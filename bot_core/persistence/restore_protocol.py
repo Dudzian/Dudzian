@@ -12,7 +12,7 @@ import shutil
 import sqlite3
 from tempfile import NamedTemporaryFile
 from threading import RLock
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 from .backup_envelope import (
     BackupEnvelope,
@@ -41,7 +41,20 @@ from .physical_backup import (
 from .secret_handoff import (
     SecretHandoffError,
     SecretHandoffRecord,
-    validate_secret_handoff_lifecycle,
+    validate_secret_handoff_snapshot,
+)
+from .lifecycle_records import LifecycleIntegrityError, validate_chain
+from .migration_execution import (
+    MigrationExecutionDeclaration,
+    MigrationExecutionAuthority,
+    MigrationExecutionError,
+)
+from .migration_execution_contract import thaw_json
+from .migration_protocol import (
+    MIGRATION_TRANSITIONS,
+    MigrationDefinition,
+    MigrationError,
+    MigrationRegistry,
 )
 
 
@@ -101,7 +114,6 @@ class SecretHandoffRestoreAuthorityPort(Protocol):
     def observe(
         self,
         descriptor: SecretHandoffRecord,
-        fence: SecretHandoffRestoreFence,
     ) -> SecretHandoffRestoreObservation: ...
 
 
@@ -113,10 +125,294 @@ class MigrationRestoreAuthorityPort(Protocol):
     ) -> None: ...
 
 
+class SealedMigrationRestoreAuthority:
+    """Read-only restore verifier rooted exclusively in a sealed registry."""
+
+    _NAMES = frozenset(
+        {
+            "Migration transition/history revisions",
+            "Migration current state/designation",
+            "Migration execution declaration",
+        }
+    )
+
+    def __init__(self, registry: MigrationRegistry) -> None:
+        if not isinstance(registry, MigrationRegistry):
+            raise TypeError("migration restore authority requires MigrationRegistry")
+        self._registry = registry
+
+    @staticmethod
+    def _ids(snapshot: StateStoreSnapshot) -> tuple[str, ...]:
+        ids: set[str] = set()
+        for carrier in (*snapshot.current_records, *snapshot.immutable_history):
+            if carrier.representation_name in SealedMigrationRestoreAuthority._NAMES:
+                migration_id = carrier.payload.get("migration_id")
+                if not isinstance(migration_id, str) or not migration_id:
+                    raise MigrationError("migration carrier identity is invalid")
+                ids.add(migration_id)
+        return tuple(sorted(ids))
+
+    def revalidate(
+        self, snapshot: StateStoreSnapshot, sqlite_schema_fingerprint_sha256: str
+    ) -> None:
+        chain: list[
+            tuple[
+                MigrationDefinition,
+                MigrationExecutionAuthority,
+                MigrationExecutionDeclaration | None,
+            ]
+        ] = []
+        for migration_id in self._ids(snapshot):
+            definition = self._registry.definition_for(migration_id)
+            authority = self._registry.execution_authority_for(migration_id)
+            authority.assert_definition(definition)
+            current_record, history_records = SQLiteStateStore._select_lifecycle(
+                snapshot,
+                identity=migration_id,
+                current_name="Migration current state/designation",
+                history_name="Migration transition/history revisions",
+                current_key=f"migration-current:{migration_id}",
+                history_key_prefix=f"migration-transition:{migration_id}:",
+            )
+            history = tuple(item.payload for item in history_records)
+            current = None if current_record is None else current_record.payload
+            if current is None:
+                raise MigrationError("migration has no current designation")
+            validate_chain(
+                history,
+                current,
+                identity_field="migration_id",
+                allowed=MIGRATION_TRANSITIONS,
+                transition_hash_field="transition_fingerprint_sha256",
+                current_hash_field="designation_fingerprint_sha256",
+            )
+            declarations = tuple(
+                item
+                for item in snapshot.immutable_history
+                if item.representation_name == "Migration execution declaration"
+                and item.payload.get("migration_id") == migration_id
+            )
+            state = str(current["state"])
+            predecessor = (
+                str(history[-2]["state"])
+                if state == "FAILED" and len(history) > 1
+                else None
+            )
+            allowed = {
+                "PREPARED": {0},
+                "APPLYING": {0, 1},
+                "DURABLE_MIGRATED": {1},
+                "COMPLETED": {1},
+                "FAILED": (
+                    {0, 1}
+                    if predecessor == "APPLYING"
+                    else ({1} if predecessor == "DURABLE_MIGRATED" else {0})
+                ),
+            }.get(state, set())
+            if len(declarations) not in allowed:
+                raise MigrationError("migration declaration cardinality is invalid")
+            declaration = None
+            if declarations:
+                declaration = MigrationExecutionDeclaration.from_mapping(
+                    thaw_json(declarations[0].payload)
+                )
+                if declarations[0] != declaration.carrier():
+                    raise MigrationError("migration declaration carrier mismatch")
+                authority.assert_declaration(declaration)
+                metadata = snapshot.metadata
+                if (
+                    declaration.account_id,
+                    declaration.device_installation_id,
+                    declaration.environment,
+                ) != (
+                    metadata.account_id,
+                    metadata.device_installation_id,
+                    metadata.environment,
+                ) or declaration.state_store_identity_fingerprint_sha256 != metadata.state_store_identity_fingerprint_sha256:
+                    raise MigrationError("migration declaration scope mismatch")
+                self._assert_materialization(snapshot, definition, declaration)
+            chain.append((definition, authority, declaration))
+        self._assert_schema_chain(snapshot, sqlite_schema_fingerprint_sha256, chain)
+
+    @staticmethod
+    def _assert_materialization(
+        snapshot: StateStoreSnapshot,
+        definition: MigrationDefinition,
+        declaration: MigrationExecutionDeclaration,
+    ) -> None:
+        descriptors = tuple(
+            item
+            for item in snapshot.transaction_descriptors
+            if item.target_generation == declaration.target_generation
+        )
+        predecessors = tuple(
+            item
+            for item in snapshot.transaction_descriptors
+            if item.target_generation == declaration.expected_current_generation
+        )
+        if len(descriptors) != 1 or len(predecessors) != 1:
+            raise MigrationError("migration transaction edge is unavailable")
+        descriptor = descriptors[0]
+        predecessor = predecessors[0]
+        metadata = snapshot.metadata
+        carrier = declaration.carrier()
+        if (
+            declaration.target_generation != declaration.expected_current_generation + 1
+            or descriptor.expected_current_generation
+            != declaration.expected_current_generation
+            or predecessor.target_generation != declaration.expected_current_generation
+            or predecessor.post_state_fingerprint_sha256
+            != declaration.pre_state_fingerprint_sha256
+            or predecessor.post_history_tail_fingerprint_sha256
+            != declaration.pre_history_tail_fingerprint_sha256
+            or descriptor.pre_state_fingerprint_sha256
+            != declaration.pre_state_fingerprint_sha256
+            or descriptor.pre_history_tail_fingerprint_sha256
+            != declaration.pre_history_tail_fingerprint_sha256
+            or descriptor.immutable_history_appends != (carrier,)
+            or descriptor.current_record_mutations != ()
+            or descriptor.state_store_schema_version != definition.target_schema_version
+            or predecessor.state_store_schema_version
+            != definition.source_schema_version
+            or (
+                descriptor.account_id,
+                descriptor.device_installation_id,
+                descriptor.environment,
+                descriptor.state_store_identity_fingerprint_sha256,
+            )
+            != (
+                metadata.account_id,
+                metadata.device_installation_id,
+                metadata.environment,
+                metadata.state_store_identity_fingerprint_sha256,
+            )
+            or (
+                predecessor.account_id,
+                predecessor.device_installation_id,
+                predecessor.environment,
+                predecessor.state_store_identity_fingerprint_sha256,
+            )
+            != (
+                metadata.account_id,
+                metadata.device_installation_id,
+                metadata.environment,
+                metadata.state_store_identity_fingerprint_sha256,
+            )
+            or not descriptor.has_valid_transaction_fingerprint()
+            or not predecessor.has_valid_transaction_fingerprint()
+        ):
+            raise MigrationError("migration declaration is not exactly materialized")
+
+    @staticmethod
+    def _assert_schema_chain(
+        snapshot: StateStoreSnapshot,
+        physical_schema: str,
+        entries: list[
+            tuple[
+                MigrationDefinition,
+                MigrationExecutionAuthority,
+                MigrationExecutionDeclaration | None,
+            ]
+        ],
+    ) -> None:
+        if not entries:
+            return
+        by_source: dict[
+            int,
+            tuple[
+                MigrationDefinition,
+                MigrationExecutionAuthority,
+                MigrationExecutionDeclaration | None,
+            ],
+        ] = {}
+        targets: set[int] = set()
+        for entry in entries:
+            definition = entry[0]
+            source = definition.source_schema_version
+            target = definition.target_schema_version
+            if source in by_source or target in targets:
+                raise MigrationError("migration schema chain branches")
+            by_source[source] = entry
+            targets.add(target)
+        starts = tuple(source for source in by_source if source not in targets)
+        if len(starts) != 1:
+            raise MigrationError("migration schema chain has no unique head")
+        ordered: list[
+            tuple[
+                MigrationDefinition,
+                MigrationExecutionAuthority,
+                MigrationExecutionDeclaration | None,
+            ]
+        ] = []
+        version = starts[0]
+        while version in by_source:
+            entry = by_source[version]
+            if entry in ordered:
+                raise MigrationError("migration schema chain cycles")
+            ordered.append(entry)
+            version = entry[0].target_schema_version
+        if len(ordered) != len(entries):
+            raise MigrationError("migration schema chain is disconnected")
+        for left, right in zip(ordered, ordered[1:]):
+            if (
+                left[1].target_sqlite_schema_fingerprint_sha256
+                != right[1].pre_sqlite_schema_fingerprint_sha256
+            ):
+                raise MigrationError("migration sealed schema chain mismatch")
+        materialized = [entry for entry in ordered if entry[2] is not None]
+        materialized_count = len(materialized)
+        if any(entry[2] is None for entry in ordered[:materialized_count]) or any(
+            entry[2] is not None for entry in ordered[materialized_count:]
+        ):
+            raise MigrationError("materialized migrations do not form a prefix")
+        if len(ordered) - materialized_count > 1:
+            raise MigrationError("migration chain has an impossible active tail")
+        declarations = [entry[2] for entry in materialized]
+        if any(
+            declaration is None
+            or declaration.expected_current_generation >= declaration.target_generation
+            for declaration in declarations
+        ) or any(
+            left.target_generation >= right.target_generation
+            for left, right in zip(declarations, declarations[1:])
+            if left is not None and right is not None
+        ):
+            raise MigrationError("migration materialization chronology is invalid")
+        terminal = materialized[-1] if materialized else ordered[0]
+        expected_version = (
+            terminal[0].target_schema_version
+            if materialized
+            else terminal[0].source_schema_version
+        )
+        expected_schema = (
+            terminal[1].target_sqlite_schema_fingerprint_sha256
+            if materialized
+            else terminal[1].pre_sqlite_schema_fingerprint_sha256
+        )
+        if (
+            snapshot.metadata.state_store_schema_version != expected_version
+            or physical_schema != expected_schema
+        ):
+            raise MigrationError("current schema does not match migration head")
+
+
 @dataclass(frozen=True, slots=True)
 class RestoreLifecycleAuthorityBundle:
     migration_restore_authority: MigrationRestoreAuthorityPort | None = None
     secret_handoff_restore_authority: SecretHandoffRestoreAuthorityPort | None = None
+
+    @classmethod
+    def from_migration_registry(
+        cls,
+        registry: MigrationRegistry,
+        secret_handoff_restore_authority: (
+            SecretHandoffRestoreAuthorityPort | None
+        ) = None,
+    ) -> "RestoreLifecycleAuthorityBundle":
+        return cls(
+            SealedMigrationRestoreAuthority(registry),
+            secret_handoff_restore_authority,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -468,27 +764,45 @@ class TrustedPhysicalRestoreCoordinator(S7CRestoreCoordinator):
     def _secret_lifecycles(
         snapshot: StateStoreSnapshot,
     ) -> tuple[tuple[SecretHandoffRecord, str], ...]:
-        descriptors: list[SecretHandoffRecord] = []
-        for carrier in snapshot.immutable_history:
-            if carrier.representation_name == "SecretHandoff immutable descriptor":
-                descriptors.append(SecretHandoffRecord.from_mapping(carrier.payload))
-        result: list[tuple[SecretHandoffRecord, str]] = []
-        for descriptor in sorted(descriptors, key=lambda item: item.handoff_id):
+        return cast(
+            tuple[tuple[SecretHandoffRecord, str], ...],
+            validate_secret_handoff_snapshot(snapshot),
+        )
+
+    @staticmethod
+    def _migration_relations(snapshot: StateStoreSnapshot) -> None:
+        """Validate local Migration current/history relations without authority calls."""
+
+        for migration_id in SealedMigrationRestoreAuthority._ids(snapshot):
             current_record, history_records = SQLiteStateStore._select_lifecycle(
                 snapshot,
-                identity=descriptor.handoff_id,
-                current_name="SecretHandoff current state/designation",
-                history_name="SecretHandoff transition/history revisions",
-                current_key=f"handoff-current:{descriptor.handoff_id}",
-                history_key_prefix=f"handoff-transition:{descriptor.handoff_id}:",
+                identity=migration_id,
+                current_name="Migration current state/designation",
+                history_name="Migration transition/history revisions",
+                current_key=f"migration-current:{migration_id}",
+                history_key_prefix=f"migration-transition:{migration_id}:",
             )
+            if current_record is None:
+                raise MigrationError("migration has no current designation")
             history = tuple(item.payload for item in history_records)
-            current = None if current_record is None else current_record.payload
-            validate_secret_handoff_lifecycle(descriptor, history, current)
-            if current is None:
-                raise SecretHandoffError("handoff descriptor has no current lifecycle")
-            result.append((descriptor, str(current["state"])))
-        return tuple(result)
+            current = current_record.payload
+            validate_chain(
+                history,
+                current,
+                identity_field="migration_id",
+                allowed=MIGRATION_TRANSITIONS,
+                transition_hash_field="transition_fingerprint_sha256",
+                current_hash_field="designation_fingerprint_sha256",
+            )
+            if (
+                current["authoritative_state_fingerprint_sha256"]
+                != history[-1]["state_fingerprint_sha256"]
+                or current["protected_freshness_generation"]
+                != history[-1]["protected_freshness_generation"]
+            ):
+                raise MigrationError(
+                    "migration current designation is not bound to latest observation"
+                )
 
     def _observe(
         self,
@@ -501,7 +815,8 @@ class TrustedPhysicalRestoreCoordinator(S7CRestoreCoordinator):
         if authority is None:
             raise SecretHandoffError("secret restore authority unavailable")
         for descriptor, lifecycle in lifecycles:
-            observation = authority.observe(descriptor, fence)
+            # The fence is coordinator timing context, never external authority input.
+            observation = authority.observe(descriptor)
             expected = (
                 descriptor.handoff_id,
                 descriptor.scope,
@@ -539,30 +854,108 @@ class TrustedPhysicalRestoreCoordinator(S7CRestoreCoordinator):
             shutil.copyfileobj(source, output)
             output.flush()
             os.fsync(output.fileno())
-        digest = hashlib.sha256(staged.read_bytes()).hexdigest()
-        if (
-            staged.stat().st_size != candidate.physical_artifact_byte_length
-            or digest != (candidate.physical_artifact_sha256)
-        ):
+        if not TrustedPhysicalRestoreCoordinator._staged_matches(candidate, staged):
             staged.unlink(missing_ok=True)
             raise StateStoreError("physical install staging continuity mismatch")
         return staged
+
+    @staticmethod
+    def _staged_matches(
+        candidate: AuthenticatedPhysicalBackupCandidate, staged: Path
+    ) -> bool:
+        digest = hashlib.sha256()
+        length = 0
+        with staged.open("rb") as source:
+            while chunk := source.read(1024 * 1024):
+                digest.update(chunk)
+                length += len(chunk)
+        return bool(
+            length == candidate.physical_artifact_byte_length
+            and digest.hexdigest() == candidate.physical_artifact_sha256
+        )
+
+    def _restore_exact_without_admission(
+        self, envelope: BackupEnvelope
+    ) -> RestoreResult:
+        """Authorize an exact live store without consulting the physical artifact."""
+
+        with SQLiteStateStore(self._live_path) as live:
+            snapshot = live.read_verified_snapshot()
+            if snapshot is None or not self._exact(snapshot, envelope):
+                raise StateStoreError("exact live snapshot became unavailable")
+            schema = live.sqlite_schema_fingerprint()
+        lifecycles = self._secret_lifecycles(snapshot)
+        self._migration_relations(snapshot)  # Stage 1, local and intrinsic only
+        migration = self._lifecycle_authority.migration_restore_authority
+        has_migration = any(
+            record.representation_name in SealedMigrationRestoreAuthority._NAMES
+            for record in (*snapshot.current_records, *snapshot.immutable_history)
+        )
+        if has_migration and not isinstance(migration, SealedMigrationRestoreAuthority):
+            raise MigrationError("sealed migration restore authority unavailable")
+        if migration is not None and has_migration:
+            migration.revalidate(snapshot, schema)
+        self._observe(lifecycles, SecretHandoffRestoreFence.INITIAL_STAGE_2)
+        self._migration_relations(snapshot)
+        self._secret_lifecycles(snapshot)  # explicit Stage 3 relational revalidation
+        scope = self._scope(envelope)
+        external = self._external(scope)
+        if not self._eligible(envelope, external.record):
+            raise StateStoreError("candidate is not externally current")
+        self._registry.invalidate_scope(scope)
+        if external.record.lifecycle == "PREPARED":
+            self._observe(lifecycles, SecretHandoffRestoreFence.FINAL_PROMOTION)
+            with SQLiteStateStore(self._live_path) as live:
+                ProtectedFreshnessHandoffCoordinator(
+                    live, self._registry, self._authority
+                ).recover_protected_state(scope)
+        with SQLiteStateStore(self._live_path) as live:
+            if not self._exact(live.read_verified_snapshot(), envelope):
+                raise StateStoreError("live changed during no-op validation")
+        self._observe(lifecycles, SecretHandoffRestoreFence.FINAL_PROMOTION)
+        with SQLiteStateStore(self._live_path) as evidence_store:
+            if self._registry.publish_verified_state(evidence_store) is None:
+                raise StateStoreError("fresh durable evidence unavailable")
+        return RestoreResult(
+            (
+                RestoreDecision.RESTORE_EXACT_PROTECTED_PENDING_AND_FINALIZE
+                if external.record.lifecycle == "PREPARED"
+                else RestoreDecision.NOOP_ALREADY_CURRENT
+            ),
+            LocalRestoreClassification.EXACT.value,
+        )
 
     def restore_trusted_artifact(
         self, artifact: TrustedPhysicalBackupArtifact
     ) -> RestoreResult:
         """Admit a trusted bundle and own its private lease through completion."""
 
-        try:
-            candidate = self._admission.admit(artifact)
-        except PhysicalBackupAdmissionError:
-            return RestoreResult(
-                RestoreDecision.DENY, "physical artifact admission denied"
-            )
-        try:
-            return self.restore_admitted(candidate)
-        finally:
-            candidate.close()
+        with self._lock:
+            try:
+                envelope = validate_backup_envelope(artifact.backup_envelope)
+                classification, _ = self._classify(envelope)
+                if classification is LocalRestoreClassification.EXACT:
+                    return self._restore_exact_without_admission(envelope)
+                candidate = self._admission.admit(artifact)
+            except (
+                BackupEnvelopeError,
+                MigrationError,
+                MigrationExecutionError,
+                OSError,
+                sqlite3.Error,
+                StateStoreError,
+                ProtectedFreshnessHandoffError,
+                PhysicalBackupAdmissionError,
+                SecretHandoffError,
+                LifecycleIntegrityError,
+            ):
+                return RestoreResult(
+                    RestoreDecision.DENY, "physical artifact admission denied"
+                )
+            try:
+                return self.restore_admitted(candidate)
+            finally:
+                candidate.close()
 
     def restore_admitted(
         self, candidate: AuthenticatedPhysicalBackupCandidate
@@ -586,23 +979,29 @@ class TrustedPhysicalRestoreCoordinator(S7CRestoreCoordinator):
                 )  # Stage 1
                 snapshot = candidate.state_store_snapshot
                 lifecycles = self._secret_lifecycles(snapshot)
+                self._migration_relations(snapshot)  # Stage 1
 
                 migration = self._lifecycle_authority.migration_restore_authority
                 has_migration = any(
-                    record.representation_name.startswith("Migration ")
+                    record.representation_name in SealedMigrationRestoreAuthority._NAMES
                     for record in (
                         *snapshot.current_records,
                         *snapshot.immutable_history,
                     )
                 )
-                if has_migration and migration is None:
-                    raise StateStoreError("migration restore authority unavailable")
+                if has_migration and not isinstance(
+                    migration, SealedMigrationRestoreAuthority
+                ):
+                    raise StateStoreError(
+                        "sealed migration restore authority unavailable"
+                    )
                 if migration is not None and has_migration:
                     migration.revalidate(
                         snapshot, candidate.sqlite_schema_fingerprint_sha256
                     )
                 self._observe(lifecycles, SecretHandoffRestoreFence.INITIAL_STAGE_2)
                 # Stage 3: repeat relational validation after all Stage-2 authority succeeds.
+                self._migration_relations(snapshot)
                 self._secret_lifecycles(snapshot)
 
                 scope = self._scope(envelope)
@@ -644,16 +1043,12 @@ class TrustedPhysicalRestoreCoordinator(S7CRestoreCoordinator):
                                 LocalRestoreClassification.NO_TRUSTED_LOCAL_OBSERVATION,
                                 LocalRestoreClassification.CORRUPT_OR_UNREADABLE,
                             }:
-                                live = SQLiteStateStore(self._live_path)
-                                if live.read_verified_snapshot() != fresh_snapshot:
-                                    live.close()
-                                    raise StateStoreError(
-                                        "live StateStore changed before checkpoint"
-                                    )
-                                live.prepare_for_atomic_install()
-                            self._observe(
-                                lifecycles, SecretHandoffRestoreFence.PRE_INSTALL
-                            )
+                                with SQLiteStateStore(self._live_path) as live:
+                                    if live.read_verified_snapshot() != fresh_snapshot:
+                                        raise StateStoreError(
+                                            "live StateStore changed before checkpoint"
+                                        )
+                                    live.prepare_for_atomic_install()
                             candidate.verify_physical_continuity()
                             latest = self._external(scope)
                             if latest != external or not self._eligible(
@@ -662,6 +1057,13 @@ class TrustedPhysicalRestoreCoordinator(S7CRestoreCoordinator):
                                 raise StateStoreError(
                                     "external authority changed before install"
                                 )
+                            if not self._staged_matches(candidate, staged):
+                                raise StateStoreError(
+                                    "final staged continuity mismatch"
+                                )
+                            self._observe(
+                                lifecycles, SecretHandoffRestoreFence.PRE_INSTALL
+                            )
                             SQLiteStateStore.atomic_replace(staged, self._live_path)
                             staged = None
                             installed = True
@@ -704,6 +1106,9 @@ class TrustedPhysicalRestoreCoordinator(S7CRestoreCoordinator):
                 ProtectedFreshnessHandoffError,
                 PhysicalBackupAdmissionError,
                 SecretHandoffError,
+                LifecycleIntegrityError,
+                MigrationError,
+                MigrationExecutionError,
             ):
                 return RestoreResult(
                     RestoreDecision.DENY, "fail-closed physical restore denial"

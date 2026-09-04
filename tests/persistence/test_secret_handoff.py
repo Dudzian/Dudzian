@@ -10,13 +10,42 @@ from bot_core.persistence.secret_handoff import (
     secret_metadata_fingerprint,
     secret_operation_fingerprint,
     handoff_current,
+    handoff_current_carrier,
+    handoff_descriptor_carrier,
     handoff_transition,
+    handoff_transition_carrier,
+    validate_secret_handoff_snapshot,
     validate_secret_handoff_lifecycle,
 )
+from bot_core.persistence.state_store import StateStoreMetadata, StateStoreSnapshot
 
 H = "a" * 64
 ACCOUNT = "acct_01890f3a-2b4c-7abc-8def-0123456789ab"
 DEVICE = "dev_01890f3a-2b4c-7abc-8def-0123456789ab"
+
+
+def handoff_snapshot(*, descriptors=True, current=True, history=True, record=None):
+    record = descriptor() if record is None else record
+    transitions, designation = lifecycle()
+    return StateStoreSnapshot(
+        StateStoreMetadata(
+            account_id=ACCOUNT,
+            device_installation_id=DEVICE,
+            state_store_schema_version=1,
+            state_store_identity_fingerprint_sha256=H,
+            environment="PAPER",
+            protected_freshness_generation=1,
+            state_fingerprint_sha256=H,
+            transaction_fingerprint_sha256=H,
+            history_tail_fingerprint_sha256=H,
+        ),
+        (handoff_current_carrier(designation),) if current else (),
+        (
+            *((handoff_descriptor_carrier(record),) if descriptors else ()),
+            *((handoff_transition_carrier(transitions[0]),) if history else ()),
+        ),
+        (),
+    )
 
 
 def descriptor(**changes):
@@ -99,7 +128,9 @@ def test_illegal_corrupt_and_descriptor_only_fail_closed():
         validate_secret_handoff_lifecycle(descriptor(), illegal, current)
     with pytest.raises(SecretHandoffError):
         validate_secret_handoff_lifecycle(
-            descriptor(), [{**history[0], "transition_fingerprint_sha256": "b" * 64}], current
+            descriptor(),
+            [{**history[0], "transition_fingerprint_sha256": "b" * 64}],
+            current,
         )
     with pytest.raises(SecretHandoffError):
         SecretHandoffCoordinator(Fake()).resume(descriptor(), [], None)
@@ -128,14 +159,26 @@ def test_lost_ack_reconciles_without_second_mutation_and_unknown_is_terminal():
     fake = Fake()
     coordinator = SecretHandoffCoordinator(fake)
     history, current = lifecycle()
-    assert coordinator.resume(descriptor(), history, current, first_dispatch=True) == "COMMITTED"
-    assert coordinator.resume(descriptor(), history, current, first_dispatch=True) == "COMMITTED"
+    assert (
+        coordinator.resume(descriptor(), history, current, first_dispatch=True)
+        == "COMMITTED"
+    )
+    assert (
+        coordinator.resume(descriptor(), history, current, first_dispatch=True)
+        == "COMMITTED"
+    )
     assert fake.mutations == 1 and fake.reconciles == 1
     unknown = Fake(ExternalOutcome.UNRESOLVED)
     c = SecretHandoffCoordinator(unknown)
-    assert c.resume(descriptor(), history, current, first_dispatch=True) == "UNKNOWN_RECONCILIATION"
+    assert (
+        c.resume(descriptor(), history, current, first_dispatch=True)
+        == "UNKNOWN_RECONCILIATION"
+    )
     h, u = lifecycle(("PREPARED", "UNKNOWN_RECONCILIATION"))
-    assert c.resume(descriptor(), h, u) == "UNKNOWN_RECONCILIATION" and unknown.mutations == 1
+    assert (
+        c.resume(descriptor(), h, u) == "UNKNOWN_RECONCILIATION"
+        and unknown.mutations == 1
+    )
 
 
 def test_concurrent_resume_mutates_at_most_once():
@@ -145,7 +188,9 @@ def test_concurrent_resume_mutates_at_most_once():
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = list(
             pool.map(
-                lambda _: coordinator.resume(descriptor(), history, current, first_dispatch=True),
+                lambda _: coordinator.resume(
+                    descriptor(), history, current, first_dispatch=True
+                ),
                 range(2),
             )
         )
@@ -168,8 +213,53 @@ def test_lifecycle_carriers_pass_stage_one_and_contain_references_only():
     )
 
     history, current = lifecycle()
-    assert handoff_transition_carrier(history[0]).record_key == "handoff-transition:handoff-1:1"
+    assert (
+        handoff_transition_carrier(history[0]).record_key
+        == "handoff-transition:handoff-1:1"
+    )
     assert handoff_current_carrier(current).record_key == "handoff-current:handoff-1"
+
+
+def test_snapshot_discovers_and_validates_complete_secret_family():
+    restored = validate_secret_handoff_snapshot(handoff_snapshot())
+    assert restored == ((descriptor(), "PREPARED"),)
+
+
+@pytest.mark.parametrize(
+    ("current", "history"),
+    [(True, False), (False, True)],
+)
+def test_snapshot_rejects_orphan_secret_lifecycle(current, history):
+    with pytest.raises(SecretHandoffError, match="immutable descriptor"):
+        validate_secret_handoff_snapshot(
+            handoff_snapshot(descriptors=False, current=current, history=history)
+        )
+
+
+def test_snapshot_rejects_duplicate_secret_descriptor():
+    snapshot = handoff_snapshot()
+    duplicate = StateStoreSnapshot(
+        snapshot.metadata,
+        snapshot.current_records,
+        (snapshot.immutable_history[0], *snapshot.immutable_history),
+        snapshot.transaction_descriptors,
+    )
+    with pytest.raises(SecretHandoffError, match="duplicate"):
+        validate_secret_handoff_snapshot(duplicate)
+
+
+@pytest.mark.parametrize(
+    "scope",
+    [
+        ("acct_01890f3a-2b4c-7abc-8def-0123456789ac", DEVICE),
+        (ACCOUNT, "dev_01890f3a-2b4c-7abc-8def-0123456789ac"),
+    ],
+)
+def test_snapshot_rejects_cross_scope_secret_descriptor(scope):
+    with pytest.raises(SecretHandoffError, match="scope"):
+        validate_secret_handoff_snapshot(
+            handoff_snapshot(record=descriptor(scope=scope))
+        )
 
 
 def test_descriptor_deeply_snapshots_reconciliation_metadata():
