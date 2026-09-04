@@ -27,6 +27,15 @@ from .secret_handoff import (
     SecretHandoffCoordinator,
     SecretHandoffRecord,
 )
+from .physical_backup import (
+    AuthenticatedPhysicalBackupCandidate,
+    PhysicalBackupAdmissionError,
+    PhysicalBackupAdmissionValidator,
+    PhysicalBackupCreator,
+    PhysicalBackupError,
+    PhysicalSQLiteArtifact,
+    TrustedPhysicalBackupArtifact,
+)
 
 __all__ = [
     "PersistenceRecord",
@@ -55,4 +64,11 @@ __all__ = [
     "SecretHandoffCoordinator",
     "DurableSecretHandoffExecutionCoordinator",
     "SecretHandoffRecord",
+    "AuthenticatedPhysicalBackupCandidate",
+    "PhysicalBackupAdmissionError",
+    "PhysicalBackupAdmissionValidator",
+    "PhysicalBackupCreator",
+    "PhysicalBackupError",
+    "PhysicalSQLiteArtifact",
+    "TrustedPhysicalBackupArtifact",
 ]
