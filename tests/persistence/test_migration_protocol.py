@@ -3,6 +3,7 @@ from dataclasses import replace
 import pytest
 
 from bot_core.persistence.state_store import StateStoreMetadata, StateStoreSnapshot
+from bot_core.persistence.migration_execution import MigrationExecutionAuthority
 
 from bot_core.persistence.migration_protocol import (
     MigrationCoordinator,
@@ -25,6 +26,22 @@ DEVICE_B = "dev_01890f3a-2b4c-7abc-8def-0123456789ac"
 
 def definition():
     return MigrationDefinition("migration-1", 1, 2, ("test-step",))
+
+
+def registry(step=lambda value: value):
+    value = definition()
+    authority = MigrationExecutionAuthority(
+        value.migration_id,
+        value.source_schema_version,
+        value.target_schema_version,
+        value.ordered_path,
+        value.rollback_policy,
+        value.fingerprint(),
+        H,
+        H,
+        H,
+    )
+    return MigrationRegistry(((value, authority, step),))
 
 
 def plan(**changes):
@@ -113,11 +130,10 @@ def test_corruption_gap_illegal_and_mismatch_fail_closed():
 
 
 def test_exact_registry_and_recovery_do_not_reapply_durable_or_terminal():
-    registry = MigrationRegistry(((definition(), lambda value: value),))
-    coordinator = MigrationCoordinator(registry)
+    coordinator = MigrationCoordinator(registry())
     calls = []
     history, current = lifecycle(("PREPARED", "APPLYING"))
-    assert (
+    with pytest.raises(MigrationError, match="sealed execution coordinator"):
         coordinator.resume(
             plan(),
             history,
@@ -126,9 +142,7 @@ def test_exact_registry_and_recovery_do_not_reapply_durable_or_terminal():
             apply_once=lambda step: calls.append(step),
             finalize=lambda: calls.append("finalize"),
         )
-        == "DURABLE_MIGRATED"
-    )
-    assert len(calls) == 1
+    assert calls == []
     history, current = lifecycle(("PREPARED", "APPLYING", "DURABLE_MIGRATED"))
     assert (
         coordinator.resume(
@@ -141,8 +155,10 @@ def test_exact_registry_and_recovery_do_not_reapply_durable_or_terminal():
         )
         == "COMPLETED"
     )
-    assert len(calls) == 2
-    history, current = lifecycle(("PREPARED", "APPLYING", "DURABLE_MIGRATED", "COMPLETED"))
+    assert len(calls) == 1
+    history, current = lifecycle(
+        ("PREPARED", "APPLYING", "DURABLE_MIGRATED", "COMPLETED")
+    )
     assert (
         coordinator.resume(
             plan(),
@@ -154,7 +170,7 @@ def test_exact_registry_and_recovery_do_not_reapply_durable_or_terminal():
         )
         == "COMPLETED"
     )
-    assert len(calls) == 2
+    assert len(calls) == 1
 
 
 def test_descriptor_is_not_authority_and_unknown_path_denied():
@@ -188,9 +204,12 @@ def test_lifecycle_carriers_pass_stage_one_and_use_existing_buckets():
 
     history, current = lifecycle()
     assert (
-        migration_transition_carrier(history[0]).record_key == "migration-transition:migration-1:1"
+        migration_transition_carrier(history[0]).record_key
+        == "migration-transition:migration-1:1"
     )
-    assert migration_current_carrier(current).record_key == "migration-current:migration-1"
+    assert (
+        migration_current_carrier(current).record_key == "migration-current:migration-1"
+    )
 
 
 @pytest.mark.parametrize(
@@ -203,16 +222,29 @@ def test_lifecycle_carriers_pass_stage_one_and_use_existing_buckets():
     ],
 )
 def test_static_definition_rejects_substitution(field, value):
-    registry = MigrationRegistry(((definition(), lambda item: item),))
     with pytest.raises(MigrationError):
-        registry.assert_static_match(plan(**{field: value}))
+        registry().assert_static_match(plan(**{field: value}))
 
 
 def snapshot(
-    *, account=ACCOUNT, device=DEVICE, environment="PAPER", generation=2, state=H, transaction=H
+    *,
+    account=ACCOUNT,
+    device=DEVICE,
+    environment="PAPER",
+    generation=2,
+    state=H,
+    transaction=H,
 ):
     metadata = StateStoreMetadata(
-        account, device, 1, "d" * 64, environment, generation, state, transaction, "e" * 64
+        account,
+        device,
+        1,
+        "d" * 64,
+        environment,
+        generation,
+        state,
+        transaction,
+        "e" * 64,
     )
     return StateStoreSnapshot(metadata, (), (), ())
 
@@ -249,7 +281,13 @@ def test_target_binding_rejects_caller_substitution():
 
 
 def test_one_static_definition_supports_multiple_runtime_installations():
-    a = snapshot(account=ACCOUNT, device=DEVICE, generation=5, state="1" * 64, transaction="2" * 64)
+    a = snapshot(
+        account=ACCOUNT,
+        device=DEVICE,
+        generation=5,
+        state="1" * 64,
+        transaction="2" * 64,
+    )
     b = snapshot(
         account=ACCOUNT_B,
         device=DEVICE_B,
@@ -278,7 +316,9 @@ def test_empty_registry_and_path_only_authority_fail_closed():
         MigrationRegistry().resolve(plan())
 
 
-@pytest.mark.parametrize("state", ["PREPARED", "DURABLE_MIGRATED", "COMPLETED", "FAILED"])
+@pytest.mark.parametrize(
+    "state", ["PREPARED", "DURABLE_MIGRATED", "COMPLETED", "FAILED"]
+)
 def test_static_substitution_rejected_before_all_lifecycle_states(state):
     states = {
         "PREPARED": ("PREPARED",),
@@ -287,7 +327,7 @@ def test_static_substitution_rejected_before_all_lifecycle_states(state):
         "FAILED": ("PREPARED", "FAILED"),
     }[state]
     history, current = lifecycle(states)
-    coordinator = MigrationCoordinator(MigrationRegistry(((definition(), lambda item: item),)))
+    coordinator = MigrationCoordinator(registry())
     with pytest.raises(MigrationError):
         coordinator.resume(
             plan(target_schema_version=9),
