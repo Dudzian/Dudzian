@@ -7,13 +7,18 @@ import pytest
 
 from bot_core.persistence.fingerprints import transaction_fingerprint_sha256
 from bot_core.persistence.migration_execution import (
+    MigrationExecutionAuthority,
     MigrationExecutionDeclaration,
     MigrationExecutionError,
     MigrationExecutionPlan,
     MigrationSqlOperation,
     sqlite_schema_fingerprint,
 )
-from bot_core.persistence.migration_protocol import MigrationDefinition, MigrationError
+from bot_core.persistence.migration_protocol import (
+    MigrationDefinition,
+    MigrationError,
+    MigrationRegistry,
+)
 from bot_core.persistence.records import PersistenceRecord
 
 SHA = "a" * 64
@@ -60,14 +65,100 @@ def declaration(value: MigrationExecutionPlan) -> MigrationExecutionDeclaration:
     )
 
 
+def authority(value: MigrationExecutionPlan) -> MigrationExecutionAuthority:
+    static = definition()
+    return MigrationExecutionAuthority(
+        static.migration_id,
+        static.source_schema_version,
+        static.target_schema_version,
+        static.ordered_path,
+        static.rollback_policy,
+        static.fingerprint(),
+        value.operation_plan_fingerprint_sha256,
+        value.pre_sqlite_schema_fingerprint_sha256,
+        value.target_sqlite_schema_fingerprint_sha256,
+    )
+
+
+def test_execution_authority_binds_definition_plan_and_declaration() -> None:
+    connection = sqlite3.connect(":memory:")
+    value = plan(connection)
+    sealed = authority(value)
+    static = definition()
+    sealed.assert_definition(static)
+    sealed.assert_plan(value)
+    sealed.assert_declaration(declaration(value))
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"source_schema_version": True},
+        {"target_schema_version": 0},
+        {"ordered_path": ["widgets"]},
+        {"rollback_policy": "REVERSIBLE"},
+        {"operation_plan_fingerprint_sha256": "A" * 64},
+    ],
+)
+def test_execution_authority_rejects_noncanonical_fields(changes) -> None:
+    values = dict(
+        migration_id="migration-1",
+        source_schema_version=1,
+        target_schema_version=2,
+        ordered_path=("widgets",),
+        rollback_policy="FORWARD_ONLY",
+        migration_definition_fingerprint_sha256="a" * 64,
+        operation_plan_fingerprint_sha256="b" * 64,
+        pre_sqlite_schema_fingerprint_sha256="c" * 64,
+        target_sqlite_schema_fingerprint_sha256="d" * 64,
+    )
+    values.update(changes)
+    with pytest.raises(MigrationExecutionError):
+        MigrationExecutionAuthority(**values)
+
+
+def test_registry_requires_complete_sealed_triple_and_authorizes_plan() -> None:
+    connection = sqlite3.connect(":memory:")
+    value = plan(connection)
+    static = definition()
+    sealed = authority(value)
+    snapshot = object()
+    registry = MigrationRegistry(((static, sealed, lambda _: value),))
+    assert registry.execution_authority_for(static.migration_id) is sealed
+    assert registry.authorized_plan_for(static, snapshot) is value  # type: ignore[arg-type]
+    with pytest.raises(MigrationError):
+        MigrationRegistry(((static, lambda _: value),))  # type: ignore[arg-type]
+    with pytest.raises(MigrationError):
+        MigrationRegistry().execution_authority_for("unknown")
+
+
+def test_candidate_plan_cannot_replace_registered_authority() -> None:
+    connection = sqlite3.connect(":memory:")
+    value = plan(connection)
+    sealed = authority(value)
+    conflicting = MigrationExecutionPlan(
+        (MigrationSqlOperation(1, "other", "DDL", "CREATE TABLE other(id INTEGER)"),),
+        value.pre_sqlite_schema_fingerprint_sha256,
+        value.target_sqlite_schema_fingerprint_sha256,
+    )
+    with pytest.raises(MigrationExecutionError):
+        sealed.assert_plan(conflicting)
+
+
 def test_sqlite_schema_fingerprint_and_undeclared_ddl_detection() -> None:
     first, second = sqlite3.connect(":memory:"), sqlite3.connect(":memory:")
     assert sqlite_schema_fingerprint(first) == sqlite_schema_fingerprint(second)
     value = plan(first)
     first.execute(value.operations[0].statement)
-    assert sqlite_schema_fingerprint(first) == value.target_sqlite_schema_fingerprint_sha256
+    assert (
+        sqlite_schema_fingerprint(first)
+        == value.target_sqlite_schema_fingerprint_sha256
+    )
     first.execute("CREATE INDEX widget_id ON widget(id)")
-    assert sqlite_schema_fingerprint(first) != value.target_sqlite_schema_fingerprint_sha256
+    assert (
+        sqlite_schema_fingerprint(first)
+        != value.target_sqlite_schema_fingerprint_sha256
+    )
 
 
 def test_declaration_is_stage1_history_and_descriptor_transitively_binds_it() -> None:
@@ -108,7 +199,10 @@ def test_operation_order_and_every_plan_field_are_exact() -> None:
     reordered = MigrationExecutionPlan(
         (replace(b, ordinal=1), replace(a, ordinal=2)), SHA, "b" * 64
     )
-    assert one.operation_plan_fingerprint_sha256 != reordered.operation_plan_fingerprint_sha256
+    assert (
+        one.operation_plan_fingerprint_sha256
+        != reordered.operation_plan_fingerprint_sha256
+    )
     declaration(one).assert_matches(definition(), one)
     for changed in (
         replace(definition(), source_schema_version=2),
@@ -146,7 +240,10 @@ def _rehashed_raw(mapping: dict[str, object]) -> PersistenceRecord:
 
 
 def _assert_raw_rejected(mutator: object, *, refresh_plan: bool = False) -> None:
-    from bot_core.persistence.records import PersistenceRecordError, validate_persistence_record
+    from bot_core.persistence.records import (
+        PersistenceRecordError,
+        validate_persistence_record,
+    )
     from bot_core.persistence.migration_execution_contract import (
         operation_plan_fingerprint_from_mappings,
     )
@@ -155,16 +252,23 @@ def _assert_raw_rejected(mutator: object, *, refresh_plan: bool = False) -> None
     payload = mapping["payload"]
     assert isinstance(payload, dict)
     mutator(payload)  # type: ignore[operator]
-    with pytest.raises((PersistenceRecordError, MigrationExecutionError, TypeError, ValueError)):
+    with pytest.raises(
+        (PersistenceRecordError, MigrationExecutionError, TypeError, ValueError)
+    ):
         if refresh_plan:
-            payload["operation_plan_fingerprint_sha256"] = operation_plan_fingerprint_from_mappings(
+            payload[
+                "operation_plan_fingerprint_sha256"
+            ] = operation_plan_fingerprint_from_mappings(
                 payload["operations"]  # type: ignore[arg-type]
             )
         validate_persistence_record(_rehashed_raw(mapping))
 
 
 def test_valid_raw_json_carrier_round_trips_through_production_stage1() -> None:
-    from bot_core.persistence.records import PersistenceRecord, validate_persistence_record
+    from bot_core.persistence.records import (
+        PersistenceRecord,
+        validate_persistence_record,
+    )
 
     mapping = _raw_mapping()
     restored = PersistenceRecord.from_mapping(mapping)
@@ -193,26 +297,34 @@ def test_raw_intrinsic_relation_substitutions_fail_stage1(mutator: object) -> No
 @pytest.mark.parametrize(
     "mutator",
     [
-        lambda p: p["operations"][0].update(statement="CREATE TABLE changed(id INTEGER)"),
+        lambda p: p["operations"][0].update(
+            statement="CREATE TABLE changed(id INTEGER)"
+        ),
         lambda p: p["operations"][0].update(parameters=[1]),
         lambda p: p["operations"][0].update(operation_kind="DML"),
         lambda p: p["operations"][0].update(operation_id="changed"),
         lambda p: p["operations"].insert(0, {**p["operations"][0], "ordinal": 1}),
     ],
 )
-def test_raw_operation_substitutions_with_stale_plan_hash_fail_stage1(mutator: object) -> None:
+def test_raw_operation_substitutions_with_stale_plan_hash_fail_stage1(
+    mutator: object,
+) -> None:
     _assert_raw_rejected(mutator)
 
 
 @pytest.mark.parametrize(
     "mutator",
     [
-        lambda p: p["operations"][0].update(statement="CREATE TABLE a(x); DROP TABLE a"),
+        lambda p: p["operations"][0].update(
+            statement="CREATE TABLE a(x); DROP TABLE a"
+        ),
         lambda p: p["operations"][0].update(statement="CREATE TABLE a(x)\x00"),
         lambda p: p["operations"][0].update(parameters=[float("nan")]),
         lambda p: p["operations"][0].update(parameters=[float("inf")]),
         lambda p: p["operations"][0].update(parameters=[object()]),
     ],
 )
-def test_raw_malformed_effects_fail_even_when_hashes_are_refreshed(mutator: object) -> None:
+def test_raw_malformed_effects_fail_even_when_hashes_are_refreshed(
+    mutator: object,
+) -> None:
     _assert_raw_rejected(mutator, refresh_plan=True)

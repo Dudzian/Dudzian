@@ -1,8 +1,27 @@
 """Produkcyjne fundamenty trwałego StateStore."""
 
-from .records import PersistenceRecord, PersistenceRecordError, validate_persistence_record
-from .state_store import StateStoreError, StateStoreMetadata, StateStoreSnapshot, SQLiteStateStore
-from .restore_protocol import RestoreDecision, RestoreResult, S7CRestoreCoordinator
+from .records import (
+    PersistenceRecord,
+    PersistenceRecordError,
+    validate_persistence_record,
+)
+from .state_store import (
+    StateStoreError,
+    StateStoreMetadata,
+    StateStoreSnapshot,
+    SQLiteStateStore,
+)
+from .restore_protocol import (
+    MigrationRestoreAuthorityPort,
+    RestoreDecision,
+    RestoreLifecycleAuthorityBundle,
+    RestoreResult,
+    S7CRestoreCoordinator,
+    SecretHandoffRestoreAuthorityPort,
+    SecretHandoffRestoreFence,
+    SecretHandoffRestoreObservation,
+    TrustedPhysicalRestoreCoordinator,
+)
 from .transaction_descriptor import (
     StateStoreTransactionDescriptor,
     TransactionDescriptorError,
@@ -14,6 +33,7 @@ from .migration_protocol import (
     MigrationRegistry,
 )
 from .migration_execution import (
+    MigrationExecutionAuthority,
     MigrationExecutionDeclaration,
     MigrationExecutionError,
     MigrationExecutionPlan,
@@ -43,6 +63,12 @@ __all__ = [
     "RestoreDecision",
     "RestoreResult",
     "S7CRestoreCoordinator",
+    "TrustedPhysicalRestoreCoordinator",
+    "RestoreLifecycleAuthorityBundle",
+    "MigrationRestoreAuthorityPort",
+    "SecretHandoffRestoreAuthorityPort",
+    "SecretHandoffRestoreFence",
+    "SecretHandoffRestoreObservation",
     "SQLiteStateStore",
     "StateStoreError",
     "StateStoreMetadata",
@@ -55,6 +81,7 @@ __all__ = [
     "MigrationRecord",
     "MigrationRegistry",
     "MigrationExecutionDeclaration",
+    "MigrationExecutionAuthority",
     "DurableMigrationCompletionCoordinator",
     "MigrationExecutionCoordinator",
     "MigrationExecutionError",
