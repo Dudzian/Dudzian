@@ -150,15 +150,9 @@ def test_sqlite_schema_fingerprint_and_undeclared_ddl_detection() -> None:
     assert sqlite_schema_fingerprint(first) == sqlite_schema_fingerprint(second)
     value = plan(first)
     first.execute(value.operations[0].statement)
-    assert (
-        sqlite_schema_fingerprint(first)
-        == value.target_sqlite_schema_fingerprint_sha256
-    )
+    assert sqlite_schema_fingerprint(first) == value.target_sqlite_schema_fingerprint_sha256
     first.execute("CREATE INDEX widget_id ON widget(id)")
-    assert (
-        sqlite_schema_fingerprint(first)
-        != value.target_sqlite_schema_fingerprint_sha256
-    )
+    assert sqlite_schema_fingerprint(first) != value.target_sqlite_schema_fingerprint_sha256
 
 
 def test_declaration_is_stage1_history_and_descriptor_transitively_binds_it() -> None:
@@ -199,10 +193,7 @@ def test_operation_order_and_every_plan_field_are_exact() -> None:
     reordered = MigrationExecutionPlan(
         (replace(b, ordinal=1), replace(a, ordinal=2)), SHA, "b" * 64
     )
-    assert (
-        one.operation_plan_fingerprint_sha256
-        != reordered.operation_plan_fingerprint_sha256
-    )
+    assert one.operation_plan_fingerprint_sha256 != reordered.operation_plan_fingerprint_sha256
     declaration(one).assert_matches(definition(), one)
     for changed in (
         replace(definition(), source_schema_version=2),
@@ -252,13 +243,9 @@ def _assert_raw_rejected(mutator: object, *, refresh_plan: bool = False) -> None
     payload = mapping["payload"]
     assert isinstance(payload, dict)
     mutator(payload)  # type: ignore[operator]
-    with pytest.raises(
-        (PersistenceRecordError, MigrationExecutionError, TypeError, ValueError)
-    ):
+    with pytest.raises((PersistenceRecordError, MigrationExecutionError, TypeError, ValueError)):
         if refresh_plan:
-            payload[
-                "operation_plan_fingerprint_sha256"
-            ] = operation_plan_fingerprint_from_mappings(
+            payload["operation_plan_fingerprint_sha256"] = operation_plan_fingerprint_from_mappings(
                 payload["operations"]  # type: ignore[arg-type]
             )
         validate_persistence_record(_rehashed_raw(mapping))
@@ -297,9 +284,7 @@ def test_raw_intrinsic_relation_substitutions_fail_stage1(mutator: object) -> No
 @pytest.mark.parametrize(
     "mutator",
     [
-        lambda p: p["operations"][0].update(
-            statement="CREATE TABLE changed(id INTEGER)"
-        ),
+        lambda p: p["operations"][0].update(statement="CREATE TABLE changed(id INTEGER)"),
         lambda p: p["operations"][0].update(parameters=[1]),
         lambda p: p["operations"][0].update(operation_kind="DML"),
         lambda p: p["operations"][0].update(operation_id="changed"),
@@ -315,9 +300,7 @@ def test_raw_operation_substitutions_with_stale_plan_hash_fail_stage1(
 @pytest.mark.parametrize(
     "mutator",
     [
-        lambda p: p["operations"][0].update(
-            statement="CREATE TABLE a(x); DROP TABLE a"
-        ),
+        lambda p: p["operations"][0].update(statement="CREATE TABLE a(x); DROP TABLE a"),
         lambda p: p["operations"][0].update(statement="CREATE TABLE a(x)\x00"),
         lambda p: p["operations"][0].update(parameters=[float("nan")]),
         lambda p: p["operations"][0].update(parameters=[float("inf")]),

@@ -60,9 +60,7 @@ class MigrationSqlOperation:
     @classmethod
     def from_mapping(cls, value: Mapping[str, Any]) -> MigrationSqlOperation:
         if set(value) != {field.name for field in fields(cls)}:
-            raise MigrationExecutionError(
-                "MigrationSqlOperation requires its exact field set"
-            )
+            raise MigrationExecutionError("MigrationSqlOperation requires its exact field set")
         parameters = value["parameters"]
         if not isinstance(parameters, list):
             raise MigrationExecutionError("JSON parameters must be an array")
@@ -92,23 +90,17 @@ class MigrationExecutionPlan:
 
     def __post_init__(self) -> None:
         if not isinstance(self.operations, tuple) or not self.operations:
-            raise MigrationExecutionError(
-                "migration plan requires an immutable operation tuple"
-            )
+            raise MigrationExecutionError("migration plan requires an immutable operation tuple")
         if tuple(operation.ordinal for operation in self.operations) != tuple(
             range(1, len(self.operations) + 1)
         ):
-            raise MigrationExecutionError(
-                "operation ordinals must be positive and contiguous"
-            )
+            raise MigrationExecutionError("operation ordinals must be positive and contiguous")
         for value in (
             self.pre_sqlite_schema_fingerprint_sha256,
             self.target_sqlite_schema_fingerprint_sha256,
         ):
             if not _is_sha(value):
-                raise MigrationExecutionError(
-                    "schema fingerprints must be lowercase SHA-256"
-                )
+                raise MigrationExecutionError("schema fingerprints must be lowercase SHA-256")
 
     @property
     def operation_plan_fingerprint_sha256(self) -> str:
@@ -135,19 +127,13 @@ class MigrationExecutionAuthority:
         for name in ("source_schema_version", "target_schema_version"):
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int) or value < 1:
-                raise MigrationExecutionError(
-                    f"authority {name} must be a positive integer"
-                )
+                raise MigrationExecutionError(f"authority {name} must be a positive integer")
         if not isinstance(self.ordered_path, tuple) or not all(
             isinstance(item, str) and item for item in self.ordered_path
         ):
-            raise MigrationExecutionError(
-                "authority ordered_path must be an exact string tuple"
-            )
+            raise MigrationExecutionError("authority ordered_path must be an exact string tuple")
         if self.rollback_policy != "FORWARD_ONLY":
-            raise MigrationExecutionError(
-                "authority rollback policy must be FORWARD_ONLY"
-            )
+            raise MigrationExecutionError("authority rollback policy must be FORWARD_ONLY")
         for name in (
             "migration_definition_fingerprint_sha256",
             "operation_plan_fingerprint_sha256",
@@ -155,9 +141,7 @@ class MigrationExecutionAuthority:
             "target_sqlite_schema_fingerprint_sha256",
         ):
             if not _is_sha(getattr(self, name)):
-                raise MigrationExecutionError(
-                    f"authority {name} must be lowercase SHA-256"
-                )
+                raise MigrationExecutionError(f"authority {name} must be lowercase SHA-256")
 
     def assert_definition(self, definition: Any) -> None:
         expected = (
@@ -177,30 +161,23 @@ class MigrationExecutionAuthority:
             self.migration_definition_fingerprint_sha256,
         )
         if actual != expected:
-            raise MigrationExecutionError(
-                "execution authority does not match definition"
-            )
+            raise MigrationExecutionError("execution authority does not match definition")
 
     def assert_plan(self, plan: MigrationExecutionPlan) -> None:
         if (
-            self.operation_plan_fingerprint_sha256
-            != plan.operation_plan_fingerprint_sha256
+            self.operation_plan_fingerprint_sha256 != plan.operation_plan_fingerprint_sha256
             or self.pre_sqlite_schema_fingerprint_sha256
             != plan.pre_sqlite_schema_fingerprint_sha256
             or self.target_sqlite_schema_fingerprint_sha256
             != plan.target_sqlite_schema_fingerprint_sha256
         ):
-            raise MigrationExecutionError(
-                "execution plan does not match sealed authority"
-            )
+            raise MigrationExecutionError("execution plan does not match sealed authority")
 
     def assert_declaration(self, declaration: MigrationExecutionDeclaration) -> None:
         if declaration.operation_plan_fingerprint_sha256 != operation_plan_fingerprint(
             declaration.operations
         ):
-            raise MigrationExecutionError(
-                "declaration operation fingerprint is not intrinsic"
-            )
+            raise MigrationExecutionError("declaration operation fingerprint is not intrinsic")
         actual = (
             declaration.migration_id,
             declaration.source_schema_version,
@@ -239,12 +216,8 @@ class MigrationExecutionDeclaration:
     operation_plan_fingerprint_sha256: str
 
     def __post_init__(self) -> None:
-        if not isinstance(self.ordered_path, tuple) or not isinstance(
-            self.operations, tuple
-        ):
-            raise MigrationExecutionError(
-                "DTO arrays must use immutable tuple representation"
-            )
+        if not isinstance(self.ordered_path, tuple) or not isinstance(self.operations, tuple):
+            raise MigrationExecutionError("DTO arrays must use immutable tuple representation")
         validate_raw_migration_execution_declaration(self.to_mapping())
 
     def to_mapping(self) -> dict[str, Any]:
@@ -256,15 +229,9 @@ class MigrationExecutionDeclaration:
     @classmethod
     def from_mapping(cls, value: Mapping[str, Any]) -> MigrationExecutionDeclaration:
         if set(value) != {field.name for field in fields(cls)}:
-            raise MigrationExecutionError(
-                "MigrationExecutionDeclaration requires its exact fields"
-            )
-        if not isinstance(value["ordered_path"], list) or not isinstance(
-            value["operations"], list
-        ):
-            raise MigrationExecutionError(
-                "JSON ordered_path and operations must be arrays"
-            )
+            raise MigrationExecutionError("MigrationExecutionDeclaration requires its exact fields")
+        if not isinstance(value["ordered_path"], list) or not isinstance(value["operations"], list):
+            raise MigrationExecutionError("JSON ordered_path and operations must be arrays")
         parsed = dict(value)
         parsed["ordered_path"] = tuple(value["ordered_path"])
         parsed["operations"] = tuple(
@@ -300,16 +267,13 @@ class MigrationExecutionDeclaration:
         )
         if static != expected or (
             self.operations != plan.operations
-            or self.operation_plan_fingerprint_sha256
-            != plan.operation_plan_fingerprint_sha256
+            or self.operation_plan_fingerprint_sha256 != plan.operation_plan_fingerprint_sha256
             or self.pre_sqlite_schema_fingerprint_sha256
             != plan.pre_sqlite_schema_fingerprint_sha256
             or self.target_sqlite_schema_fingerprint_sha256
             != plan.target_sqlite_schema_fingerprint_sha256
         ):
-            raise MigrationExecutionError(
-                "declaration does not match trusted definition and plan"
-            )
+            raise MigrationExecutionError("declaration does not match trusted definition and plan")
 
 
 def sqlite_schema_fingerprint(connection: sqlite3.Connection) -> str:
@@ -321,8 +285,7 @@ def sqlite_schema_fingerprint(connection: sqlite3.Connection) -> str:
         "ORDER BY type,name,tbl_name,sql"
     ).fetchall()
     projection = [
-        {"type": row[0], "name": row[1], "tbl_name": row[2], "sql": row[3]}
-        for row in rows
+        {"type": row[0], "name": row[1], "tbl_name": row[2], "sql": row[3]} for row in rows
     ]
     return cast(str, canonical_json_sha256(projection))
 

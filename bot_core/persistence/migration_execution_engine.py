@@ -15,6 +15,7 @@ from .migration_protocol import (
     MigrationError,
     MigrationRecord,
     MigrationRegistry,
+    migration_mapping_payload,
 )
 from .protected_freshness_handoff import (
     ProtectedFreshnessHandoffCoordinator,
@@ -35,9 +36,7 @@ class MigrationExecutionCoordinator:
         self._store = store
         self._registry = registry
         self._protected = protected
-        self._lifecycles = DurableMigrationLifecycleCoordinator(
-            store, registry, protected
-        )
+        self._lifecycles = DurableMigrationLifecycleCoordinator(store, registry, protected)
 
     def execute(self, migration_id: str) -> MigrationRecord:
         definition = self._registry.definition_for(migration_id)
@@ -46,37 +45,24 @@ class MigrationExecutionCoordinator:
         try:
             recovered = self._protected.recover_protected_state(scope)
         except ProtectedFreshnessHandoffError as exc:
-            raise MigrationError(
-                "protected migration preflight recovery failed"
-            ) from exc
+            raise MigrationError("protected migration preflight recovery failed") from exc
         if recovered != source.metadata:
             raise MigrationError("protected recovery changed migration source")
         source = self._required_snapshot()
         lifecycle = self._lifecycles._view(source, migration_id)
         if lifecycle.current is None or lifecycle.current["state"] != "APPLYING":
             raise MigrationError("migration execution requires APPLYING lifecycle")
-        if (
-            source.metadata.state_store_schema_version
-            == definition.target_schema_version
-        ):
+        if source.metadata.state_store_schema_version == definition.target_schema_version:
             return self._recover_durable(definition, source)
-        if (
-            source.metadata.state_store_schema_version
-            != definition.source_schema_version
-        ):
+        if source.metadata.state_store_schema_version != definition.source_schema_version:
             raise MigrationError("migration execution source schema mismatch")
 
         plan = self._registry.authorized_plan_for(definition, source)
-        if (
-            self._store.sqlite_schema_fingerprint()
-            != plan.pre_sqlite_schema_fingerprint_sha256
-        ):
+        if self._store.sqlite_schema_fingerprint() != plan.pre_sqlite_schema_fingerprint_sha256:
             raise MigrationError("migration pre-schema fingerprint mismatch")
         declaration = self._declaration(definition, plan, source)
         declaration.assert_matches(definition, plan)
-        self._registry.execution_authority_for(migration_id).assert_declaration(
-            declaration
-        )
+        self._registry.execution_authority_for(migration_id).assert_declaration(declaration)
         carrier = declaration.carrier()
         target_seed = replace(
             source.metadata,
@@ -95,10 +81,7 @@ class MigrationExecutionCoordinator:
             )
         except (ProtectedFreshnessHandoffError, StateStoreError, sqlite3.Error) as exc:
             latest = self._required_snapshot()
-            if (
-                latest.metadata.state_store_schema_version
-                == definition.target_schema_version
-            ):
+            if latest.metadata.state_store_schema_version == definition.target_schema_version:
                 return self._recover_durable(definition, latest)
             raise MigrationError("protected atomic migration execution failed") from exc
         return self._recover_durable(definition, self._required_snapshot())
@@ -142,9 +125,7 @@ class MigrationExecutionCoordinator:
             operation_plan_fingerprint_sha256=plan.operation_plan_fingerprint_sha256,
         )
 
-    def _recover_durable(
-        self, definition, snapshot: StateStoreSnapshot
-    ) -> MigrationRecord:
+    def _recover_durable(self, definition, snapshot: StateStoreSnapshot) -> MigrationRecord:
         lifecycle = self._lifecycles._view(snapshot, definition.migration_id)
         if lifecycle.current is None or lifecycle.current["state"] != "APPLYING":
             raise MigrationError("durable execution lifecycle is not APPLYING")
@@ -152,16 +133,13 @@ class MigrationExecutionCoordinator:
             record
             for record in snapshot.immutable_history
             if record.representation_name == "Migration execution declaration"
-            and record.payload.get("migration_id") == definition.migration_id
+            and migration_mapping_payload(record.payload).get("migration_id")
+            == definition.migration_id
         )
         if len(matching) != 1:
-            raise MigrationError(
-                "exactly one durable migration declaration is required"
-            )
+            raise MigrationError("exactly one durable migration declaration is required")
         try:
-            declaration = MigrationExecutionDeclaration.from_mapping(
-                thaw_json(matching[0].payload)
-            )
+            declaration = MigrationExecutionDeclaration.from_mapping(thaw_json(matching[0].payload))
         except (TypeError, ValueError) as exc:
             raise MigrationError("durable migration declaration is malformed") from exc
         try:
@@ -169,9 +147,7 @@ class MigrationExecutionCoordinator:
             authority.assert_definition(definition)
             authority.assert_declaration(declaration)
         except MigrationExecutionError as exc:
-            raise MigrationError(
-                "durable declaration does not match trusted authority"
-            ) from exc
+            raise MigrationError("durable declaration does not match trusted authority") from exc
         metadata = snapshot.metadata
         if (
             matching[0] != declaration.carrier()
@@ -192,9 +168,7 @@ class MigrationExecutionCoordinator:
             or self._store.sqlite_schema_fingerprint()
             != declaration.target_sqlite_schema_fingerprint_sha256
         ):
-            raise MigrationError(
-                "durable migration declaration does not match current store"
-            )
+            raise MigrationError("durable migration declaration does not match current store")
         descriptors = tuple(
             item
             for item in snapshot.transaction_descriptors
@@ -211,12 +185,10 @@ class MigrationExecutionCoordinator:
         if (
             descriptor.immutable_history_appends != (matching[0],)
             or descriptor.current_record_mutations
-            or descriptor.pre_state_fingerprint_sha256
-            != declaration.pre_state_fingerprint_sha256
+            or descriptor.pre_state_fingerprint_sha256 != declaration.pre_state_fingerprint_sha256
             or descriptor.pre_history_tail_fingerprint_sha256
             != declaration.pre_history_tail_fingerprint_sha256
-            or descriptor.post_state_fingerprint_sha256
-            != metadata.state_fingerprint_sha256
+            or descriptor.post_state_fingerprint_sha256 != metadata.state_fingerprint_sha256
         ):
             raise MigrationError("migration descriptor does not bind exact declaration")
 
@@ -229,9 +201,7 @@ class MigrationExecutionCoordinator:
             raise MigrationError("durable migration recovery changed local metadata")
         fresh = self._required_snapshot()
         if fresh.metadata != before_recovery:
-            raise MigrationError(
-                "durable migration changed during proof reconstruction"
-            )
+            raise MigrationError("durable migration changed during proof reconstruction")
         return MigrationRecord(
             migration_id=definition.migration_id,
             source_schema_version=definition.source_schema_version,

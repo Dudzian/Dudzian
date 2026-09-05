@@ -39,9 +39,7 @@ def test_zero_secret_physical_candidate_installs_and_reopens_exactly(
     live = tmp_path / "restored.sqlite"
     boundary = Boundary(artifact.backup_envelope)
 
-    result = _coordinator(tmp_path, live, boundary, verifier).restore_trusted_artifact(
-        artifact
-    )
+    result = _coordinator(tmp_path, live, boundary, verifier).restore_trusted_artifact(artifact)
 
     assert result.decision is RestoreDecision.RESTORE_EXTERNAL_COMMITTED_CURRENT
     with SQLiteStateStore(live) as reopened:
@@ -53,9 +51,9 @@ def test_true_noop_does_not_replace_live_physical_bytes(tmp_path: Path) -> None:
     before = source.path.read_bytes()
     boundary = Boundary(artifact.backup_envelope)
 
-    result = _coordinator(
-        tmp_path, source.path, boundary, verifier
-    ).restore_trusted_artifact(artifact)
+    result = _coordinator(tmp_path, source.path, boundary, verifier).restore_trusted_artifact(
+        artifact
+    )
 
     assert result.decision is RestoreDecision.NOOP_ALREADY_CURRENT
     assert source.path.read_bytes() == before
@@ -145,9 +143,7 @@ def test_entry_continuity_failure_prevents_install(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("fail", [False, True])
-def test_high_level_restore_always_closes_owned_candidate(
-    tmp_path: Path, fail: bool
-) -> None:
+def test_high_level_restore_always_closes_owned_candidate(tmp_path: Path, fail: bool) -> None:
     source, _authentication, artifact, verifier = artifact_fixture(tmp_path)
     source.close()
     admission = PhysicalBackupAdmissionValidator(verifier)
@@ -167,9 +163,7 @@ def test_high_level_restore_always_closes_owned_candidate(
     result = coordinator.restore_trusted_artifact(artifact)
 
     assert result.decision is (
-        RestoreDecision.DENY
-        if fail
-        else RestoreDecision.RESTORE_EXTERNAL_COMMITTED_CURRENT
+        RestoreDecision.DENY if fail else RestoreDecision.RESTORE_EXTERNAL_COMMITTED_CURRENT
     )
     assert admitted._directory is None
     admission.admit = original_admit  # type: ignore[method-assign]

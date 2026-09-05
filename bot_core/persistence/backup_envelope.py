@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, fields
-from typing import Any, ClassVar
+from typing import Any, ClassVar, cast
 
 from .fingerprints import canonical_json_sha256
 from .records import PersistenceRecord, PersistenceRecordError, validate_persistence_record
@@ -269,14 +269,14 @@ def validate_backup_envelope(value: Mapping[str, object] | BackupEnvelope) -> Ba
     history = _parse_records(raw["immutable_recovery_history"], "immutable_recovery_history")
     try:
         metadata = StateStoreMetadata(
-            account_id=raw["account_id"],
-            device_installation_id=raw["device_installation_id"],
+            account_id=cast(str, raw["account_id"]),
+            device_installation_id=cast(str, raw["device_installation_id"]),
             state_store_schema_version=state_store_schema_version,
             state_store_identity_fingerprint_sha256=_require_sha256(
                 raw["state_store_identity_fingerprint_sha256"],
                 "state_store_identity_fingerprint_sha256",
             ),
-            environment=raw["environment"],
+            environment=cast(str, raw["environment"]),
             protected_freshness_generation=generation,
             state_fingerprint_sha256=_require_sha256(
                 raw["state_fingerprint_sha256"], "state_fingerprint_sha256"

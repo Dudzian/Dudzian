@@ -35,17 +35,10 @@ def test_creates_exact_authenticated_self_contained_online_backup(tmp_path):
         assert isinstance(artifact, TrustedPhysicalBackupArtifact)
         assert len(fields(TrustedPhysicalBackupArtifact)) == 4
         payload = artifact.physical_artifact.path.read_bytes()
-        assert (
-            hashlib.sha256(payload).hexdigest()
-            == artifact.manifest.physical_artifact_sha256
-        )
+        assert hashlib.sha256(payload).hexdigest() == artifact.manifest.physical_artifact_sha256
         assert len(payload) == artifact.manifest.physical_artifact_byte_length
-        assert not artifact.physical_artifact.path.with_name(
-            "backup.sqlite-wal"
-        ).exists()
-        assert not artifact.physical_artifact.path.with_name(
-            "backup.sqlite-shm"
-        ).exists()
+        assert not artifact.physical_artifact.path.with_name("backup.sqlite-wal").exists()
+        assert not artifact.physical_artifact.path.with_name("backup.sqlite-shm").exists()
         with sqlite3.connect(artifact.physical_artifact.path) as connection:
             assert connection.execute("PRAGMA integrity_check").fetchall() == [("ok",)]
         metadata = store.read_metadata()
@@ -56,9 +49,7 @@ def test_creates_exact_authenticated_self_contained_online_backup(tmp_path):
         assert artifact.backup_envelope.state_fingerprint_sha256 == (
             artifact.manifest.state_fingerprint_sha256
         )
-        scope = (
-            verifier._authority.read_snapshot
-        )  # prove no capability is bundle-carried
+        scope = verifier._authority.read_snapshot  # prove no capability is bundle-carried
         del scope
         from bot_core.persistence.backup_authentication import (
             BackupArtifactAuthenticationScope,
@@ -67,9 +58,9 @@ def test_creates_exact_authenticated_self_contained_online_backup(tmp_path):
         auth_scope = BackupArtifactAuthenticationScope(
             metadata.account_id, metadata.device_installation_id, metadata.environment
         )
-        assert verifier.verify(
-            auth_scope, artifact.manifest, artifact.authentication_proof
-        ) is (BackupArtifactVerificationResult.VERIFIED)
+        assert verifier.verify(auth_scope, artifact.manifest, artifact.authentication_proof) is (
+            BackupArtifactVerificationResult.VERIFIED
+        )
     finally:
         store.close()
 
@@ -102,10 +93,7 @@ def test_repeated_destination_replaces_with_later_complete_backup(tmp_path):
             expected=1,
         )
         second = creator.create(store, output)
-        assert (
-            first.manifest.physical_artifact_sha256
-            != second.manifest.physical_artifact_sha256
-        )
+        assert first.manifest.physical_artifact_sha256 != second.manifest.physical_artifact_sha256
         assert second.manifest.local_protected_freshness_generation == 2
     finally:
         store.close()
@@ -121,26 +109,18 @@ def test_failure_before_publication_preserves_previous_good_output(tmp_path):
         original = output.read_bytes()
         failing = PhysicalBackupCreator(
             BackupArtifactAuthenticator(authority),
-            _before_publication_hook=lambda _path: (_ for _ in ()).throw(
-                RuntimeError()
-            ),
+            _before_publication_hook=lambda _path: (_ for _ in ()).throw(RuntimeError()),
         )
         with pytest.raises(PhysicalBackupError):
             failing.create(store, output)
         assert output.read_bytes() == original
-        assert (
-            hashlib.sha256(original).hexdigest()
-            == first.manifest.physical_artifact_sha256
-        )
+        assert hashlib.sha256(original).hexdigest() == first.manifest.physical_artifact_sha256
         from bot_core.persistence.backup_authentication import BackupArtifactVerifier
 
         with PhysicalBackupAdmissionValidator(BackupArtifactVerifier(authority)).admit(
             first
         ) as preserved:
-            assert (
-                preserved.classification
-                == "ELIGIBLE_FOR_FURTHER_RESTORE_VALIDATION_ONLY"
-            )
+            assert preserved.classification == "ELIGIBLE_FOR_FURTHER_RESTORE_VALIDATION_ONLY"
         assert not list(tmp_path.glob(".physical-backup-*"))
     finally:
         store.close()
@@ -172,9 +152,7 @@ def test_mutating_internal_failpoint_cannot_publish_unauthenticated_bytes(tmp_pa
         assert output.read_bytes() == original
         from bot_core.persistence.backup_authentication import BackupArtifactVerifier
 
-        with PhysicalBackupAdmissionValidator(BackupArtifactVerifier(authority)).admit(
-            first
-        ):
+        with PhysicalBackupAdmissionValidator(BackupArtifactVerifier(authority)).admit(first):
             pass
         assert not list(tmp_path.glob(".physical-backup-*"))
     finally:
@@ -191,9 +169,7 @@ def test_wal_snapshot_is_standalone_and_contains_committed_state(tmp_path):
         )
         actual = store.read_isolated_verified_snapshot(artifact.physical_artifact.path)
         assert actual == expected
-        assert (
-            actual is not None and actual.metadata.protected_freshness_generation == 2
-        )
+        assert actual is not None and actual.metadata.protected_freshness_generation == 2
         with sqlite3.connect(artifact.physical_artifact.path) as connection:
             assert connection.execute("PRAGMA integrity_check").fetchall() == [("ok",)]
     finally:
@@ -205,17 +181,13 @@ def test_output_may_not_alias_live_store(tmp_path):
     authority = authority_for(tmp_path, store)
     try:
         with pytest.raises(PhysicalBackupError):
-            PhysicalBackupCreator(BackupArtifactAuthenticator(authority)).create(
-                store, store.path
-            )
+            PhysicalBackupCreator(BackupArtifactAuthenticator(authority)).create(store, store.path)
     finally:
         store.close()
 
 
 @pytest.mark.parametrize("writer_first", [False, True])
-def test_writer_and_backup_forced_orders_are_never_torn(
-    tmp_path, monkeypatch, writer_first
-):
+def test_writer_and_backup_forced_orders_are_never_torn(tmp_path, monkeypatch, writer_first):
     store = _store(tmp_path / "live.sqlite")
     writer = type(store)(store.path)
     authority = authority_for(tmp_path, store)
@@ -239,15 +211,11 @@ def test_writer_and_backup_forced_orders_are_never_torn(
                 commit_next()
                 return snapshot
 
-            monkeypatch.setattr(
-                store, "capture_verified_physical_snapshot", capture_then_write
-            )
+            monkeypatch.setattr(store, "capture_verified_physical_snapshot", capture_then_write)
         artifact = PhysicalBackupCreator(BackupArtifactAuthenticator(authority)).create(
             store, tmp_path / "backup.sqlite"
         )
-        physical = store.read_isolated_verified_snapshot(
-            artifact.physical_artifact.path
-        )
+        physical = store.read_isolated_verified_snapshot(artifact.physical_artifact.path)
         assert physical is not None
         point = (
             physical.metadata.protected_freshness_generation,
@@ -287,15 +255,11 @@ def test_authority_creation_failure_publishes_nothing(tmp_path, provision_then_r
     )
     if provision_then_revoke:
         snapshot = authority.provision(scope)
-        authority.revoke(
-            scope, snapshot.keys[0].authority_key_id, snapshot.authority_revision
-        )
+        authority.revoke(scope, snapshot.keys[0].authority_key_id, snapshot.authority_revision)
     output = tmp_path / "backup.sqlite"
     try:
         with pytest.raises(PhysicalBackupError):
-            PhysicalBackupCreator(BackupArtifactAuthenticator(authority)).create(
-                store, output
-            )
+            PhysicalBackupCreator(BackupArtifactAuthenticator(authority)).create(store, output)
         assert not output.exists()
         assert not list(tmp_path.glob(".physical-backup-*"))
     finally:

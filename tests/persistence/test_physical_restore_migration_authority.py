@@ -60,9 +60,7 @@ def _materialized(tmp_path):  # type: ignore[no-untyped-def]
     boundary = Boundary(record("UNINITIALIZED"))
     _initialize_applying(store, boundary)
     operations = (
-        MigrationSqlOperation(
-            1, "restore-table", "DDL", "CREATE TABLE restored(id INTEGER)"
-        ),
+        MigrationSqlOperation(1, "restore-table", "DDL", "CREATE TABLE restored(id INTEGER)"),
     )
     definition, registry, _calls = _registry(store, operations)
     MigrationExecutionCoordinator(store, registry, _protected(store, boundary)).execute(
@@ -151,9 +149,7 @@ def test_sealed_restore_accepts_exact_historical_materialization(tmp_path):  # t
 
 
 @pytest.mark.parametrize("bucket", ["current", "history"])
-def test_sealed_restore_rejects_extra_structural_migration_mutation(
-    tmp_path, bucket
-):  # type: ignore[no-untyped-def]
+def test_sealed_restore_rejects_extra_structural_migration_mutation(tmp_path, bucket):  # type: ignore[no-untyped-def]
     store, snapshot, registry = _materialized(tmp_path)
     try:
         descriptor = snapshot.transaction_descriptors[-1]
@@ -201,14 +197,10 @@ def test_sealed_restore_rejects_extra_structural_migration_mutation(
     "field",
     ["pre_state_fingerprint_sha256", "pre_history_tail_fingerprint_sha256"],
 )
-def test_sealed_restore_rejects_declaration_descriptor_edge_mismatch(
-    tmp_path, field
-):  # type: ignore[no-untyped-def]
+def test_sealed_restore_rejects_declaration_descriptor_edge_mismatch(tmp_path, field):  # type: ignore[no-untyped-def]
     store, snapshot, registry = _materialized(tmp_path)
     try:
-        broken_descriptor = replace(
-            snapshot.transaction_descriptors[-1], **{field: "f" * 64}
-        )
+        broken_descriptor = replace(snapshot.transaction_descriptors[-1], **{field: "f" * 64})
         broken = StateStoreSnapshot(
             snapshot.metadata,
             snapshot.current_records,
@@ -314,9 +306,7 @@ def test_schema_chain_rejects_broken_adjacent_sealed_fingerprint(tmp_path):  # t
         ],
     ],
 )
-def test_schema_chain_rejects_materialization_gap_or_reverse_chronology(
-    tmp_path, entries
-):  # type: ignore[no-untyped-def]
+def test_schema_chain_rejects_materialization_gap_or_reverse_chronology(tmp_path, entries):  # type: ignore[no-untyped-def]
     store, snapshot, _registry = _materialized(tmp_path)
     try:
         with pytest.raises(MigrationError):
@@ -385,10 +375,7 @@ def _snapshot_with_migration_state(snapshot, states, *, keep_declaration):  # ty
         item
         for item in snapshot.immutable_history
         if item.representation_name != "Migration transition/history revisions"
-        and (
-            keep_declaration
-            or item.representation_name != "Migration execution declaration"
-        )
+        and (keep_declaration or item.representation_name != "Migration execution declaration")
     ) + tuple(migration_transition_carrier(item) for item in history)
     return StateStoreSnapshot(
         snapshot.metadata, current_records, immutable, snapshot.transaction_descriptors
@@ -398,9 +385,7 @@ def _snapshot_with_migration_state(snapshot, states, *, keep_declaration):  # ty
 def test_restore_authority_rejects_prepared_with_declaration(tmp_path):  # type: ignore[no-untyped-def]
     store, snapshot, registry = _materialized(tmp_path)
     try:
-        prepared = _snapshot_with_migration_state(
-            snapshot, ("PREPARED",), keep_declaration=True
-        )
+        prepared = _snapshot_with_migration_state(snapshot, ("PREPARED",), keep_declaration=True)
         with pytest.raises(MigrationError, match="cardinality"):
             SealedMigrationRestoreAuthority(registry).revalidate(
                 prepared, store.sqlite_schema_fingerprint()
@@ -476,9 +461,7 @@ def _real_ab_store(path):  # type: ignore[no-untyped-def]
     return store, registry, snapshot, target_b
 
 
-def test_real_ab_full_trusted_physical_restore_never_executes_migration(
-    tmp_path, monkeypatch
-):  # type: ignore[no-untyped-def]
+def test_real_ab_full_trusted_physical_restore_never_executes_migration(tmp_path, monkeypatch):  # type: ignore[no-untyped-def]
     store, registry, snapshot, target_b = _real_ab_store(tmp_path / "ab-source.sqlite")
     authority = authority_for(tmp_path, store)
     artifact = PhysicalBackupCreator(BackupArtifactAuthenticator(authority)).create(

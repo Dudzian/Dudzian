@@ -66,18 +66,14 @@ class RecordingSecretRestoreAuthority:
 
 
 class RecordingEvidence(LocalDurableEvidenceRegistry):
-    def __init__(
-        self, events: list[str], recovery: dict[str, bool] | None = None
-    ) -> None:
+    def __init__(self, events: list[str], recovery: dict[str, bool] | None = None) -> None:
         super().__init__()
         self.events = events
         self.recovery = recovery or {"active": False}
 
     def publish_verified_state(self, store):  # type: ignore[no-untyped-def]
         self.events.append(
-            "m03_recovery_evidence"
-            if self.recovery["active"]
-            else "restore_final_evidence"
+            "m03_recovery_evidence" if self.recovery["active"] else "restore_final_evidence"
         )
         return super().publish_verified_state(store)
 
@@ -93,9 +89,7 @@ def instrument_recovery(monkeypatch, events, recovery):  # type: ignore[no-untyp
         finally:
             recovery["active"] = False
 
-    monkeypatch.setattr(
-        ProtectedFreshnessHandoffCoordinator, "recover_protected_state", wrapped
-    )
+    monkeypatch.setattr(ProtectedFreshnessHandoffCoordinator, "recover_protected_state", wrapped)
 
 
 def two_secret_artifact(tmp_path: Path):
@@ -128,11 +122,7 @@ def make_coordinator(live, artifact, verifier, secret, evidence):  # type: ignor
 
 def prepared_boundary(artifact):  # type: ignore[no-untyped-def]
     boundary = RestoreBoundary(artifact.backup_envelope)
-    descriptor = (
-        artifact.backup_envelope.integrity_metadata.state_store_transaction_descriptors[
-            -1
-        ]
-    )
+    descriptor = artifact.backup_envelope.integrity_metadata.state_store_transaction_descriptors[-1]
     boundary.value = _record(
         artifact.backup_envelope,
         "PREPARED",
@@ -162,9 +152,9 @@ def test_two_secret_install_observes_every_fence_in_exact_order(
 
     monkeypatch.setattr(SQLiteStateStore, "atomic_replace", atomic)
     live = tmp_path / "two-secret-live.sqlite"
-    result = make_coordinator(
-        live, artifact, verifier, secret, evidence
-    ).restore_trusted_artifact(artifact)
+    result = make_coordinator(live, artifact, verifier, secret, evidence).restore_trusted_artifact(
+        artifact
+    )
 
     assert result.decision is RestoreDecision.RESTORE_EXTERNAL_COMMITTED_CURRENT
     assert secret.calls == ["handoff-a", "handoff-b"] * 3
@@ -249,9 +239,7 @@ def test_prepared_install_uses_two_fresh_final_rounds(
 
     result = coordinator.restore_trusted_artifact(artifact)
 
-    assert (
-        result.decision is RestoreDecision.RESTORE_EXACT_PROTECTED_PENDING_AND_FINALIZE
-    )
+    assert result.decision is RestoreDecision.RESTORE_EXACT_PROTECTED_PENDING_AND_FINALIZE
     assert secret.calls == ["handoff-a", "handoff-b"] * 4
     assert events[-3:] == [
         "FINAL_2:handoff-a",
@@ -268,9 +256,7 @@ def test_prepared_true_noop_skips_c2d_and_preinstall_but_runs_two_finals(
 ) -> None:
     source, artifact, verifier = two_secret_artifact(tmp_path)
     events: list[str] = []
-    secret = RecordingSecretRestoreAuthority(
-        events, rounds=("INITIAL", "FINAL_1", "FINAL_2")
-    )
+    secret = RecordingSecretRestoreAuthority(events, rounds=("INITIAL", "FINAL_1", "FINAL_2"))
     admission = PhysicalBackupAdmissionValidator(verifier)
     admission.admit = pytest.fail  # type: ignore[method-assign]
     recovery = {"active": False}
@@ -287,9 +273,7 @@ def test_prepared_true_noop_skips_c2d_and_preinstall_but_runs_two_finals(
     finally:
         source.close()
 
-    assert (
-        result.decision is RestoreDecision.RESTORE_EXACT_PROTECTED_PENDING_AND_FINALIZE
-    )
+    assert result.decision is RestoreDecision.RESTORE_EXACT_PROTECTED_PENDING_AND_FINALIZE
     assert secret.calls == ["handoff-a", "handoff-b"] * 3
     assert not any("PRE_INSTALL" in event for event in events)
     assert events[-1] == "restore_final_evidence"

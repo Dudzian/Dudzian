@@ -154,9 +154,7 @@ class PhysicalBackupCreator:
         if output == store.path:
             raise PhysicalBackupError("BACKUP_CREATION_FAILED")
         output.parent.mkdir(parents=True, exist_ok=True)
-        work_directory = Path(
-            tempfile.mkdtemp(prefix=".physical-backup-", dir=output.parent)
-        )
+        work_directory = Path(tempfile.mkdtemp(prefix=".physical-backup-", dir=output.parent))
         staged = work_directory / "backup.sqlite"
         try:
             snapshot = store.capture_verified_physical_snapshot(staged)
@@ -232,9 +230,7 @@ class AuthenticatedPhysicalBackupCandidate:
             self.physical_artifact_sha256,
             self.physical_artifact_byte_length,
         ):
-            raise PhysicalBackupAdmissionError(
-                PhysicalBackupAdmissionReason.PHYSICAL_HASH_MISMATCH
-            )
+            raise PhysicalBackupAdmissionError(PhysicalBackupAdmissionReason.PHYSICAL_HASH_MISMATCH)
 
     def __enter__(self) -> AuthenticatedPhysicalBackupCandidate:
         return self
@@ -261,15 +257,11 @@ class PhysicalBackupAdmissionValidator:
         staged = directory / "candidate.sqlite"
         try:
             envelope = validate_backup_envelope(artifact.backup_envelope)
-            manifest = PhysicalSQLiteArtifactManifest.from_mapping(
-                artifact.manifest.projection()
-            )
+            manifest = PhysicalSQLiteArtifactManifest.from_mapping(artifact.manifest.projection())
             proof = PhysicalArtifactAuthenticationProof.from_mapping(
                 artifact.authentication_proof.to_mapping()
             )
-            physical_hash, byte_length = _hash_file(
-                artifact.physical_artifact.path, staged
-            )
+            physical_hash, byte_length = _hash_file(artifact.physical_artifact.path, staged)
             if (physical_hash, byte_length) != (
                 manifest.physical_artifact_sha256,
                 manifest.physical_artifact_byte_length,
@@ -277,20 +269,10 @@ class PhysicalBackupAdmissionValidator:
                 raise PhysicalBackupAdmissionError(
                     PhysicalBackupAdmissionReason.PHYSICAL_HASH_MISMATCH
                 )
-            if (
-                envelope.envelope_fingerprint_sha256
-                != manifest.backup_envelope_fingerprint_sha256
-            ):
-                raise PhysicalBackupAdmissionError(
-                    PhysicalBackupAdmissionReason.ENVELOPE_MISMATCH
-                )
-            if (
-                proof.manifest_fingerprint_sha256
-                != manifest.manifest_fingerprint_sha256
-            ):
-                raise PhysicalBackupAdmissionError(
-                    PhysicalBackupAdmissionReason.MANIFEST_MISMATCH
-                )
+            if envelope.envelope_fingerprint_sha256 != manifest.backup_envelope_fingerprint_sha256:
+                raise PhysicalBackupAdmissionError(PhysicalBackupAdmissionReason.ENVELOPE_MISMATCH)
+            if proof.manifest_fingerprint_sha256 != manifest.manifest_fingerprint_sha256:
+                raise PhysicalBackupAdmissionError(PhysicalBackupAdmissionReason.MANIFEST_MISMATCH)
             scope = BackupArtifactAuthenticationScope(
                 manifest.account_id,
                 manifest.device_installation_id,

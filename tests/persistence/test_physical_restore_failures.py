@@ -157,9 +157,7 @@ def test_restore_admitted_deny_preserves_borrowed_lease(tmp_path: Path) -> None:
         candidate.close()
 
 
-def test_stage3_failure_stops_before_m03(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_stage3_failure_stops_before_m03(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     source, _authentication, artifact, verifier = artifact_fixture(tmp_path)
     source.close()
     boundary = Boundary(artifact.backup_envelope)

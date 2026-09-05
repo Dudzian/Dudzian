@@ -159,26 +159,14 @@ def test_lost_ack_reconciles_without_second_mutation_and_unknown_is_terminal():
     fake = Fake()
     coordinator = SecretHandoffCoordinator(fake)
     history, current = lifecycle()
-    assert (
-        coordinator.resume(descriptor(), history, current, first_dispatch=True)
-        == "COMMITTED"
-    )
-    assert (
-        coordinator.resume(descriptor(), history, current, first_dispatch=True)
-        == "COMMITTED"
-    )
+    assert coordinator.resume(descriptor(), history, current, first_dispatch=True) == "COMMITTED"
+    assert coordinator.resume(descriptor(), history, current, first_dispatch=True) == "COMMITTED"
     assert fake.mutations == 1 and fake.reconciles == 1
     unknown = Fake(ExternalOutcome.UNRESOLVED)
     c = SecretHandoffCoordinator(unknown)
-    assert (
-        c.resume(descriptor(), history, current, first_dispatch=True)
-        == "UNKNOWN_RECONCILIATION"
-    )
+    assert c.resume(descriptor(), history, current, first_dispatch=True) == "UNKNOWN_RECONCILIATION"
     h, u = lifecycle(("PREPARED", "UNKNOWN_RECONCILIATION"))
-    assert (
-        c.resume(descriptor(), h, u) == "UNKNOWN_RECONCILIATION"
-        and unknown.mutations == 1
-    )
+    assert c.resume(descriptor(), h, u) == "UNKNOWN_RECONCILIATION" and unknown.mutations == 1
 
 
 def test_concurrent_resume_mutates_at_most_once():
@@ -188,9 +176,7 @@ def test_concurrent_resume_mutates_at_most_once():
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = list(
             pool.map(
-                lambda _: coordinator.resume(
-                    descriptor(), history, current, first_dispatch=True
-                ),
+                lambda _: coordinator.resume(descriptor(), history, current, first_dispatch=True),
                 range(2),
             )
         )
@@ -213,10 +199,7 @@ def test_lifecycle_carriers_pass_stage_one_and_contain_references_only():
     )
 
     history, current = lifecycle()
-    assert (
-        handoff_transition_carrier(history[0]).record_key
-        == "handoff-transition:handoff-1:1"
-    )
+    assert handoff_transition_carrier(history[0]).record_key == "handoff-transition:handoff-1:1"
     assert handoff_current_carrier(current).record_key == "handoff-current:handoff-1"
 
 
@@ -257,9 +240,7 @@ def test_snapshot_rejects_duplicate_secret_descriptor():
 )
 def test_snapshot_rejects_cross_scope_secret_descriptor(scope):
     with pytest.raises(SecretHandoffError, match="scope"):
-        validate_secret_handoff_snapshot(
-            handoff_snapshot(record=descriptor(scope=scope))
-        )
+        validate_secret_handoff_snapshot(handoff_snapshot(record=descriptor(scope=scope)))
 
 
 def test_descriptor_deeply_snapshots_reconciliation_metadata():

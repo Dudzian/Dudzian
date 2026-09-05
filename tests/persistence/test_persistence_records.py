@@ -116,6 +116,20 @@ def test_valid_account_and_runtime_records_pass_stage_1() -> None:
     assert validate_persistence_record(parsed(runtime_mapping())) is None
 
 
+@pytest.mark.parametrize("payload", [None, "scalar", 1, True, ["array", 1]])
+def test_generic_carrier_accepts_json_values_before_category_validation(payload: object) -> None:
+    mapping = account_mapping(
+        payload=payload,
+        payload_fingerprint_sha256=fingerprint(payload),
+    )
+
+    record = parsed(mapping)
+
+    assert production._thaw_json(record.payload) == payload
+    with pytest.raises(PersistenceRecordError):
+        validate_persistence_record(record)
+
+
 FROZEN_PERSISTENCE_NAMES = tuple(
     name
     for name, entry in CANONICAL_REGISTRY.items()

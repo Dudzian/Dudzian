@@ -48,9 +48,10 @@ def test_rekey_vs_rekey(tmp_path, iteration):
     scope, _, _, authority = setup(tmp_path)
     first = authority.provision(scope)
     authority.revoke(scope, first.keys[0].authority_key_id, 1)
-    assert sorted(
-        race(lambda: authority.rekey(scope, 2), lambda: authority.rekey(scope, 2))
-    ) == ["ok", "stale"]
+    assert sorted(race(lambda: authority.rekey(scope, 2), lambda: authority.rekey(scope, 2))) == [
+        "ok",
+        "stale",
+    ]
     snapshot = authority.read_snapshot(scope)
     assert snapshot is not None and snapshot.authority_revision == 3
     assert sum(key.state is AuthorityKeyState.ACTIVE for key in snapshot.keys) == 1
@@ -97,9 +98,7 @@ def test_rotate_vs_revoke_forces_requested_commit_order(tmp_path, winner):
     assert stale_results == ["stale"]
     if winner == "rotate":
         assert [key.state for key in snapshot.keys].count(AuthorityKeyState.ACTIVE) == 1
-        assert [key.state for key in snapshot.keys].count(
-            AuthorityKeyState.VERIFY_ONLY
-        ) == 1
+        assert [key.state for key in snapshot.keys].count(AuthorityKeyState.VERIFY_ONLY) == 1
     else:
         assert snapshot.condition is AuthorityScopeCondition.PROVISIONED_WITHOUT_ACTIVE
         assert snapshot.keys[0].state is AuthorityKeyState.REVOKED
@@ -110,9 +109,7 @@ def test_revoke_verify_only_commits_before_stale_rekey(tmp_path):
     first = authority.provision(scope)
     rotated = authority.rotate(scope, 1)
     active = next(key for key in rotated.keys if key.state is AuthorityKeyState.ACTIVE)
-    old = next(
-        key for key in rotated.keys if key.state is AuthorityKeyState.VERIFY_ONLY
-    )
+    old = next(key for key in rotated.keys if key.state is AuthorityKeyState.VERIFY_ONLY)
     authority.revoke(scope, active.authority_key_id, 2)
     revoked = authority.revoke(scope, old.authority_key_id, 3)
     with pytest.raises(StaleAuthorityRevisionError):
@@ -177,20 +174,11 @@ def test_read_before_mutation_obeys_linearization(tmp_path, operation):
     assert result
     if operation == "verify":
         assert result[0] is BackupArtifactVerificationResult.VERIFIED
-        assert (
-            base.verify(scope, item, proof)
-            is BackupArtifactVerificationResult.REVOKED_KEY
-        )
+        assert base.verify(scope, item, proof) is BackupArtifactVerificationResult.REVOKED_KEY
     elif operation == "rotate":
-        assert (
-            base.verify(scope, item, result[0])
-            is BackupArtifactVerificationResult.VERIFIED
-        )
+        assert base.verify(scope, item, result[0]) is BackupArtifactVerificationResult.VERIFIED
     else:
-        assert (
-            base.verify(scope, item, result[0])
-            is BackupArtifactVerificationResult.REVOKED_KEY
-        )
+        assert base.verify(scope, item, result[0]) is BackupArtifactVerificationResult.REVOKED_KEY
 
 
 def test_mutation_returns_its_own_snapshot_when_later_commit_wins(tmp_path):

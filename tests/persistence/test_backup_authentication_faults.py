@@ -73,9 +73,7 @@ def test_response_loss_is_unknown_but_commit_survives(tmp_path, operation):
 
 
 @pytest.mark.parametrize("operation", ["provision", "rotate", "rekey"])
-def test_failure_after_staging_leaves_metadata_unchanged_and_orphan_unusable(
-    tmp_path, operation
-):
+def test_failure_after_staging_leaves_metadata_unchanged_and_orphan_unusable(tmp_path, operation):
     scope = new_scope()
     base, metadata, storage = build(tmp_path)
     revision = 0
@@ -144,8 +142,7 @@ def test_true_before_commit_failure_rolls_back_transactional_dml(tmp_path, opera
     assert base.read_snapshot(scope) == before
     if operation == "revoke":
         assert (
-            base.verify(scope, manifest(scope), proof)
-            is BackupArtifactVerificationResult.VERIFIED
+            base.verify(scope, manifest(scope), proof) is BackupArtifactVerificationResult.VERIFIED
         )
 
 
@@ -232,13 +229,13 @@ def test_public_objects_and_capabilities_do_not_leak_secrets(tmp_path):
     raw = next(iter(storage.values.values()))
     assert raw not in repr(scope) + repr(snapshot) + repr(proof)
     assert "custody_handle" not in {field.name for field in fields(snapshot.keys[0])}
-    authenticator, verifier = BackupArtifactAuthenticator(
-        authority
-    ), BackupArtifactVerifier(authority)
+    authenticator, verifier = (
+        BackupArtifactAuthenticator(authority),
+        BackupArtifactVerifier(authority),
+    )
     for capability in (authenticator, verifier):
         assert not any(
-            hasattr(capability, name)
-            for name in ("provision", "rotate", "rekey", "revoke")
+            hasattr(capability, name) for name in ("provision", "rotate", "rekey", "revoke")
         )
 
 
@@ -246,17 +243,13 @@ def test_detected_custody_handle_collision_never_overwrites(tmp_path, monkeypatc
     authority, _, storage = build(tmp_path)
     scope = new_scope()
     handle = "fixed-collision"
-    storage.values[SecretStorageBackupAuthenticationSecureCustody._PREFIX + handle] = (
-        "trusted"
-    )
+    storage.values[SecretStorageBackupAuthenticationSecureCustody._PREFIX + handle] = "trusted"
     monkeypatch.setattr(
         BackupArtifactAuthenticationAuthority,
         "_new_key",
         staticmethod(
             lambda: (
-                backup_authentication._StoredKey(
-                    "new-key", AuthorityKeyState.ACTIVE, handle
-                ),
+                backup_authentication._StoredKey("new-key", AuthorityKeyState.ACTIVE, handle),
                 b"x" * 32,
             )
         ),
@@ -264,8 +257,7 @@ def test_detected_custody_handle_collision_never_overwrites(tmp_path, monkeypatc
     with pytest.raises(AuthorityUnavailableError):
         authority.provision(scope)
     assert (
-        storage.values[SecretStorageBackupAuthenticationSecureCustody._PREFIX + handle]
-        == "trusted"
+        storage.values[SecretStorageBackupAuthenticationSecureCustody._PREFIX + handle] == "trusted"
     )
     assert authority.read_snapshot(scope) is None
 
