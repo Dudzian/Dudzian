@@ -67,6 +67,30 @@ PROTECTED_FIELDS = {
 }
 
 
+def test_m011_startup_recovery_model_defers_order_to_m03_and_retains_authority() -> None:
+    consumer = MACHINE["startup_recovery_model"]["corehost_startup_consumer"]
+    topology = json.loads((DOCS / "process_topology_and_lifecycle.json").read_text())
+    recovery = topology["corehost_startup_recovery_contract"]
+    assert consumer["semantic_owner"] == (
+        "process_topology_and_lifecycle.json#/corehost_startup_recovery_contract"
+    )
+    assert recovery["m0_11_dependency"]["artifact"] == MACHINE_PATH.name
+    assert consumer["protected_freshness"] == (
+        "mandatory initialized startup gate using existing recover_protected_state semantics"
+    )
+    assert consumer["migration"] == (
+        "all exact-store durable families are startup-discovered and resolved only through "
+        "sealed registry/coordinators"
+    )
+    assert consumer["secret_handoff"] == (
+        "all exact-store durable families are startup-discovered and resolved through "
+        "existing orchestrator"
+    )
+    assert consumer["fresh_verified_snapshot_between_authority_changing_stages"] is True
+    assert consumer["local_evidence_source"] == "final fresh verified StateStore snapshot"
+    assert consumer["does_not_duplicate_subsystem_state_machines"] is True
+
+
 def _protected_record_valid(value: Any) -> bool:
     if not isinstance(value, dict) or set(value) != PROTECTED_FIELDS:
         return False

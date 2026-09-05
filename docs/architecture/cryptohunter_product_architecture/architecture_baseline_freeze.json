@@ -14,7 +14,7 @@
       "milestone_id": "M0.3",
       "canonical_artifact": "docs/architecture/cryptohunter_product_architecture/process_topology_and_lifecycle.json",
       "canonical_schema_version": "cryptohunter.process_topology_and_lifecycle.v1",
-      "sha256": "5eed0ce5d5c7a2c94ef607412ea39ec3df9b595f2c6a59b12b6a744a94014b7c"
+      "sha256": "d4216765c29b5a1cb47a9050a1447b45dd0ec900f41d3bbec8b3292fcf18f69c"
     },
     {
       "milestone_id": "M0.4",
@@ -62,7 +62,7 @@
       "milestone_id": "M0.11",
       "canonical_artifact": "docs/architecture/cryptohunter_product_architecture/persistence_versioning_migrations_backup_and_recovery.json",
       "canonical_schema_version": "1.0.0",
-      "sha256": "549e45cd8c9cd09f357cf976dc763170acd86de393087ca2e9aba420fef688f6"
+      "sha256": "5a89a33198c9f8b1d6bdedb66497229a11b042f59ccb6effa910c8c5f16d1154"
     }
   ]
 }

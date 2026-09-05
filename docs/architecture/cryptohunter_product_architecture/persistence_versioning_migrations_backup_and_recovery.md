@@ -77,7 +77,7 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
       "milestone": "M0.3",
       "artifact": "process_topology_and_lifecycle.json",
       "json_pointer": "/restore_freshness_authority_contract",
-      "content_fingerprint_sha256": "e18d62bb5c74e6c484fa38363367cae60b45974b2a8449d2b988ace42b2f59e7"
+      "content_fingerprint_sha256": "27c405c90f8e8ab59a9c0a8ed90ca1db468f62e52afcf377f177e14a32309c0b"
     },
     {
       "milestone": "M0.4",
@@ -1171,7 +1171,17 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
     "descriptor_intrinsic_validation_gate": "every descriptor passes exact closed schema, conditional semantics, nested PersistenceRecord Stage 1, and canonical mutation-array order before hash/scope/chain use",
     "valid_hash_compensates_for_malformed_descriptor": false
   },
-  "registry_restart": "EMPTY"
+  "registry_restart": "EMPTY",
+  "corehost_startup_consumer": {
+    "semantic_owner": "process_topology_and_lifecycle.json#/corehost_startup_recovery_contract",
+    "role": "M0.11 subsystem authority APIs are consumed in the M0.3-owned startup order",
+    "protected_freshness": "mandatory initialized startup gate using existing recover_protected_state semantics",
+    "migration": "all exact-store durable families are startup-discovered and resolved only through sealed registry/coordinators",
+    "secret_handoff": "all exact-store durable families are startup-discovered and resolved through existing orchestrator",
+    "fresh_verified_snapshot_between_authority_changing_stages": true,
+    "local_evidence_source": "final fresh verified StateStore snapshot",
+    "does_not_duplicate_subsystem_state_machines": true
+  }
 }
 ```
 
@@ -5745,7 +5755,7 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
       "adds_new_domain_facts": false,
       "restorable_authority": false,
       "validation_strategy": "NO_PERSISTED_CARRIER",
-      "semantic_contract_fingerprint_sha256": "e18d62bb5c74e6c484fa38363367cae60b45974b2a8449d2b988ace42b2f59e7",
+      "semantic_contract_fingerprint_sha256": "27c405c90f8e8ab59a9c0a8ed90ca1db468f62e52afcf377f177e14a32309c0b",
       "record_key_strategy": "NONE"
     },
     "M0.3 current designation": {
@@ -5760,7 +5770,7 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
       "adds_new_domain_facts": false,
       "restorable_authority": false,
       "validation_strategy": "NO_PERSISTED_CARRIER",
-      "semantic_contract_fingerprint_sha256": "e18d62bb5c74e6c484fa38363367cae60b45974b2a8449d2b988ace42b2f59e7",
+      "semantic_contract_fingerprint_sha256": "27c405c90f8e8ab59a9c0a8ed90ca1db468f62e52afcf377f177e14a32309c0b",
       "record_key_strategy": "NONE"
     },
     "M0.3 retirement state": {
@@ -5775,7 +5785,7 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
       "adds_new_domain_facts": false,
       "restorable_authority": false,
       "validation_strategy": "NO_PERSISTED_CARRIER",
-      "semantic_contract_fingerprint_sha256": "e18d62bb5c74e6c484fa38363367cae60b45974b2a8449d2b988ace42b2f59e7",
+      "semantic_contract_fingerprint_sha256": "27c405c90f8e8ab59a9c0a8ed90ca1db468f62e52afcf377f177e14a32309c0b",
       "record_key_strategy": "NONE"
     },
     "LocalDurableStateEvidence payload": {
