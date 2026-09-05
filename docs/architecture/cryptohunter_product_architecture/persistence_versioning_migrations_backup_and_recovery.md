@@ -568,6 +568,142 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
 }
 ```
 
+## `state_store_physical_schema_registry`
+
+```json
+{
+  "name": "StateStorePhysicalSchemaRegistry",
+  "classification": [
+    "SEALED BUILD-TIME PRODUCT AUTHORITY",
+    "PHYSICAL STRUCTURE ONLY",
+    "NOT DURABLE STATE",
+    "NOT CANDIDATE CARRIED AUTHORITY",
+    "NOT M0.3 AUTHORITY",
+    "NOT DOMAIN AUTHORITY"
+  ],
+  "current_state_store_schema_version": 1,
+  "entry_schema": {
+    "additionalProperties": false,
+    "required": [
+      "state_store_schema_version",
+      "sqlite_schema_fingerprint_sha256"
+    ],
+    "properties": {
+      "state_store_schema_version": {
+        "type": "integer",
+        "minimum": 1,
+        "boolean_allowed": false
+      },
+      "sqlite_schema_fingerprint_sha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      }
+    }
+  },
+  "entries": [
+    {
+      "state_store_schema_version": 1,
+      "sqlite_schema_fingerprint_sha256": "18f9bac7640b66fb1051d5e1bcfe7345c79a8dcb33f417b40009fb049547c680"
+    }
+  ],
+  "composition_invariants": {
+    "one_entry_per_schema_version": true,
+    "duplicate_version": "FAIL_CLOSED",
+    "conflicting_fingerprint": "FAIL_CLOSED",
+    "current_version_must_exist": true,
+    "immutable_after_composition": true,
+    "caller_registration": false,
+    "caller_replacement": false,
+    "nearest_version_fallback": false,
+    "candidate_driven_insertion": false,
+    "state_store_driven_insertion": false,
+    "current_version_source": "STATIC PRODUCT BUILD DECISION; never observed metadata, migration ID/target, or caller input"
+  },
+  "authority_boundary": {
+    "establishes_only": "EXPECTED PHYSICAL SQLITE STRUCTURE FOR KNOWN PRODUCT SCHEMA VERSION",
+    "match_rule": "PHYSICAL_SCHEMA_MATCH_IS_NECESSARY_NOT_SUFFICIENT",
+    "does_not_establish": [
+      "StateStore logical identity",
+      "account/device membership",
+      "protected freshness",
+      "StateStore generation",
+      "state fingerprint",
+      "transaction fingerprint",
+      "history integrity",
+      "Migration lifecycle",
+      "Migration execution permission",
+      "restore authority",
+      "READY",
+      "LIVE permission"
+    ],
+    "custody": [
+      "static code/build resource",
+      "process-local read-only composition"
+    ],
+    "not_stored_in": [
+      "StateStore",
+      "BackupEnvelope",
+      "restore candidate",
+      "user configuration",
+      "mutable database table"
+    ]
+  },
+  "fingerprint_kernel": {
+    "production_api": "SQLiteStateStore.sqlite_schema_fingerprint()",
+    "algorithm_owner": "migration_protocol/migration_execution_declaration/sqlite_schema_fingerprint",
+    "manual_derivation_forbidden": true
+  },
+  "migration_binding": {
+    "canonical_version_truth": "this registry",
+    "authority_fields_retained": [
+      "pre_sqlite_schema_fingerprint_sha256",
+      "target_sqlite_schema_fingerprint_sha256"
+    ],
+    "registered_source_and_target_versions_must_exist": true,
+    "pre_fingerprint_must_equal_source_registry_entry": true,
+    "target_fingerprint_must_equal_target_registry_entry": true,
+    "mismatch": "MIGRATION_SCHEMA_AUTHORITY_REGISTRY_MISMATCH / FAIL_CLOSED",
+    "chain_continuity": "every adjacent shared version has one registry fingerprint equal to preceding target and following pre"
+  },
+  "zero_migration_families": {
+    "expected_source": "registry entry selected by verified snapshot.metadata.state_store_schema_version",
+    "actual_source": "SQLiteStateStore.sqlite_schema_fingerprint()",
+    "required": "actual equals expected",
+    "unknown_version": "UNKNOWN_STATE_STORE_SCHEMA_VERSION / FAIL_CLOSED",
+    "recovery_complete_requires": [
+      "metadata state_store_schema_version equals current_state_store_schema_version",
+      "actual physical fingerprint equals current registry fingerprint"
+    ],
+    "empty_MigrationRegistry_is_schema_authority": false,
+    "fake_migration_record_required": false
+  },
+  "lineage_rules": {
+    "fresh_current_genesis_without_migration_history": "LEGAL when metadata version and physical fingerprint equal product current registry entry",
+    "upgraded_lineage_requires_durable_migration_history": true,
+    "registry_match_substitutes_for_required_migration_history": false,
+    "known_old_version_without_sealed_path_to_current": "NO_SEALED_PATH_TO_CURRENT_SCHEMA / FAIL_CLOSED / NO RECOVERY_COMPLETE"
+  },
+  "restore_rules": {
+    "zero_migration_families": "registry directly supplies expected fingerprint; early return before physical comparison is forbidden",
+    "with_migrations": [
+      "validate registry entry for every involved version",
+      "validate every MigrationExecutionAuthority exact source/target registry binding",
+      "validate sealed schema chain",
+      "terminal physical schema equals registry entry for snapshot metadata version"
+    ],
+    "candidate_may_be_known_non_current": true,
+    "restore_executes_migration_sql": false,
+    "candidate_fields_are_proof_not_authority": true
+  },
+  "failure_semantics": [
+    "UNKNOWN_STATE_STORE_SCHEMA_VERSION",
+    "PHYSICAL_SCHEMA_FINGERPRINT_MISMATCH",
+    "MIGRATION_SCHEMA_AUTHORITY_REGISTRY_MISMATCH",
+    "NO_SEALED_PATH_TO_CURRENT_SCHEMA"
+  ]
+}
+```
+
 ## `state_store_fingerprint_contract`
 
 ```json
@@ -1318,7 +1454,9 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
     "secret_handoff": "all exact-store durable families are startup-discovered and resolved through existing orchestrator",
     "fresh_verified_snapshot_between_authority_changing_stages": true,
     "local_evidence_source": "final fresh verified StateStore snapshot",
-    "does_not_duplicate_subsystem_state_machines": true
+    "does_not_duplicate_subsystem_state_machines": true,
+    "physical_schema_authority": "state_store_physical_schema_registry",
+    "final_physical_schema_gate": "final verified metadata version equals product current version and SQLiteStateStore.sqlite_schema_fingerprint() equals the sealed registry entry"
   }
 }
 ```
@@ -9275,6 +9413,12 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
         "durability": "EPHEMERAL ONLY",
         "restore_authority": false,
         "BackupEnvelope_membership": false
+      },
+      "physical_schema_registry_binding": {
+        "primary_version_truth": "/state_store_physical_schema_registry",
+        "zero_migration_families": "registry directly supplies expected physical schema fingerprint",
+        "with_migrations": "registry and sealed MigrationExecutionAuthority chain must both agree",
+        "migration_authority_fields_retained": true
       }
     },
     "physical_sqlite_restore_prerequisite": {
@@ -9898,7 +10042,9 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
       "authenticates_arbitrary_DML_rows": false,
       "candidate_computation_before_stage_2": "ALLOWED_INTRINSIC_FACT_COLLECTION_ONLY",
       "MigrationExecutionAuthority_comparison_before_stage_2": false,
-      "authoritative_comparison_location": "/physical_sqlite_restore_artifact_contract/restore_workflow/stage_2_composition/components/MIGRATION_RESTORE_AUTHORITY_REVALIDATION"
+      "authoritative_comparison_location": "/physical_sqlite_restore_artifact_contract/restore_workflow/stage_2_composition/components/MIGRATION_RESTORE_AUTHORITY_REVALIDATION",
+      "expected_truth_source": "/state_store_physical_schema_registry",
+      "zero_migration_family_early_return_forbidden": true
     },
     "wal_sidecar_policy": {
       "rule": "SELF_CONTAINED_DATABASE_IMAGE_NO_EXTERNAL_WAL_DEPENDENCY",

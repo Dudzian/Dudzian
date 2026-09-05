@@ -10786,3 +10786,175 @@ def test_state_store_logical_identity_is_lineage_immutable_and_restore_preserved
     empty = identity["empty_uninitialized"]
     assert empty["established_fingerprint"] is False
     assert empty["p1b_generates_fingerprint"] is False
+
+
+# S8B-P1B-A3: executable model for the sealed product physical-schema authority.
+def _physical_schema_entries(registry: dict[str, Any]) -> dict[int, str]:
+    entries = registry["entries"]
+    assert isinstance(entries, list)
+    resolved: dict[int, str] = {}
+    for entry in entries:
+        assert set(entry) == {
+            "state_store_schema_version",
+            "sqlite_schema_fingerprint_sha256",
+        }
+        version = entry["state_store_schema_version"]
+        fingerprint = entry["sqlite_schema_fingerprint_sha256"]
+        assert _positive(version)
+        assert isinstance(fingerprint, str) and SHA_RE.fullmatch(fingerprint)
+        assert version not in resolved
+        resolved[version] = fingerprint
+    current = registry["current_state_store_schema_version"]
+    assert _positive(current) and current in resolved
+    return resolved
+
+
+def _physical_schema_gate(
+    registry: dict[str, Any], version: int, actual: str, *, require_current: bool
+) -> bool:
+    entries = _physical_schema_entries(registry)
+    if version not in entries or actual != entries[version]:
+        return False
+    return not require_current or version == registry["current_state_store_schema_version"]
+
+
+def _migration_schema_binding(registry: dict[str, Any], migrations: list[dict[str, Any]]) -> bool:
+    entries = _physical_schema_entries(registry)
+    for migration in migrations:
+        source, target = migration["source"], migration["target"]
+        if source not in entries or target not in entries:
+            return False
+        if migration["pre"] != entries[source] or migration["post"] != entries[target]:
+            return False
+    ordered = sorted(migrations, key=lambda item: item["source"])
+    return all(left["target"] == right["source"] for left, right in zip(ordered, ordered[1:]))
+
+
+def test_state_store_physical_schema_registry_exact_sealed_shape() -> None:
+    registry = MACHINE["state_store_physical_schema_registry"]
+    assert registry["name"] == "StateStorePhysicalSchemaRegistry"
+    assert registry["classification"] == [
+        "SEALED BUILD-TIME PRODUCT AUTHORITY",
+        "PHYSICAL STRUCTURE ONLY",
+        "NOT DURABLE STATE",
+        "NOT CANDIDATE CARRIED AUTHORITY",
+        "NOT M0.3 AUTHORITY",
+        "NOT DOMAIN AUTHORITY",
+    ]
+    assert registry["current_state_store_schema_version"] == 1
+    assert _physical_schema_entries(registry) == {
+        1: "18f9bac7640b66fb1051d5e1bcfe7345c79a8dcb33f417b40009fb049547c680"
+    }
+    invariants = registry["composition_invariants"]
+    assert all(
+        invariants[name] is False
+        for name in (
+            "caller_registration",
+            "caller_replacement",
+            "nearest_version_fallback",
+            "candidate_driven_insertion",
+            "state_store_driven_insertion",
+        )
+    )
+
+
+def test_current_runtime_ddl_matches_frozen_registry_deterministically(tmp_path: Path) -> None:
+    from bot_core.persistence.state_store import SQLiteStateStore
+
+    expected = _physical_schema_entries(MACHINE["state_store_physical_schema_registry"])[1]
+    observed = []
+    for index in range(5):
+        store = SQLiteStateStore(tmp_path / f"fresh-{index}.sqlite")
+        try:
+            assert store.read_verified_snapshot() is None
+            observed.append(store.sqlite_schema_fingerprint())
+        finally:
+            store.close()
+    assert observed == [expected] * 5
+
+
+def test_physical_schema_registry_rejects_duplicate_unknown_and_wrong_schema() -> None:
+    registry = copy.deepcopy(MACHINE["state_store_physical_schema_registry"])
+    registry["entries"].append(copy.deepcopy(registry["entries"][0]))
+    with pytest.raises(AssertionError):
+        _physical_schema_entries(registry)
+    canonical = MACHINE["state_store_physical_schema_registry"]
+    assert not _physical_schema_gate(canonical, 999, SHA, require_current=False)
+    assert not _physical_schema_gate(canonical, 1, SHA, require_current=True)
+
+
+def test_zero_migration_physical_gate_uses_registry_without_fake_family() -> None:
+    registry = MACHINE["state_store_physical_schema_registry"]
+    current = registry["entries"][0]
+    assert _physical_schema_gate(
+        registry,
+        current["state_store_schema_version"],
+        current["sqlite_schema_fingerprint_sha256"],
+        require_current=True,
+    )
+    assert (
+        registry["zero_migration_families"]["empty_MigrationRegistry_is_schema_authority"] is False
+    )
+    assert registry["zero_migration_families"]["fake_migration_record_required"] is False
+    assert registry["restore_rules"]["zero_migration_families"].endswith(
+        "early return before physical comparison is forbidden"
+    )
+
+
+def test_known_old_schema_without_sealed_path_is_not_recovery_complete() -> None:
+    registry = copy.deepcopy(MACHINE["state_store_physical_schema_registry"])
+    registry["entries"].append(
+        {"state_store_schema_version": 2, "sqlite_schema_fingerprint_sha256": "b" * 64}
+    )
+    assert _physical_schema_gate(registry, 2, "b" * 64, require_current=False)
+    assert not _physical_schema_gate(registry, 2, "b" * 64, require_current=True)
+    assert (
+        "NO_SEALED_PATH_TO_CURRENT_SCHEMA"
+        in registry["lineage_rules"]["known_old_version_without_sealed_path_to_current"]
+    )
+
+
+def test_migration_authority_must_exactly_bind_registry_versions() -> None:
+    registry = copy.deepcopy(MACHINE["state_store_physical_schema_registry"])
+    registry["entries"] = [
+        {"state_store_schema_version": 1, "sqlite_schema_fingerprint_sha256": "a" * 64},
+        {"state_store_schema_version": 2, "sqlite_schema_fingerprint_sha256": "b" * 64},
+        {"state_store_schema_version": 3, "sqlite_schema_fingerprint_sha256": "c" * 64},
+    ]
+    registry["current_state_store_schema_version"] = 3
+    chain = [
+        {"source": 1, "target": 2, "pre": "a" * 64, "post": "b" * 64},
+        {"source": 2, "target": 3, "pre": "b" * 64, "post": "c" * 64},
+    ]
+    assert _migration_schema_binding(registry, chain)
+    conflicting = copy.deepcopy(chain)
+    conflicting[1]["pre"] = "d" * 64
+    assert not _migration_schema_binding(registry, conflicting)
+
+
+def test_physical_schema_match_is_necessary_not_sufficient() -> None:
+    boundary = MACHINE["state_store_physical_schema_registry"]["authority_boundary"]
+    assert boundary["match_rule"] == "PHYSICAL_SCHEMA_MATCH_IS_NECESSARY_NOT_SUFFICIENT"
+    assert set(boundary["does_not_establish"]) >= {
+        "StateStore logical identity",
+        "protected freshness",
+        "Migration execution permission",
+        "restore authority",
+        "READY",
+        "LIVE permission",
+    }
+    assert (
+        MACHINE["state_store_physical_schema_registry"]["restore_rules"][
+            "restore_executes_migration_sql"
+        ]
+        is False
+    )
+
+
+def test_physical_schema_failure_semantics_are_closed() -> None:
+    assert MACHINE["state_store_physical_schema_registry"]["failure_semantics"] == [
+        "UNKNOWN_STATE_STORE_SCHEMA_VERSION",
+        "PHYSICAL_SCHEMA_FINGERPRINT_MISMATCH",
+        "MIGRATION_SCHEMA_AUTHORITY_REGISTRY_MISMATCH",
+        "NO_SEALED_PATH_TO_CURRENT_SCHEMA",
+    ]

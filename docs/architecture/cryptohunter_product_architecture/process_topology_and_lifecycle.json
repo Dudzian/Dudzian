@@ -603,12 +603,19 @@
         "CoreHost scope exactly matches final snapshot",
         "protected M0.3 authority is terminal/current and exactly matches final local state",
         "no recovery-required Migration lifecycle remains",
-        "migration physical schema/materialization is canonical current",
+        "migration physical schema/materialization equals sealed current StateStorePhysicalSchemaRegistry entry",
         "no recovery-required SecretHandoff remains",
         "no SecretHandoff UNKNOWN_RECONCILIATION exists",
         "final LocalDurableEvidence freshly derives from final verified snapshot"
       ],
-      "any_false": "NO_READY_AND_FAIL_CLOSED"
+      "any_false": "NO_READY_AND_FAIL_CLOSED",
+      "physical_schema_gate": {
+        "actual": "SQLiteStateStore.sqlite_schema_fingerprint()",
+        "expected": "persistence_versioning_migrations_backup_and_recovery.json#/state_store_physical_schema_registry entry for final verified metadata state_store_schema_version",
+        "required_current_version": "final metadata state_store_schema_version equals sealed current_state_store_schema_version",
+        "mismatch": "FAIL_CLOSED",
+        "match_alone_sufficient": false
+      }
     },
     "runtime_session_boundary": {
       "active_process": "EPHEMERAL RUNTIME created before StateStore open",
