@@ -5006,3 +5006,21 @@ def test_corehost_store_substitution_and_empty_identity_fail_safe() -> None:
     assert empty["identity_creation_owner"] == (
         "future authorized StateStore genesis / first-run creation flow"
     )
+
+
+def test_corehost_recovery_complete_uses_sealed_current_physical_schema_registry() -> None:
+    gate = startup_recovery_contract()["recovery_complete"]["physical_schema_gate"]
+    assert gate == {
+        "actual": "SQLiteStateStore.sqlite_schema_fingerprint()",
+        "expected": (
+            "persistence_versioning_migrations_backup_and_recovery.json#/"
+            "state_store_physical_schema_registry entry for final verified metadata "
+            "state_store_schema_version"
+        ),
+        "required_current_version": (
+            "final metadata state_store_schema_version equals sealed "
+            "current_state_store_schema_version"
+        ),
+        "mismatch": "FAIL_CLOSED",
+        "match_alone_sufficient": False,
+    }
