@@ -2825,7 +2825,11 @@ def test_evidence_has_no_persistence_backup_fingerprint_or_generation_effect() -
 
 def test_runtime_session_publication_precedes_ready_and_old_process_is_not_restored() -> None:
     model = MACHINE["runtime_session_persistence"]
-    assert model["order"][-2:] == ["durably publish current RuntimeSession history", "READY"]
+    assert model["order"][-3:] == [
+        "durably publish current RuntimeSession history using transaction_protocol as G+1",
+        "determine startup readiness",
+        "READY only after separate later startup gates and ready_gate",
+    ]
     assert model["old_history_preserved"] and not model["old_process_restored"]
 
 
@@ -10958,3 +10962,62 @@ def test_physical_schema_failure_semantics_are_closed() -> None:
         "MIGRATION_SCHEMA_AUTHORITY_REGISTRY_MISMATCH",
         "NO_SEALED_PATH_TO_CURRENT_SCHEMA",
     ]
+
+
+def test_p1c_runtime_session_persistence_reuses_existing_carrier_and_protocol() -> None:
+    model = MACHINE["runtime_session_persistence"]
+    assert model["carrier_registry_key"] == "RuntimeSession canonical identity/history"
+    assert model["carrier_registry_pointer"] == (
+        "/backup_contract/representation_registry/RuntimeSession canonical identity~1history"
+    )
+    assert model["new_representation_kind"] is False
+    assert model["publication"]["transaction_protocol_pointer"] == "/transaction_protocol"
+    assert model["publication"]["immutable_history_appends_count"] == 1
+    assert model["publication"]["record_key"] == "runtime_session_id"
+    assert model["publication"]["required_upstream_fields"] == [
+        "runtime_session_id",
+        "device_installation_id",
+    ]
+    carrier = MACHINE["backup_contract"]["representation_registry"][model["carrier_registry_key"]]
+    assert carrier["representation_category"] == "M011_IMMUTABLE_HISTORY_WRAPPER"
+    assert carrier["record_key_strategy"] == "CANONICAL_ENTITY_ID"
+
+
+def test_p1c_runtime_session_publication_is_initialized_only_g_plus_1() -> None:
+    model = MACHINE["runtime_session_persistence"]
+    publication = model["publication"]
+    assert publication["initialized_only"] is True
+    assert publication["empty_uninitialized_count"] == 0
+    assert publication["current_designation_created"] is False
+    assert publication["post_publication_evidence_generation"] == "G+1"
+    assert publication["p1b_cached_evidence_generation"] == "G"
+    assert publication["p1b_evidence_may_substitute"] is False
+    assert model["old_history_preserved"] is True
+    assert model["old_process_restored"] is False
+    assert model["durable_carrier_is_current_process_authority"] is False
+
+
+def test_p1c_runtime_session_persistence_ownership_split_is_exact() -> None:
+    model = MACHINE["runtime_session_persistence"]
+    assert "semantic_owner" not in model
+    assert model["ownership_domains"] == {
+        "runtime_session_identity_and_schema": {
+            "owner_milestone": "M0.2",
+            "artifact": "canonical_domain_vocabulary.json",
+            "json_pointers": ["/entity_kinds", "/identifier_policy"],
+        },
+        "durable_carrier_and_transaction_protocol": {
+            "owner_milestone": "M0.11",
+            "artifact": "persistence_versioning_migrations_backup_and_recovery.json",
+            "json_pointers": [
+                "/backup_contract/representation_registry/RuntimeSession canonical identity~1history",
+                "/transaction_protocol",
+                "/runtime_session_persistence/publication",
+            ],
+        },
+        "startup_sequencing_and_readiness": {
+            "owner_milestone": "M0.3",
+            "artifact": "process_topology_and_lifecycle.json",
+            "json_pointer": "/corehost_runtime_session_and_readiness_contract",
+        },
+    }

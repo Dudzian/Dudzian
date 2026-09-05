@@ -413,7 +413,6 @@
   ],
   "corehost_startup_recovery_contract": {
     "semantic_owner": "M0.3 CoreHost startup sequencing; subsystem semantics remain owned by named M0.11 authorities",
-    "expands_runtime_session_order_step": "recover writable StateStore",
     "m0_11_dependency": {
       "artifact": "persistence_versioning_migrations_backup_and_recovery.json",
       "json_pointers": [
@@ -440,10 +439,7 @@
       "recover_secret_handoffs_in_handoff_id_order",
       "read_verified_snapshot_final",
       "publish_fresh_process_local_durable_evidence",
-      "recovery_complete",
-      "durably_publish_current_runtime_session_history",
-      "determine_startup_readiness",
-      "READY_only_if_all_later_gates_pass"
+      "recovery_complete"
     ],
     "initial_observation": {
       "only_source": "read_verified_snapshot generation-pinned durable StateStore snapshot",
@@ -789,11 +785,450 @@
       ],
       "stale_wrong_or_unknown_identity": "FAIL_CLOSED",
       "security_anchor": "independent exact M0.3 triple, not filesystem path"
+    },
+    "recover_writable_state_store_phase_binding": {
+      "runtime_session_order_anchor": "recover writable StateStore",
+      "phase": "P1B_RECOVERY",
+      "starts_at": "read_verified_snapshot_initial",
+      "ends_at_inclusive": "recovery_complete",
+      "includes_runtime_session_publication": false,
+      "includes_startup_readiness": false,
+      "includes_READY": false,
+      "authoritative_global_order_pointer": "/corehost_runtime_session_and_readiness_contract/global_initialized_order"
     }
+  },
+  "corehost_runtime_session_and_readiness_contract": {
+    "contract_id": "S8B-P1C-A1",
+    "semantic_owner": "M0.3 CoreHost startup sequencing and startup-readiness boundary",
+    "dependencies": {
+      "M0.2": "RuntimeSession domain identity/schema and identifier_policy in canonical_domain_vocabulary.json",
+      "M0.11": "RuntimeSession canonical identity/history carrier and protected StateStore transaction_protocol in persistence_versioning_migrations_backup_and_recovery.json",
+      "referenced_not_copied": [
+        "M0.4 ProductCapabilities/environment policy gates",
+        "M0.5 ExchangeAccount connection/configuration readiness",
+        "M0.8 portfolio/accounting reconciliation",
+        "M0.9 ExecutionLease/risk/kill-switch prerequisites",
+        "M0.10 authorization/security state"
+      ]
+    },
+    "active_runtime_session": {
+      "manifestation": "EPHEMERAL PROCESS-LOCAL OBJECT",
+      "created": "exactly once per CoreHost start attempt, after exact process-lock acquisition and before StateStore open",
+      "canonical_fields": [
+        "runtime_session_id",
+        "device_installation_id"
+      ],
+      "runtime_session_id": {
+        "policy": "M0.2 identifier_policy",
+        "source": "fresh identity generated through Core-owned production path",
+        "read_from_durable_history": false,
+        "selected_from_latest_history": false,
+        "deterministically_derived_from_StateStore": false,
+        "is_authority": false,
+        "caller_arbitrary_id_is_production_authority": false,
+        "test_seam": "factory may reproduce a valid test object; nominal injection does not establish production authority"
+      },
+      "device_binding": "RuntimeSession.device_installation_id exact-matches CoreHostScope.device_installation_id",
+      "device_mismatch": "FAIL_CLOSED_BEFORE_DURABLE_RUNTIMESESSION_PUBLICATION",
+      "restored_from_history": false
+    },
+    "durable_carrier": {
+      "representation_registry_key": "RuntimeSession canonical identity/history",
+      "classification": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY",
+      "new_representation_kind": false,
+      "current_designation_created": false,
+      "record_key": "runtime_session_id",
+      "payload": {
+        "fact_kind": "RuntimeSession",
+        "upstream_payload": {
+          "runtime_session_id": "<current active runtime_session_id>",
+          "device_installation_id": "<current CoreHost device_installation_id>"
+        },
+        "upstream_payload_fingerprint_sha256": "<existing exact canonical fingerprint>"
+      },
+      "forbidden_added_fields": [
+        "timestamp",
+        "PID",
+        "hostname",
+        "process start clock",
+        "path",
+        "account_id"
+      ],
+      "meaning": "historical identity fact only",
+      "does_not_prove": [
+        "process alive",
+        "process-lock ownership",
+        "authentication",
+        "DeviceTrust",
+        "READY",
+        "LIVE",
+        "current-session designation"
+      ],
+      "active_process_truth": "process-local"
+    },
+    "publication": {
+      "branch": "INITIALIZED_ONLY",
+      "preconditions": [
+        "exact original process lock still held",
+        "exact current RuntimeSession handle",
+        "exact current StateStore handle",
+        "CoreHostRecoveryClassification.INITIALIZED_RECOVERY_COMPLETE"
+      ],
+      "insufficient_inputs": [
+        "caller boolean",
+        "string recovered",
+        "cached result",
+        "history presence"
+      ],
+      "protected_scope": [
+        "verified metadata account_id",
+        "verified metadata device_installation_id",
+        "verified metadata state_store_identity_fingerprint_sha256"
+      ],
+      "forbidden_scope_sources": [
+        "path",
+        "session ID",
+        "caller scope override"
+      ],
+      "mutation_kind": "NEW SEMANTIC DURABLE MUTATION AFTER P1B RECOVERY-COMPLETE",
+      "transaction_protocol_pointer": "persistence_versioning_migrations_backup_and_recovery.json#/transaction_protocol",
+      "sequence": [
+        "resolve exact current M0.3",
+        "M0.3 PREPARE G+1",
+        "prepare local semantic transaction",
+        "all-or-nothing local durable commit G+1",
+        "publish fresh LocalDurableEvidence",
+        "M0.3 FINALIZE",
+        "success after required durability/finality"
+      ],
+      "local_mutation": {
+        "immutable_history_appends": [
+          "exactly one new RuntimeSession canonical identity/history carrier for current runtime_session_id"
+        ],
+        "current_designation_writes": 0,
+        "overwrites_old_history": false,
+        "deletes_old_history": false,
+        "metadata_and_descriptor": "existing generic StateStoreMetadata and StateStoreTransactionDescriptor contract"
+      },
+      "forbidden_paths": [
+        "raw SQL",
+        "direct SQLite INSERT",
+        "unprotected append",
+        "caller durable=True",
+        "manual metadata generation bump"
+      ],
+      "immutable_scope_fields": [
+        "account_id",
+        "device_installation_id",
+        "state_store_identity_fingerprint_sha256",
+        "state_store_schema_version"
+      ],
+      "immutable_scope_exception": "only generation/fingerprint/current durable commit facts legally updated by generic transaction_protocol",
+      "success": {
+        "carrier_durable": true,
+        "state_store_generation": "G+1",
+        "m0_3": "exact COMMITTED/current for G+1",
+        "local_durable_evidence": "fresh and matching G+1",
+        "old_history_preserved": true,
+        "next_step": "determine_startup_readiness"
+      },
+      "p1b_evidence": {
+        "generation": "G",
+        "may_substitute_for_post_publication_G_plus_1": false,
+        "readiness_source": "post-publication finalized current state under existing transaction_protocol"
+      }
+    },
+    "empty_uninitialized": {
+      "classification": "CoreHostRecoveryClassification.EMPTY_UNINITIALIZED",
+      "publication_count": 0,
+      "next_step": "determine_startup_readiness",
+      "disposition": "SETUP_REQUIRED",
+      "must_not_create": [
+        "durable RuntimeSession history",
+        "StateStore identity",
+        "StateStore genesis",
+        "bootstrap consumption",
+        "M0.10 security authority"
+      ],
+      "READY": "FORBIDDEN",
+      "corehost_may_remain_active_for_setup": true,
+      "setup_required_mints_bootstrap_consumption_authority": false
+    },
+    "idempotency_and_collision": {
+      "repeated_start_same_running_corehost": {
+        "publication_count": 1,
+        "runtime_session_id_count": 1,
+        "basis": "process-local CoreHost.start() idempotency; never durable-history adoption"
+      },
+      "preexisting_record_key_equal_current_runtime_session_id": "FAIL_CLOSED_RUNTIMESESSION_ID_COLLISION",
+      "adopt_old_entry": false,
+      "restore_previous_active_session": false,
+      "fresh_process_requires_fresh_identity": true
+    },
+    "crash_matrix": {
+      "BEFORE_M0_3_PREPARE": {
+        "new_history_durable": false,
+        "state_store": "old G remains",
+        "restart": "creates NEW runtime_session_id and ordinary startup proceeds from G"
+      },
+      "PREPARED_G_PLUS_1_BEFORE_LOCAL_COMMIT": {
+        "new_history_durable": false,
+        "restart": "creates NEW runtime_session_id before StateStore; P1B resolves pending with frozen M0.3 recovery",
+        "exact_local_G": "existing ABORT semantics apply when it proves pre-candidate state",
+        "after_recovery": "publish only new process own RuntimeSession history",
+        "blind_retry_old_session": false
+      },
+      "LOCAL_COMMIT_G_PLUS_1_BEFORE_FINALIZE": {
+        "crashed_session_history": "durable historical fact",
+        "restart": "creates NEW runtime_session_id; P1B observes exact local G+1 plus PREPARED G+1 and FINALIZEs exact pending authority",
+        "old_process_restored": false,
+        "after_recovery": "current process publishes own history at later protected generation",
+        "duplicate_business_commit": false
+      },
+      "AFTER_FINALIZE_BEFORE_READINESS": {
+        "old_history": "remains durable",
+        "restart": "creates NEW runtime_session_id, runs P1B, then publishes own history",
+        "old_process_restored": false
+      }
+    },
+    "failure": {
+      "unresolved_publication_failure": "FAIL_CLOSED",
+      "READY": "FORBIDDEN",
+      "startup_readiness_success_disposition": "FORBIDDEN",
+      "cleanup": "CLOSE_EXACT_CURRENT_STATESTORE_CLOSE_EXACT_RUNTIMESESSION_RELEASE_EXACT_PROCESS_LOCK per existing CoreHost failed-start ownership semantics",
+      "rollback_completed_external_effects": false,
+      "delete_already_durable_history": false
+    },
+    "startup_readiness": {
+      "classification": "PROCESS-LOCAL NON-AUTHORITY",
+      "dispositions": [
+        "SETUP_REQUIRED",
+        "PROCEED_TO_LATER_STARTUP_GATES"
+      ],
+      "READY_outcome_present": false,
+      "separation": [
+        "recovery result",
+        "startup readiness disposition",
+        "final M0.2/Core runtime READY state"
+      ],
+      "not_equal": [
+        "INITIALIZED_RECOVERY_COMPLETE != READY",
+        "durable RuntimeSession history != READY",
+        "LocalDurableEvidence != READY",
+        "startup readiness disposition != READY"
+      ],
+      "initialized_requires": [
+        "CoreHostRecoveryClassification.INITIALIZED_RECOVERY_COMPLETE",
+        "successful durable current RuntimeSession history publication finalized at G+1"
+      ],
+      "initialized_disposition": "PROCEED_TO_LATER_STARTUP_GATES",
+      "initialized_disposition_means": "P1C boundary passed only",
+      "initialized_disposition_does_not_mean": [
+        "READY",
+        "authenticated",
+        "authorized",
+        "reconciled",
+        "leased",
+        "LIVE-capable"
+      ],
+      "authority_boolean_inputs_forbidden": [
+        "recovered=True",
+        "session_published=True",
+        "authenticated=True",
+        "authorized=True",
+        "reconciled=True",
+        "lease_valid=True",
+        "kill_switch_clear=True",
+        "capability_ok=True",
+        "ready=True"
+      ],
+      "derivation": "CoreHost-owned exact process state plus verified/persisted outputs of their semantic owners"
+    },
+    "final_ready_boundary": {
+      "p1c_mints_READY": false,
+      "final_owner": "separate later CoreHost startup_sequence ready_gate",
+      "required_later_gates": [
+        {
+          "gate": "startup readiness disposition",
+          "owner_milestone": "M0.3",
+          "artifact": "process_topology_and_lifecycle.json",
+          "json_pointer": "/corehost_runtime_session_and_readiness_contract/startup_readiness"
+        },
+        {
+          "gate": "ExchangeAccount connection/configuration readiness",
+          "owner_milestone": "M0.5",
+          "artifact": "exchange_accounts_and_instruments.json",
+          "json_pointer": "/exchange_account_contract"
+        },
+        {
+          "gate": "portfolio/accounting reconciliation",
+          "owner_milestone": "M0.8",
+          "artifact": "ledger_portfolio_capital_and_pnl.json",
+          "json_pointer": "/reconciliation_protocol"
+        },
+        {
+          "gate": "authorization/security state",
+          "owner_milestone": "M0.10",
+          "artifact": "identity_device_authentication_and_secrets.json",
+          "json_pointer": "/authority"
+        },
+        {
+          "gate": "ExecutionLease and risk prerequisites",
+          "owner_milestone": "M0.9",
+          "artifact": "risk_hierarchy_kill_switch_and_execution_lease.json",
+          "json_pointer": "/execution_lease_contract"
+        },
+        {
+          "gate": "kill-switch state",
+          "owner_milestone": "M0.9",
+          "artifact": "risk_hierarchy_kill_switch_and_execution_lease.json",
+          "json_pointer": "/kill_switch_contract"
+        },
+        {
+          "gate": "ProductCapabilities",
+          "owner_milestone": "M0.4",
+          "artifact": "environment_and_product_capabilities.json",
+          "json_pointer": "/ProductCapabilities"
+        },
+        {
+          "gate": "environment/policy readiness",
+          "owner_milestone": "M0.4",
+          "artifact": "environment_and_product_capabilities.json",
+          "json_pointer": "/environment_readiness"
+        }
+      ],
+      "connect_accounts_step_remains_after_p1c": true,
+      "ready_gate_remains_after_later_gates": true,
+      "missing_owner_or_api": "NOT_YET_READY / PROCEED_TO_LATER_STARTUP_GATES",
+      "default_allow_forbidden": [
+        "True",
+        "default allow",
+        "dummy grant",
+        "placeholder ready",
+        "test-only authority",
+        "not implemented therefore pass"
+      ]
+    },
+    "state_model_separation": [
+      "process_health_state",
+      "M0.2 runtime_state",
+      "P1C startup readiness disposition",
+      "exchange connection state",
+      "operator GUI lock state"
+    ],
+    "production_implementation_boundary": {
+      "may_implement_next": [
+        "Core-created active RuntimeSession identity/object",
+        "exact durable RuntimeSession history publisher",
+        "integration after P1B recovery-complete",
+        "empty -> SETUP_REQUIRED",
+        "initialized plus successful publication -> PROCEED_TO_LATER_STARTUP_GATES",
+        "process-local typed startup disposition",
+        "fail-closed errors and cleanup"
+      ],
+      "deferred": [
+        "bootstrap consumption",
+        "first OperatorIdentity",
+        "DeviceTrust transition",
+        "PIN setup/authentication",
+        "LiveAccessGrant",
+        "ExchangeAccount connect",
+        "reconciliation engine",
+        "ExecutionLease issuance",
+        "risk gate",
+        "final ready_gate success",
+        "LIVE"
+      ]
+    },
+    "ownership_domains": {
+      "runtime_session_identity_and_schema": {
+        "owner_milestone": "M0.2",
+        "artifact": "canonical_domain_vocabulary.json",
+        "json_pointers": [
+          "/entity_kinds",
+          "/identifier_policy"
+        ]
+      },
+      "durable_carrier_and_transaction_protocol": {
+        "owner_milestone": "M0.11",
+        "artifact": "persistence_versioning_migrations_backup_and_recovery.json",
+        "json_pointers": [
+          "/backup_contract/representation_registry/RuntimeSession canonical identity~1history",
+          "/transaction_protocol",
+          "/runtime_session_persistence/publication"
+        ]
+      },
+      "startup_sequencing_phase_boundaries_and_readiness": {
+        "owner_milestone": "M0.3",
+        "artifact": "process_topology_and_lifecycle.json",
+        "json_pointers": [
+          "/corehost_startup_recovery_contract/recover_writable_state_store_phase_binding",
+          "/corehost_runtime_session_and_readiness_contract/startup_readiness"
+        ]
+      }
+    },
+    "phase_boundaries": {
+      "P1B_RECOVERY": {
+        "starts_at": "read_verified_snapshot_initial",
+        "ends_at_inclusive": "recovery_complete",
+        "steps": [
+          "read_verified_snapshot_initial",
+          "bind_corehost_scope_to_verified_state_store_identity",
+          "recover_m0_3_protected_freshness",
+          "read_verified_snapshot_after_protected_recovery",
+          "recover_migrations_in_sealed_schema_chain_order",
+          "read_verified_snapshot_after_migration_recovery",
+          "recover_secret_handoffs_in_handoff_id_order",
+          "read_verified_snapshot_final",
+          "publish_fresh_process_local_durable_evidence",
+          "recovery_complete"
+        ],
+        "includes_runtime_session_publication": false,
+        "includes_startup_readiness": false,
+        "includes_READY": false
+      },
+      "P1C": {
+        "starts_after": "recovery_complete",
+        "steps": [
+          "durably_publish_current_runtime_session_history",
+          "determine_startup_readiness"
+        ],
+        "terminal_dispositions": [
+          "SETUP_REQUIRED",
+          "PROCEED_TO_LATER_STARTUP_GATES"
+        ],
+        "includes_final_READY": false
+      },
+      "LATER_STARTUP": {
+        "starts_after": "PROCEED_TO_LATER_STARTUP_GATES",
+        "uses_existing_later_gates": true,
+        "final_step": "ready_gate"
+      }
+    },
+    "global_initialized_order": [
+      "read_verified_snapshot_initial",
+      "bind_corehost_scope_to_verified_state_store_identity",
+      "recover_m0_3_protected_freshness",
+      "read_verified_snapshot_after_protected_recovery",
+      "recover_migrations_in_sealed_schema_chain_order",
+      "read_verified_snapshot_after_migration_recovery",
+      "recover_secret_handoffs_in_handoff_id_order",
+      "read_verified_snapshot_final",
+      "publish_fresh_process_local_durable_evidence",
+      "recovery_complete",
+      "durably_publish_current_runtime_session_history",
+      "determine_startup_readiness",
+      "PROCEED_TO_LATER_STARTUP_GATES",
+      "later_startup_gates",
+      "ready_gate",
+      "READY_only_if_all_later_gates_pass"
+    ],
+    "global_initialized_order_authority": "M0.3 SINGLE AUTHORITATIVE GLOBAL ORDER"
   },
   "state_model_separation": [
     "process_health_state",
     "M0.2 runtime_state",
+    "P1C startup readiness disposition",
     "exchange connection state",
     "operator GUI lock state"
   ],
