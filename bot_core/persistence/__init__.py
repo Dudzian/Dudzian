@@ -43,6 +43,10 @@ from .migration_execution import (
 )
 from .migration_execution_engine import MigrationExecutionCoordinator
 from .migration_completion import DurableMigrationCompletionCoordinator
+from .physical_schema_registry import (
+    StateStorePhysicalSchemaError,
+    StateStorePhysicalSchemaRegistry,
+)
 from .secret_handoff import (
     DurableSecretHandoffExecutionCoordinator,
     SecretHandoffCoordinator,
@@ -86,6 +90,8 @@ __all__ = [
     "MigrationExecutionAuthority",
     "DurableMigrationCompletionCoordinator",
     "MigrationExecutionCoordinator",
+    "StateStorePhysicalSchemaError",
+    "StateStorePhysicalSchemaRegistry",
     "MigrationExecutionError",
     "MigrationExecutionPlan",
     "MigrationSqlOperation",

@@ -51,10 +51,12 @@ from .migration_execution import (
 )
 from .migration_execution_contract import thaw_json
 from .migration_protocol import (
+    MIGRATION_FAMILY_REPRESENTATIONS,
     MIGRATION_TRANSITIONS,
     MigrationDefinition,
     MigrationError,
     MigrationRegistry,
+    migration_family_ids,
     migration_mapping_payload,
 )
 
@@ -125,14 +127,6 @@ class MigrationRestoreAuthorityPort(Protocol):
 class SealedMigrationRestoreAuthority:
     """Read-only restore verifier rooted exclusively in a sealed registry."""
 
-    _NAMES = frozenset(
-        {
-            "Migration transition/history revisions",
-            "Migration current state/designation",
-            "Migration execution declaration",
-        }
-    )
-
     def __init__(self, registry: MigrationRegistry) -> None:
         if not isinstance(registry, MigrationRegistry):
             raise TypeError("migration restore authority requires MigrationRegistry")
@@ -140,14 +134,7 @@ class SealedMigrationRestoreAuthority:
 
     @staticmethod
     def _ids(snapshot: StateStoreSnapshot) -> tuple[str, ...]:
-        ids: set[str] = set()
-        for carrier in (*snapshot.current_records, *snapshot.immutable_history):
-            if carrier.representation_name in SealedMigrationRestoreAuthority._NAMES:
-                migration_id = migration_mapping_payload(carrier.payload).get("migration_id")
-                if not isinstance(migration_id, str) or not migration_id:
-                    raise MigrationError("migration carrier identity is invalid")
-                ids.add(migration_id)
-        return tuple(sorted(ids))
+        return migration_family_ids(snapshot)
 
     def revalidate(
         self, snapshot: StateStoreSnapshot, sqlite_schema_fingerprint_sha256: str
@@ -846,7 +833,7 @@ class TrustedPhysicalRestoreCoordinator(S7CRestoreCoordinator):
         self._migration_relations(snapshot)  # Stage 1, local and intrinsic only
         migration = self._lifecycle_authority.migration_restore_authority
         has_migration = any(
-            record.representation_name in SealedMigrationRestoreAuthority._NAMES
+            record.representation_name in MIGRATION_FAMILY_REPRESENTATIONS
             for record in (*snapshot.current_records, *snapshot.immutable_history)
         )
         if has_migration and not isinstance(migration, SealedMigrationRestoreAuthority):
@@ -930,7 +917,7 @@ class TrustedPhysicalRestoreCoordinator(S7CRestoreCoordinator):
 
                 migration = self._lifecycle_authority.migration_restore_authority
                 has_migration = any(
-                    record.representation_name in SealedMigrationRestoreAuthority._NAMES
+                    record.representation_name in MIGRATION_FAMILY_REPRESENTATIONS
                     for record in (
                         *snapshot.current_records,
                         *snapshot.immutable_history,

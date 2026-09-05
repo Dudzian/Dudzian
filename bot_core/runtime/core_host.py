@@ -12,7 +12,14 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
-from typing import BinaryIO, Protocol, TypeVar
+from typing import Any, BinaryIO, Protocol, TypeVar
+
+from .core_host_recovery_types import (
+    CoreHostRecoveryClassification,
+    CoreHostRecoveryResult,
+    StartupSubsystemRecoveryClassification,
+    StartupSubsystemRecoveryResult,
+)
 
 if os.name == "nt":
     import msvcrt
@@ -127,10 +134,15 @@ SessionT = TypeVar("SessionT", bound=Closeable)
 StoreT = TypeVar("StoreT", bound=Closeable)
 
 
+class StartupRecovery(Protocol):
+    def recover(self) -> StartupSubsystemRecoveryResult: ...
+
+
 class CoreHost:
     """Own the lock and enforce the frozen initial CoreHost startup ordering.
 
-    This P1A boundary deliberately stops before integrity recovery and readiness.
+    The owned startup prefix reaches recovery-complete and deliberately stops
+    before durable RuntimeSession history publication and readiness.
     """
 
     def __init__(
@@ -139,19 +151,26 @@ class CoreHost:
         *,
         runtime_session_factory: Callable[[], SessionT],
         state_store_factory: Callable[[], StoreT],
+        startup_recovery_factory: Callable[[CoreHostScope, StoreT], StartupRecovery],
         lock_factory: Callable[[CoreHostScope], CoreHostProcessLock] = CoreHostProcessLock,
     ) -> None:
         self._scope = scope
         self._runtime_session_factory = runtime_session_factory
         self._state_store_factory = state_store_factory
         self._lock_factory = lock_factory
+        self._startup_recovery_factory = startup_recovery_factory
         self._lock: CoreHostProcessLock | None = None
         self._runtime_session: SessionT | None = None
         self._state_store: StoreT | None = None
+        self._startup_recovery_result: CoreHostRecoveryResult | None = None
 
     @property
     def owns_process_lock(self) -> bool:
         return self._lock is not None and self._lock.held
+
+    @property
+    def startup_recovery_result(self) -> CoreHostRecoveryResult | None:
+        return self._startup_recovery_result
 
     def start(self) -> None:
         if self.owns_process_lock:
@@ -159,15 +178,66 @@ class CoreHost:
         process_lock = self._lock_factory(self._scope)
         process_lock.acquire()
         self._lock = process_lock
+        session: Any = None
+        store: Any = None
         try:
             # M0.3 order 4 precedes order 5: RuntimeSession, then mutable store.
-            self._runtime_session = self._runtime_session_factory()
-            self._state_store = self._state_store_factory()
+            session = self._runtime_session_factory()
+            self._runtime_session = session
+            store = self._state_store_factory()
+            self._state_store = store
+            recovery = self._startup_recovery_factory(self._scope, store)
+            subsystem = recovery.recover()
+            if type(subsystem) is not StartupSubsystemRecoveryResult:
+                raise RuntimeError("startup recovery returned an invalid result type")
+            if (
+                self._lock is not process_lock
+                or not process_lock.held
+                or self._runtime_session is not session
+                or self._state_store is not store
+            ):
+                raise RuntimeError("CoreHost topology changed during startup recovery")
+            if (
+                subsystem.classification
+                is StartupSubsystemRecoveryClassification.EMPTY_UNINITIALIZED
+            ):
+                classification = CoreHostRecoveryClassification.EMPTY_UNINITIALIZED
+            elif (
+                subsystem.classification
+                is StartupSubsystemRecoveryClassification.INITIALIZED_DURABLE_RECOVERY_RESOLVED
+            ):
+                classification = CoreHostRecoveryClassification.INITIALIZED_RECOVERY_COMPLETE
+            else:
+                raise RuntimeError("startup recovery returned an invalid classification")
+            self._startup_recovery_result = CoreHostRecoveryResult(classification)
         except BaseException:
-            self.close()
+            self._cleanup_failed_start_attempt(process_lock, session, store)
             raise
 
+    def _cleanup_failed_start_attempt(
+        self,
+        process_lock: CoreHostProcessLock,
+        session: Closeable | None,
+        store: Closeable | None,
+    ) -> None:
+        """Release only the exact resources created by this failed start attempt."""
+
+        self._startup_recovery_result = None
+        self._state_store = None
+        self._runtime_session = None
+        self._lock = None
+        try:
+            if store is not None:
+                store.close()
+        finally:
+            try:
+                if session is not None:
+                    session.close()
+            finally:
+                process_lock.release()
+
     def close(self) -> None:
+        self._startup_recovery_result = None
         store, self._state_store = self._state_store, None
         session, self._runtime_session = self._runtime_session, None
         process_lock, self._lock = self._lock, None

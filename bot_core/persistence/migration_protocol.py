@@ -48,6 +48,28 @@ def migration_mapping_payload(value: object) -> Mapping[str, object]:
     return value
 
 
+MIGRATION_FAMILY_REPRESENTATIONS = frozenset(
+    {
+        "Migration transition/history revisions",
+        "Migration current state/designation",
+        "Migration execution declaration",
+    }
+)
+
+
+def migration_family_ids(snapshot: StateStoreSnapshot) -> tuple[str, ...]:
+    """Discover exact Migration families in one pinned verified snapshot."""
+
+    identities: set[str] = set()
+    for carrier in (*snapshot.current_records, *snapshot.immutable_history):
+        if carrier.representation_name in MIGRATION_FAMILY_REPRESENTATIONS:
+            migration_id = migration_mapping_payload(carrier.payload).get("migration_id")
+            if not isinstance(migration_id, str) or not migration_id:
+                raise MigrationError("migration carrier identity is invalid")
+            identities.add(migration_id)
+    return tuple(sorted(identities))
+
+
 @dataclass(frozen=True, slots=True)
 class MigrationRecord:
     """Ephemeral, snapshot-bound runtime candidate; never durable authority."""
@@ -475,6 +497,15 @@ class DurableMigrationLifecycleCoordinator:
         snapshot = self._store.read_verified_snapshot()
         if snapshot is None:
             raise MigrationError("migration lifecycle requires initialized StateStore")
+        return self._view(snapshot, migration_id)
+
+    def view_verified_snapshot(
+        self, snapshot: StateStoreSnapshot, migration_id: str
+    ) -> DurableMigrationLifecycle:
+        """Validate one lifecycle against the caller's pinned verified snapshot."""
+
+        if not isinstance(snapshot, StateStoreSnapshot):
+            raise TypeError("snapshot must be a StateStoreSnapshot")
         return self._view(snapshot, migration_id)
 
     def _view(self, snapshot: StateStoreSnapshot, migration_id: str) -> DurableMigrationLifecycle:
