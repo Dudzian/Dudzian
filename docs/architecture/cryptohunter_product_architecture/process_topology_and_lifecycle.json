@@ -411,6 +411,349 @@
       "description": "DesktopShell opens only by user preference, setup need, or request."
     }
   ],
+  "corehost_startup_recovery_contract": {
+    "semantic_owner": "M0.3 CoreHost startup sequencing; subsystem semantics remain owned by named M0.11 authorities",
+    "expands_runtime_session_order_step": "recover writable StateStore",
+    "m0_11_dependency": {
+      "artifact": "persistence_versioning_migrations_backup_and_recovery.json",
+      "json_pointers": [
+        "/startup_recovery_model",
+        "/protected_freshness_handoff",
+        "/migration_protocol",
+        "/secret_persistence_boundary",
+        "/runtime_session_persistence"
+      ]
+    },
+    "preconditions": [
+      "canonical CoreHost scope resolved",
+      "process lock held",
+      "current RuntimeSession active-process manifestation exists",
+      "mutable StateStore open"
+    ],
+    "initialized_order": [
+      "read_verified_snapshot_initial",
+      "bind_corehost_scope_to_verified_state_store_identity",
+      "recover_m0_3_protected_freshness",
+      "read_verified_snapshot_after_protected_recovery",
+      "recover_migrations_in_sealed_schema_chain_order",
+      "read_verified_snapshot_after_migration_recovery",
+      "recover_secret_handoffs_in_handoff_id_order",
+      "read_verified_snapshot_final",
+      "publish_fresh_process_local_durable_evidence",
+      "recovery_complete",
+      "durably_publish_current_runtime_session_history",
+      "determine_startup_readiness",
+      "READY_only_if_all_later_gates_pass"
+    ],
+    "initial_observation": {
+      "only_source": "read_verified_snapshot generation-pinned durable StateStore snapshot",
+      "forbidden_sources": [
+        "raw SQL",
+        "unverified read_snapshot",
+        "BackupEnvelope",
+        "cached LocalDurableEvidence",
+        "caller-provided metadata"
+      ],
+      "invalid_or_corrupt": "FAIL_CLOSED_NO_AUTOMATIC_PHYSICAL_RESTORE"
+    },
+    "scope_binding": {
+      "required_equal_fields": [
+        "account_id",
+        "device_installation_id",
+        "state_store_identity_fingerprint_sha256 derived from canonical state-store identity/path"
+      ],
+      "mismatch": "FAIL_CLOSED_BEFORE_EXTERNAL_MUTATION",
+      "caller_boolean_override": false
+    },
+    "empty_or_uninitialized": {
+      "order": [
+        "read_verified_snapshot_initial_returns_none",
+        "skip_initialized_recovery",
+        "determine_startup_readiness"
+      ],
+      "skips": [
+        "M0.3 protected recovery",
+        "Migration recovery",
+        "SecretHandoff recovery",
+        "LocalDurableEvidence publication"
+      ],
+      "must_not_create": [
+        "StateStoreMetadata",
+        "Account",
+        "DeviceInstallation",
+        "durable RuntimeSession history",
+        "bootstrap consumed fence",
+        "security authority"
+      ],
+      "possible_readiness": "SETUP_REQUIRED",
+      "consumes_bootstrap": false
+    },
+    "protected_freshness": {
+      "startup_owned": true,
+      "mandatory_for_initialized": true,
+      "must_precede": [
+        "Migration recovery",
+        "SecretHandoff recovery",
+        "recovery_complete",
+        "READY"
+      ],
+      "reason": [
+        "pending M0.3 may represent a durable mutation before crash",
+        "no new semantic mutation may start across unresolved protected authority",
+        "recovered local/external state is the baseline for lifecycle recovery"
+      ],
+      "production_owner": "ProtectedFreshnessHandoffCoordinator.recover_protected_state(scope)",
+      "exact_committed_current": "VERIFY_WITH_ZERO_UNNECESSARY_MUTATION",
+      "prepared": "EXISTING_PROTOCOL_DECIDES_EXACT_ABORT_OR_FINALIZE",
+      "new_ordinary_prepare": false,
+      "missing_malformed_mismatched_or_unresolved": "FAIL_CLOSED_NO_READY",
+      "initial_gate_is_session_wide_authority_token": false,
+      "later_mutations_keep_existing_protected_preflight": true
+    },
+    "migration": {
+      "startup_owned": true,
+      "discovery_source": "fresh verified StateStore snapshot",
+      "discovery_validator": "existing shared durable Migration lifecycle validator",
+      "required_authority": [
+        "sealed MigrationDefinition",
+        "sealed MigrationExecutionAuthority",
+        "sealed MigrationRegistry",
+        "existing durable declaration/materialization proof"
+      ],
+      "declaration_mints_execution_authority": false,
+      "missing_registry_entry": "FAIL_CLOSED",
+      "states": {
+        "COMPLETED": "TERMINAL_ZERO_EFFECT",
+        "FAILED": "TERMINAL_FAILURE_NO_SQL_REPLAY",
+        "PREPARED": "RESOLVE_WITH_EXISTING_PRODUCTION_MIGRATION_AUTHORITY",
+        "APPLYING": "RESUME_WITH_EXISTING_PRODUCTION_MIGRATION_AUTHORITY",
+        "DURABLE_MIGRATED": "COMPLETE_WITHOUT_STRUCTURAL_SQL_REPLAY"
+      },
+      "multiple_family_order": "SEMANTIC_EXACT_SOURCE_TO_TARGET_SCHEMA_CHAIN_FROM_SEALED_REGISTRY",
+      "forbidden_order_sources": [
+        "SQLite row order",
+        "record storage order",
+        "lexicographic migration_id",
+        "caller order"
+      ],
+      "already_materialized_structural_sql_replay": false,
+      "pre_materialization_continuation": "exact sealed authorized plan through MigrationExecutionCoordinator only",
+      "corehost_executes_sql": false
+    },
+    "secret_handoff": {
+      "startup_owned": true,
+      "discovery_source": "fresh verified StateStore snapshot after Migration recovery",
+      "discovery_validator": "existing shared pure durable SecretHandoff lifecycle validator",
+      "family_requirements": [
+        "one immutable descriptor",
+        "valid transition history",
+        "one current designation",
+        "exact scope",
+        "exact fingerprint binding"
+      ],
+      "invalid_family": "FAIL_CLOSED",
+      "states": {
+        "PREPARED": "RECONCILE_NEVER_BLIND_RETRY_INITIAL_MUTATION",
+        "COMMITTED": "EXACT_HANDOFF_IDEMPOTENT_CLEANUP_REDELIVERY",
+        "CLEANUP_PENDING": "TERMINAL_ZERO_EXTERNAL_MUTATION",
+        "UNKNOWN_RECONCILIATION": "UNRESOLVED_ZERO_BLIND_MUTATION_NO_READY"
+      },
+      "multiple_family_order": "DETERMINISTIC_ONLY_NON_AUTHORITATIVE_ASCENDING_CANONICAL_HANDOFF_ID",
+      "dependencies_between_families": "NONE_DEFINED; any discovered dependency fails closed rather than reorders"
+    },
+    "freshness_between_stages": {
+      "after_every_authority_changing_recovery": "fresh read_verified_snapshot required",
+      "stale_snapshot_reuse": false,
+      "top_level_m0_3_gate_skips_subsystem_protected_preflight": false
+    },
+    "local_durable_evidence": {
+      "position": "after final fresh verified snapshot and all protected, Migration, and SecretHandoff gates resolve",
+      "source": "final fresh verified StateStore snapshot",
+      "classification": "DERIVED / REBUILDABLE process-local non-authoritative upstream",
+      "persisted": false,
+      "equals_READY": false,
+      "equals_RuntimeSession_history_publication": false
+    },
+    "recovery_complete": {
+      "derivation": "exact observations from production authority owners; never caller boolean",
+      "initialized_requires": [
+        "process lock still held",
+        "current RuntimeSession active-process manifestation still current",
+        "StateStore handle still current and open",
+        "final StateStore snapshot verifies",
+        "CoreHost scope exactly matches final snapshot",
+        "protected M0.3 authority is terminal/current and exactly matches final local state",
+        "no recovery-required Migration lifecycle remains",
+        "migration physical schema/materialization is canonical current",
+        "no recovery-required SecretHandoff remains",
+        "no SecretHandoff UNKNOWN_RECONCILIATION exists",
+        "final LocalDurableEvidence freshly derives from final verified snapshot"
+      ],
+      "any_false": "NO_READY_AND_FAIL_CLOSED"
+    },
+    "runtime_session_boundary": {
+      "active_process": "EPHEMERAL RUNTIME created before StateStore open",
+      "durable_identity_history": "DURABLE M0.2 APPEND_ONLY_HISTORY",
+      "durable_publication": "AFTER_RECOVERY_COMPLETE_BEFORE_READINESS",
+      "old_active_process_restored": false,
+      "old_durable_history_preserved": true,
+      "new_process_uses_new_current_runtime_session_id": true
+    },
+    "readiness_boundary": {
+      "determination": "AFTER_RECOVERY_COMPLETE_FOR_INITIALIZED_STATESTORE",
+      "READY_requires": "successful recovery_complete plus existing later readiness gates",
+      "evidence_mints_READY": false,
+      "implemented_by_this_contract": false
+    },
+    "physical_restore_boundary": {
+      "normal_startup_auto_restore": false,
+      "requires": "separate explicit restore operation authority and artifact",
+      "forbidden_automatic_actions": [
+        "TrustedPhysicalRestoreCoordinator invocation",
+        "backup selection",
+        "artifact restore"
+      ]
+    },
+    "ownership": {
+      "CoreHost": "startup sequencing and process-local handles only",
+      "SQLiteStateStore": "local durable integrity and current state",
+      "M0.3 ProtectedFreshness authority": "protected external freshness and PREPARED resolution",
+      "MigrationRegistry and migration coordinators": "migration execution and completion authority",
+      "SecretHandoff production orchestrator": "secret mutation, reconciliation, and cleanup authority",
+      "LocalDurableEvidenceRegistry": "process-local derived observation only",
+      "TrustedPhysicalRestoreCoordinator": "restore-specific workflow only",
+      "M0.3 CoreHost readiness contract": "startup readiness"
+    },
+    "caller_boolean_authority": false,
+    "failure_matrix": [
+      {
+        "failure": "STATESTORE_INTEGRITY_FAILURE",
+        "READY": "FORBIDDEN",
+        "caller_bypass": false,
+        "automatic_physical_restore": false,
+        "corehost_cleanup": "CLOSE_STATESTORE_CLOSE_RUNTIMESESSION_RELEASE_PROCESS_LOCK",
+        "rollback_completed_external_effects": false,
+        "existing_failure_outcome": "AUTHORITATIVE_STATE_CORRUPT"
+      },
+      {
+        "failure": "COREHOST_SCOPE_MISMATCH",
+        "READY": "FORBIDDEN",
+        "caller_bypass": false,
+        "automatic_physical_restore": false,
+        "corehost_cleanup": "CLOSE_STATESTORE_CLOSE_RUNTIMESESSION_RELEASE_PROCESS_LOCK",
+        "rollback_completed_external_effects": false,
+        "existing_failure_outcome": "CONTRACT_INCONSISTENT"
+      },
+      {
+        "failure": "PROTECTED_AUTHORITY_MISSING",
+        "READY": "FORBIDDEN",
+        "caller_bypass": false,
+        "automatic_physical_restore": false,
+        "corehost_cleanup": "CLOSE_STATESTORE_CLOSE_RUNTIMESESSION_RELEASE_PROCESS_LOCK",
+        "rollback_completed_external_effects": false,
+        "existing_failure_outcome": "RECOVERY_REQUIRED"
+      },
+      {
+        "failure": "PROTECTED_AUTHORITY_MALFORMED",
+        "READY": "FORBIDDEN",
+        "caller_bypass": false,
+        "automatic_physical_restore": false,
+        "corehost_cleanup": "CLOSE_STATESTORE_CLOSE_RUNTIMESESSION_RELEASE_PROCESS_LOCK",
+        "rollback_completed_external_effects": false,
+        "existing_failure_outcome": "RECOVERY_FAILED"
+      },
+      {
+        "failure": "PROTECTED_SCOPE_MISMATCH",
+        "READY": "FORBIDDEN",
+        "caller_bypass": false,
+        "automatic_physical_restore": false,
+        "corehost_cleanup": "CLOSE_STATESTORE_CLOSE_RUNTIMESESSION_RELEASE_PROCESS_LOCK",
+        "rollback_completed_external_effects": false,
+        "existing_failure_outcome": "CONTRACT_INCONSISTENT"
+      },
+      {
+        "failure": "PROTECTED_PREPARED_UNRESOLVED",
+        "READY": "FORBIDDEN",
+        "caller_bypass": false,
+        "automatic_physical_restore": false,
+        "corehost_cleanup": "CLOSE_STATESTORE_CLOSE_RUNTIMESESSION_RELEASE_PROCESS_LOCK",
+        "rollback_completed_external_effects": false,
+        "existing_failure_outcome": "RECOVERY_REQUIRED"
+      },
+      {
+        "failure": "MIGRATION_FAMILY_INVALID",
+        "READY": "FORBIDDEN",
+        "caller_bypass": false,
+        "automatic_physical_restore": false,
+        "corehost_cleanup": "CLOSE_STATESTORE_CLOSE_RUNTIMESESSION_RELEASE_PROCESS_LOCK",
+        "rollback_completed_external_effects": false,
+        "existing_failure_outcome": "IMMUTABLE_HISTORY_CORRUPT"
+      },
+      {
+        "failure": "MIGRATION_AUTHORITY_MISSING",
+        "READY": "FORBIDDEN",
+        "caller_bypass": false,
+        "automatic_physical_restore": false,
+        "corehost_cleanup": "CLOSE_STATESTORE_CLOSE_RUNTIMESESSION_RELEASE_PROCESS_LOCK",
+        "rollback_completed_external_effects": false,
+        "existing_failure_outcome": "MIGRATION_PATH_UNAVAILABLE"
+      },
+      {
+        "failure": "MIGRATION_RECOVERY_FAILED",
+        "READY": "FORBIDDEN",
+        "caller_bypass": false,
+        "automatic_physical_restore": false,
+        "corehost_cleanup": "CLOSE_STATESTORE_CLOSE_RUNTIMESESSION_RELEASE_PROCESS_LOCK",
+        "rollback_completed_external_effects": false,
+        "existing_failure_outcome": "MIGRATION_FAILED"
+      },
+      {
+        "failure": "SECRET_FAMILY_INVALID",
+        "READY": "FORBIDDEN",
+        "caller_bypass": false,
+        "automatic_physical_restore": false,
+        "corehost_cleanup": "CLOSE_STATESTORE_CLOSE_RUNTIMESESSION_RELEASE_PROCESS_LOCK",
+        "rollback_completed_external_effects": false,
+        "existing_failure_outcome": "IMMUTABLE_HISTORY_CORRUPT"
+      },
+      {
+        "failure": "SECRET_RECONCILIATION_REQUIRED",
+        "READY": "FORBIDDEN",
+        "caller_bypass": false,
+        "automatic_physical_restore": false,
+        "corehost_cleanup": "CLOSE_STATESTORE_CLOSE_RUNTIMESESSION_RELEASE_PROCESS_LOCK",
+        "rollback_completed_external_effects": false,
+        "existing_failure_outcome": "RECONCILIATION_REQUIRED"
+      },
+      {
+        "failure": "SECRET_RECOVERY_FAILED",
+        "READY": "FORBIDDEN",
+        "caller_bypass": false,
+        "automatic_physical_restore": false,
+        "corehost_cleanup": "CLOSE_STATESTORE_CLOSE_RUNTIMESESSION_RELEASE_PROCESS_LOCK",
+        "rollback_completed_external_effects": false,
+        "existing_failure_outcome": "SECRET_HANDOFF_FAILED"
+      },
+      {
+        "failure": "FINAL_VERIFIED_SNAPSHOT_FAILED",
+        "READY": "FORBIDDEN",
+        "caller_bypass": false,
+        "automatic_physical_restore": false,
+        "corehost_cleanup": "CLOSE_STATESTORE_CLOSE_RUNTIMESESSION_RELEASE_PROCESS_LOCK",
+        "rollback_completed_external_effects": false,
+        "existing_failure_outcome": "AUTHORITATIVE_STATE_CORRUPT"
+      },
+      {
+        "failure": "FINAL_EVIDENCE_PUBLICATION_FAILED",
+        "READY": "FORBIDDEN",
+        "caller_bypass": false,
+        "automatic_physical_restore": false,
+        "corehost_cleanup": "CLOSE_STATESTORE_CLOSE_RUNTIMESESSION_RELEASE_PROCESS_LOCK",
+        "rollback_completed_external_effects": false,
+        "existing_failure_outcome": "RECOVERY_FAILED"
+      }
+    ]
+  },
   "state_model_separation": [
     "process_health_state",
     "M0.2 runtime_state",
@@ -5643,9 +5986,10 @@
         "create_runtime_session",
         "open_state_store",
         "verify_integrity",
+        "recover writable StateStore through corehost_startup_recovery_contract",
         "determine_startup_readiness"
       ],
-      "freshness_check": "subordinate to StateStore integrity, recovery and readiness; no mutable store before process lock",
+      "freshness_check": "subordinate to StateStore integrity, first initialized recovery gate, and prerequisite to readiness; no mutable store before process lock",
       "READY_requires": "available, valid, exact-scope protected authority and successful freshness reconciliation"
     },
     "failure_outcomes": {

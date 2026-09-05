@@ -49,6 +49,10 @@ def load_contract() -> dict:
     return cast(dict[Any, Any], json.loads(CONTRACT.read_text(encoding="utf-8")))
 
 
+def startup_recovery_contract() -> dict[str, Any]:
+    return cast(dict[str, Any], load_contract()["corehost_startup_recovery_contract"])
+
+
 def roles_by_name(data: dict) -> dict:
     return {role["name"]: role for role in data["process_roles"]}
 
@@ -93,6 +97,191 @@ def test_schema_baseline_roles_modes_and_health_states() -> None:
         "STOPPED",
         "CRASHED",
     ]
+
+
+def test_corehost_initialized_startup_recovery_has_one_exact_order() -> None:
+    contract = startup_recovery_contract()
+    assert contract["expands_runtime_session_order_step"] == "recover writable StateStore"
+    assert contract["preconditions"] == [
+        "canonical CoreHost scope resolved",
+        "process lock held",
+        "current RuntimeSession active-process manifestation exists",
+        "mutable StateStore open",
+    ]
+    assert contract["initialized_order"] == [
+        "read_verified_snapshot_initial",
+        "bind_corehost_scope_to_verified_state_store_identity",
+        "recover_m0_3_protected_freshness",
+        "read_verified_snapshot_after_protected_recovery",
+        "recover_migrations_in_sealed_schema_chain_order",
+        "read_verified_snapshot_after_migration_recovery",
+        "recover_secret_handoffs_in_handoff_id_order",
+        "read_verified_snapshot_final",
+        "publish_fresh_process_local_durable_evidence",
+        "recovery_complete",
+        "durably_publish_current_runtime_session_history",
+        "determine_startup_readiness",
+        "READY_only_if_all_later_gates_pass",
+    ]
+
+
+def test_corehost_empty_startup_skips_initialized_authority_pipeline() -> None:
+    empty = startup_recovery_contract()["empty_or_uninitialized"]
+    assert empty["order"] == [
+        "read_verified_snapshot_initial_returns_none",
+        "skip_initialized_recovery",
+        "determine_startup_readiness",
+    ]
+    assert empty["skips"] == [
+        "M0.3 protected recovery",
+        "Migration recovery",
+        "SecretHandoff recovery",
+        "LocalDurableEvidence publication",
+    ]
+    assert empty["possible_readiness"] == "SETUP_REQUIRED"
+    assert empty["consumes_bootstrap"] is False
+    assert "durable RuntimeSession history" in empty["must_not_create"]
+    assert "security authority" in empty["must_not_create"]
+
+
+def test_corehost_protected_recovery_is_first_initialized_authority_gate() -> None:
+    protected = startup_recovery_contract()["protected_freshness"]
+    assert protected["startup_owned"] is True
+    assert protected["mandatory_for_initialized"] is True
+    assert protected["production_owner"] == (
+        "ProtectedFreshnessHandoffCoordinator.recover_protected_state(scope)"
+    )
+    assert protected["new_ordinary_prepare"] is False
+    assert protected["exact_committed_current"] == "VERIFY_WITH_ZERO_UNNECESSARY_MUTATION"
+    assert protected["prepared"] == "EXISTING_PROTOCOL_DECIDES_EXACT_ABORT_OR_FINALIZE"
+    assert protected["missing_malformed_mismatched_or_unresolved"] == "FAIL_CLOSED_NO_READY"
+    assert protected["initial_gate_is_session_wide_authority_token"] is False
+    assert protected["later_mutations_keep_existing_protected_preflight"] is True
+
+
+def test_corehost_migration_startup_recovery_reuses_sealed_authority() -> None:
+    migration = startup_recovery_contract()["migration"]
+    assert migration["startup_owned"] is True
+    assert migration["discovery_source"] == "fresh verified StateStore snapshot"
+    assert migration["declaration_mints_execution_authority"] is False
+    assert migration["missing_registry_entry"] == "FAIL_CLOSED"
+    assert migration["states"] == {
+        "COMPLETED": "TERMINAL_ZERO_EFFECT",
+        "FAILED": "TERMINAL_FAILURE_NO_SQL_REPLAY",
+        "PREPARED": "RESOLVE_WITH_EXISTING_PRODUCTION_MIGRATION_AUTHORITY",
+        "APPLYING": "RESUME_WITH_EXISTING_PRODUCTION_MIGRATION_AUTHORITY",
+        "DURABLE_MIGRATED": "COMPLETE_WITHOUT_STRUCTURAL_SQL_REPLAY",
+    }
+    assert migration["already_materialized_structural_sql_replay"] is False
+    assert migration["corehost_executes_sql"] is False
+    assert migration["multiple_family_order"] == (
+        "SEMANTIC_EXACT_SOURCE_TO_TARGET_SCHEMA_CHAIN_FROM_SEALED_REGISTRY"
+    )
+    assert migration["forbidden_order_sources"] == [
+        "SQLite row order",
+        "record storage order",
+        "lexicographic migration_id",
+        "caller order",
+    ]
+
+
+def test_corehost_secret_handoff_startup_behavior_is_closed_by_state() -> None:
+    secret = startup_recovery_contract()["secret_handoff"]
+    assert secret["startup_owned"] is True
+    assert secret["states"] == {
+        "PREPARED": "RECONCILE_NEVER_BLIND_RETRY_INITIAL_MUTATION",
+        "COMMITTED": "EXACT_HANDOFF_IDEMPOTENT_CLEANUP_REDELIVERY",
+        "CLEANUP_PENDING": "TERMINAL_ZERO_EXTERNAL_MUTATION",
+        "UNKNOWN_RECONCILIATION": "UNRESOLVED_ZERO_BLIND_MUTATION_NO_READY",
+    }
+    assert secret["multiple_family_order"] == (
+        "DETERMINISTIC_ONLY_NON_AUTHORITATIVE_ASCENDING_CANONICAL_HANDOFF_ID"
+    )
+    assert secret["invalid_family"] == "FAIL_CLOSED"
+
+
+def test_corehost_recovery_requires_fresh_observations_and_final_evidence() -> None:
+    contract = startup_recovery_contract()
+    initial = contract["initial_observation"]
+    assert initial["only_source"] == (
+        "read_verified_snapshot generation-pinned durable StateStore snapshot"
+    )
+    assert initial["invalid_or_corrupt"] == "FAIL_CLOSED_NO_AUTOMATIC_PHYSICAL_RESTORE"
+    assert contract["freshness_between_stages"] == {
+        "after_every_authority_changing_recovery": "fresh read_verified_snapshot required",
+        "stale_snapshot_reuse": False,
+        "top_level_m0_3_gate_skips_subsystem_protected_preflight": False,
+    }
+    evidence = contract["local_durable_evidence"]
+    assert evidence["source"] == "final fresh verified StateStore snapshot"
+    assert evidence["persisted"] is False
+    assert evidence["equals_READY"] is False
+    assert evidence["equals_RuntimeSession_history_publication"] is False
+
+
+def test_corehost_recovery_complete_and_runtime_session_boundaries_are_exact() -> None:
+    contract = startup_recovery_contract()
+    complete = contract["recovery_complete"]
+    assert complete["derivation"] == (
+        "exact observations from production authority owners; never caller boolean"
+    )
+    assert len(complete["initialized_requires"]) == 11
+    assert "no SecretHandoff UNKNOWN_RECONCILIATION exists" in complete["initialized_requires"]
+    assert complete["any_false"] == "NO_READY_AND_FAIL_CLOSED"
+    runtime = contract["runtime_session_boundary"]
+    assert runtime["active_process"] == "EPHEMERAL RUNTIME created before StateStore open"
+    assert runtime["durable_publication"] == "AFTER_RECOVERY_COMPLETE_BEFORE_READINESS"
+    assert runtime["old_active_process_restored"] is False
+    assert runtime["old_durable_history_preserved"] is True
+    assert contract["readiness_boundary"]["READY_requires"] == (
+        "successful recovery_complete plus existing later readiness gates"
+    )
+
+
+def test_corehost_startup_recovery_ownership_and_restore_separation_are_closed() -> None:
+    contract = startup_recovery_contract()
+    assert set(contract["ownership"]) == {
+        "CoreHost",
+        "SQLiteStateStore",
+        "M0.3 ProtectedFreshness authority",
+        "MigrationRegistry and migration coordinators",
+        "SecretHandoff production orchestrator",
+        "LocalDurableEvidenceRegistry",
+        "TrustedPhysicalRestoreCoordinator",
+        "M0.3 CoreHost readiness contract",
+    }
+    assert contract["caller_boolean_authority"] is False
+    restore = contract["physical_restore_boundary"]
+    assert restore["normal_startup_auto_restore"] is False
+    assert restore["requires"] == "separate explicit restore operation authority and artifact"
+
+
+def test_corehost_startup_recovery_failure_matrix_is_uniformly_fail_closed() -> None:
+    rows = startup_recovery_contract()["failure_matrix"]
+    assert [row["failure"] for row in rows] == [
+        "STATESTORE_INTEGRITY_FAILURE",
+        "COREHOST_SCOPE_MISMATCH",
+        "PROTECTED_AUTHORITY_MISSING",
+        "PROTECTED_AUTHORITY_MALFORMED",
+        "PROTECTED_SCOPE_MISMATCH",
+        "PROTECTED_PREPARED_UNRESOLVED",
+        "MIGRATION_FAMILY_INVALID",
+        "MIGRATION_AUTHORITY_MISSING",
+        "MIGRATION_RECOVERY_FAILED",
+        "SECRET_FAMILY_INVALID",
+        "SECRET_RECONCILIATION_REQUIRED",
+        "SECRET_RECOVERY_FAILED",
+        "FINAL_VERIFIED_SNAPSHOT_FAILED",
+        "FINAL_EVIDENCE_PUBLICATION_FAILED",
+    ]
+    for row in rows:
+        assert row["READY"] == "FORBIDDEN"
+        assert row["caller_bypass"] is False
+        assert row["automatic_physical_restore"] is False
+        assert row["corehost_cleanup"] == (
+            "CLOSE_STATESTORE_CLOSE_RUNTIMESESSION_RELEASE_PROCESS_LOCK"
+        )
+        assert row["rollback_completed_external_effects"] is False
 
 
 def test_process_role_authority_flags() -> None:
