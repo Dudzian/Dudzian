@@ -1386,14 +1386,65 @@
   "runtime_session_persistence": {
     "active_process": "EPHEMERAL RUNTIME",
     "canonical_identity_history": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY",
+    "carrier_registry_key": "RuntimeSession canonical identity/history",
+    "carrier_registry_pointer": "/backup_contract/representation_registry/RuntimeSession canonical identity~1history",
+    "new_representation_kind": false,
     "order": [
       "create current runtime_session_id before StateStore open",
-      "recover writable StateStore",
-      "durably publish current RuntimeSession history",
-      "READY"
+      "recover writable StateStore through exact P1B recovery phase ending at recovery_complete",
+      "durably publish current RuntimeSession history using transaction_protocol as G+1",
+      "determine startup readiness",
+      "READY only after separate later startup gates and ready_gate"
     ],
+    "publication": {
+      "initialized_only": true,
+      "empty_uninitialized_count": 0,
+      "transaction_protocol_pointer": "/transaction_protocol",
+      "immutable_history_appends_count": 1,
+      "record_key": "runtime_session_id",
+      "required_upstream_fields": [
+        "runtime_session_id",
+        "device_installation_id"
+      ],
+      "current_designation_created": false,
+      "post_publication_evidence_generation": "G+1",
+      "p1b_cached_evidence_generation": "G",
+      "p1b_evidence_may_substitute": false
+    },
     "old_history_preserved": true,
-    "old_process_restored": false
+    "old_process_restored": false,
+    "durable_carrier_is_current_process_authority": false,
+    "ownership_domains": {
+      "runtime_session_identity_and_schema": {
+        "owner_milestone": "M0.2",
+        "artifact": "canonical_domain_vocabulary.json",
+        "json_pointers": [
+          "/entity_kinds",
+          "/identifier_policy"
+        ]
+      },
+      "durable_carrier_and_transaction_protocol": {
+        "owner_milestone": "M0.11",
+        "artifact": "persistence_versioning_migrations_backup_and_recovery.json",
+        "json_pointers": [
+          "/backup_contract/representation_registry/RuntimeSession canonical identity~1history",
+          "/transaction_protocol",
+          "/runtime_session_persistence/publication"
+        ]
+      },
+      "startup_sequencing_and_readiness": {
+        "owner_milestone": "M0.3",
+        "artifact": "process_topology_and_lifecycle.json",
+        "json_pointer": "/corehost_runtime_session_and_readiness_contract"
+      }
+    },
+    "startup_sequence_binding": {
+      "owner_milestone": "M0.3",
+      "artifact": "process_topology_and_lifecycle.json",
+      "global_order_json_pointer": "/corehost_runtime_session_and_readiness_contract/global_initialized_order",
+      "p1b_phase_json_pointer": "/corehost_startup_recovery_contract/recover_writable_state_store_phase_binding",
+      "recover_writable_state_store_ends_at_inclusive": "recovery_complete"
+    }
   },
   "execution_lease_recovery": {
     "authority": "M0.9",

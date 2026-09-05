@@ -101,7 +101,18 @@ def test_schema_baseline_roles_modes_and_health_states() -> None:
 
 def test_corehost_initialized_startup_recovery_has_one_exact_order() -> None:
     contract = startup_recovery_contract()
-    assert contract["expands_runtime_session_order_step"] == "recover writable StateStore"
+    assert contract["recover_writable_state_store_phase_binding"] == {
+        "runtime_session_order_anchor": "recover writable StateStore",
+        "phase": "P1B_RECOVERY",
+        "starts_at": "read_verified_snapshot_initial",
+        "ends_at_inclusive": "recovery_complete",
+        "includes_runtime_session_publication": False,
+        "includes_startup_readiness": False,
+        "includes_READY": False,
+        "authoritative_global_order_pointer": (
+            "/corehost_runtime_session_and_readiness_contract/global_initialized_order"
+        ),
+    }
     assert contract["preconditions"] == [
         "canonical CoreHost scope resolved",
         "process lock held",
@@ -119,9 +130,6 @@ def test_corehost_initialized_startup_recovery_has_one_exact_order() -> None:
         "read_verified_snapshot_final",
         "publish_fresh_process_local_durable_evidence",
         "recovery_complete",
-        "durably_publish_current_runtime_session_history",
-        "determine_startup_readiness",
-        "READY_only_if_all_later_gates_pass",
     ]
 
 
@@ -5023,4 +5031,353 @@ def test_corehost_recovery_complete_uses_sealed_current_physical_schema_registry
         ),
         "mismatch": "FAIL_CLOSED",
         "match_alone_sufficient": False,
+    }
+
+
+def p1c_contract() -> dict[str, Any]:
+    return cast(dict[str, Any], load_contract()["corehost_runtime_session_and_readiness_contract"])
+
+
+def test_p1c_initialized_and_empty_orders_are_exact() -> None:
+    recovery = startup_recovery_contract()
+    assert recovery["initialized_order"][-1] == "recovery_complete"
+    global_order = p1c_contract()["global_initialized_order"]
+    assert (
+        global_order.index("recovery_complete")
+        < global_order.index("durably_publish_current_runtime_session_history")
+        < global_order.index("determine_startup_readiness")
+        < global_order.index("ready_gate")
+        < global_order.index("READY_only_if_all_later_gates_pass")
+    )
+    assert recovery["empty_or_uninitialized"]["order"][-1] == "determine_startup_readiness"
+    assert p1c_contract()["empty_uninitialized"]["publication_count"] == 0
+
+
+def test_p1c_active_runtime_session_identity_and_device_binding_are_closed() -> None:
+    active = p1c_contract()["active_runtime_session"]
+    assert active["manifestation"] == "EPHEMERAL PROCESS-LOCAL OBJECT"
+    assert "before StateStore open" in active["created"]
+    assert active["canonical_fields"] == ["runtime_session_id", "device_installation_id"]
+    identity = active["runtime_session_id"]
+    assert identity["policy"] == "M0.2 identifier_policy"
+    assert not any(
+        identity[key]
+        for key in (
+            "read_from_durable_history",
+            "selected_from_latest_history",
+            "deterministically_derived_from_StateStore",
+            "is_authority",
+            "caller_arbitrary_id_is_production_authority",
+        )
+    )
+    assert active["device_mismatch"] == "FAIL_CLOSED_BEFORE_DURABLE_RUNTIMESESSION_PUBLICATION"
+    assert active["restored_from_history"] is False
+
+
+def test_p1c_reuses_exact_runtime_session_carrier_and_payload() -> None:
+    carrier = p1c_contract()["durable_carrier"]
+    assert carrier["representation_registry_key"] == "RuntimeSession canonical identity/history"
+    assert carrier["classification"] == "DURABLE IMMUTABLE / APPEND-ONLY HISTORY"
+    assert carrier["new_representation_kind"] is False
+    assert carrier["current_designation_created"] is False
+    assert carrier["record_key"] == "runtime_session_id"
+    assert carrier["payload"] == {
+        "fact_kind": "RuntimeSession",
+        "upstream_payload": {
+            "runtime_session_id": "<current active runtime_session_id>",
+            "device_installation_id": "<current CoreHost device_installation_id>",
+        },
+        "upstream_payload_fingerprint_sha256": "<existing exact canonical fingerprint>",
+    }
+    assert "account_id" in carrier["forbidden_added_fields"]
+    assert carrier["active_process_truth"] == "process-local"
+
+
+def test_p1c_publication_is_initialized_protected_g_plus_1_mutation() -> None:
+    publication = p1c_contract()["publication"]
+    assert publication["preconditions"] == [
+        "exact original process lock still held",
+        "exact current RuntimeSession handle",
+        "exact current StateStore handle",
+        "CoreHostRecoveryClassification.INITIALIZED_RECOVERY_COMPLETE",
+    ]
+    assert publication["sequence"] == [
+        "resolve exact current M0.3",
+        "M0.3 PREPARE G+1",
+        "prepare local semantic transaction",
+        "all-or-nothing local durable commit G+1",
+        "publish fresh LocalDurableEvidence",
+        "M0.3 FINALIZE",
+        "success after required durability/finality",
+    ]
+    assert publication["local_mutation"]["immutable_history_appends"] == [
+        "exactly one new RuntimeSession canonical identity/history carrier for current runtime_session_id"
+    ]
+    assert publication["local_mutation"]["current_designation_writes"] == 0
+    assert {"raw SQL", "direct SQLite INSERT", "manual metadata generation bump"} <= set(
+        publication["forbidden_paths"]
+    )
+    assert publication["success"]["state_store_generation"] == "G+1"
+    assert publication["success"]["old_history_preserved"] is True
+
+
+def test_p1c_post_publication_evidence_cannot_be_cached_p1b_evidence() -> None:
+    evidence = p1c_contract()["publication"]["p1b_evidence"]
+    assert evidence["generation"] == "G"
+    assert evidence["may_substitute_for_post_publication_G_plus_1"] is False
+    assert "post-publication finalized current state" in evidence["readiness_source"]
+
+
+def test_p1c_repeated_start_and_collision_semantics_are_exact() -> None:
+    semantics = p1c_contract()["idempotency_and_collision"]
+    assert semantics["repeated_start_same_running_corehost"]["publication_count"] == 1
+    assert semantics["repeated_start_same_running_corehost"]["runtime_session_id_count"] == 1
+    assert semantics["preexisting_record_key_equal_current_runtime_session_id"] == (
+        "FAIL_CLOSED_RUNTIMESESSION_ID_COLLISION"
+    )
+    assert semantics["adopt_old_entry"] is False
+    assert semantics["restore_previous_active_session"] is False
+
+
+def test_p1c_crash_matrix_preserves_history_without_restoring_process() -> None:
+    crashes = p1c_contract()["crash_matrix"]
+    assert crashes["BEFORE_M0_3_PREPARE"]["new_history_durable"] is False
+    prepared = crashes["PREPARED_G_PLUS_1_BEFORE_LOCAL_COMMIT"]
+    assert prepared["new_history_durable"] is False
+    assert prepared["blind_retry_old_session"] is False
+    committed = crashes["LOCAL_COMMIT_G_PLUS_1_BEFORE_FINALIZE"]
+    assert committed["crashed_session_history"] == "durable historical fact"
+    assert committed["old_process_restored"] is False
+    assert committed["duplicate_business_commit"] is False
+    finalized = crashes["AFTER_FINALIZE_BEFORE_READINESS"]
+    assert finalized["old_history"] == "remains durable"
+    assert finalized["old_process_restored"] is False
+
+
+def test_p1c_publication_failure_forbids_readiness_and_ready() -> None:
+    failure = p1c_contract()["failure"]
+    assert failure["unresolved_publication_failure"] == "FAIL_CLOSED"
+    assert failure["READY"] == "FORBIDDEN"
+    assert failure["startup_readiness_success_disposition"] == "FORBIDDEN"
+    assert failure["rollback_completed_external_effects"] is False
+    assert failure["delete_already_durable_history"] is False
+
+
+def test_p1c_dispositions_are_closed_and_never_ready() -> None:
+    readiness = p1c_contract()["startup_readiness"]
+    assert readiness["classification"] == "PROCESS-LOCAL NON-AUTHORITY"
+    assert readiness["dispositions"] == ["SETUP_REQUIRED", "PROCEED_TO_LATER_STARTUP_GATES"]
+    assert readiness["READY_outcome_present"] is False
+    assert p1c_contract()["empty_uninitialized"]["disposition"] == "SETUP_REQUIRED"
+    assert readiness["initialized_disposition"] == "PROCEED_TO_LATER_STARTUP_GATES"
+    assert "READY" in readiness["initialized_disposition_does_not_mean"]
+    assert "ready=True" in readiness["authority_boolean_inputs_forbidden"]
+
+
+def test_p1c_final_ready_stays_with_later_gate_owners_without_default_allow() -> None:
+    final = p1c_contract()["final_ready_boundary"]
+    assert final["p1c_mints_READY"] is False
+    assert final["final_owner"] == "separate later CoreHost startup_sequence ready_gate"
+    assert final["required_later_gates"] == [
+        {
+            "gate": "startup readiness disposition",
+            "owner_milestone": "M0.3",
+            "artifact": "process_topology_and_lifecycle.json",
+            "json_pointer": "/corehost_runtime_session_and_readiness_contract/startup_readiness",
+        },
+        {
+            "gate": "ExchangeAccount connection/configuration readiness",
+            "owner_milestone": "M0.5",
+            "artifact": "exchange_accounts_and_instruments.json",
+            "json_pointer": "/exchange_account_contract",
+        },
+        {
+            "gate": "portfolio/accounting reconciliation",
+            "owner_milestone": "M0.8",
+            "artifact": "ledger_portfolio_capital_and_pnl.json",
+            "json_pointer": "/reconciliation_protocol",
+        },
+        {
+            "gate": "authorization/security state",
+            "owner_milestone": "M0.10",
+            "artifact": "identity_device_authentication_and_secrets.json",
+            "json_pointer": "/authority",
+        },
+        {
+            "gate": "ExecutionLease and risk prerequisites",
+            "owner_milestone": "M0.9",
+            "artifact": "risk_hierarchy_kill_switch_and_execution_lease.json",
+            "json_pointer": "/execution_lease_contract",
+        },
+        {
+            "gate": "kill-switch state",
+            "owner_milestone": "M0.9",
+            "artifact": "risk_hierarchy_kill_switch_and_execution_lease.json",
+            "json_pointer": "/kill_switch_contract",
+        },
+        {
+            "gate": "ProductCapabilities",
+            "owner_milestone": "M0.4",
+            "artifact": "environment_and_product_capabilities.json",
+            "json_pointer": "/ProductCapabilities",
+        },
+        {
+            "gate": "environment/policy readiness",
+            "owner_milestone": "M0.4",
+            "artifact": "environment_and_product_capabilities.json",
+            "json_pointer": "/environment_readiness",
+        },
+    ]
+    assert final["missing_owner_or_api"] == "NOT_YET_READY / PROCEED_TO_LATER_STARTUP_GATES"
+    assert "default allow" in final["default_allow_forbidden"]
+
+
+def test_p1c_state_axes_and_implementation_boundary_remain_separate() -> None:
+    contract = p1c_contract()
+    assert contract["state_model_separation"] == [
+        "process_health_state",
+        "M0.2 runtime_state",
+        "P1C startup readiness disposition",
+        "exchange connection state",
+        "operator GUI lock state",
+    ]
+    assert load_contract()["state_model_separation"] == contract["state_model_separation"]
+    deferred = contract["production_implementation_boundary"]["deferred"]
+    assert {
+        "bootstrap consumption",
+        "ExecutionLease issuance",
+        "final ready_gate success",
+        "LIVE",
+    } <= set(deferred)
+
+
+def _resolve_architecture_pointer(document: Any, pointer: str) -> Any:
+    value = document
+    for token in pointer.removeprefix("/").split("/"):
+        token = token.replace("~1", "/").replace("~0", "~")
+        value = value[int(token)] if isinstance(value, list) else value[token]
+    return value
+
+
+def test_p1b_p1c_m011_cross_contract_has_no_phase_overlap() -> None:
+    m03 = load_contract()
+    m011 = json.loads(
+        (
+            ROOT
+            / "docs/architecture/cryptohunter_product_architecture"
+            / "persistence_versioning_migrations_backup_and_recovery.json"
+        ).read_text()
+    )
+    recovery = m03["corehost_startup_recovery_contract"]
+    p1c = m03["corehost_runtime_session_and_readiness_contract"]
+    runtime_persistence = m011["runtime_session_persistence"]
+    binding = recovery["recover_writable_state_store_phase_binding"]
+    p1b = p1c["phase_boundaries"]["P1B_RECOVERY"]
+
+    assert binding["ends_at_inclusive"] == p1b["ends_at_inclusive"] == "recovery_complete"
+    assert recovery["initialized_order"] == p1b["steps"]
+    assert recovery["initialized_order"][-1] == "recovery_complete"
+    assert {
+        "durably_publish_current_runtime_session_history",
+        "determine_startup_readiness",
+        "READY_only_if_all_later_gates_pass",
+        "ready_gate",
+    }.isdisjoint(p1b["steps"])
+    assert not binding["includes_runtime_session_publication"]
+    assert not binding["includes_startup_readiness"]
+    assert not binding["includes_READY"]
+
+    global_order = p1c["global_initialized_order"]
+    assert (
+        global_order.index("recovery_complete")
+        < global_order.index("durably_publish_current_runtime_session_history")
+        < global_order.index("determine_startup_readiness")
+        < global_order.index("later_startup_gates")
+        < global_order.index("ready_gate")
+        < global_order.index("READY_only_if_all_later_gates_pass")
+    )
+    assert runtime_persistence["startup_sequence_binding"] == {
+        "owner_milestone": "M0.3",
+        "artifact": "process_topology_and_lifecycle.json",
+        "global_order_json_pointer": (
+            "/corehost_runtime_session_and_readiness_contract/global_initialized_order"
+        ),
+        "p1b_phase_json_pointer": (
+            "/corehost_startup_recovery_contract/recover_writable_state_store_phase_binding"
+        ),
+        "recover_writable_state_store_ends_at_inclusive": "recovery_complete",
+    }
+    assert runtime_persistence["order"] == [
+        "create current runtime_session_id before StateStore open",
+        "recover writable StateStore through exact P1B recovery phase ending at recovery_complete",
+        "durably publish current RuntimeSession history using transaction_protocol as G+1",
+        "determine startup readiness",
+        "READY only after separate later startup gates and ready_gate",
+    ]
+
+
+def test_p1c_ownership_domains_and_later_gate_pointers_are_exact_and_resolvable() -> None:
+    contract = p1c_contract()
+    assert contract["ownership_domains"] == {
+        "runtime_session_identity_and_schema": {
+            "owner_milestone": "M0.2",
+            "artifact": "canonical_domain_vocabulary.json",
+            "json_pointers": ["/entity_kinds", "/identifier_policy"],
+        },
+        "durable_carrier_and_transaction_protocol": {
+            "owner_milestone": "M0.11",
+            "artifact": "persistence_versioning_migrations_backup_and_recovery.json",
+            "json_pointers": [
+                "/backup_contract/representation_registry/RuntimeSession canonical identity~1history",
+                "/transaction_protocol",
+                "/runtime_session_persistence/publication",
+            ],
+        },
+        "startup_sequencing_phase_boundaries_and_readiness": {
+            "owner_milestone": "M0.3",
+            "artifact": "process_topology_and_lifecycle.json",
+            "json_pointers": [
+                "/corehost_startup_recovery_contract/recover_writable_state_store_phase_binding",
+                "/corehost_runtime_session_and_readiness_contract/startup_readiness",
+            ],
+        },
+    }
+    docs = ROOT / "docs/architecture/cryptohunter_product_architecture"
+    for row in contract["final_ready_boundary"]["required_later_gates"]:
+        upstream = json.loads((docs / row["artifact"]).read_text())
+        assert upstream["m0_element"] == row["owner_milestone"]
+        assert _resolve_architecture_pointer(upstream, row["json_pointer"]) is not None
+    reconciliation = contract["final_ready_boundary"]["required_later_gates"][2]
+    assert reconciliation == {
+        "gate": "portfolio/accounting reconciliation",
+        "owner_milestone": "M0.8",
+        "artifact": "ledger_portfolio_capital_and_pnl.json",
+        "json_pointer": "/reconciliation_protocol",
+    }
+
+
+def test_p1c_dependency_labels_match_exact_connection_and_reconciliation_owners() -> None:
+    contract = p1c_contract()
+    dependencies = contract["dependencies"]["referenced_not_copied"]
+    assert dependencies == [
+        "M0.4 ProductCapabilities/environment policy gates",
+        "M0.5 ExchangeAccount connection/configuration readiness",
+        "M0.8 portfolio/accounting reconciliation",
+        "M0.9 ExecutionLease/risk/kill-switch prerequisites",
+        "M0.10 authorization/security state",
+    ]
+    assert "M0.5 ExchangeAccount connection and reconciliation" not in dependencies
+
+    gates = {row["gate"]: row for row in contract["final_ready_boundary"]["required_later_gates"]}
+    assert gates["ExchangeAccount connection/configuration readiness"] == {
+        "gate": "ExchangeAccount connection/configuration readiness",
+        "owner_milestone": "M0.5",
+        "artifact": "exchange_accounts_and_instruments.json",
+        "json_pointer": "/exchange_account_contract",
+    }
+    assert gates["portfolio/accounting reconciliation"] == {
+        "gate": "portfolio/accounting reconciliation",
+        "owner_milestone": "M0.8",
+        "artifact": "ledger_portfolio_capital_and_pnl.json",
+        "json_pointer": "/reconciliation_protocol",
     }
