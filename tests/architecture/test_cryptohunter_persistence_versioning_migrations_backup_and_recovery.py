@@ -10699,3 +10699,90 @@ def test_s7c_every_final_function_output_stays_in_closed_registry() -> None:
         )
     )
     assert outputs <= RESTORE_DECISIONS
+
+
+def test_state_store_logical_identity_genesis_derivation_is_exact() -> None:
+    identity = MACHINE["state_store_identity_contract"]
+    assert identity["classification"] == [
+        "IMMUTABLE LOGICAL STATESTORE INSTANCE IDENTITY",
+        "STRUCTURAL SCOPE INPUT",
+        "NOT AUTHORITY BY ITSELF",
+    ]
+    genesis = identity["genesis_derivation"]
+    assert genesis == {
+        "entropy_source": "cryptographically secure random 32-byte nonce",
+        "nonce_length_bytes": 32,
+        "nonce_generated_by": "production StateStore genesis using CSPRNG",
+        "nonce_caller_selected": False,
+        "domain_separator_text": "cryptohunter.state-store-identity.v1",
+        "domain_separator_encoding": "UTF-8 (identical ASCII bytes)",
+        "separator": "one NUL byte (0x00)",
+        "exact_preimage": 'b"cryptohunter.state-store-identity.v1\\x00" + nonce_32_bytes',
+        "algorithm": "SHA-256",
+        "output": "lowercase hexadecimal exactly 64 characters",
+        "json_canonicalization_used": False,
+    }
+
+
+def test_state_store_logical_identity_excludes_paths_and_survives_location_changes() -> None:
+    identity = MACHINE["state_store_identity_contract"]
+    invariants = identity["location_and_representation_invariants"]
+    assert set(invariants["forbidden_fingerprint_inputs"]) >= {
+        "filesystem path",
+        "Path.resolve() textual result",
+        "inode",
+        "filesystem device ID",
+        "drive letter",
+        "volume serial",
+        "symlink textual spelling",
+        "filesystem metadata",
+    }
+    assert set(invariants["fingerprint_unchanged_by"]) >= {
+        "database file rename",
+        "database move within the same installation",
+        "trusted physical restore to a different filesystem location",
+        "schema migration",
+    }
+
+
+def test_state_store_logical_identity_nonce_input_and_new_genesis_are_closed() -> None:
+    identity = MACHINE["state_store_identity_contract"]
+    nonce = identity["nonce_semantics"]
+    assert nonce["is_authority"] is False
+    assert nonce["required_after_fingerprint_generation"] is False
+    assert nonce["not_persisted_in"] == [
+        "BackupEnvelope",
+        "StateStore",
+        "M0.3 protected authority",
+    ]
+    assert nonce["only_final_fingerprint_is_durable"] is True
+    inputs = identity["input_policy"]
+    assert inputs["production_genesis_caller_selected"] is False
+    assert "does not mint authority" in inputs["low_level_acceptance_meaning"]
+    genesis = identity["new_genesis"]
+    assert genesis["same_account_device_environment_may_have_distinct_identity"] is True
+    assert genesis["must_receive_new_identity"] is True
+    assert genesis["not_deterministically_derived_from"] == [
+        "account_id",
+        "device_installation_id",
+        "environment",
+        "filesystem path",
+    ]
+
+
+def test_state_store_logical_identity_is_lineage_immutable_and_restore_preserved() -> None:
+    identity = MACHINE["state_store_identity_contract"]
+    lineage = identity["lineage_immutability"]
+    assert lineage["all_generations_and_descriptors"] == "same exact fingerprint"
+    assert lineage["ordinary_transaction_mutation"] == "FAIL_CLOSED"
+    assert lineage["identity_rotation"] is False
+    restore = identity["backup_restore"]
+    assert restore == {
+        "same_logical_lineage_preserves_fingerprint": True,
+        "installation_path_change_rekeys_identity": False,
+        "candidate_carrier_mints_protected_membership": False,
+        "candidate_carrier_establishes_current_m0_3_membership": False,
+    }
+    empty = identity["empty_uninitialized"]
+    assert empty["established_fingerprint"] is False
+    assert empty["p1b_generates_fingerprint"] is False

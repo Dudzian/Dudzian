@@ -457,13 +457,29 @@
       "invalid_or_corrupt": "FAIL_CLOSED_NO_AUTOMATIC_PHYSICAL_RESTORE"
     },
     "scope_binding": {
-      "required_equal_fields": [
+      "pre_open_corehost_scope": [
         "account_id",
         "device_installation_id",
-        "state_store_identity_fingerprint_sha256 derived from canonical state-store identity/path"
+        "resolved StateStore filesystem locator/path"
       ],
+      "pre_open_path_semantics": "LOCAL PROCESS TOPOLOGY / FILESYSTEM LOCATOR BINDING; selects the opened file and grants no protected authority",
+      "opened_store_path_binding": "opened SQLiteStateStore.path must equal resolved CoreHostScope.state_store_path using existing P1A Path.resolve locator normalization; no hash comparison",
+      "required_equal_fields": [
+        "verified metadata account_id equals CoreHostScope.account_id",
+        "verified metadata device_installation_id equals CoreHostScope.device_installation_id"
+      ],
+      "protected_scope_source": {
+        "account_id": "verified StateStore metadata after exact equality with CoreHostScope",
+        "device_installation_id": "verified StateStore metadata after exact equality with CoreHostScope",
+        "state_store_identity_fingerprint_sha256": "verified StateStore metadata; never rederived from filesystem path"
+      },
+      "identity_source": "verified StateStore metadata for initialized existing stores",
+      "path_hash_required": false,
+      "path_equality_grants_protected_authority": false,
+      "protected_scope_exact_triple_required": true,
       "mismatch": "FAIL_CLOSED_BEFORE_EXTERNAL_MUTATION",
-      "caller_boolean_override": false
+      "caller_boolean_override": false,
+      "semantic_owner": "persistence_versioning_migrations_backup_and_recovery.json#/state_store_identity_contract"
     },
     "empty_or_uninitialized": {
       "order": [
@@ -486,7 +502,10 @@
         "security authority"
       ],
       "possible_readiness": "SETUP_REQUIRED",
-      "consumes_bootstrap": false
+      "consumes_bootstrap": false,
+      "established_state_store_identity_fingerprint": false,
+      "p1b_generates_state_store_identity_fingerprint": false,
+      "identity_creation_owner": "future authorized StateStore genesis / first-run creation flow"
     },
     "protected_freshness": {
       "startup_owned": true,
@@ -752,7 +771,18 @@
         "rollback_completed_external_effects": false,
         "existing_failure_outcome": "RECOVERY_FAILED"
       }
-    ]
+    ],
+    "store_substitution": {
+      "scenario": "different database file substituted at the same filesystem path",
+      "path_match_sufficient": false,
+      "checks": [
+        "verified metadata exposes the substituted store logical identity",
+        "account_id and device_installation_id independently equal CoreHostScope",
+        "M0.3 accepted/current authority exists for the exact verified metadata triple"
+      ],
+      "stale_wrong_or_unknown_identity": "FAIL_CLOSED",
+      "security_anchor": "independent exact M0.3 triple, not filesystem path"
+    }
   },
   "state_model_separation": [
     "process_health_state",

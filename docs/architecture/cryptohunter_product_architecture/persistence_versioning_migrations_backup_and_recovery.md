@@ -430,6 +430,144 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
 }
 ```
 
+## `state_store_identity_contract`
+
+```json
+{
+  "field": "state_store_identity_fingerprint_sha256",
+  "semantic_owner": "M0.11 StateStore logical identity semantics",
+  "classification": [
+    "IMMUTABLE LOGICAL STATESTORE INSTANCE IDENTITY",
+    "STRUCTURAL SCOPE INPUT",
+    "NOT AUTHORITY BY ITSELF"
+  ],
+  "not": [
+    "domain entity",
+    "AccountId",
+    "DeviceInstallationId",
+    "filesystem location",
+    "filesystem-path fingerprint",
+    "file hash",
+    "SQLite schema identity",
+    "SQLite schema fingerprint",
+    "database bytes fingerprint",
+    "inode/device fingerprint",
+    "physical artifact identity",
+    "CoreHost lock fingerprint",
+    "authority membership",
+    "restore authority",
+    "protected freshness authority"
+  ],
+  "genesis_derivation": {
+    "entropy_source": "cryptographically secure random 32-byte nonce",
+    "nonce_length_bytes": 32,
+    "nonce_generated_by": "production StateStore genesis using CSPRNG",
+    "nonce_caller_selected": false,
+    "domain_separator_text": "cryptohunter.state-store-identity.v1",
+    "domain_separator_encoding": "UTF-8 (identical ASCII bytes)",
+    "separator": "one NUL byte (0x00)",
+    "exact_preimage": "b\"cryptohunter.state-store-identity.v1\\x00\" + nonce_32_bytes",
+    "algorithm": "SHA-256",
+    "output": "lowercase hexadecimal exactly 64 characters",
+    "json_canonicalization_used": false
+  },
+  "nonce_semantics": {
+    "derived_from": [],
+    "forbidden_derivations": [
+      "filesystem path",
+      "PID",
+      "time",
+      "hostname",
+      "account_id",
+      "device_installation_id",
+      "environment"
+    ],
+    "is_authority": false,
+    "required_after_fingerprint_generation": false,
+    "persisted_in": [],
+    "not_persisted_in": [
+      "BackupEnvelope",
+      "StateStore",
+      "M0.3 protected authority"
+    ],
+    "secret_domain_payload": false,
+    "only_final_fingerprint_is_durable": true
+  },
+  "input_policy": {
+    "production_genesis": "caller MUST NOT choose an arbitrary fingerprint; genesis generates it internally",
+    "production_genesis_caller_selected": false,
+    "low_level_existing_carrier_inputs": [
+      "StateStoreMetadata parser",
+      "BackupEnvelope parser",
+      "restore candidate parser",
+      "tests and fixtures"
+    ],
+    "low_level_acceptance_meaning": "reconstruct or validate an already-established exact 64-hex identity; accepting carrier input does not mint authority"
+  },
+  "location_and_representation_invariants": {
+    "fingerprint_unchanged_by": [
+      "database file rename",
+      "database move within the same installation",
+      "drive-letter or mount-point change",
+      "physical backup creation",
+      "trusted physical restore to a different filesystem location",
+      "SQLite vacuum or page-layout change",
+      "WAL or checkpoint differences",
+      "schema migration"
+    ],
+    "forbidden_fingerprint_inputs": [
+      "filesystem path",
+      "Path.resolve() textual result",
+      "absolute path text",
+      "relative path text",
+      "cwd",
+      "drive letter",
+      "UNC textual form",
+      "slash or backslash separator spelling",
+      "case folding",
+      "inode",
+      "filesystem device ID",
+      "volume serial",
+      "symlink textual spelling",
+      "realpath text",
+      "filesystem metadata",
+      "creation timestamp",
+      "SQLite file bytes"
+    ]
+  },
+  "lineage_immutability": {
+    "established_at": "authorized StateStore genesis generation 1",
+    "all_generations_and_descriptors": "same exact fingerprint",
+    "ordinary_transaction_mutation": "FAIL_CLOSED",
+    "identity_rotation": false,
+    "new_logical_store": "new authorized genesis, never rotation or re-key"
+  },
+  "new_genesis": {
+    "same_account_device_environment_may_have_distinct_identity": true,
+    "must_receive_new_identity": true,
+    "not_deterministically_derived_from": [
+      "account_id",
+      "device_installation_id",
+      "environment",
+      "filesystem path"
+    ],
+    "collision_or_known_reuse": "FAIL_OR_REGENERATE_BEFORE_AUTHORITY_ENROLLMENT using only available protected/provisioning context; no global discovery claim",
+    "mathematical_uniqueness_claim": false
+  },
+  "empty_uninitialized": {
+    "established_fingerprint": false,
+    "p1b_generates_fingerprint": false,
+    "creation_owner": "future authorized StateStore genesis / first-run creation flow"
+  },
+  "backup_restore": {
+    "same_logical_lineage_preserves_fingerprint": true,
+    "installation_path_change_rekeys_identity": false,
+    "candidate_carrier_mints_protected_membership": false,
+    "candidate_carrier_establishes_current_m0_3_membership": false
+  }
+}
+```
+
 ## `state_store_fingerprint_contract`
 
 ```json

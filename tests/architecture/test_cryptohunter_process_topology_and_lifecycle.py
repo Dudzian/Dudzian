@@ -4970,3 +4970,39 @@ def test_initial_and_preexisting_fixtures_have_disjoint_test_only_semantics() ->
         not {"unretire_reference", "restore_old_reference", "clear_retired", "reuse_reference"}
         & public
     )
+
+
+def test_corehost_scope_uses_verified_logical_store_identity_not_a_path_hash() -> None:
+    binding = startup_recovery_contract()["scope_binding"]
+    assert binding["identity_source"] == (
+        "verified StateStore metadata for initialized existing stores"
+    )
+    assert binding["path_hash_required"] is False
+    assert binding["opened_store_path_binding"] == (
+        "opened SQLiteStateStore.path must equal resolved CoreHostScope.state_store_path "
+        "using existing P1A Path.resolve locator normalization; no hash comparison"
+    )
+    assert binding["protected_scope_source"] == {
+        "account_id": "verified StateStore metadata after exact equality with CoreHostScope",
+        "device_installation_id": (
+            "verified StateStore metadata after exact equality with CoreHostScope"
+        ),
+        "state_store_identity_fingerprint_sha256": (
+            "verified StateStore metadata; never rederived from filesystem path"
+        ),
+    }
+    assert "path" not in " ".join(binding["required_equal_fields"]).lower()
+
+
+def test_corehost_store_substitution_and_empty_identity_fail_safe() -> None:
+    contract = startup_recovery_contract()
+    substitution = contract["store_substitution"]
+    assert substitution["path_match_sufficient"] is False
+    assert substitution["stale_wrong_or_unknown_identity"] == "FAIL_CLOSED"
+    assert "exact M0.3 triple" in substitution["security_anchor"]
+    empty = contract["empty_or_uninitialized"]
+    assert empty["established_state_store_identity_fingerprint"] is False
+    assert empty["p1b_generates_state_store_identity_fingerprint"] is False
+    assert empty["identity_creation_owner"] == (
+        "future authorized StateStore genesis / first-run creation flow"
+    )
