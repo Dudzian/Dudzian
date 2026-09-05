@@ -260,9 +260,7 @@ class SQLiteStateStore:
 
         return sqlite_schema_fingerprint(self._connection)
 
-    def capture_verified_physical_snapshot(
-        self, destination: str | Path
-    ) -> StateStoreSnapshot:
+    def capture_verified_physical_snapshot(self, destination: str | Path) -> StateStoreSnapshot:
         """Capture semantic state and its Online Backup image at one read snapshot."""
         target = Path(destination).resolve()
         if target == self._path:
@@ -802,8 +800,8 @@ class SQLiteStateStore:
                         "fresh store requires generation 1 and an empty-store fence"
                     )
                 pre_state = pre_history = None
-                old_current = ()
-                old_history = ()
+                old_current: tuple[PersistenceRecord, ...] = ()
+                old_history: tuple[PersistenceRecord, ...] = ()
             else:
                 self.verify_snapshot(before)
                 old = before.metadata

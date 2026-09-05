@@ -10,7 +10,7 @@ import re
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import asdict, dataclass, fields
 from threading import RLock
-from typing import Any, Protocol, TypeAlias
+from typing import Any, Protocol, TypeAlias, cast
 
 from .fingerprints import canonical_json_sha256
 from .local_durable_evidence import (
@@ -125,7 +125,7 @@ class ProtectedFreshnessAuthorityRecord:
                 or (
                     _positive(committed[0])
                     and _sha(committed[1])
-                    and prepared[0] == committed[0] + 1
+                    and prepared[0] == cast(int, committed[0]) + 1
                 )
             )
         if not valid:
@@ -519,7 +519,7 @@ class ProtectedFreshnessHandoffCoordinator:
                 raise ProtectedFreshnessHandoffError(
                     "external committed authority does not match local current"
                 )
-            if metadata.protected_freshness_generation != expected + 1:
+            if metadata.protected_freshness_generation != cast(int, expected) + 1:
                 raise ProtectedFreshnessHandoffError("candidate generation is not local G+1")
             if (
                 metadata.account_id != local.account_id

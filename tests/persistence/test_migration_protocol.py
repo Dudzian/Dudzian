@@ -156,9 +156,7 @@ def test_exact_registry_and_recovery_do_not_reapply_durable_or_terminal():
         == "COMPLETED"
     )
     assert len(calls) == 1
-    history, current = lifecycle(
-        ("PREPARED", "APPLYING", "DURABLE_MIGRATED", "COMPLETED")
-    )
+    history, current = lifecycle(("PREPARED", "APPLYING", "DURABLE_MIGRATED", "COMPLETED"))
     assert (
         coordinator.resume(
             plan(),
@@ -204,12 +202,9 @@ def test_lifecycle_carriers_pass_stage_one_and_use_existing_buckets():
 
     history, current = lifecycle()
     assert (
-        migration_transition_carrier(history[0]).record_key
-        == "migration-transition:migration-1:1"
+        migration_transition_carrier(history[0]).record_key == "migration-transition:migration-1:1"
     )
-    assert (
-        migration_current_carrier(current).record_key == "migration-current:migration-1"
-    )
+    assert migration_current_carrier(current).record_key == "migration-current:migration-1"
 
 
 @pytest.mark.parametrize(
@@ -316,9 +311,7 @@ def test_empty_registry_and_path_only_authority_fail_closed():
         MigrationRegistry().resolve(plan())
 
 
-@pytest.mark.parametrize(
-    "state", ["PREPARED", "DURABLE_MIGRATED", "COMPLETED", "FAILED"]
-)
+@pytest.mark.parametrize("state", ["PREPARED", "DURABLE_MIGRATED", "COMPLETED", "FAILED"])
 def test_static_substitution_rejected_before_all_lifecycle_states(state):
     states = {
         "PREPARED": ("PREPARED",),

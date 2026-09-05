@@ -15,7 +15,7 @@ from decimal import Decimal, InvalidOperation
 from datetime import datetime
 from hashlib import sha256
 from types import MappingProxyType
-from typing import Any, ClassVar
+from typing import Any, ClassVar, cast
 
 from .fingerprints import canonical_json, canonical_json_sha256
 from .record_registry import (
@@ -289,7 +289,7 @@ def _validate_runtime_session(record: PersistenceRecord) -> None:
         raise PersistenceRecordError("record_key must equal upstream_payload.runtime_session_id")
 
 
-def _valid_field(value: object, contract: Mapping[str, object]) -> bool:
+def _valid_field(value: object, contract: Mapping[str, Any]) -> bool:
     kind = contract.get("type")
     if kind in {"constant", "exact_literal"}:
         return value == contract.get("value")
@@ -376,7 +376,7 @@ def _valid_field(value: object, contract: Mapping[str, object]) -> bool:
         )
     if kind in {"canonical_exact_fraction_string", "nullable_canonical_exact_fraction_string"}:
         if value is None:
-            return kind.startswith("nullable_")
+            return isinstance(kind, str) and kind.startswith("nullable_")
         if (
             not isinstance(value, str)
             or re.fullmatch(r"(?:0|[1-9][0-9]*|-[1-9][0-9]*)/[1-9][0-9]*", value) is None
@@ -447,9 +447,7 @@ _SCOPE_PREFIXES = {
 _SCOPE_ORDER = tuple(_SCOPE_PREFIXES)
 
 
-def _valid_supplying_scope(
-    value: object, limit_type: object, contract: Mapping[str, object]
-) -> bool:
+def _valid_supplying_scope(value: object, limit_type: object, contract: Mapping[str, Any]) -> bool:
     if limit_type == contract.get("synthetic_limit_type"):
         return value == contract.get("synthetic_exact_value")
     if not isinstance(value, str) or ":" not in value:
@@ -463,11 +461,14 @@ def _valid_supplying_scope(
     )
 
 
-def _asset_schema() -> Mapping[str, object]:
-    return DIRECT_UPSTREAM_VALIDATORS["Fill"]["upstream_field_schemas"]["fee_asset_reference"]
+def _asset_schema() -> Mapping[str, Any]:
+    return cast(
+        Mapping[str, Any],
+        DIRECT_UPSTREAM_VALIDATORS["Fill"]["upstream_field_schemas"]["fee_asset_reference"],
+    )
 
 
-def _validate_limit_results(value: object, contract: Mapping[str, object]) -> bool:
+def _validate_limit_results(value: object, contract: Mapping[str, Any]) -> bool:
     if not isinstance(value, (list, tuple)) or len(value) < contract.get("min_items", 0):
         return False
     item_schema = contract["item_schema"]
@@ -515,7 +516,7 @@ def _validate_limit_results(value: object, contract: Mapping[str, object]) -> bo
     return keys == sorted(keys)
 
 
-def _resolved_tuple_schema(item: Mapping[str, object]) -> Mapping[str, object] | None:
+def _resolved_tuple_schema(item: Mapping[str, Any]) -> Mapping[str, Any] | None:
     if "type" in item:
         return item
     reference = item.get("schema_reference")
@@ -523,12 +524,13 @@ def _resolved_tuple_schema(item: Mapping[str, object]) -> Mapping[str, object] |
     if not isinstance(reference, str) or not reference.startswith(prefix):
         return None
     field = reference.removeprefix(prefix)
-    return DIRECT_UPSTREAM_VALIDATORS["kill-switch state/generation"]["upstream_field_schemas"].get(
-        field
-    )
+    schema = DIRECT_UPSTREAM_VALIDATORS["kill-switch state/generation"][
+        "upstream_field_schemas"
+    ].get(field)
+    return schema if isinstance(schema, Mapping) else None
 
 
-def _validate_exact_tuples(value: object, contract: Mapping[str, object]) -> bool:
+def _validate_exact_tuples(value: object, contract: Mapping[str, Any]) -> bool:
     if not isinstance(value, (list, tuple)) or len(value) < contract.get("min_items", 0):
         return False
     rows: list[tuple[object, ...]] = []
@@ -584,7 +586,7 @@ def _validate_event_safe_payload(event_type: object, safe: object) -> bool:
     )
 
 
-def _validate_risk_limits(value: object, contract: Mapping[str, object]) -> bool:
+def _validate_risk_limits(value: object, contract: Mapping[str, Any]) -> bool:
     if not isinstance(value, (list, tuple)) or not value:
         return False
     names = contract["supported_limit_names"]
@@ -614,13 +616,13 @@ def _validate_risk_limits(value: object, contract: Mapping[str, object]) -> bool
 def _valid_context_field(
     field: str,
     value: object,
-    contract: Mapping[str, object],
+    contract: Mapping[str, Any],
     payload: Mapping[str, object],
 ) -> bool:
     kind = contract.get("type")
     if kind == "canonical_scope_id":
         scope_type = payload.get(str(contract["scope_type_field"]))
-        prefix = _SCOPE_PREFIXES.get(scope_type)
+        prefix = _SCOPE_PREFIXES.get(scope_type) if isinstance(scope_type, str) else None
         if scope_type == "PRODUCT_SYSTEM":
             return value == "product"
         return (
@@ -676,8 +678,9 @@ def _semantic_fingerprint(semantic: Mapping[str, Any], upstream: Mapping[str, ob
     if shape == "DOMAIN_SEPARATOR_NEWLINE_CANONICAL_JSON_OBJECT":
         projected = {field: upstream[field] for field in fields}
         for field in ("instrument_ids", "source_catalog_snapshot_ids"):
-            if isinstance(projected.get(field), tuple):
-                projected[field] = sorted(projected[field])
+            value = projected.get(field)
+            if isinstance(value, tuple):
+                projected[field] = sorted(value)
         return sha256(
             f"{derivation['domain_separator']}\n{canonical_json(_thaw_json(projected))}".encode()
         ).hexdigest()
@@ -689,7 +692,7 @@ def _semantic_fingerprint(semantic: Mapping[str, Any], upstream: Mapping[str, ob
     raise AssertionError("unreachable semantic fingerprint shape")
 
 
-def _validate_local_schema(value: object, schema: Mapping[str, object]) -> bool:
+def _validate_local_schema(value: object, schema: Mapping[str, Any] | str) -> bool:
     if isinstance(schema, str):
         if schema == "canonical M0.2 AccountId":
             return isinstance(value, str) and bool(
@@ -1052,6 +1055,8 @@ def _validate_generic(record: PersistenceRecord, entry: Mapping[str, Any]) -> No
                 ) from exc
     else:
         raise PersistenceRecordError("unsupported representation category")
+    if not isinstance(payload, Mapping):
+        raise PersistenceRecordError("category-specific payload must be an object")
     if record.record_key != _derive_record_key(record.representation_name, entry, payload):
         raise PersistenceRecordError("record_key derivation mismatch")
 

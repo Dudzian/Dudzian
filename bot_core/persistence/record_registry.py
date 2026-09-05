@@ -6635,7 +6635,7 @@ DIRECT_SEMANTIC_CONSTRAINTS: Final[dict[str, dict[str, Any]]] = {
     },
 }
 
-STATE_STORE_SCOPE_BINDINGS: Final[dict[str, dict[str, tuple[tuple[str, ...], ...]]]] = {
+STATE_STORE_SCOPE_BINDINGS: Final[dict[str, dict[str, tuple[tuple[str | int, ...], ...]]]] = {
     "StateStoreMetadata": {
         "account_paths": (("account_id",),),
         "device_paths": (("device_installation_id",),),

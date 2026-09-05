@@ -70,9 +70,7 @@ def test_admits_only_for_further_validation_and_cleans_up(tmp_path):
     try:
         candidate = PhysicalBackupAdmissionValidator(verifier).admit(artifact)
         path = candidate.private_path
-        assert (
-            candidate.classification == "ELIGIBLE_FOR_FURTHER_RESTORE_VALIDATION_ONLY"
-        )
+        assert candidate.classification == "ELIGIBLE_FOR_FURTHER_RESTORE_VALIDATION_ONLY"
         assert candidate.state_store_snapshot.metadata.state_fingerprint_sha256 == (
             artifact.manifest.state_fingerprint_sha256
         )
@@ -92,9 +90,7 @@ def test_hash_mismatch_rejects_before_sqlite_open(tmp_path, monkeypatch):
         opened += 1
         raise AssertionError
 
-    monkeypatch.setattr(
-        "bot_core.persistence.physical_backup._validate_sqlite", forbidden
-    )
+    monkeypatch.setattr("bot_core.persistence.physical_backup._validate_sqlite", forbidden)
     monkeypatch.setattr(
         "bot_core.persistence.physical_backup.SQLiteStateStore.read_isolated_verified_snapshot",
         forbidden,
@@ -104,9 +100,7 @@ def test_hash_mismatch_rejects_before_sqlite_open(tmp_path, monkeypatch):
     try:
         with pytest.raises(PhysicalBackupAdmissionError) as raised:
             PhysicalBackupAdmissionValidator(verifier).admit(artifact)
-        assert (
-            raised.value.reason is PhysicalBackupAdmissionReason.PHYSICAL_HASH_MISMATCH
-        )
+        assert raised.value.reason is PhysicalBackupAdmissionReason.PHYSICAL_HASH_MISMATCH
         assert opened == 0
     finally:
         store.close()
@@ -121,9 +115,7 @@ def test_invalid_proof_rejects_before_sqlite_open(tmp_path, monkeypatch):
         opened += 1
         raise AssertionError
 
-    monkeypatch.setattr(
-        "bot_core.persistence.physical_backup._validate_sqlite", forbidden
-    )
+    monkeypatch.setattr("bot_core.persistence.physical_backup._validate_sqlite", forbidden)
     monkeypatch.setattr(
         "bot_core.persistence.physical_backup.SQLiteStateStore.read_isolated_verified_snapshot",
         forbidden,
@@ -137,9 +129,7 @@ def test_invalid_proof_rejects_before_sqlite_open(tmp_path, monkeypatch):
     try:
         with pytest.raises(PhysicalBackupAdmissionError) as raised:
             PhysicalBackupAdmissionValidator(verifier).admit(bad)
-        assert (
-            raised.value.reason is PhysicalBackupAdmissionReason.AUTHENTICATION_REJECTED
-        )
+        assert raised.value.reason is PhysicalBackupAdmissionReason.AUTHENTICATION_REJECTED
         assert opened == 0
     finally:
         store.close()
@@ -156,17 +146,11 @@ def test_post_auth_corruption_is_rehashed_before_sqlite_open(tmp_path, monkeypat
         nonlocal opened
         opened += 1
 
-    monkeypatch.setattr(
-        "bot_core.persistence.physical_backup._validate_sqlite", forbidden
-    )
+    monkeypatch.setattr("bot_core.persistence.physical_backup._validate_sqlite", forbidden)
     try:
         with pytest.raises(PhysicalBackupAdmissionError) as raised:
-            PhysicalBackupAdmissionValidator(
-                verifier, authenticated_hook=corrupt
-            ).admit(artifact)
-        assert (
-            raised.value.reason is PhysicalBackupAdmissionReason.PHYSICAL_HASH_MISMATCH
-        )
+            PhysicalBackupAdmissionValidator(verifier, authenticated_hook=corrupt).admit(artifact)
+        assert raised.value.reason is PhysicalBackupAdmissionReason.PHYSICAL_HASH_MISMATCH
         assert opened == 0
     finally:
         store.close()
@@ -174,12 +158,8 @@ def test_post_auth_corruption_is_rehashed_before_sqlite_open(tmp_path, monkeypat
 
 def test_adjacent_sidecars_are_never_consumed(tmp_path):
     store, _authority, artifact, verifier = artifact_fixture(tmp_path)
-    artifact.physical_artifact.path.with_name("backup.sqlite-wal").write_bytes(
-        b"attacker"
-    )
-    artifact.physical_artifact.path.with_name("backup.sqlite-shm").write_bytes(
-        b"attacker"
-    )
+    artifact.physical_artifact.path.with_name("backup.sqlite-wal").write_bytes(b"attacker")
+    artifact.physical_artifact.path.with_name("backup.sqlite-shm").write_bytes(b"attacker")
     try:
         with PhysicalBackupAdmissionValidator(verifier).admit(artifact) as candidate:
             assert not candidate.private_path.with_name("candidate.sqlite-wal").exists()
@@ -224,9 +204,7 @@ def test_post_admission_mutation_fails_continuity(tmp_path):
         candidate.private_path.write_bytes(b"changed after admission")
         with pytest.raises(PhysicalBackupAdmissionError) as raised:
             candidate.verify_physical_continuity()
-        assert (
-            raised.value.reason is PhysicalBackupAdmissionReason.PHYSICAL_HASH_MISMATCH
-        )
+        assert raised.value.reason is PhysicalBackupAdmissionReason.PHYSICAL_HASH_MISMATCH
     finally:
         candidate.close()
         store.close()
@@ -239,9 +217,7 @@ def test_post_admission_mutation_fails_continuity(tmp_path):
         BackupArtifactVerificationResult.AUTHORITY_NOT_PROVISIONED,
     ],
 )
-def test_unavailable_authority_rejects_before_both_sqlite_openers(
-    tmp_path, monkeypatch, result
-):
+def test_unavailable_authority_rejects_before_both_sqlite_openers(tmp_path, monkeypatch, result):
     store, _authority, artifact, _verifier = artifact_fixture(tmp_path)
     opened = []
 
@@ -260,9 +236,7 @@ def test_unavailable_authority_rejects_before_both_sqlite_openers(
     try:
         with pytest.raises(PhysicalBackupAdmissionError) as raised:
             PhysicalBackupAdmissionValidator(Verifier()).admit(artifact)  # type: ignore[arg-type]
-        assert (
-            raised.value.reason is PhysicalBackupAdmissionReason.AUTHORITY_UNAVAILABLE
-        )
+        assert raised.value.reason is PhysicalBackupAdmissionReason.AUTHORITY_UNAVAILABLE
         assert opened == []
     finally:
         store.close()
@@ -273,9 +247,7 @@ def test_unknown_key_rejects_before_both_sqlite_openers(tmp_path, monkeypatch):
     opened = []
     bad = replace(
         artifact,
-        authentication_proof=replace(
-            artifact.authentication_proof, authority_key_id="unknown"
-        ),
+        authentication_proof=replace(artifact.authentication_proof, authority_key_id="unknown"),
     )
     monkeypatch.setattr(
         "bot_core.persistence.physical_backup._validate_sqlite",
@@ -293,9 +265,7 @@ def test_unknown_key_rejects_before_both_sqlite_openers(tmp_path, monkeypatch):
         store.close()
 
 
-def test_rotated_proof_admits_then_revoked_proof_rejects_before_open(
-    tmp_path, monkeypatch
-):
+def test_rotated_proof_admits_then_revoked_proof_rejects_before_open(tmp_path, monkeypatch):
     store, authority, artifact, verifier = artifact_fixture(tmp_path)
     metadata = store.read_metadata()
     assert metadata is not None
@@ -319,9 +289,7 @@ def test_rotated_proof_admits_then_revoked_proof_rejects_before_open(
         )
         with pytest.raises(PhysicalBackupAdmissionError) as raised:
             PhysicalBackupAdmissionValidator(verifier).admit(artifact)
-        assert (
-            raised.value.reason is PhysicalBackupAdmissionReason.AUTHENTICATION_REJECTED
-        )
+        assert raised.value.reason is PhysicalBackupAdmissionReason.AUTHENTICATION_REJECTED
         assert opened == []
     finally:
         store.close()
@@ -344,9 +312,7 @@ def test_valid_hmac_with_wrong_schema_rejects_after_sqlite_open(tmp_path, monkey
     try:
         with pytest.raises(PhysicalBackupAdmissionError) as raised:
             PhysicalBackupAdmissionValidator(verifier).admit(bad)
-        assert (
-            raised.value.reason is PhysicalBackupAdmissionReason.SQLITE_SCHEMA_MISMATCH
-        )
+        assert raised.value.reason is PhysicalBackupAdmissionReason.SQLITE_SCHEMA_MISMATCH
         assert opened == 1
     finally:
         store.close()
@@ -367,10 +333,7 @@ def test_authenticated_non_sqlite_bytes_fail_integrity_after_authentication(tmp_
     try:
         with pytest.raises(PhysicalBackupAdmissionError) as raised:
             PhysicalBackupAdmissionValidator(verifier).admit(bad)
-        assert (
-            raised.value.reason
-            is PhysicalBackupAdmissionReason.SQLITE_INTEGRITY_FAILURE
-        )
+        assert raised.value.reason is PhysicalBackupAdmissionReason.SQLITE_INTEGRITY_FAILURE
     finally:
         store.close()
 
@@ -397,17 +360,12 @@ def test_authenticated_same_schema_different_dml_rejects_candidate_state(tmp_pat
         )
         with pytest.raises(PhysicalBackupAdmissionError) as raised:
             PhysicalBackupAdmissionValidator(verifier).admit(mixed)
-        assert (
-            raised.value.reason
-            is PhysicalBackupAdmissionReason.CANDIDATE_STATE_MISMATCH
-        )
+        assert raised.value.reason is PhysicalBackupAdmissionReason.CANDIDATE_STATE_MISMATCH
     finally:
         store.close()
 
 
-def test_structurally_valid_envelope_mismatch_rejects_before_both_openers(
-    tmp_path, monkeypatch
-):
+def test_structurally_valid_envelope_mismatch_rejects_before_both_openers(tmp_path, monkeypatch):
     store, authority, first, verifier = artifact_fixture(tmp_path)
     try:
         _commit(
@@ -465,10 +423,7 @@ def test_authenticated_outer_candidate_fact_mismatch_rejects_after_sqlite_valida
     try:
         with pytest.raises(PhysicalBackupAdmissionError) as raised:
             PhysicalBackupAdmissionValidator(verifier).admit(bad)
-        assert (
-            raised.value.reason
-            is PhysicalBackupAdmissionReason.CANDIDATE_STATE_MISMATCH
-        )
+        assert raised.value.reason is PhysicalBackupAdmissionReason.CANDIDATE_STATE_MISMATCH
         assert opened == ["sqlite"]
     finally:
         store.close()
@@ -513,10 +468,7 @@ def test_authenticated_candidate_environment_mismatch_rejects_after_sqlite(tmp_p
         )
         with pytest.raises(PhysicalBackupAdmissionError) as raised:
             PhysicalBackupAdmissionValidator(verifier).admit(mixed)
-        assert (
-            raised.value.reason
-            is PhysicalBackupAdmissionReason.CANDIDATE_STATE_MISMATCH
-        )
+        assert raised.value.reason is PhysicalBackupAdmissionReason.CANDIDATE_STATE_MISMATCH
     finally:
         other.close()
         store.close()

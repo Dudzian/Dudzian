@@ -55,15 +55,14 @@ from .migration_protocol import (
     MigrationDefinition,
     MigrationError,
     MigrationRegistry,
+    migration_mapping_payload,
 )
 
 
 class RestoreDecision(str, Enum):
     NOOP_ALREADY_CURRENT = "NOOP_ALREADY_CURRENT"
     RESTORE_EXTERNAL_COMMITTED_CURRENT = "RESTORE_EXTERNAL_COMMITTED_CURRENT"
-    RESTORE_EXACT_PROTECTED_PENDING_AND_FINALIZE = (
-        "RESTORE_EXACT_PROTECTED_PENDING_AND_FINALIZE"
-    )
+    RESTORE_EXACT_PROTECTED_PENDING_AND_FINALIZE = "RESTORE_EXACT_PROTECTED_PENDING_AND_FINALIZE"
     DENY = "DENY"
 
 
@@ -74,9 +73,7 @@ class LocalRestoreClassification(str, Enum):
     BEHIND = "BEHIND"
     EXACT = "EXACT"
     SAME_GENERATION_DIFFERENT_STATE = "SAME_GENERATION_DIFFERENT_STATE"
-    SAME_GENERATION_STATE_MATCH_LINEAGE_MISMATCH = (
-        "SAME_GENERATION_STATE_MATCH_LINEAGE_MISMATCH"
-    )
+    SAME_GENERATION_STATE_MATCH_LINEAGE_MISMATCH = "SAME_GENERATION_STATE_MATCH_LINEAGE_MISMATCH"
     AHEAD = "AHEAD"
     SCOPE_CONFLICT = "SCOPE_CONFLICT"
     ENVIRONMENT_CONFLICT = "ENVIRONMENT_CONFLICT"
@@ -146,7 +143,7 @@ class SealedMigrationRestoreAuthority:
         ids: set[str] = set()
         for carrier in (*snapshot.current_records, *snapshot.immutable_history):
             if carrier.representation_name in SealedMigrationRestoreAuthority._NAMES:
-                migration_id = carrier.payload.get("migration_id")
+                migration_id = migration_mapping_payload(carrier.payload).get("migration_id")
                 if not isinstance(migration_id, str) or not migration_id:
                     raise MigrationError("migration carrier identity is invalid")
                 ids.add(migration_id)
@@ -174,8 +171,12 @@ class SealedMigrationRestoreAuthority:
                 current_key=f"migration-current:{migration_id}",
                 history_key_prefix=f"migration-transition:{migration_id}:",
             )
-            history = tuple(item.payload for item in history_records)
-            current = None if current_record is None else current_record.payload
+            history = tuple(migration_mapping_payload(item.payload) for item in history_records)
+            current = (
+                None
+                if current_record is None
+                else migration_mapping_payload(current_record.payload)
+            )
             if current is None:
                 raise MigrationError("migration has no current designation")
             validate_chain(
@@ -190,13 +191,11 @@ class SealedMigrationRestoreAuthority:
                 item
                 for item in snapshot.immutable_history
                 if item.representation_name == "Migration execution declaration"
-                and item.payload.get("migration_id") == migration_id
+                and migration_mapping_payload(item.payload).get("migration_id") == migration_id
             )
             state = str(current["state"])
             predecessor = (
-                str(history[-2]["state"])
-                if state == "FAILED" and len(history) > 1
-                else None
+                str(history[-2]["state"]) if state == "FAILED" and len(history) > 1 else None
             )
             allowed = {
                 "PREPARED": {0},
@@ -221,14 +220,19 @@ class SealedMigrationRestoreAuthority:
                 authority.assert_declaration(declaration)
                 metadata = snapshot.metadata
                 if (
-                    declaration.account_id,
-                    declaration.device_installation_id,
-                    declaration.environment,
-                ) != (
-                    metadata.account_id,
-                    metadata.device_installation_id,
-                    metadata.environment,
-                ) or declaration.state_store_identity_fingerprint_sha256 != metadata.state_store_identity_fingerprint_sha256:
+                    (
+                        declaration.account_id,
+                        declaration.device_installation_id,
+                        declaration.environment,
+                    )
+                    != (
+                        metadata.account_id,
+                        metadata.device_installation_id,
+                        metadata.environment,
+                    )
+                    or declaration.state_store_identity_fingerprint_sha256
+                    != metadata.state_store_identity_fingerprint_sha256
+                ):
                     raise MigrationError("migration declaration scope mismatch")
                 self._assert_materialization(snapshot, definition, declaration)
             chain.append((definition, authority, declaration))
@@ -258,22 +262,18 @@ class SealedMigrationRestoreAuthority:
         carrier = declaration.carrier()
         if (
             declaration.target_generation != declaration.expected_current_generation + 1
-            or descriptor.expected_current_generation
-            != declaration.expected_current_generation
+            or descriptor.expected_current_generation != declaration.expected_current_generation
             or predecessor.target_generation != declaration.expected_current_generation
-            or predecessor.post_state_fingerprint_sha256
-            != declaration.pre_state_fingerprint_sha256
+            or predecessor.post_state_fingerprint_sha256 != declaration.pre_state_fingerprint_sha256
             or predecessor.post_history_tail_fingerprint_sha256
             != declaration.pre_history_tail_fingerprint_sha256
-            or descriptor.pre_state_fingerprint_sha256
-            != declaration.pre_state_fingerprint_sha256
+            or descriptor.pre_state_fingerprint_sha256 != declaration.pre_state_fingerprint_sha256
             or descriptor.pre_history_tail_fingerprint_sha256
             != declaration.pre_history_tail_fingerprint_sha256
             or descriptor.immutable_history_appends != (carrier,)
             or descriptor.current_record_mutations != ()
             or descriptor.state_store_schema_version != definition.target_schema_version
-            or predecessor.state_store_schema_version
-            != definition.source_schema_version
+            or predecessor.state_store_schema_version != definition.source_schema_version
             or (
                 descriptor.account_id,
                 descriptor.device_installation_id,
@@ -380,9 +380,7 @@ class SealedMigrationRestoreAuthority:
             raise MigrationError("migration materialization chronology is invalid")
         terminal = materialized[-1] if materialized else ordered[0]
         expected_version = (
-            terminal[0].target_schema_version
-            if materialized
-            else terminal[0].source_schema_version
+            terminal[0].target_schema_version if materialized else terminal[0].source_schema_version
         )
         expected_schema = (
             terminal[1].target_sqlite_schema_fingerprint_sha256
@@ -405,9 +403,7 @@ class RestoreLifecycleAuthorityBundle:
     def from_migration_registry(
         cls,
         registry: MigrationRegistry,
-        secret_handoff_restore_authority: (
-            SecretHandoffRestoreAuthorityPort | None
-        ) = None,
+        secret_handoff_restore_authority: (SecretHandoffRestoreAuthorityPort | None) = None,
     ) -> "RestoreLifecycleAuthorityBundle":
         return cls(
             SealedMigrationRestoreAuthority(registry),
@@ -446,9 +442,7 @@ class S7CRestoreCoordinator:
     def _external(self, scope: EvidenceScope) -> _ExternalTarget:
         resolved = self._authority.resolve_current(scope)
         if resolved is None:
-            raise ProtectedFreshnessHandoffError(
-                "external current membership is missing"
-            )
+            raise ProtectedFreshnessHandoffError("external current membership is missing")
         ref, raw = resolved
         record = ProtectedFreshnessAuthorityRecord.from_mapping(raw)
         if record.scope != scope:
@@ -456,9 +450,7 @@ class S7CRestoreCoordinator:
         return _ExternalTarget(ref, record)
 
     @staticmethod
-    def _eligible(
-        candidate: BackupEnvelope, external: ProtectedFreshnessAuthorityRecord
-    ) -> bool:
+    def _eligible(candidate: BackupEnvelope, external: ProtectedFreshnessAuthorityRecord) -> bool:
         generation = candidate.local_protected_freshness_generation
         if external.lifecycle == "COMMITTED":
             return bool(
@@ -469,8 +461,7 @@ class S7CRestoreCoordinator:
         if external.lifecycle == "PREPARED":
             return bool(
                 generation == external.prepared_generation
-                and candidate.state_fingerprint_sha256
-                == external.prepared_state_fingerprint_sha256
+                and candidate.state_fingerprint_sha256 == external.prepared_state_fingerprint_sha256
                 and candidate.transaction_fingerprint_sha256
                 == external.prepared_transaction_fingerprint_sha256
             )
@@ -506,10 +497,8 @@ class S7CRestoreCoordinator:
         if metadata.state_fingerprint_sha256 != candidate.state_fingerprint_sha256:
             return LocalRestoreClassification.SAME_GENERATION_DIFFERENT_STATE, snapshot
         if (
-            metadata.transaction_fingerprint_sha256
-            != candidate.transaction_fingerprint_sha256
-            or metadata.history_tail_fingerprint_sha256
-            != candidate.history_tail_fingerprint_sha256
+            metadata.transaction_fingerprint_sha256 != candidate.transaction_fingerprint_sha256
+            or metadata.history_tail_fingerprint_sha256 != candidate.history_tail_fingerprint_sha256
         ):
             return (
                 LocalRestoreClassification.SAME_GENERATION_STATE_MATCH_LINEAGE_MISMATCH,
@@ -528,9 +517,7 @@ class S7CRestoreCoordinator:
                     candidate.state_store_identity_fingerprint_sha256
                 ),
                 environment=candidate.environment,
-                protected_freshness_generation=(
-                    candidate.local_protected_freshness_generation
-                ),
+                protected_freshness_generation=(candidate.local_protected_freshness_generation),
                 state_fingerprint_sha256=candidate.state_fingerprint_sha256,
                 transaction_fingerprint_sha256=candidate.transaction_fingerprint_sha256,
                 history_tail_fingerprint_sha256=candidate.history_tail_fingerprint_sha256,
@@ -554,8 +541,7 @@ class S7CRestoreCoordinator:
             and metadata.protected_freshness_generation
             == candidate.local_protected_freshness_generation
             and metadata.state_fingerprint_sha256 == candidate.state_fingerprint_sha256
-            and metadata.transaction_fingerprint_sha256
-            == candidate.transaction_fingerprint_sha256
+            and metadata.transaction_fingerprint_sha256 == candidate.transaction_fingerprint_sha256
             and metadata.history_tail_fingerprint_sha256
             == candidate.history_tail_fingerprint_sha256
             and snapshot.transaction_descriptors
@@ -585,9 +571,7 @@ class S7CRestoreCoordinator:
             isolated.prepare_for_atomic_install()
             latest = self._external(self._scope(candidate))
             if latest != expected or not self._eligible(candidate, latest.record):
-                raise StateStoreError(
-                    "external authority changed before atomic install"
-                )
+                raise StateStoreError("external authority changed before atomic install")
             with SQLiteStateStore.installation_gate(self._live_path):
                 fresh_classification, fresh_snapshot = self._classify(candidate)
                 if fresh_classification is LocalRestoreClassification.EXACT:
@@ -599,9 +583,7 @@ class S7CRestoreCoordinator:
                     LocalRestoreClassification.SCOPE_CONFLICT,
                     LocalRestoreClassification.ENVIRONMENT_CONFLICT,
                 }:
-                    raise StateStoreError(
-                        "fresh local classification forbids replacement"
-                    )
+                    raise StateStoreError("fresh local classification forbids replacement")
                 if fresh_classification not in {
                     LocalRestoreClassification.NO_TRUSTED_LOCAL_OBSERVATION,
                     LocalRestoreClassification.CORRUPT_OR_UNREADABLE,
@@ -609,9 +591,7 @@ class S7CRestoreCoordinator:
                     live = SQLiteStateStore(self._live_path)
                     try:
                         if live.read_verified_snapshot() != fresh_snapshot:
-                            raise StateStoreError(
-                                "live StateStore changed before checkpoint"
-                            )
+                            raise StateStoreError("live StateStore changed before checkpoint")
                         live.prepare_for_atomic_install()
                     except BaseException:
                         live.close()
@@ -620,9 +600,7 @@ class S7CRestoreCoordinator:
                 if final_external != expected or not self._eligible(
                     candidate, final_external.record
                 ):
-                    raise StateStoreError(
-                        "external authority changed at final install fence"
-                    )
+                    raise StateStoreError("external authority changed at final install fence")
                 SQLiteStateStore.atomic_replace(isolated_path, self._live_path)
             with SQLiteStateStore(self._live_path) as installed:
                 if not self._exact(installed.read_verified_snapshot(), candidate):
@@ -635,9 +613,7 @@ class S7CRestoreCoordinator:
             Path(f"{isolated_path}-wal").unlink(missing_ok=True)
             Path(f"{isolated_path}-shm").unlink(missing_ok=True)
 
-    def restore(
-        self, raw_candidate: Mapping[str, object] | BackupEnvelope
-    ) -> RestoreResult:
+    def restore(self, raw_candidate: Mapping[str, object] | BackupEnvelope) -> RestoreResult:
         """Validate, authorize, restore if needed, and reconcile exactly once."""
 
         with self._lock:
@@ -666,8 +642,7 @@ class S7CRestoreCoordinator:
                 installed = False
                 if classification is not LocalRestoreClassification.EXACT:
                     installed = (
-                        self._restore_isolated(candidate, external)
-                        is _InstallOutcome.INSTALLED
+                        self._restore_isolated(candidate, external) is _InstallOutcome.INSTALLED
                     )
 
                 if external.record.lifecycle == "COMMITTED":
@@ -675,18 +650,13 @@ class S7CRestoreCoordinator:
                     # idempotency. Every authorized invocation rebuilds S4
                     # from a fresh verified live observation.
                     with SQLiteStateStore(self._live_path) as evidence_store:
-                        if (
-                            self._registry.publish_verified_state(evidence_store)
-                            is None
-                        ):
+                        if self._registry.publish_verified_state(evidence_store) is None:
                             return RestoreResult(
                                 RestoreDecision.DENY,
                                 "fresh durable evidence unavailable",
                             )
                     latest = self._external(scope)
-                    if latest != external or not self._eligible(
-                        candidate, latest.record
-                    ):
+                    if latest != external or not self._eligible(candidate, latest.record):
                         return RestoreResult(
                             RestoreDecision.DENY,
                             "external changed during reconciliation",
@@ -706,9 +676,7 @@ class S7CRestoreCoordinator:
 
                 latest = self._external(scope)
                 if latest != external or latest.record.lifecycle != "PREPARED":
-                    return RestoreResult(
-                        RestoreDecision.DENY, "prepared authority changed"
-                    )
+                    return RestoreResult(RestoreDecision.DENY, "prepared authority changed")
                 # Re-run the full production validator at the protected-action
                 # fence, including the ACK-loss reconciliation precondition.
                 candidate = validate_backup_envelope(candidate)
@@ -718,9 +686,7 @@ class S7CRestoreCoordinator:
                     )
                     coordinator.recover_protected_state(scope)
                     if not self._exact(live.read_verified_snapshot(), candidate):
-                        return RestoreResult(
-                            RestoreDecision.DENY, "local changed after FINALIZE"
-                        )
+                        return RestoreResult(RestoreDecision.DENY, "local changed after FINALIZE")
                 return RestoreResult(
                     RestoreDecision.RESTORE_EXACT_PROTECTED_PENDING_AND_FINALIZE,
                     classification.value,
@@ -784,8 +750,8 @@ class TrustedPhysicalRestoreCoordinator(S7CRestoreCoordinator):
             )
             if current_record is None:
                 raise MigrationError("migration has no current designation")
-            history = tuple(item.payload for item in history_records)
-            current = current_record.payload
+            history = tuple(migration_mapping_payload(item.payload) for item in history_records)
+            current = migration_mapping_payload(current_record.payload)
             validate_chain(
                 history,
                 current,
@@ -829,17 +795,13 @@ class TrustedPhysicalRestoreCoordinator(S7CRestoreCoordinator):
                 observation.operation_fingerprint_sha256,
                 observation.metadata_fingerprint_sha256,
             )
-            if (
-                actual != expected
-                or observation.external_state
-                not in self._SECRET_STATES.get(lifecycle, set())
+            if actual != expected or observation.external_state not in self._SECRET_STATES.get(
+                lifecycle, set()
             ):
                 raise SecretHandoffError("secret restore authority rejected candidate")
 
     @staticmethod
-    def _copy_for_install(
-        candidate: AuthenticatedPhysicalBackupCandidate, target: Path
-    ) -> Path:
+    def _copy_for_install(candidate: AuthenticatedPhysicalBackupCandidate, target: Path) -> Path:
         target.parent.mkdir(parents=True, exist_ok=True)
         with (
             NamedTemporaryFile(
@@ -860,9 +822,7 @@ class TrustedPhysicalRestoreCoordinator(S7CRestoreCoordinator):
         return staged
 
     @staticmethod
-    def _staged_matches(
-        candidate: AuthenticatedPhysicalBackupCandidate, staged: Path
-    ) -> bool:
+    def _staged_matches(candidate: AuthenticatedPhysicalBackupCandidate, staged: Path) -> bool:
         digest = hashlib.sha256()
         length = 0
         with staged.open("rb") as source:
@@ -874,9 +834,7 @@ class TrustedPhysicalRestoreCoordinator(S7CRestoreCoordinator):
             and digest.hexdigest() == candidate.physical_artifact_sha256
         )
 
-    def _restore_exact_without_admission(
-        self, envelope: BackupEnvelope
-    ) -> RestoreResult:
+    def _restore_exact_without_admission(self, envelope: BackupEnvelope) -> RestoreResult:
         """Authorize an exact live store without consulting the physical artifact."""
 
         with SQLiteStateStore(self._live_path) as live:
@@ -925,9 +883,7 @@ class TrustedPhysicalRestoreCoordinator(S7CRestoreCoordinator):
             LocalRestoreClassification.EXACT.value,
         )
 
-    def restore_trusted_artifact(
-        self, artifact: TrustedPhysicalBackupArtifact
-    ) -> RestoreResult:
+    def restore_trusted_artifact(self, artifact: TrustedPhysicalBackupArtifact) -> RestoreResult:
         """Admit a trusted bundle and own its private lease through completion."""
 
         with self._lock:
@@ -949,34 +905,25 @@ class TrustedPhysicalRestoreCoordinator(S7CRestoreCoordinator):
                 SecretHandoffError,
                 LifecycleIntegrityError,
             ):
-                return RestoreResult(
-                    RestoreDecision.DENY, "physical artifact admission denied"
-                )
+                return RestoreResult(RestoreDecision.DENY, "physical artifact admission denied")
             try:
                 return self.restore_admitted(candidate)
             finally:
                 candidate.close()
 
-    def restore_admitted(
-        self, candidate: AuthenticatedPhysicalBackupCandidate
-    ) -> RestoreResult:
+    def restore_admitted(self, candidate: AuthenticatedPhysicalBackupCandidate) -> RestoreResult:
         """Borrow an authenticated C2D candidate; raw filesystem paths are not accepted."""
 
         with self._lock:
             staged: Path | None = None
             try:
                 if not isinstance(candidate, AuthenticatedPhysicalBackupCandidate) or (
-                    candidate.classification
-                    != "ELIGIBLE_FOR_FURTHER_RESTORE_VALIDATION_ONLY"
+                    candidate.classification != "ELIGIBLE_FOR_FURTHER_RESTORE_VALIDATION_ONLY"
                 ):
-                    raise StateStoreError(
-                        "physical restore requires an admitted candidate"
-                    )
+                    raise StateStoreError("physical restore requires an admitted candidate")
                 # Admission continuity is the prerequisite, not lifecycle Stage 1.
                 candidate.verify_physical_continuity()
-                envelope = validate_backup_envelope(
-                    candidate.backup_envelope
-                )  # Stage 1
+                envelope = validate_backup_envelope(candidate.backup_envelope)  # Stage 1
                 snapshot = candidate.state_store_snapshot
                 lifecycles = self._secret_lifecycles(snapshot)
                 self._migration_relations(snapshot)  # Stage 1
@@ -989,16 +936,10 @@ class TrustedPhysicalRestoreCoordinator(S7CRestoreCoordinator):
                         *snapshot.immutable_history,
                     )
                 )
-                if has_migration and not isinstance(
-                    migration, SealedMigrationRestoreAuthority
-                ):
-                    raise StateStoreError(
-                        "sealed migration restore authority unavailable"
-                    )
+                if has_migration and not isinstance(migration, SealedMigrationRestoreAuthority):
+                    raise StateStoreError("sealed migration restore authority unavailable")
                 if migration is not None and has_migration:
-                    migration.revalidate(
-                        snapshot, candidate.sqlite_schema_fingerprint_sha256
-                    )
+                    migration.revalidate(snapshot, candidate.sqlite_schema_fingerprint_sha256)
                 self._observe(lifecycles, SecretHandoffRestoreFence.INITIAL_STAGE_2)
                 # Stage 3: repeat relational validation after all Stage-2 authority succeeds.
                 self._migration_relations(snapshot)
@@ -1051,19 +992,11 @@ class TrustedPhysicalRestoreCoordinator(S7CRestoreCoordinator):
                                     live.prepare_for_atomic_install()
                             candidate.verify_physical_continuity()
                             latest = self._external(scope)
-                            if latest != external or not self._eligible(
-                                envelope, latest.record
-                            ):
-                                raise StateStoreError(
-                                    "external authority changed before install"
-                                )
+                            if latest != external or not self._eligible(envelope, latest.record):
+                                raise StateStoreError("external authority changed before install")
                             if not self._staged_matches(candidate, staged):
-                                raise StateStoreError(
-                                    "final staged continuity mismatch"
-                                )
-                            self._observe(
-                                lifecycles, SecretHandoffRestoreFence.PRE_INSTALL
-                            )
+                                raise StateStoreError("final staged continuity mismatch")
+                            self._observe(lifecycles, SecretHandoffRestoreFence.PRE_INSTALL)
                             SQLiteStateStore.atomic_replace(staged, self._live_path)
                             staged = None
                             installed = True
@@ -1072,9 +1005,7 @@ class TrustedPhysicalRestoreCoordinator(S7CRestoreCoordinator):
                     if not self._exact(live.read_verified_snapshot(), envelope):
                         raise StateStoreError("installed restore verification mismatch")
                     if external.record.lifecycle == "PREPARED":
-                        self._observe(
-                            lifecycles, SecretHandoffRestoreFence.FINAL_PROMOTION
-                        )
+                        self._observe(lifecycles, SecretHandoffRestoreFence.FINAL_PROMOTION)
                         ProtectedFreshnessHandoffCoordinator(
                             live, self._registry, self._authority
                         ).recover_protected_state(scope)
@@ -1091,9 +1022,7 @@ class TrustedPhysicalRestoreCoordinator(S7CRestoreCoordinator):
                     if self._registry.publish_verified_state(evidence_store) is None:
                         raise StateStoreError("fresh durable evidence unavailable")
                 if external.record.lifecycle == "PREPARED":
-                    decision = (
-                        RestoreDecision.RESTORE_EXACT_PROTECTED_PENDING_AND_FINALIZE
-                    )
+                    decision = RestoreDecision.RESTORE_EXACT_PROTECTED_PENDING_AND_FINALIZE
                 elif installed:
                     decision = RestoreDecision.RESTORE_EXTERNAL_COMMITTED_CURRENT
                 else:
@@ -1110,9 +1039,7 @@ class TrustedPhysicalRestoreCoordinator(S7CRestoreCoordinator):
                 MigrationError,
                 MigrationExecutionError,
             ):
-                return RestoreResult(
-                    RestoreDecision.DENY, "fail-closed physical restore denial"
-                )
+                return RestoreResult(RestoreDecision.DENY, "fail-closed physical restore denial")
             finally:
                 if staged is not None:
                     staged.unlink(missing_ok=True)

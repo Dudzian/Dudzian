@@ -200,12 +200,8 @@ class PhysicalSQLiteArtifactManifest:
             "manifest_fingerprint_sha256",
         ):
             _sha(getattr(self, name), name)
-        if not hmac.compare_digest(
-            self.manifest_fingerprint_sha256, self.computed_fingerprint()
-        ):
-            raise ValueError(
-                "manifest fingerprint does not match canonical manifest projection"
-            )
+        if not hmac.compare_digest(self.manifest_fingerprint_sha256, self.computed_fingerprint()):
+            raise ValueError("manifest fingerprint does not match canonical manifest projection")
 
     def projection(self, *, include_fingerprint: bool = True) -> dict[str, object]:
         result = asdict(self)
@@ -245,11 +241,7 @@ def _canonical_json(value: Mapping[str, object]) -> bytes:
 
 
 def canonical_authentication_payload(manifest: PhysicalSQLiteArtifactManifest) -> bytes:
-    return (
-        BACKUP_AUTHENTICATION_PURPOSE.encode()
-        + b"\x00"
-        + _canonical_json(manifest.projection())
-    )
+    return BACKUP_AUTHENTICATION_PURPOSE.encode() + b"\x00" + _canonical_json(manifest.projection())
 
 
 @dataclass(frozen=True, slots=True)
@@ -277,9 +269,7 @@ class PhysicalArtifactAuthenticationProof:
         return asdict(self)
 
     @classmethod
-    def from_mapping(
-        cls, value: Mapping[str, object]
-    ) -> PhysicalArtifactAuthenticationProof:
+    def from_mapping(cls, value: Mapping[str, object]) -> PhysicalArtifactAuthenticationProof:
         expected = {field.name for field in fields(cls)}
         if not isinstance(value, Mapping) or set(value) != expected:
             raise ValueError("proof mapping must contain the exact six fields")
@@ -317,9 +307,7 @@ class SecretStorageBackupAuthenticationSecureCustody:
         try:
             if self._storage.get_secret(storage_key) is not None:
                 raise AuthorityUnavailableError
-            self._storage.set_secret(
-                storage_key, base64.b64encode(key_material).decode("ascii")
-            )
+            self._storage.set_secret(storage_key, base64.b64encode(key_material).decode("ascii"))
         except BackupAuthenticationError:
             raise
         except Exception:
@@ -351,14 +339,9 @@ class _StoredKey:
 class SQLiteBackupAuthenticationMetadataStore:
     """Independent transactional authority metadata store."""
 
-    def __init__(
-        self, path: str | Path, *, state_store_path: str | Path | None = None
-    ) -> None:
+    def __init__(self, path: str | Path, *, state_store_path: str | Path | None = None) -> None:
         self.path = Path(path)
-        if (
-            state_store_path is not None
-            and self.path.resolve() == Path(state_store_path).resolve()
-        ):
+        if state_store_path is not None and self.path.resolve() == Path(state_store_path).resolve():
             raise ValueError("authority metadata must not alias StateStore")
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as connection:
@@ -412,10 +395,7 @@ class SQLiteBackupAuthenticationMetadataStore:
         except ValueError:
             raise AuthorityUnavailableError
         try:
-            keys = tuple(
-                _StoredKey(item[0], AuthorityKeyState(item[1]), item[2])
-                for item in rows
-            )
+            keys = tuple(_StoredKey(item[0], AuthorityKeyState(item[1]), item[2]) for item in rows)
         except (TypeError, ValueError, IndexError):
             raise AuthorityUnavailableError from None
         if any(
@@ -526,9 +506,7 @@ class SQLiteBackupAuthenticationMetadataStore:
             raise UnknownAdminMutationOutcomeError from None
         finally:
             connection.close()
-        return expected_revision + 1, tuple(
-            sorted(keys, key=lambda key: key.authority_key_id)
-        )
+        return expected_revision + 1, tuple(sorted(keys, key=lambda key: key.authority_key_id))
 
 
 class BackupArtifactAuthenticationAuthority:
@@ -566,9 +544,7 @@ class BackupArtifactAuthenticationAuthority:
         return BackupAuthenticationAuthorityScopeSnapshot(
             scope,
             revision,
-            tuple(
-                AuthorityKeyMetadata(key.authority_key_id, key.state) for key in keys
-            ),
+            tuple(AuthorityKeyMetadata(key.authority_key_id, key.state) for key in keys),
         )
 
     @staticmethod
@@ -588,9 +564,7 @@ class BackupArtifactAuthenticationAuthority:
         snapshot = BackupAuthenticationAuthorityScopeSnapshot(
             scope,
             revision,
-            tuple(
-                AuthorityKeyMetadata(key.authority_key_id, key.state) for key in keys
-            ),
+            tuple(AuthorityKeyMetadata(key.authority_key_id, key.state) for key in keys),
         )
         snapshot.condition
         return snapshot
@@ -603,9 +577,7 @@ class BackupArtifactAuthenticationAuthority:
         key, material = self._new_key()
         self._custody.persist(key.custody_handle, material)
         self._after_staging()
-        committed = self._metadata.create(
-            scope, key, _before_commit=self._metadata_before_commit
-        )
+        committed = self._metadata.create(scope, key, _before_commit=self._metadata_before_commit)
         result = self._public_snapshot(scope, committed)
         self._after_commit()
         return result
@@ -765,9 +737,7 @@ class BackupArtifactAuthenticationAuthority:
             return BackupArtifactVerificationResult.AUTHORITY_UNAVAILABLE
         if stored is None:
             return BackupArtifactVerificationResult.AUTHORITY_NOT_PROVISIONED
-        matches = [
-            key for key in stored[1] if key.authority_key_id == proof.authority_key_id
-        ]
+        matches = [key for key in stored[1] if key.authority_key_id == proof.authority_key_id]
         if not matches:
             return BackupArtifactVerificationResult.UNKNOWN_KEY
         key = matches[0]

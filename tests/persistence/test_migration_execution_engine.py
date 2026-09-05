@@ -36,15 +36,9 @@ from tests.persistence.test_state_store_records import _account, _metadata
 
 
 def test_protected_advancement_paths_share_one_private_protocol_core() -> None:
-    ordinary = inspect.getsource(
-        ProtectedFreshnessHandoffCoordinator.advance_protected_state
-    )
-    migration = inspect.getsource(
-        ProtectedFreshnessHandoffCoordinator._advance_migration_execution
-    )
-    shared = inspect.getsource(
-        ProtectedFreshnessHandoffCoordinator._advance_protected_candidate
-    )
+    ordinary = inspect.getsource(ProtectedFreshnessHandoffCoordinator.advance_protected_state)
+    migration = inspect.getsource(ProtectedFreshnessHandoffCoordinator._advance_migration_execution)
+    shared = inspect.getsource(ProtectedFreshnessHandoffCoordinator._advance_protected_candidate)
 
     assert "_advance_protected_candidate" in ordinary
     assert "_advance_protected_candidate" in migration
@@ -61,23 +55,17 @@ def test_migration_execution_authority_has_no_public_statestore_commit() -> None
     assert callable(SQLiteStateStore._commit_migration_execution)
     public_execution_methods = {
         name
-        for name, value in inspect.getmembers(
-            MigrationExecutionCoordinator, inspect.isfunction
-        )
+        for name, value in inspect.getmembers(MigrationExecutionCoordinator, inspect.isfunction)
         if not name.startswith("_")
     }
     assert public_execution_methods == {"execute"}
 
 
 def _protected(store: SQLiteStateStore, boundary: Boundary):
-    return ProtectedFreshnessHandoffCoordinator(
-        store, LocalDurableEvidenceRegistry(), boundary
-    )
+    return ProtectedFreshnessHandoffCoordinator(store, LocalDurableEvidenceRegistry(), boundary)
 
 
-def _initialize_applying(
-    store: SQLiteStateStore, boundary: Boundary, *, schema: int = 1
-) -> None:
+def _initialize_applying(store: SQLiteStateStore, boundary: Boundary, *, schema: int = 1) -> None:
     history, current = lifecycle(("PREPARED", "APPLYING"))
     _protected(store, boundary).advance_protected_state(
         _metadata(state_store_schema_version=schema),
@@ -176,9 +164,7 @@ def test_protected_execution_persists_exact_declaration_and_materialization(
         after = store.read_verified_snapshot()
         assert before is not None and after is not None
         assert calls == [before.metadata.protected_freshness_generation]
-        assert store._connection.execute("SELECT name FROM widget").fetchall() == [
-            ("first",)
-        ]
+        assert store._connection.execute("SELECT name FROM widget").fetchall() == [("first",)]
         assert after.metadata.state_store_schema_version == 2
         assert (
             after.metadata.protected_freshness_generation
@@ -212,9 +198,7 @@ def test_operation_failure_and_target_mismatch_roll_back_everything(
         with SQLiteStateStore(tmp_path / f"state-{target_mismatch}.db") as store:
             _initialize_applying(store, boundary)
             operations = (
-                MigrationSqlOperation(
-                    1, "create-a", "DDL", "CREATE TABLE a(id INTEGER)"
-                ),
+                MigrationSqlOperation(1, "create-a", "DDL", "CREATE TABLE a(id INTEGER)"),
                 MigrationSqlOperation(
                     2,
                     "second",
@@ -230,9 +214,9 @@ def test_operation_failure_and_target_mismatch_roll_back_everything(
             definition, registry, _ = _registry(store, operations, target=target)
             before = store.read_verified_snapshot()
             with pytest.raises(MigrationError, match="execution failed"):
-                MigrationExecutionCoordinator(
-                    store, registry, _protected(store, boundary)
-                ).execute(definition.migration_id)
+                MigrationExecutionCoordinator(store, registry, _protected(store, boundary)).execute(
+                    definition.migration_id
+                )
             after = store.read_verified_snapshot()
             assert after == before
             assert (
@@ -265,14 +249,12 @@ def test_wrong_lifecycle_fails_before_prepare(tmp_path: Path) -> None:
         _protected(store, boundary).advance_protected_state(
             _metadata(state_store_schema_version=1), current_records=(_account(),)
         )
-        operation = MigrationSqlOperation(
-            1, "create-a", "DDL", "CREATE TABLE a(id INTEGER)"
-        )
+        operation = MigrationSqlOperation(1, "create-a", "DDL", "CREATE TABLE a(id INTEGER)")
         definition, registry, _ = _registry(store, (operation,))
         with pytest.raises(MigrationError, match="APPLYING"):
-            MigrationExecutionCoordinator(
-                store, registry, _protected(store, boundary)
-            ).execute(definition.migration_id)
+            MigrationExecutionCoordinator(store, registry, _protected(store, boundary)).execute(
+                definition.migration_id
+            )
         assert boundary.calls.count("prepare") == 1  # initialization only
 
 
@@ -282,16 +264,14 @@ def test_wrong_logical_source_schema_fails_before_planning_or_prepare(
     boundary = Boundary(record("UNINITIALIZED"))
     with SQLiteStateStore(tmp_path / "state.db") as store:
         _initialize_applying(store, boundary, schema=3)
-        operation = MigrationSqlOperation(
-            1, "create-a", "DDL", "CREATE TABLE a(id INTEGER)"
-        )
+        operation = MigrationSqlOperation(1, "create-a", "DDL", "CREATE TABLE a(id INTEGER)")
         definition, registry, calls = _registry(store, (operation,), target="f" * 64)
         before = store.read_verified_snapshot()
         prepares = boundary.calls.count("prepare")
         with pytest.raises(MigrationError, match="source schema mismatch"):
-            MigrationExecutionCoordinator(
-                store, registry, _protected(store, boundary)
-            ).execute(definition.migration_id)
+            MigrationExecutionCoordinator(store, registry, _protected(store, boundary)).execute(
+                definition.migration_id
+            )
         assert calls == []
         assert boundary.calls.count("prepare") == prepares
         assert store.read_verified_snapshot() == before
@@ -304,19 +284,15 @@ def test_wrong_physical_pre_schema_fails_before_prepare_or_sql(tmp_path: Path) -
     boundary = Boundary(record("UNINITIALIZED"))
     with SQLiteStateStore(tmp_path / "state.db") as store:
         _initialize_applying(store, boundary)
-        operation = MigrationSqlOperation(
-            1, "create-a", "DDL", "CREATE TABLE a(id INTEGER)"
-        )
-        definition, registry, calls = _registry(
-            store, (operation,), pre="f" * 64, target="e" * 64
-        )
+        operation = MigrationSqlOperation(1, "create-a", "DDL", "CREATE TABLE a(id INTEGER)")
+        definition, registry, calls = _registry(store, (operation,), pre="f" * 64, target="e" * 64)
         before = store.read_verified_snapshot()
         physical_before = store.sqlite_schema_fingerprint()
         prepares = boundary.calls.count("prepare")
         with pytest.raises(MigrationError, match="pre-schema fingerprint mismatch"):
-            MigrationExecutionCoordinator(
-                store, registry, _protected(store, boundary)
-            ).execute(definition.migration_id)
+            MigrationExecutionCoordinator(store, registry, _protected(store, boundary)).execute(
+                definition.migration_id
+            )
         assert calls == [before.metadata.protected_freshness_generation]
         assert boundary.calls.count("prepare") == prepares
         assert store.read_verified_snapshot() == before
@@ -326,16 +302,12 @@ def test_wrong_physical_pre_schema_fails_before_prepare_or_sql(tmp_path: Path) -
 def test_duplicate_and_reopen_do_not_execute_sql_again(tmp_path: Path) -> None:
     path = tmp_path / "state.db"
     boundary = Boundary(record("UNINITIALIZED"))
-    operation = MigrationSqlOperation(
-        1, "create-a", "DDL", "CREATE TABLE a(id INTEGER)"
-    )
+    operation = MigrationSqlOperation(1, "create-a", "DDL", "CREATE TABLE a(id INTEGER)")
     with SQLiteStateStore(path) as store:
         _initialize_applying(store, boundary)
         definition, registry, calls = _registry(store, (operation,))
         target = _target_fingerprint(store, (operation,))
-        coordinator = MigrationExecutionCoordinator(
-            store, registry, _protected(store, boundary)
-        )
+        coordinator = MigrationExecutionCoordinator(store, registry, _protected(store, boundary))
         first = coordinator.execute(definition.migration_id)
         generation = store.read_metadata().protected_freshness_generation
         assert coordinator.execute(definition.migration_id) == first
@@ -347,26 +319,22 @@ def test_duplicate_and_reopen_do_not_execute_sql_again(tmp_path: Path) -> None:
         ).execute(definition.migration_id)
         assert calls == []
         assert reopened.read_metadata().protected_freshness_generation == generation
-        assert migration_target_materialized(
-            definition, result, reopened.read_verified_snapshot()
-        )
+        assert migration_target_materialized(definition, result, reopened.read_verified_snapshot())
 
 
 def test_local_durable_external_prepared_recovers_after_restart(tmp_path: Path) -> None:
     path = tmp_path / "state.db"
     boundary = Boundary(record("UNINITIALIZED"))
-    operation = MigrationSqlOperation(
-        1, "create-a", "DDL", "CREATE TABLE a(id INTEGER)"
-    )
+    operation = MigrationSqlOperation(1, "create-a", "DDL", "CREATE TABLE a(id INTEGER)")
     with SQLiteStateStore(path) as store:
         _initialize_applying(store, boundary)
         definition, registry, calls = _registry(store, (operation,))
         target = _target_fingerprint(store, (operation,))
         boundary.fail_finalize = True
         with pytest.raises(RuntimeError, match="finalize denied"):
-            MigrationExecutionCoordinator(
-                store, registry, _protected(store, boundary)
-            ).execute(definition.migration_id)
+            MigrationExecutionCoordinator(store, registry, _protected(store, boundary)).execute(
+                definition.migration_id
+            )
         durable = store.read_verified_snapshot()
         assert durable.metadata.state_store_schema_version == 2
         assert boundary.value["lifecycle"] == "PREPARED"
@@ -397,9 +365,7 @@ def test_source_local_external_prepared_recovers_before_new_execution(
 ) -> None:
     path = tmp_path / "state.db"
     boundary = Boundary(record("UNINITIALIZED"))
-    operation = MigrationSqlOperation(
-        1, "create-a", "DDL", "CREATE TABLE a(id INTEGER)"
-    )
+    operation = MigrationSqlOperation(1, "create-a", "DDL", "CREATE TABLE a(id INTEGER)")
     with SQLiteStateStore(path) as store:
         _initialize_applying(store, boundary)
         definition, registry, _ = _registry(store, (operation,))
@@ -411,9 +377,9 @@ def test_source_local_external_prepared_recovers_before_new_execution(
 
         monkeypatch.setattr(store, "_commit_migration_execution", fail_local)
         with pytest.raises(MigrationError, match="execution failed"):
-            MigrationExecutionCoordinator(
-                store, registry, _protected(store, boundary)
-            ).execute(definition.migration_id)
+            MigrationExecutionCoordinator(store, registry, _protected(store, boundary)).execute(
+                definition.migration_id
+            )
         assert boundary.value["lifecycle"] == "PREPARED"
         assert store.read_metadata().protected_freshness_generation == source_generation
     events: list[str] = []
@@ -438,9 +404,9 @@ def test_source_local_external_prepared_recovers_before_new_execution(
 
         monkeypatch.setattr(reopened, "_commit_migration_execution", commit)
         definition, registry, calls = _registry(reopened, (operation,), target=target)
-        MigrationExecutionCoordinator(
-            reopened, registry, _protected(reopened, boundary)
-        ).execute(definition.migration_id)
+        MigrationExecutionCoordinator(reopened, registry, _protected(reopened, boundary)).execute(
+            definition.migration_id
+        )
         snapshot = reopened.read_verified_snapshot()
         assert events == ["recovery", "prepare", "sql"]
         assert calls == [source_generation]
@@ -457,18 +423,16 @@ def test_source_local_external_prepared_recovers_before_new_execution(
 def test_finalize_effect_then_ack_lost_recovers_without_sql(tmp_path: Path) -> None:
     path = tmp_path / "state.db"
     boundary = Boundary(record("UNINITIALIZED"))
-    operation = MigrationSqlOperation(
-        1, "create-a", "DDL", "CREATE TABLE a(id INTEGER)"
-    )
+    operation = MigrationSqlOperation(1, "create-a", "DDL", "CREATE TABLE a(id INTEGER)")
     with SQLiteStateStore(path) as store:
         _initialize_applying(store, boundary)
         definition, registry, _ = _registry(store, (operation,))
         target = _target_fingerprint(store, (operation,))
         boundary.ack_lost = True
         with pytest.raises(RuntimeError, match="ack lost"):
-            MigrationExecutionCoordinator(
-                store, registry, _protected(store, boundary)
-            ).execute(definition.migration_id)
+            MigrationExecutionCoordinator(store, registry, _protected(store, boundary)).execute(
+                definition.migration_id
+            )
         generation = store.read_metadata().protected_freshness_generation
         assert boundary.value["lifecycle"] == "COMMITTED"
     boundary.ack_lost = False
@@ -489,13 +453,11 @@ def test_conflicting_trusted_definition_rejects_durable_declaration(
     boundary = Boundary(record("UNINITIALIZED"))
     with SQLiteStateStore(tmp_path / "state.db") as store:
         _initialize_applying(store, boundary)
-        operation = MigrationSqlOperation(
-            1, "create-a", "DDL", "CREATE TABLE a(id INTEGER)"
-        )
+        operation = MigrationSqlOperation(1, "create-a", "DDL", "CREATE TABLE a(id INTEGER)")
         definition, registry, _ = _registry(store, (operation,))
-        MigrationExecutionCoordinator(
-            store, registry, _protected(store, boundary)
-        ).execute(definition.migration_id)
+        MigrationExecutionCoordinator(store, registry, _protected(store, boundary)).execute(
+            definition.migration_id
+        )
         before = store.read_verified_snapshot()
         conflict = replace(definition, ordered_path=("conflicting-valid-path",))
         calls: list[int] = []
@@ -589,9 +551,9 @@ def test_two_connection_same_execution_race_commits_structural_sql_once(
             == 1
         )
         definition, registry, calls = _registry(store, operations, target=target)
-        MigrationExecutionCoordinator(
-            store, registry, _protected(store, boundary)
-        ).execute(definition.migration_id)
+        MigrationExecutionCoordinator(store, registry, _protected(store, boundary)).execute(
+            definition.migration_id
+        )
         assert calls == []
 
 
@@ -600,15 +562,9 @@ def test_two_connection_conflicting_effective_plan_race_has_one_winner(
 ) -> None:
     path = tmp_path / "state.db"
     boundary = Boundary(record("UNINITIALIZED"))
-    left = (
-        MigrationSqlOperation(
-            1, "create-left", "DDL", "CREATE TABLE left_wins(id INTEGER)"
-        ),
-    )
+    left = (MigrationSqlOperation(1, "create-left", "DDL", "CREATE TABLE left_wins(id INTEGER)"),)
     right = (
-        MigrationSqlOperation(
-            1, "create-right", "DDL", "CREATE TABLE right_wins(id INTEGER)"
-        ),
+        MigrationSqlOperation(1, "create-right", "DDL", "CREATE TABLE right_wins(id INTEGER)"),
     )
     with SQLiteStateStore(path) as store:
         _initialize_applying(store, boundary)
@@ -632,7 +588,4 @@ def test_two_connection_conflicting_effective_plan_race_has_one_winner(
             if item.representation_name == "Migration execution declaration"
         )
         assert len(declarations) == 1
-        assert (
-            declarations[0].payload["target_sqlite_schema_fingerprint_sha256"]
-            in targets
-        )
+        assert declarations[0].payload["target_sqlite_schema_fingerprint_sha256"] in targets

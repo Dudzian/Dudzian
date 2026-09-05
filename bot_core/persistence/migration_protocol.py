@@ -27,9 +27,7 @@ from .migration_execution import (
 )
 from .migration_execution_contract import migration_definition_fingerprint
 
-MIGRATION_STATES = frozenset(
-    {"PREPARED", "APPLYING", "DURABLE_MIGRATED", "COMPLETED", "FAILED"}
-)
+MIGRATION_STATES = frozenset({"PREPARED", "APPLYING", "DURABLE_MIGRATED", "COMPLETED", "FAILED"})
 MIGRATION_TRANSITIONS = {
     "PREPARED": frozenset({"APPLYING", "FAILED"}),
     "APPLYING": frozenset({"DURABLE_MIGRATED", "FAILED"}),
@@ -42,6 +40,12 @@ _SHA = __import__("re").compile(r"^[0-9a-f]{64}$")
 
 class MigrationError(LifecycleIntegrityError):
     pass
+
+
+def migration_mapping_payload(value: object) -> Mapping[str, object]:
+    if not isinstance(value, Mapping):
+        raise MigrationError("migration carrier payload must be an object")
+    return value
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,9 +94,7 @@ class MigrationRecord:
             "post_state_fingerprint_sha256",
             "transaction_fingerprint_sha256",
         ):
-            if not isinstance(getattr(self, name), str) or not _SHA.fullmatch(
-                getattr(self, name)
-            ):
+            if not isinstance(getattr(self, name), str) or not _SHA.fullmatch(getattr(self, name)):
                 raise MigrationError(f"{name} must be lowercase SHA-256")
 
     @classmethod
@@ -100,13 +102,9 @@ class MigrationRecord:
         if set(value) != {f.name for f in fields(cls)}:
             raise MigrationError("MigrationRecord requires its exact field set")
         data = dict(value)
-        if not isinstance(data["ordered_path"], list) or not isinstance(
-            data["scope"], list
-        ):
+        if not isinstance(data["ordered_path"], list) or not isinstance(data["scope"], list):
             raise MigrationError("JSON ordered_path and scope must be arrays")
-        data["ordered_path"], data["scope"] = tuple(data["ordered_path"]), tuple(
-            data["scope"]
-        )
+        data["ordered_path"], data["scope"] = tuple(data["ordered_path"]), tuple(data["scope"])
         return cls(**data)
 
     def to_mapping(self) -> dict[str, Any]:
@@ -214,9 +212,7 @@ def validate_migration_lifecycle(
             or current["protected_freshness_generation"]
             != history[-1]["protected_freshness_generation"]
         ):
-            raise MigrationError(
-                "current designation is not bound to latest observation"
-            )
+            raise MigrationError("current designation is not bound to latest observation")
     except LifecycleIntegrityError as exc:
         raise MigrationError(str(exc)) from exc
 
@@ -238,15 +234,11 @@ def bind_runtime_migration_instance(
         or record.environment != metadata.environment
         or record.source_schema_version != metadata.state_store_schema_version
         or record.pre_state_fingerprint_sha256 != metadata.state_fingerprint_sha256
-        or record.transaction_fingerprint_sha256
-        != metadata.transaction_fingerprint_sha256
-        or record.protected_freshness_generation
-        != metadata.protected_freshness_generation
+        or record.transaction_fingerprint_sha256 != metadata.transaction_fingerprint_sha256
+        or record.protected_freshness_generation != metadata.protected_freshness_generation
         or record.post_state_fingerprint_sha256 != derived_post_state_fingerprint_sha256
     ):
-        raise MigrationError(
-            "runtime migration instance is not exactly source/target bound"
-        )
+        raise MigrationError("runtime migration instance is not exactly source/target bound")
 
 
 def derive_runtime_migration_record(
@@ -297,18 +289,14 @@ def migration_target_materialized(
     metadata = snapshot.metadata
     if not snapshot.transaction_descriptors:
         return False
-    descriptor = max(
-        snapshot.transaction_descriptors, key=lambda item: item.target_generation
-    )
+    descriptor = max(snapshot.transaction_descriptors, key=lambda item: item.target_generation)
     return bool(
         metadata.account_id == record.scope[0]
         and metadata.device_installation_id == record.scope[1]
         and metadata.environment == record.environment
         and metadata.state_store_schema_version == record.target_schema_version
-        and descriptor.expected_current_generation
-        == record.protected_freshness_generation
-        and descriptor.pre_state_fingerprint_sha256
-        == record.pre_state_fingerprint_sha256
+        and descriptor.expected_current_generation == record.protected_freshness_generation
+        and descriptor.pre_state_fingerprint_sha256 == record.pre_state_fingerprint_sha256
         and metadata.state_fingerprint_sha256 == record.post_state_fingerprint_sha256
         and descriptor.account_id == record.scope[0]
         and descriptor.device_installation_id == record.scope[1]
@@ -371,9 +359,7 @@ class MigrationRegistry:
     def assert_static_match(self, candidate: MigrationRecord) -> MigrationDefinition:
         definition = self.definition_for(candidate.migration_id)
         if not definition.matches_static_fields(candidate):
-            raise MigrationError(
-                "candidate static fields do not match trusted definition"
-            )
+            raise MigrationError("candidate static fields do not match trusted definition")
         return definition
 
     def execution_authority_for(self, migration_id: str) -> MigrationExecutionAuthority:
@@ -412,9 +398,7 @@ class MigrationRegistry:
             authority.assert_definition(definition)
             authority.assert_plan(plan)
         except MigrationExecutionError as exc:
-            raise MigrationError(
-                "trusted plan does not match execution authority"
-            ) from exc
+            raise MigrationError("trusted plan does not match execution authority") from exc
         return plan
 
 
@@ -442,10 +426,7 @@ class MigrationCoordinator:
             state = str(current["state"])
             if state in {"COMPLETED", "FAILED"}:
                 return state
-            if (
-                state == "PREPARED"
-                and verified_schema_version != record.source_schema_version
-            ):
+            if state == "PREPARED" and verified_schema_version != record.source_schema_version:
                 raise MigrationError("verified source schema mismatch")
             if state == "APPLYING":
                 if verified_schema_version == record.target_schema_version:
@@ -456,9 +437,7 @@ class MigrationCoordinator:
                 # source snapshot nor the protected execution capability needed
                 # to resolve a sealed plan. Effects are owned exclusively by
                 # MigrationExecutionCoordinator.authorized_plan_for().
-                raise MigrationError(
-                    "migration effects require the sealed execution coordinator"
-                )
+                raise MigrationError("migration effects require the sealed execution coordinator")
             if state == "DURABLE_MIGRATED":
                 if verified_schema_version != record.target_schema_version:
                     raise MigrationError("durable target is not verified")
@@ -498,9 +477,7 @@ class DurableMigrationLifecycleCoordinator:
             raise MigrationError("migration lifecycle requires initialized StateStore")
         return self._view(snapshot, migration_id)
 
-    def _view(
-        self, snapshot: StateStoreSnapshot, migration_id: str
-    ) -> DurableMigrationLifecycle:
+    def _view(self, snapshot: StateStoreSnapshot, migration_id: str) -> DurableMigrationLifecycle:
         definition = self._registry.definition_for(migration_id)
         current_record, history_records = SQLiteStateStore._select_lifecycle(
             snapshot,
@@ -510,8 +487,10 @@ class DurableMigrationLifecycleCoordinator:
             current_key=f"migration-current:{migration_id}",
             history_key_prefix=f"migration-transition:{migration_id}:",
         )
-        history = tuple(record.payload for record in history_records)
-        current = None if current_record is None else current_record.payload
+        history = tuple(migration_mapping_payload(record.payload) for record in history_records)
+        current = (
+            None if current_record is None else migration_mapping_payload(current_record.payload)
+        )
         try:
             validate_chain(
                 history,
@@ -527,9 +506,7 @@ class DurableMigrationLifecycleCoordinator:
                 or current["protected_freshness_generation"]
                 != history[-1]["protected_freshness_generation"]
             ):
-                raise MigrationError(
-                    "current designation is not bound to latest observation"
-                )
+                raise MigrationError("current designation is not bound to latest observation")
         except (LifecycleIntegrityError, KeyError, TypeError, ValueError) as exc:
             raise MigrationError(str(exc)) from exc
         return DurableMigrationLifecycle(definition, history, current)
@@ -548,9 +525,7 @@ class DurableMigrationLifecycleCoordinator:
         )
 
     def complete(self, migration_id: str) -> DurableMigrationLifecycle:
-        return self._advance(
-            migration_id, expected="DURABLE_MIGRATED", target="COMPLETED"
-        )
+        return self._advance(migration_id, expected="DURABLE_MIGRATED", target="COMPLETED")
 
     def record_durable_migrated(
         self, migration_id: str, materialization: MigrationRecord
@@ -584,26 +559,17 @@ class DurableMigrationLifecycleCoordinator:
         def build(source: StateStoreSnapshot):
             authoritative = self._view(source, migration_id)
             source_state = (
-                None
-                if authoritative.current is None
-                else str(authoritative.current["state"])
+                None if authoritative.current is None else str(authoritative.current["state"])
             )
             if source_state == target:
                 raise _LifecycleAlreadyApplied
             if source_state is not None or expected is not None:
-                if (
-                    allowed_predecessors is None
-                    or source_state not in allowed_predecessors
-                ):
-                    raise MigrationError(
-                        f"expected {expected!r}, found {source_state!r}"
-                    )
+                if allowed_predecessors is None or source_state not in allowed_predecessors:
+                    raise MigrationError(f"expected {expected!r}, found {source_state!r}")
             if materialization is not None and not migration_target_materialized(
                 authoritative.definition, materialization, source
             ):
-                raise MigrationError(
-                    "verified migration target is not materially proven"
-                )
+                raise MigrationError("verified migration target is not materially proven")
             required_schema = (
                 authoritative.definition.source_schema_version
                 if target in {"PREPARED", "APPLYING"}
@@ -641,8 +607,7 @@ class DurableMigrationLifecycleCoordinator:
             return (
                 replace(
                     observation,
-                    protected_freshness_generation=observation.protected_freshness_generation
-                    + 1,
+                    protected_freshness_generation=observation.protected_freshness_generation + 1,
                 ),
                 (migration_current_carrier(current),),
                 (migration_transition_carrier(transition),),
@@ -658,9 +623,7 @@ class DurableMigrationLifecycleCoordinator:
             raise MigrationError("protected migration CAS failed") from exc
         return self.discover(migration_id)
 
-    def _recover_duplicate(
-        self, migration_id: str, target: str
-    ) -> DurableMigrationLifecycle:
+    def _recover_duplicate(self, migration_id: str, target: str) -> DurableMigrationLifecycle:
         snapshot = self._store.read_verified_snapshot()
         if snapshot is None:
             raise MigrationError("migration lifecycle requires initialized StateStore")
@@ -675,18 +638,12 @@ class DurableMigrationLifecycleCoordinator:
         try:
             recovered = self._protected.recover_protected_state(scope)
         except ProtectedFreshnessHandoffError as exc:
-            raise MigrationError(
-                "protected migration duplicate recovery failed"
-            ) from exc
+            raise MigrationError("protected migration duplicate recovery failed") from exc
         if recovered != snapshot.metadata:
-            raise MigrationError(
-                "protected migration duplicate recovery changed local state"
-            )
+            raise MigrationError("protected migration duplicate recovery changed local state")
         current = self.discover(migration_id)
         if current.current is None or current.current["state"] != target:
-            raise MigrationError(
-                "migration duplicate changed during protected recovery"
-            )
+            raise MigrationError("migration duplicate changed during protected recovery")
         return current
 
 

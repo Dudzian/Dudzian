@@ -113,9 +113,7 @@ def test_scope_and_proof_are_exact(scope):
         "authentication_tag_hex",
     }
     with pytest.raises(ValueError):
-        PhysicalArtifactAuthenticationProof.from_mapping(
-            {**proof.to_mapping(), "extra": 1}
-        )
+        PhysicalArtifactAuthenticationProof.from_mapping({**proof.to_mapping(), "extra": 1})
     for change in (
         {"proof_version": 2},
         {"algorithm": "SHA-256"},
@@ -168,26 +166,17 @@ def test_lifecycle_authentication_and_cross_scope(authority, scope):
     assert first.condition is AuthorityScopeCondition.PROVISIONED_WITH_ACTIVE
     assert len(storage.values) == 1
     proof = service.authenticate(scope, item)
-    assert (
-        service.verify(scope, item, proof) is BackupArtifactVerificationResult.VERIFIED
-    )
+    assert service.verify(scope, item, proof) is BackupArtifactVerificationResult.VERIFIED
     with pytest.raises(AlreadyProvisionedError):
         service.provision(scope)
     rotated = service.rotate(scope, 1)
     assert rotated.authority_revision == 2
     assert [key.state for key in rotated.keys].count(AuthorityKeyState.ACTIVE) == 1
     assert [key.state for key in rotated.keys].count(AuthorityKeyState.VERIFY_ONLY) == 1
-    assert (
-        service.verify(scope, item, proof) is BackupArtifactVerificationResult.VERIFIED
-    )
-    old = next(
-        key for key in rotated.keys if key.state is AuthorityKeyState.VERIFY_ONLY
-    )
+    assert service.verify(scope, item, proof) is BackupArtifactVerificationResult.VERIFIED
+    old = next(key for key in rotated.keys if key.state is AuthorityKeyState.VERIFY_ONLY)
     revoked = service.revoke(scope, old.authority_key_id, 2)
-    assert (
-        service.verify(scope, item, proof)
-        is BackupArtifactVerificationResult.REVOKED_KEY
-    )
+    assert service.verify(scope, item, proof) is BackupArtifactVerificationResult.REVOKED_KEY
     with pytest.raises(InvalidAuthorityOperationError):
         service.revoke(scope, old.authority_key_id, revoked.authority_revision)
     active = next(key for key in revoked.keys if key.state is AuthorityKeyState.ACTIVE)
@@ -210,10 +199,7 @@ def test_changed_manifest_plain_hash_unknown_and_missing_material(authority, sco
     item = manifest(scope)
     proof = service.authenticate(scope, item)
     changed = manifest(scope, artifact="9" * 64)
-    assert (
-        service.verify(scope, changed, proof)
-        is BackupArtifactVerificationResult.INVALID_PROOF
-    )
+    assert service.verify(scope, changed, proof) is BackupArtifactVerificationResult.INVALID_PROOF
     assert (
         service.verify(scope, item, replace(proof, authority_key_id="unknown"))
         is BackupArtifactVerificationResult.UNKNOWN_KEY
@@ -228,8 +214,7 @@ def test_changed_manifest_plain_hash_unknown_and_missing_material(authority, sco
     )
     storage.values.clear()
     assert (
-        service.verify(scope, item, proof)
-        is BackupArtifactVerificationResult.AUTHORITY_UNAVAILABLE
+        service.verify(scope, item, proof) is BackupArtifactVerificationResult.AUTHORITY_UNAVAILABLE
     )
 
 
@@ -249,12 +234,7 @@ def test_snapshot_rejects_non_exact_positive_revision(scope, revision):
 
 def test_snapshot_validates_exact_public_shape(scope):
     active = AuthorityKeyMetadata("key", AuthorityKeyState.ACTIVE)
-    assert (
-        BackupAuthenticationAuthorityScopeSnapshot(
-            scope, 1, (active,)
-        ).authority_revision
-        == 1
-    )
+    assert BackupAuthenticationAuthorityScopeSnapshot(scope, 1, (active,)).authority_revision == 1
     with pytest.raises(ValueError):
         AuthorityKeyMetadata("", AuthorityKeyState.ACTIVE)
     with pytest.raises(ValueError):
