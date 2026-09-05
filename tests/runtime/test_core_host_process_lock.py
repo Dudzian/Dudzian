@@ -13,6 +13,10 @@ from bot_core.runtime.core_host import (
     CoreHostProcessLock,
     CoreHostScope,
 )
+from bot_core.runtime.core_host_recovery_types import (
+    StartupSubsystemRecoveryClassification,
+    StartupSubsystemRecoveryResult,
+)
 
 
 class Resource:
@@ -23,6 +27,22 @@ class Resource:
 
     def close(self) -> None:
         self._events.append(f"close:{self._name}")
+
+
+class Recovery:
+    def __init__(self, events: list[str] | None = None) -> None:
+        self._events = events
+
+    def recover(self) -> StartupSubsystemRecoveryResult:
+        if self._events is not None:
+            self._events.append("recover")
+        return StartupSubsystemRecoveryResult(
+            StartupSubsystemRecoveryClassification.EMPTY_UNINITIALIZED
+        )
+
+
+def recovery_factory(scope: CoreHostScope, store: Resource) -> Recovery:
+    return Recovery()
 
 
 def scope(tmp_path: Path, name: str = "state.sqlite") -> CoreHostScope:
@@ -72,7 +92,8 @@ def test_different_state_store_scopes_do_not_contend(tmp_path: Path) -> None:
             assert second.held
 
 
-def test_real_cross_process_exclusion_and_clean_release(tmp_path: Path) -> None:
+@pytest.mark.parametrize("_iteration", range(10))
+def test_real_cross_process_exclusion_and_clean_release(tmp_path: Path, _iteration: int) -> None:
     context = multiprocessing.get_context("spawn")
     acquired, release, result = context.Event(), context.Event(), context.Queue()
     owner = context.Process(target=lock_worker, args=(scope(tmp_path), acquired, release, result))
@@ -123,13 +144,20 @@ def test_core_host_follows_canonical_order_and_closes_in_reverse(tmp_path: Path)
         scope(tmp_path),
         runtime_session_factory=session_factory,
         state_store_factory=store_factory,
+        startup_recovery_factory=lambda scope, store: Recovery(events),
     )
     host.start()
     assert host.owns_process_lock
-    assert events == ["create:session", "create:store"]
+    assert events == ["create:session", "create:store", "recover"]
     host.close()
     host.close()
-    assert events == ["create:session", "create:store", "close:store", "close:session"]
+    assert events == [
+        "create:session",
+        "create:store",
+        "recover",
+        "close:store",
+        "close:session",
+    ]
     assert not host.owns_process_lock
 
 
@@ -140,22 +168,45 @@ def test_second_core_has_no_authority_pipeline_side_effects(tmp_path: Path) -> N
         scope(tmp_path),
         runtime_session_factory=session_factory,
         state_store_factory=store_factory,
+        startup_recovery_factory=recovery_factory,
     )
     first.start()
-    counts = {"session": 0, "store": 0, "recovery": 0, "readiness": 0}
+    counts = {
+        "session_factory": 0,
+        "store_factory": 0,
+        "recovery_factory": 0,
+        "recovery_call": 0,
+        "readiness": 0,
+    }
 
     def counted(name: str) -> Resource:
-        counts[name] += 1
+        counts[f"{name}_factory"] += 1
         return Resource([], name)
+
+    class CountedRecovery(Recovery):
+        def recover(self) -> StartupSubsystemRecoveryResult:
+            counts["recovery_call"] += 1
+            return super().recover()
+
+    def counted_recovery(scope: CoreHostScope, store: Resource) -> CountedRecovery:
+        counts["recovery_factory"] += 1
+        return CountedRecovery()
 
     second = CoreHost(
         scope(tmp_path),
         runtime_session_factory=lambda: counted("session"),
         state_store_factory=lambda: counted("store"),
+        startup_recovery_factory=counted_recovery,
     )
     with pytest.raises(CoreHostAlreadyRunningError):
         second.start()
-    assert counts == {"session": 0, "store": 0, "recovery": 0, "readiness": 0}
+    assert counts == {
+        "session_factory": 0,
+        "store_factory": 0,
+        "recovery_factory": 0,
+        "recovery_call": 0,
+        "readiness": 0,
+    }
     first.close()
 
 
@@ -171,7 +222,10 @@ def test_runtime_session_failure_releases_lock_without_opening_store(tmp_path: P
         return Resource([], "store")
 
     host = CoreHost(
-        scope(tmp_path), runtime_session_factory=fail_session, state_store_factory=open_store
+        scope(tmp_path),
+        runtime_session_factory=fail_session,
+        state_store_factory=open_store,
+        startup_recovery_factory=recovery_factory,
     )
     with pytest.raises(LookupError, match="session failed"):
         host.start()
@@ -191,6 +245,7 @@ def test_state_store_failure_closes_session_and_releases_lock(tmp_path: Path) ->
         scope(tmp_path),
         runtime_session_factory=lambda: Resource(events, "session"),
         state_store_factory=fail_store,
+        startup_recovery_factory=recovery_factory,
     )
     with pytest.raises(OSError, match="store failed"):
         host.start()
