@@ -1344,7 +1344,9 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
     "SecretHandoff current state/designation": "DURABLE AUTHORITATIVE CURRENT STATE",
     "SecretHandoff transition/history revisions": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY",
     "Migration execution declaration": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY",
-    "SecretHandoff immutable descriptor": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY"
+    "SecretHandoff immutable descriptor": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY",
+    "InitialSecurityState current state": "DURABLE AUTHORITATIVE CURRENT STATE",
+    "InitialSecurityState accepted history": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY"
   },
   "local_integrity_descriptors": {
     "StateStoreTransactionDescriptor": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY; not PersistenceRecord; excluded from canonical immutable history and state/history fingerprints"
@@ -6232,6 +6234,180 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
       "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
       "semantic_contract_fingerprint_sha256": "8c408cd1ed6a5d2a0d531f27aa2a9f3b891f2d81cec4bacf7ede91c5ea75b2aa",
       "record_key_strategy": "MIGRATION_ID_TARGET_GENERATION"
+    },
+    "InitialSecurityState current state": {
+      "durability_class": "DURABLE AUTHORITATIVE CURRENT STATE",
+      "representation_category": "DIRECT_UPSTREAM_SCHEMA",
+      "semantic_object_or_invariant": "InitialSecurityState current state",
+      "record_key_strategy": "DIRECT_UPSTREAM_KEY_FIELDS",
+      "direct_upstream_validator": "InitialSecurityState current state",
+      "semantic_owner_milestone": "M0.10",
+      "semantic_artifact": "identity_device_authentication_and_secrets.json",
+      "semantic_json_pointer": "/executable_boundary_schemas/InitialSecurityState",
+      "carrier_strategy": "PERSISTENCE_RECORD",
+      "projection_schema_if_any": null,
+      "adds_new_domain_facts": false,
+      "restorable_authority": false,
+      "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
+      "semantic_contract_fingerprint_sha256": "7648ead33d14f2c069d084128eba71254ef68dc1d259c38b6b06277113d1da56"
+    },
+    "InitialSecurityState accepted history": {
+      "durability_class": "DURABLE IMMUTABLE / APPEND-ONLY HISTORY",
+      "representation_category": "M011_IMMUTABLE_HISTORY_WRAPPER",
+      "semantic_object_or_invariant": "InitialSecurityState accepted history",
+      "record_key_strategy": "IMMUTABLE_PAYLOAD_IDENTITY_REVISION",
+      "payload_contract": {
+        "required_fields": [
+          "fact_kind",
+          "upstream_payload",
+          "upstream_payload_fingerprint_sha256"
+        ],
+        "field_sources": {
+          "upstream_payload": "exact closed upstream DTO resolved and validated per field"
+        },
+        "closed": true,
+        "validator": "EXACT_UPSTREAM_SEMANTIC_PAYLOAD_WITH_SOURCE_REVALIDATION"
+      },
+      "immutable_fact_binding": {
+        "wrapper_fields": [
+          "fact_kind",
+          "upstream_payload",
+          "upstream_payload_fingerprint_sha256"
+        ],
+        "persisted_payload_fields": [
+          "account_id",
+          "operator_id",
+          "device_installation_id",
+          "security_generation",
+          "session_generation",
+          "state",
+          "bootstrap_claim_fingerprint_sha256",
+          "content_fingerprint_sha256"
+        ],
+        "field_contracts": {
+          "account_id": {
+            "type": "canonical_id",
+            "source_pointer": "/executable_boundary_schemas/InitialSecurityState",
+            "source_path": "account_id",
+            "nullable": false,
+            "semantic_role": "parent_scope",
+            "id_prefix": "acct",
+            "source_artifact": "identity_device_authentication_and_secrets.json"
+          },
+          "operator_id": {
+            "type": "canonical_id",
+            "source_pointer": "/executable_boundary_schemas/InitialSecurityState",
+            "source_path": "operator_id",
+            "nullable": false,
+            "semantic_role": "identity",
+            "id_prefix": "op",
+            "source_artifact": "identity_device_authentication_and_secrets.json"
+          },
+          "device_installation_id": {
+            "type": "canonical_id",
+            "source_pointer": "/executable_boundary_schemas/InitialSecurityState",
+            "source_path": "device_installation_id",
+            "nullable": false,
+            "semantic_role": "parent_scope",
+            "id_prefix": "dev",
+            "source_artifact": "identity_device_authentication_and_secrets.json"
+          },
+          "security_generation": {
+            "type": "positive_integer",
+            "source_pointer": "/executable_boundary_schemas/InitialSecurityState",
+            "source_path": "security_generation",
+            "nullable": false,
+            "semantic_role": "revision_generation",
+            "source_artifact": "identity_device_authentication_and_secrets.json"
+          },
+          "session_generation": {
+            "type": "positive_integer",
+            "source_pointer": "/executable_boundary_schemas/InitialSecurityState",
+            "source_path": "session_generation",
+            "nullable": false,
+            "semantic_role": "revision_generation",
+            "source_artifact": "identity_device_authentication_and_secrets.json"
+          },
+          "state": {
+            "type": "enum",
+            "source_pointer": "/executable_boundary_schemas/InitialSecurityState",
+            "source_path": "state",
+            "nullable": false,
+            "semantic_role": "lifecycle",
+            "values": [
+              "ESTABLISHED"
+            ],
+            "source_artifact": "identity_device_authentication_and_secrets.json",
+            "constraint_pointer": "/initial_security_establishment_contract"
+          },
+          "bootstrap_claim_fingerprint_sha256": {
+            "type": "sha256_hex",
+            "source_pointer": "/executable_boundary_schemas/InitialSecurityState",
+            "source_path": "bootstrap_claim_fingerprint_sha256",
+            "nullable": false,
+            "semantic_role": "fingerprint",
+            "source_artifact": "identity_device_authentication_and_secrets.json"
+          },
+          "content_fingerprint_sha256": {
+            "type": "sha256_hex",
+            "source_pointer": "/executable_boundary_schemas/InitialSecurityState",
+            "source_path": "content_fingerprint_sha256",
+            "nullable": false,
+            "semantic_role": "fingerprint",
+            "source_artifact": "identity_device_authentication_and_secrets.json"
+          }
+        },
+        "canonical_object_identity_fields": [
+          "account_id",
+          "device_installation_id"
+        ],
+        "scope_fields": [
+          "account_id",
+          "device_installation_id"
+        ],
+        "revision_generation_fields": [
+          "security_generation",
+          "session_generation"
+        ],
+        "source_derivation_mode": "DIRECT_CLOSED_UPSTREAM_DTO",
+        "semantic_fingerprint_field": "content_fingerprint_sha256",
+        "semantic_fingerprint_input_fields": [
+          "account_id",
+          "operator_id",
+          "device_installation_id",
+          "security_generation",
+          "session_generation",
+          "state",
+          "bootstrap_claim_fingerprint_sha256"
+        ],
+        "semantic_fingerprint_derivation": {
+          "source_artifact": "identity_device_authentication_and_secrets.json",
+          "source_pointer": "/executable_boundary_schemas/InitialSecurityState",
+          "algorithm": "SHA-256",
+          "input_fields": [
+            "account_id",
+            "operator_id",
+            "device_installation_id",
+            "security_generation",
+            "session_generation",
+            "state",
+            "bootstrap_claim_fingerprint_sha256"
+          ],
+          "input_shape": "JSON_OBJECT",
+          "canonicalization": "JSON sort_keys=true, separators comma/colon, ensure_ascii=false",
+          "encoding": "UTF-8",
+          "digest_format": "lowercase_hex"
+        }
+      },
+      "semantic_owner_milestone": "M0.10",
+      "semantic_artifact": "identity_device_authentication_and_secrets.json",
+      "semantic_json_pointer": "/executable_boundary_schemas/InitialSecurityState",
+      "carrier_strategy": "PERSISTENCE_RECORD",
+      "projection_schema_if_any": null,
+      "adds_new_domain_facts": false,
+      "restorable_authority": false,
+      "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
+      "semantic_contract_fingerprint_sha256": "7648ead33d14f2c069d084128eba71254ef68dc1d259c38b6b06277113d1da56"
     }
   },
   "canonical_durable_records": "array of exact PersistenceRecord carriers for durable current facts",
@@ -9114,6 +9290,127 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
         "stage2_excluded_rules": "STAGE2_CONTEXTUAL_EXCLUDED"
       },
       "source_parity_executor": "EXPLICIT_FAIL_CLOSED_SECRETMETADATAPROJECTION"
+    },
+    "InitialSecurityState current state": {
+      "semantic_artifact": "identity_device_authentication_and_secrets.json",
+      "semantic_json_pointer": "/executable_boundary_schemas/InitialSecurityState",
+      "exact_fields": [
+        "account_id",
+        "operator_id",
+        "device_installation_id",
+        "security_generation",
+        "session_generation",
+        "state",
+        "bootstrap_claim_fingerprint_sha256",
+        "content_fingerprint_sha256"
+      ],
+      "nullable_fields": [],
+      "upstream_field_schemas": {
+        "account_id": {
+          "type": "id",
+          "prefix": "acct"
+        },
+        "operator_id": {
+          "type": "id",
+          "prefix": "op"
+        },
+        "device_installation_id": {
+          "type": "id",
+          "prefix": "dev"
+        },
+        "security_generation": {
+          "type": "positive_integer"
+        },
+        "session_generation": {
+          "type": "positive_integer"
+        },
+        "state": {
+          "type": "enum",
+          "values": [
+            "ESTABLISHED"
+          ]
+        },
+        "bootstrap_claim_fingerprint_sha256": {
+          "type": "sha256_hex"
+        },
+        "content_fingerprint_sha256": {
+          "type": "sha256_hex"
+        }
+      },
+      "validator_strategy": "EXACT_CLOSED_UPSTREAM_PAYLOAD_AND_SEMANTIC_RULES",
+      "record_key_fields": [
+        "account_id",
+        "device_installation_id"
+      ],
+      "semantic_constraints": {
+        "state": {
+          "values": [
+            "ESTABLISHED"
+          ]
+        }
+      },
+      "terminal_fingerprint": {
+        "field": "content_fingerprint_sha256",
+        "algorithm": "SHA-256",
+        "input_fields": [
+          "account_id",
+          "operator_id",
+          "device_installation_id",
+          "security_generation",
+          "session_generation",
+          "state",
+          "bootstrap_claim_fingerprint_sha256"
+        ],
+        "excluded_fields": [
+          "content_fingerprint_sha256"
+        ],
+        "input_shape": "JSON_OBJECT",
+        "canonical_policy_pointer": "/canonical_integrity_fingerprint_policy",
+        "canonicalization": {
+          "sort_keys": true,
+          "separators": [
+            ",",
+            ":"
+          ],
+          "ensure_ascii": false,
+          "allow_nan": false
+        },
+        "encoding": "UTF-8",
+        "array_order": "PRESERVE_VALIDATED_SEMANTIC_SOURCE_ORDER",
+        "unicode_normalization": "NONE",
+        "digest_format": "64_LOWERCASE_HEXADECIMAL_CHARACTERS",
+        "validator": "RECOMPUTE_AND_COMPARE_EXACT_EQUALITY",
+        "authority_boundary": "INTEGRITY_ONLY; DOES_NOT_ESTABLISH_ACCEPTED_OR_CURRENT_AUTHORITY",
+        "exact_fields_source_pointer": "/executable_boundary_schemas/InitialSecurityState"
+      },
+      "stage1_scope": "INTRINSIC_SELF_CONTAINED_ONLY_NO_AUTHORITY",
+      "stage2_contextual_rules_excluded": [
+        "accepted/current authority or membership",
+        "trusted history and cross-record lineage resolution",
+        "external venue or Core registry lookup",
+        "M0.3 membership and restore authority",
+        "LIVE readiness"
+      ],
+      "source_parity_dimension_classification": {
+        "exact_fields": "SOURCE_DERIVED_AND_CHECKED",
+        "nullable_fields": "SOURCE_DERIVED_AND_CHECKED",
+        "field_schemas": "SOURCE_DERIVED_AND_CHECKED",
+        "canonical_ids": "SOURCE_DERIVED_AND_CHECKED",
+        "closed_registries": "SOURCE_DERIVED_AND_CHECKED",
+        "constants": "SOURCE_DOES_NOT_DEFINE",
+        "nested_objects": "SOURCE_DOES_NOT_DEFINE",
+        "arrays": "SOURCE_DOES_NOT_DEFINE",
+        "array_item_schemas": "SOURCE_DOES_NOT_DEFINE",
+        "array_uniqueness": "SOURCE_DOES_NOT_DEFINE",
+        "array_ordering": "SOURCE_DOES_NOT_DEFINE",
+        "intrinsic_sibling_constraints": "SOURCE_DERIVED_AND_CHECKED",
+        "reference_grammar": "SOURCE_DOES_NOT_DEFINE",
+        "record_key_fields": "SOURCE_DERIVED_AND_CHECKED",
+        "terminal_content_fingerprint": "SOURCE_DERIVED_AND_CHECKED",
+        "stage1_included_rules": "SOURCE_DERIVED_AND_CHECKED",
+        "stage2_excluded_rules": "STAGE2_CONTEXTUAL_EXCLUDED"
+      },
+      "source_parity_executor": "EXPLICIT_FAIL_CLOSED_INITIALSECURITYSTATE_CURRENT_STATE"
     }
   },
   "direct_upstream_schema_policy": {
@@ -12369,7 +12666,9 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
           "Migration transition/history revisions",
           "SecretHandoff immutable descriptor",
           "SecretHandoff current state/designation",
-          "SecretHandoff transition/history revisions"
+          "SecretHandoff transition/history revisions",
+          "InitialSecurityState current state",
+          "InitialSecurityState accepted history"
         ]
       },
       "representation_category": {
@@ -12732,9 +13031,9 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
   "architecture_only": true,
   "all_adversarial_invariants_green": true,
   "true_upstream_semantic_gaps": 0,
-  "representation_registry": "65/65 structured, zero true upstream semantic gaps, no synthetic record kinds",
+  "representation_registry": "67/67 structured, zero true upstream semantic gaps, no synthetic record kinds",
   "immutable_upstream_provenance": "ALL_WRAPPERS_DIRECT_OR_LOSSLESS_COMPOSITE_SOURCE_DERIVED",
-  "immutable_history_wrapper_count": 14
+  "immutable_history_wrapper_count": 15
 }
 ```
 
