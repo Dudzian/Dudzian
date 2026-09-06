@@ -559,6 +559,8 @@ class InitialSecurityAuthoritySnapshot:
     current_bootstrap: Mapping[tuple[str, str], str]
     consumed_bootstrap_claims: frozenset[str]
     consumed_bootstrap_authority_fingerprints: frozenset[str]
+    accepted_authentication_proofs: Mapping[str, object]
+    accepted_authentication_proof_bindings: Mapping[str, object]
 
 
 def _empty_snapshot() -> InitialSecurityAuthoritySnapshot:
@@ -579,6 +581,8 @@ def _empty_snapshot() -> InitialSecurityAuthoritySnapshot:
         empty,
         frozenset(),
         frozenset(),
+        empty,
+        empty,
     )
 
 
