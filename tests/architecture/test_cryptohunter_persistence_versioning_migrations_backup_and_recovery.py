@@ -1442,6 +1442,55 @@ def _build_session(source: dict[str, Any]) -> SourceExpectedDirectContract:
     )
 
 
+def _build_initial_security(source: dict[str, Any]) -> SourceExpectedDirectContract:
+    fields = source["exact_fields"]
+    inputs = fields[:-1]
+    terminal = {
+        "field": "content_fingerprint_sha256",
+        "algorithm": "SHA-256",
+        "input_fields": inputs,
+        "excluded_fields": ["content_fingerprint_sha256"],
+        "input_shape": "JSON_OBJECT",
+        "canonical_policy_pointer": "/canonical_integrity_fingerprint_policy",
+        "canonicalization": {
+            "sort_keys": True,
+            "separators": [",", ":"],
+            "ensure_ascii": False,
+            "allow_nan": False,
+        },
+        "encoding": "UTF-8",
+        "array_order": "PRESERVE_VALIDATED_SEMANTIC_SOURCE_ORDER",
+        "unicode_normalization": "NONE",
+        "digest_format": "64_LOWERCASE_HEXADECIMAL_CHARACTERS",
+        "validator": "RECOMPUTE_AND_COMPARE_EXACT_EQUALITY",
+        "authority_boundary": "INTEGRITY_ONLY; DOES_NOT_ESTABLISH_ACCEPTED_OR_CURRENT_AUTHORITY",
+        "exact_fields_source_pointer": "/executable_boundary_schemas/InitialSecurityState",
+    }
+    schemas = {
+        "account_id": _id_schema("CryptoHunterAccount"),
+        "operator_id": _id_schema("OperatorIdentity"),
+        "device_installation_id": _id_schema("DeviceInstallation"),
+        "security_generation": {"type": "positive_integer"},
+        "session_generation": {"type": "positive_integer"},
+        "state": {"type": "enum", "values": ["ESTABLISHED"]},
+        "bootstrap_claim_fingerprint_sha256": {"type": "sha256_hex"},
+        "content_fingerprint_sha256": {"type": "sha256_hex"},
+    }
+    return _expected(
+        fields=fields,
+        nullable=[],
+        schemas=schemas,
+        key=["account_id", "device_installation_id"],
+        dimensions=_source_dimensions(
+            canonical_ids=True, registries=True, sibling=True, terminal=True
+        ),
+        terminal=terminal,
+        artifact="identity_device_authentication_and_secrets.json",
+        pointer="/executable_boundary_schemas/InitialSecurityState",
+        semantic_constraints={"state": {"values": ["ESTABLISHED"]}},
+    )
+
+
 def _build_secret(source: dict[str, Any]) -> SourceExpectedDirectContract:
     operations = copy.deepcopy(source["field_schemas"]["permitted_operations"])
     operations["values"] = IDENTITY["registries"]["secret_use_operation_registry"]
@@ -1503,6 +1552,7 @@ DIRECT_SOURCE_EXPECTATION_BUILDERS = {
     "RiskDecision": _build_risk_decision,
     "ExecutionLease immutable record": _build_execution_lease,
     "SessionSecurityState current generation/state": _build_session,
+    "InitialSecurityState current state": _build_initial_security,
     "SecretMetadataProjection": _build_secret,
 }
 
@@ -1771,6 +1821,10 @@ def _parity_session(projection: dict[str, Any], source: dict[str, Any]) -> bool:
     )
 
 
+def _parity_initial_security(projection: dict[str, Any], source: dict[str, Any]) -> bool:
+    return _direct_common_source_parity("InitialSecurityState current state", projection, source)
+
+
 def _parity_secret(projection: dict[str, Any], source: dict[str, Any]) -> bool:
     schema = projection["upstream_field_schemas"]["permitted_operations"]
     expected = copy.deepcopy(source["field_schemas"]["permitted_operations"])
@@ -1801,6 +1855,7 @@ DIRECT_SOURCE_PARITY_EXECUTORS = {
     "RiskDecision": _parity_risk,
     "ExecutionLease immutable record": _parity_lease,
     "SessionSecurityState current generation/state": _parity_session,
+    "InitialSecurityState current state": _parity_initial_security,
     "SecretMetadataProjection": _parity_secret,
 }
 
@@ -2508,6 +2563,7 @@ def test_direct_terminal_fingerprint_projection_is_complete_and_fail_closed() ->
         "RiskDecision": "decision_fingerprint_sha256",
         "ExecutionLease immutable record": "lease_fingerprint_sha256",
         "SessionSecurityState current generation/state": "content_fingerprint_sha256",
+        "InitialSecurityState current state": "content_fingerprint_sha256",
         "SecretMetadataProjection": "content_fingerprint_sha256",
     }
     for name, field in expected.items():
@@ -3007,6 +3063,8 @@ _EXPECTED_DURABILITY = {
     "RuntimeSession canonical identity/history": _H,
     "SessionSecurityState current generation/state": _A,
     "SessionSecurityState revision history": _H,
+    "InitialSecurityState current state": _A,
+    "InitialSecurityState accepted history": _H,
     "PinVerifierRecord accepted revisions": _H,
     "PinVerifierRecord current designation": _A,
     "DeviceTrust/security revisions": _H,
@@ -3320,6 +3378,20 @@ _EXPECTED_OWNERSHIP: dict[str, dict[str, str]] = {
         "semantic_owner_milestone": "M0.10",
         "semantic_artifact": "identity_device_authentication_and_secrets.json",
         "semantic_json_pointer": "/executable_boundary_schemas/SessionSecurityState",
+        "carrier_strategy": "PERSISTENCE_RECORD",
+    },
+    "InitialSecurityState current state": {
+        "representation_category": "DIRECT_UPSTREAM_SCHEMA",
+        "semantic_owner_milestone": "M0.10",
+        "semantic_artifact": "identity_device_authentication_and_secrets.json",
+        "semantic_json_pointer": "/executable_boundary_schemas/InitialSecurityState",
+        "carrier_strategy": "PERSISTENCE_RECORD",
+    },
+    "InitialSecurityState accepted history": {
+        "representation_category": "M011_IMMUTABLE_HISTORY_WRAPPER",
+        "semantic_owner_milestone": "M0.10",
+        "semantic_artifact": "identity_device_authentication_and_secrets.json",
+        "semantic_json_pointer": "/executable_boundary_schemas/InitialSecurityState",
         "carrier_strategy": "PERSISTENCE_RECORD",
     },
     "PinVerifierRecord accepted revisions": {
@@ -3969,6 +4041,7 @@ def _terminal_fingerprint_field(aspect: str) -> str | None:
         "RiskDecision": "decision_fingerprint_sha256",
         "ExecutionLease immutable record": "lease_fingerprint_sha256",
         "SessionSecurityState current generation/state": "content_fingerprint_sha256",
+        "InitialSecurityState current state": "content_fingerprint_sha256",
         "SecretMetadataProjection": "content_fingerprint_sha256",
     }.get(aspect)
 
@@ -5065,6 +5138,8 @@ def _direct_fixture_value(
         return "ALLOW"
     if field == "state" and "SessionSecurityState" in aspect:
         return "LOCKED"
+    if field == "state" and "InitialSecurityState" in aspect:
+        return "ESTABLISHED"
     if field == "state" and "SecretMetadata" in aspect:
         return "AVAILABLE"
     if field in {"state", "lifecycle_state", "connection_state", "execution_authorization"}:
@@ -6536,9 +6611,9 @@ def test_exact_pending_g_plus_one_finalizes_and_mismatch_preserves_pending() -> 
     assert external == before
 
 
-def test_exact_65_row_representation_registry_closure() -> None:
+def test_exact_67_row_representation_registry_closure() -> None:
     registry = MACHINE["backup_contract"]["representation_registry"]
-    assert len(registry) == 65 and set(registry) == set(_EXPECTED_DURABILITY)
+    assert len(registry) == 67 and set(registry) == set(_EXPECTED_DURABILITY)
     assert all(
         entry["durability_class"] == _EXPECTED_DURABILITY[aspect]
         for aspect, entry in registry.items()
@@ -7376,6 +7451,7 @@ def _independent_immutable_fields(aspect: str) -> list[str] | dict[str, list[str
         "OperatorIdentity revisions",
         "LiveAccessGrant accepted revisions/history",
         "SessionSecurityState revision history",
+        "InitialSecurityState accepted history",
         "PinVerifierRecord accepted revisions",
         "DeviceTrust/security revisions",
         "platform enrollment revisions",
@@ -7384,6 +7460,7 @@ def _independent_immutable_fields(aspect: str) -> list[str] | dict[str, list[str
             "OperatorIdentity revisions": "OperatorIdentitySecurityProjection",
             "LiveAccessGrant accepted revisions/history": "LiveAccessGrantSecurityProjection",
             "SessionSecurityState revision history": "SessionSecurityState",
+            "InitialSecurityState accepted history": "InitialSecurityState",
             "PinVerifierRecord accepted revisions": "PinVerifierRecord",
             "DeviceTrust/security revisions": "DeviceTrustProjection",
             "platform enrollment revisions": "CoreAcceptedPlatformBiometricAssertionBinding",
@@ -11021,3 +11098,45 @@ def test_p1c_runtime_session_persistence_ownership_split_is_exact() -> None:
             "json_pointer": "/corehost_runtime_session_and_readiness_contract",
         },
     }
+
+
+def test_initial_security_state_gap_closure_is_exact_and_uses_existing_categories() -> None:
+    registry = MACHINE["backup_contract"]["representation_registry"]
+    current = registry["InitialSecurityState current state"]
+    accepted = registry["InitialSecurityState accepted history"]
+    exact = IDENTITY["executable_boundary_schemas"]["InitialSecurityState"]
+    assert current["representation_category"] == "DIRECT_UPSTREAM_SCHEMA"
+    assert accepted["representation_category"] == "M011_IMMUTABLE_HISTORY_WRAPPER"
+    assert (
+        current["semantic_json_pointer"]
+        == accepted["semantic_json_pointer"]
+        == ("/executable_boundary_schemas/InitialSecurityState")
+    )
+    assert current["adds_new_domain_facts"] is accepted["adds_new_domain_facts"] is False
+    assert accepted["immutable_fact_binding"]["persisted_payload_fields"] == exact
+    assert accepted["immutable_fact_binding"]["canonical_object_identity_fields"] == [
+        "account_id",
+        "device_installation_id",
+    ]
+    assert current["record_key_strategy"] == "DIRECT_UPSTREAM_KEY_FIELDS"
+    direct = MACHINE["backup_contract"]["direct_upstream_validator_registry"][
+        "InitialSecurityState current state"
+    ]
+    assert direct["record_key_fields"] == ["account_id", "device_installation_id"]
+    assert direct["terminal_fingerprint"]["field"] == "content_fingerprint_sha256"
+    assert "initial_security_state_id" not in exact
+    assert registry["bootstrap consumed fence"]["semantic_object_or_invariant"] == (
+        "CoreCurrentBootstrapState"
+    )
+
+
+def test_initial_security_state_gap_contract_rejects_representative_mutations() -> None:
+    registry = copy.deepcopy(MACHINE["backup_contract"]["representation_registry"])
+    accepted = registry["InitialSecurityState accepted history"]["immutable_fact_binding"]
+    for missing in ("bootstrap_claim_fingerprint_sha256", "session_generation"):
+        assert missing in accepted["persisted_payload_fields"]
+    current = MACHINE["backup_contract"]["direct_upstream_validator_registry"][
+        "InitialSecurityState current state"
+    ]
+    assert current["record_key_fields"] != ["account_id"]
+    assert "initial_security_state_id" not in current["exact_fields"]
