@@ -183,7 +183,7 @@ def test_lock_and_logout_are_context_separated(tmp_path: Path) -> None:
 def test_biometric_policies_never_downgrade_to_pin(tmp_path: Path, operation: str) -> None:
     _, owner, comparator = prepared(tmp_path)
     candidate = request(operation)
-    with pytest.raises(AuthenticationError, match="OPERATION_UNSUPPORTED"):
+    with pytest.raises(AuthenticationError, match="AUTHENTICATION_FAILED"):
         owner.issue_authentication_proof(candidate, RAW_PIN, NOW)
     assert comparator.calls == 0
 
@@ -599,6 +599,13 @@ def test_raw_pin_and_leaking_dependency_exception_are_not_retained(tmp_path: Pat
     assert caught.value.__cause__ is None
     assert caught.value.__context__ is None
     assert raw_pin not in repr(owner.snapshot)
+
+
+def test_pin_only_malformed_raw_pin_remains_malformed_context(tmp_path: Path) -> None:
+    _, owner, comparator = prepared(tmp_path)
+    with pytest.raises(AuthenticationError, match="MALFORMED_UNTRUSTED_CONTEXT"):
+        owner.issue_authentication_proof(request("LOCK_SESSION"), object(), NOW)
+    assert comparator.calls == 0
 
 
 @pytest.mark.parametrize(

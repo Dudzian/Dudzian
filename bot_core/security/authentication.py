@@ -1,8 +1,8 @@
 """Core-owned M0.10 authentication semantic authority.
 
-This slice issues PIN-only proofs and consumes pre-existing external-platform
-biometric assertion membership.  It does not authorize requests, combine factors,
-or execute security transitions.
+This slice issues PIN-only and combined PIN-plus-biometric proofs by consuming
+pre-existing external-platform biometric assertion membership.  It does not
+authorize requests or execute security transitions.
 """
 
 from __future__ import annotations
@@ -437,7 +437,12 @@ class AuthenticationAuthority:
             return False
 
     def issue_authentication_proof(
-        self, request: object, raw_pin: object, now: object
+        self,
+        request: object,
+        raw_pin: object,
+        now: object,
+        *,
+        platform_assertion: object = None,
     ) -> AuthenticationProof:
         if not _valid_utc(now):
             _deny("MALFORMED_UNTRUSTED_CONTEXT")
@@ -449,13 +454,17 @@ class AuthenticationAuthority:
             _deny("OPERATION_UNSUPPORTED")
         if request.environment not in policy.environments:
             _deny("AUTHORIZATION_DENIED")
-        if policy.factor_policy != "PIN" or request.operation not in {
+        pin_only = policy.factor_policy == "PIN" and request.operation in {
             "LOCK_SESSION",
             "LOGOUT_SESSION",
-        }:
+        }
+        combined = policy.factor_policy == "PIN_AND_BIOMETRIC"
+        if not pin_only and not combined:
             _deny("OPERATION_UNSUPPORTED")
+        if combined and platform_assertion is None:
+            _deny("AUTHENTICATION_FAILED")
         if not isinstance(raw_pin, str):
-            _deny("MALFORMED_UNTRUSTED_CONTEXT")
+            _deny("AUTHENTICATION_FAILED" if combined else "MALFORMED_UNTRUSTED_CONTEXT")
 
         current_time = cast(datetime, now)
         with self._state.lock:
@@ -463,18 +472,21 @@ class AuthenticationAuthority:
             identity, device, pin, session = self._resolve_current_family(before, request)
             runtime = self._resolve_runtime(request, session)
             expected_scope = canonical_scope_fingerprint(request)
-            target_state = {
-                "LOCK_SESSION": "LOCKED",
-                "LOGOUT_SESSION": "LOGGED_OUT",
-            }[request.operation]
-            expected_mutation = session_mutation_fingerprint(
-                request, target_state, session.session_generation, session.session_generation + 1
-            )
-            if (
-                request.scope_fingerprint_sha256 != expected_scope
-                or request.mutation_fingerprint_sha256 != expected_mutation
-            ):
+            if request.scope_fingerprint_sha256 != expected_scope:
                 _deny("AUTHORIZATION_DENIED")
+            if pin_only:
+                target_state = {
+                    "LOCK_SESSION": "LOCKED",
+                    "LOGOUT_SESSION": "LOGGED_OUT",
+                }[request.operation]
+                expected_mutation = session_mutation_fingerprint(
+                    request,
+                    target_state,
+                    session.session_generation,
+                    session.session_generation + 1,
+                )
+                if request.mutation_fingerprint_sha256 != expected_mutation:
+                    _deny("AUTHORIZATION_DENIED")
 
             lockout = _parse_utc(pin.lockout_until_utc)
             if lockout is not None and current_time < lockout:
@@ -498,11 +510,29 @@ class AuthenticationAuthority:
                     else "AUTHENTICATION_FAILED"
                 )
 
+            if combined:
+                try:
+                    self.verify_platform_assertion(platform_assertion, request, current_time)
+                except AuthenticationError as error:
+                    if error.reason in {
+                        "AUTHENTICATION_FAILED",
+                        "FACTOR_UNAVAILABLE",
+                        "MALFORMED_UNTRUSTED_CONTEXT",
+                    }:
+                        _deny("AUTHENTICATION_FAILED")
+                    raise
+
             effective_pin = pin
             if pin.failed_attempts or pin.lockout_until_utc is not None:
                 effective_pin = self._updated_pin(pin, 0, None)
             proof = self._build_proof(
-                request, policy, current_time, identity, device, effective_pin, session
+                request,
+                policy,
+                current_time,
+                identity,
+                device,
+                effective_pin,
+                session,
             )
             binding = self._binding(proof)
             self._final_runtime_fence(request, session, runtime)
@@ -1045,7 +1075,9 @@ class AuthenticationAuthority:
             account_id=request.account_id,
             operator_id=request.operator_id,
             device_installation_id=request.device_installation_id,
-            factor_set=("PIN",),
+            factor_set=(
+                ("PIN", "BIOMETRIC") if policy.factor_policy == "PIN_AND_BIOMETRIC" else ("PIN",)
+            ),
             issued_at_utc=_utc_text(now),
             expires_at_utc=_utc_text(now + timedelta(seconds=policy.freshness_seconds)),
             identity_revision=identity.identity_revision,
@@ -1065,7 +1097,7 @@ class AuthenticationAuthority:
             request.account_id,
             request.operator_id,
             request.device_installation_id,
-            ("PIN",),
+            (("PIN", "BIOMETRIC") if policy.factor_policy == "PIN_AND_BIOMETRIC" else ("PIN",)),
             _utc_text(now),
             _utc_text(now + timedelta(seconds=policy.freshness_seconds)),
             identity.identity_revision,
