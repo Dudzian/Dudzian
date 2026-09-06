@@ -93,12 +93,37 @@ class DurableFirstRunBootstrapRegistry:
             ):
                 raise FirstRunBootstrapError("CONTRACT_INCONSISTENT")
             appended: list[ConsumedBootstrapAuthority] = []
-            for pre, post in zip(states, states[1:], strict=False):
-                if not post.consumed_authorities:
-                    raise FirstRunBootstrapError("CONTRACT_INCONSISTENT")
-                consumed = post.consumed_authorities[-1]
-                validate_bootstrap_state_transition(pre, post, consumed)
-                appended.append(consumed)
+            terminal_seen = False
+            for index, (pre, post) in enumerate(zip(states, states[1:], strict=False), 1):
+                terminal = (
+                    post.initial_security_lifecycle == "INITIAL_SECURITY_COMPLETED"
+                    and post.first_operator_presence == "PRESENT"
+                )
+                if terminal:
+                    if terminal_seen or index != len(states) - 1:
+                        raise FirstRunBootstrapError("CONTRACT_INCONSISTENT")
+                    terminal_seen = True
+                    if (
+                        pre.initial_security_lifecycle != "PRE_INITIAL_SECURITY"
+                        or pre.first_operator_presence != "ABSENT"
+                        or post.state_revision != pre.state_revision + 1
+                        or post.account_id != pre.account_id
+                        or post.device_installation_id != pre.device_installation_id
+                        or post.intended_operator_id != pre.intended_operator_id
+                        or post.startup_readiness != pre.startup_readiness
+                        or post.startup_readiness != "SETUP_REQUIRED"
+                        or post.expected_generation != pre.expected_generation
+                        or post.expected_revision != pre.expected_revision
+                        or post.consumed_authorities != pre.consumed_authorities
+                        or len(pre.consumed_authorities) != 1
+                    ):
+                        raise FirstRunBootstrapError("CONTRACT_INCONSISTENT")
+                else:
+                    if terminal_seen or not post.consumed_authorities:
+                        raise FirstRunBootstrapError("CONTRACT_INCONSISTENT")
+                    consumed = post.consumed_authorities[-1]
+                    validate_bootstrap_state_transition(pre, post, consumed)
+                    appended.append(consumed)
             if len(history) != len(appended) or set(history) != set(appended):
                 raise FirstRunBootstrapError("CONTRACT_INCONSISTENT")
             return states
@@ -130,7 +155,27 @@ class DurableFirstRunBootstrapRegistry:
         if len(scoped) != len(family):
             raise FirstRunBootstrapError("CONTRACT_INCONSISTENT")
         current = family[-1]
+        if (
+            current.initial_security_lifecycle == "INITIAL_SECURITY_COMPLETED"
+            or current.first_operator_presence == "PRESENT"
+        ):
+            raise FirstRunBootstrapError("BOOTSTRAP_AUTHORITY_DENIED")
         return cast(str, current.state_fingerprint_sha256)
+
+    def terminal_state(
+        self, account_id: str, device_installation_id: str
+    ) -> CoreCurrentBootstrapState:
+        """Return the proved terminal state for audit/reconstruction, never bootstrap use."""
+        family = self._family()
+        current = family[-1]
+        if (
+            (current.account_id, current.device_installation_id)
+            != (account_id, device_installation_id)
+            or current.initial_security_lifecycle != "INITIAL_SECURITY_COMPLETED"
+            or current.first_operator_presence != "PRESENT"
+        ):
+            raise FirstRunBootstrapError("BOOTSTRAP_AUTHORITY_DENIED")
+        return current
 
 
 def _bootstrap_state_record(state: CoreCurrentBootstrapState):

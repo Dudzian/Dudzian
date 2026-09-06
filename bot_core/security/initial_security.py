@@ -122,6 +122,19 @@ class InitialSecurityEstablishmentResult:
 
 
 @dataclass(frozen=True, slots=True)
+class _PreparedInitialSecurity:
+    """Validated shadow state; possession is deliberately not authority."""
+
+    view: M03BootstrapAuthorityView
+    runtime_session: RuntimeSession
+    identity: OperatorIdentitySecurityProjection
+    device: DeviceTrustProjection
+    pin: PinVerifierRecord
+    session: SessionSecurityState
+    initial: InitialSecurityState
+
+
+@dataclass(frozen=True, slots=True)
 class M03BootstrapAuthorityView:
     claim_fingerprint_sha256: str
     account_id: str
@@ -223,7 +236,15 @@ def _valid_salt_reference(value: str) -> bool:
     )
 
 
-def _validate_bundle(view, runtime_session, identity, device, pin, session, initial) -> None:  # type: ignore[no-untyped-def]
+def _validate_initial_security_projection_bundle(
+    view: M03BootstrapAuthorityView,
+    identity: OperatorIdentitySecurityProjection,
+    device: DeviceTrustProjection,
+    pin: PinVerifierRecord,
+    session: SessionSecurityState,
+    initial: InitialSecurityState,
+) -> None:
+    """Validate the complete M0.10 family without inventing a live RuntimeSession."""
     if not (
         _ID_RE.fullmatch(identity.account_id)
         and identity.account_id.startswith("acct_")
@@ -260,7 +281,6 @@ def _validate_bundle(view, runtime_session, identity, device, pin, session, init
             session.account_id,
             session.operator_id,
             session.device_installation_id,
-            session.runtime_session_id,
             session.state,
             session.session_generation,
             session.security_generation,
@@ -269,11 +289,12 @@ def _validate_bundle(view, runtime_session, identity, device, pin, session, init
             view.account_id,
             view.operator_id,
             view.device_installation_id,
-            runtime_session.runtime_session_id,
             "UNLOCKED",
             1,
             1,
         )
+        and _ID_RE.fullmatch(session.runtime_session_id)
+        and session.runtime_session_id.startswith("run_")
         and (
             initial.account_id,
             initial.operator_id,
@@ -296,6 +317,32 @@ def _validate_bundle(view, runtime_session, identity, device, pin, session, init
             _make_fingerprint(item) == item.content_fingerprint_sha256
             for item in (identity, device, pin, session, initial)
         )
+        and isinstance(pin.algorithm_id, str)
+        and bool(pin.algorithm_id)
+        and isinstance(pin.parameter_policy_version, int)
+        and not isinstance(pin.parameter_policy_version, bool)
+        and pin.parameter_policy_version >= 1
+        and bool(_SHA_RE.fullmatch(pin.verifier))
+        and _valid_salt_reference(pin.salt_reference)
+    ):
+        _deny("CONTRACT_INCONSISTENT")
+
+
+def _validate_bundle(
+    view: M03BootstrapAuthorityView,
+    runtime_session: RuntimeSession,
+    identity: OperatorIdentitySecurityProjection,
+    device: DeviceTrustProjection,
+    pin: PinVerifierRecord,
+    session: SessionSecurityState,
+    initial: InitialSecurityState,
+) -> None:
+    _validate_initial_security_projection_bundle(view, identity, device, pin, session, initial)
+    if (
+        not isinstance(runtime_session, RuntimeSession)
+        or runtime_session.closed
+        or runtime_session.device_installation_id != view.device_installation_id
+        or session.runtime_session_id != runtime_session.runtime_session_id
     ):
         _deny("CONTRACT_INCONSISTENT")
 
@@ -653,6 +700,14 @@ class InitialSecurityAuthority:
     def establish_initial_security(
         self, bootstrap_view: object, raw_pin: object
     ) -> InitialSecurityEstablishmentResult:
+        with self._state.lock:
+            prepared = self._prepare_initial_security(bootstrap_view, raw_pin)
+            return self._install_prepared_initial_security(prepared)
+
+    def _prepare_initial_security(
+        self, bootstrap_view: object, raw_pin: object
+    ) -> _PreparedInitialSecurity:
+        """Build a PIN-safe validated shadow bundle without publishing authority."""
         if not isinstance(raw_pin, str) or not raw_pin:
             _deny("INVALID_PIN_INPUT")
         view = self._bridge.resolve(bootstrap_view)
@@ -781,9 +836,45 @@ class InitialSecurityAuthority:
             ):
                 _deny("CONTRACT_INCONSISTENT")
             _validate_bundle(view, runtime_session, identity, device, pin, session, initial)
+            return _PreparedInitialSecurity(
+                view, runtime_session, identity, device, pin, session, initial
+            )
+
+    def _install_prepared_initial_security(
+        self, prepared: _PreparedInitialSecurity, *, _durably_verified: bool = False
+    ) -> InitialSecurityEstablishmentResult:
+        """Trusted install used only for a locally prepared or durably verified bundle."""
+        if not isinstance(prepared, _PreparedInitialSecurity):
+            _deny("AUTHORIZATION_DENIED")
+        with self._state.lock:
+            view = prepared.view
+            identity, device, pin = prepared.identity, prepared.device, prepared.pin
+            session, initial = prepared.session, prepared.initial
+            _validate_bundle(
+                view, prepared.runtime_session, identity, device, pin, session, initial
+            )
+            before = self._state.snapshot
+            scope = (view.account_id, view.device_installation_id)
+            if (
+                view.claim_fingerprint_sha256 in before.consumed_bootstrap_claims
+                or (
+                    not _durably_verified
+                    and before.current_bootstrap.get(scope) != view.claim_fingerprint_sha256
+                )
+                or any(
+                    (
+                        before.accepted_identities,
+                        before.accepted_devices,
+                        before.accepted_pins,
+                        before.accepted_sessions,
+                        before.accepted_initial_states,
+                    )
+                )
+            ):
+                _deny("BOOTSTRAP_REPLAY_DENIED")
             # One immutable pointer replacement publishes the complete shadow bundle and fence.
             current_bootstrap = dict(before.current_bootstrap)
-            del current_bootstrap[scope]
+            current_bootstrap.pop(scope, None)
             self._state.snapshot = replace(
                 before,
                 accepted_identities=MappingProxyType(
