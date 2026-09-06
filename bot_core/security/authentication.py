@@ -1,7 +1,8 @@
-"""Core-owned M0.10 PIN authentication-proof semantic authority.
+"""Core-owned M0.10 authentication semantic authority.
 
-This slice authenticates PIN-only session-operation requests.  It deliberately
-does not authorize those requests and does not execute session transitions.
+This slice issues PIN-only proofs and consumes pre-existing external-platform
+biometric assertion membership.  It does not authorize requests, combine factors,
+or execute security transitions.
 """
 
 from __future__ import annotations
@@ -10,7 +11,7 @@ from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timedelta, timezone
 import re
 from types import MappingProxyType
-from typing import Any, NoReturn, Protocol, cast
+from typing import Any, Callable, NoReturn, Protocol, cast
 
 from bot_core.persistence.fingerprints import canonical_json_sha256
 from bot_core.runtime.runtime_session import RuntimeSession
@@ -97,6 +98,30 @@ class CoreIssuedAuthenticationProofBinding:
 
 
 @dataclass(frozen=True, slots=True)
+class PlatformBiometricAssertion:
+    account_id: str
+    device_installation_id: str
+    platform_authenticator_source: object
+    platform_enrollment_revision: int
+    challenge_fingerprint_sha256: str
+    outcome: str
+    verified_at_utc: str
+    expires_at_utc: str
+    assertion_fingerprint_sha256: str
+
+
+@dataclass(frozen=True, slots=True)
+class CoreAcceptedPlatformBiometricAssertionBinding:
+    assertion_fingerprint_sha256: str
+    complete_assertion_content_fingerprint_sha256: str
+    authority_source: str
+    account_id: str
+    device_installation_id: str
+    platform_enrollment_revision: int
+    challenge_fingerprint_sha256: str
+
+
+@dataclass(frozen=True, slots=True)
 class OperationPolicy:
     factor_policy: str
     freshness_seconds: int
@@ -106,14 +131,49 @@ class OperationPolicy:
 
 OPERATION_POLICY_REGISTRY = MappingProxyType(
     {
+        "TRUST_DEVICE": OperationPolicy(
+            "PIN_AND_BIOMETRIC", 60, "trust_device", ("PAPER", "TESTNET")
+        ),
+        "REVOKE_DEVICE": OperationPolicy(
+            "PIN_AND_BIOMETRIC", 60, "revoke_device", ("PAPER", "TESTNET")
+        ),
+        "SETUP_PIN": OperationPolicy("PIN_AND_BIOMETRIC", 60, "setup_pin", ("PAPER", "TESTNET")),
+        "CHANGE_PIN": OperationPolicy("PIN_AND_BIOMETRIC", 60, "change_pin", ("PAPER", "TESTNET")),
+        "RESET_PIN": OperationPolicy("PIN_AND_BIOMETRIC", 60, "reset_pin", ("PAPER", "TESTNET")),
         "LOCK_SESSION": OperationPolicy("PIN", 60, "lock_session", ("PAPER", "TESTNET")),
-        "LOGOUT_SESSION": OperationPolicy("PIN", 60, "logout_session", ("PAPER", "TESTNET")),
-        # Registered non-P1A operations remain visible so they fail closed rather than downgrade.
         "UNLOCK_SESSION": OperationPolicy(
             "PIN_AND_BIOMETRIC", 60, "unlock_session", ("PAPER", "TESTNET")
         ),
-        "TRUST_DEVICE": OperationPolicy(
-            "PIN_AND_BIOMETRIC", 60, "trust_device", ("PAPER", "TESTNET")
+        "LOGOUT_SESSION": OperationPolicy("PIN", 60, "logout_session", ("PAPER", "TESTNET")),
+        "ROTATE_SECRET_REFERENCE": OperationPolicy(
+            "PIN_AND_BIOMETRIC", 60, "rotate_secret_reference", ("PAPER", "TESTNET")
+        ),
+        "REBIND_SECRET_REFERENCE": OperationPolicy(
+            "PIN_AND_BIOMETRIC", 60, "rebind_secret_reference", ("PAPER", "TESTNET")
+        ),
+        "ACTIVATE_CREDENTIAL_PROFILE": OperationPolicy(
+            "PIN_AND_BIOMETRIC", 60, "activate_credential_profile", ("PAPER", "TESTNET")
+        ),
+        "DEACTIVATE_CREDENTIAL_PROFILE": OperationPolicy(
+            "PIN_AND_BIOMETRIC", 60, "deactivate_credential_profile", ("PAPER", "TESTNET")
+        ),
+        "CHANGE_RISK_POLICY": OperationPolicy(
+            "PIN_AND_BIOMETRIC", 60, "change_risk_policy", ("PAPER", "TESTNET")
+        ),
+        "CHANGE_KILL_SWITCH": OperationPolicy(
+            "PIN_AND_BIOMETRIC", 60, "change_kill_switch", ("PAPER", "TESTNET")
+        ),
+        "CHANGE_PRODUCT_CAPABILITIES": OperationPolicy(
+            "PIN_AND_BIOMETRIC", 60, "change_product_capabilities", ("PAPER", "TESTNET")
+        ),
+        "GRANT_LIVE_ACCESS": OperationPolicy(
+            "PIN_AND_BIOMETRIC", 60, "grant_live_access", ("LIVE",)
+        ),
+        "SUSPEND_LIVE_ACCESS": OperationPolicy(
+            "PIN_AND_BIOMETRIC", 60, "suspend_live_access", ("LIVE",)
+        ),
+        "REVOKE_LIVE_ACCESS": OperationPolicy(
+            "PIN_AND_BIOMETRIC", 60, "revoke_live_access", ("LIVE",)
         ),
     }
 )
@@ -171,6 +231,44 @@ def authentication_proof_fingerprint(proof: AuthenticationProof) -> str:
 
 def complete_authentication_proof_fingerprint(proof: AuthenticationProof) -> str:
     return cast(str, canonical_json_sha256(asdict(proof)))
+
+
+def platform_biometric_assertion_fingerprint(assertion: PlatformBiometricAssertion) -> str:
+    return _fingerprint_without(assertion, "assertion_fingerprint_sha256")
+
+
+def complete_platform_biometric_assertion_fingerprint(
+    assertion: PlatformBiometricAssertion,
+) -> str:
+    return cast(str, canonical_json_sha256(asdict(assertion)))
+
+
+def core_expected_biometric_challenge(
+    request: AuthorizationRequest,
+    platform_enrollment_revision: int,
+    security_generation: int,
+    session_generation: int,
+) -> str:
+    return cast(
+        str,
+        canonical_json_sha256(
+            [
+                "M010-BIOMETRIC-CHALLENGE",
+                request.account_id,
+                request.operator_id,
+                request.device_installation_id,
+                request.environment,
+                request.operation,
+                request.scope_fingerprint_sha256,
+                request.mutation_fingerprint_sha256,
+                request.causation_id,
+                request.correlation_id,
+                platform_enrollment_revision,
+                security_generation,
+                session_generation,
+            ]
+        ),
+    )
 
 
 def canonical_scope_fingerprint(request: AuthorizationRequest) -> str:
@@ -232,6 +330,111 @@ class AuthenticationAuthority:
     @property
     def snapshot(self) -> InitialSecurityAuthoritySnapshot:
         return self._state.snapshot
+
+    def derive_platform_biometric_challenge(self, request: object) -> str:
+        """Derive the challenge solely from current Core-owned semantic authority."""
+        if not isinstance(request, AuthorizationRequest):
+            _deny("MALFORMED_UNTRUSTED_CONTEXT")
+        self._validate_request_structure(request)
+        if request.operation not in OPERATION_POLICY_REGISTRY:
+            _deny("OPERATION_UNSUPPORTED")
+        with self._state.lock:
+            identity, device, session = self._resolve_biometric_context(
+                self._state.snapshot, request
+            )
+            return core_expected_biometric_challenge(
+                request,
+                device.platform_enrollment_revision,
+                identity.security_generation,
+                session.session_generation,
+            )
+
+    def verify_platform_assertion(self, assertion: object, request: object, now_utc: object) -> str:
+        """Consume pre-existing external-platform membership as biometric evidence."""
+        if not _valid_utc(now_utc) or not isinstance(request, AuthorizationRequest):
+            _deny("MALFORMED_UNTRUSTED_CONTEXT")
+        self._validate_request_structure(request)
+        if request.operation not in OPERATION_POLICY_REGISTRY:
+            _deny("OPERATION_UNSUPPORTED")
+        if not self._valid_assertion_shape(assertion):
+            _deny("MALFORMED_UNTRUSTED_CONTEXT")
+        candidate = cast(PlatformBiometricAssertion, assertion)
+        current_time = cast(datetime, now_utc)
+        with self._state.lock:
+            snapshot = self._state.snapshot
+            identity, device, session = self._resolve_biometric_context(snapshot, request)
+            expected_challenge = core_expected_biometric_challenge(
+                request,
+                device.platform_enrollment_revision,
+                identity.security_generation,
+                session.session_generation,
+            )
+            try:
+                exact = CoreAcceptedPlatformBiometricAssertionBinding(
+                    candidate.assertion_fingerprint_sha256,
+                    complete_platform_biometric_assertion_fingerprint(candidate),
+                    "external_platform_authenticator",
+                    candidate.account_id,
+                    candidate.device_installation_id,
+                    candidate.platform_enrollment_revision,
+                    candidate.challenge_fingerprint_sha256,
+                )
+            except (TypeError, ValueError):
+                _deny("MALFORMED_UNTRUSTED_CONTEXT")
+            binding = snapshot.accepted_platform_biometric_assertion_bindings.get(
+                candidate.assertion_fingerprint_sha256
+            )
+            if binding != exact:
+                _deny("AUTHENTICATION_FAILED")
+            if candidate.outcome == "UNAVAILABLE":
+                _deny("FACTOR_UNAVAILABLE")
+            if candidate.outcome != "SUCCESS":
+                _deny("AUTHENTICATION_FAILED")
+            if (
+                candidate.account_id,
+                candidate.device_installation_id,
+                candidate.platform_enrollment_revision,
+                candidate.challenge_fingerprint_sha256,
+            ) != (
+                request.account_id,
+                request.device_installation_id,
+                device.platform_enrollment_revision,
+                expected_challenge,
+            ):
+                _deny("AUTHENTICATION_FAILED")
+            start = _parse_utc(candidate.verified_at_utc)
+            end = _parse_utc(candidate.expires_at_utc)
+            if start is None or end is None or not start <= current_time <= end:
+                _deny("AUTHENTICATION_FAILED")
+            return "BIOMETRIC_ACCEPTED"
+
+    @staticmethod
+    def _valid_assertion_shape(assertion: object) -> bool:
+        if not isinstance(assertion, PlatformBiometricAssertion):
+            return False
+        try:
+            return bool(
+                isinstance(assertion.account_id, str)
+                and assertion.account_id.startswith("acct_")
+                and _ID_RE.fullmatch(assertion.account_id)
+                and isinstance(assertion.device_installation_id, str)
+                and assertion.device_installation_id.startswith("dev_")
+                and _ID_RE.fullmatch(assertion.device_installation_id)
+                and assertion.outcome in {"SUCCESS", "FAILED", "CANCELLED", "UNAVAILABLE"}
+                and isinstance(assertion.platform_enrollment_revision, int)
+                and not isinstance(assertion.platform_enrollment_revision, bool)
+                and assertion.platform_enrollment_revision >= 1
+                and isinstance(assertion.challenge_fingerprint_sha256, str)
+                and _SHA_RE.fullmatch(assertion.challenge_fingerprint_sha256)
+                and _valid_canonical_utc_text(assertion.verified_at_utc)
+                and _valid_canonical_utc_text(assertion.expires_at_utc)
+                and isinstance(assertion.assertion_fingerprint_sha256, str)
+                and _SHA_RE.fullmatch(assertion.assertion_fingerprint_sha256)
+                and platform_biometric_assertion_fingerprint(assertion)
+                == assertion.assertion_fingerprint_sha256
+            )
+        except (TypeError, ValueError):
+            return False
 
     def issue_authentication_proof(
         self, request: object, raw_pin: object, now: object
@@ -512,51 +715,56 @@ class AuthenticationAuthority:
         scope_d = (request.account_id, request.device_installation_id)
         scope_p = (*scope_i, request.device_installation_id)
 
-        def resolve(
-            accepted: object, current: object, scope: object, expected_type: type[object]
-        ) -> object:
-            if not isinstance(accepted, MappingProxyType) or not isinstance(
-                current, MappingProxyType
-            ):
-                _deny("CONTRACT_INCONSISTENT")
-            fingerprint = current.get(scope)
-            value = accepted.get(fingerprint) if isinstance(fingerprint, str) else None
-            if (
-                not isinstance(value, expected_type)
-                or _fingerprint_without(value, "content_fingerprint_sha256") != fingerprint
-            ):
-                _deny("CONTRACT_INCONSISTENT")
-            return value
-
         identity = cast(
             OperatorIdentitySecurityProjection,
-            resolve(
+            self._resolve_current_projection(
                 snapshot.accepted_identities,
                 snapshot.current_identities,
                 scope_i,
                 OperatorIdentitySecurityProjection,
+                scope_i,
+                lambda value: (value.account_id, value.operator_id),
+                self._identity_intrinsically_valid,
+                "CONTRACT_INCONSISTENT",
             ),
         )
         device = cast(
             DeviceTrustProjection,
-            resolve(
+            self._resolve_current_projection(
                 snapshot.accepted_devices,
                 snapshot.current_devices,
                 scope_d,
                 DeviceTrustProjection,
+                scope_d,
+                lambda value: (value.account_id, value.device_installation_id),
+                self._device_intrinsically_valid,
+                "CONTRACT_INCONSISTENT",
             ),
         )
         pin = cast(
             PinVerifierRecord,
-            resolve(snapshot.accepted_pins, snapshot.current_pins, scope_p, PinVerifierRecord),
+            self._resolve_current_projection(
+                snapshot.accepted_pins,
+                snapshot.current_pins,
+                scope_p,
+                PinVerifierRecord,
+                scope_p,
+                lambda value: (value.account_id, value.operator_id, value.device_installation_id),
+                lambda _value: True,
+                "CONTRACT_INCONSISTENT",
+            ),
         )
         session = cast(
             SessionSecurityState,
-            resolve(
+            self._resolve_current_projection(
                 snapshot.accepted_sessions,
                 snapshot.current_sessions,
                 scope_p,
                 SessionSecurityState,
+                scope_p,
+                lambda value: (value.account_id, value.operator_id, value.device_installation_id),
+                self._session_intrinsically_valid,
+                "CONTRACT_INCONSISTENT",
             ),
         )
         if not (
@@ -605,6 +813,148 @@ class AuthenticationAuthority:
         ):
             _deny("CONTRACT_INCONSISTENT")
         return identity, device, pin, session
+
+    def _resolve_biometric_context(
+        self, snapshot: InitialSecurityAuthoritySnapshot, request: AuthorizationRequest
+    ) -> tuple[
+        OperatorIdentitySecurityProjection,
+        DeviceTrustProjection,
+        SessionSecurityState,
+    ]:
+        identity_scope = (request.account_id, request.operator_id)
+        device_scope = (request.account_id, request.device_installation_id)
+        session_scope = (*identity_scope, request.device_installation_id)
+        identity = cast(
+            OperatorIdentitySecurityProjection,
+            self._resolve_current_projection(
+                snapshot.accepted_identities,
+                snapshot.current_identities,
+                identity_scope,
+                OperatorIdentitySecurityProjection,
+                identity_scope,
+                lambda value: (value.account_id, value.operator_id),
+                self._identity_intrinsically_valid,
+                "AUTHENTICATION_FAILED",
+            ),
+        )
+        device = cast(
+            DeviceTrustProjection,
+            self._resolve_current_projection(
+                snapshot.accepted_devices,
+                snapshot.current_devices,
+                device_scope,
+                DeviceTrustProjection,
+                device_scope,
+                lambda value: (value.account_id, value.device_installation_id),
+                self._device_intrinsically_valid,
+                "AUTHENTICATION_FAILED",
+            ),
+        )
+        session = cast(
+            SessionSecurityState,
+            self._resolve_current_projection(
+                snapshot.accepted_sessions,
+                snapshot.current_sessions,
+                session_scope,
+                SessionSecurityState,
+                session_scope,
+                lambda value: (value.account_id, value.operator_id, value.device_installation_id),
+                self._session_intrinsically_valid,
+                "AUTHENTICATION_FAILED",
+            ),
+        )
+        if (
+            len(
+                {
+                    identity.security_generation,
+                    device.security_generation,
+                    session.security_generation,
+                }
+            )
+            != 1
+        ):
+            _deny("CONTRACT_INCONSISTENT")
+        return identity, device, session
+
+    @staticmethod
+    def _resolve_current_projection(
+        accepted: object,
+        current: object,
+        designation_scope: object,
+        expected_type: type[object],
+        expected_payload_scope: object,
+        payload_scope: Callable[[Any], object],
+        intrinsic_validator: Callable[[Any], bool],
+        missing_reason: str,
+    ) -> object:
+        if not isinstance(accepted, MappingProxyType) or not isinstance(current, MappingProxyType):
+            _deny("CONTRACT_INCONSISTENT")
+        fingerprint = current.get(designation_scope)
+        if fingerprint is None:
+            _deny(missing_reason)
+        if not isinstance(fingerprint, str):
+            _deny("CONTRACT_INCONSISTENT")
+        value = accepted.get(fingerprint)
+        if value is None:
+            _deny(missing_reason)
+        if not isinstance(value, expected_type):
+            _deny("CONTRACT_INCONSISTENT")
+        terminal_fingerprint = getattr(value, "content_fingerprint_sha256", None)
+        if not isinstance(terminal_fingerprint, str) or not _SHA_RE.fullmatch(terminal_fingerprint):
+            _deny("CONTRACT_INCONSISTENT")
+        try:
+            recomputed_fingerprint = _fingerprint_without(value, "content_fingerprint_sha256")
+            valid = (
+                terminal_fingerprint == fingerprint == recomputed_fingerprint
+                and payload_scope(value) == expected_payload_scope
+                and intrinsic_validator(value)
+            )
+        except (AttributeError, TypeError, ValueError):
+            valid = False
+        if not valid:
+            _deny("CONTRACT_INCONSISTENT")
+        return value
+
+    @staticmethod
+    def _canonical_id(value: object, prefix: str) -> bool:
+        return isinstance(value, str) and value.startswith(prefix) and bool(_ID_RE.fullmatch(value))
+
+    @staticmethod
+    def _positive_int(value: object) -> bool:
+        return isinstance(value, int) and not isinstance(value, bool) and value >= 1
+
+    @classmethod
+    def _identity_intrinsically_valid(cls, value: OperatorIdentitySecurityProjection) -> bool:
+        return (
+            cls._canonical_id(value.account_id, "acct_")
+            and cls._canonical_id(value.operator_id, "op_")
+            and value.state in {"ACTIVE", "REVOKED"}
+            and cls._positive_int(value.identity_revision)
+            and cls._positive_int(value.security_generation)
+        )
+
+    @classmethod
+    def _device_intrinsically_valid(cls, value: DeviceTrustProjection) -> bool:
+        return (
+            cls._canonical_id(value.account_id, "acct_")
+            and cls._canonical_id(value.device_installation_id, "dev_")
+            and value.state in {"ENROLLED_UNTRUSTED", "TRUSTED", "REVOKED", "REPLACED"}
+            and cls._positive_int(value.trust_revision)
+            and cls._positive_int(value.security_generation)
+            and cls._positive_int(value.platform_enrollment_revision)
+        )
+
+    @classmethod
+    def _session_intrinsically_valid(cls, value: SessionSecurityState) -> bool:
+        return (
+            cls._canonical_id(value.account_id, "acct_")
+            and cls._canonical_id(value.operator_id, "op_")
+            and cls._canonical_id(value.device_installation_id, "dev_")
+            and cls._canonical_id(value.runtime_session_id, "run_")
+            and value.state in {"LOCKED", "UNLOCKED", "LOGGED_OUT"}
+            and cls._positive_int(value.session_generation)
+            and cls._positive_int(value.security_generation)
+        )
 
     @staticmethod
     def _validate_pin(pin: PinVerifierRecord) -> None:

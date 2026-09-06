@@ -188,6 +188,30 @@ def test_biometric_policies_never_downgrade_to_pin(tmp_path: Path, operation: st
     assert comparator.calls == 0
 
 
+def test_pin_terminal_fingerprint_mismatch_precedes_comparison(tmp_path: Path) -> None:
+    security, owner, comparator = prepared(tmp_path)
+    pin = replace(
+        security.resolve_current_pin(ACCOUNT, OPERATOR, DEVICE),
+        content_fingerprint_sha256="f" * 64,
+    )
+    recomputed = canonical_json_sha256(
+        {key: value for key, value in asdict(pin).items() if key != "content_fingerprint_sha256"}
+    )
+    before = owner.snapshot
+    accepted = dict(before.accepted_pins)
+    accepted[recomputed] = pin
+    current = dict(before.current_pins)
+    current[(ACCOUNT, OPERATOR, DEVICE)] = recomputed
+    owner._state.snapshot = replace(  # noqa: SLF001 - corrupt terminal adversarial fixture
+        before,
+        accepted_pins=MappingProxyType(accepted),
+        current_pins=MappingProxyType(current),
+    )
+    with pytest.raises(AuthenticationError, match="CONTRACT_INCONSISTENT"):
+        owner.issue_authentication_proof(request(), RAW_PIN, NOW)
+    assert comparator.calls == 0
+
+
 def _install_tampered_current(security, collection: str, current: str, scope, value):  # type: ignore[no-untyped-def]
     snapshot = security.snapshot
     accepted = dict(getattr(snapshot, collection))
