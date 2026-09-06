@@ -12,14 +12,18 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
-from typing import Any, BinaryIO, Protocol, TypeVar
+from typing import Any, BinaryIO, Protocol, TypeVar, cast
+
+from bot_core.persistence.runtime_session_history import RuntimeSessionPublicationResult
 
 from .core_host_recovery_types import (
     CoreHostRecoveryClassification,
     CoreHostRecoveryResult,
+    CoreHostStartupDisposition,
     StartupSubsystemRecoveryClassification,
     StartupSubsystemRecoveryResult,
 )
+from .runtime_session import RuntimeSession, create_runtime_session
 
 if os.name == "nt":
     import msvcrt
@@ -138,31 +142,48 @@ class StartupRecovery(Protocol):
     def recover(self) -> StartupSubsystemRecoveryResult: ...
 
 
-class CoreHost:
-    """Own the lock and enforce the frozen initial CoreHost startup ordering.
+class RuntimeSessionPublisher(Protocol):
+    def publish_current_session(
+        self, session: RuntimeSession
+    ) -> RuntimeSessionPublicationResult: ...
 
-    The owned startup prefix reaches recovery-complete and deliberately stops
-    before durable RuntimeSession history publication and readiness.
+
+class RuntimeSessionPublicationOwner(StartupRecovery, Protocol):
+    def runtime_session_history_publisher(self) -> RuntimeSessionPublisher: ...
+
+
+class CoreHost:
+    """Own P1A/P1B sequencing and the P1C RuntimeSession boundary.
+
+    Initialized startup publishes immutable RuntimeSession history and derives
+    only SETUP_REQUIRED or PROCEED_TO_LATER_STARTUP_GATES.  Later readiness
+    gates and final READY remain outside this class.
     """
 
     def __init__(
         self,
         scope: CoreHostScope,
         *,
-        runtime_session_factory: Callable[[], SessionT],
+        runtime_session_factory: Callable[[], SessionT] | None = None,
         state_store_factory: Callable[[], StoreT],
         startup_recovery_factory: Callable[[CoreHostScope, StoreT], StartupRecovery],
+        runtime_session_publication_hook: Callable[[str, RuntimeSession], None] | None = None,
         lock_factory: Callable[[CoreHostScope], CoreHostProcessLock] = CoreHostProcessLock,
     ) -> None:
         self._scope = scope
-        self._runtime_session_factory = runtime_session_factory
+        self._runtime_session_factory = runtime_session_factory or cast(
+            Callable[[], SessionT],
+            lambda: create_runtime_session(scope.device_installation_id),
+        )
         self._state_store_factory = state_store_factory
         self._lock_factory = lock_factory
         self._startup_recovery_factory = startup_recovery_factory
+        self._runtime_session_publication_hook = runtime_session_publication_hook
         self._lock: CoreHostProcessLock | None = None
         self._runtime_session: SessionT | None = None
         self._state_store: StoreT | None = None
         self._startup_recovery_result: CoreHostRecoveryResult | None = None
+        self._startup_disposition: CoreHostStartupDisposition | None = None
 
     @property
     def owns_process_lock(self) -> bool:
@@ -171,6 +192,10 @@ class CoreHost:
     @property
     def startup_recovery_result(self) -> CoreHostRecoveryResult | None:
         return self._startup_recovery_result
+
+    @property
+    def startup_disposition(self) -> CoreHostStartupDisposition | None:
+        return self._startup_disposition
 
     def start(self) -> None:
         if self.owns_process_lock:
@@ -209,10 +234,65 @@ class CoreHost:
                 classification = CoreHostRecoveryClassification.INITIALIZED_RECOVERY_COMPLETE
             else:
                 raise RuntimeError("startup recovery returned an invalid classification")
-            self._startup_recovery_result = CoreHostRecoveryResult(classification)
+            recovery_result = CoreHostRecoveryResult(classification)
+            self._startup_recovery_result = recovery_result
+            if classification is CoreHostRecoveryClassification.EMPTY_UNINITIALIZED:
+                self._startup_disposition = CoreHostStartupDisposition.SETUP_REQUIRED
+            else:
+                if not isinstance(session, RuntimeSession):
+                    raise RuntimeError("initialized CoreHost requires a RuntimeSession")
+                if session.device_installation_id != self._scope.device_installation_id:
+                    raise RuntimeError("RuntimeSession device binding mismatch")
+                hook = self._runtime_session_publication_hook
+                if hook is not None:
+                    hook("before", session)
+                self._assert_runtime_session_publication_topology(
+                    process_lock,
+                    session,
+                    store,
+                    recovery_result,
+                )
+                owner = cast(RuntimeSessionPublicationOwner, recovery)
+                publisher = owner.runtime_session_history_publisher()
+                publication = publisher.publish_current_session(session)
+                if type(publication) is not RuntimeSessionPublicationResult:
+                    raise RuntimeError("RuntimeSession publisher returned an invalid result type")
+                if hook is not None:
+                    hook("after", session)
+                if (
+                    self._lock is not process_lock
+                    or not process_lock.held
+                    or self._runtime_session is not session
+                    or self._state_store is not store
+                    or self._startup_recovery_result is not recovery_result
+                ):
+                    raise RuntimeError(
+                        "CoreHost topology changed during RuntimeSession publication"
+                    )
+                self._startup_disposition = (
+                    CoreHostStartupDisposition.PROCEED_TO_LATER_STARTUP_GATES
+                )
         except BaseException:
             self._cleanup_failed_start_attempt(process_lock, session, store)
             raise
+
+    def _assert_runtime_session_publication_topology(
+        self,
+        process_lock: CoreHostProcessLock,
+        session: RuntimeSession,
+        store: StoreT,
+        recovery_result: CoreHostRecoveryResult,
+    ) -> None:
+        if (
+            recovery_result.classification
+            is not CoreHostRecoveryClassification.INITIALIZED_RECOVERY_COMPLETE
+            or self._lock is not process_lock
+            or not process_lock.held
+            or self._runtime_session is not session
+            or self._state_store is not store
+            or self._startup_recovery_result is not recovery_result
+        ):
+            raise RuntimeError("CoreHost topology changed before RuntimeSession publication")
 
     def _cleanup_failed_start_attempt(
         self,
@@ -223,6 +303,7 @@ class CoreHost:
         """Release only the exact resources created by this failed start attempt."""
 
         self._startup_recovery_result = None
+        self._startup_disposition = None
         self._state_store = None
         self._runtime_session = None
         self._lock = None
@@ -238,6 +319,7 @@ class CoreHost:
 
     def close(self) -> None:
         self._startup_recovery_result = None
+        self._startup_disposition = None
         store, self._state_store = self._state_store, None
         session, self._runtime_session = self._runtime_session, None
         process_lock, self._lock = self._lock, None

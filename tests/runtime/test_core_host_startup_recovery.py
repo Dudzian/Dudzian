@@ -33,6 +33,7 @@ from bot_core.persistence.secret_handoff import (
 )
 from bot_core.persistence.state_store import SQLiteStateStore
 from bot_core.runtime.core_host import CoreHost, CoreHostProcessLock, CoreHostScope
+from bot_core.runtime.runtime_session import RuntimeSession, create_runtime_session
 from bot_core.runtime.core_host_startup_recovery import (
     CoreHostStartupRecoveryCoordinator,
     CoreHostStartupRecoveryError,
@@ -192,7 +193,7 @@ def test_core_host_retains_result_runs_once_and_clears_on_close(tmp_path: Path) 
         def recover(self) -> StartupSubsystemRecoveryResult:
             events.append("recovery")
             return StartupSubsystemRecoveryResult(
-                StartupSubsystemRecoveryClassification.INITIALIZED_DURABLE_RECOVERY_RESOLVED
+                StartupSubsystemRecoveryClassification.EMPTY_UNINITIALIZED
             )
 
     host = CoreHost(
@@ -206,7 +207,7 @@ def test_core_host_retains_result_runs_once_and_clears_on_close(tmp_path: Path) 
     assert host.startup_recovery_result is not None
     assert (
         host.startup_recovery_result.classification
-        is CoreHostRecoveryClassification.INITIALIZED_RECOVERY_COMPLETE
+        is CoreHostRecoveryClassification.EMPTY_UNINITIALIZED
     )
     assert events == ["recovery"]
     host.close()
@@ -268,7 +269,7 @@ def test_core_host_rejects_typed_result_with_invalid_classification(tmp_path: Pa
 
     host = CoreHost(
         _scope(tmp_path / "classification.db"),
-        runtime_session_factory=Session,
+        runtime_session_factory=lambda: create_runtime_session(_metadata().device_installation_id),
         state_store_factory=Session,
         startup_recovery_factory=lambda scope, store: InvalidRecovery(),
     )
@@ -297,7 +298,7 @@ def test_real_core_host_owns_initialized_recovery_complete(tmp_path: Path) -> No
 
     host = CoreHost(
         _scope(path),
-        runtime_session_factory=Session,
+        runtime_session_factory=lambda: create_runtime_session(_metadata().device_installation_id),
         state_store_factory=open_store,
         startup_recovery_factory=lambda scope, store: _coordinator(
             path, store, boundary, scope=scope
@@ -319,7 +320,7 @@ def test_real_core_host_empty_path_is_not_recovery_complete(tmp_path: Path) -> N
     boundary = Boundary(record("UNINITIALIZED"))
     host = CoreHost(
         _scope(path),
-        runtime_session_factory=Session,
+        runtime_session_factory=lambda: create_runtime_session(_metadata().device_installation_id),
         state_store_factory=lambda: SQLiteStateStore(path),
         startup_recovery_factory=lambda scope, store: _coordinator(
             path, store, boundary, scope=scope
@@ -410,7 +411,7 @@ def test_corrupt_store_fails_closed_without_restore(tmp_path: Path) -> None:
     connection.close()
     host = CoreHost(
         _scope(path),
-        runtime_session_factory=Session,
+        runtime_session_factory=lambda: create_runtime_session(_metadata().device_installation_id),
         state_store_factory=lambda: SQLiteStateStore(path),
         startup_recovery_factory=lambda scope, store: _coordinator(
             path, store, Boundary(record("UNINITIALIZED")), scope=scope
@@ -435,7 +436,7 @@ def test_initialized_success_stress_ten_fresh_hosts(tmp_path: Path, iteration: i
     )
     host = CoreHost(
         _scope(path),
-        runtime_session_factory=Session,
+        runtime_session_factory=lambda: create_runtime_session(_metadata().device_installation_id),
         state_store_factory=lambda: SQLiteStateStore(path),
         startup_recovery_factory=lambda scope, store: _coordinator(
             path, store, boundary, scope=scope
@@ -469,7 +470,7 @@ def test_real_m0_3_prepared_recovery_through_core_host(
     )
     host = CoreHost(
         _scope(path),
-        runtime_session_factory=Session,
+        runtime_session_factory=lambda: create_runtime_session(_metadata().device_installation_id),
         state_store_factory=lambda: SQLiteStateStore(path),
         startup_recovery_factory=lambda scope, store: _coordinator(
             path, store, boundary, scope=scope
@@ -477,8 +478,9 @@ def test_real_m0_3_prepared_recovery_through_core_host(
     )
     host.start()
     assert host.startup_recovery_result is not None
-    assert boundary.calls.count(mode) == 1
-    assert boundary.calls.count("prepare") == 0
+    assert boundary.calls.count("abort") == (1 if mode == "abort" else 0)
+    assert boundary.calls.count("prepare") == 1
+    assert boundary.calls.count("finalize") == (2 if mode == "finalize" else 1)
     host.close()
 
 
@@ -598,7 +600,7 @@ def test_held_foreign_lock_cannot_replace_exact_start_attempt_lock(tmp_path: Pat
 
     host = CoreHost(
         canonical,
-        runtime_session_factory=Session,
+        runtime_session_factory=lambda: create_runtime_session(_metadata().device_installation_id),
         state_store_factory=Session,
         startup_recovery_factory=lambda scope, store: SwapLockRecovery(),
         lock_factory=lock_factory,
@@ -650,9 +652,9 @@ def test_initialized_high_level_stage_order_and_evidence_last(tmp_path: Path) ->
             events.append("evidence_publication")
             return cast(str | None, super().publish_verified_state(store))
 
-    def session_factory() -> Session:
+    def session_factory() -> RuntimeSession:
         events.append("session_created")
-        return Session()
+        return create_runtime_session(_metadata().device_installation_id)
 
     def recovery_factory(
         scope: CoreHostScope, store: RecordingStore
@@ -756,11 +758,12 @@ def test_initialized_high_level_stage_order_and_evidence_last(tmp_path: Path) ->
         "final_migration_rediscovery",
         "final_secret_rediscovery",
         "evidence_publication",
+        "evidence_publication",
     ]
     assert host.startup_recovery_result is not None
     assert events.count("m0_3_recovery") == 1
     assert events.count("final_m0_3_check") == 1
-    assert events[-1] == "evidence_publication"
+    assert events[-2:] == ["evidence_publication", "evidence_publication"]
     host.close()
 
 
@@ -794,9 +797,12 @@ def test_repeated_real_start_has_exact_factory_recovery_and_evidence_counts(
             counts["recover"] += 1
             return self.delegate.recover()
 
-    def session_factory() -> Session:
+        def runtime_session_history_publisher(self):  # type: ignore[no-untyped-def]
+            return self.delegate.runtime_session_history_publisher()
+
+    def session_factory() -> RuntimeSession:
         counts["session"] += 1
-        return Session()
+        return create_runtime_session(_metadata().device_installation_id)
 
     def store_factory() -> SQLiteStateStore:
         counts["store"] += 1
@@ -814,7 +820,7 @@ def test_repeated_real_start_has_exact_factory_recovery_and_evidence_counts(
     )
     host.start()
     host.start()
-    assert counts == {"session": 1, "store": 1, "factory": 1, "recover": 1, "evidence": 1}
+    assert counts == {"session": 1, "store": 1, "factory": 1, "recover": 1, "evidence": 2}
     host.close()
 
 
@@ -859,7 +865,7 @@ def test_real_secret_states_recover_through_core_host(
 
     host = CoreHost(
         _scope(path),
-        runtime_session_factory=Session,
+        runtime_session_factory=lambda: create_runtime_session(_metadata().device_installation_id),
         state_store_factory=lambda: SQLiteStateStore(path),
         startup_recovery_factory=lambda scope, store: _coordinator(
             path, store, boundary, scope=scope, secret_port=port
@@ -908,7 +914,7 @@ def test_three_real_secret_handoffs_process_in_canonical_id_order(tmp_path: Path
             port.initial_effects.add(handoff_id)
     host = CoreHost(
         _scope(path),
-        runtime_session_factory=Session,
+        runtime_session_factory=lambda: create_runtime_session(_metadata().device_installation_id),
         state_store_factory=lambda: SQLiteStateStore(path),
         startup_recovery_factory=lambda scope, store: _coordinator(
             path, store, boundary, scope=scope, secret_port=port
@@ -1011,7 +1017,7 @@ def test_real_pre_materialization_migration_completes_through_core_host(
         definition, migrations, calls = _registry(initializer, (operation,), target=target)
     host = CoreHost(
         _scope(path),
-        runtime_session_factory=Session,
+        runtime_session_factory=lambda: create_runtime_session(_metadata().device_installation_id),
         state_store_factory=lambda: SQLiteStateStore(path),
         startup_recovery_factory=lambda scope, store: _coordinator(
             path,
@@ -1065,7 +1071,7 @@ def test_real_materialized_migration_never_replays_sql_through_core_host(
         calls.clear()
     host = CoreHost(
         _scope(path),
-        runtime_session_factory=Session,
+        runtime_session_factory=lambda: create_runtime_session(_metadata().device_installation_id),
         state_store_factory=lambda: SQLiteStateStore(path),
         startup_recovery_factory=lambda scope, store: _coordinator(
             path,
@@ -1101,7 +1107,7 @@ def test_real_migration_authority_failures_block_top_level_startup(
     )
     host = CoreHost(
         _scope(path),
-        runtime_session_factory=Session,
+        runtime_session_factory=lambda: create_runtime_session(_metadata().device_installation_id),
         state_store_factory=lambda: SQLiteStateStore(path),
         startup_recovery_factory=lambda scope, store: _coordinator(
             path,
@@ -1204,7 +1210,7 @@ def test_two_real_migrations_follow_schema_chain_not_lexical_ids(tmp_path: Path)
 
     host = CoreHost(
         _scope(path),
-        runtime_session_factory=Session,
+        runtime_session_factory=lambda: create_runtime_session(_metadata().device_installation_id),
         state_store_factory=lambda: SQLiteStateStore(path),
         startup_recovery_factory=recovery_factory,
     )
@@ -1335,7 +1341,7 @@ def test_representable_invalid_migration_chain_fails_top_level_before_sql(
             calls.clear()
     host = CoreHost(
         _scope(path),
-        runtime_session_factory=Session,
+        runtime_session_factory=lambda: create_runtime_session(_metadata().device_installation_id),
         state_store_factory=lambda: SQLiteStateStore(path),
         startup_recovery_factory=lambda scope, store: _coordinator(
             path,

@@ -20,6 +20,7 @@ from bot_core.persistence.secret_handoff import (
     validate_secret_handoff_snapshot,
 )
 from bot_core.persistence.state_store import SQLiteStateStore, StateStoreSnapshot
+from bot_core.persistence.runtime_session_history import RuntimeSessionHistoryPublisher
 
 from .core_host import CoreHostScope
 from .core_host_recovery_types import (
@@ -57,6 +58,11 @@ class CoreHostStartupRecoveryCoordinator:
         self._evidence = evidence
         self._physical_schemas = physical_schemas or StateStorePhysicalSchemaRegistry()
         self._migration_validator = SealedMigrationRestoreAuthority(migrations)
+
+    def runtime_session_history_publisher(self) -> RuntimeSessionHistoryPublisher:
+        """Return the P1C owner bound to the same recovered store and M0.3 port."""
+
+        return RuntimeSessionHistoryPublisher(self._store, self._protected)
 
     def recover(self) -> StartupSubsystemRecoveryResult:
         initial = self._store.read_verified_snapshot()

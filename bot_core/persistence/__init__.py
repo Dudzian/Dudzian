@@ -61,6 +61,12 @@ from .physical_backup import (
     PhysicalSQLiteArtifact,
     TrustedPhysicalBackupArtifact,
 )
+from .runtime_session_history import (
+    RuntimeSessionHistoryError,
+    RuntimeSessionHistoryPublisher,
+    RuntimeSessionPublicationResult,
+    runtime_session_carrier,
+)
 
 __all__ = [
     "PersistenceRecord",
@@ -99,6 +105,10 @@ __all__ = [
     "SecretHandoffCoordinator",
     "DurableSecretHandoffExecutionCoordinator",
     "SecretHandoffRecord",
+    "RuntimeSessionHistoryError",
+    "RuntimeSessionHistoryPublisher",
+    "RuntimeSessionPublicationResult",
+    "runtime_session_carrier",
     "AuthenticatedPhysicalBackupCandidate",
     "PhysicalBackupAdmissionError",
     "PhysicalBackupAdmissionValidator",
