@@ -239,6 +239,37 @@ def _validate_history(state: CoreCurrentBootstrapState) -> None:
         previous = key
 
 
+def validate_bootstrap_state_transition(
+    pre: CoreCurrentBootstrapState,
+    post: CoreCurrentBootstrapState,
+    appended: ConsumedBootstrapAuthority,
+) -> None:
+    """Revalidate one exact P1A state edge without conferring registry authority."""
+
+    stable = (
+        "account_id",
+        "device_installation_id",
+        "intended_operator_id",
+        "startup_readiness",
+        "initial_security_lifecycle",
+        "first_operator_presence",
+        "expected_generation",
+        "expected_revision",
+    )
+    if (
+        pre.initial_security_lifecycle != "PRE_INITIAL_SECURITY"
+        or pre.first_operator_presence != "ABSENT"
+        or any(getattr(pre, field) != getattr(post, field) for field in stable)
+        or post.state_revision != pre.state_revision + 1
+        or post.consumed_authorities != pre.consumed_authorities + (appended,)
+        or appended.bootstrap_generation != pre.expected_generation
+        or appended.bootstrap_revision != pre.expected_revision
+    ):
+        _deny("BOOTSTRAP_SCOPE_DENIED")
+    _validate_history(pre)
+    _validate_history(post)
+
+
 def _resolve_state(
     registry: BootstrapStateRegistry, reference: object
 ) -> CoreCurrentBootstrapState:
@@ -377,34 +408,12 @@ class FirstRunBootstrapAuthority:
             _deny("BOOTSTRAP_SCOPE_DENIED")
         if current != result.post_state_fingerprint_sha256:
             _deny("BOOTSTRAP_SCOPE_DENIED")
-        stable = (
-            "account_id",
-            "device_installation_id",
-            "intended_operator_id",
-            "startup_readiness",
-            "initial_security_lifecycle",
-            "first_operator_presence",
-            "expected_generation",
-            "expected_revision",
-        )
-        if (
-            pre.initial_security_lifecycle != "PRE_INITIAL_SECURITY"
-            or pre.first_operator_presence != "ABSENT"
-            or any(getattr(pre, field) != getattr(post, field) for field in stable)
-            or post.state_revision != pre.state_revision + 1
-            or len(post.consumed_authorities) != len(pre.consumed_authorities) + 1
-            or post.consumed_authorities[:-1] != pre.consumed_authorities
-        ):
+        if not post.consumed_authorities:
             _deny("BOOTSTRAP_SCOPE_DENIED")
         appended = post.consumed_authorities[-1]
-        if (
-            appended != result.consumed_authority
-            or appended.bootstrap_generation != pre.expected_generation
-            or appended.bootstrap_revision != pre.expected_revision
-        ):
+        if appended != result.consumed_authority:
             _deny("BOOTSTRAP_SCOPE_DENIED")
-        _validate_history(pre)
-        _validate_history(post)
+        validate_bootstrap_state_transition(pre, post, appended)
         return post
 
 
@@ -422,4 +431,5 @@ __all__ = [
     "ProvisioningMembershipBinding",
     "claim_content_fingerprint",
     "state_content_fingerprint",
+    "validate_bootstrap_state_transition",
 ]
