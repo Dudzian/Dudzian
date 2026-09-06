@@ -75,10 +75,13 @@ class PinFactory:
 
 
 class Sessions:
+    def __init__(self) -> None:
+        self.current_session = RuntimeSession(SESSION, DEVICE)
+
     def resolve_current(self, account_id: str, device_installation_id: str) -> RuntimeSession:
         assert account_id == ACCOUNT
         assert device_installation_id == DEVICE
-        return RuntimeSession(SESSION, DEVICE)
+        return self.current_session
 
 
 def claim() -> FirstRunBootstrapClaim:
