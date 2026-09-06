@@ -516,6 +516,6 @@ def test_verification_has_no_proof_or_transition_side_effect(tmp_path: Path) -> 
     assert not owner.snapshot.accepted_authentication_proofs
     assert not owner.snapshot.accepted_authentication_proof_bindings
     assert security.resolve_current_session(ACCOUNT, OPERATOR, DEVICE) == before_session
-    with pytest.raises(AuthenticationError, match="OPERATION_UNSUPPORTED"):
+    with pytest.raises(AuthenticationError, match="AUTHENTICATION_FAILED"):
         owner.issue_authentication_proof(req, "2468", NOW)
     assert comparator.calls == 0
