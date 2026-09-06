@@ -26,9 +26,15 @@ class CoreHostRecoveryResult:
     classification: CoreHostRecoveryClassification
 
 
+class CoreHostStartupDisposition(str, Enum):
+    SETUP_REQUIRED = "SETUP_REQUIRED"
+    PROCEED_TO_LATER_STARTUP_GATES = "PROCEED_TO_LATER_STARTUP_GATES"
+
+
 __all__ = [
     "CoreHostRecoveryClassification",
     "CoreHostRecoveryResult",
+    "CoreHostStartupDisposition",
     "StartupSubsystemRecoveryClassification",
     "StartupSubsystemRecoveryResult",
 ]
