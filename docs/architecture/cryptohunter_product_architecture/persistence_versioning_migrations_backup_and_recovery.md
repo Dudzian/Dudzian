@@ -14162,7 +14162,10 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
   "confirmed_contradictions": {
     "execution_order": "MigrationExecutionCoordinator.execute invokes protected migration execution, whose external PREPARE, local migration commit, local evidence publication, external FINALIZE, and external COMMITTED verification complete before execute returns; post-execute staging is too late",
     "generation_model": "PREPARED, APPLYING, structural migration, DURABLE_MIGRATED, and COMPLETED are protected durable transitions; final generation follows the exact transition sequence and is not source generation G+1",
-    "byte_hash_model": "a final-target immutable SQLite byte fingerprint cannot describe the mutable workspace across intermediate lifecycle states"
+    "byte_hash_model": "a final-target immutable SQLite byte fingerprint cannot describe the mutable workspace across intermediate lifecycle states",
+    "promotion_path_topology": "nested staged SQLite parent differed from live parent while the frozen atomic_replace primitive requires exact same-directory promotion",
+    "windows_initial_staged_sibling_publication": "direct creation at final staged_sqlite_path cannot use the frozen Windows durable pathname publication fence MoveFileExW with MOVEFILE_WRITE_THROUGH because no source pathname exists",
+    "windows_control_directory_publication": "publishing manifest.json inside a newly created nested control directory does not prove durability of that directory chain on Windows, where directory metadata flush is intentionally absent"
   },
   "artifact": {
     "canonical_name": "RestoreMigrationStagingArtifact",
@@ -14171,12 +14174,13 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
     "authority": false,
     "authoritative_state_store_member": false,
     "physical_form": [
-      "one deterministic durable SQLite workspace initially materialized exactly from authenticated BackupEnvelope v1",
-      "one immutable canonical RestoreMigrationStagingManifest sidecar"
+      "one SQLite file materialized once at a deterministic unpublished same-directory pathname, then durably renamed without byte copy to the deterministic promotable sibling before manifest publication",
+      "one deterministic immutable manifest sidecar directly in pre-existing live.parent; no durable per-staging control directory"
     ],
     "same_sqlite_path_for_all_protected_transitions": true,
     "created_before_first_protected_migration_transition": true,
-    "ownership": "deterministic durable filesystem location owned by exact live StateStore path and scope; never shared across unrelated StateStores"
+    "ownership": "deterministic physical paths derived from exact live StateStore path and staging_id; never shared across unrelated live pathnames",
+    "new_durable_control_directory_exists": false
   },
   "manifest": {
     "canonical_name": "RestoreMigrationStagingManifest",
@@ -14256,19 +14260,25 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
     "depends_on_target_generation": false,
     "caller_restore_attempt_id_permitted": false,
     "arbitrary_sqlite_scanning": false,
-    "conflict": "same StateStore identity, source BackupEnvelope, and migration must resolve one staging_id; conflicting valid artifacts => STAGING_CONFLICT, never newest"
+    "conflict": "same StateStore identity, source BackupEnvelope, and migration must resolve one staging_id; conflicting valid artifacts => STAGING_CONFLICT, never newest",
+    "physical_path_derivation": "live basename and staging_id; physical placement is not authority identity",
+    "manifest_sidecar_collision_policy": "live basename plus staging_id separates manifest sidecars for distinct live paths without changing staging_id authority"
   },
   "initial_durability_order": [
     "authenticate exact BackupEnvelope v1",
-    "materialize exact v1 StateStore at deterministic durable staging path",
-    "verify exact v1 staged snapshot and source descriptor anchor",
-    "checkpoint and close source materialization according to existing physical StateStore contract",
-    "fsync staged source SQLite",
-    "atomically write immutable canonical staging manifest",
-    "fsync manifest",
-    "fsync staging directory",
-    "declare staging DURABLE",
-    "reopen same staged SQLite",
+    "derive unpublished_materialization_path, staged_sqlite_path, and manifest_path directly under pre-existing live.parent from live path plus staging_id",
+    "create and materialize the one exact v1 SQLite at unpublished_materialization_path",
+    "verify exact v1 source snapshot and source descriptor anchor at unpublished_materialization_path",
+    "invoke prepare_for_atomic_install() to WAL TRUNCATE and close the unpublished SQLite",
+    "fsync unpublished SQLite regular file",
+    "publish_file_atomically_durably(unpublished_materialization_path, staged_sqlite_path) using the existing same-file durable rename owner",
+    "require unpublished_materialization_path absent and staged_sqlite_path present",
+    "compute source PhysicalSQLiteArtifact fingerprint from staged_sqlite_path",
+    "build exact 18-field immutable source-only manifest",
+    "atomic_write_bytes_durably(manifest_path, canonical manifest bytes) in pre-existing live.parent",
+    "require unpublished_materialization_path absent, staged_sqlite_path present, and manifest_path present",
+    "declare SOURCE_READY",
+    "reopen staged_sqlite_path only",
     "only now may PREPARED migration transition begin"
   ],
   "sqlite_lifecycle_durability": {
@@ -14289,7 +14299,9 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
       "descriptor lineage from exact source anchor",
       "external protected freshness",
       "sealed migration authority"
-    ]
+    ],
+    "fixed_order": "after durable same-file rename, compute from final staged_sqlite_path before final manifest publication",
+    "rename_changes_bytes": false
   },
   "source_lineage": {
     "anchor_required": true,
@@ -14405,6 +14417,8 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
   },
   "final_install": {
     "requirements": [
+      "structural physical invariant: staged SQLite sibling parent resolves exactly to live parent and staged path differs from live",
+      "one promotable SQLite artifact: materialized once at unpublished path and durably same-file renamed to deterministic sibling before manifest; no byte copy or clone",
       "fresh valid immutable manifest",
       "exact authenticated source BackupEnvelope fingerprint",
       "fresh staged SQLite read_verified_snapshot()",
@@ -14424,7 +14438,7 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
       "existing live installation_gate and post-close final external re-read",
       "successful held staging installation_gate proves path-wide source quiescence and remains held while nested live installation_gate covers atomic_replace"
     ],
-    "operation": "atomic_replace closed, checkpointed same-filesystem staged main to live",
+    "operation": "atomic_replace closed, checkpointed deterministic same-directory staged SQLite sibling to live",
     "source_backup_equals_final_external_required": false,
     "raw_v1_install": false,
     "post_install": "installed.read_verified_snapshot() equals completed_snapshot and external remains exact target before cleanup"
@@ -14444,13 +14458,27 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
       "live unchanged"
     ],
     "after_prepared_or_later": "workspace survives ordinary failure until recovery, exact install, or manual resolution",
-    "post_promotion": "if live and external exact-match completed staged target, idempotently clean staging without migration/install replay"
+    "post_promotion": "after exact live/external proof, remove exact manifest_path plus exact staged WAL/SHM residue; no per-staging directory or empty-root cleanup",
+    "c0_exact_artifacts": [
+      "unpublished_materialization_path",
+      "unpublished -wal",
+      "unpublished -shm",
+      "staged_sqlite_path",
+      "staged -wal",
+      "staged -shm",
+      "manifest transient temp owned by exact manifest_path publication"
+    ],
+    "c0_requires_manifest_absent": true,
+    "manifest_present_missing_sibling_is_c0": false,
+    "c0_rename_outcomes": "before/during/after durable rename and before manifest: unpublished only or staged only are both exact removable C0 debris; no authority mutation has occurred",
+    "valid_manifest_with_unpublished_path": "STAGING_CONFLICT; never choose or rematerialize arbitrarily",
+    "manifest_temp_cleanup": "only transient temp residue owned by exact manifest_path publication; no arbitrary glob"
   },
-  "missing_workspace": "external ahead of authenticated source with migration-derived generation + live not exact external target + no valid workspace => RESTORE_MIGRATION_STAGING_LOST / MANUAL_RECOVERY_REQUIRED; no source replay or external rollback",
+  "missing_workspace": "manifest present + staged sibling missing + exact completed live/external => ALREADY_INSTALLED_EXACT_TARGET; otherwise RESTORE_MIGRATION_STAGING_LOST / MANUAL_RECOVERY_REQUIRED; no source replay or external rollback",
   "crash_matrix": {
     "C0": {
-      "point": "before source staging durable",
-      "restart": "external source; ordinary NEW_RESTORE"
+      "point": "before final manifest publication, including before/during/after durable prepublication same-file rename",
+      "restart": "fresh filesystem may contain unpublished_materialization_path or staged_sqlite_path; remove only exact deterministic SQLite/WAL/SHM and exact manifest-publication temp debris; no control directory and no protected authority mutation"
     },
     "C1": {
       "point": "source staging durable before migration PREPARED",
@@ -14478,11 +14506,11 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
     },
     "C6B": {
       "point": "after prepare_for_atomic_install, either before or after acquiring staging path gate, but before replace",
-      "restart": "before gate: revalidate closed workspace normally; after gate: process crash releases process-local gate while closed complete durable workspace survives; authenticate source/manifest, isolated-verify main, repeat F2 if mutable reopen occurred, acquire fresh staging gate, continue; no migration replay"
+      "restart": "manifest sidecar present and same-directory completed sibling exists; process crash releases process-local gate while closed complete durable workspace survives; revalidate, acquire fresh staging gate, and resume F1/F2/F2B/F3/F4; no migration replay or promotion copy"
     },
     "C7": {
       "point": "during or after atomic replace before manifest cleanup, with staging and live path gates both held at replace",
-      "restart": "exactly old live plus intact completed staging or exact new live; never new live main requiring old staging WAL; exact live/external completed target permits idempotent cleanup"
+      "restart": "manifest sidecar may remain; old live plus intact completed same-directory sibling or exact new live with sibling absent; never new live main requiring old staging WAL; exact live/external completed target is ALREADY_INSTALLED_EXACT_TARGET and permits idempotent cleanup of the exact sidecar without P1 rematerialization"
     }
   },
   "determinism": {
@@ -14552,6 +14580,7 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
     ],
     "sequence": {
       "F1_OPEN_FINAL_SEMANTIC_VERIFICATION": [
+        "assert staged_sqlite_path parent equals live_path parent by construction and paths differ; never repair by copy",
         "fresh immutable manifest validation",
         "exact authenticated source BackupEnvelope binding",
         "staged read_verified_snapshot() captured as completed_snapshot",
@@ -14566,14 +14595,14 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
         "external observation compatible with exact completed_snapshot metadata"
       ],
       "F2_CHECKPOINT_AND_CLOSE_ORCHESTRATOR_HANDLE": [
-        "invoke existing staged.prepare_for_atomic_install() on the orchestrator-owned instance",
+        "invoke existing staged.prepare_for_atomic_install() on the orchestrator-owned exact staged_sqlite_path sibling instance",
         "require WAL checkpoint TRUNCATE success",
         "close the invoking staged SQLiteStateStore instance only",
         "do not yet claim path-wide staging-handle quiescence",
         "checkpoint failure => FAIL_CLOSED / no install / no staging cleanup / no external rollback"
       ],
       "F2B_ACQUIRE_STAGING_PATH_GATE": [
-        "acquire SQLiteStateStore.installation_gate(staged_path) after F2",
+        "acquire SQLiteStateStore.installation_gate(staged_sqlite_path) after F2",
         "success proves path-wide registered mutable staging handle count is zero",
         "hold staging path gate continuously through F3, F4, and atomic_replace",
         "gate rejection for another registered staging handle => STAGING_PATH_NOT_QUIESCENT / FAIL_CLOSED / preserve staging / no install / no cleanup / no external rollback",
@@ -14581,7 +14610,7 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
       ],
       "F3_CLOSED_MAIN_CONTINUITY": [
         "execute inside continuously held staging installation_gate",
-        "read staged main through SQLiteStateStore.read_isolated_verified_snapshot(staged_path) or exact existing read-only immutable equivalent",
+        "read exact sibling through SQLiteStateStore.read_isolated_verified_snapshot(staged_sqlite_path); no second SQLite artifact",
         "isolated temporary reader is not a registered mutable SQLiteStateStore handle and closes before atomic_replace",
         "closed_staged_snapshot equals completed_snapshot",
         "closed staged physical schema equals completed_schema_fingerprint",
@@ -14589,14 +14618,14 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
         "do not reopen mutable/registered staged SQLiteStateStore while staging gate is held before atomic_replace"
       ],
       "F4_FINAL_LIVE_AND_EXTERNAL_FENCES": [
-        "while staging installation_gate remains held, acquire SQLiteStateStore.installation_gate(live_path)",
+        "while staged_sqlite_path installation_gate remains held, acquire SQLiteStateStore.installation_gate(live_path)",
         "hold both staging and live path gates through atomic_replace",
         "fresh local live classification",
         "reject AHEAD, SAME_GENERATION_DIFFERENT_FINGERPRINT, scope conflict, and environment conflict",
         "fresh external authority re-read after source is checkpointed, closed, and path-quiescent",
         "external remains exact COMMITTED generation/state match for completed_snapshot",
         "applicable final pre-promotion secret-handoff observation under existing S7C ordering",
-        "SQLiteStateStore.atomic_replace(staged_path, live_path) only while both gates are held",
+        "SQLiteStateStore.atomic_replace(staged_sqlite_path, live_path) only while both gates are held; source.parent == target.parent by construction",
         "release live gate before staging gate"
       ]
     },
@@ -14617,7 +14646,10 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
       "live_path_gate_held": true,
       "registered_mutable_live_handles": 0,
       "gate_order": "STAGING_PATH_GATE before LIVE_PATH_GATE",
-      "quiescence_proof": "prepare_for_atomic_install closes invoking instance; successful held installation_gate(staged_path) separately proves path-wide zero registered mutable handles"
+      "quiescence_proof": "prepare_for_atomic_install closes invoking sibling instance; successful held installation_gate(staged_sqlite_path) separately proves path-wide zero registered mutable handles",
+      "same_directory_by_construction": true,
+      "single_staged_sqlite_artifact": true,
+      "pre_promotion_copy": false
     },
     "failure_policy": {
       "checkpoint_failure": "FAIL_CLOSED; preserve staging; no install; no external rollback",
@@ -14649,7 +14681,62 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
       "live_gate_lifetime": "acquired inside staging gate before fresh live classification; held through atomic_replace; released first",
       "constructor_race_fence": "SQLiteStateStore constructor/registration and installation_gate use the same class-level path RLock, so a competing registered mutable staging open cannot pass while the staging gate is held"
     },
-    "path_quiescence_invariant": "FINAL STAGING PROMOTION REQUIRES PATH-WIDE QUIESCENCE"
+    "path_quiescence_invariant": "FINAL STAGING PROMOTION REQUIRES PATH-WIDE QUIESCENCE",
+    "physical_topology": "P1 durably publishes one SQLite file to staged_sqlite_path and one manifest sidecar to manifest_path, all directly in pre-existing live.parent; no durable control directory; P2A/P2B use only staged_sqlite_path"
+  },
+  "physical_topology": {
+    "control_directory": null,
+    "staged_sqlite_path": "<live.parent>/.<live.name>.restore-migration-<staging_id>.sqlite3",
+    "staged_sqlite_basename_derivation": "deterministic exact live basename plus staging_id; no random or caller-provided pathname",
+    "same_directory_invariant": "Path(staged_sqlite_path).parent.resolve() == Path(live_path).parent.resolve()",
+    "distinct_path_invariant": "Path(staged_sqlite_path).resolve() != Path(live_path).resolve()",
+    "collision_policy": "live basename separates alpha.sqlite3 and beta.sqlite3 unpublished SQLite paths, staged SQLite siblings, and manifest sidecars for the same staging_id",
+    "authority_identity_unchanged": true,
+    "single_sqlite_artifact": true,
+    "pre_promotion_copy": false,
+    "promotion_clone": false,
+    "cross_directory_rename": false,
+    "unpublished_materialization_path": "<live.parent>/.<live.name>.restore-migration-<staging_id>.unpublished.sqlite3",
+    "unpublished_same_directory_invariant": "Path(unpublished_materialization_path).parent.resolve() == Path(live_path).parent.resolve()",
+    "all_paths_distinct_invariant": "unpublished_materialization_path != staged_sqlite_path != live_path and unpublished_materialization_path != live_path",
+    "materialize_once_at_unpublished_path": true,
+    "durably_rename_same_file_to_staged_sibling_before_manifest": true,
+    "prepublication_same_file_rename": true,
+    "prepublication_publication_owner": "publish_file_atomically_durably(unpublished_materialization_path, staged_sqlite_path)",
+    "prepublication_byte_copy": false,
+    "two_complete_sqlite_artifacts_exist_concurrently": false,
+    "source_ready_invariant": {
+      "unpublished_materialization_path_exists": false,
+      "staged_sqlite_path_exists": true,
+      "manifest_path_exists": true,
+      "all_parents_equal_preexisting_live_parent": true,
+      "control_directory_exists": false
+    },
+    "lifecycle_and_promotion_paths": {
+      "P2A": "staged_sqlite_path only",
+      "P2B_F1_through_F4": "staged_sqlite_path only",
+      "unpublished_path_participates": false
+    },
+    "new_control_directory_created": false,
+    "no_new_durable_control_directory_exists": true,
+    "manifest_path": "<live.parent>/.<live.name>.restore-migration-<staging_id>.manifest.json",
+    "manifest_parent_is_live_parent": true,
+    "all_durable_artifact_parents_are_live_parent": true,
+    "manifest_basename_derivation": "deterministic exact live basename plus staging_id; collision-safe physical placement, not authority identity",
+    "manifest_publication_owner": "atomic_write_bytes_durably(manifest_path, canonical_manifest_bytes), delegating to publish_file_atomically_durably",
+    "manifest_transient_temp_parent": "live.parent via existing atomic_write_bytes_durably same-directory temp creation",
+    "new_directory_creation_fence_required": false,
+    "volume_handle_required": false,
+    "administrator_privileges_required": false
+  },
+  "publication_boundary": {
+    "final_manifest": "manifest_path is the sole durable publication boundary and is published directly in pre-existing live.parent",
+    "manifest_absent": "unpublished_materialization_path and its -wal/-shm, staged_sqlite_path and its -wal/-shm, and exact manifest-publication temp residue are C0 debris; no control directory cleanup and no arbitrary glob; includes durable SQLite rename outcome uncertainty before manifest",
+    "manifest_present": "never C0-delete or rematerialize a missing, malformed, or inconsistent staged_sqlite_path; unpublished_materialization_path must be absent or classification is STAGING_CONFLICT",
+    "arbitrary_globbing": false,
+    "source_ready_invariant": "unpublished_materialization_path absent + staged_sqlite_path present + manifest_path present; all directly in pre-existing live.parent; no control directory exists",
+    "protected_transition_before_source_ready": false,
+    "manifest_publication_owner": "atomic_write_bytes_durably(manifest_path, canonical manifest bytes) delegates to publish_file_atomically_durably"
   }
 }
 ```
