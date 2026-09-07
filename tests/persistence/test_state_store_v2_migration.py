@@ -8,6 +8,7 @@ from typing import cast
 
 import pytest
 
+from bot_core.persistence.backup_envelope import create_backup_envelope, validate_backup_envelope
 from bot_core.persistence.fingerprints import (
     canonical_json_sha256,
     history_tail_fingerprint_sha256,
@@ -136,6 +137,23 @@ def _coordinator(store: SQLiteStateStore, boundary: Boundary):
     return MigrationExecutionCoordinator(
         store, PRODUCTION_MIGRATION_REGISTRY, _protected(store, boundary)
     )
+
+
+def test_v2_backup_accepts_historical_v1_and_migration_v2_descriptors(tmp_path: Path) -> None:
+    store, boundary, _ = _applying_v1(tmp_path / "cross-version-backup.sqlite3")
+    try:
+        _coordinator(store, boundary).execute(MIGRATION_ID)
+        backup = create_backup_envelope(store)
+        assert backup is not None
+        assert backup.state_store_schema_version == 2
+        versions = tuple(
+            descriptor.state_store_schema_version
+            for descriptor in backup.integrity_metadata.state_store_transaction_descriptors
+        )
+        assert versions[-2:] == (1, 2)
+        assert validate_backup_envelope(backup.to_mapping()) == backup
+    finally:
+        store.close()
 
 
 def test_production_v1_pin_migration_and_reopen_recovery(tmp_path: Path) -> None:
