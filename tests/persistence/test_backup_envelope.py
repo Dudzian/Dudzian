@@ -70,6 +70,12 @@ def _pin_record() -> PersistenceRecord:
     return record
 
 
+def _v1_pin_record() -> PersistenceRecord:
+    mapping = _pin_record().to_mapping()
+    mapping["record_key"] = str(mapping["record_key"]).rsplit(":", 1)[0]
+    return PersistenceRecord.from_mapping(mapping)
+
+
 def _record_with_nested_forbidden_field(field: str) -> dict[str, object]:
     name = "Order lifecycle events/history"
     mapping = frozen_oracle._persistence_record(name)
@@ -157,13 +163,17 @@ def test_real_store_and_backup_preserve_pin_verifier_revision(tmp_path: Path) ->
     with SQLiteStateStore(tmp_path / "pin.sqlite3") as store:
         _commit(
             store,
-            _metadata(account_id=account_id, device_installation_id=device_id),
+            _metadata(
+                account_id=account_id,
+                device_installation_id=device_id,
+                state_store_schema_version=1,
+            ),
             current=(_account(account_id),),
-            history=(_pin_record(),),
+            history=(_v1_pin_record(),),
         )
         backup = create_backup_envelope(store)
     assert backup is not None
-    assert backup.immutable_recovery_history == (_pin_record(),)
+    assert backup.immutable_recovery_history == (_v1_pin_record(),)
     assert validate_backup_envelope(backup.to_mapping()) == backup
 
 

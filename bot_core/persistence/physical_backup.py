@@ -101,6 +101,14 @@ def _hash_file(path: Path, destination: Path | None = None) -> tuple[str, int]:
     return digest.hexdigest(), length
 
 
+def physical_sqlite_artifact_fingerprint(artifact: PhysicalSQLiteArtifact) -> str:
+    """Return the established exact-byte PhysicalSQLiteArtifact fingerprint."""
+
+    if not isinstance(artifact, PhysicalSQLiteArtifact):
+        raise TypeError("physical artifact must be a PhysicalSQLiteArtifact")
+    return _hash_file(artifact.path)[0]
+
+
 def _validate_sqlite(path: Path) -> str:
     connection = sqlite3.connect(f"file:{path.resolve()}?mode=ro&immutable=1", uri=True)
     try:

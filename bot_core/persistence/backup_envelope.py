@@ -5,10 +5,15 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, fields
+from enum import Enum
 from typing import Any, ClassVar, cast
 
 from .fingerprints import canonical_json_sha256
-from .records import PersistenceRecord, PersistenceRecordError, validate_persistence_record
+from .records import (
+    PersistenceRecord,
+    PersistenceRecordError,
+    validate_persistence_record_for_schema,
+)
 from .state_store import (
     SQLiteStateStore,
     StateStoreError,
@@ -91,8 +96,12 @@ def _contains_forbidden_field(
     return False
 
 
-def _validate_backup_record(record: PersistenceRecord) -> None:
-    validate_persistence_record(record)
+class BackupCandidateDisposition(str, Enum):
+    CURRENT_AUTHENTICATED_CANDIDATE = "CURRENT_AUTHENTICATED_CANDIDATE"
+    AUTHENTICATED_LEGACY_CANDIDATE = "AUTHENTICATED_LEGACY_CANDIDATE"
+
+
+def _scan_backup_record(record: PersistenceRecord) -> None:
     if record.representation_name in _FORBIDDEN_RECORD_KINDS:
         raise BackupEnvelopeError("backup contains a forbidden record kind")
     legal_verifier_path = (
@@ -104,13 +113,18 @@ def _validate_backup_record(record: PersistenceRecord) -> None:
         raise BackupEnvelopeError("backup contains a forbidden payload field")
 
 
-def _parse_records(value: object, name: str) -> tuple[PersistenceRecord, ...]:
+def _parse_records(
+    value: object, name: str, *, state_store_schema_version: int
+) -> tuple[PersistenceRecord, ...]:
     if not isinstance(value, list):
         raise BackupEnvelopeError(f"{name} must be a JSON array")
     try:
         records = tuple(PersistenceRecord.from_mapping(item) for item in value)
         for record in records:
-            _validate_backup_record(record)
+            validate_persistence_record_for_schema(
+                record, state_store_schema_version=state_store_schema_version
+            )
+            _scan_backup_record(record)
     except (PersistenceRecordError, TypeError, ValueError) as exc:
         raise BackupEnvelopeError(f"{name} contains an invalid record") from exc
     if list(records) != sorted(
@@ -231,7 +245,9 @@ def _parse_descriptors(value: object) -> tuple[StateStoreTransactionDescriptor, 
                 *descriptor.current_record_mutations,
                 *descriptor.immutable_history_appends,
             ):
-                _validate_backup_record(record)
+                # Descriptor construction is the version authority for embedded
+                # records.  This pass is deliberately content-only.
+                _scan_backup_record(record)
     except BackupEnvelopeError:
         raise
     except (PersistenceRecordError, TransactionDescriptorError, TypeError, ValueError) as exc:
@@ -260,13 +276,23 @@ def validate_backup_envelope(value: Mapping[str, object] | BackupEnvelope) -> Ba
     state_store_schema_version = _require_positive_integer(
         raw["state_store_schema_version"], "state_store_schema_version"
     )
+    if state_store_schema_version not in {1, 2}:
+        raise BackupEnvelopeError("unsupported state_store_schema_version")
     generation = _require_positive_integer(
         raw["local_protected_freshness_generation"],
         "local_protected_freshness_generation",
     )
     integrity = _validate_integrity_metadata(raw["integrity_metadata"])
-    current = _parse_records(raw["canonical_durable_records"], "canonical_durable_records")
-    history = _parse_records(raw["immutable_recovery_history"], "immutable_recovery_history")
+    current = _parse_records(
+        raw["canonical_durable_records"],
+        "canonical_durable_records",
+        state_store_schema_version=state_store_schema_version,
+    )
+    history = _parse_records(
+        raw["immutable_recovery_history"],
+        "immutable_recovery_history",
+        state_store_schema_version=state_store_schema_version,
+    )
     try:
         metadata = StateStoreMetadata(
             account_id=cast(str, raw["account_id"]),
@@ -321,6 +347,17 @@ def validate_backup_envelope(value: Mapping[str, object] | BackupEnvelope) -> Ba
     if fingerprint != expected_fingerprint:
         raise BackupEnvelopeError("envelope fingerprint mismatch")
     return candidate
+
+
+def classify_authenticated_backup(
+    value: Mapping[str, object] | BackupEnvelope,
+) -> BackupCandidateDisposition:
+    """Stage-1 classification only; it grants no restore/install authority."""
+
+    candidate = validate_backup_envelope(value)
+    if candidate.state_store_schema_version == 1:
+        return BackupCandidateDisposition.AUTHENTICATED_LEGACY_CANDIDATE
+    return BackupCandidateDisposition.CURRENT_AUTHENTICATED_CANDIDATE
 
 
 def create_backup_envelope(store: SQLiteStateStore) -> BackupEnvelope | None:
