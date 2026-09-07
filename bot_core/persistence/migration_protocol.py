@@ -468,7 +468,21 @@ class MigrationCoordinator:
             return "APPLYING"
 
 
-PRODUCTION_MIGRATION_REGISTRY = MigrationRegistry()
+from .state_store_v2_migration import (
+    STATE_STORE_V2_MIGRATION_AUTHORITY,
+    STATE_STORE_V2_MIGRATION_DEFINITION,
+    plan_state_store_v2_migration,
+)
+
+PRODUCTION_MIGRATION_REGISTRY = MigrationRegistry(
+    (
+        (
+            STATE_STORE_V2_MIGRATION_DEFINITION,
+            STATE_STORE_V2_MIGRATION_AUTHORITY,
+            plan_state_store_v2_migration,
+        ),
+    )
+)
 
 
 @dataclass(frozen=True, slots=True)

@@ -27,8 +27,9 @@ from bot_core.persistence.records import (
     PersistenceRecord,
     PersistenceRecordError,
     validate_persistence_record,
+    validate_persistence_record_for_schema,
     record_durability_class,
-    validate_record_bucket,
+    validate_record_bucket_for_schema,
 )
 from bot_core.persistence.record_registry import (
     PERSISTENCE_RECORD_REGISTRY,
@@ -51,6 +52,62 @@ _HISTORY_BUCKET = "DURABLE IMMUTABLE / APPEND-ONLY HISTORY"
 
 class StateStoreError(RuntimeError):
     """Błąd zamkniętej walidacji lub ogrodzenia trwałego StateStore."""
+
+
+def _validate_schema_version_transition(
+    previous: StateStoreTransactionDescriptor,
+    current: StateStoreTransactionDescriptor,
+) -> None:
+    """Bind the sole legal descriptor schema edge to its sealed production authority."""
+
+    if current.state_store_schema_version == previous.state_store_schema_version:
+        return
+    try:
+        from .migration_execution import MigrationExecutionDeclaration
+        from .migration_execution_contract import thaw_json
+        from .state_store_v2_migration import STATE_STORE_V2_MIGRATION_AUTHORITY
+
+        if (previous.state_store_schema_version, current.state_store_schema_version) != (1, 2):
+            raise ValueError("unsupported schema edge")
+        if current.current_record_mutations:
+            raise ValueError("migration descriptor has current mutations")
+        if len(current.immutable_history_appends) != 1:
+            raise ValueError("migration descriptor append shape mismatch")
+        carrier = current.immutable_history_appends[0]
+        if carrier.representation_name != "Migration execution declaration":
+            raise ValueError("migration declaration is unavailable")
+        declaration = MigrationExecutionDeclaration.from_mapping(thaw_json(carrier.payload))
+        if declaration.carrier() != carrier:
+            raise ValueError("migration declaration carrier mismatch")
+        STATE_STORE_V2_MIGRATION_AUTHORITY.assert_declaration(declaration)
+        if current.immutable_history_appends != (declaration.carrier(),):
+            raise ValueError("migration descriptor append shape mismatch")
+        if (
+            declaration.source_schema_version != previous.state_store_schema_version
+            or declaration.target_schema_version != current.state_store_schema_version
+            or declaration.account_id != current.account_id
+            or declaration.account_id != previous.account_id
+            or declaration.device_installation_id != current.device_installation_id
+            or declaration.device_installation_id != previous.device_installation_id
+            or declaration.environment != current.environment
+            or declaration.environment != previous.environment
+            or declaration.state_store_identity_fingerprint_sha256
+            != current.state_store_identity_fingerprint_sha256
+            or declaration.state_store_identity_fingerprint_sha256
+            != previous.state_store_identity_fingerprint_sha256
+            or declaration.expected_current_generation != previous.target_generation
+            or declaration.expected_current_generation != current.expected_current_generation
+            or declaration.target_generation != current.target_generation
+            or declaration.pre_state_fingerprint_sha256 != previous.post_state_fingerprint_sha256
+            or declaration.pre_state_fingerprint_sha256 != current.pre_state_fingerprint_sha256
+            or declaration.pre_history_tail_fingerprint_sha256
+            != previous.post_history_tail_fingerprint_sha256
+            or declaration.pre_history_tail_fingerprint_sha256
+            != current.pre_history_tail_fingerprint_sha256
+        ):
+            raise ValueError("migration declaration runtime binding mismatch")
+    except (TypeError, ValueError) as exc:
+        raise StateStoreError("unauthorized descriptor schema-version edge") from exc
 
 
 def _validate_canonical_id(value: object, *, prefix: str, field_name: str) -> None:
@@ -421,13 +478,16 @@ class SQLiteStateStore:
             result = []
             for sql_key, sql_name, encoded in rows:
                 record = PersistenceRecord.from_mapping(json.loads(encoded))
-                validate_persistence_record(record)
+                if metadata is None:
+                    raise StateStoreError("persisted record has no StateStore scope")
+                validate_persistence_record_for_schema(
+                    record,
+                    state_store_schema_version=metadata.state_store_schema_version,
+                )
                 if sql_key != record.record_key or sql_name != record.representation_name:
                     raise StateStoreError("persisted record SQL carrier mismatch")
                 if _record_bucket(record) != bucket:
                     raise StateStoreError("persisted record is in the wrong storage bucket")
-                if metadata is None:
-                    raise StateStoreError("persisted record has no StateStore scope")
                 _validate_record_store_scope(record, metadata)
                 result.append(record)
             return tuple(sorted(result, key=lambda r: (r.representation_name, r.record_key)))
@@ -507,18 +567,27 @@ class SQLiteStateStore:
     @staticmethod
     def verify_snapshot(snapshot: StateStoreSnapshot) -> None:
         metadata = snapshot.metadata
+        if metadata.state_store_schema_version not in {1, 2}:
+            raise StateStoreError("unsupported StateStore schema version")
         for records, bucket in (
             (snapshot.current_records, _CURRENT_BUCKET),
             (snapshot.immutable_history, _HISTORY_BUCKET),
         ):
             for record in records:
                 try:
-                    validate_record_bucket(record, bucket)
+                    validate_record_bucket_for_schema(
+                        record,
+                        bucket,
+                        state_store_schema_version=metadata.state_store_schema_version,
+                    )
                 except (PersistenceRecordError, TypeError, ValueError) as exc:
                     raise StateStoreError("snapshot record is in the wrong durable bucket") from exc
         for record in (*snapshot.current_records, *snapshot.immutable_history):
             try:
-                validate_persistence_record(record)
+                validate_persistence_record_for_schema(
+                    record,
+                    state_store_schema_version=metadata.state_store_schema_version,
+                )
             except (PersistenceRecordError, TypeError, ValueError) as exc:
                 raise StateStoreError("snapshot contains invalid PersistenceRecord") from exc
             _validate_record_store_scope(record, metadata)
@@ -576,6 +645,7 @@ class SQLiteStateStore:
                 != previous.post_history_tail_fingerprint_sha256
             ):
                 raise StateStoreError("descriptor fingerprint edge mismatch")
+            _validate_schema_version_transition(previous, current)
         current = ordered[-1]
         bindings = {
             "account_id": metadata.account_id,
@@ -740,7 +810,10 @@ class SQLiteStateStore:
         keys = set()
         for record in snapshot:
             try:
-                validate_persistence_record(record)
+                validate_persistence_record_for_schema(
+                    record,
+                    state_store_schema_version=metadata.state_store_schema_version,
+                )
             except (PersistenceRecordError, TypeError, ValueError) as exc:
                 raise StateStoreError("input PersistenceRecord failed Stage 1") from exc
             if _record_bucket(record) != expected_bucket:
@@ -997,8 +1070,27 @@ class SQLiteStateStore:
                 != declaration.pre_sqlite_schema_fingerprint_sha256
             ):
                 raise StateStoreError("migration pre-schema fingerprint mismatch")
+            if sqlite3.sqlite_version_info < (3, 38, 0):
+                raise StateStoreError("migration requires SQLite 3.38.0 or newer")
+            try:
+                self._connection.execute("SELECT json_extract('{}', '$'), json_set('{}', '$.x', 1)")
+            except sqlite3.Error as exc:
+                raise StateStoreError("migration requires built-in SQLite JSON functions") from exc
+            for operation in declaration.operations:
+                self._connection.execute(operation.statement, operation.parameters)
+            if (
+                sqlite_schema_fingerprint(self._connection)
+                != declaration.target_sqlite_schema_fingerprint_sha256
+            ):
+                raise StateStoreError("migration target-schema fingerprint mismatch")
 
-            history_map = {record.record_key: record for record in before.immutable_history}
+            post_current = self._read_records(
+                "state_store_current_records", _CURRENT_BUCKET, metadata
+            )
+            post_operation_history = self._read_records(
+                "state_store_immutable_history", _HISTORY_BUCKET, metadata
+            )
+            history_map = {record.record_key: record for record in post_operation_history}
             if carrier.record_key in history_map:
                 raise StateStoreError("migration declaration already exists")
             history_map[carrier.record_key] = carrier
@@ -1016,7 +1108,7 @@ class SQLiteStateStore:
                 state_store_identity_fingerprint_sha256=metadata.state_store_identity_fingerprint_sha256,
                 environment=metadata.environment,
                 protected_freshness_generation=metadata.protected_freshness_generation,
-                current_records=before.current_records,
+                current_records=post_current,
                 history_tail_fingerprint_sha256=post_history,
             )
             projection = dict(
@@ -1040,15 +1132,9 @@ class SQLiteStateStore:
                 metadata.state_fingerprint_sha256,
                 metadata.transaction_fingerprint_sha256,
             ) != (post_history, post_state, transaction_hash):
-                raise StateStoreError("migration candidate fingerprints do not match declaration")
-
-            for operation in declaration.operations:
-                self._connection.execute(operation.statement, operation.parameters)
-            if (
-                sqlite_schema_fingerprint(self._connection)
-                != declaration.target_sqlite_schema_fingerprint_sha256
-            ):
-                raise StateStoreError("migration target-schema fingerprint mismatch")
+                raise StateStoreError(
+                    "migration candidate fingerprints do not match actual post-operation rows"
+                )
 
             descriptor = StateStoreTransactionDescriptor.from_mapping(
                 {**projection, "transaction_fingerprint_sha256": transaction_hash}
@@ -1069,7 +1155,7 @@ class SQLiteStateStore:
             after = self._snapshot_inside_transaction()
             if after != StateStoreSnapshot(
                 metadata,
-                before.current_records,
+                post_current,
                 expected_history,
                 tuple(
                     sorted(
@@ -1085,6 +1171,87 @@ class SQLiteStateStore:
             if self._connection.in_transaction:
                 self._connection.execute("ROLLBACK")
             raise
+
+    def _derive_migration_execution_metadata(
+        self, target_seed: StateStoreMetadata, declaration: Any
+    ) -> StateStoreMetadata:
+        """Observe the exact rolled-back post-operation carriers for protected PREPARE."""
+
+        from .migration_execution import MigrationExecutionDeclaration, sqlite_schema_fingerprint
+
+        if not isinstance(declaration, MigrationExecutionDeclaration):
+            raise StateStoreError("validated migration declaration required")
+        carrier = declaration.carrier()
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            before = self._snapshot_inside_transaction()
+            if before is None:
+                raise StateStoreError("migration derivation requires initialized StateStore")
+            self.verify_snapshot(before)
+            if sqlite3.sqlite_version_info < (3, 38, 0):
+                raise StateStoreError("migration requires SQLite 3.38.0 or newer")
+            try:
+                self._connection.execute("SELECT json_extract('{}', '$'), json_set('{}', '$.x', 1)")
+            except sqlite3.Error as exc:
+                raise StateStoreError("migration requires built-in SQLite JSON functions") from exc
+            if (
+                sqlite_schema_fingerprint(self._connection)
+                != declaration.pre_sqlite_schema_fingerprint_sha256
+            ):
+                raise StateStoreError("migration pre-schema fingerprint mismatch")
+            for operation in declaration.operations:
+                self._connection.execute(operation.statement, operation.parameters)
+            if (
+                sqlite_schema_fingerprint(self._connection)
+                != declaration.target_sqlite_schema_fingerprint_sha256
+            ):
+                raise StateStoreError("migration target-schema fingerprint mismatch")
+            current = self._read_records(
+                "state_store_current_records", _CURRENT_BUCKET, target_seed
+            )
+            history = list(
+                self._read_records("state_store_immutable_history", _HISTORY_BUCKET, target_seed)
+            )
+            if any(item.record_key == carrier.record_key for item in history):
+                raise StateStoreError("migration declaration already exists")
+            history.append(carrier)
+            history_tail = history_tail_fingerprint_sha256(history)
+            state = state_fingerprint_sha256(
+                account_id=target_seed.account_id,
+                device_installation_id=target_seed.device_installation_id,
+                state_store_schema_version=target_seed.state_store_schema_version,
+                state_store_identity_fingerprint_sha256=target_seed.state_store_identity_fingerprint_sha256,
+                environment=target_seed.environment,
+                protected_freshness_generation=target_seed.protected_freshness_generation,
+                current_records=current,
+                history_tail_fingerprint_sha256=history_tail,
+            )
+            projection = dict(
+                account_id=target_seed.account_id,
+                device_installation_id=target_seed.device_installation_id,
+                state_store_identity_fingerprint_sha256=target_seed.state_store_identity_fingerprint_sha256,
+                state_store_schema_version=target_seed.state_store_schema_version,
+                environment=target_seed.environment,
+                expected_current_generation=declaration.expected_current_generation,
+                target_generation=target_seed.protected_freshness_generation,
+                pre_state_fingerprint_sha256=before.metadata.state_fingerprint_sha256,
+                pre_history_tail_fingerprint_sha256=before.metadata.history_tail_fingerprint_sha256,
+                post_state_fingerprint_sha256=state,
+                post_history_tail_fingerprint_sha256=history_tail,
+                current_record_mutations=[],
+                immutable_history_appends=[carrier.to_mapping()],
+            )
+            return StateStoreMetadata.from_mapping(
+                {
+                    **target_seed.to_mapping(),
+                    "history_tail_fingerprint_sha256": history_tail,
+                    "state_fingerprint_sha256": state,
+                    "transaction_fingerprint_sha256": transaction_fingerprint_sha256(projection),
+                }
+            )
+        finally:
+            if self._connection.in_transaction:
+                self._connection.execute("ROLLBACK")
 
 
 __all__ = [

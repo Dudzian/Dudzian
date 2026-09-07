@@ -71,7 +71,12 @@ def _commit(
 ) -> None:
     expected = None if generation == 1 else generation - 1
     history = (_history(pin),) if append_history else ()
-    target = _metadata(generation, account_id=ACCOUNT, device_installation_id=DEVICE)
+    target = _metadata(
+        generation,
+        account_id=ACCOUNT,
+        device_installation_id=DEVICE,
+        state_store_schema_version=2,
+    )
     prepared = store.derive_prepared_metadata(
         target,
         current_records=(_current(pin),),

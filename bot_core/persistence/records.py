@@ -16,6 +16,7 @@ from datetime import datetime
 from hashlib import sha256
 from types import MappingProxyType
 from typing import Any, ClassVar, cast
+from copy import copy
 
 from .fingerprints import canonical_json, canonical_json_sha256
 from .record_registry import (
@@ -1100,6 +1101,50 @@ def validate_persistence_record(record: PersistenceRecord) -> None:
         raise PersistenceRecordError("payload fingerprint mismatch")
 
 
+_SUPPORTED_STATE_STORE_SCHEMA_VERSIONS = frozenset({1, 2})
+_V1_RECORD_KEY_STRATEGY_OVERRIDES = {
+    "PinVerifierRecord accepted revisions": "IMMUTABLE_PAYLOAD_IDENTITY_REVISION",
+    "PinVerifierRecord current designation": "SCOPE_CURRENT_REFERENCE_REVISION_GENERATION",
+}
+
+
+def validate_persistence_record_for_schema(
+    record: PersistenceRecord, *, state_store_schema_version: int
+) -> None:
+    """Validate a carrier under the exact contract selected by its StateStore."""
+
+    if (
+        isinstance(state_store_schema_version, bool)
+        or not isinstance(state_store_schema_version, int)
+        or state_store_schema_version not in _SUPPORTED_STATE_STORE_SCHEMA_VERSIONS
+    ):
+        raise PersistenceRecordError("unsupported StateStore schema version")
+    if state_store_schema_version == 2 or record.representation_name not in (
+        _V1_RECORD_KEY_STRATEGY_OVERRIDES
+    ):
+        validate_persistence_record(record)
+        return
+    registry = _REGISTRY.get(record.representation_name)
+    if registry is None:
+        raise PersistenceRecordError("representation unsupported by production implementation")
+    overridden = copy(registry)
+    overridden["record_key_strategy"] = _V1_RECORD_KEY_STRATEGY_OVERRIDES[
+        record.representation_name
+    ]
+    for field in (
+        "representation_category",
+        "semantic_owner_milestone",
+        "semantic_artifact",
+        "semantic_json_pointer",
+        "semantic_contract_fingerprint_sha256",
+    ):
+        if getattr(record, field) != overridden[field]:
+            raise PersistenceRecordError(f"registry binding mismatch: {field}")
+    _validate_generic(record, overridden)
+    if record.payload_fingerprint_sha256 != _fingerprint(record.payload):
+        raise PersistenceRecordError("payload fingerprint mismatch")
+
+
 def record_durability_class(record: PersistenceRecord) -> str:
     """Return the exact frozen StateStore bucket for a Stage-1 representation."""
 
@@ -1111,5 +1156,15 @@ def record_durability_class(record: PersistenceRecord) -> str:
 
 def validate_record_bucket(record: PersistenceRecord, expected: str) -> None:
     validate_persistence_record(record)
+    if record_durability_class(record) != expected:
+        raise PersistenceRecordError("record is in the wrong durable bucket")
+
+
+def validate_record_bucket_for_schema(
+    record: PersistenceRecord, expected: str, *, state_store_schema_version: int
+) -> None:
+    validate_persistence_record_for_schema(
+        record, state_store_schema_version=state_store_schema_version
+    )
     if record_durability_class(record) != expected:
         raise PersistenceRecordError("record is in the wrong durable bucket")
