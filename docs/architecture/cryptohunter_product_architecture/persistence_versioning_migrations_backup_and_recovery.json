@@ -530,7 +530,7 @@
       "NOT M0.3 AUTHORITY",
       "NOT DOMAIN AUTHORITY"
     ],
-    "current_state_store_schema_version": 1,
+    "current_state_store_schema_version": 2,
     "entry_schema": {
       "additionalProperties": false,
       "required": [
@@ -553,6 +553,10 @@
       {
         "state_store_schema_version": 1,
         "sqlite_schema_fingerprint_sha256": "18f9bac7640b66fb1051d5e1bcfe7345c79a8dcb33f417b40009fb049547c680"
+      },
+      {
+        "state_store_schema_version": 2,
+        "sqlite_schema_fingerprint_sha256": "18f9bac7640b66fb1051d5e1bcfe7345c79a8dcb33f417b40009fb049547c680"
       }
     ],
     "composition_invariants": {
@@ -566,7 +570,9 @@
       "nearest_version_fallback": false,
       "candidate_driven_insertion": false,
       "state_store_driven_insertion": false,
-      "current_version_source": "STATIC PRODUCT BUILD DECISION; never observed metadata, migration ID/target, or caller input"
+      "current_version_source": "STATIC PRODUCT BUILD DECISION; never observed metadata, migration ID/target, or caller input",
+      "sqlite_schema_fingerprint_unique_across_versions": false,
+      "same_physical_fingerprint_rule": "different StateStore schema/contract versions MAY share one sqlite_schema_fingerprint_sha256 when physical DDL is unchanged and the logical durable representation contract differs"
     },
     "authority_boundary": {
       "establishes_only": "EXPECTED PHYSICAL SQLITE STRUCTURE FOR KNOWN PRODUCT SCHEMA VERSION",
@@ -595,7 +601,8 @@
         "restore candidate",
         "user configuration",
         "mutable database table"
-      ]
+      ],
+      "physical_fingerprint_meaning": "physical SQLite DDL/materialization only; not a standalone logical StateStore contract-version identifier"
     },
     "fingerprint_kernel": {
       "production_api": "SQLiteStateStore.sqlite_schema_fingerprint()",
@@ -5314,7 +5321,7 @@
         "restorable_authority": false,
         "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
         "semantic_contract_fingerprint_sha256": "526f1ecdf3d3b497c52fcd45bed9620d5d6d7aeb1c7f09693a5192e4086cae04",
-        "record_key_strategy": "IMMUTABLE_PAYLOAD_IDENTITY_REVISION",
+        "record_key_strategy": "IMMUTABLE_PAYLOAD_IDENTITY_REVISION_CONTENT_FINGERPRINT",
         "payload_contract": {
           "required_fields": [
             "fact_kind",
@@ -5500,7 +5507,8 @@
             "canonicalization": "JSON sort_keys=true, separators comma/colon, ensure_ascii=false",
             "encoding": "UTF-8",
             "digest_format": "lowercase_hex"
-          }
+          },
+          "record_key_content_fingerprint_field": "content_fingerprint_sha256"
         }
       },
       "PinVerifierRecord current designation": {
@@ -5516,7 +5524,7 @@
         "restorable_authority": false,
         "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
         "semantic_contract_fingerprint_sha256": "526f1ecdf3d3b497c52fcd45bed9620d5d6d7aeb1c7f09693a5192e4086cae04",
-        "record_key_strategy": "SCOPE_CURRENT_REFERENCE_REVISION_GENERATION",
+        "record_key_strategy": "SCOPE_CURRENT_STABLE",
         "payload_contract": {
           "required_fields": [
             "scope_key",
@@ -6343,8 +6351,11 @@
       "authority": "existing canonical payload facts only",
       "prose_aspect_key_forbidden": true,
       "arbitrary_nonempty_key_forbidden": true,
-      "collision_requirement": "different canonical object/revision/designation facts produce different keys",
-      "CANONICAL_ENTITY_ID": "record_key = exact canonical entity ID"
+      "CANONICAL_ENTITY_ID": "record_key = exact canonical entity ID",
+      "IMMUTABLE_PAYLOAD_IDENTITY_REVISION_CONTENT_FINGERPRINT": "record_key = immutable fact kind plus canonical identity/revision/generation fields plus exact upstream semantic content fingerprint",
+      "SCOPE_CURRENT_STABLE": "record_key = current designation scope_key; changing reference replaces the one identity-stable current slot",
+      "immutable_collision_requirement": "distinct canonical immutable semantic facts produce distinct immutable record keys; the exact same immutable semantic fact has the same canonical key and is idempotent",
+      "current_slot_requirement": "distinct current scopes produce distinct current record keys; only an explicitly declared identity-stable current-slot strategy may reuse one key for successive contents of one exact scope and atomically replace the prior current value"
     },
     "direct_upstream_validator_registry": {
       "ExchangeAccount": {
@@ -9338,7 +9349,8 @@
         "success": "CANDIDATE_VALID_REQUIRES_M0.3_FRESHNESS"
       },
       "structural_integrity_grants_authority": false,
-      "category_gates_are_conjunctive": true
+      "category_gates_are_conjunctive": true,
+      "schema_version_decision": "StateStore schema versions 1 and 2 are known; version 1 is an authenticated legacy candidate only and requires the sealed 1-to-2 representation migration before recovery completion; BackupEnvelope outer schema remains version 1 because its shape is unchanged"
     },
     "descriptor_preservation_contract": {
       "placement": "BackupEnvelope.integrity_metadata.state_store_transaction_descriptors",
@@ -13770,5 +13782,208 @@
         "administration_mutation_token": false
       }
     }
+  },
+  "state_store_representation_lineage_v2": {
+    "status": "CLOSED — REPRESENTATION LINEAGE V1_TO_V2 FROZEN",
+    "decision": "StateStore schema version 2 with exactly one sealed production representation migration from version 1; same-version normalization is forbidden",
+    "version_selector": {
+      "sole_selector": "authority container StateStore schema version; no component, per-record, PIN-representation, or PersistenceRecord version field",
+      "top_level_records": "validate under containing StateStoreMetadata.state_store_schema_version",
+      "descriptor_embedded_records": "validate each current_record_mutations and immutable_history_appends entry under that descriptor.state_store_schema_version, never the current product version"
+    },
+    "record_contracts": {
+      "base_registry": "/backup_contract/representation_registry",
+      "unchanged_representations": "inherit the base registry contract in both versions",
+      "version_overrides": {
+        "1": {
+          "PinVerifierRecord accepted revisions": "IMMUTABLE_PAYLOAD_IDENTITY_REVISION",
+          "PinVerifierRecord current designation": "SCOPE_CURRENT_REFERENCE_REVISION_GENERATION"
+        },
+        "2": {
+          "PinVerifierRecord accepted revisions": "IMMUTABLE_PAYLOAD_IDENTITY_REVISION_CONTENT_FINGERPRINT",
+          "PinVerifierRecord current designation": "SCOPE_CURRENT_STABLE"
+        }
+      },
+      "v1_exact_key_shapes": {
+        "history": "immutable:PinVerifierRecord accepted revisions:{operator_id}:{pin_revision}:{security_generation}",
+        "current": "current:{scope_key}:{current_reference}:{current_revision}:{current_generation}"
+      },
+      "v2_exact_key_shapes": {
+        "history": "immutable:PinVerifierRecord accepted revisions:{operator_id}:{pin_revision}:{security_generation}:{content_fingerprint_sha256}",
+        "current": "current:{account_id}:{operator_id}:{device_installation_id}"
+      }
+    },
+    "historical_descriptors": {
+      "v1_immutable_after_migration": true,
+      "rewritten_fields": [],
+      "preserved_exact": [
+        "descriptor JSON",
+        "embedded v1 record keys",
+        "transaction_fingerprint_sha256",
+        "target_generation",
+        "pre/post fingerprints",
+        "historical evidence chain"
+      ]
+    },
+    "sealed_production_migrations": [
+      {
+        "name": "StateStore PIN representation migration v1 to v2",
+        "framework": "existing MigrationDefinition and MigrationExecutionAuthority",
+        "source_schema_version": 1,
+        "target_schema_version": 2,
+        "rollback_policy": "FORWARD_ONLY",
+        "ddl_effects": [],
+        "dml_effects": [
+          "recognize exact v1 PIN history carriers",
+          "intrinsic/source-validate every exact upstream PinVerifierRecord and wrapper fingerprint",
+          "derive canonical v2 PIN history keys",
+          "replace each v1 top-level PIN history carrier row with its v2 carrier row while preserving exact wrapper payload",
+          "recognize exact v1 PIN current designation and prove its reference selects an existing accepted PIN fact",
+          "replace the v1 dynamic current row with exactly one v2 stable current scope row",
+          "publish required existing migration lifecycle/evidence",
+          "publish the migration StateStoreTransactionDescriptor under schema version 2"
+        ],
+        "forbidden_semantic_changes": [
+          "upstream PinVerifierRecord",
+          "content fingerprint",
+          "pin_revision",
+          "security_generation",
+          "failed_attempts",
+          "lockout",
+          "verifier",
+          "credential material",
+          "authority owner",
+          "any other security fact"
+        ],
+        "migration_id": "state-store-pin-representation-v1-to-v2",
+        "definition": {
+          "migration_id": "state-store-pin-representation-v1-to-v2",
+          "source_schema_version": 1,
+          "target_schema_version": 2,
+          "ordered_path": [
+            "rekey-pin-history-carriers",
+            "stabilize-pin-current-slot"
+          ],
+          "rollback_policy": "FORWARD_ONLY",
+          "migration_definition_fingerprint_sha256": "526d21da17e5492624de7458e2708afbb7ac04bc0e978821038c51e4b0855785"
+        },
+        "operations": [
+          {
+            "ordinal": 1,
+            "operation_id": "rekey-pin-history-carriers",
+            "operation_kind": "DML",
+            "statement": "UPDATE state_store_immutable_history SET record_key = 'immutable:PinVerifierRecord accepted revisions:' || json_extract(record_json, '$.payload.upstream_payload.operator_id') || ':' || json_extract(record_json, '$.payload.upstream_payload.pin_revision') || ':' || json_extract(record_json, '$.payload.upstream_payload.security_generation') || ':' || json_extract(record_json, '$.payload.upstream_payload.content_fingerprint_sha256'), record_json = json_set(record_json, '$.record_key', 'immutable:PinVerifierRecord accepted revisions:' || json_extract(record_json, '$.payload.upstream_payload.operator_id') || ':' || json_extract(record_json, '$.payload.upstream_payload.pin_revision') || ':' || json_extract(record_json, '$.payload.upstream_payload.security_generation') || ':' || json_extract(record_json, '$.payload.upstream_payload.content_fingerprint_sha256')) WHERE representation_name = 'PinVerifierRecord accepted revisions' AND record_key = 'immutable:PinVerifierRecord accepted revisions:' || json_extract(record_json, '$.payload.upstream_payload.operator_id') || ':' || json_extract(record_json, '$.payload.upstream_payload.pin_revision') || ':' || json_extract(record_json, '$.payload.upstream_payload.security_generation')",
+            "parameters": []
+          },
+          {
+            "ordinal": 2,
+            "operation_id": "stabilize-pin-current-slot",
+            "operation_kind": "DML",
+            "statement": "UPDATE state_store_current_records SET record_key = 'current:' || json_extract(record_json, '$.payload.scope_key'), record_json = json_set(record_json, '$.record_key', 'current:' || json_extract(record_json, '$.payload.scope_key')) WHERE representation_name = 'PinVerifierRecord current designation' AND record_key = 'current:' || json_extract(record_json, '$.payload.scope_key') || ':' || json_extract(record_json, '$.payload.current_reference') || ':' || json_extract(record_json, '$.payload.current_revision') || ':' || json_extract(record_json, '$.payload.current_generation')",
+            "parameters": []
+          }
+        ],
+        "operation_plan_fingerprint_sha256": "bc9664c8c3f053d151ab78e770f1e6ef8c9d8adefb1fbec9a644c52367741c8b",
+        "execution_authority": {
+          "migration_id": "state-store-pin-representation-v1-to-v2",
+          "source_schema_version": 1,
+          "target_schema_version": 2,
+          "ordered_path": [
+            "rekey-pin-history-carriers",
+            "stabilize-pin-current-slot"
+          ],
+          "rollback_policy": "FORWARD_ONLY",
+          "migration_definition_fingerprint_sha256": "526d21da17e5492624de7458e2708afbb7ac04bc0e978821038c51e4b0855785",
+          "operation_plan_fingerprint_sha256": "bc9664c8c3f053d151ab78e770f1e6ef8c9d8adefb1fbec9a644c52367741c8b",
+          "pre_sqlite_schema_fingerprint_sha256": "18f9bac7640b66fb1051d5e1bcfe7345c79a8dcb33f417b40009fb049547c680",
+          "target_sqlite_schema_fingerprint_sha256": "18f9bac7640b66fb1051d5e1bcfe7345c79a8dcb33f417b40009fb049547c680"
+        },
+        "authority_source": "exact operations and their operation_plan_fingerprint_sha256; dml_effects is documentation-only derived summary",
+        "static_generic_plan": "one build-time tuple operates set-wise for zero-or-more already validated v1 PIN history carriers and the exact v1 PIN current carrier; no snapshot-derived SQL or parameters",
+        "legacy_prevalidation": "complete v1 structural, semantic, scope, fingerprint, and descriptor-chain validation MUST succeed before execution declaration authorization; SQL never repairs malformed v1 state",
+        "sqlite_runtime_capability": {
+          "minimum_sqlite_version": "3.38.0",
+          "required_builtin_functions": [
+            "json_extract",
+            "json_set"
+          ],
+          "extension_loading": false,
+          "reason": "JSON functions are SQLite built-ins from 3.38.0; no loadable extension or caller function is authority"
+        },
+        "metadata_version_owner": "existing StateStore sealed migration transaction publishes target metadata version 2; metadata update is not duplicated in the SQL operation tuple",
+        "physical_rekey_authority": "MigrationExecutionAuthority exact operation-plan seal plus MigrationExecutionDeclaration authorizes only physical carrier-row rekey; unchanged 14-field StateStoreTransactionDescriptor binds the complete resulting poststate and no domain-history deletion field is added",
+        "descriptor_poststate_binding": "the unchanged 14-field descriptor embeds the exact MigrationExecutionDeclaration; current_record_mutations and immutable_history_appends do not duplicate SQL row effects; post_state_fingerprint_sha256 and post_history_tail_fingerprint_sha256 MUST be derived from the complete canonical post-operation v2 rows, not from the v1 pre-operation record tuples"
+      }
+    ],
+    "carrier_rekey": {
+      "classification": "physical carrier replacement, not semantic immutable-history deletion",
+      "allowed_only_if": [
+        "exact upstream semantic payload is identical",
+        "wrapper provenance and fingerprint are preserved",
+        "sealed migration explicitly declares the rekey",
+        "every distinct semantic immutable fact remains represented"
+      ],
+      "forbidden": [
+        "delete an upstream fact",
+        "change payload",
+        "merge distinct content fingerprints"
+      ],
+      "p4_equals_p0": "one immutable semantic fact and one canonical v2 carrier for the shared fingerprint; current may point back to it; no event ID"
+    },
+    "migration_publication_descriptor": {
+      "state_store_schema_version": 2,
+      "embedded_record_contract_version": 2,
+      "pre_binding": "exact verified v1 pre-state and pre-history tail",
+      "post_binding": "canonical v2 post-state and post-history tail",
+      "predecessor_descriptors_rewritten": false
+    },
+    "cross_version_descriptor_chain": {
+      "legal_shape": [
+        "G1..Gn descriptors use schema version 1",
+        "G(n+1) sealed migration publication uses schema version 2",
+        "G(n+2).. descriptors use schema version 2"
+      ],
+      "continuity_required": [
+        "generation",
+        "pre/post state fingerprints",
+        "pre/post history tail",
+        "StateStore identity",
+        "account/device scope",
+        "environment rules"
+      ],
+      "version_change_authority": "ONLY sealed Migration execution whose source equals previous metadata version and target equals resulting metadata version",
+      "ordinary_transaction_version_change": "FAIL_CLOSED"
+    },
+    "top_level_v2_poststate": {
+      "pin_history": "all distinct semantic PinVerifierRecord facts use canonical v2 carriers; no v1 top-level PIN history row remains",
+      "pin_current": "exactly one stable current scope row selecting an existing accepted content fingerprint; no v1 dynamic current row remains"
+    },
+    "legacy_backup": {
+      "stage_1_v1": "known exact version 1 may pass authentication and integrity validation using v1 top-level record contracts and descriptor-owned contracts",
+      "classification_after_stage_1": "AUTHENTICATED LEGACY CANDIDATE; NOT RECOVERY-COMPLETE; NOT CURRENT RESTORE AUTHORITY",
+      "composition": [
+        "authenticate exact v1 artifact",
+        "materialize exact isolated v1 StateStore candidate",
+        "hand candidate to ordinary M0.11 recovery/migration phase",
+        "execute sealed migration 1 → 2 only through migration executor",
+        "verify canonical isolated v2 result",
+        "only then permit final restore/install authority completion"
+      ],
+      "restore_owns_migration_sql": false,
+      "missing_sealed_path": "NO_SEALED_PATH_TO_CURRENT_SCHEMA / FAIL_CLOSED",
+      "tampering": "v1 history/current keys and descriptor-embedded records must match exact v1 derivation; mismatch fails closed"
+    },
+    "backup_envelope_schema_version": {
+      "value": 1,
+      "unchanged_reason": "outer envelope shape is unchanged and is independent of StateStore schema version"
+    },
+    "non_durable_authority_preserved": [
+      "AuthenticationProof",
+      "CoreIssuedAuthenticationProofBinding",
+      "PlatformBiometricAssertion",
+      "CoreAcceptedPlatformBiometricAssertionBinding",
+      "raw PIN",
+      "biometric material"
+    ]
   }
 }

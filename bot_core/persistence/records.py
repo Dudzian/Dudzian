@@ -861,12 +861,22 @@ def _derive_record_key(name: str, entry: Mapping[str, Any], payload: Mapping[str
         return f"immutable:{payload['fact_kind']}:" + ":".join(
             str(upstream[field]) for field in fields
         )
+    if strategy == "IMMUTABLE_PAYLOAD_IDENTITY_REVISION_CONTENT_FINGERPRINT":
+        binding = entry["immutable_fact_binding"]
+        upstream = payload["upstream_payload"]
+        fields = binding["canonical_object_identity_fields"] + binding["revision_generation_fields"]
+        fingerprint_field = binding["record_key_content_fingerprint_field"]
+        return f"immutable:{payload['fact_kind']}:" + ":".join(
+            str(upstream[field]) for field in (*fields, fingerprint_field)
+        )
     if strategy == "CANONICAL_ENTITY_ID":
         location = entry["record_key_source_location"]
         source = payload if location == "payload" else payload["upstream_payload"]
         return str(source[entry["record_key_source_field"]])
     if strategy == "SCOPE_CURRENT_REFERENCE_REVISION_GENERATION":
         return f"current:{payload['scope_key']}:{payload['current_reference']}:{payload['current_revision']}:{payload['current_generation']}"
+    if strategy == "SCOPE_CURRENT_STABLE":
+        return f"current:{payload['scope_key']}"
     if strategy == "FACT_SCOPE_OBJECT_GENERATION":
         facts = payload["facts"]
         fields = entry["fact_binding"]["record_key_object_fields"]

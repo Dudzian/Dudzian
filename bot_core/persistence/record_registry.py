@@ -3253,7 +3253,7 @@ PERSISTENCE_RECORD_REGISTRY: Final[dict[str, dict[str, Any]]] = {
         "restorable_authority": False,
         "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
         "semantic_contract_fingerprint_sha256": "526f1ecdf3d3b497c52fcd45bed9620d5d6d7aeb1c7f09693a5192e4086cae04",
-        "record_key_strategy": "IMMUTABLE_PAYLOAD_IDENTITY_REVISION",
+        "record_key_strategy": "IMMUTABLE_PAYLOAD_IDENTITY_REVISION_CONTENT_FINGERPRINT",
         "payload_contract": {
             "required_fields": [
                 "fact_kind",
@@ -3395,6 +3395,7 @@ PERSISTENCE_RECORD_REGISTRY: Final[dict[str, dict[str, Any]]] = {
             "canonical_object_identity_fields": ["operator_id"],
             "scope_fields": ["account_id", "device_installation_id"],
             "revision_generation_fields": ["pin_revision", "security_generation"],
+            "record_key_content_fingerprint_field": "content_fingerprint_sha256",
             "source_derivation_mode": "DIRECT_CLOSED_UPSTREAM_DTO",
             "semantic_fingerprint_field": "content_fingerprint_sha256",
             "semantic_fingerprint_input_fields": [
@@ -3451,7 +3452,7 @@ PERSISTENCE_RECORD_REGISTRY: Final[dict[str, dict[str, Any]]] = {
         "restorable_authority": False,
         "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
         "semantic_contract_fingerprint_sha256": "526f1ecdf3d3b497c52fcd45bed9620d5d6d7aeb1c7f09693a5192e4086cae04",
-        "record_key_strategy": "SCOPE_CURRENT_REFERENCE_REVISION_GENERATION",
+        "record_key_strategy": "SCOPE_CURRENT_STABLE",
         "payload_contract": {
             "required_fields": [
                 "scope_key",

@@ -4876,6 +4876,20 @@ def _derive_record_key(aspect: str, entry: dict[str, Any], payload: dict[str, An
                 + ":"
                 + ":".join(str(upstream[field]) for field in fields)
             )
+        if strategy == "IMMUTABLE_PAYLOAD_IDENTITY_REVISION_CONTENT_FINGERPRINT":
+            binding = entry["immutable_fact_binding"]
+            upstream = payload["upstream_payload"]
+            fields = (
+                binding["canonical_object_identity_fields"]
+                + binding["revision_generation_fields"]
+                + [binding["record_key_content_fingerprint_field"]]
+            )
+            return (
+                "immutable:"
+                + str(payload["fact_kind"])
+                + ":"
+                + ":".join(str(upstream[field]) for field in fields)
+            )
         if strategy == "CANONICAL_ENTITY_ID":
             source_field = entry["record_key_source_field"]
             source_location = entry["record_key_source_location"]
@@ -4886,6 +4900,8 @@ def _derive_record_key(aspect: str, entry: dict[str, Any], payload: dict[str, An
             return None
         if strategy == "SCOPE_CURRENT_REFERENCE_REVISION_GENERATION":
             return f"current:{payload['scope_key']}:{payload['current_reference']}:{payload['current_revision']}:{payload['current_generation']}"
+        if strategy == "SCOPE_CURRENT_STABLE":
+            return f"current:{payload['scope_key']}"
         if strategy == "CANONICAL_OBJECT_ID_REVISION":
             return (
                 f"object:{payload['semantic_object']}:{payload['object_id']}:{payload['revision']}"
@@ -10922,9 +10938,10 @@ def test_state_store_physical_schema_registry_exact_sealed_shape() -> None:
         "NOT M0.3 AUTHORITY",
         "NOT DOMAIN AUTHORITY",
     ]
-    assert registry["current_state_store_schema_version"] == 1
+    assert registry["current_state_store_schema_version"] == 2
     assert _physical_schema_entries(registry) == {
-        1: "18f9bac7640b66fb1051d5e1bcfe7345c79a8dcb33f417b40009fb049547c680"
+        1: "18f9bac7640b66fb1051d5e1bcfe7345c79a8dcb33f417b40009fb049547c680",
+        2: "18f9bac7640b66fb1051d5e1bcfe7345c79a8dcb33f417b40009fb049547c680",
     }
     invariants = registry["composition_invariants"]
     assert all(
@@ -10942,7 +10959,7 @@ def test_state_store_physical_schema_registry_exact_sealed_shape() -> None:
 def test_current_runtime_ddl_matches_frozen_registry_deterministically(tmp_path: Path) -> None:
     from bot_core.persistence.state_store import SQLiteStateStore
 
-    expected = _physical_schema_entries(MACHINE["state_store_physical_schema_registry"])[1]
+    expected = _physical_schema_entries(MACHINE["state_store_physical_schema_registry"])[2]
     observed = []
     for index in range(5):
         store = SQLiteStateStore(tmp_path / f"fresh-{index}.sqlite")
@@ -10966,7 +10983,7 @@ def test_physical_schema_registry_rejects_duplicate_unknown_and_wrong_schema() -
 
 def test_zero_migration_physical_gate_uses_registry_without_fake_family() -> None:
     registry = MACHINE["state_store_physical_schema_registry"]
-    current = registry["entries"][0]
+    current = registry["entries"][-1]
     assert _physical_schema_gate(
         registry,
         current["state_store_schema_version"],
@@ -10983,12 +11000,20 @@ def test_zero_migration_physical_gate_uses_registry_without_fake_family() -> Non
 
 
 def test_known_old_schema_without_sealed_path_is_not_recovery_complete() -> None:
-    registry = copy.deepcopy(MACHINE["state_store_physical_schema_registry"])
-    registry["entries"].append(
-        {"state_store_schema_version": 2, "sqlite_schema_fingerprint_sha256": "b" * 64}
+    registry = MACHINE["state_store_physical_schema_registry"]
+    legacy = registry["entries"][0]
+    assert _physical_schema_gate(
+        registry,
+        legacy["state_store_schema_version"],
+        legacy["sqlite_schema_fingerprint_sha256"],
+        require_current=False,
     )
-    assert _physical_schema_gate(registry, 2, "b" * 64, require_current=False)
-    assert not _physical_schema_gate(registry, 2, "b" * 64, require_current=True)
+    assert not _physical_schema_gate(
+        registry,
+        legacy["state_store_schema_version"],
+        legacy["sqlite_schema_fingerprint_sha256"],
+        require_current=True,
+    )
     assert (
         "NO_SEALED_PATH_TO_CURRENT_SCHEMA"
         in registry["lineage_rules"]["known_old_version_without_sealed_path_to_current"]
