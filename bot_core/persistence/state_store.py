@@ -348,12 +348,20 @@ class SQLiteStateStore:
     @classmethod
     def read_isolated_verified_snapshot(cls, path: str | Path) -> StateStoreSnapshot | None:
         """Read an authenticated candidate without registering or mutating it."""
+        snapshot, _ = cls.read_isolated_verified_snapshot_and_schema(path)
+        return snapshot
+
+    @classmethod
+    def read_isolated_verified_snapshot_and_schema(
+        cls, path: str | Path
+    ) -> tuple[StateStoreSnapshot | None, str]:
+        """Read semantic and physical state through one immutable connection."""
         candidate = Path(path).resolve()
         connection = sqlite3.connect(f"file:{candidate}?mode=ro&immutable=1", uri=True)
         reader = object.__new__(cls)
         reader._path, reader._closed, reader._connection = candidate, False, connection
         try:
-            return reader.read_verified_snapshot()
+            return reader.read_verified_snapshot(), reader.sqlite_schema_fingerprint()
         finally:
             connection.close()
             reader._closed = True
