@@ -63,19 +63,13 @@ class MigrationExecutionCoordinator:
         declaration = self._declaration(definition, plan, source)
         declaration.assert_matches(definition, plan)
         self._registry.execution_authority_for(migration_id).assert_declaration(declaration)
-        carrier = declaration.carrier()
         target_seed = replace(
             source.metadata,
             state_store_schema_version=definition.target_schema_version,
             protected_freshness_generation=declaration.target_generation,
         )
-        candidate = self._store.derive_prepared_metadata(
-            target_seed,
-            current_records=(),
-            immutable_history=(carrier,),
-            expected_current_generation=declaration.expected_current_generation,
-        )
         try:
+            candidate = self._store._derive_migration_execution_metadata(target_seed, declaration)
             self._protected._advance_migration_execution(
                 candidate, declaration, expected_source=source.metadata
             )

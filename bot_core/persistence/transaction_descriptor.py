@@ -11,7 +11,7 @@ from .fingerprints import canonical_records, transaction_fingerprint_sha256
 from .records import (
     PersistenceRecord,
     PersistenceRecordError,
-    validate_record_bucket,
+    validate_record_bucket_for_schema,
 )
 
 _CURRENT_BUCKET = "DURABLE AUTHORITATIVE CURRENT STATE"
@@ -64,6 +64,8 @@ class StateStoreTransactionDescriptor:
             self.state_store_identity_fingerprint_sha256, "state_store_identity_fingerprint_sha256"
         )
         _positive(self.state_store_schema_version, "state_store_schema_version")
+        if self.state_store_schema_version not in {1, 2}:
+            raise TransactionDescriptorError("unsupported StateStore schema version")
         _positive(self.target_generation, "target_generation")
         if self.environment not in {"PAPER", "TESTNET", "LIVE"}:
             raise TransactionDescriptorError("environment must be PAPER, TESTNET, or LIVE")
@@ -96,7 +98,11 @@ class StateStoreTransactionDescriptor:
                 raise TransactionDescriptorError(f"{name} must be an immutable tuple")
             try:
                 for record in records:
-                    validate_record_bucket(record, bucket)
+                    validate_record_bucket_for_schema(
+                        record,
+                        bucket,
+                        state_store_schema_version=self.state_store_schema_version,
+                    )
             except (PersistenceRecordError, TypeError, ValueError) as exc:
                 raise TransactionDescriptorError(f"{name} contains an invalid record") from exc
             if list(records) != sorted(

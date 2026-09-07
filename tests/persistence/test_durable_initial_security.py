@@ -110,7 +110,7 @@ def _stack(path: Path, **faults: object):
     provisioning = Provisioning(item)
     store = SQLiteStateStore(path)
     metadata = StateStoreMetadata(
-        ACCOUNT, DEVICE, 1, "1" * 64, "PAPER", 1, "2" * 64, "3" * 64, "4" * 64
+        ACCOUNT, DEVICE, 2, "1" * 64, "PAPER", 1, "2" * 64, "3" * 64, "4" * 64
     )
     prepared = store.derive_prepared_metadata(metadata, expected_current_generation=None)
     store.commit_prepared_metadata(prepared, expected_current_generation=None)
