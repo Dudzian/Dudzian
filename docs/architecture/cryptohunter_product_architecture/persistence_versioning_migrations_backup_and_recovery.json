@@ -13985,5 +13985,500 @@
       "raw PIN",
       "biometric material"
     ]
+  },
+  "restore_migration_staging_recovery_contract": {
+    "decision": "correct the sequencing contradiction by creating one source-seeded durable restore/migration workspace before the first protected lifecycle mutation and mutating that same SQLite file through COMPLETED and final install",
+    "confirmed_contradictions": {
+      "execution_order": "MigrationExecutionCoordinator.execute invokes protected migration execution, whose external PREPARE, local migration commit, local evidence publication, external FINALIZE, and external COMMITTED verification complete before execute returns; post-execute staging is too late",
+      "generation_model": "PREPARED, APPLYING, structural migration, DURABLE_MIGRATED, and COMPLETED are protected durable transitions; final generation follows the exact transition sequence and is not source generation G+1",
+      "byte_hash_model": "a final-target immutable SQLite byte fingerprint cannot describe the mutable workspace across intermediate lifecycle states"
+    },
+    "artifact": {
+      "canonical_name": "RestoreMigrationStagingArtifact",
+      "classification": "SOURCE-SEEDED DURABLE RESTORE/MIGRATION WORKSPACE",
+      "integrity_recovery_carrier": true,
+      "authority": false,
+      "authoritative_state_store_member": false,
+      "physical_form": [
+        "one deterministic durable SQLite workspace initially materialized exactly from authenticated BackupEnvelope v1",
+        "one immutable canonical RestoreMigrationStagingManifest sidecar"
+      ],
+      "same_sqlite_path_for_all_protected_transitions": true,
+      "created_before_first_protected_migration_transition": true,
+      "ownership": "deterministic durable filesystem location owned by exact live StateStore path and scope; never shared across unrelated StateStores"
+    },
+    "manifest": {
+      "canonical_name": "RestoreMigrationStagingManifest",
+      "semantic_role": "IMMUTABLE SOURCE / WORKSPACE IDENTITY MANIFEST; NOT LIFECYCLE AUTHORITY",
+      "schema_version": 1,
+      "exact_ordered_fields": [
+        "staging_manifest_schema_version",
+        "staging_id",
+        "account_id",
+        "device_installation_id",
+        "environment",
+        "state_store_identity_fingerprint_sha256",
+        "source_backup_envelope_fingerprint_sha256",
+        "source_state_store_schema_version",
+        "source_generation",
+        "source_state_fingerprint_sha256",
+        "source_transaction_fingerprint_sha256",
+        "source_history_tail_fingerprint_sha256",
+        "source_staged_sqlite_artifact_fingerprint_sha256",
+        "migration_id",
+        "migration_definition_fingerprint_sha256",
+        "operation_plan_fingerprint_sha256",
+        "target_state_store_schema_version",
+        "manifest_fingerprint_sha256"
+      ],
+      "additional_fields": false,
+      "source_only": true,
+      "field_contracts": {
+        "staging_manifest_schema_version": "exact positive non-boolean integer 1",
+        "staging_id": "lowercase SHA-256 of exact staging_identity projection",
+        "account_id": "canonical exact source scope account",
+        "device_installation_id": "canonical exact source scope device installation",
+        "environment": "exact source environment",
+        "state_store_identity_fingerprint_sha256": "exact immutable StateStore identity",
+        "source_backup_envelope_fingerprint_sha256": "exact currently authenticated source BackupEnvelope fingerprint",
+        "source_state_store_schema_version": "exact positive non-boolean integer 1",
+        "source_generation": "exact source protected freshness generation",
+        "source_state_fingerprint_sha256": "exact source StateStore state fingerprint",
+        "source_transaction_fingerprint_sha256": "exact source StateStore transaction fingerprint",
+        "source_history_tail_fingerprint_sha256": "exact source StateStore history-tail fingerprint",
+        "source_staged_sqlite_artifact_fingerprint_sha256": "existing PhysicalSQLiteArtifact SHA-256 over exact initial source-v1 materialization bytes before any lifecycle mutation",
+        "migration_id": "exact sealed production migration identifier",
+        "migration_definition_fingerprint_sha256": "exact definition fingerprint from trusted production MigrationRegistry",
+        "operation_plan_fingerprint_sha256": "exact operation-plan fingerprint from trusted production MigrationRegistry",
+        "target_state_store_schema_version": "exact current product StateStore schema version 2; not a target generation assertion",
+        "manifest_fingerprint_sha256": "canonical M0.11 SHA-256 of every manifest field except itself"
+      },
+      "forbidden_fields": [
+        "target_generation",
+        "target_state_fingerprint_sha256",
+        "target_transaction_fingerprint_sha256",
+        "target_history_tail_fingerprint_sha256",
+        "staged_sqlite_artifact_fingerprint_sha256"
+      ],
+      "forbidden_content": [
+        "raw PIN",
+        "verifier",
+        "secret payload",
+        "AuthenticationProof",
+        "CoreIssuedAuthenticationProofBinding",
+        "PlatformBiometricAssertion",
+        "CoreAcceptedPlatformBiometricAssertionBinding",
+        "biometric material",
+        "API credentials"
+      ],
+      "validation_grants_authority": false,
+      "records_current_phase": false
+    },
+    "staging_identity": {
+      "algorithm": "canonical M0.11 JSON SHA-256",
+      "exact_projection_order": [
+        "state_store_identity_fingerprint_sha256",
+        "source_backup_envelope_fingerprint_sha256",
+        "migration_id",
+        "target_state_store_schema_version"
+      ],
+      "depends_on_target_generation": false,
+      "caller_restore_attempt_id_permitted": false,
+      "arbitrary_sqlite_scanning": false,
+      "conflict": "same StateStore identity, source BackupEnvelope, and migration must resolve one staging_id; conflicting valid artifacts => STAGING_CONFLICT, never newest"
+    },
+    "initial_durability_order": [
+      "authenticate exact BackupEnvelope v1",
+      "materialize exact v1 StateStore at deterministic durable staging path",
+      "verify exact v1 staged snapshot and source descriptor anchor",
+      "checkpoint and close source materialization according to existing physical StateStore contract",
+      "fsync staged source SQLite",
+      "atomically write immutable canonical staging manifest",
+      "fsync manifest",
+      "fsync staging directory",
+      "declare staging DURABLE",
+      "reopen same staged SQLite",
+      "only now may PREPARED migration transition begin"
+    ],
+    "sqlite_lifecycle_durability": {
+      "workspace_may_remain_open": true,
+      "close_between_protected_transitions_required": false,
+      "durability_owner": "existing M0.11 SQLite StateStore transactional commit and physical durability contract",
+      "new_per_transition_filesystem_protocol": false,
+      "critical_property": "after every external COMMITTED transition the same durable staging SQLite contains the exact corresponding locally committed StateStore because local commit and evidence precede external FINALIZE",
+      "final_promotion_checkpoint_owner": "existing SQLiteStateStore.prepare_for_atomic_install()",
+      "atomic_replace_checkpoints_source": false,
+      "must_be_closed_at_final_atomic_promotion": true
+    },
+    "source_byte_fingerprint": {
+      "applies_only_to": "initial exact source-v1 materialization before any migration lifecycle mutation",
+      "compare_against_mutated_current_workspace": false,
+      "current_workspace_integrity_after_transition": [
+        "SQLiteStateStore.read_verified_snapshot()",
+        "descriptor lineage from exact source anchor",
+        "external protected freshness",
+        "sealed migration authority"
+      ]
+    },
+    "source_lineage": {
+      "anchor_required": true,
+      "exact_anchor_fields": {
+        "target_generation": "manifest.source_generation",
+        "post_state_fingerprint_sha256": "manifest.source_state_fingerprint_sha256",
+        "transaction_fingerprint_sha256": "manifest.source_transaction_fingerprint_sha256",
+        "post_history_tail_fingerprint_sha256": "manifest.source_history_tail_fingerprint_sha256"
+      },
+      "scope_identity_environment_exact": true,
+      "predecessor_history_prefix_rewritten": false,
+      "suffix": "complete valid StateStoreTransactionDescriptor chain from source anchor to fresh current staged snapshot",
+      "scope_only_match_sufficient": false
+    },
+    "workspace_suffix": {
+      "allowed_mutations": [
+        "exact sealed migration lifecycle family transitions",
+        "exact sealed structural migration execution edge",
+        "migration completion transitions",
+        "existing protected recovery effects required by those transitions"
+      ],
+      "unrelated_domain_writes": false,
+      "external evidence_artificially_inserted_into_StateStore": false
+    },
+    "phase_authority": {
+      "manifest_declares_current_phase": false,
+      "fresh_sources": [
+        "SQLiteStateStore.read_verified_snapshot()",
+        "StateStore descriptor chain",
+        "DurableMigrationLifecycleCoordinator",
+        "MigrationExecutionDeclaration",
+        "SealedMigrationRestoreAuthority",
+        "external ProtectedFreshness authority"
+      ],
+      "closed_phases": {
+        "SOURCE_READY": {
+          "schema_version": 1,
+          "requirements": [
+            "exact source-lineage anchor",
+            "migration family absent",
+            "current generation equals manifest source_generation"
+          ],
+          "allowed_next": "DurableMigrationLifecycleCoordinator.prepare(migration_id)",
+          "installable": false
+        },
+        "PREPARED": {
+          "schema_version": 1,
+          "requirements": [
+            "migration lifecycle current PREPARED",
+            "exact sealed migration identity"
+          ],
+          "allowed_next": "existing protected recovery, then DurableMigrationLifecycleCoordinator.begin_applying(migration_id)",
+          "installable": false
+        },
+        "APPLYING_SOURCE": {
+          "schema_version": 1,
+          "requirements": [
+            "migration lifecycle current APPLYING",
+            "no materialized MigrationExecutionDeclaration"
+          ],
+          "allowed_next": "MigrationExecutionCoordinator.execute(migration_id)",
+          "installable": false
+        },
+        "APPLYING_MATERIALIZED": {
+          "schema_version": 2,
+          "requirements": [
+            "migration lifecycle remains APPLYING",
+            "exact sealed MigrationExecutionDeclaration and descriptor edge exist"
+          ],
+          "allowed_next": "existing protected recovery, then DurableMigrationLifecycleCoordinator.record_durable_migrated(...)",
+          "installable": false
+        },
+        "DURABLE_MIGRATED": {
+          "schema_version": 2,
+          "requirements": [
+            "migration lifecycle current DURABLE_MIGRATED",
+            "exact materialized declaration and descriptor edge remain valid"
+          ],
+          "allowed_next": "DurableMigrationCompletionCoordinator resumes through existing complete() semantics",
+          "installable": false
+        },
+        "COMPLETED": {
+          "schema_version": 2,
+          "requirements": [
+            "migration lifecycle current COMPLETED",
+            "SealedMigrationRestoreAuthority.revalidate(...) GREEN"
+          ],
+          "allowed_next": "final restore fences and atomic install",
+          "installable": true
+        },
+        "FAILED": {
+          "schema_version": "1 or 2 according to verified durable state",
+          "requirements": [
+            "migration lifecycle current FAILED"
+          ],
+          "allowed_next": "fail closed or existing migration failure recovery semantics only; never silently rematerialize source",
+          "installable": false
+        }
+      },
+      "only_installable_phase": "COMPLETED"
+    },
+    "external_restart_classification": {
+      "COMMITTED_EXACT_STAGED_CURRENT": "external generation/state exact-match fresh staged metadata; resume exact classified migration phase",
+      "PREPARED_FOR_NEXT_STAGED_CANDIDATE": "use existing recover_protected_state(...) only; restore invents no resolution",
+      "COMMITTED_PREDECESSOR_WHILE_LOCAL_PREDECESSOR": "proceed through existing next protected transition",
+      "EXTERNAL_AHEAD_OF_STAGED_CURRENT": "FAIL_CLOSED unless exact existing PREPARED recovery explains it",
+      "EXTERNAL_DIFFERENT_SAME_GENERATION_OR_SCOPE": "FAIL_CLOSED"
+    },
+    "final_generation": {
+      "fixed_source_plus_one": false,
+      "authority": "fresh COMPLETED staged snapshot.metadata.protected_freshness_generation",
+      "external_match": "fresh external COMMITTED generation and state fingerprint equal fresh COMPLETED staged metadata; never compare final external membership to source v1 BackupEnvelope"
+    },
+    "final_install": {
+      "requirements": [
+        "fresh valid immutable manifest",
+        "exact authenticated source BackupEnvelope fingerprint",
+        "fresh staged SQLite read_verified_snapshot()",
+        "exact source-lineage anchor and valid restricted suffix",
+        "closed phase COMPLETED",
+        "current product schema version 2",
+        "exact MigrationExecutionDeclaration and descriptor edge",
+        "fresh SealedMigrationRestoreAuthority revalidation",
+        "exact current physical SQLite schema",
+        "fresh external COMMITTED matching current COMPLETED staged generation/state",
+        "permitted local live classification",
+        "all applicable secret-handoff restore fences",
+        "final external re-read exact current COMPLETED staged generation/state",
+        "successful existing prepare_for_atomic_install checkpoint and invoking staged-instance close",
+        "closed staged main independently re-verifies completed_snapshot and physical schema",
+        "staged main requires no source WAL/SHM at promotion",
+        "existing live installation_gate and post-close final external re-read",
+        "successful held staging installation_gate proves path-wide source quiescence and remains held while nested live installation_gate covers atomic_replace"
+      ],
+      "operation": "atomic_replace closed, checkpointed same-filesystem staged main to live",
+      "source_backup_equals_final_external_required": false,
+      "raw_v1_install": false,
+      "post_install": "installed.read_verified_snapshot() equals completed_snapshot and external remains exact target before cleanup"
+    },
+    "local_live_classification": {
+      "EXACT_COMPLETED_TARGET": "idempotent success and legal cleanup",
+      "BEHIND_OR_SOURCE": "install only with exact completed target external and every final fence GREEN",
+      "AHEAD": "FAIL_CLOSED",
+      "SAME_GENERATION_DIFFERENT_FINGERPRINT": "FAIL_CLOSED",
+      "SCOPE_OR_ENVIRONMENT_CONFLICT": "FAIL_CLOSED"
+    },
+    "cleanup": {
+      "unconditional_finally_cleanup": false,
+      "before_first_transition_only_if": [
+        "external remains exact source",
+        "workspace abandoned before PREPARED",
+        "live unchanged"
+      ],
+      "after_prepared_or_later": "workspace survives ordinary failure until recovery, exact install, or manual resolution",
+      "post_promotion": "if live and external exact-match completed staged target, idempotently clean staging without migration/install replay"
+    },
+    "missing_workspace": "external ahead of authenticated source with migration-derived generation + live not exact external target + no valid workspace => RESTORE_MIGRATION_STAGING_LOST / MANUAL_RECOVERY_REQUIRED; no source replay or external rollback",
+    "crash_matrix": {
+      "C0": {
+        "point": "before source staging durable",
+        "restart": "external source; ordinary NEW_RESTORE"
+      },
+      "C1": {
+        "point": "source staging durable before migration PREPARED",
+        "restart": "external source; resume SOURCE_READY"
+      },
+      "C2": {
+        "point": "external PREPARED during any lifecycle transition",
+        "restart": "durable workspace exists; existing protected recovery resolves PREPARED"
+      },
+      "C3": {
+        "point": "external COMMITTED intermediate schema-v1 PREPARED or APPLYING",
+        "restart": "workspace exact-matches external; resume classified lifecycle without rematerializing backup"
+      },
+      "C4": {
+        "point": "structural migration materialized schema v2 while lifecycle APPLYING",
+        "restart": "workspace contains exact declaration/edge; resume to DURABLE_MIGRATED"
+      },
+      "C5": {
+        "point": "external COMMITTED schema-v2 APPLYING_MATERIALIZED or DURABLE_MIGRATED",
+        "restart": "resume existing lifecycle; never replay structural migration after declaration exists"
+      },
+      "C6A": {
+        "point": "before final checkpoint of mutable durable COMPLETED workspace",
+        "restart": "reclassify COMPLETED and repeat F1 through F4; no migration replay"
+      },
+      "C6B": {
+        "point": "after prepare_for_atomic_install, either before or after acquiring staging path gate, but before replace",
+        "restart": "before gate: revalidate closed workspace normally; after gate: process crash releases process-local gate while closed complete durable workspace survives; authenticate source/manifest, isolated-verify main, repeat F2 if mutable reopen occurred, acquire fresh staging gate, continue; no migration replay"
+      },
+      "C7": {
+        "point": "during or after atomic replace before manifest cleanup, with staging and live path gates both held at replace",
+        "restart": "exactly old live plus intact completed staging or exact new live; never new live main requiring old staging WAL; exact live/external completed target permits idempotent cleanup"
+      }
+    },
+    "determinism": {
+      "inputs": [
+        "exact authenticated source BackupEnvelope",
+        "exact sealed migration definition and operation plan",
+        "exact closed migration lifecycle path"
+      ],
+      "outputs": [
+        "same ordered durable transition contents",
+        "same final completed StateStore and metadata generation",
+        "same staging identity"
+      ],
+      "fixed_final_generation_assumption": false,
+      "final_generation_source": "exact durable transition sequence",
+      "nondeterminism_audit": "Migration lifecycle transition/current schemas contain no timestamp, UUID, random nonce, or caller attempt identifier; revisions and fingerprints derive from exact durable observations."
+    },
+    "ordinary_owners": {
+      "restore_owns_migration_sql": false,
+      "structural_execution": "MigrationExecutionCoordinator",
+      "lifecycle": "DurableMigrationLifecycleCoordinator",
+      "completion": "DurableMigrationCompletionCoordinator",
+      "restore_role": "orchestrate trusted owners on the same durable staging workspace",
+      "migration_restore_authority": "SealedMigrationRestoreAuthority remains read-only",
+      "production_registry_required": true
+    },
+    "protected_freshness": {
+      "semantics_changed": false,
+      "new_callback_or_hook": false,
+      "exact_existing_order": [
+        "external PREPARE",
+        "local durable StateStore mutation",
+        "publish local evidence",
+        "external FINALIZE",
+        "verify external COMMITTED"
+      ],
+      "external_rollback": false,
+      "new_external_authority": false
+    },
+    "preserved_contracts": {
+      "source_backup_required_on_every_resume": true,
+      "backup_envelope_outer_schema_version": 1,
+      "version_aware_stage_1_remains_unimplemented_A2_requirement": "v1/v2 top-level records use envelope StateStore version; embedded descriptor records use descriptor-owned version",
+      "secret_handoff_fences_preserved": true,
+      "non_durable_security_authority_restorable": false
+    },
+    "wal_promotion_boundary": {
+      "invariant": "NO OPEN / UNCHECKPOINTED STAGING MAY CROSS FINAL ATOMIC PROMOTION",
+      "production_storage": {
+        "journal_mode": "WAL",
+        "synchronous": "FULL",
+        "intermediate_durability": "existing transactional SQLiteStateStore commits under WAL + FULL"
+      },
+      "existing_primitives": {
+        "prepare_for_atomic_install": "sole final WAL checkpoint owner for the invoking staged SQLiteStateStore instance; PRAGMA wal_checkpoint(TRUNCATE), then close only that invoking instance; does not by itself prove path-wide handle quiescence or close other instances",
+        "atomic_replace": "atomic same-directory main-file promotion only; does not checkpoint source WAL and requires a closed source main SQLite image",
+        "read_isolated_verified_snapshot": "read-only immutable closed-main semantic continuity verification without registering a mutable SQLiteStateStore handle",
+        "installation_gate": "existing shared process-local path gate; successful installation_gate(path) proves zero registered SQLiteStateStore handles for that path and prevents a new registered open while held"
+      },
+      "completed_phase_semantics": "COMPLETED is semantically installable, but atomic promotion additionally requires runtime-only CHECKPOINTED_AND_CLOSED_FOR_PROMOTION disposition; this is not a migration lifecycle state, manifest field, StateStore record, or authority",
+      "runtime_only_observations": [
+        "completed_snapshot",
+        "completed_schema_fingerprint",
+        "closed_staged_snapshot",
+        "closed_staged_schema_fingerprint",
+        "CHECKPOINTED_AND_CLOSED_FOR_PROMOTION"
+      ],
+      "sequence": {
+        "F1_OPEN_FINAL_SEMANTIC_VERIFICATION": [
+          "fresh immutable manifest validation",
+          "exact authenticated source BackupEnvelope binding",
+          "staged read_verified_snapshot() captured as completed_snapshot",
+          "exact source-lineage anchor",
+          "restricted workspace suffix",
+          "phase exactly COMPLETED",
+          "StateStore schema exactly 2",
+          "exact MigrationExecutionDeclaration and sealed descriptor edge",
+          "SealedMigrationRestoreAuthority.revalidate(...)",
+          "physical schema fingerprint captured as completed_schema_fingerprint",
+          "applicable secret-handoff PRE_INSTALL observation",
+          "external observation compatible with exact completed_snapshot metadata"
+        ],
+        "F2_CHECKPOINT_AND_CLOSE_ORCHESTRATOR_HANDLE": [
+          "invoke existing staged.prepare_for_atomic_install() on the orchestrator-owned instance",
+          "require WAL checkpoint TRUNCATE success",
+          "close the invoking staged SQLiteStateStore instance only",
+          "do not yet claim path-wide staging-handle quiescence",
+          "checkpoint failure => FAIL_CLOSED / no install / no staging cleanup / no external rollback"
+        ],
+        "F2B_ACQUIRE_STAGING_PATH_GATE": [
+          "acquire SQLiteStateStore.installation_gate(staged_path) after F2",
+          "success proves path-wide registered mutable staging handle count is zero",
+          "hold staging path gate continuously through F3, F4, and atomic_replace",
+          "gate rejection for another registered staging handle => STAGING_PATH_NOT_QUIESCENT / FAIL_CLOSED / preserve staging / no install / no cleanup / no external rollback",
+          "never forcibly close another owner instance"
+        ],
+        "F3_CLOSED_MAIN_CONTINUITY": [
+          "execute inside continuously held staging installation_gate",
+          "read staged main through SQLiteStateStore.read_isolated_verified_snapshot(staged_path) or exact existing read-only immutable equivalent",
+          "isolated temporary reader is not a registered mutable SQLiteStateStore handle and closes before atomic_replace",
+          "closed_staged_snapshot equals completed_snapshot",
+          "closed staged physical schema equals completed_schema_fingerprint",
+          "staged main independently represents complete COMPLETED state without staged -wal or -shm",
+          "do not reopen mutable/registered staged SQLiteStateStore while staging gate is held before atomic_replace"
+        ],
+        "F4_FINAL_LIVE_AND_EXTERNAL_FENCES": [
+          "while staging installation_gate remains held, acquire SQLiteStateStore.installation_gate(live_path)",
+          "hold both staging and live path gates through atomic_replace",
+          "fresh local live classification",
+          "reject AHEAD, SAME_GENERATION_DIFFERENT_FINGERPRINT, scope conflict, and environment conflict",
+          "fresh external authority re-read after source is checkpointed, closed, and path-quiescent",
+          "external remains exact COMMITTED generation/state match for completed_snapshot",
+          "applicable final pre-promotion secret-handoff observation under existing S7C ordering",
+          "SQLiteStateStore.atomic_replace(staged_path, live_path) only while both gates are held",
+          "release live gate before staging gate"
+        ]
+      },
+      "ordering": [
+        "F1_OPEN_FINAL_SEMANTIC_VERIFICATION",
+        "F2_CHECKPOINT_AND_CLOSE_ORCHESTRATOR_HANDLE",
+        "F2B_ACQUIRE_STAGING_PATH_GATE",
+        "F3_CLOSED_MAIN_CONTINUITY",
+        "F4_FINAL_LIVE_AND_EXTERNAL_FENCES"
+      ],
+      "source_requirements_at_replace": {
+        "open_process_local_staged_handles": 0,
+        "requires_staged_wal": false,
+        "requires_staged_shm": false,
+        "mutable_reopen_after_checkpoint": false,
+        "windows_safe": "source staging and live path have no open process-local SQLiteStateStore handles; no Unix open-inode rename assumption",
+        "staging_path_gate_held": true,
+        "live_path_gate_held": true,
+        "registered_mutable_live_handles": 0,
+        "gate_order": "STAGING_PATH_GATE before LIVE_PATH_GATE",
+        "quiescence_proof": "prepare_for_atomic_install closes invoking instance; successful held installation_gate(staged_path) separately proves path-wide zero registered mutable handles"
+      },
+      "failure_policy": {
+        "checkpoint_failure": "FAIL_CLOSED; preserve staging; no install; no external rollback",
+        "closed_main_mismatch": "FAIL_CLOSED; preserve staging for manual recovery; no install",
+        "final_fence_failure": "FAIL_CLOSED; closed complete staging survives retry; no install or external rollback",
+        "staging_path_not_quiescent": "STAGING_PATH_NOT_QUIESCENT / FAIL_CLOSED; preserve staging; no atomic_replace; no cleanup; no external rollback; retry may succeed after the foreign handle closes"
+      },
+      "post_install": [
+        "open live through normal SQLiteStateStore",
+        "installed.read_verified_snapshot() equals completed_snapshot",
+        "fresh external authority remains exact completed target",
+        "only after both proofs may staging manifest cleanup occur",
+        "post-install mismatch => FAIL_CLOSED / MANUAL_RECOVERY_REQUIRED; no external rollback"
+      ],
+      "no_new_durable_state": {
+        "PROMOTION_READY_migration_state": false,
+        "checkpoint_StateStore_record": false,
+        "external_promotion_authority": false,
+        "manifest_mutation": false
+      },
+      "dual_gate_protocol": {
+        "lock_order": [
+          "STAGING_PATH_GATE",
+          "LIVE_PATH_GATE"
+        ],
+        "lock_framework": "reuse SQLiteStateStore.installation_gate for both paths; no third lock framework",
+        "staging_gate_acquired_after": "successful prepare_for_atomic_install on orchestrator-owned staged instance",
+        "staging_gate_lifetime": "held continuously through F3, F4, and atomic_replace; released after live gate",
+        "live_gate_lifetime": "acquired inside staging gate before fresh live classification; held through atomic_replace; released first",
+        "constructor_race_fence": "SQLiteStateStore constructor/registration and installation_gate use the same class-level path RLock, so a competing registered mutable staging open cannot pass while the staging gate is held"
+      },
+      "path_quiescence_invariant": "FINAL STAGING PROMOTION REQUIRES PATH-WIDE QUIESCENCE"
+    }
   }
 }
