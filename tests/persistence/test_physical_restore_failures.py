@@ -15,7 +15,7 @@ from bot_core.persistence.restore_protocol import (
     TrustedPhysicalRestoreCoordinator,
 )
 from bot_core.persistence.state_store import SQLiteStateStore, StateStoreError
-from tests.persistence.physical_backup_helpers import artifact_fixture
+from tests.persistence.physical_backup_helpers import current_artifact_fixture
 from tests.persistence.test_restore_protocol import Boundary
 
 
@@ -32,7 +32,7 @@ def coordinator(live, boundary, admission):  # type: ignore[no-untyped-def]
 def test_final_staged_tamper_denies_before_atomic_install(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    source, _authentication, artifact, verifier = artifact_fixture(tmp_path)
+    source, _authentication, artifact, verifier = current_artifact_fixture(tmp_path)
     source.close()
     live = tmp_path / "staged-tamper.sqlite"
     original = TrustedPhysicalRestoreCoordinator._copy_for_install
@@ -63,7 +63,7 @@ def test_final_staged_tamper_denies_before_atomic_install(
 def test_open_live_handle_blocks_physical_install(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    source, _authentication, artifact, verifier = artifact_fixture(tmp_path)
+    source, _authentication, artifact, verifier = current_artifact_fixture(tmp_path)
     source.close()
     live = tmp_path / "open-live.sqlite"
     open_live = SQLiteStateStore(live)
@@ -85,7 +85,7 @@ def test_open_live_handle_blocks_physical_install(
 def test_original_artifact_swap_after_admission_uses_private_candidate(
     tmp_path: Path,
 ) -> None:
-    source, _authentication, artifact, verifier = artifact_fixture(tmp_path)
+    source, _authentication, artifact, verifier = current_artifact_fixture(tmp_path)
     expected = source.read_verified_snapshot()
     source.close()
     admission = PhysicalBackupAdmissionValidator(verifier)
@@ -110,7 +110,7 @@ def test_original_artifact_swap_after_admission_uses_private_candidate(
 def test_late_exact_discards_staging_without_atomic_replacement(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    source, _authentication, artifact, verifier = artifact_fixture(tmp_path)
+    source, _authentication, artifact, verifier = current_artifact_fixture(tmp_path)
     source.close()
     live = tmp_path / "late-exact.sqlite"
     original_copy = TrustedPhysicalRestoreCoordinator._copy_for_install
@@ -142,7 +142,7 @@ def test_late_exact_discards_staging_without_atomic_replacement(
 
 
 def test_restore_admitted_deny_preserves_borrowed_lease(tmp_path: Path) -> None:
-    source, _authentication, artifact, verifier = artifact_fixture(tmp_path)
+    source, _authentication, artifact, verifier = current_artifact_fixture(tmp_path)
     source.close()
     admission = PhysicalBackupAdmissionValidator(verifier)
     candidate = admission.admit(artifact)
@@ -158,7 +158,7 @@ def test_restore_admitted_deny_preserves_borrowed_lease(tmp_path: Path) -> None:
 
 
 def test_stage3_failure_stops_before_m03(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    source, _authentication, artifact, verifier = artifact_fixture(tmp_path)
+    source, _authentication, artifact, verifier = current_artifact_fixture(tmp_path)
     source.close()
     boundary = Boundary(artifact.backup_envelope)
     coordinator_ = coordinator(
@@ -185,7 +185,7 @@ def test_stage3_failure_stops_before_m03(tmp_path: Path, monkeypatch: pytest.Mon
 def test_m03_failure_stops_before_preinstall(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    source, _authentication, artifact, verifier = artifact_fixture(tmp_path)
+    source, _authentication, artifact, verifier = current_artifact_fixture(tmp_path)
     source.close()
     boundary = Boundary(artifact.backup_envelope)
     boundary.resolve_current = Mock(return_value=None)  # type: ignore[method-assign]
@@ -203,7 +203,7 @@ def test_m03_failure_stops_before_preinstall(
 def test_post_install_reopen_failure_denies_before_final(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    source, _authentication, artifact, verifier = artifact_fixture(tmp_path)
+    source, _authentication, artifact, verifier = current_artifact_fixture(tmp_path)
     source.close()
     live = tmp_path / "reopen-failure.sqlite"
     installed = False
@@ -233,7 +233,7 @@ def test_post_install_reopen_failure_denies_before_final(
 def test_post_install_reopen_mismatch_denies_before_final(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    source, _authentication, artifact, verifier = artifact_fixture(tmp_path)
+    source, _authentication, artifact, verifier = current_artifact_fixture(tmp_path)
     source.close()
     live = tmp_path / "reopen-mismatch.sqlite"
     installed = False
@@ -265,7 +265,7 @@ def test_fresh_forbidden_live_change_prevents_replacement(
 ) -> None:
     from bot_core.persistence.restore_protocol import LocalRestoreClassification
 
-    source, _authentication, artifact, verifier = artifact_fixture(tmp_path)
+    source, _authentication, artifact, verifier = current_artifact_fixture(tmp_path)
     source.close()
     coordinator_ = coordinator(
         tmp_path / "fresh-forbidden.sqlite",

@@ -98,7 +98,9 @@ def two_secret_artifact(tmp_path: Path):
     protected = ProtectedFreshnessHandoffCoordinator(
         store, LocalDurableEvidenceRegistry(), protected_boundary
     )
-    protected.advance_protected_state(_metadata(), current_records=(_account(),))
+    protected.advance_protected_state(
+        _metadata(state_store_schema_version=2), current_records=(_account(),)
+    )
     lifecycle = DurableSecretHandoffLifecycleCoordinator(store, protected)
     scope = (_metadata().account_id, _metadata().device_installation_id)
     lifecycle.prepare(descriptor(handoff_id="handoff-a", scope=scope))

@@ -15,7 +15,7 @@ from bot_core.persistence.restore_protocol import (
     TrustedPhysicalRestoreCoordinator,
 )
 from bot_core.persistence.state_store import SQLiteStateStore
-from tests.persistence.physical_backup_helpers import artifact_fixture
+from tests.persistence.physical_backup_helpers import current_artifact_fixture
 from tests.persistence.test_restore_protocol import Boundary
 
 
@@ -32,7 +32,7 @@ def _coordinator(tmp_path: Path, live: Path, boundary: Boundary, verifier):  # t
 def test_zero_secret_physical_candidate_installs_and_reopens_exactly(
     tmp_path: Path,
 ) -> None:
-    source, _authentication, artifact, verifier = artifact_fixture(tmp_path)
+    source, _authentication, artifact, verifier = current_artifact_fixture(tmp_path)
     candidate_snapshot = source.read_verified_snapshot()
     assert candidate_snapshot is not None
     source.close()
@@ -47,7 +47,7 @@ def test_zero_secret_physical_candidate_installs_and_reopens_exactly(
 
 
 def test_true_noop_does_not_replace_live_physical_bytes(tmp_path: Path) -> None:
-    source, _authentication, artifact, verifier = artifact_fixture(tmp_path)
+    source, _authentication, artifact, verifier = current_artifact_fixture(tmp_path)
     before = source.path.read_bytes()
     boundary = Boundary(artifact.backup_envelope)
 
@@ -61,7 +61,7 @@ def test_true_noop_does_not_replace_live_physical_bytes(tmp_path: Path) -> None:
 
 
 def test_true_noop_never_enters_physical_admission(tmp_path: Path) -> None:
-    source, _authentication, artifact, verifier = artifact_fixture(tmp_path)
+    source, _authentication, artifact, verifier = current_artifact_fixture(tmp_path)
     boundary = Boundary(artifact.backup_envelope)
     admission = PhysicalBackupAdmissionValidator(verifier)
     admission.admit = Mock(side_effect=AssertionError("C2D must not run"))  # type: ignore[method-assign]
@@ -81,7 +81,7 @@ def test_true_noop_never_enters_physical_admission(tmp_path: Path) -> None:
 
 
 def test_true_noop_calls_are_process_serialized(tmp_path: Path) -> None:
-    source, _authentication, artifact, verifier = artifact_fixture(tmp_path)
+    source, _authentication, artifact, verifier = current_artifact_fixture(tmp_path)
 
     class BlockingBoundary(Boundary):
         def __init__(self):
@@ -119,7 +119,7 @@ def test_true_noop_calls_are_process_serialized(tmp_path: Path) -> None:
 
 
 def test_entry_continuity_failure_prevents_install(tmp_path: Path) -> None:
-    source, _authentication, artifact, verifier = artifact_fixture(tmp_path)
+    source, _authentication, artifact, verifier = current_artifact_fixture(tmp_path)
     source.close()
     admission = PhysicalBackupAdmissionValidator(verifier)
     candidate = admission.admit(artifact)
@@ -144,7 +144,7 @@ def test_entry_continuity_failure_prevents_install(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("fail", [False, True])
 def test_high_level_restore_always_closes_owned_candidate(tmp_path: Path, fail: bool) -> None:
-    source, _authentication, artifact, verifier = artifact_fixture(tmp_path)
+    source, _authentication, artifact, verifier = current_artifact_fixture(tmp_path)
     source.close()
     admission = PhysicalBackupAdmissionValidator(verifier)
     admitted = admission.admit(artifact)
@@ -170,7 +170,7 @@ def test_high_level_restore_always_closes_owned_candidate(tmp_path: Path, fail: 
 
 
 def test_restore_admitted_borrows_candidate_lease(tmp_path: Path) -> None:
-    source, _authentication, artifact, verifier = artifact_fixture(tmp_path)
+    source, _authentication, artifact, verifier = current_artifact_fixture(tmp_path)
     source.close()
     admission = PhysicalBackupAdmissionValidator(verifier)
     candidate = admission.admit(artifact)
@@ -193,7 +193,7 @@ def test_restore_admitted_borrows_candidate_lease(tmp_path: Path) -> None:
 def test_atomic_replace_failure_denies_without_reopen(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    source, _authentication, artifact, verifier = artifact_fixture(tmp_path)
+    source, _authentication, artifact, verifier = current_artifact_fixture(tmp_path)
     source.close()
     live = tmp_path / "atomic-failure.sqlite"
     calls = Mock(side_effect=OSError("injected pre-replacement failure"))
