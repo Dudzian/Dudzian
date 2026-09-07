@@ -105,7 +105,12 @@ def _history(name: str, value: object) -> PersistenceRecord:
         ),
     }[name]
     entry_identity = ":".join(str(upstream[field]) for field in fields)
-    return persistence_record(name, f"immutable:{name}:{entry_identity}", payload)
+    if name == "PinVerifierRecord accepted revisions":
+        entry_identity = f"{entry_identity}:{upstream['content_fingerprint_sha256']}"
+    return cast(
+        PersistenceRecord,
+        persistence_record(name, f"immutable:{name}:{entry_identity}", payload),
+    )
 
 
 def _designation(
@@ -118,8 +123,12 @@ def _designation(
         "current_generation": generation,
     }
     payload["content_fingerprint_sha256"] = canonical_json_sha256(payload)
-    key = f"current:{scope}:{reference}:{revision}:{generation}"
-    return persistence_record(name, key, payload)
+    key = (
+        f"current:{scope}"
+        if name == "PinVerifierRecord current designation"
+        else f"current:{scope}:{reference}:{revision}:{generation}"
+    )
+    return cast(PersistenceRecord, persistence_record(name, key, payload))
 
 
 def _records(bundle: _PreparedInitialSecurity, terminal: CoreCurrentBootstrapState):
