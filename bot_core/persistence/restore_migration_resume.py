@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
+from typing import Protocol
 
 from .backup_envelope import BackupEnvelope
 from .local_durable_evidence import LocalDurableEvidenceRegistry
@@ -55,6 +56,14 @@ _ALLOWED_SUFFIX_ROLE_PREFIXES = frozenset(
         ),
     }
 )
+
+
+class _LineageBinding(Protocol):
+    @property
+    def source_generation(self) -> int: ...
+
+    @property
+    def migration_id(self) -> str: ...
 
 
 class RestoreMigrationResumeError(RuntimeError):
@@ -277,7 +286,7 @@ class RestoreMigrationResumeCoordinator:
     @staticmethod
     def _assert_lineage(
         source: BackupEnvelope,
-        manifest: RestoreMigrationStagingManifest,
+        manifest: _LineageBinding,
         snapshot: StateStoreSnapshot,
     ) -> tuple[str, ...]:
         prefix = tuple(
