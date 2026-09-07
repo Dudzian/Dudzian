@@ -12,7 +12,8 @@ from bot_core.persistence.backup_authentication import (
 )
 from bot_core.persistence.physical_backup import PhysicalBackupCreator
 from bot_core.security.base import SecretStorage
-from tests.persistence.test_backup_envelope import _store
+from bot_core.persistence.state_store import SQLiteStateStore
+from tests.persistence.test_state_store_records import _account, _commit, _metadata, _runtime
 
 
 class MemoryStorage(SecretStorage):
@@ -30,7 +31,21 @@ class MemoryStorage(SecretStorage):
 
 
 def artifact_fixture(tmp_path: Path):
-    store = _store(tmp_path / "live.sqlite")
+    return _artifact_fixture(tmp_path, state_store_schema_version=1)
+
+
+def current_artifact_fixture(tmp_path: Path):
+    return _artifact_fixture(tmp_path, state_store_schema_version=2)
+
+
+def _artifact_fixture(tmp_path: Path, *, state_store_schema_version: int):
+    store = SQLiteStateStore(tmp_path / "live.sqlite")
+    _commit(
+        store,
+        _metadata(state_store_schema_version=state_store_schema_version),
+        current=(_account(),),
+        history=(_runtime(),),
+    )
     metadata = store.read_metadata()
     assert metadata is not None
     scope = BackupArtifactAuthenticationScope(

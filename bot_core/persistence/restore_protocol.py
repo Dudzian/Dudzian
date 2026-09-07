@@ -56,6 +56,7 @@ from .migration_protocol import (
     MigrationDefinition,
     MigrationError,
     MigrationRegistry,
+    PRODUCTION_MIGRATION_REGISTRY,
     migration_family_ids,
     migration_mapping_payload,
 )
@@ -876,9 +877,10 @@ class TrustedPhysicalRestoreCoordinator(S7CRestoreCoordinator):
         with self._lock:
             try:
                 envelope = validate_backup_envelope(artifact.backup_envelope)
-                classification, _ = self._classify(envelope)
-                if classification is LocalRestoreClassification.EXACT:
-                    return self._restore_exact_without_admission(envelope)
+                if envelope.state_store_schema_version == 2:
+                    classification, _ = self._classify(envelope)
+                    if classification is LocalRestoreClassification.EXACT:
+                        return self._restore_exact_without_admission(envelope)
                 candidate = self._admission.admit(artifact)
             except (
                 BackupEnvelopeError,
@@ -911,6 +913,10 @@ class TrustedPhysicalRestoreCoordinator(S7CRestoreCoordinator):
                 # Admission continuity is the prerequisite, not lifecycle Stage 1.
                 candidate.verify_physical_continuity()
                 envelope = validate_backup_envelope(candidate.backup_envelope)  # Stage 1
+                if envelope.state_store_schema_version == 1:
+                    return self._restore_legacy_admitted(envelope)
+                if envelope.state_store_schema_version != 2:
+                    raise StateStoreError("unsupported admitted StateStore schema version")
                 snapshot = candidate.state_store_snapshot
                 lifecycles = self._secret_lifecycles(snapshot)
                 self._migration_relations(snapshot)  # Stage 1
@@ -1030,3 +1036,35 @@ class TrustedPhysicalRestoreCoordinator(S7CRestoreCoordinator):
             finally:
                 if staged is not None:
                     staged.unlink(missing_ok=True)
+
+    def _restore_legacy_admitted(self, envelope: BackupEnvelope) -> RestoreResult:
+        """Route an already-admitted v1 envelope through the sealed migration installer."""
+
+        # Local import preserves the intentionally one-way public routing edge: the
+        # internal installer reuses read-only restore helpers from this module but
+        # never invokes this public ingress.
+        from .restore_migration_install import (
+            RestoreMigrationInstallCoordinator,
+            RestoreMigrationInstallDisposition,
+            RestoreMigrationInstallError,
+        )
+
+        try:
+            result = RestoreMigrationInstallCoordinator(
+                live_state_store_path=self._live_path,
+                local_evidence_registry=self._registry,
+                external_authority=self._authority,
+                registry=PRODUCTION_MIGRATION_REGISTRY,
+                lifecycle_authority=self._lifecycle_authority,
+            ).install(envelope)
+        except RestoreMigrationInstallError as exc:
+            return RestoreResult(RestoreDecision.DENY, str(exc))
+        if result.disposition is RestoreMigrationInstallDisposition.INSTALLED:
+            return RestoreResult(
+                RestoreDecision.RESTORE_EXTERNAL_COMMITTED_CURRENT,
+                "legacy migration installed",
+            )
+        return RestoreResult(
+            RestoreDecision.NOOP_ALREADY_CURRENT,
+            "legacy migration already installed",
+        )
