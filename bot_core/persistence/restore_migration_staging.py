@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 import re
-import shutil
 from threading import RLock
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, fields
@@ -21,8 +20,8 @@ from .fingerprints import canonical_json, canonical_json_sha256
 from .migration_protocol import MIGRATION_FAMILY_REPRESENTATIONS
 from .physical_durability import (
     atomic_write_bytes_durably,
-    flush_created_directory_metadata,
     fsync_file,
+    publish_file_atomically_durably,
     reinforce_published_file_durability,
 )
 from .physical_backup import PhysicalSQLiteArtifact, physical_sqlite_artifact_fingerprint
@@ -34,8 +33,6 @@ from .state_store_v2_migration import (
 )
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
-_MANIFEST_NAME = "manifest.json"
-_SQLITE_NAME = "state_store.sqlite3"
 _PREPUBLICATION_LOCK = RLock()
 
 
@@ -155,7 +152,7 @@ class RestoreMigrationStagingManifest:
 
 @dataclass(frozen=True, slots=True)
 class RestoreMigrationStagingArtifact:
-    directory: Path
+    staging_id: str
     sqlite_path: Path
     manifest_path: Path
     manifest: RestoreMigrationStagingManifest
@@ -187,9 +184,23 @@ def restore_migration_staging_id(
     )
 
 
-def restore_migration_staging_path(live_state_store_path: str | Path, staging_id: str) -> Path:
+def restore_migration_unpublished_sqlite_path(
+    live_state_store_path: str | Path, staging_id: str
+) -> Path:
     live = Path(live_state_store_path).resolve()
-    return live.parent / ".cryptohunter-restore-staging" / staging_id
+    return live.parent / f".{live.name}.restore-migration-{staging_id}.unpublished.sqlite3"
+
+
+def restore_migration_staged_sqlite_path(
+    live_state_store_path: str | Path, staging_id: str
+) -> Path:
+    live = Path(live_state_store_path).resolve()
+    return live.parent / f".{live.name}.restore-migration-{staging_id}.sqlite3"
+
+
+def restore_migration_manifest_path(live_state_store_path: str | Path, staging_id: str) -> Path:
+    live = Path(live_state_store_path).resolve()
+    return live.parent / f".{live.name}.restore-migration-{staging_id}.manifest.json"
 
 
 def _source_snapshot(envelope: BackupEnvelope) -> StateStoreSnapshot:
@@ -246,14 +257,22 @@ def _read_manifest(path: Path) -> RestoreMigrationStagingManifest:
 
 
 def _verify_existing(
-    directory: Path,
+    staging_id: str,
+    unpublished_path: Path,
+    sqlite_path: Path,
+    manifest_path: Path,
     expected: RestoreMigrationStagingManifest,
     source_snapshot: StateStoreSnapshot,
 ) -> RestoreMigrationStagingArtifact:
-    manifest_path, sqlite_path = directory / _MANIFEST_NAME, directory / _SQLITE_NAME
     manifest = _read_manifest(manifest_path)
     if manifest != expected:
         raise RestoreMigrationStagingError("STAGING_CONFLICT: manifest does not match source")
+    if unpublished_path.exists():
+        raise RestoreMigrationStagingError("STAGING_CONFLICT: unpublished SQLite exists")
+    if not sqlite_path.exists():
+        raise RestoreMigrationStagingError(
+            "STAGING_CONFLICT: manifest exists but staged SQLite requires higher-level recovery"
+        )
     try:
         with SQLiteStateStore(sqlite_path) as reopened:
             snapshot = reopened.read_verified_snapshot()
@@ -271,7 +290,7 @@ def _verify_existing(
             manifest_path, canonical_json(manifest.to_mapping()).encode("utf-8")
         )
         return RestoreMigrationStagingArtifact(
-            directory,
+            staging_id,
             sqlite_path,
             manifest_path,
             manifest,
@@ -287,7 +306,7 @@ def _verify_existing(
         raise RestoreMigrationStagingError("STAGING_CONFLICT: staged source bytes mismatch")
     _reinforce_existing_durability(sqlite_path, manifest_path, manifest)
     return RestoreMigrationStagingArtifact(
-        directory,
+        staging_id,
         sqlite_path,
         manifest_path,
         manifest,
@@ -330,17 +349,23 @@ def _reinforce_existing_durability(
     )
 
 
-def _published_manifest_path(directory: Path) -> Path | None:
-    manifest_path = directory / _MANIFEST_NAME
-    return manifest_path if manifest_path.exists() else None
+def _remove_prepublication_debris(
+    unpublished_path: Path, staged_path: Path, manifest_path: Path
+) -> None:
+    """Remove only artifacts owned by this exact unpublished publication."""
 
-
-def _remove_unpublished_debris(directory: Path) -> None:
-    """Remove only a deterministic workspace with no final publication marker."""
-
-    if _published_manifest_path(directory) is not None:
+    if manifest_path.exists():
         raise RestoreMigrationStagingError("STAGING_CONFLICT: manifest publication raced cleanup")
-    shutil.rmtree(directory)
+    for sqlite_path in (unpublished_path, staged_path):
+        sqlite_path.unlink(missing_ok=True)
+        Path(f"{sqlite_path}-wal").unlink(missing_ok=True)
+        Path(f"{sqlite_path}-shm").unlink(missing_ok=True)
+    # atomic_write_bytes_durably uses mkstemp(prefix=f".{target.name}.",
+    # dir=target.parent), which gives this exact manifest its own namespace.
+    temporary_prefix = f".{manifest_path.name}."
+    for candidate in manifest_path.parent.iterdir():
+        if candidate.is_file() and candidate.name.startswith(temporary_prefix):
+            candidate.unlink()
 
 
 def prepare_legacy_restore_staging(
@@ -356,40 +381,29 @@ def prepare_legacy_restore_staging(
         source_backup_envelope_fingerprint_sha256=envelope.envelope_fingerprint_sha256,
     )
     with _PREPUBLICATION_LOCK:
-        directory = restore_migration_staging_path(live_state_store_path, staging_id)
-        sqlite_path, manifest_path = directory / _SQLITE_NAME, directory / _MANIFEST_NAME
-        if directory.exists():
-            if _published_manifest_path(directory) is not None:
-                existing = _read_manifest(manifest_path)
-                expected = _manifest(
-                    envelope,
-                    staging_id,
-                    existing.source_staged_sqlite_artifact_fingerprint_sha256,
-                )
-                return _verify_existing(directory, expected, _source_snapshot(envelope))
-            _remove_unpublished_debris(directory)
-
-        staging_root = directory.parent
-        if not staging_root.exists():
-            staging_root.mkdir()
-            flush_created_directory_metadata(staging_root.parent)
+        unpublished_path = restore_migration_unpublished_sqlite_path(
+            live_state_store_path, staging_id
+        )
+        sqlite_path = restore_migration_staged_sqlite_path(live_state_store_path, staging_id)
+        manifest_path = restore_migration_manifest_path(live_state_store_path, staging_id)
+        if manifest_path.exists():
+            existing = _read_manifest(manifest_path)
+            expected = _manifest(
+                envelope,
+                staging_id,
+                existing.source_staged_sqlite_artifact_fingerprint_sha256,
+            )
+            return _verify_existing(
+                staging_id,
+                unpublished_path,
+                sqlite_path,
+                manifest_path,
+                expected,
+                _source_snapshot(envelope),
+            )
+        _remove_prepublication_debris(unpublished_path, sqlite_path, manifest_path)
         try:
-            directory.mkdir()
-        except FileExistsError:
-            # Never delete after an atomic-create race: the winner may be about
-            # to publish. Reclassify a published winner, otherwise fail closed.
-            if _published_manifest_path(directory) is not None:
-                existing = _read_manifest(manifest_path)
-                expected = _manifest(
-                    envelope,
-                    staging_id,
-                    existing.source_staged_sqlite_artifact_fingerprint_sha256,
-                )
-                return _verify_existing(directory, expected, _source_snapshot(envelope))
-            raise RestoreMigrationStagingError("STAGING_CONFLICT: concurrent staging creation")
-        flush_created_directory_metadata(staging_root)
-        try:
-            staged = SQLiteStateStore(sqlite_path)
+            staged = SQLiteStateStore(unpublished_path)
             try:
                 staged.write_restored_snapshot(_source_snapshot(envelope))
                 verified = staged.read_verified_snapshot()
@@ -398,17 +412,27 @@ def prepare_legacy_restore_staging(
                 staged.prepare_for_atomic_install()
             finally:
                 staged.close()
+            fsync_file(unpublished_path)
+            publish_file_atomically_durably(unpublished_path, sqlite_path)
+            if unpublished_path.exists() or not sqlite_path.exists():
+                raise RestoreMigrationStagingError("STAGING_CONFLICT: staged publication failed")
             fingerprint = physical_sqlite_artifact_fingerprint(PhysicalSQLiteArtifact(sqlite_path))
-            fsync_file(sqlite_path)
             manifest = _manifest(envelope, staging_id, fingerprint)
             _assert_source_anchor(verified, manifest)
             _write_manifest_durably(manifest_path, manifest)
-            return _verify_existing(directory, manifest, _source_snapshot(envelope))
+            return _verify_existing(
+                staging_id,
+                unpublished_path,
+                sqlite_path,
+                manifest_path,
+                manifest,
+                _source_snapshot(envelope),
+            )
         finally:
             # A final manifest is the irrevocable publication boundary, even if
             # its trailing durability fence failed. Never silently recreate it.
-            if directory.exists() and _published_manifest_path(directory) is None:
-                shutil.rmtree(directory, ignore_errors=True)
+            if not manifest_path.exists():
+                _remove_prepublication_debris(unpublished_path, sqlite_path, manifest_path)
 
 
 def _manifest(

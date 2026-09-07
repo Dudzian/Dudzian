@@ -66,6 +66,15 @@ def test_source_ready_reaches_completed_without_install_and_retry_is_read_only(
     assert first.metadata.state_store_schema_version == 2
     assert retry.completed_snapshot == first
     assert result.sqlite_path.exists()
+    assert result.sqlite_path.parent.resolve() == live.parent.resolve()
+    assert result.sqlite_path.name.startswith(f".{live.name}.restore-migration-")
+    manifest_path = live.parent / f"{result.sqlite_path.name[: -len('.sqlite3')]}.manifest.json"
+    unpublished_path = (
+        live.parent / f"{result.sqlite_path.name[: -len('.sqlite3')]}.unpublished.sqlite3"
+    )
+    assert manifest_path.exists()
+    assert not unpublished_path.exists()
+    assert not (live.parent / ".cryptohunter-restore-staging").exists()
     assert live.read_bytes() == live_before
     with SQLiteStateStore(result.sqlite_path) as reopened:
         assert reopened.read_verified_snapshot() == first
@@ -244,7 +253,8 @@ def test_external_same_generation_different_state_fails_closed(tmp_path: Path) -
         RestoreMigrationResumeCoordinator(live, LocalDurableEvidenceRegistry(), boundary).resume(
             backup
         )
-    assert artifact.directory.exists()
+    assert artifact.sqlite_path.exists()
+    assert artifact.manifest_path.exists()
 
 
 def test_declaration_selector_counts_only_target_and_rejects_malformed(tmp_path: Path) -> None:
@@ -348,5 +358,5 @@ def test_verified_same_family_current_only_suffix_is_rejected_without_rollback(
     assert boundary.value["committed_state_fingerprint_sha256"] == (
         verified_noop.metadata.state_fingerprint_sha256
     )
-    assert completed.directory.exists()
+    assert completed.sqlite_path.exists()
     assert live.read_bytes() == live_before

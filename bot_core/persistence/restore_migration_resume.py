@@ -68,7 +68,6 @@ class RestoreMigrationCompletedDisposition(str, Enum):
 @dataclass(frozen=True, slots=True)
 class RestoreMigrationCompletedStaging:
     manifest: RestoreMigrationStagingManifest
-    directory: Path
     sqlite_path: Path
     completed_snapshot: StateStoreSnapshot
     sqlite_schema_fingerprint_sha256: str
@@ -164,7 +163,6 @@ class RestoreMigrationResumeCoordinator:
             self._assert_external_matches(scope, completed)
             return RestoreMigrationCompletedStaging(
                 manifest,
-                artifact.directory,
                 artifact.sqlite_path,
                 completed,
                 schema_fingerprint,
