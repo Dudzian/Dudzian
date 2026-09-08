@@ -554,10 +554,14 @@ def test_live_exact_replaced_staged_path_is_reproved_before_cleanup(
     def replace_path_then_cleanup(*args, **kwargs):  # type: ignore[no-untyped-def]
         nonlocal replacement_bytes
         staged.unlink()
-        with sqlite3.connect(staged) as replacement:
-            replacement.execute("PRAGMA journal_mode=DELETE")
-            replacement.execute("CREATE TABLE marker(value TEXT)")
-            replacement.execute("INSERT INTO marker VALUES ('foreign')")
+        replacement = sqlite3.connect(staged)
+        try:
+            with replacement:
+                replacement.execute("PRAGMA journal_mode=DELETE")
+                replacement.execute("CREATE TABLE marker(value TEXT)")
+                replacement.execute("INSERT INTO marker VALUES ('foreign')")
+        finally:
+            replacement.close()
         replacement_bytes = staged.read_bytes()
         return original_cleanup(*args, **kwargs)
 
