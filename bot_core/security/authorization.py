@@ -331,18 +331,6 @@ class AuthorizationAuthority:
             self._authentication._validate_pin(pin)  # noqa: SLF001
         except AuthenticationError as error:
             _deny(error.reason)
-        if (
-            len(
-                {
-                    identity.security_generation,
-                    device.security_generation,
-                    pin.security_generation,
-                    session.security_generation,
-                }
-            )
-            != 1
-        ):
-            _deny("CONTRACT_INCONSISTENT")
         return identity, device, pin, session
 
     @staticmethod
