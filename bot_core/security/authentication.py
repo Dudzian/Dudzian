@@ -14,11 +14,16 @@ from types import MappingProxyType
 from typing import Any, Callable, NoReturn, Protocol, cast
 
 from bot_core.persistence.fingerprints import canonical_json_sha256
+from bot_core.security.current_projection_authority import (
+    _accept_pin_projection,
+    _validate_pin_successor,
+)
 from bot_core.runtime.runtime_session import RuntimeSession
 from bot_core.security.initial_security import (
     DeviceTrustProjection,
     InitialSecurityAuthority,
     InitialSecurityAuthoritySnapshot,
+    InitialSecurityError,
     OperatorIdentitySecurityProjection,
     PinVerifierRecord,
     SessionSecurityState,
@@ -485,15 +490,11 @@ class AuthenticationAuthority:
 
             if pin.failed_attempts or pin.lockout_until_utc is not None:
                 updated = self._updated_pin(pin, 0, None)
-                accepted = dict(before.accepted_pins)
-                current = dict(before.current_pins)
-                accepted[updated.content_fingerprint_sha256] = updated
-                current[scope] = updated.content_fingerprint_sha256
-                self._state.snapshot = replace(
-                    before,
-                    accepted_pins=MappingProxyType(accepted),
-                    current_pins=MappingProxyType(current),
-                )
+                try:
+                    if not _accept_pin_projection(self._state, updated):
+                        return "CONTRACT_INCONSISTENT"
+                except InitialSecurityError:
+                    return "CONTRACT_INCONSISTENT"
             return "PIN_ACCEPTED"
 
     def verify_platform_assertion(self, assertion: object, request: object, now_utc: object) -> str:
@@ -691,6 +692,12 @@ class AuthenticationAuthority:
             accepted_pins = dict(before.accepted_pins)
             current_pins = dict(before.current_pins)
             if effective_pin != pin:
+                try:
+                    valid_successor = _validate_pin_successor(before, effective_pin)
+                except InitialSecurityError:
+                    _deny("CONTRACT_INCONSISTENT")
+                if not valid_successor:
+                    _deny("CONTRACT_INCONSISTENT")
                 accepted_pins[effective_pin.content_fingerprint_sha256] = effective_pin
                 current_pins[(pin.account_id, pin.operator_id, pin.device_installation_id)] = (
                     effective_pin.content_fingerprint_sha256
@@ -1212,15 +1219,12 @@ class AuthenticationAuthority:
             else None
         )
         updated = self._updated_pin(pin, failures, lockout)
-        accepted = dict(before.accepted_pins)
-        current = dict(before.current_pins)
-        accepted[updated.content_fingerprint_sha256] = updated
-        current[(pin.account_id, pin.operator_id, pin.device_installation_id)] = (
-            updated.content_fingerprint_sha256
-        )
-        self._state.snapshot = replace(
-            before, accepted_pins=MappingProxyType(accepted), current_pins=MappingProxyType(current)
-        )
+        try:
+            accepted = _accept_pin_projection(self._state, updated)
+        except InitialSecurityError:
+            _deny("CONTRACT_INCONSISTENT")
+        if not accepted:
+            _deny("CONTRACT_INCONSISTENT")
 
     @staticmethod
     def _build_proof(
