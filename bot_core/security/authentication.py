@@ -422,6 +422,80 @@ class AuthenticationAuthority:
                 session.session_generation,
             )
 
+    def verify_current_pin(
+        self,
+        account_id: object,
+        operator_id: object,
+        device_installation_id: object,
+        raw_pin: object,
+        now_utc: object,
+    ) -> str:
+        """Verify the current genuine PIN record without granting authority."""
+        if (
+            not self._canonical_id(account_id, "acct_")
+            or not self._canonical_id(operator_id, "op_")
+            or not self._canonical_id(device_installation_id, "dev_")
+            or not isinstance(raw_pin, str)
+            or not _valid_utc(now_utc)
+        ):
+            return "MALFORMED_UNTRUSTED_CONTEXT"
+        scope = (account_id, operator_id, device_installation_id)
+        with self._state.lock:
+            before = self._state.snapshot
+            try:
+                pin = cast(
+                    PinVerifierRecord,
+                    self._resolve_current_projection(
+                        before.accepted_pins,
+                        before.current_pins,
+                        scope,
+                        PinVerifierRecord,
+                        scope,
+                        lambda value: (
+                            value.account_id,
+                            value.operator_id,
+                            value.device_installation_id,
+                        ),
+                        lambda _value: True,
+                        "AUTHENTICATION_FAILED",
+                    ),
+                )
+                self._validate_pin(pin)
+            except AuthenticationError as error:
+                return error.reason
+
+            current_time = cast(datetime, now_utc)
+            lockout = _parse_utc(pin.lockout_until_utc)
+            if lockout is not None and current_time < lockout:
+                return "PIN_LOCKED"
+            try:
+                matched = self._comparator.compare(raw_pin, pin)
+            except Exception:
+                # Do not retain or expose a dependency exception that may contain the PIN.
+                return "PIN_VERIFIER_DEPENDENCY_FAILURE"
+            if type(matched) is not bool:
+                return "PIN_VERIFIER_DEPENDENCY_FAILURE"
+            if not matched:
+                self._publish_pin_failure(before, pin, current_time)
+                return (
+                    "PIN_LOCKED"
+                    if pin.failed_attempts + 1 >= _MAX_FAILED_ATTEMPTS
+                    else "AUTHENTICATION_FAILED"
+                )
+
+            if pin.failed_attempts or pin.lockout_until_utc is not None:
+                updated = self._updated_pin(pin, 0, None)
+                accepted = dict(before.accepted_pins)
+                current = dict(before.current_pins)
+                accepted[updated.content_fingerprint_sha256] = updated
+                current[scope] = updated.content_fingerprint_sha256
+                self._state.snapshot = replace(
+                    before,
+                    accepted_pins=MappingProxyType(accepted),
+                    current_pins=MappingProxyType(current),
+                )
+            return "PIN_ACCEPTED"
+
     def verify_platform_assertion(self, assertion: object, request: object, now_utc: object) -> str:
         """Consume pre-existing external-platform membership as biometric evidence."""
         if not _valid_utc(now_utc) or not isinstance(request, AuthorizationRequest):
