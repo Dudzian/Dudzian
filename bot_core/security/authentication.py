@@ -364,6 +364,30 @@ def device_mutation_fingerprint(
     )
 
 
+def pin_mutation_fingerprint(
+    request: AuthorizationRequest,
+    current_revision: int,
+    next_revision: int,
+) -> str:
+    """Bind a PIN replacement to its exact current-to-next revision edge."""
+    policy = OPERATION_POLICY_REGISTRY[request.operation]
+    return cast(
+        str,
+        canonical_json_sha256(
+            [
+                "M010-PIN-INTENT",
+                request.account_id,
+                request.operator_id,
+                request.device_installation_id,
+                request.operation,
+                current_revision,
+                next_revision,
+                policy.authorization_scope,
+            ]
+        ),
+    )
+
+
 class AuthenticationAuthority:
     """Issues and resolves genuine proofs over the shared initial-security state."""
 
@@ -1208,5 +1232,6 @@ __all__ = [
     "authentication_proof_fingerprint",
     "canonical_scope_fingerprint",
     "complete_authentication_proof_fingerprint",
+    "pin_mutation_fingerprint",
     "session_mutation_fingerprint",
 ]
