@@ -117,7 +117,7 @@ def test_canonical_freeze_manifest_guards_all_artifacts() -> None:
 
 
 def test_markdown_is_deterministic_manifest_projection() -> None:
-    assert PROJECTION_PATH.read_text() == _render_markdown(_manifest())
+    assert PROJECTION_PATH.read_text(encoding="utf-8") == _render_markdown(_manifest())
 
 
 @pytest.mark.parametrize("missing", EXPECTED_MILESTONES)

@@ -974,6 +974,7 @@ jobs:
     permissions:
       contents: read
       actions: read
+      artifact-metadata: write
     env:
       MIRROR_S3_URI: ${{ secrets.MARKETING_PARITY_MIRROR_S3 || vars.MARKETING_PARITY_MIRROR_S3 }}
       MIRROR_GIT_REPO: ${{ secrets.MARKETING_PARITY_MIRROR_GIT || vars.MARKETING_PARITY_MIRROR_GIT }}
