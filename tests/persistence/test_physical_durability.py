@@ -16,6 +16,7 @@ from bot_core.persistence.physical_durability import (
 )
 
 
+@pytest.mark.skipif(os.name != "posix", reason="real POSIX durability fences run only on POSIX CI")
 def test_posix_directory_and_atomic_file_fences(tmp_path: Path) -> None:
     flush_created_directory_metadata(tmp_path, _platform="posix")
     target = tmp_path / "manifest.json"
