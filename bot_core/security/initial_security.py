@@ -562,6 +562,8 @@ class InitialSecurityAuthoritySnapshot:
     accepted_authentication_proofs: Mapping[str, object]
     accepted_authentication_proof_bindings: Mapping[str, object]
     accepted_platform_biometric_assertion_bindings: Mapping[str, object]
+    accepted_operation_entitlements: Mapping[str, object]
+    current_operation_entitlements: Mapping[tuple[str, str, str, str, str], str]
 
 
 def _empty_snapshot() -> InitialSecurityAuthoritySnapshot:
@@ -582,6 +584,8 @@ def _empty_snapshot() -> InitialSecurityAuthoritySnapshot:
         empty,
         frozenset(),
         frozenset(),
+        empty,
+        empty,
         empty,
         empty,
         empty,
@@ -731,6 +735,8 @@ class InitialSecurityAuthority:
                     before.accepted_pins,
                     before.accepted_sessions,
                     before.accepted_initial_states,
+                    before.accepted_operation_entitlements,
+                    before.current_operation_entitlements,
                 )
             ):
                 _deny("PRE_EXISTING_SECURITY_AUTHORITY")
@@ -874,6 +880,8 @@ class InitialSecurityAuthority:
                         before.accepted_pins,
                         before.accepted_sessions,
                         before.accepted_initial_states,
+                        before.accepted_operation_entitlements,
+                        before.current_operation_entitlements,
                     )
                 )
             ):
