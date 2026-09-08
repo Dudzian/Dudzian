@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from bot_core.security.authentication import session_mutation_fingerprint
+from bot_core.security.current_projection_authority import _accept_session_projection
 from bot_core.security.authorization import (
     AuthorizationAuthority,
     AuthorizationError,
@@ -75,6 +76,10 @@ def test_genuine_transition_preserves_session_history_and_fences_old_proof(
     assert security.snapshot.current_sessions[(ACCOUNT, OPERATOR, DEVICE)] == (
         post.content_fingerprint_sha256
     )
+    with pytest.raises(AuthorizationError, match="PROOF_STALE"):
+        authorization.authorize(proof, req, NOW)
+    assert not _accept_session_projection(security._state, old)  # noqa: SLF001
+    assert security.resolve_current_session(ACCOUNT, OPERATOR, DEVICE) == post
     with pytest.raises(AuthorizationError, match="PROOF_STALE"):
         authorization.authorize(proof, req, NOW)
 

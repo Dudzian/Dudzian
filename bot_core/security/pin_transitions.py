@@ -13,10 +13,12 @@ from bot_core.security.authentication import (
     pin_mutation_fingerprint,
 )
 from bot_core.security.authorization import AuthorizationAuthority, AuthorizationError
+from bot_core.security.current_projection_authority import _accept_pin_projection
 from bot_core.security.initial_security import (
     PinVerifierFactory,
     PinVerifierMaterial,
     PinVerifierRecord,
+    InitialSecurityError,
 )
 
 
@@ -128,19 +130,12 @@ class PinSecurityTransitionAuthority:
                 return "PIN_VERIFIER_DEPENDENCY_FAILURE"
             if post.pin_revision != old.pin_revision + 1:
                 return "CONTRACT_INCONSISTENT"
-            collision = before.accepted_pins.get(post.content_fingerprint_sha256)
-            if collision is not None and collision != post:
+            try:
+                accepted = _accept_pin_projection(self._state, post)
+            except InitialSecurityError:
                 return "CONTRACT_INCONSISTENT"
-
-            accepted = dict(before.accepted_pins)
-            current = dict(before.current_pins)
-            accepted[post.content_fingerprint_sha256] = post
-            current[scope] = post.content_fingerprint_sha256
-            self._state.snapshot = replace(
-                before,
-                accepted_pins=MappingProxyType(accepted),
-                current_pins=MappingProxyType(current),
-            )
+            if not accepted:
+                return "CONTRACT_INCONSISTENT"
             return "PIN_CHANGED"
 
     @staticmethod

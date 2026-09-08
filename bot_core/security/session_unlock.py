@@ -21,8 +21,10 @@ from bot_core.security.authorization import (
     OperationEntitlementProjection,
     _valid_entitlement,
 )
+from bot_core.security.current_projection_authority import _accept_session_projection
 from bot_core.security.initial_security import (
     DeviceTrustProjection,
+    InitialSecurityError,
     OperatorIdentitySecurityProjection,
     PinVerifierRecord,
     SessionSecurityState,
@@ -232,17 +234,10 @@ class SessionUnlockAuthority:
             ):
                 return "CONTRACT_INCONSISTENT"
 
-            current_snapshot = self._state.snapshot
-            collision = current_snapshot.accepted_sessions.get(post.content_fingerprint_sha256)
-            if collision is not None and collision != post:
+            try:
+                accepted = _accept_session_projection(self._state, post)
+            except InitialSecurityError:
                 return "CONTRACT_INCONSISTENT"
-            accepted = dict(current_snapshot.accepted_sessions)
-            current = dict(current_snapshot.current_sessions)
-            accepted[post.content_fingerprint_sha256] = post
-            current[family_scope] = post.content_fingerprint_sha256
-            self._state.snapshot = replace(
-                current_snapshot,
-                accepted_sessions=MappingProxyType(accepted),
-                current_sessions=MappingProxyType(current),
-            )
+            if not accepted:
+                return "CONTRACT_INCONSISTENT"
             return "UNLOCKED"

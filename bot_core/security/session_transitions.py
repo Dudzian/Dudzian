@@ -13,7 +13,8 @@ from bot_core.security.authentication import (
     session_mutation_fingerprint,
 )
 from bot_core.security.authorization import AuthorizationAuthority, AuthorizationError
-from bot_core.security.initial_security import SessionSecurityState
+from bot_core.security.current_projection_authority import _accept_session_projection
+from bot_core.security.initial_security import InitialSecurityError, SessionSecurityState
 
 
 def _session_fingerprint(value: SessionSecurityState) -> str:
@@ -113,17 +114,10 @@ class SessionSecurityTransitionAuthority:
                 or post.security_generation != old.security_generation
             ):
                 return "CONTRACT_INCONSISTENT"
-            collision = before.accepted_sessions.get(post.content_fingerprint_sha256)
-            if collision is not None and collision != post:
+            try:
+                accepted = _accept_session_projection(self._state, post)
+            except InitialSecurityError:
                 return "CONTRACT_INCONSISTENT"
-
-            accepted = dict(before.accepted_sessions)
-            current = dict(before.current_sessions)
-            accepted[post.content_fingerprint_sha256] = post
-            current[scope] = post.content_fingerprint_sha256
-            self._state.snapshot = replace(
-                before,
-                accepted_sessions=MappingProxyType(accepted),
-                current_sessions=MappingProxyType(current),
-            )
+            if not accepted:
+                return "CONTRACT_INCONSISTENT"
             return cast(str, post.state)
