@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, replace
 from pathlib import Path
+from threading import Event, Thread
 from typing import Any
 
 import pytest
@@ -222,6 +223,88 @@ def test_genesis_and_normal_advance_use_ordered_handoff(tmp_path: Path) -> None:
         assert boundary.calls.count("prepare") == boundary.calls.count("finalize") == 2
         assert coordinator._recovery_required is False
         assert coordinator._recovery_scope is None
+
+
+def test_recovery_waits_for_same_scope_advance_after_prepare(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database = tmp_path / "shared-scope.db"
+    with SQLiteStateStore(database) as initializing_store:
+        one = _commit(initializing_store, _metadata())
+
+    boundary = Boundary(
+        record(
+            "COMMITTED",
+            committed_generation=1,
+            committed_state_fingerprint_sha256=one.state_fingerprint_sha256,
+        )
+    )
+    registry = LocalDurableEvidenceRegistry()
+    prepared_before_commit = Event()
+    allow_commit = Event()
+    recovery_attempted = Event()
+    recovery_finished = Event()
+    failures: list[BaseException] = []
+
+    original_commit = SQLiteStateStore.commit_prepared_state
+
+    def paused_commit(store: SQLiteStateStore, *args: Any, **kwargs: Any) -> None:
+        prepared_before_commit.set()
+        if not allow_commit.wait(5):
+            raise AssertionError("test did not release the paused local commit")
+        original_commit(store, *args, **kwargs)
+
+    monkeypatch.setattr(SQLiteStateStore, "commit_prepared_state", paused_commit)
+
+    def advance() -> None:
+        try:
+            with SQLiteStateStore(database) as store:
+                ProtectedFreshnessHandoffCoordinator(
+                    store, registry, boundary
+                ).advance_protected_state(_metadata(2))
+        except BaseException as exc:
+            failures.append(exc)
+
+    def recover() -> None:
+        recovery_attempted.set()
+        try:
+            with SQLiteStateStore(database) as store:
+                ProtectedFreshnessHandoffCoordinator(
+                    store, registry, boundary
+                ).recover_protected_state(SCOPE)
+        except BaseException as exc:
+            failures.append(exc)
+        finally:
+            recovery_finished.set()
+
+    advance_thread = Thread(target=advance)
+    recovery_thread = Thread(target=recover)
+    advance_thread.start()
+    assert prepared_before_commit.wait(5), failures
+    assert boundary.value["lifecycle"] == "PREPARED"
+    recovery_thread.start()
+    assert recovery_attempted.wait(5)
+    assert not recovery_finished.wait(0.1)
+    assert "abort" not in boundary.calls
+
+    allow_commit.set()
+    advance_thread.join(5)
+    recovery_thread.join(5)
+    assert not advance_thread.is_alive()
+    assert not recovery_thread.is_alive()
+    assert failures == []
+
+    with SQLiteStateStore(database) as store:
+        local = store.read_verified_snapshot()
+    assert local is not None
+    assert boundary.value["lifecycle"] == "COMMITTED"
+    assert (
+        boundary.value["committed_generation"],
+        boundary.value["committed_state_fingerprint_sha256"],
+    ) == (
+        local.metadata.protected_freshness_generation,
+        local.metadata.state_fingerprint_sha256,
+    )
 
 
 def test_post_finalize_local_advance_fails_s5_and_keeps_scope_bound(

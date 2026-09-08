@@ -10,7 +10,8 @@ import re
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import asdict, dataclass, fields
 from threading import RLock
-from typing import Any, Protocol, TypeAlias, cast
+from typing import Any, ClassVar, Protocol, TypeAlias, cast
+from weakref import WeakValueDictionary
 
 from .fingerprints import canonical_json_sha256
 from .local_durable_evidence import (
@@ -183,6 +184,9 @@ class ProtectedFreshnessAuthorityPort(Protocol):
 class ProtectedFreshnessHandoffCoordinator:
     """Process-serialized ordered protocol for one ordinary protected advance."""
 
+    _scope_locks_guard: ClassVar[RLock] = RLock()
+    _scope_locks: ClassVar[WeakValueDictionary[EvidenceScope, RLock]] = WeakValueDictionary()
+
     def __init__(
         self,
         store: SQLiteStateStore,
@@ -193,6 +197,17 @@ class ProtectedFreshnessHandoffCoordinator:
         self._lock = RLock()
         self._recovery_required = False
         self._recovery_scope: EvidenceScope | None = None
+
+    @classmethod
+    def _shared_scope_lock(cls, scope: EvidenceScope) -> RLock:
+        """Return the process-local serialization lock for one canonical scope."""
+
+        with cls._scope_locks_guard:
+            lock = cls._scope_locks.get(scope)
+            if lock is None:
+                lock = RLock()
+                cls._scope_locks[scope] = lock
+            return lock
 
     def _bind_recovery(self, scope: EvidenceScope) -> None:
         if self._recovery_required and self._recovery_scope != scope:
@@ -294,6 +309,13 @@ class ProtectedFreshnessHandoffCoordinator:
 
         with self._lock:
             self._validate_scope(scope)
+            with self._shared_scope_lock(scope):
+                return self._recover_protected_state_locked(scope)
+
+    def _recover_protected_state_locked(self, scope: EvidenceScope) -> StateStoreMetadata | None:
+        """Recover while the shared lock excludes every same-scope coordinator."""
+
+        with self._lock:
             self._bind_recovery(scope)
             ref, external = self._external(scope)
             snapshot = self._store.read_verified_snapshot()
@@ -436,8 +458,8 @@ class ProtectedFreshnessHandoffCoordinator:
                     terminal_ref,
                     ref,
                     terminal,
-                    expected_generation,
-                    expected_state,
+                    cast(int, expected_generation),
+                    cast(str, expected_state),
                     revision_after=revision_after,
                 ):
                     raise ProtectedFreshnessHandoffError(
@@ -448,8 +470,8 @@ class ProtectedFreshnessHandoffCoordinator:
                 terminal_ref,
                 ref,
                 terminal,
-                expected_generation,
-                expected_state,
+                cast(int, expected_generation),
+                cast(str, expected_state),
                 revision_after=revision_after,
             ):
                 raise ProtectedFreshnessHandoffError(
@@ -482,155 +504,160 @@ class ProtectedFreshnessHandoffCoordinator:
     def _advance_protected_candidate(self, spec: _ProtectedCommitSpec) -> StateStoreMetadata:
         """Run M0.3 once, dispatching only closed internal commit variants."""
 
-        if self._recovery_required:
-            raise ProtectedFreshnessHandoffError("protected advance requires recovery")
         metadata = spec.metadata if isinstance(spec, _OrdinaryCommitSpec) else spec.candidate
         scope = (
             metadata.account_id,
             metadata.device_installation_id,
             metadata.state_store_identity_fingerprint_sha256,
         )
-        ref, external = self._external(scope)
-        before = self._store.read_verified_snapshot()
-        if spec.expected_source is not None and (
-            before is None or before.metadata != spec.expected_source
-        ):
-            raise ProtectedFreshnessHandoffError(
-                "protected mutation source changed before advancement"
-            )
-        expected = None if before is None else before.metadata.protected_freshness_generation
-        if external.lifecycle == "PREPARED":
+        self._validate_scope(scope)
+        with self._shared_scope_lock(scope):
+            if self._recovery_required:
+                raise ProtectedFreshnessHandoffError("protected advance requires recovery")
+            metadata = spec.metadata if isinstance(spec, _OrdinaryCommitSpec) else spec.candidate
+            ref, external = self._external(scope)
+            before = self._store.read_verified_snapshot()
+            if spec.expected_source is not None and (
+                before is None or before.metadata != spec.expected_source
+            ):
+                raise ProtectedFreshnessHandoffError(
+                    "protected mutation source changed before advancement"
+                )
+            expected = None if before is None else before.metadata.protected_freshness_generation
+            if external.lifecycle == "PREPARED":
+                self._bind_recovery(scope)
+                raise ProtectedFreshnessHandoffError("external PREPARED requires recovery")
+            if before is None:
+                if (
+                    isinstance(spec, _MigrationCommitSpec)
+                    or external.lifecycle != "UNINITIALIZED"
+                    or metadata.protected_freshness_generation != 1
+                ):
+                    raise ProtectedFreshnessHandoffError("invalid protected genesis entry")
+            else:
+                local = before.metadata
+                if (
+                    external.lifecycle != "COMMITTED"
+                    or external.committed_generation != expected
+                    or external.committed_state_fingerprint_sha256 != local.state_fingerprint_sha256
+                ):
+                    raise ProtectedFreshnessHandoffError(
+                        "external committed authority does not match local current"
+                    )
+                if metadata.protected_freshness_generation != cast(int, expected) + 1:
+                    raise ProtectedFreshnessHandoffError("candidate generation is not local G+1")
+                if (
+                    metadata.account_id != local.account_id
+                    or metadata.device_installation_id != local.device_installation_id
+                    or metadata.state_store_identity_fingerprint_sha256
+                    != local.state_store_identity_fingerprint_sha256
+                    or (
+                        isinstance(spec, _OrdinaryCommitSpec)
+                        and metadata.state_store_schema_version != local.state_store_schema_version
+                    )
+                ):
+                    raise ProtectedFreshnessHandoffError(
+                        "candidate violates immutable local metadata preflight"
+                    )
+            if isinstance(spec, _OrdinaryCommitSpec):
+                candidate = self._store.derive_prepared_metadata(
+                    metadata,
+                    current_records=spec.current_records,
+                    immutable_history=spec.immutable_history,
+                    expected_current_generation=expected,
+                )
+            else:
+                candidate = spec.candidate
+            latest = self._store.read_verified_snapshot()
+            if (before is None) != (latest is None) or (
+                before is not None and latest is not None and latest.metadata != before.metadata
+            ):
+                raise ProtectedFreshnessHandoffError(
+                    "local StateStore baseline changed during candidate derivation"
+                )
             self._bind_recovery(scope)
-            raise ProtectedFreshnessHandoffError("external PREPARED requires recovery")
-        if before is None:
+            self._authority.prepare(
+                ref,
+                scope,
+                expected_committed_generation=external.committed_generation,
+                expected_committed_state_fingerprint_sha256=external.committed_state_fingerprint_sha256,
+                candidate_generation=candidate.protected_freshness_generation,
+                candidate_state_fingerprint_sha256=candidate.state_fingerprint_sha256,
+                candidate_transaction_fingerprint_sha256=candidate.transaction_fingerprint_sha256,
+            )
+            prepared_ref, prepared = self._external(scope)
             if (
-                isinstance(spec, _MigrationCommitSpec)
-                or external.lifecycle != "UNINITIALIZED"
-                or metadata.protected_freshness_generation != 1
-            ):
-                raise ProtectedFreshnessHandoffError("invalid protected genesis entry")
-        else:
-            local = before.metadata
-            if (
-                external.lifecycle != "COMMITTED"
-                or external.committed_generation != expected
-                or external.committed_state_fingerprint_sha256 != local.state_fingerprint_sha256
-            ):
-                raise ProtectedFreshnessHandoffError(
-                    "external committed authority does not match local current"
-                )
-            if metadata.protected_freshness_generation != cast(int, expected) + 1:
-                raise ProtectedFreshnessHandoffError("candidate generation is not local G+1")
-            if (
-                metadata.account_id != local.account_id
-                or metadata.device_installation_id != local.device_installation_id
-                or metadata.state_store_identity_fingerprint_sha256
-                != local.state_store_identity_fingerprint_sha256
+                prepared_ref != ref
+                or prepared.lifecycle != "PREPARED"
                 or (
-                    isinstance(spec, _OrdinaryCommitSpec)
-                    and metadata.state_store_schema_version != local.state_store_schema_version
+                    prepared.prepared_generation,
+                    prepared.prepared_state_fingerprint_sha256,
+                    prepared.prepared_transaction_fingerprint_sha256,
                 )
+                != (
+                    candidate.protected_freshness_generation,
+                    candidate.state_fingerprint_sha256,
+                    candidate.transaction_fingerprint_sha256,
+                )
+                or (prepared.committed_generation, prepared.committed_state_fingerprint_sha256)
+                != (external.committed_generation, external.committed_state_fingerprint_sha256)
             ):
-                raise ProtectedFreshnessHandoffError(
-                    "candidate violates immutable local metadata preflight"
+                raise ProtectedFreshnessHandoffError("external PREPARE acknowledgement mismatch")
+            if isinstance(spec, _OrdinaryCommitSpec):
+                self._store.commit_prepared_state(
+                    candidate,
+                    current_records=spec.current_records,
+                    immutable_history=spec.immutable_history,
+                    expected_current_generation=expected,
                 )
-        if isinstance(spec, _OrdinaryCommitSpec):
-            candidate = self._store.derive_prepared_metadata(
-                metadata,
-                current_records=spec.current_records,
-                immutable_history=spec.immutable_history,
-                expected_current_generation=expected,
-            )
-        else:
-            candidate = spec.candidate
-        latest = self._store.read_verified_snapshot()
-        if (before is None) != (latest is None) or (
-            before is not None and latest is not None and latest.metadata != before.metadata
-        ):
-            raise ProtectedFreshnessHandoffError(
-                "local StateStore baseline changed during candidate derivation"
-            )
-        self._bind_recovery(scope)
-        self._authority.prepare(
-            ref,
-            scope,
-            expected_committed_generation=external.committed_generation,
-            expected_committed_state_fingerprint_sha256=external.committed_state_fingerprint_sha256,
-            candidate_generation=candidate.protected_freshness_generation,
-            candidate_state_fingerprint_sha256=candidate.state_fingerprint_sha256,
-            candidate_transaction_fingerprint_sha256=candidate.transaction_fingerprint_sha256,
-        )
-        prepared_ref, prepared = self._external(scope)
-        if (
-            prepared_ref != ref
-            or prepared.lifecycle != "PREPARED"
-            or (
-                prepared.prepared_generation,
-                prepared.prepared_state_fingerprint_sha256,
-                prepared.prepared_transaction_fingerprint_sha256,
-            )
-            != (
+            else:
+                self._store._commit_migration_execution(
+                    candidate,
+                    spec.declaration,
+                    expected_current_generation=spec.expected_source.protected_freshness_generation,
+                )
+            after = self._store.read_verified_snapshot()
+            if after is None or (
+                after.metadata.account_id,
+                after.metadata.device_installation_id,
+                after.metadata.state_store_identity_fingerprint_sha256,
+                after.metadata.protected_freshness_generation,
+                after.metadata.state_fingerprint_sha256,
+                after.metadata.transaction_fingerprint_sha256,
+            ) != (
+                *scope,
                 candidate.protected_freshness_generation,
                 candidate.state_fingerprint_sha256,
                 candidate.transaction_fingerprint_sha256,
+            ):
+                raise ProtectedFreshnessHandoffError("local commit verification mismatch")
+            evidence_ref = self._registry.publish_verified_state(self._store)
+            resolver = self._store_bound_resolver(scope)
+            evidence = resolver(evidence_ref)
+            if evidence is None or (
+                evidence.generation,
+                evidence.state_fingerprint_sha256,
+                evidence.transaction_fingerprint_sha256,
+            ) != (
+                candidate.protected_freshness_generation,
+                candidate.state_fingerprint_sha256,
+                candidate.transaction_fingerprint_sha256,
+            ):
+                raise ProtectedFreshnessHandoffError("current local evidence mismatch")
+            self._authority.finalize(
+                ref, scope, evidence_ref=evidence_ref, evidence_resolver=resolver
             )
-            or (prepared.committed_generation, prepared.committed_state_fingerprint_sha256)
-            != (external.committed_generation, external.committed_state_fingerprint_sha256)
-        ):
-            raise ProtectedFreshnessHandoffError("external PREPARE acknowledgement mismatch")
-        if isinstance(spec, _OrdinaryCommitSpec):
-            self._store.commit_prepared_state(
-                candidate,
-                current_records=spec.current_records,
-                immutable_history=spec.immutable_history,
-                expected_current_generation=expected,
-            )
-        else:
-            self._store._commit_migration_execution(
-                candidate,
-                spec.declaration,
-                expected_current_generation=spec.expected_source.protected_freshness_generation,
-            )
-        after = self._store.read_verified_snapshot()
-        if after is None or (
-            after.metadata.account_id,
-            after.metadata.device_installation_id,
-            after.metadata.state_store_identity_fingerprint_sha256,
-            after.metadata.protected_freshness_generation,
-            after.metadata.state_fingerprint_sha256,
-            after.metadata.transaction_fingerprint_sha256,
-        ) != (
-            *scope,
-            candidate.protected_freshness_generation,
-            candidate.state_fingerprint_sha256,
-            candidate.transaction_fingerprint_sha256,
-        ):
-            raise ProtectedFreshnessHandoffError("local commit verification mismatch")
-        evidence_ref = self._registry.publish_verified_state(self._store)
-        resolver = self._store_bound_resolver(scope)
-        evidence = resolver(evidence_ref)
-        if evidence is None or (
-            evidence.generation,
-            evidence.state_fingerprint_sha256,
-            evidence.transaction_fingerprint_sha256,
-        ) != (
-            candidate.protected_freshness_generation,
-            candidate.state_fingerprint_sha256,
-            candidate.transaction_fingerprint_sha256,
-        ):
-            raise ProtectedFreshnessHandoffError("current local evidence mismatch")
-        self._authority.finalize(ref, scope, evidence_ref=evidence_ref, evidence_resolver=resolver)
-        committed_ref, committed = self._external(scope)
-        if (
-            committed_ref != ref
-            or committed.lifecycle != "COMMITTED"
-            or (committed.committed_generation, committed.committed_state_fingerprint_sha256)
-            != (candidate.protected_freshness_generation, candidate.state_fingerprint_sha256)
-        ):
-            raise ProtectedFreshnessHandoffError("external FINALIZE acknowledgement mismatch")
-        self._assert_local_still_matches(candidate)
-        self._clear_recovery()
-        return candidate
+            committed_ref, committed = self._external(scope)
+            if (
+                committed_ref != ref
+                or committed.lifecycle != "COMMITTED"
+                or (committed.committed_generation, committed.committed_state_fingerprint_sha256)
+                != (candidate.protected_freshness_generation, candidate.state_fingerprint_sha256)
+            ):
+                raise ProtectedFreshnessHandoffError("external FINALIZE acknowledgement mismatch")
+            self._assert_local_still_matches(candidate)
+            self._clear_recovery()
+            return candidate
 
     def advance_protected_mutation(
         self,
@@ -646,18 +673,48 @@ class ProtectedFreshnessHandoffCoordinator:
         """Build records from the precise verified pre-transition observation."""
 
         with self._lock:
-            source = self._store.read_verified_snapshot()
-            if source is None:
+            preliminary = self._store.read_verified_snapshot()
+            if preliminary is None:
                 raise ProtectedFreshnessHandoffError(
                     "protected semantic mutation requires initialized StateStore"
                 )
-            metadata, current, history = builder(source)
-            return self.advance_protected_state(
-                metadata,
-                current_records=current,
-                immutable_history=history,
-                _expected_source=source.metadata,
+            scope = (
+                preliminary.metadata.account_id,
+                preliminary.metadata.device_installation_id,
+                preliminary.metadata.state_store_identity_fingerprint_sha256,
             )
+            self._validate_scope(scope)
+            with self._shared_scope_lock(scope):
+                source = self._store.read_verified_snapshot()
+                if source is None:
+                    raise ProtectedFreshnessHandoffError(
+                        "protected semantic mutation source disappeared"
+                    )
+                locked_scope = (
+                    source.metadata.account_id,
+                    source.metadata.device_installation_id,
+                    source.metadata.state_store_identity_fingerprint_sha256,
+                )
+                if locked_scope != scope:
+                    raise ProtectedFreshnessHandoffError(
+                        "protected semantic mutation scope changed before advancement"
+                    )
+                metadata, current, history = builder(source)
+                candidate_scope = (
+                    metadata.account_id,
+                    metadata.device_installation_id,
+                    metadata.state_store_identity_fingerprint_sha256,
+                )
+                if candidate_scope != scope:
+                    raise ProtectedFreshnessHandoffError(
+                        "protected semantic mutation candidate changed scope"
+                    )
+                return self.advance_protected_state(
+                    metadata,
+                    current_records=current,
+                    immutable_history=history,
+                    _expected_source=source.metadata,
+                )
 
     def _advance_migration_execution(
         self,
