@@ -22,6 +22,15 @@ from tests.persistence.test_migration_execution_engine import _registry, _target
 from tests.persistence.test_protected_freshness_handoff import Boundary, record
 
 
+@pytest.fixture(autouse=True)
+def _restore_production_schema_edge_authority():
+    from bot_core.persistence import state_store_v2_migration
+
+    authority = state_store_v2_migration.STATE_STORE_V2_MIGRATION_AUTHORITY
+    yield
+    state_store_v2_migration.STATE_STORE_V2_MIGRATION_AUTHORITY = authority
+
+
 def _coordinators(store: SQLiteStateStore, registry, boundary: Boundary):
     protected = ProtectedFreshnessHandoffCoordinator(
         store, LocalDurableEvidenceRegistry(), boundary
