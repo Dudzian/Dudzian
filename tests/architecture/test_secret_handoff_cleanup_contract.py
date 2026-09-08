@@ -5,7 +5,8 @@ from __future__ import annotations
 import inspect
 import json
 from pathlib import Path
-from typing import get_protocol_members
+
+from typing_extensions import get_protocol_members
 
 from bot_core.persistence.secret_handoff import SecretExternalResourcePort
 from bot_core.persistence.secret_handoff_contract import SECRET_HANDOFF_FIELDS
