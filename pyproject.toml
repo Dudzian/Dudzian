@@ -222,6 +222,7 @@ dev = [
   "sqlalchemy[asyncio]>=2.0",
   "packaging>=23.2",
   "types-requests>=2.31",
+  "typing_extensions>=4.7",
 ]
 test = [
   "pytest>=7.4",
@@ -235,6 +236,7 @@ test = [
   "pandas>=2.2",
   "joblib>=1.3",
   "pytest-timeout>=2.3",
+  "typing_extensions>=4.7",
 ]
 codegen = [
   "grpcio-tools==1.71.2",
