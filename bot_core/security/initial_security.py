@@ -112,6 +112,19 @@ class SecretMetadataProjection:
 
 
 @dataclass(frozen=True, slots=True)
+class LiveAccessGrantSecurityProjection:
+    live_access_grant_id: str
+    account_id: str
+    operator_id: str
+    device_installation_id: str
+    policy_scope_fingerprint_sha256: str
+    state: str
+    grant_revision: int
+    security_generation: int
+    content_fingerprint_sha256: str
+
+
+@dataclass(frozen=True, slots=True)
 class InitialSecurityState:
     account_id: str
     operator_id: str
@@ -580,6 +593,8 @@ class InitialSecurityAuthoritySnapshot:
     current_operation_entitlements: Mapping[tuple[str, str, str, str, str], str]
     accepted_secret_metadata: Mapping[str, SecretMetadataProjection]
     current_secret_metadata: Mapping[tuple[str, str], str]
+    accepted_live_access_grants: Mapping[str, LiveAccessGrantSecurityProjection]
+    current_live_access_grants: Mapping[tuple[str, str, str], str]
 
 
 def _empty_snapshot() -> InitialSecurityAuthoritySnapshot:
@@ -600,6 +615,8 @@ def _empty_snapshot() -> InitialSecurityAuthoritySnapshot:
         empty,
         frozenset(),
         frozenset(),
+        empty,
+        empty,
         empty,
         empty,
         empty,
