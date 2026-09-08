@@ -244,6 +244,32 @@ class AuthorizationAuthority:
                 _deny("PROOF_STALE")
         return "AUTHORIZED"
 
+    def authorize_upstream_security_request(
+        self,
+        proof: object,
+        request: object,
+        now_utc: object,
+    ) -> str:
+        """Authorize, without executing, a request owned by an upstream authority."""
+        if not isinstance(request, AuthorizationRequest):
+            return "MALFORMED_UNTRUSTED_CONTEXT"
+        try:
+            self._authentication._validate_request_structure(request)  # noqa: SLF001
+        except AuthenticationError as error:
+            return cast(str, error.reason)
+        if request.operation not in OPERATION_POLICY_REGISTRY:
+            return "OPERATION_UNSUPPORTED"
+        if (
+            OPERATION_OWNERSHIP.get(request.operation)
+            != "AUTHORIZED_SECURITY_REQUEST_TO_UPSTREAM_OWNER"
+        ):
+            return "OPERATION_UNSUPPORTED"
+        try:
+            decision = self.authorize(proof, request, now_utc)
+        except AuthorizationError:
+            return "AUTHORIZATION_DENIED"
+        return "AUTHORIZED_SECURITY_REQUEST" if decision == "AUTHORIZED" else "AUTHORIZATION_DENIED"
+
     @staticmethod
     def _proof_time(value: str) -> datetime:
         try:
