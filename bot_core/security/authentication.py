@@ -178,6 +178,29 @@ OPERATION_POLICY_REGISTRY = MappingProxyType(
     }
 )
 
+OPERATION_OWNERSHIP = MappingProxyType(
+    {
+        "TRUST_DEVICE": "M0.10_OWNED_TRANSITION",
+        "REVOKE_DEVICE": "M0.10_OWNED_TRANSITION",
+        "SETUP_PIN": "AUTHORIZED_SECURITY_REQUEST_TO_UPSTREAM_OWNER",
+        "CHANGE_PIN": "M0.10_OWNED_TRANSITION",
+        "RESET_PIN": "M0.10_OWNED_TRANSITION",
+        "LOCK_SESSION": "M0.10_OWNED_TRANSITION",
+        "UNLOCK_SESSION": "M0.10_OWNED_TRANSITION",
+        "LOGOUT_SESSION": "M0.10_OWNED_TRANSITION",
+        "ROTATE_SECRET_REFERENCE": "AUTHORIZED_SECURITY_REQUEST_TO_UPSTREAM_OWNER",
+        "REBIND_SECRET_REFERENCE": "AUTHORIZED_SECURITY_REQUEST_TO_UPSTREAM_OWNER",
+        "ACTIVATE_CREDENTIAL_PROFILE": "AUTHORIZED_SECURITY_REQUEST_TO_UPSTREAM_OWNER",
+        "DEACTIVATE_CREDENTIAL_PROFILE": "AUTHORIZED_SECURITY_REQUEST_TO_UPSTREAM_OWNER",
+        "CHANGE_RISK_POLICY": "AUTHORIZED_SECURITY_REQUEST_TO_UPSTREAM_OWNER",
+        "CHANGE_KILL_SWITCH": "AUTHORIZED_SECURITY_REQUEST_TO_UPSTREAM_OWNER",
+        "CHANGE_PRODUCT_CAPABILITIES": "AUTHORIZED_SECURITY_REQUEST_TO_UPSTREAM_OWNER",
+        "GRANT_LIVE_ACCESS": "M0.10_OWNED_TRANSITION",
+        "SUSPEND_LIVE_ACCESS": "M0.10_OWNED_TRANSITION",
+        "REVOKE_LIVE_ACCESS": "M0.10_OWNED_TRANSITION",
+    }
+)
+
 
 class PinVerifierComparator(Protocol):
     """Production KDF/secure-store comparison boundary; it grants no authority."""
@@ -471,8 +494,13 @@ class AuthenticationAuthority:
             before = self._state.snapshot
             identity, device, pin, session = self._resolve_current_family(before, request)
             runtime = self._resolve_runtime(request, session)
-            expected_scope = canonical_scope_fingerprint(request)
-            if request.scope_fingerprint_sha256 != expected_scope:
+            ownership = OPERATION_OWNERSHIP.get(request.operation)
+            if ownership is None:
+                _deny("CONTRACT_INCONSISTENT")
+            if (
+                ownership == "M0.10_OWNED_TRANSITION"
+                and request.scope_fingerprint_sha256 != canonical_scope_fingerprint(request)
+            ):
                 _deny("AUTHORIZATION_DENIED")
             if pin_only:
                 target_state = {
@@ -557,30 +585,19 @@ class AuthenticationAuthority:
             return proof
 
     def resolve_accepted_proof(self, candidate: object) -> AuthenticationProof:
-        if not isinstance(candidate, AuthenticationProof):
-            _deny("AUTHENTICATION_REQUIRED")
-        self._validate_authentication_proof_structure(candidate)
-        recomputed = authentication_proof_fingerprint(candidate)
-        if candidate.proof_fingerprint_sha256 != recomputed:
-            _deny("AUTHENTICATION_REQUIRED")
         with self._state.lock:
             snapshot = self._state.snapshot
-            accepted = snapshot.accepted_authentication_proofs.get(recomputed)
-            binding = snapshot.accepted_authentication_proof_bindings.get(recomputed)
-        if accepted != candidate or not isinstance(binding, CoreIssuedAuthenticationProofBinding):
-            _deny("AUTHENTICATION_REQUIRED")
-        if binding != self._binding(candidate):
-            _deny("CONTRACT_INCONSISTENT")
+            accepted_proof = self._resolve_accepted_proof_membership(candidate, snapshot)
         request = AuthorizationRequest(
-            candidate.account_id,
-            candidate.operator_id,
-            candidate.device_installation_id,
-            candidate.environment,
-            candidate.operation,
-            candidate.scope_fingerprint_sha256,
-            candidate.mutation_fingerprint_sha256,
-            candidate.causation_id,
-            candidate.correlation_id,
+            accepted_proof.account_id,
+            accepted_proof.operator_id,
+            accepted_proof.device_installation_id,
+            accepted_proof.environment,
+            accepted_proof.operation,
+            accepted_proof.scope_fingerprint_sha256,
+            accepted_proof.mutation_fingerprint_sha256,
+            accepted_proof.causation_id,
+            accepted_proof.correlation_id,
         )
         identity, device, pin, session = self._resolve_current_family(snapshot, request)
         if (
@@ -591,14 +608,34 @@ class AuthenticationAuthority:
             identity.security_generation,
             session.session_generation,
         ) != (
-            candidate.identity_revision,
-            candidate.device_trust_revision,
-            candidate.pin_revision,
-            candidate.platform_enrollment_revision,
-            candidate.security_generation,
-            candidate.session_generation,
+            accepted_proof.identity_revision,
+            accepted_proof.device_trust_revision,
+            accepted_proof.pin_revision,
+            accepted_proof.platform_enrollment_revision,
+            accepted_proof.security_generation,
+            accepted_proof.session_generation,
         ):
             _deny("PROOF_STALE")
+        return accepted_proof
+
+    def _resolve_accepted_proof_membership(
+        self,
+        candidate: object,
+        snapshot: InitialSecurityAuthoritySnapshot,
+    ) -> AuthenticationProof:
+        """Resolve only genuine Core-issued proof membership and its exact binding."""
+        if not isinstance(candidate, AuthenticationProof):
+            _deny("AUTHENTICATION_REQUIRED")
+        self._validate_authentication_proof_structure(candidate)
+        recomputed = authentication_proof_fingerprint(candidate)
+        if candidate.proof_fingerprint_sha256 != recomputed:
+            _deny("AUTHENTICATION_REQUIRED")
+        accepted = snapshot.accepted_authentication_proofs.get(recomputed)
+        binding = snapshot.accepted_authentication_proof_bindings.get(recomputed)
+        if accepted != candidate or not isinstance(binding, CoreIssuedAuthenticationProofBinding):
+            _deny("AUTHENTICATION_REQUIRED")
+        if binding != self._binding(candidate):
+            _deny("CONTRACT_INCONSISTENT")
         return candidate
 
     @staticmethod
@@ -1139,6 +1176,7 @@ __all__ = [
     "AuthenticationProof",
     "AuthorizationRequest",
     "CoreIssuedAuthenticationProofBinding",
+    "OPERATION_OWNERSHIP",
     "OPERATION_POLICY_REGISTRY",
     "PinVerifierComparator",
     "authentication_proof_fingerprint",

@@ -160,6 +160,8 @@ def test_genuine_durable_bootstrap_atomically_establishes_initial_security(tmp_p
         name in repr(state)
         for name in ("LiveAccessGrant", "ExecutionLease", "RiskDecision", "AuthenticationProof")
     )
+    assert not state.accepted_operation_entitlements
+    assert not state.current_operation_entitlements
 
 
 def test_manual_and_tampered_views_are_denied(tmp_path: Path) -> None:
