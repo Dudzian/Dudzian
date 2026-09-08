@@ -20,7 +20,8 @@ def fsync_file(path: str | Path) -> None:
     """Flush one existing regular file through the operating-system boundary."""
 
     try:
-        with Path(path).open("rb") as handle:
+        mode = "r+b" if os.name == "nt" else "rb"
+        with Path(path).open(mode) as handle:
             os.fsync(handle.fileno())
     except OSError as exc:
         raise PhysicalDurabilityError(f"could not make file durable: {path}") from exc
