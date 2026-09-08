@@ -338,6 +338,32 @@ def session_mutation_fingerprint(
     )
 
 
+def device_mutation_fingerprint(
+    request: AuthorizationRequest,
+    target_device_id: str,
+    current_revision: int,
+    next_revision: int,
+) -> str:
+    """Bind a device transition to its exact target and revision edge."""
+    policy = OPERATION_POLICY_REGISTRY[request.operation]
+    return cast(
+        str,
+        canonical_json_sha256(
+            [
+                "M010-DEVICE",
+                request.account_id,
+                request.operator_id,
+                request.device_installation_id,
+                request.operation,
+                target_device_id,
+                current_revision,
+                next_revision,
+                policy.authorization_scope,
+            ]
+        ),
+    )
+
+
 class AuthenticationAuthority:
     """Issues and resolves genuine proofs over the shared initial-security state."""
 
