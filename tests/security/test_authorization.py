@@ -177,6 +177,27 @@ def test_entitlement_generation_inconsistency_is_contract_error(tmp_path: Path) 
         owner.authorize(proof, req, NOW)
 
 
+def test_missing_entitlement_precedes_current_family_generation_incoherence(
+    tmp_path: Path,
+) -> None:
+    _, _, owner, req, proof = arranged(tmp_path)
+    _install_current_change(
+        owner,
+        "accepted_devices",
+        "current_devices",
+        security_generation=2,
+    )
+
+    with pytest.raises(AuthorizationError) as denied:
+        owner.authorize(proof, req, NOW)
+    assert denied.value.reason == "AUTHORIZATION_DENIED"
+
+    _seed_trusted_operation_entitlement(owner, entitlement(req))
+    with pytest.raises(AuthorizationError) as inconsistent:
+        owner.authorize(proof, req, NOW)
+    assert inconsistent.value.reason == "CONTRACT_INCONSISTENT"
+
+
 def test_dangling_current_entitlement_pointer_is_authorization_denied(tmp_path: Path) -> None:
     _, _, owner, req, proof = arranged(tmp_path)
     item = entitlement(req)
