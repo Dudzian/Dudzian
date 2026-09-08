@@ -18,6 +18,10 @@ from bot_core.persistence.migration_protocol import (
     DurableMigrationLifecycleCoordinator,
     MigrationDefinition,
     MigrationRegistry,
+    migration_current,
+    migration_current_carrier,
+    migration_transition,
+    migration_transition_carrier,
 )
 from bot_core.persistence.physical_schema_registry import (
     StateStorePhysicalSchemaError,
@@ -31,7 +35,8 @@ from bot_core.persistence.secret_handoff import (
     DurableSecretHandoffLifecycleCoordinator,
     ExternalOutcome,
 )
-from bot_core.persistence.state_store import SQLiteStateStore
+from bot_core.persistence.state_store import SQLiteStateStore, StateStoreSnapshot
+from bot_core.persistence.transaction_descriptor import TransactionDescriptorError
 from bot_core.runtime.core_host import CoreHost, CoreHostProcessLock, CoreHostScope
 from bot_core.runtime.runtime_session import RuntimeSession, create_runtime_session
 from bot_core.runtime.core_host_startup_recovery import (
@@ -51,6 +56,15 @@ from tests.persistence.test_migration_execution_engine import _registry, _target
 from tests.persistence.test_state_store_records import _commit, _metadata
 from tests.persistence.test_secret_handoff import descriptor
 from tests.persistence.test_secret_handoff_execution_orchestrator import Port
+
+
+@pytest.fixture(autouse=True)
+def _restore_production_schema_edge_authority():
+    from bot_core.persistence import state_store_v2_migration
+
+    authority = state_store_v2_migration.STATE_STORE_V2_MIGRATION_AUTHORITY
+    yield
+    state_store_v2_migration.STATE_STORE_V2_MIGRATION_AUTHORITY = authority
 
 
 class Session:
@@ -367,19 +381,14 @@ def test_zero_migration_wrong_actual_schema_fails_before_evidence(tmp_path: Path
             _coordinator(path, store, boundary, evidence=evidence).recover()
 
 
-def test_unknown_metadata_schema_version_fails_closed(tmp_path: Path) -> None:
+def test_unknown_metadata_schema_version_fails_closed_at_state_store_boundary(
+    tmp_path: Path,
+) -> None:
     path = tmp_path / "unknown-version.db"
     with SQLiteStateStore(path) as store:
-        metadata = _commit(store, _metadata(state_store_schema_version=99))
-        boundary = Boundary(
-            record(
-                "COMMITTED",
-                committed_generation=1,
-                committed_state_fingerprint_sha256=metadata.state_fingerprint_sha256,
-            )
-        )
-        with pytest.raises(StateStorePhysicalSchemaError, match="unknown"):
-            _coordinator(path, store, boundary).recover()
+        with pytest.raises(TransactionDescriptorError):
+            _commit(store, _metadata(state_store_schema_version=99))
+        assert store.read_verified_snapshot() is None
 
 
 def test_evidence_failure_prevents_recovery_complete(tmp_path: Path) -> None:
@@ -1125,31 +1134,52 @@ def test_real_migration_authority_failures_block_top_level_startup(
     assert not host.owns_process_lock
 
 
-def test_two_real_migrations_follow_schema_chain_not_lexical_ids(tmp_path: Path) -> None:
+def _synthetic_prepared_migration_snapshot(
+    snapshot: StateStoreSnapshot, migration_ids: tuple[str, ...]
+) -> StateStoreSnapshot:
+    transitions = []
+    currents = []
+    for migration_id in migration_ids:
+        transition = migration_transition(
+            migration_id=migration_id,
+            transition_revision=1,
+            previous_state=None,
+            state="PREPARED",
+            transaction_fingerprint_sha256="a" * 64,
+            state_fingerprint_sha256="b" * 64,
+            protected_freshness_generation=1,
+        )
+        current = migration_current(
+            migration_id=migration_id,
+            current_transition_revision=1,
+            state="PREPARED",
+            authoritative_state_fingerprint_sha256="b" * 64,
+            protected_freshness_generation=1,
+        )
+        transitions.append(migration_transition_carrier(transition))
+        currents.append(migration_current_carrier(current))
+    return StateStoreSnapshot(
+        snapshot.metadata,
+        (*snapshot.current_records, *currents),
+        (*snapshot.immutable_history, *transitions),
+        snapshot.transaction_descriptors,
+    )
+
+
+def test_migration_chain_order_is_topological_not_lexical(tmp_path: Path) -> None:
     path = tmp_path / "two-migrations.db"
     boundary = Boundary(record("UNINITIALIZED"))
     first_id, second_id = "migration-z-v1-v2", "migration-a-v2-v3"
-    first_op = MigrationSqlOperation(1, "create-first", "DDL", "CREATE TABLE first_v2(id INTEGER)")
-    second_op = MigrationSqlOperation(
-        1, "create-second", "DDL", "CREATE TABLE second_v3(id INTEGER)"
-    )
-    with SQLiteStateStore(path) as initializer:
-        ProtectedFreshnessHandoffCoordinator(
-            initializer, LocalDurableEvidenceRegistry(), boundary
-        ).advance_protected_state(_metadata())
-        one = initializer.sqlite_schema_fingerprint()
-        two = _target_fingerprint(initializer, (first_op,))
-        three = _target_fingerprint(initializer, (first_op, second_op))
+    with SQLiteStateStore(path) as store:
+        metadata = _commit(store, _metadata())
+        baseline = store.read_verified_snapshot()
+        assert baseline is not None
         definitions = (
             MigrationDefinition(first_id, 1, 2, ("first",)),
             MigrationDefinition(second_id, 2, 3, ("second",)),
         )
-        plans = (
-            MigrationExecutionPlan((first_op,), one, two),
-            MigrationExecutionPlan((second_op,), two, three),
-        )
         entries = []
-        for definition, plan in zip(definitions, plans):
+        for definition in definitions:
             authority = MigrationExecutionAuthority(
                 definition.migration_id,
                 definition.source_schema_version,
@@ -1157,71 +1187,27 @@ def test_two_real_migrations_follow_schema_chain_not_lexical_ids(tmp_path: Path)
                 definition.ordered_path,
                 definition.rollback_policy,
                 definition.fingerprint(),
-                plan.operation_plan_fingerprint_sha256,
-                plan.pre_sqlite_schema_fingerprint_sha256,
-                plan.target_sqlite_schema_fingerprint_sha256,
+                "a" * 64,
+                "b" * 64,
+                "c" * 64,
             )
-            entries.append((definition, authority, lambda snapshot, value=plan: value))
+            entries.append((definition, authority, lambda _snapshot: None))
         migrations = MigrationRegistry(tuple(entries))
-        protected = ProtectedFreshnessHandoffCoordinator(
-            initializer, LocalDurableEvidenceRegistry(), boundary
-        )
-        lifecycle = DurableMigrationLifecycleCoordinator(initializer, migrations, protected)
-        lifecycle.prepare(first_id)
-        lifecycle.begin_applying(first_id)
-        proof = MigrationExecutionCoordinator(initializer, migrations, protected).execute(first_id)
-        lifecycle.record_durable_migrated(first_id, proof)
-        lifecycle.complete(first_id)
-        lifecycle.prepare(second_id)
-
-    observed: list[str] = []
-
-    def recovery_factory(
-        scope: CoreHostScope, store: SQLiteStateStore
-    ) -> CoreHostStartupRecoveryCoordinator:
-        evidence = LocalDurableEvidenceRegistry()
-        protected = ProtectedFreshnessHandoffCoordinator(store, evidence, boundary)
-
-        class RecordingLifecycle(DurableMigrationLifecycleCoordinator):
-            def discover(self, migration_id: str) -> Any:
-                observed.append(migration_id)
-                return super().discover(migration_id)
-
-        lifecycles = RecordingLifecycle(store, migrations, protected)
-        execution = MigrationExecutionCoordinator(store, migrations, protected)
-        completion = DurableMigrationCompletionCoordinator(store, execution, lifecycles, protected)
-        secrets = DurableSecretHandoffExecutionCoordinator(
+        snapshot = _synthetic_prepared_migration_snapshot(baseline, (second_id, first_id))
+        coordinator = _coordinator(
+            path,
             store,
-            DurableSecretHandoffLifecycleCoordinator(store, protected),
-            protected,
-            SecretPort(),
+            Boundary(
+                record(
+                    "COMMITTED",
+                    committed_generation=metadata.protected_freshness_generation,
+                    committed_state_fingerprint_sha256=metadata.state_fingerprint_sha256,
+                )
+            ),
+            migrations=migrations,
         )
-        return CoreHostStartupRecoveryCoordinator(
-            scope,
-            store,
-            protected,
-            migrations,
-            lifecycles,
-            completion,
-            secrets,
-            evidence,
-            cast(Any, ThreeVersionPhysicalSchemas(one, two, three)),
-        )
-
-    host = CoreHost(
-        _scope(path),
-        runtime_session_factory=lambda: create_runtime_session(_metadata().device_installation_id),
-        state_store_factory=lambda: SQLiteStateStore(path),
-        startup_recovery_factory=recovery_factory,
-    )
-    host.start()
-    first_distinct = list(dict.fromkeys(observed))
-    assert first_distinct[:2] == [first_id, second_id]
-    owned = cast(SQLiteStateStore, host._state_store)
-    assert owned.read_metadata().state_store_schema_version == 3
-    assert owned.sqlite_schema_fingerprint() == three
-    assert host.startup_recovery_result is not None
-    host.close()
+        assert tuple(sorted((first_id, second_id))) == (second_id, first_id)
+        assert coordinator._migration_ids(snapshot) == (first_id, second_id)
 
 
 def test_final_migration_rediscovery_rejects_late_real_prepared_family(tmp_path: Path) -> None:
@@ -1306,7 +1292,6 @@ def test_representable_invalid_migration_chain_fails_top_level_before_sql(
     tmp_path: Path, shape: str
 ) -> None:
     path = tmp_path / f"invalid-{shape}.db"
-    boundary = Boundary(record("UNINITIALIZED"))
     definitions = (
         MigrationDefinition("shape-first", 1, 2, ("first",)),
         MigrationDefinition(
@@ -1317,45 +1302,31 @@ def test_representable_invalid_migration_chain_fails_top_level_before_sql(
         ),
     )
     calls: list[str] = []
-    with SQLiteStateStore(path) as initializer:
-        ProtectedFreshnessHandoffCoordinator(
-            initializer, LocalDurableEvidenceRegistry(), boundary
-        ).advance_protected_state(_metadata())
-        fingerprint = initializer.sqlite_schema_fingerprint()
+    with SQLiteStateStore(path) as store:
+        metadata = _commit(store, _metadata())
+        baseline = store.read_verified_snapshot()
+        assert baseline is not None
+        fingerprint = store.sqlite_schema_fingerprint()
         migrations = _migration_shape_registry(definitions, fingerprint, calls)
-        protected = ProtectedFreshnessHandoffCoordinator(
-            initializer, LocalDurableEvidenceRegistry(), boundary
+        snapshot = _synthetic_prepared_migration_snapshot(
+            baseline, tuple(definition.migration_id for definition in definitions)
         )
-        lifecycle = DurableMigrationLifecycleCoordinator(initializer, migrations, protected)
-        lifecycle.prepare("shape-first")
-        if shape == "branch":
-            lifecycle.prepare("shape-second")
-        else:
-            lifecycle.begin_applying("shape-first")
-            proof = MigrationExecutionCoordinator(initializer, migrations, protected).execute(
-                "shape-first"
-            )
-            lifecycle.record_durable_migrated("shape-first", proof)
-            lifecycle.complete("shape-first")
-            lifecycle.prepare("shape-second")
-            calls.clear()
-    host = CoreHost(
-        _scope(path),
-        runtime_session_factory=lambda: create_runtime_session(_metadata().device_installation_id),
-        state_store_factory=lambda: SQLiteStateStore(path),
-        startup_recovery_factory=lambda scope, store: _coordinator(
+        coordinator = _coordinator(
             path,
             store,
-            boundary,
-            scope=scope,
+            Boundary(
+                record(
+                    "COMMITTED",
+                    committed_generation=metadata.protected_freshness_generation,
+                    committed_state_fingerprint_sha256=metadata.state_fingerprint_sha256,
+                )
+            ),
             migrations=migrations,
-            physical_schemas=cast(Any, FuturePhysicalSchemas(fingerprint, fingerprint)),
-        ),
-    )
-    with pytest.raises(Exception, match="branches|unique head|cyclic"):
-        host.start()
-    assert calls == []
-    assert host.startup_recovery_result is None
+        )
+        with pytest.raises(Exception, match="branches|unique head|cyclic"):
+            coordinator._migration_ids(snapshot)
+        assert calls == []
+        assert store.read_verified_snapshot() == baseline
 
 
 def test_disconnected_family_is_rejected_by_public_lifecycle_source_gate(

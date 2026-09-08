@@ -33,6 +33,7 @@ from bot_core.persistence.migration_protocol import (
     MigrationDefinition,
     MigrationError,
     MigrationRegistry,
+    PRODUCTION_MIGRATION_REGISTRY,
     migration_current_carrier,
     migration_transition_carrier,
 )
@@ -43,6 +44,7 @@ from bot_core.persistence.restore_protocol import (
     TrustedPhysicalRestoreCoordinator,
 )
 from bot_core.persistence.state_store import SQLiteStateStore, StateStoreSnapshot
+from bot_core.persistence.state_store_v2_migration import MIGRATION_ID
 from tests.persistence.test_migration_execution_engine import (
     _initialize_applying,
     _protected,
@@ -53,6 +55,16 @@ from tests.persistence.test_protected_freshness_handoff import Boundary, record
 from tests.persistence.test_migration_protocol import lifecycle
 from tests.persistence.physical_backup_helpers import authority_for
 from tests.persistence.test_restore_protocol import Boundary as RestoreBoundary
+from tests.persistence.test_state_store_v2_migration import _applying_v1, _coordinator
+
+
+@pytest.fixture(autouse=True)
+def _restore_production_schema_edge_authority():
+    from bot_core.persistence import state_store_v2_migration
+
+    authority = state_store_v2_migration.STATE_STORE_V2_MIGRATION_AUTHORITY
+    yield
+    state_store_v2_migration.STATE_STORE_V2_MIGRATION_AUTHORITY = authority
 
 
 def _materialized(tmp_path):  # type: ignore[no-untyped-def]
@@ -71,69 +83,70 @@ def _materialized(tmp_path):  # type: ignore[no-untyped-def]
     return store, snapshot, registry
 
 
-def test_two_real_sequential_migrations_restore_revalidate(tmp_path):  # type: ignore[no-untyped-def]
-    store = SQLiteStateStore(tmp_path / "two-real-migrations.sqlite")
-    boundary = Boundary(record("UNINITIALIZED"))
+def _production_v2_store(path):  # type: ignore[no-untyped-def]
+    store, boundary, _ = _applying_v1(path)
+    protected = _protected(store, boundary)
+    materialized = _coordinator(store, boundary).execute(MIGRATION_ID)
+    lifecycles = DurableMigrationLifecycleCoordinator(
+        store, PRODUCTION_MIGRATION_REGISTRY, protected
+    )
+    lifecycles.record_durable_migrated(MIGRATION_ID, materialized)
+    lifecycles.complete(MIGRATION_ID)
+    snapshot = store.read_verified_snapshot()
+    assert snapshot is not None and snapshot.metadata.state_store_schema_version == 2
+    return store, boundary, snapshot
+
+
+def test_unfrozen_schema_three_migration_fails_closed_after_production_v2(tmp_path):  # type: ignore[no-untyped-def]
+    store, boundary, _ = _production_v2_store(tmp_path / "unsupported-v3.sqlite")
     try:
-        _initialize_applying(store, boundary)
-        operation_a = MigrationSqlOperation(
-            1, "create-a", "DDL", "CREATE TABLE migration_a(id INTEGER)"
+        operation = MigrationSqlOperation(
+            1, "unsupported-v3", "DDL", "CREATE TABLE unfrozen_v3(id INTEGER)"
         )
-        operation_b = MigrationSqlOperation(
-            1, "create-b", "DDL", "CREATE TABLE migration_b(id INTEGER)"
+        pre = store.sqlite_schema_fingerprint()
+        target = _target_fingerprint(store, (operation,))
+        definition = MigrationDefinition("unfrozen-v2-to-v3", 2, 3, ("unsupported-v3",))
+        plan = MigrationExecutionPlan((operation,), pre, target)
+        authority = MigrationExecutionAuthority(
+            definition.migration_id,
+            definition.source_schema_version,
+            definition.target_schema_version,
+            definition.ordered_path,
+            definition.rollback_policy,
+            definition.fingerprint(),
+            plan.operation_plan_fingerprint_sha256,
+            pre,
+            target,
         )
-        pre_a = store.sqlite_schema_fingerprint()
-        target_a = _target_fingerprint(store, (operation_a,))
-        target_b = _target_fingerprint(store, (operation_a, operation_b))
-        definition_a = MigrationDefinition("migration-1", 1, 2, ("a",))
-        definition_b = MigrationDefinition("migration-2", 2, 3, ("b",))
-
-        def entry(definition, operation, pre, target):  # type: ignore[no-untyped-def]
-            plan = MigrationExecutionPlan((operation,), pre, target)
-            authority = MigrationExecutionAuthority(
-                definition.migration_id,
-                definition.source_schema_version,
-                definition.target_schema_version,
-                definition.ordered_path,
-                definition.rollback_policy,
-                definition.fingerprint(),
-                plan.operation_plan_fingerprint_sha256,
-                pre,
-                target,
-            )
-            return definition, authority, lambda _snapshot: plan
-
-        registry = MigrationRegistry(
-            (
-                entry(definition_a, operation_a, pre_a, target_a),
-                entry(definition_b, operation_b, target_a, target_b),
-            )
-        )
+        registry = MigrationRegistry(((definition, authority, lambda _snapshot: plan),))
         protected = _protected(store, boundary)
-        execution = MigrationExecutionCoordinator(store, registry, protected)
-        materialized_a = execution.execute("migration-1")
         lifecycles = DurableMigrationLifecycleCoordinator(store, registry, protected)
-        lifecycles.record_durable_migrated("migration-1", materialized_a)
-        lifecycles.complete("migration-1")
-        lifecycles.prepare("migration-2")
-        lifecycles.begin_applying("migration-2")
-        execution.execute("migration-2")
+        lifecycles.prepare(definition.migration_id)
+        lifecycles.begin_applying(definition.migration_id)
+        before = store.read_verified_snapshot()
+        assert before is not None
+        physical_before = store.sqlite_schema_fingerprint()
 
-        snapshot = store.read_verified_snapshot()
-        assert snapshot is not None
-        declarations = tuple(
-            item
-            for item in snapshot.immutable_history
-            if item.representation_name == "Migration execution declaration"
+        with pytest.raises(MigrationError):
+            MigrationExecutionCoordinator(store, registry, protected).execute(
+                definition.migration_id
+            )
+
+        assert store.read_verified_snapshot() == before
+        assert before.metadata.state_store_schema_version == 2
+        assert store.sqlite_schema_fingerprint() == physical_before == pre
+        assert not store._connection.execute(
+            "SELECT 1 FROM sqlite_schema WHERE type='table' AND name='unfrozen_v3'"
+        ).fetchone()
+        assert all(
+            descriptor.state_store_schema_version != 3
+            for descriptor in before.transaction_descriptors
         )
-        assert len(declarations) == 2
-        assert (
-            declarations[0].payload["target_generation"]
-            < declarations[1].payload["target_generation"]
+        assert all(
+            record.payload.get("target_schema_version") != 3
+            for record in before.immutable_history
+            if record.representation_name == "Migration execution declaration"
         )
-        assert snapshot.metadata.state_store_schema_version == 3
-        assert target_a != store.sqlite_schema_fingerprint() == target_b
-        SealedMigrationRestoreAuthority(registry).revalidate(snapshot, target_b)
     finally:
         store.close()
 
@@ -410,62 +423,14 @@ def test_restore_authority_rejects_completed_without_declaration(tmp_path):  # t
         store.close()
 
 
-def _real_ab_store(path):  # type: ignore[no-untyped-def]
-    store = SQLiteStateStore(path)
-    boundary = Boundary(record("UNINITIALIZED"))
-    _initialize_applying(store, boundary)
-    operation_a = MigrationSqlOperation(
-        1, "create-a", "DDL", "CREATE TABLE migration_a(id INTEGER)"
-    )
-    operation_b = MigrationSqlOperation(
-        1, "create-b", "DDL", "CREATE TABLE migration_b(id INTEGER)"
-    )
-    pre_a = store.sqlite_schema_fingerprint()
-    target_a = _target_fingerprint(store, (operation_a,))
-    target_b = _target_fingerprint(store, (operation_a, operation_b))
-    definition_a = MigrationDefinition("migration-1", 1, 2, ("a",))
-    definition_b = MigrationDefinition("migration-2", 2, 3, ("b",))
-
-    def entry(definition, operation, pre, target):  # type: ignore[no-untyped-def]
-        plan = MigrationExecutionPlan((operation,), pre, target)
-        authority = MigrationExecutionAuthority(
-            definition.migration_id,
-            definition.source_schema_version,
-            definition.target_schema_version,
-            definition.ordered_path,
-            definition.rollback_policy,
-            definition.fingerprint(),
-            plan.operation_plan_fingerprint_sha256,
-            pre,
-            target,
-        )
-        return definition, authority, lambda _snapshot: plan
-
-    registry = MigrationRegistry(
-        (
-            entry(definition_a, operation_a, pre_a, target_a),
-            entry(definition_b, operation_b, target_a, target_b),
-        )
-    )
-    protected = _protected(store, boundary)
-    execution = MigrationExecutionCoordinator(store, registry, protected)
-    materialized_a = execution.execute("migration-1")
-    lifecycles = DurableMigrationLifecycleCoordinator(store, registry, protected)
-    lifecycles.record_durable_migrated("migration-1", materialized_a)
-    lifecycles.complete("migration-1")
-    lifecycles.prepare("migration-2")
-    lifecycles.begin_applying("migration-2")
-    execution.execute("migration-2")
-    snapshot = store.read_verified_snapshot()
-    assert snapshot is not None
-    return store, registry, snapshot, target_b
-
-
-def test_real_ab_full_trusted_physical_restore_never_executes_migration(tmp_path, monkeypatch):  # type: ignore[no-untyped-def]
-    store, registry, snapshot, target_b = _real_ab_store(tmp_path / "ab-source.sqlite")
+def test_production_v2_full_trusted_physical_restore_never_executes_migration(
+    tmp_path, monkeypatch
+):  # type: ignore[no-untyped-def]
+    store, _boundary, snapshot = _production_v2_store(tmp_path / "v2-source.sqlite")
+    source_physical = store.sqlite_schema_fingerprint()
     authority = authority_for(tmp_path, store)
     artifact = PhysicalBackupCreator(BackupArtifactAuthenticator(authority)).create(
-        store, tmp_path / "ab-backup.sqlite"
+        store, tmp_path / "v2-backup.sqlite"
     )
     store.close()
     execution_calls = 0
@@ -487,17 +452,18 @@ def test_real_ab_full_trusted_physical_restore_never_executes_migration(tmp_path
         "resume_to_completion",
         forbidden_completion,
     )
-    live = tmp_path / "ab-restored.sqlite"
+    live = tmp_path / "v2-restored.sqlite"
     result = TrustedPhysicalRestoreCoordinator(
         live,
         LocalDurableEvidenceRegistry(),
         RestoreBoundary(artifact.backup_envelope),
         PhysicalBackupAdmissionValidator(BackupArtifactVerifier(authority)),
-        RestoreLifecycleAuthorityBundle.from_migration_registry(registry),
+        RestoreLifecycleAuthorityBundle.from_migration_registry(PRODUCTION_MIGRATION_REGISTRY),
     ).restore_trusted_artifact(artifact)
 
     assert result.decision is RestoreDecision.RESTORE_EXTERNAL_COMMITTED_CURRENT
     assert execution_calls == completion_calls == 0
     with SQLiteStateStore(live) as restored:
         assert restored.read_verified_snapshot() == snapshot
-        assert restored.sqlite_schema_fingerprint() == target_b
+        assert restored.read_verified_snapshot().metadata.state_store_schema_version == 2
+        assert restored.sqlite_schema_fingerprint() == source_physical
