@@ -98,6 +98,20 @@ class SessionSecurityState:
 
 
 @dataclass(frozen=True, slots=True)
+class SecretMetadataProjection:
+    secret_reference: str
+    secret_kind: str
+    exchange_account_id: str
+    credential_profile_id: str
+    exchange_id: str
+    environment: str
+    permitted_operations: tuple[str, ...]
+    secret_revision: int
+    state: str
+    content_fingerprint_sha256: str
+
+
+@dataclass(frozen=True, slots=True)
 class InitialSecurityState:
     account_id: str
     operator_id: str
@@ -564,6 +578,8 @@ class InitialSecurityAuthoritySnapshot:
     accepted_platform_biometric_assertion_bindings: Mapping[str, object]
     accepted_operation_entitlements: Mapping[str, object]
     current_operation_entitlements: Mapping[tuple[str, str, str, str, str], str]
+    accepted_secret_metadata: Mapping[str, SecretMetadataProjection]
+    current_secret_metadata: Mapping[tuple[str, str], str]
 
 
 def _empty_snapshot() -> InitialSecurityAuthoritySnapshot:
@@ -584,6 +600,8 @@ def _empty_snapshot() -> InitialSecurityAuthoritySnapshot:
         empty,
         frozenset(),
         frozenset(),
+        empty,
+        empty,
         empty,
         empty,
         empty,
@@ -979,5 +997,6 @@ __all__ = [
     "PinVerifierMaterial",
     "PinVerifierRecord",
     "RuntimeSessionAuthority",
+    "SecretMetadataProjection",
     "SessionSecurityState",
 ]
