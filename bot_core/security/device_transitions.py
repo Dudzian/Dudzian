@@ -15,7 +15,9 @@ from bot_core.security.authentication import (
     device_mutation_fingerprint,
 )
 from bot_core.security.authorization import AuthorizationAuthority, AuthorizationError
+from bot_core.security.current_projection_authority import _accept_device_projection
 from bot_core.security.initial_security import DeviceTrustProjection
+from bot_core.security.initial_security import InitialSecurityError
 
 
 def _device_fingerprint(value: DeviceTrustProjection) -> str:
@@ -121,26 +123,9 @@ class DeviceTrustTransitionAuthority:
                 "",
             )
             post = replace(post, content_fingerprint_sha256=_device_fingerprint(post))
-            if not self._authentication._device_intrinsically_valid(post):  # noqa: SLF001
+            try:
+                if not _accept_device_projection(self._state, post):
+                    return "CONTRACT_INCONSISTENT"
+            except InitialSecurityError:
                 return "CONTRACT_INCONSISTENT"
-            if old is not None and (
-                post.trust_revision <= old.trust_revision
-                or post.security_generation < old.security_generation
-                or post.platform_enrollment_revision < old.platform_enrollment_revision
-                or old.state in {"REVOKED", "REPLACED"}
-            ):
-                return "CONTRACT_INCONSISTENT"
-            collision = before.accepted_devices.get(post.content_fingerprint_sha256)
-            if collision is not None and collision != post:
-                return "CONTRACT_INCONSISTENT"
-
-            accepted = dict(before.accepted_devices)
-            current = dict(before.current_devices)
-            accepted[post.content_fingerprint_sha256] = post
-            current[scope] = post.content_fingerprint_sha256
-            self._state.snapshot = replace(
-                before,
-                accepted_devices=MappingProxyType(accepted),
-                current_devices=MappingProxyType(current),
-            )
             return cast(str, post.state)
