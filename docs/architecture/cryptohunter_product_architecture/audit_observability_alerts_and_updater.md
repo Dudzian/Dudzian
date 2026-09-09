@@ -17,7 +17,7 @@
 ## `status`
 
 ```json
-"IN_PROGRESS_FOUNDATION"
+"IN_PROGRESS_AUDIT_JOURNAL_CLOSED"
 ```
 
 ## `contract_identity`
@@ -25,8 +25,8 @@
 ```json
 {
   "contract_id": "M0.12-audit-observability-alerts-updater",
-  "version": "0.1.0",
-  "phase": "S9A_CONTRACT_FOUNDATION",
+  "version": "0.2.5",
+  "phase": "S9B_C5_AUDIT_JOURNAL_CONTRACT",
   "machine_source_of_truth": true,
   "markdown_is_projection_only": true
 }
@@ -175,7 +175,10 @@
       "purpose",
       "parent",
       "persistence",
-      "optional_references"
+      "audit_event_categories",
+      "optional_references",
+      "relationships",
+      "identifier_policy"
     ],
     "identity_redefinition_by_M0.12": false
   },
@@ -248,7 +251,7 @@
     "owner": "M0.2 owns canonical AuditEvent identity/schema; M0.12 owns append policy; trusted writer is lifecycle-phase dependent",
     "authority_source": "canonical M0.2 AuditEvent plus an append decision from the phase-appropriate privileged trusted path",
     "durability": "DURABLE_APPEND_ONLY",
-    "ordering": "per-environment monotonic sequence with causal references",
+    "ordering": "DeviceInstallation-scoped durable monotonic append sequence; environment is optional scope only",
     "identity": "audit_event_id only; canonical format, prefix and DeviceInstallation parent remain M0.2-owned",
     "retention": "policy-versioned; security, execution and economic minimum retention may not be shortened by UI",
     "rebuildability": "not replaceable by logs or metrics; projections rebuild from retained records",
@@ -1028,7 +1031,7 @@
   "no selection of database, telemetry vendor, signing algorithm, installer technology or transport",
   "no activation of LIVE",
   "no claim that legacy audit/log/update code is canonical",
-  "no complete field-level schemas for every M0.12 record in S9A"
+  "no observability/health, alert or updater closure in S9B"
 ]
 ```
 
@@ -1036,8 +1039,7 @@
 
 ```json
 [
-  "close exact AuditEvent and append transaction schemas, ordering domains, tamper-evidence chain and retention matrix",
-  "decide the physical durable AuditEvent journal/carrier relative to the frozen M0.11 PersistenceRecord registry without adding a registry entry or StateStore schema v3 in S9A-C1",
+  "architecture-approve and implement the physical durable AuditEvent journal/carrier relative to frozen M0.11; canonical audit readiness remains blocked until then",
   "close alert category/severity policies, deduplication windows, suppression authorization, escalation routes and durable schemas",
   "close probe-specific freshness budgets and capability-scoped health composition",
   "select release-channel registry, manifest canonicalization, signing algorithms, trust-root provisioning, rotation and revocation",
@@ -1048,4 +1050,1921 @@
   "define privacy/redaction/export policy and telemetry retention/cardinality budgets",
   "map every individual legacy implementation path to the M1 migration backlog after M0.12 closure"
 ]
+```
+
+## `audit_journal_contract`
+
+```json
+{
+  "upstream_binding": {
+    "selection": "consume the single M0.2 entity where canonical_name == AuditEvent; no copied identity/category registry is authoritative",
+    "required_exact_keys": [
+      "canonical_name",
+      "id_field",
+      "id_prefix",
+      "parent",
+      "persistence",
+      "audit_event_categories",
+      "optional_references",
+      "relationships"
+    ],
+    "identifier_policy_pointer": "canonical_domain_vocabulary.json#/identifier_policy",
+    "drift_disposition": "CONTRACT_INCONSISTENT_FAIL_CLOSED"
+  },
+  "schema": {
+    "fields": [
+      "audit_event_id",
+      "category",
+      "event_type",
+      "payload_family",
+      "occurred_at_utc",
+      "device_installation_id",
+      "runtime_session_id",
+      "operator_id",
+      "environment",
+      "workspace_id",
+      "exchange_account_id",
+      "order_id",
+      "ledger_entry_id",
+      "correlation_id",
+      "causation_id",
+      "writer_phase",
+      "outcome",
+      "reason_code",
+      "safe_payload",
+      "m07_event_envelope",
+      "content_fingerprint_sha256",
+      "sequence",
+      "previous_chain_fingerprint_sha256",
+      "chain_fingerprint_sha256"
+    ],
+    "field_contracts": {
+      "audit_event_id": {
+        "owner": "M0.2",
+        "source": "/entity_kinds/AuditEvent + /identifier_policy",
+        "type": "evt-prefixed UUIDv7",
+        "required": "always",
+        "nullable": false,
+        "meaning": "sole durable event identity"
+      },
+      "category": {
+        "owner": "M0.2",
+        "source": "/entity_kinds/AuditEvent/audit_event_categories",
+        "type": "upstream closed enum",
+        "required": "always",
+        "nullable": false,
+        "meaning": "retention and audit classification"
+      },
+      "event_type": {
+        "owner": "M0.7 for CORE_DOMAIN_EVENT; M0.12 otherwise",
+        "source": "M0.7 /event_contract/event_types or M0.12 /audit_journal_contract/payload_families",
+        "type": "closed enum selected by payload_family",
+        "required": "always",
+        "nullable": false,
+        "meaning": "exact event schema discriminator"
+      },
+      "payload_family": {
+        "owner": "M0.12",
+        "source": "/audit_journal_contract/payload_families",
+        "type": "closed enum",
+        "required": "always",
+        "nullable": false,
+        "meaning": "selects the authoritative closed envelope/payload schema"
+      },
+      "occurred_at_utc": {
+        "owner": "M0.7 when CORE_DOMAIN_EVENT; M0.12 otherwise",
+        "source": "M0.7 /event_contract/envelope_schema or M0.12 timestamp policy",
+        "type": "RFC3339 UTC timestamp",
+        "required": "always",
+        "nullable": false,
+        "meaning": "observation time; never append order"
+      },
+      "device_installation_id": {
+        "owner": "M0.2",
+        "source": "consumed from canonical_domain_vocabulary.json /entity_kinds entry DeviceInstallation",
+        "type": "canonical DeviceInstallation ID; prefix resolved from upstream entity, currently dev",
+        "required": "always",
+        "nullable": false,
+        "meaning": "parent and primary journal domain"
+      },
+      "runtime_session_id": {
+        "owner": "M0.2 identity; M0.12 contextual policy",
+        "source": "consumed from canonical_domain_vocabulary.json /entity_kinds entry RuntimeSession plus AuditEvent optional_references",
+        "type": "canonical RuntimeSession ID; prefix resolved from upstream entity, currently run",
+        "required": "CORE_RUNTIME only",
+        "nullable": true,
+        "meaning": "runtime context, not global parent"
+      },
+      "operator_id": {
+        "owner": "M0.2",
+        "source": "AuditEvent optional_references",
+        "type": "canonical id prefix op",
+        "required": "when an authenticated operator is actor",
+        "nullable": true,
+        "meaning": "accountable operator reference"
+      },
+      "environment": {
+        "owner": "M0.4",
+        "source": "execution environment registry",
+        "type": "PAPER|TESTNET|LIVE",
+        "required": "when event has trading environment scope",
+        "nullable": true,
+        "meaning": "optional event scope, not journal identity"
+      },
+      "workspace_id": {
+        "owner": "M0.2",
+        "source": "AuditEvent optional_references",
+        "type": "canonical id prefix ws",
+        "required": "when workspace scoped",
+        "nullable": true,
+        "meaning": "workspace reference"
+      },
+      "exchange_account_id": {
+        "owner": "M0.2",
+        "source": "AuditEvent optional_references",
+        "type": "canonical id prefix xacc",
+        "required": "when account scoped",
+        "nullable": true,
+        "meaning": "exchange-account reference"
+      },
+      "order_id": {
+        "owner": "M0.2/M0.7",
+        "source": "AuditEvent optional_references; M0.7 envelope",
+        "type": "canonical id prefix ord",
+        "required": "CORE_DOMAIN_EVENT",
+        "nullable": true,
+        "meaning": "order aggregate reference"
+      },
+      "ledger_entry_id": {
+        "owner": "M0.2/M0.8",
+        "source": "AuditEvent optional_references and relationship",
+        "type": "canonical id prefix led",
+        "required": "when ledger fact referenced",
+        "nullable": true,
+        "meaning": "economic fact reference"
+      },
+      "correlation_id": {
+        "owner": "M0.7 when available; M0.12 contextual correlation otherwise",
+        "source": "M0.7 /event_contract/envelope_schema; M0.3 causation/correlation when available",
+        "type": "canonical correlation reference",
+        "required": "CORE_DOMAIN_EVENT; otherwise when available",
+        "nullable": true,
+        "meaning": "cross-event workflow correlation"
+      },
+      "causation_id": {
+        "owner": "M0.7 when available; originating contract otherwise",
+        "source": "M0.7 /event_contract/envelope_schema; M0.3 when available",
+        "type": "canonical cause reference",
+        "required": "contextual",
+        "nullable": true,
+        "meaning": "immediate causal fact reference"
+      },
+      "writer_phase": {
+        "owner": "M0.12 constrained by M0.3/M0.10/M0.11",
+        "source": "/audit_model/writer_authority/phases",
+        "type": "PRE_CORE|CORE_RUNTIME|MAINTENANCE_UPDATE_RECOVERY",
+        "required": "always",
+        "nullable": false,
+        "meaning": "selects trusted writer policy"
+      },
+      "outcome": {
+        "owner": "M0.12",
+        "source": "/audit_journal_contract/outcomes",
+        "type": "INTENT|ACCEPTED|DENIED|COMPLETED|FAILED|RECOVERY_REQUIRED",
+        "required": "always",
+        "nullable": false,
+        "meaning": "recorded transition disposition"
+      },
+      "reason_code": {
+        "owner": "originating upstream contract or M0.12 event schema",
+        "source": "/audit_journal_contract/safe_code_type or exact originating upstream registry",
+        "type": "SAFE_CODE when present",
+        "required": "contextual; required for DENIED/FAILED/RECOVERY_REQUIRED",
+        "nullable": true,
+        "meaning": "safe denial/failure reason, never raw exception"
+      },
+      "safe_payload": {
+        "owner": "M0.7 for CORE_DOMAIN_EVENT; family owner otherwise",
+        "source": "closed event registry",
+        "type": "closed object",
+        "required": "always",
+        "nullable": false,
+        "meaning": "exact non-secret authoritative evidence"
+      },
+      "content_fingerprint_sha256": {
+        "owner": "M0.12",
+        "source": "/audit_journal_contract/integrity",
+        "type": "64 lowercase hex",
+        "required": "always",
+        "nullable": false,
+        "meaning": "content integrity only"
+      },
+      "sequence": {
+        "owner": "M0.12 journal serializer",
+        "source": "/audit_journal_contract/ordering",
+        "type": "positive integer",
+        "required": "accepted append",
+        "nullable": false,
+        "meaning": "primary DeviceInstallation append order"
+      },
+      "previous_chain_fingerprint_sha256": {
+        "owner": "M0.12 journal serializer",
+        "source": "/audit_journal_contract/integrity",
+        "type": "64 lowercase hex",
+        "required": "accepted append",
+        "nullable": false,
+        "meaning": "predecessor proof or genesis constant"
+      },
+      "chain_fingerprint_sha256": {
+        "owner": "M0.12 journal serializer",
+        "source": "/audit_journal_contract/integrity",
+        "type": "64 lowercase hex",
+        "required": "accepted append",
+        "nullable": false,
+        "meaning": "chain continuity proof 1:1 with audit_event_id"
+      },
+      "m07_event_envelope": {
+        "owner": "M0.7",
+        "source": "commands_events_order_lifecycle_and_idempotency.json#/event_contract/envelope_schema",
+        "type": "exact closed M0.7 envelope",
+        "required": "CORE_DOMAIN_EVENT only; null otherwise",
+        "nullable": true,
+        "meaning": "complete immutable upstream event fact; outer audit_event_id must equal nested audit_event_id"
+      }
+    },
+    "additional_properties": false,
+    "proof_fields_excluded_from_content": [
+      "content_fingerprint_sha256",
+      "sequence",
+      "previous_chain_fingerprint_sha256",
+      "chain_fingerprint_sha256"
+    ]
+  },
+  "payload_families": {
+    "CORE_DOMAIN_EVENT": {
+      "owner": "M0.7",
+      "event_registry_pointer": "commands_events_order_lifecycle_and_idempotency.json#/event_contract/event_schema_registry",
+      "envelope_pointer": "commands_events_order_lifecycle_and_idempotency.json#/event_contract/envelope_schema",
+      "rule": "M0.7 event envelope is consumed exactly; M0.12 adds device/runtime/writer/outcome and journal proof without redefining aggregate ordering",
+      "representation_shape": "EXACT_NESTED_FROZEN_ENVELOPE",
+      "identity_invariant": "outer audit_event_id == m07_event_envelope.audit_event_id",
+      "outer_reference_invariant": "every non-null overlapping outer field equals the nested M0.7 field",
+      "m07_fingerprint_rule": "validate and recompute nested event_fingerprint_sha256 before M0.12 content fingerprint",
+      "object_semantics": "Python type is exactly dict and key set equals frozen envelope_schema.fields; insertion order is irrelevant; canonical sorted-key JSON owns fingerprint semantics"
+    },
+    "PRE_CORE_SECURITY_EVENT": {
+      "owner": "M0.12 constrained by M0.3/M0.10",
+      "allowed_event_types": [
+        "AUTHENTICATION_DECIDED",
+        "AUTHORIZATION_DECIDED",
+        "SECURITY_MUTATION_RECORDED",
+        "BOOTSTRAP_TRANSITION"
+      ],
+      "runtime_session_policy": "must be absent"
+    },
+    "MAINTENANCE_UPDATE_EVENT": {
+      "owner": "M0.12 constrained by M0.3/M0.10/M0.11",
+      "allowed_event_types": [
+        "UPDATE_TRANSITION",
+        "PERSISTENCE_TRANSITION"
+      ],
+      "runtime_session_policy": "optional only when existing Core context is referenced"
+    },
+    "RECOVERY_EVENT": {
+      "owner": "M0.12 constrained by M0.3/M0.11",
+      "allowed_event_types": [
+        "RECOVERY_TRANSITION",
+        "PERSISTENCE_TRANSITION"
+      ],
+      "runtime_session_policy": "optional"
+    },
+    "CORE_CONTROL_EVENT": {
+      "owner": "M0.12 consuming M0.4/M0.8/M0.9/M0.10",
+      "allowed_event_types": [
+        "AUTHENTICATION_DECIDED",
+        "AUTHORIZATION_DECIDED",
+        "SECURITY_MUTATION_RECORDED",
+        "CONFIGURATION_CHANGED",
+        "LIVE_ACTIVATION_DECIDED",
+        "RISK_CONTROL_TRANSITION",
+        "ECONOMIC_CORRECTION_RECORDED",
+        "PERSISTENCE_TRANSITION"
+      ],
+      "runtime_session_policy": "required"
+    }
+  },
+  "non_m07_event_schema_registry": {
+    "AUTHENTICATION_DECIDED": {
+      "required_fields": [
+        "method",
+        "result_code"
+      ],
+      "nullable_fields": [],
+      "field_schemas": {
+        "method": {
+          "type": "enum",
+          "source": "identity_device_authentication_and_secrets.json#/registries/factors"
+        },
+        "result_code": {
+          "type": "safe_code",
+          "pattern": "^[A-Z][A-Z0-9_]{0,63}$",
+          "normalization": "NFC",
+          "max_length": 64
+        }
+      },
+      "additional_properties": false,
+      "forbidden_secret_scan": true,
+      "exact_category": "authentication"
+    },
+    "AUTHORIZATION_DECIDED": {
+      "required_fields": [
+        "operation_code",
+        "decision_code"
+      ],
+      "nullable_fields": [],
+      "field_schemas": {
+        "operation_code": {
+          "type": "safe_code",
+          "pattern": "^[A-Z][A-Z0-9_]{0,63}$",
+          "normalization": "NFC",
+          "max_length": 64
+        },
+        "decision_code": {
+          "type": "safe_code",
+          "pattern": "^[A-Z][A-Z0-9_]{0,63}$",
+          "normalization": "NFC",
+          "max_length": 64
+        }
+      },
+      "additional_properties": false,
+      "forbidden_secret_scan": true,
+      "exact_category": "authorization"
+    },
+    "SECURITY_MUTATION_RECORDED": {
+      "required_fields": [
+        "mutation_code",
+        "target_reference",
+        "revision"
+      ],
+      "nullable_fields": [],
+      "field_schemas": {
+        "mutation_code": {
+          "type": "safe_code",
+          "pattern": "^[A-Z][A-Z0-9_]{0,63}$",
+          "normalization": "NFC",
+          "max_length": 64
+        },
+        "target_reference": "canonical_id",
+        "revision": "positive_integer"
+      },
+      "additional_properties": false,
+      "forbidden_secret_scan": true,
+      "exact_category": "device_management"
+    },
+    "CONFIGURATION_CHANGED": {
+      "required_fields": [
+        "configuration_key_code",
+        "revision"
+      ],
+      "nullable_fields": [],
+      "field_schemas": {
+        "configuration_key_code": {
+          "type": "safe_code",
+          "pattern": "^[A-Z][A-Z0-9_]{0,63}$",
+          "normalization": "NFC",
+          "max_length": 64
+        },
+        "revision": "positive_integer"
+      },
+      "additional_properties": false,
+      "forbidden_secret_scan": true,
+      "exact_category": "configuration"
+    },
+    "LIVE_ACTIVATION_DECIDED": {
+      "required_fields": [
+        "decision_code"
+      ],
+      "nullable_fields": [],
+      "field_schemas": {
+        "decision_code": {
+          "type": "safe_code",
+          "pattern": "^[A-Z][A-Z0-9_]{0,63}$",
+          "normalization": "NFC",
+          "max_length": 64
+        }
+      },
+      "additional_properties": false,
+      "forbidden_secret_scan": true,
+      "exact_category": "live_activation"
+    },
+    "RISK_CONTROL_TRANSITION": {
+      "required_fields": [
+        "control_code",
+        "state_code"
+      ],
+      "nullable_fields": [],
+      "field_schemas": {
+        "control_code": {
+          "type": "safe_code",
+          "pattern": "^[A-Z][A-Z0-9_]{0,63}$",
+          "normalization": "NFC",
+          "max_length": 64
+        },
+        "state_code": {
+          "type": "enum",
+          "source": "risk_hierarchy_kill_switch_and_execution_lease.json#/kill_switch_contract/states"
+        }
+      },
+      "additional_properties": false,
+      "forbidden_secret_scan": true,
+      "exact_category": "risk"
+    },
+    "ECONOMIC_CORRECTION_RECORDED": {
+      "required_fields": [
+        "correction_code",
+        "source_fingerprint_sha256"
+      ],
+      "nullable_fields": [],
+      "field_schemas": {
+        "correction_code": {
+          "type": "safe_code",
+          "pattern": "^[A-Z][A-Z0-9_]{0,63}$",
+          "normalization": "NFC",
+          "max_length": 64
+        },
+        "source_fingerprint_sha256": "sha256_hex"
+      },
+      "additional_properties": false,
+      "forbidden_secret_scan": true,
+      "exact_category": "trading"
+    },
+    "PERSISTENCE_TRANSITION": {
+      "required_fields": [
+        "operation_code",
+        "first_sequence",
+        "last_sequence",
+        "checkpoint_fingerprint_sha256",
+        "retention_policy_version",
+        "result_code"
+      ],
+      "nullable_fields": [],
+      "field_schemas": {
+        "operation_code": {
+          "type": "safe_code",
+          "pattern": "^[A-Z][A-Z0-9_]{0,63}$",
+          "normalization": "NFC",
+          "max_length": 64
+        },
+        "first_sequence": {
+          "type": "positive_integer"
+        },
+        "last_sequence": {
+          "type": "positive_integer"
+        },
+        "checkpoint_fingerprint_sha256": {
+          "type": "sha256_hex"
+        },
+        "retention_policy_version": {
+          "type": "constant",
+          "value": "AUDIT_RETENTION_V1"
+        },
+        "result_code": {
+          "type": "safe_code",
+          "pattern": "^[A-Z][A-Z0-9_]{0,63}$",
+          "normalization": "NFC",
+          "max_length": 64
+        }
+      },
+      "additional_properties": false,
+      "forbidden_secret_scan": true,
+      "exact_category": "recovery"
+    },
+    "UPDATE_TRANSITION": {
+      "required_fields": [
+        "update_attempt_reference",
+        "phase_code",
+        "artifact_fingerprint_sha256"
+      ],
+      "nullable_fields": [],
+      "field_schemas": {
+        "update_attempt_reference": {
+          "type": "safe_code",
+          "pattern": "^[A-Z][A-Z0-9_]{0,63}$",
+          "normalization": "NFC",
+          "max_length": 64
+        },
+        "phase_code": {
+          "type": "enum",
+          "source": "audit_observability_alerts_and_updater.json#/canonical_vocabulary/update_phases"
+        },
+        "artifact_fingerprint_sha256": "sha256_hex"
+      },
+      "additional_properties": false,
+      "forbidden_secret_scan": true,
+      "exact_category": "update"
+    },
+    "BOOTSTRAP_TRANSITION": {
+      "required_fields": [
+        "step_code",
+        "result_code"
+      ],
+      "nullable_fields": [],
+      "field_schemas": {
+        "step_code": {
+          "type": "safe_code",
+          "pattern": "^[A-Z][A-Z0-9_]{0,63}$",
+          "normalization": "NFC",
+          "max_length": 64
+        },
+        "result_code": {
+          "type": "safe_code",
+          "pattern": "^[A-Z][A-Z0-9_]{0,63}$",
+          "normalization": "NFC",
+          "max_length": 64
+        }
+      },
+      "additional_properties": false,
+      "forbidden_secret_scan": true,
+      "exact_category": "security"
+    },
+    "RECOVERY_TRANSITION": {
+      "required_fields": [
+        "recovery_code",
+        "trusted_prefix_sequence"
+      ],
+      "nullable_fields": [],
+      "field_schemas": {
+        "recovery_code": {
+          "type": "safe_code",
+          "pattern": "^[A-Z][A-Z0-9_]{0,63}$",
+          "normalization": "NFC",
+          "max_length": 64
+        },
+        "trusted_prefix_sequence": "non_negative_integer"
+      },
+      "additional_properties": false,
+      "forbidden_secret_scan": true,
+      "exact_category": "recovery"
+    }
+  },
+  "outcomes": [
+    "INTENT",
+    "ACCEPTED",
+    "DENIED",
+    "COMPLETED",
+    "FAILED",
+    "RECOVERY_REQUIRED"
+  ],
+  "secret_policy": {
+    "forbidden_names": [
+      "password",
+      "pin",
+      "pin_verifier_secret",
+      "biometric_template",
+      "biometric_assertion",
+      "api_key",
+      "api_secret",
+      "access_token",
+      "refresh_token",
+      "credential_plaintext",
+      "bootstrap_secret",
+      "private_signing_key"
+    ],
+    "recursive_name_match": true,
+    "raw_exceptions_and_caller_blobs_forbidden": true,
+    "allowed_evidence": [
+      "canonical IDs",
+      "reference IDs",
+      "fingerprints",
+      "generation/revision",
+      "safe reason codes",
+      "algorithm/key IDs",
+      "boolean/result state"
+    ],
+    "rule": "encryption never permits secret material in AuditEvent"
+  },
+  "canonicalization": {
+    "reuse": "M0.7 and M0.11 canonical NFC/UTF-8 JSON semantics: recursively NFC-normalize strings and keys, reject duplicate/non-string keys, booleans-as-integers, floats and non-finite numbers, emit UTF-8 JSON with lexicographically sorted keys and no insignificant whitespace",
+    "content_domain_separator": "CryptoHunter/M0.12/AuditEventContent/v1\\x00",
+    "chain_domain_separator": "CryptoHunter/M0.12/AuditEventChain/v1\\x00",
+    "hash": "SHA-256 lowercase hexadecimal"
+  },
+  "ordering": {
+    "primary_domain": "device_installation_id",
+    "reason": "AuditEvent parent is DeviceInstallation and PRE_CORE/security/update events need no environment",
+    "sequence": "durably serialized positive integer; genesis=1; every new accepted event is prior+1; no process-local counter",
+    "environment": "optional event scope only",
+    "secondary_axes": [
+      "M0.7 per-order aggregate_version",
+      "M0.7 correlation_id/causation_id",
+      "M0.8 ledger ordering",
+      "occurred_at_utc observation time",
+      "M0.7 aggregate_version is independent from M0.12 sequence and may differ"
+    ],
+    "clock_rule": "timestamp regression is legal and cannot alter accepted sequence"
+  },
+  "integrity": {
+    "content_fingerprint": "SHA-256(domain separator || canonical JSON of every immutable event field excluding four proof fields)",
+    "genesis_previous_chain_fingerprint_sha256": "64 zero characters",
+    "chain_fingerprint": "SHA-256(chain domain separator || UTF-8 decimal sequence || 0x00 || previous chain fingerprint bytes-as-lowercase-hex || 0x00 || content fingerprint bytes-as-lowercase-hex)",
+    "proof_identity": "proof metadata is carried 1:1 by audit_event_id and has no separate durable identity",
+    "verification": "recompute content and chain; require exact sequence and predecessor; verify retained checkpoint anchor before suffix"
+  },
+  "append_protocol": {
+    "serializer_authority": "one durable compare-and-append authority per DeviceInstallation shared across PRE_CORE, CoreHost and authorized Bootstrapper handoff; implementations may differ but a Python/process lock is insufficient",
+    "new_append": "validate upstream binding, identity/parent, phase writer, closed schema/scope/secrets and fingerprints; reserve exactly tail+1 and predecessor; durably accept before success acknowledgement",
+    "same_id_same_content": "REPLAY idempotent success only when caller-supplied proof exact-matches stored original proof; return stored original proof; append zero records",
+    "same_id_different_content": "IDENTITY_CONFLICT fail closed",
+    "same_sequence_different_event": "SEQUENCE_CONFLICT fail closed",
+    "same_payload_different_id": "append as distinct identity; no similarity dedupe",
+    "immutability": "no accepted field may be updated; correction/resolution is a new causally referenced AuditEvent"
+  },
+  "required_transition_matrix": [
+    {
+      "transition_class": "authentication",
+      "writer_phase": "PRE_CORE or CORE_RUNTIME",
+      "audit_requirement": "AUDIT_REQUIRED",
+      "append_ordering": "decision evidence before acknowledgement",
+      "authority_owner": "M0.10 authority",
+      "failure_disposition": "NO_SUCCESS_ACKNOWLEDGEMENT; BLOCK_OR_RECOVERY_REQUIRED"
+    },
+    {
+      "transition_class": "authorization",
+      "writer_phase": "PRE_CORE or CORE_RUNTIME",
+      "audit_requirement": "AUDIT_REQUIRED",
+      "append_ordering": "decision evidence before acknowledgement",
+      "authority_owner": "M0.10 authority",
+      "failure_disposition": "NO_SUCCESS_ACKNOWLEDGEMENT; BLOCK_OR_RECOVERY_REQUIRED"
+    },
+    {
+      "transition_class": "device/security mutation",
+      "writer_phase": "PRE_CORE or CORE_RUNTIME",
+      "audit_requirement": "AUDIT_REQUIRED",
+      "append_ordering": "intent then completion; shared-boundary atomic where legal",
+      "authority_owner": "M0.10 authority",
+      "failure_disposition": "NO_SUCCESS_ACKNOWLEDGEMENT; BLOCK_OR_RECOVERY_REQUIRED"
+    },
+    {
+      "transition_class": "credential management",
+      "writer_phase": "PRE_CORE or CORE_RUNTIME",
+      "audit_requirement": "AUDIT_REQUIRED",
+      "append_ordering": "intent then completion; never secret material",
+      "authority_owner": "M0.10 authority",
+      "failure_disposition": "NO_SUCCESS_ACKNOWLEDGEMENT; BLOCK_OR_RECOVERY_REQUIRED"
+    },
+    {
+      "transition_class": "live activation decisions",
+      "writer_phase": "CORE_RUNTIME",
+      "audit_requirement": "AUDIT_REQUIRED",
+      "append_ordering": "decision before acknowledgement",
+      "authority_owner": "M0.4/CoreHost authority",
+      "failure_disposition": "NO_SUCCESS_ACKNOWLEDGEMENT; BLOCK_OR_RECOVERY_REQUIRED"
+    },
+    {
+      "transition_class": "configuration changes",
+      "writer_phase": "CORE_RUNTIME",
+      "audit_requirement": "AUDIT_REQUIRED",
+      "append_ordering": "intent then completion",
+      "authority_owner": "configuration authority",
+      "failure_disposition": "NO_SUCCESS_ACKNOWLEDGEMENT; BLOCK_OR_RECOVERY_REQUIRED"
+    },
+    {
+      "transition_class": "execution/order/fill",
+      "writer_phase": "CORE_RUNTIME",
+      "audit_requirement": "AUDIT_REQUIRED",
+      "append_ordering": "M0.7 fact and audit proof in legal shared boundary or pending recovery",
+      "authority_owner": "M0.7/CoreHost authority",
+      "failure_disposition": "NO_SUCCESS_ACKNOWLEDGEMENT; BLOCK_OR_RECOVERY_REQUIRED"
+    },
+    {
+      "transition_class": "risk/kill switch/lease",
+      "writer_phase": "CORE_RUNTIME",
+      "audit_requirement": "AUDIT_REQUIRED",
+      "append_ordering": "decision/transition evidence before acknowledgement",
+      "authority_owner": "M0.9/CoreHost authority",
+      "failure_disposition": "NO_SUCCESS_ACKNOWLEDGEMENT; BLOCK_OR_RECOVERY_REQUIRED"
+    },
+    {
+      "transition_class": "economic/ledger correction",
+      "writer_phase": "CORE_RUNTIME",
+      "audit_requirement": "AUDIT_REQUIRED",
+      "append_ordering": "M0.8 fact and audit proof in legal shared boundary or pending recovery",
+      "authority_owner": "M0.8/CoreHost authority",
+      "failure_disposition": "NO_SUCCESS_ACKNOWLEDGEMENT; BLOCK_OR_RECOVERY_REQUIRED"
+    },
+    {
+      "transition_class": "migration",
+      "writer_phase": "MAINTENANCE_UPDATE_RECOVERY",
+      "audit_requirement": "AUDIT_REQUIRED",
+      "append_ordering": "intent before; completion after verified commit",
+      "authority_owner": "M0.11 migration authority",
+      "failure_disposition": "NO_SUCCESS_ACKNOWLEDGEMENT; BLOCK_OR_RECOVERY_REQUIRED"
+    },
+    {
+      "transition_class": "backup/restore/recovery",
+      "writer_phase": "MAINTENANCE_UPDATE_RECOVERY",
+      "audit_requirement": "AUDIT_REQUIRED",
+      "append_ordering": "request/denial/acceptance before action; completion after verification",
+      "authority_owner": "M0.11 plus M0.3 protected freshness authority",
+      "failure_disposition": "NO_SUCCESS_ACKNOWLEDGEMENT; BLOCK_OR_RECOVERY_REQUIRED"
+    },
+    {
+      "transition_class": "update authorization/install/rollback",
+      "writer_phase": "MAINTENANCE_UPDATE_RECOVERY",
+      "audit_requirement": "AUDIT_REQUIRED",
+      "append_ordering": "authorization/intent before; completion after verification",
+      "authority_owner": "M0.3 authorized Bootstrapper handoff",
+      "failure_disposition": "NO_SUCCESS_ACKNOWLEDGEMENT; BLOCK_OR_RECOVERY_REQUIRED"
+    },
+    {
+      "transition_class": "bootstrap/setup",
+      "writer_phase": "PRE_CORE",
+      "audit_requirement": "AUDIT_REQUIRED",
+      "append_ordering": "decision evidence before acknowledgement",
+      "authority_owner": "M0.3 external provisioning/M0.10 authority",
+      "failure_disposition": "NO_SUCCESS_ACKNOWLEDGEMENT; BLOCK_OR_RECOVERY_REQUIRED"
+    }
+  ],
+  "non_audit_examples": [
+    "debug log line",
+    "metric sample",
+    "trace span",
+    "periodic successful health probe",
+    "UI notification delivery"
+  ],
+  "failure_and_recovery": {
+    "append_before_transition_fails": "transition does not execute and is not acknowledged",
+    "transition_fails_after_intent": "append FAILED outcome as a new event; if unavailable retain recovery-required state and no success",
+    "transition_commits_completion_append_fails": "transition remains unacknowledged; affected capability fails closed; durable recovery-required condition must be established at earliest legal append point",
+    "crash_between": "on restart verify trusted prefix and reconcile authoritative state; append RECOVERY_REQUIRED then completion/failure; never infer missing success",
+    "atomicity": "only claim atomicity when mutation and journal share a legal durable transaction; otherwise explicit PENDING/UNACKNOWLEDGED/RECOVERY_REQUIRED protocol",
+    "clean_prefix_recovery": "resume only after full prefix verification and authoritative-state reconciliation"
+  },
+  "physical_carrier": {
+    "decision": "OPEN_FOR_M1_IMPLEMENTATION",
+    "audit_result": "M0.11 StateStore v2 registry has no standalone AuditEvent representation; existing representations do not legally carry the complete journal; frozen M0.11 neither specifies nor authorizes a concrete external carrier",
+    "contract_scope": "M0.12 closes the implementation-neutral logical journal only; physical integration requires a future architecture decision without mutating M0.11",
+    "forbidden": [
+      "add AuditEvent to PERSISTENCE_RECORD_REGISTRY",
+      "StateStore schema v3",
+      "audit_events table",
+      "select a storage vendor"
+    ],
+    "blocker": "Durable deployment cannot claim canonical audit readiness until a physical carrier satisfying this contract is architecture-approved and implemented"
+  },
+  "backup_restore": {
+    "independence": "StateStore backup/restore never establishes audit authority and never erases, truncates, resurrects or rolls back newer journal events",
+    "backup": "capture journal version, DeviceInstallation domain, sealed checkpoint/tail proof and StateStore binding; backup is evidence candidate only",
+    "restore": "compare restored checkpoint with current journal; current newer valid extension survives; equal prefix is allowed; divergent/forked/unknown prefix fails closed",
+    "bootstrap_events": [
+      "RESTORE_REQUESTED",
+      "RESTORE_DENIED",
+      "RESTORE_ACCEPTED",
+      "RESTORE_COMPLETED",
+      "RECOVERY_REQUIRED",
+      "RECOVERY_COMPLETED"
+    ],
+    "bootstrap_rule": "request/denial/acceptance append at maintenance authority before StateStore replacement; completion after restored StateStore verification; journal remains independently appendable so no restore/audit cycle"
+  },
+  "retention": {
+    "policy_owner": "versioned protected product policy accepted through authorized configuration/update path; UI/operator cannot directly shorten",
+    "duration_rule": "deployment durations remain open; no arbitrary calendar duration is asserted",
+    "retroactivity": "new policy applies prospectively; it may extend existing minima but cannot retroactively shorten an already accepted event minimum",
+    "classes": {
+      "SHORT_OPERATIONAL": "bounded non-security runtime evidence; pruning allowed after policy minimum",
+      "PRODUCT_HISTORY": "configuration/licensing/device history; pruning only by sealed segments",
+      "SECURITY_HISTORY": "authentication/authorization/credential/security history; pruning only by sealed segments",
+      "ECONOMIC_HISTORY": "trading/risk/ledger history; pruning only by sealed segments",
+      "RELEASE_HISTORY": "migration/recovery/update/bootstrap history; pruning only by sealed segments"
+    },
+    "category_matrix": [
+      {
+        "category": "authentication",
+        "retention_class": "SECURITY_HISTORY",
+        "minimum_durability": "DURABLE_APPEND_ONLY_UNTIL_VERSIONED_POLICY_MINIMUM_AND_VALID_SEAL",
+        "pruning_allowed": true,
+        "export_allowed": true,
+        "operator_or_ui_may_shorten": false
+      },
+      {
+        "category": "authorization",
+        "retention_class": "SECURITY_HISTORY",
+        "minimum_durability": "DURABLE_APPEND_ONLY_UNTIL_VERSIONED_POLICY_MINIMUM_AND_VALID_SEAL",
+        "pruning_allowed": true,
+        "export_allowed": true,
+        "operator_or_ui_may_shorten": false
+      },
+      {
+        "category": "configuration",
+        "retention_class": "PRODUCT_HISTORY",
+        "minimum_durability": "DURABLE_APPEND_ONLY_UNTIL_VERSIONED_POLICY_MINIMUM_AND_VALID_SEAL",
+        "pruning_allowed": true,
+        "export_allowed": true,
+        "operator_or_ui_may_shorten": false
+      },
+      {
+        "category": "credential_management",
+        "retention_class": "SECURITY_HISTORY",
+        "minimum_durability": "DURABLE_APPEND_ONLY_UNTIL_VERSIONED_POLICY_MINIMUM_AND_VALID_SEAL",
+        "pruning_allowed": true,
+        "export_allowed": true,
+        "operator_or_ui_may_shorten": false
+      },
+      {
+        "category": "device_management",
+        "retention_class": "SECURITY_HISTORY",
+        "minimum_durability": "DURABLE_APPEND_ONLY_UNTIL_VERSIONED_POLICY_MINIMUM_AND_VALID_SEAL",
+        "pruning_allowed": true,
+        "export_allowed": true,
+        "operator_or_ui_may_shorten": false
+      },
+      {
+        "category": "licensing",
+        "retention_class": "PRODUCT_HISTORY",
+        "minimum_durability": "DURABLE_APPEND_ONLY_UNTIL_VERSIONED_POLICY_MINIMUM_AND_VALID_SEAL",
+        "pruning_allowed": true,
+        "export_allowed": true,
+        "operator_or_ui_may_shorten": false
+      },
+      {
+        "category": "live_activation",
+        "retention_class": "SECURITY_HISTORY",
+        "minimum_durability": "DURABLE_APPEND_ONLY_UNTIL_VERSIONED_POLICY_MINIMUM_AND_VALID_SEAL",
+        "pruning_allowed": true,
+        "export_allowed": true,
+        "operator_or_ui_may_shorten": false
+      },
+      {
+        "category": "runtime",
+        "retention_class": "SHORT_OPERATIONAL",
+        "minimum_durability": "DURABLE_APPEND_ONLY_UNTIL_VERSIONED_POLICY_MINIMUM_AND_VALID_SEAL",
+        "pruning_allowed": true,
+        "export_allowed": true,
+        "operator_or_ui_may_shorten": false
+      },
+      {
+        "category": "trading",
+        "retention_class": "ECONOMIC_HISTORY",
+        "minimum_durability": "DURABLE_APPEND_ONLY_UNTIL_VERSIONED_POLICY_MINIMUM_AND_VALID_SEAL",
+        "pruning_allowed": true,
+        "export_allowed": true,
+        "operator_or_ui_may_shorten": false
+      },
+      {
+        "category": "risk",
+        "retention_class": "ECONOMIC_HISTORY",
+        "minimum_durability": "DURABLE_APPEND_ONLY_UNTIL_VERSIONED_POLICY_MINIMUM_AND_VALID_SEAL",
+        "pruning_allowed": true,
+        "export_allowed": true,
+        "operator_or_ui_may_shorten": false
+      },
+      {
+        "category": "recovery",
+        "retention_class": "RELEASE_HISTORY",
+        "minimum_durability": "DURABLE_APPEND_ONLY_UNTIL_VERSIONED_POLICY_MINIMUM_AND_VALID_SEAL",
+        "pruning_allowed": true,
+        "export_allowed": true,
+        "operator_or_ui_may_shorten": false
+      },
+      {
+        "category": "update",
+        "retention_class": "RELEASE_HISTORY",
+        "minimum_durability": "DURABLE_APPEND_ONLY_UNTIL_VERSIONED_POLICY_MINIMUM_AND_VALID_SEAL",
+        "pruning_allowed": true,
+        "export_allowed": true,
+        "operator_or_ui_may_shorten": false
+      },
+      {
+        "category": "security",
+        "retention_class": "SECURITY_HISTORY",
+        "minimum_durability": "DURABLE_APPEND_ONLY_UNTIL_VERSIONED_POLICY_MINIMUM_AND_VALID_SEAL",
+        "pruning_allowed": true,
+        "export_allowed": true,
+        "operator_or_ui_may_shorten": false
+      }
+    ],
+    "export": "allowed only as integrity-verifiable secret-redacted evidence; export never deletes authority",
+    "policy_version": "AUDIT_RETENTION_V1"
+  },
+  "pruning": {
+    "rule": "never row/time cutoff deletion",
+    "sealed_checkpoint": {
+      "fields": [
+        "device_installation_id",
+        "first_sequence",
+        "last_sequence",
+        "predecessor_chain_fingerprint_sha256",
+        "terminal_chain_fingerprint_sha256",
+        "segment_content_fingerprint_sha256",
+        "journal_version",
+        "retention_policy_version",
+        "compact_replay_fingerprint_sha256"
+      ],
+      "identity": "no new domain ID; deterministic proof for a contiguous sequence range",
+      "requirements": [
+        "verify full segment before seal",
+        "durably retain checkpoint before removing event bodies",
+        "preserve predecessor and terminal anchors",
+        "next retained event must bind terminal anchor",
+        "pruning itself emits audit evidence"
+      ],
+      "field_contracts": {
+        "device_installation_id": "canonical M0.2 DeviceInstallation ID; exact journal and every body domain",
+        "first_sequence": "positive non-bool integer; previous checkpoint last+1 or genesis 1",
+        "last_sequence": "positive non-bool integer >= first_sequence; exact compact/body count",
+        "predecessor_chain_fingerprint_sha256": "64 lowercase hex; zero at genesis, otherwise previous checkpoint terminal",
+        "terminal_chain_fingerprint_sha256": "64 lowercase hex; exact last compact/body chain proof",
+        "segment_content_fingerprint_sha256": "64 lowercase hex over canonical full bodies, established before deletion and retained as historical seal",
+        "journal_version": "exact audit_journal_contract.version; unknown versions fail closed",
+        "retention_policy_version": "exact audit_journal_contract.retention.policy_version authorizing this prune",
+        "compact_replay_fingerprint_sha256": "64 lowercase hex over ordered compact replay metadata for this range"
+      }
+    },
+    "executable_semantics": "checkpoint chain validates every declared field; seal only fully validated contiguous active bodies; bind compact replay metadata; remove bodies from all full-body containers; require next retained PERSISTENCE_TRANSITION audit evidence; active suffix verification starts from latest retained terminal anchor",
+    "successive_segment_model": {
+      "model": "CHECKPOINT_CHAIN",
+      "first": "genesis segment starts at 1 with zero predecessor",
+      "next": "first_sequence equals previous checkpoint last_sequence + 1 and predecessor equals previous terminal fingerprint",
+      "body_requirement": "each new segment uses only current active bodies plus prior retained checkpoint anchor; deleted earlier bodies are never required",
+      "retained_authority": [
+        "ordered checkpoint chain",
+        "compact replay metadata keyed 1:1 by audit_event_id",
+        "active suffix"
+      ],
+      "overlap_or_gap": "fail closed"
+    },
+    "compact_replay_metadata": {
+      "fields": [
+        "audit_event_id",
+        "content_fingerprint_sha256",
+        "sequence",
+        "previous_chain_fingerprint_sha256",
+        "chain_fingerprint_sha256",
+        "pruning_evidence_binding"
+      ],
+      "identity": "no new domain identity; mapping key and audit_event_id are the existing canonical AuditEvent identity",
+      "forbidden": [
+        "safe_payload",
+        "m07_event_envelope",
+        "any other full AuditEvent field"
+      ],
+      "integrity": "each segment checkpoint compact_replay_fingerprint_sha256 is SHA-256 of canonical ordered compact metadata; sequence/predecessor/chain continuity is independently recomputed",
+      "pruning_evidence_binding": {
+        "ordinary_event": null,
+        "AUDIT_SEGMENT_PRUNED": {
+          "fields": [
+            "operation_code",
+            "first_sequence",
+            "last_sequence",
+            "checkpoint_fingerprint_sha256",
+            "retention_policy_version",
+            "result_code"
+          ],
+          "source": "exact validated safe_payload subset; no actor/runtime/full payload retained"
+        },
+        "identity": "representation metadata under existing audit_event_id; no ID or prefix",
+        "integrity": "included in checkpoint compact_replay_fingerprint_sha256",
+        "validation": "None or exact closed six-field object; positive non-bool range, lowercase SHA-256 checkpoint fingerprint, accepted policy constant and exact operation/result codes"
+      },
+      "index_invariants": [
+        "mapping key equals contained audit_event_id",
+        "key is canonical M0.2 AuditEvent ID",
+        "exact compact field set",
+        "active and compact indexes are disjoint",
+        "all retained AuditEvent IDs are globally unique",
+        "every compact record belongs to exactly one committed checkpoint range",
+        "no compact records when checkpoint chain is empty",
+        "compact sequences are globally unique",
+        "compact records equal the disjoint union authenticated by ordered checkpoint ranges"
+      ]
+    },
+    "audit_evidence": {
+      "event_type": "PERSISTENCE_TRANSITION",
+      "payload_family": "MAINTENANCE_UPDATE_EVENT",
+      "exact_category": "recovery",
+      "operation_codes": [
+        "AUDIT_SEGMENT_PRUNED"
+      ],
+      "ordering": [
+        "fully validate eligible segment bodies",
+        "durably retain checkpoint and compact replay metadata",
+        "remove eligible full bodies from every full-body container",
+        "append AUDIT_SEGMENT_PRUNED evidence as the next active AuditEvent; it is ineligible for the operation it describes"
+      ],
+      "payload_fields": [
+        "operation_code",
+        "first_sequence",
+        "last_sequence",
+        "checkpoint_fingerprint_sha256",
+        "retention_policy_version",
+        "result_code"
+      ],
+      "absence": "until required evidence append succeeds journal is RECOVERY_REQUIRED and ordinary append/success acknowledgement is blocked",
+      "uniqueness": "exactly one successful evidence AuditEvent per checkpoint fingerprint/range; same audit_event_id is replay, different audit_event_id is ambiguous conflict",
+      "retained_verification": "every committed checkpoint must resolve exactly one active full or compact pruning_evidence_binding with exact canonical checkpoint fingerprint, range, policy and COMPLETED result"
+    },
+    "partial_failure": {
+      "checkpoint_durable_body_removal_failed": "retain checkpoint plus bodies, mark RECOVERY_REQUIRED, do not claim PRUNED; retry/reconcile idempotently",
+      "body_removal_succeeded_evidence_append_failed": "retain checkpoint and compact index, mark RECOVERY_REQUIRED, block ordinary append and pruning success acknowledgement until exact pruning evidence is appended",
+      "silent_success_forbidden": true,
+      "retry": "exact pending checkpoint retry is idempotently eligible; different checkpoint/range/hash is rejected; no manual recovery reset"
+    },
+    "pending_recovery_state_machine": {
+      "NONE": "no incomplete pruning; ordinary append, restore and next prune may proceed",
+      "CHECKPOINT_DURABLE_BODIES_RETAINED": "pending descriptor retains exact checkpoint/fingerprint/range/policy/expected evidence plus expected next position; bodies and active_by_id remain, committed chain and compact index do not advance; only exact checkpoint retry may proceed",
+      "BODIES_REMOVED_EVIDENCE_PENDING": "checkpoint promoted, compact metadata retained and bodies removed; only exact expected PERSISTENCE_TRANSITION at exact next sequence/predecessor may append",
+      "recovery_required": "derived as pending_pruning != null; no public/manual boolean setter",
+      "completion": "exact evidence APPENDED or exact same-ID REPLAY after durable append clears pending; unrelated evidence never clears it",
+      "restore": "any pending state blocks restore and cannot be used as completed anchor",
+      "next_prune": "blocked until NONE"
+    },
+    "expected_evidence_descriptor": {
+      "fields": [
+        "checkpoint",
+        "checkpoint_fingerprint_sha256",
+        "first_sequence",
+        "last_sequence",
+        "retention_policy_version",
+        "expected_payload",
+        "expected_sequence",
+        "expected_predecessor",
+        "phase"
+      ],
+      "identity": "no durable domain ID",
+      "payload_derivation": "AUDIT_SEGMENT_PRUNED + exact checkpoint range + SHA-256(canonical checkpoint) + checkpoint policy + COMPLETED"
+    },
+    "checkpoint_evidence_graph": {
+      "checkpoint_fingerprint": "SHA-256 over canonical NFC/UTF-8 sorted-key JSON of the complete checkpoint",
+      "required_relation": "each committed checkpoint resolves exactly one active full evidence or retained compact pruning binding whose payload equals deterministic expected payload",
+      "latest": "validate full active AuditEvent, journal position/chain and exact payload",
+      "older": "when full evidence is later pruned, its minimal binding remains inside compact metadata and compact segment fingerprint",
+      "mutation": "changing checkpoint including segment_content_fingerprint changes checkpoint fingerprint and breaks retained evidence relation",
+      "missing_or_duplicate": "fail closed / RECOVERY_REQUIRED",
+      "bijection": "completed state requires exact 1:1 relation: every successful evidence maps exactly one checkpoint and every checkpoint maps exactly one evidence",
+      "no_orphans": "active or compact successful pruning evidence matching zero or multiple expected checkpoint payloads fails closed",
+      "pending_latest_exception": "only a real BODIES_REMOVED_EVIDENCE_PENDING descriptor equal to the latest committed checkpoint may permit that exact latest relation to have 0 or 1 matches; every prior relation remains exactly 1 and all actual evidence must map exactly once"
+    }
+  },
+  "corruption": {
+    "conditions": [
+      "invalid content fingerprint",
+      "broken chain",
+      "duplicate sequence",
+      "unknown predecessor",
+      "sequence gap",
+      "truncated active segment",
+      "malformed canonical event",
+      "unsupported journal version",
+      "fork or divergent restore",
+      "identity-index key mismatch",
+      "active/index divergence",
+      "compact/index divergence",
+      "duplicate AuditEvent identity",
+      "checkpoint-evidence graph missing or ambiguous",
+      "active/compact identity overlap",
+      "orphan compact record outside checkpoint coverage",
+      "duplicate compact append sequence",
+      "compact history without checkpoint",
+      "orphan successful pruning evidence",
+      "pending latest-evidence exception without exact pending descriptor"
+    ],
+    "disposition": "fail closed affected privileged/safety and audit authority operations; preserve all evidence and surface recovery condition; never silently delete orphan metadata or repair, rebuild or rekey evidence/indexes"
+  },
+  "version": "cryptohunter.audit-journal.v1",
+  "upstream_executable_bindings": {
+    "M02": {
+      "entities": {
+        "AuditEvent": {
+          "id_field": "audit_event_id",
+          "id_prefix": "evt"
+        },
+        "DeviceInstallation": {
+          "id_field": "device_installation_id",
+          "id_prefix": "dev"
+        },
+        "RuntimeSession": {
+          "id_field": "runtime_session_id",
+          "id_prefix": "run"
+        },
+        "OperatorIdentity": {
+          "id_field": "operator_id",
+          "id_prefix": "op"
+        },
+        "Workspace": {
+          "id_field": "workspace_id",
+          "id_prefix": "ws"
+        },
+        "ExchangeAccount": {
+          "id_field": "exchange_account_id",
+          "id_prefix": "xacc"
+        },
+        "Order": {
+          "id_field": "order_id",
+          "id_prefix": "ord"
+        },
+        "LedgerEntry": {
+          "id_field": "ledger_entry_id",
+          "id_prefix": "led"
+        }
+      },
+      "audit_event": {
+        "id_prefix": "evt",
+        "parent": "DeviceInstallation",
+        "persistence": true,
+        "audit_event_categories": [
+          "authentication",
+          "authorization",
+          "configuration",
+          "credential_management",
+          "device_management",
+          "licensing",
+          "live_activation",
+          "runtime",
+          "trading",
+          "risk",
+          "recovery",
+          "update",
+          "security"
+        ],
+        "optional_references": [
+          "runtime_session_id",
+          "operator_id",
+          "workspace_id",
+          "exchange_account_id",
+          "order_id",
+          "ledger_entry_id"
+        ],
+        "relationships": [
+          [
+            "AuditEvent",
+            "LedgerEntry",
+            "optional_reference"
+          ],
+          [
+            "DeviceInstallation",
+            "AuditEvent",
+            "one_to_many"
+          ],
+          [
+            "RuntimeSession",
+            "AuditEvent",
+            "optional_runtime_reference"
+          ]
+        ]
+      },
+      "identifier_policy": {
+        "persistent_id_format": "<prefix>_<uuidv7>",
+        "regex": "^[a-z][a-z0-9]*_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+        "uuid_version": "uuidv7",
+        "rules": [
+          "lowercase",
+          "stable unique entity prefix",
+          "no usernames/exchanges/symbols/secrets",
+          "immutable after rename",
+          "display names stored separately",
+          "safe for JSON SQLite Protobuf logs API",
+          "legacy strings migrated by explicit mapping",
+          "never derive durable ID from name"
+        ]
+      }
+    },
+    "M03": {
+      "bootstrapper_mode": "transport_and_discovery_only",
+      "audit_boundary": {
+        "uses": "canonical M0.2 AuditEvent; M0.7 causation/correlation when available",
+        "ordering": "RuntimeSession is created after process-lock ownership and may exist before bootstrap validation; no artificial pre-RuntimeSession event requirement",
+        "allowed": [
+          "account_id",
+          "device_installation_id",
+          "intended_operator_id",
+          "claim/reference fingerprint",
+          "bootstrap generation",
+          "reason code",
+          "causation_id",
+          "correlation_id"
+        ],
+        "forbidden": [
+          "raw bootstrap secret",
+          "PIN",
+          "biometric material",
+          "API credentials",
+          "protected provisioning payload"
+        ]
+      },
+      "maintenance_authorization": {
+        "may_consume_maintenance_authorization": true,
+        "may_apply_runtime_mutations": false,
+        "may_request_runtime_mutations": false
+      }
+    },
+    "M04": {
+      "execution_environments": [
+        "PAPER",
+        "TESTNET",
+        "LIVE"
+      ]
+    },
+    "M07": {
+      "envelope_schema": {
+        "fields": [
+          "audit_event_id",
+          "event_type",
+          "order_id",
+          "aggregate_version",
+          "correlation_id",
+          "causation_id",
+          "command_id",
+          "environment",
+          "workspace_id",
+          "portfolio_id",
+          "exchange_account_id",
+          "exchange_id",
+          "instrument_id",
+          "execution_route_id",
+          "occurred_at_utc",
+          "safe_payload",
+          "event_fingerprint_sha256"
+        ],
+        "nullable_fields": [
+          "causation_id",
+          "command_id"
+        ],
+        "field_schemas": {
+          "audit_event_id": {
+            "type": "id",
+            "prefix": "evt"
+          },
+          "event_type": {
+            "type": "enum",
+            "registry": "event_types"
+          },
+          "order_id": {
+            "type": "id",
+            "prefix": "ord"
+          },
+          "aggregate_version": {
+            "type": "positive_integer"
+          },
+          "correlation_id": {
+            "type": "id",
+            "prefix": "corr"
+          },
+          "causation_id": {
+            "type": "id",
+            "prefix": "cause"
+          },
+          "command_id": {
+            "type": "id",
+            "prefix": "cmd"
+          },
+          "environment": {
+            "type": "enum",
+            "values": [
+              "PAPER",
+              "TESTNET",
+              "LIVE"
+            ]
+          },
+          "workspace_id": {
+            "type": "id",
+            "prefix": "ws"
+          },
+          "portfolio_id": {
+            "type": "id",
+            "prefix": "port"
+          },
+          "exchange_account_id": {
+            "type": "id",
+            "prefix": "xacc"
+          },
+          "exchange_id": {
+            "type": "non_empty_string"
+          },
+          "instrument_id": {
+            "type": "id",
+            "prefix": "instr"
+          },
+          "execution_route_id": {
+            "type": "id",
+            "prefix": "xroute"
+          },
+          "occurred_at_utc": {
+            "type": "timestamp"
+          },
+          "safe_payload": {
+            "type": "event_safe_payload"
+          },
+          "event_fingerprint_sha256": {
+            "type": "sha256_hex"
+          }
+        },
+        "fingerprint_excluded_fields": [
+          "event_fingerprint_sha256"
+        ],
+        "scope_fields": [
+          "environment",
+          "workspace_id",
+          "portfolio_id",
+          "exchange_account_id",
+          "exchange_id",
+          "instrument_id",
+          "execution_route_id"
+        ]
+      },
+      "event_types": [
+        "ORDER_PLANNED",
+        "ORDER_DISPATCHED",
+        "ORDER_ACKNOWLEDGED",
+        "ORDER_REJECTED",
+        "ORDER_PARTIALLY_FILLED",
+        "ORDER_FILLED",
+        "ORDER_CANCEL_REQUESTED",
+        "ORDER_CANCEL_CONFIRMED",
+        "ORDER_CANCEL_REJECTED",
+        "ORDER_REPLACE_REQUESTED",
+        "ORDER_REPLACE_CONFIRMED",
+        "ORDER_REPLACE_REJECTED",
+        "ORDER_EXPIRED",
+        "ORDER_EXTERNAL_OUTCOME_UNKNOWN",
+        "ORDER_RECONCILIATION_OBSERVED",
+        "COMMAND_ACCEPTED",
+        "COMMAND_REJECTED",
+        "COMMAND_REPLAYED",
+        "IDEMPOTENCY_CONFLICT",
+        "EVENT_REPLAY_IGNORED",
+        "EVENT_REJECTED"
+      ],
+      "event_schema_registry": {
+        "ORDER_PLANNED": {
+          "safe_payload_fields": [
+            "side",
+            "order_type",
+            "quantity"
+          ],
+          "field_schemas": {
+            "side": {
+              "type": "string"
+            },
+            "order_type": {
+              "type": "string"
+            },
+            "quantity": {
+              "type": "decimal"
+            }
+          },
+          "nullable_fields": [],
+          "required_scope": [
+            "environment",
+            "workspace_id",
+            "portfolio_id",
+            "exchange_account_id",
+            "exchange_id",
+            "instrument_id",
+            "execution_route_id"
+          ]
+        },
+        "ORDER_DISPATCHED": {
+          "safe_payload_fields": [
+            "client_order_id"
+          ],
+          "field_schemas": {
+            "client_order_id": {
+              "type": "string"
+            }
+          },
+          "nullable_fields": [],
+          "required_scope": [
+            "environment",
+            "workspace_id",
+            "portfolio_id",
+            "exchange_account_id",
+            "exchange_id",
+            "instrument_id",
+            "execution_route_id"
+          ]
+        },
+        "ORDER_ACKNOWLEDGED": {
+          "safe_payload_fields": [
+            "venue_order_id"
+          ],
+          "field_schemas": {
+            "venue_order_id": {
+              "type": "string"
+            }
+          },
+          "nullable_fields": [],
+          "required_scope": [
+            "environment",
+            "workspace_id",
+            "portfolio_id",
+            "exchange_account_id",
+            "exchange_id",
+            "instrument_id",
+            "execution_route_id"
+          ]
+        },
+        "ORDER_REJECTED": {
+          "safe_payload_fields": [
+            "reason_code"
+          ],
+          "field_schemas": {
+            "reason_code": {
+              "type": "string"
+            }
+          },
+          "nullable_fields": [],
+          "required_scope": [
+            "environment",
+            "workspace_id",
+            "portfolio_id",
+            "exchange_account_id",
+            "exchange_id",
+            "instrument_id",
+            "execution_route_id"
+          ]
+        },
+        "ORDER_PARTIALLY_FILLED": {
+          "safe_payload_fields": [
+            "fill_id",
+            "venue_trade_id",
+            "cumulative_executed_quantity"
+          ],
+          "field_schemas": {
+            "fill_id": {
+              "type": "id",
+              "prefix": "fill"
+            },
+            "venue_trade_id": {
+              "type": "string"
+            },
+            "cumulative_executed_quantity": {
+              "type": "decimal"
+            }
+          },
+          "nullable_fields": [],
+          "required_scope": [
+            "environment",
+            "workspace_id",
+            "portfolio_id",
+            "exchange_account_id",
+            "exchange_id",
+            "instrument_id",
+            "execution_route_id"
+          ]
+        },
+        "ORDER_FILLED": {
+          "safe_payload_fields": [
+            "fill_id",
+            "venue_trade_id",
+            "cumulative_executed_quantity"
+          ],
+          "field_schemas": {
+            "fill_id": {
+              "type": "id",
+              "prefix": "fill"
+            },
+            "venue_trade_id": {
+              "type": "string"
+            },
+            "cumulative_executed_quantity": {
+              "type": "decimal"
+            }
+          },
+          "nullable_fields": [],
+          "required_scope": [
+            "environment",
+            "workspace_id",
+            "portfolio_id",
+            "exchange_account_id",
+            "exchange_id",
+            "instrument_id",
+            "execution_route_id"
+          ]
+        },
+        "ORDER_CANCEL_REQUESTED": {
+          "safe_payload_fields": [
+            "reason_code"
+          ],
+          "field_schemas": {
+            "reason_code": {
+              "type": "string"
+            }
+          },
+          "nullable_fields": [],
+          "required_scope": [
+            "environment",
+            "workspace_id",
+            "portfolio_id",
+            "exchange_account_id",
+            "exchange_id",
+            "instrument_id",
+            "execution_route_id"
+          ]
+        },
+        "ORDER_CANCEL_CONFIRMED": {
+          "safe_payload_fields": [
+            "venue_order_id"
+          ],
+          "field_schemas": {
+            "venue_order_id": {
+              "type": "string"
+            }
+          },
+          "nullable_fields": [],
+          "required_scope": [
+            "environment",
+            "workspace_id",
+            "portfolio_id",
+            "exchange_account_id",
+            "exchange_id",
+            "instrument_id",
+            "execution_route_id"
+          ]
+        },
+        "ORDER_CANCEL_REJECTED": {
+          "safe_payload_fields": [
+            "reason_code"
+          ],
+          "field_schemas": {
+            "reason_code": {
+              "type": "string"
+            }
+          },
+          "nullable_fields": [],
+          "required_scope": [
+            "environment",
+            "workspace_id",
+            "portfolio_id",
+            "exchange_account_id",
+            "exchange_id",
+            "instrument_id",
+            "execution_route_id"
+          ]
+        },
+        "ORDER_REPLACE_REQUESTED": {
+          "safe_payload_fields": [
+            "replacement_order_id"
+          ],
+          "field_schemas": {
+            "replacement_order_id": {
+              "type": "id",
+              "prefix": "ord"
+            }
+          },
+          "nullable_fields": [],
+          "required_scope": [
+            "environment",
+            "workspace_id",
+            "portfolio_id",
+            "exchange_account_id",
+            "exchange_id",
+            "instrument_id",
+            "execution_route_id"
+          ]
+        },
+        "ORDER_REPLACE_CONFIRMED": {
+          "safe_payload_fields": [
+            "replacement_order_id",
+            "venue_order_id"
+          ],
+          "field_schemas": {
+            "replacement_order_id": {
+              "type": "id",
+              "prefix": "ord"
+            },
+            "venue_order_id": {
+              "type": "string"
+            }
+          },
+          "nullable_fields": [],
+          "required_scope": [
+            "environment",
+            "workspace_id",
+            "portfolio_id",
+            "exchange_account_id",
+            "exchange_id",
+            "instrument_id",
+            "execution_route_id"
+          ]
+        },
+        "ORDER_REPLACE_REJECTED": {
+          "safe_payload_fields": [
+            "reason_code"
+          ],
+          "field_schemas": {
+            "reason_code": {
+              "type": "string"
+            }
+          },
+          "nullable_fields": [],
+          "required_scope": [
+            "environment",
+            "workspace_id",
+            "portfolio_id",
+            "exchange_account_id",
+            "exchange_id",
+            "instrument_id",
+            "execution_route_id"
+          ]
+        },
+        "ORDER_EXPIRED": {
+          "safe_payload_fields": [
+            "venue_order_id"
+          ],
+          "field_schemas": {
+            "venue_order_id": {
+              "type": "string"
+            }
+          },
+          "nullable_fields": [],
+          "required_scope": [
+            "environment",
+            "workspace_id",
+            "portfolio_id",
+            "exchange_account_id",
+            "exchange_id",
+            "instrument_id",
+            "execution_route_id"
+          ]
+        },
+        "ORDER_EXTERNAL_OUTCOME_UNKNOWN": {
+          "safe_payload_fields": [
+            "operation_type",
+            "client_order_id"
+          ],
+          "field_schemas": {
+            "operation_type": {
+              "type": "string"
+            },
+            "client_order_id": {
+              "type": "string"
+            }
+          },
+          "nullable_fields": [],
+          "required_scope": [
+            "environment",
+            "workspace_id",
+            "portfolio_id",
+            "exchange_account_id",
+            "exchange_id",
+            "instrument_id",
+            "execution_route_id"
+          ]
+        },
+        "ORDER_RECONCILIATION_OBSERVED": {
+          "safe_payload_fields": [
+            "trusted_fact_kind",
+            "venue_order_id"
+          ],
+          "field_schemas": {
+            "trusted_fact_kind": {
+              "type": "enum",
+              "values": [
+                "ACKNOWLEDGED",
+                "REJECTED",
+                "PARTIAL_FILL",
+                "FULL_FILL",
+                "CANCEL_CONFIRMED",
+                "REPLACE_CONFIRMED",
+                "EXPIRED"
+              ]
+            },
+            "venue_order_id": {
+              "type": "string"
+            }
+          },
+          "nullable_fields": [
+            "venue_order_id"
+          ],
+          "required_scope": [
+            "environment",
+            "workspace_id",
+            "portfolio_id",
+            "exchange_account_id",
+            "exchange_id",
+            "instrument_id",
+            "execution_route_id"
+          ]
+        },
+        "COMMAND_ACCEPTED": {
+          "safe_payload_fields": [
+            "command_id",
+            "operation_type"
+          ],
+          "field_schemas": {
+            "command_id": {
+              "type": "id",
+              "prefix": "cmd"
+            },
+            "operation_type": {
+              "type": "string"
+            }
+          },
+          "nullable_fields": [],
+          "required_scope": [
+            "environment",
+            "workspace_id",
+            "portfolio_id",
+            "exchange_account_id",
+            "exchange_id",
+            "instrument_id",
+            "execution_route_id"
+          ]
+        },
+        "COMMAND_REJECTED": {
+          "safe_payload_fields": [
+            "command_id",
+            "denial_code"
+          ],
+          "field_schemas": {
+            "command_id": {
+              "type": "id",
+              "prefix": "cmd"
+            },
+            "denial_code": {
+              "type": "string"
+            }
+          },
+          "nullable_fields": [],
+          "required_scope": [
+            "environment",
+            "workspace_id",
+            "portfolio_id",
+            "exchange_account_id",
+            "exchange_id",
+            "instrument_id",
+            "execution_route_id"
+          ]
+        },
+        "COMMAND_REPLAYED": {
+          "safe_payload_fields": [
+            "command_id"
+          ],
+          "field_schemas": {
+            "command_id": {
+              "type": "id",
+              "prefix": "cmd"
+            }
+          },
+          "nullable_fields": [],
+          "required_scope": [
+            "environment",
+            "workspace_id",
+            "portfolio_id",
+            "exchange_account_id",
+            "exchange_id",
+            "instrument_id",
+            "execution_route_id"
+          ]
+        },
+        "IDEMPOTENCY_CONFLICT": {
+          "safe_payload_fields": [
+            "command_id"
+          ],
+          "field_schemas": {
+            "command_id": {
+              "type": "id",
+              "prefix": "cmd"
+            }
+          },
+          "nullable_fields": [],
+          "required_scope": [
+            "environment",
+            "workspace_id",
+            "portfolio_id",
+            "exchange_account_id",
+            "exchange_id",
+            "instrument_id",
+            "execution_route_id"
+          ]
+        },
+        "EVENT_REPLAY_IGNORED": {
+          "safe_payload_fields": [
+            "replayed_audit_event_id"
+          ],
+          "field_schemas": {
+            "replayed_audit_event_id": {
+              "type": "id",
+              "prefix": "evt"
+            }
+          },
+          "nullable_fields": [],
+          "required_scope": [
+            "environment",
+            "workspace_id",
+            "portfolio_id",
+            "exchange_account_id",
+            "exchange_id",
+            "instrument_id",
+            "execution_route_id"
+          ]
+        },
+        "EVENT_REJECTED": {
+          "safe_payload_fields": [
+            "rejected_audit_event_id",
+            "reason_code"
+          ],
+          "field_schemas": {
+            "rejected_audit_event_id": {
+              "type": "id",
+              "prefix": "evt"
+            },
+            "reason_code": {
+              "type": "string"
+            }
+          },
+          "nullable_fields": [],
+          "required_scope": [
+            "environment",
+            "workspace_id",
+            "portfolio_id",
+            "exchange_account_id",
+            "exchange_id",
+            "instrument_id",
+            "execution_route_id"
+          ]
+        }
+      },
+      "fingerprint": "SHA-256 over canonical NFC/UTF-8 JSON of the complete immutable event envelope except exact event_fingerprint_sha256 field",
+      "identity_policy": {
+        "canonical_source": "canonical_domain_vocabulary.json /entity_kinds",
+        "durable_ids": {
+          "OrderIntent": {
+            "field": "order_intent_id",
+            "prefix": "oint"
+          },
+          "Order": {
+            "field": "order_id",
+            "prefix": "ord"
+          },
+          "Fill": {
+            "field": "fill_id",
+            "prefix": "fill"
+          },
+          "AuditEvent": {
+            "field": "audit_event_id",
+            "prefix": "evt"
+          }
+        },
+        "command_identity": {
+          "field": "command_id",
+          "format": "cmd_<lowercase canonical UUIDv7>",
+          "classification": "immutable idempotency identity, not aggregate identity",
+          "scope": [
+            "workspace_id",
+            "environment",
+            "exchange_account_id",
+            "command_id"
+          ],
+          "order_id_is_command_id": false
+        },
+        "external_ids": [
+          "venue_order_id",
+          "venue_trade_id",
+          "client_order_id"
+        ],
+        "external_ids_are_not_durable_ids": true
+      }
+    },
+    "M11": {
+      "current_state_store_schema_version": 2,
+      "physical_schema_registry_entries": [
+        {
+          "state_store_schema_version": 1,
+          "sqlite_schema_fingerprint_sha256": "18f9bac7640b66fb1051d5e1bcfe7345c79a8dcb33f417b40009fb049547c680"
+        },
+        {
+          "state_store_schema_version": 2,
+          "sqlite_schema_fingerprint_sha256": "18f9bac7640b66fb1051d5e1bcfe7345c79a8dcb33f417b40009fb049547c680"
+        }
+      ],
+      "rollback_policy": "FORWARD_ONLY"
+    }
+  },
+  "safe_code_type": {
+    "type": "SAFE_CODE",
+    "pattern": "^[A-Z][A-Z0-9_]{0,63}$",
+    "normalization": "NFC",
+    "minimum_length": 1,
+    "maximum_length": 64,
+    "purpose": "bounded non-narrative code only; not an open business-value registry"
+  },
+  "retained_state_authority": {
+    "precondition": "ordinary append, replay, restore decision and next seal/prune proceed only from a verified current retained journal state",
+    "full_verifier": [
+      "checkpoint chain and compact segment integrity",
+      "exact checkpoint-to-pruning-evidence graph",
+      "active suffix content and chain",
+      "active and compact identity-index exactness",
+      "active/compact disjointness",
+      "global audit_event_id uniqueness"
+    ],
+    "pending_exception": "exact latest-checkpoint recovery evidence uses the pending descriptor gate and verifies all prior completed history plus latest checkpoint/compact integrity while allowing only its one missing evidence relation",
+    "implementation_neutrality": "reference oracle may eagerly reverify; production may use an equivalent validated durable tail/index/checkpoint proof or generation-bound verification state and need not rescan O(N)",
+    "repair": "verification detects and never silently rebuilds, rekeys or repairs an index",
+    "compact_coverage": "all compact entries map exactly once to ordered committed checkpoint ranges; sequences are unique and exactly cover their authenticated ranges; zero checkpoints requires zero compact entries",
+    "evidence_graph": "classification-based exact checkpoint/evidence bijection; no count-based substitution and no orphan active/compact pruning evidence",
+    "authority_failure": "orphan compact/evidence blocks verify, append/replay, restore and seal/prune before identity lookup or mutation"
+  }
+}
 ```
