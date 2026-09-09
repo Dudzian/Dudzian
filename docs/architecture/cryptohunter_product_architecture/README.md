@@ -151,6 +151,16 @@ Historia rezerwacji wykonuje oba warianty M0.8 bez generycznych skrótów: `capi
 
 M0.11 rewaliduje autorytet historii rezerwacji poza integralnością rekordu: restore wymaga istniejącego wcześniej, nieprzenoszonego w backupie członkostwa `CoreAcceptedAccountingFactProjection` oraz zapieczętowanego kontekstu zaakceptowanej komendy M0.7 `SUBMIT_ORDER` albo zaakceptowanego terminalnego zdarzenia M0.7. Kandydat, jego source hash ani wrapper hash nie mogą samodzielnie utworzyć tego członkostwa (no self-enrollment).
 
+## Status M0.12 — IN PROGRESS
+
+M0.12 S9A ustanawia foundation contract dla durable audit evidence, observability, alertów oraz uprzywilejowanego updatera/rollbacku. Nie implementuje runtime'u M1, nie aktywuje LIVE i nie zmienia zamrożonego baseline'u M0.2–M0.11.
+
+## Artefakty M0.12 S9A
+
+- [audit_observability_alerts_and_updater.json](audit_observability_alerts_and_updater.json) — kanoniczne maszynowe źródło prawdy foundation contract.
+- [audit_observability_alerts_and_updater.md](audit_observability_alerts_and_updater.md) — deterministyczna projekcja Markdown.
+- [test_cryptohunter_audit_observability_alerts_and_updater.py](../../../tests/architecture/test_cryptohunter_audit_observability_alerts_and_updater.py) — wykonywalny test architektury i cross-contract bindings.
+
 ## FROZEN ARCHITECTURE BASELINE — M0.2–M0.11
 
 M0.2–M0.11 stanowią zamrożony baseline architektury chroniony przez [canonical freeze manifest](architecture_baseline_freeze.json) oraz jego [projekcję Markdown](architecture_baseline_freeze.md). Późniejsze prace produkcyjne nie mogą potajemnie zmieniać tych kontraktów. Zmiana baseline'u wymaga jawnego architecture change, aktualizacji właściwego canonical JSON, a następnie świadomej aktualizacji freeze manifestu.
