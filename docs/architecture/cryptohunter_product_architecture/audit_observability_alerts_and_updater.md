@@ -17,7 +17,7 @@
 ## `status`
 
 ```json
-"IN_PROGRESS_OBSERVABILITY_HEALTH_READINESS_CLOSED"
+"IN_PROGRESS_ALERTS_BLOCKED_M010_AUTHORIZATION"
 ```
 
 ## `contract_identity`
@@ -25,8 +25,8 @@
 ```json
 {
   "contract_id": "M0.12-audit-observability-alerts-updater",
-  "version": "0.3.9",
-  "phase": "S9C_C9_MARKET_DATA_ROUTE_ACCESS_CLOSED",
+  "version": "0.4.2",
+  "phase": "S9D_C2_BLOCKED_BY_FROZEN_M010_ALERT_ACTION_AUTHORIZATION",
   "machine_source_of_truth": true,
   "markdown_is_projection_only": true
 }
@@ -205,13 +205,13 @@
       {
         "field": "log_record_id",
         "status": "optional M0.12-local diagnostic handle; not durable authority"
+      },
+      {
+        "field": "alert_id",
+        "status": "M0.12-local logical durable-record identity; alrt_ plus canonical lowercase UUIDv7; CoreHost generated only; not M0.2 identity"
       }
     ],
     "C_UNRESOLVED_IDENTITY_TO_CLOSE_LATER": [
-      {
-        "field": "alert_id",
-        "status": "M0.12-local/unresolved; exact identity semantics deferred"
-      },
       {
         "field": "release_id",
         "status": "release-domain local/unresolved; exact identity semantics deferred"
@@ -3234,28 +3234,1585 @@
 
 ```json
 {
-  "required_fields": [
-    "alert_id",
-    "category",
-    "severity",
-    "environment",
-    "scope",
-    "source_reference",
-    "raised_at",
-    "lifecycle",
-    "acknowledgement",
-    "resolution",
-    "deduplication_key",
-    "suppression",
-    "escalation",
-    "operator_visibility",
-    "revision"
+  "authority": {
+    "owner": "CoreHost alert lifecycle service",
+    "record_class": "M0.12-local logical durable record",
+    "non_authorities": [
+      "UI",
+      "TrayAgent",
+      "DesktopShell",
+      "notification dispatcher",
+      "delivery channels"
+    ],
+    "alert_is_authority": false,
+    "forbidden_effects": [
+      "mint ProductCapabilities",
+      "change readiness",
+      "authorize execution or authentication",
+      "mint ExecutionLease",
+      "change kill switch or risk decision",
+      "accept persistence or reconciliation",
+      "authorize update",
+      "alter upstream facts"
+    ]
+  },
+  "identity": {
+    "syntax": "alrt_<UUIDv7 lowercase canonical 8-4-4-4-12 hexadecimal>",
+    "regex": "^alrt_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+    "classification": "M0.12-local logical durable-record identity",
+    "generator": "CoreHost alert lifecycle service only",
+    "properties": [
+      "stable across redelivery",
+      "unique per lifecycle instance",
+      "immutable",
+      "not caller/UI selected",
+      "not message-derived",
+      "not upstream canonical entity ID"
+    ],
+    "m02_entity": false,
+    "collision": "regenerate before durable acceptance; never overwrite existing alert_id"
+  },
+  "source_family_registry": [
+    "OBSERVATION_CONDITION",
+    "UPSTREAM_STATE_CONDITION",
+    "DOMAIN_EVENT_FACT",
+    "AUDIT_EVENT_FACT",
+    "SYSTEM_INTERNAL_CONDITION",
+    "RELEASE_UPDATE_RESERVED"
   ],
+  "source_reference_union": {
+    "discriminator": "variant",
+    "variants": {
+      "OBSERVATION": {
+        "type": "closed_object",
+        "required_fields": [
+          "variant",
+          "category",
+          "current_key",
+          "source_component",
+          "source_instance_id",
+          "environment",
+          "scope",
+          "observed_at_utc",
+          "sequence"
+        ],
+        "optional_fields": [],
+        "additional_fields": "REJECT",
+        "field_schemas": {
+          "variant": {
+            "const": "OBSERVATION"
+          },
+          "authority": "accepted effective-current member of injected S9C ObservationReference only"
+        }
+      },
+      "DOMAIN_EVENT": {
+        "type": "closed_object",
+        "required_fields": [
+          "variant",
+          "audit_event_id",
+          "event_type",
+          "event_fingerprint_sha256",
+          "aggregate_version",
+          "environment",
+          "scope"
+        ],
+        "optional_fields": [],
+        "additional_fields": "REJECT",
+        "field_schemas": {
+          "variant": {
+            "const": "DOMAIN_EVENT"
+          },
+          "authority": "recomputed exact M0.7 envelope plus accepted aggregate membership/order"
+        }
+      },
+      "AUDIT_EVENT": {
+        "type": "closed_object",
+        "required_fields": [
+          "variant",
+          "audit_event_id",
+          "content_fingerprint_sha256",
+          "sequence",
+          "chain_fingerprint_sha256",
+          "action",
+          "outcome",
+          "environment",
+          "scope"
+        ],
+        "optional_fields": [],
+        "additional_fields": "REJECT",
+        "field_schemas": {
+          "variant": {
+            "const": "AUDIT_EVENT"
+          },
+          "authority": "accepted S9B journal membership, content recomputation, sequence and chain continuity"
+        }
+      },
+      "M08_RECONCILIATION": {
+        "type": "closed_object",
+        "required_fields": [
+          "variant",
+          "outcome",
+          "scope",
+          "as_of_utc",
+          "source_fingerprint_sha256"
+        ],
+        "optional_fields": [],
+        "additional_fields": "REJECT",
+        "field_schemas": {
+          "variant": {
+            "const": "M08_RECONCILIATION"
+          },
+          "authority": "accepted M0.8 observed balance projection and exact reconciliation result"
+        }
+      },
+      "M09_KILL_SWITCH": {
+        "type": "closed_object",
+        "required_fields": [
+          "variant",
+          "scope",
+          "environment",
+          "state",
+          "source_revision",
+          "effective_at_utc",
+          "generation",
+          "record_fingerprint_sha256",
+          "accepted_membership_id"
+        ],
+        "optional_fields": [],
+        "additional_fields": "REJECT",
+        "field_schemas": {
+          "variant": {
+            "const": "M09_KILL_SWITCH"
+          },
+          "authority": "accepted content binding plus current designation; fingerprint alone is integrity only"
+        }
+      },
+      "M09_RISK_DECISION": {
+        "type": "closed_object",
+        "required_fields": [
+          "variant",
+          "decision",
+          "decision_fingerprint_sha256",
+          "scope",
+          "evaluated_at_utc"
+        ],
+        "optional_fields": [],
+        "additional_fields": "REJECT",
+        "field_schemas": {
+          "variant": {
+            "const": "M09_RISK_DECISION"
+          },
+          "authority": "exact member of Core accepted_decisions registry; fingerprint alone is insufficient"
+        }
+      },
+      "M11_RECOVERY": {
+        "type": "closed_object",
+        "required_fields": [
+          "variant",
+          "scope",
+          "result",
+          "generation",
+          "observed_at_utc",
+          "evidence_fingerprint_sha256"
+        ],
+        "optional_fields": [],
+        "additional_fields": "REJECT",
+        "field_schemas": {
+          "variant": {
+            "const": "M11_RECOVERY"
+          },
+          "authority": "fresh current M0.11 verified StateStore observation and recovery result"
+        }
+      },
+      "SYSTEM_INTERNAL": {
+        "type": "closed_object",
+        "required_fields": [
+          "variant",
+          "condition_code",
+          "component",
+          "source_instance_id",
+          "environment",
+          "scope",
+          "observed_at_utc",
+          "sequence"
+        ],
+        "optional_fields": [],
+        "additional_fields": "REJECT",
+        "field_schemas": {
+          "variant": {
+            "const": "SYSTEM_INTERNAL"
+          },
+          "authority": "Core-owned accepted internal condition registry only; caller/UI/delivery cannot mint"
+        }
+      }
+    },
+    "unknown_variant": "REJECT",
+    "additional_fields": "REJECT",
+    "authority_rule": "shape/hash never establishes accepted/current membership"
+  },
+  "scope_schema": {
+    "type": "closed_discriminated_union",
+    "discriminator": "kind",
+    "variants": {
+      "OBSERVATION_SCOPE": {
+        "type": "closed_object",
+        "required_fields": [
+          "kind",
+          "fields"
+        ],
+        "optional_fields": [],
+        "additional_fields": "REJECT",
+        "field_schemas": {
+          "kind": {
+            "const": "OBSERVATION_SCOPE"
+          },
+          "fields": {
+            "type": "exact S9C category scope"
+          }
+        }
+      },
+      "KILL_SWITCH_SCOPE": {
+        "type": "closed_object",
+        "required_fields": [
+          "kind",
+          "scope_type",
+          "scope_id"
+        ],
+        "optional_fields": [],
+        "additional_fields": "REJECT",
+        "field_schemas": {
+          "kind": {
+            "const": "KILL_SWITCH_SCOPE"
+          },
+          "scope_type": {
+            "upstream": "M0.9 /scope_hierarchy/applicable_order"
+          },
+          "scope_id": {
+            "upstream": "M0.9 /scope_hierarchy/scope_id_policy"
+          }
+        }
+      },
+      "RISK_DECISION_SCOPE": {
+        "type": "closed_object",
+        "required_fields": [
+          "kind",
+          "command_id",
+          "command_request_fingerprint_sha256",
+          "order_id",
+          "workspace_id",
+          "portfolio_id",
+          "exchange_account_id",
+          "exchange_id",
+          "instrument_id",
+          "execution_route_id"
+        ],
+        "optional_fields": [],
+        "additional_fields": "REJECT",
+        "field_schemas": {
+          "kind": {
+            "const": "RISK_DECISION_SCOPE"
+          }
+        }
+      },
+      "RECONCILIATION_SCOPE": {
+        "type": "closed_object",
+        "required_fields": [
+          "kind",
+          "workspace_id",
+          "portfolio_id",
+          "exchange_account_id",
+          "asset_reference",
+          "source_id"
+        ],
+        "optional_fields": [],
+        "additional_fields": "REJECT",
+        "field_schemas": {
+          "kind": {
+            "const": "RECONCILIATION_SCOPE"
+          }
+        }
+      },
+      "STATE_STORE_SCOPE": {
+        "type": "closed_object",
+        "required_fields": [
+          "kind",
+          "device_installation_id",
+          "state_store_identity_fingerprint_sha256"
+        ],
+        "optional_fields": [],
+        "additional_fields": "REJECT",
+        "field_schemas": {
+          "kind": {
+            "const": "STATE_STORE_SCOPE"
+          }
+        }
+      },
+      "DOMAIN_EVENT_SCOPE": {
+        "type": "closed_object",
+        "required_fields": [
+          "kind",
+          "order_id",
+          "command_id",
+          "workspace_id",
+          "portfolio_id",
+          "exchange_account_id",
+          "exchange_id",
+          "instrument_id",
+          "execution_route_id"
+        ],
+        "optional_fields": [],
+        "additional_fields": "REJECT",
+        "field_schemas": {
+          "kind": {
+            "const": "DOMAIN_EVENT_SCOPE"
+          }
+        }
+      },
+      "AUDIT_EVENT_SCOPE": {
+        "type": "closed_object",
+        "required_fields": [
+          "kind",
+          "device_installation_id",
+          "operator_id",
+          "runtime_session_id"
+        ],
+        "optional_fields": [
+          "workspace_id",
+          "exchange_account_id"
+        ],
+        "additional_fields": "REJECT",
+        "field_schemas": {
+          "kind": {
+            "const": "AUDIT_EVENT_SCOPE"
+          }
+        }
+      },
+      "INTERNAL_SCOPE": {
+        "type": "closed_object",
+        "required_fields": [
+          "kind",
+          "component"
+        ],
+        "optional_fields": [],
+        "additional_fields": "REJECT",
+        "field_schemas": {
+          "kind": {
+            "const": "INTERNAL_SCOPE"
+          }
+        }
+      }
+    },
+    "unknown_variant": "REJECT",
+    "rule": "exact source-owned scope; no global workspace requirement"
+  },
+  "alert_type_registry": [
+    {
+      "alert_type": "MARKET_DATA_CURRENT_CONDITION",
+      "category": "MARKET_DATA",
+      "source_family": "OBSERVATION_CONDITION",
+      "source_selector": {
+        "variant": "OBSERVATION",
+        "categories": [
+          "ADAPTER_STATUS",
+          "MARKET_DATA_FRESHNESS"
+        ]
+      },
+      "scope_dimensions": [
+        "workspace_id",
+        "exchange_account_id",
+        "instrument_id",
+        "market_data_route_id"
+      ],
+      "severity_policy": {
+        "UNKNOWN": "ERROR",
+        "DEGRADED": "WARNING",
+        "BLOCKED": "ERROR"
+      },
+      "lifecycle_class": "CONDITION_ALERT",
+      "dedup_policy": {
+        "components": [
+          "alert_type",
+          "environment",
+          "source category",
+          "exact observation scope",
+          "source_component",
+          "source_instance_id"
+        ],
+        "window": "ACTIVE_LIFECYCLE"
+      },
+      "resolution_policy": "FRESH_EFFECTIVE_CURRENT_OBSERVATION_OK_EXACT_SCOPE",
+      "suppression_policy": "TIMED_OPERATOR",
+      "escalation_policy": "STANDARD",
+      "retention_class": "DURABLE_ALERT_HISTORY",
+      "audit_policy": {
+        "raise_redelivery": "SOURCE_EVIDENCE_SUFFICIENT",
+        "acknowledge": "AUDIT_REQUIRED_ATOMIC",
+        "suppression_change": "AUDIT_REQUIRED_ATOMIC",
+        "resolution": "SOURCE_EVIDENCE_REQUIRED"
+      },
+      "operator_visibility_policy": "CRITICAL_ALWAYS_VISIBLE_OTHER_ACTIVE_VISIBLE"
+    },
+    {
+      "alert_type": "EXECUTION_ROUTE_CONDITION",
+      "category": "EXECUTION",
+      "source_family": "OBSERVATION_CONDITION",
+      "source_selector": {
+        "variant": "OBSERVATION",
+        "categories": [
+          "EXECUTION_CONNECTIVITY",
+          "EXECUTION_ROUTE_STATUS"
+        ]
+      },
+      "scope_dimensions": [
+        "workspace_id",
+        "exchange_account_id",
+        "instrument_id",
+        "execution_route_id"
+      ],
+      "severity_policy": {
+        "UNKNOWN": "ERROR",
+        "DEGRADED": "ERROR",
+        "BLOCKED": "CRITICAL"
+      },
+      "lifecycle_class": "CONDITION_ALERT",
+      "dedup_policy": {
+        "components": [
+          "alert_type",
+          "environment",
+          "source category",
+          "exact observation scope",
+          "source_component",
+          "source_instance_id"
+        ],
+        "window": "ACTIVE_LIFECYCLE"
+      },
+      "resolution_policy": "FRESH_EFFECTIVE_CURRENT_OBSERVATION_OK_EXACT_SCOPE",
+      "suppression_policy": "TIMED_OPERATOR",
+      "escalation_policy": "STANDARD",
+      "retention_class": "DURABLE_ALERT_HISTORY",
+      "audit_policy": {
+        "raise_redelivery": "SOURCE_EVIDENCE_SUFFICIENT",
+        "acknowledge": "AUDIT_REQUIRED_ATOMIC",
+        "suppression_change": "AUDIT_REQUIRED_ATOMIC",
+        "resolution": "SOURCE_EVIDENCE_REQUIRED"
+      },
+      "operator_visibility_policy": "CRITICAL_ALWAYS_VISIBLE_OTHER_ACTIVE_VISIBLE"
+    },
+    {
+      "alert_type": "KILL_SWITCH_ACTIVE",
+      "category": "RISK",
+      "source_family": "UPSTREAM_STATE_CONDITION",
+      "source_selector": {
+        "variant": "M09_KILL_SWITCH",
+        "state": "ACTIVE"
+      },
+      "scope_dimensions": [
+        "scope_type",
+        "scope_id"
+      ],
+      "severity_policy": {
+        "ACTIVE": "CRITICAL"
+      },
+      "lifecycle_class": "CONDITION_ALERT",
+      "dedup_policy": {
+        "components": [
+          "alert_type",
+          "environment",
+          "scope_type",
+          "scope_id",
+          "M09_KILL_SWITCH"
+        ],
+        "window": "ACTIVE_LIFECYCLE"
+      },
+      "resolution_policy": "accepted-current newer/equal-generation M0.9 INACTIVE exact scope/environment",
+      "suppression_policy": "NO_ORDINARY_DELIVERY_SUPPRESSION",
+      "escalation_policy": "CRITICAL",
+      "retention_class": "DURABLE_ALERT_HISTORY",
+      "audit_policy": {
+        "raise_redelivery": "SOURCE_EVIDENCE_SUFFICIENT",
+        "acknowledge": "AUDIT_REQUIRED_ATOMIC",
+        "suppression_change": "AUDIT_REQUIRED_ATOMIC",
+        "resolution": "SOURCE_EVIDENCE_REQUIRED"
+      },
+      "operator_visibility_policy": "CRITICAL_ALWAYS_VISIBLE_OTHER_ACTIVE_VISIBLE"
+    },
+    {
+      "alert_type": "RISK_DECISION_DENIED",
+      "category": "RISK",
+      "source_family": "UPSTREAM_STATE_CONDITION",
+      "source_selector": {
+        "variant": "M09_RISK_DECISION",
+        "decisions": [
+          "DENY",
+          "INCOMPLETE"
+        ]
+      },
+      "scope_dimensions": [
+        "command_id",
+        "command_request_fingerprint_sha256",
+        "order_id",
+        "workspace_id",
+        "portfolio_id",
+        "exchange_account_id",
+        "exchange_id",
+        "instrument_id",
+        "execution_route_id"
+      ],
+      "severity_policy": {
+        "DENY": "ERROR",
+        "INCOMPLETE": "ERROR"
+      },
+      "lifecycle_class": "FACT_ALERT",
+      "dedup_policy": {
+        "components": [
+          "alert_type",
+          "environment",
+          "workspace_id",
+          "portfolio_id",
+          "exchange_account_id",
+          "instrument_id",
+          "execution_route_id",
+          "exact_source_fact_identity"
+        ],
+        "window": "EXACT_IMMUTABLE_FACT_IDENTITY"
+      },
+      "resolution_policy": "newer accepted M0.9 ALLOW exact same command/request and execution scope",
+      "suppression_policy": "TIMED_OPERATOR",
+      "escalation_policy": "STANDARD",
+      "retention_class": "DURABLE_ALERT_HISTORY",
+      "audit_policy": {
+        "raise_redelivery": "SOURCE_EVIDENCE_SUFFICIENT",
+        "acknowledge": "AUDIT_REQUIRED_ATOMIC",
+        "suppression_change": "AUDIT_REQUIRED_ATOMIC",
+        "resolution": "SOURCE_EVIDENCE_REQUIRED"
+      },
+      "operator_visibility_policy": "CRITICAL_ALWAYS_VISIBLE_OTHER_ACTIVE_VISIBLE"
+    },
+    {
+      "alert_type": "RECONCILIATION_DIVERGENCE",
+      "category": "RECONCILIATION",
+      "source_family": "UPSTREAM_STATE_CONDITION",
+      "source_selector": {
+        "variant": "M08_RECONCILIATION",
+        "outcomes": [
+          "DRIFT",
+          "MISSING_INTERNAL_FACT",
+          "MISSING_EXTERNAL_FACT",
+          "UNMAPPED_ASSET",
+          "UNSUPPORTED"
+        ]
+      },
+      "scope_dimensions": [
+        "workspace_id",
+        "portfolio_id",
+        "exchange_account_id",
+        "asset_reference",
+        "source_id"
+      ],
+      "severity_policy": {
+        "DRIFT": "ERROR",
+        "MISSING_INTERNAL_FACT": "CRITICAL",
+        "MISSING_EXTERNAL_FACT": "ERROR",
+        "UNMAPPED_ASSET": "ERROR",
+        "UNSUPPORTED": "WARNING"
+      },
+      "lifecycle_class": "CONDITION_ALERT",
+      "dedup_policy": {
+        "components": [
+          "alert_type",
+          "environment",
+          "workspace_id",
+          "portfolio_id",
+          "exchange_account_id",
+          "source_condition_discriminator"
+        ],
+        "window": "ACTIVE_LIFECYCLE"
+      },
+      "resolution_policy": "ACCEPTED_M0.8_RECONCILIATION_MATCH_EXACT_SCOPE",
+      "suppression_policy": "TIMED_OPERATOR",
+      "escalation_policy": "STANDARD",
+      "retention_class": "DURABLE_ALERT_HISTORY",
+      "audit_policy": {
+        "raise_redelivery": "SOURCE_EVIDENCE_SUFFICIENT",
+        "acknowledge": "AUDIT_REQUIRED_ATOMIC",
+        "suppression_change": "AUDIT_REQUIRED_ATOMIC",
+        "resolution": "SOURCE_EVIDENCE_REQUIRED"
+      },
+      "operator_visibility_policy": "CRITICAL_ALWAYS_VISIBLE_OTHER_ACTIVE_VISIBLE"
+    },
+    {
+      "alert_type": "PERSISTENCE_RECOVERY_REQUIRED",
+      "category": "PERSISTENCE",
+      "source_family": "UPSTREAM_STATE_CONDITION",
+      "source_selector": {
+        "variant": "M11_RECOVERY",
+        "results": [
+          "RECOVERY_REQUIRED",
+          "RESTORE_REQUIRED",
+          "PERSISTENCE_BLOCKED"
+        ]
+      },
+      "scope_dimensions": [
+        "device_installation_id",
+        "state_store_identity_fingerprint_sha256"
+      ],
+      "severity_policy": {
+        "RECOVERY_REQUIRED": "CRITICAL",
+        "RESTORE_REQUIRED": "CRITICAL",
+        "PERSISTENCE_BLOCKED": "CRITICAL"
+      },
+      "lifecycle_class": "CONDITION_ALERT",
+      "dedup_policy": {
+        "components": [
+          "alert_type",
+          "device_installation_id",
+          "state_store_identity_fingerprint_sha256",
+          "M11_RECOVERY"
+        ],
+        "window": "ACTIVE_LIFECYCLE"
+      },
+      "resolution_policy": "ACCEPTED_M0.11_RECOVERY_COMPLETION_EXACT_STORE",
+      "suppression_policy": "NO_ORDINARY_DELIVERY_SUPPRESSION",
+      "escalation_policy": "CRITICAL",
+      "retention_class": "DURABLE_ALERT_HISTORY",
+      "audit_policy": {
+        "raise_redelivery": "SOURCE_EVIDENCE_SUFFICIENT",
+        "acknowledge": "AUDIT_REQUIRED_ATOMIC",
+        "suppression_change": "AUDIT_REQUIRED_ATOMIC",
+        "resolution": "SOURCE_EVIDENCE_REQUIRED"
+      },
+      "operator_visibility_policy": "CRITICAL_ALWAYS_VISIBLE_OTHER_ACTIVE_VISIBLE"
+    },
+    {
+      "alert_type": "SECURITY_PRIVILEGED_FAILURE",
+      "category": "SECURITY",
+      "source_family": "AUDIT_EVENT_FACT",
+      "source_selector": {
+        "variant": "AUDIT_EVENT",
+        "qualified_actions": [
+          "TRUST_DEVICE",
+          "REVOKE_DEVICE",
+          "SETUP_PIN",
+          "CHANGE_PIN",
+          "RESET_PIN",
+          "ROTATE_SECRET_REFERENCE",
+          "REBIND_SECRET_REFERENCE",
+          "ACTIVATE_CREDENTIAL_PROFILE",
+          "DEACTIVATE_CREDENTIAL_PROFILE",
+          "CHANGE_RISK_POLICY",
+          "CHANGE_KILL_SWITCH",
+          "CHANGE_PRODUCT_CAPABILITIES",
+          "GRANT_LIVE_ACCESS",
+          "SUSPEND_LIVE_ACCESS",
+          "REVOKE_LIVE_ACCESS"
+        ],
+        "outcomes": [
+          "DENIED",
+          "FAILED"
+        ],
+        "requires_exact_actor_session_device_scope": true
+      },
+      "scope_dimensions": [
+        "workspace_id",
+        "device_installation_id"
+      ],
+      "severity_policy": {
+        "DENIED": "ERROR",
+        "FAILED": "CRITICAL"
+      },
+      "lifecycle_class": "FACT_ALERT",
+      "dedup_policy": {
+        "components": [
+          "alert_type",
+          "environment",
+          "workspace_id",
+          "device_installation_id",
+          "exact_source_fact_identity"
+        ],
+        "window": "EXACT_IMMUTABLE_FACT_IDENTITY"
+      },
+      "resolution_policy": "BLOCKED_MANUAL_REVIEW_REQUIRES_UNREPRESENTABLE_M0.10_OPERATION",
+      "suppression_policy": "TIMED_OPERATOR",
+      "escalation_policy": "SECURITY",
+      "retention_class": "DURABLE_ALERT_HISTORY",
+      "audit_policy": {
+        "raise_redelivery": "SOURCE_EVIDENCE_SUFFICIENT",
+        "acknowledge": "AUDIT_REQUIRED_ATOMIC",
+        "suppression_change": "AUDIT_REQUIRED_ATOMIC",
+        "resolution": "SOURCE_EVIDENCE_REQUIRED"
+      },
+      "operator_visibility_policy": "CRITICAL_ALWAYS_VISIBLE_OTHER_ACTIVE_VISIBLE"
+    },
+    {
+      "alert_type": "DOMAIN_EXECUTION_FAILURE",
+      "category": "EXECUTION",
+      "source_family": "DOMAIN_EVENT_FACT",
+      "source_selector": {
+        "variant": "DOMAIN_EVENT",
+        "event_types": [
+          "ORDER_REJECTED",
+          "ORDER_EXTERNAL_OUTCOME_UNKNOWN",
+          "IDEMPOTENCY_CONFLICT"
+        ]
+      },
+      "scope_dimensions": [
+        "workspace_id",
+        "portfolio_id",
+        "exchange_account_id",
+        "instrument_id",
+        "execution_route_id"
+      ],
+      "severity_policy": {
+        "ORDER_REJECTED": "WARNING",
+        "ORDER_EXTERNAL_OUTCOME_UNKNOWN": "CRITICAL",
+        "IDEMPOTENCY_CONFLICT": "ERROR"
+      },
+      "lifecycle_class": "FACT_ALERT",
+      "dedup_policy": {
+        "components": [
+          "alert_type",
+          "environment",
+          "workspace_id",
+          "portfolio_id",
+          "exchange_account_id",
+          "instrument_id",
+          "execution_route_id",
+          "exact_source_fact_identity"
+        ],
+        "window": "EXACT_IMMUTABLE_FACT_IDENTITY"
+      },
+      "resolution_policy": "OPEN_NO_UNAMBIGUOUS_CORRECTIVE_SUCCESSOR_IN_FROZEN_M0.7; original or unrelated same-scope event REJECT; no manual resolution until M0.10 gate closes",
+      "suppression_policy": "TIMED_OPERATOR",
+      "escalation_policy": "STANDARD",
+      "retention_class": "DURABLE_ALERT_HISTORY",
+      "audit_policy": {
+        "raise_redelivery": "SOURCE_EVIDENCE_SUFFICIENT",
+        "acknowledge": "AUDIT_REQUIRED_ATOMIC",
+        "suppression_change": "AUDIT_REQUIRED_ATOMIC",
+        "resolution": "SOURCE_EVIDENCE_REQUIRED"
+      },
+      "operator_visibility_policy": "CRITICAL_ALWAYS_VISIBLE_OTHER_ACTIVE_VISIBLE"
+    },
+    {
+      "alert_type": "ALERT_DELIVERY_SUBSYSTEM_FAILURE",
+      "category": "OPERATIONS",
+      "source_family": "SYSTEM_INTERNAL_CONDITION",
+      "source_selector": {
+        "variant": "SYSTEM_INTERNAL",
+        "condition_code": "ALERT_DELIVERY_FAILURE"
+      },
+      "scope_dimensions": [
+        "workspace_id"
+      ],
+      "severity_policy": {
+        "DEGRADED": "WARNING",
+        "BLOCKED": "ERROR"
+      },
+      "lifecycle_class": "CONDITION_ALERT",
+      "dedup_policy": {
+        "components": [
+          "alert_type",
+          "environment",
+          "component",
+          "condition_code",
+          "source_instance_id"
+        ],
+        "window": "ACTIVE_LIFECYCLE"
+      },
+      "resolution_policy": "FRESH_INTERNAL_DELIVERY_HEALTH_OK",
+      "suppression_policy": "NO_SELF_DELIVERY_ALERT",
+      "escalation_policy": "STANDARD",
+      "retention_class": "DURABLE_ALERT_HISTORY",
+      "audit_policy": {
+        "raise_redelivery": "SOURCE_EVIDENCE_SUFFICIENT",
+        "acknowledge": "AUDIT_REQUIRED_ATOMIC",
+        "suppression_change": "AUDIT_REQUIRED_ATOMIC",
+        "resolution": "SOURCE_EVIDENCE_REQUIRED"
+      },
+      "operator_visibility_policy": "CRITICAL_ALWAYS_VISIBLE_OTHER_ACTIVE_VISIBLE"
+    }
+  ],
+  "release_update_disposition": {
+    "category": "RELEASE_UPDATE",
+    "source_family": "RELEASE_UPDATE_RESERVED",
+    "status": "FUTURE_SOURCE_NOT_CURRENT_AUTHORITY",
+    "alert_types": [],
+    "updater_state_machines": "OPEN"
+  },
+  "alert_schema": {
+    "type": "closed_object",
+    "required_fields": [
+      "alert_id",
+      "alert_type",
+      "category",
+      "severity",
+      "environment",
+      "scope",
+      "source_reference",
+      "raised_at",
+      "last_seen_at",
+      "occurrence_count",
+      "lifecycle",
+      "acknowledgement",
+      "resolution",
+      "deduplication_key",
+      "suppression",
+      "escalation",
+      "operator_visibility",
+      "revision"
+    ],
+    "optional_fields": [],
+    "additional_fields": "REJECT",
+    "field_schemas": {
+      "alert_id": {
+        "type": "canonical alrt UUIDv7"
+      },
+      "alert_type": {
+        "registry": "/alert_model/alert_type_registry"
+      },
+      "category": {
+        "derived": true
+      },
+      "severity": {
+        "derived": true
+      },
+      "environment": {
+        "type": "nullable upstream environment"
+      },
+      "scope": {
+        "pointer": "/alert_model/scope_schema"
+      },
+      "source_reference": {
+        "pointer": "/alert_model/source_reference_union"
+      },
+      "raised_at": {
+        "type": "canonical UTC timestamp"
+      },
+      "last_seen_at": {
+        "type": "canonical UTC timestamp"
+      },
+      "occurrence_count": {
+        "type": "positive_non_bool_integer"
+      },
+      "lifecycle": {
+        "enum": [
+          "RAISED",
+          "ACKNOWLEDGED",
+          "RESOLVED"
+        ]
+      },
+      "acknowledgement": {
+        "type": "null_or_Acknowledgement"
+      },
+      "resolution": {
+        "type": "null_or_Resolution"
+      },
+      "deduplication_key": {
+        "type": "dk1 lowercase SHA256"
+      },
+      "suppression": {
+        "type": "null_or_Suppression"
+      },
+      "escalation": {
+        "type": "Escalation"
+      },
+      "operator_visibility": {
+        "type": "OperatorVisibility"
+      },
+      "revision": {
+        "type": "positive_non_bool_integer"
+      }
+    }
+  },
+  "nested_schemas": {
+    "acknowledgement": {
+      "type": "closed_object",
+      "required_fields": [
+        "operator_id",
+        "acknowledged_at",
+        "authorization_reference",
+        "reason_code",
+        "revision"
+      ],
+      "optional_fields": [],
+      "additional_fields": "REJECT",
+      "field_schemas": {}
+    },
+    "authorization_reference": {
+      "type": "closed_object",
+      "required_fields": [
+        "proof_id",
+        "operator_id",
+        "device_installation_id",
+        "runtime_session_id",
+        "environment",
+        "action",
+        "target_alert_id",
+        "target_scope_fingerprint_sha256",
+        "security_generation",
+        "authorized_at"
+      ],
+      "optional_fields": [],
+      "additional_fields": "REJECT",
+      "field_schemas": {}
+    },
+    "resolution": {
+      "type": "closed_object",
+      "required_fields": [
+        "resolved_at",
+        "resolution_policy",
+        "resolution_source_reference",
+        "resolved_code",
+        "authorization_reference",
+        "revision"
+      ],
+      "optional_fields": [],
+      "additional_fields": "REJECT",
+      "field_schemas": {}
+    },
+    "suppression": {
+      "type": "closed_object",
+      "required_fields": [
+        "suppressed",
+        "scope",
+        "reason_code",
+        "authorized_by",
+        "starts_at",
+        "expires_at",
+        "policy_id",
+        "authorization_reference",
+        "revision"
+      ],
+      "optional_fields": [],
+      "additional_fields": "REJECT",
+      "field_schemas": {}
+    },
+    "escalation": {
+      "type": "closed_object",
+      "required_fields": [
+        "level",
+        "routes",
+        "evaluated_at",
+        "policy_version",
+        "delivery_failure_count"
+      ],
+      "optional_fields": [],
+      "additional_fields": "REJECT",
+      "field_schemas": {}
+    },
+    "operator_visibility": {
+      "type": "closed_object",
+      "required_fields": [
+        "visible",
+        "attention_required",
+        "persistence_class",
+        "mandatory_routes"
+      ],
+      "optional_fields": [],
+      "additional_fields": "REJECT",
+      "field_schemas": {}
+    }
+  },
   "lifecycle": {
+    "states": [
+      "RAISED",
+      "ACKNOWLEDGED",
+      "RESOLVED"
+    ],
+    "classes": [
+      "CONDITION_ALERT",
+      "FACT_ALERT"
+    ],
+    "allowed_transitions": [
+      [
+        "RAISED",
+        "RESOLVED"
+      ]
+    ],
+    "terminal": [
+      "RESOLVED"
+    ],
+    "recurrence": "new alert_id; prior history remains terminal",
+    "orthogonal_dimensions": [
+      "suppression",
+      "escalation",
+      "delivery"
+    ],
     "RAISED": "active and not acknowledged",
     "ACKNOWLEDGED": "operator awareness recorded; source fault remains active",
-    "RESOLVED": "trusted resolution evidence recorded; history retained"
+    "RESOLVED": "trusted resolution evidence recorded; history retained",
+    "blocked_transitions": [
+      [
+        "RAISED",
+        "ACKNOWLEDGED"
+      ],
+      [
+        "ACKNOWLEDGED",
+        "RESOLVED via operator manual review"
+      ]
+    ]
   },
+  "deduplication": {
+    "key_encoding": "dk1:SHA-256(lowercase hex of canonical UTF-8 JSON array of registry-declared components)",
+    "caller_supplied": false,
+    "message_fields_forbidden": true,
+    "active_condition": "same key updates same active alert",
+    "fact": "same exact fact identity is replay",
+    "resolved_condition_recurrence": "new alert_id with same semantic key",
+    "index": "rebuildable deduplication_key -> active alert_id; history is authority",
+    "time_window_for_identity": false,
+    "condition_discriminator": "registry source selector discriminator: observation category + source identity, or typed upstream condition family; never alert_type alone"
+  },
+  "redelivery": {
+    "mutates": [
+      "revision += 1",
+      "last_seen_at=max accepted source time",
+      "occurrence_count += 1",
+      "source_reference if policy permits",
+      "severity may only escalate"
+    ],
+    "preserves": [
+      "alert_id",
+      "raised_at",
+      "ACKNOWLEDGED lifecycle"
+    ],
+    "severity_downgrade": "FORBIDDEN",
+    "source_order": "accepted upstream currentness/order first; out-of-order is replay/no-op and cannot replace source_reference",
+    "last_seen_at": "max(previous accepted source timestamp, incoming accepted source timestamp)",
+    "history": "every accepted non-replay has full HistoryEntry"
+  },
+  "operator_action_policy": {
+    "status": "BLOCKED_BY_FROZEN_M0.10",
+    "requested_actions": [
+      "ACKNOWLEDGE",
+      "SET_SUPPRESSION",
+      "CLEAR_SUPPRESSION",
+      "AUTHORIZED_MANUAL_FACT_RESOLUTION"
+    ],
+    "accepted_actions": [],
+    "public_behavior": "REJECT OPERATION_UNSUPPORTED without Alert, history, replay, index, or AuditEvent mutation",
+    "upstream_pointer": "/alert_model/s9d_c2_authorization_gate",
+    "expected_revision": "specified but cannot be consumed until authorization operation exists"
+  },
+  "suppression_contract": {
+    "dimension": "delivery only",
+    "ordinary_manual": "time bounded; expires_at required and later than starts_at",
+    "permanent": "NOT_SUPPORTED_IN_S9D",
+    "expiry": "Core-derived unsuppress mutation; lifecycle/source/severity unchanged",
+    "critical": "active CRITICAL always visible on IN_APP and TRAY_PERSISTENT; repeated noise may be throttled",
+    "cannot_change": [
+      "lifecycle",
+      "severity",
+      "source",
+      "readiness",
+      "kill switch",
+      "risk",
+      "execution",
+      "acknowledgement",
+      "resolution"
+    ],
+    "time_validation": "starts_at == explicit now_utc; UTC offset zero; expires_at > starts_at; now monotonic; equality is expired",
+    "expiry_mutation": "Core-derived, revisioned, durable UNSUPPRESS_EXPIRED with history/replay; other alert fields invariant"
+  },
+  "escalation_contract": {
+    "policy_version": "S9D-1",
+    "authority_effect": false,
+    "levels": {
+      "INFO": {
+        "after_seconds": null,
+        "routes": [
+          "IN_APP"
+        ]
+      },
+      "WARNING": {
+        "after_seconds": 900,
+        "routes": [
+          "IN_APP",
+          "LOCAL_OS_NOTIFICATION"
+        ]
+      },
+      "ERROR": {
+        "after_seconds": 300,
+        "routes": [
+          "IN_APP",
+          "LOCAL_OS_NOTIFICATION",
+          "TRAY_PERSISTENT"
+        ]
+      },
+      "CRITICAL": {
+        "after_seconds": 0,
+        "routes": [
+          "IN_APP",
+          "TRAY_PERSISTENT",
+          "OPERATOR_ATTENTION_REQUIRED"
+        ]
+      }
+    },
+    "acknowledgement_effect": "may stop timed repeat delivery but never lower severity/visibility floor",
+    "delivery_failure_effect": "increment failure count and re-evaluate route; no safety mutation",
+    "boundary": "elapsed threshold inclusive: WARNING 900, ERROR 300, CRITICAL 0; before false, at/after true"
+  },
+  "delivery_contract": {
+    "classes": [
+      "IN_APP",
+      "LOCAL_OS_NOTIFICATION",
+      "TRAY_PERSISTENT",
+      "OPERATOR_ATTENTION_REQUIRED"
+    ],
+    "attempt_schema": {
+      "type": "closed_object",
+      "required_fields": [
+        "attempt_id",
+        "alert_id",
+        "alert_revision",
+        "delivery_class",
+        "attempted_at",
+        "result"
+      ],
+      "optional_fields": [
+        "receipt_at"
+      ],
+      "additional_fields": "REJECT",
+      "field_schemas": {}
+    },
+    "receipt_is_acknowledgement": false,
+    "history_durability": "LOSS_TOLERANT_DIAGNOSTIC_CACHE",
+    "lifecycle_restore_dependency": false,
+    "failure_semantics": [
+      "does not resolve",
+      "does not change source/readiness/safety",
+      "does not block canonical safety action"
+    ],
+    "recursion": {
+      "dedicated_type": "ALERT_DELIVERY_SUBSYSTEM_FAILURE",
+      "single_active_per_environment_component": "dedup key",
+      "delivery_of_dedicated_alert_failure_creates_alert": false
+    },
+    "separate_from_alert_record": true
+  },
+  "resolution_contract": {
+    "condition": "fresh trusted effective-current exact-scope non-alert source evidence only",
+    "stale_missing_wrong_scope": "REJECT",
+    "manual_fixed_boolean": "REJECT",
+    "fact": "exact alert-type designated corrective evidence only; age is irrelevant",
+    "resolved_terminal": true,
+    "typed_paths": {
+      "MARKET_DATA_CURRENT_CONDITION": "S9C effective-current OK exact category/key/source/environment/scope and not expired",
+      "EXECUTION_ROUTE_CONDITION": "S9C effective-current OK exact category/key/source/environment/scope and not expired",
+      "KILL_SWITCH_ACTIVE": "current accepted M0.9 INACTIVE exact scope/environment and generation >= alert source",
+      "RECONCILIATION_DIVERGENCE": "accepted M0.8 MATCH exact complete reconciliation key",
+      "PERSISTENCE_RECOVERY_REQUIRED": "current accepted M0.11 COMPLETED exact device/store identity",
+      "RISK_DECISION_DENIED": "accepted M0.9 ALLOW exact command/request/execution scope",
+      "DOMAIN_EXECUTION_FAILURE": "OPEN: frozen M0.7 defines facts and transition graph but no single corrective successor mapping for ORDER_REJECTED, ORDER_EXTERNAL_OUTCOME_UNKNOWN, or IDEMPOTENCY_CONFLICT; self/unrelated event rejected",
+      "SECURITY_PRIVILEGED_FAILURE": "BLOCKED: manual resolution has no representable frozen M0.10 authorization operation"
+    }
+  },
+  "durability": {
+    "physical_carrier": "DEFERRED_TO_M1, but logical mutation oracle remains OPEN until M0.10 gate and C2 defects close",
+    "authoritative_units": [
+      "current closed Alert record",
+      "append-only mutation history",
+      "request-id/fingerprint replay ledger"
+    ],
+    "history_entry_schema": {
+      "type": "closed_object",
+      "required_fields": [
+        "alert_id",
+        "revision",
+        "mutation_id",
+        "mutation_type",
+        "occurred_at",
+        "before_fingerprint",
+        "after_fingerprint",
+        "authorization_reference",
+        "audit_event_id",
+        "source_evidence"
+      ],
+      "optional_fields": [],
+      "additional_fields": "REJECT",
+      "field_schemas": {
+        "revision": {
+          "type": "positive_non_bool_integer"
+        },
+        "before_fingerprint": {
+          "type": "nullable recomputed record SHA256"
+        },
+        "after_fingerprint": {
+          "type": "recomputed record SHA256"
+        },
+        "authorization_reference": {
+          "type": "nullable exact authorization reference"
+        },
+        "audit_event_id": {
+          "type": "nullable canonical M0.2 AuditEvent ID"
+        },
+        "source_evidence": {
+          "type": "closed mutation evidence including exact after_record snapshot"
+        }
+      }
+    },
+    "revision": "starts at 1; every accepted mutation +1; exact replay no increment; stale expected revision CONFLICT",
+    "atomic_commit": "record + history + replay entry + required AuditEvent commit together or none",
+    "restore": "validate full history then rebuild indexes; any corruption => RECOVERY_REQUIRED",
+    "canonicalization": "NFC UTF-8 JSON, sorted keys, separators comma/colon; SHA-256 lowercase; record fingerprint excludes no semantic current fields",
+    "replay_entry_schema": {
+      "type": "closed_object",
+      "required_fields": [
+        "mutation_id",
+        "request_fingerprint_sha256",
+        "alert_id",
+        "result_revision",
+        "mutation_type"
+      ],
+      "optional_fields": [],
+      "additional_fields": "REJECT",
+      "field_schemas": {}
+    }
+  },
+  "restore_validation": [
+    "unique alert_id",
+    "one active alert per dedup key",
+    "contiguous positive revisions from 1",
+    "legal forward lifecycle only",
+    "resolved absent from active index",
+    "record equals final history projection",
+    "acknowledgement has matching history/authorization",
+    "suppression has matching authorization/history and valid expiry",
+    "resolution has allowed source evidence/history",
+    "replay mutation identity has one fingerprint",
+    "index exactly equals rebuilt active history"
+  ],
+  "crash_matrix": [
+    {
+      "operation": "raise",
+      "before_atomic_commit": "no visible mutation",
+      "after_atomic_commit": "complete mutation visible; replay idempotent"
+    },
+    {
+      "operation": "redelivery",
+      "before_atomic_commit": "no visible mutation",
+      "after_atomic_commit": "complete mutation visible; replay idempotent"
+    },
+    {
+      "operation": "acknowledge",
+      "before_atomic_commit": "no visible mutation",
+      "after_atomic_commit": "complete mutation visible; replay idempotent"
+    },
+    {
+      "operation": "suppress",
+      "before_atomic_commit": "no visible mutation",
+      "after_atomic_commit": "complete mutation visible; replay idempotent"
+    },
+    {
+      "operation": "unsuppress_or_expiry",
+      "before_atomic_commit": "no visible mutation",
+      "after_atomic_commit": "complete mutation visible; replay idempotent"
+    },
+    {
+      "operation": "escalate",
+      "before_atomic_commit": "no visible mutation",
+      "after_atomic_commit": "complete mutation visible; replay idempotent"
+    },
+    {
+      "operation": "resolve",
+      "before_atomic_commit": "no visible mutation",
+      "after_atomic_commit": "complete mutation visible; replay idempotent"
+    }
+  ],
+  "audit_integration": {
+    "required_operations": [
+      "ACKNOWLEDGE",
+      "SET_SUPPRESSION",
+      "CLEAR_SUPPRESSION",
+      "AUTHORIZED_MANUAL_FACT_RESOLUTION"
+    ],
+    "raise_redelivery": "no additional event when authoritative source evidence already identifies fact; type audit policy applies",
+    "failure": "S9B required append failure => entire privileged mutation rejected/rolled back",
+    "not_substitute_for": [
+      "AuditEvent",
+      "M0.7 DomainEvent",
+      "M0.8 ledger evidence",
+      "M0.9 risk evidence"
+    ],
+    "source_audit_event": "selected fact only; does not replace alert lifecycle",
+    "blocked_operations": [
+      "ACKNOWLEDGE",
+      "SET_SUPPRESSION",
+      "CLEAR_SUPPRESSION",
+      "AUTHORIZED_MANUAL_FACT_RESOLUTION"
+    ],
+    "blocked_behavior": "reject before audit append or Alert mutation; atomic append design cannot close before M0.10 authorizes the operation"
+  },
+  "freshness": "reuse S9C effective current observation; raw stored OK after expiry is not evidence; missing/stale remains active or maps UNKNOWN per type, never resolves",
+  "ui_projection": {
+    "fields": [
+      "lifecycle",
+      "severity",
+      "scope",
+      "source_family",
+      "acknowledgement",
+      "suppression",
+      "escalation",
+      "operator_visibility",
+      "source_staleness",
+      "revision"
+    ],
+    "intents": [
+      "ACKNOWLEDGE",
+      "SET_SUPPRESSION"
+    ],
+    "rule": "client projection only; response becomes canonical only after accepted Core mutation; no local authority"
+  },
+  "redaction": {
+    "reuse": [
+      "M0.10 audit_safe_payload",
+      "S9C safe_field_contract"
+    ],
+    "forbidden": [
+      "PIN",
+      "password",
+      "raw token",
+      "API key",
+      "API secret",
+      "private key",
+      "biometric material",
+      "raw credential"
+    ],
+    "human_text": "non-authoritative rendered projection from alert_type plus safe structured fields; excluded from identity and dedup"
+  },
+  "upstream_binding_manifest": [
+    {
+      "milestone": "M0.2",
+      "artifact": "canonical_domain_vocabulary.json",
+      "pointer": "/entity_kinds",
+      "sha256": "1913a18c7e7479d9c20850a690ee81b9f311a7d08cf2458374c91f6332d277f1",
+      "drift": "ContractInconsistent"
+    },
+    {
+      "milestone": "M0.2",
+      "artifact": "canonical_domain_vocabulary.json",
+      "pointer": "/identifier_policy",
+      "sha256": "44726b4e51c53722ebbc95212d708521007c59cb54292ea7bc5b970320031d20",
+      "drift": "ContractInconsistent"
+    },
+    {
+      "milestone": "M0.7",
+      "artifact": "commands_events_order_lifecycle_and_idempotency.json",
+      "pointer": "/event_contract/event_types",
+      "sha256": "5e62e1c2761c383c51160d3db9eff8a378ad9fa250b0764cefc2a95505e85621",
+      "drift": "ContractInconsistent"
+    },
+    {
+      "milestone": "M0.7",
+      "artifact": "commands_events_order_lifecycle_and_idempotency.json",
+      "pointer": "/event_contract/event_schema_registry",
+      "sha256": "1a00bea752efca1cc06740eb144b1d6c72162c47bead09a72e5406fe8e1bfa85",
+      "drift": "ContractInconsistent"
+    },
+    {
+      "milestone": "M0.7",
+      "artifact": "commands_events_order_lifecycle_and_idempotency.json",
+      "pointer": "/event_contract/envelope_schema",
+      "sha256": "66dd37a084874295ace4568900f465009db148c9542bf5aa960b7e54ba89d18d",
+      "drift": "ContractInconsistent"
+    },
+    {
+      "milestone": "M0.7",
+      "artifact": "commands_events_order_lifecycle_and_idempotency.json",
+      "pointer": "/event_contract/fingerprint",
+      "sha256": "567355f92de30f538d3be322b5ca1a19c69b36f6a3972092df557a4d89df38a1",
+      "drift": "ContractInconsistent"
+    },
+    {
+      "milestone": "M0.7",
+      "artifact": "commands_events_order_lifecycle_and_idempotency.json",
+      "pointer": "/event_contract/ordering",
+      "sha256": "cb5b41881ba32e072b63946aa5c1d825b019cd87b507e0dc8706b85ec007c3f7",
+      "drift": "ContractInconsistent"
+    },
+    {
+      "milestone": "M0.8",
+      "artifact": "ledger_portfolio_capital_and_pnl.json",
+      "pointer": "/reconciliation_protocol/key",
+      "sha256": "7c4fff75fdb07046e62e62b8d2a74b9b6586f6c7de1e47a43d81dbf81597b484",
+      "drift": "ContractInconsistent"
+    },
+    {
+      "milestone": "M0.8",
+      "artifact": "ledger_portfolio_capital_and_pnl.json",
+      "pointer": "/reconciliation_protocol/outcomes",
+      "sha256": "94f5c932d55d28eef34f96c9e9a73111cd33e3cd96297e3359728cd4057831c2",
+      "drift": "ContractInconsistent"
+    },
+    {
+      "milestone": "M0.8",
+      "artifact": "ledger_portfolio_capital_and_pnl.json",
+      "pointer": "/reconciliation_protocol/observed_fact_fields",
+      "sha256": "6856418e9b7e448a8496c3732bfa979a2dc40b38406c39b6d21686552eb23a63",
+      "drift": "ContractInconsistent"
+    },
+    {
+      "milestone": "M0.8",
+      "artifact": "ledger_portfolio_capital_and_pnl.json",
+      "pointer": "/reconciliation_protocol/source_authority",
+      "sha256": "4bcc55786bf05c57fa68accf394b4ad4d5e869f68c841faea8f32d5623ebc6e3",
+      "drift": "ContractInconsistent"
+    },
+    {
+      "milestone": "M0.8",
+      "artifact": "ledger_portfolio_capital_and_pnl.json",
+      "pointer": "/reconciliation_protocol/outcome_rules",
+      "sha256": "77a5d37be640c97f89a57c20e619864fc6ce99d726ca54fcde717dfc158d2ead",
+      "drift": "ContractInconsistent"
+    },
+    {
+      "milestone": "M0.9",
+      "artifact": "risk_hierarchy_kill_switch_and_execution_lease.json",
+      "pointer": "/scope_hierarchy/applicable_order",
+      "sha256": "ab56fb8ab2838bd20c746f08ef8096917a68e6115fc42ff1d29c20942d086d78",
+      "drift": "ContractInconsistent"
+    },
+    {
+      "milestone": "M0.9",
+      "artifact": "risk_hierarchy_kill_switch_and_execution_lease.json",
+      "pointer": "/scope_hierarchy/scope_id_policy",
+      "sha256": "cd8d10a76ee06ee180fb59204f6433b5a552ea0681f0616a8278cec214b3e4b3",
+      "drift": "ContractInconsistent"
+    },
+    {
+      "milestone": "M0.9",
+      "artifact": "risk_hierarchy_kill_switch_and_execution_lease.json",
+      "pointer": "/kill_switch_contract/record_fields",
+      "sha256": "bc0a68a7622e475f334b9c741436793ca2ddd0ace1c93b489307215df87ca313",
+      "drift": "ContractInconsistent"
+    },
+    {
+      "milestone": "M0.9",
+      "artifact": "risk_hierarchy_kill_switch_and_execution_lease.json",
+      "pointer": "/kill_switch_contract/transition",
+      "sha256": "4f55cf0e72fe591845fe4c895283eb62979728849dc7cf460fb6f9147cfaeb95",
+      "drift": "ContractInconsistent"
+    },
+    {
+      "milestone": "M0.9",
+      "artifact": "risk_hierarchy_kill_switch_and_execution_lease.json",
+      "pointer": "/kill_switch_contract/authority",
+      "sha256": "bbdbbe69ecd1c0c34e202022ffe017692dc267d9abbd403b4a31d9dac38e042a",
+      "drift": "ContractInconsistent"
+    },
+    {
+      "milestone": "M0.9",
+      "artifact": "risk_hierarchy_kill_switch_and_execution_lease.json",
+      "pointer": "/kill_switch_contract/generation_validation",
+      "sha256": "ee892ff0aed9f8a2e7d05729135de41699e64ff96ef8a83dafddc43fd1cc3a5b",
+      "drift": "ContractInconsistent"
+    },
+    {
+      "milestone": "M0.9",
+      "artifact": "risk_hierarchy_kill_switch_and_execution_lease.json",
+      "pointer": "/risk_decision_contract/required_fields",
+      "sha256": "7eccd54c17ee9def7a4f151ec684fd8623f36299a1e6f5dfa1c3716c7a46d92a",
+      "drift": "ContractInconsistent"
+    },
+    {
+      "milestone": "M0.9",
+      "artifact": "risk_hierarchy_kill_switch_and_execution_lease.json",
+      "pointer": "/risk_decision_contract/decisions",
+      "sha256": "c5fca7951b15ead9804fdc2c1e89d7d07b936ca9141aa58b38ae8e280997958b",
+      "drift": "ContractInconsistent"
+    },
+    {
+      "milestone": "M0.9",
+      "artifact": "risk_hierarchy_kill_switch_and_execution_lease.json",
+      "pointer": "/risk_decision_contract/decision_fingerprint",
+      "sha256": "4281b97a278a492c6c81b314b4088ed4b655be0e0cf0e8c1b4d32d2cb76546d4",
+      "drift": "ContractInconsistent"
+    },
+    {
+      "milestone": "M0.9",
+      "artifact": "risk_hierarchy_kill_switch_and_execution_lease.json",
+      "pointer": "/core_authority_registries/accepted_decisions",
+      "sha256": "7d32d17c1af31ab0eb6c62c942d59e1f9f758504f723cbc4a11ecec93fcef3ca",
+      "drift": "ContractInconsistent"
+    },
+    {
+      "milestone": "M0.9",
+      "artifact": "risk_hierarchy_kill_switch_and_execution_lease.json",
+      "pointer": "/core_authority_registries/accepted_content",
+      "sha256": "116ed03c401a4cdd27aaa071954d46312a297bb9c13988f2decb07a5d086f0f2",
+      "drift": "ContractInconsistent"
+    },
+    {
+      "milestone": "M0.10",
+      "artifact": "identity_device_authentication_and_secrets.json",
+      "pointer": "/authority/public_authorization_inputs",
+      "sha256": "af01ca12a48bac50e4a80d6c35c671ede8bd678584663ec0a5ad74714251a533",
+      "drift": "ContractInconsistent"
+    },
+    {
+      "milestone": "M0.10",
+      "artifact": "identity_device_authentication_and_secrets.json",
+      "pointer": "/authority/public_authorization_forbidden_inputs",
+      "sha256": "6e765224ab28e1c050e1e235ac29e2fc44be2c2aef0b6dd6f64256b1574b9c4c",
+      "drift": "ContractInconsistent"
+    },
+    {
+      "milestone": "M0.10",
+      "artifact": "identity_device_authentication_and_secrets.json",
+      "pointer": "/operation_policy_registry",
+      "sha256": "f3cf802bebe7dd5ce70e88ee25bbddce442e5f6f9d6582d55193e2cfe24f8f59",
+      "drift": "ContractInconsistent"
+    },
+    {
+      "milestone": "M0.10",
+      "artifact": "identity_device_authentication_and_secrets.json",
+      "pointer": "/proof_policy",
+      "sha256": "811e80629e97f9afe16be1636927066577c39d1fe5211067bbaee52a88d30c97",
+      "drift": "ContractInconsistent"
+    },
+    {
+      "milestone": "M0.10",
+      "artifact": "identity_device_authentication_and_secrets.json",
+      "pointer": "/executable_boundary_schemas/AuthenticationProof",
+      "sha256": "d41cb6a5735327c67b506d68ba6ee7339dbe5b24fc5b7806560e1bcb1f7ba750",
+      "drift": "ContractInconsistent"
+    },
+    {
+      "milestone": "M0.10",
+      "artifact": "identity_device_authentication_and_secrets.json",
+      "pointer": "/executable_boundary_schemas/CoreIssuedAuthenticationProofBinding",
+      "sha256": "5c2adf1beee44f074f34d01e2c3ce6043775fffaf77dadb2bedf56a3a3ea2050",
+      "drift": "ContractInconsistent"
+    },
+    {
+      "milestone": "M0.11",
+      "artifact": "persistence_versioning_migrations_backup_and_recovery.json",
+      "pointer": "/state_store_identity_contract",
+      "sha256": "8836af4304ee417a1185f8c011a355ea322fb13dde45ab8a63812fa8be5a0ecd",
+      "drift": "ContractInconsistent"
+    },
+    {
+      "milestone": "M0.11",
+      "artifact": "persistence_versioning_migrations_backup_and_recovery.json",
+      "pointer": "/startup_recovery_model/trusted_observation_gates",
+      "sha256": "ac1570a9ad78809e5c9cb1ab2ef8286606242b56431bbd5b3b2d16e528d5e80b",
+      "drift": "ContractInconsistent"
+    },
+    {
+      "milestone": "M0.11",
+      "artifact": "persistence_versioning_migrations_backup_and_recovery.json",
+      "pointer": "/restore_contract/result",
+      "sha256": "f0ab79f1f7a32bcb460b5c9cd825e1508e90d8472e013918dbc95e9e7c95d9ff",
+      "drift": "ContractInconsistent"
+    },
+    {
+      "milestone": "M0.11",
+      "artifact": "persistence_versioning_migrations_backup_and_recovery.json",
+      "pointer": "/restore_contract/promotion_gates",
+      "sha256": "2dcdec86df165754280e66b9754bec01bc006ba19092520aac5bf1c04387b81e",
+      "drift": "ContractInconsistent"
+    }
+  ],
   "principles": [
     "stable identity survives redelivery",
     "deduplication groups equivalent active conditions without deleting history",
@@ -3264,7 +4821,100 @@
     "condition resolution requires fresh trusted evidence",
     "fact alerts resolve only by explicit canonical policy",
     "alerts do not create ProductCapabilities, readiness, authentication, risk, execution, persistence or update authority"
-  ]
+  ],
+  "s9d_c2_authorization_gate": {
+    "status": "BLOCKED_UPSTREAM_DECISION_REQUIRED",
+    "dependency": "frozen M0.10 identity_device_authentication_and_secrets.json",
+    "finding": "Frozen M0.10 has a closed operation_policy_registry and OPERATION_OWNERSHIP. It contains no alert acknowledgement, suppression, clear-suppression, or manual alert fact-resolution operation and exposes no registration/extension point.",
+    "required_operations": {
+      "ACKNOWLEDGE": "UNREPRESENTABLE_IN_FROZEN_M0.10",
+      "SET_SUPPRESSION": "UNREPRESENTABLE_IN_FROZEN_M0.10",
+      "CLEAR_SUPPRESSION": "UNREPRESENTABLE_IN_FROZEN_M0.10",
+      "AUTHORIZED_MANUAL_FACT_RESOLUTION": "UNREPRESENTABLE_IN_FROZEN_M0.10"
+    },
+    "exact_frozen_pointers": [
+      "/operation_policy_registry",
+      "/operation_ownership",
+      "/proof_policy",
+      "/authority/public_authorization_inputs",
+      "/authority/public_authorization_forbidden_inputs",
+      "/executable_boundary_schemas/AuthenticationProof",
+      "/executable_boundary_schemas/CoreIssuedAuthenticationProofBinding"
+    ],
+    "authentication_proof_exact_fields": [
+      "account_id",
+      "operator_id",
+      "device_installation_id",
+      "factor_set",
+      "issued_at_utc",
+      "expires_at_utc",
+      "identity_revision",
+      "device_trust_revision",
+      "pin_revision",
+      "platform_enrollment_revision",
+      "security_generation",
+      "session_generation",
+      "environment",
+      "operation",
+      "scope_fingerprint_sha256",
+      "mutation_fingerprint_sha256",
+      "causation_id",
+      "correlation_id",
+      "proof_fingerprint_sha256"
+    ],
+    "authorization_request_exact_fields": [
+      "account_id",
+      "operator_id",
+      "device_installation_id",
+      "environment",
+      "operation",
+      "scope_fingerprint_sha256",
+      "mutation_fingerprint_sha256",
+      "causation_id",
+      "correlation_id"
+    ],
+    "core_issued_binding_exact_fields": [
+      "proof_fingerprint_sha256",
+      "complete_proof_content_fingerprint_sha256",
+      "authority_source",
+      "account_id",
+      "operator_id",
+      "device_installation_id",
+      "identity_revision",
+      "device_trust_revision",
+      "pin_revision",
+      "platform_enrollment_revision",
+      "security_generation",
+      "session_generation"
+    ],
+    "unknown_operation_behavior": "OPERATION_UNSUPPORTED",
+    "extension_point": null,
+    "m012_prohibitions": [
+      "no local AuthenticationProof schema",
+      "no local proof issuer/resolver",
+      "no mutable dictionary self-enrollment",
+      "no reuse of unrelated M0.10 operation",
+      "no privileged alert mutation accepted until upstream decision"
+    ],
+    "required_resolution": "architecture decision explicitly reopening/augmenting M0.10 operation authorization, outside S9D-C2 scope"
+  },
+  "local_defect_status": {
+    "domain_fact_corrective_resolution": "OPEN_UPSTREAM_M0.7_SEMANTIC_DECISION; self-resolution forbidden",
+    "source_membership_current_authority": "OPEN_ORACLE_REPLACEMENT_REQUIRED; prior mutable-dict self-enrollment is non-authoritative and withdrawn",
+    "canonical_ids_time": "OPEN_ORACLE_REPLACEMENT_REQUIRED",
+    "semantic_alert_validation": "OPEN_ORACLE_REPLACEMENT_REQUIRED",
+    "dedup_registry_executable_parity": "PARTIAL_LOCAL_FIX_REGISTRY_SCOPES_CORRECTED; executable oracle remains open",
+    "currentness_ordering": "OPEN_ORACLE_REPLACEMENT_REQUIRED",
+    "security_manual_resolution": "BLOCKED_M0.10",
+    "atomic_audit": "BLOCKED_M0.10_OPERATION_PRECONDITION",
+    "clear_suppression": "BLOCKED_M0.10; declared request but accepted action set empty",
+    "internal_delivery_condition": "OPEN_ORACLE_REPLACEMENT_REQUIRED",
+    "multi_source_observations": "OPEN_ORACLE_REPLACEMENT_REQUIRED",
+    "escalation": "OPEN_ORACLE_REPLACEMENT_REQUIRED",
+    "delivery_attempts": "OPEN_ORACLE_REPLACEMENT_REQUIRED",
+    "semantic_restore": "OPEN_ORACLE_REPLACEMENT_REQUIRED",
+    "source_selectors": "OPEN_ORACLE_REPLACEMENT_REQUIRED"
+  }
 }
 ```
 
@@ -3600,7 +5250,7 @@
       "ui/qml/components/AlertCenterPanel.qml",
       "ui/qml/components/UpdateManagerPanel.qml"
     ],
-    "reason": "usable presentation code after projection-only and non-boolean readiness alignment"
+    "reason": "presentation is reusable only as canonical Core projection/client; local acknowledgement/lifecycle authority must be rewritten"
   },
   {
     "subsystem": "PySide preview audit/observability/rollback read models",
@@ -3678,9 +5328,10 @@
 
 ```json
 [
+  "S9D operator mutations require authorization operations/scopes not representable by the frozen M0.10 operation registry. No local M0.12 proof schema may impersonate M0.10 authority. Architecture decision/reopening of M0.10 is required before privileged alert lifecycle mutations can close.",
   "architecture-approve and implement the physical durable AuditEvent journal/carrier relative to frozen M0.11; canonical audit readiness remains blocked until then",
   "implement versioned deployment-specific probe freshness budgets within the closed source/category policy (no architecture semantic gap)",
-  "close alert category/severity policies, deduplication windows, suppression authorization, escalation routes and durable schemas",
+  "implement the S9D logical alert carrier physically in M1 without changing its authority semantics",
   "select release-channel registry, manifest canonicalization, signing algorithms, trust-root provisioning, rotation and revocation",
   "close UpdatePlan/UpdateAttempt/rollback state machines and crash matrix",
   "define exact operator authorization policy per update/rollback class using M0.10 primitives",

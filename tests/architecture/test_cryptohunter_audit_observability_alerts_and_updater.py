@@ -74,11 +74,11 @@ def test_identity_status_and_exact_top_level_shape() -> None:
     assert set(MACHINE) == TOP_LEVEL_KEYS
     assert MACHINE["schema_version"] == "cryptohunter.audit_observability_alerts_and_updater.v1"
     assert MACHINE["m0_element"] == "M0.12"
-    assert MACHINE["status"] == "IN_PROGRESS_OBSERVABILITY_HEALTH_READINESS_CLOSED"
+    assert MACHINE["status"] == "IN_PROGRESS_ALERTS_BLOCKED_M010_AUTHORIZATION"
     assert MACHINE["contract_identity"] == {
         "contract_id": "M0.12-audit-observability-alerts-updater",
-        "version": "0.3.9",
-        "phase": "S9C_C9_MARKET_DATA_ROUTE_ACCESS_CLOSED",
+        "version": "0.4.2",
+        "phase": "S9D_C2_BLOCKED_BY_FROZEN_M010_ALERT_ACTION_AUTHORIZATION",
         "machine_source_of_truth": True,
         "markdown_is_projection_only": True,
     }
@@ -5197,3 +5197,195 @@ def test_market_data_route_access_contract_is_manifest_bound_and_drift_protected
     )
     with pytest.raises(ContractInconsistent):
         ObservationReference(contracts, [_policy("COMPONENT_STATUS")])
+
+
+# S9D-C2 gate oracle. Privileged mutations deliberately have no local proof model.
+M010 = _load("identity_device_authentication_and_secrets.json")
+
+
+class AlertAuthorizationBlocked(RuntimeError):
+    pass
+
+
+def _frozen_m010_authorize_alert_action(operation: str) -> None:
+    """Interpret the closed frozen operation registry; unknown operations fail closed."""
+    registry = M010["operation_policy_registry"]
+    ownership = {
+        operation
+        for operations in M010["operation_ownership"].values()
+        if isinstance(operations, list)
+        for operation in operations
+    }
+    if operation not in registry or operation not in ownership:
+        raise AlertAuthorizationBlocked("OPERATION_UNSUPPORTED")
+    raise AssertionError("alert operation unexpectedly entered frozen M0.10")
+
+
+def _blocked_alert_mutation(state: dict[str, Any], operation: str) -> None:
+    before = deepcopy(state)
+    with pytest.raises(AlertAuthorizationBlocked, match="OPERATION_UNSUPPORTED"):
+        _frozen_m010_authorize_alert_action(operation)
+    assert state == before
+
+
+def test_s9d_c2_status_is_honestly_blocked_and_updater_stays_open() -> None:
+    assert MACHINE["status"] == "IN_PROGRESS_ALERTS_BLOCKED_M010_AUTHORIZATION"
+    assert MACHINE["contract_identity"] == {
+        "contract_id": "M0.12-audit-observability-alerts-updater",
+        "version": "0.4.2",
+        "phase": "S9D_C2_BLOCKED_BY_FROZEN_M010_ALERT_ACTION_AUTHORIZATION",
+        "machine_source_of_truth": True,
+        "markdown_is_projection_only": True,
+    }
+    release = MACHINE["alert_model"]["release_update_disposition"]
+    assert release["status"] == "FUTURE_SOURCE_NOT_CURRENT_AUTHORITY"
+    assert release["updater_state_machines"] == "OPEN"
+
+
+def test_s9d_c2_gate_consumes_exact_frozen_m010_shapes() -> None:
+    gate = MACHINE["alert_model"]["s9d_c2_authorization_gate"]
+    assert (
+        gate["authentication_proof_exact_fields"]
+        == M010["executable_boundary_schemas"]["AuthenticationProof"]
+    )
+    assert (
+        gate["core_issued_binding_exact_fields"]
+        == M010["executable_boundary_schemas"]["CoreIssuedAuthenticationProofBinding"]
+    )
+    assert gate["authorization_request_exact_fields"] == [
+        "account_id",
+        "operator_id",
+        "device_installation_id",
+        "environment",
+        "operation",
+        "scope_fingerprint_sha256",
+        "mutation_fingerprint_sha256",
+        "causation_id",
+        "correlation_id",
+    ]
+    assert M010["authority"]["public_authorization_inputs"] == [
+        "untrusted AuthenticationProof",
+        "untrusted exact authorization request",
+        "now_utc",
+    ]
+    assert M010["proof_policy"]["membership"] == (
+        "pre-existing CoreIssuedAuthenticationProofBinding"
+    )
+    assert M010["proof_policy"]["self_hash_authority"] is False
+    assert gate["extension_point"] is None
+
+
+@pytest.mark.parametrize(
+    "operation",
+    [
+        "ACKNOWLEDGE",
+        "SET_SUPPRESSION",
+        "CLEAR_SUPPRESSION",
+        "AUTHORIZED_MANUAL_FACT_RESOLUTION",
+    ],
+)
+def test_frozen_m010_rejects_every_required_alert_operation_without_mutation(
+    operation: str,
+) -> None:
+    assert operation not in M010["operation_policy_registry"]
+    assert all(
+        operation not in operations
+        for operations in M010["operation_ownership"].values()
+        if isinstance(operations, list)
+    )
+    state = {
+        "records": {"alert": {"revision": 4}},
+        "history": ["existing"],
+        "replay": {"existing": "entry"},
+        "active": {"dedup": "alert"},
+        "audit_journal": ["existing-audit"],
+    }
+    _blocked_alert_mutation(state, operation)
+
+
+def test_no_local_fake_authentication_proof_or_accepted_action_remains() -> None:
+    policy = MACHINE["alert_model"]["operator_action_policy"]
+    assert policy["status"] == "BLOCKED_BY_FROZEN_M0.10"
+    assert policy["accepted_actions"] == []
+    assert "OPERATION_UNSUPPORTED" in policy["public_behavior"]
+    assert (
+        "no local AuthenticationProof schema"
+        in MACHINE["alert_model"]["s9d_c2_authorization_gate"]["m012_prohibitions"]
+    )
+
+
+def test_domain_execution_fact_resolution_is_open_and_self_resolution_forbidden() -> None:
+    policy = next(
+        item
+        for item in MACHINE["alert_model"]["alert_type_registry"]
+        if item["alert_type"] == "DOMAIN_EXECUTION_FAILURE"
+    )
+    frozen_events = _load("commands_events_order_lifecycle_and_idempotency.json")["event_contract"][
+        "event_types"
+    ]
+    sources = {
+        "ORDER_REJECTED",
+        "ORDER_EXTERNAL_OUTCOME_UNKNOWN",
+        "IDEMPOTENCY_CONFLICT",
+    }
+    assert sources <= set(frozen_events)
+    assert set(policy["source_selector"]["event_types"]) == sources
+    assert policy["resolution_policy"].startswith(
+        "OPEN_NO_UNAMBIGUOUS_CORRECTIVE_SUCCESSOR_IN_FROZEN_M0.7"
+    )
+    assert "original or unrelated same-scope event REJECT" in policy["resolution_policy"]
+    assert (
+        "OPEN:"
+        in MACHINE["alert_model"]["resolution_contract"]["typed_paths"]["DOMAIN_EXECUTION_FAILURE"]
+    )
+
+
+def test_dedup_registry_scope_declarations_are_locally_corrected() -> None:
+    by_type = {item["alert_type"]: item for item in MACHINE["alert_model"]["alert_type_registry"]}
+    assert by_type["KILL_SWITCH_ACTIVE"]["dedup_policy"]["components"] == [
+        "alert_type",
+        "environment",
+        "scope_type",
+        "scope_id",
+        "M09_KILL_SWITCH",
+    ]
+    assert by_type["PERSISTENCE_RECOVERY_REQUIRED"]["dedup_policy"]["components"] == [
+        "alert_type",
+        "device_installation_id",
+        "state_store_identity_fingerprint_sha256",
+        "M11_RECOVERY",
+    ]
+    assert by_type["ALERT_DELIVERY_SUBSYSTEM_FAILURE"]["dedup_policy"]["components"] == [
+        "alert_type",
+        "environment",
+        "component",
+        "condition_code",
+        "source_instance_id",
+    ]
+
+
+def test_every_remaining_c2_defect_is_explicitly_open_or_blocked() -> None:
+    statuses = MACHINE["alert_model"]["local_defect_status"]
+    assert set(statuses) == {
+        "domain_fact_corrective_resolution",
+        "source_membership_current_authority",
+        "canonical_ids_time",
+        "semantic_alert_validation",
+        "dedup_registry_executable_parity",
+        "currentness_ordering",
+        "security_manual_resolution",
+        "atomic_audit",
+        "clear_suppression",
+        "internal_delivery_condition",
+        "multi_source_observations",
+        "escalation",
+        "delivery_attempts",
+        "semantic_restore",
+        "source_selectors",
+    }
+    assert all(value.startswith(("OPEN", "BLOCKED", "PARTIAL")) for value in statuses.values())
+    assert not MACHINE["contract_identity"]["phase"].endswith("CLOSED")
+
+
+def test_markdown_remains_exact_machine_projection_after_c2_gate() -> None:
+    assert MARKDOWN_PATH.read_text(encoding="utf-8") == _render_markdown(MACHINE)
