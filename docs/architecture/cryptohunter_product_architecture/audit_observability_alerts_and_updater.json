@@ -1,11 +1,11 @@
 {
   "schema_version": "cryptohunter.audit_observability_alerts_and_updater.v1",
   "m0_element": "M0.12",
-  "status": "IN_PROGRESS_AUDIT_JOURNAL_CLOSED",
+  "status": "IN_PROGRESS_OBSERVABILITY_HEALTH_READINESS_CLOSED",
   "contract_identity": {
     "contract_id": "M0.12-audit-observability-alerts-updater",
-    "version": "0.2.5",
-    "phase": "S9B_C5_AUDIT_JOURNAL_CONTRACT",
+    "version": "0.3.9",
+    "phase": "S9C_C9_MARKET_DATA_ROUTE_ACCESS_CLOSED",
     "machine_source_of_truth": true,
     "markdown_is_projection_only": true
   },
@@ -511,7 +511,1204 @@
       "observation may describe but never mutate upstream authority",
       "cross-environment aggregation is explicitly non-authoritative"
     ],
-    "projection_rule": "dashboards, diagnostic bundles, notifications and UI are lossy rebuildable projections"
+    "projection_rule": "dashboards, diagnostic bundles, notifications and UI are lossy rebuildable projections",
+    "category_contracts": [
+      {
+        "category": "STRUCTURED_LOGS",
+        "owner": "emitting component",
+        "source_authority_reference": "diagnostic statement",
+        "required_scope": "SEE scope_schema_ref (legacy human summary only; non-authoritative)",
+        "freshness_semantics": "event-local; no readiness freshness",
+        "retention_class": "BEST_EFFORT",
+        "cardinality_policy": "bounded fields; no user labels",
+        "secret_policy": "M0.10-bound deny raw secrets; allow safe IDs, fingerprints, reason codes, counts, enums and bounded diagnostics",
+        "contributes_to_health": false,
+        "contributes_to_readiness": false,
+        "scope_schema_ref": "observability_model.category_scope_registry.STRUCTURED_LOGS"
+      },
+      {
+        "category": "METRICS",
+        "owner": "metrics pipeline",
+        "source_authority_reference": "numeric aggregate of validated observations",
+        "required_scope": "SEE scope_schema_ref (legacy human summary only; non-authoritative)",
+        "freshness_semantics": "sample timestamp; category policy",
+        "retention_class": "BOUNDED",
+        "cardinality_policy": "registry labels only; raw IDs forbidden",
+        "secret_policy": "M0.10-bound deny raw secrets; allow safe IDs, fingerprints, reason codes, counts, enums and bounded diagnostics",
+        "contributes_to_health": false,
+        "contributes_to_readiness": false,
+        "scope_schema_ref": "observability_model.category_scope_registry.METRICS"
+      },
+      {
+        "category": "TRACES",
+        "owner": "emitting component",
+        "source_authority_reference": "diagnostic timing and causality",
+        "required_scope": "SEE scope_schema_ref (legacy human summary only; non-authoritative)",
+        "freshness_semantics": "span-local; never readiness evidence",
+        "retention_class": "BOUNDED",
+        "cardinality_policy": "bounded attributes; raw IDs forbidden",
+        "secret_policy": "M0.10-bound deny raw secrets; allow safe IDs, fingerprints, reason codes, counts, enums and bounded diagnostics",
+        "contributes_to_health": false,
+        "contributes_to_readiness": false,
+        "scope_schema_ref": "observability_model.category_scope_registry.TRACES"
+      },
+      {
+        "category": "COMPONENT_STATUS",
+        "owner": "CoreHost health aggregator",
+        "source_authority_reference": "M0.3 lifecycle and validated component checks",
+        "required_scope": "SEE scope_schema_ref (legacy human summary only; non-authoritative)",
+        "freshness_semantics": "source/category policy required",
+        "retention_class": "CURRENT_PLUS_BOUNDED_HISTORY",
+        "cardinality_policy": "one current key per scope",
+        "secret_policy": "M0.10-bound deny raw secrets; allow safe IDs, fingerprints, reason codes, counts, enums and bounded diagnostics",
+        "contributes_to_health": true,
+        "contributes_to_readiness": true,
+        "scope_schema_ref": "observability_model.category_scope_registry.COMPONENT_STATUS"
+      },
+      {
+        "category": "ADAPTER_STATUS",
+        "owner": "CoreHost adapter owner",
+        "source_authority_reference": "M0.6 route/adaptor validation",
+        "required_scope": "SEE scope_schema_ref (legacy human summary only; non-authoritative)",
+        "freshness_semantics": "source/category policy required",
+        "retention_class": "CURRENT_PLUS_BOUNDED_HISTORY",
+        "cardinality_policy": "one current key per route/session",
+        "secret_policy": "M0.10-bound deny raw secrets; allow safe IDs, fingerprints, reason codes, counts, enums and bounded diagnostics",
+        "contributes_to_health": true,
+        "contributes_to_readiness": true,
+        "scope_schema_ref": "observability_model.category_scope_registry.ADAPTER_STATUS"
+      },
+      {
+        "category": "MARKET_DATA_FRESHNESS",
+        "owner": "CoreHost market-data owner",
+        "source_authority_reference": "M0.6 route readiness and source data currency",
+        "required_scope": "SEE scope_schema_ref (legacy human summary only; non-authoritative)",
+        "freshness_semantics": "M0.6-derived source/category policy required",
+        "retention_class": "CURRENT_PLUS_BOUNDED_HISTORY",
+        "cardinality_policy": "one current key per route/instrument/session",
+        "secret_policy": "M0.10-bound deny raw secrets; allow safe IDs, fingerprints, reason codes, counts, enums and bounded diagnostics",
+        "contributes_to_health": true,
+        "contributes_to_readiness": true,
+        "scope_schema_ref": "observability_model.category_scope_registry.MARKET_DATA_FRESHNESS"
+      },
+      {
+        "category": "EXECUTION_PATH_HEALTH",
+        "owner": "CoreHost execution owner",
+        "source_authority_reference": "M0.5 operability + M0.6 route + M0.9 authority",
+        "required_scope": "SEE scope_schema_ref (legacy human summary only; non-authoritative)",
+        "freshness_semantics": "source/category policy required",
+        "retention_class": "CURRENT_PLUS_BOUNDED_HISTORY",
+        "cardinality_policy": "one current key per execution scope/session",
+        "secret_policy": "M0.10-bound deny raw secrets; allow safe IDs, fingerprints, reason codes, counts, enums and bounded diagnostics",
+        "contributes_to_health": true,
+        "contributes_to_readiness": true,
+        "scope_schema_ref": "observability_model.category_scope_registry.EXECUTION_PATH_HEALTH"
+      },
+      {
+        "category": "PERSISTENCE_HEALTH",
+        "owner": "CoreHost StateStore owner",
+        "source_authority_reference": "M0.11 accepted persistence/recovery facts",
+        "required_scope": "SEE scope_schema_ref (legacy human summary only; non-authoritative)",
+        "freshness_semantics": "source/category policy required",
+        "retention_class": "CURRENT_PLUS_BOUNDED_HISTORY",
+        "cardinality_policy": "one current key per StateStore/session",
+        "secret_policy": "M0.10-bound deny raw secrets; allow safe IDs, fingerprints, reason codes, counts, enums and bounded diagnostics",
+        "contributes_to_health": true,
+        "contributes_to_readiness": true,
+        "scope_schema_ref": "observability_model.category_scope_registry.PERSISTENCE_HEALTH"
+      },
+      {
+        "category": "RECONCILIATION_HEALTH",
+        "owner": "CoreHost reconciliation owner",
+        "source_authority_reference": "M0.8 reconciliation and M0.11 recovery facts",
+        "required_scope": "SEE scope_schema_ref (legacy human summary only; non-authoritative)",
+        "freshness_semantics": "source/category policy required",
+        "retention_class": "CURRENT_PLUS_BOUNDED_HISTORY",
+        "cardinality_policy": "one current key per reconciliation scope/session",
+        "secret_policy": "M0.10-bound deny raw secrets; allow safe IDs, fingerprints, reason codes, counts, enums and bounded diagnostics",
+        "contributes_to_health": true,
+        "contributes_to_readiness": true,
+        "scope_schema_ref": "observability_model.category_scope_registry.RECONCILIATION_HEALTH"
+      },
+      {
+        "category": "SECURITY_RISK_GATE_HEALTH",
+        "owner": "CoreHost safety owner",
+        "source_authority_reference": "M0.9 risk/kill-switch/lease and M0.10 security facts",
+        "required_scope": "SEE scope_schema_ref (legacy human summary only; non-authoritative)",
+        "freshness_semantics": "source/category policy required",
+        "retention_class": "CURRENT_PLUS_BOUNDED_HISTORY",
+        "cardinality_policy": "one current key per safety scope/session",
+        "secret_policy": "M0.10-bound deny raw secrets; allow safe IDs, fingerprints, reason codes, counts, enums and bounded diagnostics",
+        "contributes_to_health": true,
+        "contributes_to_readiness": true,
+        "scope_schema_ref": "observability_model.category_scope_registry.SECURITY_RISK_GATE_HEALTH"
+      },
+      {
+        "category": "RESOURCE_RUNTIME_HEALTH",
+        "owner": "owning process",
+        "source_authority_reference": "M0.3 process lifecycle plus bounded resource probes",
+        "required_scope": "SEE scope_schema_ref (legacy human summary only; non-authoritative)",
+        "freshness_semantics": "source/category policy required",
+        "retention_class": "CURRENT_PLUS_BOUNDED_HISTORY",
+        "cardinality_policy": "one current key per resource class/session",
+        "secret_policy": "M0.10-bound deny raw secrets; allow safe IDs, fingerprints, reason codes, counts, enums and bounded diagnostics",
+        "contributes_to_health": true,
+        "contributes_to_readiness": false,
+        "scope_schema_ref": "observability_model.category_scope_registry.RESOURCE_RUNTIME_HEALTH"
+      },
+      {
+        "category": "UPDATE_RELEASE_STATE",
+        "owner": "future privileged update coordinator",
+        "source_authority_reference": "future S9D updater authority; diagnostic only in S9C",
+        "required_scope": "SEE scope_schema_ref (legacy human summary only; non-authoritative)",
+        "freshness_semantics": "not readiness evidence in S9C",
+        "retention_class": "BOUNDED",
+        "cardinality_policy": "one current key per candidate; untrusted metadata bounded",
+        "secret_policy": "M0.10-bound deny raw secrets; allow safe IDs, fingerprints, reason codes, counts, enums and bounded diagnostics",
+        "contributes_to_health": false,
+        "contributes_to_readiness": false,
+        "scope_schema_ref": "observability_model.category_scope_registry.UPDATE_RELEASE_STATE"
+      }
+    ],
+    "observation_envelope": {
+      "closed": true,
+      "additional_fields": "REJECT",
+      "fields": [
+        {
+          "name": "observation_id",
+          "type": "non-empty string",
+          "nullable": false,
+          "semantics": "M0.12-local correlation/deduplication handle; non-authoritative; not an M0.2 durable entity identity"
+        },
+        {
+          "name": "category",
+          "type": "enum",
+          "nullable": false,
+          "registry": "observability_model.categories"
+        },
+        {
+          "name": "source_component",
+          "type": "enum reference",
+          "nullable": false,
+          "registry": "M0.3 process_roles.name or category-authorized internal component registry"
+        },
+        {
+          "name": "source_instance_id",
+          "type": "string",
+          "nullable": true,
+          "semantics": "runtime_session_id for CoreHost when applicable; otherwise source-local restart/session identity"
+        },
+        {
+          "name": "environment",
+          "type": "enum reference",
+          "nullable": true,
+          "registry": "M0.4 execution_environments.environment_id; required by category/scope policy"
+        },
+        {
+          "name": "scope",
+          "type": "closed object of canonical references",
+          "nullable": false,
+          "semantics": "category-authorized M0.2/M0.5/M0.6/M0.8/M0.9/M0.11 references; no caller-defined keys"
+        },
+        {
+          "name": "source_event_at_utc",
+          "type": "RFC3339 UTC string",
+          "nullable": true,
+          "semantics": "upstream fact time; not receipt time and not ordering authority alone"
+        },
+        {
+          "name": "observed_at_utc",
+          "type": "RFC3339 UTC string",
+          "nullable": false,
+          "semantics": "time probe formed the observation"
+        },
+        {
+          "name": "ingested_at_utc",
+          "type": "RFC3339 UTC string",
+          "nullable": false,
+          "semantics": "trusted ingress receipt time"
+        },
+        {
+          "name": "expires_at_utc",
+          "type": "RFC3339 UTC string",
+          "nullable": false,
+          "semantics": "exclusive validity horizon selected by versioned source/category policy"
+        },
+        {
+          "name": "freshness_policy_id",
+          "type": "registered string",
+          "nullable": false,
+          "semantics": "versioned source/category policy; no global timeout"
+        },
+        {
+          "name": "source_sequence",
+          "type": "non-negative integer",
+          "nullable": true,
+          "semantics": "monotonic only within source_component + source_instance_id"
+        },
+        {
+          "name": "condition",
+          "type": "enum",
+          "nullable": false,
+          "registry": "canonical_vocabulary.condition_states"
+        },
+        {
+          "name": "reason_code",
+          "type": "registered string",
+          "nullable": false,
+          "semantics": "safe machine-readable diagnostic"
+        },
+        {
+          "name": "value",
+          "type": "category-closed scalar/object",
+          "nullable": true,
+          "semantics": "bounded redacted diagnostic; never authority"
+        },
+        {
+          "name": "source_quality",
+          "type": "enum",
+          "nullable": false,
+          "registry": [
+            "DIRECT",
+            "DERIVED",
+            "CACHED"
+          ],
+          "semantics": "confidence metadata; cannot promote authority"
+        },
+        {
+          "name": "correlation_reference",
+          "type": "safe reference",
+          "nullable": true,
+          "semantics": "correlation only; cannot prove authorization or business outcome"
+        }
+      ]
+    },
+    "current_projection": {
+      "key_fields": [
+        "category",
+        "source_component",
+        "source_instance_id",
+        "environment",
+        "canonicalized_scope"
+      ],
+      "observation_id_is_key": false,
+      "replacement": "higher source_sequence in same source session replaces; without sequence, strictly later observed_at_utc replaces after skew validation",
+      "history": "optional bounded and lossy",
+      "authority": false
+    },
+    "freshness_and_clock": {
+      "freshness_states": [
+        "FRESH",
+        "STALE"
+      ],
+      "fresh": "explicit now < expires_at_utc and all timestamp/policy checks pass",
+      "expiry": "now >= expires_at_utc derives STALE; displayed condition becomes UNKNOWN with reason OBSERVATION_EXPIRED; prior OK is never retained",
+      "policy": "horizon is registered and versioned per source/category; no arbitrary global timeout",
+      "ordering": "source sequence within source session is primary when present; wall clock alone never proves global ordering",
+      "validation": {
+        "future_timestamp": "reject observed/source event time beyond policy skew bound",
+        "clock_moved_backwards": "reject older observed_at in same key unless a new source_instance_id establishes restart",
+        "older_source_timestamp": "without source_sequence reject SOURCE_EVENT_REGRESSION; increasing sequence may establish legal later sample with older source-event time and surfaces source ordering diagnostics",
+        "expires_before_or_equal_observed": "reject",
+        "unreasonable_expiry": "reject if horizon differs from freshness_policy_id",
+        "ingested_before_observed": "allowed only within policy skew bound; otherwise reject",
+        "older_observed_same_current_key": "reject CLOCK_REGRESSION regardless of increasing source_sequence; only new source_instance_id creates a new key/context"
+      }
+    },
+    "source_sequence_contract": {
+      "scope": [
+        "source_component",
+        "source_instance_id"
+      ],
+      "global_sequence": false,
+      "duplicate_same_sequence_same_content": "idempotent replay; current projection unchanged",
+      "duplicate_same_sequence_conflicting_content": "reject CONTRACT_INCONSISTENT",
+      "gap": "accept and surface SEQUENCE_GAP/DEGRADED confidence; never synthesize missing facts",
+      "regression": "reject",
+      "restart_reset": "requires new non-null source_instance_id; sequence may restart only in new session",
+      "validation_order_for_sequenced_observation": [
+        "lookup exact source component + source instance + sequence",
+        "exact content => historical replay return without current-clock validation or mutation",
+        "conflicting content => DUPLICATE_SEQUENCE_CONFLICT",
+        "only unseen sequence => regression, current clock, source-event, gap and replacement validation"
+      ]
+    },
+    "structured_log_schema": {
+      "required": [
+        "timestamp_utc",
+        "level",
+        "component",
+        "event_code",
+        "safe_fields"
+      ],
+      "optional": [
+        "source_instance_id",
+        "environment",
+        "correlation_reference",
+        "narrative_message"
+      ],
+      "levels": [
+        "DEBUG",
+        "INFO",
+        "WARNING",
+        "ERROR",
+        "CRITICAL"
+      ],
+      "safe_fields": "closed event-code schema; arbitrary dictionaries rejected",
+      "authority": false,
+      "narrative_message": "diagnostic only; never parsed back into state",
+      "delivery": "best effort",
+      "additional_fields": "REJECT",
+      "event_registry": {
+        "COMPONENT_PROBE": {
+          "required_safe_fields": [
+            "condition"
+          ],
+          "optional_safe_fields": [
+            "reason_code"
+          ],
+          "field_domains": {
+            "condition": [
+              "UNKNOWN",
+              "OK",
+              "DEGRADED",
+              "BLOCKED"
+            ],
+            "reason_code": "SAFE_CODE"
+          }
+        }
+      }
+    },
+    "metric_schema": {
+      "required": [
+        "metric_name",
+        "value",
+        "unit",
+        "labels",
+        "scope",
+        "timestamp_utc"
+      ],
+      "metric_name": "closed versioned registry",
+      "value_types": [
+        "INTEGER",
+        "DECIMAL"
+      ],
+      "unit": "registered per metric",
+      "labels": "closed per-metric keys and values",
+      "cardinality": "finite registered dimensions only; user-controlled labels and raw entity IDs forbidden",
+      "authority": false,
+      "additional_fields": "REJECT",
+      "registry": {
+        "component_probe_total": {
+          "unit": "count",
+          "label_schema": {
+            "component": [
+              "core_host",
+              "tray_agent",
+              "desktop_shell",
+              "bootstrapper"
+            ],
+            "condition": [
+              "UNKNOWN",
+              "OK",
+              "DEGRADED",
+              "BLOCKED"
+            ]
+          },
+          "scope_schema_ref": "COMPONENT_STATUS"
+        }
+      },
+      "value_type": "finite integer or decimal; bool forbidden",
+      "scope_label_consistency": {
+        "component_probe_total": "labels.component MUST equal scope.component; scope is validated through category_scope_registry[scope_schema_ref], not hardcoded to core_host"
+      }
+    },
+    "trace_schema": {
+      "purpose": "diagnostic timing and causality",
+      "required": [
+        "trace_id",
+        "span_id",
+        "component",
+        "operation_code",
+        "started_at_utc",
+        "ended_at_utc",
+        "safe_attributes"
+      ],
+      "optional": [
+        "parent_span_id",
+        "correlation_reference",
+        "causation_reference",
+        "source_instance_id",
+        "environment"
+      ],
+      "prohibitions": [
+        "prove authorization",
+        "prove order acceptance",
+        "replace AuditEvent",
+        "replace M0.7 event"
+      ],
+      "authority": false,
+      "additional_fields": "REJECT",
+      "operation_registry": {
+        "OBSERVATION_INGEST": {
+          "required_attributes": [
+            "category"
+          ],
+          "optional_attributes": [
+            "result_code"
+          ],
+          "attribute_domains": {
+            "category": [
+              "STRUCTURED_LOGS",
+              "METRICS",
+              "TRACES",
+              "COMPONENT_STATUS",
+              "ADAPTER_STATUS",
+              "MARKET_DATA_FRESHNESS",
+              "EXECUTION_PATH_HEALTH",
+              "PERSISTENCE_HEALTH",
+              "RECONCILIATION_HEALTH",
+              "SECURITY_RISK_GATE_HEALTH",
+              "RESOURCE_RUNTIME_HEALTH",
+              "UPDATE_RELEASE_STATE"
+            ],
+            "result_code": "SAFE_CODE"
+          }
+        }
+      },
+      "id_syntax": "16..64 lowercase hex",
+      "parent_relation": "parent_span_id absent or valid span id different from span_id"
+    },
+    "redaction_and_export": {
+      "upstream": "M0.10 identity_device_authentication_and_secrets.json",
+      "forbidden_raw": [
+        "password",
+        "PIN",
+        "API key",
+        "API secret",
+        "token",
+        "private key",
+        "biometric template",
+        "biometric assertion",
+        "protected bootstrap material"
+      ],
+      "allowed": [
+        "safe canonical IDs",
+        "fingerprints",
+        "reason codes",
+        "counts",
+        "state enums",
+        "bounded diagnostics"
+      ],
+      "applies_to": [
+        "observations",
+        "structured logs",
+        "metrics",
+        "traces",
+        "diagnostic bundles"
+      ],
+      "secret_like_input": "reject before storage/export",
+      "diagnostic_bundle": "lossy redacted bounded-history projection with cardinality limits; never backup of business or audit state"
+    },
+    "source_component_registry": {
+      "authority": "M0.3 process_roles.name only",
+      "values": [
+        "core_host",
+        "tray_agent",
+        "desktop_shell",
+        "bootstrapper"
+      ],
+      "internal_component_registry": null
+    },
+    "source_instance_contract": {
+      "CORE_HOST_RUNTIME_SESSION": {
+        "discriminator": "source_component == core_host",
+        "field": "source_instance_id",
+        "source": {
+          "milestone": "M0.2",
+          "pointer": "/entity_kinds[canonical_name=RuntimeSession]",
+          "id_field": "runtime_session_id",
+          "id_prefix": "run",
+          "syntax": "canonical lowercase UUIDv7"
+        }
+      },
+      "NON_CORE_LOCAL_SESSION": {
+        "discriminator": "source_component != core_host",
+        "type": "M0.12-local non-authoritative source-session handle",
+        "syntax": "1..96 SAFE_HANDLE characters [A-Za-z0-9][A-Za-z0-9._:-]*",
+        "restart_semantics": "new handle required for sequence reset",
+        "durable_domain_entity": false,
+        "claims_M02_prefix": false
+      }
+    },
+    "category_scope_registry": {
+      "STRUCTURED_LOGS": {
+        "required_keys": [],
+        "optional_keys": [
+          "component"
+        ],
+        "forbidden_keys_policy": "ALL_KEYS_NOT_IN_REQUIRED_OR_OPTIONAL",
+        "environment_requirement": "OPTIONAL",
+        "field_contracts": {
+          "component": {
+            "milestone": "M0.3",
+            "pointer": "/process_roles/name",
+            "identity_or_type": "enum"
+          }
+        },
+        "allowed_source_components": [
+          "core_host",
+          "tray_agent",
+          "desktop_shell",
+          "bootstrapper"
+        ],
+        "source_instance_policy": "RUNTIME_SESSION_FOR_CORE_HOST_ELSE_LOCAL_SESSION_OPTIONAL"
+      },
+      "METRICS": {
+        "required_keys": [],
+        "optional_keys": [
+          "component",
+          "resource_class"
+        ],
+        "forbidden_keys_policy": "ALL_KEYS_NOT_IN_REQUIRED_OR_OPTIONAL",
+        "environment_requirement": "OPTIONAL",
+        "field_contracts": {
+          "component": {
+            "milestone": "M0.3",
+            "pointer": "/process_roles/name",
+            "identity_or_type": "enum"
+          },
+          "resource_class": {
+            "milestone": "M0.12",
+            "pointer": "/observability_model/resource_class_registry",
+            "identity_or_type": "enum"
+          }
+        },
+        "allowed_source_components": [
+          "core_host",
+          "tray_agent",
+          "desktop_shell"
+        ],
+        "source_instance_policy": "RUNTIME_SESSION_FOR_CORE_HOST_ELSE_LOCAL_SESSION_OPTIONAL"
+      },
+      "TRACES": {
+        "required_keys": [],
+        "optional_keys": [
+          "component"
+        ],
+        "forbidden_keys_policy": "ALL_KEYS_NOT_IN_REQUIRED_OR_OPTIONAL",
+        "environment_requirement": "OPTIONAL",
+        "field_contracts": {
+          "component": {
+            "milestone": "M0.3",
+            "pointer": "/process_roles/name",
+            "identity_or_type": "enum"
+          }
+        },
+        "allowed_source_components": [
+          "core_host",
+          "tray_agent",
+          "desktop_shell",
+          "bootstrapper"
+        ],
+        "source_instance_policy": "RUNTIME_SESSION_FOR_CORE_HOST_ELSE_LOCAL_SESSION_OPTIONAL"
+      },
+      "COMPONENT_STATUS": {
+        "required_keys": [
+          "component"
+        ],
+        "optional_keys": [],
+        "forbidden_keys_policy": "ALL_KEYS_NOT_IN_REQUIRED_OR_OPTIONAL",
+        "environment_requirement": "OPTIONAL",
+        "field_contracts": {
+          "component": {
+            "milestone": "M0.3",
+            "pointer": "/process_roles/name",
+            "identity_or_type": "enum"
+          }
+        },
+        "allowed_source_components": [
+          "core_host",
+          "tray_agent",
+          "desktop_shell",
+          "bootstrapper"
+        ],
+        "source_instance_policy": "RUNTIME_SESSION_FOR_CORE_HOST_ELSE_LOCAL_SESSION_REQUIRED"
+      },
+      "ADAPTER_STATUS": {
+        "required_keys": [],
+        "optional_keys": [
+          "exchange_account_id",
+          "market_data_route_id",
+          "execution_route_id"
+        ],
+        "forbidden_keys_policy": "ALL_KEYS_NOT_IN_REQUIRED_OR_OPTIONAL",
+        "environment_requirement": "REQUIRED",
+        "field_contracts": {
+          "exchange_account_id": {
+            "milestone": "M0.5",
+            "pointer": "/exchange_account_contract",
+            "identity_or_type": "xacc"
+          },
+          "market_data_route_id": {
+            "milestone": "M0.6",
+            "pointer": "/entity_registry/MarketDataRoute",
+            "identity_or_type": "mdr"
+          },
+          "execution_route_id": {
+            "milestone": "M0.6",
+            "pointer": "/entity_registry/ExecutionRoute",
+            "identity_or_type": "xroute"
+          }
+        },
+        "allowed_source_components": [
+          "core_host"
+        ],
+        "source_instance_policy": "RUNTIME_SESSION_REQUIRED_FOR_CORE_HOST",
+        "at_least_one_of": [
+          "exchange_account_id",
+          "market_data_route_id",
+          "execution_route_id"
+        ]
+      },
+      "MARKET_DATA_FRESHNESS": {
+        "required_keys": [
+          "market_data_route_id",
+          "instrument_id"
+        ],
+        "optional_keys": [],
+        "forbidden_keys_policy": "ALL_KEYS_NOT_IN_REQUIRED_OR_OPTIONAL",
+        "environment_requirement": "REQUIRED",
+        "field_contracts": {
+          "market_data_route_id": {
+            "milestone": "M0.6",
+            "pointer": "/entity_registry/MarketDataRoute",
+            "identity_or_type": "mdr"
+          },
+          "instrument_id": {
+            "milestone": "M0.5",
+            "pointer": "/instrument_contract",
+            "identity_or_type": "instr"
+          }
+        },
+        "allowed_source_components": [
+          "core_host"
+        ],
+        "source_instance_policy": "RUNTIME_SESSION_REQUIRED_FOR_CORE_HOST"
+      },
+      "EXECUTION_PATH_HEALTH": {
+        "required_keys": [
+          "exchange_account_id",
+          "instrument_id",
+          "execution_route_id"
+        ],
+        "optional_keys": [],
+        "forbidden_keys_policy": "ALL_KEYS_NOT_IN_REQUIRED_OR_OPTIONAL",
+        "environment_requirement": "REQUIRED",
+        "field_contracts": {
+          "exchange_account_id": {
+            "milestone": "M0.5",
+            "pointer": "/exchange_account_contract",
+            "identity_or_type": "xacc"
+          },
+          "instrument_id": {
+            "milestone": "M0.5",
+            "pointer": "/instrument_contract",
+            "identity_or_type": "instr"
+          },
+          "execution_route_id": {
+            "milestone": "M0.6",
+            "pointer": "/entity_registry/ExecutionRoute",
+            "identity_or_type": "xroute"
+          }
+        },
+        "allowed_source_components": [
+          "core_host"
+        ],
+        "source_instance_policy": "RUNTIME_SESSION_REQUIRED_FOR_CORE_HOST"
+      },
+      "PERSISTENCE_HEALTH": {
+        "required_keys": [
+          "device_installation_id",
+          "state_store_identity_fingerprint_sha256"
+        ],
+        "optional_keys": [],
+        "forbidden_keys_policy": "ALL_KEYS_NOT_IN_REQUIRED_OR_OPTIONAL",
+        "environment_requirement": "FORBIDDEN",
+        "field_contracts": {
+          "device_installation_id": {
+            "milestone": "M0.2",
+            "pointer": "/entity_kinds[canonical_name=DeviceInstallation]",
+            "identity_or_type": "dev"
+          },
+          "state_store_identity_fingerprint_sha256": {
+            "milestone": "M0.11",
+            "pointer": "/state_store_identity_contract",
+            "identity_or_type": "lowercase_hex_64"
+          }
+        },
+        "allowed_source_components": [
+          "core_host"
+        ],
+        "source_instance_policy": "RUNTIME_SESSION_REQUIRED_FOR_CORE_HOST"
+      },
+      "RECONCILIATION_HEALTH": {
+        "required_keys": [
+          "exchange_account_id",
+          "portfolio_id"
+        ],
+        "optional_keys": [],
+        "forbidden_keys_policy": "ALL_KEYS_NOT_IN_REQUIRED_OR_OPTIONAL",
+        "environment_requirement": "REQUIRED",
+        "field_contracts": {
+          "exchange_account_id": {
+            "milestone": "M0.5",
+            "pointer": "/exchange_account_contract",
+            "identity_or_type": "xacc"
+          },
+          "portfolio_id": {
+            "milestone": "M0.2",
+            "pointer": "/entity_kinds[canonical_name=Portfolio]",
+            "identity_or_type": "port"
+          }
+        },
+        "allowed_source_components": [
+          "core_host"
+        ],
+        "source_instance_policy": "RUNTIME_SESSION_REQUIRED_FOR_CORE_HOST"
+      },
+      "SECURITY_RISK_GATE_HEALTH": {
+        "required_keys": [
+          "exchange_account_id",
+          "instrument_id",
+          "execution_route_id"
+        ],
+        "optional_keys": [],
+        "forbidden_keys_policy": "ALL_KEYS_NOT_IN_REQUIRED_OR_OPTIONAL",
+        "environment_requirement": "REQUIRED",
+        "field_contracts": {
+          "exchange_account_id": {
+            "milestone": "M0.5",
+            "pointer": "/exchange_account_contract",
+            "identity_or_type": "xacc"
+          },
+          "instrument_id": {
+            "milestone": "M0.5",
+            "pointer": "/instrument_contract",
+            "identity_or_type": "instr"
+          },
+          "execution_route_id": {
+            "milestone": "M0.6",
+            "pointer": "/entity_registry/ExecutionRoute",
+            "identity_or_type": "xroute"
+          }
+        },
+        "allowed_source_components": [
+          "core_host"
+        ],
+        "source_instance_policy": "RUNTIME_SESSION_REQUIRED_FOR_CORE_HOST"
+      },
+      "RESOURCE_RUNTIME_HEALTH": {
+        "required_keys": [
+          "component",
+          "resource_class"
+        ],
+        "optional_keys": [],
+        "forbidden_keys_policy": "ALL_KEYS_NOT_IN_REQUIRED_OR_OPTIONAL",
+        "environment_requirement": "OPTIONAL",
+        "field_contracts": {
+          "component": {
+            "milestone": "M0.3",
+            "pointer": "/process_roles/name",
+            "identity_or_type": "enum"
+          },
+          "resource_class": {
+            "milestone": "M0.12",
+            "pointer": "/observability_model/resource_class_registry",
+            "identity_or_type": "enum"
+          }
+        },
+        "allowed_source_components": [
+          "core_host",
+          "tray_agent",
+          "desktop_shell",
+          "bootstrapper"
+        ],
+        "source_instance_policy": "RUNTIME_SESSION_FOR_CORE_HOST_ELSE_LOCAL_SESSION_REQUIRED"
+      },
+      "UPDATE_RELEASE_STATE": {
+        "required_keys": [
+          "release_candidate_reference"
+        ],
+        "optional_keys": [],
+        "forbidden_keys_policy": "ALL_KEYS_NOT_IN_REQUIRED_OR_OPTIONAL",
+        "environment_requirement": "FORBIDDEN",
+        "field_contracts": {
+          "release_candidate_reference": {
+            "milestone": "M0.12",
+            "pointer": "future S9D local candidate reference",
+            "identity_or_type": "safe_handle"
+          }
+        },
+        "allowed_source_components": [
+          "bootstrapper"
+        ],
+        "source_instance_policy": "LOCAL_SESSION_REQUIRED"
+      }
+    },
+    "resource_class_registry": [
+      "CPU",
+      "MEMORY",
+      "DISK",
+      "IPC",
+      "THREAD_PROGRESS"
+    ],
+    "category_value_schemas": {
+      "STRUCTURED_LOGS": {
+        "allowed_keys": [
+          "emitted_count"
+        ],
+        "required_keys": [],
+        "additional_keys": "REJECT",
+        "max_serialized_bytes": 2048,
+        "scalar_types": [
+          "string",
+          "integer",
+          "decimal",
+          "boolean",
+          "null"
+        ],
+        "nested_objects": false,
+        "safe_value_policy": "SAFE_SCALAR_NO_SECRETS"
+      },
+      "METRICS": {
+        "allowed_keys": [
+          "sample_count"
+        ],
+        "required_keys": [],
+        "additional_keys": "REJECT",
+        "max_serialized_bytes": 2048,
+        "scalar_types": [
+          "string",
+          "integer",
+          "decimal",
+          "boolean",
+          "null"
+        ],
+        "nested_objects": false,
+        "safe_value_policy": "SAFE_SCALAR_NO_SECRETS"
+      },
+      "TRACES": {
+        "allowed_keys": [
+          "span_count"
+        ],
+        "required_keys": [],
+        "additional_keys": "REJECT",
+        "max_serialized_bytes": 2048,
+        "scalar_types": [
+          "string",
+          "integer",
+          "decimal",
+          "boolean",
+          "null"
+        ],
+        "nested_objects": false,
+        "safe_value_policy": "SAFE_SCALAR_NO_SECRETS"
+      },
+      "COMPONENT_STATUS": {
+        "allowed_keys": [
+          "progress_counter"
+        ],
+        "required_keys": [
+          "progress_counter"
+        ],
+        "additional_keys": "REJECT",
+        "max_serialized_bytes": 2048,
+        "scalar_types": [
+          "string",
+          "integer",
+          "decimal",
+          "boolean",
+          "null"
+        ],
+        "nested_objects": false,
+        "safe_value_policy": "SAFE_SCALAR_NO_SECRETS"
+      },
+      "ADAPTER_STATUS": {
+        "allowed_keys": [
+          "transport_state"
+        ],
+        "required_keys": [
+          "transport_state"
+        ],
+        "additional_keys": "REJECT",
+        "max_serialized_bytes": 2048,
+        "scalar_types": [
+          "string",
+          "integer",
+          "decimal",
+          "boolean",
+          "null"
+        ],
+        "nested_objects": false,
+        "safe_value_policy": "SAFE_SCALAR_NO_SECRETS"
+      },
+      "MARKET_DATA_FRESHNESS": {
+        "allowed_keys": [
+          "last_data_at_utc",
+          "sequence_state"
+        ],
+        "required_keys": [
+          "last_data_at_utc",
+          "sequence_state"
+        ],
+        "additional_keys": "REJECT",
+        "max_serialized_bytes": 2048,
+        "scalar_types": [
+          "string",
+          "integer",
+          "decimal",
+          "boolean",
+          "null"
+        ],
+        "nested_objects": false,
+        "safe_value_policy": "SAFE_SCALAR_NO_SECRETS"
+      },
+      "EXECUTION_PATH_HEALTH": {
+        "allowed_keys": [
+          "path_state"
+        ],
+        "required_keys": [
+          "path_state"
+        ],
+        "additional_keys": "REJECT",
+        "max_serialized_bytes": 2048,
+        "scalar_types": [
+          "string",
+          "integer",
+          "decimal",
+          "boolean",
+          "null"
+        ],
+        "nested_objects": false,
+        "safe_value_policy": "SAFE_SCALAR_NO_SECRETS"
+      },
+      "PERSISTENCE_HEALTH": {
+        "allowed_keys": [
+          "integrity_state",
+          "recovery_required"
+        ],
+        "required_keys": [
+          "integrity_state",
+          "recovery_required"
+        ],
+        "additional_keys": "REJECT",
+        "max_serialized_bytes": 2048,
+        "scalar_types": [
+          "string",
+          "integer",
+          "decimal",
+          "boolean",
+          "null"
+        ],
+        "nested_objects": false,
+        "safe_value_policy": "SAFE_SCALAR_NO_SECRETS"
+      },
+      "RECONCILIATION_HEALTH": {
+        "allowed_keys": [
+          "reconciliation_state"
+        ],
+        "required_keys": [
+          "reconciliation_state"
+        ],
+        "additional_keys": "REJECT",
+        "max_serialized_bytes": 2048,
+        "scalar_types": [
+          "string",
+          "integer",
+          "decimal",
+          "boolean",
+          "null"
+        ],
+        "nested_objects": false,
+        "safe_value_policy": "SAFE_SCALAR_NO_SECRETS"
+      },
+      "SECURITY_RISK_GATE_HEALTH": {
+        "allowed_keys": [
+          "risk_allowed",
+          "kill_switch_inactive",
+          "lease_state"
+        ],
+        "required_keys": [
+          "risk_allowed",
+          "kill_switch_inactive",
+          "lease_state"
+        ],
+        "additional_keys": "REJECT",
+        "max_serialized_bytes": 2048,
+        "scalar_types": [
+          "string",
+          "integer",
+          "decimal",
+          "boolean",
+          "null"
+        ],
+        "nested_objects": false,
+        "safe_value_policy": "SAFE_SCALAR_NO_SECRETS"
+      },
+      "RESOURCE_RUNTIME_HEALTH": {
+        "allowed_keys": [
+          "usage_ratio"
+        ],
+        "required_keys": [
+          "usage_ratio"
+        ],
+        "additional_keys": "REJECT",
+        "max_serialized_bytes": 2048,
+        "scalar_types": [
+          "string",
+          "integer",
+          "decimal",
+          "boolean",
+          "null"
+        ],
+        "nested_objects": false,
+        "safe_value_policy": "SAFE_SCALAR_NO_SECRETS"
+      },
+      "UPDATE_RELEASE_STATE": {
+        "allowed_keys": [
+          "candidate_state"
+        ],
+        "required_keys": [
+          "candidate_state"
+        ],
+        "additional_keys": "REJECT",
+        "max_serialized_bytes": 2048,
+        "scalar_types": [
+          "string",
+          "integer",
+          "decimal",
+          "boolean",
+          "null"
+        ],
+        "nested_objects": false,
+        "safe_value_policy": "SAFE_SCALAR_NO_SECRETS"
+      }
+    },
+    "safe_field_contract": {
+      "safe_handle": {
+        "min_length": 1,
+        "max_length": 128,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+        "control_characters": "REJECT"
+      },
+      "safe_code": {
+        "min_length": 1,
+        "max_length": 64,
+        "pattern": "^[A-Z][A-Z0-9_]*$"
+      },
+      "canonical_uuidv7_id": {
+        "pattern": "^<upstream-prefix>_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+      },
+      "correlation_reference": {
+        "closed_variants": {
+          "LOCAL": {
+            "exact_keys": [
+              "kind",
+              "value"
+            ],
+            "kind": "LOCAL",
+            "value_schema": "safe_handle",
+            "authority": false
+          },
+          "CANONICAL": {
+            "exact_keys": [
+              "kind",
+              "entity",
+              "value"
+            ],
+            "kind": "CANONICAL",
+            "entity_registry": [
+              "RuntimeSession",
+              "ExchangeAccount",
+              "Instrument",
+              "MarketDataRoute",
+              "ExecutionRoute"
+            ],
+            "value_schema": "selected upstream identity"
+          }
+        }
+      },
+      "secret_rejection": "schema-first: closed keys/types/enums/identities; then shared recursive prohibited-secret classifier as defense in depth"
+    },
+    "freshness_policy_contract": {
+      "closed": true,
+      "required_fields": [
+        "policy_id",
+        "version",
+        "category",
+        "source_class",
+        "validity_horizon_seconds",
+        "allowed_observed_future_skew_seconds",
+        "allowed_source_event_future_skew_seconds",
+        "allowed_ingest_before_observed_skew_seconds"
+      ],
+      "additional_fields": "REJECT",
+      "field_contracts": {
+        "policy_id": "SAFE_CODE",
+        "version": "positive non-boolean integer",
+        "category": "observability categories enum",
+        "source_class": "source_component registry or registered class",
+        "validity_horizon_seconds": "positive non-boolean integer",
+        "allowed_observed_future_skew_seconds": "non-negative non-boolean integer",
+        "allowed_source_event_future_skew_seconds": "non-negative non-boolean integer",
+        "allowed_ingest_before_observed_skew_seconds": "non-negative non-boolean integer"
+      },
+      "selection_key": [
+        "category",
+        "source_class",
+        "policy_id",
+        "version"
+      ],
+      "deployment_values": "injected registered configuration; no global duration",
+      "expiry_derivation": "expires_at_utc == observed_at_utc + validity_horizon_seconds"
+    },
+    "sequence_result_contract": {
+      "accepted_fields": [
+        "observation",
+        "replayed",
+        "sequence_gap",
+        "effective_condition",
+        "effective_reason_codes"
+      ],
+      "gap": "sequence > prior + 1 => accepted, sequence_gap=true, effective condition from sequence_gap_condition_composition[raw condition], append SEQUENCE_GAP; never weaken UNKNOWN/BLOCKED",
+      "old_exact_replay": "lookup precedes current-clock checks; exact historical acceptance returns replayed=true and explicit current remains newer; no mutation"
+    },
+    "sequence_gap_condition_composition": {
+      "OK": "DEGRADED",
+      "DEGRADED": "DEGRADED",
+      "UNKNOWN": "UNKNOWN",
+      "BLOCKED": "BLOCKED",
+      "invariant": "diagnostic uncertainty may preserve or restrict; never make a condition less restrictive"
+    },
+    "source_instance_policy_interpreter": {
+      "RUNTIME_SESSION_REQUIRED_FOR_CORE_HOST": {
+        "core_host": "CANONICAL_RUNTIME_SESSION_REQUIRED",
+        "non_core": "FORBIDDEN_BY_CATEGORY_SOURCE_POLICY"
+      },
+      "RUNTIME_SESSION_FOR_CORE_HOST_ELSE_LOCAL_SESSION_REQUIRED": {
+        "core_host": "CANONICAL_RUNTIME_SESSION_REQUIRED",
+        "non_core": "LOCAL_SAFE_SESSION_REQUIRED"
+      },
+      "RUNTIME_SESSION_FOR_CORE_HOST_ELSE_LOCAL_SESSION_OPTIONAL": {
+        "core_host": "CANONICAL_RUNTIME_SESSION_REQUIRED",
+        "non_core": "LOCAL_SAFE_SESSION_OPTIONAL"
+      },
+      "LOCAL_SESSION_REQUIRED": {
+        "core_host": "FORBIDDEN_BY_CATEGORY_SOURCE_POLICY",
+        "non_core": "LOCAL_SAFE_SESSION_REQUIRED"
+      }
+    }
   },
   "health_readiness_model": {
     "dimensions": {
@@ -520,10 +1717,10 @@
       "READINESS": "specific capability may be attempted only when all upstream lifecycle/capability gates independently authorize it"
     },
     "condition_states": {
-      "UNKNOWN": "no current trusted evidence",
-      "OK": "all required current checks pass",
-      "DEGRADED": "service operates with reduced quality but no forbidden capability is opened",
-      "BLOCKED": "specific capability must not proceed"
+      "UNKNOWN": "no current trusted evidence; neither OK nor DEGRADED; required safety dependency fails closed",
+      "OK": "fresh check satisfies its declared dependency only; never grants upstream authority",
+      "DEGRADED": "fresh reduced-quality condition; blocks only capabilities whose matrix dependency maps DEGRADED to BLOCKED",
+      "BLOCKED": "fresh explicit condition forbids affected capability"
     },
     "composition": [
       "never collapse dimensions into one healthy boolean",
@@ -532,7 +1729,1448 @@
       "M0.4 ProductCapabilities and environment_readiness remain authority",
       "UNKNOWN safety evidence is BLOCKED for the affected capability",
       "telemetry cannot promote readiness"
-    ]
+    ],
+    "composition_rules": {
+      "liveness": "response/progress evidence only; does not imply safe, healthy, or ready",
+      "health": "component/dependency condition composed from required and optional checks; required UNKNOWN/STALE gives UNKNOWN, required BLOCKED gives BLOCKED, relevant degradation gives DEGRADED; capability context is not inferred",
+      "readiness": "capability/environment/scope projection only; upstream authority AND every required fresh dependency",
+      "required_checks": "all evaluated; missing/stale never positive",
+      "optional_checks": "may degrade component health but do not block a capability unless that capability matrix marks them required",
+      "not_worst_enum": "component health and each capability readiness are independently composed"
+    },
+    "observation_ingestion": {
+      "steps": [
+        "validate closed envelope and category source/scope policy",
+        "validate environment and canonical references",
+        "reject secret-like content",
+        "validate timestamps and versioned horizon",
+        "apply session-scoped sequence rules",
+        "idempotently accept exact replay or replace deterministic current key",
+        "derive expiry using explicit now",
+        "recompose component health and capability readiness"
+      ],
+      "reject_codes": [
+        "UNKNOWN_CATEGORY",
+        "WRONG_SOURCE",
+        "WRONG_SCOPE",
+        "ILLEGAL_ENVIRONMENT",
+        "MALFORMED_TIMESTAMP",
+        "FUTURE_TIMESTAMP",
+        "INVALID_EXPIRY",
+        "UNKNOWN_FRESHNESS_POLICY",
+        "SEQUENCE_REGRESSION",
+        "DUPLICATE_SEQUENCE_CONFLICT",
+        "SECRET_CONTENT",
+        "UNKNOWN_CONDITION"
+      ]
+    },
+    "readiness_dependency_matrix": [
+      {
+        "readiness_id": "PAPER_OPERATION",
+        "capability_authority": {
+          "milestone": "M0.4",
+          "pointer": "/ProductCapabilities/current_edition_capability_policy",
+          "selector": {
+            "capability": "PAPER_LOCAL_SIMULATION",
+            "environment": "PAPER"
+          },
+          "selector_family": "CAPABILITY_ENVIRONMENT"
+        },
+        "allowed_environments": [
+          "PAPER"
+        ],
+        "scope_schema": {
+          "required_keys": [
+            "exchange_account_id",
+            "instrument_id",
+            "execution_route_id"
+          ],
+          "additional_keys": "REJECT"
+        },
+        "required_upstream_checks": [
+          {
+            "check_id": "m03_ready",
+            "milestone": "M0.3",
+            "pointer": "/corehost_runtime_session_and_readiness_contract/startup_readiness",
+            "scope_binding": "CURRENT_RUNTIME_CONTEXT"
+          },
+          {
+            "check_id": "m04_capability_allowed",
+            "milestone": "M0.4",
+            "pointer": "/ProductCapabilities/current_edition_capability_policy",
+            "scope_binding": "CAPABILITY_SELECTOR"
+          },
+          {
+            "check_id": "m05_account_operable",
+            "milestone": "M0.5",
+            "pointer": "/current_edition_account_operability_policy",
+            "scope_binding": "REQUEST_ACCOUNT"
+          },
+          {
+            "check_id": "m05_instrument_operable",
+            "milestone": "M0.5",
+            "pointer": "/instrument_contract/metadata_vs_tradability",
+            "scope_binding": "REQUEST_INSTRUMENT"
+          },
+          {
+            "check_id": "m06_route_ready",
+            "milestone": "M0.6",
+            "pointer": "/route_readiness_contract",
+            "scope_binding": "REQUEST_ROUTES"
+          },
+          {
+            "check_id": "m11_persistence_accepted",
+            "milestone": "M0.11",
+            "pointer": "/startup_recovery_model",
+            "scope_binding": "CURRENT_INSTALLATION_STATESTORE"
+          }
+        ],
+        "required_observations": [
+          {
+            "category": "COMPONENT_STATUS",
+            "freshness": "FRESH_REQUIRED",
+            "unknown_or_stale": "BLOCKED",
+            "degraded": "ALLOW",
+            "scope_binding": {
+              "mode": "FIXED_SCOPE",
+              "fixed_scope": {
+                "component": "core_host"
+              }
+            }
+          },
+          {
+            "category": "PERSISTENCE_HEALTH",
+            "freshness": "FRESH_REQUIRED",
+            "unknown_or_stale": "BLOCKED",
+            "degraded": "BLOCKED",
+            "scope_binding": {
+              "mode": "CURRENT_INSTALLATION_STATESTORE",
+              "context_fields": [
+                "device_installation_id",
+                "state_store_identity_fingerprint_sha256"
+              ]
+            }
+          }
+        ],
+        "result_states": [
+          "OK",
+          "BLOCKED"
+        ]
+      },
+      {
+        "readiness_id": "TESTNET_PRIVATE_EXECUTION",
+        "capability_authority": {
+          "milestone": "M0.4",
+          "pointer": "/ProductCapabilities/current_edition_capability_policy",
+          "selector": {
+            "capability": "TESTNET_PRIVATE_EXECUTION_AFTER_READINESS",
+            "environment": "TESTNET"
+          },
+          "selector_family": "CAPABILITY_ENVIRONMENT"
+        },
+        "allowed_environments": [
+          "TESTNET"
+        ],
+        "scope_schema": {
+          "required_keys": [
+            "exchange_account_id",
+            "instrument_id",
+            "execution_route_id",
+            "market_data_route_id",
+            "portfolio_id"
+          ],
+          "additional_keys": "REJECT"
+        },
+        "required_upstream_checks": [
+          {
+            "check_id": "m03_ready",
+            "milestone": "M0.3",
+            "pointer": "/corehost_runtime_session_and_readiness_contract/startup_readiness",
+            "scope_binding": "CURRENT_RUNTIME_CONTEXT"
+          },
+          {
+            "check_id": "m04_capability_allowed",
+            "milestone": "M0.4",
+            "pointer": "/ProductCapabilities/current_edition_capability_policy",
+            "scope_binding": "CAPABILITY_SELECTOR"
+          },
+          {
+            "check_id": "m05_account_operable",
+            "milestone": "M0.5",
+            "pointer": "/current_edition_account_operability_policy",
+            "scope_binding": "REQUEST_ACCOUNT"
+          },
+          {
+            "check_id": "m05_instrument_operable",
+            "milestone": "M0.5",
+            "pointer": "/instrument_contract/metadata_vs_tradability",
+            "scope_binding": "REQUEST_INSTRUMENT"
+          },
+          {
+            "check_id": "m06_route_ready",
+            "milestone": "M0.6",
+            "pointer": "/route_readiness_contract",
+            "scope_binding": "REQUEST_ROUTES"
+          },
+          {
+            "check_id": "m09_risk_allowed",
+            "milestone": "M0.9",
+            "pointer": "/risk_decision_contract",
+            "scope_binding": "REQUEST_EXECUTION_SCOPE"
+          },
+          {
+            "check_id": "m09_kill_switch_inactive",
+            "milestone": "M0.9",
+            "pointer": "/kill_switch_contract",
+            "scope_binding": "REQUEST_EXECUTION_SCOPE"
+          },
+          {
+            "check_id": "m09_execution_lease_valid",
+            "milestone": "M0.9",
+            "pointer": "/execution_lease_contract",
+            "scope_binding": "REQUEST_EXECUTION_SCOPE"
+          },
+          {
+            "check_id": "m11_persistence_accepted",
+            "milestone": "M0.11",
+            "pointer": "/startup_recovery_model",
+            "scope_binding": "CURRENT_INSTALLATION_STATESTORE"
+          }
+        ],
+        "required_observations": [
+          {
+            "category": "ADAPTER_STATUS",
+            "freshness": "FRESH_REQUIRED",
+            "unknown_or_stale": "BLOCKED",
+            "degraded": "BLOCKED",
+            "scope_binding": {
+              "mode": "MATCH_REQUEST_SCOPE_FIELDS",
+              "fields": [
+                "exchange_account_id",
+                "market_data_route_id",
+                "execution_route_id"
+              ]
+            }
+          },
+          {
+            "category": "MARKET_DATA_FRESHNESS",
+            "freshness": "FRESH_REQUIRED",
+            "unknown_or_stale": "BLOCKED",
+            "degraded": "BLOCKED",
+            "scope_binding": {
+              "mode": "MATCH_REQUEST_SCOPE_FIELDS",
+              "fields": [
+                "market_data_route_id",
+                "instrument_id"
+              ]
+            }
+          },
+          {
+            "category": "EXECUTION_PATH_HEALTH",
+            "freshness": "FRESH_REQUIRED",
+            "unknown_or_stale": "BLOCKED",
+            "degraded": "BLOCKED",
+            "scope_binding": {
+              "mode": "MATCH_REQUEST_SCOPE_FIELDS",
+              "fields": [
+                "exchange_account_id",
+                "instrument_id",
+                "execution_route_id"
+              ]
+            }
+          },
+          {
+            "category": "SECURITY_RISK_GATE_HEALTH",
+            "freshness": "FRESH_REQUIRED",
+            "unknown_or_stale": "BLOCKED",
+            "degraded": "BLOCKED",
+            "scope_binding": {
+              "mode": "MATCH_REQUEST_SCOPE_FIELDS",
+              "fields": [
+                "exchange_account_id",
+                "instrument_id",
+                "execution_route_id"
+              ]
+            }
+          },
+          {
+            "category": "PERSISTENCE_HEALTH",
+            "freshness": "FRESH_REQUIRED",
+            "unknown_or_stale": "BLOCKED",
+            "degraded": "BLOCKED",
+            "scope_binding": {
+              "mode": "CURRENT_INSTALLATION_STATESTORE",
+              "context_fields": [
+                "device_installation_id",
+                "state_store_identity_fingerprint_sha256"
+              ]
+            }
+          },
+          {
+            "category": "RECONCILIATION_HEALTH",
+            "freshness": "FRESH_REQUIRED",
+            "unknown_or_stale": "BLOCKED",
+            "degraded": "BLOCKED",
+            "scope_binding": {
+              "mode": "MATCH_REQUEST_SCOPE_FIELDS",
+              "fields": [
+                "exchange_account_id",
+                "portfolio_id"
+              ]
+            }
+          }
+        ],
+        "result_states": [
+          "OK",
+          "BLOCKED"
+        ]
+      },
+      {
+        "readiness_id": "LIVE_EXECUTION",
+        "capability_authority": {
+          "milestone": "M0.4",
+          "pointer": "/ProductCapabilities/current_edition_capability_policy",
+          "selector": {
+            "field": "live_allowed_in_current_edition",
+            "equals": true,
+            "environment": "LIVE"
+          },
+          "selector_family": "FIELD_EQUALS_ENVIRONMENT"
+        },
+        "allowed_environments": [
+          "LIVE"
+        ],
+        "scope_schema": {
+          "required_keys": [
+            "exchange_account_id",
+            "instrument_id",
+            "execution_route_id",
+            "market_data_route_id",
+            "portfolio_id"
+          ],
+          "additional_keys": "REJECT"
+        },
+        "required_upstream_checks": [
+          {
+            "check_id": "m03_ready",
+            "milestone": "M0.3",
+            "pointer": "/corehost_runtime_session_and_readiness_contract/startup_readiness",
+            "scope_binding": "CURRENT_RUNTIME_CONTEXT"
+          },
+          {
+            "check_id": "m04_capability_allowed",
+            "milestone": "M0.4",
+            "pointer": "/ProductCapabilities/current_edition_capability_policy",
+            "scope_binding": "CAPABILITY_SELECTOR"
+          },
+          {
+            "check_id": "m05_account_operable",
+            "milestone": "M0.5",
+            "pointer": "/current_edition_account_operability_policy",
+            "scope_binding": "REQUEST_ACCOUNT"
+          },
+          {
+            "check_id": "m05_instrument_operable",
+            "milestone": "M0.5",
+            "pointer": "/instrument_contract/metadata_vs_tradability",
+            "scope_binding": "REQUEST_INSTRUMENT"
+          },
+          {
+            "check_id": "m06_route_ready",
+            "milestone": "M0.6",
+            "pointer": "/route_readiness_contract",
+            "scope_binding": "REQUEST_ROUTES"
+          },
+          {
+            "check_id": "m09_risk_allowed",
+            "milestone": "M0.9",
+            "pointer": "/risk_decision_contract",
+            "scope_binding": "REQUEST_EXECUTION_SCOPE"
+          },
+          {
+            "check_id": "m09_kill_switch_inactive",
+            "milestone": "M0.9",
+            "pointer": "/kill_switch_contract",
+            "scope_binding": "REQUEST_EXECUTION_SCOPE"
+          },
+          {
+            "check_id": "m09_execution_lease_valid",
+            "milestone": "M0.9",
+            "pointer": "/execution_lease_contract",
+            "scope_binding": "REQUEST_EXECUTION_SCOPE"
+          },
+          {
+            "check_id": "m11_persistence_accepted",
+            "milestone": "M0.11",
+            "pointer": "/startup_recovery_model",
+            "scope_binding": "CURRENT_INSTALLATION_STATESTORE"
+          }
+        ],
+        "required_observations": [
+          {
+            "category": "ADAPTER_STATUS",
+            "freshness": "FRESH_REQUIRED",
+            "unknown_or_stale": "BLOCKED",
+            "degraded": "BLOCKED",
+            "scope_binding": {
+              "mode": "MATCH_REQUEST_SCOPE_FIELDS",
+              "fields": [
+                "exchange_account_id",
+                "market_data_route_id",
+                "execution_route_id"
+              ]
+            }
+          },
+          {
+            "category": "MARKET_DATA_FRESHNESS",
+            "freshness": "FRESH_REQUIRED",
+            "unknown_or_stale": "BLOCKED",
+            "degraded": "BLOCKED",
+            "scope_binding": {
+              "mode": "MATCH_REQUEST_SCOPE_FIELDS",
+              "fields": [
+                "market_data_route_id",
+                "instrument_id"
+              ]
+            }
+          },
+          {
+            "category": "EXECUTION_PATH_HEALTH",
+            "freshness": "FRESH_REQUIRED",
+            "unknown_or_stale": "BLOCKED",
+            "degraded": "BLOCKED",
+            "scope_binding": {
+              "mode": "MATCH_REQUEST_SCOPE_FIELDS",
+              "fields": [
+                "exchange_account_id",
+                "instrument_id",
+                "execution_route_id"
+              ]
+            }
+          },
+          {
+            "category": "SECURITY_RISK_GATE_HEALTH",
+            "freshness": "FRESH_REQUIRED",
+            "unknown_or_stale": "BLOCKED",
+            "degraded": "BLOCKED",
+            "scope_binding": {
+              "mode": "MATCH_REQUEST_SCOPE_FIELDS",
+              "fields": [
+                "exchange_account_id",
+                "instrument_id",
+                "execution_route_id"
+              ]
+            }
+          },
+          {
+            "category": "PERSISTENCE_HEALTH",
+            "freshness": "FRESH_REQUIRED",
+            "unknown_or_stale": "BLOCKED",
+            "degraded": "BLOCKED",
+            "scope_binding": {
+              "mode": "CURRENT_INSTALLATION_STATESTORE",
+              "context_fields": [
+                "device_installation_id",
+                "state_store_identity_fingerprint_sha256"
+              ]
+            }
+          }
+        ],
+        "result_states": [
+          "OK",
+          "BLOCKED"
+        ]
+      },
+      {
+        "readiness_id": "MARKET_DATA_CONSUMPTION",
+        "capability_authority": {
+          "milestone": "M0.6",
+          "pointer": "/route_readiness_contract",
+          "selector": {
+            "route_kind": "MARKET_DATA"
+          },
+          "selector_family": "ROUTE_KIND"
+        },
+        "allowed_environments": [
+          "PAPER",
+          "TESTNET",
+          "LIVE"
+        ],
+        "scope_schema": {
+          "required_keys": [
+            "market_data_route_id",
+            "instrument_id"
+          ],
+          "additional_keys": "REJECT"
+        },
+        "required_upstream_checks": [
+          {
+            "check_id": "m04_capability_allowed",
+            "milestone": "M0.4",
+            "pointer": "/ProductCapabilities/current_edition_capability_policy",
+            "scope_binding": "CAPABILITY_SELECTOR"
+          },
+          {
+            "check_id": "m05_instrument_operable",
+            "milestone": "M0.5",
+            "pointer": "/instrument_contract/metadata_vs_tradability",
+            "scope_binding": "REQUEST_INSTRUMENT"
+          },
+          {
+            "check_id": "m06_route_ready",
+            "milestone": "M0.6",
+            "pointer": "/route_readiness_contract",
+            "scope_binding": "REQUEST_ROUTES"
+          }
+        ],
+        "required_observations": [
+          {
+            "category": "ADAPTER_STATUS",
+            "freshness": "FRESH_REQUIRED",
+            "unknown_or_stale": "BLOCKED",
+            "degraded": "BLOCKED",
+            "scope_binding": {
+              "mode": "MATCH_REQUEST_SCOPE_FIELDS",
+              "fields": [
+                "market_data_route_id"
+              ]
+            }
+          },
+          {
+            "category": "MARKET_DATA_FRESHNESS",
+            "freshness": "FRESH_REQUIRED",
+            "unknown_or_stale": "BLOCKED",
+            "degraded": "BLOCKED",
+            "scope_binding": {
+              "mode": "MATCH_REQUEST_SCOPE_FIELDS",
+              "fields": [
+                "market_data_route_id",
+                "instrument_id"
+              ]
+            }
+          }
+        ],
+        "result_states": [
+          "OK",
+          "BLOCKED"
+        ]
+      },
+      {
+        "readiness_id": "CORE_STARTUP",
+        "capability_authority": {
+          "milestone": "M0.3",
+          "pointer": "/corehost_runtime_session_and_readiness_contract/startup_readiness",
+          "selector": {
+            "state": "READY"
+          },
+          "selector_family": "STARTUP_STATE"
+        },
+        "allowed_environments": [
+          "NONE"
+        ],
+        "scope_schema": {
+          "required_keys": [
+            "device_installation_id",
+            "state_store_identity_fingerprint_sha256"
+          ],
+          "additional_keys": "REJECT"
+        },
+        "required_upstream_checks": [
+          {
+            "check_id": "m03_ready",
+            "milestone": "M0.3",
+            "pointer": "/corehost_runtime_session_and_readiness_contract/startup_readiness",
+            "scope_binding": "CURRENT_RUNTIME_CONTEXT"
+          },
+          {
+            "check_id": "m03_single_instance",
+            "milestone": "M0.3",
+            "pointer": "/single_instance_policy",
+            "scope_binding": "CURRENT_RUNTIME_CONTEXT"
+          },
+          {
+            "check_id": "m11_persistence_accepted",
+            "milestone": "M0.11",
+            "pointer": "/startup_recovery_model",
+            "scope_binding": "CURRENT_INSTALLATION_STATESTORE"
+          }
+        ],
+        "required_observations": [
+          {
+            "category": "COMPONENT_STATUS",
+            "freshness": "FRESH_REQUIRED",
+            "unknown_or_stale": "BLOCKED",
+            "degraded": "ALLOW",
+            "scope_binding": {
+              "mode": "FIXED_SCOPE",
+              "fixed_scope": {
+                "component": "core_host"
+              }
+            }
+          },
+          {
+            "category": "PERSISTENCE_HEALTH",
+            "freshness": "FRESH_REQUIRED",
+            "unknown_or_stale": "BLOCKED",
+            "degraded": "BLOCKED",
+            "scope_binding": {
+              "mode": "CURRENT_INSTALLATION_STATESTORE",
+              "context_fields": [
+                "device_installation_id",
+                "state_store_identity_fingerprint_sha256"
+              ]
+            }
+          }
+        ],
+        "result_states": [
+          "OK",
+          "BLOCKED"
+        ]
+      },
+      {
+        "readiness_id": "PERSISTENCE_MUTATION",
+        "capability_authority": {
+          "milestone": "M0.11",
+          "pointer": "/transaction_protocol",
+          "selector": {
+            "accepted_state_required": true
+          },
+          "selector_family": "ACCEPTED_STATE_REQUIRED"
+        },
+        "allowed_environments": [
+          "NONE",
+          "PAPER",
+          "TESTNET"
+        ],
+        "scope_schema": {
+          "required_keys": [
+            "device_installation_id",
+            "state_store_identity_fingerprint_sha256"
+          ],
+          "additional_keys": "REJECT"
+        },
+        "required_upstream_checks": [
+          {
+            "check_id": "m03_single_instance",
+            "milestone": "M0.3",
+            "pointer": "/single_instance_policy",
+            "scope_binding": "CURRENT_RUNTIME_CONTEXT"
+          },
+          {
+            "check_id": "m11_persistence_accepted",
+            "milestone": "M0.11",
+            "pointer": "/startup_recovery_model",
+            "scope_binding": "CURRENT_INSTALLATION_STATESTORE"
+          }
+        ],
+        "required_observations": [
+          {
+            "category": "PERSISTENCE_HEALTH",
+            "freshness": "FRESH_REQUIRED",
+            "unknown_or_stale": "BLOCKED",
+            "degraded": "BLOCKED",
+            "scope_binding": {
+              "mode": "CURRENT_INSTALLATION_STATESTORE",
+              "context_fields": [
+                "device_installation_id",
+                "state_store_identity_fingerprint_sha256"
+              ]
+            }
+          }
+        ],
+        "result_states": [
+          "OK",
+          "BLOCKED"
+        ]
+      },
+      {
+        "readiness_id": "RECONCILIATION_RECOVERY",
+        "capability_authority": {
+          "milestone": "M0.8",
+          "pointer": "/reconciliation_protocol",
+          "selector": {
+            "attempt_only": true
+          },
+          "selector_family": "ATTEMPT_ONLY"
+        },
+        "allowed_environments": [
+          "PAPER",
+          "TESTNET"
+        ],
+        "scope_schema": {
+          "required_keys": [
+            "exchange_account_id",
+            "portfolio_id"
+          ],
+          "additional_keys": "REJECT"
+        },
+        "required_upstream_checks": [
+          {
+            "check_id": "m08_reconciliation_authorized",
+            "milestone": "M0.8",
+            "pointer": "/reconciliation_protocol",
+            "scope_binding": "REQUEST_RECONCILIATION_SCOPE"
+          },
+          {
+            "check_id": "m11_recovery_attempt_allowed",
+            "milestone": "M0.11",
+            "pointer": "/startup_recovery_model",
+            "scope_binding": "CURRENT_INSTALLATION_STATESTORE"
+          }
+        ],
+        "required_observations": [
+          {
+            "category": "RECONCILIATION_HEALTH",
+            "freshness": "FRESH_REQUIRED",
+            "unknown_or_stale": "BLOCKED",
+            "degraded": "BLOCKED",
+            "scope_binding": {
+              "mode": "MATCH_REQUEST_SCOPE_FIELDS",
+              "fields": [
+                "exchange_account_id",
+                "portfolio_id"
+              ]
+            }
+          },
+          {
+            "category": "PERSISTENCE_HEALTH",
+            "freshness": "FRESH_REQUIRED",
+            "unknown_or_stale": "BLOCKED",
+            "degraded": "BLOCKED",
+            "scope_binding": {
+              "mode": "CURRENT_INSTALLATION_STATESTORE",
+              "context_fields": [
+                "device_installation_id",
+                "state_store_identity_fingerprint_sha256"
+              ]
+            }
+          }
+        ],
+        "result_states": [
+          "OK",
+          "BLOCKED"
+        ]
+      }
+    ],
+    "authority_intersection": {
+      "formula": "EffectiveReadiness(capability, environment, scope) = upstream_authority(capability, environment, scope) INTERSECT all matrix-required observations fresh and satisfying their capability-specific mapping",
+      "upper_bound": "M0.12 readiness <= upstream authority",
+      "positive_result": "OK means may attempt; it is not command acceptance, authentication, lease grant, kill-switch clear, persistence acceptance or update eligibility",
+      "unknown_safety": "UNKNOWN or missing evidence for execution, risk, lease, persistence, security or market-data freshness => BLOCKED",
+      "telemetry_outage": "missing safety observations => UNKNOWN/BLOCKED; loss of purely diagnostic logs/metrics/traces only degrades monitoring health"
+    },
+    "upstream_binding_manifest": [
+      {
+        "milestone": "M0.2",
+        "artifact": "canonical_domain_vocabulary.json",
+        "pointers": [
+          "/entity_kinds"
+        ]
+      },
+      {
+        "milestone": "M0.3",
+        "artifact": "process_topology_and_lifecycle.json",
+        "pointers": [
+          "/process_roles",
+          "/single_instance_policy",
+          "/startup_sequence",
+          "/corehost_runtime_session_and_readiness_contract/startup_readiness"
+        ]
+      },
+      {
+        "milestone": "M0.4",
+        "artifact": "environment_and_product_capabilities.json",
+        "pointers": [
+          "/execution_environments",
+          "/ProductCapabilities/current_edition_capability_policy",
+          "/environment_readiness",
+          "/signature_validation_pipeline/m0_4_cryptographic_signature_verification",
+          "/signature_validation_pipeline/stage_result_registry/CRYPTOGRAPHIC_SIGNATURE_VERIFICATION_ACCEPTED/availability",
+          "/fail_closed_fallbacks/SAFE_LOCAL_ONLY",
+          "/endpoint_policy/live_endpoint_resolution_current_edition_allowed",
+          "/endpoint_policy/testnet_allowed_endpoint_classes",
+          "/endpoint_policy/paper_execution_endpoint_class"
+        ]
+      },
+      {
+        "milestone": "M0.5",
+        "artifact": "exchange_accounts_and_instruments.json",
+        "pointers": [
+          "/exchange_account_contract",
+          "/instrument_contract",
+          "/current_edition_account_operability_policy",
+          "/exchange_registry_contract/entries",
+          "/instrument_type_registry"
+        ]
+      },
+      {
+        "milestone": "M0.6",
+        "artifact": "strategy_market_data_and_execution_routing.json",
+        "pointers": [
+          "/entity_registry/MarketDataRoute",
+          "/entity_registry/ExecutionRoute",
+          "/route_readiness_contract",
+          "/current_edition_execution_pair_policy",
+          "/endpoint_class_registry",
+          "/execution_route_contract",
+          "/environment_policy",
+          "/authorization_dependencies_by_environment",
+          "/authorization_dependency_policy",
+          "/entity_registry/RouteReadiness",
+          "/execution_route_contract/execution_readiness_max_age_seconds",
+          "/record_schemas/MarketDataRoute",
+          "/record_schemas/ExecutionRoute",
+          "/record_schemas/RouteReadiness",
+          "/array_enum_registries",
+          "/market_data_route_contract"
+        ]
+      },
+      {
+        "milestone": "M0.8",
+        "artifact": "ledger_portfolio_capital_and_pnl.json",
+        "pointers": [
+          "/reconciliation_protocol"
+        ]
+      },
+      {
+        "milestone": "M0.9",
+        "artifact": "risk_hierarchy_kill_switch_and_execution_lease.json",
+        "pointers": [
+          "/risk_decision_contract",
+          "/kill_switch_contract",
+          "/execution_lease_contract",
+          "/lease_validation_conditions"
+        ]
+      },
+      {
+        "milestone": "M0.10",
+        "artifact": "identity_device_authentication_and_secrets.json",
+        "pointers": [
+          "/secret_reference_policy",
+          "/audit_safe_payload"
+        ]
+      },
+      {
+        "milestone": "M0.11",
+        "artifact": "persistence_versioning_migrations_backup_and_recovery.json",
+        "pointers": [
+          "/state_store_identity_contract",
+          "/startup_recovery_model",
+          "/transaction_protocol",
+          "/failure_registry"
+        ]
+      }
+    ],
+    "audit_path_health": {
+      "contract_level": "S9B logical journal rules are closed and may be a required readiness dependency",
+      "condition_code": "AUDIT_EVIDENCE_PATH_AVAILABLE",
+      "physical_deployment": "not production-ready until future M1 physical durable carrier is architecture-approved and implemented",
+      "failure": "required durable append path unavailable blocks affected privileged/economic capability; a healthy log sink is insufficient"
+    },
+    "ui_projection": {
+      "allowed": [
+        "OK",
+        "DEGRADED",
+        "UNKNOWN",
+        "BLOCKED",
+        "stale",
+        "last observation",
+        "reason"
+      ],
+      "forbidden": [
+        "override readiness",
+        "mark dependency OK",
+        "clear safety block",
+        "acknowledge canonical success",
+        "mint upstream authority"
+      ],
+      "implementation_in_S9C": false
+    },
+    "derived_freshness_state": {
+      "STALE": "derived freshness status, not a fifth condition enum; projection condition is UNKNOWN and required safety dependency is BLOCKED"
+    },
+    "upstream_evidence_contract": {
+      "input_type": "UpstreamReadinessEvidence",
+      "caller_boolean_map_allowed": false,
+      "required_sections": [
+        "runtime_context",
+        "product_capabilities_evidence",
+        "accounts_by_id",
+        "instruments_by_id",
+        "market_data_routes_by_id",
+        "execution_routes_by_id",
+        "risk_by_scope",
+        "persistence_context",
+        "reconciliation_by_scope"
+      ],
+      "derivation_flow": [
+        "validate structured evidence shape",
+        "bind evidence to requested/canonical context",
+        "resolve capability authority from injected frozen contract",
+        "derive internal facts",
+        "apply matrix"
+      ],
+      "check_registry": {
+        "m03_ready": {
+          "check_id": "m03_ready",
+          "milestone": "M0.3",
+          "pointer": "/corehost_runtime_session_and_readiness_contract/startup_readiness",
+          "scope_binding": "CURRENT_RUNTIME_CONTEXT"
+        },
+        "m03_single_instance": {
+          "check_id": "m03_single_instance",
+          "milestone": "M0.3",
+          "pointer": "/single_instance_policy",
+          "scope_binding": "CURRENT_RUNTIME_CONTEXT"
+        },
+        "m04_capability_allowed": {
+          "check_id": "m04_capability_allowed",
+          "milestone": "M0.4",
+          "pointer": "/ProductCapabilities/current_edition_capability_policy",
+          "scope_binding": "CAPABILITY_SELECTOR"
+        },
+        "m05_account_operable": {
+          "check_id": "m05_account_operable",
+          "milestone": "M0.5",
+          "pointer": "/current_edition_account_operability_policy",
+          "scope_binding": "REQUEST_ACCOUNT"
+        },
+        "m05_instrument_operable": {
+          "check_id": "m05_instrument_operable",
+          "milestone": "M0.5",
+          "pointer": "/instrument_contract/metadata_vs_tradability",
+          "scope_binding": "REQUEST_INSTRUMENT"
+        },
+        "m06_route_ready": {
+          "check_id": "m06_route_ready",
+          "milestone": "M0.6",
+          "pointer": "/route_readiness_contract",
+          "scope_binding": "REQUEST_ROUTES"
+        },
+        "m08_reconciliation_authorized": {
+          "check_id": "m08_reconciliation_authorized",
+          "milestone": "M0.8",
+          "pointer": "/reconciliation_protocol",
+          "scope_binding": "REQUEST_RECONCILIATION_SCOPE"
+        },
+        "m09_risk_allowed": {
+          "check_id": "m09_risk_allowed",
+          "milestone": "M0.9",
+          "pointer": "/risk_decision_contract",
+          "scope_binding": "REQUEST_EXECUTION_SCOPE"
+        },
+        "m09_kill_switch_inactive": {
+          "check_id": "m09_kill_switch_inactive",
+          "milestone": "M0.9",
+          "pointer": "/kill_switch_contract",
+          "scope_binding": "REQUEST_EXECUTION_SCOPE"
+        },
+        "m09_execution_lease_valid": {
+          "check_id": "m09_execution_lease_valid",
+          "milestone": "M0.9",
+          "pointer": "/execution_lease_contract",
+          "scope_binding": "REQUEST_EXECUTION_SCOPE"
+        },
+        "m11_persistence_accepted": {
+          "check_id": "m11_persistence_accepted",
+          "milestone": "M0.11",
+          "pointer": "/startup_recovery_model",
+          "scope_binding": "CURRENT_INSTALLATION_STATESTORE"
+        },
+        "m11_recovery_attempt_allowed": {
+          "check_id": "m11_recovery_attempt_allowed",
+          "milestone": "M0.11",
+          "pointer": "/startup_recovery_model",
+          "scope_binding": "CURRENT_INSTALLATION_STATESTORE"
+        }
+      },
+      "nested_section_schemas": {
+        "runtime_context": {
+          "shape": "CLOSED_RECORD",
+          "required_fields": [
+            "runtime_session_id",
+            "device_installation_id",
+            "state_store_identity_fingerprint_sha256",
+            "startup_readiness_state",
+            "process_lock_owned"
+          ],
+          "optional_fields": [],
+          "additional_fields": "REJECT",
+          "field_types": {
+            "runtime_session_id": "M0.2 RuntimeSession canonical ID",
+            "device_installation_id": "M0.2 DeviceInstallation canonical ID",
+            "state_store_identity_fingerprint_sha256": "M0.11 lowercase hex64",
+            "startup_readiness_state": "M0.3 startup readiness enum",
+            "process_lock_owned": "exact boolean"
+          },
+          "provenance": "accepted current M0.3/M0.11 runtime context; consumed, not minted"
+        },
+        "product_capabilities_evidence": {
+          "shape": "NULL_OR_NON_AUTHORITATIVE_DIAGNOSTIC_REFERENCE",
+          "required_fields": [
+            "carrier_kind",
+            "evidence_schema_version",
+            "stage_id",
+            "stage_result",
+            "stage_evidence_id",
+            "predecessor_stage_evidence_id",
+            "validation_context_id",
+            "document_fingerprint",
+            "capabilities_id",
+            "edition_id",
+            "signed_payload_hash",
+            "capability_set_hash",
+            "payload_schema_version",
+            "signature_schema_version",
+            "complete_stage_evidence",
+            "same_validation_context_id",
+            "same_document_fingerprint",
+            "issuer_attestation_verified"
+          ],
+          "optional_fields": [],
+          "additional_fields": "REJECT",
+          "field_types": {
+            "carrier_kind": "CORE_ACCEPTED_M04_VALIDATED_SNAPSHOT_REFERENCE",
+            "all fingerprint/evidence id fields": "lowercase hex64 except schema/identity fields",
+            "booleans": "exact boolean"
+          },
+          "canonical_sources": [
+            "M0.4#/validation_context_contract",
+            "M0.4#/stage_evidence_chain_contract",
+            "M0.4#/ProductCapabilities/validated_snapshot_rules"
+          ],
+          "provenance": "optional non-authoritative diagnostic mirror of future-only M0.4 model; ordinary dict, hashes, IDs, and booleans never establish accepted upstream object identity or current readiness",
+          "authority_by_itself": false,
+          "current_positive_authority": false,
+          "future_only_fields_are_diagnostic_mirrors": true
+        },
+        "accounts_by_id": {
+          "shape": "MAP_OF_CLOSED_RECORDS",
+          "key_type": "M0.5 ExchangeAccount ID",
+          "key_equals_field": "exchange_account_id",
+          "required_fields": [
+            "exchange_account_id",
+            "workspace_id",
+            "exchange_id",
+            "environment",
+            "market_type",
+            "lifecycle_state",
+            "connection_state",
+            "execution_authorization"
+          ],
+          "optional_fields": [],
+          "additional_fields": "REJECT",
+          "field_types": {
+            "exchange_account_id": "M0.5 canonical ID",
+            "environment": "M0.4 enum",
+            "states": "M0.5 registries",
+            "workspace_id": "M0.2 Workspace canonical ID",
+            "exchange_id": "M0.5 exchange registry identity",
+            "market_type": "M0.5 market type registry"
+          },
+          "provenance": "accepted current M0.5 account projection with exact workspace/exchange/environment/market binding"
+        },
+        "instruments_by_id": {
+          "shape": "MAP_OF_CLOSED_RECORDS",
+          "key_type": "M0.5 Instrument ID",
+          "key_equals_field": "instrument_id",
+          "required_fields": [
+            "instrument_id",
+            "workspace_id",
+            "exchange_id",
+            "environment",
+            "market_type",
+            "instrument_type",
+            "source_adapter_family_id",
+            "trading_status"
+          ],
+          "optional_fields": [],
+          "additional_fields": "REJECT",
+          "field_types": {
+            "instrument_id": "M0.5 canonical ID",
+            "environment": "M0.4 enum",
+            "trading_status": "M0.5 registry",
+            "workspace_id": "M0.2 Workspace canonical ID",
+            "exchange_id": "M0.5 exchange registry identity",
+            "market_type": "M0.5 market type registry",
+            "instrument_type": "M0.5 instrument type registry",
+            "source_adapter_family_id": "exact M0.5 trusted instrument projection adapter family"
+          },
+          "provenance": "accepted current M0.5 instrument projection with exact workspace/exchange/environment/market binding"
+        },
+        "market_data_routes_by_id": {
+          "shape": "MAP_OF_CLOSED_RECORDS",
+          "key_type": "M0.6 MarketDataRoute ID",
+          "key_equals_field": "market_data_route_id",
+          "required_fields": [
+            "market_data_route_id",
+            "route_kind",
+            "workspace_id",
+            "exchange_id",
+            "environment",
+            "market_type",
+            "adapter_family_id",
+            "endpoint_class",
+            "data_scope",
+            "instrument_ids",
+            "channel_types",
+            "snapshot_stream_semantics",
+            "sequence_policy",
+            "freshness_policy",
+            "reconnect_policy",
+            "route_status",
+            "instrument_id",
+            "route_readiness"
+          ],
+          "optional_fields": [],
+          "additional_fields": "REJECT",
+          "field_types": {
+            "market_data_route_id": "M0.6 canonical ID",
+            "route_kind": "MARKET_DATA joined discriminator",
+            "source_route_fields": "exact M0.6 MarketDataRoute closed schema",
+            "instrument_id": "joined requested M0.5 Instrument reference contained in instrument_ids",
+            "route_readiness": "exact Core-owned non-durable M0.6 RouteReadiness projection"
+          },
+          "provenance": "Joined projection: exact source-shaped persisted M0.6 MarketDataRoute plus separately sourced Core-owned RouteReadiness and exact M0.5 instrument/venue graph; persisted readiness_state is forbidden."
+        },
+        "execution_routes_by_id": {
+          "shape": "MAP_OF_CLOSED_RECORDS",
+          "key_type": "M0.6 ExecutionRoute ID",
+          "key_equals_field": "execution_route_id",
+          "required_fields": [
+            "execution_route_id",
+            "route_kind",
+            "workspace_id",
+            "exchange_account_id",
+            "exchange_id",
+            "environment",
+            "market_type",
+            "adapter_family_id",
+            "endpoint_class",
+            "supported_instrument_types",
+            "route_status",
+            "route_capability_ceiling",
+            "authorization_dependencies",
+            "instrument_id",
+            "route_readiness"
+          ],
+          "optional_fields": [],
+          "additional_fields": "REJECT",
+          "field_types": {
+            "execution_route_id": "M0.6 canonical ID",
+            "route_kind": "EXECUTION",
+            "workspace_id": "M0.2 canonical ID",
+            "exchange_account_id": "M0.5 canonical ID",
+            "exchange_id": "M0.5 exchange registry identity",
+            "environment": "M0.4 enum",
+            "market_type": "M0.5 market type registry",
+            "adapter_family_id": "exact enabled venue binding",
+            "endpoint_class": "M0.6 endpoint class allowing EXECUTION",
+            "supported_instrument_types": "closed list of M0.5 instrument types",
+            "route_status": "ACTIVE required",
+            "route_capability_ceiling": "must contain PLACE_ORDERS",
+            "authorization_dependencies": "exact M0.6 environment dependency set",
+            "instrument_id": "joined requested M0.5 Instrument reference",
+            "route_readiness": "exact Core-owned non-durable M0.6 RouteReadiness projection",
+            "array_fields": "exact unique non-empty lists validated against frozen registries before membership"
+          },
+          "provenance": "Joined projection: source-shaped persisted M0.6 ExecutionRoute plus separately sourced Core-owned RouteReadiness and exact M0.5 account/instrument/venue graph; caller READY alone has no authority."
+        },
+        "risk_by_scope": {
+          "shape": "MAP_OF_CLOSED_RECORDS",
+          "key_construction": [
+            "environment",
+            "exchange_account_id",
+            "instrument_id",
+            "execution_route_id"
+          ],
+          "key_separator": ":",
+          "required_fields": [
+            "environment",
+            "exchange_account_id",
+            "instrument_id",
+            "execution_route_id",
+            "risk_allowed",
+            "kill_switch_inactive",
+            "execution_lease_valid"
+          ],
+          "optional_fields": [],
+          "additional_fields": "REJECT",
+          "field_types": {
+            "scope identities": "canonical upstream",
+            "outcomes": "exact boolean"
+          },
+          "provenance": "accepted M0.9 risk/kill-switch/lease projections; key must equal ordered contained scope"
+        },
+        "persistence_context": {
+          "shape": "CLOSED_RECORD",
+          "required_fields": [
+            "device_installation_id",
+            "state_store_identity_fingerprint_sha256",
+            "accepted",
+            "recovery_attempt_allowed"
+          ],
+          "optional_fields": [],
+          "additional_fields": "REJECT",
+          "field_types": {
+            "device_installation_id": "M0.2 canonical ID",
+            "state_store_identity_fingerprint_sha256": "M0.11 lowercase hex64",
+            "outcomes": "exact boolean"
+          },
+          "provenance": "accepted current M0.11 recovery disposition"
+        },
+        "reconciliation_by_scope": {
+          "shape": "MAP_OF_CLOSED_RECORDS",
+          "key_construction": [
+            "environment",
+            "exchange_account_id",
+            "portfolio_id"
+          ],
+          "key_separator": ":",
+          "required_fields": [
+            "environment",
+            "exchange_account_id",
+            "portfolio_id",
+            "attempt_allowed"
+          ],
+          "optional_fields": [],
+          "additional_fields": "REJECT",
+          "field_types": {
+            "scope identities": "canonical upstream",
+            "attempt_allowed": "exact boolean"
+          },
+          "provenance": "accepted M0.8 reconciliation projection; key must equal ordered contained scope"
+        }
+      },
+      "product_capabilities_evidence_consumption": {
+        "current_runtime": "None is canonical because M0.4 VALID is unreachable",
+        "ordinary_mapping": "may be structurally classified as FUTURE_CONTRACT_MODEL_ONLY but authority=false",
+        "stage_evidence_ids": "never trusted by syntax; no M0.12 recomputation substitutes for M0.4 issuer attestation",
+        "raw_document_fields": "not consumed for authority",
+        "future_fixture": "not accepted as current authority",
+        "positive_authority_requirement": "opaque actual M0.4 validated result from a future reachable trusted boundary; unavailable today",
+        "permanent_non_authority_invariant": "presence or structural validity MUST NEVER participate in any positive capability authorization expression"
+      }
+    },
+    "dependency_scope_binding_modes": {
+      "MATCH_REQUEST_SCOPE_FIELDS": "all declared fields must exist in request and observation and equal exactly; empty fields forbidden as CONTRACT_INCONSISTENT",
+      "FIXED_SCOPE": "observation scope must exactly contain declared fixed_scope values",
+      "CURRENT_RUNTIME_CONTEXT": "observation must bind declared fields from validated runtime context; empty context forbidden",
+      "CURRENT_INSTALLATION_STATESTORE": "observation must exactly match validated current device_installation_id and state_store_identity_fingerprint_sha256"
+    },
+    "capability_selector_registry": {
+      "CAPABILITY_ENVIRONMENT": {
+        "exact_keys": [
+          "capability",
+          "environment"
+        ],
+        "compatible_milestone": "M0.4",
+        "compatible_pointer": "/ProductCapabilities/current_edition_capability_policy",
+        "legal_capabilities": [
+          "PAPER_LOCAL_SIMULATION",
+          "TESTNET_PRIVATE_EXECUTION_AFTER_READINESS"
+        ],
+        "semantics": "PAPER derives SAFE_LOCAL_ONLY local simulation; TESTNET conditional permission additionally requires currently reachable M0.4 VALID, which is unavailable; diagnostic/future wrapper has no authority"
+      },
+      "FIELD_EQUALS_ENVIRONMENT": {
+        "exact_keys": [
+          "field",
+          "equals",
+          "environment"
+        ],
+        "compatible_milestone": "M0.4",
+        "legal_field": "live_allowed_in_current_edition",
+        "legal_equals": true,
+        "legal_environment": "LIVE"
+      },
+      "ROUTE_KIND": {
+        "exact_keys": [
+          "route_kind"
+        ],
+        "compatible_milestone": "M0.6",
+        "legal_route_kind": "MARKET_DATA",
+        "semantics": "exact requested MarketDataRoute record, environment, instrument and READY state"
+      },
+      "STARTUP_STATE": {
+        "exact_keys": [
+          "state"
+        ],
+        "compatible_milestone": "M0.3",
+        "legal_state": "READY"
+      },
+      "ACCEPTED_STATE_REQUIRED": {
+        "exact_keys": [
+          "accepted_state_required"
+        ],
+        "compatible_milestone": "M0.11",
+        "legal_value": true
+      },
+      "ATTEMPT_ONLY": {
+        "exact_keys": [
+          "attempt_only"
+        ],
+        "compatible_milestone": "M0.8",
+        "legal_value": true
+      }
+    },
+    "product_capabilities_authority": {
+      "frozen_owner": "M0.4 environment_and_product_capabilities.json",
+      "reachability_source": {
+        "pipeline_pointer": "/signature_validation_pipeline/m0_4_cryptographic_signature_verification",
+        "current_value": "CRYPTOGRAPHIC_VERIFICATION_NOT_IMPLEMENTED_IN_M0_4",
+        "future_accepted_result_availability_pointer": "/signature_validation_pipeline/stage_result_registry/CRYPTOGRAPHIC_SIGNATURE_VERIFICATION_ACCEPTED/availability",
+        "future_value": "FUTURE_ONLY"
+      },
+      "current_reachability": "VALIDATED_SNAPSHOT_AND_TRUST_STATE_VALID_UNREACHABLE_IN_CURRENT_M0_4",
+      "current_paper": {
+        "authority_path": "M0.4 SAFE_LOCAL_ONLY fallback",
+        "requires_valid_snapshot": false,
+        "local_simulation_only": true,
+        "private_exchange_side_effects": false
+      },
+      "current_testnet_private": "BLOCKED_WITHOUT_REACHABLE_VALID_M04_EVIDENCE",
+      "current_live": "BLOCKED_BY_CURRENT_EDITION",
+      "future_contract_model": "M0.4 closure-local future fixture proves future semantics only; never current authority",
+      "M012_mints_authority": false,
+      "current_reachability_rule": {
+        "pipeline_value_must_equal": "CRYPTOGRAPHIC_VERIFICATION_NOT_IMPLEMENTED_IN_M0_4",
+        "accepted_result_availability_must_equal": "FUTURE_ONLY",
+        "derived_current_valid_reachable": false,
+        "unexpected_value": "CONTRACT_INCONSISTENT_NEVER_REACHABLE",
+        "negative_sentinel_comparison_forbidden": true
+      },
+      "diagnostic_wrapper_in_positive_authorization_expression": false,
+      "future_handoff_policy": "Any upstream M0.4 change fails closed until M0.12 is explicitly revised to bind an actual trusted accepted-output primitive; disappearance of the current sentinel never enables TESTNET automatically."
+    },
+    "live_market_data_authority": {
+      "current_endpoint_policy": {
+        "milestone": "M0.4",
+        "pointer": "/endpoint_policy/live_endpoint_resolution_current_edition_allowed",
+        "required_current_value": false
+      },
+      "endpoint_classes_are_descriptive_only": true,
+      "route_contract": {
+        "milestone": "M0.6",
+        "entity_pointer": "/entity_registry/MarketDataRoute",
+        "readiness_pointer": "/route_readiness_contract",
+        "endpoint_registry_pointer": "/endpoint_class_registry",
+        "joined_projection_schema_ref": "/health_readiness_model/upstream_evidence_contract/nested_section_schemas/market_data_routes_by_id",
+        "market_data_route_contract_pointer": "/market_data_route_contract"
+      },
+      "venue_registry": {
+        "milestone": "M0.5",
+        "pointer": "/exchange_registry_contract/entries",
+        "requirements": [
+          "exact exchange_id entry exists",
+          "status == ENABLED",
+          "environment in supported_environments",
+          "market_type in supported_market_types",
+          "adapter_family_id exact match"
+        ]
+      },
+      "current_enabled_live_venue_reachable": false,
+      "caller_ready_is_authority": false,
+      "current_results": {
+        "PAPER": "SOURCE_POLICY_AND_ROUTE_GATES",
+        "TESTNET": "SOURCE_POLICY_AND_ROUTE_GATES",
+        "LIVE": "BLOCKED"
+      },
+      "future_handoff_policy": "LIVE market data requires a coordinated explicit M0.4 endpoint-policy, M0.5 enabled LIVE venue, M0.6 route-proof, and M0.12 binding update; enum presence, endpoint_classes, or caller READY never enables it automatically."
+    },
+    "execution_route_authority": {
+      "explicit_route_kind_dispatch": [
+        "MARKET_DATA",
+        "EXECUTION"
+      ],
+      "unknown_or_unhandled_route_kind": "BLOCKED_NEVER_GENERIC_SUCCESS",
+      "route_definition": {
+        "milestone": "M0.6",
+        "entity_pointer": "/entity_registry/ExecutionRoute",
+        "contract_pointer": "/execution_route_contract"
+      },
+      "route_readiness": {
+        "milestone": "M0.6",
+        "entity_pointer": "/entity_registry/RouteReadiness",
+        "contract_pointer": "/route_readiness_contract",
+        "source": "Core-owned route_readiness_by_id only"
+      },
+      "policy_pointers": [
+        "/endpoint_class_registry",
+        "/environment_policy",
+        "/authorization_dependencies_by_environment",
+        "/authorization_dependency_policy",
+        "/current_edition_execution_pair_policy"
+      ],
+      "venue_pointer": {
+        "milestone": "M0.5",
+        "pointer": "/exchange_registry_contract/entries"
+      },
+      "caller_ready_is_authority": false,
+      "required_graph_equalities": [
+        "route.workspace_id == account.workspace_id == instrument.workspace_id",
+        "route.exchange_id == account.exchange_id == instrument.exchange_id",
+        "route.environment == account.environment == instrument.environment == request environment",
+        "route.market_type == account.market_type == instrument.market_type",
+        "route.exchange_account_id == requested account",
+        "instrument.instrument_type in route.supported_instrument_types"
+      ]
+    },
+    "route_readiness_temporal_authority": {
+      "validation_time_source": "explicit readiness evaluation now argument; one trusted logical RFC3339 UTC instant per evaluation; no system-clock reads",
+      "route_readiness_schema": {
+        "milestone": "M0.6",
+        "pointer": "/record_schemas/RouteReadiness"
+      },
+      "route_readiness_contract": {
+        "milestone": "M0.6",
+        "pointer": "/route_readiness_contract"
+      },
+      "execution_max_age": {
+        "milestone": "M0.6",
+        "pointer": "/execution_route_contract/execution_readiness_max_age_seconds",
+        "boundary": "age_seconds <= max_age_seconds"
+      },
+      "market_data_max_age": {
+        "source": "exact source-shaped MarketDataRoute.freshness_policy.max_age_seconds",
+        "boundary": "age_seconds <= max_age_seconds"
+      },
+      "sequence_state_by_kind": {
+        "MARKET_DATA": "CONTIGUOUS",
+        "EXECUTION": "NOT_APPLICABLE"
+      },
+      "future_observed_at": "BLOCKED",
+      "stale_ready": "BLOCKED",
+      "persisted_route_readiness_state_forbidden": true,
+      "strict_array_shape": "exact unique non-empty list; strings, tuples, mappings, scalars, booleans and null rejected before membership",
+      "array_registry_pointers": [
+        {
+          "milestone": "M0.5",
+          "pointer": "/instrument_type_registry"
+        },
+        {
+          "milestone": "M0.6",
+          "pointer": "/array_enum_registries"
+        }
+      ]
+    },
+    "market_data_route_access_authority": {
+      "milestone": "M0.6",
+      "contract_pointer": "/market_data_route_contract",
+      "endpoint_registry_pointer": "/endpoint_class_registry",
+      "cross_field_rules": [
+        "endpoint.environment == route.environment",
+        "MARKET_DATA in endpoint.allowed_route_kinds",
+        "endpoint.access_scope == route.data_scope",
+        "PUBLIC data_scope forbids every PRIVATE_* channel"
+      ],
+      "private_channel_prefix": "PRIVATE_",
+      "classification": "trusted-context graph mismatch makes route not source-ready",
+      "all_instrument_ids": "each canonical ID must resolve to an accepted instrument projection with exact workspace/exchange/environment/market_type and source_adapter_family_id graph",
+      "schema_source": "upstream_evidence_contract.nested_section_schemas.market_data_routes_by_id",
+      "top_level_readiness_state_forbidden": true,
+      "joined_route_readiness_required": true,
+      "current_private_disposition": "BLOCKED_WITHOUT_ACCOUNT_CREDENTIAL_AUTHORITY_NOT_PRESENT_IN_MARKET_DATA_CONSUMPTION_SCOPE"
+    }
   },
   "alert_model": {
     "required_fields": [
@@ -935,18 +3573,18 @@
     "no selection of database, telemetry vendor, signing algorithm, installer technology or transport",
     "no activation of LIVE",
     "no claim that legacy audit/log/update code is canonical",
-    "no observability/health, alert or updater closure in S9B"
+    "no S9D alert closure or updater closure in S9C",
+    "no physical AuditEvent carrier implementation"
   ],
   "open_items": [
     "architecture-approve and implement the physical durable AuditEvent journal/carrier relative to frozen M0.11; canonical audit readiness remains blocked until then",
+    "implement versioned deployment-specific probe freshness budgets within the closed source/category policy (no architecture semantic gap)",
     "close alert category/severity policies, deduplication windows, suppression authorization, escalation routes and durable schemas",
-    "close probe-specific freshness budgets and capability-scoped health composition",
     "select release-channel registry, manifest canonicalization, signing algorithms, trust-root provisioning, rotation and revocation",
     "close UpdatePlan/UpdateAttempt/rollback state machines and crash matrix",
     "define exact operator authorization policy per update/rollback class using M0.10 primitives",
     "define product-version and StateStore compatibility matrix including forward-repair paths",
     "close pre-update backup and post-install verification evidence schemas",
-    "define privacy/redaction/export policy and telemetry retention/cardinality budgets",
     "map every individual legacy implementation path to the M1 migration backlog after M0.12 closure"
   ],
   "audit_journal_contract": {
