@@ -56,7 +56,7 @@ PERSISTENCE_RECORD_REGISTRY: Final[dict[str, dict[str, Any]]] = {
         "adds_new_domain_facts": False,
         "restorable_authority": False,
         "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
-        "semantic_contract_fingerprint_sha256": "0767428358d3b9660a7456b834a9d040e85e335ae9ee1d8f691b456b72db9321",
+        "semantic_contract_fingerprint_sha256": "662cde4cf8b245d43ae9f3d19dfffa7e46c96b3195cffdeb9aba410030dac841",
         "record_key_strategy": "FACT_SCOPE_OBJECT_GENERATION",
         "fact_binding": {
             "required_fact_fields": [
@@ -125,7 +125,7 @@ PERSISTENCE_RECORD_REGISTRY: Final[dict[str, dict[str, Any]]] = {
         "adds_new_domain_facts": False,
         "restorable_authority": False,
         "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
-        "semantic_contract_fingerprint_sha256": "0767428358d3b9660a7456b834a9d040e85e335ae9ee1d8f691b456b72db9321",
+        "semantic_contract_fingerprint_sha256": "662cde4cf8b245d43ae9f3d19dfffa7e46c96b3195cffdeb9aba410030dac841",
         "record_key_strategy": "SCOPE_CURRENT_REFERENCE_REVISION_GENERATION",
         "payload_contract": {
             "required_fields": [
@@ -284,7 +284,7 @@ PERSISTENCE_RECORD_REGISTRY: Final[dict[str, dict[str, Any]]] = {
         "adds_new_domain_facts": False,
         "restorable_authority": False,
         "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
-        "semantic_contract_fingerprint_sha256": "0767428358d3b9660a7456b834a9d040e85e335ae9ee1d8f691b456b72db9321",
+        "semantic_contract_fingerprint_sha256": "662cde4cf8b245d43ae9f3d19dfffa7e46c96b3195cffdeb9aba410030dac841",
         "record_key_strategy": "SCOPE_CURRENT_REFERENCE_REVISION_GENERATION",
         "payload_contract": {
             "required_fields": [

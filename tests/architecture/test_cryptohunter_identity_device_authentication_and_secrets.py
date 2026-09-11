@@ -134,6 +134,21 @@ class SessionSecurityState:
 
 
 @dataclass(frozen=True)
+class DownstreamOperationDefinition:
+    owner_milestone: Any
+    operation: Any
+    factor_policy: Any
+    freshness_seconds: Any
+    authorization_scope: Any
+    environments: Any
+    target_scope_contract: Any
+    mutation_binding_contract: Any
+    dependency_fingerprint_sha256: Any
+    definition_revision: Any
+    content_fingerprint_sha256: Any
+
+
+@dataclass(frozen=True)
 class OperationEntitlementProjection:
     account_id: Any
     operator_id: Any
@@ -250,6 +265,7 @@ M010_AUTHORITY_DATACLASSES = (
     AuthenticationProof,
     CoreIssuedAuthenticationProofBinding,
     SessionSecurityState,
+    DownstreamOperationDefinition,
     OperationEntitlementProjection,
     SecretMetadataProjection,
     LiveAccessGrantSecurityProjection,
@@ -261,9 +277,9 @@ M010_AUTHORITY_DATACLASSES = (
 )
 
 EXPECTED_PROTOCOL_LITERAL = {
-    "schema_version": "1.0.0",
+    "schema_version": "1.1.0",
     "m0_element": "M0.10",
-    "status": "closed",
+    "status": "corrective_reopened",
     "authority": {
         "owner": "CoreHost",
         "integrity_is_authority": False,
@@ -297,6 +313,7 @@ EXPECTED_PROTOCOL_LITERAL = {
             "current authority objects or registries",
             "entitlement boolean",
             "caller roles or approval booleans",
+            "downstream operation definition or policy",
         ],
         "acceptance_plane": {
             "public_self_enrollment_allowed": False,
@@ -309,6 +326,7 @@ EXPECTED_PROTOCOL_LITERAL = {
             "harness represents authority already "
             "accepted by M0.3, external platform "
             "or M0.5; never product API",
+            "downstream_operation_caller_acceptance_allowed": False,
         },
         "security_generation_coherence": "identity == device == PIN == session == "
         "entitlement == proof for exact authorization "
@@ -322,6 +340,103 @@ EXPECTED_PROTOCOL_LITERAL = {
         "non-decreasing per scope; rollback is denied "
         "and cannot resurrect historical grant/proof "
         "authority",
+    },
+    "reopening": {
+        "corrective_id": "M0.10-R1",
+        "reason": "Frozen M0.10 could not represent downstream-owned privileged operations; "
+        "reopening adds a general Core-accepted descriptor authority without "
+        "changing caller or proof authority.",
+        "selected_model": "CORE_ACCEPTED_DOWNSTREAM_OPERATION_DEFINITION",
+        "rejected_model": "DIRECT_GLOBAL_REGISTRY_EXTENSION would require Core edits for "
+        "every downstream milestone and provides no owner/dependency "
+        "drift boundary",
+        "s9d_status": "REMAINS_OPEN_FOR_SEPARATE_S9D-C3",
+    },
+    "downstream_operation_authority": {
+        "canonical_identity": "<owner_milestone>/<UPPER_SNAKE_OPERATION>; "
+        "owner prefix MUST exactly equal "
+        "owner_milestone",
+        "authority_owner": "CoreHost",
+        "declaration_owner": "the owning downstream architecture milestone",
+        "acceptance": "pre-existing accepted definition fingerprint "
+        "plus current operation-to-fingerprint Core "
+        "designation",
+        "caller_descriptor_allowed": False,
+        "self_hash_authority": False,
+        "public_inputs": [
+            "untrusted AuthenticationProof",
+            "untrusted exact AuthorizationRequest",
+            "now_utc",
+        ],
+        "definition_fields": [
+            "owner_milestone",
+            "operation",
+            "factor_policy",
+            "freshness_seconds",
+            "authorization_scope",
+            "environments",
+            "target_scope_contract",
+            "mutation_binding_contract",
+            "dependency_fingerprint_sha256",
+            "definition_revision",
+            "content_fingerprint_sha256",
+        ],
+        "proof_schema_changed": False,
+        "proof_definition_binding": "private Core proof-fingerprint to "
+        "exact current "
+        "operation-definition-fingerprint "
+        "membership; definition drift "
+        "makes proof stale",
+        "entitlement": "required accepted/current "
+        "OperationEntitlementProjection with exact "
+        "namespaced operation, environment, "
+        "authorization_scope and coherent "
+        "security_generation",
+        "unknown_operation": "OPERATION_UNSUPPORTED",
+        "scope_derivation": [
+            "M010-DOWNSTREAM-SCOPE-V1",
+            "owner_milestone",
+            "operation",
+            "accepted definition fingerprint",
+            "account",
+            "operator",
+            "actor device",
+            "environment",
+            "exact ordered target scope",
+        ],
+        "mutation_derivation": [
+            "M010-DOWNSTREAM-MUTATION-V1",
+            "owner_milestone",
+            "operation",
+            "accepted definition fingerprint",
+            "account",
+            "operator",
+            "actor device",
+            "environment",
+            "exact ordered target scope",
+            "exact ordered mutation intent",
+            "causation_id",
+            "correlation_id",
+        ],
+        "runtime_session_decision": "AuthenticationProof remains "
+        "unchanged. Core resolves the "
+        "current RuntimeSession and "
+        "requires its exact "
+        "runtime_session_id to equal "
+        "current SessionSecurityState; "
+        "session_generation remains the "
+        "proof fence.",
+        "downstream_execution_rule": "the downstream owner MUST "
+        "independently derive actual "
+        "scope and mutation fingerprints "
+        "and require exact equality "
+        "before mutation",
+        "m012_conformance_operations": [
+            "M0.12/ALERT_ACKNOWLEDGE",
+            "M0.12/ALERT_SET_SUPPRESSION",
+            "M0.12/ALERT_CLEAR_SUPPRESSION",
+            "M0.12/ALERT_MANUAL_FACT_RESOLUTION",
+        ],
     },
     "dependency_manifest": [
         {
@@ -1111,6 +1226,19 @@ EXPECTED_PROTOCOL_LITERAL = {
             "consumed_challenge_fingerprint_sha256",
             "authority_source",
         ],
+        "DownstreamOperationDefinition": [
+            "owner_milestone",
+            "operation",
+            "factor_policy",
+            "freshness_seconds",
+            "authorization_scope",
+            "environments",
+            "target_scope_contract",
+            "mutation_binding_contract",
+            "dependency_fingerprint_sha256",
+            "definition_revision",
+            "content_fingerprint_sha256",
+        ],
     },
     "deferred_to_m011": ["persistence", "durable atomicity", "migrations", "backup", "recovery"],
     "core_owned_registry_semantics": {
@@ -1126,6 +1254,7 @@ EXPECTED_PROTOCOL_LITERAL = {
             "initial security states",
             "platform biometric assertion bindings",
             "Core-issued proof bindings",
+            "downstream operation definitions",
         ],
         "current_designations": "canonical designation is only "
         "Core-owned scope -> accepted "

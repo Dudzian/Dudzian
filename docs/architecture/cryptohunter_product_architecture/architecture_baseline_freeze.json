@@ -55,14 +55,14 @@
     {
       "milestone_id": "M0.10",
       "canonical_artifact": "docs/architecture/cryptohunter_product_architecture/identity_device_authentication_and_secrets.json",
-      "canonical_schema_version": "1.0.0",
-      "sha256": "dd7a23a4f40001a929ab16135876b5d1cb850d3a4f136c7e7d21e01a1c38e61e"
+      "canonical_schema_version": "1.1.0",
+      "sha256": "5a403f8eae059bfb1fc2ff6a588eb5d37a825443b30a3ea34278057364b1b24f"
     },
     {
       "milestone_id": "M0.11",
       "canonical_artifact": "docs/architecture/cryptohunter_product_architecture/persistence_versioning_migrations_backup_and_recovery.json",
       "canonical_schema_version": "1.0.0",
-      "sha256": "5c40648f43e029d54f49bd6614c2ae0e8772ca7646e1705b5c1f6b18c4a58f97"
+      "sha256": "705467340b4ef424d60d28bb5a1d7e84d469ff7c5af222f2aae78d32bcc325ef"
     }
   ]
 }

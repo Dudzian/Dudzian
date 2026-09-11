@@ -134,6 +134,23 @@ class OperationPolicy:
     environments: tuple[str, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class DownstreamOperationDefinition:
+    """Core-accepted policy declaration owned by a downstream milestone."""
+
+    owner_milestone: str
+    operation: str
+    factor_policy: str
+    freshness_seconds: int
+    authorization_scope: str
+    environments: tuple[str, ...]
+    target_scope_contract: tuple[str, ...]
+    mutation_binding_contract: tuple[str, ...]
+    dependency_fingerprint_sha256: str
+    definition_revision: int
+    content_fingerprint_sha256: str
+
+
 OPERATION_POLICY_REGISTRY = MappingProxyType(
     {
         "TRUST_DEVICE": OperationPolicy(
@@ -205,6 +222,72 @@ OPERATION_OWNERSHIP = MappingProxyType(
         "REVOKE_LIVE_ACCESS": "M0.10_OWNED_TRANSITION",
     }
 )
+
+_DOWNSTREAM_OPERATION_RE = re.compile(r"^(M0\.[0-9]+)/([A-Z][A-Z0-9_]*)$")
+
+
+def downstream_operation_definition_fingerprint(definition: DownstreamOperationDefinition) -> str:
+    return _fingerprint_without(definition, "content_fingerprint_sha256")
+
+
+def _valid_downstream_operation_definition(definition: object) -> bool:
+    if not isinstance(definition, DownstreamOperationDefinition):
+        return False
+    match = _DOWNSTREAM_OPERATION_RE.fullmatch(definition.operation)
+    return bool(
+        match
+        and match.group(1) == definition.owner_milestone
+        and definition.operation not in OPERATION_POLICY_REGISTRY
+        and definition.factor_policy in {"PIN", "PIN_AND_BIOMETRIC"}
+        and isinstance(definition.freshness_seconds, int)
+        and not isinstance(definition.freshness_seconds, bool)
+        and definition.freshness_seconds > 0
+        and isinstance(definition.authorization_scope, str)
+        and definition.authorization_scope
+        and isinstance(definition.environments, tuple)
+        and bool(definition.environments)
+        and set(definition.environments) <= {"PAPER", "TESTNET", "LIVE"}
+        and len(set(definition.environments)) == len(definition.environments)
+        and isinstance(definition.target_scope_contract, tuple)
+        and all(isinstance(field, str) and field for field in definition.target_scope_contract)
+        and len(set(definition.target_scope_contract)) == len(definition.target_scope_contract)
+        and isinstance(definition.mutation_binding_contract, tuple)
+        and all(isinstance(field, str) and field for field in definition.mutation_binding_contract)
+        and len(set(definition.mutation_binding_contract))
+        == len(definition.mutation_binding_contract)
+        and _SHA_RE.fullmatch(definition.dependency_fingerprint_sha256)
+        and isinstance(definition.definition_revision, int)
+        and not isinstance(definition.definition_revision, bool)
+        and definition.definition_revision >= 1
+        and _SHA_RE.fullmatch(definition.content_fingerprint_sha256)
+        and downstream_operation_definition_fingerprint(definition)
+        == definition.content_fingerprint_sha256
+    )
+
+
+def _seed_trusted_downstream_operation_definition(
+    authority: AuthenticationAuthority,
+    definition: DownstreamOperationDefinition,
+    *,
+    current: bool = True,
+) -> None:
+    """Private harness for an architecture-owned definition already accepted by Core."""
+    if not isinstance(
+        authority, AuthenticationAuthority
+    ) or not _valid_downstream_operation_definition(definition):
+        _deny("CONTRACT_INCONSISTENT")
+    with authority._state.lock:  # noqa: SLF001
+        before = authority._state.snapshot  # noqa: SLF001
+        accepted = dict(before.accepted_downstream_operation_definitions)
+        designations = dict(before.current_downstream_operation_definitions)
+        accepted[definition.content_fingerprint_sha256] = definition
+        if current:
+            designations[definition.operation] = definition.content_fingerprint_sha256
+        authority._state.snapshot = replace(  # noqa: SLF001
+            before,
+            accepted_downstream_operation_definitions=MappingProxyType(accepted),
+            current_downstream_operation_definitions=MappingProxyType(designations),
+        )
 
 
 class PinVerifierComparator(Protocol):
@@ -318,6 +401,68 @@ def canonical_scope_fingerprint(request: AuthorizationRequest) -> str:
     )
 
 
+def downstream_scope_fingerprint(
+    definition: DownstreamOperationDefinition,
+    request: AuthorizationRequest,
+    target_scope: dict[str, object],
+) -> str:
+    """Derive the exact downstream target scope, including accepted-definition identity."""
+    if not _valid_downstream_operation_definition(definition) or tuple(target_scope) != (
+        definition.target_scope_contract
+    ):
+        _deny("MALFORMED_UNTRUSTED_CONTEXT")
+    return cast(
+        str,
+        canonical_json_sha256(
+            [
+                "M010-DOWNSTREAM-SCOPE-V1",
+                definition.owner_milestone,
+                definition.operation,
+                definition.content_fingerprint_sha256,
+                request.account_id,
+                request.operator_id,
+                request.device_installation_id,
+                request.environment,
+                target_scope,
+            ]
+        ),
+    )
+
+
+def downstream_mutation_fingerprint(
+    definition: DownstreamOperationDefinition,
+    request: AuthorizationRequest,
+    target_scope: dict[str, object],
+    mutation: dict[str, object],
+) -> str:
+    """Derive exact downstream mutation intent and its target/revision edge."""
+    if (
+        not _valid_downstream_operation_definition(definition)
+        or tuple(target_scope) != definition.target_scope_contract
+        or tuple(mutation) != definition.mutation_binding_contract
+    ):
+        _deny("MALFORMED_UNTRUSTED_CONTEXT")
+    return cast(
+        str,
+        canonical_json_sha256(
+            [
+                "M010-DOWNSTREAM-MUTATION-V1",
+                definition.owner_milestone,
+                definition.operation,
+                definition.content_fingerprint_sha256,
+                request.account_id,
+                request.operator_id,
+                request.device_installation_id,
+                request.environment,
+                target_scope,
+                mutation,
+                request.causation_id,
+                request.correlation_id,
+            ]
+        ),
+    )
+
+
 def session_mutation_fingerprint(
     request: AuthorizationRequest,
     target_state: str,
@@ -414,9 +559,8 @@ class AuthenticationAuthority:
         if not isinstance(request, AuthorizationRequest):
             _deny("MALFORMED_UNTRUSTED_CONTEXT")
         self._validate_request_structure(request)
-        if request.operation not in OPERATION_POLICY_REGISTRY:
-            _deny("OPERATION_UNSUPPORTED")
         with self._state.lock:
+            self._resolve_operation(self._state.snapshot, request.operation)
             identity, device, session = self._resolve_biometric_context(
                 self._state.snapshot, request
             )
@@ -502,14 +646,13 @@ class AuthenticationAuthority:
         if not _valid_utc(now_utc) or not isinstance(request, AuthorizationRequest):
             _deny("MALFORMED_UNTRUSTED_CONTEXT")
         self._validate_request_structure(request)
-        if request.operation not in OPERATION_POLICY_REGISTRY:
-            _deny("OPERATION_UNSUPPORTED")
         if not self._valid_assertion_shape(assertion):
             _deny("MALFORMED_UNTRUSTED_CONTEXT")
         candidate = cast(PlatformBiometricAssertion, assertion)
         current_time = cast(datetime, now_utc)
         with self._state.lock:
             snapshot = self._state.snapshot
+            self._resolve_operation(snapshot, request.operation)
             identity, device, session = self._resolve_biometric_context(snapshot, request)
             expected_challenge = core_expected_biometric_challenge(
                 request,
@@ -597,37 +740,35 @@ class AuthenticationAuthority:
         if not isinstance(request, AuthorizationRequest):
             _deny("MALFORMED_UNTRUSTED_CONTEXT")
         self._validate_request_structure(request)
-        policy = OPERATION_POLICY_REGISTRY.get(request.operation)
-        if policy is None:
-            _deny("OPERATION_UNSUPPORTED")
-        if request.environment not in policy.environments:
-            _deny("AUTHORIZATION_DENIED")
-        pin_only = policy.factor_policy == "PIN" and request.operation in {
-            "LOCK_SESSION",
-            "LOGOUT_SESSION",
-        }
-        combined = policy.factor_policy == "PIN_AND_BIOMETRIC"
-        if not pin_only and not combined:
-            _deny("OPERATION_UNSUPPORTED")
-        if combined and platform_assertion is None:
-            _deny("AUTHENTICATION_FAILED")
-        if not isinstance(raw_pin, str):
-            _deny("AUTHENTICATION_FAILED" if combined else "MALFORMED_UNTRUSTED_CONTEXT")
-
         current_time = cast(datetime, now)
         with self._state.lock:
             before = self._state.snapshot
+            policy, ownership, definition_fingerprint = self._resolve_operation(
+                before, request.operation
+            )
+            if request.environment not in policy.environments:
+                _deny("AUTHORIZATION_DENIED")
+            pin_only = policy.factor_policy == "PIN" and request.operation in {
+                "LOCK_SESSION",
+                "LOGOUT_SESSION",
+            }
+            combined = policy.factor_policy == "PIN_AND_BIOMETRIC"
+            if ownership == "DOWNSTREAM_OWNED_PRIVILEGED_OPERATION":
+                pin_only = policy.factor_policy == "PIN"
+            if not pin_only and not combined:
+                _deny("OPERATION_UNSUPPORTED")
+            if combined and platform_assertion is None:
+                _deny("AUTHENTICATION_FAILED")
+            if not isinstance(raw_pin, str):
+                _deny("AUTHENTICATION_FAILED" if combined else "MALFORMED_UNTRUSTED_CONTEXT")
             identity, device, pin, session = self._resolve_current_family(before, request)
             runtime = self._resolve_runtime(request, session)
-            ownership = OPERATION_OWNERSHIP.get(request.operation)
-            if ownership is None:
-                _deny("CONTRACT_INCONSISTENT")
             if (
                 ownership == "M0.10_OWNED_TRANSITION"
                 and request.scope_fingerprint_sha256 != canonical_scope_fingerprint(request)
             ):
                 _deny("AUTHORIZATION_DENIED")
-            if pin_only:
+            if request.operation in {"LOCK_SESSION", "LOGOUT_SESSION"}:
                 target_state = {
                     "LOCK_SESSION": "LOCKED",
                     "LOGOUT_SESSION": "LOGGED_OUT",
@@ -704,14 +845,17 @@ class AuthenticationAuthority:
                 )
             proofs = dict(before.accepted_authentication_proofs)
             bindings = dict(before.accepted_authentication_proof_bindings)
+            proof_definitions = dict(before.authentication_proof_operation_definitions)
             proofs[proof.proof_fingerprint_sha256] = proof
             bindings[proof.proof_fingerprint_sha256] = binding
+            proof_definitions[proof.proof_fingerprint_sha256] = definition_fingerprint
             self._state.snapshot = replace(
                 before,
                 accepted_pins=MappingProxyType(accepted_pins),
                 current_pins=MappingProxyType(current_pins),
                 accepted_authentication_proofs=MappingProxyType(proofs),
                 accepted_authentication_proof_bindings=MappingProxyType(bindings),
+                authentication_proof_operation_definitions=MappingProxyType(proof_definitions),
             )
             return proof
 
@@ -767,6 +911,12 @@ class AuthenticationAuthority:
             _deny("AUTHENTICATION_REQUIRED")
         if binding != self._binding(candidate):
             _deny("CONTRACT_INCONSISTENT")
+        _, _, current_definition = self._resolve_operation(snapshot, candidate.operation)
+        bound_definition = snapshot.authentication_proof_operation_definitions.get(recomputed)
+        if bound_definition != current_definition and not (
+            bound_definition is None and candidate.operation in OPERATION_POLICY_REGISTRY
+        ):
+            _deny("PROOF_STALE")
         return candidate
 
     @staticmethod
@@ -810,7 +960,6 @@ class AuthenticationAuthority:
                 for value in positive_epochs
             )
             or proof.environment not in {"PAPER", "TESTNET", "LIVE"}
-            or proof.operation not in OPERATION_POLICY_REGISTRY
             or not _SHA_RE.fullmatch(proof.scope_fingerprint_sha256)
             or not _SHA_RE.fullmatch(proof.mutation_fingerprint_sha256)
             or not _SHA_RE.fullmatch(proof.proof_fingerprint_sha256)
@@ -818,6 +967,37 @@ class AuthenticationAuthority:
             or not proof.correlation_id
         ):
             _deny("AUTHENTICATION_REQUIRED")
+
+    @staticmethod
+    def _resolve_operation(
+        snapshot: InitialSecurityAuthoritySnapshot, operation: str
+    ) -> tuple[OperationPolicy, str, str]:
+        policy = OPERATION_POLICY_REGISTRY.get(operation)
+        if policy is not None:
+            owner = OPERATION_OWNERSHIP.get(operation)
+            if owner is None:
+                _deny("CONTRACT_INCONSISTENT")
+            return policy, owner, cast(str, canonical_json_sha256([operation, asdict(policy)]))
+        fingerprint = snapshot.current_downstream_operation_definitions.get(operation)
+        if not isinstance(fingerprint, str):
+            _deny("OPERATION_UNSUPPORTED")
+        definition = snapshot.accepted_downstream_operation_definitions.get(fingerprint)
+        if (
+            not _valid_downstream_operation_definition(definition)
+            or definition.content_fingerprint_sha256 != fingerprint
+            or definition.operation != operation
+        ):
+            _deny("CONTRACT_INCONSISTENT")
+        return (
+            OperationPolicy(
+                definition.factor_policy,
+                definition.freshness_seconds,
+                definition.authorization_scope,
+                definition.environments,
+            ),
+            "DOWNSTREAM_OWNED_PRIVILEGED_OPERATION",
+            fingerprint,
+        )
 
     def _resolve_runtime(
         self, request: AuthorizationRequest, session: SessionSecurityState
@@ -1306,6 +1486,10 @@ __all__ = [
     "CoreIssuedAuthenticationProofBinding",
     "OPERATION_OWNERSHIP",
     "OPERATION_POLICY_REGISTRY",
+    "DownstreamOperationDefinition",
+    "downstream_operation_definition_fingerprint",
+    "downstream_scope_fingerprint",
+    "downstream_mutation_fingerprint",
     "PinVerifierComparator",
     "authentication_proof_fingerprint",
     "canonical_scope_fingerprint",
