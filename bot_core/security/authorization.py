@@ -66,11 +66,11 @@ def operation_entitlement_fingerprint(entitlement: OperationEntitlementProjectio
     )
 
 
-def _valid_entitlement(entitlement: object) -> bool:
+def _valid_entitlement(entitlement: object, policy: object = None) -> bool:
     if not isinstance(entitlement, OperationEntitlementProjection):
         return False
     try:
-        policy = OPERATION_POLICY_REGISTRY.get(entitlement.operation)
+        policy = policy or OPERATION_POLICY_REGISTRY.get(entitlement.operation)
         return bool(
             AuthenticationAuthority._canonical_id(entitlement.account_id, "acct_")
             and AuthenticationAuthority._canonical_id(entitlement.operator_id, "op_")
@@ -101,7 +101,17 @@ def _seed_trusted_operation_entitlement(
     current: bool = True,
 ) -> None:
     """Module-private harness for authority already accepted by an upstream Core owner."""
-    if not isinstance(authority, AuthorizationAuthority) or not _valid_entitlement(entitlement):
+    if not isinstance(authority, AuthorizationAuthority):
+        _deny("CONTRACT_INCONSISTENT")
+    with authority._state.lock:  # noqa: SLF001
+        try:
+            policy, _, _ = authority._authentication._resolve_operation(  # noqa: SLF001
+                authority._state.snapshot,
+                entitlement.operation,  # noqa: SLF001
+            )
+        except AuthenticationError:
+            _deny("CONTRACT_INCONSISTENT")
+    if not _valid_entitlement(entitlement, policy):
         _deny("CONTRACT_INCONSISTENT")
     scope = authority._entitlement_scope(entitlement)  # noqa: SLF001 - trusted owner boundary
     with authority._state.lock:  # noqa: SLF001 - trusted owner boundary
@@ -136,22 +146,21 @@ class AuthorizationAuthority:
             self._authentication._validate_request_structure(request)  # noqa: SLF001
         except AuthenticationError as error:
             _deny(error.reason)
-        policy = OPERATION_POLICY_REGISTRY.get(request.operation)
-        if policy is None:
-            _deny("OPERATION_UNSUPPORTED")
-        if request.environment not in policy.environments:
-            _deny("AUTHORIZATION_DENIED")
-        ownership = OPERATION_OWNERSHIP.get(request.operation)
-        if ownership is None:
-            _deny("CONTRACT_INCONSISTENT")
-        if (
-            ownership == "M0.10_OWNED_TRANSITION"
-            and request.scope_fingerprint_sha256 != canonical_scope_fingerprint(request)
-        ):
-            _deny("AUTHORIZATION_DENIED")
-
         with self._state.lock:
             snapshot = self._state.snapshot
+            try:
+                policy, ownership, _ = self._authentication._resolve_operation(  # noqa: SLF001
+                    snapshot, request.operation
+                )
+            except AuthenticationError as error:
+                _deny(error.reason)
+            if request.environment not in policy.environments:
+                _deny("AUTHORIZATION_DENIED")
+            if (
+                ownership == "M0.10_OWNED_TRANSITION"
+                and request.scope_fingerprint_sha256 != canonical_scope_fingerprint(request)
+            ):
+                _deny("AUTHORIZATION_DENIED")
             try:
                 accepted_proof = self._authentication._resolve_accepted_proof_membership(  # noqa: SLF001
                     proof, snapshot
@@ -226,7 +235,7 @@ class AuthorizationAuthority:
             if entitlement is None:
                 _deny("AUTHORIZATION_DENIED")
             if (
-                not _valid_entitlement(entitlement)
+                not _valid_entitlement(entitlement, policy)
                 or entitlement.content_fingerprint_sha256 != fingerprint
                 or self._entitlement_scope(entitlement) != scope
             ):

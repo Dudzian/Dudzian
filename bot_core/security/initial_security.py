@@ -588,7 +588,10 @@ class InitialSecurityAuthoritySnapshot:
     consumed_bootstrap_authority_fingerprints: frozenset[str]
     accepted_authentication_proofs: Mapping[str, object]
     accepted_authentication_proof_bindings: Mapping[str, object]
+    authentication_proof_operation_definitions: Mapping[str, str]
     accepted_platform_biometric_assertion_bindings: Mapping[str, object]
+    accepted_downstream_operation_definitions: Mapping[str, object]
+    current_downstream_operation_definitions: Mapping[str, str]
     accepted_operation_entitlements: Mapping[str, object]
     current_operation_entitlements: Mapping[tuple[str, str, str, str, str], str]
     accepted_secret_metadata: Mapping[str, SecretMetadataProjection]
@@ -600,30 +603,33 @@ class InitialSecurityAuthoritySnapshot:
 def _empty_snapshot() -> InitialSecurityAuthoritySnapshot:
     empty: Mapping[Any, Any] = MappingProxyType({})
     return InitialSecurityAuthoritySnapshot(
-        empty,
-        empty,
-        empty,
-        empty,
-        empty,
-        empty,
-        empty,
-        empty,
-        empty,
-        empty,
-        empty,
-        empty,
-        empty,
-        frozenset(),
-        frozenset(),
-        empty,
-        empty,
-        empty,
-        empty,
-        empty,
-        empty,
-        empty,
-        empty,
-        empty,
+        accepted_identities=empty,
+        current_identities=empty,
+        accepted_devices=empty,
+        current_devices=empty,
+        accepted_pins=empty,
+        current_pins=empty,
+        accepted_sessions=empty,
+        current_sessions=empty,
+        accepted_initial_states=empty,
+        current_initial_states=empty,
+        accepted_bootstrap_bindings=empty,
+        accepted_bootstrap_views=empty,
+        current_bootstrap=empty,
+        consumed_bootstrap_claims=frozenset(),
+        consumed_bootstrap_authority_fingerprints=frozenset(),
+        accepted_authentication_proofs=empty,
+        accepted_authentication_proof_bindings=empty,
+        authentication_proof_operation_definitions=empty,
+        accepted_platform_biometric_assertion_bindings=empty,
+        accepted_downstream_operation_definitions=empty,
+        current_downstream_operation_definitions=empty,
+        accepted_operation_entitlements=empty,
+        current_operation_entitlements=empty,
+        accepted_secret_metadata=empty,
+        current_secret_metadata=empty,
+        accepted_live_access_grants=empty,
+        current_live_access_grants=empty,
     )
 
 

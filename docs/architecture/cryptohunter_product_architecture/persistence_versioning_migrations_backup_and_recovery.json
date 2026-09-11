@@ -225,7 +225,7 @@
         "milestone": "M0.10",
         "artifact": "identity_device_authentication_and_secrets.json",
         "json_pointer": "/authority",
-        "content_fingerprint_sha256": "e52f768bf23a47c08191cd17041231eac1fffc12f4de0dd6d6b0946e2919acf0"
+        "content_fingerprint_sha256": "a0c812dcf80c83ede00e45f4c5e21e21c99cc655c160b4d64a103d60ea56a376"
       },
       {
         "milestone": "M0.10",
@@ -273,7 +273,7 @@
         "milestone": "M0.10",
         "artifact": "identity_device_authentication_and_secrets.json",
         "json_pointer": "/core_owned_registry_semantics",
-        "content_fingerprint_sha256": "5320a2fd20df9849b30960ad822b2eb88608033472139b703120382d611043ac"
+        "content_fingerprint_sha256": "865525d21dfed3ea112dc0077528ef28122ba8304735163b87e6a600523bc193"
       },
       {
         "milestone": "M0.10",
@@ -297,7 +297,7 @@
         "milestone": "M0.10",
         "artifact": "identity_device_authentication_and_secrets.json",
         "json_pointer": "/executable_boundary_schemas",
-        "content_fingerprint_sha256": "0767428358d3b9660a7456b834a9d040e85e335ae9ee1d8f691b456b72db9321"
+        "content_fingerprint_sha256": "662cde4cf8b245d43ae9f3d19dfffa7e46c96b3195cffdeb9aba410030dac841"
       }
     ],
     "count": 48,
@@ -2305,7 +2305,7 @@
         "adds_new_domain_facts": false,
         "restorable_authority": false,
         "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
-        "semantic_contract_fingerprint_sha256": "0767428358d3b9660a7456b834a9d040e85e335ae9ee1d8f691b456b72db9321",
+        "semantic_contract_fingerprint_sha256": "662cde4cf8b245d43ae9f3d19dfffa7e46c96b3195cffdeb9aba410030dac841",
         "record_key_strategy": "FACT_SCOPE_OBJECT_GENERATION",
         "fact_binding": {
           "required_fact_fields": [
@@ -2380,7 +2380,7 @@
         "adds_new_domain_facts": false,
         "restorable_authority": false,
         "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
-        "semantic_contract_fingerprint_sha256": "0767428358d3b9660a7456b834a9d040e85e335ae9ee1d8f691b456b72db9321",
+        "semantic_contract_fingerprint_sha256": "662cde4cf8b245d43ae9f3d19dfffa7e46c96b3195cffdeb9aba410030dac841",
         "record_key_strategy": "SCOPE_CURRENT_REFERENCE_REVISION_GENERATION",
         "payload_contract": {
           "required_fields": [
@@ -2545,7 +2545,7 @@
         "adds_new_domain_facts": false,
         "restorable_authority": false,
         "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
-        "semantic_contract_fingerprint_sha256": "0767428358d3b9660a7456b834a9d040e85e335ae9ee1d8f691b456b72db9321",
+        "semantic_contract_fingerprint_sha256": "662cde4cf8b245d43ae9f3d19dfffa7e46c96b3195cffdeb9aba410030dac841",
         "record_key_strategy": "SCOPE_CURRENT_REFERENCE_REVISION_GENERATION",
         "payload_contract": {
           "required_fields": [

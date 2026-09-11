@@ -29,7 +29,7 @@ M010_PATH = DOCS / "identity_device_authentication_and_secrets.json"
 MACHINE = json.loads(M011_PATH.read_text(encoding="utf-8"))
 LINEAGE = MACHINE["state_store_representation_lineage_v2"]
 PHYSICAL_FINGERPRINT = "18f9bac7640b66fb1051d5e1bcfe7345c79a8dcb33f417b40009fb049547c680"
-M010_FROZEN_SHA256 = "dd7a23a4f40001a929ab16135876b5d1cb850d3a4f136c7e7d21e01a1c38e61e"
+M010_FROZEN_SHA256 = "5a403f8eae059bfb1fc2ff6a588eb5d37a825443b30a3ea34278057364b1b24f"
 
 
 def test_sealed_migration_contains_complete_definition_authority() -> None:

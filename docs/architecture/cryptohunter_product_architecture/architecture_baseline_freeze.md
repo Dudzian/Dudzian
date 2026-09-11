@@ -14,8 +14,8 @@ Cel: `INTEGRITY_GUARD_ONLY_NOT_RUNTIME_AUTHORITY`.
 | M0.7 | `docs/architecture/cryptohunter_product_architecture/commands_events_order_lifecycle_and_idempotency.json` | `cryptohunter.commands_events_order_lifecycle_and_idempotency.v1` | `e9cb8bfc0300174e03a0bbd557f7c5055634b0fd2f00bcf2f989625b6b896cb0` |
 | M0.8 | `docs/architecture/cryptohunter_product_architecture/ledger_portfolio_capital_and_pnl.json` | `1.0.0` | `bdf70ab825298ee689718de794ee6f9d39211405db0f735db19816119c2d46fd` |
 | M0.9 | `docs/architecture/cryptohunter_product_architecture/risk_hierarchy_kill_switch_and_execution_lease.json` | `1.0.0` | `f7b3fb943d3aa503b4ea6810ea084f17f5bc830f82eab7ce98b3ea5d63eb0537` |
-| M0.10 | `docs/architecture/cryptohunter_product_architecture/identity_device_authentication_and_secrets.json` | `1.0.0` | `dd7a23a4f40001a929ab16135876b5d1cb850d3a4f136c7e7d21e01a1c38e61e` |
-| M0.11 | `docs/architecture/cryptohunter_product_architecture/persistence_versioning_migrations_backup_and_recovery.json` | `1.0.0` | `5c40648f43e029d54f49bd6614c2ae0e8772ca7646e1705b5c1f6b18c4a58f97` |
+| M0.10 | `docs/architecture/cryptohunter_product_architecture/identity_device_authentication_and_secrets.json` | `1.1.0` | `5a403f8eae059bfb1fc2ff6a588eb5d37a825443b30a3ea34278057364b1b24f` |
+| M0.11 | `docs/architecture/cryptohunter_product_architecture/persistence_versioning_migrations_backup_and_recovery.json` | `1.0.0` | `705467340b4ef424d60d28bb5a1d7e84d469ff7c5af222f2aae78d32bcc325ef` |
 
 Baseline M0.2–M0.11 jest zamrożony. Zmiana któregokolwiek canonical JSON wymaga jawnej aktualizacji freeze manifestu.
 

@@ -2,7 +2,7 @@
 
 ## Status i granica
 
-M0.10 jest zamkniętym, implementacyjnie neutralnym kontraktem bezpieczeństwa. Nie implementuje runtime'u, persystencji, keychaina, kryptografii produkcyjnej, biometrii platformowej ani skutków giełdowych. Trwałość i atomowe odtwarzanie pozostają w M0.11.
+M0.10-R1 ma wersję kontraktu `1.1.0` i fazę `corrective_reopened`. Frozen M0.10 został jawnie reopened, ponieważ zamknięty registry nie potrafił reprezentować downstream-owned privileged operations. Pozostaje implementacyjnie neutralnym kontraktem bezpieczeństwa. Nie implementuje runtime'u, persystencji, keychaina, kryptografii produkcyjnej, biometrii platformowej ani skutków giełdowych. Trwałość i atomowe odtwarzanie pozostają w M0.11.
 
 ## Authority
 
@@ -21,6 +21,16 @@ Authority bieżącego operatora wynika z prywatnego rejestru accepted projekcji 
 Raw PIN istnieje wyłącznie na wejściu porównania Core. Referencyjny deterministyczny verifier służy tylko testowi architektury i nie jest produkcyjnym KDF. Błąd zwiększa licznik, trzeci błąd ustala dokładny lockout, poprawny PIN po wygaśnięciu lockoutu zapisuje nowy current record z wyzerowanym licznikiem i pustym lockoutem, a change/reset podnosi `pin_revision`. Raw PIN nie jest serializowany, audytowany ani fingerprintowany. Caller nie może dopisać faktora `PIN`.
 
 CryptoHunter nie przechowuje materiału biometrycznego. Faktor `BIOMETRIC` pochodzi wyłącznie z walidacji platform assertion: `SUCCESS`, dokładne account/device, current enrollment revision, Core-derived challenge i inclusive freshness. Challenge jest deterministycznie wyprowadzany z pełnego request context, enrollment oraz security/session generations; caller nie wybiera expectation i assertion nie może być replayowane między operacjami lub requestami. Bool `biometric_ok` i caller factor set są nie-authority. `AuthenticationProof.factor_set` jest wyłącznie wynikiem derived Core; polityka `PIN_AND_BIOMETRIC` wymaga obu dowodów.
+
+## Core-accepted downstream operation definitions
+
+M0.10-R1 wybiera Model B. Downstream milestone deklaruje zamknięty `DownstreamOperationDefinition`, lecz wyłącznie `CoreHost` może zaakceptować jego pełny fingerprint i ustanowić current designation dla canonical identity `<owner_milestone>/<UPPER_SNAKE_OPERATION>`. Prefix operation musi dokładnie odpowiadać ownerowi. Nominalny descriptor, self-hash, caller registry, plugin i UI są nie-authority. Model A został odrzucony: bezpośrednie dopisywanie każdej przyszłej operacji do globalnego registry ponownie zamrażałoby downstream rozwój w M0.10 i nie dawałoby jawnego owner/dependency drift fence. Unknown, accepted-but-not-current oraz arbitrary operation pozostają `OPERATION_UNSUPPORTED`.
+
+Descriptor zamyka factor policy, freshness, environments, authorization scope, ordered target-scope contract, ordered mutation contract, owner dependency fingerprint i revision. Core wiąże każdy wystawiony proof prywatnym membershipem z exact current definition fingerprint; zmiana current definition lub dependency fence'uje wcześniejszy proof jako `PROOF_STALE`. Publiczne wejście authorization pozostaje dokładnie `(untrusted AuthenticationProof, untrusted exact AuthorizationRequest, now_utc)`: caller nie przekazuje descriptora, policy, bindingu ani entitlementu. `AuthenticationProof` nie zmienia pól i nadal wymaga pre-existing `CoreIssuedAuthenticationProofBinding`.
+
+Canonical downstream scope fingerprint obejmuje domain tag `M010-DOWNSTREAM-SCOPE-V1`, owner, namespaced operation, accepted definition fingerprint, account/operator/actor-device, environment i ordered exact target scope. Mutation fingerprint obejmuje ponadto `M010-DOWNSTREAM-MUTATION-V1`, exact mutation intent, causation i correlation. Downstream owner musi przed skutkiem niezależnie wyprowadzić fingerprint actual target/revision/mutation i porównać exact equality. Dlatego proof nie może przejść między ownerami, operacjami, alertami, rewizjami, environmentami, scope, mutation, causation lub correlation.
+
+Każda downstream operation nadal wymaga accepted/current `OperationEntitlementProjection` dla exact namespaced operation, environment i authorization scope oraz coherent security generation. Caller bool i role pozostają nie-authority. Runtime session ID nie wchodzi do proof: Core już rozwiązuje current `RuntimeSession`, wymaga exact zgodności jego ID z current `SessionSecurityState`, a `session_generation` w proof stanowi monotoniczny fence. M0.12 operations są wyłącznie conformance fixtures; S9D pozostaje otwarte do osobnego S9D-C3.
 
 ## Proof, sesja i authorization
 
@@ -526,3 +536,7 @@ The canonical JSON remains authoritative. This section is its deterministic proj
   ]
 }
 ```
+
+### `reopening` and `downstream_operation_authority`
+
+Canonical details, exact derivation arrays, conformance operation identities and closed descriptor fields are authoritative in the corresponding top-level JSON objects. The executable descriptor schema is `DownstreamOperationDefinition`; `AuthenticationProof` is unchanged.
