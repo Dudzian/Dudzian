@@ -143,6 +143,11 @@ class DownstreamOperationDefinition:
     environments: Any
     target_scope_contract: Any
     mutation_binding_contract: Any
+    declared_intent: Any
+    owner_artifact: Any
+    owner_json_pointer: Any
+    owner_contract_fingerprint_sha256: Any
+    declaration_fingerprint_sha256: Any
     dependency_fingerprint_sha256: Any
     definition_revision: Any
     content_fingerprint_sha256: Any
@@ -277,7 +282,7 @@ M010_AUTHORITY_DATACLASSES = (
 )
 
 EXPECTED_PROTOCOL_LITERAL = {
-    "schema_version": "1.1.0",
+    "schema_version": "1.5.0",
     "m0_element": "M0.10",
     "status": "corrective_reopened",
     "authority": {
@@ -342,10 +347,10 @@ EXPECTED_PROTOCOL_LITERAL = {
         "authority",
     },
     "reopening": {
-        "corrective_id": "M0.10-R1",
-        "reason": "Frozen M0.10 could not represent downstream-owned privileged operations; "
-        "reopening adds a general Core-accepted descriptor authority without "
-        "changing caller or proof authority.",
+        "corrective_id": "M0.10-R5",
+        "reason": "R5 validates actual top-level artifact owner identity before bootstrap "
+        "conversion or publication and derives contract identity only from that "
+        "validated artifact.",
         "selected_model": "CORE_ACCEPTED_DOWNSTREAM_OPERATION_DEFINITION",
         "rejected_model": "DIRECT_GLOBAL_REGISTRY_EXTENSION would require Core edits for "
         "every downstream milestone and provides no owner/dependency "
@@ -377,6 +382,11 @@ EXPECTED_PROTOCOL_LITERAL = {
             "environments",
             "target_scope_contract",
             "mutation_binding_contract",
+            "declared_intent",
+            "owner_artifact",
+            "owner_json_pointer",
+            "owner_contract_fingerprint_sha256",
+            "declaration_fingerprint_sha256",
             "dependency_fingerprint_sha256",
             "definition_revision",
             "content_fingerprint_sha256",
@@ -397,6 +407,7 @@ EXPECTED_PROTOCOL_LITERAL = {
             "M010-DOWNSTREAM-SCOPE-V1",
             "owner_milestone",
             "operation",
+            "declared_intent",
             "accepted definition fingerprint",
             "account",
             "operator",
@@ -408,6 +419,7 @@ EXPECTED_PROTOCOL_LITERAL = {
             "M010-DOWNSTREAM-MUTATION-V1",
             "owner_milestone",
             "operation",
+            "declared_intent",
             "accepted definition fingerprint",
             "account",
             "operator",
@@ -437,6 +449,124 @@ EXPECTED_PROTOCOL_LITERAL = {
             "M0.12/ALERT_CLEAR_SUPPRESSION",
             "M0.12/ALERT_MANUAL_FACT_RESOLUTION",
         ],
+        "canonical_declaration_source": "closed Core-owned "
+        "milestone-to-artifact map; "
+        "M0.12 uses "
+        "audit_observability_alerts_and_updater.json#/downstream_operation_declarations/<index>",
+        "provenance_validation": "resolve canonical artifact and "
+        "RFC6901 pointer; verify artifact "
+        "m0_element/closed owner mapping; "
+        "recompute canonical JSON declaration "
+        "fingerprint and stable "
+        "artifact-identity fingerprint; "
+        "compare exact descriptor semantics "
+        "including declared_intent and "
+        "fingerprints before Core acceptance "
+        "and every authority consumption",
+        "dependency_fingerprint_authority": False,
+        "current_revision_rule": "artifact history is exactly one "
+        "declaration for every contiguous "
+        "revision 1..declared current, with "
+        "no future revisions; exact operation "
+        "key sets are mandatory; replay must "
+        "finish at the exact declared current "
+        "fingerprint; in-process equal exact "
+        "fingerprint is idempotent and only "
+        "N+1 advances",
+        "accepted_history": "immutable; historical definitions can never be redesignated current",
+        "mutation_enforcement": "declared_intent is interpreted exact "
+        "operation-owned semantics during "
+        "fingerprint derivation and actual "
+        "validation; authorize proves "
+        "security/request binding only; "
+        "downstream owner MUST call "
+        "validate_downstream_authorized_mutation "
+        "before effect",
+        "restart_authority": {
+            "accepted_and_current_definitions": "M0.10 "
+            "fully "
+            "validates "
+            "actual "
+            "artifact "
+            "identity "
+            "and "
+            "declarations, "
+            "builds "
+            "exact "
+            "canonical "
+            "accepted/current "
+            "shadow "
+            "registries, "
+            "then "
+            "atomically "
+            "replaces "
+            "old "
+            "ephemeral "
+            "definition "
+            "authority "
+            "while "
+            "clearing "
+            "proof "
+            "authority; "
+            "every "
+            "provenance "
+            "failure "
+            "publishes "
+            "nothing",
+            "proofs": "restart-ephemeral; every "
+            "AuthenticationAuthority start "
+            "clears proofs, Core-issued "
+            "proof bindings, and "
+            "proof-definition bindings",
+            "proof_definition_bindings": "restart-ephemeral "
+            "with their "
+            "proofs; "
+            "M0.11 "
+            "persists "
+            "neither",
+        },
+        "atomic_mutation_decision": "AUTHORIZED_MUTATION is a "
+        "point-in-time security decision "
+        "over one coherent locked Core "
+        "snapshot; authorization and "
+        "actual target, mutation, and "
+        "declared-intent checks share one "
+        "semantic core and one lock "
+        "acquisition",
+        "request_declared_intent": "single Core semantic validator: "
+        "built-in operation requires null; "
+        "downstream operation requires "
+        "exact current canonical definition "
+        "declared_intent; challenge, proof "
+        "issuance, and authorization all "
+        "consume this rule",
+        "request_field_closure": "every public AuthorizationRequest "
+        "field has deterministic Core "
+        "interpretation; no caller-controlled "
+        "request field is ignored by proof "
+        "binding or operation semantics",
+        "canonical_conversion_failure": "missing or wrong-typed "
+        "canonical declaration fields "
+        "always map to "
+        "CONTRACT_INCONSISTENT; raw "
+        "KeyError, TypeError, and "
+        "ValueError never escape",
+        "artifact_owner_provenance": "before declaration conversion, "
+        "the closed-map artifact must be "
+        "a JSON object whose actual "
+        "non-empty string m0_element "
+        "exactly equals the mapped owner "
+        "and whose schema_version is a "
+        "non-empty string",
+        "single_provenance_semantics": "bootstrap and later "
+        "consumption share closed "
+        "owner-to-artifact mapping, "
+        "validated actual artifact "
+        "identity, exact RFC6901 "
+        "declaration pointer, exact "
+        "declaration "
+        "owner/namespace/semantics, and "
+        "recomputed fingerprints",
     },
     "dependency_manifest": [
         {
@@ -1235,6 +1365,11 @@ EXPECTED_PROTOCOL_LITERAL = {
             "environments",
             "target_scope_contract",
             "mutation_binding_contract",
+            "declared_intent",
+            "owner_artifact",
+            "owner_json_pointer",
+            "owner_contract_fingerprint_sha256",
+            "declaration_fingerprint_sha256",
             "dependency_fingerprint_sha256",
             "definition_revision",
             "content_fingerprint_sha256",
@@ -1242,7 +1377,10 @@ EXPECTED_PROTOCOL_LITERAL = {
     },
     "deferred_to_m011": ["persistence", "durable atomicity", "migrations", "backup", "recovery"],
     "core_owned_registry_semantics": {
-        "durability": "deferred to M0.11; pure semantic registries only",
+        "durability": "M0.11 owns durable security projections; M0.10 "
+        "definitions deterministically bootstrap from "
+        "canonical architecture; proofs and "
+        "proof-definition bindings are restart-ephemeral",
         "accepted_registries": [
             "operator identities",
             "device trust projections",

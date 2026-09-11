@@ -13,11 +13,14 @@ from bot_core.security.authentication import (
     AuthenticationError,
     AuthenticationProof,
     AuthorizationRequest,
+    DownstreamOperationDefinition,
     OPERATION_OWNERSHIP,
     OPERATION_POLICY_REGISTRY,
     _parse_utc,
     _valid_utc,
     canonical_scope_fingerprint,
+    downstream_mutation_fingerprint,
+    downstream_scope_fingerprint,
 )
 from bot_core.security.initial_security import (
     DeviceTrustProjection,
@@ -135,7 +138,9 @@ class AuthorizationAuthority:
         self._authentication = authentication
         self._state = authentication._state  # noqa: SLF001 - same exact semantic plane
 
-    def authorize(self, proof: object, request: object, now_utc: object) -> str:
+    def _validate_authorization_inputs(
+        self, proof: object, request: object, now_utc: object
+    ) -> tuple[AuthenticationProof, AuthorizationRequest, datetime]:
         if not _valid_utc(now_utc):
             _deny("MALFORMED_UNTRUSTED_CONTEXT")
         if not isinstance(proof, AuthenticationProof):
@@ -146,112 +151,174 @@ class AuthorizationAuthority:
             self._authentication._validate_request_structure(request)  # noqa: SLF001
         except AuthenticationError as error:
             _deny(error.reason)
-        with self._state.lock:
-            snapshot = self._state.snapshot
-            try:
-                policy, ownership, _ = self._authentication._resolve_operation(  # noqa: SLF001
-                    snapshot, request.operation
+        return proof, request, cast(datetime, now_utc)
+
+    def _authorize_against_snapshot_locked(
+        self,
+        proof: AuthenticationProof,
+        request: AuthorizationRequest,
+        now_utc: datetime,
+    ) -> None:
+        """Single authorization core; caller must hold the shared Core-state lock."""
+        snapshot = self._state.snapshot
+        try:
+            policy, ownership, _ = (
+                self._authentication._validate_operation_request_semantics_locked(  # noqa: SLF001
+                    snapshot, request
                 )
-            except AuthenticationError as error:
-                _deny(error.reason)
-            if request.environment not in policy.environments:
-                _deny("AUTHORIZATION_DENIED")
-            if (
-                ownership == "M0.10_OWNED_TRANSITION"
-                and request.scope_fingerprint_sha256 != canonical_scope_fingerprint(request)
-            ):
-                _deny("AUTHORIZATION_DENIED")
-            try:
-                accepted_proof = self._authentication._resolve_accepted_proof_membership(  # noqa: SLF001
-                    proof, snapshot
-                )
-            except AuthenticationError as error:
-                _deny(error.reason)
-            if not self._proof_matches_request(accepted_proof, request):
-                _deny("AUTHORIZATION_DENIED")
-
-            issued = self._proof_time(accepted_proof.issued_at_utc)
-            expires = self._proof_time(accepted_proof.expires_at_utc)
-            now = cast(datetime, now_utc)
-            if expires <= issued:
-                _deny("MALFORMED_UNTRUSTED_CONTEXT")
-            if now < issued:
-                _deny("AUTHENTICATION_REQUIRED")
-            if now > expires or now - issued > timedelta(seconds=policy.freshness_seconds):
-                _deny("PROOF_EXPIRED")
-
-            expected_factors = {
-                "PIN": ("PIN",),
-                "BIOMETRIC": ("BIOMETRIC",),
-                "PIN_AND_BIOMETRIC": ("PIN", "BIOMETRIC"),
-            }.get(policy.factor_policy)
-            if expected_factors is None:
-                _deny("CONTRACT_INCONSISTENT")
-            if accepted_proof.factor_set != expected_factors:
-                _deny("PROOF_STALE")
-
-            identity, device, pin, session = self._resolve_authorization_family(snapshot, request)
-            if identity.state == "REVOKED":
-                _deny("IDENTITY_REVOKED")
-            if identity.state != "ACTIVE":
-                _deny("CONTRACT_INCONSISTENT")
-            if device.state != "TRUSTED":
-                _deny("DEVICE_NOT_TRUSTED")
-            if session.state != "UNLOCKED":
-                _deny("PROOF_STALE")
-            if (
-                identity.identity_revision,
-                device.trust_revision,
-                pin.pin_revision,
-                device.platform_enrollment_revision,
-                identity.security_generation,
-                session.session_generation,
-            ) != (
-                accepted_proof.identity_revision,
-                accepted_proof.device_trust_revision,
-                accepted_proof.pin_revision,
-                accepted_proof.platform_enrollment_revision,
-                accepted_proof.security_generation,
-                accepted_proof.session_generation,
-            ):
-                _deny("PROOF_STALE")
-            scope = (
-                request.account_id,
-                request.operator_id,
-                request.operation,
-                request.environment,
-                policy.authorization_scope,
             )
-            if not isinstance(
-                snapshot.accepted_operation_entitlements, MappingProxyType
-            ) or not isinstance(snapshot.current_operation_entitlements, MappingProxyType):
+        except AuthenticationError as error:
+            _deny(error.reason)
+        if request.environment not in policy.environments:
+            _deny("AUTHORIZATION_DENIED")
+        if (
+            ownership == "M0.10_OWNED_TRANSITION"
+            and request.scope_fingerprint_sha256 != canonical_scope_fingerprint(request)
+        ):
+            _deny("AUTHORIZATION_DENIED")
+        try:
+            accepted_proof = self._authentication._resolve_accepted_proof_membership(  # noqa: SLF001
+                proof, snapshot
+            )
+        except AuthenticationError as error:
+            _deny(error.reason)
+        if not self._proof_matches_request(accepted_proof, request):
+            _deny("AUTHORIZATION_DENIED")
+
+        issued = self._proof_time(accepted_proof.issued_at_utc)
+        expires = self._proof_time(accepted_proof.expires_at_utc)
+        now = now_utc
+        if expires <= issued:
+            _deny("MALFORMED_UNTRUSTED_CONTEXT")
+        if now < issued:
+            _deny("AUTHENTICATION_REQUIRED")
+        if now > expires or now - issued > timedelta(seconds=policy.freshness_seconds):
+            _deny("PROOF_EXPIRED")
+
+        expected_factors = {
+            "PIN": ("PIN",),
+            "BIOMETRIC": ("BIOMETRIC",),
+            "PIN_AND_BIOMETRIC": ("PIN", "BIOMETRIC"),
+        }.get(policy.factor_policy)
+        if expected_factors is None:
+            _deny("CONTRACT_INCONSISTENT")
+        if accepted_proof.factor_set != expected_factors:
+            _deny("PROOF_STALE")
+
+        identity, device, pin, session = self._resolve_authorization_family(snapshot, request)
+        if identity.state == "REVOKED":
+            _deny("IDENTITY_REVOKED")
+        if identity.state != "ACTIVE":
+            _deny("CONTRACT_INCONSISTENT")
+        if device.state != "TRUSTED":
+            _deny("DEVICE_NOT_TRUSTED")
+        if session.state != "UNLOCKED":
+            _deny("PROOF_STALE")
+        if (
+            identity.identity_revision,
+            device.trust_revision,
+            pin.pin_revision,
+            device.platform_enrollment_revision,
+            identity.security_generation,
+            session.session_generation,
+        ) != (
+            accepted_proof.identity_revision,
+            accepted_proof.device_trust_revision,
+            accepted_proof.pin_revision,
+            accepted_proof.platform_enrollment_revision,
+            accepted_proof.security_generation,
+            accepted_proof.session_generation,
+        ):
+            _deny("PROOF_STALE")
+        scope = (
+            request.account_id,
+            request.operator_id,
+            request.operation,
+            request.environment,
+            policy.authorization_scope,
+        )
+        if not isinstance(
+            snapshot.accepted_operation_entitlements, MappingProxyType
+        ) or not isinstance(snapshot.current_operation_entitlements, MappingProxyType):
+            _deny("CONTRACT_INCONSISTENT")
+        fingerprint = snapshot.current_operation_entitlements.get(scope)
+        if fingerprint is None:
+            _deny("AUTHORIZATION_DENIED")
+        if not isinstance(fingerprint, str):
+            _deny("CONTRACT_INCONSISTENT")
+        entitlement = snapshot.accepted_operation_entitlements.get(fingerprint)
+        if entitlement is None:
+            _deny("AUTHORIZATION_DENIED")
+        if (
+            not _valid_entitlement(entitlement, policy)
+            or entitlement.content_fingerprint_sha256 != fingerprint
+            or self._entitlement_scope(entitlement) != scope
+        ):
+            _deny("AUTHORIZATION_DENIED")
+        current_generations = {
+            identity.security_generation,
+            device.security_generation,
+            pin.security_generation,
+            session.security_generation,
+            entitlement.security_generation,
+        }
+        if len(current_generations) != 1:
+            _deny("CONTRACT_INCONSISTENT")
+        if current_generations != {accepted_proof.security_generation}:
+            _deny("PROOF_STALE")
+
+    def authorize(self, proof: object, request: object, now_utc: object) -> str:
+        validated_proof, validated_request, validated_now = self._validate_authorization_inputs(
+            proof, request, now_utc
+        )
+        with self._state.lock:
+            self._authorize_against_snapshot_locked(
+                validated_proof, validated_request, validated_now
+            )
+        return "AUTHORIZED"
+
+    def validate_downstream_authorized_mutation(
+        self,
+        proof: object,
+        request: object,
+        now_utc: object,
+        target_scope: object,
+        mutation: object,
+    ) -> str:
+        """Return a point-in-time decision over one coherently locked Core snapshot."""
+        if not isinstance(target_scope, dict) or not isinstance(mutation, dict):
+            _deny("MALFORMED_UNTRUSTED_CONTEXT")
+        validated_proof, validated_request, validated_now = self._validate_authorization_inputs(
+            proof, request, now_utc
+        )
+        with self._state.lock:
+            self._authorize_against_snapshot_locked(
+                validated_proof, validated_request, validated_now
+            )
+            snapshot = self._state.snapshot
+            fingerprint = snapshot.current_downstream_operation_definitions.get(
+                validated_request.operation
+            )
+            definition = snapshot.accepted_downstream_operation_definitions.get(fingerprint)
+            if not isinstance(definition, DownstreamOperationDefinition):
                 _deny("CONTRACT_INCONSISTENT")
-            fingerprint = snapshot.current_operation_entitlements.get(scope)
-            if fingerprint is None:
+            if mutation.get("intent") != definition.declared_intent:
                 _deny("AUTHORIZATION_DENIED")
-            if not isinstance(fingerprint, str):
-                _deny("CONTRACT_INCONSISTENT")
-            entitlement = snapshot.accepted_operation_entitlements.get(fingerprint)
-            if entitlement is None:
-                _deny("AUTHORIZATION_DENIED")
+            try:
+                expected_scope = downstream_scope_fingerprint(
+                    definition, validated_request, target_scope
+                )
+                expected_mutation = downstream_mutation_fingerprint(
+                    definition, validated_request, target_scope, mutation
+                )
+            except AuthenticationError as error:
+                _deny(error.reason)
             if (
-                not _valid_entitlement(entitlement, policy)
-                or entitlement.content_fingerprint_sha256 != fingerprint
-                or self._entitlement_scope(entitlement) != scope
+                validated_request.scope_fingerprint_sha256 != expected_scope
+                or validated_request.mutation_fingerprint_sha256 != expected_mutation
             ):
                 _deny("AUTHORIZATION_DENIED")
-            current_generations = {
-                identity.security_generation,
-                device.security_generation,
-                pin.security_generation,
-                session.security_generation,
-                entitlement.security_generation,
-            }
-            if len(current_generations) != 1:
-                _deny("CONTRACT_INCONSISTENT")
-            if current_generations != {accepted_proof.security_generation}:
-                _deny("PROOF_STALE")
-        return "AUTHORIZED"
+        return "AUTHORIZED_MUTATION"
 
     def authorize_upstream_security_request(
         self,

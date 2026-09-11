@@ -7257,3 +7257,113 @@
   }
 }
 ```
+
+## `downstream_operation_declarations`
+
+```json
+[
+  {
+    "owner_milestone": "M0.12",
+    "operation": "M0.12/ALERT_ACKNOWLEDGE",
+    "factor_policy": "PIN",
+    "freshness_seconds": 60,
+    "authorization_scope": "alert_lifecycle",
+    "environments": [
+      "PAPER",
+      "TESTNET",
+      "LIVE"
+    ],
+    "target_scope_contract": [
+      "alert_id",
+      "expected_alert_revision",
+      "alert_scope"
+    ],
+    "mutation_binding_contract": [
+      "intent",
+      "value"
+    ],
+    "declared_intent": "ACKNOWLEDGE",
+    "definition_revision": 1
+  },
+  {
+    "owner_milestone": "M0.12",
+    "operation": "M0.12/ALERT_SET_SUPPRESSION",
+    "factor_policy": "PIN",
+    "freshness_seconds": 60,
+    "authorization_scope": "alert_lifecycle",
+    "environments": [
+      "PAPER",
+      "TESTNET",
+      "LIVE"
+    ],
+    "target_scope_contract": [
+      "alert_id",
+      "expected_alert_revision",
+      "alert_scope"
+    ],
+    "mutation_binding_contract": [
+      "intent",
+      "value"
+    ],
+    "declared_intent": "SET_SUPPRESSION",
+    "definition_revision": 1
+  },
+  {
+    "owner_milestone": "M0.12",
+    "operation": "M0.12/ALERT_CLEAR_SUPPRESSION",
+    "factor_policy": "PIN",
+    "freshness_seconds": 60,
+    "authorization_scope": "alert_lifecycle",
+    "environments": [
+      "PAPER",
+      "TESTNET",
+      "LIVE"
+    ],
+    "target_scope_contract": [
+      "alert_id",
+      "expected_alert_revision",
+      "alert_scope"
+    ],
+    "mutation_binding_contract": [
+      "intent",
+      "value"
+    ],
+    "declared_intent": "CLEAR_SUPPRESSION",
+    "definition_revision": 1
+  },
+  {
+    "owner_milestone": "M0.12",
+    "operation": "M0.12/ALERT_MANUAL_FACT_RESOLUTION",
+    "factor_policy": "PIN",
+    "freshness_seconds": 60,
+    "authorization_scope": "alert_lifecycle",
+    "environments": [
+      "PAPER",
+      "TESTNET",
+      "LIVE"
+    ],
+    "target_scope_contract": [
+      "alert_id",
+      "expected_alert_revision",
+      "alert_scope"
+    ],
+    "mutation_binding_contract": [
+      "intent",
+      "value"
+    ],
+    "declared_intent": "MANUAL_FACT_RESOLUTION",
+    "definition_revision": 1
+  }
+]
+```
+
+## `current_downstream_operation_definition_revisions`
+
+```json
+{
+  "M0.12/ALERT_ACKNOWLEDGE": 1,
+  "M0.12/ALERT_SET_SUPPRESSION": 1,
+  "M0.12/ALERT_CLEAR_SUPPRESSION": 1,
+  "M0.12/ALERT_MANUAL_FACT_RESOLUTION": 1
+}
+```
