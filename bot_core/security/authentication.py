@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timedelta, timezone
+import json
+from pathlib import Path
 import re
 from types import MappingProxyType
 from typing import Any, Callable, NoReturn, Protocol, cast
@@ -61,6 +63,7 @@ class AuthorizationRequest:
     mutation_fingerprint_sha256: str
     causation_id: str
     correlation_id: str
+    declared_intent: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -146,6 +149,11 @@ class DownstreamOperationDefinition:
     environments: tuple[str, ...]
     target_scope_contract: tuple[str, ...]
     mutation_binding_contract: tuple[str, ...]
+    declared_intent: str
+    owner_artifact: str
+    owner_json_pointer: str
+    owner_contract_fingerprint_sha256: str
+    declaration_fingerprint_sha256: str
     dependency_fingerprint_sha256: str
     definition_revision: int
     content_fingerprint_sha256: str
@@ -230,6 +238,101 @@ def downstream_operation_definition_fingerprint(definition: DownstreamOperationD
     return _fingerprint_without(definition, "content_fingerprint_sha256")
 
 
+_ARCHITECTURE_ROOT = (
+    Path(__file__).resolve().parents[2]
+    / "docs"
+    / "architecture"
+    / "cryptohunter_product_architecture"
+)
+# Closed, code-owned mapping.  Neither callers nor plugins can add owners/artifacts.
+_CANONICAL_DOWNSTREAM_OWNER_ARTIFACTS = MappingProxyType(
+    {"M0.12": "audit_observability_alerts_and_updater.json"}
+)
+
+
+def _resolve_json_pointer(document: object, pointer: str) -> object:
+    if not pointer.startswith("/"):
+        _deny("CONTRACT_INCONSISTENT")
+    value = document
+    for raw in pointer[1:].split("/"):
+        token = raw.replace("~1", "/").replace("~0", "~")
+        if isinstance(value, list) and token.isdecimal():
+            index = int(token)
+            if index >= len(value):
+                _deny("CONTRACT_INCONSISTENT")
+            value = value[index]
+        elif isinstance(value, dict) and token in value:
+            value = value[token]
+        else:
+            _deny("CONTRACT_INCONSISTENT")
+    return value
+
+
+def _validated_artifact_identity(document: object, expected_owner: str) -> tuple[str, str]:
+    """Validate actual top-level identity selected by the closed owner mapping."""
+    if not isinstance(document, dict):
+        _deny("CONTRACT_INCONSISTENT")
+    actual_owner = document.get("m0_element")
+    schema_version = document.get("schema_version")
+    if (
+        not isinstance(actual_owner, str)
+        or actual_owner != expected_owner
+        or not isinstance(schema_version, str)
+        or not schema_version
+    ):
+        _deny("CONTRACT_INCONSISTENT")
+    return actual_owner, schema_version
+
+
+def _canonical_declaration(definition: DownstreamOperationDefinition) -> dict[str, object]:
+    expected_artifact = _CANONICAL_DOWNSTREAM_OWNER_ARTIFACTS.get(definition.owner_milestone)
+    if expected_artifact is None or definition.owner_artifact != expected_artifact:
+        _deny("CONTRACT_INCONSISTENT")
+    path = _ARCHITECTURE_ROOT / expected_artifact
+    try:
+        raw = path.read_bytes()
+        document = json.loads(raw)
+    except (OSError, ValueError, TypeError):
+        _deny("CONTRACT_INCONSISTENT")
+    actual_owner, schema_version = _validated_artifact_identity(
+        document, definition.owner_milestone
+    )
+    declaration = _resolve_json_pointer(document, definition.owner_json_pointer)
+    if not isinstance(declaration, dict):
+        _deny("CONTRACT_INCONSISTENT")
+    contract_fingerprint = cast(
+        str,
+        canonical_json_sha256(
+            {
+                "m0_element": actual_owner,
+                "schema_version": schema_version,
+            }
+        ),
+    )
+    declaration_fingerprint = cast(str, canonical_json_sha256(declaration))
+    semantic = {
+        "owner_milestone": definition.owner_milestone,
+        "operation": definition.operation,
+        "factor_policy": definition.factor_policy,
+        "freshness_seconds": definition.freshness_seconds,
+        "authorization_scope": definition.authorization_scope,
+        "environments": list(definition.environments),
+        "target_scope_contract": list(definition.target_scope_contract),
+        "mutation_binding_contract": list(definition.mutation_binding_contract),
+        "declared_intent": definition.declared_intent,
+        "definition_revision": definition.definition_revision,
+    }
+    if any(declaration.get(key) != value for key, value in semantic.items()):
+        _deny("CONTRACT_INCONSISTENT")
+    if (
+        definition.owner_contract_fingerprint_sha256 != contract_fingerprint
+        or definition.declaration_fingerprint_sha256 != declaration_fingerprint
+        or definition.dependency_fingerprint_sha256 != declaration_fingerprint
+    ):
+        _deny("CONTRACT_INCONSISTENT")
+    return declaration
+
+
 def _valid_downstream_operation_definition(definition: object) -> bool:
     if not isinstance(definition, DownstreamOperationDefinition):
         return False
@@ -243,7 +346,7 @@ def _valid_downstream_operation_definition(definition: object) -> bool:
         and not isinstance(definition.freshness_seconds, bool)
         and definition.freshness_seconds > 0
         and isinstance(definition.authorization_scope, str)
-        and definition.authorization_scope
+        and bool(definition.authorization_scope)
         and isinstance(definition.environments, tuple)
         and bool(definition.environments)
         and set(definition.environments) <= {"PAPER", "TESTNET", "LIVE"}
@@ -253,16 +356,153 @@ def _valid_downstream_operation_definition(definition: object) -> bool:
         and len(set(definition.target_scope_contract)) == len(definition.target_scope_contract)
         and isinstance(definition.mutation_binding_contract, tuple)
         and all(isinstance(field, str) and field for field in definition.mutation_binding_contract)
+        and isinstance(definition.declared_intent, str)
+        and bool(definition.declared_intent)
         and len(set(definition.mutation_binding_contract))
         == len(definition.mutation_binding_contract)
-        and _SHA_RE.fullmatch(definition.dependency_fingerprint_sha256)
+        and all(
+            _SHA_RE.fullmatch(value)
+            for value in (
+                definition.owner_contract_fingerprint_sha256,
+                definition.declaration_fingerprint_sha256,
+                definition.dependency_fingerprint_sha256,
+                definition.content_fingerprint_sha256,
+            )
+        )
         and isinstance(definition.definition_revision, int)
         and not isinstance(definition.definition_revision, bool)
         and definition.definition_revision >= 1
-        and _SHA_RE.fullmatch(definition.content_fingerprint_sha256)
         and downstream_operation_definition_fingerprint(definition)
         == definition.content_fingerprint_sha256
     )
+
+
+def _definition_from_declaration(
+    artifact: str,
+    pointer: str,
+    artifact_owner: str,
+    schema_version: str,
+    declaration: dict[str, object],
+) -> DownstreamOperationDefinition:
+    """Convert validated JSON-domain declaration or fail with controlled taxonomy."""
+    required_strings = (
+        "owner_milestone",
+        "operation",
+        "factor_policy",
+        "authorization_scope",
+        "declared_intent",
+    )
+    required_lists = (
+        "environments",
+        "target_scope_contract",
+        "mutation_binding_contract",
+    )
+    try:
+        if (
+            any(
+                not isinstance(declaration[name], str) or not declaration[name]
+                for name in required_strings
+            )
+            or any(
+                not isinstance(declaration[name], list)
+                or not declaration[name]
+                or any(not isinstance(value, str) or not value for value in declaration[name])
+                for name in required_lists
+            )
+            or not isinstance(declaration["freshness_seconds"], int)
+            or isinstance(declaration["freshness_seconds"], bool)
+            or not isinstance(declaration["definition_revision"], int)
+            or isinstance(declaration["definition_revision"], bool)
+        ):
+            _deny("CONTRACT_INCONSISTENT")
+        declaration_fingerprint = cast(str, canonical_json_sha256(declaration))
+        item = DownstreamOperationDefinition(
+            owner_milestone=declaration["owner_milestone"],
+            operation=declaration["operation"],
+            factor_policy=declaration["factor_policy"],
+            freshness_seconds=declaration["freshness_seconds"],
+            authorization_scope=declaration["authorization_scope"],
+            environments=tuple(declaration["environments"]),
+            target_scope_contract=tuple(declaration["target_scope_contract"]),
+            mutation_binding_contract=tuple(declaration["mutation_binding_contract"]),
+            declared_intent=declaration["declared_intent"],
+            owner_artifact=artifact,
+            owner_json_pointer=pointer,
+            owner_contract_fingerprint_sha256=cast(
+                str,
+                canonical_json_sha256(
+                    {
+                        "m0_element": artifact_owner,
+                        "schema_version": schema_version,
+                    }
+                ),
+            ),
+            declaration_fingerprint_sha256=declaration_fingerprint,
+            dependency_fingerprint_sha256=declaration_fingerprint,
+            definition_revision=declaration["definition_revision"],
+            content_fingerprint_sha256="",
+        )
+    except (KeyError, TypeError, ValueError):
+        _deny("CONTRACT_INCONSISTENT")
+    return replace(
+        item, content_fingerprint_sha256=downstream_operation_definition_fingerprint(item)
+    )
+
+
+def _architecture_downstream_definitions() -> tuple[DownstreamOperationDefinition, ...]:
+    """Validate and return exact contiguous canonical histories through declared current."""
+    result: list[DownstreamOperationDefinition] = []
+    for owner, artifact in _CANONICAL_DOWNSTREAM_OWNER_ARTIFACTS.items():
+        path = _ARCHITECTURE_ROOT / artifact
+        try:
+            raw = path.read_bytes()
+            document = json.loads(raw)
+            artifact_owner, schema_version = _validated_artifact_identity(document, owner)
+            declarations = document["downstream_operation_declarations"]
+            currents = document["current_downstream_operation_definition_revisions"]
+        except (OSError, ValueError, TypeError, KeyError):
+            _deny("CONTRACT_INCONSISTENT")
+        if not isinstance(declarations, list) or not isinstance(currents, dict):
+            _deny("CONTRACT_INCONSISTENT")
+        grouped: dict[str, list[tuple[int, int, dict[str, object]]]] = {}
+        for index, declaration in enumerate(declarations):
+            if not isinstance(declaration, dict) or declaration.get("owner_milestone") != owner:
+                _deny("CONTRACT_INCONSISTENT")
+            operation = declaration.get("operation")
+            revision = declaration.get("definition_revision")
+            if (
+                not isinstance(operation, str)
+                or not isinstance(revision, int)
+                or isinstance(revision, bool)
+                or revision <= 0
+            ):
+                _deny("CONTRACT_INCONSISTENT")
+            grouped.setdefault(operation, []).append((revision, index, declaration))
+        if set(currents) != set(grouped):
+            _deny("CONTRACT_INCONSISTENT")
+        for operation in sorted(grouped):
+            current = currents[operation]
+            history = sorted(grouped[operation], key=lambda row: row[0])
+            revisions = [row[0] for row in history]
+            if (
+                not isinstance(current, int)
+                or isinstance(current, bool)
+                or current <= 0
+                or revisions != list(range(1, current + 1))
+            ):
+                _deny("CONTRACT_INCONSISTENT")
+            for _, index, declaration in history:
+                definition = _definition_from_declaration(
+                    artifact,
+                    f"/downstream_operation_declarations/{index}",
+                    artifact_owner,
+                    schema_version,
+                    declaration,
+                )
+                if not _valid_downstream_operation_definition(definition):
+                    _deny("CONTRACT_INCONSISTENT")
+                result.append(definition)
+    return tuple(result)
 
 
 def _seed_trusted_downstream_operation_definition(
@@ -271,15 +511,34 @@ def _seed_trusted_downstream_operation_definition(
     *,
     current: bool = True,
 ) -> None:
-    """Private harness for an architecture-owned definition already accepted by Core."""
+    """Accept only an independently resolved canonical architecture declaration."""
     if not isinstance(
         authority, AuthenticationAuthority
     ) or not _valid_downstream_operation_definition(definition):
         _deny("CONTRACT_INCONSISTENT")
+    _canonical_declaration(definition)
     with authority._state.lock:  # noqa: SLF001
         before = authority._state.snapshot  # noqa: SLF001
         accepted = dict(before.accepted_downstream_operation_definitions)
         designations = dict(before.current_downstream_operation_definitions)
+        existing = accepted.get(definition.content_fingerprint_sha256)
+        if existing is not None and existing != definition:
+            _deny("CONTRACT_INCONSISTENT")
+        current_fingerprint = designations.get(definition.operation)
+        current_definition = accepted.get(current_fingerprint) if current_fingerprint else None
+        if current and current_definition is not None:
+            if not isinstance(current_definition, DownstreamOperationDefinition):
+                _deny("CONTRACT_INCONSISTENT")
+            if definition.definition_revision < current_definition.definition_revision:
+                _deny("CONTRACT_INCONSISTENT")
+            if definition.definition_revision == current_definition.definition_revision:
+                if definition.content_fingerprint_sha256 != current_fingerprint:
+                    _deny("CONTRACT_INCONSISTENT")
+                return
+            if definition.definition_revision != current_definition.definition_revision + 1:
+                _deny("CONTRACT_INCONSISTENT")
+        elif current and definition.definition_revision != 1:
+            _deny("CONTRACT_INCONSISTENT")
         accepted[definition.content_fingerprint_sha256] = definition
         if current:
             designations[definition.operation] = definition.content_fingerprint_sha256
@@ -418,6 +677,7 @@ def downstream_scope_fingerprint(
                 "M010-DOWNSTREAM-SCOPE-V1",
                 definition.owner_milestone,
                 definition.operation,
+                definition.declared_intent,
                 definition.content_fingerprint_sha256,
                 request.account_id,
                 request.operator_id,
@@ -440,6 +700,7 @@ def downstream_mutation_fingerprint(
         not _valid_downstream_operation_definition(definition)
         or tuple(target_scope) != definition.target_scope_contract
         or tuple(mutation) != definition.mutation_binding_contract
+        or mutation.get("intent") != definition.declared_intent
     ):
         _deny("MALFORMED_UNTRUSTED_CONTEXT")
     return cast(
@@ -449,6 +710,7 @@ def downstream_mutation_fingerprint(
                 "M010-DOWNSTREAM-MUTATION-V1",
                 definition.owner_milestone,
                 definition.operation,
+                definition.declared_intent,
                 definition.content_fingerprint_sha256,
                 request.account_id,
                 request.operator_id,
@@ -549,6 +811,34 @@ class AuthenticationAuthority:
         self._state = security._state  # noqa: SLF001 -- trusted owner over the exact shared plane
         self._comparator = comparator
         self._runtime_sessions = security._runtime_sessions  # noqa: SLF001
+        # Validate and build the complete ephemeral authority in shadow state.
+        # No live state changes until every canonical artifact has closed successfully.
+        definitions = _architecture_downstream_definitions()
+        accepted = {item.content_fingerprint_sha256: item for item in definitions}
+        expected_current = {item.operation: item for item in definitions}
+        current = {
+            operation: item.content_fingerprint_sha256
+            for operation, item in expected_current.items()
+        }
+        if (
+            len(accepted) != len(definitions)
+            or set(current) != set(expected_current)
+            or any(
+                accepted.get(fingerprint) != expected_current[operation]
+                for operation, fingerprint in current.items()
+            )
+        ):
+            _deny("CONTRACT_INCONSISTENT")
+        with self._state.lock:
+            before = self._state.snapshot
+            self._state.snapshot = replace(
+                before,
+                accepted_authentication_proofs=MappingProxyType({}),
+                accepted_authentication_proof_bindings=MappingProxyType({}),
+                authentication_proof_operation_definitions=MappingProxyType({}),
+                accepted_downstream_operation_definitions=MappingProxyType(accepted),
+                current_downstream_operation_definitions=MappingProxyType(current),
+            )
 
     @property
     def snapshot(self) -> InitialSecurityAuthoritySnapshot:
@@ -560,7 +850,7 @@ class AuthenticationAuthority:
             _deny("MALFORMED_UNTRUSTED_CONTEXT")
         self._validate_request_structure(request)
         with self._state.lock:
-            self._resolve_operation(self._state.snapshot, request.operation)
+            self._validate_operation_request_semantics_locked(self._state.snapshot, request)
             identity, device, session = self._resolve_biometric_context(
                 self._state.snapshot, request
             )
@@ -652,7 +942,7 @@ class AuthenticationAuthority:
         current_time = cast(datetime, now_utc)
         with self._state.lock:
             snapshot = self._state.snapshot
-            self._resolve_operation(snapshot, request.operation)
+            self._validate_operation_request_semantics_locked(snapshot, request)
             identity, device, session = self._resolve_biometric_context(snapshot, request)
             expected_challenge = core_expected_biometric_challenge(
                 request,
@@ -743,8 +1033,8 @@ class AuthenticationAuthority:
         current_time = cast(datetime, now)
         with self._state.lock:
             before = self._state.snapshot
-            policy, ownership, definition_fingerprint = self._resolve_operation(
-                before, request.operation
+            policy, ownership, definition_fingerprint = (
+                self._validate_operation_request_semantics_locked(before, request)
             )
             if request.environment not in policy.environments:
                 _deny("AUTHORIZATION_DENIED")
@@ -913,10 +1203,22 @@ class AuthenticationAuthority:
             _deny("CONTRACT_INCONSISTENT")
         _, _, current_definition = self._resolve_operation(snapshot, candidate.operation)
         bound_definition = snapshot.authentication_proof_operation_definitions.get(recomputed)
-        if bound_definition != current_definition and not (
-            bound_definition is None and candidate.operation in OPERATION_POLICY_REGISTRY
-        ):
-            _deny("PROOF_STALE")
+        if candidate.operation in OPERATION_POLICY_REGISTRY:
+            # Compatibility contract: built-ins bind directly to the immutable
+            # Core policy fingerprint; they have no downstream definition.
+            if bound_definition not in (None, current_definition):
+                _deny("CONTRACT_INCONSISTENT")
+        else:
+            if not isinstance(bound_definition, str):
+                _deny("CONTRACT_INCONSISTENT")
+            definition = snapshot.accepted_downstream_operation_definitions.get(bound_definition)
+            if not isinstance(definition, DownstreamOperationDefinition):
+                _deny("CONTRACT_INCONSISTENT")
+            if definition.operation != candidate.operation or definition.definition_revision < 1:
+                _deny("CONTRACT_INCONSISTENT")
+            _canonical_declaration(definition)
+            if bound_definition != current_definition:
+                _deny("PROOF_STALE")
         return candidate
 
     @staticmethod
@@ -988,6 +1290,7 @@ class AuthenticationAuthority:
             or definition.operation != operation
         ):
             _deny("CONTRACT_INCONSISTENT")
+        _canonical_declaration(definition)
         return (
             OperationPolicy(
                 definition.factor_policy,
@@ -998,6 +1301,25 @@ class AuthenticationAuthority:
             "DOWNSTREAM_OWNED_PRIVILEGED_OPERATION",
             fingerprint,
         )
+
+    @classmethod
+    def _validate_operation_request_semantics_locked(
+        cls,
+        snapshot: InitialSecurityAuthoritySnapshot,
+        request: AuthorizationRequest,
+    ) -> tuple[OperationPolicy, str, str]:
+        """Give every request field one deterministic meaning from current Core authority."""
+        policy, ownership, fingerprint = cls._resolve_operation(snapshot, request.operation)
+        if ownership == "DOWNSTREAM_OWNED_PRIVILEGED_OPERATION":
+            definition = snapshot.accepted_downstream_operation_definitions.get(fingerprint)
+            if (
+                not isinstance(definition, DownstreamOperationDefinition)
+                or request.declared_intent != definition.declared_intent
+            ):
+                _deny("AUTHORIZATION_DENIED")
+        elif request.declared_intent is not None:
+            _deny("AUTHORIZATION_DENIED")
+        return policy, ownership, fingerprint
 
     def _resolve_runtime(
         self, request: AuthorizationRequest, session: SessionSecurityState
@@ -1074,6 +1396,10 @@ class AuthenticationAuthority:
             or request.environment not in {"PAPER", "TESTNET", "LIVE"}
             or not _SHA_RE.fullmatch(request.scope_fingerprint_sha256)
             or not _SHA_RE.fullmatch(request.mutation_fingerprint_sha256)
+            or not (
+                request.declared_intent is None
+                or (isinstance(request.declared_intent, str) and request.declared_intent)
+            )
             or not isinstance(request.causation_id, str)
             or not request.causation_id
             or not isinstance(request.correlation_id, str)

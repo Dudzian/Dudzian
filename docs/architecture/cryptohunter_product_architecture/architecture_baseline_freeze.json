@@ -55,8 +55,8 @@
     {
       "milestone_id": "M0.10",
       "canonical_artifact": "docs/architecture/cryptohunter_product_architecture/identity_device_authentication_and_secrets.json",
-      "canonical_schema_version": "1.1.0",
-      "sha256": "5a403f8eae059bfb1fc2ff6a588eb5d37a825443b30a3ea34278057364b1b24f"
+      "canonical_schema_version": "1.5.0",
+      "sha256": "76e76f676720c9ae347c4396f1e6e2bb80f9a69c476c1d659b7bb9512ffc1313"
     },
     {
       "milestone_id": "M0.11",

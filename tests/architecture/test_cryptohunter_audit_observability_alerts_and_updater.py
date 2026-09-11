@@ -41,6 +41,8 @@ TOP_LEVEL_KEYS = {
     "current_state_classification",
     "non_goals",
     "open_items",
+    "downstream_operation_declarations",
+    "current_downstream_operation_definition_revisions",
 }
 
 

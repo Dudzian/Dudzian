@@ -2,7 +2,7 @@
 
 ## Status i granica
 
-M0.10-R1 ma wersję kontraktu `1.1.0` i fazę `corrective_reopened`. Frozen M0.10 został jawnie reopened, ponieważ zamknięty registry nie potrafił reprezentować downstream-owned privileged operations. Pozostaje implementacyjnie neutralnym kontraktem bezpieczeństwa. Nie implementuje runtime'u, persystencji, keychaina, kryptografii produkcyjnej, biometrii platformowej ani skutków giełdowych. Trwałość i atomowe odtwarzanie pozostają w M0.11.
+M0.10-R5 ma wersję kontraktu `1.5.0` i fazę `corrective_reopened`. Frozen M0.10 został jawnie reopened, ponieważ zamknięty registry nie potrafił reprezentować downstream-owned privileged operations. Pozostaje implementacyjnie neutralnym kontraktem bezpieczeństwa. Nie implementuje runtime'u, persystencji, keychaina, kryptografii produkcyjnej, biometrii platformowej ani skutków giełdowych. Trwałość i atomowe odtwarzanie pozostają w M0.11.
 
 ## Authority
 
@@ -24,11 +24,29 @@ CryptoHunter nie przechowuje materiału biometrycznego. Faktor `BIOMETRIC` pocho
 
 ## Core-accepted downstream operation definitions
 
-M0.10-R1 wybiera Model B. Downstream milestone deklaruje zamknięty `DownstreamOperationDefinition`, lecz wyłącznie `CoreHost` może zaakceptować jego pełny fingerprint i ustanowić current designation dla canonical identity `<owner_milestone>/<UPPER_SNAKE_OPERATION>`. Prefix operation musi dokładnie odpowiadać ownerowi. Nominalny descriptor, self-hash, caller registry, plugin i UI są nie-authority. Model A został odrzucony: bezpośrednie dopisywanie każdej przyszłej operacji do globalnego registry ponownie zamrażałoby downstream rozwój w M0.10 i nie dawałoby jawnego owner/dependency drift fence. Unknown, accepted-but-not-current oraz arbitrary operation pozostają `OPERATION_UNSUPPORTED`.
+M0.10-R5 utrzymuje wybrany w R1 Model B. Downstream milestone deklaruje zamknięty `DownstreamOperationDefinition`, lecz wyłącznie `CoreHost` może zaakceptować jego pełny fingerprint i ustanowić current designation dla canonical identity `<owner_milestone>/<UPPER_SNAKE_OPERATION>`. Prefix operation musi dokładnie odpowiadać ownerowi. Nominalny descriptor, self-hash, caller registry, plugin i UI są nie-authority. Model A został odrzucony: bezpośrednie dopisywanie każdej przyszłej operacji do globalnego registry ponownie zamrażałoby downstream rozwój w M0.10 i nie dawałoby jawnego owner/dependency drift fence. Unknown, accepted-but-not-current oraz arbitrary operation pozostają `OPERATION_UNSUPPORTED`.
 
 Descriptor zamyka factor policy, freshness, environments, authorization scope, ordered target-scope contract, ordered mutation contract, owner dependency fingerprint i revision. Core wiąże każdy wystawiony proof prywatnym membershipem z exact current definition fingerprint; zmiana current definition lub dependency fence'uje wcześniejszy proof jako `PROOF_STALE`. Publiczne wejście authorization pozostaje dokładnie `(untrusted AuthenticationProof, untrusted exact AuthorizationRequest, now_utc)`: caller nie przekazuje descriptora, policy, bindingu ani entitlementu. `AuthenticationProof` nie zmienia pól i nadal wymaga pre-existing `CoreIssuedAuthenticationProofBinding`.
 
 Canonical downstream scope fingerprint obejmuje domain tag `M010-DOWNSTREAM-SCOPE-V1`, owner, namespaced operation, accepted definition fingerprint, account/operator/actor-device, environment i ordered exact target scope. Mutation fingerprint obejmuje ponadto `M010-DOWNSTREAM-MUTATION-V1`, exact mutation intent, causation i correlation. Downstream owner musi przed skutkiem niezależnie wyprowadzić fingerprint actual target/revision/mutation i porównać exact equality. Dlatego proof nie może przejść między ownerami, operacjami, alertami, rewizjami, environmentami, scope, mutation, causation lub correlation.
+
+R2 zamyka provenance executable: Core rozpoznaje ownera wyłącznie przez zamkniętą mapę milestone→canonical artifact, rozwiązuje dokładny RFC6901 pointer deklaracji, sprawdza `m0_element`, przelicza canonical-JSON fingerprint kompletnej deklaracji i porównuje wszystkie semantyczne pola. Dla M0.12 źródłem są `audit_observability_alerts_and_updater.json#/downstream_operation_declarations/<index>`. Dowolny SHA, nieznany owner oraz undeclared operation nie ustanawiają authority.
+
+Current definition jest contiguous monotonic fencing epoch: startuje od rewizji 1, potem dopuszcza tylko N+1; exact duplicate jest no-op, natomiast rollback, luka i equal-revision/different-content są `CONTRACT_INCONSISTENT`. Accepted history jest immutable i nigdy nie może ponownie stać się current.
+
+Accepted/current definitions nie są M0.11 persistence authority: M0.10 deterministycznie bootstrapuje je przy każdym starcie wyłącznie z canonical architecture declarations. Proofy, Core-issued proof bindings i proof-definition bindings są restart-ephemeral i start je unieważnia. M0.11 nadal odpowiada za trwałe security projections, lecz świadomie nie przechowuje tych czterech klas. `validate_downstream_authorized_mutation` jest obowiązkowym pre-effect fence actual ordered target/mutation; samo `authorize` dowodzi wyłącznie security/request binding.
+
+R3 interpretuje `declared_intent` jako exact immutable operation-owned constraint, a nie wyłącznie przypadkową część declaration hash. Derivation i actual mutation validation odrzucają intent różny od canonical operation intent.
+
+Restart bootstrap akceptuje wyłącznie dokładną historię `1..declared_current_revision`: positive non-bool, unique, contiguous, bez future revisions, z identycznym key-set declarations/current map. Po replayu Core dowodzi exact current revision i definition fingerprint.
+
+`AUTHORIZED_MUTATION` jest point-in-time security decision nad jednym coherent locked Core snapshot. Publiczne `authorize` i mutation validator współdzielą jeden semantic core; mutation validator utrzymuje ten sam lock przez proof, freshness, identity/device/PIN/session, entitlement, definition, target, mutation i declared-intent checks. Downstream commit nie może reuse decyzji po zmianie target revision albo security authority.
+
+R4 zamyka wszystkie pola `AuthorizationRequest` jednym Core-owned semantic validatorem: built-in operation wymaga `declared_intent == null`, a downstream operation wymaga exact intent current canonical definition. Ta sama reguła obowiązuje challenge derivation, proof issuance i authorization; żadne caller-controlled pole requestu nie jest ignorowane.
+
+Canonical declaration conversion jawnie waliduje wymagane scalars i containers; missing/wrong type zawsze daje `CONTRACT_INCONSISTENT`, nigdy raw `KeyError`, `TypeError` ani `ValueError`. Restart najpierw buduje kompletne exact accepted/current shadow registries, a dopiero po pełnym sukcesie atomowo zastępuje stare ephemeral definitions i czyści proof authority. Failure publikuje zero zmian.
+
+R5 waliduje actual top-level canonical artifact identity przed conversion i przed publication: dokument musi być JSON object, jego `m0_element` musi być exact closed-map ownerem, a `schema_version` niepustym stringiem. `owner_contract_fingerprint_sha256` pochodzi z rzeczywiście zwalidowanych top-level wartości; declaration owner nie może naprawić ani zamaskować błędnego artifact ownera. Bootstrap i późniejsze consumption stosują ten sam provenance chain, a failure pozostawia istniejący snapshot object-identical.
 
 Każda downstream operation nadal wymaga accepted/current `OperationEntitlementProjection` dla exact namespaced operation, environment i authorization scope oraz coherent security generation. Caller bool i role pozostają nie-authority. Runtime session ID nie wchodzi do proof: Core już rozwiązuje current `RuntimeSession`, wymaga exact zgodności jego ID z current `SessionSecurityState`, a `session_generation` w proof stanowi monotoniczny fence. M0.12 operations są wyłącznie conformance fixtures; S9D pozostaje otwarte do osobnego S9D-C3.
 
