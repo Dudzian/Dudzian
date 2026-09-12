@@ -85,11 +85,11 @@ def test_identity_status_and_exact_top_level_shape() -> None:
     assert set(MACHINE) == TOP_LEVEL_KEYS
     assert MACHINE["schema_version"] == "cryptohunter.audit_observability_alerts_and_updater.v1"
     assert MACHINE["m0_element"] == "M0.12"
-    assert MACHINE["status"] == "IN_PROGRESS_S9D_C17_EXECUTABLE_ALERT_AUTHORITY_PARTIAL_OPEN"
+    assert MACHINE["status"] == "IN_PROGRESS_S9D_C18_BLOCKED_S9C_EXECUTABLE_SOURCE_AUTHORITY"
     assert MACHINE["contract_identity"] == {
         "contract_id": "M0.12-audit-observability-alerts-updater",
-        "version": "1.9.0",
-        "phase": "S9D_C17_CACHE_INDEPENDENT_SOURCE_RESTORE",
+        "version": "1.10.0",
+        "phase": "S9D_C18_BLOCKED_S9C_EXECUTABLE_SOURCE_AUTHORITY",
         "machine_source_of_truth": True,
         "markdown_is_projection_only": True,
     }
@@ -5279,11 +5279,11 @@ def _blocked_alert_mutation(state: dict[str, Any], operation: str) -> None:
 
 
 def test_s9d_c15_status_is_honestly_open_and_updater_stays_open() -> None:
-    assert MACHINE["status"] == "IN_PROGRESS_S9D_C17_EXECUTABLE_ALERT_AUTHORITY_PARTIAL_OPEN"
+    assert MACHINE["status"] == "IN_PROGRESS_S9D_C18_BLOCKED_S9C_EXECUTABLE_SOURCE_AUTHORITY"
     assert MACHINE["contract_identity"] == {
         "contract_id": "M0.12-audit-observability-alerts-updater",
-        "version": "1.9.0",
-        "phase": "S9D_C17_CACHE_INDEPENDENT_SOURCE_RESTORE",
+        "version": "1.10.0",
+        "phase": "S9D_C18_BLOCKED_S9C_EXECUTABLE_SOURCE_AUTHORITY",
         "machine_source_of_truth": True,
         "markdown_is_projection_only": True,
     }
@@ -5388,3 +5388,23 @@ def test_c4_defect_status_distinguishes_executable_and_upstream_open_work() -> N
 
 def test_markdown_remains_exact_machine_projection_after_c2_gate() -> None:
     assert MARKDOWN_PATH.read_text(encoding="utf-8") == _render_markdown(MACHINE)
+
+
+def test_s9d_c18_records_the_missing_frozen_s9c_executable_boundary() -> None:
+    disposition = MACHINE["alert_model"]["executable_authority"][
+        "s9d_c18_source_authority_disposition"
+    ]
+    assert disposition["status"] == "BLOCKED_S9C_EXECUTABLE_SOURCE_AUTHORITY"
+    assert disposition["production_api"] == "ABSENT"
+    assert disposition["production_types"] == "ABSENT"
+    assert disposition["alertstore_adapter"].startswith("NOT_IMPLEMENTED")
+    assert disposition["market_data_current_condition"] == "OPEN_SOURCE_AUTHORITY"
+    assert disposition["execution_route_condition"] == "OPEN_SOURCE_AUTHORITY"
+    assert "pure executable oracle" in disposition["executable_oracle"]
+    assert "test oracle" in disposition["membership_authority"]
+    assert "snapshot token" in disposition["currentness_and_expiry_fence"]
+    assert "historical observation A" in disposition["durable_historical_lookup"]
+    assert all(
+        status == "OPEN_SOURCE_AUTHORITY"
+        for _, status in PRODUCTION_SOURCE_RESOLUTION_POLICIES.values()
+    )

@@ -17,7 +17,7 @@
 ## `status`
 
 ```json
-"IN_PROGRESS_S9D_C17_EXECUTABLE_ALERT_AUTHORITY_PARTIAL_OPEN"
+"IN_PROGRESS_S9D_C18_BLOCKED_S9C_EXECUTABLE_SOURCE_AUTHORITY"
 ```
 
 ## `contract_identity`
@@ -25,8 +25,8 @@
 ```json
 {
   "contract_id": "M0.12-audit-observability-alerts-updater",
-  "version": "1.9.0",
-  "phase": "S9D_C17_CACHE_INDEPENDENT_SOURCE_RESTORE",
+  "version": "1.10.0",
+  "phase": "S9D_C18_BLOCKED_S9C_EXECUTABLE_SOURCE_AUTHORITY",
   "machine_source_of_truth": true,
   "markdown_is_projection_only": true
 }
@@ -5011,7 +5011,7 @@
         "executable_status": "OPEN_SOURCE_AUTHORITY"
       }
     },
-    "production_source_policy_status": "PARTIAL_OPEN: canonical definitions are mirrored exactly, but frozen upstream authority adapters are not executable in AlertStore for production types",
+    "production_source_policy_status": "BLOCKED_S9C_EXECUTABLE_SOURCE_AUTHORITY: canonical S9C schema and pure test oracle exist, but no production membership/currentness fence or durable historical evidence API exists; all production source paths remain open",
     "synthetic_source_resolution_policies": {
       "TEST_MULTI_SOURCE": "NON_PRODUCTION_TEST_FIXTURE",
       "OPERATOR_WORKFLOW_REQUIRED": "NON_PRODUCTION_TEST_FIXTURE_FOR_CLOSED_MANUAL_LIFECYCLE"
@@ -5021,7 +5021,21 @@
     "combined_state_restore": "constructor/restore pins one AtomicAlertAuthorityState and verifies source history from HistoricalSourceDecision evidence_ids plus durable upstream accepted evidence; historical evidence need not remain current or fresh now",
     "atomic_read": "load_atomic_state acquires the carrier lock once and returns one immutable AtomicAlertAuthorityState; concurrent ordinary commits linearize wholly before or after that read and cannot create a torn restore projection",
     "immutable_atomic_pin": "load_atomic_state is defensively pinned: tuple record collections and nested tuple semantics require exact immutable shapes, while mappings are copied into owned MappingProxyType projections; carrier-retained mutable aliases cannot change restore validation",
-    "schema_parity": "machine closed-object required_fields exactly equal dataclasses.fields for DeliveryAttempt, MutationHistoryEntry, OperatorReplayEntry, and HistoricalSourceDecision"
+    "schema_parity": "machine closed-object required_fields exactly equal dataclasses.fields for DeliveryAttempt, MutationHistoryEntry, OperatorReplayEntry, and HistoricalSourceDecision",
+    "s9d_c18_source_authority_disposition": {
+      "status": "BLOCKED_S9C_EXECUTABLE_SOURCE_AUTHORITY",
+      "frozen_canonical_artifact": "audit_observability_alerts_and_updater.json observability_model",
+      "executable_oracle": "tests/architecture/test_cryptohunter_audit_observability_alerts_and_updater.py S9C-C1 pure executable oracle",
+      "production_api": "ABSENT",
+      "production_types": "ABSENT",
+      "membership_authority": "ABSENT: S9C accepts injected UpstreamReadinessEvidence only inside a test oracle; no production-owned accepted observation membership API exists",
+      "currentness_and_expiry_fence": "ABSENT: no S9C production transaction, lock, snapshot token, or revision fence can be held or verified through AlertStore publication",
+      "durable_historical_lookup": "ABSENT: no S9C production API resolves accepted historical observation A after effective-current advances to B",
+      "failing_authority": "ABSENT: no production S9C API authorizes the non-OK observation for either alert type",
+      "alertstore_adapter": "NOT_IMPLEMENTED: an adapter would invent authority rather than consume a frozen executable S9C owner",
+      "market_data_current_condition": "OPEN_SOURCE_AUTHORITY",
+      "execution_route_condition": "OPEN_SOURCE_AUTHORITY"
+    }
   }
 }
 ```
