@@ -6,12 +6,21 @@ import json
 import hashlib
 import re
 import unicodedata
+from dataclasses import fields
 
 import pytest
 from copy import deepcopy
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
+
+from bot_core.alerts.store import (
+    DeliveryAttempt,
+    HistoricalSourceDecision,
+    MutationHistoryEntry,
+    OperatorReplayEntry,
+    PRODUCTION_SOURCE_RESOLUTION_POLICIES,
+)
 
 ROOT = Path(__file__).parents[2]
 DOCS = ROOT / "docs/architecture/cryptohunter_product_architecture"
@@ -76,14 +85,53 @@ def test_identity_status_and_exact_top_level_shape() -> None:
     assert set(MACHINE) == TOP_LEVEL_KEYS
     assert MACHINE["schema_version"] == "cryptohunter.audit_observability_alerts_and_updater.v1"
     assert MACHINE["m0_element"] == "M0.12"
-    assert MACHINE["status"] == "IN_PROGRESS_ALERTS_BLOCKED_M010_AUTHORIZATION"
+    assert MACHINE["status"] == "IN_PROGRESS_S9D_C17_EXECUTABLE_ALERT_AUTHORITY_PARTIAL_OPEN"
     assert MACHINE["contract_identity"] == {
         "contract_id": "M0.12-audit-observability-alerts-updater",
-        "version": "0.4.2",
-        "phase": "S9D_C2_BLOCKED_BY_FROZEN_M010_ALERT_ACTION_AUTHORIZATION",
+        "version": "1.9.0",
+        "phase": "S9D_C17_CACHE_INDEPENDENT_SOURCE_RESTORE",
         "machine_source_of_truth": True,
         "markdown_is_projection_only": True,
     }
+
+
+def test_replay_schema_exactly_matches_executable_record() -> None:
+    schema = MACHINE["alert_model"]["durability"]["replay_entry_schema"]
+    assert schema["required_fields"] == [item.name for item in fields(OperatorReplayEntry)]
+    assert schema["optional_fields"] == []
+    assert schema["additional_fields"] == "REJECT"
+
+
+def test_delivery_and_history_schemas_exactly_match_executable_records() -> None:
+    delivery = MACHINE["alert_model"]["delivery_contract"]["attempt_schema"]
+    history = MACHINE["alert_model"]["durability"]["history_entry_schema"]
+    assert delivery["required_fields"] == [item.name for item in fields(DeliveryAttempt)]
+    assert history["required_fields"] == [item.name for item in fields(MutationHistoryEntry)]
+    for schema in (delivery, history):
+        assert schema["optional_fields"] == []
+        assert schema["additional_fields"] == "REJECT"
+
+
+def test_historical_source_decision_schema_matches_executable_record() -> None:
+    schema = MACHINE["alert_model"]["durability"]["historical_source_decision_schema"]
+    assert schema["required_fields"] == [item.name for item in fields(HistoricalSourceDecision)]
+    assert schema["optional_fields"] == []
+    assert schema["additional_fields"] == "REJECT"
+
+
+def test_production_source_policy_registry_matches_machine_source_of_truth() -> None:
+    machine = MACHINE["alert_model"]["executable_authority"][
+        "production_source_resolution_policies"
+    ]
+    executable = {
+        alert_type: {
+            "canonical_corrective_authority": policy,
+            "executable_status": status,
+        }
+        for alert_type, (policy, status) in PRODUCTION_SOURCE_RESOLUTION_POLICIES.items()
+    }
+    assert executable == machine
+    assert set(machine) == set(MACHINE["alert_model"]["resolution_contract"]["typed_paths"])
 
 
 def test_upstream_references_are_complete_and_resolve_to_frozen_contracts() -> None:
@@ -5230,12 +5278,12 @@ def _blocked_alert_mutation(state: dict[str, Any], operation: str) -> None:
     assert state == before
 
 
-def test_s9d_c2_status_is_honestly_blocked_and_updater_stays_open() -> None:
-    assert MACHINE["status"] == "IN_PROGRESS_ALERTS_BLOCKED_M010_AUTHORIZATION"
+def test_s9d_c15_status_is_honestly_open_and_updater_stays_open() -> None:
+    assert MACHINE["status"] == "IN_PROGRESS_S9D_C17_EXECUTABLE_ALERT_AUTHORITY_PARTIAL_OPEN"
     assert MACHINE["contract_identity"] == {
         "contract_id": "M0.12-audit-observability-alerts-updater",
-        "version": "0.4.2",
-        "phase": "S9D_C2_BLOCKED_BY_FROZEN_M010_ALERT_ACTION_AUTHORIZATION",
+        "version": "1.9.0",
+        "phase": "S9D_C17_CACHE_INDEPENDENT_SOURCE_RESTORE",
         "machine_source_of_truth": True,
         "markdown_is_projection_only": True,
     }
@@ -5244,76 +5292,19 @@ def test_s9d_c2_status_is_honestly_blocked_and_updater_stays_open() -> None:
     assert release["updater_state_machines"] == "OPEN"
 
 
-def test_s9d_c2_gate_consumes_exact_frozen_m010_shapes() -> None:
-    gate = MACHINE["alert_model"]["s9d_c2_authorization_gate"]
-    assert (
-        gate["authentication_proof_exact_fields"]
-        == M010["executable_boundary_schemas"]["AuthenticationProof"]
-    )
-    assert (
-        gate["core_issued_binding_exact_fields"]
-        == M010["executable_boundary_schemas"]["CoreIssuedAuthenticationProofBinding"]
-    )
-    assert gate["authorization_request_exact_fields"] == [
-        "account_id",
-        "operator_id",
-        "device_installation_id",
-        "environment",
-        "operation",
-        "scope_fingerprint_sha256",
-        "mutation_fingerprint_sha256",
-        "causation_id",
-        "correlation_id",
-    ]
-    assert M010["authority"]["public_authorization_inputs"] == [
-        "untrusted AuthenticationProof",
-        "untrusted exact authorization request",
-        "now_utc",
-    ]
-    assert M010["proof_policy"]["membership"] == (
-        "pre-existing CoreIssuedAuthenticationProofBinding"
-    )
-    assert M010["proof_policy"]["self_hash_authority"] is False
-    assert gate["extension_point"] is None
-
-
-@pytest.mark.parametrize(
-    "operation",
-    [
-        "ACKNOWLEDGE",
-        "SET_SUPPRESSION",
-        "CLEAR_SUPPRESSION",
-        "AUTHORIZED_MANUAL_FACT_RESOLUTION",
-    ],
-)
-def test_frozen_m010_rejects_every_required_alert_operation_without_mutation(
-    operation: str,
-) -> None:
-    assert operation not in M010["operation_policy_registry"]
-    assert all(
-        operation not in operations
-        for operations in M010["operation_ownership"].values()
-        if isinstance(operations, list)
-    )
-    state = {
-        "records": {"alert": {"revision": 4}},
-        "history": ["existing"],
-        "replay": {"existing": "entry"},
-        "active": {"dedup": "alert"},
-        "audit_journal": ["existing-audit"],
-    }
-    _blocked_alert_mutation(state, operation)
+def test_s9d_c3_consumes_m010_without_a_local_proof_schema() -> None:
+    authority = MACHINE["alert_model"]["executable_authority"]
+    assert authority["plain_authorize_executes_mutation"] is False
+    assert "validate_downstream_authorized_mutation" in authority["authorization_boundary"]
+    assert authority["updater"] == "NOT_STARTED"
+    assert authority["manual_resolution_policy"]["DOMAIN_EXECUTION_FAILURE"] == "DENIED"
 
 
 def test_no_local_fake_authentication_proof_or_accepted_action_remains() -> None:
     policy = MACHINE["alert_model"]["operator_action_policy"]
-    assert policy["status"] == "BLOCKED_BY_FROZEN_M0.10"
-    assert policy["accepted_actions"] == []
-    assert "OPERATION_UNSUPPORTED" in policy["public_behavior"]
-    assert (
-        "no local AuthenticationProof schema"
-        in MACHINE["alert_model"]["s9d_c2_authorization_gate"]["m012_prohibitions"]
-    )
+    assert len(policy["accepted_operations"]) == 4
+    assert policy["authority"].startswith("canonical M0.10")
+    assert "authorization_reference" not in json.dumps(MACHINE["alert_model"])
 
 
 def test_domain_execution_fact_resolution_is_open_and_self_resolution_forbidden() -> None:
@@ -5366,7 +5357,7 @@ def test_dedup_registry_scope_declarations_are_locally_corrected() -> None:
     ]
 
 
-def test_every_remaining_c2_defect_is_explicitly_open_or_blocked() -> None:
+def test_c4_defect_status_distinguishes_executable_and_upstream_open_work() -> None:
     statuses = MACHINE["alert_model"]["local_defect_status"]
     assert set(statuses) == {
         "domain_fact_corrective_resolution",
@@ -5385,7 +5376,13 @@ def test_every_remaining_c2_defect_is_explicitly_open_or_blocked() -> None:
         "semantic_restore",
         "source_selectors",
     }
-    assert all(value.startswith(("OPEN", "BLOCKED", "PARTIAL")) for value in statuses.values())
+    assert statuses["domain_fact_corrective_resolution"].startswith("OPEN_SOURCE_AUTHORITY")
+    assert statuses["source_selectors"].startswith("PARTIAL_OPEN")
+    assert all(
+        value.startswith("EXECUTABLE")
+        for key, value in statuses.items()
+        if key not in {"domain_fact_corrective_resolution", "source_selectors"}
+    )
     assert not MACHINE["contract_identity"]["phase"].endswith("CLOSED")
 
 
