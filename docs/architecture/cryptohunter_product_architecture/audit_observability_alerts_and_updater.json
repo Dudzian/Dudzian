@@ -1,11 +1,11 @@
 {
   "schema_version": "cryptohunter.audit_observability_alerts_and_updater.v1",
   "m0_element": "M0.12",
-  "status": "IN_PROGRESS_ALERTS_BLOCKED_M010_AUTHORIZATION",
+  "status": "IN_PROGRESS_S9D_C17_EXECUTABLE_ALERT_AUTHORITY_PARTIAL_OPEN",
   "contract_identity": {
     "contract_id": "M0.12-audit-observability-alerts-updater",
-    "version": "0.4.2",
-    "phase": "S9D_C2_BLOCKED_BY_FROZEN_M010_ALERT_ACTION_AUTHORIZATION",
+    "version": "1.9.0",
+    "phase": "S9D_C17_CACHE_INDEPENDENT_SOURCE_RESTORE",
     "machine_source_of_truth": true,
     "markdown_is_projection_only": true
   },
@@ -4069,27 +4069,8 @@
         "required_fields": [
           "operator_id",
           "acknowledged_at",
-          "authorization_reference",
           "reason_code",
           "revision"
-        ],
-        "optional_fields": [],
-        "additional_fields": "REJECT",
-        "field_schemas": {}
-      },
-      "authorization_reference": {
-        "type": "closed_object",
-        "required_fields": [
-          "proof_id",
-          "operator_id",
-          "device_installation_id",
-          "runtime_session_id",
-          "environment",
-          "action",
-          "target_alert_id",
-          "target_scope_fingerprint_sha256",
-          "security_generation",
-          "authorized_at"
         ],
         "optional_fields": [],
         "additional_fields": "REJECT",
@@ -4102,7 +4083,6 @@
           "resolution_policy",
           "resolution_source_reference",
           "resolved_code",
-          "authorization_reference",
           "revision"
         ],
         "optional_fields": [],
@@ -4119,7 +4099,6 @@
           "starts_at",
           "expires_at",
           "policy_id",
-          "authorization_reference",
           "revision"
         ],
         "optional_fields": [],
@@ -4218,20 +4197,25 @@
       "severity_downgrade": "FORBIDDEN",
       "source_order": "accepted upstream currentness/order first; out-of-order is replay/no-op and cannot replace source_reference",
       "last_seen_at": "max(previous accepted source timestamp, incoming accepted source timestamp)",
-      "history": "every accepted non-replay has full HistoryEntry"
+      "history": "every accepted non-replay has full HistoryEntry",
+      "executable_fields": [
+        "raised_at_utc",
+        "last_seen_at_utc",
+        "occurrence_count"
+      ],
+      "replay": "exact accepted historical evidence returns current Alert without increment even after freshness window",
+      "new_failing": "revision +1, occurrence_count +1, source last_seen max, raised_at unchanged, ACK/lifecycle preserved"
     },
     "operator_action_policy": {
-      "status": "BLOCKED_BY_FROZEN_M0.10",
-      "requested_actions": [
-        "ACKNOWLEDGE",
-        "SET_SUPPRESSION",
-        "CLEAR_SUPPRESSION",
-        "AUTHORIZED_MANUAL_FACT_RESOLUTION"
+      "accepted_operations": [
+        "M0.12/ALERT_ACKNOWLEDGE",
+        "M0.12/ALERT_SET_SUPPRESSION",
+        "M0.12/ALERT_CLEAR_SUPPRESSION",
+        "M0.12/ALERT_MANUAL_FACT_RESOLUTION"
       ],
-      "accepted_actions": [],
-      "public_behavior": "REJECT OPERATION_UNSUPPORTED without Alert, history, replay, index, or AuditEvent mutation",
-      "upstream_pointer": "/alert_model/s9d_c2_authorization_gate",
-      "expected_revision": "specified but cannot be consumed until authorization operation exists"
+      "authority": "canonical M0.10 declarations and validate_downstream_authorized_mutation only",
+      "cas": "expected_alert_revision must equal externally designated current revision at commit",
+      "failure": "controlled denial/conflict leaves alert history, current designation and audit outbox unchanged"
     },
     "suppression_contract": {
       "dimension": "delivery only",
@@ -4251,7 +4235,20 @@
         "resolution"
       ],
       "time_validation": "starts_at == explicit now_utc; UTC offset zero; expires_at > starts_at; now monotonic; equality is expired",
-      "expiry_mutation": "Core-derived, revisioned, durable UNSUPPRESS_EXPIRED with history/replay; other alert fields invariant"
+      "expiry_mutation": "Core-derived, revisioned, durable UNSUPPRESS_EXPIRED with history/replay; other alert fields invariant",
+      "executable_delivery_policy": {
+        "WARNING": "all delivery and escalation routes suppressible",
+        "ERROR": "all delivery and escalation routes suppressible",
+        "CRITICAL": "IN_APP and TRAY_PERSISTENT mandatory; other routes suppressible",
+        "expiry_or_clear": "normal canonical delivery resumes",
+        "non_effects": [
+          "fact",
+          "resolution",
+          "severity",
+          "source currentness",
+          "safety actions"
+        ]
+      }
     },
     "escalation_contract": {
       "policy_version": "S9D-1",
@@ -4289,7 +4286,14 @@
       },
       "acknowledgement_effect": "may stop timed repeat delivery but never lower severity/visibility floor",
       "delivery_failure_effect": "increment failure count and re-evaluate route; no safety mutation",
-      "boundary": "elapsed threshold inclusive: WARNING 900, ERROR 300, CRITICAL 0; before false, at/after true"
+      "boundary": "elapsed threshold inclusive: WARNING 900, ERROR 300, CRITICAL 0; before false, at/after true",
+      "executable_boundary": "requires unresolved failing fact, FAILED delivery, failure threshold, elapsed threshold, exact alert/delivery/escalation revisions, monotonic time and resolved route; produces typed ESCALATION history edge",
+      "route_execution": "each escalation atomically creates exactly one EscalationRouteIntent per effective canonical route; every route requires a configured executor and exact canonical destination; missing executor fails closed",
+      "suppression_interaction": {
+        "WARNING": "does not advance while suppressed",
+        "ERROR": "does not advance while suppressed",
+        "CRITICAL": "advances only mandatory IN_APP and TRAY_PERSISTENT routes; failure counters do not change during escalation"
+      }
     },
     "delivery_contract": {
       "classes": [
@@ -4300,23 +4304,29 @@
       ],
       "attempt_schema": {
         "type": "closed_object",
+        "executable_record": "DeliveryAttempt",
         "required_fields": [
-          "attempt_id",
           "alert_id",
-          "alert_revision",
-          "delivery_class",
-          "attempted_at",
-          "result"
+          "expected_alert_revision",
+          "expected_delivery_revision",
+          "attempt_id",
+          "channel",
+          "destination",
+          "outcome",
+          "attempted_at_utc",
+          "retry_count",
+          "escalation_level",
+          "escalation_route_intent_id",
+          "content_fingerprint_sha256"
         ],
-        "optional_fields": [
-          "receipt_at"
-        ],
+        "optional_fields": [],
         "additional_fields": "REJECT",
-        "field_schemas": {}
+        "field_schemas": {},
+        "authority": "stable semantic attempt context excludes outcome and attempted_at_utc; adapter-owned first result supplies immutable outcome/time and trusted historical membership"
       },
       "receipt_is_acknowledgement": false,
-      "history_durability": "LOSS_TOLERANT_DIAGNOSTIC_CACHE",
-      "lifecycle_restore_dependency": false,
+      "history_durability": "ATOMIC_ALERTSTORE_CARRIER",
+      "lifecycle_restore_dependency": true,
       "failure_semantics": [
         "does not resolve",
         "does not change source/readiness/safety",
@@ -4327,7 +4337,24 @@
         "single_active_per_environment_component": "dedup key",
         "delivery_of_dedicated_alert_failure_creates_alert": false
       },
-      "separate_from_alert_record": true
+      "separate_from_alert_record": false,
+      "canonical_runtime_routes": [
+        "IN_APP",
+        "LOCAL_OS_NOTIFICATION",
+        "TRAY_PERSISTENT",
+        "OPERATOR_ATTENTION_REQUIRED"
+      ],
+      "SYSTEM_INTERNAL": "source-reference variant only; not a runtime delivery class or transport substitute",
+      "result_provenance": "DeliveryAdapter historical membership plus immutable canonical route destination; self-hash alone is insufficient",
+      "replay": "attempt_id binds original persisted request context; exact retry is no-op even after later alert mutations",
+      "suppression": "suppressible attempts fail SUPPRESSED_DELIVERY before adapter execution; CRITICAL mandatory visibility routes remain executable",
+      "escalation_execution_api": "execute_escalation_route(intent_id, now_utc); intent is execution authority and caller cannot select route attempt_id",
+      "route_intent_identity": "deterministic hash of every semantic field including attempt_id; attempt links back by escalation_route_intent_id",
+      "aggregate_state": "DeliveryState channel and destination are the actual last attempted canonical route and its canonical owner",
+      "resolved": "new delivery and unconsumed old route intents reject ALERT_RESOLVED",
+      "adapter_contract": "attempt_idempotent(attempt_id, immutable context) durably returns the same historical result without repeating external effect; conflicting context rejects",
+      "preflight": "all deterministic revision/time/resolution/suppression/route/destination/replay checks precede adapter execution",
+      "carrier_failure": "adapter historical idempotent result survives failed result-carrier commit and exact retry records it once"
     },
     "resolution_contract": {
       "condition": "fresh trusted effective-current exact-scope non-alert source evidence only",
@@ -4343,65 +4370,78 @@
         "PERSISTENCE_RECOVERY_REQUIRED": "current accepted M0.11 COMPLETED exact device/store identity",
         "RISK_DECISION_DENIED": "accepted M0.9 ALLOW exact command/request/execution scope",
         "DOMAIN_EXECUTION_FAILURE": "OPEN: frozen M0.7 defines facts and transition graph but no single corrective successor mapping for ORDER_REJECTED, ORDER_EXTERNAL_OUTCOME_UNKNOWN, or IDEMPOTENCY_CONFLICT; self/unrelated event rejected",
-        "SECURITY_PRIVILEGED_FAILURE": "BLOCKED: manual resolution has no representable frozen M0.10 authorization operation"
+        "SECURITY_PRIVILEGED_FAILURE": "manual resolution only for exact closed-policy types; M0.10 downstream mutation validation required"
       }
     },
     "durability": {
-      "physical_carrier": "DEFERRED_TO_M1, but logical mutation oracle remains OPEN until M0.10 gate and C2 defects close",
+      "physical_carrier": "AtomicAlertAuthorityState is the executable in-memory combined publication carrier; production physical carrier remains OPEN_PHYSICAL_CARRIER_M1",
       "authoritative_units": [
-        "current closed Alert record",
-        "append-only mutation history",
-        "request-id/fingerprint replay ledger"
+        "one AtomicAlertAuthorityState combined publication",
+        "AlertStoreSnapshot: accepted revisions, current designations, typed history, dedup, AuditObligation, OperatorReplayEntry, delivery state",
+        "external trusted committed HistoricalAuthorizationDecision membership owned by the same combined carrier state",
+        "trusted HistoricalSourceDecision membership atomically published with each source edge"
       ],
       "history_entry_schema": {
         "type": "closed_object",
+        "executable_record": "MutationHistoryEntry",
         "required_fields": [
-          "alert_id",
-          "revision",
           "mutation_id",
+          "alert_id",
+          "pre_revision",
+          "post_revision",
           "mutation_type",
-          "occurred_at",
           "before_fingerprint",
           "after_fingerprint",
-          "authorization_reference",
-          "audit_event_id",
-          "source_evidence"
+          "timestamp_utc",
+          "source_evidence_reference",
+          "audit_obligation_id",
+          "delivery_attempt_id",
+          "causation_id",
+          "correlation_id"
         ],
         "optional_fields": [],
         "additional_fields": "REJECT",
-        "field_schemas": {
-          "revision": {
-            "type": "positive_non_bool_integer"
-          },
-          "before_fingerprint": {
-            "type": "nullable recomputed record SHA256"
-          },
-          "after_fingerprint": {
-            "type": "recomputed record SHA256"
-          },
-          "authorization_reference": {
-            "type": "nullable exact authorization reference"
-          },
-          "audit_event_id": {
-            "type": "nullable canonical M0.2 AuditEvent ID"
-          },
-          "source_evidence": {
-            "type": "closed mutation evidence including exact after_record snapshot"
-          }
-        }
+        "field_schemas": {}
       },
-      "revision": "starts at 1; every accepted mutation +1; exact replay no increment; stale expected revision CONFLICT",
-      "atomic_commit": "record + history + replay entry + required AuditEvent commit together or none",
-      "restore": "validate full history then rebuild indexes; any corruption => RECOVERY_REQUIRED",
+      "revision": "alert revision starts at 1 per incident; store_revision equals committed mutation-history length; every accepted mutation increments both transaction edge count and store revision exactly once",
+      "atomic_commit": "Operator mutations atomically publish AlertStoreSnapshot plus HistoricalAuthorizationDecision membership; source mutations atomically publish AlertStoreSnapshot plus HistoricalSourceDecision membership through one carrier state replacement. Ordinary carrier commits cannot mint either provenance class.",
+      "restore": "validate complete semantic history and indexes without repair; corruption blocks restore",
       "canonicalization": "NFC UTF-8 JSON, sorted keys, separators comma/colon; SHA-256 lowercase; record fingerprint excludes no semantic current fields",
       "replay_entry_schema": {
         "type": "closed_object",
         "required_fields": [
-          "mutation_id",
-          "request_fingerprint_sha256",
+          "replay_id",
+          "account_id",
+          "operator_id",
+          "device_installation_id",
+          "environment",
+          "operation",
+          "declared_intent",
           "alert_id",
+          "expected_alert_revision",
+          "mutation",
+          "causation_id",
+          "correlation_id",
           "result_revision",
-          "mutation_type"
+          "audit_obligation_id"
+        ],
+        "optional_fields": [],
+        "additional_fields": "REJECT",
+        "field_schemas": {}
+      },
+      "record_schema_scope": "DeliveryAttempt, MutationHistoryEntry, OperatorReplayEntry, and HistoricalSourceDecision schemas are exact executable dataclass schemas; other listed authority records are semantic runtime records described by invariants rather than separate exact closed-object schemas.",
+      "historical_source_decision_schema": {
+        "type": "closed_object",
+        "executable_record": "HistoricalSourceDecision",
+        "required_fields": [
+          "decision_id",
+          "evidence_reference",
+          "evidence_ids",
+          "transaction_time_utc",
+          "result",
+          "severity",
+          "resolution_policy_id",
+          "source_fence"
         ],
         "optional_fields": [],
         "additional_fields": "REJECT",
@@ -4419,7 +4459,45 @@
       "suppression has matching authorization/history and valid expiry",
       "resolution has allowed source evidence/history",
       "replay mutation identity has one fingerprint",
-      "index exactly equals rebuilt active history"
+      "index exactly equals rebuilt active history",
+      "exact genesis semantics",
+      "history/revision bijection and sealed mutation_id",
+      "source evidence reference exact identity binding",
+      "store_revision equals mutation history length",
+      "sealed delivery attempt replay uniqueness and exact DeliveryState projection",
+      "exact per-severity escalation threshold and routes",
+      "delivery destination from immutable canonical route resolver and result membership from adapter authority",
+      "audit actor and action matched to durable HistoricalAuthorizationDecision membership, never restart-ephemeral M0.10 proof membership",
+      "escalation route-intent exact set, uniqueness, ownership and edge binding",
+      "suppression-to-delivery policy parity",
+      "exact per-source generation/revision fence vectors",
+      "historical authorization decision membership independent of ephemeral M0.10 proof lifetime",
+      "source fence exact equality to historical source fact",
+      "canonical unique positive source fence shape",
+      "route intent full semantic identity including attempt_id",
+      "one-to-one escalation route intent and DeliveryAttempt link",
+      "actual last route equals aggregate DeliveryState channel/destination",
+      "resolved alerts cannot consume stale route intents",
+      "operator replay exact semantic identity, edge and audit bijection",
+      "redelivery raised/last-seen/occurrence exact source semantics",
+      "operator environment equals authoritative alert environment",
+      "route attempt uses current exact intent and aggregate channel/destination",
+      "delivery adapter durable idempotency provenance",
+      "source selector runtime shape and complete canonical registry identity",
+      "closed canonical source-resolution policy identity independent of selector booleans",
+      "source last_seen chronology by parsed UTC datetime, never lexical stamp order",
+      "OperatorReplayEntry exact alert/pre/post edge equality with AuditObligation and MutationHistoryEntry",
+      "successor current_at_utc equals its exact MutationHistoryEntry timestamp",
+      "operator edge, AuditObligation, HistoricalAuthorizationDecision and successor exact transaction-time equality",
+      "manual resolution exact RESOLVED lifecycle and MANUAL_CLOSED_POLICY mode",
+      "combined carrier state forbids operator snapshot without matching committed historical decision",
+      "historical decision-like data in ordinary AlertStoreSnapshot creates no authority",
+      "exact AuditObligation historical-decision IDs equal combined carrier membership keys",
+      "one HistoricalAuthorizationDecision per operator edge with no missing, orphan, or duplicate reference",
+      "every decision mapping key equals a recomputed canonical decision_id",
+      "restore snapshot and historical membership originate from one pinned AtomicAlertAuthorityState",
+      "ordinary AlertStoreCarrier has no combined historical-membership mint API",
+      "no module-global publication credential exists"
     ],
     "crash_matrix": [
       {
@@ -4761,98 +4839,128 @@
       "fact alerts resolve only by explicit canonical policy",
       "alerts do not create ProductCapabilities, readiness, authentication, risk, execution, persistence or update authority"
     ],
-    "s9d_c2_authorization_gate": {
-      "status": "BLOCKED_UPSTREAM_DECISION_REQUIRED",
-      "dependency": "frozen M0.10 identity_device_authentication_and_secrets.json",
-      "finding": "Frozen M0.10 has a closed operation_policy_registry and OPERATION_OWNERSHIP. It contains no alert acknowledgement, suppression, clear-suppression, or manual alert fact-resolution operation and exposes no registration/extension point.",
-      "required_operations": {
-        "ACKNOWLEDGE": "UNREPRESENTABLE_IN_FROZEN_M0.10",
-        "SET_SUPPRESSION": "UNREPRESENTABLE_IN_FROZEN_M0.10",
-        "CLEAR_SUPPRESSION": "UNREPRESENTABLE_IN_FROZEN_M0.10",
-        "AUTHORIZED_MANUAL_FACT_RESOLUTION": "UNREPRESENTABLE_IN_FROZEN_M0.10"
-      },
-      "exact_frozen_pointers": [
-        "/operation_policy_registry",
-        "/operation_ownership",
-        "/proof_policy",
-        "/authority/public_authorization_inputs",
-        "/authority/public_authorization_forbidden_inputs",
-        "/executable_boundary_schemas/AuthenticationProof",
-        "/executable_boundary_schemas/CoreIssuedAuthenticationProofBinding"
-      ],
-      "authentication_proof_exact_fields": [
-        "account_id",
-        "operator_id",
-        "device_installation_id",
-        "factor_set",
-        "issued_at_utc",
-        "expires_at_utc",
-        "identity_revision",
-        "device_trust_revision",
-        "pin_revision",
-        "platform_enrollment_revision",
-        "security_generation",
-        "session_generation",
-        "environment",
-        "operation",
-        "scope_fingerprint_sha256",
-        "mutation_fingerprint_sha256",
-        "causation_id",
-        "correlation_id",
-        "proof_fingerprint_sha256"
-      ],
-      "authorization_request_exact_fields": [
-        "account_id",
-        "operator_id",
-        "device_installation_id",
-        "environment",
-        "operation",
-        "scope_fingerprint_sha256",
-        "mutation_fingerprint_sha256",
-        "causation_id",
-        "correlation_id"
-      ],
-      "core_issued_binding_exact_fields": [
-        "proof_fingerprint_sha256",
-        "complete_proof_content_fingerprint_sha256",
-        "authority_source",
-        "account_id",
-        "operator_id",
-        "device_installation_id",
-        "identity_revision",
-        "device_trust_revision",
-        "pin_revision",
-        "platform_enrollment_revision",
-        "security_generation",
-        "session_generation"
-      ],
-      "unknown_operation_behavior": "OPERATION_UNSUPPORTED",
-      "extension_point": null,
-      "m012_prohibitions": [
-        "no local AuthenticationProof schema",
-        "no local proof issuer/resolver",
-        "no mutable dictionary self-enrollment",
-        "no reuse of unrelated M0.10 operation",
-        "no privileged alert mutation accepted until upstream decision"
-      ],
-      "required_resolution": "architecture decision explicitly reopening/augmenting M0.10 operation authorization, outside S9D-C2 scope"
-    },
     "local_defect_status": {
-      "domain_fact_corrective_resolution": "OPEN_UPSTREAM_M0.7_SEMANTIC_DECISION; self-resolution forbidden",
-      "source_membership_current_authority": "OPEN_ORACLE_REPLACEMENT_REQUIRED; prior mutable-dict self-enrollment is non-authoritative and withdrawn",
-      "canonical_ids_time": "OPEN_ORACLE_REPLACEMENT_REQUIRED",
-      "semantic_alert_validation": "OPEN_ORACLE_REPLACEMENT_REQUIRED",
-      "dedup_registry_executable_parity": "PARTIAL_LOCAL_FIX_REGISTRY_SCOPES_CORRECTED; executable oracle remains open",
-      "currentness_ordering": "OPEN_ORACLE_REPLACEMENT_REQUIRED",
-      "security_manual_resolution": "BLOCKED_M0.10",
-      "atomic_audit": "BLOCKED_M0.10_OPERATION_PRECONDITION",
-      "clear_suppression": "BLOCKED_M0.10; declared request but accepted action set empty",
-      "internal_delivery_condition": "OPEN_ORACLE_REPLACEMENT_REQUIRED",
-      "multi_source_observations": "OPEN_ORACLE_REPLACEMENT_REQUIRED",
-      "escalation": "OPEN_ORACLE_REPLACEMENT_REQUIRED",
-      "delivery_attempts": "OPEN_ORACLE_REPLACEMENT_REQUIRED",
-      "semantic_restore": "OPEN_ORACLE_REPLACEMENT_REQUIRED",
-      "source_selectors": "OPEN_ORACLE_REPLACEMENT_REQUIRED"
+      "domain_fact_corrective_resolution": "OPEN_SOURCE_AUTHORITY; executable path fails closed",
+      "source_membership_current_authority": "EXECUTABLE_REPLAY_BEFORE_FRESHNESS_AND_CLOSED_SELECTOR",
+      "canonical_ids_time": "EXECUTABLE",
+      "semantic_alert_validation": "EXECUTABLE_ENVIRONMENT_AND_REDELIVERY_PARITY",
+      "dedup_registry_executable_parity": "EXECUTABLE",
+      "currentness_ordering": "EXECUTABLE_SOURCE_STORE_CARRIER_LOCK_ORDER",
+      "security_manual_resolution": "EXECUTABLE_CLOSED_POLICY",
+      "atomic_audit": "EXECUTABLE_PINNED_COMBINED_READ_INTERNAL_PUBLISHER; OPEN_PHYSICAL_CARRIER_M1",
+      "clear_suppression": "EXECUTABLE",
+      "internal_delivery_condition": "EXECUTABLE_CANONICAL_ROUTES_SYSTEM_INTERNAL_SOURCE_ONLY",
+      "multi_source_observations": "EXECUTABLE_REQUIRED_SET_VALIDATION",
+      "escalation": "EXECUTABLE_CURRENT_INTENT_ONLY_PREFLIGHT",
+      "delivery_attempts": "EXECUTABLE_LATER_TIME_CRASH_REPLAY_STABLE_FIRST_RESULT",
+      "semantic_restore": "EXECUTABLE_DEFENSIVE_ATOMIC_PIN_AND_SCHEMA_PARITY",
+      "source_selectors": "PARTIAL_OPEN_PRODUCTION_UPSTREAM_SOURCE_AUTHORITIES"
+    },
+    "executable_authority": {
+      "implementation": "bot_core/alerts/store.py",
+      "operator_operations": [
+        "M0.12/ALERT_ACKNOWLEDGE",
+        "M0.12/ALERT_SET_SUPPRESSION",
+        "M0.12/ALERT_CLEAR_SUPPRESSION",
+        "M0.12/ALERT_MANUAL_FACT_RESOLUTION"
+      ],
+      "authorization_boundary": "AuthorizationAuthority.validate_downstream_authorized_mutation(proof, request, now_utc, actual_target_scope, actual_mutation) under shared security lock, followed by exact AlertStore CAS and commit under the store lock",
+      "plain_authorize_executes_mutation": false,
+      "currentness": "accepted contiguous revisions plus an external current_designations map; alert content cannot self-designate current",
+      "audit_coupling": "AtomicAlertAuthorityState is accepted only when AuditObligation decision references and carrier-owned HistoricalAuthorizationDecision membership are an exact one-to-one set; missing, orphan, duplicate, key-mismatched or identity-invalid decisions reject",
+      "manual_resolution_policy": {
+        "default": "DENIED",
+        "allowed_alert_types": [
+          "OPERATOR_WORKFLOW_REQUIRED"
+        ],
+        "DOMAIN_EXECUTION_FAILURE": "DENIED"
+      },
+      "delivery_owner": {
+        "IN_APP": "core_host/in_app",
+        "LOCAL_OS_NOTIFICATION": "desktop_shell/os_notification",
+        "TRAY_PERSISTENT": "tray_agent/persistent",
+        "OPERATOR_ATTENTION_REQUIRED": "core_host/operator_attention"
+      },
+      "restore": "validates live-policy parity for source resolution/redelivery severity and terminality, escalation preconditions, exact transition times, history/replay/audit/delivery provenance, and store_revision without repair",
+      "updater": "NOT_STARTED",
+      "source_authority": "structured SourceEvidenceSet validated for accepted/current membership, selector, freshness and complete required sources; self-hash is integrity only",
+      "suppression": "Core-owned one-hour bounded expiry plus revisioned UNSUPPRESS_EXPIRED; permanent suppression rejected",
+      "escalation": "closed severity policy: WARNING 900s, ERROR 300s, CRITICAL 0s, with exact canonical route tuple persisted in DeliveryState and history",
+      "history": "sealed deterministic mutation_id; exact bijection between accepted revisions and typed MutationHistoryEntry edges",
+      "source_linearization": "SourceEvidenceAuthority.consume_current holds currentness through construction and the sole carrier publication of source edge plus HistoricalSourceDecision; global order source -> store -> carrier",
+      "condition_identity": "current key and dedup identity bind alert type, source family, environment, scope, fact type, condition key and source id; mixed conditions reject",
+      "severity": "derived from accepted source evidence under closed selector minimum; monotonic for an active incident",
+      "delivery_replay": "DeliveryAttempt binds the original external-effect alert/delivery revision, route, destination and attempt identity; a later DELIVERY_ATTEMPT finalization edge may reconcile the adapter-owned historical result onto the then-current Alert without rewriting intervening history",
+      "source_ordering": "exact per-source (source_id, generation, revision) vector with component-wise advancement and generation reset support; exact references replay without mutation",
+      "suppression_delivery": "executable SUPPRESSED_DELIVERY gate with CRITICAL mandatory visibility floor",
+      "routing": "canonical delivery classes execute directly; SYSTEM_INTERNAL is only a source variant, never delivery transport",
+      "route_intents": "sealed escalation transition is linked to exactly one executable EscalationRouteIntent per effective required route",
+      "delivery_provenance": "canonical route destination plus DeliveryAdapter historical result membership; coherent resealing cannot create authority",
+      "audit_provenance": "AuditObligation binds a durable historical decision; restore compares full actor/device/account/environment/operation/intent/target/mutation/causation/correlation without live proof membership",
+      "historical_authorization": "fresh read views resolve carrier-owned membership but expose no public publication API; restore provenance uses the pinned combined-state mapping rather than a second live carrier projection",
+      "source_fence_provenance": "HistoricalSourceDecision carries canonical evidence_ids and binds reference, transaction time, result, severity, policy identity, and ordered fence; fresh authorities resolve durable accepted evidence directly without prior validate_current caches",
+      "source_set_identity": "semantic set canonicalized by source_id before evidence-reference derivation; reordered exact sets are identical replays",
+      "source_replay": "exact evidence replay returns the current Alert projection after later metadata mutations and creates no edge",
+      "route_intent_consumption": "execute_escalation_route(intent_id) derives route, destination and attempt_id exclusively from one persisted sealed intent; arbitrary caller attempt identities reject",
+      "route_attempt_binding": "DeliveryAttempt carries exact escalation_route_intent_id; restore proves one-to-one intent execution and exact route/destination/alert/escalation/attempt fields",
+      "resolved_delivery": "new ordinary or unconsumed escalation-route delivery rejects ALERT_RESOLVED",
+      "operator_environment": "owner-side request.environment must equal authoritative Alert dedup environment before live authorization/provenance/effect",
+      "operator_replay": "sealed OperatorReplayEntry atomically binds complete request/mutation meaning and exact alert/pre/post edge to the same AuditObligation and MutationHistoryEntry",
+      "delivery_crash_safety": "DeliveryAdapter stable semantic identity excludes outcome and retry time; historical_result recovers the immutable first external result after unrelated commits without another external effect, while changed original context conflicts",
+      "delivery_preflight": "historical_result presence distinguishes completed-effect finalization from first execution; absent history requires current unresolved/failing escalation, route, destination, suppression and expiry checks before adapter execution",
+      "suppression_expiry_boundary": "delivery/escalation at expires_at materializes UNSUPPRESS_EXPIRED and requires retry at its successor revision",
+      "source_replay_freshness": "historical accepted reference is checked for committed replay before current/fresh validation; replay returns current Alert",
+      "redelivery": "raised_at_utc immutable; source-derived last_seen_at_utc monotonic; occurrence_count increments once per newer failing evidence and never for exact replay/operator/delivery",
+      "selector_validation": "exact SourceSelector runtime types; non-empty canonical unique source tuple; supported environment/severity; complete selector identity rejects duplicates without replacement",
+      "route_bypass": "ordinary request_delivery is rejected during ESCALATION_PENDING; only execute_escalation_route consumes exact current intent",
+      "stale_route_preflight": "intent escalation revision, route, destination, unresolved state and suppression are validated before adapter call",
+      "source_resolution_policy": "closed immutable Core/M0.12 policy registry binds selector identity, required sources, automatic healthy-resolution support and corrective policy identity; selector booleans cannot create authority",
+      "source_time": "last_seen_at_utc is derived using parsed chronological UTC instants for runtime and restore",
+      "production_source_resolution_policies": {
+        "MARKET_DATA_CURRENT_CONDITION": {
+          "canonical_corrective_authority": "S9C effective-current OK exact category/key/source/environment/scope and not expired",
+          "executable_status": "OPEN_SOURCE_AUTHORITY"
+        },
+        "EXECUTION_ROUTE_CONDITION": {
+          "canonical_corrective_authority": "S9C effective-current OK exact category/key/source/environment/scope and not expired",
+          "executable_status": "OPEN_SOURCE_AUTHORITY"
+        },
+        "KILL_SWITCH_ACTIVE": {
+          "canonical_corrective_authority": "current accepted M0.9 INACTIVE exact scope/environment and generation >= alert source",
+          "executable_status": "OPEN_SOURCE_AUTHORITY"
+        },
+        "RECONCILIATION_DIVERGENCE": {
+          "canonical_corrective_authority": "accepted M0.8 MATCH exact complete reconciliation key",
+          "executable_status": "OPEN_SOURCE_AUTHORITY"
+        },
+        "PERSISTENCE_RECOVERY_REQUIRED": {
+          "canonical_corrective_authority": "current accepted M0.11 COMPLETED exact device/store identity",
+          "executable_status": "OPEN_SOURCE_AUTHORITY"
+        },
+        "RISK_DECISION_DENIED": {
+          "canonical_corrective_authority": "accepted M0.9 ALLOW exact command/request/execution scope",
+          "executable_status": "OPEN_SOURCE_AUTHORITY"
+        },
+        "DOMAIN_EXECUTION_FAILURE": {
+          "canonical_corrective_authority": "OPEN: frozen M0.7 defines facts and transition graph but no single corrective successor mapping for ORDER_REJECTED, ORDER_EXTERNAL_OUTCOME_UNKNOWN, or IDEMPOTENCY_CONFLICT; self/unrelated event rejected",
+          "executable_status": "OPEN_SOURCE_AUTHORITY"
+        },
+        "SECURITY_PRIVILEGED_FAILURE": {
+          "canonical_corrective_authority": "manual resolution only for exact closed-policy types; M0.10 downstream mutation validation required",
+          "executable_status": "OPEN_SOURCE_AUTHORITY"
+        }
+      },
+      "production_source_policy_status": "PARTIAL_OPEN: canonical definitions are mirrored exactly, but frozen upstream authority adapters are not executable in AlertStore for production types",
+      "synthetic_source_resolution_policies": {
+        "TEST_MULTI_SOURCE": "NON_PRODUCTION_TEST_FIXTURE",
+        "OPERATOR_WORKFLOW_REQUIRED": "NON_PRODUCTION_TEST_FIXTURE_FOR_CLOSED_MANUAL_LIFECYCLE"
+      },
+      "operator_transaction_publication": "trusted publisher closure exists only inside the AlertStore operator mutation runtime after composition; ordinary AlertStoreCarrier exposes no combined decision-mint method and no importable singleton authorizes publication",
+      "combined_failure_semantics": "BEFORE_PUBLICATION and FORMER_POST_CARRIER_PRE_DECISION fault points fail before the sole replacement; HISTORICAL_TRANSACTION_COMMIT_FAILED also precedes publication; externally recoverable state is entirely before or entirely after",
+      "combined_state_restore": "constructor/restore pins one AtomicAlertAuthorityState and verifies source history from HistoricalSourceDecision evidence_ids plus durable upstream accepted evidence; historical evidence need not remain current or fresh now",
+      "atomic_read": "load_atomic_state acquires the carrier lock once and returns one immutable AtomicAlertAuthorityState; concurrent ordinary commits linearize wholly before or after that read and cannot create a torn restore projection",
+      "immutable_atomic_pin": "load_atomic_state is defensively pinned: tuple record collections and nested tuple semantics require exact immutable shapes, while mappings are copied into owned MappingProxyType projections; carrier-retained mutable aliases cannot change restore validation",
+      "schema_parity": "machine closed-object required_fields exactly equal dataclasses.fields for DeliveryAttempt, MutationHistoryEntry, OperatorReplayEntry, and HistoricalSourceDecision"
     }
   },
   "updater_model": {
@@ -5227,7 +5335,7 @@
     "no physical AuditEvent carrier implementation"
   ],
   "open_items": [
-    "S9D operator mutations require authorization operations/scopes not representable by the frozen M0.10 operation registry. No local M0.12 proof schema may impersonate M0.10 authority. Architecture decision/reopening of M0.10 is required before privileged alert lifecycle mutations can close.",
+    "Production physical AlertStoreCarrier remains OPEN_PHYSICAL_CARRIER_M1; logical authorization provenance atomicity is executable, while production corrective-source authority integrations remain OPEN_SOURCE_AUTHORITY.",
     "architecture-approve and implement the physical durable AuditEvent journal/carrier relative to frozen M0.11; canonical audit readiness remains blocked until then",
     "implement versioned deployment-specific probe freshness budgets within the closed source/category policy (no architecture semantic gap)",
     "implement the S9D logical alert carrier physically in M1 without changing its authority semantics",
