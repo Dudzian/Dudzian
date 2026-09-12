@@ -912,6 +912,48 @@ def _historical_source_decision_id(value: HistoricalSourceDecision) -> str:
     return str(canonical_json_sha256(body))
 
 
+def _validate_historical_source_decision_shape(value: object) -> None:
+    """Reject carrier-controlled nested source identities without coercion or repair."""
+    if not isinstance(value, HistoricalSourceDecision):
+        raise AlertStoreError("SOURCE_EVIDENCE_UNACCEPTED")
+    string_fields = (
+        value.decision_id,
+        value.evidence_reference,
+        value.transaction_time_utc,
+        value.result,
+        value.severity,
+        value.resolution_policy_id,
+    )
+    if any(not isinstance(item, str) or not item for item in string_fields):
+        raise AlertStoreError("SOURCE_EVIDENCE_UNACCEPTED")
+    if (
+        type(value.evidence_ids) is not tuple
+        or not value.evidence_ids
+        or any(not isinstance(item, str) or not item for item in value.evidence_ids)
+        or len(set(value.evidence_ids)) != len(value.evidence_ids)
+        or type(value.source_fence) is not tuple
+        or not value.source_fence
+    ):
+        raise AlertStoreError("SOURCE_EVIDENCE_UNACCEPTED")
+    source_ids: list[str] = []
+    for fence in value.source_fence:
+        if type(fence) is not tuple or len(fence) != 3:
+            raise AlertStoreError("SOURCE_EVIDENCE_UNACCEPTED")
+        source_id, generation, revision = fence
+        if (
+            not isinstance(source_id, str)
+            or not source_id
+            or type(generation) is not int
+            or generation < 1
+            or type(revision) is not int
+            or revision < 1
+        ):
+            raise AlertStoreError("SOURCE_EVIDENCE_UNACCEPTED")
+        source_ids.append(source_id)
+    if tuple(sorted(set(source_ids))) != tuple(source_ids):
+        raise AlertStoreError("SOURCE_EVIDENCE_UNACCEPTED")
+
+
 def _seal_decision(value: HistoricalAuthorizationDecision) -> HistoricalAuthorizationDecision:
     return replace(value, decision_id=_decision_id(value))
 
@@ -948,8 +990,11 @@ def _validate_historical_source_membership(
     if len(references) != len(set(references)) or set(references) != set(decisions):
         raise AlertStoreError("SOURCE_EVIDENCE_UNACCEPTED")
     for reference, decision in decisions.items():
+        _validate_historical_source_decision_shape(decision)
         if (
-            reference != decision.evidence_reference
+            not isinstance(reference, str)
+            or not reference
+            or reference != decision.evidence_reference
             or _historical_source_decision_id(decision) != decision.decision_id
         ):
             raise AlertStoreError("SOURCE_EVIDENCE_UNACCEPTED")
@@ -986,6 +1031,7 @@ def _pin_atomic_state(state: AtomicAlertAuthorityState) -> AtomicAlertAuthorityS
         ):
             raise AlertStoreError("CONTRACT_INCONSISTENT")
     for decision in state.committed_historical_source_decisions.values():
+        _validate_historical_source_decision_shape(decision)
         if (
             type(decision.evidence_ids) is not tuple
             or type(decision.source_fence) is not tuple
