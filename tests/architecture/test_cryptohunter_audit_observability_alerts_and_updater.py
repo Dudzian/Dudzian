@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+import math
 import re
 import unicodedata
 from dataclasses import fields
@@ -20,6 +21,12 @@ from bot_core.alerts.store import (
     MutationHistoryEntry,
     OperatorReplayEntry,
     PRODUCTION_SOURCE_RESOLUTION_POLICIES,
+)
+from bot_core.observability.authority import (
+    FreshnessPolicy,
+    FrozenEnvironmentRegistryBinding,
+    InMemoryObservationAuthorityCarrier,
+    ObservationAuthority,
 )
 
 ROOT = Path(__file__).parents[2]
@@ -85,11 +92,11 @@ def test_identity_status_and_exact_top_level_shape() -> None:
     assert set(MACHINE) == TOP_LEVEL_KEYS
     assert MACHINE["schema_version"] == "cryptohunter.audit_observability_alerts_and_updater.v1"
     assert MACHINE["m0_element"] == "M0.12"
-    assert MACHINE["status"] == "IN_PROGRESS_S9D_C18_BLOCKED_S9C_EXECUTABLE_SOURCE_AUTHORITY"
+    assert MACHINE["status"] == "IN_PROGRESS_S9C_C14_EXECUTABLE_AUTHORITY_AVAILABLE_S9D_OPEN"
     assert MACHINE["contract_identity"] == {
         "contract_id": "M0.12-audit-observability-alerts-updater",
-        "version": "1.10.0",
-        "phase": "S9D_C18_BLOCKED_S9C_EXECUTABLE_SOURCE_AUTHORITY",
+        "version": "1.23.0",
+        "phase": "S9C_C14_EXECUTABLE_AUTHORITY_AVAILABLE_ADAPTER_NOT_YET_INTEGRATED",
         "machine_source_of_truth": True,
         "markdown_is_projection_only": True,
     }
@@ -2198,7 +2205,10 @@ def _all_contracts() -> dict[str, dict[str, Any]]:
 
 
 def _utc(value: Any) -> datetime:
-    if not isinstance(value, str) or not value.endswith("Z"):
+    if type(value) is not str or not re.fullmatch(
+        r"[0-9]{4}-[0-9]{2}-[0-9]{2}T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]Z",
+        value,
+    ):
         raise ValueError("MALFORMED_TIMESTAMP")
     try:
         result = datetime.fromisoformat(value[:-1] + "+00:00")
@@ -2222,8 +2232,12 @@ def _safe_scalar(value: Any) -> None:
     if (
         value is None
         or isinstance(value, bool)
-        or (isinstance(value, (int, float)) and not isinstance(value, bool))
+        or (isinstance(value, int) and not isinstance(value, bool))
     ):
+        return
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError("INVALID_VALUE")
         return
     if not isinstance(value, str) or len(value) > 256 or any(ord(char) < 32 for char in value):
         raise ValueError("UNSAFE_VALUE")
@@ -2264,7 +2278,7 @@ def _correlation(value: Any) -> None:
         "MarketDataRoute": "mdr",
         "ExecutionRoute": "xroute",
     }
-    if value["entity"] not in entities:
+    if type(value["entity"]) is not str or value["entity"] not in entities:
         raise ValueError("INVALID_CORRELATION")
     _canonical_id(value["value"], entities[value["entity"]])
 
@@ -2326,6 +2340,12 @@ class ObservationReference:
             or any(policy[x] < 0 for x in schema["required_fields"][5:])
         ):
             raise ValueError("INVALID_FRESHNESS_POLICY")
+        try:
+            for field in schema["required_fields"][4:]:
+                timedelta(seconds=policy[field])
+            json.dumps(policy, sort_keys=True, separators=(",", ":"), allow_nan=False)
+        except (OverflowError, ValueError) as error:
+            raise ValueError("INVALID_FRESHNESS_POLICY") from error
 
     @staticmethod
     def key(item: dict[str, Any]) -> tuple[Any, ...]:
@@ -2399,10 +2419,14 @@ class ObservationReference:
             or set(value) - set(schema["allowed_keys"])
         ):
             raise ValueError("INVALID_VALUE")
-        if len(json.dumps(value)) > schema["max_serialized_bytes"]:
-            raise ValueError("INVALID_VALUE")
         for scalar in value.values():
             _safe_scalar(scalar)
+        try:
+            serialized = json.dumps(value, allow_nan=False)
+        except (OverflowError, ValueError) as error:
+            raise ValueError("INVALID_VALUE") from error
+        if len(serialized) > schema["max_serialized_bytes"]:
+            raise ValueError("INVALID_VALUE")
 
     def ingest(self, item: dict[str, Any], now: str) -> dict[str, Any]:
         fields = {
@@ -2415,7 +2439,7 @@ class ObservationReference:
         ):
             raise ValueError("INVALID_OBSERVATION_ID")
         _safe_scalar(item["observation_id"])
-        if item["category"] not in MACHINE["observability_model"]["categories"]:
+        if type(item["category"]) is not str or item["category"] not in MACHINE["observability_model"]["categories"]:
             raise ValueError("UNKNOWN_CATEGORY")
         if (
             item["source_component"]
@@ -2448,7 +2472,9 @@ class ObservationReference:
         environments = {
             x["environment_id"] for x in self.contracts["M0.4"]["execution_environments"]
         }
-        if item["environment"] is not None and item["environment"] not in environments:
+        if item["environment"] is not None and (
+            type(item["environment"]) is not str or item["environment"] not in environments
+        ):
             raise ValueError("ILLEGAL_ENVIRONMENT")
         self._validate_scope(item)
         if item["condition"] not in MACHINE["canonical_vocabulary"]["condition_states"]:
@@ -2461,19 +2487,39 @@ class ObservationReference:
         _correlation(item["correlation_reference"])
         self._validate_value(item)
         sequence = item["source_sequence"]
-        if sequence is not None and (
-            isinstance(sequence, bool) or not isinstance(sequence, int) or sequence < 0
-        ):
+        if sequence is not None and (type(sequence) is not int or sequence < 0):
             raise ValueError("INVALID_SOURCE_SEQUENCE")
+        if sequence is not None:
+            try:
+                json.dumps(sequence, allow_nan=False)
+            except (OverflowError, ValueError) as error:
+                raise ValueError("INVALID_SOURCE_SEQUENCE") from error
         if sequence is not None:
             replay_key = (item["source_component"], session, sequence)
             historical = self.accepted_by_sequence.get(replay_key)
             if historical is not None:
-                if historical["observation"] != item:
+                # Independent exact JSON-content identity: unlike Python mapping
+                # equality, canonical JSON distinguishes integer, decimal and bool.
+                historical_fingerprint = hashlib.sha256(
+                    json.dumps(
+                        historical["observation"],
+                        sort_keys=True,
+                        separators=(",", ":"),
+                        allow_nan=False,
+                    ).encode()
+                ).hexdigest()
+                candidate_fingerprint = hashlib.sha256(
+                    json.dumps(
+                        item, sort_keys=True, separators=(",", ":"), allow_nan=False
+                    ).encode()
+                ).hexdigest()
+                if historical_fingerprint != candidate_fingerprint:
                     raise ValueError("DUPLICATE_SEQUENCE_CONFLICT")
                 replay = deepcopy(historical)
                 replay["replayed"] = True
                 return {"acceptance": replay, "current": deepcopy(self.current.get(self.key(item)))}
+        if type(item["freshness_policy_id"]) is not str:
+            raise ValueError("UNKNOWN_FRESHNESS_POLICY")
         observed, ingested, expires, logical_now = map(
             _utc, (item["observed_at_utc"], item["ingested_at_utc"], item["expires_at_utc"], now)
         )
@@ -3446,6 +3492,356 @@ def _observation(category: str = "COMPONENT_STATUS", **changes: Any) -> dict[str
     }
     item.update(changes)
     return item
+
+
+def _production_observations(category: str):
+    raw_policy = _policy(category)
+    policy = FreshnessPolicy(**raw_policy)
+    return ObservationAuthority.compose(
+        InMemoryObservationAuthorityCarrier(),
+        policies=(policy,),
+        environment_binding=FrozenEnvironmentRegistryBinding(),
+        enabled_environments=frozenset({"TESTNET"}),
+    )
+
+
+@pytest.mark.parametrize("category", ["MARKET_DATA_FRESHNESS", "EXECUTION_PATH_HEALTH"])
+def test_s9c_c3_production_is_differentially_checked_against_c1(category: str) -> None:
+    cases = [
+        ({}, None),
+        ({"source_component": "tray_agent"}, "WRONG_SOURCE"),
+        ({"source_instance_id": "bad"}, "WRONG_SOURCE_INSTANCE"),
+        ({"environment": "OTHER"}, "ILLEGAL_ENVIRONMENT"),
+        ({"scope": {}}, "WRONG_SCOPE"),
+        ({"scope": {**_scope(category), next(iter(_scope(category))): "bad"}}, "WRONG_SCOPE"),
+        ({"value": {}}, "INVALID_VALUE"),
+        ({"value": {**_value(category), next(iter(_value(category))): "api_secret=bad"}}, "SECRET_CONTENT"),
+        ({"correlation_reference": {"kind": "LOCAL", "value": "token.value"}}, "SECRET_CONTENT"),
+        ({"correlation_reference": {"kind": "CANONICAL", "entity": "Unknown", "value": f"run_{UUID7}"}}, "INVALID_CORRELATION"),
+        ({"correlation_reference": {"kind": "CANONICAL", "entity": "RuntimeSession", "value": f"xacc_{UUID7}"}}, "INVALID_CORRELATION"),
+        ({"freshness_policy_id": "UNKNOWN"}, "UNKNOWN_FRESHNESS_POLICY"),
+        ({"expires_at_utc": "2030-01-01T00:00:29Z"}, "INVALID_EXPIRY"),
+        ({"observed_at_utc": "2030-01-01T00:00:05Z", "expires_at_utc": "2030-01-01T00:00:35Z"}, "FUTURE_TIMESTAMP"),
+        ({"source_event_at_utc": "2030-01-01T00:00:06Z"}, "FUTURE_SOURCE_EVENT"),
+        ({"ingested_at_utc": "2029-12-31T23:59:55Z"}, "INGEST_SKEW"),
+    ]
+    for changes, expected_error in cases:
+        item = _observation(category, **changes)
+        oracle = ObservationReference(_all_contracts(), [_policy(category)])
+        _, publisher = _production_observations(category)
+        if expected_error:
+            with pytest.raises(ValueError, match=expected_error):
+                oracle.ingest(deepcopy(item), "2030-01-01T00:00:00Z")
+            with pytest.raises(ValueError, match=expected_error):
+                publisher.publish(deepcopy(item), now_utc="2030-01-01T00:00:00Z")
+        else:
+            reference = oracle.ingest(deepcopy(item), "2030-01-01T00:00:00Z")["acceptance"]
+            production = publisher.publish(deepcopy(item), now_utc="2030-01-01T00:00:00Z")
+            assert production.effective_condition == reference["effective_condition"]
+            assert production.effective_reason_codes == tuple(reference["effective_reason_codes"])
+
+
+@pytest.mark.parametrize("category", ["MARKET_DATA_FRESHNESS", "EXECUTION_PATH_HEALTH"])
+def test_s9c_c3_sequence_and_projection_differential(category: str) -> None:
+    oracle = ObservationReference(_all_contracts(), [_policy(category)])
+    authority, publisher = _production_observations(category)
+    first = _observation(category)
+    reference = oracle.ingest(deepcopy(first), "2030-01-01T00:00:00Z")["acceptance"]
+    accepted = publisher.publish(deepcopy(first), now_utc="2030-01-01T00:00:00Z")
+    assert publisher.publish(deepcopy(first), now_utc="2030-01-01T00:00:01Z") == accepted
+    assert oracle.ingest(deepcopy(first), "2030-01-01T00:00:01Z")["acceptance"]["replayed"]
+    for mutation, error in [({"reason_code": "CHANGED"}, "DUPLICATE_SEQUENCE_CONFLICT"), ({"source_sequence": 0, "observed_at_utc": "2030-01-01T00:00:01Z", "expires_at_utc": "2030-01-01T00:00:31Z"}, "SEQUENCE_REGRESSION")]:
+        item = {**first, **mutation}
+        with pytest.raises(ValueError, match=error): oracle.ingest(deepcopy(item), "2030-01-01T00:00:01Z")
+        with pytest.raises(ValueError, match=error): publisher.publish(deepcopy(item), now_utc="2030-01-01T00:00:01Z")
+    gap = {**first, "observation_id": "gap", "source_sequence": 3, "observed_at_utc": "2030-01-01T00:00:01Z", "expires_at_utc": "2030-01-01T00:00:31Z"}
+    expected = oracle.ingest(deepcopy(gap), "2030-01-01T00:00:01Z")["acceptance"]
+    actual = publisher.publish(deepcopy(gap), now_utc="2030-01-01T00:00:01Z")
+    assert (actual.sequence_gap, actual.effective_condition, actual.effective_reason_codes) == (expected["sequence_gap"], expected["effective_condition"], tuple(expected["effective_reason_codes"]))
+    assert oracle.projected(expected, "2030-01-01T00:00:31Z")["condition"] == authority.resolve_current(actual.key, now_utc="2030-01-01T00:00:31Z").projected_condition == "UNKNOWN"
+
+    # Optional-sequence successors use clock/source-event ordering and remain history.
+    oracle = ObservationReference(_all_contracts(), [_policy(category)])
+    authority, publisher = _production_observations(category)
+    unsequenced = {**first, "source_sequence": None}
+    oracle.ingest(deepcopy(unsequenced), "2030-01-01T00:00:00Z")
+    original = publisher.publish(deepcopy(unsequenced), now_utc="2030-01-01T00:00:00Z")
+    for mutation, error in [
+        ({"observation_id": "clock", "observed_at_utc": "2029-12-31T23:59:59Z", "ingested_at_utc": "2029-12-31T23:59:59Z", "expires_at_utc": "2030-01-01T00:00:29Z"}, "CLOCK_REGRESSION"),
+        ({"observation_id": "source", "observed_at_utc": "2030-01-01T00:00:01Z", "expires_at_utc": "2030-01-01T00:00:31Z", "source_event_at_utc": "2029-12-31T23:59:59Z"}, "SOURCE_EVENT_REGRESSION"),
+    ]:
+        item = {**unsequenced, **mutation}
+        with pytest.raises(ValueError, match=error):
+            oracle.ingest(deepcopy(item), "2030-01-01T00:00:01Z")
+        with pytest.raises(ValueError, match=error):
+            publisher.publish(deepcopy(item), now_utc="2030-01-01T00:00:01Z")
+    successor = {**unsequenced, "observation_id": "successor", "observed_at_utc": "2030-01-01T00:00:01Z", "source_event_at_utc": "2030-01-01T00:00:01Z", "expires_at_utc": "2030-01-01T00:00:31Z"}
+    oracle.ingest(deepcopy(successor), "2030-01-01T00:00:01Z")
+    publisher.publish(deepcopy(successor), now_utc="2030-01-01T00:00:01Z")
+    assert authority.resolve_historical_acceptance(original.acceptance_id) == original
+
+
+@pytest.mark.parametrize("category", ["MARKET_DATA_FRESHNESS", "EXECUTION_PATH_HEALTH"])
+@pytest.mark.parametrize(
+    ("field", "value", "accepted"),
+    [
+        ("observation_id", "A" * 128, True),
+        ("observation_id", "A" * 129, False),
+        ("observation_id", "A/B", False),
+        ("local_correlation", "A" * 128, True),
+        ("local_correlation", "A" * 129, False),
+        ("local_correlation", "A/B", False),
+        ("reason_code", "A" * 64, True),
+        ("reason_code", "A" * 65, False),
+        ("policy_id", "A" * 64, True),
+        ("policy_id", "A" * 65, False),
+    ],
+)
+def test_s9c_c4_lexical_boundaries_have_actual_c1_parity(category: str, field: str, value: str, accepted: bool) -> None:
+    item = _observation(category)
+    raw_policy = _policy(category)
+    if field == "local_correlation":
+        item["correlation_reference"] = {"kind": "LOCAL", "value": value}
+    elif field == "policy_id":
+        item["freshness_policy_id"] = value
+        raw_policy["policy_id"] = value
+    else:
+        item[field] = value
+    outcomes = []
+    try:
+        oracle = ObservationReference(_all_contracts(), [raw_policy])
+        oracle.ingest(deepcopy(item), "2030-01-01T00:00:00Z")
+        outcomes.append(True)
+    except ValueError:
+        outcomes.append(False)
+    try:
+        policy = FreshnessPolicy(**raw_policy)
+        _, publisher = ObservationAuthority.compose(InMemoryObservationAuthorityCarrier(), policies=(policy,), environment_binding=FrozenEnvironmentRegistryBinding(), enabled_environments=frozenset({"TESTNET"}))
+        publisher.publish(deepcopy(item), now_utc="2030-01-01T00:00:00Z")
+        outcomes.append(True)
+    except ValueError:
+        outcomes.append(False)
+    assert outcomes == [accepted, accepted]
+
+
+@pytest.mark.parametrize("entity,prefix", [("RuntimeSession","run"),("ExchangeAccount","xacc"),("Instrument","instr"),("MarketDataRoute","mdr"),("ExecutionRoute","xroute")])
+def test_s9c_c4_every_canonical_correlation_entity_has_c1_parity(entity: str, prefix: str) -> None:
+    for actual_prefix, accepted in ((prefix, True), ("dev", False)):
+        item = _observation("MARKET_DATA_FRESHNESS", correlation_reference={"kind":"CANONICAL","entity":entity,"value":f"{actual_prefix}_{UUID7}"})
+        oracle = ObservationReference(_all_contracts(), [_policy("MARKET_DATA_FRESHNESS")]); _, publisher = _production_observations("MARKET_DATA_FRESHNESS")
+        outcomes=[]
+        for operation in (lambda: oracle.ingest(deepcopy(item),"2030-01-01T00:00:00Z"),lambda: publisher.publish(deepcopy(item),now_utc="2030-01-01T00:00:00Z")):
+            try: operation(); outcomes.append(True)
+            except ValueError: outcomes.append(False)
+        assert outcomes == [accepted, accepted]
+
+
+@pytest.mark.parametrize("environment", ["PAPER", "TESTNET", "LIVE"])
+def test_s9c_c4_frozen_m04_environments_have_c1_parity(environment: str) -> None:
+    item = _observation("MARKET_DATA_FRESHNESS", environment=environment)
+    oracle = ObservationReference(_all_contracts(), [_policy("MARKET_DATA_FRESHNESS")])
+    oracle.ingest(deepcopy(item), "2030-01-01T00:00:00Z")
+    _, publisher = ObservationAuthority.compose(InMemoryObservationAuthorityCarrier(), policies=(FreshnessPolicy(**_policy("MARKET_DATA_FRESHNESS")),), environment_binding=FrozenEnvironmentRegistryBinding(), enabled_environments=frozenset({environment}))
+    assert publisher.publish(item, now_utc="2030-01-01T00:00:00Z").observation.environment == environment
+
+
+def test_s9c_c4_unknown_environment_cannot_be_configured_as_authority() -> None:
+    with pytest.raises(ValueError, match="ILLEGAL_ENVIRONMENT"):
+        ObservationAuthority.compose(InMemoryObservationAuthorityCarrier(), policies=(FreshnessPolicy(**_policy("MARKET_DATA_FRESHNESS")),), environment_binding=FrozenEnvironmentRegistryBinding(), enabled_environments=frozenset({"OTHER"}))
+
+
+def test_s9c_c5_compile_time_environment_projection_matches_frozen_m04() -> None:
+    frozen_m04 = _load("environment_and_product_capabilities.json")
+    assert FrozenEnvironmentRegistryBinding().canonical_environments == frozenset(
+        item["environment_id"] for item in frozen_m04["execution_environments"]
+    )
+
+
+@pytest.mark.parametrize("category", ["MARKET_DATA_FRESHNESS", "EXECUTION_PATH_HEALTH"])
+@pytest.mark.parametrize("original,changed", [(1, 1.0), (0, False), (1, True)])
+def test_s9c_c8_exact_typed_replay_has_c1_production_parity(
+    category: str, original: Any, changed: Any
+) -> None:
+    item = _observation(category)
+    field = next(iter(item["value"]))
+    item["value"][field] = original
+    oracle = ObservationReference(_all_contracts(), [_policy(category)])
+    _, publisher = _production_observations(category)
+    oracle.ingest(deepcopy(item), "2030-01-01T00:00:00Z")
+    publisher.publish(deepcopy(item), now_utc="2030-01-01T00:00:00Z")
+    conflict = deepcopy(item)
+    conflict["value"][field] = changed
+    for operation in (
+        lambda: oracle.ingest(deepcopy(conflict), "2030-01-01T00:00:01Z"),
+        lambda: publisher.publish(deepcopy(conflict), now_utc="2030-01-01T00:00:01Z"),
+    ):
+        with pytest.raises(ValueError, match="DUPLICATE_SEQUENCE_CONFLICT"):
+            operation()
+
+
+@pytest.mark.parametrize("category", ["MARKET_DATA_FRESHNESS", "EXECUTION_PATH_HEALTH"])
+def test_s9c_c8_identical_and_reordered_replay_has_c1_production_parity(category: str) -> None:
+    item = _observation(category)
+    oracle = ObservationReference(_all_contracts(), [_policy(category)])
+    _, publisher = _production_observations(category)
+    oracle.ingest(deepcopy(item), "2030-01-01T00:00:00Z")
+    accepted = publisher.publish(deepcopy(item), now_utc="2030-01-01T00:00:00Z")
+    reordered = dict(reversed(list(item.items())))
+    reordered["scope"] = dict(reversed(list(item["scope"].items())))
+    reordered["value"] = dict(reversed(list(item["value"].items())))
+    assert oracle.ingest(reordered, "2031-01-01T00:00:00Z")["acceptance"]["replayed"]
+    assert publisher.publish(reordered, now_utc="2031-01-01T00:00:00Z") == accepted
+
+
+@pytest.mark.parametrize("category", ["MARKET_DATA_FRESHNESS", "EXECUTION_PATH_HEALTH"])
+@pytest.mark.parametrize("changes", [
+    {"observed_at_utc": "malformed"},
+    {"expires_at_utc": "2030-01-01T00:00:29Z"},
+    {"source_event_at_utc": "malformed"},
+    {"ingested_at_utc": "2029-12-31T23:59:00Z"},
+    {"freshness_policy_id": "UNKNOWN"},
+])
+def test_s9c_c9_known_sequence_conflict_order_has_c1_production_parity(category: str, changes: dict[str, Any]) -> None:
+    item = _observation(category); oracle = ObservationReference(_all_contracts(), [_policy(category)]); _, publisher = _production_observations(category)
+    original = oracle.ingest(deepcopy(item), "2030-01-01T00:00:00Z")["acceptance"]
+    accepted = publisher.publish(deepcopy(item), now_utc="2030-01-01T00:00:00Z")
+    conflict = {**item, **changes}
+    for operation in (lambda: oracle.ingest(deepcopy(conflict), "malformed"), lambda: publisher.publish(deepcopy(conflict), now_utc="malformed")):
+        with pytest.raises(ValueError, match="DUPLICATE_SEQUENCE_CONFLICT"):
+            operation()
+    assert oracle.ingest(deepcopy(item), "malformed")["acceptance"]["observation"] == original["observation"]
+    assert publisher.publish(deepcopy(item), now_utc="malformed") == accepted
+
+
+@pytest.mark.parametrize("field,error", [("source_component", "WRONG_SOURCE"), ("source_instance_id", "WRONG_SOURCE_INSTANCE")])
+def test_s9c_c9_unhashable_source_field_error_has_c1_production_parity(field: str, error: str) -> None:
+    item = _observation("MARKET_DATA_FRESHNESS", **{field: []})
+    oracle = ObservationReference(_all_contracts(), [_policy("MARKET_DATA_FRESHNESS")]); _, publisher = _production_observations("MARKET_DATA_FRESHNESS")
+    for operation in (lambda: oracle.ingest(deepcopy(item), "2030-01-01T00:00:00Z"), lambda: publisher.publish(deepcopy(item), now_utc="2030-01-01T00:00:00Z")):
+        with pytest.raises(ValueError, match=error):
+            operation()
+
+
+@pytest.mark.parametrize("category", ["MARKET_DATA_FRESHNESS", "EXECUTION_PATH_HEALTH"])
+@pytest.mark.parametrize("changes,error", [
+    ({"category": []}, "UNKNOWN_CATEGORY"),
+    ({"category": {}}, "UNKNOWN_CATEGORY"),
+    ({"environment": []}, "ILLEGAL_ENVIRONMENT"),
+    ({"environment": {}}, "ILLEGAL_ENVIRONMENT"),
+    ({"freshness_policy_id": []}, "UNKNOWN_FRESHNESS_POLICY"),
+    ({"freshness_policy_id": {}}, "UNKNOWN_FRESHNESS_POLICY"),
+    ({"freshness_policy_id": 1}, "UNKNOWN_FRESHNESS_POLICY"),
+    ({"freshness_policy_id": True}, "UNKNOWN_FRESHNESS_POLICY"),
+    ({"correlation_reference": {"kind": "CANONICAL", "entity": [], "value": f"run_{UUID7}"}}, "INVALID_CORRELATION"),
+    ({"correlation_reference": {"kind": "CANONICAL", "entity": {}, "value": f"run_{UUID7}"}}, "INVALID_CORRELATION"),
+])
+def test_s9c_c10_hash_lookup_primitive_errors_have_c1_production_parity(category: str, changes: dict[str, Any], error: str) -> None:
+    item = _observation(category); item.update(changes)
+    oracle = ObservationReference(_all_contracts(), [_policy(category)]); _, publisher = _production_observations(category)
+    for operation in (lambda: oracle.ingest(deepcopy(item), "2030-01-01T00:00:00Z"), lambda: publisher.publish(deepcopy(item), now_utc="2030-01-01T00:00:00Z")):
+        with pytest.raises(ValueError, match=error):
+            operation()
+
+
+@pytest.mark.parametrize("category", ["MARKET_DATA_FRESHNESS", "EXECUTION_PATH_HEALTH"])
+@pytest.mark.parametrize("nonfinite", [float("nan"), float("inf"), float("-inf")])
+def test_s9c_c11_nonfinite_scalar_rejection_has_c1_production_parity(
+    category: str, nonfinite: float
+) -> None:
+    item = _observation(category)
+    item["value"][next(iter(item["value"]))] = nonfinite
+    oracle = ObservationReference(_all_contracts(), [_policy(category)])
+    _, publisher = _production_observations(category)
+    for operation in (
+        lambda: oracle.ingest(deepcopy(item), "2030-01-01T00:00:00Z"),
+        lambda: publisher.publish(deepcopy(item), now_utc="2030-01-01T00:00:00Z"),
+    ):
+        with pytest.raises(ValueError, match="INVALID_VALUE"):
+            operation()
+
+
+@pytest.mark.parametrize("category", ["MARKET_DATA_FRESHNESS", "EXECUTION_PATH_HEALTH"])
+@pytest.mark.parametrize("timestamp", [
+    "2030-01-01T00:00Z",
+    "2030-01-01T00Z",
+    "2030-01-01Z",
+    "2030-W01-1T00:00:00Z",
+    "20300101T000000Z",
+    "2030-01-01T000000Z",
+    "20300101T00:00:00Z",
+])
+def test_s9c_c12_strict_rfc3339_timestamp_has_c1_production_parity(
+    category: str, timestamp: str
+) -> None:
+    item = _observation(category, observed_at_utc=timestamp)
+    oracle = ObservationReference(_all_contracts(), [_policy(category)])
+    carrier = InMemoryObservationAuthorityCarrier()
+    _, publisher = ObservationAuthority.compose(
+        carrier,
+        policies=(FreshnessPolicy(**_policy(category)),),
+        environment_binding=FrozenEnvironmentRegistryBinding(),
+        enabled_environments=frozenset({"TESTNET"}),
+    )
+    before = carrier.read()
+    for operation in (
+        lambda: oracle.ingest(deepcopy(item), "2030-01-01T00:00:00Z"),
+        lambda: publisher.publish(deepcopy(item), now_utc="2030-01-01T00:00:00Z"),
+    ):
+        with pytest.raises(ValueError, match="MALFORMED_TIMESTAMP"):
+            operation()
+    assert carrier.read() == before
+
+
+@pytest.mark.parametrize("category", ["MARKET_DATA_FRESHNESS", "EXECUTION_PATH_HEALTH"])
+@pytest.mark.parametrize("digits", [4301, 5001])
+def test_s9c_c13_oversized_integer_value_has_c1_production_parity(
+    category: str, digits: int
+) -> None:
+    item = _observation(category)
+    item["value"][next(iter(item["value"]))] = 10**digits
+    oracle = ObservationReference(_all_contracts(), [_policy(category)])
+    carrier = InMemoryObservationAuthorityCarrier()
+    _, publisher = ObservationAuthority.compose(
+        carrier,
+        policies=(FreshnessPolicy(**_policy(category)),),
+        environment_binding=FrozenEnvironmentRegistryBinding(),
+        enabled_environments=frozenset({"TESTNET"}),
+    )
+    before = carrier.read()
+    for operation in (
+        lambda: oracle.ingest(deepcopy(item), "2030-01-01T00:00:00Z"),
+        lambda: publisher.publish(deepcopy(item), now_utc="2030-01-01T00:00:00Z"),
+    ):
+        with pytest.raises(ValueError, match="INVALID_VALUE"):
+            operation()
+    assert carrier.read() == before
+
+
+@pytest.mark.parametrize("category", ["MARKET_DATA_FRESHNESS", "EXECUTION_PATH_HEALTH"])
+@pytest.mark.parametrize(
+    "sequence", [10**4301, 10**5001, True, 1.0, -1],
+    ids=["digits4302", "digits5002", "bool", "float", "negative"],
+)
+def test_s9c_c14_source_sequence_representability_has_c1_production_parity(
+    category: str, sequence: Any
+) -> None:
+    item = _observation(category, source_sequence=sequence)
+    oracle = ObservationReference(_all_contracts(), [_policy(category)])
+    carrier = InMemoryObservationAuthorityCarrier()
+    _, publisher = ObservationAuthority.compose(
+        carrier,
+        policies=(FreshnessPolicy(**_policy(category)),),
+        environment_binding=FrozenEnvironmentRegistryBinding(),
+        enabled_environments=frozenset({"TESTNET"}),
+    )
+    before = carrier.read()
+    for operation in (
+        lambda: oracle.ingest(deepcopy(item), "2030-01-01T00:00:00Z"),
+        lambda: publisher.publish(deepcopy(item), now_utc="2030-01-01T00:00:00Z"),
+    ):
+        with pytest.raises(ValueError, match="INVALID_SOURCE_SEQUENCE"):
+            operation()
+    assert carrier.read() == before
 
 
 def _store(categories: list[str]) -> ObservationReference:
@@ -5279,11 +5675,11 @@ def _blocked_alert_mutation(state: dict[str, Any], operation: str) -> None:
 
 
 def test_s9d_c15_status_is_honestly_open_and_updater_stays_open() -> None:
-    assert MACHINE["status"] == "IN_PROGRESS_S9D_C18_BLOCKED_S9C_EXECUTABLE_SOURCE_AUTHORITY"
+    assert MACHINE["status"] == "IN_PROGRESS_S9C_C14_EXECUTABLE_AUTHORITY_AVAILABLE_S9D_OPEN"
     assert MACHINE["contract_identity"] == {
         "contract_id": "M0.12-audit-observability-alerts-updater",
-        "version": "1.10.0",
-        "phase": "S9D_C18_BLOCKED_S9C_EXECUTABLE_SOURCE_AUTHORITY",
+        "version": "1.23.0",
+        "phase": "S9C_C14_EXECUTABLE_AUTHORITY_AVAILABLE_ADAPTER_NOT_YET_INTEGRATED",
         "machine_source_of_truth": True,
         "markdown_is_projection_only": True,
     }
@@ -5390,20 +5786,20 @@ def test_markdown_remains_exact_machine_projection_after_c2_gate() -> None:
     assert MARKDOWN_PATH.read_text(encoding="utf-8") == _render_markdown(MACHINE)
 
 
-def test_s9d_c18_records_the_missing_frozen_s9c_executable_boundary() -> None:
+def test_s9c_c2_records_executable_boundary_without_adapter_integration() -> None:
     disposition = MACHINE["alert_model"]["executable_authority"][
         "s9d_c18_source_authority_disposition"
     ]
-    assert disposition["status"] == "BLOCKED_S9C_EXECUTABLE_SOURCE_AUTHORITY"
-    assert disposition["production_api"] == "ABSENT"
-    assert disposition["production_types"] == "ABSENT"
+    assert disposition["status"] == "S9C_EXECUTABLE_AUTHORITY_AVAILABLE_ADAPTER_NOT_YET_INTEGRATED"
+    assert "consume_effective_current" in disposition["production_api"]
+    assert "ObservationAuthority" in disposition["production_types"]
     assert disposition["alertstore_adapter"].startswith("NOT_IMPLEMENTED")
     assert disposition["market_data_current_condition"] == "OPEN_SOURCE_AUTHORITY"
     assert disposition["execution_route_condition"] == "OPEN_SOURCE_AUTHORITY"
     assert "pure executable oracle" in disposition["executable_oracle"]
-    assert "test oracle" in disposition["membership_authority"]
-    assert "snapshot token" in disposition["currentness_and_expiry_fence"]
-    assert "historical observation A" in disposition["durable_historical_lookup"]
+    assert disposition["membership_authority"].startswith("EXECUTABLE")
+    assert disposition["currentness_and_expiry_fence"].startswith("EXECUTABLE")
+    assert disposition["durable_historical_lookup"].startswith("EXECUTABLE")
     assert all(
         status == "OPEN_SOURCE_AUTHORITY"
         for _, status in PRODUCTION_SOURCE_RESOLUTION_POLICIES.values()
