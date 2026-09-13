@@ -143,4 +143,5 @@ from .authority import (  # noqa: E402
     ObservationAuthority,
     ObservationAuthorityCarrier,
     ObservationKey,
+    ObservationSemanticKey,
 )

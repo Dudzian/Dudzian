@@ -16,6 +16,7 @@ from bot_core.alerts.dispatcher import (
     emit_alert,
     get_alert_dispatcher,
 )
+from bot_core.alerts.s9c_source import S9CObservationSourceAuthority
 from bot_core.alerts.channels import (
     DEFAULT_SMS_PROVIDERS,
     EmailChannel,
@@ -75,6 +76,7 @@ __all__ = [
     "AlertDispatcher",
     "AlertEvent",
     "AlertSeverity",
+    "S9CObservationSourceAuthority",
     "BotError",
     "emit_alert",
     "get_alert_dispatcher",

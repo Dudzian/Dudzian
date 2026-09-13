@@ -59,6 +59,95 @@ def test_real_authority_fence_orders_superseding_publication_after_consumer():
  t1=Thread(target=consuming); t2=Thread(target=supersede); t1.start(); t2.start(); assert attempted.wait(2); assert not finished.wait(.1); release.set(); t1.join(); t2.join(); assert order==["consumer_enter","downstream_commit","b_current"]
  assert other.resolve_current(first.key,now_utc="2030-01-01T00:00:02Z").accepted.observation.observation_id=="next"
 
+def test_semantic_live_winner_crosses_runtime_sessions():
+ authority,publisher=composed()
+ first=publisher.publish(raw(condition="BLOCKED"),now_utc="2030-01-01T00:00:00Z")
+ second_raw=raw(seq=1,source_instance_id="run_018f1f10-7b2c-7abc-8def-123456789abd",condition="OK",observed="2030-01-01T00:00:01Z",observation_id="run-b")
+ second=publisher.publish(second_raw,now_utc="2030-01-01T00:00:01Z")
+ semantic=ObservationSemanticKey.from_observation(first.observation)
+ seen=[]; authority.consume_semantic_effective_current(semantic,now_utc="2030-01-01T00:00:02Z",consumer=seen.append)
+ assert seen==[second]
+ assert authority.resolve_current(first.key,now_utc="2030-01-01T00:00:02Z").accepted==first
+
+def test_historical_semantic_winner_crosses_runtime_sessions():
+ authority,publisher=composed()
+ first=publisher.publish(raw(condition="BLOCKED"),now_utc="2030-01-01T00:00:00Z")
+ second=publisher.publish(raw(seq=1,source_instance_id="run_018f1f10-7b2c-7abc-8def-123456789abd",observed="2030-01-01T00:00:01Z",observation_id="run-b"),now_utc="2030-01-01T00:00:01Z")
+ with pytest.raises(ValueError,match="ACCEPTANCE_NOT_HISTORICALLY_EFFECTIVE"):
+  authority.validate_historical_semantic_effective_acceptance(first.acceptance_id,at_utc="2030-01-01T00:00:02Z")
+ assert authority.validate_historical_semantic_effective_acceptance(second.acceptance_id,at_utc="2030-01-01T00:00:02Z")==second
+
+@pytest.mark.parametrize("category", ["MARKET_DATA_FRESHNESS", "EXECUTION_PATH_HEALTH"])
+@pytest.mark.parametrize("cross_runtime", [False, True])
+def test_same_semantic_same_second_new_acceptance_is_rejected(category,cross_runtime):
+ carrier=InMemoryObservationAuthorityCarrier(); authority,publisher=composed(carrier)
+ first=publisher.publish(raw(category,condition="BLOCKED"),now_utc="2030-01-01T00:00:00Z"); before=carrier.read()
+ changes=dict(seq=2,observation_id="next")
+ if cross_runtime: changes.update(seq=1,source_instance_id="run_018f1f10-7b2c-7abc-8def-123456789abd")
+ with pytest.raises(ValueError,match="SEMANTIC_TRANSACTION_TIME_COLLISION"):
+  publisher.publish(raw(category,**changes),now_utc="2030-01-01T00:00:00Z")
+ assert carrier.read()==before
+ assert authority.validate_historical_semantic_effective_acceptance(first.acceptance_id,at_utc="2030-01-01T00:00:00Z")==first
+
+def test_distinct_semantic_keys_may_share_transaction_second():
+ authority,publisher=composed()
+ first=publisher.publish(raw("MARKET_DATA_FRESHNESS"),now_utc="2030-01-01T00:00:00Z")
+ second=publisher.publish(raw("EXECUTION_PATH_HEALTH",seq=2),now_utc="2030-01-01T00:00:00Z")
+ assert (first.transaction_revision,second.transaction_revision)==(1,2)
+ assert authority.validate_historical_semantic_effective_acceptance(first.acceptance_id,at_utc="2030-01-01T00:00:00Z")==first
+ assert authority.validate_historical_semantic_effective_acceptance(second.acceptance_id,at_utc="2030-01-01T00:00:00Z")==second
+
+def test_expired_semantic_winner_never_falls_back_to_older_runtime():
+ authority,publisher=composed()
+ older=publisher.publish(raw(observed="2030-01-01T00:00:04Z",expires_at_utc="2030-01-01T00:00:34Z"),now_utc="2030-01-01T00:00:00Z")
+ publisher.publish(raw(seq=1,source_instance_id="run_018f1f10-7b2c-7abc-8def-123456789abd",observation_id="run-b"),now_utc="2030-01-01T00:00:01Z")
+ assert authority.resolve_current(older.key,now_utc="2030-01-01T00:00:31Z").status=="FRESH"
+ with pytest.raises(ValueError,match="OBSERVATION_NOT_EFFECTIVE_CURRENT"):
+  authority.consume_semantic_effective_current(ObservationSemanticKey.from_observation(older.observation),now_utc="2030-01-01T00:00:31Z",consumer=lambda item:item)
+
+@pytest.mark.parametrize("category", ["MARKET_DATA_FRESHNESS", "EXECUTION_PATH_HEALTH"])
+def test_cross_runtime_transaction_time_rollback_is_atomic(category):
+ carrier=InMemoryObservationAuthorityCarrier(); authority,publisher=composed(carrier)
+ first=publisher.publish(raw(category,observed="2030-01-01T00:00:10Z",expires_at_utc="2030-01-01T00:00:40Z"),now_utc="2030-01-01T00:00:10Z"); before=carrier.read()
+ candidate=raw(category,seq=1,source_instance_id="run_018f1f10-7b2c-7abc-8def-123456789abd",observed="2030-01-01T00:00:09Z",expires_at_utc="2030-01-01T00:00:39Z",observation_id="run-b")
+ with pytest.raises(ValueError,match="TRANSACTION_TIME_ROLLBACK"): publisher.publish(candidate,now_utc="2030-01-01T00:00:09Z")
+ assert carrier.read()==before
+ seen=[]; authority.consume_semantic_effective_current(ObservationSemanticKey.from_observation(first.observation),now_utc="2030-01-01T00:00:11Z",consumer=seen.append); assert seen==[first]
+
+def test_same_runtime_rollback_rejects_but_distinct_semantic_same_second_and_replay_remain_valid():
+ carrier=InMemoryObservationAuthorityCarrier(); authority,publisher=composed(carrier)
+ original=raw(observed="2030-01-01T00:00:09Z",expires_at_utc="2030-01-01T00:00:39Z"); first=publisher.publish(original,now_utc="2030-01-01T00:00:10Z")
+ rollback=raw(seq=2,observed="2030-01-01T00:00:10Z",expires_at_utc="2030-01-01T00:00:40Z",observation_id="next")
+ with pytest.raises(ValueError,match="TRANSACTION_TIME_ROLLBACK"): publisher.publish(rollback,now_utc="2030-01-01T00:00:09Z")
+ assert publisher.publish(original,now_utc="malformed")==first
+ second=publisher.publish(raw("EXECUTION_PATH_HEALTH",seq=2,observed="2030-01-01T00:00:10Z",expires_at_utc="2030-01-01T00:00:40Z"),now_utc="2030-01-01T00:00:10Z")
+ assert second.transaction_revision==2
+ assert authority.validate_historical_semantic_effective_acceptance(second.acceptance_id,at_utc="2030-01-01T00:00:10Z")==second
+
+def test_restore_rejects_coherently_resealed_transaction_time_rollback():
+ carrier=InMemoryObservationAuthorityCarrier(); authority,publisher=composed(carrier)
+ first=publisher.publish(raw(observed="2030-01-01T00:00:08Z",expires_at_utc="2030-01-01T00:00:38Z"),now_utc="2030-01-01T00:00:09Z")
+ second=publisher.publish(raw(seq=2,observed="2030-01-01T00:00:10Z",expires_at_utc="2030-01-01T00:00:40Z",observation_id="next"),now_utc="2030-01-01T00:00:10Z")
+ state=carrier.read(); backdated="2030-01-01T00:00:08Z"
+ forged_id=authority._acceptance_id(2,backdated,second.content_fingerprint,second.freshness_policy_fingerprint_sha256)
+ forged=replace(second,acceptance_id=forged_id,accepted_at_utc=backdated)
+ current=tuple((key,forged_id if value==second.acceptance_id else value) for key,value in state.current)
+ replay=tuple((key,forged_id if value==second.acceptance_id else value) for key,value in state.replay)
+ bad=replace(state,accepted=(first,forged),current=current,replay=replay)
+ with pytest.raises(ValueError,match="CORRUPT_AUTHORITY_STATE"): composed(InMemoryObservationAuthorityCarrier(bad))
+
+def test_restore_rejects_coherently_resealed_semantic_time_collision():
+ carrier=InMemoryObservationAuthorityCarrier(); authority,publisher=composed(carrier)
+ first=publisher.publish(raw(observed="2030-01-01T00:00:08Z",expires_at_utc="2030-01-01T00:00:38Z"),now_utc="2030-01-01T00:00:09Z")
+ second=publisher.publish(raw(seq=2,observed="2030-01-01T00:00:10Z",expires_at_utc="2030-01-01T00:00:40Z",observation_id="next"),now_utc="2030-01-01T00:00:10Z")
+ state=carrier.read(); collided=first.accepted_at_utc
+ forged_id=authority._acceptance_id(2,collided,second.content_fingerprint,second.freshness_policy_fingerprint_sha256)
+ forged=replace(second,acceptance_id=forged_id,accepted_at_utc=collided)
+ current=tuple((key,forged_id if value==second.acceptance_id else value) for key,value in state.current)
+ replay=tuple((key,forged_id if value==second.acceptance_id else value) for key,value in state.replay)
+ bad=replace(state,accepted=(first,forged),current=current,replay=replay)
+ with pytest.raises(ValueError,match="CORRUPT_AUTHORITY_STATE"): composed(InMemoryObservationAuthorityCarrier(bad))
+
 def test_cross_instance_visibility_history_and_opposite_linearization():
  carrier=InMemoryObservationAuthorityCarrier(); a,p=composed(carrier); b,q=composed(carrier)
  first=p.publish(raw(),now_utc="2030-01-01T00:00:00Z")

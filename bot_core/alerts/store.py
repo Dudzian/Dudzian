@@ -87,11 +87,11 @@ PRODUCTION_SOURCE_RESOLUTION_POLICIES = MappingProxyType(
     {
         "MARKET_DATA_CURRENT_CONDITION": (
             "S9C effective-current OK exact category/key/source/environment/scope and not expired",
-            "OPEN_SOURCE_AUTHORITY",
+            "S9C_ADAPTER_INTEGRATED_SOURCE_PRODUCER_AUTHENTICITY_OPEN",
         ),
         "EXECUTION_ROUTE_CONDITION": (
             "S9C effective-current OK exact category/key/source/environment/scope and not expired",
-            "OPEN_SOURCE_AUTHORITY",
+            "S9C_ADAPTER_INTEGRATED_SOURCE_PRODUCER_AUTHENTICITY_OPEN",
         ),
         "KILL_SWITCH_ACTIVE": (
             "current accepted M0.9 INACTIVE exact scope/environment and generation >= alert source",
@@ -119,6 +119,33 @@ PRODUCTION_SOURCE_RESOLUTION_POLICIES = MappingProxyType(
         ),
     }
 )
+
+S9C_PRODUCTION_RESOLUTION_POLICY_ID = "S9D/S9C_EFFECTIVE_CURRENT_OK_EXACT_SCOPE_V1"
+
+
+def _source_resolution_policy(selector: SourceSelector) -> tuple[bool, str] | None:
+    """Resolve fixture and production policies without caller-granted authority."""
+    if (
+        selector.alert_type in {
+            "MARKET_DATA_CURRENT_CONDITION", "EXECUTION_ROUTE_CONDITION"
+        }
+        and selector.source_family == "OBSERVATION_CONDITION"
+        and selector.fact_type
+        == {
+            "MARKET_DATA_CURRENT_CONDITION": "MARKET_DATA_FRESHNESS",
+            "EXECUTION_ROUTE_CONDITION": "EXECUTION_PATH_HEALTH",
+        }[selector.alert_type]
+        and selector.resolution_policy_id == S9C_PRODUCTION_RESOLUTION_POLICY_ID
+        and len(selector.required_source_ids) == 1
+        and selector.required_source_ids[0].startswith("s9c-source-")
+    ):
+        return True, S9C_PRODUCTION_RESOLUTION_POLICY_ID
+    return CANONICAL_SOURCE_RESOLUTION_POLICIES.get(
+        (
+            selector.alert_type, selector.source_family, selector.environment,
+            selector.alert_scope, selector.fact_type, selector.required_source_ids,
+        )
+    )
 
 
 class AlertStoreError(RuntimeError):
@@ -1253,16 +1280,7 @@ class AlertStore:
                 if before and entry.mutation_type == "SOURCE_FAILING_OBSERVATION"
                 else (before.occurrence_count if before else 1)
             )
-            policy = CANONICAL_SOURCE_RESOLUTION_POLICIES.get(
-                (
-                    historical.selector.alert_type,
-                    historical.selector.source_family,
-                    historical.selector.environment,
-                    historical.selector.alert_scope,
-                    historical.selector.fact_type,
-                    historical.selector.required_source_ids,
-                )
-            )
+            policy = _source_resolution_policy(historical.selector)
             source_severity = historical.evidence[0].source_severity
             historical_identity_matches = all(
                 (
@@ -1441,6 +1459,9 @@ class AlertStore:
             )
             if replay is not None:
                 return self.current(replay.alert_id)
+            existing_id = self._snapshot.dedup_index.get(identity)
+            if existing_id and _parse(stamp) < _parse(self.current(existing_id).current_at_utc):
+                raise AlertStoreError("TIME_ROLLBACK")
             if fact.result == "FAILING":
                 return self._observe_failing(
                     alert_id,
@@ -1451,16 +1472,7 @@ class AlertStore:
                     stamp,
                     last_seen,
                 )
-            resolution_policy = CANONICAL_SOURCE_RESOLUTION_POLICIES.get(
-                (
-                    fact.selector.alert_type,
-                    fact.selector.source_family,
-                    fact.selector.environment,
-                    fact.selector.alert_scope,
-                    fact.selector.fact_type,
-                    fact.selector.required_source_ids,
-                )
-            )
+            resolution_policy = _source_resolution_policy(fact.selector)
             if (
                 resolution_policy is None
                 or fact.selector.resolution_policy_id != resolution_policy[1]
