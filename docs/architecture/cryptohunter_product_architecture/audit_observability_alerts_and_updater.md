@@ -17,7 +17,7 @@
 ## `status`
 
 ```json
-"IN_PROGRESS_S9C_C14_EXECUTABLE_AUTHORITY_AVAILABLE_S9D_OPEN"
+"IN_PROGRESS_S9D_C22_SEMANTIC_TIME_NONRETROACTIVITY_OTHER_SOURCE_AUTHORITIES_OPEN"
 ```
 
 ## `contract_identity`
@@ -25,8 +25,8 @@
 ```json
 {
   "contract_id": "M0.12-audit-observability-alerts-updater",
-  "version": "1.23.0",
-  "phase": "S9C_C14_EXECUTABLE_AUTHORITY_AVAILABLE_ADAPTER_NOT_YET_INTEGRATED",
+  "version": "1.27.0",
+  "phase": "S9D_C22_SEMANTIC_TIME_NONRETROACTIVITY_OTHER_SOURCE_AUTHORITIES_OPEN",
   "machine_source_of_truth": true,
   "markdown_is_projection_only": true
 }
@@ -1804,7 +1804,7 @@
     "currentness_fence": "EXECUTABLE_CARRIER_WIDE_AUTHORITY_FENCE_HELD_THROUGH_DOWNSTREAM_CONSUMER_PUBLICATION",
     "source_producer_authenticity": "OPEN_SOURCE_PRODUCER_AUTHENTICITY",
     "physical_durable_m1_carrier": "OPEN_IN_MEMORY_REFERENCE_CARRIER_ONLY",
-    "s9d_adapter_integration": "NOT_IMPLEMENTED",
+    "s9d_adapter_integration": "S9C_ADAPTER_INTEGRATED_SOURCE_PRODUCER_AUTHENTICITY_OPEN",
     "retention_contract": {
       "presentation_retention": "CURRENT_PLUS_BOUNDED_HISTORY",
       "authority_provenance_retention": "RETAIN_WHILE_DURABLE_DOWNSTREAM_PROVENANCE_MAY_BE_RESTORED",
@@ -1828,7 +1828,8 @@
     "canonical_timestamp_validation": "STRICT_RFC3339_UTC_LEXICAL_GATE_NO_PYTHON_ISO8601_SUPERSET",
     "historical_acceptance_identity": "REVISION_ACCEPTED_AT_CONTENT_POLICY_BOUND",
     "numeric_representability": "VALUE_SOURCE_SEQUENCE_AND_POLICY_NUMBERS_FAIL_CLOSED_BEFORE_CANONICAL_SERIALIZATION_OR_TIMEDELTA_LIMITS"
-  }
+  },
+  "s9d_adapter_integration": "S9C_ADAPTER_INTEGRATED_SOURCE_PRODUCER_AUTHENTICITY_OPEN"
 }
 ```
 
@@ -5049,11 +5050,11 @@
     "production_source_resolution_policies": {
       "MARKET_DATA_CURRENT_CONDITION": {
         "canonical_corrective_authority": "S9C effective-current OK exact category/key/source/environment/scope and not expired",
-        "executable_status": "OPEN_SOURCE_AUTHORITY"
+        "executable_status": "S9C_ADAPTER_INTEGRATED_SOURCE_PRODUCER_AUTHENTICITY_OPEN"
       },
       "EXECUTION_ROUTE_CONDITION": {
         "canonical_corrective_authority": "S9C effective-current OK exact category/key/source/environment/scope and not expired",
-        "executable_status": "OPEN_SOURCE_AUTHORITY"
+        "executable_status": "S9C_ADAPTER_INTEGRATED_SOURCE_PRODUCER_AUTHENTICITY_OPEN"
       },
       "KILL_SWITCH_ACTIVE": {
         "canonical_corrective_authority": "current accepted M0.9 INACTIVE exact scope/environment and generation >= alert source",
@@ -5080,7 +5081,7 @@
         "executable_status": "OPEN_SOURCE_AUTHORITY"
       }
     },
-    "production_source_policy_status": "S9C_EXECUTABLE_AUTHORITY_AVAILABLE_ADAPTER_NOT_YET_INTEGRATED: membership, exact effective-current fencing, and historical lookup exist for both S9D source categories; AlertStore source paths remain OPEN_SOURCE_AUTHORITY until adapter integration",
+    "production_source_policy_status": "S9C_ADAPTER_INTEGRATED_SOURCE_PRODUCER_AUTHENTICITY_OPEN; OTHER_SOURCE_AUTHORITIES_OPEN",
     "synthetic_source_resolution_policies": {
       "TEST_MULTI_SOURCE": "NON_PRODUCTION_TEST_FIXTURE",
       "OPERATOR_WORKFLOW_REQUIRED": "NON_PRODUCTION_TEST_FIXTURE_FOR_CLOSED_MANUAL_LIFECYCLE"
@@ -5092,7 +5093,7 @@
     "immutable_atomic_pin": "load_atomic_state is defensively pinned: tuple record collections and nested tuple semantics require exact immutable shapes, while mappings are copied into owned MappingProxyType projections; carrier-retained mutable aliases cannot change restore validation",
     "schema_parity": "machine closed-object required_fields exactly equal dataclasses.fields for DeliveryAttempt, MutationHistoryEntry, OperatorReplayEntry, and HistoricalSourceDecision",
     "s9d_c18_source_authority_disposition": {
-      "status": "S9C_EXECUTABLE_AUTHORITY_AVAILABLE_ADAPTER_NOT_YET_INTEGRATED",
+      "status": "S9C_ADAPTER_INTEGRATED_SOURCE_PRODUCER_AUTHENTICITY_OPEN",
       "frozen_canonical_artifact": "audit_observability_alerts_and_updater.json observability_model",
       "executable_oracle": "tests/architecture/test_cryptohunter_audit_observability_alerts_and_updater.py S9C-C1 pure executable oracle",
       "production_api": "ObservationAuthority.resolve_historical_acceptance, ObservationAuthority.resolve_current, ObservationAuthority.consume_effective_current; non-exported owner-composed writer capability publish",
@@ -5100,11 +5101,61 @@
       "membership_authority": "EXECUTABLE: carrier-owned accepted history; content fingerprints do not mint membership",
       "currentness_and_expiry_fence": "EXECUTABLE: carrier-wide authority fence serializes independent runtime views and is held through downstream consumer durable publication",
       "durable_historical_lookup": "EXECUTABLE: carrier state restores superseded accepted A independently of freshness/currentness and process caches",
-      "failing_authority": "AVAILABLE_NOT_INTEGRATED: accepted non-OK S9C membership can be resolved, but AlertStore adapter is intentionally absent",
-      "alertstore_adapter": "NOT_IMPLEMENTED: next S9D adapter slice must consume carrier-owned accepted membership",
-      "market_data_current_condition": "OPEN_SOURCE_AUTHORITY",
-      "execution_route_condition": "OPEN_SOURCE_AUTHORITY"
-    }
+      "failing_authority": "INTEGRATED_FOR_TWO_S9C_TYPED_PATHS",
+      "alertstore_adapter": "IMPLEMENTED: exact acceptance membership and fenced currentness projection",
+      "market_data_current_condition": "S9C_ADAPTER_INTEGRATED_SOURCE_PRODUCER_AUTHENTICITY_OPEN",
+      "execution_route_condition": "S9C_ADAPTER_INTEGRATED_SOURCE_PRODUCER_AUTHENTICITY_OPEN"
+    },
+    "s9c_alertstore_adapter": "REAL_ACCEPTED_OBSERVATION_MEMBERSHIP_ONLY",
+    "s9c_alertstore_currentness": "SEMANTIC_WINNER_SELECTED_AND_HELD_UNDER_S9C_CARRIER_FENCE_THROUGH_ALERTSTORE_PUBLICATION",
+    "s9c_historical_source_validation": "DURABLE_ACCEPTANCE_PLUS_EFFECTIVE_CURRENT_AT_TRANSACTION_TIME",
+    "s9c_source_reference": "EXACT_ACCEPTANCE_ID_NO_PROCESS_LOCAL_REFERENCE_CACHE",
+    "s9c_source_fence": "STABLE_SEMANTIC_SOURCE_ID_ADAPTER_EPOCH_AND_S9C_TRANSACTION_REVISION",
+    "s9c_condition_identity": "STABLE_ACROSS_ACCEPTANCE_REVISION_AND_RUNTIME_SESSION",
+    "cross_carrier_semantics": "SOURCE_FENCE_THROUGH_ATOMIC_ALERTSTORE_PUBLICATION_NOT_PHYSICAL_TWO_STORE_ATOMICITY",
+    "s9c_exact_observation_currentness": "EXACT_OBSERVATION_KEY_INCLUDES_RUNTIME_SESSION",
+    "s9d_s9c_semantic_currentness": "LATEST_TRANSACTION_REVISION_FOR_EXACT_CATEGORY_SOURCE_COMPONENT_ENVIRONMENT_SCOPE_ACROSS_RUNTIME_SESSIONS",
+    "s9d_runtime_restart_semantics": "NEW_RUNTIME_SEMANTIC_ACCEPTANCE_SUPERSEDES_OLDER_RUNTIME_FOR_ALERT_AUTHORITY",
+    "s9c_adapter_projection": {
+      "MARKET_DATA_FRESHNESS": {
+        "alert_type": "MARKET_DATA_CURRENT_CONDITION",
+        "source_family": "OBSERVATION_CONDITION",
+        "fact_type": "MARKET_DATA_FRESHNESS",
+        "severity": {
+          "UNKNOWN": "ERROR",
+          "DEGRADED": "WARNING",
+          "BLOCKED": "ERROR"
+        },
+        "healthy_resolution_supported": true,
+        "resolution_policy_id": "S9D/S9C_EFFECTIVE_CURRENT_OK_EXACT_SCOPE_V1",
+        "scope_fields": [
+          "market_data_route_id",
+          "instrument_id"
+        ]
+      },
+      "EXECUTION_PATH_HEALTH": {
+        "alert_type": "EXECUTION_ROUTE_CONDITION",
+        "source_family": "OBSERVATION_CONDITION",
+        "fact_type": "EXECUTION_PATH_HEALTH",
+        "severity": {
+          "UNKNOWN": "ERROR",
+          "DEGRADED": "ERROR",
+          "BLOCKED": "CRITICAL"
+        },
+        "healthy_resolution_supported": true,
+        "resolution_policy_id": "S9D/S9C_EFFECTIVE_CURRENT_OK_EXACT_SCOPE_V1",
+        "scope_fields": [
+          "exchange_account_id",
+          "instrument_id",
+          "execution_route_id"
+        ]
+      }
+    },
+    "s9c_transaction_time_order": "GLOBAL_NONDECREASING_ACCEPTED_AT",
+    "historical_provenance_nonretroactivity": "LATER_SAME_SEMANTIC_TRANSACTION_CANNOT_ENTER_AN_ALREADY_COMMITTED_HISTORICAL_INSTANT",
+    "s9d_source_transaction_time": "NEW_SOURCE_EDGE_NOT_BEFORE_REFERENCED_S9C_ACCEPTANCE_OR_CURRENT_ALERT_REVISION",
+    "s9c_semantic_transaction_time_order": "STRICTLY_INCREASING_ACCEPTED_AT_PER_OBSERVATION_SEMANTIC_KEY",
+    "s9c_same_second_parallelism": "EQUAL_ACCEPTED_AT_ALLOWED_ONLY_FOR_DISTINCT_SEMANTIC_KEYS"
   }
 }
 ```

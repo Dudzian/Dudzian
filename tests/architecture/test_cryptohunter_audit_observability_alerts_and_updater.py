@@ -22,6 +22,7 @@ from bot_core.alerts.store import (
     OperatorReplayEntry,
     PRODUCTION_SOURCE_RESOLUTION_POLICIES,
 )
+from bot_core.alerts.s9c_source import S9C_PRODUCTION_PROJECTION, S9C_RESOLUTION_POLICY_ID
 from bot_core.observability.authority import (
     FreshnessPolicy,
     FrozenEnvironmentRegistryBinding,
@@ -92,11 +93,11 @@ def test_identity_status_and_exact_top_level_shape() -> None:
     assert set(MACHINE) == TOP_LEVEL_KEYS
     assert MACHINE["schema_version"] == "cryptohunter.audit_observability_alerts_and_updater.v1"
     assert MACHINE["m0_element"] == "M0.12"
-    assert MACHINE["status"] == "IN_PROGRESS_S9C_C14_EXECUTABLE_AUTHORITY_AVAILABLE_S9D_OPEN"
+    assert MACHINE["status"] == "IN_PROGRESS_S9D_C22_SEMANTIC_TIME_NONRETROACTIVITY_OTHER_SOURCE_AUTHORITIES_OPEN"
     assert MACHINE["contract_identity"] == {
         "contract_id": "M0.12-audit-observability-alerts-updater",
-        "version": "1.23.0",
-        "phase": "S9C_C14_EXECUTABLE_AUTHORITY_AVAILABLE_ADAPTER_NOT_YET_INTEGRATED",
+        "version": "1.27.0",
+        "phase": "S9D_C22_SEMANTIC_TIME_NONRETROACTIVITY_OTHER_SOURCE_AUTHORITIES_OPEN",
         "machine_source_of_truth": True,
         "markdown_is_projection_only": True,
     }
@@ -5674,12 +5675,12 @@ def _blocked_alert_mutation(state: dict[str, Any], operation: str) -> None:
     assert state == before
 
 
-def test_s9d_c15_status_is_honestly_open_and_updater_stays_open() -> None:
-    assert MACHINE["status"] == "IN_PROGRESS_S9C_C14_EXECUTABLE_AUTHORITY_AVAILABLE_S9D_OPEN"
+def test_s9d_c19_status_is_honestly_open_and_updater_stays_open() -> None:
+    assert MACHINE["status"] == "IN_PROGRESS_S9D_C22_SEMANTIC_TIME_NONRETROACTIVITY_OTHER_SOURCE_AUTHORITIES_OPEN"
     assert MACHINE["contract_identity"] == {
         "contract_id": "M0.12-audit-observability-alerts-updater",
-        "version": "1.23.0",
-        "phase": "S9C_C14_EXECUTABLE_AUTHORITY_AVAILABLE_ADAPTER_NOT_YET_INTEGRATED",
+        "version": "1.27.0",
+        "phase": "S9D_C22_SEMANTIC_TIME_NONRETROACTIVITY_OTHER_SOURCE_AUTHORITIES_OPEN",
         "machine_source_of_truth": True,
         "markdown_is_projection_only": True,
     }
@@ -5786,21 +5787,56 @@ def test_markdown_remains_exact_machine_projection_after_c2_gate() -> None:
     assert MARKDOWN_PATH.read_text(encoding="utf-8") == _render_markdown(MACHINE)
 
 
-def test_s9c_c2_records_executable_boundary_without_adapter_integration() -> None:
+def test_s9d_c19_records_executable_adapter_boundary() -> None:
     disposition = MACHINE["alert_model"]["executable_authority"][
         "s9d_c18_source_authority_disposition"
     ]
-    assert disposition["status"] == "S9C_EXECUTABLE_AUTHORITY_AVAILABLE_ADAPTER_NOT_YET_INTEGRATED"
+    integrated = "S9C_ADAPTER_INTEGRATED_SOURCE_PRODUCER_AUTHENTICITY_OPEN"
+    assert disposition["status"] == integrated
     assert "consume_effective_current" in disposition["production_api"]
     assert "ObservationAuthority" in disposition["production_types"]
-    assert disposition["alertstore_adapter"].startswith("NOT_IMPLEMENTED")
-    assert disposition["market_data_current_condition"] == "OPEN_SOURCE_AUTHORITY"
-    assert disposition["execution_route_condition"] == "OPEN_SOURCE_AUTHORITY"
+    assert disposition["alertstore_adapter"].startswith("IMPLEMENTED")
+    assert disposition["market_data_current_condition"] == integrated
+    assert disposition["execution_route_condition"] == integrated
     assert "pure executable oracle" in disposition["executable_oracle"]
     assert disposition["membership_authority"].startswith("EXECUTABLE")
     assert disposition["currentness_and_expiry_fence"].startswith("EXECUTABLE")
     assert disposition["durable_historical_lookup"].startswith("EXECUTABLE")
+    statuses = {
+        alert_type: status
+        for alert_type, (_, status) in PRODUCTION_SOURCE_RESOLUTION_POLICIES.items()
+    }
+    assert statuses["MARKET_DATA_CURRENT_CONDITION"] == integrated
+    assert statuses["EXECUTION_ROUTE_CONDITION"] == integrated
     assert all(
         status == "OPEN_SOURCE_AUTHORITY"
-        for _, status in PRODUCTION_SOURCE_RESOLUTION_POLICIES.values()
+        for alert_type, status in statuses.items()
+        if alert_type not in {"MARKET_DATA_CURRENT_CONDITION", "EXECUTION_ROUTE_CONDITION"}
     )
+
+
+def test_s9d_c20_adapter_status_and_production_projection_have_machine_parity() -> None:
+    integrated = "S9C_ADAPTER_INTEGRATED_SOURCE_PRODUCER_AUTHENTICITY_OPEN"
+    statuses = []
+    def collect(value):
+        if isinstance(value, dict):
+            for key, nested in value.items():
+                if key == "s9d_adapter_integration":
+                    statuses.append(nested)
+                collect(nested)
+        elif isinstance(value, list):
+            for nested in value:
+                collect(nested)
+    collect(MACHINE)
+    assert statuses and set(statuses) == {integrated}
+
+    frozen = MACHINE["alert_model"]["executable_authority"]["s9c_adapter_projection"]
+    for category, runtime in S9C_PRODUCTION_PROJECTION.items():
+        machine = frozen[category]
+        assert machine["alert_type"] == runtime["alert_type"]
+        assert machine["source_family"] == "OBSERVATION_CONDITION"
+        assert machine["fact_type"] == category
+        assert machine["severity"] == dict(runtime["severity"])
+        assert machine["healthy_resolution_supported"] is True
+        assert machine["resolution_policy_id"] == S9C_RESOLUTION_POLICY_ID
+        assert machine["scope_fields"] == list(runtime["scope_fields"])

@@ -127,6 +127,25 @@ class ObservationKey:
 
 
 @dataclass(frozen=True)
+class ObservationSemanticKey:
+    """Condition identity shared across source runtime-session restarts."""
+
+    category: str
+    source_component: str
+    environment: str
+    scope: tuple[tuple[str, Any], ...]
+
+    @classmethod
+    def from_observation(cls, observation: "CanonicalObservation") -> "ObservationSemanticKey":
+        return cls(
+            observation.category,
+            observation.source_component,
+            observation.environment,
+            observation.scope,
+        )
+
+
+@dataclass(frozen=True)
 class CanonicalObservation:
     observation_id: str
     category: str
@@ -465,6 +484,25 @@ class ObservationAuthority:
                         raise ValueError("DUPLICATE_SEQUENCE_CONFLICT")
                     return prior
             self._validate_unseen_temporal_and_freshness(payload, now)
+            if state.accepted and _utc(now) < _utc(state.accepted[-1].accepted_at_utc):
+                raise ValueError("TRANSACTION_TIME_ROLLBACK")
+            semantic_key = ObservationSemanticKey.from_observation(payload)
+            semantic_prior = next(
+                (
+                    item
+                    for item in reversed(state.accepted)
+                    if ObservationSemanticKey.from_observation(item.observation)
+                    == semantic_key
+                ),
+                None,
+            )
+            if semantic_prior is not None:
+                prior_time = _utc(semantic_prior.accepted_at_utc)
+                transaction_time = _utc(now)
+                if transaction_time < prior_time:
+                    raise ValueError("TRANSACTION_TIME_ROLLBACK")
+                if transaction_time == prior_time:
+                    raise ValueError("SEMANTIC_TRANSACTION_TIME_COLLISION")
             observation = payload
             fingerprint = self._fingerprint(observation)
             policy = self._policies[observation.freshness_policy_id]
@@ -496,6 +534,65 @@ class ObservationAuthority:
             state = self._load_locked()
             return next((item for item in state.accepted if item.acceptance_id == acceptance_id), None)
 
+    def validate_historical_effective_acceptance(
+        self, acceptance_id: str, *, at_utc: str
+    ) -> AcceptedObservation:
+        """Prove accepted membership was effective-current at an historical instant.
+
+        This deliberately uses the accepted record's pinned policy and expiry, not
+        today's policy registry or enabled-environment projection.  Revision breaks
+        ties when multiple acceptances have the same whole-second acceptance time.
+        """
+        instant = _utc(at_utc)
+        with self._carrier.authority_fence():
+            state = self._load_locked()
+            requested = next(
+                (item for item in state.accepted if item.acceptance_id == acceptance_id),
+                None,
+            )
+            if requested is None:
+                raise ValueError("UNKNOWN_ACCEPTANCE")
+            eligible = tuple(
+                item
+                for item in state.accepted
+                if item.key == requested.key and _utc(item.accepted_at_utc) <= instant
+            )
+            if (
+                not eligible
+                or max(eligible, key=lambda item: item.transaction_revision) != requested
+                or instant >= _utc(requested.observation.expires_at_utc)
+            ):
+                raise ValueError("ACCEPTANCE_NOT_HISTORICALLY_EFFECTIVE")
+            return requested
+
+    def validate_historical_semantic_effective_acceptance(
+        self, acceptance_id: str, *, at_utc: str
+    ) -> AcceptedObservation:
+        """Prove S9D semantic currentness across runtime-session identities."""
+        instant = _utc(at_utc)
+        with self._carrier.authority_fence():
+            state = self._load_locked()
+            requested = next(
+                (item for item in state.accepted if item.acceptance_id == acceptance_id),
+                None,
+            )
+            if requested is None:
+                raise ValueError("UNKNOWN_ACCEPTANCE")
+            semantic_key = ObservationSemanticKey.from_observation(requested.observation)
+            eligible = tuple(
+                item
+                for item in state.accepted
+                if ObservationSemanticKey.from_observation(item.observation) == semantic_key
+                and _utc(item.accepted_at_utc) <= instant
+            )
+            if (
+                not eligible
+                or max(eligible, key=lambda item: item.transaction_revision) != requested
+                or instant >= _utc(requested.observation.expires_at_utc)
+            ):
+                raise ValueError("ACCEPTANCE_NOT_HISTORICALLY_EFFECTIVE")
+            return requested
+
     def resolve_current(self, selector: ObservationKey, *, now_utc: str) -> EffectiveCurrentObservation:
         with self._carrier.authority_fence():
             return self._resolve_current(self._load_locked(), selector, now_utc)
@@ -517,6 +614,36 @@ class ObservationAuthority:
                 raise ValueError("OBSERVATION_NOT_EFFECTIVE_CURRENT")
             return consumer(result.accepted)
 
+    def consume_semantic_effective_current(
+        self,
+        selector: ObservationSemanticKey,
+        *,
+        now_utc: str,
+        consumer: Callable[[AcceptedObservation], T],
+    ) -> T:
+        """Hold the carrier fence through consumption of the latest semantic record.
+
+        Exact-key currentness remains independently available.  Here the newest
+        transaction across runtime sessions wins, and an expired winner prevents
+        fallback to an older runtime's record.
+        """
+        now = _utc(now_utc)
+        if not isinstance(selector, ObservationSemanticKey):
+            raise ValueError("INVALID_SEMANTIC_KEY")
+        with self._carrier.authority_fence():
+            state = self._load_locked()
+            matches = tuple(
+                item
+                for item in state.accepted
+                if ObservationSemanticKey.from_observation(item.observation) == selector
+            )
+            if not matches:
+                raise ValueError("OBSERVATION_NOT_EFFECTIVE_CURRENT")
+            winner = max(matches, key=lambda item: item.transaction_revision)
+            if now >= _utc(winner.observation.expires_at_utc):
+                raise ValueError("OBSERVATION_NOT_EFFECTIVE_CURRENT")
+            return consumer(winner)
+
     def _load_locked(self) -> AtomicObservationAuthorityState:
         return self._pin(self._carrier.read())
 
@@ -536,6 +663,8 @@ class ObservationAuthority:
         expected_current: dict[ObservationKey, str] = {}
         expected_replay: dict[tuple[str, str, int], str] = {}
         expected_last: dict[tuple[str, str], int] = {}
+        previous_accepted_at: datetime | None = None
+        semantic_accepted_at: dict[ObservationSemanticKey, datetime] = {}
         for revision, record in enumerate(state.accepted, 1):
             if not isinstance(record, AcceptedObservation) or type(record.effective_reason_codes) is not tuple or not isinstance(record.observation, CanonicalObservation) or type(record.observation.scope) is not tuple or type(record.observation.value) is not tuple or (record.observation.correlation_reference is not None and type(record.observation.correlation_reference) is not tuple):
                 raise ValueError("CORRUPT_AUTHORITY_STATE")
@@ -558,6 +687,17 @@ class ObservationAuthority:
             if record.freshness_policy.policy_id != record.observation.freshness_policy_id:
                 raise ValueError("CORRUPT_AUTHORITY_STATE")
             policy_fingerprint = self._policy_fingerprint(record.freshness_policy)
+            accepted_at = _utc(record.accepted_at_utc)
+            if previous_accepted_at is not None and accepted_at < previous_accepted_at:
+                raise ValueError("CORRUPT_AUTHORITY_STATE")
+            previous_accepted_at = accepted_at
+            semantic_key = ObservationSemanticKey.from_observation(record.observation)
+            if (
+                semantic_key in semantic_accepted_at
+                and accepted_at <= semantic_accepted_at[semantic_key]
+            ):
+                raise ValueError("CORRUPT_AUTHORITY_STATE")
+            semantic_accepted_at[semantic_key] = accepted_at
             canonical = self._canonical(record.observation.mapping(), record.accepted_at_utc, historical_policy=record.freshness_policy, enforce_enabled=False)
             fingerprint = self._fingerprint(canonical)
             expected_id = self._acceptance_id(revision, record.accepted_at_utc, fingerprint, policy_fingerprint)
