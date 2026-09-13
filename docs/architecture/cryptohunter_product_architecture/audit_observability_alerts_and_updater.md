@@ -17,7 +17,7 @@
 ## `status`
 
 ```json
-"IN_PROGRESS_S9D_C22_SEMANTIC_TIME_NONRETROACTIVITY_OTHER_SOURCE_AUTHORITIES_OPEN"
+"IN_PROGRESS_S9D_C23_M09_EXECUTABLE_AUTHORITY_OTHER_SOURCE_AUTHORITIES_OPEN"
 ```
 
 ## `contract_identity`
@@ -25,8 +25,8 @@
 ```json
 {
   "contract_id": "M0.12-audit-observability-alerts-updater",
-  "version": "1.27.0",
-  "phase": "S9D_C22_SEMANTIC_TIME_NONRETROACTIVITY_OTHER_SOURCE_AUTHORITIES_OPEN",
+  "version": "1.28.0",
+  "phase": "S9D_C23_M09_EXECUTABLE_AUTHORITY_ADAPTER_OPEN",
   "machine_source_of_truth": true,
   "markdown_is_projection_only": true
 }
@@ -5058,7 +5058,8 @@
       },
       "KILL_SWITCH_ACTIVE": {
         "canonical_corrective_authority": "current accepted M0.9 INACTIVE exact scope/environment and generation >= alert source",
-        "executable_status": "OPEN_SOURCE_AUTHORITY"
+        "executable_status": "OPEN_SOURCE_AUTHORITY",
+        "upstream_authority_status": "M0.9_EXECUTABLE_KILL_SWITCH_AUTHORITY_AVAILABLE_ADAPTER_NOT_YET_INTEGRATED"
       },
       "RECONCILIATION_DIVERGENCE": {
         "canonical_corrective_authority": "accepted M0.8 MATCH exact complete reconciliation key",
@@ -5081,7 +5082,19 @@
         "executable_status": "OPEN_SOURCE_AUTHORITY"
       }
     },
-    "production_source_policy_status": "S9C_ADAPTER_INTEGRATED_SOURCE_PRODUCER_AUTHENTICITY_OPEN; OTHER_SOURCE_AUTHORITIES_OPEN",
+    "production_source_policy_status": "S9C_ADAPTER_INTEGRATED_SOURCE_PRODUCER_AUTHENTICITY_OPEN; M0.9_EXECUTABLE_KILL_SWITCH_AUTHORITY_AVAILABLE_ADAPTER_NOT_YET_INTEGRATED; OTHER_SOURCE_AUTHORITIES_OPEN",
+    "m09_kill_switch_authority": {
+      "executable_status": "AVAILABLE",
+      "implementation": "bot_core/m09_kill_switch_authority.py",
+      "membership_authority": "independent carrier-owned CoreAcceptedContentBinding membership plus accepted kill-switch context in durable carrier history; raw DTOs, records and fingerprints never self-enroll",
+      "frozen_boundary_types": "CoreAcceptedContentBinding(membership_id, content_fingerprint_sha256); PrevalidatedKillSwitchContext(history, membership_id, context_fingerprint_sha256)",
+      "restore_trust_chain": "revalidates Core membership, exact bound history content, accepted-authority membership reference, record fingerprints, context fingerprint, generation history and current projection",
+      "currentness": "exact scope_type, scope_id and environment designation",
+      "history_and_restore": "superseded membership retained and current projection reconstructed fail-closed from accepted history",
+      "generation": "positive non-boolean integer strictly increasing without reuse or rollback per exact scope/environment",
+      "carrier_fence": "consume_current holds the M0.9 carrier-wide fence through the downstream callback",
+      "kill_switch_active_alertstore_adapter": "NOT_YET_INTEGRATED_OPEN_SOURCE_AUTHORITY"
+    },
     "synthetic_source_resolution_policies": {
       "TEST_MULTI_SOURCE": "NON_PRODUCTION_TEST_FIXTURE",
       "OPERATOR_WORKFLOW_REQUIRED": "NON_PRODUCTION_TEST_FIXTURE_FOR_CLOSED_MANUAL_LIFECYCLE"
