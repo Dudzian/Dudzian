@@ -17,7 +17,7 @@
 ## `status`
 
 ```json
-"IN_PROGRESS_S9D_C18_BLOCKED_S9C_EXECUTABLE_SOURCE_AUTHORITY"
+"IN_PROGRESS_S9C_C14_EXECUTABLE_AUTHORITY_AVAILABLE_S9D_OPEN"
 ```
 
 ## `contract_identity`
@@ -25,8 +25,8 @@
 ```json
 {
   "contract_id": "M0.12-audit-observability-alerts-updater",
-  "version": "1.10.0",
-  "phase": "S9D_C18_BLOCKED_S9C_EXECUTABLE_SOURCE_AUTHORITY",
+  "version": "1.23.0",
+  "phase": "S9C_C14_EXECUTABLE_AUTHORITY_AVAILABLE_ADAPTER_NOT_YET_INTEGRATED",
   "machine_source_of_truth": true,
   "markdown_is_projection_only": true
 }
@@ -1759,6 +1759,75 @@
       "core_host": "FORBIDDEN_BY_CATEGORY_SOURCE_POLICY",
       "non_core": "LOCAL_SAFE_SESSION_REQUIRED"
     }
+  },
+  "executable_authority": {
+    "phase": "S9C_C14",
+    "production_module": "bot_core.observability.authority",
+    "production_types": [
+      "ObservationAuthority",
+      "FrozenEnvironmentRegistryBinding",
+      "ObservationAuthorityCarrier",
+      "InMemoryObservationAuthorityCarrier",
+      "AtomicObservationAuthorityState",
+      "CanonicalObservation",
+      "ObservationKey",
+      "AcceptedObservation",
+      "EffectiveCurrentObservation",
+      "FreshnessPolicy"
+    ],
+    "production_apis": [
+      "ObservationAuthority.compose",
+      "ObservationAuthority.resolve_historical_acceptance",
+      "ObservationAuthority.resolve_current",
+      "ObservationAuthority.consume_effective_current",
+      "owner composition return capability.publish (non-exported writer type)"
+    ],
+    "executable_categories": [
+      "MARKET_DATA_FRESHNESS",
+      "EXECUTION_PATH_HEALTH"
+    ],
+    "oracle_only_categories": [
+      "STRUCTURED_LOGS",
+      "METRICS",
+      "TRACES",
+      "COMPONENT_STATUS",
+      "ADAPTER_STATUS",
+      "PERSISTENCE_HEALTH",
+      "RECONCILIATION_HEALTH",
+      "SECURITY_RISK_GATE_HEALTH",
+      "RESOURCE_RUNTIME_HEALTH",
+      "UPDATE_RELEASE_STATE"
+    ],
+    "membership_authority": "EXECUTABLE_CARRIER_OWNED_ATOMIC_MEMBERSHIP",
+    "effective_current_authority": "EXECUTABLE_EXACT_KEY_QUERY_WITH_QUERY_TIME_EXPIRY_PROJECTION",
+    "historical_lookup": "EXECUTABLE_ACCEPTANCE_ID_LOOKUP_AFTER_SUPERSESSION_AND_RESTART",
+    "currentness_fence": "EXECUTABLE_CARRIER_WIDE_AUTHORITY_FENCE_HELD_THROUGH_DOWNSTREAM_CONSUMER_PUBLICATION",
+    "source_producer_authenticity": "OPEN_SOURCE_PRODUCER_AUTHENTICITY",
+    "physical_durable_m1_carrier": "OPEN_IN_MEMORY_REFERENCE_CARRIER_ONLY",
+    "s9d_adapter_integration": "NOT_IMPLEMENTED",
+    "retention_contract": {
+      "presentation_retention": "CURRENT_PLUS_BOUNDED_HISTORY",
+      "authority_provenance_retention": "RETAIN_WHILE_DURABLE_DOWNSTREAM_PROVENANCE_MAY_BE_RESTORED",
+      "resolution": "NO_CONFLICT_PRESENTATION_RETENTION_DOES_NOT_DELETE_REFERENCED_AUTHORITY_MEMBERSHIP"
+    },
+    "writer_capability_ownership": "NON_EXPORTED_CAPABILITY_MINTED_ONLY_BY_OBSERVATION_AUTHORITY_COMPOSE",
+    "restore_projection_validation": "EXACT_RECONSTRUCTION_OF_CURRENT_REPLAY_LAST_SEQUENCE_AND_ACCEPTANCE_ID_FROM_ACCEPTED_HISTORY",
+    "c1_differential_parity": "EXECUTABLE_CATEGORIES_DIFFERENTIALLY_TESTED_AGAINST_INDEPENDENT_OBSERVATION_REFERENCE",
+    "c1_lexical_parity": "EXACT_SAFE_HANDLE_128_AND_SAFE_CODE_64",
+    "canonical_environment_authority": "COMPILE_TIME_PINNED_PROJECTION_WITH_ARCHITECTURE_PARITY_TO_FROZEN_M0.4",
+    "historical_freshness_policy_binding": "IMMUTABLE_FULL_POLICY_SNAPSHOT_VERSION_AND_SHA256_FINGERPRINT",
+    "historical_policy_restore": "INDEPENDENT_OF_CURRENT_ACTIVE_POLICY_VERSION",
+    "historical_freshness_policy_validation": "SAME_CANONICAL_VALIDATOR_AS_LIVE_CONFIGURATION_POLICY_ID_EXACTLY_BOUND_TO_OBSERVATION",
+    "restore_transition_validation": "EXACT_REPLAY_OF_LIVE_CLOCK_SOURCE_EVENT_SEQUENCE_TRANSITION_RULES",
+    "canonical_environment_binding": "IMMUTABLE_OWNED_FROZENSET_PINNED_TO_FROZEN_M0.4",
+    "restore_primitive_shape_validation": "EXACT_TYPES_NO_BOOL_INT_ALIASING",
+    "sequence_replay_content_identity": "CANONICAL_JSON_FINGERPRINT_EXACT_SCALAR_TYPES_MAPPING_ORDER_INDEPENDENT_HISTORICAL_POLICY",
+    "sequence_replay_validation_order": "PRE_REPLAY_CANONICAL_PAYLOAD_THEN_KNOWN_SEQUENCE_FINGERPRINT_THEN_UNSEEN_TEMPORAL_FRESHNESS_TRANSITION",
+    "observation_ingress_primitive_validation": "EXACT_TYPES_BEFORE_HASH_BASED_LOOKUP_NO_RAW_HASHABILITY_EXCEPTIONS",
+    "canonical_json_scalar_validation": "STRICT_JSON_FINITE_NUMBERS_ONLY_ALLOW_NAN_FALSE",
+    "canonical_timestamp_validation": "STRICT_RFC3339_UTC_LEXICAL_GATE_NO_PYTHON_ISO8601_SUPERSET",
+    "historical_acceptance_identity": "REVISION_ACCEPTED_AT_CONTENT_POLICY_BOUND",
+    "numeric_representability": "VALUE_SOURCE_SEQUENCE_AND_POLICY_NUMBERS_FAIL_CLOSED_BEFORE_CANONICAL_SERIALIZATION_OR_TIMEDELTA_LIMITS"
   }
 }
 ```
@@ -5011,7 +5080,7 @@
         "executable_status": "OPEN_SOURCE_AUTHORITY"
       }
     },
-    "production_source_policy_status": "BLOCKED_S9C_EXECUTABLE_SOURCE_AUTHORITY: canonical S9C schema and pure test oracle exist, but no production membership/currentness fence or durable historical evidence API exists; all production source paths remain open",
+    "production_source_policy_status": "S9C_EXECUTABLE_AUTHORITY_AVAILABLE_ADAPTER_NOT_YET_INTEGRATED: membership, exact effective-current fencing, and historical lookup exist for both S9D source categories; AlertStore source paths remain OPEN_SOURCE_AUTHORITY until adapter integration",
     "synthetic_source_resolution_policies": {
       "TEST_MULTI_SOURCE": "NON_PRODUCTION_TEST_FIXTURE",
       "OPERATOR_WORKFLOW_REQUIRED": "NON_PRODUCTION_TEST_FIXTURE_FOR_CLOSED_MANUAL_LIFECYCLE"
@@ -5023,16 +5092,16 @@
     "immutable_atomic_pin": "load_atomic_state is defensively pinned: tuple record collections and nested tuple semantics require exact immutable shapes, while mappings are copied into owned MappingProxyType projections; carrier-retained mutable aliases cannot change restore validation",
     "schema_parity": "machine closed-object required_fields exactly equal dataclasses.fields for DeliveryAttempt, MutationHistoryEntry, OperatorReplayEntry, and HistoricalSourceDecision",
     "s9d_c18_source_authority_disposition": {
-      "status": "BLOCKED_S9C_EXECUTABLE_SOURCE_AUTHORITY",
+      "status": "S9C_EXECUTABLE_AUTHORITY_AVAILABLE_ADAPTER_NOT_YET_INTEGRATED",
       "frozen_canonical_artifact": "audit_observability_alerts_and_updater.json observability_model",
       "executable_oracle": "tests/architecture/test_cryptohunter_audit_observability_alerts_and_updater.py S9C-C1 pure executable oracle",
-      "production_api": "ABSENT",
-      "production_types": "ABSENT",
-      "membership_authority": "ABSENT: S9C accepts injected UpstreamReadinessEvidence only inside a test oracle; no production-owned accepted observation membership API exists",
-      "currentness_and_expiry_fence": "ABSENT: no S9C production transaction, lock, snapshot token, or revision fence can be held or verified through AlertStore publication",
-      "durable_historical_lookup": "ABSENT: no S9C production API resolves accepted historical observation A after effective-current advances to B",
-      "failing_authority": "ABSENT: no production S9C API authorizes the non-OK observation for either alert type",
-      "alertstore_adapter": "NOT_IMPLEMENTED: an adapter would invent authority rather than consume a frozen executable S9C owner",
+      "production_api": "ObservationAuthority.resolve_historical_acceptance, ObservationAuthority.resolve_current, ObservationAuthority.consume_effective_current; non-exported owner-composed writer capability publish",
+      "production_types": "bot_core.observability.authority ObservationAuthority, ObservationAuthorityCarrier, AtomicObservationAuthorityState, AcceptedObservation, ObservationKey",
+      "membership_authority": "EXECUTABLE: carrier-owned accepted history; content fingerprints do not mint membership",
+      "currentness_and_expiry_fence": "EXECUTABLE: carrier-wide authority fence serializes independent runtime views and is held through downstream consumer durable publication",
+      "durable_historical_lookup": "EXECUTABLE: carrier state restores superseded accepted A independently of freshness/currentness and process caches",
+      "failing_authority": "AVAILABLE_NOT_INTEGRATED: accepted non-OK S9C membership can be resolved, but AlertStore adapter is intentionally absent",
+      "alertstore_adapter": "NOT_IMPLEMENTED: next S9D adapter slice must consume carrier-owned accepted membership",
       "market_data_current_condition": "OPEN_SOURCE_AUTHORITY",
       "execution_route_condition": "OPEN_SOURCE_AUTHORITY"
     }

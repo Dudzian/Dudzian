@@ -131,3 +131,16 @@ __all__ = [
     "evaluate_slo",
     "write_slo_results_csv",
 ]
+
+from .authority import (  # noqa: E402
+    AcceptedObservation,
+    AtomicObservationAuthorityState,
+    CanonicalObservation,
+    EffectiveCurrentObservation,
+    FrozenEnvironmentRegistryBinding,
+    FreshnessPolicy,
+    InMemoryObservationAuthorityCarrier,
+    ObservationAuthority,
+    ObservationAuthorityCarrier,
+    ObservationKey,
+)
