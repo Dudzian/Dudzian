@@ -1,11 +1,11 @@
 {
   "schema_version": "cryptohunter.audit_observability_alerts_and_updater.v1",
   "m0_element": "M0.12",
-  "status": "IN_PROGRESS_S9D_C23_M09_EXECUTABLE_AUTHORITY_OTHER_SOURCE_AUTHORITIES_OPEN",
+  "status": "IN_PROGRESS_S9D_C24_R1_M09_HISTORICAL_CURRENTNESS_OTHER_SOURCE_AUTHORITIES_OPEN",
   "contract_identity": {
     "contract_id": "M0.12-audit-observability-alerts-updater",
-    "version": "1.28.0",
-    "phase": "S9D_C23_M09_EXECUTABLE_AUTHORITY_ADAPTER_OPEN",
+    "version": "1.29.1",
+    "phase": "S9D_C24_R1_M09_HISTORICAL_CURRENTNESS_CLOSED",
     "machine_source_of_truth": true,
     "markdown_is_projection_only": true
   },
@@ -4997,8 +4997,7 @@
         },
         "KILL_SWITCH_ACTIVE": {
           "canonical_corrective_authority": "current accepted M0.9 INACTIVE exact scope/environment and generation >= alert source",
-          "executable_status": "OPEN_SOURCE_AUTHORITY",
-          "upstream_authority_status": "M0.9_EXECUTABLE_KILL_SWITCH_AUTHORITY_AVAILABLE_ADAPTER_NOT_YET_INTEGRATED"
+          "executable_status": "M09_ADAPTER_INTEGRATED_SOURCE_PRODUCER_AUTHENTICITY_OPEN"
         },
         "RECONCILIATION_DIVERGENCE": {
           "canonical_corrective_authority": "accepted M0.8 MATCH exact complete reconciliation key",
@@ -5021,7 +5020,7 @@
           "executable_status": "OPEN_SOURCE_AUTHORITY"
         }
       },
-      "production_source_policy_status": "S9C_ADAPTER_INTEGRATED_SOURCE_PRODUCER_AUTHENTICITY_OPEN; M0.9_EXECUTABLE_KILL_SWITCH_AUTHORITY_AVAILABLE_ADAPTER_NOT_YET_INTEGRATED; OTHER_SOURCE_AUTHORITIES_OPEN",
+      "production_source_policy_status": "S9C_AND_M09_ADAPTERS_INTEGRATED_SOURCE_PRODUCER_AUTHENTICITY_OPEN; OTHER_SOURCE_AUTHORITIES_OPEN",
       "m09_kill_switch_authority": {
         "executable_status": "AVAILABLE",
         "implementation": "bot_core/m09_kill_switch_authority.py",
@@ -5032,7 +5031,10 @@
         "history_and_restore": "superseded membership retained and current projection reconstructed fail-closed from accepted history",
         "generation": "positive non-boolean integer strictly increasing without reuse or rollback per exact scope/environment",
         "carrier_fence": "consume_current holds the M0.9 carrier-wide fence through the downstream callback",
-        "kill_switch_active_alertstore_adapter": "NOT_YET_INTEGRATED_OPEN_SOURCE_AUTHORITY"
+        "kill_switch_active_alertstore_adapter": "INTEGRATED_PRODUCTION_SOURCE_AUTHORITY",
+        "accepted_transaction_time": "AcceptedKillSwitchAuthorityEntry.accepted_at_utc is explicit trusted carrier transaction metadata; never inferred from KillSwitchRecord.effective_at_utc",
+        "transaction_time_ordering": "global nondecreasing for accepted entries; per exact scope/environment strictly increasing only for genuinely-new transitions; exact replay and overlap are exempt from per-scope advancement",
+        "historical_currentness": "resolve_historical_current_record reconstructs exact per-scope current designation at transaction time under carrier fence; issuance and restore both require this proof plus effective_at_utc <= transaction time"
       },
       "synthetic_source_resolution_policies": {
         "TEST_MULTI_SOURCE": "NON_PRODUCTION_TEST_FIXTURE",

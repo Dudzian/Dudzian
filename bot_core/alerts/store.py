@@ -95,7 +95,7 @@ PRODUCTION_SOURCE_RESOLUTION_POLICIES = MappingProxyType(
         ),
         "KILL_SWITCH_ACTIVE": (
             "current accepted M0.9 INACTIVE exact scope/environment and generation >= alert source",
-            "OPEN_SOURCE_AUTHORITY",
+            "M09_ADAPTER_INTEGRATED_SOURCE_PRODUCER_AUTHENTICITY_OPEN",
         ),
         "RECONCILIATION_DIVERGENCE": (
             "accepted M0.8 MATCH exact complete reconciliation key",
@@ -121,6 +121,9 @@ PRODUCTION_SOURCE_RESOLUTION_POLICIES = MappingProxyType(
 )
 
 S9C_PRODUCTION_RESOLUTION_POLICY_ID = "S9D/S9C_EFFECTIVE_CURRENT_OK_EXACT_SCOPE_V1"
+M09_PRODUCTION_RESOLUTION_POLICY_ID = (
+    "M0.9/CURRENT_INACTIVE_EXACT_SCOPE_ENVIRONMENT_GENERATION_V1"
+)
 
 
 def _source_resolution_policy(selector: SourceSelector) -> tuple[bool, str] | None:
@@ -140,6 +143,15 @@ def _source_resolution_policy(selector: SourceSelector) -> tuple[bool, str] | No
         and selector.required_source_ids[0].startswith("s9c-source-")
     ):
         return True, S9C_PRODUCTION_RESOLUTION_POLICY_ID
+    if (
+        selector.alert_type == "KILL_SWITCH_ACTIVE"
+        and selector.source_family == "UPSTREAM_STATE_CONDITION"
+        and selector.fact_type == "M09_KILL_SWITCH"
+        and selector.resolution_policy_id == M09_PRODUCTION_RESOLUTION_POLICY_ID
+        and len(selector.required_source_ids) == 1
+        and selector.required_source_ids[0].startswith("m09-source-")
+    ):
+        return True, M09_PRODUCTION_RESOLUTION_POLICY_ID
     return CANONICAL_SOURCE_RESOLUTION_POLICIES.get(
         (
             selector.alert_type, selector.source_family, selector.environment,
