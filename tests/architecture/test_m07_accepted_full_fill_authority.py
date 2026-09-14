@@ -206,3 +206,39 @@ def test_overfill_and_fifo_cannot_be_claimed_without_genuine_order_lifecycle_aut
     # and M0.7 lifecycle/order projections are production authorities.
     _, writer = accounting()
     assert not hasattr(writer, "accept_fill")
+
+
+def test_m05_discovery_records_missing_independent_membership_anchor():
+    """Schemas, DTOs and the frozen oracle must not be reported as production authority."""
+    from pathlib import Path
+
+    root = Path(__file__).parents[2]
+    machine = json.loads((root / "docs/architecture/cryptohunter_product_architecture/audit_observability_alerts_and_updater.json").read_text(encoding="utf-8"))
+    closure = machine["alert_model"]["executable_authority"]["s9d_c25_m08_reconciliation_authority_disposition"]
+    boundary = closure["m07_full_fill_authority_boundary"]
+    dependency = boundary["m05_historical_instrument_dependency"]
+
+    assert closure["m07_full_fill_authority"] == (
+        "M07_FULL_FILL_AUTHORITY_BLOCKED_M05_HISTORICAL_INSTRUMENT_AND_M07_LIFECYCLE_AUTHORITY"
+    )
+    assert dependency["status"] == "MISSING_GENUINE_UPSTREAM_CATALOG_SOURCE_MEMBERSHIP_AUTHORITY"
+    assert dependency["genuine_production_authority"] == "NOT_FOUND"
+    assert dependency["downstream_nominal_projection"].startswith("NOT_IMPLEMENTED")
+    assert dependency["coherent_reseal_disposition"].startswith("BLOCKED_FAIL_CLOSED")
+    assert dependency["restore_disposition"].startswith("UNAVAILABLE")
+    assert "independently authenticated exchange-adapter ingestion authority" in dependency["missing_upstream_anchor"]
+
+
+def test_raw_catalog_and_instrument_have_no_production_enrollment_or_restore_surface():
+    """A coherent local reseal cannot attack an API which correctly remains absent."""
+    import bot_core.execution as execution
+
+    forbidden = {
+        "M05PrevalidatedInstrumentHistory",
+        "InstrumentHistoryAuthority",
+        "AcceptedInstrumentHistory",
+        "restore_instrument_history",
+        "accept_instrument",
+        "accept_catalog",
+    }
+    assert forbidden.isdisjoint(vars(execution))
