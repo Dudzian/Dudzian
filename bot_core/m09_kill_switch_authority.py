@@ -174,6 +174,7 @@ class PrevalidatedKillSwitchContext:
 @dataclass(frozen=True, slots=True)
 class AcceptedKillSwitchAuthorityEntry:
     transaction_revision: int
+    accepted_at_utc: str
     context: PrevalidatedKillSwitchContext
 
 
@@ -219,8 +220,10 @@ class _KillSwitchWriter:
     def __init__(self, authority: KillSwitchAuthority) -> None:
         self.__authority = authority
 
-    def accept(self, context: PrevalidatedKillSwitchContext) -> AcceptedKillSwitchAuthorityEntry:
-        return self.__authority._accept(context)  # noqa: SLF001
+    def accept(
+        self, context: PrevalidatedKillSwitchContext, *, now_utc: str
+    ) -> AcceptedKillSwitchAuthorityEntry:
+        return self.__authority._accept(context, now_utc=now_utc)  # noqa: SLF001
 
 
 class KillSwitchAuthority:
@@ -317,7 +320,25 @@ class KillSwitchAuthority:
             raise KillSwitchAuthorityError("TRUSTED_CONTEXT_FAILURE")
         return context
 
-    def _accept(self, context: PrevalidatedKillSwitchContext) -> AcceptedKillSwitchAuthorityEntry:
+    @staticmethod
+    def _transaction_time(value: object, *, error: str) -> datetime:
+        try:
+            parsed = datetime.fromisoformat(value.removesuffix("Z") + "+00:00")
+            valid = (
+                type(value) is str
+                and value.endswith("Z")
+                and parsed.tzinfo == timezone.utc
+                and parsed.isoformat().replace("+00:00", "Z") == value
+            )
+        except (AttributeError, ValueError):
+            valid = False
+        if not valid:
+            raise KillSwitchAuthorityError(error)
+        return parsed
+
+    def _accept(
+        self, context: PrevalidatedKillSwitchContext, *, now_utc: str
+    ) -> AcceptedKillSwitchAuthorityEntry:
         context = self._validate_context(context)
         with self._carrier.authority_fence():
             before = self._carrier.read()
@@ -334,13 +355,27 @@ class KillSwitchAuthority:
                 if replay.context != context:
                     raise KillSwitchAuthorityError("TRUSTED_CONTEXT_FAILURE")
                 return replay
+            accepted_at = self._transaction_time(now_utc, error="TRUSTED_CONTEXT_FAILURE")
             known, generations, current = self._reconstructed_history(before)
             genuinely_new = self._reconcile_context(
                 context, known=known, generations=generations,
                 error="TRUSTED_CONTEXT_FAILURE",
             )
+            if before.accepted:
+                previous = self._transaction_time(
+                    before.accepted[-1].accepted_at_utc,
+                    error="CORRUPT_AUTHORITY_STATE",
+                )
+                if accepted_at < previous:
+                    raise KillSwitchAuthorityError("TRUSTED_CONTEXT_FAILURE")
+            latest_by_scope = self._latest_transition_times(before)
+            if any(
+                scope in latest_by_scope and accepted_at <= latest_by_scope[scope]
+                for scope in genuinely_new
+            ):
+                raise KillSwitchAuthorityError("TRUSTED_CONTEXT_FAILURE")
             revision = before.store_revision + 1
-            entry = AcceptedKillSwitchAuthorityEntry(revision, context)
+            entry = AcceptedKillSwitchAuthorityEntry(revision, now_utc, context)
             for scope in genuinely_new:
                 current[scope] = context.membership_id
             replacement = AtomicKillSwitchAuthorityState(revision, before.accepted + (entry,), tuple(current.items()))
@@ -393,10 +428,99 @@ class KillSwitchAuthority:
                 current[scope] = entry.context.membership_id
         return known, generations, current
 
+    @classmethod
+    def _latest_transition_times(
+        cls, state: AtomicKillSwitchAuthorityState
+    ) -> dict[tuple[str, str, str], datetime]:
+        known: dict[tuple[str, str, str, int], KillSwitchRecord] = {}
+        generations: dict[tuple[str, str, str], int] = {}
+        result: dict[tuple[str, str, str], datetime] = {}
+        for entry in state.accepted:
+            new_scopes = cls._reconcile_context(
+                entry.context, known=known, generations=generations,
+                error="CORRUPT_AUTHORITY_STATE",
+            )
+            accepted_at = cls._transaction_time(
+                entry.accepted_at_utc, error="CORRUPT_AUTHORITY_STATE"
+            )
+            for scope in new_scopes:
+                if scope in result and accepted_at <= result[scope]:
+                    raise KillSwitchAuthorityError("CORRUPT_AUTHORITY_STATE")
+                result[scope] = accepted_at
+        return result
+
     def resolve_historical(self, membership_id: str) -> AcceptedKillSwitchAuthorityEntry | None:
         with self._carrier.authority_fence():
             state = self._validated_read()
             return next((item for item in state.accepted if item.context.membership_id == membership_id), None)
+
+    def resolve_historical_record(
+        self, *, membership_id: str, record_fingerprint_sha256: str
+    ) -> tuple[AcceptedKillSwitchAuthorityEntry, KillSwitchRecord] | None:
+        """Resolve an exact accepted record under the durable carrier fence."""
+        with self._carrier.authority_fence():
+            state = self._validated_read()
+            entry = next(
+                (item for item in state.accepted if item.context.membership_id == membership_id),
+                None,
+            )
+            if entry is None:
+                return None
+            matches = tuple(
+                record for record in entry.context.history
+                if record.record_fingerprint_sha256 == record_fingerprint_sha256
+            )
+            if len(matches) != 1:
+                return None
+            return entry, matches[0]
+
+    def resolve_historical_current_record(
+        self, *, membership_id: str, record_fingerprint_sha256: str, at_utc: str
+    ) -> tuple[AcceptedKillSwitchAuthorityEntry, KillSwitchRecord] | None:
+        """Resolve exact effective-current accepted membership at transaction time."""
+        at = self._transaction_time(at_utc, error="TRUSTED_CONTEXT_FAILURE")
+        with self._carrier.authority_fence():
+            state = self._validated_read()
+            historical = tuple(
+                entry for entry in state.accepted
+                if self._transaction_time(
+                    entry.accepted_at_utc, error="CORRUPT_AUTHORITY_STATE"
+                ) <= at
+            )
+            prefix = AtomicKillSwitchAuthorityState(
+                len(historical), historical, ()
+            )
+            _known, _generations, current = self._reconstructed_history(prefix)
+            entry = next(
+                (item for item in historical if item.context.membership_id == membership_id),
+                None,
+            )
+            if entry is None:
+                return None
+            matches = tuple(
+                record for record in entry.context.history
+                if record.record_fingerprint_sha256 == record_fingerprint_sha256
+            )
+            if len(matches) != 1:
+                return None
+            record = matches[0]
+            if (
+                current.get(self._scope(record)) != membership_id
+                or self._transaction_time(
+                    record.effective_at_utc, error="CORRUPT_AUTHORITY_STATE"
+                ) > at
+            ):
+                return None
+            # A full-history context can contain an older record for a scope it
+            # advances.  The reference must identify its exact latest record.
+            current_record = max(
+                (
+                    item for item in entry.context.history
+                    if self._scope(item) == self._scope(record)
+                ),
+                key=lambda item: item.generation,
+            )
+            return (entry, record) if current_record == record else None
 
     def resolve_current(self, *, scope_type: str, scope_id: str, environment: str) -> AcceptedKillSwitchAuthorityEntry | None:
         with self._carrier.authority_fence():
@@ -429,14 +553,22 @@ class KillSwitchAuthority:
             ):
                 raise KillSwitchAuthorityError("CORRUPT_AUTHORITY_STATE")
             memberships: set[str] = set()
+            previous_time: datetime | None = None
             for revision, entry in enumerate(state.accepted, 1):
                 if not isinstance(entry, AcceptedKillSwitchAuthorityEntry) or entry.transaction_revision != revision:
                     raise KillSwitchAuthorityError("CORRUPT_AUTHORITY_STATE")
                 context = self._validate_context(entry.context)
+                accepted_at = self._transaction_time(
+                    entry.accepted_at_utc, error="CORRUPT_AUTHORITY_STATE"
+                )
+                if previous_time is not None and accepted_at < previous_time:
+                    raise KillSwitchAuthorityError("CORRUPT_AUTHORITY_STATE")
+                previous_time = accepted_at
                 if context.membership_id in memberships:
                     raise KillSwitchAuthorityError("CORRUPT_AUTHORITY_STATE")
                 memberships.add(context.membership_id)
             _known, _generations, expected = self._reconstructed_history(state)
+            self._latest_transition_times(state)
             actual = dict(state.current)
             if len(actual) != len(state.current) or actual != expected:
                 raise KillSwitchAuthorityError("CORRUPT_AUTHORITY_STATE")
