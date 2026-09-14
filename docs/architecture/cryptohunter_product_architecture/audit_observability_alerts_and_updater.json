@@ -1,11 +1,11 @@
 {
   "schema_version": "cryptohunter.audit_observability_alerts_and_updater.v1",
   "m0_element": "M0.12",
-  "status": "IN_PROGRESS_S9D_C24_R1_M09_HISTORICAL_CURRENTNESS_OTHER_SOURCE_AUTHORITIES_OPEN",
+  "status": "IN_PROGRESS_S9D_C25_BLOCKED_M08_EXECUTABLE_RECONCILIATION_AUTHORITY_OTHER_SOURCE_AUTHORITIES_OPEN",
   "contract_identity": {
     "contract_id": "M0.12-audit-observability-alerts-updater",
-    "version": "1.29.1",
-    "phase": "S9D_C24_R1_M09_HISTORICAL_CURRENTNESS_CLOSED",
+    "version": "1.30.0",
+    "phase": "S9D_C25_BLOCKED_M08_EXECUTABLE_RECONCILIATION_AUTHORITY",
     "machine_source_of_truth": true,
     "markdown_is_projection_only": true
   },
@@ -5035,6 +5035,27 @@
         "accepted_transaction_time": "AcceptedKillSwitchAuthorityEntry.accepted_at_utc is explicit trusted carrier transaction metadata; never inferred from KillSwitchRecord.effective_at_utc",
         "transaction_time_ordering": "global nondecreasing for accepted entries; per exact scope/environment strictly increasing only for genuinely-new transitions; exact replay and overlap are exempt from per-scope advancement",
         "historical_currentness": "resolve_historical_current_record reconstructs exact per-scope current designation at transaction time under carrier fence; issuance and restore both require this proof plus effective_at_utc <= transaction time"
+      },
+      "s9d_c25_m08_reconciliation_authority_disposition": {
+        "status": "S9D_C25_BLOCKED_M08_EXECUTABLE_RECONCILIATION_AUTHORITY",
+        "discovery_scope": "local production bot_core, frozen M0.8 machine contract, and architecture/reference tests were searched independently",
+        "production_discovery": "no production executable M0.8 accepted journal/accounting projection, CoreAcceptedObservedBalanceFactProjection, accepted reconciliation-result authority, durable reconciliation history, or owner-composed reconciliation publisher/carrier exists",
+        "non_authorities_found": "bot_core.execution.paper.LedgerEntry is a paper execution DTO; bot_core.persistence.record_registry contains contract/schema metadata; AccountingRiskProjection, CoreAcceptedAccountingFactProjection, AssetReference, observed-fact validation, and reconciliation outcome computation exist only in tests/architecture/test_cryptohunter_ledger_portfolio_capital_and_pnl.py",
+        "frozen_semantics_available": "M0.8 fixes the complete key, outcomes, observed fact fields, source-authority requirement and outcome rules, but does not provide executable durable membership/publication/restore semantics for either required authority side",
+        "missing_upstream_dependencies": [
+          "production carrier-owned accepted M0.8 journal/accounting history that derives exact projected quantity for the complete reconciliation key at as_of_utc",
+          "production CoreAcceptedObservedBalanceFactProjection that maps source_id to exact accepted fingerprint, scope, AssetReference and balance semantics",
+          "production durable accepted reconciliation-result carrier and owner-composed publisher/consumption fence"
+        ],
+        "safety_disposition": "BLOCKED rather than accepting caller-owned internal_quantity, raw snapshots, source_id, self-hashes, or caller-declared outcomes",
+        "match_authority": "UNAVAILABLE; MATCH cannot be produced until both independent accepted authority sides exist and exact quantities compare equal",
+        "reconciliation_divergence_alertstore_adapter": "NOT_STARTED",
+        "reconciliation_divergence_status": "OPEN_SOURCE_AUTHORITY",
+        "source_producer_authenticity": "OPEN",
+        "s9d": "OPEN",
+        "updater": "NOT_STARTED",
+        "m010": "CLOSED",
+        "c24_r1": "CLOSED"
       },
       "synthetic_source_resolution_policies": {
         "TEST_MULTI_SOURCE": "NON_PRODUCTION_TEST_FIXTURE",
