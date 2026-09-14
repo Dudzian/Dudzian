@@ -25,7 +25,7 @@
 ```json
 {
   "contract_id": "M0.12-audit-observability-alerts-updater",
-  "version": "1.34.0",
+  "version": "1.35.0",
   "phase": "S9D_C25_BLOCKED_M08_EXECUTABLE_RECONCILIATION_AUTHORITY",
   "machine_source_of_truth": true,
   "markdown_is_projection_only": true
@@ -5142,7 +5142,37 @@
         "raw_structural_fill": "structural/fingerprint validation only; NOT trusted economic authority",
         "trusted_economic_fill": "BLOCKED: requires genuine prevalidated M0.5 historical Instrument authority; raw Instrument plus local fingerprint cannot create membership",
         "complete_accepted_history": "BLOCKED: requires Core-owned accepted_fill_ids_by_order_id derived only from accepted M0.7 lifecycle history",
-        "accounting": "BLOCKED: AccountingAuthority exposes no accept_fill path and does not claim incomplete OWNED_AVAILABLE spend, reserved consumption, FIFO lots, or Fill-derived realized P&L under ACCOUNTING_SPOT_FIFO_V1"
+        "accounting": "BLOCKED: AccountingAuthority exposes no accept_fill path and does not claim incomplete OWNED_AVAILABLE spend, reserved consumption, FIFO lots, or Fill-derived realized P&L under ACCOUNTING_SPOT_FIFO_V1",
+        "m05_historical_instrument_dependency": {
+          "status": "MISSING_GENUINE_UPSTREAM_CATALOG_SOURCE_MEMBERSHIP_AUTHORITY",
+          "discovery_scope": [
+            "bot_core production modules",
+            "M0.5 Instrument and InstrumentCatalogSnapshot machine contract",
+            "M0.5 executable architecture oracle",
+            "M0.6 downstream Instrument/Catalog projections",
+            "persistence record registry",
+            "runtime DTO and event surfaces"
+          ],
+          "genuine_production_authority": "NOT_FOUND",
+          "production_schema_dto": "persistence registry and runtime records describe storage/transport shapes only; restorable_authority=false does not mint accepted M0.5 membership",
+          "test_reference_oracle": "tests/architecture/test_cryptohunter_exchange_accounts_and_instruments.py contains the frozen full Instrument/Catalog graph validator and M05PrevalidatedInstrumentHistory remains a test-only nominal reference type",
+          "documentation_machine_contract": "exchange_accounts_and_instruments.json defines full Instrument history, bidirectional Catalog membership, scope/adapter binding, and Catalog lineage rules but is not runtime acceptance evidence",
+          "downstream_reference_evidence": "M0.6 InstrumentCatalogProjection and related projections consume M0.5 semantics but do not attest source acceptance",
+          "missing_upstream_anchor": "Core-owned accepted Catalog/source membership issued by an independently authenticated exchange-adapter ingestion authority, with durable immutable Catalog lineage and exact Catalog-to-Instrument membership",
+          "forbidden_substitutes": [
+            "raw Instrument mapping",
+            "raw Catalog mapping",
+            "caller-provided prevalidated boolean",
+            "local Instrument or Catalog fingerprint",
+            "persistence schema or DTO",
+            "runtime event",
+            "reference-test model",
+            "owner method accepting arbitrary raw metadata"
+          ],
+          "coherent_reseal_disposition": "BLOCKED_FAIL_CLOSED: no production restore/resolve API is created; raw Catalog plus raw Instrument plus recomputed local fingerprints cannot be promoted to accepted membership",
+          "restore_disposition": "UNAVAILABLE until restore can revalidate every historical membership against the independent upstream Catalog/source authority",
+          "downstream_nominal_projection": "NOT_IMPLEMENTED: M05PrevalidatedInstrumentHistory exists only in the executable reference oracle"
+        }
       }
     },
     "synthetic_source_resolution_policies": {
