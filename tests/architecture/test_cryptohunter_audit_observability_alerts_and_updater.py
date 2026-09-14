@@ -96,7 +96,7 @@ def test_identity_status_and_exact_top_level_shape() -> None:
     assert MACHINE["status"] == "IN_PROGRESS_S9D_C25_BLOCKED_M08_EXECUTABLE_RECONCILIATION_AUTHORITY_OTHER_SOURCE_AUTHORITIES_OPEN"
     assert MACHINE["contract_identity"] == {
         "contract_id": "M0.12-audit-observability-alerts-updater",
-        "version": "1.30.0",
+        "version": "1.32.0",
         "phase": "S9D_C25_BLOCKED_M08_EXECUTABLE_RECONCILIATION_AUTHORITY",
         "machine_source_of_truth": True,
         "markdown_is_projection_only": True,
@@ -5679,7 +5679,7 @@ def test_s9d_c25_status_is_honestly_blocked_and_updater_stays_not_started() -> N
     assert MACHINE["status"] == "IN_PROGRESS_S9D_C25_BLOCKED_M08_EXECUTABLE_RECONCILIATION_AUTHORITY_OTHER_SOURCE_AUTHORITIES_OPEN"
     assert MACHINE["contract_identity"] == {
         "contract_id": "M0.12-audit-observability-alerts-updater",
-        "version": "1.30.0",
+        "version": "1.32.0",
         "phase": "S9D_C25_BLOCKED_M08_EXECUTABLE_RECONCILIATION_AUTHORITY",
         "machine_source_of_truth": True,
         "markdown_is_projection_only": True,
@@ -5854,7 +5854,13 @@ def test_s9d_c25_records_honest_m08_reconciliation_authority_blocker() -> None:
     disposition = alerting["s9d_c25_m08_reconciliation_authority_disposition"]
     assert disposition["status"] == "S9D_C25_BLOCKED_M08_EXECUTABLE_RECONCILIATION_AUTHORITY"
     assert disposition["match_authority"].startswith("UNAVAILABLE")
-    assert len(disposition["missing_upstream_dependencies"]) == 3
+    assert disposition["internal_accounting_authority"] == (
+        "M0.8_INTERNAL_ACCOUNTING_AUTHORITY_BLOCKED_UPSTREAM_SOURCE_MEMBERSHIP"
+    )
+    assert disposition["observed_balance_authority"] == "MISSING"
+    assert disposition["reconciliation_result_authority"] == "MISSING"
+    assert len(disposition["missing_upstream_dependencies"]) == 4
+    assert disposition["c26"] == "NOT_STARTED"
     assert disposition["reconciliation_divergence_alertstore_adapter"] == "NOT_STARTED"
     assert disposition["reconciliation_divergence_status"] == "OPEN_SOURCE_AUTHORITY"
     assert disposition["source_producer_authenticity"] == "OPEN"
