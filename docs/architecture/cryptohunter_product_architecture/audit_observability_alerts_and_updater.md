@@ -25,7 +25,7 @@
 ```json
 {
   "contract_id": "M0.12-audit-observability-alerts-updater",
-  "version": "1.32.0",
+  "version": "1.34.0",
   "phase": "S9D_C25_BLOCKED_M08_EXECUTABLE_RECONCILIATION_AUTHORITY",
   "machine_source_of_truth": true,
   "markdown_is_projection_only": true
@@ -5100,13 +5100,12 @@
     "s9d_c25_m08_reconciliation_authority_disposition": {
       "status": "S9D_C25_BLOCKED_M08_EXECUTABLE_RECONCILIATION_AUTHORITY",
       "discovery_scope": "local production bot_core, frozen M0.8 machine contract, and architecture/reference tests were searched independently",
-      "production_discovery": "production typed M0.8 accepted exact-economic AuditEvent authority and accounting journal exist for deposit and withdrawal; production M0.7 composite accepted Full Fill, accepted command context, accepted terminal lifecycle context, CoreAcceptedObservedBalanceFactProjection, and accepted reconciliation-result authority do not exist",
+      "production_discovery": "production typed M0.8 accepted exact-economic AuditEvent authority and accounting journal exist for deposit and withdrawal; production CoreAcceptedObservedBalanceFactProjection now exists; production M0.7 composite accepted Full Fill, accepted command context, accepted terminal lifecycle context, and accepted reconciliation-result authority do not exist",
       "non_authorities_found": "generic CoreAcceptedContentBinding is only a lower trust-chain component and cannot prove M0.8 source semantics; bot_core.execution.paper.LedgerEntry remains a paper execution DTO; architecture/reference implementations remain oracle-only",
-      "frozen_semantics_available": "M0.8 fixes the complete key, outcomes, observed fact fields, source-authority requirement and outcome rules, but does not provide executable durable membership/publication/restore semantics for either required authority side",
+      "frozen_semantics_available": "M0.8 fixes the complete key, outcomes, observed fact fields, source-authority requirement and outcome rules; R2 implements only durable external-observation membership and does not implement reconciliation outcomes",
       "missing_upstream_dependencies": [
         "production M0.7 composite trusted accepted Full Fill authority required for authoritative trade accounting history",
         "production M0.7 accepted SUBMIT_ORDER command and terminal lifecycle/event contexts required for capital reservation and release accounting",
-        "production CoreAcceptedObservedBalanceFactProjection that maps source_id to exact accepted fingerprint, scope, AssetReference and balance semantics",
         "production durable accepted reconciliation-result carrier and owner-composed publisher/consumption fence"
       ],
       "safety_disposition": "BLOCKED rather than accepting caller-owned internal_quantity, raw snapshots, source_id, self-hashes, or caller-declared outcomes",
@@ -5120,9 +5119,20 @@
       "c24_r1": "CLOSED",
       "internal_accounting_authority": "M0.8_INTERNAL_ACCOUNTING_AUTHORITY_BLOCKED_UPSTREAM_SOURCE_MEMBERSHIP",
       "internal_accounting_authority_boundary": "CoreAcceptedAccountingFactProjection binds and independently fingerprints exact deposit/withdrawal economics; AccountingAuthority derives immutable postings and revalidates typed upstream authority on restore; complete authority remains blocked by absent production M0.7 Fill/command/terminal-event authorities",
-      "observed_balance_authority": "MISSING",
+      "observed_balance_authority": "AVAILABLE",
       "reconciliation_result_authority": "MISSING",
-      "c26": "NOT_STARTED"
+      "c26": "NOT_STARTED",
+      "observed_balance_authority_boundary": {
+        "implementation": "bot_core/reconciliation/observed_balance_authority.py: CoreAcceptedObservedBalanceFactProjection",
+        "membership_authority": "immutable carrier history published only by the owner capability returned from compose; raw facts, source_id, source self-hashes and membership integrity hashes do not self-enroll",
+        "exact_fingerprint_boundary": "independently recomputed SHA-256 of canonical exact observed fact excluding source_fingerprint_sha256",
+        "scope_binding": "exact workspace_id, portfolio_id, environment, exchange_account_id, raw AssetReference, as_of_utc, source_id and fingerprint",
+        "asset_mapping_behavior": "EXACT and EXPLICIT_ALIAS are authoritative mappings; UNKNOWN and AMBIGUOUS remain accepted exact observations with non-authoritative mapping",
+        "semantics_binding": "accepted membership independently binds exactly BALANCE or UNSUPPORTED using membership_fingerprint_sha256 over source_id, exact observed source fingerprint and semantics; restore recomputes the binding and rejects semantics rewrites",
+        "durable_history_restore": "all accepted observations remain historical membership; restore independently revalidates carrier order/revision, record type, unique identity, canonical content, scope, decimal, timestamp, mapping status, observed source fingerprint, semantics and semantics membership binding",
+        "carrier_fence": "consume_accepted holds a reentrant carrier-wide fence through the callback for an exact source_id and expected fingerprint",
+        "source_id_policy": "opaque exact str accepted-source identity as typed by frozen M0.8 ObservedBalanceFact; it is not an M0.2 canonical entity ID, and M0.8 declares no prefix"
+      }
     },
     "synthetic_source_resolution_policies": {
       "TEST_MULTI_SOURCE": "NON_PRODUCTION_TEST_FIXTURE",
