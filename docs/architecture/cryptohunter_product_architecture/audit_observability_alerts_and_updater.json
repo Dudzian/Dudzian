@@ -5039,12 +5039,15 @@
       "s9d_c25_m08_reconciliation_authority_disposition": {
         "status": "S9D_C25_BLOCKED_M08_EXECUTABLE_RECONCILIATION_AUTHORITY",
         "discovery_scope": "local production bot_core, frozen M0.8 machine contract, and architecture/reference tests were searched independently",
-        "production_discovery": "production typed M0.8 accepted exact-economic AuditEvent authority and accounting journal exist for deposit and withdrawal; production CoreAcceptedObservedBalanceFactProjection now exists; production M0.7 composite accepted Full Fill, accepted command context, accepted terminal lifecycle context, and accepted reconciliation-result authority do not exist",
+        "production_discovery": "production search found schemas/registry metadata and non-authoritative runtime DTO/event paths, but no genuine production M0.5 accepted historical Instrument membership authority and no production M0.7 accepted canonical Order/lifecycle projection deriving accepted_fill_ids_by_order_id; R1A self-enrolling substitutes were removed",
         "non_authorities_found": "generic CoreAcceptedContentBinding is only a lower trust-chain component and cannot prove M0.8 source semantics; bot_core.execution.paper.LedgerEntry remains a paper execution DTO; architecture/reference implementations remain oracle-only",
         "frozen_semantics_available": "M0.8 fixes the complete key, outcomes, observed fact fields, source-authority requirement and outcome rules; R2 implements only durable external-observation membership and does not implement reconciliation outcomes",
         "missing_upstream_dependencies": [
-          "production M0.7 composite trusted accepted Full Fill authority required for authoritative trade accounting history",
-          "production M0.7 accepted SUBMIT_ORDER command and terminal lifecycle/event contexts required for capital reservation and release accounting",
+          "production genuine M0.5 accepted historical Instrument membership authority",
+          "production M0.7 accepted canonical Order and lifecycle projection deriving accepted_fill_ids_by_order_id and validating Fill progression",
+          "production M0.7 accepted SUBMIT_ORDER command context required for capital reservation accounting",
+          "production M0.7 accepted terminal lifecycle/event context required for capital release accounting",
+          "production internal_transfer authority remains a separate reconciliation-relevant M0.8 dependency",
           "production durable accepted reconciliation-result carrier and owner-composed publisher/consumption fence"
         ],
         "safety_disposition": "BLOCKED rather than accepting caller-owned internal_quantity, raw snapshots, source_id, self-hashes, or caller-declared outcomes",
@@ -5057,7 +5060,7 @@
         "m010": "CLOSED",
         "c24_r1": "CLOSED",
         "internal_accounting_authority": "M0.8_INTERNAL_ACCOUNTING_AUTHORITY_BLOCKED_UPSTREAM_SOURCE_MEMBERSHIP",
-        "internal_accounting_authority_boundary": "CoreAcceptedAccountingFactProjection binds and independently fingerprints exact deposit/withdrawal economics; AccountingAuthority derives immutable postings and revalidates typed upstream authority on restore; complete authority remains blocked by absent production M0.7 Fill/command/terminal-event authorities",
+        "internal_accounting_authority_boundary": "CoreAcceptedAccountingFactProjection binds deposit/withdrawal economics; raw M0.7 Full Fill receives exact structural/fingerprint validation only. Fill journal publication remains unsupported until genuine M0.5 historical Instrument membership, M0.7 canonical Order/lifecycle history, and reservation/FIFO authority paths exist",
         "observed_balance_authority": "AVAILABLE",
         "reconciliation_result_authority": "MISSING",
         "c26": "NOT_STARTED",
@@ -5071,6 +5074,14 @@
           "durable_history_restore": "all accepted observations remain historical membership; restore independently revalidates carrier order/revision, record type, unique identity, canonical content, scope, decimal, timestamp, mapping status, observed source fingerprint, semantics and semantics membership binding",
           "carrier_fence": "consume_accepted holds a reentrant carrier-wide fence through the callback for an exact source_id and expected fingerprint",
           "source_id_policy": "opaque exact str accepted-source identity as typed by frozen M0.8 ObservedBalanceFact; it is not an M0.2 canonical entity ID, and M0.8 declares no prefix"
+        },
+        "m07_full_fill_authority": "M07_FULL_FILL_AUTHORITY_BLOCKED_M05_HISTORICAL_INSTRUMENT_AND_M07_LIFECYCLE_AUTHORITY",
+        "m07_full_fill_authority_boundary": {
+          "structural_implementation": "bot_core/execution/m07_fill_validation.py validates exact frozen fields, canonical encodings, fee semantics and independently recomputes fill_fingerprint_sha256",
+          "raw_structural_fill": "structural/fingerprint validation only; NOT trusted economic authority",
+          "trusted_economic_fill": "BLOCKED: requires genuine prevalidated M0.5 historical Instrument authority; raw Instrument plus local fingerprint cannot create membership",
+          "complete_accepted_history": "BLOCKED: requires Core-owned accepted_fill_ids_by_order_id derived only from accepted M0.7 lifecycle history",
+          "accounting": "BLOCKED: AccountingAuthority exposes no accept_fill path and does not claim incomplete OWNED_AVAILABLE spend, reserved consumption, FIFO lots, or Fill-derived realized P&L under ACCOUNTING_SPOT_FIFO_V1"
         }
       },
       "synthetic_source_resolution_policies": {
