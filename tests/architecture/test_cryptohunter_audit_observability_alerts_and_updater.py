@@ -93,11 +93,11 @@ def test_identity_status_and_exact_top_level_shape() -> None:
     assert set(MACHINE) == TOP_LEVEL_KEYS
     assert MACHINE["schema_version"] == "cryptohunter.audit_observability_alerts_and_updater.v1"
     assert MACHINE["m0_element"] == "M0.12"
-    assert MACHINE["status"] == "IN_PROGRESS_S9D_C24_R1_M09_HISTORICAL_CURRENTNESS_OTHER_SOURCE_AUTHORITIES_OPEN"
+    assert MACHINE["status"] == "IN_PROGRESS_S9D_C25_BLOCKED_M08_EXECUTABLE_RECONCILIATION_AUTHORITY_OTHER_SOURCE_AUTHORITIES_OPEN"
     assert MACHINE["contract_identity"] == {
         "contract_id": "M0.12-audit-observability-alerts-updater",
-        "version": "1.29.1",
-        "phase": "S9D_C24_R1_M09_HISTORICAL_CURRENTNESS_CLOSED",
+        "version": "1.30.0",
+        "phase": "S9D_C25_BLOCKED_M08_EXECUTABLE_RECONCILIATION_AUTHORITY",
         "machine_source_of_truth": True,
         "markdown_is_projection_only": True,
     }
@@ -5675,12 +5675,12 @@ def _blocked_alert_mutation(state: dict[str, Any], operation: str) -> None:
     assert state == before
 
 
-def test_s9d_c24_status_is_honestly_open_and_updater_stays_open() -> None:
-    assert MACHINE["status"] == "IN_PROGRESS_S9D_C24_R1_M09_HISTORICAL_CURRENTNESS_OTHER_SOURCE_AUTHORITIES_OPEN"
+def test_s9d_c25_status_is_honestly_blocked_and_updater_stays_not_started() -> None:
+    assert MACHINE["status"] == "IN_PROGRESS_S9D_C25_BLOCKED_M08_EXECUTABLE_RECONCILIATION_AUTHORITY_OTHER_SOURCE_AUTHORITIES_OPEN"
     assert MACHINE["contract_identity"] == {
         "contract_id": "M0.12-audit-observability-alerts-updater",
-        "version": "1.29.1",
-        "phase": "S9D_C24_R1_M09_HISTORICAL_CURRENTNESS_CLOSED",
+        "version": "1.30.0",
+        "phase": "S9D_C25_BLOCKED_M08_EXECUTABLE_RECONCILIATION_AUTHORITY",
         "machine_source_of_truth": True,
         "markdown_is_projection_only": True,
     }
@@ -5847,3 +5847,27 @@ def test_s9d_c20_adapter_status_and_production_projection_have_machine_parity() 
         assert machine["healthy_resolution_supported"] is True
         assert machine["resolution_policy_id"] == S9C_RESOLUTION_POLICY_ID
         assert machine["scope_fields"] == list(runtime["scope_fields"])
+
+
+def test_s9d_c25_records_honest_m08_reconciliation_authority_blocker() -> None:
+    alerting = MACHINE["alert_model"]["executable_authority"]
+    disposition = alerting["s9d_c25_m08_reconciliation_authority_disposition"]
+    assert disposition["status"] == "S9D_C25_BLOCKED_M08_EXECUTABLE_RECONCILIATION_AUTHORITY"
+    assert disposition["match_authority"].startswith("UNAVAILABLE")
+    assert len(disposition["missing_upstream_dependencies"]) == 3
+    assert disposition["reconciliation_divergence_alertstore_adapter"] == "NOT_STARTED"
+    assert disposition["reconciliation_divergence_status"] == "OPEN_SOURCE_AUTHORITY"
+    assert disposition["source_producer_authenticity"] == "OPEN"
+    assert disposition["s9d"] == "OPEN"
+    assert disposition["updater"] == "NOT_STARTED"
+    assert disposition["m010"] == "CLOSED"
+    assert disposition["c24_r1"] == "CLOSED"
+    policies = alerting["production_source_resolution_policies"]
+    assert policies["RECONCILIATION_DIVERGENCE"]["executable_status"] == "OPEN_SOURCE_AUTHORITY"
+    assert policies["KILL_SWITCH_ACTIVE"]["executable_status"] == (
+        "M09_ADAPTER_INTEGRATED_SOURCE_PRODUCER_AUTHENTICITY_OPEN"
+    )
+    for alert_type in ("MARKET_DATA_CURRENT_CONDITION", "EXECUTION_ROUTE_CONDITION"):
+        assert policies[alert_type]["executable_status"] == (
+            "S9C_ADAPTER_INTEGRATED_SOURCE_PRODUCER_AUTHENTICITY_OPEN"
+        )
