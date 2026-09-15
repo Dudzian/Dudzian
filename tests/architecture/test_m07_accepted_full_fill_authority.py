@@ -224,6 +224,7 @@ def test_m05_discovery_records_policy_specific_missing_anchors():
     assert dependency["genuine_production_authority"] == "NOT_FOUND"
     assert dependency["coherent_reseal_disposition"].startswith("BLOCKED_FAIL_CLOSED")
     assert dependency["restore_disposition"].startswith("UNAVAILABLE")
+    assert "policy-specific accepted upstream Catalog/source authority" in dependency["restore_disposition"]
     assert "nearest_missing_prerequisite" not in dependency
 
     discovery = dependency["production_catalog_source_authority_discovery"]
@@ -234,9 +235,17 @@ def test_m05_discovery_records_policy_specific_missing_anchors():
 
     policy = dependency["m05_catalog_source_policy_disposition"]
     assert policy["PAPER"]["nearest_missing_prerequisite"] == (
-        "MISSING_CORE_OWNED_CANONICAL_LOCAL_CONTRACT_METADATA_CATALOG_HISTORY_PRODUCER"
+        "MISSING_BUILD_TIME_CANONICAL_PAPER_INSTRUMENT_METADATA"
     )
     assert policy["PAPER"]["external_authenticated_adapter_membership_required"] == "NO"
+    assert policy["PAPER"]["authority_status"] == "NOT_IMPLEMENTED"
+    discovery = policy["PAPER"]["canonical_metadata_discovery"]
+    assert discovery["build_time_immutable_production_metadata"] == (
+        "EXCHANGE_SCOPE_ONLY_NO_INSTRUMENT_SET"
+    )
+    assert "base_asset_reference" in discovery["frozen_fields_without_production_owned_source"]
+    assert "venue_symbol" in discovery["caller_config_only_fields"]
+    assert discovery["test_reference_samples_are_authority"] == "NO"
     assert policy["TESTNET"]["nearest_missing_prerequisite"] == (
         "CORE_OWNED_DURABLE_AUTHENTICATED_ADAPTER_SOURCE_MEMBERSHIP"
     )
