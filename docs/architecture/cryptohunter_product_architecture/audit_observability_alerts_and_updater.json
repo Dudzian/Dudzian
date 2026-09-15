@@ -4,8 +4,8 @@
   "status": "IN_PROGRESS_S9D_C25_BLOCKED_M08_EXECUTABLE_RECONCILIATION_AUTHORITY_OTHER_SOURCE_AUTHORITIES_OPEN",
   "contract_identity": {
     "contract_id": "M0.12-audit-observability-alerts-updater",
-    "version": "1.43.0",
-    "phase": "S9D_C25_BLOCKED_M08_RECONCILIATION_CHAIN_M07_LIFECYCLE_AND_M05_PAPER_CONTENT_PREREQUISITES_OPEN",
+    "version": "1.44.0",
+    "phase": "S9D_C25_BLOCKED_SOURCE_PRODUCER_AND_CATALOG_ACCEPTANCE_AUTHORITIES_OPEN",
     "machine_source_of_truth": true,
     "markdown_is_projection_only": true
   },
@@ -5768,7 +5768,7 @@
                   },
                   {
                     "target": "M0.6 Instrument exchange/environment equality",
-                    "classification": "SEMANTIC_MIGRATION_REQUIRED",
+                    "classification": "MIGRATED_CANONICAL_1.44.0",
                     "impact": "InstrumentProjection currently carries exchange_id and environment, environment registry binds InstrumentProjection.environment, and route/catalog checks require exact exchange/environment equality. Migrate Instrument source comparisons to source identity and retain execution comparisons on account/route; same-Workspace TRUSTED_CONTEXT_INVALID invariant is unchanged."
                   },
                   {
@@ -5911,10 +5911,9 @@
                       "shared_canonical_instrument_id_across_workspaces": false
                     },
                     "instrument_identity_dimensions": {
-                      "status": "MIGRATION_REQUIRED",
+                      "status": "MIGRATED_CANONICAL_1.44.0",
                       "current": [
-                        "exchange_id",
-                        "environment",
+                        "source_exchange_id",
                         "market_type",
                         "venue_symbol"
                       ],
@@ -5923,7 +5922,7 @@
                         "market_type",
                         "venue_symbol"
                       ],
-                      "authoritative_m05_cutover_blocked_until_migrated": true
+                      "authoritative_m05_cutover_blocked_until_migrated": false
                     }
                   },
                   "M0.6": {
@@ -5932,24 +5931,23 @@
                     "historical_universe_workspace_binding": "UNCHANGED_REQUIRED",
                     "migration_dependency_required": false,
                     "same_workspace_status": "UNCHANGED",
-                    "instrument_environment_exchange_checks": "SEMANTIC_MIGRATION_REQUIRED",
+                    "instrument_environment_exchange_checks": "MIGRATED_CANONICAL_1.44.0_SOURCE_EXECUTION_ROLES_SEPARATED",
                     "exact_evidence": [
-                      "InstrumentProjection required fields include exchange_id and environment",
-                      "environment_registry binds InstrumentProjection.environment",
-                      "trusted context requires route/catalog/account exact exchange/environment scope"
+                      "InstrumentProjection exact fields contain source_exchange_id and omit exchange_id/environment",
+                      "TradingUniverse source reference resolves WorkspaceCatalogProjection then AcceptedSourceCatalogSnapshot",
+                      "account and ExecutionRoute retain exact execution environment/backend binding"
                     ],
-                    "migration_rule": "Remove source Instrument environment equality; compare source_exchange_id only for source facts and execution exchange/environment only across account/route/order/lease contexts."
+                    "migration_rule": "MIGRATED: source validation uses Instrument/WorkspaceCatalogProjection/AcceptedSourceCatalogSnapshot; execution validation uses account/route/backend/environment."
                   }
                 },
                 "m02_identity_dimensions_migration_dependency": {
-                  "status": "MIGRATION_REQUIRED_DESIGN_ONLY_NOT_IMPLEMENTED",
+                  "status": "MIGRATED_CANONICAL_1.44.0",
                   "exact_frozen_evidence": {
                     "artifact": "canonical_domain_vocabulary.json",
                     "entity": "Instrument",
                     "parent": "Workspace",
                     "identity_dimensions": [
-                      "exchange_id",
-                      "environment",
+                      "source_exchange_id",
                       "market_type",
                       "venue_symbol"
                     ],
@@ -5985,6 +5983,16 @@
                   "old_m02_result": "(binance, PAPER, SPOT, BTCUSDT) != (binance, LIVE, SPOT, BTCUSDT), incorrectly minting execution-environment copies.",
                   "target_result": "One Workspace A Instrument bound to (binance, SPOT, BTCUSDT); PAPER and future LIVE use distinct account/route/execution contexts, not distinct Instrument identity.",
                   "live_disposition": "DISABLED_UNCHANGED; this example defines identity semantics only and grants no LIVE capability."
+                }
+              },
+              "canonical_m02_m05_m06_contract_migration": {
+                "status": "CLOSED",
+                "predecessor": "1.43.0",
+                "contract_identity": "1.44.0",
+                "scope": "Canonical schema and executable-oracle migration only; no runtime source ingestion or Catalog acceptance authority",
+                "global_status_invariants": {
+                  "C25": "BLOCKED",
+                  "S9D": "OPEN"
                 }
               }
             }

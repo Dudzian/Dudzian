@@ -444,7 +444,7 @@
       "canonical_name": "Instrument",
       "id_field": "instrument_id",
       "id_prefix": "instr",
-      "purpose": "venue/market specific instrument identity",
+      "purpose": "Workspace-owned canonical projection of an exact venue source product",
       "parent": "Workspace",
       "lifecycle_scope": "persistent product entity",
       "persistence": true,
@@ -471,11 +471,17 @@
         "symbol string"
       ],
       "identity_dimensions": [
-        "exchange_id",
-        "environment",
+        "source_exchange_id",
         "market_type",
         "venue_symbol"
-      ]
+      ],
+      "identity_policy": {
+        "workspace_scope": "workspace_id + source-product identity -> instrument_id",
+        "execution_environment_orthogonal": true,
+        "comparison": "exact bytes/codepoints; no trim, case-fold, Unicode normalization, parsing, or inferred aliases",
+        "source_market_namespace_id": "NOT_FROZEN_NO_SUPPORTED_VENUE_EVIDENCE",
+        "cross_workspace": "same source product receives distinct instrument_id per Workspace"
+      }
     },
     {
       "canonical_name": "StrategyDefinition",

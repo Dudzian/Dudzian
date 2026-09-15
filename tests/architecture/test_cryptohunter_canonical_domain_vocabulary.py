@@ -118,8 +118,7 @@ def test_corrected_ownership_and_cardinality() -> None:
     assert entities["Instrument"]["parent"] == "Workspace"
     assert rels[("TradingUniverse", "Instrument")] == "many_to_many_membership"
     assert entities["Instrument"]["identity_dimensions"] == [
-        "exchange_id",
-        "environment",
+        "source_exchange_id",
         "market_type",
         "venue_symbol",
     ]

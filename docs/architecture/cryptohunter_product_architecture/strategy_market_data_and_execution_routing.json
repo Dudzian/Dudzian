@@ -1785,19 +1785,19 @@
       "entity_references": {
         "exchange_account_id": "ExchangeAccountProjection",
         "instrument_ids": "InstrumentProjection",
-        "source_catalog_snapshot_ids": "InstrumentCatalogProjection",
+        "source_catalog_snapshot_ids": "WorkspaceCatalogProjection",
         "previous_version_id": "TradingUniverseProjection"
       },
       "enum_registry_ref": {
         "lifecycle_state": "m05_universe_lifecycle_states"
-      }
+      },
+      "source_catalog_reference_semantics": "IDs resolve WorkspaceCatalogProjection, then AcceptedSourceCatalogSnapshot; never legacy InstrumentCatalogProjection"
     },
     "InstrumentProjection": {
       "exact_fields": [
         "instrument_id",
         "workspace_id",
-        "exchange_id",
-        "environment",
+        "source_exchange_id",
         "market_type",
         "instrument_type",
         "venue_symbol",
@@ -1818,7 +1818,7 @@
         "expiry_at_utc",
         "strike_price",
         "option_side",
-        "catalog_snapshot_id",
+        "accepted_source_catalog_snapshot_id",
         "metadata_version",
         "observed_at_utc",
         "effective_at_utc",
@@ -1828,8 +1828,6 @@
       "field_types": {
         "instrument_id": "id",
         "workspace_id": "id",
-        "exchange_id": "string",
-        "environment": "enum",
         "market_type": "enum",
         "instrument_type": "enum",
         "venue_symbol": "string",
@@ -1850,12 +1848,13 @@
         "expiry_at_utc": "timestamp",
         "strike_price": "string",
         "option_side": "string",
-        "catalog_snapshot_id": "id",
         "metadata_version": "integer",
         "observed_at_utc": "timestamp",
         "effective_at_utc": "timestamp",
         "stale_after_utc": "timestamp",
-        "source_adapter_family_id": "string"
+        "source_adapter_family_id": "string",
+        "source_exchange_id": "string",
+        "accepted_source_catalog_snapshot_id": "id"
       },
       "id_field": "instrument_id",
       "id_prefix": "instr",
@@ -1877,16 +1876,12 @@
       "nested_schemas": {},
       "entity_references": {
         "workspace_id": "Workspace",
-        "catalog_snapshot_id": "InstrumentCatalogProjection"
+        "accepted_source_catalog_snapshot_id": "AcceptedSourceCatalogSnapshot"
       },
       "enum_registry_ref": {
         "trading_status": "m05_instrument_trading_statuses"
       },
       "canonical_projection_refs": {
-        "environment_registry": {
-          "contract": "exchange_accounts_and_instruments.json",
-          "json_pointer": "/environment_registry"
-        },
         "market_type_registry": {
           "contract": "exchange_accounts_and_instruments.json",
           "json_pointer": "/market_type_registry"
@@ -1921,10 +1916,6 @@
         }
       },
       "enum_canonical_pointer_ref": {
-        "environment": {
-          "contract": "exchange_accounts_and_instruments.json",
-          "json_pointer": "/environment_registry"
-        },
         "market_type": {
           "contract": "exchange_accounts_and_instruments.json",
           "json_pointer": "/market_type_registry"
@@ -1995,7 +1986,9 @@
           "contract": "exchange_accounts_and_instruments.json",
           "json_pointer": "/environment_registry"
         }
-      }
+      },
+      "authority_disposition": "LEGACY_MIGRATION_BLOCKED_READ_ONLY_NOT_SOURCE_AUTHORITY",
+      "may_mint_source_membership": false
     },
     "AccountCapabilitySnapshotProjection": {
       "exact_fields": [
@@ -2358,7 +2351,7 @@
     }
   },
   "instrument_projection_policy": {
-    "canonical_catalog_binding_field": "catalog_snapshot_id",
+    "canonical_catalog_binding_field": "accepted_source_catalog_snapshot_id",
     "workspace_ownership": "Instrument.workspace_id == StrategyInstance.workspace_id == ExchangeAccount.workspace_id == MarketDataRoute.workspace_id == ExecutionRoute.workspace_id",
     "structural_time_order": "observed_at_utc <= effective_at_utc < stale_after_utc",
     "future_metadata_forbidden": [
@@ -2368,7 +2361,23 @@
     "freshness_boundary": "validation_time_utc < stale_after_utc is fresh",
     "operability": "trading_status == TRADING and fresh",
     "structural_denial": "TRUSTED_CONTEXT_INVALID",
-    "operability_denial": "INSTRUMENT_SCOPE_MISMATCH"
+    "operability_denial": "INSTRUMENT_SCOPE_MISMATCH",
+    "source_execution_separation": {
+      "source_side": [
+        "Instrument.source_exchange_id",
+        "accepted source Catalog",
+        "source metadata lineage"
+      ],
+      "execution_side": [
+        "ExchangeAccount",
+        "ExecutionRoute",
+        "execution environment",
+        "execution backend",
+        "execution authorization"
+      ],
+      "instrument_environment_equality_required": false,
+      "source_adapter_may_differ_from_execution_backend": true
+    }
   },
   "canonical_cross_contract_registry_refs": {
     "m05_exchange_registry_entries": {
@@ -2463,12 +2472,11 @@
     "InstrumentProjection": {
       "canonical_entity": "Instrument",
       "canonical_identity_field": "instrument_id",
-      "canonical_parent": "InstrumentCatalogSnapshot",
+      "canonical_parent": "Workspace",
       "authority_relevant_fields": [
         "instrument_id",
         "workspace_id",
-        "exchange_id",
-        "environment",
+        "source_exchange_id",
         "market_type",
         "instrument_type",
         "venue_symbol",
@@ -2489,7 +2497,7 @@
         "expiry_at_utc",
         "strike_price",
         "option_side",
-        "catalog_snapshot_id",
+        "accepted_source_catalog_snapshot_id",
         "metadata_version",
         "observed_at_utc",
         "effective_at_utc",
@@ -2502,7 +2510,7 @@
         "m05_instrument_types"
       ],
       "structural_invariants": [
-        "exact exchange scope and adapter",
+        "exact source exchange scope and accepted metadata lineage",
         "ordered metadata timestamps",
         "workspace ownership"
       ],
@@ -2520,7 +2528,6 @@
       ],
       "canonical_projection_resolver": "resolve_instrument_projection_contract",
       "canonical_projection_refs_executed": [
-        "environment_registry",
         "market_type_registry",
         "instrument_type_registry",
         "allowed_market_instrument_type_pairs",
@@ -2856,22 +2863,6 @@
     "bind_checks_declaration_not_current_operability": true
   },
   "canonical_projection_binding_manifest": {
-    "environment_registry": {
-      "contract": "exchange_accounts_and_instruments.json",
-      "json_pointer": "/environment_registry",
-      "expected_result_type": "array",
-      "content_fingerprint_sha256": "c2182111523b676163dda381a902ed4ef238a9e1508484e1da1ce790e83cf0d9",
-      "consumers": [
-        "InstrumentProjection.environment",
-        "CredentialProfileProjection.environment_scope",
-        "MarketDataRoute.environment",
-        "ExecutionRoute.environment",
-        "ExchangeAccountProjection.environment",
-        "InstrumentCatalogProjection.environment",
-        "AccountCapabilitySnapshotProjection.environment",
-        "TrustedExternalIdentityProjection.environment"
-      ]
-    },
     "market_type_registry": {
       "contract": "exchange_accounts_and_instruments.json",
       "json_pointer": "/market_type_registry",
@@ -2922,7 +2913,7 @@
       "contract": "exchange_accounts_and_instruments.json",
       "json_pointer": "/instrument_contract/record_fields",
       "expected_result_type": "array",
-      "content_fingerprint_sha256": "4c10117c28505bc7b546126690f3f3ef6cbc15c47815a47e016bd8c646b71409",
+      "content_fingerprint_sha256": "39b5d32a1d887863cbc7f7a652e163b6b78d02a6ae21b1e4447e97437e18bf16",
       "consumers": [
         "InstrumentProjection.exact_fields"
       ]
@@ -2931,7 +2922,7 @@
       "contract": "exchange_accounts_and_instruments.json",
       "json_pointer": "/asset_reference_contract",
       "expected_result_type": "object",
-      "content_fingerprint_sha256": "837e1452a60de230d0ca091a7e2c05308ff41d961499f7800d350d7c9b3682ae",
+      "content_fingerprint_sha256": "6aaa3985e58acd4f7ee82cbd941e67507dd76a3186e7969bf8c62db1d4d41ee0",
       "consumers": [
         "validate_instrument_record"
       ]
@@ -3127,20 +3118,6 @@
       "registry_ref": "m05_universe_lifecycle_states",
       "expected_result_type": "array",
       "content_fingerprint_sha256": "f462d4ea15629414b3b8862183985f4759242a6834052eead5117907f5596a16"
-    },
-    "InstrumentProjection.environment": {
-      "schema": "InstrumentProjection",
-      "field": "environment",
-      "field_type": "enum",
-      "binding_kind": "enum_canonical_pointer_ref",
-      "nullable": false,
-      "exact_fields_membership": true,
-      "array_policy": null,
-      "contract": "exchange_accounts_and_instruments.json",
-      "json_pointer": "/environment_registry",
-      "registry_ref": null,
-      "expected_result_type": "array",
-      "content_fingerprint_sha256": "c2182111523b676163dda381a902ed4ef238a9e1508484e1da1ce790e83cf0d9"
     },
     "InstrumentProjection.market_type": {
       "schema": "InstrumentProjection",
@@ -3543,7 +3520,7 @@
       "source_contract": "exchange_accounts_and_instruments.json",
       "json_pointer": "/instrument_contract/record_fields",
       "expected_result_type": "array",
-      "content_fingerprint_sha256": "4c10117c28505bc7b546126690f3f3ef6cbc15c47815a47e016bd8c646b71409",
+      "content_fingerprint_sha256": "39b5d32a1d887863cbc7f7a652e163b6b78d02a6ae21b1e4447e97437e18bf16",
       "consumers": [
         "resolve_instrument_projection_contract.record_fields"
       ],
@@ -3553,7 +3530,7 @@
       "source_contract": "exchange_accounts_and_instruments.json",
       "json_pointer": "/asset_reference_contract",
       "expected_result_type": "object",
-      "content_fingerprint_sha256": "837e1452a60de230d0ca091a7e2c05308ff41d961499f7800d350d7c9b3682ae",
+      "content_fingerprint_sha256": "6aaa3985e58acd4f7ee82cbd941e67507dd76a3186e7969bf8c62db1d4d41ee0",
       "consumers": [
         "resolve_instrument_projection_contract.asset_reference_contract"
       ],
@@ -3847,5 +3824,34 @@
       "runtime_code_integrity_requires_external_trust_anchor": true
     },
     "deferred_code_integrity_requirement": "Runtime code-integrity enforcement, if required, must be implemented by an external bootstrap or deployment trust mechanism that validates signed/hash-pinned artifacts before importing the application module."
+  },
+  "canonical_source_catalog_projection_chain": {
+    "TradingUniverseProjection.source_catalog_snapshot_ids": "WorkspaceCatalogProjection",
+    "WorkspaceCatalogProjection.accepted_source_catalog_snapshot_id": "AcceptedSourceCatalogSnapshot",
+    "TradingUniverseProjection.instrument_ids": "Workspace-owned InstrumentProjection",
+    "execution_environment_in_source_chain": false,
+    "paper_source_policy": "PAPER execution route must be explicitly permitted for Instrument.source_exchange_id + market_type by source_catalog_policy/account_execution_policy; same workspace and market_type alone are insufficient",
+    "runtime_acceptance": "NOT_IMPLEMENTED"
+  },
+  "source_catalog_projection_schemas": {
+    "AcceptedSourceCatalogSnapshot": {
+      "canonical_contract": "exchange_accounts_and_instruments.json#/accepted_source_catalog_snapshot_contract",
+      "scope": [
+        "source_exchange_id",
+        "market_type"
+      ],
+      "execution_environment_forbidden": true,
+      "authority_status": "SCHEMA_ONLY_RUNTIME_ACCEPTANCE_NOT_IMPLEMENTED"
+    },
+    "WorkspaceCatalogProjection": {
+      "canonical_contract": "exchange_accounts_and_instruments.json#/workspace_catalog_projection_contract",
+      "scope": [
+        "workspace_id",
+        "accepted_source_catalog_snapshot_id"
+      ],
+      "member_invariant": "Instrument.workspace_id == projection.workspace_id",
+      "upstream_reference": "AcceptedSourceCatalogSnapshot",
+      "execution_environment_forbidden": true
+    }
   }
 }

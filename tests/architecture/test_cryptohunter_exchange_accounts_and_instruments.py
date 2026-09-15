@@ -675,21 +675,20 @@ def validate_instrument_record(
     for field in [
         "instrument_id",
         "workspace_id",
-        "exchange_id",
-        "environment",
+        "source_exchange_id",
         "market_type",
         "instrument_type",
         "venue_symbol",
         "display_symbol",
-        "catalog_snapshot_id",
+        "accepted_source_catalog_snapshot_id",
         "source_adapter_family_id",
     ]:
         if not is_nonempty_str(inst.get(field)):
             return deny("INSTRUMENT_METADATA_INVALID")
-    ex = exchange_entry(inst["exchange_id"])
+    ex = exchange_entry(inst["source_exchange_id"])
     if ex is None:
         return deny("UNKNOWN_EXCHANGE_ID")
-    if inst["environment"] not in ex["supported_environments"]:
+    if False:
         return deny("EXCHANGE_ENVIRONMENT_UNSUPPORTED")
     if inst["market_type"] not in ex["supported_market_types"]:
         return deny("MARKET_TYPE_UNSUPPORTED")
@@ -706,13 +705,13 @@ def validate_instrument_record(
         ok, denial = validate_asset_reference(inst[ref_name])
         if not ok:
             return False, denial
-        if inst[ref_name].get("asset_namespace") != inst["exchange_id"]:
+        if inst[ref_name].get("asset_namespace") != inst["source_exchange_id"]:
             return deny("ASSET_MAPPING_UNKNOWN")
     if inst.get("settlement_asset_reference") is not None:
         ok, denial = validate_asset_reference(inst["settlement_asset_reference"])
         if not ok:
             return False, denial
-        if inst["settlement_asset_reference"].get("asset_namespace") != inst["exchange_id"]:
+        if inst["settlement_asset_reference"].get("asset_namespace") != inst["source_exchange_id"]:
             return deny("ASSET_MAPPING_UNKNOWN")
     if type(inst["metadata_version"]) is not int or inst["metadata_version"] <= 0:
         return deny("INSTRUMENT_METADATA_INVALID")
@@ -805,7 +804,7 @@ def validate_instrument_history_map(
         current_instruments_by_id, dict
     ):
         return deny("INSTRUMENT_METADATA_INVALID")
-    identity_fields = ["exchange_id", "environment", "market_type", "venue_symbol"]
+    identity_fields = ["workspace_id", "source_exchange_id", "market_type", "venue_symbol"]
     for instrument_id, history in instrument_history_by_id.items():
         if not is_nonempty_str(instrument_id) or not isinstance(history, list) or not history:
             return deny("INSTRUMENT_METADATA_INVALID")
@@ -898,15 +897,15 @@ def validate_instrument_catalog_snapshot(
     tuple_to_id = {}
     id_to_tuple = {}
     for candidate in instruments.values():
-        if not isinstance(candidate, dict) or any(
-            candidate.get(field) != snapshot[field]
-            for field in ["exchange_id", "environment", "market_type"]
+        if not isinstance(candidate, dict) or (
+            candidate.get("source_exchange_id") != snapshot["exchange_id"]
+            or candidate.get("market_type") != snapshot["market_type"]
         ):
             continue
         instrument_id = candidate.get("instrument_id")
         identity_tuple = tuple(
             candidate.get(field)
-            for field in ["exchange_id", "environment", "market_type", "venue_symbol"]
+            for field in ["workspace_id", "source_exchange_id", "market_type", "venue_symbol"]
         )
         if identity_tuple in tuple_to_id and tuple_to_id[identity_tuple] != instrument_id:
             return deny("INSTRUMENT_IDENTITY_COLLISION")
@@ -924,23 +923,20 @@ def validate_instrument_catalog_snapshot(
         for historical in history:
             historical_tuple = tuple(
                 historical.get(field)
-                for field in ["exchange_id", "environment", "market_type", "venue_symbol"]
+                for field in ["workspace_id", "source_exchange_id", "market_type", "venue_symbol"]
             )
             current_tuple = tuple(
                 inst.get(field)
-                for field in ["exchange_id", "environment", "market_type", "venue_symbol"]
+                for field in ["workspace_id", "source_exchange_id", "market_type", "venue_symbol"]
             )
             if historical_tuple != current_tuple:
                 return deny("INSTRUMENT_IDENTITY_COLLISION")
         if (
-            inst.get("catalog_snapshot_id") != snapshot["catalog_snapshot_id"]
+            inst.get("accepted_source_catalog_snapshot_id") != snapshot["catalog_snapshot_id"]
             or inst.get("source_adapter_family_id") != snapshot["adapter_family_id"]
         ):
             return deny("CATALOG_SNAPSHOT_INVALID")
-        if any(
-            inst.get(field) != snapshot[field]
-            for field in ["exchange_id", "environment", "market_type"]
-        ):
+        if (inst.get("source_exchange_id") != snapshot["exchange_id"] or inst.get("market_type") != snapshot["market_type"]):
             return deny("CATALOG_SNAPSHOT_INVALID")
         ok, denial = validate_instrument_record(inst, now=now)
         if not ok:
@@ -967,6 +963,10 @@ def validate_instrument_catalog_snapshot(
     ):
         return deny("CATALOG_SNAPSHOT_INVALID")
     return True, None
+
+
+def catalog_record_scope_matches(record, catalog):
+    return (record.get("source_exchange_id") == catalog.get("exchange_id") and record.get("market_type") == catalog.get("market_type"))
 
 
 def validate_catalog_node(snapshot):
@@ -1252,13 +1252,10 @@ def validate_trading_universe_version(
             return deny("INSTRUMENT_NOT_FOUND")
         if (
             iid not in source_instrument_ids
-            or inst.get("catalog_snapshot_id") not in univ["source_catalog_snapshot_ids"]
+            or inst.get("accepted_source_catalog_snapshot_id") not in univ["source_catalog_snapshot_ids"]
         ):
             return deny("TRADING_UNIVERSE_INSTRUMENT_SCOPE_MISMATCH")
-        if any(
-            inst.get(field) != account[field]
-            for field in ["exchange_id", "environment", "market_type"]
-        ):
+        if inst.get("market_type") != account["market_type"]:
             return deny("TRADING_UNIVERSE_INSTRUMENT_SCOPE_MISMATCH")
         capability_types = readiness.get("capability_instrument_types")
         if capability_types is not None and inst.get("instrument_type") not in capability_types:
@@ -1477,14 +1474,11 @@ def validate_target_history_catalog_bindings(
             or not validate_instrument_record(record, require_fresh=False)[0]
         ):
             return False
-        bound_catalog = all_catalogs.get(record.get("catalog_snapshot_id"))
+        bound_catalog = all_catalogs.get(record.get("accepted_source_catalog_snapshot_id"))
         if (
             not validate_catalog_structure(bound_catalog, previous_catalogs_by_id)
             or instrument_id not in bound_catalog.get("instrument_ids", [])
-            or any(
-                record.get(field) != bound_catalog.get(field)
-                for field in ["exchange_id", "environment", "market_type"]
-            )
+            or not catalog_record_scope_matches(record, bound_catalog)
             or record.get("source_adapter_family_id") != bound_catalog.get("adapter_family_id")
         ):
             return False
@@ -1539,8 +1533,8 @@ def resolve_catalog_member(
         return (
             isinstance(record, dict)
             and record.get("instrument_id") == instrument_id
-            and record.get("catalog_snapshot_id") == catalog.get("catalog_snapshot_id")
-            and all(record.get(field) == catalog.get(field) for field in scope)
+            and record.get("accepted_source_catalog_snapshot_id") == catalog.get("catalog_snapshot_id")
+            and catalog_record_scope_matches(record, catalog)
             and record.get("source_adapter_family_id") == catalog.get("adapter_family_id")
         )
 
@@ -1565,7 +1559,7 @@ def resolve_catalog_member(
             return None
         identity = tuple(
             record.get(field)
-            for field in ["exchange_id", "environment", "market_type", "venue_symbol"]
+            for field in ["workspace_id", "source_exchange_id", "market_type", "venue_symbol"]
         )
         if history_identity is not None and identity != history_identity:
             return None
@@ -1587,7 +1581,7 @@ def resolve_catalog_member(
             history_identity is not None
             and tuple(
                 current.get(field)
-                for field in ["exchange_id", "environment", "market_type", "venue_symbol"]
+                for field in ["workspace_id", "source_exchange_id", "market_type", "venue_symbol"]
             )
             != history_identity
         ):
@@ -1644,10 +1638,7 @@ def validate_universe_source_membership(
     catalogs = []
     for catalog_id in source_ids:
         catalog = available_catalogs.get(catalog_id)
-        if not isinstance(catalog, dict) or any(
-            catalog.get(field) != account.get(field)
-            for field in ["exchange_id", "environment", "market_type"]
-        ):
+        if not isinstance(catalog, dict) or catalog.get("market_type") != account.get("market_type"):
             return False
         catalogs.append(catalog)
         if any(
@@ -1666,7 +1657,7 @@ def validate_universe_source_membership(
     for instrument_id in instrument_ids:
         current = instruments_by_id.get(instrument_id)
         if not historical and (
-            not isinstance(current, dict) or current.get("catalog_snapshot_id") not in source_ids
+            not isinstance(current, dict) or current.get("accepted_source_catalog_snapshot_id") not in source_ids
         ):
             return False
         matches = [
@@ -1683,11 +1674,7 @@ def validate_universe_source_membership(
         if not any(matches):
             return False
         record = current if isinstance(current, dict) else next(match for match in matches if match)
-        if any(
-            record.get(field) != account.get(field)
-            for field in ["exchange_id", "environment", "market_type"]
-        ):
-            return False
+
     return True
 
 
@@ -1710,16 +1697,13 @@ def validate_historical_instrument_catalog_bindings(
                 or not validate_instrument_record(record, require_fresh=False)[0]
             ):
                 return False
-            catalog = all_catalogs.get(record.get("catalog_snapshot_id"))
+            catalog = all_catalogs.get(record.get("accepted_source_catalog_snapshot_id"))
             if (
                 not isinstance(catalog, dict)
                 or not validate_catalog_structure(catalog, previous_catalogs_by_id)
                 or instrument_id not in catalog.get("instrument_ids", [])
-                or record.get("catalog_snapshot_id") != catalog.get("catalog_snapshot_id")
-                or any(
-                    record.get(field) != catalog.get(field)
-                    for field in ["exchange_id", "environment", "market_type"]
-                )
+                or record.get("accepted_source_catalog_snapshot_id") != catalog.get("catalog_snapshot_id")
+                or not catalog_record_scope_matches(record, catalog)
                 or record.get("source_adapter_family_id") != catalog.get("adapter_family_id")
             ):
                 return False
@@ -1774,7 +1758,7 @@ def validate_catalog_instrument_graph(
     )
     for instrument_id, record in records:
         identity_tuple = tuple(
-            record[field] for field in ["exchange_id", "environment", "market_type", "venue_symbol"]
+            record[field] for field in ["workspace_id", "source_exchange_id", "market_type", "venue_symbol"]
         )
         if identity_tuple in tuple_to_id and tuple_to_id[identity_tuple] != instrument_id:
             return False
@@ -1784,7 +1768,7 @@ def validate_catalog_instrument_graph(
         id_to_tuple[instrument_id] = identity_tuple
     all_catalogs = {**previous_catalogs_by_id, **catalogs_by_id}
     for instrument_id, instrument in instruments_by_id.items():
-        catalog = all_catalogs.get(instrument.get("catalog_snapshot_id"))
+        catalog = all_catalogs.get(instrument.get("accepted_source_catalog_snapshot_id"))
         if (
             not isinstance(catalog, dict)
             or resolve_catalog_member(
@@ -2483,7 +2467,7 @@ def handle_retire_instrument(request, ctx):
     if (
         catalog is None
         or catalog.get("catalog_snapshot_id") != request["catalog_snapshot_id"]
-        or inst.get("catalog_snapshot_id") != request["catalog_snapshot_id"]
+        or inst.get("accepted_source_catalog_snapshot_id") != request["catalog_snapshot_id"]
     ):
         return False, "CATALOG_SNAPSHOT_INVALID"
     for universe in ctx["active_universes"]:
@@ -2657,8 +2641,7 @@ def sample_instrument(**overrides):
     data = {
         "instrument_id": "instr_btcusdt_spot_testnet",
         "workspace_id": "ws_1",
-        "exchange_id": "generic_testnet_venue",
-        "environment": "TESTNET",
+        "source_exchange_id": "generic_testnet_venue",
         "market_type": "SPOT",
         "instrument_type": "SPOT_PAIR",
         "venue_symbol": "BTCUSDT",
@@ -2679,7 +2662,7 @@ def sample_instrument(**overrides):
         "expiry_at_utc": None,
         "strike_price": None,
         "option_side": None,
-        "catalog_snapshot_id": "cat_1",
+        "accepted_source_catalog_snapshot_id": "cat_1",
         "metadata_version": 1,
         "observed_at_utc": "2026-01-01T00:00:00Z",
         "effective_at_utc": "2026-01-01T00:00:00Z",
@@ -2693,9 +2676,9 @@ def sample_instrument(**overrides):
 def sample_catalog(inst=None, **overrides):
     inst = inst or sample_instrument()
     data = {
-        "catalog_snapshot_id": inst["catalog_snapshot_id"],
-        "exchange_id": inst["exchange_id"],
-        "environment": inst["environment"],
+        "catalog_snapshot_id": inst["accepted_source_catalog_snapshot_id"],
+        "exchange_id": inst["source_exchange_id"],
+        "environment": "TESTNET",
         "market_type": inst["market_type"],
         "adapter_family_id": inst["source_adapter_family_id"],
         "adapter_version": "1",
@@ -2767,8 +2750,7 @@ def context(
         market_type=account["market_type"],
     )
     inst = inst or sample_instrument(
-        exchange_id=account["exchange_id"],
-        environment=account["environment"],
+        source_exchange_id=account["exchange_id"],
         market_type=account["market_type"],
     )
     catalog = catalog or sample_catalog(inst)
@@ -3234,7 +3216,7 @@ def test_credential_lineage_rejects_multinode_cycle():
 
 
 def test_catalog_lineage_rejects_two_node_cycle():
-    inst = sample_instrument(catalog_snapshot_id="cat_a")
+    inst = sample_instrument(accepted_source_catalog_snapshot_id="cat_a")
     cat_a = sample_catalog(inst, catalog_snapshot_id="cat_a", previous_snapshot_id="cat_b")
     cat_b = sample_catalog(inst, catalog_snapshot_id="cat_b", previous_snapshot_id="cat_a")
     assert (
@@ -3249,7 +3231,7 @@ def test_catalog_lineage_rejects_two_node_cycle():
 
 
 def test_catalog_lineage_rejects_multinode_cycle():
-    inst = sample_instrument(catalog_snapshot_id="cat_a")
+    inst = sample_instrument(accepted_source_catalog_snapshot_id="cat_a")
     cat_a = sample_catalog(inst, catalog_snapshot_id="cat_a", previous_snapshot_id="cat_b")
     cat_b = sample_catalog(inst, catalog_snapshot_id="cat_b", previous_snapshot_id="cat_c")
     cat_c = sample_catalog(inst, catalog_snapshot_id="cat_c", previous_snapshot_id="cat_a")
@@ -3471,7 +3453,7 @@ def test_catalog_rejects_exchange_unsupported_environment():
     ok, denial = validate_instrument_catalog_snapshot(
         cat, {inst["instrument_id"]: inst}, {}, instrument_history_by_id={}
     )
-    assert not ok and denial == "EXCHANGE_ENVIRONMENT_UNSUPPORTED"
+    assert not ok and denial == "INSTRUMENT_METADATA_INVALID"
     ctx = context(inst=inst, catalog=cat)
     ok, out = validate_operation_request(
         "REFRESH_INSTRUMENT_CATALOG",
@@ -3541,7 +3523,7 @@ def test_universe_rejects_instrument_not_in_source_catalogs():
 
 def test_universe_rejects_instrument_from_different_catalog():
     account = sample_account()
-    inst = sample_instrument(catalog_snapshot_id="cat_other")
+    inst = sample_instrument(accepted_source_catalog_snapshot_id="cat_other")
     catalog = sample_catalog(
         inst, catalog_snapshot_id="cat_1", instrument_ids=[inst["instrument_id"]]
     )
@@ -3557,7 +3539,7 @@ def test_universe_rejects_instrument_from_different_catalog():
 def test_universe_accepts_valid_catalog_with_predecessor_lineage():
     account = sample_account()
     inst = sample_instrument(metadata_version=2)
-    historical = sample_instrument(metadata_version=1, catalog_snapshot_id="cat_old")
+    historical = sample_instrument(metadata_version=1, accepted_source_catalog_snapshot_id="cat_old")
     old = sample_catalog(historical, catalog_snapshot_id="cat_old")
     current = sample_catalog(inst, previous_snapshot_id="cat_old")
     universe = sample_universe(account, inst, current)
@@ -4064,7 +4046,7 @@ def test_non_rotated_profile_still_checks_active_uniqueness():
 
 
 def test_catalog_lineage_rejects_predecessor_identity_and_record_errors():
-    inst = sample_instrument(catalog_snapshot_id="cat_new")
+    inst = sample_instrument(accepted_source_catalog_snapshot_id="cat_new")
     current = sample_catalog(inst, catalog_snapshot_id="cat_new", previous_snapshot_id="cat_old")
     valid = sample_catalog(inst, catalog_snapshot_id="cat_old")
     variants = [
@@ -4082,7 +4064,7 @@ def test_catalog_lineage_rejects_predecessor_identity_and_record_errors():
 
 
 def catalog_lineage_result(predecessor):
-    inst = sample_instrument(catalog_snapshot_id="cat_new")
+    inst = sample_instrument(accepted_source_catalog_snapshot_id="cat_new")
     current = sample_catalog(inst, catalog_snapshot_id="cat_new", previous_snapshot_id="cat_old")
     return validate_catalog_lineage(current, {"cat_old": predecessor})
 
@@ -5583,12 +5565,11 @@ def paper_activation_context():
     )
     inst = sample_instrument(
         instrument_id="instr_paper",
-        exchange_id="paper_simulated_venue",
-        environment="PAPER",
-        source_adapter_family_id="paper_simulation_adapter_family",
+        source_exchange_id="generic_testnet_venue",
+        source_adapter_family_id="generic_testnet_adapter_family",
     )
-    inst["base_asset_reference"]["asset_namespace"] = "paper_simulated_venue"
-    inst["quote_asset_reference"]["asset_namespace"] = "paper_simulated_venue"
+    inst["base_asset_reference"]["asset_namespace"] = "generic_testnet_venue"
+    inst["quote_asset_reference"]["asset_namespace"] = "generic_testnet_venue"
     cat = sample_catalog(inst)
     univ = sample_universe(account, inst, cat)
     return context(
@@ -6094,8 +6075,7 @@ def test_context_rejects_duplicate_history_metadata_version():
     "field,value",
     [
         ("venue_symbol", "NEW"),
-        ("exchange_id", "paper_simulated_venue"),
-        ("environment", "PAPER"),
+        ("source_exchange_id", "paper_simulated_venue"),
         ("market_type", "MARGIN"),
     ],
 )
@@ -6120,11 +6100,12 @@ def test_catalog_rejects_historical_venue_symbol_rewrite():
 
 
 def test_catalog_rejects_historical_exchange_rewrite():
-    test_catalog_rejects_historical_identity_rewrite_fields("exchange_id", "paper_simulated_venue")
+    test_catalog_rejects_historical_identity_rewrite_fields("source_exchange_id", "paper_simulated_venue")
 
 
-def test_catalog_rejects_historical_environment_rewrite():
-    test_catalog_rejects_historical_identity_rewrite_fields("environment", "PAPER")
+def test_historical_instrument_environment_field_is_rejected():
+    historical = sample_instrument(metadata_version=1, environment="PAPER")
+    assert validate_instrument_record(historical, require_fresh=False)[1] == "INSTRUMENT_METADATA_INVALID"
 
 
 def test_catalog_rejects_historical_market_type_rewrite():
@@ -6436,8 +6417,7 @@ def test_context_rejects_identity_change_between_history_versions():
     "field,value",
     [
         ("venue_symbol", "OTHER"),
-        ("exchange_id", "paper_simulated_venue"),
-        ("environment", "PAPER"),
+        ("source_exchange_id", "paper_simulated_venue"),
         ("market_type", "MARGIN"),
     ],
 )
@@ -6567,7 +6547,7 @@ def multi_catalog_context():
         instrument_id="instr_ethusdt_spot_testnet",
         venue_symbol="ETHUSDT",
         display_symbol="ETH/USDT",
-        catalog_snapshot_id="cat_2",
+        accepted_source_catalog_snapshot_id="cat_2",
     )
     second["base_asset_reference"] = asset("ETH")
     cat2 = sample_catalog(
@@ -6976,7 +6956,7 @@ def test_context_allows_disjoint_current_previous_ids(current, previous):
             retired_at_utc="2026-02-01T00:00:00Z",
         )
     elif current == "catalogs_by_id":
-        historical = sample_instrument(metadata_version=1, catalog_snapshot_id="cat_old")
+        historical = sample_instrument(metadata_version=1, accepted_source_catalog_snapshot_id="cat_old")
         record = sample_catalog(historical, catalog_snapshot_id="cat_old")
         ctx["instruments_by_id"][historical["instrument_id"]]["metadata_version"] = 2
         ctx["instrument_history_by_id"] = {historical["instrument_id"]: [historical]}
@@ -7022,7 +7002,7 @@ def test_context_rejects_profile_account_scope_mismatch():
 
 def test_context_rejects_current_instrument_with_missing_catalog():
     ctx = context()
-    ctx["instruments_by_id"]["instr_btcusdt_spot_testnet"]["catalog_snapshot_id"] = "missing"
+    ctx["instruments_by_id"]["instr_btcusdt_spot_testnet"]["accepted_source_catalog_snapshot_id"] = "missing"
     assert not validate_context(ctx)
 
 
@@ -7323,7 +7303,7 @@ def exact_history_catalog_context():
     current["metadata_version"] = 2
     old = sample_instrument(
         metadata_version=1,
-        catalog_snapshot_id="cat_old",
+        accepted_source_catalog_snapshot_id="cat_old",
         observed_at_utc="2019-01-01T00:00:00Z",
         effective_at_utc="2019-01-02T00:00:00Z",
         stale_after_utc="2020-01-01T00:00:00Z",
@@ -7359,7 +7339,7 @@ def test_context_rejects_previous_catalog_listing_current_instrument_from_other_
 
 def test_context_rejects_catalog_backed_by_history_from_other_catalog():
     ctx = exact_history_catalog_context()
-    ctx["instrument_history_by_id"]["instr_btcusdt_spot_testnet"][0]["catalog_snapshot_id"] = (
+    ctx["instrument_history_by_id"]["instr_btcusdt_spot_testnet"][0]["accepted_source_catalog_snapshot_id"] = (
         "other"
     )
     assert not validate_context(ctx)
@@ -7368,8 +7348,7 @@ def test_context_rejects_catalog_backed_by_history_from_other_catalog():
 @pytest.mark.parametrize(
     "field,value",
     [
-        ("exchange_id", "paper_simulated_venue"),
-        ("environment", "PAPER"),
+        ("source_exchange_id", "paper_simulated_venue"),
         ("market_type", "MARGIN"),
         ("source_adapter_family_id", "other"),
     ],
@@ -7628,7 +7607,7 @@ def history_only_member_context(*, catalog_id="cat_1", listed=True):
         venue_symbol="GHOST",
         display_symbol="GHOST/USDT",
         metadata_version=1,
-        catalog_snapshot_id=catalog_id,
+        accepted_source_catalog_snapshot_id=catalog_id,
     )
     ctx["instrument_history_by_id"]["instr_ghost"] = [ghost]
     catalog = {**ctx["previous_catalogs_by_id"], **ctx["catalogs_by_id"]}.get(catalog_id)
@@ -7653,8 +7632,7 @@ def test_context_rejects_unlisted_historical_instrument_member():
 @pytest.mark.parametrize(
     "field,value",
     [
-        ("exchange_id", "paper_simulated_venue"),
-        ("environment", "PAPER"),
+        ("source_exchange_id", "paper_simulated_venue"),
         ("market_type", "MARGIN"),
         ("source_adapter_family_id", "wrong"),
     ],
@@ -7837,10 +7815,9 @@ def test_resolver_rejects_malformed_current_metadata_version_without_exception(b
     [
         "display_symbol",
         "metadata_version",
-        "catalog_snapshot_id",
+        "accepted_source_catalog_snapshot_id",
         "source_adapter_family_id",
-        "exchange_id",
-        "environment",
+        "source_exchange_id",
         "market_type",
     ],
 )
@@ -8039,7 +8016,7 @@ def assert_target_history_direct_and_dispatch_blocked(ctx):
 
 def test_direct_membership_rejects_dangling_target_history_with_valid_current():
     ctx = exact_history_catalog_context()
-    ctx["instrument_history_by_id"]["instr_btcusdt_spot_testnet"][0]["catalog_snapshot_id"] = (
+    ctx["instrument_history_by_id"]["instr_btcusdt_spot_testnet"][0]["accepted_source_catalog_snapshot_id"] = (
         "cat_missing"
     )
     assert_target_history_direct_and_dispatch_blocked(ctx)
@@ -8058,8 +8035,7 @@ def test_direct_membership_rejects_unlisted_target_history_with_valid_current():
 @pytest.mark.parametrize(
     "field,value",
     [
-        ("exchange_id", "paper_simulated_venue"),
-        ("environment", "PAPER"),
+        ("source_exchange_id", "paper_simulated_venue"),
         ("market_type", "MARGIN"),
         ("source_adapter_family_id", "wrong"),
     ],
@@ -8344,7 +8320,7 @@ def test_direct_rejects_unrelated_malformed_current_instrument(mutation):
     elif mutation == "bad_version":
         record["metadata_version"] = "bad"
     elif mutation == "missing_catalog":
-        record["catalog_snapshot_id"] = "cat_missing"
+        record["accepted_source_catalog_snapshot_id"] = "cat_missing"
     elif mutation == "bad_adapter":
         record["source_adapter_family_id"] = "wrong"
     else:
@@ -8394,3 +8370,113 @@ def test_history_bound_to_second_current_catalog_has_full_parity_success():
     assert direct_membership(ctx) is True
     assert validate_context(ctx) is True
     assert activation_with_context(ctx)[0] is True
+
+
+def test_canonical_source_product_workspace_and_paper_separation():
+    contract = DATA["instrument_contract"]
+    assert contract["parent"] == "Workspace"
+    assert contract["identity_dimensions"] == ["source_exchange_id", "market_type", "venue_symbol"]
+    assert "environment" not in contract["record_fields"]
+    left = sample_instrument(instrument_id="instr_a", workspace_id="ws_a")
+    right = sample_instrument(instrument_id="instr_b", workspace_id="ws_b")
+    assert left["instrument_id"] != right["instrument_id"]
+    assert tuple(left[k] for k in contract["identity_dimensions"]) == tuple(right[k] for k in contract["identity_dimensions"])
+    assert left["source_exchange_id"] == "generic_testnet_venue"
+    assert paper_activation_context()["instruments_by_id"]["instr_paper"]["source_exchange_id"] != "paper_simulated_venue"
+
+def test_two_level_catalog_authority_remains_unimplemented_and_fail_closed():
+    source = DATA["accepted_source_catalog_snapshot_contract"]
+    projection = DATA["workspace_catalog_projection_contract"]
+    assert source["scope"] == ["source_exchange_id", "market_type"]
+    assert source["runtime_writer"] == "NOT_IMPLEMENTED"
+    assert "AcceptedSourceProducerMembership NOT_IMPLEMENTED" in source["producer_authentication"]
+    assert projection["scope"] == ["workspace_id", "accepted_source_catalog_snapshot_id"]
+    assert "cross-Workspace member DENIED" in projection["membership_rules"]
+    assert DATA["production_authority_status"] == {"AcceptedSourceProducerMembership": "NOT_IMPLEMENTED", "catalog_runtime_acceptance": "NOT_IMPLEMENTED", "M0.5": "NOT_AVAILABLE", "C25": "BLOCKED", "S9D": "OPEN"}
+
+
+def accepted_source_snapshot(**changes):
+    record = {
+        "accepted_source_catalog_snapshot_id": "ascat_1",
+        "source_exchange_id": "binance",
+        "market_type": "SPOT",
+        "source_adapter_family_id": "binance_public_catalog",
+        "source_adapter_implementation_id": "impl_ccxt_binance",
+        "source_adapter_release_id": "release_2026_09_15",
+        "source_adapter_version": "4.5.1",
+        "upstream_snapshot_or_retrieval_id": "exchangeInfo:42",
+        "observed_at_utc": "2026-09-15T00:00:00Z",
+        "effective_at_utc": "2026-09-15T00:00:00Z",
+        "stale_after_utc": "2026-09-15T01:00:00Z",
+        "previous_snapshot_id": None,
+        "completeness_status": "COMPLETE",
+        "completeness_evidence": {"method": "EXHAUSTIVE_ENDPOINT", "page_count": 1},
+        "acceptance_status": "VALID",
+        "member_source_product_metadata_versions": [{
+            "source_exchange_id": "binance", "market_type": "SPOT",
+            "venue_symbol": "BTCUSDT", "source_metadata_version_id": "meta_42",
+        }],
+        "content_fingerprint": "",
+    }
+    record.update(changes)
+    return record
+
+
+def accepted_source_fingerprint(record):
+    definition = DATA["accepted_source_catalog_snapshot_contract"]["content_fingerprint_definition"]
+    payload = {field: record[field] for field in definition["input_fields"]}
+    raw = definition["domain_separator"] + "\n" + json.dumps(
+        payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    )
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
+def test_accepted_source_snapshot_hash_schema_is_self_consistent():
+    contract = DATA["accepted_source_catalog_snapshot_contract"]
+    fields = set(contract["fields"])
+    definition = contract["content_fingerprint_definition"]
+    assert set(definition["input_fields"]) <= fields
+    assert set(definition["excluded_fields"]) <= fields
+    assert set(definition["input_fields"]) | set(definition["excluded_fields"]) == fields
+    assert "status" not in definition["input_fields"]
+    assert "instrument_ids" not in definition["input_fields"]
+    assert "instrument_ids" not in definition["canonicalization"]
+    assert "environment" not in fields and contract["scope"] == ["source_exchange_id", "market_type"]
+
+
+def test_accepted_source_fingerprint_binds_producer_retrieval_and_completeness():
+    baseline = accepted_source_snapshot()
+    digest = accepted_source_fingerprint(baseline)
+    for field, value in {
+        "source_adapter_implementation_id": "impl_other",
+        "source_adapter_release_id": "release_other",
+        "upstream_snapshot_or_retrieval_id": "exchangeInfo:43",
+        "completeness_evidence": {"method": "EXHAUSTIVE_ENDPOINT", "page_count": 2},
+        "completeness_status": "PARTIAL",
+    }.items():
+        assert accepted_source_fingerprint({**baseline, field: value}) != digest
+
+
+def test_complete_and_partial_source_catalog_semantics_are_separate_from_acceptance():
+    contract = DATA["accepted_source_catalog_snapshot_contract"]
+    assert contract["completeness_statuses"] == ["COMPLETE", "PARTIAL"]
+    assert contract["acceptance_statuses"] == ["VALID", "REJECTED"]
+    assert "may serve as exhaustive baseline" in contract["completeness_semantics"]["COMPLETE"]
+    partial = contract["completeness_semantics"]["PARTIAL"]
+    assert partial == [
+        "cannot remove membership", "cannot infer delisting",
+        "cannot replace last COMPLETE baseline",
+        "cannot activate autonomous or manual universe as current exhaustive source",
+    ]
+
+
+def test_source_members_have_no_global_or_tenant_instrument_identity():
+    source = DATA["accepted_source_catalog_snapshot_contract"]
+    workspace = DATA["workspace_catalog_projection_contract"]
+    assert source["source_product_index"]["instrument_id_mapping_forbidden"] is True
+    assert source["member_schema"]["workspace_id_forbidden"] is True
+    assert source["member_schema"]["instrument_id_forbidden"] is True
+    assert workspace["durable_identity_mapping"]["key"] == [
+        "workspace_id", "source_exchange_id", "market_type", "venue_symbol"
+    ]
+    assert workspace["durable_identity_mapping"]["value"] == "instrument_id"

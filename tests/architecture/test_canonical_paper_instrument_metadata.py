@@ -13,12 +13,12 @@ import bot_core.instruments as public
 import bot_core.instruments.paper_canonical_metadata as source
 
 FROZEN_FIELDS = (
-    "instrument_id", "workspace_id", "exchange_id", "environment", "market_type",
+    "instrument_id", "workspace_id", "source_exchange_id", "market_type",
     "instrument_type", "venue_symbol", "display_symbol", "base_asset_reference",
     "quote_asset_reference", "settlement_asset_reference", "trading_status", "price_tick",
     "quantity_step", "min_quantity", "max_quantity", "min_notional", "max_notional",
     "contract_size", "contract_value_currency", "derivative_settlement_type",
-    "expiry_at_utc", "strike_price", "option_side", "catalog_snapshot_id",
+    "expiry_at_utc", "strike_price", "option_side", "accepted_source_catalog_snapshot_id",
     "metadata_version", "observed_at_utc", "effective_at_utc", "stale_after_utc",
     "source_adapter_family_id",
 )
@@ -36,24 +36,24 @@ NULLABLE_FIELDS = {
 
 
 def _asset(code: str = "BASE") -> source._AssetReference:
-    return source._AssetReference(code, code, "paper_simulated_venue", "EXACT")
+    return source._AssetReference(code, code, "generic_testnet_venue", "EXACT")
 
 
 def _spot(**changes: object) -> source._CanonicalPaperInstrumentMetadata:
     record = source._CanonicalPaperInstrumentMetadata(
         instrument_id="instr_private_candidate", workspace_id="workspace_private",
-        exchange_id="paper_simulated_venue", environment="PAPER", market_type="SPOT",
+        source_exchange_id="generic_testnet_venue", market_type="SPOT",
         instrument_type="SPOT_PAIR", venue_symbol="PRIVATE", display_symbol="PRIVATE",
         base_asset_reference=_asset(), quote_asset_reference=_asset("QUOTE"),
         settlement_asset_reference=None, trading_status="TRADING", price_tick="0.01",
         quantity_step="0.1", min_quantity=None, max_quantity=None, min_notional=None,
         max_notional=None, contract_size=None, contract_value_currency=None,
         derivative_settlement_type=None, expiry_at_utc=None, strike_price=None,
-        option_side=None, catalog_snapshot_id="catalog_private", metadata_version=1,
+        option_side=None, accepted_source_catalog_snapshot_id="ascat_private", metadata_version=1,
         observed_at_utc="2026-01-01T00:00:00Z",
         effective_at_utc="2026-01-01T00:00:00Z",
         stale_after_utc="2027-01-01T00:00:00Z",
-        source_adapter_family_id="paper_simulation_adapter_family",
+        source_adapter_family_id="generic_testnet_adapter_family",
     )
     return replace(record, **changes)
 

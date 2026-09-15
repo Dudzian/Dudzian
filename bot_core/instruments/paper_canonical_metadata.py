@@ -47,8 +47,7 @@ class _CanonicalPaperInstrumentMetadata:
 
     instrument_id: str
     workspace_id: str
-    exchange_id: str
-    environment: Literal["PAPER"]
+    source_exchange_id: str
     market_type: MarketType
     instrument_type: InstrumentType
     venue_symbol: str
@@ -69,7 +68,7 @@ class _CanonicalPaperInstrumentMetadata:
     expiry_at_utc: str | None
     strike_price: str | None
     option_side: OptionSide | None
-    catalog_snapshot_id: str
+    accepted_source_catalog_snapshot_id: str
     metadata_version: int
     observed_at_utc: str
     effective_at_utc: str
@@ -119,7 +118,7 @@ def _timestamp(value: object) -> tuple[datetime, int] | None:
     return parsed, int((fraction + "0" * 9)[:9]) if fraction else 0
 
 
-def _validate_asset_reference(reference: object) -> None:
+def _validate_asset_reference(reference: object, source_exchange_id: str) -> None:
     if not isinstance(reference, _AssetReference):
         raise ValueError("malformed AssetReference")
     if not all(
@@ -131,7 +130,7 @@ def _validate_asset_reference(reference: object) -> None:
         )
     ) or reference.mapping_status not in {"EXACT", "EXPLICIT_ALIAS"}:
         raise ValueError("malformed AssetReference")
-    if reference.asset_namespace != "paper_simulated_venue":
+    if reference.asset_namespace != source_exchange_id:
         raise ValueError("AssetReference namespace mismatch")
 
 
@@ -143,31 +142,28 @@ def _validate_release_entry(entry: object) -> None:
     required_strings = (
         entry.instrument_id,
         entry.workspace_id,
-        entry.exchange_id,
-        entry.environment,
+        entry.source_exchange_id,
         entry.market_type,
         entry.instrument_type,
         entry.venue_symbol,
         entry.display_symbol,
-        entry.catalog_snapshot_id,
+        entry.accepted_source_catalog_snapshot_id,
         entry.source_adapter_family_id,
     )
     if not all(_nonempty(value) for value in required_strings):
         raise ValueError("required Instrument scalar is empty")
     if not entry.instrument_id.startswith("instr_"):
         raise ValueError("instrument_id must use frozen instr prefix")
-    if entry.exchange_id != "paper_simulated_venue" or entry.environment != "PAPER":
-        raise ValueError("release entry is outside canonical PAPER scope")
-    if entry.source_adapter_family_id != "paper_simulation_adapter_family":
-        raise ValueError("source adapter family mismatch")
+    if entry.source_exchange_id == "paper_simulated_venue":
+        raise ValueError("paper backend cannot own canonical source Instrument")
     if _MARKET_INSTRUMENT_PAIRS.get(entry.market_type) != entry.instrument_type:
         raise ValueError("invalid market/instrument pair")
     if entry.venue_symbol.strip() != entry.venue_symbol:
         raise ValueError("venue_symbol is not exact")
     for reference in (entry.base_asset_reference, entry.quote_asset_reference):
-        _validate_asset_reference(reference)
+        _validate_asset_reference(reference, entry.source_exchange_id)
     if entry.settlement_asset_reference is not None:
-        _validate_asset_reference(entry.settlement_asset_reference)
+        _validate_asset_reference(entry.settlement_asset_reference, entry.source_exchange_id)
     if entry.trading_status not in _TRADING_STATUSES:
         raise ValueError("invalid trading status")
     if type(entry.metadata_version) is not int or entry.metadata_version <= 0:
@@ -246,7 +242,7 @@ def _validate_release_entries(entries: tuple[_CanonicalPaperInstrumentMetadata, 
         if entry.instrument_id in seen_ids:
             raise ValueError("duplicate instrument_id")
         seen_ids.add(entry.instrument_id)
-        identity = (entry.exchange_id, entry.environment, entry.market_type, entry.venue_symbol)
+        identity = (entry.workspace_id, entry.source_exchange_id, entry.market_type, entry.venue_symbol)
         previous = identity_to_id.setdefault(identity, entry.instrument_id)
         if previous != entry.instrument_id:
             raise ValueError("immutable identity tuple collision")

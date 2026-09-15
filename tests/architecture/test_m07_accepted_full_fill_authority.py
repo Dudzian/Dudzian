@@ -628,7 +628,7 @@ def test_workspace_instrument_identity_is_distinct_over_one_shared_source_fact()
         "shared_canonical_instrument_id_across_workspaces": False,
     }
     assert compatibility["M0.2"]["instrument_identity_dimensions"]["status"] == (
-        "MIGRATION_REQUIRED"
+        "MIGRATED_CANONICAL_1.44.0"
     )
     assert compatibility["M0.6"]["same_workspace_invariant"] == (
         "Instrument.workspace_id == ExchangeAccount.workspace_id remains required"
@@ -667,8 +667,8 @@ def test_m02_frozen_instrument_dimensions_prove_explicit_migration_dependency():
     )
     assert instrument["identity_dimensions"] == migration["exact_frozen_evidence"][
         "identity_dimensions"
-    ] == ["exchange_id", "environment", "market_type", "venue_symbol"]
-    assert migration["status"] == "MIGRATION_REQUIRED_DESIGN_ONLY_NOT_IMPLEMENTED"
+    ] == ["source_exchange_id", "market_type", "venue_symbol"]
+    assert migration["status"] == "MIGRATED_CANONICAL_1.44.0"
     assert migration["target_identity_dimensions"] == [
         "source_exchange_id",
         "market_type",
@@ -682,4 +682,4 @@ def test_m02_frozen_instrument_dimensions_prove_explicit_migration_dependency():
     ] is False
     assert design["m02_m06_compatibility"]["M0.6"][
         "instrument_environment_exchange_checks"
-    ] == "SEMANTIC_MIGRATION_REQUIRED"
+    ] == "MIGRATED_CANONICAL_1.44.0_SOURCE_EXECUTION_ROLES_SEPARATED"

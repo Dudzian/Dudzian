@@ -168,7 +168,36 @@
       "one exchange may support multiple market types",
       "exchange capabilities do not imply account capabilities",
       "ExchangeCapabilities do not extend ProductCapabilities"
-    ]
+    ],
+    "source_catalog_policy": {
+      "scope": [
+        "source_exchange_id",
+        "market_type"
+      ],
+      "allowed_adapter_families": "closed build-time declaration; not producer authentication",
+      "completeness_policy": "accepted COMPLETE evidence required for exhaustive absence",
+      "freshness_policy": "accepted snapshot timestamps",
+      "runtime_config_may_mint_authority": false
+    },
+    "account_execution_policy": {
+      "scope": [
+        "exchange_id",
+        "environment",
+        "market_type"
+      ],
+      "environments": [
+        "PAPER",
+        "TESTNET",
+        "LIVE"
+      ],
+      "live_enabled": false,
+      "account_identity_policy": "existing ExchangeAccount contract",
+      "execution_backend_policy": "closed build-time registry"
+    },
+    "registry_membership_is_source_producer_authentication": false,
+    "legacy_entry_disposition": {
+      "paper_simulated_venue": "PAPER execution backend/simulation provider only; not canonical source Instrument owner"
+    }
   },
   "exchange_account_contract": {
     "entity": "ExchangeAccount",
@@ -552,16 +581,14 @@
     "id_prefix": "instr",
     "parent": "Workspace",
     "identity_dimensions": [
-      "exchange_id",
-      "environment",
+      "source_exchange_id",
       "market_type",
       "venue_symbol"
     ],
     "record_fields": [
       "instrument_id",
       "workspace_id",
-      "exchange_id",
-      "environment",
+      "source_exchange_id",
       "market_type",
       "instrument_type",
       "venue_symbol",
@@ -582,7 +609,7 @@
       "expiry_at_utc",
       "strike_price",
       "option_side",
-      "catalog_snapshot_id",
+      "accepted_source_catalog_snapshot_id",
       "metadata_version",
       "observed_at_utc",
       "effective_at_utc",
@@ -608,7 +635,16 @@
       "display symbol not routing key",
       "symbol change requires explicit alias lineage",
       "delisted remains historically resolvable",
-      "no hard delete after historical use"
+      "no hard delete after historical use",
+      "workspace_id is immutable identity scope",
+      "execution environment is not an Instrument field",
+      "refresh and metadata revision preserve instrument_id",
+      "same source product in different Workspaces has distinct instrument_id",
+      "cross-Workspace resolution fails closed",
+      "raw symbol config adapter plugin or manifest cannot mint source identity",
+      "source_exchange_id is never rewritten for PAPER execution",
+      "accepted_source_catalog_snapshot_id exact-binds the source snapshot for this metadata_version",
+      "historical resolution requires exact instrument_id + metadata_version + accepted_source_catalog_snapshot_id; current fallback forbidden"
     ],
     "venue_symbol_policy": {
       "field": "venue_symbol",
@@ -650,8 +686,8 @@
         "historical non-TRADING statuses remain resolvable"
       ],
       "immutable_identity_tuple": [
-        "exchange_id",
-        "environment",
+        "workspace_id",
+        "source_exchange_id",
         "market_type",
         "venue_symbol"
       ],
@@ -675,7 +711,9 @@
       ],
       "version_denial": "INSTRUMENT_METADATA_INVALID",
       "identity_denial": "INSTRUMENT_IDENTITY_COLLISION",
-      "version_order": "positive non-boolean integers, unique and strictly increasing in list order; current strictly greater than historical maximum"
+      "version_order": "positive non-boolean integers, unique and strictly increasing in list order; current strictly greater than historical maximum",
+      "snapshot_binding_field": "accepted_source_catalog_snapshot_id",
+      "missing_historical_snapshot": "FAIL_CLOSED; never fallback to current metadata or another authority family"
     }
   },
   "asset_reference_contract": {
@@ -699,11 +737,14 @@
     "rules": [
       "no durable Asset entity",
       "canonical display code is not routing identity",
-      "alias scoped by exchange_id",
+      "alias scoped by source_exchange_id",
       "no global aliases",
       "AMBIGUOUS and UNKNOWN fail closed",
       "no symbol parsing heuristics",
-      "asset references come from catalog metadata"
+      "asset references come from catalog metadata",
+      "asset_namespace exact-binds source_exchange_id",
+      "PAPER execution never rewrites asset_namespace to paper_simulated_venue",
+      "same asset code across venues does not establish authoritative equivalence"
     ]
   },
   "decimal_policy": {
@@ -915,7 +956,8 @@
       "direct_catalog_id_disjointness": "current and previous Catalog durable ID sets are disjoint in direct and full paths",
       "catalog_union_history": "history may exact-bind to a valid Catalog from either trusted current or previous map; all complete-graph resolver calls receive both maps",
       "success_and_denial_parity": "direct, full-context and dispatcher parity covers fail-closed denials and valid multi-current-Catalog successes"
-    }
+    },
+    "legacy_disposition": "LEGACY_MIGRATION_BLOCKED_READ_ONLY; cannot mint accepted source membership and cannot serve as canonical source authority for new TradingUniverse"
   },
   "instrument_symbol_alias_contract": {
     "fields": [
@@ -3045,5 +3087,189 @@
       ],
       "empty_dict": "valid only for first version without predecessor"
     }
+  },
+  "workspace_catalog_projection_contract": {
+    "entity": "WorkspaceCatalogProjection",
+    "scope": [
+      "workspace_id",
+      "accepted_source_catalog_snapshot_id"
+    ],
+    "fields": [
+      "workspace_catalog_projection_id",
+      "workspace_id",
+      "accepted_source_catalog_snapshot_id",
+      "instrument_ids",
+      "created_at_utc",
+      "content_fingerprint"
+    ],
+    "membership_rules": [
+      "Instrument.workspace_id == projection.workspace_id",
+      "Instrument exact-binds source product and metadata_version from upstream snapshot",
+      "cross-Workspace member DENIED",
+      "projection does not mint source acceptance or Instrument identity"
+    ],
+    "runtime_writer": "NOT_IMPLEMENTED",
+    "member_schema": {
+      "fields": [
+        "instrument_id",
+        "source_exchange_id",
+        "market_type",
+        "venue_symbol",
+        "source_metadata_version_id"
+      ],
+      "rules": [
+        "instrument_id resolves to Instrument owned by projection.workspace_id",
+        "source tuple and source_metadata_version_id exact-match an upstream AcceptedSourceCatalogSnapshot member"
+      ]
+    },
+    "durable_identity_mapping": {
+      "key": [
+        "workspace_id",
+        "source_exchange_id",
+        "market_type",
+        "venue_symbol"
+      ],
+      "value": "instrument_id",
+      "same_source_product_different_workspace": "distinct instrument_id"
+    }
+  },
+  "legacy_paper_instrument_disposition": {
+    "match": [
+      "exchange_id=paper_simulated_venue",
+      "environment=PAPER"
+    ],
+    "status": "LEGACY_READ_ONLY_QUARANTINE",
+    "symbol_inference_forbidden": true,
+    "cross_workspace_deduplication_forbidden": true
+  },
+  "production_authority_status": {
+    "AcceptedSourceProducerMembership": "NOT_IMPLEMENTED",
+    "catalog_runtime_acceptance": "NOT_IMPLEMENTED",
+    "M0.5": "NOT_AVAILABLE",
+    "C25": "BLOCKED",
+    "S9D": "OPEN"
+  },
+  "accepted_source_catalog_snapshot_contract": {
+    "entity": "AcceptedSourceCatalogSnapshot",
+    "id_field": "accepted_source_catalog_snapshot_id",
+    "id_prefix": "ascat",
+    "scope": [
+      "source_exchange_id",
+      "market_type"
+    ],
+    "fields": [
+      "accepted_source_catalog_snapshot_id",
+      "source_exchange_id",
+      "market_type",
+      "source_adapter_family_id",
+      "source_adapter_implementation_id",
+      "source_adapter_release_id",
+      "source_adapter_version",
+      "upstream_snapshot_or_retrieval_id",
+      "observed_at_utc",
+      "effective_at_utc",
+      "stale_after_utc",
+      "previous_snapshot_id",
+      "completeness_status",
+      "completeness_evidence",
+      "acceptance_status",
+      "member_source_product_metadata_versions",
+      "content_fingerprint"
+    ],
+    "completeness_statuses": [
+      "COMPLETE",
+      "PARTIAL"
+    ],
+    "acceptance_statuses": [
+      "VALID",
+      "REJECTED"
+    ],
+    "freshness_model": "derived exclusively from stale_after_utc; freshness is not completeness or acceptance",
+    "member_schema": {
+      "type": "array of closed SourceProductMetadataVersionMember records",
+      "fields": [
+        "source_exchange_id",
+        "market_type",
+        "venue_symbol",
+        "source_metadata_version_id"
+      ],
+      "identity_fields": [
+        "source_exchange_id",
+        "market_type",
+        "venue_symbol"
+      ],
+      "metadata_binding_field": "source_metadata_version_id",
+      "workspace_id_forbidden": true,
+      "instrument_id_forbidden": true,
+      "comparison": "exact; opaque venue_symbol; no trim case-fold Unicode normalization parsing or aliases"
+    },
+    "source_product_index": {
+      "key": [
+        "source_exchange_id",
+        "market_type",
+        "venue_symbol"
+      ],
+      "value": "exact source_metadata_version_id",
+      "instrument_id_mapping_forbidden": true
+    },
+    "scope_validation": [
+      "same source_exchange_id + market_type for snapshot and every member",
+      "source exchange exists in canonical source registry",
+      "market_type supported by source_catalog_policy",
+      "source_adapter_family_id permitted by source_catalog_policy",
+      "execution environment is neither read nor validated"
+    ],
+    "completeness_semantics": {
+      "COMPLETE": "may serve as exhaustive baseline only with valid completeness_evidence and policy permission",
+      "PARTIAL": [
+        "cannot remove membership",
+        "cannot infer delisting",
+        "cannot replace last COMPLETE baseline",
+        "cannot activate autonomous or manual universe as current exhaustive source"
+      ],
+      "absence_may_imply_delisting_iff": [
+        "acceptance_status == VALID",
+        "completeness_status == COMPLETE",
+        "completeness_evidence is valid",
+        "source_catalog_policy permits exhaustive absence semantics",
+        "scope exactly matches source_exchange_id + market_type"
+      ]
+    },
+    "content_fingerprint_definition": {
+      "algorithm": "SHA-256",
+      "domain_separator": "cryptohunter.m0.5.accepted_source_catalog_snapshot.v2",
+      "input_fields": [
+        "source_exchange_id",
+        "market_type",
+        "source_adapter_family_id",
+        "source_adapter_implementation_id",
+        "source_adapter_release_id",
+        "source_adapter_version",
+        "upstream_snapshot_or_retrieval_id",
+        "observed_at_utc",
+        "effective_at_utc",
+        "stale_after_utc",
+        "previous_snapshot_id",
+        "completeness_status",
+        "completeness_evidence",
+        "acceptance_status",
+        "member_source_product_metadata_versions"
+      ],
+      "canonicalization": "JSON object with lexicographically sorted keys; member_source_product_metadata_versions sorted by exact source-product key then source_metadata_version_id",
+      "encoding": "UTF-8",
+      "digest_format": "lowercase hex",
+      "excluded_fields": [
+        "accepted_source_catalog_snapshot_id",
+        "content_fingerprint"
+      ],
+      "exclusion_rationale": {
+        "accepted_source_catalog_snapshot_id": "Core-owned durable identity, excluded from semantic content fingerprint",
+        "content_fingerprint": "digest output cannot include itself"
+      }
+    },
+    "identity_policy": "accepted_source_catalog_snapshot_id is Core-owned; content fingerprint proves exact provenance/content but cannot mint acceptance",
+    "authority_status": "SCHEMA_READY_ACCEPTED_SOURCE_PRODUCER_MEMBERSHIP_NOT_IMPLEMENTED",
+    "runtime_writer": "NOT_IMPLEMENTED",
+    "producer_authentication": "AcceptedSourceProducerMembership NOT_IMPLEMENTED; registry/config/adapter/plugin/manifest/local hash cannot mint acceptance"
   }
 }

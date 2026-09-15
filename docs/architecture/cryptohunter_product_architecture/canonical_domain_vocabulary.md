@@ -334,3 +334,7 @@ External identifiers are not CryptoHunter IDs and must not be mixed with interna
 - `docs/ARCHITECTURE.md`
 - `docs/architecture/phase1_foundation.md`
 - `docs/architecture/desktop_shell_plan.md`
+
+## M0.2 canonical source-product identity migration
+
+Instrument remains a persistent child of exactly one Workspace and `Workspace → Instrument` remains `one_to_many_catalog`. Its canonical identity dimensions are now exactly `source_exchange_id`, `market_type`, and opaque `venue_symbol`; Workspace is the separate ownership scope. Execution environment is deliberately absent. Thus PAPER and LIVE execution contexts in one Workspace reference the same Instrument, while the same source product projected into two Workspaces receives distinct `instrument_id` values. No supported frozen venue supplied evidence for `source_market_namespace_id`, so that discriminator is not frozen in this edition.
