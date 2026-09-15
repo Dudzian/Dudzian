@@ -25,7 +25,7 @@
 ```json
 {
   "contract_id": "M0.12-audit-observability-alerts-updater",
-  "version": "1.37.0",
+  "version": "1.38.0",
   "phase": "S9D_C25_BLOCKED_M08_EXECUTABLE_RECONCILIATION_AUTHORITY",
   "machine_source_of_truth": true,
   "markdown_is_projection_only": true
@@ -5172,7 +5172,7 @@
             "owner method accepting arbitrary raw metadata"
           ],
           "coherent_reseal_disposition": "BLOCKED_FAIL_CLOSED: no production restore/resolve API is created; raw Catalog plus raw Instrument plus recomputed local fingerprints cannot be promoted to accepted membership",
-          "restore_disposition": "UNAVAILABLE until restore can revalidate every historical membership against the independent upstream Catalog/source authority",
+          "restore_disposition": "UNAVAILABLE until restore can revalidate every historical membership against the policy-specific accepted upstream Catalog/source authority",
           "downstream_nominal_projection": "NOT_IMPLEMENTED: M05PrevalidatedInstrumentHistory exists only in the executable reference oracle",
           "production_catalog_source_authority_discovery": {
             "source_identity_authenticator": {
@@ -5196,7 +5196,7 @@
                 "adapter_family_id",
                 "source_adapter_family_id"
               ],
-              "evidence": "the M0.5 oracle and M0.6 projections validate these values structurally, but no production accepted source membership binds them as provenance"
+              "evidence": "the M0.5 oracle and M0.6 projections validate these values structurally, but no production policy-specific accepted authority binds these values as provenance: PAPER lacks accepted canonical local-metadata authority and TESTNET lacks accepted authenticated adapter-source authority"
             },
             "independent_non_caller_mintable_anchor": {
               "status": "NOT_FOUND",
@@ -5239,13 +5239,70 @@
               "account_identity_discovery_policy": "LOCAL_SIMULATED_IDENTITY",
               "authority_status": "NOT_IMPLEMENTED",
               "external_authenticated_adapter_membership_required": "NO",
-              "complete_snapshot_derivation": "NOT_AVAILABLE: the frozen contract defines validation and hashing but production local InstrumentConfig/core config does not contain the full canonical Instrument/Catalog record, accepted instrument_ids membership, snapshot IDs, adapter version, or timestamp values",
-              "instrument_ids_source": "Production paper market setup reads caller-configurable CoreConfig.instrument_universes and exchange_symbols; frozen sample Catalog construction exists only in the executable oracle and is not production membership.",
-              "metadata_immutability": "The frozen exchange entry is build-time closed, but production instrument universe/config metadata is caller-configurable and has no accepted immutable membership/history.",
-              "core_owned_catalog_path": "NOT_FOUND: no CoreHost-owned producer derives a full canonical InstrumentCatalogSnapshot without caller-provided raw metadata.",
-              "hash_lineage_timestamp_semantics": "PARTIAL_ONLY: content_hash canonicalization and lineage/timestamp validation are frozen, but snapshot identity, timestamp values, predecessor acceptance and publication sequence are not deterministically derived by production code.",
-              "historical_instrument_disposition": "NOT_FOUND: no production owner/carrier derives and retains full immutable historical Instrument records from accepted local contract metadata.",
-              "nearest_missing_prerequisite": "MISSING_CORE_OWNED_CANONICAL_LOCAL_CONTRACT_METADATA_CATALOG_HISTORY_PRODUCER"
+              "complete_snapshot_derivation": "NOT_AVAILABLE: production has no build-time canonical PAPER instrument set and therefore cannot supply every frozen Instrument field or exact accepted instrument_ids; CoreConfig.instrument_universes, InstrumentConfig, exchange_symbols, YAML and CLI are caller/config-controlled.",
+              "instrument_ids_source": "NOT_FOUND outside caller/config input: Paper execution/bootstrap enumerates CoreConfig.instrument_universes and selects exchange_symbols; frozen sample membership exists only in tests/reference and documentation.",
+              "metadata_immutability": "The frozen registry immutably binds PAPER exchange/environment/adapter policy only; it defines no canonical instruments, AssetReference values, market constraints, versions, or timestamps.",
+              "core_owned_catalog_path": "NOT_FOUND: without a production-owned canonical instrument set, no CoreHost mechanism can derive exact instrument_ids or construct a genuine accepted full InstrumentCatalogSnapshot.",
+              "hash_lineage_timestamp_semantics": "SCHEMA_ORACLE_ONLY: hashing and validation rules exist, but production owns no snapshot identity, adapter_version, accepted transaction timestamps, predecessor sequence, or lineage publication mechanism.",
+              "historical_instrument_disposition": "NOT_FOUND: persistence record schemas are DTO/carrier shapes, not immutable accepted membership, and there is no exact instrument_id + metadata_version accepted-history resolver.",
+              "nearest_missing_prerequisite": "MISSING_BUILD_TIME_CANONICAL_PAPER_INSTRUMENT_METADATA",
+              "canonical_metadata_discovery": {
+                "build_time_immutable_production_metadata": "EXCHANGE_SCOPE_ONLY_NO_INSTRUMENT_SET",
+                "build_time_values_found": [
+                  "exchange_id=paper_simulated_venue",
+                  "environment=PAPER",
+                  "adapter_family_id=paper_simulation_adapter_family",
+                  "capability_discovery_policy=STATIC_BUILD_TIME",
+                  "instrument_catalog_discovery_policy=LOCAL_CONTRACT_METADATA"
+                ],
+                "runtime_derived_metadata": "PaperBackend delegates load_markets/MarketRules to its price-feed backend; runtime values are not a build-time local metadata authority.",
+                "caller_config_metadata": "PaperTradingExecutionService markets and PaperMarketMetadata are constructed from CoreConfig.instrument_universes, InstrumentConfig, exchange_symbols and paper_trading defaults/overrides.",
+                "caller_config_only_fields": [
+                  "venue_symbol",
+                  "base_asset code",
+                  "quote_asset code",
+                  "min_quantity",
+                  "min_notional",
+                  "quantity_step analogue",
+                  "price_tick analogue"
+                ],
+                "frozen_fields_without_production_owned_source": [
+                  "instrument_id",
+                  "workspace_id",
+                  "market_type",
+                  "instrument_type",
+                  "venue_symbol",
+                  "display_symbol",
+                  "base_asset_reference",
+                  "quote_asset_reference",
+                  "settlement_asset_reference",
+                  "trading_status",
+                  "price_tick",
+                  "quantity_step",
+                  "min_quantity",
+                  "max_quantity",
+                  "min_notional",
+                  "max_notional",
+                  "contract_size",
+                  "contract_value_currency",
+                  "derivative_settlement_type",
+                  "expiry_at_utc",
+                  "strike_price",
+                  "option_side",
+                  "catalog_snapshot_id",
+                  "metadata_version",
+                  "observed_at_utc",
+                  "effective_at_utc",
+                  "stale_after_utc",
+                  "source_adapter_family_id"
+                ],
+                "test_reference_metadata": "Executable M0.5 oracle constructs complete sample Instrument/Catalog graphs, including PAPER examples; these are fixtures/reference samples only.",
+                "test_reference_samples_are_authority": "NO",
+                "documentation_only_metadata": "The frozen M0.5 JSON defines schemas, registries, validation, hashes and policies, but supplies no canonical PAPER Instrument membership records.",
+                "catalog_acceptance_disposition": "IMPOSSIBLE_GENUINELY: exact instrument_ids cannot be derived without caller/config data, so a full snapshot could only self-enroll caller/test metadata.",
+                "persistence_carrier_disposition": "SCHEMA_ONLY_NOT_AUTHORITY: persistence primitives cannot independently prove immutable accepted local-metadata origin or reject a coherent reseal after restart.",
+                "external_adapter_authentication_required": "NO: PAPER uses LOCAL_CONTRACT_METADATA; the blocker is absent canonical local instrument metadata, not adapter identity."
+              }
             },
             "TESTNET": {
               "exchange_id": "generic_testnet_venue",
