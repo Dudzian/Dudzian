@@ -4,7 +4,7 @@
   "status": "IN_PROGRESS_S9D_C25_BLOCKED_M08_EXECUTABLE_RECONCILIATION_AUTHORITY_OTHER_SOURCE_AUTHORITIES_OPEN",
   "contract_identity": {
     "contract_id": "M0.12-audit-observability-alerts-updater",
-    "version": "1.35.0",
+    "version": "1.37.0",
     "phase": "S9D_C25_BLOCKED_M08_EXECUTABLE_RECONCILIATION_AUTHORITY",
     "machine_source_of_truth": true,
     "markdown_is_projection_only": true
@@ -5085,19 +5085,21 @@
           "m05_historical_instrument_dependency": {
             "status": "MISSING_GENUINE_UPSTREAM_CATALOG_SOURCE_MEMBERSHIP_AUTHORITY",
             "discovery_scope": [
-              "bot_core production modules",
-              "M0.5 Instrument and InstrumentCatalogSnapshot machine contract",
-              "M0.5 executable architecture oracle",
-              "M0.6 downstream Instrument/Catalog projections",
-              "persistence record registry",
-              "runtime DTO and event surfaces"
+              "all production bot_core modules",
+              "runtime process topology and CoreHost composition",
+              "runtime and ExchangeManager adapter registries plus dynamic plugin/config loading",
+              "M0.3 CoreHost authority and M0.4 ProductCapabilities contracts",
+              "M0.5 Instrument and InstrumentCatalogSnapshot machine contract and executable oracle",
+              "M0.6 downstream adapter-family Instrument/Catalog projections",
+              "persistence kernel record registry, carriers, restore and authenticity components",
+              "S9C/S9D source-producer authenticity and accepted-observation authorities"
             ],
             "genuine_production_authority": "NOT_FOUND",
             "production_schema_dto": "persistence registry and runtime records describe storage/transport shapes only; restorable_authority=false does not mint accepted M0.5 membership",
             "test_reference_oracle": "tests/architecture/test_cryptohunter_exchange_accounts_and_instruments.py contains the frozen full Instrument/Catalog graph validator and M05PrevalidatedInstrumentHistory remains a test-only nominal reference type",
             "documentation_machine_contract": "exchange_accounts_and_instruments.json defines full Instrument history, bidirectional Catalog membership, scope/adapter binding, and Catalog lineage rules but is not runtime acceptance evidence",
             "downstream_reference_evidence": "M0.6 InstrumentCatalogProjection and related projections consume M0.5 semantics but do not attest source acceptance",
-            "missing_upstream_anchor": "Core-owned accepted Catalog/source membership issued by an independently authenticated exchange-adapter ingestion authority, with durable immutable Catalog lineage and exact Catalog-to-Instrument membership",
+            "missing_upstream_anchor": "POLICY_SPECIFIC: PAPER requires a Core-owned canonical local-contract-metadata Catalog/history producer; TESTNET requires independently authenticated adapter-source membership before adapter snapshot acceptance.",
             "forbidden_substitutes": [
               "raw Instrument mapping",
               "raw Catalog mapping",
@@ -5110,7 +5112,102 @@
             ],
             "coherent_reseal_disposition": "BLOCKED_FAIL_CLOSED: no production restore/resolve API is created; raw Catalog plus raw Instrument plus recomputed local fingerprints cannot be promoted to accepted membership",
             "restore_disposition": "UNAVAILABLE until restore can revalidate every historical membership against the independent upstream Catalog/source authority",
-            "downstream_nominal_projection": "NOT_IMPLEMENTED: M05PrevalidatedInstrumentHistory exists only in the executable reference oracle"
+            "downstream_nominal_projection": "NOT_IMPLEMENTED: M05PrevalidatedInstrumentHistory exists only in the executable reference oracle",
+            "production_catalog_source_authority_discovery": {
+              "source_identity_authenticator": {
+                "status": "POLICY_SPECIFIC",
+                "evidence": "NOT_REQUIRED_AS_EXTERNAL_ADAPTER_MEMBERSHIP for PAPER LOCAL_CONTRACT_METADATA; NOT_FOUND for TESTNET ADAPTER_SNAPSHOT_REQUIRED"
+              },
+              "catalog_snapshot_acceptor": {
+                "status": "NOT_FOUND",
+                "evidence": "no production ingestion component implements either frozen PAPER LOCAL_CONTRACT_METADATA derivation or TESTNET independently sourced ADAPTER_SNAPSHOT_REQUIRED acceptance"
+              },
+              "accepted_catalog_carrier_history": {
+                "status": "NOT_FOUND",
+                "evidence": "no production carrier retains immutable accepted Catalog snapshots, monotonic membership revisions, replay conflicts, predecessor membership or historical resolution"
+              },
+              "scope_binding_evidence": {
+                "status": "SCHEMA_ONLY_NOT_AUTHORITY",
+                "fields": [
+                  "exchange_id",
+                  "environment",
+                  "market_type",
+                  "adapter_family_id",
+                  "source_adapter_family_id"
+                ],
+                "evidence": "the M0.5 oracle and M0.6 projections validate these values structurally, but no production accepted source membership binds them as provenance"
+              },
+              "independent_non_caller_mintable_anchor": {
+                "status": "NOT_FOUND",
+                "evidence": "PAPER has no Core-owned immutable local metadata producer/history; TESTNET has no independently authenticated adapter-source membership; M0.3/M0.4, config, fingerprints, persistence DTOs and S9C/S9D observation authorities do not fill either policy-specific gap"
+              }
+            },
+            "existing_adapter_registration_disposition": "NOT_AUTHORITY_FOR_ADAPTER_SNAPSHOT_REQUIRED_SOURCE_PROVENANCE: public register_adapter_factory and register_native_adapter accept caller-selected identifiers/factories and mutable configuration provenance; this finding applies to TESTNET ADAPTER_SNAPSHOT_REQUIRED and does not invalidate PAPER LOCAL_CONTRACT_METADATA.",
+            "catalog_authority_stage_disposition": "BLOCKED_POLICY_SPECIFIC: neither the PAPER local-metadata producer/history path nor the TESTNET authenticated adapter-snapshot path exists; Catalog accept/resolve/history/restore APIs remain intentionally absent.",
+            "enabled_frozen_exchange_policy_matrix": [
+              {
+                "exchange_id": "paper_simulated_venue",
+                "supported_environments": [
+                  "PAPER"
+                ],
+                "adapter_family_id": "paper_simulation_adapter_family",
+                "capability_discovery_policy": "STATIC_BUILD_TIME",
+                "instrument_catalog_discovery_policy": "LOCAL_CONTRACT_METADATA",
+                "account_identity_discovery_policy": "LOCAL_SIMULATED_IDENTITY"
+              },
+              {
+                "exchange_id": "generic_testnet_venue",
+                "supported_environments": [
+                  "TESTNET"
+                ],
+                "adapter_family_id": "generic_testnet_adapter_family",
+                "capability_discovery_policy": "ADAPTER_SNAPSHOT_REQUIRED",
+                "instrument_catalog_discovery_policy": "ADAPTER_SNAPSHOT_REQUIRED",
+                "account_identity_discovery_policy": "PRIVATE_READINESS_CHECK_REQUIRED"
+              }
+            ],
+            "m05_catalog_source_policy_disposition": {
+              "PAPER": {
+                "exchange_id": "paper_simulated_venue",
+                "supported_environments": [
+                  "PAPER"
+                ],
+                "adapter_family_id": "paper_simulation_adapter_family",
+                "capability_discovery_policy": "STATIC_BUILD_TIME",
+                "instrument_catalog_discovery_policy": "LOCAL_CONTRACT_METADATA",
+                "account_identity_discovery_policy": "LOCAL_SIMULATED_IDENTITY",
+                "authority_status": "NOT_IMPLEMENTED",
+                "external_authenticated_adapter_membership_required": "NO",
+                "complete_snapshot_derivation": "NOT_AVAILABLE: the frozen contract defines validation and hashing but production local InstrumentConfig/core config does not contain the full canonical Instrument/Catalog record, accepted instrument_ids membership, snapshot IDs, adapter version, or timestamp values",
+                "instrument_ids_source": "Production paper market setup reads caller-configurable CoreConfig.instrument_universes and exchange_symbols; frozen sample Catalog construction exists only in the executable oracle and is not production membership.",
+                "metadata_immutability": "The frozen exchange entry is build-time closed, but production instrument universe/config metadata is caller-configurable and has no accepted immutable membership/history.",
+                "core_owned_catalog_path": "NOT_FOUND: no CoreHost-owned producer derives a full canonical InstrumentCatalogSnapshot without caller-provided raw metadata.",
+                "hash_lineage_timestamp_semantics": "PARTIAL_ONLY: content_hash canonicalization and lineage/timestamp validation are frozen, but snapshot identity, timestamp values, predecessor acceptance and publication sequence are not deterministically derived by production code.",
+                "historical_instrument_disposition": "NOT_FOUND: no production owner/carrier derives and retains full immutable historical Instrument records from accepted local contract metadata.",
+                "nearest_missing_prerequisite": "MISSING_CORE_OWNED_CANONICAL_LOCAL_CONTRACT_METADATA_CATALOG_HISTORY_PRODUCER"
+              },
+              "TESTNET": {
+                "exchange_id": "generic_testnet_venue",
+                "supported_environments": [
+                  "TESTNET"
+                ],
+                "adapter_family_id": "generic_testnet_adapter_family",
+                "capability_discovery_policy": "ADAPTER_SNAPSHOT_REQUIRED",
+                "instrument_catalog_discovery_policy": "ADAPTER_SNAPSHOT_REQUIRED",
+                "account_identity_discovery_policy": "PRIVATE_READINESS_CHECK_REQUIRED",
+                "authority_status": "NOT_IMPLEMENTED",
+                "closed_registry_sufficiency": "INSUFFICIENT: the frozen registry fixes legal identity/scope and adapter_family_id but supplies neither an adapter-produced snapshot nor evidence that a concrete producer owns that family.",
+                "snapshot_source_requirement": "A full Catalog snapshot must be produced through the frozen generic_testnet_adapter_family path; a matching string or locally hashed raw Catalog is not source evidence.",
+                "runtime_registry_forgery": "POSSIBLE_AS_DI_DECLARATION: ordinary callers can register a chosen factory/exchange_id, so runtime registry presence cannot authenticate ownership of the frozen adapter family.",
+                "minimal_independent_evidence": "Durable Core-owned exact-scope membership authenticating the snapshot producer as generic_testnet_adapter_family before Catalog acceptance; the design remains intentionally unspecified in this discovery.",
+                "nearest_missing_prerequisite": "CORE_OWNED_DURABLE_AUTHENTICATED_ADAPTER_SOURCE_MEMBERSHIP"
+              },
+              "LIVE": {
+                "frozen_exchange_entry_status": "NO_FROZEN_ENABLED_LIVE_EXCHANGE_ENTRY",
+                "authority_status": "NOT_APPLICABLE_TO_CURRENT_FROZEN_REGISTRY",
+                "evidence": "LIVE exists in the environment registry, but no ENABLED frozen exchange entry supports LIVE."
+              }
+            }
           }
         }
       },

@@ -208,26 +208,73 @@ def test_overfill_and_fifo_cannot_be_claimed_without_genuine_order_lifecycle_aut
     assert not hasattr(writer, "accept_fill")
 
 
-def test_m05_discovery_records_missing_independent_membership_anchor():
-    """Schemas, DTOs and the frozen oracle must not be reported as production authority."""
+def test_m05_discovery_records_policy_specific_missing_anchors():
+    """The frozen PAPER and TESTNET policies must retain distinct blockers."""
     from pathlib import Path
 
     root = Path(__file__).parents[2]
     machine = json.loads((root / "docs/architecture/cryptohunter_product_architecture/audit_observability_alerts_and_updater.json").read_text(encoding="utf-8"))
     closure = machine["alert_model"]["executable_authority"]["s9d_c25_m08_reconciliation_authority_disposition"]
-    boundary = closure["m07_full_fill_authority_boundary"]
-    dependency = boundary["m05_historical_instrument_dependency"]
+    dependency = closure["m07_full_fill_authority_boundary"]["m05_historical_instrument_dependency"]
 
     assert closure["m07_full_fill_authority"] == (
         "M07_FULL_FILL_AUTHORITY_BLOCKED_M05_HISTORICAL_INSTRUMENT_AND_M07_LIFECYCLE_AUTHORITY"
     )
     assert dependency["status"] == "MISSING_GENUINE_UPSTREAM_CATALOG_SOURCE_MEMBERSHIP_AUTHORITY"
     assert dependency["genuine_production_authority"] == "NOT_FOUND"
-    assert dependency["downstream_nominal_projection"].startswith("NOT_IMPLEMENTED")
     assert dependency["coherent_reseal_disposition"].startswith("BLOCKED_FAIL_CLOSED")
     assert dependency["restore_disposition"].startswith("UNAVAILABLE")
-    assert "independently authenticated exchange-adapter ingestion authority" in dependency["missing_upstream_anchor"]
+    assert "nearest_missing_prerequisite" not in dependency
 
+    discovery = dependency["production_catalog_source_authority_discovery"]
+    assert discovery["source_identity_authenticator"]["status"] == "POLICY_SPECIFIC"
+    assert discovery["catalog_snapshot_acceptor"]["status"] == "NOT_FOUND"
+    assert discovery["accepted_catalog_carrier_history"]["status"] == "NOT_FOUND"
+    assert discovery["scope_binding_evidence"]["status"] == "SCHEMA_ONLY_NOT_AUTHORITY"
+
+    policy = dependency["m05_catalog_source_policy_disposition"]
+    assert policy["PAPER"]["nearest_missing_prerequisite"] == (
+        "MISSING_CORE_OWNED_CANONICAL_LOCAL_CONTRACT_METADATA_CATALOG_HISTORY_PRODUCER"
+    )
+    assert policy["PAPER"]["external_authenticated_adapter_membership_required"] == "NO"
+    assert policy["TESTNET"]["nearest_missing_prerequisite"] == (
+        "CORE_OWNED_DURABLE_AUTHENTICATED_ADAPTER_SOURCE_MEMBERSHIP"
+    )
+    assert policy["LIVE"]["frozen_exchange_entry_status"] == (
+        "NO_FROZEN_ENABLED_LIVE_EXCHANGE_ENTRY"
+    )
+
+
+def test_m05_discovery_is_split_by_exact_frozen_exchange_policy():
+    """PAPER local metadata and TESTNET adapter snapshots are distinct trust paths."""
+    from pathlib import Path
+
+    root = Path(__file__).parents[2]
+    m05 = json.loads((root / "docs/architecture/cryptohunter_product_architecture/exchange_accounts_and_instruments.json").read_text(encoding="utf-8"))
+    machine = json.loads((root / "docs/architecture/cryptohunter_product_architecture/audit_observability_alerts_and_updater.json").read_text(encoding="utf-8"))
+    registry = m05["exchange_registry_contract"]
+    assert registry["closed_build_time_registry"] is True
+    assert registry["runtime_config_may_extend_registry"] is False
+
+    enabled = {entry["exchange_id"]: entry for entry in registry["entries"] if entry["status"] == "ENABLED"}
+    fields = (
+        "exchange_id", "supported_environments", "adapter_family_id",
+        "capability_discovery_policy", "instrument_catalog_discovery_policy",
+        "account_identity_discovery_policy",
+    )
+    expected = [{field: entry[field] for field in fields} for entry in enabled.values()]
+    dependency = machine["alert_model"]["executable_authority"]["s9d_c25_m08_reconciliation_authority_disposition"]["m07_full_fill_authority_boundary"]["m05_historical_instrument_dependency"]
+    assert dependency["enabled_frozen_exchange_policy_matrix"] == expected
+
+    paper = enabled["paper_simulated_venue"]
+    assert paper["supported_environments"] == ["PAPER"]
+    assert paper["capability_discovery_policy"] == "STATIC_BUILD_TIME"
+    assert paper["instrument_catalog_discovery_policy"] == "LOCAL_CONTRACT_METADATA"
+    assert paper["account_identity_discovery_policy"] == "LOCAL_SIMULATED_IDENTITY"
+    testnet = enabled["generic_testnet_venue"]
+    assert testnet["supported_environments"] == ["TESTNET"]
+    assert testnet["instrument_catalog_discovery_policy"] == "ADAPTER_SNAPSHOT_REQUIRED"
+    assert not any("LIVE" in entry["supported_environments"] for entry in enabled.values())
 
 def test_raw_catalog_and_instrument_have_no_production_enrollment_or_restore_surface():
     """A coherent local reseal cannot attack an API which correctly remains absent."""
@@ -242,3 +289,42 @@ def test_raw_catalog_and_instrument_have_no_production_enrollment_or_restore_sur
         "accept_catalog",
     }
     assert forbidden.isdisjoint(vars(execution))
+
+
+def test_existing_adapter_registries_are_not_authority_for_adapter_snapshot_provenance():
+    """Caller-mutable DI cannot prove an ADAPTER_SNAPSHOT_REQUIRED TESTNET source."""
+    from bot_core.exchanges.manager import (
+        Mode,
+        get_native_adapter_info,
+        register_native_adapter,
+        unregister_native_adapter,
+    )
+    from pathlib import Path
+
+    class CallerSuppliedFactory:
+        pass
+
+    native_id = "caller_supplied_exchange"
+    try:
+        register_native_adapter(
+            exchange_id=native_id,
+            mode=Mode.FUTURES,
+            factory=CallerSuppliedFactory,
+            source="caller/config.yaml",
+            dynamic=True,
+        )
+        registration = get_native_adapter_info(exchange_id=native_id, mode=Mode.FUTURES)
+        assert registration is not None
+        assert registration.factory is CallerSuppliedFactory
+        assert registration.dynamic is True
+    finally:
+        unregister_native_adapter(
+            exchange_id=native_id, mode=Mode.FUTURES, allow_dynamic=True
+        )
+
+    bootstrap = (
+        Path(__file__).parents[2] / "bot_core/runtime/bootstrap.py"
+    ).read_text(encoding="utf-8")
+    assert "def register_adapter_factory(" in bootstrap
+    assert "_DEFAULT_ADAPTERS[normalized] = factory" in bootstrap
+    assert '"register_adapter_factory"' in bootstrap
