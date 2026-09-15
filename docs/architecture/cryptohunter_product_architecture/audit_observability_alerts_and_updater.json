@@ -4,7 +4,7 @@
   "status": "IN_PROGRESS_S9D_C25_BLOCKED_M08_EXECUTABLE_RECONCILIATION_AUTHORITY_OTHER_SOURCE_AUTHORITIES_OPEN",
   "contract_identity": {
     "contract_id": "M0.12-audit-observability-alerts-updater",
-    "version": "1.41.0",
+    "version": "1.42.0",
     "phase": "S9D_C25_BLOCKED_M08_RECONCILIATION_CHAIN_M07_LIFECYCLE_AND_M05_PAPER_CONTENT_PREREQUISITES_OPEN",
     "machine_source_of_truth": true,
     "markdown_is_projection_only": true
@@ -5259,15 +5259,15 @@
                 "capability_discovery_policy": "STATIC_BUILD_TIME",
                 "instrument_catalog_discovery_policy": "LOCAL_CONTRACT_METADATA",
                 "account_identity_discovery_policy": "LOCAL_SIMULATED_IDENTITY",
-                "authority_status": "METADATA_MECHANISM_AVAILABLE_CATALOG_HISTORY_NOT_IMPLEMENTED",
-                "external_authenticated_adapter_membership_required": "NO",
-                "complete_snapshot_derivation": "NOT_AVAILABLE: the release-owned canonical metadata mechanism is implemented, but its registry intentionally has zero entries because no product-owned PAPER instrument set is approved.",
-                "instrument_ids_source": "RELEASE_OWNED_SOURCE_AVAILABLE_BUT_EMPTY: only source-controlled entries in bot_core.instruments.paper_canonical_metadata can establish metadata membership; no IDs exist until product approval.",
+                "authority_status": "FROZEN_POLICY_CONFLICT_DYNAMIC_EXCHANGE_CATALOG_REQUIRES_EXPLICIT_M05_MIGRATION",
+                "external_authenticated_adapter_membership_required": "PRODUCT_TARGET_YES_FROZEN_PAPER_POLICY_NO: LOCAL_CONTRACT_METADATA binds paper_simulated_venue/paper_simulation_adapter_family and defines no authenticated real-exchange lineage.",
+                "complete_snapshot_derivation": "NOT_AVAILABLE: the frozen PAPER source is release-owned LOCAL_CONTRACT_METADATA; it cannot dynamically derive a full selected real-exchange catalog.",
+                "instrument_ids_source": "FROZEN_CURRENT_PATH_ONLY: release-owned local entries could establish PAPER membership, but product intent rejects a static pair whitelist and the tuple remains empty.",
                 "metadata_immutability": "Build-time immutable internal record types and a private release-owned tuple expose read-only enumeration/resolution. Every tuple entry is frozen-M0.5-compatible validated before indexing; there is no public nominal constructor, caller path, config/env/CLI override, merge, writer, adapter registration, or plugin injection surface.",
-                "core_owned_catalog_path": "METADATA_SOURCE_ONLY: stable restart-resolvable product metadata exists, but M0.5 InstrumentCatalogSnapshot acceptance/history authority is intentionally NOT_IMPLEMENTED.",
+                "core_owned_catalog_path": "NOT_IMPLEMENTED: no trusted real-exchange ingestion/canonicalization authority exists, and the frozen PAPER identity/source policy cannot represent the requested lineage.",
                 "hash_lineage_timestamp_semantics": "SCHEMA_ORACLE_ONLY: hashing and validation rules exist, but production owns no snapshot identity, adapter_version, accepted transaction timestamps, predecessor sequence, or lineage publication mechanism.",
                 "historical_instrument_disposition": "NOT_FOUND: persistence record schemas are DTO/carrier shapes, not immutable accepted membership, and there is no exact instrument_id + metadata_version accepted-history resolver.",
-                "nearest_missing_prerequisite": "MISSING_APPROVED_CANONICAL_PAPER_INSTRUMENT_ENTRIES",
+                "nearest_missing_prerequisite": "EXPLICIT_M05_SOURCE_VENUE_EXECUTION_ENVIRONMENT_IDENTITY_MIGRATION",
                 "canonical_metadata_discovery": {
                   "build_time_immutable_production_metadata": "AVAILABLE_RELEASE_OWNED_EMPTY_INSTRUMENT_REGISTRY",
                   "build_time_values_found": [
@@ -5276,7 +5276,7 @@
                     "content_status=NO_APPROVED_CANONICAL_PAPER_INSTRUMENT_ENTRIES",
                     "approved_entry_count=0"
                   ],
-                  "runtime_derived_metadata": "PaperBackend delegates load_markets/MarketRules to its price-feed backend; runtime values are not a build-time local metadata authority.",
+                  "runtime_derived_metadata": "PaperBackend load_markets/MarketRules delegation is neither genuine source authentication nor a frozen Catalog acceptance authority; raw results must never be accepted directly.",
                   "caller_config_metadata": "PaperTradingExecutionService markets and PaperMarketMetadata are constructed from CoreConfig.instrument_universes, InstrumentConfig, exchange_symbols and paper_trading defaults/overrides.",
                   "caller_config_only_fields": [
                     "venue_symbol",
@@ -5291,14 +5291,14 @@
                   "test_reference_metadata": "Executable M0.5 oracle constructs complete sample Instrument/Catalog graphs, including PAPER examples; these are fixtures/reference samples only.",
                   "test_reference_samples_are_authority": "NO",
                   "documentation_only_metadata": "The frozen M0.5 JSON defines schemas, registries, validation, hashes and policies, but supplies no canonical PAPER Instrument membership records.",
-                  "catalog_acceptance_disposition": "NOT_IMPLEMENTED: the metadata trust boundary is not InstrumentCatalogSnapshot acceptance or accepted history; zero approved entries prevents snapshot derivation.",
+                  "catalog_acceptance_disposition": "NOT_IMPLEMENTED: zero entries remain; more importantly, dynamic selected-exchange canonicalization is outside frozen PAPER LOCAL_CONTRACT_METADATA semantics.",
                   "persistence_carrier_disposition": "SCHEMA_ONLY_NOT_AUTHORITY: persistence primitives cannot independently prove immutable accepted local-metadata origin or reject a coherent reseal after restart.",
-                  "external_adapter_authentication_required": "NO: PAPER uses LOCAL_CONTRACT_METADATA; the remaining content blocker is product approval of canonical instrument entries.",
-                  "production_artifact": "bot_core.instruments.paper_canonical_metadata; source-controlled and packaged with the release, with no caller-selected load path.",
-                  "membership_rule": "Only inclusion in the private release-owned tuple establishes canonical metadata membership. Every included entry is validated before indexing. A fingerprint binds the full ordered entry projection for integrity and cannot enroll raw metadata.",
+                  "external_adapter_authentication_required": "PRODUCT TARGET REQUIRES IT, BUT FROZEN PAPER DOES NOT DEFINE IT; this mismatch requires an explicit M0.5 migration rather than a workaround.",
+                  "production_artifact": "bot_core.instruments.paper_canonical_metadata remains an empty fallback/static local-metadata mechanism under the frozen contract, not the future dynamic PAPER source.",
+                  "membership_rule": "Current frozen fallback membership can arise only from the private release-owned tuple. Product intent does not require or permit filling it as a pair-by-pair approval whitelist.",
                   "caller_extension": "IMPOSSIBLE_BY_API: CoreConfig.instrument_universes, exchange_symbols, YAML, CLI, environment, adapters, plugins, fixtures, raw mappings and matching self-hashes are not accepted inputs.",
-                  "restart_and_version_binding": "Repeated imports/loads resolve source identity cryptohunter.product.paper-instrument-metadata and version 1.0.0 with stable entries. The SHA-256 binds source ID, source version, content status, and every ordered entry field including nested AssetReference and explicit nulls; future approved metadata requires a source-controlled version change.",
-                  "stable_id_policy": "Future entries must carry product-approved stable instrument_id and catalog_snapshot_id values; IDs are never generated at process start. Identity changes require explicit version evolution under frozen M0.5 rules.",
+                  "restart_and_version_binding": "The empty release projection is restart-stable. Future dynamic catalogs require durable accepted immutable snapshots, predecessor lineage and exact historical resolution rather than release-bound replacement.",
+                  "stable_id_policy": "Frozen IDs are Core-owned prefixed UUIDv7 values, so a migration needs a durable authority mapping the immutable venue identity tuple to one stable instrument_id; refresh must resolve that map, never mint per refresh or use an ordinary hash.",
                   "asset_reference_policy": "Future entries contain full explicit AssetReference values for base, quote and settlement as applicable; contract_value_currency is a nullable scalar string. Venue symbols are never parsed to derive assets or canonical display codes.",
                   "approved_entry_count": 0,
                   "frozen_fields_without_production_owned_source_meaning": "EMPTY_MEANS_SCHEMA_COVERAGE_COMPLETE_ONLY: the release mechanism can represent and validate every frozen field; it does not claim approved values or entries, whose count remains zero.",
@@ -5326,6 +5326,101 @@
                 "frozen_exchange_entry_status": "NO_FROZEN_ENABLED_LIVE_EXCHANGE_ENTRY",
                 "authority_status": "NOT_APPLICABLE_TO_CURRENT_FROZEN_REGISTRY",
                 "evidence": "LIVE exists in the environment registry, but no ENABLED frozen exchange entry supports LIVE."
+              }
+            },
+            "paper_catalog_product_decision_discovery": {
+              "status": "NOT_IMPLEMENTED",
+              "product_decision": {
+                "static_product_owned_paper_pair_whitelist_required": "NO",
+                "full_trusted_exchange_catalog_is_availability_source": "YES",
+                "catalog_membership_implies_trading_authority": "NO",
+                "new_listing_without_software_release_target": "YES",
+                "paper_release_owned_entries_must_remain_empty": "YES"
+              },
+              "frozen_contract_compatibility": {
+                "dynamic_model_legal_without_contract_change": "NO",
+                "conflict": "PAPER is closed to exchange_id=paper_simulated_venue, environment=PAPER, source_adapter_family_id=paper_simulation_adapter_family and LOCAL_CONTRACT_METADATA. Real venues are not enabled PAPER registry entries, and no source-venue lineage field/authenticator exists.",
+                "model_a_legal": "NO: rewriting real venue identity/asset namespace/adapter family as paper_simulated_venue destroys provenance; retaining lineage is not expressible in the frozen Instrument/Catalog shape.",
+                "model_b_legal": "NO: a real exchange_id cannot pair with PAPER because frozen enabled registry entries do not support that tuple; runtime configuration cannot extend the closed registry.",
+                "minimal_migration": "Explicitly revise M0.5 to separate source venue/catalog identity from execution environment, register supported trusted real exchange families, define authenticated source-family/version provenance and acceptance, and preserve all existing fail-closed validation."
+              },
+              "discovery_answers": {
+                "A_static_product_owned_paper_pair_whitelist": "NO",
+                "B_full_trusted_exchange_catalog_source": "YES",
+                "C_current_frozen_m05_allows_without_change": "NO",
+                "D_paper_simulated_venue_can_inherit_real_metadata": "NO",
+                "E_real_exchange_id_can_be_preserved_with_paper_execution": "NO",
+                "F_genuine_trusted_exchange_catalog_source_authority_exists": "NO",
+                "G_caller_controlled_adapter_can_self_enroll": "NO",
+                "H_trading_universe_is_manual_selection_boundary": "YES",
+                "I_autonomous_selector_only_accepted_catalog_members": "YES",
+                "J_ranking_grants_execution_authority": "NO",
+                "K_new_listings_without_release": "YES_PRODUCT_TARGET_NO_CURRENT_LEGAL_PATH",
+                "L_delisting_preserves_historical_resolution": "YES_REQUIRED_NOT_IMPLEMENTED"
+              },
+              "exchange_catalog_ingestion": {
+                "status": "NOT_IMPLEMENTED",
+                "required": "Authenticate exchange identity, adapter family and version independently of caller claims; ingest a complete non-partial venue/market-type snapshot with source provenance and timestamps."
+              },
+              "catalog_acceptance": {
+                "status": "NOT_IMPLEMENTED",
+                "required": "Core validates trusted AssetReference metadata without symbol parsing, capabilities, completeness, snapshot identity/hash, monotonic predecessor and append-only accepted history; partial/stale snapshots fail activation and never overwrite history."
+              },
+              "manual_trading_universe": {
+                "status": "NOT_IMPLEMENTED",
+                "flow": [
+                  "accepted Catalog query/search/filter",
+                  "user submits instrument_id selection intent",
+                  "Core resolves every ID in explicit accepted VALID fresh source snapshots",
+                  "Core creates a new immutable TradingUniverse version",
+                  "activation still passes account/capability/strategy/risk/execution gates"
+                ],
+                "authority": "Selection cannot create Instrument or Catalog membership; unknown IDs fail closed and GUI is not authority."
+              },
+              "autonomous_trading_universe": {
+                "status": "NOT_IMPLEMENTED",
+                "flow": [
+                  "accepted Catalog",
+                  "policy-derived Eligible Universe",
+                  "Candidate Ranking",
+                  "new versioned Active Autonomous Selection"
+                ],
+                "authority": "Selector cannot mutate Catalog, self-enroll symbols, or maintain an authority-bypassing mutable whitelist."
+              },
+              "autonomous_candidate_ranking": {
+                "status": "NOT_IMPLEMENTED",
+                "constraints": "No thresholds or scoring are specified. Ranking consumes only eligible accepted members and grants neither Instrument identity nor execution/risk authority."
+              },
+              "execution_authority_separation": {
+                "status": "NOT_IMPLEMENTED",
+                "invariant": "accepted Catalog member AND eligible AND selected AND strategy-compatible AND M0.9 risk-approved AND kill-switch-permitted AND execution-lease-authorized AND M0.7-lifecycle-valid; autonomous ranking alone is never sufficient."
+              },
+              "catalog_lifecycle": {
+                "snapshot_version": "monotonic immutable accepted version",
+                "predecessor": "exact prior accepted snapshot reference",
+                "new_listing": "new member in a later complete accepted snapshot; stable identity map reused",
+                "changed_metadata": "new immutable metadata version linked through accepted history",
+                "delisting": "status transition/absence semantics must be explicitly migrated; never hard delete historical membership",
+                "stale_catalog": "not eligible for new activation",
+                "partial_catalog": "retained/rejected per frozen rules but never ACTIVE source",
+                "restart": "durable accepted snapshot, membership, identity map and lineage restore before resolution",
+                "historical_resolution": "exact snapshot_id plus instrument_id/metadata_version remains resolvable"
+              },
+              "market_types": {
+                "catalog_capability": [
+                  "SPOT",
+                  "MARGIN",
+                  "PERPETUAL",
+                  "DELIVERY_FUTURES",
+                  "OPTIONS"
+                ],
+                "rule": "Exchange offering does not imply TradingUniverse, edition, strategy, risk or execution eligibility."
+              },
+              "testnet_disposition": "UNCHANGED: ADAPTER_SNAPSHOT_REQUIRED and its authenticated provenance blocker remain open; a future authenticator may be shared only after explicit architecture design.",
+              "live_disposition": "UNCHANGED_NOT_ENABLED",
+              "global_status_invariants": {
+                "C25": "BLOCKED",
+                "S9D": "OPEN"
               }
             }
           }
