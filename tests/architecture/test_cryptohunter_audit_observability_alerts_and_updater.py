@@ -96,8 +96,8 @@ def test_identity_status_and_exact_top_level_shape() -> None:
     assert MACHINE["status"] == "IN_PROGRESS_S9D_C25_BLOCKED_M08_EXECUTABLE_RECONCILIATION_AUTHORITY_OTHER_SOURCE_AUTHORITIES_OPEN"
     assert MACHINE["contract_identity"] == {
         "contract_id": "M0.12-audit-observability-alerts-updater",
-        "version": "1.40.0",
-        "phase": "S9D_C25_BLOCKED_MISSING_APPROVED_CANONICAL_PAPER_INSTRUMENT_ENTRIES",
+        "version": "1.41.0",
+        "phase": "S9D_C25_BLOCKED_M08_RECONCILIATION_CHAIN_M07_LIFECYCLE_AND_M05_PAPER_CONTENT_PREREQUISITES_OPEN",
         "machine_source_of_truth": True,
         "markdown_is_projection_only": True,
     }
@@ -5679,8 +5679,8 @@ def test_s9d_c25_status_is_honestly_blocked_and_updater_stays_not_started() -> N
     assert MACHINE["status"] == "IN_PROGRESS_S9D_C25_BLOCKED_M08_EXECUTABLE_RECONCILIATION_AUTHORITY_OTHER_SOURCE_AUTHORITIES_OPEN"
     assert MACHINE["contract_identity"] == {
         "contract_id": "M0.12-audit-observability-alerts-updater",
-        "version": "1.40.0",
-        "phase": "S9D_C25_BLOCKED_MISSING_APPROVED_CANONICAL_PAPER_INSTRUMENT_ENTRIES",
+        "version": "1.41.0",
+        "phase": "S9D_C25_BLOCKED_M08_RECONCILIATION_CHAIN_M07_LIFECYCLE_AND_M05_PAPER_CONTENT_PREREQUISITES_OPEN",
         "machine_source_of_truth": True,
         "markdown_is_projection_only": True,
     }

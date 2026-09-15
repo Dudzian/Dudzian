@@ -25,8 +25,8 @@
 ```json
 {
   "contract_id": "M0.12-audit-observability-alerts-updater",
-  "version": "1.40.0",
-  "phase": "S9D_C25_BLOCKED_MISSING_APPROVED_CANONICAL_PAPER_INSTRUMENT_ENTRIES",
+  "version": "1.41.0",
+  "phase": "S9D_C25_BLOCKED_M08_RECONCILIATION_CHAIN_M07_LIFECYCLE_AND_M05_PAPER_CONTENT_PREREQUISITES_OPEN",
   "machine_source_of_truth": true,
   "markdown_is_projection_only": true
 }
@@ -5143,6 +5143,89 @@
         "trusted_economic_fill": "BLOCKED: requires genuine prevalidated M0.5 historical Instrument authority; raw Instrument plus local fingerprint cannot create membership",
         "complete_accepted_history": "BLOCKED: requires Core-owned accepted_fill_ids_by_order_id derived only from accepted M0.7 lifecycle history",
         "accounting": "BLOCKED: AccountingAuthority exposes no accept_fill path and does not claim incomplete OWNED_AVAILABLE spend, reserved consumption, FIFO lots, or Fill-derived realized P&L under ACCOUNTING_SPOT_FIFO_V1",
+        "m07_order_lifecycle_dependency": {
+          "status": "MISSING_CORE_OWNED_ACCEPTED_ORDER_LIFECYCLE_ROOT",
+          "discovery_scope": [
+            "all production bot_core modules",
+            "execution services and runtime/API routing",
+            "exchange managers, adapters, and paper execution",
+            "database Order/Trade persistence and restore surfaces",
+            "event buses, audit infrastructure, and command/event carriers",
+            "frozen M0.7 machine contract and executable oracle"
+          ],
+          "genuine_production_authority": "NOT_FOUND",
+          "frozen_semantics": {
+            "order_schema": "accepted SUBMIT_ORDER plan binds command scope, order_intent_id, distinct canonical order_id, side, order_type, positive exact decimal quantity, price/TIF/expiry semantics; accepted effect is plan persistence, not venue acknowledgement or execution",
+            "identity_and_relation": "order_id is canonical ord UUIDv7 identity, distinct from command_id; one accepted SUBMIT_ORDER creates one Order from one OrderIntent; external venue/client IDs are not durable Order identity",
+            "states": [
+              "PLANNED",
+              "SUBMISSION_PENDING",
+              "ACKNOWLEDGED",
+              "PARTIALLY_FILLED",
+              "CANCEL_PENDING",
+              "REPLACE_PENDING",
+              "RECONCILIATION_REQUIRED",
+              "REJECTED",
+              "FILLED",
+              "CANCELLED",
+              "EXPIRED",
+              "REPLACED"
+            ],
+            "terminal_states": [
+              "REJECTED",
+              "FILLED",
+              "CANCELLED",
+              "EXPIRED",
+              "REPLACED"
+            ],
+            "event_model": "immutable scoped events target one order_id, carry event_id, order_version and predecessor/current transition; accepted ordered history is the sole current-state source",
+            "ordering_and_replay": "strict next order_version and predecessor transition; exact identity+payload replay is idempotent REPLAY_SUCCESS, while changed same identity, stale/gapped version, scope mismatch, invalid transition, and fingerprint conflict fail closed",
+            "fill_and_quantity": "immutable Fill binds canonical parent order_id and exact scope/side/instrument/route; cumulative accepted fills progress PARTIALLY_FILLED to FILLED and may not exceed the accepted Order quantity",
+            "cancellation_rejection_expiration": "commands plan cancellation/replacement only; accepted lifecycle events, not response/status strings, establish CANCEL_PENDING/CANCELLED, REJECTED, EXPIRED, or REPLACED"
+          },
+          "candidate_disposition": {
+            "grpc_and_runtime_execution": "RAW_EXECUTION_RESULT: API constructs mutable OrderRequest and maps ExecutionResult/exception to response status; no frozen command acceptance, Order membership, history, or version boundary",
+            "exchange_adapters_and_manager": "RAW_EXECUTION_RESULT: venue IDs, float quantities, normalized mutable statuses and adapter payloads are transport/backend observations, not canonical ord membership or accepted lifecycle events",
+            "paper_execution": "RAW_EXECUTION_RESULT: in-memory integer IDs, mutable order state/DTOs, direct status mutation and callback Event payloads; open orders are removed on fill/cancel and exact history is not restart-safe",
+            "database_orders_and_trades": "PERSISTENCE_DTO_ONLY: caller-provided OrderIn/status is inserted or mutates an existing row; integer record key, floats, logical trade link, no immutable event history/sequence/provenance/conflict replay validation; restore cannot attest authority",
+            "event_and_audit_infrastructure": "TRANSPORT_OR_UNRELATED_AUTHORITY: queues/callbacks/audit records do not accept the frozen Order aggregate or derive its projection"
+          },
+          "answers": {
+            "non_caller_mintable_accepted_order_creation": "NO",
+            "core_owned_order_identity_membership": "NO",
+            "immutable_accepted_lifecycle_history": "NO",
+            "current_state_derived_from_accepted_history": "NO",
+            "durable_authoritative_event_ordering": "NO",
+            "conflicting_replay_fail_closed": "NO",
+            "terminal_state_restart_safe": "NO",
+            "exact_authoritative_order_quantity": "NO",
+            "fill_order_id_resolves_exact_accepted_order": "NO",
+            "partial_fills_sum_without_self_enrollment": "NO"
+          },
+          "missing_components": [
+            "non-caller-mintable accepted SUBMIT_ORDER/Order creation source",
+            "Core-owned canonical Order membership",
+            "immutable accepted lifecycle-event carrier/history",
+            "strict durable event sequence/version acceptance",
+            "deterministic current projection derived only from history",
+            "exact replay idempotency and conflicting replay denial",
+            "authority-bound exact original quantity and scope",
+            "tamper-evident restore validated against an independent accepted root"
+          ],
+          "forbidden_substitutes": [
+            "raw Order/OrderRequest/OrderDTO",
+            "raw event or callback payload",
+            "caller-provided order_id or lifecycle state",
+            "terminal status string",
+            "mutable execution backend result",
+            "database/persistence DTO",
+            "local or recomputed hash",
+            "test fixture or executable reference model"
+          ],
+          "public_fake_acceptance_surface": "ABSENT: production exports no M0.7 accept_order or accept_event API; none is added by this discovery",
+          "restore_disposition": "UNAVAILABLE: terminal state, exact quantity, history and event order cannot be proven after restart; coherent DTO reseal would remain caller-controlled",
+          "downstream_disposition": "BLOCKED_FAIL_CLOSED: Full Fill cannot resolve Fill.order_id to an exact accepted Order or sum partial fills against authoritative quantity without self-enrollment"
+        },
         "m05_historical_instrument_dependency": {
           "status": "MISSING_GENUINE_UPSTREAM_CATALOG_SOURCE_MEMBERSHIP_AUTHORITY",
           "discovery_scope": [

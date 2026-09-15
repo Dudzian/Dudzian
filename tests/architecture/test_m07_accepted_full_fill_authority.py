@@ -341,3 +341,37 @@ def test_existing_adapter_registries_are_not_authority_for_adapter_snapshot_prov
     assert "def register_adapter_factory(" in bootstrap
     assert "_DEFAULT_ADAPTERS[normalized] = factory" in bootstrap
     assert '"register_adapter_factory"' in bootstrap
+
+
+def test_m07_lifecycle_discovery_records_missing_genuine_root_and_exact_answers():
+    from pathlib import Path
+
+    root = Path(__file__).parents[2]
+    machine = json.loads((root / "docs/architecture/cryptohunter_product_architecture/audit_observability_alerts_and_updater.json").read_text(encoding="utf-8"))
+    boundary = machine["alert_model"]["executable_authority"]["s9d_c25_m08_reconciliation_authority_disposition"]["m07_full_fill_authority_boundary"]
+    dependency = boundary["m07_order_lifecycle_dependency"]
+    assert dependency["status"] == "MISSING_CORE_OWNED_ACCEPTED_ORDER_LIFECYCLE_ROOT"
+    assert dependency["genuine_production_authority"] == "NOT_FOUND"
+    assert set(dependency["answers"].values()) == {"NO"}
+    assert dependency["public_fake_acceptance_surface"].startswith("ABSENT")
+    assert dependency["restore_disposition"].startswith("UNAVAILABLE")
+    assert dependency["downstream_disposition"].startswith("BLOCKED_FAIL_CLOSED")
+    assert boundary["complete_accepted_history"].startswith("BLOCKED")
+
+
+def test_raw_order_event_status_hash_and_persistence_cannot_self_enroll_lifecycle():
+    import bot_core.execution as execution
+
+    forbidden = {
+        "OrderLifecycleAuthority", "PrevalidatedOrderLifecycle",
+        "accept_order", "accept_event", "restore_order_lifecycle",
+    }
+    assert forbidden.isdisjoint(vars(execution))
+
+    raw_order = {"order_id": f"ord_{U1}", "quantity": "1", "state": "FILLED"}
+    raw_event = {"event_id": f"evt_{U1}", "order_id": raw_order["order_id"], "type": "ORDER_FILLED"}
+    persistence_dto = {**raw_order, "event": raw_event, "integrity": canonical_json_sha256(raw_order)}
+    assert raw_order["state"] == "FILLED"  # a terminal string remains only caller data
+    assert persistence_dto["integrity"] == canonical_json_sha256(raw_order)
+    assert not hasattr(execution, "accept_order")
+    assert not hasattr(execution, "accept_event")
