@@ -235,15 +235,19 @@ def test_m05_discovery_records_policy_specific_missing_anchors():
 
     policy = dependency["m05_catalog_source_policy_disposition"]
     assert policy["PAPER"]["nearest_missing_prerequisite"] == (
-        "MISSING_BUILD_TIME_CANONICAL_PAPER_INSTRUMENT_METADATA"
+        "MISSING_APPROVED_CANONICAL_PAPER_INSTRUMENT_ENTRIES"
     )
     assert policy["PAPER"]["external_authenticated_adapter_membership_required"] == "NO"
-    assert policy["PAPER"]["authority_status"] == "NOT_IMPLEMENTED"
+    assert policy["PAPER"]["authority_status"] == (
+        "METADATA_MECHANISM_AVAILABLE_CATALOG_HISTORY_NOT_IMPLEMENTED"
+    )
+    assert policy["PAPER"]["canonical_metadata_discovery"]["approved_entry_count"] == 0
     discovery = policy["PAPER"]["canonical_metadata_discovery"]
     assert discovery["build_time_immutable_production_metadata"] == (
-        "EXCHANGE_SCOPE_ONLY_NO_INSTRUMENT_SET"
+        "AVAILABLE_RELEASE_OWNED_EMPTY_INSTRUMENT_REGISTRY"
     )
-    assert "base_asset_reference" in discovery["frozen_fields_without_production_owned_source"]
+    assert discovery["frozen_fields_without_production_owned_source"] == []
+    assert discovery["membership_rule"].startswith("Only inclusion")
     assert "venue_symbol" in discovery["caller_config_only_fields"]
     assert discovery["test_reference_samples_are_authority"] == "NO"
     assert policy["TESTNET"]["nearest_missing_prerequisite"] == (
