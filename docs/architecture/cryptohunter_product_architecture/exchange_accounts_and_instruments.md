@@ -38,7 +38,7 @@ External account identity ma stany `UNVERIFIED`, `VERIFYING`, `VERIFIED`, `MISMA
 
 Nie powstaje trwały byt Asset. M0.5 używa value objects base/quote/settlement z polami `venue_asset_code`, `canonical_display_code`, `asset_namespace`, `mapping_status`. `EXACT` i `EXPLICIT_ALIAS` są jawne; `AMBIGUOUS` i `UNKNOWN` fail-closed. Parsing symbolu typu BTCUSDT jest zabroniony; base/quote/settlement pochodzą z catalog metadata.
 
-Instrument record zawiera identity, typ, exact symbol, display symbol, asset references, trading status, tick/step/limity, pola pochodnych, catalog snapshot, metadata version, czasy ważności i adapter family source. Wartości finansowe są exact decimal strings: bez float, scientific notation, NaN i Infinity; tick i step są dodatnie; min nie przekracza max; null limit nie oznacza zera.
+Instrument record zawiera identity, typ, exact symbol, display symbol, asset references, trading status, tick/step/limity, pola pochodnych, accepted source catalog snapshot, metadata version, czasy ważności i adapter family source. Wartości finansowe są exact decimal strings: bez float, scientific notation, NaN i Infinity; tick i step są dodatnie; min nie przekracza max; null limit nie oznacza zera.
 
 ## Derivatives i katalog
 
@@ -214,3 +214,11 @@ Direct resolution waliduje pełny binding historii target Instrument do trusted 
 `validate_catalog_instrument_graph` jest wspólną bramką dla full context i direct TradingUniverse membership. Totalnie preflightuje wszystkie current/previous Catalog maps, current Instrument oraz pełne target i unrelated `instrument_history_by_id`; egzekwuje rozłączne Catalog ID spaces, map-key binding, pełny history validator, odwrotne Instrument→Catalog binding i closure każdego członka każdego katalogu. Orphan lub malformed unrelated current Instrument, malformed unrelated Catalog, unresolved member i pusta, out-of-order, rewritten albo rollback history blokują direct membership bez wyjątku.
 
 Historia może exact-bindować się do katalogu z trusted current albo previous mapy. Wszystkie complete-graph resolver calls otrzymują obie mapy, dzięki czemu drugi poprawny current Catalog jest widoczny identycznie dla direct, full-context i dispatcher paths. Parytet obejmuje zarówno kontrolowane odmowy, jak i prawidłowe sukcesy. M0.5 jest zamkniętym kontraktem.
+
+## M0.5 canonical source/catalog migration
+
+The authoritative Instrument is Workspace-owned and exact-binds `instrument_id`, immutable `workspace_id`, `source_exchange_id`, `market_type`, opaque `venue_symbol`, metadata version, source provenance, assets, constraints, derivatives, status, and timestamps. It has no execution `environment`. Source-product comparison performs no trim, case-fold, Unicode normalization, parsing, or inferred aliasing. Refresh and metadata revisions preserve `instrument_id`; another Workspace gets a distinct ID and foreign membership is denied.
+
+Catalog semantics are split into `AcceptedSourceCatalogSnapshot` with independent COMPLETE/PARTIAL completeness and VALID/REJECTED acceptance (scope `source_exchange_id + market_type`) and `WorkspaceCatalogProjection` (scope `workspace_id + accepted_source_catalog_snapshot_id`). A projection admits only Instruments owned by its Workspace and exact-bound to an upstream member/version. PARTIAL never deletes membership, infers delisting, replaces a COMPLETE baseline, or activates a universe. Exhaustive absence additionally requires authenticated producer membership, accepted COMPLETE evidence, exact scope, and policy permission. Runtime ingestion, the writer/acceptor, and `AcceptedSourceProducerMembership` remain `NOT_IMPLEMENTED`; registry/config/adapter/plugin/manifest/local hashes cannot mint authority.
+
+`paper_simulated_venue` is an execution backend/simulation provider, not the source owner of new real-product Instruments. PAPER does not rewrite `source_exchange_id` or AssetReference namespace. Old `exchange_id=paper_simulated_venue, environment=PAPER` Instruments remain `LEGACY_READ_ONLY_QUARANTINE` without trusted mapping evidence and are never symbol-inferred or deduplicated across Workspaces. The release-owned static pair registry remains empty.

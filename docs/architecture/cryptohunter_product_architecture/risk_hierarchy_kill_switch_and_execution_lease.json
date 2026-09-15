@@ -1109,7 +1109,7 @@
     {
       "contract": "canonical_domain_vocabulary.json",
       "json_pointer": "/entity_kinds",
-      "content_fingerprint_sha256": "1913a18c7e7479d9c20850a690ee81b9f311a7d08cf2458374c91f6332d277f1"
+      "content_fingerprint_sha256": "bb92436a67abe42975d763b06717962009d3f4bc8a6066b227f34c8e7d178e9b"
     },
     {
       "contract": "canonical_domain_vocabulary.json",
@@ -1149,12 +1149,12 @@
     {
       "contract": "exchange_accounts_and_instruments.json",
       "json_pointer": "/instrument_contract",
-      "content_fingerprint_sha256": "a3b72fe19c84c63ab7702a00f4ad7e8b7f2b4cb6f093daffce4d4433f883f98c"
+      "content_fingerprint_sha256": "15aa619f05d8526f69225224d9a8b83ad514baa49aea248287325e0282020116"
     },
     {
       "contract": "exchange_accounts_and_instruments.json",
       "json_pointer": "/asset_reference_contract",
-      "content_fingerprint_sha256": "837e1452a60de230d0ca091a7e2c05308ff41d961499f7800d350d7c9b3682ae"
+      "content_fingerprint_sha256": "6aaa3985e58acd4f7ee82cbd941e67507dd76a3186e7969bf8c62db1d4d41ee0"
     },
     {
       "contract": "strategy_market_data_and_execution_routing.json",

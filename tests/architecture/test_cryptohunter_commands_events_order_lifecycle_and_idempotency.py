@@ -1070,7 +1070,7 @@ EXPECTED_CROSS_CONTRACT_DEPENDENCIES = deep_freeze(
         {
             "contract": "canonical_domain_vocabulary.json",
             "json_pointer": "/entity_kinds",
-            "content_fingerprint_sha256": "1913a18c7e7479d9c20850a690ee81b9f311a7d08cf2458374c91f6332d277f1",
+            "content_fingerprint_sha256": "bb92436a67abe42975d763b06717962009d3f4bc8a6066b227f34c8e7d178e9b",
         },
         {
             "contract": "canonical_domain_vocabulary.json",
@@ -1135,17 +1135,17 @@ EXPECTED_CROSS_CONTRACT_DEPENDENCIES = deep_freeze(
         {
             "contract": "exchange_accounts_and_instruments.json",
             "json_pointer": "/asset_reference_contract",
-            "content_fingerprint_sha256": "837e1452a60de230d0ca091a7e2c05308ff41d961499f7800d350d7c9b3682ae",
+            "content_fingerprint_sha256": "6aaa3985e58acd4f7ee82cbd941e67507dd76a3186e7969bf8c62db1d4d41ee0",
         },
         {
             "contract": "exchange_accounts_and_instruments.json",
             "json_pointer": "/instrument_contract/trusted_history_contract",
-            "content_fingerprint_sha256": "87b09322419aac6fcc36f12405931e1cf88cf0630ced72e68b341d5434e10e8f",
+            "content_fingerprint_sha256": "d3bdb205695163ec2834a065bb872d9ca39f1ad1b0d60c592d7273f42c380c65",
         },
         {
             "contract": "exchange_accounts_and_instruments.json",
             "json_pointer": "/instrument_contract/record_fields",
-            "content_fingerprint_sha256": "4c10117c28505bc7b546126690f3f3ef6cbc15c47815a47e016bd8c646b71409",
+            "content_fingerprint_sha256": "39b5d32a1d887863cbc7f7a652e163b6b78d02a6ae21b1e4447e97437e18bf16",
         },
     ]
 )

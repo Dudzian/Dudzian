@@ -463,18 +463,6 @@ EXPECTED_EXTERNAL_CANONICAL_ENUM_CONSUMERS = deep_freeze(
             "registry_ref": "m05_catalog_statuses",
             "schema": "InstrumentCatalogProjection",
         },
-        "InstrumentProjection.environment": {
-            "array_policy": None,
-            "binding_kind": "enum_canonical_pointer_ref",
-            "contract": "exchange_accounts_and_instruments.json",
-            "exact_fields_membership": True,
-            "field": "environment",
-            "field_type": "enum",
-            "json_pointer": "/environment_registry",
-            "nullable": False,
-            "registry_ref": None,
-            "schema": "InstrumentProjection",
-        },
         "InstrumentProjection.instrument_type": {
             "array_policy": None,
             "binding_kind": "enum_canonical_pointer_ref",
@@ -1476,7 +1464,7 @@ EXPECTED_CANONICAL_DEPENDENCIES = deep_freeze(
         "m05_asset_reference_contract": {
             "authority_classification": "asset identity authority",
             "consumers": ["resolve_instrument_projection_contract.asset_reference_contract"],
-            "content_fingerprint_sha256": "837e1452a60de230d0ca091a7e2c05308ff41d961499f7800d350d7c9b3682ae",
+            "content_fingerprint_sha256": "6aaa3985e58acd4f7ee82cbd941e67507dd76a3186e7969bf8c62db1d4d41ee0",
             "expected_result_type": "object",
             "json_pointer": "/asset_reference_contract",
             "source_contract": "exchange_accounts_and_instruments.json",
@@ -1527,7 +1515,7 @@ EXPECTED_CANONICAL_DEPENDENCIES = deep_freeze(
         "m05_instrument_record_fields": {
             "authority_classification": "schema authority",
             "consumers": ["resolve_instrument_projection_contract.record_fields"],
-            "content_fingerprint_sha256": "4c10117c28505bc7b546126690f3f3ef6cbc15c47815a47e016bd8c646b71409",
+            "content_fingerprint_sha256": "39b5d32a1d887863cbc7f7a652e163b6b78d02a6ae21b1e4447e97437e18bf16",
             "expected_result_type": "array",
             "json_pointer": "/instrument_contract/record_fields",
             "source_contract": "exchange_accounts_and_instruments.json",
@@ -2064,7 +2052,6 @@ def resolve_current_edition_execution_pair_policy():
 def validate_canonical_projection_binding_manifest():
     manifest = CONTRACT["canonical_projection_binding_manifest"]
     expected = {
-        "environment_registry": ("/environment_registry", list),
         "market_type_registry": ("/market_type_registry", list),
         "instrument_type_registry": ("/instrument_type_registry", list),
         "allowed_market_instrument_type_pairs": (
@@ -2080,16 +2067,6 @@ def validate_canonical_projection_binding_manifest():
     if type(manifest) is not dict or set(manifest) != set(expected):
         raise TypeError("canonical projection binding manifest")
     expected_consumers = {
-        "environment_registry": [
-            "InstrumentProjection.environment",
-            "CredentialProfileProjection.environment_scope",
-            "MarketDataRoute.environment",
-            "ExecutionRoute.environment",
-            "ExchangeAccountProjection.environment",
-            "InstrumentCatalogProjection.environment",
-            "AccountCapabilitySnapshotProjection.environment",
-            "TrustedExternalIdentityProjection.environment",
-        ],
         "market_type_registry": [
             "InstrumentProjection.market_type",
             "ExchangeAccountProjection.market_type",
@@ -2278,7 +2255,6 @@ def validate_canonical_enum_binding_manifest():
             raise ValueError(key)
     projection_refs = SCHEMAS["InstrumentProjection"]["canonical_projection_refs"]
     for field, projection_name in {
-        "environment": "environment_registry",
         "market_type": "market_type_registry",
         "instrument_type": "instrument_type_registry",
         "trading_status": "trading_statuses",
@@ -2297,7 +2273,6 @@ def resolve_instrument_projection_contract():
     schema = SCHEMAS["InstrumentProjection"]
     references = schema["canonical_projection_refs"]
     expected = {
-        "environment_registry": list,
         "market_type_registry": list,
         "instrument_type_registry": list,
         "allowed_market_instrument_type_pairs": dict,
@@ -2315,7 +2290,6 @@ def resolve_instrument_projection_contract():
     }
 
     for name in (
-        "environment_registry",
         "market_type_registry",
         "instrument_type_registry",
         "trading_statuses",
@@ -2645,15 +2619,15 @@ def record_matches_exchange_registry(record):
         (
             item
             for item in canonical_exchange_entries()
-            if item["exchange_id"] == record["exchange_id"]
+            if item["exchange_id"] == record.get("exchange_id", record.get("source_exchange_id"))
         ),
         None,
     )
     if (
         entry is None
         or entry["status"] != "ENABLED"
-        or record.get("environment", record.get("environment_scope"))
-        not in entry["supported_environments"]
+        or (("environment" in record or "environment_scope" in record)
+            and record.get("environment", record.get("environment_scope")) not in entry["supported_environments"])
         or (
             "market_type" in record and record["market_type"] not in entry["supported_market_types"]
         )
@@ -2818,7 +2792,7 @@ def valid_projection_times(record, validation_time):
 def validate_instrument_record(context, record, validation_time):
     projection_contract = resolve_instrument_projection_contract()
     catalogs = {**context["previous_catalogs_by_id"], **context["catalogs_by_id"]}
-    catalog = catalogs.get(record.get("catalog_snapshot_id"))
+    catalog = catalogs.get(record.get("accepted_source_catalog_snapshot_id"))
     asset_fields = set(projection_contract["asset_reference_contract"]["fields"])
     mapping_statuses = set(projection_contract["asset_reference_contract"]["mapping_statuses"])
 
@@ -2837,7 +2811,7 @@ def validate_instrument_record(context, record, validation_time):
             type(value) is dict
             and set(value) == asset_fields
             and all(type(value[field]) is str and value[field] for field in asset_fields)
-            and value["asset_namespace"] == record["exchange_id"]
+            and value["asset_namespace"] == record["source_exchange_id"]
             and value["mapping_status"] in mapping_statuses
             and value["mapping_status"] in {"EXACT", "EXPLICIT_ALIAS"}
         )
@@ -2931,10 +2905,8 @@ def validate_instrument_record(context, record, validation_time):
         and record["venue_symbol"].strip() == record["venue_symbol"]
         and catalog
         and record["instrument_id"] in catalog["instrument_ids"]
-        and all(
-            record[field] == catalog[field]
-            for field in ("exchange_id", "environment", "market_type")
-        )
+        and record["source_exchange_id"] == catalog["exchange_id"]
+        and record["market_type"] == catalog["market_type"]
         and record["source_adapter_family_id"] == catalog["adapter_family_id"]
         and valid_projection_times(record, validation_time)
     )
@@ -2961,7 +2933,7 @@ def validate_instrument_history_map(context, validation_time):
             identities.add(
                 tuple(
                     record[field]
-                    for field in ("exchange_id", "environment", "market_type", "venue_symbol")
+                    for field in ("workspace_id", "source_exchange_id", "market_type", "venue_symbol")
                 )
             )
         current = context["instruments_by_id"].get(instrument_id)
@@ -2971,7 +2943,7 @@ def validate_instrument_history_map(context, validation_time):
             and (
                 tuple(
                     current[field]
-                    for field in ("exchange_id", "environment", "market_type", "venue_symbol")
+                    for field in ("workspace_id", "source_exchange_id", "market_type", "venue_symbol")
                 )
                 not in identities
                 or current["metadata_version"] <= max(versions)
@@ -2991,7 +2963,7 @@ def validate_global_instrument_identity(context):
     )
     for record in records:
         identity = tuple(
-            record[field] for field in ("exchange_id", "environment", "market_type", "venue_symbol")
+            record[field] for field in ("workspace_id", "source_exchange_id", "market_type", "venue_symbol")
         )
         instrument_id = record["instrument_id"]
         if tuple_to_id.setdefault(identity, instrument_id) != instrument_id:
@@ -3047,7 +3019,7 @@ def validate_catalog_record(context, record, validation_time, *, historical):
                 (
                     item
                     for item in context["instrument_history_by_id"].get(instrument_id, [])
-                    if item["catalog_snapshot_id"] == record["catalog_snapshot_id"]
+                    if item["accepted_source_catalog_snapshot_id"] == record["catalog_snapshot_id"]
                 ),
                 None,
             )
@@ -3056,14 +3028,12 @@ def validate_catalog_record(context, record, validation_time, *, historical):
         )
         if (
             not instrument
-            or any(
-                instrument[field] != record[field]
-                for field in ("exchange_id", "environment", "market_type")
-            )
+            or instrument["source_exchange_id"] != record["exchange_id"]
+            or instrument["market_type"] != record["market_type"]
             or instrument["source_adapter_family_id"] != record["adapter_family_id"]
         ):
             return False
-        if instrument["catalog_snapshot_id"] != record["catalog_snapshot_id"]:
+        if instrument["accepted_source_catalog_snapshot_id"] != record["catalog_snapshot_id"]:
             return False
     return True
 
@@ -3089,7 +3059,7 @@ def validate_universe_record(context, record, *, historical):
             candidates += context["instrument_history_by_id"].get(instrument_id, [])
         instruments.append(
             next(
-                (item for item in candidates if item and item["catalog_snapshot_id"] in sources),
+                (item for item in candidates if item and item["accepted_source_catalog_snapshot_id"] in sources),
                 None,
             )
         )
@@ -3099,13 +3069,10 @@ def validate_universe_record(context, record, *, historical):
     ):
         return False
     for instrument in instruments:
-        if any(
-            instrument[field] != account[field]
-            for field in ("workspace_id", "exchange_id", "environment", "market_type")
-        ):
+        if any(instrument[field] != account[field] for field in ("workspace_id", "market_type")):
             return False
     return set(record["source_catalog_snapshot_ids"]) == {
-        item["catalog_snapshot_id"] for item in instruments
+        item["accepted_source_catalog_snapshot_id"] for item in instruments
     }
 
 
@@ -3287,7 +3254,7 @@ def validate_references(context):
     ):
         return False
     for instrument in context["instruments_by_id"].values():
-        catalog = context["catalogs_by_id"].get(instrument["catalog_snapshot_id"])
+        catalog = context["catalogs_by_id"].get(instrument["accepted_source_catalog_snapshot_id"])
         try:
             observed = parse_time(instrument["observed_at_utc"])
             effective = parse_time(instrument["effective_at_utc"])
@@ -3303,10 +3270,7 @@ def validate_references(context):
             or effective > validation_time
             or not catalog
             or instrument["instrument_id"] not in catalog["instrument_ids"]
-            or any(
-                instrument[field] != catalog[field]
-                for field in ("exchange_id", "environment", "market_type")
-            )
+            or (instrument["source_exchange_id"] != catalog["exchange_id"] or instrument["market_type"] != catalog["market_type"])
             or instrument["source_adapter_family_id"] != catalog["adapter_family_id"]
         ):
             return False
@@ -3324,12 +3288,10 @@ def validate_references(context):
             instrument = context["instruments_by_id"].get(iid)
             if (
                 not instrument
-                or instrument["catalog_snapshot_id"] != cid
+                or instrument["accepted_source_catalog_snapshot_id"] != cid
                 or instrument["source_adapter_family_id"] != catalog["adapter_family_id"]
-                or any(
-                    instrument[field] != catalog[field]
-                    for field in ("exchange_id", "environment", "market_type")
-                )
+                or instrument["source_exchange_id"] != catalog["exchange_id"]
+                or instrument["market_type"] != catalog["market_type"]
             ):
                 return False
     for universe in context["universes_by_id"].values():
@@ -3338,18 +3300,15 @@ def validate_references(context):
         if not account or any(item is None for item in instruments):
             return False
         if set(universe["source_catalog_snapshot_ids"]) != {
-            item["catalog_snapshot_id"] for item in instruments
+            item["accepted_source_catalog_snapshot_id"] for item in instruments
         }:
             return False
         for item in instruments:
-            catalog = context["catalogs_by_id"].get(item["catalog_snapshot_id"])
+            catalog = context["catalogs_by_id"].get(item["accepted_source_catalog_snapshot_id"])
             if not catalog or item["instrument_id"] not in catalog["instrument_ids"]:
                 return False
             if (
-                any(
-                    item[field] != account[field]
-                    for field in ("exchange_id", "environment", "market_type")
-                )
+                item["market_type"] != account["market_type"]
                 or item["workspace_id"] != account["workspace_id"]
             ):
                 return False
@@ -3522,15 +3481,10 @@ def validate_references(context):
         ):
             return False
         for instrument in instruments:
-            catalog = context["catalogs_by_id"].get(instrument["catalog_snapshot_id"])
+            catalog = context["catalogs_by_id"].get(instrument["accepted_source_catalog_snapshot_id"])
             if (
                 not catalog
-                or any(
-                    route[field] != instrument[field]
-                    for field in ("exchange_id", "environment", "market_type")
-                )
-                or route["adapter_family_id"] != instrument["source_adapter_family_id"]
-                or route["adapter_family_id"] != catalog["adapter_family_id"]
+                or route["market_type"] != instrument["market_type"]
                 or instrument["workspace_id"] != route["workspace_id"]
             ):
                 return False
@@ -3628,7 +3582,7 @@ def validate_references(context):
         if execution:
             for iid in universe["instrument_ids"]:
                 instrument = context["instruments_by_id"][iid]
-                catalog = context["catalogs_by_id"][instrument["catalog_snapshot_id"]]
+                catalog = context["catalogs_by_id"][instrument["accepted_source_catalog_snapshot_id"]]
                 if (
                     instrument["workspace_id"] != instance["workspace_id"]
                     or instrument["workspace_id"] != account["workspace_id"]
@@ -4113,7 +4067,7 @@ def validate_strategy_execution_operability(request, context, operation):
         return deny(operation, policy["unsupported_pair_denial"])
     catalogs = [
         context["catalogs_by_id"][catalog_snapshot_id]
-        for catalog_snapshot_id in {instrument["catalog_snapshot_id"] for instrument in instruments}
+        for catalog_snapshot_id in {instrument["accepted_source_catalog_snapshot_id"] for instrument in instruments}
     ]
     validation_time = parse_time(context["validation_time_utc"])
     if any(
@@ -4449,9 +4403,8 @@ def fixture_context(environment="TESTNET", instance_state="BOUND"):
     instrument = {
         "instrument_id": IDS["instr"],
         "workspace_id": IDS["ws"],
-        "catalog_snapshot_id": IDS["icat"],
-        "exchange_id": exchange_id,
-        "environment": environment,
+        "accepted_source_catalog_snapshot_id": IDS["icat"],
+        "source_exchange_id": exchange_id,
         "market_type": "SPOT",
         "instrument_type": "SPOT_PAIR",
         "venue_symbol": "BTCUSDT",
@@ -4891,7 +4844,7 @@ def make_reachability_case(operation, denial):
             workspace_id, iid, cid = f"ws_{UUID7}0f", f"instr_{UUID7}0f", f"icat_{UUID7}0f"
             instrument = copy.deepcopy(context["instruments_by_id"][IDS["instr"]])
             catalog = copy.deepcopy(context["catalogs_by_id"][IDS["icat"]])
-            instrument.update(instrument_id=iid, workspace_id=workspace_id, catalog_snapshot_id=cid)
+            instrument.update(instrument_id=iid, workspace_id=workspace_id, accepted_source_catalog_snapshot_id=cid)
             instrument["venue_symbol"] = "FOREIGN-WORKSPACE-SYMBOL"
             catalog.update(catalog_snapshot_id=cid, instrument_ids=[iid])
             context["instruments_by_id"][iid] = instrument
@@ -5394,7 +5347,7 @@ def test_reverse_integrity_covers_unrelated_records():
 
     def missing_catalog(context):
         instrument = copy.deepcopy(context["instruments_by_id"][IDS["instr"]])
-        instrument.update(instrument_id=f"instr_{UUID7}0f", catalog_snapshot_id=f"icat_{UUID7}0f")
+        instrument.update(instrument_id=f"instr_{UUID7}0f", accepted_source_catalog_snapshot_id=f"icat_{UUID7}0f")
         context["instruments_by_id"][instrument["instrument_id"]] = instrument
 
     def missing_back_reference(context):
@@ -6796,7 +6749,7 @@ def context_with_previous_catalog():
     current["previous_snapshot_id"] = predecessor_id
     context["previous_catalogs_by_id"][predecessor_id] = predecessor
     historical_instrument = copy.deepcopy(context["instruments_by_id"][IDS["instr"]])
-    historical_instrument["catalog_snapshot_id"] = predecessor_id
+    historical_instrument["accepted_source_catalog_snapshot_id"] = predecessor_id
     context["instruments_by_id"][IDS["instr"]]["metadata_version"] = 2
     context["instrument_history_by_id"][IDS["instr"]] = [historical_instrument]
     rehash_m05_projections(context)
@@ -7502,7 +7455,6 @@ def test_margin_authority_cannot_be_enabled_by_mutating_machine_policy(monkeypat
 @pytest.mark.parametrize(
     ("binding", "pointer"),
     [
-        ("environment_registry", "/instrument_contract/trading_statuses"),
         ("trading_statuses", "/environment_registry"),
         ("market_type_registry", "/instrument_type_registry"),
         ("instrument_type_registry", "/environment_registry"),
@@ -7553,7 +7505,7 @@ def test_canonical_enum_binding_manifest_faults_are_machine_contract_errors(monk
         monkeypatch.setitem(SCHEMAS["MarketDataRoute"], "enum_canonical_pointer_ref", bindings)
     elif fault == "wrong_same_type_pointer":
         bindings = copy.deepcopy(SCHEMAS["InstrumentProjection"]["enum_canonical_pointer_ref"])
-        bindings["environment"]["json_pointer"] = "/instrument_contract/trading_statuses"
+        bindings["market_type"]["json_pointer"] = "/instrument_contract/trading_statuses"
         monkeypatch.setitem(SCHEMAS["InstrumentProjection"], "enum_canonical_pointer_ref", bindings)
     elif fault == "content_without_fingerprint":
         monkeypatch.setitem(M05_CONTRACT, "market_type_registry", ["SPOT"])
@@ -7778,7 +7730,6 @@ def test_expected_observed_and_manifest_external_consumers_are_exactly_equal():
         ("MarketDataRoute", "environment"),
         ("ExecutionRoute", "environment"),
         ("ExchangeAccountProjection", "environment"),
-        ("InstrumentProjection", "environment"),
         ("InstrumentCatalogProjection", "environment"),
         ("AccountCapabilitySnapshotProjection", "environment"),
         ("CredentialProfileProjection", "environment_scope"),
@@ -8956,3 +8907,35 @@ def test_fail_closed_decision_boundary_audit_is_exact():
         "non_string_outer_operation": "normalized to null and denied as UNKNOWN_OPERATION",
         "malformed_machine_event_registry": "CONTRACT_INCONSISTENT, never an exception",
     }
+
+
+def test_instrument_projection_separates_source_from_execution_context():
+    schema = SCHEMAS["InstrumentProjection"]
+    assert "source_exchange_id" in schema["exact_fields"]
+    assert "exchange_id" not in schema["exact_fields"]
+    assert "environment" not in schema["exact_fields"]
+    policy = CONTRACT["instrument_projection_policy"]["source_execution_separation"]
+    assert policy["instrument_environment_equality_required"] is False
+    assert policy["source_adapter_may_differ_from_execution_backend"] is True
+    context = fixture_context("PAPER")
+    instrument = context["instruments_by_id"][IDS["instr"]]
+    account = context["accounts_by_id"][IDS["xacc"]]
+    route = context["execution_routes_by_id"][IDS["xroute"]]
+    assert instrument["workspace_id"] == account["workspace_id"] == route["workspace_id"]
+    assert "environment" not in instrument
+    assert account["environment"] == route["environment"] == "PAPER"
+
+
+def test_trading_universe_uses_canonical_workspace_source_catalog_chain():
+    universe = SCHEMAS["TradingUniverseProjection"]
+    legacy = SCHEMAS["InstrumentCatalogProjection"]
+    chain = CONTRACT["canonical_source_catalog_projection_chain"]
+    source_schemas = CONTRACT["source_catalog_projection_schemas"]
+    assert source_schemas["AcceptedSourceCatalogSnapshot"]["execution_environment_forbidden"] is True
+    assert source_schemas["WorkspaceCatalogProjection"]["upstream_reference"] == "AcceptedSourceCatalogSnapshot"
+    assert universe["entity_references"]["source_catalog_snapshot_ids"] == "WorkspaceCatalogProjection"
+    assert "AcceptedSourceCatalogSnapshot" in universe["source_catalog_reference_semantics"]
+    assert chain["execution_environment_in_source_chain"] is False
+    assert legacy["authority_disposition"] == "LEGACY_MIGRATION_BLOCKED_READ_ONLY_NOT_SOURCE_AUTHORITY"
+    assert legacy["may_mint_source_membership"] is False
+    assert "explicitly permitted" in chain["paper_source_policy"]
