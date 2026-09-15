@@ -428,3 +428,258 @@ def test_corrected_paper_catalog_product_decision_is_fail_closed_discovery():
     assert decision["testnet_disposition"].startswith("UNCHANGED")
     assert decision["live_disposition"] == "UNCHANGED_NOT_ENABLED"
     assert decision["global_status_invariants"] == {"C25": "BLOCKED", "S9D": "OPEN"}
+
+
+def test_explicit_m05_identity_migration_design_closes_exact_decisions():
+    """The design separates source identity without claiming production authority."""
+    from pathlib import Path
+
+    root = Path(__file__).parents[2]
+    machine = json.loads(
+        (
+            root
+            / "docs/architecture/cryptohunter_product_architecture/"
+            "audit_observability_alerts_and_updater.json"
+        ).read_text(encoding="utf-8")
+    )
+    dependency = machine["alert_model"]["executable_authority"][
+        "s9d_c25_m08_reconciliation_authority_disposition"
+    ]["m07_full_fill_authority_boundary"]["m05_historical_instrument_dependency"]
+    design = dependency["paper_catalog_product_decision_discovery"][
+        "explicit_m05_source_venue_execution_environment_identity_migration_design"
+    ]
+
+    assert design["status"] == "DESIGN_ONLY_NOT_IMPLEMENTED"
+    assert design["chosen_identity_model"]["source_product_identity"]["tuple"] == [
+        "source_exchange_id",
+        "market_type",
+        "venue_symbol",
+    ]
+    assert "execution_environment" not in design["chosen_identity_model"][
+        "source_product_identity"
+    ]["tuple"]
+    assert design["chosen_identity_model"]["workspace_instrument_identity"][
+        "tuple"
+    ] == [
+        "workspace_id",
+        "source_exchange_id",
+        "market_type",
+        "venue_symbol",
+    ]
+    assert design["chosen_identity_model"]["environment_in_identity"] is False
+    assert [item["disposition"] for item in design["evaluated_alternatives"]] == [
+        "CHOSEN_WITH_WORKSPACE_PROJECTION_CORRECTION",
+        "CHOSEN_AS_BINDING_PATTERN_NOT_NEW_ENTITY",
+        "REJECTED",
+    ]
+    assert design["paper_simulated_venue_disposition"][
+        "instrument_source_identity_owner"
+    ] is False
+    assert "execution_environment is forbidden from source provenance" in design[
+        "catalog_snapshot_contract"
+    ]["scope"]
+    assert design["source_authenticator"]["architecture_name"] == (
+        "AcceptedSourceProducerMembership"
+    )
+    assert design["dynamic_listing_delisting_and_completeness"][
+        "complete_proof_required"
+    ] is True
+    assert design["dynamic_listing_delisting_and_completeness"][
+        "partial_policy"
+    ].startswith("PARTIAL may be retained")
+    assert design["stable_identity_map"]["historical_resolution"].endswith(
+        "no current-metadata fallback."
+    )
+    assert design["stable_identity_map"]["mapping"].startswith(
+        "workspace_id + immutable source-product identity tuple"
+    )
+    assert design["stable_identity_map"]["workspace_invariants"] == [
+        "one immutable workspace_id owns each instrument_id",
+        "same source product in Workspace A and Workspace B maps to instrument_A and "
+        "instrument_B where instrument_A != instrument_B",
+        "workspace cannot change",
+        "source-product continuity preserves ID only within the same Workspace",
+        "cross-Workspace lookup or membership fails closed",
+    ]
+    catalog = design["catalog_snapshot_contract"]["two_level_model"]
+    assert catalog["AcceptedSourceCatalogSnapshot"]["scope"] == [
+        "source_exchange_id",
+        "market_type",
+    ]
+    assert catalog["WorkspaceCatalogProjection"]["scope"] == [
+        "workspace_id",
+        "accepted_source_catalog_snapshot_id",
+    ]
+    assert catalog["WorkspaceCatalogProjection"]["cross_workspace"].startswith(
+        "DENIED"
+    )
+    assert {item["target"] for item in design["downstream_impact_audit"]} == {
+        "exchange_id",
+        "environment",
+        "source_adapter_family_id",
+        "instrument_id",
+        "catalog_snapshot_id",
+        "ExchangeAccount",
+        "TradingUniverse",
+        "ExecutionRoute",
+        "OrderIntent",
+        "Order",
+        "Fill",
+        "M0.8 ledger",
+        "M0.9 lease",
+        "M0.2 Instrument parent",
+        "M0.2 Workspace->Instrument",
+        "M0.6 workspace binding",
+        "M0.2 Instrument identity_dimensions",
+        "M0.6 Instrument exchange/environment equality",
+    }
+    assert design["compatibility_decision"]["fully_additive_possible"] is False
+    assert design["legacy_paper_records"]["automatic_mapping"] is False
+    assert design["implementation_disposition"] == {
+        "production_migration": "NOT_IMPLEMENTED",
+        "forbidden_in_this_iteration": [
+            "network ingestion",
+            "exchange-specific adapters or venue hardcoding",
+            "Catalog acceptance runtime",
+            "identity map persistence",
+            "GUI",
+            "manual universe writer",
+            "autonomous selector/ranking",
+            "lifecycle authority",
+            "Full Fill",
+            "reconciliation",
+            "LIVE enablement",
+        ],
+        "blockers": {"C25": "BLOCKED", "S9D": "OPEN"},
+    }
+    assert design["final_answers"] == {
+        "source_venue_separate_from_execution_environment": "YES",
+        "paper_simulated_venue_remains_instrument_source_identity": "NO",
+        "real_source_exchange_id_preserved_under_paper": "YES",
+        "current_instrument_identity_tuple_requires_migration": "YES",
+        "migration_fully_additive": "NO",
+        "trusted_adapter_registration_equals_source_authority": "NO",
+        "dynamic_plugin_may_claim_official_venue_authority": "NO",
+        "complete_snapshot_proof_required_before_absence_delisting": "YES",
+        "partial_snapshot_may_remove_membership": "NO",
+        "stable_instrument_id_requires_durable_identity_map": "YES",
+        "historical_metadata_versions_remain_resolvable": "YES",
+        "trading_universe_works_without_instrument_copy": "YES",
+        "legacy_paper_records_automatically_map_to_real_venue": "NO",
+        "production_migration_implemented": "NO",
+        "C25": "BLOCKED",
+        "S9D": "OPEN",
+        "canonical_instrument_has_exactly_one_workspace_parent": "YES",
+        "two_workspaces_may_share_one_canonical_instrument_id": "NO",
+        "two_workspaces_may_reference_same_trusted_source_product_or_catalog_fact": "YES",
+        "source_product_equivalence_implies_canonical_instrument_identity_equivalence": "NO",
+        "cross_workspace_instrument_resolution_fails_closed": "YES",
+        "m02_workspace_ownership_requires_migration": "NO",
+        "m06_same_workspace_invariant_preserved": "YES",
+        "paper_reuses_workspace_owned_source_backed_instrument_without_copy": "YES",
+        "m02_instrument_identity_dimensions_require_migration": "YES",
+        "m02_environment_remains_in_canonical_instrument_identity": (
+            "NO_TARGET_NOT_IMPLEMENTED"
+        ),
+        "m02_source_exchange_identity_replaces_execution_exchange_semantics_for_instrument": (
+            "YES_TARGET_NOT_IMPLEMENTED"
+        ),
+        "m06_environment_equality_checks_require_semantic_migration": "YES",
+    }
+
+
+def test_workspace_instrument_identity_is_distinct_over_one_shared_source_fact():
+    """Design oracle: source reuse cannot collapse tenant-owned entities."""
+    from pathlib import Path
+
+    root = Path(__file__).parents[2]
+    machine = json.loads(
+        (
+            root
+            / "docs/architecture/cryptohunter_product_architecture/"
+            "audit_observability_alerts_and_updater.json"
+        ).read_text(encoding="utf-8")
+    )
+    dependency = machine["alert_model"]["executable_authority"][
+        "s9d_c25_m08_reconciliation_authority_disposition"
+    ]["m07_full_fill_authority_boundary"]["m05_historical_instrument_dependency"]
+    design = dependency["paper_catalog_product_decision_discovery"][
+        "explicit_m05_source_venue_execution_environment_identity_migration_design"
+    ]
+
+    source_product = ("binance", "SPOT", "BTCUSDT")
+    workspace_a_key = ("wrk_A", *source_product)
+    workspace_b_key = ("wrk_B", *source_product)
+    # Conceptual fixtures assert the frozen mapping's declared cardinality; they
+    # are deliberately not a production ID-map implementation.
+    conceptual_identity_map = {
+        workspace_a_key: "instr_A",
+        workspace_b_key: "instr_B",
+    }
+    assert workspace_a_key[1:] == workspace_b_key[1:] == source_product
+    assert conceptual_identity_map[workspace_a_key] != conceptual_identity_map[workspace_b_key]
+
+    compatibility = design["m02_m06_compatibility"]
+    assert compatibility["M0.2"]["ownership"] == {
+        "status": "UNCHANGED",
+        "instrument_parent": "Workspace",
+        "workspace_to_instrument": "one_to_many_catalog",
+        "ownership_migration_required": False,
+        "shared_canonical_instrument_id_across_workspaces": False,
+    }
+    assert compatibility["M0.2"]["instrument_identity_dimensions"]["status"] == (
+        "MIGRATION_REQUIRED"
+    )
+    assert compatibility["M0.6"]["same_workspace_invariant"] == (
+        "Instrument.workspace_id == ExchangeAccount.workspace_id remains required"
+    )
+    assert compatibility["M0.6"]["foreign_instrument_disposition"] == (
+        "TRUSTED_CONTEXT_INVALID"
+    )
+    assert design["trading_universe_compatibility"][
+        "cross_workspace_selection"
+    ].startswith("DENIED_FAIL_CLOSED")
+
+
+def test_m02_frozen_instrument_dimensions_prove_explicit_migration_dependency():
+    """The design must cite the real frozen M0.2 conflict, not only M0.12 claims."""
+    from pathlib import Path
+
+    root = Path(__file__).parents[2]
+    docs = root / "docs/architecture/cryptohunter_product_architecture"
+    m02 = json.loads((docs / "canonical_domain_vocabulary.json").read_text())
+    machine = json.loads(
+        (docs / "audit_observability_alerts_and_updater.json").read_text()
+    )
+    instrument = next(
+        entity for entity in m02["entity_kinds"] if entity["canonical_name"] == "Instrument"
+    )
+    dependency = machine["alert_model"]["executable_authority"][
+        "s9d_c25_m08_reconciliation_authority_disposition"
+    ]["m07_full_fill_authority_boundary"]["m05_historical_instrument_dependency"]
+    design = dependency["paper_catalog_product_decision_discovery"][
+        "explicit_m05_source_venue_execution_environment_identity_migration_design"
+    ]
+    migration = design["m02_identity_dimensions_migration_dependency"]
+
+    assert instrument["parent"] == migration["exact_frozen_evidence"]["parent"] == (
+        "Workspace"
+    )
+    assert instrument["identity_dimensions"] == migration["exact_frozen_evidence"][
+        "identity_dimensions"
+    ] == ["exchange_id", "environment", "market_type", "venue_symbol"]
+    assert migration["status"] == "MIGRATION_REQUIRED_DESIGN_ONLY_NOT_IMPLEMENTED"
+    assert migration["target_identity_dimensions"] == [
+        "source_exchange_id",
+        "market_type",
+        "venue_symbol",
+    ]
+    assert migration["cutover_dependency"] == (
+        "REQUIRED_BEFORE_AUTHORITATIVE_M0.5_CUTOVER"
+    )
+    assert design["m02_m06_compatibility"]["M0.2"]["ownership"][
+        "ownership_migration_required"
+    ] is False
+    assert design["m02_m06_compatibility"]["M0.6"][
+        "instrument_environment_exchange_checks"
+    ] == "SEMANTIC_MIGRATION_REQUIRED"

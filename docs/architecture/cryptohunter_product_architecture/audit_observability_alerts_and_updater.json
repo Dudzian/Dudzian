@@ -4,7 +4,7 @@
   "status": "IN_PROGRESS_S9D_C25_BLOCKED_M08_EXECUTABLE_RECONCILIATION_AUTHORITY_OTHER_SOURCE_AUTHORITIES_OPEN",
   "contract_identity": {
     "contract_id": "M0.12-audit-observability-alerts-updater",
-    "version": "1.42.0",
+    "version": "1.43.0",
     "phase": "S9D_C25_BLOCKED_M08_RECONCILIATION_CHAIN_M07_LIFECYCLE_AND_M05_PAPER_CONTENT_PREREQUISITES_OPEN",
     "machine_source_of_truth": true,
     "markdown_is_projection_only": true
@@ -5421,6 +5421,571 @@
               "global_status_invariants": {
                 "C25": "BLOCKED",
                 "S9D": "OPEN"
+              },
+              "explicit_m05_source_venue_execution_environment_identity_migration_design": {
+                "status": "DESIGN_ONLY_NOT_IMPLEMENTED",
+                "decision_id": "EXPLICIT_M05_SOURCE_VENUE_EXECUTION_ENVIRONMENT_IDENTITY_MIGRATION",
+                "scope": "M0.2 Instrument identity-dimensions plus M0.5 source-venue/execution-separation migration design; M0.5 authoritative cutover depends on the explicit M0.2 identity migration. No production authority or downstream contract is changed.",
+                "chosen_identity_model": {
+                  "model": "TWO_LEVEL_SOURCE_PRODUCT_AND_WORKSPACE_INSTRUMENT_WITH_MODEL_2_STYLE_EXECUTION_REFERENCE",
+                  "decision": "Source venue owns the logical source-product key and shared metadata fact; each canonical frozen-domain Instrument is a projection owned by exactly one Workspace. PAPER eligibility references that Workspace Instrument, account/backend and TradingUniverse and never creates a second PAPER Instrument in that Workspace.",
+                  "comparison": "exact bytes for each component; no trim, case-fold, Unicode normalization or symbol parsing",
+                  "environment_in_identity": false,
+                  "namespace_rule": "source_exchange_id is the source-product venue namespace boundary; any source_market_namespace_id is source-owned and never execution_environment.",
+                  "why_minimal": "Shared authenticated source facts feed separate Workspace-owned Instrument projections, preserving frozen ownership, provenance and history without PAPER/LIVE copies inside a Workspace.",
+                  "source_product_identity": {
+                    "tuple": [
+                      "source_exchange_id",
+                      "market_type",
+                      "venue_symbol"
+                    ],
+                    "optional_discriminator": "source_market_namespace_id only when a venue exposes collision-capable product namespaces",
+                    "scope": "Venue-owned logical product key; globally reusable as source fact and independent of Workspace and execution_environment.",
+                    "entity_status": "Not the canonical frozen-domain Instrument and does not itself mint instrument_id."
+                  },
+                  "workspace_instrument_identity": {
+                    "tuple": [
+                      "workspace_id",
+                      "source_exchange_id",
+                      "market_type",
+                      "venue_symbol"
+                    ],
+                    "optional_discriminator": "source_market_namespace_id exactly when present in source-product identity",
+                    "mapping": "workspace_id + immutable source-product identity -> canonical instrument_id",
+                    "ownership": "Exactly one Workspace parent per canonical Instrument; workspace_id is immutable.",
+                    "cross_workspace_rule": "The same source product in two Workspaces receives two distinct instrument_ids; source-product equivalence is not canonical Instrument identity equivalence; foreign Instrument resolution fails closed."
+                  }
+                },
+                "evaluated_alternatives": [
+                  {
+                    "model": "MODEL_1",
+                    "disposition": "CHOSEN_WITH_WORKSPACE_PROJECTION_CORRECTION",
+                    "reason": "Source venue owns source-product identity and metadata, while frozen M0.2 ownership requires a distinct canonical Instrument projection in each Workspace."
+                  },
+                  {
+                    "model": "MODEL_2",
+                    "disposition": "CHOSEN_AS_BINDING_PATTERN_NOT_NEW_ENTITY",
+                    "reason": "A PAPER reference is useful only as execution eligibility/binding to source_instrument_id; it must not become another Instrument identity."
+                  },
+                  {
+                    "model": "MODEL_3",
+                    "disposition": "REJECTED",
+                    "reason": "Keeping a PAPER-owned Instrument while adding source fields preserves two identities and ambiguous exchange_id semantics; frozen stability does not require that duplication and legacy records are handled explicitly."
+                  }
+                ],
+                "source_execution_separation": {
+                  "source_venue": "Real exchange identity that defines instrument and venue asset namespaces.",
+                  "catalog_provenance": "Authenticated producer membership plus immutable accepted snapshot lineage; independent of execution.",
+                  "execution_context": "ExchangeAccount/ExecutionRoute environment PAPER, TESTNET or LIVE plus backend identity and authorization; never mutates Instrument.",
+                  "paper_binding_required_fields": [
+                    "source_instrument_id",
+                    "source_catalog_snapshot_id",
+                    "trading_universe_id",
+                    "exchange_account_id",
+                    "execution_route_id",
+                    "execution_environment",
+                    "execution_backend_id"
+                  ],
+                  "paper_binding_rules": [
+                    "execution_environment must equal PAPER",
+                    "source Instrument and catalog retain real source_exchange_id",
+                    "source Instrument, TradingUniverse, ExchangeAccount and ExecutionRoute all resolve to the same workspace_id",
+                    "TradingUniverse version must contain exact source_instrument_id and bind exact accepted source_catalog_snapshot_id",
+                    "account/backend/route policies must permit PAPER for the selected source exchange and market type",
+                    "Catalog membership and ranking grant no account, route, risk, lease, lifecycle or execution authority"
+                  ],
+                  "workspace_projection": "A Workspace-owned Instrument exact-binds one source-product key, one accepted upstream source snapshot/version and immutable metadata provenance; reuse of the source fact does not share instrument_id.",
+                  "paper_execution_flow": [
+                    "trusted real-venue source product / AcceptedSourceCatalogSnapshot",
+                    "WorkspaceCatalogProjection and Workspace-owned Instrument",
+                    "same-Workspace TradingUniverse",
+                    "same-Workspace/Portfolio PAPER ExchangeAccount",
+                    "PAPER ExecutionRoute/backend"
+                  ]
+                },
+                "exchange_registry_migration": {
+                  "no_exchange_entries_added_by_this_design": true,
+                  "real_exchange_identity_schema": {
+                    "required_fields": [
+                      "exchange_id",
+                      "display_name",
+                      "status",
+                      "source_market_types",
+                      "source_catalog_policy",
+                      "account_execution_policy"
+                    ],
+                    "identity_rules": [
+                      "exchange_id is Core-owned stable real venue identity, never display/config/plugin/class name",
+                      "aliases are migration/read aliases only and never durable IDs",
+                      "registry membership does not authenticate a producer and does not enable execution"
+                    ]
+                  },
+                  "adapter_family_schema": {
+                    "required_fields": [
+                      "adapter_family_id",
+                      "exchange_id",
+                      "source_capabilities",
+                      "compatible_market_types"
+                    ],
+                    "rule": "Family compatibility is descriptive; source authority additionally requires authenticated producer membership."
+                  },
+                  "source_catalog_policy": {
+                    "fields": [
+                      "allowed_adapter_family_ids",
+                      "supported_source_market_types",
+                      "completeness_evidence_policy",
+                      "freshness_policy"
+                    ],
+                    "meaning": "Where trusted metadata may exist and under which acceptance rules; contains no execution grant."
+                  },
+                  "account_execution_policy": {
+                    "fields": [
+                      "allowed_execution_environments",
+                      "account_identity_policy_by_environment",
+                      "execution_backend_policy_by_environment"
+                    ],
+                    "meaning": "Where accounts/routes/execution may exist; independent of metadata availability."
+                  },
+                  "supported_environments_disposition": "Rename/reinterpret only on account/execution records as allowed_execution_environments. Do not use it for metadata; supported_source_market_types plus source_catalog_policy own metadata availability."
+                },
+                "paper_simulated_venue_disposition": {
+                  "future_role": [
+                    "PAPER_EXECUTION_BACKEND_IDENTITY",
+                    "OPTIONAL_SYNTHETIC_EXCHANGE_ACCOUNT_PROVIDER",
+                    "SIMULATION_ENGINE_IDENTITY"
+                  ],
+                  "instrument_source_identity_owner": false,
+                  "status_as_instrument_owner": "DEPRECATED_LEGACY_READ_ONLY",
+                  "rule": "It may identify who simulates execution, but may not own or rewrite real venue Instrument, AssetReference or Catalog provenance."
+                },
+                "asset_reference_model": {
+                  "canonical_asset": "Venue-independent canonical asset identity when explicitly resolved by trusted mapping; no symbol-derived inference.",
+                  "venue_asset_reference": "Immutable reference containing canonical_asset_id when known, source_exchange_id asset namespace, exact venue asset code and metadata version/status.",
+                  "source_namespace_rule": "BTC on a real venue retains that source_exchange_id namespace in PAPER, TESTNET and LIVE.",
+                  "paper_rule": "PAPER binds balances/simulation to venue AssetReferences; it creates no paper_simulated_venue canonicalization and no cross-venue asset equivalence.",
+                  "scope_separation": "A venue AssetReference/source asset fact may be source-global; that fact does not globalize the Workspace-owned Instrument entity or permit a cross-Workspace Instrument reference."
+                },
+                "catalog_snapshot_contract": {
+                  "statuses": [
+                    "COMPLETE",
+                    "PARTIAL",
+                    "REJECTED",
+                    "STALE"
+                  ],
+                  "scope": "Upstream snapshot: source_exchange_id + market_type. Workspace membership projection: workspace_id + accepted_source_catalog_snapshot_id. execution_environment is forbidden from source provenance and fingerprint input.",
+                  "immutability": "Every accepted snapshot, ordered/set-canonicalized membership, timestamps, predecessor and producer provenance is immutable and historically resolvable.",
+                  "fingerprint": "Domain-separated canonical encoding exact-binds every required semantic field except the fingerprint itself; catalog_snapshot_id is Core-owned and is not derived by pretending a hash is UUIDv7.",
+                  "source_snapshot_identity": "Exact upstream venue/adapter snapshot identifier or authenticated retrieval identity; absence is explicit, never synthesized from execution environment.",
+                  "two_level_model": {
+                    "AcceptedSourceCatalogSnapshot": {
+                      "scope": [
+                        "source_exchange_id",
+                        "market_type"
+                      ],
+                      "ownership": "Shared immutable authenticated upstream fact; no execution_environment and no Workspace Instrument membership.",
+                      "members": "source-product identities plus exact metadata versions/provenance"
+                    },
+                    "WorkspaceCatalogProjection": {
+                      "scope": [
+                        "workspace_id",
+                        "accepted_source_catalog_snapshot_id"
+                      ],
+                      "ownership": "Workspace-owned accepted projection/membership compatible with frozen M0.5 Catalog use.",
+                      "members": "Only instrument_ids whose Instrument.workspace_id exactly equals projection.workspace_id and which exact-bind a member source product/version from the referenced upstream snapshot.",
+                      "cross_workspace": "DENIED; a foreign Workspace instrument_id cannot enter membership even for an equivalent source product."
+                    },
+                    "flow": [
+                      "AcceptedSourceCatalogSnapshot",
+                      "WorkspaceCatalogProjection",
+                      "Workspace-owned Instrument"
+                    ]
+                  },
+                  "upstream_source_required_fields": [
+                    "catalog_snapshot_id",
+                    "source_exchange_id",
+                    "source_adapter_family_id",
+                    "source_adapter_implementation_id",
+                    "source_adapter_release_id",
+                    "source_adapter_version",
+                    "source_catalog_snapshot_identity",
+                    "market_type",
+                    "accepted_at_utc",
+                    "observed_at_utc",
+                    "effective_at_utc",
+                    "stale_after_utc",
+                    "previous_catalog_snapshot_id",
+                    "completeness_status",
+                    "completeness_evidence",
+                    "content_fingerprint_sha256",
+                    "member_source_product_versions"
+                  ],
+                  "workspace_projection_required_fields": [
+                    "workspace_catalog_projection_id",
+                    "workspace_id",
+                    "accepted_source_catalog_snapshot_id",
+                    "accepted_at_utc",
+                    "previous_workspace_catalog_projection_id",
+                    "member_instrument_ids",
+                    "content_fingerprint_sha256"
+                  ]
+                },
+                "source_authenticator": {
+                  "architecture_name": "AcceptedSourceProducerMembership",
+                  "authority_owner": "Core",
+                  "trust_root": "Core-owned, durable, versioned and independently installed acceptance set; not adapter self-description, runtime DI registration, plugin manifest or user configuration.",
+                  "exact_binding_fields": [
+                    "exchange_id",
+                    "adapter_family_id",
+                    "adapter_implementation_id",
+                    "adapter_release_id",
+                    "adapter_version",
+                    "allowed_source_capabilities",
+                    "allowed_market_types",
+                    "valid_from_utc",
+                    "valid_until_utc",
+                    "release_or_code_provenance",
+                    "membership_generation"
+                  ],
+                  "acceptance_rule": "Snapshot acceptance resolves one current membership and exact scope before catalog validation, then persists the membership identity/generation with the accepted snapshot for historical proof.",
+                  "minting_rule": "Only Core release/security authority can mint/revoke membership; caller, config, plugin and adapter cannot.",
+                  "plugin_layers": {
+                    "installed_adapter": "Code is discoverable/loadable only.",
+                    "configured_adapter": "Instance has user/runtime settings only.",
+                    "authenticated_source_producer": "Separately matches accepted Core membership and exact release/capability scope."
+                  },
+                  "dynamic_plugin_claim_rule": "A plugin claiming an official exchange_id remains unauthenticated and cannot publish canonical venue snapshots unless its concrete release has separately accepted membership."
+                },
+                "stable_identity_map": {
+                  "mapping": "workspace_id + immutable source-product identity tuple -> Core-owned canonical instrument_id",
+                  "durability": "Persisted atomically per Workspace with first accepted projection appearance and restored before Workspace snapshot/history resolution.",
+                  "creation": "First accepted appearance for a given Workspace reserves a new Core-generated prefixed UUIDv7; refresh in that Workspace resolves it, while another Workspace must allocate a distinct ID.",
+                  "metadata_revision": "Creates a new immutable metadata_version under the same instrument_id.",
+                  "symbol_reuse": "Exact tuple never silently rebinds. If the venue proves continuity, retain ID; if it proves a distinct product/venue identity epoch, extend the durable mapping with an explicit Core-owned identity_epoch/venue_product_id discriminator and mint a new ID; ambiguity or collision rejects acceptance.",
+                  "prohibitions": [
+                    "no per-refresh mint",
+                    "no config/plugin supplied ID",
+                    "no ordinary deterministic hash represented as canonical UUIDv7",
+                    "no tuple rewrite or inferred alias"
+                  ],
+                  "historical_resolution": "instrument_id + exact metadata_version resolves an immutable accepted version and its source snapshot; missing version fails closed with no current-metadata fallback.",
+                  "workspace_invariants": [
+                    "one immutable workspace_id owns each instrument_id",
+                    "same source product in Workspace A and Workspace B maps to instrument_A and instrument_B where instrument_A != instrument_B",
+                    "workspace cannot change",
+                    "source-product continuity preserves ID only within the same Workspace",
+                    "cross-Workspace lookup or membership fails closed"
+                  ]
+                },
+                "dynamic_listing_delisting_and_completeness": {
+                  "new_listing": "A later immutable accepted COMPLETE snapshot may add tuples, allocate stable IDs once and leave prior snapshots unchanged; no CryptoHunter release is required.",
+                  "complete_proof_required": true,
+                  "completeness_evidence": "Authenticated producer attests full enumeration for exact source_exchange_id + market_type scope, with retrieval/page/cursor completion evidence and Core validation of scope, chronology, predecessor and anomaly policy. A count or adapter boolean alone is insufficient.",
+                  "partial_policy": "PARTIAL may be retained as diagnostic/history but cannot become ACTIVE membership source, remove members, infer delisting, activate a universe or replace last accepted COMPLETE baseline.",
+                  "delisting_rule": "Explicit trusted trading_status=DELISTED/SUSPENDED is authoritative when accepted. Absence may imply DELISTED only in a later accepted COMPLETE snapshot whose policy explicitly declares exhaustive membership and whose completeness evidence passes; otherwise absence has no membership-removal effect.",
+                  "anomaly_rule": "Large/unexpected removal triggers policy validation/manual or independent confirmation requirement and fails closed; it never downgrades completeness automatically into accepted deletion.",
+                  "history": "Never hard delete Instrument, metadata version, snapshot membership, orders, fills or audit references."
+                },
+                "trading_universe_compatibility": {
+                  "manual_flow": [
+                    "accepted source Catalog",
+                    "user selection intent",
+                    "exact instrument_id and snapshot resolution",
+                    "immutable TradingUniverse version"
+                  ],
+                  "autonomous_flow": [
+                    "accepted source Catalog",
+                    "policy-derived Eligible Universe",
+                    "ranking",
+                    "immutable/versioned Active Selection"
+                  ],
+                  "copy_instrument": false,
+                  "authority": "Both store references to canonical source Instruments/snapshots. Selection, eligibility and ranking never mint identity or execution authority.",
+                  "workspace_binding": "TradingUniverse remains an ExchangeAccount child and every selected Instrument must satisfy Instrument.workspace_id == TradingUniverse/ExchangeAccount.workspace_id.",
+                  "cross_workspace_selection": "DENIED_FAIL_CLOSED even when the foreign Instrument binds the same source-product identity or upstream Catalog fact."
+                },
+                "testnet_live_disposition": {
+                  "TESTNET": "Separation removes false environment from source identity. The same AcceptedSourceProducerMembership shape may later authenticate a distinct testnet or real-venue producer release/capability, but existing TESTNET blocker remains OPEN and no account/source equivalence is asserted.",
+                  "LIVE": "Schema is compatible with later LIVE accounts/routes while LIVE remains disabled and unchanged; no LIVE authority is enabled by this design."
+                },
+                "required_schema_changes": [
+                  {
+                    "target": "M0.2 canonical Instrument identity_dimensions",
+                    "classification": "SCHEMA_CONTRACT_MIGRATION_REQUIRED",
+                    "change": "Keep parent Workspace unchanged; replace exchange_id/environment/market_type/venue_symbol dimensions with source_exchange_id/market_type/venue_symbol plus only an explicitly frozen optional source_market_namespace_id rule. execution environment remains account/route/order/lease context.",
+                    "compatibility": "REQUIRED_BEFORE_AUTHORITATIVE_M0.5_CUTOVER; NOT_IMPLEMENTED"
+                  },
+                  {
+                    "target": "M0.5 Instrument and identity index",
+                    "change": "separate global source-product key from Workspace-owned canonical identity map: workspace_id + source-product tuple -> instrument_id; remove environment from both",
+                    "compatibility": "M0.2 Workspace ownership UNCHANGED; identity migration required for legacy PAPER source semantics"
+                  },
+                  {
+                    "target": "M0.5 AssetReference",
+                    "change": "bind venue namespace to source_exchange_id independently of execution",
+                    "compatibility": "SCHEMA_MIGRATION_REQUIRED"
+                  },
+                  {
+                    "target": "M0.5 Exchange Registry",
+                    "change": "split source catalog/market metadata policy from account/execution environment policy",
+                    "compatibility": "SCHEMA_MIGRATION_REQUIRED"
+                  },
+                  {
+                    "target": "M0.5 CatalogSnapshot",
+                    "change": "replace exchange/environment scope with exact source/provenance/completeness contract",
+                    "compatibility": "SCHEMA_MIGRATION_REQUIRED"
+                  },
+                  {
+                    "target": "M0.5 execution eligibility",
+                    "change": "add source Instrument + snapshot + TradingUniverse + account/backend/route PAPER binding",
+                    "compatibility": "ADDITIVE_NEW_BINDING"
+                  },
+                  {
+                    "target": "M0.11 persistence",
+                    "change": "declare durable identity map, producer membership, accepted snapshots and metadata history plus explicit legacy migration",
+                    "compatibility": "SCHEMA_MIGRATION_REQUIRED_NOT_IMPLEMENTED"
+                  }
+                ],
+                "downstream_impact_audit": [
+                  {
+                    "target": "M0.2 Instrument parent",
+                    "classification": "UNCHANGED",
+                    "impact": "Instrument retains exactly one Workspace parent; canonical instrument_id is never shared across Workspaces."
+                  },
+                  {
+                    "target": "M0.2 Workspace->Instrument",
+                    "classification": "UNCHANGED",
+                    "impact": "The one_to_many_catalog relationship remains authoritative. Shared source-product facts do not change domain entity ownership and no M0.2 ownership migration is required."
+                  },
+                  {
+                    "target": "M0.2 Instrument identity_dimensions",
+                    "classification": "SCHEMA_CONTRACT_MIGRATION_REQUIRED",
+                    "impact": "Frozen dimensions are exchange_id/environment/market_type/venue_symbol. Target removes environment and uses source_exchange_id; Workspace parent remains unchanged. Required before M0.5 cutover."
+                  },
+                  {
+                    "target": "M0.6 workspace binding",
+                    "classification": "UNCHANGED",
+                    "impact": "Instrument.workspace_id must exactly equal ExchangeAccount.workspace_id; foreign Workspace Instrument is TRUSTED_CONTEXT_INVALID; historical universe workspace binding remains mandatory."
+                  },
+                  {
+                    "target": "M0.6 Instrument exchange/environment equality",
+                    "classification": "SEMANTIC_MIGRATION_REQUIRED",
+                    "impact": "InstrumentProjection currently carries exchange_id and environment, environment registry binds InstrumentProjection.environment, and route/catalog checks require exact exchange/environment equality. Migrate Instrument source comparisons to source identity and retain execution comparisons on account/route; same-Workspace TRUSTED_CONTEXT_INVALID invariant is unchanged."
+                  },
+                  {
+                    "target": "exchange_id",
+                    "classification": "DANGEROUS_IDENTITY_ASSUMPTION",
+                    "impact": "Currently overloads source venue and environment-enabled execution venue. Migrate Instrument/Catalog uses to source_exchange_id; preserve ExchangeAccount/ExecutionRoute exchange binding as execution policy context."
+                  },
+                  {
+                    "target": "environment",
+                    "classification": "SEMANTIC_REINTERPRETATION",
+                    "impact": "Unchanged for account, route, order and lease execution context; forbidden from source Instrument/Catalog identity."
+                  },
+                  {
+                    "target": "source_adapter_family_id",
+                    "classification": "SCHEMA_MIGRATION_REQUIRED",
+                    "impact": "Remains metadata lineage on Instrument but must bind AcceptedSourceProducerMembership and source Catalog, not execution adapter."
+                  },
+                  {
+                    "target": "instrument_id",
+                    "classification": "UNCHANGED",
+                    "impact": "Core-owned durable Workspace-scoped ID and historical references remain; equivalent source products across Workspaces have distinct IDs and legacy IDs never deduplicate across Workspace."
+                  },
+                  {
+                    "target": "catalog_snapshot_id",
+                    "classification": "SCHEMA_MIGRATION_REQUIRED",
+                    "impact": "ID/reference remains, while snapshot scope/provenance and completeness fields change; historical exact lookup remains mandatory."
+                  },
+                  {
+                    "target": "ExchangeAccount",
+                    "classification": "SEMANTIC_REINTERPRETATION",
+                    "impact": "Remains environment-bound execution/account identity. PAPER provider may be simulation backend while selected source Instruments belong to real venues; current same-exchange Instrument checks must migrate."
+                  },
+                  {
+                    "target": "TradingUniverse",
+                    "classification": "SCHEMA_MIGRATION_REQUIRED",
+                    "impact": "Current parent/account same-Workspace rule remains; version references only Workspace-owned Instruments backed by accepted source facts and a separate execution eligibility binding without copying metadata."
+                  },
+                  {
+                    "target": "ExecutionRoute",
+                    "classification": "SCHEMA_MIGRATION_REQUIRED",
+                    "impact": "Current execution adapter == Instrument source adapter assumption is dangerous. Route binds execution backend/account/environment; source adapter lineage remains Catalog-only."
+                  },
+                  {
+                    "target": "OrderIntent",
+                    "classification": "SEMANTIC_REINTERPRETATION",
+                    "impact": "Keep instrument_id, metadata_version, universe/account/route references; environment derives from execution context, never Instrument identity. Exact source snapshot provenance must remain reachable. Every resolved Instrument must belong to the fact/account execution Workspace; equivalent source identity never permits a foreign Workspace instrument_id."
+                  },
+                  {
+                    "target": "Order",
+                    "classification": "SEMANTIC_REINTERPRETATION",
+                    "impact": "Historical instrument/version and route/account references remain; any copied exchange/environment equality against Instrument must use source-versus-execution roles explicitly. Every resolved Instrument must belong to the fact/account execution Workspace; equivalent source identity never permits a foreign Workspace instrument_id."
+                  },
+                  {
+                    "target": "Fill",
+                    "classification": "SEMANTIC_REINTERPRETATION",
+                    "impact": "Keep exact instrument_id + metadata_version with order/route provenance; never current metadata fallback or PAPER venue rewrite. Every resolved Instrument must belong to the fact/account execution Workspace; equivalent source identity never permits a foreign Workspace instrument_id."
+                  },
+                  {
+                    "target": "M0.8 ledger",
+                    "classification": "DANGEROUS_IDENTITY_ASSUMPTION",
+                    "impact": "Economic account/environment scope remains execution-bound, while instrument/AssetReference valuation provenance is source-bound; paper_simulated_venue asset namespaces require migration or legacy isolation. Every resolved Instrument must belong to the fact/account execution Workspace; equivalent source identity never permits a foreign Workspace instrument_id."
+                  },
+                  {
+                    "target": "M0.9 lease",
+                    "classification": "UNCHANGED_WITH_EXPLICIT_INPUT_ROLE",
+                    "impact": "Lease remains account/execution-scope authority and does not authorize source Catalog membership; validators must stop expecting Instrument.environment equality. Every resolved Instrument must belong to the fact/account execution Workspace; equivalent source identity never permits a foreign Workspace instrument_id."
+                  }
+                ],
+                "compatibility_decision": {
+                  "fully_additive_possible": false,
+                  "answer": "NO for canonical identity semantics; YES only for staged transport.",
+                  "reason": "Adding source_exchange_id while retaining paper_simulated_venue/environment in canonical Instrument identity leaves two competing identities. A staged additive release may populate new fields and bindings, but authoritative cutover changes the tuple and validators and is identity-breaking for ambiguous legacy PAPER records.",
+                  "cutover_rule": "New authoritative records use only migrated semantics. Old semantics are never accepted into new Catalog/universe/execution authority merely because both field sets are present."
+                },
+                "legacy_paper_records": {
+                  "default": "LEGACY_READ_ONLY_QUARANTINE",
+                  "automatic_mapping": false,
+                  "trusted_mapping_only": "Migration is allowed only when durable accepted evidence exact-binds the old instrument_id/metadata_version to one source identity tuple and snapshot provenance without collision; migration record preserves old ID/reference lineage or issues an explicit alias according to the future M0.11 plan.",
+                  "unknown_source": "FAIL_CLOSED_CANNOT_INFER; retain for audit/read/historical accounting only and deny new Catalog membership, universe activation and execution.",
+                  "prohibition": "Never infer source exchange from venue_symbol, asset code, config defaults, account, plugin claim or current market availability.",
+                  "cross_workspace_dedupe": "FORBIDDEN: two legacy Instrument IDs owned by different Workspaces are never merged merely because source-product tuple or symbol matches."
+                },
+                "implementation_disposition": {
+                  "production_migration": "NOT_IMPLEMENTED",
+                  "forbidden_in_this_iteration": [
+                    "network ingestion",
+                    "exchange-specific adapters or venue hardcoding",
+                    "Catalog acceptance runtime",
+                    "identity map persistence",
+                    "GUI",
+                    "manual universe writer",
+                    "autonomous selector/ranking",
+                    "lifecycle authority",
+                    "Full Fill",
+                    "reconciliation",
+                    "LIVE enablement"
+                  ],
+                  "blockers": {
+                    "C25": "BLOCKED",
+                    "S9D": "OPEN"
+                  }
+                },
+                "final_answers": {
+                  "source_venue_separate_from_execution_environment": "YES",
+                  "paper_simulated_venue_remains_instrument_source_identity": "NO",
+                  "real_source_exchange_id_preserved_under_paper": "YES",
+                  "current_instrument_identity_tuple_requires_migration": "YES",
+                  "migration_fully_additive": "NO",
+                  "trusted_adapter_registration_equals_source_authority": "NO",
+                  "dynamic_plugin_may_claim_official_venue_authority": "NO",
+                  "complete_snapshot_proof_required_before_absence_delisting": "YES",
+                  "partial_snapshot_may_remove_membership": "NO",
+                  "stable_instrument_id_requires_durable_identity_map": "YES",
+                  "historical_metadata_versions_remain_resolvable": "YES",
+                  "trading_universe_works_without_instrument_copy": "YES",
+                  "legacy_paper_records_automatically_map_to_real_venue": "NO",
+                  "production_migration_implemented": "NO",
+                  "C25": "BLOCKED",
+                  "S9D": "OPEN",
+                  "canonical_instrument_has_exactly_one_workspace_parent": "YES",
+                  "two_workspaces_may_share_one_canonical_instrument_id": "NO",
+                  "two_workspaces_may_reference_same_trusted_source_product_or_catalog_fact": "YES",
+                  "source_product_equivalence_implies_canonical_instrument_identity_equivalence": "NO",
+                  "cross_workspace_instrument_resolution_fails_closed": "YES",
+                  "m02_workspace_ownership_requires_migration": "NO",
+                  "m06_same_workspace_invariant_preserved": "YES",
+                  "paper_reuses_workspace_owned_source_backed_instrument_without_copy": "YES",
+                  "m02_instrument_identity_dimensions_require_migration": "YES",
+                  "m02_environment_remains_in_canonical_instrument_identity": "NO_TARGET_NOT_IMPLEMENTED",
+                  "m02_source_exchange_identity_replaces_execution_exchange_semantics_for_instrument": "YES_TARGET_NOT_IMPLEMENTED",
+                  "m06_environment_equality_checks_require_semantic_migration": "YES"
+                },
+                "m02_m06_compatibility": {
+                  "M0.2": {
+                    "ownership": {
+                      "status": "UNCHANGED",
+                      "instrument_parent": "Workspace",
+                      "workspace_to_instrument": "one_to_many_catalog",
+                      "ownership_migration_required": false,
+                      "shared_canonical_instrument_id_across_workspaces": false
+                    },
+                    "instrument_identity_dimensions": {
+                      "status": "MIGRATION_REQUIRED",
+                      "current": [
+                        "exchange_id",
+                        "environment",
+                        "market_type",
+                        "venue_symbol"
+                      ],
+                      "target": [
+                        "source_exchange_id",
+                        "market_type",
+                        "venue_symbol"
+                      ],
+                      "authoritative_m05_cutover_blocked_until_migrated": true
+                    }
+                  },
+                  "M0.6": {
+                    "same_workspace_invariant": "Instrument.workspace_id == ExchangeAccount.workspace_id remains required",
+                    "foreign_instrument_disposition": "TRUSTED_CONTEXT_INVALID",
+                    "historical_universe_workspace_binding": "UNCHANGED_REQUIRED",
+                    "migration_dependency_required": false,
+                    "same_workspace_status": "UNCHANGED",
+                    "instrument_environment_exchange_checks": "SEMANTIC_MIGRATION_REQUIRED",
+                    "exact_evidence": [
+                      "InstrumentProjection required fields include exchange_id and environment",
+                      "environment_registry binds InstrumentProjection.environment",
+                      "trusted context requires route/catalog/account exact exchange/environment scope"
+                    ],
+                    "migration_rule": "Remove source Instrument environment equality; compare source_exchange_id only for source facts and execution exchange/environment only across account/route/order/lease contexts."
+                  }
+                },
+                "m02_identity_dimensions_migration_dependency": {
+                  "status": "MIGRATION_REQUIRED_DESIGN_ONLY_NOT_IMPLEMENTED",
+                  "exact_frozen_evidence": {
+                    "artifact": "canonical_domain_vocabulary.json",
+                    "entity": "Instrument",
+                    "parent": "Workspace",
+                    "identity_dimensions": [
+                      "exchange_id",
+                      "environment",
+                      "market_type",
+                      "venue_symbol"
+                    ],
+                    "oracle": "tests/architecture/test_cryptohunter_canonical_domain_vocabulary.py::test_corrected_ownership_and_cardinality"
+                  },
+                  "ownership_disposition": "UNCHANGED: parent Workspace and Workspace -> Instrument one_to_many_catalog remain frozen.",
+                  "target_identity_dimensions": [
+                    "source_exchange_id",
+                    "market_type",
+                    "venue_symbol"
+                  ],
+                  "optional_namespace_requirement": "If source_market_namespace_id is required for a venue, M0.2 schema must explicitly permit it as a conditional identity dimension or replace the fixed dimensions with an explicit SourceProductIdentity reference; the migration must choose and freeze one representation before implementation.",
+                  "chosen_minimal_representation": "Use source_exchange_id, market_type and venue_symbol as M0.2 Instrument identity_dimensions inside the existing Workspace parent scope. Add source_market_namespace_id only through an explicit schema rule when proven necessary; do not invent it per adapter/config.",
+                  "parent_scope_rule": "workspace_id remains parent/scope identity and is not duplicated in M0.2 identity_dimensions; the durable full lookup key still combines parent workspace_id with the dimensions.",
+                  "semantic_change": [
+                    "environment is removed from canonical Instrument identity dimensions",
+                    "source_exchange_id replaces overloaded execution exchange_id semantics for Instrument source identity",
+                    "execution environment remains on account, route, order and lease context"
+                  ],
+                  "cutover_dependency": "REQUIRED_BEFORE_AUTHORITATIVE_M0.5_CUTOVER"
+                },
+                "identity_failure_example": {
+                  "workspace": "Workspace A",
+                  "source_product": [
+                    "binance",
+                    "SPOT",
+                    "BTCUSDT"
+                  ],
+                  "execution_contexts": [
+                    "PAPER",
+                    "LIVE_DISABLED_IDENTITY_EXAMPLE_ONLY"
+                  ],
+                  "old_m02_result": "(binance, PAPER, SPOT, BTCUSDT) != (binance, LIVE, SPOT, BTCUSDT), incorrectly minting execution-environment copies.",
+                  "target_result": "One Workspace A Instrument bound to (binance, SPOT, BTCUSDT); PAPER and future LIVE use distinct account/route/execution contexts, not distinct Instrument identity.",
+                  "live_disposition": "DISABLED_UNCHANGED; this example defines identity semantics only and grants no LIVE capability."
+                }
               }
             }
           }
