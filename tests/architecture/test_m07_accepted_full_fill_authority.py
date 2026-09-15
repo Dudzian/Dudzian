@@ -235,11 +235,13 @@ def test_m05_discovery_records_policy_specific_missing_anchors():
 
     policy = dependency["m05_catalog_source_policy_disposition"]
     assert policy["PAPER"]["nearest_missing_prerequisite"] == (
-        "MISSING_APPROVED_CANONICAL_PAPER_INSTRUMENT_ENTRIES"
+        "EXPLICIT_M05_SOURCE_VENUE_EXECUTION_ENVIRONMENT_IDENTITY_MIGRATION"
     )
-    assert policy["PAPER"]["external_authenticated_adapter_membership_required"] == "NO"
+    assert policy["PAPER"]["external_authenticated_adapter_membership_required"].startswith(
+        "PRODUCT_TARGET_YES_FROZEN_PAPER_POLICY_NO"
+    )
     assert policy["PAPER"]["authority_status"] == (
-        "METADATA_MECHANISM_AVAILABLE_CATALOG_HISTORY_NOT_IMPLEMENTED"
+        "FROZEN_POLICY_CONFLICT_DYNAMIC_EXCHANGE_CATALOG_REQUIRES_EXPLICIT_M05_MIGRATION"
     )
     assert policy["PAPER"]["canonical_metadata_discovery"]["approved_entry_count"] == 0
     discovery = policy["PAPER"]["canonical_metadata_discovery"]
@@ -247,7 +249,7 @@ def test_m05_discovery_records_policy_specific_missing_anchors():
         "AVAILABLE_RELEASE_OWNED_EMPTY_INSTRUMENT_REGISTRY"
     )
     assert discovery["frozen_fields_without_production_owned_source"] == []
-    assert discovery["membership_rule"].startswith("Only inclusion")
+    assert "does not require or permit filling it" in discovery["membership_rule"]
     assert "venue_symbol" in discovery["caller_config_only_fields"]
     assert discovery["test_reference_samples_are_authority"] == "NO"
     assert policy["TESTNET"]["nearest_missing_prerequisite"] == (
@@ -375,3 +377,54 @@ def test_raw_order_event_status_hash_and_persistence_cannot_self_enroll_lifecycl
     assert persistence_dto["integrity"] == canonical_json_sha256(raw_order)
     assert not hasattr(execution, "accept_order")
     assert not hasattr(execution, "accept_event")
+
+
+def test_corrected_paper_catalog_product_decision_is_fail_closed_discovery():
+    """Dynamic PAPER availability is specified without pretending it is implemented."""
+    import json
+    from pathlib import Path
+
+    from bot_core.instruments import paper_canonical_metadata as paper_metadata
+
+    root = Path(__file__).parents[2]
+    machine = json.loads((root / "docs/architecture/cryptohunter_product_architecture/audit_observability_alerts_and_updater.json").read_text(encoding="utf-8"))
+    dependency = machine["alert_model"]["executable_authority"][
+        "s9d_c25_m08_reconciliation_authority_disposition"
+    ]["m07_full_fill_authority_boundary"]["m05_historical_instrument_dependency"]
+    decision = dependency["paper_catalog_product_decision_discovery"]
+    answers = decision["discovery_answers"]
+
+    assert decision["status"] == "NOT_IMPLEMENTED"
+    assert answers == {
+        "A_static_product_owned_paper_pair_whitelist": "NO",
+        "B_full_trusted_exchange_catalog_source": "YES",
+        "C_current_frozen_m05_allows_without_change": "NO",
+        "D_paper_simulated_venue_can_inherit_real_metadata": "NO",
+        "E_real_exchange_id_can_be_preserved_with_paper_execution": "NO",
+        "F_genuine_trusted_exchange_catalog_source_authority_exists": "NO",
+        "G_caller_controlled_adapter_can_self_enroll": "NO",
+        "H_trading_universe_is_manual_selection_boundary": "YES",
+        "I_autonomous_selector_only_accepted_catalog_members": "YES",
+        "J_ranking_grants_execution_authority": "NO",
+        "K_new_listings_without_release": "YES_PRODUCT_TARGET_NO_CURRENT_LEGAL_PATH",
+        "L_delisting_preserves_historical_resolution": "YES_REQUIRED_NOT_IMPLEMENTED",
+    }
+    assert paper_metadata._RELEASE_OWNED_ENTRIES == ()
+    assert paper_metadata.canonical_paper_instruments() == ()
+    for section in (
+        "exchange_catalog_ingestion", "catalog_acceptance",
+        "manual_trading_universe", "autonomous_trading_universe",
+        "autonomous_candidate_ranking", "execution_authority_separation",
+    ):
+        assert decision[section]["status"] == "NOT_IMPLEMENTED"
+    assert "cannot create Instrument" in decision["manual_trading_universe"]["authority"]
+    assert "unknown IDs fail closed" in decision["manual_trading_universe"]["authority"]
+    assert "self-enroll" in decision["autonomous_trading_universe"]["authority"]
+    assert "never sufficient" in decision["execution_authority_separation"]["invariant"]
+    assert "raw results must never be accepted directly" in (
+        dependency["m05_catalog_source_policy_disposition"]["PAPER"]
+        ["canonical_metadata_discovery"]["runtime_derived_metadata"]
+    )
+    assert decision["testnet_disposition"].startswith("UNCHANGED")
+    assert decision["live_disposition"] == "UNCHANGED_NOT_ENABLED"
+    assert decision["global_status_invariants"] == {"C25": "BLOCKED", "S9D": "OPEN"}

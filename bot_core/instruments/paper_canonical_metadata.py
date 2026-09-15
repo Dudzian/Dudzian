@@ -1,9 +1,9 @@
-"""Release-owned, read-only canonical PAPER instrument metadata boundary.
+"""Frozen release-owned fallback for local PAPER instrument metadata.
 
-Membership is established only by source-controlled inclusion in
-``_RELEASE_OWNED_ENTRIES``.  Validation and hashing protect that release projection;
-neither operation can promote caller content.  Catalog acceptance/history is not
-implemented here.
+The corrected product model does not use this tuple as a pair-by-pair approval list.
+It remains empty while an explicit M0.5 migration defines trusted exchange catalog
+lineage for PAPER. Validation and hashing cannot promote caller content, and Catalog
+acceptance/history is not implemented here.
 """
 
 from __future__ import annotations
@@ -289,7 +289,8 @@ def _fingerprint_release_projection(
     return sha256(encoded).hexdigest()
 
 
-# Do not populate until product-owned PAPER instruments and stable IDs are approved.
+# Keep empty: product intent rejects a release-owned pair whitelist. Dynamic trusted
+# exchange ingestion requires an explicit frozen M0.5 architecture migration.
 _RELEASE_OWNED_ENTRIES: Final[tuple[_CanonicalPaperInstrumentMetadata, ...]] = ()
 _validate_release_entries(_RELEASE_OWNED_ENTRIES)
 _BY_ID: Final[Mapping[str, _CanonicalPaperInstrumentMetadata]] = MappingProxyType(
