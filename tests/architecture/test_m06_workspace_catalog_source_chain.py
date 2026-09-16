@@ -2,6 +2,7 @@ from copy import deepcopy
 from inspect import signature
 from pathlib import Path
 import tempfile
+from unittest.mock import patch
 
 from bot_core.instruments.catalog_projection_oracle import (
     PROJECTION_FINGERPRINT_FIELDS,
@@ -21,12 +22,14 @@ from bot_core.instruments.source_producer_membership import (
     JsonlMembershipCarrier,
     SourceProducerMembershipAuthority,
 )
+from bot_core.instruments.core_time import ProductionCoreClock
 
 _AUTHORITY_DIR = tempfile.TemporaryDirectory()
-SOURCE_PRODUCER_AUTHORITY = SourceProducerMembershipAuthority(
-    JsonlMembershipCarrier(Path(_AUTHORITY_DIR.name) / "memberships.jsonl")
-)
-SOURCE_PRODUCER_AUTHORITY.admit_release_grant("core_release_1_45_binance_spot", trusted_core_now_utc="2026-09-14T00:00:00Z")
+with patch.object(ProductionCoreClock, "now_utc", return_value="2026-09-14T00:00:00Z"):
+    SOURCE_PRODUCER_AUTHORITY = SourceProducerMembershipAuthority(
+        JsonlMembershipCarrier(Path(_AUTHORITY_DIR.name) / "memberships.jsonl")
+    )
+    SOURCE_PRODUCER_AUTHORITY.admit_release_grant("core_release_1_45_binance_spot")
 
 
 def _projection_fingerprint(projection):

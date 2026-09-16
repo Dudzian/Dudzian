@@ -7,6 +7,7 @@ import inspect
 import json
 import re
 import tempfile
+from unittest.mock import patch
 from copy import deepcopy
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
@@ -17,6 +18,12 @@ import pytest
 from bot_core.instruments.source_producer_membership import (
     JsonlMembershipCarrier,
     SourceProducerMembershipAuthority,
+)
+from bot_core.instruments.core_time import ProductionCoreClock
+from bot_core.instruments.testing_core_time import (
+    TestCoreClock,
+    TestSQLiteMembershipCarrier,
+    TestSourceProducerMembershipAuthority,
 )
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -48,11 +55,12 @@ CANONICAL_UUID7_ID = re.compile(
     r"^[a-z][a-z0-9]*_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
 )
 _MEMBERSHIP_DIR = tempfile.TemporaryDirectory()
-SOURCE_PRODUCER_AUTHORITY = SourceProducerMembershipAuthority(
-    JsonlMembershipCarrier(Path(_MEMBERSHIP_DIR.name) / "memberships.jsonl")
-)
-SOURCE_PRODUCER_AUTHORITY.admit_release_grant("core_release_1_45_generic_testnet_spot", trusted_core_now_utc="2026-01-01T00:00:00Z")
-SOURCE_PRODUCER_AUTHORITY.admit_release_grant("core_release_1_45_binance_spot", trusted_core_now_utc="2026-09-14T00:00:00Z")
+with patch.object(ProductionCoreClock, "now_utc", return_value="2026-01-01T00:00:00Z"):
+    SOURCE_PRODUCER_AUTHORITY = SourceProducerMembershipAuthority(
+        JsonlMembershipCarrier(Path(_MEMBERSHIP_DIR.name) / "memberships.jsonl")
+    )
+    SOURCE_PRODUCER_AUTHORITY.admit_release_grant("core_release_1_45_generic_testnet_spot")
+    SOURCE_PRODUCER_AUTHORITY.admit_release_grant("core_release_1_45_binance_spot")
 
 
 def deny(code):
@@ -8931,6 +8939,35 @@ def test_activate_trading_universe_uses_canonical_workspace_source_chain():
         validation_context=trusted,
     )
     assert dispatched[0] is True
+    test_clock_authority = TestSourceProducerMembershipAuthority(
+        TestSQLiteMembershipCarrier(Path(_MEMBERSHIP_DIR.name) / "dispatcher-test.sqlite3"),
+        TestCoreClock("2000-01-01T00:00:00Z"),
+    )
+    assert test_clock_authority.admit_release_grant(
+        "core_release_1_45_generic_testnet_spot"
+    ) is not None
+    test_clock_context = {
+        **trusted,
+        "source_producer_membership_authority": test_clock_authority,
+    }
+    assert not execute_instrument_operation(
+        "ACTIVATE_TRADING_UNIVERSE",
+        universe,
+        source_account,
+        test_clock_context,
+        now_utc="2026-06-01T00:00:00Z",
+    )
+    assert not validate_operation_request(
+        "ACTIVATE_TRADING_UNIVERSE",
+        request_for(
+            "ACTIVATE_TRADING_UNIVERSE",
+            trading_universe_id=universe["trading_universe_id"],
+            exchange_account_id=account["exchange_account_id"],
+            source_catalog_snapshot_ids=["wcat_1"],
+            content_hash=universe["content_hash"],
+        ),
+        validation_context=test_clock_context,
+    )[0]
     valid_request = request_for(
         "ACTIVATE_TRADING_UNIVERSE",
         trading_universe_id=universe["trading_universe_id"],

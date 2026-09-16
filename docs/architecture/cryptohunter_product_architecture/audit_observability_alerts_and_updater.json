@@ -6258,12 +6258,24 @@
       "semantic_admission_transaction_boundary": "BEGIN IMMEDIATE -> current durable transport validation -> full authority replay -> candidate/idempotency/terminal decision -> candidate full replay -> row/head update -> durable transport validation -> full post-state replay -> COMMIT; no semantic decision uses pre-lock state",
       "acknowledged_state_must_be_semantically_replayable": true,
       "concurrent_duplicate_admission": "identical GRANT/EVENT is idempotent with one physical row; conflicting terminal loser is controlled DENY; never duplicate physical authority records",
+      "trusted_time_authority": {
+        "production_symbol": "bot_core.instruments.core_time.PRODUCTION_CORE_CLOCK / ProductionCoreClock.now_utc",
+        "construction_owner": "SourceProducerMembershipAuthority.__init__; production constructor accepts only SQLiteMembershipCarrier and stores no replaceable clock field",
+        "production_authority_type": "bot_core.instruments.source_producer_membership.SourceProducerMembershipAuthority",
+        "test_authority_type": "bot_core.instruments.testing_core_time.TestSourceProducerMembershipAuthority",
+        "test_clock_backed_authority_is_not_production_authority": true,
+        "canonical_graph_rejects_test_authority": true,
+        "production_authority_clock_swap_supported": false,
+        "admission_methods_accept_caller_timestamps": false,
+        "future_catalog_runtime_acceptor_clock_semantics": "same PRODUCTION_CORE_CLOCK or an explicitly equivalent frozen Core time authority"
+      },
+      "caller_supplied_admission_timestamp_forbidden": true,
       "grant_authority_admission_chronology": {
         "field": "authority_admitted_at_utc",
         "meaning": "explicit trusted Core boundary time at which GRANT is transactionally committed to durable authority",
         "rules": [
           "canonical UTC, immutable, fingerprinted, persisted",
-          "explicit trusted_core_now_utc; never implicit wall clock or adapter/plugin/config/request time",
+          "ProductionCoreClock.now_utc is read after BEGIN IMMEDIATE; admission APIs accept no timestamp",
           "journal-order nondecreasing",
           "historical/current eligibility requires authority_admitted_at_utc <= evaluation/acceptance time",
           "idempotent admission returns original persisted timestamp"
@@ -6284,7 +6296,16 @@
       "temporal_non_retroactivity": [
         "later durable EVENT admission cannot transform a previously legal accepted snapshot into illegal",
         "later durable GRANT admission cannot transform a previously unauthorized historical snapshot into authoritative"
-      ]
+      ],
+      "durable_authority_provenance": {
+        "production_store_domain": "cryptohunter.source_producer_membership.production.v1",
+        "test_store_domain": "cryptohunter.source_producer_membership.test.v1",
+        "domain_is_immutable": true,
+        "production_rejects_test_store": true,
+        "test_rejects_production_store": true,
+        "record_digest_binds_store_domain": true,
+        "test_clock_backed_durable_records_cannot_be_replayed_as_production": true
+      }
     }
   },
   "failure_policy": [
