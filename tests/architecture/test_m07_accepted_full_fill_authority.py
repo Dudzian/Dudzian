@@ -577,14 +577,12 @@ def test_explicit_m05_identity_migration_design_closes_exact_decisions():
         "m02_workspace_ownership_requires_migration": "NO",
         "m06_same_workspace_invariant_preserved": "YES",
         "paper_reuses_workspace_owned_source_backed_instrument_without_copy": "YES",
-        "m02_instrument_identity_dimensions_require_migration": "YES",
-        "m02_environment_remains_in_canonical_instrument_identity": (
-            "NO_TARGET_NOT_IMPLEMENTED"
-        ),
-        "m02_source_exchange_identity_replaces_execution_exchange_semantics_for_instrument": (
-            "YES_TARGET_NOT_IMPLEMENTED"
-        ),
-        "m06_environment_equality_checks_require_semantic_migration": "YES",
+        "m02_identity_migration_was_required": "YES",
+        "m02_identity_migration_current_status": "MIGRATED_CANONICAL_1.44.0",
+        "environment_in_current_canonical_instrument_identity": "NO",
+        "source_exchange_id_is_current_canonical_source_identity": "YES",
+        "m06_source_execution_migration_was_required": "YES",
+        "m06_source_execution_migration_current_status": "MIGRATED_CANONICAL_1.44.0",
     }
 
 
