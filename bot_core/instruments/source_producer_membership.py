@@ -17,6 +17,8 @@ from types import MappingProxyType
 from typing import Any, Mapping
 import sqlite3
 
+from bot_core.instruments.core_time import PRODUCTION_CORE_CLOCK
+
 _UTC = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z\Z")
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _MARKETS = frozenset({"SPOT", "MARGIN", "PERPETUAL", "DELIVERY_FUTURES", "OPTIONS"})
@@ -147,7 +149,7 @@ def validate_source_producer_membership_event(record: object) -> bool:
         return False
 
 
-class SQLiteMembershipCarrier:
+class _SQLiteMembershipCarrierBase:
     """Cross-platform transactional journal with an exact durable monotonic head.
 
     Records and the singleton head are committed in one SQLite ``BEGIN IMMEDIATE``
@@ -159,6 +161,8 @@ class SQLiteMembershipCarrier:
     """
 
     _ZERO = "0" * 64
+    _AUTHORITY_DOMAIN = ""
+    _SCHEMA_VERSION = 1
 
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path).resolve()
@@ -174,23 +178,66 @@ class SQLiteMembershipCarrier:
 
     def _initialize(self) -> None:
         with self._connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            connection.execute(
-                "CREATE TABLE IF NOT EXISTS membership_authority_records ("
-                "journal_sequence INTEGER PRIMARY KEY, canonical_record TEXT NOT NULL, "
-                "previous_record_digest TEXT NOT NULL, record_digest TEXT NOT NULL UNIQUE)"
-            )
-            connection.execute(
-                "CREATE TABLE IF NOT EXISTS membership_authority_head ("
-                "singleton INTEGER PRIMARY KEY CHECK(singleton = 1), "
-                "committed_sequence INTEGER NOT NULL, committed_head_digest TEXT NOT NULL, "
-                "last_committed_record_id TEXT)"
-            )
-            connection.execute(
-                "INSERT OR IGNORE INTO membership_authority_head VALUES (1, 0, ?, NULL)",
-                (self._ZERO,),
-            )
-            connection.commit()
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                tables = {
+                    row[0] for row in connection.execute(
+                        "SELECT name FROM sqlite_master WHERE type = 'table'"
+                    )
+                }
+                metadata_existed = "membership_authority_store_metadata" in tables
+                legacy_nonempty = False
+                if not metadata_existed:
+                    if "membership_authority_records" in tables:
+                        legacy_nonempty = connection.execute(
+                            "SELECT EXISTS(SELECT 1 FROM membership_authority_records)"
+                        ).fetchone()[0] == 1
+                    if "membership_authority_head" in tables:
+                        head = connection.execute(
+                            "SELECT committed_sequence FROM membership_authority_head WHERE singleton = 1"
+                        ).fetchone()
+                        legacy_nonempty = legacy_nonempty or (head is not None and head[0] != 0)
+                if legacy_nonempty:
+                    raise ValueError("MEMBERSHIP_AUTHORITY_DOMAIN_MISSING")
+                connection.execute(
+                    "CREATE TABLE IF NOT EXISTS membership_authority_store_metadata ("
+                    "singleton INTEGER PRIMARY KEY CHECK(singleton = 1), "
+                    "authority_domain TEXT NOT NULL, schema_version INTEGER NOT NULL)"
+                )
+                connection.execute(
+                    "CREATE TABLE IF NOT EXISTS membership_authority_records ("
+                    "journal_sequence INTEGER PRIMARY KEY, canonical_record TEXT NOT NULL, "
+                    "previous_record_digest TEXT NOT NULL, record_digest TEXT NOT NULL UNIQUE)"
+                )
+                connection.execute(
+                    "CREATE TABLE IF NOT EXISTS membership_authority_head ("
+                    "singleton INTEGER PRIMARY KEY CHECK(singleton = 1), "
+                    "committed_sequence INTEGER NOT NULL, committed_head_digest TEXT NOT NULL, "
+                    "last_committed_record_id TEXT)"
+                )
+                if not metadata_existed:
+                    connection.execute(
+                        "INSERT INTO membership_authority_store_metadata VALUES (1, ?, ?)",
+                        (self._AUTHORITY_DOMAIN, self._SCHEMA_VERSION),
+                    )
+                self._validate_domain(connection)
+                connection.execute(
+                    "INSERT OR IGNORE INTO membership_authority_head VALUES (1, 0, ?, NULL)",
+                    (self._ZERO,),
+                )
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+
+    @classmethod
+    def _validate_domain(cls, connection: sqlite3.Connection) -> None:
+        rows = connection.execute(
+            "SELECT singleton, authority_domain, schema_version "
+            "FROM membership_authority_store_metadata"
+        ).fetchall()
+        if rows != [(1, cls._AUTHORITY_DOMAIN, cls._SCHEMA_VERSION)]:
+            raise ValueError("MEMBERSHIP_AUTHORITY_DOMAIN_MISMATCH")
 
     @staticmethod
     def _record_id(record: Mapping[str, Any]) -> str:
@@ -205,10 +252,12 @@ class SQLiteMembershipCarrier:
             {"journal_sequence": sequence, "canonical_record": canonical, "previous_record_digest": previous},
             sort_keys=True, separators=(",", ":"), ensure_ascii=False,
         )
-        return hashlib.sha256(("cryptohunter.m0.12.membership-journal-row.v1\n" + material).encode()).hexdigest()
+        separator = f"cryptohunter.m0.12.membership-journal-row.v2\n{cls._AUTHORITY_DOMAIN}\n"
+        return hashlib.sha256((separator + material).encode()).hexdigest()
 
     @classmethod
     def _validated_rows(cls, connection: sqlite3.Connection) -> tuple[dict[str, Any], ...]:
+        cls._validate_domain(connection)
         head = connection.execute(
             "SELECT committed_sequence, committed_head_digest, last_committed_record_id "
             "FROM membership_authority_head WHERE singleton = 1"
@@ -245,21 +294,26 @@ class SQLiteMembershipCarrier:
         with self._connect() as connection:
             return self._validated_rows(connection)
 
-    def _transact_append(self, record: dict[str, Any], semantic_validator: Any) -> Any:
+    def _transact_append(self, record_factory: Any, semantic_validator: Any) -> Any:
         """Serialize semantic admission and durable append in one writer transaction."""
-        canonical = json.dumps(record, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
-        record_id = self._record_id(record)
         with self._connect() as connection:
             try:
                 connection.execute("BEGIN IMMEDIATE")
                 records = self._validated_rows(connection)
-                decision, result = semantic_validator(records, record)
+                decision, result = semantic_validator(records, None)
                 if decision == "EXISTING":
                     connection.commit()
                     return result
+                if decision != "READY":
+                    connection.rollback()
+                    return None
+                record = record_factory()
+                decision, result = semantic_validator(records, record)
                 if decision != "APPEND":
                     connection.rollback()
                     return None
+                canonical = json.dumps(record, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
+                record_id = self._record_id(record)
                 head = connection.execute(
                     "SELECT committed_sequence, committed_head_digest FROM membership_authority_head WHERE singleton = 1"
                 ).fetchone()
@@ -279,7 +333,7 @@ class SQLiteMembershipCarrier:
                     raise ValueError("CORRUPT_MEMBERSHIP_JOURNAL")
                 # Full authority semantics, not only carrier hashes, must hold pre-COMMIT.
                 post_decision, _ = semantic_validator(durable_records, None)
-                if post_decision != "VALID":
+                if post_decision not in {"VALID", "EXISTING"}:
                     raise ValueError("CORRUPT_MEMBERSHIP_JOURNAL")
                 connection.commit()
                 return result
@@ -287,6 +341,12 @@ class SQLiteMembershipCarrier:
                 connection.rollback()
                 raise
 
+
+
+class SQLiteMembershipCarrier(_SQLiteMembershipCarrierBase):
+    """Production-only durable carrier with immutable production provenance."""
+
+    _AUTHORITY_DOMAIN = "cryptohunter.source_producer_membership.production.v1"
 
 
 # Compatibility name for the proposed 1.45 API; storage is SQLite, not JSONL.
@@ -297,6 +357,17 @@ def _key(record: Mapping[str, Any]) -> tuple[str, ...]:
     return tuple(record[name] for name in ("source_exchange_id", "market_type", "source_adapter_family_id", "source_adapter_implementation_id", "source_adapter_release_id", "source_adapter_version"))
 
 
+def _matches_release_declaration(record: Mapping[str, Any], declaration: object) -> bool:
+    """Authenticate release-owned policy fields, never the Core runtime timestamp."""
+    declared = declaration.to_mapping()
+    runtime_fields = {"authority_admitted_at_utc", "content_fingerprint"}
+    return {
+        key: value for key, value in record.items() if key not in runtime_fields
+    } == {
+        key: value for key, value in declared.items() if key not in runtime_fields
+    }
+
+
 @dataclass(frozen=True, slots=True)
 class _Replay:
     grants: Mapping[str, AcceptedSourceProducerMembershipGrant]
@@ -304,13 +375,17 @@ class _Replay:
     terminal_by_membership: Mapping[str, AcceptedSourceProducerMembershipEvent]
 
 
-class SourceProducerMembershipAuthority:
-    """Only public authority resolver; never accepts caller-provided history."""
-    def __init__(self, carrier: SQLiteMembershipCarrier) -> None:
-        if not isinstance(carrier, SQLiteMembershipCarrier):
-            raise TypeError("genuine SQLiteMembershipCarrier required")
+class _SourceProducerMembershipAuthorityBase:
+    """Shared implementation; concrete types encode trusted-time provenance."""
+
+    __slots__ = ("_carrier",)
+
+    def __init__(self, carrier: _SQLiteMembershipCarrierBase) -> None:
         self._carrier = carrier
         self._replay(carrier.read())
+
+    def _now_utc(self) -> str:
+        raise NotImplementedError
 
     def __deepcopy__(self, memo: dict[int, Any]) -> SourceProducerMembershipAuthority:
         """Authority is an opaque process dependency, not caller-copyable state."""
@@ -329,9 +404,7 @@ class SourceProducerMembershipAuthority:
         for raw in records:
             if validate_source_producer_membership(raw):
                 expected = _RELEASE_GRANT_BY_ID.get(raw["accepted_source_producer_membership_id"])
-                if expected is None or raw != _materialize_grant(
-                    expected, raw["authority_admitted_at_utc"]
-                ):
+                if expected is None or not _matches_release_declaration(raw, expected):
                     raise ValueError("CORRUPT_MEMBERSHIP_JOURNAL")
                 grant = AcceptedSourceProducerMembershipGrant(**raw)
                 admitted_at = _time(grant.authority_admitted_at_utc)
@@ -355,9 +428,7 @@ class SourceProducerMembershipAuthority:
                 last_authority_admitted_at = admitted_at
             elif validate_source_producer_membership_event(raw):
                 expected_event = _RELEASE_EVENT_BY_ID.get(raw["event_id"])
-                if expected_event is None or raw != _materialize_event(
-                    expected_event, raw["authority_admitted_at_utc"]
-                ):
+                if expected_event is None or not _matches_release_declaration(raw, expected_event):
                     raise ValueError("CORRUPT_MEMBERSHIP_JOURNAL")
                 event = AcceptedSourceProducerMembershipEvent(**raw)
                 grant = grants.get(event.membership_id)
@@ -380,45 +451,47 @@ class SourceProducerMembershipAuthority:
     def _state(self) -> _Replay:
         return self._replay(self._carrier.read())
 
-    def admit_release_grant(self, declaration_id: object, *, trusted_core_now_utc: object) -> AcceptedSourceProducerMembershipGrant | None:
+    def admit_release_grant(self, declaration_id: object) -> AcceptedSourceProducerMembershipGrant | None:
         declaration = _RELEASE_GRANTS_BY_NAME.get(declaration_id) if type(declaration_id) is str else None
         if declaration is None:
             return None
-        if _time(trusted_core_now_utc) is None:
-            return None
-        candidate = _materialize_grant(declaration, trusted_core_now_utc)
+        identifier = declaration.accepted_source_producer_membership_id
+        def materialize() -> dict[str, Any]:
+            return _materialize_grant(declaration, self._now_utc())
 
         def validate(records: tuple[dict[str, Any], ...], proposed: dict[str, Any] | None) -> tuple[str, Any]:
             state = self._replay(records)
-            if proposed is None:
-                return "VALID", state
-            existing = state.grants.get(candidate["accepted_source_producer_membership_id"])
+            existing = state.grants.get(identifier)
             if existing is not None:
                 return "EXISTING", existing
+            if proposed is None:
+                return "READY", state
+            candidate = proposed
             result = AcceptedSourceProducerMembershipGrant(**candidate)
             self._replay(records + (candidate,))
             return "APPEND", result
 
-        return self._carrier._transact_append(candidate, validate)
+        return self._carrier._transact_append(materialize, validate)
 
     # Backward-compatible name accepts only an immutable release declaration name.
     admit_release_declaration = admit_release_grant
 
-    def admit_release_event(self, declaration_id: object, *, trusted_core_now_utc: object) -> AcceptedSourceProducerMembershipEvent | None:
+    def admit_release_event(self, declaration_id: object) -> AcceptedSourceProducerMembershipEvent | None:
         declaration = _RELEASE_EVENTS_BY_NAME.get(declaration_id) if type(declaration_id) is str else None
         if declaration is None:
             return None
-        if _time(trusted_core_now_utc) is None:
-            return None
-        candidate = _materialize_event(declaration, trusted_core_now_utc)
+        identifier = declaration.event_id
+        def materialize() -> dict[str, Any]:
+            return _materialize_event(declaration, self._now_utc())
 
         def validate(records: tuple[dict[str, Any], ...], proposed: dict[str, Any] | None) -> tuple[str, Any]:
             state = self._replay(records)
-            if proposed is None:
-                return "VALID", state
-            existing = state.events.get(candidate["event_id"])
+            existing = state.events.get(identifier)
             if existing is not None:
                 return "EXISTING", existing
+            if proposed is None:
+                return "READY", state
+            candidate = proposed
             # Any different terminal already committed for this membership loses the race.
             if candidate["membership_id"] in state.terminal_by_membership:
                 return "DENY", None
@@ -426,7 +499,7 @@ class SourceProducerMembershipAuthority:
             self._replay(records + (candidate,))
             return "APPEND", result
 
-        return self._carrier._transact_append(candidate, validate)
+        return self._carrier._transact_append(materialize, validate)
 
     def resolve_current(self, producer_identity: object, producer_generation: object, at_utc: object) -> AcceptedSourceProducerMembershipGrant | None:
         try:
@@ -465,6 +538,20 @@ class SourceProducerMembershipAuthority:
             return grant
         except (KeyError, TypeError, ValueError):
             return None
+
+
+class SourceProducerMembershipAuthority(_SourceProducerMembershipAuthorityBase):
+    """Production authority permanently bound to the sealed Core UTC authority."""
+
+    __slots__ = ()
+
+    def __init__(self, carrier: SQLiteMembershipCarrier) -> None:
+        if type(carrier) is not SQLiteMembershipCarrier:
+            raise TypeError("exact production SQLiteMembershipCarrier required")
+        super().__init__(carrier)
+
+    def _now_utc(self) -> str:
+        return PRODUCTION_CORE_CLOCK.now_utc()
 
 
 def _exact(grant: AcceptedSourceProducerMembershipGrant, identity: Mapping[str, Any]) -> bool:
