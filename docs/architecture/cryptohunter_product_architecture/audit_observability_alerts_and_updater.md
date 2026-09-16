@@ -25,7 +25,7 @@
 ```json
 {
   "contract_id": "M0.12-audit-observability-alerts-updater",
-  "version": "1.45.0",
+  "version": "1.46.0",
   "phase": "S9D_C25_BLOCKED_CATALOG_RUNTIME_ACCEPTANCE",
   "machine_source_of_truth": true,
   "markdown_is_projection_only": true
@@ -6300,8 +6300,8 @@
       "source_producer_generation",
       "source_producer_membership_fingerprint"
     ],
-    "catalog_runtime_acceptance": "NOT_IMPLEMENTED",
-    "source_network_ingestion": "NOT_IMPLEMENTED",
+    "catalog_runtime_acceptance": "PARTIAL_PROPOSED_UNACCEPTED_1.46.0",
+    "source_network_ingestion": "AVAILABLE_ONE_SHOT",
     "production_M0_5_authority": "NOT_AVAILABLE",
     "next_blocker": "CATALOG_RUNTIME_ACCEPTANCE",
     "C25": "BLOCKED",
@@ -6309,7 +6309,7 @@
     "content_fingerprint_invariant": "CONTENT_FINGERPRINT_IS_NOT_ADMISSION_PROOF",
     "canonical_graph_integration": "validate_canonical_catalog_context_graph requires genuine SourceProducerMembershipAuthority and historical-resolves every ascat including unrelated snapshots",
     "single_writer_prerequisite": "M0.3 single CoreHost authority owner; SQLite BEGIN IMMEDIATE additionally serializes accidental concurrent writers across instances/processes",
-    "revision_status": "PROPOSED_UNACCEPTED_1.45.0",
+    "revision_status": "PROPOSED_UNACCEPTED_1.46.0",
     "durable_commit_model": "SQLite BEGIN IMMEDIATE: validate current rows/head, INSERT immutable sequence N+1 row, UPDATE singleton head, validate in-transaction, COMMIT; acknowledge only after successful COMMIT",
     "anti_valid_prefix_rollback_mechanism": "exact sequences 1..committed_sequence plus previous_record_digest/record_digest chain plus head committed_head_digest and last_committed_record_id; missing acknowledged tail or middle row fails closed",
     "monotonic_head_storage": "membership_authority_head singleton row in the same SQLite database and transaction as membership_authority_records",
@@ -6376,6 +6376,28 @@
       "test_rejects_production_store": true,
       "record_digest_binds_store_domain": true,
       "test_clock_backed_durable_records_cannot_be_replayed_as_production": true
+    },
+    "catalog_runtime_acceptance_authority": {
+      "production_symbol": "bot_core.instruments.catalog_runtime_acceptance.CatalogRuntimeAcceptanceAuthority",
+      "producer_invocation_authentication": "fetch_catalog_once accepts only frozen release binding core_release_1_46_binance_spot; Core constructs exact _BinanceSpotCatalogProducer and invokes exchangeInfo; runtime registry, caller factory/object/payload/identity and producer self-report are not inputs",
+      "current_membership_requirement": "inside shared SQLite BEGIN IMMEDIATE, exact release identity and generation resolve uniquely against current membership replay; terminal membership denies",
+      "trusted_core_acceptance_time": "bot_core.instruments.core_time.PRODUCTION_CORE_CLOCK.now_utc after writer lock; caller and producer cannot supply effective_at_utc",
+      "source_product_metadata_history": "immutable source_metadata_versions, tuple [source_exchange_id,market_type,venue_symbol], monotonic per-product metadata_version, exact predecessor, deterministic fingerprint; unchanged metadata reuses version",
+      "completeness_policy": "BINANCE_EXCHANGE_INFO_ATOMIC_V1: one authenticated atomic /api/v3/exchangeInfo response, terminal=true and exact normalized product count/content digest; missing required metadata rejects",
+      "freshness_policy": "release-owned _BinanceSpotCatalogProducer.freshness_seconds=3600; stale_after_utc = trusted Core acceptance time + 3600 seconds",
+      "snapshot_durable_history": "accepted_catalog_snapshots and catalog_authority_head plus separately chained source_metadata_versions and source_metadata_authority_head in the membership SQLite database/domain cryptohunter.catalog_runtime_acceptance.production.v1; append-only domain-bound digest chains, exact metadata introduction binding, scope lineage and replay validation",
+      "idempotency": "exact source scope + upstream retrieval ID + normalized content returns existing historical ascat across producer generations; same source retrieval ID with changed content denies",
+      "membership_race_ordering": "shared database BEGIN IMMEDIATE serializes catalog acceptance with membership GRANT/REVOKE/SUPERSEDE; acceptance time/current resolution and both durable histories are evaluated under the same writer fence",
+      "runtime_source_execution_separation": "full source Catalog is accepted before Workspace/TradingUniverse filtering; source scope excludes workspace/account/environment and grants no execution permission",
+      "background_scheduler": "NOT_IMPLEMENTED",
+      "trading_universe_auto_selection": "NOT_IMPLEMENTED",
+      "snapshot_shadow_column_binding": "every replay exact-compares snapshot ID, source scope, retrieval ID, and normalized-content hash shadow columns with the canonical ascat before any indexed idempotency decision",
+      "canonical_retrieval_uniqueness": "replay maintains canonical [source_exchange_id, market_type, upstream_snapshot_or_retrieval_id] uniqueness independently of the SQL shadow-column UNIQUE constraint",
+      "normalized_content_commitment": "replay exact-resolves every member metadata version, validates its closed normalized-product schema and tuple, sorts products by venue_symbol, rebuilds canonical SHA-256, and exact-compares product_count and BINANCE_EXCHANGE_INFO_ATOMIC_V1 evidence",
+      "metadata_introduction_binding": "metadata_record_digest binds authority domain, sequence, introduced_by_snapshot_id, previous digest, and canonical metadata; shadow introduction mutation fails closed",
+      "existing_store_open": "an existing catalog_authority_metadata marker requires all four durable Catalog tables and exact heads; missing tables fail CATALOG_AUTHORITY_STORAGE_MISSING and are never recreated",
+      "complete_substore_erasure_threat_model": "complete deletion/restoration of the entire Catalog authority substore including its enrollment marker is outside the locally detectable threat model, analogous to whole-authority-store restoration without an external monotonic anchor",
+      "producer_invocation_membership_semantics": "producer membership is frozen as authorization to accept produced source Catalog facts; the network fetch occurs without holding the SQLite writer lock and current exact membership is authoritatively checked under BEGIN IMMEDIATE immediately before acceptance"
     }
   }
 }
