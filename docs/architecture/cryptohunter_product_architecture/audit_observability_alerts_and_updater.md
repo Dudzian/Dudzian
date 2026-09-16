@@ -17,7 +17,7 @@
 ## `status`
 
 ```json
-"IN_PROGRESS_S9D_C25_BLOCKED_M08_EXECUTABLE_RECONCILIATION_AUTHORITY_OTHER_SOURCE_AUTHORITIES_OPEN"
+"IN_PROGRESS_S9D_C25_BLOCKED_CATALOG_RUNTIME_ACCEPTANCE"
 ```
 
 ## `contract_identity`
@@ -25,8 +25,8 @@
 ```json
 {
   "contract_id": "M0.12-audit-observability-alerts-updater",
-  "version": "1.44.0",
-  "phase": "S9D_C25_BLOCKED_SOURCE_PRODUCER_AND_CATALOG_ACCEPTANCE_AUTHORITIES_OPEN",
+  "version": "1.45.0",
+  "phase": "S9D_C25_BLOCKED_CATALOG_RUNTIME_ACCEPTANCE",
   "machine_source_of_truth": true,
   "markdown_is_projection_only": true
 }
@@ -6257,7 +6257,106 @@
     "safe M0.3 lifecycle plan"
   ],
   "candidate_rule": "discovered or downloaded material remains a candidate and is never installable authority",
-  "anti_rollback_rule": "older version selection requires explicit trusted rollback plan; version ordering alone never authorizes it"
+  "anti_rollback_rule": "older version selection requires explicit trusted rollback plan; version ordering alone never authorizes it",
+  "accepted_source_producer_membership_authority": {
+    "availability": "AVAILABLE",
+    "predecessor_contract_version": "1.44.0",
+    "discovery": {
+      "existing_release_trust_root": "NOT_FOUND (no production cryptographic adapter-release identity verifier)",
+      "existing_durable_authority_store": "FOUND bot_core.persistence.state_store.SQLiteStateStore; reused its cross-platform transactional SQLite persistence-kernel pattern",
+      "existing_authenticated_adapter_construction_boundary": "NOT_FOUND (runtime construction/DI is not authentication)",
+      "existing_adapter_implementation_identity": "FOUND AcceptedSourceCatalogSnapshot source_adapter_family_id/source_adapter_implementation_id/source_adapter_release_id/source_adapter_version claimant facts; not authority"
+    },
+    "admission_trust_root": "immutable frozen Core release-owned grant/event declarations in bot_core.instruments.source_producer_membership; plugin/config/manifest data cannot mutate them; trusted Core process code is inside the boundary and arbitrary Python execution inside Core is out of scope",
+    "durable_history": "SQLiteMembershipCarrier transactional append-only GRANT/EVENT rows plus singleton monotonic head; repository SQLite persistence-kernel pattern reused",
+    "entity": "AcceptedSourceProducerMembershipGrant / aspm_* plus AcceptedSourceProducerMembershipEvent / aspme_*",
+    "exact_scope": [
+      "source_exchange_id",
+      "market_type",
+      "source_adapter_family_id",
+      "source_adapter_implementation_id",
+      "source_adapter_release_id",
+      "source_adapter_version",
+      "producer_generation"
+    ],
+    "lifecycle": [
+      "GRANT is immutable",
+      "REVOKE terminal event is appended",
+      "SUPERSEDE terminal event is appended and exact-binds successor"
+    ],
+    "generation": "Core-owned positive non-bool, exact predecessor + 1; gaps and duplicates reject",
+    "current_resolver": "SourceProducerMembershipAuthority.resolve_current rereads fenced carrier, release-authenticates full replay, derives non-terminal unique current generation, then exact-compares claimant identity; accepts no caller history Mapping",
+    "historical_resolver": "SourceProducerMembershipAuthority.resolve_historical rereads fenced carrier and exact-resolves immutable grant at acceptance time; later terminal events are non-retroactive; accepts no caller history Mapping",
+    "non_caller_mintability": [
+      "runtime adapter registry",
+      "caller factory",
+      "plugin manifest/config/metadata",
+      "producer self-description",
+      "mutable alias",
+      "TOFU"
+    ],
+    "snapshot_membership_evidence": [
+      "accepted_source_producer_membership_id",
+      "source_producer_generation",
+      "source_producer_membership_fingerprint"
+    ],
+    "catalog_runtime_acceptance": "NOT_IMPLEMENTED",
+    "source_network_ingestion": "NOT_IMPLEMENTED",
+    "production_M0_5_authority": "NOT_AVAILABLE",
+    "next_blocker": "CATALOG_RUNTIME_ACCEPTANCE",
+    "C25": "BLOCKED",
+    "S9D": "OPEN",
+    "content_fingerprint_invariant": "CONTENT_FINGERPRINT_IS_NOT_ADMISSION_PROOF",
+    "canonical_graph_integration": "validate_canonical_catalog_context_graph requires genuine SourceProducerMembershipAuthority and historical-resolves every ascat including unrelated snapshots",
+    "single_writer_prerequisite": "M0.3 single CoreHost authority owner; SQLite BEGIN IMMEDIATE additionally serializes accidental concurrent writers across instances/processes",
+    "revision_status": "PROPOSED_UNACCEPTED_1.45.0",
+    "durable_commit_model": "SQLite BEGIN IMMEDIATE: validate current rows/head, INSERT immutable sequence N+1 row, UPDATE singleton head, validate in-transaction, COMMIT; acknowledge only after successful COMMIT",
+    "anti_valid_prefix_rollback_mechanism": "exact sequences 1..committed_sequence plus previous_record_digest/record_digest chain plus head committed_head_digest and last_committed_record_id; missing acknowledged tail or middle row fails closed",
+    "monotonic_head_storage": "membership_authority_head singleton row in the same SQLite database and transaction as membership_authority_records",
+    "crash_acknowledgement_boundary": {
+      "before_commit": "not acknowledged and SQLite rolls transaction back, including record/head partial work",
+      "after_commit": "record and head are atomically committed and may be acknowledged",
+      "after_acknowledgement": "normal restart must reproduce exact committed sequence/head and derived state"
+    },
+    "cross_platform_locking_or_transaction_model": "SQLite BEGIN IMMEDIATE/WAL/FULL synchronous transaction and database locking; no unconditional POSIX-only module",
+    "supported_platforms": [
+      "Windows",
+      "macOS",
+      "Linux"
+    ],
+    "rollback_threat_model_limit": "Detects missing/reordered/mutated acknowledged rows inside the current durable database. Whole-database restoration together with its matching old head is not detectable without TPM or remote monotonic anchor and is out of scope.",
+    "canonical_graph_authority_type_check": "type(source_producer_membership_authority) is SourceProducerMembershipAuthority before snapshot iteration, including empty graphs",
+    "semantic_admission_transaction_boundary": "BEGIN IMMEDIATE -> current durable transport validation -> full authority replay -> candidate/idempotency/terminal decision -> candidate full replay -> row/head update -> durable transport validation -> full post-state replay -> COMMIT; no semantic decision uses pre-lock state",
+    "acknowledged_state_must_be_semantically_replayable": true,
+    "concurrent_duplicate_admission": "identical GRANT/EVENT is idempotent with one physical row; conflicting terminal loser is controlled DENY; never duplicate physical authority records",
+    "grant_authority_admission_chronology": {
+      "field": "authority_admitted_at_utc",
+      "meaning": "explicit trusted Core boundary time at which GRANT is transactionally committed to durable authority",
+      "rules": [
+        "canonical UTC, immutable, fingerprinted, persisted",
+        "explicit trusted_core_now_utc; never implicit wall clock or adapter/plugin/config/request time",
+        "journal-order nondecreasing",
+        "historical/current eligibility requires authority_admitted_at_utc <= evaluation/acceptance time",
+        "idempotent admission returns original persisted timestamp"
+      ]
+    },
+    "event_authority_admission_chronology": {
+      "field": "authority_admitted_at_utc",
+      "meaning": "explicit trusted Core boundary time at which EVENT is transactionally committed",
+      "rules": [
+        "canonical UTC, immutable, fingerprinted, persisted",
+        "journal-order nondecreasing",
+        "terminal cutoff is max(policy effective_at_utc, authority_admitted_at_utc)",
+        "late durable terminal admission cannot invalidate an earlier accepted snapshot"
+      ]
+    },
+    "policy_effective_time_vs_authority_admission_time": "effective_at_utc is release policy/schedule time; authority_admitted_at_utc is actual explicit Core durable-admission boundary persisted at COMMIT; they are independent and cutoff uses their maximum",
+    "historical_snapshot_time_semantics": "AcceptedSourceCatalogSnapshot.effective_at_utc is frozen as its Core acceptance/effectivity boundary, set by the future Catalog runtime acceptor from trusted Core time; observed_at_utc remains upstream observation time; membership historical resolution uses effective_at_utc",
+    "temporal_non_retroactivity": [
+      "later durable EVENT admission cannot transform a previously legal accepted snapshot into illegal",
+      "later durable GRANT admission cannot transform a previously unauthorized historical snapshot into authoritative"
+    ]
+  }
 }
 ```
 

@@ -3213,11 +3213,12 @@
     "cross_workspace_deduplication_forbidden": true
   },
   "production_authority_status": {
-    "AcceptedSourceProducerMembership": "NOT_IMPLEMENTED",
+    "AcceptedSourceProducerMembership": "AVAILABLE",
     "catalog_runtime_acceptance": "NOT_IMPLEMENTED",
     "M0.5": "NOT_AVAILABLE",
     "C25": "BLOCKED",
-    "S9D": "OPEN"
+    "S9D": "OPEN",
+    "next_blocker": "CATALOG_RUNTIME_ACCEPTANCE"
   },
   "accepted_source_catalog_snapshot_contract": {
     "entity": "AcceptedSourceCatalogSnapshot",
@@ -3235,6 +3236,9 @@
       "source_adapter_implementation_id",
       "source_adapter_release_id",
       "source_adapter_version",
+      "accepted_source_producer_membership_id",
+      "source_producer_generation",
+      "source_producer_membership_fingerprint",
       "upstream_snapshot_or_retrieval_id",
       "observed_at_utc",
       "effective_at_utc",
@@ -3315,6 +3319,9 @@
         "source_adapter_implementation_id",
         "source_adapter_release_id",
         "source_adapter_version",
+        "accepted_source_producer_membership_id",
+        "source_producer_generation",
+        "source_producer_membership_fingerprint",
         "upstream_snapshot_or_retrieval_id",
         "observed_at_utc",
         "effective_at_utc",
@@ -3338,13 +3345,14 @@
       }
     },
     "identity_policy": "accepted_source_catalog_snapshot_id is Core-owned; content fingerprint proves exact provenance/content but cannot mint acceptance",
-    "authority_status": "SCHEMA_READY_ACCEPTED_SOURCE_PRODUCER_MEMBERSHIP_NOT_IMPLEMENTED",
+    "authority_status": "SCHEMA_READY_ACCEPTED_SOURCE_PRODUCER_MEMBERSHIP_AVAILABLE_CATALOG_RUNTIME_ACCEPTANCE_NOT_IMPLEMENTED",
     "runtime_writer": "NOT_IMPLEMENTED",
-    "producer_authentication": "AcceptedSourceProducerMembership NOT_IMPLEMENTED; registry/config/adapter/plugin/manifest/local hash cannot mint acceptance",
+    "producer_authentication": "AcceptedSourceProducerMembership AVAILABLE via Core release-owned declaration and durable journal; registry/config/adapter/plugin/manifest/self-description/local hash cannot mint acceptance",
     "structural_vs_operability": {
       "PARTIAL": "structurally legal, activation-ineligible",
       "REJECTED": "structurally legal, activation-ineligible",
       "stale": "structurally legal and historically resolvable, current activation-ineligible"
-    }
+    },
+    "membership_evidence_validation": "separate exact historical resolver; structural hash never mints authority; later revocation is non-retroactive"
   }
 }

@@ -93,11 +93,11 @@ def test_identity_status_and_exact_top_level_shape() -> None:
     assert set(MACHINE) == TOP_LEVEL_KEYS
     assert MACHINE["schema_version"] == "cryptohunter.audit_observability_alerts_and_updater.v1"
     assert MACHINE["m0_element"] == "M0.12"
-    assert MACHINE["status"] == "IN_PROGRESS_S9D_C25_BLOCKED_M08_EXECUTABLE_RECONCILIATION_AUTHORITY_OTHER_SOURCE_AUTHORITIES_OPEN"
+    assert MACHINE["status"] == "IN_PROGRESS_S9D_C25_BLOCKED_CATALOG_RUNTIME_ACCEPTANCE"
     assert MACHINE["contract_identity"] == {
         "contract_id": "M0.12-audit-observability-alerts-updater",
-        "version": "1.44.0",
-        "phase": "S9D_C25_BLOCKED_SOURCE_PRODUCER_AND_CATALOG_ACCEPTANCE_AUTHORITIES_OPEN",
+        "version": "1.45.0",
+        "phase": "S9D_C25_BLOCKED_CATALOG_RUNTIME_ACCEPTANCE",
         "machine_source_of_truth": True,
         "markdown_is_projection_only": True,
     }
@@ -5676,11 +5676,11 @@ def _blocked_alert_mutation(state: dict[str, Any], operation: str) -> None:
 
 
 def test_s9d_c25_status_is_honestly_blocked_and_updater_stays_not_started() -> None:
-    assert MACHINE["status"] == "IN_PROGRESS_S9D_C25_BLOCKED_M08_EXECUTABLE_RECONCILIATION_AUTHORITY_OTHER_SOURCE_AUTHORITIES_OPEN"
+    assert MACHINE["status"] == "IN_PROGRESS_S9D_C25_BLOCKED_CATALOG_RUNTIME_ACCEPTANCE"
     assert MACHINE["contract_identity"] == {
         "contract_id": "M0.12-audit-observability-alerts-updater",
-        "version": "1.44.0",
-        "phase": "S9D_C25_BLOCKED_SOURCE_PRODUCER_AND_CATALOG_ACCEPTANCE_AUTHORITIES_OPEN",
+        "version": "1.45.0",
+        "phase": "S9D_C25_BLOCKED_CATALOG_RUNTIME_ACCEPTANCE",
         "machine_source_of_truth": True,
         "markdown_is_projection_only": True,
     }

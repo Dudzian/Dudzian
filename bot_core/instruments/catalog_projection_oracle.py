@@ -1,7 +1,7 @@
 """Total executable oracle for the canonical M0.5 -> M0.6 catalog chain.
 
-Records passed here are already trusted inputs.  Structural validation never mints
-source acceptance; producer membership and runtime acceptance remain unimplemented.
+Structural validation never mints source acceptance. Producer membership evidence
+is resolved separately; runtime Catalog acceptance remains unimplemented.
 """
 
 from __future__ import annotations
@@ -25,6 +25,9 @@ SOURCE_FIELDS = frozenset(
         "source_adapter_implementation_id",
         "source_adapter_release_id",
         "source_adapter_version",
+        "accepted_source_producer_membership_id",
+        "source_producer_generation",
+        "source_producer_membership_fingerprint",
         "upstream_snapshot_or_retrieval_id",
         "observed_at_utc",
         "effective_at_utc",
@@ -202,6 +205,11 @@ def validate_accepted_source_catalog_snapshot(record: Any) -> bool:
                 "upstream_snapshot_or_retrieval_id",
             )
         )
+        or not _nonempty(record.get("accepted_source_producer_membership_id"), prefix="aspm")
+        or type(record.get("source_producer_generation")) is not int
+        or record["source_producer_generation"] < 1
+        or type(record.get("source_producer_membership_fingerprint")) is not str
+        or re.fullmatch(r"[0-9a-f]{64}", record["source_producer_membership_fingerprint"]) is None
         or observed is None
         or effective is None
         or stale is None
@@ -235,6 +243,36 @@ def validate_accepted_source_catalog_snapshot(record: Any) -> bool:
         SOURCE_FINGERPRINT_FIELDS,
         record,
     )
+
+
+def validate_accepted_source_snapshot_membership_evidence(
+    snapshot: Any, source_producer_membership_authority: Any
+) -> bool:
+    """Resolve exact historical authority without requiring current ACTIVE status."""
+    try:
+        from .source_producer_membership import SourceProducerMembershipAuthority
+
+        if not validate_accepted_source_catalog_snapshot(snapshot):
+            return False
+        identity = {
+            name: snapshot[name]
+            for name in (
+                "source_exchange_id", "market_type", "source_adapter_family_id",
+                "source_adapter_implementation_id", "source_adapter_release_id",
+                "source_adapter_version",
+            )
+        }
+        if not isinstance(source_producer_membership_authority, SourceProducerMembershipAuthority):
+            return False
+        return source_producer_membership_authority.resolve_historical(
+            snapshot["accepted_source_producer_membership_id"],
+            snapshot["source_producer_generation"],
+            snapshot["source_producer_membership_fingerprint"],
+            identity,
+            snapshot["effective_at_utc"],
+        ) is not None
+    except (KeyError, TypeError, ValueError):
+        return False
 
 
 def validate_accepted_source_catalog_lineage(
@@ -650,15 +688,25 @@ def validate_canonical_catalog_context_graph(
     accepted_source_catalog_snapshots_by_id: Any,
     instruments_by_id: Any,
     instrument_history_by_id: Any,
+    source_producer_membership_authority: Any,
 ) -> bool:
     """Validate every canonical trusted record independently of Universe presence."""
+    from .source_producer_membership import SourceProducerMembershipAuthority
+
     if (
         type(workspace_catalog_projections_by_id) is not dict
         or type(accepted_source_catalog_snapshots_by_id) is not dict
         or type(instruments_by_id) is not dict
         or type(instrument_history_by_id) is not dict
+        or type(source_producer_membership_authority) is not SourceProducerMembershipAuthority
         or not _validate_map_identities(
             workspace_catalog_projections_by_id, accepted_source_catalog_snapshots_by_id
+        )
+        or not all(
+            validate_accepted_source_snapshot_membership_evidence(
+                snapshot, source_producer_membership_authority
+            )
+            for snapshot in accepted_source_catalog_snapshots_by_id.values()
         )
         or not all(
             _nonempty(key)
@@ -824,6 +872,7 @@ def validate_trading_universe_source_chain(
     paper_source_product_permissions: frozenset[tuple[str, str]] | None = None,
     instrument_history_by_id: Mapping[str, list[dict[str, Any]]] | None = None,
     historical: bool = False,
+    source_producer_membership_authority: Any = None,
 ) -> bool:
     """Public activation validator; operability cannot be disabled by the caller."""
     history = {} if instrument_history_by_id is None else instrument_history_by_id
@@ -832,6 +881,7 @@ def validate_trading_universe_source_chain(
         accepted_source_catalog_snapshots_by_id=accepted_source_catalog_snapshots_by_id,
         instruments_by_id=instruments_by_id,
         instrument_history_by_id=history,
+        source_producer_membership_authority=source_producer_membership_authority,
     ):
         return False
     return _validate_trading_universe_source_graph_prevalidated_impl(
@@ -857,6 +907,7 @@ def validate_trading_universe_source_graph(
     instruments_by_id: Mapping[str, Any],
     instrument_history_by_id: Mapping[str, list[dict[str, Any]]] | None = None,
     historical: bool = False,
+    source_producer_membership_authority: Any = None,
 ) -> bool:
     """Structural source graph; intentionally ignores current activation operability."""
     history = {} if instrument_history_by_id is None else instrument_history_by_id
@@ -865,6 +916,7 @@ def validate_trading_universe_source_graph(
         accepted_source_catalog_snapshots_by_id=accepted_source_catalog_snapshots_by_id,
         instruments_by_id=instruments_by_id,
         instrument_history_by_id=history,
+        source_producer_membership_authority=source_producer_membership_authority,
     ):
         return False
     return _validate_trading_universe_source_graph_prevalidated_impl(
@@ -917,6 +969,7 @@ def validate_universe_source_membership(
     paper_source_product_permissions: frozenset[tuple[str, str]] | None = None,
     instrument_history_by_id: Mapping[str, list[dict[str, Any]]] | None = None,
     historical: bool = False,
+    source_producer_membership_authority: Any = None,
 ) -> bool:
     """Canonical shared-validator name; delegates without a legacy catalog path."""
     return validate_trading_universe_source_chain(
@@ -929,6 +982,7 @@ def validate_universe_source_membership(
         paper_source_product_permissions=paper_source_product_permissions,
         instrument_history_by_id=instrument_history_by_id,
         historical=historical,
+        source_producer_membership_authority=source_producer_membership_authority,
     )
 
 
@@ -943,6 +997,7 @@ def validate_activate_trading_universe(
         "accepted_source_catalog_snapshots_by_id",
         "instruments_by_id",
         "paper_source_product_permissions",
+        "source_producer_membership_authority",
     )
     if any(key not in validation_context for key in required):
         return False
@@ -959,6 +1014,9 @@ def validate_activate_trading_universe(
         instrument_history_by_id=validation_context.get("instrument_history_by_id"),
         now_utc=now_utc,
         paper_source_product_permissions=validation_context["paper_source_product_permissions"],
+        source_producer_membership_authority=validation_context[
+            "source_producer_membership_authority"
+        ],
     )
 
 
