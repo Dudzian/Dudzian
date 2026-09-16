@@ -96,7 +96,7 @@ def test_identity_status_and_exact_top_level_shape() -> None:
     assert MACHINE["status"] == "IN_PROGRESS_S9D_C25_BLOCKED_CATALOG_RUNTIME_ACCEPTANCE"
     assert MACHINE["contract_identity"] == {
         "contract_id": "M0.12-audit-observability-alerts-updater",
-        "version": "1.45.0",
+        "version": "1.46.0",
         "phase": "S9D_C25_BLOCKED_CATALOG_RUNTIME_ACCEPTANCE",
         "machine_source_of_truth": True,
         "markdown_is_projection_only": True,
@@ -5679,7 +5679,7 @@ def test_s9d_c25_status_is_honestly_blocked_and_updater_stays_not_started() -> N
     assert MACHINE["status"] == "IN_PROGRESS_S9D_C25_BLOCKED_CATALOG_RUNTIME_ACCEPTANCE"
     assert MACHINE["contract_identity"] == {
         "contract_id": "M0.12-audit-observability-alerts-updater",
-        "version": "1.45.0",
+        "version": "1.46.0",
         "phase": "S9D_C25_BLOCKED_CATALOG_RUNTIME_ACCEPTANCE",
         "machine_source_of_truth": True,
         "markdown_is_projection_only": True,
