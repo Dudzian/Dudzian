@@ -2895,7 +2895,7 @@
         "catalog_snapshot_id",
         "instrument_id"
       ],
-      "source_catalog_snapshot_ids": "unique list of string IDs",
+      "source_catalog_snapshot_ids": "semantic typedef WorkspaceCatalogProjectionId[]; unique IDs in the wcat namespace, never AcceptedSourceCatalogSnapshot IDs",
       "content_hash": "canonical lowercase sha256 hex string",
       "patch": "closed mutable patch object only"
     },
@@ -2910,7 +2910,9 @@
       "previous_catalogs_by_id",
       "active_universes",
       "active_profile_ids",
-      "readiness_by_account_id"
+      "readiness_by_account_id",
+      "workspace_catalog_projections_by_id",
+      "accepted_source_catalog_snapshots_by_id"
     ],
     "rules": [
       "request carries transport IDs hashes lists only",
@@ -2936,7 +2938,10 @@
         "active_profile_ids_by_account_id",
         "account_capability_snapshots_by_id",
         "previous_account_capability_snapshots_by_id",
-        "instrument_history_by_id"
+        "instrument_history_by_id",
+        "workspace_catalog_projections_by_id",
+        "accepted_source_catalog_snapshots_by_id",
+        "workspace_ids_by_portfolio_id"
       ],
       "required_list_fields": [
         "active_universes"
@@ -2955,7 +2960,10 @@
         "external_identity_snapshots_by_account_id": "account-scoped binding to account identity dimensions",
         "account_capability_snapshots_by_id": "account_capability_snapshot_id",
         "previous_account_capability_snapshots_by_id": "account_capability_snapshot_id",
-        "instrument_history_by_id": "instrument_id -> ordered non-empty list of full Instrument records whose instrument_id equals the key"
+        "instrument_history_by_id": "instrument_id -> ordered non-empty list of full Instrument records whose instrument_id equals the key",
+        "workspace_catalog_projections_by_id": "workspace_catalog_projection_id",
+        "accepted_source_catalog_snapshots_by_id": "accepted_source_catalog_snapshot_id",
+        "workspace_ids_by_portfolio_id": "portfolio_id -> workspace_id exact ownership binding"
       },
       "exact_top_level_fields": true,
       "full_structural_validation": {
@@ -2972,7 +2980,9 @@
           "previous_universes_by_id",
           "account_capability_snapshots_by_id",
           "previous_account_capability_snapshots_by_id",
-          "instrument_history_by_id"
+          "instrument_history_by_id",
+          "workspace_catalog_projections_by_id",
+          "accepted_source_catalog_snapshots_by_id"
         ],
         "lists_and_bindings": [
           "active_universes",
@@ -2980,7 +2990,14 @@
           "active_profile_ids_by_account_id"
         ],
         "structure_not_operability": "UNVERIFIED identity, DISABLED account, STALE catalog and stale historical Instrument may be structurally valid but cannot grant activation readiness",
-        "malformed_policy": "fail-closed without exception"
+        "malformed_policy": "fail-closed without exception",
+        "workspace_projection_closure": "every referenced or unrelated projection passes validate_workspace_catalog_projection_graph against its source lineage and exact current/historical full Instrument member",
+        "instrument_history_closure": "every unrelated or referenced entry is an ordered non-empty list of closed full Instrument records with identity continuity and positive non-boolean increasing metadata_version",
+        "canonical_instrument_history_relation": "history-only instrument IDs are permitted; when a current record exists it exact-matches every historical workspace_id/source_exchange_id/market_type/venue_symbol identity and current.metadata_version is strictly greater than the historical maximum; equality and rollback are denied",
+        "canonical_instrument_source_provenance": "every current and historical Instrument.source_adapter_family_id exact-binds its AcceptedSourceCatalogSnapshot.source_adapter_family_id",
+        "caller_controlled_validation_mode_forbidden": true,
+        "caller_controlled_prevalidated_flag_forbidden": true,
+        "legacy_catalog_validation": "node schema + lineage + every member resolves by exact legacy source scope in current Instrument or trusted history; read-only and never canonical source authority"
       },
       "active_index_consistency": {
         "credential_profiles": "group all current profiles by exchange_account_id; at most one ACTIVE; exact equality with account.active_credential_profile_id and active_profile_ids_by_account_id; previous profiles RETIRED only",
@@ -3008,10 +3025,12 @@
       "referential_integrity": {
         "profiles": "account exists and exchange/environment scope matches",
         "instruments": "catalog exists in current or previous maps and scope/adapter match",
-        "catalogs": "every member resolves in current instruments or trusted history",
+        "catalogs": "legacy node/lineage and every member resolve in current instruments or trusted history; never canonical source authority",
         "universes": "account, source catalogs and instruments resolve with matching scope",
         "capabilities": "account exists and current/previous IDs are disjoint",
-        "active_indexes": "all references exist and exact-bind; hidden conflicts forbidden"
+        "active_indexes": "all references exist and exact-bind; hidden conflicts forbidden",
+        "canonical_source_chain": "TradingUniverse source_catalog_snapshot_ids resolve only WorkspaceCatalogProjection IDs; each projection resolves exactly one structurally validated trusted AcceptedSourceCatalogSnapshot and exact-bound Workspace Instruments",
+        "legacy_catalog_isolation": "catalogs_by_id is legacy read-only and never source authority for canonical TradingUniverse activation"
       },
       "account_owned_bindings": {
         "active_credential_profile_id": "null forbids ACTIVE profile/index; non-null exact-binds one current ACTIVE profile and one-element active index with account/exchange/environment scope",
@@ -3023,7 +3042,29 @@
         "profile_account": "validate_profile_account_binding",
         "capability_account": "validate_capability_account_binding",
         "catalog_member": "resolve_catalog_member",
-        "universe_membership": "validate_universe_source_membership"
+        "activation_operation": "canonical source-chain is a sub-gate of validate_operation_request; it never replaces request, context, account, universe, readiness, state, or audit gates",
+        "universe_structural_membership": "validate_trading_universe_source_graph; validates one Universe against an already structurally valid canonical graph",
+        "universe_activation_membership": "validate_trading_universe_source_chain; structural membership plus VALID, COMPLETE, freshness and PAPER permission",
+        "global_canonical_source_graph_validation": "validate_canonical_catalog_context_graph; independent of Universe presence",
+        "market_type_scope": "STRUCTURAL_REFERENTIAL_INVARIANT"
+      },
+      "required_scalar_fields": [
+        "validation_time_utc",
+        "paper_source_product_permissions"
+      ],
+      "canonical_activation_order": [
+        "known operation",
+        "exact request structural/type validation",
+        "full trusted context validation",
+        "account state/readiness/capability validation",
+        "canonical WorkspaceCatalogProjection source-chain sub-gate",
+        "handler success audit"
+      ],
+      "legacy_activation_fallback_forbidden": true,
+      "canonical_source_chain_role": "sub-gate after request, full context, account, universe, state and readiness validation; never an alternate mode or replacement protocol",
+      "legacy_validator_disposition": {
+        "validate_trading_universe_version": "LEGACY_MIGRATION_BLOCKED_READ_ONLY_NOT_CALLED_BY_CANONICAL_ACTIVATE",
+        "handle_activate_trading_universe": "LEGACY_MIGRATION_BLOCKED_READ_ONLY_NOT_REGISTERED_FOR_CANONICAL_ACTIVATE"
       }
     },
     "request_type_policy": {
@@ -3099,6 +3140,7 @@
       "workspace_id",
       "accepted_source_catalog_snapshot_id",
       "instrument_ids",
+      "member_bindings",
       "created_at_utc",
       "content_fingerprint"
     ],
@@ -3115,12 +3157,15 @@
         "source_exchange_id",
         "market_type",
         "venue_symbol",
+        "instrument_metadata_version",
         "source_metadata_version_id"
       ],
       "rules": [
         "instrument_id resolves to Instrument owned by projection.workspace_id",
+        "instrument_metadata_version exact-binds Instrument.metadata_version; it is not the same identity type as source_metadata_version_id",
         "source tuple and source_metadata_version_id exact-match an upstream AcceptedSourceCatalogSnapshot member"
-      ]
+      ],
+      "type": "array of closed WorkspaceSourceMemberBinding records in member_bindings"
     },
     "durable_identity_mapping": {
       "key": [
@@ -3131,6 +3176,31 @@
       ],
       "value": "instrument_id",
       "same_source_product_different_workspace": "distinct instrument_id"
+    },
+    "id_prefix": "wcat",
+    "content_fingerprint_definition": {
+      "algorithm": "SHA-256",
+      "domain_separator": "cryptohunter.m0.5.workspace_catalog_projection.v1",
+      "input_fields": [
+        "workspace_id",
+        "accepted_source_catalog_snapshot_id",
+        "instrument_ids",
+        "member_bindings",
+        "created_at_utc"
+      ],
+      "excluded_fields": [
+        "workspace_catalog_projection_id",
+        "content_fingerprint"
+      ],
+      "canonicalization": "JSON sort_keys=true, separators comma/colon, ensure_ascii=false; member_bindings sorted by instrument_id",
+      "digest_format": "lowercase hex"
+    },
+    "activation_operability": {
+      "required_source_acceptance_status": "VALID",
+      "required_source_completeness_status": "COMPLETE",
+      "freshness": "effective_at_utc <= explicit now_utc < stale_after_utc",
+      "historical_resolution": "instrument_history_by_id ordered records; exact instrument_id + instrument_metadata_version + accepted_source_catalog_snapshot_id; no current fallback",
+      "paper_permission": "exact frozen frozenset[tuple[source_exchange_id, market_type]] with total runtime schema validation; permission does not mint source acceptance"
     }
   },
   "legacy_paper_instrument_disposition": {
@@ -3270,6 +3340,11 @@
     "identity_policy": "accepted_source_catalog_snapshot_id is Core-owned; content fingerprint proves exact provenance/content but cannot mint acceptance",
     "authority_status": "SCHEMA_READY_ACCEPTED_SOURCE_PRODUCER_MEMBERSHIP_NOT_IMPLEMENTED",
     "runtime_writer": "NOT_IMPLEMENTED",
-    "producer_authentication": "AcceptedSourceProducerMembership NOT_IMPLEMENTED; registry/config/adapter/plugin/manifest/local hash cannot mint acceptance"
+    "producer_authentication": "AcceptedSourceProducerMembership NOT_IMPLEMENTED; registry/config/adapter/plugin/manifest/local hash cannot mint acceptance",
+    "structural_vs_operability": {
+      "PARTIAL": "structurally legal, activation-ineligible",
+      "REJECTED": "structurally legal, activation-ineligible",
+      "stale": "structurally legal and historically resolvable, current activation-ineligible"
+    }
   }
 }

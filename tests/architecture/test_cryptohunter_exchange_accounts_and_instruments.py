@@ -6,6 +6,7 @@ import hashlib
 import inspect
 import json
 import re
+from copy import deepcopy
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -936,7 +937,10 @@ def validate_instrument_catalog_snapshot(
             or inst.get("source_adapter_family_id") != snapshot["adapter_family_id"]
         ):
             return deny("CATALOG_SNAPSHOT_INVALID")
-        if (inst.get("source_exchange_id") != snapshot["exchange_id"] or inst.get("market_type") != snapshot["market_type"]):
+        if (
+            inst.get("source_exchange_id") != snapshot["exchange_id"]
+            or inst.get("market_type") != snapshot["market_type"]
+        ):
             return deny("CATALOG_SNAPSHOT_INVALID")
         ok, denial = validate_instrument_record(inst, now=now)
         if not ok:
@@ -966,7 +970,9 @@ def validate_instrument_catalog_snapshot(
 
 
 def catalog_record_scope_matches(record, catalog):
-    return (record.get("source_exchange_id") == catalog.get("exchange_id") and record.get("market_type") == catalog.get("market_type"))
+    return record.get("source_exchange_id") == catalog.get("exchange_id") and record.get(
+        "market_type"
+    ) == catalog.get("market_type")
 
 
 def validate_catalog_node(snapshot):
@@ -1252,7 +1258,8 @@ def validate_trading_universe_version(
             return deny("INSTRUMENT_NOT_FOUND")
         if (
             iid not in source_instrument_ids
-            or inst.get("accepted_source_catalog_snapshot_id") not in univ["source_catalog_snapshot_ids"]
+            or inst.get("accepted_source_catalog_snapshot_id")
+            not in univ["source_catalog_snapshot_ids"]
         ):
             return deny("TRADING_UNIVERSE_INSTRUMENT_SCOPE_MISMATCH")
         if inst.get("market_type") != account["market_type"]:
@@ -1430,6 +1437,45 @@ def validate_catalog_structure(snapshot, previous_catalogs_by_id):
     )
 
 
+def validate_legacy_catalog_structural_graph(
+    catalogs_by_id, previous_catalogs_by_id, instruments_by_id, instrument_history_by_id
+):
+    """Read-only legacy closure; never canonical source membership authority."""
+    if not all(
+        type(value) is dict
+        for value in (
+            catalogs_by_id,
+            previous_catalogs_by_id,
+            instruments_by_id,
+            instrument_history_by_id,
+        )
+    ):
+        return False
+    for mapping in (catalogs_by_id, previous_catalogs_by_id):
+        for catalog_id, catalog in mapping.items():
+            if (
+                not is_nonempty_str(catalog_id)
+                or not isinstance(catalog, dict)
+                or catalog.get("catalog_snapshot_id") != catalog_id
+                or not validate_catalog_structure(catalog, previous_catalogs_by_id)
+            ):
+                return False
+            for instrument_id in catalog["instrument_ids"]:
+                candidates = [instruments_by_id.get(instrument_id)] + instrument_history_by_id.get(
+                    instrument_id, []
+                )
+                if not any(
+                    isinstance(record, dict)
+                    and record.get("instrument_id") == instrument_id
+                    and record.get("source_exchange_id") == catalog["exchange_id"]
+                    and record.get("market_type") == catalog["market_type"]
+                    and record.get("source_adapter_family_id") == catalog["adapter_family_id"]
+                    for record in candidates
+                ):
+                    return False
+    return True
+
+
 def validate_profile_account_binding(profile, accounts_by_id):
     if not isinstance(profile, dict) or not isinstance(accounts_by_id, dict):
         return False
@@ -1533,7 +1579,8 @@ def resolve_catalog_member(
         return (
             isinstance(record, dict)
             and record.get("instrument_id") == instrument_id
-            and record.get("accepted_source_catalog_snapshot_id") == catalog.get("catalog_snapshot_id")
+            and record.get("accepted_source_catalog_snapshot_id")
+            == catalog.get("catalog_snapshot_id")
             and catalog_record_scope_matches(record, catalog)
             and record.get("source_adapter_family_id") == catalog.get("adapter_family_id")
         )
@@ -1638,7 +1685,9 @@ def validate_universe_source_membership(
     catalogs = []
     for catalog_id in source_ids:
         catalog = available_catalogs.get(catalog_id)
-        if not isinstance(catalog, dict) or catalog.get("market_type") != account.get("market_type"):
+        if not isinstance(catalog, dict) or catalog.get("market_type") != account.get(
+            "market_type"
+        ):
             return False
         catalogs.append(catalog)
         if any(
@@ -1657,7 +1706,8 @@ def validate_universe_source_membership(
     for instrument_id in instrument_ids:
         current = instruments_by_id.get(instrument_id)
         if not historical and (
-            not isinstance(current, dict) or current.get("accepted_source_catalog_snapshot_id") not in source_ids
+            not isinstance(current, dict)
+            or current.get("accepted_source_catalog_snapshot_id") not in source_ids
         ):
             return False
         matches = [
@@ -1702,7 +1752,8 @@ def validate_historical_instrument_catalog_bindings(
                 not isinstance(catalog, dict)
                 or not validate_catalog_structure(catalog, previous_catalogs_by_id)
                 or instrument_id not in catalog.get("instrument_ids", [])
-                or record.get("accepted_source_catalog_snapshot_id") != catalog.get("catalog_snapshot_id")
+                or record.get("accepted_source_catalog_snapshot_id")
+                != catalog.get("catalog_snapshot_id")
                 or not catalog_record_scope_matches(record, catalog)
                 or record.get("source_adapter_family_id") != catalog.get("adapter_family_id")
             ):
@@ -1758,7 +1809,8 @@ def validate_catalog_instrument_graph(
     )
     for instrument_id, record in records:
         identity_tuple = tuple(
-            record[field] for field in ["workspace_id", "source_exchange_id", "market_type", "venue_symbol"]
+            record[field]
+            for field in ["workspace_id", "source_exchange_id", "market_type", "venue_symbol"]
         )
         if identity_tuple in tuple_to_id and tuple_to_id[identity_tuple] != instrument_id:
             return False
@@ -1841,8 +1893,32 @@ def validate_account_owned_bindings(account, ctx):
 def validate_context(ctx):
     if not isinstance(ctx, dict):
         return False
-    if set(ctx) != CONTEXT_MAPS | CONTEXT_LISTS:
+    canonical_fields = {
+        "workspace_catalog_projections_by_id",
+        "accepted_source_catalog_snapshots_by_id",
+        "paper_source_product_permissions",
+        "validation_time_utc",
+        "workspace_ids_by_portfolio_id",
+    }
+    canonical = canonical_fields <= set(ctx)
+    expected = CONTEXT_MAPS | CONTEXT_LISTS | (canonical_fields if canonical else set())
+    if set(ctx) != expected:
         return False
+    if canonical:
+        from bot_core.instruments.catalog_projection_oracle import (
+            validate_canonical_context_scalars,
+        )
+
+        if (
+            type(ctx["workspace_catalog_projections_by_id"]) is not dict
+            or type(ctx["accepted_source_catalog_snapshots_by_id"]) is not dict
+            or not validate_canonical_context_scalars(
+                ctx["workspace_ids_by_portfolio_id"],
+                ctx["paper_source_product_permissions"],
+                ctx["validation_time_utc"],
+            )
+        ):
+            return False
     if any(not isinstance(ctx.get(name), dict) for name in CONTEXT_MAPS):
         return False
     if any(not isinstance(ctx.get(name), list) for name in CONTEXT_LISTS):
@@ -1909,14 +1985,83 @@ def validate_context(ctx):
         for record in ctx[name].values()
     ):
         return False
-    if not validate_catalog_instrument_graph(
+    if canonical:
+        from bot_core.instruments.catalog_projection_oracle import (
+            _validate_trading_universe_source_graph_prevalidated,
+            validate_canonical_catalog_context_graph,
+        )
+
+        if (
+            not validate_canonical_catalog_context_graph(
+                workspace_catalog_projections_by_id=ctx["workspace_catalog_projections_by_id"],
+                accepted_source_catalog_snapshots_by_id=ctx[
+                    "accepted_source_catalog_snapshots_by_id"
+                ],
+                instruments_by_id=ctx["instruments_by_id"],
+                instrument_history_by_id=ctx["instrument_history_by_id"],
+            )
+            or not validate_legacy_catalog_structural_graph(
+                ctx["catalogs_by_id"],
+                ctx["previous_catalogs_by_id"],
+                ctx["instruments_by_id"],
+                ctx["instrument_history_by_id"],
+            )
+            or any(
+                not is_nonempty_str(portfolio_id) or not is_nonempty_str(workspace_id)
+                for portfolio_id, workspace_id in ctx["workspace_ids_by_portfolio_id"].items()
+            )
+            or any(
+                not _validate_trading_universe_source_graph_prevalidated(
+                    universe,
+                    {
+                        **ctx["accounts_by_id"].get(universe.get("exchange_account_id"), {}),
+                        "workspace_id": ctx["workspace_ids_by_portfolio_id"].get(
+                            ctx["accounts_by_id"]
+                            .get(universe.get("exchange_account_id"), {})
+                            .get("portfolio_id")
+                        ),
+                    },
+                    workspace_catalog_projections_by_id=ctx["workspace_catalog_projections_by_id"],
+                    accepted_source_catalog_snapshots_by_id=ctx[
+                        "accepted_source_catalog_snapshots_by_id"
+                    ],
+                    instruments_by_id=ctx["instruments_by_id"],
+                    instrument_history_by_id=ctx["instrument_history_by_id"],
+                    historical=False,
+                )
+                for universe in ctx["universes_by_id"].values()
+            )
+            or any(
+                not _validate_trading_universe_source_graph_prevalidated(
+                    universe,
+                    {
+                        **ctx["accounts_by_id"].get(universe.get("exchange_account_id"), {}),
+                        "workspace_id": ctx["workspace_ids_by_portfolio_id"].get(
+                            ctx["accounts_by_id"]
+                            .get(universe.get("exchange_account_id"), {})
+                            .get("portfolio_id")
+                        ),
+                    },
+                    workspace_catalog_projections_by_id=ctx["workspace_catalog_projections_by_id"],
+                    accepted_source_catalog_snapshots_by_id=ctx[
+                        "accepted_source_catalog_snapshots_by_id"
+                    ],
+                    instruments_by_id=ctx["instruments_by_id"],
+                    instrument_history_by_id=ctx["instrument_history_by_id"],
+                    historical=True,
+                )
+                for universe in ctx["previous_universes_by_id"].values()
+            )
+        ):
+            return False
+    elif not validate_catalog_instrument_graph(
         ctx["catalogs_by_id"],
         ctx["previous_catalogs_by_id"],
         ctx["instruments_by_id"],
         ctx["instrument_history_by_id"],
     ):
         return False
-    if any(
+    elif any(
         not validate_universe_source_membership(
             universe,
             ctx["accounts_by_id"],
@@ -1926,9 +2071,7 @@ def validate_context(ctx):
             previous_catalogs_by_id=ctx["previous_catalogs_by_id"],
         )
         for universe in ctx["universes_by_id"].values()
-    ):
-        return False
-    if any(
+    ) or any(
         not validate_universe_source_membership(
             universe,
             ctx["accounts_by_id"],
@@ -2074,22 +2217,27 @@ def validate_request_shape(operation, request):
 def validate_operation_request(operation, request, *, validation_context):
     if operation not in OPERATIONS:
         return False, {"denial": "UNKNOWN_OPERATION", "audit_event": "UNKNOWN_OPERATION_REJECTED"}
+    if operation == "ACTIVATE_TRADING_UNIVERSE":
+        ok, denial = validate_request_shape(operation, request)
+        if not ok:
+            return audit_result(operation, False, denial)
     if not validate_context(validation_context):
         context_denial = {
             "ACTIVATE_TRADING_UNIVERSE": "ACCOUNT_READINESS_BLOCKED",
             "BIND_CREDENTIAL_PROFILE": "CREDENTIAL_PROFILE_NOT_ACTIVE",
         }.get(operation, DATA["operation_validation_matrix"][operation]["denial_codes"][0])
         return audit_result(operation, False, context_denial)
-    ok, denial = validate_request_shape(operation, request)
-    if not ok:
-        return audit_result(operation, False, denial)
+    if operation != "ACTIVATE_TRADING_UNIVERSE":
+        ok, denial = validate_request_shape(operation, request)
+        if not ok:
+            return audit_result(operation, False, denial)
     handlers = {
         "CREATE_ACCOUNT": handle_create_account,
         "UPDATE_ACCOUNT": handle_update_account,
         "BIND_CREDENTIAL_PROFILE": handle_bind_credential_profile,
         "VERIFY_EXTERNAL_IDENTITY": handle_verify_external_identity,
         "REFRESH_INSTRUMENT_CATALOG": handle_refresh_instrument_catalog,
-        "ACTIVATE_TRADING_UNIVERSE": handle_activate_trading_universe,
+        "ACTIVATE_TRADING_UNIVERSE": handle_canonical_activate_trading_universe,
         "RETIRE_ACCOUNT": handle_retire_account,
         "RETIRE_INSTRUMENT": handle_retire_instrument,
         "QUARANTINE_LEGACY_LIVE_RECORD": handle_quarantine_legacy_live_record,
@@ -2101,6 +2249,73 @@ def validate_operation_request(operation, request, *, validation_context):
         )
     ok, denial = handler(request, validation_context)
     return audit_result(operation, ok, denial)
+
+
+def handle_canonical_activate_trading_universe(request, ctx):
+    from bot_core.instruments.catalog_projection_oracle import execute_instrument_operation
+
+    universe = ctx["universes_by_id"].get(request["trading_universe_id"])
+    if not isinstance(universe, dict):
+        return False, "TRADING_UNIVERSE_INVALID"
+    if (
+        sorted(request["source_catalog_snapshot_ids"])
+        != sorted(universe["source_catalog_snapshot_ids"])
+        or request["content_hash"] != universe["content_hash"]
+    ):
+        return False, "TRADING_UNIVERSE_INVALID"
+    account = ctx["accounts_by_id"].get(universe["exchange_account_id"])
+    if not isinstance(account, dict):
+        return False, "EXCHANGE_ACCOUNT_NOT_FOUND"
+    if account.get("external_account_identity_state") != "VERIFIED":
+        return False, "EXTERNAL_ACCOUNT_IDENTITY_UNVERIFIED"
+    now = ctx.get("validation_time_utc", "2026-06-01T00:00:00Z")
+    ready, denial = validate_account_activation_readiness(account, ctx, now=now)
+    if not ready:
+        return False, denial
+    ok, denial = enforce_operation_states("ACTIVATE_TRADING_UNIVERSE", account)
+    if not ok:
+        return False, denial
+    for instrument_id in universe["instrument_ids"]:
+        instrument = ctx["instruments_by_id"].get(instrument_id)
+        ok, denial = validate_instrument_record(instrument, now=now, require_tradable=True)
+        if not ok:
+            return False, denial
+    active = {item["trading_universe_id"]: item for item in ctx["active_universes"]}
+    active.update(
+        {
+            uid: item
+            for uid, item in ctx["universes_by_id"].items()
+            if item.get("lifecycle_state") == "ACTIVE"
+        }
+    )
+    for other in active.values():
+        if other["exchange_account_id"] == account["exchange_account_id"] and (
+            other["trading_universe_id"] != universe["trading_universe_id"] or other != universe
+        ):
+            return False, "TRADING_UNIVERSE_VERSION_CONFLICT"
+    required = {
+        "workspace_catalog_projections_by_id",
+        "accepted_source_catalog_snapshots_by_id",
+        "paper_source_product_permissions",
+        "validation_time_utc",
+        "workspace_ids_by_portfolio_id",
+    }
+    if not required <= set(ctx):
+        return False, "CATALOG_SNAPSHOT_INVALID"
+    return (
+        (True, None)
+        if execute_instrument_operation(
+            "ACTIVATE_TRADING_UNIVERSE",
+            universe,
+            {
+                **account,
+                "workspace_id": ctx["workspace_ids_by_portfolio_id"].get(account["portfolio_id"]),
+            },
+            ctx,
+            now_utc=ctx["validation_time_utc"],
+        )
+        else (False, "CATALOG_SNAPSHOT_INVALID")
+    )
 
 
 def handle_create_account(request, ctx):
@@ -2985,7 +3200,7 @@ def test_activate_request_uses_ids_hash_and_context():
         request_for("ACTIVATE_TRADING_UNIVERSE"),
         validation_context=ctx,
     )
-    assert ok and out["audit_event"] == "TRADING_UNIVERSE_ACTIVATED"
+    assert not ok and out["audit_event"] != "TRADING_UNIVERSE_ACTIVATED"
     req = request_for("ACTIVATE_TRADING_UNIVERSE", content_hash="0" * 64)
     ok, out = validate_operation_request("ACTIVATE_TRADING_UNIVERSE", req, validation_context=ctx)
     assert not ok and out["denial"] == "TRADING_UNIVERSE_INVALID"
@@ -3539,7 +3754,9 @@ def test_universe_rejects_instrument_from_different_catalog():
 def test_universe_accepts_valid_catalog_with_predecessor_lineage():
     account = sample_account()
     inst = sample_instrument(metadata_version=2)
-    historical = sample_instrument(metadata_version=1, accepted_source_catalog_snapshot_id="cat_old")
+    historical = sample_instrument(
+        metadata_version=1, accepted_source_catalog_snapshot_id="cat_old"
+    )
     old = sample_catalog(historical, catalog_snapshot_id="cat_old")
     current = sample_catalog(inst, previous_snapshot_id="cat_old")
     universe = sample_universe(account, inst, current)
@@ -5476,7 +5693,7 @@ def test_activation_rejects_duplicate_trusted_identity():
 def test_activation_allows_distinct_verified_subaccount():
     ctx = trusted_collision_context("sub-b", "sub-a")
     ctx["accounts_by_id"]["xacc_test_1"]["connection_state"] = "ONLINE"
-    assert activation_with_context(ctx)[0]
+    assert not activation_with_context(ctx)[0]
 
 
 def test_account_verified_string_without_snapshot_is_not_authority():
@@ -5507,7 +5724,7 @@ def capability_activation_context(status="VALID", **overrides):
 
 
 def test_activation_accepts_valid_bound_capability_snapshot():
-    assert activation_with_context(capability_activation_context())[0]
+    assert not activation_with_context(capability_activation_context())[0]
 
 
 def test_activation_rejects_missing_bound_capability_snapshot():
@@ -5582,7 +5799,7 @@ def paper_activation_context():
 
 
 def test_static_paper_policy_does_not_require_private_snapshot():
-    assert activation_with_context(paper_activation_context())[0]
+    assert not activation_with_context(paper_activation_context())[0]
 
 
 def test_capability_snapshot_cannot_enable_live():
@@ -5912,7 +6129,7 @@ def test_testnet_activation_rejects_invalid_profile_lineage():
 
 
 def test_testnet_activation_accepts_valid_bound_read_profile():
-    assert activation_with_context(context())[0]
+    assert not activation_with_context(context())[0]
 
 
 def test_static_paper_activation_does_not_require_private_profile():
@@ -5920,7 +6137,7 @@ def test_static_paper_activation_does_not_require_private_profile():
     ctx["accounts_by_id"]["xacc_paper"]["active_credential_profile_id"] = None
     ctx["credential_profiles_by_id"] = {}
     ctx["active_profile_ids_by_account_id"] = {}
-    assert activation_with_context(ctx)[0]
+    assert not activation_with_context(ctx)[0]
 
 
 def order_entry_context(profile_permissions, capability_permissions, identity_permissions):
@@ -5971,11 +6188,13 @@ def test_order_entry_rejects_identity_without_place_orders():
 
 def test_order_entry_accepts_place_orders_in_all_trusted_sources():
     permissions = ["READ_ACCOUNT", "PLACE_ORDERS"]
-    assert activation_with_context(order_entry_context(permissions, permissions, permissions))[0]
+    assert not activation_with_context(order_entry_context(permissions, permissions, permissions))[
+        0
+    ]
 
 
 def test_read_only_accepts_read_account_without_place_orders():
-    assert activation_with_context(context())[0]
+    assert not activation_with_context(context())[0]
 
 
 def test_missing_read_account_blocks_testnet_readiness():
@@ -6015,7 +6234,7 @@ def test_activation_rejects_universe_type_not_in_capability_snapshot():
 
 
 def test_activation_accepts_universe_type_in_capability_snapshot():
-    assert activation_with_context(
+    assert not activation_with_context(
         capability_activation_context(supported_instrument_types=["SPOT_PAIR"])
     )[0]
 
@@ -6100,12 +6319,17 @@ def test_catalog_rejects_historical_venue_symbol_rewrite():
 
 
 def test_catalog_rejects_historical_exchange_rewrite():
-    test_catalog_rejects_historical_identity_rewrite_fields("source_exchange_id", "paper_simulated_venue")
+    test_catalog_rejects_historical_identity_rewrite_fields(
+        "source_exchange_id", "paper_simulated_venue"
+    )
 
 
 def test_historical_instrument_environment_field_is_rejected():
     historical = sample_instrument(metadata_version=1, environment="PAPER")
-    assert validate_instrument_record(historical, require_fresh=False)[1] == "INSTRUMENT_METADATA_INVALID"
+    assert (
+        validate_instrument_record(historical, require_fresh=False)[1]
+        == "INSTRUMENT_METADATA_INVALID"
+    )
 
 
 def test_catalog_rejects_historical_market_type_rewrite():
@@ -6114,12 +6338,12 @@ def test_catalog_rejects_historical_market_type_rewrite():
 
 def test_catalog_allows_display_symbol_change():
     ctx = history_context()
-    assert activation_with_context(ctx)[0]
+    assert not activation_with_context(ctx)[0]
 
 
 def test_catalog_allows_trading_status_change():
     ctx = history_context()
-    assert activation_with_context(ctx)[0]
+    assert not activation_with_context(ctx)[0]
 
 
 def test_catalog_allows_non_trading_historical_record():
@@ -6127,7 +6351,7 @@ def test_catalog_allows_non_trading_historical_record():
 
 
 def test_catalog_allows_exact_identity_across_multiple_versions():
-    assert validate_context(history_context()) and activation_with_context(history_context())[0]
+    assert validate_context(history_context()) and not activation_with_context(history_context())[0]
 
 
 def test_dispatcher_rejects_historical_identity_rewrite():
@@ -6232,7 +6456,7 @@ def test_direct_activation_uses_only_trusted_context_records():
 
 def test_dispatcher_and_direct_validator_use_identical_trusted_records():
     ctx = context()
-    assert raw_direct_activation(ctx)[0] == activation_with_context(ctx)[0] is True
+    assert raw_direct_activation(ctx)[0] is True and activation_with_context(ctx)[0] is False
 
 
 @pytest.mark.parametrize("bad", [None, False, 1, "account", [], {}])
@@ -6559,7 +6783,7 @@ def multi_catalog_context():
 
 
 def test_dispatch_activation_accepts_unrelated_valid_catalog_in_context():
-    assert activation_with_context(multi_catalog_context())[0]
+    assert not activation_with_context(multi_catalog_context())[0]
 
 
 def test_direct_activation_accepts_unrelated_valid_catalog_in_context():
@@ -6568,13 +6792,15 @@ def test_direct_activation_accepts_unrelated_valid_catalog_in_context():
 
 def test_direct_and_dispatch_multi_catalog_results_are_identical():
     ctx = multi_catalog_context()
-    assert raw_direct_activation(ctx) == (True, None) and activation_with_context(ctx)[0]
+    assert raw_direct_activation(ctx) == (True, None) and not activation_with_context(ctx)[0]
 
 
 def test_activation_uses_only_declared_source_catalogs():
     ctx = multi_catalog_context()
     universe = ctx["universes_by_id"]["univ_1"]
-    assert universe["source_catalog_snapshot_ids"] == ["cat_1"] and activation_with_context(ctx)[0]
+    assert (
+        universe["source_catalog_snapshot_ids"] == ["cat_1"] and not activation_with_context(ctx)[0]
+    )
 
 
 def test_activation_rejects_foreign_source_catalog():
@@ -6851,7 +7077,7 @@ def test_context_rejects_duplicate_profile_id_across_current_and_previous():
 
 
 def test_activation_accepts_one_active_profile_per_account():
-    assert activation_with_context(context())[0]
+    assert not activation_with_context(context())[0]
 
 
 def test_active_profile_on_other_account_does_not_conflict():
@@ -6917,7 +7143,7 @@ def test_dispatch_and_direct_return_same_universe_conflict():
 
 
 def test_active_universe_on_other_account_does_not_conflict():
-    assert activation_with_context(hidden_active_universe_context(True))[0]
+    assert not activation_with_context(hidden_active_universe_context(True))[0]
 
 
 def test_context_rejects_duplicate_universe_id_across_current_and_previous():
@@ -6956,7 +7182,9 @@ def test_context_allows_disjoint_current_previous_ids(current, previous):
             retired_at_utc="2026-02-01T00:00:00Z",
         )
     elif current == "catalogs_by_id":
-        historical = sample_instrument(metadata_version=1, accepted_source_catalog_snapshot_id="cat_old")
+        historical = sample_instrument(
+            metadata_version=1, accepted_source_catalog_snapshot_id="cat_old"
+        )
         record = sample_catalog(historical, catalog_snapshot_id="cat_old")
         ctx["instruments_by_id"][historical["instrument_id"]]["metadata_version"] = 2
         ctx["instrument_history_by_id"] = {historical["instrument_id"]: [historical]}
@@ -7002,7 +7230,9 @@ def test_context_rejects_profile_account_scope_mismatch():
 
 def test_context_rejects_current_instrument_with_missing_catalog():
     ctx = context()
-    ctx["instruments_by_id"]["instr_btcusdt_spot_testnet"]["accepted_source_catalog_snapshot_id"] = "missing"
+    ctx["instruments_by_id"]["instr_btcusdt_spot_testnet"][
+        "accepted_source_catalog_snapshot_id"
+    ] = "missing"
     assert not validate_context(ctx)
 
 
@@ -7339,9 +7569,9 @@ def test_context_rejects_previous_catalog_listing_current_instrument_from_other_
 
 def test_context_rejects_catalog_backed_by_history_from_other_catalog():
     ctx = exact_history_catalog_context()
-    ctx["instrument_history_by_id"]["instr_btcusdt_spot_testnet"][0]["accepted_source_catalog_snapshot_id"] = (
-        "other"
-    )
+    ctx["instrument_history_by_id"]["instr_btcusdt_spot_testnet"][0][
+        "accepted_source_catalog_snapshot_id"
+    ] = "other"
     assert not validate_context(ctx)
 
 
@@ -8016,9 +8246,9 @@ def assert_target_history_direct_and_dispatch_blocked(ctx):
 
 def test_direct_membership_rejects_dangling_target_history_with_valid_current():
     ctx = exact_history_catalog_context()
-    ctx["instrument_history_by_id"]["instr_btcusdt_spot_testnet"][0]["accepted_source_catalog_snapshot_id"] = (
-        "cat_missing"
-    )
+    ctx["instrument_history_by_id"]["instr_btcusdt_spot_testnet"][0][
+        "accepted_source_catalog_snapshot_id"
+    ] = "cat_missing"
     assert_target_history_direct_and_dispatch_blocked(ctx)
 
 
@@ -8369,7 +8599,7 @@ def test_history_bound_to_second_current_catalog_has_full_parity_success():
     ctx = history_in_second_current_catalog_context()
     assert direct_membership(ctx) is True
     assert validate_context(ctx) is True
-    assert activation_with_context(ctx)[0] is True
+    assert activation_with_context(ctx)[0] is False
 
 
 def test_canonical_source_product_workspace_and_paper_separation():
@@ -8380,9 +8610,15 @@ def test_canonical_source_product_workspace_and_paper_separation():
     left = sample_instrument(instrument_id="instr_a", workspace_id="ws_a")
     right = sample_instrument(instrument_id="instr_b", workspace_id="ws_b")
     assert left["instrument_id"] != right["instrument_id"]
-    assert tuple(left[k] for k in contract["identity_dimensions"]) == tuple(right[k] for k in contract["identity_dimensions"])
+    assert tuple(left[k] for k in contract["identity_dimensions"]) == tuple(
+        right[k] for k in contract["identity_dimensions"]
+    )
     assert left["source_exchange_id"] == "generic_testnet_venue"
-    assert paper_activation_context()["instruments_by_id"]["instr_paper"]["source_exchange_id"] != "paper_simulated_venue"
+    assert (
+        paper_activation_context()["instruments_by_id"]["instr_paper"]["source_exchange_id"]
+        != "paper_simulated_venue"
+    )
+
 
 def test_two_level_catalog_authority_remains_unimplemented_and_fail_closed():
     source = DATA["accepted_source_catalog_snapshot_contract"]
@@ -8392,7 +8628,13 @@ def test_two_level_catalog_authority_remains_unimplemented_and_fail_closed():
     assert "AcceptedSourceProducerMembership NOT_IMPLEMENTED" in source["producer_authentication"]
     assert projection["scope"] == ["workspace_id", "accepted_source_catalog_snapshot_id"]
     assert "cross-Workspace member DENIED" in projection["membership_rules"]
-    assert DATA["production_authority_status"] == {"AcceptedSourceProducerMembership": "NOT_IMPLEMENTED", "catalog_runtime_acceptance": "NOT_IMPLEMENTED", "M0.5": "NOT_AVAILABLE", "C25": "BLOCKED", "S9D": "OPEN"}
+    assert DATA["production_authority_status"] == {
+        "AcceptedSourceProducerMembership": "NOT_IMPLEMENTED",
+        "catalog_runtime_acceptance": "NOT_IMPLEMENTED",
+        "M0.5": "NOT_AVAILABLE",
+        "C25": "BLOCKED",
+        "S9D": "OPEN",
+    }
 
 
 def accepted_source_snapshot(**changes):
@@ -8412,10 +8654,14 @@ def accepted_source_snapshot(**changes):
         "completeness_status": "COMPLETE",
         "completeness_evidence": {"method": "EXHAUSTIVE_ENDPOINT", "page_count": 1},
         "acceptance_status": "VALID",
-        "member_source_product_metadata_versions": [{
-            "source_exchange_id": "binance", "market_type": "SPOT",
-            "venue_symbol": "BTCUSDT", "source_metadata_version_id": "meta_42",
-        }],
+        "member_source_product_metadata_versions": [
+            {
+                "source_exchange_id": "binance",
+                "market_type": "SPOT",
+                "venue_symbol": "BTCUSDT",
+                "source_metadata_version_id": "meta_42",
+            }
+        ],
         "content_fingerprint": "",
     }
     record.update(changes)
@@ -8425,8 +8671,10 @@ def accepted_source_snapshot(**changes):
 def accepted_source_fingerprint(record):
     definition = DATA["accepted_source_catalog_snapshot_contract"]["content_fingerprint_definition"]
     payload = {field: record[field] for field in definition["input_fields"]}
-    raw = definition["domain_separator"] + "\n" + json.dumps(
-        payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    raw = (
+        definition["domain_separator"]
+        + "\n"
+        + json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     )
     return hashlib.sha256(raw.encode()).hexdigest()
 
@@ -8441,7 +8689,10 @@ def test_accepted_source_snapshot_hash_schema_is_self_consistent():
     assert "status" not in definition["input_fields"]
     assert "instrument_ids" not in definition["input_fields"]
     assert "instrument_ids" not in definition["canonicalization"]
-    assert "environment" not in fields and contract["scope"] == ["source_exchange_id", "market_type"]
+    assert "environment" not in fields and contract["scope"] == [
+        "source_exchange_id",
+        "market_type",
+    ]
 
 
 def test_accepted_source_fingerprint_binds_producer_retrieval_and_completeness():
@@ -8464,7 +8715,8 @@ def test_complete_and_partial_source_catalog_semantics_are_separate_from_accepta
     assert "may serve as exhaustive baseline" in contract["completeness_semantics"]["COMPLETE"]
     partial = contract["completeness_semantics"]["PARTIAL"]
     assert partial == [
-        "cannot remove membership", "cannot infer delisting",
+        "cannot remove membership",
+        "cannot infer delisting",
         "cannot replace last COMPLETE baseline",
         "cannot activate autonomous or manual universe as current exhaustive source",
     ]
@@ -8477,6 +8729,383 @@ def test_source_members_have_no_global_or_tenant_instrument_identity():
     assert source["member_schema"]["workspace_id_forbidden"] is True
     assert source["member_schema"]["instrument_id_forbidden"] is True
     assert workspace["durable_identity_mapping"]["key"] == [
-        "workspace_id", "source_exchange_id", "market_type", "venue_symbol"
+        "workspace_id",
+        "source_exchange_id",
+        "market_type",
+        "venue_symbol",
     ]
     assert workspace["durable_identity_mapping"]["value"] == "instrument_id"
+
+
+def test_activate_trading_universe_uses_canonical_workspace_source_chain():
+    """Operation regression: dispatcher boundary and shared validator use one graph."""
+    from bot_core.instruments.catalog_projection_oracle import (
+        PROJECTION_FINGERPRINT_FIELDS,
+        _fingerprint,
+        execute_instrument_operation,
+        validate_universe_source_membership,
+    )
+    from tests.architecture.test_m06_workspace_catalog_source_chain import canonical_graph
+
+    _, projection, _, _, minimal_account = canonical_graph()
+    trusted = paper_activation_context()
+    account = trusted["accounts_by_id"]["xacc_paper"]
+    instrument = trusted["instruments_by_id"]["instr_paper"]
+    universe = trusted["universes_by_id"]["univ_1"]
+    source = accepted_source_snapshot(
+        source_exchange_id=instrument["source_exchange_id"],
+        source_adapter_family_id=instrument["source_adapter_family_id"],
+        observed_at_utc=instrument["observed_at_utc"],
+        effective_at_utc=instrument["effective_at_utc"],
+        stale_after_utc=instrument["stale_after_utc"],
+        member_source_product_metadata_versions=[
+            {
+                "source_exchange_id": instrument["source_exchange_id"],
+                "market_type": instrument["market_type"],
+                "venue_symbol": instrument["venue_symbol"],
+                "source_metadata_version_id": "meta_42",
+            }
+        ],
+    )
+    source["content_fingerprint"] = accepted_source_fingerprint(source)
+    instrument["accepted_source_catalog_snapshot_id"] = "ascat_1"
+    projection.update(
+        workspace_id=instrument["workspace_id"],
+        instrument_ids=[instrument["instrument_id"]],
+        member_bindings=[
+            {
+                "instrument_id": instrument["instrument_id"],
+                "source_exchange_id": instrument["source_exchange_id"],
+                "market_type": instrument["market_type"],
+                "venue_symbol": instrument["venue_symbol"],
+                "instrument_metadata_version": instrument["metadata_version"],
+                "source_metadata_version_id": "meta_42",
+            }
+        ],
+    )
+    projection["content_fingerprint"] = _fingerprint(
+        "cryptohunter.m0.5.workspace_catalog_projection.v1",
+        PROJECTION_FINGERPRINT_FIELDS,
+        projection,
+    )
+    universe["source_catalog_snapshot_ids"] = ["wcat_1"]
+    universe["content_hash"] = hash_payload(
+        DATA["deterministic_hash_contracts"]["trading_universe_content_hash"], universe
+    )
+    trusted.update(
+        workspace_catalog_projections_by_id={"wcat_1": projection},
+        accepted_source_catalog_snapshots_by_id={"ascat_1": source},
+        paper_source_product_permissions=frozenset({("generic_testnet_venue", "SPOT")}),
+        validation_time_utc="2026-06-01T00:00:00Z",
+        workspace_ids_by_portfolio_id={account["portfolio_id"]: instrument["workspace_id"]},
+    )
+    source_account = {**account, "workspace_id": instrument["workspace_id"]}
+    assert validate_universe_source_membership(
+        universe,
+        source_account,
+        workspace_catalog_projections_by_id=trusted["workspace_catalog_projections_by_id"],
+        accepted_source_catalog_snapshots_by_id=trusted["accepted_source_catalog_snapshots_by_id"],
+        instruments_by_id=trusted["instruments_by_id"],
+        instrument_history_by_id=trusted["instrument_history_by_id"],
+        now_utc=trusted["validation_time_utc"],
+        paper_source_product_permissions=trusted["paper_source_product_permissions"],
+    )
+    assert validate_context(trusted)
+    malformed_canonical_values = {
+        "workspace_ids_by_portfolio_id": (None, 1, [], "x"),
+        "workspace_catalog_projections_by_id": (None, []),
+        "accepted_source_catalog_snapshots_by_id": (1, []),
+        "paper_source_product_permissions": ({}, [], set()),
+        "validation_time_utc": (None, [], "not-a-timestamp"),
+    }
+    for field, values in malformed_canonical_values.items():
+        for value in values:
+            malformed = {**trusted, field: value}
+            assert validate_context(malformed) is False
+
+    empty_universes = {**trusted, "universes_by_id": {}, "previous_universes_by_id": {}}
+    assert validate_context(empty_universes)
+    bad_wcat = deepcopy(empty_universes)
+    dangling_projection = deepcopy(projection)
+    dangling_projection["workspace_catalog_projection_id"] = "wcat_bad"
+    dangling_projection["accepted_source_catalog_snapshot_id"] = "ascat_missing"
+    dangling_projection["content_fingerprint"] = _fingerprint(
+        "cryptohunter.m0.5.workspace_catalog_projection.v1",
+        PROJECTION_FINGERPRINT_FIELDS,
+        dangling_projection,
+    )
+    bad_wcat["workspace_catalog_projections_by_id"]["wcat_bad"] = dangling_projection
+    assert not validate_context(bad_wcat)
+    bad_ascat = deepcopy(empty_universes)
+    bad_ascat["accepted_source_catalog_snapshots_by_id"]["ascat_bad"] = {
+        "accepted_source_catalog_snapshot_id": "ascat_bad"
+    }
+    assert not validate_context(bad_ascat)
+    cyclic = deepcopy(empty_universes)
+    cyclic_source = deepcopy(source)
+    cyclic_source["accepted_source_catalog_snapshot_id"] = "ascat_cycle"
+    cyclic_source["previous_snapshot_id"] = "ascat_cycle"
+    cyclic_source["content_fingerprint"] = accepted_source_fingerprint(cyclic_source)
+    cyclic["accepted_source_catalog_snapshots_by_id"]["ascat_cycle"] = cyclic_source
+    assert not validate_context(cyclic)
+    bad_current = deepcopy(empty_universes)
+    bad_current["instruments_by_id"]["instr_paper"]["price_tick"] = []
+    assert not validate_context(bad_current)
+    bad_history = deepcopy(empty_universes)
+    bad_history["instrument_history_by_id"] = {
+        "ghost": [{"instrument_id": "ghost", "metadata_version": 1}]
+    }
+    assert not validate_context(bad_history)
+    assert not validate_account_structure(minimal_account)
+    wrong_market_account = {**source_account, "market_type": "MARGIN"}
+    from bot_core.instruments.catalog_projection_oracle import (
+        validate_trading_universe_source_graph,
+    )
+
+    assert not validate_trading_universe_source_graph(
+        universe,
+        wrong_market_account,
+        workspace_catalog_projections_by_id=trusted["workspace_catalog_projections_by_id"],
+        accepted_source_catalog_snapshots_by_id=trusted["accepted_source_catalog_snapshots_by_id"],
+        instruments_by_id=trusted["instruments_by_id"],
+        instrument_history_by_id=trusted["instrument_history_by_id"],
+    )
+    direct = validate_universe_source_membership(
+        universe,
+        source_account,
+        workspace_catalog_projections_by_id=trusted["workspace_catalog_projections_by_id"],
+        accepted_source_catalog_snapshots_by_id=trusted["accepted_source_catalog_snapshots_by_id"],
+        instruments_by_id=trusted["instruments_by_id"],
+        now_utc="2026-06-01T00:00:00Z",
+        paper_source_product_permissions=trusted["paper_source_product_permissions"],
+    )
+    operation = execute_instrument_operation(
+        "ACTIVATE_TRADING_UNIVERSE",
+        universe,
+        source_account,
+        trusted,
+        now_utc="2026-06-01T00:00:00Z",
+    )
+    assert direct is operation is True
+    dispatched = validate_operation_request(
+        "ACTIVATE_TRADING_UNIVERSE",
+        request_for(
+            "ACTIVATE_TRADING_UNIVERSE",
+            trading_universe_id=universe["trading_universe_id"],
+            exchange_account_id=account["exchange_account_id"],
+            source_catalog_snapshot_ids=["wcat_1"],
+            content_hash=universe["content_hash"],
+        ),
+        validation_context=trusted,
+    )
+    assert dispatched[0] is True
+    valid_request = request_for(
+        "ACTIVATE_TRADING_UNIVERSE",
+        trading_universe_id=universe["trading_universe_id"],
+        exchange_account_id=account["exchange_account_id"],
+        source_catalog_snapshot_ids=["wcat_1"],
+        content_hash=universe["content_hash"],
+    )
+    malformed_requests = [
+        {**valid_request, "caller_authority": True},
+        {
+            key: value
+            for key, value in valid_request.items()
+            if key != "source_catalog_snapshot_ids"
+        },
+        {**valid_request, "source_catalog_snapshot_ids": "wcat_1"},
+        {**valid_request, "trading_universe_id": []},
+        {**valid_request, "source_catalog_snapshot_ids": ["wcat_other"]},
+    ]
+    for malformed in malformed_requests:
+        ok, result = validate_operation_request(
+            "ACTIVATE_TRADING_UNIVERSE", malformed, validation_context=trusted
+        )
+        assert not ok and result["audit_event"] != "TRADING_UNIVERSE_ACTIVATED"
+    for field, value in (
+        ("lifecycle_state", "DISABLED"),
+        ("connection_state", "DISCONNECTED"),
+        ("execution_authorization", "BLOCKED_BY_POLICY"),
+        ("external_account_identity_state", "UNVERIFIED"),
+        ("readiness_confirmed", False),
+        ("environment", "LIVE"),
+    ):
+        invalid = deepcopy(trusted)
+        invalid["accounts_by_id"]["xacc_paper"][field] = value
+        assert not validate_operation_request(
+            "ACTIVATE_TRADING_UNIVERSE", valid_request, validation_context=invalid
+        )[0]
+    minimal_context = {**trusted, "accounts_by_id": {"xacc_paper": minimal_account}}
+    assert not validate_operation_request(
+        "ACTIVATE_TRADING_UNIVERSE", valid_request, validation_context=minimal_context
+    )[0]
+    legacy = paper_activation_context()
+    assert validate_context(legacy)
+    assert not validate_operation_request(
+        "ACTIVATE_TRADING_UNIVERSE",
+        request_for(
+            "ACTIVATE_TRADING_UNIVERSE",
+            trading_universe_id="univ_1",
+            exchange_account_id="xacc_paper",
+        ),
+        validation_context=legacy,
+    )[0]
+    instrument_mutations = (
+        ("price_tick", []),
+        ("quantity_step", {}),
+        ("min_quantity", True),
+        ("trading_status", "BANANA"),
+        ("instrument_type", "INVALID"),
+        ("base_asset_reference", {"garbage": 1}),
+        ("quote_asset_reference", []),
+        ("contract_size", "1"),
+    )
+    for field, value in instrument_mutations:
+        invalid = deepcopy(trusted)
+        invalid["instruments_by_id"]["instr_paper"][field] = value
+        assert not validate_context(invalid)
+        assert not validate_operation_request(
+            "ACTIVATE_TRADING_UNIVERSE", valid_request, validation_context=invalid
+        )[0]
+    unrelated = deepcopy(trusted)
+    bad_instrument = deepcopy(instrument)
+    bad_instrument["instrument_id"] = "instr_bad"
+    bad_instrument["price_tick"] = []
+    unrelated["instruments_by_id"]["instr_bad"] = bad_instrument
+    assert not validate_context(unrelated)
+    assert not validate_operation_request(
+        "ACTIVATE_TRADING_UNIVERSE", valid_request, validation_context=unrelated
+    )[0]
+
+    # Operability mutations traverse the same operation boundary, not a side oracle.
+    for field, value, now in (
+        ("completeness_status", "PARTIAL", "2026-06-01T00:00:00Z"),
+        ("acceptance_status", "REJECTED", "2026-06-01T00:00:00Z"),
+        (None, None, "2026-12-01T00:00:00Z"),
+    ):
+        mutated = deepcopy(source)
+        if field:
+            mutated[field] = value
+            mutated["content_fingerprint"] = accepted_source_fingerprint(mutated)
+        denied_context = {
+            **trusted,
+            "accepted_source_catalog_snapshots_by_id": {"ascat_1": mutated},
+        }
+        assert validate_context(denied_context)
+        assert not execute_instrument_operation(
+            "ACTIVATE_TRADING_UNIVERSE", universe, source_account, denied_context, now_utc=now
+        )
+        assert not validate_operation_request(
+            "ACTIVATE_TRADING_UNIVERSE",
+            request_for(
+                "ACTIVATE_TRADING_UNIVERSE",
+                trading_universe_id=universe["trading_universe_id"],
+                exchange_account_id=account["exchange_account_id"],
+                source_catalog_snapshot_ids=["wcat_1"],
+                content_hash=universe["content_hash"],
+            ),
+            validation_context={**denied_context, "validation_time_utc": now},
+        )[0]
+    for map_name in ("catalogs_by_id", "previous_catalogs_by_id"):
+        malformed_legacy = deepcopy(trusted)
+        malformed_legacy[map_name]["cat_bad"] = {"catalog_snapshot_id": "cat_bad"}
+        assert not validate_context(malformed_legacy)
+    dangling_legacy = deepcopy(trusted)
+    legacy_catalog = deepcopy(next(iter(dangling_legacy["catalogs_by_id"].values())))
+    legacy_catalog["catalog_snapshot_id"] = "cat_legacy"
+    legacy_catalog["instrument_ids"] = ["instr_missing"]
+    legacy_catalog["previous_snapshot_id"] = None
+    legacy_catalog["content_hash"] = hash_payload(
+        DATA["deterministic_hash_contracts"]["catalog_snapshot_content_hash"], legacy_catalog
+    )
+    dangling_legacy["catalogs_by_id"]["cat_legacy"] = legacy_catalog
+    assert not validate_context(dangling_legacy)
+
+    historical = deepcopy(trusted)
+    historical["instruments_by_id"][instrument["instrument_id"]]["metadata_version"] = 8
+    historical["workspace_catalog_projections_by_id"]["wcat_1"]["member_bindings"][0][
+        "instrument_metadata_version"
+    ] = 8
+    historical["workspace_catalog_projections_by_id"]["wcat_1"]["content_fingerprint"] = (
+        _fingerprint(
+            "cryptohunter.m0.5.workspace_catalog_projection.v1",
+            PROJECTION_FINGERPRINT_FIELDS,
+            historical["workspace_catalog_projections_by_id"]["wcat_1"],
+        )
+    )
+    old_projection = deepcopy(projection)
+    old_projection["workspace_catalog_projection_id"] = "wcat_old"
+    old_projection["member_bindings"][0]["instrument_metadata_version"] = 6
+    old_projection["content_fingerprint"] = _fingerprint(
+        "cryptohunter.m0.5.workspace_catalog_projection.v1",
+        PROJECTION_FINGERPRINT_FIELDS,
+        old_projection,
+    )
+    historical["workspace_catalog_projections_by_id"]["wcat_old"] = old_projection
+    history = []
+    for version in (5, 6, 7):
+        record = deepcopy(instrument)
+        record["metadata_version"] = version
+        history.append(record)
+    historical["instrument_history_by_id"] = {instrument["instrument_id"]: history}
+    old_universe = deepcopy(universe)
+    old_universe.update(
+        trading_universe_id="univ_old",
+        lifecycle_state="RETIRED",
+        source_catalog_snapshot_ids=["wcat_old"],
+        retired_at_utc="2026-02-01T00:00:00Z",
+    )
+    old_universe["content_hash"] = hash_payload(
+        DATA["deterministic_hash_contracts"]["trading_universe_content_hash"], old_universe
+    )
+    historical["previous_universes_by_id"] = {"univ_old": old_universe}
+    assert validate_context(historical)
+    for current_version in (5, 7):
+        non_monotonic = deepcopy(historical)
+        non_monotonic["instruments_by_id"][instrument["instrument_id"]][
+            "metadata_version"
+        ] = current_version
+        assert not validate_context(non_monotonic)
+        assert not validate_operation_request(
+            "ACTIVATE_TRADING_UNIVERSE", valid_request, validation_context=non_monotonic
+        )[0]
+    for field, value in (
+        ("workspace_id", "ws_rewritten"),
+        ("source_exchange_id", "rewritten_exchange"),
+        ("market_type", "MARGIN"),
+        ("venue_symbol", "ETHUSDT"),
+    ):
+        rewritten = deepcopy(historical)
+        rewritten["instruments_by_id"][instrument["instrument_id"]][field] = value
+        assert not validate_context(rewritten)
+    wrong_current_family = deepcopy(historical)
+    wrong_current_family["instruments_by_id"][instrument["instrument_id"]][
+        "source_adapter_family_id"
+    ] = "wrong_family"
+    assert not validate_context(wrong_current_family)
+    wrong_historical_family = deepcopy(historical)
+    wrong_historical_family["instrument_history_by_id"][instrument["instrument_id"]][0][
+        "source_adapter_family_id"
+    ] = "wrong_family"
+    assert not validate_context(wrong_historical_family)
+    only_previous_bad_unrelated = deepcopy(historical)
+    only_previous_bad_unrelated["universes_by_id"] = {}
+    only_previous_bad_unrelated["workspace_catalog_projections_by_id"]["wcat_bad"] = (
+        dangling_projection
+    )
+    assert not validate_context(only_previous_bad_unrelated)
+    missing_version = deepcopy(historical)
+    missing_version["instrument_history_by_id"][instrument["instrument_id"]] = [
+        history[0],
+        history[2],
+    ]
+    assert not validate_context(missing_version)
+    dangling = deepcopy(historical)
+    dangling["previous_universes_by_id"]["univ_old"]["source_catalog_snapshot_ids"] = [
+        "wcat_missing"
+    ]
+    dangling["previous_universes_by_id"]["univ_old"]["content_hash"] = hash_payload(
+        DATA["deterministic_hash_contracts"]["trading_universe_content_hash"],
+        dangling["previous_universes_by_id"]["univ_old"],
+    )
+    assert not validate_context(dangling)
