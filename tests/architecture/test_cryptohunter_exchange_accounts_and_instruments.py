@@ -6,12 +6,18 @@ import hashlib
 import inspect
 import json
 import re
+import tempfile
 from copy import deepcopy
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 import pytest
+
+from bot_core.instruments.source_producer_membership import (
+    JsonlMembershipCarrier,
+    SourceProducerMembershipAuthority,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 ARCH_DIR = ROOT / "docs/architecture/cryptohunter_product_architecture"
@@ -41,6 +47,12 @@ HEX64 = re.compile(r"^[0-9a-f]{64}$")
 CANONICAL_UUID7_ID = re.compile(
     r"^[a-z][a-z0-9]*_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
 )
+_MEMBERSHIP_DIR = tempfile.TemporaryDirectory()
+SOURCE_PRODUCER_AUTHORITY = SourceProducerMembershipAuthority(
+    JsonlMembershipCarrier(Path(_MEMBERSHIP_DIR.name) / "memberships.jsonl")
+)
+SOURCE_PRODUCER_AUTHORITY.admit_release_grant("core_release_1_45_generic_testnet_spot", trusted_core_now_utc="2026-01-01T00:00:00Z")
+SOURCE_PRODUCER_AUTHORITY.admit_release_grant("core_release_1_45_binance_spot", trusted_core_now_utc="2026-09-14T00:00:00Z")
 
 
 def deny(code):
@@ -1899,6 +1911,7 @@ def validate_context(ctx):
         "paper_source_product_permissions",
         "validation_time_utc",
         "workspace_ids_by_portfolio_id",
+        "source_producer_membership_authority",
     }
     canonical = canonical_fields <= set(ctx)
     expected = CONTEXT_MAPS | CONTEXT_LISTS | (canonical_fields if canonical else set())
@@ -1999,6 +2012,9 @@ def validate_context(ctx):
                 ],
                 instruments_by_id=ctx["instruments_by_id"],
                 instrument_history_by_id=ctx["instrument_history_by_id"],
+                source_producer_membership_authority=ctx[
+                    "source_producer_membership_authority"
+                ],
             )
             or not validate_legacy_catalog_structural_graph(
                 ctx["catalogs_by_id"],
@@ -8625,15 +8641,16 @@ def test_two_level_catalog_authority_remains_unimplemented_and_fail_closed():
     projection = DATA["workspace_catalog_projection_contract"]
     assert source["scope"] == ["source_exchange_id", "market_type"]
     assert source["runtime_writer"] == "NOT_IMPLEMENTED"
-    assert "AcceptedSourceProducerMembership NOT_IMPLEMENTED" in source["producer_authentication"]
+    assert "AcceptedSourceProducerMembership AVAILABLE" in source["producer_authentication"]
     assert projection["scope"] == ["workspace_id", "accepted_source_catalog_snapshot_id"]
     assert "cross-Workspace member DENIED" in projection["membership_rules"]
     assert DATA["production_authority_status"] == {
-        "AcceptedSourceProducerMembership": "NOT_IMPLEMENTED",
+        "AcceptedSourceProducerMembership": "AVAILABLE",
         "catalog_runtime_acceptance": "NOT_IMPLEMENTED",
         "M0.5": "NOT_AVAILABLE",
         "C25": "BLOCKED",
         "S9D": "OPEN",
+        "next_blocker": "CATALOG_RUNTIME_ACCEPTANCE",
     }
 
 
@@ -8646,6 +8663,9 @@ def accepted_source_snapshot(**changes):
         "source_adapter_implementation_id": "impl_ccxt_binance",
         "source_adapter_release_id": "release_2026_09_15",
         "source_adapter_version": "4.5.1",
+        "accepted_source_producer_membership_id": "aspm_core_1_45_binance_spot_1",
+        "source_producer_generation": 1,
+        "source_producer_membership_fingerprint": "76168d4b535580703661ff9fa59ecbdeefe09d58f242de5684af8460ad9c9a57",
         "upstream_snapshot_or_retrieval_id": "exchangeInfo:42",
         "observed_at_utc": "2026-09-15T00:00:00Z",
         "effective_at_utc": "2026-09-15T00:00:00Z",
@@ -8665,6 +8685,13 @@ def accepted_source_snapshot(**changes):
         "content_fingerprint": "",
     }
     record.update(changes)
+    if record["source_exchange_id"] == "generic_testnet_venue":
+        record["accepted_source_producer_membership_id"] = (
+            "aspm_core_1_45_generic_testnet_spot_1"
+        )
+        record["source_producer_membership_fingerprint"] = (
+            "cd8252ce969f022da7cfff7e536b83ca4d3f72fa25947b5c59ea1087bfa04843"
+        )
     return record
 
 
@@ -8795,6 +8822,7 @@ def test_activate_trading_universe_uses_canonical_workspace_source_chain():
     trusted.update(
         workspace_catalog_projections_by_id={"wcat_1": projection},
         accepted_source_catalog_snapshots_by_id={"ascat_1": source},
+        source_producer_membership_authority=SOURCE_PRODUCER_AUTHORITY,
         paper_source_product_permissions=frozenset({("generic_testnet_venue", "SPOT")}),
         validation_time_utc="2026-06-01T00:00:00Z",
         workspace_ids_by_portfolio_id={account["portfolio_id"]: instrument["workspace_id"]},
@@ -8809,6 +8837,9 @@ def test_activate_trading_universe_uses_canonical_workspace_source_chain():
         instrument_history_by_id=trusted["instrument_history_by_id"],
         now_utc=trusted["validation_time_utc"],
         paper_source_product_permissions=trusted["paper_source_product_permissions"],
+        source_producer_membership_authority=trusted[
+            "source_producer_membership_authority"
+        ],
     )
     assert validate_context(trusted)
     malformed_canonical_values = {
@@ -8878,6 +8909,7 @@ def test_activate_trading_universe_uses_canonical_workspace_source_chain():
         instruments_by_id=trusted["instruments_by_id"],
         now_utc="2026-06-01T00:00:00Z",
         paper_source_product_permissions=trusted["paper_source_product_permissions"],
+        source_producer_membership_authority=SOURCE_PRODUCER_AUTHORITY,
     )
     operation = execute_instrument_operation(
         "ACTIVATE_TRADING_UNIVERSE",

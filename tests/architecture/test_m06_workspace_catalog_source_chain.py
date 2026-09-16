@@ -1,5 +1,7 @@
 from copy import deepcopy
 from inspect import signature
+from pathlib import Path
+import tempfile
 
 from bot_core.instruments.catalog_projection_oracle import (
     PROJECTION_FINGERPRINT_FIELDS,
@@ -15,6 +17,16 @@ from bot_core.instruments.catalog_projection_oracle import (
     validate_universe_source_membership,
     validate_workspace_catalog_projection,
 )
+from bot_core.instruments.source_producer_membership import (
+    JsonlMembershipCarrier,
+    SourceProducerMembershipAuthority,
+)
+
+_AUTHORITY_DIR = tempfile.TemporaryDirectory()
+SOURCE_PRODUCER_AUTHORITY = SourceProducerMembershipAuthority(
+    JsonlMembershipCarrier(Path(_AUTHORITY_DIR.name) / "memberships.jsonl")
+)
+SOURCE_PRODUCER_AUTHORITY.admit_release_grant("core_release_1_45_binance_spot", trusted_core_now_utc="2026-09-14T00:00:00Z")
 
 
 def _projection_fingerprint(projection):
@@ -34,6 +46,9 @@ def canonical_graph():
         "source_adapter_implementation_id": "impl_ccxt_binance",
         "source_adapter_release_id": "release_2026_09_15",
         "source_adapter_version": "4.5.1",
+        "accepted_source_producer_membership_id": "aspm_core_1_45_binance_spot_1",
+        "source_producer_generation": 1,
+        "source_producer_membership_fingerprint": "76168d4b535580703661ff9fa59ecbdeefe09d58f242de5684af8460ad9c9a57",
         "upstream_snapshot_or_retrieval_id": "exchangeInfo:42",
         "observed_at_utc": "2026-09-15T00:00:00Z",
         "effective_at_utc": "2026-09-15T00:00:00Z",
@@ -139,6 +154,7 @@ def validate_graph(source, projection, instrument, universe, account):
         accepted_source_catalog_snapshots_by_id={"ascat_1": source},
         instruments_by_id={"instr_1": instrument},
         paper_source_product_permissions=frozenset({("binance", "SPOT")}),
+        source_producer_membership_authority=SOURCE_PRODUCER_AUTHORITY,
         now_utc="2026-09-15T00:30:00Z",
     )
 
@@ -202,6 +218,7 @@ def test_legacy_catalog_cannot_activate_and_paper_policy_is_explicit():
         accepted_source_catalog_snapshots_by_id={"ascat_1": source},
         instruments_by_id={"instr_1": instrument},
         paper_source_product_permissions=frozenset({("binance", "SPOT")}),
+        source_producer_membership_authority=SOURCE_PRODUCER_AUTHORITY,
         now_utc="2026-09-15T00:30:00Z",
     )
     assert not validate_trading_universe_source_chain(
@@ -229,6 +246,7 @@ def test_historical_resolution_never_falls_back_to_current_instrument():
         instrument_history_by_id={"instr_1": [wrong_history]},
         historical=True,
         paper_source_product_permissions=frozenset({("binance", "SPOT")}),
+        source_producer_membership_authority=SOURCE_PRODUCER_AUTHORITY,
         now_utc="2026-09-15T00:30:00Z",
     )
 
@@ -260,6 +278,7 @@ def test_partial_rejected_and_stale_are_structural_but_not_activation_eligible()
             instruments_by_id={"instr_1": instrument},
             now_utc=now,
             paper_source_product_permissions=frozenset({("binance", "SPOT")}),
+            source_producer_membership_authority=SOURCE_PRODUCER_AUTHORITY,
         )
 
 
@@ -310,6 +329,7 @@ def test_historical_resolution_exactly_selects_requested_ordered_version():
         historical=True,
         now_utc="2026-09-15T00:30:00Z",
         paper_source_product_permissions=frozenset({("binance", "SPOT")}),
+        source_producer_membership_authority=SOURCE_PRODUCER_AUTHORITY,
     )
     assert validate_trading_universe_source_chain(
         universe, account, instrument_history_by_id={"instr_1": history}, **kwargs
@@ -332,6 +352,7 @@ def test_map_key_identity_and_unrelated_entries_fail_closed():
         instruments_by_id={"instr_1": instrument},
         now_utc="2026-09-15T00:30:00Z",
         paper_source_product_permissions=frozenset({("binance", "SPOT")}),
+        source_producer_membership_authority=SOURCE_PRODUCER_AUTHORITY,
     )
 
 
@@ -350,6 +371,7 @@ def test_source_predecessor_lineage_resolves_scope_chronology_and_cycles():
         instruments_by_id={"instr_1": instrument},
         now_utc="2026-09-15T00:30:00Z",
         paper_source_product_permissions=frozenset({("binance", "SPOT")}),
+        source_producer_membership_authority=SOURCE_PRODUCER_AUTHORITY,
     )
     assert validate_trading_universe_source_chain(
         universe,
@@ -373,6 +395,7 @@ def test_source_predecessor_lineage_resolves_scope_chronology_and_cycles():
         instruments_by_id={"instr_1": instrument},
         now_utc="2026-09-15T00:30:00Z",
         paper_source_product_permissions=frozenset({("binance", "SPOT")}),
+        source_producer_membership_authority=SOURCE_PRODUCER_AUTHORITY,
     )
     unrelated = deepcopy(projection)
     unrelated["workspace_catalog_projection_id"] = "wcat_B"
@@ -384,6 +407,7 @@ def test_source_predecessor_lineage_resolves_scope_chronology_and_cycles():
         instruments_by_id={"instr_1": instrument},
         now_utc="2026-09-15T00:30:00Z",
         paper_source_product_permissions=frozenset({("binance", "SPOT")}),
+        source_producer_membership_authority=SOURCE_PRODUCER_AUTHORITY,
     )
 
 
@@ -409,6 +433,7 @@ def test_shared_direct_operation_and_context_paths_have_decision_parity():
         "instruments_by_id": {"instr_1": instrument},
         "instrument_history_by_id": {},
         "paper_source_product_permissions": frozenset({("binance", "SPOT")}),
+        "source_producer_membership_authority": SOURCE_PRODUCER_AUTHORITY,
     }
     kwargs = dict(
         workspace_catalog_projections_by_id=context["workspace_catalog_projections_by_id"],
@@ -416,6 +441,7 @@ def test_shared_direct_operation_and_context_paths_have_decision_parity():
         instruments_by_id=context["instruments_by_id"],
         now_utc="2026-09-15T00:30:00Z",
         paper_source_product_permissions=context["paper_source_product_permissions"],
+        source_producer_membership_authority=SOURCE_PRODUCER_AUTHORITY,
     )
     assert validate_trading_universe_source_chain(universe, account, **kwargs)
     assert validate_universe_source_membership(universe, account, **kwargs)
@@ -462,6 +488,7 @@ def test_unrelated_projection_requires_full_referential_closure():
             instruments_by_id=instruments,
             now_utc="2026-09-15T00:30:00Z",
             paper_source_product_permissions=frozenset({("binance", "SPOT")}),
+            source_producer_membership_authority=SOURCE_PRODUCER_AUTHORITY,
         )
 
 
@@ -473,6 +500,7 @@ def test_malformed_unrelated_full_history_fails_every_public_path():
         "instruments_by_id": {"instr_1": instrument},
         "instrument_history_by_id": {"ghost": [{"instrument_id": "ghost", "metadata_version": 1}]},
         "paper_source_product_permissions": frozenset({("binance", "SPOT")}),
+        "source_producer_membership_authority": SOURCE_PRODUCER_AUTHORITY,
     }
     kwargs = dict(
         workspace_catalog_projections_by_id=context["workspace_catalog_projections_by_id"],
@@ -480,6 +508,7 @@ def test_malformed_unrelated_full_history_fails_every_public_path():
         instruments_by_id=context["instruments_by_id"],
         instrument_history_by_id=context["instrument_history_by_id"],
         paper_source_product_permissions=context["paper_source_product_permissions"],
+        source_producer_membership_authority=SOURCE_PRODUCER_AUTHORITY,
         now_utc="2026-09-15T00:30:00Z",
     )
     assert not validate_trading_universe_source_chain(universe, account, **kwargs)
@@ -507,6 +536,7 @@ def test_history_metadata_versions_and_paper_permissions_are_total():
             instrument_history_by_id={"ghost": [bad | {"instrument_id": "ghost"}]},
             now_utc="2026-09-15T00:30:00Z",
             paper_source_product_permissions=frozenset({("binance", "SPOT")}),
+            source_producer_membership_authority=SOURCE_PRODUCER_AUTHORITY,
         )
     malformed_permissions = (
         1,
@@ -603,6 +633,7 @@ def _global_graph(source, projection, instrument, history):
         accepted_source_catalog_snapshots_by_id={"ascat_1": source},
         instruments_by_id={"instr_1": instrument},
         instrument_history_by_id=history,
+        source_producer_membership_authority=SOURCE_PRODUCER_AUTHORITY,
     )
 
 
@@ -665,7 +696,7 @@ def test_source_adapter_family_exact_binds_current_and_historical_instruments():
         "instruments_by_id": {"instr_1": instrument},
     }
     assert not validate_canonical_catalog_context_graph(
-        **kwargs, instrument_history_by_id={}
+        **kwargs, instrument_history_by_id={}, source_producer_membership_authority=SOURCE_PRODUCER_AUTHORITY
     )
     assert not validate_trading_universe_source_graph(universe, account, **kwargs)
     assert not validate_trading_universe_source_chain(
@@ -674,6 +705,7 @@ def test_source_adapter_family_exact_binds_current_and_historical_instruments():
         **kwargs,
         now_utc="2026-09-15T00:30:00Z",
         paper_source_product_permissions=frozenset({("binance", "SPOT")}),
+        source_producer_membership_authority=SOURCE_PRODUCER_AUTHORITY,
     )
 
     source, projection, instrument, _, _ = canonical_graph()
@@ -712,6 +744,7 @@ def test_public_membership_cannot_bypass_global_closure_or_map_preflight():
         "instruments_by_id": {"instr_1": instrument},
         "now_utc": "2026-09-15T00:30:00Z",
         "paper_source_product_permissions": frozenset({("binance", "SPOT")}),
+        "source_producer_membership_authority": SOURCE_PRODUCER_AUTHORITY,
     }
     assert not validate_universe_source_membership(universe, account, **kwargs)
     kwargs["workspace_catalog_projections_by_id"] = 1
