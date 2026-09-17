@@ -1,0 +1,660 @@
+{
+  "schema_version": "1.0.0",
+  "artifact_kind": "M07_FILL_CONTRACT_MIGRATION_DESIGN_DISCOVERY",
+  "design_only": true,
+  "accepted_reconciliation": "8eec34f92a32b87dd196122e0a1d4a18f46248f9",
+  "reconciliation_result": "M07_FILL_CONTRACT_MIGRATION_REQUIRED",
+  "current_contract": {
+    "field_count": 19,
+    "fingerprint_input_count": 18,
+    "fields": [
+      "fill_id",
+      "order_id",
+      "environment",
+      "workspace_id",
+      "portfolio_id",
+      "exchange_account_id",
+      "exchange_id",
+      "instrument_id",
+      "instrument_metadata_version",
+      "execution_route_id",
+      "venue_trade_id",
+      "side",
+      "executed_quantity",
+      "execution_price",
+      "executed_at_utc",
+      "fee_kind",
+      "fee_quantity",
+      "fee_asset_reference",
+      "fill_fingerprint_sha256"
+    ],
+    "fingerprint_domain": "LEGACY_UNDOMAINED_CANONICAL_JSON_SHA256_V1",
+    "structural_implementation": "bot_core/execution/m07_fill_validation.py",
+    "semantic_full_fill_authority": "NOT_AVAILABLE"
+  },
+  "migration_driver": [
+    "exact historical Instrument provenance needs instrument_id + instrument_metadata_version + accepted_source_catalog_snapshot_id",
+    "source identity must remain distinct from execution identity",
+    "fee AssetReference namespace must use resolved historical Instrument.source_exchange_id"
+  ],
+  "candidate_designs": {
+    "ADD_ACCEPTED_SOURCE_CATALOG_SNAPSHOT_ID_TO_FILL": {
+      "shape": "one immutable field on Full Fill",
+      "minimality": "BEST: one selector, no new authority or handle",
+      "immutability": "field and v2 fingerprint bind it",
+      "caller_mint_resistance": "PASS only after genuine CatalogRuntimeAcceptanceAuthority plus future WCP/historical Instrument resolution; claimed value alone is untrusted",
+      "historical_determinism": "PASS: exact three-part selector is self-contained",
+      "restart_safety": "PASS when authorities are durable; no current/latest lookup",
+      "dedupe_identity_stability": "PASS: excluded from external execution key",
+      "fingerprint_closure": "PASS: included in v2 inputs under a new domain",
+      "order_fill_binding": "FILL_PINNED; Order identity/scope still must match, snapshot equality is not imposed",
+      "migration_compatibility": "legacy remains readable but cannot enter v2 admission",
+      "paper_correctness": "PASS: source snapshot and resolved source namespace are not execution venue",
+      "m08_consumption": "PASS: M0.8 consumes accepted M0.7 fact"
+    },
+    "AUTHORITY_BOUND_PROVENANCE_REFERENCE": {
+      "shape": "add fill_source_provenance_id and a new Core-owned durable authenticated immutable authority record resolving exactly one tuple",
+      "minimality": "WORSE: new ID, store, lifecycle and resolver only to carry one missing selector",
+      "immutability": "PASS if separately fingerprinted and durable",
+      "caller_mint_resistance": "PASS only if Core authority mints it; otherwise FAIL",
+      "historical_determinism": "PASS if record remains permanently resolvable",
+      "restart_safety": "requires another durable authority",
+      "dedupe_identity_stability": "PASS if reference excluded from external key",
+      "fingerprint_closure": "PASS only when reference is included in a new Fill domain",
+      "order_fill_binding": "adds hidden resolver dependency without improving required Order equality",
+      "migration_compatibility": "more moving parts than direct field",
+      "paper_correctness": "possible but provides no advantage",
+      "m08_consumption": "adds avoidable indirection"
+    },
+    "REUSE_EXISTING_CANONICAL_REFERENCE": {
+      "shape": "no qualifying reference found in frozen Fill or Order contracts",
+      "minimality": "not assessable because candidate does not exist",
+      "immutability": "UNPROVEN",
+      "caller_mint_resistance": "UNPROVEN",
+      "historical_determinism": "FAIL: instrument_id + metadata_version omits required snapshot selector",
+      "restart_safety": "FAIL",
+      "dedupe_identity_stability": "N/A",
+      "fingerprint_closure": "FAIL",
+      "order_fill_binding": "Order carries no equivalent exact provenance handle",
+      "migration_compatibility": "FAIL",
+      "paper_correctness": "UNPROVEN",
+      "m08_consumption": "FAIL"
+    }
+  },
+  "selected_design": "ADD_ACCEPTED_SOURCE_CATALOG_SNAPSHOT_ID_TO_FILL",
+  "selection_rationale": {
+    "decision": "The snapshot is Core source provenance attached immutably when the execution fact is accepted. Although not venue-originated and duplicative of an Instrument attribute, it is part of the canonical economic Fill fact because it makes the historical meaning of instrument_metadata_version explicit and durable without a new resolver handle. The authority, not the field syntax, supplies trust.",
+    "for": [
+      "exact immutable provenance at execution acceptance",
+      "direct historical reconstruction",
+      "no extra provenance-reference authority",
+      "simple closed fingerprint"
+    ],
+    "against_considered": [
+      "venue did not originate the Core field",
+      "20-field schema migration",
+      "possible future duplication with Order provenance"
+    ],
+    "why_not_B": "A new authority solely to store the snapshot selector is redundant indirection and a new restart/durability dependency.",
+    "why_not_C": "No current Fill or Order reference exact-binds the required accepted source snapshot."
+  },
+  "new_fill_schema": {
+    "name": "Full Fill v2",
+    "field_count": 20,
+    "closed_field_set": true,
+    "fields": [
+      "fill_id",
+      "order_id",
+      "environment",
+      "workspace_id",
+      "portfolio_id",
+      "exchange_account_id",
+      "exchange_id",
+      "instrument_id",
+      "instrument_metadata_version",
+      "accepted_source_catalog_snapshot_id",
+      "execution_route_id",
+      "venue_trade_id",
+      "side",
+      "executed_quantity",
+      "execution_price",
+      "executed_at_utc",
+      "fee_kind",
+      "fee_quantity",
+      "fee_asset_reference",
+      "fill_fingerprint_sha256"
+    ],
+    "field_schemas": {
+      "fill_id": {
+        "type": "id",
+        "prefix": "fill"
+      },
+      "order_id": {
+        "type": "id",
+        "prefix": "ord"
+      },
+      "environment": {
+        "type": "enum",
+        "values": [
+          "PAPER",
+          "TESTNET",
+          "LIVE"
+        ]
+      },
+      "workspace_id": {
+        "type": "id",
+        "prefix": "ws"
+      },
+      "portfolio_id": {
+        "type": "id",
+        "prefix": "port"
+      },
+      "exchange_account_id": {
+        "type": "id",
+        "prefix": "xacc"
+      },
+      "exchange_id": {
+        "type": "non_empty_string"
+      },
+      "instrument_id": {
+        "type": "id",
+        "prefix": "instr"
+      },
+      "instrument_metadata_version": {
+        "type": "positive_integer"
+      },
+      "accepted_source_catalog_snapshot_id": {
+        "type": "prefixed_non_empty_string",
+        "prefix": "ascat",
+        "semantic_type": "AcceptedSourceCatalogSnapshotId",
+        "nullable": false,
+        "immutable": true,
+        "structural_format": "type(value) is str AND value starts with \"ascat_\" AND suffix is non-empty",
+        "authority_resolution": "CatalogRuntimeAcceptanceAuthority resolves exact genuine snapshot",
+        "syntax_grants_trust": false
+      },
+      "execution_route_id": {
+        "type": "id",
+        "prefix": "xroute"
+      },
+      "venue_trade_id": {
+        "type": "non_empty_string"
+      },
+      "side": {
+        "type": "enum",
+        "values": [
+          "BUY",
+          "SELL"
+        ]
+      },
+      "executed_quantity": {
+        "type": "decimal",
+        "constraint": "positive"
+      },
+      "execution_price": {
+        "type": "decimal",
+        "constraint": "positive"
+      },
+      "executed_at_utc": {
+        "type": "timestamp"
+      },
+      "fee_kind": {
+        "type": "enum",
+        "values": [
+          "NONE",
+          "CHARGE"
+        ]
+      },
+      "fee_quantity": {
+        "type": "decimal",
+        "constraint": "non_negative"
+      },
+      "fee_asset_reference": {
+        "type": "asset_reference",
+        "fields": [
+          "venue_asset_code",
+          "canonical_display_code",
+          "asset_namespace",
+          "mapping_status"
+        ],
+        "field_schemas": {
+          "venue_asset_code": {
+            "type": "non_empty_string"
+          },
+          "canonical_display_code": {
+            "type": "non_empty_string"
+          },
+          "asset_namespace": {
+            "type": "non_empty_string"
+          },
+          "mapping_status": {
+            "type": "enum",
+            "values": [
+              "EXACT",
+              "EXPLICIT_ALIAS"
+            ]
+          }
+        },
+        "rules": [
+          "exact M0.5 asset-reference value object",
+          "AMBIGUOUS and UNKNOWN forbidden",
+          "no default to base, quote, or settlement asset"
+        ]
+      },
+      "fill_fingerprint_sha256": {
+        "type": "sha256_hex"
+      }
+    },
+    "new_field": {
+      "name": "accepted_source_catalog_snapshot_id",
+      "position": 10,
+      "type": "prefixed_non_empty_string",
+      "semantic_type": "AcceptedSourceCatalogSnapshotId",
+      "prefix": "ascat",
+      "immutable": true,
+      "nullable": false,
+      "fingerprint_input": true,
+      "structural_grammar": {
+        "rule": "type(value) is str AND value starts with \"ascat_\" AND suffix is non-empty",
+        "reject": [
+          "",
+          "foo",
+          "snapshot_1",
+          "wcat_1",
+          "ascat",
+          "ASCat_1"
+        ],
+        "may_accept_syntactically": [
+          "ascat_1",
+          "ascat_fake"
+        ]
+      },
+      "authority_resolution": "CatalogRuntimeAcceptanceAuthority resolves exact genuine snapshot",
+      "syntax_grants_trust": false
+    },
+    "fill_schema_version_field": null,
+    "version_discriminator": [
+      "closed field set",
+      "fingerprint domain",
+      "future v2 FullFillAuthority type"
+    ],
+    "source_fields_not_duplicated": [
+      "source_exchange_id",
+      "market_type",
+      "venue_symbol",
+      "source_metadata_version_id"
+    ]
+  },
+  "fingerprint_versioning": {
+    "old": {
+      "version": "v1",
+      "domain": "LEGACY_UNDOMAINED_CANONICAL_JSON_SHA256_V1",
+      "field_count": 19,
+      "input_count": 18,
+      "status": "historical structural verification only"
+    },
+    "new": {
+      "version": "v2",
+      "domain": "cryptohunter.m0.7.full_fill.v2",
+      "algorithm": "SHA-256",
+      "preimage": "UTF-8(domain || 0x00 || NFC(canonical JSON projection))",
+      "input_fields": [
+        "fill_id",
+        "order_id",
+        "environment",
+        "workspace_id",
+        "portfolio_id",
+        "exchange_account_id",
+        "exchange_id",
+        "instrument_id",
+        "instrument_metadata_version",
+        "accepted_source_catalog_snapshot_id",
+        "execution_route_id",
+        "venue_trade_id",
+        "side",
+        "executed_quantity",
+        "execution_price",
+        "executed_at_utc",
+        "fee_kind",
+        "fee_quantity",
+        "fee_asset_reference"
+      ],
+      "excluded_fields": [
+        "fill_fingerprint_sha256"
+      ],
+      "canonicalization": [
+        "exact fact field order is schema attestation; JSON object keys sorted for hashing",
+        "UTF-8",
+        "NFC",
+        "canonical JSON separators comma and colon",
+        "M0.5 canonical decimals",
+        "canonical UTC RFC3339 Z timestamps"
+      ]
+    },
+    "cross_version_verification": "FORBIDDEN: v1 bytes/hash never verify as v2 and v2 never uses the legacy domain"
+  },
+  "legacy_policy": {
+    "classification": "LEGACY_STRUCTURAL_ONLY",
+    "historically_readable": true,
+    "new_admission": "REJECT_FOR_NEW_ADMISSION",
+    "may_be_upgraded_in_place": false,
+    "v2_without_provenance": "DENY",
+    "economic_effect_rule": "A legacy representation cannot independently create an accepted effect; reconciliation to the canonical external key returns replay/conflict."
+  },
+  "snapshot_binding_semantics": {
+    "binding_location": "FILL",
+    "selector": [
+      "instrument_id",
+      "instrument_metadata_version",
+      "accepted_source_catalog_snapshot_id"
+    ],
+    "caller_claim_is_proof": false,
+    "resolution_chain": [
+      "claimed field",
+      "existing CatalogRuntimeAcceptanceAuthority durable history/state resolves exact accepted ASCAT",
+      "future genuine WorkspaceCatalogProjection authority proves workspace and exact member",
+      "future genuine historical Instrument authority resolves exact selector and source tuple"
+    ],
+    "fallbacks": {
+      "latest_snapshot": false,
+      "current_instrument": false,
+      "symbol": false
+    },
+    "membership_rule": "instrument_metadata_version must be a member of the claimed genuine snapshot for the exact instrument_id and exact source tuple; otherwise DENY",
+    "historical_acceptance": "A genuinely accepted ASCAT remains historical provenance after later producer-membership revocation; revocation blocks later admissions according to M0.12 policy but does not rewrite an already accepted historical fact.",
+    "structural_identifier_validation": "AcceptedSourceCatalogSnapshotId requires type(value) is str, prefix ascat_, and a non-empty suffix",
+    "authority_validation": "CatalogRuntimeAcceptanceAuthority resolves the exact genuine snapshot; syntactically valid ascat_fake is not proof",
+    "identifier_syntax_grants_trust": false
+  },
+  "order_snapshot_relationship": {
+    "mode": "FILL_PINNED",
+    "order_snapshot_pin_required": false,
+    "snapshot_equality_required": false,
+    "long_lived_order": "At T2 the Fill binds the exact snapshot carried by the resolved historical Instrument metadata_version, not latest-at-T2 and not automatically T0. If execution legitimately uses the T0 version it binds that version snapshot; if an authority-valid execution binds a newer version it binds that version snapshot.",
+    "metadata_refresh": "does not mutate Order or prior Fill",
+    "replace_order": "new Order follows normal execution scope binding; no implicit snapshot inheritance",
+    "paper": "same FILL_PINNED rule"
+  },
+  "external_trade_dedupe_migration": {
+    "canonical_key": [
+      "environment",
+      "exchange_account_id",
+      "exchange_id",
+      "venue_trade_id"
+    ],
+    "snapshot_in_key": false,
+    "cross_version_rule": "Before any economic mutation, probe one shared version-independent external-key index. Same key + same economics is REPLAY_SUCCESS and retains first canonical fact; same key + different economics is FILL_IDENTITY_CONFLICT with no mutation. Representation version never creates a second key.",
+    "same_trade_duplicate_effect_possible": false,
+    "economics_comparison": "all execution economics are compared independently of representation version; provenance mismatch is conflict/reconciliation, never a second effect",
+    "proof": "Both v1 and v2 normalize to the unchanged external key before effect publication; the single uniqueness decision precedes accepted-history append."
+  },
+  "fill_id_migration": {
+    "policy": "STABLE",
+    "same_execution_fact": "same fill_id is retained when represented as v2",
+    "snapshot_changes_fill_id": false,
+    "conflict_rule": "same fill_id with changed economics or provenance is FILL_IDENTITY_CONFLICT; a different fill_id with the same external key still creates zero duplicate effect"
+  },
+  "workspace_projection_dependency": {
+    "status": "NOT_AVAILABLE",
+    "required_future_interface": {
+      "input": [
+        "workspace_id",
+        "accepted_source_catalog_snapshot_id",
+        "instrument_id",
+        "instrument_metadata_version"
+      ],
+      "prove": [
+        "exact workspace_catalog_projection",
+        "projection.workspace_id",
+        "projection.accepted_source_catalog_snapshot_id",
+        "member instrument_id + instrument_metadata_version",
+        "member source_exchange_id + market_type + venue_symbol + source_metadata_version_id"
+      ]
+    },
+    "caller_supplied_projection_map_is_proof": false,
+    "implemented_by_this_design": false
+  },
+  "catalog_runtime_authority_dependency": {
+    "status": "AVAILABLE",
+    "authority": "CatalogRuntimeAcceptanceAuthority",
+    "single_authority_invariant": "CatalogRuntimeAcceptanceAuthority is the sole AcceptedSourceCatalogSnapshot runtime acceptance owner; no competing Catalog authority may be introduced.",
+    "also_required": [
+      "CatalogAdmissionReceiptAuthority",
+      "AcceptedSourceProducerMembership"
+    ],
+    "identifier_syntax_is_proof": false
+  },
+  "fee_asset_reference_migration": {
+    "structural_rule": {
+      "classification": "RAW_STRUCTURAL_FILL_V2_SHAPE_ONLY",
+      "NONE": "fee_quantity == \"0\" and fee_asset_reference == null",
+      "CHARGE": [
+        "fee_quantity is positive",
+        "fee_asset_reference is non-null",
+        "fee_asset_reference has the exact closed AssetReference fields",
+        "mapping_status is EXACT or EXPLICIT_ALIAS",
+        "all AssetReference string fields are canonical and non-empty"
+      ],
+      "namespace_comparison": "NONE",
+      "forbidden_comparisons": [
+        "fee_asset_reference.asset_namespace == Fill.exchange_id",
+        "fee_asset_reference.asset_namespace == historical Instrument.source_exchange_id"
+      ],
+      "reason": "The raw-only validator has no authority context. Execution-namespace equality is stale, while source-namespace equality requires genuine historical Instrument resolution."
+    },
+    "semantic_rule": {
+      "classification": "TRUSTED_ECONOMIC_FILL_V2_SEMANTIC_RULE",
+      "owner": "future M0.7 FullFillAuthority",
+      "rule": "For CHARGE, fee_asset_reference.asset_namespace == resolved historical Instrument.source_exchange_id and the exact fee asset resolves in that source namespace under M0.5.",
+      "implementation_allowed_now": false
+    },
+    "old_rule": "fee_asset_reference.asset_namespace == Fill.exchange_id",
+    "source_of_namespace": "authority-resolved historical Instrument, never caller execution venue",
+    "third_asset_fee": "LEGAL when the future semantic authority resolves the exact asset in the exact source namespace; the structural validator validates AssetReference shape only",
+    "maker_rebate": "unchanged unsupported fail-closed"
+  },
+  "paper_semantics": {
+    "environment": "PAPER",
+    "source_exchange_id": "binance",
+    "exchange_id": "paper_simulated_venue",
+    "valid_when": "all genuine catalog, projection, Instrument, Order and Fill bindings pass",
+    "fee_asset_namespace": "binance",
+    "source_execution_equality_required": false,
+    "source_namespace_rewrite": false,
+    "proven": true
+  },
+  "live_semantics": {
+    "environment": "LIVE",
+    "source_exchange_id": "binance",
+    "exchange_id": "binance",
+    "valid_when": "all genuine bindings pass",
+    "note": "observed equality is incidental and does not establish a semantic equality rule"
+  },
+  "attack_matrix": [
+    {
+      "attack": "valid-looking/caller-known snapshot identifier only",
+      "result": "DENY",
+      "error": "TRUSTED_CONTEXT_FAILURE"
+    },
+    {
+      "attack": "genuine snapshot lacks exact Instrument metadata version",
+      "result": "DENY",
+      "error": "INSTRUMENT_METADATA_INVALID"
+    },
+    {
+      "attack": "projection workspace A, Fill/Order workspace B",
+      "result": "DENY",
+      "error": "TRUSTED_CONTEXT_FAILURE"
+    },
+    {
+      "attack": "correct instrument_id, wrong metadata_version",
+      "result": "DENY",
+      "error": "INSTRUMENT_METADATA_INVALID"
+    },
+    {
+      "attack": "genuine snapshot but member source tuple mismatch",
+      "result": "DENY",
+      "error": "INSTRUMENT_IDENTITY_COLLISION"
+    },
+    {
+      "attack": "latest snapshot fallback",
+      "result": "DENY",
+      "error": "TRUSTED_CONTEXT_FAILURE"
+    },
+    {
+      "attack": "current Instrument fallback",
+      "result": "DENY",
+      "error": "TRUSTED_CONTEXT_FAILURE"
+    },
+    {
+      "attack": "later producer membership revocation rewrites accepted historical Fill",
+      "result": "DENY_RETROACTIVE_REWRITE",
+      "error": "TRUSTED_CONTEXT_FAILURE"
+    }
+  ],
+  "error_taxonomy": {
+    "policy": "Reuse current frozen vocabulary; do not add provenance-specific aliases until implementation proves an uncovered caller-visible distinction.",
+    "MALFORMED_FILL": "v2 shape/type/canonical encoding/fingerprint failure including missing snapshot field",
+    "TRUSTED_CONTEXT_FAILURE": "missing/non-authoritative snapshot, projection/history absence, cross-scope, or unresolved reference",
+    "INSTRUMENT_METADATA_INVALID": "missing/wrong metadata version in exact historical source chain",
+    "INSTRUMENT_IDENTITY_COLLISION": "source identity tuple conflicts",
+    "FILL_IDENTITY_CONFLICT": "same fill_id/external key conflicts in economics, provenance, or representation"
+  },
+  "trust_boundary": {
+    "raw_structural_fill_v2": {
+      "owner": "pure structural validator",
+      "production_symbol": "bot_core.execution.m07_fill_validation.validate_structural_fill",
+      "inputs": [
+        "20-field raw Fill only"
+      ],
+      "input_mode": "RAW_FILL_ONLY",
+      "may_prove": [
+        "closed field set",
+        "field types",
+        "canonical ID/string/decimal/timestamp forms",
+        "AcceptedSourceCatalogSnapshotId structural prefix grammar",
+        "fee NONE/CHARGE structural shape",
+        "AssetReference structural closed schema",
+        "allowed mapping_status",
+        "v2 fingerprint integrity"
+      ],
+      "must_not_prove": [
+        "snapshot acceptance",
+        "snapshot existence",
+        "accepted snapshot existence",
+        "snapshot authority",
+        "WorkspaceCatalogProjection membership",
+        "historical Instrument membership",
+        "source_exchange_id equality",
+        "fee source namespace correctness",
+        "Order authority",
+        "economic admission"
+      ],
+      "authority_context_consumed": false,
+      "boundary_migration_rule": "The current function is a pure raw-Fill validator and does not consume authority context; v2 migration must not silently change that boundary."
+    },
+    "trusted_economic_fill_v2": {
+      "future_owner": "M0.7 FullFillAuthority",
+      "consumes": [
+        "structurally valid Fill v2",
+        "genuine Order context",
+        "CatalogRuntimeAcceptanceAuthority",
+        "genuine WorkspaceCatalogProjection authority",
+        "genuine historical Instrument authority"
+      ],
+      "must_prove": [
+        "accepted_source_catalog_snapshot_id genuine",
+        "exact Instrument history resolution",
+        "workspace/source tuple binding",
+        "fee_asset_reference.asset_namespace == resolved historical Instrument.source_exchange_id",
+        "external trade dedupe",
+        "Fill/Order binding"
+      ]
+    },
+    "complete_accepted_fill_history": {
+      "future_owner": "M0.7 FullFillAuthority",
+      "consumes": [
+        "accepted trusted economic Fill v2 facts only"
+      ],
+      "proves": "Core-owned deduplicated ordered Fill history; caller list/map is never authority"
+    }
+  },
+  "order_authority_impact": {
+    "snapshot_pin_required": false,
+    "journal_migration_required": false,
+    "disposition": "NO_ORDER_JOURNAL_MIGRATION",
+    "reason": "provenance is Fill-pinned; existing Order execution scope and Fill relationship remain required but no Order event field/fingerprint changes"
+  },
+  "m08_impact": {
+    "status": "NOT_AVAILABLE",
+    "future_dependency": "M0.8 consumes genuine M0.7 FullFillAuthority fact",
+    "raw_fill_resolution_by_m08": false,
+    "dependency_fingerprint_migration": "required later after v2 implementation; M0.8 must not own Fill admission"
+  },
+  "test_oracle_migration": {
+    "later_not_this_iteration": {
+      "tests/architecture/test_m07_fill_v2_structural_validation.py": [
+        "20-field closed shape and types",
+        "canonicalization and v2 fingerprint",
+        "fee NONE/CHARGE and AssetReference structural shape only",
+        "legacy-v1 / v2 discrimination"
+      ],
+      "future FullFillAuthority semantic tests": [
+        "CatalogRuntimeAcceptanceAuthority/WCP/historical Instrument/Order binding",
+        "genuine historical Instrument resolution",
+        "source-resolved fee namespace equality",
+        "external trade dedupe and accepted history"
+      ],
+      "tests/architecture/test_m07_accepted_full_fill_authority.py": "split existing oracle responsibilities: raw structural assertions remain raw-only; future semantic assertions require genuine authorities",
+      "tests/architecture/test_cryptohunter_commands_events_order_lifecycle_and_idempotency.py": "migrate Full Fill fixture and preserve external dedupe key only when the corresponding layer exists",
+      "tests/architecture/test_m07_order_authority.py": "consume genuine accepted Fill only; unchanged Order journal",
+      "M0.8 dependency fingerprints": "point only to genuine M0.7 accepted v2 fact after semantic authority exists"
+    },
+    "this_iteration": [
+      "tests/architecture/test_m07_fill_contract_migration_design_discovery.py"
+    ]
+  },
+  "implementation_preconditions": [
+    "preserve the raw-Fill-only structural validator boundary",
+    "implement the exact 20-field closed v2 schema and frozen fingerprint domain",
+    "validate fee shape without comparing asset_namespace to execution or source namespace",
+    "discriminate legacy v1 from v2 and never admit legacy as v2",
+    "do not implement semantic admission until genuine WorkspaceCatalogProjection and historical Instrument authorities exist",
+    "retain the existing CatalogRuntimeAcceptanceAuthority as the single catalog authority"
+  ],
+  "candidate_implementation_allowed": true,
+  "next_stage": "M07_STRUCTURAL_V2_CONTRACT_AND_VALIDATOR_IMPLEMENTATION_CANDIDATE_ONLY (semantic FullFillAuthority admission remains blocked)",
+  "preserved_status": {
+    "M0.7_OrderAuthority_kernel": "ACCEPTED_AVAILABLE",
+    "M0.7_structural_Full_Fill_foundation": "CLOSED_V1",
+    "M0.7_FullFillAuthority": "NOT_AVAILABLE",
+    "M0.7_semantic_SUBMIT_ORDER": "BLOCKED_UPSTREAM",
+    "WorkspaceCatalogProjection_authority": "NOT_AVAILABLE",
+    "CatalogRuntimeAcceptanceAuthority": "AVAILABLE",
+    "production_M0.5": "NOT_AVAILABLE",
+    "M0.8": "NOT_AVAILABLE",
+    "C25": "BLOCKED",
+    "S9D": "OPEN"
+  },
+  "candidate_implementation_scope": {
+    "permission_scope": "STRUCTURAL_V2_CONTRACT_AND_VALIDATOR_ONLY",
+    "allowed": [
+      "canonical v2 contract schema",
+      "pure structural v2 validator",
+      "v2 fingerprint helper",
+      "structural tests",
+      "legacy-v1 / v2 discrimination"
+    ],
+    "forbidden": [
+      "source-resolved fee namespace acceptance",
+      "genuine snapshot resolution",
+      "WorkspaceCatalogProjection resolution",
+      "historical Instrument resolution",
+      "FullFillAuthority admission",
+      "economic publication"
+    ],
+    "semantic_admission_implementation_allowed": false,
+    "semantic_fee_namespace_validation_implementation_allowed": false,
+    "historical_instrument_resolution_in_structural_validator": false
+  }
+}
