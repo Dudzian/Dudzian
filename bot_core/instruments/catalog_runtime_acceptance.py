@@ -27,6 +27,10 @@ from bot_core.instruments.catalog_projection_oracle import (
     validate_accepted_source_catalog_snapshot,
 )
 from bot_core.instruments.core_time import PRODUCTION_CORE_CLOCK
+from bot_core.instruments.catalog_admission_receipt import (
+    CatalogAdmissionReceiptAuthority,
+    catalog_admission_storage_commitment,
+)
 from bot_core.instruments.source_producer_membership import (
     SourceProducerMembershipAuthority,
     SQLiteMembershipCarrier,
@@ -36,6 +40,8 @@ from bot_core.instruments.source_producer_membership import (
 
 _DOMAIN = "cryptohunter.catalog_runtime_acceptance.production.v1"
 _METADATA_FP_DOMAIN = "cryptohunter.m0.5.source-product-metadata.v1"
+CATALOG_ADMISSION_CATALOG_COMMITMENT_DOMAIN = "CRYPTOHUNTER_M0_12_CATALOG_SNAPSHOT_COMMITMENT_V1"
+CATALOG_ADMISSION_MEMBERSHIP_COMMITMENT_DOMAIN = "CRYPTOHUNTER_M0_12_CATALOG_MEMBERSHIP_COMMITMENT_V1"
 _ID = re.compile(r"[A-Za-z0-9._:-]+\Z")
 _DECIMAL = re.compile(r"(?:0|[1-9]\d*)(?:\.\d+)?\Z")
 _NORMALIZED_PRODUCT_FIELDS = frozenset({
@@ -46,11 +52,39 @@ _NORMALIZED_PRODUCT_FIELDS = frozenset({
 _REQUIRED_CATALOG_TABLES = frozenset({
     "accepted_catalog_snapshots", "catalog_authority_head",
     "source_metadata_versions", "source_metadata_authority_head",
+    "catalog_snapshot_admission_receipts",
 })
 
 
 def _canonical(value: object) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
+
+
+def _commitment(domain: str, value: Mapping[str, Any]) -> str:
+    return hashlib.sha256((domain + "\x00" + _canonical(value)).encode("utf-8")).hexdigest()
+
+
+def catalog_admission_catalog_commitment(ascat: Mapping[str, Any]) -> str:
+    """Commit to the exact frozen public canonical Catalog authority fact."""
+    if set(ascat) != SOURCE_FIELDS:
+        raise ValueError("canonical ascat required")
+    return _commitment(CATALOG_ADMISSION_CATALOG_COMMITMENT_DOMAIN, ascat)
+
+
+def catalog_admission_membership_commitment(ascat: Mapping[str, Any]) -> str:
+    """Commit to the exact producer evidence used to admit an ascat."""
+    names = (
+        "accepted_source_producer_membership_id", "source_producer_generation",
+        "source_producer_membership_fingerprint", "source_adapter_family_id",
+        "source_adapter_implementation_id", "source_adapter_release_id",
+        "source_adapter_version",
+    )
+    if not SOURCE_FIELDS.issuperset(names) or any(name not in ascat for name in names):
+        raise ValueError("canonical membership evidence required")
+    return _commitment(
+        CATALOG_ADMISSION_MEMBERSHIP_COMMITMENT_DOMAIN,
+        {name: ascat[name] for name in names},
+    )
 
 
 def _digest(domain: str, value: Mapping[str, Any], excluded: set[str]) -> str:
@@ -260,15 +294,22 @@ def _normalize_binance(raw: object) -> _Observation | None:
 class CatalogRuntimeAcceptanceAuthority:
     """Production authority. ``fetch_catalog_once`` is the sole ingestion entrypoint."""
 
-    __slots__ = ("_membership", "_path")
+    __slots__ = ("_membership", "_receipts", "_path")
 
-    def __init__(self, membership_authority: SourceProducerMembershipAuthority) -> None:
+    def __init__(
+        self,
+        membership_authority: SourceProducerMembershipAuthority,
+        catalog_admission_receipt_authority: CatalogAdmissionReceiptAuthority,
+    ) -> None:
         if type(membership_authority) is not SourceProducerMembershipAuthority:
             raise TypeError("exact production membership authority required")
         carrier = membership_authority._carrier
         if type(carrier) is not SQLiteMembershipCarrier:
             raise TypeError("exact production membership carrier required")
+        if type(catalog_admission_receipt_authority) is not CatalogAdmissionReceiptAuthority:
+            raise TypeError("exact production Catalog admission receipt authority required")
         self._membership = membership_authority
+        self._receipts = catalog_admission_receipt_authority
         self._path = carrier.path
         self._initialize()
 
@@ -315,6 +356,7 @@ class CatalogRuntimeAcceptanceAuthority:
                     db.execute("CREATE TABLE source_metadata_versions(source_metadata_sequence INTEGER PRIMARY KEY, source_metadata_version_id TEXT UNIQUE NOT NULL, source_exchange_id TEXT NOT NULL, market_type TEXT NOT NULL, venue_symbol TEXT NOT NULL, metadata_version INTEGER NOT NULL, introduced_by_snapshot_id TEXT NOT NULL, canonical_record TEXT NOT NULL, previous_metadata_digest TEXT NOT NULL, metadata_record_digest TEXT UNIQUE NOT NULL, UNIQUE(source_exchange_id,market_type,venue_symbol,metadata_version))")
                     db.execute("CREATE TABLE source_metadata_authority_head(singleton INTEGER PRIMARY KEY CHECK(singleton=1), committed_sequence INTEGER NOT NULL, committed_digest TEXT NOT NULL, last_metadata_version_id TEXT)")
                     db.execute("CREATE TABLE accepted_catalog_snapshots(snapshot_sequence INTEGER PRIMARY KEY, accepted_source_catalog_snapshot_id TEXT UNIQUE NOT NULL, source_exchange_id TEXT NOT NULL, market_type TEXT NOT NULL, upstream_snapshot_or_retrieval_id TEXT NOT NULL, normalized_content_sha256 TEXT NOT NULL, canonical_record TEXT NOT NULL, previous_digest TEXT NOT NULL, record_digest TEXT UNIQUE NOT NULL, UNIQUE(source_exchange_id,market_type,upstream_snapshot_or_retrieval_id))")
+                    db.execute("CREATE TABLE catalog_snapshot_admission_receipts(accepted_source_catalog_snapshot_id TEXT PRIMARY KEY, catalog_admission_receipt_id TEXT UNIQUE NOT NULL, catalog_commitment_sha256 TEXT NOT NULL, membership_commitment_sha256 TEXT NOT NULL, receipt_mac TEXT NOT NULL)")
                     db.execute("CREATE TABLE catalog_authority_head(singleton INTEGER PRIMARY KEY CHECK(singleton=1), committed_sequence INTEGER NOT NULL, committed_digest TEXT NOT NULL, last_snapshot_id TEXT)")
                     db.execute("INSERT INTO catalog_authority_metadata VALUES(1,?,1)", (_DOMAIN,))
                     db.execute("INSERT INTO source_metadata_authority_head VALUES(1,0,?,NULL)", ("0" * 64,))
@@ -340,8 +382,18 @@ class CatalogRuntimeAcceptanceAuthority:
             raise ValueError("CATALOG_AUTHORITY_DOMAIN_MISMATCH")
 
     @staticmethod
-    def _snapshot_digest(sequence: int, canonical: str, previous: str) -> str:
-        return hashlib.sha256((f"{_DOMAIN}\n{sequence}\n{previous}\n{canonical}").encode()).hexdigest()
+    def _snapshot_digest(
+        sequence: int, canonical: str, previous: str, receipt_id: str = "",
+        catalog_commitment: str = "", membership_commitment: str = "", receipt_mac: str = "",
+    ) -> str:
+        envelope = _canonical({
+            "snapshot_sequence": sequence, "canonical_ascat": json.loads(canonical),
+            "catalog_admission_receipt_id": receipt_id,
+            "catalog_commitment_sha256": catalog_commitment,
+            "membership_commitment_sha256": membership_commitment,
+            "receipt_mac": receipt_mac, "previous_snapshot_digest": previous,
+        })
+        return hashlib.sha256((_DOMAIN + "\nadmitted-snapshot-v1\n" + envelope).encode()).hexdigest()
 
     @staticmethod
     def _metadata_digest(
@@ -360,6 +412,29 @@ class CatalogRuntimeAcceptanceAuthority:
             "canonical_record,previous_digest,record_digest "
             "FROM accepted_catalog_snapshots ORDER BY snapshot_sequence"
         ).fetchall()
+        relation_rows = db.execute(
+            "SELECT accepted_source_catalog_snapshot_id,catalog_admission_receipt_id,"
+            "catalog_commitment_sha256,membership_commitment_sha256,receipt_mac "
+            "FROM catalog_snapshot_admission_receipts"
+        ).fetchall()
+        if len(relation_rows) != len(snapshot_rows):
+            raise ValueError("CORRUPT_CATALOG_AUTHORITY")
+        relations = {row[0]: row[1:] for row in relation_rows}
+        if len(relations) != len(relation_rows):
+            raise ValueError("CORRUPT_CATALOG_AUTHORITY")
+        try:
+            receipt_items = self._receipts.receipts()
+            finalization_items = self._receipts.finalizations()
+        except Exception:
+            raise ValueError("CORRUPT_CATALOG_AUTHORITY") from None
+        receipts = {item.receipt_id: item for item in receipt_items}
+        finalizations = {item.receipt_id: item for item in finalization_items}
+        relation_receipt_ids = {row[1] for row in relation_rows}
+        if (
+            len(finalizations) != len(finalization_items)
+            or set(finalizations) != relation_receipt_ids
+        ):
+            raise ValueError("CORRUPT_CATALOG_AUTHORITY")
         if snapshot_head is None or snapshot_head[0] != len(snapshot_rows):
             raise ValueError("CORRUPT_CATALOG_AUTHORITY")
         previous = "0" * 64
@@ -373,7 +448,17 @@ class CatalogRuntimeAcceptanceAuthority:
                 sequence, row_snapshot_id, row_exchange_id, row_market_type,
                 row_retrieval_id, row_content_hash, canonical, row_previous, digest,
             ) = row
-            if sequence != expected or row_previous != previous or digest != self._snapshot_digest(sequence, canonical, previous):
+            relation = relations.get(row_snapshot_id)
+            if relation is None:
+                raise ValueError("CORRUPT_CATALOG_AUTHORITY")
+            receipt_id, catalog_commitment, membership_commitment, receipt_mac = relation
+            if (
+                sequence != expected or row_previous != previous
+                or digest != self._snapshot_digest(
+                    sequence, canonical, previous, receipt_id, catalog_commitment,
+                    membership_commitment, receipt_mac,
+                )
+            ):
                 raise ValueError("CORRUPT_CATALOG_AUTHORITY")
             raw = json.loads(canonical)
             if not validate_accepted_source_catalog_snapshot(raw):
@@ -400,6 +485,32 @@ class CatalogRuntimeAcceptanceAuthority:
             cutoff = None if terminal is None else max(_time(terminal.effective_at_utc), _time(terminal.authority_admitted_at_utc))
             identity = {name: raw[name] for name in ("source_exchange_id", "market_type", "source_adapter_family_id", "source_adapter_implementation_id", "source_adapter_release_id", "source_adapter_version")}
             if (grant is None or accepted_at is None or grant.producer_generation != raw["source_producer_generation"] or grant.content_fingerprint != raw["source_producer_membership_fingerprint"] or not _exact(grant, identity) or _time(grant.effective_at_utc) > accepted_at or _time(grant.authority_admitted_at_utc) > accepted_at or (cutoff is not None and cutoff <= accepted_at)):
+                raise ValueError("CORRUPT_CATALOG_AUTHORITY")
+            receipt = receipts.get(receipt_id)
+            expected_catalog = catalog_admission_catalog_commitment(raw)
+            expected_membership = catalog_admission_membership_commitment(raw)
+            storage = {
+                "accepted_source_catalog_snapshot_id": row_snapshot_id,
+                "receipt_id": receipt_id,
+                "catalog_commitment_sha256": catalog_commitment,
+                "membership_commitment_sha256": membership_commitment,
+                "receipt_mac": receipt_mac,
+                "snapshot_sequence": sequence,
+                "snapshot_record_digest": digest,
+            }
+            finalization = finalizations.get(receipt_id)
+            if (
+                receipt is None or not self._receipts.verify(receipt)
+                or finalization is None
+                or finalization.catalog_storage_commitment_sha256
+                != catalog_admission_storage_commitment(storage)
+                or receipt.catalog_commitment_sha256 != expected_catalog
+                or receipt.membership_commitment_sha256 != expected_membership
+                or receipt.accepted_at_utc != raw["effective_at_utc"]
+                or catalog_commitment != expected_catalog
+                or membership_commitment != expected_membership
+                or receipt.receipt_mac != receipt_mac
+            ):
                 raise ValueError("CORRUPT_CATALOG_AUTHORITY")
             identifier = raw["accepted_source_catalog_snapshot_id"]
             if identifier in snapshots_by_id:
@@ -474,13 +585,22 @@ class CatalogRuntimeAcceptanceAuthority:
                 result = self._accept_locked(db, producer, observation)
                 if result is None:
                     db.rollback()
-                else:
-                    db.commit()
-                return result
+                    return None
+                snapshot, receipt, storage = result
+                db.commit()
+            if receipt is not None:
+                self._receipts.finalize(receipt, storage)
+            # The post-commit replay is the acknowledgement boundary.  A crash
+            # before finalization leaves a deliberately fail-closed Catalog-ahead row.
+            return next(
+                item for item in self.snapshots()
+                if item.accepted_source_catalog_snapshot_id
+                == snapshot.accepted_source_catalog_snapshot_id
+            )
         except (OSError, RuntimeError, ValueError, TypeError, json.JSONDecodeError, sqlite3.Error):
             return None
 
-    def _accept_locked(self, db: sqlite3.Connection, producer: _BinanceSpotCatalogProducer, observation: _Observation) -> AcceptedSourceCatalogSnapshot | None:
+    def _accept_locked(self, db: sqlite3.Connection, producer: _BinanceSpotCatalogProducer, observation: _Observation):
         self._validate_catalog_domain(db)
         snapshots = self._replay(db)
         state = self._membership._replay(SQLiteMembershipCarrier._validated_rows(db))
@@ -502,7 +622,8 @@ class CatalogRuntimeAcceptanceAuthority:
             if existing_row[1] != content_hash:
                 return None
             existing = json.loads(existing_row[0])
-            return AcceptedSourceCatalogSnapshot(**{**existing, "member_source_product_metadata_versions": tuple(existing["member_source_product_metadata_versions"])})
+            snapshot = AcceptedSourceCatalogSnapshot(**{**existing, "member_source_product_metadata_versions": tuple(existing["member_source_product_metadata_versions"])})
+            return snapshot, None, None
         sequence = len(snapshots) + 1
         snapshot_id = f"ascat_{sequence:020d}"
         members: list[dict[str, Any]] = []
@@ -528,6 +649,15 @@ class CatalogRuntimeAcceptanceAuthority:
         record = {"accepted_source_catalog_snapshot_id": snapshot_id, **material, "content_fingerprint": fingerprint}
         if set(record) != SOURCE_FIELDS or not validate_accepted_source_catalog_snapshot(record) or any(set(member) != SOURCE_MEMBER_FIELDS for member in members):
             raise ValueError("INVALID_CANONICAL_SOURCE_SNAPSHOT")
+        catalog_commitment = catalog_admission_catalog_commitment(record)
+        membership_commitment = catalog_admission_membership_commitment(record)
+        # PREPARE authenticates this immutable candidate but verify() remains false.
+        # Only post-Catalog-commit finalization can turn it into admission authority.
+        receipt = self._receipts.prepare(
+            catalog_commitment_sha256=catalog_commitment,
+            membership_commitment_sha256=membership_commitment,
+            accepted_at_utc=now,
+        )
         metadata_head = db.execute("SELECT committed_sequence,committed_digest FROM source_metadata_authority_head WHERE singleton=1").fetchone()
         metadata_sequence, metadata_previous = metadata_head
         for metadata_id, key, version, metadata_record in pending_metadata:
@@ -541,11 +671,33 @@ class CatalogRuntimeAcceptanceAuthority:
             db.execute("UPDATE source_metadata_authority_head SET committed_sequence=?,committed_digest=?,last_metadata_version_id=? WHERE singleton=1", (metadata_sequence, metadata_previous, pending_metadata[-1][0]))
         canonical = _canonical(record)
         head = db.execute("SELECT committed_digest FROM catalog_authority_head WHERE singleton=1").fetchone()[0]
-        digest = self._snapshot_digest(sequence, canonical, head)
+        db.execute(
+            "INSERT INTO catalog_snapshot_admission_receipts VALUES(?,?,?,?,?)",
+            (snapshot_id, receipt.receipt_id, catalog_commitment, membership_commitment,
+             receipt.receipt_mac),
+        )
+        digest = self._snapshot_digest(
+            sequence, canonical, head, receipt.receipt_id, catalog_commitment,
+            membership_commitment, receipt.receipt_mac,
+        )
         db.execute("INSERT INTO accepted_catalog_snapshots VALUES(?,?,?,?,?,?,?,?,?)", (sequence, snapshot_id, *scope, observation.retrieval_id, content_hash, canonical, head, digest))
         db.execute("UPDATE catalog_authority_head SET committed_sequence=?,committed_digest=?,last_snapshot_id=? WHERE singleton=1", (sequence, digest, snapshot_id))
-        self._replay(db)
-        return AcceptedSourceCatalogSnapshot(**{**record, "member_source_product_metadata_versions": tuple(members)})
+        storage = {
+            "accepted_source_catalog_snapshot_id": snapshot_id,
+            "receipt_id": receipt.receipt_id,
+            "catalog_commitment_sha256": catalog_commitment,
+            "membership_commitment_sha256": membership_commitment,
+            "receipt_mac": receipt.receipt_mac,
+            "snapshot_sequence": sequence,
+            "snapshot_record_digest": digest,
+        }
+        return (
+            AcceptedSourceCatalogSnapshot(**{
+                **record, "member_source_product_metadata_versions": tuple(members)
+            }),
+            receipt,
+            storage,
+        )
 
     def snapshots(self) -> tuple[AcceptedSourceCatalogSnapshot, ...]:
         with self._connect() as db:
@@ -560,4 +712,10 @@ class CatalogRuntimeAcceptanceAuthority:
             return tuple(SourceProductMetadataVersion(**json.loads(row[0])) for row in rows)
 
 
-__all__ = ["AcceptedSourceCatalogSnapshot", "CatalogRuntimeAcceptanceAuthority", "SourceProductMetadataVersion"]
+__all__ = [
+    "AcceptedSourceCatalogSnapshot", "CatalogRuntimeAcceptanceAuthority",
+    "SourceProductMetadataVersion", "catalog_admission_catalog_commitment",
+    "catalog_admission_membership_commitment",
+    "CATALOG_ADMISSION_CATALOG_COMMITMENT_DOMAIN",
+    "CATALOG_ADMISSION_MEMBERSHIP_COMMITMENT_DOMAIN",
+]
