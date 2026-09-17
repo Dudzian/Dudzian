@@ -1,0 +1,449 @@
+{
+  "artifact": "M05_CRYPTOHUNTER_ACCOUNT_AUTHORITY_CONTRACT_DESIGN",
+  "iteration": "CONTRACT_DESIGN_FREEZE_ONLY",
+  "repository_head_examined": "2ab2bb37a2b27012e8332bedbc0e6ad07dbb8c01",
+  "provenance": {
+    "discovery_commit_supplied": "f8e8e665e0117d036f112bde8a10e662646ecdad",
+    "supplied_commit_available": false,
+    "current_tree_discovery_artifact": "m05_cryptohunter_account_authority_discovery.json",
+    "discovery_fact": "CryptoHunterAccountAuthority, genuine resolver, and genuine writer are NOT_FOUND; M0.11 durable current-record carrier is FOUND",
+    "mode": "CURRENT_TREE_PLUS_PRIOR_DISCOVERY",
+    "formal_authority_status_minted": false,
+    "rule": "Design evidence cannot mint ACCEPTED or AVAILABLE and this artifact does not implement authority."
+  },
+  "preserved_entity_contract": {
+    "entity": "CryptoHunterAccount",
+    "id_field": "account_id",
+    "id_grammar": "acct_<canonical lowercase UUIDv7>",
+    "parent": "none",
+    "persistent": true,
+    "secret_policy": "must not contain secrets",
+    "syntax_grants_authority": false
+  },
+  "root_of_trust": {
+    "question": "Who may create the first genuine CryptoHunterAccount?",
+    "requirements": [
+      "non-caller-mintable trust source",
+      "explicit production/test separation",
+      "replay/idempotency semantics",
+      "restart-verifiable provenance"
+    ],
+    "models": {
+      "A_installation_bootstrap_root_authority": "NOT_VIABLE_ON_CURRENT_EVIDENCE: bootstrap machinery exists, but no canonical contract delegates account admission to it or binds its consumed proof to a first account",
+      "B_authenticated_product_owner_operator_authority": "NOT_VIABLE_ON_CURRENT_EVIDENCE: OperatorIdentity is account-scoped/nearby and cannot authorize creation of the account that would establish its own trust scope",
+      "C_deployment_admin_authority": "NOT_VIABLE_ON_CURRENT_EVIDENCE: no canonical deployment administrator identity, credential, admission operation, or durable provenance is assigned account creation",
+      "D_external_saas_account_service_authority": "NOT_VIABLE_ON_CURRENT_EVIDENCE: CryptoHunterAccount is a SaaS/customer-account candidate, but no external service protocol, issuer key, audience, replay rule, or restart proof exists",
+      "E_DESIGN_BLOCKED": "SELECTED"
+    },
+    "selected_model": "DESIGN_BLOCKED",
+    "self_bootstrap": "FORBIDDEN",
+    "caller_supplied_account_id_can_become_genuine": false,
+    "status": "DESIGN_BLOCKED"
+  },
+  "accepted_record": {
+    "status": "DESIGN_BLOCKED",
+    "reason": "An exact admission_provenance_reference and authentication binding cannot be typed or validated before selecting a genuine root actor and durability/authentication authority; freezing placeholders would invent authority.",
+    "required_semantics_not_schema": [
+      "authority-minted accepted_account_record_id",
+      "authority-minted account_id",
+      "authority-global monotonic generation",
+      "authority commit time admitted_at_utc",
+      "independently verifiable admission provenance reference",
+      "predecessor/head binding in selected history model",
+      "authenticated canonical-content binding"
+    ],
+    "excluded_as_unnecessary_or_unproven": [
+      "caller-selected identifiers",
+      "account profile data",
+      "secrets",
+      "parent binding",
+      "invented lifecycle status"
+    ],
+    "PersistentEntityIdentityProjection_is_accepted_fact": false
+  },
+  "id_minting": {
+    "account_id_owner": "future genuine CryptoHunterAccountAuthority only",
+    "algorithm": "canonical lowercase UUIDv7 using authority-owned entropy/clock source; random UUIDv7, not request-derived",
+    "accepted_account_record_id_owner": "future genuine authority only; exact grammar DESIGN_BLOCKED",
+    "caller_may_choose": [],
+    "caller_fields_forbidden": [
+      "account_id",
+      "accepted_account_record_id",
+      "generation",
+      "authority metadata"
+    ],
+    "status": "PARTIALLY_FROZEN"
+  },
+  "admission": {
+    "status": "DESIGN_BLOCKED",
+    "request_boundary": "typed closed CreateCryptoHunterAccount request, never a raw mapping or accepted fact",
+    "candidate_request_fields": {
+      "command_id": "caller-minted canonical command UUIDv7 identity",
+      "idempotency_key": "must exactly equal command_id",
+      "environment_domain": "explicit TEST or PRODUCTION authority domain",
+      "correlation_id": "optional tracing only; excluded from semantic fingerprint",
+      "causation_id": "optional, semantic when present",
+      "trusted_actor_proof": "required independent proof; exact type DESIGN_BLOCKED"
+    },
+    "request_must_not_contain": [
+      "account_id",
+      "accepted_account_record_id",
+      "generation",
+      "authority metadata",
+      "secret material"
+    ],
+    "semantic_request_identity": "authentication domain + command_id + canonical request fingerprint excluding only correlation_id",
+    "authority_output": "a typed accepted account fact only after all admission gates commit",
+    "failure_taxonomy": [
+      "INVALID_REQUEST",
+      "UNSUPPORTED_ENVIRONMENT_DOMAIN",
+      "UNAUTHENTICATED_ACTOR",
+      "UNAUTHORIZED_ACTOR",
+      "REPLAY_CONFLICT",
+      "HEAD_CONFLICT",
+      "AUTHORITY_UNAVAILABLE",
+      "DURABILITY_FAILURE",
+      "FRESHNESS_FAILURE"
+    ],
+    "trusted_actor_proof": "must verify independently of the new account; exact issuer/evidence DESIGN_BLOCKED",
+    "circular_proof_allowed": false
+  },
+  "lifecycle": {
+    "status": "DESIGN_FROZEN",
+    "model": "IMMUTABLE_GENESIS_ONLY",
+    "states": [],
+    "decision": "ACTIVE, SUSPENDED, CLOSED, REVOKED, and DELETED are not account-identity states absent product semantics; access and usability belong to independently authoritative grants/policies.",
+    "effects": {
+      "new_Workspace_creation": "requires genuine current account resolution plus future Workspace policy; genesis alone does not authorize creation",
+      "existing_Workspace_usability": "unchanged by account lifecycle because none is defined; governed by its own authorities and access grants",
+      "historical_Workspace_resolution": "continues resolving immutable account genesis",
+      "DeviceInstallation": "no implicit mutation or authorization",
+      "OperatorIdentity": "no implicit mutation or authorization",
+      "LiveAccessGrant": "no implicit mutation or authorization"
+    }
+  },
+  "resolver_model": {
+    "status": "CONTRACT_FROZEN_IMPLEMENTATION_BLOCKED",
+    "resolve_current_account(account_id)": "returns only a genuine authenticated/fresh authority fact derived from verified authority genesis, or NOT_A_GENUINE_ACCOUNT/AUTHORITY_UNAVAILABLE; current equals immutable genesis",
+    "resolve_account_revision(account_id, generation)": "resolves the exact immutable accepted genesis at its authority-global admission generation, or NOT_FOUND; no mutable per-account revision exists",
+    "fallbacks": {
+      "caller_mapping": false,
+      "backup_projection": false,
+      "syntax": false,
+      "M011_carrier": false
+    }
+  },
+  "history_model": {
+    "status": "DESIGN_FROZEN",
+    "evaluated": {
+      "A_immutable_admission_plus_revision_history": "unnecessary without mutable account semantics",
+      "B_immutable_genesis_plus_lifecycle_journal": "rejected because no lifecycle semantics are established",
+      "C_current_plus_external_history": "rejected; ambiguous and insufficient for historical parent proof",
+      "D_no_mutable_account_semantics_after_genesis": "SELECTED",
+      "E_DESIGN_BLOCKED": "not selected for history shape"
+    },
+    "model": "immutable authenticated append-only authority-global admission journal; one immutable genesis per account; no account revisions after genesis",
+    "historical_retention": "indefinite for every account referenced by persistent descendants",
+    "deletion": "no authority-record deletion or ID reuse"
+  },
+  "durability_model": {
+    "status": "DESIGN_BLOCKED",
+    "source_of_genuine_facts": "future authenticated append-only account admission journal plus authenticated head and external non-rollbackable freshness anchor",
+    "current_index": "derived from verified genesis facts and never authoritative alone",
+    "exact_store_schema_backend_and_external_anchor_API": "NOT_FROZEN",
+    "local_SQLite_generation_sufficient": false
+  },
+  "m011_carrier_integration": {
+    "choice": "REUSE_AS_PROJECTION_CARRIER",
+    "display_result": "REUSE",
+    "direction": "CryptoHunterAccountAuthority -> genuine accepted/current fact -> projection adapter -> M0.11 CryptoHunterAccount current record",
+    "authority_store_is_source_of_genuine_facts": true,
+    "M011_role": "derived current identity projection only",
+    "adds_new_domain_facts": false,
+    "restorable_authority": false,
+    "reverse_minting_forbidden": true,
+    "reconciliation_invariant": "Within every M0.11 StateStore contractually designated as a projection target for account X, the CryptoHunterAccount current record must exactly equal the deterministic PersistentEntityIdentityProjection(entity_kind=CryptoHunterAccount, entity_id=X, parent_scope_bindings={}); within a StateStore scoped to acct_A no CryptoHunterAccount row for acct_B may exist. This local invariant does not assert discovery of all device stores.",
+    "mismatch_on_restart": "For a contractually designated target whose gating role is frozen, DENY that target/gate or repair only from already verified authority facts; never choose a newer local timestamp, let M0.11 win, or infer a global all-replica gate."
+  },
+  "immutable_StateStore_identity": {
+    "status": "FOUND",
+    "fields": [
+      "account_id",
+      "device_installation_id",
+      "state_store_identity_fingerprint_sha256"
+    ],
+    "source": "bot_core.persistence.state_store._IDENTITY_FIELDS",
+    "transition_invariant": "all fields remain equal across G -> G+1 or commit fails with immutable store identity changed",
+    "environment_is_field": false
+  },
+  "StateStore_metadata_dimensions": {
+    "status": "FOUND",
+    "fields_observed": [
+      "account_id",
+      "device_installation_id",
+      "state_store_identity_fingerprint_sha256",
+      "environment"
+    ],
+    "environment": {
+      "StateStore_metadata_dimension": true,
+      "allowed_values": [
+        "PAPER",
+        "TESTNET",
+        "LIVE"
+      ],
+      "included_in_state_fingerprint": true,
+      "included_in_transaction_protocol_bindings": true,
+      "proven_part_of_immutable_StateStore_identity": false,
+      "mutability_claim": "NONE: exclusion from _IDENTITY_FIELDS does not by itself prove environment is mutable"
+    },
+    "record_key": {
+      "strategy": "STATE_STORE_SCOPE_GENERATION",
+      "derivation": "state-store:{account_id}:{device_installation_id}:{state_store_identity_fingerprint_sha256}:{protected_freshness_generation}",
+      "uses_environment": false
+    }
+  },
+  "projection_target_partitioning": {
+    "status": "DESIGN_BLOCKED",
+    "proven_cardinality": "one CryptoHunterAccount may have multiple device-scoped/local StateStores because DeviceInstallation is one-to-many and device_installation_id is immutable identity; no environment cardinality is proven",
+    "environment_partition": "NOT_PROVEN",
+    "per_environment_candidate": "NOT_SELECTED / NOT_PROVEN_BY_CURRENT_IDENTITY_CONTRACT",
+    "redteam_same_identity_fields_different_environment": {
+      "same": [
+        "account_id",
+        "device_installation_id",
+        "state_store_identity_fingerprint_sha256"
+      ],
+      "different": [
+        "environment"
+      ],
+      "automatically_two_distinct_StateStore_identities": false,
+      "identity_distinction": "NOT_PROVEN / requires separate contract rule"
+    },
+    "exactly_three_identities_for_one_device_across_PAPER_TESTNET_LIVE": false,
+    "target_discovery": "NOT_FROZEN"
+  },
+  "m011_projection_topology": {
+    "status": "DESIGN_BLOCKED",
+    "reason": "The executable contract proves immutable account/device/fingerprint identity and additional metadata dimensions, but does not select the projection target set, discovery mechanism, gating role, environment partitioning, or multi-device repair policy.",
+    "models": {
+      "A_LOCAL_DEVICE_ONLY": "NOT_SELECTED: local scope exists, but no canonical rule makes only the starting device a target or defines publication ordering",
+      "B_ALL_KNOWN_DEVICE_STORES": "NOT_SELECTED: known-device enumeration, offline-device behavior, and synchronous quorum are not defined",
+      "C_DESIGNATED_PRIMARY_DEVICE_STORE": "NOT_SELECTED: no primary-device designation authority or failover contract exists",
+      "D_PER_ACCOUNT_PER_ENVIRONMENT_PROJECTION_SET": "NOT_SELECTED / NOT_PROVEN_BY_CURRENT_IDENTITY_CONTRACT: environment is metadata/protocol state, not an executable immutable identity field",
+      "E_DERIVED_ASYNCHRONOUS_REPLICA_SET_NOT_REQUIRED_FOR_AUTHORITY_PUBLICATION": "NOT_SELECTED: compatible with derived-carrier direction, but replica-health/conflict and repair delivery policy lack canonical evidence",
+      "F_DESIGN_BLOCKED": "SELECTED"
+    },
+    "selected_topology": "DESIGN_BLOCKED",
+    "multi_device_relation": {
+      "shape": "CryptoHunterAccount -> DeviceInstallation* -> StateStore*",
+      "projection_unit": "NOT_FROZEN: per device, per process, or per local installation is not canonically selected; per-environment targeting is only an unproven candidate, not an existing identity partition",
+      "target_discovery": "NOT_FROZEN"
+    },
+    "authority_resolver_publication_gate": {
+      "status": "DESIGN_BLOCKED",
+      "rule": "Authority availability must not accidentally mean all derived replicas are healthy. Only targets whose scope and gating role are selected by a future topology may participate in this gate.",
+      "requires_every_device_projection_current": false,
+      "reason_for_false": "No ALL_KNOWN_DEVICE_STORES topology or offline-device semantics is selected; this is not permission to publish while silently ignoring conflict."
+    },
+    "projection_replica_health": {
+      "status": "DESIGN_BLOCKED",
+      "offline_scenario": "acct_A genuine; dev_1 current; dev_2 offline/stale -> effect on global resolver NOT_FROZEN",
+      "online_conflict_scenario": "dev_1 current; dev_2 online/stale or conflicting -> MUST NOT be silently ignored; repairable-replica versus security-failure classification NOT_FROZEN",
+      "process_start_order_may_decide": false,
+      "stale_remote_projection_silently_ignored": false
+    },
+    "projection_repair_permission": {
+      "source": "already verified genuine CryptoHunterAccount authority facts only",
+      "M011_to_authority_repair": "FORBIDDEN",
+      "scope": "DESIGN_BLOCKED: local-only, all reachable replicas, or queued asynchronous repair is not selected"
+    },
+    "authority_domain_to_StateStore_environment_mapping": {
+      "status": "DESIGN_BLOCKED",
+      "authority_domains": [
+        "TEST",
+        "PRODUCTION"
+      ],
+      "StateStore_environments": [
+        "PAPER",
+        "TESTNET",
+        "LIVE"
+      ],
+      "PRODUCTION_automatically_equals_LIVE": false,
+      "TEST_automatically_equals_PAPER_and_TESTNET": false,
+      "rule": "No target is eligible through an inferred mapping: environment is metadata/protocol state, and the current contract proves neither a Store-identity partition nor an account-authority-domain mapping."
+    },
+    "local_extra_row_invariant": "Within metadata scoped to acct_A, every CryptoHunterAccount current record entity_id must equal StateStoreMetadata.account_id == acct_A; acct_B is rejected locally.",
+    "global_inventory_claim": "FORBIDDEN: the local invariant does not prove the authority knows every M0.11 row on every device"
+  },
+  "authentication": {
+    "status": "DESIGN_BLOCKED",
+    "required_model": "keyed authenticated canonical authority records, predecessor/head, domain and generation; HMAC-SHA-256 is a repository-established candidate, not selected without a key owner",
+    "public_SHA_role": "structural fingerprint only; never authenticity",
+    "authentication_domain": "must bind product, CryptoHunterAccountAuthority schema/version, environment domain, store identity, record/head kind, generation, predecessor and canonical content",
+    "key_owner": "NOT_FOUND",
+    "key_rotation": "must retain verification of all historical records and atomically authenticate successor-key activation; exact protocol NOT_FROZEN",
+    "recovery": "only independently authenticated recovery authority may re-establish key access; exact authority NOT_FOUND",
+    "lost_key": "FAIL_CLOSED; no account reconstruction from local records or M0.11",
+    "secrets_in_account_record": false
+  },
+  "freshness": {
+    "status": "DESIGN_BLOCKED",
+    "required": "external non-rollbackable monotonic anchor exact-bound to environment/store identity, authenticated authority generation and head authenticator",
+    "owner_API": "NOT_FOUND",
+    "SQLite_generation_alone_sufficient": false
+  },
+  "rollback": {
+    "valid_prefix_A_B_after_A_B_C": "MUST_FAIL_CLOSED before resolver publication",
+    "coherent_rewrite": "MUST_FAIL authentication and/or external freshness equality even if journal, head, hashes, and M0.11 projection agree",
+    "protection_available_now": false,
+    "status": "DESIGN_BLOCKED"
+  },
+  "restart": {
+    "status": "ALGORITHM_FROZEN_DEPENDENCIES_BLOCKED",
+    "sequence": [
+      "open only environment-specific authority storage and keep resolver unavailable",
+      "verify storage/schema and reject incomplete prepared/finalized state",
+      "verify every record/head keyed authenticator and authentication domain",
+      "verify complete generation sequence, predecessor closure, unique genesis/account IDs, idempotency index closure, and exact current head",
+      "require external freshness anchor equality with authenticated head; reject older/newer/incomparable values",
+      "resolve and verify root actor provenance independently for every admission; no account may establish its own actor",
+      "derive genuine current accounts only from verified immutable genesis facts",
+      "verify/reconcile only M0.11 projection targets whose scope and publication-gating role are frozen by the selected topology; topology is currently blocked",
+      "publish resolver only after all checks succeed"
+    ],
+    "authority_fact_unrecoverable": "FAIL_CLOSED",
+    "load_account_row_and_trust": false,
+    "uses_word_AVAILABLE_as_status": false,
+    "M011_reconciliation_portion": "DESIGN_BLOCKED until projection target set and gating role are selected",
+    "missing_local_projection_after_verified_authority": "repair from verified authority; never downgrade or erase genuine genesis; whether publication waits for repair is DESIGN_BLOCKED"
+  },
+  "restore": {
+    "M011_restore_can_mint_authority": false,
+    "restored_projection_status": "UNTRUSTED until revalidated against recoverable genuine authority",
+    "authority_unrecoverable": "FAIL_CLOSED",
+    "account_recreation_from_projection": false
+  },
+  "crash_atomicity": {
+    "status": "PROTOCOL_REQUIREMENTS_FROZEN_EXACT_BACKEND_BLOCKED",
+    "rule": "authority commit is serialized prepare -> authenticated record/idempotency result -> authenticated head -> external anchor CAS -> finalized marker; M0.11 projections follow and may lag independently per future topology",
+    "points": {
+      "before_prepare": "no effect; old verified head remains",
+      "after_prepare": "intent is non-current; abort/recover using authenticated old head",
+      "after_authority_record": "record is non-current and must not resolve until head+anchor finalize",
+      "after_authority_head": "if anchor is old, resolver remains unavailable; complete exact pending CAS or fail closed",
+      "before_freshness_anchor": "same: no publication",
+      "after_freshness_anchor": "anchor is authoritative freshness; recovery must find exact authenticated local head/result or fail closed—never roll anchor back",
+      "before_M011_projection_update": "authority is committed; missing/lagging local projection must be repaired from verified authority and must not make the account non-genuine; whether resolver publication waits for that designated local repair is DESIGN_BLOCKED",
+      "after_M011_projection_update": "verify equality and finalize projection bookkeeping; projection never proves commit"
+    },
+    "unknown_external_anchor_outcome": "FAIL_CLOSED pending authoritative read/compare; never blind retry with a new account ID",
+    "committed_genesis_invariant": "A lagging or missing derived projection alone MUST NOT retroactively invalidate an already committed genuine authority genesis; only an explicitly selected future topology may make specified projection health a publication gate.",
+    "multi_device_attack": "dev_1 updated and dev_2 stale/offline creates no implicit synchronous global requirement; resolver effect and replica repair/health outcome remain DESIGN_BLOCKED with topology"
+  },
+  "concurrency": {
+    "status": "DESIGN_FROZEN_REQUIREMENTS",
+    "serialization": "single authority-global transition order",
+    "CAS": "every mutation supplies expected authenticated head generation+authenticator; commit is exactly G to G+1",
+    "last_writer_wins": false,
+    "exact_duplicate": "returns the durably retained original accepted genesis/account_id and creates no record",
+    "conflicting_duplicate": "same environment+command_id with different canonical request fingerprint => REPLAY_CONFLICT and no mutation",
+    "concurrent_distinct": "one CAS winner; loser retries from new verified head using its same request identity"
+  },
+  "idempotency": {
+    "status": "DESIGN_FROZEN_REQUIREMENTS",
+    "key_owner": "caller mints command_id; authority validates idempotency_key == command_id and owns durable interpretation/result",
+    "scope": "authentication environment/domain + command_id",
+    "request_fingerprint": "canonical closed request excluding only correlation_id; includes causation_id, environment and actor-proof reference/binding",
+    "retention": "indefinite, co-retained with immutable admission journal and freshness-protected; no key reuse",
+    "exact_retry": "same result including same account_id and accepted genesis",
+    "conflict": "REPLAY_CONFLICT; never mint second ID or genesis"
+  },
+  "environment_isolation": {
+    "status": "DESIGN_FROZEN_REQUIREMENTS",
+    "production_test_storage": "physically/logically distinct store identities and paths",
+    "authentication_domains": "distinct and cryptographically bound",
+    "key_material": "distinct; no shared active or recovery keys",
+    "root_actors_bootstrap_sources": "distinct allowlists/issuers and evidence namespaces",
+    "cross_environment_records_proofs_replays": "DENY",
+    "test_to_production_laundering": "DENY"
+  },
+  "workspace_parent_binding": {
+    "status": "DESIGN_FROZEN",
+    "relationship": "Workspace -> CryptoHunterAccount",
+    "immutable": true,
+    "admission_requirement": "future WorkspaceAuthority must consume genuine resolved CryptoHunterAccount authority fact",
+    "not_proof": [
+      "acct_* syntax",
+      "PersistentEntityIdentityProjection",
+      "StateStore record",
+      "caller mapping"
+    ],
+    "historical_resolution": "pins account_id and genuine immutable account genesis; later access-policy changes cannot reparent or erase historical binding",
+    "account_authority_unblocks_WorkspaceAuthority": false
+  },
+  "self_mint_resistance": {
+    "status": "DESIGN_FROZEN_REQUIREMENT",
+    "scenario": "caller has valid acct_<uuidv7>, accepted-record-looking mapping, correct public fingerprint, and valid M0.11 projection, but no genuine independent root actor proof",
+    "result": "DENY",
+    "carrier_only_result": "NOT_A_GENUINE_ACCOUNT",
+    "restore_carrier_only_result": "FAIL_CLOSED"
+  },
+  "nearby_entity_boundary": {
+    "does_not_own": [
+      "Workspace",
+      "DeviceInstallation",
+      "OperatorIdentity",
+      "Portfolio",
+      "ExchangeAccount",
+      "TradingUniverse",
+      "billing",
+      "license",
+      "subscription"
+    ],
+    "rule": "Account may be referenced as scope by separately authoritative entities; this authority neither mints nor mutates them."
+  },
+  "negative_requirements": [
+    "caller ID syntax becomes authority -> FAIL",
+    "M0.11 carrier becomes authority -> FAIL",
+    "restored carrier mints authority -> FAIL",
+    "public SHA becomes authenticity -> FAIL",
+    "self-bootstrap root allowed -> FAIL",
+    "production/test keys shared -> FAIL",
+    "valid-prefix rollback accepted -> FAIL",
+    "second current store introduced without reconciliation -> FAIL",
+    "M0.11 projection wins over genuine authority on mismatch -> FAIL",
+    "last-writer-wins concurrent admission -> FAIL",
+    "duplicate creation mints second account -> FAIL",
+    "Workspace automatically unblocked -> FAIL",
+    "one global M0.11 store per account asserted without evidence -> FAIL",
+    "ALL_KNOWN_DEVICE_STORES selected while offline-device semantics undefined -> FAIL",
+    "authority resolver requires every device projection current without selected topology -> FAIL",
+    "stale remote projection silently ignored without replica-health policy -> FAIL",
+    "PRODUCTION authority domain automatically maps to LIVE without frozen mapping -> FAIL",
+    "TEST authority domain automatically maps to PAPER/TESTNET without frozen mapping -> FAIL",
+    "environment promoted into immutable StateStore identity without executable migration -> FAIL",
+    "one account plus one device plus three environments asserted as exactly three StateStore identities -> FAIL"
+  ],
+  "missing_semantics": [
+    "canonical independently trusted root actor and proof schema",
+    "exact accepted_account_record_id grammar and admission_provenance_reference type",
+    "authority authentication key owner, rotation and recovery protocol",
+    "external non-rollbackable freshness authority and API",
+    "exact authority journal/head/idempotency durable schema and backend",
+    "root-proof-aware prepare/finalize recovery protocol",
+    "M0.11 projection topology, target discovery, and publication-gating role",
+    "multi-device offline/stale replica health and repair scope",
+    "authority-domain to PAPER/TESTNET/LIVE StateStore-environment mapping",
+    "environment projection-target partitioning versus metadata/protocol binding"
+  ],
+  "design_result": "DESIGN_BLOCKED",
+  "implementation_allowed": false,
+  "next_stage": "Freeze the independent root authority and provenance first; then freeze exact accepted record/authentication/freshness/durable schemas and rerun red-team design review. Do not implement a production kernel in this iteration.",
+  "preserved_status": {
+    "CryptoHunterAccountAuthority": "NOT_AVAILABLE",
+    "WorkspaceAuthority_implementation_allowed": false,
+    "FullFillAuthority": "NOT_AVAILABLE",
+    "M0.8": "NOT_AVAILABLE",
+    "production_M0.5": "NOT_AVAILABLE"
+  }
+}
