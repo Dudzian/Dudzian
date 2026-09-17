@@ -1,0 +1,744 @@
+{
+  "schema_version": "cryptohunter.m07_semantic_admission_upstream_discovery.v2",
+  "repository_head_examined": "e6169b456e3c0170ce98b23304efa7ff9d556f3f",
+  "accepted_workstream_base": "7dbfe87acad28eb92ef1878ed9976e012e8207ae",
+  "repository_provenance": {
+    "relationship": "ancestry could not be established because the accepted-base object is absent from this repository clone",
+    "command": "git merge-base --is-ancestor 7dbfe87acad28eb92ef1878ed9976e012e8207ae e6169b456e3c0170ce98b23304efa7ff9d556f3f",
+    "exit_code": 128,
+    "result": "BLOCKED_ACCEPTED_BASE_COMMIT_NOT_AVAILABLE",
+    "publication_disposition": "DISCOVERY_WITHHELD_PENDING_EXACT_ACCEPTED_BASE",
+    "accepted_base_object_available": false,
+    "accepted_base_ancestry_verified": false,
+    "exact_discovery_run_against_accepted_base": false
+  },
+  "mode": "DISCOVERY_DEPENDENCY_DECOMPOSITION_ONLY",
+  "formal_accepted_base_discovery": "WITHHELD_PENDING_EXACT_ACCEPTED_BASE",
+  "implementation_advancement_permitted": false,
+  "order_kernel_status": {
+    "production_order_authority_kernel": "ACCEPTED_AVAILABLE",
+    "production_order_history": "ACCEPTED_AVAILABLE",
+    "historical_order_resolver": "ACCEPTED_AVAILABLE",
+    "semantic_submit_order": "BLOCKED_UPSTREAM",
+    "M0.7": "NOT_AVAILABLE",
+    "M0.8_order_side_dependency": "BLOCKED"
+  },
+  "workspace_status": {
+    "workspace_authority": "WITHHELD",
+    "workspace_blocker": "DISCOVERY_BLOCKED_ACCEPTED_BASE_COMMIT_NOT_AVAILABLE",
+    "ordering": "UNSPECIFIED",
+    "ordered_by_contract": false,
+    "caller_workspace_id_is_authority_proof": false
+  },
+  "canonical_side_effect_gate_order": [
+    "M0.4 environment/ProductCapabilities authority",
+    "M0.5 exact account/exchange/instrument authority",
+    "M0.6 exact strategy instance/execution route/readiness authority",
+    "M0.9 future ExecutionLease authority dependency",
+    "M0.7 atomic idempotency reservation and accepted plan",
+    "adapter dispatch"
+  ],
+  "canonical_side_effect_gate_order_source": {
+    "contract": "commands_events_order_lifecycle_and_idempotency.json",
+    "json_pointers": [
+      "/environment_execution_boundary/side_effect_gate_order"
+    ]
+  },
+  "secondary_exact_gate_order": "NONE",
+  "non_authoritative_examined_head_inventory": {
+    "examined_repository_head": "e6169b456e3c0170ce98b23304efa7ff9d556f3f",
+    "authoritative_for_accepted_base": false,
+    "may_advance_implementation": false,
+    "implementation_permission": false,
+    "accepted_base_equivalence": "NOT_PROVEN",
+    "inventory_status": "AVAILABLE",
+    "product_capabilities_authority": {
+      "production_product_capabilities_authority": "NOT_FOUND",
+      "production_search_result": "No Core-owned signed-document admission/current resolver was found in bot_core; M0.6 projections and test validators are not authority.",
+      "contract_found": true,
+      "genuine": false,
+      "current_api": "NOT_FOUND",
+      "blocks_plan_admission": true,
+      "blocks_external_side_effect": true
+    },
+    "strategy_instance_authority": {
+      "production_strategy_instance_authority": "NOT_FOUND",
+      "record_schema": "FOUND_CONTRACT_ONLY",
+      "M0.11_persistence_representation": "NOT_AUTHORITY",
+      "test_validation_context": "NOT_AUTHORITY",
+      "genuine_accepted_current_authority": "NOT_FOUND",
+      "exact_dependencies": {
+        "fields": [
+          "strategy_instance_id",
+          "workspace_id",
+          "portfolio_id",
+          "strategy_definition_id",
+          "strategy_definition_version",
+          "exchange_account_id",
+          "trading_universe_id",
+          "market_data_route_id",
+          "execution_route_id",
+          "lifecycle_state"
+        ],
+        "environment_exchange_market_binding": "inherited exact-equality via account, universe and non-null routes; not direct StrategyInstance fields"
+      },
+      "currentness": {
+        "executable_lifecycle_state": "ACTIVE",
+        "current_designation_required": true,
+        "exact_strategy_definition_revision_required": true,
+        "strategy_definition_activation_requirement": "ACTIVE for activation; persisted pinned definition may later be RETIRED",
+        "trading_universe_current_active_required": true,
+        "execution_route_current_required": true
+      },
+      "blocker": "PRODUCTION_STRATEGY_INSTANCE_AUTHORITY_NOT_FOUND"
+    },
+    "exchange_account_authority": {
+      "production_exchange_account_authority": "NOT_FOUND",
+      "genuine_admission_contract": "INCOMPLETE",
+      "workspace_dependency": "BLOCKED_BY_WORKSPACE_AUTHORITY",
+      "blocker": "GENUINE_EXCHANGE_ACCOUNT_ADMISSION_PROVENANCE_AND_WORKSPACE_PARENT_PROOF_NOT_FOUND"
+    },
+    "execution_route_authority": {
+      "production_execution_route_authority": "NOT_FOUND",
+      "genuine_admission_contract": "INCOMPLETE",
+      "route_readiness_authority": "EPHEMERAL_ONLY",
+      "route_readiness_classification": "non-durable Core-owned observation contract; no production owner/resolver found",
+      "blocker": "GENUINE_EXECUTION_ROUTE_ADMISSION_AND_CURRENT_DESIGNATION_AUTHORITY_NOT_FOUND"
+    },
+    "execution_adapter_authenticity": {
+      "status": "MISSING",
+      "execution_adapter_membership_contract": "INCOMPLETE",
+      "execution_adapter_membership_workspace_dependency": "NOT_DETERMINABLE",
+      "missing_frozen_semantics": [
+        "identity fields",
+        "issuer/admission provenance",
+        "release/generation lifecycle",
+        "revocation/supersession",
+        "current resolution",
+        "historical resolution",
+        "scope/capabilities"
+      ],
+      "catalog_source_membership_is_not_execution_membership": true,
+      "blocker": "EXECUTION_ADAPTER_MEMBERSHIP_CONTRACT_INCOMPLETE"
+    },
+    "instrument_authority": {
+      "production_M0.5": "NOT_AVAILABLE",
+      "current_submit_resolution": "REQUIRED",
+      "historical_fill_resolution": "REQUIRED_LATER",
+      "partial_preparation_without_authority": "structural validation and fingerprint preparation only; ORDER_PLANNED admission forbidden"
+    },
+    "authority_context_resolver": {
+      "production_authority_context": "NOT_FOUND",
+      "caller_field_is_proof": false,
+      "ordering": "UNSPECIFIED",
+      "ordered_by_contract": false,
+      "classification": "required unresolved semantic dependency, not an independently positioned frozen gate",
+      "creation": "NOT_FOUND",
+      "resolution": "NOT_FOUND",
+      "scope_binding": "NOT_FOUND",
+      "lifetime": "NOT_FOUND",
+      "freshness": "NOT_FOUND",
+      "dependency_fingerprints": "NOT_FOUND"
+    },
+    "trusted_context_self_mint": {
+      "SELF_MINT_TRUSTED_CONTEXT": "NO",
+      "production_path": "bot_core.orders.authority.OrderAuthority.submit_order validates shape then unconditionally raises UpstreamAuthorityUnavailable"
+    },
+    "dependency_resolution_inventory": [
+      {
+        "dependency": "M0.4 ProductCapabilities",
+        "owner_milestone": "M0.4",
+        "required_inputs": [
+          "environment",
+          "current signed ProductCapabilities validated snapshot"
+        ],
+        "currentness": "current edition and current trust/expiry/revocation evaluation",
+        "scope": [
+          "environment",
+          "edition",
+          "allowed operation"
+        ],
+        "failure_semantics": "UNAUTHORIZED_OPERATION / upstream denial; no plan or dispatch",
+        "relationship_to_frozen_gate": "M0.4 environment/ProductCapabilities authority",
+        "ordering": "ONLY_PARENT_GATE_ORDERED",
+        "evidence": {
+          "contract": "commands_events_order_lifecycle_and_idempotency.json",
+          "json_pointers": [
+            "/environment_execution_boundary/side_effect_gate_order"
+          ]
+        }
+      },
+      {
+        "dependency": "Workspace prerequisite",
+        "owner_milestone": "Workspace authority (WITHHELD)",
+        "required_inputs": [
+          "genuine Workspace parent/reference proof where M0.5/M0.6 records bind workspace_id"
+        ],
+        "currentness": "current parent proof required by dependent graph; standalone M0.7 position unspecified",
+        "scope": [
+          "workspace_id"
+        ],
+        "failure_semantics": "TRUSTED_CONTEXT_FAILURE",
+        "relationship_to_frozen_gate": "prerequisite embedded in M0.5/M0.6 graphs; not an independent frozen gate",
+        "ordering": "UNSPECIFIED",
+        "ordered_by_contract": false,
+        "evidence": {
+          "contract": "strategy_market_data_and_execution_routing.json",
+          "json_pointers": [
+            "/referential_integrity/strategy_instance",
+            "/record_schemas/ExecutionRoute/entity_references/workspace_id"
+          ]
+        }
+      },
+      {
+        "dependency": "ExchangeAccount",
+        "owner_milestone": "M0.5",
+        "required_inputs": [
+          "exact current accepted account",
+          "credential/capability/external identity as environment requires"
+        ],
+        "currentness": "current and operational for plan admission",
+        "scope": [
+          "portfolio_id",
+          "exchange_account_id",
+          "exchange_id",
+          "environment",
+          "market_type"
+        ],
+        "failure_semantics": "TRUSTED_CONTEXT_FAILURE",
+        "relationship_to_frozen_gate": "M0.5 exact account/exchange/instrument authority",
+        "ordering": "ONLY_PARENT_GATE_ORDERED",
+        "evidence": {
+          "contract": "exchange_accounts_and_instruments.json",
+          "json_pointers": [
+            "/exchange_account_contract",
+            "/current_edition_account_operability_policy"
+          ]
+        }
+      },
+      {
+        "dependency": "Instrument",
+        "owner_milestone": "M0.5",
+        "required_inputs": [
+          "exact current accepted Instrument"
+        ],
+        "currentness": "current/fresh/tradable for submit; exact historical version later for Fill",
+        "scope": [
+          "workspace_id",
+          "instrument_id",
+          "source_exchange_id",
+          "market_type",
+          "source_adapter_family_id"
+        ],
+        "failure_semantics": "TRUSTED_CONTEXT_FAILURE",
+        "relationship_to_frozen_gate": "M0.5 exact account/exchange/instrument authority",
+        "ordering": "SIBLING_ORDER_WITHIN_PARENT_UNSPECIFIED",
+        "evidence": {
+          "contract": "exchange_accounts_and_instruments.json",
+          "json_pointers": [
+            "/instrument_contract",
+            "/instrument_contract/trusted_history_contract"
+          ]
+        }
+      },
+      {
+        "dependency": "StrategyInstance",
+        "owner_milestone": "M0.6",
+        "required_inputs": [
+          "strategy_instance_id when source_type is STRATEGY_INSTANCE",
+          "exact current StrategyInstance graph"
+        ],
+        "currentness": "executable lifecycle is ACTIVE; exact pinned StrategyDefinition revision; activation requires definition ACTIVE; exact account/universe/routes references",
+        "scope": [
+          "strategy_instance_id",
+          "workspace_id",
+          "portfolio_id",
+          "strategy_definition_id",
+          "strategy_definition_version",
+          "exchange_account_id",
+          "trading_universe_id",
+          "market_data_route_id",
+          "execution_route_id",
+          "lifecycle_state"
+        ],
+        "failure_semantics": "TRUSTED_CONTEXT_FAILURE / M0.6 operation denial",
+        "relationship_to_frozen_gate": "M0.6 exact strategy instance/execution route/readiness authority",
+        "ordering": "SIBLING_ORDER_WITHIN_PARENT_UNSPECIFIED",
+        "evidence": {
+          "contract": "strategy_market_data_and_execution_routing.json",
+          "json_pointers": [
+            "/strategy_instance_contract",
+            "/record_schemas/StrategyInstance",
+            "/referential_integrity/strategy_instance",
+            "/trusted_validation_context/array_fields/active_strategy_instances"
+          ]
+        }
+      },
+      {
+        "dependency": "ExecutionRoute",
+        "owner_milestone": "M0.6",
+        "required_inputs": [
+          "exact accepted current route designation"
+        ],
+        "currentness": "current ACTIVE route matching instance/account/workspace/environment/exchange/market/instrument adapter family",
+        "scope": [
+          "execution_route_id",
+          "workspace_id",
+          "exchange_account_id",
+          "exchange_id",
+          "environment",
+          "market_type",
+          "adapter_family_id"
+        ],
+        "failure_semantics": "TRUSTED_CONTEXT_FAILURE",
+        "relationship_to_frozen_gate": "M0.6 exact strategy instance/execution route/readiness authority",
+        "ordering": "SIBLING_ORDER_WITHIN_PARENT_UNSPECIFIED",
+        "evidence": {
+          "contract": "strategy_market_data_and_execution_routing.json",
+          "json_pointers": [
+            "/execution_route_contract",
+            "/referential_integrity/bound_execution_adapter"
+          ]
+        }
+      },
+      {
+        "dependency": "RouteReadiness",
+        "owner_milestone": "M0.6",
+        "required_inputs": [
+          "Core-owned readiness observation for exact execution_route_id"
+        ],
+        "currentness": "READY and age <= 30 seconds at Core-owned validation_time_utc",
+        "scope": [
+          "execution_route_id",
+          "route_kind"
+        ],
+        "failure_semantics": "TRUSTED_CONTEXT_FAILURE / EXECUTION_ROUTE_NOT_READY",
+        "relationship_to_frozen_gate": "M0.6 exact strategy instance/execution route/readiness authority",
+        "ordering": "SIBLING_ORDER_WITHIN_PARENT_UNSPECIFIED",
+        "evidence": {
+          "contract": "strategy_market_data_and_execution_routing.json",
+          "json_pointers": [
+            "/route_readiness_contract"
+          ]
+        }
+      },
+      {
+        "dependency": "authority_context_id resolver",
+        "owner_milestone": "unassigned",
+        "required_inputs": [
+          "non-caller-mintable resolution binding the dependency graph"
+        ],
+        "currentness": "lifetime/freshness/fingerprint mechanism NOT_FOUND",
+        "scope": [
+          "authority_context_id",
+          "command scope fields"
+        ],
+        "failure_semantics": "TRUSTED_CONTEXT_FAILURE",
+        "relationship_to_frozen_gate": "unresolved semantic dependency; no independent position in frozen sequence",
+        "ordering": "UNSPECIFIED",
+        "ordered_by_contract": false,
+        "evidence": {
+          "contract": "commands_events_order_lifecycle_and_idempotency.json",
+          "json_pointers": [
+            "/command_registry/SUBMIT_ORDER/field_schemas/authority_context_id",
+            "/failure_taxonomy/TRUSTED_CONTEXT_FAILURE"
+          ]
+        }
+      },
+      {
+        "dependency": "M0.9 ExecutionLease",
+        "owner_milestone": "M0.9",
+        "required_inputs": [
+          "future current ExecutionLease before external side effect"
+        ],
+        "currentness": "current immediately before external dispatch",
+        "scope": [
+          "execution authority scope not frozen here"
+        ],
+        "failure_semantics": "UNAUTHORIZED_OPERATION; blocks dispatch, explicitly not M0.7 plan admission",
+        "relationship_to_frozen_gate": "M0.9 future ExecutionLease authority dependency",
+        "ordering": "ONLY_PARENT_GATE_ORDERED",
+        "evidence": {
+          "contract": "commands_events_order_lifecycle_and_idempotency.json",
+          "json_pointers": [
+            "/environment_execution_boundary/future_execution_lease"
+          ]
+        }
+      },
+      {
+        "dependency": "M0.7 atomic admission",
+        "owner_milestone": "M0.7",
+        "required_inputs": [
+          "atomic idempotency reservation",
+          "accepted immutable plan",
+          "exact ORDER_PLANNED binding"
+        ],
+        "currentness": "linearized durable admission after upstream gates",
+        "scope": [
+          "command_id",
+          "idempotency scope",
+          "order_id"
+        ],
+        "failure_semantics": "IDEMPOTENCY_CONFLICT or recorded replay; no duplicate effect",
+        "relationship_to_frozen_gate": "M0.7 atomic idempotency reservation and accepted plan",
+        "ordering": "ONLY_PARENT_GATE_ORDERED",
+        "evidence": {
+          "contract": "commands_events_order_lifecycle_and_idempotency.json",
+          "json_pointers": [
+            "/environment_execution_boundary/side_effect_gate_order",
+            "/idempotency_contract",
+            "/event_contract/event_schema_registry/ORDER_PLANNED"
+          ]
+        }
+      },
+      {
+        "dependency": "ExecutionAdapter provenance",
+        "owner_milestone": "adapter dispatch",
+        "required_inputs": [
+          "authenticated accepted execution-adapter membership and transport dispatch"
+        ],
+        "currentness": "membership current at dispatch; historical provenance for later facts",
+        "scope": [
+          "implementation/release/generation/capabilities are not frozen"
+        ],
+        "failure_semantics": "no external side effect without trusted adapter",
+        "relationship_to_frozen_gate": "adapter dispatch",
+        "ordering": "ONLY_PARENT_GATE_ORDERED",
+        "evidence": {
+          "contract": "commands_events_order_lifecycle_and_idempotency.json",
+          "json_pointers": [
+            "/environment_execution_boundary/side_effect_gate_order",
+            "/environment_execution_boundary/non_authorities"
+          ]
+        }
+      }
+    ],
+    "execution_lease_boundary": {
+      "future_execution_lease_not_a_M0.7_blocker": true,
+      "plan_admission_dependency": false,
+      "external_side_effect_dependency": true,
+      "evidence": {
+        "contract": "commands_events_order_lifecycle_and_idempotency.json",
+        "json_pointers": [
+          "/environment_execution_boundary/future_execution_lease"
+        ]
+      }
+    },
+    "M0.7_plan_admission": {
+      "status": "ACCEPTED_KERNEL_BLOCKED_UPSTREAM_SEMANTICS",
+      "kernel": "ACCEPTED OrderAuthority kernel",
+      "atomic_durable_command_admission": "AVAILABLE_IN_KERNEL_AFTER_GENUINE_UPSTREAM_RESOLUTION",
+      "exact_ORDER_PLANNED_binding": "AVAILABLE",
+      "adapter_dispatch_is_separate": true
+    },
+    "toctou_binding": {
+      "status": "NOT_FOUND",
+      "required_races": [
+        "ProductCapabilities/environment authorization changes after resolve",
+        "Workspace revoked after resolve",
+        "ExchangeAccount changes after resolve",
+        "Instrument current version changes after resolve",
+        "StrategyInstance current/lifecycle changes after resolve",
+        "ExecutionRoute changes after resolve",
+        "adapter generation changes after resolve"
+      ],
+      "snapshot_generation_pin": "NOT_FOUND",
+      "fingerprint_pin": "NOT_FOUND",
+      "authority_context": "NOT_FOUND",
+      "atomic_fence": "NOT_FOUND",
+      "revalidation": "NOT_FOUND"
+    },
+    "decision_table": [
+      {
+        "dependency": "M0.4 ProductCapabilities",
+        "frozen_parent_gate": "M0.4 environment/ProductCapabilities authority",
+        "contract_found": true,
+        "production_authority_found": false,
+        "genuine": false,
+        "current_historical_api": "CONTRACT_CURRENT_SIGNED_VALIDATED_SNAPSHOT_ONLY",
+        "plan_admission_requirement": true,
+        "external_side_effect_requirement": true,
+        "workspace_dependency": "INDEPENDENT",
+        "blocker_literal": "PRODUCTION_PRODUCT_CAPABILITIES_AUTHORITY_NOT_FOUND",
+        "evidence": {
+          "contract": "environment_and_product_capabilities.json",
+          "json_pointers": [
+            "/ProductCapabilities",
+            "/signature_validation_pipeline",
+            "/capability_revocation_policy"
+          ]
+        },
+        "buildability": {
+          "contract_complete": true,
+          "no_missing_genuine_parent": true,
+          "no_withheld_required_parent": true,
+          "no_invented_provenance_required": true
+        }
+      },
+      {
+        "dependency": "Workspace prerequisite",
+        "frozen_parent_gate": "M0.5/M0.6 embedded prerequisite",
+        "contract_found": false,
+        "production_authority_found": false,
+        "genuine": false,
+        "current_historical_api": "NOT_FOUND",
+        "plan_admission_requirement": true,
+        "external_side_effect_requirement": true,
+        "workspace_dependency": "SELF",
+        "blocker_literal": "DISCOVERY_BLOCKED_ACCEPTED_BASE_COMMIT_NOT_AVAILABLE",
+        "evidence": {
+          "contract": "strategy_market_data_and_execution_routing.json",
+          "json_pointers": [
+            "/referential_integrity/strategy_instance"
+          ]
+        },
+        "buildability": {
+          "contract_complete": false,
+          "no_missing_genuine_parent": true,
+          "no_withheld_required_parent": false,
+          "no_invented_provenance_required": false
+        }
+      },
+      {
+        "dependency": "ExchangeAccount",
+        "frozen_parent_gate": "M0.5 exact account/exchange/instrument authority",
+        "contract_found": true,
+        "production_authority_found": false,
+        "genuine": false,
+        "current_historical_api": "CONTRACT_ONLY_CURRENT_AND_HISTORICAL_RULES",
+        "plan_admission_requirement": true,
+        "external_side_effect_requirement": true,
+        "workspace_dependency": "BLOCKED_BY_WORKSPACE",
+        "blocker_literal": "PRODUCTION_EXCHANGE_ACCOUNT_AUTHORITY_NOT_FOUND_AND_BLOCKED_BY_WORKSPACE_AUTHORITY",
+        "evidence": {
+          "contract": "exchange_accounts_and_instruments.json",
+          "json_pointers": [
+            "/exchange_account_contract"
+          ]
+        },
+        "buildability": {
+          "contract_complete": false,
+          "no_missing_genuine_parent": false,
+          "no_withheld_required_parent": false,
+          "no_invented_provenance_required": false
+        }
+      },
+      {
+        "dependency": "Instrument",
+        "frozen_parent_gate": "M0.5 exact account/exchange/instrument authority",
+        "contract_found": true,
+        "production_authority_found": false,
+        "genuine": false,
+        "current_historical_api": "CONTRACT_ONLY_CURRENT_AND_HISTORICAL",
+        "plan_admission_requirement": true,
+        "external_side_effect_requirement": true,
+        "workspace_dependency": "BLOCKED_BY_WORKSPACE",
+        "blocker_literal": "PRODUCTION_M0.5_NOT_AVAILABLE",
+        "evidence": {
+          "contract": "exchange_accounts_and_instruments.json",
+          "json_pointers": [
+            "/instrument_contract/trusted_history_contract"
+          ]
+        },
+        "buildability": {
+          "contract_complete": false,
+          "no_missing_genuine_parent": false,
+          "no_withheld_required_parent": false,
+          "no_invented_provenance_required": true
+        }
+      },
+      {
+        "dependency": "StrategyInstance",
+        "frozen_parent_gate": "M0.6 exact strategy instance/execution route/readiness authority",
+        "contract_found": true,
+        "production_authority_found": false,
+        "genuine": false,
+        "current_historical_api": "CONTRACT_ONLY_CURRENT_GRAPH; NO_PRODUCTION_HISTORY",
+        "plan_admission_requirement": true,
+        "external_side_effect_requirement": true,
+        "workspace_dependency": "BLOCKED_BY_WORKSPACE_AND_M0.5_PARENTS",
+        "blocker_literal": "PRODUCTION_STRATEGY_INSTANCE_AUTHORITY_NOT_FOUND",
+        "evidence": {
+          "contract": "strategy_market_data_and_execution_routing.json",
+          "json_pointers": [
+            "/record_schemas/StrategyInstance",
+            "/strategy_instance_contract",
+            "/referential_integrity/strategy_instance"
+          ]
+        },
+        "buildability": {
+          "contract_complete": true,
+          "no_missing_genuine_parent": false,
+          "no_withheld_required_parent": false,
+          "no_invented_provenance_required": false
+        }
+      },
+      {
+        "dependency": "ExecutionRoute",
+        "frozen_parent_gate": "M0.6 exact strategy instance/execution route/readiness authority",
+        "contract_found": true,
+        "production_authority_found": false,
+        "genuine": false,
+        "current_historical_api": "CONTRACT_ONLY_CURRENT_DESIGNATION",
+        "plan_admission_requirement": true,
+        "external_side_effect_requirement": true,
+        "workspace_dependency": "BLOCKED_BY_WORKSPACE_AND_EXCHANGE_ACCOUNT",
+        "blocker_literal": "PRODUCTION_EXECUTION_ROUTE_AUTHORITY_NOT_FOUND",
+        "evidence": {
+          "contract": "strategy_market_data_and_execution_routing.json",
+          "json_pointers": [
+            "/execution_route_contract"
+          ]
+        },
+        "buildability": {
+          "contract_complete": false,
+          "no_missing_genuine_parent": false,
+          "no_withheld_required_parent": false,
+          "no_invented_provenance_required": false
+        }
+      },
+      {
+        "dependency": "RouteReadiness",
+        "frozen_parent_gate": "M0.6 exact strategy instance/execution route/readiness authority",
+        "contract_found": true,
+        "production_authority_found": false,
+        "genuine": false,
+        "current_historical_api": "EPHEMERAL_CURRENT_OBSERVATION_ONLY",
+        "plan_admission_requirement": true,
+        "external_side_effect_requirement": true,
+        "workspace_dependency": "INDIRECT_ROUTE_SCOPE",
+        "blocker_literal": "PRODUCTION_ROUTE_READINESS_AUTHORITY_NOT_FOUND",
+        "evidence": {
+          "contract": "strategy_market_data_and_execution_routing.json",
+          "json_pointers": [
+            "/route_readiness_contract"
+          ]
+        },
+        "buildability": {
+          "contract_complete": true,
+          "no_missing_genuine_parent": false,
+          "no_withheld_required_parent": true,
+          "no_invented_provenance_required": true
+        }
+      },
+      {
+        "dependency": "ExecutionAdapter provenance",
+        "frozen_parent_gate": "adapter dispatch",
+        "contract_found": false,
+        "production_authority_found": false,
+        "genuine": false,
+        "current_historical_api": "NOT_FOUND",
+        "plan_admission_requirement": false,
+        "external_side_effect_requirement": true,
+        "workspace_dependency": "NOT_DETERMINABLE",
+        "blocker_literal": "EXECUTION_ADAPTER_MEMBERSHIP_CONTRACT_INCOMPLETE",
+        "evidence": {
+          "contract": "commands_events_order_lifecycle_and_idempotency.json",
+          "json_pointers": [
+            "/environment_execution_boundary/non_authorities"
+          ]
+        },
+        "buildability": {
+          "contract_complete": false,
+          "no_missing_genuine_parent": true,
+          "no_withheld_required_parent": true,
+          "no_invented_provenance_required": false
+        }
+      },
+      {
+        "dependency": "authority_context_id resolver",
+        "frozen_parent_gate": "UNORDERED_SEMANTIC_DEPENDENCY",
+        "contract_found": true,
+        "production_authority_found": false,
+        "genuine": false,
+        "current_historical_api": "NOT_FOUND",
+        "plan_admission_requirement": true,
+        "external_side_effect_requirement": true,
+        "workspace_dependency": "BINDS_WORKSPACE_SCOPED_GRAPH",
+        "blocker_literal": "PRODUCTION_AUTHORITY_CONTEXT_RESOLVER_NOT_FOUND",
+        "evidence": {
+          "contract": "commands_events_order_lifecycle_and_idempotency.json",
+          "json_pointers": [
+            "/command_registry/SUBMIT_ORDER/field_schemas/authority_context_id"
+          ]
+        },
+        "buildability": {
+          "contract_complete": false,
+          "no_missing_genuine_parent": false,
+          "no_withheld_required_parent": false,
+          "no_invented_provenance_required": false
+        }
+      },
+      {
+        "dependency": "M0.9 ExecutionLease",
+        "frozen_parent_gate": "M0.9 future ExecutionLease authority dependency",
+        "contract_found": true,
+        "production_authority_found": false,
+        "genuine": false,
+        "current_historical_api": "FUTURE_CURRENT_API_NOT_IMPLEMENTED",
+        "plan_admission_requirement": false,
+        "external_side_effect_requirement": true,
+        "workspace_dependency": "NOT_SPECIFIED",
+        "blocker_literal": "FUTURE_EXECUTION_LEASE_AUTHORITY_NOT_AVAILABLE",
+        "evidence": {
+          "contract": "commands_events_order_lifecycle_and_idempotency.json",
+          "json_pointers": [
+            "/environment_execution_boundary/future_execution_lease"
+          ]
+        },
+        "buildability": {
+          "contract_complete": false,
+          "no_missing_genuine_parent": true,
+          "no_withheld_required_parent": true,
+          "no_invented_provenance_required": false
+        }
+      },
+      {
+        "dependency": "M0.7 atomic admission",
+        "frozen_parent_gate": "M0.7 atomic idempotency reservation and accepted plan",
+        "contract_found": true,
+        "production_authority_found": true,
+        "genuine": true,
+        "current_historical_api": "CURRENT_AND_HISTORICAL_ORDER_APIS_AVAILABLE",
+        "plan_admission_requirement": true,
+        "external_side_effect_requirement": true,
+        "workspace_dependency": "CONSUMES_UPSTREAM_SCOPE",
+        "blocker_literal": "NONE_KERNEL_ACCEPTED_AVAILABLE",
+        "evidence": {
+          "contract": "commands_events_order_lifecycle_and_idempotency.json",
+          "json_pointers": [
+            "/idempotency_contract",
+            "/event_contract/event_schema_registry/ORDER_PLANNED"
+          ]
+        },
+        "buildability": {
+          "contract_complete": true,
+          "no_missing_genuine_parent": true,
+          "no_withheld_required_parent": true,
+          "no_invented_provenance_required": true
+        }
+      }
+    ],
+    "next_authority_derivation": {
+      "formula": "contract_complete AND no_missing_genuine_parent AND no_withheld_required_parent AND no_invented_provenance_required",
+      "eligible_missing_authorities": [
+        "M0.4 ProductCapabilities"
+      ],
+      "selection_rule": "first eligible missing authority in frozen parent-gate order; unordered prerequisites are not promoted",
+      "derived_result": "M0.4 ProductCapabilities"
+    },
+    "candidate_next_buildable_authority": "M0.4 ProductCapabilities",
+    "candidate_next_blocker": "PRODUCTION_PRODUCT_CAPABILITIES_AUTHORITY_NOT_FOUND",
+    "candidate_classification": "CANDIDATE_FROM_UNVERIFIED_EXAMINED_HEAD"
+  },
+  "next_buildable_authority": "WITHHELD_PENDING_EXACT_ACCEPTED_BASE_DISCOVERY",
+  "next_blocker": "DISCOVERY_BLOCKED_ACCEPTED_BASE_COMMIT_NOT_AVAILABLE",
+  "preserved_status": {
+    "M0.12_1.46.0": "ACCEPTED",
+    "Workspace": "WITHHELD",
+    "Workspace_blocker": "DISCOVERY_BLOCKED_ACCEPTED_BASE_COMMIT_NOT_AVAILABLE",
+    "production_M0.5": "NOT_AVAILABLE",
+    "C25": "BLOCKED",
+    "S9D": "OPEN"
+  }
+}
