@@ -50,10 +50,29 @@ def validate(d: dict) -> None:
     assert d["root_of_trust"]["caller_supplied_account_id_can_become_genuine"] is False
     assert d["accepted_record"]["status"] == "DESIGN_BLOCKED"
     assert d["accepted_record"]["PersistentEntityIdentityProjection_is_accepted_fact"] is False
-    assert d["id_minting"]["caller_may_choose"] == []
+    assert any(
+        item.startswith("genuine authority-bound account_id")
+        for item in d["accepted_record"]["required_semantics_not_schema"]
+    )
+    minting = d["id_minting"]
+    assert minting["account_id_owner"] == "UNRESOLVED_PENDING_ROOT_OF_TRUST_RECONCILIATION"
+    assert minting["algorithm"] == "NOT_FROZEN"
+    assert minting["account_id_syntax"] == "FROZEN: acct_<canonical lowercase UUIDv7>"
+    assert minting["mint_reservation_protocol"] == "NOT_FROZEN"
+    assert minting["entropy_clock_owner"] == "NOT_FROZEN"
+    assert minting["caller_selected_genuine_account_id"] == "FORBIDDEN"
+    assert minting["candidate_or_reserved_id_is_authority"] is False
+    assert minting["status"] == "DESIGN_BLOCKED"
+    assert minting["caller_may_choose"] == []
     assert set(d["id_minting"]["caller_fields_forbidden"]) == {
-        "account_id", "accepted_account_record_id", "generation", "authority metadata"
+        "accepted_account_record_id", "generation", "authority metadata"
     }
+    assert "account_id" not in d["admission"]["request_must_not_contain"]
+    assert d["admission"]["caller_selected_account_id"] == "FORBIDDEN"
+    assert d["admission"]["authority_bound_account_id_input_presence"] == "NOT_FROZEN"
+    assert d["account_id_ownership_reopened_by"] == (
+        "m05_cryptohunter_account_root_of_trust_reconciliation.json"
+    )
     assert d["admission"]["circular_proof_allowed"] is False
     assert d["lifecycle"]["model"] == "IMMUTABLE_GENESIS_ONLY"
     assert d["lifecycle"]["states"] == []
@@ -165,6 +184,11 @@ def test_markdown_is_deterministic_complete_projection() -> None:
         lambda x: x["projection_target_partitioning"].update(
             exactly_three_identities_for_one_device_across_PAPER_TESTNET_LIVE=True
         ),
+        lambda x: x["id_minting"].update(
+            account_id_owner="future genuine CryptoHunterAccountAuthority only"
+        ),
+        lambda x: x["id_minting"].update(status="PARTIALLY_FROZEN_WITH_OWNER"),
+        lambda x: x["admission"]["request_must_not_contain"].append("account_id"),
     ],
     ids=[
         "caller-id-syntax-becomes-authority", "carrier-becomes-authority",
@@ -176,6 +200,7 @@ def test_markdown_is_deterministic_complete_projection() -> None:
         "every-device-projection-gates-resolver", "stale-remote-silently-ignored",
         "production-automatically-live", "test-automatically-paper-testnet",
         "environment-promoted-to-identity", "three-environments-three-store-identities",
+        "account-authority-only-owner", "partially-frozen-owner", "permanent-account-id-ban",
     ],
 )
 def test_mandatory_negative_mutations_fail(mutation) -> None:
@@ -197,7 +222,7 @@ def test_required_sections_and_crash_points_are_closed() -> None:
         "rollback", "restart", "crash_atomicity", "concurrency", "idempotency",
         "environment_isolation", "workspace_parent_binding", "self_mint_resistance",
         "missing_semantics", "design_result", "implementation_allowed", "next_stage",
-        "preserved_status",
+        "preserved_status", "account_id_ownership_reopened_by", "targeted_reopen_scope",
     }
     assert required <= d.keys()
     assert set(d["crash_atomicity"]["points"]) == {
