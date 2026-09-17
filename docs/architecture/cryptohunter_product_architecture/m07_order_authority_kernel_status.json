@@ -1,0 +1,93 @@
+{
+  "schema_version": "1.0.0",
+  "status": "REVIEW_CANDIDATE",
+  "canonical_contract": "commands_events_order_lifecycle_and_idempotency.json",
+  "executable_discovery_json_pointers": {
+    "submit_order_request_fields": "/command_registry/SUBMIT_ORDER/request_fields",
+    "command_outcome_fields": "/command_outcome_contract/fields",
+    "event_envelope_fields": "/event_contract/fields",
+    "event_types": "/event_contract/event_types",
+    "safe_payload_schema_per_event_type": "/event_contract/event_schema_registry",
+    "aggregate_version_rules": "/event_contract/ordering",
+    "command_fingerprint_rules": "/idempotency_contract/fingerprint_input",
+    "command_fingerprint_exclusions": "/idempotency_contract/fingerprint_excluded_fields",
+    "event_fingerprint_rules": "/event_contract/fingerprint",
+    "event_fingerprint_exclusions": "/event_contract/envelope_schema/fingerprint_excluded_fields",
+    "idempotency_rules": "/idempotency_contract",
+    "lifecycle_transitions": "/order_lifecycle/transitions",
+    "dynamic_lifecycle_targets": "/order_lifecycle/dynamic_target_rules",
+    "error_taxonomy": "/failure_taxonomy",
+    "authority_context_semantics": "/command_registry/SUBMIT_ORDER/field_schemas/authority_context_id",
+    "authority_context_trust_failure": "/failure_taxonomy/TRUSTED_CONTEXT_FAILURE",
+    "trusted_upstream_gate_order": "/environment_execution_boundary/side_effect_gate_order",
+    "order_planned_payload": "/event_contract/event_schema_registry/ORDER_PLANNED",
+    "order_partially_filled_payload": "/event_contract/event_schema_registry/ORDER_PARTIALLY_FILLED",
+    "order_filled_payload": "/event_contract/event_schema_registry/ORDER_FILLED",
+    "fill_identity": "/fill_contract/identity",
+    "fill_external_dedupe_scope": "/fill_contract/external_dedupe_scope",
+    "fill_dedupe_rules": "/fill_contract/dedupe",
+    "fill_cumulative_rule": "/fill_contract/cumulative_executed_quantity",
+    "fill_progression_invariants": "/fill_contract/invariants"
+  },
+  "production_order_authority_kernel": "AVAILABLE_CANDIDATE",
+  "production_order_history": "AVAILABLE_CANDIDATE",
+  "historical_order_resolver": "AVAILABLE_CANDIDATE",
+  "semantic_submit_order": "BLOCKED_UPSTREAM",
+  "semantic_submit_order_available": false,
+  "upstream_blockers": [
+    "Workspace authority unavailable",
+    "production ExchangeAccount authority unavailable",
+    "production M0.5 Instrument authority unavailable",
+    "execution-route trusted-context resolution unavailable"
+  ],
+  "M0.7": "NOT_AVAILABLE",
+  "M0.8_order_side_dependency": "BLOCKED",
+  "valid_prefix_rollback_threat": "arbitrary SQL mint/rewrite without genuine MAC is detected; coherent rollback of a genuine authenticated journal prefix plus matching local authenticated head is not detectable without an external freshness anchor",
+  "preserved_status": {
+    "M0.12_1.46.0": "ACCEPTED",
+    "Workspace_blocker": "UNCHANGED",
+    "production_M0.5": "NOT_AVAILABLE",
+    "C25": "BLOCKED",
+    "S9D": "OPEN"
+  },
+  "production_authenticity": {
+    "algorithm": "HMAC-SHA-256",
+    "custody": "KeyringOrderAuthoritySecretCustody",
+    "purpose": "CRYPTOHUNTER_M0_7_ORDER_AUTHORITY_PRODUCTION_ADMISSION_V1",
+    "public_sha_is_admission_proof": false
+  },
+  "submit_order_initial_plan_binding": {
+    "source_pointers": [
+      "/command_registry/SUBMIT_ORDER",
+      "/event_contract/event_schema_registry/ORDER_PLANNED",
+      "/event_contract/envelope_schema"
+    ],
+    "envelope_equal_fields": [
+      "command_id",
+      "order_id",
+      "environment",
+      "workspace_id",
+      "portfolio_id",
+      "exchange_account_id",
+      "instrument_id",
+      "execution_route_id",
+      "correlation_id",
+      "causation_id"
+    ],
+    "payload_equal_fields": [
+      "side",
+      "order_type",
+      "quantity"
+    ],
+    "outcome_links": [
+      "command_id",
+      "order_id",
+      "accepted_audit_event_id"
+    ],
+    "unbound_core_or_upstream_fields": [
+      "exchange_id",
+      "occurred_at_utc",
+      "event_fingerprint_sha256"
+    ]
+  }
+}
