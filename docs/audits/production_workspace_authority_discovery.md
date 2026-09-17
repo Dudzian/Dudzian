@@ -1,0 +1,209 @@
+# Production Workspace authority discovery
+
+This document is a deterministic rendering of the discovery report. It records a fail-closed provenance decision and does not define new Workspace semantics.
+
+```json
+{
+  "report_id": "PRODUCTION_WORKSPACE_AUTHORITY_DISCOVERY_2026_09_17",
+  "accepted_base_commit": "4690eb37c95f7600b4060003833515d0617e0928",
+  "repository_head_examined": "1586f3a250f8881d055d5b50e99d351224c848b7",
+  "base_head_relationship": "UNKNOWN: accepted base object is absent from the local object database; ancestry cannot be evaluated",
+  "workspace_relevant_tree_equivalent": false,
+  "workspace_relevant_diff": {
+    "status": "NOT_AVAILABLE",
+    "reason": "The accepted base commit cannot be resolved, so no base-to-HEAD tree or content diff can be computed.",
+    "commands": [
+      {
+        "command": "git rev-parse --verify 4690eb37c95f7600b4060003833515d0617e0928^{commit}",
+        "result": "fatal: Needed a single revision"
+      },
+      {
+        "command": "git merge-base --is-ancestor 4690eb37c95f7600b4060003833515d0617e0928 HEAD",
+        "result": "fatal: Not a valid commit name 4690eb37c95f7600b4060003833515d0617e0928"
+      },
+      {
+        "command": "git diff --name-status 4690eb37c95f7600b4060003833515d0617e0928..HEAD",
+        "result": "fatal: Invalid revision range 4690eb37c95f7600b4060003833515d0617e0928..HEAD"
+      },
+      {
+        "command": "git diff 4690eb37c95f7600b4060003833515d0617e0928..HEAD -- docs/architecture/cryptohunter_product_architecture bot_core/instruments tests/architecture",
+        "result": "fatal: Invalid revision range 4690eb37c95f7600b4060003833515d0617e0928..HEAD"
+      }
+    ]
+  },
+  "provenance_decision": "BLOCKED: exact accepted-base discovery was not executable in this checkout",
+  "canonical_workspace_admission_decision": "WITHHELD_PENDING_EXACT_ACCEPTED_BASE_DISCOVERY",
+  "blocker": "DISCOVERY_BLOCKED_ACCEPTED_BASE_COMMIT_NOT_AVAILABLE",
+  "production_workspace_authority": "NOT_IMPLEMENTED",
+  "discovery_scope": [
+    "Workspace",
+    "workspace_id",
+    "WorkspaceAuthority",
+    "workspace registry",
+    "tenant",
+    "portfolio/workspace",
+    "workspace membership",
+    "same-workspace",
+    "workspace lifecycle",
+    "workspace creation",
+    "workspace deletion",
+    "workspace ownership"
+  ],
+  "frozen_contract_sources": [
+    {
+      "path": "docs/architecture/cryptohunter_product_architecture/canonical_domain_vocabulary.json",
+      "json_pointers": [
+        "/entity_kinds/4",
+        "/identifier_policy",
+        "/relationships/2",
+        "/relationships/3",
+        "/relationships/13",
+        "/relationships/15",
+        "/relationships/26",
+        "/relationships/27",
+        "/relationships/28",
+        "/relationships/31",
+        "/relationships/32"
+      ],
+      "symbols": [
+        "Workspace",
+        "workspace_id"
+      ],
+      "exact_schema": "No Workspace record schema is frozen. The entity declaration freezes canonical_name=Workspace, id_field=workspace_id, id_prefix=ws, purpose=product workspace boundary, parent=CryptoHunterAccount, lifecycle_scope=persistent product entity, persistence=true, saas_sync_candidate=true, secret_policy=must not contain secrets, relationships, and legacy_names=[].",
+      "identity_fields": [
+        "workspace_id: ws_<uuidv7> under the global canonical lowercase UUIDv7 regex"
+      ],
+      "lifecycle_semantics": [
+        "persistent product entity",
+        "identifier immutable after rename",
+        "durable ID never derived from name"
+      ],
+      "ownership_admission_semantics": [
+        "CryptoHunterAccount -> Workspace is one_to_many",
+        "No creation command, admission event, trusted issuer, accepted record, or admission precondition is specified."
+      ],
+      "historical_semantics": "No Workspace historical record schema, lifecycle transition, generation, sequence, close/revoke/supersede rule, or historical resolver is specified."
+    },
+    {
+      "path": "docs/architecture/cryptohunter_product_architecture/persistence_versioning_migrations_backup_and_recovery.json",
+      "json_pointer": "/backup_contract/representation_registry/Workspace",
+      "symbol": "Workspace representation registry entry",
+      "exact_schema": {
+        "representation_category": "M011_ENTITY_IDENTITY_PROJECTION",
+        "projection_schema_if_any": "PersistentEntityIdentityProjection",
+        "payload_required_fields": [
+          "entity_kind",
+          "entity_id",
+          "parent_scope_bindings"
+        ],
+        "record_key": "record_key == payload.entity_id",
+        "adds_new_domain_facts": false,
+        "restorable_authority": false
+      },
+      "meaning": "This is a persistence/backup representation of a pre-existing identity, explicitly not an authority and not a source of new Workspace admission facts."
+    },
+    {
+      "path": "docs/architecture/cryptohunter_product_architecture/exchange_accounts_and_instruments.json",
+      "json_pointers": [
+        "/instrument_contract",
+        "/workspace_catalog_projection_contract",
+        "/operation_dispatch_policy/validation_context_closed_schema"
+      ],
+      "symbols": [
+        "Instrument",
+        "WorkspaceCatalogProjection",
+        "validate_trading_universe_source_chain"
+      ],
+      "m05_references": [
+        "Instrument.workspace_id is immutable ownership scope.",
+        "WorkspaceCatalogProjection scope is [workspace_id, accepted_source_catalog_snapshot_id].",
+        "Projection members require Instrument.workspace_id == projection.workspace_id.",
+        "Cross-Workspace membership and resolution fail closed.",
+        "The durable Instrument identity map key is [workspace_id, source_exchange_id, market_type, venue_symbol].",
+        "WorkspaceCatalogProjection.runtime_writer is NOT_IMPLEMENTED."
+      ],
+      "workspace_admission_semantics": "None; these contracts consume workspace_id and explicitly do not mint Workspace identity."
+    },
+    {
+      "path": "docs/architecture/cryptohunter_product_architecture/strategy_market_data_and_execution_routing.json",
+      "json_pointers": [
+        "/record_schemas/ExchangeAccountProjection",
+        "/record_schemas/InstrumentProjection",
+        "/record_schemas/PortfolioProjection",
+        "/instrument_projection_policy/workspace_ownership",
+        "/instrument_projection_validation_policy/historical_universe_workspace_binding",
+        "/source_catalog_projection_schemas/WorkspaceCatalogProjection"
+      ],
+      "m06_references": [
+        "ExchangeAccountProjection, InstrumentProjection, and PortfolioProjection carry workspace_id references to Workspace.",
+        "Instrument.workspace_id == StrategyInstance.workspace_id == ExchangeAccount.workspace_id == MarketDataRoute.workspace_id == ExecutionRoute.workspace_id.",
+        "Current and historical Instrument resolution requires Instrument.workspace_id == ExchangeAccount.workspace_id.",
+        "WorkspaceCatalogProjection requires Instrument.workspace_id == projection.workspace_id.",
+        "Same workspace and market_type alone are insufficient for PAPER permission."
+      ],
+      "workspace_admission_semantics": "None; M0.6 consumes accepted upstream projections and supplies no Workspace issuer or admission event."
+    },
+    {
+      "path": "bot_core/instruments/catalog_projection_oracle.py",
+      "symbols": [
+        "PROJECTION_FIELDS",
+        "INSTRUMENT_FIELDS",
+        "validate_workspace_catalog_projection",
+        "validate_trading_universe_source_chain"
+      ],
+      "runtime_semantics": [
+        "Structural validators exact-bind projection, Instrument, account, and history workspace IDs.",
+        "A syntactically valid workspace_id string is not proven to be a genuine admitted Workspace.",
+        "No WorkspaceAuthority symbol or Workspace admission path exists."
+      ]
+    },
+    {
+      "path": "tests/architecture/test_m06_workspace_catalog_source_chain.py",
+      "symbols": [
+        "canonical_graph",
+        "validate_graph",
+        "test_historical_resolution_never_falls_back_to_current_instrument"
+      ],
+      "m06_executable_requirements": [
+        "Cross-workspace Instrument/projection/account mismatches are denied.",
+        "Historical Instrument lookup does not fall back to current.",
+        "Fixtures use workspace_id values as trusted-context inputs; they do not establish Workspace admission provenance."
+      ]
+    }
+  ],
+  "exact_missing_frozen_requirements": [
+    "A canonical Workspace admission command or exact Core admission event schema.",
+    "The trusted actor/authority permitted to request or approve Workspace creation and the required proof of its parent CryptoHunterAccount.",
+    "The complete canonical accepted Workspace record schema beyond generic entity_id and parent_scope_bindings.",
+    "Whether admission has time, generation, sequence, authority record ID, fingerprint/digest, or journal/head fields and their exact derivations.",
+    "Workspace lifecycle states and legal transitions, including whether close, delete, revoke, or supersede exists.",
+    "Current and historical Workspace resolution keys and missing-history behavior.",
+    "The authoritative CryptoHunterAccount resolver needed to validate the frozen parent relationship at admission.",
+    "Production/test durable carrier types and canonical durable domain separators for Workspace authority."
+  ],
+  "red_team_conclusion": "No Workspace semantics or authority may be inferred from this report because exact accepted-base provenance is unavailable. The current-HEAD search inventory cannot prove what commit 4690eb37 contained.",
+  "implementation": {
+    "workspace_authority": "NOT_CREATED",
+    "test_workspace_authority": "NOT_CREATED",
+    "production_store": "NOT_CREATED",
+    "workspace_catalog_runtime_projection_authority": "NOT_CREATED",
+    "reason": "No implementation is permitted while accepted-base discovery provenance is unresolved."
+  },
+  "status": {
+    "M0.12_1.46.0": "ACCEPTED_UNCHANGED",
+    "production_M0.5": "NOT_AVAILABLE",
+    "C25": "BLOCKED",
+    "S9D": "OPEN",
+    "workspace_admission_contract_conclusion": "NOT_ASSERTED_FOR_ACCEPTED_BASE"
+  },
+  "prohibited_inferences": [
+    "Do not treat ws_<uuidv7> syntax as admission proof.",
+    "Do not let a caller choose workspace_id or authority metadata.",
+    "Do not turn PersistentEntityIdentityProjection into a Workspace DTO or authority.",
+    "Do not infer Workspace lifecycle from ExchangeAccount or Instrument lifecycle.",
+    "Do not implement WorkspaceCatalogRuntimeProjectionAuthority before genuine Workspace authority exists."
+  ],
+  "required_contract_work_before_implementation": "First make the accepted base commit object available and rerun the complete Workspace search and relevant-tree diff. Only that exact-base evidence may determine whether canonical Workspace admission requirements are missing.",
+  "current_head_observations_classification": "NON_AUTHORITATIVE_FOR_ACCEPTED_BASE; retained only as search inventory and must be rerun at the accepted base"
+}
+```
