@@ -1,0 +1,105 @@
+{
+  "iteration": "CONTRACT_DESIGN_FREEZE_ONLY",
+  "discovery_commit_supplied": "d33bc33d1678009b621c836479e359e47ec38740",
+  "repository_head_examined": "07156448589022e024d0dfa3121894c1798309d6",
+  "provenance": {
+    "mode": "CURRENT_TREE_PLUS_PRIOR_DISCOVERY",
+    "formal_authority_status_minted": false,
+    "rule": "Heuristic/discovery evidence may classify or design but cannot mint ACCEPTED or AVAILABLE."
+  },
+  "preserved_status": {
+    "M0.12_1.46.0": "ACCEPTED",
+    "CatalogRuntimeAcceptanceAuthority": "ACCEPTED_AVAILABLE",
+    "M0.7_structural_Full_Fill_v2": "ACCEPTED_AVAILABLE_FOR_STRUCTURAL_VALIDATION",
+    "M0.7_FullFillAuthority": "NOT_AVAILABLE",
+    "WorkspaceCatalogProjectionAuthority": "NOT_AVAILABLE",
+    "production_M0.5": "NOT_AVAILABLE",
+    "M0.8": "NOT_AVAILABLE",
+    "C25": "BLOCKED",
+    "S9D": "OPEN"
+  },
+  "artifact": "M05_INSTRUMENT_AUTHORITY_CONTRACT_FREEZE",
+  "result": "INSUFFICIENT_SEMANTICS",
+  "implementation_allowed": false,
+  "authority_boundary": {
+    "owner": "future InstrumentAuthority / InstrumentHistoryAuthority (not implemented)",
+    "owns": [
+      "instrument_id",
+      "immutable workspace identity",
+      "source identity",
+      "metadata_version progression",
+      "authoritative current record",
+      "immutable authoritative historical records"
+    ],
+    "must_not_own": [
+      "Workspace admission",
+      "WorkspaceCatalogProjection identity",
+      "TradingUniverse"
+    ]
+  },
+  "canonical_identity": {
+    "key": [
+      "workspace_id",
+      "source_exchange_id",
+      "market_type",
+      "venue_symbol"
+    ],
+    "execution_exchange_derivation": false,
+    "instrument_id_minted_by": "InstrumentAuthority; caller and WCP forbidden"
+  },
+  "version_contract": {
+    "metadata_version": "positive non-boolean integer",
+    "increment_owner": "InstrumentAuthority only; exact next version generated under serialized transition",
+    "progression": "strict monotonic; no duplicates; no gaps policy NOT_FROZEN",
+    "history": "immutable",
+    "coherence": "current.metadata_version > max(history.metadata_version); initial current v1 permits empty history",
+    "rollback": "current v7 -> v6 DENY"
+  },
+  "transition_semantics": {
+    "new_product": "mint new instrument_id only after genuine admission proof",
+    "metadata_update": "same identity and instrument_id; archive old current then authority increments version",
+    "delist": "new immutable version with DELISTED status; identity retained",
+    "relist": "NOT_FROZEN (same identity/version progression versus new identity)",
+    "source_metadata_change": "new version only after exact genuine ASCAT member authorization",
+    "symbol_reuse": "NOT_FROZEN; must not silently alias prior product",
+    "identity_collision": "DENY and fail closed; no overwrite"
+  },
+  "source_provenance": {
+    "every_version_pins": [
+      "accepted_source_catalog_snapshot_id",
+      "source_exchange_id",
+      "market_type",
+      "venue_symbol",
+      "source_metadata_version_id_or_canonical_member_proof"
+    ],
+    "current_catalog_fallback_for_history": false,
+    "admission_source": "candidate genuine ASCAT member + genuine Workspace policy/admission context, but policy contract is NOT_FROZEN"
+  },
+  "ordering": "genuine ASCAT -> Instrument version admission -> WCP projection admission; WCP cannot mint Instrument or cite itself",
+  "exact_resolver": {
+    "signature": "resolve_exact_instrument_version(instrument_id, metadata_version, accepted_source_catalog_snapshot_id)",
+    "sources": [
+      "authoritative current record on exact match",
+      "authoritative historical record on exact match"
+    ],
+    "fallbacks": {
+      "latest": false,
+      "nearest": false,
+      "current_for_missing_old": false,
+      "symbol_lookup": false
+    }
+  },
+  "missing_semantics": [
+    "Genuine Workspace authority and policy context",
+    "Instrument admission actor/command/event",
+    "Relist and symbol-reuse identity rules",
+    "Version gap rule and transaction protocol",
+    "Durable authenticated current/history store, restart and rollback model"
+  ],
+  "negative_requirements": [
+    "caller chooses Instrument metadata_version -> FAIL",
+    "current Instrument substitutes missing requested old version -> FAIL",
+    "latest Instrument fallback -> FAIL",
+    "WCP mints Instrument identity -> FAIL"
+  ]
+}
