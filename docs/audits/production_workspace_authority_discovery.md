@@ -6,7 +6,35 @@ This document is a deterministic rendering of the discovery report. It records a
 {
   "report_id": "PRODUCTION_WORKSPACE_AUTHORITY_DISCOVERY_2026_09_17",
   "accepted_base_commit": "4690eb37c95f7600b4060003833515d0617e0928",
-  "repository_head_examined": "1586f3a250f8881d055d5b50e99d351224c848b7",
+  "requested_current_commit": "46b07adba147fab15e5e4f944f3ccca9730d3e44",
+  "repository_head_examined": "05406fc3e849f581f6082097c50cb70a6e022027",
+  "repository_root": "/workspace/Dudzian",
+  "repository_provenance": {
+    "remotes": [],
+    "branches": [
+      "work"
+    ],
+    "tags": [],
+    "shallow": true,
+    "alternates": [],
+    "promisor_remotes": [],
+    "accepted_sha_initially_available": false,
+    "accepted_sha_recovered": false,
+    "recovery_source": "NOT_RECOVERED",
+    "recovery_decision": "No fetch or unshallow was attempted because no repository remote is configured; therefore no remote URL/ref provenance could be established safely.",
+    "requested_current_commit_available": false,
+    "object_search": {
+      "commit": "NOT_FOUND",
+      "dangling_or_unreachable_commit": "NOT_FOUND",
+      "remote_ref_ancestor": "NOT_APPLICABLE_NO_REMOTE_REFS",
+      "reflog_object": "NOT_FOUND",
+      "alternate_object": "NOT_APPLICABLE_NO_ALTERNATES",
+      "promisor_object": "NOT_APPLICABLE_NO_PROMISOR_REMOTE"
+    }
+  },
+  "exact_base_commit_available": false,
+  "exact_base_discovery_completed": false,
+  "exact_discovery_head": null,
   "base_head_relationship": "UNKNOWN: accepted base object is absent from the local object database; ancestry cannot be evaluated",
   "workspace_relevant_tree_equivalent": false,
   "workspace_relevant_diff": {
@@ -22,16 +50,17 @@ This document is a deterministic rendering of the discovery report. It records a
         "result": "fatal: Not a valid commit name 4690eb37c95f7600b4060003833515d0617e0928"
       },
       {
-        "command": "git diff --name-status 4690eb37c95f7600b4060003833515d0617e0928..HEAD",
-        "result": "fatal: Invalid revision range 4690eb37c95f7600b4060003833515d0617e0928..HEAD"
+        "command": "git diff --name-status 4690eb37c95f7600b4060003833515d0617e0928..46b07adba147fab15e5e4f944f3ccca9730d3e44",
+        "result": "fatal: Invalid revision range 4690eb37c95f7600b4060003833515d0617e0928..46b07adba147fab15e5e4f944f3ccca9730d3e44"
       },
       {
-        "command": "git diff 4690eb37c95f7600b4060003833515d0617e0928..HEAD -- docs/architecture/cryptohunter_product_architecture bot_core/instruments tests/architecture",
-        "result": "fatal: Invalid revision range 4690eb37c95f7600b4060003833515d0617e0928..HEAD"
+        "command": "git diff 4690eb37c95f7600b4060003833515d0617e0928..46b07adba147fab15e5e4f944f3ccca9730d3e44 -- docs/architecture/cryptohunter_product_architecture bot_core tests/architecture",
+        "result": "fatal: Invalid revision range 4690eb37c95f7600b4060003833515d0617e0928..46b07adba147fab15e5e4f944f3ccca9730d3e44"
       }
     ]
   },
   "provenance_decision": "BLOCKED: exact accepted-base discovery was not executable in this checkout",
+  "production_workspace_authority_contract": "WITHHELD",
   "canonical_workspace_admission_decision": "WITHHELD_PENDING_EXACT_ACCEPTED_BASE_DISCOVERY",
   "blocker": "DISCOVERY_BLOCKED_ACCEPTED_BASE_COMMIT_NOT_AVAILABLE",
   "production_workspace_authority": "NOT_IMPLEMENTED",
@@ -183,10 +212,10 @@ This document is a deterministic rendering of the discovery report. It records a
   ],
   "red_team_conclusion": "No Workspace semantics or authority may be inferred from this report because exact accepted-base provenance is unavailable. The current-HEAD search inventory cannot prove what commit 4690eb37 contained.",
   "implementation": {
-    "workspace_authority": "NOT_CREATED",
+    "workspace_authority": "NOT_IMPLEMENTED",
     "test_workspace_authority": "NOT_CREATED",
     "production_store": "NOT_CREATED",
-    "workspace_catalog_runtime_projection_authority": "NOT_CREATED",
+    "workspace_catalog_runtime_projection_authority": "NOT_IMPLEMENTED",
     "reason": "No implementation is permitted while accepted-base discovery provenance is unresolved."
   },
   "status": {
@@ -204,6 +233,7 @@ This document is a deterministic rendering of the discovery report. It records a
     "Do not implement WorkspaceCatalogRuntimeProjectionAuthority before genuine Workspace authority exists."
   ],
   "required_contract_work_before_implementation": "First make the accepted base commit object available and rerun the complete Workspace search and relevant-tree diff. Only that exact-base evidence may determine whether canonical Workspace admission requirements are missing.",
-  "current_head_observations_classification": "NON_AUTHORITATIVE_FOR_ACCEPTED_BASE; retained only as search inventory and must be rerun at the accepted base"
+  "current_head_observations_classification": "NON_AUTHORITATIVE_FOR_ACCEPTED_BASE; retained only as search inventory and must be rerun at the accepted base",
+  "current_head_inventory_source_commit": "1586f3a250f8881d055d5b50e99d351224c848b7"
 }
 ```
