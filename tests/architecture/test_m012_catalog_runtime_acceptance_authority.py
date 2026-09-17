@@ -13,7 +13,14 @@ from bot_core.instruments.catalog_runtime_acceptance import (
     _METADATA_FP_DOMAIN,
     _canonical,
     _digest,
+    _normalize_binance,
 )
+from bot_core.instruments.catalog_admission_receipt import (
+    CatalogAdmissionReceiptAuthority,
+    SQLiteCatalogAdmissionReceiptMetadataStore,
+)
+from bot_core.instruments.testing_catalog_admission_receipt import TestCatalogAdmissionReceiptAuthority
+from bot_core.security.keyring_storage import KeyringSecretStorage
 from bot_core.instruments.catalog_projection_oracle import (
     SOURCE_FIELDS,
     SOURCE_FINGERPRINT_FIELDS,
@@ -47,12 +54,20 @@ def _payload(*, server_time: int | None = None, tick: str = "0.01", extra: objec
 
 @pytest.fixture
 def authority(tmp_path, monkeypatch):
+    secrets: dict[str, str] = {}
+    monkeypatch.setattr(KeyringSecretStorage, "__init__", lambda storage, **kwargs: setattr(storage, "_catalog_test_values", secrets))
+    monkeypatch.setattr(KeyringSecretStorage, "get_secret", lambda storage, key: storage._catalog_test_values.get(key))
+    monkeypatch.setattr(KeyringSecretStorage, "set_secret", lambda storage, key, value: storage._catalog_test_values.__setitem__(key, value))
+    receipts = CatalogAdmissionReceiptAuthority(
+        SQLiteCatalogAdmissionReceiptMetadataStore(tmp_path / "receipts.sqlite3")
+    )
+    receipts.provision()
     carrier = SQLiteMembershipCarrier(tmp_path / "authority.sqlite3")
     membership = SourceProducerMembershipAuthority(carrier)
     assert membership.admit_release_grant("core_release_1_45_binance_spot") is not None
     values = [_payload()]
     monkeypatch.setattr(_BinanceSpotCatalogProducer, "fetch", lambda self: values[-1])
-    return CatalogRuntimeAcceptanceAuthority(membership), membership, values, carrier
+    return CatalogRuntimeAcceptanceAuthority(membership, receipts), membership, values, carrier
 
 
 def test_core_invokes_release_producer_and_restart_preserves_history(authority) -> None:
@@ -77,7 +92,7 @@ def test_core_invokes_release_producer_and_restart_preserves_history(authority) 
     assert first.stale_after_utc > first.effective_at_utc >= first.observed_at_utc
     assert runtime.fetch_catalog_once("core_release_1_46_binance_spot") == first
 
-    restarted = CatalogRuntimeAcceptanceAuthority(SourceProducerMembershipAuthority(carrier))
+    restarted = CatalogRuntimeAcceptanceAuthority(SourceProducerMembershipAuthority(carrier), runtime._receipts)
     assert restarted.snapshots() == (first,)
     old_metadata = restarted.metadata_history("binance", "SPOT", "BTCUSDT")
     assert len(old_metadata) == 1
@@ -88,6 +103,166 @@ def test_core_invokes_release_producer_and_restart_preserves_history(authority) 
     history = restarted.metadata_history("binance", "SPOT", "BTCUSDT")
     assert len(history) == 2
     assert history[1].previous_source_metadata_version_id == history[0].source_metadata_version_id
+
+
+def test_production_rejects_test_receipt_authority(authority, tmp_path) -> None:
+    _runtime, membership, _values, _carrier = authority
+    test_receipts = TestCatalogAdmissionReceiptAuthority(
+        tmp_path / "test-receipts.sqlite3", deterministic_seed=b"x" * 32
+    )
+    with pytest.raises(TypeError, match="exact production Catalog"):
+        CatalogRuntimeAcceptanceAuthority(membership, test_receipts)  # type: ignore[arg-type]
+
+
+def test_receipt_relation_is_required_exact_and_idempotently_reused(authority) -> None:
+    runtime, membership, _values, carrier = authority
+    first = runtime.fetch_catalog_once("core_release_1_46_binance_spot")
+    assert first is not None
+    receipt_count = len(runtime._receipts.receipts())
+    finalization_count = len(runtime._receipts.finalizations())
+    with _sqlite(carrier) as db:
+        relation = db.execute(
+            "SELECT catalog_admission_receipt_id FROM catalog_snapshot_admission_receipts"
+        ).fetchone()
+    assert runtime.fetch_catalog_once("core_release_1_46_binance_spot") == first
+    assert len(runtime._receipts.receipts()) == receipt_count
+    assert len(runtime._receipts.finalizations()) == finalization_count
+    with _sqlite(carrier) as db:
+        assert db.execute(
+            "SELECT catalog_admission_receipt_id FROM catalog_snapshot_admission_receipts"
+        ).fetchone() == relation
+        db.execute("DELETE FROM catalog_snapshot_admission_receipts")
+    with pytest.raises(ValueError, match="CORRUPT_CATALOG_AUTHORITY"):
+        CatalogRuntimeAcceptanceAuthority(membership, runtime._receipts)
+
+
+def test_orphan_genuine_receipt_does_not_create_catalog_fact(authority) -> None:
+    runtime, membership, _values, carrier = authority
+    receipt = runtime._receipts.prepare(
+        catalog_commitment_sha256="a" * 64,
+        membership_commitment_sha256="b" * 64,
+        accepted_at_utc="2030-01-02T03:04:05Z",
+    )
+    assert not runtime._receipts.verify(receipt)
+    restarted = CatalogRuntimeAcceptanceAuthority(membership, runtime._receipts)
+    assert restarted.snapshots() == ()
+    with _sqlite(carrier) as db:
+        assert db.execute("SELECT COUNT(*) FROM catalog_snapshot_admission_receipts").fetchone() == (0,)
+
+
+def test_catalog_commit_without_finalization_fails_closed(authority) -> None:
+    runtime, membership, values, _carrier = authority
+    observation = _normalize_binance(values[-1])
+    assert observation is not None
+    with runtime._connect() as db:
+        db.execute("BEGIN IMMEDIATE")
+        snapshot, receipt, _storage = runtime._accept_locked(
+            db, _BinanceSpotCatalogProducer(), observation
+        )
+        assert snapshot is not None and receipt is not None
+        db.commit()
+    assert not runtime._receipts.verify(receipt)
+    with pytest.raises(ValueError, match="CORRUPT_CATALOG_AUTHORITY"):
+        CatalogRuntimeAcceptanceAuthority(membership, runtime._receipts)
+
+
+def test_prepared_orphan_cannot_authorize_coherent_sql_catalog_mint(authority) -> None:
+    runtime, membership, values, carrier = authority
+    observation = _normalize_binance(values[-1])
+    assert observation is not None
+    with runtime._connect() as db:
+        db.execute("BEGIN IMMEDIATE")
+        _snapshot, receipt, _storage = runtime._accept_locked(
+            db, _BinanceSpotCatalogProducer(), observation
+        )
+        captured = {
+            table: db.execute(f"SELECT * FROM {table}").fetchall()
+            for table in (
+                "source_metadata_versions", "source_metadata_authority_head",
+                "accepted_catalog_snapshots", "catalog_snapshot_admission_receipts",
+                "catalog_authority_head",
+            )
+        }
+        db.rollback()
+    assert receipt is not None and not runtime._receipts.verify(receipt)
+    with _sqlite(carrier) as db:
+        for table in ("source_metadata_versions", "accepted_catalog_snapshots",
+                      "catalog_snapshot_admission_receipts"):
+            placeholders = ",".join("?" for _ in captured[table][0])
+            db.executemany(f"INSERT INTO {table} VALUES({placeholders})", captured[table])
+        for table in ("source_metadata_authority_head", "catalog_authority_head"):
+            db.execute(f"DELETE FROM {table}")
+            placeholders = ",".join("?" for _ in captured[table][0])
+            db.executemany(f"INSERT INTO {table} VALUES({placeholders})", captured[table])
+    with pytest.raises(ValueError, match="CORRUPT_CATALOG_AUTHORITY"):
+        CatalogRuntimeAcceptanceAuthority(membership, runtime._receipts)
+
+
+def test_receipt_key_rotation_and_revocation_are_current_trust(authority) -> None:
+    runtime, _membership, values, _carrier = authority
+    first = runtime.fetch_catalog_once("core_release_1_46_binance_spot")
+    assert first is not None
+    first_receipt = runtime._receipts.receipts()[0]
+    new_key = runtime._receipts.rotate()
+    assert runtime.snapshots() == (first,)  # VERIFY_ONLY remains trusted.
+    values.append(_payload(server_time=int(datetime.now(timezone.utc).timestamp() * 1000) - 100))
+    second = runtime.fetch_catalog_once("core_release_1_46_binance_spot")
+    assert second is not None
+    assert runtime._receipts.receipts()[-1].key_id == new_key
+    runtime._receipts.revoke(first_receipt.key_id)
+    with pytest.raises(ValueError, match="CORRUPT_CATALOG_AUTHORITY"):
+        runtime.snapshots()
+
+
+def test_catalog_valid_prefix_rollback_is_rejected_by_finalization_closure(authority) -> None:
+    runtime, membership, values, carrier = authority
+    first = runtime.fetch_catalog_once("core_release_1_46_binance_spot")
+    assert first is not None
+    with _sqlite(carrier) as db:
+        catalog_head_one = db.execute(
+            "SELECT * FROM catalog_authority_head WHERE singleton=1"
+        ).fetchone()
+        metadata_head_one = db.execute(
+            "SELECT * FROM source_metadata_authority_head WHERE singleton=1"
+        ).fetchone()
+    values.append(_payload(
+        server_time=int(datetime.now(timezone.utc).timestamp() * 1000) - 100,
+        tick="0.1",
+    ))
+    second = runtime.fetch_catalog_once("core_release_1_46_binance_spot")
+    assert second is not None
+    assert len(runtime.snapshots()) == len(runtime._receipts.finalizations()) == 2
+    with _sqlite(carrier) as db:
+        db.execute(
+            "DELETE FROM catalog_snapshot_admission_receipts "
+            "WHERE accepted_source_catalog_snapshot_id=?", (second.accepted_source_catalog_snapshot_id,)
+        )
+        db.execute("DELETE FROM accepted_catalog_snapshots WHERE snapshot_sequence=2")
+        db.execute("DELETE FROM source_metadata_versions WHERE source_metadata_sequence>1")
+        db.execute("DELETE FROM catalog_authority_head")
+        db.execute("INSERT INTO catalog_authority_head VALUES(?,?,?,?)", catalog_head_one)
+        db.execute("DELETE FROM source_metadata_authority_head")
+        db.execute(
+            "INSERT INTO source_metadata_authority_head VALUES(?,?,?,?)", metadata_head_one
+        )
+    assert len(runtime._receipts.finalizations()) == 2
+    with pytest.raises(ValueError, match="CORRUPT_CATALOG_AUTHORITY"):
+        CatalogRuntimeAcceptanceAuthority(membership, runtime._receipts)
+
+
+def test_complete_catalog_substore_reset_with_finalization_is_rejected(authority) -> None:
+    runtime, membership, _values, carrier = authority
+    assert runtime.fetch_catalog_once("core_release_1_46_binance_spot") is not None
+    assert len(runtime._receipts.finalizations()) == 1
+    with _sqlite(carrier) as db:
+        for table in (
+            "catalog_snapshot_admission_receipts", "accepted_catalog_snapshots",
+            "catalog_authority_head", "source_metadata_versions",
+            "source_metadata_authority_head", "catalog_authority_metadata",
+        ):
+            db.execute(f"DROP TABLE {table}")
+    with pytest.raises(ValueError, match="CORRUPT_CATALOG_AUTHORITY"):
+        CatalogRuntimeAcceptanceAuthority(membership, runtime._receipts)
 
 
 def test_public_boundary_denies_factory_payload_time_and_identity_substitution(authority) -> None:
@@ -132,10 +307,12 @@ def test_revoked_membership_cannot_accept_new_snapshot_but_old_replays(authority
 def test_same_retrieval_id_with_different_content_denies(authority) -> None:
     runtime, _membership, values, _carrier = authority
     assert runtime.fetch_catalog_once("core_release_1_46_binance_spot") is not None
+    before = (len(runtime._receipts.receipts()), len(runtime._receipts.finalizations()))
     original_time = values[-1]["serverTime"]
     values.append(_payload(server_time=original_time, tick="0.1"))
     assert runtime.fetch_catalog_once("core_release_1_46_binance_spot") is None
     assert len(runtime.snapshots()) == 1
+    assert (len(runtime._receipts.receipts()), len(runtime._receipts.finalizations())) == before
 
 
 def test_concurrent_revoke_committed_before_acceptance_fence_wins(authority, monkeypatch) -> None:
@@ -182,7 +359,7 @@ def test_orphan_valid_fingerprint_metadata_is_corruption(authority) -> None:
                    ("smeta_orphan", "binance", "SPOT", "BTCUSDT", 2,
                     "ascat_00000000000000000001", _canonical(record), "0" * 64, "1" * 64))
     with pytest.raises(ValueError, match="CORRUPT_CATALOG_AUTHORITY"):
-        CatalogRuntimeAcceptanceAuthority(SourceProducerMembershipAuthority(carrier))
+        CatalogRuntimeAcceptanceAuthority(SourceProducerMembershipAuthority(carrier), runtime._receipts)
 
 
 def test_metadata_mutation_with_recomputed_public_fingerprint_is_corruption(authority) -> None:
@@ -246,7 +423,7 @@ def test_catalog_domain_corruption_fails_live_and_on_restart(authority, mutation
         runtime.metadata_history("binance", "SPOT", "BTCUSDT")
     assert runtime.fetch_catalog_once("core_release_1_46_binance_spot") is None
     with pytest.raises(ValueError, match="CATALOG_AUTHORITY_DOMAIN"):
-        CatalogRuntimeAcceptanceAuthority(membership)
+        CatalogRuntimeAcceptanceAuthority(membership, runtime._receipts)
 
 
 def test_wrong_alias_and_wrong_fingerprint_domain_are_not_canonical(authority) -> None:
@@ -279,7 +456,7 @@ def test_snapshot_shadow_columns_are_exact_bound(authority, column, value) -> No
     with pytest.raises(ValueError, match="CORRUPT_CATALOG_AUTHORITY"):
         runtime.snapshots()
     with pytest.raises(ValueError, match="CORRUPT_CATALOG_AUTHORITY"):
-        CatalogRuntimeAcceptanceAuthority(membership)
+        CatalogRuntimeAcceptanceAuthority(membership, runtime._receipts)
 
 
 def _rewrite_snapshot_row(runtime, db, sequence: int, mutate) -> dict[str, object]:
@@ -434,7 +611,7 @@ def test_initialized_store_never_repairs_missing_required_tables(authority, tabl
         for table in tables:
             db.execute(f"DROP TABLE {table}")
     with pytest.raises(ValueError, match="CATALOG_AUTHORITY_STORAGE_MISSING"):
-        CatalogRuntimeAcceptanceAuthority(membership)
+        CatalogRuntimeAcceptanceAuthority(membership, runtime._receipts)
 
 
 def test_supersession_before_acceptance_denies_and_old_snapshot_stays_historical(authority, monkeypatch) -> None:

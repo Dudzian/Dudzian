@@ -30,6 +30,7 @@ from bot_core.security.keyring_storage import KeyringSecretStorage
 CATALOG_ADMISSION_RECEIPT_PURPOSE = "CRYPTOHUNTER_M0_12_CATALOG_ADMISSION_RECEIPT_V1"
 CATALOG_RECEIPT_KEY_LIFECYCLE_PURPOSE = "CRYPTOHUNTER_M0_12_CATALOG_RECEIPT_KEY_LIFECYCLE_V1"
 CATALOG_RECEIPT_AUTHORITY_ANCHOR_PURPOSE = "CRYPTOHUNTER_M0_12_CATALOG_RECEIPT_AUTHORITY_ANCHOR_V1"
+CATALOG_ADMISSION_FINALIZATION_PURPOSE = "CRYPTOHUNTER_M0_12_CATALOG_ADMISSION_FINALIZATION_V1"
 CATALOG_ADMISSION_RECEIPT_ALGORITHM = "HMAC-SHA-256"
 CATALOG_ADMISSION_RECEIPT_DOMAIN = "cryptohunter.catalog-admission-receipt.production.v1"
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
@@ -101,6 +102,67 @@ class CatalogAdmissionReceipt:
 
     def to_mapping(self) -> dict[str, object]:
         return asdict(self)
+
+
+@dataclass(frozen=True, slots=True)
+class CatalogAdmissionReceiptFinalization:
+    finalization_sequence: int
+    receipt_id: str
+    key_id: str
+    accepted_source_catalog_snapshot_id: str
+    catalog_commitment_sha256: str
+    membership_commitment_sha256: str
+    receipt_mac: str
+    snapshot_sequence: int
+    snapshot_record_digest: str
+    catalog_storage_commitment_sha256: str
+    previous_finalization_digest: str
+    purpose: str
+    finalization_mac: str
+
+    def to_mapping(self) -> dict[str, object]:
+        return asdict(self)
+
+
+_FINALIZATION_FIELDS = frozenset(
+    field.name for field in fields(CatalogAdmissionReceiptFinalization)
+)
+
+
+def catalog_admission_storage_commitment(value: Mapping[str, object]) -> str:
+    required = {
+        "accepted_source_catalog_snapshot_id", "receipt_id",
+        "catalog_commitment_sha256", "membership_commitment_sha256", "receipt_mac",
+        "snapshot_sequence", "snapshot_record_digest",
+    }
+    if set(value) != required:
+        raise ValueError("exact Catalog storage envelope required")
+    if (
+        type(value["accepted_source_catalog_snapshot_id"]) is not str
+        or not value["accepted_source_catalog_snapshot_id"]
+        or type(value["receipt_id"]) is not str
+        or not value["receipt_id"]
+        or type(value["snapshot_sequence"]) is not int
+        or value["snapshot_sequence"] < 1
+        or not all(
+            _valid_sha(value[name])
+            for name in (
+                "catalog_commitment_sha256", "membership_commitment_sha256",
+                "receipt_mac", "snapshot_record_digest",
+            )
+        )
+    ):
+        raise ValueError("exact Catalog storage envelope required")
+    return hashlib.sha256(
+        CATALOG_ADMISSION_FINALIZATION_PURPOSE.encode("ascii")
+        + b"\x00"
+        + _canonical(value)
+    ).hexdigest()
+
+
+def _finalization_payload(value: Mapping[str, object]) -> bytes:
+    body = {name: value[name] for name in sorted(_FINALIZATION_FIELDS - {"finalization_mac"})}
+    return CATALOG_ADMISSION_FINALIZATION_PURPOSE.encode("ascii") + b"\x00" + _canonical(body)
 
 
 _RECEIPT_FIELDS = frozenset(field.name for field in fields(CatalogAdmissionReceipt))
@@ -249,6 +311,18 @@ class _SQLiteCatalogAdmissionReceiptMetadataStoreBase:
                 CREATE TABLE IF NOT EXISTS catalog_receipt_authority_head(
                   singleton INTEGER PRIMARY KEY CHECK(singleton=1), committed_sequence INTEGER NOT NULL,
                   committed_digest TEXT NOT NULL, last_receipt_id TEXT);
+                CREATE TABLE IF NOT EXISTS catalog_admission_receipt_finalizations(
+                  finalization_sequence INTEGER PRIMARY KEY,
+                  receipt_id TEXT UNIQUE NOT NULL, key_id TEXT NOT NULL,
+                  canonical_finalization TEXT NOT NULL, finalization_mac TEXT NOT NULL,
+                  previous_finalization_digest TEXT NOT NULL,
+                  record_digest TEXT UNIQUE NOT NULL,
+                  FOREIGN KEY(receipt_id) REFERENCES catalog_admission_receipts(receipt_id),
+                  FOREIGN KEY(key_id) REFERENCES catalog_receipt_authority_keys(key_id));
+                CREATE TABLE IF NOT EXISTS catalog_receipt_finalization_head(
+                  singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+                  committed_sequence INTEGER NOT NULL, committed_digest TEXT NOT NULL,
+                  last_receipt_id TEXT);
             """)
             row = db.execute("SELECT COUNT(*) FROM catalog_receipt_authority_metadata").fetchone()
             if row == (0,):
@@ -259,6 +333,9 @@ class _SQLiteCatalogAdmissionReceiptMetadataStoreBase:
             row = db.execute("SELECT COUNT(*) FROM catalog_receipt_authority_head").fetchone()
             if row == (0,):
                 db.execute("INSERT INTO catalog_receipt_authority_head VALUES(1,0,?,NULL)", ("0" * 64,))
+            row = db.execute("SELECT COUNT(*) FROM catalog_receipt_finalization_head").fetchone()
+            if row == (0,):
+                db.execute("INSERT INTO catalog_receipt_finalization_head VALUES(1,0,?,NULL)", ("0" * 64,))
 
 
 class SQLiteCatalogAdmissionReceiptMetadataStore(_SQLiteCatalogAdmissionReceiptMetadataStoreBase):
@@ -291,12 +368,19 @@ class _CatalogAdmissionReceiptAuthorityBase:
             "SELECT committed_sequence,committed_digest,last_receipt_id "
             "FROM catalog_receipt_authority_head WHERE singleton=1"
         ).fetchone()
-        if metadata is None or head is None:
+        finalization_head = db.execute(
+            "SELECT committed_sequence,committed_digest,last_receipt_id "
+            "FROM catalog_receipt_finalization_head WHERE singleton=1"
+        ).fetchone()
+        if metadata is None or head is None or finalization_head is None:
             raise CatalogAdmissionReceiptAuthorityUnavailable
         lifecycle_mac = metadata[0]
         sequence, digest, last_receipt_id = head
         if revision == 0 and root_handle is None and sequence == 0:
-            if lifecycle_mac is not None or digest != "0" * 64 or last_receipt_id is not None:
+            if (
+                lifecycle_mac is not None or digest != "0" * 64 or last_receipt_id is not None
+                or finalization_head != (0, "0" * 64, None)
+            ):
                 raise CatalogAdmissionReceiptAuthorityUnavailable
             return None
         if (
@@ -320,6 +404,9 @@ class _CatalogAdmissionReceiptAuthorityBase:
             "receipt_committed_sequence": sequence,
             "receipt_committed_digest": digest,
             "last_receipt_id": last_receipt_id,
+            "finalization_committed_sequence": finalization_head[0],
+            "finalization_committed_digest": finalization_head[1],
+            "last_finalized_receipt_id": finalization_head[2],
         }
 
     def _read_anchor(self) -> dict[str, object] | None:
@@ -359,6 +446,12 @@ class _CatalogAdmissionReceiptAuthorityBase:
                 f"{CATALOG_ADMISSION_RECEIPT_PURPOSE}\n{self._AUTHORITY_DOMAIN}\n"
                 f"{sequence}\n{previous}\n{canonical}"
             ).encode()
+        ).hexdigest()
+
+    def _finalization_record_digest(self, sequence: int, canonical: str, previous: str) -> str:
+        return hashlib.sha256(
+            (f"{CATALOG_ADMISSION_FINALIZATION_PURPOSE}\n{self._AUTHORITY_DOMAIN}\n"
+             f"{sequence}\n{previous}\n{canonical}").encode()
         ).hexdigest()
 
     def _lifecycle_payload(
@@ -497,6 +590,62 @@ class _CatalogAdmissionReceiptAuthorityBase:
         expected_last = receipts[-1].receipt_id if receipts else None
         if head[1:] != (previous, expected_last):
             raise CatalogAdmissionReceiptAuthorityUnavailable
+        finalization_head = db.execute(
+            "SELECT committed_sequence,committed_digest,last_receipt_id "
+            "FROM catalog_receipt_finalization_head WHERE singleton=1"
+        ).fetchone()
+        finalization_rows = db.execute(
+            "SELECT finalization_sequence,receipt_id,key_id,canonical_finalization,"
+            "finalization_mac,previous_finalization_digest,record_digest "
+            "FROM catalog_admission_receipt_finalizations ORDER BY finalization_sequence"
+        ).fetchall()
+        if finalization_head is None or finalization_head[0] != len(finalization_rows):
+            raise CatalogAdmissionReceiptAuthorityUnavailable
+        receipt_by_id = {receipt.receipt_id: receipt for receipt in receipts}
+        previous_finalization = "0" * 64
+        finalized_ids: list[str] = []
+        for expected_sequence, row in enumerate(finalization_rows, 1):
+            sequence, receipt_id, key_id, canonical, mac, row_previous, digest = row
+            try:
+                raw = json.loads(canonical)
+            except (TypeError, json.JSONDecodeError):
+                raise CatalogAdmissionReceiptAuthorityUnavailable from None
+            receipt = receipt_by_id.get(receipt_id)
+            key = by_id.get(key_id)
+            storage = {
+                name: raw.get(name)
+                for name in (
+                    "accepted_source_catalog_snapshot_id", "receipt_id",
+                    "catalog_commitment_sha256", "membership_commitment_sha256",
+                    "receipt_mac", "snapshot_sequence", "snapshot_record_digest",
+                )
+            }
+            if (
+                sequence != expected_sequence or set(raw) != _FINALIZATION_FIELDS
+                or row_previous != previous_finalization
+                or digest != self._finalization_record_digest(sequence, canonical, row_previous)
+                or raw.get("finalization_sequence") != sequence
+                or raw.get("receipt_id") != receipt_id or raw.get("key_id") != key_id
+                or raw.get("previous_finalization_digest") != row_previous
+                or raw.get("purpose") != CATALOG_ADMISSION_FINALIZATION_PURPOSE
+                or raw.get("finalization_mac") != mac
+                or receipt is None or key is None or receipt.key_id != key_id
+                or raw.get("catalog_commitment_sha256") != receipt.catalog_commitment_sha256
+                or raw.get("membership_commitment_sha256") != receipt.membership_commitment_sha256
+                or raw.get("receipt_mac") != receipt.receipt_mac
+                or raw.get("catalog_storage_commitment_sha256")
+                != catalog_admission_storage_commitment(storage)
+            ):
+                raise CatalogAdmissionReceiptAuthorityUnavailable
+            expected_mac = self._custody.digest(key.custody_handle, _finalization_payload(raw))
+            if expected_mac is None or not hmac.compare_digest(expected_mac.hex(), mac):
+                raise CatalogAdmissionReceiptAuthorityUnavailable
+            finalized_ids.append(receipt_id)
+            previous_finalization = digest
+        if finalization_head[1:] != (
+            previous_finalization, finalized_ids[-1] if finalized_ids else None
+        ):
+            raise CatalogAdmissionReceiptAuthorityUnavailable
         if check_anchor:
             self._validate_anchor(db, _revision, _root_handle)
         return tuple(receipts)
@@ -623,7 +772,7 @@ class _CatalogAdmissionReceiptAuthorityBase:
             self._publish_anchor(db)
             self._replay(db)
 
-    def issue(
+    def prepare(
         self,
         *,
         catalog_commitment_sha256: object,
@@ -679,9 +828,107 @@ class _CatalogAdmissionReceiptAuthorityBase:
             self._replay(db)
         return receipt
 
+    def finalize(
+        self, receipt: CatalogAdmissionReceipt, catalog_storage: Mapping[str, object]
+    ) -> CatalogAdmissionReceiptFinalization:
+        if type(receipt) is not CatalogAdmissionReceipt:
+            raise CatalogAdmissionReceiptAuthorityUnavailable
+        storage_commitment = catalog_admission_storage_commitment(catalog_storage)
+        if (
+            catalog_storage["receipt_id"] != receipt.receipt_id
+            or catalog_storage["catalog_commitment_sha256"] != receipt.catalog_commitment_sha256
+            or catalog_storage["membership_commitment_sha256"] != receipt.membership_commitment_sha256
+            or catalog_storage["receipt_mac"] != receipt.receipt_mac
+        ):
+            raise CatalogAdmissionReceiptAuthorityUnavailable
+        with self._metadata._connect() as db:
+            try:
+                db.execute("BEGIN IMMEDIATE")
+                receipts = self._replay(db)
+                if receipt not in receipts:
+                    raise CatalogAdmissionReceiptAuthorityUnavailable
+                revision, keys, _root = self._metadata_and_keys(db)
+                del revision
+                key = next((item for item in keys if item.key_id == receipt.key_id), None)
+                if key is None or key.lifecycle_state is CatalogAdmissionReceiptKeyState.REVOKED:
+                    raise CatalogAdmissionReceiptAuthorityUnavailable
+                existing = db.execute(
+                    "SELECT canonical_finalization FROM catalog_admission_receipt_finalizations "
+                    "WHERE receipt_id=?", (receipt.receipt_id,),
+                ).fetchone()
+                if existing is not None:
+                    value = CatalogAdmissionReceiptFinalization(**json.loads(existing[0]))
+                    if value.catalog_storage_commitment_sha256 != storage_commitment:
+                        raise CatalogAdmissionReceiptAuthorityUnavailable
+                    db.rollback()
+                    return value
+                head = db.execute(
+                    "SELECT committed_sequence,committed_digest FROM "
+                    "catalog_receipt_finalization_head WHERE singleton=1"
+                ).fetchone()
+                sequence, previous = head[0] + 1, head[1]
+                material: dict[str, object] = {
+                    "finalization_sequence": sequence,
+                    "receipt_id": receipt.receipt_id, "key_id": receipt.key_id,
+                    **dict(catalog_storage),
+                    "catalog_storage_commitment_sha256": storage_commitment,
+                    "previous_finalization_digest": previous,
+                    "purpose": CATALOG_ADMISSION_FINALIZATION_PURPOSE,
+                }
+                tag = self._custody.digest(key.custody_handle, _finalization_payload(material))
+                if tag is None:
+                    raise CatalogAdmissionReceiptAuthorityUnavailable
+                finalization = CatalogAdmissionReceiptFinalization(
+                    **material, finalization_mac=tag.hex()
+                )
+                canonical = _canonical(finalization.to_mapping()).decode("utf-8")
+                digest = self._finalization_record_digest(sequence, canonical, previous)
+                db.execute(
+                    "INSERT INTO catalog_admission_receipt_finalizations VALUES(?,?,?,?,?,?,?)",
+                    (sequence, receipt.receipt_id, receipt.key_id, canonical,
+                     finalization.finalization_mac, previous, digest),
+                )
+                db.execute(
+                    "UPDATE catalog_receipt_finalization_head SET committed_sequence=?,"
+                    "committed_digest=?,last_receipt_id=? WHERE singleton=1",
+                    (sequence, digest, receipt.receipt_id),
+                )
+                self._replay(db, check_anchor=False)
+                db.commit()
+            except Exception:
+                db.rollback()
+                raise
+        with self._metadata._connect() as db:
+            self._publish_anchor(db)
+            self._replay(db)
+        return finalization
+
     def receipts(self) -> tuple[CatalogAdmissionReceipt, ...]:
         with self._metadata._connect() as db:
             return self._replay(db)
+
+    def finalizations(self) -> tuple[CatalogAdmissionReceiptFinalization, ...]:
+        """Return the complete immutable finalized-fact journal after full replay."""
+        with self._metadata._connect() as db:
+            self._replay(db)
+            rows = db.execute(
+                "SELECT canonical_finalization FROM catalog_admission_receipt_finalizations "
+                "ORDER BY finalization_sequence"
+            ).fetchall()
+        return tuple(
+            CatalogAdmissionReceiptFinalization(**json.loads(row[0])) for row in rows
+        )
+
+    def finalization(self, receipt_id: object) -> CatalogAdmissionReceiptFinalization | None:
+        if type(receipt_id) is not str:
+            return None
+        with self._metadata._connect() as db:
+            self._replay(db)
+            row = db.execute(
+                "SELECT canonical_finalization FROM catalog_admission_receipt_finalizations "
+                "WHERE receipt_id=?", (receipt_id,),
+            ).fetchone()
+        return None if row is None else CatalogAdmissionReceiptFinalization(**json.loads(row[0]))
 
     def verify(self, receipt: object) -> bool:
         if type(receipt) is not CatalogAdmissionReceipt:
@@ -690,12 +937,17 @@ class _CatalogAdmissionReceiptAuthorityBase:
             with self._metadata._connect() as db:
                 accepted = self._replay(db)
                 _revision, keys, _root_handle = self._metadata_and_keys(db)
+                finalized = db.execute(
+                    "SELECT COUNT(*) FROM catalog_admission_receipt_finalizations "
+                    "WHERE receipt_id=?", (receipt.receipt_id,),
+                ).fetchone()[0]
             matches = [item for item in accepted if item.receipt_id == receipt.receipt_id]
             key = next((item for item in keys if item.key_id == receipt.key_id), None)
             return (
                 key is not None
                 and key.lifecycle_state is not CatalogAdmissionReceiptKeyState.REVOKED
                 and len(matches) == 1
+                and finalized == 1
                 and hmac.compare_digest(
                     _canonical(matches[0].to_mapping()),
                     _canonical(receipt.to_mapping()),
@@ -721,11 +973,14 @@ __all__ = [
     "CATALOG_ADMISSION_RECEIPT_ALGORITHM",
     "CATALOG_ADMISSION_RECEIPT_DOMAIN",
     "CATALOG_ADMISSION_RECEIPT_PURPOSE",
+    "CATALOG_ADMISSION_FINALIZATION_PURPOSE",
     "CATALOG_RECEIPT_KEY_LIFECYCLE_PURPOSE",
     "CATALOG_RECEIPT_AUTHORITY_ANCHOR_PURPOSE",
     "CatalogAdmissionReceipt",
+    "CatalogAdmissionReceiptFinalization",
     "CatalogAdmissionReceiptAuthority",
     "CatalogAdmissionReceiptSecureCustody",
     "SecretStorageCatalogAdmissionReceiptSecureCustody",
     "SQLiteCatalogAdmissionReceiptMetadataStore",
+    "catalog_admission_storage_commitment",
 ]

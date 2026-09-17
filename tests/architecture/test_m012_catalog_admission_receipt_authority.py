@@ -78,11 +78,27 @@ def production(tmp_path, monkeypatch):
 
 def _issue(authority) -> CatalogAdmissionReceipt:
     authority.provision()
-    return authority.issue(
-        catalog_commitment_sha256=CATALOG,
-        membership_commitment_sha256=MEMBERSHIP,
-        accepted_at_utc=WHEN,
+    return _prepare_and_finalize(authority, CATALOG, MEMBERSHIP, WHEN)
+
+
+def _prepare_and_finalize(authority, catalog: str, membership: str, when: str):
+    receipt = authority.prepare(
+        catalog_commitment_sha256=catalog,
+        membership_commitment_sha256=membership,
+        accepted_at_utc=when,
     )
+    authority.finalize(receipt, {
+        "accepted_source_catalog_snapshot_id": f"ascat_{receipt.receipt_sequence:020d}",
+        "receipt_id": receipt.receipt_id,
+        "catalog_commitment_sha256": catalog,
+        "membership_commitment_sha256": membership,
+        "receipt_mac": receipt.receipt_mac,
+        "snapshot_sequence": receipt.receipt_sequence,
+        "snapshot_record_digest": hashlib.sha256(
+            f"test-catalog-record:{receipt.receipt_id}".encode()
+        ).hexdigest(),
+    })
+    return receipt
 
 
 def test_production_constructor_has_no_key_injection_and_test_type_is_distinct(
@@ -90,6 +106,7 @@ def test_production_constructor_has_no_key_injection_and_test_type_is_distinct(
 ) -> None:
     authority, _path, _secrets = production
     assert type(authority) is CatalogAdmissionReceiptAuthority
+    assert not hasattr(authority, "issue")
     assert "secret" not in CatalogAdmissionReceiptAuthority.__init__.__annotations__
     test = TestCatalogAdmissionReceiptAuthority(
         tmp_path / "distinct-test-authority.sqlite3",
@@ -155,6 +172,51 @@ def test_restart_preserves_receipt_key_sequence_and_mac(production) -> None:
     assert restarted.verify(receipt)
     assert restarted.receipts()[0].key_id == receipt.key_id
     assert restarted.receipts()[0].receipt_mac == receipt.receipt_mac
+
+
+def test_prepared_receipt_is_not_authority_until_authenticated_finalization(production) -> None:
+    authority, _path, _secrets = production
+    authority.provision()
+    receipt = authority.prepare(
+        catalog_commitment_sha256=CATALOG,
+        membership_commitment_sha256=MEMBERSHIP,
+        accepted_at_utc=WHEN,
+    )
+    assert not authority.verify(receipt)
+    storage = {
+        "accepted_source_catalog_snapshot_id": "ascat_00000000000000000001",
+        "receipt_id": receipt.receipt_id,
+        "catalog_commitment_sha256": CATALOG,
+        "membership_commitment_sha256": MEMBERSHIP,
+        "receipt_mac": receipt.receipt_mac,
+        "snapshot_sequence": 1,
+        "snapshot_record_digest": "c" * 64,
+    }
+    finalization = authority.finalize(receipt, storage)
+    assert finalization.receipt_id == receipt.receipt_id
+    assert authority.verify(receipt)
+    assert authority.finalizations() == (finalization,)
+
+
+def test_finalization_tail_rollback_fails_against_external_anchor(production) -> None:
+    authority, path, _secrets = production
+    first = _issue(authority)
+    assert authority.verify(first)
+    with sqlite3.connect(path) as db:
+        first_head = db.execute(
+            "SELECT * FROM catalog_receipt_finalization_head WHERE singleton=1"
+        ).fetchone()
+    second = _prepare_and_finalize(
+        authority, "c" * 64, "d" * 64, "2030-01-02T03:04:06Z"
+    )
+    assert authority.verify(second)
+    with sqlite3.connect(path) as db:
+        db.execute("DELETE FROM catalog_admission_receipt_finalizations WHERE finalization_sequence=2")
+        db.execute("DELETE FROM catalog_receipt_finalization_head")
+        db.execute("INSERT INTO catalog_receipt_finalization_head VALUES(?,?,?,?)", first_head)
+        db.commit()
+    with pytest.raises(CatalogAdmissionReceiptAuthorityUnavailable):
+        CatalogAdmissionReceiptAuthority(SQLiteCatalogAdmissionReceiptMetadataStore(path))
 
 
 def test_secret_bytes_are_not_stored_in_catalog_sqlite(production) -> None:
@@ -229,11 +291,11 @@ def test_direct_sql_mint_with_valid_public_chain_fails_closed_on_restart(product
         {"catalog_commitment_sha256": CATALOG, "membership_commitment_sha256": MEMBERSHIP, "accepted_at_utc": "2030-01-02T03:04:05+00:00"},
     ],
 )
-def test_issue_rejects_non_exact_commitments_and_noncanonical_time(production, kwargs) -> None:
+def test_prepare_rejects_non_exact_commitments_and_noncanonical_time(production, kwargs) -> None:
     authority, _path, _secrets = production
     authority.provision()
     with pytest.raises(ValueError):
-        authority.issue(**kwargs)
+        authority.prepare(**kwargs)
 
 
 def test_rotation_keeps_old_receipt_verifiable_and_revocation_fails_closed(production) -> None:
@@ -296,10 +358,8 @@ def test_valid_genuine_receipt_prefix_and_old_head_rollback_fails_against_anchor
 ) -> None:
     authority, path, _secrets = production
     first = _issue(authority)
-    second = authority.issue(
-        catalog_commitment_sha256="c" * 64,
-        membership_commitment_sha256="d" * 64,
-        accepted_at_utc="2030-01-02T03:04:06Z",
+    second = _prepare_and_finalize(
+        authority, "c" * 64, "d" * 64, "2030-01-02T03:04:06Z"
     )
     assert authority.verify(second)
     with sqlite3.connect(path) as db:

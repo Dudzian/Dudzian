@@ -6396,9 +6396,33 @@
       "normalized_content_commitment": "replay exact-resolves every member metadata version, validates its closed normalized-product schema and tuple, sorts products by venue_symbol, rebuilds canonical SHA-256, and exact-compares product_count and BINANCE_EXCHANGE_INFO_ATOMIC_V1 evidence",
       "metadata_introduction_binding": "metadata_record_digest binds authority domain, sequence, introduced_by_snapshot_id, previous digest, and canonical metadata; shadow introduction mutation fails closed",
       "existing_store_open": "an existing catalog_authority_metadata marker requires all four durable Catalog tables and exact heads; missing tables fail CATALOG_AUTHORITY_STORAGE_MISSING and are never recreated",
-      "complete_substore_erasure_threat_model": "complete deletion/restoration of the entire Catalog authority substore including its enrollment marker is outside the locally detectable threat model, analogous to whole-authority-store restoration without an external monotonic anchor",
-      "producer_invocation_membership_semantics": "producer membership is frozen as authorization to accept produced source Catalog facts; the network fetch occurs without holding the SQLite writer lock and current exact membership is authoritatively checked under BEGIN IMMEDIATE immediately before acceptance"
-    }
+      "complete_substore_erasure_threat_model": "Catalog-only rollback or deletion without matching rollback of receipt authority and its external anchor is detected by exact finalization-to-snapshot closure; only coordinated historical rollback of Catalog SQLite, receipt SQLite, and the matching historical external keyring anchor remains out of scope without TPM or a remote monotonic anchor",
+      "producer_invocation_membership_semantics": "producer membership is frozen as authorization to accept produced source Catalog facts; the network fetch occurs without holding the SQLite writer lock and current exact membership is authoritatively checked under BEGIN IMMEDIATE immediately before acceptance",
+      "production_receipt_integration_boundary": "constructor requires type(catalog_admission_receipt_authority) is CatalogAdmissionReceiptAuthority; operation remains fetch_catalog_once(release_binding)",
+      "snapshot_receipt_relation": "catalog_snapshot_admission_receipts; UNIQUE snapshot ID and UNIQUE receipt ID; commitments and receipt MAC are bound into the internal admitted-snapshot record digest",
+      "receipt_replay": "resolve exact durable relation, receipt, and finalization journal fact; verify requires FINALIZED receipt; reconstruct Catalog, membership, and Catalog storage commitments; require receipt.accepted_at_utc == ascat.effective_at_utc",
+      "cross_authority_commit": "prepare authenticated but non-authoritative receipt under Catalog writer fence; commit Catalog snapshot plus exact relation; finalize receipt with authenticated exact durable storage envelope; full replay before ACK; prepared orphan is not Catalog authority; committed Catalog without finalization fails closed",
+      "receipt_key_lifecycle": "VERIFY_ONLY receipts remain trusted; REVOKED receipts fail current trust verification and therefore Catalog replay fails closed",
+      "receipt_finalization": "CatalogAdmissionReceiptFinalization append-only HMAC journal binds snapshot ID, receipt ID, both commitments, receipt MAC, snapshot sequence and snapshot record digest under CRYPTOHUNTER_M0_12_CATALOG_ADMISSION_FINALIZATION_V1",
+      "finalization_anti_prefix_rollback": "external keyring freshness anchor exact-binds finalization sequence, digest, and last finalized receipt ID",
+      "finalization_closure": "production replay requires the exact set of finalized receipt IDs to equal the exact set of durable Catalog relation receipt IDs and reconstructs every finalization storage commitment from its unique relation and snapshot"
+    },
+    "catalog_admission_receipt_required": true,
+    "catalog_snapshot_receipt_relation": "DURABLE_EXACT_ONE_TO_ONE",
+    "catalog_commitment": "catalog_admission_catalog_commitment / CRYPTOHUNTER_M0_12_CATALOG_SNAPSHOT_COMMITMENT_V1",
+    "membership_commitment": "catalog_admission_membership_commitment / CRYPTOHUNTER_M0_12_CATALOG_MEMBERSHIP_COMMITMENT_V1",
+    "coherent_sql_catalog_mint_without_receipt": "DENIED",
+    "orphan_receipt_creates_catalog_authority": false,
+    "idempotent_catalog_retrieval_reuses_receipt": true,
+    "catalog_receipt_protocol": "PREPARE_CATALOG_COMMIT_FINALIZE",
+    "prepared_receipt_is_catalog_authority": false,
+    "catalog_receipt_finalization_required": true,
+    "orphan_prepared_receipt_creates_catalog_authority": false,
+    "catalog_committed_without_finalization": "FAIL_CLOSED",
+    "catalog_finalization_to_snapshot_closure": "EXACT_BIJECTIVE",
+    "finalized_receipt_without_catalog_snapshot": "CORRUPT_CATALOG_AUTHORITY",
+    "catalog_valid_prefix_rollback_against_newer_receipt_anchor": "DENIED",
+    "catalog_substore_reset_with_retained_receipt_anchor": "DENIED"
   }
 }
 ```
