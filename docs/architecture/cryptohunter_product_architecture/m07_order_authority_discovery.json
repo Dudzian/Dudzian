@@ -1,0 +1,245 @@
+{
+  "schema_version": "cryptohunter.m07_order_authority_discovery.v1",
+  "repository_head_examined": "942217531fc0199f6503bcbb5ede316358fabdb2",
+  "discovery_scope": [
+    "bot_core/**",
+    "docs/architecture/cryptohunter_product_architecture/**",
+    "tests/architecture/**",
+    "tests/**"
+  ],
+  "authoritative_contract": {
+    "path": "docs/architecture/cryptohunter_product_architecture/commands_events_order_lifecycle_and_idempotency.json",
+    "schema_version": "cryptohunter.commands_events_order_lifecycle_and_idempotency.v1",
+    "authority": "CoreHost",
+    "status": "closed",
+    "source_of_truth": "JSON; Markdown is descriptive"
+  },
+  "canonical_order_schema": "FOUND",
+  "canonical_order_schema_detail": {
+    "classification": "canonical admission request and immutable event aggregate; no standalone caller-constructible canonical Order DTO",
+    "json_pointers": [
+      "/command_registry/SUBMIT_ORDER",
+      "/command_outcome_contract",
+      "/event_contract/envelope_schema"
+    ],
+    "submit_order_fields": [
+      "command_id",
+      "operation_type",
+      "authority_context_id",
+      "environment",
+      "workspace_id",
+      "portfolio_id",
+      "exchange_account_id",
+      "strategy_instance_id",
+      "source_type",
+      "instrument_id",
+      "execution_route_id",
+      "correlation_id",
+      "causation_id",
+      "idempotency_key",
+      "order_intent_id",
+      "order_id",
+      "side",
+      "order_type",
+      "quantity",
+      "limit_price",
+      "time_in_force",
+      "expire_at_utc"
+    ],
+    "event_envelope_fields": [
+      "audit_event_id",
+      "event_type",
+      "order_id",
+      "aggregate_version",
+      "correlation_id",
+      "causation_id",
+      "command_id",
+      "environment",
+      "workspace_id",
+      "portfolio_id",
+      "exchange_account_id",
+      "exchange_id",
+      "instrument_id",
+      "execution_route_id",
+      "occurred_at_utc",
+      "safe_payload",
+      "event_fingerprint_sha256"
+    ],
+    "fingerprints": {
+      "command": "operation_type plus every normalized closed request field except correlation_id; command_id, idempotency_key and causation_id are included",
+      "event": "SHA-256 over canonical NFC/UTF-8 JSON of the complete immutable event envelope except event_fingerprint_sha256",
+      "domain_or_helper": "frozen contract canonical JSON rules; executable oracle exists only in tests/architecture/test_cryptohunter_commands_events_order_lifecycle_and_idempotency.py",
+      "production_validator": "NOT_FOUND"
+    },
+    "other_order_types": {
+      "execution_adapter": "bot_core.exchanges.base.OrderRequest and OrderResult are transport DTOs",
+      "database_legacy_dto": "bot_core.database.manager.Order and OrderIn are mutable persistence DTOs",
+      "paper_projection": "bot_core.execution.paper.LedgerEntry and generated paper-* order IDs are simulator records",
+      "routing_projection": "bot_core.execution.intent_store.IntentStore stores replaceable routing bindings, not accepted Order membership",
+      "test_fixture_or_oracle": "tests/architecture/test_cryptohunter_commands_events_order_lifecycle_and_idempotency.py is executable contract coverage, not production authority"
+    }
+  },
+  "canonical_order_lifecycle": "FOUND",
+  "canonical_order_lifecycle_detail": {
+    "json_pointer": "/order_lifecycle",
+    "states": [
+      "PLANNED",
+      "SUBMISSION_PENDING",
+      "ACKNOWLEDGED",
+      "PARTIALLY_FILLED",
+      "CANCEL_PENDING",
+      "REPLACE_PENDING",
+      "RECONCILIATION_REQUIRED",
+      "REJECTED",
+      "FILLED",
+      "CANCELLED",
+      "EXPIRED",
+      "REPLACED"
+    ],
+    "initial_state": "PLANNED",
+    "terminal_states": ["REJECTED", "FILLED", "CANCELLED", "EXPIRED", "REPLACED"],
+    "transitions": [
+      "NONE --ORDER_PLANNED--> PLANNED",
+      "PLANNED --ORDER_DISPATCHED--> SUBMISSION_PENDING",
+      "SUBMISSION_PENDING|RECONCILIATION_REQUIRED --ORDER_ACKNOWLEDGED--> ACKNOWLEDGED",
+      "SUBMISSION_PENDING|RECONCILIATION_REQUIRED --ORDER_REJECTED--> REJECTED",
+      "SUBMISSION_PENDING|ACKNOWLEDGED|PARTIALLY_FILLED|CANCEL_PENDING|REPLACE_PENDING|RECONCILIATION_REQUIRED --ORDER_PARTIALLY_FILLED--> PARTIALLY_FILLED",
+      "SUBMISSION_PENDING|ACKNOWLEDGED|PARTIALLY_FILLED|CANCEL_PENDING|REPLACE_PENDING|RECONCILIATION_REQUIRED --ORDER_FILLED--> FILLED",
+      "ACKNOWLEDGED|PARTIALLY_FILLED --ORDER_CANCEL_REQUESTED--> CANCEL_PENDING",
+      "CANCEL_PENDING|RECONCILIATION_REQUIRED --ORDER_CANCEL_CONFIRMED--> CANCELLED",
+      "CANCEL_PENDING --ORDER_CANCEL_REJECTED--> RESTORE_PRE_REQUEST_STATE",
+      "ACKNOWLEDGED|PARTIALLY_FILLED --ORDER_REPLACE_REQUESTED--> REPLACE_PENDING",
+      "REPLACE_PENDING|RECONCILIATION_REQUIRED --ORDER_REPLACE_CONFIRMED--> REPLACED",
+      "REPLACE_PENDING --ORDER_REPLACE_REJECTED--> RESTORE_PRE_REQUEST_STATE",
+      "SUBMISSION_PENDING|ACKNOWLEDGED|PARTIALLY_FILLED|CANCEL_PENDING|REPLACE_PENDING|RECONCILIATION_REQUIRED --ORDER_EXPIRED--> EXPIRED",
+      "SUBMISSION_PENDING|CANCEL_PENDING|REPLACE_PENDING --ORDER_EXTERNAL_OUTCOME_UNKNOWN--> RECONCILIATION_REQUIRED",
+      "RECONCILIATION_REQUIRED --ORDER_RECONCILIATION_OBSERVED--> TRUSTED_FACT_TARGET"
+    ],
+    "reopen_legality": "forbidden: terminal states have no outgoing transitions; identical late facts are replay and other late facts require reconciliation/audit without regression",
+    "cancel_semantics": "request is legal only from ACKNOWLEDGED or PARTIALLY_FILLED; confirmation terminates as CANCELLED; rejection restores the exact stored pre-request state, never a caller target",
+    "reject_semantics": "venue rejection is legal only from SUBMISSION_PENDING or RECONCILIATION_REQUIRED and terminates as REJECTED",
+    "partial_fill_semantics": "legal in pending, acknowledged, partially-filled, cancel/replace-pending and reconciliation states; cumulative must be greater than zero and below quantity",
+    "replace_semantics": "request is legal only from ACKNOWLEDGED or PARTIALLY_FILLED; confirmation terminates original as REPLACED and binds a distinct preallocated replacement_order_id; rejection restores stored pre-request state"
+  },
+  "production_order_authority": "NOT_FOUND",
+  "production_order_store": "NOT_FOUND",
+  "historical_order_resolver": "NOT_FOUND",
+  "production_account_authority": "NOT_FOUND",
+  "authority_review": {
+    "contract_exists": true,
+    "production_admission_api": "NOT_FOUND",
+    "production_current_projection": "NOT_FOUND",
+    "production_immutable_history": "NOT_FOUND",
+    "durability": {
+      "append_only_history": "NOT_FOUND",
+      "sequence": "CONTRACT_ONLY",
+      "previous_digest": "NOT_SPECIFIED_FOR_M0.7",
+      "record_digest": "CONTRACT_EVENT_FINGERPRINT_ONLY",
+      "head": "NOT_FOUND",
+      "restart_replay": "NOT_FOUND",
+      "domain_marker": "NOT_FOUND",
+      "production_test_separation": "oracle is test-only; production implementation absent"
+    }
+  },
+  "self_mint_possible": "YES",
+  "self_mint_scope": "non-authoritative runtime and persistence paths only; self-minted data does not become a genuine canonical Core-accepted Order fact",
+  "self_mint_exploit_paths": [
+    "DatabaseManager.record_order accepts caller OrderIn/dict, including status, exchange_order_id, client_order_id and numeric fields, and inserts or mutates an Order row without canonical Core admission",
+    "DatabaseManager.update_order_status accepts caller-selected status and exchange_order_id and directly mutates the row",
+    "IntentStore.save_order_binding uses INSERT OR REPLACE for caller-selected order_id, exchange, symbol, client_order_id and created_at",
+    "PaperTradingExecutionService mints paper-<counter> IDs and mutable filled/cancelled LedgerEntry observations without canonical ord UUIDv7 identity or accepted lifecycle history",
+    "adapter OrderResult and runtime status paths carry venue/caller observations without authenticated adapter membership bound to a Core acceptance record"
+  ],
+  "order_identity": {
+    "order_id": "ord_<lowercase canonical UUIDv7>; distinct from command_id",
+    "workspace_binding": "workspace_id",
+    "account_binding": "exchange_account_id",
+    "instrument_binding": "instrument_id; Full Fill additionally exact-binds instrument_metadata_version through M0.5 historical resolution",
+    "market_type_binding": "not an Order field in M0.7; inherited/verified through exact M0.5 account/instrument authority",
+    "environment_binding": "environment in PAPER|TESTNET|LIVE",
+    "strategy_binding": "strategy_instance_id is required only when source_type is STRATEGY_INSTANCE; null for OPERATOR and SYSTEM_RECONCILIATION",
+    "additional_scope": ["portfolio_id", "exchange_id on events", "execution_route_id"]
+  },
+  "order_instrument_dependency": "M0.5 exact current authority at command admission and exact historical Instrument resolution for Full Fill; production M0.5 is NOT_AVAILABLE",
+  "order_account_dependency": "M0.5 exact accepted ExchangeAccount projection bound to workspace_id, exchange_id, environment and market/capability policy; production authority NOT_FOUND",
+  "fill_order_binding_contract": {
+    "status": "FOUND_CONTRACT_ONLY",
+    "exact_fields": [
+      "order_id",
+      "environment",
+      "workspace_id",
+      "portfolio_id",
+      "exchange_account_id",
+      "exchange_id",
+      "instrument_id",
+      "execution_route_id"
+    ],
+    "additional_rules": [
+      "Fill side must agree with the immutable accepted Order plan",
+      "Fill instrument_metadata_version must exact-resolve a trusted historical Instrument",
+      "Fill venue_trade_id must equal the lifecycle event safe payload",
+      "Fill identity/fingerprint and complete accepted Fill history must validate before lifecycle mutation"
+    ]
+  },
+  "fill_lifecycle_legality": {
+    "missing_order": "TRUSTED_CONTEXT_FAILURE; no mutation",
+    "rejected_order": "denied as terminal/INVALID_LIFECYCLE_TRANSITION; no mutation",
+    "cancelled_order": "denied as terminal/INVALID_LIFECYCLE_TRANSITION; no mutation",
+    "filled_order": "identical accepted fact is replay; any other fact requires reconciliation/audit and cannot regress or mutate terminal state",
+    "wrong_workspace": "ORDER_SCOPE_MISMATCH or TRUSTED_CONTEXT_FAILURE; no mutation",
+    "wrong_instrument": "ORDER_SCOPE_MISMATCH or TRUSTED_CONTEXT_FAILURE; no mutation",
+    "wrong_account": "ORDER_SCOPE_MISMATCH or TRUSTED_CONTEXT_FAILURE; no mutation"
+  },
+  "quantity_accounting": {
+    "owner": "M0.7 lifecycle progression over trusted accepted Full Fill facts; M0.8 consumes the accepted economic facts for accounting",
+    "ordered_quantity": "immutable positive exact decimal quantity from accepted SUBMIT_ORDER/ORDER_PLANNED",
+    "cumulative_filled_quantity": "sum of unique accepted full-economic Fill facts in deterministic accepted event sequence",
+    "remaining_quantity": "order quantity minus cumulative executed quantity",
+    "overfill": "FILL_PROGRESSION_CONFLICT and reconciliation; no mutation",
+    "filled_equality": "FILLED iff cumulative equals order quantity",
+    "partial_equality": "PARTIALLY_FILLED iff cumulative is greater than zero and less than order quantity",
+    "duplicate_fill": "identical durable or scoped external replay has zero new economic effect; conflicts require reconciliation"
+  },
+  "duplicate_replay_semantics": {
+    "same_command_or_order_submission_same_fingerprint": "return byte-equivalent immutable recorded outcome as COMMAND_REPLAYED; no new transition or side effect",
+    "same_command_or_order_submission_conflicting_payload": "IDEMPOTENCY_CONFLICT; no mutation or side effect",
+    "same_event_same_fingerprint": "replay success/ignored; no version increment",
+    "same_event_conflicting_fingerprint": "EVENT_IDENTITY_CONFLICT",
+    "same_exchange_acknowledgement": "deduplicate venue_order_id plus acknowledgement fact; identical replay ignored",
+    "same_exchange_order_id_other_core_order": "no explicit standalone rule; scope/history conflict must fail closed and reconcile",
+    "same_fill_or_external_trade": "identical replay ignored; different economics is FILL_IDENTITY_CONFLICT"
+  },
+  "adapter_authenticity": "Production adapter results are transport observations. The frozen contract requires EXECUTION_ADAPTER-owned facts and trusted context, but no production authenticated adapter-membership-to-Order admission boundary was found. Content fingerprint is not admission proof.",
+  "concurrency": {
+    "rule": "strict per-order aggregate_version linearizes accepted facts; stale, gaps and impossible transitions fail closed",
+    "ack_vs_cancel": "cancel request cannot precede ACKNOWLEDGED; after ACK, strict next version determines order",
+    "fill_vs_cancel": "fill remains legal in CANCEL_PENDING; whichever accepted next version is first determines progression, and terminal cancellation forbids a new fill mutation",
+    "fill_vs_reject": "both may originate at SUBMISSION_PENDING but terminal REJECTED forbids later fill mutation; strict next version linearizes the winner",
+    "two_fills": "strict consecutive versions plus fill/external-trade dedupe; recompute cumulative from complete accepted history",
+    "replace_vs_fill": "fill remains legal in REPLACE_PENDING; terminal REPLACED forbids later fill mutation",
+    "duplicate_exchange_event": "same event identity/fingerprint or same acknowledgement fact is replay; conflicts fail closed"
+  },
+  "test_discovery": {
+    "tests/architecture/test_cryptohunter_commands_events_order_lifecycle_and_idempotency.py": "full frozen M0.7 JSON/Markdown parity, closed command/event schemas, lifecycle, replay, Fill binding, quantity and reference-model oracle",
+    "tests/architecture/test_m07_accepted_full_fill_authority.py": "production boundary: only structural Fill validation exists; no self-enrolling Instrument/Fill/Order lifecycle authority",
+    "tests/architecture/test_cryptohunter_exchange_accounts_and_instruments.py": "M0.5 account/instrument/catalog contract and exact historical resolution oracle",
+    "tests/architecture/test_cryptohunter_canonical_domain_vocabulary.py": "canonical entity IDs and vocabulary",
+    "tests/execution/test_exchange_lifecycle_live.py": "runtime execution lifecycle behavior, not canonical M0.7 authority",
+    "tests/integration/test_execution_router_failover.py": "routing/failover behavior, not canonical admission",
+    "tests/services/test_order_router.py": "legacy service routing behavior, not canonical admission"
+  },
+  "M0.7_status": "M0.7_ORDER_AUTHORITY_NOT_IMPLEMENTED",
+  "M0.7_structural_lifecycle_foundation": "AVAILABLE_CONTRACT_AND_TEST_ORACLE",
+  "M0.7_semantic_admission": "BLOCKED_ON_PRODUCTION_AUTHORITY_AND_UPSTREAM_WORKSPACE_M0.5_AUTHORITIES",
+  "M0.8_semantic_order_dependency": "BLOCKED",
+  "next_blocker": "Implement a non-caller-mintable Core-owned M0.7 admission/history/projection authority against the frozen contract; semantic admission also remains gated by the deliberately unchanged Workspace authority and production M0.5 account/instrument authorities.",
+  "frozen_external_status": {
+    "M0.12_1.46.0": "ACCEPTED",
+    "Workspace_contract": "WITHHELD",
+    "Workspace_blocker": "DISCOVERY_BLOCKED_ACCEPTED_BASE_COMMIT_NOT_AVAILABLE",
+    "production_M0.5": "NOT_AVAILABLE",
+    "C25": "BLOCKED",
+    "M0.8_Full_Fill_structural_foundation": "CLOSED",
+    "S9D": "OPEN"
+  }
+}
