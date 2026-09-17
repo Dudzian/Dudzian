@@ -1,0 +1,358 @@
+{
+  "report_id": "M05_WORKSPACE_CATALOG_PROJECTION_AUTHORITY_DISCOVERY_2026_09_17",
+  "repository_head_examined": "ee6d5f65e70e7d33bbbfc1a5c7f18de5332b3646",
+  "accepted_head_requested": "1bad386729a7ad830cc74902acbb5c6ae43eb055",
+  "provenance_mode": "HYBRID_HEURISTIC_CURRENT_TREE",
+  "equivalence_class": "HIGH_CONFIDENCE_LINEAGE_EQUIVALENT",
+  "formal_acceptance_allowed": false,
+  "provenance_evidence": {
+    "accepted_commit_object_available": false,
+    "current_head_subject": "Merge pull request #2877 from Dudzian/codex/implement-structural-validation-for-full-fill-v2",
+    "current_head_implements_claimed_stage": true,
+    "policy": "Heuristic evidence supports discovery only and cannot mint ACCEPTED/AVAILABLE WCP authority."
+  },
+  "canonical_schema": {
+    "status": "FOUND",
+    "contract": "exchange_accounts_and_instruments.json#/workspace_catalog_projection_contract",
+    "oracle": "bot_core/instruments/catalog_projection_oracle.py",
+    "closed_fields": [
+      "workspace_catalog_projection_id",
+      "workspace_id",
+      "accepted_source_catalog_snapshot_id",
+      "instrument_ids",
+      "member_bindings",
+      "created_at_utc",
+      "content_fingerprint"
+    ],
+    "field_schema": {
+      "workspace_catalog_projection_id": "non-empty str with wcat_ prefix (contract id_prefix=wcat); no stronger UUID grammar frozen",
+      "workspace_id": "non-empty str structurally; genuine Workspace provenance required semantically",
+      "accepted_source_catalog_snapshot_id": "non-empty str with ascat_ prefix; must resolve through genuine CatalogRuntimeAcceptanceAuthority",
+      "instrument_ids": "non-empty JSON list of unique non-empty strings; exactly the set of member_bindings.instrument_id",
+      "member_bindings": "JSON list, same length as instrument_ids, unique instrument_id, closed member schema",
+      "created_at_utc": "canonical UTC YYYY-MM-DDTHH:MM:SS[.1-6 digits]Z and a real datetime",
+      "content_fingerprint": "lowercase 64-hex SHA-256 of the frozen domain and projection"
+    },
+    "member_closed_fields": [
+      "instrument_id",
+      "source_exchange_id",
+      "market_type",
+      "venue_symbol",
+      "instrument_metadata_version",
+      "source_metadata_version_id"
+    ],
+    "member_schema": {
+      "instrument_id": "non-empty str",
+      "source_exchange_id": "non-empty str",
+      "market_type": [
+        "SPOT",
+        "MARGIN",
+        "PERPETUAL",
+        "DELIVERY_FUTURES",
+        "OPTIONS"
+      ],
+      "venue_symbol": "non-empty exact string; no trim/case-fold/Unicode normalization",
+      "instrument_metadata_version": "positive non-boolean int",
+      "source_metadata_version_id": "non-empty str"
+    },
+    "completeness_semantics": {
+      "classification": "WORKSPACE_POLICY_SELECTED_SUBSET_STRUCTURALLY_PERMITTED",
+      "evidence": "No equality with all ASCAT members is required; every selected member must close exactly. Omission is not deletion.",
+      "selection_policy_owner": "NOT_FOUND",
+      "is_trading_universe_authority": false
+    },
+    "structural_projection_validation": {
+      "status": "AVAILABLE",
+      "closed_schema_validation": "AVAILABLE",
+      "fingerprint_calculation": "AVAILABLE",
+      "member_structural_closure_oracle": "AVAILABLE",
+      "is_authority_kernel": false
+    }
+  },
+  "identity_and_fingerprint": {
+    "id_grammar": "wcat_ followed by one or more characters; no stronger grammar frozen",
+    "id_owner": "future Core production WCP authority; callers may not mint it",
+    "domain_separator": "cryptohunter.m0.5.workspace_catalog_projection.v1",
+    "algorithm": "SHA-256",
+    "digest_format": "lowercase hex",
+    "input_fields": [
+      "workspace_id",
+      "accepted_source_catalog_snapshot_id",
+      "instrument_ids",
+      "member_bindings",
+      "created_at_utc"
+    ],
+    "excluded_fields": [
+      "workspace_catalog_projection_id",
+      "content_fingerprint"
+    ],
+    "canonical_json": {
+      "sort_keys": true,
+      "separators": [
+        ",",
+        ":"
+      ],
+      "ensure_ascii": false,
+      "allow_nan": false,
+      "unicode_normalization": "NONE; exact codepoints are retained, NFC is not applied"
+    },
+    "ordering": {
+      "member_bindings": "sorted by instrument_id before hashing",
+      "instrument_ids": "order retained and therefore fingerprint-significant",
+      "object_keys": "sorted",
+      "semantic_binding_coverage": "set equality between instrument_ids and binding IDs"
+    },
+    "public_sha_is_authenticity": false
+  },
+  "production_authority": {
+    "status": "NOT_FOUND",
+    "searched_symbols": [
+      "WorkspaceCatalogProjectionAuthority",
+      "WorkspaceCatalogRuntimeProjectionAuthority"
+    ],
+    "structural_oracle_is_authority": false,
+    "raw_mapping_is_authority": false,
+    "test_fixture_or_nominal_wrapper_is_authority": false,
+    "public_admission_methods": []
+  },
+  "workspace_dependency": {
+    "WorkspaceAuthority": "NOT_FOUND",
+    "syntactic_workspace_id_is_proof": false,
+    "workspace_isolation_requires_authority_binding": true,
+    "existing_discovery": "docs/audits/production_workspace_authority_discovery.json",
+    "semantic_effect": "blocks genuine workspace provenance and semantic WCP admission"
+  },
+  "ascat_dependency": {
+    "status": "AVAILABLE",
+    "authority": "bot_core.instruments.catalog_runtime_acceptance.CatalogRuntimeAcceptanceAuthority",
+    "public_ingestion_boundary": "fetch_catalog_once",
+    "CatalogAdmissionReceiptAuthority": "ACCEPTED_AVAILABLE",
+    "AcceptedSourceProducerMembership": "ACCEPTED_AVAILABLE",
+    "caller_snapshot_id_is_proof": false,
+    "second_catalog_authority_allowed": false,
+    "exact_snapshot_resolution_required": true
+  },
+  "instrument_dependency": {
+    "status": "NOT_FOUND",
+    "authority_owner": "NOT_FOUND",
+    "canonical_contract_owner": "M0.5 Instrument contract",
+    "wcp_behavior": "references an exact already-authoritative Instrument version resolved from authoritative current or historical state; projection never mints Instrument identity or version",
+    "atomic_projection_and_instrument_creation": "NOT_SPECIFIED_AND_NOT_IMPLEMENTED",
+    "ownership": {
+      "instrument_id": "Instrument authority/Core durable workspace-scoped identity map",
+      "instrument_metadata_version": "Instrument version authority; the exact version may be the authoritative current record or an authoritative historical record",
+      "accepted_source_catalog_snapshot_id": "CatalogRuntimeAcceptanceAuthority owns ASCAT identity; Instrument version and WCP reference it",
+      "source_metadata_version_id": "AcceptedSourceCatalogSnapshot member owns upstream source-member version; WCP binding copies and exact-matches it"
+    },
+    "production_authority": "NOT_FOUND",
+    "production_resolver_authority": "NOT_FOUND",
+    "instrument_resolution_mode": "EXACT_CURRENT_OR_HISTORICAL_BY_METADATA_VERSION",
+    "required_future_capability": "authoritative exact current + historical Instrument resolver"
+  },
+  "member_closure": {
+    "required_tuple": [
+      "source_exchange_id",
+      "market_type",
+      "venue_symbol",
+      "source_metadata_version_id"
+    ],
+    "instrument_match": [
+      "instrument_id",
+      "workspace_id",
+      "accepted_source_catalog_snapshot_id",
+      "source_exchange_id",
+      "market_type",
+      "venue_symbol",
+      "metadata_version"
+    ],
+    "symbol_only_lookup": false,
+    "caller_tuple_is_proof": false,
+    "latest_or_current_fallback": false,
+    "instrument_resolution": {
+      "mode": "EXACT_CURRENT_OR_HISTORICAL_BY_METADATA_VERSION",
+      "required_tuple": [
+        "instrument_id",
+        "workspace_id",
+        "accepted_source_catalog_snapshot_id",
+        "source_exchange_id",
+        "market_type",
+        "venue_symbol",
+        "metadata_version"
+      ],
+      "exact_version_required": true,
+      "current_record_permitted_on_exact_version_match": true,
+      "historical_record_permitted_on_exact_version_match": true,
+      "current_fallback_for_missing_requested_version": false,
+      "latest_version_fallback": false,
+      "examples": {
+        "binding_v7_current_v7": "ALLOW_IF_COMPLETE_TUPLE_EXACT",
+        "binding_v6_current_v7_history_v6_missing": "DENY",
+        "binding_v6_current_v7_history_v6_exact": "ALLOW_IF_COMPLETE_TUPLE_EXACT"
+      }
+    }
+  },
+  "workspace_isolation": {
+    "required_result": "DENY",
+    "instrument_workspace_must_equal_projection_workspace": true,
+    "projection_id_reuse_across_workspaces": "DENY; durable authority must bind ID immutably to workspace",
+    "currently_authority_enforced": false,
+    "reason": "Structural oracle checks equality, but genuine Workspace/WCP authorities do not exist."
+  },
+  "snapshot_closure": {
+    "required_result": "DENY",
+    "projection_snapshot_must_equal_genuine_resolved_ASCAT": true,
+    "every_member_must_belong_to_exact_selected_ASCAT": true,
+    "snapshot_A_member_B": false,
+    "latest_or_current_fallback": false
+  },
+  "history_model": {
+    "contract_status": "NO_WCP_HISTORY_MODEL_FROZEN",
+    "current_contract_representation": "current projection map only",
+    "immutable_sequence": false,
+    "predecessor_linkage": "NOT_FOUND",
+    "version_or_generation": "NOT_FOUND",
+    "restart_validation": "NOT_FOUND",
+    "instrument_history_separate": true,
+    "current_only_store_authorized": false,
+    "current_only_gap": "No contract defines replacement of old current state, restart selection of the latest genuine current state, older-state restoration detection, rollback detection, or state authentication."
+  },
+  "durability": {
+    "production_WCP_store": "NOT_FOUND",
+    "classification": "NOT_AVAILABLE",
+    "restart_semantics": "NOT_DEFINED",
+    "kernel_mechanics_possible": "closed schema/fingerprint and exact closure validation can be built without enabling admission",
+    "persistent_state_model": "NOT_FROZEN",
+    "authority_kernel_implementation_allowed": false,
+    "structural_validator_implementation_allowed": true,
+    "durable_WCP_authority_kernel_implementation_allowed": false
+  },
+  "rollback_protection": {
+    "classification": "NOT_AVAILABLE",
+    "rollback_policy": "NOT_FROZEN",
+    "freshness_policy": "NOT_FROZEN",
+    "current_contract_has_no_defined_answer": true,
+    "authority_implementation_permission": false,
+    "valid_prefix_restore_A_B_after_A_B_C": "UNDEFINED_BY_CURRENT_CONTRACT",
+    "mutable_current_only_store_without_freshness_semantics_allowed": false,
+    "sqlite_integrity_sufficient": false,
+    "external_freshness_anchor": "NOT_FOUND"
+  },
+  "tamper_protection": {
+    "classification": "HASH_ONLY_STRUCTURAL_CHECK_IN_ORACLE; NO_DURABLE_WCP_STATE",
+    "public_sha_authenticity": false,
+    "HMAC_or_authenticated_WCP_state": "NOT_FOUND",
+    "external_freshness_anchored": "NOT_FOUND",
+    "authenticated_state_policy": "NOT_FROZEN"
+  },
+  "self_mint_result": {
+    "result": "NO",
+    "current_tree_result": "NO_CURRENT_AUTHORITY_PATH",
+    "current_result_basis": "NO_PRODUCTION_AUTHORITY_EXISTS",
+    "future_kernel_self_mint_resistance": "UNPROVEN_UNTIL_DESIGN",
+    "raw_valid_projection_can_obtain_genuine_authority": false,
+    "reason": "No production admission boundary exists. This proves only that the current tree has no self-mint path; future resistance remains unproven until Workspace, ASCAT, Instrument/history, ID-minting, persistence, restart, rollback/authentication, and selection-policy boundaries are designed."
+  },
+  "kernel_buildability": "BLOCKED_BY_MULTIPLE",
+  "semantic_admission_status": "NOT_AVAILABLE",
+  "impact_on_m07_full_fill": {
+    "status": "BLOCKING",
+    "required_future_resolution": [
+      "Fill.workspace_id",
+      "Fill.instrument_id",
+      "Fill.instrument_metadata_version",
+      "Fill.accepted_source_catalog_snapshot_id",
+      "genuine WCP membership bound to an exact authoritative current or historical Instrument version"
+    ],
+    "FullFillAuthority": "NOT_AVAILABLE",
+    "implemented_now": false,
+    "instrument_resolution_mode": "EXACT_CURRENT_OR_HISTORICAL_BY_METADATA_VERSION"
+  },
+  "blockers": [
+    "production WorkspaceAuthority and trusted Workspace provenance are absent",
+    "production Instrument identity/history authority and resolver are absent",
+    "production WorkspaceCatalogProjection authority/admission boundary is absent",
+    "WCP durable store, restart validation, history/version/predecessor contract, rollback protection, and authenticated/external freshness anchoring are not frozen",
+    "workspace selection-policy owner is not frozen"
+  ],
+  "next_stage": "FREEZE_WCP_AUTHORITY_STATE_MODEL_AND_WORKSPACE_INSTRUMENT_AUTHORITY_CONTRACTS",
+  "negative_mutation_requirements": {
+    "caller_snapshot_id_alone_grants_authority": "FAIL",
+    "raw_mapping_grants_authority": "FAIL",
+    "workspace_mismatch": "FAIL",
+    "member_from_different_ASCAT": "FAIL",
+    "source_tuple_mismatch": "FAIL",
+    "latest_or_current_catalog_fallback": "FAIL",
+    "symbol_only_lookup": "FAIL",
+    "test_only_wrapper_counts_as_production": "FAIL",
+    "public_SHA_counts_as_authenticity": "FAIL",
+    "missing_WorkspaceAuthority_treated_as_genuine": "FAIL",
+    "valid_prefix_rollback_accepted": "CURRENT_CONTRACT_UNDEFINED_THEREFORE_AUTHORITY_IMPLEMENTATION_PERMISSION_FALSE",
+    "buildable_kernel_while_state_model_unfrozen": "FAIL",
+    "kernel_allowed_while_restart_undefined": "FAIL",
+    "kernel_allowed_without_rollback_policy": "FAIL",
+    "mutable_current_only_without_freshness": "FAIL",
+    "future_self_mint_proven_from_absent_current_authority": "FAIL",
+    "instrument_resolution_historical_only": "FAIL",
+    "current_exact_version_record_forbidden": "FAIL",
+    "current_fallback_for_missing_requested_version": "FAIL",
+    "latest_instrument_version_fallback": "FAIL",
+    "instrument_metadata_version_not_exact": "FAIL"
+  },
+  "preserved_status": {
+    "M0.7_OrderAuthority_kernel": "ACCEPTED_AVAILABLE",
+    "M0.7_structural_Full_Fill_v2": "ACCEPTED_AVAILABLE_FOR_STRUCTURAL_VALIDATION",
+    "M0.7_FullFillAuthority": "NOT_AVAILABLE",
+    "CatalogRuntimeAcceptanceAuthority": "ACCEPTED_AVAILABLE",
+    "CatalogAdmissionReceiptAuthority": "ACCEPTED_AVAILABLE",
+    "AcceptedSourceProducerMembership": "ACCEPTED_AVAILABLE",
+    "production_M0.5": "NOT_AVAILABLE",
+    "M0.8": "NOT_AVAILABLE",
+    "C25": "BLOCKED",
+    "S9D": "OPEN",
+    "WorkspaceCatalogProjectionAuthority": "NOT_AVAILABLE",
+    "WorkspaceAuthority": "NOT_FOUND",
+    "Instrument_authority": "NOT_FOUND"
+  },
+  "structural_projection_validation": "AVAILABLE",
+  "authority_kernel_prerequisites": {
+    "workspace_authority_contract": "NOT_AVAILABLE",
+    "instrument_authority_contract": "NOT_AVAILABLE_EXACT_CURRENT_AND_HISTORICAL_RESOLVER",
+    "persistent_state_model": "NOT_FROZEN",
+    "history_or_current_state_semantics": "NOT_FROZEN",
+    "restart_validation_contract": "NOT_FROZEN",
+    "rollback_policy": "NOT_FROZEN",
+    "authenticated_state_policy": "NOT_FROZEN",
+    "external_freshness_policy": "NOT_FROZEN",
+    "selection_policy_owner": "NOT_FOUND"
+  },
+  "authority_kernel_implementation_allowed": false,
+  "structural_validator_implementation_allowed": true,
+  "durable_WCP_authority_kernel_implementation_allowed": false,
+  "semantic_admission_prerequisites": [
+    "genuine Workspace provenance",
+    "genuine CatalogRuntimeAcceptanceAuthority fact",
+    "authoritative Instrument/history resolution",
+    "authoritative workspace selection policy"
+  ],
+  "kernel_blocker_reasons": [
+    "Workspace authority contract unavailable",
+    "Instrument authority/exact current-and-historical version resolver unavailable",
+    "WCP persistent-state model not frozen",
+    "restart semantics not frozen",
+    "rollback/freshness semantics not frozen",
+    "authenticated durable-state model not frozen",
+    "workspace selection-policy owner not frozen"
+  ],
+  "required_freeze_before_kernel_design": [
+    "Workspace authority/trust boundary",
+    "Instrument identity/version authority plus exact current-and-historical resolver",
+    "WCP current-vs-history model",
+    "WCP ID minting ownership",
+    "persistent store semantics",
+    "restart validation",
+    "rollback/freshness model",
+    "tamper/authentication model",
+    "selection-policy ownership"
+  ],
+  "subsequent_stage": "DESIGN_WCP_AUTHORITY_KERNEL_WITH_SEMANTIC_ADMISSION_DISABLED"
+}
