@@ -1,0 +1,353 @@
+{
+  "artifact": "M05_CRYPTOHUNTER_ACCOUNT_ROOT_OF_TRUST_RECONCILIATION",
+  "iteration": "ROOT_OF_TRUST_DISCOVERY_RECONCILIATION_ONLY",
+  "repository_head_examined": "5fda36a4c9bca7f272ee12da5956cc28dcd57ba5",
+  "provenance": {
+    "supplied_accepted_review_head": "8e26230eef2ed9ae84bc2c465bfcbe94df290984",
+    "supplied_commit_available": false,
+    "classification": "UNKNOWN",
+    "current_tree_basis": [
+      "docs/architecture/cryptohunter_product_architecture/process_topology_and_lifecycle.json",
+      "docs/architecture/cryptohunter_product_architecture/process_topology_and_lifecycle.md",
+      "bot_core/runtime/first_run_bootstrap.py",
+      "bot_core/persistence/first_run_bootstrap.py",
+      "bot_core/persistence/state_store.py",
+      "tests/architecture/test_cryptohunter_process_topology_and_lifecycle.py",
+      "tests/runtime/test_first_run_bootstrap_authority.py",
+      "tests/persistence/test_durable_first_run_bootstrap.py",
+      "tests/persistence/test_durable_initial_security.py"
+    ],
+    "rule": "The unavailable supplied SHA is not claimed equivalent; conclusions describe the exact current local tree. Discovery does not confer availability."
+  },
+  "m03_existing_authorities": {
+    "external_product_provisioning_boundary": {
+      "authority_owner": true,
+      "validator": "upstream/not implemented locally",
+      "transport": false,
+      "durable_carrier": "NOT_PROVEN",
+      "consumer": false,
+      "may_mint_domain_facts": "accepted provisioning membership only, by contract",
+      "may_mint_account_id": "NOT_PROVEN",
+      "may_accept_account_identity": "YES: membership binds a claim containing account_id; acceptance is not account genesis"
+    },
+    "FirstRunBootstrapAuthority": {
+      "authority_owner": "semantic compare-and-consume for initial security only",
+      "validator": true,
+      "transport": false,
+      "durable_carrier": false,
+      "consumer": true,
+      "may_mint_domain_facts": "only BootstrapTransitionResult and ConsumedBootstrapAuthority derived from pre-accepted inputs",
+      "may_mint_account_id": false,
+      "may_accept_account_identity": false,
+      "purpose": "INITIAL_SECURITY_ESTABLISHMENT_ONLY"
+    },
+    "BootstrapStateRegistry": {
+      "authority_owner": "accepted/current bootstrap-state designation",
+      "validator": "port contract",
+      "transport": false,
+      "durable_carrier": "protocol alone: no; production DurableFirstRunBootstrapRegistry: yes",
+      "consumer": false,
+      "may_mint_domain_facts": false,
+      "may_mint_account_id": false,
+      "may_accept_account_identity": "no; resolves pre-existing scoped state"
+    },
+    "CoreHost": {
+      "authority_owner": false,
+      "validator": false,
+      "transport": true,
+      "durable_carrier": false,
+      "consumer": true,
+      "may_mint_domain_facts": false,
+      "may_mint_account_id": false,
+      "may_accept_account_identity": false
+    },
+    "Bootstrapper": {
+      "authority_owner": false,
+      "validator": false,
+      "transport": true,
+      "durable_carrier": false,
+      "consumer": true,
+      "may_mint_domain_facts": false,
+      "may_mint_account_id": false,
+      "may_accept_account_identity": false
+    },
+    "M0.11_durable_registry": {
+      "authority_owner": false,
+      "validator": "verified StateStore structure/history and accepted/current bootstrap designation",
+      "transport": false,
+      "durable_carrier": true,
+      "consumer": false,
+      "may_mint_domain_facts": false,
+      "may_mint_account_id": false,
+      "may_accept_account_identity": "no; account/device metadata and identity projections are carriers of pre-existing identity"
+    }
+  },
+  "provisioning_claim_contract": {
+    "schema": "FirstRunBootstrapClaim",
+    "fields": [
+      "account_id",
+      "device_installation_id",
+      "intended_operator_id",
+      "bootstrap_generation",
+      "bootstrap_revision",
+      "issued_at_utc",
+      "expires_at_utc",
+      "challenge_fingerprint_sha256",
+      "provisioning_context_fingerprint_sha256",
+      "claim_fingerprint_sha256"
+    ],
+    "closure": "The accepted complete claim closes account, device, intended operator, generation, revision, issue/expiry times, challenge and provisioning context; claim_fingerprint_sha256 is the canonical content hash excluding itself.",
+    "public_fingerprint_is_authenticity": false
+  },
+  "membership_contract": {
+    "schema": "ProvisioningMembershipBinding",
+    "fields": [
+      "claim_fingerprint_sha256",
+      "complete_claim_content_fingerprint_sha256",
+      "authority_source",
+      "provisioning_context_fingerprint_sha256"
+    ],
+    "authority_source_exact": "external_product_provisioning_boundary",
+    "consumed_schema": "ConsumedBootstrapAuthority",
+    "consumed_fields": [
+      "account_id",
+      "device_installation_id",
+      "bootstrap_generation",
+      "bootstrap_revision",
+      "claim_fingerprint_sha256",
+      "challenge_fingerprint_sha256"
+    ],
+    "semantics": "Membership and the separately resolved accepted claim must agree exactly. The binding authenticates nothing by public SHA alone and does not state who minted account_id."
+  },
+  "upstream_dependency_status": "BLOCKED_UPSTREAM",
+  "upstream_dependency": "external_product_provisioning_boundary production implementation",
+  "production_provisioning_authority_availability": "NOT_FOUND / NOT_AVAILABLE",
+  "production_implementation_search": {
+    "classification": "SEMANTIC_KERNEL_FOUND_BUT_UPSTREAM_PORT_EXTERNAL",
+    "found": [
+      "FirstRunBootstrapAuthority",
+      "DurableFirstRunBootstrapRegistry",
+      "DurableFirstRunBootstrapCoordinator"
+    ],
+    "not_found": [
+      "production ProvisioningBoundary implementation",
+      "durable authenticated provisioning membership registry",
+      "issuer/signature authority",
+      "protected provisioning membership state",
+      "production/test-separated provisioning authority store"
+    ],
+    "test_only_implementations": [
+      "tests/runtime/test_first_run_bootstrap_authority.py::InMemoryProvisioningBoundary",
+      "tests/persistence/test_durable_first_run_bootstrap.py::Provisioning",
+      "tests/persistence/test_durable_initial_security.py::Provisioning"
+    ]
+  },
+  "account_id_provenance": {
+    "trace": [
+      "Origin/mint owner: not represented in the repository contract; provenance stops before ProvisioningBoundary",
+      "FirstRunBootstrapClaim.account_id: supplied by the pre-accepted external provisioning handoff",
+      "CoreCurrentBootstrapState.account_id: pre-existing registry state; consume requires exact equality with the claim",
+      "StateStoreMetadata.account_id: coordinator initialization copies claim.account_id",
+      "PersistentEntityIdentityProjection.entity_id: M0.11 carrier of a pre-existing CryptoHunterAccount identity; never admission proof"
+    ],
+    "handoff_supplies_account_id": true,
+    "handoff_mints_account_id": "NOT_PROVEN",
+    "classification": "ACCOUNT_ID_PROVENANCE_STOPS_UPSTREAM",
+    "upstream_proof_requirement": "Before M0.3 may support account admission, an independently authenticated, non-caller-mintable, production/test-isolated authority must prove that the exact account_id was minted/assigned before or atomically with admission, bind that ID to the complete accepted claim and authority domain, and provide replay, durable restart provenance, and non-rollbackable freshness."
+  },
+  "account_id_mint_owner": {
+    "classification": "ACCOUNT_ID_PROVENANCE_STOPS_UPSTREAM",
+    "existing_owner": "NOT_FOUND",
+    "external_boundary_ownership": "NOT_PROVEN",
+    "supplies_is_not_mints": true
+  },
+  "account_id_reservation_problem": {
+    "prior_account_design_owner_before_reconciliation": "future genuine CryptoHunterAccountAuthority only",
+    "prior_owner_status": "REOPENED / SUPERSEDED",
+    "current_account_id_owner": "UNRESOLVED_PENDING_ROOT_OF_TRUST_RECONCILIATION",
+    "provisioning_requirement": "external provisioning proof already binds account_id before bootstrap consumption",
+    "models": {
+      "A_PRE_ADMISSION_ACCOUNT_AUTHORITY_MINTED_RESERVATION": "NOT_SELECTED / NOT_PROVEN",
+      "B_EXTERNAL_AUTHORITY_MINTS_ACCOUNT_ID": "NOT_SELECTED / NOT_PROVEN",
+      "C_ATOMIC_ISSUER_ACCOUNT_AUTHORITY_PROTOCOL": "NOT_SELECTED / NOT_PROVEN",
+      "D_OTHER_FROZEN_MODEL": "NOT_FOUND",
+      "E_DESIGN_BLOCKED": "SELECTED"
+    },
+    "end_to_end_account_id_mint_protocol": "NOT_FROZEN",
+    "end_to_end_account_id_ownership_protocol": "UNRESOLVED",
+    "candidate_id_rule": "A minted or reserved candidate acct_<uuidv7> is not a genuine CryptoHunterAccount until account genesis commits.",
+    "syntax_or_reservation_establishes_authority": false
+  },
+  "account_vs_device_ordering": {
+    "classification": "UNRESOLVED",
+    "evidence": "Canonical vocabulary makes DeviceInstallation a child of CryptoHunterAccount, while M0.3 accepts one claim binding both and initializes device-scoped state. No current contract says that account genesis pre-exists first device provisioning or authorizes a coordinated atomic account+device genesis.",
+    "first_device_race": {
+      "claims": [
+        "acct_A / dev_1",
+        "acct_B / dev_2"
+      ],
+      "assumption": "both cryptographically authentic, fresh, and production-authority accepted",
+      "result": "DESIGN_BLOCKED",
+      "reason": "account-genesis serialization semantics are not defined",
+      "winner_selection_forbidden": [
+        "arrival order",
+        "local timestamp",
+        "device startup order",
+        "last writer wins"
+      ]
+    },
+    "models": {
+      "ACCOUNT_FIRST": "NOT_SELECTED / NOT_PROVEN",
+      "ATOMIC_ACCOUNT_PLUS_FIRST_DEVICE": "NOT_SELECTED / NOT_PROVEN",
+      "DESIGN_BLOCKED": "SELECTED"
+    },
+    "production_provisioning_authority_available_selects_model": false,
+    "same_account_first_device_race": {
+      "claims": [
+        "acct_A / dev_1",
+        "acct_A / dev_2"
+      ],
+      "precondition": "account genesis does not yet exist",
+      "result": "DESIGN_BLOCKED",
+      "rule": "must not create two genesis facts; exact atomicity and idempotency semantics must be frozen first"
+    }
+  },
+  "multi_device_semantics": {
+    "classification": "UNRESOLVED",
+    "known": "Each later device claim is bound to one exact account_id and device_installation_id; M0.3 scopes consumption per device state.",
+    "required_proof": "dev_2 must carry independently verified proof resolving existing genuine acct_A plus separate genuine device-provisioning membership; account genesis must be idempotently resolved, never recreated.",
+    "forbidden": [
+      "mint acct_B during dev_2 provisioning",
+      "recreate acct_A genesis",
+      "change account_id"
+    ]
+  },
+  "account_genesis_semantics": {
+    "atomicity": "NOT_DEFINED",
+    "serialization": "NOT_DEFINED",
+    "idempotency": "NOT_DEFINED",
+    "concurrent_distinct_account_claims": "DESIGN_BLOCKED",
+    "concurrent_same_account_claims": "DESIGN_BLOCKED"
+  },
+  "root_candidate_evaluation": {
+    "candidate": "M03_EXTERNAL_PRODUCT_PROVISIONING_MEMBERSHIP",
+    "result": "VIABLE_ONLY_AFTER_ADDITIONAL_AUTHORITY",
+    "requirements": {
+      "independent_from_account_being_created": "UNPROVEN",
+      "non_caller_mintable": "CONTRACT_INTENT_ONLY; PRODUCTION ENFORCEMENT NOT_FOUND",
+      "exact_account_id_binding": "YES",
+      "replay_resistant": "YES_FOR_BOOTSTRAP_CONSUMPTION; NO_ACCOUNT_GENESIS_IDEMPOTENCY",
+      "restart_verifiable": "YES_FOR_CONSUMED_BOOTSTRAP_HISTORY; NO_DURABLE_ORIGINAL_MEMBERSHIP/AUTHENTIC_ACCOUNT_GENESIS_PROVENANCE",
+      "authenticated": "NOT_FOUND",
+      "freshness_rollback_protected": "M0.11 carrier protection exists for bootstrap state, but independent provisioning membership freshness/rollback anchor is NOT_FOUND",
+      "production_test_isolated": "NOT_FOUND"
+    },
+    "additional_authority": "A genuine external provisioning issuer/registry remains only a conditional proof source: it must be established independently before account admission or participate in a formally frozen non-circular atomic genesis protocol, AND all intrinsic genesis ordering, serialization, idempotency, and conflict semantics must be frozen.",
+    "condition": "AND_AFTER_INTRINSIC_GENESIS_SEMANTICS_ARE_FROZEN",
+    "additional_authority_alone_sufficient": false
+  },
+  "circularity_analysis": {
+    "classification": "UNRESOLVED",
+    "pre_admission_external_establishment": "NOT_PROVEN",
+    "depends_on_existing_genuine_account": "NOT_PROVEN",
+    "rule": "If membership acceptance relies on the genuine account it is offered to create, reject as circular. Current abstract port proves neither direction.",
+    "production_ProvisioningBoundary_AVAILABLE_solves_circularity": false
+  },
+  "intrinsic_root_proof_semantics": "INSUFFICIENT",
+  "intrinsic_semantic_gaps": [
+    "account_id mint ownership",
+    "first account versus first device ordering",
+    "account/device genesis atomicity",
+    "non-circular root establishment",
+    "account-genesis serialization",
+    "account-genesis idempotency",
+    "concurrent first-installation conflict semantics"
+  ],
+  "upstream_only_resolution_sufficient": false,
+  "replay": {
+    "m03_existing": "claim fingerprint, generation/revision, challenge, exact current-state designation, and consumed-history fences reject repeat bootstrap consumption",
+    "account_admission_gap": "No account-genesis journal, global idempotency decision, or duplicate-account resolution consumes this identity. Replaying membership must never mint another account."
+  },
+  "expiry": {
+    "current_contract": "FirstRunBootstrapAuthority requires issued_at_utc <= now_utc <= expires_at_utc at consumption.",
+    "post_genesis": "UNRESOLVED for account admission. Design reasoning requires expiry to gate admission commit time and not retroactively erase immutable genesis, but M0.3 does not freeze an account-genesis rule."
+  },
+  "restart_provenance": {
+    "m03_durable_evidence": "ConsumedBootstrapAuthority plus verified CoreCurrentBootstrapState/immutable history survives restart in DurableFirstRunBootstrapRegistry.",
+    "minimum_for_future_account_admission": [
+      "immutable account genesis identifier and exact account_id",
+      "exact provisioning claim and membership evidence reference/content fingerprint",
+      "authenticated issuer/authority domain and decision",
+      "commit-time validity result",
+      "account-admission idempotency identity",
+      "authenticated predecessor/head and non-rollbackable freshness generation"
+    ],
+    "ephemeral_caller_required": false
+  },
+  "authentication": {
+    "claim_fingerprint_role": "canonical content integrity only",
+    "keyed_authentication": "NOT_FOUND",
+    "signature_verification": "NOT_FOUND",
+    "authenticated_registry": "NOT_FOUND",
+    "external_protected_state": "NOT_FOUND",
+    "caller_generated_correct_sha": "DENY"
+  },
+  "rollback_freshness": {
+    "bootstrap_carrier": "Durable registry reads verified M0.11 snapshots and retains consumption history",
+    "provisioning_membership": "No production durable/authenticated membership registry or independent freshness anchor found",
+    "account_genesis": "NOT_IMPLEMENTED / NOT_AVAILABLE"
+  },
+  "impact_on_current_account_design": {
+    "classification": "UNRESOLVED",
+    "account_id_owner": "UNRESOLVED_PENDING_ROOT_OF_TRUST_RECONCILIATION",
+    "reason": "M0.3 supplies and binds account_id but does not prove that it mints it, so no competing mint owner was found. This narrow non-conflict does not freeze end-to-end ID ownership, reservation, ordering, provenance, or genesis semantics.",
+    "implementation_allowed": false,
+    "competing_mint_owner_conflict": "NO",
+    "narrow_finding": "NO_COMPETING_MINT_OWNER_FOUND",
+    "end_to_end_account_id_ownership_protocol": "UNRESOLVED",
+    "end_to_end_account_id_mint_protocol": "NOT_FROZEN"
+  },
+  "impact_on_workspace": {
+    "WorkspaceAuthority": "NOT_AVAILABLE",
+    "implementation_allowed": false,
+    "reason": "No genuine account root proof or available account authority was established."
+  },
+  "mandatory_redteam_mutations": {
+    "caller_claim_hash_equals_authority": "FAIL",
+    "FirstRunBootstrapAuthority_equals_CryptoHunterAccountAuthority": "FAIL",
+    "Bootstrapper_mints_membership": "FAIL",
+    "CoreHost_self_enrolls_membership": "FAIL",
+    "valid_account_id_syntax_proves_membership": "FAIL",
+    "first_run_claim_creates_second_genesis": "FAIL",
+    "dev_2_silently_creates_acct_B": "FAIL",
+    "expired_or_replayed_claim_mints_account": "FAIL",
+    "public_SHA_substitutes_membership": "FAIL",
+    "M0.11_carrier_becomes_root_proof": "FAIL"
+  },
+  "result": "ROOT_PROOF_INSUFFICIENT_SEMANTICS",
+  "next_stage": "Do not implement account or workspace authority. Independently supply the missing production provisioning boundary and freeze the intrinsic account-genesis authority model: ID mint/reservation ownership, account/device ordering and atomicity, non-circular establishment, serialization, idempotency, and concurrent-conflict semantics. Upstream availability alone is insufficient.",
+  "preserved_status": {
+    "M0.12": "ACCEPTED / AVAILABLE",
+    "M0.7_structural_Full_Fill_v2": "ACCEPTED / STRUCTURAL AVAILABLE",
+    "CryptoHunterAccountAuthority": "NOT_AVAILABLE",
+    "CryptoHunterAccountAuthority_implementation_allowed": false,
+    "WorkspaceAuthority": "NOT_AVAILABLE",
+    "WorkspaceAuthority_implementation_allowed": false,
+    "InstrumentAuthority": "NOT_AVAILABLE",
+    "WCP_Authority": "NOT_AVAILABLE / DESIGN_BLOCKED",
+    "FullFillAuthority": "NOT_AVAILABLE",
+    "production_M0.5": "NOT_AVAILABLE",
+    "M0.8": "NOT_AVAILABLE",
+    "C25": "BLOCKED",
+    "S9D": "OPEN"
+  },
+  "supersedes_or_reopens": {
+    "artifact": "m05_cryptohunter_account_authority_contract_design.json",
+    "scope_only": [
+      "id_minting.account_id_owner",
+      "id_minting.algorithm ownership and mint/reservation protocol",
+      "admission authority-bound account_id input presence"
+    ],
+    "whole_prior_design_invalid": false
+  }
+}

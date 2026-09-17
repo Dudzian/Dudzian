@@ -45,7 +45,7 @@
     "reason": "An exact admission_provenance_reference and authentication binding cannot be typed or validated before selecting a genuine root actor and durability/authentication authority; freezing placeholders would invent authority.",
     "required_semantics_not_schema": [
       "authority-minted accepted_account_record_id",
-      "authority-minted account_id",
+      "genuine authority-bound account_id whose mint/reservation ownership and provenance satisfy the selected root-of-trust protocol",
       "authority-global monotonic generation",
       "authority commit time admitted_at_utc",
       "independently verifiable admission provenance reference",
@@ -62,17 +62,27 @@
     "PersistentEntityIdentityProjection_is_accepted_fact": false
   },
   "id_minting": {
-    "account_id_owner": "future genuine CryptoHunterAccountAuthority only",
-    "algorithm": "canonical lowercase UUIDv7 using authority-owned entropy/clock source; random UUIDv7, not request-derived",
+    "account_id_owner": "UNRESOLVED_PENDING_ROOT_OF_TRUST_RECONCILIATION",
+    "algorithm": "NOT_FROZEN",
     "accepted_account_record_id_owner": "future genuine authority only; exact grammar DESIGN_BLOCKED",
     "caller_may_choose": [],
     "caller_fields_forbidden": [
-      "account_id",
       "accepted_account_record_id",
       "generation",
       "authority metadata"
     ],
-    "status": "PARTIALLY_FROZEN"
+    "status": "DESIGN_BLOCKED",
+    "account_id_syntax": "FROZEN: acct_<canonical lowercase UUIDv7>",
+    "mint_reservation_protocol": "NOT_FROZEN",
+    "entropy_clock_owner": "NOT_FROZEN",
+    "caller_selected_genuine_account_id": "FORBIDDEN",
+    "candidate_or_reserved_id_is_authority": false,
+    "frozen_subfacts": [
+      "account_id syntax",
+      "caller-selected genuine account_id forbidden",
+      "candidate/reserved ID is not authority before genesis commit"
+    ],
+    "account_id_ownership_reopened_by": "m05_cryptohunter_account_root_of_trust_reconciliation.json"
   },
   "admission": {
     "status": "DESIGN_BLOCKED",
@@ -86,7 +96,6 @@
       "trusted_actor_proof": "required independent proof; exact type DESIGN_BLOCKED"
     },
     "request_must_not_contain": [
-      "account_id",
       "accepted_account_record_id",
       "generation",
       "authority metadata",
@@ -106,7 +115,10 @@
       "FRESHNESS_FAILURE"
     ],
     "trusted_actor_proof": "must verify independently of the new account; exact issuer/evidence DESIGN_BLOCKED",
-    "circular_proof_allowed": false
+    "circular_proof_allowed": false,
+    "caller_selected_account_id": "FORBIDDEN",
+    "authority_bound_account_id_input_presence": "NOT_FROZEN",
+    "account_id_input_rule": "Only caller-selected/self-minted genuine identity is forbidden. Whether a future typed request carries an authority-bound account_id or reservation/provenance reference depends on the selected root-of-trust model."
   },
   "lifecycle": {
     "status": "DESIGN_FROZEN",
@@ -445,5 +457,11 @@
     "FullFillAuthority": "NOT_AVAILABLE",
     "M0.8": "NOT_AVAILABLE",
     "production_M0.5": "NOT_AVAILABLE"
-  }
+  },
+  "account_id_ownership_reopened_by": "m05_cryptohunter_account_root_of_trust_reconciliation.json",
+  "targeted_reopen_scope": [
+    "id_minting.account_id_owner",
+    "id_minting.algorithm ownership and mint/reservation protocol",
+    "admission authority-bound account_id input presence"
+  ]
 }
