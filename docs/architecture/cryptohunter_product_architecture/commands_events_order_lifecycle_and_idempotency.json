@@ -1900,5 +1900,244 @@
     "cross_milestone_attestation": true,
     "reference_tests": true,
     "remaining_blockers": []
+  },
+  "fill_contract_versions": {
+    "version_selection": {
+      "discriminator": "EXACT_CLOSED_FIELD_SET",
+      "rules": [
+        {
+          "exact_field_set": "v1",
+          "result": "VALIDATE_WITH_V1_STRUCTURAL_RULES"
+        },
+        {
+          "exact_field_set": "v2",
+          "result": "VALIDATE_WITH_V2_STRUCTURAL_RULES"
+        },
+        {
+          "exact_field_set": "anything_else",
+          "result": "MALFORMED_FILL"
+        }
+      ],
+      "heuristic_detection": false
+    },
+    "v1": {
+      "version": "v1",
+      "status": "CLOSED_HISTORICALLY_IDENTIFIABLE",
+      "canonical_contract_pointer": "/fill_contract",
+      "field_count": 19,
+      "fingerprint_input_count": 18,
+      "fingerprint_domain": "LEGACY_UNDOMAINED_CANONICAL_JSON_SHA256",
+      "fee_namespace_rule": "fee_asset_reference.asset_namespace == Fill.exchange_id"
+    },
+    "v2": {
+      "version": "v2",
+      "status": "IMPLEMENTED_CANDIDATE_STRUCTURAL_ONLY",
+      "field_count": 20,
+      "fact_fields": [
+        "fill_id",
+        "order_id",
+        "environment",
+        "workspace_id",
+        "portfolio_id",
+        "exchange_account_id",
+        "exchange_id",
+        "instrument_id",
+        "instrument_metadata_version",
+        "accepted_source_catalog_snapshot_id",
+        "execution_route_id",
+        "venue_trade_id",
+        "side",
+        "executed_quantity",
+        "execution_price",
+        "executed_at_utc",
+        "fee_kind",
+        "fee_quantity",
+        "fee_asset_reference",
+        "fill_fingerprint_sha256"
+      ],
+      "nullable_fields": [
+        "fee_asset_reference"
+      ],
+      "field_schemas": {
+        "fill_id": {
+          "type": "id",
+          "prefix": "fill"
+        },
+        "order_id": {
+          "type": "id",
+          "prefix": "ord"
+        },
+        "environment": {
+          "type": "enum",
+          "values": [
+            "PAPER",
+            "TESTNET",
+            "LIVE"
+          ]
+        },
+        "workspace_id": {
+          "type": "id",
+          "prefix": "ws"
+        },
+        "portfolio_id": {
+          "type": "id",
+          "prefix": "port"
+        },
+        "exchange_account_id": {
+          "type": "id",
+          "prefix": "xacc"
+        },
+        "exchange_id": {
+          "type": "non_empty_string"
+        },
+        "instrument_id": {
+          "type": "id",
+          "prefix": "instr"
+        },
+        "instrument_metadata_version": {
+          "type": "positive_integer"
+        },
+        "accepted_source_catalog_snapshot_id": {
+          "type": "exact_str",
+          "semantic_type": "AcceptedSourceCatalogSnapshotId",
+          "prefix": "ascat_",
+          "suffix": "non_empty",
+          "nullable": false,
+          "fingerprint_input": true,
+          "syntax_grants_trust": false
+        },
+        "execution_route_id": {
+          "type": "id",
+          "prefix": "xroute"
+        },
+        "venue_trade_id": {
+          "type": "non_empty_string"
+        },
+        "side": {
+          "type": "enum",
+          "values": [
+            "BUY",
+            "SELL"
+          ]
+        },
+        "executed_quantity": {
+          "type": "decimal",
+          "constraint": "positive"
+        },
+        "execution_price": {
+          "type": "decimal",
+          "constraint": "positive"
+        },
+        "executed_at_utc": {
+          "type": "timestamp"
+        },
+        "fee_kind": {
+          "type": "enum",
+          "values": [
+            "NONE",
+            "CHARGE"
+          ]
+        },
+        "fee_quantity": {
+          "type": "decimal",
+          "constraint": "non_negative"
+        },
+        "fee_asset_reference": {
+          "type": "asset_reference",
+          "fields": [
+            "venue_asset_code",
+            "canonical_display_code",
+            "asset_namespace",
+            "mapping_status"
+          ],
+          "field_schemas": {
+            "venue_asset_code": {
+              "type": "non_empty_string"
+            },
+            "canonical_display_code": {
+              "type": "non_empty_string"
+            },
+            "asset_namespace": {
+              "type": "non_empty_string"
+            },
+            "mapping_status": {
+              "type": "enum",
+              "values": [
+                "EXACT",
+                "EXPLICIT_ALIAS"
+              ]
+            }
+          },
+          "rules": [
+            "exact M0.5 asset-reference value object",
+            "AMBIGUOUS and UNKNOWN forbidden",
+            "no default to base, quote, or settlement asset"
+          ]
+        },
+        "fill_fingerprint_sha256": {
+          "type": "sha256_hex"
+        }
+      },
+      "fingerprint": {
+        "field": "fill_fingerprint_sha256",
+        "algorithm": "SHA-256",
+        "domain": "cryptohunter.m0.7.full_fill.v2",
+        "preimage": "UTF-8(domain || 0x00 || NFC(canonical JSON projection))",
+        "input_fields": [
+          "fill_id",
+          "order_id",
+          "environment",
+          "workspace_id",
+          "portfolio_id",
+          "exchange_account_id",
+          "exchange_id",
+          "instrument_id",
+          "instrument_metadata_version",
+          "accepted_source_catalog_snapshot_id",
+          "execution_route_id",
+          "venue_trade_id",
+          "side",
+          "executed_quantity",
+          "execution_price",
+          "executed_at_utc",
+          "fee_kind",
+          "fee_quantity",
+          "fee_asset_reference"
+        ],
+        "excluded_fields": [
+          "fill_fingerprint_sha256"
+        ],
+        "canonicalization": [
+          "JSON object keys sorted",
+          "separators comma and colon",
+          "UTF-8",
+          "NFC",
+          "NaN and Infinity forbidden",
+          "M0.5 canonical decimals",
+          "canonical UTC RFC3339 Z timestamps"
+        ]
+      },
+      "fee_structural_policy": {
+        "classification": "RAW_STRUCTURAL_FILL_V2_SHAPE_ONLY",
+        "NONE": {
+          "fee_quantity": "exactly 0",
+          "fee_asset_reference": null
+        },
+        "CHARGE": {
+          "fee_quantity": "positive",
+          "fee_asset_reference": "exact structural AssetReference shape",
+          "mapping_status": [
+            "EXACT",
+            "EXPLICIT_ALIAS"
+          ]
+        },
+        "namespace_comparison": "NONE",
+        "historical_instrument_resolution": false
+      },
+      "validator_input_mode": "RAW_FILL_ONLY",
+      "syntax_grants_trust": false,
+      "trusted_full_fill_authority": "NOT_AVAILABLE",
+      "semantic_fill_admission": "NOT_AVAILABLE"
+    }
   }
 }

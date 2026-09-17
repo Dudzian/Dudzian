@@ -12,20 +12,32 @@ import re
 import unicodedata
 from typing import Mapping
 
-FILL_FIELDS = frozenset({
+FILL_V1_FIELDS = frozenset({
     "fill_id", "order_id", "environment", "workspace_id", "portfolio_id",
     "exchange_account_id", "exchange_id", "instrument_id",
     "instrument_metadata_version", "execution_route_id", "venue_trade_id", "side",
     "executed_quantity", "execution_price", "executed_at_utc", "fee_kind",
     "fee_quantity", "fee_asset_reference", "fill_fingerprint_sha256",
 })
-FILL_FINGERPRINT_FIELDS = (
+FILL_FIELDS = FILL_V1_FIELDS  # historical public name
+FILL_V1_FINGERPRINT_FIELDS = (
     "fill_id", "order_id", "environment", "workspace_id", "portfolio_id",
     "exchange_account_id", "exchange_id", "instrument_id",
     "instrument_metadata_version", "execution_route_id", "venue_trade_id", "side",
     "executed_quantity", "execution_price", "executed_at_utc", "fee_kind",
     "fee_quantity", "fee_asset_reference",
 )
+FILL_FINGERPRINT_FIELDS = FILL_V1_FINGERPRINT_FIELDS  # historical public name
+FILL_V2_FINGERPRINT_DOMAIN = "cryptohunter.m0.7.full_fill.v2"
+FILL_V2_FINGERPRINT_FIELDS = (
+    "fill_id", "order_id", "environment", "workspace_id", "portfolio_id",
+    "exchange_account_id", "exchange_id", "instrument_id",
+    "instrument_metadata_version", "accepted_source_catalog_snapshot_id",
+    "execution_route_id", "venue_trade_id", "side", "executed_quantity",
+    "execution_price", "executed_at_utc", "fee_kind", "fee_quantity",
+    "fee_asset_reference",
+)
+FILL_V2_FIELDS = frozenset((*FILL_V2_FINGERPRINT_FIELDS, "fill_fingerprint_sha256"))
 _DECIMAL = re.compile(r"(?:0|[1-9][0-9]*)(?:\.[0-9]*[1-9])?\Z")
 _ID = re.compile(r"[a-z][a-z0-9]*_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\Z")
 _TIME = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d*[1-9])?Z\Z")
@@ -40,7 +52,7 @@ class M07FillValidationError(ValueError):
 def canonical_fill_fingerprint(fill: Mapping[str, object]) -> str:
     """Independently recompute the exact frozen fingerprint projection."""
     try:
-        projected = {field: fill[field] for field in FILL_FINGERPRINT_FIELDS}
+        projected = {field: fill[field] for field in FILL_V1_FINGERPRINT_FIELDS}
     except KeyError as exc:
         raise M07FillValidationError("MALFORMED_FILL") from exc
     serialized = json.dumps(
@@ -48,6 +60,24 @@ def canonical_fill_fingerprint(fill: Mapping[str, object]) -> str:
     )
     normalized = unicodedata.normalize("NFC", serialized)
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def canonical_fill_v2_fingerprint(fill: Mapping[str, object]) -> str:
+    """Recompute the domain-separated structural v2 fingerprint."""
+    try:
+        projected = {field: fill[field] for field in FILL_V2_FINGERPRINT_FIELDS}
+    except (KeyError, TypeError) as exc:
+        raise M07FillValidationError("MALFORMED_FILL") from exc
+    try:
+        serialized = json.dumps(
+            projected, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+            allow_nan=False,
+        )
+    except (TypeError, ValueError) as exc:
+        raise M07FillValidationError("MALFORMED_FILL") from exc
+    normalized = unicodedata.normalize("NFC", serialized)
+    preimage = f"{FILL_V2_FINGERPRINT_DOMAIN}\0{normalized}".encode("utf-8")
+    return hashlib.sha256(preimage).hexdigest()
 
 
 def _id(value: object, prefix: str) -> bool:
@@ -75,19 +105,21 @@ def _enum(value: object, values: tuple[str, ...]) -> bool:
     return type(value) is str and value in values
 
 
-def _asset(value: object, namespace: object) -> bool:
+def _asset(value: object, namespace: object | None) -> bool:
     return (type(value) is dict and set(value) == _ASSET_FIELDS
             and all(type(value[name]) is str and bool(value[name]) for name in _ASSET_FIELDS)
             and _enum(value["mapping_status"], ("EXACT", "EXPLICIT_ALIAS"))
-            and value["asset_namespace"] == namespace)
+            and (namespace is None or value["asset_namespace"] == namespace))
 
 
-def validate_structural_fill(fill: object) -> Mapping[str, object]:
-    """Validate raw structural Fill without granting accepted membership."""
-    if type(fill) is not dict or set(fill) != FILL_FIELDS:
-        raise M07FillValidationError("MALFORMED_FILL")
-    item = dict(fill)
-    if (not _id(item["fill_id"], "fill") or not _id(item["order_id"], "ord")
+def _validate_fields(item: dict[str, object], *, v2: bool) -> None:
+    snapshot_valid = (not v2 or (
+        type(item["accepted_source_catalog_snapshot_id"]) is str
+        and item["accepted_source_catalog_snapshot_id"].startswith("ascat_")
+        and len(item["accepted_source_catalog_snapshot_id"]) > len("ascat_")
+    ))
+    if (not snapshot_valid
+            or not _id(item["fill_id"], "fill") or not _id(item["order_id"], "ord")
             or not _id(item["workspace_id"], "ws") or not _id(item["portfolio_id"], "port")
             or not _id(item["exchange_account_id"], "xacc") or not _id(item["instrument_id"], "instr")
             or not _id(item["execution_route_id"], "xroute")
@@ -105,12 +137,26 @@ def validate_structural_fill(fill: object) -> Mapping[str, object]:
         raise M07FillValidationError("MALFORMED_FILL")
     if item["fee_kind"] == "NONE":
         legal_fee = item["fee_quantity"] == "0" and item["fee_asset_reference"] is None
-    elif item["fee_kind"] == "CHARGE":
-        legal_fee = (item["fee_quantity"] != "0"
-                     and _asset(item["fee_asset_reference"], item["exchange_id"]))
     else:
-        legal_fee = False
+        namespace = None if v2 else item["exchange_id"]
+        legal_fee = item["fee_quantity"] != "0" and _asset(item["fee_asset_reference"], namespace)
+    fingerprint = canonical_fill_v2_fingerprint(item) if v2 else canonical_fill_fingerprint(item)
     if (not legal_fee or not _sha256(item["fill_fingerprint_sha256"])
-            or item["fill_fingerprint_sha256"] != canonical_fill_fingerprint(item)):
+            or item["fill_fingerprint_sha256"] != fingerprint):
         raise M07FillValidationError("MALFORMED_FILL")
+
+
+def validate_structural_fill(fill: object) -> Mapping[str, object]:
+    """Validate raw structural Fill without granting accepted membership."""
+    if type(fill) is not dict:
+        raise M07FillValidationError("MALFORMED_FILL")
+    item = dict(fill)
+    fields = set(item)
+    if fields == FILL_V1_FIELDS:
+        v2 = False
+    elif fields == FILL_V2_FIELDS:
+        v2 = True
+    else:
+        raise M07FillValidationError("MALFORMED_FILL")
+    _validate_fields(item, v2=v2)
     return item
