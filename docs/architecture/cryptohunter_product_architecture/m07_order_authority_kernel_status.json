@@ -29,9 +29,9 @@
     "fill_cumulative_rule": "/fill_contract/cumulative_executed_quantity",
     "fill_progression_invariants": "/fill_contract/invariants"
   },
-  "production_order_authority_kernel": "AVAILABLE_CANDIDATE",
-  "production_order_history": "AVAILABLE_CANDIDATE",
-  "historical_order_resolver": "AVAILABLE_CANDIDATE",
+  "production_order_authority_kernel": "ACCEPTED_AVAILABLE",
+  "production_order_history": "ACCEPTED_AVAILABLE",
+  "historical_order_resolver": "ACCEPTED_AVAILABLE",
   "semantic_submit_order": "BLOCKED_UPSTREAM",
   "semantic_submit_order_available": false,
   "upstream_blockers": [
