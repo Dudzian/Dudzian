@@ -1,0 +1,1000 @@
+{
+  "artifact": "M05_ACCOUNT_GENESIS_FRESHNESS_AUTHORITY_CAS_AND_FINALIZATION_CONTRACT",
+  "iteration": "DESIGN / RECONCILIATION ONLY",
+  "repository_head_examined": "b644cc7e952076ebe489e7dc9313a7682f94494e",
+  "provenance": {
+    "source": "GIT",
+    "actual_repository_HEAD_inspected": "b644cc7e952076ebe489e7dc9313a7682f94494e",
+    "reviewed_SHA_supplied": "NOT_SUPPLIED",
+    "reviewed_sha_state": "NOT_SUPPLIED",
+    "availability": "NOT_APPLICABLE",
+    "classification": "UNKNOWN",
+    "finding_scope": "CURRENT_TREE_ONLY",
+    "formal_advancement_allowed": false,
+    "formal_project_advancement": "WITHHELD",
+    "artifacts_and_code_examined": [
+      "m05_account_genesis_physical_persistence_crash_atomicity_contract.json",
+      "m05_account_genesis_authority_topology_resolution_after_binding_freeze.json",
+      "m05_account_genesis_security_substrate_contract.json",
+      "m05_account_genesis_operation_identity_request_binding_contract.json",
+      "m05_cryptohunter_account_genesis_reservation_state_model.json",
+      "m05_account_genesis_root_proof_admission_binding_contract.json",
+      "tests/architecture/test_m012_catalog_admission_receipt_authority.py",
+      "bot_core/security/keyring_storage.py",
+      "bot_core/instruments/catalog_admission_receipt.py"
+    ],
+    "rule": "No reviewed SHA was supplied; findings apply only to the current tree and cannot advance the formal project."
+  },
+  "frozen_inputs": {
+    "semantic_authority_owner": "CryptoHunterAccountAuthority",
+    "generation_candidate_proposer": "CryptoHunterAccountAuthority",
+    "freshness_generation_authority_owner": "Future AccountGenesis freshness / anti-rollback authority",
+    "freshness_owner_equals_genesis_semantic_decision_owner": false,
+    "coordinator_may_unilaterally_advance_authoritative_generation": false,
+    "physical_persistence_protocol": "F_DESIGN_BLOCKED",
+    "physical_persistence_result": "ACCOUNT_GENESIS_PHYSICAL_PERSISTENCE_DESIGN_BLOCKED"
+  },
+  "ownership_boundary": {
+    "CryptoHunterAccountAuthority": "candidate successor proposer / semantic coordinator",
+    "authoritative_freshness_owner": "Future AccountGenesis freshness / anti-rollback authority",
+    "independent_trust_input_required": true,
+    "CHA_may_accept_authoritative_successor": false,
+    "custody_adapter_is_authority_by_storage_access": false
+  },
+  "authority_bootstrap": {
+    "trust_source": "pre-account deployment/provisioning trust configuration controlled by the freshness authority operator and installed before AccountGenesis",
+    "must_not_derive_from": [
+      "acct_A",
+      "OperatorIdentity of acct_A",
+      "DeviceInstallation of acct_A",
+      "Workspace of acct_A",
+      "account-scoped authority of acct_A"
+    ],
+    "root_proof_issuer_same_role": false,
+    "exact_provider_and_ceremony": "NOT_FROZEN",
+    "failure": "UNAVAILABLE / NO COMMITTED PUBLICATION"
+  },
+  "authority_identity": {
+    "authority_id_semantics": "stable opaque identifier of one exact freshness authority lineage within environment and trust_domain",
+    "account_id_allowed": false,
+    "bound_components": [
+      "environment",
+      "trust_domain",
+      "authority_id",
+      "document namespace"
+    ],
+    "provisioning": "pre-account trusted configuration",
+    "exact_encoding": "NOT_FROZEN",
+    "unknown_authority": "REJECT"
+  },
+  "candidate_vs_authoritative_state": {
+    "candidate_anchor_document_equals_authoritative_freshness_document": false,
+    "candidate_creator": "CryptoHunterAccountAuthority",
+    "candidate_is_freshness": false,
+    "acceptor": "Future AccountGenesis freshness / anti-rollback authority",
+    "authoritative_definition": "the unique complete N+1 document atomically accepted from exact authoritative N by authority-controlled monotonic CAS and accompanied by verifiable finalization evidence",
+    "without_acceptance": "no authoritative N+1",
+    "method_returned_true_is_historical_proof": false
+  },
+  "anchor_document_contract": {
+    "payload_type": "AccountGenesisFreshnessDocumentPayload",
+    "payload_exact_semantic_fields": [
+      "schema_version",
+      "environment",
+      "trust_domain",
+      "authority_id",
+      "generation",
+      "predecessor_generation",
+      "predecessor_document_digest",
+      "complete_semantic_head_set",
+      "freshness_authority_key_id",
+      "freshness_authority_key_version",
+      "finalization_request_id"
+    ],
+    "finalization_request_id_semantically_selected": true,
+    "envelope_exact_fields": [
+      "payload",
+      "document_digest",
+      "authentication_tag_or_signature"
+    ],
+    "document_digest_semantics": "HASH(domain_separator || canonical(AccountGenesisFreshnessDocumentPayload))",
+    "document_digest_field_excluded_from_own_preimage": true,
+    "authentication_material_excluded_from_document_digest_preimage": true,
+    "authentication_rule": "authentication_tag_or_signature authenticates domain_separator, canonical payload, and document_digest; it is not part of document_digest preimage",
+    "candidate_or_proposed_digest_name": "proposed_document_digest",
+    "proposed_document_digest_semantics": "the document_digest of the exact CryptoHunterAccountAuthority-proposed AccountGenesisFreshnessDocumentPayload before authority acceptance",
+    "separate_candidate_payload_digest_present": false,
+    "accepted_document_digest_semantics": "the same document_digest object used by CAS for the exact payload atomically accepted as authoritative; never a digest of receipt or authenticated envelope",
+    "timestamps_required": false,
+    "unknown_fields": "REJECT",
+    "canonical_byte_encoding": "NOT_FROZEN",
+    "hash_algorithm": "NOT_FROZEN",
+    "semantic_preimage": "FROZEN",
+    "partial_or_mixed_heads": "REJECT",
+    "finalization_request_id_is_in_digest_preimage": true,
+    "changing_finalization_request_id_changes_document_identity": true,
+    "proposed_candidate_object": {
+      "type": "ProposedAccountGenesisFreshnessDocument",
+      "exact_fields": [
+        "payload",
+        "document_digest",
+        "proposer_authentication"
+      ],
+      "payload_type": "AccountGenesisFreshnessDocumentPayload",
+      "document_digest": "HASH(domain_separator || canonical(payload))",
+      "proposer_authentication": "semantic authentication binding over domain_separator, exact payload and document_digest; exact algorithm NOT_FROZEN",
+      "single_source_of_candidate_truth": true,
+      "proposer_authentication_type": "ProposerAuthentication",
+      "proposer_authentication_exact_fields": [
+        "schema_version",
+        "proposer_identity",
+        "environment",
+        "trust_domain",
+        "proposer_key_id",
+        "proposer_key_version",
+        "signed_or_authenticated_document_digest",
+        "authentication_tag_or_signature"
+      ],
+      "timestamps_present": false
+    },
+    "payload_key_binding_semantics": "freshness_authority_key_id/version identify the expected freshness-finalization key lifecycle only; they never identify or authorize the CHA proposer key"
+  },
+  "CAS_contract": {
+    "conceptual_operation": "compare_and_advance",
+    "arguments": [
+      "expected_generation",
+      "expected_document_digest",
+      "expected_complete_heads",
+      "proposed_document_payload",
+      "proposed_document_digest",
+      "proposer_authentication"
+    ],
+    "preconditions": {
+      "current_full_document_matches_expected_generation": true,
+      "current_full_document_matches_expected_digest": true,
+      "current_complete_heads_match_expected_heads": true,
+      "candidate_generation_is_exact_successor": true,
+      "candidate_predecessor_matches_expected_document": true,
+      "candidate_complete_heads_bound": true,
+      "candidate_authentication_required": true,
+      "environment_match_required": true,
+      "trust_domain_match_required": true,
+      "authority_id_match_required": true,
+      "finalization_request_identity_match_required": true,
+      "proposed_payload_digest_matches_proposed_document_digest": true,
+      "proposed_payload_exactly_matches_CAS_candidate_identity": true,
+      "accepted_payload_must_equal_proposed_payload": true,
+      "accepted_document_digest_must_equal_proposed_document_digest": true,
+      "authority_may_not_rewrite_candidate_payload": true,
+      "authorized_proposer_identity_match_required": true,
+      "trusted_proposer_key_required": true,
+      "proposer_environment_match_required": true,
+      "proposer_trust_domain_match_required": true,
+      "proposer_document_digest_binding_required": true,
+      "proposer_key_lifecycle_eligible_required": true
+    },
+    "atomicity_boundary": "single full authoritative anchor document plus durable single-successor decision and retrievable finalization evidence",
+    "success": "ACCEPTED with authenticated FreshnessFinalizationReceipt",
+    "statuses": [
+      "ACCEPTED",
+      "ALREADY_ACCEPTED_EXACT",
+      "CAS_CONFLICT",
+      "PREDECESSOR_MISMATCH",
+      "INVALID_DOCUMENT",
+      "INVALID_AUTHENTICATION",
+      "WRONG_DOMAIN",
+      "UNAVAILABLE",
+      "OUTCOME_UNKNOWN"
+    ],
+    "conflict": "no mutation; reread; no LWW, timestamp, digest arbitration or merge",
+    "generation_gap": "FORBIDDEN; exact +1 required except a separately reviewed migration protocol",
+    "read_compare_set_emulation": "FORBIDDEN / TOCTOU",
+    "availability": "NO COMMITTED PUBLICATION",
+    "candidate_fields_source": "read only from proposed_document_payload; no duplicate top-level candidate fields",
+    "payload_fields_validated": [
+      "schema_version",
+      "environment",
+      "trust_domain",
+      "authority_id",
+      "generation",
+      "predecessor_generation",
+      "predecessor_document_digest",
+      "complete_semantic_head_set",
+      "freshness_authority_key_id",
+      "freshness_authority_key_version",
+      "finalization_request_id"
+    ],
+    "compare_and_advance_proposed_document_digest_required": true,
+    "freshness_authority_may_modify_proposed_payload": false,
+    "key_lifecycle_race": {
+      "scenario": "payload proposed under authentication_key_id=K1 and authentication_key_version=V1; lifecycle changes before CAS",
+      "if_key_binding_no_longer_valid_or_eligible": "REJECT / REQUIRE NEW PROPOSAL",
+      "authority_may_rewrite_K1_V1_to_K2_V2_and_accept": false,
+      "identity_preservation": "proposed_document_digest == accepted_document_digest",
+      "key_role": "freshness authority finalization key, distinct from proposer authentication key role"
+    },
+    "proposer_authentication_failure_no_fallback": true
+  },
+  "finalization_evidence": {
+    "required": "FreshnessFinalizationReceipt plus authoritative read verification",
+    "fields": [
+      "schema_version",
+      "environment",
+      "trust_domain",
+      "authority_id",
+      "exact_predecessor_generation",
+      "exact_predecessor_document_digest",
+      "accepted_generation",
+      "accepted_document_digest",
+      "complete_semantic_head_digest",
+      "finalization_request_id",
+      "receipt_id",
+      "freshness_authority_key_id",
+      "freshness_authority_key_version",
+      "authentication_tag_or_signature"
+    ],
+    "full_document_alone_sufficient": false,
+    "reason": "current contract requires durable decision identity and historical key-bound evidence; a mutable current document cannot alone prove an earlier ambiguous request",
+    "receipt_authenticity_alone_establishes_freshness": false,
+    "method_success_alone": false,
+    "accepted_document_digest_semantics": "the same document_digest object used by CAS for the exact payload atomically accepted as authoritative; never a digest of receipt or authenticated envelope",
+    "accepted_document_digest_binding": "FreshnessFinalizationReceipt.accepted_document_digest == exact proposed_document_digest accepted by the same CAS decision",
+    "complete_semantic_head_digest_semantics": "HASH(semantic-head-domain || canonical(complete_semantic_head_set))",
+    "complete_semantic_head_digest_semantic_preimage": "FROZEN",
+    "complete_semantic_head_digest_canonical_byte_encoding": "NOT_FROZEN",
+    "complete_semantic_head_digest_hash_algorithm": "NOT_FROZEN",
+    "key_field_semantics": "freshness_authority_key_id/version identify only the freshness authority key that authenticates finalization evidence; proposer_key_id/version are carried only in ProposerAuthentication",
+    "authentication_boundary": {
+      "object_type": "FreshnessFinalizationReceipt",
+      "authentication_binding": [
+        "finalization-receipt-authentication-domain-separator",
+        "schema_version",
+        "environment",
+        "trust_domain",
+        "authority_id",
+        "exact_predecessor_generation",
+        "exact_predecessor_document_digest",
+        "accepted_generation",
+        "accepted_document_digest",
+        "complete_semantic_head_digest",
+        "finalization_request_id",
+        "receipt_id",
+        "freshness_authority_key_id",
+        "freshness_authority_key_version"
+      ],
+      "authentication_tag_or_signature_in_own_preimage": false,
+      "semantic_preimage": "FROZEN",
+      "cryptographic_algorithm": "NOT_FROZEN",
+      "provider": "NOT_FROZEN",
+      "canonical_byte_encoding": "NOT_FROZEN",
+      "schema_version_authenticated_before_interpretation": true,
+      "authenticated_key_identity_drives_receipt_verification_historical_verification_and_lifecycle": true,
+      "lifecycle_or_verifier_identity_may_use_unauthenticated_metadata": false,
+      "provider_alias_or_material_reuse_may_bypass_receipt_key_lifecycle": false,
+      "changing_freshness_authority_key_id_or_version_requires_new_authentication": true,
+      "K1_receipt_may_be_treated_as_K2_receipt": false,
+      "key_identity_rule": "freshness_authority_key_id and freshness_authority_key_version used for receipt verification, historical verification and lifecycle evaluation MUST exactly equal the authenticated values in the FreshnessFinalizationReceipt preimage",
+      "accepted_document_digest_rule": "authenticated accepted_document_digest == exact proposed_document_digest accepted by the same CAS decision"
+    }
+  },
+  "direction_proof": {
+    "definition": "authenticated authority read and matching FreshnessFinalizationReceipt bound to exact predecessor, candidate, domain, authority and request identity",
+    "local_pending_intent_required_for_automatic_retry": true,
+    "local_state_alone_may_mint_direction": false,
+    "receipt_without_monotonic_single_successor_state": false
+  },
+  "recovery_semantics": {
+    "local_N_plus_1_authority_N": "CONDITIONAL_AUTOMATIC_EXACT_CAS_RETRY",
+    "conditions": [
+      "durable authenticated PREPARED pending intent contains and binds exact proposed_document_payload, proposed_document_digest, predecessor and request identity",
+      "authority authenticates and still exactly exposes N",
+      "candidate remains valid",
+      "compare_and_advance is atomic and exact replay is idempotent",
+      "authority makes the decision and no alternate N+1 is accepted"
+    ],
+    "condition_failure": "FAIL_CLOSED",
+    "authority_N_plus_1_local_N": "FAIL_CLOSED unless local durable authenticated PREPARED precursor and exact receipt prove the same closure; never reconstruct missing authority history from anchor",
+    "same_generation_unequal_documents": "FAIL_CLOSED / FORK_OR_TAMPER",
+    "equal_exact_state": "continue only after authentication and complete local closure verification",
+    "missing_exact_proposed_candidate_identity": "FAIL_CLOSED"
+  },
+  "ambiguous_outcome": {
+    "trigger": "request sent and timeout/connection/error leaves outcome unknown",
+    "initial_status": "OUTCOME_UNKNOWN",
+    "mandatory_action": "read_current and read_or_verify_finalization; never assume success or failure",
+    "exact_candidate_accepted": "ALREADY_ACCEPTED_EXACT with authenticated receipt; finalize only matching PREPARED closure",
+    "predecessor_still_current": "retry exact request only under local-ahead conditions; otherwise FAIL_CLOSED",
+    "different_successor_accepted": "CAS_CONFLICT / FAIL_CLOSED; never overwrite or merge",
+    "unreadable_or_unverifiable": "UNAVAILABLE / FAIL_CLOSED / NO COMMITTED PUBLICATION"
+  },
+  "idempotency": {
+    "exact_replay": "ALREADY_ACCEPTED_EXACT / IDEMPOTENT_SUCCESS_EVIDENCE",
+    "identity_requires": [
+      "environment",
+      "trust_domain",
+      "authority_id",
+      "finalization_request_id",
+      "exact_predecessor_generation",
+      "exact_predecessor_document_digest",
+      "exact_proposed_document_digest",
+      "exact_complete_semantic_head_set_digest"
+    ],
+    "different_any_binding": "CAS_CONFLICT or WRONG_DOMAIN",
+    "receipt_reissue": "original receipt with unchanged authenticated preimage, or alternate currently-trusted authority-attested historical lookup satisfying historical_lookup_contract",
+    "ALREADY_ACCEPTED_EXACT_receipt_binding": "receipt.accepted_document_digest == original proposed_document_digest and exact finalization_request_id matches",
+    "different_finalization_request_id_for_otherwise_same_successor_semantics": "different finalization_request_id => different proposed document digest => CAS_CONFLICT / REQUEST_IDENTITY_MISMATCH / FAIL_CLOSED; never ALREADY_ACCEPTED_EXACT absent separately frozen alias/migration protocol",
+    "historical_lookup_contract": {
+      "exact_same_authoritative_decision_required": true,
+      "exact_bindings": [
+        "environment",
+        "trust_domain",
+        "authority_id",
+        "exact_predecessor_generation",
+        "exact_predecessor_document_digest",
+        "accepted_generation",
+        "accepted_document_digest",
+        "complete_semantic_head_digest",
+        "finalization_request_id",
+        "original_decision_identity"
+      ],
+      "may_create_second_authority_decision": false,
+      "currently_trusted_authority_evidence_required": true,
+      "may_derive_trust_solely_from_historical_REVOKED_key": false,
+      "may_rewrite_original_candidate_or_document_identity": false,
+      "may_change_finalization_request_id": false,
+      "may_change_accepted_document_digest": false,
+      "original_receipt_authenticated_preimage_unchanged": true,
+      "alternate_transport_provider_algorithm": "NOT_FROZEN",
+      "original_decision_identity_type": "OriginalDecisionIdentity",
+      "original_decision_identity_semantic_tuple": [
+        "environment",
+        "trust_domain",
+        "authority_id",
+        "exact_predecessor_generation",
+        "exact_predecessor_document_digest",
+        "accepted_generation",
+        "accepted_document_digest",
+        "complete_semantic_head_digest",
+        "finalization_request_id"
+      ],
+      "missing_currently_trusted_independent_root_may_yield_ALREADY_ACCEPTED_EXACT": false
+    }
+  },
+  "concurrency": {
+    "successful_successors_per_predecessor": 1,
+    "same_generation_unequal_documents": "FORBIDDEN",
+    "competing_writer_loser": "CAS_CONFLICT then authoritative reread",
+    "last_write_wins": false,
+    "timestamp_arbitration": false,
+    "lexicographic_digest_choice": false
+  },
+  "multi_lineage_atomicity": {
+    "full_document_atomic_CAS_required": true,
+    "independent_per_lineage_CAS": false,
+    "mixed_closure": "FORBIDDEN",
+    "complete_semantic_head_set_required": true
+  },
+  "key_lifecycle": {
+    "states": [
+      "ACTIVE",
+      "VERIFY_ONLY",
+      "REVOKED"
+    ],
+    "ACTIVE": "may finalize new transitions and verify history",
+    "VERIFY_ONLY": "normal retired/rotated historical key; historical verification allowed; new finalization forbidden",
+    "REVOKED": "compromise or suspected-compromise terminal security state; new finalization forbidden; revoked-key authentication alone cannot establish historical acceptance",
+    "rotation": "atomically publish successor active key metadata under authority state; old key becomes VERIFY_ONLY only after new key and lifecycle transition are durable",
+    "historical_receipt_verification": "required after K+1; verification material and lifecycle provenance retained",
+    "crash_during_rotation": "reread authoritative key lifecycle; exactly one active state; ambiguous/unverifiable fails closed",
+    "independent_key_boundary": true,
+    "reuse_AccountGenesis_HMAC_custody_blindly": false,
+    "planned_rotation_target": "VERIFY_ONLY",
+    "planned_rotation_may_target_REVOKED": false,
+    "revoked_state_terminal": true,
+    "REVOKED_may_transition_to_ACTIVE": false,
+    "REVOKED_may_transition_to_VERIFY_ONLY": false,
+    "historical_receipt_under_REVOKED_requires_independent_authority_proof": true,
+    "revoked_receipt_authentication_alone_establishes_historical_acceptance": false,
+    "revoked_receipt_authentication_alone_establishes_ALREADY_ACCEPTED_EXACT": false,
+    "revoked_receipt_authentication_alone_establishes_recovery_direction": false,
+    "revoked_receipt_authentication_alone_establishes_local_COMMITTED": false,
+    "revoked_receipt_authentication_alone_establishes_genuine_prior_finalization": false,
+    "missing_independent_revoked_history_proof": "UNAVAILABLE / FAIL_CLOSED / NO LOCAL COMMITTED CLOSURE",
+    "revoked_historical_independent_proof_abstract_options": [
+      "retained monotonic authority decision record",
+      "authenticated successor-chain evidence committing to exact historical document and decision",
+      "currently trusted authority-attested historical lookup"
+    ],
+    "independent_proof_must_bind_exact_same_decision_identity": true,
+    "wall_clock_timestamp_arbitration": "FORBIDDEN; no trusted time authority is frozen",
+    "compromise_scope_basis": "authority-controlled monotonic state, generation, or retained decision history; never untrusted wall clock"
+  },
+  "authentication_model": {
+    "rule": "authenticity != freshness",
+    "freshness_source": "authority-controlled monotonic full-document CAS state",
+    "HMAC": "possible only with independent opaque authority custody; verifier/key separation limitations",
+    "asymmetric_signature": "preferred for independently verifiable receipts but still requires monotonic CAS",
+    "authenticated_remote_registry": "valid backend if transactional, domain-bound and operational policy is accepted",
+    "OS_keyring_secret": "custody primitive only; current API has no CAS",
+    "selected_authentication": "signature-or-authenticated-tag semantics frozen; exact algorithm NOT_FROZEN",
+    "valid_HMAC_alone_establishes_freshness": false,
+    "successful_writer_return_without_atomic_CAS_establishes_freshness": false
+  },
+  "domain_isolation": {
+    "dimensions": [
+      "authority IDs",
+      "key material",
+      "document namespaces",
+      "CAS state",
+      "receipts",
+      "generations"
+    ],
+    "TEST_PRODUCTION_separated": true,
+    "TEST_receipt_in_PRODUCTION": "REJECT / WRONG_DOMAIN",
+    "cross_domain_replay": "REJECT",
+    "test_generation_constrains_production": false
+  },
+  "rollback_boundary": {
+    "local_DB_only_rollback_authority_newer": "DETECTABLE; fail closed",
+    "authority_only_rollback_local_newer": "DETECTABLE_AS_MISMATCH; direction requires evidence",
+    "both_local_and_authority_rolled_back": "NOT_DETECTABLE if within one coordinated rollback boundary; detectable only when an independent non-rolled-back authority/audit root survives",
+    "external_noncoordinated_authority_improvement": "can detect coordinated local DB/keyring rollback, subject to service compromise and DR rollback policy",
+    "out_of_scope": [
+      "compromise of authority signing/CAS service sufficient to rewrite its monotonic state and lifecycle",
+      "simultaneous compromise or rollback of every trust root and all retained evidence",
+      "denial of service",
+      "endpoint compromise before candidate authorization",
+      "privacy leakage beyond fields sent under the selected future deployment"
+    ]
+  },
+  "candidate_models": {
+    "A_OS_KEYRING_SINGLE_DOCUMENT_CAS": {
+      "authenticated_CAS": "NO_CURRENT_API",
+      "durability": "backend-dependent; not established",
+      "replay_resistance": "insufficient without monotonic CAS",
+      "rollback_resistance": "detects only asymmetric rollback if genuine CAS existed",
+      "ambiguous_write": "requires authoritative reread",
+      "multi_process": "NOT_SUPPORTED by KeyringSecretStorage get/set",
+      "crash_recovery": "insufficient",
+      "deployability_offline": "GOOD",
+      "key_lifecycle": "local custody available, authority lifecycle absent",
+      "current_repo_support": "NO; set_secret is blind set, read-compare-set is TOCTOU",
+      "selection": "REJECT_CURRENT"
+    },
+    "B_SEPARATE_LOCAL_MONOTONIC_STORE": {
+      "authenticated_CAS": "POSSIBLE_NOT_PRESENT",
+      "durability": "implementation-dependent",
+      "replay_resistance": "possible with authenticated monotonic state",
+      "rollback_resistance": "coordinated local rollback remains undetected",
+      "ambiguous_write": "requires same-store reread/evidence",
+      "multi_process": "requires transactional cross-process primitive",
+      "crash_recovery": "possible after protocol freeze",
+      "deployability_offline": "GOOD",
+      "key_lifecycle": "must be independent",
+      "current_repo_support": "NO_ACCOUNT_GENESIS_IMPLEMENTATION",
+      "selection": "NOT_SELECTED"
+    },
+    "C_REMOTE_TRANSACTIONAL_FRESHNESS_SERVICE": {
+      "authenticated_CAS": "YES_IF_IMPLEMENTED",
+      "durability": "service/DR dependent",
+      "replay_resistance": "STRONG_IF_DOMAIN_BOUND",
+      "rollback_resistance": "improves coordinated-local rollback detection",
+      "ambiguous_write": "authoritative remote reread",
+      "multi_process": "STRONG",
+      "crash_recovery": "STRONG_WITH_RECEIPTS",
+      "deployability_offline": "NO; outage blocks publication",
+      "key_lifecycle": "service identity and verification history required",
+      "current_repo_support": "NONE; privacy/rate-limit/DR/multi-device policy unresolved",
+      "selection": "VALID_BACKEND_CANDIDATE_NOT_MANDATED"
+    },
+    "D_SIGNED_FINALIZATION_RECEIPT_AUTHORITY": {
+      "authenticated_CAS": "NO_BY_ITSELF",
+      "durability": "receipt durable but double-sign possible",
+      "replay_resistance": "signature only",
+      "rollback_resistance": "insufficient without single-successor state",
+      "ambiguous_write": "cannot decide without authority state",
+      "multi_process": "unsafe without serialization",
+      "crash_recovery": "insufficient alone",
+      "deployability_offline": "depends on signer",
+      "key_lifecycle": "verification history required",
+      "current_repo_support": "catalog receipt pattern only; not reusable authority",
+      "selection": "REJECT_STANDALONE"
+    },
+    "E_HARDWARE_MONOTONIC_COUNTER_OR_TPM_STYLE_ROOT": {
+      "authenticated_CAS": "POSSIBLE_WITH_PROTOCOL",
+      "durability": "hardware-dependent",
+      "replay_resistance": "STRONG",
+      "rollback_resistance": "STRONG_LOCAL",
+      "ambiguous_write": "requires attested counter/document binding reread",
+      "multi_process": "requires exclusive transactional protocol",
+      "crash_recovery": "possible",
+      "deployability_offline": "GOOD_BUT_HARDWARE_DEPENDENT",
+      "key_lifecycle": "attestation/provisioning lifecycle unresolved",
+      "current_repo_support": "verification utilities do not provide AccountGenesis CAS",
+      "selection": "VALID_FUTURE_BACKEND_NOT_REQUIRED"
+    },
+    "F_HYBRID_CAS_PLUS_SIGNED_FINALIZATION_RECEIPT": {
+      "authenticated_CAS": "REQUIRED",
+      "durability": "backend plus durable verifiable receipt",
+      "replay_resistance": "STRONG_WITH_DOMAIN_REQUEST_BINDING",
+      "rollback_resistance": "best available abstract contract; exact boundary backend-dependent",
+      "ambiguous_write": "reread plus exact receipt",
+      "multi_process": "single atomic authority decision",
+      "crash_recovery": "defined below",
+      "deployability_offline": "backend-dependent",
+      "key_lifecycle": "explicit ACTIVE/VERIFY_ONLY/REVOKED",
+      "current_repo_support": "NO_IMPLEMENTATION; design primitives only",
+      "selection": "SELECTED_CONTRACT_MODEL"
+    },
+    "G_DESIGN_BLOCKED": {
+      "authenticated_CAS": "NO",
+      "durability": "NO",
+      "replay_resistance": "NO",
+      "rollback_resistance": "NO",
+      "ambiguous_write": "FAIL_CLOSED",
+      "multi_process": "NO",
+      "crash_recovery": "NO",
+      "deployability_offline": "N/A",
+      "key_lifecycle": "NO",
+      "current_repo_support": "reflects implementation state, not selected design",
+      "selection": "IMPLEMENTATION_STATE_ONLY"
+    }
+  },
+  "selected_or_blocked_model": {
+    "selected": "F_HYBRID_CAS_PLUS_SIGNED_FINALIZATION_RECEIPT",
+    "selection_scope": "normative abstract protocol, not a production backend",
+    "backend": "NOT_FROZEN",
+    "current_atomic_CAS_available": false,
+    "current_KeyringSecretStorage": "get/set/delete only; no atomic compare-and-swap; read-compare-set forbidden",
+    "Catalog_anchor": "blind keyring set plus equality verification, not authenticated external full-document CAS and not an AccountGenesis authority",
+    "remote_dependency_mandated": false,
+    "hardware_dependency_mandated": false,
+    "implementation": "NOT_AVAILABLE"
+  },
+  "cross_artifact_parity": {
+    "topology_freshness_owner": "MATCH: independent future owner, CHA proposer only",
+    "physical_persistence_boundary": "MATCH: requires authenticated external full-document CAS and direction/finalization proof",
+    "security_substrate": "RECONCILED: prior HMAC/keyring comparison anchor is authenticity/storage, not authoritative CAS freshness",
+    "root_proof_independence": "MATCH: freshness bootstrap and root-proof issuer are separate roles; neither derives from acct_A",
+    "Catalog_pattern": "PATTERN_ONLY / NOT_REUSED: receipts and anchor demonstrate domain binding but write_anchor is blind set",
+    "verification": "ACTUAL SOURCE READ REQUIRED BY EXECUTABLE TESTS; declarative labels are not evidence"
+  },
+  "mandatory_redteam": {
+    "CHA becomes freshness authority owner": {
+      "mutation": "REJECT",
+      "expected": "contract validation fails"
+    },
+    "valid HMAC alone establishes freshness": {
+      "mutation": "REJECT",
+      "expected": "contract validation fails"
+    },
+    "writer success without CAS establishes freshness": {
+      "mutation": "REJECT",
+      "expected": "contract validation fails"
+    },
+    "read-compare-write emulation accepted as atomic CAS": {
+      "mutation": "REJECT",
+      "expected": "contract validation fails"
+    },
+    "two N+1 successors accepted": {
+      "mutation": "REJECT",
+      "expected": "contract validation fails"
+    },
+    "N -> N+2 accepted": {
+      "mutation": "REJECT",
+      "expected": "contract validation fails"
+    },
+    "same generation unequal documents accepted": {
+      "mutation": "REJECT",
+      "expected": "contract validation fails"
+    },
+    "TEST receipt accepted in PRODUCTION": {
+      "mutation": "REJECT",
+      "expected": "contract validation fails"
+    },
+    "receipt from unknown authority accepted": {
+      "mutation": "REJECT",
+      "expected": "contract validation fails"
+    },
+    "receipt authenticity without monotonic state considered freshness": {
+      "mutation": "REJECT",
+      "expected": "contract validation fails"
+    },
+    "freshness authority bootstrapped from acct_A": {
+      "mutation": "REJECT",
+      "expected": "contract validation fails"
+    },
+    "ambiguous write assumed failed without reread": {
+      "mutation": "REJECT",
+      "expected": "contract validation fails"
+    },
+    "ambiguous write assumed successful without evidence": {
+      "mutation": "REJECT",
+      "expected": "contract validation fails"
+    },
+    "anchor-ahead reconstructs missing local authority history": {
+      "mutation": "REJECT",
+      "expected": "contract validation fails"
+    },
+    "local state alone authorizes recovery direction": {
+      "mutation": "REJECT",
+      "expected": "contract validation fails"
+    }
+  },
+  "result": {
+    "primary_result": "ACCOUNT_GENESIS_FRESHNESS_AUTHORITY_CONTRACT_FROZEN",
+    "design_contract_frozen": true,
+    "production_backend_selected": false,
+    "physical_persistence_unblocked": false,
+    "reason": "The safety/API/evidence contract is frozen, but no conforming atomic authority implementation, canonical serialization/key algorithm review, or deployment backend exists; other physical persistence blockers also remain."
+  },
+  "implementation_allowed": {
+    "FreshnessAuthority": "NO",
+    "CryptoHunterAccountAuthority": "NO",
+    "design_validators_and_contract_tests_only": "YES"
+  },
+  "preserved_status": {
+    "physical persistence protocol": "F_DESIGN_BLOCKED",
+    "physical persistence result": "ACCOUNT_GENESIS_PHYSICAL_PERSISTENCE_DESIGN_BLOCKED",
+    "WorkspaceAuthority": "NOT_AVAILABLE",
+    "FullFillAuthority": "NOT_AVAILABLE",
+    "M0.8": "BLOCKED",
+    "production M0.5": "NOT_AVAILABLE"
+  },
+  "proposer_authentication_boundary": {
+    "authorized_proposer_identity": "CryptoHunterAccountAuthority",
+    "candidate_creator_must_equal_authorized_proposer": true,
+    "trusted_proposer_verification_lineage": "C_PROPOSER_KEY_LINEAGE_NOT_YET_FROZEN",
+    "exact_key_provider": "NOT_FROZEN",
+    "semantic_acceptance_rule": "FreshnessAuthority accepts only candidates authenticated as genuine CryptoHunterAccountAuthority under independently pre-provisioned trusted proposer verification lineage",
+    "proposer_verification_trust_available_before_AccountGenesis": "REQUIRED",
+    "created_account_may_provision_its_own_proposer_trust": false,
+    "trust_must_not_derive_from": [
+      "acct_A",
+      "OperatorIdentity of acct_A",
+      "DeviceInstallation of acct_A",
+      "Workspace of acct_A",
+      "account-scoped authority of acct_A"
+    ],
+    "unknown_proposer_identity": "INVALID_AUTHENTICATION / REJECT",
+    "untrusted_or_unknown_proposer_key": "INVALID_AUTHENTICATION / REJECT",
+    "wrong_environment_or_trust_domain": "WRONG_DOMAIN / REJECT",
+    "self_asserted_proposer_identity": "FORBIDDEN",
+    "cryptographic_validity_alone_authorizes_proposer": false,
+    "candidate_carried_key_may_establish_trust": false,
+    "TOFU": "FORBIDDEN",
+    "authentication_algorithm": "NOT_FROZEN",
+    "authentication_binding": [
+      "proposer-authentication-domain-separator",
+      "schema_version",
+      "proposer_identity",
+      "environment",
+      "trust_domain",
+      "proposer_key_id",
+      "proposer_key_version",
+      "exact proposed_document_digest"
+    ],
+    "valid_proposer_authentication_establishes_authoritative_freshness": false,
+    "valid_proposer_authentication_establishes_genuine_account": false,
+    "valid_proposer_authentication_establishes_genesis_COMMITTED": false,
+    "proposer_key_role": "authenticate origin of new candidate as CryptoHunterAccountAuthority only",
+    "freshness_finalization_key_role": "authenticate authoritative acceptance document and FreshnessFinalizationReceipt only",
+    "must_be_distinct_security_roles": true,
+    "shared_key_material_or_custody": "NOT_FROZEN / requires explicit future review; never merges semantic roles",
+    "proposer_key_lifecycle": {
+      "states": [
+        "ACTIVE",
+        "VERIFY_ONLY",
+        "REVOKED"
+      ],
+      "ACTIVE": "may authenticate new candidates and historical provenance",
+      "VERIFY_ONLY": "historical provenance verification only; cannot authorize new candidate",
+      "REVOKED": "cannot authorize new candidate",
+      "rotation_mechanism": "NOT_FROZEN"
+    },
+    "proposer_rotation_race": {
+      "scenario": "P1 signs candidate then rotates or is revoked before CAS",
+      "if_P1_not_eligible_at_CAS": "INVALID_AUTHENTICATION / REQUIRE NEW PROPOSAL",
+      "authority_may_rewrite_P1_to_P2_and_accept": false,
+      "key_identity_version_authenticated_before_lifecycle_eligibility": true
+    },
+    "authentication_tag_or_signature_in_own_preimage": false,
+    "authenticated_key_identity_drives_verification_and_lifecycle": true,
+    "lifecycle_eligibility_may_use_unauthenticated_key_metadata": false,
+    "provider_alias_or_material_reuse_may_bypass_authenticated_key_lifecycle": false,
+    "changing_proposer_key_id_or_version_requires_new_authentication": true,
+    "P1_authentication_may_be_treated_as_P2_authentication": false,
+    "key_identity_rule": "proposer_key_id and proposer_key_version used for verification and lifecycle eligibility MUST exactly equal the values in the authenticated ProposerAuthentication preimage",
+    "schema_version_authenticated_before_interpretation": true
+  },
+  "proposer_authentication_redteam": {
+    "arbitrary self-signed proposer accepted as CryptoHunterAccountAuthority": {
+      "mutation": "REJECT",
+      "expected": "contract validation fails"
+    },
+    "unknown proposer key accepted": {
+      "mutation": "REJECT",
+      "expected": "contract validation fails"
+    },
+    "wrong proposer identity accepted": {
+      "mutation": "REJECT",
+      "expected": "contract validation fails"
+    },
+    "TEST proposer credential accepted in PRODUCTION": {
+      "mutation": "REJECT",
+      "expected": "contract validation fails"
+    },
+    "proposer authentication key treated as freshness-finalization authority": {
+      "mutation": "REJECT",
+      "expected": "contract validation fails"
+    },
+    "proposer identity binding removed": {
+      "mutation": "REJECT",
+      "expected": "contract validation fails"
+    },
+    "proposed digest binding removed from proposer authentication": {
+      "mutation": "REJECT",
+      "expected": "contract validation fails"
+    },
+    "candidate-carried key enables TOFU": {
+      "mutation": "REJECT",
+      "expected": "contract validation fails"
+    },
+    "proposer key id removed from authentication binding": {
+      "mutation": "REJECT",
+      "expected": "contract validation fails"
+    },
+    "proposer key version removed from authentication binding": {
+      "mutation": "REJECT",
+      "expected": "contract validation fails"
+    },
+    "proposer schema version removed from authentication binding": {
+      "mutation": "REJECT",
+      "expected": "contract validation fails"
+    },
+    "REVOKED proposer key may authorize new candidate": {
+      "mutation": "REJECT",
+      "expected": "contract validation fails"
+    },
+    "VERIFY_ONLY proposer key may authorize new candidate": {
+      "mutation": "REJECT",
+      "expected": "contract validation fails"
+    },
+    "P1 authentication may be relabeled as P2 without new authentication": {
+      "mutation": "REJECT",
+      "expected": "contract validation fails"
+    },
+    "proposer key lifecycle eligibility may use unauthenticated key metadata": {
+      "mutation": "REJECT",
+      "expected": "contract validation fails"
+    }
+  },
+  "finalization_receipt_authentication_redteam": {
+    "receipt key id removed from authentication binding": {
+      "mutation": "REJECT",
+      "expected": "contract validation fails"
+    },
+    "receipt key version removed from authentication binding": {
+      "mutation": "REJECT",
+      "expected": "contract validation fails"
+    },
+    "receipt schema version removed from authentication binding": {
+      "mutation": "REJECT",
+      "expected": "contract validation fails"
+    },
+    "receipt accepted document digest removed from authentication binding": {
+      "mutation": "REJECT",
+      "expected": "contract validation fails"
+    },
+    "receipt predecessor digest removed from authentication binding": {
+      "mutation": "REJECT",
+      "expected": "contract validation fails"
+    },
+    "receipt finalization request id removed from authentication binding": {
+      "mutation": "REJECT",
+      "expected": "contract validation fails"
+    },
+    "receipt authority id removed from authentication binding": {
+      "mutation": "REJECT",
+      "expected": "contract validation fails"
+    },
+    "receipt id removed from authentication binding": {
+      "mutation": "REJECT",
+      "expected": "contract validation fails"
+    },
+    "K1 receipt may be relabeled as K2 without new authentication": {
+      "mutation": "REJECT",
+      "expected": "contract validation fails"
+    },
+    "receipt lifecycle eligibility may use unauthenticated key metadata": {
+      "mutation": "REJECT",
+      "expected": "contract validation fails"
+    },
+    "provider alias may bypass receipt key lifecycle": {
+      "mutation": "REJECT",
+      "expected": "contract validation fails"
+    },
+    "authentication tag is included in its own preimage": {
+      "mutation": "REJECT",
+      "expected": "contract validation fails"
+    }
+  },
+  "freshness_finalization_lifecycle_redteam": {
+    "REVOKED freshness key may finalize new transition": {
+      "mutation": "REJECT",
+      "expected": "contract validation fails"
+    },
+    "REVOKED receipt signature alone establishes historical acceptance": {
+      "mutation": "REJECT",
+      "expected": "contract validation fails"
+    },
+    "REVOKED receipt alone yields ALREADY_ACCEPTED_EXACT": {
+      "mutation": "REJECT",
+      "expected": "contract validation fails"
+    },
+    "REVOKED receipt alone authorizes recovery direction": {
+      "mutation": "REJECT",
+      "expected": "contract validation fails"
+    },
+    "REVOKED receipt alone closes local COMMITTED state": {
+      "mutation": "REJECT",
+      "expected": "contract validation fails"
+    },
+    "planned rotation moves ACTIVE directly to REVOKED": {
+      "mutation": "REJECT",
+      "expected": "contract validation fails"
+    },
+    "REVOKED key may transition back to ACTIVE": {
+      "mutation": "REJECT",
+      "expected": "contract validation fails"
+    },
+    "REVOKED key may transition back to VERIFY_ONLY": {
+      "mutation": "REJECT",
+      "expected": "contract validation fails"
+    },
+    "missing independent proof for revoked historical receipt is accepted": {
+      "mutation": "REJECT",
+      "expected": "contract validation fails"
+    },
+    "historical receipt under VERIFY_ONLY is rejected merely because key is not ACTIVE": {
+      "mutation": "REJECT",
+      "expected": "contract validation fails"
+    },
+    "historical lookup result may derive trust solely from revoked key": {
+      "mutation": "REJECT",
+      "expected": "contract validation fails"
+    },
+    "historical lookup result may represent a second authority decision": {
+      "mutation": "REJECT",
+      "expected": "contract validation fails"
+    },
+    "historical lookup may rewrite original finalization_request_id": {
+      "mutation": "REJECT",
+      "expected": "contract validation fails"
+    },
+    "historical lookup may rewrite accepted_document_digest": {
+      "mutation": "REJECT",
+      "expected": "contract validation fails"
+    }
+  },
+  "original_decision_identity_contract": {
+    "type": "OriginalDecisionIdentity",
+    "semantic_tuple": [
+      "environment",
+      "trust_domain",
+      "authority_id",
+      "exact_predecessor_generation",
+      "exact_predecessor_document_digest",
+      "accepted_generation",
+      "accepted_document_digest",
+      "complete_semantic_head_digest",
+      "finalization_request_id"
+    ],
+    "semantic_preimage": "FROZEN",
+    "canonical_byte_encoding": "NOT_FROZEN",
+    "hash_algorithm": "NOT_FROZEN",
+    "is_caller_selected": false,
+    "is_lookup_selected": false,
+    "is_receipt_id": false,
+    "may_be_minted_during_historical_lookup": false,
+    "changing_finalization_request_id_changes_identity": true,
+    "changing_accepted_document_digest_changes_identity": true,
+    "materialized_digest_semantics": "content identity only; not authority and not freshness",
+    "historical_lookup_must_reference_already_existing_identity": true
+  },
+  "revoked_history_independent_proof_contract": {
+    "applies_to_all_allowed_proof_shapes": true,
+    "currently_trusted_authority_root_or_state_required": true,
+    "may_derive_trust_solely_from_revoked_historical_key": false,
+    "revoked_key_authentication_may_participate_as_historical_artifact": true,
+    "revoked_key_authentication_may_be_ultimate_trust_root": false,
+    "proof_must_bind_exact_same_original_decision_identity": true,
+    "proof_must_be_verifiable_without_treating_revoked_key_as_current_trust_anchor": true,
+    "proof_cannot_be_self_corroboration_of_same_revoked_credential": true,
+    "same_revoked_key_signing_receipt_and_corroborating_record_is_independent": false,
+    "missing_currently_trusted_independent_root": "UNAVAILABLE / FAIL_CLOSED / NO LOCAL COMMITTED CLOSURE",
+    "valid_signature_or_tag_under_revoked_K1_alone_establishes_corroboration": false,
+    "proof_shapes": {
+      "retained_monotonic_authority_decision_record": {
+        "belongs_to_authority_controlled_monotonic_decision_history": true,
+        "binds_exact_original_decision_identity": true,
+        "history_integrity_currently_trusted_independently_of_revoked_key": true,
+        "record_authenticated_solely_by_revoked_key_is_sufficient": false,
+        "caller_or_local_projection_may_manufacture_record": false,
+        "local_DB_copy_alone_is_authority_proof": false,
+        "backend": "NOT_FROZEN"
+      },
+      "authenticated_successor_chain_evidence": {
+        "commits_to_exact_original_decision_identity": true,
+        "verification_reaches_currently_trusted_authority_root_or_state": true,
+        "trust_path_terminating_only_in_revoked_key_is_sufficient": false,
+        "same_revoked_key_may_sign_receipt_and_chain_to_establish_independence": false,
+        "may_rewrite_original_candidate_request_or_document_identity": false,
+        "encoding_and_backend": "NOT_FROZEN"
+      },
+      "currently_trusted_authority_attested_historical_lookup": {
+        "uses_historical_lookup_contract": true,
+        "currently_trusted_authority_evidence_required": true,
+        "may_derive_trust_solely_from_historical_REVOKED_key": false
+      }
+    }
+  },
+  "revoked_history_independent_proof_redteam": {
+    "retained decision record trusted solely because revoked key authenticates it": {
+      "mutation": "REJECT",
+      "expected": "contract validation fails"
+    },
+    "successor chain terminates only in revoked key": {
+      "mutation": "REJECT",
+      "expected": "contract validation fails"
+    },
+    "revoked receipt self-corroborates as independent proof": {
+      "mutation": "REJECT",
+      "expected": "contract validation fails"
+    },
+    "same revoked key signs receipt and corroborating history record": {
+      "mutation": "REJECT",
+      "expected": "contract validation fails"
+    },
+    "local DB projection accepted as retained authority decision record": {
+      "mutation": "REJECT",
+      "expected": "contract validation fails"
+    },
+    "independent proof need not reach currently trusted authority root": {
+      "mutation": "REJECT",
+      "expected": "contract validation fails"
+    },
+    "independent proof need not bind exact original decision identity": {
+      "mutation": "REJECT",
+      "expected": "contract validation fails"
+    },
+    "original decision identity may be caller selected": {
+      "mutation": "REJECT",
+      "expected": "contract validation fails"
+    },
+    "original decision identity may be minted during lookup": {
+      "mutation": "REJECT",
+      "expected": "contract validation fails"
+    },
+    "receipt_id is treated as original authority decision identity": {
+      "mutation": "REJECT",
+      "expected": "contract validation fails"
+    },
+    "changing finalization_request_id preserves original decision identity": {
+      "mutation": "REJECT",
+      "expected": "contract validation fails"
+    },
+    "changing accepted_document_digest preserves original decision identity": {
+      "mutation": "REJECT",
+      "expected": "contract validation fails"
+    },
+    "historical lookup can use revoked key as ultimate trust root": {
+      "mutation": "REJECT",
+      "expected": "contract validation fails"
+    },
+    "missing currently trusted independent root still yields ALREADY_ACCEPTED_EXACT": {
+      "mutation": "REJECT",
+      "expected": "contract validation fails"
+    }
+  }
+}
