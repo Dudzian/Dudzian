@@ -1,0 +1,410 @@
+{
+  "artifact": "M05_ACCOUNT_GENESIS_OPERATION_IDENTITY_REQUEST_BINDING_CONTRACT",
+  "iteration": "DESIGN_RECONCILIATION_ONLY",
+  "repository_head_examined": "c3eb1587fc37d896052d7defaa6f24d7818b9264",
+  "reviewed_head_supplied": "5ed5af00659f2414657dfa80af84907cdd2265e4",
+  "provenance": {
+    "source": "GIT",
+    "reviewed_head_available_locally": false,
+    "classification": "UNKNOWN",
+    "relationship_to_reviewed_sha": "UNKNOWN",
+    "finding_scope": "CURRENT_TREE_ONLY",
+    "formal_advancement_allowed": false,
+    "rule": "The supplied reviewed SHA is unavailable locally and is not equated with the inspected tree. Safety invariants may be frozen; missing authority semantics may not be invented.",
+    "artifacts_examined": [
+      "m05_cryptohunter_account_genesis_uniqueness_idempotency_design.json",
+      "m05_cryptohunter_account_genesis_reservation_state_model.json",
+      "m05_account_genesis_root_proof_admission_binding_contract.json",
+      "m05_account_genesis_authority_topology_and_ownership.json",
+      "m05_cryptohunter_account_genesis_subject_identity_discovery.json"
+    ]
+  },
+  "frozen_inputs": {
+    "logical_operation_meaning": "one logical AccountGenesis attempt/decision across retry, restart, crash recovery, reservation recovery, root-proof validation and final commit resolution",
+    "account_id_is_logical_operation_identity": false,
+    "reservation_identity_is_logical_operation_identity": "NO_UNLESS_EXPLICITLY_SELECTED_BY_FUTURE_PROTOCOL",
+    "root_proof_id_is_logical_operation_identity": false,
+    "caller_command_id_is_genuine_logical_operation_identity": false,
+    "caller_command_id_use": "correlation/input metadata only",
+    "different_operation_ids_prove_distinct_operations": false,
+    "subject_cardinality": "NOT_FROZEN"
+  },
+  "identity_roles": {
+    "identity_issuer": "DESIGN_BLOCKED",
+    "identity_owner": "DESIGN_BLOCKED",
+    "semantic_decision_owner": "NOT_FOUND",
+    "persistence_owner": "DESIGN_BLOCKED",
+    "roles_may_coincide": true,
+    "roles_assumed_identical": false,
+    "provenance_requirement": "A genuine identity MUST carry or resolve authenticated evidence of issuance by the selected authority; syntax alone is insufficient."
+  },
+  "candidate_identity_models": {
+    "A_AUTHORITY_ISSUED_GENESIS_REQUEST_ID": {
+      "status": "VIABLE_REQUIREMENTS / NOT_SELECTED",
+      "gap": "issuer, owner, authenticated record and recovery protocol absent"
+    },
+    "B_RESERVATION_RECOVERY_IDENTITY_AS_OPERATION_ID": {
+      "status": "CONDITIONAL / NOT_SELECTED",
+      "gap": "reservation identity and authority semantics are not frozen"
+    },
+    "C_ATOMIC_OPERATION_AND_RESERVATION_IDENTITY": {
+      "status": "VIABLE_REQUIREMENTS / NOT_SELECTED",
+      "gap": "atomic issuer/persistence protocol absent"
+    },
+    "D_EXTERNAL_ISSUER_DECISION_ID_AS_OPERATION_ID": {
+      "status": "CONDITIONAL / NOT_SELECTED",
+      "gap": "AccountGenesis-specific external decision and cardinality absent"
+    },
+    "E_COMPOSITE_AUTHORITY_BOUND_IDENTITY": {
+      "status": "CONDITIONAL / NOT_SELECTED",
+      "gap": "components, canonical composition and authenticating owner absent"
+    },
+    "F_DESIGN_BLOCKED": {
+      "status": "SELECTED",
+      "reason": "Evidence does not select an issuer, owner, issuance protocol or authority-authenticated durable representation."
+    }
+  },
+  "selected_or_blocked_model": {
+    "selection": "F_DESIGN_BLOCKED",
+    "operation_identity_syntax": "NOT_FROZEN",
+    "uuidv7_clock_owner": "NOT_FROZEN",
+    "uuidv7_entropy_owner": "NOT_FROZEN",
+    "collision_handling": "NOT_FROZEN",
+    "restart_behavior": "NOT_FROZEN",
+    "authority_bound_identity": "REQUIRED"
+  },
+  "issuance_timing": {
+    "status": "NOT_FROZEN",
+    "BEFORE_RESERVATION": "CANDIDATE / NOT_SELECTED",
+    "ATOMIC_WITH_RESERVATION": "CANDIDATE / NOT_SELECTED",
+    "INSIDE_FIRST_PREPARE": "CONDITIONAL_CANDIDATE / NOT_SELECTED",
+    "INSIDE_FIRST_PREPARE_prerequisite": "AUTHORITY_BOUND_RESERVATION_RECOVERY_IDENTITY + AUTHENTICATED_CANONICAL_REQUEST_BINDING + DETERMINISTIC_HANDOFF_TO_OPERATION_IDENTITY",
+    "without_prerequisite": "FAIL_CLOSED"
+  },
+  "canonical_request": {
+    "status": "SEMANTIC_REQUIREMENTS_PARTIALLY_FROZEN / EXACT_SCHEMA_DESIGN_BLOCKED",
+    "transport_DTO_is_canonical_request": false,
+    "closed_semantic_field_set_required": true,
+    "frozen_semantic_requirement_may_disappear_from_fingerprint_contract": false,
+    "unknown_semantic_fields": "REJECT",
+    "ambiguous_optional_fields": "FORBIDDEN",
+    "required_semantic_slots": [
+      "request_schema_version",
+      "environment/trust_domain",
+      "requested_genesis_action",
+      "product/account_scope",
+      "candidate account_id",
+      "reservation relationship",
+      "root-proof reference or handoff expectation"
+    ],
+    "not_invented": "subject identity or subject-to-account cardinality",
+    "root_proof_timing_models": {
+      "exact_proof_id": "CANDIDATE_WHEN_PROOF_PREEXISTS / NOT_SELECTED",
+      "required_proof_slot_or_authenticated_handoff": "CANDIDATE_WHEN_PROOF_FOLLOWS_OPERATION / NOT_SELECTED"
+    },
+    "authority_context_id": "NOT_FROZEN; required only if selected authority domain cannot otherwise be unambiguously authenticated",
+    "root_proof_handoff_progression": {
+      "authorized_proof_arrival_satisfying_previously_bound_handoff_is_request_mutation": false,
+      "classification": "AUTHENTICATED_OPERATION_STATE_AND_PROVENANCE_PROGRESSION",
+      "preserves": [
+        "same operation identity",
+        "same canonical request",
+        "same reservation/account_id"
+      ],
+      "does_not_create": [
+        "new operation",
+        "new request",
+        "new account"
+      ]
+    }
+  },
+  "request_field_taxonomy": [
+    {
+      "field": "request_schema_version",
+      "classification": "SEMANTIC_FINGERPRINTED"
+    },
+    {
+      "field": "environment/trust_domain",
+      "classification": "SEMANTIC_FINGERPRINTED"
+    },
+    {
+      "field": "requested_genesis_action",
+      "classification": "SEMANTIC_FINGERPRINTED"
+    },
+    {
+      "field": "product/account_scope",
+      "classification": "SEMANTIC_FINGERPRINTED"
+    },
+    {
+      "field": "account_id",
+      "classification": "SEMANTIC_FINGERPRINTED"
+    },
+    {
+      "field": "reservation_identity/relationship",
+      "classification": "NOT_FROZEN"
+    },
+    {
+      "field": "root_proof_id or root-proof handoff slot",
+      "classification": "NOT_FROZEN"
+    },
+    {
+      "field": "authority_context_id",
+      "classification": "NOT_FROZEN"
+    },
+    {
+      "field": "correlation_id",
+      "classification": "NON_SEMANTIC_TRANSPORT"
+    },
+    {
+      "field": "causation_id",
+      "classification": "NON_SEMANTIC_TRANSPORT"
+    },
+    {
+      "field": "caller command_id",
+      "classification": "NON_SEMANTIC_TRANSPORT"
+    },
+    {
+      "field": "request_fingerprint",
+      "classification": "DERIVED"
+    },
+    {
+      "field": "subject/cardinality",
+      "classification": "NOT_ALLOWED"
+    },
+    {
+      "field": "timestamps",
+      "classification": "NOT_ALLOWED"
+    },
+    {
+      "field": "unknown fields",
+      "classification": "NOT_ALLOWED"
+    }
+  ],
+  "fingerprint_contract": {
+    "algorithm": "SHA-256",
+    "purpose": "content identity only",
+    "is_authority": false,
+    "is_freshness": false,
+    "is_operation_ownership": false,
+    "is_authorization": false,
+    "closed_field_set": true,
+    "canonical_serialization": "REQUIRED / exact encoding NOT_FROZEN",
+    "explicit_unique_domain_separation": "REQUIRED",
+    "domain_status": "EXACT_DOMAIN_LITERAL_NOT_FROZEN",
+    "candidate_domain_literal": "cryptohunter.m0.5.account-genesis-request.v1",
+    "schema_version_in_preimage": true,
+    "environment_in_preimage": true,
+    "optional_or_default_ambiguity_allowed": false,
+    "unicode": "NFC requirement NOT_FROZEN because exact string-bearing schema is not frozen",
+    "enums": "exact case-sensitive closed values required",
+    "numbers": "canonical numeric form required; numeric semantic fields currently NOT_SELECTED",
+    "timestamps": "NOT_ALLOWED in minimal canonical request unless future semantics justify and freeze UTC representation",
+    "omitted_vs_null": "null forbidden; absence only for an explicitly versioned optional field with frozen semantics"
+  },
+  "versioning": {
+    "schema_version_participates_in_domain_or_preimage": true,
+    "silent_reinterpretation": false,
+    "migration": "explicit authenticated migration required; old bytes retain old meaning",
+    "unknown_version": "REJECT"
+  },
+  "reservation_binding": {
+    "one_operation_maximum_reservations": 1,
+    "row_existence_proves_operation_ownership": false,
+    "account_id_as_operation_identity": false,
+    "substitution": "DENY unless an explicit authenticated recovery/migration protocol proves equivalence",
+    "durable_precommit_restart_trust": "requires exact authenticated canonical-request binding"
+  },
+  "account_binding": {
+    "one_operation_maximum_account_candidates": 1,
+    "account_id_substitution": "FORBIDDEN",
+    "same_operation_may_remint_after_crash": false,
+    "missing_recovery_identity_may_allocate_acct_B": false
+  },
+  "root_proof_binding": {
+    "future_requirement": "accepted proof binds logical operation identity or authenticated equivalent",
+    "proof_id_is_operation_id": false,
+    "after_PREPARED_substitution": "DENY unless exact authorized replacement protocol",
+    "consumption": "NOT_FROZEN",
+    "final_closure": "operation identity + canonical request + reservation + candidate account_id + accepted proof/validation evidence + COMMITTED genesis",
+    "exact_proof_model_substitution": "proof_A -> proof_B is request mismatch/substitution; DENY unless exact authorized replacement protocol",
+    "already_durable_binding_or_consumption_retry": "FORBIDDEN",
+    "single_use": "NOT_FROZEN",
+    "multi_use": "NOT_FROZEN",
+    "cross_operation_reuse": "NOT_FROZEN"
+  },
+  "retry_matrix": [
+    {
+      "case": "same operation ID + same request + NEW_OR_UNOBSERVED",
+      "outcome": "AUTHORITY_PROOF_REQUIRED; do not infer issuance, reservation, progression, or a new account"
+    },
+    {
+      "case": "same operation ID + same request + RESERVED",
+      "outcome": "RECOVER_SAME_OPERATION_AND_CONTINUE_OR_RETURN_TERMINAL_OUTCOME; recover same reservation/account_id/request; may execute only not-yet-durable authorized transition work toward PREPARED; never reallocate or infer account genuineness"
+    },
+    {
+      "case": "same operation ID + same request + PREPARED",
+      "outcome": "RECOVER_SAME_OPERATION_AND_CONTINUE_OR_RETURN_TERMINAL_OUTCOME; resume/reconcile same reservation/account_id/request toward same terminal decision; may execute only not-yet-durable authorized transition work; no replacement or second genesis"
+    },
+    {
+      "case": "same operation ID + same request + COMMITTED",
+      "outcome": "RETURN_SAME_COMMITTED_OUTCOME; NO_NEW_SIDE_EFFECTS; no new genesis, proof consumption, reservation, or account"
+    },
+    {
+      "case": "same operation ID + same request + ABORTED",
+      "outcome": "RETURN_SAME_ABORTED_OUTCOME; NO_NEW_SIDE_EFFECTS; no restart whether reservation is ABORTED_HELD or RELEASED_TOMBSTONED"
+    },
+    {
+      "case": "same operation ID + different request",
+      "outcome": "CONFLICT / CONTRACT_INCONSISTENT; NO_MUTATION at every durable state"
+    },
+    {
+      "case": "different operation ID + same request",
+      "outcome": "UNKNOWN / AUTHORITY_PROOF_REQUIRED; neither duplicate nor independent by ID alone"
+    },
+    {
+      "case": "different operation ID + different request",
+      "outcome": "UNKNOWN / AUTHORITY_PROOF_REQUIRED"
+    },
+    {
+      "case": "missing operation ID after crash",
+      "outcome": "FAIL_CLOSED unless authority-bound reservation recovery identity deterministically recovers same operation"
+    },
+    {
+      "case": "caller supplies new command ID after crash",
+      "outcome": "FAIL_CLOSED; command ID cannot establish a new logical genesis"
+    },
+    {
+      "case": "reservation exists but operation identity missing",
+      "outcome": "FAIL_CLOSED unless frozen authenticated deterministic handoff recovers same operation"
+    },
+    {
+      "case": "root proof same but operation IDs differ",
+      "outcome": "UNKNOWN / AUTHORITY_PROOF_REQUIRED; proof ID/cardinality/consumption do not prove operation identity"
+    }
+  ],
+  "crash_recovery": {
+    "missing_recoverable_identity": "FAIL_CLOSED",
+    "new_account_allocation": false,
+    "PREPARED_R1_retry_R2": "CONFLICT / CONTRACT_INCONSISTENT even with fresh caller command_id",
+    "request_binding_before_restart_trust": true
+  },
+  "concurrency": {
+    "same_request_two_callers": "NOT_FROZEN: same operation, two operations, or conflict depends on genuine issuance/idempotency protocol",
+    "automatic_content_deduplication": false,
+    "business_uniqueness_implemented_by_idempotency": false
+  },
+  "state_machine_binding": {
+    "states": [
+      "NEW_OR_UNOBSERVED",
+      "RESERVED",
+      "PREPARED",
+      "COMMITTED",
+      "ABORTED"
+    ],
+    "binding_survives_all_durable_states": true,
+    "PREPARED_request_mutation": "FORBIDDEN",
+    "COMMITTED_to_PREPARED_rollback": "FAIL_CLOSED under frozen freshness model"
+  },
+  "abort_release": {
+    "ABORTED": "terminal; retains operation identity, canonical request, reservation history and accepted root-proof provenance",
+    "RELEASE": "reservation-only; MUST NOT erase operation/request identity"
+  },
+  "historical_resolution": {
+    "required": true,
+    "query_key": "genuine operation identity",
+    "must_answer": [
+      "exact canonical request",
+      "reservation",
+      "account_id",
+      "root proof/validation evidence",
+      "terminal result"
+    ],
+    "availability": "NOT_AVAILABLE"
+  },
+  "authentication": {
+    "substrate": "AccountGenesis security substrate",
+    "operation_request_records_authenticated": true,
+    "valid_HMAC_is_authorized_genesis": false,
+    "valid_HMAC_is_freshness": false,
+    "exact_owner": "DESIGN_BLOCKED"
+  },
+  "freshness": {
+    "required": true,
+    "available": "NOT_AVAILABLE",
+    "anti_rollback_required": true
+  },
+  "environment_isolation": {
+    "canonical_request_must_bind_exact_environment_before_production_commit": true,
+    "operation_identity_spaces_must_be_isolated": true,
+    "authenticated_record_spaces_must_be_isolated": true,
+    "TEST_request_accepted_as_PRODUCTION": false
+  },
+  "cross_artifact_parity": {
+    "parity": "PASS",
+    "actual_sources_validated": true,
+    "account_id_not_operation_identity": true,
+    "different_ids_prove_distinct_operations": false,
+    "same_operation_may_remint_after_crash": false,
+    "reservation_recovery_identity_may_precede_operation_identity": true,
+    "proof_id_not_operation_id": true,
+    "subject_cardinality": "NOT_FROZEN",
+    "ABORTED_terminal": true,
+    "RELEASE_reservation_only": true,
+    "root_proof_result": "ACCOUNT_GENESIS_ROOT_PROOF_INSUFFICIENT_SEMANTICS"
+  },
+  "mandatory_redteam": {
+    "executable_mutation_tests_required": true,
+    "cases": [
+      "caller command ID promoted to genuine operation ID",
+      "account_id promoted to operation ID",
+      "same genuine operation identity + changed request accepted",
+      "acct_A changes to acct_B inside same operation",
+      "reservation_A changes to reservation_B without authenticated migration",
+      "proof_A silently replaced by proof_B after PREPARED",
+      "TEST operation/request accepted as PRODUCTION",
+      "request fingerprint treated as authority",
+      "missing recovery identity after crash causes new account allocation",
+      "unknown request field silently ignored",
+      "preterminal same-operation same-request retry treated as immutable result with progression forbidden",
+      "COMMITTED retry may execute genesis/proof consumption again",
+      "ABORTED retry may restart operation",
+      "authorized proof arrival satisfying existing handoff treated as canonical request mutation"
+    ]
+  },
+  "result": {
+    "primary_result": "ACCOUNT_GENESIS_OPERATION_REQUEST_CONTRACT_PARTIALLY_FROZEN",
+    "reason": "Safety, retry, binding and fingerprint requirements are frozen, but identity model/owner/issuer/timing, exact request schema/serialization/domain, reservation handoff and root-proof timing semantics remain blocked."
+  },
+  "implementation_allowed": {
+    "CryptoHunterAccountAuthority": false,
+    "production_M05": "NOT_AVAILABLE",
+    "design_or_validator_only": true
+  },
+  "preserved_status": {
+    "CryptoHunterAccountAuthority": "NOT_AVAILABLE",
+    "WorkspaceAuthority": "NOT_AVAILABLE",
+    "FullFillAuthority": "NOT_AVAILABLE",
+    "M08": "BLOCKED",
+    "subject_to_account_cardinality": "NOT_FROZEN",
+    "production_M05": "NOT_AVAILABLE"
+  },
+  "idempotency_progression": {
+    "same_operation_same_canonical_request": "SAME_OPERATION_SEMANTICS_AND_SAME_BOUND_IDENTITIES",
+    "always_same_transient_state_or_result": false,
+    "idempotency_prevents_duplicate_side_effects": true,
+    "idempotency_prevents_legitimate_first_time_state_progression": false,
+    "duplicate_reservation": "FORBIDDEN",
+    "duplicate_account_candidate": "FORBIDDEN",
+    "duplicate_genesis_commit": "FORBIDDEN",
+    "duplicate_already_recorded_proof_binding_or_consumption": "FORBIDDEN",
+    "first_not_yet_performed_authorized_transition_on_recovered_nonterminal_operation": "ALLOWED",
+    "progression_preconditions": [
+      "same operation identity",
+      "same canonical request",
+      "same reservation/account_id",
+      "authenticated CAS/generation",
+      "root-proof contract",
+      "state-machine legality"
+    ]
+  }
+}
