@@ -1,0 +1,314 @@
+# M0.5 AccountGenesis security substrate contract
+
+This file is a deterministic complete projection of `m05_account_genesis_security_substrate_contract.json`. JSON is the source of truth.
+
+```json
+{
+  "artifact": "M05_ACCOUNT_GENESIS_SECURITY_SUBSTRATE_CONTRACT",
+  "iteration": "CONTRACT / DESIGN FREEZE ONLY",
+  "repository_head_examined": "bd234cc48d619bb9dc88a941d0136f9ab11ad4ec",
+  "reviewed_head_supplied": "bb58eb57071226049a92eac14a90e4dbb8eff415",
+  "provenance": {
+    "source": "GIT",
+    "reviewed_head_available_locally": false,
+    "classification": "UNKNOWN",
+    "relationship_to_reviewed_sha": "UNKNOWN",
+    "actual_local_source_tree": "bd234cc48d619bb9dc88a941d0136f9ab11ad4ec",
+    "finding_scope": "CURRENT_TREE_ONLY",
+    "formal_advancement_allowed": false,
+    "rule": "The supplied reviewed commit is unavailable locally; this contract is grounded in the current tree and preserves all accepted supplied constraints."
+  },
+  "frozen_inputs": {
+    "m012_authorities": "UNCHANGED_AND_SCOPED",
+    "catalog_receipt_keys": "FORBIDDEN",
+    "catalog_lifecycle_root": "FORBIDDEN",
+    "catalog_anchor_slot": "FORBIDDEN",
+    "catalog_authority_domains": "FORBIDDEN",
+    "catalog_authority_as_account_authority": "FORBIDDEN",
+    "valid_MAC_is_freshness": false,
+    "PREPARED_is_genuine_account": false,
+    "root_of_trust": "DESIGN_BLOCKED"
+  },
+  "generic_secret_storage_reuse": {
+    "implementation": "bot_core.security.keyring_storage.KeyringSecretStorage",
+    "classification": "REUSABLE_WITH_WRAPPER",
+    "reason": "Generic encrypted secret persistence is suitable only behind a dedicated wrapper that freezes service isolation, key namespace isolation, index/rotation-inventory isolation and fail-closed semantics. This is storage reuse, not Catalog custody reuse.",
+    "native_backend_enforcement": "REQUIRED_AND_PRESENT",
+    "service_name_isolation": "REQUIRED",
+    "storage_key_namespace": "AccountGenesis wrapper MUST prefix and validate AccountGenesis-only opaque slots",
+    "HWID_binding": "Master-key record binds the current HWID digest; mismatch fails closed",
+    "master_key_ownership": "Per service namespace; storage encryption owner, never authority-key lifecycle owner",
+    "index_behavior": {
+      "role": "Operational rotation inventory; not trust authority",
+      "loss_or_corruption": "Must not establish authenticity or freshness. An incomplete or wrong-domain index MUST make affected master-key rotation fail closed before destructive master-key replacement.",
+      "cross_authority_risk": "The current index records storage_key without service identity. A shared index lets service-local lookup return None for a foreign entry and current rotate_master_key then unregister that entry.",
+      "foreign_service_inventory_mutation": "FORBIDDEN",
+      "current_generic_guarantee": "NOT_PROVIDED: the AccountGenesis wrapper/future implementation MUST validate exclusive inventory before rotation"
+    },
+    "rotation_behavior": "NON_TRANSACTIONAL: current rotate_master_key stores the new master key before re-encrypting all indexed secrets; the wrapper MUST NOT claim transactional safety",
+    "failure_semantics": "Native backend/HWID/decryption/write failures MUST make substrate unavailable; never regenerate enrolled authority secrets or accept partial rotation",
+    "wrapper_fixed_scopes": [
+      "service_name",
+      "storage_key_prefix",
+      "index_path"
+    ],
+    "index_path_isolation": "REQUIRED",
+    "generic_default_index_path": "var/security/secret_index.json",
+    "account_genesis_index_path": "var/security/account_genesis_secret_index.json",
+    "service_name_isolation_alone_sufficient": false,
+    "shared_KeyringSecretStorage_index_between_authority_families": "FORBIDDEN",
+    "future_implementation_requirement": "Before replacing the master key, validate an AccountGenesis-only complete index; use an exclusive index_path and fail closed on foreign, incomplete or wrong-domain inventory. Do not modify generic production code in this design iteration.",
+    "cross_authority_rotation_attack": {
+      "precondition": "Catalog secret C and AccountGenesis secret A use different service_name and storage prefix but the same index_path",
+      "operation": "AccountGenesis.rotate_master_key()",
+      "classification": "UNSAFE / FORBIDDEN",
+      "mechanism": "AccountGenesis can enumerate Catalog storage_key, receive None from its service-local get_password lookup, and unregister the foreign inventory entry",
+      "closed_by_contract": "Dedicated AccountGenesis-only index_path plus rejection of foreign inventory before rotation"
+    },
+    "catalog_preservation": "AccountGenesis storage operation MUST NOT make accepted M0.12 authority unavailable"
+  },
+  "authentication_algorithm": {
+    "selected": "HMAC-SHA-256 with opaque AccountGenesis custody",
+    "decision": "FROZEN",
+    "rationale": "The verifier is Core-owned, persistence is locally untrusted, and no canonical third-party/offline verification requirement exists. HMAC provides strong record authenticity with simpler custody than asymmetric signing; selection follows this threat model, not precedent alone.",
+    "alternatives": {
+      "asymmetric_signatures": "NOT_SELECTED: no third-party verification requirement; adds private-key lifecycle and public-key trust-root complexity without solving freshness",
+      "other_existing_production_primitive": "NOT_SELECTED: public SHA-256 chains detect corruption but do not authenticate against an attacker who can rewrite persistence",
+      "DESIGN_BLOCKED": "NOT_SELECTED: requirements suffice to select HMAC-SHA-256; domain authority/root-of-trust remains separately blocked"
+    }
+  },
+  "cryptographic_domains": {
+    "exact_domain_literals": "FROZEN",
+    "environment_rule": "Every preimage binds exactly one PRODUCTION or TEST authority domain; validators reject all other domains",
+    "production_authority_domain": "cryptohunter.account-genesis.production.v1",
+    "test_authority_domain": "cryptohunter.account-genesis.test.v1",
+    "purposes": {
+      "operation_records": "CRYPTOHUNTER_M0_5_ACCOUNT_GENESIS_OPERATION_RECORD_V1",
+      "reservation_records": "CRYPTOHUNTER_M0_5_ACCOUNT_GENESIS_RESERVATION_RECORD_V1",
+      "genesis_finalization_records": "CRYPTOHUNTER_M0_5_ACCOUNT_GENESIS_FINALIZATION_RECORD_V1",
+      "key_lifecycle": "CRYPTOHUNTER_M0_5_ACCOUNT_GENESIS_KEY_LIFECYCLE_V1",
+      "freshness_anchor": "CRYPTOHUNTER_M0_5_ACCOUNT_GENESIS_FRESHNESS_ANCHOR_V1",
+      "abort_release_disposition": "CRYPTOHUNTER_M0_5_ACCOUNT_GENESIS_ABORT_RELEASE_DISPOSITION_V1"
+    },
+    "cross_record_substitution": "MUST_FAIL: purpose, record type, authority domain and environment are authenticated and validators require the expected literal"
+  },
+  "record_authentication_coverage": {
+    "required_where_semantically_applicable": [
+      "authority_domain",
+      "record_purpose/type",
+      "schema/version",
+      "identity",
+      "generation/sequence",
+      "predecessor",
+      "canonical_semantic_body",
+      "environment/trust_domain",
+      "key_id"
+    ],
+    "canonicalization": "Exact deterministic encoding MUST be specified before implementation; ambiguous encodings are forbidden",
+    "authentication_is_authorization": false,
+    "invariant": "valid AccountGenesis MAC != authorized account creation",
+    "authentication_is_freshness": false
+  },
+  "key_namespace": {
+    "production_custody_service_name": "dudzian.account-genesis.production",
+    "production_storage_prefix": "dudzian.account-genesis.production.v1:",
+    "catalog_service_name_forbidden": "dudzian.catalog-admission-receipt",
+    "catalog_handles_or_raw_keys_reused": false,
+    "test_custody": "In-memory or isolated test-only implementation using cryptohunter.account-genesis.test.v1; no production service or slots",
+    "production_index_path": "var/security/account_genesis_secret_index.json",
+    "production_index_scope": "ACCOUNT_GENESIS_ONLY",
+    "shared_index_with_catalog": "FORBIDDEN",
+    "foreign_service_inventory_enumeration_mutation_removal_or_rotation": "FORBIDDEN",
+    "coexistence_invariant": "ACCOUNTGENESIS_KEYRING_INDEX MUST NOT enumerate, mutate, remove or rotate Catalog custody inventory entries; Catalog storage master-key rotation MUST NOT enumerate or mutate AccountGenesis custody inventory."
+  },
+  "key_lifecycle": {
+    "states": [
+      "ACTIVE",
+      "VERIFY_ONLY",
+      "REVOKED"
+    ],
+    "ACTIVE": "May authenticate new records and verify historical records",
+    "VERIFY_ONLY": "Cannot authenticate new records; continues verification of legitimate historical records",
+    "REVOKED": "Cannot authenticate new records. Historical records remain cryptographically checkable but are reported as signed by a compromised/revoked key and require authenticated compromise policy; they MUST NOT be silently reclassified as never having existed.",
+    "lifecycle_state_authenticated": true,
+    "lifecycle_root": "YES: distinct AccountGenesis lifecycle root secret; Catalog lifecycle root reuse is forbidden",
+    "revocation_semantics": "Revocation is prospective admission denial plus explicit compromise evidence, not destructive erasure of terminal genesis history",
+    "destructive_retirement": "FORBIDDEN without a replay-safe, authenticated, freshness-preserving migration proof"
+  },
+  "historical_verification": {
+    "normal_rotation": "REQUIRED: legitimate historical genesis facts remain verifiable via VERIFY_ONLY material",
+    "revocation": "Historical bytes and provenance remain verifiable and visible with REVOKED status; authorization/trust response is a separate policy decision",
+    "terminal_facts_may_become_unverifiable": false
+  },
+  "key_rotation": {
+    "authority_key_rotation": "Creates new independent ACTIVE authentication material; old ACTIVE becomes VERIFY_ONLY; authenticated lifecycle generation and freshness head advance",
+    "storage_master_key_rotation": "Only re-encrypts custody values; MUST NOT change authority key_id, lifecycle state, record MAC, or authority generation",
+    "same_operation": false,
+    "partial_storage_rotation": "FAIL_CLOSED",
+    "storage_master_key_rotation_transactional": false
+  },
+  "freshness_lineage": {
+    "model": "AccountGenesis-specific atomic multi-lineage anchor document",
+    "physical_tables": "NOT_FROZEN",
+    "semantic_heads": [
+      "key lifecycle head",
+      "operation journal head",
+      "reservation journal/head",
+      "genesis committed head",
+      "abort/release/tombstone head"
+    ],
+    "commitment": "One canonical authenticated document binds every semantic head, authority/environment domains, schema version and anchor generation; omitted or independently advanced heads are forbidden",
+    "closure": [
+      "PREPARED and COMMITTED are distinct authenticated states",
+      "COMMITTED -> PREPARED MUST_FAIL_CLOSED",
+      "ABORTED -> PREPARED MUST_FAIL_CLOSED",
+      "RELEASED_TOMBSTONED -> ABORTED_HELD MUST_FAIL_CLOSED"
+    ]
+  },
+  "anchor_models": {
+    "selected": "C. atomic multi-lineage anchor document",
+    "A_one_unified_lineage": "NOT_SELECTED: obscures independent semantic heads and complicates diagnosis",
+    "B_namespaced_slots": "NOT_SELECTED: independent writes permit torn cross-lineage closure",
+    "C_atomic_multi_lineage_document": "SELECTED: one AccountGenesis-only custody slot atomically replaces a canonical document covering all heads",
+    "D_remote_TPM_monotonic": "NOT_REQUIRED_BY_CURRENT_THREAT_BOUNDARY; future strengthening must preserve this contract",
+    "E_DESIGN_BLOCKED": "NOT_SELECTED",
+    "catalog_anchor_reused": false,
+    "anchor_authentication": "HMAC-SHA-256 under a dedicated AccountGenesis anchor key plus opaque production custody; custody alone is insufficient because canonical bytes and domain/key identity require authentication",
+    "monotonicity": "Comparison anchor, not hardware monotonic storage"
+  },
+  "anchor_atomicity": {
+    "protocol": "verify current local closure and anchor -> commit local transaction -> publish complete external anchor document -> re-read and compare",
+    "local_and_external_atomic": false,
+    "crash_after_local_commit_before_publish": "FAIL_CLOSED / recovery required; never remint, publish stale account, or treat COMMITTED as uncommitted",
+    "priority": "safety > availability"
+  },
+  "anchor_mismatch_semantics": {
+    "local_greater_than_anchor": "Ambiguous between interrupted publication and anchor rollback; FAIL_CLOSED",
+    "local_less_than_anchor": "Evidence consistent with DB rollback or coordinated corruption; FAIL_CLOSED",
+    "equal_generation_unequal_heads": "Corruption/split brain; FAIL_CLOSED",
+    "automatic_repair": "FORBIDDEN unless a future deterministic authenticated direction proof external to both compared states is frozen",
+    "reason": "A valid local MAC proves authenticity, not which side is freshest; direction cannot be inferred safely from the two values alone"
+  },
+  "rollback_threat_boundary": {
+    "selected": "A. same local anti-rollback boundary as Catalog, instantiated independently",
+    "rationale": "Current local/Core-owned topology has no canonical remote or TPM requirement; stronger protection remains an additive future requirement, while the exact non-protection is explicit",
+    "local_DB_rollback_while_newer_keyring_survives": "DETECTED",
+    "anchor_rollback_while_newer_local_state_survives": "DETECTED_AS_MISMATCH / direction not inferred",
+    "coordinated_DB_and_keyring_rollback": "OUT_OF_SCOPE / NOT_DETECTED",
+    "machine_wide_rollback": "NOT_PROTECTED",
+    "valid_MAC_with_stale_anchor": "MUST_FAIL_CLOSED"
+  },
+  "machine_binding": {
+    "production": "HWID-bound KeyringSecretStorage master key; mismatch makes custody unavailable",
+    "security_property": "Device binding protects local custody access but is not an account identity or remote rollback proof"
+  },
+  "migration": {
+    "model": "AUTHENTICATED_MIGRATION_REQUIRED",
+    "protocol": "NOT_FROZEN",
+    "default": "Cross-machine use MUST fail closed until a separately authorized export/import protocol transfers authority keys, lifecycle, complete journal closure and freshness state atomically",
+    "root_account_recovery": "Must not be inferred from copying the DB or changing HWID; domain authority/root proof remains separate"
+  },
+  "backup_restore": {
+    "DB_same_machine": "Accepted only when restored closure exactly equals retained authenticated anchor; older/newer mismatch fails closed",
+    "DB_new_machine": "Fails closed: missing/mismatched HWID-bound custody and anchor; requires authenticated migration",
+    "keyring_backup_only": "Fails closed against unequal/missing local authenticated closure",
+    "DB_and_keyring": "Coherent historical rollback is NOT_DETECTED within the selected threat boundary; operational restore MUST use an external authenticated migration/recovery proof",
+    "partial_or_mixed_generation": "FAIL_CLOSED"
+  },
+  "CAS_compatibility": {
+    "required": [
+      "expected generation",
+      "authenticated predecessor",
+      "same-operation CAS",
+      "same-reservation CAS",
+      "account_id/genesis CAS"
+    ],
+    "rule": "Every transition binds current identity, generation and predecessor; serialization compares expected authenticated heads before one local atomic commit and then publishes the complete anchor",
+    "ambiguous_generation_transition": "FORBIDDEN",
+    "semantic_owner": "CAS prevents races but does not decide semantic authorization"
+  },
+  "restart_order": [
+    "load substrate",
+    "verify authenticated key lifecycle",
+    "verify authenticated journal closure",
+    "verify freshness anchor",
+    "reconstruct reservation/operation state",
+    "reconcile genesis commit",
+    "publish resolver"
+  ],
+  "restart_order_rule": "No resolver publication or semantic recovery precedes successful lifecycle, closure and freshness checks.",
+  "production_test_separation": {
+    "authority_domain": "DISTINCT",
+    "key_material": "DISTINCT",
+    "custody_implementation_or_namespace": "DISTINCT",
+    "freshness_state": "DISTINCT",
+    "TEST_key_verifies_PRODUCTION_record": false,
+    "PRODUCTION_key_verifies_TEST_record": false,
+    "rotation_inventory/index_state": "DISTINCT",
+    "shared_mutable_rotation_index": "FORBIDDEN",
+    "TEST_mutates_PRODUCTION_rotation_inventory": false
+  },
+  "exact_type_gating": {
+    "decision": "FROZEN",
+    "production_constructor_rule": "Future production AccountGenesis authority MUST accept only exact approved production custody/store/anchor types",
+    "subclasses_accepted": false,
+    "test_double_laundering": "MUST_FAIL",
+    "note": "Exact approved class identities are implementation-time names; the exact-type semantic gate is frozen now"
+  },
+  "authority_boundary": {
+    "security_substrate": "Authenticates and freshness-protects exact records only",
+    "does_not_decide": [
+      "who may create account",
+      "whether root proof is valid",
+      "whether reservation is semantically authorized",
+      "whether account genesis should occur"
+    ],
+    "custody_owner": "AccountGenesis-specific security component; exact component NOT_FROZEN",
+    "freshness_owner": "AccountGenesis-specific security component; exact component NOT_FROZEN",
+    "domain_authority_owner": "DESIGN_BLOCKED",
+    "owners_are_semantically_identical": false,
+    "M0.12_security_substrate_owner_becomes_AccountAuthority": false,
+    "valid_MAC_is_authorized_account_creation": false
+  },
+  "result": {
+    "primary_result": "ACCOUNT_GENESIS_SECURITY_SUBSTRATE_CONTRACT_FROZEN",
+    "scope": "Security contract only; no production authority implementation",
+    "root_of_trust_solved": false,
+    "reservation_owner_solved": false
+  },
+  "implementation_allowed": {
+    "CryptoHunterAccountAuthority": false,
+    "AccountIdReservationAuthority": false,
+    "WorkspaceAuthority": false,
+    "FullFillAuthority": false,
+    "M0.8": false
+  },
+  "preserved_status": {
+    "M0.12": "ACCEPTED / AVAILABLE",
+    "CryptoHunterAccountAuthority": "NOT_AVAILABLE",
+    "AccountIdReservationAuthority": "NOT_AVAILABLE",
+    "WorkspaceAuthority": "NOT_AVAILABLE",
+    "FullFillAuthority": "NOT_AVAILABLE",
+    "production M0.5": "NOT_AVAILABLE",
+    "M0.8": "NOT_AVAILABLE",
+    "root_of_trust": "DESIGN_BLOCKED",
+    "reservation_owner": "DESIGN_BLOCKED"
+  },
+  "mandatory_redteam": {
+    "Catalog key used for AccountGenesis MAC": "FAIL",
+    "Catalog anchor slot used for AccountGenesis lineage": "FAIL",
+    "same purpose/domain for operation and reservation": "FAIL",
+    "TEST key verifies PRODUCTION record": "FAIL",
+    "valid MAC accepted despite stale anchor": "FAIL",
+    "COMMITTED -> PREPARED rollback accepted": "FAIL",
+    "ABORTED -> PREPARED rollback accepted": "FAIL",
+    "anchor mismatch automatically repaired without direction proof": "FAIL",
+    "security master-key rotation treated as authority-key rotation": "FAIL",
+    "M0.12 security substrate owner becomes AccountAuthority": "FAIL",
+    "shared Catalog and AccountGenesis rotation index": "FAIL",
+    "service_name isolation alone considered sufficient": "FAIL",
+    "TEST and PRODUCTION share mutable rotation index": "FAIL",
+    "AccountGenesis rotation unregisters foreign-service inventory": "FAIL"
+  }
+}
+```
