@@ -847,7 +847,10 @@ def test_cross_artifact_parity_reads_actual_sources() -> None:
         "coordinator_may_unilaterally_advance_authoritative_generation"
     ] is False
     assert physical["CAS_generation_contract"]["current_external_CAS_available"] is False
-    assert physical["selected_or_blocked_protocol"]["selection"] == "F_DESIGN_BLOCKED"
+    assert physical["selected_or_blocked_protocol"]["selection"] == (
+        "INITIAL_BINDING_THEN_PREPARED_THEN_FRESHNESS_CAS_THEN_LOCAL_FINAL_COMMIT"
+    )
+    assert physical["implementation_allowed"]["FreshnessAuthority"] is False
     assert physical["authority_vs_storage_roles"]["generation_candidate_proposer"] == (
         "CryptoHunterAccountAuthority"
     )
