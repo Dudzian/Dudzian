@@ -1,0 +1,406 @@
+# M0.5 CryptoHunterAccount genesis uniqueness and idempotency design
+
+This file is a deterministic complete projection of `m05_cryptohunter_account_genesis_uniqueness_idempotency_design.json`. JSON is the source of truth.
+
+```json
+{
+  "artifact": "M05_CRYPTOHUNTER_ACCOUNT_GENESIS_UNIQUENESS_IDEMPOTENCY_DESIGN",
+  "iteration": "CONTRACT / DESIGN FREEZE ONLY",
+  "repository_head_examined": "1aa8fb905b378755bb316f47a81aee5c95876d3c",
+  "provenance": {
+    "source": "GIT",
+    "reviewed_head_available_locally": false,
+    "classification": "UNKNOWN",
+    "current_tree_evidence": true,
+    "finding_scope": "CURRENT_TREE_ONLY",
+    "formal_advancement_allowed": false,
+    "relationship_to_reviewed_sha": "UNKNOWN",
+    "current_local_tree_inspected": "YES",
+    "path_content_comparison_evidence": "NOT_PERFORMED",
+    "artifacts_examined": [
+      "m05_cryptohunter_account_genesis_authority_model.json",
+      "m05_cryptohunter_account_genesis_subject_identity_discovery.json",
+      "m05_cryptohunter_account_root_of_trust_reconciliation.json",
+      "m05_cryptohunter_account_authority_contract_design.json",
+      "process_topology_and_lifecycle.json",
+      "bot_core/runtime/first_run_bootstrap.py"
+    ],
+    "current_tree_findings": "AVAILABLE FOR DISCOVERY ONLY",
+    "formal_advancement_from_reviewed_sha": "WITHHELD",
+    "source_tree_semantics": "repository_head_examined is the locally available parent/base tree read for this design; it is not the later artifact commit",
+    "canonical_invariant": "If reviewed_head_available_locally is false and relationship_to_reviewed_sha is UNKNOWN, repository_head_examined MUST NOT equal reviewed_head_supplied absent separately recorded materialization/content-equivalence evidence."
+  },
+  "identity_separation": {
+    "entity_identity": "account_id answers which account this is",
+    "operation_idempotency": "answers whether this is a retry of the same logical genesis operation",
+    "business_subject_uniqueness": "answers whether an external subject may own another account",
+    "contracts_are_distinct": true
+  },
+  "entity_uniqueness": {
+    "result": "ENTITY_UNIQUENESS_KEY_FROZEN",
+    "key": "account_id",
+    "syntax": "acct_<canonical lowercase UUIDv7>",
+    "invariant": "one genuine account_id -> at most one immutable account genesis",
+    "account_id_alone_sufficient_to_prevent_duplicate_entity_genesis": true,
+    "account_id_is_logical_operation_idempotency_identity": false,
+    "enforcement": "unique durable genesis key plus per-account_id serialization/CAS; no LWW",
+    "independent_of_external_subject_model": true
+  },
+  "business_uniqueness_boundary": {
+    "subject_to_account_cardinality": "NOT_FROZEN",
+    "one_subject_one_account": "NOT_PROVEN",
+    "multiple_accounts_per_subject_allowed": "NOT_PROVEN",
+    "external_subject_identity": "NOT_FOUND",
+    "missing_subject_identity_alone_makes_genesis_impossible": false,
+    "different_account_ids_automatically_duplicate_for_same_subject": false,
+    "idempotency_may_enforce_business_uniqueness": false
+  },
+  "idempotency_candidates": [
+    {
+      "candidate": "ACCOUNT_ID_RESERVATION_IDENTITY",
+      "authority_owner": "future reservation authority: NOT_FOUND",
+      "caller_controllability": "caller selection of genuine ID FORBIDDEN; allocation owner NOT_FROZEN",
+      "stability_across_retries": "REQUIRED but protocol NOT_FROZEN",
+      "stability_across_crash_restart": "REQUIRED but store/owner NOT_FROZEN",
+      "uniqueness_scope": "one reservation/account candidate",
+      "durability": "REQUIRED / NOT_AVAILABLE",
+      "authentication": "REQUIRED / key owner NOT_FOUND",
+      "retry_returns_same_account": "REQUIRED",
+      "two_legitimate_account_creations_can_use_different_ids": "YES, through separately issued reservations",
+      "status": "VIABLE_REQUIREMENTS / NOT_SELECTED",
+      "reason": "Could anchor retries only if authority durably re-resolves the same reservation; reservation is not genesis authority."
+    },
+    {
+      "candidate": "EXTERNAL_PROVISIONING_DECISION_ID",
+      "authority_owner": "external_product_provisioning_boundary",
+      "caller_controllability": "NO for accepted membership; exact decision ID absent",
+      "stability_across_retries": "NOT_PROVEN",
+      "stability_across_crash_restart": "NOT_PROVEN",
+      "uniqueness_scope": "M0.3 device first-run membership, not account genesis",
+      "durability": "accepted membership exists, genesis linkage absent",
+      "authentication": "ProvisioningMembershipBinding accepted by external boundary; public SHA insufficient",
+      "retry_returns_same_account": "NOT_PROVEN",
+      "two_legitimate_account_creations_can_use_different_ids": "NOT_PROVEN",
+      "status": "NOT_FOUND_FOR_ACCOUNT_GENESIS",
+      "reason": "No exact issuer-issued account-genesis decision ID exists."
+    },
+    {
+      "candidate": "AUTHORITY_ISSUED_GENESIS_REQUEST_ID",
+      "authority_owner": "future genuine account-genesis authority: NOT_FOUND",
+      "caller_controllability": "NO by requirement",
+      "stability_across_retries": "REQUIRED",
+      "stability_across_crash_restart": "REQUIRED",
+      "uniqueness_scope": "one logical account-genesis operation within authority domain",
+      "durability": "REQUIRED indefinitely",
+      "authentication": "REQUIRED / exact owner blocked",
+      "retry_returns_same_account": "REQUIRED",
+      "two_legitimate_account_creations_can_use_different_ids": "YES",
+      "status": "PREFERRED_CONCEPTUAL_CANDIDATE / DESIGN_BLOCKED",
+      "reason": "Would meet the contract, but authority, issuance, schema and durable recovery do not exist."
+    },
+    {
+      "candidate": "ROOT_PROOF_DECISION_ID",
+      "authority_owner": "independent root-proof authority: NOT_FOUND",
+      "caller_controllability": "NO by requirement",
+      "stability_across_retries": "NOT_PROVEN",
+      "stability_across_crash_restart": "NOT_PROVEN",
+      "uniqueness_scope": "root-proof decision, not necessarily one genesis operation",
+      "durability": "REQUIRED / NOT_AVAILABLE",
+      "authentication": "REQUIRED / owner NOT_FOUND",
+      "retry_returns_same_account": "NOT_PROVEN",
+      "two_legitimate_account_creations_can_use_different_ids": "NOT_PROVEN",
+      "status": "NOT_SELECTED",
+      "reason": "Root proof may be reused or mapped differently; cardinality and identity are not frozen."
+    },
+    {
+      "candidate": "ATOMIC_ISSUER_DECISION_ID",
+      "authority_owner": "future atomic issuer/account protocol: NOT_FOUND",
+      "caller_controllability": "NO by requirement",
+      "stability_across_retries": "REQUIRED",
+      "stability_across_crash_restart": "REQUIRED",
+      "uniqueness_scope": "one atomic issuance/genesis decision",
+      "durability": "REQUIRED / protocol NOT_FOUND",
+      "authentication": "REQUIRED / participants and keys NOT_FOUND",
+      "retry_returns_same_account": "REQUIRED",
+      "two_legitimate_account_creations_can_use_different_ids": "YES",
+      "status": "DESIGN_BLOCKED",
+      "reason": "Atomic protocol, participant ownership and decision identifier are absent."
+    },
+    {
+      "candidate": "EXTERNAL_SUBJECT_IDENTITY",
+      "authority_owner": "external subject authority: NOT_FOUND",
+      "caller_controllability": "MUST NOT be caller controlled",
+      "stability_across_retries": "NOT_PROVEN",
+      "stability_across_crash_restart": "NOT_PROVEN",
+      "uniqueness_scope": "business subject, not operation",
+      "durability": "NOT_FOUND",
+      "authentication": "NOT_FOUND",
+      "retry_returns_same_account": "NO",
+      "two_legitimate_account_creations_can_use_different_ids": "Only if business cardinality allowed; NOT_FROZEN",
+      "status": "REJECTED",
+      "reason": "Conflates business uniqueness with operation idempotency; subject identity is absent."
+    },
+    {
+      "candidate": "CALLER_COMMAND_ID",
+      "authority_owner": "caller issues; authority only interprets in older design",
+      "caller_controllability": "YES",
+      "stability_across_retries": "NO: caller may replace cmd_1 with cmd_2",
+      "stability_across_crash_restart": "Only for exact repeated ID if journal survives",
+      "uniqueness_scope": "caller-chosen command, not logical operation",
+      "durability": "authority retention proposed elsewhere but not a stable logical identity",
+      "authentication": "journal would require authentication; caller ID itself is not authority",
+      "retry_returns_same_account": "Only when caller reuses the key",
+      "two_legitimate_account_creations_can_use_different_ids": "YES",
+      "status": "INSUFFICIENT_BY_DEFAULT",
+      "reason": "A caller-generated random command ID alone cannot identify retries when the caller can replace it."
+    },
+    {
+      "candidate": "DESIGN_BLOCKED",
+      "authority_owner": "NONE",
+      "caller_controllability": "N/A",
+      "stability_across_retries": "N/A",
+      "stability_across_crash_restart": "N/A",
+      "uniqueness_scope": "N/A",
+      "durability": "N/A",
+      "authentication": "N/A",
+      "retry_returns_same_account": "NO",
+      "two_legitimate_account_creations_can_use_different_ids": "UNKNOWN",
+      "status": "SELECTED",
+      "reason": "No canonical stable authority-issued identity binds every retry of one logical account-genesis operation."
+    }
+  ],
+  "provisioning_generation_revision": {
+    "fields_found": [
+      "bootstrap_generation",
+      "bootstrap_revision"
+    ],
+    "owner_scope": "M0.3 device first-run bootstrap claim",
+    "global": false,
+    "per_issuer": "NOT_PROVEN",
+    "per_subject": "NOT_PROVEN",
+    "per_device": "bound with device_installation_id in claim/consumption",
+    "per_account": "bound with account_id in claim/consumption but not proven unique per account",
+    "can_two_genuine_accounts_share_values": true,
+    "issuer_namespace_plus_generation_revision_identifies_one_provisioning_decision": "NOT_PROVEN",
+    "account_genesis_idempotency_candidate": "REJECTED"
+  },
+  "selected_or_blocked_idempotency_model": {
+    "selection": "DESIGN_BLOCKED",
+    "selected_identity": "NOT_FROZEN",
+    "same_logical_account_genesis_operation": "requires one stable, authenticated, durable authority-issued identity that survives caller retries and restart and is bound to one canonical semantic request; no such identity is currently owned",
+    "new_legal_account_genesis": "a different authority-issued idempotency identity and different reserved account_id may be independent unless a future business uniqueness contract forbids it",
+    "authority_owner": "NOT_FOUND",
+    "account_genesis_decision_id": "NOT_FROZEN / DO_NOT_INVENT",
+    "decision_id_need": "A distinct ID would aid audit, provenance, dedupe and recovery, but account_id already enforces entity uniqueness and no authority exists to issue the operation ID.",
+    "preferred_conceptual_candidate_is_selected_frozen_contract": false
+  },
+  "serialization_scope": {
+    "status": "PARTIALLY_FROZEN",
+    "minimum": "per account_id serialization/CAS is REQUIRED",
+    "per_reservation_identity": "REQUIRED if a reservation protocol is selected",
+    "per_idempotency_identity": "REQUIRED if an idempotency identity is selected",
+    "authority_global": "FORBIDDEN as account singleton/deduplication mechanism; a total journal order is not required by this design",
+    "per_external_subject": "NOT_FROZEN / MUST NOT APPLY without cardinality contract",
+    "last_writer_wins": false,
+    "distinct_account_operation_relationship": "NOT_FROZEN",
+    "cross_account_logical_operation_serialization": "DESIGN_BLOCKED / depends on selected operation identity",
+    "authority_journal_global_ordering": "OPTIONAL / NOT_FORBIDDEN; may be selected for persistence, but cannot enforce that only one account exists",
+    "global_singleton_serialization": "FORBIDDEN as account-existence or deduplication rule"
+  },
+  "same_account_concurrency": {
+    "same_account_same_idempotency_identity": "one commit and one exact replay result",
+    "same_account_different_idempotency_identities": "at most one genesis; loser receives deterministic ALREADY_ADMITTED / CONFLICT / DENY, never a second genesis",
+    "same_account_id_two_genesis": "FORBIDDEN"
+  },
+  "distinct_account_concurrency": {
+    "scenario": "acct_A/idem_X concurrent with acct_B/idem_Y",
+    "logical_operation_relationship": "UNKNOWN without frozen authority-bound provenance",
+    "different_account_ids_imply_distinct_operations": false,
+    "different_idempotency_ids_imply_distinct_operations": false,
+    "different_account_ids_automatically_duplicate": false,
+    "may_be_independent": "CONDITIONAL: only after genuine authority-bound provenance establishes DISTINCT logical operations",
+    "required_independence_proof": "different authority-issued logical genesis identities, durable reservation identities, or issuer/root decisions under the future selected model",
+    "global_singleton_serialization": false,
+    "same_external_subject_alone_causes_duplicate_or_conflict": false
+  },
+  "request_binding": {
+    "status": "REQUIREMENTS_FROZEN / EXACT TYPES BLOCKED",
+    "required_semantic_fields": [
+      "authority domain",
+      "account reservation reference and account_id",
+      "exact root-proof reference/binding",
+      "exact provisioning decision reference if genesis consumes one",
+      "canonical genesis request semantics"
+    ],
+    "excluded_ephemeral_fields": [
+      "response time",
+      "retry time",
+      "transport correlation metadata unless semantically authoritative"
+    ],
+    "fingerprint_only_authenticates": false,
+    "same_logical_operation_proof": "must bind the same canonical semantic request",
+    "different_account_id_after_crash_redefines_operation": false
+  },
+  "retry_semantics": {
+    "same_identity_same_semantic_request": "same committed result / exact replay; if prepared, recover the same operation",
+    "same_identity_different_semantic_request": "CONFLICT / CONTRACT_INCONSISTENT; no mutation and never a second account",
+    "different_identities": "not automatically conflict and not automatically independent; they may represent two legitimate creations only if authority-issued provenance establishes DISTINCT logical operations",
+    "caller_changes_command_id_for_same_request": "does not create a trustworthy new logical identity or permission to silently remint",
+    "different_idempotency_ids_imply_distinct_operations": false,
+    "caller_command_id_inequality_proves_distinct_operations": false
+  },
+  "reservation_relationship": {
+    "reservation_exists_implies_account_exists": false,
+    "reserved_account_id_is_genuine": false,
+    "reservation_is_account_authority": false,
+    "crash_retry": "recover same durable reservation; never mint acct_B",
+    "abandoned_reuse": "FORBIDDEN absent authenticated release semantics",
+    "genuine_account_id_at": "only after genuine durable genesis commit",
+    "authenticated_release_abort_semantics": "NOT_FROZEN",
+    "missing_reservation_lookup_allows_new_id": false,
+    "unproven_previous_reservation_absent_or_released": "FAIL_CLOSED rather than create a new independent reservation",
+    "same_logical_operation_may_remint_after_crash": false
+  },
+  "crash_before_commit": {
+    "state": "prepared/incomplete, distinct from committed",
+    "recovery": "recover the same authenticated idempotency/reservation state and either safely finish or fail closed",
+    "silent_remint": "FORBIDDEN",
+    "exact_protocol": "DESIGN_BLOCKED",
+    "fallback_to_new_account_id": "FORBIDDEN unless a genuine authenticated abort/release decision proves the previous logical operation is no longer live and a new operation is explicitly initiated",
+    "different_account_id_alone_proves_new_operation": false
+  },
+  "crash_after_commit": {
+    "recovery": "return the same committed genesis/account_id",
+    "new_account": "FORBIDDEN",
+    "response_loss_changes_commit": false
+  },
+  "authentication": {
+    "idempotency_state_must_be_authenticated": true,
+    "public_SHA_sufficient": false,
+    "exact_key_owner": "NOT_FOUND / DESIGN_BLOCKED",
+    "caller_identifier_is_authority": false
+  },
+  "freshness": {
+    "requirement": "security-critical idempotency/reservation history requires an independent non-rollbackable freshness anchor",
+    "authority": "NOT_FOUND",
+    "status": "DESIGN_BLOCKED"
+  },
+  "rollback": {
+    "valid_prefix_A_B_after_A_B_C": "MUST_FAIL_CLOSED",
+    "already_consumed_creation_may_be_minted_again": false,
+    "freshness_authority_available": false,
+    "status": "DESIGN_BLOCKED"
+  },
+  "environment_isolation": {
+    "TEST_to_PRODUCTION_account_genesis": "DENY",
+    "domain_must_be_bound_to_request_state_and_authentication": true,
+    "exact_environment_mapping": "DESIGN_BLOCKED"
+  },
+  "M03_interaction": {
+    "existing_exact_decision_id": "NOT_FOUND",
+    "membership_id_field": "NOT_FOUND",
+    "accepted_request_id": "NOT_FOUND",
+    "issuer_decision_id": "NOT_FOUND",
+    "bootstrap_generation_revision": "FOUND but not globally/per-account unique and bound to device first-run claim",
+    "claim_fingerprint_sha256": "ephemeral claim identity / integrity fingerprint, not durable account-genesis identity",
+    "reusable_identity_for_device_first_run": "accepted claim fingerprint plus exact membership/consumption contract only",
+    "reusable_identity_for_account_genesis": false,
+    "ownership_expanded": false
+  },
+  "cross_artifact_parity": {
+    "subject_cardinality": "NOT_FROZEN",
+    "missing_subject_identity_alone_makes_genesis_impossible": false,
+    "caller_selected_genuine_account_id": "FORBIDDEN",
+    "candidate_or_reserved_account_id": "NOT AUTHORITY",
+    "reservation_is_authority": false,
+    "same_account_id_maximum_genesis": 1,
+    "account_id_syntax": "acct_<canonical lowercase UUIDv7>",
+    "parity": "PASS"
+  },
+  "intrinsic_blockers": [
+    "logical-operation identity selection and semantic binding are absent",
+    "reservation/idempotency durable state machine and crash protocol are absent",
+    "authentication key owner and freshness/rollback authority are absent"
+  ],
+  "upstream_blockers": [
+    "independent root-proof authority remains NOT_FOUND",
+    "account ID mint/reservation owner and provisioning handoff remain NOT_FROZEN",
+    "external provisioning exposes no account-genesis decision identity"
+  ],
+  "mandatory_redteam_mutations": {
+    "same account_id creates two genuine genesis facts": "FAIL",
+    "same idempotency key + different semantic request creates new account": "FAIL",
+    "crash retry mints new account": "FAIL",
+    "reservation becomes genuine authority": "FAIL",
+    "caller-generated random command ID alone defines logical identity": "FAIL",
+    "all account creation globally serialized as one singleton": "FAIL",
+    "external subject identity becomes uniqueness key without selected cardinality": "FAIL",
+    "two different account IDs treated as duplicates solely because same subject": "FAIL",
+    "public SHA authenticates idempotency journal": "FAIL",
+    "TEST idempotency decision accepted in production": "FAIL",
+    "different_account_ids_imply_distinct_operations = true": "FAIL",
+    "different_idempotency_ids_imply_distinct_operations = true while ownership is NOT_FROZEN": "FAIL",
+    "crash after acct_A reservation -> acct_B allowed merely because account_id differs": "FAIL",
+    "cmd_X != cmd_Y therefore operations are distinct": "FAIL",
+    "unavailable reviewed head with UNKNOWN relationship is recorded as repository_head_examined": "FAIL",
+    "classification = EXACT_COMMIT while reviewed SHA is unavailable": "FAIL",
+    "formal_advancement_allowed = true while classification is UNKNOWN": "FAIL"
+  },
+  "result": {
+    "primary_result": "ACCOUNT_GENESIS_UNIQUENESS_IDEMPOTENCY_INSUFFICIENT_SEMANTICS",
+    "entity_uniqueness_result": "ENTITY_UNIQUENESS_KEY_FROZEN",
+    "intrinsic_status": "DESIGN_BLOCKED",
+    "upstream_status": "BLOCKED_UPSTREAM",
+    "formal_status_advancement": "WITHHELD",
+    "reason": "Entity uniqueness is frozen on account_id, but current evidence supplies no stable authority-issued logical-genesis identity, authenticated durable recovery protocol, or freshness authority."
+  },
+  "implementation_allowed": {
+    "CryptoHunterAccountAuthority": false,
+    "ProvisioningBoundary": false,
+    "WorkspaceAuthority": false,
+    "InstrumentAuthority": false,
+    "WCP Authority": false,
+    "FullFillAuthority": false,
+    "M0.8": false
+  },
+  "preserved_status": {
+    "M0.12": "ACCEPTED / AVAILABLE",
+    "M0.7 structural Full Fill v2": "ACCEPTED / STRUCTURAL AVAILABLE",
+    "CryptoHunterAccountAuthority": "NOT_AVAILABLE",
+    "WorkspaceAuthority": "NOT_AVAILABLE",
+    "InstrumentAuthority": "NOT_AVAILABLE",
+    "WCP Authority": "NOT_AVAILABLE / DESIGN_BLOCKED",
+    "FullFillAuthority": "NOT_AVAILABLE",
+    "production M0.5": "NOT_AVAILABLE",
+    "M0.8": "NOT_AVAILABLE",
+    "C25": "BLOCKED",
+    "S9D": "OPEN"
+  },
+  "logical_operation_relationship": {
+    "classifications": [
+      "SAME",
+      "DISTINCT",
+      "UNKNOWN"
+    ],
+    "current_default_without_authority_bound_provenance": "UNKNOWN",
+    "different_account_ids_imply_distinct_operations": false,
+    "different_idempotency_ids_imply_distinct_operations": false,
+    "caller_command_ids_prove_distinct_operations": false,
+    "different_account_ids_automatically_duplicates": false,
+    "operation_duplication_is_business_subject_duplication": false,
+    "ONE_SUBJECT_MANY_ACCOUNTS_prevents_retry_duplication": false,
+    "distinct_proof_requirement": "Genuine authority-bound provenance must prove different authority-issued logical genesis identities, durable reservation identities, or issuer/root decisions under the future selected model.",
+    "exact_proof_source": "NOT_FROZEN",
+    "distinct_account_ids_may_represent_independent_legitimate_genesis": "CONDITIONAL_ON_AUTHORITY_BOUND_DISTINCTNESS_PROOF"
+  },
+  "critical_retry_split_scenario": {
+    "logical_operation": "O",
+    "attempt_1": "reservation acct_A / idem_X / crash",
+    "attempt_2": "reservation acct_B / idem_Y",
+    "relationship_without_authority_bound_distinctness_proof": "UNKNOWN",
+    "acct_B_automatically_independent_new_genesis": false,
+    "outcome": "recover acct_A reservation/operation or FAIL_CLOSED; acct_B requires an authenticated abort/release of O and explicitly initiated new operation"
+  },
+  "reviewed_head_supplied": "6b0a196f9c5c509ae6ab58550ca43939a1c1a727"
+}
+```
