@@ -1,0 +1,427 @@
+# M0.5 CryptoHunterAccount genesis authority model design
+
+This file is a deterministic complete projection of `m05_cryptohunter_account_genesis_authority_model.json`. JSON is the source of truth.
+
+```json
+{
+  "artifact": "M05_CRYPTOHUNTER_ACCOUNT_GENESIS_AUTHORITY_MODEL_DESIGN",
+  "iteration": "CONTRACT / DESIGN FREEZE ONLY",
+  "repository_head_examined": "643680bf56b5a16d7ff67acd63de61456eb60a43",
+  "provenance": {
+    "root_reconciliation": "GIT",
+    "root_reconciliation_result": "ROOT_PROOF_INSUFFICIENT_SEMANTICS",
+    "reconciled_artifacts": [
+      "m05_cryptohunter_account_authority_contract_design.json",
+      "m05_cryptohunter_account_root_of_trust_reconciliation.json",
+      "m05_cryptohunter_account_authority_discovery.json",
+      "process_topology_and_lifecycle.json"
+    ],
+    "rule": "Conclusions preserve the reviewed Git evidence and do not treat a future ProvisioningBoundary as proof."
+  },
+  "frozen_input_contracts": {
+    "CryptoHunterAccount": "persistent root entity",
+    "account_id_syntax": "acct_<canonical lowercase UUIDv7>",
+    "caller_selected_genuine_account_id": "FORBIDDEN",
+    "candidate_or_reserved_account_id": "NOT AUTHORITY",
+    "PersistentEntityIdentityProjection": "NOT AUTHORITY",
+    "M0.11_carrier": "NOT AUTHORITY",
+    "FirstRunBootstrapAuthority": "INITIAL_SECURITY_ESTABLISHMENT_ONLY",
+    "relationship": "CryptoHunterAccount -> DeviceInstallation*",
+    "FirstRunBootstrapClaim_bindings": [
+      "account_id",
+      "device_installation_id",
+      "intended_operator_id"
+    ]
+  },
+  "account_subject_identity": {
+    "classification": "ACCOUNT_GENESIS_SUBJECT_IDENTITY = NOT_FOUND",
+    "independent_of_account_id": false,
+    "canonical_field": "NOT_FOUND",
+    "searched_candidates": [
+      "customer_subject_id",
+      "tenant_subject_id",
+      "external_account_subject",
+      "subscription owner",
+      "deployment owner",
+      "provisioning subject"
+    ],
+    "impact": "Duplicate and same-subject distinct-account conflict detection cannot be made authoritative; per-subject serialization and idempotency cannot be frozen.",
+    "invention_forbidden": true
+  },
+  "account_id_state_machine": {
+    "states": [
+      {
+        "state": "SYNTACTICALLY_VALID_ID",
+        "authority": false,
+        "meaning": "Only grammar-valid acct_<canonical lowercase UUIDv7>."
+      },
+      {
+        "state": "RESERVED_OR_CANDIDATE_ID",
+        "authority": false,
+        "meaning": "Mint/reservation intent; not an account fact."
+      },
+      {
+        "state": "AUTHORITY_BOUND_ADMISSION_CANDIDATE",
+        "authority": false,
+        "meaning": "Candidate bound to authenticated root/provisioning evidence; still not genuine."
+      },
+      {
+        "state": "GENUINE_COMMITTED_CRYPTOHUNTERACCOUNT_ID",
+        "authority": true,
+        "meaning": "Only after the genesis decision authority atomically commits one genuine genesis record."
+      }
+    ],
+    "genuine_at": "successful durable account-genesis commit by the genuine genesis decision authority",
+    "forbidden_implications": [
+      "valid syntax => genuine",
+      "reservation => genuine",
+      "provisioning claim contains ID => genuine"
+    ]
+  },
+  "account_id_mint_models": {
+    "A_ACCOUNT_AUTHORITY_PRE_ADMISSION_RESERVATION": {
+      "status": "NOT_SELECTED / UNSUPPORTED",
+      "uuidv7_chooser": "future account authority",
+      "entropy_clock_owner": "future account authority",
+      "reserved_at": "durable pre-admission reservation",
+      "genuine_at": "separate genesis commit",
+      "survives_restart": "REQUIRED but owner/store absent",
+      "expires": "NOT_FROZEN",
+      "abandoned_reuse": "FORBIDDEN unless canonically released; release semantics absent",
+      "exact_id_retry": "REQUIRED",
+      "provisioning_obtains_id": "authority handoff not defined",
+      "circularity": "could be non-circular only with independent root proof; not proven"
+    },
+    "B_EXTERNAL_PROVISIONING_AUTHORITY_MINTS_ACCOUNT_ID": {
+      "status": "NOT_SELECTED / UNSUPPORTED",
+      "uuidv7_chooser": "external provisioning issuer",
+      "entropy_clock_owner": "external provisioning issuer",
+      "reserved_at": "issuer decision",
+      "genuine_at": "account genesis commit, never issuance alone",
+      "survives_restart": "issuer durability required but NOT_AVAILABLE",
+      "expires": "NOT_FROZEN",
+      "abandoned_reuse": "FORBIDDEN pending semantics",
+      "exact_id_retry": "REQUIRED by stable issuer identity",
+      "provisioning_obtains_id": "direct issuer claim",
+      "circularity": "issuer must pre-exist account; not proven"
+    },
+    "C_ATOMIC_ISSUER_AND_ACCOUNT_AUTHORITY_PROTOCOL": {
+      "status": "NOT_SELECTED / UNSUPPORTED",
+      "uuidv7_chooser": "protocol-designated issuer; NOT_FROZEN",
+      "entropy_clock_owner": "protocol-designated issuer; NOT_FROZEN",
+      "reserved_at": "atomic prepare",
+      "genuine_at": "single atomic commit",
+      "survives_restart": "REQUIRED prepared-decision recovery",
+      "expires": "evidence must be valid at commit; reservation expiry NOT_FROZEN",
+      "abandoned_reuse": "FORBIDDEN without durable abort/release",
+      "exact_id_retry": "REQUIRED by authority-issued idempotency identity",
+      "provisioning_obtains_id": "atomic protocol result",
+      "circularity": "participants and independent pre-account root must be frozen; absent"
+    },
+    "D_OTHER_CANONICALLY_SUPPORTED_MODEL": {
+      "status": "NOT_FOUND",
+      "uuidv7_chooser": "NOT_FOUND",
+      "entropy_clock_owner": "NOT_FOUND",
+      "reserved_at": "NOT_FOUND",
+      "genuine_at": "NOT_FOUND",
+      "survives_restart": "NOT_FOUND",
+      "expires": "NOT_FOUND",
+      "abandoned_reuse": "NOT_FOUND",
+      "exact_id_retry": "NOT_FOUND",
+      "provisioning_obtains_id": "NOT_FOUND",
+      "circularity": "NOT_PROVEN"
+    },
+    "E_DESIGN_BLOCKED": {
+      "status": "SELECTED",
+      "uuidv7_chooser": "NOT_FROZEN",
+      "entropy_clock_owner": "NOT_FROZEN",
+      "reserved_at": "NOT_FROZEN",
+      "genuine_at": "frozen only as genesis commit boundary; authority/protocol absent",
+      "survives_restart": "must fail closed",
+      "expires": "NOT_FROZEN",
+      "abandoned_reuse": "DENY",
+      "exact_id_retry": "required but identity source blocked",
+      "provisioning_obtains_id": "NOT_FROZEN",
+      "circularity": "unresolved"
+    }
+  },
+  "selected_or_blocked_mint_model": {
+    "selection": "E_DESIGN_BLOCKED",
+    "account_id_mint_owner": "NOT_FROZEN",
+    "mint_reservation_protocol": "NOT_FROZEN",
+    "reason": "No canonical owner, subject identity, independent root authority, or durable handoff/atomic protocol exists."
+  },
+  "account_device_ordering": {
+    "ACCOUNT_FIRST": {
+      "status": "NOT_SELECTED / NOT_PROVEN",
+      "conceptual_order": [
+        "root proof",
+        "reserve/mint account_id",
+        "commit account genesis",
+        "resolve genuine account",
+        "issue/accept first-device provisioning membership",
+        "M0.3 first-run"
+      ],
+      "M03_compatibility": "Conceptually preserves M0.3 as consumer, but no canonical contract proves membership may be issued after genesis; ordering cannot be selected without upstream contract work.",
+      "root_proof_relationship_to_later_device_membership": "NOT_FROZEN: the root proof is not assumed to be the same object or authority as the later first-device ProvisioningMembershipBinding."
+    },
+    "ATOMIC_ACCOUNT_PLUS_FIRST_DEVICE": {
+      "status": "DESIGN_BLOCKED",
+      "required_single_decision": "account genesis + first DeviceInstallation admission/provisioning binding",
+      "authority_protocol": "NOT_FOUND",
+      "prepare": "NOT_DEFINED",
+      "commit": "NOT_DEFINED",
+      "abort": "NOT_DEFINED",
+      "restart_recovery": "NOT_DEFINED",
+      "idempotency": "NOT_DEFINED",
+      "conflict_semantics": "NOT_DEFINED",
+      "root_evidence_and_device_membership_participation": "Allowed only if ownership and relationship are explicitly frozen; no equivalence is implied and FirstRunBootstrapAuthority scope is not expanded."
+    }
+  },
+  "selected_or_blocked_ordering_model": {
+    "selection": "DESIGN_BLOCKED",
+    "account_device_atomicity": "NOT_FROZEN",
+    "reason": "Child cardinality and the joint M0.3 claim prove neither ACCOUNT_FIRST nor an atomic committer."
+  },
+  "root_dependency_graph": {
+    "nodes": [
+      "independent pre-account root authority",
+      "root proof",
+      "account_id candidate",
+      "account genesis decision",
+      "genuine CryptoHunterAccount",
+      "first-device provisioning membership",
+      "M0.3 first-run"
+    ],
+    "permitted_edges": [
+      "independent pre-account root authority -> root proof",
+      "root proof -> account genesis decision",
+      "account_id candidate -> account genesis decision",
+      "account genesis decision -> genuine CryptoHunterAccount"
+    ],
+    "forbidden_edges": [
+      "genuine CryptoHunterAccount -> root proof for that same account",
+      "account-scoped post-genesis authority -> root proof for that same account"
+    ],
+    "current_missing_edges": [
+      "independent pre-account root authority -> root proof",
+      "root proof -> account genesis decision"
+    ]
+  },
+  "circularity": {
+    "result": "DESIGN_BLOCKED",
+    "cycle_detection": "A root proof requiring genuine acct_A or an authority scoped by acct_A forms a cycle and MUST be rejected.",
+    "non_circular_root_establishment": "NOT_PROVEN",
+    "future_ProvisioningBoundary_assumption_sufficient": false
+  },
+  "genesis_decision_authority": {
+    "owner": "NOT_FOUND",
+    "mint_owner_same_as_genesis_owner": "NOT_FROZEN",
+    "decision": "Only a genuine, independently rooted account-genesis authority may decide that genesis exists.",
+    "two_authority_handoff": "NOT_FROZEN",
+    "atomicity_boundary": "NOT_FROZEN"
+  },
+  "genesis_record_semantics": {
+    "required": [
+      "accepted_account_record_id",
+      "account_id",
+      "exact root/provisioning provenance",
+      "authority generation",
+      "commit time",
+      "idempotency identity",
+      "authenticated predecessor/head relationship",
+      "freshness binding"
+    ],
+    "exact_field_types": "DESIGN_BLOCKED",
+    "reason": "Root authority, authenticator, freshness anchor, and their durable identifiers are not owned.",
+    "expiry": "Evidence must be valid at genesis commit; later expiry does not erase immutable history.",
+    "restart_proof": "Must durably authenticate why this exact genesis was accepted without caller, M0.11 projection, or public hash trust."
+  },
+  "serialization": {
+    "authority_global": "possible safety fallback but no authority exists and it cannot identify logical duplicates",
+    "per_account_id_reservation": "required for at-most-one genesis per ID but insufficient for acct_A/acct_B of one subject",
+    "per_provisioning_subject_customer": "required for same-subject duplicate exclusion but BLOCKED because stable subject key is NOT_FOUND",
+    "per_external_issuer_subject": "possible only after canonical issuer and stable subject are frozen",
+    "selected_scope": "DESIGN_BLOCKED",
+    "arrival_order_selects_winner": false,
+    "local_timestamp_selects_winner": false,
+    "last_writer_wins": false
+  },
+  "idempotency": {
+    "selected_identity": "DESIGN_BLOCKED",
+    "candidates": [
+      "external provisioning decision ID",
+      "root-proof ID",
+      "account-creation command ID",
+      "subject + generation",
+      "other canonical authority-issued identity"
+    ],
+    "caller_generated_random_command_id_sufficient": false,
+    "requirement": "A stable authority-issued identity must map every exact retry to the same committed genesis result."
+  },
+  "concurrency": {
+    "same_account": {
+      "scenario": [
+        "claim_1 = acct_A/dev_1",
+        "claim_2 = acct_A/dev_2"
+      ],
+      "precondition": "acct_A genesis absent",
+      "invariant": "at most one account genesis commit",
+      "second_operation": [
+        "exact retry",
+        "already admitted",
+        "conflict",
+        "deny"
+      ],
+      "second_genesis": "FORBIDDEN",
+      "closure_status": "REQUIREMENT_FROZEN / PROTOCOL_DESIGN_BLOCKED"
+    },
+    "distinct_account_same_subject": {
+      "scenario": [
+        "claim_1 = acct_A/dev_1",
+        "claim_2 = acct_B/dev_2"
+      ],
+      "rule": "Must not silently create two accounts for the same external subject.",
+      "closure_status": "DESIGN_BLOCKED: ACCOUNT_GENESIS_SUBJECT_IDENTITY = NOT_FOUND"
+    },
+    "distinct_genuine_subjects": "Both may potentially be valid only when independently authenticated stable subject bindings differ."
+  },
+  "reservation_crash_recovery": {
+    "durability": "REQUIRED but protocol NOT_FROZEN",
+    "reuse": "FORBIDDEN by default",
+    "release": "Only an authenticated durable authority abort/release decision; semantics NOT_FROZEN",
+    "other_subject_assignment": "FORBIDDEN",
+    "restart": "Fail closed and recover the same reservation; never silently remint."
+  },
+  "genesis_crash_recovery": {
+    "scenario": "authority record written; crash before final acknowledgement",
+    "retry_result": "same genuine genesis result",
+    "new_account": "FORBIDDEN",
+    "mechanism": "Requires durable authority-issued idempotency identity and authenticated committed head; DESIGN_BLOCKED"
+  },
+  "root_candidate_reconciliation": {
+    "root_candidate_source": "m05_cryptohunter_account_root_of_trust_reconciliation.json",
+    "root_candidate": "M03_EXTERNAL_PRODUCT_PROVISIONING_MEMBERSHIP",
+    "root_candidate_status": "VIABLE_ONLY_AFTER_ADDITIONAL_AUTHORITY AND_AFTER_INTRINSIC_GENESIS_SEMANTICS_ARE_FROZEN",
+    "superseded": false,
+    "pre_admission_external_establishment": "NOT_PROVEN"
+  },
+  "account_root_provisioning_evidence": {
+    "role": "conditional root-proof candidate only",
+    "timing": "NOT_FROZEN",
+    "before_account_genesis": "NOT_FROZEN / CONDITIONAL_CANDIDATE: PRE_ACCOUNT_ADMISSION",
+    "inside_atomic_genesis_protocol": "NOT_FROZEN / CONDITIONAL_CANDIDATE: INSIDE_ATOMIC_GENESIS_PROTOCOL",
+    "selected_timing": "NONE",
+    "account_authority": false
+  },
+  "first_device_provisioning_membership": {
+    "role": "DeviceInstallation / M0.3 initial-security admission evidence",
+    "references_account_id_is_account_authority": false,
+    "before_account_genesis": "NOT_SELECTED / NOT_PROVEN",
+    "after_account_genesis": "NOT_SELECTED / NOT_PROVEN: candidate under ACCOUNT_FIRST",
+    "inside_atomic_genesis_protocol": "NOT_SELECTED / NOT_PROVEN: candidate under ATOMIC_ACCOUNT_PLUS_FIRST_DEVICE",
+    "selected_timing": "NONE"
+  },
+  "root_evidence_device_membership_relationship": {
+    "same_artifact_or_authority": "NOT_FROZEN",
+    "equivalence_asserted": false,
+    "difference_asserted": false,
+    "rule": "Neither equivalence nor required separation may be inferred until ownership, timing, and the selected genesis model are frozen."
+  },
+  "provisioning_timing": {
+    "selection": "DESIGN_BLOCKED",
+    "account_root_evidence": {
+      "before_account_genesis": "NOT_FROZEN / CONDITIONAL_CANDIDATE",
+      "inside_atomic_genesis_protocol": "NOT_FROZEN / CONDITIONAL_CANDIDATE"
+    },
+    "first_device_membership": {
+      "before_account_genesis": "NOT_SELECTED / NOT_PROVEN",
+      "after_account_genesis": "NOT_SELECTED / NOT_PROVEN: candidate under ACCOUNT_FIRST",
+      "inside_atomic_genesis_protocol": "NOT_SELECTED / NOT_PROVEN: candidate under ATOMIC_ACCOUNT_PLUS_FIRST_DEVICE"
+    },
+    "all_timing_paths_simultaneously_selected": false
+  },
+  "multi_device_after_genesis": {
+    "invariant": "dev_2, dev_3, ... must resolve existing genuine acct_A and must NEVER trigger account genesis.",
+    "account_genesis": "FORBIDDEN",
+    "separate_device_admission_required": true
+  },
+  "authentication_requirements": {
+    "root_proof": "must be cryptographically authenticated",
+    "verification_authority": "must be independent from caller and account being created",
+    "production_test_trust_domains": "must be separated",
+    "implementation_choice": "DESIGN_BLOCKED",
+    "public_SHA_is_authenticity": false,
+    "M0.11_carrier_is_root_proof": false
+  },
+  "freshness_requirements": {
+    "valid_at": "genesis commit",
+    "post_commit_expiry": "does not erase immutable genesis history",
+    "binding": "exact proof/decision generation and commit must be durably bound",
+    "anchor_owner": "NOT_FOUND / DESIGN_BLOCKED"
+  },
+  "rollback_requirements": {
+    "valid_prefix_rollback": "MUST_FAIL_CLOSED",
+    "coherent_local_rewrite": "MUST_FAIL_CLOSED",
+    "authenticated_predecessor_head": "REQUIRED",
+    "independent_anchor_owner": "NOT_FOUND / DESIGN_BLOCKED"
+  },
+  "impact_on_M03": {
+    "role": "consumer of already-established account identity only (if ACCOUNT_FIRST is later selected)",
+    "atomic_participation": "NOT_AUTHORIZED",
+    "FirstRunBootstrapAuthority_scope_expanded": false,
+    "classification": "NO_CURRENT_MIGRATION; MODEL_SELECTION_BLOCKED",
+    "M03_CONTRACT_MIGRATION_REQUIRED": "would apply if a later selected atomic model expands M0.3 ownership"
+  },
+  "impact_on_AccountAuthority_design": {
+    "CryptoHunterAccountAuthority": "NOT_AVAILABLE",
+    "implementation_allowed": false,
+    "reason": "Conceptual invariants do not supply subject identity, root owner, mint protocol, serialization, authentication, or rollback anchor."
+  },
+  "impact_on_Workspace": {
+    "WorkspaceAuthority": "NOT_AVAILABLE",
+    "implementation_allowed": false,
+    "reason": "Workspace intrinsic semantics remain independently unfrozen."
+  },
+  "mandatory_redteam_mutations": {
+    "caller-selected account_id becomes genuine": "FAIL",
+    "reserved ID becomes genuine before genesis": "FAIL",
+    "FirstRunBootstrapAuthority silently becomes AccountAuthority": "FAIL",
+    "two concurrent same-account claims create two genesis facts": "FAIL",
+    "same external subject can create acct_A and acct_B by racing": "FAIL",
+    "arrival order selects winner": "FAIL",
+    "local timestamp selects winner": "FAIL",
+    "last-writer-wins": "FAIL",
+    "crash retry creates second account": "FAIL",
+    "dev_2 provisioning recreates account genesis": "FAIL",
+    "public SHA becomes root authenticity": "FAIL",
+    "M0.11 carrier becomes root proof": "FAIL",
+    "pre-account root provisioning evidence becomes NOT_AUTHORIZED while root candidate remains open": "FAIL",
+    "ACCOUNT_FIRST root proof equals first-device ProvisioningMembershipBinding without evidence": "FAIL",
+    "first-device provisioning membership references account_id therefore becomes account authority": "FAIL"
+  },
+  "result": {
+    "primary_result": "ACCOUNT_GENESIS_MODEL_DESIGN_BLOCKED",
+    "upstream_dependency_status": "BLOCKED_UPSTREAM: production ProvisioningBoundary NOT_AVAILABLE",
+    "intrinsic_semantic_status": "DESIGN_BLOCKED: subject identity, root owner, mint/reservation owner and protocol, ordering/atomicity, serialization, idempotency, authentication and rollback anchor remain unresolved"
+  },
+  "implementation_allowed": {
+    "CryptoHunterAccountAuthority": false,
+    "WorkspaceAuthority": false,
+    "production_ProvisioningBoundary": false
+  },
+  "preserved_status": {
+    "M0.12": "ACCEPTED / AVAILABLE",
+    "M0.7_structural_Full_Fill_v2": "ACCEPTED / STRUCTURAL AVAILABLE",
+    "CryptoHunterAccountAuthority": "NOT_AVAILABLE",
+    "WorkspaceAuthority": "NOT_AVAILABLE",
+    "InstrumentAuthority": "NOT_AVAILABLE",
+    "WCP_Authority": "NOT_AVAILABLE / DESIGN_BLOCKED",
+    "FullFillAuthority": "NOT_AVAILABLE",
+    "production_M0.5": "NOT_AVAILABLE",
+    "M0.8": "NOT_AVAILABLE",
+    "C25": "BLOCKED",
+    "S9D": "OPEN"
+  }
+}
+```
