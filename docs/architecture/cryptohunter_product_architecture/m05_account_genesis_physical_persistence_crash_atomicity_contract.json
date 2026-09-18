@@ -20,7 +20,7 @@
     "selected_topology": "A_SINGLE_ACCOUNT_GENESIS_COORDINATOR",
     "sole_coordinator": "CryptoHunterAccountAuthority",
     "logical_commit_closure": "FROZEN",
-    "prior_physical_persistence_protocol": "NOT_SELECTED / DESIGN_BLOCKED",
+    "prior_physical_persistence_protocol": "DESIGN_BLOCKED / RECONCILED BY THIS ITERATION",
     "freshness_implementation": "NOT_AVAILABLE",
     "external_root_proof_issuer": "NOT_AVAILABLE",
     "production_CryptoHunterAccountAuthority": "FORBIDDEN",
@@ -33,7 +33,13 @@
       "operation COMMITTED",
       "reservation CONSUMED_COMMITTED",
       "authenticated fresh history"
-    ]
+    ],
+    "freshness_contract": "F_HYBRID_CAS_PLUS_SIGNED_FINALIZATION_RECEIPT / FROZEN",
+    "operation_identity_owner": "CryptoHunterAccountAuthority / FROZEN",
+    "reservation_and_recovery_binding_owner": "CryptoHunterAccountAuthority / FROZEN",
+    "one_operation_maximum_reservations": 1,
+    "one_operation_maximum_account_candidates": 1,
+    "retry_identity_rule": "exact operation/reservation/account_id only; no remint or recreation"
   },
   "authority_vs_storage_roles": {
     "semantic_authority_owner": "CryptoHunterAccountAuthority",
@@ -117,9 +123,9 @@
       "fatal_gap": "append-only local authenticity does not prove freshness or unique successor after rollback"
     },
     "C_PREPARE_LOCAL_THEN_ANCHOR_THEN_LOCAL_FINALIZE": {
-      "decision": "REJECTED",
-      "benefit": "durable precursor can bind identities",
-      "fatal_gap": "anchor may become N+1 while local remains N/PREPARED; anchor alone cannot reconstruct exact authority history"
+      "decision": "SELECTED_WITH_ATOMIC_INITIAL_BINDING",
+      "benefit": "An atomic INITIAL_BINDING removes the pre-PREPARED identity gap; durable PREPARED binds the exact CAS candidate and receipt-directed recovery safely completes the local closure.",
+      "fatal_gap": "NONE AT ABSTRACT SEMANTIC LEVEL; production adapters and backends remain unavailable."
     },
     "D_LOCAL_COMMIT_PLUS_AUTHENTICATED_FINALIZATION_RECEIPT": {
       "decision": "PROMISING_BUT_NOT_SELECTABLE",
@@ -132,55 +138,80 @@
       "fatal_gap": "no canonical supported implementation exists in current tree"
     },
     "F_DESIGN_BLOCKED": {
-      "decision": "SELECTED",
+      "decision": "REJECTED_AFTER_RECONCILIATION",
       "benefit": "preserves safety and frozen mismatch behavior",
-      "fatal_gap": "availability is sacrificed until external CAS plus authenticated direction proof/finalization semantics exist"
+      "fatal_gap": "No remaining semantic-safety failure path after atomic INITIAL_BINDING, exact PREPARED intent, frozen CAS/receipt recovery and fail-closed mismatch handling."
     }
   },
   "selected_or_blocked_protocol": {
-    "selection": "F_DESIGN_BLOCKED",
-    "protocol_result": "ACCOUNT_GENESIS_PHYSICAL_PERSISTENCE_DESIGN_BLOCKED",
-    "reason": "No current AccountGenesis external anchor writer offers atomic authenticated CAS, and no external authenticated direction proof/finalization receipt exists. Selecting local-first or anchor-first would contradict frozen fail-closed mismatch semantics.",
+    "selection": "INITIAL_BINDING_THEN_PREPARED_THEN_FRESHNESS_CAS_THEN_LOCAL_FINAL_COMMIT",
+    "protocol_result": "PHYSICAL_PROTOCOL_CAN_NOW_BE_FROZEN",
+    "ordering": [
+      "atomic durable INITIAL_BINDING",
+      "atomic durable PREPARED",
+      "external authoritative freshness CAS N -> N+1",
+      "atomic local final COMMIT",
+      "publish only after exact closure and evidence verification"
+    ],
+    "point_of_no_return": "exact authoritative freshness acceptance N -> N+1",
+    "not_point_of_no_return": [
+      "request send",
+      "timeout or OUTCOME_UNKNOWN",
+      "INITIAL_BINDING",
+      "PREPARED"
+    ],
     "logical_authority_atomicity_equals_single_physical_transaction": false,
     "no_partial_physical_state_publishable": true,
-    "future_minimum_shape": "Atomic authenticated local closure plus full-document external CAS, exact reread, and independently authenticated recovery direction/finalization evidence."
+    "abstract_protocol_frozen_without_schema_or_backend_selection": true
   },
   "physical_phases": [
     {
       "phase": "NO_DURABLE_STATE",
       "semantic_state": "NONE",
       "publishable": false,
-      "restart": "begin only with a new authority-issued operation identity"
+      "restart": "retry may perform the first authority issuance/allocation; no durable identity exists and this is not reminting"
     },
     {
-      "phase": "RESERVATION_DURABLE",
-      "semantic_state": "RESERVED",
+      "phase": "INITIAL_BINDING_DURABLE",
+      "semantic_state": "RESERVED with exact recovery binding",
       "publishable": false,
-      "restart": "recover the exact operation/request/reservation/account candidate; never reallocate"
+      "restart": "recover exact operation/request/reservation/account candidate; never reissue, recreate or remint"
     },
     {
       "phase": "LOCAL_PREPARED",
       "semantic_state": "PREPARED",
       "publishable": false,
-      "restart": "verify authenticated PREPARED closure and resume the same identities only"
+      "restart": "verify authenticated exact CAS intent and resume the same identities only"
     },
     {
-      "phase": "LOCAL_CLOSURE_COMMITTED_ANCHOR_UNCONFIRMED",
-      "semantic_state": "COMMITTED locally; reservation CONSUMED_COMMITTED locally",
+      "phase": "CAS_CONFLICT_CONFIRMED",
+      "semantic_state": "old PREPARED retained; AUTHORITATIVE_DIFFERENT_UNIQUE_SUCCESSOR_PROVEN durably classified for exact old predecessor",
       "publishable": false,
-      "restart": "FAIL_CLOSED / MANUAL_OR_EXTERNAL_RECOVERY_REQUIRED; no automatic anchor advance"
+      "restart": "atomically REPREPARE same identities; negative/missing lookup never reaches this phase"
     },
     {
-      "phase": "EXTERNAL_ANCHOR_WRITE_AMBIGUOUS",
-      "semantic_state": "unchanged local terminal closure",
+      "phase": "REPREPARED",
+      "semantic_state": "PREPARED with a new exact candidate identity and retained supersession history",
       "publishable": false,
-      "restart": "reread external anchor; exact match may continue, every mismatch/unreadable result fails closed"
+      "restart": "send only the current new candidate after expected-state fence; old candidates remain non-sendable"
     },
     {
-      "phase": "EXTERNAL_ANCHOR_CONFIRMED",
-      "semantic_state": "COMMITTED and CONSUMED_COMMITTED with fresh authenticated closure",
+      "phase": "FRESHNESS_OUTCOME_UNKNOWN",
+      "semantic_state": "PREPARED; external outcome unknown",
+      "publishable": false,
+      "restart": "authoritative reread plus finalization-evidence lookup; never infer success or failure"
+    },
+    {
+      "phase": "AUTHORITY_ACCEPTED_LOCAL_FINALIZATION_PENDING",
+      "semantic_state": "PREPARED locally; exact N+1 accepted externally",
+      "publishable": false,
+      "restart": "verify exact receipt and PREPARED precursor, then complete only the exact local finalization or fail closed"
+    },
+    {
+      "phase": "LOCAL_COMMITTED",
+      "semantic_state": "COMMITTED and CONSUMED_COMMITTED with exact freshness evidence",
       "publishable": true,
-      "restart": "reread and verify exact local closure and exact full anchor document before republishing"
+      "restart": "verify complete local closure, exact receipt and authoritative state before republishing"
     },
     {
       "phase": "PUBLISHED",
@@ -190,30 +221,61 @@
     }
   ],
   "allowed_physical_transitions": [
-    "NO_DURABLE_STATE -> RESERVATION_DURABLE",
-    "RESERVATION_DURABLE -> LOCAL_PREPARED",
-    "LOCAL_PREPARED -> LOCAL_CLOSURE_COMMITTED_ANCHOR_UNCONFIRMED",
-    "LOCAL_CLOSURE_COMMITTED_ANCHOR_UNCONFIRMED -> EXTERNAL_ANCHOR_WRITE_AMBIGUOUS",
-    "LOCAL_CLOSURE_COMMITTED_ANCHOR_UNCONFIRMED -> EXTERNAL_ANCHOR_CONFIRMED only through successful CAS plus exact reread",
-    "EXTERNAL_ANCHOR_WRITE_AMBIGUOUS -> EXTERNAL_ANCHOR_CONFIRMED only after exact reread",
-    "EXTERNAL_ANCHOR_CONFIRMED -> PUBLISHED"
+    "NO_DURABLE_STATE -> INITIAL_BINDING_DURABLE by one atomic local transaction",
+    "INITIAL_BINDING_DURABLE -> LOCAL_PREPARED by one atomic local transaction",
+    "LOCAL_PREPARED(old candidate) -> CAS_CONFLICT_CONFIRMED only after AUTHORITATIVE_DIFFERENT_UNIQUE_SUCCESSOR_PROVEN for exact (N, D_N, H_N); negative or absent lookup is forbidden",
+    "LOCAL_PREPARED(old candidate) -> CAS_CONFLICT_CONFIRMED -> REPREPARED(new candidate) by one atomic durable supersession transaction preserving operation/reservation/account/request identities",
+    "REPREPARED(new candidate) -> FRESHNESS_OUTCOME_UNKNOWN when the new CAS transport outcome is ambiguous",
+    "REPREPARED(new candidate) -> CAS_CONFLICT_CONFIRMED if another authoritative different successor wins and exact reread proves new candidate non-acceptance",
+    "LOCAL_PREPARED -> FRESHNESS_OUTCOME_UNKNOWN when CAS transport outcome is ambiguous",
+    "LOCAL_PREPARED, REPREPARED or FRESHNESS_OUTCOME_UNKNOWN -> AUTHORITY_ACCEPTED_LOCAL_FINALIZATION_PENDING only after exact own-candidate authoritative acceptance and verifiable finalization evidence",
+    "AUTHORITY_ACCEPTED_LOCAL_FINALIZATION_PENDING -> LOCAL_COMMITTED by one atomic local finalization transaction",
+    "LOCAL_COMMITTED -> PUBLISHED only after exact closure/evidence verification"
   ],
   "local_transaction_contract": {
-    "status": "REQUIRED_SHAPE_FROZEN / ADAPTER_NOT_AVAILABLE",
+    "status": "ABSTRACT SEMANTIC BOUNDARIES FROZEN / EXACT SCHEMA AND ADAPTER NOT SELECTED",
+    "INITIAL_BINDING_atomic_records": [
+      "authority-issued logical operation identity",
+      "canonical request binding/fingerprint",
+      "reservation identity and CHA ownership",
+      "candidate account_id",
+      "environment and trust-domain binding",
+      "recovery relationship operation <-> reservation <-> account candidate"
+    ],
+    "INITIAL_BINDING_partial_state": "IMPOSSIBLE under a conforming atomic transaction; reservation durable while operation/request/account binding is absent is FORBIDDEN",
+    "INITIAL_BINDING_crash_before_commit": "no durable operation, reservation or account candidate; retry may perform first issuance/allocation",
+    "INITIAL_BINDING_crash_after_commit": "recover exact same operation, request, reservation and account_id; no new issuance",
+    "PREPARED_atomic_records": [
+      "exact INITIAL_BINDING reference",
+      "accepted root-proof validation evidence/reference with exact provenance",
+      "exact proposed_document_payload and proposed_document_digest",
+      "exact predecessor generation and document digest",
+      "exact complete semantic head set and digest",
+      "finalization_request_id and authority/domain bindings",
+      "pending finalization status"
+    ],
+    "FINAL_COMMIT_atomic_records": [
+      "operation PREPARED -> COMMITTED",
+      "reservation RESERVED/BOUND_PREPARED -> CONSUMED_COMMITTED",
+      "genesis terminal history event",
+      "exact accepted receipt and independently required historical proof",
+      "all resulting local semantic heads and accepted freshness generation",
+      "terminal idempotent result"
+    ],
     "atomic_records": [
       "operation transition PREPARED -> COMMITTED",
-      "canonical request reference/fingerprint/schema",
-      "reservation transition RESERVED -> CONSUMED_COMMITTED",
-      "account candidate and mint/reservation binding",
-      "accepted root-proof validation evidence record/reference with exact provenance",
+      "canonical request binding retained",
+      "reservation transition to CONSUMED_COMMITTED",
+      "account candidate binding retained",
+      "root-proof evidence with exact provenance",
       "genesis history terminal event",
-      "all resulting semantic heads and local generation",
-      "pending external-anchor finalization record containing exact candidate anchor and predecessor"
+      "semantic heads and accepted generation",
+      "exact external finalization evidence"
     ],
     "operation_COMMITTED_with_reservation_RESERVED": "FAIL_CLOSED / DO_NOT_PUBLISH",
-    "partial_commit": "MUST_ROLL_BACK_OR_BE_DETECTED_AND_FAIL_CLOSED",
-    "expected_predecessor": "Authenticated exact generation and complete head set must match inside BEGIN IMMEDIATE transaction",
-    "PREPARED": "Durable authenticated non-genuine state binding the exact same operation/request/reservation/account; retry may not reallocate."
+    "partial_commit": "MUST ROLL BACK OR BE DETECTED AND FAIL CLOSED",
+    "cross_process_boundary": "database/authority transaction with durable uniqueness and expected-state fences; process-local mutex is insufficient",
+    "PREPARED": "Durable authenticated non-genuine state binding the exact identities and exact CAS candidate; retry may not reallocate."
   },
   "external_anchor_contract": {
     "model": "AccountGenesis-specific atomic multi-lineage anchor document",
@@ -227,9 +289,9 @@
       "reread authoritative external anchor",
       "authenticate and compare exact canonical document, generation, predecessor and every semantic head"
     ],
-    "exact_success_condition": "The reread document authenticates in the PRODUCTION AccountGenesis domain and is canonically identical to the locally committed candidate, including N+1, predecessor N/head and every lineage head.",
+    "exact_success_condition": "The authority authenticates and accepts the exact PREPARED candidate as N+1 and returns or makes retrievable exact finalization evidence; authoritative reread and evidence must match predecessor, request identity, digest and every semantic head.",
     "successful_write_followed_by_unreadable": "FAIL_CLOSED",
-    "same_generation_same_exact_document_rewrite": "IDEMPOTENT only if the future CAS API explicitly guarantees compare-identical semantics; current primitive NOT_FROZEN",
+    "same_generation_same_exact_document_rewrite": "ALREADY_ACCEPTED_EXACT only with exact decision identity and authenticated finalization evidence; never a second decision.",
     "same_generation_different_heads": "CONFLICT / FAIL_CLOSED"
   },
   "CAS_generation_contract": {
@@ -254,100 +316,246 @@
     "PREPARED_publishable": false,
     "anchor_confirmation_without_local_history_publishable": false,
     "physical_phase_not_semantic_state": true,
-    "COMMITTED_PENDING_EXTERNAL_FRESHNESS_semantic_state": "FORBIDDEN; use the physical LOCAL_CLOSURE_COMMITTED_ANCHOR_UNCONFIRMED phase"
+    "authority_acceptance_before_local_final_commit": "NOT_PUBLISHABLE",
+    "LOCAL_COMMITTED_with_exact_receipt_and_authoritative_match": "PUBLISHABLE",
+    "unresolved_CAS_conflict": "NOT_PUBLISHABLE",
+    "CAS_CONFLICT_CONFIRMED_publishable": false,
+    "REPREPARED_publishable": false
   },
   "projection_update_order": [
+    "commit atomic INITIAL_BINDING",
+    "commit exact durable PREPARED intent",
+    "complete external authoritative full-document CAS and obtain/verify exact finalization evidence",
     "commit complete authoritative local closure",
-    "complete external full-document CAS and authenticated exact reread",
     "publish deterministic COMMITTED result as genuine authority",
     "update/rebuild CryptoHunterAccount projection idempotently"
   ],
   "crash_matrix": [
     {
-      "crash_point": "before reservation commit",
-      "durable_facts_present": "none or predecessor only",
+      "crash_point": "before INITIAL_BINDING commit",
+      "durable_facts_present": "none; atomic transaction rolled back",
       "external_anchor_state": "N",
-      "restart_action": "rollback/infer no reservation; retry command under issuance rules",
+      "restart_action": "perform first authority issuance/allocation; no durable identity exists",
       "publishable": "NO",
-      "may_retry": "YES, same command may start if no durable identity exists",
-      "may_allocate_new_account": "NO, except first authority allocation under ordinary rules",
+      "may_retry": "YES, first issuance/allocation",
+      "may_allocate_new_account": "YES, only as the first allocation",
       "manual_or_external_recovery_required": "NO"
     },
     {
-      "crash_point": "after reservation commit",
-      "durable_facts_present": "exact operation/request/reservation/account binding in RESERVED",
+      "crash_point": "after INITIAL_BINDING commit",
+      "durable_facts_present": "exact operation/request/reservation/account recovery binding",
       "external_anchor_state": "N",
-      "restart_action": "recover exact binding; resume same operation only",
+      "restart_action": "recover exact binding; no new issuance, reservation or account_id",
       "publishable": "NO",
-      "may_retry": "YES, same operation",
+      "may_retry": "YES, exact same operation only",
       "may_allocate_new_account": "NO",
       "manual_or_external_recovery_required": "NO"
     },
     {
-      "crash_point": "after PREPARED",
-      "durable_facts_present": "authenticated exact PREPARED closure and RESERVED binding",
+      "crash_point": "before PREPARED commit",
+      "durable_facts_present": "complete INITIAL_BINDING only; partial PREPARED rolled back",
       "external_anchor_state": "N",
-      "restart_action": "verify and resume same operation/request/reservation/account",
+      "restart_action": "recover exact binding and retry the PREPARED transaction",
       "publishable": "NO",
-      "may_retry": "YES, same operation",
+      "may_retry": "YES, exact same operation only",
       "may_allocate_new_account": "NO",
       "manual_or_external_recovery_required": "NO"
     },
     {
-      "crash_point": "during local closure transaction",
-      "durable_facts_present": "either complete predecessor/PREPARED or complete local closure; never a committed subset",
+      "crash_point": "after PREPARED before CAS",
+      "durable_facts_present": "authenticated exact PREPARED CAS intent",
       "external_anchor_state": "N",
-      "restart_action": "SQLite rollback/replay, then classify exact complete state",
+      "restart_action": "verify authority still exposes exact N, then send/retry the exact CAS request",
       "publishable": "NO",
-      "may_retry": "YES only from predecessor/PREPARED; local-ahead requires recovery",
+      "may_retry": "YES, exact same operation only",
       "may_allocate_new_account": "NO",
-      "manual_or_external_recovery_required": "YES iff transaction committed as local N+1"
+      "manual_or_external_recovery_required": "NO"
     },
     {
-      "crash_point": "after local closure commit before anchor write",
-      "durable_facts_present": "complete authenticated local N+1 closure plus pending finalization record",
-      "external_anchor_state": "N",
-      "restart_action": "FAIL_CLOSED / MANUAL_OR_EXTERNAL_RECOVERY_REQUIRED; direction proof absent",
+      "crash_point": "CAS timeout or transport ambiguity",
+      "durable_facts_present": "authenticated exact PREPARED CAS intent",
+      "external_anchor_state": "N, exact N+1, different N+1 or unavailable",
+      "restart_action": "classify OUTCOME_UNKNOWN; authoritative reread and receipt lookup; never infer outcome",
       "publishable": "NO",
-      "may_retry": "NO automatic anchor publication",
+      "may_retry": "YES only after authoritative classification",
+      "may_allocate_new_account": "NO",
+      "manual_or_external_recovery_required": "YES while unavailable/unverifiable"
+    },
+    {
+      "crash_point": "authority exact N+1 while local PREPARED",
+      "durable_facts_present": "authenticated exact PREPARED precursor",
+      "external_anchor_state": "exact N+1 with exact receipt",
+      "restart_action": "complete only exact local final COMMIT",
+      "publishable": "NO",
+      "may_retry": "YES, exact same operation only",
+      "may_allocate_new_account": "NO",
+      "manual_or_external_recovery_required": "NO"
+    },
+    {
+      "crash_point": "authority different N+1 while local PREPARED",
+      "durable_facts_present": "authenticated exact PREPARED precursor",
+      "external_anchor_state": "authenticated exact N+1 whose predecessor binds exact old (N, D_N, H_N) and whose accepted identity differs from old candidate",
+      "restart_action": "AUTHORITATIVE_DIFFERENT_UNIQUE_SUCCESSOR_PROVEN -> DURABLE_CONFLICT_CLASSIFICATION -> ATOMIC_REPREPARE_SAME_IDENTITIES",
+      "publishable": "NO",
+      "may_retry": "YES only through durable CAS_CONFLICT_CONFIRMED and atomic REPREPARE; never old candidate",
+      "may_allocate_new_account": "NO",
+      "manual_or_external_recovery_required": "NO after verifiable authoritative classification"
+    },
+    {
+      "crash_point": "after CAS conflict before durable conflict classification",
+      "durable_facts_present": "old complete PREPARED; no durable conflict decision",
+      "external_anchor_state": "different successor observed but classification not durable",
+      "restart_action": "obtain constructive exact unique-successor proof or positive old-acceptance proof; negative/absent lookup remains FAIL_CLOSED",
+      "publishable": "NO",
+      "may_retry": "YES only after repeated authoritative classification",
+      "may_allocate_new_account": "NO",
+      "manual_or_external_recovery_required": "YES while unavailable/unverifiable"
+    },
+    {
+      "crash_point": "after durable CAS_CONFLICT_CONFIRMED",
+      "durable_facts_present": "old PREPARED plus durable authoritative non-acceptance/conflict evidence",
+      "external_anchor_state": "exact current predecessor",
+      "restart_action": "resume atomic REPREPARE preserving all logical identities; old candidate remains non-sendable",
+      "publishable": "NO",
+      "may_retry": "YES, exact same logical operation only",
+      "may_allocate_new_account": "NO",
+      "manual_or_external_recovery_required": "NO"
+    },
+    {
+      "crash_point": "during atomic REPREPARE",
+      "durable_facts_present": "complete old PREPARED or complete new REPREPARED; retained supersession history is atomic",
+      "external_anchor_state": "exact predecessor used by attempted reprepare",
+      "restart_action": "rollback/recover one complete candidate; never accept mixed old/new fields",
+      "publishable": "NO",
+      "may_retry": "YES, exact same logical operation only",
+      "may_allocate_new_account": "NO",
+      "manual_or_external_recovery_required": "NO"
+    },
+    {
+      "crash_point": "after new REPREPARED before new CAS",
+      "durable_facts_present": "complete new candidate plus retained superseded old candidate",
+      "external_anchor_state": "new candidate exact predecessor still requires reread",
+      "restart_action": "expected-state fence, reread authority, then send only current candidate or classify another conflict",
+      "publishable": "NO",
+      "may_retry": "YES, exact same logical operation only",
+      "may_allocate_new_account": "NO",
+      "manual_or_external_recovery_required": "NO"
+    },
+    {
+      "crash_point": "authority changes again before loser next CAS",
+      "durable_facts_present": "complete current REPREPARED candidate",
+      "external_anchor_state": "different later successor",
+      "restart_action": "require verified successor-chain proof of exact immediate successor for current candidate predecessor; current generation ahead alone is insufficient",
+      "publishable": "NO",
+      "may_retry": "YES, exact same logical operation only",
+      "may_allocate_new_account": "NO",
+      "manual_or_external_recovery_required": "NO"
+    },
+    {
+      "crash_point": "stale process attempts old candidate after supersession",
+      "durable_facts_present": "new REPREPARED is current; old candidate retained SUPERSEDED",
+      "external_anchor_state": "any",
+      "restart_action": "reject locally by durable attempt/current-request expected-state fence; no external CAS",
+      "publishable": "NO",
+      "may_retry": "NO old-candidate retry; current attempt only",
+      "may_allocate_new_account": "NO",
+      "manual_or_external_recovery_required": "NO"
+    },
+    {
+      "crash_point": "old finalization receipt appears after supersession",
+      "durable_facts_present": "new REPREPARED current plus old superseded history",
+      "external_anchor_state": "unexpected evidence for old candidate",
+      "restart_action": "FAIL_CLOSED / security incident; old receipt cannot close new candidate",
+      "publishable": "NO",
+      "may_retry": "NO until independently reconciled",
       "may_allocate_new_account": "NO",
       "manual_or_external_recovery_required": "YES"
     },
     {
-      "crash_point": "during anchor write",
-      "durable_facts_present": "complete authenticated local N+1 closure plus ambiguous marker/outcome",
-      "external_anchor_state": "N or exact N+1 or unreadable",
-      "restart_action": "reread authoritative external anchor; exact N+1 may continue, otherwise fail closed",
-      "publishable": "NO until exact reread",
-      "may_retry": "YES only exact idempotent document after authenticated recovery policy; not inferred from exception",
-      "may_allocate_new_account": "NO",
-      "manual_or_external_recovery_required": "YES unless reread proves exact N+1"
-    },
-    {
-      "crash_point": "after anchor write before anchor reread",
-      "durable_facts_present": "complete authenticated local N+1 closure",
-      "external_anchor_state": "unknown until reread",
-      "restart_action": "reread and byte/canonical-semantic compare exact authenticated document",
+      "crash_point": "authoritative reread unavailable during conflict resolution",
+      "durable_facts_present": "old PREPARED or CAS_CONFLICT_CONFIRMED",
+      "external_anchor_state": "unavailable/unverifiable",
+      "restart_action": "UNAVAILABLE / FAIL_CLOSED / RETAIN CURRENT CANDIDATE; no conflict confirmation, REPREPARE, supersession, ABORT, RELEASE or new request identity",
       "publishable": "NO",
-      "may_retry": "YES by reread; no blind rewrite",
+      "may_retry": "YES only authoritative reread/verification",
       "may_allocate_new_account": "NO",
-      "manual_or_external_recovery_required": "NO if exact reread; otherwise YES"
+      "manual_or_external_recovery_required": "YES"
     },
     {
-      "crash_point": "after anchor reread before publication",
-      "durable_facts_present": "complete authenticated local N+1 closure",
-      "external_anchor_state": "verified exact N+1 full-head document",
-      "restart_action": "reverify or publish the deterministic terminal result",
-      "publishable": "YES",
-      "may_retry": "YES, idempotent publication",
+      "crash_point": "current authority N+2 or later during old-candidate recovery",
+      "durable_facts_present": "exact old PREPARED bound to (N, D_N, H_N)",
+      "external_anchor_state": "current head later than N+1",
+      "restart_action": "require currently trusted verified retained history/successor chain proving exact immediate N+1 successor; head generation alone proves nothing",
+      "publishable": "NO",
+      "may_retry": "YES only after constructive authoritative classification",
+      "may_allocate_new_account": "NO",
+      "manual_or_external_recovery_required": "YES while proof unavailable"
+    },
+    {
+      "crash_point": "old candidate won but response was lost and authority later advanced",
+      "durable_facts_present": "exact old PREPARED; outcome previously unknown",
+      "external_anchor_state": "current later head plus retained history",
+      "restart_action": "positive exact authenticated historical old acceptance requires finalizing old candidate; REPREPARE forbidden; unavailable evidence fails closed",
+      "publishable": "NO",
+      "may_retry": "YES only after constructive authoritative classification",
+      "may_allocate_new_account": "NO",
+      "manual_or_external_recovery_required": "YES while evidence unavailable"
+    },
+    {
+      "crash_point": "after authority acceptance before local COMMIT",
+      "durable_facts_present": "authenticated exact PREPARED precursor",
+      "external_anchor_state": "exact N+1 accepted",
+      "restart_action": "point-of-no-return crossed; verify evidence and finish exact local finalization or fail closed",
+      "publishable": "NO",
+      "may_retry": "YES, exact same operation only",
       "may_allocate_new_account": "NO",
       "manual_or_external_recovery_required": "NO"
     },
     {
+      "crash_point": "during local final COMMIT",
+      "durable_facts_present": "PREPARED or complete LOCAL_COMMITTED; never a committed subset",
+      "external_anchor_state": "exact N+1 accepted",
+      "restart_action": "database rollback/recovery, then retry exact finalization if still PREPARED",
+      "publishable": "NO",
+      "may_retry": "YES, exact same operation only",
+      "may_allocate_new_account": "NO",
+      "manual_or_external_recovery_required": "NO"
+    },
+    {
+      "crash_point": "after local COMMIT before publication",
+      "durable_facts_present": "complete closure plus exact evidence",
+      "external_anchor_state": "exact N+1",
+      "restart_action": "reverify and publish deterministic result",
+      "publishable": "YES",
+      "may_retry": "YES, idempotent result only",
+      "may_allocate_new_account": "NO",
+      "manual_or_external_recovery_required": "NO"
+    },
+    {
+      "crash_point": "same generation unequal digest",
+      "durable_facts_present": "any local phase",
+      "external_anchor_state": "same generation with unequal digest",
+      "restart_action": "FAIL_CLOSED / FORK_OR_TAMPER",
+      "publishable": "NO",
+      "may_retry": "NO",
+      "may_allocate_new_account": "NO",
+      "manual_or_external_recovery_required": "YES"
+    },
+    {
+      "crash_point": "authority unavailable or evidence unverifiable",
+      "durable_facts_present": "INITIAL_BINDING or PREPARED/pending",
+      "external_anchor_state": "unavailable/unverifiable",
+      "restart_action": "retain exact identities and intent; no publication, abort-to-reuse or new allocation",
+      "publishable": "NO",
+      "may_retry": "YES only as exact reread/recovery",
+      "may_allocate_new_account": "NO",
+      "manual_or_external_recovery_required": "YES"
+    },
+    {
       "crash_point": "after publication before projection update",
-      "durable_facts_present": "complete authority closure; publication may have occurred",
+      "durable_facts_present": "complete verified authority closure",
       "external_anchor_state": "verified exact N+1",
-      "restart_action": "reverify authority and idempotently rebuild projection",
+      "restart_action": "idempotently rebuild projection",
       "publishable": "YES",
       "may_retry": "YES, idempotent result/projection",
       "may_allocate_new_account": "NO",
@@ -355,7 +563,7 @@
     },
     {
       "crash_point": "after projection update",
-      "durable_facts_present": "complete authority closure; projection may be present",
+      "durable_facts_present": "complete verified authority closure",
       "external_anchor_state": "verified exact N+1",
       "restart_action": "verify authority first; retain/rebuild projection only after success",
       "publishable": "YES",
@@ -375,11 +583,11 @@
       "reconstruct operation/reservation states only from verified authority history",
       "publish resolver only if exact equality and closure hold"
     ],
-    "local_N_plus_1_anchor_N": "FAIL_CLOSED / MANUAL_OR_EXTERNAL_RECOVERY_REQUIRED; no automatic acceptance or anchor publication without external authenticated direction proof",
-    "anchor_N_plus_1_local_N": "FAIL_CLOSED / MANUAL_OR_EXTERNAL_RECOVERY_REQUIRED; never create missing local authority history from anchor",
+    "local_N_plus_1_anchor_N": "Impossible in the selected ordering for a conforming final COMMIT; if observed, FAIL_CLOSED as rollback/tamper/protocol violation.",
+    "anchor_N_plus_1_local_N": "Finalize only when exact durable authenticated PREPARED precursor and exact verifiable receipt bind the same closure; otherwise FAIL_CLOSED and never reconstruct missing history from the authority.",
     "same_generation_unequal_heads": "FAIL_CLOSED",
     "equal_generation_equal_heads": "Continue only after all local authentication, closure and key-lifecycle checks succeed",
-    "automatic_repair": "FORBIDDEN absent authenticated direction proof external to both compared states"
+    "automatic_repair": "Only exact PREPARED-to-final-COMMIT completion proven by authoritative state and exact finalization evidence; no reconstruction without the precursor."
   },
   "ambiguous_anchor_write": {
     "classification": "WRITE_OUTCOME_UNKNOWN",
@@ -393,7 +601,13 @@
     "per_account_lock": "Required for conflicting candidate/account transitions; does not impose one-account-per-subject",
     "authority_global_anchor_CAS": "REQUIRED because one document sequences all AccountGenesis lineages",
     "serialization_scope": "Freshness sequence is authority-global; business uniqueness remains entity/account scoped and does not become one-account-per-subject",
-    "O1_O2_same_N": "At most one exact full-document CAS may win; loser rereads and fails closed/restarts from a newly authorized predecessor without changing its identities."
+    "O1_O2_same_N": "REPREPARE_SAME_LOGICAL_OPERATION_ATOMIC_SUPERSESSION",
+    "per_reservation_lock": "Required durable serialization for reservation ownership and recovery binding; process-local lock is insufficient.",
+    "initial_binding_serialization": "Atomic durable uniqueness and expected-absence fences across operation, reservation and account candidate; competing bootstrap may yield exactly one binding.",
+    "process_local_mutex_sufficient": false,
+    "competing_bootstrap_loser": "Reread durable INITIAL_BINDING and recover the exact winning identity when it is the same logical operation; otherwise conflict/fail closed; never allocate a replacement.",
+    "CAS_conflict_crash_matrix_policy": "AUTHORITATIVE_DIFFERENT_UNIQUE_SUCCESSOR_PROVEN -> DURABLE_CONFLICT_CLASSIFICATION -> ATOMIC_REPREPARE_SAME_IDENTITIES",
+    "loser_resolution_transition": "LOCAL_PREPARED(old candidate) -> CAS_CONFLICT_CONFIRMED -> REPREPARED(new candidate)"
   },
   "multi_lineage_anchor": {
     "heads": [
@@ -413,14 +627,21 @@
     "blind_overwrite": false,
     "timestamp_arbitration": false,
     "choose_local_or_anchor": false,
-    "second_N_plus_1_writer": "MUST_NOT_FINALIZE"
+    "second_N_plus_1_writer": "MUST_NOT_FINALIZE",
+    "CAS_loser_policy": "REPREPARE_SAME_LOGICAL_OPERATION_ATOMIC_SUPERSESSION",
+    "old_candidate_blind_retry": false,
+    "old_candidate_in_place_rebase": false
   },
   "abort_persistence": {
     "operation_ABORTED_terminal_immutable": true,
     "reservation_disposition_separately_recoverable": true,
     "crash_between_ABORT_and_RELEASE": "ABORTED_HELD",
     "later_RELEASE_changes_operation_terminal_history": false,
-    "ABORT_anchor_transition": "Requires authenticated local transaction plus the same external freshness confirmation before publication."
+    "ABORT_anchor_transition": "Requires authenticated local transaction plus the same external freshness confirmation before publication.",
+    "before_point_of_no_return": "Allowed only as an authenticated atomic CHA transition retaining operation/request/reservation/account history; it must not race an unresolved CAS.",
+    "after_point_of_no_return": "FORBIDDEN for the accepted operation; local finalization must close the exact accepted candidate or FAIL_CLOSED.",
+    "OUTCOME_UNKNOWN": "ABORT FORBIDDEN until authoritative reread proves that acceptance did not occur.",
+    "CAS_conflict_loser": "REPREPARE selected; conflict alone does not authorize ABORT. A separately authorized pre-point-of-no-return ABORT requires authoritative reread proving no own acceptance and must preserve supersession history."
   },
   "release_persistence": {
     "scope": "RESERVATION_ONLY",
@@ -428,7 +649,11 @@
     "may_update_freshness_anchor": true,
     "may_rewrite_operation_ABORTED": false,
     "account_id_reusable": false,
-    "reuse_policy": "Requires a separate future explicit policy; RELEASE alone never permits reuse."
+    "reuse_policy": "Requires a separate future explicit policy; RELEASE alone never permits reuse.",
+    "after_authority_acceptance": "FORBIDDEN if it enables reuse, erases history or contradicts the accepted decision.",
+    "accepted_account_id_reusable": false,
+    "accepted_operation_restartable": false,
+    "CAS_conflict_loser": "RELEASE cannot resolve conflict, enable account_id reuse, erase superseded candidates, or change operation history."
   },
   "root_proof_evidence_persistence": {
     "required_before_local_COMMITTED": true,
@@ -579,21 +804,287 @@
         "Catalog_anchor_or_custody_reused"
       ],
       "unsafe_value": true
+    },
+    "partial_initial_binding_accepted": {
+      "path": [
+        "local_transaction_contract",
+        "INITIAL_BINDING_partial_state"
+      ],
+      "unsafe_value": "ALLOWED"
+    },
+    "prepared_published": {
+      "path": [
+        "publishability_rule",
+        "PREPARED_publishable"
+      ],
+      "unsafe_value": true
+    },
+    "point_of_no_return_at_request_send": {
+      "path": [
+        "selected_or_blocked_protocol",
+        "point_of_no_return"
+      ],
+      "unsafe_value": "request send"
+    },
+    "abort_after_authority_acceptance": {
+      "path": [
+        "abort_persistence",
+        "after_point_of_no_return"
+      ],
+      "unsafe_value": "ALLOWED"
+    },
+    "release_enables_accepted_account_reuse": {
+      "path": [
+        "release_persistence",
+        "accepted_account_id_reusable"
+      ],
+      "unsafe_value": true
+    },
+    "process_local_mutex_as_cross_process_authority": {
+      "path": [
+        "concurrency",
+        "process_local_mutex_sufficient"
+      ],
+      "unsafe_value": true
+    },
+    "cas_loser_silently_rewrites_old_prepared_predecessor": {
+      "path": [
+        "CAS_conflict_loser_resolution",
+        "old_candidate_disposition",
+        "mutable_in_place"
+      ],
+      "unsafe_value": true
+    },
+    "cas_loser_keeps_old_digest_after_predecessor_change": {
+      "path": [
+        "CAS_conflict_loser_resolution",
+        "new_candidate_identity",
+        "proposed_document_digest"
+      ],
+      "unsafe_value": "KEEP_OLD"
+    },
+    "cas_loser_treats_new_candidate_as_already_accepted_exact_old": {
+      "path": [
+        "CAS_conflict_loser_resolution",
+        "old_candidate_disposition",
+        "may_equal_new_candidate_identity"
+      ],
+      "unsafe_value": true
+    },
+    "cas_loser_remints_account_id": {
+      "path": [
+        "CAS_conflict_loser_resolution",
+        "identity_preservation",
+        "remint_account_id"
+      ],
+      "unsafe_value": true
+    },
+    "cas_loser_creates_new_reservation": {
+      "path": [
+        "CAS_conflict_loser_resolution",
+        "identity_preservation",
+        "new_reservation"
+      ],
+      "unsafe_value": true
+    },
+    "cas_loser_starts_new_logical_operation_as_retry": {
+      "path": [
+        "CAS_conflict_loser_resolution",
+        "identity_preservation",
+        "new_logical_operation"
+      ],
+      "unsafe_value": true
+    },
+    "stale_old_candidate_remains_sendable_after_supersession": {
+      "path": [
+        "CAS_conflict_loser_resolution",
+        "old_candidate_disposition",
+        "sendable_after_supersession"
+      ],
+      "unsafe_value": true
+    },
+    "partial_reprepare_produces_mixed_old_new_candidate": {
+      "path": [
+        "CAS_conflict_loser_resolution",
+        "atomic_reprepare",
+        "crash_atomicity"
+      ],
+      "unsafe_value": "MIXED_ALLOWED"
+    },
+    "conflict_path_absent_from_allowed_transitions": {
+      "path": [
+        "allowed_physical_transitions"
+      ],
+      "unsafe_value": [
+        "NO_DURABLE_STATE -> INITIAL_BINDING_DURABLE by one atomic local transaction",
+        "INITIAL_BINDING_DURABLE -> LOCAL_PREPARED by one atomic local transaction",
+        "LOCAL_PREPARED(old candidate) -> CAS_CONFLICT_CONFIRMED only after authoritative reread and finalization lookup prove different successor and old candidate non-acceptance",
+        "REPREPARED(new candidate) -> FRESHNESS_OUTCOME_UNKNOWN when the new CAS transport outcome is ambiguous",
+        "REPREPARED(new candidate) -> CAS_CONFLICT_CONFIRMED if another authoritative different successor wins and exact reread proves new candidate non-acceptance",
+        "LOCAL_PREPARED -> FRESHNESS_OUTCOME_UNKNOWN when CAS transport outcome is ambiguous",
+        "LOCAL_PREPARED, REPREPARED or FRESHNESS_OUTCOME_UNKNOWN -> AUTHORITY_ACCEPTED_LOCAL_FINALIZATION_PENDING only after exact own-candidate authoritative acceptance and verifiable finalization evidence",
+        "AUTHORITY_ACCEPTED_LOCAL_FINALIZATION_PENDING -> LOCAL_COMMITTED by one atomic local finalization transaction",
+        "LOCAL_COMMITTED -> PUBLISHED only after exact closure/evidence verification"
+      ]
+    },
+    "concurrency_policy_contradicts_crash_matrix": {
+      "path": [
+        "concurrency",
+        "CAS_conflict_crash_matrix_policy"
+      ],
+      "unsafe_value": "TERMINAL_ABORT"
+    },
+    "cas_loser_abort_enables_account_id_reuse": {
+      "path": [
+        "release_persistence",
+        "account_id_reusable"
+      ],
+      "unsafe_value": true
+    },
+    "unresolved_conflict_permits_publication": {
+      "path": [
+        "publishability_rule",
+        "unresolved_CAS_conflict"
+      ],
+      "unsafe_value": "PUBLISHABLE"
+    },
+    "unavailable_authoritative_reread_permits_reprepare_or_abort": {
+      "path": [
+        "CAS_conflict_loser_resolution",
+        "unavailable_or_unverifiable_reread"
+      ],
+      "unsafe_value": "REPREPARE"
+    },
+    "old_receipt_from_superseded_candidate_closes_new_candidate": {
+      "path": [
+        "CAS_conflict_loser_resolution",
+        "old_receipt_disposition",
+        "may_close_new_candidate"
+      ],
+      "unsafe_value": true
+    },
+    "receipt_not_found_treated_as_non_acceptance_proof": {
+      "path": [
+        "authoritative_non_acceptance_proof",
+        "receipt_not_found_is_proof"
+      ],
+      "unsafe_value": true
+    },
+    "timeout_treated_as_non_acceptance_proof": {
+      "path": [
+        "authoritative_non_acceptance_proof",
+        "timeout_is_proof"
+      ],
+      "unsafe_value": true
+    },
+    "unavailable_historical_lookup_allows_reprepare": {
+      "path": [
+        "authoritative_non_acceptance_proof",
+        "unavailable_history_is_proof"
+      ],
+      "unsafe_value": true
+    },
+    "current_generation_ahead_alone_allows_reprepare": {
+      "path": [
+        "authoritative_non_acceptance_proof",
+        "current_generation_greater_than_old_predecessor_is_proof"
+      ],
+      "unsafe_value": true
+    },
+    "N_plus_2_head_without_verified_immediate_history_allows_reprepare": {
+      "path": [
+        "authoritative_non_acceptance_proof",
+        "historical_successor_chain",
+        "current_head_alone_sufficient"
+      ],
+      "unsafe_value": true
+    },
+    "local_projection_proves_non_acceptance": {
+      "path": [
+        "authoritative_non_acceptance_proof",
+        "historical_successor_chain",
+        "local_projection_sufficient"
+      ],
+      "unsafe_value": true
+    },
+    "revoked_only_history_proves_non_acceptance": {
+      "path": [
+        "authoritative_non_acceptance_proof",
+        "historical_successor_chain",
+        "revoked_only_trust_sufficient"
+      ],
+      "unsafe_value": true
+    },
+    "same_generation_unequal_document_is_valid_successor_proof": {
+      "path": [
+        "authoritative_non_acceptance_proof",
+        "same_generation_unequal_document"
+      ],
+      "unsafe_value": "VALID_DIFFERENT_SUCCESSOR"
+    },
+    "incomplete_successor_chain_allows_reprepare": {
+      "path": [
+        "authoritative_non_acceptance_proof",
+        "incomplete_history"
+      ],
+      "unsafe_value": "REPREPARE"
+    },
+    "positive_exact_old_receipt_allows_reprepare": {
+      "path": [
+        "authoritative_non_acceptance_proof",
+        "positive_old_acceptance",
+        "exact_receipt_for_old_candidate"
+      ],
+      "unsafe_value": "REPREPARE"
+    },
+    "positive_exact_old_history_allows_reprepare": {
+      "path": [
+        "authoritative_non_acceptance_proof",
+        "positive_old_acceptance",
+        "exact_authenticated_historical_acceptance"
+      ],
+      "unsafe_value": "REPREPARE"
+    },
+    "different_successor_wrong_predecessor_digest_allows_reprepare": {
+      "path": [
+        "authoritative_non_acceptance_proof",
+        "direct_different_successor",
+        "predecessor_document_digest_matches_old_D_N"
+      ],
+      "unsafe_value": false
+    },
+    "different_successor_wrong_predecessor_heads_allows_reprepare": {
+      "path": [
+        "authoritative_non_acceptance_proof",
+        "direct_different_successor",
+        "predecessor_complete_heads_match_old_H_N"
+      ],
+      "unsafe_value": false
+    },
+    "different_successor_other_trust_domain_allows_reprepare": {
+      "path": [
+        "authoritative_non_acceptance_proof",
+        "direct_different_successor",
+        "environment_trust_domain_authority_match_required"
+      ],
+      "unsafe_value": false
     }
   },
   "result": {
-    "primary_result": "ACCOUNT_GENESIS_PHYSICAL_PERSISTENCE_DESIGN_BLOCKED",
-    "physical_protocol_frozen": false,
-    "safety_and_required_protocol_shape_frozen": true,
-    "blocking_dependencies": [
-      "production dedicated AccountGenesis external freshness writer with authenticated full-document CAS",
-      "authenticated external direction/finalization proof sufficient for crash recovery",
-      "production independent root-proof issuer",
-      "production dedicated local authority adapter/schema and verified durability contract"
-    ]
+    "primary_result": "PHYSICAL_PROTOCOL_CAN_NOW_BE_FROZEN",
+    "physical_protocol_frozen": true,
+    "selected_protocol": "INITIAL_BINDING -> PREPARED -> EXTERNAL_FRESHNESS_CAS -> LOCAL_FINAL_COMMIT",
+    "initial_binding_removes_prior_identity_recovery_blocker": true,
+    "remaining_design_blockers": [],
+    "implementation_and_backend_available": false,
+    "CAS_conflict_loser_resolution_frozen": true,
+    "selected_CAS_conflict_loser_model": "A_REPREPARE_REBASE_SAME_LOGICAL_OPERATION",
+    "authoritative_non_acceptance_proof_frozen": true
   },
   "implementation_allowed": {
-    "CryptoHunterAccountAuthority": false
+    "FreshnessAuthority": false,
+    "CryptoHunterAccountAuthority": false,
+    "design_validators_and_contract_tests_only": true
   },
   "preserved_status": {
     "WorkspaceAuthority": "NOT_AVAILABLE",
@@ -601,7 +1092,8 @@
     "M0.8": "BLOCKED",
     "production M0.5": "NOT_AVAILABLE",
     "freshness implementation": "NOT_AVAILABLE",
-    "external root-proof issuer": "NOT_AVAILABLE"
+    "external root-proof issuer": "NOT_AVAILABLE",
+    "physical persistence protocol": "FROZEN ABSTRACT DESIGN"
   },
   "freshness_ownership_redteam": {
     "freshness_owner_collapsed_into_CHA": {
@@ -632,5 +1124,106 @@
       ],
       "unsafe_value": true
     }
+  },
+  "CAS_conflict_loser_resolution": {
+    "selected_model": "A_REPREPARE_REBASE_SAME_LOGICAL_OPERATION",
+    "normative_policy": "REPREPARE_SAME_LOGICAL_OPERATION_ATOMIC_SUPERSESSION",
+    "exact_transition": "LOCAL_PREPARED(old candidate) -> CAS_CONFLICT_CONFIRMED -> REPREPARED(new candidate)",
+    "eligibility": "Only before this operation point-of-no-return and only after AUTHORITATIVE_DIFFERENT_UNIQUE_SUCCESSOR_PROVEN for the exact old predecessor under authoritative_non_acceptance_proof.",
+    "authoritative_reread_required": true,
+    "unavailable_or_unverifiable_reread": "UNAVAILABLE / FAIL_CLOSED / RETAIN CURRENT CANDIDATE; no CAS_CONFLICT_CONFIRMED, REPREPARE, supersession, ABORT, RELEASE or new finalization_request_id",
+    "identity_preservation": {
+      "logical_operation_identity": "PRESERVED_EXACT",
+      "reservation_identity": "PRESERVED_EXACT",
+      "account_id": "PRESERVED_EXACT",
+      "canonical_request_binding": "PRESERVED_EXACT",
+      "root_proof_binding": "PRESERVED_EXACT_IF_STILL_VALID",
+      "new_logical_operation": false,
+      "new_reservation": false,
+      "remint_account_id": false
+    },
+    "new_candidate_identity": {
+      "required": true,
+      "predecessor": "exact current authoritative successor document",
+      "proposed_payload": "new exact payload bound to the new predecessor and unchanged operation semantics",
+      "proposed_document_digest": "NEW and recomputed; old digest forbidden",
+      "finalization_request_id": "NEW and distinct from every superseded attempt",
+      "proposer_authentication": "NEW and bound to the complete new candidate"
+    },
+    "old_candidate_disposition": {
+      "status": "SUPERSEDED_RETAINED_HISTORY",
+      "old_finalization_request_id": "retained and atomically marked SUPERSEDED_BY new finalization_request_id",
+      "old_proposed_document_digest": "retained with exact old predecessor and payload",
+      "sendable_after_supersession": false,
+      "mutable_in_place": false,
+      "eligible_as_current_attempt": false,
+      "may_equal_new_candidate_identity": false
+    },
+    "old_receipt_disposition": {
+      "lookup_required_before_reprepare": true,
+      "receipt_arrives_before_atomic_reprepare": "positive exact old acceptance evidence requires FINALIZE_OLD_CANDIDATE; REPREPARE forbidden",
+      "receipt_arrives_after_supersession": "FAIL_CLOSED / FORK_OR_TAMPER security incident; legitimate supersession already constructively proved a different unique successor",
+      "may_close_new_candidate": false,
+      "ALREADY_ACCEPTED_EXACT_scope": "old receipt and old request identity refer only to the exact old candidate"
+    },
+    "atomic_reprepare": {
+      "required": true,
+      "pre_state": "complete old LOCAL_PREPARED plus authoritative conflict evidence",
+      "post_state": "complete REPREPARED new candidate plus retained supersession history",
+      "crash_atomicity": "complete old PREPARED or complete new REPREPARED; never mixed old/new candidate",
+      "silent_overwrite": false,
+      "stale_writer_fence": "durable attempt generation/current finalization_request_id expected-state fence; stale old candidate send is rejected before external CAS"
+    },
+    "authority_changes_again": "repeat authoritative reread and, after exact non-acceptance proof, another atomic supersession; never mutate or send a stale candidate",
+    "crash_matrix_policy": "AUTHORITATIVE_DIFFERENT_UNIQUE_SUCCESSOR_PROVEN -> DURABLE_CONFLICT_CLASSIFICATION -> ATOMIC_REPREPARE_SAME_IDENTITIES",
+    "publication_while_conflict_unresolved": "FORBIDDEN"
+  },
+  "authoritative_non_acceptance_proof": {
+    "required": true,
+    "entry_gate": "AUTHORITATIVE_DIFFERENT_UNIQUE_SUCCESSOR_PROVEN",
+    "negative_lookup_is_proof": false,
+    "receipt_not_found_is_proof": false,
+    "missing_historical_lookup_is_proof": false,
+    "timeout_is_proof": false,
+    "unavailable_history_is_proof": false,
+    "unverifiable_history_is_proof": false,
+    "current_generation_greater_than_old_predecessor_is_proof": false,
+    "negative_or_ambiguous_result": "UNAVAILABLE / FAIL_CLOSED / RETAIN_CURRENT_CANDIDATE; no CAS_CONFLICT_CONFIRMED, REPREPARE, supersession, ABORT, RELEASE or new finalization_request_id",
+    "direct_different_successor": {
+      "allowed": true,
+      "accepted_generation_is_exact_N_plus_1": true,
+      "predecessor_generation_matches_old_N": true,
+      "predecessor_document_digest_matches_old_D_N": true,
+      "predecessor_complete_heads_match_old_H_N": true,
+      "accepted_document_identity_differs_from_old_candidate": true,
+      "single_successor_invariant_authority_authenticated": true,
+      "environment_trust_domain_authority_match_required": true
+    },
+    "historical_successor_chain": {
+      "allowed": true,
+      "required_when_current_generation_is_N_plus_2_or_later": true,
+      "current_head_alone_sufficient": false,
+      "exact_immediate_successor_of_old_predecessor_required": true,
+      "exact_old_predecessor_generation_digest_heads_binding_required": true,
+      "immediate_successor_differs_from_old_candidate_required": true,
+      "currently_trusted_authority_evidence_required": true,
+      "verification_reaches_currently_trusted_authority_state_or_root": true,
+      "no_missing_generation_required": true,
+      "no_fork_required": true,
+      "revoked_only_trust_sufficient": false,
+      "local_projection_sufficient": false
+    },
+    "incomplete_history": "FAIL_CLOSED / RETAIN_CURRENT_CANDIDATE",
+    "unavailable_history": "FAIL_CLOSED / RETAIN_CURRENT_CANDIDATE",
+    "unverifiable_history": "FAIL_CLOSED / RETAIN_CURRENT_CANDIDATE",
+    "same_generation_unequal_document": "FAIL_CLOSED / FORK_OR_TAMPER",
+    "positive_old_acceptance": {
+      "exact_receipt_for_old_candidate": "FINALIZE_OLD_CANDIDATE / REPREPARE_FORBIDDEN",
+      "exact_authenticated_historical_acceptance": "FINALIZE_OLD_CANDIDATE / REPREPARE_FORBIDDEN",
+      "positive_old_acceptance_evidence_forbids_reprepare": true,
+      "later_current_generation_does_not_override_old_acceptance": true,
+      "historical_evidence_unavailable": "FAIL_CLOSED / RETAIN_CURRENT_CANDIDATE / NO_REPREPARE"
+    },
+    "old_won_lost_response_then_authority_advanced": "Recover exact authenticated historical acceptance, finalize old candidate, and forbid REPREPARE; unavailable distinguishing history fails closed."
   }
 }
