@@ -45,8 +45,11 @@ This file is a deterministic complete projection of `m05_cryptohunter_account_ge
       "deployment owner",
       "provisioning subject"
     ],
-    "impact": "Duplicate and same-subject distinct-account conflict detection cannot be made authoritative; per-subject serialization and idempotency cannot be frozen.",
-    "invention_forbidden": true
+    "impact": "Subject-based duplicate detection and per-subject serialization applicability cannot be decided until subject-to-account cardinality and the account uniqueness key are frozen; missing subject identity alone does not make genesis impossible.",
+    "invention_forbidden": true,
+    "subject_to_account_cardinality": "NOT_FROZEN",
+    "one_subject_one_account": "NOT_PROVEN",
+    "missing_subject_identity_alone_makes_genesis_impossible": false
   },
   "account_id_state_machine": {
     "states": [
@@ -281,10 +284,13 @@ This file is a deterministic complete projection of `m05_cryptohunter_account_ge
         "claim_1 = acct_A/dev_1",
         "claim_2 = acct_B/dev_2"
       ],
-      "rule": "Must not silently create two accounts for the same external subject.",
-      "closure_status": "DESIGN_BLOCKED: ACCOUNT_GENESIS_SUBJECT_IDENTITY = NOT_FOUND"
+      "classification": "DOMAIN_SEMANTICS_NOT_FROZEN",
+      "one_subject_one_account": "deterministic conflict/duplicate if later frozen",
+      "one_subject_many_accounts": "both may be genuine if later frozen",
+      "no_external_subject_model": "comparison may be irrelevant",
+      "closure_status": "DESIGN_BLOCKED: SUBJECT_ACCOUNT_CARDINALITY = NOT_FROZEN"
     },
-    "distinct_genuine_subjects": "Both may potentially be valid only when independently authenticated stable subject bindings differ."
+    "distinct_genuine_subjects": "Subject distinction is unavailable; consequences depend on the selected future uniqueness model, and authority-global singleton serialization is forbidden."
   },
   "reservation_crash_recovery": {
     "durability": "REQUIRED but protocol NOT_FROZEN",
@@ -376,7 +382,7 @@ This file is a deterministic complete projection of `m05_cryptohunter_account_ge
   "impact_on_AccountAuthority_design": {
     "CryptoHunterAccountAuthority": "NOT_AVAILABLE",
     "implementation_allowed": false,
-    "reason": "Conceptual invariants do not supply subject identity, root owner, mint protocol, serialization, authentication, or rollback anchor."
+    "reason": "Conceptual invariants do not supply root owner, mint protocol, ordering, serialization scope, idempotency basis, authentication, or rollback anchor. Missing external subject identity alone is not the blocker until cardinality is selected."
   },
   "impact_on_Workspace": {
     "WorkspaceAuthority": "NOT_AVAILABLE",
@@ -388,7 +394,6 @@ This file is a deterministic complete projection of `m05_cryptohunter_account_ge
     "reserved ID becomes genuine before genesis": "FAIL",
     "FirstRunBootstrapAuthority silently becomes AccountAuthority": "FAIL",
     "two concurrent same-account claims create two genesis facts": "FAIL",
-    "same external subject can create acct_A and acct_B by racing": "FAIL",
     "arrival order selects winner": "FAIL",
     "local timestamp selects winner": "FAIL",
     "last-writer-wins": "FAIL",
@@ -398,12 +403,16 @@ This file is a deterministic complete projection of `m05_cryptohunter_account_ge
     "M0.11 carrier becomes root proof": "FAIL",
     "pre-account root provisioning evidence becomes NOT_AUTHORIZED while root candidate remains open": "FAIL",
     "ACCOUNT_FIRST root proof equals first-device ProvisioningMembershipBinding without evidence": "FAIL",
-    "first-device provisioning membership references account_id therefore becomes account authority": "FAIL"
+    "first-device provisioning membership references account_id therefore becomes account authority": "FAIL",
+    "same-subject acct_A/acct_B forced conflict before cardinality selection": "FAIL",
+    "one-to-many model rejects legitimate acct_B": "FAIL",
+    "different subjects serialized as global singleton": "FAIL",
+    "missing subject identity alone makes genesis impossible": "FAIL"
   },
   "result": {
     "primary_result": "ACCOUNT_GENESIS_MODEL_DESIGN_BLOCKED",
     "upstream_dependency_status": "BLOCKED_UPSTREAM: production ProvisioningBoundary NOT_AVAILABLE",
-    "intrinsic_semantic_status": "DESIGN_BLOCKED: subject identity, root owner, mint/reservation owner and protocol, ordering/atomicity, serialization, idempotency, authentication and rollback anchor remain unresolved"
+    "intrinsic_semantic_status": "DESIGN_BLOCKED: subject/cardinality model, root owner, mint/reservation owner and protocol, ordering/atomicity, serialization scope, idempotency basis, authentication and rollback anchor remain unresolved"
   },
   "implementation_allowed": {
     "CryptoHunterAccountAuthority": false,
@@ -422,6 +431,13 @@ This file is a deterministic complete projection of `m05_cryptohunter_account_ge
     "M0.8": "NOT_AVAILABLE",
     "C25": "BLOCKED",
     "S9D": "OPEN"
+  },
+  "subject_cardinality_parity": {
+    "subject_to_account_cardinality": "NOT_FROZEN",
+    "one_subject_one_account": "NOT_PROVEN",
+    "canonical_vocabulary_defines_cardinality": false,
+    "root_SaaS_customer_account_implies_one_to_one": false,
+    "discovery_artifact_expected": "NOT_FROZEN"
   }
 }
 ```
