@@ -24,10 +24,10 @@
     "independent_accepted_first_account_root": "REQUIRED",
     "self_authorization_using_local_evidence": "FORBIDDEN",
     "non_circular_root": "FROZEN",
-    "root_proof_issuer": "NOT_FOUND / conditional external provisioning issuer",
-    "root_proof_validator": "DESIGN_BLOCKED",
-    "root_proof_consumption_semantics": "NOT_FROZEN",
-    "genesis_final_decision_owner": "NOT_FOUND",
+    "root_proof_issuer": "INDEPENDENT_PRE_ACCOUNT_ROOT_PROOF_ISSUER",
+    "root_proof_validator": "CHA admission validation role (implementation unavailable)",
+    "root_proof_consumption_semantics": "C_STATEFUL_SINGLE_BIND_AT_ISSUANCE_PLUS_IMMUTABLE_EXACT_OPERATION_PROOF",
+    "genesis_final_decision_owner": "CryptoHunterAccountAuthority",
     "subject_cardinality": "NOT_FROZEN",
     "proof_id_is_operation_id": false,
     "issuance_is_validation": false,
@@ -224,7 +224,15 @@
         "gap": "must equal claim context fingerprint; nominal shape/literal/hash cannot establish issuer authority"
       }
     ],
-    "assessment": "VIABLE_ONLY_AFTER_ADDITIONAL_AUTHORITY; insufficient as current AccountGenesis root proof"
+    "assessment": "VIABLE_ONLY_AFTER_ADDITIONAL_AUTHORITY; insufficient as current AccountGenesis root proof",
+    "root_proof_validation_receipt": {
+      "object": "SEPARATE_VALIDATION_RECEIPT_NOT_REQUIRED",
+      "replacement": "RootProofAdmissionEvidenceV1"
+    },
+    "AccountGenesis_admission_evidence": {
+      "object": "RootProofAdmissionEvidenceV1",
+      "availability": "SEMANTICS_FROZEN / IMPLEMENTATION_NOT_AVAILABLE"
+    }
   },
   "proof_object_layers": {
     "raw_external_claim": {
@@ -238,12 +246,14 @@
       "scope": "INITIAL_SECURITY_ESTABLISHMENT_ONLY consumer contract; not AccountGenesis evidence"
     },
     "root_proof_validation_receipt": {
-      "object": "NOT_FOUND; future immutable receipt is useful but schema/name/owner are NOT_FROZEN",
-      "must_not_be_fabricated_from": "public SHA, local HMAC, structural validity, or current membership fallback"
+      "object": "SEPARATE_VALIDATION_RECEIPT_NOT_REQUIRED",
+      "replacement": "RootProofAdmissionEvidenceV1",
+      "must_not_be_fabricated_from": "public SHA, local HMAC, structural validity, current membership fallback, current issuer state alone or caller proof alone"
     },
     "AccountGenesis_admission_evidence": {
-      "object": "NOT_FOUND",
-      "requirement": "must retain exact accepted root-proof provenance and exact genesis binding/decision linkage independently of current issuer state"
+      "object": "RootProofAdmissionEvidenceV1",
+      "owner": "CryptoHunterAccountAuthority local AccountGenesis authority record",
+      "requirement": "atomically retain exact validation, root-proof, claimant, requester, entitlement BOUND history and INITIAL_BINDING provenance in PREPARED"
     }
   },
   "candidate_models": {
@@ -256,7 +266,7 @@
       "requirements": "authenticated derivation chain, exact domain/bindings/freshness, non-circular issuer and historical resolution"
     },
     "C_EXTERNAL_ISSUER_ACCOUNT_GENESIS_PROOF": {
-      "status": "POSSIBLE_NOT_SELECTED",
+      "status": "SELECTED_SEMANTICS_FROZEN_IMPLEMENTATION_UNAVAILABLE",
       "requirements": "trusted issuer contract, authentication, domain, binding, freshness, replay and history"
     },
     "D_VALIDATION_RECEIPT_MINTED_BY_FUTURE_ROOT_PROOF_VALIDATOR": {
@@ -268,24 +278,21 @@
       "requirements": "frozen issuer/reservation/admission atomic protocol without collapsing authority roles"
     },
     "F_DESIGN_BLOCKED": {
-      "status": "SELECTED",
+      "status": "NOT_SELECTED",
       "reason": "no candidate has a complete evidenced contract and validator owner remains DESIGN_BLOCKED"
     }
   },
   "selected_or_blocked_model": {
-    "selection": "F_DESIGN_BLOCKED",
+    "selection": "C_EXTERNAL_ISSUER_ACCOUNT_GENESIS_PROOF",
     "existing_candidate_disposition": "M03 candidate is conditional input evidence, not a sufficient AccountGenesis root proof",
-    "intrinsic_blockers": [
-      "missing AccountGenesis operation/request binding model",
-      "consumption/replay/cardinality semantics NOT_FROZEN",
-      "validator and final decision owner NOT_FOUND/DESIGN_BLOCKED",
-      "account-id mint/reservation handoff protocol NOT_FROZEN"
-    ],
+    "intrinsic_blockers": [],
     "upstream_blockers": [
       "production ProvisioningBoundary/authenticated issuer NOT_AVAILABLE",
       "issuer trust-domain keys/registry NOT_FOUND",
       "membership lifecycle/revocation and anti-rollback anchor NOT_FOUND"
-    ]
+    ],
+    "semantic_status": "SEMANTICS_FROZEN",
+    "implementation_status": "PRODUCTION_ISSUER_ENTITLEMENT_AND_CLAIMANT_AUTHORITY_NOT_AVAILABLE"
   },
   "binding_requirements": {
     "rule": "An accepted future proof MUST bind every semantically required fact directly or through one authenticated, historically resolvable derivation chain. Fields below are requirements, not invented DTO fields.",
@@ -307,23 +314,24 @@
     "current_candidate": "FirstRunBootstrapClaim directly binds exact account_id",
     "options": {
       "A_proof_then_authenticated_handoff_to_reservation": "POSSIBLE_NOT_SELECTED",
-      "B_direct_exact_account_id": "CURRENT_CANDIDATE_HAS_FIELD_BUT_END_TO_END_AUTHORITY_INSUFFICIENT",
+      "B_direct_exact_account_id": "SELECTED: independent issuer proof exact binding",
       "C_atomic_proof_reservation": "POSSIBLE_NOT_SELECTED",
-      "D_NOT_FROZEN": "SELECTED"
+      "D_NOT_FROZEN": "NOT_SELECTED"
     },
-    "mismatch_rule": "If an accepted proof/derivation binds acct_A, use for acct_B MUST fail. Current candidate can detect content mismatch only after genuine membership authenticity exists.",
+    "mismatch_rule": "Proof account_id MUST exactly equal INITIAL_BINDING account_id; mismatch REJECT.",
     "proof_accepted_is_account_id_minted": false,
     "account_id_minted_is_proof_accepted": false,
     "both_imply_account_genuine": false
   },
   "operation_binding": {
     "proof_id_is_operation_id": false,
-    "current_candidate_binds_logical_operation": false,
-    "current_candidate_binds_reservation": false,
-    "current_candidate_binds_canonical_genesis_request": false,
-    "future_requirement": "stable authority-issued logical operation identity or authenticated equivalent must make an exact retry converge on the same decision/result",
-    "changed_semantics_rule": "MUST fail only after an operation/request-bound model is selected; current root proof is not operation-bound, so this is not claimed as current behavior",
-    "status": "DESIGN_BLOCKED"
+    "current_candidate_binds_logical_operation": true,
+    "current_candidate_binds_reservation": true,
+    "current_candidate_binds_canonical_genesis_request": true,
+    "future_requirement": "SATISFIED_BY_INDEPENDENT_ISSUER_CONTRACT",
+    "changed_semantics_rule": "different operation, account, request fingerprint, or INITIAL_BINDING tuple is REJECT",
+    "status": "FROZEN",
+    "issuance_timing": "B_AFTER_INITIAL_BINDING_BEFORE_PREPARED"
   },
   "environment_binding": {
     "requirement": "TEST root proof MUST NOT authorize PRODUCTION AccountGenesis",
@@ -359,7 +367,7 @@
     "disposition_when_unverifiable": "DENY / FAIL_CLOSED"
   },
   "validation_semantics": {
-    "valid_root_proof_means": "Only the exact claims explicitly guaranteed by a future trusted issuer/validator contract, for its exact authority domain, authenticated content, bindings and validity point; that contract is not currently complete.",
+    "valid_root_proof_means": "Prerequisite evidence from the frozen independent issuer contract, exact-bound to authoritative INITIAL_BINDING account, operation, request and entitlement.",
     "does_not_prove": [
       "account_id is genuine",
       "account genesis COMMITTED",
@@ -370,48 +378,109 @@
       "validation owner owns final genesis decision"
     ],
     "proof_verification_is_issuance": false,
-    "proof_validated_is_account_committed": false
+    "proof_validated_is_account_committed": false,
+    "proof_validated_is_freshness": false
   },
   "validation_output": {
-    "immutable_receipt_useful": true,
-    "name_AcceptedAccountGenesisRootProof": "NOT_FROZEN",
-    "owner": "DESIGN_BLOCKED",
-    "minimum_candidate_contents": [
-      "receipt identity and schema version",
-      "validator identity/authority domain and decision",
-      "exact issuer/proof identity and authenticated evidence reference",
-      "environment/trust domain",
-      "exact account_id or reservation handoff",
-      "logical operation and canonical request binding or authenticated equivalent",
-      "validation time and applicable freshness/revocation snapshot",
-      "immutable provenance and predecessor/head binding"
+    "model": "NO_SEPARATE_EXTERNAL_VALIDATION_AUTHORITY_OR_RECEIPT",
+    "separate_validation_receipt": "SEPARATE_VALIDATION_RECEIPT_NOT_REQUIRED",
+    "object": "RootProofAdmissionEvidenceV1",
+    "owner": "CryptoHunterAccountAuthority local AccountGenesis authority record",
+    "semantic_role": "durable subordinate CHA record that exact validation succeeded for one INITIAL_BINDING and is ACCEPTED_FOR_PREPARED_ONLY",
+    "is_new_root_of_trust": false,
+    "is_new_semantic_authority": false,
+    "is_freshness_evidence": false,
+    "is_issuer_decision": false,
+    "implies_COMMITTED": false,
+    "implies_freshness": false,
+    "fields": [
+      "schema_version",
+      "environment",
+      "trust_domain",
+      "logical_operation_id",
+      "account_id",
+      "reservation_identity",
+      "reservation_relation",
+      "canonical_genesis_request_fingerprint_sha256",
+      "initial_binding_reference",
+      "initial_binding_digest_sha256",
+      "root_proof_id",
+      "root_proof_signed_payload_digest_sha256",
+      "root_proof_signature_or_immutable_signed_proof_reference",
+      "root_proof_issuer_id",
+      "issuer_key_id",
+      "issuer_key_version",
+      "bootstrap_entitlement_id",
+      "entitlement_generation",
+      "bound_decision_identity_or_reference",
+      "provisioning_principal_id",
+      "claimant_key_id",
+      "claimant_key_version",
+      "cha_root_proof_issuance_requester_credential_id",
+      "cha_root_proof_issuance_requester_key_version",
+      "issuer_retained_history_decision_reference",
+      "lifecycle_checkpoint_reference",
+      "validation_policy_profile_version",
+      "validation_outcome",
+      "winning_root_proof_issuance_attempt_id",
+      "winning_root_proof_issuance_attempt_digest_sha256"
     ],
-    "warning": "A receipt can attest validation only; it cannot mint external issuer authority, account_id, reservation, or COMMITTED genesis."
-  },
-  "consumption_semantics": {
-    "single_use": "NOT_FROZEN",
-    "multi_use": "NOT_FROZEN",
-    "account_bound": "admission NOT_FROZEN",
-    "operation_bound": "NOT_FROZEN",
-    "subject_bound": "NOT_FROZEN",
-    "decision_conditions": {
-      "single_use_valid_if": "future business/admission authority freezes one proof to at most one terminal logical genesis and durable atomic consumption/recovery",
-      "multi_use_valid_if": "issuer scope and subject/cardinality policy explicitly allow reuse and each operation/account binding is authenticated and historically retained",
-      "account_bound_valid_if": "proof or authenticated handoff binds exact account_id/reservation before commit",
-      "operation_bound_valid_if": "proof or authenticated handoff binds stable logical operation plus canonical semantics",
-      "subject_bound_valid_if": "canonical subject schema and subject/account cardinality are frozen"
+    "validation_outcome": "ACCEPTED_FOR_PREPARED_ONLY",
+    "timestamps_are_authority": false,
+    "claimant_binding_model": "AUTHORITATIVE_INDIRECT via exact entitlement id/generation and BOUND history; evidence retains claimant principal/key binding",
+    "persistence": "atomically stored with PREPARED under dedicated AccountGenesis local authority integrity/custody boundary; partial PREPARED impossible",
+    "minted_by_issuer": false,
+    "minted_by_FreshnessAuthority": false,
+    "winning_attempt_rule": "must reference exact actual issuer BOUND winner, its requester/claimant key versions, authoritative BOUND history and exact proof; never newest-local preference",
+    "winning_attempt_digest_semantics": {
+      "field": "winning_root_proof_issuance_attempt_digest_sha256",
+      "exact_meaning": "SHA-256 immutable RootProofIssuanceAttemptIdentityPayloadV1 digest under CRYPTOHUNTER_ACCOUNT_GENESIS_ROOT_PROOF_ISSUANCE_ATTEMPT_IDENTITY_V1",
+      "forbidden_meanings": [
+        "mutable attempt row digest",
+        "attempt_state digest",
+        "issuance_attempt_id hash",
+        "request digest alone",
+        "implementation-specific serialization"
+      ],
+      "consistency": "winning attempt ID + immutable identity digest + authoritative BOUND history + exact root proof MUST mutually match"
+    },
+    "winning_attempt_end_to_end_consistency": {
+      "admission_winning_attempt_id": "MUST equal issuer_history.bound_issuance_attempt_id",
+      "local_attempt_id": "MUST equal admission and issuer history ID",
+      "immutable_digest": "MUST resolve the local immutable identity payload for that exact ID",
+      "signed_request_identity": "MUST exactly match issuer-retained signed RootProofIssuanceRequest identity; semantic equivalence is insufficient",
+      "bound_history_and_root_proof": "MUST bind the same issuance_attempt_id",
+      "mismatch": "FAIL_CLOSED / CORRUPTION_OR_TAMPER",
+      "current_pointer_is_authoritative": false
     }
   },
+  "consumption_semantics": {
+    "model": "C_STATEFUL_SINGLE_BIND_AT_ISSUANCE_PLUS_IMMUTABLE_EXACT_OPERATION_PROOF",
+    "single_use": true,
+    "multi_use": false,
+    "max_logical_operations": 1,
+    "max_account_ids": 1,
+    "account_bound": true,
+    "operation_bound": true,
+    "request_fingerprint_bound": true,
+    "entitlement_transition": "issuer-owned globally serialized UNBOUND -> BOUND(exact tuple, proof identity, signing key version)",
+    "exact_same_tuple_retry": "IDEMPOTENT_SAME_PROOF_BYTES",
+    "different_tuple": "REJECT",
+    "post_issuance_CONSUMED_state": false,
+    "post_issuance_issuer_callback": false,
+    "source_of_truth": "m05_account_genesis_independent_root_proof_issuer_contract.json"
+  },
   "replay": {
-    "R_to_O1_acct_A_then_O2_acct_B": "DOMAIN_SEMANTICS_NOT_FROZEN",
-    "one_external_R_validated_twice": "NOT_FROZEN: same receipt, conflict, or two receipts depends on validator identity/consumption contract",
-    "same_proof_same_logical_operation_retry": "FROZEN REQUIREMENT: future contract must return/resolve the same terminal result and MUST NOT create a second account",
-    "blocker": "stable logical operation identity and durable decision resolver are NOT_FOUND",
-    "same_proof_changed_semantic_request": "CONDITIONAL: fail when selected proof/handoff is operation/request-bound; no current rule invented"
+    "R_to_O1_acct_A_then_O2_acct_B": "REJECT",
+    "one_external_R_validated_twice": "ONLY exact same tuple retry; idempotent same proof and same terminal operation",
+    "same_proof_same_logical_operation_retry": "IDEMPOTENT_SAME_PROOF; MUST NOT create a second account",
+    "same_proof_changed_semantic_request": "REJECT",
+    "entitlement_second_independent_operation": "REJECT",
+    "post_issuance_consumption": "NONE"
   },
   "historical_provenance": {
     "requirement": "Every future committed genesis MUST immutably identify and resolve the exact accepted root proof, issuer/authority domain, authenticated derivation/validation evidence, bindings and commit-time validity decision without current-state substitution.",
-    "current_availability": "NOT_AVAILABLE",
+    "current_availability": "SEMANTICS_FROZEN / IMPLEMENTATION_NOT_AVAILABLE",
     "current_issuer_state_is_historical_substitute": false,
     "stored_HMAC_is_external_genuineness": false
   },
@@ -435,17 +504,16 @@
       "reservation != genesis final decision",
       "proof acceptance != reservation consumption"
     ],
-    "issuer": "NOT_FOUND / conditional external provisioning issuer",
+    "issuer": "IndependentAccountGenesisRootProofIssuer",
     "validator_options": {
-      "A_future_CryptoHunterAccountAuthority_internal": "NOT_SELECTED",
-      "B_separate_RootProofValidationAuthority": "NOT_SELECTED",
-      "C_ProvisioningBoundary_verifies_own_evidence": "NOT_SELECTED",
-      "D_external_issuer_returns_accepted_proof": "NOT_SELECTED",
-      "E_DESIGN_BLOCKED": "SELECTED"
+      "A_CHA_SUBORDINATE_VALIDATION_CAPABILITY": "SELECTED",
+      "B_SEPARATE_VALIDATION_AUTHORITY": "NOT_SELECTED"
     },
-    "validator_owner": "DESIGN_BLOCKED",
-    "genesis_final_decision_owner": "NOT_FOUND",
-    "non_circular_rule": "Root for acct_A MUST be independent of acct_A and every child/account-scoped authority whose legitimacy requires acct_A."
+    "validator_owner": "CryptoHunterAccountAuthority",
+    "genesis_final_decision_owner": "CryptoHunterAccountAuthority",
+    "non_circular_rule": "Root for acct_A MUST be independent of acct_A and every child/account-scoped authority whose legitimacy requires acct_A.",
+    "root_proof_validation_is_subordinate": true,
+    "admission_evidence_is_genesis_decision": false
   },
   "failure_semantics": {
     "public_literals": "NOT_FROZEN; do not invent API error literals",
@@ -481,12 +549,12 @@
       "evidence": "accepted complete FirstRunBootstrapClaim binds exact account_id"
     },
     "operation binding": {
-      "status": "NOT_AVAILABLE",
-      "evidence": "no AccountGenesis logical operation identity; proof_id_is_operation_id=false"
+      "status": "AVAILABLE",
+      "evidence": "frozen independent issuer proof binds exact logical operation"
     },
     "request-semantic binding": {
-      "status": "NOT_AVAILABLE",
-      "evidence": "no canonical AccountGenesis request/fingerprint"
+      "status": "AVAILABLE",
+      "evidence": "frozen proof binds canonical request fingerprint"
     },
     "environment binding": {
       "status": "NOT_AVAILABLE",
@@ -501,8 +569,8 @@
       "evidence": "no membership revocation/lifecycle semantics"
     },
     "replay semantics": {
-      "status": "NOT_FROZEN",
-      "evidence": "bootstrap consumption replay is fenced, AccountGenesis proof consumption is not"
+      "status": "AVAILABLE",
+      "evidence": "Model C exact-tuple bind/retry/reject semantics frozen"
     },
     "historical verification": {
       "status": "PARTIAL",
@@ -528,9 +596,19 @@
     "proof_id_is_operation_id": false,
     "issuer_implies_account_id_mint_owner": false,
     "subject_cardinality": "NOT_FROZEN",
-    "same_proof_replay_semantics": "NOT_FROZEN",
+    "same_proof_replay_semantics": "IDEMPOTENT_EXACT_TUPLE_ONLY",
     "M03_FirstRunBootstrapAuthority_scope": "INITIAL_SECURITY_ESTABLISHMENT_ONLY",
-    "M03_membership_equals_genesis_authority": false
+    "M03_membership_equals_genesis_authority": false,
+    "consumption_model": "C_STATEFUL_SINGLE_BIND_AT_ISSUANCE_PLUS_IMMUTABLE_EXACT_OPERATION_PROOF",
+    "issuance_timing": "B_AFTER_INITIAL_BINDING_BEFORE_PREPARED",
+    "account_binding": true,
+    "operation_binding": true,
+    "request_fingerprint_binding": true,
+    "entitlement_max_operations": 1,
+    "entitlement_max_accounts": 1,
+    "post_issuance_CONSUMED_state": false,
+    "validation_success": "PREREQUISITE_EVIDENCE_ONLY",
+    "issuer_implementation_available": false
   },
   "mandatory_redteam": {
     "locally_generated_AccountAuthority_proof_accepted": "FAIL",
@@ -544,11 +622,11 @@
     "proof_id_automatically_becomes_logical_operation_id": "FAIL"
   },
   "result": {
-    "primary_result": "ACCOUNT_GENESIS_ROOT_PROOF_INSUFFICIENT_SEMANTICS",
-    "intrinsic_status": "DESIGN_BLOCKED",
-    "upstream_status": "BLOCKED_UPSTREAM",
+    "primary_result": "ACCOUNT_GENESIS_ROOT_PROOF_ISSUER_CONTRACT_CAN_BE_FROZEN",
+    "semantic_status": "SEMANTICS_FROZEN",
+    "production_status": "PRODUCTION_ISSUER_ENTITLEMENT_AND_CLAIMANT_AUTHORITY_NOT_AVAILABLE",
     "formal_advancement": "WITHHELD",
-    "reason": "The M0.3 candidate binds exact claim content and account_id and has bootstrap-only timing/replay fences, but it lacks proven issuer authentication, environment, AccountGenesis operation/request/consumption policy, complete historical provenance, validator ownership and rollback closure."
+    "reason": "Admission semantics are frozen and share Model C with the independent issuer contract; production issuer, entitlement, claimant authority, custody and retained registry remain unavailable."
   },
   "implementation_allowed": {
     "ProvisioningBoundary": false,
@@ -563,10 +641,10 @@
     "independent accepted first-account root": "REQUIRED",
     "self-authorization using local evidence": "FORBIDDEN",
     "non-circular root": "FROZEN",
-    "root-proof issuer": "NOT_FOUND / conditional external provisioning issuer",
-    "root-proof validator": "DESIGN_BLOCKED",
-    "root-proof consumption semantics": "NOT_FROZEN",
-    "genesis final decision owner": "NOT_FOUND",
+    "root-proof issuer": "SEMANTICS_FROZEN_IMPLEMENTATION_NOT_AVAILABLE",
+    "root-proof validator": "SEMANTICS_FROZEN_IMPLEMENTATION_NOT_AVAILABLE",
+    "root-proof consumption semantics": "C_STATEFUL_SINGLE_BIND_AT_ISSUANCE_PLUS_IMMUTABLE_EXACT_OPERATION_PROOF",
+    "genesis final decision owner": "CryptoHunterAccountAuthority",
     "CryptoHunterAccountAuthority": "NOT_AVAILABLE",
     "WorkspaceAuthority": "NOT_AVAILABLE",
     "FullFillAuthority": "NOT_AVAILABLE",
@@ -602,5 +680,39 @@
     "replay_consumption_denied": "REQUIRED",
     "purpose": "INITIAL_SECURITY_ESTABLISHMENT_ONLY",
     "cryptographic_issuer_authenticity_inferred": false
-  }
+  },
+  "admission_recovery": {
+    "continue_PREPARED_only_if": "durable RootProofAdmissionEvidenceV1 exactly matches current operation, account, request, INITIAL_BINDING, root proof, issuer history decision, entitlement generation/bound tuple, claimant and requester",
+    "missing_or_mismatch": "FAIL_CLOSED",
+    "forbidden_reconstruction_sources": [
+      "current issuer state alone",
+      "caller-supplied proof alone",
+      "root_proof_id alone",
+      "current entitlement lookup alone",
+      "local projection"
+    ],
+    "caller_may_reconstruct_missing_evidence": false,
+    "current_issuer_state_substitutes_retained_history": false,
+    "VERIFY_ONLY_after_normal_rotation": "historical verification allowed when credential was eligible at issuance/validation and retained evidence matches",
+    "compromise_REVOKED": "requires independent retained-history and trusted-checkpoint evidence; missing trustworthy history FAIL_CLOSED",
+    "winning_attempt": "actual authoritative BOUND attempt controls recovery and PREPARED evidence, even when a newer local superseding attempt exists"
+  },
+  "admission_evidence_redteam_mutations": [
+    "prepared_root_proof_id_only",
+    "evidence_omits_root_proof_signed_digest",
+    "evidence_omits_initial_binding_digest_reference",
+    "evidence_omits_entitlement_generation",
+    "evidence_omits_claimant_principal_key",
+    "evidence_omits_requester_key_identity",
+    "evidence_omits_issuer_history_decision",
+    "current_issuer_state_substitutes_history",
+    "caller_reconstructs_evidence_after_crash",
+    "evidence_o1_acct_a_reused_o2_acct_b",
+    "validation_record_claims_committed",
+    "validation_record_claims_freshness",
+    "admission_final_owner_not_found",
+    "operation_reason_root_proof_timing_blocked",
+    "validation_output_design_blocked",
+    "admission_evidence_not_found"
+  ]
 }

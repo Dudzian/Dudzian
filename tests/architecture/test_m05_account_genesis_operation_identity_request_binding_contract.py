@@ -243,7 +243,8 @@ def validate_cross_artifact_parity(value: dict) -> None:
     assert value["root_proof_binding"]["proof_id_is_operation_id"] == (
         proof["operation_binding"]["proof_id_is_operation_id"]
     ) == False
-    assert proof["result"]["primary_result"] == "ACCOUNT_GENESIS_ROOT_PROOF_INSUFFICIENT_SEMANTICS"
+    assert proof["result"]["primary_result"] == "ACCOUNT_GENESIS_ROOT_PROOF_ISSUER_CONTRACT_CAN_BE_FROZEN"
+    assert proof["result"]["production_status"] == "PRODUCTION_ISSUER_ENTITLEMENT_AND_CLAIMANT_AUTHORITY_NOT_AVAILABLE"
     assert topology["cross_artifact_parity"]["account_id_not_operation_identity"] is True
     assert topology["cross_artifact_parity"]["RELEASE_reservation_only"] is True
     assert value["frozen_inputs"]["subject_cardinality"] == (
