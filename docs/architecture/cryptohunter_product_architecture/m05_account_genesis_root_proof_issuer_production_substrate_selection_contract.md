@@ -1,0 +1,1066 @@
+# M0.5 — wybór production substrate dla Root-Proof Issuer
+
+> Deterministyczna projekcja pliku `m05_account_genesis_root_proof_issuer_production_substrate_selection_contract.json`. JSON jest źródłem prawdy.
+
+## Wynik
+
+**ROOT_PROOF_ISSUER_PRODUCTION_SUBSTRATE_SELECTION_BLOCKED**
+
+Profil repo wspiera wdrożenie lokalne/jednohostowe, SQLite i ogólny OS keyring, lecz nie wspiera wielohostowego rejestru, niezależnego checkpointu ani Ed25519 HSM/KMS. Dlatego nie wolno arbitralnie wybrać infrastruktury operatorskiej. Jedynym wybranym substrate jest odrębny lokalny SQLite dla prób CHA; pozostałe dziesięć zależności ma `DECISION_REQUIRED`.
+
+## Projekcja maszynowa
+
+```json
+{
+  "artifact": "M05_ACCOUNT_GENESIS_ROOT_PROOF_ISSUER_PRODUCTION_SUBSTRATE_SELECTION_CONTRACT",
+  "schema_version": 1,
+  "principal_result": "ROOT_PROOF_ISSUER_PRODUCTION_SUBSTRATE_SELECTION_BLOCKED",
+  "frozen_inputs": [
+    "ACCOUNT_GENESIS_ROOT_PROOF_ISSUER_CONTRACT_CAN_BE_FROZEN",
+    "ROOT_PROOF_ISSUER_IMPLEMENTATION_READINESS_CAN_BE_FROZEN"
+  ],
+  "production_profile": {
+    "supported_profile": "single-host desktop or one bot container with bind-mounted local data; monitoring sidecars are network services, not security authorities",
+    "multi_host_authority_service": false,
+    "database_drivers": [
+      "sqlite3",
+      "aiosqlite",
+      "SQLAlchemy asyncio without a deployed server driver"
+    ],
+    "network_services": [
+      "Prometheus",
+      "Grafana",
+      "Loki",
+      "Vector"
+    ],
+    "secret_management": "generic native keyring wrapper stores exportable encrypted values; no issuer custody lifecycle",
+    "cloud_KMS_or_HSM": "none",
+    "filesystem": "local paths and bind mounts assumed",
+    "backup": "local authenticated SQLite backup abstractions; no independent rollback anchor",
+    "bootstrap": "desktop/offline packaging and first-run local persistence; no AccountGenesis operator provisioning",
+    "environment": "runtime strings PAPER/TESTNET/LIVE; not a security boundary",
+    "migration": "project-specific local SQLite migration declarations; no issuer schema owner",
+    "operator_path": "not found"
+  },
+  "result_matrix": [
+    {
+      "readiness_dependency": "deployment_trust_root_provider",
+      "selected_production_mechanism": "DECISION_REQUIRED: (A) offline-signed deployment root bundle in OS trust store, or (B) operator-selected external PKI/secret authority",
+      "selection_status": "DECISION_REQUIRED",
+      "production_anchor": "No supported production anchor in current deployment",
+      "credentials": "dedicated role credential; never shared across semantic authorities",
+      "transaction_CAS_primitive": "not applicable / pending exact provider selection",
+      "crash_guarantee": "fail closed; no result without durable commit and authenticated history",
+      "rollback_guarantee": "no claim until independent checkpoint is selected",
+      "environment_separation": "physically distinct credentials and namespaces; TEST never authorizes PRODUCTION",
+      "authority_owner": "DECISION_REQUIRED: Product Deployment Security Authority must appoint a non-account authority",
+      "persistence_owner": "DECISION_REQUIRED",
+      "trust_owner": "Product Deployment Security Authority",
+      "scope": "multi-process and multi-host required",
+      "authentication_model": "mutual authenticated service identity rooted before the first account",
+      "crash_model": "fail closed; no result without durable commit and authenticated history",
+      "restore_model": "startup remains fail closed until direction is proven against independent checkpoint",
+      "TEST_PRODUCTION_isolation": "physically distinct credentials and namespaces; TEST never authorizes PRODUCTION",
+      "implementation_interface": "DeploymentTrustRootProvider",
+      "remaining_prerequisite": "operator selection, deployment wiring, credentials, provisioning runbook and recovery drill",
+      "rejected_alternatives": [
+        "process memory",
+        "caller-selected authority",
+        "plain configuration",
+        "last-write-wins",
+        "existing account-scoped StateStore as issuer authority"
+      ]
+    },
+    {
+      "readiness_dependency": "entitlement_registry_backend",
+      "selected_production_mechanism": "DECISION_REQUIRED: PostgreSQL-compatible strongly consistent service is the minimal multi-host category, but no driver/service/operator choice exists",
+      "selection_status": "DECISION_REQUIRED",
+      "production_anchor": "No supported production anchor in current deployment",
+      "credentials": "dedicated role credential; never shared across semantic authorities",
+      "transaction_CAS_primitive": "single SERIALIZABLE transaction using immutable authority key and conditional UPDATE WHERE state=UNBOUND AND generation=? AND cas_revision=?; affected_rows=1 is sole winner, plus unique(environment,trust_domain,entitlement_id,generation)",
+      "crash_guarantee": "fail closed; no result without durable commit and authenticated history",
+      "rollback_guarantee": "no claim until independent checkpoint is selected",
+      "environment_separation": "physically distinct credentials and namespaces; TEST never authorizes PRODUCTION",
+      "authority_owner": "DECISION_REQUIRED: Product Deployment Security Authority must appoint a non-account authority",
+      "persistence_owner": "DECISION_REQUIRED",
+      "trust_owner": "Product Deployment Security Authority",
+      "scope": "multi-process and multi-host required",
+      "authentication_model": "mutual authenticated service identity rooted before the first account",
+      "crash_model": "fail closed; no result without durable commit and authenticated history",
+      "restore_model": "startup remains fail closed until direction is proven against independent checkpoint",
+      "TEST_PRODUCTION_isolation": "physically distinct credentials and namespaces; TEST never authorizes PRODUCTION",
+      "implementation_interface": "new production provider port; no provider currently exists",
+      "remaining_prerequisite": "operator selection, deployment wiring, credentials, provisioning runbook and recovery drill",
+      "rejected_alternatives": [
+        "process memory",
+        "caller-selected authority",
+        "plain configuration",
+        "last-write-wins",
+        "existing account-scoped StateStore as issuer authority"
+      ]
+    },
+    {
+      "readiness_dependency": "claimant_identity_registry",
+      "selected_production_mechanism": "DECISION_REQUIRED: dedicated claimant credential schema/API on the selected authoritative SQL service",
+      "selection_status": "DECISION_REQUIRED",
+      "production_anchor": "No supported production anchor in current deployment",
+      "credentials": "dedicated role credential; never shared across semantic authorities",
+      "transaction_CAS_primitive": "not applicable / pending exact provider selection",
+      "crash_guarantee": "fail closed; no result without durable commit and authenticated history",
+      "rollback_guarantee": "no claim until independent checkpoint is selected",
+      "environment_separation": "physically distinct credentials and namespaces; TEST never authorizes PRODUCTION",
+      "authority_owner": "DECISION_REQUIRED: Product Deployment Security Authority must appoint a non-account authority",
+      "persistence_owner": "DECISION_REQUIRED",
+      "trust_owner": "Product Deployment Security Authority",
+      "scope": "multi-process and multi-host required",
+      "authentication_model": "mutual authenticated service identity rooted before the first account",
+      "crash_model": "fail closed; no result without durable commit and authenticated history",
+      "restore_model": "startup remains fail closed until direction is proven against independent checkpoint",
+      "TEST_PRODUCTION_isolation": "physically distinct credentials and namespaces; TEST never authorizes PRODUCTION",
+      "implementation_interface": "ClaimantIdentityRegistry",
+      "remaining_prerequisite": "operator selection, deployment wiring, credentials, provisioning runbook and recovery drill",
+      "rejected_alternatives": [
+        "process memory",
+        "caller-selected authority",
+        "plain configuration",
+        "last-write-wins",
+        "existing account-scoped StateStore as issuer authority"
+      ]
+    },
+    {
+      "readiness_dependency": "requester_credential_registry",
+      "selected_production_mechanism": "DECISION_REQUIRED: dedicated requester credential schema/API on the selected authoritative SQL service",
+      "selection_status": "DECISION_REQUIRED",
+      "production_anchor": "No supported production anchor in current deployment",
+      "credentials": "dedicated role credential; never shared across semantic authorities",
+      "transaction_CAS_primitive": "not applicable / pending exact provider selection",
+      "crash_guarantee": "fail closed; no result without durable commit and authenticated history",
+      "rollback_guarantee": "no claim until independent checkpoint is selected",
+      "environment_separation": "physically distinct credentials and namespaces; TEST never authorizes PRODUCTION",
+      "authority_owner": "DECISION_REQUIRED: Product Deployment Security Authority must appoint a non-account authority",
+      "persistence_owner": "DECISION_REQUIRED",
+      "trust_owner": "Product Deployment Security Authority",
+      "scope": "multi-process and multi-host required",
+      "authentication_model": "mutual authenticated service identity rooted before the first account",
+      "crash_model": "fail closed; no result without durable commit and authenticated history",
+      "restore_model": "startup remains fail closed until direction is proven against independent checkpoint",
+      "TEST_PRODUCTION_isolation": "physically distinct credentials and namespaces; TEST never authorizes PRODUCTION",
+      "implementation_interface": "RequesterCredentialRegistry",
+      "remaining_prerequisite": "operator selection, deployment wiring, credentials, provisioning runbook and recovery drill",
+      "rejected_alternatives": [
+        "process memory",
+        "caller-selected authority",
+        "plain configuration",
+        "last-write-wins",
+        "existing account-scoped StateStore as issuer authority"
+      ]
+    },
+    {
+      "readiness_dependency": "root_proof_signing_key_custody",
+      "selected_production_mechanism": "DECISION_REQUIRED: operator must choose an Ed25519-capable non-exportable HSM/KMS/provider; repository has no supported integration",
+      "selection_status": "DECISION_REQUIRED",
+      "production_anchor": "No supported production anchor in current deployment",
+      "credentials": "dedicated non-exportable issuer key handle; plaintext config forbidden",
+      "transaction_CAS_primitive": "not applicable / pending exact provider selection",
+      "crash_guarantee": "fail closed; no result without durable commit and authenticated history",
+      "rollback_guarantee": "no claim until independent checkpoint is selected",
+      "environment_separation": "physically distinct credentials and namespaces; TEST never authorizes PRODUCTION",
+      "authority_owner": "DECISION_REQUIRED: Product Deployment Security Authority must appoint a non-account authority",
+      "persistence_owner": "DECISION_REQUIRED",
+      "trust_owner": "Product Deployment Security Authority",
+      "scope": "multi-process and multi-host required",
+      "authentication_model": "mutual authenticated service identity rooted before the first account",
+      "crash_model": "fail closed; no result without durable commit and authenticated history",
+      "restore_model": "startup remains fail closed until direction is proven against independent checkpoint",
+      "TEST_PRODUCTION_isolation": "physically distinct credentials and namespaces; TEST never authorizes PRODUCTION",
+      "implementation_interface": "RootProofSigningCustody",
+      "remaining_prerequisite": "operator selection, deployment wiring, credentials, provisioning runbook and recovery drill",
+      "rejected_alternatives": [
+        "process memory",
+        "caller-selected authority",
+        "plain configuration",
+        "last-write-wins",
+        "existing account-scoped StateStore as issuer authority"
+      ]
+    },
+    {
+      "readiness_dependency": "global_serialization_CAS",
+      "selected_production_mechanism": "DECISION_REQUIRED with registry backend; exact frozen candidate primitive: SERIALIZABLE conditional UPDATE described here",
+      "selection_status": "DECISION_REQUIRED",
+      "production_anchor": "No supported production anchor in current deployment",
+      "credentials": "dedicated role credential; never shared across semantic authorities",
+      "transaction_CAS_primitive": "BEGIN ISOLATION LEVEL SERIALIZABLE; lock authority row; INSERT immutable BoundDecision; UPDATE current pointer SET state=BOUND, cas_revision=cas_revision+1 WHERE authority_key=? AND generation=? AND state=UNBOUND AND cas_revision=?; COMMIT iff affected_rows=1; unique bound decision authority key",
+      "crash_guarantee": "fail closed; no result without durable commit and authenticated history",
+      "rollback_guarantee": "no claim until independent checkpoint is selected",
+      "environment_separation": "physically distinct credentials and namespaces; TEST never authorizes PRODUCTION",
+      "authority_owner": "DECISION_REQUIRED: Product Deployment Security Authority must appoint a non-account authority",
+      "persistence_owner": "DECISION_REQUIRED",
+      "trust_owner": "Product Deployment Security Authority",
+      "scope": "multi-process and multi-host required",
+      "authentication_model": "mutual authenticated service identity rooted before the first account",
+      "crash_model": "fail closed; no result without durable commit and authenticated history",
+      "restore_model": "startup remains fail closed until direction is proven against independent checkpoint",
+      "TEST_PRODUCTION_isolation": "physically distinct credentials and namespaces; TEST never authorizes PRODUCTION",
+      "implementation_interface": "new production provider port; no provider currently exists",
+      "remaining_prerequisite": "operator selection, deployment wiring, credentials, provisioning runbook and recovery drill",
+      "rejected_alternatives": [
+        "process memory",
+        "caller-selected authority",
+        "plain configuration",
+        "last-write-wins",
+        "existing account-scoped StateStore as issuer authority"
+      ]
+    },
+    {
+      "readiness_dependency": "retained_authenticated_history",
+      "selected_production_mechanism": "DECISION_REQUIRED: append-only hash-linked issuer history in a dedicated schema of selected registry engine, authenticated by a distinct history-attestation key",
+      "selection_status": "DECISION_REQUIRED",
+      "production_anchor": "No supported production anchor in current deployment",
+      "credentials": "dedicated role credential; never shared across semantic authorities",
+      "transaction_CAS_primitive": "not applicable / pending exact provider selection",
+      "crash_guarantee": "fail closed; no result without durable commit and authenticated history",
+      "rollback_guarantee": "no claim until independent checkpoint is selected",
+      "environment_separation": "physically distinct credentials and namespaces; TEST never authorizes PRODUCTION",
+      "authority_owner": "DECISION_REQUIRED: Product Deployment Security Authority must appoint a non-account authority",
+      "persistence_owner": "DECISION_REQUIRED",
+      "trust_owner": "Product Deployment Security Authority",
+      "scope": "multi-process and multi-host required",
+      "authentication_model": "mutual authenticated service identity rooted before the first account",
+      "crash_model": "fail closed; no result without durable commit and authenticated history",
+      "restore_model": "startup remains fail closed until direction is proven against independent checkpoint",
+      "TEST_PRODUCTION_isolation": "physically distinct credentials and namespaces; TEST never authorizes PRODUCTION",
+      "implementation_interface": "IssuerAuthenticatedHistory",
+      "remaining_prerequisite": "operator selection, deployment wiring, credentials, provisioning runbook and recovery drill",
+      "rejected_alternatives": [
+        "process memory",
+        "caller-selected authority",
+        "plain configuration",
+        "last-write-wins",
+        "existing account-scoped StateStore as issuer authority"
+      ]
+    },
+    {
+      "readiness_dependency": "history_checkpoint_or_anti_rollback",
+      "selected_production_mechanism": "DECISION_REQUIRED: (A) independently administered append-only transparency/checkpoint service with monotonic sequence, or (B) operator-provided HSM monotonic counter plus externally retained signed heads",
+      "selection_status": "DECISION_REQUIRED",
+      "production_anchor": "No supported production anchor in current deployment",
+      "credentials": "dedicated role credential; never shared across semantic authorities",
+      "transaction_CAS_primitive": "not applicable / pending exact provider selection",
+      "crash_guarantee": "fail closed; no result without durable commit and authenticated history",
+      "rollback_guarantee": "no claim until independent checkpoint is selected",
+      "environment_separation": "physically distinct credentials and namespaces; TEST never authorizes PRODUCTION",
+      "authority_owner": "Independent Checkpoint / Anti-Rollback Authority",
+      "persistence_owner": "outside registry, issuer lifecycle and CHA rollback domains",
+      "trust_owner": "Product Deployment Security Authority",
+      "scope": "multi-process and multi-host required",
+      "authentication_model": "mutual authenticated service identity rooted before the first account",
+      "crash_model": "fail closed; no result without durable commit and authenticated history",
+      "restore_model": "startup remains fail closed until direction is proven against independent checkpoint",
+      "TEST_PRODUCTION_isolation": "physically distinct credentials and namespaces; TEST never authorizes PRODUCTION",
+      "implementation_interface": "CheckpointAuthority",
+      "remaining_prerequisite": "operator selection, deployment wiring, credentials, provisioning runbook and recovery drill",
+      "rejected_alternatives": [
+        "process memory",
+        "caller-selected authority",
+        "plain configuration",
+        "last-write-wins",
+        "existing account-scoped StateStore as issuer authority"
+      ]
+    },
+    {
+      "readiness_dependency": "reconciliation_evidence_source",
+      "selected_production_mechanism": "DECISION_REQUIRED: issuer read-only reconciliation API over the selected registry, returning signed canonical RootProofIssuanceReconciliationEvidenceV1 bound to decision revision and checkpoint head",
+      "selection_status": "DECISION_REQUIRED",
+      "production_anchor": "No supported production anchor in current deployment",
+      "credentials": "dedicated role credential; never shared across semantic authorities",
+      "transaction_CAS_primitive": "not applicable / pending exact provider selection",
+      "crash_guarantee": "fail closed; no result without durable commit and authenticated history",
+      "rollback_guarantee": "no claim until independent checkpoint is selected",
+      "environment_separation": "physically distinct credentials and namespaces; TEST never authorizes PRODUCTION",
+      "authority_owner": "DECISION_REQUIRED: Product Deployment Security Authority must appoint a non-account authority",
+      "persistence_owner": "DECISION_REQUIRED",
+      "trust_owner": "Product Deployment Security Authority",
+      "scope": "multi-process and multi-host required",
+      "authentication_model": "mutual authenticated service identity rooted before the first account",
+      "crash_model": "fail closed; no result without durable commit and authenticated history",
+      "restore_model": "startup remains fail closed until direction is proven against independent checkpoint",
+      "TEST_PRODUCTION_isolation": "physically distinct credentials and namespaces; TEST never authorizes PRODUCTION",
+      "implementation_interface": "RootProofReconciliationEvidenceSource",
+      "remaining_prerequisite": "operator selection, deployment wiring, credentials, provisioning runbook and recovery drill",
+      "rejected_alternatives": [
+        "process memory",
+        "caller-selected authority",
+        "plain configuration",
+        "last-write-wins",
+        "existing account-scoped StateStore as issuer authority"
+      ]
+    },
+    {
+      "readiness_dependency": "durable_local_attempt_storage",
+      "selected_production_mechanism": "SQLite database dedicated to CHA attempt authority using BEGIN IMMEDIATE, WAL, FULL synchronous, immutable attempt rows and fenced current pointer",
+      "selection_status": "SELECTED",
+      "production_anchor": "bot_core/persistence/state_store.py and sqlite3 standard-library production dependency",
+      "credentials": "dedicated role credential; never shared across semantic authorities",
+      "transaction_CAS_primitive": "A BEGIN IMMEDIATE insert reservation+pointer iff absent; B insert immutable final+fenced pointer update; C insert replacement then CAS pointer old fence->new fence; D transactionally append resolution and CAS pointer",
+      "crash_guarantee": "fail closed; no result without durable commit and authenticated history",
+      "rollback_guarantee": "local DB alone has no anti-rollback guarantee; recovery requires issuer evidence and independent checkpoint",
+      "environment_separation": "distinct database path, OS identity and permissions per environment/trust_domain; no shared file",
+      "authority_owner": "CryptoHunterAccountAuthority",
+      "persistence_owner": "CHA local installation",
+      "trust_owner": "CryptoHunterAccountAuthority",
+      "scope": "single CHA installation; multi-process safe on one supported local filesystem; never issuer multi-host CAS",
+      "authentication_model": "OS installation identity and filesystem ACL; issuer evidence remains independently authenticated",
+      "crash_model": "fail closed; no result without durable commit and authenticated history",
+      "restore_model": "startup remains fail closed until direction is proven against independent checkpoint",
+      "TEST_PRODUCTION_isolation": "physically distinct credentials and namespaces; TEST never authorizes PRODUCTION",
+      "implementation_interface": "new CHA AttemptStore adapter over existing sqlite3 persistence conventions",
+      "remaining_prerequisite": "design and implement adapter/schema only after provider architecture resolves; verify supported filesystem locking",
+      "rejected_alternatives": [
+        "issuer registry write credential",
+        "process memory",
+        "shared issuer schema",
+        "network filesystem without proven SQLite locking"
+      ]
+    },
+    {
+      "readiness_dependency": "TEST_PRODUCTION_separation",
+      "selected_production_mechanism": "DECISION_REQUIRED: (A) separate OS/container service identities + separate DB instances/credentials + separate trust bundles and custody namespaces, or (B) separately administered deployments with equivalent physical controls",
+      "selection_status": "DECISION_REQUIRED",
+      "production_anchor": "No supported production anchor in current deployment",
+      "credentials": "dedicated role credential; never shared across semantic authorities",
+      "transaction_CAS_primitive": "not applicable / pending exact provider selection",
+      "crash_guarantee": "fail closed; no result without durable commit and authenticated history",
+      "rollback_guarantee": "no claim until independent checkpoint is selected",
+      "environment_separation": "physically distinct credentials and namespaces; TEST never authorizes PRODUCTION",
+      "authority_owner": "Product Deployment Security Authority",
+      "persistence_owner": "each authority namespace owner",
+      "trust_owner": "Product Deployment Security Authority",
+      "scope": "multi-process and multi-host required",
+      "authentication_model": "mutual authenticated service identity rooted before the first account",
+      "crash_model": "fail closed; no result without durable commit and authenticated history",
+      "restore_model": "startup remains fail closed until direction is proven against independent checkpoint",
+      "TEST_PRODUCTION_isolation": "physically distinct credentials and namespaces; TEST never authorizes PRODUCTION",
+      "implementation_interface": "DeploymentEnvironmentBoundary",
+      "remaining_prerequisite": "operator selection, deployment wiring, credentials, provisioning runbook and recovery drill",
+      "rejected_alternatives": [
+        "process memory",
+        "caller-selected authority",
+        "plain configuration",
+        "last-write-wins",
+        "existing account-scoped StateStore as issuer authority"
+      ]
+    }
+  ],
+  "authority_separation": {
+    "rule": "PHYSICAL COLOCATION != AUTHORITY REUSE",
+    "CHA_direct_registry_write": false,
+    "issuer_direct_account_commit": false,
+    "required_separation": [
+      "schemas/namespaces",
+      "credentials",
+      "write permissions",
+      "authority APIs",
+      "transaction ownership",
+      "TEST/PRODUCTION boundaries"
+    ]
+  },
+  "registry_schema_boundary": {
+    "primary_authority_key": "issuer-generated opaque authority_record_id; never caller selected",
+    "generation_key": "(environment, trust_domain, entitlement_id, lifecycle_generation)",
+    "uniqueness": [
+      "authority_record_id",
+      "(environment,trust_domain,entitlement_id,generation)",
+      "one immutable BOUND decision per generation"
+    ],
+    "current_state_pointer": "authority-owned pointer with cas_revision",
+    "records": {
+      "BootstrapEntitlementRecord": "original creation and provisioner identity",
+      "EntitlementLifecycleGeneration": "ACTIVE/VERIFY_ONLY/REVOKED and supersession lineage",
+      "EntitlementBoundDecision": "immutable exact frozen tuple, attempt/request/root-proof/key identities",
+      "IssuerDecisionHistoryRecord": "hash-linked decision/reconciliation event"
+    },
+    "required_fields": [
+      "environment",
+      "trust_domain",
+      "entitlement_id",
+      "cas_revision"
+    ]
+  },
+  "history": {
+    "append_model": "immutable insert in issuer history transaction; sequence and previous_digest link",
+    "authentication": "canonical bytes signed by distinct history-attestation credential",
+    "integrity_head": "(environment,trust_domain,sequence,record_digest,previous_digest) signed and checkpointed",
+    "records": [
+      "original entitlement creation",
+      "lifecycle generations",
+      "BOUND",
+      "issuance_attempt_id",
+      "signed request identity",
+      "root_proof_id",
+      "key versions",
+      "requester identity",
+      "claimant identity",
+      "reconciliation evidence",
+      "revocation/supersession lineage"
+    ],
+    "query_recovery": "authenticated range and head API; reject gaps, forks and unknown schemas",
+    "historical_keys": "retain public keys and ACTIVE/VERIFY_ONLY/REVOKED transitions; REVOKED never implicitly ACTIVE",
+    "backup_restore": "restore only with independently verified checkpoint direction",
+    "status": "DECISION_REQUIRED"
+  },
+  "checkpoint": {
+    "status": "DECISION_REQUIRED",
+    "producer": "independent Checkpoint Authority, not issuer/DB",
+    "storage": "outside DB/issuer-key/CHA rollback domains",
+    "authentication": "dedicated checkpoint signing credential under deployment root",
+    "monotonic_dimension": "authority sequence/counter, never wall clock",
+    "startup": "compare signed DB history head, lifecycle generations and reconciliation head with independent monotonic anchor",
+    "unavailable": "AUTHORITY_UNAVAILABLE; all four operations false",
+    "DB_ahead": "stop; require checkpoint catch-up/attestation by checkpoint authority",
+    "checkpoint_ahead": "CHECKPOINT_MISMATCH; presume rollback, stop",
+    "ambiguous_direction": "RESTORE_DIRECTION_UNPROVEN even if signatures verify; stop"
+  },
+  "coordinated_rollback": {
+    "detected": false,
+    "limitation": "No selected external checkpoint exists. A coordinated rollback of DB + issuer lifecycle/key store + CHA store is not currently detectable. Even after a checkpoint selection, CHA-local state not committed into its independent head can roll back; operator reconciliation remains mandatory.",
+    "availability": "fail closed pending independently authenticated operator reconciliation"
+  },
+  "credential_role_separation": [
+    "ROOT_PROOF_REQUESTER != ROOT_PROOF_CLAIMANT",
+    "ROOT_PROOF_REQUESTER != ROOT_PROOF_ISSUER_SIGNING",
+    "ROOT_PROOF_REQUESTER != ACCOUNT_GENESIS_FRESHNESS_PROPOSER",
+    "ROOT_PROOF_REQUESTER != CATALOG_AUTHORITY",
+    "ROOT_PROOF_REQUESTER != STORAGE_SECURITY_KEY",
+    "ROOT_PROOF_CLAIMANT != ROOT_PROOF_ISSUER_SIGNING",
+    "ROOT_PROOF_ISSUER_SIGNING != ACCOUNT_GENESIS_FRESHNESS_PROPOSER",
+    "ROOT_PROOF_ISSUER_SIGNING != CATALOG_AUTHORITY"
+  ],
+  "trust_root": {
+    "status": "DECISION_REQUIRED",
+    "format": "versioned canonical signed root bundle containing environment/trust_domain, issuer allow-list, requester roots, claimant/provisioning roots and lifecycle",
+    "provisioning": "offline/operator installation before first account; atomic activation after signature verification",
+    "storage": "OS-protected read-only deployment location or external authority (choice unresolved)",
+    "rotation_revocation": "signed successor with monotonic generation; retain history; revoked never reactivated",
+    "forbidden": [
+      "TOFU",
+      "candidate-carried root",
+      "CHA self-installation",
+      "account-scoped bootstrap",
+      "TEST root authorizing PRODUCTION"
+    ]
+  },
+  "reconciliation": {
+    "status": "DECISION_REQUIRED",
+    "query": "issuer read-only authoritative registry query over mutually authenticated channel",
+    "positive_only": "AUTHORITATIVELY_UNBOUND signed evidence only",
+    "NOT_FOUND": "OUTCOME_UNKNOWN",
+    "binding": [
+      "decision_revision",
+      "canonical evidence bytes or immutable reference",
+      "digest",
+      "checkpoint head"
+    ],
+    "restart": "retrieve by immutable evidence id from retained history"
+  },
+  "attempt_transactions": {
+    "A_initial_reservation": "BEGIN IMMEDIATE; insert immutable reservation and current fenced pointer atomically",
+    "B_immutable_finalization": "insert final attempt and CAS pointer on reservation id/fence in one transaction",
+    "C_replacement_switch": "insert replacement reservation/evidence relation then CAS old pointer/fence to new in one transaction",
+    "D_local_recovery": "append authenticated resolution reference and CAS pointer; never infer UNBOUND from NOT_FOUND"
+  },
+  "isolation": {
+    "status": "DECISION_REQUIRED",
+    "config_string_sufficient": false,
+    "required_namespaces": [
+      "environment",
+      "trust_domain",
+      "trust roots",
+      "entitlement",
+      "claimant",
+      "requester",
+      "issuer signing",
+      "history/checkpoint"
+    ],
+    "enforcement": "separate service/OS identities, database instances or schemas with denied cross-role grants, distinct trust bundles and custody namespaces",
+    "TEST_may_authorize_PRODUCTION": false
+  },
+  "restore": {
+    "states": [
+      "NORMAL",
+      "RESTORE_DIRECTION_UNPROVEN",
+      "CHECKPOINT_MISMATCH",
+      "HISTORY_GAP",
+      "KEY_LIFECYCLE_MISMATCH",
+      "AUTHORITY_UNAVAILABLE"
+    ],
+    "ambiguous_policy": {
+      "ISSUE": false,
+      "RECOVER": false,
+      "REPLACE": false,
+      "PREPARED": false
+    },
+    "exit_evidence": "operator supplies independent signed checkpoint chain, complete authenticated history, lifecycle/key inventory and registry-to-CHA reconciliation proving a single nondecreasing direction; dual control records approval",
+    "REVOKED_to_ACTIVE_restore_allowed": false,
+    "REVOKED_to_VERIFY_ONLY_restore_allowed": false,
+    "restored_VERIFY_ONLY_after_later_REVOKED": "ROLLBACK_OR_TAMPER / FAIL_CLOSED"
+  },
+  "migrations": {
+    "owner": "respective semantic authority; issuer registry owner cannot migrate CHA store and vice versa",
+    "mechanism": "explicit versioned offline migration declaration, staging copy, canonical-byte/digest comparison, authenticated completion record, checkpoint after activation",
+    "preserve": [
+      "IDs",
+      "signature bytes",
+      "canonical digest interpretation",
+      "entitlement generations",
+      "reconciliation evidence",
+      "environment/trust_domain namespaces",
+      "historical key references"
+    ],
+    "unknown_schema": "fail closed; never implicit upgrade"
+  },
+  "topology": {
+    "components": [
+      "Product Deployment Security Authority",
+      "Independent Root-Proof Issuer",
+      "Issuer Registry",
+      "Checkpoint / Anti-Rollback Authority",
+      "Signing Custody",
+      "CHA",
+      "CHA Attempt Store"
+    ],
+    "edges": [
+      {
+        "from": "Security Authority",
+        "to": "all providers",
+        "protocol": "offline signed provisioning/API",
+        "credential": "deployment provisioner",
+        "authorization": "create roots/entitlements/role credentials only",
+        "trust_root": "offline deployment root",
+        "write": true
+      },
+      {
+        "from": "CHA",
+        "to": "Issuer",
+        "protocol": "mutually authenticated issuance API",
+        "credential": "requester credential",
+        "authorization": "submit/read evidence; no registry write",
+        "trust_root": "requester/issuer roots",
+        "write": false
+      },
+      {
+        "from": "Issuer",
+        "to": "Issuer Registry",
+        "protocol": "selected DB protocol",
+        "credential": "issuer registry role",
+        "authorization": "CAS entitlement + append issuer history only",
+        "trust_root": "DB service root",
+        "write": true
+      },
+      {
+        "from": "Issuer",
+        "to": "Signing Custody",
+        "protocol": "provider signing API",
+        "credential": "issuer workload identity",
+        "authorization": "sign with ACTIVE issuer handle",
+        "trust_root": "custody service root",
+        "write": false
+      },
+      {
+        "from": "Checkpoint Authority",
+        "to": "Issuer Registry",
+        "protocol": "authenticated read API",
+        "credential": "checkpoint reader",
+        "authorization": "read heads only",
+        "trust_root": "issuer API root",
+        "write": false
+      },
+      {
+        "from": "Checkpoint Authority",
+        "to": "Checkpoint Store",
+        "protocol": "append signed checkpoint",
+        "credential": "checkpoint key",
+        "authorization": "append only",
+        "trust_root": "deployment checkpoint root",
+        "write": true
+      },
+      {
+        "from": "CHA",
+        "to": "CHA Attempt Store",
+        "protocol": "local SQLite",
+        "credential": "CHA OS identity",
+        "authorization": "attempt transactions only",
+        "trust_root": "installation ACL",
+        "write": true
+      },
+      {
+        "from": "Issuer",
+        "to": "CHA Attempt Store",
+        "protocol": "none",
+        "credential": "none",
+        "authorization": "forbidden",
+        "trust_root": "none",
+        "write": false
+      }
+    ]
+  },
+  "outage_matrix": [
+    {
+      "condition": "registry DB unavailable",
+      "ISSUE": false,
+      "RECOVER": false,
+      "REPLACE": false,
+      "PREPARED": false,
+      "behavior": "fail closed; retain evidence and require authoritative recovery"
+    },
+    {
+      "condition": "CAS timeout",
+      "ISSUE": false,
+      "RECOVER": false,
+      "REPLACE": false,
+      "PREPARED": false,
+      "behavior": "fail closed; retain evidence and require authoritative recovery"
+    },
+    {
+      "condition": "signing custody unavailable",
+      "ISSUE": false,
+      "RECOVER": false,
+      "REPLACE": false,
+      "PREPARED": false,
+      "behavior": "fail closed; retain evidence and require authoritative recovery"
+    },
+    {
+      "condition": "claimant registry unavailable",
+      "ISSUE": false,
+      "RECOVER": false,
+      "REPLACE": false,
+      "PREPARED": false,
+      "behavior": "fail closed; retain evidence and require authoritative recovery"
+    },
+    {
+      "condition": "requester registry unavailable",
+      "ISSUE": false,
+      "RECOVER": false,
+      "REPLACE": false,
+      "PREPARED": false,
+      "behavior": "fail closed; retain evidence and require authoritative recovery"
+    },
+    {
+      "condition": "checkpoint unavailable",
+      "ISSUE": false,
+      "RECOVER": false,
+      "REPLACE": false,
+      "PREPARED": false,
+      "behavior": "fail closed; retain evidence and require authoritative recovery"
+    },
+    {
+      "condition": "checkpoint stale",
+      "ISSUE": false,
+      "RECOVER": false,
+      "REPLACE": false,
+      "PREPARED": false,
+      "behavior": "fail closed; retain evidence and require authoritative recovery"
+    },
+    {
+      "condition": "checkpoint ahead",
+      "ISSUE": false,
+      "RECOVER": false,
+      "REPLACE": false,
+      "PREPARED": false,
+      "behavior": "fail closed; retain evidence and require authoritative recovery"
+    },
+    {
+      "condition": "history gap",
+      "ISSUE": false,
+      "RECOVER": false,
+      "REPLACE": false,
+      "PREPARED": false,
+      "behavior": "fail closed; retain evidence and require authoritative recovery"
+    },
+    {
+      "condition": "trust-root store unavailable",
+      "ISSUE": false,
+      "RECOVER": false,
+      "REPLACE": false,
+      "PREPARED": false,
+      "behavior": "fail closed; retain evidence and require authoritative recovery"
+    },
+    {
+      "condition": "reconciliation source unavailable",
+      "ISSUE": false,
+      "RECOVER": false,
+      "REPLACE": false,
+      "PREPARED": false,
+      "behavior": "fail closed; retain evidence and require authoritative recovery"
+    },
+    {
+      "condition": "CHA attempt store unavailable",
+      "ISSUE": false,
+      "RECOVER": false,
+      "REPLACE": false,
+      "PREPARED": false,
+      "behavior": "fail closed; retain evidence and require authoritative recovery"
+    },
+    {
+      "condition": "network partition",
+      "ISSUE": false,
+      "RECOVER": false,
+      "REPLACE": false,
+      "PREPARED": false,
+      "behavior": "fail closed; retain evidence and require authoritative recovery"
+    },
+    {
+      "condition": "restore detected",
+      "ISSUE": false,
+      "RECOVER": false,
+      "REPLACE": false,
+      "PREPARED": false,
+      "behavior": "fail closed; retain evidence and require authoritative recovery"
+    },
+    {
+      "condition": "one region/host stale",
+      "ISSUE": false,
+      "RECOVER": false,
+      "REPLACE": false,
+      "PREPARED": false,
+      "behavior": "fail closed; retain evidence and require authoritative recovery"
+    }
+  ],
+  "split_brain": {
+    "two_issuer_processes": "only global DB CAS may choose; losing transaction returns conflict",
+    "two_issuer_hosts": "same; no local winner",
+    "two_CHA_processes": "SQLite fenced pointer serializes local installation; separate hosts are unsupported without a selected shared CHA authority",
+    "DB_one_partition": "only connected side may reach CAS, but issuance also requires current checkpoint; disconnected side stops",
+    "checkpoint_one_partition": "side without checkpoint stops; reachable side proceeds only when head is current and direction proven",
+    "custody_without_registry": "never sign; registry commit/history/checkpoint prerequisites cannot be bypassed",
+    "timestamp_arbitration": false
+  },
+  "key_compromise": {
+    "claimant": {
+      "new_operations_forbidden": [
+        "root-proof issuance"
+      ],
+      "historical_evidence": "independent authenticated retained claimant authority history under a currently trusted root/checkpoint lineage",
+      "compromise_transition": "ACTIVE|VERIFY_ONLY -> REVOKED",
+      "resulting_state": "REVOKED",
+      "compromised_key_signature_alone_sufficient": false,
+      "retain_generation_and_revocation_in_history": true
+    },
+    "requester": {
+      "new_operations_forbidden": [
+        "NEW_BIND",
+        "new issuance request"
+      ],
+      "historical_evidence": "independently trusted issuer/registry attempt history",
+      "compromise_transition": "ACTIVE|VERIFY_ONLY -> REVOKED",
+      "resulting_state": "REVOKED",
+      "compromised_key_signature_alone_sufficient": false,
+      "retain_generation_and_revocation_in_history": true
+    },
+    "issuer_signing": {
+      "new_operations_forbidden": [
+        "sign new root proofs"
+      ],
+      "historical_evidence": "trusted retained issuer decision history and checkpoint lineage",
+      "compromise_transition": "ACTIVE|VERIFY_ONLY -> REVOKED",
+      "resulting_state": "REVOKED",
+      "compromised_key_signature_alone_sufficient": false,
+      "retain_generation_and_revocation_in_history": true
+    },
+    "deployment_trust_root": {
+      "new_operations_forbidden": [
+        "new provisioning",
+        "new trust establishment"
+      ],
+      "historical_evidence": "successor/recovery lineage anchored outside the compromised root",
+      "compromise_transition": "ACTIVE|VERIFY_ONLY -> REVOKED",
+      "resulting_state": "REVOKED",
+      "compromised_key_signature_alone_sufficient": false,
+      "retain_generation_and_revocation_in_history": true
+    },
+    "checkpoint": {
+      "new_operations_forbidden": [
+        "attest new checkpoints"
+      ],
+      "historical_evidence": "independently trusted checkpoint/root recovery lineage",
+      "compromise_transition": "ACTIVE|VERIFY_ONLY -> REVOKED",
+      "resulting_state": "REVOKED",
+      "compromised_key_signature_alone_sufficient": false,
+      "retain_generation_and_revocation_in_history": true
+    }
+  },
+  "least_privilege": {
+    "CHA": [
+      "submit request",
+      "read/verify evidence",
+      "never bind registry"
+    ],
+    "Issuer": [
+      "CAS registry",
+      "append issuer history",
+      "invoke signing",
+      "never commit account"
+    ],
+    "CheckpointAuthority": [
+      "read/attest heads",
+      "never issue root proof"
+    ],
+    "SecurityAuthority": [
+      "provision roots/entitlements/credentials",
+      "no runtime CHA impersonation"
+    ]
+  },
+  "status": {
+    "production_substrate_selected": false,
+    "production_substrate_available_now": false,
+    "implementation_allowed": false,
+    "RootProofIssuer_implementation_allowed": false,
+    "FreshnessAuthority_implementation_allowed": false,
+    "CryptoHunterAccountAuthority_implementation_allowed": false,
+    "WorkspaceAuthority": "NOT_AVAILABLE",
+    "FullFillAuthority": "NOT_AVAILABLE",
+    "production_M05": "BLOCKED / NOT AVAILABLE",
+    "M08": "BLOCKED / NOT AVAILABLE"
+  },
+  "provenance": {
+    "classification": "UNKNOWN",
+    "finding_scope": "CURRENT_TREE_ONLY",
+    "formal_project_advancement": "WITHHELD"
+  },
+  "redteam_mutations": [
+    "CHA_directly_mutates_entitlement_registry",
+    "issuer_directly_commits_account",
+    "checkpoint_same_rollback_domain_without_independent_anchor",
+    "ordinary_DB_durability_claimed_as_anti_rollback",
+    "root_proof_signing_key_plaintext_config",
+    "requester_key_reused_as_issuer_signing_key",
+    "claimant_key_reused_as_requester_key",
+    "TEST_namespace_reused_for_PRODUCTION",
+    "process_local_CAS_selected_for_multi_host_registry",
+    "last_write_wins_selected_as_BIND",
+    "checkpoint_unavailable_but_issuance_allowed",
+    "registry_unavailable_but_signing_only_fallback_allowed",
+    "NOT_FOUND_used_as_authoritative_UNBOUND",
+    "restored_BOUND_to_UNBOUND_state_accepted",
+    "restored_REVOKED_to_ACTIVE_state_accepted",
+    "CHA_attempt_store_shares_authority_write_role_with_issuer_registry",
+    "unknown_schema_auto_migrated",
+    "caller_selects_entitlement_record",
+    "local_timestamp_used_to_resolve_split_brain",
+    "implementation_allowed_with_DECISION_REQUIRED_dependency",
+    "compromised_issuer_key_becomes_VERIFY_ONLY",
+    "compromised_requester_key_becomes_VERIFY_ONLY",
+    "compromised_claimant_key_becomes_VERIFY_ONLY",
+    "compromised_deployment_root_becomes_VERIFY_ONLY",
+    "compromised_checkpoint_key_becomes_VERIFY_ONLY",
+    "REVOKED_to_VERIFY_ONLY_allowed",
+    "REVOKED_to_ACTIVE_allowed_after_compromise",
+    "compromised_key_signature_alone_establishes_historical_acceptance",
+    "compromised_checkpoint_self_attests_recovery",
+    "restored_REVOKED_to_VERIFY_ONLY_state_accepted",
+    "requester_key_reused_as_freshness_proposer_key",
+    "requester_key_reused_as_Catalog_authority_key",
+    "requester_key_reused_as_storage_security_key",
+    "issuer_signing_key_reused_as_freshness_proposer_key",
+    "issuer_signing_key_reused_as_Catalog_authority_key",
+    "claimant_key_reused_as_issuer_signing_key"
+  ],
+  "credential_lifecycle": {
+    "states": {
+      "ACTIVE": {
+        "new_role_authorized_operations": true,
+        "historical_verification_where_otherwise_valid": true
+      },
+      "VERIFY_ONLY": {
+        "purpose": "planned rotation / retirement only",
+        "new_role_authorized_operations": false,
+        "historical_verification_where_otherwise_valid": true
+      },
+      "REVOKED": {
+        "purpose": "compromise or suspected compromise",
+        "new_role_authorized_operations": false,
+        "signature_alone_establishes_historical_acceptance_or_recovery_direction": false
+      }
+    },
+    "planned_retirement_transition": "ACTIVE -> VERIFY_ONLY",
+    "compromise_transitions": [
+      "ACTIVE -> REVOKED",
+      "VERIFY_ONLY -> REVOKED"
+    ],
+    "compromise_may_result_in_VERIFY_ONLY": false,
+    "REVOKED_is_terminal": true,
+    "REVOKED_to_VERIFY_ONLY_allowed": false,
+    "REVOKED_to_ACTIVE_allowed": false,
+    "separately_reviewed_rehabilitation_protocol_exists": false,
+    "history": {
+      "preserve_states": [
+        "ACTIVE",
+        "VERIFY_ONLY",
+        "REVOKED"
+      ],
+      "preserve_compromised_generation_identity": true,
+      "preserve_REVOKED_transition": true,
+      "delete_compromised_generation": false,
+      "reinterpret_REVOKED_as_VERIFY_ONLY": false,
+      "retaining_REVOKED_equals_trusting_its_signature": false
+    },
+    "historical_proof_for_REVOKED": {
+      "independent_trusted_evidence_required": true,
+      "requirements": [
+        "currently trusted authority root or checkpoint lineage",
+        "exact historical credential generation identity",
+        "exact historical record or decision identity",
+        "authority-history proof that state existed before or independently of compromise determination",
+        "authenticated retained history"
+      ],
+      "compromised_key_signature_alone_sufficient": false,
+      "compromised_key_self_corroboration_allowed": false,
+      "wall_clock_establishes_direction": false,
+      "unavailable_evidence_result": "FAIL_CLOSED / UNAVAILABLE",
+      "acceptance_changes_lifecycle_state": false
+    },
+    "checkpoint_interaction": {
+      "checkpointed_transition_proves": [
+        "lifecycle transition",
+        "ordering"
+      ],
+      "checkpoint_makes_compromised_key_trustworthy_again": false,
+      "compromised_checkpoint_self_attests_recovery": false,
+      "checkpoint_compromise_recovery_requires": "independently trusted checkpoint/root lineage"
+    },
+    "roles": {
+      "claimant": {
+        "new_operations_forbidden": [
+          "root-proof issuance"
+        ],
+        "historical_evidence": "independent authenticated retained claimant authority history under a currently trusted root/checkpoint lineage",
+        "compromise_transition": "ACTIVE|VERIFY_ONLY -> REVOKED",
+        "resulting_state": "REVOKED",
+        "compromised_key_signature_alone_sufficient": false,
+        "retain_generation_and_revocation_in_history": true
+      },
+      "requester": {
+        "new_operations_forbidden": [
+          "NEW_BIND",
+          "new issuance request"
+        ],
+        "historical_evidence": "independently trusted issuer/registry attempt history",
+        "compromise_transition": "ACTIVE|VERIFY_ONLY -> REVOKED",
+        "resulting_state": "REVOKED",
+        "compromised_key_signature_alone_sufficient": false,
+        "retain_generation_and_revocation_in_history": true
+      },
+      "issuer_signing": {
+        "new_operations_forbidden": [
+          "sign new root proofs"
+        ],
+        "historical_evidence": "trusted retained issuer decision history and checkpoint lineage",
+        "compromise_transition": "ACTIVE|VERIFY_ONLY -> REVOKED",
+        "resulting_state": "REVOKED",
+        "compromised_key_signature_alone_sufficient": false,
+        "retain_generation_and_revocation_in_history": true
+      },
+      "deployment_trust_root": {
+        "new_operations_forbidden": [
+          "new provisioning",
+          "new trust establishment"
+        ],
+        "historical_evidence": "successor/recovery lineage anchored outside the compromised root",
+        "compromise_transition": "ACTIVE|VERIFY_ONLY -> REVOKED",
+        "resulting_state": "REVOKED",
+        "compromised_key_signature_alone_sufficient": false,
+        "retain_generation_and_revocation_in_history": true
+      },
+      "checkpoint": {
+        "new_operations_forbidden": [
+          "attest new checkpoints"
+        ],
+        "historical_evidence": "independently trusted checkpoint/root recovery lineage",
+        "compromise_transition": "ACTIVE|VERIFY_ONLY -> REVOKED",
+        "resulting_state": "REVOKED",
+        "compromised_key_signature_alone_sufficient": false,
+        "retain_generation_and_revocation_in_history": true
+      }
+    }
+  },
+  "credential_role_non_aliasing": {
+    "roles": [
+      "ROOT_PROOF_REQUESTER",
+      "ROOT_PROOF_CLAIMANT",
+      "ROOT_PROOF_ISSUER_SIGNING",
+      "ACCOUNT_GENESIS_FRESHNESS_PROPOSER",
+      "CATALOG_AUTHORITY",
+      "STORAGE_SECURITY_KEY"
+    ],
+    "requester_role": {
+      "role_id": "ROOT_PROOF_REQUESTER",
+      "authority": "CryptoHunterAccountAuthority",
+      "scope": "dedicated pre-account credential",
+      "assertion": "CryptoHunterAccountAuthority originated and authorized this root-proof issuance request"
+    },
+    "issuer_signing_role": {
+      "role_id": "ROOT_PROOF_ISSUER_SIGNING",
+      "authority": "Independent Root-Proof Issuer",
+      "assertion": "Independent Root-Proof Issuer accepted and signed this proof"
+    },
+    "required_distinct_pairs": [
+      [
+        "ROOT_PROOF_REQUESTER",
+        "ROOT_PROOF_CLAIMANT"
+      ],
+      [
+        "ROOT_PROOF_REQUESTER",
+        "ROOT_PROOF_ISSUER_SIGNING"
+      ],
+      [
+        "ROOT_PROOF_REQUESTER",
+        "ACCOUNT_GENESIS_FRESHNESS_PROPOSER"
+      ],
+      [
+        "ROOT_PROOF_REQUESTER",
+        "CATALOG_AUTHORITY"
+      ],
+      [
+        "ROOT_PROOF_REQUESTER",
+        "STORAGE_SECURITY_KEY"
+      ],
+      [
+        "ROOT_PROOF_CLAIMANT",
+        "ROOT_PROOF_ISSUER_SIGNING"
+      ],
+      [
+        "ROOT_PROOF_ISSUER_SIGNING",
+        "ACCOUNT_GENESIS_FRESHNESS_PROPOSER"
+      ],
+      [
+        "ROOT_PROOF_ISSUER_SIGNING",
+        "CATALOG_AUTHORITY"
+      ]
+    ],
+    "pair_semantics": "unordered; absence of a pair never implies equality",
+    "distinct_dimensions": [
+      "semantic role",
+      "credential identity",
+      "cryptographic key material or non-exportable key handle",
+      "custody role",
+      "lifecycle namespace"
+    ],
+    "logical_ACLs_on_same_key_material_satisfy_separation": false,
+    "future_exception_protocol_exists": false,
+    "forbidden_alias_forms": [
+      "same private key bytes with two key IDs",
+      "same non-exportable key handle under two semantic aliases",
+      "same KMS/HSM key version used for distinct forbidden roles",
+      "same credential generation re-labelled between roles",
+      "same physical secret copied into multiple role namespaces"
+    ],
+    "implementation_readiness_identity_check": [
+      "role credential ID",
+      "provider namespace",
+      "key version or key handle identity"
+    ],
+    "non_exportable_key_equality_rule": "equal provider namespace plus equal key-handle/version identity proves forbidden aliasing without inspecting material",
+    "issuer_may_authenticate_requester_with_proof_signing_credential": false,
+    "CHA_requester_obtains_issuer_signing_authority": false
+  }
+}
+```
