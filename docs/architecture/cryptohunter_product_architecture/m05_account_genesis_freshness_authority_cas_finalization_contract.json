@@ -107,8 +107,8 @@
     "accepted_document_digest_semantics": "the same document_digest object used by CAS for the exact payload atomically accepted as authoritative; never a digest of receipt or authenticated envelope",
     "timestamps_required": false,
     "unknown_fields": "REJECT",
-    "canonical_byte_encoding": "NOT_FROZEN",
-    "hash_algorithm": "NOT_FROZEN",
+    "canonical_byte_encoding": "RFC 8785 JSON Canonicalization Scheme (JCS), restricted to the contract schema",
+    "hash_algorithm": "SHA-256",
     "semantic_preimage": "FROZEN",
     "partial_or_mixed_heads": "REJECT",
     "finalization_request_id_is_in_digest_preimage": true,
@@ -122,7 +122,7 @@
       ],
       "payload_type": "AccountGenesisFreshnessDocumentPayload",
       "document_digest": "HASH(domain_separator || canonical(payload))",
-      "proposer_authentication": "semantic authentication binding over domain_separator, exact payload and document_digest; exact algorithm NOT_FROZEN",
+      "proposer_authentication": "Ed25519 signature binding exact frozen proposer authentication preimage",
       "single_source_of_candidate_truth": true,
       "proposer_authentication_type": "ProposerAuthentication",
       "proposer_authentication_exact_fields": [
@@ -135,9 +135,26 @@
         "signed_or_authenticated_document_digest",
         "authentication_tag_or_signature"
       ],
-      "timestamps_present": false
+      "timestamps_present": false,
+      "authentication_algorithm": "Ed25519",
+      "signature_representation": "base64url without padding over exactly 64 signature bytes",
+      "domain_literal": "cryptohunter.account-genesis.cha-proposer-authentication.v1"
     },
-    "payload_key_binding_semantics": "freshness_authority_key_id/version identify the expected freshness-finalization key lifecycle only; they never identify or authorize the CHA proposer key"
+    "payload_key_binding_semantics": "freshness_authority_key_id/version identify the expected freshness-finalization key lifecycle only; they never identify or authorize the CHA proposer key",
+    "digest_representation": "lowercase hexadecimal, exactly 64 ASCII characters",
+    "document_digest_domain_literal": "cryptohunter.account-genesis.freshness-document-digest.v1",
+    "domain_separator_preimage_format": "ASCII(exact_domain_literal) || 0x00 || canonical_bytes",
+    "authoritative_document_authentication": {
+      "algorithm": "Ed25519",
+      "signature_representation": "base64url without padding over exactly 64 signature bytes",
+      "domain_literal": "cryptohunter.account-genesis.freshness-document-authentication.v1",
+      "preimage": "ASCII(domain_literal) || 0x00 || canonical({payload, document_digest})",
+      "signing_role": "FreshnessAuthority authority/finalization signing key role",
+      "same_role_as_finalization_receipt": true,
+      "same_key_identity_and_version_as_payload_binding": true,
+      "proposer_key_role_allowed": false,
+      "provider": "NOT_FROZEN / NOT_SELECTED"
+    }
   },
   "CAS_contract": {
     "conceptual_operation": "compare_and_advance",
@@ -241,8 +258,8 @@
     "accepted_document_digest_binding": "FreshnessFinalizationReceipt.accepted_document_digest == exact proposed_document_digest accepted by the same CAS decision",
     "complete_semantic_head_digest_semantics": "HASH(semantic-head-domain || canonical(complete_semantic_head_set))",
     "complete_semantic_head_digest_semantic_preimage": "FROZEN",
-    "complete_semantic_head_digest_canonical_byte_encoding": "NOT_FROZEN",
-    "complete_semantic_head_digest_hash_algorithm": "NOT_FROZEN",
+    "complete_semantic_head_digest_canonical_byte_encoding": "RFC 8785 JSON Canonicalization Scheme (JCS), restricted to the contract schema",
+    "complete_semantic_head_digest_hash_algorithm": "SHA-256",
     "key_field_semantics": "freshness_authority_key_id/version identify only the freshness authority key that authenticates finalization evidence; proposer_key_id/version are carried only in ProposerAuthentication",
     "authentication_boundary": {
       "object_type": "FreshnessFinalizationReceipt",
@@ -264,9 +281,9 @@
       ],
       "authentication_tag_or_signature_in_own_preimage": false,
       "semantic_preimage": "FROZEN",
-      "cryptographic_algorithm": "NOT_FROZEN",
-      "provider": "NOT_FROZEN",
-      "canonical_byte_encoding": "NOT_FROZEN",
+      "cryptographic_algorithm": "Ed25519",
+      "provider": "NOT_FROZEN / NOT_SELECTED",
+      "canonical_byte_encoding": "RFC 8785 JSON Canonicalization Scheme (JCS), restricted to the contract schema",
       "schema_version_authenticated_before_interpretation": true,
       "authenticated_key_identity_drives_receipt_verification_historical_verification_and_lifecycle": true,
       "lifecycle_or_verifier_identity_may_use_unauthenticated_metadata": false,
@@ -274,8 +291,12 @@
       "changing_freshness_authority_key_id_or_version_requires_new_authentication": true,
       "K1_receipt_may_be_treated_as_K2_receipt": false,
       "key_identity_rule": "freshness_authority_key_id and freshness_authority_key_version used for receipt verification, historical verification and lifecycle evaluation MUST exactly equal the authenticated values in the FreshnessFinalizationReceipt preimage",
-      "accepted_document_digest_rule": "authenticated accepted_document_digest == exact proposed_document_digest accepted by the same CAS decision"
-    }
+      "accepted_document_digest_rule": "authenticated accepted_document_digest == exact proposed_document_digest accepted by the same CAS decision",
+      "signature_representation": "base64url without padding over exactly 64 signature bytes",
+      "domain_literal": "cryptohunter.account-genesis.freshness-finalization-receipt-authentication.v1"
+    },
+    "complete_semantic_head_digest_representation": "lowercase hexadecimal, exactly 64 ASCII characters",
+    "complete_semantic_head_digest_domain_literal": "cryptohunter.account-genesis.complete-semantic-head-set-digest.v1"
   },
   "direction_proof": {
     "definition": "authenticated authority read and matching FreshnessFinalizationReceipt bound to exact predecessor, candidate, domain, authority and request identity",
@@ -416,7 +437,7 @@
     "asymmetric_signature": "preferred for independently verifiable receipts but still requires monotonic CAS",
     "authenticated_remote_registry": "valid backend if transactional, domain-bound and operational policy is accepted",
     "OS_keyring_secret": "custody primitive only; current API has no CAS",
-    "selected_authentication": "signature-or-authenticated-tag semantics frozen; exact algorithm NOT_FROZEN",
+    "selected_authentication": "Ed25519 for CHA proposer, authoritative freshness document envelope, and FreshnessFinalizationReceipt; FreshnessAuthority envelope/receipt share one authority/finalization signing role distinct from proposer role",
     "valid_HMAC_alone_establishes_freshness": false,
     "successful_writer_return_without_atomic_CAS_establishes_freshness": false
   },
@@ -625,8 +646,8 @@
     "primary_result": "ACCOUNT_GENESIS_FRESHNESS_AUTHORITY_CONTRACT_FROZEN",
     "design_contract_frozen": true,
     "production_backend_selected": false,
-    "physical_persistence_unblocked": false,
-    "reason": "The safety/API/evidence contract is frozen, but no conforming atomic authority implementation, canonical serialization/key algorithm review, or deployment backend exists; other physical persistence blockers also remain."
+    "physical_persistence_unblocked": true,
+    "reason": "The freshness safety/API/evidence, canonical representation/crypto profile, and abstract physical persistence design are frozen; production remains blocked because no conforming CAS/history backend, custody provider, FreshnessAuthority or dedicated local authority adapter implementation exists, and the independent root-proof issuer prerequisite remains unavailable."
   },
   "implementation_allowed": {
     "FreshnessAuthority": "NO",
@@ -634,8 +655,8 @@
     "design_validators_and_contract_tests_only": "YES"
   },
   "preserved_status": {
-    "physical persistence protocol": "F_DESIGN_BLOCKED",
-    "physical persistence result": "ACCOUNT_GENESIS_PHYSICAL_PERSISTENCE_DESIGN_BLOCKED",
+    "physical persistence protocol": "FROZEN ABSTRACT DESIGN",
+    "physical persistence result": "PHYSICAL_PROTOCOL_CAN_NOW_BE_FROZEN",
     "WorkspaceAuthority": "NOT_AVAILABLE",
     "FullFillAuthority": "NOT_AVAILABLE",
     "M0.8": "BLOCKED",
@@ -644,8 +665,8 @@
   "proposer_authentication_boundary": {
     "authorized_proposer_identity": "CryptoHunterAccountAuthority",
     "candidate_creator_must_equal_authorized_proposer": true,
-    "trusted_proposer_verification_lineage": "C_PROPOSER_KEY_LINEAGE_NOT_YET_FROZEN",
-    "exact_key_provider": "NOT_FROZEN",
+    "trusted_proposer_verification_lineage": "FROZEN_BY_IMPLEMENTATION_READINESS_CONTRACT",
+    "exact_key_provider": "NOT_FROZEN / NOT_SELECTED",
     "semantic_acceptance_rule": "FreshnessAuthority accepts only candidates authenticated as genuine CryptoHunterAccountAuthority under independently pre-provisioned trusted proposer verification lineage",
     "proposer_verification_trust_available_before_AccountGenesis": "REQUIRED",
     "created_account_may_provision_its_own_proposer_trust": false,
@@ -663,7 +684,7 @@
     "cryptographic_validity_alone_authorizes_proposer": false,
     "candidate_carried_key_may_establish_trust": false,
     "TOFU": "FORBIDDEN",
-    "authentication_algorithm": "NOT_FROZEN",
+    "authentication_algorithm": "Ed25519",
     "authentication_binding": [
       "proposer-authentication-domain-separator",
       "schema_version",
@@ -680,7 +701,7 @@
     "proposer_key_role": "authenticate origin of new candidate as CryptoHunterAccountAuthority only",
     "freshness_finalization_key_role": "authenticate authoritative acceptance document and FreshnessFinalizationReceipt only",
     "must_be_distinct_security_roles": true,
-    "shared_key_material_or_custody": "NOT_FROZEN / requires explicit future review; never merges semantic roles",
+    "shared_key_material_or_custody": "FORBIDDEN; distinct from FreshnessAuthority authority/finalization signing key role",
     "proposer_key_lifecycle": {
       "states": [
         "ACTIVE",
@@ -705,7 +726,9 @@
     "changing_proposer_key_id_or_version_requires_new_authentication": true,
     "P1_authentication_may_be_treated_as_P2_authentication": false,
     "key_identity_rule": "proposer_key_id and proposer_key_version used for verification and lifecycle eligibility MUST exactly equal the values in the authenticated ProposerAuthentication preimage",
-    "schema_version_authenticated_before_interpretation": true
+    "schema_version_authenticated_before_interpretation": true,
+    "signature_representation": "base64url without padding over exactly 64 signature bytes",
+    "domain_literal": "cryptohunter.account-genesis.cha-proposer-authentication.v1"
   },
   "proposer_authentication_redteam": {
     "arbitrary self-signed proposer accepted as CryptoHunterAccountAuthority": {
@@ -891,8 +914,8 @@
       "finalization_request_id"
     ],
     "semantic_preimage": "FROZEN",
-    "canonical_byte_encoding": "NOT_FROZEN",
-    "hash_algorithm": "NOT_FROZEN",
+    "canonical_byte_encoding": "RFC 8785 JSON Canonicalization Scheme (JCS), restricted to the contract schema",
+    "hash_algorithm": "SHA-256",
     "is_caller_selected": false,
     "is_lookup_selected": false,
     "is_receipt_id": false,
@@ -900,7 +923,9 @@
     "changing_finalization_request_id_changes_identity": true,
     "changing_accepted_document_digest_changes_identity": true,
     "materialized_digest_semantics": "content identity only; not authority and not freshness",
-    "historical_lookup_must_reference_already_existing_identity": true
+    "historical_lookup_must_reference_already_existing_identity": true,
+    "digest_representation": "lowercase hexadecimal, exactly 64 ASCII characters",
+    "domain_literal": "cryptohunter.account-genesis.original-decision-identity.v1"
   },
   "revoked_history_independent_proof_contract": {
     "applies_to_all_allowed_proof_shapes": true,
@@ -995,6 +1020,42 @@
     "missing currently trusted independent root still yields ALREADY_ACCEPTED_EXACT": {
       "mutation": "REJECT",
       "expected": "contract validation fails"
+    }
+  },
+  "concrete_representation_refinement": {
+    "status": "FROZEN_BY_IMPLEMENTATION_READINESS_RECONCILIATION",
+    "semantic_preimages_changed": false,
+    "profile_version": "account-genesis-freshness-crypto-profile-v1",
+    "provider_selection": "NOT_FROZEN / NOT_SELECTED",
+    "canonical_profile": {
+      "serialization": "RFC 8785 JSON Canonicalization Scheme (JCS), restricted to the contract schema",
+      "text_encoding": "UTF-8, no BOM",
+      "invalid_Unicode_or_lone_surrogate": "REJECT before canonicalization in accordance with JCS/I-JSON constraints",
+      "duplicate_object_keys": "REJECT during parsing before canonicalization",
+      "floats_in_cryptographic_preimages": "REJECT",
+      "set_like_array_rule": "each set-like field has a schema-declared comparator; sort by ascending unsigned lexicographic order of each element canonical UTF-8 byte string; equal canonical elements are duplicates and REJECT; arrays not declared set-like preserve semantic order",
+      "base64url": "RFC 4648 URL-safe alphabet without padding; decode then re-encode equality required; padding and noncanonical forms REJECT",
+      "digest_hex": "exactly 64 lowercase hexadecimal ASCII characters; uppercase and mixed case REJECT",
+      "unknown_fields": "REJECT"
+    },
+    "digest_algorithm": "SHA-256",
+    "digest_representation": "lowercase hexadecimal, exactly 64 ASCII characters",
+    "authentication_algorithm": "Ed25519",
+    "signature_representation": "base64url without padding over exactly 64 signature bytes",
+    "domain_separator_preimage_format": "ASCII(exact_domain_literal) || 0x00 || canonical_bytes",
+    "domain_separators": {
+      "freshness_document_digest": "cryptohunter.account-genesis.freshness-document-digest.v1",
+      "authoritative_document_authentication": "cryptohunter.account-genesis.freshness-document-authentication.v1",
+      "cha_proposer_authentication": "cryptohunter.account-genesis.cha-proposer-authentication.v1",
+      "complete_semantic_head_set_digest": "cryptohunter.account-genesis.complete-semantic-head-set-digest.v1",
+      "finalization_receipt_authentication": "cryptohunter.account-genesis.freshness-finalization-receipt-authentication.v1",
+      "original_decision_identity": "cryptohunter.account-genesis.original-decision-identity.v1"
+    },
+    "domain_rules": {
+      "all_literals_distinct": true,
+      "environment_binding": "TEST/PRODUCTION remains inside canonical authenticated payload",
+      "immutability": "literal immutable for profile v1; change requires explicit new protocol/profile version",
+      "runtime_or_caller_configurable": false
     }
   }
 }

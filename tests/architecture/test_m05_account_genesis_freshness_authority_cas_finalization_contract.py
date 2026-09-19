@@ -136,6 +136,30 @@ def validate(value: dict) -> None:
     assert state["without_acceptance"] == "no authoritative N+1"
     assert state["method_returned_true_is_historical_proof"] is False
 
+    representation = value["concrete_representation_refinement"]
+    assert representation["status"] == (
+        "FROZEN_BY_IMPLEMENTATION_READINESS_RECONCILIATION"
+    )
+    assert representation["semantic_preimages_changed"] is False
+    assert representation["digest_algorithm"] == "SHA-256"
+    assert representation["authentication_algorithm"] == "Ed25519"
+    assert representation["signature_representation"] == (
+        "base64url without padding over exactly 64 signature bytes"
+    )
+    profile = representation["canonical_profile"]
+    assert profile["serialization"].startswith("RFC 8785")
+    assert profile["invalid_Unicode_or_lone_surrogate"].startswith("REJECT")
+    assert profile["duplicate_object_keys"].startswith("REJECT")
+    assert profile["floats_in_cryptographic_preimages"] == "REJECT"
+    assert "schema-declared comparator" in profile["set_like_array_rule"]
+    assert "padding and noncanonical forms REJECT" in profile["base64url"]
+    assert "uppercase and mixed case REJECT" in profile["digest_hex"]
+    domains = representation["domain_separators"]
+    assert len(domains) == 6
+    assert len(set(domains.values())) == len(domains)
+    assert all(literal and literal.endswith(".v1") for literal in domains.values())
+    assert representation["domain_rules"]["runtime_or_caller_configurable"] is False
+
     document = value["anchor_document_contract"]
     assert document["payload_type"] == "AccountGenesisFreshnessDocumentPayload"
     assert set(document["payload_exact_semantic_fields"]) == EXPECTED_PAYLOAD_FIELDS
@@ -150,6 +174,13 @@ def validate(value: dict) -> None:
     assert document["separate_candidate_payload_digest_present"] is False
     assert document["candidate_or_proposed_digest_name"] == "proposed_document_digest"
     assert document["semantic_preimage"] == "FROZEN"
+    assert document["canonical_byte_encoding"].startswith("RFC 8785")
+    assert document["hash_algorithm"] == "SHA-256"
+    assert document["digest_representation"].startswith("lowercase hexadecimal")
+    document_auth = document["authoritative_document_authentication"]
+    assert document_auth["algorithm"] == "Ed25519"
+    assert document_auth["same_role_as_finalization_receipt"] is True
+    assert document_auth["proposer_key_role_allowed"] is False
     assert document["finalization_request_id_is_in_digest_preimage"] is True
     assert document["changing_finalization_request_id_changes_document_identity"] is True
     proposed = document["proposed_candidate_object"]
@@ -161,9 +192,8 @@ def validate(value: dict) -> None:
     assert proposed["document_digest"] == (
         "HASH(domain_separator || canonical(payload))"
     )
-    assert proposed["proposer_authentication"].startswith(
-        "semantic authentication binding over domain_separator, exact payload and document_digest"
-    )
+    assert proposed["proposer_authentication"].startswith("Ed25519 signature binding")
+    assert proposed["authentication_algorithm"] == "Ed25519"
     assert proposed["single_source_of_candidate_truth"] is True
     assert proposed["proposer_authentication_type"] == "ProposerAuthentication"
     assert set(proposed["proposer_authentication_exact_fields"]) == EXPECTED_PROPOSER_AUTH_FIELDS
@@ -215,9 +245,9 @@ def validate(value: dict) -> None:
     )
     assert receipt_auth["authentication_tag_or_signature_in_own_preimage"] is False
     assert receipt_auth["semantic_preimage"] == "FROZEN"
-    assert receipt_auth["cryptographic_algorithm"] == "NOT_FROZEN"
-    assert receipt_auth["provider"] == "NOT_FROZEN"
-    assert receipt_auth["canonical_byte_encoding"] == "NOT_FROZEN"
+    assert receipt_auth["cryptographic_algorithm"] == "Ed25519"
+    assert receipt_auth["provider"] == "NOT_FROZEN / NOT_SELECTED"
+    assert receipt_auth["canonical_byte_encoding"].startswith("RFC 8785")
     assert receipt_auth["schema_version_authenticated_before_interpretation"] is True
     assert receipt_auth[
         "authenticated_key_identity_drives_receipt_verification_historical_verification_and_lifecycle"
@@ -295,8 +325,8 @@ def validate(value: dict) -> None:
     assert identity["type"] == "OriginalDecisionIdentity"
     assert set(identity["semantic_tuple"]) == EXPECTED_ORIGINAL_DECISION_IDENTITY
     assert identity["semantic_preimage"] == "FROZEN"
-    assert identity["canonical_byte_encoding"] == "NOT_FROZEN"
-    assert identity["hash_algorithm"] == "NOT_FROZEN"
+    assert identity["canonical_byte_encoding"].startswith("RFC 8785")
+    assert identity["hash_algorithm"] == "SHA-256"
     assert identity["is_caller_selected"] is False
     assert identity["is_lookup_selected"] is False
     assert identity["is_receipt_id"] is False
@@ -395,9 +425,9 @@ def validate(value: dict) -> None:
     assert proposer["authorized_proposer_identity"] == "CryptoHunterAccountAuthority"
     assert proposer["candidate_creator_must_equal_authorized_proposer"] is True
     assert proposer["trusted_proposer_verification_lineage"] == (
-        "C_PROPOSER_KEY_LINEAGE_NOT_YET_FROZEN"
+        "FROZEN_BY_IMPLEMENTATION_READINESS_CONTRACT"
     )
-    assert proposer["exact_key_provider"] == "NOT_FROZEN"
+    assert proposer["exact_key_provider"] == "NOT_FROZEN / NOT_SELECTED"
     assert proposer["proposer_verification_trust_available_before_AccountGenesis"] == "REQUIRED"
     assert proposer["created_account_may_provision_its_own_proposer_trust"] is False
     assert set(proposer["trust_must_not_derive_from"]) == EXPECTED_BOOTSTRAP_DENY
@@ -408,7 +438,7 @@ def validate(value: dict) -> None:
     assert proposer["cryptographic_validity_alone_authorizes_proposer"] is False
     assert proposer["candidate_carried_key_may_establish_trust"] is False
     assert proposer["TOFU"] == "FORBIDDEN"
-    assert proposer["authentication_algorithm"] == "NOT_FROZEN"
+    assert proposer["authentication_algorithm"] == "Ed25519"
     assert set(proposer["authentication_binding"]) == {
         "proposer-authentication-domain-separator", "schema_version", "proposer_identity",
         "environment", "trust_domain", "proposer_key_id", "proposer_key_version",
@@ -489,7 +519,15 @@ def validate(value: dict) -> None:
     assert value["result"]["primary_result"] == (
         "ACCOUNT_GENESIS_FRESHNESS_AUTHORITY_CONTRACT_FROZEN"
     )
-    assert value["result"]["physical_persistence_unblocked"] is False
+    assert value["result"]["physical_persistence_unblocked"] is True
+    assert value["preserved_status"]["physical persistence protocol"] == (
+        "FROZEN ABSTRACT DESIGN"
+    )
+    assert value["preserved_status"]["physical persistence result"] == (
+        "PHYSICAL_PROTOCOL_CAN_NOW_BE_FROZEN"
+    )
+    assert "canonical serialization/key algorithm review" not in value["result"]["reason"]
+    assert "physical persistence blockers" not in value["result"]["reason"]
     assert value["implementation_allowed"]["FreshnessAuthority"] == "NO"
     assert value["implementation_allowed"]["CryptoHunterAccountAuthority"] == "NO"
     assert value["preserved_status"]["production M0.5"] == "NOT_AVAILABLE"
