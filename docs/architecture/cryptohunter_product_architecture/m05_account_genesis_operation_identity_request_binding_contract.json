@@ -350,7 +350,8 @@
     "subject_cardinality": "NOT_FROZEN",
     "ABORTED_terminal": true,
     "RELEASE_reservation_only": true,
-    "root_proof_result": "ACCOUNT_GENESIS_ROOT_PROOF_INSUFFICIENT_SEMANTICS"
+    "root_proof_result": "ACCOUNT_GENESIS_ROOT_PROOF_ISSUER_CONTRACT_CAN_BE_FROZEN",
+    "root_proof_production_status": "PRODUCTION_ISSUER_ENTITLEMENT_AND_CLAIMANT_AUTHORITY_NOT_AVAILABLE"
   },
   "mandatory_redteam": {
     "executable_mutation_tests_required": true,
@@ -373,7 +374,8 @@
   },
   "result": {
     "primary_result": "ACCOUNT_GENESIS_OPERATION_REQUEST_CONTRACT_PARTIALLY_FROZEN",
-    "reason": "Safety, retry, binding and fingerprint requirements are frozen, but identity model/owner/issuer/timing, exact request schema/serialization/domain, reservation handoff and root-proof timing semantics remain blocked."
+    "reason": "Safety, retry, binding, authority owner, operation issuance timing and root-proof timing semantics are frozen; exact canonical request schema/serialization/domain, reservation handoff details and subject cardinality remain unresolved.",
+    "root_proof_timing_status": "FROZEN_AFTER_INITIAL_BINDING_BEFORE_PREPARED"
   },
   "implementation_allowed": {
     "CryptoHunterAccountAuthority": false,

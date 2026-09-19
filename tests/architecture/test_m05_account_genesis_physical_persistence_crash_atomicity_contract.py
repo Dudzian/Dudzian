@@ -542,6 +542,8 @@ def test_cross_artifact_parity_uses_actual_frozen_values() -> None:
     assert contract["cross_artifact_parity"]["reservation_state_required"] in (
         reservation["genesis_commit_binding"]["genuine_at"]
     )
-    assert proof["historical_provenance"]["current_availability"] == "NOT_AVAILABLE"
+    assert proof["historical_provenance"]["current_availability"] == (
+        "SEMANTICS_FROZEN / IMPLEMENTATION_NOT_AVAILABLE"
+    )
     assert "exact accepted root proof" in proof["historical_provenance"]["requirement"]
     assert proof["implementation_allowed"]["CryptoHunterAccountAuthority"] is False

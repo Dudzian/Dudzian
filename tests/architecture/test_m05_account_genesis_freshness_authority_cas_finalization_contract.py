@@ -908,7 +908,7 @@ def test_cross_artifact_parity_reads_actual_sources() -> None:
     assert operation_binding["implementation_allowed"]["CryptoHunterAccountAuthority"] is False
 
     assert root_proof["frozen_inputs"]["root_proof_issuer"] == (
-        "NOT_FOUND / conditional external provisioning issuer"
+        "INDEPENDENT_PRE_ACCOUNT_ROOT_PROOF_ISSUER"
     )
     assert root_proof["authority_boundary"]["issuer"] != freshness["candidate_owner"]
     assert root_proof["non_circular_root"]["account_scoped_authority_allowed"] is False

@@ -280,7 +280,8 @@ Ten plik jest deterministyczną, kompletną projekcją `m05_account_genesis_phys
     "operation_COMMITTED_with_reservation_RESERVED": "FAIL_CLOSED / DO_NOT_PUBLISH",
     "partial_commit": "MUST ROLL BACK OR BE DETECTED AND FAIL CLOSED",
     "cross_process_boundary": "database/authority transaction with durable uniqueness and expected-state fences; process-local mutex is insufficient",
-    "PREPARED": "Durable authenticated non-genuine state binding the exact identities and exact CAS candidate; retry may not reallocate."
+    "PREPARED": "Durable authenticated non-genuine state binding the exact identities and exact CAS candidate; retry may not reallocate.",
+    "ROOT_PROOF_ISSUANCE_ATTEMPT_persist_before_send": "exact authenticated request/signatures and recovery identity durable before external send; side effect without record FORBIDDEN"
   },
   "external_anchor_contract": {
     "model": "AccountGenesis-specific atomic multi-lineage anchor document",
@@ -1230,6 +1231,67 @@ Ten plik jest deterministyczną, kompletną projekcją `m05_account_genesis_phys
       "historical_evidence_unavailable": "FAIL_CLOSED / RETAIN_CURRENT_CANDIDATE / NO_REPREPARE"
     },
     "old_won_lost_response_then_authority_advanced": "Recover exact authenticated historical acceptance, finalize old candidate, and forbid REPREPARE; unavailable distinguishing history fails closed."
+  },
+  "root_proof_issuance_attempt_recovery": {
+    "object": "RootProofIssuanceAttemptV1",
+    "macro_phase_change": false,
+    "position": "between INITIAL_BINDING and PREPARED",
+    "persist_before_send": true,
+    "external_send_without_durable_attempt": "FORBIDDEN",
+    "network_send_atomic_with_local_storage": false,
+    "send_transition": "durably classify MAY_HAVE_BEEN_SENT_OUTCOME_UNKNOWN before/as external attempt begins",
+    "missing_response_implies_not_sent": false,
+    "restart": "authoritative issuer reconciliation required; never reconstruct from caller, current credentials, lookup or process memory",
+    "identity_contract": "authority-issued rpa_<canonical lowercase UUIDv7> plus immutable RootProofIssuanceAttemptIdentityPayloadV1 digest; mutable attempt_state excluded",
+    "replacement": "authoritative UNBOUND first creates a new durable reservation with NOT_YET_DEFINED digest; later signed immutable finalization defines the new digest; old identity/digest preserved; actual BOUND winner remains authoritative",
+    "crash_two_current_attempts_same_tuple": "FORBIDDEN",
+    "authority_winner": "issuer_history.bound_issuance_attempt_id overrides current/newest local pointer",
+    "two_step_local_model": [
+      "durable authority-owned RootProofIssuanceAttemptReservationV1",
+      "exact requester and claimant signing for reserved rpa_id",
+      "durable completed immutable RootProofIssuanceAttemptV1",
+      "external issuer send"
+    ],
+    "authority_id_reservation_precedes_signing": true,
+    "immutable_attempt_persistence_precedes_send": true,
+    "reservation_atomicity": "current fence + RootProofIssuanceAttemptReservationV1 creation/install are one local authority transition; signing and immutable attempt persistence excluded",
+    "immutable_finalization_atomicity": "later local authority transaction verifies exact current non-superseded reservation/fence and exact signed identity, persists immutable attempt+digest, and transitions state without changing rpa_id",
+    "reservation_transaction_includes": {
+      "requester_signing": false,
+      "claimant_signing": false,
+      "immutable_attempt_persistence": false,
+      "external_issuer_send": false
+    },
+    "ordering": {
+      "reservation_commit_precedes_signing": true,
+      "immutable_finalization_follows_both_signatures": true,
+      "immutable_persistence_precedes_external_send": true
+    },
+    "replacement_reservation_switch_atomicity": "old supersession + durable exact authenticated authoritative-UNBOUND evidence reference/digest + new RootProofIssuanceAttemptReservationV1 persistence + new current pointer install are one local authority transition; evidence obtained and verified before switch; no signing, immutable persistence or send",
+    "replacement_immutable_finalization_atomicity": "later reuse immutable_finalization_atomicity against the same current replacement reservation/rpa_id",
+    "replacement_reservation_transaction_includes": {
+      "old_supersession": true,
+      "new_reservation_persistence": true,
+      "current_pointer_switch": true,
+      "requester_signing": false,
+      "claimant_signing": false,
+      "immutable_attempt_persistence": false,
+      "external_send": false,
+      "authenticated_unbound_evidence_binding": true
+    },
+    "replacement_reconciliation_evidence": {
+      "object": "RootProofIssuanceReconciliationEvidenceV1",
+      "obtained_before_local_switch": true,
+      "distributed_transaction_with_issuer_claimed": false,
+      "durably_bound_in_local_switch": true,
+      "bound_relation": [
+        "old_issuance_attempt_id",
+        "replacement_authorization_evidence_reference",
+        "replacement_authorization_evidence_digest_sha256",
+        "new_issuance_attempt_id"
+      ],
+      "missing_or_corrupt_after_restart": "FAIL_CLOSED; no reconstruction from current lookup/caller/process memory/current credentials"
+    }
   }
 }
 ```

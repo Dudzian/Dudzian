@@ -86,10 +86,10 @@ def validate_cross_artifact_parity(
     )
     assert subject["result"]["subject_account_cardinality"] == "NOT_FROZEN"
     assert idempotency["cross_artifact_parity"]["subject_cardinality"] == "NOT_FROZEN"
-    assert root["consumption_semantics"]["single_use"] == "NOT_FROZEN"
-    assert root["consumption_semantics"]["multi_use"] == "NOT_FROZEN"
+    assert contract["consumption_semantics"]["single_use"] is True
+    assert contract["consumption_semantics"]["multi_use"] is False
     assert contract["cross_artifact_parity"]["same_proof_replay_semantics"] == (
-        "NOT_FROZEN"
+        "IDEMPOTENT_EXACT_TUPLE_ONLY"
     )
 
 
@@ -124,11 +124,12 @@ def validate(value: dict) -> None:
         "E_ATOMIC_ISSUER_ACCOUNT_PROTOCOL_PROOF",
         "F_DESIGN_BLOCKED",
     }
-    assert models["F_DESIGN_BLOCKED"]["status"] == "SELECTED"
-    assert value["selected_or_blocked_model"]["selection"] == "F_DESIGN_BLOCKED"
+    assert models["F_DESIGN_BLOCKED"]["status"] == "NOT_SELECTED"
+    assert models["C_EXTERNAL_ISSUER_ACCOUNT_GENESIS_PROOF"]["status"].startswith("SELECTED")
+    assert value["selected_or_blocked_model"]["selection"] == "C_EXTERNAL_ISSUER_ACCOUNT_GENESIS_PROOF"
 
     account = value["account_binding"]
-    assert account["options"]["D_NOT_FROZEN"] == "SELECTED"
+    assert account["options"]["D_NOT_FROZEN"] == "NOT_SELECTED"
     assert account["proof_accepted_is_account_id_minted"] is False
     assert account["account_id_minted_is_proof_accepted"] is False
     assert account["both_imply_account_genuine"] is False
@@ -142,8 +143,9 @@ def validate(value: dict) -> None:
     operation = value["operation_binding"]
     assert operation["proof_id_is_operation_id"] is False
     assert operation["proof_id_is_operation_id"] == frozen["proof_id_is_operation_id"]
-    assert operation["current_candidate_binds_logical_operation"] is False
-    assert operation["current_candidate_binds_canonical_genesis_request"] is False
+    assert operation["current_candidate_binds_logical_operation"] is True
+    assert operation["current_candidate_binds_canonical_genesis_request"] is True
+    assert operation["issuance_timing"] == "B_AFTER_INITIAL_BINDING_BEFORE_PREPARED"
 
     authentication = value["authentication"]
     assert authentication["public_SHA_is_authority"] is False
@@ -167,25 +169,24 @@ def validate(value: dict) -> None:
         "reservation exists or was consumed",
         "logical operation is unique",
     }
-    assert value["validation_output"]["name_AcceptedAccountGenesisRootProof"] == (
-        "NOT_FROZEN"
-    )
-    assert value["validation_output"]["owner"] == "DESIGN_BLOCKED"
+    assert value["validation_semantics"]["proof_validated_is_freshness"] is False
 
     consumption = value["consumption_semantics"]
-    assert consumption["single_use"] == "NOT_FROZEN"
-    assert consumption["multi_use"] == "NOT_FROZEN"
-    assert consumption["operation_bound"] == "NOT_FROZEN"
+    assert consumption["single_use"] is True
+    assert consumption["multi_use"] is False
+    assert consumption["operation_bound"] is True
+    assert consumption["request_fingerprint_bound"] is True
+    assert consumption["post_issuance_CONSUMED_state"] is False
     replay = value["replay"]
-    assert replay["R_to_O1_acct_A_then_O2_acct_B"] == (
-        "DOMAIN_SEMANTICS_NOT_FROZEN"
-    )
-    assert replay["one_external_R_validated_twice"].startswith("NOT_FROZEN")
+    assert replay["R_to_O1_acct_A_then_O2_acct_B"] == "REJECT"
+    assert replay["one_external_R_validated_twice"].startswith("ONLY exact same tuple")
     assert "MUST NOT create a second account" in replay[
         "same_proof_same_logical_operation_retry"
     ]
 
-    assert value["historical_provenance"]["current_availability"] == "NOT_AVAILABLE"
+    assert value["historical_provenance"]["current_availability"] == (
+        "SEMANTICS_FROZEN / IMPLEMENTATION_NOT_AVAILABLE"
+    )
     assert value["historical_provenance"][
         "current_issuer_state_is_historical_substitute"
     ] is False
@@ -208,9 +209,15 @@ def validate(value: dict) -> None:
     )
 
     boundary = value["authority_boundary"]
-    assert boundary["validator_options"]["E_DESIGN_BLOCKED"] == "SELECTED"
-    assert boundary["validator_owner"] == "DESIGN_BLOCKED"
-    assert boundary["genesis_final_decision_owner"] == "NOT_FOUND"
+    assert boundary["validator_options"]["A_CHA_SUBORDINATE_VALIDATION_CAPABILITY"] == "SELECTED"
+    assert boundary["validator_owner"] == "CryptoHunterAccountAuthority"
+    assert boundary["genesis_final_decision_owner"] == "CryptoHunterAccountAuthority"
+    assert boundary["root_proof_validation_is_subordinate"] is True
+    evidence = value["validation_output"]
+    assert evidence["object"] == "RootProofAdmissionEvidenceV1"
+    assert evidence["separate_validation_receipt"] == "SEPARATE_VALIDATION_RECEIPT_NOT_REQUIRED"
+    assert evidence["validation_outcome"] == "ACCEPTED_FOR_PREPARED_ONLY"
+    assert evidence["implies_COMMITTED"] is evidence["implies_freshness"] is False
     assert len(boundary["separations"]) == 5
     failures = value["failure_semantics"]
     assert failures["public_literals"].startswith("NOT_FROZEN")
@@ -241,7 +248,7 @@ def validate(value: dict) -> None:
     assert {item["status"] for item in matrix.values()} <= allowed
     assert matrix["account candidate binding"]["status"] == "AVAILABLE"
     assert matrix["issuer authenticity"]["status"] == "NOT_AVAILABLE"
-    assert matrix["replay semantics"]["status"] == "NOT_FROZEN"
+    assert matrix["replay semantics"]["status"] == "AVAILABLE"
     assert matrix["end-to-end genuine root-proof usability"]["status"] == (
         "NOT_AVAILABLE"
     )
@@ -253,13 +260,15 @@ def validate(value: dict) -> None:
     assert parity["proof_id_is_operation_id"] is False
     assert parity["issuer_implies_account_id_mint_owner"] is False
     assert parity["subject_cardinality"] == "NOT_FROZEN"
-    assert parity["same_proof_replay_semantics"] == "NOT_FROZEN"
+    assert parity["same_proof_replay_semantics"] == "IDEMPOTENT_EXACT_TUPLE_ONLY"
 
     assert value["result"]["primary_result"] == (
-        "ACCOUNT_GENESIS_ROOT_PROOF_INSUFFICIENT_SEMANTICS"
+        "ACCOUNT_GENESIS_ROOT_PROOF_ISSUER_CONTRACT_CAN_BE_FROZEN"
     )
-    assert value["result"]["intrinsic_status"] == "DESIGN_BLOCKED"
-    assert value["result"]["upstream_status"] == "BLOCKED_UPSTREAM"
+    assert value["result"]["semantic_status"] == "SEMANTICS_FROZEN"
+    assert value["result"]["production_status"] == (
+        "PRODUCTION_ISSUER_ENTITLEMENT_AND_CLAIMANT_AUTHORITY_NOT_AVAILABLE"
+    )
     assert all(allowed is False for allowed in value["implementation_allowed"].values())
     assert value["preserved_status"]["production M0.5"] == "NOT_AVAILABLE"
 
@@ -379,8 +388,8 @@ def test_cross_artifact_parity_mutations_fail(mutation) -> None:
         (("account_binding_security", "content_bound_account_id_must_match_candidate"), False),
         (("frozen_inputs", "proof_acceptance_implies_COMMITTED"), True),
         (("validation_semantics", "proof_validated_is_account_committed"), True),
-        (("consumption_semantics", "single_use"), "FROZEN"),
-        (("replay", "R_to_O1_acct_A_then_O2_acct_B"), "FORBIDDEN"),
+        (("consumption_semantics", "single_use"), False),
+        (("replay", "R_to_O1_acct_A_then_O2_acct_B"), "ALLOW"),
         (("authority_boundary", "validator_owner"), "ProvisioningBoundary"),
         (("historical_provenance", "current_issuer_state_is_historical_substitute"), True),
         (("restart", "current_membership_substitutes_missing_history"), True),
