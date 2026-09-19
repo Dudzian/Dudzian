@@ -1,0 +1,830 @@
+# M0.5 Independent Root-Proof Issuer — production substrate / implementation readiness
+
+Ten plik jest deterministyczną, kompletną projekcją `m05_account_genesis_root_proof_issuer_implementation_readiness_contract.json`. JSON jest źródłem prawdy.
+
+```json
+{
+  "artifact": "M05_ACCOUNT_GENESIS_ROOT_PROOF_ISSUER_IMPLEMENTATION_READINESS_CONTRACT",
+  "schema_version": 1,
+  "iteration": "DISCOVERY / READINESS FREEZE ONLY",
+  "principal_readiness_result": "ROOT_PROOF_ISSUER_IMPLEMENTATION_READINESS_CAN_BE_FROZEN",
+  "provenance": {
+    "classification": "UNKNOWN",
+    "finding_scope": "CURRENT_TREE_ONLY",
+    "formal_project_advancement": "WITHHELD"
+  },
+  "status": {
+    "semantic_contract_frozen": true,
+    "semantic_result": "ACCOUNT_GENESIS_ROOT_PROOF_ISSUER_CONTRACT_CAN_BE_FROZEN",
+    "implementation_readiness_frozen": true,
+    "production_dependencies_available": false,
+    "implementation_allowed": false,
+    "production_M05_available": false
+  },
+  "discovery_scope": {
+    "roots": [
+      "bot_core/",
+      "deploy/",
+      "config/",
+      "pyproject.toml"
+    ],
+    "examined": [
+      "durable storage and DB abstractions",
+      "transactional and CAS primitives",
+      "append-only history and registries",
+      "key, certificate, secret, HSM and KMS provisioning",
+      "first-run bootstrap and runtime trust identity",
+      "deployment and backup/restore",
+      "anti-rollback and checkpoints",
+      "environment namespaces",
+      "migrations, audit, multi-process and multi-host serialization"
+    ],
+    "classification_rule": "interface, test helper, process-local facility, placeholder, or documentation alone is never AVAILABLE",
+    "categories_distinguished": [
+      "genuine production capability",
+      "test helper",
+      "process-local abstraction",
+      "configuration placeholder",
+      "interface without production backend",
+      "documentation-only candidate"
+    ]
+  },
+  "discovery_results": {
+    "issuer_registry_backend": {
+      "classification": "NOT_AVAILABLE",
+      "production_anchors": [
+        {
+          "path": "bot_core/persistence/state_store.py",
+          "finding": "SQLite projection is not an issuer registry"
+        }
+      ],
+      "production_mechanism_selected": false,
+      "finding_scope": "CURRENT_TREE_ONLY",
+      "mechanism_properties": {
+        "authority_backend_kind": "NONE_SELECTED",
+        "serialization_scope": "NONE",
+        "durability_scope": "NONE",
+        "multi_host_safe": false
+      }
+    },
+    "entitlement_registry_backend": {
+      "classification": "NOT_AVAILABLE",
+      "production_anchors": [],
+      "production_mechanism_selected": false,
+      "finding_scope": "CURRENT_TREE_ONLY",
+      "mechanism_properties": {
+        "authority_backend_kind": "NONE_SELECTED",
+        "serialization_scope": "NONE",
+        "durability_scope": "NONE",
+        "multi_host_safe": false
+      }
+    },
+    "claimant_identity_registry": {
+      "classification": "NOT_AVAILABLE",
+      "production_anchors": [],
+      "production_mechanism_selected": false,
+      "finding_scope": "CURRENT_TREE_ONLY",
+      "mechanism_properties": {
+        "authority_backend_kind": "NONE_SELECTED",
+        "serialization_scope": "NONE",
+        "durability_scope": "NONE",
+        "multi_host_safe": false
+      }
+    },
+    "requester_credential_registry": {
+      "classification": "NOT_AVAILABLE",
+      "production_anchors": [],
+      "production_mechanism_selected": false,
+      "finding_scope": "CURRENT_TREE_ONLY",
+      "mechanism_properties": {
+        "authority_backend_kind": "NONE_SELECTED",
+        "serialization_scope": "NONE",
+        "durability_scope": "NONE",
+        "multi_host_safe": false
+      }
+    },
+    "root_proof_signing_key_custody": {
+      "classification": "NOT_AVAILABLE",
+      "production_anchors": [
+        {
+          "path": "bot_core/security/keyring_storage.py",
+          "finding": "generic keyring storage does not establish this role or lifecycle"
+        }
+      ],
+      "production_mechanism_selected": false,
+      "finding_scope": "CURRENT_TREE_ONLY",
+      "mechanism_properties": {
+        "authority_backend_kind": "NONE_SELECTED",
+        "serialization_scope": "NONE",
+        "durability_scope": "NONE",
+        "multi_host_safe": false
+      }
+    },
+    "deployment_trust_root_provider": {
+      "classification": "NOT_AVAILABLE",
+      "production_anchors": [
+        {
+          "path": "config/oem_fingerprint_keys.json",
+          "finding": "OEM configuration is not an AccountGenesis deployment trust root"
+        }
+      ],
+      "production_mechanism_selected": false,
+      "finding_scope": "CURRENT_TREE_ONLY",
+      "mechanism_properties": {
+        "authority_backend_kind": "NONE_SELECTED",
+        "serialization_scope": "NONE",
+        "durability_scope": "NONE",
+        "multi_host_safe": false
+      }
+    },
+    "global_serialization_CAS": {
+      "classification": "NOT_AVAILABLE",
+      "production_anchors": [
+        {
+          "path": "bot_core/persistence/state_store.py",
+          "finding": "local SQLite projection does not provide selected multi-host authority CAS"
+        }
+      ],
+      "production_mechanism_selected": false,
+      "finding_scope": "CURRENT_TREE_ONLY",
+      "mechanism_properties": {
+        "authority_backend_kind": "NONE_SELECTED",
+        "serialization_scope": "NONE",
+        "durability_scope": "NONE",
+        "multi_host_safe": false
+      }
+    },
+    "retained_authenticated_history": {
+      "classification": "NOT_AVAILABLE",
+      "production_anchors": [
+        {
+          "path": "bot_core/instruments/source_producer_membership.py",
+          "finding": "domain-local journal is not reusable AccountGenesis authority history"
+        }
+      ],
+      "production_mechanism_selected": false,
+      "finding_scope": "CURRENT_TREE_ONLY",
+      "mechanism_properties": {
+        "authority_backend_kind": "NONE_SELECTED",
+        "serialization_scope": "NONE",
+        "durability_scope": "NONE",
+        "multi_host_safe": false
+      }
+    },
+    "history_checkpoint_or_anti_rollback": {
+      "classification": "NOT_FOUND",
+      "production_anchors": [],
+      "production_mechanism_selected": false,
+      "finding_scope": "CURRENT_TREE_ONLY",
+      "mechanism_properties": {
+        "authority_backend_kind": "NONE_SELECTED",
+        "serialization_scope": "NONE",
+        "durability_scope": "NONE",
+        "multi_host_safe": false
+      }
+    },
+    "reconciliation_evidence_source": {
+      "classification": "NOT_AVAILABLE",
+      "production_anchors": [],
+      "production_mechanism_selected": false,
+      "finding_scope": "CURRENT_TREE_ONLY",
+      "mechanism_properties": {
+        "authority_backend_kind": "NONE_SELECTED",
+        "serialization_scope": "NONE",
+        "durability_scope": "NONE",
+        "multi_host_safe": false
+      }
+    },
+    "durable_local_attempt_storage": {
+      "classification": "NOT_AVAILABLE",
+      "production_anchors": [
+        {
+          "path": "bot_core/persistence/state_store.py",
+          "finding": "no AccountGenesis reservation/attempt adapter exists"
+        }
+      ],
+      "production_mechanism_selected": false,
+      "finding_scope": "CURRENT_TREE_ONLY",
+      "mechanism_properties": {
+        "authority_backend_kind": "NONE_SELECTED",
+        "serialization_scope": "NONE",
+        "durability_scope": "NONE",
+        "multi_host_safe": false
+      }
+    },
+    "TEST_PRODUCTION_separation": {
+      "classification": "CONDITIONAL",
+      "production_anchors": [
+        {
+          "path": "config/runtime.yaml",
+          "finding": "runtime environment configuration exists, but no dedicated genesis credential namespaces/provider"
+        }
+      ],
+      "production_mechanism_selected": false,
+      "finding_scope": "CURRENT_TREE_ONLY",
+      "mechanism_properties": {
+        "authority_backend_kind": "NONE_SELECTED",
+        "serialization_scope": "NONE",
+        "durability_scope": "NONE",
+        "multi_host_safe": false
+      }
+    },
+    "backup_restore_security_semantics": {
+      "classification": "NOT_AVAILABLE",
+      "production_anchors": [
+        {
+          "path": "bot_core/persistence/physical_backup.py",
+          "finding": "ordinary backup capability does not prove rollback detection for genesis authority"
+        }
+      ],
+      "production_mechanism_selected": false,
+      "finding_scope": "CURRENT_TREE_ONLY",
+      "mechanism_properties": {
+        "authority_backend_kind": "NONE_SELECTED",
+        "serialization_scope": "NONE",
+        "durability_scope": "NONE",
+        "multi_host_safe": false
+      }
+    },
+    "schema_migration_support": {
+      "classification": "CONDITIONAL",
+      "production_anchors": [
+        {
+          "path": "bot_core/persistence/migration_execution.py",
+          "finding": "general migration mechanisms do not define AccountGenesis historical schema migrations"
+        }
+      ],
+      "production_mechanism_selected": false,
+      "finding_scope": "CURRENT_TREE_ONLY",
+      "mechanism_properties": {
+        "authority_backend_kind": "NONE_SELECTED",
+        "serialization_scope": "NONE",
+        "durability_scope": "NONE",
+        "multi_host_safe": false
+      }
+    }
+  },
+  "topology": {
+    "Product Deployment Security Authority": [
+      "deployment trust roots",
+      "issuer allow-list",
+      "initial BootstrapEntitlement creation",
+      "provisioning principal and claimant registration"
+    ],
+    "IndependentAccountGenesisRootProofIssuer": [
+      "globally serialized entitlement registry",
+      "requester verifier",
+      "claimant verifier",
+      "root-proof signing custody",
+      "retained issuance history",
+      "reconciliation evidence",
+      "historical lifecycle resolution"
+    ],
+    "CryptoHunterAccountAuthority": [
+      "local attempt and reservation authority",
+      "issuer client",
+      "PREPARED admission evidence"
+    ],
+    "authority_rule": "ownership refines production boundaries and does not change frozen semantic authority"
+  },
+  "trust_root_bootstrap": {
+    "status": "NOT_AVAILABLE",
+    "must_preexist_first_account": true,
+    "sources": {
+      "issuer_verification_trust_root": "NOT_AVAILABLE",
+      "provisioning_authority_trust_root": "NOT_AVAILABLE",
+      "claimant_credential_trust": "NOT_AVAILABLE",
+      "CHA_requester_credential_trust": "NOT_AVAILABLE"
+    },
+    "forbidden": [
+      "account prerequisite",
+      "candidate-carried key",
+      "TOFU",
+      "Catalog authority reuse",
+      "FreshnessAuthority reuse",
+      "CHA self-authorization",
+      "account-scoped DeviceInstallation/Operator/Workspace root",
+      "TEST root authorizes PRODUCTION"
+    ]
+  },
+  "bootstrap_entitlement_provisioning": {
+    "owner": "Product Deployment Security Authority",
+    "time": "before first AccountGenesis request",
+    "status": "REQUIRED / PROVIDER NOT_AVAILABLE",
+    "identity": "authority-generated unpredictable entitlement_id; caller cannot select it or backend",
+    "binding": [
+      "environment",
+      "trust_domain",
+      "product",
+      "action",
+      "provisioning_principal_id",
+      "claimant_key_id",
+      "claimant_key_version"
+    ],
+    "generation": "authority creates generation 1 with initial ACTIVE lifecycle in one durable transaction",
+    "duplicate": "exact idempotent replay only; conflicting duplicate rejected",
+    "revocation_supersession": "new retained generation with authenticated lineage; never overwrite",
+    "history": "survives process/deployment restart and key rotation",
+    "lookup": "authority-owned immutable identifiers/aliases; aliases cannot select record or winner",
+    "AccountGenesis_may_create_entitlement": false
+  },
+  "claimant_identity_and_custody": {
+    "status": "NOT_AVAILABLE",
+    "requirements": [
+      "pre-account non-account-scoped identity",
+      "custody owner selected outside AccountGenesis",
+      "ACTIVE/VERIFY_ONLY/REVOKED lifecycle",
+      "version and generation transitions",
+      "retained authenticated history",
+      "compromise and revocation response",
+      "TEST/PRODUCTION isolation"
+    ]
+  },
+  "requester_credential": {
+    "role": "ACCOUNT_GENESIS_ROOT_PROOF_ISSUANCE_REQUESTER_V1",
+    "status": "NOT_AVAILABLE",
+    "requirements": [
+      "dedicated key namespace and distinct material/custody",
+      "pre-account verification trust",
+      "lifecycle registry and rotation",
+      "historical verification",
+      "environment separation"
+    ],
+    "may_alias_roles": {
+      "freshness proposer key": false,
+      "root-proof signing key": false,
+      "claimant key": false,
+      "Catalog key": false,
+      "storage key": false
+    }
+  },
+  "root_proof_signing_custody": {
+    "status": "NOT_AVAILABLE",
+    "acceptable_mechanism": "selected software secret custody, OS keystore, KMS, HSM, or equivalent; plaintext config is forbidden",
+    "requirements": [
+      "authority-controlled generation",
+      "explicit exportability policy",
+      "rotation owner",
+      "ACTIVE/VERIFY_ONLY/REVOKED enforcement",
+      "historical public-key retention",
+      "compromise response",
+      "environment and trust-domain isolation",
+      "auditable operations"
+    ]
+  },
+  "globally_serialized_entitlement_registry": {
+    "status": "NOT_AVAILABLE",
+    "transition": "UNBOUND -> BOUND(exact frozen tuple)",
+    "requirements": [
+      "durable",
+      "globally serialized for one authoritative record",
+      "crash-safe",
+      "exact-idempotent",
+      "exactly one winner",
+      "immutable retained BOUND decision",
+      "multi-process and multi-host safe"
+    ],
+    "forbidden": [
+      "process-local mutex authority",
+      "last-write-wins overwrite",
+      "caller-provided winner",
+      "silent duplicate registry",
+      "bind without atomic conditional transition"
+    ],
+    "atomic_conditional_bind_required": true,
+    "last_write_wins_allowed": false,
+    "multi_host_serialization_required": true
+  },
+  "retained_authenticated_history": {
+    "status": "NOT_AVAILABLE",
+    "records": [
+      "original entitlement creation",
+      "lifecycle generations",
+      "BOUND decision",
+      "issuance_attempt_id",
+      "signed request identity",
+      "root_proof_id",
+      "issuer key version",
+      "requester and claimant identities and versions",
+      "reconciliation evidence",
+      "revocation and supersession lineage"
+    ],
+    "survival": [
+      "restart",
+      "process replacement",
+      "deployment restart",
+      "key rotation"
+    ],
+    "authentication_boundary": "authority-authenticated append-only or equivalent rollback-protected history linked to a currently trusted checkpoint; ordinary log files are insufficient",
+    "key_lifecycle_history_required": true,
+    "revocation_supersession_lineage_required": true,
+    "historical_verification_after_rotation_or_revocation_required": true,
+    "forbidden_authority_sources": [
+      "process memory",
+      "caller data",
+      "unauthenticated cache / projection"
+    ],
+    "process_memory_authoritative": false,
+    "anti_rollback_requirement_satisfied_by": "history_checkpoint_or_anti_rollback",
+    "ordinary_durability_satisfies_anti_rollback": false,
+    "production_available_requires_anti_rollback_capability_AVAILABLE": true
+  },
+  "anti_rollback": {
+    "status": "NOT_FOUND",
+    "rollback_detection_available": false,
+    "external_checkpoint_available": false,
+    "trusted_monotonic_revision_available": false,
+    "coordinated_DB_key_store_rollback_detectable": false,
+    "limitation": "ordinary durability cannot detect a valid-prefix or coordinated snapshot rollback; production must fail closed after ambiguous restore"
+  },
+  "reconciliation_evidence_provider": {
+    "status": "NOT_AVAILABLE",
+    "owner": "IndependentAccountGenesisRootProofIssuer backed by authoritative registry",
+    "must_produce": [
+      "authoritative_state_identity",
+      "authoritative_state_revision",
+      "authenticated evidence reference and digest",
+      "positive AUTHORITATIVELY_UNBOUND result"
+    ],
+    "profile": "authenticated issuer response plus retained, checkpoint-linked registry decision identity is selected; no new signing authority is introduced",
+    "restart_verification": "requires retained evidence bytes/digest, issuer-authenticated channel identity, registry decision and checkpoint lineage",
+    "forbidden": [
+      "caller boolean",
+      "NOT_FOUND or absence inference",
+      "unsigned untrusted record"
+    ],
+    "NOT_FOUND_proves_UNBOUND": false,
+    "caller_assertion_proves_UNBOUND": false,
+    "unauthenticated_record_accepted": false
+  },
+  "durable_local_attempt_storage": {
+    "status": "NOT_AVAILABLE",
+    "owner": "CryptoHunterAccountAuthority",
+    "records": [
+      "RootProofIssuanceAttemptReservationV1",
+      "RootProofIssuanceAttemptV1",
+      "current attempt pointer and fence",
+      "attempt history",
+      "replacement evidence reference and digest"
+    ],
+    "requirements": [
+      "transactional reservation",
+      "immutable finalization CAS",
+      "replacement reservation switch CAS",
+      "crash recovery",
+      "multi-process safety"
+    ]
+  },
+  "backup_restore": {
+    "status": "FAIL_CLOSED_WITHOUT_TRUSTED_CHECKPOINT",
+    "possible_regressions": [
+      "BOUND to UNBOUND",
+      "REVOKED to ACTIVE",
+      "current attempt pointer backward",
+      "reconciliation evidence disappearance",
+      "signing key version/history backward"
+    ],
+    "rule": "no timestamps; ambiguous rollback blocks issuance, recovery, replacement, and PREPARED until trusted reconciliation/checkpoint restores direction",
+    "BOUND_to_UNBOUND_restore_allowed": false,
+    "REVOKED_to_ACTIVE_restore_allowed": false
+  },
+  "schema_migrations": {
+    "status": "REVIEWED_EXPLICIT_MIGRATION_REQUIRED",
+    "unknown_schema": "FAIL_CLOSED",
+    "must_preserve": [
+      "root_proof_id",
+      "issuance_attempt_id",
+      "entitlement_generation",
+      "historical signature bytes and interpretation",
+      "reconciliation evidence",
+      "TEST/PRODUCTION namespaces",
+      "canonical digest meaning"
+    ],
+    "implicit_migration_allowed": false
+  },
+  "fail_closed_matrix": [
+    {
+      "condition": "registry_unavailable",
+      "issuance_allowed": false,
+      "historical_recovery_allowed": false,
+      "replacement_allowed": false,
+      "PREPARED_allowed": false
+    },
+    {
+      "condition": "registry_history_unreadable",
+      "issuance_allowed": false,
+      "historical_recovery_allowed": false,
+      "replacement_allowed": false,
+      "PREPARED_allowed": false
+    },
+    {
+      "condition": "trust_root_missing",
+      "issuance_allowed": false,
+      "historical_recovery_allowed": false,
+      "replacement_allowed": false,
+      "PREPARED_allowed": false
+    },
+    {
+      "condition": "unknown_issuer_key",
+      "issuance_allowed": false,
+      "historical_recovery_allowed": false,
+      "replacement_allowed": false,
+      "PREPARED_allowed": false
+    },
+    {
+      "condition": "claimant_registry_unavailable",
+      "issuance_allowed": false,
+      "historical_recovery_allowed": false,
+      "replacement_allowed": false,
+      "PREPARED_allowed": false
+    },
+    {
+      "condition": "requester_verifier_unavailable",
+      "issuance_allowed": false,
+      "historical_recovery_allowed": false,
+      "replacement_allowed": false,
+      "PREPARED_allowed": false
+    },
+    {
+      "condition": "signing_custody_unavailable",
+      "issuance_allowed": false,
+      "historical_recovery_allowed": false,
+      "replacement_allowed": false,
+      "PREPARED_allowed": false
+    },
+    {
+      "condition": "CAS_unavailable",
+      "issuance_allowed": false,
+      "historical_recovery_allowed": false,
+      "replacement_allowed": false,
+      "PREPARED_allowed": false
+    },
+    {
+      "condition": "history_checkpoint_unavailable",
+      "issuance_allowed": false,
+      "historical_recovery_allowed": false,
+      "replacement_allowed": false,
+      "PREPARED_allowed": false
+    },
+    {
+      "condition": "stale_restored_registry",
+      "issuance_allowed": false,
+      "historical_recovery_allowed": false,
+      "replacement_allowed": false,
+      "PREPARED_allowed": false
+    },
+    {
+      "condition": "reconciliation_provider_unavailable",
+      "issuance_allowed": false,
+      "historical_recovery_allowed": false,
+      "replacement_allowed": false,
+      "PREPARED_allowed": false
+    },
+    {
+      "condition": "reconciliation_evidence_unverifiable",
+      "issuance_allowed": false,
+      "historical_recovery_allowed": false,
+      "replacement_allowed": false,
+      "PREPARED_allowed": false
+    },
+    {
+      "condition": "key_lifecycle_store_unavailable",
+      "issuance_allowed": false,
+      "historical_recovery_allowed": false,
+      "replacement_allowed": false,
+      "PREPARED_allowed": false
+    },
+    {
+      "condition": "TEST_credential_presented_to_PRODUCTION",
+      "issuance_allowed": false,
+      "historical_recovery_allowed": false,
+      "replacement_allowed": false,
+      "PREPARED_allowed": false
+    },
+    {
+      "condition": "schema_version_unknown",
+      "issuance_allowed": false,
+      "historical_recovery_allowed": false,
+      "replacement_allowed": false,
+      "PREPARED_allowed": false
+    },
+    {
+      "condition": "TEST_PRODUCTION_isolation_unavailable",
+      "issuance_allowed": false,
+      "historical_recovery_allowed": false,
+      "replacement_allowed": false,
+      "PREPARED_allowed": false
+    }
+  ],
+  "required_provider_gate": [
+    "deployment_trust_root_provider",
+    "entitlement_registry_backend",
+    "claimant_identity_registry",
+    "requester_credential_registry",
+    "root_proof_signing_key_custody",
+    "global_serialization_CAS",
+    "retained_authenticated_history",
+    "history_checkpoint_or_anti_rollback",
+    "reconciliation_evidence_source",
+    "durable_local_attempt_storage",
+    "TEST_PRODUCTION_separation"
+  ],
+  "implementation_gate": {
+    "all_required_providers_must_have_selected_production_mechanism": true,
+    "readiness_freeze_does_not_allow_implementation": true,
+    "required_dependency_predicate": {
+      "classification_must_equal": "AVAILABLE",
+      "production_mechanism_selected_must_equal": true,
+      "unresolved_CONDITIONAL_satisfies_gate": false,
+      "NOT_AVAILABLE_satisfies_gate": false,
+      "NOT_FOUND_satisfies_gate": false
+    },
+    "production_dependencies_available_true_iff_all_required_dependencies_satisfy_predicate": true,
+    "implementation_allowed_requires_production_dependencies_available": true,
+    "non_production_implementation_mode": "NONE_FROZEN",
+    "production_dependencies_require_environment_isolation_satisfied": true,
+    "implementation_allowed_requires_environment_isolation_satisfied": true
+  },
+  "no_authority_reuse": [
+    "Catalog key as issuer/signing key",
+    "Freshness proposer key as root-proof signing key",
+    "claimant key as requester/signing key",
+    "storage key as protocol credential",
+    "CHA-installed issuer trust root"
+  ],
+  "environment_isolation": {
+    "status": "CONDITIONAL_NOT_PRODUCTION_READY",
+    "TEST_may_authorize_PRODUCTION": false,
+    "namespace_dimension_required_in": [
+      "trust roots",
+      "entitlements",
+      "claimant credentials",
+      "requester credentials",
+      "issuer signing keys",
+      "history and checkpoints"
+    ],
+    "mandatory_implementation_dependency": true,
+    "environment_namespace_enforced": false,
+    "trust_domain_namespace_enforced": false,
+    "TEST_credentials_rejected_by_PRODUCTION": true,
+    "PRODUCTION_credentials_rejected_by_TEST": true,
+    "credential_namespace_owner": "NOT_SELECTED",
+    "trust_root_namespace_separated": false,
+    "entitlement_namespace_separated": false,
+    "claimant_namespace_separated": false,
+    "requester_namespace_separated": false,
+    "issuer_signing_key_namespace_separated": false,
+    "history_checkpoint_namespace_separated": false,
+    "plain_runtime_environment_string_sufficient": false,
+    "provider_linkage": {
+      "deployment_trust_root_provider": "trust_root_namespace_separated",
+      "entitlement_registry_backend": "entitlement_namespace_separated",
+      "claimant_identity_registry": "claimant_namespace_separated",
+      "requester_credential_registry": "requester_namespace_separated",
+      "root_proof_signing_key_custody": "issuer_signing_key_namespace_separated",
+      "retained_authenticated_history": "history_checkpoint_namespace_separated",
+      "history_checkpoint_or_anti_rollback": "history_checkpoint_namespace_separated"
+    },
+    "mechanism_kind": "NONE_SELECTED",
+    "mechanism_requirements": {
+      "production_valid_kinds": [
+        "PRODUCT_DEPLOYMENT_ENFORCEMENT_BOUNDARY",
+        "REVIEWED_PRODUCTION_ISOLATION_BOUNDARY"
+      ],
+      "production_invalid_kinds": [
+        "NONE_SELECTED",
+        "TEST_HELPER",
+        "PROCESS_LOCAL",
+        "CONFIG_PLACEHOLDER",
+        "DOCUMENTATION_ONLY",
+        "INTERFACE_ONLY"
+      ],
+      "process_local_rule": "PROCESS_LOCAL cannot be authoritative across the deployment/trust boundary; a future strictly local design requires an explicit reviewed production kind",
+      "database_serialization_or_durability_semantics_required": false,
+      "must_enforce_every_required_namespace_dimension": true
+    },
+    "credential_namespace_owner_kind": "NOT_SELECTED",
+    "credential_namespace_owner_requirements": {
+      "production_valid_owner_kinds": [
+        "PRODUCT_DEPLOYMENT_SECURITY_AUTHORITY",
+        "REVIEWED_PRODUCTION_ISOLATION_AUTHORITY"
+      ],
+      "production_invalid_owner_kinds": [
+        "NOT_SELECTED",
+        "TEST_FIXTURE",
+        "CURRENT_PROCESS",
+        "CALLER_SELECTED",
+        "ACCOUNT_GENESIS_CANDIDATE",
+        "ACCOUNT_SCOPED",
+        "TEST_ONLY_AUTHORITY"
+      ],
+      "owner_must_resolve_to_pre_account_boundary": true,
+      "caller_arbitrary_owner_allowed": false
+    },
+    "status_semantics": {
+      "derived_from_readiness_state": true,
+      "ready_value": "PRODUCTION_READY",
+      "not_ready_value": "CONDITIONAL_NOT_PRODUCTION_READY",
+      "satisfied_iff_status_is_ready": true
+    }
+  },
+  "status_preservation": {
+    "RootProofIssuer_implementation_allowed": false,
+    "FreshnessAuthority_implementation_allowed": false,
+    "CryptoHunterAccountAuthority_implementation_allowed": false,
+    "WorkspaceAuthority": "NOT_AVAILABLE",
+    "FullFillAuthority": "NOT_AVAILABLE",
+    "production_M05": "BLOCKED / NOT_AVAILABLE",
+    "M08": "BLOCKED / NOT_AVAILABLE"
+  },
+  "frozen_semantics_change_rule": "DO_NOT_REOPEN_WITHOUT_CONCRETE_EXPLOIT_OR_CONTRADICTION",
+  "redteam_mutations": [
+    "process_local_registry_marked_production_ready",
+    "caller_selected_entitlement_backend",
+    "catalog_key_reused_as_issuer_key",
+    "freshness_key_reused_as_root_proof_signing_key",
+    "CHA_self_installs_issuer_trust_root",
+    "account_scoped_identity_bootstraps_first_account",
+    "TEST_trust_root_authorizes_PRODUCTION",
+    "entitlement_bind_without_global_CAS",
+    "last_write_wins_bound_registry",
+    "BOUND_history_not_retained",
+    "revoked_key_history_discarded",
+    "stale_restore_BOUND_to_UNBOUND_accepted",
+    "stale_restore_REVOKED_to_ACTIVE_accepted",
+    "reconciliation_from_NOT_FOUND",
+    "caller_boolean_used_as_UNBOUND",
+    "unsigned_untrusted_reconciliation_record",
+    "process_memory_used_as_authoritative_history",
+    "claimant_key_missing_but_issuance_allowed",
+    "requester_verifier_missing_but_issuance_allowed",
+    "signing_custody_missing_but_issuance_allowed",
+    "unknown_schema_migrated_implicitly",
+    "production_implementation_allowed_with_missing_provider",
+    "root_proof_semantics_reopened_without_exploit",
+    "WorkspaceAuthority_unblocked_by_readiness_only",
+    "M08_unblocked_by_readiness_only",
+    "implementation_allowed_with_checkpoint_missing",
+    "production_dependencies_true_with_checkpoint_missing",
+    "retained_history_available_without_required_rollback_protection",
+    "checkpoint_not_in_required_provider_gate",
+    "provider_classification_available_but_mechanism_unselected",
+    "implementation_allowed_with_one_required_provider_unselected",
+    "implementation_allowed_with_TEST_PRODUCTION_separation_CONDITIONAL",
+    "production_dependencies_true_without_environment_isolation",
+    "environment_isolation_mechanism_unselected",
+    "TEST_credential_allowed_to_PRODUCTION",
+    "trust_root_namespace_shared_TEST_PRODUCTION",
+    "entitlement_namespace_shared_TEST_PRODUCTION",
+    "claimant_namespace_shared_TEST_PRODUCTION",
+    "requester_namespace_shared_TEST_PRODUCTION",
+    "root_proof_signing_namespace_shared_TEST_PRODUCTION",
+    "history_checkpoint_namespace_shared_TEST_PRODUCTION",
+    "all_ready_fixture_forgets_to_ready_environment_isolation",
+    "isolation_TEST_HELPER_marked_production_ready",
+    "isolation_PROCESS_LOCAL_marked_production_ready",
+    "isolation_CONFIG_PLACEHOLDER_marked_production_ready",
+    "isolation_DOCUMENTATION_ONLY_marked_production_ready",
+    "isolation_INTERFACE_ONLY_marked_production_ready",
+    "isolation_owner_test_fixture_accepted",
+    "isolation_owner_current_process_accepted",
+    "isolation_owner_caller_selected_accepted",
+    "isolation_owner_account_scoped_accepted",
+    "isolation_status_not_production_ready_but_gate_passes"
+  ],
+  "remaining_prerequisites": [
+    "select and provision pre-account trust roots",
+    "implement globally serialized entitlement registry and authenticated retained history",
+    "provide claimant and requester credential lifecycle registries/custody",
+    "select root-proof signing custody",
+    "provide checkpoint/anti-rollback and reconciliation evidence",
+    "implement durable multi-process CHA attempt adapter",
+    "define reviewed schema migrations and rollback-safe restore procedure"
+  ],
+  "issuer_registry_backend_role": {
+    "role": "UMBRELLA_CAPABILITY_LABEL",
+    "authoritative_record_backend": "entitlement_registry_backend",
+    "independently_required_gate_dependency": false,
+    "rule": "issuer_registry_backend does not name a second authority store and cannot hide or substitute for the gated entitlement registry"
+  },
+  "mutation_policy": {
+    "mutation_semantic_fidelity_required": true,
+    "requirements": [
+      "changes the actual named property",
+      "reaches the production-readiness validator",
+      "is rejected due to the mutated property",
+      "does not rely on an unrelated snapshot status literal"
+    ],
+    "JSON_mutation_names_equal_Python_names": true
+  },
+  "production_M05_gate": {
+    "readiness_freeze_makes_production_M05_available": false,
+    "issuer_implementation_allowed_alone_is_sufficient": false,
+    "additional_separately_frozen_prerequisites": [
+      "FreshnessAuthority",
+      "CryptoHunterAccountAuthority"
+    ],
+    "current_production_M05_available": false
+  }
+}
+```
