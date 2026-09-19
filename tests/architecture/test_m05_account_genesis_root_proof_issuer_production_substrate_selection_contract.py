@@ -25,7 +25,14 @@ ALIAS_MUTATION_PAIRS={
 PROFILE_MUTATIONS={'production_local_requires_HSM','production_local_requires_remote_checkpoint','local_provider_marked_server_ready_by_name_only','local_checkpoint_claims_independent_rollback_domain','local_software_key_claims_hardware_backed','TEST_key_authorizes_PRODUCTION_LOCAL','TEST_key_authorizes_PRODUCTION_SERVER_READY','PRODUCTION_LOCAL_key_reused_as_SERVER_READY_key','local_to_server_ready_automatic_promotion','local_history_retroactively_marked_server_ready','insecure_runtime_override_allows_server_ready','server_ready_checkpoint_same_rollback_domain_as_registry','server_ready_signing_plaintext_export_allowed','production_local_marked_deprecated','production_server_ready_replaces_local','production_local_full_product_functionality_false','vendor_name_required_by_core','provider_capabilities_caller_asserted_without_qualification','local_checkpoint_missing_monotonic_head_binding','production_local_credential_role_aliasing'}
 LIFECYCLE_MUTATIONS={'compromised_issuer_key_becomes_VERIFY_ONLY','compromised_requester_key_becomes_VERIFY_ONLY','compromised_claimant_key_becomes_VERIFY_ONLY','compromised_deployment_root_becomes_VERIFY_ONLY','compromised_checkpoint_key_becomes_VERIFY_ONLY','REVOKED_to_VERIFY_ONLY_allowed','REVOKED_to_ACTIVE_allowed_after_compromise','compromised_key_signature_alone_establishes_historical_acceptance','compromised_checkpoint_self_attests_recovery','restored_REVOKED_to_VERIFY_ONLY_state_accepted'}
 SECURITY_MUTATIONS={'CHA_directly_mutates_entitlement_registry','issuer_directly_commits_account','ordinary_DB_durability_claimed_as_anti_rollback','root_proof_signing_key_plaintext_config','TEST_namespace_reused_for_PRODUCTION','process_local_CAS_selected_for_multi_host_registry','last_write_wins_selected_as_BIND','checkpoint_unavailable_but_issuance_allowed','registry_unavailable_but_signing_only_fallback_allowed','NOT_FOUND_used_as_authoritative_UNBOUND','restored_BOUND_to_UNBOUND_state_accepted','restored_REVOKED_to_ACTIVE_state_accepted','CHA_attempt_store_shares_authority_write_role_with_issuer_registry','unknown_schema_auto_migrated','caller_selects_entitlement_record','local_timestamp_used_to_resolve_split_brain'}
-ALL_MUTATIONS=PROFILE_MUTATIONS|LIFECYCLE_MUTATIONS|SECURITY_MUTATIONS|set(ALIAS_MUTATION_PAIRS)
+TRUST_ROOT_MUTATIONS={'trust_root_generated_online','trust_root_private_key_present_in_runtime','unsigned_trust_bundle_accepted','TOFU_trust_root_allowed','candidate_carried_root_allowed','CHA_self_installs_trust_root','account_scoped_bootstrap_root_allowed','TEST_root_authorizes_PRODUCTION'}
+RESULT_MATRIX_MUTATIONS={'dependency_removed_from_result_matrix','unknown_dependency_added','duplicate_dependency_added','dependency_reverted_to_DECISION_REQUIRED','production_local_qualification_not_machine_validated','server_ready_provider_falsely_selected_now','server_ready_runtime_falsely_available_now','missing_provider_interface'}
+ISOLATION_MUTATIONS={'profile_namespace_list_contains_duplicate','PRODUCTION_LOCAL_namespace_missing','SERVER_READY_namespace_missing','TEST_and_PRODUCTION_share_trust_root','TEST_and_PRODUCTION_share_requester_credential','TEST_and_PRODUCTION_share_claimant_credential','TEST_and_PRODUCTION_share_issuer_signing_identity','TEST_and_PRODUCTION_share_history_namespace','TEST_and_PRODUCTION_share_checkpoint_namespace'}
+LOCAL_SIGNING_MUTATIONS={'local_signing_not_Ed25519','local_signing_identity_not_durable','local_signing_lifecycle_shared','local_signing_role_namespace_shared','local_signing_key_material_shared','local_signing_plaintext_config','local_signing_storage_unprotected','local_signing_OS_ACL_missing','local_signing_backup_model_missing','local_signing_falsely_claims_non_exportable'}
+LOCAL_HISTORY_MUTATIONS={'history_not_append_only','history_records_mutable','history_hash_chain_disabled','history_signed_heads_disabled','history_gap_detection_disabled','history_unknown_schema_accepted'}
+SERVER_READY_MUTATIONS={'server_ready_not_Ed25519','server_ready_key_identity_not_durable','server_ready_role_isolation_false','server_ready_lifecycle_support_false','server_ready_provider_namespace_unstable','server_ready_key_handle_identity_unstable','server_ready_history_attestation_aliases_root_proof_key','server_ready_history_attestation_uses_same_key_material','server_ready_checkpoint_not_monotonic','server_ready_checkpoint_no_historical_lookup','server_ready_checkpoint_no_direction_proof','server_ready_checkpoint_uses_wall_clock'}
+ALL_MUTATIONS=PROFILE_MUTATIONS|LIFECYCLE_MUTATIONS|SECURITY_MUTATIONS|set(ALIAS_MUTATION_PAIRS)|TRUST_ROOT_MUTATIONS|RESULT_MATRIX_MUTATIONS|ISOLATION_MUTATIONS|LOCAL_SIGNING_MUTATIONS|LOCAL_HISTORY_MUTATIONS|SERVER_READY_MUTATIONS
+DEPENDENCIES={'deployment_trust_root_provider','entitlement_registry_backend','claimant_identity_registry','requester_credential_registry','root_proof_signing_key_custody','global_serialization_CAS','retained_authenticated_history','history_checkpoint_or_anti_rollback','reconciliation_evidence_source','durable_local_attempt_storage','TEST_PRODUCTION_separation'}
 ACTIONS={'ISSUE','RECOVER','REPLACE','PREPARED'}
 
 def load(): return json.loads(MACHINE.read_text(encoding='utf-8'))
@@ -93,6 +100,61 @@ def validate_profile_model(v):
  assert server['checkpoint']['independent_rollback_domain'] and server['checkpoint']['independent_admin_or_security_domain'] and server['checkpoint']['retained_authenticated_history'] and not server['checkpoint']['wall_clock_arbitration']
  assert v['status']['architecture_selection_complete'] and not v['status']['architecture_implementation_currently_exists']
 
+def validate_trust_root_and_provisioning(v):
+ t=v['production_local_substrate']['trust_root']
+ assert t['offline_generated'] is True and t['private_root_key_in_runtime'] is False and t['signed_trust_bundle_installed_at_runtime'] is True
+ assert t['authority_scope']=='pre-account deployment authority' and t['format']=='versioned canonical signed root bundle'
+ assert set(t['bundle_bindings'])=={'environment','trust_domain','issuer allow-list / identity','requester trust roots','claimant/provisioning roots','lifecycle generation/version'}
+ assert t['activation']=={'signature_verified_before_activation':True}
+ assert t['rotation']=={'authenticated_signed_successor':True,'monotonic_generation':True,'history_retained':True,'REVOKED_never_reactivated':True}
+ assert t['forbidden']=={'TOFU':True,'candidate-carried root':True,'CHA self-installation':True,'account-scoped bootstrap':True,'TEST root authorizing PRODUCTION':True}
+ p=v['production_local_substrate']['provisioning']
+ assert p=={'tier_1':'offline root provisioning workflow/workstation','tier_2':'separate cryptohunter-admin CLI/tooling','runtime_has_admin_or_provisioning_credentials':False,'admin_authority_separated_from_runtime':True}
+
+def validate_result_matrix(v):
+ rows=v['result_matrix']; names=[x['readiness_dependency'] for x in rows]
+ assert len(rows)==len(names)==11 and set(names)==DEPENDENCIES
+ for row in rows:
+  assert row['architecture_selection_status']=='SELECTED'
+  assert isinstance(row['production_local_mechanism'],str) and row['production_local_mechanism'].strip()
+  assert row['production_local_qualification']=='QUALIFIED_BY_MACHINE_VALIDATED_CAPABILITIES'
+  assert isinstance(row['production_server_ready_required_capability'],str) and row['production_server_ready_required_capability'].strip()
+  assert row['concrete_server_ready_provider_selected_now'] is False and row['server_ready_runtime_available_now'] is False
+  assert isinstance(row['implementation_interface'],str) and row['implementation_interface'].strip()
+
+def validate_architecture_status(v):
+ assert v['status']=={'architecture_selection_complete':True,'production_local_substrate_selected':True,'production_server_ready_capability_substrate_selected':True,'concrete_server_ready_provider_deployment_deferred':True,'architecture_implementation_currently_exists':False,'implementation_is_claimed':False}
+ if v['status']['architecture_selection_complete']:
+  assert all(x['architecture_selection_status']=='SELECTED' for x in v['result_matrix'])
+ if all(not x['server_ready_runtime_available_now'] for x in v['result_matrix']):
+  assert all(not p['deployment_available_now'] for p in v['profiles'].values())
+
+def validate_profile_isolation(v):
+ i=v['profile_isolation']; namespaces=i['trust_domains_and_credential_namespaces_distinct']
+ assert len(namespaces)==4 and set(namespaces)=={'DEVELOPMENT','TEST','PRODUCTION_LOCAL','PRODUCTION_SERVER_READY'}
+ assert set(i['required_isolation_dimensions'])=={'environment namespace','trust_domain','deployment trust roots','PostgreSQL/registry state','DB/service credentials','requester credentials','claimant credentials','issuer signing credential/key identity','history-attestation credential/key identity','authenticated history namespace/state','checkpoint namespace/state','CHA AttemptStore namespace/state'}
+ assert set(i['PRODUCTION_SERVER_READY_additional_isolation_dimensions'])=={'provider namespace','key handle/version identity'}
+ assert all(i['TEST_PRODUCTION_distinct'].values()) and set(i['TEST_PRODUCTION_distinct'])=={'deployment trust roots','requester credentials','claimant credentials','issuer signing credential/key identity','authenticated history namespace/state','checkpoint namespace/state'}
+ assert i['TEST_credential_authorizes_PRODUCTION_LOCAL'] is False and i['TEST_credential_authorizes_PRODUCTION_SERVER_READY'] is False and i['PRODUCTION_credentials_used_in_TEST'] is False and i['DEVELOPMENT_artifacts_cross_profile_accepted_without_import_protocol'] is False
+
+def validate_production_local_signing_custody(v):
+ s=v['production_local_substrate']; k=s['signing']
+ assert k=={'algorithm':'Ed25519','provider_kind':'LOCAL_SOFTWARE','durable_credential_identity':True,'separate_lifecycle':True,'separate_role_namespace':True,'separate_key_material':True,'plaintext_private_key_in_config':False,'protected_or_encrypted_local_secret_storage':True,'filesystem_or_OS_ACL':True,'backup_and_recovery_model_required':True,'hardware_backed':False,'non_exportable_against_host_admin':False}
+ assert s['history_attestation']=={'separate_from_root_proof_signing':True,'separate_credential_identity':True,'separate_key_material_or_handle':True,'provider_kind':'LOCAL_SOFTWARE_ED25519'}
+ assert 'full privileged host control' in v['production_local_threat_model']['outside_guarantee']
+
+def validate_production_local_history_and_checkpoint(v):
+ s=v['production_local_substrate']
+ assert s['history']=={'append_only':True,'immutable_records':True,'sequence':True,'previous_digest':True,'canonical_record_digest':True,'hash_chain':True,'signed_heads':True,'gap_and_fork_detection':True,'unknown_schema':'FAIL_CLOSED'}
+ assert s['checkpoint']=={'provider':'LocalCheckpointProvider','protocol_component_not_mock':True,'append_or_advance':True,'authenticated':True,'monotonic_sequence':True,'exact_history_head_binding':True,'durable_local_state':True,'wall_clock_arbitration':False,'crash_and_restart_correctness':True,'stale_and_ahead_handling':True,'malformed_forked_gapped_history_rejected':True,'independent_rollback_domain':False,'coordinated_full_host_rollback_detection':False,'server_ready_anti_rollback':False}
+
+def validate_server_ready_capabilities(v):
+ s=v['production_server_ready_capabilities']
+ assert s['root_proof_signing']=={'Ed25519':True,'durable_key_identity':True,'hardware_backed_or_equivalent_secure_custody':True,'plaintext_private_key_export':False,'role_isolation':True,'lifecycle_support':True,'stable_credential_identity':True,'stable_provider_namespace':True,'stable_key_handle_or_version_identity':True}
+ assert s['history_attestation']=={'separate_credential_identity':True,'separate_key_material_or_handle':True,'aliases_root_proof_signing':False,'same_server_ready_custody_guarantees':True}
+ c=s['checkpoint']; assert {k:c[k] for k in c if k!='outside_domains'}=={'authenticated':True,'monotonic':True,'exact_history_head_binding':True,'independent_rollback_domain':True,'independent_admin_or_security_domain':True,'retained_authenticated_history':True,'historical_lookup_and_recovery':True,'rollback_direction_proof':True,'wall_clock_arbitration':False}
+ assert len(c['outside_domains'])==4 and set(c['outside_domains'])=={'PostgreSQL','issuer signing custody','CHA store','local host snapshot'}
+
 def validate_provider_qualification(v):
  c=v['core_provider_model']; assert c['provider_agnostic'] and c['semantic_core_shared_by_all_profiles']
  assert not c['vendor_name_required'] and not c['caller_asserted_capabilities_accepted'] and not c['provider_name_or_environment_grants_eligibility']
@@ -109,7 +171,9 @@ def validate_profile_migration(v):
 
 def validate_registry_schema_and_CAS(v):
  r=v['production_local_substrate']['registry']; assert r['engine']=='PostgreSQL' and r['issuer_only_semantic_BIND_owner'] and not r['CHA_registry_write_authority'] and r['unknown_schema']=='FAIL_CLOSED'
+ assert r['deployment']=='separate service/container on same physical host' and r['separate_schemas_and_DB_roles'] and r['least_privilege'] and r['schema_migration_owner']=='cryptohunter-admin'
  c=v['production_local_substrate']['serialization']; assert c['isolation']=='SERIALIZABLE' and c['immutable_authority_identity'] and c['lifecycle_generation'] and c['cas_revision']
+ assert c['crash_safe_commit'] is True
  assert c['condition']=='state=UNBOUND AND generation=? AND cas_revision=?' and c['winner']=='exactly one affected row' and c['unique_authoritative_decision_constraint'] and not c['last_write_wins']
  b=v['registry_schema_boundary']; assert b['primary_authority_key']=='issuer-generated opaque authority_record_id; never caller selected'
  assert b['generation_key']=='(environment, trust_domain, entitlement_id, lifecycle_generation)'
@@ -149,12 +213,40 @@ def validate_split_brain_and_migrations(v):
  assert set(m['preserve'])=={'IDs','signature bytes','canonical digest interpretation','entitlement generations','reconciliation evidence','environment/trust_domain namespaces','historical key references'}
 
 def validate(v):
- for fn in [validate_profile_model,validate_provider_qualification,validate_profile_migration,validate_non_aliasing_exact,validate_lifecycle_and_compromise,validate_registry_schema_and_CAS,validate_CHA_attempt_store,validate_outage_and_restore,validate_authority_separation_and_topology,validate_reconciliation_semantics,validate_split_brain_and_migrations]: fn(v)
+ for fn in [validate_profile_model,validate_trust_root_and_provisioning,validate_result_matrix,validate_architecture_status,validate_profile_isolation,validate_production_local_signing_custody,validate_production_local_history_and_checkpoint,validate_server_ready_capabilities,validate_provider_qualification,validate_profile_migration,validate_non_aliasing_exact,validate_lifecycle_and_compromise,validate_registry_schema_and_CAS,validate_CHA_attempt_store,validate_outage_and_restore,validate_authority_separation_and_topology,validate_reconciliation_semantics,validate_split_brain_and_migrations]: fn(v)
  assert set(v['redteam_mutations'])==ALL_MUTATIONS
  assert v['provenance']=={'classification':'UNKNOWN','finding_scope':'CURRENT_TREE_ONLY','formal_project_advancement':'WITHHELD'}
 
 def mutate(v,name):
  r=deepcopy(v); local=r['profiles']['PRODUCTION_LOCAL']; ps=r['production_local_substrate']; server=r['production_server_ready_capabilities']; iso=r['profile_isolation']; mig=r['profile_migration']
+ paths={
+  'trust_root_generated_online':('trust_root','offline_generated',False),'trust_root_private_key_present_in_runtime':('trust_root','private_root_key_in_runtime',True),'unsigned_trust_bundle_accepted':('trust_root','signed_trust_bundle_installed_at_runtime',False),'TOFU_trust_root_allowed':('trust_root','forbidden','TOFU',False),'candidate_carried_root_allowed':('trust_root','forbidden','candidate-carried root',False),'CHA_self_installs_trust_root':('trust_root','forbidden','CHA self-installation',False),'account_scoped_bootstrap_root_allowed':('trust_root','forbidden','account-scoped bootstrap',False),'TEST_root_authorizes_PRODUCTION':('trust_root','forbidden','TEST root authorizing PRODUCTION',False),
+  'local_signing_not_Ed25519':('signing','algorithm','RSA'),'local_signing_identity_not_durable':('signing','durable_credential_identity',False),'local_signing_lifecycle_shared':('signing','separate_lifecycle',False),'local_signing_role_namespace_shared':('signing','separate_role_namespace',False),'local_signing_key_material_shared':('signing','separate_key_material',False),'local_signing_plaintext_config':('signing','plaintext_private_key_in_config',True),'local_signing_storage_unprotected':('signing','protected_or_encrypted_local_secret_storage',False),'local_signing_OS_ACL_missing':('signing','filesystem_or_OS_ACL',False),'local_signing_backup_model_missing':('signing','backup_and_recovery_model_required',False),'local_signing_falsely_claims_non_exportable':('signing','non_exportable_against_host_admin',True),
+  'history_not_append_only':('history','append_only',False),'history_records_mutable':('history','immutable_records',False),'history_hash_chain_disabled':('history','hash_chain',False),'history_signed_heads_disabled':('history','signed_heads',False),'history_gap_detection_disabled':('history','gap_and_fork_detection',False),'history_unknown_schema_accepted':('history','unknown_schema','ACCEPT'),
+ }
+ if name in paths:
+  *keys,value=paths[name]; target=ps
+  for key in keys[:-1]: target=target[key]
+  target[keys[-1]]=value; return r
+ server_paths={'server_ready_not_Ed25519':('root_proof_signing','Ed25519',False),'server_ready_key_identity_not_durable':('root_proof_signing','durable_key_identity',False),'server_ready_role_isolation_false':('root_proof_signing','role_isolation',False),'server_ready_lifecycle_support_false':('root_proof_signing','lifecycle_support',False),'server_ready_provider_namespace_unstable':('root_proof_signing','stable_provider_namespace',False),'server_ready_key_handle_identity_unstable':('root_proof_signing','stable_key_handle_or_version_identity',False),'server_ready_history_attestation_aliases_root_proof_key':('history_attestation','aliases_root_proof_signing',True),'server_ready_history_attestation_uses_same_key_material':('history_attestation','separate_key_material_or_handle',False),'server_ready_checkpoint_not_monotonic':('checkpoint','monotonic',False),'server_ready_checkpoint_no_historical_lookup':('checkpoint','historical_lookup_and_recovery',False),'server_ready_checkpoint_no_direction_proof':('checkpoint','rollback_direction_proof',False),'server_ready_checkpoint_uses_wall_clock':('checkpoint','wall_clock_arbitration',True)}
+ if name in server_paths:
+  section,key,value=server_paths[name]; server[section][key]=value; return r
+ shared={'TEST_and_PRODUCTION_share_trust_root':'deployment trust roots','TEST_and_PRODUCTION_share_requester_credential':'requester credentials','TEST_and_PRODUCTION_share_claimant_credential':'claimant credentials','TEST_and_PRODUCTION_share_issuer_signing_identity':'issuer signing credential/key identity','TEST_and_PRODUCTION_share_history_namespace':'authenticated history namespace/state','TEST_and_PRODUCTION_share_checkpoint_namespace':'checkpoint namespace/state'}
+ if name in shared: iso['TEST_PRODUCTION_distinct'][shared[name]]=False; return r
+ if name=='profile_namespace_list_contains_duplicate': iso['trust_domains_and_credential_namespaces_distinct'].append('TEST'); return r
+ if name=='PRODUCTION_LOCAL_namespace_missing': iso['trust_domains_and_credential_namespaces_distinct'].remove('PRODUCTION_LOCAL'); return r
+ if name=='SERVER_READY_namespace_missing': iso['trust_domains_and_credential_namespaces_distinct'].remove('PRODUCTION_SERVER_READY'); return r
+ if name in RESULT_MATRIX_MUTATIONS:
+  rows=r['result_matrix']
+  if name=='dependency_removed_from_result_matrix': rows.pop()
+  elif name=='unknown_dependency_added': rows.append({**rows[0],'readiness_dependency':'unknown'})
+  elif name=='duplicate_dependency_added': rows.append(deepcopy(rows[0]))
+  elif name=='dependency_reverted_to_DECISION_REQUIRED': rows[0]['architecture_selection_status']='DECISION_REQUIRED'
+  elif name=='production_local_qualification_not_machine_validated': rows[0]['production_local_qualification']='DESCRIPTIVE_ONLY'
+  elif name=='server_ready_provider_falsely_selected_now': rows[0]['concrete_server_ready_provider_selected_now']=True
+  elif name=='server_ready_runtime_falsely_available_now': rows[0]['server_ready_runtime_available_now']=True
+  elif name=='missing_provider_interface': rows[0]['implementation_interface']=''
+  return r
  if name=='production_local_requires_HSM': local['requires_HSM']=True
  elif name=='production_local_requires_remote_checkpoint': local['requires_remote_checkpoint']=True
  elif name=='local_provider_marked_server_ready_by_name_only': r['provider_qualification']['name_only_qualification_allowed']=True
@@ -206,6 +298,14 @@ SPECIALIZED={**{x:validate_profile_model for x in PROFILE_MUTATIONS},**{x:valida
  'production_local_credential_role_aliasing':validate_non_aliasing_exact,'CHA_directly_mutates_entitlement_registry':validate_authority_separation_and_topology,'issuer_directly_commits_account':validate_authority_separation_and_topology,'ordinary_DB_durability_claimed_as_anti_rollback':validate_CHA_attempt_store,'root_proof_signing_key_plaintext_config':validate_profile_model,'TEST_namespace_reused_for_PRODUCTION':validate_provider_qualification,'process_local_CAS_selected_for_multi_host_registry':validate_registry_schema_and_CAS,'last_write_wins_selected_as_BIND':validate_registry_schema_and_CAS,'checkpoint_unavailable_but_issuance_allowed':validate_outage_and_restore,'registry_unavailable_but_signing_only_fallback_allowed':validate_outage_and_restore,'NOT_FOUND_used_as_authoritative_UNBOUND':validate_reconciliation_semantics,'restored_BOUND_to_UNBOUND_state_accepted':validate_outage_and_restore,'restored_REVOKED_to_ACTIVE_state_accepted':validate_outage_and_restore,'CHA_attempt_store_shares_authority_write_role_with_issuer_registry':validate_CHA_attempt_store,'unknown_schema_auto_migrated':validate_split_brain_and_migrations,'caller_selects_entitlement_record':validate_registry_schema_and_CAS,'local_timestamp_used_to_resolve_split_brain':validate_split_brain_and_migrations}
 # Profile mutations whose exact guard lives outside profile validator.
 SPECIALIZED.update({'local_provider_marked_server_ready_by_name_only':validate_provider_qualification,'TEST_key_authorizes_PRODUCTION_LOCAL':validate_provider_qualification,'TEST_key_authorizes_PRODUCTION_SERVER_READY':validate_provider_qualification,'insecure_runtime_override_allows_server_ready':validate_provider_qualification,'vendor_name_required_by_core':validate_provider_qualification,'provider_capabilities_caller_asserted_without_qualification':validate_provider_qualification,'PRODUCTION_LOCAL_key_reused_as_SERVER_READY_key':validate_profile_migration,'local_to_server_ready_automatic_promotion':validate_profile_migration,'local_history_retroactively_marked_server_ready':validate_profile_migration})
+
+SPECIALIZED.update({x:validate_trust_root_and_provisioning for x in TRUST_ROOT_MUTATIONS})
+SPECIALIZED.update({x:validate_result_matrix for x in RESULT_MATRIX_MUTATIONS})
+SPECIALIZED.update({x:validate_profile_isolation for x in ISOLATION_MUTATIONS})
+SPECIALIZED.update({x:validate_production_local_signing_custody for x in LOCAL_SIGNING_MUTATIONS})
+SPECIALIZED.update({x:validate_production_local_history_and_checkpoint for x in LOCAL_HISTORY_MUTATIONS})
+SPECIALIZED.update({x:validate_server_ready_capabilities for x in SERVER_READY_MUTATIONS})
+SPECIALIZED.update({'local_checkpoint_missing_monotonic_head_binding':validate_production_local_history_and_checkpoint,'local_checkpoint_claims_independent_rollback_domain':validate_production_local_history_and_checkpoint,'root_proof_signing_key_plaintext_config':validate_production_local_signing_custody,'local_software_key_claims_hardware_backed':validate_production_local_signing_custody,'server_ready_checkpoint_same_rollback_domain_as_registry':validate_server_ready_capabilities,'server_ready_signing_plaintext_export_allowed':validate_server_ready_capabilities})
 
 def test_contract_and_deterministic_projection():
  v=load(); validate(v); assert MARKDOWN.read_text(encoding='utf-8')==render(v)
