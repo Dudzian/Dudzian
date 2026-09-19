@@ -93,7 +93,33 @@ Wybrano trwały, czteroprofilowy i niezależny od vendora model capability/provi
       "TEST",
       "PRODUCTION_LOCAL",
       "PRODUCTION_SERVER_READY"
-    ]
+    ],
+    "required_isolation_dimensions": [
+      "environment namespace",
+      "trust_domain",
+      "deployment trust roots",
+      "PostgreSQL/registry state",
+      "DB/service credentials",
+      "requester credentials",
+      "claimant credentials",
+      "issuer signing credential/key identity",
+      "history-attestation credential/key identity",
+      "authenticated history namespace/state",
+      "checkpoint namespace/state",
+      "CHA AttemptStore namespace/state"
+    ],
+    "PRODUCTION_SERVER_READY_additional_isolation_dimensions": [
+      "provider namespace",
+      "key handle/version identity"
+    ],
+    "TEST_PRODUCTION_distinct": {
+      "deployment trust roots": true,
+      "requester credentials": true,
+      "claimant credentials": true,
+      "issuer signing credential/key identity": true,
+      "authenticated history namespace/state": true,
+      "checkpoint namespace/state": true
+    }
   },
   "provider_qualification": {
     "evidence_source": "provider-owned attestation verified by qualification policy; never caller assertion",
@@ -182,7 +208,33 @@ Wybrano trwały, czteroprofilowy i niezależny od vendora model capability/provi
     "trust_root": {
       "offline_generated": true,
       "private_root_key_in_runtime": false,
-      "signed_trust_bundle_installed_at_runtime": true
+      "signed_trust_bundle_installed_at_runtime": true,
+      "authority_scope": "pre-account deployment authority",
+      "format": "versioned canonical signed root bundle",
+      "bundle_bindings": [
+        "environment",
+        "trust_domain",
+        "issuer allow-list / identity",
+        "requester trust roots",
+        "claimant/provisioning roots",
+        "lifecycle generation/version"
+      ],
+      "activation": {
+        "signature_verified_before_activation": true
+      },
+      "rotation": {
+        "authenticated_signed_successor": true,
+        "monotonic_generation": true,
+        "history_retained": true,
+        "REVOKED_never_reactivated": true
+      },
+      "forbidden": {
+        "TOFU": true,
+        "candidate-carried root": true,
+        "CHA self-installation": true,
+        "account-scoped bootstrap": true,
+        "TEST root authorizing PRODUCTION": true
+      }
     },
     "reconciliation": {
       "read_only_authenticated_API": true,
@@ -766,7 +818,60 @@ Wybrano trwały, czteroprofilowy i niezależny od vendora model capability/provi
     "CHA_attempt_store_shares_authority_write_role_with_issuer_registry",
     "unknown_schema_auto_migrated",
     "caller_selects_entitlement_record",
-    "local_timestamp_used_to_resolve_split_brain"
+    "local_timestamp_used_to_resolve_split_brain",
+    "trust_root_generated_online",
+    "trust_root_private_key_present_in_runtime",
+    "unsigned_trust_bundle_accepted",
+    "TOFU_trust_root_allowed",
+    "candidate_carried_root_allowed",
+    "CHA_self_installs_trust_root",
+    "account_scoped_bootstrap_root_allowed",
+    "TEST_root_authorizes_PRODUCTION",
+    "dependency_removed_from_result_matrix",
+    "unknown_dependency_added",
+    "duplicate_dependency_added",
+    "dependency_reverted_to_DECISION_REQUIRED",
+    "production_local_qualification_not_machine_validated",
+    "server_ready_provider_falsely_selected_now",
+    "server_ready_runtime_falsely_available_now",
+    "missing_provider_interface",
+    "profile_namespace_list_contains_duplicate",
+    "PRODUCTION_LOCAL_namespace_missing",
+    "SERVER_READY_namespace_missing",
+    "TEST_and_PRODUCTION_share_trust_root",
+    "TEST_and_PRODUCTION_share_requester_credential",
+    "TEST_and_PRODUCTION_share_claimant_credential",
+    "TEST_and_PRODUCTION_share_issuer_signing_identity",
+    "TEST_and_PRODUCTION_share_history_namespace",
+    "TEST_and_PRODUCTION_share_checkpoint_namespace",
+    "local_signing_not_Ed25519",
+    "local_signing_identity_not_durable",
+    "local_signing_lifecycle_shared",
+    "local_signing_role_namespace_shared",
+    "local_signing_key_material_shared",
+    "local_signing_plaintext_config",
+    "local_signing_storage_unprotected",
+    "local_signing_OS_ACL_missing",
+    "local_signing_backup_model_missing",
+    "local_signing_falsely_claims_non_exportable",
+    "history_not_append_only",
+    "history_records_mutable",
+    "history_hash_chain_disabled",
+    "history_signed_heads_disabled",
+    "history_gap_detection_disabled",
+    "history_unknown_schema_accepted",
+    "server_ready_not_Ed25519",
+    "server_ready_key_identity_not_durable",
+    "server_ready_role_isolation_false",
+    "server_ready_lifecycle_support_false",
+    "server_ready_provider_namespace_unstable",
+    "server_ready_key_handle_identity_unstable",
+    "server_ready_history_attestation_aliases_root_proof_key",
+    "server_ready_history_attestation_uses_same_key_material",
+    "server_ready_checkpoint_not_monotonic",
+    "server_ready_checkpoint_no_historical_lookup",
+    "server_ready_checkpoint_no_direction_proof",
+    "server_ready_checkpoint_uses_wall_clock"
   ],
   "registry_schema_boundary": {
     "primary_authority_key": "issuer-generated opaque authority_record_id; never caller selected",
