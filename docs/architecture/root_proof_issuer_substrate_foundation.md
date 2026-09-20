@@ -118,7 +118,79 @@ identity comparable across root-proof and history-attestation adapters.
 ## Still not implemented
 
 There is no semantic RootProofIssuer, NEW_BIND flow, issuance state machine,
-PostgreSQL entitlement registry, production local key custody, durable local
-checkpoint, HSM/KMS adapter, remote checkpoint, final CHA coordinator, or
+PostgreSQL entitlement registry, durable local checkpoint, HSM/KMS adapter,
+remote checkpoint, final CHA coordinator, or
 LOCAL-to-SERVER_READY migration workflow. Composition into `CoreHost` is a
 future scoped startup step after concrete providers exist.
+
+## Current-tree production-local signing custody
+
+`bot_core.local_signing_custody` now supplies two API-exclusive local software
+Ed25519 providers.  Provisioning is an explicit offline/admin operation.  It
+places private seeds behind the existing native-keyring `SecretStorage`
+boundary and writes only strict public binding/lifecycle metadata to a
+dedicated absolute directory.  Runtime adapters receive a read-only secret
+capability and never generate, rotate, repair, or replace material.
+The concrete runtime facade can only be constructed over the repository's
+reviewed `KeyringSecretStorage`; a shape-compatible dictionary or plaintext
+test backend cannot be passed to a production signing provider.
+Each facade is bound to one exact `(trust_domain, ProviderRole)` authority.
+Canonical JSON for that tuple is SHA-256 encoded into a collision-resistant
+keyring service namespace and secret-reference prefix.  Root, history, and
+different trust domains therefore have different effective read domains, and
+a scoped reader rejects even a valid reference belonging to another authority.
+Providers accept only exact immutable path/security configuration and create
+their sealed read-only keyring reader internally; they expose no generic secret
+capability or administrative operation.
+
+Metadata creation uses a fully flushed temporary file plus an atomic hard-link
+winner and directory fsync; lifecycle updates use flushed temporary files,
+atomic replacement, and directory fsync.  Strict schema/profile/domain/role,
+permissions, Ed25519 shape, and derived public/private consistency checks fail
+closed.  The lifecycle graph is `ACTIVE -> VERIFY_ONLY`, `ACTIVE -> REVOKED`,
+and `VERIFY_ONLY -> REVOKED`; only `ACTIVE` signs.
+One POSIX advisory lock covers the complete custody directory.  Provisioning
+and lifecycle changes take it exclusively, while signing and active-identity
+reads hold it shared through completion.  Cross-role alias checks, secret
+creation, metadata commit and cleanup therefore form one serialized critical
+section, and signing has an explicit order relative to revocation.
+All filesystem entry points reject subclasses of the platform's concrete
+`pathlib` type before invoking any caller-overridable path method, then retain a
+trusted path snapshot.
+
+Provisioning and record loading share one canonical identity derivation.  The
+role-prefixed credential ID contains one lowercase 32-hex provisioning token;
+that same token fixes the key handle.  Trust domain and role fix the provider
+and lifecycle namespaces, this single-key stage fixes key version `1`, and the
+authority scope plus credential ID fixes the protected-secret reference.
+Loading rejects any independently edited identity field.  Lifecycle record
+self-consistency is also closed to states the current API cannot emit:
+`ACTIVE/1`, `VERIFY_ONLY/2`, and `REVOKED/2|3` are the only combinations.
+This is record self-consistency, not rollback detection; authenticated history
+and checkpoint authorities remain future work.
+
+The local providers truthfully report software custody and therefore qualify
+for `PRODUCTION_LOCAL`, but not `PRODUCTION_SERVER_READY`.  Native keyring and
+host permissions share the controlled-host administration boundary, so this
+does not claim HSM-grade non-exportability or protection from the host admin.
+The exact semantic root-proof/history signing domains are not yet frozen; this
+foundation signs caller-supplied canonical bytes and does not invent a domain
+literal.
+
+The native keyring and metadata file are separate durability authorities and
+do not provide a cross-store transaction.  A handled metadata-commit failure
+deletes its newly created secret, but an abrupt power loss between those writes
+may leave an unreachable keyring entry requiring an offline reconciliation
+tool.  Since loading recomputes the exact secret reference from the canonical
+authority and credential identity, such an orphan cannot be adopted by editing
+metadata and can never become an accepted signing identity without the legal
+provisioning protocol.
+
+Current-tree status:
+
+* `ROOT_PROOF_ISSUER_PRODUCTION_LOCAL_SIGNING_CUSTODY_IMPLEMENTED = true`
+* `ROOT_PROOF_ISSUER_IMPLEMENTED = false`
+* `PRODUCTION_LOCAL_RUNTIME_AVAILABLE = false`
+* provenance classification: `UNKNOWN`
+* finding scope: `CURRENT_TREE_ONLY`
+* formal project advancement: `WITHHELD`
