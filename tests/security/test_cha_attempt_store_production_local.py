@@ -2,13 +2,14 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 import base64
-from dataclasses import replace
+from dataclasses import asdict, replace
 from pathlib import Path
 import json
 import sqlite3
 
 import pytest
 
+import bot_core.cha_attempt_store as cha
 from bot_core.cha_attempt_store import (
     AttemptAuthorization,
     AttemptConflictError,
@@ -184,12 +185,15 @@ def test_replacement_preserves_predecessor_and_exactly_one_fence_wins(tmp_path: 
     auth = authorization()
     with open_store(path) as store:
         old = store.reserve_or_resolve_attempt_id(auth)
-        successor = store.replace_after_authoritative_unbound(auth, evidence(old.reservation.issuance_attempt_id), expected_fence=1)
+        old = store.finalize_attempt(
+            identity(auth, old.reservation.issuance_attempt_id), expected_fence=1
+        )
+        successor = store.replace_after_authoritative_unbound(auth, evidence(old.reservation.issuance_attempt_id), expected_fence=2)
         assert successor.reservation.issuance_attempt_id != old.reservation.issuance_attempt_id
         assert store._connection.execute("SELECT count(*) FROM reservations").fetchone() == (2,)  # noqa: SLF001
         with pytest.raises(AttemptConflictError):
             store.replace_after_authoritative_unbound(
-                replace(auth, requester_key_version=3), evidence(old.reservation.issuance_attempt_id), expected_fence=1
+                replace(auth, requester_key_version=3), evidence(old.reservation.issuance_attempt_id), expected_fence=2
             )
 
 
@@ -198,6 +202,9 @@ def test_two_connections_have_one_concurrent_replacement_winner(tmp_path: Path) 
     auth = authorization()
     with open_store(path) as store:
         old = store.reserve_or_resolve_attempt_id(auth)
+        old = store.finalize_attempt(
+            identity(auth, old.reservation.issuance_attempt_id), expected_fence=1
+        )
 
     def compete(version: int) -> str:
         try:
@@ -205,7 +212,7 @@ def test_two_connections_have_one_concurrent_replacement_winner(tmp_path: Path) 
                 competitor.replace_after_authoritative_unbound(
                     replace(auth, requester_key_version=version),
                     evidence(old.reservation.issuance_attempt_id),
-                    expected_fence=1,
+                    expected_fence=2,
                 )
             return "winner"
         except AttemptConflictError:
@@ -272,8 +279,8 @@ def test_malformed_state_fails_closed(tmp_path: Path) -> None:
     db.execute("UPDATE current_attempts SET state='INVALID'")
     db.commit()
     db.close()
-    with open_store(path) as reopened, pytest.raises(AttemptCorruptError):
-        reopened.attempt(auth.logical_operation_id)
+    with pytest.raises(AttemptCorruptError):
+        open_store(path)
 
 
 def test_current_pointer_to_missing_record_fails_closed(tmp_path: Path) -> None:
@@ -292,8 +299,8 @@ def test_current_pointer_to_missing_record_fails_closed(tmp_path: Path) -> None:
     )
     db.commit()
     db.close()
-    with open_store(path) as reopened, pytest.raises(AttemptCorruptError, match="target is missing"):
-        reopened.attempt(auth.logical_operation_id)
+    with pytest.raises(AttemptCorruptError):
+        open_store(path)
 
 
 def test_store_has_no_account_mint_or_issuer_registry_write_dependency(tmp_path: Path) -> None:
@@ -317,8 +324,11 @@ def test_replacement_exact_retry_after_reopen_uses_same_successor_and_no_duplica
     auth = authorization()
     with open_store(path) as store:
         old = store.reserve_or_resolve_attempt_id(auth)
+        old = store.finalize_attempt(
+            identity(auth, old.reservation.issuance_attempt_id), expected_fence=1
+        )
         committed = store.replace_after_authoritative_unbound(
-            auth, evidence(old.reservation.issuance_attempt_id), expected_fence=1
+            auth, evidence(old.reservation.issuance_attempt_id), expected_fence=2
         )
         counts = tuple(
             store._connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0]  # noqa: S608, SLF001
@@ -326,7 +336,7 @@ def test_replacement_exact_retry_after_reopen_uses_same_successor_and_no_duplica
         )
     with open_store(path) as reopened:
         replay = reopened.replace_after_authoritative_unbound(
-            auth, evidence(old.reservation.issuance_attempt_id), expected_fence=1
+            auth, evidence(old.reservation.issuance_attempt_id), expected_fence=2
         )
         assert replay.reservation.issuance_attempt_id == committed.reservation.issuance_attempt_id
         assert counts == tuple(
@@ -339,15 +349,18 @@ def test_replacement_conflicting_retry_is_rejected(tmp_path: Path) -> None:
     auth = authorization()
     with open_store((tmp_path / "attempts.db").resolve()) as store:
         old = store.reserve_or_resolve_attempt_id(auth)
+        old = store.finalize_attempt(
+            identity(auth, old.reservation.issuance_attempt_id), expected_fence=1
+        )
         store.replace_after_authoritative_unbound(
-            auth, evidence(old.reservation.issuance_attempt_id), expected_fence=1
+            auth, evidence(old.reservation.issuance_attempt_id), expected_fence=2
         )
         conflicting = replace(
             evidence(old.reservation.issuance_attempt_id),
             authority_authenticated_evidence_digest_sha256="a" * 64,
         )
         with pytest.raises(AttemptConflictError):
-            store.replace_after_authoritative_unbound(auth, conflicting, expected_fence=1)
+            store.replace_after_authoritative_unbound(auth, conflicting, expected_fence=2)
 
 
 def test_recovery_exact_retry_after_reopen_has_no_duplicate_transition(tmp_path: Path) -> None:
@@ -381,8 +394,11 @@ def test_replacement_and_transition_history_reject_update_and_delete(tmp_path: P
     auth = authorization()
     with open_store((tmp_path / "attempts.db").resolve()) as store:
         old = store.reserve_or_resolve_attempt_id(auth)
+        old = store.finalize_attempt(
+            identity(auth, old.reservation.issuance_attempt_id), expected_fence=1
+        )
         store.replace_after_authoritative_unbound(
-            auth, evidence(old.reservation.issuance_attempt_id), expected_fence=1
+            auth, evidence(old.reservation.issuance_attempt_id), expected_fence=2
         )
         for statement in (
             "UPDATE replacement_relations SET evidence_digest='x'",
@@ -441,8 +457,8 @@ def test_persisted_authorization_and_idempotency_tampering_fails_closed(tmp_path
     )
     db.commit()
     db.close()
-    with open_store(path) as reopened, pytest.raises(AttemptCorruptError, match="inconsistent"):
-        reopened.attempt(auth.logical_operation_id)
+    with pytest.raises(AttemptCorruptError, match="inconsistent"):
+        open_store(path)
 
 
 def test_persisted_malformed_attempt_id_fails_closed(tmp_path: Path) -> None:
@@ -456,8 +472,8 @@ def test_persisted_malformed_attempt_id_fails_closed(tmp_path: Path) -> None:
     db.execute("UPDATE current_attempts SET attempt_id='rpa_invalid'")
     db.commit()
     db.close()
-    with open_store(path) as reopened, pytest.raises(AttemptCorruptError):
-        reopened.attempt(auth.logical_operation_id)
+    with pytest.raises(AttemptCorruptError):
+        open_store(path)
 
 
 @pytest.mark.parametrize(
@@ -493,8 +509,8 @@ def test_persisted_authorization_tampering_fails_closed(
     )
     db.commit()
     db.close()
-    with open_store(path) as reopened, pytest.raises(AttemptCorruptError):
-        reopened.attempt(auth.logical_operation_id)
+    with pytest.raises(AttemptCorruptError):
+        open_store(path)
 
 
 def test_persisted_malformed_signature_fails_closed(tmp_path: Path) -> None:
@@ -524,8 +540,8 @@ def test_persisted_malformed_signature_fails_closed(tmp_path: Path) -> None:
     )
     db.commit()
     db.close()
-    with open_store(path) as reopened, pytest.raises(AttemptCorruptError, match="immutable attempt"):
-        reopened.attempt(auth.logical_operation_id)
+    with pytest.raises(AttemptCorruptError, match="immutable attempt"):
+        open_store(path)
 
 
 def test_unknown_then_bound_is_monotonic_append_only_and_replayable(tmp_path: Path) -> None:
@@ -675,8 +691,8 @@ def test_reservation_semantic_identity_tamper_is_rejected(
     )
     db.commit()
     db.close()
-    with open_store(path) as reopened, pytest.raises(AttemptCorruptError):
-        reopened.attempt(auth.logical_operation_id)
+    with pytest.raises(AttemptCorruptError):
+        open_store(path)
 
 
 @pytest.mark.parametrize("column", ["evidence_digest", "decision_key"])
@@ -687,8 +703,11 @@ def test_replacement_history_identity_tamper_is_rejected(
     auth = authorization()
     store = open_store(path)
     old = store.reserve_or_resolve_attempt_id(auth)
+    old = store.finalize_attempt(
+        identity(auth, old.reservation.issuance_attempt_id), expected_fence=1
+    )
     successor = store.replace_after_authoritative_unbound(
-        auth, evidence(old.reservation.issuance_attempt_id), expected_fence=1
+        auth, evidence(old.reservation.issuance_attempt_id), expected_fence=2
     )
     store.close()
     db = sqlite3.connect(path)
@@ -700,8 +719,8 @@ def test_replacement_history_identity_tamper_is_rejected(
     )
     db.commit()
     db.close()
-    with open_store(path) as reopened, pytest.raises(AttemptCorruptError):
-        reopened.attempt(successor.reservation.authorization.logical_operation_id)
+    with pytest.raises(AttemptCorruptError):
+        open_store(path)
 
 
 def test_recovery_history_self_consistency_tamper_is_rejected(tmp_path: Path) -> None:
@@ -735,5 +754,703 @@ def test_recovery_history_self_consistency_tamper_is_rejected(tmp_path: Path) ->
     )
     db.commit()
     db.close()
-    with open_store(path) as reopened, pytest.raises(AttemptCorruptError, match="progression"):
-        reopened.attempt(auth.logical_operation_id)
+    with pytest.raises(AttemptCorruptError, match="progression"):
+        open_store(path)
+
+
+def test_bound_and_unsigned_attempts_cannot_be_replaced(tmp_path: Path) -> None:
+    auth = authorization()
+    with open_store((tmp_path / "unsigned.db").resolve()) as store:
+        unsigned = store.reserve_or_resolve_attempt_id(auth)
+        before = store._connection.total_changes  # noqa: SLF001
+        with pytest.raises(AttemptConflictError, match="unsigned"):
+            store.replace_after_authoritative_unbound(
+                auth, evidence(unsigned.reservation.issuance_attempt_id), expected_fence=1
+            )
+        assert store._connection.total_changes == before  # noqa: SLF001
+
+    with open_store((tmp_path / "bound.db").resolve()) as store:
+        current = store.reserve_or_resolve_attempt_id(auth)
+        current = store.finalize_attempt(
+            identity(auth, current.reservation.issuance_attempt_id), expected_fence=1
+        )
+        current = store.record_recovery_resolution(
+            auth.logical_operation_id,
+            RecoveryResolution(
+                current.reservation.issuance_attempt_id,
+                AttemptState.EXACT_BOUND_RECOVERED,
+                "issuer:bound:terminal",
+                "a" * 64,
+            ),
+            expected_fence=2,
+        )
+        counts = tuple(
+            store._connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0]  # noqa: S608, SLF001
+            for table in ("reservations", "replacement_relations", "attempt_transitions")
+        )
+        with pytest.raises(AttemptConflictError, match="BOUND"):
+            store.replace_after_authoritative_unbound(
+                auth, evidence(current.reservation.issuance_attempt_id), expected_fence=3
+            )
+        assert store.attempt(auth.logical_operation_id) == current
+        assert counts == tuple(
+            store._connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0]  # noqa: S608, SLF001
+            for table in ("reservations", "replacement_relations", "attempt_transitions")
+        )
+
+
+def test_historical_recovery_and_replacement_replays_return_current_descendant(
+    tmp_path: Path,
+) -> None:
+    path = (tmp_path / "attempts.db").resolve()
+    auth = authorization()
+    with open_store(path) as store:
+        attempt_a = store.reserve_or_resolve_attempt_id(auth)
+        attempt_a = store.finalize_attempt(
+            identity(auth, attempt_a.reservation.issuance_attempt_id), expected_fence=1
+        )
+        unknown = RecoveryResolution(
+            attempt_a.reservation.issuance_attempt_id,
+            AttemptState.MAY_HAVE_BEEN_SENT_OUTCOME_UNKNOWN,
+            "issuer:unknown:historical",
+            "b" * 64,
+        )
+        store.record_recovery_resolution(auth.logical_operation_id, unknown, expected_fence=2)
+        attempt_b = store.replace_after_authoritative_unbound(
+            auth, evidence(attempt_a.reservation.issuance_attempt_id), expected_fence=3
+        )
+        counts = store._connection.total_changes  # noqa: SLF001
+        assert store.record_recovery_resolution(
+            auth.logical_operation_id, unknown, expected_fence=2
+        ) == attempt_b
+        assert store._connection.total_changes == counts  # noqa: SLF001
+
+        attempt_b = store.finalize_attempt(
+            identity(auth, attempt_b.reservation.issuance_attempt_id), expected_fence=4
+        )
+        attempt_c = store.replace_after_authoritative_unbound(
+            auth, evidence(attempt_b.reservation.issuance_attempt_id), expected_fence=5
+        )
+        counts = store._connection.total_changes  # noqa: SLF001
+        assert store.replace_after_authoritative_unbound(
+            auth, evidence(attempt_a.reservation.issuance_attempt_id), expected_fence=3
+        ) == attempt_c
+        assert store._connection.total_changes == counts  # noqa: SLF001
+
+
+@pytest.mark.parametrize("mode", ["extra", "changed", "missing"])
+def test_transition_history_semantics_are_validated_on_reopen(
+    tmp_path: Path, mode: str
+) -> None:
+    path = (tmp_path / "attempts.db").resolve()
+    auth = authorization()
+    store = open_store(path)
+    current = store.reserve_or_resolve_attempt_id(auth)
+    store.finalize_attempt(identity(auth, current.reservation.issuance_attempt_id), expected_fence=1)
+    if mode == "extra":
+        store._connection.execute(  # noqa: SLF001
+            "INSERT INTO attempt_transitions(attempt_id,state,decision_key) VALUES(?,?,?)",
+            (current.reservation.issuance_attempt_id, AttemptState.EXACT_BOUND_RECOVERED.value, "c" * 64),
+        )
+    else:
+        trigger = "transitions_immutable_update" if mode == "changed" else "transitions_immutable_delete"
+        store._connection.execute(f"DROP TRIGGER {trigger}")  # noqa: S608, SLF001
+        statement = (
+            "UPDATE attempt_transitions SET evidence_digest='dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd'"
+            if mode == "changed"
+            else "DELETE FROM attempt_transitions"
+        )
+        store._connection.execute(statement)  # noqa: SLF001
+        operation = "UPDATE" if mode == "changed" else "DELETE"
+        store._connection.execute(  # noqa: SLF001
+            f"CREATE TRIGGER {trigger} BEFORE {operation} ON attempt_transitions "  # noqa: S608
+            "BEGIN SELECT RAISE(ABORT,'immutable transition'); END"
+        )
+    store.close()
+    with pytest.raises(AttemptCorruptError, match="transition authority history"):
+        open_store(path)
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "CREATE UNIQUE INDEX fake_decision_unique ON reservations(decision_key) WHERE 0",
+        "CREATE UNIQUE INDEX extra_operation_unique ON reservations(operation_id)",
+    ],
+)
+def test_partial_or_extra_unique_index_is_rejected(tmp_path: Path, sql: str) -> None:
+    path = (tmp_path / "attempts.db").resolve()
+    store = open_store(path)
+    store._connection.execute(sql)  # noqa: SLF001
+    store.close()
+    with pytest.raises(AttemptCorruptError, match="UNIQUE"):
+        open_store(path)
+
+
+@pytest.mark.parametrize(
+    "state",
+    [
+        AttemptState.EXACT_BOUND_RECOVERED,
+        AttemptState.MAY_HAVE_BEEN_SENT_OUTCOME_UNKNOWN,
+    ],
+)
+def test_current_state_without_immutable_decision_is_rejected(
+    tmp_path: Path, state: AttemptState
+) -> None:
+    path = (tmp_path / "attempts.db").resolve()
+    auth = authorization()
+    store = open_store(path)
+    current = store.reserve_or_resolve_attempt_id(auth)
+    store.finalize_attempt(identity(auth, current.reservation.issuance_attempt_id), expected_fence=1)
+    store.close()
+    db = sqlite3.connect(path)
+    db.execute("UPDATE current_attempts SET state=?", (state.value,))
+    db.commit()
+    db.close()
+    with pytest.raises(AttemptCorruptError, match="current projection"):
+        open_store(path)
+
+
+def test_positive_but_wrong_fence_is_rejected(tmp_path: Path) -> None:
+    path = (tmp_path / "attempts.db").resolve()
+    auth = authorization()
+    store = open_store(path)
+    store.reserve_or_resolve_attempt_id(auth)
+    store.close()
+    db = sqlite3.connect(path)
+    db.execute("UPDATE current_attempts SET fence=fence+100")
+    db.commit()
+    db.close()
+    with pytest.raises(AttemptCorruptError, match="current projection"):
+        open_store(path)
+
+
+def test_current_pointer_rollback_from_successor_is_rejected(tmp_path: Path) -> None:
+    path = (tmp_path / "attempts.db").resolve()
+    auth = authorization()
+    store = open_store(path)
+    attempt_a = store.reserve_or_resolve_attempt_id(auth)
+    attempt_a = store.finalize_attempt(
+        identity(auth, attempt_a.reservation.issuance_attempt_id), expected_fence=1
+    )
+    store.replace_after_authoritative_unbound(
+        auth, evidence(attempt_a.reservation.issuance_attempt_id), expected_fence=2
+    )
+    store.close()
+    db = sqlite3.connect(path)
+    db.execute(
+        "UPDATE current_attempts SET attempt_id=?,state=?,digest_status='DEFINED',digest=?",
+        (
+            attempt_a.reservation.issuance_attempt_id,
+            AttemptState.SIGNED_IMMUTABLE_DURABLE_NOT_SENT.value,
+            attempt_a.immutable_attempt_digest_sha256,
+        ),
+    )
+    db.commit()
+    db.close()
+    with pytest.raises(AttemptCorruptError, match="current projection"):
+        open_store(path)
+
+
+@pytest.mark.parametrize("history", ["bound_replacement", "unsigned_replacement", "unsigned_recovery"])
+def test_illegal_historical_state_machine_is_rejected(tmp_path: Path, history: str) -> None:
+    path = (tmp_path / "attempts.db").resolve()
+    auth = authorization()
+    store = open_store(path)
+    attempt_a = store.reserve_or_resolve_attempt_id(auth)
+    attempt_a = store.finalize_attempt(
+        identity(auth, attempt_a.reservation.issuance_attempt_id), expected_fence=1
+    )
+    if history == "unsigned_recovery":
+        store.record_recovery_resolution(
+            auth.logical_operation_id,
+            RecoveryResolution(
+                attempt_a.reservation.issuance_attempt_id,
+                AttemptState.MAY_HAVE_BEEN_SENT_OUTCOME_UNKNOWN,
+                "issuer:unknown:forged-history",
+                "e" * 64,
+            ),
+            expected_fence=2,
+        )
+    else:
+        store.replace_after_authoritative_unbound(
+            auth, evidence(attempt_a.reservation.issuance_attempt_id), expected_fence=2
+        )
+        if history == "bound_replacement":
+            resolution = RecoveryResolution(
+                attempt_a.reservation.issuance_attempt_id,
+                AttemptState.EXACT_BOUND_RECOVERED,
+                "issuer:bound:forged-history",
+                "f" * 64,
+            )
+            payload = {
+                "issuance_attempt_id": resolution.issuance_attempt_id,
+                "outcome": resolution.outcome.value,
+                "authenticated_reference": resolution.authenticated_reference,
+                "authenticated_digest_sha256": resolution.authenticated_digest_sha256,
+            }
+            key = cha._decision_key("RECOVERY", payload)
+            store._connection.execute(  # noqa: SLF001
+                "INSERT INTO recovery_resolutions(attempt_id,predecessor_state,outcome,decision_key,resolution_json) "
+                "VALUES(?,?,?,?,?)",
+                (
+                    resolution.issuance_attempt_id,
+                    AttemptState.SIGNED_IMMUTABLE_DURABLE_NOT_SENT.value,
+                    resolution.outcome.value,
+                    key,
+                    cha._canonical(payload),
+                ),
+            )
+            store._connection.execute(  # noqa: SLF001
+                "INSERT INTO attempt_transitions(attempt_id,state,evidence_reference,evidence_digest,decision_key) "
+                "VALUES(?,?,?,?,?)",
+                (
+                    resolution.issuance_attempt_id,
+                    resolution.outcome.value,
+                    resolution.authenticated_reference,
+                    resolution.authenticated_digest_sha256,
+                    key,
+                ),
+            )
+            store._connection.execute("DROP TRIGGER transitions_immutable_update")  # noqa: SLF001
+            store._connection.execute("UPDATE attempt_transitions SET transition_id=99 WHERE transition_id=2")  # noqa: SLF001
+            store._connection.execute("UPDATE attempt_transitions SET transition_id=2 WHERE transition_id=3")  # noqa: SLF001
+            store._connection.execute("UPDATE attempt_transitions SET transition_id=3 WHERE transition_id=99")  # noqa: SLF001
+            store._connection.execute(  # noqa: SLF001
+                "CREATE TRIGGER transitions_immutable_update BEFORE UPDATE ON attempt_transitions "
+                "BEGIN SELECT RAISE(ABORT,'immutable transition'); END"
+            )
+    if history != "bound_replacement":
+        store._connection.execute("DROP TRIGGER attempts_immutable_delete")  # noqa: SLF001
+        store._connection.execute("DROP TRIGGER transitions_immutable_delete")  # noqa: SLF001
+        store._connection.execute(  # noqa: SLF001
+            "UPDATE current_attempts SET digest_status='NOT_YET_DEFINED',digest=NULL"
+        )
+        store._connection.execute("DELETE FROM immutable_attempts")  # noqa: SLF001
+        store._connection.execute(  # noqa: SLF001
+            "DELETE FROM attempt_transitions WHERE state=?",
+            (AttemptState.SIGNED_IMMUTABLE_DURABLE_NOT_SENT.value,),
+        )
+        store._connection.execute(  # noqa: SLF001
+            "CREATE TRIGGER attempts_immutable_delete BEFORE DELETE ON immutable_attempts "
+            "BEGIN SELECT RAISE(ABORT,'immutable attempt'); END"
+        )
+        store._connection.execute(  # noqa: SLF001
+            "CREATE TRIGGER transitions_immutable_delete BEFORE DELETE ON attempt_transitions "
+            "BEGIN SELECT RAISE(ABORT,'immutable transition'); END"
+        )
+    store.close()
+    with pytest.raises(AttemptCorruptError):
+        open_store(path)
+
+
+def test_orphan_reservation_is_rejected(tmp_path: Path) -> None:
+    path = (tmp_path / "attempts.db").resolve()
+    auth = authorization()
+    store = open_store(path)
+    store.reserve_or_resolve_attempt_id(auth)
+    orphan = cha._new_rpa_id()
+    orphan_auth = replace(auth, requester_key_version=99)
+    store._connection.execute(  # noqa: SLF001
+        "INSERT INTO reservations VALUES(?,?,?,?,?,?,?)",
+        (
+            orphan,
+            auth.logical_operation_id,
+            cha._idempotency_key(orphan_auth),
+            cha._canonical(asdict(orphan_auth)),
+            AttemptState.RESERVED_AWAITING_SIGNATURES.value,
+            "INITIAL",
+            cha._decision_key("INITIAL", asdict(orphan_auth)),
+        ),
+    )
+    store.close()
+    with pytest.raises(AttemptCorruptError):
+        open_store(path)
+
+
+@pytest.mark.parametrize("foreign_key", ["extra", "cascade"])
+def test_exact_foreign_key_contract_is_enforced(tmp_path: Path, foreign_key: str) -> None:
+    path = (tmp_path / "attempts.db").resolve()
+    store = open_store(path)
+    store._connection.execute("DROP TRIGGER transitions_immutable_update")  # noqa: SLF001
+    store._connection.execute("DROP TRIGGER transitions_immutable_delete")  # noqa: SLF001
+    store._connection.execute("ALTER TABLE attempt_transitions RENAME TO old_transitions")  # noqa: SLF001
+    clause = (
+        ", FOREIGN KEY(state) REFERENCES reservations(attempt_id)"
+        if foreign_key == "extra"
+        else ""
+    )
+    action = " ON DELETE CASCADE" if foreign_key == "cascade" else ""
+    store._connection.execute(  # noqa: SLF001
+        "CREATE TABLE attempt_transitions(transition_id INTEGER PRIMARY KEY,"
+        f"attempt_id TEXT NOT NULL REFERENCES reservations(attempt_id){action},"
+        "state TEXT NOT NULL,evidence_reference TEXT,evidence_digest TEXT,"
+        f"decision_key TEXT NOT NULL UNIQUE{clause})"
+    )
+    store._connection.execute("DROP TABLE old_transitions")  # noqa: SLF001
+    for operation in ("update", "delete"):
+        store._connection.execute(  # noqa: SLF001
+            f"CREATE TRIGGER transitions_immutable_{operation} BEFORE {operation.upper()} "
+            "ON attempt_transitions BEGIN SELECT RAISE(ABORT,'immutable transition'); END"
+        )
+    store.close()
+    with pytest.raises(AttemptCorruptError, match="foreign key contract"):
+        open_store(path)
+
+
+@pytest.mark.parametrize(
+    "forged_state",
+    [
+        AttemptState.EXACT_BOUND_RECOVERED,
+        AttemptState.MAY_HAVE_BEEN_SENT_OUTCOME_UNKNOWN,
+    ],
+)
+def test_already_open_store_rejects_externally_forged_current_state(
+    tmp_path: Path, forged_state: AttemptState
+) -> None:
+    path = (tmp_path / "attempts.db").resolve()
+    auth = authorization()
+    with open_store(path) as store:
+        current = store.reserve_or_resolve_attempt_id(auth)
+        store.finalize_attempt(
+            identity(auth, current.reservation.issuance_attempt_id), expected_fence=1
+        )
+        external = sqlite3.connect(path)
+        external.execute("UPDATE current_attempts SET state=?", (forged_state.value,))
+        external.commit()
+        external.close()
+        with pytest.raises(AttemptCorruptError, match="current projection"):
+            store.attempt(auth.logical_operation_id)
+
+
+def test_already_open_store_rejects_external_fence_and_pointer_rollback(tmp_path: Path) -> None:
+    auth = authorization()
+    fence_path = (tmp_path / "fence.db").resolve()
+    with open_store(fence_path) as store:
+        store.reserve_or_resolve_attempt_id(auth)
+        external = sqlite3.connect(fence_path)
+        external.execute("UPDATE current_attempts SET fence=fence+100")
+        external.commit()
+        external.close()
+        with pytest.raises(AttemptCorruptError, match="current projection"):
+            store.attempt(auth.logical_operation_id)
+
+    pointer_path = (tmp_path / "pointer.db").resolve()
+    with open_store(pointer_path) as store:
+        attempt_a = store.reserve_or_resolve_attempt_id(auth)
+        attempt_a = store.finalize_attempt(
+            identity(auth, attempt_a.reservation.issuance_attempt_id), expected_fence=1
+        )
+        store.replace_after_authoritative_unbound(
+            auth, evidence(attempt_a.reservation.issuance_attempt_id), expected_fence=2
+        )
+        external = sqlite3.connect(pointer_path)
+        external.execute(
+            "UPDATE current_attempts SET attempt_id=?,state=?,digest_status='DEFINED',digest=?",
+            (
+                attempt_a.reservation.issuance_attempt_id,
+                AttemptState.SIGNED_IMMUTABLE_DURABLE_NOT_SENT.value,
+                attempt_a.immutable_attempt_digest_sha256,
+            ),
+        )
+        external.commit()
+        external.close()
+        with pytest.raises(AttemptCorruptError, match="current projection"):
+            store.attempt(auth.logical_operation_id)
+
+
+def test_transaction_c_rejects_projection_tamper_before_side_effects(tmp_path: Path) -> None:
+    path = (tmp_path / "attempts.db").resolve()
+    auth = authorization()
+    with open_store(path) as store:
+        current = store.reserve_or_resolve_attempt_id(auth)
+        current = store.finalize_attempt(
+            identity(auth, current.reservation.issuance_attempt_id), expected_fence=1
+        )
+        external = sqlite3.connect(path)
+        external.execute("UPDATE current_attempts SET state=?", (AttemptState.EXACT_BOUND_RECOVERED.value,))
+        external.commit()
+        external.close()
+        counts = tuple(
+            store._connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0]  # noqa: S608, SLF001
+            for table in ("reservations", "replacement_relations", "attempt_transitions")
+        )
+        with pytest.raises(AttemptCorruptError, match="current projection"):
+            store.replace_after_authoritative_unbound(
+                auth, evidence(current.reservation.issuance_attempt_id), expected_fence=2
+            )
+        assert counts == tuple(
+            store._connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0]  # noqa: S608, SLF001
+            for table in ("reservations", "replacement_relations", "attempt_transitions")
+        )
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"account_id": "acct_018f3e70-7b5c-7c21-8b9a-0123456789ac"},
+        {"canonical_genesis_request_fingerprint_sha256": "9" * 64},
+        {"initial_binding_reference": "ib:authority:other"},
+        {"initial_binding_digest_sha256": "8" * 64},
+    ],
+)
+def test_replacement_cannot_rebind_persisted_predecessor(
+    tmp_path: Path, changes: dict[str, object]
+) -> None:
+    auth = authorization()
+    replacement_auth = replace(auth, **changes)
+    with open_store((tmp_path / "attempts.db").resolve()) as store:
+        current = store.reserve_or_resolve_attempt_id(auth)
+        current = store.finalize_attempt(
+            identity(auth, current.reservation.issuance_attempt_id), expected_fence=1
+        )
+        before = store._connection.total_changes  # noqa: SLF001
+        with pytest.raises(AttemptConflictError, match="persisted predecessor"):
+            store.replace_after_authoritative_unbound(
+                replacement_auth,
+                evidence(current.reservation.issuance_attempt_id, replacement_auth),
+                expected_fence=2,
+            )
+        assert store._connection.total_changes == before  # noqa: SLF001
+
+
+def test_replacement_preserves_credential_rotation_with_stable_binding(tmp_path: Path) -> None:
+    auth = authorization()
+    rotated = replace(auth, requester_key_version=2, claimant_key_version=2)
+    with open_store((tmp_path / "attempts.db").resolve()) as store:
+        current = store.reserve_or_resolve_attempt_id(auth)
+        current = store.finalize_attempt(
+            identity(auth, current.reservation.issuance_attempt_id), expected_fence=1
+        )
+        successor = store.replace_after_authoritative_unbound(
+            rotated,
+            evidence(current.reservation.issuance_attempt_id, rotated),
+            expected_fence=2,
+        )
+        assert successor.reservation.authorization == rotated
+
+
+def test_historical_authorization_must_match_store_trust_domain(tmp_path: Path) -> None:
+    path = (tmp_path / "attempts.db").resolve()
+    auth = authorization()
+    store = open_store(path)
+    store.reserve_or_resolve_attempt_id(auth)
+    store.close()
+    db = sqlite3.connect(path)
+    raw = db.execute("SELECT authorization_json FROM reservations").fetchone()[0]
+    payload = json.loads(bytes(raw))
+    payload["trust_domain"] = "different-domain"
+    db.execute("DROP TRIGGER reservations_immutable_update")
+    db.execute(
+        "UPDATE reservations SET authorization_json=?",
+        (json.dumps(payload, sort_keys=True, separators=(",", ":")).encode(),),
+    )
+    db.execute(
+        "CREATE TRIGGER reservations_immutable_update BEFORE UPDATE ON reservations "
+        "BEGIN SELECT RAISE(ABORT,'immutable reservation'); END"
+    )
+    db.commit()
+    db.close()
+    with pytest.raises(AttemptCorruptError):
+        open_store(path)
+
+
+def test_authorization_subclass_is_rejected_before_semantic_reads(tmp_path: Path) -> None:
+    class StatefulAuthorization(AttemptAuthorization):
+        reads = 0
+
+        def __getattribute__(self, name: str) -> object:
+            if name in AttemptAuthorization.__dataclass_fields__:
+                type(self).reads += 1
+            return super().__getattribute__(name)
+
+    auth = authorization()
+    malicious = StatefulAuthorization(**asdict(auth))
+    StatefulAuthorization.reads = 0
+    with open_store((tmp_path / "attempts.db").resolve()) as store:
+        before = store._connection.total_changes  # noqa: SLF001
+        with pytest.raises(TypeError, match="exact AttemptAuthorization"):
+            store.reserve_or_resolve_attempt_id(malicious)
+        assert StatefulAuthorization.reads == 0
+        assert store._connection.total_changes == before  # noqa: SLF001
+        assert store.reserve_or_resolve_attempt_id(auth).state is AttemptState.RESERVED_AWAITING_SIGNATURES
+
+
+def test_identity_override_is_rejected_before_method_or_property_use(tmp_path: Path) -> None:
+    class StatefulIdentity(AttemptIdentity):
+        calls = 0
+
+        def payload(self) -> dict[str, str | int]:
+            type(self).calls += 1
+            return super().payload()
+
+        @property
+        def digest_sha256(self) -> str:
+            type(self).calls += 1
+            return super().digest_sha256
+
+    auth = authorization()
+    with open_store((tmp_path / "attempts.db").resolve()) as store:
+        current = store.reserve_or_resolve_attempt_id(auth)
+        valid = identity(auth, current.reservation.issuance_attempt_id)
+        malicious = StatefulIdentity(
+            valid.authorization,
+            valid.issuance_attempt_id,
+            valid.root_proof_issuance_request_signed_payload_digest_sha256,
+            valid.root_proof_issuance_request_canonical_bytes_reference,
+            valid.requester_signature_base64url,
+            valid.claimant_authorization_signature_base64url,
+            valid.issuance_request_domain_and_profile_version,
+            valid.claimant_authorization_domain_and_profile_version,
+        )
+        before = store._connection.total_changes  # noqa: SLF001
+        with pytest.raises(TypeError, match="exact AttemptIdentity"):
+            store.finalize_attempt(malicious, expected_fence=1)
+        assert StatefulIdentity.calls == 0
+        assert store._connection.total_changes == before  # noqa: SLF001
+
+
+def test_stateful_evidence_and_recovery_subclasses_are_rejected_without_reads(
+    tmp_path: Path,
+) -> None:
+    class StatefulEvidence(AuthoritativeUnboundEvidence):
+        reads = 0
+
+        def __getattribute__(self, name: str) -> object:
+            if name in AuthoritativeUnboundEvidence.__dataclass_fields__:
+                type(self).reads += 1
+            return super().__getattribute__(name)
+
+    class StatefulRecovery(RecoveryResolution):
+        reads = 0
+
+        def __getattribute__(self, name: str) -> object:
+            if name in RecoveryResolution.__dataclass_fields__:
+                type(self).reads += 1
+            return super().__getattribute__(name)
+
+    auth = authorization()
+    with open_store((tmp_path / "attempts.db").resolve()) as store:
+        current = store.reserve_or_resolve_attempt_id(auth)
+        current = store.finalize_attempt(
+            identity(auth, current.reservation.issuance_attempt_id), expected_fence=1
+        )
+        valid_evidence = evidence(current.reservation.issuance_attempt_id)
+        malicious_evidence = StatefulEvidence(**asdict(valid_evidence))
+        valid_recovery = RecoveryResolution(
+            current.reservation.issuance_attempt_id,
+            AttemptState.MAY_HAVE_BEEN_SENT_OUTCOME_UNKNOWN,
+            "issuer:stateful:unknown",
+            "7" * 64,
+        )
+        malicious_recovery = StatefulRecovery(
+            valid_recovery.issuance_attempt_id,
+            valid_recovery.outcome,
+            valid_recovery.authenticated_reference,
+            valid_recovery.authenticated_digest_sha256,
+        )
+        StatefulEvidence.reads = StatefulRecovery.reads = 0
+        before = store._connection.total_changes  # noqa: SLF001
+        with pytest.raises(TypeError, match="exact AuthoritativeUnboundEvidence"):
+            store.replace_after_authoritative_unbound(
+                auth, malicious_evidence, expected_fence=2
+            )
+        with pytest.raises(TypeError, match="exact RecoveryResolution"):
+            store.record_recovery_resolution(
+                auth.logical_operation_id, malicious_recovery, expected_fence=2
+            )
+        assert StatefulEvidence.reads == StatefulRecovery.reads == 0
+        assert store._connection.total_changes == before  # noqa: SLF001
+        assert store.attempt(auth.logical_operation_id) == current
+
+
+@pytest.mark.parametrize("kind", ["authorization", "identity", "evidence", "recovery"])
+def test_fabricated_exact_value_objects_fail_closed(tmp_path: Path, kind: str) -> None:
+    path = (tmp_path / f"{kind}.db").resolve()
+    auth = authorization()
+    with open_store(path) as store:
+        if kind == "authorization":
+            fabricated = object.__new__(AttemptAuthorization)
+            object.__setattr__(fabricated, "environment", 7)
+            call = lambda: store.reserve_or_resolve_attempt_id(fabricated)  # type: ignore[arg-type]
+        else:
+            current = store.reserve_or_resolve_attempt_id(auth)
+            current = store.finalize_attempt(
+                identity(auth, current.reservation.issuance_attempt_id), expected_fence=1
+            )
+            if kind == "identity":
+                fabricated = object.__new__(AttemptIdentity)
+                object.__setattr__(fabricated, "authorization", "not-an-authorization")
+                call = lambda: store.finalize_attempt(fabricated, expected_fence=2)  # type: ignore[arg-type]
+            elif kind == "evidence":
+                fabricated = object.__new__(AuthoritativeUnboundEvidence)
+                object.__setattr__(fabricated, "outcome", "NOT_FOUND")
+                call = lambda: store.replace_after_authoritative_unbound(  # type: ignore[arg-type]
+                    auth, fabricated, expected_fence=2
+                )
+            else:
+                fabricated = object.__new__(RecoveryResolution)
+                object.__setattr__(fabricated, "outcome", "EXACT_BOUND_RECOVERED")
+                call = lambda: store.record_recovery_resolution(  # type: ignore[arg-type]
+                    auth.logical_operation_id, fabricated, expected_fence=2
+                )
+        before = store._connection.total_changes  # noqa: SLF001
+        with pytest.raises(ValueError, match="malformed"):
+            call()
+        assert store._connection.total_changes == before  # noqa: SLF001
+
+
+@pytest.mark.parametrize("bad_fence", [True, False, 1.0, "1", 0, -1])
+@pytest.mark.parametrize("transaction", ["finalize", "replace", "recover"])
+def test_security_sensitive_transactions_require_exact_positive_fence(
+    tmp_path: Path, transaction: str, bad_fence: object
+) -> None:
+    path = (tmp_path / f"{transaction}-{bad_fence!r}.db").resolve()
+    auth = authorization()
+    with open_store(path) as store:
+        current = store.reserve_or_resolve_attempt_id(auth)
+        if transaction == "finalize":
+            call = lambda: store.finalize_attempt(  # type: ignore[arg-type]
+                identity(auth, current.reservation.issuance_attempt_id),
+                expected_fence=bad_fence,
+            )
+        else:
+            current = store.finalize_attempt(
+                identity(auth, current.reservation.issuance_attempt_id), expected_fence=1
+            )
+            if transaction == "replace":
+                call = lambda: store.replace_after_authoritative_unbound(  # type: ignore[arg-type]
+                    auth,
+                    evidence(current.reservation.issuance_attempt_id),
+                    expected_fence=bad_fence,
+                )
+            else:
+                resolution = RecoveryResolution(
+                    current.reservation.issuance_attempt_id,
+                    AttemptState.MAY_HAVE_BEEN_SENT_OUTCOME_UNKNOWN,
+                    "issuer:fence:unknown",
+                    "6" * 64,
+                )
+                call = lambda: store.record_recovery_resolution(  # type: ignore[arg-type]
+                    auth.logical_operation_id, resolution, expected_fence=bad_fence
+                )
+        before = store._connection.total_changes  # noqa: SLF001
+        error = TypeError if type(bad_fence) is not int else ValueError
+        with pytest.raises(error, match="expected_fence"):
+            call()
+        assert store._connection.total_changes == before  # noqa: SLF001
+
+
+@pytest.mark.parametrize("operation_id", [None, 7, True, "", "   "])
+def test_operation_id_public_boundaries_require_exact_nonempty_string(
+    tmp_path: Path, operation_id: object
+) -> None:
+    resolution = object.__new__(RecoveryResolution)
+    with open_store((tmp_path / f"operation-{operation_id!r}.db").resolve()) as store:
+        error = TypeError if type(operation_id) is not str else ValueError
+        with pytest.raises(error, match="operation_id"):
+            store.attempt(operation_id)  # type: ignore[arg-type]
+        with pytest.raises(error, match="operation_id"):
+            store.record_recovery_resolution(  # type: ignore[arg-type]
+                operation_id, resolution, expected_fence=1
+            )

@@ -30,7 +30,7 @@ PERSISTENCE_RECORD_REGISTRY: Final[dict[str, dict[str, Any]]] = {
         "adds_new_domain_facts": False,
         "restorable_authority": False,
         "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
-        "semantic_contract_fingerprint_sha256": "1913a18c7e7479d9c20850a690ee81b9f311a7d08cf2458374c91f6332d277f1",
+        "semantic_contract_fingerprint_sha256": "bb92436a67abe42975d763b06717962009d3f4bc8a6066b227f34c8e7d178e9b",
         "record_key_strategy": "CANONICAL_ENTITY_ID",
         "payload_contract": {
             "required_fields": ["entity_kind", "entity_id", "parent_scope_bindings"],
@@ -56,7 +56,7 @@ PERSISTENCE_RECORD_REGISTRY: Final[dict[str, dict[str, Any]]] = {
         "adds_new_domain_facts": False,
         "restorable_authority": False,
         "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
-        "semantic_contract_fingerprint_sha256": "662cde4cf8b245d43ae9f3d19dfffa7e46c96b3195cffdeb9aba410030dac841",
+        "semantic_contract_fingerprint_sha256": "cecc6af207e765bf6fedef8a68b11f0e88bad1048dc8b7f3055e559c0906f68d",
         "record_key_strategy": "FACT_SCOPE_OBJECT_GENERATION",
         "fact_binding": {
             "required_fact_fields": [
@@ -125,7 +125,7 @@ PERSISTENCE_RECORD_REGISTRY: Final[dict[str, dict[str, Any]]] = {
         "adds_new_domain_facts": False,
         "restorable_authority": False,
         "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
-        "semantic_contract_fingerprint_sha256": "662cde4cf8b245d43ae9f3d19dfffa7e46c96b3195cffdeb9aba410030dac841",
+        "semantic_contract_fingerprint_sha256": "cecc6af207e765bf6fedef8a68b11f0e88bad1048dc8b7f3055e559c0906f68d",
         "record_key_strategy": "SCOPE_CURRENT_REFERENCE_REVISION_GENERATION",
         "payload_contract": {
             "required_fields": [
@@ -284,7 +284,7 @@ PERSISTENCE_RECORD_REGISTRY: Final[dict[str, dict[str, Any]]] = {
         "adds_new_domain_facts": False,
         "restorable_authority": False,
         "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
-        "semantic_contract_fingerprint_sha256": "662cde4cf8b245d43ae9f3d19dfffa7e46c96b3195cffdeb9aba410030dac841",
+        "semantic_contract_fingerprint_sha256": "cecc6af207e765bf6fedef8a68b11f0e88bad1048dc8b7f3055e559c0906f68d",
         "record_key_strategy": "SCOPE_CURRENT_REFERENCE_REVISION_GENERATION",
         "payload_contract": {
             "required_fields": [
@@ -483,7 +483,7 @@ PERSISTENCE_RECORD_REGISTRY: Final[dict[str, dict[str, Any]]] = {
         "adds_new_domain_facts": False,
         "restorable_authority": False,
         "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
-        "semantic_contract_fingerprint_sha256": "1913a18c7e7479d9c20850a690ee81b9f311a7d08cf2458374c91f6332d277f1",
+        "semantic_contract_fingerprint_sha256": "bb92436a67abe42975d763b06717962009d3f4bc8a6066b227f34c8e7d178e9b",
         "record_key_strategy": "CANONICAL_ENTITY_ID",
         "payload_contract": {
             "required_fields": ["entity_kind", "entity_id", "parent_scope_bindings"],
@@ -2954,7 +2954,7 @@ PERSISTENCE_RECORD_REGISTRY: Final[dict[str, dict[str, Any]]] = {
         "adds_new_domain_facts": False,
         "restorable_authority": False,
         "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
-        "semantic_contract_fingerprint_sha256": "1913a18c7e7479d9c20850a690ee81b9f311a7d08cf2458374c91f6332d277f1",
+        "semantic_contract_fingerprint_sha256": "bb92436a67abe42975d763b06717962009d3f4bc8a6066b227f34c8e7d178e9b",
         "record_key_strategy": "CANONICAL_ENTITY_ID",
         "payload_contract": {
             "required_fields": [

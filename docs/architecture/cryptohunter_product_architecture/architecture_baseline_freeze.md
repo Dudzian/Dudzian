@@ -6,16 +6,16 @@ Cel: `INTEGRITY_GUARD_ONLY_NOT_RUNTIME_AUTHORITY`.
 
 | Milestone | Canonical artifact | Canonical schema version | SHA-256 |
 | --- | --- | --- | --- |
-| M0.2 | `docs/architecture/cryptohunter_product_architecture/canonical_domain_vocabulary.json` | `cryptohunter.canonical_domain_vocabulary.v1` | `4b25ce887432590bcb0647fcc10b774b68c49f2fb207637399201a7bc88087f8` |
+| M0.2 | `docs/architecture/cryptohunter_product_architecture/canonical_domain_vocabulary.json` | `cryptohunter.canonical_domain_vocabulary.v1` | `f50b4deae2ba220fae20804901a83cfafb7b9dbc569f6cb00ac737aaa7879ff3` |
 | M0.3 | `docs/architecture/cryptohunter_product_architecture/process_topology_and_lifecycle.json` | `cryptohunter.process_topology_and_lifecycle.v1` | `aa68cc7b844374a99121b3f6c792f6eda19f83cbba5e2a0116054557a0311be3` |
 | M0.4 | `docs/architecture/cryptohunter_product_architecture/environment_and_product_capabilities.json` | `cryptohunter.environment_and_product_capabilities.v1` | `0fb844d86817746fee3efb7ba7e19794ab2c4f321b70082557bdc6e2ea80b9c4` |
-| M0.5 | `docs/architecture/cryptohunter_product_architecture/exchange_accounts_and_instruments.json` | `cryptohunter.exchange_accounts_and_instruments.v1` | `82fe0548c889aa0f203059db158e324ff1680b5b5c1b24395542244363f2174b` |
-| M0.6 | `docs/architecture/cryptohunter_product_architecture/strategy_market_data_and_execution_routing.json` | `1.0.0` | `39a9b4f3b5e0c1311f788b061170bf5dc6b5e9c0fe3cec691b7094455fe4ceb7` |
-| M0.7 | `docs/architecture/cryptohunter_product_architecture/commands_events_order_lifecycle_and_idempotency.json` | `cryptohunter.commands_events_order_lifecycle_and_idempotency.v1` | `e9cb8bfc0300174e03a0bbd557f7c5055634b0fd2f00bcf2f989625b6b896cb0` |
-| M0.8 | `docs/architecture/cryptohunter_product_architecture/ledger_portfolio_capital_and_pnl.json` | `1.0.0` | `bdf70ab825298ee689718de794ee6f9d39211405db0f735db19816119c2d46fd` |
-| M0.9 | `docs/architecture/cryptohunter_product_architecture/risk_hierarchy_kill_switch_and_execution_lease.json` | `1.0.0` | `f7b3fb943d3aa503b4ea6810ea084f17f5bc830f82eab7ce98b3ea5d63eb0537` |
-| M0.10 | `docs/architecture/cryptohunter_product_architecture/identity_device_authentication_and_secrets.json` | `1.5.0` | `76e76f676720c9ae347c4396f1e6e2bb80f9a69c476c1d659b7bb9512ffc1313` |
-| M0.11 | `docs/architecture/cryptohunter_product_architecture/persistence_versioning_migrations_backup_and_recovery.json` | `1.0.0` | `705467340b4ef424d60d28bb5a1d7e84d469ff7c5af222f2aae78d32bcc325ef` |
+| M0.5 | `docs/architecture/cryptohunter_product_architecture/exchange_accounts_and_instruments.json` | `cryptohunter.exchange_accounts_and_instruments.v1` | `9be7e3b5f5f6bf48738ab758e216822f0c3ae02d3edc6024bc81d7502ca59510` |
+| M0.6 | `docs/architecture/cryptohunter_product_architecture/strategy_market_data_and_execution_routing.json` | `1.0.0` | `e5651d55fefd5b3ce9ebf33431aa1561d7bf3339075e1b0ce1b008a50475cf7f` |
+| M0.7 | `docs/architecture/cryptohunter_product_architecture/commands_events_order_lifecycle_and_idempotency.json` | `cryptohunter.commands_events_order_lifecycle_and_idempotency.v1` | `790b9110f52fca2afab573f5130b003f18f74e2f441b3a58eb8078dfa66ae25d` |
+| M0.8 | `docs/architecture/cryptohunter_product_architecture/ledger_portfolio_capital_and_pnl.json` | `1.0.0` | `e4e078013789ace2e283e544e2dccd93b3bd5e2930e0b7fe74f6bedb371710d8` |
+| M0.9 | `docs/architecture/cryptohunter_product_architecture/risk_hierarchy_kill_switch_and_execution_lease.json` | `1.0.0` | `cbf7f6c07e7c0238753e8eea68690668731c175d5e4d2ffe615d3f045210754f` |
+| M0.10 | `docs/architecture/cryptohunter_product_architecture/identity_device_authentication_and_secrets.json` | `1.5.0` | `a532fb292ea9e2f18e56c50a45202e8369400ab1179b57a186851dbf08219d71` |
+| M0.11 | `docs/architecture/cryptohunter_product_architecture/persistence_versioning_migrations_backup_and_recovery.json` | `1.0.0` | `31776894972835b37f1a9640f0ddea3f675cab116c8c96892c12c22cc2c246b1` |
 
 Baseline M0.2–M0.11 jest zamrożony. Zmiana któregokolwiek canonical JSON wymaga jawnej aktualizacji freeze manifestu.
 

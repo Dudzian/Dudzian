@@ -52,7 +52,7 @@ _LEGACY_REGISTRY = {
         "semantic_artifact": "canonical_domain_vocabulary.json",
         "semantic_json_pointer": "/entity_kinds",
         "semantic_contract_fingerprint_sha256": (
-            "1913a18c7e7479d9c20850a690ee81b9f311a7d08cf2458374c91f6332d277f1"
+            "bb92436a67abe42975d763b06717962009d3f4bc8a6066b227f34c8e7d178e9b"
         ),
         "record_key_strategy": "CANONICAL_ENTITY_ID",
         "record_key_source_field": "entity_id",
@@ -64,7 +64,7 @@ _LEGACY_REGISTRY = {
         "semantic_artifact": "canonical_domain_vocabulary.json",
         "semantic_json_pointer": "/entity_kinds",
         "semantic_contract_fingerprint_sha256": (
-            "1913a18c7e7479d9c20850a690ee81b9f311a7d08cf2458374c91f6332d277f1"
+            "bb92436a67abe42975d763b06717962009d3f4bc8a6066b227f34c8e7d178e9b"
         ),
         "record_key_strategy": "CANONICAL_ENTITY_ID",
         "record_key_source_field": "runtime_session_id",

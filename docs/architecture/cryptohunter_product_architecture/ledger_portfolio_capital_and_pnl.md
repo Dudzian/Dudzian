@@ -136,13 +136,13 @@ types, and the Portfolio-to-LedgerEntry relationship; no array index is an autho
 | Contract | JSON Pointer | SHA-256 |
 |---|---|---|
 | `canonical_domain_vocabulary.json` | `/public_trading_environments` | `b0114e386bf72439199ec8155d65a57dc7e00cabe79dba805f53221ba7713103` |
-| `canonical_domain_vocabulary.json` | `/entity_kinds` | `1913a18c7e7479d9c20850a690ee81b9f311a7d08cf2458374c91f6332d277f1` |
+| `canonical_domain_vocabulary.json` | `/entity_kinds` | `bb92436a67abe42975d763b06717962009d3f4bc8a6066b227f34c8e7d178e9b` |
 | `canonical_domain_vocabulary.json` | `/relationships` | `03c64a8159cd7ae7f1103b029234c858d0cf86898d9dc0b652e1043667fc11a9` |
 | `canonical_domain_vocabulary.json` | `/identifier_policy` | `44726b4e51c53722ebbc95212d708521007c59cb54292ea7bc5b970320031d20` |
-| `exchange_accounts_and_instruments.json` | `/asset_reference_contract` | `837e1452a60de230d0ca091a7e2c05308ff41d961499f7800d350d7c9b3682ae` |
+| `exchange_accounts_and_instruments.json` | `/asset_reference_contract` | `6aaa3985e58acd4f7ee82cbd941e67507dd76a3186e7969bf8c62db1d4d41ee0` |
 | `exchange_accounts_and_instruments.json` | `/decimal_policy` | `e526f728e0075a3a27380a87a213eb5e5f074d90cc4b63a99b48485957070b48` |
-| `exchange_accounts_and_instruments.json` | `/instrument_contract/record_fields` | `4c10117c28505bc7b546126690f3f3ef6cbc15c47815a47e016bd8c646b71409` |
-| `exchange_accounts_and_instruments.json` | `/instrument_contract/trusted_history_contract` | `87b09322419aac6fcc36f12405931e1cf88cf0630ced72e68b341d5434e10e8f` |
+| `exchange_accounts_and_instruments.json` | `/instrument_contract/record_fields` | `39b5d32a1d887863cbc7f7a652e163b6b78d02a6ae21b1e4447e97437e18bf16` |
+| `exchange_accounts_and_instruments.json` | `/instrument_contract/trusted_history_contract` | `d3bdb205695163ec2834a065bb872d9ca39f1ad1b0d60c592d7273f42c380c65` |
 | `exchange_accounts_and_instruments.json` | `/instrument_type_registry` | `e99ba1e3af1a3b5771add15b7d0ab0659c0b24a1bd855c04c0d5c27f2d2831f8` |
 | `strategy_market_data_and_execution_routing.json` | `/current_edition_execution_pair_policy` | `7dd12317c8dab7bc2d19e751f39800db7895f737a42335df1e22927d465ec0b9` |
 | `commands_events_order_lifecycle_and_idempotency.json` | `/fill_contract` | `1846393d14f684fc2462eb12b5d92f9c18cfa8a0163b2a2f41fe88c913324d1b` |
