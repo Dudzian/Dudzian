@@ -128,8 +128,10 @@ class ReconciliationFake(GenericProvider):
 
 
 class AttemptStoreFake(GenericProvider):
-    def begin_attempt(self, operation_id: str, request_digest: bytes) -> object: return operation_id, request_digest
-    def compare_and_swap_attempt(self, expected: object, successor: object) -> bool: return expected != successor
+    def reserve_or_resolve_attempt_id(self, authorization: object) -> object: return authorization
+    def finalize_attempt(self, identity: object, *, expected_fence: int) -> object: return identity, expected_fence
+    def replace_after_authoritative_unbound(self, authorization: object, evidence: object, *, expected_fence: int) -> object: return authorization, evidence, expected_fence
+    def record_recovery_resolution(self, operation_id: str, resolution: object, *, expected_fence: int) -> object: return operation_id, resolution, expected_fence
     def attempt(self, operation_id: str) -> object: return operation_id
 
 

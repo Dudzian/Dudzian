@@ -11,7 +11,16 @@ from dataclasses import dataclass
 from enum import Enum
 import hashlib
 from types import MappingProxyType
-from typing import Mapping, Protocol, Sequence, runtime_checkable
+from typing import TYPE_CHECKING, Mapping, Protocol, Sequence, runtime_checkable
+
+if TYPE_CHECKING:
+    from bot_core.cha_attempt_store import (
+        AttemptAuthorization,
+        AttemptIdentity,
+        AuthoritativeUnboundEvidence,
+        CurrentAttempt,
+        RecoveryResolution,
+    )
 
 
 class SecurityProfile(str, Enum):
@@ -332,9 +341,27 @@ class RootProofReconciliationEvidenceSource(SecurityProvider, Protocol):
 
 @runtime_checkable
 class CHAAttemptStore(SecurityProvider, Protocol):
-    def begin_attempt(self, operation_id: str, request_digest: bytes) -> object: ...
-    def compare_and_swap_attempt(self, expected: object, successor: object) -> bool: ...
-    def attempt(self, operation_id: str) -> object: ...
+    def reserve_or_resolve_attempt_id(
+        self, authorization: AttemptAuthorization
+    ) -> CurrentAttempt: ...
+    def finalize_attempt(
+        self, identity: AttemptIdentity, *, expected_fence: int
+    ) -> CurrentAttempt: ...
+    def replace_after_authoritative_unbound(
+        self,
+        authorization: AttemptAuthorization,
+        evidence: AuthoritativeUnboundEvidence,
+        *,
+        expected_fence: int,
+    ) -> CurrentAttempt: ...
+    def record_recovery_resolution(
+        self,
+        operation_id: str,
+        resolution: RecoveryResolution,
+        *,
+        expected_fence: int,
+    ) -> CurrentAttempt: ...
+    def attempt(self, operation_id: str) -> CurrentAttempt: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -466,8 +493,10 @@ _ROLE_METHODS: Mapping[ProviderRole, tuple[str, ...]] = MappingProxyType(
         ),
         ProviderRole.RECONCILIATION_EVIDENCE: ("evidence_for", "verify_evidence"),
         ProviderRole.CHA_ATTEMPT_STORE: (
-            "begin_attempt",
-            "compare_and_swap_attempt",
+            "reserve_or_resolve_attempt_id",
+            "finalize_attempt",
+            "replace_after_authoritative_unbound",
+            "record_recovery_resolution",
             "attempt",
         ),
     }
