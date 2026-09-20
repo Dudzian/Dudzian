@@ -42,8 +42,7 @@ This file is a deterministic complete projection of `m08_full_fill_authority_dis
       "tests/architecture/test_m08_internal_accounting_authority.py"
     ],
     "semantic_differences": [
-      "M0.7 Fill instrument_binding.required_matches still references execution exchange_id/environment while canonical M0.5 Instrument source model no longer carries those fields.",
-      "M0.8 ledger cross-contract dependency attestations drift from current canonical upstream contracts, including Instrument record/history semantics."
+      "M0.7 Fill instrument_binding.required_matches still references execution exchange_id/environment while canonical M0.5 Instrument source model no longer carries those fields."
     ],
     "historical_metadata_differences": [
       "m07_semantic_admission_upstream_discovery.json and its Markdown projection retain the original blocked exact-base checkout metadata; these literals are historical provenance, not an architecture-semantic mismatch"
@@ -462,7 +461,7 @@ This file is a deterministic complete projection of `m08_full_fill_authority_dis
     "source_contract": "docs/architecture/cryptohunter_product_architecture/ledger_portfolio_capital_and_pnl.json",
     "json_pointer": "/cross_contract_dependencies",
     "canonical_hash": "SHA-256 over UTF-8 NFC-normalized JSON with sorted keys and comma/colon separators, identical to executable M0.8 oracle",
-    "overall_status": "DRIFT_FOUND",
+    "overall_status": "NO_DEPENDENCY_FINGERPRINT_DRIFT",
     "dependencies": [
       {
         "contract": "canonical_domain_vocabulary.json",
@@ -474,9 +473,9 @@ This file is a deterministic complete projection of `m08_full_fill_authority_dis
       {
         "contract": "canonical_domain_vocabulary.json",
         "json_pointer": "/entity_kinds",
-        "declared_fingerprint": "1913a18c7e7479d9c20850a690ee81b9f311a7d08cf2458374c91f6332d277f1",
+        "declared_fingerprint": "bb92436a67abe42975d763b06717962009d3f4bc8a6066b227f34c8e7d178e9b",
         "current_recomputed_fingerprint": "bb92436a67abe42975d763b06717962009d3f4bc8a6066b227f34c8e7d178e9b",
-        "status": "DRIFT"
+        "status": "MATCH"
       },
       {
         "contract": "canonical_domain_vocabulary.json",
@@ -495,9 +494,9 @@ This file is a deterministic complete projection of `m08_full_fill_authority_dis
       {
         "contract": "exchange_accounts_and_instruments.json",
         "json_pointer": "/asset_reference_contract",
-        "declared_fingerprint": "837e1452a60de230d0ca091a7e2c05308ff41d961499f7800d350d7c9b3682ae",
+        "declared_fingerprint": "6aaa3985e58acd4f7ee82cbd941e67507dd76a3186e7969bf8c62db1d4d41ee0",
         "current_recomputed_fingerprint": "6aaa3985e58acd4f7ee82cbd941e67507dd76a3186e7969bf8c62db1d4d41ee0",
-        "status": "DRIFT"
+        "status": "MATCH"
       },
       {
         "contract": "exchange_accounts_and_instruments.json",
@@ -509,16 +508,16 @@ This file is a deterministic complete projection of `m08_full_fill_authority_dis
       {
         "contract": "exchange_accounts_and_instruments.json",
         "json_pointer": "/instrument_contract/record_fields",
-        "declared_fingerprint": "4c10117c28505bc7b546126690f3f3ef6cbc15c47815a47e016bd8c646b71409",
+        "declared_fingerprint": "39b5d32a1d887863cbc7f7a652e163b6b78d02a6ae21b1e4447e97437e18bf16",
         "current_recomputed_fingerprint": "39b5d32a1d887863cbc7f7a652e163b6b78d02a6ae21b1e4447e97437e18bf16",
-        "status": "DRIFT"
+        "status": "MATCH"
       },
       {
         "contract": "exchange_accounts_and_instruments.json",
         "json_pointer": "/instrument_contract/trusted_history_contract",
-        "declared_fingerprint": "87b09322419aac6fcc36f12405931e1cf88cf0630ced72e68b341d5434e10e8f",
+        "declared_fingerprint": "d3bdb205695163ec2834a065bb872d9ca39f1ad1b0d60c592d7273f42c380c65",
         "current_recomputed_fingerprint": "d3bdb205695163ec2834a065bb872d9ca39f1ad1b0d60c592d7273f42c380c65",
-        "status": "DRIFT"
+        "status": "MATCH"
       },
       {
         "contract": "exchange_accounts_and_instruments.json",
@@ -577,31 +576,14 @@ This file is a deterministic complete projection of `m08_full_fill_authority_dis
         "status": "MATCH"
       }
     ],
-    "drifted_pointers": [
-      {
-        "contract": "canonical_domain_vocabulary.json",
-        "json_pointer": "/entity_kinds"
-      },
-      {
-        "contract": "exchange_accounts_and_instruments.json",
-        "json_pointer": "/asset_reference_contract"
-      },
-      {
-        "contract": "exchange_accounts_and_instruments.json",
-        "json_pointer": "/instrument_contract/record_fields"
-      },
-      {
-        "contract": "exchange_accounts_and_instruments.json",
-        "json_pointer": "/instrument_contract/trusted_history_contract"
-      }
-    ],
+    "drifted_pointers": [],
     "red_test": {
       "test": "tests/architecture/test_cryptohunter_ledger_portfolio_capital_and_pnl.py::test_contract_and_real_upstream_dependencies_are_valid",
-      "result": "CONTRACT_INCONSISTENT",
-      "classification": "RELEVANT_CROSS_CONTRACT_DRIFT"
+      "result": "VALID",
+      "classification": "NO_RELEVANT_CROSS_CONTRACT_FINGERPRINT_DRIFT"
     },
     "historical_target_contract": "CLOSED_AT_ORIGINAL_BASELINE",
-    "current_upstream_compatibility": "CONTRACT_INCONSISTENT"
+    "current_upstream_compatibility": "DEPENDENCY_FINGERPRINTS_MATCH"
   },
   "current_m05_instrument_model": {
     "sources": [
@@ -673,7 +655,7 @@ This file is a deterministic complete projection of `m08_full_fill_authority_dis
   },
   "fill_instrument_binding_status": "CONTRACT_INCONSISTENT",
   "M0.8_historical_target_contract": "CLOSED_AT_ORIGINAL_BASELINE",
-  "M0.8_current_upstream_compatibility": "CONTRACT_INCONSISTENT",
+  "M0.8_current_upstream_compatibility": "DEPENDENCY_FINGERPRINTS_MATCH_SEMANTIC_FILL_BINDING_INCONSISTENT",
   "single_fill_authority_invariant": {
     "canonical_accepted_fill_authority_owner": "M0.7",
     "canonical_accepted_fill_history_owner": "M0.7",

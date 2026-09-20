@@ -41,7 +41,7 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
       "milestone": "M0.2",
       "artifact": "canonical_domain_vocabulary.json",
       "json_pointer": "/entity_kinds",
-      "content_fingerprint_sha256": "1913a18c7e7479d9c20850a690ee81b9f311a7d08cf2458374c91f6332d277f1"
+      "content_fingerprint_sha256": "bb92436a67abe42975d763b06717962009d3f4bc8a6066b227f34c8e7d178e9b"
     },
     {
       "milestone": "M0.2",
@@ -299,7 +299,7 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
       "milestone": "M0.10",
       "artifact": "identity_device_authentication_and_secrets.json",
       "json_pointer": "/core_owned_registry_semantics",
-      "content_fingerprint_sha256": "865525d21dfed3ea112dc0077528ef28122ba8304735163b87e6a600523bc193"
+      "content_fingerprint_sha256": "c95f09e040311f4be940544b1855fdc4a668ab5775a99f5e5f8b2d82b9bb2d82"
     },
     {
       "milestone": "M0.10",
@@ -323,7 +323,7 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
       "milestone": "M0.10",
       "artifact": "identity_device_authentication_and_secrets.json",
       "json_pointer": "/executable_boundary_schemas",
-      "content_fingerprint_sha256": "662cde4cf8b245d43ae9f3d19dfffa7e46c96b3195cffdeb9aba410030dac841"
+      "content_fingerprint_sha256": "cecc6af207e765bf6fedef8a68b11f0e88bad1048dc8b7f3055e559c0906f68d"
     }
   ],
   "count": 48,
@@ -2381,7 +2381,7 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
       "adds_new_domain_facts": false,
       "restorable_authority": false,
       "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
-      "semantic_contract_fingerprint_sha256": "1913a18c7e7479d9c20850a690ee81b9f311a7d08cf2458374c91f6332d277f1",
+      "semantic_contract_fingerprint_sha256": "bb92436a67abe42975d763b06717962009d3f4bc8a6066b227f34c8e7d178e9b",
       "record_key_strategy": "CANONICAL_ENTITY_ID",
       "payload_contract": {
         "required_fields": [
@@ -2411,7 +2411,7 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
       "adds_new_domain_facts": false,
       "restorable_authority": false,
       "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
-      "semantic_contract_fingerprint_sha256": "662cde4cf8b245d43ae9f3d19dfffa7e46c96b3195cffdeb9aba410030dac841",
+      "semantic_contract_fingerprint_sha256": "cecc6af207e765bf6fedef8a68b11f0e88bad1048dc8b7f3055e559c0906f68d",
       "record_key_strategy": "FACT_SCOPE_OBJECT_GENERATION",
       "fact_binding": {
         "required_fact_fields": [
@@ -2486,7 +2486,7 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
       "adds_new_domain_facts": false,
       "restorable_authority": false,
       "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
-      "semantic_contract_fingerprint_sha256": "662cde4cf8b245d43ae9f3d19dfffa7e46c96b3195cffdeb9aba410030dac841",
+      "semantic_contract_fingerprint_sha256": "cecc6af207e765bf6fedef8a68b11f0e88bad1048dc8b7f3055e559c0906f68d",
       "record_key_strategy": "SCOPE_CURRENT_REFERENCE_REVISION_GENERATION",
       "payload_contract": {
         "required_fields": [
@@ -2651,7 +2651,7 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
       "adds_new_domain_facts": false,
       "restorable_authority": false,
       "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
-      "semantic_contract_fingerprint_sha256": "662cde4cf8b245d43ae9f3d19dfffa7e46c96b3195cffdeb9aba410030dac841",
+      "semantic_contract_fingerprint_sha256": "cecc6af207e765bf6fedef8a68b11f0e88bad1048dc8b7f3055e559c0906f68d",
       "record_key_strategy": "SCOPE_CURRENT_REFERENCE_REVISION_GENERATION",
       "payload_contract": {
         "required_fields": [
@@ -2855,7 +2855,7 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
       "adds_new_domain_facts": false,
       "restorable_authority": false,
       "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
-      "semantic_contract_fingerprint_sha256": "1913a18c7e7479d9c20850a690ee81b9f311a7d08cf2458374c91f6332d277f1",
+      "semantic_contract_fingerprint_sha256": "bb92436a67abe42975d763b06717962009d3f4bc8a6066b227f34c8e7d178e9b",
       "record_key_strategy": "CANONICAL_ENTITY_ID",
       "payload_contract": {
         "required_fields": [
@@ -5140,7 +5140,7 @@ Canonical machine-readable source: `persistence_versioning_migrations_backup_and
       "adds_new_domain_facts": false,
       "restorable_authority": false,
       "validation_strategy": "CATEGORY_VALIDATOR_THEN_RESTORE_REVALIDATION",
-      "semantic_contract_fingerprint_sha256": "1913a18c7e7479d9c20850a690ee81b9f311a7d08cf2458374c91f6332d277f1",
+      "semantic_contract_fingerprint_sha256": "bb92436a67abe42975d763b06717962009d3f4bc8a6066b227f34c8e7d178e9b",
       "record_key_strategy": "CANONICAL_ENTITY_ID",
       "payload_contract": {
         "required_fields": [

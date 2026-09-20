@@ -2281,7 +2281,10 @@ def _correlation(value: Any) -> None:
     }
     if type(value["entity"]) is not str or value["entity"] not in entities:
         raise ValueError("INVALID_CORRELATION")
-    _canonical_id(value["value"], entities[value["entity"]])
+    try:
+        _canonical_id(value["value"], entities[value["entity"]])
+    except ValueError as exc:
+        raise ValueError("INVALID_CORRELATION") from exc
 
 
 def _validate_closed(value: dict[str, Any], required: set[str], optional: set[str]) -> None:
@@ -2461,7 +2464,10 @@ class ObservationReference:
                 for entity in self.contracts["M0.2"]["entity_kinds"]
                 if entity["canonical_name"] == "RuntimeSession"
             )
-            _canonical_id(session, runtime["id_prefix"])
+            try:
+                _canonical_id(session, runtime["id_prefix"])
+            except ValueError as exc:
+                raise ValueError("WRONG_SOURCE_INSTANCE") from exc
         elif interpretation == "LOCAL_SAFE_SESSION_REQUIRED" and session is None:
             raise ValueError("WRONG_SOURCE_INSTANCE")
         elif interpretation.startswith("LOCAL_SAFE_SESSION") and session is not None:
@@ -4034,7 +4040,7 @@ def test_field_complete_observation_validation_and_category_source_policy() -> N
         ({"correlation_reference": "token raw"}, "INVALID_CORRELATION"),
         ({"value": {"unexpected": 1}}, "INVALID_VALUE"),
         ({"scope": {"component": "core_host", "extra": "x"}}, "WRONG_SCOPE"),
-        ({"source_instance_id": "local-session"}, "WRONG_SCOPE"),
+        ({"source_instance_id": "local-session"}, "WRONG_SOURCE_INSTANCE"),
     ]
     for change, error in changes:
         with pytest.raises(ValueError, match=error):
@@ -5860,7 +5866,7 @@ def test_s9d_c25_records_honest_m08_reconciliation_authority_blocker() -> None:
     assert disposition["observed_balance_authority"] == "AVAILABLE"
     assert disposition["observed_balance_authority_boundary"]["implementation"].endswith("CoreAcceptedObservedBalanceFactProjection")
     assert disposition["reconciliation_result_authority"] == "MISSING"
-    assert len(disposition["missing_upstream_dependencies"]) == 3
+    assert len(disposition["missing_upstream_dependencies"]) == 6
     assert disposition["c26"] == "NOT_STARTED"
     assert disposition["reconciliation_divergence_alertstore_adapter"] == "NOT_STARTED"
     assert disposition["reconciliation_divergence_status"] == "OPEN_SOURCE_AUTHORITY"

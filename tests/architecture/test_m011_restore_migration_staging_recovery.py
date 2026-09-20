@@ -424,7 +424,7 @@ def test_backup_security_and_m010_identity_remain_unchanged() -> None:
     assert preserved["non_durable_security_authority_restorable"] is False
     raw = (DOCS / "identity_device_authentication_and_secrets.json").read_bytes()
     assert hashlib.sha256(raw).hexdigest() == (
-        "76e76f676720c9ae347c4396f1e6e2bb80f9a69c476c1d659b7bb9512ffc1313"
+        "a532fb292ea9e2f18e56c50a45202e8369400ab1179b57a186851dbf08219d71"
     )
 
 

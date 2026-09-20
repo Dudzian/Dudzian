@@ -91,6 +91,32 @@ class AttemptState(str, Enum):
     )
 
 
+_RECOVERY_TRANSITIONS = {
+    AttemptState.SIGNED_IMMUTABLE_DURABLE_NOT_SENT: {
+        AttemptState.MAY_HAVE_BEEN_SENT_OUTCOME_UNKNOWN,
+        AttemptState.EXACT_BOUND_RECOVERED,
+    },
+    AttemptState.MAY_HAVE_BEEN_SENT_OUTCOME_UNKNOWN: {
+        AttemptState.EXACT_BOUND_RECOVERED,
+    },
+}
+_REPLACEMENT_ELIGIBLE_STATES = {
+    AttemptState.SIGNED_IMMUTABLE_DURABLE_NOT_SENT,
+    AttemptState.MAY_HAVE_BEEN_SENT_OUTCOME_UNKNOWN,
+}
+_STABLE_AUTHORIZATION_BINDING_FIELDS = (
+    "environment",
+    "trust_domain",
+    "logical_operation_id",
+    "account_id",
+    "bootstrap_entitlement_id",
+    "entitlement_generation",
+    "canonical_genesis_request_fingerprint_sha256",
+    "initial_binding_reference",
+    "initial_binding_digest_sha256",
+)
+
+
 @dataclass(frozen=True, slots=True)
 class AttemptAuthorization:
     environment: str
@@ -140,8 +166,11 @@ class AttemptReservation:
             raise ValueError("idempotency key must be lowercase SHA-256 hex")
         if type(self.issuance_attempt_id) is not str or _RPA_ID.fullmatch(self.issuance_attempt_id) is None:
             raise ValueError("issuance_attempt_id must be a canonical lowercase UUIDv7 rpa id")
-        if type(self.reservation_state) is not AttemptState:
-            raise TypeError("reservation_state must be an exact AttemptState")
+        if (
+            type(self.reservation_state) is not AttemptState
+            or self.reservation_state is not AttemptState.RESERVED_AWAITING_SIGNATURES
+        ):
+            raise ValueError("reservation_state must be the frozen reserved state")
 
 
 @dataclass(frozen=True, slots=True)
@@ -306,6 +335,112 @@ class CurrentAttempt:
             raise TypeError("state must be exact AttemptState")
         if type(self.fence) is not int or self.fence < 1:
             raise ValueError("fence must be a positive exact int")
+        if self.identity is None:
+            if (
+                self.immutable_attempt_digest_sha256 is not None
+                or self.state is not AttemptState.RESERVED_AWAITING_SIGNATURES
+            ):
+                raise ValueError("unsigned current attempt has an invalid state/digest union")
+        elif (
+            type(self.identity) is not AttemptIdentity
+            or self.identity.authorization != self.reservation.authorization
+            or self.identity.issuance_attempt_id != self.reservation.issuance_attempt_id
+            or self.immutable_attempt_digest_sha256 != self.identity.digest_sha256
+            or self.state
+            not in {
+                AttemptState.SIGNED_IMMUTABLE_DURABLE_NOT_SENT,
+                AttemptState.MAY_HAVE_BEEN_SENT_OUTCOME_UNKNOWN,
+                AttemptState.EXACT_BOUND_RECOVERED,
+            }
+        ):
+            raise ValueError("signed current attempt has an invalid identity/state/digest union")
+
+
+def _exact_slot_values(value: object, expected: type[object], fields: tuple[str, ...]) -> tuple[object, ...]:
+    if type(value) is not expected:
+        raise TypeError(f"value must be an exact {expected.__name__}")
+    try:
+        return tuple(object.__getattribute__(value, field) for field in fields)
+    except (AttributeError, KeyError, TypeError) as exc:
+        raise ValueError(f"malformed {expected.__name__}") from exc
+
+
+def _snapshot_authorization(value: object) -> AttemptAuthorization:
+    fields = tuple(AttemptAuthorization.__dataclass_fields__)
+    values = _exact_slot_values(value, AttemptAuthorization, fields)
+    try:
+        return AttemptAuthorization(**dict(zip(fields, values, strict=True)))
+    except (AttributeError, KeyError, TypeError, ValueError) as exc:
+        raise ValueError("malformed AttemptAuthorization") from exc
+
+
+def _snapshot_identity(value: object) -> AttemptIdentity:
+    fields = tuple(AttemptIdentity.__dataclass_fields__)
+    values = _exact_slot_values(value, AttemptIdentity, fields)
+    data = dict(zip(fields, values, strict=True))
+    data["authorization"] = _snapshot_authorization(data["authorization"])
+    try:
+        return AttemptIdentity(**data)
+    except (AttributeError, KeyError, TypeError, ValueError) as exc:
+        raise ValueError("malformed AttemptIdentity") from exc
+
+
+def _snapshot_unbound_evidence(value: object) -> AuthoritativeUnboundEvidence:
+    fields = tuple(AuthoritativeUnboundEvidence.__dataclass_fields__)
+    values = _exact_slot_values(value, AuthoritativeUnboundEvidence, fields)
+    try:
+        return AuthoritativeUnboundEvidence(**dict(zip(fields, values, strict=True)))
+    except (AttributeError, KeyError, TypeError, ValueError) as exc:
+        raise ValueError("malformed AuthoritativeUnboundEvidence") from exc
+
+
+def _snapshot_recovery_resolution(value: object) -> RecoveryResolution:
+    fields = tuple(RecoveryResolution.__dataclass_fields__)
+    values = _exact_slot_values(value, RecoveryResolution, fields)
+    try:
+        return RecoveryResolution(**dict(zip(fields, values, strict=True)))
+    except (AttributeError, KeyError, TypeError, ValueError) as exc:
+        raise ValueError("malformed RecoveryResolution") from exc
+
+
+def _snapshot_reservation(value: object) -> AttemptReservation:
+    fields = tuple(AttemptReservation.__dataclass_fields__)
+    values = _exact_slot_values(value, AttemptReservation, fields)
+    data = dict(zip(fields, values, strict=True))
+    data["authorization"] = _snapshot_authorization(data["authorization"])
+    try:
+        return AttemptReservation(**data)
+    except (AttributeError, KeyError, TypeError, ValueError) as exc:
+        raise ValueError("malformed AttemptReservation") from exc
+
+
+def _snapshot_current_attempt(value: object) -> CurrentAttempt:
+    fields = tuple(CurrentAttempt.__dataclass_fields__)
+    values = _exact_slot_values(value, CurrentAttempt, fields)
+    data = dict(zip(fields, values, strict=True))
+    data["reservation"] = _snapshot_reservation(data["reservation"])
+    if data["identity"] is not None:
+        data["identity"] = _snapshot_identity(data["identity"])
+    try:
+        return CurrentAttempt(**data)
+    except (AttributeError, KeyError, TypeError, ValueError) as exc:
+        raise ValueError("malformed CurrentAttempt") from exc
+
+
+def _validate_operation_id(value: object) -> str:
+    if type(value) is not str:
+        raise TypeError("operation_id must be an exact str")
+    if not value.strip():
+        raise ValueError("operation_id must be non-empty")
+    return value
+
+
+def _validate_expected_fence(value: object) -> int:
+    if type(value) is not int:
+        raise TypeError("expected_fence must be an exact int")
+    if value < 1:
+        raise ValueError("expected_fence must be positive")
+    return value
 
 
 def _canonical(value: object) -> bytes:
@@ -336,6 +471,10 @@ def _decision_key(kind: str, value: object) -> str:
     ).hexdigest()
 
 
+def _stable_authorization_binding(value: object) -> tuple[object, ...]:
+    return tuple(getattr(value, field) for field in _STABLE_AUTHORIZATION_BINDING_FIELDS)
+
+
 def _new_rpa_id() -> str:
     millis = int(time.time() * 1000) & ((1 << 48) - 1)
     random_bits = secrets.randbits(74)
@@ -362,7 +501,19 @@ class SQLiteCHAAttemptStore:
             if os.name == "posix":
                 os.chmod(path, 0o600)
             self._configure()
-            self._open_schema()
+            existing_schema = self._connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' LIMIT 1"
+            ).fetchone()
+            if existing_schema is not None:
+                self._connection.execute("BEGIN")
+            try:
+                self._open_schema()
+                if self._connection.in_transaction:
+                    self._connection.execute("COMMIT")
+            except Exception:
+                if self._connection.in_transaction:
+                    self._connection.execute("ROLLBACK")
+                raise
         except (OSError, sqlite3.Error) as exc:
             connection = getattr(self, "_connection", None)
             if connection is not None:
@@ -463,19 +614,22 @@ class SQLiteCHAAttemptStore:
                 if actual != expected:
                     raise AttemptCorruptError("security-critical immutability trigger is malformed")
         expected_foreign_keys = {
-            ("immutable_attempts", "reservations", "attempt_id", "attempt_id"),
-            ("current_attempts", "reservations", "attempt_id", "attempt_id"),
-            ("replacement_relations", "reservations", "old_attempt_id", "attempt_id"),
-            ("replacement_relations", "reservations", "new_attempt_id", "attempt_id"),
-            ("recovery_resolutions", "reservations", "attempt_id", "attempt_id"),
-            ("attempt_transitions", "reservations", "attempt_id", "attempt_id"),
+            ("immutable_attempts", "reservations", "attempt_id", "attempt_id", "NO ACTION", "NO ACTION", "NONE"),
+            ("current_attempts", "reservations", "attempt_id", "attempt_id", "NO ACTION", "NO ACTION", "NONE"),
+            ("current_attempts", "immutable_attempts", "digest", "digest", "NO ACTION", "NO ACTION", "NONE"),
+            ("replacement_relations", "reservations", "old_attempt_id", "attempt_id", "NO ACTION", "NO ACTION", "NONE"),
+            ("replacement_relations", "reservations", "new_attempt_id", "attempt_id", "NO ACTION", "NO ACTION", "NONE"),
+            ("recovery_resolutions", "reservations", "attempt_id", "attempt_id", "NO ACTION", "NO ACTION", "NONE"),
+            ("attempt_transitions", "reservations", "attempt_id", "attempt_id", "NO ACTION", "NO ACTION", "NONE"),
         }
-        actual_foreign_keys: set[tuple[str, str, str, str]] = set()
+        actual_foreign_keys: set[tuple[str, str, str, str, str, str, str]] = set()
         for table in required_tables:
             for row in self._connection.execute(f"PRAGMA foreign_key_list({table})"):
-                actual_foreign_keys.add((table, row[2], row[3], row[4]))
-        if not expected_foreign_keys.issubset(actual_foreign_keys):
-            raise AttemptCorruptError("security-critical CHA foreign key is missing")
+                actual_foreign_keys.add(
+                    (table, row[2], row[3], row[4], row[5], row[6], row[7])
+                )
+        if expected_foreign_keys != actual_foreign_keys:
+            raise AttemptCorruptError("security-critical CHA foreign key contract differs")
         required_unique_keys = {
             "current_attempts": {("operation_id",)},
             "reservations": {("attempt_id",), ("decision_key",)},
@@ -489,25 +643,32 @@ class SQLiteCHAAttemptStore:
             "attempt_transitions": {("transition_id",), ("decision_key",)},
         }
         for table, required in required_unique_keys.items():
-            if not required.issubset(self._unique_keys(table)):
-                raise AttemptCorruptError("security-critical UNIQUE/PRIMARY KEY is missing")
+            if required != self._unique_keys(table):
+                raise AttemptCorruptError("security-critical UNIQUE/PRIMARY KEY contract differs")
+        self._validate_persisted_history_integrity(self._connection)
 
     @staticmethod
     def _normalize_schema_sql(sql: str) -> str:
         return " ".join(sql.rstrip("; ").upper().split())
 
     def _unique_keys(self, table: str) -> set[tuple[str, ...]]:
-        keys = {
-            tuple(
-                row[2]
-                for row in sorted(
-                    self._connection.execute(f"PRAGMA index_info({index[1]})"),
-                    key=lambda row: row[0],
+        keys: set[tuple[str, ...]] = set()
+        for index in self._connection.execute(f"PRAGMA index_list({table})"):
+            # index_list columns are seq, name, unique, origin, partial.  A
+            # partial UNIQUE is never equivalent to a table-wide identity.
+            if index[2] != 1:
+                continue
+            if len(index) < 5 or index[4] != 0 or index[3] not in {"u", "pk"}:
+                raise AttemptCorruptError("partial or non-constraint UNIQUE index is forbidden")
+            keys.add(
+                tuple(
+                    row[2]
+                    for row in sorted(
+                        self._connection.execute(f"PRAGMA index_info({index[1]})"),
+                        key=lambda row: row[0],
+                    )
                 )
             )
-            for index in self._connection.execute(f"PRAGMA index_list({table})")
-            if index[2] == 1
-        }
         primary = tuple(
             row[1]
             for row in sorted(
@@ -518,6 +679,250 @@ class SQLiteCHAAttemptStore:
         if primary:
             keys.add(primary)
         return keys
+
+    def _validate_persisted_history_integrity(self, db: sqlite3.Connection) -> None:
+        """Replay immutable decisions and verify the mutable head projection."""
+        reservations: dict[str, tuple[AttemptAuthorization, str, str]] = {}
+        operations: dict[str, set[str]] = {}
+        for row in db.execute(
+            "SELECT attempt_id,operation_id,idempotency_key,authorization_json,"
+            "reservation_state,reservation_kind,decision_key FROM reservations"
+        ):
+            attempt_id, operation_id, key, auth_json, state, kind, decision_key = row
+            try:
+                auth = AttemptAuthorization(**json.loads(bytes(auth_json)))
+            except (TypeError, ValueError, UnicodeError, json.JSONDecodeError) as exc:
+                raise AttemptCorruptError("persisted reservation is malformed") from exc
+            if (
+                auth.logical_operation_id != operation_id
+                or auth.environment != self._security.profile.value
+                or auth.trust_domain != self._security.trust_domain
+                or key != _idempotency_key(auth)
+                or state != AttemptState.RESERVED_AWAITING_SIGNATURES.value
+                or kind not in {"INITIAL", "REPLACEMENT"}
+                or (kind == "INITIAL" and decision_key != _decision_key("INITIAL", asdict(auth)))
+            ):
+                raise AttemptCorruptError("persisted reservation identity is inconsistent")
+            reservations[str(attempt_id)] = (auth, str(kind), str(decision_key))
+            operations.setdefault(str(operation_id), set()).add(str(attempt_id))
+
+        identities: dict[str, AttemptIdentity] = {}
+        expected: dict[str, tuple[object, ...]] = {}
+        decision_kind: dict[str, str] = {}
+        for attempt_id, digest, identity_json in db.execute(
+            "SELECT attempt_id,digest,identity_json FROM immutable_attempts"
+        ):
+            try:
+                data = json.loads(bytes(identity_json))
+                auth_fields = {
+                    name: data.pop(name) for name in AttemptAuthorization.__dataclass_fields__
+                }
+                data.pop("schema_version")
+                identity = AttemptIdentity(AttemptAuthorization(**auth_fields), **data)
+            except (KeyError, TypeError, ValueError, UnicodeError, json.JSONDecodeError) as exc:
+                raise AttemptCorruptError("persisted immutable attempt is malformed") from exc
+            if (
+                identity.issuance_attempt_id != attempt_id
+                or identity.digest_sha256 != digest
+                or attempt_id not in reservations
+                or identity.authorization != reservations[attempt_id][0]
+            ):
+                raise AttemptCorruptError("persisted immutable attempt identity is inconsistent")
+            identities[str(attempt_id)] = identity
+            key = _decision_key("FINALIZATION", identity.payload())
+            expected[key] = (
+                attempt_id,
+                AttemptState.SIGNED_IMMUTABLE_DURABLE_NOT_SENT.value,
+                None,
+                None,
+                key,
+            )
+            decision_kind[key] = "FINALIZATION"
+
+        recovery_predecessors: dict[str, str] = {}
+        for row in db.execute(
+            "SELECT recovery_sequence,attempt_id,predecessor_state,outcome,decision_key,"
+            "resolution_json FROM recovery_resolutions ORDER BY recovery_sequence"
+        ):
+            resolution = self._recovery_from_row(row)
+            key = str(row[4])
+            if key in expected:
+                raise AttemptCorruptError("authority decisions have duplicate identities")
+            if resolution.issuance_attempt_id not in identities:
+                raise AttemptCorruptError("recovery decision has no finalized attempt")
+            expected[key] = (
+                resolution.issuance_attempt_id,
+                resolution.outcome.value,
+                resolution.authenticated_reference,
+                resolution.authenticated_digest_sha256,
+                key,
+            )
+            decision_kind[key] = "RECOVERY"
+            recovery_predecessors[key] = str(row[2])
+
+        replacements: dict[str, str] = {}
+        incoming: dict[str, str] = {}
+        replacement_keys: dict[str, str] = {}
+        for row in db.execute(
+            "SELECT old_attempt_id,new_attempt_id,evidence_json,authorization_json,"
+            "evidence_digest,decision_key FROM replacement_relations"
+        ):
+            auth, evidence = self._validate_replacement_row(row, db)
+            old_id, new_id, key = str(row[0]), str(row[1]), str(row[5])
+            if key in expected:
+                raise AttemptCorruptError("authority decisions have duplicate identities")
+            if (
+                old_id not in reservations
+                or new_id not in reservations
+                or old_id in replacements
+                or new_id in incoming
+                or reservations[new_id] != (auth, "REPLACEMENT", key)
+                or _stable_authorization_binding(reservations[old_id][0])
+                != _stable_authorization_binding(auth)
+                or _stable_authorization_binding(reservations[old_id][0])
+                != _stable_authorization_binding(evidence)
+            ):
+                raise AttemptCorruptError("replacement lineage binding is inconsistent")
+            replacements[old_id] = new_id
+            incoming[new_id] = old_id
+            replacement_keys[old_id] = key
+            expected[key] = (
+                old_id,
+                AttemptState.SUPERSEDED_AFTER_AUTHORITATIVE_UNBOUND_RECONCILIATION.value,
+                evidence.authority_authenticated_evidence_reference,
+                evidence.authority_authenticated_evidence_digest_sha256,
+                key,
+            )
+            decision_kind[key] = "REPLACEMENT"
+
+        transition_rows = db.execute(
+            "SELECT attempt_id,state,evidence_reference,evidence_digest,decision_key "
+            "FROM attempt_transitions ORDER BY transition_id"
+        ).fetchall()
+        actual = {str(row[4]): tuple(row) for row in transition_rows}
+        if len(actual) != len(transition_rows) or actual != expected:
+            raise AttemptCorruptError("transition authority history differs from source decisions")
+
+        states = {attempt_id: AttemptState.RESERVED_AWAITING_SIGNATURES for attempt_id in reservations}
+        transition_count = {operation_id: 0 for operation_id in operations}
+        transition_positions: dict[str, int] = {}
+        first_attempt_transition: dict[str, int] = {}
+        for position, (attempt_id, state_raw, _, _, key_raw) in enumerate(transition_rows):
+            attempt_id, key = str(attempt_id), str(key_raw)
+            if attempt_id not in reservations:
+                raise AttemptCorruptError("transition refers to an unknown reservation")
+            state = AttemptState(state_raw)
+            current = states[attempt_id]
+            kind = decision_kind[key]
+            if kind == "FINALIZATION":
+                legal = (
+                    current is AttemptState.RESERVED_AWAITING_SIGNATURES
+                    and state is AttemptState.SIGNED_IMMUTABLE_DURABLE_NOT_SENT
+                    and attempt_id in identities
+                )
+            elif kind == "RECOVERY":
+                legal = (
+                    recovery_predecessors[key] == current.value
+                    and state in _RECOVERY_TRANSITIONS.get(current, set())
+                )
+            else:
+                legal = (
+                    current in _REPLACEMENT_ELIGIBLE_STATES
+                    and state
+                    is AttemptState.SUPERSEDED_AFTER_AUTHORITATIVE_UNBOUND_RECONCILIATION
+                    and attempt_id in replacements
+                )
+            if not legal:
+                raise AttemptCorruptError("persisted attempt state-machine progression is illegal")
+            states[attempt_id] = state
+            transition_positions[key] = position
+            first_attempt_transition.setdefault(attempt_id, position)
+            operation_id = reservations[attempt_id][0].logical_operation_id
+            transition_count[operation_id] += 1
+
+        for old_id, new_id in replacements.items():
+            successor_first = first_attempt_transition.get(new_id)
+            if (
+                successor_first is not None
+                and transition_positions[replacement_keys[old_id]] >= successor_first
+            ):
+                raise AttemptCorruptError("successor history predates its replacement decision")
+
+        current_rows = {
+            str(row[0]): tuple(row)
+            for row in db.execute(
+                "SELECT operation_id,attempt_id,fence,state,digest_status,digest FROM current_attempts"
+            )
+        }
+        if set(current_rows) != set(operations):
+            raise AttemptCorruptError("current projection operation set differs from history")
+        for operation_id, attempt_ids in operations.items():
+            roots = [
+                attempt_id
+                for attempt_id in attempt_ids
+                if reservations[attempt_id][1] == "INITIAL" and attempt_id not in incoming
+            ]
+            if len(roots) != 1:
+                raise AttemptCorruptError("operation does not have exactly one initial chain root")
+            for attempt_id in attempt_ids:
+                kind = reservations[attempt_id][1]
+                if (kind == "INITIAL") != (attempt_id not in incoming):
+                    raise AttemptCorruptError("reservation is orphaned or has an invalid predecessor")
+            visited: set[str] = set()
+            cursor = roots[0]
+            while True:
+                if cursor in visited:
+                    raise AttemptCorruptError("replacement chain contains a cycle")
+                visited.add(cursor)
+                successor = replacements.get(cursor)
+                if successor is None:
+                    leaf = cursor
+                    break
+                if successor not in attempt_ids:
+                    raise AttemptCorruptError("replacement successor crosses logical operations")
+                cursor = successor
+            if visited != attempt_ids:
+                raise AttemptCorruptError("reservation is orphaned or replacement chain forks")
+            leaf_state = states[leaf]
+            if leaf_state is AttemptState.SUPERSEDED_AFTER_AUTHORITATIVE_UNBOUND_RECONCILIATION:
+                raise AttemptCorruptError("replacement chain leaf is superseded")
+            identity = identities.get(leaf)
+            digest_status = "DEFINED" if identity is not None else "NOT_YET_DEFINED"
+            digest = identity.digest_sha256 if identity is not None else None
+            expected_current = (
+                operation_id,
+                leaf,
+                1 + transition_count[operation_id],
+                leaf_state.value,
+                digest_status,
+                digest,
+            )
+            if current_rows[operation_id] != expected_current:
+                raise AttemptCorruptError("current projection differs from immutable history head")
+
+    def _require_current_descendant(
+        self, historical_attempt_id: str, operation_id: str, db: sqlite3.Connection
+    ) -> CurrentAttempt:
+        current = self._read_current(operation_id, db)
+        cursor = historical_attempt_id
+        visited: set[str] = set()
+        while cursor != current.reservation.issuance_attempt_id:
+            if cursor in visited:
+                raise AttemptCorruptError("replacement chain contains a cycle")
+            visited.add(cursor)
+            row = db.execute(
+                "SELECT new_attempt_id FROM replacement_relations WHERE old_attempt_id=?",
+                (cursor,),
+            ).fetchone()
+            if row is None:
+                raise AttemptCorruptError("current pointer is not a historical decision descendant")
+            cursor = str(row[0])
+        historical_operation = db.execute(
+            "SELECT operation_id FROM reservations WHERE attempt_id=?", (historical_attempt_id,)
+        ).fetchone()
+        if historical_operation != (operation_id,):
+            raise AttemptCorruptError("historical decision belongs to another operation")
+        return current
 
     def _create_schema(self) -> None:
         # Schema identifiers are constants; all caller data below is bound.
@@ -596,14 +1001,37 @@ class SQLiteCHAAttemptStore:
                 self._connection.execute("ROLLBACK")
             raise AttemptStoreUnavailableError("SQLite authority transaction failed") from exc
 
+    @contextmanager
+    def _read(self) -> Iterator[sqlite3.Connection]:
+        try:
+            self._connection.execute("BEGIN")
+            yield self._connection
+            self._connection.execute("COMMIT")
+        except AttemptStoreError:
+            if self._connection.in_transaction:
+                self._connection.execute("ROLLBACK")
+            raise
+        except sqlite3.Error as exc:
+            if self._connection.in_transaction:
+                self._connection.execute("ROLLBACK")
+            raise AttemptStoreUnavailableError("SQLite authority read failed") from exc
+
+    def _authoritative_current(
+        self, operation_id: str, db: sqlite3.Connection
+    ) -> CurrentAttempt:
+        self._validate_persisted_history_integrity(db)
+        return self._read_current(operation_id, db)
+
     def _check_auth(self, auth: AttemptAuthorization) -> None:
         if auth.environment != self._security.profile.value or auth.trust_domain != self._security.trust_domain:
             raise AttemptConflictError("authorization environment/trust_domain mismatch")
 
     def reserve_or_resolve_attempt_id(self, auth: AttemptAuthorization) -> CurrentAttempt:
+        auth = _snapshot_authorization(auth)
         self._check_auth(auth)
         key = _idempotency_key(auth)
         with self._write() as db:
+            self._validate_persisted_history_integrity(db)
             row = db.execute("SELECT attempt_id FROM current_attempts WHERE operation_id=?", (auth.logical_operation_id,)).fetchone()
             if row is not None:
                 existing = self._read_current(auth.logical_operation_id, db)
@@ -631,10 +1059,14 @@ class SQLiteCHAAttemptStore:
             return self._read_current(auth.logical_operation_id, db)
 
     def finalize_attempt(self, identity: AttemptIdentity, *, expected_fence: int) -> CurrentAttempt:
+        identity = _snapshot_identity(identity)
+        expected_fence = _validate_expected_fence(expected_fence)
         self._check_auth(identity.authorization)
         payload = _canonical(identity.payload())
         with self._write() as db:
-            current = self._read_current(identity.authorization.logical_operation_id, db)
+            current = self._authoritative_current(
+                identity.authorization.logical_operation_id, db
+            )
             if current.reservation.issuance_attempt_id != identity.issuance_attempt_id:
                 raise AttemptConflictError("reserved attempt does not match finalization")
             existing = db.execute("SELECT digest, identity_json FROM immutable_attempts WHERE attempt_id=?", (identity.issuance_attempt_id,)).fetchone()
@@ -655,6 +1087,9 @@ class SQLiteCHAAttemptStore:
             return self._read_current(identity.authorization.logical_operation_id, db)
 
     def replace_after_authoritative_unbound(self, auth: AttemptAuthorization, evidence: AuthoritativeUnboundEvidence, *, expected_fence: int) -> CurrentAttempt:
+        auth = _snapshot_authorization(auth)
+        evidence = _snapshot_unbound_evidence(evidence)
+        expected_fence = _validate_expected_fence(expected_fence)
         self._check_auth(auth)
         if evidence.environment != auth.environment or evidence.trust_domain != auth.trust_domain:
             raise AttemptConflictError("replacement evidence domain mismatch")
@@ -676,6 +1111,7 @@ class SQLiteCHAAttemptStore:
         }
         decision_key = _decision_key("REPLACEMENT", replacement_identity)
         with self._write() as db:
+            self._validate_persisted_history_integrity(db)
             previous = db.execute(
                 "SELECT old_attempt_id,new_attempt_id,evidence_json,authorization_json,evidence_digest,decision_key FROM replacement_relations WHERE old_attempt_id=?",
                 (evidence.old_issuance_attempt_id,),
@@ -684,13 +1120,30 @@ class SQLiteCHAAttemptStore:
                 stored_auth, stored_evidence = self._validate_replacement_row(previous, db)
                 if stored_evidence != evidence or stored_auth != auth:
                     raise AttemptConflictError("predecessor already has a different replacement decision")
-                replay = self._read_current(auth.logical_operation_id, db)
-                if replay.reservation.issuance_attempt_id != previous[1]:
-                    raise AttemptCorruptError("committed replacement is not current")
-                return replay
+                self._validate_persisted_history_integrity(db)
+                return self._require_current_descendant(
+                    str(previous[1]), auth.logical_operation_id, db
+                )
             old = self._read_current(auth.logical_operation_id, db)
             if old.reservation.issuance_attempt_id != evidence.old_issuance_attempt_id:
                 raise AttemptConflictError("replacement evidence does not name current attempt")
+            if (
+                _stable_authorization_binding(old.reservation.authorization)
+                != _stable_authorization_binding(auth)
+                or _stable_authorization_binding(old.reservation.authorization)
+                != _stable_authorization_binding(evidence)
+            ):
+                raise AttemptConflictError(
+                    "replacement rebinding differs from persisted predecessor"
+                )
+            if old.identity is None:
+                raise AttemptConflictError("an unsigned reservation cannot be replaced")
+            if old.state is AttemptState.EXACT_BOUND_RECOVERED:
+                raise AttemptConflictError(
+                    "authoritative BOUND and authoritative UNBOUND evidence conflict"
+                )
+            if old.state not in _REPLACEMENT_ELIGIBLE_STATES:
+                raise AttemptConflictError("attempt state is not eligible for replacement")
             attempt_id = _new_rpa_id()
             key = _idempotency_key(auth)
             db.execute(
@@ -730,6 +1183,9 @@ class SQLiteCHAAttemptStore:
             return self._read_current(auth.logical_operation_id, db)
 
     def record_recovery_resolution(self, operation_id: str, resolution: RecoveryResolution, *, expected_fence: int) -> CurrentAttempt:
+        operation_id = _validate_operation_id(operation_id)
+        resolution = _snapshot_recovery_resolution(resolution)
+        expected_fence = _validate_expected_fence(expected_fence)
         resolution_json = _canonical(
             {
                 "issuance_attempt_id": resolution.issuance_attempt_id,
@@ -740,6 +1196,7 @@ class SQLiteCHAAttemptStore:
         )
         decision_key = _decision_key("RECOVERY", json.loads(resolution_json))
         with self._write() as db:
+            self._validate_persisted_history_integrity(db)
             previous = db.execute(
                 "SELECT recovery_sequence,attempt_id,predecessor_state,outcome,decision_key,resolution_json FROM recovery_resolutions WHERE decision_key=?",
                 (decision_key,),
@@ -748,25 +1205,16 @@ class SQLiteCHAAttemptStore:
                 stored = self._recovery_from_row(previous)
                 if stored != resolution:
                     raise AttemptCorruptError("recovery decision identity collision or corruption")
-                replay = self._read_current(operation_id, db)
-                if replay.reservation.issuance_attempt_id != resolution.issuance_attempt_id:
-                    raise AttemptCorruptError("committed recovery resolution does not match current")
-                return replay
+                self._validate_persisted_history_integrity(db)
+                return self._require_current_descendant(
+                    resolution.issuance_attempt_id, operation_id, db
+                )
             current = self._read_current(operation_id, db)
             if current.reservation.issuance_attempt_id != resolution.issuance_attempt_id:
                 raise AttemptConflictError("recovery does not resolve current attempt")
             if current.identity is None:
                 raise AttemptConflictError("an unsigned reservation cannot have an issuer recovery outcome")
-            legal = {
-                AttemptState.SIGNED_IMMUTABLE_DURABLE_NOT_SENT: {
-                    AttemptState.MAY_HAVE_BEEN_SENT_OUTCOME_UNKNOWN,
-                    AttemptState.EXACT_BOUND_RECOVERED,
-                },
-                AttemptState.MAY_HAVE_BEEN_SENT_OUTCOME_UNKNOWN: {
-                    AttemptState.EXACT_BOUND_RECOVERED,
-                },
-            }
-            if resolution.outcome not in legal.get(current.state, set()):
+            if resolution.outcome not in _RECOVERY_TRANSITIONS.get(current.state, set()):
                 raise AttemptConflictError("illegal or non-monotonic recovery transition")
             db.execute(
                 "INSERT INTO recovery_resolutions(attempt_id,predecessor_state,outcome,decision_key,resolution_json) VALUES(?,?,?,?,?)",
@@ -816,22 +1264,13 @@ class SQLiteCHAAttemptStore:
             (attempt_id,),
         ).fetchall()
         predecessor = AttemptState.SIGNED_IMMUTABLE_DURABLE_NOT_SENT
-        legal = {
-            AttemptState.SIGNED_IMMUTABLE_DURABLE_NOT_SENT: {
-                AttemptState.MAY_HAVE_BEEN_SENT_OUTCOME_UNKNOWN,
-                AttemptState.EXACT_BOUND_RECOVERED,
-            },
-            AttemptState.MAY_HAVE_BEEN_SENT_OUTCOME_UNKNOWN: {
-                AttemptState.EXACT_BOUND_RECOVERED,
-            },
-        }
         for row in rows:
             resolution = self._recovery_from_row(row)
             try:
                 stored_predecessor = AttemptState(row[2])
             except ValueError as exc:
                 raise AttemptCorruptError("recovery predecessor state is malformed") from exc
-            if stored_predecessor is not predecessor or resolution.outcome not in legal.get(predecessor, set()):
+            if stored_predecessor is not predecessor or resolution.outcome not in _RECOVERY_TRANSITIONS.get(predecessor, set()):
                 raise AttemptCorruptError("recovery history progression is inconsistent")
             predecessor = resolution.outcome
         if rows and predecessor is not current_state:
@@ -899,7 +1338,9 @@ class SQLiteCHAAttemptStore:
             raise AttemptCorruptError("current attempt CAS affected impossible row count")
 
     def attempt(self, operation_id: str) -> CurrentAttempt:
-        return self._read_current(operation_id, self._connection)
+        operation_id = _validate_operation_id(operation_id)
+        with self._read() as db:
+            return self._authoritative_current(operation_id, db)
 
     def _read_current(self, operation_id: str, db: sqlite3.Connection) -> CurrentAttempt:
         rows = db.execute("SELECT attempt_id,fence,state,digest_status,digest FROM current_attempts WHERE operation_id=?", (operation_id,)).fetchall()
@@ -976,7 +1417,12 @@ class SQLiteCHAAttemptStore:
             raise AttemptCorruptError("current digest union is malformed")
         if identity is not None:
             self._validate_recovery_history(attempt_id, state, db)
-        return CurrentAttempt(reservation, state, fence, digest, identity)
+        try:
+            return _snapshot_current_attempt(
+                CurrentAttempt(reservation, state, fence, digest, identity)
+            )
+        except (TypeError, ValueError) as exc:
+            raise AttemptCorruptError("persisted current attempt is malformed") from exc
 
     def close(self) -> None:
         self._connection.close()

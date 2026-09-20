@@ -123,9 +123,11 @@ def validate(machine: dict[str, object]) -> None:
         "BLOCKED_BY_CROSS_CONTRACT_FILL_INSTRUMENT_BINDING"
     )
     assert machine["next_buildable_stage"] == "M07_M05_FILL_INSTRUMENT_BINDING_RECONCILIATION"
-    assert machine["cross_contract_consistency"]["overall_status"] == "DRIFT_FOUND"
+    assert machine["cross_contract_consistency"]["overall_status"] == "NO_DEPENDENCY_FINGERPRINT_DRIFT"
     assert machine["M0.8_historical_target_contract"] == "CLOSED_AT_ORIGINAL_BASELINE"
-    assert machine["M0.8_current_upstream_compatibility"] == "CONTRACT_INCONSISTENT"
+    assert machine["M0.8_current_upstream_compatibility"] == (
+        "DEPENDENCY_FINGERPRINTS_MATCH_SEMANTIC_FILL_BINDING_INCONSISTENT"
+    )
     preserved = machine["preserved_status"]
     assert preserved["M0.7_OrderAuthority_kernel"] == "ACCEPTED_AVAILABLE"
     assert preserved["M0.7_semantic_SUBMIT_ORDER"] == "BLOCKED_UPSTREAM"
@@ -186,6 +188,19 @@ def test_every_m08_dependency_attestation_is_recomputed_and_every_drift_reported
         for row in machine["cross_contract_consistency"]["drifted_pointers"]
     }
     assert actual_drift == expected_drift
+    if not expected_drift:
+        assert {row["status"] for row in reported.values()} == {"MATCH"}
+        assert machine["cross_contract_consistency"]["overall_status"] == (
+            "NO_DEPENDENCY_FINGERPRINT_DRIFT"
+        )
+        assert machine["cross_contract_consistency"]["red_test"] == {
+            "test": "tests/architecture/test_cryptohunter_ledger_portfolio_capital_and_pnl.py::test_contract_and_real_upstream_dependencies_are_valid",
+            "result": "VALID",
+            "classification": "NO_RELEVANT_CROSS_CONTRACT_FINGERPRINT_DRIFT",
+        }
+        assert machine["cross_contract_consistency"]["current_upstream_compatibility"] == (
+            "DEPENDENCY_FINGERPRINTS_MATCH"
+        )
     if expected_drift:
         assert machine["m07_equivalence"]["semantic_differences"]
         assert machine["candidate_implementation_allowed"] is False
