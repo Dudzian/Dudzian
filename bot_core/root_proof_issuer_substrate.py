@@ -13,6 +13,15 @@ import hashlib
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Mapping, Protocol, Sequence, runtime_checkable
 
+from bot_core.entitlement_registry_contract import (
+    BindRequest,
+    BindResult,
+    HistoricalStateResult,
+    RetainedHistoryResult,
+    RegistryReadResult,
+    RegistrySubject,
+)
+
 if TYPE_CHECKING:
     from bot_core.cha_attempt_store import (
         AttemptAuthorization,
@@ -281,9 +290,14 @@ class DeploymentTrustRootProvider(SecurityProvider, Protocol):
 
 @runtime_checkable
 class EntitlementRegistryProvider(SecurityProvider, Protocol):
-    def authoritative_state(self, subject_id: str) -> object: ...
-    def compare_and_swap_bind(self, expected: object, successor: object) -> bool: ...
-    def historical_state(self, subject_id: str, generation: int) -> object: ...
+    """Least-privilege runtime port; provisioning/admin is a separate authority."""
+
+    def authoritative_state(self, subject: RegistrySubject) -> RegistryReadResult: ...
+    def compare_and_swap_bind(self, request: BindRequest) -> BindResult: ...
+    def state_at_revision(
+        self, subject: RegistrySubject, authoritative_state_revision: int
+    ) -> HistoricalStateResult: ...
+    def retained_history(self, subject: RegistrySubject) -> RetainedHistoryResult: ...
 
 
 @runtime_checkable
@@ -462,7 +476,8 @@ _ROLE_METHODS: Mapping[ProviderRole, tuple[str, ...]] = MappingProxyType(
         ProviderRole.ENTITLEMENT_REGISTRY: (
             "authoritative_state",
             "compare_and_swap_bind",
-            "historical_state",
+            "state_at_revision",
+            "retained_history",
         ),
         ProviderRole.CLAIMANT_IDENTITY_REGISTRY: ("resolve_claimant", "historical_claimant"),
         ProviderRole.REQUESTER_CREDENTIAL_REGISTRY: (

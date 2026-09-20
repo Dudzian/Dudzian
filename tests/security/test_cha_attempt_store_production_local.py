@@ -30,6 +30,7 @@ def authorization(**changes: object) -> AttemptAuthorization:
     values: dict[str, object] = {
         "environment": "PRODUCTION_LOCAL",
         "trust_domain": "td-production",
+        "product_scope": "CryptoHunter",
         "logical_operation_id": "ago_operation",
         "account_id": "acct_018f3e70-7b5c-7c21-8b9a-0123456789ab",
         "canonical_genesis_request_fingerprint_sha256": "1" * 64,
@@ -66,9 +67,10 @@ def identity(auth: AttemptAuthorization, attempt_id: str) -> AttemptIdentity:
 def evidence(attempt_id: str, auth: AttemptAuthorization | None = None) -> AuthoritativeUnboundEvidence:
     auth = auth or authorization()
     return AuthoritativeUnboundEvidence(
-        "1",
+        "2",
         auth.environment,
         auth.trust_domain,
+        auth.product_scope,
         "issuer-authority-local",
         "issuer-registry-local",
         auth.bootstrap_entitlement_id,
@@ -481,6 +483,7 @@ def test_persisted_malformed_attempt_id_fails_closed(tmp_path: Path) -> None:
     [
         ("account_id", "acct_malformed"),
         ("logical_operation_id", "ago_different"),
+        ("product_scope", "OtherProduct"),
     ],
 )
 def test_persisted_authorization_tampering_fails_closed(
@@ -1454,3 +1457,147 @@ def test_operation_id_public_boundaries_require_exact_nonempty_string(
             store.record_recovery_resolution(  # type: ignore[arg-type]
                 operation_id, resolution, expected_fence=1
             )
+
+
+def test_product_scope_is_required_and_changes_idempotency_and_attempt_digest() -> None:
+    with pytest.raises(TypeError):
+        AttemptAuthorization(**{
+            key: value for key, value in asdict(authorization()).items()
+            if key != "product_scope"
+        })
+    auth_a = authorization(product_scope="ProductA")
+    auth_b = replace(auth_a, product_scope="ProductB")
+    assert cha._idempotency_key(auth_a) != cha._idempotency_key(auth_b)  # noqa: SLF001
+    attempt_id = "rpa_018f3e70-7b5a-7c21-8b9a-0123456789ab"
+    assert identity(auth_a, attempt_id).digest_sha256 != identity(auth_b, attempt_id).digest_sha256
+    with pytest.raises(ValueError):
+        replace(auth_a, product_scope=" ")
+    with pytest.raises(TypeError):
+        AuthoritativeUnboundEvidence(**{
+            key: value for key, value in asdict(evidence(attempt_id)).items()
+            if key != "product_scope"
+        })
+
+
+@pytest.mark.parametrize("evidence_product", ["ProductA", "ProductB"])
+def test_cross_product_replacement_has_zero_side_effects(
+    tmp_path: Path, evidence_product: str
+) -> None:
+    auth_a = authorization(product_scope="ProductA")
+    auth_b = replace(auth_a, product_scope="ProductB")
+    with open_store((tmp_path / f"cross-{evidence_product}.db").resolve()) as store:
+        current = store.reserve_or_resolve_attempt_id(auth_a)
+        current = store.finalize_attempt(
+            identity(auth_a, current.reservation.issuance_attempt_id), expected_fence=1
+        )
+        before = store._connection.total_changes  # noqa: SLF001
+        counts = tuple(
+            store._connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0]  # noqa: S608, SLF001
+            for table in ("reservations", "replacement_relations", "attempt_transitions")
+        )
+        with pytest.raises(AttemptConflictError):
+            store.replace_after_authoritative_unbound(
+                auth_b,
+                evidence(
+                    current.reservation.issuance_attempt_id,
+                    auth_a if evidence_product == "ProductA" else auth_b,
+                ),
+                expected_fence=2,
+            )
+        assert store._connection.total_changes == before  # noqa: SLF001
+        assert counts == tuple(
+            store._connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0]  # noqa: S608, SLF001
+            for table in ("reservations", "replacement_relations", "attempt_transitions")
+        )
+        assert store.attempt(auth_a.logical_operation_id) == current
+
+
+@pytest.mark.parametrize("column", ["evidence_json", "authorization_json"])
+def test_persisted_replacement_product_tamper_fails_closed(
+    tmp_path: Path, column: str
+) -> None:
+    path = (tmp_path / f"tamper-{column}.db").resolve()
+    auth = authorization(product_scope="ProductA")
+    with open_store(path) as store:
+        old = store.reserve_or_resolve_attempt_id(auth)
+        old = store.finalize_attempt(
+            identity(auth, old.reservation.issuance_attempt_id), expected_fence=1
+        )
+        store.replace_after_authoritative_unbound(
+            auth, evidence(old.reservation.issuance_attempt_id, auth), expected_fence=2
+        )
+    db = sqlite3.connect(path)
+    raw = db.execute(f"SELECT {column} FROM replacement_relations").fetchone()[0]  # noqa: S608
+    payload = json.loads(bytes(raw))
+    payload["product_scope"] = "ProductB"
+    db.execute("DROP TRIGGER replacements_immutable_update")
+    db.execute(
+        f"UPDATE replacement_relations SET {column}=?",  # noqa: S608
+        (json.dumps(payload, sort_keys=True, separators=(",", ":")).encode(),),
+    )
+    db.commit()
+    db.close()
+    with pytest.raises(AttemptCorruptError):
+        open_store(path)
+
+
+def test_product_scope_survives_replacement_restart_and_old_schema_fails_closed(
+    tmp_path: Path,
+) -> None:
+    path = (tmp_path / "restart-product.db").resolve()
+    auth = authorization(product_scope="CryptoHunter")
+    with open_store(path) as store:
+        old = store.reserve_or_resolve_attempt_id(auth)
+        old = store.finalize_attempt(
+            identity(auth, old.reservation.issuance_attempt_id), expected_fence=1
+        )
+        successor = store.replace_after_authoritative_unbound(
+            auth, evidence(old.reservation.issuance_attempt_id, auth), expected_fence=2
+        )
+    with open_store(path) as reopened:
+        restored = reopened.attempt(auth.logical_operation_id)
+        assert restored == successor
+        assert restored.reservation.authorization.product_scope == "CryptoHunter"
+        raw = reopened._connection.execute(  # noqa: SLF001
+            "SELECT evidence_json FROM replacement_relations"
+        ).fetchone()[0]
+        assert json.loads(bytes(raw))["product_scope"] == "CryptoHunter"
+    db = sqlite3.connect(path)
+    tamper_metadata(db, "schema_version=3")
+    db.commit()
+    db.close()
+    with pytest.raises(AttemptSchemaUnsupportedError):
+        open_store(path)
+
+
+def test_cross_product_retry_and_immutable_identity_product_tamper_fail_closed(
+    tmp_path: Path,
+) -> None:
+    path = (tmp_path / "identity-product.db").resolve()
+    auth = authorization(product_scope="ProductA")
+    with open_store(path) as store:
+        reserved = store.reserve_or_resolve_attempt_id(auth)
+        with pytest.raises(AttemptConflictError):
+            store.reserve_or_resolve_attempt_id(replace(auth, product_scope="ProductB"))
+        finalized = store.finalize_attempt(
+            identity(auth, reserved.reservation.issuance_attempt_id), expected_fence=1
+        )
+    db = sqlite3.connect(path)
+    raw = db.execute(
+        "SELECT identity_json FROM immutable_attempts WHERE attempt_id=?",
+        (finalized.reservation.issuance_attempt_id,),
+    ).fetchone()[0]
+    payload = json.loads(bytes(raw))
+    payload["product_scope"] = "ProductB"
+    db.execute("DROP TRIGGER attempts_immutable_update")
+    db.execute(
+        "UPDATE immutable_attempts SET identity_json=? WHERE attempt_id=?",
+        (
+            json.dumps(payload, sort_keys=True, separators=(",", ":")).encode(),
+            finalized.reservation.issuance_attempt_id,
+        ),
+    )
+    db.commit()
+    db.close()
+    with pytest.raises(AttemptCorruptError):
+        open_store(path)

@@ -389,9 +389,10 @@ class _OtherProvider:
     def credential_identities(self): return self.credentials
     def active_bundle(self): return b"x"
     def verify_signed_successor(self, candidate): return True
-    def authoritative_state(self, subject_id): return None
-    def compare_and_swap_bind(self, expected, successor): return True
-    def historical_state(self, subject_id, generation): return None
+    def authoritative_state(self, subject): return None
+    def compare_and_swap_bind(self, request): return request
+    def state_at_revision(self, subject, authoritative_state_revision): return None
+    def retained_history(self, subject): return None
     def resolve_claimant(self, claimant_id): return None
     def historical_claimant(self, claimant_id, generation): return None
     def active_requester_credential(self, requester_id): return None

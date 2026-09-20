@@ -36,7 +36,7 @@ from bot_core.root_proof_issuer_substrate import (
 
 
 _SCHEMA_IDENTITY = "CRYPT0HUNTER_CHA_ATTEMPT_STORE"
-_SCHEMA_VERSION = 3
+_SCHEMA_VERSION = 4
 _ATTEMPT_DOMAIN = b"CRYPTOHUNTER_ACCOUNT_GENESIS_ROOT_PROOF_ISSUANCE_ATTEMPT_IDENTITY_V1\x00"
 _IDEMPOTENCY_DOMAIN = b"CRYPTOHUNTER_CHA_ATTEMPT_RESERVATION_IDEMPOTENCY_V1\x00"
 _HEX64 = re.compile(r"[0-9a-f]{64}\Z")
@@ -107,6 +107,7 @@ _REPLACEMENT_ELIGIBLE_STATES = {
 _STABLE_AUTHORIZATION_BINDING_FIELDS = (
     "environment",
     "trust_domain",
+    "product_scope",
     "logical_operation_id",
     "account_id",
     "bootstrap_entitlement_id",
@@ -121,6 +122,7 @@ _STABLE_AUTHORIZATION_BINDING_FIELDS = (
 class AttemptAuthorization:
     environment: str
     trust_domain: str
+    product_scope: str
     logical_operation_id: str
     account_id: str
     canonical_genesis_request_fingerprint_sha256: str
@@ -244,6 +246,7 @@ class AuthoritativeUnboundEvidence:
     schema_version: str
     environment: str
     trust_domain: str
+    product_scope: str
     issuer_authority_identity: str
     issuer_registry_identity: str
     bootstrap_entitlement_id: str
@@ -262,7 +265,7 @@ class AuthoritativeUnboundEvidence:
     verification_profile_version: str
 
     def __post_init__(self) -> None:
-        if type(self.schema_version) is not str or self.schema_version != "1":
+        if type(self.schema_version) is not str or self.schema_version != "2":
             raise ValueError("evidence schema_version is not the frozen value")
         if type(self.outcome) is not str or self.outcome != "AUTHORITATIVELY_UNBOUND":
             raise ValueError("only positive authoritative UNBOUND evidence permits replacement")
@@ -282,6 +285,7 @@ class AuthoritativeUnboundEvidence:
             self.schema_version,
             self.environment,
             self.trust_domain,
+            self.product_scope,
             self.issuer_authority_identity,
             self.issuer_registry_identity,
             self.bootstrap_entitlement_id,
@@ -1091,7 +1095,11 @@ class SQLiteCHAAttemptStore:
         evidence = _snapshot_unbound_evidence(evidence)
         expected_fence = _validate_expected_fence(expected_fence)
         self._check_auth(auth)
-        if evidence.environment != auth.environment or evidence.trust_domain != auth.trust_domain:
+        if (
+            evidence.environment != auth.environment
+            or evidence.trust_domain != auth.trust_domain
+            or evidence.product_scope != auth.product_scope
+        ):
             raise AttemptConflictError("replacement evidence domain mismatch")
         if (
             evidence.logical_operation_id != auth.logical_operation_id
@@ -1315,6 +1323,7 @@ class SQLiteCHAAttemptStore:
         if (
             evidence.environment != auth.environment
             or evidence.trust_domain != auth.trust_domain
+            or evidence.product_scope != auth.product_scope
             or evidence.logical_operation_id != auth.logical_operation_id
             or evidence.account_id != auth.account_id
             or evidence.bootstrap_entitlement_id != auth.bootstrap_entitlement_id
