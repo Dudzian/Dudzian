@@ -71,9 +71,10 @@ class TrustRootFake(GenericProvider):
 
 
 class EntitlementFake(GenericProvider):
-    def authoritative_state(self, subject_id: str) -> object: return subject_id
-    def compare_and_swap_bind(self, expected: object, successor: object) -> bool: return expected != successor
-    def historical_state(self, subject_id: str, generation: int) -> object: return subject_id, generation
+    def authoritative_state(self, subject): return subject
+    def compare_and_swap_bind(self, request): return request
+    def state_at_revision(self, subject, authoritative_state_revision): return subject, authoritative_state_revision
+    def retained_history(self, subject): return subject
 
 
 class ClaimantFake(GenericProvider):

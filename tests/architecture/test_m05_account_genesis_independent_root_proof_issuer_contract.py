@@ -437,7 +437,7 @@ def validate_rotation_recovery(issuer: dict, admission: dict, physical: dict) ->
 
     attempt = issuer["root_proof_issuance_attempt"]
     required = {
-        "schema_version", "environment", "trust_domain", "issuance_attempt_id", "logical_operation_id", "account_id",
+        "schema_version", "environment", "trust_domain", "product_scope", "issuance_attempt_id", "logical_operation_id", "account_id",
         "reservation_identity", "reservation_relation", "canonical_genesis_request_fingerprint_sha256",
         "initial_binding_reference", "initial_binding_digest_sha256", "bootstrap_entitlement_id", "entitlement_generation",
         "requester_principal_id", "requester_credential_role", "requester_key_id", "requester_key_version",
@@ -544,7 +544,7 @@ def validate_attempt_identity(issuer: dict, admission: dict, physical: dict) -> 
     assert attempt_id["caller_selected"] is attempt_id["process_selected_unauthenticated"] is attempt_id["reusable"] is False
     assert attempt_id["same_id_unequal_payload"] == "FAIL_CLOSED / CORRUPTION_OR_TAMPER"
     required = {
-        "schema_version", "environment", "trust_domain", "issuance_attempt_id", "logical_operation_id", "account_id",
+        "schema_version", "environment", "trust_domain", "product_scope", "issuance_attempt_id", "logical_operation_id", "account_id",
         "reservation_identity", "reservation_relation", "canonical_genesis_request_fingerprint_sha256",
         "initial_binding_reference", "initial_binding_digest_sha256", "bootstrap_entitlement_id", "entitlement_generation",
         "requester_principal_id", "requester_credential_role", "requester_key_id", "requester_key_version",
@@ -650,6 +650,7 @@ def validate_end_to_end_attempt_binding(issuer: dict, admission: dict, physical:
     assert linkage["bound_history_field"] == "bound_issuance_attempt_id"
     assert linkage["requester_signature_covers_attempt_id"] is linkage["claimant_signature_covers_attempt_id"] is linkage["root_proof_signed_payload_covers_attempt_id"] is True
     assert "issuance_attempt_id" in linkage["exact_retry_fields"]
+    assert "product_scope" in linkage["exact_retry_fields"]
     assert linkage["different_attempt_id_same_other_fields"].startswith("NOT_EXACT_RETRY")
     assert linkage["caller_may_override_bound_attempt_id"] is False
     assert linkage["ambiguous_history"].startswith("FAIL_CLOSED")
@@ -659,7 +660,7 @@ def validate_end_to_end_attempt_binding(issuer: dict, admission: dict, physical:
     assert fence["model"] == "PER_OPERATION_CURRENT_ISSUANCE_ATTEMPT_FENCE"
     assert fence["field"] == "current_root_proof_issuance_attempt_id"
     assert fence["global_serialization"].startswith("durable local authority transaction/CAS")
-    assert set(fence["exact_idempotency_key_fields"]) == {"environment", "trust_domain", "logical_operation_id", "account_id", "canonical_genesis_request_fingerprint_sha256", "bootstrap_entitlement_id", "entitlement_generation", "requester_principal_id", "requester_credential_role", "requester_key_id", "requester_key_version", "provisioning_principal_id", "claimant_key_id", "claimant_key_version", "initial_binding_digest_sha256"}
+    assert set(fence["exact_idempotency_key_fields"]) == {"environment", "trust_domain", "product_scope", "logical_operation_id", "account_id", "canonical_genesis_request_fingerprint_sha256", "bootstrap_entitlement_id", "entitlement_generation", "requester_principal_id", "requester_credential_role", "requester_key_id", "requester_key_version", "provisioning_principal_id", "claimant_key_id", "claimant_key_version", "initial_binding_digest_sha256"}
     assert set(fence["forbidden_idempotency_inputs"]) == {"wall-clock time", "thread id", "process id", "caller-generated random token"}
     assert fence["EXACT_CURRENT_RESERVED"].startswith("return same authority-owned issuance_attempt_id")
     assert "NOT_YET_DEFINED" in fence["EXACT_CURRENT_RESERVED"]
@@ -708,6 +709,7 @@ def semantic_authorization_fixture(**overrides: object) -> dict:
     value = {
         "environment": "TEST",
         "trust_domain": "td_example",
+        "product_scope": "CryptoHunter",
         "logical_operation_id": "ago_018f3e70-7b5b-7c21-8b9a-0123456789ab",
         "account_id": "acct_018f3e70-7b5c-7c21-8b9a-0123456789ab",
         "canonical_genesis_request_fingerprint_sha256": "11" * 32,
@@ -863,6 +865,7 @@ def reconciliation_evidence_fixture(request: dict, old_id: str, **overrides: obj
         "schema_version": "RootProofIssuanceReconciliationEvidenceV1",
         "environment": request["environment"],
         "trust_domain": request["trust_domain"],
+        "product_scope": request["product_scope"],
         "issuer_authority_identity": "IndependentAccountGenesisRootProofIssuer",
         "issuer_registry_identity": "root-proof-entitlement-registry-v1",
         "bootstrap_entitlement_id": request["bootstrap_entitlement_id"],
@@ -990,7 +993,7 @@ def validate_cas_and_lost_response(contract: dict) -> None:
     assert fence["candidate_loser_externally_sendable"] is False
     assert fence["changed_current_requires"].startswith("RECONCILIATION_REQUIRED")
     expected = {
-        "environment", "trust_domain", "logical_operation_id", "account_id",
+            "environment", "trust_domain", "product_scope", "logical_operation_id", "account_id",
         "canonical_genesis_request_fingerprint_sha256", "bootstrap_entitlement_id",
         "entitlement_generation", "requester_principal_id", "requester_credential_role",
         "requester_key_id", "requester_key_version", "provisioning_principal_id",
@@ -1069,7 +1072,7 @@ def validate_reservation_sequencing(issuer: dict, physical: dict) -> None:
     assert reservation["owner"] == "CryptoHunterAccountAuthority local AccountGenesis authority boundary"
     assert reservation["purpose"].startswith("durably establish authority-owned issuance_attempt_id before any")
     required = {
-        "schema_version", "environment", "trust_domain", "logical_operation_id", "account_id",
+        "schema_version", "environment", "trust_domain", "product_scope", "logical_operation_id", "account_id",
         "canonical_genesis_request_fingerprint_sha256", "initial_binding_reference", "initial_binding_digest_sha256",
         "bootstrap_entitlement_id", "entitlement_generation", "requester_principal_id", "requester_credential_role",
         "requester_key_id", "requester_key_version", "provisioning_principal_id", "claimant_key_id",
@@ -1379,6 +1382,7 @@ RECONCILIATION_EVIDENCE_MUTATIONS = {
     "reconciliation_wrong_initial_binding_accepted": ("issuer", "replacement_reservation_transition.evidence_exact_binding_fields", ["canonical_genesis_request_fingerprint_sha256"]),
     "reconciliation_wrong_environment_accepted": ("issuer", "replacement_reservation_transition.evidence_exact_binding_fields", ["trust_domain"]),
     "reconciliation_wrong_trust_domain_accepted": ("issuer", "replacement_reservation_transition.evidence_exact_binding_fields", ["environment"]),
+    "reconciliation_wrong_product_scope_accepted": ("issuer", "replacement_reservation_transition.evidence_exact_binding_fields", ["environment", "trust_domain"]),
     "stale_unbound_evidence_after_later_bound_accepted": ("issuer", "reconciliation_evidence_contract.stale_after_later_bound_authorizes", True),
     "replacement_commit_omits_reconciliation_evidence_reference": ("issuer", "replacement_reservation_transition.durable_replacement_binding_fields", ["old_issuance_attempt_id", "new_issuance_attempt_id"]),
     "crash_reconstructs_reconciliation_evidence_from_current_lookup": ("issuer", "reconciliation_evidence_contract.forbidden_reconstruction_sources", ["caller"]),
@@ -1394,8 +1398,10 @@ def validate_reconciliation_evidence(issuer: dict, physical: dict) -> None:
     assert evidence["positive_result"] is evidence["absence_never_proves_unbound"] is evidence["authentication_required"] is True
     assert set(evidence["non_authoritative_outcomes"]) == {"timeout", "connection error", "missing response", "NOT_FOUND", "absent local proof", "absent local receipt", "empty history", "caller boolean/string UNBOUND", "process memory", "cached non-authoritative projection", "stale issuer snapshot"}
     assert evidence["non_authoritative_result"] == "OUTCOME_UNKNOWN / FAIL_CLOSED"
-    required = {"schema_version", "environment", "trust_domain", "issuer_authority_identity", "issuer_registry_identity", "bootstrap_entitlement_id", "entitlement_generation", "logical_operation_id", "account_id", "canonical_genesis_request_fingerprint_sha256", "old_issuance_attempt_id", "initial_binding_reference", "initial_binding_digest_sha256", "outcome", "authoritative_state_identity", "authoritative_state_revision", "authority_authenticated_evidence_reference", "authority_authenticated_evidence_digest_sha256", "verification_profile_version"}
+    required = {"schema_version", "environment", "trust_domain", "product_scope", "issuer_authority_identity", "issuer_registry_identity", "bootstrap_entitlement_id", "entitlement_generation", "logical_operation_id", "account_id", "canonical_genesis_request_fingerprint_sha256", "old_issuance_attempt_id", "initial_binding_reference", "initial_binding_digest_sha256", "outcome", "authoritative_state_identity", "authoritative_state_revision", "authority_authenticated_evidence_reference", "authority_authenticated_evidence_digest_sha256", "verification_profile_version"}
     assert set(evidence["required_fields"]) == required
+    assert "product_scope" in issuer["root_proof_object"]["signed_payload_fields"]
+    assert "product_scope" in evidence["required_fields"]
     assert evidence["wall_clock_establishes_ordering"] is False
     assert evidence["anti_staleness_model"] == "CURRENT_AUTHORITY_REVISION_AND_RETAINED_HISTORY_FENCE"
     assert evidence["stale_after_later_bound_authorizes"] is False
@@ -1405,8 +1411,10 @@ def validate_reconciliation_evidence(issuer: dict, physical: dict) -> None:
     assert transition["evidence_required"] is True
     assert transition["caller_assertion_sufficient"] is False
     assert transition["evidence_object"] == evidence["object"]
-    exact = {"environment", "trust_domain", "bootstrap_entitlement_id", "entitlement_generation", "logical_operation_id", "account_id", "canonical_genesis_request_fingerprint_sha256", "old_issuance_attempt_id", "initial_binding_reference", "initial_binding_digest_sha256"}
+    exact = {"environment", "trust_domain", "product_scope", "bootstrap_entitlement_id", "entitlement_generation", "logical_operation_id", "account_id", "canonical_genesis_request_fingerprint_sha256", "old_issuance_attempt_id", "initial_binding_reference", "initial_binding_digest_sha256"}
     assert set(transition["evidence_exact_binding_fields"]) == exact
+    assert "product_scope" in transition["evidence_exact_binding_fields"]
+    assert "product_scope" in issuer["local_current_attempt_fence"]["exact_idempotency_key_fields"]
     assert set(transition["durable_replacement_binding_fields"]) == {"old_issuance_attempt_id", "replacement_authorization_evidence_reference", "replacement_authorization_evidence_digest_sha256", "new_issuance_attempt_id"}
     assert transition["mismatch_result"].startswith("FAIL_CLOSED")
     concurrency = issuer["replacement_concurrency"]
