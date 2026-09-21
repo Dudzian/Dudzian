@@ -52,10 +52,26 @@ qualification).
 The frozen production-substrate selection contract says a REVOKED-key signature
 alone is insufficient: historical acceptance requires a currently trusted root,
 the exact retained credential/generation/record, independently authenticated
-history, and no compromised-key self-corroboration.  This stage has no such
-independent evidence port, so verification raises an explicit unavailable error
-for REVOKED rather than accidentally trusting the retained public key.  ACTIVE
-and VERIFY_ONLY remain valid verification states.
+history, and no compromised-key self-corroboration.  The executable reference
+model uses the already-selected checkpoint authority, rather than inventing a
+new key or role.  A REVOKED signature is checked cryptographically first, but is
+accepted only when the trusted composition supplies the exact checkpoint
+authority which retained a matching `HistoricalHeadAcceptanceEvidence` while
+the credential was ACTIVE.  Missing evidence or the wrong authority is
+`HistoricalRevokedSignatureVerificationUnavailable`.  ACTIVE and VERIFY_ONLY
+remain valid verification states without historical acceptance evidence.
+
+The accepted local signing custody lifecycle starts at generation 1/ACTIVE.
+Each legal one-way transition (`ACTIVE -> VERIFY_ONLY`, `ACTIVE -> REVOKED`, or
+`VERIFY_ONLY -> REVOKED`) atomically increments the persisted metadata
+generation, while credential ID, key handle/version and public key remain
+unchanged.  REVOKED is terminal.  Thus direct revocation has generation 2 and
+planned retirement followed by revocation has generation 3.  Custody reloads
+the current persisted generation after restart, but it retains no transition
+journal and cannot independently reconstruct an earlier generation.  The
+checkpoint-owned acceptance record therefore captures the ACTIVE generation at
+the acceptance linearization point; it does not infer history from wall time or
+from the later current custody value.
 
 The existing composition gate returns qualification failures but does not issue
 a transferable provider-qualification capability or public snapshot.  Therefore
@@ -116,6 +132,48 @@ not a caller-created checkpoint value, and captures one detached authoritative
 checkpoint snapshot before comparison.  With verified history and no committed
 checkpoint the outcome is `STALE`; a fabricated matching value cannot produce
 `EXACT_COMMITTED`.
+
+Every non-replay checkpoint advance also atomically appends an authority-owned
+`HistoricalHeadAcceptanceEvidence`.  It binds the unguessable reference
+checkpoint-authority instance identity, checkpoint revision, complete stream
+(including product, trust domain and security epoch), exact sequence and head
+digest, signing credential ID and key version, ACTIVE lifecycle generation and
+state, and the preceding acceptance digest.  Acceptance records form a retained
+digest-linked revision chain and are never replaced when the current checkpoint
+advances, so a later checkpoint signed by credential B does not erase the exact
+earlier acceptance of credential A.  Evidence is exact-head only: a record for
+N cannot establish N-1 or N+1.  No ancestry shortcut is inferred.
+
+The public evidence dataclass is only a detached report.  Historical
+verification queries the exact provider instance and revalidates its retained
+chain; it never consumes a caller-provided evidence value, seal or token.  The
+provider's lock publishes checkpoint and evidence together under the same CAS,
+so two commits at one expected revision have one winner.  History verification
+and lifecycle sampling happen before the checkpoint lock; no history,
+checkpoint and custody locks are nested.  The final observed ACTIVE state and
+generation define the acceptance-before-revocation linearization point.  A
+REVOKED observation cannot append evidence.
+
+One central `_verify_authority_state_locked` definition protects every
+checkpoint/evidence authority read and every decision inside `advance`.  It
+validates exact evidence types, stream and authority identity, contiguous
+checkpoint revisions, predecessor and canonical evidence digests, ACTIVE state,
+positive lifecycle generation, and strictly increasing (not necessarily
+adjacent) accepted history sequences.  It additionally requires `_current` to
+be absent exactly when the evidence chain is empty, evidence cardinality to
+equal the current checkpoint revision, and the last evidence to bind every
+current checkpoint field exactly.  `advance` invokes this validator as its first
+operation under the checkpoint lock, before revision/replay decisions or use of
+the predecessor digest.  Consequently corrupt evidence, missing or trailing
+evidence, and checkpoint-only rollback cannot authorize either a successor or
+an exact-replay result.
+
+`current_checkpoint`, `historical_acceptance`, and
+`verify_historical_acceptance` use the same validator.  Reconciliation maps a
+detected internal checkpoint/evidence inconsistency to `CORRUPT`; inability of
+the signing/key/lifecycle authority remains `UNAVAILABLE`.  The SHA-256 chain is
+an integrity mechanism inside the selected authority, not a trust root and not
+a replacement for trusted composition provenance.
 
 Checkpoint behind a valid history is `STALE` and may be advanced from verified
 history.  Checkpoint ahead of history is `CORRUPT`, as is a checkpoint whose
@@ -188,14 +246,26 @@ cross-account reconciliation evidence, and provider-unavailability handling is
 a requirement for the later semantic RootProofIssuer stage, not a claim that
 those paths are already executable here.
 
-Malformed/broken history, a head that is not its exact current head, and an
+Malformed/broken history, a current head that is not its exact current record,
+and an
 invalid attestation classify as `CORRUPT`.  Inability of the trusted signing or
 lifecycle authority to supply required evidence classifies as `UNAVAILABLE`;
 this is not asserted to prove corruption.  A historical REVOKED signature
-without the independently trusted evidence required by the frozen substrate
-contract raises the explicit fail-closed unavailable error.  The executable
-independent trusted REVOKED-history evidence source and binding model remains a
-required later decision, not an inferred implementation in this stage.
+without the exact retained checkpoint-authority evidence required by the frozen
+substrate contract raises the explicit fail-closed unavailable error.  With
+evidence, `verify_attested_historical_head` validates the complete retained
+chain, exact record at the stated sequence, canonical signature and key
+material, current terminal lifecycle state/generation, and exact acceptance.
+
+The reference oracle remains in-memory.  A future PRODUCTION_LOCAL adapter must
+durably and crash-atomically persist the checkpoint and complete acceptance
+chain, preserve stable provider identity/capability binding across restart, and
+return `UNAVAILABLE` if that durable evidence cannot be recovered.  Selecting
+the canonical injected instance is a trusted-composition-root responsibility;
+structural protocol compatibility is not provenance.  Same-host persistence
+does not detect a coordinated privileged rollback of history, checkpoint /
+evidence, and lifecycle state.  SERVER_READY still requires an independent
+rollback and administration domain.
 
 ## Qualification and privileged mutation boundary
 
@@ -216,7 +286,7 @@ configuration override; qualification remains capability-based.
 * `ENTITLEMENT_REGISTRY_EXECUTABLE_SEMANTIC_CONTRACT_FROZEN = true`
 * `ACCOUNT_GENESIS_CHA_ATTEMPT_STORE_PRODUCTION_LOCAL_IMPLEMENTED = true`
 * `ROOT_PROOF_ISSUER_PRODUCTION_LOCAL_ENTITLEMENT_REGISTRY_IMPLEMENTED = true`
-* `AUTHENTICATED_ISSUER_HISTORY_LOCAL_CHECKPOINT_EXECUTABLE_SEMANTIC_CONTRACT_FROZEN = false`
+* `AUTHENTICATED_ISSUER_HISTORY_LOCAL_CHECKPOINT_EXECUTABLE_SEMANTIC_CONTRACT_FROZEN = true`
 * `ROOT_PROOF_ISSUER_IMPLEMENTED = false`
 * `PRODUCTION_LOCAL_RUNTIME_AVAILABLE = false`
 * classification: `UNKNOWN`

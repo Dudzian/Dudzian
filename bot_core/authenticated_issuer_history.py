@@ -14,6 +14,7 @@ import json
 from threading import RLock
 from types import MappingProxyType
 from typing import Any, Mapping, Protocol
+import uuid
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
@@ -31,6 +32,7 @@ from bot_core.root_proof_issuer_substrate import (
 
 RECORD_DOMAIN = b"CryptoHunter/M0.5/IssuerAuthenticatedHistoryRecord/v1\0"
 ATTESTATION_DOMAIN = b"CryptoHunter/M0.5/IssuerAuthenticatedHistoryHead/v1\0"
+ACCEPTANCE_DOMAIN = b"CryptoHunter/M0.5/HistoricalHeadAcceptanceEvidence/v1\0"
 NO_PREDECESSOR = "NO_PREDECESSOR"
 GENESIS_SEQUENCE = 1
 
@@ -40,7 +42,7 @@ class HistoryContractError(RuntimeError):
 
 
 class HistoricalRevokedSignatureVerificationUnavailable(HistoryContractError):
-    """A revoked key needs independent historical authority not present here."""
+    """Independent retained acceptance evidence is absent or unavailable."""
 
 
 class HistorySigningAuthorityUnavailable(HistoryContractError):
@@ -229,7 +231,7 @@ def attest_head(record: HistoryRecord, signer: HistoryAttestationSigningProvider
 def _trusted_history_credential(
     head: AttestedHistoryHead,
     authority: HistoryAttestationSigningProvider,
-) -> tuple[CredentialRoleIdentity, bytes]:
+) -> tuple[CredentialRoleIdentity, bytes, SigningKeyLifecycle, int]:
     """Resolve one head signer and key exclusively from the trusted authority."""
     try:
         provider_identity = authority.identity
@@ -271,34 +273,37 @@ def _trusted_history_credential(
     if observed_identity != credential.key_material_identity:
         raise HistoryContractError("trusted public-key material identity mismatch")
     lifecycle_reader = getattr(authority, "lifecycle_state", None)
-    if not callable(lifecycle_reader):
+    generation_reader = getattr(authority, "lifecycle_generation", None)
+    if not callable(lifecycle_reader) or not callable(generation_reader):
         raise HistorySigningAuthorityUnavailable(
             "trusted signing lifecycle evidence unavailable"
         )
     try:
         lifecycle = lifecycle_reader()
+        generation = generation_reader()
     except Exception as exc:
         raise HistorySigningAuthorityUnavailable(
             "trusted signing lifecycle evidence unavailable"
         ) from exc
-    if type(lifecycle) is not SigningKeyLifecycle:
+    if type(lifecycle) is not SigningKeyLifecycle or type(generation) is not int or generation < 1:
         raise HistoryContractError("invalid trusted signing lifecycle evidence")
-    if lifecycle is SigningKeyLifecycle.REVOKED:
-        raise HistoricalRevokedSignatureVerificationUnavailable(
-            "revoked historical signature requires independent retained authority evidence"
-        )
-    if lifecycle not in (SigningKeyLifecycle.ACTIVE, SigningKeyLifecycle.VERIFY_ONLY):
+    if lifecycle not in (
+        SigningKeyLifecycle.ACTIVE,
+        SigningKeyLifecycle.VERIFY_ONLY,
+        SigningKeyLifecycle.REVOKED,
+    ):
         raise HistoryContractError("unsupported trusted signing lifecycle state")
-    return credential, public_key
+    return credential, public_key, lifecycle, generation
 
 
 def verify_head(head: AttestedHistoryHead, authority: HistoryAttestationSigningProvider, *,
-                expected_stream: HistoryStreamIdentity) -> None:
+                expected_stream: HistoryStreamIdentity,
+                historical_evidence_authority: LocalCheckpointProvider | None = None) -> None:
     if type(head) is not AttestedHistoryHead or type(expected_stream) is not HistoryStreamIdentity:
         raise TypeError("head and expected_stream must be exact contract objects")
     if head.stream != expected_stream:
         raise HistoryContractError("wrong stream/environment/trust/product/security epoch")
-    _, public_key = _trusted_history_credential(head, authority)
+    _, public_key, lifecycle, generation = _trusted_history_credential(head, authority)
     material = {"stream": head.stream.material(), "sequence": head.sequence,
                 "record_digest": head.record_digest, "signing_role": "HISTORY_ATTESTATION_SIGNING",
                 "signing_credential_id": head.signing_credential_id,
@@ -310,6 +315,14 @@ def verify_head(head: AttestedHistoryHead, authority: HistoryAttestationSigningP
         Ed25519PublicKey.from_public_bytes(public_key).verify(head.signature, expected)
     except (ValueError, InvalidSignature) as exc:
         raise HistoryContractError("invalid history-head signature") from exc
+    if lifecycle is SigningKeyLifecycle.REVOKED:
+        if type(historical_evidence_authority) is not LocalCheckpointProvider:
+            raise HistoricalRevokedSignatureVerificationUnavailable(
+                "revoked historical signature lacks its trusted checkpoint authority"
+            )
+        historical_evidence_authority.verify_historical_acceptance(
+            head, current_lifecycle_generation=generation,
+        )
 
 
 class ReferenceAuthenticatedHistory:
@@ -374,6 +387,7 @@ class ReferenceAuthenticatedHistory:
         self,
         head: AttestedHistoryHead,
         authority: HistoryAttestationSigningProvider,
+        historical_evidence_authority: LocalCheckpointProvider | None = None,
     ) -> VerifiedHistoryHead:
         """Verify the complete retained chain, exact head relation, and attestation."""
         with self._lock:
@@ -390,7 +404,33 @@ class ReferenceAuthenticatedHistory:
                 raise HistoryContractError(
                     "attested head does not name the current verified history"
                 )
-            verify_head(snapshot, authority, expected_stream=self._stream)
+            verify_head(
+                snapshot, authority, expected_stream=self._stream,
+                historical_evidence_authority=historical_evidence_authority,
+            )
+            return VerifiedHistoryHead(snapshot)
+
+    def verify_attested_historical_head(
+        self,
+        head: AttestedHistoryHead,
+        authority: HistoryAttestationSigningProvider,
+        historical_evidence_authority: LocalCheckpointProvider,
+    ) -> VerifiedHistoryHead:
+        """Verify one exact retained record using checkpoint-owned acceptance."""
+        if type(historical_evidence_authority) is not LocalCheckpointProvider:
+            raise TypeError("historical evidence authority must be exact")
+        with self._lock:
+            snapshot = _snapshot_head(head)
+            self._verify_locked()
+            if snapshot.stream != self._stream or snapshot.sequence > len(self._records):
+                raise HistoryContractError("historical head is outside retained history")
+            record = self._records[snapshot.sequence - GENESIS_SEQUENCE]
+            if snapshot.record_digest != record.authenticated_digest:
+                raise HistoryContractError("historical head does not name its exact record")
+            verify_head(
+                snapshot, authority, expected_stream=self._stream,
+                historical_evidence_authority=historical_evidence_authority,
+            )
             return VerifiedHistoryHead(snapshot)
 
     def reconcile(
@@ -406,19 +446,27 @@ class ReferenceAuthenticatedHistory:
         if not self._records:
             if head is not None:
                 return ReconciliationOutcome.CORRUPT
-            checkpoint = checkpoint_authority.current_checkpoint()
+            try:
+                checkpoint = checkpoint_authority.current_checkpoint()
+            except HistoryContractError:
+                return ReconciliationOutcome.CORRUPT
             return ReconciliationOutcome.NOT_FOUND if checkpoint is None else ReconciliationOutcome.CORRUPT
         if head is None or verification_authority is None:
             return ReconciliationOutcome.CORRUPT
         try:
-            verified = self.verify_attested_head(head, verification_authority)
+            verified = self.verify_attested_head(
+                head, verification_authority, checkpoint_authority,
+            )
         except HistoricalRevokedSignatureVerificationUnavailable:
             raise
         except HistorySigningAuthorityUnavailable:
             return ReconciliationOutcome.UNAVAILABLE
         except (HistoryContractError, TypeError):
             return ReconciliationOutcome.CORRUPT
-        checkpoint = checkpoint_authority.current_checkpoint()
+        try:
+            checkpoint = checkpoint_authority.current_checkpoint()
+        except HistoryContractError:
+            return ReconciliationOutcome.CORRUPT
         return _compare_verified_checkpoint(verified.head, checkpoint)
 
 
@@ -502,17 +550,198 @@ def _snapshot_checkpoint(checkpoint: LocalCheckpoint) -> LocalCheckpoint:
     )
 
 
+@dataclass(frozen=True, slots=True)
+class HistoricalHeadAcceptanceEvidence:
+    """Detached report of an acceptance retained by a checkpoint authority."""
+
+    checkpoint_authority_identity: str
+    checkpoint_revision: int
+    stream: HistoryStreamIdentity
+    accepted_history_sequence: int
+    accepted_authenticated_head_digest: str
+    history_signing_credential_id: str
+    history_signing_key_version: str
+    lifecycle_generation_at_acceptance: int
+    lifecycle_state_at_acceptance: SigningKeyLifecycle
+    predecessor_acceptance_digest: str
+    acceptance_digest: str
+
+    def __post_init__(self) -> None:
+        if type(self.stream) is not HistoryStreamIdentity:
+            raise TypeError("stream must be an exact HistoryStreamIdentity")
+        for name in (
+            "checkpoint_authority_identity", "accepted_authenticated_head_digest",
+            "history_signing_credential_id", "history_signing_key_version",
+            "predecessor_acceptance_digest", "acceptance_digest",
+        ):
+            _text(getattr(self, name), name)
+        _integer(self.checkpoint_revision, "checkpoint_revision", minimum=1)
+        _integer(self.accepted_history_sequence, "accepted_history_sequence", minimum=1)
+        _integer(
+            self.lifecycle_generation_at_acceptance,
+            "lifecycle_generation_at_acceptance",
+            minimum=1,
+        )
+        if type(self.lifecycle_state_at_acceptance) is not SigningKeyLifecycle:
+            raise TypeError("lifecycle_state_at_acceptance must be exact")
+        if self.acceptance_digest != _acceptance_digest(self):
+            raise HistoryContractError("historical acceptance digest mismatch")
+
+
+def _acceptance_material(evidence: HistoricalHeadAcceptanceEvidence) -> dict[str, object]:
+    return {
+        "checkpoint_authority_identity": evidence.checkpoint_authority_identity,
+        "checkpoint_revision": evidence.checkpoint_revision,
+        "stream": evidence.stream.material(),
+        "accepted_history_sequence": evidence.accepted_history_sequence,
+        "accepted_authenticated_head_digest": evidence.accepted_authenticated_head_digest,
+        "history_signing_credential_id": evidence.history_signing_credential_id,
+        "history_signing_key_version": evidence.history_signing_key_version,
+        "lifecycle_generation_at_acceptance": evidence.lifecycle_generation_at_acceptance,
+        "lifecycle_state_at_acceptance": evidence.lifecycle_state_at_acceptance.value,
+        "predecessor_acceptance_digest": evidence.predecessor_acceptance_digest,
+    }
+
+
+def _acceptance_digest(evidence: HistoricalHeadAcceptanceEvidence) -> str:
+    return _digest(ACCEPTANCE_DOMAIN, _acceptance_material(evidence))
+
+
+def _snapshot_acceptance(
+    evidence: HistoricalHeadAcceptanceEvidence,
+) -> HistoricalHeadAcceptanceEvidence:
+    if type(evidence) is not HistoricalHeadAcceptanceEvidence:
+        raise TypeError("acceptance evidence must be exact")
+    return HistoricalHeadAcceptanceEvidence(
+        evidence.checkpoint_authority_identity,
+        evidence.checkpoint_revision,
+        _snapshot_stream(evidence.stream),
+        evidence.accepted_history_sequence,
+        evidence.accepted_authenticated_head_digest,
+        evidence.history_signing_credential_id,
+        evidence.history_signing_key_version,
+        evidence.lifecycle_generation_at_acceptance,
+        evidence.lifecycle_state_at_acceptance,
+        evidence.predecessor_acceptance_digest,
+        evidence.acceptance_digest,
+    )
+
+
 class LocalCheckpointProvider:
     """Reference atomic CAS semantics, not independent rollback protection."""
     def __init__(self, checkpoint_id: str, stream: HistoryStreamIdentity) -> None:
         self._checkpoint_id = _text(checkpoint_id, "checkpoint_id")
         self._stream = _snapshot_stream(stream)
+        self._authority_identity = f"local-checkpoint-authority:{uuid.uuid4().hex}"
         self._current = None
+        self._acceptances: list[HistoricalHeadAcceptanceEvidence] = []
         self._lock = RLock()
 
     def current_checkpoint(self) -> LocalCheckpoint | None:
         with self._lock:
+            self._verify_authority_state_locked()
             return _snapshot_checkpoint(self._current) if self._current is not None else None
+
+    def historical_acceptance(
+        self, head: AttestedHistoryHead,
+    ) -> HistoricalHeadAcceptanceEvidence | None:
+        """Return a detached exact-head report; the value itself grants no authority."""
+        snapshot = _snapshot_head(head)
+        with self._lock:
+            self._verify_authority_state_locked()
+            match = next((
+                item for item in self._acceptances
+                if _acceptance_matches_head(item, snapshot)
+            ), None)
+            return _snapshot_acceptance(match) if match is not None else None
+
+    def verify_historical_acceptance(
+        self, head: AttestedHistoryHead, *, current_lifecycle_generation: int,
+    ) -> None:
+        """Authority lookup, not validation of a caller-supplied evidence value."""
+        snapshot = _snapshot_head(head)
+        _integer(current_lifecycle_generation, "current_lifecycle_generation", minimum=1)
+        with self._lock:
+            self._verify_authority_state_locked()
+            match = next((
+                item for item in self._acceptances
+                if _acceptance_matches_head(item, snapshot)
+            ), None)
+            if match is None:
+                raise HistoricalRevokedSignatureVerificationUnavailable(
+                    "no exact independently retained historical acceptance"
+                )
+            if (
+                match.lifecycle_state_at_acceptance is not SigningKeyLifecycle.ACTIVE
+                or match.lifecycle_generation_at_acceptance >= current_lifecycle_generation
+            ):
+                raise HistoryContractError("invalid lifecycle ordering in acceptance evidence")
+
+    def _verify_authority_state_locked(self) -> None:
+        """Validate the one checkpoint/evidence authority state definition."""
+        predecessor = NO_PREDECESSOR
+        previous_sequence = 0
+        for revision, evidence in enumerate(self._acceptances, 1):
+            if (
+                type(evidence) is not HistoricalHeadAcceptanceEvidence
+                or evidence.checkpoint_authority_identity != self._authority_identity
+                or evidence.stream != self._stream
+                or evidence.checkpoint_revision != revision
+                or evidence.predecessor_acceptance_digest != predecessor
+                or evidence.lifecycle_state_at_acceptance is not SigningKeyLifecycle.ACTIVE
+                or type(evidence.lifecycle_generation_at_acceptance) is not int
+                or evidence.lifecycle_generation_at_acceptance < 1
+                or evidence.accepted_history_sequence <= previous_sequence
+            ):
+                raise HistoryContractError("retained historical acceptance chain corrupt")
+            try:
+                HistoricalHeadAcceptanceEvidence(**{
+                    name: getattr(evidence, name)
+                    for name in evidence.__dataclass_fields__
+                })
+            except (HistoryContractError, TypeError) as exc:
+                raise HistoryContractError(
+                    "retained historical acceptance chain corrupt"
+                ) from exc
+            predecessor = evidence.acceptance_digest
+            previous_sequence = evidence.accepted_history_sequence
+
+        if (self._current is None) != (not self._acceptances):
+            raise HistoryContractError("checkpoint/evidence authority cardinality corrupt")
+        if self._current is None:
+            return
+        if type(self._current) is not LocalCheckpoint:
+            raise HistoryContractError("retained checkpoint type corrupt")
+        try:
+            LocalCheckpoint(**{
+                name: getattr(self._current, name)
+                for name in self._current.__dataclass_fields__
+            })
+        except (HistoryContractError, TypeError) as exc:
+            raise HistoryContractError("retained checkpoint corrupt") from exc
+        if (
+            self._current.checkpoint_id != self._checkpoint_id
+            or self._current.stream != self._stream
+            or len(self._acceptances) != self._current.checkpoint_revision
+        ):
+            raise HistoryContractError("checkpoint/evidence authority cardinality corrupt")
+        last = self._acceptances[-1]
+        if (
+            last.checkpoint_revision,
+            last.stream,
+            last.accepted_history_sequence,
+            last.accepted_authenticated_head_digest,
+            last.history_signing_credential_id,
+            last.history_signing_key_version,
+        ) != (
+            self._current.checkpoint_revision,
+            self._current.stream,
+            self._current.history_sequence,
+            self._current.authenticated_head_digest,
+            self._current.history_signing_credential_id,
+            self._current.history_signing_key_version,
+        ):
+            raise HistoryContractError("current checkpoint/last acceptance binding corrupt")
 
     def advance(
         self, *, expected_revision: int, history: ReferenceAuthenticatedHistory,
@@ -523,9 +752,27 @@ class LocalCheckpointProvider:
             raise TypeError("history must be the exact reference authority")
         verified = history.verify_attested_head(head, verification_authority)
         snapshot = verified.head
+        try:
+            lifecycle_generation = verification_authority.lifecycle_generation()
+            lifecycle = verification_authority.lifecycle_state()
+            confirmed_generation = verification_authority.lifecycle_generation()
+        except Exception as exc:
+            raise HistorySigningAuthorityUnavailable(
+                "signing lifecycle unavailable at checkpoint acceptance"
+            ) from exc
+        if (
+            lifecycle is not SigningKeyLifecycle.ACTIVE
+            or type(lifecycle_generation) is not int
+            or lifecycle_generation < 1
+            or confirmed_generation != lifecycle_generation
+        ):
+            raise HistoryContractError(
+                "checkpoint acceptance requires an ACTIVE history credential"
+            )
         if snapshot.stream != self._stream:
             raise HistoryContractError("checkpoint cross-stream splice")
         with self._lock:
+            self._verify_authority_state_locked()
             current = self._current
             revision = 0 if current is None else current.checkpoint_revision
             if expected_revision != revision:
@@ -551,8 +798,45 @@ class LocalCheckpointProvider:
                 snapshot.record_digest, snapshot.signing_credential_id,
                 snapshot.signing_key_version, revision + 1,
             )
+            predecessor = (
+                NO_PREDECESSOR
+                if not self._acceptances
+                else self._acceptances[-1].acceptance_digest
+            )
+            acceptance_material = {
+                "checkpoint_authority_identity": self._authority_identity,
+                "checkpoint_revision": revision + 1,
+                "stream": self._stream.material(),
+                "accepted_history_sequence": snapshot.sequence,
+                "accepted_authenticated_head_digest": snapshot.record_digest,
+                "history_signing_credential_id": snapshot.signing_credential_id,
+                "history_signing_key_version": snapshot.signing_key_version,
+                "lifecycle_generation_at_acceptance": lifecycle_generation,
+                "lifecycle_state_at_acceptance": lifecycle.value,
+                "predecessor_acceptance_digest": predecessor,
+            }
+            acceptance = HistoricalHeadAcceptanceEvidence(
+                self._authority_identity, revision + 1, self._stream,
+                snapshot.sequence, snapshot.record_digest,
+                snapshot.signing_credential_id, snapshot.signing_key_version,
+                lifecycle_generation, lifecycle, predecessor,
+                _digest(ACCEPTANCE_DOMAIN, acceptance_material),
+            )
             self._current = successor
+            self._acceptances.append(acceptance)
             return _snapshot_checkpoint(successor), False
+
+
+def _acceptance_matches_head(
+    evidence: HistoricalHeadAcceptanceEvidence, head: AttestedHistoryHead,
+) -> bool:
+    return (
+        evidence.stream == head.stream
+        and evidence.accepted_history_sequence == head.sequence
+        and evidence.accepted_authenticated_head_digest == head.record_digest
+        and evidence.history_signing_credential_id == head.signing_credential_id
+        and evidence.history_signing_key_version == head.signing_key_version
+    )
 
 
 def _compare_verified_checkpoint(
@@ -591,6 +875,6 @@ def reconcile_checkpoint(
     )
 
 
-AUTHENTICATED_ISSUER_HISTORY_LOCAL_CHECKPOINT_EXECUTABLE_SEMANTIC_CONTRACT_FROZEN = False
+AUTHENTICATED_ISSUER_HISTORY_LOCAL_CHECKPOINT_EXECUTABLE_SEMANTIC_CONTRACT_FROZEN = True
 ROOT_PROOF_ISSUER_IMPLEMENTED = False
 PRODUCTION_LOCAL_RUNTIME_AVAILABLE = False
