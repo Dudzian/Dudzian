@@ -106,6 +106,14 @@ class HistorySigningFake(SigningIdentityFakeBase):
     def sign_history_head(self, canonical_head: bytes) -> bytes: return canonical_head
 
 
+class FinalizationSigningFake(SigningIdentityFakeBase):
+    def sign_finalization(self, canonical_payload: bytes) -> bytes: return canonical_payload
+
+
+class ProposerSigningFake(SigningIdentityFakeBase):
+    def sign_freshness_proposal(self, canonical_payload: bytes) -> bytes: return canonical_payload
+
+
 class DualSigningFake(SigningIdentityFakeBase):
     def sign_root_proof(self, canonical_payload: bytes) -> bytes: return canonical_payload
     def sign_history_head(self, canonical_head: bytes) -> bytes: return canonical_head
@@ -143,6 +151,8 @@ ROLE_FAKES = {
     ProviderRole.REQUESTER_CREDENTIAL_REGISTRY: RequesterFake,
     ProviderRole.ROOT_PROOF_SIGNING: RootSigningFake,
     ProviderRole.HISTORY_ATTESTATION_SIGNING: HistorySigningFake,
+    ProviderRole.FRESHNESS_AUTHORITY_FINALIZATION_SIGNING: FinalizationSigningFake,
+    ProviderRole.CHA_FRESHNESS_PROPOSER_SIGNING: ProposerSigningFake,
     ProviderRole.ISSUER_AUTHENTICATED_HISTORY: HistoryFake,
     ProviderRole.CHECKPOINT_AUTHORITY: CheckpointFake,
     ProviderRole.RECONCILIATION_EVIDENCE: ReconciliationFake,
@@ -154,6 +164,8 @@ CREDENTIAL_ROLES = {
     ProviderRole.REQUESTER_CREDENTIAL_REGISTRY: CredentialSemanticRole.ROOT_PROOF_REQUESTER,
     ProviderRole.ROOT_PROOF_SIGNING: CredentialSemanticRole.ROOT_PROOF_ISSUER_SIGNING,
     ProviderRole.HISTORY_ATTESTATION_SIGNING: CredentialSemanticRole.HISTORY_ATTESTATION_SIGNING,
+    ProviderRole.FRESHNESS_AUTHORITY_FINALIZATION_SIGNING: CredentialSemanticRole.ACCOUNT_GENESIS_FRESHNESS_AUTHORITY_FINALIZATION_SIGNING_V1,
+    ProviderRole.CHA_FRESHNESS_PROPOSER_SIGNING: CredentialSemanticRole.ACCOUNT_GENESIS_FRESHNESS_PROPOSER_SIGNING_V1,
 }
 
 
@@ -163,6 +175,8 @@ def credential(role: CredentialSemanticRole, namespace: str, suffix: str) -> Cre
     if role in {
         CredentialSemanticRole.ROOT_PROOF_ISSUER_SIGNING,
         CredentialSemanticRole.HISTORY_ATTESTATION_SIGNING,
+        CredentialSemanticRole.ACCOUNT_GENESIS_FRESHNESS_AUTHORITY_FINALIZATION_SIGNING_V1,
+        CredentialSemanticRole.ACCOUNT_GENESIS_FRESHNESS_PROPOSER_SIGNING_V1,
     }:
         material = public_key_material_identity(_test_public_key_bytes(credential_id))
     return CredentialRoleIdentity(
@@ -177,7 +191,12 @@ def credential(role: CredentialSemanticRole, namespace: str, suffix: str) -> Cre
 
 def capabilities_for(role: ProviderRole, signing, checkpoint) -> ProviderCapabilities:
     base = ProviderCapabilities(implemented=True)
-    if role in {ProviderRole.ROOT_PROOF_SIGNING, ProviderRole.HISTORY_ATTESTATION_SIGNING}:
+    if role in {
+        ProviderRole.ROOT_PROOF_SIGNING,
+        ProviderRole.HISTORY_ATTESTATION_SIGNING,
+        ProviderRole.FRESHNESS_AUTHORITY_FINALIZATION_SIGNING,
+        ProviderRole.CHA_FRESHNESS_PROPOSER_SIGNING,
+    }:
         return replace(base, signing=signing)
     if role is ProviderRole.CHECKPOINT_AUTHORITY:
         return replace(base, durable_state=True, checkpoint=checkpoint)

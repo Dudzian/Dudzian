@@ -413,7 +413,12 @@ class _OtherProvider:
 
 
 def _composition_others(security: SecurityProfileIdentity) -> list[_OtherProvider]:
-    signing_roles = {ProviderRole.ROOT_PROOF_SIGNING, ProviderRole.HISTORY_ATTESTATION_SIGNING}
+    signing_roles = {
+        ProviderRole.ROOT_PROOF_SIGNING,
+        ProviderRole.HISTORY_ATTESTATION_SIGNING,
+        ProviderRole.FRESHNESS_AUTHORITY_FINALIZATION_SIGNING,
+        ProviderRole.CHA_FRESHNESS_PROPOSER_SIGNING,
+    }
     credential_roles = {
         ProviderRole.CLAIMANT_IDENTITY_REGISTRY: CredentialSemanticRole.ROOT_PROOF_CLAIMANT,
         ProviderRole.REQUESTER_CREDENTIAL_REGISTRY: CredentialSemanticRole.ROOT_PROOF_REQUESTER,

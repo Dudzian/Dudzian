@@ -46,6 +46,10 @@ class ProviderRole(str, Enum):
     REQUESTER_CREDENTIAL_REGISTRY = "REQUESTER_CREDENTIAL_REGISTRY"
     ROOT_PROOF_SIGNING = "ROOT_PROOF_SIGNING"
     HISTORY_ATTESTATION_SIGNING = "HISTORY_ATTESTATION_SIGNING"
+    FRESHNESS_AUTHORITY_FINALIZATION_SIGNING = (
+        "FRESHNESS_AUTHORITY_FINALIZATION_SIGNING"
+    )
+    CHA_FRESHNESS_PROPOSER_SIGNING = "CHA_FRESHNESS_PROPOSER_SIGNING"
     ISSUER_AUTHENTICATED_HISTORY = "ISSUER_AUTHENTICATED_HISTORY"
     CHECKPOINT_AUTHORITY = "CHECKPOINT_AUTHORITY"
     RECONCILIATION_EVIDENCE = "RECONCILIATION_EVIDENCE"
@@ -57,6 +61,14 @@ class CredentialSemanticRole(str, Enum):
     ROOT_PROOF_CLAIMANT = "ROOT_PROOF_CLAIMANT"
     ROOT_PROOF_ISSUER_SIGNING = "ROOT_PROOF_ISSUER_SIGNING"
     HISTORY_ATTESTATION_SIGNING = "HISTORY_ATTESTATION_SIGNING"
+    ACCOUNT_GENESIS_FRESHNESS_AUTHORITY_FINALIZATION_SIGNING_V1 = (
+        "ACCOUNT_GENESIS_FRESHNESS_AUTHORITY_FINALIZATION_SIGNING_V1"
+    )
+    ACCOUNT_GENESIS_FRESHNESS_PROPOSER_SIGNING_V1 = (
+        "ACCOUNT_GENESIS_FRESHNESS_PROPOSER_SIGNING_V1"
+    )
+    # Retained for the already-frozen requester/claimant alias contract.  This
+    # lineage role is deliberately not the local proposer signing role above.
     ACCOUNT_GENESIS_FRESHNESS_PROPOSER = "ACCOUNT_GENESIS_FRESHNESS_PROPOSER"
     CATALOG_AUTHORITY = "CATALOG_AUTHORITY"
     STORAGE_SECURITY_KEY = "STORAGE_SECURITY_KEY"
@@ -334,6 +346,18 @@ class HistoryAttestationSigningProvider(SigningIdentityProvider, Protocol):
 
 
 @runtime_checkable
+class FreshnessAuthorityFinalizationSigningProvider(
+    SigningIdentityProvider, Protocol
+):
+    def sign_finalization(self, canonical_payload: bytes) -> object: ...
+
+
+@runtime_checkable
+class CHAFreshnessProposerSigningProvider(SigningIdentityProvider, Protocol):
+    def sign_freshness_proposal(self, canonical_payload: bytes) -> object: ...
+
+
+@runtime_checkable
 class IssuerAuthenticatedHistory(SecurityProvider, Protocol):
     def current_head(self) -> object: ...
     def append_exact_successor(self, expected_head: object, record: object) -> object: ...
@@ -453,6 +477,22 @@ _FORBIDDEN_ROLE_PAIRS = {
     frozenset((CredentialSemanticRole.ROOT_PROOF_REQUESTER, CredentialSemanticRole.STORAGE_SECURITY_KEY)),
     frozenset((CredentialSemanticRole.ROOT_PROOF_ISSUER_SIGNING, CredentialSemanticRole.ACCOUNT_GENESIS_FRESHNESS_PROPOSER)),
     frozenset((CredentialSemanticRole.ROOT_PROOF_ISSUER_SIGNING, CredentialSemanticRole.CATALOG_AUTHORITY)),
+    *(
+        frozenset((freshness, other))
+        for freshness in (
+            CredentialSemanticRole.ACCOUNT_GENESIS_FRESHNESS_AUTHORITY_FINALIZATION_SIGNING_V1,
+            CredentialSemanticRole.ACCOUNT_GENESIS_FRESHNESS_PROPOSER_SIGNING_V1,
+        )
+        for other in (
+            CredentialSemanticRole.ACCOUNT_GENESIS_FRESHNESS_AUTHORITY_FINALIZATION_SIGNING_V1,
+            CredentialSemanticRole.ACCOUNT_GENESIS_FRESHNESS_PROPOSER_SIGNING_V1,
+            CredentialSemanticRole.ROOT_PROOF_ISSUER_SIGNING,
+            CredentialSemanticRole.HISTORY_ATTESTATION_SIGNING,
+            CredentialSemanticRole.CATALOG_AUTHORITY,
+            CredentialSemanticRole.STORAGE_SECURITY_KEY,
+        )
+        if freshness is not other
+    ),
 }
 
 _ROLE_PORTS: Mapping[ProviderRole, type[SecurityProvider]] = MappingProxyType(
@@ -463,6 +503,8 @@ _ROLE_PORTS: Mapping[ProviderRole, type[SecurityProvider]] = MappingProxyType(
         ProviderRole.REQUESTER_CREDENTIAL_REGISTRY: RequesterCredentialRegistry,
         ProviderRole.ROOT_PROOF_SIGNING: RootProofSigningProvider,
         ProviderRole.HISTORY_ATTESTATION_SIGNING: HistoryAttestationSigningProvider,
+        ProviderRole.FRESHNESS_AUTHORITY_FINALIZATION_SIGNING: FreshnessAuthorityFinalizationSigningProvider,
+        ProviderRole.CHA_FRESHNESS_PROPOSER_SIGNING: CHAFreshnessProposerSigningProvider,
         ProviderRole.ISSUER_AUTHENTICATED_HISTORY: IssuerAuthenticatedHistory,
         ProviderRole.CHECKPOINT_AUTHORITY: CheckpointAuthorityProvider,
         ProviderRole.RECONCILIATION_EVIDENCE: RootProofReconciliationEvidenceSource,
@@ -496,6 +538,18 @@ _ROLE_METHODS: Mapping[ProviderRole, tuple[str, ...]] = MappingProxyType(
             "lifecycle_generation",
             "sign_history_head",
         ),
+        ProviderRole.FRESHNESS_AUTHORITY_FINALIZATION_SIGNING: (
+            "active_credential_identity",
+            "public_key",
+            "lifecycle_generation",
+            "sign_finalization",
+        ),
+        ProviderRole.CHA_FRESHNESS_PROPOSER_SIGNING: (
+            "active_credential_identity",
+            "public_key",
+            "lifecycle_generation",
+            "sign_freshness_proposal",
+        ),
         ProviderRole.ISSUER_AUTHENTICATED_HISTORY: (
             "current_head",
             "append_exact_successor",
@@ -523,13 +577,27 @@ _CREDENTIAL_ROLES: Mapping[ProviderRole, CredentialSemanticRole] = MappingProxyT
         ProviderRole.CLAIMANT_IDENTITY_REGISTRY: CredentialSemanticRole.ROOT_PROOF_CLAIMANT,
         ProviderRole.ROOT_PROOF_SIGNING: CredentialSemanticRole.ROOT_PROOF_ISSUER_SIGNING,
         ProviderRole.HISTORY_ATTESTATION_SIGNING: CredentialSemanticRole.HISTORY_ATTESTATION_SIGNING,
+        ProviderRole.FRESHNESS_AUTHORITY_FINALIZATION_SIGNING: CredentialSemanticRole.ACCOUNT_GENESIS_FRESHNESS_AUTHORITY_FINALIZATION_SIGNING_V1,
+        ProviderRole.CHA_FRESHNESS_PROPOSER_SIGNING: CredentialSemanticRole.ACCOUNT_GENESIS_FRESHNESS_PROPOSER_SIGNING_V1,
     }
 )
 
 _SIGNING_ROLES = {
     ProviderRole.ROOT_PROOF_SIGNING,
     ProviderRole.HISTORY_ATTESTATION_SIGNING,
+    ProviderRole.FRESHNESS_AUTHORITY_FINALIZATION_SIGNING,
+    ProviderRole.CHA_FRESHNESS_PROPOSER_SIGNING,
 }
+
+_ROOT_PROOF_MANDATORY_PROVIDER_ROLES = tuple(
+    role
+    for role in ProviderRole
+    if role
+    not in {
+        ProviderRole.FRESHNESS_AUTHORITY_FINALIZATION_SIGNING,
+        ProviderRole.CHA_FRESHNESS_PROPOSER_SIGNING,
+    }
+)
 
 _ROLE_CAPABILITIES: Mapping[ProviderRole, tuple[str, ...]] = MappingProxyType(
     {
@@ -543,6 +611,8 @@ _ROLE_CAPABILITIES: Mapping[ProviderRole, tuple[str, ...]] = MappingProxyType(
         ProviderRole.REQUESTER_CREDENTIAL_REGISTRY: ("authoritative_reads", "durable_state"),
         ProviderRole.ROOT_PROOF_SIGNING: (),
         ProviderRole.HISTORY_ATTESTATION_SIGNING: (),
+        ProviderRole.FRESHNESS_AUTHORITY_FINALIZATION_SIGNING: (),
+        ProviderRole.CHA_FRESHNESS_PROPOSER_SIGNING: (),
         ProviderRole.ISSUER_AUTHENTICATED_HISTORY: ("authoritative_reads", "durable_state"),
         ProviderRole.CHECKPOINT_AUTHORITY: ("durable_state",),
         ProviderRole.RECONCILIATION_EVIDENCE: ("authoritative_reads",),
@@ -587,7 +657,7 @@ def _provider_qualification_failures(
     missing = [name for name in _ROLE_CAPABILITIES[role] if not getattr(evidence, name)]
     if missing:
         failures.append(f"required foundation capabilities are absent: {', '.join(missing)}")
-    if role in {ProviderRole.ROOT_PROOF_SIGNING, ProviderRole.HISTORY_ATTESTATION_SIGNING}:
+    if role in _SIGNING_ROLES:
         signing = evidence.signing
         if signing is None:
             failures.append("signing capability evidence is absent")
@@ -679,7 +749,7 @@ class RootProofIssuerCompositionGate:
         by_role: dict[ProviderRole, list[_ProviderQualificationSnapshot]] = {}
         for snapshot in snapshots:
             by_role.setdefault(snapshot.identity.role, []).append(snapshot)
-        for role in ProviderRole:
+        for role in _ROOT_PROOF_MANDATORY_PROVIDER_ROLES:
             matches = by_role.get(role, [])
             if not matches:
                 failures.append(QualificationFailure(QualificationFailureCode.MISSING_PROVIDER, role, "mandatory provider is absent"))
@@ -705,12 +775,20 @@ class RootProofIssuerCompositionGate:
                         "provider does not implement the runtime port required by its role",
                     )
                 )
-            opposite_method = {
-                ProviderRole.ROOT_PROOF_SIGNING: "sign_history_head",
-                ProviderRole.HISTORY_ATTESTATION_SIGNING: "sign_root_proof",
-            }.get(role)
-            if opposite_method is not None and callable(
-                getattr(snapshot.provider, opposite_method, None)
+            role_operation = {
+                ProviderRole.ROOT_PROOF_SIGNING: "sign_root_proof",
+                ProviderRole.HISTORY_ATTESTATION_SIGNING: "sign_history_head",
+                ProviderRole.FRESHNESS_AUTHORITY_FINALIZATION_SIGNING: "sign_finalization",
+                ProviderRole.CHA_FRESHNESS_PROPOSER_SIGNING: "sign_freshness_proposal",
+            }
+            opposite_methods = {
+                operation
+                for operation in role_operation.values()
+                if operation != role_operation.get(role)
+            }
+            if role in _SIGNING_ROLES and any(
+                callable(getattr(snapshot.provider, operation, None))
+                for operation in opposite_methods
             ):
                 failures.append(
                     QualificationFailure(
