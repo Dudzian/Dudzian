@@ -50,15 +50,15 @@ Wybrano wyłącznie model substrate. FreshnessAuthority oraz runtime nie są zai
     },
     {
       "capability": "freshness authority signing custody",
-      "status": "PARTIAL",
+      "status": "FOUND",
       "path": "bot_core/local_signing_custody.py",
-      "finding": "safe Ed25519 custody pattern exists but only root-proof and history roles are implemented"
+      "finding": "dedicated local finalization signer custody with typed numeric version and isolated lifecycle is executable; this is not FreshnessAuthority"
     },
     {
       "capability": "CHA freshness proposer custody",
-      "status": "PARTIAL",
+      "status": "FOUND",
       "path": "bot_core/root_proof_issuer_substrate.py",
-      "finding": "semantic proposer role exists; no dedicated custody provider/lineage is implemented"
+      "finding": "dedicated local CHA proposer signing custody is executable; this does not establish trusted proposer lineage"
     },
     {
       "capability": "trusted proposer verification lineage",
@@ -367,7 +367,6 @@ Wybrano wyłącznie model substrate. FreshnessAuthority oraz runtime nie są zai
     "production_substrate_implemented": false,
     "remaining_blockers": [
       "implement and qualify PostgreSQL freshness backend",
-      "implement dedicated authority and proposer custody roles with typed numeric versions",
       "implement trusted proposer lineage/provisioning",
       "implement independently trusted freshness historical checkpoint evidence",
       "implement dedicated local FreshnessAuthority adapter and crash/restart tests"
@@ -376,7 +375,8 @@ Wybrano wyłącznie model substrate. FreshnessAuthority oraz runtime nie są zai
     "PRODUCTION_LOCAL_RUNTIME_AVAILABLE": false,
     "classification": "UNKNOWN",
     "finding_scope": "CURRENT_TREE_ONLY",
-    "formal_project_advancement": "WITHHELD"
+    "formal_project_advancement": "WITHHELD",
+    "FRESHNESS_AUTHORITY_PRODUCTION_LOCAL_SIGNING_CUSTODY_FOUNDATION_IMPLEMENTED": true
   },
   "original_decision_identity": {
     "type": "OriginalDecisionIdentity",
@@ -423,6 +423,13 @@ Wybrano wyłącznie model substrate. FreshnessAuthority oraz runtime nie są zai
       "validator_rule": "decode and validate exact closed V1 value fields; reproduce exact V1 canonical bytes; reject unknown or missing fields before signature verification"
     },
     "wire_crypto_schema_source": "canonical frozen freshness CAS/finalization contract, never PostgreSQL schema or this selection contract independently"
+  },
+  "lifecycle_authority_ownership": {
+    "active_at_new_cas_authoritative_owner": "future PostgreSQL FreshnessAuthority authority-owned lineage in the same SERIALIZABLE CAS transaction",
+    "postgresql_key_lifecycle_history": "authoritative retained lifecycle history and the sole ACTIVE eligibility source for a new CAS",
+    "local_custody_metadata": "operational signing-custody state; authoritative only for whether the local provider may emit a signature, never independently authoritative for CAS acceptance",
+    "cas_rule": "reread exact credential identity, typed key_version, lifecycle_generation, lifecycle state and key-material identity from authority-owned lineage at CAS linearization; caller and stale signing snapshots are not trusted",
+    "dual_authority": false
   }
 }
 ```

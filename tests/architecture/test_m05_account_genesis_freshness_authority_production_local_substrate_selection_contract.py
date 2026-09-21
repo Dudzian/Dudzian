@@ -86,7 +86,8 @@ def test_discovery_is_complete_and_honest():
     assert {item["status"] for item in items.values()} <= {"FOUND", "PARTIAL", "NOT_FOUND"}
     assert items["production freshness CAS backend"]["status"] == "NOT_FOUND"
     assert items["durable finalization receipt store"]["status"] == "NOT_FOUND"
-    assert items["freshness authority signing custody"]["status"] == "PARTIAL"
+    assert items["freshness authority signing custody"]["status"] == "FOUND"
+    assert items["CHA freshness proposer custody"]["status"] == "FOUND"
     assert all((ROOT / item["path"]).exists() for item in items.values())
 
 
@@ -115,6 +116,15 @@ def test_atomic_authority_transaction_retains_decision_and_receipt():
     for required in ("exact current generation/digest/complete head set", "exact N+1",
                      "immutable document, decision, receipt", "commit exactly once"):
         assert required in transaction
+
+
+def test_lifecycle_has_one_authority_at_cas_linearization():
+    ownership = load()["lifecycle_authority_ownership"]
+    assert ownership["dual_authority"] is False
+    assert "PostgreSQL" in ownership["active_at_new_cas_authoritative_owner"]
+    assert "sole ACTIVE eligibility source" in ownership["postgresql_key_lifecycle_history"]
+    assert "never independently authoritative" in ownership["local_custody_metadata"]
+    assert "typed key_version" in ownership["cas_rule"]
 
 
 def test_receipt_is_exact_and_never_caller_authority():
@@ -247,7 +257,10 @@ def test_readiness_remains_fail_closed():
     assert readiness["classification"] == "UNKNOWN"
     assert readiness["finding_scope"] == "CURRENT_TREE_ONLY"
     assert readiness["formal_project_advancement"] == "WITHHELD"
-    assert len(readiness["remaining_blockers"]) == 5
+    assert readiness[
+        "FRESHNESS_AUTHORITY_PRODUCTION_LOCAL_SIGNING_CUSTODY_FOUNDATION_IMPLEMENTED"
+    ] is True
+    assert len(readiness["remaining_blockers"]) == 4
 
 
 @pytest.mark.parametrize("path,value", [
