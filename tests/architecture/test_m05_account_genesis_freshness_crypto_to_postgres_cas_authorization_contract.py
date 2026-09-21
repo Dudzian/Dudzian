@@ -177,7 +177,7 @@ def test_no_implementation_is_authorized_and_flags_remain_false() -> None:
     assert flags["production_substrate_selected"] is True
     assert flags["production_substrate_implemented"] is False
     assert flags["FreshnessAuthority_implemented"] is False
-    assert flags["FreshnessAuthority_implementation_allowed_after_iteration"] is False
+    assert flags["FreshnessAuthority_implementation_allowed_after_iteration"] is True
     assert flags["ROOT_PROOF_ISSUER_IMPLEMENTED"] is False
     assert flags["PRODUCTION_LOCAL_RUNTIME_AVAILABLE"] is False
     assert flags["classification"] == "UNKNOWN"

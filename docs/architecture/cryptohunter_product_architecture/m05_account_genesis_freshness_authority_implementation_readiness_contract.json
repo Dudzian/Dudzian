@@ -6,9 +6,9 @@
     "FreshnessAuthority_implemented": false,
     "CryptoHunterAccountAuthority_implemented": false,
     "concrete_production_provider_selected": false,
-    "FreshnessAuthority_implementation_allowed_after_iteration": false,
+    "FreshnessAuthority_implementation_allowed_after_iteration": true,
     "CHA_implementation_allowed_after_iteration": false,
-    "reason": "design contract is frozen, but production CAS/history/custody and dedicated local authority adapter implementations do not exist"
+    "reason": "all design and PRODUCTION_LOCAL authentication prerequisites are executably closed; the low-level PostgreSQL FreshnessAuthority core may be implemented next, but no production implementation or runtime is available now"
   },
   "provenance": {
     "classification": "UNKNOWN",
@@ -458,5 +458,17 @@
     "freshness_reason_claims_physical_design_blockers_remain",
     "implementation_available_inferred_from_physical_design_freeze",
     "production_M05_available_from_physical_design_freeze"
-  ]
+  ],
+  "implementation_authorization_gate": {
+    "result": "PASSED",
+    "evidence_artifact": "m05_account_genesis_freshness_authority_production_local_authentication_gate.json",
+    "executable_test": "tests/security/test_postgresql_freshness_production_local_authentication.py",
+    "authorizes": "low-level PostgreSQL FreshnessAuthority core implementation in the next iteration only",
+    "does_not_claim": [
+      "FreshnessAuthority implemented",
+      "production substrate implemented",
+      "PRODUCTION_LOCAL runtime available",
+      "RootProofIssuer implemented"
+    ]
+  }
 }

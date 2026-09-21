@@ -441,7 +441,20 @@ Ten plik jest deterministyczną, kompletną projekcją `m05_account_genesis_fres
       "use mutually authenticated channel and remote attestation where required",
       "add independent rollback/checkpoint authority",
       "retain semantic API, exact preparation schema and CAS-time lifecycle recheck"
-    ]
+    ],
+    "authentication_binding": {
+      "transport": "local PostgreSQL Unix-domain socket only; listen_addresses is empty",
+      "method": "peer with exact reviewed pg_ident mapping",
+      "mapping": {
+        "os_freshness_crypto_verifier": "freshness_crypto_verifier",
+        "os_freshness_runtime": "freshness_runtime"
+      },
+      "terminal_rule": "reject every other local connection to the authority database",
+      "runtime_can_open_new_connection_as_verifier": false,
+      "verifier_can_open_new_connection_as_runtime": false,
+      "caller_supplied_role_token_header_or_GUC_is_identity": false,
+      "executable_proof": "tests/security/test_postgresql_freshness_production_local_authentication.py"
+    }
   },
   "implementation_allowed": {
     "canonical_model_selected": true,
@@ -459,7 +472,7 @@ Ten plik jest deterministyczną, kompletną projekcją `m05_account_genesis_fres
     "production_substrate_selected": true,
     "production_substrate_implemented": false,
     "FreshnessAuthority_implemented": false,
-    "FreshnessAuthority_implementation_allowed_after_iteration": false,
+    "FreshnessAuthority_implementation_allowed_after_iteration": true,
     "ROOT_PROOF_ISSUER_IMPLEMENTED": false,
     "PRODUCTION_LOCAL_RUNTIME_AVAILABLE": false,
     "classification": "UNKNOWN",

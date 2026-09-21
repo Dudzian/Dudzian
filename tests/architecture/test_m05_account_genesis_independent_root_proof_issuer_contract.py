@@ -104,7 +104,7 @@ def test_cross_artifact_contracts_and_m03_implementation() -> None:
     assert reservation["identity_boundaries"]["account_id_is_operation_identity"] is False
     assert topology["root_proof_validation_role"]["may_issue_proof"] is False
     assert substrate["authentication_algorithm"]["selected"].startswith("HMAC-SHA-256")
-    assert freshness["implementation_scope"]["FreshnessAuthority_implementation_allowed_after_iteration"] is False
+    assert freshness["implementation_scope"]["FreshnessAuthority_implementation_allowed_after_iteration"] is True
     validate_issuer_admission_parity(v, admission)
     assert AUTHORITY_SOURCE == "external_product_provisioning_boundary"
     assert INITIAL_SECURITY_ESTABLISHMENT_ONLY == "INITIAL_SECURITY_ESTABLISHMENT_ONLY"
@@ -359,7 +359,7 @@ def validate_role_and_prepared_evidence(
     reason = operation["result"]["reason"]
     assert "root-proof timing semantics remain blocked" not in reason
     assert operation["result"]["root_proof_timing_status"] == "FROZEN_AFTER_INITIAL_BINDING_BEFORE_PREPARED"
-    assert readiness["implementation_scope"]["FreshnessAuthority_implementation_allowed_after_iteration"] is False
+    assert readiness["implementation_scope"]["FreshnessAuthority_implementation_allowed_after_iteration"] is True
     assert issuer["implementation_status"]["RootProofIssuer_implementation_allowed_by_this_artifact"] is False
 
 
