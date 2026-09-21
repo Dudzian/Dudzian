@@ -24,6 +24,7 @@ import re
 import secrets
 import stat
 import uuid
+from typing import Callable
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -48,6 +49,9 @@ _SCHEMA = "cryptohunter.production-local-signing-custody"
 _SCHEMA_VERSION = 1
 _KEYRING_SERVICE_PREFIX = "dudzian.root-proof-issuer.production-local"
 _LOCK_FILENAME = ".signing-custody.lock"
+_RETAINED_DIRECTORY = "retained-signing-credentials"
+_ROTATION_DIRECTORY = ".signing-rotation"
+_COMPLETED_ROTATION_DIRECTORY = "completed-signing-rotations"
 _RECORD_FILENAME = {
     ProviderRole.ROOT_PROOF_SIGNING: "root-proof-signing.json",
     ProviderRole.HISTORY_ATTESTATION_SIGNING: "history-attestation-signing.json",
@@ -468,11 +472,93 @@ def _record_path(directory: Path, role: ProviderRole) -> Path:
     return directory / filename
 
 
+def _identity_token(identity: CredentialRoleIdentity) -> str:
+    """Return a filename-safe digest of the complete immutable identity."""
+
+    if type(identity) is not CredentialRoleIdentity:
+        raise LocalSigningCustodyError("invalid signing credential identity")
+    encoded = json.dumps(
+        [
+            identity.semantic_role.value,
+            identity.credential_identity,
+            identity.provider_namespace,
+            identity.key_handle_or_version,
+            identity.custody_lifecycle_namespace,
+            identity.key_material_identity,
+        ],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _retained_path(
+    directory: Path, role: ProviderRole, identity: CredentialRoleIdentity
+) -> Path:
+    role_token = role.value.lower().replace("_", "-")
+    return directory / _RETAINED_DIRECTORY / f"{role_token}.{_identity_token(identity)}.json"
+
+
+def _rotation_paths(directory: Path, role: ProviderRole) -> tuple[Path, Path, Path]:
+    role_token = role.value.lower().replace("_", "-")
+    rotation = directory / _ROTATION_DIRECTORY
+    return (
+        rotation / f"{role_token}.intent.json",
+        rotation / f"{role_token}.retained.prepared.json",
+        rotation / f"{role_token}.successor.prepared.json",
+    )
+
+
+def _rotation_operation_token(operation_id: str) -> str:
+    if (
+        type(operation_id) is not str
+        or not operation_id
+        or len(operation_id) > 128
+        or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]*", operation_id) is None
+    ):
+        raise LocalSigningProvisioningConflict("invalid rotation operation identity")
+    return hashlib.sha256(operation_id.encode("utf-8")).hexdigest()
+
+
+def _completed_rotation_path(
+    directory: Path,
+    security: SecurityProfileIdentity,
+    role: ProviderRole,
+    operation_id: str,
+) -> Path:
+    scope = _authority_secret_scope(security, role)
+    return (
+        directory
+        / _COMPLETED_ROTATION_DIRECTORY
+        / f"{scope.scope_identity}.{_rotation_operation_token(operation_id)}.json"
+    )
+
+
+def _pending_rotation(directory: Path, role: ProviderRole) -> bool:
+    intent, _, _ = _rotation_paths(directory, role)
+    return intent.exists() or intent.is_symlink()
+
+
+def _authority_record_paths(directory: Path) -> tuple[Path, ...]:
+    """Enumerate only custody-owned record locations, including preparations."""
+
+    paths = [directory / filename for filename in _RECORD_FILENAME.values()]
+    retained = directory / _RETAINED_DIRECTORY
+    rotation = directory / _ROTATION_DIRECTORY
+    if retained.is_dir() and not retained.is_symlink():
+        paths.extend(retained.glob("*.json"))
+    if rotation.is_dir() and not rotation.is_symlink():
+        paths.extend(rotation.glob("*.prepared.json"))
+    return tuple(paths)
+
+
 def _stored_public_keys(directory: Path) -> tuple[bytes, ...]:
     """Read public material from every current or retained custody record."""
 
     keys: list[bytes] = []
-    for candidate in directory.glob("*signing*.json"):
+    for candidate in _authority_record_paths(directory):
+        if not candidate.exists():
+            continue
         try:
             document = json.loads(candidate.read_text(encoding="utf-8"))
             if type(document) is not dict or "public_key_b64" not in document:
@@ -487,6 +573,24 @@ def _stored_public_keys(directory: Path) -> tuple[bytes, ...]:
                 "custody material unavailable/corrupt"
             ) from exc
         keys.append(public_key)
+    rotation = directory / _ROTATION_DIRECTORY
+    if rotation.is_dir() and not rotation.is_symlink():
+        for intent in rotation.glob("*.intent.json"):
+            try:
+                journal = json.loads(intent.read_text(encoding="utf-8"))
+                successor = json.loads(
+                    base64.b64decode(journal["successor"], validate=True).decode("utf-8")
+                )
+                public_key = base64.b64decode(
+                    successor["public_key_b64"], validate=True
+                )
+                if len(public_key) != 32:
+                    raise ValueError
+            except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+                raise LocalSigningCustodyError(
+                    "custody material unavailable/corrupt"
+                ) from exc
+            keys.append(public_key)
     return tuple(keys)
 
 
@@ -762,6 +866,84 @@ def provision_local_signing_authority(
             raise
 
 
+def _resolve_credential_record(
+    root: Path,
+    security: SecurityProfileIdentity,
+    role: ProviderRole,
+    identity: CredentialRoleIdentity,
+) -> tuple[Path, LocalSigningMetadata]:
+    """Resolve an exact authority-owned current or retained credential."""
+
+    if type(identity) is not CredentialRoleIdentity:
+        raise LocalSigningLifecycleError("invalid signing credential identity")
+    current_path = _record_path(root, role)
+    current = _read_record(current_path, security, role)
+    if current.credential_identity() == identity:
+        return current_path, current
+    retained_path = _retained_path(root, role, identity)
+    if not retained_path.exists() or retained_path.is_symlink():
+        raise LocalSigningLifecycleError("unknown signing credential")
+    retained = _read_record(retained_path, security, role)
+    if retained.credential_identity() != identity:
+        raise LocalSigningCustodyError("custody material unavailable/corrupt")
+    return retained_path, retained
+
+
+def _transition_exact_locked(
+    root: Path,
+    security: SecurityProfileIdentity,
+    role: ProviderRole,
+    identity: CredentialRoleIdentity,
+    expected_lifecycle_generation: int,
+    target: SigningKeyLifecycle,
+) -> LocalSigningMetadata:
+    if type(expected_lifecycle_generation) is not int or expected_lifecycle_generation < 1:
+        raise LocalSigningLifecycleError("invalid expected lifecycle generation")
+    if type(target) is not SigningKeyLifecycle:
+        raise LocalSigningLifecycleError("illegal signing-key lifecycle transition")
+    path, current = _resolve_credential_record(root, security, role, identity)
+    if current.lifecycle_generation != expected_lifecycle_generation:
+        raise LocalSigningLifecycleError("stale signing-key lifecycle generation")
+    allowed = {
+        (SigningKeyLifecycle.ACTIVE, SigningKeyLifecycle.VERIFY_ONLY),
+        (SigningKeyLifecycle.ACTIVE, SigningKeyLifecycle.REVOKED),
+        (SigningKeyLifecycle.VERIFY_ONLY, SigningKeyLifecycle.REVOKED),
+    }
+    if (current.lifecycle_state, target) not in allowed:
+        raise LocalSigningLifecycleError("illegal signing-key lifecycle transition")
+    successor = LocalSigningMetadata(
+        current.security_profile, current.trust_domain, current.provider_role,
+        current.credential_semantic_role, current.credential_id,
+        current.provider_namespace, current.key_handle, current.key_version,
+        current.lifecycle_namespace, current.lifecycle_generation + 1, target,
+        current.public_key, current.protected_private_material_reference,
+    )
+    _replace_record(path, _encode_record(successor))
+    return successor
+
+
+def transition_local_signing_credential_lifecycle(
+    directory: Path,
+    *,
+    security: SecurityProfileIdentity,
+    role: ProviderRole,
+    credential_identity: CredentialRoleIdentity,
+    expected_lifecycle_generation: int,
+    target: SigningKeyLifecycle,
+) -> LocalSigningMetadata:
+    """CAS-like lifecycle update of one exact authority-owned credential."""
+
+    root = _validate_directory(directory, create=False)
+    security = _snapshot_security(security)
+    if type(role) is not ProviderRole or role not in _RECORD_FILENAME:
+        raise LocalSigningLifecycleError("invalid signing authority role")
+    with _custody_lock(root, exclusive=True):
+        return _transition_exact_locked(
+            root, security, role, credential_identity,
+            expected_lifecycle_generation, target,
+        )
+
+
 def transition_local_signing_lifecycle(
     directory: Path,
     *,
@@ -775,27 +957,434 @@ def transition_local_signing_lifecycle(
     security = _snapshot_security(security)
     if type(role) is not ProviderRole or role not in _RECORD_FILENAME:
         raise LocalSigningLifecycleError("invalid signing authority role")
-    if type(target) is not SigningKeyLifecycle:
-        raise LocalSigningLifecycleError("illegal signing-key lifecycle transition")
-    allowed = {
-        (SigningKeyLifecycle.ACTIVE, SigningKeyLifecycle.VERIFY_ONLY),
-        (SigningKeyLifecycle.ACTIVE, SigningKeyLifecycle.REVOKED),
-        (SigningKeyLifecycle.VERIFY_ONLY, SigningKeyLifecycle.REVOKED),
-    }
     with _custody_lock(root, exclusive=True):
-        path = _record_path(root, role)
-        current = _read_record(path, security, role)
-        if (current.lifecycle_state, target) not in allowed:
-            raise LocalSigningLifecycleError("illegal signing-key lifecycle transition")
-        successor = LocalSigningMetadata(
-            current.security_profile, current.trust_domain, current.provider_role,
-            current.credential_semantic_role, current.credential_id, current.provider_namespace,
-            current.key_handle, current.key_version, current.lifecycle_namespace,
-            current.lifecycle_generation + 1, target, current.public_key,
-            current.protected_private_material_reference,
+        current = _read_record(_record_path(root, role), security, role)
+        return _transition_exact_locked(
+            root, security, role, current.credential_identity(),
+            current.lifecycle_generation, target,
         )
-        _replace_record(path, _encode_record(successor))
-        return successor
+
+
+@dataclass(frozen=True, slots=True)
+class _RotationRecord:
+    operation_id: str
+    request_mode: str
+    requested_key_material_identity: str | None
+    old: LocalSigningMetadata
+    retained: LocalSigningMetadata
+    successor: LocalSigningMetadata
+    final_retained: LocalSigningMetadata | None = None
+
+
+def _rotation_document(
+    operation_id: str,
+    request_mode: str,
+    requested_key_material_identity: str | None,
+    role: ProviderRole,
+    old: LocalSigningMetadata,
+    retained: LocalSigningMetadata,
+    successor: LocalSigningMetadata,
+    *,
+    completed: bool = False,
+    final_retained: LocalSigningMetadata | None = None,
+) -> bytes:
+    value = {
+        "schema": "cryptohunter.production-local-signing-rotation",
+        "version": 1,
+        "operation_id": operation_id,
+        "request_mode": request_mode,
+        "requested_key_material_identity": requested_key_material_identity,
+        "role": role.value,
+        "old": base64.b64encode(_encode_record(old)).decode("ascii"),
+        "retained": base64.b64encode(_encode_record(retained)).decode("ascii"),
+        "successor": base64.b64encode(_encode_record(successor)).decode("ascii"),
+    }
+    if completed:
+        value["completion_state"] = "COMPLETED"
+        value["final_retained"] = base64.b64encode(
+            _encode_record(final_retained if final_retained is not None else retained)
+        ).decode("ascii")
+    return (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode()
+
+
+def _read_rotation_intent(
+    path: Path,
+    security: SecurityProfileIdentity,
+    role: ProviderRole,
+    *,
+    completed: bool = False,
+) -> _RotationRecord:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+        expected_fields = {
+            "schema", "version", "operation_id", "request_mode",
+            "requested_key_material_identity", "role", "old", "retained", "successor"
+        }
+        if completed:
+            expected_fields.update({"completion_state", "final_retained"})
+        if type(value) is not dict or set(value) != expected_fields:
+            raise ValueError
+        if (
+            value["schema"] != "cryptohunter.production-local-signing-rotation"
+            or value["version"] != 1
+            or value["role"] != role.value
+            or (completed and value["completion_state"] != "COMPLETED")
+            or value["request_mode"] not in {"GENERATED", "EXPLICIT"}
+            or (
+                value["request_mode"] == "GENERATED"
+                and value["requested_key_material_identity"] is not None
+            )
+            or (
+                value["request_mode"] == "EXPLICIT"
+                and type(value["requested_key_material_identity"]) is not str
+            )
+        ):
+            raise ValueError
+        operation_id = value["operation_id"]
+        _rotation_operation_token(operation_id)
+        records = tuple(
+            _decode_record(
+                base64.b64decode(value[name], validate=True),
+                expected_security=security,
+                expected_role=role,
+            )
+            for name in ("old", "retained", "successor")
+        )
+        completed_retained = (
+            _decode_record(
+                base64.b64decode(value["final_retained"], validate=True),
+                expected_security=security,
+                expected_role=role,
+            )
+            if completed
+            else None
+        )
+    except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise LocalSigningCustodyError("rotation intent unavailable/corrupt") from exc
+    old, retained, successor = records
+    if (
+        retained.credential_identity() != old.credential_identity()
+        or retained.lifecycle_state is not SigningKeyLifecycle.VERIFY_ONLY
+        or retained.lifecycle_generation != old.lifecycle_generation + 1
+        or successor.lifecycle_state is not SigningKeyLifecycle.ACTIVE
+        or successor.lifecycle_generation != 1
+        or successor.key_version != old.key_version + 1
+        or (
+            value["requested_key_material_identity"] is not None
+            and value["requested_key_material_identity"]
+            != successor.key_material_identity
+        )
+    ):
+        raise LocalSigningCustodyError("rotation intent unavailable/corrupt")
+    if completed_retained is not None:
+        if (
+            completed_retained.lifecycle_state is SigningKeyLifecycle.ACTIVE
+            or not _same_or_legal_lifecycle_descendant(completed_retained, old)
+        ):
+            raise LocalSigningCustodyError("completed rotation lifecycle is corrupt")
+    return _RotationRecord(
+        operation_id=operation_id,
+        request_mode=value["request_mode"],
+        requested_key_material_identity=value["requested_key_material_identity"],
+        old=old,
+        retained=retained,
+        successor=successor,
+        final_retained=completed_retained,
+    )
+
+
+def _validate_rotation_request(
+    *,
+    stored_operation_id: str,
+    stored_request_mode: str,
+    stored_requested_key_material_identity: str | None,
+    operation_id: str,
+    private_seed: bytes | None,
+) -> None:
+    requested_mode = "GENERATED" if private_seed is None else "EXPLICIT"
+    requested_identity = (
+        None
+        if private_seed is None
+        else public_key_material_identity(
+            Ed25519PrivateKey.from_private_bytes(private_seed)
+            .public_key()
+            .public_bytes_raw()
+        )
+    )
+    if (
+        stored_operation_id != operation_id
+        or stored_request_mode != requested_mode
+        or stored_requested_key_material_identity != requested_identity
+    ):
+        raise LocalSigningProvisioningConflict(
+            "rotation operation identity is bound to a different request"
+        )
+
+
+def _retained_rotation_state(
+    root: Path,
+    security: SecurityProfileIdentity,
+    role: ProviderRole,
+    baseline: LocalSigningMetadata,
+) -> LocalSigningMetadata:
+    """Publish a missing baseline or preserve its sole legal descendant."""
+
+    path = _retained_path(root, role, baseline.credential_identity())
+    if not path.exists():
+        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        if not _write_new_record(path, _encode_record(baseline)):
+            raise LocalSigningCustodyError("retained lifecycle publication conflict")
+        return baseline
+    existing = _read_record(path, security, role)
+    immutable_equal = (
+        existing.credential_identity() == baseline.credential_identity()
+        and existing.public_key == baseline.public_key
+        and existing.protected_private_material_reference
+        == baseline.protected_private_material_reference
+    )
+    exact_baseline = (
+        existing.lifecycle_state is SigningKeyLifecycle.VERIFY_ONLY
+        and existing.lifecycle_generation == baseline.lifecycle_generation
+    )
+    revoked_descendant = (
+        existing.lifecycle_state is SigningKeyLifecycle.REVOKED
+        and existing.lifecycle_generation == baseline.lifecycle_generation + 1
+    )
+    if not immutable_equal or not (exact_baseline or revoked_descendant):
+        raise LocalSigningCustodyError("retained lifecycle state conflicts with rotation")
+    return existing
+
+
+def _publish_or_preserve_lifecycle_state(
+    root: Path,
+    security: SecurityProfileIdentity,
+    role: ProviderRole,
+    expected: LocalSigningMetadata,
+) -> LocalSigningMetadata:
+    """Publish an authoritative state or preserve only its legal descendant."""
+
+    path = _retained_path(root, role, expected.credential_identity())
+    if not path.exists():
+        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        if not _write_new_record(path, _encode_record(expected)):
+            raise LocalSigningCustodyError("retained lifecycle publication conflict")
+        return expected
+    existing = _read_record(path, security, role)
+    if not _same_or_legal_lifecycle_descendant(existing, expected):
+        raise LocalSigningCustodyError("retained lifecycle state conflicts with rotation")
+    return existing
+
+
+def _same_or_legal_lifecycle_descendant(
+    actual: LocalSigningMetadata, ancestor: LocalSigningMetadata
+) -> bool:
+    immutable_equal = (
+        actual.credential_identity() == ancestor.credential_identity()
+        and actual.public_key == ancestor.public_key
+        and actual.protected_private_material_reference
+        == ancestor.protected_private_material_reference
+    )
+    if not immutable_equal:
+        return False
+    if (
+        actual.lifecycle_state is ancestor.lifecycle_state
+        and actual.lifecycle_generation == ancestor.lifecycle_generation
+    ):
+        return True
+    generation_delta = actual.lifecycle_generation - ancestor.lifecycle_generation
+    if ancestor.lifecycle_state is SigningKeyLifecycle.ACTIVE:
+        return (
+            actual.lifecycle_state is SigningKeyLifecycle.VERIFY_ONLY
+            and generation_delta == 1
+        ) or (
+            actual.lifecycle_state is SigningKeyLifecycle.REVOKED
+            and generation_delta in {1, 2}
+        )
+    return (
+        ancestor.lifecycle_state is SigningKeyLifecycle.VERIFY_ONLY
+        and actual.lifecycle_state is SigningKeyLifecycle.REVOKED
+        and generation_delta == 1
+    )
+
+
+def _cleanup_rotation_artifacts(
+    root: Path,
+    role: ProviderRole,
+    fault_injector: Callable[[str], None] | None,
+) -> None:
+    """Idempotently remove transient files and durably record their absence."""
+
+    intent, retained_prepared, successor_prepared = _rotation_paths(root, role)
+    retained_prepared.unlink(missing_ok=True)
+    if fault_injector is not None:
+        fault_injector("CLEANUP_AFTER_RETAINED_PREPARED")
+    successor_prepared.unlink(missing_ok=True)
+    if fault_injector is not None:
+        fault_injector("CLEANUP_AFTER_SUCCESSOR_PREPARED")
+    intent.unlink(missing_ok=True)
+    if fault_injector is not None:
+        fault_injector("CLEANUP_AFTER_INTENT_UNLINK")
+    _fsync_directory(intent.parent)
+    if fault_injector is not None:
+        fault_injector("CLEANUP_AFTER_FSYNC")
+
+
+def _recover_rotation_locked(
+    root: Path,
+    secret_store: NativeKeyringSigningSecretAdministrator,
+    security: SecurityProfileIdentity,
+    role: ProviderRole,
+    operation_id: str,
+    private_seed: bytes | None,
+    fault_injector: Callable[[str], None] | None,
+) -> LocalSigningMetadata | None:
+    """Deterministically roll back an unmaterialized intent or finish its vN+1."""
+
+    intent, retained_prepared, successor_prepared = _rotation_paths(root, role)
+    if not intent.exists():
+        return None
+    rotation = _read_rotation_intent(intent, security, role)
+    _validate_rotation_request(
+        stored_operation_id=rotation.operation_id,
+        stored_request_mode=rotation.request_mode,
+        stored_requested_key_material_identity=(
+            rotation.requested_key_material_identity
+        ),
+        operation_id=operation_id,
+        private_seed=private_seed,
+    )
+    old = rotation.old
+    retained = rotation.retained
+    successor = rotation.successor
+    current_path = _record_path(root, role)
+    current = _read_record(current_path, security, role)
+    secret = secret_store.read_authority_secret(
+        successor.protected_private_material_reference
+    )
+    if (
+        current.credential_identity() == old.credential_identity()
+        and not _same_or_legal_lifecycle_descendant(current, old)
+    ):
+        raise LocalSigningCustodyError(
+            "rotation predecessor lifecycle is contradictory"
+        )
+    if current.credential_identity() == old.credential_identity() and secret is None:
+        retained_prepared.unlink(missing_ok=True)
+        successor_prepared.unlink(missing_ok=True)
+        intent.unlink()
+        _fsync_directory(intent.parent)
+        return None
+    if current.credential_identity() not in {
+        old.credential_identity(), successor.credential_identity()
+    }:
+        raise LocalSigningCustodyError("rotation current record is contradictory")
+    if secret is None:
+        raise LocalSigningCustodyError("rotation successor secret unavailable")
+    _load_private_key(successor, secret_store)
+    # Prepared records are not authoritative.  The current-record replace below
+    # is the logical linearization point; recovery holds the same process lock.
+    if current.credential_identity() == old.credential_identity():
+        # Before publication, current is the sole lifecycle authority.  The
+        # planned VERIFY_ONLY record is used only when current is still the
+        # exact ACTIVE snapshot.  A concurrent admin transition has already
+        # consumed that lifecycle step and must be preserved byte-for-byte.
+        final_predecessor = retained if current == old else current
+        _replace_record(successor_prepared, _encode_record(successor))
+        _replace_record(retained_prepared, _encode_record(final_predecessor))
+        _replace_record(current_path, _encode_record(successor))
+    else:
+        final_predecessor = retained
+    final_retained = _publish_or_preserve_lifecycle_state(
+        root, security, role, final_predecessor
+    )
+    completed_path = _completed_rotation_path(root, security, role, operation_id)
+    completed_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    completed_payload = _rotation_document(
+        operation_id,
+        rotation.request_mode,
+        rotation.requested_key_material_identity,
+        role,
+        old,
+        retained,
+        successor,
+        completed=True,
+        final_retained=final_retained,
+    )
+    if completed_path.exists():
+        if completed_path.read_bytes() != completed_payload:
+            raise LocalSigningCustodyError("completed rotation record conflicts")
+    elif not _write_new_record(completed_path, completed_payload):
+        raise LocalSigningCustodyError("completed rotation publication conflict")
+    if fault_injector is not None:
+        fault_injector("R6_COMPLETED")
+    _cleanup_rotation_artifacts(root, role, fault_injector)
+    return successor
+
+
+def _completed_rotation_replay(
+    root: Path,
+    security: SecurityProfileIdentity,
+    role: ProviderRole,
+    operation_id: str,
+    private_seed: bytes | None,
+    fault_injector: Callable[[str], None] | None,
+) -> LocalSigningMetadata | None:
+    path = _completed_rotation_path(root, security, role, operation_id)
+    if not path.exists():
+        return None
+    completed_rotation = _read_rotation_intent(
+        path, security, role, completed=True
+    )
+    _validate_rotation_request(
+        stored_operation_id=completed_rotation.operation_id,
+        stored_request_mode=completed_rotation.request_mode,
+        stored_requested_key_material_identity=(
+            completed_rotation.requested_key_material_identity
+        ),
+        operation_id=operation_id,
+        private_seed=private_seed,
+    )
+    retained = completed_rotation.retained
+    successor = completed_rotation.successor
+    final_retained = completed_rotation.final_retained
+    if final_retained is None:
+        raise LocalSigningCustodyError("completed rotation result is incomplete")
+    retained_path = _retained_path(root, role, retained.credential_identity())
+    if retained_path.exists():
+        authority_retained = _read_record(retained_path, security, role)
+    else:
+        retained_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        if not _write_new_record(retained_path, _encode_record(final_retained)):
+            raise LocalSigningCustodyError("retained lifecycle publication conflict")
+        authority_retained = final_retained
+    if not _same_or_legal_lifecycle_descendant(
+        authority_retained, final_retained
+    ):
+        raise LocalSigningCustodyError(
+            "retained lifecycle conflicts with completed rotation"
+        )
+    _, authority_successor = _resolve_credential_record(
+        root, security, role, successor.credential_identity()
+    )
+    if not _same_or_legal_lifecycle_descendant(authority_successor, successor):
+        raise LocalSigningCustodyError("completed rotation result conflicts with custody")
+    intent, _, _ = _rotation_paths(root, role)
+    if intent.exists() or intent.is_symlink():
+        pending = _read_rotation_intent(intent, security, role)
+        if (
+            pending.operation_id != completed_rotation.operation_id
+            or pending.request_mode != completed_rotation.request_mode
+            or pending.requested_key_material_identity
+            != completed_rotation.requested_key_material_identity
+            or pending.old != completed_rotation.old
+            or pending.retained != completed_rotation.retained
+            or pending.successor != completed_rotation.successor
+        ):
+            raise LocalSigningCustodyError(
+                "pending intent conflicts with completed rotation"
+            )
+    _cleanup_rotation_artifacts(root, role, fault_injector)
+    return successor
 
 
 def rotate_local_freshness_signing_authority(
@@ -804,9 +1393,19 @@ def rotate_local_freshness_signing_authority(
     *,
     security: SecurityProfileIdentity,
     role: ProviderRole,
+    rotation_operation_id: str,
     private_seed: bytes | None = None,
+    fault_injector: Callable[[str], None] | None = None,
 ) -> LocalSigningMetadata:
-    """Offline planned rotation: retain old VERIFY_ONLY, publish new ACTIVE."""
+    """Recoverable planned rotation with the current replace as commit point.
+
+    ``fault_injector`` is a deterministic test hook called at R0..R7.  An
+    exception models abrupt termination.  R0--R2 have no durable successor
+    secret and may discard the tentative generated identity before repeating
+    the same operation.  From R3 the intent is recoverable and the exact
+    successor is finished.  A durable completion record makes R7 replay the
+    exact result even when authority-generated key material was requested.
+    """
 
     freshness_roles = {
         ProviderRole.FRESHNESS_AUTHORITY_FINALIZATION_SIGNING,
@@ -814,6 +1413,7 @@ def rotate_local_freshness_signing_authority(
     }
     root = _validate_directory(directory, create=False)
     security = _snapshot_security(security)
+    _rotation_operation_token(rotation_operation_id)
     if type(role) is not ProviderRole or role not in freshness_roles:
         raise LocalSigningLifecycleError("rotation is limited to freshness signing roles")
     if (
@@ -825,7 +1425,36 @@ def rotate_local_freshness_signing_authority(
         type(private_seed) is not bytes or len(private_seed) != 32
     ):
         raise LocalSigningProvisioningConflict("invalid Ed25519 provisioning material")
+    if fault_injector is not None and not callable(fault_injector):
+        raise TypeError("fault injector must be callable")
+
+    def cut(name: str) -> None:
+        if fault_injector is not None:
+            fault_injector(name)
+
     with _custody_lock(root, exclusive=True):
+        cut("R0")
+        replayed = _completed_rotation_replay(
+            root,
+            security,
+            role,
+            rotation_operation_id,
+            private_seed,
+            fault_injector,
+        )
+        if replayed is not None:
+            return replayed
+        recovered = _recover_rotation_locked(
+            root,
+            secret_store,
+            security,
+            role,
+            rotation_operation_id,
+            private_seed,
+            fault_injector,
+        )
+        if recovered is not None:
+            return recovered
         path = _record_path(root, role)
         current = _read_record(path, security, role)
         if current.lifecycle_state is not SigningKeyLifecycle.ACTIVE:
@@ -860,9 +1489,6 @@ def rotate_local_freshness_signing_authority(
             current.public_key,
             current.protected_private_material_reference,
         )
-        archive = root / f"{path.stem}.v{current.key_version}.verify-only.json"
-        if archive.exists() or not _write_new_record(archive, _encode_record(retained)):
-            raise LocalSigningProvisioningConflict("rotation archive already exists")
         unique = uuid.uuid4().hex
         canonical = _canonical_signing_identity(
             security, role, unique, key_version=current.key_version + 1
@@ -882,18 +1508,62 @@ def rotate_local_freshness_signing_authority(
             public_key,
             canonical.protected_private_material_reference,
         )
+        intent, retained_prepared, successor_prepared = _rotation_paths(root, role)
+        intent.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        request_mode = "GENERATED" if private_seed is None else "EXPLICIT"
+        requested_identity = (
+            None if private_seed is None else successor.key_material_identity
+        )
+        if not _write_new_record(
+            intent,
+            _rotation_document(
+                rotation_operation_id,
+                request_mode,
+                requested_identity,
+                role,
+                current,
+                retained,
+                successor,
+            ),
+        ):
+            raise LocalSigningProvisioningConflict("rotation already in progress")
+        cut("R1")
+        _replace_record(retained_prepared, _encode_record(retained))
+        cut("R2")
         secret_store.create_authority_secret(
             canonical.protected_private_material_reference,
             base64.b64encode(seed).decode("ascii"),
         )
-        try:
-            _replace_record(path, _encode_record(successor))
-        except Exception:
-            secret_store.delete_authority_secret(
-                canonical.protected_private_material_reference
-            )
-            archive.unlink(missing_ok=True)
-            raise
+        cut("R3")
+        _replace_record(successor_prepared, _encode_record(successor))
+        cut("R4")
+        # Logical linearization point.  Before this replace only old is
+        # authoritative; after it successor is current and old is retained.
+        _replace_record(path, _encode_record(successor))
+        cut("R5")
+        _retained_rotation_state(root, security, role, retained)
+        cut("R6")
+        completed_path = _completed_rotation_path(
+            root, security, role, rotation_operation_id
+        )
+        completed_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        if not _write_new_record(
+            completed_path,
+            _rotation_document(
+                rotation_operation_id,
+                request_mode,
+                requested_identity,
+                role,
+                current,
+                retained,
+                successor,
+                completed=True,
+            ),
+        ):
+            raise LocalSigningCustodyError("completed rotation publication conflict")
+        cut("R6_COMPLETED")
+        _cleanup_rotation_artifacts(root, role, fault_injector)
+        cut("R7")
         return successor
 
 
@@ -1011,29 +1681,15 @@ class _LocalSigningProviderBase:
         ):
             raise TypeError("historical verification requires exact values")
         with _custody_lock(self.__directory, exclusive=False):
-            metadata = _read_record(
-                _record_path(self.__directory, self.__role),
+            if _pending_rotation(self.__directory, self.__role):
+                raise LocalSigningCustodyError("rotation recovery required")
+            _, metadata = _resolve_credential_record(
+                self.__directory,
                 self.__security,
                 self.__role,
+                expected_snapshot.credential_identity,
             )
             current = self._snapshot(metadata)
-            if current.credential_identity != expected_snapshot.credential_identity:
-                path = _record_path(self.__directory, self.__role)
-                archives = self.__directory.glob(
-                    f"{path.stem}.v*.verify-only.json"
-                )
-                matches = []
-                for archive in archives:
-                    candidate = _read_record(
-                        archive, self.__security, self.__role
-                    )
-                    if (
-                        candidate.credential_identity()
-                        == expected_snapshot.credential_identity
-                    ):
-                        matches.append(self._snapshot(candidate))
-                if len(matches) == 1:
-                    current = matches[0]
             same_credential_facts = (
                 current.provider_identity == expected_snapshot.provider_identity
                 and current.credential_identity
@@ -1060,6 +1716,8 @@ class _LocalSigningProviderBase:
             return True
 
     def _load_material(self) -> tuple[LocalSigningMetadata, Ed25519PrivateKey]:
+        if _pending_rotation(self.__directory, self.__role):
+            raise LocalSigningCustodyError("rotation recovery required")
         metadata = _read_record(
             _record_path(self.__directory, self.__role), self.__security, self.__role
         )
@@ -1143,5 +1801,6 @@ __all__ = [
     "LocalSigningProvisioningConflict", "SigningKeyLifecycle",
     "NativeKeyringSigningSecretAdministrator", "NativeKeyringSigningSecretReader",
     "provision_local_signing_authority", "rotate_local_freshness_signing_authority",
+    "transition_local_signing_credential_lifecycle",
     "transition_local_signing_lifecycle",
 ]
