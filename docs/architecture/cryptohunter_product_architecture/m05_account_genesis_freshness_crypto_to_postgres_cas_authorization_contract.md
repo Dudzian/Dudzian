@@ -1,0 +1,481 @@
+# M0.5 AccountGenesis freshness crypto-to-PostgreSQL CAS authorization contract
+
+Ten plik jest deterministyczną, kompletną projekcją `m05_account_genesis_freshness_crypto_to_postgres_cas_authorization_contract.json`. JSON jest źródłem prawdy.
+
+```json
+{
+  "artifact": "M05_ACCOUNT_GENESIS_FRESHNESS_CRYPTO_TO_POSTGRES_CAS_AUTHORIZATION_CONTRACT",
+  "iteration": "CANONICAL DESIGN / FREEZE ONLY",
+  "principal_result": "FRESHNESS_CRYPTO_TO_POSTGRES_CAS_AUTHORIZATION_MODEL_SELECTED",
+  "problem_statement": {
+    "gap": "How an authority-owned PostgreSQL mutation boundary obtains non-forgeable evidence that exact Ed25519 verification succeeded without runtime raw DML or a caller assertion.",
+    "required_authorities": {
+      "postgresql": [
+        "SERIALIZABLE full-document CAS",
+        "current authoritative state",
+        "retained decisions/history",
+        "CAS-time lifecycle ACTIVE eligibility",
+        "receipt persistence"
+      ],
+      "cryptography": [
+        "CHA proposer authentication",
+        "FreshnessAuthority authoritative document signature",
+        "FreshnessFinalizationReceipt V1"
+      ]
+    },
+    "runtime_raw_authority_dml": false,
+    "caller_constructible_verification_assertion": false
+  },
+  "threat_model": {
+    "protected_against": [
+      "accidental or malicious caller holding freshness_runtime database credentials",
+      "compromised application request path without verifier OS/database credentials",
+      "forged caller fields",
+      "replay of verification evidence for another operation",
+      "stale lifecycle state",
+      "cross-authority reuse",
+      "cross-environment reuse",
+      "cross-trust-domain reuse",
+      "valid-signature/wrong-identity laundering"
+    ],
+    "out_of_scope_for_PRODUCTION_LOCAL": [
+      "PostgreSQL schema owner",
+      "database superuser",
+      "host root",
+      "coordinated full-host compromise or rollback"
+    ],
+    "rule": "No protection against an out-of-scope principal is implied; SERVER_READY independence is not claimed."
+  },
+  "discovery": {
+    "reusable_patterns": [
+      {
+        "source": "PostgreSQL EntitlementRegistry V5",
+        "reusable": [
+          "separate exact roles and OIDs",
+          "zero PUBLIC authority",
+          "SECURITY DEFINER fixed search_path",
+          "code ↔ pg_proc.prosrc ↔ manifest qualification",
+          "SERIALIZABLE transactions"
+        ],
+        "not_reusable": "It has no Ed25519 verification-to-mutation authorization boundary."
+      },
+      {
+        "source": "local signing custody",
+        "reusable": [
+          "typed CredentialRoleIdentity",
+          "key_version distinct from lifecycle_generation",
+          "role separation",
+          "Ed25519 canonical verification helpers"
+        ],
+        "not_reusable": "Signing custody is not verifier-attestation authority and exposes no DB-authenticated semantic verification admission."
+      },
+      {
+        "source": "authenticated issuer history/checkpoint",
+        "reusable": [
+          "independent currently-trusted checkpoint requirement",
+          "no revoked-key self-corroboration"
+        ],
+        "not_reusable": "It does not authorize PostgreSQL freshness mutations."
+      },
+      {
+        "source": "CHA attempt store",
+        "reusable": [
+          "prepared-before-send and exact crash recovery patterns"
+        ],
+        "not_reusable": "Its in-process authorization object is not non-forgeable evidence against a holder of runtime DB credentials."
+      },
+      {
+        "source": "root-proof substrate",
+        "reusable": [
+          "provider/credential role typing and fail-closed capability declarations"
+        ],
+        "not_reusable": "It does not supply the missing crypto-to-SQL boundary."
+      }
+    ],
+    "postgresql_16_stock": "No native Ed25519 verification SQL primitive was found.",
+    "pgcrypto_1_3": "Provides digest, HMAC, symmetric encryption and OpenPGP operations; installed function inventory contains no Ed25519 signature verification primitive.",
+    "external_ed25519_extension_required_for_model_A": true,
+    "external_extension_selected": false
+  },
+  "rejected_models": {
+    "RUNTIME_RAW_DML": {
+      "status": "REJECTED",
+      "reason": "A runtime credential can bypass every Python verification and lifecycle path."
+    },
+    "CALLER_BOOLEAN": {
+      "status": "REJECTED",
+      "examples": [
+        "verified=true",
+        "signature_valid=true",
+        "trusted=true",
+        "ACTIVE=true"
+      ],
+      "reason": "Caller assertion is not cryptographic proof."
+    },
+    "CALLER_TOKEN_WITHOUT_AUTHORITY": {
+      "status": "REJECTED",
+      "examples": [
+        "verified_token",
+        "verification_id",
+        "prepared_id",
+        "random UUID"
+      ],
+      "reason": "Runtime-mintable, runtime-writable or substitutable identifiers are not authority evidence."
+    },
+    "SECURITY_DEFINER_ALONE": {
+      "status": "REJECTED",
+      "reason": "It protects tables but cannot prove that caller-side Ed25519 verification occurred."
+    },
+    "SESSION_LOCAL_ASSERTION": {
+      "status": "REJECTED",
+      "examples": [
+        "GUC",
+        "temporary table",
+        "session variable",
+        "advisory lock",
+        "connection-local flag"
+      ],
+      "reason": "Runtime can manufacture the state; locality is not cryptographic authority."
+    },
+    "GENERIC_VERIFIER_SIGN_OR_MAC": {
+      "status": "REJECTED",
+      "reason": "A generic sign(bytes) or mac(bytes) capability lets runtime authorize unreviewed semantics."
+    },
+    "CIRCULAR_FRESHNESS_SELF_ATTESTATION": {
+      "status": "REJECTED",
+      "reason": "The caller-controlled mutation path cannot establish its own verification authority."
+    }
+  },
+  "considered_models": {
+    "A_VERIFY_INSIDE_POSTGRESQL": {
+      "status": "NOT_SELECTED",
+      "trust_boundary": "CAS function and an Ed25519-capable PostgreSQL extension",
+      "new_secrets": 0,
+      "new_processes": 0,
+      "new_extensions": 1,
+      "replay": "Could verify every new CAS invocation; exact accepted replay uses retained decision.",
+      "crash": "Simple single transaction after canonical preimage reconstruction.",
+      "lifecycle": "DB can recheck retained lifecycle head in the same transaction.",
+      "qualification": "Must pin extension name/version/library/provenance, functions, owners, ACLs and upgrade path.",
+      "limitations": "Stock PostgreSQL 16 and pgcrypto 1.3 do not provide the required Ed25519 primitive; selecting an unreviewed native extension enlarges the database TCB and deployment surface.",
+      "server_ready": "Would require separately accepted extension supply-chain and operational qualification."
+    },
+    "B_HMAC_VERIFIER_EVIDENCE": {
+      "status": "NOT_SELECTED",
+      "trust_boundary": "Isolated verifier plus DB-held HMAC secret reachable only inside reviewed SECURITY DEFINER code.",
+      "new_secrets": 1,
+      "new_processes": 1,
+      "new_extensions": 0,
+      "replay": "MAC must bind exact operation and be consumed once.",
+      "crash": "Requires secret-consistent recovery, rotation, backup and prepared evidence cleanup.",
+      "lifecycle": "MAC proves only crypto verification; CAS still rechecks DB lifecycle.",
+      "qualification": "Must prove runtime cannot read secret or invoke generic MAC and qualify secret version/lifecycle.",
+      "limitations": "Creates a new verifier-attestation secret authority and recursive lifecycle/history obligations; existing signing keys cannot be reused.",
+      "server_ready": "Secret must move to independently administered/HSM-backed boundary or equivalent."
+    },
+    "C_ISOLATED_LOCAL_VERIFIER_PROCESS": {
+      "status": "SELECTED_AS_TRANSPORT_AND_CRYPTO_AUTHORITY",
+      "trust_boundary": "Dedicated same-host OS principal and narrow semantic verifier process; runtime cannot access its DB credential or IPC administration.",
+      "new_secrets": 0,
+      "new_processes": 1,
+      "new_extensions": 0,
+      "replay": "Verifier writes exact prepared record; runtime receives only opaque lookup identity and cannot mint the row.",
+      "crash": "Verification without prepared commit has no authority; committed preparation is recoverable and exact-bound.",
+      "lifecycle": "Verifier establishes signature validity only; CAS rechecks lifecycle in serialization order.",
+      "qualification": "Pin OS/service identity, peer-auth/database role, socket ownership/mode, executable/config provenance and narrow API.",
+      "limitations": "Host root can impersonate or extract credentials; this is outside PRODUCTION_LOCAL."
+    },
+    "D_TWO_PHASE_DB_PREPARATION": {
+      "status": "SELECTED_AS_DURABLE_EVIDENCE_AND_CONSUMPTION_MODEL",
+      "trust_boundary": "Dedicated freshness_crypto_verifier DB role alone may execute prepare_verified_freshness_candidate; freshness_runtime alone may execute compare_and_advance consuming a prepared row.",
+      "new_secrets": 0,
+      "new_processes": 0,
+      "new_extensions": 0,
+      "replay": "Prepared row is one-time consumable for a new decision; exact retry after acceptance resolves retained decision/receipt without new verification.",
+      "crash": "Prepared records survive verifier/runtime restart and cannot authorize a substituted candidate.",
+      "lifecycle": "Preparation does not assert ACTIVE; CAS locks and validates latest retained lifecycle records.",
+      "qualification": "Exact roles/OIDs, current_user/session_user, no memberships, function source/owner/ACL/search_path, table ACL and prepared-record constraints are qualified.",
+      "limitations": "Schema owner/superuser/host root can forge preparation and remain out of scope."
+    }
+  },
+  "selected_model": {
+    "name": "ISOLATED_SEMANTIC_VERIFIER_WITH_DB_AUTHENTICATED_ONE_TIME_PREPARATION",
+    "composition": [
+      "C_ISOLATED_LOCAL_VERIFIER_PROCESS",
+      "D_TWO_PHASE_DB_PREPARATION"
+    ],
+    "selection_reason": [
+      "No new cryptographic key or PostgreSQL extension is required.",
+      "PostgreSQL authenticates a distinct verifier principal that runtime cannot impersonate within the stated threat model.",
+      "Only the verifier principal can create the durable prepared evidence; runtime has zero raw mutation DML.",
+      "CAS-time lifecycle authority remains wholly in PostgreSQL.",
+      "The two commits are intentionally not one distributed transaction: preparation proves signatures, CAS independently decides freshness."
+    ],
+    "nonforgeable_basis": "PostgreSQL authenticates the exact login role in session_user; inside SECURITY DEFINER current_user is the dedicated reviewed function owner. Exact EXECUTE ACL, absent memberships and a credential held only by the isolated verifier OS principal prevent freshness_runtime from invoking preparation. preparation_id is lookup identity only, never authority evidence.",
+    "not_selected_as_new_external_infrastructure": "The verifier is a same-host PRODUCTION_LOCAL component, not recurring paid or managed external infrastructure."
+  },
+  "authority_roles": {
+    "freshness_schema_owner": "offline owner; no runtime use",
+    "freshness_admin": "offline provisioning and reviewed lifecycle administration only",
+    "freshness_crypto_verifier": "exact LOGIN role; may directly EXECUTE only prepare_verified_freshness_candidate and read minimum immutable inputs; no raw table DML, no CAS execute, role membership or SET ROLE path",
+    "freshness_runtime": "exact LOGIN role; may directly EXECUTE only compare_and_advance/read functions; no prepare execute, no raw table DML, role membership or SET ROLE path",
+    "freshness_reader": "read-only reviewed relations",
+    "os_freshness_crypto_verifier": "owns verifier process and its DB credential/socket; distinct from application runtime OS principal",
+    "freshness_function_owner": "dedicated NOLOGIN owner of reviewed SECURITY DEFINER mutation functions; distinct from schema owner, admin, verifier, runtime and reader"
+  },
+  "verifier_api": {
+    "operation": "verify_exact_freshness_candidate_and_prepare",
+    "generic_sign_or_mac_available": false,
+    "independently_reconstructs": [
+      "closed-schema canonical payload and digest",
+      "proposer authentication preimage",
+      "authoritative document authentication preimage",
+      "FreshnessFinalizationReceipt V1 preimage",
+      "OriginalDecisionIdentity"
+    ],
+    "verifies": [
+      "exact CHA proposer Ed25519 signature",
+      "exact authoritative document Ed25519 signature",
+      "exact FreshnessFinalizationReceipt V1 Ed25519 signature",
+      "identity/key/version/material/role/domain binding",
+      "signed proposer_identity exactly equals authoritative credential semantic identity",
+      "proposer semantic role equals ACCOUNT_GENESIS_FRESHNESS_PROPOSER_SIGNING_V1",
+      "finalization semantic role equals ACCOUNT_GENESIS_FRESHNESS_AUTHORITY_FINALIZATION_SIGNING_V1",
+      "proposer and finalization raw Ed25519 public key material identities are unequal"
+    ],
+    "does_not_assert": [
+      "current ACTIVE lifecycle",
+      "current predecessor",
+      "CAS winner",
+      "freshness acceptance"
+    ],
+    "fail_closed_before_preparation": [
+      "proposer_identity differs from authoritative credential semantic identity",
+      "either semantic role differs from its exact canonical value",
+      "proposer and finalization credentials resolve to the same raw Ed25519 public key material identity"
+    ]
+  },
+  "evidence_schema": {
+    "type": "PreparedFreshnessCryptoVerificationV1",
+    "internal_only_not_wire_schema": true,
+    "exact_fields": [
+      "schema_version",
+      "security_profile",
+      "environment",
+      "trust_domain",
+      "authority_id",
+      "operation_type",
+      "expected_predecessor_generation",
+      "expected_predecessor_document_digest",
+      "expected_predecessor_complete_semantic_head_digest",
+      "proposed_document_digest",
+      "original_decision_identity",
+      "proposer_identity",
+      "proposer_credential_role_identity",
+      "proposer_key_version",
+      "proposer_lifecycle_generation_observed_for_key_binding_only",
+      "proposer_public_key_material_identity",
+      "proposer_authentication_digest",
+      "finalization_credential_role_identity",
+      "finalization_key_version",
+      "finalization_lifecycle_generation_observed_for_key_binding_only",
+      "finalization_public_key_material_identity",
+      "authoritative_document_authentication_digest",
+      "receipt_id",
+      "receipt_canonical_digest",
+      "finalization_request_id",
+      "preparation_id",
+      "verifier_authority_identity",
+      "verifier_authority_version"
+    ],
+    "excluded_assertions": [
+      "signature_valid",
+      "verified",
+      "trusted",
+      "ACTIVE"
+    ],
+    "binding_rule": "Every field is derived by the verifier from exact canonical inputs or authoritative immutable credential identity; SQL recomputes/compares every CAS-relevant digest and identity before consumption.",
+    "cross_scope_reuse": "REJECT",
+    "substitution": "REJECT",
+    "proposer_identity_binding": "signed proposer_identity MUST exactly equal the authority-owned proposer credential semantic identity CryptoHunterAccountAuthority; a signature made by key A over identity B cannot authorize credential A.",
+    "semantic_roles": {
+      "proposer": "ACCOUNT_GENESIS_FRESHNESS_PROPOSER_SIGNING_V1",
+      "finalization": "ACCOUNT_GENESIS_FRESHNESS_AUTHORITY_FINALIZATION_SIGNING_V1",
+      "arbitrary_text_allowed": false
+    },
+    "cross_role_key_material_invariant": {
+      "rule": "proposer_public_key_material_identity MUST NOT equal finalization_public_key_material_identity",
+      "same_exact_raw_ed25519_public_key_material": "REJECT_BEFORE_PREPARATION_AND_AT_CAS_QUALIFICATION",
+      "comparison_basis": "identity deterministically recomputed from exact canonical raw 32-byte Ed25519 public key material, not trusted stored labels",
+      "aliases_do_not_bypass": [
+        "different credential_id",
+        "different key_id",
+        "different key_version",
+        "different semantic role label"
+      ],
+      "retained_authority_requirement": "Future PostgreSQL credential/lifecycle authority MUST make simultaneous proposer/finalization registration or retained state using the same raw key material identity impossible within exact environment/trust_domain/authority_id scope."
+    }
+  },
+  "mutation_boundary": {
+    "preparation_function": "prepare_verified_freshness_candidate",
+    "preparation_caller": "inside SECURITY DEFINER: exact freshness_crypto_verifier LOGIN is session_user; exact freshness_function_owner is current_user",
+    "cas_function": "compare_and_advance",
+    "cas_caller": "inside SECURITY DEFINER: exact freshness_runtime LOGIN is session_user; exact freshness_function_owner is current_user",
+    "security": "Both are reviewed SECURITY DEFINER functions with fixed pg_catalog-only search_path, exact owners/ACLs, no PUBLIC execute and code ↔ pg_proc.prosrc ↔ manifest qualification.",
+    "runtime_raw_dml": false,
+    "verifier_raw_dml": false,
+    "admin_arbitrary_raw_dml": false,
+    "prepared_row_creation": "Only the SECURITY DEFINER preparation function invoked directly by exact verifier login session_user may create it; current_user is exact dedicated function owner. SQL trusts neither caller principal fields, verified flags nor caller-created tokens.",
+    "cas_consumption": "CAS locks exact unconsumed preparation, recomputes bindings, rechecks current predecessor and lifecycle heads, writes decision/document/receipt/current pointer, and marks preparation consumed in one SERIALIZABLE transaction.",
+    "invoker_authentication": {
+      "function_owner": "exact dedicated freshness_function_owner NOLOGIN role",
+      "inside_security_definer_current_user": "MUST equal persisted and catalog-qualified freshness_function_owner name/OID",
+      "inside_preparation_session_user": "MUST equal persisted and catalog-qualified freshness_crypto_verifier LOGIN name/OID",
+      "inside_cas_session_user": "MUST equal persisted and catalog-qualified freshness_runtime LOGIN name/OID",
+      "caller_supplied_principal_fields": "FORBIDDEN",
+      "public_execute": "FORBIDDEN",
+      "execute_acl": "direct exact caller only; no grant option",
+      "memberships": "No authority role may appear as roleid or member in pg_auth_members; no inherited or SET ROLE path."
+    },
+    "key_material_separation": "Preparation and CAS recompute exact raw public-key material identities, require proposer != finalization, and fail closed on retained credential/lifecycle aliasing."
+  },
+  "lifecycle_and_ordering": {
+    "authority": "PostgreSQL retained lifecycle history is the sole ACTIVE eligibility authority.",
+    "evidence_scope": "Preparation proves cryptographic validity only and never freezes lifecycle eligibility.",
+    "proposer_revoke_race": {
+      "revoke_before_CAS": "REJECT as invalid authentication/stale lifecycle; consume no new decision",
+      "CAS_before_revoke": "acceptance may commit with exact ACTIVE lifecycle generation recorded"
+    },
+    "proposer_rotation_race": {
+      "rotation_before_CAS": "old proposer preparation cannot authorize CAS",
+      "CAS_before_rotation": "acceptance may commit against old exact ACTIVE head"
+    },
+    "finalization_signer_race": {
+      "signer_loses_ACTIVE_before_CAS": "REJECT; no decision/receipt commit",
+      "CAS_before_transition": "acceptance may commit with exact ACTIVE signer lifecycle generation recorded"
+    }
+  },
+  "replay_semantics": {
+    "new_decision": "Preparation is one-time consumable by one exact OriginalDecisionIdentity and candidate.",
+    "concurrent_consumption": "Row lock plus SERIALIZABLE CAS permits at most one physical decision append.",
+    "preparation_replay_before_acceptance": "May retry consumption of the same unconsumed exact preparation; no substitution.",
+    "lost_response_after_acceptance": "Lookup retained decision and exact receipt by OriginalDecisionIdentity/finalization_request_id; no new preparation and no N+2.",
+    "different_candidate_or_scope": "Requires a distinct verifier preparation and remains subject to predecessor CAS."
+  },
+  "crash_semantics": [
+    {
+      "point": "verification succeeded, no DB evidence committed",
+      "result": "No authorization exists; repeat exact semantic verification."
+    },
+    {
+      "point": "prepared evidence committed, CAS not attempted",
+      "result": "Exact preparation remains durable and unconsumed; runtime may attempt exact CAS."
+    },
+    {
+      "point": "CAS started, not committed",
+      "result": "No decision and preparation remains unconsumed after rollback."
+    },
+    {
+      "point": "CAS committed, response lost",
+      "result": "Decision, receipt, current pointer and consumed preparation are durable; exact replay recovers them."
+    },
+    {
+      "point": "verifier restart",
+      "result": "No reconstruction from memory; read exact durable preparation or repeat verification only when no committed preparation exists."
+    },
+    {
+      "point": "PostgreSQL restart",
+      "result": "Durable preparation/decision state governs; no caller reconstruction."
+    }
+  ],
+  "failure_taxonomy": {
+    "invalid_cryptography": "INVALID_AUTHENTICATION or INVALID_DOCUMENT according to the frozen CAS contract; never UNAVAILABLE",
+    "verifier_unavailable": "UNAVAILABLE",
+    "database_unavailable": "UNAVAILABLE",
+    "stale_lifecycle": "INVALID_AUTHENTICATION / REQUIRE NEW PROPOSAL, or CAS_CONFLICT where exact predecessor already changed",
+    "corrupt_preparation_or_binding": "CORRUPT / fail closed"
+  },
+  "provisioning_and_qualification": {
+    "provisioning": [
+      "offline creation of exact roles/OIDs",
+      "dedicated verifier OS principal and service",
+      "local Unix socket or equally reviewed local channel",
+      "PostgreSQL peer/certificate authentication binding verifier service to freshness_crypto_verifier",
+      "no reusable secret exposed to runtime",
+      "dedicated NOLOGIN freshness_function_owner distinct from all callers",
+      "direct non-grantable EXECUTE ACLs only; PUBLIC revoked; zero authority-role memberships"
+    ],
+    "qualification": [
+      "per function, session_user equals exact permitted authenticated LOGIN role name/OID and current_user equals exact SECURITY DEFINER function owner name/OID",
+      "exact function owner is dedicated freshness_function_owner and distinct from schema owner/admin/verifier/runtime/reader",
+      "exact role names/OIDs and no role appears as roleid or member in pg_auth_members",
+      "runtime cannot SET ROLE to verifier and verifier cannot SET ROLE to runtime",
+      "PUBLIC has no EXECUTE; direct EXECUTE exists only for exact caller and is not grantable; no inherited EXECUTE",
+      "zero raw mutation DML for runtime/verifier/admin",
+      "exact schema/table/function/sequence owners and ACLs",
+      "function language/security-definer/search_path/config/arguments/return/source/manifest",
+      "prepared evidence columns/types/constraints/indexes and one-time consumption uniqueness",
+      "retained credential/lifecycle state enforces unique raw Ed25519 key material identity across proposer and finalization roles within exact scope",
+      "qualification recomputes public-key material identity from exact raw 32-byte Ed25519 public key and rejects stored-label mismatch or cross-role alias",
+      "exact canonical semantic roles and signed proposer_identity-to-authoritative-credential identity binding",
+      "no unexpected extensions; pgcrypto is not required by selected model",
+      "service executable/config/socket owner and mode",
+      "no generic verifier sign/MAC endpoint"
+    ],
+    "verifier_authority_lifecycle": "verifier_authority_identity and version are provisioned offline; version rotation is an explicit service/DB-role deployment ceremony; old unconsumed preparations are invalidated or deliberately retained by reviewed cutover policy; compromise revocation fails closed and historical accepted decisions rely on retained decision evidence, not verifier self-corroboration."
+  },
+  "production_local": {
+    "guarantees": [
+      "runtime DB credentials cannot raw-mutate authority relations",
+      "runtime application path cannot mint prepared crypto verification evidence",
+      "candidate/scope substitution and stale lifecycle are rejected",
+      "same-host multi-process crash recovery uses durable PostgreSQL evidence"
+    ],
+    "limitations": [
+      "host root can impersonate the verifier or steal its DB credential",
+      "database superuser/schema owner can forge or rewrite prepared evidence",
+      "coordinated full-host rollback remains undetected without independent checkpoint"
+    ],
+    "server_ready_migration": [
+      "move verifier identity/credential custody to independently administered service or hardware-backed workload identity",
+      "use mutually authenticated channel and remote attestation where required",
+      "add independent rollback/checkpoint authority",
+      "retain semantic API, exact preparation schema and CAS-time lifecycle recheck"
+    ]
+  },
+  "implementation_allowed": {
+    "canonical_model_selected": true,
+    "design_and_architecture_tests_only": true,
+    "postgresql_schema": false,
+    "postgresql_tables": false,
+    "sql_functions": false,
+    "verifier_service": false,
+    "FreshnessAuthority": false,
+    "RootProofIssuer": false,
+    "AccountGenesis_runtime_wiring": false
+  },
+  "preserved_flags": {
+    "FRESHNESS_AUTHORITY_PRODUCTION_LOCAL_SIGNING_CUSTODY_FOUNDATION_IMPLEMENTED": true,
+    "production_substrate_selected": true,
+    "production_substrate_implemented": false,
+    "FreshnessAuthority_implemented": false,
+    "FreshnessAuthority_implementation_allowed_after_iteration": false,
+    "ROOT_PROOF_ISSUER_IMPLEMENTED": false,
+    "PRODUCTION_LOCAL_RUNTIME_AVAILABLE": false,
+    "classification": "UNKNOWN",
+    "finding_scope": "CURRENT_TREE_ONLY",
+    "formal_project_advancement": "WITHHELD"
+  },
+  "cross_artifact_parity": {
+    "freshness_receipt_v1": "Referenced unchanged from CAS/finalization contract.",
+    "original_decision_identity": "Referenced unchanged from CAS/finalization contract.",
+    "key_version": "Typed key version remains distinct from lifecycle_generation.",
+    "lifecycle_generation": "PostgreSQL lineage generation remains the CAS-time eligibility reference.",
+    "CredentialRoleIdentity": "Referenced from root-proof substrate/local signing custody; not redefined.",
+    "receipt_atomicity": "Accepted decision and receipt remain one PostgreSQL transaction; preparation is prior evidence, not acceptance.",
+    "proposer_identity": "Signed proposer_identity remains CryptoHunterAccountAuthority and must equal authoritative credential semantic identity; it is not credential_id.",
+    "semantic_roles": "Exact existing CredentialSemanticRole values are referenced, not redefined as arbitrary text.",
+    "cross_role_key_material": "Existing custody role separation is strengthened to reject identical exact raw Ed25519 public key material across proposer/finalization roles."
+  }
+}
+```
