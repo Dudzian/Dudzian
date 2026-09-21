@@ -34,8 +34,10 @@ fields, and non-canonical attestation bytes fail closed.  The record digest
 binds the stream, sequence, predecessor, exact event identity, payload, and
 event digest.
 
-The immutable attested head binds the exact stream, sequence, record digest,
-role `HISTORY_ATTESTATION_SIGNING`, credential ID, and key version.  It contains
+The V2 immutable attested head binds the exact stream, sequence, record digest,
+and complete `CredentialRoleIdentity`: semantic role, credential identity,
+provider namespace, key handle/version, custody lifecycle namespace, and key
+material identity.  It contains
 canonical attestation bytes and signature, never a provider object.  New heads
 are obtained only through the history signing port; the local custody provider
 already permits signing only with `ACTIVE`.  `VERIFY_ONLY` remains suitable for
@@ -79,6 +81,12 @@ the verification authority passed here has the explicit precondition that it
 originates from the trusted composition root.  Satisfying the structural Python
 protocol is not presented as proof of trusted provenance.
 
+The reviewed domains are
+`CryptoHunter/M0.5/IssuerAuthenticatedHistoryHead/v2` and
+`CryptoHunter/M0.5/HistoricalHeadAcceptanceEvidence/v2`.  A V1 head or
+acceptance omitted the complete namespaced signer identity and is deliberately
+not promoted or interpreted as V2 evidence.
+
 Exact event retry returns the original record deterministically, including
 after a lost response.  The same event identity with a different payload is a
 conflict.  Expected-predecessor CAS means append/append and retry/append races
@@ -106,7 +114,7 @@ internal corruption cannot authorize a successor.
 
 `LocalCheckpoint` binds checkpoint ID, full stream identity (and therefore
 environment, trust domain and epoch), history sequence and authenticated head
-digest, signing credential ID/version, and checkpoint revision.  Advance uses
+digest, complete exact signing `CredentialRoleIdentity`, and checkpoint revision.  Advance uses
 expected-revision CAS.  Exact same-head replay is idempotent; lower sequence is
 rollback, and same sequence with a different digest or signer is split-brain.
 A higher sequence is acceptable only when `LocalCheckpointProvider.advance`
@@ -134,10 +142,10 @@ checkpoint the outcome is `STALE`; a fabricated matching value cannot produce
 `EXACT_COMMITTED`.
 
 Every non-replay checkpoint advance also atomically appends an authority-owned
-`HistoricalHeadAcceptanceEvidence`.  It binds the unguessable reference
+V2 `HistoricalHeadAcceptanceEvidence`.  It binds the unguessable reference
 checkpoint-authority instance identity, checkpoint revision, complete stream
 (including product, trust domain and security epoch), exact sequence and head
-digest, signing credential ID and key version, ACTIVE lifecycle generation and
+digest, complete exact signing `CredentialRoleIdentity`, ACTIVE lifecycle generation and
 state, and the preceding acceptance digest.  Acceptance records form a retained
 digest-linked revision chain and are never replaced when the current checkpoint
 advances, so a later checkpoint signed by credential B does not erase the exact
@@ -286,7 +294,7 @@ configuration override; qualification remains capability-based.
 * `ENTITLEMENT_REGISTRY_EXECUTABLE_SEMANTIC_CONTRACT_FROZEN = true`
 * `ACCOUNT_GENESIS_CHA_ATTEMPT_STORE_PRODUCTION_LOCAL_IMPLEMENTED = true`
 * `ROOT_PROOF_ISSUER_PRODUCTION_LOCAL_ENTITLEMENT_REGISTRY_IMPLEMENTED = true`
-* `AUTHENTICATED_ISSUER_HISTORY_LOCAL_CHECKPOINT_EXECUTABLE_SEMANTIC_CONTRACT_FROZEN = true`
+* `AUTHENTICATED_ISSUER_HISTORY_LOCAL_CHECKPOINT_EXECUTABLE_SEMANTIC_CONTRACT_FROZEN = false`
 * `ROOT_PROOF_ISSUER_IMPLEMENTED = false`
 * `PRODUCTION_LOCAL_RUNTIME_AVAILABLE = false`
 * classification: `UNKNOWN`

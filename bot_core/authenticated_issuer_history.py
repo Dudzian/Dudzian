@@ -31,8 +31,8 @@ from bot_core.root_proof_issuer_substrate import (
 
 
 RECORD_DOMAIN = b"CryptoHunter/M0.5/IssuerAuthenticatedHistoryRecord/v1\0"
-ATTESTATION_DOMAIN = b"CryptoHunter/M0.5/IssuerAuthenticatedHistoryHead/v1\0"
-ACCEPTANCE_DOMAIN = b"CryptoHunter/M0.5/HistoricalHeadAcceptanceEvidence/v1\0"
+ATTESTATION_DOMAIN = b"CryptoHunter/M0.5/IssuerAuthenticatedHistoryHead/v2\0"
+ACCEPTANCE_DOMAIN = b"CryptoHunter/M0.5/HistoricalHeadAcceptanceEvidence/v2\0"
 NO_PREDECESSOR = "NO_PREDECESSOR"
 GENESIS_SEQUENCE = 1
 
@@ -106,6 +106,32 @@ def canonical_json_bytes(value: Mapping[str, object]) -> bytes:
 
 def _digest(domain: bytes, value: Mapping[str, object]) -> str:
     return "sha256:" + hashlib.sha256(domain + canonical_json_bytes(value)).hexdigest()
+
+
+def _credential_material(identity: CredentialRoleIdentity) -> dict[str, object]:
+    """Canonical, complete and namespaced credential identity snapshot."""
+    if type(identity) is not CredentialRoleIdentity:
+        raise TypeError("signing credential identity must be exact")
+    if identity.semantic_role is not CredentialSemanticRole.HISTORY_ATTESTATION_SIGNING:
+        raise HistoryContractError("history signer identity has the wrong semantic role")
+    return {
+        "semantic_role": identity.semantic_role.value,
+        "credential_identity": identity.credential_identity,
+        "provider_namespace": identity.provider_namespace,
+        "key_handle_or_version": identity.key_handle_or_version,
+        "custody_lifecycle_namespace": identity.custody_lifecycle_namespace,
+        "key_material_identity": identity.key_material_identity,
+    }
+
+
+def _snapshot_credential(identity: CredentialRoleIdentity) -> CredentialRoleIdentity:
+    material = _credential_material(identity)
+    return CredentialRoleIdentity(
+        CredentialSemanticRole(material["semantic_role"]),
+        material["credential_identity"], material["provider_namespace"],
+        material["key_handle_or_version"], material["custody_lifecycle_namespace"],
+        material["key_material_identity"],
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -194,8 +220,7 @@ class AttestedHistoryHead:
     stream: HistoryStreamIdentity
     sequence: int
     record_digest: str
-    signing_credential_id: str
-    signing_key_version: str
+    signing_credential_identity: CredentialRoleIdentity
     canonical_attestation_bytes: bytes
     signature: bytes
 
@@ -203,8 +228,8 @@ class AttestedHistoryHead:
         if type(self.stream) is not HistoryStreamIdentity:
             raise TypeError("stream must be an exact HistoryStreamIdentity")
         _integer(self.sequence, "sequence", minimum=GENESIS_SEQUENCE)
-        for name in ("record_digest", "signing_credential_id", "signing_key_version"):
-            _text(getattr(self, name), name)
+        _text(self.record_digest, "record_digest")
+        _credential_material(self.signing_credential_identity)
         if type(self.canonical_attestation_bytes) is not bytes or type(self.signature) is not bytes:
             raise TypeError("attestation and signature must be exact bytes")
 
@@ -216,15 +241,14 @@ def attest_head(record: HistoryRecord, signer: HistoryAttestationSigningProvider
         or identity.semantic_role is not CredentialSemanticRole.HISTORY_ATTESTATION_SIGNING
     ):
         raise HistoryContractError("history head requires HISTORY_ATTESTATION_SIGNING role")
-    version = _text(identity.key_handle_or_version, "key version")
+    _text(identity.key_handle_or_version, "key version")
+    signer_identity = _snapshot_credential(identity)
     material = {"stream": record.stream.material(), "sequence": record.sequence,
                 "record_digest": record.authenticated_digest,
-                "signing_role": "HISTORY_ATTESTATION_SIGNING",
-                "signing_credential_id": identity.credential_identity,
-                "signing_key_version": version}
+                "signing_credential_identity": _credential_material(signer_identity)}
     canonical = ATTESTATION_DOMAIN + canonical_json_bytes(material)
     return AttestedHistoryHead(record.stream, record.sequence, record.authenticated_digest,
-                               identity.credential_identity, version, canonical,
+                               signer_identity, canonical,
                                signer.sign_history_head(canonical))
 
 
@@ -251,7 +275,7 @@ def _trusted_history_credential(
     matches = tuple(
         credential for credential in credentials
         if type(credential) is CredentialRoleIdentity
-        and credential.credential_identity == head.signing_credential_id
+        and credential == head.signing_credential_identity
     )
     if len(matches) != 1:
         raise HistoryContractError("signer credential is not uniquely trusted")
@@ -259,7 +283,6 @@ def _trusted_history_credential(
     if (
         credential.semantic_role is not CredentialSemanticRole.HISTORY_ATTESTATION_SIGNING
         or credential.provider_namespace != provider_identity.provider_namespace
-        or credential.key_handle_or_version != head.signing_key_version
         or credential.key_material_identity is None
     ):
         raise HistoryContractError("trusted signer identity/role/version mismatch")
@@ -305,9 +328,8 @@ def verify_head(head: AttestedHistoryHead, authority: HistoryAttestationSigningP
         raise HistoryContractError("wrong stream/environment/trust/product/security epoch")
     _, public_key, lifecycle, generation = _trusted_history_credential(head, authority)
     material = {"stream": head.stream.material(), "sequence": head.sequence,
-                "record_digest": head.record_digest, "signing_role": "HISTORY_ATTESTATION_SIGNING",
-                "signing_credential_id": head.signing_credential_id,
-                "signing_key_version": head.signing_key_version}
+                "record_digest": head.record_digest,
+                "signing_credential_identity": _credential_material(head.signing_credential_identity)}
     expected = ATTESTATION_DOMAIN + canonical_json_bytes(material)
     if head.canonical_attestation_bytes != expected:
         raise HistoryContractError("non-canonical head attestation")
@@ -476,8 +498,7 @@ class LocalCheckpoint:
     stream: HistoryStreamIdentity
     history_sequence: int
     authenticated_head_digest: str
-    history_signing_credential_id: str
-    history_signing_key_version: str
+    history_signing_credential_identity: CredentialRoleIdentity
     checkpoint_revision: int
 
     def __post_init__(self) -> None:
@@ -486,8 +507,8 @@ class LocalCheckpoint:
         _text(self.checkpoint_id, "checkpoint_id")
         _integer(self.history_sequence, "history_sequence", minimum=GENESIS_SEQUENCE)
         _integer(self.checkpoint_revision, "checkpoint_revision", minimum=1)
-        for name in ("authenticated_head_digest", "history_signing_credential_id", "history_signing_key_version"):
-            _text(getattr(self, name), name)
+        _text(self.authenticated_head_digest, "authenticated_head_digest")
+        _credential_material(self.history_signing_credential_identity)
 
 
 @dataclass(frozen=True, slots=True)
@@ -508,8 +529,7 @@ def _snapshot_head(head: AttestedHistoryHead) -> AttestedHistoryHead:
         _snapshot_stream(head.stream),
         head.sequence,
         head.record_digest,
-        head.signing_credential_id,
-        head.signing_key_version,
+        _snapshot_credential(head.signing_credential_identity),
         head.canonical_attestation_bytes,
         head.signature,
     )
@@ -545,8 +565,8 @@ def _snapshot_checkpoint(checkpoint: LocalCheckpoint) -> LocalCheckpoint:
     return LocalCheckpoint(
         checkpoint.checkpoint_id, _snapshot_stream(checkpoint.stream),
         checkpoint.history_sequence, checkpoint.authenticated_head_digest,
-        checkpoint.history_signing_credential_id,
-        checkpoint.history_signing_key_version, checkpoint.checkpoint_revision,
+        _snapshot_credential(checkpoint.history_signing_credential_identity),
+        checkpoint.checkpoint_revision,
     )
 
 
@@ -559,8 +579,7 @@ class HistoricalHeadAcceptanceEvidence:
     stream: HistoryStreamIdentity
     accepted_history_sequence: int
     accepted_authenticated_head_digest: str
-    history_signing_credential_id: str
-    history_signing_key_version: str
+    history_signing_credential_identity: CredentialRoleIdentity
     lifecycle_generation_at_acceptance: int
     lifecycle_state_at_acceptance: SigningKeyLifecycle
     predecessor_acceptance_digest: str
@@ -571,12 +590,12 @@ class HistoricalHeadAcceptanceEvidence:
             raise TypeError("stream must be an exact HistoryStreamIdentity")
         for name in (
             "checkpoint_authority_identity", "accepted_authenticated_head_digest",
-            "history_signing_credential_id", "history_signing_key_version",
             "predecessor_acceptance_digest", "acceptance_digest",
         ):
             _text(getattr(self, name), name)
         _integer(self.checkpoint_revision, "checkpoint_revision", minimum=1)
         _integer(self.accepted_history_sequence, "accepted_history_sequence", minimum=1)
+        _credential_material(self.history_signing_credential_identity)
         _integer(
             self.lifecycle_generation_at_acceptance,
             "lifecycle_generation_at_acceptance",
@@ -595,8 +614,9 @@ def _acceptance_material(evidence: HistoricalHeadAcceptanceEvidence) -> dict[str
         "stream": evidence.stream.material(),
         "accepted_history_sequence": evidence.accepted_history_sequence,
         "accepted_authenticated_head_digest": evidence.accepted_authenticated_head_digest,
-        "history_signing_credential_id": evidence.history_signing_credential_id,
-        "history_signing_key_version": evidence.history_signing_key_version,
+        "history_signing_credential_identity": _credential_material(
+            evidence.history_signing_credential_identity
+        ),
         "lifecycle_generation_at_acceptance": evidence.lifecycle_generation_at_acceptance,
         "lifecycle_state_at_acceptance": evidence.lifecycle_state_at_acceptance.value,
         "predecessor_acceptance_digest": evidence.predecessor_acceptance_digest,
@@ -618,8 +638,7 @@ def _snapshot_acceptance(
         _snapshot_stream(evidence.stream),
         evidence.accepted_history_sequence,
         evidence.accepted_authenticated_head_digest,
-        evidence.history_signing_credential_id,
-        evidence.history_signing_key_version,
+        _snapshot_credential(evidence.history_signing_credential_identity),
         evidence.lifecycle_generation_at_acceptance,
         evidence.lifecycle_state_at_acceptance,
         evidence.predecessor_acceptance_digest,
@@ -731,15 +750,13 @@ class LocalCheckpointProvider:
             last.stream,
             last.accepted_history_sequence,
             last.accepted_authenticated_head_digest,
-            last.history_signing_credential_id,
-            last.history_signing_key_version,
+            last.history_signing_credential_identity,
         ) != (
             self._current.checkpoint_revision,
             self._current.stream,
             self._current.history_sequence,
             self._current.authenticated_head_digest,
-            self._current.history_signing_credential_id,
-            self._current.history_signing_key_version,
+            self._current.history_signing_credential_identity,
         ):
             raise HistoryContractError("current checkpoint/last acceptance binding corrupt")
 
@@ -783,20 +800,18 @@ class LocalCheckpointProvider:
                 if snapshot.sequence == current.history_sequence:
                     exact = (
                         snapshot.record_digest,
-                        snapshot.signing_credential_id,
-                        snapshot.signing_key_version,
+                        snapshot.signing_credential_identity,
                     ) == (
                         current.authenticated_head_digest,
-                        current.history_signing_credential_id,
-                        current.history_signing_key_version,
+                        current.history_signing_credential_identity,
                     )
                     if not exact:
                         raise HistoryContractError("same-sequence split brain")
                     return _snapshot_checkpoint(current), True
             successor = LocalCheckpoint(
                 self._checkpoint_id, self._stream, snapshot.sequence,
-                snapshot.record_digest, snapshot.signing_credential_id,
-                snapshot.signing_key_version, revision + 1,
+                snapshot.record_digest,
+                _snapshot_credential(snapshot.signing_credential_identity), revision + 1,
             )
             predecessor = (
                 NO_PREDECESSOR
@@ -809,8 +824,9 @@ class LocalCheckpointProvider:
                 "stream": self._stream.material(),
                 "accepted_history_sequence": snapshot.sequence,
                 "accepted_authenticated_head_digest": snapshot.record_digest,
-                "history_signing_credential_id": snapshot.signing_credential_id,
-                "history_signing_key_version": snapshot.signing_key_version,
+                "history_signing_credential_identity": _credential_material(
+                    snapshot.signing_credential_identity
+                ),
                 "lifecycle_generation_at_acceptance": lifecycle_generation,
                 "lifecycle_state_at_acceptance": lifecycle.value,
                 "predecessor_acceptance_digest": predecessor,
@@ -818,7 +834,7 @@ class LocalCheckpointProvider:
             acceptance = HistoricalHeadAcceptanceEvidence(
                 self._authority_identity, revision + 1, self._stream,
                 snapshot.sequence, snapshot.record_digest,
-                snapshot.signing_credential_id, snapshot.signing_key_version,
+                _snapshot_credential(snapshot.signing_credential_identity),
                 lifecycle_generation, lifecycle, predecessor,
                 _digest(ACCEPTANCE_DOMAIN, acceptance_material),
             )
@@ -834,8 +850,7 @@ def _acceptance_matches_head(
         evidence.stream == head.stream
         and evidence.accepted_history_sequence == head.sequence
         and evidence.accepted_authenticated_head_digest == head.record_digest
-        and evidence.history_signing_credential_id == head.signing_credential_id
-        and evidence.history_signing_key_version == head.signing_key_version
+        and evidence.history_signing_credential_identity == head.signing_credential_identity
     )
 
 
@@ -852,8 +867,8 @@ def _compare_verified_checkpoint(
     if checkpoint.authenticated_head_digest != history_head.record_digest:
         return ReconciliationOutcome.CONFLICT
     if (
-        checkpoint.history_signing_credential_id != history_head.signing_credential_id
-        or checkpoint.history_signing_key_version != history_head.signing_key_version
+        checkpoint.history_signing_credential_identity
+        != history_head.signing_credential_identity
     ):
         return ReconciliationOutcome.CONFLICT
     return ReconciliationOutcome.EXACT_COMMITTED
@@ -875,6 +890,6 @@ def reconcile_checkpoint(
     )
 
 
-AUTHENTICATED_ISSUER_HISTORY_LOCAL_CHECKPOINT_EXECUTABLE_SEMANTIC_CONTRACT_FROZEN = True
+AUTHENTICATED_ISSUER_HISTORY_LOCAL_CHECKPOINT_EXECUTABLE_SEMANTIC_CONTRACT_FROZEN = False
 ROOT_PROOF_ISSUER_IMPLEMENTED = False
 PRODUCTION_LOCAL_RUNTIME_AVAILABLE = False
