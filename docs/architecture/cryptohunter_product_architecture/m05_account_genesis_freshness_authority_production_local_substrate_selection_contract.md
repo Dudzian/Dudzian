@@ -1,0 +1,428 @@
+# M0.5 — wybór substrate PRODUCTION_LOCAL FreshnessAuthority
+
+> Deterministyczna projekcja `m05_account_genesis_freshness_authority_production_local_substrate_selection_contract.json`. JSON jest źródłem prawdy.
+
+## Wynik
+
+**FRESHNESS_AUTHORITY_PRODUCTION_LOCAL_SUBSTRATE_MODEL_CAN_BE_FROZEN**
+
+Wybrano wyłącznie model substrate. FreshnessAuthority oraz runtime nie są zaimplementowane.
+
+## Projekcja maszynowa
+
+```json
+{
+  "artifact": "M05_ACCOUNT_GENESIS_FRESHNESS_AUTHORITY_PRODUCTION_LOCAL_SUBSTRATE_SELECTION_CONTRACT",
+  "schema_version": 1,
+  "architecture_stage": "SUBSTRATE_FOUNDATION_SELECTION_ONLY",
+  "principal_result": "FRESHNESS_AUTHORITY_PRODUCTION_LOCAL_SUBSTRATE_MODEL_CAN_BE_FROZEN",
+  "frozen_inputs": {
+    "freshness_model": "F_HYBRID_CAS_PLUS_SIGNED_FINALIZATION_RECEIPT",
+    "update_unit": "FULL_AUTHORITATIVE_DOCUMENT",
+    "winner": "EXACTLY_ONE_SUCCESSFUL_N_TO_N_PLUS_1",
+    "physical_protocol": "INITIAL_BINDING -> PREPARED -> EXTERNAL_FRESHNESS_CAS -> LOCAL_FINAL_COMMIT",
+    "accepted_document_equals_proposed_document": true
+  },
+  "current_tree_discovery": [
+    {
+      "capability": "production freshness CAS backend",
+      "status": "NOT_FOUND",
+      "path": "bot_core/postgresql_entitlement_registry.py",
+      "finding": "PostgreSQL V5 is entitlement-specific; no freshness schema or CAS adapter exists"
+    },
+    {
+      "capability": "authoritative freshness history backend",
+      "status": "NOT_FOUND",
+      "path": "bot_core/authenticated_issuer_history.py",
+      "finding": "issuer history is a distinct authority and cannot be reused as freshness history"
+    },
+    {
+      "capability": "durable finalization receipt store",
+      "status": "NOT_FOUND",
+      "path": "bot_core",
+      "finding": "no FreshnessFinalizationReceipt persistence implementation exists"
+    },
+    {
+      "capability": "dedicated local freshness authority adapter",
+      "status": "NOT_FOUND",
+      "path": "bot_core",
+      "finding": "no AccountGenesis FreshnessAuthority adapter exists"
+    },
+    {
+      "capability": "freshness authority signing custody",
+      "status": "PARTIAL",
+      "path": "bot_core/local_signing_custody.py",
+      "finding": "safe Ed25519 custody pattern exists but only root-proof and history roles are implemented"
+    },
+    {
+      "capability": "CHA freshness proposer custody",
+      "status": "PARTIAL",
+      "path": "bot_core/root_proof_issuer_substrate.py",
+      "finding": "semantic proposer role exists; no dedicated custody provider/lineage is implemented"
+    },
+    {
+      "capability": "trusted proposer verification lineage",
+      "status": "NOT_FOUND",
+      "path": "docs/architecture/cryptohunter_product_architecture/m05_account_genesis_freshness_authority_implementation_readiness_contract.json",
+      "finding": "lineage semantics frozen; provider and provisioning ceremony absent"
+    },
+    {
+      "capability": "TEST/PRODUCTION separation",
+      "status": "PARTIAL",
+      "path": "bot_core/root_proof_issuer_substrate.py",
+      "finding": "profile/trust-domain identities exist; freshness namespaces, roots and state do not"
+    },
+    {
+      "capability": "independent revoked-history evidence",
+      "status": "PARTIAL",
+      "path": "bot_core/authenticated_issuer_history.py",
+      "finding": "accepted checkpoint pattern exists for issuer history, not freshness decisions"
+    },
+    {
+      "capability": "production/local rollback model",
+      "status": "PARTIAL",
+      "path": "docs/architecture/cryptohunter_product_architecture/m05_account_genesis_freshness_authority_cas_finalization_contract.json",
+      "finding": "limitations are frozen; no freshness checkpoint or independent rollback implementation exists"
+    }
+  ],
+  "production_local_selection": {
+    "selected": "POSTGRESQL_16_SERIALIZABLE_ATOMIC_DECISION_HISTORY_RECEIPT_PLUS_SEPARATE_LOCAL_ED25519_CUSTODY",
+    "selection_is_implementation": false,
+    "reason": [
+      "PostgreSQL supplies multi-process transactional serialization and durable authoritative reread",
+      "one transaction can atomically persist successor, append-only decision, receipt and lifecycle reference",
+      "role/schema qualification can reuse reviewed EntitlementRegistry V5 hardening without reusing its authority",
+      "local signing custody is viable only after new non-aliasing freshness and proposer roles are implemented"
+    ],
+    "durability": {
+      "minimum_server_version": 16,
+      "fsync": "on",
+      "synchronous_commit": "on",
+      "unlogged_tables_allowed": false,
+      "temporary_authority_objects_allowed": false
+    },
+    "concurrency_authority": "database SERIALIZABLE transaction plus exact predecessor row lock/CAS; never Python lock or read-then-write"
+  },
+  "schema_authority_model": {
+    "separate_schema": true,
+    "roles": [
+      "freshness_schema_owner",
+      "freshness_runtime",
+      "freshness_reader",
+      "freshness_admin"
+    ],
+    "runtime_role_membership": false,
+    "tables": {
+      "authority_lineages": [
+        "environment",
+        "trust_domain",
+        "authority_id",
+        "current_generation",
+        "current_document_digest",
+        "current_complete_head_set_digest",
+        "active_freshness_key_id",
+        "active_freshness_key_version",
+        "cas_revision"
+      ],
+      "authoritative_documents": [
+        "authority_id",
+        "generation",
+        "predecessor_generation",
+        "predecessor_document_digest",
+        "complete_head_set_digest",
+        "canonical_payload",
+        "document_digest",
+        "authentication_signature",
+        "freshness_key_id",
+        "freshness_key_version",
+        "finalization_request_id"
+      ],
+      "decisions": [
+        "decision_sequence",
+        "original_decision_identity",
+        "authority_id",
+        "predecessor_generation",
+        "predecessor_document_digest",
+        "predecessor_complete_head_set_digest",
+        "accepted_generation",
+        "accepted_document_digest",
+        "accepted_complete_head_set_digest",
+        "finalization_request_id",
+        "lifecycle_reference"
+      ],
+      "finalization_receipts": [
+        "receipt_id",
+        "original_decision_identity_index",
+        "decision_sequence_index",
+        "frozen_v1_canonical_receipt_bytes",
+        "authentication_tag_or_signature",
+        "freshness_authority_key_id_index",
+        "freshness_authority_key_version_index"
+      ],
+      "key_lifecycle_history": [
+        "authority_id",
+        "key_id",
+        "key_version",
+        "lifecycle_generation",
+        "state",
+        "predecessor_lifecycle_digest",
+        "record_digest"
+      ]
+    },
+    "atomic_transaction": [
+      "lock exact authority lineage",
+      "verify exact current generation/digest/complete head set",
+      "verify candidate is exact N+1 and accepted bytes equal proposed bytes",
+      "verify trusted ACTIVE proposer and ACTIVE freshness signing key from authority-owned lineage",
+      "insert immutable document, decision, receipt and lifecycle reference",
+      "advance current pointer and cas_revision",
+      "commit exactly once"
+    ],
+    "same_predecessor": {
+      "same_original_decision_identity_and_bytes": "ALREADY_ACCEPTED_EXACT",
+      "different_candidate_or_request": "CAS_CONFLICT",
+      "automatic_N_plus_2_retry": false
+    }
+  },
+  "qualification": {
+    "required": [
+      "exact schema version and persisted manifest",
+      "exact role names and OIDs",
+      "exact owners and privilege matrix",
+      "no role membership escalation",
+      "SECURITY DEFINER with fixed search_path",
+      "PUBLIC execute absent",
+      "exact tables, columns, constraints and indexes",
+      "permanent ordinary relkind only",
+      "RLS and FORCE RLS disabled; no policies",
+      "no user triggers or rewrite rules",
+      "reviewed function source hash",
+      "code to pg_proc.prosrc to manifest three-way equality"
+    ],
+    "persisted_manifest_is_trust_root": false,
+    "structural_protocol_is_trusted_provenance": false
+  },
+  "crypto_and_custody": {
+    "profile": [
+      "RFC 8785 JCS restricted closed schema",
+      "UTF-8 without BOM",
+      "SHA-256 lowercase 64 hex",
+      "Ed25519",
+      "base64url without padding",
+      "unknown fields, floats, duplicate keys and lone surrogates rejected"
+    ],
+    "authority_role": "ACCOUNT_GENESIS_FRESHNESS_AUTHORITY_FINALIZATION_SIGNING_V1",
+    "proposer_role": "ACCOUNT_GENESIS_FRESHNESS_PROPOSER_SIGNING_V1",
+    "numeric_key_version_source": "exact typed custody metadata field; never parse CredentialRoleIdentity.key_handle_or_version and never use lifecycle_generation",
+    "required_identity": [
+      "provider role",
+      "security profile",
+      "trust domain",
+      "provider namespace",
+      "credential identity",
+      "numeric key version",
+      "opaque key handle identity",
+      "lifecycle namespace",
+      "key material fingerprint"
+    ],
+    "forbidden_alias_dimensions": [
+      "provider namespace",
+      "credential ID",
+      "key handle",
+      "key material identity",
+      "lifecycle namespace"
+    ],
+    "forbidden_alias_roles": [
+      "CHA proposer",
+      "RootProof issuer",
+      "history attestation",
+      "Catalog authority",
+      "storage security key"
+    ]
+  },
+  "receipt": {
+    "type": "FreshnessFinalizationReceipt",
+    "canonical_source": {
+      "artifact": "m05_account_genesis_freshness_authority_cas_finalization_contract.json",
+      "value_fields_path": "finalization_evidence.fields",
+      "authentication_binding_path": "finalization_evidence.authentication_boundary.authentication_binding",
+      "domain_path": "finalization_evidence.authentication_boundary.domain_literal"
+    },
+    "exact_value_fields": [
+      "schema_version",
+      "environment",
+      "trust_domain",
+      "authority_id",
+      "exact_predecessor_generation",
+      "exact_predecessor_document_digest",
+      "accepted_generation",
+      "accepted_document_digest",
+      "complete_semantic_head_digest",
+      "finalization_request_id",
+      "receipt_id",
+      "freshness_authority_key_id",
+      "freshness_authority_key_version",
+      "authentication_tag_or_signature"
+    ],
+    "exact_authenticated_preimage_fields": [
+      "schema_version",
+      "environment",
+      "trust_domain",
+      "authority_id",
+      "exact_predecessor_generation",
+      "exact_predecessor_document_digest",
+      "accepted_generation",
+      "accepted_document_digest",
+      "complete_semantic_head_digest",
+      "finalization_request_id",
+      "receipt_id",
+      "freshness_authority_key_id",
+      "freshness_authority_key_version"
+    ],
+    "authentication_binding": [
+      "finalization-receipt-authentication-domain-separator",
+      "schema_version",
+      "environment",
+      "trust_domain",
+      "authority_id",
+      "exact_predecessor_generation",
+      "exact_predecessor_document_digest",
+      "accepted_generation",
+      "accepted_document_digest",
+      "complete_semantic_head_digest",
+      "finalization_request_id",
+      "receipt_id",
+      "freshness_authority_key_id",
+      "freshness_authority_key_version"
+    ],
+    "authentication_tag_or_signature_in_own_preimage": false,
+    "domain": "cryptohunter.account-genesis.freshness-finalization-receipt-authentication.v1",
+    "canonical_byte_encoding": "RFC 8785 JSON Canonicalization Scheme (JCS), restricted to the contract schema",
+    "signature": "base64url without padding over exactly 64 signature bytes",
+    "atomic_with_decision": true,
+    "caller_constructed_receipt_is_authority": false,
+    "stored_canonical_bytes_must_equal_frozen_v1_representation": true,
+    "lost_response_recovered_receipt_accepted_by_frozen_v1_verifier": true
+  },
+  "history_and_rollback": {
+    "retention": "all accepted documents, exact decisions, receipts, lifecycle records and successor links; immutable append-only authority history",
+    "exact_replay": "lookup by authority-owned OriginalDecisionIdentity plus finalization_request_id and verify chain to current state",
+    "negative_lookup_is_non_acceptance": false,
+    "revoked_history": "requires independently currently-trusted authority state/checkpoint binding exact original decision; revoked signature alone and self-corroboration fail closed",
+    "coordinated_full_host_rollback_detected": false,
+    "claim": "detects non-coordinated divergence; does not claim SERVER_READY anti-rollback"
+  },
+  "crash_and_lost_response_matrix": [
+    {
+      "cut": "before CAS",
+      "durable": "predecessor N only",
+      "retry": "same exact CAS may be attempted"
+    },
+    {
+      "cut": "CAS transaction committed / receipt response lost",
+      "durable": "N+1 document, decision, receipt and current pointer",
+      "retry": "authoritative decision lookup returns exact receipt",
+      "compatibility": "recovered canonical bytes are byte-identical and verifiable by frozen FreshnessFinalizationReceipt V1 verifier"
+    },
+    {
+      "cut": "history committed / receipt not returned",
+      "durable": "receipt is already atomic with history decision",
+      "retry": "exact replay; never second N+1",
+      "compatibility": "stored canonical bytes are exact frozen V1; authority index metadata is outside the signed preimage"
+    },
+    {
+      "cut": "receipt committed / process crash",
+      "durable": "entire atomic transaction",
+      "retry": "exact replay from retained authority"
+    },
+    {
+      "cut": "CAS committed / local caller response lost",
+      "durable": "entire authority transaction",
+      "retry": "exact replay; local final commit remains separate"
+    },
+    {
+      "cut": "restart before local final commit",
+      "durable": "external authority winner N+1",
+      "retry": "verify receipt and chain, then finish exact LOCAL_FINAL_COMMIT"
+    }
+  ],
+  "red_team_required": [
+    "fabricated receipt",
+    "fabricated VALID/current generation/digest",
+    "subclass/dict/copy/object.__setattr__ mutation",
+    "wrong environment/trust domain/authority",
+    "same-generation unequal successor",
+    "concurrent N+1 candidates",
+    "stale proposer lifecycle",
+    "dynamic signing identity/version",
+    "TEST credential in PRODUCTION",
+    "all forbidden role aliases",
+    "schema/function/role/manifest tampering",
+    "revoked key self-corroboration"
+  ],
+  "readiness": {
+    "FreshnessAuthority_implemented": false,
+    "FreshnessAuthority_implementation_allowed_after_iteration": false,
+    "production_substrate_selected": true,
+    "production_substrate_implemented": false,
+    "remaining_blockers": [
+      "implement and qualify PostgreSQL freshness backend",
+      "implement dedicated authority and proposer custody roles with typed numeric versions",
+      "implement trusted proposer lineage/provisioning",
+      "implement independently trusted freshness historical checkpoint evidence",
+      "implement dedicated local FreshnessAuthority adapter and crash/restart tests"
+    ],
+    "ROOT_PROOF_ISSUER_IMPLEMENTED": false,
+    "PRODUCTION_LOCAL_RUNTIME_AVAILABLE": false,
+    "classification": "UNKNOWN",
+    "finding_scope": "CURRENT_TREE_ONLY",
+    "formal_project_advancement": "WITHHELD"
+  },
+  "original_decision_identity": {
+    "type": "OriginalDecisionIdentity",
+    "canonical_source": {
+      "artifact": "m05_account_genesis_freshness_authority_cas_finalization_contract.json",
+      "semantic_tuple_path": "original_decision_identity_contract.semantic_tuple",
+      "domain_path": "original_decision_identity_contract.domain_literal"
+    },
+    "exact_semantic_tuple": [
+      "environment",
+      "trust_domain",
+      "authority_id",
+      "exact_predecessor_generation",
+      "exact_predecessor_document_digest",
+      "accepted_generation",
+      "accepted_document_digest",
+      "complete_semantic_head_digest",
+      "finalization_request_id"
+    ],
+    "domain": "cryptohunter.account-genesis.original-decision-identity.v1",
+    "persisted_in_immutable_decision_record": true,
+    "authority_owned_lookup_index": true,
+    "used_for_exact_historical_lookup": true,
+    "used_for_lost_response_recovery": true,
+    "is_freshness_finalization_receipt_v1_field": false
+  },
+  "internal_vs_canonical": {
+    "internal_postgresql_authority_fields_may_include": [
+      "original_decision_identity",
+      "decision_sequence",
+      "predecessor_complete_semantic_head_set_digest",
+      "accepted_complete_semantic_head_set_digest",
+      "lifecycle_reference"
+    ],
+    "internal_fields_change_frozen_receipt_v1_preimage": false,
+    "receipt_storage": {
+      "canonical_receipt_bytes": "exact frozen FreshnessFinalizationReceipt V1 representation",
+      "signature": "authentication_tag_or_signature from frozen V1 value",
+      "authority_owned_index_metadata": [
+        "original_decision_identity",
+        "decision_sequence"
+      ],
+      "metadata_in_cryptographic_preimage": false,
+      "validator_rule": "decode and validate exact closed V1 value fields; reproduce exact V1 canonical bytes; reject unknown or missing fields before signature verification"
+    },
+    "wire_crypto_schema_source": "canonical frozen freshness CAS/finalization contract, never PostgreSQL schema or this selection contract independently"
+  }
+}
+```
