@@ -251,7 +251,7 @@ def test_readiness_remains_fail_closed():
     assert readiness["production_substrate_selected"] is True
     assert readiness["production_substrate_implemented"] is False
     assert readiness["FreshnessAuthority_implemented"] is False
-    assert readiness["FreshnessAuthority_implementation_allowed_after_iteration"] is False
+    assert readiness["FreshnessAuthority_implementation_allowed_after_iteration"] is True
     assert readiness["ROOT_PROOF_ISSUER_IMPLEMENTED"] is False
     assert readiness["PRODUCTION_LOCAL_RUNTIME_AVAILABLE"] is False
     assert readiness["classification"] == "UNKNOWN"
@@ -265,7 +265,7 @@ def test_readiness_remains_fail_closed():
 
 @pytest.mark.parametrize("path,value", [
     (("readiness", "FreshnessAuthority_implemented"), True),
-    (("readiness", "FreshnessAuthority_implementation_allowed_after_iteration"), True),
+    (("readiness", "FreshnessAuthority_implementation_allowed_after_iteration"), False),
     (("production_local_selection", "selection_is_implementation"), True),
     (("receipt", "caller_constructed_receipt_is_authority"), True),
     (("history_and_rollback", "negative_lookup_is_non_acceptance"), True),

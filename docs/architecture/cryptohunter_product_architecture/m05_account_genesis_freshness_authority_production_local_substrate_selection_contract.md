@@ -362,7 +362,7 @@ Wybrano wyłącznie model substrate. FreshnessAuthority oraz runtime nie są zai
   ],
   "readiness": {
     "FreshnessAuthority_implemented": false,
-    "FreshnessAuthority_implementation_allowed_after_iteration": false,
+    "FreshnessAuthority_implementation_allowed_after_iteration": true,
     "production_substrate_selected": true,
     "production_substrate_implemented": false,
     "remaining_blockers": [

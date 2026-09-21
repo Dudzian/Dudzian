@@ -53,7 +53,7 @@ def validate(value: dict) -> None:
     assert scope["FreshnessAuthority_implemented"] is False
     assert scope["CryptoHunterAccountAuthority_implemented"] is False
     assert scope["concrete_production_provider_selected"] is False
-    assert scope["FreshnessAuthority_implementation_allowed_after_iteration"] is False
+    assert scope["FreshnessAuthority_implementation_allowed_after_iteration"] is True
     assert scope["CHA_implementation_allowed_after_iteration"] is False
 
     assert value["frozen_inputs"]["TEST_PRODUCTION_domains_distinct"] is True
