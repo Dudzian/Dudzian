@@ -26,7 +26,7 @@ PROPOSER_ROLE = "ACCOUNT_GENESIS_FRESHNESS_PROPOSER_SIGNING_V1"
 FINALIZATION_ROLE = "ACCOUNT_GENESIS_FRESHNESS_AUTHORITY_FINALIZATION_SIGNING_V1"
 _SAFE = re.compile(r"[a-z_][a-z0-9_]{0,62}\Z")
 _HEX = re.compile(r"[0-9a-f]{64}\Z")
-_REVIEWED_PHYSICAL_FINGERPRINT = "be8d6a693263a920b4087d083581209ce9c7a4b7fe4224bfa622b0fd2d1b31dd"
+_REVIEWED_PHYSICAL_FINGERPRINT = "a5f737dcf2fd49f14ed8d3728e2803ad406310faa12a984a5cbecb99a538e8ad"
 DOCUMENT_DOMAIN = b"cryptohunter.account-genesis.freshness-document-digest.v1\x00"
 RECEIPT_DOMAIN = b"cryptohunter.account-genesis.freshness-finalization-receipt-authentication.v1\x00"
 COMPLETE_HEAD_DOMAIN = b"cryptohunter.account-genesis.complete-semantic-head-set-digest.v1\x00"
@@ -318,13 +318,15 @@ BEGIN
  {guard % "'freshness_admin'"}
  IF $1<>'PRODUCTION' OR $2='' OR $3='' OR $4!~'^[0-9a-f]{{64}}$' OR $5!~'^[0-9a-f]{{64}}$' THEN RAISE EXCEPTION 'invalid authority scope' USING ERRCODE='22023'; END IF;
  INSERT INTO {q}.authority_lineages(environment,trust_domain,authority_id,current_generation,current_document_digest,current_complete_head_digest) VALUES($1,$2,$3,0,$4,$5);
+ INSERT INTO {q}.authority_generation_heads(environment,trust_domain,authority_id,generation,document_digest,complete_head_digest) VALUES($1,$2,$3,0,$4,$5);
 END""",
       "provision_credential(jsonb)": f"""
 DECLARE p jsonb:=$1; material bytea; material_id text; bound_role text;
 BEGIN
  {guard % "'freshness_admin'"}
  IF pg_catalog.jsonb_typeof(p)<>'object' OR (SELECT count(*) FROM pg_catalog.jsonb_object_keys(p))<>10 OR NOT p ?& ARRAY['security_profile','environment','trust_domain','authority_id','credential_id','semantic_identity','semantic_role','key_id','key_version','public_key_hex'] THEN RAISE EXCEPTION 'credential schema' USING ERRCODE='22023'; END IF;
- IF p->>'semantic_role' NOT IN ('{PROPOSER_ROLE}','{FINALIZATION_ROLE}') OR p->>'environment'<>'PRODUCTION' OR p->>'security_profile'<>'PRODUCTION_LOCAL' OR pg_catalog.jsonb_typeof(p->'key_version')<>'number' OR (p->>'key_version')!~'^[1-9][0-9]*$' OR (p->>'key_version')::numeric>9007199254740991 THEN RAISE EXCEPTION 'credential semantics' USING ERRCODE='22023'; END IF;
+ IF pg_catalog.jsonb_typeof(p->'security_profile') IS DISTINCT FROM 'string' OR pg_catalog.jsonb_typeof(p->'environment') IS DISTINCT FROM 'string' OR pg_catalog.jsonb_typeof(p->'trust_domain') IS DISTINCT FROM 'string' OR pg_catalog.jsonb_typeof(p->'authority_id') IS DISTINCT FROM 'string' OR pg_catalog.jsonb_typeof(p->'credential_id') IS DISTINCT FROM 'string' OR pg_catalog.jsonb_typeof(p->'semantic_identity') IS DISTINCT FROM 'string' OR pg_catalog.jsonb_typeof(p->'semantic_role') IS DISTINCT FROM 'string' OR pg_catalog.jsonb_typeof(p->'key_id') IS DISTINCT FROM 'string' OR pg_catalog.jsonb_typeof(p->'key_version') IS DISTINCT FROM 'number' OR pg_catalog.jsonb_typeof(p->'public_key_hex') IS DISTINCT FROM 'string' THEN RAISE EXCEPTION 'credential field types' USING ERRCODE='22023'; END IF;
+ IF p->>'semantic_role' NOT IN ('{PROPOSER_ROLE}','{FINALIZATION_ROLE}') OR p->>'environment'<>'PRODUCTION' OR p->>'security_profile'<>'PRODUCTION_LOCAL' OR p->>'trust_domain'='' OR p->>'authority_id'='' OR p->>'credential_id'='' OR p->>'semantic_identity'='' OR p->>'key_id'='' OR (p->'key_version')::text!~'^[1-9][0-9]*$' OR ((p->'key_version')::text)::numeric>9007199254740991 OR p->>'public_key_hex' !~ '^[0-9a-f]{{64}}$' THEN RAISE EXCEPTION 'credential semantics' USING ERRCODE='22023'; END IF;
  material:=pg_catalog.decode(p->>'public_key_hex','hex'); IF pg_catalog.length(material)<>32 THEN RAISE EXCEPTION 'public key must be 32 bytes' USING ERRCODE='22023'; END IF;
  material_id:=pg_catalog.encode(pg_catalog.sha256(material),'hex');
  INSERT INTO {q}.key_material_role_bindings(environment,trust_domain,authority_id,public_key_material_identity,semantic_role,public_key) VALUES(p->>'environment',p->>'trust_domain',p->>'authority_id',material_id,p->>'semantic_role',material) ON CONFLICT DO NOTHING;
@@ -343,8 +345,28 @@ BEGIN
  IF NOT ((c.lifecycle_state='ACTIVE' AND $6 IN ('VERIFY_ONLY','REVOKED')) OR (c.lifecycle_state='VERIFY_ONLY' AND $6='REVOKED')) THEN RAISE EXCEPTION 'forbidden lifecycle transition' USING ERRCODE='22023'; END IF;
  INSERT INTO {q}.key_lifecycle_history VALUES($1,$2,$3,$4,$5+1,$6,$7); UPDATE {q}.credentials SET lifecycle_generation=$5+1,lifecycle_state=$6 WHERE environment=$1 AND trust_domain=$2 AND authority_id=$3 AND credential_id=$4;
 END""",
+      "resolve_verification_credential(text,text,text,text,text,bigint)": f"""
+BEGIN
+ {guard % "'freshness_crypto_verifier'"}
+ IF $1<>'PRODUCTION' OR $2='' OR $3='' OR $4 NOT IN ('{PROPOSER_ROLE}','{FINALIZATION_ROLE}') OR $5='' OR $6<1 THEN RAISE EXCEPTION 'invalid credential selector' USING ERRCODE='22023'; END IF;
+ RETURN QUERY SELECT c.credential_id,c.semantic_identity,c.lifecycle_generation,c.public_key
+ FROM {q}.credentials c WHERE c.environment=$1 AND c.trust_domain=$2 AND c.authority_id=$3
+ AND c.semantic_role=$4 AND c.key_id=$5 AND c.key_version=$6;
+ IF NOT FOUND THEN RAISE EXCEPTION 'unknown retained credential' USING ERRCODE='28000'; END IF;
+END""",
+      "resolve_predecessor_head(text,text,text,bigint,text)": f"""
+DECLARE result text;
+BEGIN
+ {guard % "'freshness_crypto_verifier'"}
+ IF $1<>'PRODUCTION' OR $2='' OR $3='' OR $4<0 OR $5!~'^[0-9a-f]{{64}}$' THEN RAISE EXCEPTION 'invalid predecessor selector' USING ERRCODE='22023'; END IF;
+ SELECT complete_head_digest INTO result FROM {q}.authority_generation_heads
+ WHERE environment=$1 AND trust_domain=$2 AND authority_id=$3
+ AND generation=$4 AND document_digest=$5;
+ IF NOT FOUND THEN RAISE EXCEPTION 'unknown exact predecessor' USING ERRCODE='28000'; END IF;
+ RETURN result;
+END""",
       "prepare_verified_freshness_candidate(bytea,bytea,bytea)": f"""
-DECLARE p jsonb; d jsonb; r jsonb; pc {q}.credentials%ROWTYPE; fc {q}.credentials%ROWTYPE; payload jsonb; doc_digest text; head_digest text; receipt_digest text; sig bytea; doc_sig bytea; canonical_sig text; canonical_doc_sig text; selector_credential text;
+DECLARE p jsonb; d jsonb; r jsonb; pc {q}.credentials%ROWTYPE; fc {q}.credentials%ROWTYPE; existing {q}.prepared_verifications%ROWTYPE; payload jsonb; doc_digest text; head_digest text; receipt_digest text; sig bytea; doc_sig bytea; canonical_sig text; canonical_doc_sig text; selector_credential text;
 BEGIN
  {guard % "'freshness_crypto_verifier'"}
  BEGIN p:=pg_catalog.convert_from($1,'UTF8')::jsonb; d:=pg_catalog.convert_from($2,'UTF8')::jsonb; r:=pg_catalog.convert_from($3,'UTF8')::jsonb; EXCEPTION WHEN others THEN RAISE EXCEPTION 'invalid canonical JSON bytes' USING ERRCODE='22023'; END;
@@ -374,7 +396,12 @@ BEGIN
  IF pc.semantic_role<>'{PROPOSER_ROLE}' OR pc.semantic_identity<>p->>'proposer_identity' OR pc.key_version<>(p->>'proposer_key_version')::bigint OR pc.public_key_material_identity<>p->>'proposer_public_key_material_identity' OR fc.semantic_role<>'{FINALIZATION_ROLE}' OR fc.key_version<>(p->>'finalization_key_version')::bigint OR fc.key_id<>r->>'freshness_authority_key_id' OR fc.public_key_material_identity<>p->>'finalization_public_key_material_identity' THEN RAISE EXCEPTION 'invalid authentication identity' USING ERRCODE='28000'; END IF;
  SELECT credential_id INTO selector_credential FROM {q}.credentials WHERE environment=p->>'environment' AND trust_domain=p->>'trust_domain' AND authority_id=p->>'authority_id' AND semantic_role='{FINALIZATION_ROLE}' AND key_id=r->>'freshness_authority_key_id' AND key_version=(r->>'freshness_authority_key_version')::bigint;
  IF selector_credential IS DISTINCT FROM fc.credential_id THEN RAISE EXCEPTION 'ambiguous finalization selector' USING ERRCODE='28000'; END IF;
- INSERT INTO {q}.prepared_verifications(preparation_id,binding,canonical_document,canonical_document_bytes,canonical_receipt,canonical_receipt_bytes,proposer_credential_id,proposer_lifecycle_generation,finalization_credential_id,finalization_lifecycle_generation) VALUES(p->>'preparation_id',p,d,{q}.canonical_jsonb(d),r,{q}.canonical_jsonb(r),pc.credential_id,(p->>'proposer_lifecycle_generation_observed_for_key_binding_only')::bigint,fc.credential_id,(p->>'finalization_lifecycle_generation_observed_for_key_binding_only')::bigint);
+ BEGIN
+   INSERT INTO {q}.prepared_verifications(preparation_id,binding,canonical_document,canonical_document_bytes,canonical_receipt,canonical_receipt_bytes,proposer_credential_id,proposer_lifecycle_generation,finalization_credential_id,finalization_lifecycle_generation) VALUES(p->>'preparation_id',p,d,{q}.canonical_jsonb(d),r,{q}.canonical_jsonb(r),pc.credential_id,(p->>'proposer_lifecycle_generation_observed_for_key_binding_only')::bigint,fc.credential_id,(p->>'finalization_lifecycle_generation_observed_for_key_binding_only')::bigint);
+ EXCEPTION WHEN unique_violation THEN
+   SELECT * INTO existing FROM {q}.prepared_verifications WHERE preparation_id=p->>'preparation_id' FOR UPDATE;
+   IF NOT FOUND OR existing.binding IS DISTINCT FROM p OR existing.canonical_document IS DISTINCT FROM d OR existing.canonical_document_bytes IS DISTINCT FROM {q}.canonical_jsonb(d) OR existing.canonical_receipt IS DISTINCT FROM r OR existing.canonical_receipt_bytes IS DISTINCT FROM {q}.canonical_jsonb(r) OR existing.proposer_credential_id IS DISTINCT FROM pc.credential_id OR existing.proposer_lifecycle_generation IS DISTINCT FROM (p->>'proposer_lifecycle_generation_observed_for_key_binding_only')::bigint OR existing.finalization_credential_id IS DISTINCT FROM fc.credential_id OR existing.finalization_lifecycle_generation IS DISTINCT FROM (p->>'finalization_lifecycle_generation_observed_for_key_binding_only')::bigint THEN RAISE EXCEPTION 'preparation identity conflict' USING ERRCODE='23505'; END IF;
+ END;
  RETURN p->>'preparation_id';
 END""",
       "compare_and_advance(text,jsonb,bytea,bytea)": f"""
@@ -387,9 +414,9 @@ BEGIN
  SELECT * INTO existing FROM {q}.decisions d0 WHERE d0.original_decision_identity=$2->>'original_decision_identity' AND d0.finalization_request_id=$2->>'finalization_request_id'; IF FOUND THEN
    SELECT * INTO retained_doc FROM {q}.authoritative_documents ad WHERE ad.environment=existing.environment AND ad.trust_domain=existing.trust_domain AND ad.authority_id=existing.authority_id AND ad.generation=existing.accepted_generation;
    SELECT * INTO retained_receipt FROM {q}.finalization_receipts fr WHERE fr.decision_sequence=existing.decision_sequence;
-   IF existing.candidate_binding=$2 AND retained_doc.canonical_document=d AND retained_doc.canonical_document_bytes={q}.canonical_jsonb(d) AND retained_receipt.canonical_receipt=r AND retained_receipt.canonical_receipt_bytes={q}.canonical_jsonb(r) THEN RETURN QUERY SELECT 'ALREADY_ACCEPTED_EXACT'::text,existing.decision_sequence,retained_receipt.canonical_receipt; RETURN; ELSE RAISE EXCEPTION 'replay conflict' USING ERRCODE='23505'; END IF;
+   IF existing.candidate_binding=$2 AND retained_doc.canonical_document IS NOT DISTINCT FROM d AND retained_doc.canonical_document_bytes IS NOT DISTINCT FROM {q}.canonical_jsonb(d) AND retained_receipt.canonical_receipt IS NOT DISTINCT FROM r AND retained_receipt.canonical_receipt_bytes IS NOT DISTINCT FROM {q}.canonical_jsonb(r) THEN RETURN QUERY SELECT 'ALREADY_ACCEPTED_EXACT'::text,existing.decision_sequence,retained_receipt.canonical_receipt; RETURN; ELSE RAISE EXCEPTION 'replay conflict' USING ERRCODE='23505'; END IF;
  END IF;
- SELECT * INTO prep FROM {q}.prepared_verifications WHERE preparation_id=$1 FOR UPDATE; IF NOT FOUND OR prep.consumed_at IS NOT NULL OR prep.binding<>$2 OR prep.canonical_document<>d OR prep.canonical_receipt<>r OR prep.canonical_document_bytes<>{q}.canonical_jsonb(d) OR prep.canonical_receipt_bytes<>{q}.canonical_jsonb(r) THEN RAISE EXCEPTION 'substitution or consumed preparation' USING ERRCODE='28000'; END IF;
+ SELECT * INTO prep FROM {q}.prepared_verifications WHERE preparation_id=$1 FOR UPDATE; IF NOT FOUND OR prep.consumed_at IS NOT NULL OR prep.binding IS DISTINCT FROM $2 OR prep.canonical_document IS DISTINCT FROM d OR prep.canonical_receipt IS DISTINCT FROM r OR prep.canonical_document_bytes IS DISTINCT FROM {q}.canonical_jsonb(d) OR prep.canonical_receipt_bytes IS DISTINCT FROM {q}.canonical_jsonb(r) THEN RAISE EXCEPTION 'substitution or consumed preparation' USING ERRCODE='28000'; END IF;
  SELECT * INTO line FROM {q}.authority_lineages WHERE environment=$2->>'environment' AND trust_domain=$2->>'trust_domain' AND authority_id=$2->>'authority_id' FOR UPDATE; IF NOT FOUND OR line.current_generation<>(($2->>'expected_predecessor_generation')::bigint) OR line.current_document_digest<>$2->>'expected_predecessor_document_digest' OR line.current_complete_head_digest<>$2->>'expected_predecessor_complete_semantic_head_digest' THEN RAISE EXCEPTION 'predecessor mismatch' USING ERRCODE='40001'; END IF;
  SELECT * INTO pc FROM {q}.credentials WHERE environment=line.environment AND trust_domain=line.trust_domain AND authority_id=line.authority_id AND credential_id=prep.proposer_credential_id FOR UPDATE; SELECT * INTO fc FROM {q}.credentials WHERE environment=line.environment AND trust_domain=line.trust_domain AND authority_id=line.authority_id AND credential_id=prep.finalization_credential_id FOR UPDATE;
  SELECT * INTO ph FROM {q}.key_lifecycle_history WHERE environment=pc.environment AND trust_domain=pc.trust_domain AND authority_id=pc.authority_id AND credential_id=pc.credential_id ORDER BY lifecycle_generation DESC LIMIT 1 FOR UPDATE; SELECT * INTO fh FROM {q}.key_lifecycle_history WHERE environment=fc.environment AND trust_domain=fc.trust_domain AND authority_id=fc.authority_id AND credential_id=fc.credential_id ORDER BY lifecycle_generation DESC LIMIT 1 FOR UPDATE;
@@ -398,6 +425,7 @@ BEGIN
  accepted_head_digest:=pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to('cryptohunter.account-genesis.complete-semantic-head-set-digest.v1','UTF8')||pg_catalog.decode('00','hex')||{q}.canonical_complete_head_set(d->'payload'->'complete_semantic_head_set')),'hex');
  IF accepted_head_digest<>r->>'complete_semantic_head_digest' THEN RAISE EXCEPTION 'accepted complete head mismatch' USING ERRCODE='22023'; END IF;
  INSERT INTO {q}.authoritative_documents(environment,trust_domain,authority_id,generation,predecessor_generation,document_digest,complete_head_digest,canonical_document,canonical_document_bytes) VALUES(line.environment,line.trust_domain,line.authority_id,line.current_generation+1,line.current_generation,$2->>'proposed_document_digest',accepted_head_digest,d,prep.canonical_document_bytes);
+ INSERT INTO {q}.authority_generation_heads(environment,trust_domain,authority_id,generation,document_digest,complete_head_digest) VALUES(line.environment,line.trust_domain,line.authority_id,line.current_generation+1,$2->>'proposed_document_digest',accepted_head_digest);
  INSERT INTO {q}.decisions(original_decision_identity,finalization_request_id,environment,trust_domain,authority_id,predecessor_generation,accepted_generation,candidate_binding,lifecycle_reference) VALUES($2->>'original_decision_identity',$2->>'finalization_request_id',line.environment,line.trust_domain,line.authority_id,line.current_generation,line.current_generation+1,$2,pg_catalog.jsonb_build_object('proposer',ph.lifecycle_generation,'finalization',fh.lifecycle_generation)) RETURNING decisions.decision_sequence INTO seq;
  INSERT INTO {q}.finalization_receipts(receipt_id,decision_sequence,canonical_receipt,canonical_receipt_bytes,authentication_signature) VALUES(r->>'receipt_id',seq,r,prep.canonical_receipt_bytes,r->>'authentication_tag_or_signature'); UPDATE {q}.authority_lineages SET current_generation=current_generation+1,current_document_digest=$2->>'proposed_document_digest',current_complete_head_digest=accepted_head_digest,cas_revision=cas_revision+1 WHERE environment=line.environment AND trust_domain=line.trust_domain AND authority_id=line.authority_id; UPDATE {q}.prepared_verifications SET consumed_at=pg_catalog.clock_timestamp(),decision_sequence=seq WHERE preparation_id=$1;
  RETURN QUERY SELECT 'CAS_ACCEPTED'::text,seq,r;
@@ -426,6 +454,7 @@ CREATE TABLE {s}.credentials(environment text NOT NULL,trust_domain text NOT NUL
 CREATE UNIQUE INDEX credentials_one_active_role_idx ON {s}.credentials(environment,trust_domain,authority_id,semantic_role) WHERE lifecycle_state='ACTIVE';
 CREATE TABLE {s}.key_lifecycle_history(environment text NOT NULL,trust_domain text NOT NULL,authority_id text NOT NULL,credential_id text NOT NULL,lifecycle_generation bigint NOT NULL,state text NOT NULL CHECK(state IN ('ACTIVE','VERIFY_ONLY','REVOKED')),record jsonb NOT NULL,PRIMARY KEY(environment,trust_domain,authority_id,credential_id,lifecycle_generation),FOREIGN KEY(environment,trust_domain,authority_id,credential_id) REFERENCES {s}.credentials DEFERRABLE INITIALLY DEFERRED);
 CREATE TABLE {s}.authority_lineages(environment text NOT NULL,trust_domain text NOT NULL,authority_id text NOT NULL,current_generation bigint NOT NULL CHECK(current_generation>=0),current_document_digest text NOT NULL,current_complete_head_digest text NOT NULL,cas_revision bigint NOT NULL DEFAULT 0,PRIMARY KEY(environment,trust_domain,authority_id));
+CREATE TABLE {s}.authority_generation_heads(environment text NOT NULL,trust_domain text NOT NULL,authority_id text NOT NULL,generation bigint NOT NULL CHECK(generation>=0),document_digest text NOT NULL CHECK(document_digest~'^[0-9a-f]{{64}}$'),complete_head_digest text NOT NULL CHECK(complete_head_digest~'^[0-9a-f]{{64}}$'),PRIMARY KEY(environment,trust_domain,authority_id,generation),UNIQUE(environment,trust_domain,authority_id,document_digest));
 CREATE TABLE {s}.prepared_verifications(preparation_id text PRIMARY KEY,binding jsonb NOT NULL,canonical_document jsonb NOT NULL,canonical_document_bytes bytea NOT NULL,canonical_receipt jsonb NOT NULL,canonical_receipt_bytes bytea NOT NULL,proposer_credential_id text NOT NULL,proposer_lifecycle_generation bigint NOT NULL,finalization_credential_id text NOT NULL,finalization_lifecycle_generation bigint NOT NULL,created_at timestamptz NOT NULL DEFAULT clock_timestamp(),consumed_at timestamptz,decision_sequence bigint);
 CREATE TABLE {s}.authoritative_documents(environment text NOT NULL,trust_domain text NOT NULL,authority_id text NOT NULL,generation bigint NOT NULL,predecessor_generation bigint NOT NULL,document_digest text NOT NULL CHECK(document_digest~'^[0-9a-f]{{64}}$'),complete_head_digest text NOT NULL CHECK(complete_head_digest~'^[0-9a-f]{{64}}$'),canonical_document jsonb NOT NULL,canonical_document_bytes bytea NOT NULL,PRIMARY KEY(environment,trust_domain,authority_id,generation),UNIQUE(environment,trust_domain,authority_id,predecessor_generation));
 CREATE TABLE {s}.decisions(decision_sequence bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,original_decision_identity text NOT NULL,finalization_request_id text NOT NULL,environment text NOT NULL,trust_domain text NOT NULL,authority_id text NOT NULL,predecessor_generation bigint NOT NULL,accepted_generation bigint NOT NULL,candidate_binding jsonb NOT NULL,lifecycle_reference jsonb NOT NULL,UNIQUE(original_decision_identity,finalization_request_id));
@@ -437,16 +466,18 @@ CREATE TABLE {s}.finalization_receipts(receipt_id text PRIMARY KEY,decision_sequ
        "jcs_sort_key(text)":"(text) RETURNS text", "canonical_jsonb(jsonb)":"(jsonb) RETURNS bytea",
        "canonical_complete_head_set(jsonb)":"(jsonb) RETURNS bytea", "provision_authority(text,text,text,text,text)":"(text,text,text,text,text) RETURNS void",
        "provision_credential(jsonb)":"(jsonb) RETURNS void", "transition_credential(text,text,text,text,bigint,text,jsonb)":"(text,text,text,text,bigint,text,jsonb) RETURNS void",
+       "resolve_verification_credential(text,text,text,text,text,bigint)":"(text,text,text,text,text,bigint) RETURNS TABLE(credential_id text,semantic_identity text,lifecycle_generation bigint,public_key bytea)",
+       "resolve_predecessor_head(text,text,text,bigint,text)":"(text,text,text,bigint,text) RETURNS text",
        "prepare_verified_freshness_candidate(bytea,bytea,bytea)":"(bytea,bytea,bytea) RETURNS text", "compare_and_advance(text,jsonb,bytea,bytea)":"(text,jsonb,bytea,bytea) RETURNS TABLE(outcome text,decision_sequence bigint,receipt jsonb)"}
       for sig, source in sources.items():
         name=sig.split("(",1)[0]
         conn.execute(sql.SQL("CREATE FUNCTION {}.{} {} LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS {}") .format(s,sql.Identifier(name),sql.SQL(signatures[sig]),sql.Literal(source)))
         conn.execute(sql.SQL("ALTER FUNCTION {}.{} OWNER TO {}; REVOKE ALL ON FUNCTION {}.{} FROM PUBLIC").format(s,sql.SQL(sig),fo,s,sql.SQL(sig)))
-      conn.execute(sql.SQL("GRANT USAGE ON SCHEMA {} TO {},{},{},{},{}; GRANT SELECT ON ALL TABLES IN SCHEMA {} TO {}; GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA {} TO {}; GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA {} TO {}; GRANT EXECUTE ON FUNCTION {}.provision_authority(text,text,text,text,text),{}.provision_credential(jsonb),{}.transition_credential(text,text,text,text,bigint,text,jsonb) TO {}; GRANT EXECUTE ON FUNCTION {}.prepare_verified_freshness_candidate(bytea,bytea,bytea) TO {}; GRANT EXECUTE ON FUNCTION {}.compare_and_advance(text,jsonb,bytea,bytea) TO {}").format(s,ver,run,read,fo,adm,s,read,s,fo,s,fo,s,s,s,adm,s,ver,s,run))
+      conn.execute(sql.SQL("GRANT USAGE ON SCHEMA {} TO {},{},{},{},{}; GRANT SELECT ON ALL TABLES IN SCHEMA {} TO {}; GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA {} TO {}; GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA {} TO {}; GRANT EXECUTE ON FUNCTION {}.provision_authority(text,text,text,text,text),{}.provision_credential(jsonb),{}.transition_credential(text,text,text,text,bigint,text,jsonb) TO {}; GRANT EXECUTE ON FUNCTION {}.resolve_verification_credential(text,text,text,text,text,bigint),{}.resolve_predecessor_head(text,text,text,bigint,text),{}.prepare_verified_freshness_candidate(bytea,bytea,bytea) TO {}; GRANT EXECUTE ON FUNCTION {}.compare_and_advance(text,jsonb,bytea,bytea) TO {}").format(s,ver,run,read,fo,adm,s,read,s,fo,s,fo,s,s,s,adm,s,s,s,ver,s,run))
       manifest={k:hashlib.sha256(v.encode()).hexdigest() for k,v in sources.items()}
       conn.execute(sql.SQL("INSERT INTO {}.metadata VALUES(true,%s,%s,%s)").format(s),(SCHEMA_IDENTITY,SCHEMA_VERSION,json.dumps(manifest)))
       for table in ("metadata", "key_material_role_bindings", "credentials", "key_lifecycle_history",
-                    "authority_lineages", "prepared_verifications",
+                    "authority_lineages", "authority_generation_heads", "prepared_verifications",
                     "authoritative_documents", "decisions",
                     "finalization_receipts"):
         conn.execute(sql.SQL("ALTER TABLE {}.{} OWNER TO {}").format(s, sql.Identifier(table), so))
@@ -485,6 +516,8 @@ def qualify_postgresql_freshness_authority(connection: PostgreSQLConnectionConfi
           "provision_authority(text,text,text,text,text)": {config.admin_role},
           "provision_credential(jsonb)": {config.admin_role},
           "transition_credential(text,text,text,text,bigint,text,jsonb)": {config.admin_role},
+          "resolve_verification_credential(text,text,text,text,text,bigint)": {config.verifier_role},
+          "resolve_predecessor_head(text,text,text,bigint,text)": {config.verifier_role},
           "prepare_verified_freshness_candidate(bytea,bytea,bytea)": {config.verifier_role},
           "compare_and_advance(text,jsonb,bytea,bytea)": {config.runtime_role},
       }
@@ -496,7 +529,7 @@ def qualify_postgresql_freshness_authority(connection: PostgreSQLConnectionConfi
       immutable={k:hashlib.sha256(v.encode()).hexdigest() for k,v in expected.items()}
       if not meta or tuple(meta[:2])!=(SCHEMA_IDENTITY,SCHEMA_VERSION) or meta[2]!=immutable: problems.append("manifest")
       expected_relations={"metadata","key_material_role_bindings","credentials",
-          "key_lifecycle_history","authority_lineages","prepared_verifications",
+          "key_lifecycle_history","authority_lineages","authority_generation_heads","prepared_verifications",
           "authoritative_documents","decisions","finalization_receipts",
           "decisions_decision_sequence_seq"}
       rels=conn.execute("SELECT c.relname,c.relkind,c.relpersistence,r.rolname,c.relrowsecurity,c.relforcerowsecurity FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace JOIN pg_catalog.pg_roles r ON r.oid=c.relowner WHERE n.nspname=%s AND c.relkind IN ('r','S')",(config.schema,)).fetchall()
@@ -525,6 +558,8 @@ def qualify_postgresql_freshness_authority(connection: PostgreSQLConnectionConfi
       evidence_mismatch=conn.execute(sql.SQL("""SELECT
         (SELECT count(*) FROM {s}.prepared_verifications p WHERE p.canonical_document_bytes<>{s}.canonical_jsonb(p.canonical_document) OR p.canonical_receipt_bytes<>{s}.canonical_jsonb(p.canonical_receipt) OR p.binding->>'preparation_id'<>p.preparation_id) +
         (SELECT count(*) FROM {s}.authoritative_documents d WHERE d.canonical_document_bytes<>{s}.canonical_jsonb(d.canonical_document) OR d.document_digest<>d.canonical_document->>'document_digest') +
+        (SELECT count(*) FROM {s}.authority_lineages l LEFT JOIN {s}.authority_generation_heads h ON h.environment=l.environment AND h.trust_domain=l.trust_domain AND h.authority_id=l.authority_id AND h.generation=l.current_generation WHERE h.generation IS NULL OR h.document_digest IS DISTINCT FROM l.current_document_digest OR h.complete_head_digest IS DISTINCT FROM l.current_complete_head_digest) +
+        (SELECT count(*) FROM {s}.authority_generation_heads h LEFT JOIN {s}.authoritative_documents d ON d.environment=h.environment AND d.trust_domain=h.trust_domain AND d.authority_id=h.authority_id AND d.generation=h.generation WHERE h.generation>0 AND (d.generation IS NULL OR d.document_digest IS DISTINCT FROM h.document_digest OR d.complete_head_digest IS DISTINCT FROM h.complete_head_digest)) +
         (SELECT count(*) FROM {s}.finalization_receipts r WHERE r.canonical_receipt_bytes<>{s}.canonical_jsonb(r.canonical_receipt) OR r.receipt_id<>r.canonical_receipt->>'receipt_id' OR r.authentication_signature<>r.canonical_receipt->>'authentication_tag_or_signature')
       """).format(s=sql.Identifier(config.schema))).fetchone()[0]
       if evidence_mismatch: problems.append("retained evidence integrity")
