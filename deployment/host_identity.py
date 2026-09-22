@@ -5,7 +5,9 @@ from __future__ import annotations
 import platform
 
 
-class UnsupportedHostOSError(RuntimeError):
+class UnsupportedHostOSError(OSError):
+    """Raised when deployment evidence is requested on an unsupported OS."""
+
     pass
 
 

@@ -12,6 +12,7 @@ from deployment.core_test_plan import (
     canonical_plan_digest,
     execute_plan,
     load_manifest,
+    main,
     marker_document,
     selectors_for_platform,
 )
@@ -42,8 +43,30 @@ def test_canonical_host_os_mapping(native: str, canonical: str) -> None:
 
 
 def test_canonical_host_os_rejects_unknown() -> None:
+    assert issubclass(UnsupportedHostOSError, OSError)
     with pytest.raises(UnsupportedHostOSError, match="unsupported host OS"):
         canonical_host_os("Plan9")
+
+
+def test_core_plan_cli_reports_unsupported_host_without_traceback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr("deployment.host_identity.platform.system", lambda: "Plan9")
+
+    result = main([
+        "--runner-os", "Linux",
+        "--source-revision", "current",
+        "--ci-run-id", "run-1",
+        "--ci-provider", "https://github.com",
+        "--output", str(tmp_path / "marker.json"),
+    ])
+
+    captured = capsys.readouterr()
+    assert result != 0
+    assert captured.out == ""
+    assert captured.err == "unsupported host OS: 'Plan9'\n"
+    assert "Traceback" not in captured.err
+    assert not (tmp_path / "marker.json").exists()
 
 
 def test_darwin_host_executes_canonical_macos_plan(
