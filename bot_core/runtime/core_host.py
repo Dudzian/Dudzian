@@ -15,6 +15,11 @@ from types import TracebackType
 from typing import Any, BinaryIO, Protocol, TypeVar, cast
 
 from bot_core.persistence.runtime_session_history import RuntimeSessionPublicationResult
+from .core_host_catalog_runtime import (
+    CatalogRuntimeDeploymentConfiguration,
+    CatalogRuntimeStartupResult,
+    CoreHostCatalogRuntimeLifecycle,
+)
 
 from .core_host_recovery_types import (
     CoreHostRecoveryClassification,
@@ -169,6 +174,7 @@ class CoreHost:
         startup_recovery_factory: Callable[[CoreHostScope, StoreT], StartupRecovery],
         runtime_session_publication_hook: Callable[[str, RuntimeSession], None] | None = None,
         lock_factory: Callable[[CoreHostScope], CoreHostProcessLock] = CoreHostProcessLock,
+        catalog_runtime_configuration: CatalogRuntimeDeploymentConfiguration | None = None,
     ) -> None:
         self._scope = scope
         self._runtime_session_factory = runtime_session_factory or cast(
@@ -179,6 +185,14 @@ class CoreHost:
         self._lock_factory = lock_factory
         self._startup_recovery_factory = startup_recovery_factory
         self._runtime_session_publication_hook = runtime_session_publication_hook
+        if (
+            catalog_runtime_configuration is not None
+            and type(catalog_runtime_configuration)
+            is not CatalogRuntimeDeploymentConfiguration
+        ):
+            raise TypeError("exact CatalogRuntimeDeploymentConfiguration required")
+        self._catalog_runtime_configuration = catalog_runtime_configuration
+        self._catalog_runtime: CoreHostCatalogRuntimeLifecycle | None = None
         self._lock: CoreHostProcessLock | None = None
         self._runtime_session: SessionT | None = None
         self._state_store: StoreT | None = None
@@ -196,6 +210,16 @@ class CoreHost:
     @property
     def startup_disposition(self) -> CoreHostStartupDisposition | None:
         return self._startup_disposition
+
+    @property
+    def catalog_runtime_startup_result(self) -> CatalogRuntimeStartupResult | None:
+        return None if self._catalog_runtime is None else self._catalog_runtime.result
+
+    def fetch_source_catalog_once(self) -> object | None:
+        """Invoke the frozen release binding only through the owned ready lifecycle."""
+        if self._catalog_runtime is None:
+            return None
+        return self._catalog_runtime.fetch_catalog_once()
 
     def start(self) -> None:
         if self.owns_process_lock:
@@ -239,6 +263,11 @@ class CoreHost:
             if classification is CoreHostRecoveryClassification.EMPTY_UNINITIALIZED:
                 self._startup_disposition = CoreHostStartupDisposition.SETUP_REQUIRED
             else:
+                catalog_runtime = CoreHostCatalogRuntimeLifecycle(
+                    self._catalog_runtime_configuration
+                )
+                catalog_runtime.start_after_recovery()
+                self._catalog_runtime = catalog_runtime
                 if not isinstance(session, RuntimeSession):
                     raise RuntimeError("initialized CoreHost requires a RuntimeSession")
                 if session.device_installation_id != self._scope.device_installation_id:
@@ -304,6 +333,7 @@ class CoreHost:
 
         self._startup_recovery_result = None
         self._startup_disposition = None
+        self._catalog_runtime = None
         self._state_store = None
         self._runtime_session = None
         self._lock = None
@@ -320,6 +350,7 @@ class CoreHost:
     def close(self) -> None:
         self._startup_recovery_result = None
         self._startup_disposition = None
+        self._catalog_runtime = None
         store, self._state_store = self._state_store, None
         session, self._runtime_session = self._runtime_session, None
         process_lock, self._lock = self._lock, None

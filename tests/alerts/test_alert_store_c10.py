@@ -243,6 +243,22 @@ def test_production_policy_catalog_is_explicitly_open_until_upstream_integration
         "SECURITY_PRIVILEGED_FAILURE",
     }
     assert set(PRODUCTION_SOURCE_RESOLUTION_POLICIES) == expected
-    assert {status for _, status in PRODUCTION_SOURCE_RESOLUTION_POLICIES.values()} == {
-        "OPEN_SOURCE_AUTHORITY"
+    assert {
+        category: status
+        for category, (_policy, status) in PRODUCTION_SOURCE_RESOLUTION_POLICIES.items()
+    } == {
+        "MARKET_DATA_CURRENT_CONDITION": (
+            "S9C_ADAPTER_INTEGRATED_SOURCE_PRODUCER_AUTHENTICITY_OPEN"
+        ),
+        "EXECUTION_ROUTE_CONDITION": (
+            "S9C_ADAPTER_INTEGRATED_SOURCE_PRODUCER_AUTHENTICITY_OPEN"
+        ),
+        "KILL_SWITCH_ACTIVE": (
+            "M09_ADAPTER_INTEGRATED_SOURCE_PRODUCER_AUTHENTICITY_OPEN"
+        ),
+        "RECONCILIATION_DIVERGENCE": "OPEN_SOURCE_AUTHORITY",
+        "PERSISTENCE_RECOVERY_REQUIRED": "OPEN_SOURCE_AUTHORITY",
+        "RISK_DECISION_DENIED": "OPEN_SOURCE_AUTHORITY",
+        "DOMAIN_EXECUTION_FAILURE": "OPEN_SOURCE_AUTHORITY",
+        "SECURITY_PRIVILEGED_FAILURE": "OPEN_SOURCE_AUTHORITY",
     }

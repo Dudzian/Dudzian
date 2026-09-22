@@ -4,7 +4,7 @@ from dataclasses import replace
 from types import MappingProxyType
 
 import pytest
-import bot_core.alerts.store as alerts
+from bot_core.alerts import store as alerts
 
 from bot_core.alerts.store import (
     AlertStore,
