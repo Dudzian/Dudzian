@@ -7,8 +7,10 @@ import json
 import hashlib
 import os
 from pathlib import Path
+import pwd
 import subprocess
 import sys
+import time
 
 import psycopg
 import pytest
@@ -397,3 +399,319 @@ def test_generation_head_history_survives_two_durable_postgresql_restarts(
     assert _resolve_head(cluster, 0, "0" * 64).stdout.strip() == "1" * 64
     assert _resolve_head(cluster, 1, digest1).stdout.strip() == head1
     assert _resolve_head(cluster, 2, digest2).stdout.strip() == head2
+
+
+def test_real_high_level_runtime_process_exact_replay_over_unix_ipc_and_peer_postgresql(
+        isolated_peer_cluster, tmp_path):
+    cluster = isolated_peer_cluster
+    values = list(fixture_candidate())
+    _reset_to_real_core(cluster, values)
+    candidate = _candidate_file(cluster, tmp_path, values)
+    tmp_path.chmod(0o777)
+    verifier_socket = tmp_path / "semantic-verifier.sock"
+    runtime_uid = pwd.getpwnam("os_freshness_runtime").pw_uid
+    server_code = r'''import json,sys
+from bot_core.freshness_semantic_verifier import FreshnessSemanticVerifier,PostgreSQLPreparationWriter,PostgreSQLRetainedCredentialResolver,PostgreSQLVerifierConnection,serve_local_unix_socket
+v=json.load(open(sys.argv[1])); c=PostgreSQLVerifierConnection(v["socket"],v["port"])
+ver=FreshnessSemanticVerifier(PostgreSQLRetainedCredentialResolver(c),PostgreSQLPreparationWriter(c),"semantic-verifier-v1")
+serve_local_unix_socket(ver,sys.argv[2],allowed_peer_uid=int(sys.argv[3]),stop_after=2)'''
+    runtime_code = r'''import base64,json,sys
+from bot_core.account_genesis_freshness_authority import ProductionLocalFreshnessAuthority,ProductionLocalFreshnessAuthorityConfig
+v=json.load(open(sys.argv[1])); a=ProductionLocalFreshnessAuthority(ProductionLocalFreshnessAuthorityConfig(sys.argv[2],v["socket"],v["port"]))
+r=a.authenticate_and_advance(*(base64.urlsafe_b64decode(x) for x in v["objects"]))
+print(json.dumps({"outcome":r.outcome.value,"sequence":r.decision_sequence,"receipt":base64.urlsafe_b64encode(r.retained_receipt or b"").decode()}))'''
+    server = subprocess.Popen(
+        ["runuser", "-u", "os_freshness_crypto_verifier", "--", sys.executable,
+         "-c", server_code, str(candidate), str(verifier_socket), str(runtime_uid)],
+        text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    )
+    for _ in range(200):
+        if verifier_socket.exists():
+            break
+        if server.poll() is not None:
+            raise AssertionError(server.stderr.read())
+        time.sleep(0.01)
+    verifier_socket.chmod(0o666)  # fixture transport access; SO_PEERCRED remains authoritative
+    results = []
+    for _ in range(2):
+        completed = _as("os_freshness_runtime", [
+            sys.executable, "-c", runtime_code, str(candidate), str(verifier_socket),
+        ])
+        results.append(json.loads(completed.stdout))
+    server.wait(5)
+    assert server.returncode == 0, server.stderr.read()
+    assert [item["outcome"] for item in results] == [
+        "CAS_ACCEPTED", "ALREADY_ACCEPTED_EXACT",
+    ]
+    assert results[0]["sequence"] == results[1]["sequence"]
+    assert results[0]["receipt"] == results[1]["receipt"]
+    with psycopg.connect(cluster["admin"]) as connection:
+        assert connection.execute("select count(*) from freshness_authority.prepared_verifications").fetchone() == (1,)
+        assert connection.execute("select count(*) from freshness_authority.authoritative_documents").fetchone() == (1,)
+        assert connection.execute("select count(*) from freshness_authority.authority_generation_heads").fetchone() == (2,)
+        assert connection.execute("select count(*) from freshness_authority.decisions").fetchone() == (1,)
+        assert connection.execute("select count(*) from freshness_authority.finalization_receipts").fetchone() == (1,)
+        assert connection.execute("select current_generation from freshness_authority.authority_lineages").fetchone() == (1,)
+        assert connection.execute(
+            "select count(*) from freshness_authority.prepared_verifications "
+            "where consumed_at is not null and decision_sequence is not null"
+        ).fetchone() == (1,)
+
+
+def test_real_high_level_preparation_commit_response_loss_is_sticky_and_recovers_exactly(
+        isolated_peer_cluster, tmp_path):
+    cluster = isolated_peer_cluster
+    values = list(fixture_candidate())
+    _reset_to_real_core(cluster, values)
+    candidate = _candidate_file(cluster, tmp_path, values)
+    tmp_path.chmod(0o777)
+    verifier_socket = tmp_path / "lost-prepared.sock"
+    runtime_uid = pwd.getpwnam("os_freshness_runtime").pw_uid
+    lossy_server = r'''import base64,json,os,socket,struct,sys
+from bot_core.freshness_semantic_verifier import FreshnessSemanticVerifier,PostgreSQLPreparationWriter,PostgreSQLRetainedCredentialResolver,PostgreSQLVerifierConnection
+from bot_core.postgresql_freshness_authority import parse_canonical_json
+v=json.load(open(sys.argv[1])); c=PostgreSQLVerifierConnection(v["socket"],v["port"])
+ver=FreshnessSemanticVerifier(PostgreSQLRetainedCredentialResolver(c),PostgreSQLPreparationWriter(c),"semantic-verifier-v1")
+s=socket.socket(socket.AF_UNIX);s.bind(sys.argv[2]);os.chmod(sys.argv[2],0o666);s.listen(1);x,_=s.accept()
+assert struct.unpack("3i",x.getsockopt(socket.SOL_SOCKET,socket.SO_PEERCRED,12))[1]==int(sys.argv[3])
+def read(n):
+ b=b""
+ while len(b)<n:
+  p=x.recv(n-len(b))
+  if not p: raise RuntimeError("truncated")
+  b+=p
+ return b
+n=struct.unpack("!I",read(4))[0];q=parse_canonical_json(read(n));dec=lambda z:base64.urlsafe_b64decode(z+"="*(-len(z)%4))
+ver.verify_exact_candidate(*(dec(q[k]) for k in ("proposer_authentication","authoritative_document","finalization_receipt")))
+x.close();s.close()'''
+    normal_server = r'''import json,sys
+from bot_core.freshness_semantic_verifier import FreshnessSemanticVerifier,PostgreSQLPreparationWriter,PostgreSQLRetainedCredentialResolver,PostgreSQLVerifierConnection,serve_local_unix_socket
+v=json.load(open(sys.argv[1]));c=PostgreSQLVerifierConnection(v["socket"],v["port"]);ver=FreshnessSemanticVerifier(PostgreSQLRetainedCredentialResolver(c),PostgreSQLPreparationWriter(c),"semantic-verifier-v1")
+serve_local_unix_socket(ver,sys.argv[2],allowed_peer_uid=int(sys.argv[3]),stop_after=1)'''
+    runtime = r'''import base64,json,sys
+from bot_core.account_genesis_freshness_authority import ProductionLocalFreshnessAuthority,ProductionLocalFreshnessAuthorityConfig
+v=json.load(open(sys.argv[1]));a=ProductionLocalFreshnessAuthority(ProductionLocalFreshnessAuthorityConfig(sys.argv[2],v["socket"],v["port"]));r=a.authenticate_and_advance(*(base64.urlsafe_b64decode(x) for x in v["objects"]));print(r.outcome.value)'''
+    first = subprocess.Popen(["runuser", "-u", "os_freshness_crypto_verifier", "--",
+        sys.executable, "-c", lossy_server, str(candidate), str(verifier_socket), str(runtime_uid)])
+    for _ in range(200):
+        if verifier_socket.exists(): break
+        time.sleep(0.01)
+    lost = _as("os_freshness_runtime", [sys.executable, "-c", runtime,
+        str(candidate), str(verifier_socket)])
+    first.wait(5)
+    assert lost.stdout.strip() == "PREPARATION_OUTCOME_UNKNOWN"
+    with psycopg.connect(cluster["admin"]) as connection:
+        preparation_id = connection.execute(
+            "select preparation_id from freshness_authority.prepared_verifications"
+        ).fetchone()[0]
+        assert connection.execute(
+            "select count(*) from freshness_authority.prepared_verifications"
+        ).fetchone() == (1,)
+    verifier_socket.unlink(missing_ok=True)
+    second = subprocess.Popen(["runuser", "-u", "os_freshness_crypto_verifier", "--",
+        sys.executable, "-c", normal_server, str(candidate), str(verifier_socket), str(runtime_uid)])
+    for _ in range(200):
+        if verifier_socket.exists(): break
+        time.sleep(0.01)
+    verifier_socket.chmod(0o666)
+    recovered = _as("os_freshness_runtime", [sys.executable, "-c", runtime,
+        str(candidate), str(verifier_socket)])
+    second.wait(5)
+    assert recovered.stdout.strip() == "CAS_ACCEPTED"
+    with psycopg.connect(cluster["admin"]) as connection:
+        assert connection.execute(
+            "select preparation_id,count(*) from freshness_authority.prepared_verifications group by preparation_id"
+        ).fetchone() == (preparation_id, 1)
+        assert connection.execute("select count(*) from freshness_authority.decisions").fetchone() == (1,)
+
+
+def test_real_high_level_cas_commit_response_loss_recovers_retained_exact_acceptance(
+        isolated_peer_cluster, tmp_path):
+    cluster = isolated_peer_cluster
+    values = list(fixture_candidate())
+    _reset_to_real_core(cluster, values)
+    candidate = _candidate_file(cluster, tmp_path, values)
+    tmp_path.chmod(0o777)
+    verifier_socket = tmp_path / "lost-cas.sock"
+    runtime_uid = pwd.getpwnam("os_freshness_runtime").pw_uid
+    server_code = r'''import json,sys
+from bot_core.freshness_semantic_verifier import FreshnessSemanticVerifier,PostgreSQLPreparationWriter,PostgreSQLRetainedCredentialResolver,PostgreSQLVerifierConnection,serve_local_unix_socket
+v=json.load(open(sys.argv[1]));c=PostgreSQLVerifierConnection(v["socket"],v["port"]);ver=FreshnessSemanticVerifier(PostgreSQLRetainedCredentialResolver(c),PostgreSQLPreparationWriter(c),"semantic-verifier-v1");serve_local_unix_socket(ver,sys.argv[2],allowed_peer_uid=int(sys.argv[3]),stop_after=2)'''
+    runtime = r'''import base64,json,sys
+from bot_core.account_genesis_freshness_authority import FreshnessAuthorityOutcome,FreshnessAuthorityResult,ProductionLocalFreshnessAuthority,ProductionLocalFreshnessAuthorityConfig
+v=json.load(open(sys.argv[1]))
+class LoseAcceptedResponse(ProductionLocalFreshnessAuthority):
+ def _compare_and_advance(self,p,d,r):
+  accepted=super()._compare_and_advance(p,d,r)
+  assert accepted.outcome is FreshnessAuthorityOutcome.CAS_ACCEPTED
+  return FreshnessAuthorityResult(FreshnessAuthorityOutcome.FRESHNESS_OUTCOME_UNKNOWN,preparation_id=p.preparation_id)
+a=(LoseAcceptedResponse if sys.argv[3]=="lose" else ProductionLocalFreshnessAuthority)(ProductionLocalFreshnessAuthorityConfig(sys.argv[2],v["socket"],v["port"]));r=a.authenticate_and_advance(*(base64.urlsafe_b64decode(x) for x in v["objects"]));print(json.dumps({"outcome":r.outcome.value,"sequence":r.decision_sequence,"receipt":base64.urlsafe_b64encode(r.retained_receipt or b"").decode()}))'''
+    server = subprocess.Popen(["runuser", "-u", "os_freshness_crypto_verifier", "--",
+        sys.executable, "-c", server_code, str(candidate), str(verifier_socket), str(runtime_uid)])
+    for _ in range(200):
+        if verifier_socket.exists(): break
+        time.sleep(0.01)
+    verifier_socket.chmod(0o666)
+    lost = json.loads(_as("os_freshness_runtime", [sys.executable, "-c", runtime,
+        str(candidate), str(verifier_socket), "lose"]).stdout)
+    with psycopg.connect(cluster["admin"]) as connection:
+        sequence = connection.execute("select decision_sequence from freshness_authority.decisions").fetchone()[0]
+        retained = bytes(connection.execute(
+            "select canonical_receipt_bytes from freshness_authority.finalization_receipts"
+        ).fetchone()[0])
+    recovered = json.loads(_as("os_freshness_runtime", [sys.executable, "-c", runtime,
+        str(candidate), str(verifier_socket), "recover"]).stdout)
+    server.wait(5)
+    assert lost["outcome"] == "FRESHNESS_OUTCOME_UNKNOWN"
+    assert recovered["outcome"] == "ALREADY_ACCEPTED_EXACT"
+    assert recovered["sequence"] == sequence
+    assert base64.urlsafe_b64decode(recovered["receipt"]) == retained
+    with psycopg.connect(cluster["admin"]) as connection:
+        assert connection.execute("select count(*) from freshness_authority.decisions").fetchone() == (1,)
+        assert connection.execute("select count(*) from freshness_authority.finalization_receipts").fetchone() == (1,)
+        assert connection.execute("select count(*) from freshness_authority.authoritative_documents").fetchone() == (1,)
+        assert connection.execute("select current_generation from freshness_authority.authority_lineages").fetchone() == (1,)
+
+
+def _concurrent_high_level_calls(cluster, tmp_path, candidate_paths, before_release=None):
+    for parent in (Path("/root"), Path(sys.executable).parent,
+                   Path(sys.executable).parent.parent,
+                   Path(sys.executable).parent.parent.parent):
+        parent.chmod(parent.stat().st_mode | 0o111)
+    tmp_path.chmod(0o777)
+    socket_path = tmp_path / "concurrent-verifier.sock"
+    runtime_uid = pwd.getpwnam("os_freshness_runtime").pw_uid
+    server_code = r'''import json,sys
+from bot_core.freshness_semantic_verifier import FreshnessSemanticVerifier,PostgreSQLPreparationWriter,PostgreSQLRetainedCredentialResolver,PostgreSQLVerifierConnection,serve_local_unix_socket
+v=json.load(open(sys.argv[1]));c=PostgreSQLVerifierConnection(v["socket"],v["port"]);ver=FreshnessSemanticVerifier(PostgreSQLRetainedCredentialResolver(c),PostgreSQLPreparationWriter(c),"semantic-verifier-v1");serve_local_unix_socket(ver,sys.argv[2],allowed_peer_uid=int(sys.argv[3]),stop_after=int(sys.argv[4]))'''
+    runtime_code = r'''import base64,json,pathlib,sys,time
+from bot_core.account_genesis_freshness_authority import ProductionLocalFreshnessAuthority,ProductionLocalFreshnessAuthorityConfig
+v=json.load(open(sys.argv[1]))
+class BarrierAuthority(ProductionLocalFreshnessAuthority):
+ def _compare_and_advance(self,p,d,r):
+  pathlib.Path(sys.argv[3]).write_text("ready")
+  while not pathlib.Path(sys.argv[4]).exists(): time.sleep(.002)
+  return super()._compare_and_advance(p,d,r)
+a=BarrierAuthority(ProductionLocalFreshnessAuthorityConfig(sys.argv[2],v["socket"],v["port"]));r=a.authenticate_and_advance(*(base64.urlsafe_b64decode(x) for x in v["objects"]));print(json.dumps({"outcome":r.outcome.value,"sequence":r.decision_sequence,"receipt":base64.urlsafe_b64encode(r.retained_receipt or b"").decode()}))'''
+    server = subprocess.Popen(["runuser", "-u", "os_freshness_crypto_verifier", "--",
+        sys.executable, "-c", server_code, str(candidate_paths[0]), str(socket_path),
+        str(runtime_uid), str(len(candidate_paths))])
+    for _ in range(300):
+        if socket_path.exists(): break
+        time.sleep(0.01)
+    socket_path.chmod(0o666)
+    go = tmp_path / "go"
+    processes = []
+    for index, path in enumerate(candidate_paths):
+        ready = tmp_path / f"ready-{index}"
+        processes.append((ready, subprocess.Popen(
+            ["runuser", "-u", "os_freshness_runtime", "--", sys.executable, "-c",
+             runtime_code, str(path), str(socket_path), str(ready), str(go)],
+            text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )))
+    for _ in range(500):
+        if all(ready.exists() for ready, _ in processes): break
+        time.sleep(0.01)
+    assert all(ready.exists() for ready, _ in processes)
+    if before_release is not None:
+        before_release()
+    go.write_text("go")
+    results = []
+    for _, process in processes:
+        stdout, stderr = process.communicate(timeout=15)
+        assert process.returncode == 0, stderr
+        results.append(json.loads(stdout))
+    server.wait(5)
+    assert server.returncode == 0
+    return results
+
+
+def test_real_high_level_concurrent_exact_candidate_converges_to_retained_acceptance(
+        isolated_peer_cluster, tmp_path):
+    cluster = isolated_peer_cluster
+    values = list(fixture_candidate())
+    _reset_to_real_core(cluster, values)
+    candidate = _candidate_file(cluster, tmp_path, values)
+    results = _concurrent_high_level_calls(cluster, tmp_path, [candidate, candidate])
+    assert sorted(item["outcome"] for item in results) == [
+        "ALREADY_ACCEPTED_EXACT", "CAS_ACCEPTED",
+    ]
+    assert results[0]["sequence"] == results[1]["sequence"]
+    assert results[0]["receipt"] == results[1]["receipt"]
+    with psycopg.connect(cluster["admin"]) as connection:
+        assert connection.execute("select count(*) from freshness_authority.prepared_verifications").fetchone() == (1,)
+        assert connection.execute("select count(*) from freshness_authority.authoritative_documents").fetchone() == (1,)
+        assert connection.execute("select count(*) from freshness_authority.authority_generation_heads where generation=1").fetchone() == (1,)
+        assert connection.execute("select count(*) from freshness_authority.decisions").fetchone() == (1,)
+        assert connection.execute("select count(*) from freshness_authority.finalization_receipts").fetchone() == (1,)
+        assert connection.execute("select current_generation from freshness_authority.authority_lineages").fetchone() == (1,)
+
+
+def test_real_high_level_concurrent_different_candidates_yield_one_semantic_conflict(
+        isolated_peer_cluster, tmp_path):
+    cluster = isolated_peer_cluster
+    first = list(fixture_candidate())
+    _reset_to_real_core(cluster, first)
+    second = list(fixture_candidate())
+    second[5], second[6] = first[5], first[6]
+    _resign(second, "different-request", "different-receipt")
+    first_dir, second_dir = tmp_path / "first", tmp_path / "second"
+    first_dir.mkdir(); second_dir.mkdir()
+    first_path = _candidate_file(cluster, first_dir, first)
+    second_path = _candidate_file(cluster, second_dir, second)
+    results = _concurrent_high_level_calls(cluster, tmp_path, [first_path, second_path])
+    assert sorted(item["outcome"] for item in results) == ["CAS_ACCEPTED", "CAS_CONFLICT"]
+    with psycopg.connect(cluster["admin"]) as connection:
+        assert connection.execute("select count(*) from freshness_authority.decisions").fetchone() == (1,)
+        assert connection.execute("select count(*) from freshness_authority.finalization_receipts").fetchone() == (1,)
+        assert connection.execute("select count(*) from freshness_authority.authoritative_documents").fetchone() == (1,)
+        assert connection.execute("select current_generation from freshness_authority.authority_lineages").fetchone() == (1,)
+
+
+@pytest.mark.parametrize("credential,target", [
+    ("proposer-credential", "VERIFY_ONLY"),
+    ("proposer-credential", "REVOKED"),
+    ("finalizer-credential", "VERIFY_ONLY"),
+    ("finalizer-credential", "REVOKED"),
+])
+def test_real_high_level_lifecycle_transition_before_cas_is_authentication_invalid(
+        isolated_peer_cluster, tmp_path, credential, target):
+    cluster = isolated_peer_cluster
+    values = list(fixture_candidate())
+    _reset_to_real_core(cluster, values)
+    candidate = _candidate_file(cluster, tmp_path, values)
+
+    def transition():
+        with psycopg.connect(cluster["admin"], autocommit=True) as connection:
+            connection.execute("SET SESSION AUTHORIZATION freshness_admin")
+            connection.execute(
+                "select freshness_authority.transition_credential(%s,%s,%s,%s,%s,%s,%s)",
+                ("PRODUCTION", "td", "auth", credential, 1, target,
+                 json.dumps({"reason": "high-level-serialization"})),
+            )
+
+    results = _concurrent_high_level_calls(
+        cluster, tmp_path, [candidate], before_release=transition,
+    )
+    assert [item["outcome"] for item in results] == ["INVALID_AUTHENTICATION"]
+    with psycopg.connect(cluster["admin"]) as connection:
+        assert connection.execute("select count(*) from freshness_authority.decisions").fetchone() == (0,)
+
+
+def test_real_high_level_cas_before_lifecycle_transition_is_accepted(
+        isolated_peer_cluster, tmp_path):
+    cluster = isolated_peer_cluster
+    values = list(fixture_candidate())
+    _reset_to_real_core(cluster, values)
+    candidate = _candidate_file(cluster, tmp_path, values)
+    result = _concurrent_high_level_calls(cluster, tmp_path, [candidate])[0]
+    assert result["outcome"] == "CAS_ACCEPTED"
+    with psycopg.connect(cluster["admin"], autocommit=True) as connection:
+        connection.execute("SET SESSION AUTHORIZATION freshness_admin")
+        connection.execute(
+            "select freshness_authority.transition_credential(%s,%s,%s,%s,%s,%s,%s)",
+            ("PRODUCTION", "td", "auth", "proposer-credential", 1, "REVOKED",
+             json.dumps({"reason": "cas-first"})),
+        )
+    with psycopg.connect(cluster["admin"]) as connection:
+        assert connection.execute("select count(*) from freshness_authority.decisions").fetchone() == (1,)

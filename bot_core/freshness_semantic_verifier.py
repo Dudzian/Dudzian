@@ -61,6 +61,18 @@ class PreparationOutcomeUnknown(RuntimeError):
     """The connection was lost while commit outcome could no longer be known."""
 
 
+class FreshnessVerifierUnavailable(RuntimeError):
+    """The fixed local verifier authority infrastructure is unavailable."""
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedFreshnessCandidate:
+    """Authority-issued material needed by the one fixed CAS operation."""
+
+    preparation_id: str
+    binding: bytes
+
+
 @dataclass(frozen=True, slots=True)
 class RetainedVerificationCredential:
     """Immutable credential facts resolved from the retained trust source."""
@@ -114,18 +126,21 @@ class PostgreSQLVerifierConnection:
             raise ValueError("database must be a safe fixed identifier")
 
     def connect(self) -> psycopg.Connection[object]:
-        connection = psycopg.connect(
-            host=self.socket_directory, port=self.port, dbname=self.database,
-            user="freshness_crypto_verifier", sslmode="disable",
-        )
-        facts = connection.execute(
-            "SELECT session_user,current_user,inet_client_addr(),inet_server_addr(),"
-            "coalesce((SELECT ssl FROM pg_catalog.pg_stat_ssl "
-            "WHERE pid=pg_catalog.pg_backend_pid()),false)"
-        ).fetchone()
+        try:
+            connection = psycopg.connect(
+                host=self.socket_directory, port=self.port, dbname=self.database,
+                user="freshness_crypto_verifier", sslmode="disable",
+            )
+            facts = connection.execute(
+                "SELECT session_user,current_user,inet_client_addr(),inet_server_addr(),"
+                "coalesce((SELECT ssl FROM pg_catalog.pg_stat_ssl "
+                "WHERE pid=pg_catalog.pg_backend_pid()),false)"
+            ).fetchone()
+        except psycopg.Error as exc:
+            raise FreshnessVerifierUnavailable("verifier database session unavailable") from exc
         if facts != ("freshness_crypto_verifier", "freshness_crypto_verifier", None, None, False):
             connection.close()
-            raise FreshnessSemanticVerificationError("non-peer or wrong database session")
+            raise FreshnessVerifierUnavailable("non-peer or wrong database session")
         return connection
 
 
@@ -139,10 +154,17 @@ class PostgreSQLRetainedCredentialResolver:
                 semantic_role: str, key_id: str, key_version: int
                 ) -> RetainedVerificationCredential:
         with self.connection.connect() as database:
-            row = database.execute(
-                "SELECT * FROM freshness_authority.resolve_verification_credential(%s,%s,%s,%s,%s,%s)",
-                (environment, trust_domain, authority_id, semantic_role, key_id, key_version),
-            ).fetchone()
+            try:
+                row = database.execute(
+                    "SELECT * FROM freshness_authority.resolve_verification_credential(%s,%s,%s,%s,%s,%s)",
+                    (environment, trust_domain, authority_id, semantic_role, key_id, key_version),
+                ).fetchone()
+            except psycopg.Error as exc:
+                if exc.sqlstate in {"22023", "28000"}:
+                    raise FreshnessSemanticVerificationError(
+                        "invalid retained credential selector") from exc
+                raise FreshnessVerifierUnavailable(
+                    "retained credential resolver unavailable") from exc
         if row is None:
             raise FreshnessSemanticVerificationError("unknown retained credential")
         credential_id, semantic_identity, lifecycle_generation, public_key = row
@@ -157,10 +179,17 @@ class PostgreSQLRetainedCredentialResolver:
         generation: int, document_digest: str,
     ) -> str:
         with self.connection.connect() as database:
-            row = database.execute(
-                "SELECT freshness_authority.resolve_predecessor_head(%s,%s,%s,%s,%s)",
-                (environment, trust_domain, authority_id, generation, document_digest),
-            ).fetchone()
+            try:
+                row = database.execute(
+                    "SELECT freshness_authority.resolve_predecessor_head(%s,%s,%s,%s,%s)",
+                    (environment, trust_domain, authority_id, generation, document_digest),
+                ).fetchone()
+            except psycopg.Error as exc:
+                if exc.sqlstate in {"22023", "28000"}:
+                    raise FreshnessSemanticVerificationError(
+                        "invalid retained predecessor selector") from exc
+                raise FreshnessVerifierUnavailable(
+                    "retained predecessor resolver unavailable") from exc
         if row is None or type(row[0]) is not str:
             raise FreshnessSemanticVerificationError("unknown exact predecessor")
         return row[0]
@@ -266,15 +295,29 @@ class FreshnessSemanticVerifier:
             payload = _object(document["payload"], DOCUMENT_PAYLOAD_FIELDS,
                               "document payload")
             return self._verified_prepare(proposer, document, payload, receipt,
-                                          authoritative_document, finalization_receipt)
+                                          authoritative_document, finalization_receipt).preparation_id
         except FreshnessSemanticVerificationError:
             raise
         except (TypeError, ValueError, UnicodeError, KeyError) as exc:
             raise FreshnessSemanticVerificationError("invalid canonical candidate") from exc
 
+    def verify_exact_candidate(self, proposer_authentication: bytes,
+                               authoritative_document: bytes,
+                               finalization_receipt: bytes) -> PreparedFreshnessCandidate:
+        """Verify, durably prepare and return the exact authority-created CAS binding."""
+        proposer = _object(parse_canonical_json(proposer_authentication),
+                           PROPOSER_AUTHENTICATION_FIELDS, "proposer authentication")
+        document = _object(parse_canonical_json(authoritative_document),
+                           DOCUMENT_FIELDS, "authoritative document")
+        receipt = _object(parse_canonical_json(finalization_receipt), RECEIPT_FIELDS, "receipt")
+        payload = _object(document["payload"], DOCUMENT_PAYLOAD_FIELDS, "document payload")
+        return self._verified_prepare(proposer, document, payload, receipt,
+                                      authoritative_document, finalization_receipt)
+
     def _verified_prepare(self, proposer: dict[str, object], document: dict[str, object],
                           payload: dict[str, object], receipt: dict[str, object],
-                          document_bytes: bytes, receipt_bytes: bytes) -> str:
+                          document_bytes: bytes,
+                          receipt_bytes: bytes) -> PreparedFreshnessCandidate:
         if (_integer(proposer["schema_version"], "proposer schema version", 1) != 1 or
                 _integer(payload["schema_version"], "document schema version", 1) != 1 or
                 _integer(receipt["schema_version"], "receipt schema version", 1) != 1):
@@ -399,8 +442,9 @@ class FreshnessSemanticVerifier:
         preparation = {**preparation_without_id, "preparation_id": preparation_id}
         if set(preparation) != PREPARATION_FIELDS:
             raise AssertionError("internal preparation schema drift")
-        return self.preparations.prepare(canonical_json_bytes(preparation),
-                                         document_bytes, receipt_bytes)
+        binding = canonical_json_bytes(preparation)
+        issued = self.preparations.prepare(binding, document_bytes, receipt_bytes)
+        return PreparedFreshnessCandidate(issued, binding)
 
     @staticmethod
     def _credential(value: RetainedVerificationCredential, environment: str,
@@ -483,11 +527,25 @@ def serve_local_unix_socket(verifier: FreshnessSemanticVerifier, socket_path: st
                         "proposer_authentication", "authoritative_document",
                         "finalization_receipt",
                     ))
-                    preparation_id = verifier.verify_and_prepare(*inputs)
-                    response = canonical_json_bytes({"preparation_id": preparation_id})
+                    prepared = verifier.verify_exact_candidate(*inputs)
+                    response = canonical_json_bytes({
+                        "outcome": "PREPARED", "preparation_id": prepared.preparation_id,
+                        "binding": _encode_ipc_bytes(prepared.binding),
+                    })
+                except PreparationOutcomeUnknown:
+                    response = canonical_json_bytes({"outcome": "OUTCOME_UNKNOWN"})
+                except FreshnessSemanticVerificationError:
+                    # One coarse result deliberately hides the failing crypto/selector detail.
+                    response = canonical_json_bytes({"outcome": "INVALID"})
+                except (TypeError, ValueError, UnicodeError, struct.error):
+                    response = canonical_json_bytes({"outcome": "INVALID"})
+                except (psycopg.Error, OSError):
+                    response = canonical_json_bytes({"outcome": "UNAVAILABLE"})
+                except FreshnessVerifierUnavailable:
+                    response = canonical_json_bytes({"outcome": "UNAVAILABLE"})
                 except Exception:
-                    # The wire response discloses no crypto/parser/credential oracle detail.
-                    response = canonical_json_bytes({"error": "REJECTED"})
+                    # Unexpected authority faults fail closed, never as invalid authentication.
+                    response = canonical_json_bytes({"outcome": "UNAVAILABLE"})
                 connection.sendall(struct.pack("!I", len(response)) + response)
                 handled += 1
     os.unlink(path)
@@ -514,3 +572,7 @@ def _decode_ipc_bytes(value: object, name: str) -> bytes:
     if base64.urlsafe_b64encode(result).rstrip(b"=").decode() != text:
         raise FreshnessSemanticVerificationError("noncanonical IPC byte encoding")
     return result
+
+
+def _encode_ipc_bytes(value: bytes) -> str:
+    return base64.urlsafe_b64encode(value).rstrip(b"=").decode("ascii")

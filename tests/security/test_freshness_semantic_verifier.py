@@ -24,6 +24,7 @@ from bot_core.freshness_semantic_verifier import (
     RECEIPT_AUTHENTICATION_DOMAIN,
     FreshnessSemanticVerificationError,
     FreshnessSemanticVerifier,
+    PreparationOutcomeUnknown,
     RetainedVerificationCredential,
     serve_local_unix_socket,
 )
@@ -289,9 +290,30 @@ def _ipc_request(values, **extra) -> bytes:
 def test_unix_ipc_process_accepts_only_closed_valid_request(tmp_path):
     values = list(fixture_candidate())
     path, process = _ipc_server(tmp_path, values[0])
-    assert _ipc_exchange(path, _ipc_request(values)) == {"preparation_id": "opaque-preparation"}
+    response = _ipc_exchange(path, _ipc_request(values))
+    assert response["outcome"] == "PREPARED"
+    assert response["preparation_id"] == "opaque-preparation"
+    assert set(response) == {"outcome", "preparation_id", "binding"}
     process.join(5)
     assert process.exitcode == 0 and not path.exists()
+
+
+@pytest.mark.parametrize("failure,expected", [
+    (PreparationOutcomeUnknown("lost commit response"), {"outcome": "OUTCOME_UNKNOWN"}),
+    (OSError("database unavailable"), {"outcome": "UNAVAILABLE"}),
+])
+def test_unix_ipc_has_closed_non_crypto_failure_outcomes(tmp_path, failure, expected):
+    values = list(fixture_candidate())
+
+    class FailingWriter:
+        def prepare(self, *_):
+            raise failure
+
+    object.__setattr__(values[0], "preparations", FailingWriter())
+    path, process = _ipc_server(tmp_path, values[0])
+    assert _ipc_exchange(path, _ipc_request(values)) == expected
+    process.join(5)
+    assert process.exitcode == 0
 
 
 @pytest.mark.parametrize("request_factory", [
@@ -306,7 +328,7 @@ def test_unix_ipc_process_accepts_only_closed_valid_request(tmp_path):
 def test_unix_ipc_process_rejects_injection_and_malformed_without_oracle(tmp_path, request_factory):
     values = list(fixture_candidate())
     path, process = _ipc_server(tmp_path, values[0])
-    assert _ipc_exchange(path, request_factory(values)) == {"error": "REJECTED"}
+    assert _ipc_exchange(path, request_factory(values)) == {"outcome": "INVALID"}
     process.join(5)
     assert process.exitcode == 0
 
@@ -315,7 +337,7 @@ def test_unix_ipc_process_rejects_injection_and_malformed_without_oracle(tmp_pat
 def test_unix_ipc_process_rejects_bad_frame_lengths(tmp_path, declared):
     values = list(fixture_candidate())
     path, process = _ipc_server(tmp_path, values[0])
-    assert _ipc_exchange(path, b"x", declared_length=declared) == {"error": "REJECTED"}
+    assert _ipc_exchange(path, b"x", declared_length=declared) == {"outcome": "INVALID"}
     process.join(5)
     assert process.exitcode == 0
 

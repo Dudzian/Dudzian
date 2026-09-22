@@ -22,11 +22,18 @@ from psycopg import sql
 SCHEMA_IDENTITY = "cryptohunter.freshness_authority.postgresql"
 SCHEMA_VERSION = 1
 PROFILE = "PRODUCTION_LOCAL"
+PREDECESSOR_CONFLICT_SQLSTATE = "PFA01"
+LIFECYCLE_TRANSITION_CONFLICT_SQLSTATE = "PFA02"
 PROPOSER_ROLE = "ACCOUNT_GENESIS_FRESHNESS_PROPOSER_SIGNING_V1"
 FINALIZATION_ROLE = "ACCOUNT_GENESIS_FRESHNESS_AUTHORITY_FINALIZATION_SIGNING_V1"
 _SAFE = re.compile(r"[a-z_][a-z0-9_]{0,62}\Z")
 _HEX = re.compile(r"[0-9a-f]{64}\Z")
-_REVIEWED_PHYSICAL_FINGERPRINT = "a5f737dcf2fd49f14ed8d3728e2803ad406310faa12a984a5cbecb99a538e8ad"
+_REVIEWED_PHYSICAL_FINGERPRINT = "1a069795061d597de126bd446f725a0cf339d8428f33f2dcefcb0b9d09431c2a"
+PRODUCTION_LOCAL_REVIEWED_IDENTIFIERS = (
+    "freshness_authority", "freshness_schema_owner", "freshness_function_owner",
+    "freshness_admin", "freshness_crypto_verifier", "freshness_runtime",
+    "freshness_reader",
+)
 DOCUMENT_DOMAIN = b"cryptohunter.account-genesis.freshness-document-digest.v1\x00"
 RECEIPT_DOMAIN = b"cryptohunter.account-genesis.freshness-finalization-receipt-authentication.v1\x00"
 COMPLETE_HEAD_DOMAIN = b"cryptohunter.account-genesis.complete-semantic-head-set-digest.v1\x00"
@@ -82,6 +89,7 @@ class PostgreSQLConnectionConfig:
 
 @dataclass(frozen=True, slots=True)
 class PostgreSQLFreshnessAuthorityProvisioning:
+    """Exact reviewed PRODUCTION_LOCAL names; custom namespaces are unsupported."""
     schema: str = "freshness_authority"
     schema_owner_role: str = "freshness_schema_owner"
     function_owner_role: str = "freshness_function_owner"
@@ -98,6 +106,8 @@ class PostgreSQLFreshnessAuthorityProvisioning:
             raise ValueError("all names must be safe lowercase PostgreSQL identifiers")
         if len(set(names[1:])) != 6:
             raise ValueError("all authority roles must be distinct")
+        if names != PRODUCTION_LOCAL_REVIEWED_IDENTIFIERS:
+            raise ValueError("PRODUCTION_LOCAL authority identifiers are frozen")
 
 
 def canonical_json_bytes(value: object) -> bytes:
@@ -212,8 +222,14 @@ def _physical_fingerprint(conn: psycopg.Connection[Any], schema: str) -> str:
       FROM pg_catalog.pg_index i JOIN pg_catalog.pg_class t ON t.oid=i.indrelid
       JOIN pg_catalog.pg_class ic ON ic.oid=i.indexrelid
       JOIN pg_catalog.pg_namespace n ON n.oid=t.relnamespace WHERE n.nspname=%s
+      UNION ALL
+      SELECT 'sequence',c.relname,pg_catalog.format_type(s.seqtypid,NULL),
+             s.seqstart::text,s.seqincrement::text,s.seqmax::text,
+             s.seqmin::text,s.seqcache::text,s.seqcycle::text
+      FROM pg_catalog.pg_sequence s JOIN pg_catalog.pg_class c ON c.oid=s.seqrelid
+      JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=%s
       ORDER BY 1,2,3,4,5
-    """, (schema, schema, schema)).fetchall()
+    """, (schema, schema, schema, schema)).fetchall()
     return hashlib.sha256(json.dumps(facts, separators=(",", ":"),
                                      ensure_ascii=True).encode()).hexdigest()
 
@@ -341,7 +357,7 @@ BEGIN
  {guard % "'freshness_admin'"}
  SELECT * INTO c FROM {q}.credentials WHERE environment=$1 AND trust_domain=$2 AND authority_id=$3 AND credential_id=$4 FOR UPDATE;
  SELECT lifecycle_generation INTO latest FROM {q}.key_lifecycle_history WHERE environment=$1 AND trust_domain=$2 AND authority_id=$3 AND credential_id=$4 ORDER BY lifecycle_generation DESC LIMIT 1 FOR UPDATE;
- IF NOT FOUND OR c.lifecycle_generation<>$5 OR latest<>$5 THEN RAISE EXCEPTION 'stale lifecycle' USING ERRCODE='40001'; END IF;
+ IF NOT FOUND OR c.lifecycle_generation<>$5 OR latest<>$5 THEN RAISE EXCEPTION 'stale lifecycle' USING ERRCODE='{LIFECYCLE_TRANSITION_CONFLICT_SQLSTATE}'; END IF;
  IF NOT ((c.lifecycle_state='ACTIVE' AND $6 IN ('VERIFY_ONLY','REVOKED')) OR (c.lifecycle_state='VERIFY_ONLY' AND $6='REVOKED')) THEN RAISE EXCEPTION 'forbidden lifecycle transition' USING ERRCODE='22023'; END IF;
  INSERT INTO {q}.key_lifecycle_history VALUES($1,$2,$3,$4,$5+1,$6,$7); UPDATE {q}.credentials SET lifecycle_generation=$5+1,lifecycle_state=$6 WHERE environment=$1 AND trust_domain=$2 AND authority_id=$3 AND credential_id=$4;
 END""",
@@ -416,8 +432,8 @@ BEGIN
    SELECT * INTO retained_receipt FROM {q}.finalization_receipts fr WHERE fr.decision_sequence=existing.decision_sequence;
    IF existing.candidate_binding=$2 AND retained_doc.canonical_document IS NOT DISTINCT FROM d AND retained_doc.canonical_document_bytes IS NOT DISTINCT FROM {q}.canonical_jsonb(d) AND retained_receipt.canonical_receipt IS NOT DISTINCT FROM r AND retained_receipt.canonical_receipt_bytes IS NOT DISTINCT FROM {q}.canonical_jsonb(r) THEN RETURN QUERY SELECT 'ALREADY_ACCEPTED_EXACT'::text,existing.decision_sequence,retained_receipt.canonical_receipt; RETURN; ELSE RAISE EXCEPTION 'replay conflict' USING ERRCODE='23505'; END IF;
  END IF;
- SELECT * INTO prep FROM {q}.prepared_verifications WHERE preparation_id=$1 FOR UPDATE; IF NOT FOUND OR prep.consumed_at IS NOT NULL OR prep.binding IS DISTINCT FROM $2 OR prep.canonical_document IS DISTINCT FROM d OR prep.canonical_receipt IS DISTINCT FROM r OR prep.canonical_document_bytes IS DISTINCT FROM {q}.canonical_jsonb(d) OR prep.canonical_receipt_bytes IS DISTINCT FROM {q}.canonical_jsonb(r) THEN RAISE EXCEPTION 'substitution or consumed preparation' USING ERRCODE='28000'; END IF;
- SELECT * INTO line FROM {q}.authority_lineages WHERE environment=$2->>'environment' AND trust_domain=$2->>'trust_domain' AND authority_id=$2->>'authority_id' FOR UPDATE; IF NOT FOUND OR line.current_generation<>(($2->>'expected_predecessor_generation')::bigint) OR line.current_document_digest<>$2->>'expected_predecessor_document_digest' OR line.current_complete_head_digest<>$2->>'expected_predecessor_complete_semantic_head_digest' THEN RAISE EXCEPTION 'predecessor mismatch' USING ERRCODE='40001'; END IF;
+ SELECT * INTO prep FROM {q}.prepared_verifications WHERE preparation_id=$1 FOR UPDATE; IF NOT FOUND OR prep.consumed_at IS NOT NULL OR prep.binding IS DISTINCT FROM $2 OR prep.canonical_document IS DISTINCT FROM d OR prep.canonical_receipt IS DISTINCT FROM r OR prep.canonical_document_bytes IS DISTINCT FROM {q}.canonical_jsonb(d) OR prep.canonical_receipt_bytes IS DISTINCT FROM {q}.canonical_jsonb(r) THEN RAISE EXCEPTION 'substitution or consumed preparation' USING ERRCODE='23000'; END IF;
+ SELECT * INTO line FROM {q}.authority_lineages WHERE environment=$2->>'environment' AND trust_domain=$2->>'trust_domain' AND authority_id=$2->>'authority_id' FOR UPDATE; IF NOT FOUND OR line.current_generation<>(($2->>'expected_predecessor_generation')::bigint) OR line.current_document_digest<>$2->>'expected_predecessor_document_digest' OR line.current_complete_head_digest<>$2->>'expected_predecessor_complete_semantic_head_digest' THEN RAISE EXCEPTION 'predecessor mismatch' USING ERRCODE='{PREDECESSOR_CONFLICT_SQLSTATE}'; END IF;
  SELECT * INTO pc FROM {q}.credentials WHERE environment=line.environment AND trust_domain=line.trust_domain AND authority_id=line.authority_id AND credential_id=prep.proposer_credential_id FOR UPDATE; SELECT * INTO fc FROM {q}.credentials WHERE environment=line.environment AND trust_domain=line.trust_domain AND authority_id=line.authority_id AND credential_id=prep.finalization_credential_id FOR UPDATE;
  SELECT * INTO ph FROM {q}.key_lifecycle_history WHERE environment=pc.environment AND trust_domain=pc.trust_domain AND authority_id=pc.authority_id AND credential_id=pc.credential_id ORDER BY lifecycle_generation DESC LIMIT 1 FOR UPDATE; SELECT * INTO fh FROM {q}.key_lifecycle_history WHERE environment=fc.environment AND trust_domain=fc.trust_domain AND authority_id=fc.authority_id AND credential_id=fc.credential_id ORDER BY lifecycle_generation DESC LIMIT 1 FOR UPDATE;
  IF pc.lifecycle_state<>'ACTIVE' OR fc.lifecycle_state<>'ACTIVE' OR pc.lifecycle_generation<>ph.lifecycle_generation OR pc.lifecycle_state<>ph.state OR fc.lifecycle_generation<>fh.lifecycle_generation OR fc.lifecycle_state<>fh.state OR ph.lifecycle_generation<>prep.proposer_lifecycle_generation OR fh.lifecycle_generation<>prep.finalization_lifecycle_generation THEN RAISE EXCEPTION 'lifecycle divergence or inactive' USING ERRCODE='28000'; END IF;
@@ -490,6 +506,13 @@ def qualify_postgresql_freshness_authority(connection: PostgreSQLConnectionConfi
       problems=[]
       if conn.info.server_version < 160000: problems.append("server version")
       if conn.execute("SELECT current_setting('fsync'),current_setting('synchronous_commit')").fetchone() != ("on","on"): problems.append("durability")
+      # Check the exact physical shape before any shape-dependent reads below;
+      # a dropped expected column must become a closed qualification failure,
+      # never a raw catalog/query error.
+      if _physical_fingerprint(conn, config.schema) != _REVIEWED_PHYSICAL_FINGERPRINT:
+          raise FreshnessAuthorityQualificationError(
+              "qualification failed: physical schema fingerprint"
+          )
       roles=(config.schema_owner_role,config.function_owner_role,config.admin_role,config.verifier_role,config.runtime_role,config.reader_role)
       rows=conn.execute("SELECT rolname,rolsuper,rolinherit,rolcreaterole,rolcreatedb,rolcanlogin,rolreplication,rolbypassrls FROM pg_catalog.pg_roles WHERE rolname=ANY(%s)",(list(roles),)).fetchall()
       if len(rows)!=6 or any(r[1] or r[2] or r[3] or r[4] or r[6] or r[7] for r in rows): problems.append("role attributes")
@@ -563,8 +586,6 @@ def qualify_postgresql_freshness_authority(connection: PostgreSQLConnectionConfi
         (SELECT count(*) FROM {s}.finalization_receipts r WHERE r.canonical_receipt_bytes<>{s}.canonical_jsonb(r.canonical_receipt) OR r.receipt_id<>r.canonical_receipt->>'receipt_id' OR r.authentication_signature<>r.canonical_receipt->>'authentication_tag_or_signature')
       """).format(s=sql.Identifier(config.schema))).fetchone()[0]
       if evidence_mismatch: problems.append("retained evidence integrity")
-      if config == PostgreSQLFreshnessAuthorityProvisioning() and _physical_fingerprint(conn, config.schema) != _REVIEWED_PHYSICAL_FINGERPRINT:
-          problems.append("physical schema fingerprint")
       # No relation may be non-permanent, have RLS/policies, triggers, rules, or a wrong owner.
       bad=conn.execute("SELECT count(*) FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace JOIN pg_catalog.pg_roles r ON r.oid=c.relowner WHERE n.nspname=%s AND c.relkind IN ('r','S') AND (c.relpersistence<>'p' OR c.relrowsecurity OR c.relforcerowsecurity OR r.rolname<>%s)",(config.schema,config.schema_owner_role)).fetchone()[0]
       extras=conn.execute("SELECT (SELECT count(*) FROM pg_catalog.pg_trigger t JOIN pg_catalog.pg_class c ON c.oid=t.tgrelid JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=%s AND NOT t.tgisinternal)+(SELECT count(*) FROM pg_catalog.pg_policy p JOIN pg_catalog.pg_class c ON c.oid=p.polrelid JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=%s)",(config.schema,config.schema)).fetchone()[0]

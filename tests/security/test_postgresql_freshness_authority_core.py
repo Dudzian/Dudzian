@@ -532,6 +532,7 @@ def test_selector_constraint_active_predicate_and_unexpected_object_inventory_ta
     with pytest.raises(FreshnessAuthorityQualificationError): qualify_postgresql_freshness_authority(CFG)
     _super("DROP MATERIALIZED VIEW freshness_authority.evil_materialized"); qualify_postgresql_freshness_authority(CFG)
 
+
 def test_unexpected_execute_grantees_public_and_grant_option_fail_closed():
     _super("CREATE ROLE freshness_outsider NOLOGIN")
     cases=[
@@ -570,3 +571,25 @@ def test_credential_raw_key_material_identity_relationship_tamper_fails_qualific
     with pytest.raises(FreshnessAuthorityQualificationError): qualify_postgresql_freshness_authority(CFG)
     _super("UPDATE freshness_authority.credentials SET public_key=%s WHERE authority_id='auth' AND credential_id='prop'",(original,))
     qualify_postgresql_freshness_authority(CFG)
+
+@pytest.mark.parametrize("mutation", [
+    "ALTER TABLE freshness_authority.metadata DROP COLUMN schema_version",
+    "ALTER TABLE freshness_authority.metadata ALTER COLUMN schema_identity TYPE varchar(200)",
+    "ALTER TABLE freshness_authority.metadata ALTER COLUMN schema_identity DROP NOT NULL",
+    "ALTER TABLE freshness_authority.metadata ALTER COLUMN singleton DROP DEFAULT",
+    "DROP INDEX freshness_authority.credentials_one_active_role_idx",
+    "DROP INDEX freshness_authority.credentials_one_active_role_idx; CREATE INDEX credentials_one_active_role_idx ON freshness_authority.credentials(environment,trust_domain,authority_id,semantic_role)",
+    "ALTER TABLE freshness_authority.credentials DROP CONSTRAINT credentials_authenticated_selector_key; ALTER TABLE freshness_authority.credentials ADD CONSTRAINT credentials_authenticated_selector_key UNIQUE(environment,trust_domain,authority_id,key_id,key_version)",
+    "ALTER TABLE freshness_authority.metadata DROP CONSTRAINT metadata_singleton_check; ALTER TABLE freshness_authority.metadata ADD CONSTRAINT metadata_singleton_check CHECK(singleton IS NOT NULL)",
+])
+def test_exact_physical_inventory_rejects_column_constraint_and_index_mutation(mutation):
+    # Reprovision after each destructive mutation: restoration itself must not
+    # accidentally bless changed column ordering or rewritten definitions.
+    try:
+        _super(mutation)
+        with pytest.raises(FreshnessAuthorityQualificationError):
+            qualify_postgresql_freshness_authority(CFG)
+    finally:
+        _cleanup()
+        provision_postgresql_freshness_authority(CFG)
+        qualify_postgresql_freshness_authority(CFG)
