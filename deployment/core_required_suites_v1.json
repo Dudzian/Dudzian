@@ -1,0 +1,110 @@
+{
+  "schema_version": 1,
+  "test_plan_id": "CORE_REQUIRED_SUITES_V1",
+  "required_platforms": ["Linux", "Windows", "macOS"],
+  "optional_dependency_setup": "python -m pip install -e \".[test]\"",
+  "acceptance_policy": {
+    "pytest_exit_code": 0,
+    "failures": 0,
+    "errors": 0,
+    "skips": 0,
+    "xfails": 0,
+    "unexpected_passes": 0,
+    "marker_only_after_complete_plan": true
+  },
+  "expected_evidence_identity": {
+    "item": "CORE_REQUIRED_SUITES",
+    "evidence_class": "CROSS_OS_CI_MATRIX",
+    "release_ci_provider": "https://github.com",
+    "current_run_binding": true
+  },
+  "suites": [
+    {
+      "suite_id": "corehost-lifecycle-recovery",
+      "platform_requirement": "REQUIRED_ON_ALL_THREE",
+      "selectors": [
+        "tests/runtime/test_core_host_process_lock.py",
+        "tests/runtime/test_core_host_runtime_session_readiness.py",
+        "tests/runtime/test_core_host_startup_recovery.py",
+        "tests/runtime/test_core_host_catalog_runtime_lifecycle.py"
+      ]
+    },
+    {
+      "suite_id": "statestore-persistence",
+      "platform_requirement": "REQUIRED_ON_ALL_THREE",
+      "selectors": [
+        "tests/persistence/test_state_store.py",
+        "tests/persistence/test_state_store_fingerprints.py",
+        "tests/persistence/test_state_store_records.py",
+        "tests/persistence/test_state_store_transaction_descriptors.py",
+        "tests/persistence/test_state_store_v2_migration.py",
+        "tests/persistence/test_state_store_verified_snapshot.py"
+      ]
+    },
+    {
+      "suite_id": "scheduler-runtime",
+      "platform_requirement": "REQUIRED_ON_ALL_THREE",
+      "selectors": [
+        "tests/runtime/test_scheduler.py",
+        "tests/runtime/test_multi_strategy_scheduler_async.py",
+        "tests/test_multi_strategy_scheduler.py",
+        "tests/test_runtime_scheduler.py"
+      ]
+    },
+    {
+      "suite_id": "network-health-readiness",
+      "platform_requirement": "REQUIRED_ON_ALL_THREE",
+      "selectors": [
+        "tests/test_network_guard.py",
+        "tests/runtime/test_feed_health_tracker.py",
+        "tests/test_cli_health_check.py"
+      ]
+    },
+    {
+      "suite_id": "configuration-schema-validation",
+      "platform_requirement": "REQUIRED_ON_ALL_THREE",
+      "selectors": [
+        "tests/test_config_loader.py",
+        "tests/test_config_loader_defaults.py",
+        "tests/test_config_validation.py",
+        "tests/test_runtime_config.py",
+        "tests/test_runtime_bootstrap_config.py"
+      ]
+    },
+    {
+      "suite_id": "trading-runtime-common",
+      "platform_requirement": "REQUIRED_ON_ALL_THREE",
+      "selectors": [
+        "tests/test_pipeline_paper.py",
+        "tests/decision/test_scheduler.py",
+        "tests/auto_trader/test_decision_scheduler.py"
+      ]
+    },
+    {
+      "suite_id": "update-state-common",
+      "platform_requirement": "REQUIRED_ON_ALL_THREE",
+      "selectors": [
+        "tests/update/test_offline_update_flow.py",
+        "tests/update/test_offline_updater.py",
+        "tests/update/test_update_package_cli.py",
+        "tests/security/test_update_module.py"
+      ]
+    },
+    {
+      "suite_id": "common-architecture-security",
+      "platform_requirement": "REQUIRED_ON_ALL_THREE",
+      "selectors": [
+        "tests/architecture/test_m05_account_genesis_security_substrate_contract.py",
+        "tests/architecture/test_m05_account_genesis_physical_persistence_crash_atomicity_contract.py",
+        "tests/architecture/test_m05_account_genesis_freshness_authority_implementation_readiness_contract.py"
+      ]
+    }
+  ],
+  "excluded_scopes": {
+    "platform_deployment": "systemd, launchd and Windows SCM have independent tracks",
+    "external_exchange_integration": "credentials and external services are not frozen local core",
+    "ui": "GUI is not the cross-platform backend core",
+    "live_postgresql": "external PostgreSQL service belongs to substrate integration",
+    "platform_specific": "POSIX-only and OS-only behavior is tested by its platform track"
+  }
+}

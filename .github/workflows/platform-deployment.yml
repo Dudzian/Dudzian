@@ -1,0 +1,105 @@
+name: Platform deployment tracks
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  core-linux:
+    runs-on: ubuntu-latest
+    steps: &core_steps
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with: {python-version: "3.11"}
+      - run: python -m pip install -e ".[test]"
+      - name: Execute complete canonical cross-platform core plan
+        run: python -m deployment.core_test_plan --runner-os "${{ runner.os }}" --output "core-${{ runner.os }}.json"
+      - uses: actions/upload-artifact@v6
+        with:
+          name: core-evidence-${{ runner.os }}
+          path: core-${{ runner.os }}.json
+
+  core-windows:
+    runs-on: windows-latest
+    steps: *core_steps
+
+  core-macos:
+    runs-on: macos-latest
+    steps: *core_steps
+
+  windows-deployment-contract:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with: {python-version: "3.11"}
+      - run: python -m pip install pytest pyyaml
+      - run: python -m pytest -q tests/deployment/test_platform_readiness.py tests/deployment/test_platform_evidence.py
+
+  windows-deployment-integration:
+    runs-on: windows-latest
+    needs: windows-deployment-contract
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with: {python-version: "3.11"}
+      - run: python -m pip install pywin32
+      - name: Execute reviewed SCM lifecycle probe
+        run: python -m deployment.platform_evidence windows-scm --output windows-scm-evidence.json
+      - uses: actions/upload-artifact@v6
+        with:
+          name: windows-scm-evidence
+          path: windows-scm-evidence.json
+
+  linux-deployment-integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with: {python-version: "3.11"}
+      - name: Enforce recorded Linux integration evidence
+        run: python -m deployment.platform_readiness --platform LINUX
+
+  macos-deployment-integration:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with: {python-version: "3.11"}
+      - name: Enforce recorded macOS integration evidence
+        run: python -m deployment.platform_readiness --platform MACOS
+
+  windows-release-gate:
+    if: always()
+    runs-on: windows-latest
+    needs:
+      - core-linux
+      - core-windows
+      - core-macos
+      - windows-deployment-contract
+      - windows-deployment-integration
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with: {python-version: "3.11"}
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: core-evidence-*
+          path: evidence
+          merge-multiple: true
+      - uses: actions/download-artifact@v7
+        with:
+          name: windows-scm-evidence
+          path: evidence
+      - name: Aggregate revision-bound cross-OS core evidence
+        run: >-
+          python -m deployment.platform_evidence aggregate-core
+          --marker evidence/core-Linux.json
+          --marker evidence/core-Windows.json
+          --marker evidence/core-macOS.json
+          --output evidence/core-matrix.json
+      - name: Enforce canonical Windows production readiness
+        run: >-
+          python -m deployment.platform_readiness --platform WINDOWS
+          --evidence evidence/core-matrix.json
+          --evidence evidence/windows-scm-evidence.json
