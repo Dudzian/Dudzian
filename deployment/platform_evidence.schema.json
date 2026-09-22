@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cryptohunter.invalid/schemas/platform-evidence-v1.json",
+  "title": "CryptoHunter platform execution evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "platform", "source_revision", "ci_provider", "ci_run_id",
+    "runner_os", "runner_arch", "generated_at_utc", "results"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "platform": {"enum": ["WINDOWS", "LINUX", "MACOS", "CROSS_PLATFORM_CORE"]},
+    "source_revision": {"type": "string", "minLength": 1},
+    "ci_provider": {"type": "string", "minLength": 1},
+    "ci_run_id": {"type": "string", "minLength": 1},
+    "runner_os": {"enum": ["Windows", "Linux", "macOS"]},
+    "runner_arch": {"type": "string", "minLength": 1},
+    "generated_at_utc": {"type": "string", "format": "date-time"},
+    "results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["item", "status", "evidence_class", "test_or_probe", "details"],
+        "properties": {
+          "item": {"type": "string", "minLength": 1},
+          "status": {"enum": ["PASS", "FAIL", "NOT_IMPLEMENTED", "NOT_TESTED", "UNVERIFIED_ENVIRONMENT_LIMITATION", "NOT_APPLICABLE"]},
+          "evidence_class": {"enum": ["LIVE_WINDOWS_INTEGRATION", "LIVE_LINUX_INTEGRATION", "LIVE_MACOS_INTEGRATION", "CROSS_OS_CI_MATRIX"]},
+          "test_or_probe": {"type": "string", "minLength": 1},
+          "details": {"type": "string", "minLength": 1}
+        }
+      }
+    }
+  }
+}

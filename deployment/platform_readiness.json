@@ -1,0 +1,352 @@
+{
+  "schema_version": 1,
+  "reference_platform": "WINDOWS",
+  "platforms": [
+    "WINDOWS",
+    "LINUX",
+    "MACOS"
+  ],
+  "release_priority": {
+    "WINDOWS": "PRIMARY",
+    "LINUX": "SUPPORTED",
+    "MACOS": "SUPPORTED"
+  },
+  "allowed_statuses": [
+    "PASS",
+    "FAIL",
+    "NOT_IMPLEMENTED",
+    "NOT_TESTED",
+    "UNVERIFIED_ENVIRONMENT_LIMITATION",
+    "NOT_APPLICABLE"
+  ],
+  "semantic_invariants": [
+    "distinct runtime, verifier, and administrator principals",
+    "database observes authenticated identity; caller claims are never authority",
+    "least privilege and no PUBLIC grants",
+    "protected local-only IPC and protected state/configuration",
+    "fail-closed runtime qualification only reads and verifies permissions",
+    "bounded graceful shutdown, crash supervision, autostart, and process-tree cleanup",
+    "core update state is separate from privileged platform handoff"
+  ],
+  "mechanisms": {
+    "WINDOWS": {
+      "service_manager": "Windows Service Control Manager",
+      "identity": "NT SERVICE\\CryptoHunterBackend",
+      "ipc": "ACL-protected named pipe",
+      "permissions": "Windows DACL",
+      "principal_auth": "REVIEW_REQUIRED: PostgreSQL-visible Windows authenticated identity; SSPI feasibility not yet frozen",
+      "paths": "ProgramFiles/ProgramData/LOCALAPPDATA known-folder boundary"
+    },
+    "LINUX": {
+      "service_manager": "systemd",
+      "identity": "os_freshness_crypto_verifier and os_freshness_runtime",
+      "ipc": "Unix socket plus SO_PEERCRED",
+      "permissions": "POSIX owner/mode",
+      "principal_auth": "PostgreSQL peer plus pg_ident",
+      "paths": "/usr/lib, /etc, /run"
+    },
+    "MACOS": {
+      "service_manager": "launchd",
+      "identity": "NOT_IMPLEMENTED",
+      "ipc": "NOT_IMPLEMENTED",
+      "permissions": "macOS permissions/ACL",
+      "principal_auth": "REVIEW_REQUIRED",
+      "paths": "macOS-native locations pending"
+    }
+  },
+  "matrix": {
+    "core_tests": {
+      "WINDOWS": "REQUIRED",
+      "LINUX": "REQUIRED",
+      "MACOS": "REQUIRED"
+    },
+    "platform_integration": {
+      "WINDOWS": "REQUIRED",
+      "LINUX": "REQUIRED_BEFORE_LINUX_RELEASE",
+      "MACOS": "REQUIRED_BEFORE_MACOS_RELEASE"
+    },
+    "installer_package": {
+      "WINDOWS": "REQUIRED",
+      "LINUX": "REQUIRED_BEFORE_LINUX_RELEASE",
+      "MACOS": "REQUIRED_BEFORE_MACOS_RELEASE"
+    },
+    "long_running_lifecycle": {
+      "WINDOWS": "REQUIRED",
+      "LINUX": "REQUIRED_BEFORE_LINUX_RELEASE",
+      "MACOS": "REQUIRED_BEFORE_MACOS_RELEASE"
+    },
+    "reboot_recovery": {
+      "WINDOWS": "REQUIRED",
+      "LINUX": "REQUIRED_BEFORE_LINUX_RELEASE",
+      "MACOS": "REQUIRED_BEFORE_MACOS_RELEASE"
+    },
+    "update_restart": {
+      "WINDOWS": "REQUIRED",
+      "LINUX": "REQUIRED_BEFORE_LINUX_RELEASE",
+      "MACOS": "REQUIRED_BEFORE_MACOS_RELEASE"
+    }
+  },
+  "acceptance": {
+    "CORE_REQUIRED_SUITES": {
+      "owner": "CROSS_PLATFORM_CORE",
+      "status": "NOT_TESTED",
+      "evidence": "targeted local suites passed, but the required cross-OS CI matrix has not executed for this revision",
+      "evidence_class": "CROSS_OS_CI_MATRIX"
+    },
+    "WINDOWS_CLEAN_INSTALL": {
+      "owner": "WINDOWS",
+      "status": "NOT_IMPLEMENTED",
+      "evidence": "no canonical production installer",
+      "evidence_class": "LIVE_WINDOWS_INTEGRATION"
+    },
+    "WINDOWS_SERVICE_INSTALLATION": {
+      "owner": "WINDOWS",
+      "status": "NOT_TESTED",
+      "evidence": "reviewed SCM acceptance harness exists; no current Windows CI execution evidence recorded",
+      "evidence_class": "LIVE_WINDOWS_INTEGRATION"
+    },
+    "WINDOWS_SERVICE_START": {
+      "owner": "WINDOWS",
+      "status": "NOT_TESTED",
+      "evidence": "reviewed SCM acceptance harness exists; no current Windows CI execution evidence recorded",
+      "evidence_class": "LIVE_WINDOWS_INTEGRATION"
+    },
+    "WINDOWS_GRACEFUL_STOP": {
+      "owner": "WINDOWS",
+      "status": "NOT_TESTED",
+      "evidence": "reviewed SCM acceptance harness exists; no current Windows CI execution evidence recorded",
+      "evidence_class": "LIVE_WINDOWS_INTEGRATION"
+    },
+    "WINDOWS_MANUAL_RESTART": {
+      "owner": "WINDOWS",
+      "status": "NOT_TESTED",
+      "evidence": "reviewed SCM acceptance harness exists; no current Windows CI execution evidence recorded",
+      "evidence_class": "LIVE_WINDOWS_INTEGRATION"
+    },
+    "WINDOWS_AUTOMATIC_CRASH_RESTART": {
+      "owner": "WINDOWS",
+      "status": "NOT_IMPLEMENTED",
+      "evidence": "SCM recovery policy pending",
+      "evidence_class": "LIVE_WINDOWS_INTEGRATION"
+    },
+    "WINDOWS_REBOOT_RECOVERY": {
+      "owner": "WINDOWS",
+      "status": "UNVERIFIED_ENVIRONMENT_LIMITATION",
+      "evidence": "requires real Windows host",
+      "evidence_class": "LIVE_WINDOWS_INTEGRATION"
+    },
+    "WINDOWS_AUTOSTART": {
+      "owner": "WINDOWS",
+      "status": "NOT_IMPLEMENTED",
+      "evidence": "SCM installer pending",
+      "evidence_class": "LIVE_WINDOWS_INTEGRATION"
+    },
+    "WINDOWS_LONG_RUNNING_LIFECYCLE": {
+      "owner": "WINDOWS",
+      "status": "NOT_TESTED",
+      "evidence": "24/72h test not run",
+      "evidence_class": "LIVE_WINDOWS_INTEGRATION"
+    },
+    "WINDOWS_PERSISTENT_LOGGING": {
+      "owner": "WINDOWS",
+      "status": "NOT_IMPLEMENTED",
+      "evidence": "bounded production sink pending",
+      "evidence_class": "LIVE_WINDOWS_INTEGRATION"
+    },
+    "WINDOWS_PROTECTED_CONFIGURATION": {
+      "owner": "WINDOWS",
+      "status": "NOT_IMPLEMENTED",
+      "evidence": "DACL provisioner pending",
+      "evidence_class": "LIVE_WINDOWS_INTEGRATION"
+    },
+    "WINDOWS_PROTECTED_STATE_PATHS": {
+      "owner": "WINDOWS",
+      "status": "NOT_IMPLEMENTED",
+      "evidence": "DACL provisioner pending",
+      "evidence_class": "LIVE_WINDOWS_INTEGRATION"
+    },
+    "WINDOWS_ACL_QUALIFICATION": {
+      "owner": "WINDOWS",
+      "status": "NOT_IMPLEMENTED",
+      "evidence": "native read-only DACL qualifier fails closed",
+      "evidence_class": "LIVE_WINDOWS_INTEGRATION"
+    },
+    "WINDOWS_LOCAL_PRINCIPAL_AUTHENTICATION": {
+      "owner": "WINDOWS",
+      "status": "NOT_IMPLEMENTED",
+      "evidence": "SSPI or equivalent requires architecture review",
+      "evidence_class": "LIVE_WINDOWS_INTEGRATION"
+    },
+    "WINDOWS_SQLITE_CRASH_INTEGRITY": {
+      "owner": "WINDOWS",
+      "status": "UNVERIFIED_ENVIRONMENT_LIMITATION",
+      "evidence": "requires real Windows forced-termination tests",
+      "evidence_class": "LIVE_WINDOWS_INTEGRATION"
+    },
+    "WINDOWS_FILE_LOCKING": {
+      "owner": "WINDOWS",
+      "status": "UNVERIFIED_ENVIRONMENT_LIMITATION",
+      "evidence": "msvcrt path exists; live Windows matrix not run",
+      "evidence_class": "LIVE_WINDOWS_INTEGRATION"
+    },
+    "WINDOWS_PROCESS_TREE": {
+      "owner": "WINDOWS",
+      "status": "NOT_IMPLEMENTED",
+      "evidence": "Job Object/SCM ownership pending",
+      "evidence_class": "LIVE_WINDOWS_INTEGRATION"
+    },
+    "WINDOWS_UPDATE_RESTART": {
+      "owner": "WINDOWS",
+      "status": "NOT_IMPLEMENTED",
+      "evidence": "secure updater execution contract unresolved",
+      "evidence_class": "LIVE_WINDOWS_INTEGRATION"
+    },
+    "WINDOWS_FAILED_UPDATE_SAFE_BEHAVIOR": {
+      "owner": "WINDOWS",
+      "status": "NOT_IMPLEMENTED",
+      "evidence": "no fabricated M1 rollback authority",
+      "evidence_class": "LIVE_WINDOWS_INTEGRATION"
+    },
+    "WINDOWS_NO_ORPHAN_CHILDREN": {
+      "owner": "WINDOWS",
+      "status": "NOT_IMPLEMENTED",
+      "evidence": "process-tree adapter pending",
+      "evidence_class": "LIVE_WINDOWS_INTEGRATION"
+    },
+    "WINDOWS_NETWORK_RECOVERY": {
+      "owner": "WINDOWS",
+      "status": "NOT_TESTED",
+      "evidence": "Windows integration scenario pending",
+      "evidence_class": "LIVE_WINDOWS_INTEGRATION"
+    },
+    "WINDOWS_SAFE_OS_SHUTDOWN": {
+      "owner": "WINDOWS",
+      "status": "NOT_IMPLEMENTED",
+      "evidence": "SCM shutdown notifications pending",
+      "evidence_class": "LIVE_WINDOWS_INTEGRATION"
+    },
+    "WINDOWS_POSTGRESQL_SUBSTRATE": {
+      "owner": "WINDOWS",
+      "status": "NOT_IMPLEMENTED",
+      "evidence": "install/auth/backup/ordering not frozen",
+      "evidence_class": "LIVE_WINDOWS_INTEGRATION"
+    },
+    "WINDOWS_GUI_BACKEND_LIFECYCLE": {
+      "owner": "WINDOWS",
+      "status": "NOT_APPLICABLE",
+      "evidence": "current production backend is not yet a separately installed Windows service",
+      "evidence_class": "LIVE_WINDOWS_INTEGRATION"
+    },
+    "LINUX_STATIC_QUALIFICATION": {
+      "owner": "LINUX",
+      "status": "PASS",
+      "evidence": "reviewed systemd/PostgreSQL artifacts and static tests",
+      "evidence_class": "STATIC_EXECUTABLE_CONTRACT"
+    },
+    "LINUX_SYSTEMD_INTEGRATION": {
+      "owner": "LINUX",
+      "status": "UNVERIFIED_ENVIRONMENT_LIMITATION",
+      "evidence": "sandbox has no systemd PID 1",
+      "evidence_class": "LIVE_LINUX_INTEGRATION"
+    },
+    "LINUX_REBOOT_LIFECYCLE_UPDATE": {
+      "owner": "LINUX",
+      "status": "UNVERIFIED_ENVIRONMENT_LIMITATION",
+      "evidence": "live host required",
+      "evidence_class": "LIVE_LINUX_INTEGRATION"
+    },
+    "MACOS_LAUNCHD_INTEGRATION": {
+      "owner": "MACOS",
+      "status": "NOT_IMPLEMENTED",
+      "evidence": "boundary only",
+      "evidence_class": "LIVE_MACOS_INTEGRATION"
+    },
+    "MACOS_PACKAGE_PERMISSIONS_AUTH_IPC": {
+      "owner": "MACOS",
+      "status": "NOT_IMPLEMENTED",
+      "evidence": "platform design pending",
+      "evidence_class": "LIVE_MACOS_INTEGRATION"
+    },
+    "MACOS_REBOOT_LIFECYCLE_UPDATE": {
+      "owner": "MACOS",
+      "status": "NOT_IMPLEMENTED",
+      "evidence": "platform design pending",
+      "evidence_class": "LIVE_MACOS_INTEGRATION"
+    },
+    "WINDOWS_PATH_LAYOUT_STATIC_CONTRACT": {
+      "owner": "WINDOWS",
+      "status": "PASS",
+      "evidence": "PureWindowsPath layout contract executable test",
+      "evidence_class": "STATIC_EXECUTABLE_CONTRACT"
+    },
+    "WINDOWS_NATIVE_PATH_INTEGRATION": {
+      "owner": "WINDOWS",
+      "status": "UNVERIFIED_ENVIRONMENT_LIMITATION",
+      "evidence": "not executed on a real Windows filesystem",
+      "evidence_class": "LIVE_WINDOWS_INTEGRATION"
+    },
+    "LINUX_INSTALLER_STATIC_CONTRACT": {
+      "owner": "LINUX",
+      "status": "PASS",
+      "evidence": "installer artifact assertions execute in the Linux static deployment suite",
+      "evidence_class": "STATIC_EXECUTABLE_CONTRACT"
+    },
+    "LINUX_CLEAN_INSTALL": {
+      "owner": "LINUX",
+      "status": "UNVERIFIED_ENVIRONMENT_LIMITATION",
+      "evidence": "privileged clean installation was not executed on a live Linux host",
+      "evidence_class": "LIVE_LINUX_INTEGRATION"
+    }
+  },
+  "release_gates": {
+    "WINDOWS_PRODUCTION_READY": [
+      "CORE_REQUIRED_SUITES",
+      "WINDOWS_CLEAN_INSTALL",
+      "WINDOWS_SERVICE_INSTALLATION",
+      "WINDOWS_SERVICE_START",
+      "WINDOWS_GRACEFUL_STOP",
+      "WINDOWS_MANUAL_RESTART",
+      "WINDOWS_AUTOMATIC_CRASH_RESTART",
+      "WINDOWS_REBOOT_RECOVERY",
+      "WINDOWS_AUTOSTART",
+      "WINDOWS_LONG_RUNNING_LIFECYCLE",
+      "WINDOWS_PERSISTENT_LOGGING",
+      "WINDOWS_PROTECTED_CONFIGURATION",
+      "WINDOWS_PROTECTED_STATE_PATHS",
+      "WINDOWS_ACL_QUALIFICATION",
+      "WINDOWS_LOCAL_PRINCIPAL_AUTHENTICATION",
+      "WINDOWS_SQLITE_CRASH_INTEGRITY",
+      "WINDOWS_FILE_LOCKING",
+      "WINDOWS_PATH_LAYOUT_STATIC_CONTRACT",
+      "WINDOWS_NATIVE_PATH_INTEGRATION",
+      "WINDOWS_PROCESS_TREE",
+      "WINDOWS_UPDATE_RESTART",
+      "WINDOWS_FAILED_UPDATE_SAFE_BEHAVIOR",
+      "WINDOWS_NO_ORPHAN_CHILDREN",
+      "WINDOWS_NETWORK_RECOVERY",
+      "WINDOWS_SAFE_OS_SHUTDOWN",
+      "WINDOWS_POSTGRESQL_SUBSTRATE"
+    ],
+    "LINUX_PRODUCTION_READY": [
+      "CORE_REQUIRED_SUITES",
+      "LINUX_STATIC_QUALIFICATION",
+      "LINUX_SYSTEMD_INTEGRATION",
+      "LINUX_INSTALLER_STATIC_CONTRACT",
+      "LINUX_CLEAN_INSTALL",
+      "LINUX_REBOOT_LIFECYCLE_UPDATE"
+    ],
+    "MACOS_PRODUCTION_READY": [
+      "CORE_REQUIRED_SUITES",
+      "MACOS_LAUNCHD_INTEGRATION",
+      "MACOS_PACKAGE_PERMISSIONS_AUTH_IPC",
+      "MACOS_REBOOT_LIFECYCLE_UPDATE"
+    ]
+  },
+  "legacy_flags": {
+    "policy": "unchanged and conservative; never inputs to a platform gate",
+    "FreshnessAuthority_implemented": false,
+    "ROOT_PROOF_ISSUER_IMPLEMENTED": false,
+    "production_substrate_implemented": false,
+    "PRODUCTION_LOCAL_RUNTIME_AVAILABLE": false
+  }
+}

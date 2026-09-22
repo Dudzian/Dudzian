@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CryptoHunter core test-plan marker",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "source_revision", "runner_os", "test_plan_id",
+    "test_plan_digest", "ci_run_id", "ci_provider"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "source_revision": {"type": "string", "minLength": 1},
+    "runner_os": {"enum": ["Linux", "Windows", "macOS"]},
+    "test_plan_id": {"const": "CORE_REQUIRED_SUITES_V1"},
+    "test_plan_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "ci_run_id": {"type": "string", "minLength": 1},
+    "ci_provider": {"const": "https://github.com"}
+  }
+}
