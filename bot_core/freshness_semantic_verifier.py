@@ -16,6 +16,7 @@ import os
 import re
 import socket
 import struct
+import stat
 from typing import Protocol
 
 from cryptography.exceptions import InvalidSignature
@@ -488,7 +489,9 @@ class FreshnessSemanticVerifier:
 
 
 def serve_local_unix_socket(verifier: FreshnessSemanticVerifier, socket_path: str,
-                            *, allowed_peer_uid: int, stop_after: int | None = None) -> None:
+                            *, allowed_peer_uid: int, stop_after: int | None = None,
+                            socket_gid: int | None = None,
+                            parent_mode: int | None = None) -> None:
     """Serve the single verifier operation over a length-framed Unix socket.
 
     Deployment must start this executable component as
@@ -499,11 +502,33 @@ def serve_local_unix_socket(verifier: FreshnessSemanticVerifier, socket_path: st
     if type(allowed_peer_uid) is not int or allowed_peer_uid < 0:
         raise ValueError("allowed_peer_uid must be an exact uid")
     path = os.fspath(socket_path)
-    if os.path.exists(path):
+    if not os.path.isabs(path):
+        raise ValueError("socket_path must be absolute")
+    parent = os.path.dirname(path)
+    parent_status = os.stat(parent, follow_symlinks=False)
+    if stat.S_ISLNK(parent_status.st_mode) or not stat.S_ISDIR(parent_status.st_mode):
+        raise ValueError("socket parent must be a real directory")
+    if (parent_mode is not None or socket_gid is not None) and parent_status.st_uid != os.geteuid():
+        raise PermissionError("socket parent has unexpected owner")
+    if parent_mode is not None and stat.S_IMODE(parent_status.st_mode) != parent_mode:
+        raise PermissionError("socket parent has unexpected mode")
+    if socket_gid is not None and parent_status.st_gid != socket_gid:
+        raise PermissionError("socket parent has unexpected group")
+    try:
+        existing = os.lstat(path)
+    except FileNotFoundError:
+        existing = None
+    if existing is not None:
+        # Only a socket owned by this exact service is safe stale state.  A
+        # symlink, regular file, or another principal's socket is tampering.
+        if not stat.S_ISSOCK(existing.st_mode) or existing.st_uid != os.geteuid():
+            raise PermissionError("unsafe object at verifier socket path")
         os.unlink(path)
     handled = 0
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
         listener.bind(path)
+        if socket_gid is not None:
+            os.chown(path, -1, socket_gid)
         os.chmod(path, 0o660)
         listener.listen(8)
         while stop_after is None or handled < stop_after:
