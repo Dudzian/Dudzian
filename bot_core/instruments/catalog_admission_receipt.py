@@ -663,6 +663,23 @@ class _CatalogAdmissionReceiptAuthorityBase:
     def _key_material(self) -> bytes:
         return secrets.token_bytes(32)
 
+    def qualified_for_runtime(self) -> bool:
+        """Return whether replay proves one usable, already-provisioned active key."""
+        try:
+            with self._metadata._connect() as db:
+                self._replay(db)
+                revision, keys, root_handle = self._metadata_and_keys(db)
+            return (
+                revision > 0
+                and root_handle is not None
+                and sum(
+                    key.lifecycle_state is CatalogAdmissionReceiptKeyState.ACTIVE
+                    for key in keys
+                ) == 1
+            )
+        except CatalogAdmissionReceiptError:
+            return False
+
     def provision(self) -> str:
         with self._metadata._connect() as db:
             self._replay(db)

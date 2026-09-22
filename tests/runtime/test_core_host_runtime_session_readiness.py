@@ -10,6 +10,7 @@ import pytest
 from bot_core.persistence.local_durable_evidence import LocalDurableEvidenceRegistry
 from bot_core.persistence.state_store import SQLiteStateStore
 from bot_core.runtime.core_host import CoreHost, CoreHostProcessLock, CoreHostScope
+from bot_core.runtime.core_host_catalog_runtime import CatalogRuntimeDeploymentConfiguration
 from bot_core.runtime.core_host_recovery_types import (
     CoreHostRecoveryClassification,
     CoreHostStartupDisposition,
@@ -74,6 +75,7 @@ def _real_host(
     runtime_session_factory: Callable[[], RuntimeSession] | None = None,
     hook: Callable[[str, RuntimeSession], None] | None = None,
     store_factory: Callable[[], SQLiteStateStore] | None = None,
+    catalog_runtime_configuration: CatalogRuntimeDeploymentConfiguration | None = None,
 ) -> tuple[CoreHost, list[SQLiteStateStore], list[LocalDurableEvidenceRegistry]]:
     stores: list[SQLiteStateStore] = []
     registries: list[LocalDurableEvidenceRegistry] = []
@@ -95,6 +97,7 @@ def _real_host(
             state_store_factory=open_store,
             startup_recovery_factory=recovery_factory,
             runtime_session_publication_hook=hook,
+            catalog_runtime_configuration=catalog_runtime_configuration,
         ),
         stores,
         registries,
