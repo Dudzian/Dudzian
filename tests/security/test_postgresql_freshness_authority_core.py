@@ -103,6 +103,48 @@ def test_raw_dml_denied_runtime_verifier_admin_and_offline_admin_boundary():
     for role in ("freshness_runtime","freshness_crypto_verifier"):
         with _role(role) as c, pytest.raises(InsufficientPrivilege): c.execute("select freshness_authority.transition_credential('PRODUCTION','td','auth','prop',1,'REVOKED','{}')")
 
+def test_verifier_has_only_reviewed_read_functions_and_no_raw_select():
+    _seed("read-boundary")
+    with _role("freshness_crypto_verifier") as c:
+        credential=c.execute(
+            "select * from freshness_authority.resolve_verification_credential(%s,%s,%s,%s,%s,%s)",
+            ("PRODUCTION","td","read-boundary",PROPOSER_ROLE,"pk",1),
+        ).fetchone()
+        assert credential[:3]==("prop","identity-A",1) and bytes(credential[3])==bytes([1])*32
+        assert c.execute(
+            "select freshness_authority.resolve_predecessor_head(%s,%s,%s,%s,%s)",
+            ("PRODUCTION","td","read-boundary",0,"a"*64),
+        ).fetchone()==(H0,)
+        with pytest.raises(InsufficientPrivilege): c.execute("select * from freshness_authority.credentials")
+        c.rollback()
+        with pytest.raises(InsufficientPrivilege): c.execute("select * from freshness_authority.authority_generation_heads")
+    for role in ("freshness_crypto_verifier","freshness_runtime"):
+        with _role(role) as c, pytest.raises(InsufficientPrivilege):
+            c.execute("delete from freshness_authority.authority_generation_heads")
+    with psycopg.connect(DSN) as c:
+        c.execute("SET SESSION AUTHORIZATION freshness_admin")
+        with pytest.raises(InsufficientPrivilege):
+            c.execute("update freshness_authority.authority_generation_heads set complete_head_digest=%s",("f"*64,))
+
+def test_preparation_exact_retry_is_idempotent_and_conflict_is_fail_closed():
+    _seed("prepare-replay")
+    exact=_candidate("prepare-replay",authority="prepare-replay",prop="prop",fin="fin")
+    assert _prepare(exact)==_prepare(exact)=="prepare-replay"
+    assert _super("select count(*) from freshness_authority.prepared_verifications where preparation_id='prepare-replay'",fetch=True)==[(1,)]
+    conflicting=deepcopy(exact)
+    conflicting[0]["verifier_authority_identity"]="other-verifier"
+    with pytest.raises(psycopg.errors.UniqueViolation,match="preparation identity conflict"):
+        _prepare(conflicting)
+    assert _super("select binding->>'verifier_authority_identity' from freshness_authority.prepared_verifications where preparation_id='prepare-replay'",fetch=True)==[("ver",)]
+
+def test_two_concurrent_exact_preparations_return_one_physical_row():
+    _seed("prepare-race")
+    exact=_candidate("prepare-race",authority="prepare-race",prop="prop",fin="fin")
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results=list(pool.map(lambda _: _prepare(exact),range(2)))
+    assert results==["prepare-race","prepare-race"]
+    assert _super("select count(*) from freshness_authority.prepared_verifications where preparation_id='prepare-race'",fetch=True)==[(1,)]
+
 def test_canonical_codec_duplicate_unicode_float_bool_and_safe_integer():
     with pytest.raises(ValueError): parse_canonical_json('{"x":1,"x":2}')
     with pytest.raises((ValueError,UnicodeError)): canonical_json_bytes({"x":"\ud800"})
@@ -224,6 +266,56 @@ def test_complete_head_h0_to_h1_then_n2_and_stale_h0_rejection():
     stale=_candidate("staleh0",generation=3,predecessor_digest=second[0]["proposed_document_digest"],predecessor_head=H0,head_set=[])
     _prepare(stale)
     with pytest.raises(psycopg.Error): _cas(stale)
+
+def test_retained_generation_heads_resolve_historical_not_current_projection():
+    _seed("head-history")
+    first=_candidate("head-history-1",authority="head-history",prop="prop",fin="fin")
+    _prepare(first); assert _cas(first)[0]=="CAS_ACCEPTED"
+    first_digest=first[0]["proposed_document_digest"]
+    s2=[{"domain":"catalog","digest":"4"*64}]; h2=complete_semantic_head_digest(s2)
+    second=_candidate("head-history-2",authority="head-history",prop="prop",fin="fin",
+                      generation=2,predecessor_digest=first_digest,predecessor_head=H1,head_set=s2)
+    _prepare(second); assert _cas(second)[0]=="CAS_ACCEPTED"
+    previous_digest=second[0]["proposed_document_digest"]; previous_head=h2
+    for generation in range(3,6):
+        heads=[{"domain":"catalog","digest":str(generation)*64}]
+        candidate=_candidate(f"head-history-{generation}",authority="head-history",prop="prop",fin="fin",
+                             generation=generation,predecessor_digest=previous_digest,
+                             predecessor_head=previous_head,head_set=heads)
+        _prepare(candidate); assert _cas(candidate)[0]=="CAS_ACCEPTED"
+        previous_digest=candidate[0]["proposed_document_digest"]
+        previous_head=complete_semantic_head_digest(heads)
+    with _role("freshness_crypto_verifier") as c:
+        resolve=lambda generation,digest: c.execute(
+            "select freshness_authority.resolve_predecessor_head(%s,%s,%s,%s,%s)",
+            ("PRODUCTION","td","head-history",generation,digest)).fetchone()[0]
+        assert resolve(0,"a"*64)==H0
+        assert resolve(1,first_digest)==H1
+        assert resolve(2,second[0]["proposed_document_digest"])==h2
+        assert resolve(0,"a"*64)==H0  # still historical with current at N+5
+        for generation,digest in ((0,"f"*64),(9,"a"*64)):
+            with pytest.raises(psycopg.Error): resolve(generation,digest)
+            c.rollback()
+        with pytest.raises(psycopg.Error): c.execute(
+            "select freshness_authority.resolve_predecessor_head('TEST','td','head-history',0,%s)",
+            ("a"*64,))
+        c.rollback()
+        with pytest.raises(psycopg.Error): c.execute(
+            "select freshness_authority.resolve_predecessor_head('PRODUCTION','wrong','head-history',0,%s)",
+            ("a"*64,))
+
+def test_current_projection_tamper_does_not_rewrite_history_and_fails_qualification():
+    _seed("projection-tamper")
+    retained=_super("select complete_head_digest from freshness_authority.authority_generation_heads where authority_id='projection-tamper' and generation=0",fetch=True)
+    assert retained==[(H0,)]
+    _super("update freshness_authority.authority_lineages set current_complete_head_digest=%s where authority_id='projection-tamper'",("f"*64,))
+    with _role("freshness_crypto_verifier") as c:
+        assert c.execute(
+            "select freshness_authority.resolve_predecessor_head('PRODUCTION','td','projection-tamper',0,%s)",
+            ("a"*64,)).fetchone()==(H0,)
+    with pytest.raises(FreshnessAuthorityQualificationError,match="retained evidence integrity"):
+        qualify_postgresql_freshness_authority(CFG)
+    _super("update freshness_authority.authority_lineages set current_complete_head_digest=%s where authority_id='projection-tamper'",(H0,))
 
 def test_arbitrary_receipt_complete_head_digest_is_rejected():
     values=_candidate("badhead"); p,d,r=deepcopy(values); r["complete_semantic_head_digest"]="f"*64
