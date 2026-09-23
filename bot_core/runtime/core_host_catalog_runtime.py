@@ -1,11 +1,13 @@
 """Canonical CoreHost lifecycle gate for M0.12 Catalog runtime acceptance."""
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass
+from enum import Enum
 import os
 from pathlib import Path
 import stat
-from typing import Mapping
 
 from bot_core.instruments.catalog_runtime_acceptance import (
     AcceptedSourceCatalogSnapshot,
@@ -18,7 +20,69 @@ from bot_core.instruments.catalog_runtime_composition import (
 )
 from bot_core.instruments.core_time import PRODUCTION_CORE_CLOCK
 
-_POSIX_PERMISSION_MODEL = os.name == "posix"
+class CatalogPermissionQualification(Enum):
+    QUALIFIED = "QUALIFIED"
+    INVALID = "INVALID"
+    UNAVAILABLE = "UNAVAILABLE"
+
+
+class CatalogPermissionQualifier(ABC):
+    """Platform-neutral physical permission proof boundary."""
+
+    @abstractmethod
+    def qualify(
+        self, paths: CatalogRuntimeAuthorityPaths
+    ) -> CatalogPermissionQualification: ...
+
+
+class PosixCatalogPermissionQualifier(CatalogPermissionQualifier):
+    """Frozen owner/mode proof; it observes storage and never repairs it."""
+
+    def __init__(
+        self,
+        *,
+        stat_reader: Callable[[Path], os.stat_result] = Path.stat,
+        uid_reader: Callable[[], int] | None = None,
+    ) -> None:
+        self._stat_reader = stat_reader
+        self._uid_reader = uid_reader or os.geteuid
+
+    def qualify(
+        self, paths: CatalogRuntimeAuthorityPaths
+    ) -> CatalogPermissionQualification:
+        uid = self._uid_reader()
+        directories = {paths.catalog_state.parent, paths.receipt_metadata.parent}
+        qualified = all(
+            (metadata := self._stat_reader(path)).st_uid == uid
+            and stat.S_IMODE(metadata.st_mode) == 0o700
+            for path in directories
+        ) and all(
+            (metadata := self._stat_reader(path)).st_uid == uid
+            and stat.S_IMODE(metadata.st_mode) == 0o600
+            for path in (paths.catalog_state, paths.receipt_metadata)
+        )
+        return (
+            CatalogPermissionQualification.QUALIFIED
+            if qualified
+            else CatalogPermissionQualification.INVALID
+        )
+
+
+class UnavailableCatalogPermissionQualifier(CatalogPermissionQualifier):
+    def qualify(
+        self, paths: CatalogRuntimeAuthorityPaths
+    ) -> CatalogPermissionQualification:
+        del paths
+        return CatalogPermissionQualification.UNAVAILABLE
+
+
+def native_catalog_permission_qualifier(
+    platform_name: str | None = None,
+) -> CatalogPermissionQualifier:
+    selected = os.name if platform_name is None else platform_name
+    if selected == "posix":
+        return PosixCatalogPermissionQualifier()
+    return UnavailableCatalogPermissionQualifier()
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,12 +121,21 @@ class CatalogRuntimeStartupResult:
 class CoreHostCatalogRuntimeLifecycle:
     """CoreHost-owned, reopen-only gate; it never repairs or provisions storage."""
 
-    __slots__ = ("_configuration", "_runtime", "_result")
+    __slots__ = ("_configuration", "_permission_qualifier", "_runtime", "_result")
 
-    def __init__(self, configuration: CatalogRuntimeDeploymentConfiguration | None) -> None:
+    def __init__(
+        self,
+        configuration: CatalogRuntimeDeploymentConfiguration | None,
+        *,
+        permission_qualifier: CatalogPermissionQualifier | None = None,
+    ) -> None:
         if configuration is not None and type(configuration) is not CatalogRuntimeDeploymentConfiguration:
             raise TypeError("exact CatalogRuntimeDeploymentConfiguration required")
         self._configuration = configuration
+        qualifier = permission_qualifier or native_catalog_permission_qualifier()
+        if not isinstance(qualifier, CatalogPermissionQualifier):
+            raise TypeError("CatalogPermissionQualifier required")
+        self._permission_qualifier = qualifier
         self._runtime: CatalogRuntimeAcceptanceAuthority | None = None
         self._result = CatalogRuntimeStartupResult(False, "NOT_STARTED")
 
@@ -78,9 +151,12 @@ class CoreHostCatalogRuntimeLifecycle:
         paths = self._configuration.paths
         if not paths.catalog_state.is_file() or not paths.receipt_metadata.is_file():
             return self._block("CATALOG_RUNTIME_STORAGE_MISSING")
-        if not _POSIX_PERMISSION_MODEL:
+        qualification = self._permission_qualifier.qualify(paths)
+        if type(qualification) is not CatalogPermissionQualification:
+            raise TypeError("permission qualifier returned an invalid result type")
+        if qualification is CatalogPermissionQualification.UNAVAILABLE:
             return self._block("CATALOG_RUNTIME_PLATFORM_PERMISSION_PROOF_UNAVAILABLE")
-        if not self._permissions_qualified(paths):
+        if qualification is CatalogPermissionQualification.INVALID:
             return self._block("CATALOG_RUNTIME_PERMISSIONS_INVALID")
         try:
             runtime = compose_catalog_runtime_acceptance(paths)
@@ -99,18 +175,6 @@ class CoreHostCatalogRuntimeLifecycle:
         self._result = CatalogRuntimeStartupResult(True, "READY_FOR_EXPLICIT_ONE_SHOT_FETCH")
         return self._result
 
-    @staticmethod
-    def _permissions_qualified(paths: CatalogRuntimeAuthorityPaths) -> bool:
-        uid = os.geteuid()
-        directories = {paths.catalog_state.parent, paths.receipt_metadata.parent}
-        return all(
-            path.stat().st_uid == uid and stat.S_IMODE(path.stat().st_mode) == 0o700
-            for path in directories
-        ) and all(
-            path.stat().st_uid == uid and stat.S_IMODE(path.stat().st_mode) == 0o600
-            for path in (paths.catalog_state, paths.receipt_metadata)
-        )
-
     def _block(self, reason: str) -> CatalogRuntimeStartupResult:
         self._runtime = None
         self._result = CatalogRuntimeStartupResult(False, reason)
@@ -123,7 +187,12 @@ class CoreHostCatalogRuntimeLifecycle:
 
 
 __all__ = [
+    "CatalogPermissionQualification",
+    "CatalogPermissionQualifier",
     "CatalogRuntimeDeploymentConfiguration",
     "CatalogRuntimeStartupResult",
     "CoreHostCatalogRuntimeLifecycle",
+    "PosixCatalogPermissionQualifier",
+    "UnavailableCatalogPermissionQualifier",
+    "native_catalog_permission_qualifier",
 ]

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import sqlite3
+from types import SimpleNamespace
 
 import pytest
 
@@ -17,13 +18,29 @@ from bot_core.instruments.source_producer_membership import (
 )
 from bot_core.runtime.core_host import CoreHostProcessLock
 from bot_core.runtime.core_host_catalog_runtime import (
+    CatalogPermissionQualification,
+    CatalogPermissionQualifier,
     CatalogRuntimeDeploymentConfiguration,
     CoreHostCatalogRuntimeLifecycle,
+    PosixCatalogPermissionQualifier,
+    UnavailableCatalogPermissionQualifier,
+    native_catalog_permission_qualifier,
 )
-import bot_core.runtime.core_host_catalog_runtime as catalog_lifecycle_module
 from bot_core.runtime.core_host_startup_recovery import CoreHostStartupRecoveryCoordinator
 from bot_core.security.keyring_storage import KeyringSecretStorage
 from tests.runtime.test_core_host_runtime_session_readiness import _initialize, _real_host
+
+
+class _FixedQualifier(CatalogPermissionQualifier):
+    def __init__(self, result: CatalogPermissionQualification) -> None:
+        self._result = result
+
+    def qualify(self, paths):  # type: ignore[no-untyped-def]
+        del paths
+        return self._result
+
+
+QUALIFIED = _FixedQualifier(CatalogPermissionQualification.QUALIFIED)
 
 
 @pytest.fixture
@@ -84,20 +101,24 @@ def test_protected_configuration_has_exact_keys_no_defaults_and_absolute_paths(t
 def test_permission_qualification_blocks_without_repair(tmp_path, keyring, bad_target) -> None:
     config, catalog, _receipts = _offline_storage(tmp_path, custody=True, admission=True)
     target = tmp_path if bad_target == "directory" else catalog
-    target.chmod(0o755 if bad_target == "directory" else 0o644)
-    before = target.stat().st_mode
+    before = target.read_bytes() if target.is_file() else tuple(target.iterdir())
 
-    result = CoreHostCatalogRuntimeLifecycle(config).start_after_recovery()
+    result = CoreHostCatalogRuntimeLifecycle(
+        config,
+        permission_qualifier=_FixedQualifier(CatalogPermissionQualification.INVALID),
+    ).start_after_recovery()
 
     assert result.reason == "CATALOG_RUNTIME_PERMISSIONS_INVALID"
-    assert target.stat().st_mode == before
+    after = target.read_bytes() if target.is_file() else tuple(target.iterdir())
+    assert after == before
 
 
-def test_non_posix_permission_proof_fails_closed(tmp_path, keyring, monkeypatch) -> None:
+def test_non_posix_permission_proof_fails_closed(tmp_path, keyring) -> None:
     config, _catalog, _receipts = _offline_storage(tmp_path, custody=True, admission=True)
-    monkeypatch.setattr(catalog_lifecycle_module, "_POSIX_PERMISSION_MODEL", False)
 
-    result = CoreHostCatalogRuntimeLifecycle(config).start_after_recovery()
+    result = CoreHostCatalogRuntimeLifecycle(
+        config, permission_qualifier=UnavailableCatalogPermissionQualifier()
+    ).start_after_recovery()
 
     assert result.reason == "CATALOG_RUNTIME_PLATFORM_PERMISSION_PROOF_UNAVAILABLE"
 
@@ -105,7 +126,7 @@ def test_non_posix_permission_proof_fails_closed(tmp_path, keyring, monkeypatch)
 def test_missing_custody_blocks_without_key_generation_or_fetch(tmp_path, keyring, monkeypatch) -> None:
     config, _catalog, _receipts = _offline_storage(tmp_path, custody=False, admission=True)
     monkeypatch.setattr(_BinanceSpotCatalogProducer, "fetch", lambda self: pytest.fail("fetch"))
-    lifecycle = CoreHostCatalogRuntimeLifecycle(config)
+    lifecycle = CoreHostCatalogRuntimeLifecycle(config, permission_qualifier=QUALIFIED)
 
     assert lifecycle.start_after_recovery().reason == "CATALOG_RUNTIME_RECEIPT_CUSTODY_MISSING"
     assert lifecycle.fetch_catalog_once() is None
@@ -115,7 +136,7 @@ def test_missing_custody_blocks_without_key_generation_or_fetch(tmp_path, keyrin
 def test_missing_admission_blocks_without_grant_or_fetch(tmp_path, keyring, monkeypatch) -> None:
     config, catalog, _receipts = _offline_storage(tmp_path, custody=True, admission=False)
     monkeypatch.setattr(_BinanceSpotCatalogProducer, "fetch", lambda self: pytest.fail("fetch"))
-    lifecycle = CoreHostCatalogRuntimeLifecycle(config)
+    lifecycle = CoreHostCatalogRuntimeLifecycle(config, permission_qualifier=QUALIFIED)
 
     assert lifecycle.start_after_recovery().reason == "CATALOG_RUNTIME_PRODUCER_ADMISSION_MISSING"
     assert lifecycle.fetch_catalog_once() is None
@@ -129,7 +150,9 @@ def test_corrupt_authority_blocks_without_repair_or_fetch(tmp_path, keyring, mon
     before = catalog.read_bytes()
     monkeypatch.setattr(_BinanceSpotCatalogProducer, "fetch", lambda self: pytest.fail("fetch"))
 
-    result = CoreHostCatalogRuntimeLifecycle(config).start_after_recovery()
+    result = CoreHostCatalogRuntimeLifecycle(
+        config, permission_qualifier=QUALIFIED
+    ).start_after_recovery()
 
     assert result.reason == "CATALOG_RUNTIME_AUTHORITY_REPLAY_FAILED"
     assert catalog.read_bytes() == before
@@ -140,10 +163,10 @@ def test_restart_and_pre_fetch_crash_reopen_without_side_effects(tmp_path, keyri
     monkeypatch.setattr(_BinanceSpotCatalogProducer, "fetch", lambda self: pytest.fail("fetch"))
     before = (catalog.read_bytes(), receipts.read_bytes(), dict(keyring))
 
-    first = CoreHostCatalogRuntimeLifecycle(config)
+    first = CoreHostCatalogRuntimeLifecycle(config, permission_qualifier=QUALIFIED)
     assert first.start_after_recovery().ready
     del first  # process crash before explicit fetch
-    second = CoreHostCatalogRuntimeLifecycle(config)
+    second = CoreHostCatalogRuntimeLifecycle(config, permission_qualifier=QUALIFIED)
     assert second.start_after_recovery().ready
     assert second.start_after_recovery().ready
 
@@ -195,7 +218,10 @@ def test_corehost_alone_owns_explicit_one_shot_fetch(tmp_path, keyring, monkeypa
     state = tmp_path / "state.sqlite3"
     boundary, _ = _initialize(state)
     host, _stores, _registries = _real_host(
-        state, boundary, catalog_runtime_configuration=config
+        state,
+        boundary,
+        catalog_runtime_configuration=config,
+        catalog_permission_qualifier_factory=lambda: QUALIFIED,
     )
     calls: list[str] = []
     monkeypatch.setattr(
@@ -213,3 +239,62 @@ def test_corehost_alone_owns_explicit_one_shot_fetch(tmp_path, keyring, monkeypa
         assert calls == ["fetch"]
     finally:
         host.close()
+
+
+def test_native_windows_selection_remains_unavailable() -> None:
+    assert isinstance(
+        native_catalog_permission_qualifier("nt"),
+        UnavailableCatalogPermissionQualifier,
+    )
+
+
+def test_posix_qualifier_preserves_frozen_owner_and_mode_rules(tmp_path, keyring) -> None:
+    config, _catalog, _receipts = _offline_storage(
+        tmp_path, custody=False, admission=False
+    )
+    modes = {
+        config.catalog_state_path.parent: 0o700,
+        config.receipt_metadata_path.parent: 0o700,
+        config.catalog_state_path: 0o600,
+        config.receipt_metadata_path: 0o600,
+    }
+
+    def fake_stat(path):  # type: ignore[no-untyped-def]
+        return SimpleNamespace(st_uid=42, st_mode=modes[path])
+
+    qualifier = PosixCatalogPermissionQualifier(
+        stat_reader=fake_stat, uid_reader=lambda: 42
+    )
+    assert qualifier.qualify(config.paths) is CatalogPermissionQualification.QUALIFIED
+    modes[config.catalog_state_path] = 0o644
+    assert qualifier.qualify(config.paths) is CatalogPermissionQualification.INVALID
+
+
+def test_permission_contract_rejects_untyped_qualifier_and_result(tmp_path, keyring) -> None:
+    config, _catalog, _receipts = _offline_storage(
+        tmp_path, custody=False, admission=False
+    )
+    with pytest.raises(TypeError, match="CatalogPermissionQualifier required"):
+        CoreHostCatalogRuntimeLifecycle(config, permission_qualifier=lambda: "QUALIFIED")  # type: ignore[arg-type]
+
+    class BadQualifier(CatalogPermissionQualifier):
+        def qualify(self, paths):  # type: ignore[no-untyped-def]
+            del paths
+            return "QUALIFIED"
+
+    lifecycle = CoreHostCatalogRuntimeLifecycle(
+        config, permission_qualifier=BadQualifier()
+    )
+    with pytest.raises(TypeError, match="invalid result type"):
+        lifecycle.start_after_recovery()
+
+    state = tmp_path / "state.sqlite3"
+    boundary, _ = _initialize(state)
+    host, _stores, _registries = _real_host(
+        state,
+        boundary,
+        catalog_runtime_configuration=config,
+        catalog_permission_qualifier_factory=lambda: "QUALIFIED",  # type: ignore[return-value]
+    )
+    with pytest.raises(TypeError, match="CatalogPermissionQualifier required"):
+        host.start()
