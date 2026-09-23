@@ -1,4 +1,5 @@
 """Executable parity and red-team checks for hybrid M0.8 Fill discovery."""
+
 from __future__ import annotations
 
 from copy import deepcopy
@@ -86,16 +87,28 @@ def validate(machine: dict[str, object]) -> None:
     assert machine["production_fill_store"] == "NOT_FOUND"
     assert machine["historical_fill_resolver"] == "NOT_FOUND"
     assert machine["fill_order_binding"]["exact_fields"] == [
-        "order_id", "environment", "workspace_id", "portfolio_id",
-        "exchange_account_id", "exchange_id", "instrument_id", "execution_route_id",
+        "order_id",
+        "environment",
+        "workspace_id",
+        "portfolio_id",
+        "exchange_account_id",
+        "exchange_id",
+        "instrument_id",
+        "execution_route_id",
     ]
     assert machine["fill_instrument_binding_status"] == "CONTRACT_INCONSISTENT"
     assert machine["fill_instrument_binding"]["M0.7_fill_migration_required"] == "UNRESOLVED"
     assert machine["fill_instrument_binding"]["historical_instrument_authority"] == "NOT_AVAILABLE"
-    assert machine["execution_producer_authenticity"]["catalog_source_producer_membership_is_execution_proof"] is False
+    assert (
+        machine["execution_producer_authenticity"][
+            "catalog_source_producer_membership_is_execution_proof"
+        ]
+        is False
+    )
     assert machine["execution_producer_authenticity"]["status"] == "NOT_FOUND"
     assert machine["venue_trade_provenance"] == {
-        "classification": "NOT_FOUND", "caller_supplied_venue_trade_id_is_proof": False
+        "classification": "NOT_FOUND",
+        "caller_supplied_venue_trade_id_is_proof": False,
     }
     assert machine["fifo_accounting_authority"]["status"] == "NOT_FOUND"
     ownership = machine["fill_progression_ownership"]
@@ -123,7 +136,9 @@ def validate(machine: dict[str, object]) -> None:
         "BLOCKED_BY_CROSS_CONTRACT_FILL_INSTRUMENT_BINDING"
     )
     assert machine["next_buildable_stage"] == "M07_M05_FILL_INSTRUMENT_BINDING_RECONCILIATION"
-    assert machine["cross_contract_consistency"]["overall_status"] == "NO_DEPENDENCY_FINGERPRINT_DRIFT"
+    assert (
+        machine["cross_contract_consistency"]["overall_status"] == "NO_DEPENDENCY_FINGERPRINT_DRIFT"
+    )
     assert machine["M0.8_historical_target_contract"] == "CLOSED_AT_ORIGINAL_BASELINE"
     assert machine["M0.8_current_upstream_compatibility"] == (
         "DEPENDENCY_FINGERPRINTS_MATCH_SEMANTIC_FILL_BINDING_INCONSISTENT"
@@ -152,11 +167,22 @@ def test_authority_relevant_equivalence_paths_exist_and_runtime_invariants_are_p
     authority = (ROOT / "bot_core/orders/authority.py").read_text(encoding="utf-8")
     custody = (ROOT / "bot_core/orders/custody.py").read_text(encoding="utf-8")
     tests = (ROOT / "tests/architecture/test_m07_order_authority.py").read_text(encoding="utf-8")
-    for literal in ("SEMANTIC_SUBMIT_ORDER_AVAILABLE: Final = False", "if type(authority) is not OrderAuthority"):
+    for literal in (
+        "SEMANTIC_SUBMIT_ORDER_AVAILABLE: Final = False",
+        "if type(authority) is not OrderAuthority",
+    ):
         assert literal in authority
-    for literal in ("HMAC-SHA-256", "KeyringOrderAuthoritySecretCustody", "PRODUCTION_ORDER_AUTHENTICITY_PURPOSE", "TEST_ORDER_AUTHENTICITY_PURPOSE"):
+    for literal in (
+        "HMAC-SHA-256",
+        "KeyringOrderAuthoritySecretCustody",
+        "PRODUCTION_ORDER_AUTHENTICITY_PURPOSE",
+        "TEST_ORDER_AUTHENTICITY_PURPOSE",
+    ):
         assert literal in custody
-    for literal in ("test_coherent_public_sha_sql_mint_without_mac_is_denied", "test_coherent_public_rewrite_without_new_mac_is_denied"):
+    for literal in (
+        "test_coherent_public_sha_sql_mint_without_mac_is_denied",
+        "test_coherent_public_rewrite_without_new_mac_is_denied",
+    ):
         assert literal in tests
 
 
@@ -227,9 +253,7 @@ def test_canonical_m07_to_m08_fill_ownership_is_single_authority() -> None:
     assert ledger["source_registry"]["fill"]["authority"] == (
         "M0.7 composite trusted accepted Full Fill"
     )
-    complete_history = order["fill_contract"]["trust_boundaries"][
-        "complete_accepted_history"
-    ]
+    complete_history = order["fill_contract"]["trust_boundaries"]["complete_accepted_history"]
     assert "accepted_fill_ids_by_order_id" in complete_history
     assert "accepted M0.7 lifecycle history" in complete_history
     assert machine["single_fill_authority_invariant"] == {
@@ -244,37 +268,44 @@ def test_canonical_m07_to_m08_fill_ownership_is_single_authority() -> None:
             "accepted-source reference/evidence never becomes Fill authority"
         ),
     }
-    assert machine["authority_boundary_red_team"]["required_result"].startswith(
-        "M0.8 rejects F1"
-    )
+    assert machine["authority_boundary_red_team"]["required_result"].startswith("M0.8 rejects F1")
 
 
 Mutation = Callable[[dict[str, object]], None]
 
 
-@pytest.mark.parametrize("mutation", [
-    lambda d: d["production_full_fill_authority"].update(status="FOUND"),
-    lambda d: d["fill_order_binding"].update(exact_fields=[]),
-    lambda d: d["fill_instrument_binding"].update(historical_instrument_authority="AVAILABLE"),
-    lambda d: d["execution_producer_authenticity"].update(catalog_source_producer_membership_is_execution_proof=True),
-    lambda d: d["venue_trade_provenance"].update(caller_supplied_venue_trade_id_is_proof=True),
-    lambda d: d["fifo_accounting_authority"].update(status="FOUND"),
-    lambda d: d["preserved_status"].update({"M0.7_OrderAuthority_kernel": "NOT_AVAILABLE"}),
-    lambda d: d["preserved_status"].update({"M0.7_semantic_SUBMIT_ORDER": "AVAILABLE"}),
-    lambda d: d.update(formal_acceptance_allowed=True),
-    lambda d: d.update(provenance_mode="EXACT_COMMIT"),
-    lambda d: d.update(candidate_implementation_allowed=True),
-    lambda d: d.update(fill_instrument_binding_status="CONSISTENT"),
-    lambda d: d["fill_authority_kernel_buildability"].update(classification="BUILDABLE_INDEPENDENTLY"),
-    lambda d: d["fill_progression_ownership"].update(
-        {"M0.8_role": "owns genuine Fill admission/history"}
-    ),
-    lambda d: d["production_full_fill_authority"].update(architectural_owner="M0.8"),
-    lambda d: d["fill_progression_ownership"].update(
-        {"M0.8_independent_external_venue_trade_admission": True}
-    ),
-    lambda d: d["single_fill_authority_invariant"].update(canonical_accepted_fill_history_owner=False),
-])
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda d: d["production_full_fill_authority"].update(status="FOUND"),
+        lambda d: d["fill_order_binding"].update(exact_fields=[]),
+        lambda d: d["fill_instrument_binding"].update(historical_instrument_authority="AVAILABLE"),
+        lambda d: d["execution_producer_authenticity"].update(
+            catalog_source_producer_membership_is_execution_proof=True
+        ),
+        lambda d: d["venue_trade_provenance"].update(caller_supplied_venue_trade_id_is_proof=True),
+        lambda d: d["fifo_accounting_authority"].update(status="FOUND"),
+        lambda d: d["preserved_status"].update({"M0.7_OrderAuthority_kernel": "NOT_AVAILABLE"}),
+        lambda d: d["preserved_status"].update({"M0.7_semantic_SUBMIT_ORDER": "AVAILABLE"}),
+        lambda d: d.update(formal_acceptance_allowed=True),
+        lambda d: d.update(provenance_mode="EXACT_COMMIT"),
+        lambda d: d.update(candidate_implementation_allowed=True),
+        lambda d: d.update(fill_instrument_binding_status="CONSISTENT"),
+        lambda d: d["fill_authority_kernel_buildability"].update(
+            classification="BUILDABLE_INDEPENDENTLY"
+        ),
+        lambda d: d["fill_progression_ownership"].update(
+            {"M0.8_role": "owns genuine Fill admission/history"}
+        ),
+        lambda d: d["production_full_fill_authority"].update(architectural_owner="M0.8"),
+        lambda d: d["fill_progression_ownership"].update(
+            {"M0.8_independent_external_venue_trade_admission": True}
+        ),
+        lambda d: d["single_fill_authority_invariant"].update(
+            canonical_accepted_fill_history_owner=False
+        ),
+    ],
+)
 def test_security_claim_mutations_fail(mutation: Mutation) -> None:
     machine, _ = load()
     changed = deepcopy(machine)

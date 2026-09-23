@@ -31,12 +31,8 @@ def render(value: dict) -> str:
 
 
 def validate(value: dict) -> None:
-    assert value["artifact"] == (
-        "M05_ACCOUNT_GENESIS_AUTHORITY_TOPOLOGY_AND_OWNERSHIP_DESIGN"
-    )
-    assert value["reviewed_head_supplied"] == (
-        "18107c75b75ad410c9ea481b2df4947566921a3e"
-    )
+    assert value["artifact"] == ("M05_ACCOUNT_GENESIS_AUTHORITY_TOPOLOGY_AND_OWNERSHIP_DESIGN")
+    assert value["reviewed_head_supplied"] == ("18107c75b75ad410c9ea481b2df4947566921a3e")
     provenance = value["provenance"]
     assert provenance["source"] == "GIT"
     assert provenance["reviewed_head_available_locally"] is False
@@ -45,9 +41,7 @@ def validate(value: dict) -> None:
     assert value["repository_head_examined"] != value["reviewed_head_supplied"]
 
     frozen = value["frozen_inputs"]
-    assert frozen["security_substrate"] == (
-        "ACCOUNT_GENESIS_SECURITY_SUBSTRATE_CONTRACT_FROZEN"
-    )
+    assert frozen["security_substrate"] == ("ACCOUNT_GENESIS_SECURITY_SUBSTRATE_CONTRACT_FROZEN")
     assert frozen["root_of_trust"] == "DESIGN_BLOCKED"
     assert frozen["account_id_is_operation_identity"] is False
     assert frozen["reservation_is_authority"] is False
@@ -68,9 +62,7 @@ def validate(value: dict) -> None:
         "F_DESIGN_BLOCKED",
     }
     assert candidates["F_DESIGN_BLOCKED"] == "SELECTED"
-    unified = value["topology_analysis"][
-        "A_UNIFIED_CRYPTOHUNTER_ACCOUNT_AUTHORITY"
-    ]
+    unified = value["topology_analysis"]["A_UNIFIED_CRYPTOHUNTER_ACCOUNT_AUTHORITY"]
     assert unified["candidate_id_technical_ownership"] == (
         "AccountAuthority may mint/reserve candidate IDs"
     )
@@ -120,10 +112,7 @@ def validate(value: dict) -> None:
     self_authorization = root["first_account_self_authorization"]
     assert self_authorization["independent_accepted_root_proof_required"] is True
     assert self_authorization["locally_generated_evidence_only"] == "FORBIDDEN"
-    assert (
-        self_authorization["technical_ownership_is_self_authorization_permission"]
-        is False
-    )
+    assert self_authorization["technical_ownership_is_self_authorization_permission"] is False
     non_circular = root["non_circular_root"]
     assert non_circular["target_account"] == "acct_A"
     assert non_circular["created_account_itself_allowed"] is False
@@ -132,14 +121,9 @@ def validate(value: dict) -> None:
     assert non_circular["account_scoped_workspace_allowed"] is False
     assert non_circular["account_scoped_authority_allowed"] is False
     assert (
-        non_circular[
-            "legitimacy_may_depend_on_entity_requiring_target_account_to_exist"
-        ]
-        is False
+        non_circular["legitimacy_may_depend_on_entity_requiring_target_account_to_exist"] is False
     )
-    assert value["account_id_mint_ownership"]["ProvisioningBoundary_mints"] == (
-        "NOT_PROVEN"
-    )
+    assert value["account_id_mint_ownership"]["ProvisioningBoundary_mints"] == ("NOT_PROVEN")
     assert value["account_id_mint_ownership"]["caller_arbitrary_id"] == "FORBIDDEN"
     assert value["reservation_recovery_ownership"]["identity_gap"] == "FAIL_CLOSED"
     assert value["reservation_recovery_ownership"]["identity_gap_allocates_acct_B"] is False
@@ -160,7 +144,9 @@ def validate(value: dict) -> None:
     assert substrate["owners_are_semantically_identical"] is False
     assert substrate["security_owner_implies_AccountAuthority"] is False
     assert len(substrate["does_not_decide"]) == 4
-    assert value["M03_boundary"]["accepted_first_device_membership_equals_genesis_authority"] is False
+    assert (
+        value["M03_boundary"]["accepted_first_device_membership_equals_genesis_authority"] is False
+    )
     assert value["M03_boundary"]["FirstRunBootstrapAuthority"] == (
         "INITIAL_SECURITY_ESTABLISHMENT_ONLY"
     )
@@ -186,9 +172,7 @@ def validate(value: dict) -> None:
     assert parity["security_substrate_authorizes_genesis"] is False
     redteam = value["mandatory_redteam"]
     assert set(redteam.values()) == {"FAIL"}
-    assert redteam["AccountAuthority_self_authorizes_without_independent_root"] == (
-        "FAIL"
-    )
+    assert redteam["AccountAuthority_self_authorizes_without_independent_root"] == ("FAIL")
     assert self_authorization["independent_accepted_root_proof_required"] is True
     assert redteam["account_scoped_identity_as_pre_account_root"] == "FAIL"
     assert all(
@@ -293,9 +277,7 @@ def test_markdown_is_deterministic_complete_projection() -> None:
         ),
     ],
 )
-def test_mandatory_redteam_mutations_fail(
-    path: tuple[str, ...], unsafe_value: object
-) -> None:
+def test_mandatory_redteam_mutations_fail(path: tuple[str, ...], unsafe_value: object) -> None:
     mutated = deepcopy(load())
     target = mutated
     for component in path[:-1]:
@@ -313,19 +295,16 @@ def test_cross_artifact_status_parity() -> None:
         "m05_cryptohunter_account_genesis_authority_model.json",
         "m05_cryptohunter_account_root_of_trust_reconciliation.json",
     ]
-    artifacts = {
-        name: json.loads((DOCS / name).read_text(encoding="utf-8")) for name in names
-    }
+    artifacts = {name: json.loads((DOCS / name).read_text(encoding="utf-8")) for name in names}
     contract = load()
     assert artifacts[names[0]]["result"]["primary_result"] == (
         "ACCOUNT_GENESIS_SECURITY_SUBSTRATE_CONTRACT_FROZEN"
     )
-    assert artifacts[names[1]]["preserved_status"][
-        "selected_logical_idempotency_identity"
-    ] == "NOT_FROZEN"
-    assert artifacts[names[2]]["M03_interaction"][
-        "reusable_identity_for_account_genesis"
-    ] is False
+    assert (
+        artifacts[names[1]]["preserved_status"]["selected_logical_idempotency_identity"]
+        == "NOT_FROZEN"
+    )
+    assert artifacts[names[2]]["M03_interaction"]["reusable_identity_for_account_genesis"] is False
     assert artifacts[names[3]]["result"]["primary_result"] == (
         "ACCOUNT_GENESIS_MODEL_DESIGN_BLOCKED"
     )

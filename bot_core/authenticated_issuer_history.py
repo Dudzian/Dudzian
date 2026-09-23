@@ -100,7 +100,10 @@ def canonical_json_bytes(value: Mapping[str, object]) -> bytes:
         raise TypeError("canonical JSON root must be an exact dict")
     frozen = _freeze_json(value)
     return json.dumps(
-        _plain(frozen), ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        _plain(frozen),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
     ).encode("utf-8")
 
 
@@ -128,8 +131,10 @@ def _snapshot_credential(identity: CredentialRoleIdentity) -> CredentialRoleIden
     material = _credential_material(identity)
     return CredentialRoleIdentity(
         CredentialSemanticRole(material["semantic_role"]),
-        material["credential_identity"], material["provider_namespace"],
-        material["key_handle_or_version"], material["custody_lifecycle_namespace"],
+        material["credential_identity"],
+        material["provider_namespace"],
+        material["key_handle_or_version"],
+        material["custody_lifecycle_namespace"],
         material["key_material_identity"],
     )
 
@@ -145,7 +150,14 @@ class HistoryStreamIdentity:
     security_epoch: int
 
     def __post_init__(self) -> None:
-        for name in ("stream_id", "issuer_authority_identity", "security_profile", "environment", "trust_domain", "product_scope"):
+        for name in (
+            "stream_id",
+            "issuer_authority_identity",
+            "security_profile",
+            "environment",
+            "trust_domain",
+            "product_scope",
+        ):
             _text(getattr(self, name), name)
         _integer(self.security_epoch, "security_epoch", minimum=1)
 
@@ -178,7 +190,10 @@ class HistoryRecord:
     authenticated_digest: str
 
     def __post_init__(self) -> None:
-        if type(self.stream) is not HistoryStreamIdentity or type(self.event_identity) is not HistoryEventIdentity:
+        if (
+            type(self.stream) is not HistoryStreamIdentity
+            or type(self.event_identity) is not HistoryEventIdentity
+        ):
             raise TypeError("history identities must be exact contract objects")
         _integer(self.sequence, "sequence", minimum=GENESIS_SEQUENCE)
         _text(self.predecessor_authenticated_digest, "predecessor_authenticated_digest")
@@ -186,33 +201,57 @@ class HistoryRecord:
             raise TypeError("canonical_event_payload must be an exact dict snapshot")
         payload = _freeze_json(_plain(self.canonical_event_payload))
         object.__setattr__(self, "canonical_event_payload", payload)
-        if self.event_digest != _digest(b"CryptoHunter/M0.5/IssuerHistoryEvent/v1\0", _plain(payload)):
+        if self.event_digest != _digest(
+            b"CryptoHunter/M0.5/IssuerHistoryEvent/v1\0", _plain(payload)
+        ):
             raise HistoryContractError("event digest mismatch")
         if self.authenticated_digest != _digest(RECORD_DOMAIN, self.unsigned_material()):
             raise HistoryContractError("authenticated record digest mismatch")
 
     def unsigned_material(self) -> dict[str, object]:
-        return {"stream": self.stream.material(), "sequence": self.sequence,
-                "predecessor_authenticated_digest": self.predecessor_authenticated_digest,
-                "event_identity": self.event_identity.material(),
-                "canonical_event_payload": _plain(self.canonical_event_payload),
-                "event_digest": self.event_digest}
+        return {
+            "stream": self.stream.material(),
+            "sequence": self.sequence,
+            "predecessor_authenticated_digest": self.predecessor_authenticated_digest,
+            "event_identity": self.event_identity.material(),
+            "canonical_event_payload": _plain(self.canonical_event_payload),
+            "event_digest": self.event_digest,
+        }
 
 
-def build_record(stream: HistoryStreamIdentity, sequence: int, predecessor: str,
-                 event_identity: HistoryEventIdentity, payload: Mapping[str, object]) -> HistoryRecord:
-    if type(stream) is not HistoryStreamIdentity or type(event_identity) is not HistoryEventIdentity:
+def build_record(
+    stream: HistoryStreamIdentity,
+    sequence: int,
+    predecessor: str,
+    event_identity: HistoryEventIdentity,
+    payload: Mapping[str, object],
+) -> HistoryRecord:
+    if (
+        type(stream) is not HistoryStreamIdentity
+        or type(event_identity) is not HistoryEventIdentity
+    ):
         raise TypeError("history identities must be exact contract objects")
     if type(payload) is not dict:
         raise TypeError("payload must be an exact canonical JSON dict")
     frozen = _freeze_json(payload)
     event_digest = _digest(b"CryptoHunter/M0.5/IssuerHistoryEvent/v1\0", _plain(frozen))
-    material = {"stream": stream.material(), "sequence": sequence,
-                "predecessor_authenticated_digest": predecessor,
-                "event_identity": event_identity.material(), "canonical_event_payload": _plain(frozen),
-                "event_digest": event_digest}
-    return HistoryRecord(stream, sequence, predecessor, event_identity, frozen, event_digest,
-                         _digest(RECORD_DOMAIN, material))
+    material = {
+        "stream": stream.material(),
+        "sequence": sequence,
+        "predecessor_authenticated_digest": predecessor,
+        "event_identity": event_identity.material(),
+        "canonical_event_payload": _plain(frozen),
+        "event_digest": event_digest,
+    }
+    return HistoryRecord(
+        stream,
+        sequence,
+        predecessor,
+        event_identity,
+        frozen,
+        event_digest,
+        _digest(RECORD_DOMAIN, material),
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -234,7 +273,9 @@ class AttestedHistoryHead:
             raise TypeError("attestation and signature must be exact bytes")
 
 
-def attest_head(record: HistoryRecord, signer: HistoryAttestationSigningProvider) -> AttestedHistoryHead:
+def attest_head(
+    record: HistoryRecord, signer: HistoryAttestationSigningProvider
+) -> AttestedHistoryHead:
     identity = signer.active_credential_identity()
     if (
         type(identity) is not CredentialRoleIdentity
@@ -243,13 +284,21 @@ def attest_head(record: HistoryRecord, signer: HistoryAttestationSigningProvider
         raise HistoryContractError("history head requires HISTORY_ATTESTATION_SIGNING role")
     _text(identity.key_handle_or_version, "key version")
     signer_identity = _snapshot_credential(identity)
-    material = {"stream": record.stream.material(), "sequence": record.sequence,
-                "record_digest": record.authenticated_digest,
-                "signing_credential_identity": _credential_material(signer_identity)}
+    material = {
+        "stream": record.stream.material(),
+        "sequence": record.sequence,
+        "record_digest": record.authenticated_digest,
+        "signing_credential_identity": _credential_material(signer_identity),
+    }
     canonical = ATTESTATION_DOMAIN + canonical_json_bytes(material)
-    return AttestedHistoryHead(record.stream, record.sequence, record.authenticated_digest,
-                               signer_identity, canonical,
-                               signer.sign_history_head(canonical))
+    return AttestedHistoryHead(
+        record.stream,
+        record.sequence,
+        record.authenticated_digest,
+        signer_identity,
+        canonical,
+        signer.sign_history_head(canonical),
+    )
 
 
 def _trusted_history_credential(
@@ -273,7 +322,8 @@ def _trusted_history_credential(
     ):
         raise HistoryContractError("invalid history signing authority")
     matches = tuple(
-        credential for credential in credentials
+        credential
+        for credential in credentials
         if type(credential) is CredentialRoleIdentity
         and credential == head.signing_credential_identity
     )
@@ -290,17 +340,13 @@ def _trusted_history_credential(
         public_key = authority.public_key(credential.credential_identity)
         observed_identity = public_key_material_identity(public_key)
     except Exception as exc:
-        raise HistorySigningAuthorityUnavailable(
-            "trusted signing public key unavailable"
-        ) from exc
+        raise HistorySigningAuthorityUnavailable("trusted signing public key unavailable") from exc
     if observed_identity != credential.key_material_identity:
         raise HistoryContractError("trusted public-key material identity mismatch")
     lifecycle_reader = getattr(authority, "lifecycle_state", None)
     generation_reader = getattr(authority, "lifecycle_generation", None)
     if not callable(lifecycle_reader) or not callable(generation_reader):
-        raise HistorySigningAuthorityUnavailable(
-            "trusted signing lifecycle evidence unavailable"
-        )
+        raise HistorySigningAuthorityUnavailable("trusted signing lifecycle evidence unavailable")
     try:
         lifecycle = lifecycle_reader()
         generation = generation_reader()
@@ -319,17 +365,24 @@ def _trusted_history_credential(
     return credential, public_key, lifecycle, generation
 
 
-def verify_head(head: AttestedHistoryHead, authority: HistoryAttestationSigningProvider, *,
-                expected_stream: HistoryStreamIdentity,
-                historical_evidence_authority: LocalCheckpointProvider | None = None) -> None:
+def verify_head(
+    head: AttestedHistoryHead,
+    authority: HistoryAttestationSigningProvider,
+    *,
+    expected_stream: HistoryStreamIdentity,
+    historical_evidence_authority: LocalCheckpointProvider | None = None,
+) -> None:
     if type(head) is not AttestedHistoryHead or type(expected_stream) is not HistoryStreamIdentity:
         raise TypeError("head and expected_stream must be exact contract objects")
     if head.stream != expected_stream:
         raise HistoryContractError("wrong stream/environment/trust/product/security epoch")
     _, public_key, lifecycle, generation = _trusted_history_credential(head, authority)
-    material = {"stream": head.stream.material(), "sequence": head.sequence,
-                "record_digest": head.record_digest,
-                "signing_credential_identity": _credential_material(head.signing_credential_identity)}
+    material = {
+        "stream": head.stream.material(),
+        "sequence": head.sequence,
+        "record_digest": head.record_digest,
+        "signing_credential_identity": _credential_material(head.signing_credential_identity),
+    }
     expected = ATTESTATION_DOMAIN + canonical_json_bytes(material)
     if head.canonical_attestation_bytes != expected:
         raise HistoryContractError("non-canonical head attestation")
@@ -343,12 +396,14 @@ def verify_head(head: AttestedHistoryHead, authority: HistoryAttestationSigningP
                 "revoked historical signature lacks its trusted checkpoint authority"
             )
         historical_evidence_authority.verify_historical_acceptance(
-            head, current_lifecycle_generation=generation,
+            head,
+            current_lifecycle_generation=generation,
         )
 
 
 class ReferenceAuthenticatedHistory:
     """Executable CAS/idempotency oracle; it deliberately claims no durability."""
+
     def __init__(self, stream: HistoryStreamIdentity) -> None:
         self._stream = _snapshot_stream(stream)
         self._records: list[HistoryRecord] = []
@@ -359,16 +414,24 @@ class ReferenceAuthenticatedHistory:
         with self._lock:
             return _snapshot_record(self._records[-1]) if self._records else None
 
-    def append(self, *, expected_digest: str, event_identity: HistoryEventIdentity,
-               payload: Mapping[str, object]) -> tuple[HistoryRecord, bool]:
+    def append(
+        self,
+        *,
+        expected_digest: str,
+        event_identity: HistoryEventIdentity,
+        payload: Mapping[str, object],
+    ) -> tuple[HistoryRecord, bool]:
         with self._lock:
             self._verify_locked()
             admitted_event = _snapshot_event_identity(event_identity)
             prior = self._events.get(admitted_event)
             if prior is not None:
                 candidate = build_record(
-                    self._stream, prior.sequence,
-                    prior.predecessor_authenticated_digest, admitted_event, payload,
+                    self._stream,
+                    prior.sequence,
+                    prior.predecessor_authenticated_digest,
+                    admitted_event,
+                    payload,
                 )
                 if candidate.event_digest != prior.event_digest:
                     raise HistoryContractError("conflicting idempotency replay")
@@ -395,13 +458,16 @@ class ReferenceAuthenticatedHistory:
     def _verify_locked(self) -> None:
         predecessor = NO_PREDECESSOR
         for expected_sequence, record in enumerate(self._records, GENESIS_SEQUENCE):
-            if record.stream != self._stream or record.sequence != expected_sequence or record.predecessor_authenticated_digest != predecessor:
+            if (
+                record.stream != self._stream
+                or record.sequence != expected_sequence
+                or record.predecessor_authenticated_digest != predecessor
+            ):
                 raise HistoryContractError("gap, rewind, splice, fork, or invalid predecessor")
             HistoryRecord(**{name: getattr(record, name) for name in record.__dataclass_fields__})
             predecessor = record.authenticated_digest
         if len(self._events) != len(self._records) or any(
-            self._events.get(record.event_identity) is not record
-            for record in self._records
+            self._events.get(record.event_identity) is not record for record in self._records
         ):
             raise HistoryContractError("history event index is inconsistent")
 
@@ -427,7 +493,9 @@ class ReferenceAuthenticatedHistory:
                     "attested head does not name the current verified history"
                 )
             verify_head(
-                snapshot, authority, expected_stream=self._stream,
+                snapshot,
+                authority,
+                expected_stream=self._stream,
                 historical_evidence_authority=historical_evidence_authority,
             )
             return VerifiedHistoryHead(snapshot)
@@ -450,7 +518,9 @@ class ReferenceAuthenticatedHistory:
             if snapshot.record_digest != record.authenticated_digest:
                 raise HistoryContractError("historical head does not name its exact record")
             verify_head(
-                snapshot, authority, expected_stream=self._stream,
+                snapshot,
+                authority,
+                expected_stream=self._stream,
                 historical_evidence_authority=historical_evidence_authority,
             )
             return VerifiedHistoryHead(snapshot)
@@ -472,12 +542,18 @@ class ReferenceAuthenticatedHistory:
                 checkpoint = checkpoint_authority.current_checkpoint()
             except HistoryContractError:
                 return ReconciliationOutcome.CORRUPT
-            return ReconciliationOutcome.NOT_FOUND if checkpoint is None else ReconciliationOutcome.CORRUPT
+            return (
+                ReconciliationOutcome.NOT_FOUND
+                if checkpoint is None
+                else ReconciliationOutcome.CORRUPT
+            )
         if head is None or verification_authority is None:
             return ReconciliationOutcome.CORRUPT
         try:
             verified = self.verify_attested_head(
-                head, verification_authority, checkpoint_authority,
+                head,
+                verification_authority,
+                checkpoint_authority,
             )
         except HistoricalRevokedSignatureVerificationUnavailable:
             raise
@@ -551,10 +627,12 @@ def _snapshot_record(record: HistoryRecord) -> HistoryRecord:
     if type(record) is not HistoryRecord:
         raise TypeError("record must be exact")
     return HistoryRecord(
-        _snapshot_stream(record.stream), record.sequence,
+        _snapshot_stream(record.stream),
+        record.sequence,
         record.predecessor_authenticated_digest,
         _snapshot_event_identity(record.event_identity),
-        _plain(record.canonical_event_payload), record.event_digest,
+        _plain(record.canonical_event_payload),
+        record.event_digest,
         record.authenticated_digest,
     )
 
@@ -563,8 +641,10 @@ def _snapshot_checkpoint(checkpoint: LocalCheckpoint) -> LocalCheckpoint:
     if type(checkpoint) is not LocalCheckpoint:
         raise TypeError("checkpoint must be exact")
     return LocalCheckpoint(
-        checkpoint.checkpoint_id, _snapshot_stream(checkpoint.stream),
-        checkpoint.history_sequence, checkpoint.authenticated_head_digest,
+        checkpoint.checkpoint_id,
+        _snapshot_stream(checkpoint.stream),
+        checkpoint.history_sequence,
+        checkpoint.authenticated_head_digest,
         _snapshot_credential(checkpoint.history_signing_credential_identity),
         checkpoint.checkpoint_revision,
     )
@@ -589,8 +669,10 @@ class HistoricalHeadAcceptanceEvidence:
         if type(self.stream) is not HistoryStreamIdentity:
             raise TypeError("stream must be an exact HistoryStreamIdentity")
         for name in (
-            "checkpoint_authority_identity", "accepted_authenticated_head_digest",
-            "predecessor_acceptance_digest", "acceptance_digest",
+            "checkpoint_authority_identity",
+            "accepted_authenticated_head_digest",
+            "predecessor_acceptance_digest",
+            "acceptance_digest",
         ):
             _text(getattr(self, name), name)
         _integer(self.checkpoint_revision, "checkpoint_revision", minimum=1)
@@ -648,6 +730,7 @@ def _snapshot_acceptance(
 
 class LocalCheckpointProvider:
     """Reference atomic CAS semantics, not independent rollback protection."""
+
     def __init__(self, checkpoint_id: str, stream: HistoryStreamIdentity) -> None:
         self._checkpoint_id = _text(checkpoint_id, "checkpoint_id")
         self._stream = _snapshot_stream(stream)
@@ -662,30 +745,34 @@ class LocalCheckpointProvider:
             return _snapshot_checkpoint(self._current) if self._current is not None else None
 
     def historical_acceptance(
-        self, head: AttestedHistoryHead,
+        self,
+        head: AttestedHistoryHead,
     ) -> HistoricalHeadAcceptanceEvidence | None:
         """Return a detached exact-head report; the value itself grants no authority."""
         snapshot = _snapshot_head(head)
         with self._lock:
             self._verify_authority_state_locked()
-            match = next((
-                item for item in self._acceptances
-                if _acceptance_matches_head(item, snapshot)
-            ), None)
+            match = next(
+                (item for item in self._acceptances if _acceptance_matches_head(item, snapshot)),
+                None,
+            )
             return _snapshot_acceptance(match) if match is not None else None
 
     def verify_historical_acceptance(
-        self, head: AttestedHistoryHead, *, current_lifecycle_generation: int,
+        self,
+        head: AttestedHistoryHead,
+        *,
+        current_lifecycle_generation: int,
     ) -> None:
         """Authority lookup, not validation of a caller-supplied evidence value."""
         snapshot = _snapshot_head(head)
         _integer(current_lifecycle_generation, "current_lifecycle_generation", minimum=1)
         with self._lock:
             self._verify_authority_state_locked()
-            match = next((
-                item for item in self._acceptances
-                if _acceptance_matches_head(item, snapshot)
-            ), None)
+            match = next(
+                (item for item in self._acceptances if _acceptance_matches_head(item, snapshot)),
+                None,
+            )
             if match is None:
                 raise HistoricalRevokedSignatureVerificationUnavailable(
                     "no exact independently retained historical acceptance"
@@ -714,14 +801,11 @@ class LocalCheckpointProvider:
             ):
                 raise HistoryContractError("retained historical acceptance chain corrupt")
             try:
-                HistoricalHeadAcceptanceEvidence(**{
-                    name: getattr(evidence, name)
-                    for name in evidence.__dataclass_fields__
-                })
+                HistoricalHeadAcceptanceEvidence(
+                    **{name: getattr(evidence, name) for name in evidence.__dataclass_fields__}
+                )
             except (HistoryContractError, TypeError) as exc:
-                raise HistoryContractError(
-                    "retained historical acceptance chain corrupt"
-                ) from exc
+                raise HistoryContractError("retained historical acceptance chain corrupt") from exc
             predecessor = evidence.acceptance_digest
             previous_sequence = evidence.accepted_history_sequence
 
@@ -732,10 +816,12 @@ class LocalCheckpointProvider:
         if type(self._current) is not LocalCheckpoint:
             raise HistoryContractError("retained checkpoint type corrupt")
         try:
-            LocalCheckpoint(**{
-                name: getattr(self._current, name)
-                for name in self._current.__dataclass_fields__
-            })
+            LocalCheckpoint(
+                **{
+                    name: getattr(self._current, name)
+                    for name in self._current.__dataclass_fields__
+                }
+            )
         except (HistoryContractError, TypeError) as exc:
             raise HistoryContractError("retained checkpoint corrupt") from exc
         if (
@@ -761,7 +847,10 @@ class LocalCheckpointProvider:
             raise HistoryContractError("current checkpoint/last acceptance binding corrupt")
 
     def advance(
-        self, *, expected_revision: int, history: ReferenceAuthenticatedHistory,
+        self,
+        *,
+        expected_revision: int,
+        history: ReferenceAuthenticatedHistory,
         head: AttestedHistoryHead,
         verification_authority: HistoryAttestationSigningProvider,
     ) -> tuple[LocalCheckpoint, bool]:
@@ -809,14 +898,15 @@ class LocalCheckpointProvider:
                         raise HistoryContractError("same-sequence split brain")
                     return _snapshot_checkpoint(current), True
             successor = LocalCheckpoint(
-                self._checkpoint_id, self._stream, snapshot.sequence,
+                self._checkpoint_id,
+                self._stream,
+                snapshot.sequence,
                 snapshot.record_digest,
-                _snapshot_credential(snapshot.signing_credential_identity), revision + 1,
+                _snapshot_credential(snapshot.signing_credential_identity),
+                revision + 1,
             )
             predecessor = (
-                NO_PREDECESSOR
-                if not self._acceptances
-                else self._acceptances[-1].acceptance_digest
+                NO_PREDECESSOR if not self._acceptances else self._acceptances[-1].acceptance_digest
             )
             acceptance_material = {
                 "checkpoint_authority_identity": self._authority_identity,
@@ -832,10 +922,15 @@ class LocalCheckpointProvider:
                 "predecessor_acceptance_digest": predecessor,
             }
             acceptance = HistoricalHeadAcceptanceEvidence(
-                self._authority_identity, revision + 1, self._stream,
-                snapshot.sequence, snapshot.record_digest,
+                self._authority_identity,
+                revision + 1,
+                self._stream,
+                snapshot.sequence,
+                snapshot.record_digest,
                 _snapshot_credential(snapshot.signing_credential_identity),
-                lifecycle_generation, lifecycle, predecessor,
+                lifecycle_generation,
+                lifecycle,
+                predecessor,
                 _digest(ACCEPTANCE_DOMAIN, acceptance_material),
             )
             self._current = successor
@@ -844,7 +939,8 @@ class LocalCheckpointProvider:
 
 
 def _acceptance_matches_head(
-    evidence: HistoricalHeadAcceptanceEvidence, head: AttestedHistoryHead,
+    evidence: HistoricalHeadAcceptanceEvidence,
+    head: AttestedHistoryHead,
 ) -> bool:
     return (
         evidence.stream == head.stream
@@ -855,7 +951,8 @@ def _acceptance_matches_head(
 
 
 def _compare_verified_checkpoint(
-    history_head: AttestedHistoryHead, checkpoint: LocalCheckpoint | None,
+    history_head: AttestedHistoryHead,
+    checkpoint: LocalCheckpoint | None,
 ) -> ReconciliationOutcome:
     """Compare only after the owning history authority verified its head."""
     if checkpoint is not None and checkpoint.stream != history_head.stream:
@@ -866,16 +963,14 @@ def _compare_verified_checkpoint(
         return ReconciliationOutcome.CORRUPT
     if checkpoint.authenticated_head_digest != history_head.record_digest:
         return ReconciliationOutcome.CONFLICT
-    if (
-        checkpoint.history_signing_credential_identity
-        != history_head.signing_credential_identity
-    ):
+    if checkpoint.history_signing_credential_identity != history_head.signing_credential_identity:
         return ReconciliationOutcome.CONFLICT
     return ReconciliationOutcome.EXACT_COMMITTED
 
 
 def reconcile_checkpoint(
-    *, history: ReferenceAuthenticatedHistory,
+    *,
+    history: ReferenceAuthenticatedHistory,
     history_head: AttestedHistoryHead | None,
     verification_authority: HistoryAttestationSigningProvider | None,
     checkpoint_authority: LocalCheckpointProvider,

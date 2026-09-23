@@ -25,8 +25,13 @@ AFTER_6 = datetime(2026, 1, 1, 0, 0, 6, 500000, tzinfo=timezone.utc)
 
 
 def _accept(
-    rig: Rig, state: str, generation: int, revision: int, membership: str,
-    *, accepted_at: str | None = None,
+    rig: Rig,
+    state: str,
+    generation: int,
+    revision: int,
+    membership: str,
+    *,
+    accepted_at: str | None = None,
 ):
     record = rig.record(state=state, generation=generation, source_revision=revision)
     return rig.accept(
@@ -102,16 +107,13 @@ def test_reference_forgery_and_exact_scope_environment_are_fail_closed():
     )
     fact = adapter.validate_current(evidence, NOW)
     forged = replace(
-        fact.evidence[0], source_generation=6, source_revision=10,
-        observed_result="HEALTHY"
+        fact.evidence[0], source_generation=6, source_revision=10, observed_result="HEALTHY"
     )
     assert forged != fact.evidence[0]  # Raw SourceEvidence is transport, never an input authority.
     with pytest.raises(AlertStoreError, match="SOURCE_EVIDENCE_UNACCEPTED"):
         adapter.historical_fact(evidence.evidence_ids[0] + "forged")
     with pytest.raises(AlertStoreError, match="SOURCE_EVIDENCE_UNACCEPTED"):
-        adapter.evidence_set_for_current(
-            scope_type="WORKSPACE", scope_id=WS, environment="LIVE"
-        )
+        adapter.evidence_set_for_current(scope_type="WORKSPACE", scope_id=WS, environment="LIVE")
     with pytest.raises(AlertStoreError, match="SOURCE_EVIDENCE_UNACCEPTED"):
         adapter.evidence_set_for_current(
             scope_type="WORKSPACE",
@@ -140,9 +142,7 @@ def test_valid_historical_hsd_survives_supersession_and_authority_restart():
     reference = adapter.evidence_set_for_current(
         scope_type="WORKSPACE", scope_id=WS, environment="TESTNET"
     ).evidence_ids[0]
-    decision = adapter.authorize_historical_transition(
-        reference, "2026-01-01T12:00:05.500000Z"
-    )
+    decision = adapter.authorize_historical_transition(reference, "2026-01-01T12:00:05.500000Z")
     _accept(rig, "INACTIVE", 6, 1, "inactive-6", accepted_at="2026-01-01T12:00:06Z")
 
     assert adapter.validates_historical_decision(decision)
@@ -165,8 +165,13 @@ def test_coherently_resealed_hsd_for_stale_at_transaction_time_is_rejected():
     item = fact.evidence[0]
     _accept(rig, "INACTIVE", 6, 6, "inactive-6")
     forged = HistoricalSourceDecision(
-        "", reference, (reference,), "2026-01-01T00:00:07Z", fact.result,
-        item.source_severity, fact.selector.resolution_policy_id,
+        "",
+        reference,
+        (reference,),
+        "2026-01-01T00:00:07Z",
+        fact.result,
+        item.source_severity,
+        fact.selector.resolution_policy_id,
         ((item.source_id, item.source_generation, item.source_revision),),
     )
     forged = replace(forged, decision_id=_historical_source_decision_id(forged))
@@ -184,14 +189,16 @@ def test_generation_not_source_revision_controls_corrective_fence():
         alert_id="alert",
         evidence_set=adapter.evidence_set_for_current(
             scope_type="WORKSPACE", scope_id=WS, environment="TESTNET"
-        ), now_utc=AFTER_5,
+        ),
+        now_utc=AFTER_5,
     )
     _accept(rig, "INACTIVE", 6, 1, "inactive-6")
     resolved = store.observe(
         alert_id="ignored",
         evidence_set=adapter.evidence_set_for_current(
             scope_type="WORKSPACE", scope_id=WS, environment="TESTNET"
-        ), now_utc=AFTER_6,
+        ),
+        now_utc=AFTER_6,
     )
     assert failing.source_fence[0][1:] == (5, 100)
     assert resolved.source_fence[0][1:] == (6, 1)
@@ -225,9 +232,7 @@ def test_alertstore_nested_hsd_is_reentrant_and_inside_source_fence(monkeypatch)
 def test_cross_runtime_successor_waits_for_complete_alertstore_callback(monkeypatch):
     rig = Rig()
     _accept(rig, "ACTIVE", 5, 5, "active-5")
-    authority_b, writer_b = KillSwitchAuthority.compose(
-        rig.carrier, core_membership=rig.core
-    )
+    authority_b, writer_b = KillSwitchAuthority.compose(rig.carrier, core_membership=rig.core)
     assert authority_b is not rig.authority
     adapter = M09KillSwitchSourceAuthority(rig.authority)
     store = AlertStore(object(), adapter, InMemoryAlertStoreCarrier())
@@ -248,12 +253,14 @@ def test_cross_runtime_successor_waits_for_complete_alertstore_callback(monkeypa
 
     monkeypatch.setattr(store, "_observe_fact", blocked)
     result = []
-    observing = Thread(target=lambda: result.append(store.observe(
-        alert_id="alert", evidence_set=evidence, now_utc=NOW
-    )))
-    successor_thread = Thread(target=lambda: (
-        writer_b.accept(successor, now_utc="2026-01-01T00:00:11Z"), published.set()
-    ))
+    observing = Thread(
+        target=lambda: result.append(
+            store.observe(alert_id="alert", evidence_set=evidence, now_utc=NOW)
+        )
+    )
+    successor_thread = Thread(
+        target=lambda: (writer_b.accept(successor, now_utc="2026-01-01T00:00:11Z"), published.set())
+    )
     observing.start()
     assert entered.wait(2)
     successor_thread.start()
@@ -277,9 +284,7 @@ def test_full_history_multi_scope_projection_hsd_and_restore():
     )
     workspace_2 = rig.record(state="INACTIVE", generation=2)
     accepted_b = rig.accept(
-        rig.context(
-            system_1, workspace_1, workspace_2, membership_id="snapshot-B"
-        ),
+        rig.context(system_1, workspace_1, workspace_2, membership_id="snapshot-B"),
         now_utc="2026-01-01T12:00:02Z",
     )
     adapter = M09KillSwitchSourceAuthority(rig.authority)
@@ -291,17 +296,16 @@ def test_full_history_multi_scope_projection_hsd_and_restore():
     ).evidence_ids[0]
     assert accepted_a.context.membership_id in system_ref
     assert accepted_b.context.membership_id in workspace_ref
-    assert adapter.validate_current(
-        SourceEvidenceSet((system_ref,)),
-        datetime(2026, 1, 1, 12, 0, 3, tzinfo=timezone.utc),
-    ).result == "FAILING"
+    assert (
+        adapter.validate_current(
+            SourceEvidenceSet((system_ref,)),
+            datetime(2026, 1, 1, 12, 0, 3, tzinfo=timezone.utc),
+        ).result
+        == "FAILING"
+    )
     assert adapter.historical_fact(workspace_ref).result == "HEALTHY"
-    system_hsd = adapter.authorize_historical_transition(
-        system_ref, "2026-01-01T12:00:03Z"
-    )
-    workspace_hsd = adapter.authorize_historical_transition(
-        workspace_ref, "2026-01-01T12:00:03Z"
-    )
+    system_hsd = adapter.authorize_historical_transition(system_ref, "2026-01-01T12:00:03Z")
+    workspace_hsd = adapter.authorize_historical_transition(workspace_ref, "2026-01-01T12:00:03Z")
     restored = M09KillSwitchSourceAuthority(
         KillSwitchAuthority(rig.carrier, core_membership=rig.core)
     )

@@ -46,9 +46,7 @@ class ProviderRole(str, Enum):
     REQUESTER_CREDENTIAL_REGISTRY = "REQUESTER_CREDENTIAL_REGISTRY"
     ROOT_PROOF_SIGNING = "ROOT_PROOF_SIGNING"
     HISTORY_ATTESTATION_SIGNING = "HISTORY_ATTESTATION_SIGNING"
-    FRESHNESS_AUTHORITY_FINALIZATION_SIGNING = (
-        "FRESHNESS_AUTHORITY_FINALIZATION_SIGNING"
-    )
+    FRESHNESS_AUTHORITY_FINALIZATION_SIGNING = "FRESHNESS_AUTHORITY_FINALIZATION_SIGNING"
     CHA_FRESHNESS_PROPOSER_SIGNING = "CHA_FRESHNESS_PROPOSER_SIGNING"
     ISSUER_AUTHENTICATED_HISTORY = "ISSUER_AUTHENTICATED_HISTORY"
     CHECKPOINT_AUTHORITY = "CHECKPOINT_AUTHORITY"
@@ -64,9 +62,7 @@ class CredentialSemanticRole(str, Enum):
     ACCOUNT_GENESIS_FRESHNESS_AUTHORITY_FINALIZATION_SIGNING_V1 = (
         "ACCOUNT_GENESIS_FRESHNESS_AUTHORITY_FINALIZATION_SIGNING_V1"
     )
-    ACCOUNT_GENESIS_FRESHNESS_PROPOSER_SIGNING_V1 = (
-        "ACCOUNT_GENESIS_FRESHNESS_PROPOSER_SIGNING_V1"
-    )
+    ACCOUNT_GENESIS_FRESHNESS_PROPOSER_SIGNING_V1 = "ACCOUNT_GENESIS_FRESHNESS_PROPOSER_SIGNING_V1"
     # Retained for the already-frozen requester/claimant alias contract.  This
     # lineage role is deliberately not the local proposer signing role above.
     ACCOUNT_GENESIS_FRESHNESS_PROPOSER = "ACCOUNT_GENESIS_FRESHNESS_PROPOSER"
@@ -270,13 +266,9 @@ def _valid_provider_capabilities(candidate: object) -> bool:
                     candidate.compare_and_swap,
                 )
             )
+            and (candidate.signing is None or _valid_signing_capabilities(candidate.signing))
             and (
-                candidate.signing is None
-                or _valid_signing_capabilities(candidate.signing)
-            )
-            and (
-                candidate.checkpoint is None
-                or _valid_checkpoint_capabilities(candidate.checkpoint)
+                candidate.checkpoint is None or _valid_checkpoint_capabilities(candidate.checkpoint)
             )
         )
     except (AttributeError, TypeError):
@@ -330,6 +322,7 @@ class SigningIdentityProvider(SecurityProvider, Protocol):
     def public_key(self, credential_identity: str) -> bytes:
         """Return the canonical raw 32-byte Ed25519 public key."""
         ...
+
     def lifecycle_generation(self) -> int: ...
 
 
@@ -346,9 +339,7 @@ class HistoryAttestationSigningProvider(SigningIdentityProvider, Protocol):
 
 
 @runtime_checkable
-class FreshnessAuthorityFinalizationSigningProvider(
-    SigningIdentityProvider, Protocol
-):
+class FreshnessAuthorityFinalizationSigningProvider(SigningIdentityProvider, Protocol):
     def sign_finalization(self, canonical_payload: bytes) -> object: ...
 
 
@@ -468,15 +459,48 @@ class QualificationResult:
 
 
 _FORBIDDEN_ROLE_PAIRS = {
-    frozenset((CredentialSemanticRole.ROOT_PROOF_REQUESTER, CredentialSemanticRole.ROOT_PROOF_CLAIMANT)),
-    frozenset((CredentialSemanticRole.ROOT_PROOF_REQUESTER, CredentialSemanticRole.ROOT_PROOF_ISSUER_SIGNING)),
-    frozenset((CredentialSemanticRole.ROOT_PROOF_CLAIMANT, CredentialSemanticRole.ROOT_PROOF_ISSUER_SIGNING)),
-    frozenset((CredentialSemanticRole.ROOT_PROOF_ISSUER_SIGNING, CredentialSemanticRole.HISTORY_ATTESTATION_SIGNING)),
-    frozenset((CredentialSemanticRole.ROOT_PROOF_REQUESTER, CredentialSemanticRole.ACCOUNT_GENESIS_FRESHNESS_PROPOSER)),
-    frozenset((CredentialSemanticRole.ROOT_PROOF_REQUESTER, CredentialSemanticRole.CATALOG_AUTHORITY)),
-    frozenset((CredentialSemanticRole.ROOT_PROOF_REQUESTER, CredentialSemanticRole.STORAGE_SECURITY_KEY)),
-    frozenset((CredentialSemanticRole.ROOT_PROOF_ISSUER_SIGNING, CredentialSemanticRole.ACCOUNT_GENESIS_FRESHNESS_PROPOSER)),
-    frozenset((CredentialSemanticRole.ROOT_PROOF_ISSUER_SIGNING, CredentialSemanticRole.CATALOG_AUTHORITY)),
+    frozenset(
+        (CredentialSemanticRole.ROOT_PROOF_REQUESTER, CredentialSemanticRole.ROOT_PROOF_CLAIMANT)
+    ),
+    frozenset(
+        (
+            CredentialSemanticRole.ROOT_PROOF_REQUESTER,
+            CredentialSemanticRole.ROOT_PROOF_ISSUER_SIGNING,
+        )
+    ),
+    frozenset(
+        (
+            CredentialSemanticRole.ROOT_PROOF_CLAIMANT,
+            CredentialSemanticRole.ROOT_PROOF_ISSUER_SIGNING,
+        )
+    ),
+    frozenset(
+        (
+            CredentialSemanticRole.ROOT_PROOF_ISSUER_SIGNING,
+            CredentialSemanticRole.HISTORY_ATTESTATION_SIGNING,
+        )
+    ),
+    frozenset(
+        (
+            CredentialSemanticRole.ROOT_PROOF_REQUESTER,
+            CredentialSemanticRole.ACCOUNT_GENESIS_FRESHNESS_PROPOSER,
+        )
+    ),
+    frozenset(
+        (CredentialSemanticRole.ROOT_PROOF_REQUESTER, CredentialSemanticRole.CATALOG_AUTHORITY)
+    ),
+    frozenset(
+        (CredentialSemanticRole.ROOT_PROOF_REQUESTER, CredentialSemanticRole.STORAGE_SECURITY_KEY)
+    ),
+    frozenset(
+        (
+            CredentialSemanticRole.ROOT_PROOF_ISSUER_SIGNING,
+            CredentialSemanticRole.ACCOUNT_GENESIS_FRESHNESS_PROPOSER,
+        )
+    ),
+    frozenset(
+        (CredentialSemanticRole.ROOT_PROOF_ISSUER_SIGNING, CredentialSemanticRole.CATALOG_AUTHORITY)
+    ),
     *(
         frozenset((freshness, other))
         for freshness in (
@@ -644,9 +668,7 @@ def _provider_qualification_failures(
 
     if type(profile) is not SecurityProfile:
         return ("security profile evidence has invalid type",)
-    if not _valid_provider_identity(identity) or not _valid_provider_capabilities(
-        evidence
-    ):
+    if not _valid_provider_identity(identity) or not _valid_provider_capabilities(evidence):
         return ("provider identity or capability evidence has invalid type",)
     if identity.security.profile is not profile:
         return ("target security profile does not match provider identity",)
@@ -752,20 +774,29 @@ class RootProofIssuerCompositionGate:
         for role in _ROOT_PROOF_MANDATORY_PROVIDER_ROLES:
             matches = by_role.get(role, [])
             if not matches:
-                failures.append(QualificationFailure(QualificationFailureCode.MISSING_PROVIDER, role, "mandatory provider is absent"))
+                failures.append(
+                    QualificationFailure(
+                        QualificationFailureCode.MISSING_PROVIDER,
+                        role,
+                        "mandatory provider is absent",
+                    )
+                )
             elif len(matches) > 1:
-                failures.append(QualificationFailure(QualificationFailureCode.DUPLICATE_PROVIDER_ROLE, role, "semantic provider role occurs more than once"))
+                failures.append(
+                    QualificationFailure(
+                        QualificationFailureCode.DUPLICATE_PROVIDER_ROLE,
+                        role,
+                        "semantic provider role occurs more than once",
+                    )
+                )
         for snapshot in snapshots:
             role = snapshot.identity.role
             try:
-                expected_port_satisfied = isinstance(
-                    snapshot.provider, _ROLE_PORTS[role]
-                )
+                expected_port_satisfied = isinstance(snapshot.provider, _ROLE_PORTS[role])
             except Exception:
                 expected_port_satisfied = False
             methods_satisfied = all(
-                callable(getattr(snapshot.provider, method, None))
-                for method in _ROLE_METHODS[role]
+                callable(getattr(snapshot.provider, method, None)) for method in _ROLE_METHODS[role]
             )
             if not expected_port_satisfied or not methods_satisfied:
                 failures.append(
@@ -798,16 +829,24 @@ class RootProofIssuerCompositionGate:
                     )
                 )
             if snapshot.identity.security != security:
-                failures.append(QualificationFailure(QualificationFailureCode.PROFILE_IDENTITY_MISMATCH, role, "provider profile or trust_domain differs from composition"))
+                failures.append(
+                    QualificationFailure(
+                        QualificationFailureCode.PROFILE_IDENTITY_MISMATCH,
+                        role,
+                        "provider profile or trust_domain differs from composition",
+                    )
+                )
             for detail in _provider_qualification_failures(
                 security.profile, snapshot.identity, snapshot.capabilities
             ):
-                code = QualificationFailureCode.PROVIDER_NOT_IMPLEMENTED if "unavailable" in detail else QualificationFailureCode.INSUFFICIENT_CAPABILITIES
+                code = (
+                    QualificationFailureCode.PROVIDER_NOT_IMPLEMENTED
+                    if "unavailable" in detail
+                    else QualificationFailureCode.INSUFFICIENT_CAPABILITIES
+                )
                 failures.append(QualificationFailure(code, role, detail))
             failures.extend(self._credential_evidence_failures(snapshot))
-        credentials = [
-            identity for snapshot in snapshots for identity in snapshot.credentials
-        ]
+        credentials = [identity for snapshot in snapshots for identity in snapshot.credentials]
         failures.extend(self._alias_failures(credentials))
         return QualificationResult(tuple(failures))
 
@@ -829,7 +868,8 @@ class RootProofIssuerCompositionGate:
 
     @classmethod
     def _capture_snapshot(
-        cls, provider: SecurityProvider,
+        cls,
+        provider: SecurityProvider,
     ) -> tuple[_ProviderQualificationSnapshot | None, QualificationFailure | None]:
         try:
             identity = provider.identity
@@ -875,14 +915,9 @@ class RootProofIssuerCompositionGate:
         active: CredentialRoleIdentity | None = None
         observed: str | None = None
         interface_compatible = all(
-            callable(getattr(provider, method, None))
-            for method in _ROLE_METHODS[identity.role]
+            callable(getattr(provider, method, None)) for method in _ROLE_METHODS[identity.role]
         )
-        if (
-            identity.role in _SIGNING_ROLES
-            and interface_compatible
-            and len(credentials) == 1
-        ):
+        if identity.role in _SIGNING_ROLES and interface_compatible and len(credentials) == 1:
             try:
                 candidate = provider.active_credential_identity()  # type: ignore[attr-defined]
             except Exception:
@@ -1029,11 +1064,16 @@ class RootProofIssuerCompositionGate:
         return failures
 
     @staticmethod
-    def _alias_failures(credentials: Sequence[CredentialRoleIdentity]) -> list[QualificationFailure]:
+    def _alias_failures(
+        credentials: Sequence[CredentialRoleIdentity],
+    ) -> list[QualificationFailure]:
         failures: list[QualificationFailure] = []
         for index, left in enumerate(credentials):
             for right in credentials[index + 1 :]:
-                if frozenset((left.semantic_role, right.semantic_role)) not in _FORBIDDEN_ROLE_PAIRS:
+                if (
+                    frozenset((left.semantic_role, right.semantic_role))
+                    not in _FORBIDDEN_ROLE_PAIRS
+                ):
                     continue
                 if (
                     left.provider_namespace,
@@ -1042,7 +1082,13 @@ class RootProofIssuerCompositionGate:
                     right.provider_namespace,
                     right.credential_identity,
                 ):
-                    failures.append(QualificationFailure(QualificationFailureCode.CREDENTIAL_IDENTITY_ALIAS, None, "forbidden roles share credential identity"))
+                    failures.append(
+                        QualificationFailure(
+                            QualificationFailureCode.CREDENTIAL_IDENTITY_ALIAS,
+                            None,
+                            "forbidden roles share credential identity",
+                        )
+                    )
                 if left.key_handle_or_version is not None and (
                     left.provider_namespace,
                     left.key_handle_or_version,
@@ -1050,7 +1096,13 @@ class RootProofIssuerCompositionGate:
                     right.provider_namespace,
                     right.key_handle_or_version,
                 ):
-                    failures.append(QualificationFailure(QualificationFailureCode.KEY_HANDLE_ALIAS, None, "forbidden roles share key handle/version"))
+                    failures.append(
+                        QualificationFailure(
+                            QualificationFailureCode.KEY_HANDLE_ALIAS,
+                            None,
+                            "forbidden roles share key handle/version",
+                        )
+                    )
                 if (
                     left.key_material_identity is not None
                     and left.key_material_identity == right.key_material_identity

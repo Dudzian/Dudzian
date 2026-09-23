@@ -59,24 +59,21 @@ def validate_cross_artifact_parity(
 ) -> None:
     """Derive parity from the actual upstream artifacts, not self-reporting."""
     root = topology["root_proof_boundary"]
-    assert root["first_account_self_authorization"][
-        "independent_accepted_root_proof_required"
-    ] is True
-    assert root["first_account_self_authorization"][
-        "locally_generated_evidence_only"
-    ] == "FORBIDDEN"
+    assert (
+        root["first_account_self_authorization"]["independent_accepted_root_proof_required"] is True
+    )
+    assert (
+        root["first_account_self_authorization"]["locally_generated_evidence_only"] == "FORBIDDEN"
+    )
     assert root["non_circular_root"] == contract["non_circular_root"]
     assert root["proof_id_is_operation_id"] is False
-    assert root["proof_id_is_operation_id"] == contract["operation_binding"][
-        "proof_id_is_operation_id"
-    ]
+    assert (
+        root["proof_id_is_operation_id"]
+        == contract["operation_binding"]["proof_id_is_operation_id"]
+    )
     assert root["issuance_implies_account_id_mint"] is False
-    assert topology["account_id_mint_ownership"]["ProvisioningBoundary_mints"] == (
-        "NOT_PROVEN"
-    )
-    assert reconciliation["account_id_mint_owner"]["external_boundary_ownership"] == (
-        "NOT_PROVEN"
-    )
+    assert topology["account_id_mint_ownership"]["ProvisioningBoundary_mints"] == ("NOT_PROVEN")
+    assert reconciliation["account_id_mint_owner"]["external_boundary_ownership"] == ("NOT_PROVEN")
     assert reconciliation["account_id_mint_owner"]["supplies_is_not_mints"] is True
     assert reconciliation["root_candidate_evaluation"]["result"] == (
         "VIABLE_ONLY_AFTER_ADDITIONAL_AUTHORITY"
@@ -94,12 +91,8 @@ def validate_cross_artifact_parity(
 
 
 def validate(value: dict) -> None:
-    assert value["artifact"] == (
-        "M05_ACCOUNT_GENESIS_ROOT_PROOF_ADMISSION_BINDING_CONTRACT"
-    )
-    assert value["reviewed_head_supplied"] == (
-        "74355d07f6fde26e26126c2130422ea4a71917b8"
-    )
+    assert value["artifact"] == ("M05_ACCOUNT_GENESIS_ROOT_PROOF_ADMISSION_BINDING_CONTRACT")
+    assert value["reviewed_head_supplied"] == ("74355d07f6fde26e26126c2130422ea4a71917b8")
     assert value["repository_head_examined"] != value["reviewed_head_supplied"]
     assert value["provenance"]["source"] == "GIT"
     assert value["provenance"]["reviewed_head_available_locally"] is False
@@ -126,7 +119,9 @@ def validate(value: dict) -> None:
     }
     assert models["F_DESIGN_BLOCKED"]["status"] == "NOT_SELECTED"
     assert models["C_EXTERNAL_ISSUER_ACCOUNT_GENESIS_PROOF"]["status"].startswith("SELECTED")
-    assert value["selected_or_blocked_model"]["selection"] == "C_EXTERNAL_ISSUER_ACCOUNT_GENESIS_PROOF"
+    assert (
+        value["selected_or_blocked_model"]["selection"] == "C_EXTERNAL_ISSUER_ACCOUNT_GENESIS_PROOF"
+    )
 
     account = value["account_binding"]
     assert account["options"]["D_NOT_FROZEN"] == "NOT_SELECTED"
@@ -154,9 +149,10 @@ def validate(value: dict) -> None:
     assert authentication["unknown_issuer"] == "DENY / FAIL_CLOSED"
     assert value["freshness"]["authentication_is_freshness"] is False
     assert value["revocation"]["valid_T1_revoked_or_stale_T2"] == "NOT_FROZEN"
-    assert value["environment_binding"][
-        "structural_or_literal_authority_source_is_sufficient"
-    ] is False
+    assert (
+        value["environment_binding"]["structural_or_literal_authority_source_is_sufficient"]
+        is False
+    )
     assert value["environment_binding"]["disposition"] == "FAIL_CLOSED"
     assert value["environment_binding"]["test_proof_authorizes_production"] is False
 
@@ -180,16 +176,12 @@ def validate(value: dict) -> None:
     replay = value["replay"]
     assert replay["R_to_O1_acct_A_then_O2_acct_B"] == "REJECT"
     assert replay["one_external_R_validated_twice"].startswith("ONLY exact same tuple")
-    assert "MUST NOT create a second account" in replay[
-        "same_proof_same_logical_operation_retry"
-    ]
+    assert "MUST NOT create a second account" in replay["same_proof_same_logical_operation_retry"]
 
     assert value["historical_provenance"]["current_availability"] == (
         "SEMANTICS_FROZEN / IMPLEMENTATION_NOT_AVAILABLE"
     )
-    assert value["historical_provenance"][
-        "current_issuer_state_is_historical_substitute"
-    ] is False
+    assert value["historical_provenance"]["current_issuer_state_is_historical_substitute"] is False
     assert value["restart"]["current_membership_substitutes_missing_history"] is False
     assert value["rollback"]["separate_weaker_trust_path"] is False
     assert value["rollback"]["current_root_proof_anti_rollback"] == "NOT_AVAILABLE"
@@ -249,9 +241,7 @@ def validate(value: dict) -> None:
     assert matrix["account candidate binding"]["status"] == "AVAILABLE"
     assert matrix["issuer authenticity"]["status"] == "NOT_AVAILABLE"
     assert matrix["replay semantics"]["status"] == "AVAILABLE"
-    assert matrix["end-to-end genuine root-proof usability"]["status"] == (
-        "NOT_AVAILABLE"
-    )
+    assert matrix["end-to-end genuine root-proof usability"]["status"] == ("NOT_AVAILABLE")
 
     parity = value["cross_artifact_parity"]
     assert parity["parity"] == "PASS"
@@ -322,8 +312,8 @@ def test_m03_critical_behavior_evidence_matches_production_source() -> None:
         "claim.bootstrap_revision",
         "if now < issued:",
         "if now > expires:",
-        'if purpose != INITIAL_SECURITY_ESTABLISHMENT_ONLY:',
-        'if consumed in state.consumed_authorities or any(',
+        "if purpose != INITIAL_SECURITY_ESTABLISHMENT_ONLY:",
+        "if consumed in state.consumed_authorities or any(",
         '_deny("BOOTSTRAP_REPLAY_DENIED")',
     )
     assert all(fragment in source for fragment in required_fragments)
@@ -348,9 +338,9 @@ def test_cross_artifact_parity_is_derived_from_actual_sources() -> None:
 @pytest.mark.parametrize(
     "mutation",
     [
-        lambda topology: topology["root_proof_boundary"][
-            "first_account_self_authorization"
-        ].update(independent_accepted_root_proof_required=False),
+        lambda topology: topology["root_proof_boundary"]["first_account_self_authorization"].update(
+            independent_accepted_root_proof_required=False
+        ),
         lambda topology: topology["root_proof_boundary"]["non_circular_root"].update(
             account_scoped_operator_identity_allowed=True
         ),

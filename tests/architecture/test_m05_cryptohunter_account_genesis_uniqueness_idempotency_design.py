@@ -98,9 +98,7 @@ def validate(value: dict) -> None:
     assert scope["status"] == "PARTIALLY_FROZEN"
     assert "per account_id" in scope["minimum"]
     assert scope["distinct_account_operation_relationship"] == "NOT_FROZEN"
-    assert scope["cross_account_logical_operation_serialization"].startswith(
-        "DESIGN_BLOCKED"
-    )
+    assert scope["cross_account_logical_operation_serialization"].startswith("DESIGN_BLOCKED")
     assert scope["last_writer_wins"] is False
     assert value["same_account_concurrency"]["same_account_id_two_genesis"] == "FORBIDDEN"
     relation = value["logical_operation_relationship"]
@@ -112,19 +110,27 @@ def validate(value: dict) -> None:
         "CONDITIONAL"
     )
     assert value["distinct_account_concurrency"]["global_singleton_serialization"] is False
-    assert value["distinct_account_concurrency"][
-        "same_external_subject_alone_causes_duplicate_or_conflict"
-    ] is False
+    assert (
+        value["distinct_account_concurrency"][
+            "same_external_subject_alone_causes_duplicate_or_conflict"
+        ]
+        is False
+    )
 
     retry = value["retry_semantics"]
     assert "exact replay" in retry["same_identity_same_semantic_request"]
     assert "CONFLICT" in retry["same_identity_different_semantic_request"]
     assert value["reservation_relationship"]["reservation_is_account_authority"] is False
     assert value["reservation_relationship"]["missing_reservation_lookup_allows_new_id"] is False
-    assert value["reservation_relationship"]["same_logical_operation_may_remint_after_crash"] is False
+    assert (
+        value["reservation_relationship"]["same_logical_operation_may_remint_after_crash"] is False
+    )
     assert value["crash_before_commit"]["silent_remint"] == "FORBIDDEN"
     assert value["crash_before_commit"]["different_account_id_alone_proves_new_operation"] is False
-    assert value["critical_retry_split_scenario"]["acct_B_automatically_independent_new_genesis"] is False
+    assert (
+        value["critical_retry_split_scenario"]["acct_B_automatically_independent_new_genesis"]
+        is False
+    )
     assert value["crash_after_commit"]["new_account"] == "FORBIDDEN"
     assert value["authentication"]["public_SHA_sufficient"] is False
     assert value["rollback"]["valid_prefix_A_B_after_A_B_C"] == "MUST_FAIL_CLOSED"
@@ -158,12 +164,14 @@ def test_cross_artifact_parity() -> None:
         (DOCS / "m05_cryptohunter_account_genesis_subject_identity_discovery.json").read_text()
     )
     parity = value["cross_artifact_parity"]
-    assert parity["subject_cardinality"] == genesis["account_subject_identity"][
-        "subject_to_account_cardinality"
-    ]
-    assert parity["subject_cardinality"] == subject["subject_account_cardinality"][
-        "subject_to_account_cardinality"
-    ]
+    assert (
+        parity["subject_cardinality"]
+        == genesis["account_subject_identity"]["subject_to_account_cardinality"]
+    )
+    assert (
+        parity["subject_cardinality"]
+        == subject["subject_account_cardinality"]["subject_to_account_cardinality"]
+    )
     assert parity["missing_subject_identity_alone_makes_genesis_impossible"] is False
     assert parity["caller_selected_genuine_account_id"] == "FORBIDDEN"
 
@@ -180,12 +188,8 @@ def test_cross_artifact_parity() -> None:
         lambda d: d["crash_before_commit"].update(silent_remint="ALLOWED"),
         lambda d: d["reservation_relationship"].update(reservation_is_account_authority=True),
         lambda d: candidates(d)["CALLER_COMMAND_ID"].update(status="SELECTED"),
-        lambda d: d["distinct_account_concurrency"].update(
-            global_singleton_serialization=True
-        ),
-        lambda d: d["business_uniqueness_boundary"].update(
-            subject_to_account_cardinality="ONE"
-        ),
+        lambda d: d["distinct_account_concurrency"].update(global_singleton_serialization=True),
+        lambda d: d["business_uniqueness_boundary"].update(subject_to_account_cardinality="ONE"),
         lambda d: d["distinct_account_concurrency"].update(
             same_external_subject_alone_causes_duplicate_or_conflict=True
         ),
@@ -205,9 +209,7 @@ def test_cross_artifact_parity() -> None:
         lambda d: d.update(repository_head_examined=d["reviewed_head_supplied"]),
         lambda d: d["provenance"].update(classification="EXACT_COMMIT"),
         lambda d: d["provenance"].update(formal_advancement_allowed=True),
-        lambda d: d["environment_isolation"].update(
-            TEST_to_PRODUCTION_account_genesis="ALLOW"
-        ),
+        lambda d: d["environment_isolation"].update(TEST_to_PRODUCTION_account_genesis="ALLOW"),
     ],
 )
 def test_mandatory_redteam_mutations_fail(mutation) -> None:

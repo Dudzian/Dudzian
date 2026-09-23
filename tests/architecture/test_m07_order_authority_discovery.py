@@ -69,7 +69,7 @@ def render_m07_order_authority_discovery(machine: Mapping[str, object]) -> str:
 
 This file is generated deterministically from
 `m07_order_authority_discovery.json`. It examines repository HEAD
-`{machine['repository_head_examined']}`.
+`{machine["repository_head_examined"]}`.
 
 ## Result
 
@@ -78,28 +78,28 @@ This file is generated deterministically from
 {result_table}
 
 The frozen admission contract exists and is closed. No `OrderAuthority` is
-implemented by this discovery. `self_mint_possible = {machine['self_mint_possible']}`
-means exactly: {machine['self_mint_scope']}.
+implemented by this discovery. `self_mint_possible = {machine["self_mint_possible"]}`
+means exactly: {machine["self_mint_scope"]}.
 
 ## Canonical schema and identity
 
-Classification: {schema['classification']}.
+Classification: {schema["classification"]}.
 
 Exact `SUBMIT_ORDER` fields: {submit_fields}.
 
 Exact immutable event-envelope fields: {event_fields}.
 
-Command fingerprint: {schema['fingerprints']['command']}.
+Command fingerprint: {schema["fingerprints"]["command"]}.
 
-Event fingerprint: {schema['fingerprints']['event']}.
+Event fingerprint: {schema["fingerprints"]["event"]}.
 
-Production validator: **{schema['fingerprints']['production_validator']}**.
+Production validator: **{schema["fingerprints"]["production_validator"]}**.
 
 ## Lifecycle
 
 States: {states}.
 
-Initial state: **{lifecycle['initial_state']}**.
+Initial state: **{lifecycle["initial_state"]}**.
 
 Terminal states: {terminal}.
 
@@ -107,11 +107,11 @@ Terminal states: {terminal}.
 
 {transitions}
 
-* Reopen legality: {lifecycle['reopen_legality']}.
-* Cancel: {lifecycle['cancel_semantics']}.
-* Reject: {lifecycle['reject_semantics']}.
-* Partial Fill: {lifecycle['partial_fill_semantics']}.
-* Replace: {lifecycle['replace_semantics']}.
+* Reopen legality: {lifecycle["reopen_legality"]}.
+* Cancel: {lifecycle["cancel_semantics"]}.
+* Reject: {lifecycle["reject_semantics"]}.
+* Partial Fill: {lifecycle["partial_fill_semantics"]}.
+* Replace: {lifecycle["replace_semantics"]}.
 
 ## Red-team self-mint paths
 
@@ -122,18 +122,18 @@ do not create a genuine Core-accepted Order authority fact.
 
 ## Dependencies and Fill binding
 
-Order → Instrument: {machine['order_instrument_dependency']}.
+Order → Instrument: {machine["order_instrument_dependency"]}.
 
-Order → ExchangeAccount: {machine['order_account_dependency']}.
+Order → ExchangeAccount: {machine["order_account_dependency"]}.
 
 Exact Fill → Order equality fields: {binding_fields}.
 
 M0.7 structural/lifecycle foundation:
-**{machine['M0.7_structural_lifecycle_foundation']}**.
+**{machine["M0.7_structural_lifecycle_foundation"]}**.
 
-M0.7 semantic admission: **{machine['M0.7_semantic_admission']}**.
+M0.7 semantic admission: **{machine["M0.7_semantic_admission"]}**.
 
-Next blocker: {machine['next_blocker']}.
+Next blocker: {machine["next_blocker"]}.
 
 ## Preserved external status
 
@@ -173,13 +173,14 @@ def test_machine_result_records_exact_head_and_required_disposition() -> None:
 def test_contract_fields_and_lifecycle_are_exactly_copied_from_frozen_oracle() -> None:
     machine, _ = _artifacts()
     contract = json.loads(
-        (DOCS / "commands_events_order_lifecycle_and_idempotency.json").read_text(
-            encoding="utf-8"
-        )
+        (DOCS / "commands_events_order_lifecycle_and_idempotency.json").read_text(encoding="utf-8")
     )
     detail = machine["canonical_order_schema_detail"]
     lifecycle = machine["canonical_order_lifecycle_detail"]
-    assert detail["submit_order_fields"] == contract["command_registry"]["SUBMIT_ORDER"]["request_fields"]
+    assert (
+        detail["submit_order_fields"]
+        == contract["command_registry"]["SUBMIT_ORDER"]["request_fields"]
+    )
     assert detail["event_envelope_fields"] == contract["event_contract"]["fields"]
     assert lifecycle["states"] == contract["order_lifecycle"]["states"]
     assert lifecycle["terminal_states"] == contract["order_lifecycle"]["terminal_states"]

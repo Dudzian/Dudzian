@@ -130,8 +130,8 @@ try {
         $configured.Name -cne $service -or
         $configured.StartName -cne $identity -or
         -not $expectedPath -or $configured.PathName -cne $expectedPath -or
-        -not $expectedHost -or $actualHost -cne $expectedHost
-        -or -not $expectedSid -or $actualSid -cne $expectedSid
+        -not $expectedHost -or $actualHost -cne $expectedHost -or
+        -not $expectedSid -or $actualSid -cne $expectedSid
       ) {
         $cleanupFailures.Add("current-run service configuration ownership is not proven")
       } else {

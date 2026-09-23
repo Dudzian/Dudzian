@@ -12,7 +12,6 @@ from bot_core.execution.base import ExecutionContext, ExecutionService
 from bot_core.execution.mode_policy import DEFAULT_MODE_SELECTOR
 from bot_core.execution.live_router import LiveExecutionRouter, QoSConfig
 from bot_core.exchanges.base import ExchangeAdapter, OrderRequest
-from bot_core.security import build_transaction_signer_selector
 
 _LOGGER = logging.getLogger(__name__)
 _ALLOWED_EXCHANGE_LIFECYCLE = frozenset({"active", "disabled", "deprecated"})
@@ -272,6 +271,10 @@ def build_live_execution_service(
                 else None
             ),
         )
+
+    # Signing is required only by the live path; keep controller imports independent
+    # from optional/native signing runtime dependencies.
+    from bot_core.security import build_transaction_signer_selector
 
     signer_selector = build_transaction_signer_selector(getattr(live_cfg, "signers", None))
     license_caps = getattr(bootstrap_ctx, "license_capabilities", None)

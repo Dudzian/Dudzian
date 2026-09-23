@@ -645,7 +645,9 @@ def test_current_instrument_version_must_strictly_follow_history():
     instrument["metadata_version"] = 5
     projection["member_bindings"][0]["instrument_metadata_version"] = 5
     _projection_fingerprint(projection)
-    assert not _global_graph(source, projection, instrument, {"instr_1": _history(instrument, (6, 7))})
+    assert not _global_graph(
+        source, projection, instrument, {"instr_1": _history(instrument, (6, 7))}
+    )
 
     source, projection, instrument, _, _ = canonical_graph()
     assert not _global_graph(
@@ -699,7 +701,9 @@ def test_source_adapter_family_exact_binds_current_and_historical_instruments():
         "instruments_by_id": {"instr_1": instrument},
     }
     assert not validate_canonical_catalog_context_graph(
-        **kwargs, instrument_history_by_id={}, source_producer_membership_authority=SOURCE_PRODUCER_AUTHORITY
+        **kwargs,
+        instrument_history_by_id={},
+        source_producer_membership_authority=SOURCE_PRODUCER_AUTHORITY,
     )
     assert not validate_trading_universe_source_graph(universe, account, **kwargs)
     assert not validate_trading_universe_source_chain(

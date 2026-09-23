@@ -1,4 +1,5 @@
 """Carrier-owned executable S9C observation membership and currentness authority."""
+
 from __future__ import annotations
 
 from contextlib import contextmanager
@@ -20,14 +21,47 @@ ACCEPTANCE_ID = re.compile(r"s9c_[0-9a-f]{64}\Z")
 RFC3339_UTC_SECONDS = re.compile(
     r"[0-9]{4}-[0-9]{2}-[0-9]{2}T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]Z\Z"
 )
-SECRET = re.compile(r"(?i)(password|api[_ -]?secret|api[_ -]?key|private[_ -]?key|bearer|token|pin|biometric)")
-ENVELOPE = ("observation_id", "category", "source_component", "source_instance_id", "environment", "scope", "source_event_at_utc", "observed_at_utc", "ingested_at_utc", "expires_at_utc", "freshness_policy_id", "source_sequence", "condition", "reason_code", "value", "source_quality", "correlation_reference")
+SECRET = re.compile(
+    r"(?i)(password|api[_ -]?secret|api[_ -]?key|private[_ -]?key|bearer|token|pin|biometric)"
+)
+ENVELOPE = (
+    "observation_id",
+    "category",
+    "source_component",
+    "source_instance_id",
+    "environment",
+    "scope",
+    "source_event_at_utc",
+    "observed_at_utc",
+    "ingested_at_utc",
+    "expires_at_utc",
+    "freshness_policy_id",
+    "source_sequence",
+    "condition",
+    "reason_code",
+    "value",
+    "source_quality",
+    "correlation_reference",
+)
 SCOPES = {
     "MARKET_DATA_FRESHNESS": (("market_data_route_id", "mdr"), ("instrument_id", "instr")),
-    "EXECUTION_PATH_HEALTH": (("exchange_account_id", "xacc"), ("instrument_id", "instr"), ("execution_route_id", "xroute")),
+    "EXECUTION_PATH_HEALTH": (
+        ("exchange_account_id", "xacc"),
+        ("instrument_id", "instr"),
+        ("execution_route_id", "xroute"),
+    ),
 }
-VALUES = {"MARKET_DATA_FRESHNESS": ("last_data_at_utc", "sequence_state"), "EXECUTION_PATH_HEALTH": ("path_state",)}
-CANONICAL_CORRELATIONS = {"RuntimeSession": "run", "ExchangeAccount": "xacc", "Instrument": "instr", "MarketDataRoute": "mdr", "ExecutionRoute": "xroute"}
+VALUES = {
+    "MARKET_DATA_FRESHNESS": ("last_data_at_utc", "sequence_state"),
+    "EXECUTION_PATH_HEALTH": ("path_state",),
+}
+CANONICAL_CORRELATIONS = {
+    "RuntimeSession": "run",
+    "ExchangeAccount": "xacc",
+    "Instrument": "instr",
+    "MarketDataRoute": "mdr",
+    "ExecutionRoute": "xroute",
+}
 CONDITIONS = ("UNKNOWN", "OK", "DEGRADED", "BLOCKED")
 GAP = {"OK": "DEGRADED", "DEGRADED": "DEGRADED", "UNKNOWN": "UNKNOWN", "BLOCKED": "BLOCKED"}
 T = TypeVar("T")
@@ -59,7 +93,11 @@ def _safe_scalar(value: Any) -> None:
 
 
 def _canonical_id(value: Any, prefix: str, error: str) -> None:
-    if not isinstance(value, str) or not value.startswith(prefix + "_") or not UUID7.fullmatch(value[len(prefix) + 1 :]):
+    if (
+        not isinstance(value, str)
+        or not value.startswith(prefix + "_")
+        or not UUID7.fullmatch(value[len(prefix) + 1 :])
+    ):
         raise ValueError(error)
 
 
@@ -107,7 +145,11 @@ class FrozenEnvironmentRegistryBinding:
     canonical_environments: frozenset[str] = frozenset({"PAPER", "TESTNET", "LIVE"})
 
     def __post_init__(self) -> None:
-        if type(self.canonical_environments) is not frozenset or self.canonical_environments != frozenset({"PAPER", "TESTNET", "LIVE"}):
+        if type(
+            self.canonical_environments
+        ) is not frozenset or self.canonical_environments != frozenset(
+            {"PAPER", "TESTNET", "LIVE"}
+        ):
             raise ValueError("INVALID_M04_ENVIRONMENT_BINDING")
 
 
@@ -120,7 +162,15 @@ class ObservationKey:
     scope: tuple[tuple[str, Any], ...]
 
     @classmethod
-    def exact(cls, *, category: str, source_component: str, source_instance_id: str, environment: str, scope: Mapping[str, Any]) -> "ObservationKey":
+    def exact(
+        cls,
+        *,
+        category: str,
+        source_component: str,
+        source_instance_id: str,
+        environment: str,
+        scope: Mapping[str, Any],
+    ) -> "ObservationKey":
         if type(scope) is not dict:
             raise ValueError("WRONG_SCOPE")
         return cls(category, source_component, source_instance_id, environment, _pairs(scope))
@@ -169,7 +219,9 @@ class CanonicalObservation:
         result = {name: getattr(self, name) for name in ENVELOPE}
         result["scope"] = dict(self.scope)
         result["value"] = dict(self.value)
-        result["correlation_reference"] = None if self.correlation_reference is None else dict(self.correlation_reference)
+        result["correlation_reference"] = (
+            None if self.correlation_reference is None else dict(self.correlation_reference)
+        )
         return result
 
 
@@ -215,11 +267,14 @@ class ObservationAuthorityCarrier(Protocol):
 
     def authority_fence(self) -> ContextManager[None]: ...
     def read(self) -> AtomicObservationAuthorityState: ...
-    def compare_and_swap(self, expected_revision: int, state: AtomicObservationAuthorityState) -> None: ...
+    def compare_and_swap(
+        self, expected_revision: int, state: AtomicObservationAuthorityState
+    ) -> None: ...
 
 
 class InMemoryObservationAuthorityCarrier:
     """Atomic reference carrier whose lock is the carrier-wide authority fence."""
+
     def __init__(self, state: AtomicObservationAuthorityState | None = None) -> None:
         self._lock = RLock()
         self._state = state or AtomicObservationAuthorityState()
@@ -234,7 +289,9 @@ class InMemoryObservationAuthorityCarrier:
         with self._lock:
             return self._state
 
-    def compare_and_swap(self, expected_revision: int, state: AtomicObservationAuthorityState) -> None:
+    def compare_and_swap(
+        self, expected_revision: int, state: AtomicObservationAuthorityState
+    ) -> None:
         with self._lock:
             if self.fail_next:
                 self.fail_next = False
@@ -246,6 +303,7 @@ class InMemoryObservationAuthorityCarrier:
 
 class _ObservationPublisher:
     """Non-exported writer capability minted only by the owner composition boundary."""
+
     def __init__(self, authority: "ObservationAuthority") -> None:
         self.__authority = authority
 
@@ -257,16 +315,39 @@ class ObservationAuthority:
     EXECUTABLE_CATEGORIES = frozenset(SCOPES)
 
     @classmethod
-    def compose(cls, carrier: ObservationAuthorityCarrier, *, policies: tuple[FreshnessPolicy, ...], environment_binding: FrozenEnvironmentRegistryBinding, enabled_environments: frozenset[str] | None = None) -> tuple["ObservationAuthority", _ObservationPublisher]:
-        authority = cls(carrier, policies=policies, environment_binding=environment_binding, enabled_environments=enabled_environments)
+    def compose(
+        cls,
+        carrier: ObservationAuthorityCarrier,
+        *,
+        policies: tuple[FreshnessPolicy, ...],
+        environment_binding: FrozenEnvironmentRegistryBinding,
+        enabled_environments: frozenset[str] | None = None,
+    ) -> tuple["ObservationAuthority", _ObservationPublisher]:
+        authority = cls(
+            carrier,
+            policies=policies,
+            environment_binding=environment_binding,
+            enabled_environments=enabled_environments,
+        )
         return authority, _ObservationPublisher(authority)
 
-    def __init__(self, carrier: ObservationAuthorityCarrier, *, policies: tuple[FreshnessPolicy, ...], environment_binding: FrozenEnvironmentRegistryBinding, enabled_environments: frozenset[str] | None = None) -> None:
+    def __init__(
+        self,
+        carrier: ObservationAuthorityCarrier,
+        *,
+        policies: tuple[FreshnessPolicy, ...],
+        environment_binding: FrozenEnvironmentRegistryBinding,
+        enabled_environments: frozenset[str] | None = None,
+    ) -> None:
         self._carrier = carrier
         if not isinstance(environment_binding, FrozenEnvironmentRegistryBinding):
             raise ValueError("INVALID_M04_ENVIRONMENT_BINDING")
         self._canonical_environments = frozenset(environment_binding.canonical_environments)
-        self._enabled_environments = self._canonical_environments if enabled_environments is None else frozenset(enabled_environments)
+        self._enabled_environments = (
+            self._canonical_environments
+            if enabled_environments is None
+            else frozenset(enabled_environments)
+        )
         if not self._enabled_environments <= self._canonical_environments:
             raise ValueError("ILLEGAL_ENVIRONMENT")
         self._policies = MappingProxyType(self._validate_policies(policies))
@@ -303,7 +384,9 @@ class ObservationAuthority:
             raise ValueError("INVALID_FRESHNESS_POLICY") from error
 
     @classmethod
-    def _validate_policies(cls, policies: tuple[FreshnessPolicy, ...]) -> dict[str, FreshnessPolicy]:
+    def _validate_policies(
+        cls, policies: tuple[FreshnessPolicy, ...]
+    ) -> dict[str, FreshnessPolicy]:
         if type(policies) is not tuple:
             raise ValueError("INVALID_FRESHNESS_POLICY")
         result: dict[str, FreshnessPolicy] = {}
@@ -323,7 +406,10 @@ class ObservationAuthority:
         if raw["source_component"] != "core_host":
             raise ValueError("WRONG_SOURCE")
         _canonical_id(raw["source_instance_id"], "run", "WRONG_SOURCE_INSTANCE")
-        if type(raw["environment"]) is not str or raw["environment"] not in self._canonical_environments:
+        if (
+            type(raw["environment"]) is not str
+            or raw["environment"] not in self._canonical_environments
+        ):
             raise ValueError("ILLEGAL_ENVIRONMENT")
         scope = raw["scope"]
         if type(scope) is not dict or set(scope) != {field for field, _ in SCOPES[category]}:
@@ -354,13 +440,20 @@ class ObservationAuthority:
             raise ValueError("UNKNOWN_SOURCE_QUALITY")
         correlation = raw["correlation_reference"]
         if correlation is not None:
-            if type(correlation) is not dict or correlation.get("kind") not in ("LOCAL", "CANONICAL"):
+            if type(correlation) is not dict or correlation.get("kind") not in (
+                "LOCAL",
+                "CANONICAL",
+            ):
                 raise ValueError("INVALID_CORRELATION")
-            expected = {"kind", "value"} if correlation["kind"] == "LOCAL" else {"kind", "entity", "value"}
+            expected = (
+                {"kind", "value"} if correlation["kind"] == "LOCAL" else {"kind", "entity", "value"}
+            )
             if set(correlation) != expected:
                 raise ValueError("INVALID_CORRELATION")
             if correlation["kind"] == "LOCAL":
-                if not isinstance(correlation["value"], str) or not SAFE.fullmatch(correlation["value"]):
+                if not isinstance(correlation["value"], str) or not SAFE.fullmatch(
+                    correlation["value"]
+                ):
                     raise ValueError("INVALID_CORRELATION")
                 _safe_scalar(correlation["value"])
             else:
@@ -375,7 +468,14 @@ class ObservationAuthority:
         _validate_source_sequence(sequence)
         if type(raw["freshness_policy_id"]) is not str:
             raise ValueError("UNKNOWN_FRESHNESS_POLICY")
-        return CanonicalObservation(*(raw[name] if name not in ("scope", "value", "correlation_reference") else (_pairs(raw[name]) if raw[name] is not None else None) for name in ENVELOPE))
+        return CanonicalObservation(
+            *(
+                raw[name]
+                if name not in ("scope", "value", "correlation_reference")
+                else (_pairs(raw[name]) if raw[name] is not None else None)
+                for name in ENVELOPE
+            )
+        )
 
     def _validate_unseen_temporal_and_freshness(
         self,
@@ -387,21 +487,50 @@ class ObservationAuthority:
     ) -> None:
         if enforce_enabled and observation.environment not in self._enabled_environments:
             raise ValueError("ILLEGAL_ENVIRONMENT")
-        observed, ingested, expires, logical_now = map(_utc, (observation.observed_at_utc, observation.ingested_at_utc, observation.expires_at_utc, now))
-        source_event = _utc(observation.source_event_at_utc) if observation.source_event_at_utc is not None else None
+        observed, ingested, expires, logical_now = map(
+            _utc,
+            (
+                observation.observed_at_utc,
+                observation.ingested_at_utc,
+                observation.expires_at_utc,
+                now,
+            ),
+        )
+        source_event = (
+            _utc(observation.source_event_at_utc)
+            if observation.source_event_at_utc is not None
+            else None
+        )
         policy = historical_policy or self._policies.get(observation.freshness_policy_id)
-        if policy is None or policy.category != observation.category or policy.source_class != "core_host":
+        if (
+            policy is None
+            or policy.category != observation.category
+            or policy.source_class != "core_host"
+        ):
             raise ValueError("UNKNOWN_FRESHNESS_POLICY")
-        if expires <= observed or expires - observed != timedelta(seconds=policy.validity_horizon_seconds):
+        if expires <= observed or expires - observed != timedelta(
+            seconds=policy.validity_horizon_seconds
+        ):
             raise ValueError("INVALID_EXPIRY")
         if observed - logical_now > timedelta(seconds=policy.allowed_observed_future_skew_seconds):
             raise ValueError("FUTURE_TIMESTAMP")
-        if source_event and source_event - logical_now > timedelta(seconds=policy.allowed_source_event_future_skew_seconds):
+        if source_event and source_event - logical_now > timedelta(
+            seconds=policy.allowed_source_event_future_skew_seconds
+        ):
             raise ValueError("FUTURE_SOURCE_EVENT")
-        if observed - ingested > timedelta(seconds=policy.allowed_ingest_before_observed_skew_seconds):
+        if observed - ingested > timedelta(
+            seconds=policy.allowed_ingest_before_observed_skew_seconds
+        ):
             raise ValueError("INGEST_SKEW")
 
-    def _canonical(self, raw: Mapping[str, Any], now: str, *, historical_policy: FreshnessPolicy | None = None, enforce_enabled: bool = True) -> CanonicalObservation:
+    def _canonical(
+        self,
+        raw: Mapping[str, Any],
+        now: str,
+        *,
+        historical_policy: FreshnessPolicy | None = None,
+        enforce_enabled: bool = True,
+    ) -> CanonicalObservation:
         observation = self._canonical_payload_before_replay(raw)
         self._validate_unseen_temporal_and_freshness(
             observation,
@@ -420,14 +549,25 @@ class ObservationAuthority:
         return sha256(_json(asdict(policy)).encode()).hexdigest()
 
     @staticmethod
-    def _acceptance_id(revision: int, accepted_at_utc: str, fingerprint: str, policy_fingerprint: str) -> str:
-        return "s9c_" + sha256(
-            _json((revision, accepted_at_utc, fingerprint, policy_fingerprint)).encode()
-        ).hexdigest()
+    def _acceptance_id(
+        revision: int, accepted_at_utc: str, fingerprint: str, policy_fingerprint: str
+    ) -> str:
+        return (
+            "s9c_"
+            + sha256(
+                _json((revision, accepted_at_utc, fingerprint, policy_fingerprint)).encode()
+            ).hexdigest()
+        )
 
     @staticmethod
     def _key(observation: CanonicalObservation) -> ObservationKey:
-        return ObservationKey(observation.category, observation.source_component, observation.source_instance_id, observation.environment, observation.scope)
+        return ObservationKey(
+            observation.category,
+            observation.source_component,
+            observation.source_instance_id,
+            observation.environment,
+            observation.scope,
+        )
 
     @staticmethod
     def _validate_transition(
@@ -476,10 +616,16 @@ class ObservationAuthority:
             # Replay is already-authorized historical membership.  Resolve it before
             # today's policy registry can reinterpret the original transaction.
             if payload.source_sequence is not None:
-                replay_key = (payload.source_component, payload.source_instance_id, payload.source_sequence)
+                replay_key = (
+                    payload.source_component,
+                    payload.source_instance_id,
+                    payload.source_sequence,
+                )
                 replay_id = dict(state.replay).get(replay_key)
                 if replay_id is not None:
-                    prior = next(record for record in state.accepted if record.acceptance_id == replay_id)
+                    prior = next(
+                        record for record in state.accepted if record.acceptance_id == replay_id
+                    )
                     if self._fingerprint(payload) != prior.content_fingerprint:
                         raise ValueError("DUPLICATE_SEQUENCE_CONFLICT")
                     return prior
@@ -491,8 +637,7 @@ class ObservationAuthority:
                 (
                     item
                     for item in reversed(state.accepted)
-                    if ObservationSemanticKey.from_observation(item.observation)
-                    == semantic_key
+                    if ObservationSemanticKey.from_observation(item.observation) == semantic_key
                 ),
                 None,
             )
@@ -513,18 +658,40 @@ class ObservationAuthority:
             current = dict(state.current)
             source = (observation.source_component, observation.source_instance_id)
             key = self._key(observation)
-            replayed, gap = self._validate_transition(observation, fingerprint, history, current, replay, last)
+            replayed, gap = self._validate_transition(
+                observation, fingerprint, history, current, replay, last
+            )
             if replayed is not None:
                 return replayed
             condition = GAP[observation.condition] if gap else observation.condition
-            reasons = (observation.reason_code, "SEQUENCE_GAP") if gap else (observation.reason_code,)
+            reasons = (
+                (observation.reason_code, "SEQUENCE_GAP") if gap else (observation.reason_code,)
+            )
             revision = state.store_revision + 1
-            record = AcceptedObservation(self._acceptance_id(revision, now, fingerprint, policy_fingerprint), revision, now, observation, key, condition, reasons, gap, fingerprint, policy, policy_fingerprint)
+            record = AcceptedObservation(
+                self._acceptance_id(revision, now, fingerprint, policy_fingerprint),
+                revision,
+                now,
+                observation,
+                key,
+                condition,
+                reasons,
+                gap,
+                fingerprint,
+                policy,
+                policy_fingerprint,
+            )
             if observation.source_sequence is not None:
                 replay[(*source, observation.source_sequence)] = record.acceptance_id
                 last[source] = observation.source_sequence
             current[key] = record.acceptance_id
-            replacement = AtomicObservationAuthorityState(revision, state.accepted + (record,), tuple(current.items()), tuple(replay.items()), tuple(last.items()))
+            replacement = AtomicObservationAuthorityState(
+                revision,
+                state.accepted + (record,),
+                tuple(current.items()),
+                tuple(replay.items()),
+                tuple(last.items()),
+            )
             self._carrier.compare_and_swap(state.store_revision, replacement)
             self._state = replacement
             return record
@@ -532,7 +699,9 @@ class ObservationAuthority:
     def resolve_historical_acceptance(self, acceptance_id: str) -> AcceptedObservation | None:
         with self._carrier.authority_fence():
             state = self._load_locked()
-            return next((item for item in state.accepted if item.acceptance_id == acceptance_id), None)
+            return next(
+                (item for item in state.accepted if item.acceptance_id == acceptance_id), None
+            )
 
     def validate_historical_effective_acceptance(
         self, acceptance_id: str, *, at_utc: str
@@ -593,21 +762,35 @@ class ObservationAuthority:
                 raise ValueError("ACCEPTANCE_NOT_HISTORICALLY_EFFECTIVE")
             return requested
 
-    def resolve_current(self, selector: ObservationKey, *, now_utc: str) -> EffectiveCurrentObservation:
+    def resolve_current(
+        self, selector: ObservationKey, *, now_utc: str
+    ) -> EffectiveCurrentObservation:
         with self._carrier.authority_fence():
             return self._resolve_current(self._load_locked(), selector, now_utc)
 
     @staticmethod
-    def _resolve_current(state: AtomicObservationAuthorityState, selector: ObservationKey, now: str) -> EffectiveCurrentObservation:
+    def _resolve_current(
+        state: AtomicObservationAuthorityState, selector: ObservationKey, now: str
+    ) -> EffectiveCurrentObservation:
         acceptance_id = dict(state.current).get(selector)
-        record = next((item for item in state.accepted if item.acceptance_id == acceptance_id), None)
+        record = next(
+            (item for item in state.accepted if item.acceptance_id == acceptance_id), None
+        )
         if record is None:
             return EffectiveCurrentObservation("ABSENT", None, "UNKNOWN", ("MISSING_OBSERVATION",))
         if _utc(now) >= _utc(record.observation.expires_at_utc):
             return EffectiveCurrentObservation("STALE", record, "UNKNOWN", ("OBSERVATION_EXPIRED",))
-        return EffectiveCurrentObservation("FRESH", record, record.effective_condition, record.effective_reason_codes)
+        return EffectiveCurrentObservation(
+            "FRESH", record, record.effective_condition, record.effective_reason_codes
+        )
 
-    def consume_effective_current(self, selector: ObservationKey, *, now_utc: str, consumer: Callable[[AcceptedObservation], T]) -> T:
+    def consume_effective_current(
+        self,
+        selector: ObservationKey,
+        *,
+        now_utc: str,
+        consumer: Callable[[AcceptedObservation], T],
+    ) -> T:
         with self._carrier.authority_fence():
             result = self._resolve_current(self._load_locked(), selector, now_utc)
             if result.status != "FRESH" or result.accepted is None:
@@ -650,14 +833,29 @@ class ObservationAuthority:
     def _pin(self, candidate: AtomicObservationAuthorityState) -> AtomicObservationAuthorityState:
         try:
             self._validate_state(candidate)
-            state = AtomicObservationAuthorityState(candidate.store_revision, tuple(candidate.accepted), tuple(candidate.current), tuple(candidate.replay), tuple(candidate.last_sequence))
+            state = AtomicObservationAuthorityState(
+                candidate.store_revision,
+                tuple(candidate.accepted),
+                tuple(candidate.current),
+                tuple(candidate.replay),
+                tuple(candidate.last_sequence),
+            )
         except (AttributeError, KeyError, TypeError, ValueError, OverflowError) as error:
             raise ValueError("CORRUPT_AUTHORITY_STATE") from error
         self._state = state
         return state
 
     def _validate_state(self, state: AtomicObservationAuthorityState) -> None:
-        if not isinstance(state, AtomicObservationAuthorityState) or type(state.store_revision) is not int or state.store_revision < 0 or any(type(value) is not tuple for value in (state.accepted, state.current, state.replay, state.last_sequence)) or state.store_revision != len(state.accepted):
+        if (
+            not isinstance(state, AtomicObservationAuthorityState)
+            or type(state.store_revision) is not int
+            or state.store_revision < 0
+            or any(
+                type(value) is not tuple
+                for value in (state.accepted, state.current, state.replay, state.last_sequence)
+            )
+            or state.store_revision != len(state.accepted)
+        ):
             raise ValueError("CORRUPT_AUTHORITY_STATE")
         by_id: dict[str, AcceptedObservation] = {}
         expected_current: dict[ObservationKey, str] = {}
@@ -666,7 +864,17 @@ class ObservationAuthority:
         previous_accepted_at: datetime | None = None
         semantic_accepted_at: dict[ObservationSemanticKey, datetime] = {}
         for revision, record in enumerate(state.accepted, 1):
-            if not isinstance(record, AcceptedObservation) or type(record.effective_reason_codes) is not tuple or not isinstance(record.observation, CanonicalObservation) or type(record.observation.scope) is not tuple or type(record.observation.value) is not tuple or (record.observation.correlation_reference is not None and type(record.observation.correlation_reference) is not tuple):
+            if (
+                not isinstance(record, AcceptedObservation)
+                or type(record.effective_reason_codes) is not tuple
+                or not isinstance(record.observation, CanonicalObservation)
+                or type(record.observation.scope) is not tuple
+                or type(record.observation.value) is not tuple
+                or (
+                    record.observation.correlation_reference is not None
+                    and type(record.observation.correlation_reference) is not tuple
+                )
+            ):
                 raise ValueError("CORRUPT_AUTHORITY_STATE")
             if (
                 type(record.transaction_revision) is not int
@@ -698,11 +906,26 @@ class ObservationAuthority:
             ):
                 raise ValueError("CORRUPT_AUTHORITY_STATE")
             semantic_accepted_at[semantic_key] = accepted_at
-            canonical = self._canonical(record.observation.mapping(), record.accepted_at_utc, historical_policy=record.freshness_policy, enforce_enabled=False)
+            canonical = self._canonical(
+                record.observation.mapping(),
+                record.accepted_at_utc,
+                historical_policy=record.freshness_policy,
+                enforce_enabled=False,
+            )
             fingerprint = self._fingerprint(canonical)
-            expected_id = self._acceptance_id(revision, record.accepted_at_utc, fingerprint, policy_fingerprint)
+            expected_id = self._acceptance_id(
+                revision, record.accepted_at_utc, fingerprint, policy_fingerprint
+            )
             key = self._key(canonical)
-            if record.transaction_revision != revision or record.observation != canonical or record.content_fingerprint != fingerprint or record.freshness_policy_fingerprint_sha256 != policy_fingerprint or record.acceptance_id != expected_id or record.acceptance_id in by_id or record.key != key:
+            if (
+                record.transaction_revision != revision
+                or record.observation != canonical
+                or record.content_fingerprint != fingerprint
+                or record.freshness_policy_fingerprint_sha256 != policy_fingerprint
+                or record.acceptance_id != expected_id
+                or record.acceptance_id in by_id
+                or record.key != key
+            ):
                 raise ValueError("CORRUPT_AUTHORITY_STATE")
             replayed, gap = self._validate_transition(
                 canonical,
@@ -715,8 +938,14 @@ class ObservationAuthority:
             if replayed is not None:
                 raise ValueError("CORRUPT_AUTHORITY_STATE")
             expected_condition = GAP[canonical.condition] if gap else canonical.condition
-            expected_reasons = (canonical.reason_code, "SEQUENCE_GAP") if gap else (canonical.reason_code,)
-            if (record.sequence_gap, record.effective_condition, record.effective_reason_codes) != (gap, expected_condition, expected_reasons):
+            expected_reasons = (
+                (canonical.reason_code, "SEQUENCE_GAP") if gap else (canonical.reason_code,)
+            )
+            if (record.sequence_gap, record.effective_condition, record.effective_reason_codes) != (
+                gap,
+                expected_condition,
+                expected_reasons,
+            ):
                 raise ValueError("CORRUPT_AUTHORITY_STATE")
             by_id[expected_id] = record
             expected_current[key] = expected_id
@@ -725,16 +954,62 @@ class ObservationAuthority:
                 expected_replay[(*source, canonical.source_sequence)] = expected_id
                 expected_last[source] = canonical.source_sequence
         for entry in state.current:
-            if type(entry) is not tuple or len(entry) != 2 or not isinstance(entry[0], ObservationKey) or any(type(value) is not str for value in (entry[0].category, entry[0].source_component, entry[0].source_instance_id, entry[0].environment)) or type(entry[0].scope) is not tuple or any(type(pair) is not tuple or len(pair) != 2 or type(pair[0]) is not str for pair in entry[0].scope) or type(entry[1]) is not str or not ACCEPTANCE_ID.fullmatch(entry[1]):
+            if (
+                type(entry) is not tuple
+                or len(entry) != 2
+                or not isinstance(entry[0], ObservationKey)
+                or any(
+                    type(value) is not str
+                    for value in (
+                        entry[0].category,
+                        entry[0].source_component,
+                        entry[0].source_instance_id,
+                        entry[0].environment,
+                    )
+                )
+                or type(entry[0].scope) is not tuple
+                or any(
+                    type(pair) is not tuple or len(pair) != 2 or type(pair[0]) is not str
+                    for pair in entry[0].scope
+                )
+                or type(entry[1]) is not str
+                or not ACCEPTANCE_ID.fullmatch(entry[1])
+            ):
                 raise ValueError("CORRUPT_AUTHORITY_STATE")
         for entry in state.replay:
-            if type(entry) is not tuple or len(entry) != 2 or type(entry[0]) is not tuple or len(entry[0]) != 3 or type(entry[0][0]) is not str or type(entry[0][1]) is not str or type(entry[0][2]) is not int or entry[0][2] < 0 or type(entry[1]) is not str or not ACCEPTANCE_ID.fullmatch(entry[1]):
+            if (
+                type(entry) is not tuple
+                or len(entry) != 2
+                or type(entry[0]) is not tuple
+                or len(entry[0]) != 3
+                or type(entry[0][0]) is not str
+                or type(entry[0][1]) is not str
+                or type(entry[0][2]) is not int
+                or entry[0][2] < 0
+                or type(entry[1]) is not str
+                or not ACCEPTANCE_ID.fullmatch(entry[1])
+            ):
                 raise ValueError("CORRUPT_AUTHORITY_STATE")
         for entry in state.last_sequence:
-            if type(entry) is not tuple or len(entry) != 2 or type(entry[0]) is not tuple or len(entry[0]) != 2 or any(type(value) is not str for value in entry[0]) or type(entry[1]) is not int or entry[1] < 0:
+            if (
+                type(entry) is not tuple
+                or len(entry) != 2
+                or type(entry[0]) is not tuple
+                or len(entry[0]) != 2
+                or any(type(value) is not str for value in entry[0])
+                or type(entry[1]) is not int
+                or entry[1] < 0
+            ):
                 raise ValueError("CORRUPT_AUTHORITY_STATE")
         actual_current = dict(state.current)
         actual_replay = dict(state.replay)
         actual_last = dict(state.last_sequence)
-        if len(actual_current) != len(state.current) or len(actual_replay) != len(state.replay) or len(actual_last) != len(state.last_sequence) or actual_current != expected_current or actual_replay != expected_replay or actual_last != expected_last:
+        if (
+            len(actual_current) != len(state.current)
+            or len(actual_replay) != len(state.replay)
+            or len(actual_last) != len(state.last_sequence)
+            or actual_current != expected_current
+            or actual_replay != expected_replay
+            or actual_last != expected_last
+        ):
             raise ValueError("CORRUPT_AUTHORITY_STATE")

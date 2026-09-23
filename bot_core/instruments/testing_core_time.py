@@ -1,4 +1,5 @@
 """Deterministic Core time dependency available only through the explicit test path."""
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -27,7 +28,9 @@ class TestCoreClock:
         if not isinstance(now_utc, str):
             raise ValueError("canonical UTC timestamp required")
         try:
-            datetime.strptime(now_utc, "%Y-%m-%dT%H:%M:%SZ" if "." not in now_utc else "%Y-%m-%dT%H:%M:%S.%fZ")
+            datetime.strptime(
+                now_utc, "%Y-%m-%dT%H:%M:%SZ" if "." not in now_utc else "%Y-%m-%dT%H:%M:%S.%fZ"
+            )
         except ValueError as exc:
             raise ValueError("canonical UTC timestamp required") from exc
         self._now = now_utc

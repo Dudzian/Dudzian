@@ -1,4 +1,5 @@
 """Executable contract and red-team checks for WCP authority discovery."""
+
 from __future__ import annotations
 
 from copy import deepcopy
@@ -44,7 +45,11 @@ def validate(machine: dict[str, object]) -> None:
     identity = machine["identity_and_fingerprint"]
     fingerprint = contract["content_fingerprint_definition"]
     assert identity["domain_separator"] == fingerprint["domain_separator"]
-    assert identity["input_fields"] == fingerprint["input_fields"] == list(oracle.PROJECTION_FINGERPRINT_FIELDS)
+    assert (
+        identity["input_fields"]
+        == fingerprint["input_fields"]
+        == list(oracle.PROJECTION_FINGERPRINT_FIELDS)
+    )
     assert identity["canonical_json"]["unicode_normalization"].startswith("NONE")
     assert identity["ordering"]["instrument_ids"].startswith("order retained")
     assert machine["production_authority"]["status"] == "NOT_FOUND"
@@ -79,7 +84,9 @@ def validate(machine: dict[str, object]) -> None:
     assert machine["tamper_protection"]["public_sha_authenticity"] is False
     assert machine["self_mint_result"]["result"] == "NO"
     assert machine["self_mint_result"]["current_result_basis"] == "NO_PRODUCTION_AUTHORITY_EXISTS"
-    assert machine["self_mint_result"]["future_kernel_self_mint_resistance"] == "UNPROVEN_UNTIL_DESIGN"
+    assert (
+        machine["self_mint_result"]["future_kernel_self_mint_resistance"] == "UNPROVEN_UNTIL_DESIGN"
+    )
     assert machine["structural_projection_validation"] == "AVAILABLE"
     structural = schema["structural_projection_validation"]
     assert structural == {
@@ -112,9 +119,16 @@ def validate(machine: dict[str, object]) -> None:
     assert machine["history_model"]["current_only_store_authorized"] is False
     assert machine["rollback_protection"]["current_contract_has_no_defined_answer"] is True
     assert machine["rollback_protection"]["authority_implementation_permission"] is False
-    assert machine["rollback_protection"]["mutable_current_only_store_without_freshness_semantics_allowed"] is False
+    assert (
+        machine["rollback_protection"][
+            "mutable_current_only_store_without_freshness_semantics_allowed"
+        ]
+        is False
+    )
     assert machine["semantic_admission_status"] == "NOT_AVAILABLE"
-    assert m06["source_catalog_projection_schemas"]["WorkspaceCatalogProjection"]["canonical_contract"].endswith("#/workspace_catalog_projection_contract")
+    assert m06["source_catalog_projection_schemas"]["WorkspaceCatalogProjection"][
+        "canonical_contract"
+    ].endswith("#/workspace_catalog_projection_contract")
     assert contract["runtime_writer"] == "NOT_IMPLEMENTED"
 
 
@@ -128,18 +142,25 @@ def test_discovery_is_derived_from_current_contracts() -> None:
 
 
 def test_only_structural_oracle_exists_not_production_authority() -> None:
-    production = "\n".join(path.read_text(encoding="utf-8", errors="ignore") for path in (ROOT / "bot_core").rglob("*.py"))
+    production = "\n".join(
+        path.read_text(encoding="utf-8", errors="ignore")
+        for path in (ROOT / "bot_core").rglob("*.py")
+    )
     assert "class WorkspaceCatalogProjectionAuthority" not in production
     assert "class WorkspaceAuthority" not in production
     assert "class InstrumentAuthority" not in production
     assert callable(oracle.validate_workspace_catalog_projection)
-    catalog_authority = (ROOT / "bot_core/instruments/catalog_runtime_acceptance.py").read_text(encoding="utf-8")
+    catalog_authority = (ROOT / "bot_core/instruments/catalog_runtime_acceptance.py").read_text(
+        encoding="utf-8"
+    )
     assert "class CatalogRuntimeAcceptanceAuthority:" in catalog_authority
     assert "def fetch_catalog_once(" in catalog_authority
 
 
 def test_exact_current_or_historical_instrument_resolution_without_fallback() -> None:
-    m06_tests = runpy.run_path(str(ROOT / "tests/architecture/test_m06_workspace_catalog_source_chain.py"))
+    m06_tests = runpy.run_path(
+        str(ROOT / "tests/architecture/test_m06_workspace_catalog_source_chain.py")
+    )
     graph = m06_tests["canonical_graph"]
     validate_global = m06_tests["_global_graph"]
     history = m06_tests["_history"]
@@ -182,9 +203,10 @@ def test_exact_current_version_still_denies_wrong_scope_source_or_snapshot(
     )["canonical_graph"]
     source, projection, current, _, _ = graph()
     current.update(mutation)
-    assert current["metadata_version"] == projection["member_bindings"][0][
-        "instrument_metadata_version"
-    ]
+    assert (
+        current["metadata_version"]
+        == projection["member_bindings"][0]["instrument_metadata_version"]
+    )
     assert not oracle.validate_workspace_catalog_projection(
         projection, source, {current["instrument_id"]: current}
     )
@@ -193,31 +215,44 @@ def test_exact_current_version_still_denies_wrong_scope_source_or_snapshot(
 Mutation = Callable[[dict[str, object]], None]
 
 
-@pytest.mark.parametrize("mutation", [
-    lambda d: d["ascat_dependency"].update(caller_snapshot_id_is_proof=True),
-    lambda d: d["production_authority"].update(raw_mapping_is_authority=True),
-    lambda d: d["workspace_isolation"].update(required_result="ALLOW"),
-    lambda d: d["snapshot_closure"].update(snapshot_A_member_B=True),
-    lambda d: d["member_closure"].update(caller_tuple_is_proof=True),
-    lambda d: d["member_closure"].update(latest_or_current_fallback=True),
-    lambda d: d["member_closure"].update(symbol_only_lookup=True),
-    lambda d: d["production_authority"].update(test_fixture_or_nominal_wrapper_is_authority=True),
-    lambda d: d["tamper_protection"].update(public_sha_authenticity=True),
-    lambda d: d["workspace_dependency"].update(syntactic_workspace_id_is_proof=True),
-    lambda d: d["rollback_protection"].update(sqlite_integrity_sufficient=True),
-    lambda d: d.update(kernel_buildability="BUILDABLE_INDEPENDENTLY_WITH_SEMANTIC_ADMISSION_DISABLED"),
-    lambda d: d.update(authority_kernel_implementation_allowed=True),
-    lambda d: d.update(durable_WCP_authority_kernel_implementation_allowed=True),
-    lambda d: d["rollback_protection"].update(authority_implementation_permission=True),
-    lambda d: d["rollback_protection"].update(mutable_current_only_store_without_freshness_semantics_allowed=True),
-    lambda d: d["history_model"].update(current_only_store_authorized=True),
-    lambda d: d["self_mint_result"].update(future_kernel_self_mint_resistance="PROVEN"),
-    lambda d: d["instrument_dependency"].update(instrument_resolution_mode="HISTORICAL_ONLY"),
-    lambda d: d["member_closure"]["instrument_resolution"].update(current_record_permitted_on_exact_version_match=False),
-    lambda d: d["member_closure"]["instrument_resolution"].update(current_fallback_for_missing_requested_version=True),
-    lambda d: d["member_closure"]["instrument_resolution"].update(latest_version_fallback=True),
-    lambda d: d["member_closure"]["instrument_resolution"].update(exact_version_required=False),
-])
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda d: d["ascat_dependency"].update(caller_snapshot_id_is_proof=True),
+        lambda d: d["production_authority"].update(raw_mapping_is_authority=True),
+        lambda d: d["workspace_isolation"].update(required_result="ALLOW"),
+        lambda d: d["snapshot_closure"].update(snapshot_A_member_B=True),
+        lambda d: d["member_closure"].update(caller_tuple_is_proof=True),
+        lambda d: d["member_closure"].update(latest_or_current_fallback=True),
+        lambda d: d["member_closure"].update(symbol_only_lookup=True),
+        lambda d: d["production_authority"].update(
+            test_fixture_or_nominal_wrapper_is_authority=True
+        ),
+        lambda d: d["tamper_protection"].update(public_sha_authenticity=True),
+        lambda d: d["workspace_dependency"].update(syntactic_workspace_id_is_proof=True),
+        lambda d: d["rollback_protection"].update(sqlite_integrity_sufficient=True),
+        lambda d: d.update(
+            kernel_buildability="BUILDABLE_INDEPENDENTLY_WITH_SEMANTIC_ADMISSION_DISABLED"
+        ),
+        lambda d: d.update(authority_kernel_implementation_allowed=True),
+        lambda d: d.update(durable_WCP_authority_kernel_implementation_allowed=True),
+        lambda d: d["rollback_protection"].update(authority_implementation_permission=True),
+        lambda d: d["rollback_protection"].update(
+            mutable_current_only_store_without_freshness_semantics_allowed=True
+        ),
+        lambda d: d["history_model"].update(current_only_store_authorized=True),
+        lambda d: d["self_mint_result"].update(future_kernel_self_mint_resistance="PROVEN"),
+        lambda d: d["instrument_dependency"].update(instrument_resolution_mode="HISTORICAL_ONLY"),
+        lambda d: d["member_closure"]["instrument_resolution"].update(
+            current_record_permitted_on_exact_version_match=False
+        ),
+        lambda d: d["member_closure"]["instrument_resolution"].update(
+            current_fallback_for_missing_requested_version=True
+        ),
+        lambda d: d["member_closure"]["instrument_resolution"].update(latest_version_fallback=True),
+        lambda d: d["member_closure"]["instrument_resolution"].update(exact_version_required=False),
+    ],
+)
 def test_mandatory_red_team_mutations_fail(mutation: Mutation) -> None:
     candidate = deepcopy(load(MACHINE))
     mutation(candidate)

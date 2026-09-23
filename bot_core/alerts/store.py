@@ -121,17 +121,13 @@ PRODUCTION_SOURCE_RESOLUTION_POLICIES = MappingProxyType(
 )
 
 S9C_PRODUCTION_RESOLUTION_POLICY_ID = "S9D/S9C_EFFECTIVE_CURRENT_OK_EXACT_SCOPE_V1"
-M09_PRODUCTION_RESOLUTION_POLICY_ID = (
-    "M0.9/CURRENT_INACTIVE_EXACT_SCOPE_ENVIRONMENT_GENERATION_V1"
-)
+M09_PRODUCTION_RESOLUTION_POLICY_ID = "M0.9/CURRENT_INACTIVE_EXACT_SCOPE_ENVIRONMENT_GENERATION_V1"
 
 
 def _source_resolution_policy(selector: SourceSelector) -> tuple[bool, str] | None:
     """Resolve fixture and production policies without caller-granted authority."""
     if (
-        selector.alert_type in {
-            "MARKET_DATA_CURRENT_CONDITION", "EXECUTION_ROUTE_CONDITION"
-        }
+        selector.alert_type in {"MARKET_DATA_CURRENT_CONDITION", "EXECUTION_ROUTE_CONDITION"}
         and selector.source_family == "OBSERVATION_CONDITION"
         and selector.fact_type
         == {
@@ -154,8 +150,12 @@ def _source_resolution_policy(selector: SourceSelector) -> tuple[bool, str] | No
         return True, M09_PRODUCTION_RESOLUTION_POLICY_ID
     return CANONICAL_SOURCE_RESOLUTION_POLICIES.get(
         (
-            selector.alert_type, selector.source_family, selector.environment,
-            selector.alert_scope, selector.fact_type, selector.required_source_ids,
+            selector.alert_type,
+            selector.source_family,
+            selector.environment,
+            selector.alert_scope,
+            selector.fact_type,
+            selector.required_source_ids,
         )
     )
 
@@ -465,15 +465,24 @@ class InMemorySourceEvidenceAuthority:
                 if observed > transaction_time or transaction_time - observed > SOURCE_FRESHNESS:
                     raise AlertStoreError("SOURCE_EVIDENCE_STALE")
                 key = (
-                    item.alert_type, item.source_family, item.environment, item.alert_scope,
-                    item.fact_type, item.condition_key, item.source_id,
+                    item.alert_type,
+                    item.source_family,
+                    item.environment,
+                    item.alert_scope,
+                    item.fact_type,
+                    item.condition_key,
+                    item.source_id,
                 )
                 if self._current.get(key) != item.evidence_id:
                     raise AlertStoreError("SOURCE_EVIDENCE_STALE")
             decision = HistoricalSourceDecision(
-                "", reference, tuple(item.evidence_id for item in fact.evidence),
-                transaction_time_utc, fact.result,
-                fact.evidence[0].source_severity, fact.selector.resolution_policy_id,
+                "",
+                reference,
+                tuple(item.evidence_id for item in fact.evidence),
+                transaction_time_utc,
+                fact.result,
+                fact.evidence[0].source_severity,
+                fact.selector.resolution_policy_id,
                 tuple((x.source_id, x.source_generation, x.source_revision) for x in fact.evidence),
             )
             return replace(decision, decision_id=_historical_source_decision_id(decision))
@@ -503,8 +512,13 @@ class InMemorySourceEvidenceAuthority:
             reference = str(canonical_json_sha256({"evidence_ids": canonical_ids}))
             first = canonical[0]
             selector = self._selectors.get(
-                (first.alert_type, first.source_family, first.environment,
-                 first.alert_scope, first.fact_type)
+                (
+                    first.alert_type,
+                    first.source_family,
+                    first.environment,
+                    first.alert_scope,
+                    first.fact_type,
+                )
             )
             transaction_time = _parse(decision.transaction_time_utc)
             if (
@@ -515,13 +529,26 @@ class InMemorySourceEvidenceAuthority:
                 or len(canonical) != len(selector.required_source_ids)
                 or len({item.condition_key for item in canonical}) != 1
                 or any(
-                    (item.alert_type, item.source_family, item.environment,
-                     item.alert_scope, item.fact_type)
-                    != (selector.alert_type, selector.source_family, selector.environment,
-                        selector.alert_scope, selector.fact_type)
+                    (
+                        item.alert_type,
+                        item.source_family,
+                        item.environment,
+                        item.alert_scope,
+                        item.fact_type,
+                    )
+                    != (
+                        selector.alert_type,
+                        selector.source_family,
+                        selector.environment,
+                        selector.alert_scope,
+                        selector.fact_type,
+                    )
                     for item in canonical
                 )
-                or any(_source_fingerprint(item) != item.content_fingerprint_sha256 for item in canonical)
+                or any(
+                    _source_fingerprint(item) != item.content_fingerprint_sha256
+                    for item in canonical
+                )
                 or any(
                     _parse(item.observed_at_utc) > transaction_time
                     or transaction_time - _parse(item.observed_at_utc) > SOURCE_FRESHNESS
@@ -1057,10 +1084,15 @@ def _pin_atomic_state(state: AtomicAlertAuthorityState) -> AtomicAlertAuthorityS
     if any(type(getattr(snapshot_value, name)) is not tuple for name in tuple_fields):
         raise AlertStoreError("CONTRACT_INCONSISTENT")
     for alert in snapshot_value.accepted_revisions:
-        if type(alert.source_fence) is not tuple or type(alert.delivery.escalation_routes) is not tuple:
+        if (
+            type(alert.source_fence) is not tuple
+            or type(alert.delivery.escalation_routes) is not tuple
+        ):
             raise AlertStoreError("CONTRACT_INCONSISTENT")
     for replay in snapshot_value.operator_replays:
-        if type(replay.mutation) is not tuple or any(type(item) is not tuple for item in replay.mutation):
+        if type(replay.mutation) is not tuple or any(
+            type(item) is not tuple for item in replay.mutation
+        ):
             raise AlertStoreError("CONTRACT_INCONSISTENT")
     for decision in state.committed_historical_authorization_decisions.values():
         if (
@@ -1343,8 +1375,7 @@ class AlertStore:
                             and (
                                 before.fact_state != "FAILING"
                                 or before.lifecycle_state == "RESOLVED"
-                                or SEVERITY_RANK[source_severity]
-                                < SEVERITY_RANK[before.severity]
+                                or SEVERITY_RANK[source_severity] < SEVERITY_RANK[before.severity]
                             )
                         )
                     )
@@ -1842,8 +1873,7 @@ class AlertStore:
                 (
                     item
                     for item in self._snapshot.accepted_revisions
-                    if item.alert_id == alert_id
-                    and item.alert_revision == expected_alert_revision
+                    if item.alert_id == alert_id and item.alert_revision == expected_alert_revision
                 ),
                 None,
             )
@@ -1935,7 +1965,11 @@ class AlertStore:
                     alert_id, expected_alert_revision=expected_alert_revision, now_utc=now_utc
                 )
                 raise AlertStoreError("SUPPRESSION_EXPIRED_RETRY")
-            if not recovering and effect_before.suppression.suppressed and not mandatory_despite_suppression:
+            if (
+                not recovering
+                and effect_before.suppression.suppressed
+                and not mandatory_despite_suppression
+            ):
                 raise AlertStoreError("SUPPRESSED_DELIVERY")
             if not destination:
                 raise AlertStoreError("DELIVERY_DESTINATION_UNRESOLVED")
@@ -1963,8 +1997,7 @@ class AlertStore:
                     if route_intent is None:
                         raise AlertStoreError("STALE_DELIVERY_REVISION")
                     if (
-                        route_intent.escalation_revision
-                        != old.delivery.escalation_revision
+                        route_intent.escalation_revision != old.delivery.escalation_revision
                         or route_intent.route not in old.delivery.escalation_routes
                     ):
                         raise AlertStoreError("STALE_ESCALATION_ROUTE_INTENT")
@@ -2065,14 +2098,12 @@ class AlertStore:
             return next(
                 item
                 for item in self._snapshot.accepted_revisions
-                if item.alert_id == prior.alert_id
-                and item.alert_revision == edge.post_revision
+                if item.alert_id == prior.alert_id and item.alert_revision == edge.post_revision
             )
         effect_before = next(
             item
             for item in self._snapshot.accepted_revisions
-            if item.alert_id == intent.alert_id
-            and item.alert_revision == intent.alert_revision
+            if item.alert_id == intent.alert_id and item.alert_revision == intent.alert_revision
         )
         return self.request_delivery(
             intent.alert_id,
@@ -2278,9 +2309,7 @@ class AlertStore:
             source_decision = self._sources.authorize_historical_transition(
                 entry.source_evidence_reference, entry.timestamp_utc
             )
-            self.__publish_source_transaction(
-                before.store_revision, candidate, source_decision
-            )
+            self.__publish_source_transaction(before.store_revision, candidate, source_decision)
         else:
             self._carrier.commit(before.store_revision, candidate)
         self._snapshot = candidate
@@ -2841,8 +2870,7 @@ class AlertStore:
         if entry.mutation_type == "ESCALATION" and (
             before.fact_state != "FAILING"
             or before.lifecycle_state == "RESOLVED"
-            or
-            after.delivery.escalation_level != before.delivery.escalation_level + 1
+            or after.delivery.escalation_level != before.delivery.escalation_level + 1
             or after.delivery.escalation_revision != before.delivery.escalation_revision + 1
             or after.delivery.attempt != before.delivery.attempt
             or after.delivery.delivery_revision != before.delivery.delivery_revision

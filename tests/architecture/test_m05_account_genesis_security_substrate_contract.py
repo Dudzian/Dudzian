@@ -33,9 +33,7 @@ def render(value: dict) -> str:
 def validate(value: dict) -> None:
     assert value["artifact"] == "M05_ACCOUNT_GENESIS_SECURITY_SUBSTRATE_CONTRACT"
     assert value["iteration"] == "CONTRACT / DESIGN FREEZE ONLY"
-    assert value["reviewed_head_supplied"] == (
-        "bb58eb57071226049a92eac14a90e4dbb8eff415"
-    )
+    assert value["reviewed_head_supplied"] == ("bb58eb57071226049a92eac14a90e4dbb8eff415")
     assert value["provenance"]["source"] == "GIT"
     assert value["provenance"]["reviewed_head_available_locally"] is False
 
@@ -63,20 +61,14 @@ def validate(value: dict) -> None:
     assert storage["service_name_isolation"] == "REQUIRED"
     assert storage["index_path_isolation"] == "REQUIRED"
     assert storage["service_name_isolation_alone_sufficient"] is False
-    assert storage["shared_KeyringSecretStorage_index_between_authority_families"] == (
-        "FORBIDDEN"
-    )
+    assert storage["shared_KeyringSecretStorage_index_between_authority_families"] == ("FORBIDDEN")
     assert storage["generic_default_index_path"] == "var/security/secret_index.json"
     assert storage["account_genesis_index_path"] == (
         "var/security/account_genesis_secret_index.json"
     )
     assert "not trust authority" in storage["index_behavior"]["role"]
-    assert storage["index_behavior"]["foreign_service_inventory_mutation"] == (
-        "FORBIDDEN"
-    )
-    assert storage["cross_authority_rotation_attack"]["classification"] == (
-        "UNSAFE / FORBIDDEN"
-    )
+    assert storage["index_behavior"]["foreign_service_inventory_mutation"] == ("FORBIDDEN")
+    assert storage["cross_authority_rotation_attack"]["classification"] == ("UNSAFE / FORBIDDEN")
     assert value["authentication_algorithm"]["selected"] == (
         "HMAC-SHA-256 with opaque AccountGenesis custody"
     )
@@ -106,15 +98,17 @@ def validate(value: dict) -> None:
     assert coverage["authentication_is_freshness"] is False
 
     namespace = value["key_namespace"]
-    assert namespace["production_custody_service_name"] != (
-        namespace["catalog_service_name_forbidden"]
+    assert (
+        namespace["production_custody_service_name"]
+        != (namespace["catalog_service_name_forbidden"])
     )
     assert namespace["catalog_handles_or_raw_keys_reused"] is False
     assert namespace["production_index_scope"] == "ACCOUNT_GENESIS_ONLY"
     assert namespace["shared_index_with_catalog"] == "FORBIDDEN"
-    assert namespace[
-        "foreign_service_inventory_enumeration_mutation_removal_or_rotation"
-    ] == "FORBIDDEN"
+    assert (
+        namespace["foreign_service_inventory_enumeration_mutation_removal_or_rotation"]
+        == "FORBIDDEN"
+    )
     lifecycle = value["key_lifecycle"]
     assert lifecycle["states"] == ["ACTIVE", "VERIFY_ONLY", "REVOKED"]
     assert lifecycle["lifecycle_state_authenticated"] is True
@@ -201,8 +195,10 @@ def test_markdown_is_deterministic_complete_projection() -> None:
     [
         (("key_namespace", "catalog_handles_or_raw_keys_reused"), True),
         (("anchor_models", "catalog_anchor_reused"), True),
-        (("cryptographic_domains", "purposes", "reservation_records"),
-         "CRYPTOHUNTER_M0_5_ACCOUNT_GENESIS_OPERATION_RECORD_V1"),
+        (
+            ("cryptographic_domains", "purposes", "reservation_records"),
+            "CRYPTOHUNTER_M0_5_ACCOUNT_GENESIS_OPERATION_RECORD_V1",
+        ),
         (("production_test_separation", "TEST_key_verifies_PRODUCTION_record"), True),
         (("rollback_threat_boundary", "valid_MAC_with_stale_anchor"), "ACCEPT"),
         (("freshness_lineage", "closure", 1), "COMMITTED -> PREPARED ACCEPT"),
@@ -263,9 +259,7 @@ def test_generic_keyring_index_and_rotation_source_evidence() -> None:
     source = (ROOT / "bot_core/security/keyring_storage.py").read_text(encoding="utf-8")
     assert 'DEFAULT_INDEX_PATH = Path("var/security/secret_index.json")' in source
     rotate_start = source.index("    def rotate_master_key(self) -> None:")
-    next_section = source.index(
-        "    # Obsługa klucza głównego i indeksu", rotate_start
-    )
+    next_section = source.index("    # Obsługa klucza głównego i indeksu", rotate_start)
     rotate_source = source[rotate_start:next_section]
     assert "index = self._load_index()" in rotate_source
     assert 'stored_keys = list(index.get("keys", {}).keys())' in rotate_source

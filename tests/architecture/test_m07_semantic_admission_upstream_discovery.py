@@ -99,14 +99,22 @@ def _validate(machine: Mapping[str, object]) -> None:
         assert all(rows[name]["frozen_parent_gate"] == parent for name in dependencies)
 
     assert set(rows) == {
-        "M0.4 ProductCapabilities", "Workspace prerequisite", "ExchangeAccount",
-        "Instrument", "StrategyInstance", "ExecutionRoute", "RouteReadiness",
-        "ExecutionAdapter provenance", "authority_context_id resolver",
-        "M0.9 ExecutionLease", "M0.7 atomic admission",
+        "M0.4 ProductCapabilities",
+        "Workspace prerequisite",
+        "ExchangeAccount",
+        "Instrument",
+        "StrategyInstance",
+        "ExecutionRoute",
+        "RouteReadiness",
+        "ExecutionAdapter provenance",
+        "authority_context_id resolver",
+        "M0.9 ExecutionLease",
+        "M0.7 atomic admission",
     }
     for dependency in ("Workspace prerequisite", "authority_context_id resolver"):
         item = next(
-            entry for entry in inventory["dependency_resolution_inventory"]
+            entry
+            for entry in inventory["dependency_resolution_inventory"]
             if entry["dependency"] == dependency
         )
         assert item["ordering"] == "UNSPECIFIED"
@@ -180,8 +188,7 @@ def test_repository_provenance_command_is_executable_and_matches_artifact() -> N
 def test_every_reported_contract_pointer_resolves() -> None:
     machine, _ = _load()
     documents = {
-        path.name: json.loads(path.read_text(encoding="utf-8"))
-        for path in DOCS.glob("*.json")
+        path.name: json.loads(path.read_text(encoding="utf-8")) for path in DOCS.glob("*.json")
     }
 
     def visit(value: object) -> None:
@@ -208,6 +215,7 @@ def _remove_row(name: str) -> Mutation:
         inventory["decision_table"] = [
             row for row in inventory["decision_table"] if row["dependency"] != name
         ]
+
     return mutation
 
 
@@ -215,10 +223,12 @@ def _invent_order(name: str) -> Mutation:
     def mutation(machine: dict[str, object]) -> None:
         inventory = machine["non_authoritative_examined_head_inventory"]
         item = next(
-            entry for entry in inventory["dependency_resolution_inventory"]
+            entry
+            for entry in inventory["dependency_resolution_inventory"]
             if entry["dependency"] == name
         )
         item["ordered_by_contract"] = True
+
     return mutation
 
 
@@ -236,7 +246,9 @@ def _invent_order(name: str) -> Mutation:
         lambda d: d.update(next_blocker="WRONG"),
         lambda d: d.update(next_buildable_authority="M0.4 ProductCapabilities"),
         lambda d: d["repository_provenance"].update(publication_disposition="DISCOVERY_AVAILABLE"),
-        lambda d: d["non_authoritative_examined_head_inventory"].update(implementation_permission=True),
+        lambda d: d["non_authoritative_examined_head_inventory"].update(
+            implementation_permission=True
+        ),
         lambda d: d.update(implementation_advancement_permitted=True),
         lambda d: d["non_authoritative_examined_head_inventory"]["decision_table"].pop(),
         lambda d: d["order_kernel_status"].update(semantic_submit_order="AVAILABLE"),

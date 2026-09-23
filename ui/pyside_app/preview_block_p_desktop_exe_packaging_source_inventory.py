@@ -2209,6 +2209,7 @@ PROJECT_DEPENDENCY_SPECS_18_1: Final[list[str]] = [
     "grpcio>=1.62,<2",
     "PyYAML>=6.0",
     "cryptography>=50.0.1,<51",
+    "psycopg[binary]>=3.2,<4",
     "PyNaCl>=1.5.0,<2",
     "pydantic>=2.5",
     "numpy>=1.26",

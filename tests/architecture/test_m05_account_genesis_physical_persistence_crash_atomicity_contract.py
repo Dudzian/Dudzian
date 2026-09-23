@@ -45,9 +45,7 @@ def validate(value: dict) -> None:
     )
     assert value["iteration"] == "DESIGN / RECONCILIATION ONLY"
     provenance = value["provenance"]
-    assert provenance["actual_repository_HEAD_inspected"] == (
-        value["repository_head_examined"]
-    )
+    assert provenance["actual_repository_HEAD_inspected"] == (value["repository_head_examined"])
     assert provenance["classification"] in PROVENANCE_CLASSIFICATIONS
     assert value["reviewed_sha_supplied"] == provenance["reviewed_SHA_supplied"]
     assert value["reviewed_sha_supplied"] == "NOT_SUPPLIED"
@@ -67,7 +65,8 @@ def validate(value: dict) -> None:
     assert frozen["freshness_implementation"] == "NOT_AVAILABLE"
     assert frozen["external_root_proof_issuer"] == "NOT_AVAILABLE"
     assert frozen["required_genuine_closure"][-3:] == [
-        "operation COMMITTED", "reservation CONSUMED_COMMITTED",
+        "operation COMMITTED",
+        "reservation CONSUMED_COMMITTED",
         "authenticated fresh history",
     ]
 
@@ -82,32 +81,23 @@ def validate(value: dict) -> None:
     assert roles["external_anchor_writer"].endswith("NOT_AVAILABLE")
 
     freshness = value["freshness_ownership_boundary"]
-    assert freshness["owner"] == (
-        "Future AccountGenesis freshness / anti-rollback authority"
-    )
+    assert freshness["owner"] == ("Future AccountGenesis freshness / anti-rollback authority")
     assert freshness["owner"] != roles["semantic_authority_owner"]
-    assert freshness["owner_status"] == (
-        "OWNER_CLASS_FROZEN / IMPLEMENTATION_NOT_AVAILABLE"
-    )
+    assert freshness["owner_status"] == ("OWNER_CLASS_FROZEN / IMPLEMENTATION_NOT_AVAILABLE")
     assert freshness["implementation"] == "NOT_AVAILABLE"
     assert freshness["must_be_independent_from_created_account"] == "YES"
     assert freshness["owner_equals_genesis_semantic_decision_owner"] is False
     assert freshness["coordinator_may_propose_successor"] is True
-    assert freshness[
-        "coordinator_may_unilaterally_advance_authoritative_generation"
-    ] is False
+    assert freshness["coordinator_may_unilaterally_advance_authoritative_generation"] is False
     assert freshness["candidate_generation_becomes_authoritative_on_construction"] is False
-    assert freshness[
-        "authoritative_generation_exists_only_after_independent_freshness_acceptance"
-    ] is True
-    assert freshness["valid_local_HMAC_establishes_freshness"] is False
-    assert freshness[
-        "external_anchor_writer_automatically_is_freshness_authority"
-    ] is False
-    assert freshness["successful_external_write_alone_establishes_freshness"] is False
-    assert freshness["custody_writer_itself_is_freshness_authority"].startswith(
-        "NOT_FROZEN"
+    assert (
+        freshness["authoritative_generation_exists_only_after_independent_freshness_acceptance"]
+        is True
     )
+    assert freshness["valid_local_HMAC_establishes_freshness"] is False
+    assert freshness["external_anchor_writer_automatically_is_freshness_authority"] is False
+    assert freshness["successful_external_write_alone_establishes_freshness"] is False
+    assert freshness["custody_writer_itself_is_freshness_authority"].startswith("NOT_FROZEN")
 
     records = {item["record"]: item["authority"] for item in value["authoritative_records"]}
     assert all(records.values())
@@ -125,25 +115,29 @@ def validate(value: dict) -> None:
         "B_APPEND_ONLY_LOCAL_JOURNAL_PLUS_EXTERNAL_ANCHOR_FINALIZATION",
         "C_PREPARE_LOCAL_THEN_ANCHOR_THEN_LOCAL_FINALIZE",
         "D_LOCAL_COMMIT_PLUS_AUTHENTICATED_FINALIZATION_RECEIPT",
-        "E_OTHER_CANONICALLY_SUPPORTED_PROTOCOL", "F_DESIGN_BLOCKED",
+        "E_OTHER_CANONICALLY_SUPPORTED_PROTOCOL",
+        "F_DESIGN_BLOCKED",
     }
     selected = value["selected_or_blocked_protocol"]
     assert selected["selection"] == (
         "INITIAL_BINDING_THEN_PREPARED_THEN_FRESHNESS_CAS_THEN_LOCAL_FINAL_COMMIT"
     )
     assert selected["protocol_result"] == "PHYSICAL_PROTOCOL_CAN_NOW_BE_FROZEN"
-    assert selected["point_of_no_return"] == (
-        "exact authoritative freshness acceptance N -> N+1"
-    )
+    assert selected["point_of_no_return"] == ("exact authoritative freshness acceptance N -> N+1")
     assert selected["logical_authority_atomicity_equals_single_physical_transaction"] is False
     assert selected["no_partial_physical_state_publishable"] is True
 
     phases = {item["phase"]: item for item in value["physical_phases"]}
     assert set(phases) == {
-        "NO_DURABLE_STATE", "INITIAL_BINDING_DURABLE", "LOCAL_PREPARED",
-        "CAS_CONFLICT_CONFIRMED", "REPREPARED",
-        "FRESHNESS_OUTCOME_UNKNOWN", "AUTHORITY_ACCEPTED_LOCAL_FINALIZATION_PENDING",
-        "LOCAL_COMMITTED", "PUBLISHED",
+        "NO_DURABLE_STATE",
+        "INITIAL_BINDING_DURABLE",
+        "LOCAL_PREPARED",
+        "CAS_CONFLICT_CONFIRMED",
+        "REPREPARED",
+        "FRESHNESS_OUTCOME_UNKNOWN",
+        "AUTHORITY_ACCEPTED_LOCAL_FINALIZATION_PENDING",
+        "LOCAL_COMMITTED",
+        "PUBLISHED",
     }
     assert phases["LOCAL_PREPARED"]["publishable"] is False
     assert phases["CAS_CONFLICT_CONFIRMED"]["publishable"] is False
@@ -155,8 +149,13 @@ def validate(value: dict) -> None:
     assert transaction["INITIAL_BINDING_partial_state"].startswith("IMPOSSIBLE")
     assert len(transaction["INITIAL_BINDING_atomic_records"]) == 6
     required_fragments = (
-        "operation", "canonical request", "reservation",
-        "account", "root-proof", "genesis", "semantic heads",
+        "operation",
+        "canonical request",
+        "reservation",
+        "account",
+        "root-proof",
+        "genesis",
+        "semantic heads",
         "finalization",
     )
     all_atomic_records = sum(
@@ -168,8 +167,7 @@ def validate(value: dict) -> None:
         [],
     )
     assert all(
-        any(fragment in record for record in all_atomic_records)
-        for fragment in required_fragments
+        any(fragment in record for record in all_atomic_records) for fragment in required_fragments
     )
     assert transaction["operation_COMMITTED_with_reservation_RESERVED"] == (
         "FAIL_CLOSED / DO_NOT_PUBLISH"
@@ -207,13 +205,16 @@ def validate(value: dict) -> None:
 
     matrix = {row["crash_point"]: row for row in value["crash_matrix"]}
     expected_points = {
-        "before INITIAL_BINDING commit", "after INITIAL_BINDING commit",
-        "before PREPARED commit", "after PREPARED before CAS",
+        "before INITIAL_BINDING commit",
+        "after INITIAL_BINDING commit",
+        "before PREPARED commit",
+        "after PREPARED before CAS",
         "CAS timeout or transport ambiguity",
         "authority exact N+1 while local PREPARED",
         "authority different N+1 while local PREPARED",
         "after CAS conflict before durable conflict classification",
-        "after durable CAS_CONFLICT_CONFIRMED", "during atomic REPREPARE",
+        "after durable CAS_CONFLICT_CONFIRMED",
+        "during atomic REPREPARE",
         "after new REPREPARED before new CAS",
         "authority changes again before loser next CAS",
         "stale process attempts old candidate after supersession",
@@ -221,15 +222,23 @@ def validate(value: dict) -> None:
         "authoritative reread unavailable during conflict resolution",
         "current authority N+2 or later during old-candidate recovery",
         "old candidate won but response was lost and authority later advanced",
-        "after authority acceptance before local COMMIT", "during local final COMMIT",
-        "after local COMMIT before publication", "same generation unequal digest",
+        "after authority acceptance before local COMMIT",
+        "during local final COMMIT",
+        "after local COMMIT before publication",
+        "same generation unequal digest",
         "authority unavailable or evidence unverifiable",
-        "after publication before projection update", "after projection update",
+        "after publication before projection update",
+        "after projection update",
     }
     assert set(matrix) == expected_points
     required_columns = {
-        "crash_point", "durable_facts_present", "external_anchor_state", "restart_action",
-        "publishable", "may_retry", "may_allocate_new_account",
+        "crash_point",
+        "durable_facts_present",
+        "external_anchor_state",
+        "restart_action",
+        "publishable",
+        "may_retry",
+        "may_allocate_new_account",
         "manual_or_external_recovery_required",
     }
     assert all(set(row) == required_columns for row in matrix.values())
@@ -241,8 +250,7 @@ def validate(value: dict) -> None:
     conflict = value["CAS_conflict_loser_resolution"]
     policy = "REPREPARE_SAME_LOGICAL_OPERATION_ATOMIC_SUPERSESSION"
     transition = (
-        "LOCAL_PREPARED(old candidate) -> CAS_CONFLICT_CONFIRMED -> "
-        "REPREPARED(new candidate)"
+        "LOCAL_PREPARED(old candidate) -> CAS_CONFLICT_CONFIRMED -> REPREPARED(new candidate)"
     )
     assert conflict["selected_model"] == "A_REPREPARE_REBASE_SAME_LOGICAL_OPERATION"
     assert conflict["normative_policy"] == policy
@@ -281,18 +289,14 @@ def validate(value: dict) -> None:
 
     non_acceptance = value["authoritative_non_acceptance_proof"]
     assert non_acceptance["required"] is True
-    assert non_acceptance["entry_gate"] == (
-        "AUTHORITATIVE_DIFFERENT_UNIQUE_SUCCESSOR_PROVEN"
-    )
+    assert non_acceptance["entry_gate"] == ("AUTHORITATIVE_DIFFERENT_UNIQUE_SUCCESSOR_PROVEN")
     assert non_acceptance["negative_lookup_is_proof"] is False
     assert non_acceptance["receipt_not_found_is_proof"] is False
     assert non_acceptance["missing_historical_lookup_is_proof"] is False
     assert non_acceptance["timeout_is_proof"] is False
     assert non_acceptance["unavailable_history_is_proof"] is False
     assert non_acceptance["unverifiable_history_is_proof"] is False
-    assert non_acceptance[
-        "current_generation_greater_than_old_predecessor_is_proof"
-    ] is False
+    assert non_acceptance["current_generation_greater_than_old_predecessor_is_proof"] is False
     direct = non_acceptance["direct_different_successor"]
     assert direct["allowed"] is True
     assert direct["accepted_generation_is_exact_N_plus_1"] is True
@@ -317,14 +321,10 @@ def validate(value: dict) -> None:
     assert non_acceptance["incomplete_history"].startswith("FAIL_CLOSED")
     assert non_acceptance["unavailable_history"].startswith("FAIL_CLOSED")
     assert non_acceptance["unverifiable_history"].startswith("FAIL_CLOSED")
-    assert non_acceptance["same_generation_unequal_document"] == (
-        "FAIL_CLOSED / FORK_OR_TAMPER"
-    )
+    assert non_acceptance["same_generation_unequal_document"] == ("FAIL_CLOSED / FORK_OR_TAMPER")
     positive = non_acceptance["positive_old_acceptance"]
     assert positive["exact_receipt_for_old_candidate"].startswith("FINALIZE_OLD")
-    assert positive["exact_authenticated_historical_acceptance"].startswith(
-        "FINALIZE_OLD"
-    )
+    assert positive["exact_authenticated_historical_acceptance"].startswith("FINALIZE_OLD")
     assert positive["positive_old_acceptance_evidence_forbids_reprepare"] is True
 
     recovery = value["restart_recovery"]
@@ -392,21 +392,29 @@ def validate(value: dict) -> None:
 
     assert set(value["mandatory_redteam"]) == {
         "local_committed_published_before_external_confirmation",
-        "operation_committed_reservation_reserved", "anchor_ahead_auto_creates_history",
+        "operation_committed_reservation_reserved",
+        "anchor_ahead_auto_creates_history",
         "local_ahead_auto_accepted_without_direction_proof",
-        "same_generation_unequal_heads_accepted", "two_writers_finalize_same_generation",
-        "last_write_wins_anchor_conflict", "partial_multi_lineage_anchor_accepted",
-        "proof_provenance_lost_but_publishable", "aborted_rewritten_by_release",
-        "test_accepted_as_production", "m011_projection_as_authority_after_loss",
+        "same_generation_unequal_heads_accepted",
+        "two_writers_finalize_same_generation",
+        "last_write_wins_anchor_conflict",
+        "partial_multi_lineage_anchor_accepted",
+        "proof_provenance_lost_but_publishable",
+        "aborted_rewritten_by_release",
+        "test_accepted_as_production",
+        "m011_projection_as_authority_after_loss",
         "catalog_anchor_reused",
-        "partial_initial_binding_accepted", "prepared_published",
-        "point_of_no_return_at_request_send", "abort_after_authority_acceptance",
+        "partial_initial_binding_accepted",
+        "prepared_published",
+        "point_of_no_return_at_request_send",
+        "abort_after_authority_acceptance",
         "release_enables_accepted_account_reuse",
         "process_local_mutex_as_cross_process_authority",
         "cas_loser_silently_rewrites_old_prepared_predecessor",
         "cas_loser_keeps_old_digest_after_predecessor_change",
         "cas_loser_treats_new_candidate_as_already_accepted_exact_old",
-        "cas_loser_remints_account_id", "cas_loser_creates_new_reservation",
+        "cas_loser_remints_account_id",
+        "cas_loser_creates_new_reservation",
         "cas_loser_starts_new_logical_operation_as_retry",
         "stale_old_candidate_remains_sendable_after_supersession",
         "partial_reprepare_produces_mixed_old_new_candidate",
@@ -441,8 +449,10 @@ def validate(value: dict) -> None:
     assert value["implementation_allowed"]["FreshnessAuthority"] is False
     assert value["implementation_allowed"]["CryptoHunterAccountAuthority"] is False
     assert value["preserved_status"] == {
-        "WorkspaceAuthority": "NOT_AVAILABLE", "FullFillAuthority": "NOT_AVAILABLE",
-        "M0.8": "BLOCKED", "production M0.5": "NOT_AVAILABLE",
+        "WorkspaceAuthority": "NOT_AVAILABLE",
+        "FullFillAuthority": "NOT_AVAILABLE",
+        "M0.8": "BLOCKED",
+        "production M0.5": "NOT_AVAILABLE",
         "freshness implementation": "NOT_AVAILABLE",
         "external root-proof issuer": "NOT_AVAILABLE",
         "physical persistence protocol": "FROZEN ABSTRACT DESIGN",
@@ -468,18 +478,14 @@ def test_markdown_is_deterministic_complete_projection() -> None:
         ("formal_project_advancement", "ACCEPTED"),
     ],
 )
-def test_no_reviewed_sha_provenance_mutations_fail(
-    field: str, unsafe_value: object
-) -> None:
+def test_no_reviewed_sha_provenance_mutations_fail(field: str, unsafe_value: object) -> None:
     mutated = deepcopy(load())
     mutated["provenance"][field] = unsafe_value
     with pytest.raises(AssertionError):
         validate(mutated)
 
 
-@pytest.mark.parametrize(
-    "mutation", sorted(load()["freshness_ownership_redteam"])
-)
+@pytest.mark.parametrize("mutation", sorted(load()["freshness_ownership_redteam"]))
 def test_freshness_ownership_mutations_fail(mutation: str) -> None:
     mutated = deepcopy(load())
     specification = mutated["freshness_ownership_redteam"][mutation]
@@ -511,36 +517,37 @@ def test_cross_artifact_parity_uses_actual_frozen_values() -> None:
     reservation = load("m05_cryptohunter_account_genesis_reservation_state_model.json")
     proof = load("m05_account_genesis_root_proof_admission_binding_contract.json")
 
-    assert contract["cross_artifact_parity"]["coordinator"] == (
-        topology["logical_commit_closure"]["coordinator"]
+    assert (
+        contract["cross_artifact_parity"]["coordinator"]
+        == (topology["logical_commit_closure"]["coordinator"])
     )
     topology_freshness_owner = next(
         role for role in topology["role_matrix"] if role["role"] == "freshness owner"
     )
     freshness = contract["freshness_ownership_boundary"]
     assert topology_freshness_owner["candidate_owner"] == freshness["owner"]
-    assert topology_freshness_owner[
-        "must_be_independent_from_created_account"
-    ] == "YES"
-    assert freshness["owner"] != contract["authority_vs_storage_roles"][
-        "semantic_authority_owner"
-    ]
-    assert topology["separation_invariants"][
-        "freshness_owner_is_genesis_semantic_decision_owner"
-    ] == freshness["owner_equals_genesis_semantic_decision_owner"]
-    assert contract["projection_boundary"]["M0.11_SQLiteStateStore_CryptoHunterAccount"] == (
-        topology["ownership_resolution"]["M0.11_SQLiteStateStore_role"]
+    assert topology_freshness_owner["must_be_independent_from_created_account"] == "YES"
+    assert freshness["owner"] != contract["authority_vs_storage_roles"]["semantic_authority_owner"]
+    assert (
+        topology["separation_invariants"]["freshness_owner_is_genesis_semantic_decision_owner"]
+        == freshness["owner_equals_genesis_semantic_decision_owner"]
     )
-    assert contract["restart_recovery"]["same_generation_unequal_heads"] in (
-        substrate["anchor_mismatch_semantics"]["equal_generation_unequal_heads"]
+    assert (
+        contract["projection_boundary"]["M0.11_SQLiteStateStore_CryptoHunterAccount"]
+        == (topology["ownership_resolution"]["M0.11_SQLiteStateStore_role"])
+    )
+    assert (
+        contract["restart_recovery"]["same_generation_unequal_heads"]
+        in (substrate["anchor_mismatch_semantics"]["equal_generation_unequal_heads"])
     )
     assert substrate["anchor_atomicity"]["local_and_external_atomic"] is False
-    assert substrate["freshness_lineage"]["model"] == (
-        contract["external_anchor_contract"]["model"]
+    assert (
+        substrate["freshness_lineage"]["model"] == (contract["external_anchor_contract"]["model"])
     )
     assert binding["state_machine_binding"]["PREPARED_request_mutation"] == "FORBIDDEN"
-    assert contract["cross_artifact_parity"]["reservation_state_required"] in (
-        reservation["genesis_commit_binding"]["genuine_at"]
+    assert (
+        contract["cross_artifact_parity"]["reservation_state_required"]
+        in (reservation["genesis_commit_binding"]["genuine_at"])
     )
     assert proof["historical_provenance"]["current_availability"] == (
         "SEMANTICS_FROZEN / IMPLEMENTATION_NOT_AVAILABLE"

@@ -30,44 +30,84 @@ _SAFE = re.compile(r"[a-z_][a-z0-9_]{0,62}\Z")
 _HEX = re.compile(r"[0-9a-f]{64}\Z")
 _REVIEWED_PHYSICAL_FINGERPRINT = "1a069795061d597de126bd446f725a0cf339d8428f33f2dcefcb0b9d09431c2a"
 PRODUCTION_LOCAL_REVIEWED_IDENTIFIERS = (
-    "freshness_authority", "freshness_schema_owner", "freshness_function_owner",
-    "freshness_admin", "freshness_crypto_verifier", "freshness_runtime",
+    "freshness_authority",
+    "freshness_schema_owner",
+    "freshness_function_owner",
+    "freshness_admin",
+    "freshness_crypto_verifier",
+    "freshness_runtime",
     "freshness_reader",
 )
 DOCUMENT_DOMAIN = b"cryptohunter.account-genesis.freshness-document-digest.v1\x00"
-RECEIPT_DOMAIN = b"cryptohunter.account-genesis.freshness-finalization-receipt-authentication.v1\x00"
+RECEIPT_DOMAIN = (
+    b"cryptohunter.account-genesis.freshness-finalization-receipt-authentication.v1\x00"
+)
 COMPLETE_HEAD_DOMAIN = b"cryptohunter.account-genesis.complete-semantic-head-set-digest.v1\x00"
-PREPARATION_FIELDS = frozenset({
-    "schema_version", "security_profile", "environment", "trust_domain",
-    "authority_id", "operation_type", "expected_predecessor_generation",
-    "expected_predecessor_document_digest",
-    "expected_predecessor_complete_semantic_head_digest",
-    "proposed_document_digest", "original_decision_identity",
-    "proposer_identity", "proposer_credential_role_identity",
-    "proposer_key_version",
-    "proposer_lifecycle_generation_observed_for_key_binding_only",
-    "proposer_public_key_material_identity", "proposer_authentication_digest",
-    "finalization_credential_role_identity", "finalization_key_version",
-    "finalization_lifecycle_generation_observed_for_key_binding_only",
-    "finalization_public_key_material_identity",
-    "authoritative_document_authentication_digest", "receipt_id",
-    "receipt_canonical_digest", "finalization_request_id", "preparation_id",
-    "verifier_authority_identity", "verifier_authority_version",
-})
-RECEIPT_FIELDS = frozenset({
-    "schema_version", "environment", "trust_domain", "authority_id",
-    "exact_predecessor_generation", "exact_predecessor_document_digest",
-    "accepted_generation", "accepted_document_digest",
-    "complete_semantic_head_digest", "finalization_request_id", "receipt_id",
-    "freshness_authority_key_id", "freshness_authority_key_version",
-    "authentication_tag_or_signature",
-})
-DOCUMENT_PAYLOAD_FIELDS = frozenset({
-    "schema_version", "environment", "trust_domain", "authority_id",
-    "generation", "predecessor_generation", "predecessor_document_digest",
-    "complete_semantic_head_set", "freshness_authority_key_id",
-    "freshness_authority_key_version", "finalization_request_id",
-})
+PREPARATION_FIELDS = frozenset(
+    {
+        "schema_version",
+        "security_profile",
+        "environment",
+        "trust_domain",
+        "authority_id",
+        "operation_type",
+        "expected_predecessor_generation",
+        "expected_predecessor_document_digest",
+        "expected_predecessor_complete_semantic_head_digest",
+        "proposed_document_digest",
+        "original_decision_identity",
+        "proposer_identity",
+        "proposer_credential_role_identity",
+        "proposer_key_version",
+        "proposer_lifecycle_generation_observed_for_key_binding_only",
+        "proposer_public_key_material_identity",
+        "proposer_authentication_digest",
+        "finalization_credential_role_identity",
+        "finalization_key_version",
+        "finalization_lifecycle_generation_observed_for_key_binding_only",
+        "finalization_public_key_material_identity",
+        "authoritative_document_authentication_digest",
+        "receipt_id",
+        "receipt_canonical_digest",
+        "finalization_request_id",
+        "preparation_id",
+        "verifier_authority_identity",
+        "verifier_authority_version",
+    }
+)
+RECEIPT_FIELDS = frozenset(
+    {
+        "schema_version",
+        "environment",
+        "trust_domain",
+        "authority_id",
+        "exact_predecessor_generation",
+        "exact_predecessor_document_digest",
+        "accepted_generation",
+        "accepted_document_digest",
+        "complete_semantic_head_digest",
+        "finalization_request_id",
+        "receipt_id",
+        "freshness_authority_key_id",
+        "freshness_authority_key_version",
+        "authentication_tag_or_signature",
+    }
+)
+DOCUMENT_PAYLOAD_FIELDS = frozenset(
+    {
+        "schema_version",
+        "environment",
+        "trust_domain",
+        "authority_id",
+        "generation",
+        "predecessor_generation",
+        "predecessor_document_digest",
+        "complete_semantic_head_set",
+        "freshness_authority_key_id",
+        "freshness_authority_key_version",
+        "finalization_request_id",
+    }
+)
 DOCUMENT_FIELDS = frozenset({"payload", "document_digest", "authentication_tag_or_signature"})
 
 
@@ -90,6 +130,7 @@ class PostgreSQLConnectionConfig:
 @dataclass(frozen=True, slots=True)
 class PostgreSQLFreshnessAuthorityProvisioning:
     """Exact reviewed PRODUCTION_LOCAL names; custom namespaces are unsupported."""
+
     schema: str = "freshness_authority"
     schema_owner_role: str = "freshness_schema_owner"
     function_owner_role: str = "freshness_function_owner"
@@ -99,9 +140,15 @@ class PostgreSQLFreshnessAuthorityProvisioning:
     reader_role: str = "freshness_reader"
 
     def __post_init__(self) -> None:
-        names = (self.schema, self.schema_owner_role, self.function_owner_role,
-                 self.admin_role, self.verifier_role, self.runtime_role,
-                 self.reader_role)
+        names = (
+            self.schema,
+            self.schema_owner_role,
+            self.function_owner_role,
+            self.admin_role,
+            self.verifier_role,
+            self.runtime_role,
+            self.reader_role,
+        )
         if any(type(x) is not str or _SAFE.fullmatch(x) is None for x in names):
             raise ValueError("all names must be safe lowercase PostgreSQL identifiers")
         if len(set(names[1:])) != 6:
@@ -112,6 +159,7 @@ class PostgreSQLFreshnessAuthorityProvisioning:
 
 def canonical_json_bytes(value: object) -> bytes:
     """Restricted RFC 8785 JCS (the frozen schema forbids floating point)."""
+
     def check(v: object) -> None:
         if v is None or type(v) in (str, bool):
             if type(v) is str:
@@ -122,15 +170,20 @@ def canonical_json_bytes(value: object) -> bytes:
                 raise ValueError("integer outside JSON safe integer range")
             return
         if type(v) is list:
-            for x in v: check(x)
+            for x in v:
+                check(x)
             return
         if type(v) is dict:
             if any(type(k) is not str for k in v):
                 raise ValueError("JSON object keys must be strings")
-            for k, x in v.items(): k.encode("utf-8", "strict"); check(x)
+            for k, x in v.items():
+                k.encode("utf-8", "strict")
+                check(x)
             return
         raise ValueError("floats and non-JSON values are forbidden")
+
     check(value)
+
     def jcs_order(item: tuple[str, object]) -> bytes:
         return item[0].encode("utf-16-be")
 
@@ -141,8 +194,9 @@ def canonical_json_bytes(value: object) -> bytes:
             return [ordered(item) for item in v]
         return v
 
-    return json.dumps(ordered(value), ensure_ascii=False, sort_keys=False,
-                      separators=(",", ":"), allow_nan=False).encode("utf-8")
+    return json.dumps(
+        ordered(value), ensure_ascii=False, sort_keys=False, separators=(",", ":"), allow_nan=False
+    ).encode("utf-8")
 
 
 def parse_canonical_json(raw: bytes | str) -> object:
@@ -151,6 +205,7 @@ def parse_canonical_json(raw: bytes | str) -> object:
         raise TypeError("canonical JSON input must be exact bytes or str")
     if type(raw) is bytes:
         raw = raw.decode("utf-8", "strict")
+
     def pairs(items: list[tuple[str, object]]) -> dict[str, object]:
         out: dict[str, object] = {}
         for key, value in items:
@@ -158,9 +213,13 @@ def parse_canonical_json(raw: bytes | str) -> object:
                 raise ValueError("duplicate JSON object key")
             out[key] = value
         return out
-    value = json.loads(raw, object_pairs_hook=pairs,
-                       parse_float=lambda _: (_ for _ in ()).throw(ValueError("floats forbidden")),
-                       parse_constant=lambda _: (_ for _ in ()).throw(ValueError("non-finite forbidden")))
+
+    value = json.loads(
+        raw,
+        object_pairs_hook=pairs,
+        parse_float=lambda _: (_ for _ in ()).throw(ValueError("floats forbidden")),
+        parse_constant=lambda _: (_ for _ in ()).throw(ValueError("non-finite forbidden")),
+    )
     canonical = canonical_json_bytes(value)
     if raw.encode("utf-8") != canonical:
         raise ValueError("input is not the exact canonical JCS representation")
@@ -179,8 +238,9 @@ def normalize_complete_semantic_head_set(value: object) -> list[object]:
     """Normalize the sole frozen set-like field by canonical UTF-8 bytes."""
     if type(value) is not list:
         raise TypeError("complete_semantic_head_set must be an exact list")
-    decorated = sorted(((canonical_json_bytes(item), item) for item in value),
-                       key=lambda pair: pair[0])
+    decorated = sorted(
+        ((canonical_json_bytes(item), item) for item in value), key=lambda pair: pair[0]
+    )
     if any(left[0] == right[0] for left, right in zip(decorated, decorated[1:])):
         raise ValueError("duplicate complete semantic head")
     return [item for _, item in decorated]
@@ -202,7 +262,8 @@ def _valid_signature(value: object) -> bool:
 
 def _physical_fingerprint(conn: psycopg.Connection[Any], schema: str) -> str:
     """Fingerprint every reviewed physical column, constraint and index fact."""
-    facts = conn.execute("""
+    facts = conn.execute(
+        """
       SELECT 'column',c.relname,a.attnum::text,a.attname,
              pg_catalog.format_type(a.atttypid,a.atttypmod),a.attnotnull::text,
              a.attidentity::text,a.attgenerated::text,
@@ -229,9 +290,12 @@ def _physical_fingerprint(conn: psycopg.Connection[Any], schema: str) -> str:
       FROM pg_catalog.pg_sequence s JOIN pg_catalog.pg_class c ON c.oid=s.seqrelid
       JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=%s
       ORDER BY 1,2,3,4,5
-    """, (schema, schema, schema, schema)).fetchall()
-    return hashlib.sha256(json.dumps(facts, separators=(",", ":"),
-                                     ensure_ascii=True).encode()).hexdigest()
+    """,
+        (schema, schema, schema, schema),
+    ).fetchall()
+    return hashlib.sha256(
+        json.dumps(facts, separators=(",", ":"), ensure_ascii=True).encode()
+    ).hexdigest()
 
 
 def _sources(schema: str) -> dict[str, str]:
@@ -241,6 +305,7 @@ def _sources(schema: str) -> dict[str, str]:
     receipt_keys = ",".join("'" + x + "'" for x in sorted(RECEIPT_FIELDS))
     payload_keys = ",".join("'" + x + "'" for x in sorted(DOCUMENT_PAYLOAD_FIELDS))
     document_keys = ",".join("'" + x + "'" for x in sorted(DOCUMENT_FIELDS))
+
     def string_matrix(var: str, fields: set[str]) -> str:
         return " OR ".join(
             f"pg_catalog.jsonb_typeof({var}->'{field}') IS DISTINCT FROM 'string'"
@@ -266,27 +331,36 @@ def _sources(schema: str) -> dict[str, str]:
     }
     prep_strings = set(PREPARATION_FIELDS) - set(prep_integers)
     payload_integers = {
-        "schema_version": 1, "generation": 1, "predecessor_generation": 0,
+        "schema_version": 1,
+        "generation": 1,
+        "predecessor_generation": 0,
         "freshness_authority_key_version": 1,
     }
-    payload_strings = set(DOCUMENT_PAYLOAD_FIELDS) - set(payload_integers) - {"complete_semantic_head_set"}
+    payload_strings = (
+        set(DOCUMENT_PAYLOAD_FIELDS) - set(payload_integers) - {"complete_semantic_head_set"}
+    )
     receipt_integers = {
-        "schema_version": 1, "exact_predecessor_generation": 0,
-        "accepted_generation": 1, "freshness_authority_key_version": 1,
+        "schema_version": 1,
+        "exact_predecessor_generation": 0,
+        "accepted_generation": 1,
+        "freshness_authority_key_version": 1,
     }
     receipt_strings = set(RECEIPT_FIELDS) - set(receipt_integers)
     digest_fields = {
         "expected_predecessor_document_digest",
         "expected_predecessor_complete_semantic_head_digest",
-        "proposed_document_digest", "proposer_public_key_material_identity",
-        "proposer_authentication_digest", "finalization_public_key_material_identity",
-        "authoritative_document_authentication_digest", "receipt_canonical_digest",
+        "proposed_document_digest",
+        "proposer_public_key_material_identity",
+        "proposer_authentication_digest",
+        "finalization_public_key_material_identity",
+        "authoritative_document_authentication_digest",
+        "receipt_canonical_digest",
     }
     prep_digest_check = " OR ".join(
         f"p->>'{field}' !~ '^[0-9a-f]{{64}}$'" for field in sorted(digest_fields)
     )
     return {
-      "jcs_sort_key(text)": r"""
+        "jcs_sort_key(text)": r"""
 DECLARE i integer; cp integer; shifted integer; result text:='';
 BEGIN
  FOR i IN 1..pg_catalog.char_length($1) LOOP
@@ -296,7 +370,7 @@ BEGIN
  END LOOP;
  RETURN result;
 END""",
-      "canonical_jsonb(jsonb)": r"""
+        "canonical_jsonb(jsonb)": r"""
 DECLARE k text; item jsonb; result text; kind text := pg_catalog.jsonb_typeof($1);
 BEGIN
  IF kind='object' THEN
@@ -318,7 +392,7 @@ BEGIN
  END IF;
  RAISE EXCEPTION 'invalid JSON value' USING ERRCODE='22023';
 END""",
-      "canonical_complete_head_set(jsonb)": r"""
+        "canonical_complete_head_set(jsonb)": r"""
 DECLARE item jsonb; previous bytea; current bytea; result text:='[';
 BEGIN
  IF pg_catalog.jsonb_typeof($1)<>'array' THEN RAISE EXCEPTION 'complete semantic head set must be array' USING ERRCODE='22023'; END IF;
@@ -329,14 +403,14 @@ BEGIN
  END LOOP;
  RETURN pg_catalog.convert_to(result||']','UTF8');
 END""",
-      "provision_authority(text,text,text,text,text)": f"""
+        "provision_authority(text,text,text,text,text)": f"""
 BEGIN
  {guard % "'freshness_admin'"}
  IF $1<>'PRODUCTION' OR $2='' OR $3='' OR $4!~'^[0-9a-f]{{64}}$' OR $5!~'^[0-9a-f]{{64}}$' THEN RAISE EXCEPTION 'invalid authority scope' USING ERRCODE='22023'; END IF;
  INSERT INTO {q}.authority_lineages(environment,trust_domain,authority_id,current_generation,current_document_digest,current_complete_head_digest) VALUES($1,$2,$3,0,$4,$5);
  INSERT INTO {q}.authority_generation_heads(environment,trust_domain,authority_id,generation,document_digest,complete_head_digest) VALUES($1,$2,$3,0,$4,$5);
 END""",
-      "provision_credential(jsonb)": f"""
+        "provision_credential(jsonb)": f"""
 DECLARE p jsonb:=$1; material bytea; material_id text; bound_role text;
 BEGIN
  {guard % "'freshness_admin'"}
@@ -351,7 +425,7 @@ BEGIN
  INSERT INTO {q}.credentials(environment,trust_domain,authority_id,credential_id,semantic_identity,semantic_role,key_id,key_version,public_key,public_key_material_identity,lifecycle_generation,lifecycle_state) VALUES(p->>'environment',p->>'trust_domain',p->>'authority_id',p->>'credential_id',p->>'semantic_identity',p->>'semantic_role',p->>'key_id',(p->>'key_version')::bigint,material,material_id,1,'ACTIVE');
  INSERT INTO {q}.key_lifecycle_history(environment,trust_domain,authority_id,credential_id,lifecycle_generation,state,record) VALUES(p->>'environment',p->>'trust_domain',p->>'authority_id',p->>'credential_id',1,'ACTIVE',p);
 END""",
-      "transition_credential(text,text,text,text,bigint,text,jsonb)": f"""
+        "transition_credential(text,text,text,text,bigint,text,jsonb)": f"""
 DECLARE c {q}.credentials%ROWTYPE; latest bigint;
 BEGIN
  {guard % "'freshness_admin'"}
@@ -361,7 +435,7 @@ BEGIN
  IF NOT ((c.lifecycle_state='ACTIVE' AND $6 IN ('VERIFY_ONLY','REVOKED')) OR (c.lifecycle_state='VERIFY_ONLY' AND $6='REVOKED')) THEN RAISE EXCEPTION 'forbidden lifecycle transition' USING ERRCODE='22023'; END IF;
  INSERT INTO {q}.key_lifecycle_history VALUES($1,$2,$3,$4,$5+1,$6,$7); UPDATE {q}.credentials SET lifecycle_generation=$5+1,lifecycle_state=$6 WHERE environment=$1 AND trust_domain=$2 AND authority_id=$3 AND credential_id=$4;
 END""",
-      "resolve_verification_credential(text,text,text,text,text,bigint)": f"""
+        "resolve_verification_credential(text,text,text,text,text,bigint)": f"""
 BEGIN
  {guard % "'freshness_crypto_verifier'"}
  IF $1<>'PRODUCTION' OR $2='' OR $3='' OR $4 NOT IN ('{PROPOSER_ROLE}','{FINALIZATION_ROLE}') OR $5='' OR $6<1 THEN RAISE EXCEPTION 'invalid credential selector' USING ERRCODE='22023'; END IF;
@@ -370,7 +444,7 @@ BEGIN
  AND c.semantic_role=$4 AND c.key_id=$5 AND c.key_version=$6;
  IF NOT FOUND THEN RAISE EXCEPTION 'unknown retained credential' USING ERRCODE='28000'; END IF;
 END""",
-      "resolve_predecessor_head(text,text,text,bigint,text)": f"""
+        "resolve_predecessor_head(text,text,text,bigint,text)": f"""
 DECLARE result text;
 BEGIN
  {guard % "'freshness_crypto_verifier'"}
@@ -381,7 +455,7 @@ BEGIN
  IF NOT FOUND THEN RAISE EXCEPTION 'unknown exact predecessor' USING ERRCODE='28000'; END IF;
  RETURN result;
 END""",
-      "prepare_verified_freshness_candidate(bytea,bytea,bytea)": f"""
+        "prepare_verified_freshness_candidate(bytea,bytea,bytea)": f"""
 DECLARE p jsonb; d jsonb; r jsonb; pc {q}.credentials%ROWTYPE; fc {q}.credentials%ROWTYPE; existing {q}.prepared_verifications%ROWTYPE; payload jsonb; doc_digest text; head_digest text; receipt_digest text; sig bytea; doc_sig bytea; canonical_sig text; canonical_doc_sig text; selector_credential text;
 BEGIN
  {guard % "'freshness_crypto_verifier'"}
@@ -391,10 +465,10 @@ BEGIN
  IF pg_catalog.jsonb_typeof(d)<>'object' OR (SELECT count(*) FROM pg_catalog.jsonb_object_keys(d))<>{len(DOCUMENT_FIELDS)} OR NOT d ?& ARRAY[{document_keys}] OR pg_catalog.jsonb_typeof(d->'payload')<>'object' THEN RAISE EXCEPTION 'document schema' USING ERRCODE='22023'; END IF;
  payload:=d->'payload'; IF (SELECT count(*) FROM pg_catalog.jsonb_object_keys(payload))<>{len(DOCUMENT_PAYLOAD_FIELDS)} OR NOT payload ?& ARRAY[{payload_keys}] THEN RAISE EXCEPTION 'document payload schema' USING ERRCODE='22023'; END IF;
  IF pg_catalog.jsonb_typeof(r)<>'object' OR (SELECT count(*) FROM pg_catalog.jsonb_object_keys(r))<>{len(RECEIPT_FIELDS)} OR NOT r ?& ARRAY[{receipt_keys}] THEN RAISE EXCEPTION 'receipt schema' USING ERRCODE='22023'; END IF;
- IF {integer_matrix('p', prep_integers)} OR {string_matrix('p', prep_strings)} OR {prep_digest_check} THEN RAISE EXCEPTION 'preparation type or lexical contract' USING ERRCODE='22023'; END IF;
- IF {integer_matrix('payload', payload_integers)} OR {string_matrix('payload', payload_strings)} OR pg_catalog.jsonb_typeof(payload->'complete_semantic_head_set') IS DISTINCT FROM 'array' OR payload->>'predecessor_document_digest' !~ '^[0-9a-f]{{64}}$' THEN RAISE EXCEPTION 'document payload type or lexical contract' USING ERRCODE='22023'; END IF;
+ IF {integer_matrix("p", prep_integers)} OR {string_matrix("p", prep_strings)} OR {prep_digest_check} THEN RAISE EXCEPTION 'preparation type or lexical contract' USING ERRCODE='22023'; END IF;
+ IF {integer_matrix("payload", payload_integers)} OR {string_matrix("payload", payload_strings)} OR pg_catalog.jsonb_typeof(payload->'complete_semantic_head_set') IS DISTINCT FROM 'array' OR payload->>'predecessor_document_digest' !~ '^[0-9a-f]{{64}}$' THEN RAISE EXCEPTION 'document payload type or lexical contract' USING ERRCODE='22023'; END IF;
  IF pg_catalog.jsonb_typeof(d->'document_digest') IS DISTINCT FROM 'string' OR pg_catalog.jsonb_typeof(d->'authentication_tag_or_signature') IS DISTINCT FROM 'string' OR d->>'document_digest' !~ '^[0-9a-f]{{64}}$' THEN RAISE EXCEPTION 'document envelope type or lexical contract' USING ERRCODE='22023'; END IF;
- IF {integer_matrix('r', receipt_integers)} OR {string_matrix('r', receipt_strings)} OR r->>'exact_predecessor_document_digest' !~ '^[0-9a-f]{{64}}$' OR r->>'accepted_document_digest' !~ '^[0-9a-f]{{64}}$' OR r->>'complete_semantic_head_digest' !~ '^[0-9a-f]{{64}}$' THEN RAISE EXCEPTION 'receipt type or lexical contract' USING ERRCODE='22023'; END IF;
+ IF {integer_matrix("r", receipt_integers)} OR {string_matrix("r", receipt_strings)} OR r->>'exact_predecessor_document_digest' !~ '^[0-9a-f]{{64}}$' OR r->>'accepted_document_digest' !~ '^[0-9a-f]{{64}}$' OR r->>'complete_semantic_head_digest' !~ '^[0-9a-f]{{64}}$' THEN RAISE EXCEPTION 'receipt type or lexical contract' USING ERRCODE='22023'; END IF;
  IF p->>'schema_version' IS DISTINCT FROM '1' OR p->>'security_profile' IS DISTINCT FROM 'PRODUCTION_LOCAL' OR p->>'environment' IS DISTINCT FROM 'PRODUCTION' OR p->>'operation_type' IS DISTINCT FROM 'FULL_AUTHORITATIVE_DOCUMENT' THEN RAISE EXCEPTION 'preparation constants' USING ERRCODE='22023'; END IF;
  PERFORM {q}.canonical_complete_head_set(payload->'complete_semantic_head_set');
  doc_digest:=pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to('cryptohunter.account-genesis.freshness-document-digest.v1','UTF8')||pg_catalog.decode('00','hex')||{q}.canonical_jsonb(payload)),'hex');
@@ -420,7 +494,7 @@ BEGIN
  END;
  RETURN p->>'preparation_id';
 END""",
-      "compare_and_advance(text,jsonb,bytea,bytea)": f"""
+        "compare_and_advance(text,jsonb,bytea,bytea)": f"""
 DECLARE d jsonb; r jsonb; prep {q}.prepared_verifications%ROWTYPE; line {q}.authority_lineages%ROWTYPE; pc {q}.credentials%ROWTYPE; fc {q}.credentials%ROWTYPE; ph {q}.key_lifecycle_history%ROWTYPE; fh {q}.key_lifecycle_history%ROWTYPE; existing {q}.decisions%ROWTYPE; retained_doc {q}.authoritative_documents%ROWTYPE; retained_receipt {q}.finalization_receipts%ROWTYPE; seq bigint; accepted_head_digest text;
 BEGIN
  {guard % "'freshness_runtime'"}
@@ -448,22 +522,62 @@ BEGIN
 END""",
     }
 
-def provision_postgresql_freshness_authority(connection: PostgreSQLConnectionConfig,
-                                              config: PostgreSQLFreshnessAuthorityProvisioning = PostgreSQLFreshnessAuthorityProvisioning()) -> None:
+
+def provision_postgresql_freshness_authority(
+    connection: PostgreSQLConnectionConfig,
+    config: PostgreSQLFreshnessAuthorityProvisioning = PostgreSQLFreshnessAuthorityProvisioning(),
+) -> None:
     """Provision the authority.  The connection must be an offline superuser."""
-    ids = {x: sql.Identifier(x) for x in (config.schema, config.schema_owner_role,
-            config.function_owner_role, config.admin_role, config.verifier_role,
-            config.runtime_role, config.reader_role)}
-    s, so, fo, adm, ver, run, read = (ids[x] for x in (config.schema,
-        config.schema_owner_role, config.function_owner_role, config.admin_role,
-        config.verifier_role, config.runtime_role, config.reader_role))
+    ids = {
+        x: sql.Identifier(x)
+        for x in (
+            config.schema,
+            config.schema_owner_role,
+            config.function_owner_role,
+            config.admin_role,
+            config.verifier_role,
+            config.runtime_role,
+            config.reader_role,
+        )
+    }
+    s, so, fo, adm, ver, run, read = (
+        ids[x]
+        for x in (
+            config.schema,
+            config.schema_owner_role,
+            config.function_owner_role,
+            config.admin_role,
+            config.verifier_role,
+            config.runtime_role,
+            config.reader_role,
+        )
+    )
     with psycopg.connect(connection.dsn, autocommit=True) as conn:
-      if conn.info.server_version < 160000: raise RuntimeError("PostgreSQL >=16 required")
-      if conn.execute("SELECT current_setting('fsync'),current_setting('synchronous_commit')").fetchone() != ("on", "on"): raise RuntimeError("fsync and synchronous_commit must be on")
-      for name, login in ((config.schema_owner_role,False),(config.function_owner_role,False),(config.admin_role,False),(config.verifier_role,True),(config.runtime_role,True),(config.reader_role,False)):
-        conn.execute(sql.SQL("CREATE ROLE {} {} NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS").format(sql.Identifier(name),sql.SQL("LOGIN" if login else "NOLOGIN")))
-      conn.execute(sql.SQL("CREATE SCHEMA {} AUTHORIZATION {}; REVOKE ALL ON SCHEMA {} FROM PUBLIC").format(s,so,s))
-      ddl = sql.SQL("""
+        if conn.info.server_version < 160000:
+            raise RuntimeError("PostgreSQL >=16 required")
+        if conn.execute(
+            "SELECT current_setting('fsync'),current_setting('synchronous_commit')"
+        ).fetchone() != ("on", "on"):
+            raise RuntimeError("fsync and synchronous_commit must be on")
+        for name, login in (
+            (config.schema_owner_role, False),
+            (config.function_owner_role, False),
+            (config.admin_role, False),
+            (config.verifier_role, True),
+            (config.runtime_role, True),
+            (config.reader_role, False),
+        ):
+            conn.execute(
+                sql.SQL(
+                    "CREATE ROLE {} {} NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS"
+                ).format(sql.Identifier(name), sql.SQL("LOGIN" if login else "NOLOGIN"))
+            )
+        conn.execute(
+            sql.SQL(
+                "CREATE SCHEMA {} AUTHORIZATION {}; REVOKE ALL ON SCHEMA {} FROM PUBLIC"
+            ).format(s, so, s)
+        )
+        ddl = sql.SQL("""
 CREATE TABLE {s}.metadata(singleton boolean PRIMARY KEY DEFAULT true CHECK(singleton),schema_identity text NOT NULL,schema_version integer NOT NULL,function_manifest jsonb NOT NULL);
 CREATE TABLE {s}.key_material_role_bindings(environment text NOT NULL,trust_domain text NOT NULL,authority_id text NOT NULL,public_key_material_identity text NOT NULL CHECK(public_key_material_identity~'^[0-9a-f]{{64}}$'),semantic_role text NOT NULL CHECK(semantic_role IN ({pr},{fr})),public_key bytea NOT NULL CHECK(octet_length(public_key)=32),PRIMARY KEY(environment,trust_domain,authority_id,public_key_material_identity),UNIQUE(environment,trust_domain,authority_id,public_key_material_identity,semantic_role));
 CREATE TABLE {s}.credentials(environment text NOT NULL,trust_domain text NOT NULL,authority_id text NOT NULL,credential_id text NOT NULL,semantic_identity text NOT NULL,semantic_role text NOT NULL CHECK(semantic_role IN ({pr},{fr})),key_id text NOT NULL,key_version bigint NOT NULL CHECK(key_version>=1),public_key bytea NOT NULL CHECK(octet_length(public_key)=32),public_key_material_identity text NOT NULL CHECK(public_key_material_identity~'^[0-9a-f]{{64}}$'),lifecycle_generation bigint NOT NULL CHECK(lifecycle_generation>=1),lifecycle_state text NOT NULL CHECK(lifecycle_state IN ('ACTIVE','VERIFY_ONLY','REVOKED')),PRIMARY KEY(environment,trust_domain,authority_id,credential_id),UNIQUE(environment,trust_domain,authority_id,semantic_role,public_key_material_identity),CONSTRAINT credentials_authenticated_selector_key UNIQUE(environment,trust_domain,authority_id,semantic_role,key_id,key_version),FOREIGN KEY(environment,trust_domain,authority_id,public_key_material_identity,semantic_role) REFERENCES {s}.key_material_role_bindings(environment,trust_domain,authority_id,public_key_material_identity,semantic_role));
@@ -475,119 +589,335 @@ CREATE TABLE {s}.prepared_verifications(preparation_id text PRIMARY KEY,binding 
 CREATE TABLE {s}.authoritative_documents(environment text NOT NULL,trust_domain text NOT NULL,authority_id text NOT NULL,generation bigint NOT NULL,predecessor_generation bigint NOT NULL,document_digest text NOT NULL CHECK(document_digest~'^[0-9a-f]{{64}}$'),complete_head_digest text NOT NULL CHECK(complete_head_digest~'^[0-9a-f]{{64}}$'),canonical_document jsonb NOT NULL,canonical_document_bytes bytea NOT NULL,PRIMARY KEY(environment,trust_domain,authority_id,generation),UNIQUE(environment,trust_domain,authority_id,predecessor_generation));
 CREATE TABLE {s}.decisions(decision_sequence bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,original_decision_identity text NOT NULL,finalization_request_id text NOT NULL,environment text NOT NULL,trust_domain text NOT NULL,authority_id text NOT NULL,predecessor_generation bigint NOT NULL,accepted_generation bigint NOT NULL,candidate_binding jsonb NOT NULL,lifecycle_reference jsonb NOT NULL,UNIQUE(original_decision_identity,finalization_request_id));
 CREATE TABLE {s}.finalization_receipts(receipt_id text PRIMARY KEY,decision_sequence bigint NOT NULL UNIQUE REFERENCES {s}.decisions(decision_sequence),canonical_receipt jsonb NOT NULL,canonical_receipt_bytes bytea NOT NULL,authentication_signature text NOT NULL);
-""").format(s=s,pr=sql.Literal(PROPOSER_ROLE),fr=sql.Literal(FINALIZATION_ROLE))
-      conn.execute(ddl)
-      sources = _sources(config.schema)
-      signatures = {
-       "jcs_sort_key(text)":"(text) RETURNS text", "canonical_jsonb(jsonb)":"(jsonb) RETURNS bytea",
-       "canonical_complete_head_set(jsonb)":"(jsonb) RETURNS bytea", "provision_authority(text,text,text,text,text)":"(text,text,text,text,text) RETURNS void",
-       "provision_credential(jsonb)":"(jsonb) RETURNS void", "transition_credential(text,text,text,text,bigint,text,jsonb)":"(text,text,text,text,bigint,text,jsonb) RETURNS void",
-       "resolve_verification_credential(text,text,text,text,text,bigint)":"(text,text,text,text,text,bigint) RETURNS TABLE(credential_id text,semantic_identity text,lifecycle_generation bigint,public_key bytea)",
-       "resolve_predecessor_head(text,text,text,bigint,text)":"(text,text,text,bigint,text) RETURNS text",
-       "prepare_verified_freshness_candidate(bytea,bytea,bytea)":"(bytea,bytea,bytea) RETURNS text", "compare_and_advance(text,jsonb,bytea,bytea)":"(text,jsonb,bytea,bytea) RETURNS TABLE(outcome text,decision_sequence bigint,receipt jsonb)"}
-      for sig, source in sources.items():
-        name=sig.split("(",1)[0]
-        conn.execute(sql.SQL("CREATE FUNCTION {}.{} {} LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS {}") .format(s,sql.Identifier(name),sql.SQL(signatures[sig]),sql.Literal(source)))
-        conn.execute(sql.SQL("ALTER FUNCTION {}.{} OWNER TO {}; REVOKE ALL ON FUNCTION {}.{} FROM PUBLIC").format(s,sql.SQL(sig),fo,s,sql.SQL(sig)))
-      conn.execute(sql.SQL("GRANT USAGE ON SCHEMA {} TO {},{},{},{},{}; GRANT SELECT ON ALL TABLES IN SCHEMA {} TO {}; GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA {} TO {}; GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA {} TO {}; GRANT EXECUTE ON FUNCTION {}.provision_authority(text,text,text,text,text),{}.provision_credential(jsonb),{}.transition_credential(text,text,text,text,bigint,text,jsonb) TO {}; GRANT EXECUTE ON FUNCTION {}.resolve_verification_credential(text,text,text,text,text,bigint),{}.resolve_predecessor_head(text,text,text,bigint,text),{}.prepare_verified_freshness_candidate(bytea,bytea,bytea) TO {}; GRANT EXECUTE ON FUNCTION {}.compare_and_advance(text,jsonb,bytea,bytea) TO {}").format(s,ver,run,read,fo,adm,s,read,s,fo,s,fo,s,s,s,adm,s,s,s,ver,s,run))
-      manifest={k:hashlib.sha256(v.encode()).hexdigest() for k,v in sources.items()}
-      conn.execute(sql.SQL("INSERT INTO {}.metadata VALUES(true,%s,%s,%s)").format(s),(SCHEMA_IDENTITY,SCHEMA_VERSION,json.dumps(manifest)))
-      for table in ("metadata", "key_material_role_bindings", "credentials", "key_lifecycle_history",
-                    "authority_lineages", "authority_generation_heads", "prepared_verifications",
-                    "authoritative_documents", "decisions",
-                    "finalization_receipts"):
-        conn.execute(sql.SQL("ALTER TABLE {}.{} OWNER TO {}").format(s, sql.Identifier(table), so))
+""").format(s=s, pr=sql.Literal(PROPOSER_ROLE), fr=sql.Literal(FINALIZATION_ROLE))
+        conn.execute(ddl)
+        sources = _sources(config.schema)
+        signatures = {
+            "jcs_sort_key(text)": "(text) RETURNS text",
+            "canonical_jsonb(jsonb)": "(jsonb) RETURNS bytea",
+            "canonical_complete_head_set(jsonb)": "(jsonb) RETURNS bytea",
+            "provision_authority(text,text,text,text,text)": "(text,text,text,text,text) RETURNS void",
+            "provision_credential(jsonb)": "(jsonb) RETURNS void",
+            "transition_credential(text,text,text,text,bigint,text,jsonb)": "(text,text,text,text,bigint,text,jsonb) RETURNS void",
+            "resolve_verification_credential(text,text,text,text,text,bigint)": "(text,text,text,text,text,bigint) RETURNS TABLE(credential_id text,semantic_identity text,lifecycle_generation bigint,public_key bytea)",
+            "resolve_predecessor_head(text,text,text,bigint,text)": "(text,text,text,bigint,text) RETURNS text",
+            "prepare_verified_freshness_candidate(bytea,bytea,bytea)": "(bytea,bytea,bytea) RETURNS text",
+            "compare_and_advance(text,jsonb,bytea,bytea)": "(text,jsonb,bytea,bytea) RETURNS TABLE(outcome text,decision_sequence bigint,receipt jsonb)",
+        }
+        for sig, source in sources.items():
+            name = sig.split("(", 1)[0]
+            conn.execute(
+                sql.SQL(
+                    "CREATE FUNCTION {}.{} {} LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS {}"
+                ).format(s, sql.Identifier(name), sql.SQL(signatures[sig]), sql.Literal(source))
+            )
+            conn.execute(
+                sql.SQL(
+                    "ALTER FUNCTION {}.{} OWNER TO {}; REVOKE ALL ON FUNCTION {}.{} FROM PUBLIC"
+                ).format(s, sql.SQL(sig), fo, s, sql.SQL(sig))
+            )
+        conn.execute(
+            sql.SQL(
+                "GRANT USAGE ON SCHEMA {} TO {},{},{},{},{}; GRANT SELECT ON ALL TABLES IN SCHEMA {} TO {}; GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA {} TO {}; GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA {} TO {}; GRANT EXECUTE ON FUNCTION {}.provision_authority(text,text,text,text,text),{}.provision_credential(jsonb),{}.transition_credential(text,text,text,text,bigint,text,jsonb) TO {}; GRANT EXECUTE ON FUNCTION {}.resolve_verification_credential(text,text,text,text,text,bigint),{}.resolve_predecessor_head(text,text,text,bigint,text),{}.prepare_verified_freshness_candidate(bytea,bytea,bytea) TO {}; GRANT EXECUTE ON FUNCTION {}.compare_and_advance(text,jsonb,bytea,bytea) TO {}"
+            ).format(
+                s,
+                ver,
+                run,
+                read,
+                fo,
+                adm,
+                s,
+                read,
+                s,
+                fo,
+                s,
+                fo,
+                s,
+                s,
+                s,
+                adm,
+                s,
+                s,
+                s,
+                ver,
+                s,
+                run,
+            )
+        )
+        manifest = {k: hashlib.sha256(v.encode()).hexdigest() for k, v in sources.items()}
+        conn.execute(
+            sql.SQL("INSERT INTO {}.metadata VALUES(true,%s,%s,%s)").format(s),
+            (SCHEMA_IDENTITY, SCHEMA_VERSION, json.dumps(manifest)),
+        )
+        for table in (
+            "metadata",
+            "key_material_role_bindings",
+            "credentials",
+            "key_lifecycle_history",
+            "authority_lineages",
+            "authority_generation_heads",
+            "prepared_verifications",
+            "authoritative_documents",
+            "decisions",
+            "finalization_receipts",
+        ):
+            conn.execute(
+                sql.SQL("ALTER TABLE {}.{} OWNER TO {}").format(s, sql.Identifier(table), so)
+            )
 
 
-def qualify_postgresql_freshness_authority(connection: PostgreSQLConnectionConfig,
-                                            config: PostgreSQLFreshnessAuthorityProvisioning = PostgreSQLFreshnessAuthorityProvisioning()) -> None:
+def qualify_postgresql_freshness_authority(
+    connection: PostgreSQLConnectionConfig,
+    config: PostgreSQLFreshnessAuthorityProvisioning = PostgreSQLFreshnessAuthorityProvisioning(),
+) -> None:
     """Fail closed unless catalog state and reviewed function text are exact."""
     with psycopg.connect(connection.dsn) as conn:
-      problems=[]
-      if conn.info.server_version < 160000: problems.append("server version")
-      if conn.execute("SELECT current_setting('fsync'),current_setting('synchronous_commit')").fetchone() != ("on","on"): problems.append("durability")
-      # Check the exact physical shape before any shape-dependent reads below;
-      # a dropped expected column must become a closed qualification failure,
-      # never a raw catalog/query error.
-      if _physical_fingerprint(conn, config.schema) != _REVIEWED_PHYSICAL_FINGERPRINT:
-          raise FreshnessAuthorityQualificationError(
-              "qualification failed: physical schema fingerprint"
-          )
-      roles=(config.schema_owner_role,config.function_owner_role,config.admin_role,config.verifier_role,config.runtime_role,config.reader_role)
-      rows=conn.execute("SELECT rolname,rolsuper,rolinherit,rolcreaterole,rolcreatedb,rolcanlogin,rolreplication,rolbypassrls FROM pg_catalog.pg_roles WHERE rolname=ANY(%s)",(list(roles),)).fetchall()
-      if len(rows)!=6 or any(r[1] or r[2] or r[3] or r[4] or r[6] or r[7] for r in rows): problems.append("role attributes")
-      login={r[0]:r[5] for r in rows}
-      expected_login={config.schema_owner_role:False,config.function_owner_role:False,
-                      config.admin_role:False,config.verifier_role:True,
-                      config.runtime_role:True,config.reader_role:False}
-      if login != expected_login: problems.append("role LOGIN")
-      if conn.execute("SELECT count(*) FROM pg_catalog.pg_auth_members m JOIN pg_catalog.pg_roles a ON a.oid=m.roleid JOIN pg_catalog.pg_roles b ON b.oid=m.member WHERE a.rolname=ANY(%s) OR b.rolname=ANY(%s)",(list(roles),list(roles))).fetchone()[0]: problems.append("role membership")
-      expected=_sources(config.schema)
-      got=conn.execute("SELECT p.proname||'('||pg_catalog.pg_get_function_identity_arguments(p.oid)||')',p.prosrc,p.prosecdef,p.proconfig,r.rolname,coalesce(p.proacl::text,'') FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace JOIN pg_catalog.pg_roles r ON r.oid=p.proowner WHERE n.nspname=%s",(config.schema,)).fetchall()
-      if len(got)!=len(expected): problems.append("function set")
-      actual={r[0].replace(", ", ","):r for r in got}
-      for sig,src in expected.items():
-        r=actual.get(sig)
-        public_execute = r is not None and (
-            r[5].startswith("{=X/") or ",=X/" in r[5]
+        problems = []
+        if conn.info.server_version < 160000:
+            problems.append("server version")
+        if conn.execute(
+            "SELECT current_setting('fsync'),current_setting('synchronous_commit')"
+        ).fetchone() != ("on", "on"):
+            problems.append("durability")
+        # Check the exact physical shape before any shape-dependent reads below;
+        # a dropped expected column must become a closed qualification failure,
+        # never a raw catalog/query error.
+        if _physical_fingerprint(conn, config.schema) != _REVIEWED_PHYSICAL_FINGERPRINT:
+            raise FreshnessAuthorityQualificationError(
+                "qualification failed: physical schema fingerprint"
+            )
+        roles = (
+            config.schema_owner_role,
+            config.function_owner_role,
+            config.admin_role,
+            config.verifier_role,
+            config.runtime_role,
+            config.reader_role,
         )
-        if not r or r[1]!=src or not r[2] or r[3]!=['search_path=pg_catalog'] or r[4]!=config.function_owner_role or public_execute: problems.append("function "+sig)
-      function_callers={
-          "jcs_sort_key(text)": set(),
-          "canonical_jsonb(jsonb)": set(),
-          "canonical_complete_head_set(jsonb)": set(),
-          "provision_authority(text,text,text,text,text)": {config.admin_role},
-          "provision_credential(jsonb)": {config.admin_role},
-          "transition_credential(text,text,text,text,bigint,text,jsonb)": {config.admin_role},
-          "resolve_verification_credential(text,text,text,text,text,bigint)": {config.verifier_role},
-          "resolve_predecessor_head(text,text,text,bigint,text)": {config.verifier_role},
-          "prepare_verified_freshness_candidate(bytea,bytea,bytea)": {config.verifier_role},
-          "compare_and_advance(text,jsonb,bytea,bytea)": {config.runtime_role},
-      }
-      facl=conn.execute("""SELECT p.proname||'('||replace(pg_catalog.pg_get_function_identity_arguments(p.oid),', ', ',')||')',CASE WHEN x.grantee=0 THEN 'PUBLIC' ELSE g.rolname END,x.privilege_type,x.is_grantable FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace CROSS JOIN LATERAL pg_catalog.aclexplode(coalesce(p.proacl,pg_catalog.acldefault('f',p.proowner))) x LEFT JOIN pg_catalog.pg_roles g ON g.oid=x.grantee WHERE n.nspname=%s""",(config.schema,)).fetchall()
-      expected_facl={(sig,config.function_owner_role,"EXECUTE",False) for sig in expected}
-      expected_facl|={(sig,role,"EXECUTE",False) for sig,rs in function_callers.items() for role in rs}
-      if set(facl)!=expected_facl: problems.append("function ACL")
-      meta=conn.execute(sql.SQL("SELECT schema_identity,schema_version,function_manifest FROM {}.metadata").format(sql.Identifier(config.schema))).fetchone()
-      immutable={k:hashlib.sha256(v.encode()).hexdigest() for k,v in expected.items()}
-      if not meta or tuple(meta[:2])!=(SCHEMA_IDENTITY,SCHEMA_VERSION) or meta[2]!=immutable: problems.append("manifest")
-      expected_relations={"metadata","key_material_role_bindings","credentials",
-          "key_lifecycle_history","authority_lineages","authority_generation_heads","prepared_verifications",
-          "authoritative_documents","decisions","finalization_receipts",
-          "decisions_decision_sequence_seq"}
-      rels=conn.execute("SELECT c.relname,c.relkind,c.relpersistence,r.rolname,c.relrowsecurity,c.relforcerowsecurity FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace JOIN pg_catalog.pg_roles r ON r.oid=c.relowner WHERE n.nspname=%s AND c.relkind IN ('r','S')",(config.schema,)).fetchall()
-      if {r[0] for r in rels}!=expected_relations or any(r[1] not in ('r','S') or r[2]!='p' or r[3]!=config.schema_owner_role or r[4] or r[5] for r in rels): problems.append("relation set/shape")
-      unexpected_objects=conn.execute("SELECT count(*) FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=%s AND c.relkind NOT IN ('r','S','i')",(config.schema,)).fetchone()[0]
-      orphan_indexes=conn.execute("SELECT count(*) FROM pg_catalog.pg_class i JOIN pg_catalog.pg_namespace n ON n.oid=i.relnamespace LEFT JOIN pg_catalog.pg_index x ON x.indexrelid=i.oid LEFT JOIN pg_catalog.pg_class t ON t.oid=x.indrelid WHERE n.nspname=%s AND i.relkind='i' AND (t.oid IS NULL OR t.relnamespace<>n.oid)",(config.schema,)).fetchone()[0]
-      if unexpected_objects or orphan_indexes: problems.append("unexpected schema object")
-      schema_acl=conn.execute("""SELECT CASE WHEN x.grantee=0 THEN 'PUBLIC' ELSE r.rolname END,x.privilege_type,x.is_grantable FROM pg_catalog.pg_namespace n CROSS JOIN LATERAL pg_catalog.aclexplode(coalesce(n.nspacl,pg_catalog.acldefault('n',n.nspowner))) x LEFT JOIN pg_catalog.pg_roles r ON r.oid=x.grantee WHERE n.nspname=%s""",(config.schema,)).fetchall()
-      expected_schema={(config.schema_owner_role,p,False) for p in ('USAGE','CREATE')}|{(r,'USAGE',False) for r in (config.function_owner_role,config.admin_role,config.verifier_role,config.runtime_role,config.reader_role)}
-      if set(schema_acl)!=expected_schema: problems.append("schema ACL")
-      table_acl=conn.execute("""SELECT c.relname,CASE WHEN x.grantee=0 THEN 'PUBLIC' ELSE r.rolname END,x.privilege_type,x.is_grantable FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace CROSS JOIN LATERAL pg_catalog.aclexplode(coalesce(c.relacl,pg_catalog.acldefault(CASE c.relkind WHEN 'S' THEN 's'::"char" ELSE 'r'::"char" END,c.relowner))) x LEFT JOIN pg_catalog.pg_roles r ON r.oid=x.grantee WHERE n.nspname=%s AND c.relkind IN ('r','S')""",(config.schema,)).fetchall()
-      tables=expected_relations-{"decisions_decision_sequence_seq"}
-      owner_table_privs={'SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER'}
-      expected_tacl={(t,config.schema_owner_role,p,False) for t in tables for p in owner_table_privs}|{(t,config.function_owner_role,p,False) for t in tables for p in ('SELECT','INSERT','UPDATE','DELETE')}|{(t,config.reader_role,'SELECT',False) for t in tables}
-      expected_tacl|={("decisions_decision_sequence_seq",config.schema_owner_role,p,False) for p in ('USAGE','SELECT','UPDATE')}|{("decisions_decision_sequence_seq",config.function_owner_role,p,False) for p in ('USAGE','SELECT')}
-      if set(table_acl)!=expected_tacl: problems.append("relation ACL")
-      rules=conn.execute("SELECT count(*) FROM pg_catalog.pg_rewrite w JOIN pg_catalog.pg_class c ON c.oid=w.ev_class JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=%s AND w.rulename<>'_RETURN'",(config.schema,)).fetchone()[0]
-      inheritance=conn.execute("SELECT count(*) FROM pg_catalog.pg_inherits i JOIN pg_catalog.pg_class c ON c.oid=i.inhrelid JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=%s",(config.schema,)).fetchone()[0]
-      if rules or inheritance: problems.append("rules/inheritance")
-      aliases=conn.execute(sql.SQL("SELECT count(*) FROM {}.credentials c JOIN {}.credentials d USING(environment,trust_domain,authority_id,public_key) WHERE c.semantic_role<>d.semantic_role").format(sql.Identifier(config.schema),sql.Identifier(config.schema))).fetchone()[0]
-      binding_mismatch=conn.execute(sql.SQL("SELECT count(*) FROM {}.key_material_role_bindings WHERE public_key_material_identity<>encode(sha256(public_key),'hex')").format(sql.Identifier(config.schema))).fetchone()[0]
-      credential_mismatch=conn.execute(sql.SQL("""SELECT count(*) FROM {s}.credentials c LEFT JOIN {s}.key_material_role_bindings b USING(environment,trust_domain,authority_id,public_key_material_identity,semantic_role) WHERE c.public_key_material_identity<>pg_catalog.encode(pg_catalog.sha256(c.public_key),'hex') OR b.public_key IS NULL OR b.public_key<>c.public_key""").format(s=sql.Identifier(config.schema))).fetchone()[0]
-      selector_duplicates=conn.execute(sql.SQL("SELECT count(*) FROM (SELECT 1 FROM {}.credentials GROUP BY environment,trust_domain,authority_id,semantic_role,key_id,key_version HAVING count(*)<>1) q").format(sql.Identifier(config.schema))).fetchone()[0]
-      active_duplicates=conn.execute(sql.SQL("SELECT count(*) FROM (SELECT 1 FROM {}.credentials WHERE lifecycle_state='ACTIVE' GROUP BY environment,trust_domain,authority_id,semantic_role HAVING count(*)>1) q").format(sql.Identifier(config.schema))).fetchone()[0]
-      if aliases or binding_mismatch or credential_mismatch or selector_duplicates or active_duplicates: problems.append("key material binding/cardinality")
-      evidence_mismatch=conn.execute(sql.SQL("""SELECT
+        rows = conn.execute(
+            "SELECT rolname,rolsuper,rolinherit,rolcreaterole,rolcreatedb,rolcanlogin,rolreplication,rolbypassrls FROM pg_catalog.pg_roles WHERE rolname=ANY(%s)",
+            (list(roles),),
+        ).fetchall()
+        if len(rows) != 6 or any(r[1] or r[2] or r[3] or r[4] or r[6] or r[7] for r in rows):
+            problems.append("role attributes")
+        login = {r[0]: r[5] for r in rows}
+        expected_login = {
+            config.schema_owner_role: False,
+            config.function_owner_role: False,
+            config.admin_role: False,
+            config.verifier_role: True,
+            config.runtime_role: True,
+            config.reader_role: False,
+        }
+        if login != expected_login:
+            problems.append("role LOGIN")
+        if conn.execute(
+            "SELECT count(*) FROM pg_catalog.pg_auth_members m JOIN pg_catalog.pg_roles a ON a.oid=m.roleid JOIN pg_catalog.pg_roles b ON b.oid=m.member WHERE a.rolname=ANY(%s) OR b.rolname=ANY(%s)",
+            (list(roles), list(roles)),
+        ).fetchone()[0]:
+            problems.append("role membership")
+        expected = _sources(config.schema)
+        got = conn.execute(
+            "SELECT p.proname||'('||pg_catalog.pg_get_function_identity_arguments(p.oid)||')',p.prosrc,p.prosecdef,p.proconfig,r.rolname,coalesce(p.proacl::text,'') FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace JOIN pg_catalog.pg_roles r ON r.oid=p.proowner WHERE n.nspname=%s",
+            (config.schema,),
+        ).fetchall()
+        if len(got) != len(expected):
+            problems.append("function set")
+        actual = {r[0].replace(", ", ","): r for r in got}
+        for sig, src in expected.items():
+            r = actual.get(sig)
+            public_execute = r is not None and (r[5].startswith("{=X/") or ",=X/" in r[5])
+            if (
+                not r
+                or r[1] != src
+                or not r[2]
+                or r[3] != ["search_path=pg_catalog"]
+                or r[4] != config.function_owner_role
+                or public_execute
+            ):
+                problems.append("function " + sig)
+        function_callers = {
+            "jcs_sort_key(text)": set(),
+            "canonical_jsonb(jsonb)": set(),
+            "canonical_complete_head_set(jsonb)": set(),
+            "provision_authority(text,text,text,text,text)": {config.admin_role},
+            "provision_credential(jsonb)": {config.admin_role},
+            "transition_credential(text,text,text,text,bigint,text,jsonb)": {config.admin_role},
+            "resolve_verification_credential(text,text,text,text,text,bigint)": {
+                config.verifier_role
+            },
+            "resolve_predecessor_head(text,text,text,bigint,text)": {config.verifier_role},
+            "prepare_verified_freshness_candidate(bytea,bytea,bytea)": {config.verifier_role},
+            "compare_and_advance(text,jsonb,bytea,bytea)": {config.runtime_role},
+        }
+        facl = conn.execute(
+            """SELECT p.proname||'('||replace(pg_catalog.pg_get_function_identity_arguments(p.oid),', ', ',')||')',CASE WHEN x.grantee=0 THEN 'PUBLIC' ELSE g.rolname END,x.privilege_type,x.is_grantable FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace CROSS JOIN LATERAL pg_catalog.aclexplode(coalesce(p.proacl,pg_catalog.acldefault('f',p.proowner))) x LEFT JOIN pg_catalog.pg_roles g ON g.oid=x.grantee WHERE n.nspname=%s""",
+            (config.schema,),
+        ).fetchall()
+        expected_facl = {(sig, config.function_owner_role, "EXECUTE", False) for sig in expected}
+        expected_facl |= {
+            (sig, role, "EXECUTE", False) for sig, rs in function_callers.items() for role in rs
+        }
+        if set(facl) != expected_facl:
+            problems.append("function ACL")
+        meta = conn.execute(
+            sql.SQL(
+                "SELECT schema_identity,schema_version,function_manifest FROM {}.metadata"
+            ).format(sql.Identifier(config.schema))
+        ).fetchone()
+        immutable = {k: hashlib.sha256(v.encode()).hexdigest() for k, v in expected.items()}
+        if not meta or tuple(meta[:2]) != (SCHEMA_IDENTITY, SCHEMA_VERSION) or meta[2] != immutable:
+            problems.append("manifest")
+        expected_relations = {
+            "metadata",
+            "key_material_role_bindings",
+            "credentials",
+            "key_lifecycle_history",
+            "authority_lineages",
+            "authority_generation_heads",
+            "prepared_verifications",
+            "authoritative_documents",
+            "decisions",
+            "finalization_receipts",
+            "decisions_decision_sequence_seq",
+        }
+        rels = conn.execute(
+            "SELECT c.relname,c.relkind,c.relpersistence,r.rolname,c.relrowsecurity,c.relforcerowsecurity FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace JOIN pg_catalog.pg_roles r ON r.oid=c.relowner WHERE n.nspname=%s AND c.relkind IN ('r','S')",
+            (config.schema,),
+        ).fetchall()
+        if {r[0] for r in rels} != expected_relations or any(
+            r[1] not in ("r", "S")
+            or r[2] != "p"
+            or r[3] != config.schema_owner_role
+            or r[4]
+            or r[5]
+            for r in rels
+        ):
+            problems.append("relation set/shape")
+        unexpected_objects = conn.execute(
+            "SELECT count(*) FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=%s AND c.relkind NOT IN ('r','S','i')",
+            (config.schema,),
+        ).fetchone()[0]
+        orphan_indexes = conn.execute(
+            "SELECT count(*) FROM pg_catalog.pg_class i JOIN pg_catalog.pg_namespace n ON n.oid=i.relnamespace LEFT JOIN pg_catalog.pg_index x ON x.indexrelid=i.oid LEFT JOIN pg_catalog.pg_class t ON t.oid=x.indrelid WHERE n.nspname=%s AND i.relkind='i' AND (t.oid IS NULL OR t.relnamespace<>n.oid)",
+            (config.schema,),
+        ).fetchone()[0]
+        if unexpected_objects or orphan_indexes:
+            problems.append("unexpected schema object")
+        schema_acl = conn.execute(
+            """SELECT CASE WHEN x.grantee=0 THEN 'PUBLIC' ELSE r.rolname END,x.privilege_type,x.is_grantable FROM pg_catalog.pg_namespace n CROSS JOIN LATERAL pg_catalog.aclexplode(coalesce(n.nspacl,pg_catalog.acldefault('n',n.nspowner))) x LEFT JOIN pg_catalog.pg_roles r ON r.oid=x.grantee WHERE n.nspname=%s""",
+            (config.schema,),
+        ).fetchall()
+        expected_schema = {(config.schema_owner_role, p, False) for p in ("USAGE", "CREATE")} | {
+            (r, "USAGE", False)
+            for r in (
+                config.function_owner_role,
+                config.admin_role,
+                config.verifier_role,
+                config.runtime_role,
+                config.reader_role,
+            )
+        }
+        if set(schema_acl) != expected_schema:
+            problems.append("schema ACL")
+        table_acl = conn.execute(
+            """SELECT c.relname,CASE WHEN x.grantee=0 THEN 'PUBLIC' ELSE r.rolname END,x.privilege_type,x.is_grantable FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace CROSS JOIN LATERAL pg_catalog.aclexplode(coalesce(c.relacl,pg_catalog.acldefault(CASE c.relkind WHEN 'S' THEN 's'::"char" ELSE 'r'::"char" END,c.relowner))) x LEFT JOIN pg_catalog.pg_roles r ON r.oid=x.grantee WHERE n.nspname=%s AND c.relkind IN ('r','S')""",
+            (config.schema,),
+        ).fetchall()
+        tables = expected_relations - {"decisions_decision_sequence_seq"}
+        owner_table_privs = {
+            "SELECT",
+            "INSERT",
+            "UPDATE",
+            "DELETE",
+            "TRUNCATE",
+            "REFERENCES",
+            "TRIGGER",
+        }
+        expected_tacl = (
+            {(t, config.schema_owner_role, p, False) for t in tables for p in owner_table_privs}
+            | {
+                (t, config.function_owner_role, p, False)
+                for t in tables
+                for p in ("SELECT", "INSERT", "UPDATE", "DELETE")
+            }
+            | {(t, config.reader_role, "SELECT", False) for t in tables}
+        )
+        expected_tacl |= {
+            ("decisions_decision_sequence_seq", config.schema_owner_role, p, False)
+            for p in ("USAGE", "SELECT", "UPDATE")
+        } | {
+            ("decisions_decision_sequence_seq", config.function_owner_role, p, False)
+            for p in ("USAGE", "SELECT")
+        }
+        if set(table_acl) != expected_tacl:
+            problems.append("relation ACL")
+        rules = conn.execute(
+            "SELECT count(*) FROM pg_catalog.pg_rewrite w JOIN pg_catalog.pg_class c ON c.oid=w.ev_class JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=%s AND w.rulename<>'_RETURN'",
+            (config.schema,),
+        ).fetchone()[0]
+        inheritance = conn.execute(
+            "SELECT count(*) FROM pg_catalog.pg_inherits i JOIN pg_catalog.pg_class c ON c.oid=i.inhrelid JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=%s",
+            (config.schema,),
+        ).fetchone()[0]
+        if rules or inheritance:
+            problems.append("rules/inheritance")
+        aliases = conn.execute(
+            sql.SQL(
+                "SELECT count(*) FROM {}.credentials c JOIN {}.credentials d USING(environment,trust_domain,authority_id,public_key) WHERE c.semantic_role<>d.semantic_role"
+            ).format(sql.Identifier(config.schema), sql.Identifier(config.schema))
+        ).fetchone()[0]
+        binding_mismatch = conn.execute(
+            sql.SQL(
+                "SELECT count(*) FROM {}.key_material_role_bindings WHERE public_key_material_identity<>encode(sha256(public_key),'hex')"
+            ).format(sql.Identifier(config.schema))
+        ).fetchone()[0]
+        credential_mismatch = conn.execute(
+            sql.SQL(
+                """SELECT count(*) FROM {s}.credentials c LEFT JOIN {s}.key_material_role_bindings b USING(environment,trust_domain,authority_id,public_key_material_identity,semantic_role) WHERE c.public_key_material_identity<>pg_catalog.encode(pg_catalog.sha256(c.public_key),'hex') OR b.public_key IS NULL OR b.public_key<>c.public_key"""
+            ).format(s=sql.Identifier(config.schema))
+        ).fetchone()[0]
+        selector_duplicates = conn.execute(
+            sql.SQL(
+                "SELECT count(*) FROM (SELECT 1 FROM {}.credentials GROUP BY environment,trust_domain,authority_id,semantic_role,key_id,key_version HAVING count(*)<>1) q"
+            ).format(sql.Identifier(config.schema))
+        ).fetchone()[0]
+        active_duplicates = conn.execute(
+            sql.SQL(
+                "SELECT count(*) FROM (SELECT 1 FROM {}.credentials WHERE lifecycle_state='ACTIVE' GROUP BY environment,trust_domain,authority_id,semantic_role HAVING count(*)>1) q"
+            ).format(sql.Identifier(config.schema))
+        ).fetchone()[0]
+        if (
+            aliases
+            or binding_mismatch
+            or credential_mismatch
+            or selector_duplicates
+            or active_duplicates
+        ):
+            problems.append("key material binding/cardinality")
+        evidence_mismatch = conn.execute(
+            sql.SQL("""SELECT
         (SELECT count(*) FROM {s}.prepared_verifications p WHERE p.canonical_document_bytes<>{s}.canonical_jsonb(p.canonical_document) OR p.canonical_receipt_bytes<>{s}.canonical_jsonb(p.canonical_receipt) OR p.binding->>'preparation_id'<>p.preparation_id) +
         (SELECT count(*) FROM {s}.authoritative_documents d WHERE d.canonical_document_bytes<>{s}.canonical_jsonb(d.canonical_document) OR d.document_digest<>d.canonical_document->>'document_digest') +
         (SELECT count(*) FROM {s}.authority_lineages l LEFT JOIN {s}.authority_generation_heads h ON h.environment=l.environment AND h.trust_domain=l.trust_domain AND h.authority_id=l.authority_id AND h.generation=l.current_generation WHERE h.generation IS NULL OR h.document_digest IS DISTINCT FROM l.current_document_digest OR h.complete_head_digest IS DISTINCT FROM l.current_complete_head_digest) +
         (SELECT count(*) FROM {s}.authority_generation_heads h LEFT JOIN {s}.authoritative_documents d ON d.environment=h.environment AND d.trust_domain=h.trust_domain AND d.authority_id=h.authority_id AND d.generation=h.generation WHERE h.generation>0 AND (d.generation IS NULL OR d.document_digest IS DISTINCT FROM h.document_digest OR d.complete_head_digest IS DISTINCT FROM h.complete_head_digest)) +
         (SELECT count(*) FROM {s}.finalization_receipts r WHERE r.canonical_receipt_bytes<>{s}.canonical_jsonb(r.canonical_receipt) OR r.receipt_id<>r.canonical_receipt->>'receipt_id' OR r.authentication_signature<>r.canonical_receipt->>'authentication_tag_or_signature')
-      """).format(s=sql.Identifier(config.schema))).fetchone()[0]
-      if evidence_mismatch: problems.append("retained evidence integrity")
-      # No relation may be non-permanent, have RLS/policies, triggers, rules, or a wrong owner.
-      bad=conn.execute("SELECT count(*) FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace JOIN pg_catalog.pg_roles r ON r.oid=c.relowner WHERE n.nspname=%s AND c.relkind IN ('r','S') AND (c.relpersistence<>'p' OR c.relrowsecurity OR c.relforcerowsecurity OR r.rolname<>%s)",(config.schema,config.schema_owner_role)).fetchone()[0]
-      extras=conn.execute("SELECT (SELECT count(*) FROM pg_catalog.pg_trigger t JOIN pg_catalog.pg_class c ON c.oid=t.tgrelid JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=%s AND NOT t.tgisinternal)+(SELECT count(*) FROM pg_catalog.pg_policy p JOIN pg_catalog.pg_class c ON c.oid=p.polrelid JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=%s)",(config.schema,config.schema)).fetchone()[0]
-      if bad or extras: problems.append("relation security")
-      if problems: raise FreshnessAuthorityQualificationError("qualification failed: "+", ".join(problems))
+      """).format(s=sql.Identifier(config.schema))
+        ).fetchone()[0]
+        if evidence_mismatch:
+            problems.append("retained evidence integrity")
+        # No relation may be non-permanent, have RLS/policies, triggers, rules, or a wrong owner.
+        bad = conn.execute(
+            "SELECT count(*) FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace JOIN pg_catalog.pg_roles r ON r.oid=c.relowner WHERE n.nspname=%s AND c.relkind IN ('r','S') AND (c.relpersistence<>'p' OR c.relrowsecurity OR c.relforcerowsecurity OR r.rolname<>%s)",
+            (config.schema, config.schema_owner_role),
+        ).fetchone()[0]
+        extras = conn.execute(
+            "SELECT (SELECT count(*) FROM pg_catalog.pg_trigger t JOIN pg_catalog.pg_class c ON c.oid=t.tgrelid JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=%s AND NOT t.tgisinternal)+(SELECT count(*) FROM pg_catalog.pg_policy p JOIN pg_catalog.pg_class c ON c.oid=p.polrelid JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=%s)",
+            (config.schema, config.schema),
+        ).fetchone()[0]
+        if bad or extras:
+            problems.append("relation security")
+        if problems:
+            raise FreshnessAuthorityQualificationError(
+                "qualification failed: " + ", ".join(problems)
+            )

@@ -57,9 +57,7 @@ def identity(
     entitlement_id: str = f"ent_{U}",
     product_scope: str = "CryptoHunter",
 ) -> EntitlementIdentity:
-    return EntitlementIdentity(
-        entitlement_id, generation, "TEST", "td_example", product_scope
-    )
+    return EntitlementIdentity(entitlement_id, generation, "TEST", "td_example", product_scope)
 
 
 def provenance(
@@ -82,10 +80,22 @@ def binding(
     claimant_version: int = 1,
 ) -> BoundBinding:
     return BoundBinding(
-        f"ago_{U}", f"acct_{U}", "b" * 64, 1, attempt,
-        "CryptoHunterAccountAuthority", "rpr_test_1", 1,
-        principal, claimant, claimant_version, "c" * 64,
-        "immutable:req:1", proof, "issuer-signing-key", 1,
+        f"ago_{U}",
+        f"acct_{U}",
+        "b" * 64,
+        1,
+        attempt,
+        "CryptoHunterAccountAuthority",
+        "rpr_test_1",
+        1,
+        principal,
+        claimant,
+        claimant_version,
+        "c" * 64,
+        "immutable:req:1",
+        proof,
+        "issuer-signing-key",
+        1,
     )
 
 
@@ -138,17 +148,14 @@ class SemanticRegistryModel:
         resolution = resolve_bind_request(history, request)
         outcomes = {
             BindResolutionKind.EXACT_REPLAY: BindOutcome.EXACT_REPLAY,
-            BindResolutionKind.CONFLICT_BOUND_TO_DIFFERENT_TUPLE:
-                BindOutcome.CONFLICT_BOUND_TO_DIFFERENT_TUPLE,
+            BindResolutionKind.CONFLICT_BOUND_TO_DIFFERENT_TUPLE: BindOutcome.CONFLICT_BOUND_TO_DIFFERENT_TUPLE,
             BindResolutionKind.STALE_PREDECESSOR: BindOutcome.STALE_PREDECESSOR,
             BindResolutionKind.NOT_FOUND: BindOutcome.NOT_FOUND,
             BindResolutionKind.INACTIVE_REVOKED: BindOutcome.INACTIVE_REVOKED,
             BindResolutionKind.INACTIVE_SUPERSEDED: BindOutcome.INACTIVE_SUPERSEDED,
         }
         if resolution.kind is not BindResolutionKind.NEW_BIND_ELIGIBLE:
-            return BindResult(
-                outcomes[resolution.kind], resolution.historical_bound_state
-            )
+            return BindResult(outcomes[resolution.kind], resolution.historical_bound_state)
         state = self._current[request.subject]
         committed = replace(
             state,
@@ -159,9 +166,7 @@ class SemanticRegistryModel:
         self._record(committed)
         return BindResult(BindOutcome.NEW_BIND_COMMITTED, committed)
 
-    def state_at_revision(
-        self, requested: RegistrySubject, revision: int
-    ) -> HistoricalStateResult:
+    def state_at_revision(self, requested: RegistrySubject, revision: int) -> HistoricalStateResult:
         current = self._current.get(requested)
         if current is None:
             return HistoricalStateResult(
@@ -173,8 +178,11 @@ class SemanticRegistryModel:
             )
         current_revision = current.authoritative_state_revision
         state = next(
-            (item for item in self._history.get(requested, [])
-             if item.authoritative_state_revision == revision),
+            (
+                item
+                for item in self._history.get(requested, [])
+                if item.authoritative_state_revision == revision
+            ),
             None,
         )
         if state is None:
@@ -197,9 +205,7 @@ class SemanticRegistryModel:
     def retained_history(self, requested: RegistrySubject) -> RetainedHistoryResult:
         states = tuple(self._history.get(requested, []))
         if not states:
-            return RetainedHistoryResult(
-                RegistryReadOutcome.NOT_FOUND, requested, (), None, None
-            )
+            return RetainedHistoryResult(RegistryReadOutcome.NOT_FOUND, requested, (), None, None)
         return RetainedHistoryResult(
             RegistryReadOutcome.FOUND,
             requested,
@@ -259,9 +265,10 @@ def test_unbound_first_bind_exact_retry_conflict_and_lost_response() -> None:
     assert replay.outcome is BindOutcome.EXACT_REPLAY
     assert replay.authoritative_state == committed.authoritative_state
     other = replace(binding(), root_proof_id="rpf_018f3e70-7b5a-7c21-8b9a-1123456789ab")
-    assert model.compare_and_swap_bind(
-        BindRequest(subject(), predecessor_for(initial), other)
-    ).outcome is BindOutcome.CONFLICT_BOUND_TO_DIFFERENT_TUPLE
+    assert (
+        model.compare_and_swap_bind(BindRequest(subject(), predecessor_for(initial), other)).outcome
+        is BindOutcome.CONFLICT_BOUND_TO_DIFFERENT_TUPLE
+    )
 
 
 def test_two_subject_interleaving_uses_one_per_subject_revision_meaning() -> None:
@@ -276,7 +283,10 @@ def test_two_subject_interleaving_uses_one_per_subject_revision_meaning() -> Non
             subject_b,
             EntitlementIdentity(
                 "ent_018f3e70-7b5a-7c21-8b9a-1123456789ab",
-                1, "TEST", "td_example", "CryptoHunter",
+                1,
+                "TEST",
+                "td_example",
+                "CryptoHunter",
             ),
             provenance(reference="immutable:provisioning:b"),
         )
@@ -302,20 +312,25 @@ def test_two_subject_interleaving_uses_one_per_subject_revision_meaning() -> Non
     query = AuthoritativelyUnboundQuery(
         subject(),
         "CryptoHunter",
-        initial_a.identity.bootstrap_entitlement_id, 1, f"ago_{U}", f"acct_{U}",
-        "b" * 64, f"rpa_{U}",
+        initial_a.identity.bootstrap_entitlement_id,
+        1,
+        f"ago_{U}",
+        f"acct_{U}",
+        "b" * 64,
+        f"rpa_{U}",
     )
-    assert not history_proves_authoritatively_unbound(
-        history_a, query, observed_current_revision=2
-    )
+    assert not history_proves_authoritatively_unbound(history_a, query, observed_current_revision=2)
 
 
 def test_missing_is_not_unbound_and_handle_cannot_redirect() -> None:
     model, initial = provisioned()
     assert model.authoritative_state(subject("other")).outcome is RegistryReadOutcome.NOT_FOUND
-    assert model.compare_and_swap_bind(
-        BindRequest(subject("other"), predecessor_for(initial), binding())
-    ).outcome is BindOutcome.NOT_FOUND
+    assert (
+        model.compare_and_swap_bind(
+            BindRequest(subject("other"), predecessor_for(initial), binding())
+        ).outcome
+        is BindOutcome.NOT_FOUND
+    )
 
 
 def test_authoritative_identity_has_one_subject_lineage_and_one_possible_winner() -> None:
@@ -328,9 +343,12 @@ def test_authoritative_identity_has_one_subject_lineage_and_one_possible_winner(
     assert duplicate.state is None
     assert second_subject not in model._current
     assert second_subject not in model._history
-    assert model.compare_and_swap_bind(
-        BindRequest(subject(), predecessor_for(initial), binding())
-    ).outcome is BindOutcome.NEW_BIND_COMMITTED
+    assert (
+        model.compare_and_swap_bind(
+            BindRequest(subject(), predecessor_for(initial), binding())
+        ).outcome
+        is BindOutcome.NEW_BIND_COMMITTED
+    )
     assert model.authoritative_state(second_subject).outcome is RegistryReadOutcome.NOT_FOUND
 
 
@@ -338,8 +356,14 @@ def test_unbound_evidence_is_self_bound_to_subject_and_trust_domain() -> None:
     model, initial = provisioned()
     model.compare_and_swap_bind(BindRequest(subject(), predecessor_for(initial), binding()))
     query = AuthoritativelyUnboundQuery(
-        subject(), "CryptoHunter", initial.identity.bootstrap_entitlement_id, 1,
-        f"ago_{U}", f"acct_{U}", "b" * 64, f"rpa_{U}",
+        subject(),
+        "CryptoHunter",
+        initial.identity.bootstrap_entitlement_id,
+        1,
+        f"ago_{U}",
+        f"acct_{U}",
+        "b" * 64,
+        f"rpa_{U}",
     )
     other_subject_model, _ = provisioned(subject("other-handle"))
     assert not history_proves_authoritatively_unbound(
@@ -379,13 +403,22 @@ def test_composite_authority_key_and_cross_product_unbound_attack() -> None:
     assert provision_a.outcome is AdminOutcome.COMMITTED
     assert provision_b.outcome is AdminOutcome.COMMITTED
     assert provision_a.state is not None
-    assert model.compare_and_swap_bind(
-        BindRequest(subject_a, predecessor_for(provision_a.state), binding())
-    ).outcome is BindOutcome.NEW_BIND_COMMITTED
+    assert (
+        model.compare_and_swap_bind(
+            BindRequest(subject_a, predecessor_for(provision_a.state), binding())
+        ).outcome
+        is BindOutcome.NEW_BIND_COMMITTED
+    )
     history_b = model.retained_history(subject_b)
     wrong_product = AuthoritativelyUnboundQuery(
-        subject_b, "ProductA", identity_b.bootstrap_entitlement_id, 1,
-        f"ago_{U}", f"acct_{U}", "b" * 64, f"rpa_{U}",
+        subject_b,
+        "ProductA",
+        identity_b.bootstrap_entitlement_id,
+        1,
+        f"ago_{U}",
+        f"acct_{U}",
+        "b" * 64,
+        f"rpa_{U}",
     )
     assert not history_proves_authoritatively_unbound(
         history_b, wrong_product, observed_current_revision=1
@@ -432,18 +465,17 @@ def test_revoke_active_unbound_is_executable_and_terminal() -> None:
     assert revoked.state.lifecycle is EntitlementLifecycle.REVOKED
     assert type(revoked.state.binding) is UnboundBinding
     assert revoked.state.authoritative_state_revision == 2
-    retry = model.revoke_entitlement(
-        RevokeEntitlementRequest(admin_predecessor_for(revoked.state))
-    )
+    retry = model.revoke_entitlement(RevokeEntitlementRequest(admin_predecessor_for(revoked.state)))
     assert retry.outcome is AdminOutcome.CONFLICT
     assert model.authoritative_state(subject()).state == revoked.state
-    assert model.compare_and_swap_bind(
-        BindRequest(subject(), predecessor_for(revoked.state), binding())
-    ).outcome is BindOutcome.INACTIVE_REVOKED
+    assert (
+        model.compare_and_swap_bind(
+            BindRequest(subject(), predecessor_for(revoked.state), binding())
+        ).outcome
+        is BindOutcome.INACTIVE_REVOKED
+    )
     with pytest.raises(ContractValidationError):
-        SupersedeEntitlementRequest(
-            admin_predecessor_for(revoked.state), identity(2), provenance()
-        )
+        SupersedeEntitlementRequest(admin_predecessor_for(revoked.state), identity(2), provenance())
 
 
 def test_superseded_unbound_cannot_first_bind() -> None:
@@ -475,21 +507,29 @@ def test_bind_cannot_replace_provisioned_claimant_anchor(changed: dict[str, obje
 def test_stale_and_serialization_failure_are_distinct() -> None:
     model, initial = provisioned()
     stale = replace(predecessor_for(initial), authoritative_state_revision=99)
-    assert model.compare_and_swap_bind(
-        BindRequest(subject(), stale, binding())
-    ).outcome is BindOutcome.STALE_PREDECESSOR
+    assert (
+        model.compare_and_swap_bind(BindRequest(subject(), stale, binding())).outcome
+        is BindOutcome.STALE_PREDECESSOR
+    )
     model.fail_next_serialization = True
-    assert model.compare_and_swap_bind(
-        BindRequest(subject(), predecessor_for(initial), binding())
-    ).outcome is BindOutcome.RETRYABLE_SERIALIZATION_FAILURE
+    assert (
+        model.compare_and_swap_bind(
+            BindRequest(subject(), predecessor_for(initial), binding())
+        ).outcome
+        is BindOutcome.RETRYABLE_SERIALIZATION_FAILURE
+    )
 
 
 def test_exact_historical_result_binds_subject_and_requested_revision() -> None:
     model, initial = provisioned()
     with pytest.raises(ContractValidationError):
-        HistoricalStateResult(subject(), RegistryReadResult(RegistryReadOutcome.FOUND, initial), 2, 2, 1)
+        HistoricalStateResult(
+            subject(), RegistryReadResult(RegistryReadOutcome.FOUND, initial), 2, 2, 1
+        )
     with pytest.raises(ContractValidationError):
-        HistoricalStateResult(subject("other"), RegistryReadResult(RegistryReadOutcome.FOUND, initial), 1, 1, 1)
+        HistoricalStateResult(
+            subject("other"), RegistryReadResult(RegistryReadOutcome.FOUND, initial), 1, 1, 1
+        )
 
 
 def test_supersession_is_admin_owned_retains_bound_and_allows_reviewed_anchor_rotation() -> None:
@@ -529,9 +569,12 @@ def test_exact_replay_after_revoke_returns_original_active_bound_revision() -> N
     assert replay.authoritative_state.lifecycle is EntitlementLifecycle.ACTIVE
     assert replay.authoritative_state.authoritative_state_revision == 2
     different = replace(binding(), root_proof_id="rpf_018f3e70-7b5a-7c21-8b9a-1123456789ab")
-    assert model.compare_and_swap_bind(
-        BindRequest(subject(), predecessor_for(initial), different)
-    ).outcome is BindOutcome.CONFLICT_BOUND_TO_DIFFERENT_TUPLE
+    assert (
+        model.compare_and_swap_bind(
+            BindRequest(subject(), predecessor_for(initial), different)
+        ).outcome
+        is BindOutcome.CONFLICT_BOUND_TO_DIFFERENT_TUPLE
+    )
 
 
 def test_exact_replay_after_supersession_returns_original_bound_revision() -> None:
@@ -552,9 +595,12 @@ def test_exact_replay_after_supersession_returns_original_bound_revision() -> No
     assert replay.outcome is BindOutcome.EXACT_REPLAY
     assert replay.authoritative_state == committed.authoritative_state
     different = replace(binding(), root_proof_id="rpf_018f3e70-7b5a-7c21-8b9a-1123456789ab")
-    assert model.compare_and_swap_bind(
-        BindRequest(subject(), predecessor_for(initial), different)
-    ).outcome is BindOutcome.CONFLICT_BOUND_TO_DIFFERENT_TUPLE
+    assert (
+        model.compare_and_swap_bind(
+            BindRequest(subject(), predecessor_for(initial), different)
+        ).outcome
+        is BindOutcome.CONFLICT_BOUND_TO_DIFFERENT_TUPLE
+    )
 
 
 @pytest.mark.parametrize(
@@ -592,10 +638,16 @@ def test_history_gap_bound_rollback_and_winner_mutation_are_rejected() -> None:
     gap = replace(genesis, authoritative_state_revision=3, predecessor_revision=2)
     with pytest.raises(ContractValidationError):
         RetainedHistoryResult(RegistryReadOutcome.FOUND, subject(), (genesis, gap), 3, 1)
-    bound = replace(genesis, binding=binding(), authoritative_state_revision=2, predecessor_revision=1)
-    rollback = replace(bound, binding=UnboundBinding(), authoritative_state_revision=3, predecessor_revision=2)
+    bound = replace(
+        genesis, binding=binding(), authoritative_state_revision=2, predecessor_revision=1
+    )
+    rollback = replace(
+        bound, binding=UnboundBinding(), authoritative_state_revision=3, predecessor_revision=2
+    )
     with pytest.raises(ContractValidationError):
-        RetainedHistoryResult(RegistryReadOutcome.FOUND, subject(), (genesis, bound, rollback), 3, 1)
+        RetainedHistoryResult(
+            RegistryReadOutcome.FOUND, subject(), (genesis, bound, rollback), 3, 1
+        )
     mutation = replace(
         bound,
         binding=replace(binding(), root_proof_id="rpf_018f3e70-7b5a-7c21-8b9a-1123456789ab"),
@@ -603,7 +655,9 @@ def test_history_gap_bound_rollback_and_winner_mutation_are_rejected() -> None:
         predecessor_revision=2,
     )
     with pytest.raises(ContractValidationError):
-        RetainedHistoryResult(RegistryReadOutcome.FOUND, subject(), (genesis, bound, mutation), 3, 1)
+        RetainedHistoryResult(
+            RegistryReadOutcome.FOUND, subject(), (genesis, bound, mutation), 3, 1
+        )
     no_op = replace(genesis, authoritative_state_revision=2, predecessor_revision=1)
     with pytest.raises(ContractValidationError):
         RetainedHistoryResult(RegistryReadOutcome.FOUND, subject(), (genesis, no_op), 2, 1)
@@ -619,30 +673,46 @@ def _fabricated(cls: type[object], **values: object) -> object:
 def test_fabricated_exact_nested_objects_fail_closed_without_attribute_error() -> None:
     malformed_identity = _fabricated(
         EntitlementIdentity,
-        bootstrap_entitlement_id="bad", entitlement_generation=True,
-        environment="TEST", trust_domain="td_example", product_scope="CryptoHunter",
+        bootstrap_entitlement_id="bad",
+        entitlement_generation=True,
+        environment="TEST",
+        trust_domain="td_example",
+        product_scope="CryptoHunter",
         intended_action="ACCOUNT_GENESIS_BOOTSTRAP",
     )
     malformed_binding = _fabricated(
         BoundBinding,
-        **{field.name: getattr(binding(), field.name) for field in __import__("dataclasses").fields(BoundBinding)},
+        **{
+            field.name: getattr(binding(), field.name)
+            for field in __import__("dataclasses").fields(BoundBinding)
+        },
     )
     object.__setattr__(malformed_binding, "claimant_key_version", True)
     malformed_state = _fabricated(
         AuthoritativeEntitlementState,
-        subject=subject(), identity=malformed_identity, provenance=provenance(),
-        lifecycle=EntitlementLifecycle.ACTIVE, binding=UnboundBinding(),
-        authoritative_state_revision=1, predecessor_revision=None,
+        subject=subject(),
+        identity=malformed_identity,
+        provenance=provenance(),
+        lifecycle=EntitlementLifecycle.ACTIVE,
+        binding=UnboundBinding(),
+        authoritative_state_revision=1,
+        predecessor_revision=None,
     )
     malformed_request = _fabricated(
-        BindRequest, subject=subject(), expected=object.__new__(type(predecessor_for(provisioned()[1]))),
+        BindRequest,
+        subject=subject(),
+        expected=object.__new__(type(predecessor_for(provisioned()[1]))),
         attempted_binding=malformed_binding,
     )
     malformed_revoke = _fabricated(
-        RevokeEntitlementRequest, expected=object.__new__(type(admin_predecessor_for(provisioned()[1])))
+        RevokeEntitlementRequest,
+        expected=object.__new__(type(admin_predecessor_for(provisioned()[1]))),
     )
     for value in (
-        malformed_identity, malformed_binding, malformed_state, malformed_request,
+        malformed_identity,
+        malformed_binding,
+        malformed_state,
+        malformed_request,
         malformed_revoke,
     ):
         with pytest.raises(ContractValidationError):
@@ -689,8 +759,12 @@ def test_authoritatively_unbound_requires_valid_current_complete_history() -> No
     query = AuthoritativelyUnboundQuery(
         subject(),
         "CryptoHunter",
-        initial.identity.bootstrap_entitlement_id, 1, f"ago_{U}", f"acct_{U}",
-        "b" * 64, f"rpa_{U}",
+        initial.identity.bootstrap_entitlement_id,
+        1,
+        f"ago_{U}",
+        f"acct_{U}",
+        "b" * 64,
+        f"rpa_{U}",
     )
     assert history_proves_authoritatively_unbound(history, query, observed_current_revision=1)
     assert not history_proves_authoritatively_unbound(history, query, observed_current_revision=2)
@@ -703,9 +777,13 @@ def test_authoritatively_unbound_requires_valid_current_complete_history() -> No
 def test_port_remains_typed_and_bind_request_has_no_successor_revision() -> None:
     annotations = inspect.get_annotations(EntitlementRegistryProvider.compare_and_swap_bind)
     assert annotations["return"] != bool
-    assert inspect.get_annotations(EntitlementRegistryProvider.authoritative_state)["return"] != object
+    assert (
+        inspect.get_annotations(EntitlementRegistryProvider.authoritative_state)["return"] != object
+    )
     assert set(inspect.signature(BindRequest).parameters) == {
-        "subject", "expected", "attempted_binding"
+        "subject",
+        "expected",
+        "attempted_binding",
     }
     with pytest.raises(ContractValidationError):
         BindResult(True, None)  # type: ignore[arg-type]
@@ -741,12 +819,16 @@ def test_bind_result_success_payload_matrix_requires_bound_state() -> None:
         BindRequest(subject(), predecessor_for(initial), binding())
     )
     assert committed.authoritative_state is not None
-    assert BindResult(
-        BindOutcome.NEW_BIND_COMMITTED, committed.authoritative_state
-    ).authoritative_state == committed.authoritative_state
-    assert BindResult(
-        BindOutcome.EXACT_REPLAY, committed.authoritative_state
-    ).authoritative_state == committed.authoritative_state
+    assert (
+        BindResult(
+            BindOutcome.NEW_BIND_COMMITTED, committed.authoritative_state
+        ).authoritative_state
+        == committed.authoritative_state
+    )
+    assert (
+        BindResult(BindOutcome.EXACT_REPLAY, committed.authoritative_state).authoritative_state
+        == committed.authoritative_state
+    )
     with pytest.raises(ContractValidationError):
         BindResult(BindOutcome.NEW_BIND_COMMITTED, None)
     with pytest.raises(ContractValidationError):

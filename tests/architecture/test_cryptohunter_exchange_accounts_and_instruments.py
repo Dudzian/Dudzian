@@ -2020,9 +2020,7 @@ def validate_context(ctx):
                 ],
                 instruments_by_id=ctx["instruments_by_id"],
                 instrument_history_by_id=ctx["instrument_history_by_id"],
-                source_producer_membership_authority=ctx[
-                    "source_producer_membership_authority"
-                ],
+                source_producer_membership_authority=ctx["source_producer_membership_authority"],
             )
             or not validate_legacy_catalog_structural_graph(
                 ctx["catalogs_by_id"],
@@ -8694,9 +8692,7 @@ def accepted_source_snapshot(**changes):
     }
     record.update(changes)
     if record["source_exchange_id"] == "generic_testnet_venue":
-        record["accepted_source_producer_membership_id"] = (
-            "aspm_core_1_45_generic_testnet_spot_1"
-        )
+        record["accepted_source_producer_membership_id"] = "aspm_core_1_45_generic_testnet_spot_1"
         record["source_producer_membership_fingerprint"] = (
             "cd8252ce969f022da7cfff7e536b83ca4d3f72fa25947b5c59ea1087bfa04843"
         )
@@ -8845,9 +8841,7 @@ def test_activate_trading_universe_uses_canonical_workspace_source_chain():
         instrument_history_by_id=trusted["instrument_history_by_id"],
         now_utc=trusted["validation_time_utc"],
         paper_source_product_permissions=trusted["paper_source_product_permissions"],
-        source_producer_membership_authority=trusted[
-            "source_producer_membership_authority"
-        ],
+        source_producer_membership_authority=trusted["source_producer_membership_authority"],
     )
     assert validate_context(trusted)
     malformed_canonical_values = {
@@ -8943,9 +8937,10 @@ def test_activate_trading_universe_uses_canonical_workspace_source_chain():
         TestSQLiteMembershipCarrier(Path(_MEMBERSHIP_DIR.name) / "dispatcher-test.sqlite3"),
         TestCoreClock("2000-01-01T00:00:00Z"),
     )
-    assert test_clock_authority.admit_release_grant(
-        "core_release_1_45_generic_testnet_spot"
-    ) is not None
+    assert (
+        test_clock_authority.admit_release_grant("core_release_1_45_generic_testnet_spot")
+        is not None
+    )
     test_clock_context = {
         **trusted,
         "source_producer_membership_authority": test_clock_authority,
@@ -9131,9 +9126,9 @@ def test_activate_trading_universe_uses_canonical_workspace_source_chain():
     assert validate_context(historical)
     for current_version in (5, 7):
         non_monotonic = deepcopy(historical)
-        non_monotonic["instruments_by_id"][instrument["instrument_id"]][
-            "metadata_version"
-        ] = current_version
+        non_monotonic["instruments_by_id"][instrument["instrument_id"]]["metadata_version"] = (
+            current_version
+        )
         assert not validate_context(non_monotonic)
         assert not validate_operation_request(
             "ACTIVATE_TRADING_UNIVERSE", valid_request, validation_context=non_monotonic

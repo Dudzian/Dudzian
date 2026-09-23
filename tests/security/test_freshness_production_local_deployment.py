@@ -5,6 +5,9 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import socket
+import subprocess
+import sys
+import textwrap
 
 import pytest
 
@@ -26,20 +29,32 @@ def test_systemd_unit_is_valid_and_has_reviewed_effective_sandbox(tmp_path: Path
     postgres = tmp_path / "postgresql.service"
     postgres.write_text("[Service]\nType=oneshot\nExecStart=/bin/true\n")
     result = subprocess.run(
-        ["systemd-analyze", "verify", str(UNIT), str(postgres)],
-        text=True, capture_output=True
+        ["systemd-analyze", "verify", str(UNIT), str(postgres)], text=True, capture_output=True
     )
     assert result.returncode == 0, result.stderr
     content = UNIT.read_text(encoding="ascii")
     for exact in (
-        "User=os_freshness_crypto_verifier", "Group=freshness_verifier_ipc",
-        "RuntimeDirectory=cryptohunter/freshness", "RuntimeDirectoryMode=0750",
-        "NoNewPrivileges=yes", "PrivateTmp=yes", "ProtectSystem=strict",
-        "ProtectHome=yes", "ProtectKernelTunables=yes", "ProtectKernelModules=yes",
-        "ProtectKernelLogs=yes", "ProtectControlGroups=yes", "RestrictSUIDSGID=yes",
-        "LockPersonality=yes", "RestrictNamespaces=yes", "RestrictRealtime=yes",
-        "MemoryDenyWriteExecute=yes", "CapabilityBoundingSet=", "AmbientCapabilities=",
-        "RestrictAddressFamilies=AF_UNIX", "Environment=PYTHONNOUSERSITE=1",
+        "User=os_freshness_crypto_verifier",
+        "Group=freshness_verifier_ipc",
+        "RuntimeDirectory=cryptohunter/freshness",
+        "RuntimeDirectoryMode=0750",
+        "NoNewPrivileges=yes",
+        "PrivateTmp=yes",
+        "ProtectSystem=strict",
+        "ProtectHome=yes",
+        "ProtectKernelTunables=yes",
+        "ProtectKernelModules=yes",
+        "ProtectKernelLogs=yes",
+        "ProtectControlGroups=yes",
+        "RestrictSUIDSGID=yes",
+        "LockPersonality=yes",
+        "RestrictNamespaces=yes",
+        "RestrictRealtime=yes",
+        "MemoryDenyWriteExecute=yes",
+        "CapabilityBoundingSet=",
+        "AmbientCapabilities=",
+        "RestrictAddressFamilies=AF_UNIX",
+        "Environment=PYTHONNOUSERSITE=1",
     ):
         assert exact in content
     assert "Restart=always" not in content
@@ -52,6 +67,46 @@ def test_reviewed_authentication_templates_are_exact():
     assert len(ident) == len(EXPECTED_IDENT) == 3
     forbidden = ("trust", "md5", "scram", "host ", "sameuser")
     assert not any(item in line for item in forbidden for line in hba)
+
+
+def test_qualification_imports_without_posix_account_modules_and_fails_closed():
+    script = textwrap.dedent(
+        """
+        import importlib.abc
+        import os
+        import sys
+
+        sys.modules.pop("grp", None)
+        sys.modules.pop("pwd", None)
+
+        class NativeAccountBlocker(importlib.abc.MetaPathFinder):
+            def find_spec(self, fullname, path, target=None):
+                if fullname in {"grp", "pwd"}:
+                    raise ModuleNotFoundError(f"blocked {fullname}", name=fullname)
+                return None
+
+        sys.meta_path.insert(0, NativeAccountBlocker())
+        import bot_core.freshness_deployment_qualification as qualification
+        assert qualification.EXPECTED_HBA
+        assert qualification.EXPECTED_IDENT
+        os.name = "nt"
+        try:
+            qualification.qualify_production_local_deployment()
+        except qualification.DeploymentQualificationError:
+            pass
+        else:
+            raise AssertionError("non-POSIX qualification did not fail closed")
+        assert "grp" not in sys.modules
+        assert "pwd" not in sys.modules
+        """
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 @pytest.mark.parametrize("attack", ["symlink-directory", "symlink-path", "regular-path"])
@@ -70,8 +125,14 @@ def test_socket_substitution_fails_closed(tmp_path: Path, attack: str):
     elif attack == "regular-path":
         path.touch()
     with pytest.raises((ValueError, PermissionError)):
-        serve_local_unix_socket(_NeverCalled(), str(path), allowed_peer_uid=os.getuid(),
-                                stop_after=0, socket_gid=os.getgid(), parent_mode=0o750)
+        serve_local_unix_socket(
+            _NeverCalled(),
+            str(path),
+            allowed_peer_uid=os.getuid(),
+            stop_after=0,
+            socket_gid=os.getgid(),
+            parent_mode=0o750,
+        )
 
 
 def test_only_exact_owned_stale_socket_is_recreated(tmp_path: Path):
@@ -81,6 +142,12 @@ def test_only_exact_owned_stale_socket_is_recreated(tmp_path: Path):
     stale = socket.socket(socket.AF_UNIX)
     stale.bind(str(path))
     stale.close()
-    serve_local_unix_socket(_NeverCalled(), str(path), allowed_peer_uid=os.getuid(),
-                            stop_after=0, socket_gid=os.getgid(), parent_mode=0o750)
+    serve_local_unix_socket(
+        _NeverCalled(),
+        str(path),
+        allowed_peer_uid=os.getuid(),
+        stop_after=0,
+        socket_gid=os.getgid(),
+        parent_mode=0o750,
+    )
     assert not path.exists()

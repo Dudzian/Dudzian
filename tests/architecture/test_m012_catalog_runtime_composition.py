@@ -1,4 +1,5 @@
 """S9D-C25 production Catalog runtime composition regressions."""
+
 import json
 import os
 from pathlib import Path
@@ -64,11 +65,14 @@ def test_composition_reopens_exact_production_authorities_without_mutating_polic
 
     assert type(runtime) is CatalogRuntimeAcceptanceAuthority
     assert runtime._receipts.receipts() == ()
-    assert runtime._membership.resolve_current(
-        _BinanceSpotCatalogProducer.identity,
-        _BinanceSpotCatalogProducer.generation,
-        "9999-01-01T00:00:00Z",
-    ) == grant
+    assert (
+        runtime._membership.resolve_current(
+            _BinanceSpotCatalogProducer.identity,
+            _BinanceSpotCatalogProducer.generation,
+            "9999-01-01T00:00:00Z",
+        )
+        == grant
+    )
     assert runtime._receipts.rotate() != key_id
 
 
@@ -101,16 +105,10 @@ def test_composition_missing_storage_fails_atomically_without_creating_files(
         catalog.write_bytes(b"offline-existing-catalog")
     elif existing == "receipts":
         receipts.write_bytes(b"offline-existing-receipts")
-    before = {
-        path: path.read_bytes()
-        for path in (catalog, receipts)
-        if path.exists()
-    }
+    before = {path: path.read_bytes() for path in (catalog, receipts) if path.exists()}
 
     with pytest.raises(ValueError, match="CATALOG_RUNTIME_STORAGE_MISSING"):
-        compose_catalog_runtime_acceptance(
-            CatalogRuntimeAuthorityPaths(catalog, receipts)
-        )
+        compose_catalog_runtime_acceptance(CatalogRuntimeAuthorityPaths(catalog, receipts))
 
     assert {path: path.read_bytes() for path in before} == before
     missing = {catalog, receipts} - set(before)
@@ -135,9 +133,7 @@ def test_runtime_paths_reject_storage_alias_and_non_file_targets(tmp_path: Path)
     with pytest.raises(ValueError, match="STATE_NOT_FILE"):
         CatalogRuntimeAuthorityPaths(tmp_path.absolute(), state)
     with pytest.raises(ValueError, match="PARENT_UNAVAILABLE"):
-        CatalogRuntimeAuthorityPaths(
-            (tmp_path / "missing" / "catalog.sqlite3").absolute(), state
-        )
+        CatalogRuntimeAuthorityPaths((tmp_path / "missing" / "catalog.sqlite3").absolute(), state)
 
 
 def test_runtime_paths_reject_distinct_hardlinks_to_the_same_physical_file(
@@ -155,9 +151,7 @@ def test_runtime_paths_reject_distinct_hardlinks_to_the_same_physical_file(
 
 
 @pytest.mark.parametrize("link_side", ["receipts", "catalog"])
-def test_runtime_paths_reject_direct_symlink_alias(
-    tmp_path: Path, link_side: str
-) -> None:
+def test_runtime_paths_reject_direct_symlink_alias(tmp_path: Path, link_side: str) -> None:
     target = tmp_path / "authority.sqlite3"
     target.touch()
     catalog = target if link_side == "receipts" else tmp_path / "catalog-link.sqlite3"
@@ -213,9 +207,7 @@ def test_runtime_paths_reject_main_hardlinked_to_opposite_sqlite_sidecar(
     assert catalog != receipts
     assert not os.path.samefile(catalog, receipts)
     assert os.path.samefile(sidecar, opposite_main)
-    with pytest.raises(
-        ValueError, match="CATALOG_RUNTIME_SQLITE_SIDECAR_PHYSICAL_ALIAS"
-    ):
+    with pytest.raises(ValueError, match="CATALOG_RUNTIME_SQLITE_SIDECAR_PHYSICAL_ALIAS"):
         CatalogRuntimeAuthorityPaths(catalog.absolute(), receipts.absolute())
 
 
@@ -277,9 +269,7 @@ def test_runtime_paths_reject_opposite_main_reached_through_sidecar_symlink(
     sidecar.symlink_to(opposite_main)
 
     assert os.path.samefile(sidecar, opposite_main)
-    with pytest.raises(
-        ValueError, match="CATALOG_RUNTIME_SQLITE_SIDECAR_SYMLINK"
-    ):
+    with pytest.raises(ValueError, match="CATALOG_RUNTIME_SQLITE_SIDECAR_SYMLINK"):
         CatalogRuntimeAuthorityPaths(catalog.absolute(), receipts.absolute())
 
 
@@ -300,17 +290,21 @@ def test_runtime_paths_reject_physical_alias_across_sidecar_namespaces(
     os.link(catalog_sidecar, receipt_sidecar)
 
     assert os.path.samefile(catalog_sidecar, receipt_sidecar)
-    with pytest.raises(
-        ValueError, match="CATALOG_RUNTIME_SQLITE_SIDECAR_PHYSICAL_ALIAS"
-    ):
+    with pytest.raises(ValueError, match="CATALOG_RUNTIME_SQLITE_SIDECAR_PHYSICAL_ALIAS"):
         CatalogRuntimeAuthorityPaths(catalog.absolute(), receipts.absolute())
 
 
 def test_runtime_paths_preserve_distinct_existing_sidecar_objects(tmp_path: Path) -> None:
     catalog = tmp_path / "catalog.sqlite3"
     receipts = tmp_path / "receipts.sqlite3"
-    paths = (catalog, Path(f"{catalog}-wal"), Path(f"{catalog}-shm"),
-             receipts, Path(f"{receipts}-wal"), Path(f"{receipts}-shm"))
+    paths = (
+        catalog,
+        Path(f"{catalog}-wal"),
+        Path(f"{catalog}-shm"),
+        receipts,
+        Path(f"{receipts}-wal"),
+        Path(f"{receipts}-shm"),
+    )
     for path in paths:
         path.touch()
 
@@ -335,9 +329,7 @@ def test_runtime_paths_reject_real_wal_hardlinked_as_receipt_main(tmp_path: Path
 
         assert not os.path.samefile(catalog, receipts)
         assert os.path.samefile(catalog_wal, receipts)
-        with pytest.raises(
-            ValueError, match="CATALOG_RUNTIME_SQLITE_SIDECAR_PHYSICAL_ALIAS"
-        ):
+        with pytest.raises(ValueError, match="CATALOG_RUNTIME_SQLITE_SIDECAR_PHYSICAL_ALIAS"):
             CatalogRuntimeAuthorityPaths(catalog.absolute(), receipts.absolute())
 
 
@@ -356,17 +348,17 @@ def test_composition_rejects_subclassed_path_policy(tmp_path: Path) -> None:
 def test_machine_contract_records_composition_without_closing_s9d() -> None:
     root = Path(__file__).resolve().parents[2]
     contract = json.loads(
-        (root / "docs/architecture/cryptohunter_product_architecture/"
-         "audit_observability_alerts_and_updater.json").read_text(encoding="utf-8")
+        (
+            root / "docs/architecture/cryptohunter_product_architecture/"
+            "audit_observability_alerts_and_updater.json"
+        ).read_text(encoding="utf-8")
     )
     membership = contract["release_artifact_authority"][
         "accepted_source_producer_membership_authority"
     ]
     composition = membership["catalog_runtime_acceptance_authority"]
 
-    assert composition["runtime_composition_symbol"].endswith(
-        ".compose_catalog_runtime_acceptance"
-    )
+    assert composition["runtime_composition_symbol"].endswith(".compose_catalog_runtime_acceptance")
     assert composition["runtime_composition_status"] == (
         "IMPLEMENTED_CURRENT_TREE_NOT_FINAL_ACCEPTANCE"
     )
@@ -389,8 +381,10 @@ def test_machine_contract_records_composition_without_closing_s9d() -> None:
 def test_next_c25_lifecycle_deployment_contract_is_implemented_current_tree() -> None:
     root = Path(__file__).resolve().parents[2]
     contract = json.loads(
-        (root / "docs/architecture/cryptohunter_product_architecture/"
-         "audit_observability_alerts_and_updater.json").read_text(encoding="utf-8")
+        (
+            root / "docs/architecture/cryptohunter_product_architecture/"
+            "audit_observability_alerts_and_updater.json"
+        ).read_text(encoding="utf-8")
     )
     membership = contract["release_artifact_authority"][
         "accepted_source_producer_membership_authority"
@@ -400,20 +394,37 @@ def test_next_c25_lifecycle_deployment_contract_is_implemented_current_tree() ->
     ]
 
     assert lifecycle["status"] == "IMPLEMENTED_CURRENT_TREE_PENDING_DEPLOYMENT_ACCEPTANCE"
-    assert lifecycle["contract_id"] == (
-        "M0.12-S9D-C25-CATALOG-RUNTIME-LIFECYCLE-DEPLOYMENT-V1"
-    )
+    assert lifecycle["contract_id"] == ("M0.12-S9D-C25-CATALOG-RUNTIME-LIFECYCLE-DEPLOYMENT-V1")
     assert set(lifecycle) == {
-        "status", "contract_id", "owner", "composition_hook", "configuration_source",
-        "path_default_policy", "directory_ownership", "file_ownership",
-        "posix_directory_mode", "posix_file_mode", "non_posix_acl_policy",
-        "storage_creation_authority", "provisioning_authority", "runtime_reopen_authority",
-        "startup_missing_database", "startup_missing_receipt_custody",
-        "startup_missing_producer_admission", "startup_corrupt_authority",
-        "restart_behavior", "crash_behavior", "repeated_start_idempotency",
-        "authority_lifetime", "one_shot_fetch_owner", "background_scheduler_dependency",
-        "trading_universe_auto_selection_dependency", "acceptance_evidence",
-        "status_transition", "c25_unblocking_condition", "s9d_advancement_condition",
+        "status",
+        "contract_id",
+        "owner",
+        "composition_hook",
+        "configuration_source",
+        "path_default_policy",
+        "directory_ownership",
+        "file_ownership",
+        "posix_directory_mode",
+        "posix_file_mode",
+        "non_posix_acl_policy",
+        "storage_creation_authority",
+        "provisioning_authority",
+        "runtime_reopen_authority",
+        "startup_missing_database",
+        "startup_missing_receipt_custody",
+        "startup_missing_producer_admission",
+        "startup_corrupt_authority",
+        "restart_behavior",
+        "crash_behavior",
+        "repeated_start_idempotency",
+        "authority_lifetime",
+        "one_shot_fetch_owner",
+        "background_scheduler_dependency",
+        "trading_universe_auto_selection_dependency",
+        "acceptance_evidence",
+        "status_transition",
+        "c25_unblocking_condition",
+        "s9d_advancement_condition",
     }
     assert lifecycle["path_default_policy"].startswith("NO_DEFAULTS")
     assert lifecycle["posix_directory_mode"] == "0700"

@@ -45,12 +45,20 @@ EXPECTED_DISCOVERY = {
     "schema_migration_support": "CONDITIONAL",
 }
 FAILURES = {
-    "registry_unavailable", "registry_history_unreadable", "trust_root_missing",
-    "unknown_issuer_key", "claimant_registry_unavailable",
-    "requester_verifier_unavailable", "signing_custody_unavailable",
-    "CAS_unavailable", "history_checkpoint_unavailable", "stale_restored_registry",
-    "reconciliation_provider_unavailable", "reconciliation_evidence_unverifiable",
-    "key_lifecycle_store_unavailable", "TEST_credential_presented_to_PRODUCTION",
+    "registry_unavailable",
+    "registry_history_unreadable",
+    "trust_root_missing",
+    "unknown_issuer_key",
+    "claimant_registry_unavailable",
+    "requester_verifier_unavailable",
+    "signing_custody_unavailable",
+    "CAS_unavailable",
+    "history_checkpoint_unavailable",
+    "stale_restored_registry",
+    "reconciliation_provider_unavailable",
+    "reconciliation_evidence_unverifiable",
+    "key_lifecycle_store_unavailable",
+    "TEST_credential_presented_to_PRODUCTION",
     "schema_version_unknown",
     "TEST_PRODUCTION_isolation_unavailable",
 }
@@ -132,9 +140,8 @@ def provider_satisfied(value: dict, name: str) -> bool:
     return (
         row["classification"] == "AVAILABLE"
         and row["production_mechanism_selected"] is True
-        and properties["authority_backend_kind"] not in {
-            "NONE_SELECTED", "PROCESS_LOCAL", "TEST_HELPER", "CONFIG_PLACEHOLDER"
-        }
+        and properties["authority_backend_kind"]
+        not in {"NONE_SELECTED", "PROCESS_LOCAL", "TEST_HELPER", "CONFIG_PLACEHOLDER"}
         and properties["durability_scope"] == "DURABLE"
         and properties["serialization_scope"] == "MULTI_HOST"
         and properties["multi_host_safe"] is True
@@ -164,8 +171,7 @@ def isolation_qualification_without_status(value: dict) -> bool:
         and row["production_mechanism_selected"] is True
         and isolation["mechanism_kind"] in mechanism["production_valid_kinds"]
         and isolation["mechanism_kind"] not in mechanism["production_invalid_kinds"]
-        and isolation["credential_namespace_owner_kind"]
-        in owners["production_valid_owner_kinds"]
+        and isolation["credential_namespace_owner_kind"] in owners["production_valid_owner_kinds"]
         and isolation["credential_namespace_owner_kind"]
         not in owners["production_invalid_owner_kinds"]
         and isolation["credential_namespace_owner"] != "NOT_SELECTED"
@@ -177,8 +183,7 @@ def isolation_qualification_without_status(value: dict) -> bool:
 def isolation_provider_satisfied(value: dict) -> bool:
     isolation = value["environment_isolation"]
     return (
-        isolation_qualification_without_status(value)
-        and isolation["status"] == "PRODUCTION_READY"
+        isolation_qualification_without_status(value) and isolation["status"] == "PRODUCTION_READY"
     )
 
 
@@ -192,14 +197,23 @@ def validate_environment_isolation(value: dict) -> None:
     assert isolation["plain_runtime_environment_string_sufficient"] is False
     mechanism = isolation["mechanism_requirements"]
     assert set(mechanism["production_invalid_kinds"]) >= {
-        "NONE_SELECTED", "TEST_HELPER", "PROCESS_LOCAL", "CONFIG_PLACEHOLDER",
-        "DOCUMENTATION_ONLY", "INTERFACE_ONLY",
+        "NONE_SELECTED",
+        "TEST_HELPER",
+        "PROCESS_LOCAL",
+        "CONFIG_PLACEHOLDER",
+        "DOCUMENTATION_ONLY",
+        "INTERFACE_ONLY",
     }
     assert mechanism["database_serialization_or_durability_semantics_required"] is False
     owners = isolation["credential_namespace_owner_requirements"]
     assert set(owners["production_invalid_owner_kinds"]) >= {
-        "NOT_SELECTED", "TEST_FIXTURE", "CURRENT_PROCESS", "CALLER_SELECTED",
-        "ACCOUNT_GENESIS_CANDIDATE", "ACCOUNT_SCOPED", "TEST_ONLY_AUTHORITY",
+        "NOT_SELECTED",
+        "TEST_FIXTURE",
+        "CURRENT_PROCESS",
+        "CALLER_SELECTED",
+        "ACCOUNT_GENESIS_CANDIDATE",
+        "ACCOUNT_SCOPED",
+        "TEST_ONLY_AUTHORITY",
     }
     assert owners["owner_must_resolve_to_pre_account_boundary"] is True
     semantics = isolation["status_semantics"]
@@ -216,9 +230,12 @@ def validate_environment_isolation(value: dict) -> None:
     )
     assert isolation["status"] == expected_status
     assert set(isolation["provider_linkage"]) == {
-        "deployment_trust_root_provider", "entitlement_registry_backend",
-        "claimant_identity_registry", "requester_credential_registry",
-        "root_proof_signing_key_custody", "retained_authenticated_history",
+        "deployment_trust_root_provider",
+        "entitlement_registry_backend",
+        "claimant_identity_registry",
+        "requester_credential_registry",
+        "root_proof_signing_key_custody",
+        "retained_authenticated_history",
         CHECKPOINT,
     }
     for provider, field in isolation["provider_linkage"].items():
@@ -236,9 +253,12 @@ def validate_production_gate(value: dict) -> None:
         "NOT_AVAILABLE_satisfies_gate": False,
         "NOT_FOUND_satisfies_gate": False,
     }
-    assert gate[
-        "production_dependencies_available_true_iff_all_required_dependencies_satisfy_predicate"
-    ] is True
+    assert (
+        gate[
+            "production_dependencies_available_true_iff_all_required_dependencies_satisfy_predicate"
+        ]
+        is True
+    )
     assert gate["implementation_allowed_requires_production_dependencies_available"] is True
     assert gate["production_dependencies_require_environment_isolation_satisfied"] is True
     assert gate["implementation_allowed_requires_environment_isolation_satisfied"] is True
@@ -261,7 +281,10 @@ def validate_production_gate(value: dict) -> None:
     assert history["anti_rollback_requirement_satisfied_by"] == CHECKPOINT
     assert history["ordinary_durability_satisfies_anti_rollback"] is False
     assert history["production_available_requires_anti_rollback_capability_AVAILABLE"] is True
-    if value["discovery_results"]["retained_authenticated_history"]["classification"] == "AVAILABLE":
+    if (
+        value["discovery_results"]["retained_authenticated_history"]["classification"]
+        == "AVAILABLE"
+    ):
         assert provider_satisfied(value, CHECKPOINT)
 
 
@@ -282,7 +305,9 @@ def validate_history_semantics(value: dict) -> None:
     assert history["revocation_supersession_lineage_required"] is True
     assert history["historical_verification_after_rotation_or_revocation_required"] is True
     assert set(history["forbidden_authority_sources"]) >= {
-        "process memory", "caller data", "unauthenticated cache / projection"
+        "process memory",
+        "caller data",
+        "unauthenticated cache / projection",
     }
     assert history["process_memory_authoritative"] is False
 
@@ -314,7 +339,8 @@ def validate_status_preservation(value: dict) -> None:
     assert production["readiness_freeze_makes_production_M05_available"] is False
     assert production["issuer_implementation_allowed_alone_is_sufficient"] is False
     assert set(production["additional_separately_frozen_prerequisites"]) == {
-        "FreshnessAuthority", "CryptoHunterAccountAuthority"
+        "FreshnessAuthority",
+        "CryptoHunterAccountAuthority",
     }
     assert production["current_production_M05_available"] is False
 
@@ -330,17 +356,23 @@ def validate_invariants(value: dict) -> None:
     assert value["bootstrap_entitlement_provisioning"]["identity"] == (
         "authority-generated unpredictable entitlement_id; caller cannot select it or backend"
     )
-    assert value["bootstrap_entitlement_provisioning"][
-        "AccountGenesis_may_create_entitlement"
-    ] is False
+    assert (
+        value["bootstrap_entitlement_provisioning"]["AccountGenesis_may_create_entitlement"]
+        is False
+    )
     assert set(value["no_authority_reuse"]) == {
-        "Catalog key as issuer/signing key", "Freshness proposer key as root-proof signing key",
-        "claimant key as requester/signing key", "storage key as protocol credential",
+        "Catalog key as issuer/signing key",
+        "Freshness proposer key as root-proof signing key",
+        "claimant key as requester/signing key",
+        "storage key as protocol credential",
         "CHA-installed issuer trust root",
     }
     assert set(value["trust_root_bootstrap"]["forbidden"]) >= {
-        "TOFU", "Catalog authority reuse", "FreshnessAuthority reuse",
-        "CHA self-authorization", "account-scoped DeviceInstallation/Operator/Workspace root",
+        "TOFU",
+        "Catalog authority reuse",
+        "FreshnessAuthority reuse",
+        "CHA self-authorization",
+        "account-scoped DeviceInstallation/Operator/Workspace root",
         "TEST root authorizes PRODUCTION",
     }
     assert value["environment_isolation"]["TEST_may_authorize_PRODUCTION"] is False
@@ -354,18 +386,29 @@ def validate_invariants(value: dict) -> None:
     rows = {row["condition"]: row for row in value["fail_closed_matrix"]}
     assert set(rows) == FAILURES
     for row in rows.values():
-        assert not any((row["issuance_allowed"], row["historical_recovery_allowed"],
-                        row["replacement_allowed"], row["PREPARED_allowed"]))
+        assert not any(
+            (
+                row["issuance_allowed"],
+                row["historical_recovery_allowed"],
+                row["replacement_allowed"],
+                row["PREPARED_allowed"],
+            )
+        )
 
 
 def validate_current_discovery_snapshot(value: dict) -> None:
-    assert {name: row["classification"] for name, row in value["discovery_results"].items()} == EXPECTED_DISCOVERY
-    assert all(not row["production_mechanism_selected"] for row in value["discovery_results"].values())
+    assert {
+        name: row["classification"] for name, row in value["discovery_results"].items()
+    } == EXPECTED_DISCOVERY
+    assert all(
+        not row["production_mechanism_selected"] for row in value["discovery_results"].values()
+    )
     assert value["principal_readiness_result"] == (
         "ROOT_PROOF_ISSUER_IMPLEMENTATION_READINESS_CAN_BE_FROZEN"
     )
     assert value["provenance"] == {
-        "classification": "UNKNOWN", "finding_scope": "CURRENT_TREE_ONLY",
+        "classification": "UNKNOWN",
+        "finding_scope": "CURRENT_TREE_ONLY",
         "formal_project_advancement": "WITHHELD",
     }
     assert value["status"] == {
@@ -402,9 +445,7 @@ def make_all_ready(value: dict) -> dict:
         isolation[field] = True
     isolation["mechanism_kind"] = "REVIEWED_PRODUCTION_ISOLATION_BOUNDARY"
     isolation["credential_namespace_owner"] = "SYNTHETIC_PRODUCT_SECURITY_AUTHORITY"
-    isolation["credential_namespace_owner_kind"] = (
-        "REVIEWED_PRODUCTION_ISOLATION_AUTHORITY"
-    )
+    isolation["credential_namespace_owner_kind"] = "REVIEWED_PRODUCTION_ISOLATION_AUTHORITY"
     isolation["TEST_may_authorize_PRODUCTION"] = False
     isolation["status"] = "PRODUCTION_READY"
     return result
@@ -473,15 +514,9 @@ ISOLATION_BREAKS = {
     "entitlement_namespace": ("isolation", "entitlement_namespace_separated", False),
     "claimant_namespace": ("isolation", "claimant_namespace_separated", False),
     "requester_namespace": ("isolation", "requester_namespace_separated", False),
-    "issuer_signing_key_namespace": (
-        "isolation", "issuer_signing_key_namespace_separated", False
-    ),
-    "history_checkpoint_namespace": (
-        "isolation", "history_checkpoint_namespace_separated", False
-    ),
-    "TEST_credential_rejection": (
-        "isolation", "TEST_credentials_rejected_by_PRODUCTION", False
-    ),
+    "issuer_signing_key_namespace": ("isolation", "issuer_signing_key_namespace_separated", False),
+    "history_checkpoint_namespace": ("isolation", "history_checkpoint_namespace_separated", False),
+    "TEST_credential_rejection": ("isolation", "TEST_credentials_rejected_by_PRODUCTION", False),
 }
 
 
@@ -522,8 +557,12 @@ def test_ready_provider_cannot_alias_TEST_PRODUCTION_authority(field: str) -> No
 @pytest.mark.parametrize(
     "mechanism_kind",
     [
-        "NONE_SELECTED", "TEST_HELPER", "PROCESS_LOCAL", "CONFIG_PLACEHOLDER",
-        "DOCUMENTATION_ONLY", "INTERFACE_ONLY",
+        "NONE_SELECTED",
+        "TEST_HELPER",
+        "PROCESS_LOCAL",
+        "CONFIG_PLACEHOLDER",
+        "DOCUMENTATION_ONLY",
+        "INTERFACE_ONLY",
     ],
 )
 def test_nonproduction_isolation_mechanism_kind_is_rejected(
@@ -540,8 +579,12 @@ def test_nonproduction_isolation_mechanism_kind_is_rejected(
 @pytest.mark.parametrize(
     "owner_kind",
     [
-        "NOT_SELECTED", "TEST_FIXTURE", "CURRENT_PROCESS", "CALLER_SELECTED",
-        "ACCOUNT_SCOPED", "TEST_ONLY_AUTHORITY",
+        "NOT_SELECTED",
+        "TEST_FIXTURE",
+        "CURRENT_PROCESS",
+        "CALLER_SELECTED",
+        "ACCOUNT_SCOPED",
+        "TEST_ONLY_AUTHORITY",
     ],
 )
 def test_nonproduction_isolation_owner_is_rejected(owner_kind: str) -> None:
@@ -582,8 +625,10 @@ def mutate(value: dict, name: str) -> dict:
         row = result["discovery_results"]["entitlement_registry_backend"]
         row.update(classification="AVAILABLE", production_mechanism_selected=True)
         row["mechanism_properties"].update(
-            authority_backend_kind="PROCESS_LOCAL", serialization_scope="PROCESS",
-            durability_scope="MEMORY", multi_host_safe=False,
+            authority_backend_kind="PROCESS_LOCAL",
+            serialization_scope="PROCESS",
+            durability_scope="MEMORY",
+            multi_host_safe=False,
         )
         result["status"].update(production_dependencies_available=True, implementation_allowed=True)
     elif name == "caller_selected_entitlement_backend":
@@ -601,7 +646,9 @@ def mutate(value: dict, name: str) -> dict:
     elif name == "TEST_trust_root_authorizes_PRODUCTION":
         result["environment_isolation"]["TEST_may_authorize_PRODUCTION"] = True
     elif name == "entitlement_bind_without_global_CAS":
-        result["globally_serialized_entitlement_registry"]["atomic_conditional_bind_required"] = False
+        result["globally_serialized_entitlement_registry"]["atomic_conditional_bind_required"] = (
+            False
+        )
     elif name == "last_write_wins_bound_registry":
         result["globally_serialized_entitlement_registry"]["last_write_wins_allowed"] = True
     elif name == "BOUND_history_not_retained":
@@ -633,7 +680,9 @@ def mutate(value: dict, name: str) -> dict:
         "implementation_allowed_with_one_required_provider_unselected",
     }:
         result = make_all_ready(result)
-        result["discovery_results"]["claimant_identity_registry"]["production_mechanism_selected"] = False
+        result["discovery_results"]["claimant_identity_registry"][
+            "production_mechanism_selected"
+        ] = False
         result["status"].update(production_dependencies_available=True, implementation_allowed=True)
     elif name == "root_proof_semantics_reopened_without_exploit":
         result["frozen_semantics_change_rule"] = "REOPEN"
@@ -653,7 +702,9 @@ def mutate(value: dict, name: str) -> dict:
             name == "implementation_allowed_with_checkpoint_missing"
         )
     elif name == "retained_history_available_without_required_rollback_protection":
-        result["discovery_results"]["retained_authenticated_history"]["classification"] = "AVAILABLE"
+        result["discovery_results"]["retained_authenticated_history"]["classification"] = (
+            "AVAILABLE"
+        )
     elif name == "checkpoint_not_in_required_provider_gate":
         result["required_provider_gate"].remove(CHECKPOINT)
     elif name == "provider_classification_available_but_mechanism_unselected":
@@ -733,9 +784,7 @@ def mutate(value: dict, name: str) -> dict:
             "isolation_owner_caller_selected_accepted": "CALLER_SELECTED",
             "isolation_owner_account_scoped_accepted": "ACCOUNT_SCOPED",
         }
-        result["environment_isolation"]["credential_namespace_owner_kind"] = (
-            owner_by_mutation[name]
-        )
+        result["environment_isolation"]["credential_namespace_owner_kind"] = owner_by_mutation[name]
         result["status"].update(production_dependencies_available=True, implementation_allowed=True)
     elif name == "isolation_status_not_production_ready_but_gate_passes":
         result = make_all_ready(result)

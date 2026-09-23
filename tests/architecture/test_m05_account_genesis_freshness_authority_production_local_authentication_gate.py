@@ -1,4 +1,5 @@
 """Statyczna część ostatniej bramki autoryzacji implementacji FreshnessAuthority."""
+
 import json
 from pathlib import Path
 
@@ -25,7 +26,10 @@ def test_projection_and_exact_peer_binding():
         "os_freshness_crypto_verifier": "freshness_crypto_verifier",
         "os_freshness_runtime": "freshness_runtime",
     }
-    assert auth["hba_order"][-2:] == ["local <authority_database> all reject", "local all all reject"]
+    assert auth["hba_order"][-2:] == [
+        "local <authority_database> all reject",
+        "local all all reject",
+    ]
     assert auth["network_listeners"] is False
     assert auth["caller_supplied_identity_allowed"] is False
 
@@ -33,12 +37,21 @@ def test_projection_and_exact_peer_binding():
 def test_exact_roles_and_final_flags():
     value = load()
     assert set(value["roles"]) == {
-        "freshness_schema_owner", "freshness_function_owner", "freshness_admin",
-        "freshness_crypto_verifier", "freshness_runtime", "freshness_reader",
+        "freshness_schema_owner",
+        "freshness_function_owner",
+        "freshness_admin",
+        "freshness_crypto_verifier",
+        "freshness_runtime",
+        "freshness_reader",
     }
     assert all(not role["inherit"] for role in value["roles"].values())
-    assert value["roles"]["freshness_crypto_verifier"]["direct_execute"] == ["prepare_verified_freshness_candidate"]
-    assert value["roles"]["freshness_runtime"]["direct_execute"] == ["compare_and_advance", "reviewed reads"]
+    assert value["roles"]["freshness_crypto_verifier"]["direct_execute"] == [
+        "prepare_verified_freshness_candidate"
+    ]
+    assert value["roles"]["freshness_runtime"]["direct_execute"] == [
+        "compare_and_advance",
+        "reviewed reads",
+    ]
     assert value["final_flags"] == {
         "FreshnessAuthority_implementation_allowed_after_iteration": True,
         "FreshnessAuthority_implemented": False,

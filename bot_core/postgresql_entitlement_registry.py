@@ -136,7 +136,9 @@ def _state_from_json(payload: object) -> AuthoritativeEntitlementState:
     identity_data = payload.get("identity")
     provenance_data = payload.get("provenance")
     binding_data = payload.get("binding")
-    if not all(type(item) is dict for item in (subject_data, identity_data, provenance_data, binding_data)):
+    if not all(
+        type(item) is dict for item in (subject_data, identity_data, provenance_data, binding_data)
+    ):
         raise ContractValidationError("stored state has malformed nested records")
     assert isinstance(subject_data, dict)
     assert isinstance(identity_data, dict)
@@ -571,10 +573,7 @@ def _reviewed_function_sources(
     expected_names = {signature.partition("(")[0] for signature in _FUNCTION_SIGNATURES}
     if set(by_name) != expected_names or len(matches) != len(expected_names):
         raise RegistryQualificationError("reviewed function source template is ambiguous")
-    return {
-        signature: by_name[signature.partition("(")[0]]
-        for signature in _FUNCTION_SIGNATURES
-    }
+    return {signature: by_name[signature.partition("(")[0]] for signature in _FUNCTION_SIGNATURES}
 
 
 def _function_source_fingerprint(signature: str, source: str) -> str:
@@ -621,8 +620,7 @@ def provision_postgresql_entitlement_registry(
             for signature in _FUNCTION_SIGNATURES:
                 qualified = f"{config.schema}.{signature}"
                 row = conn.execute(
-                    "SELECT prosrc FROM pg_catalog.pg_proc "
-                    "WHERE oid=to_regprocedure(%s)",
+                    "SELECT prosrc FROM pg_catalog.pg_proc WHERE oid=to_regprocedure(%s)",
                     (qualified,),
                 ).fetchone()
                 if row != (expected_sources[signature],):
@@ -868,7 +866,13 @@ class _PostgreSQLRegistryBase:
         }:
             raise RegistryQualificationError("registry schema ACL differs from allowlist")
         owner_table_privileges = {
-            "SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"
+            "SELECT",
+            "INSERT",
+            "UPDATE",
+            "DELETE",
+            "TRUNCATE",
+            "REFERENCES",
+            "TRIGGER",
         }
         expected_table_acl = {
             (relation, owner_oid, privilege, False)
@@ -901,18 +905,14 @@ class _PostgreSQLRegistryBase:
         ).fetchall()
         if column_acls:
             raise RegistryQualificationError("registry column ACL must be empty")
-        for role_name, _role_oid in (
-            roles["runtime_role"], roles["admin_role"]
-        ):
+        for role_name, _role_oid in (roles["runtime_role"], roles["admin_role"]):
             for relation in ("metadata", "lineages", "history"):
                 any_forbidden = conn.execute(
                     "SELECT has_any_column_privilege(%s,%s,'INSERT,UPDATE,REFERENCES')",
                     (role_name, f"{self._schema}.{relation}"),
                 ).fetchone()
                 if any_forbidden != (False,):
-                    raise RegistryQualificationError(
-                        "registry role has forbidden column privilege"
-                    )
+                    raise RegistryQualificationError("registry role has forbidden column privilege")
 
     def _qualify_constraints(self, conn: psycopg.Connection[Any]) -> None:
         rows = conn.execute(
@@ -924,14 +924,77 @@ class _PostgreSQLRegistryBase:
         ).fetchall()
         observed = set(rows)
         expected = {
-            (f"{self._schema}.metadata", "p", "PRIMARY KEY (singleton)", False, False, " ", " ", " "),
+            (
+                f"{self._schema}.metadata",
+                "p",
+                "PRIMARY KEY (singleton)",
+                False,
+                False,
+                " ",
+                " ",
+                " ",
+            ),
             (f"{self._schema}.metadata", "c", "CHECK (singleton)", False, False, " ", " ", " "),
-            (f"{self._schema}.lineages", "p", "PRIMARY KEY (lookup_handle, environment, trust_domain)", False, False, " ", " ", " "),
-            (f"{self._schema}.lineages", "u", "UNIQUE (environment, trust_domain, product_scope, bootstrap_entitlement_id)", False, False, " ", " ", " "),
-            (f"{self._schema}.lineages", "c", "CHECK ((current_revision >= 1))", False, False, " ", " ", " "),
-            (f"{self._schema}.history", "p", "PRIMARY KEY (lookup_handle, environment, trust_domain, revision)", False, False, " ", " ", " "),
-            (f"{self._schema}.history", "c", "CHECK ((revision >= 1))", False, False, " ", " ", " "),
-            (f"{self._schema}.history", "f", f"FOREIGN KEY (lookup_handle, environment, trust_domain) REFERENCES {self._schema}.lineages(lookup_handle, environment, trust_domain) DEFERRABLE INITIALLY DEFERRED", True, True, "a", "a", "s"),
+            (
+                f"{self._schema}.lineages",
+                "p",
+                "PRIMARY KEY (lookup_handle, environment, trust_domain)",
+                False,
+                False,
+                " ",
+                " ",
+                " ",
+            ),
+            (
+                f"{self._schema}.lineages",
+                "u",
+                "UNIQUE (environment, trust_domain, product_scope, bootstrap_entitlement_id)",
+                False,
+                False,
+                " ",
+                " ",
+                " ",
+            ),
+            (
+                f"{self._schema}.lineages",
+                "c",
+                "CHECK ((current_revision >= 1))",
+                False,
+                False,
+                " ",
+                " ",
+                " ",
+            ),
+            (
+                f"{self._schema}.history",
+                "p",
+                "PRIMARY KEY (lookup_handle, environment, trust_domain, revision)",
+                False,
+                False,
+                " ",
+                " ",
+                " ",
+            ),
+            (
+                f"{self._schema}.history",
+                "c",
+                "CHECK ((revision >= 1))",
+                False,
+                False,
+                " ",
+                " ",
+                " ",
+            ),
+            (
+                f"{self._schema}.history",
+                "f",
+                f"FOREIGN KEY (lookup_handle, environment, trust_domain) REFERENCES {self._schema}.lineages(lookup_handle, environment, trust_domain) DEFERRABLE INITIALLY DEFERRED",
+                True,
+                True,
+                "a",
+                "a",
+                "s",
+            ),
         }
         if observed != expected:
             raise RegistryQualificationError("registry constraints differ from reviewed schema")
@@ -1066,11 +1129,7 @@ class _PostgreSQLRegistryBase:
             expected_grantee_oid = (
                 roles["runtime_role"][1]
                 if signature.startswith("append_bind(")
-                else (
-                    None
-                    if signature.startswith("validate_state(")
-                    else roles["admin_role"][1]
-                )
+                else (None if signature.startswith("validate_state(") else roles["admin_role"][1])
             )
             function_acl = set(
                 conn.execute(
@@ -1106,7 +1165,9 @@ class _PostgreSQLRegistryBase:
             raise ContractValidationError("subject does not match provider security scope")
         return trusted
 
-    def _load_history(self, conn: psycopg.Connection[Any], subject: RegistrySubject) -> tuple[AuthoritativeEntitlementState, ...] | None:
+    def _load_history(
+        self, conn: psycopg.Connection[Any], subject: RegistrySubject
+    ) -> tuple[AuthoritativeEntitlementState, ...] | None:
         table = sql.Identifier(self._schema, "history")
         rows = conn.execute(
             sql.SQL(
@@ -1123,9 +1184,7 @@ class _PostgreSQLRegistryBase:
         for expected_revision, row in enumerate(rows, 1):
             handle, environment, trust_domain, revision, predecessor, payload, checksum_ok = row
             if checksum_ok is not True:
-                raise ContractValidationError(
-                    "local stored-state corruption checksum differs"
-                )
+                raise ContractValidationError("local stored-state corruption checksum differs")
             state = _state_from_json(payload)
             expected_predecessor = None if expected_revision == 1 else expected_revision - 1
             if (
@@ -1144,11 +1203,15 @@ class _PostgreSQLRegistryBase:
             states.append(state)
         return tuple(states)
 
-    def _validated_history(self, conn: psycopg.Connection[Any], subject: RegistrySubject) -> RetainedHistoryResult:
+    def _validated_history(
+        self, conn: psycopg.Connection[Any], subject: RegistrySubject
+    ) -> RetainedHistoryResult:
         states = self._load_history(conn, subject)
         lineage = sql.Identifier(self._schema, "lineages")
         head = conn.execute(
-            sql.SQL("SELECT current_revision,product_scope,bootstrap_entitlement_id FROM {} WHERE lookup_handle=%s AND environment=%s AND trust_domain=%s").format(lineage),
+            sql.SQL(
+                "SELECT current_revision,product_scope,bootstrap_entitlement_id FROM {} WHERE lookup_handle=%s AND environment=%s AND trust_domain=%s"
+            ).format(lineage),
             (subject.lookup_handle, subject.environment, subject.trust_domain),
         ).fetchone()
         if states is None and head is None:
@@ -1159,11 +1222,20 @@ class _PostgreSQLRegistryBase:
         tail = states[-1]
         if head[0] != tail.authoritative_state_revision or head[0] != len(states):
             raise ContractValidationError("current head does not equal retained history tail")
-        if head[1] != tail.identity.product_scope or head[2] != tail.identity.bootstrap_entitlement_id:
+        if (
+            head[1] != tail.identity.product_scope
+            or head[2] != tail.identity.bootstrap_entitlement_id
+        ):
             raise ContractValidationError("reverse identity projection differs from history")
         return RetainedHistoryResult(RegistryReadOutcome.FOUND, subject, states, head[0], 1)
 
-    def _read(self, subject: RegistrySubject, operation: Callable[[psycopg.Connection[Any], RegistrySubject], _T], unavailable: Callable[[], _T], corrupt: Callable[[], _T]) -> _T:
+    def _read(
+        self,
+        subject: RegistrySubject,
+        operation: Callable[[psycopg.Connection[Any], RegistrySubject], _T],
+        unavailable: Callable[[], _T],
+        corrupt: Callable[[], _T],
+    ) -> _T:
         try:
             with self._connect() as conn, conn.transaction():
                 conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
@@ -1173,7 +1245,14 @@ class _PostgreSQLRegistryBase:
         except psycopg.Error:
             return unavailable()
 
-    def _serializable(self, callback: Callable[[psycopg.Connection[Any]], _T], retryable: Callable[[], _T], unavailable: Callable[[], _T], conflict: Callable[[], _T], corrupt: Callable[[], _T]) -> _T:
+    def _serializable(
+        self,
+        callback: Callable[[psycopg.Connection[Any]], _T],
+        retryable: Callable[[], _T],
+        unavailable: Callable[[], _T],
+        conflict: Callable[[], _T],
+        corrupt: Callable[[], _T],
+    ) -> _T:
         try:
             with self._connect() as conn, conn.transaction():
                 conn.execute("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE")
@@ -1204,7 +1283,9 @@ class PostgreSQLEntitlementRegistryProvider(_PostgreSQLRegistryBase):
 
     @property
     def capabilities(self) -> ProviderCapabilities:
-        return ProviderCapabilities(True, authoritative_reads=True, durable_state=True, compare_and_swap=True)
+        return ProviderCapabilities(
+            True, authoritative_reads=True, durable_state=True, compare_and_swap=True
+        )
 
     def credential_identities(self) -> tuple[()]:
         return ()
@@ -1220,38 +1301,71 @@ class PostgreSQLEntitlementRegistryProvider(_PostgreSQLRegistryBase):
 
     def authoritative_state(self, subject: RegistrySubject) -> RegistryReadResult:
         trusted = self._trusted_subject(subject)
-        def operation(conn: psycopg.Connection[Any], requested: RegistrySubject) -> RegistryReadResult:
+
+        def operation(
+            conn: psycopg.Connection[Any], requested: RegistrySubject
+        ) -> RegistryReadResult:
             history = self._validated_history(conn, requested)
             if history.outcome is RegistryReadOutcome.NOT_FOUND:
                 return RegistryReadResult(RegistryReadOutcome.NOT_FOUND, None)
             return RegistryReadResult(RegistryReadOutcome.FOUND, history.states[-1])
-        return self._read(trusted, operation, lambda: RegistryReadResult(RegistryReadOutcome.UNAVAILABLE, None), lambda: RegistryReadResult(RegistryReadOutcome.CORRUPT, None))
 
-    def state_at_revision(self, subject: RegistrySubject, authoritative_state_revision: int) -> HistoricalStateResult:
+        return self._read(
+            trusted,
+            operation,
+            lambda: RegistryReadResult(RegistryReadOutcome.UNAVAILABLE, None),
+            lambda: RegistryReadResult(RegistryReadOutcome.CORRUPT, None),
+        )
+
+    def state_at_revision(
+        self, subject: RegistrySubject, authoritative_state_revision: int
+    ) -> HistoricalStateResult:
         trusted = self._trusted_subject(subject)
         if type(authoritative_state_revision) is not int or authoritative_state_revision < 1:
             raise ContractValidationError("revision must be a positive exact int")
         revision = authoritative_state_revision
+
         def result(outcome: RegistryReadOutcome) -> HistoricalStateResult:
-            return HistoricalStateResult(trusted, RegistryReadResult(outcome, None), revision, None, None)
-        def operation(conn: psycopg.Connection[Any], requested: RegistrySubject) -> HistoricalStateResult:
+            return HistoricalStateResult(
+                trusted, RegistryReadResult(outcome, None), revision, None, None
+            )
+
+        def operation(
+            conn: psycopg.Connection[Any], requested: RegistrySubject
+        ) -> HistoricalStateResult:
             history = self._validated_history(conn, requested)
             if history.outcome is RegistryReadOutcome.NOT_FOUND:
                 return result(RegistryReadOutcome.NOT_FOUND)
             assert history.current_authoritative_state_revision is not None
             if revision > history.current_authoritative_state_revision:
                 return result(RegistryReadOutcome.NOT_FOUND)
-            state = next((item for item in history.states if item.authoritative_state_revision == revision), None)
+            state = next(
+                (item for item in history.states if item.authoritative_state_revision == revision),
+                None,
+            )
             if state is None:
                 return result(RegistryReadOutcome.CORRUPT)
-            return HistoricalStateResult(trusted, RegistryReadResult(RegistryReadOutcome.FOUND, state), revision, history.current_authoritative_state_revision, 1)
-        return self._read(trusted, operation, lambda: result(RegistryReadOutcome.UNAVAILABLE), lambda: result(RegistryReadOutcome.CORRUPT))
+            return HistoricalStateResult(
+                trusted,
+                RegistryReadResult(RegistryReadOutcome.FOUND, state),
+                revision,
+                history.current_authoritative_state_revision,
+                1,
+            )
+
+        return self._read(
+            trusted,
+            operation,
+            lambda: result(RegistryReadOutcome.UNAVAILABLE),
+            lambda: result(RegistryReadOutcome.CORRUPT),
+        )
 
     def compare_and_swap_bind(self, request: BindRequest) -> BindResult:
         trusted = validate_exact_snapshot(request)
         if not isinstance(trusted, BindRequest):
             raise ContractValidationError("request must be exact BindRequest")
         self._trusted_subject(trusted.subject)
+
         def operation(conn: psycopg.Connection[Any]) -> BindResult:
             history = self._validated_history(conn, trusted.subject)
             resolution = resolve_bind_request(history, trusted)
@@ -1266,13 +1380,34 @@ class PostgreSQLEntitlementRegistryProvider(_PostgreSQLRegistryBase):
             if resolution.kind is not BindResolutionKind.NEW_BIND_ELIGIBLE:
                 return BindResult(outcomes[resolution.kind], resolution.historical_bound_state)
             current = history.states[-1]
-            committed = AuthoritativeEntitlementState(current.subject, current.identity, current.provenance, current.lifecycle, trusted.attempted_binding, current.authoritative_state_revision + 1, current.authoritative_state_revision)
+            committed = AuthoritativeEntitlementState(
+                current.subject,
+                current.identity,
+                current.provenance,
+                current.lifecycle,
+                trusted.attempted_binding,
+                current.authoritative_state_revision + 1,
+                current.authoritative_state_revision,
+            )
             conn.execute(
-                sql.SQL("SELECT {}.append_bind(%s,%s,%s,%s,%s)").format(sql.Identifier(self._schema)),
-                (*_subject_params(trusted.subject), current.authoritative_state_revision, psycopg.types.json.Json(_state_json(committed))),
+                sql.SQL("SELECT {}.append_bind(%s,%s,%s,%s,%s)").format(
+                    sql.Identifier(self._schema)
+                ),
+                (
+                    *_subject_params(trusted.subject),
+                    current.authoritative_state_revision,
+                    psycopg.types.json.Json(_state_json(committed)),
+                ),
             )
             return BindResult(BindOutcome.NEW_BIND_COMMITTED, committed)
-        return self._serializable(operation, lambda: BindResult(BindOutcome.RETRYABLE_SERIALIZATION_FAILURE, None), lambda: BindResult(BindOutcome.UNAVAILABLE, None), lambda: BindResult(BindOutcome.STALE_PREDECESSOR, None), lambda: BindResult(BindOutcome.CORRUPT, None))
+
+        return self._serializable(
+            operation,
+            lambda: BindResult(BindOutcome.RETRYABLE_SERIALIZATION_FAILURE, None),
+            lambda: BindResult(BindOutcome.UNAVAILABLE, None),
+            lambda: BindResult(BindOutcome.STALE_PREDECESSOR, None),
+            lambda: BindResult(BindOutcome.CORRUPT, None),
+        )
 
 
 class PostgreSQLEntitlementProvisioningAdminProvider(_PostgreSQLRegistryBase):
@@ -1285,8 +1420,16 @@ class PostgreSQLEntitlementProvisioningAdminProvider(_PostgreSQLRegistryBase):
     )
     _expected_role_field = "admin_role"
 
-    def _admin_write(self, callback: Callable[[psycopg.Connection[Any]], AdminResult]) -> AdminResult:
-        return self._serializable(callback, lambda: AdminResult(AdminOutcome.RETRYABLE_SERIALIZATION_FAILURE, None), lambda: AdminResult(AdminOutcome.UNAVAILABLE, None), lambda: AdminResult(AdminOutcome.CONFLICT, None), lambda: AdminResult(AdminOutcome.CORRUPT, None))
+    def _admin_write(
+        self, callback: Callable[[psycopg.Connection[Any]], AdminResult]
+    ) -> AdminResult:
+        return self._serializable(
+            callback,
+            lambda: AdminResult(AdminOutcome.RETRYABLE_SERIALIZATION_FAILURE, None),
+            lambda: AdminResult(AdminOutcome.UNAVAILABLE, None),
+            lambda: AdminResult(AdminOutcome.CONFLICT, None),
+            lambda: AdminResult(AdminOutcome.CORRUPT, None),
+        )
 
     def provision_entitlement(self, request: ProvisionEntitlementRequest) -> AdminResult:
         trusted = validate_exact_snapshot(request)
@@ -1294,9 +1437,21 @@ class PostgreSQLEntitlementProvisioningAdminProvider(_PostgreSQLRegistryBase):
             raise ContractValidationError("request must be exact ProvisionEntitlementRequest")
         self._trusted_subject(trusted.subject)
         state = initial_state_for(trusted)
+
         def operation(conn: psycopg.Connection[Any]) -> AdminResult:
-            conn.execute(sql.SQL("SELECT {}.provision(%s,%s,%s,%s,%s,%s)").format(sql.Identifier(self._schema)), (*_subject_params(trusted.subject), trusted.identity.product_scope, trusted.identity.bootstrap_entitlement_id, psycopg.types.json.Json(_state_json(state))))
+            conn.execute(
+                sql.SQL("SELECT {}.provision(%s,%s,%s,%s,%s,%s)").format(
+                    sql.Identifier(self._schema)
+                ),
+                (
+                    *_subject_params(trusted.subject),
+                    trusted.identity.product_scope,
+                    trusted.identity.bootstrap_entitlement_id,
+                    psycopg.types.json.Json(_state_json(state)),
+                ),
+            )
             return AdminResult(AdminOutcome.COMMITTED, state)
+
         return self._admin_write(operation)
 
     def revoke_entitlement(self, request: RevokeEntitlementRequest) -> AdminResult:
@@ -1304,16 +1459,28 @@ class PostgreSQLEntitlementProvisioningAdminProvider(_PostgreSQLRegistryBase):
         if not isinstance(trusted, RevokeEntitlementRequest):
             raise ContractValidationError("request must be exact RevokeEntitlementRequest")
         subject = self._trusted_subject(trusted.expected.subject)
+
         def operation(conn: psycopg.Connection[Any]) -> AdminResult:
             history = self._validated_history(conn, subject)
             if history.outcome is RegistryReadOutcome.NOT_FOUND:
                 return AdminResult(AdminOutcome.NOT_FOUND, None)
             current = history.states[-1]
-            if admin_predecessor_for(current) != trusted.expected or current.lifecycle is not EntitlementLifecycle.ACTIVE:
+            if (
+                admin_predecessor_for(current) != trusted.expected
+                or current.lifecycle is not EntitlementLifecycle.ACTIVE
+            ):
                 return AdminResult(AdminOutcome.CONFLICT, None)
             state = revoked_state_for(current, trusted)
-            conn.execute(sql.SQL("SELECT {}.revoke(%s,%s,%s,%s,%s)").format(sql.Identifier(self._schema)), (*_subject_params(subject), current.authoritative_state_revision, psycopg.types.json.Json(_state_json(state))))
+            conn.execute(
+                sql.SQL("SELECT {}.revoke(%s,%s,%s,%s,%s)").format(sql.Identifier(self._schema)),
+                (
+                    *_subject_params(subject),
+                    current.authoritative_state_revision,
+                    psycopg.types.json.Json(_state_json(state)),
+                ),
+            )
             return AdminResult(AdminOutcome.COMMITTED, state)
+
         return self._admin_write(operation)
 
     def supersede_entitlement(self, request: SupersedeEntitlementRequest) -> AdminResult:
@@ -1321,6 +1488,7 @@ class PostgreSQLEntitlementProvisioningAdminProvider(_PostgreSQLRegistryBase):
         if not isinstance(trusted, SupersedeEntitlementRequest):
             raise ContractValidationError("request must be exact SupersedeEntitlementRequest")
         subject = self._trusted_subject(trusted.expected.subject)
+
         def operation(conn: psycopg.Connection[Any]) -> AdminResult:
             history = self._validated_history(conn, subject)
             if history.outcome is RegistryReadOutcome.NOT_FOUND:
@@ -1329,8 +1497,19 @@ class PostgreSQLEntitlementProvisioningAdminProvider(_PostgreSQLRegistryBase):
             if admin_predecessor_for(current) != trusted.expected:
                 return AdminResult(AdminOutcome.CONFLICT, None)
             retired, successor = supersession_states_for(current, trusted)
-            conn.execute(sql.SQL("SELECT {}.supersede(%s,%s,%s,%s,%s,%s)").format(sql.Identifier(self._schema)), (*_subject_params(subject), current.authoritative_state_revision, psycopg.types.json.Json(_state_json(retired)), psycopg.types.json.Json(_state_json(successor))))
+            conn.execute(
+                sql.SQL("SELECT {}.supersede(%s,%s,%s,%s,%s,%s)").format(
+                    sql.Identifier(self._schema)
+                ),
+                (
+                    *_subject_params(subject),
+                    current.authoritative_state_revision,
+                    psycopg.types.json.Json(_state_json(retired)),
+                    psycopg.types.json.Json(_state_json(successor)),
+                ),
+            )
             return AdminResult(AdminOutcome.COMMITTED, successor)
+
         return self._admin_write(operation)
 
 

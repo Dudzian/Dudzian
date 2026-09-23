@@ -46,9 +46,7 @@ SERVER_CHECKPOINT = replace(
 def _test_public_key_bytes(credential_identity: str) -> bytes:
     """Return deterministic 32-byte test material, not generated Ed25519 crypto."""
 
-    return hashlib.sha256(
-        b"test-ed25519-public-key\x00" + credential_identity.encode()
-    ).digest()
+    return hashlib.sha256(b"test-ed25519-public-key\x00" + credential_identity.encode()).digest()
 
 
 @dataclass(frozen=True)
@@ -66,25 +64,41 @@ class GenericProvider:
 
 
 class TrustRootFake(GenericProvider):
-    def active_bundle(self) -> bytes: return b"bundle"
-    def verify_signed_successor(self, candidate: bytes) -> bool: return bool(candidate)
+    def active_bundle(self) -> bytes:
+        return b"bundle"
+
+    def verify_signed_successor(self, candidate: bytes) -> bool:
+        return bool(candidate)
 
 
 class EntitlementFake(GenericProvider):
-    def authoritative_state(self, subject): return subject
-    def compare_and_swap_bind(self, request): return request
-    def state_at_revision(self, subject, authoritative_state_revision): return subject, authoritative_state_revision
-    def retained_history(self, subject): return subject
+    def authoritative_state(self, subject):
+        return subject
+
+    def compare_and_swap_bind(self, request):
+        return request
+
+    def state_at_revision(self, subject, authoritative_state_revision):
+        return subject, authoritative_state_revision
+
+    def retained_history(self, subject):
+        return subject
 
 
 class ClaimantFake(GenericProvider):
-    def resolve_claimant(self, claimant_id: str) -> object: return claimant_id
-    def historical_claimant(self, claimant_id: str, generation: int) -> object: return claimant_id, generation
+    def resolve_claimant(self, claimant_id: str) -> object:
+        return claimant_id
+
+    def historical_claimant(self, claimant_id: str, generation: int) -> object:
+        return claimant_id, generation
 
 
 class RequesterFake(GenericProvider):
-    def active_requester_credential(self, requester_id: str) -> object: return requester_id
-    def historical_requester_credential(self, credential_id: str) -> object: return credential_id
+    def active_requester_credential(self, requester_id: str) -> object:
+        return requester_id
+
+    def historical_requester_credential(self, credential_id: str) -> object:
+        return credential_id
 
 
 class SigningIdentityFakeBase(GenericProvider):
@@ -95,53 +109,88 @@ class SigningIdentityFakeBase(GenericProvider):
     def public_key(self, credential_identity: str) -> bytes:
         object.__setattr__(self, "_public_key_reads", self._public_key_reads + 1)
         return _test_public_key_bytes(credential_identity)
-    def lifecycle_generation(self) -> int: return 1
+
+    def lifecycle_generation(self) -> int:
+        return 1
 
 
 class RootSigningFake(SigningIdentityFakeBase):
-    def sign_root_proof(self, canonical_payload: bytes) -> bytes: return canonical_payload
+    def sign_root_proof(self, canonical_payload: bytes) -> bytes:
+        return canonical_payload
 
 
 class HistorySigningFake(SigningIdentityFakeBase):
-    def sign_history_head(self, canonical_head: bytes) -> bytes: return canonical_head
+    def sign_history_head(self, canonical_head: bytes) -> bytes:
+        return canonical_head
 
 
 class FinalizationSigningFake(SigningIdentityFakeBase):
-    def sign_finalization(self, canonical_payload: bytes) -> bytes: return canonical_payload
+    def sign_finalization(self, canonical_payload: bytes) -> bytes:
+        return canonical_payload
 
 
 class ProposerSigningFake(SigningIdentityFakeBase):
-    def sign_freshness_proposal(self, canonical_payload: bytes) -> bytes: return canonical_payload
+    def sign_freshness_proposal(self, canonical_payload: bytes) -> bytes:
+        return canonical_payload
 
 
 class DualSigningFake(SigningIdentityFakeBase):
-    def sign_root_proof(self, canonical_payload: bytes) -> bytes: return canonical_payload
-    def sign_history_head(self, canonical_head: bytes) -> bytes: return canonical_head
+    def sign_root_proof(self, canonical_payload: bytes) -> bytes:
+        return canonical_payload
+
+    def sign_history_head(self, canonical_head: bytes) -> bytes:
+        return canonical_head
 
 
 class HistoryFake(GenericProvider):
-    def current_head(self) -> object: return 1
-    def append_exact_successor(self, expected_head: object, record: object) -> object: return record
-    def record_at(self, sequence: int) -> object: return sequence
+    def current_head(self) -> object:
+        return 1
+
+    def append_exact_successor(self, expected_head: object, record: object) -> object:
+        return record
+
+    def record_at(self, sequence: int) -> object:
+        return sequence
 
 
 class CheckpointFake(GenericProvider):
-    def current_checkpoint(self) -> object: return 1
-    def advance_exact_successor(self, expected: object, successor: object) -> bool: return expected != successor
-    def authenticated_checkpoint_at(self, sequence: int) -> object: return sequence
+    def current_checkpoint(self) -> object:
+        return 1
+
+    def advance_exact_successor(self, expected: object, successor: object) -> bool:
+        return expected != successor
+
+    def authenticated_checkpoint_at(self, sequence: int) -> object:
+        return sequence
 
 
 class ReconciliationFake(GenericProvider):
-    def evidence_for(self, subject_id: str, history_head: bytes) -> object: return subject_id, history_head
-    def verify_evidence(self, evidence: object) -> bool: return evidence is not None
+    def evidence_for(self, subject_id: str, history_head: bytes) -> object:
+        return subject_id, history_head
+
+    def verify_evidence(self, evidence: object) -> bool:
+        return evidence is not None
 
 
 class AttemptStoreFake(GenericProvider):
-    def reserve_or_resolve_attempt_id(self, authorization: object) -> object: return authorization
-    def finalize_attempt(self, identity: object, *, expected_fence: int) -> object: return identity, expected_fence
-    def replace_after_authoritative_unbound(self, authorization: object, evidence: object, *, expected_fence: int) -> object: return authorization, evidence, expected_fence
-    def record_recovery_resolution(self, operation_id: str, resolution: object, *, expected_fence: int) -> object: return operation_id, resolution, expected_fence
-    def attempt(self, operation_id: str) -> object: return operation_id
+    def reserve_or_resolve_attempt_id(self, authorization: object) -> object:
+        return authorization
+
+    def finalize_attempt(self, identity: object, *, expected_fence: int) -> object:
+        return identity, expected_fence
+
+    def replace_after_authoritative_unbound(
+        self, authorization: object, evidence: object, *, expected_fence: int
+    ) -> object:
+        return authorization, evidence, expected_fence
+
+    def record_recovery_resolution(
+        self, operation_id: str, resolution: object, *, expected_fence: int
+    ) -> object:
+        return operation_id, resolution, expected_fence
+
+    def attempt(self, operation_id: str) -> object:
+        return operation_id
 
 
 ROLE_FAKES = {
@@ -203,7 +252,9 @@ def capabilities_for(role: ProviderRole, signing, checkpoint) -> ProviderCapabil
     authoritative = role is not ProviderRole.CHECKPOINT_AUTHORITY
     durable = role not in {ProviderRole.RECONCILIATION_EVIDENCE}
     cas = role in {ProviderRole.ENTITLEMENT_REGISTRY, ProviderRole.CHA_ATTEMPT_STORE}
-    return replace(base, authoritative_reads=authoritative, durable_state=durable, compare_and_swap=cas)
+    return replace(
+        base, authoritative_reads=authoritative, durable_state=durable, compare_and_swap=cas
+    )
 
 
 def providers(
@@ -219,7 +270,9 @@ def providers(
     for role in ProviderRole:
         namespace = f"{domain}.{role.value.lower()}"
         semantic_role = CREDENTIAL_ROLES.get(role)
-        identities = (credential(semantic_role, namespace, role.value.lower()),) if semantic_role else ()
+        identities = (
+            (credential(semantic_role, namespace, role.value.lower()),) if semantic_role else ()
+        )
         result.append(
             ROLE_FAKES[role](
                 ProviderIdentity(role, security, namespace),
@@ -266,13 +319,17 @@ def test_generic_provider_claiming_each_role_is_interface_mismatch(role):
     )
     index = next(i for i, item in enumerate(items) if item.identity.role is role)
     items[index] = GenericProvider(original.identity, original.capabilities, original.credentials)
-    assert QualificationFailureCode.PROVIDER_INTERFACE_MISMATCH in {f.code for f in qualify(items).failures}
+    assert QualificationFailureCode.PROVIDER_INTERFACE_MISMATCH in {
+        f.code for f in qualify(items).failures
+    }
 
 
 def test_root_and_history_signing_ports_are_structurally_independent():
     items = providers(SecurityProfile.PRODUCTION_LOCAL)
     root = next(item for item in items if item.identity.role is ProviderRole.ROOT_PROOF_SIGNING)
-    history = next(item for item in items if item.identity.role is ProviderRole.HISTORY_ATTESTATION_SIGNING)
+    history = next(
+        item for item in items if item.identity.role is ProviderRole.HISTORY_ATTESTATION_SIGNING
+    )
     assert isinstance(root, RootProofSigningProvider)
     assert not isinstance(root, HistoryAttestationSigningProvider)
     assert isinstance(history, HistoryAttestationSigningProvider)
@@ -300,7 +357,12 @@ def test_provider_evidence_is_read_once_per_qualification_pass():
     result = qualify(items)
     assert result.qualified
     assert all(item._credential_reads == 1 for item in items)
-    signing = [item for item in items if item.identity.role in {ProviderRole.ROOT_PROOF_SIGNING, ProviderRole.HISTORY_ATTESTATION_SIGNING}]
+    signing = [
+        item
+        for item in items
+        if item.identity.role
+        in {ProviderRole.ROOT_PROOF_SIGNING, ProviderRole.HISTORY_ATTESTATION_SIGNING}
+    ]
     assert all(item._active_reads == 1 for item in signing)
     assert all(item._public_key_reads == 1 for item in signing)
 
@@ -327,7 +389,9 @@ def test_role_specific_minimum_capabilities_fail_closed(role, field):
     items = providers(SecurityProfile.PRODUCTION_LOCAL)
     item = next(item for item in items if item.identity.role is role)
     replace_provider(items, role, capabilities=replace(item.capabilities, **{field: False}))
-    assert QualificationFailureCode.INSUFFICIENT_CAPABILITIES in {f.code for f in qualify(items).failures}
+    assert QualificationFailureCode.INSUFFICIENT_CAPABILITIES in {
+        f.code for f in qualify(items).failures
+    }
 
 
 @pytest.mark.parametrize(
@@ -337,7 +401,9 @@ def test_role_specific_minimum_capabilities_fail_closed(role, field):
 def test_credential_bearing_provider_requires_identity_evidence(role):
     items = providers(SecurityProfile.PRODUCTION_LOCAL)
     replace_provider(items, role, credentials=())
-    assert QualificationFailureCode.MISSING_CREDENTIAL_IDENTITY_EVIDENCE in {f.code for f in qualify(items).failures}
+    assert QualificationFailureCode.MISSING_CREDENTIAL_IDENTITY_EVIDENCE in {
+        f.code for f in qualify(items).failures
+    }
 
 
 @pytest.mark.parametrize(
@@ -346,21 +412,34 @@ def test_credential_bearing_provider_requires_identity_evidence(role):
         (ProviderRole.CLAIMANT_IDENTITY_REGISTRY, CredentialSemanticRole.ROOT_PROOF_REQUESTER),
         (ProviderRole.REQUESTER_CREDENTIAL_REGISTRY, CredentialSemanticRole.ROOT_PROOF_CLAIMANT),
         (ProviderRole.ROOT_PROOF_SIGNING, CredentialSemanticRole.ROOT_PROOF_REQUESTER),
-        (ProviderRole.HISTORY_ATTESTATION_SIGNING, CredentialSemanticRole.ROOT_PROOF_ISSUER_SIGNING),
+        (
+            ProviderRole.HISTORY_ATTESTATION_SIGNING,
+            CredentialSemanticRole.ROOT_PROOF_ISSUER_SIGNING,
+        ),
     ],
 )
 def test_signing_provider_rejects_wrong_semantic_role(role, wrong_role):
     items = providers(SecurityProfile.PRODUCTION_LOCAL)
     item = next(item for item in items if item.identity.role is role)
-    replace_provider(items, role, credentials=(replace(item.credentials[0], semantic_role=wrong_role),))
-    assert QualificationFailureCode.CREDENTIAL_ROLE_MISMATCH in {f.code for f in qualify(items).failures}
+    replace_provider(
+        items, role, credentials=(replace(item.credentials[0], semantic_role=wrong_role),)
+    )
+    assert QualificationFailureCode.CREDENTIAL_ROLE_MISMATCH in {
+        f.code for f in qualify(items).failures
+    }
 
 
 def test_provider_and_credential_namespace_must_match():
     items = providers(SecurityProfile.PRODUCTION_LOCAL)
     item = next(item for item in items if item.identity.role is ProviderRole.ROOT_PROOF_SIGNING)
-    replace_provider(items, item.identity.role, credentials=(replace(item.credentials[0], provider_namespace="other"),))
-    assert QualificationFailureCode.CREDENTIAL_NAMESPACE_MISMATCH in {f.code for f in qualify(items).failures}
+    replace_provider(
+        items,
+        item.identity.role,
+        credentials=(replace(item.credentials[0], provider_namespace="other"),),
+    )
+    assert QualificationFailureCode.CREDENTIAL_NAMESPACE_MISMATCH in {
+        f.code for f in qualify(items).failures
+    }
 
 
 @pytest.mark.parametrize(
@@ -368,10 +447,18 @@ def test_provider_and_credential_namespace_must_match():
     [ProviderRole.ROOT_PROOF_SIGNING, ProviderRole.HISTORY_ATTESTATION_SIGNING],
 )
 def test_stable_signing_handle_claim_requires_handle_evidence(role):
-    items = providers(SecurityProfile.PRODUCTION_SERVER_READY, signing=SERVER_SIGNING, checkpoint=SERVER_CHECKPOINT)
+    items = providers(
+        SecurityProfile.PRODUCTION_SERVER_READY,
+        signing=SERVER_SIGNING,
+        checkpoint=SERVER_CHECKPOINT,
+    )
     item = next(item for item in items if item.identity.role is role)
-    replace_provider(items, role, credentials=(replace(item.credentials[0], key_handle_or_version=None),))
-    assert QualificationFailureCode.MISSING_KEY_HANDLE_IDENTITY in {f.code for f in qualify(items).failures}
+    replace_provider(
+        items, role, credentials=(replace(item.credentials[0], key_handle_or_version=None),)
+    )
+    assert QualificationFailureCode.MISSING_KEY_HANDLE_IDENTITY in {
+        f.code for f in qualify(items).failures
+    }
 
 
 @pytest.mark.parametrize(
@@ -416,7 +503,9 @@ def test_active_signing_identity_namespace_mismatch_is_rejected():
 
     items = providers(SecurityProfile.PRODUCTION_LOCAL)
     item = next(item for item in items if item.identity.role is ProviderRole.ROOT_PROOF_SIGNING)
-    items[items.index(item)] = NamespaceLaunderingFake(item.identity, item.capabilities, item.credentials)
+    items[items.index(item)] = NamespaceLaunderingFake(
+        item.identity, item.capabilities, item.credentials
+    )
     assert QualificationFailureCode.ACTIVE_CREDENTIAL_IDENTITY_MISMATCH in {
         failure.code for failure in qualify(items).failures
     }
@@ -448,7 +537,9 @@ def test_public_key_fingerprint_must_match_declared_material_identity():
 
     items = providers(SecurityProfile.PRODUCTION_LOCAL)
     item = next(item for item in items if item.identity.role is ProviderRole.ROOT_PROOF_SIGNING)
-    items[items.index(item)] = DifferentPublicKeyFake(item.identity, item.capabilities, item.credentials)
+    items[items.index(item)] = DifferentPublicKeyFake(
+        item.identity, item.capabilities, item.credentials
+    )
     assert QualificationFailureCode.KEY_MATERIAL_IDENTITY_MISMATCH in {
         failure.code for failure in qualify(items).failures
     }
@@ -469,7 +560,9 @@ def test_missing_signing_key_material_identity_is_rejected():
 def test_same_signing_material_in_different_namespaces_is_rejected():
     items = providers(SecurityProfile.PRODUCTION_LOCAL)
     root = next(item for item in items if item.identity.role is ProviderRole.ROOT_PROOF_SIGNING)
-    history = next(item for item in items if item.identity.role is ProviderRole.HISTORY_ATTESTATION_SIGNING)
+    history = next(
+        item for item in items if item.identity.role is ProviderRole.HISTORY_ATTESTATION_SIGNING
+    )
     shared_credential_id = root.credentials[0].credential_identity
     shared_material = root.credentials[0].key_material_identity
     replace_provider(
@@ -507,7 +600,9 @@ def test_dynamic_credential_evidence_cannot_bypass_material_alias_check():
 
     items = providers(SecurityProfile.PRODUCTION_LOCAL)
     root = next(item for item in items if item.identity.role is ProviderRole.ROOT_PROOF_SIGNING)
-    history = next(item for item in items if item.identity.role is ProviderRole.HISTORY_ATTESTATION_SIGNING)
+    history = next(
+        item for item in items if item.identity.role is ProviderRole.HISTORY_ATTESTATION_SIGNING
+    )
     rotating = RotatingEvidenceRoot(root.identity, root.capabilities, root.credentials)
     items[items.index(root)] = rotating
     replace_provider(
@@ -552,11 +647,20 @@ def test_identity_and_capabilities_are_captured_once():
                 return self.delegate.capabilities
             return replace(self.delegate.capabilities, implemented=False)
 
-        def credential_identities(self): return self.delegate.credential_identities()
-        def active_credential_identity(self): return self.delegate.active_credential_identity()
-        def public_key(self, credential_identity): return self.delegate.public_key(credential_identity)
-        def lifecycle_generation(self): return 1
-        def sign_root_proof(self, canonical_payload): return canonical_payload
+        def credential_identities(self):
+            return self.delegate.credential_identities()
+
+        def active_credential_identity(self):
+            return self.delegate.active_credential_identity()
+
+        def public_key(self, credential_identity):
+            return self.delegate.public_key(credential_identity)
+
+        def lifecycle_generation(self):
+            return 1
+
+        def sign_root_proof(self, canonical_payload):
+            return canonical_payload
 
     items = providers(SecurityProfile.PRODUCTION_LOCAL)
     root = next(item for item in items if item.identity.role is ProviderRole.ROOT_PROOF_SIGNING)
@@ -570,7 +674,9 @@ def test_identity_and_capabilities_are_captured_once():
 def test_same_signing_handle_in_different_namespaces_with_distinct_material_is_accepted():
     items = providers(SecurityProfile.PRODUCTION_LOCAL)
     root = next(item for item in items if item.identity.role is ProviderRole.ROOT_PROOF_SIGNING)
-    history = next(item for item in items if item.identity.role is ProviderRole.HISTORY_ATTESTATION_SIGNING)
+    history = next(
+        item for item in items if item.identity.role is ProviderRole.HISTORY_ATTESTATION_SIGNING
+    )
     replace_provider(
         items,
         history.identity.role,
@@ -586,12 +692,17 @@ def test_same_signing_handle_in_different_namespaces_with_distinct_material_is_a
 
 def test_structural_port_check_does_not_claim_exact_signature_validation():
     class WrongSignatureTrustRoot(TrustRootFake):
-        def active_bundle(self, unexpected): return unexpected
-        def verify_signed_successor(self): return True
+        def active_bundle(self, unexpected):
+            return unexpected
+
+        def verify_signed_successor(self):
+            return True
 
     items = providers(SecurityProfile.PRODUCTION_LOCAL)
     item = next(item for item in items if item.identity.role is ProviderRole.DEPLOYMENT_TRUST_ROOT)
-    items[items.index(item)] = WrongSignatureTrustRoot(item.identity, item.capabilities, item.credentials)
+    items[items.index(item)] = WrongSignatureTrustRoot(
+        item.identity, item.capabilities, item.credentials
+    )
     assert qualify(items).qualified
 
 
@@ -604,21 +715,49 @@ def test_structural_port_check_does_not_claim_exact_signature_validation():
 )
 def test_same_namespace_alias_for_forbidden_roles_is_rejected(field, code):
     items = providers(SecurityProfile.PRODUCTION_LOCAL)
-    claimant = next(item for item in items if item.identity.role is ProviderRole.CLAIMANT_IDENTITY_REGISTRY)
-    requester = next(item for item in items if item.identity.role is ProviderRole.REQUESTER_CREDENTIAL_REGISTRY)
+    claimant = next(
+        item for item in items if item.identity.role is ProviderRole.CLAIMANT_IDENTITY_REGISTRY
+    )
+    requester = next(
+        item for item in items if item.identity.role is ProviderRole.REQUESTER_CREDENTIAL_REGISTRY
+    )
     shared_namespace = "shared-custody"
-    replace_provider(items, claimant.identity.role, identity=replace(claimant.identity, provider_namespace=shared_namespace), credentials=(replace(claimant.credentials[0], provider_namespace=shared_namespace),))
+    replace_provider(
+        items,
+        claimant.identity.role,
+        identity=replace(claimant.identity, provider_namespace=shared_namespace),
+        credentials=(replace(claimant.credentials[0], provider_namespace=shared_namespace),),
+    )
     value = getattr(claimant.credentials[0], field)
-    replace_provider(items, requester.identity.role, identity=replace(requester.identity, provider_namespace=shared_namespace), credentials=(replace(requester.credentials[0], provider_namespace=shared_namespace, **{field: value}),))
+    replace_provider(
+        items,
+        requester.identity.role,
+        identity=replace(requester.identity, provider_namespace=shared_namespace),
+        credentials=(
+            replace(
+                requester.credentials[0], provider_namespace=shared_namespace, **{field: value}
+            ),
+        ),
+    )
     assert code in {f.code for f in qualify(items).failures}
 
 
 @pytest.mark.parametrize("field", ["credential_identity", "key_handle_or_version"])
 def test_same_local_identity_in_different_namespaces_is_accepted(field):
     items = providers(SecurityProfile.PRODUCTION_LOCAL)
-    claimant = next(item for item in items if item.identity.role is ProviderRole.CLAIMANT_IDENTITY_REGISTRY)
-    requester = next(item for item in items if item.identity.role is ProviderRole.REQUESTER_CREDENTIAL_REGISTRY)
-    replace_provider(items, requester.identity.role, credentials=(replace(requester.credentials[0], **{field: getattr(claimant.credentials[0], field)}),))
+    claimant = next(
+        item for item in items if item.identity.role is ProviderRole.CLAIMANT_IDENTITY_REGISTRY
+    )
+    requester = next(
+        item for item in items if item.identity.role is ProviderRole.REQUESTER_CREDENTIAL_REGISTRY
+    )
+    replace_provider(
+        items,
+        requester.identity.role,
+        credentials=(
+            replace(requester.credentials[0], **{field: getattr(claimant.credentials[0], field)}),
+        ),
+    )
     assert qualify(items).qualified
 
 
@@ -627,15 +766,23 @@ def test_same_local_identity_in_different_namespaces_is_accepted(field):
     [(LOCAL_SIGNING, SERVER_CHECKPOINT), (SERVER_SIGNING, LOCAL_CHECKPOINT)],
 )
 def test_server_ready_rejects_local_security_provider(signing, checkpoint):
-    assert not qualify(providers(SecurityProfile.PRODUCTION_SERVER_READY, signing=signing, checkpoint=checkpoint)).qualified
+    assert not qualify(
+        providers(SecurityProfile.PRODUCTION_SERVER_READY, signing=signing, checkpoint=checkpoint)
+    ).qualified
 
 
 def test_missing_duplicate_and_profile_mismatch_fail_closed():
     items = providers(SecurityProfile.PRODUCTION_LOCAL)
-    assert QualificationFailureCode.MISSING_PROVIDER in {f.code for f in qualify(items[:-1]).failures}
-    assert QualificationFailureCode.DUPLICATE_PROVIDER_ROLE in {f.code for f in qualify(items + [items[0]]).failures}
+    assert QualificationFailureCode.MISSING_PROVIDER in {
+        f.code for f in qualify(items[:-1]).failures
+    }
+    assert QualificationFailureCode.DUPLICATE_PROVIDER_ROLE in {
+        f.code for f in qualify(items + [items[0]]).failures
+    }
     server = SecurityProfileIdentity(SecurityProfile.PRODUCTION_SERVER_READY, "server-domain")
-    assert QualificationFailureCode.PROFILE_IDENTITY_MISMATCH in {f.code for f in qualify(items, server).failures}
+    assert QualificationFailureCode.PROFILE_IDENTITY_MISMATCH in {
+        f.code for f in qualify(items, server).failures
+    }
 
 
 @pytest.mark.parametrize(
@@ -648,19 +795,26 @@ def test_missing_duplicate_and_profile_mismatch_fail_closed():
 )
 def test_server_signing_capability_mutations_fail_closed(field):
     signing = replace(SERVER_SIGNING, **{field: False})
-    items = providers(SecurityProfile.PRODUCTION_SERVER_READY, signing=signing, checkpoint=SERVER_CHECKPOINT)
+    items = providers(
+        SecurityProfile.PRODUCTION_SERVER_READY, signing=signing, checkpoint=SERVER_CHECKPOINT
+    )
     assert not qualify(items).qualified
 
 
-@pytest.mark.parametrize("field", ["independent_rollback_domain", "independent_admin_or_security_domain"])
+@pytest.mark.parametrize(
+    "field", ["independent_rollback_domain", "independent_admin_or_security_domain"]
+)
 def test_server_checkpoint_capability_mutations_fail_closed(field):
     checkpoint = replace(SERVER_CHECKPOINT, **{field: False})
-    items = providers(SecurityProfile.PRODUCTION_SERVER_READY, signing=SERVER_SIGNING, checkpoint=checkpoint)
+    items = providers(
+        SecurityProfile.PRODUCTION_SERVER_READY, signing=SERVER_SIGNING, checkpoint=checkpoint
+    )
     assert not qualify(items).qualified
 
 
 def test_class_name_and_caller_flag_do_not_affect_qualification():
-    class ProductionHSM(RootSigningFake): pass
+    class ProductionHSM(RootSigningFake):
+        pass
 
     items = providers(SecurityProfile.PRODUCTION_SERVER_READY, checkpoint=SERVER_CHECKPOINT)
     item = next(item for item in items if item.identity.role is ProviderRole.ROOT_PROOF_SIGNING)
@@ -681,7 +835,11 @@ def test_profile_identity_and_capabilities_are_immutable_and_exact():
 
 
 def test_no_insecure_override_parameter_exists():
-    assert set(inspect.signature(RootProofIssuerCompositionGate.qualify).parameters) == {"self", "security", "providers"}
+    assert set(inspect.signature(RootProofIssuerCompositionGate.qualify).parameters) == {
+        "self",
+        "security",
+        "providers",
+    }
     assert set(inspect.signature(RootProofIssuerCompositionGate.__init__).parameters) == {"self"}
     assert "force" not in inspect.signature(ProviderQualificationPolicy.failures_for).parameters
 
@@ -815,7 +973,10 @@ def test_arbitrary_provider_and_security_objects_fail_closed_without_exception()
     assert QualificationFailureCode.PROVIDER_EVIDENCE_UNAVAILABLE in {
         failure.code for failure in provider_result.failures
     }
-    assert security_result.failures[0].code is QualificationFailureCode.INVALID_COMPOSITION_SECURITY_IDENTITY
+    assert (
+        security_result.failures[0].code
+        is QualificationFailureCode.INVALID_COMPOSITION_SECURITY_IDENTITY
+    )
 
 
 def test_policy_rejects_invalid_profile_type_defense_in_depth():
@@ -920,11 +1081,7 @@ def test_dual_signing_authority_api_is_rejected(role):
 
 
 def _provider_with_active_override(items, role, active):
-    base_type = (
-        RootSigningFake
-        if role is ProviderRole.ROOT_PROOF_SIGNING
-        else HistorySigningFake
-    )
+    base_type = RootSigningFake if role is ProviderRole.ROOT_PROOF_SIGNING else HistorySigningFake
 
     class ActiveOverride(base_type):
         def active_credential_identity(self):
@@ -1134,7 +1291,11 @@ def test_policy_and_gate_agree_on_fabricated_nested_capability_evidence(kind, in
         nested = _fabricated_checkpoint_capabilities("authenticated", invalid_value)
         role = ProviderRole.CHECKPOINT_AUTHORITY
         evidence = _fabricated_provider_capabilities(checkpoint=nested)
-    items = providers(SecurityProfile.PRODUCTION_SERVER_READY, signing=SERVER_SIGNING, checkpoint=SERVER_CHECKPOINT)
+    items = providers(
+        SecurityProfile.PRODUCTION_SERVER_READY,
+        signing=SERVER_SIGNING,
+        checkpoint=SERVER_CHECKPOINT,
+    )
     item = next(item for item in items if item.identity.role is role)
     items[items.index(item)] = replace(item, capabilities=evidence)
     policy_failures = ProviderQualificationPolicy().failures_for(
@@ -1280,9 +1441,7 @@ def test_alternate_public_key_serialization_cannot_qualify():
 
     items = providers(SecurityProfile.PRODUCTION_LOCAL)
     history = next(
-        item
-        for item in items
-        if item.identity.role is ProviderRole.HISTORY_ATTESTATION_SIGNING
+        item for item in items if item.identity.role is ProviderRole.HISTORY_ATTESTATION_SIGNING
     )
     wrapped = WrappedHistoryKeyFake(
         history.identity,

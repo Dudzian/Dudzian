@@ -32,18 +32,30 @@ from bot_core.observability.authority import (
 from bot_core.persistence.fingerprints import canonical_json_sha256
 
 S9C_RESOLUTION_POLICY_ID = "S9D/S9C_EFFECTIVE_CURRENT_OK_EXACT_SCOPE_V1"
-S9C_PRODUCTION_PROJECTION = MappingProxyType({
-    "MARKET_DATA_FRESHNESS": MappingProxyType({
-        "alert_type": "MARKET_DATA_CURRENT_CONDITION", "threshold": "WARNING",
-        "severity": MappingProxyType({"UNKNOWN": "ERROR", "DEGRADED": "WARNING", "BLOCKED": "ERROR"}),
-        "scope_fields": ("market_data_route_id", "instrument_id"),
-    }),
-    "EXECUTION_PATH_HEALTH": MappingProxyType({
-        "alert_type": "EXECUTION_ROUTE_CONDITION", "threshold": "ERROR",
-        "severity": MappingProxyType({"UNKNOWN": "ERROR", "DEGRADED": "ERROR", "BLOCKED": "CRITICAL"}),
-        "scope_fields": ("exchange_account_id", "instrument_id", "execution_route_id"),
-    }),
-})
+S9C_PRODUCTION_PROJECTION = MappingProxyType(
+    {
+        "MARKET_DATA_FRESHNESS": MappingProxyType(
+            {
+                "alert_type": "MARKET_DATA_CURRENT_CONDITION",
+                "threshold": "WARNING",
+                "severity": MappingProxyType(
+                    {"UNKNOWN": "ERROR", "DEGRADED": "WARNING", "BLOCKED": "ERROR"}
+                ),
+                "scope_fields": ("market_data_route_id", "instrument_id"),
+            }
+        ),
+        "EXECUTION_PATH_HEALTH": MappingProxyType(
+            {
+                "alert_type": "EXECUTION_ROUTE_CONDITION",
+                "threshold": "ERROR",
+                "severity": MappingProxyType(
+                    {"UNKNOWN": "ERROR", "DEGRADED": "ERROR", "BLOCKED": "CRITICAL"}
+                ),
+                "scope_fields": ("exchange_account_id", "instrument_id", "execution_route_id"),
+            }
+        ),
+    }
+)
 
 
 def _s9c_stamp(value: datetime) -> str:
@@ -103,21 +115,41 @@ class S9CObservationSourceAuthority:
         condition_key = str(canonical_json_sha256(semantic))
         source_id = "s9c-source-" + condition_key
         result = "HEALTHY" if accepted.effective_condition == "OK" else "FAILING"
-        severity = threshold if result == "HEALTHY" else path["severity"][accepted.effective_condition]
+        severity = (
+            threshold if result == "HEALTHY" else path["severity"][accepted.effective_condition]
+        )
         selector = SourceSelector(
-            alert_type, "OBSERVATION_CONDITION", observation.environment,
-            condition_key, observation.category, (source_id,), True, threshold,
+            alert_type,
+            "OBSERVATION_CONDITION",
+            observation.environment,
+            condition_key,
+            observation.category,
+            (source_id,),
+            True,
+            threshold,
             S9C_RESOLUTION_POLICY_ID,
         )
         evidence = SourceEvidence(
-            accepted.acceptance_id, alert_type, selector.source_family, source_id,
-            observation.environment, condition_key, observation.category, condition_key,
-            accepted.transaction_revision, 1, result, observation.observed_at_utc,
-            severity, accepted.content_fingerprint,
+            accepted.acceptance_id,
+            alert_type,
+            selector.source_family,
+            source_id,
+            observation.environment,
+            condition_key,
+            observation.category,
+            condition_key,
+            accepted.transaction_revision,
+            1,
+            result,
+            observation.observed_at_utc,
+            severity,
+            accepted.content_fingerprint,
         )
         return ValidatedSourceFact(selector, (evidence,), result, accepted.acceptance_id)
 
-    def validate_current(self, evidence_set: SourceEvidenceSet, now_utc: datetime) -> ValidatedSourceFact:
+    def validate_current(
+        self, evidence_set: SourceEvidenceSet, now_utc: datetime
+    ) -> ValidatedSourceFact:
         result: ValidatedSourceFact | None = None
 
         def retain(fact: ValidatedSourceFact) -> Alert:  # protocol return is irrelevant here
@@ -130,7 +162,9 @@ class S9CObservationSourceAuthority:
         return result
 
     def consume_current(
-        self, evidence_set: SourceEvidenceSet, now_utc: datetime,
+        self,
+        evidence_set: SourceEvidenceSet,
+        now_utc: datetime,
         consumer: Callable[[ValidatedSourceFact], Alert],
     ) -> Alert:
         acceptance_id = self._one(evidence_set)
@@ -177,11 +211,19 @@ class S9CObservationSourceAuthority:
             return False
         item = fact.evidence[0]
         return (
-            identity.alert_type, identity.environment, identity.alert_scope,
-            identity.source_family, identity.fact_type, identity.condition_key,
+            identity.alert_type,
+            identity.environment,
+            identity.alert_scope,
+            identity.source_family,
+            identity.fact_type,
+            identity.condition_key,
         ) == (
-            item.alert_type, item.environment, item.alert_scope,
-            item.source_family, item.fact_type, item.condition_key,
+            item.alert_type,
+            item.environment,
+            item.alert_scope,
+            item.source_family,
+            item.fact_type,
+            item.condition_key,
         )
 
     def _historical(self, reference: str, transaction_time_utc: str) -> ValidatedSourceFact:
@@ -203,8 +245,13 @@ class S9CObservationSourceAuthority:
         fact = self._historical(reference, transaction_time_utc)
         item = fact.evidence[0]
         decision = HistoricalSourceDecision(
-            "", reference, (reference,), transaction_time_utc, fact.result,
-            item.source_severity, fact.selector.resolution_policy_id,
+            "",
+            reference,
+            (reference,),
+            transaction_time_utc,
+            fact.result,
+            item.source_severity,
+            fact.selector.resolution_policy_id,
             ((item.source_id, item.source_generation, item.source_revision),),
         )
         return replace(decision, decision_id=_historical_source_decision_id(decision))

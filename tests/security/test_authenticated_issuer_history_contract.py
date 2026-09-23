@@ -40,20 +40,30 @@ from bot_core.root_proof_issuer_substrate import (
 
 
 class Signer:
-    def __init__(self, *, role=CredentialSemanticRole.HISTORY_ATTESTATION_SIGNING,
-                 provider_role=ProviderRole.HISTORY_ATTESTATION_SIGNING,
-                 credential_id="history-credential", version="7", key=None,
-                 advertised_key=None, material_identity=None,
-                 lifecycle=SigningKeyLifecycle.ACTIVE, generation=1,
-                 provider_namespace="history-provider",
-                 lifecycle_namespace="lifecycle"):
+    def __init__(
+        self,
+        *,
+        role=CredentialSemanticRole.HISTORY_ATTESTATION_SIGNING,
+        provider_role=ProviderRole.HISTORY_ATTESTATION_SIGNING,
+        credential_id="history-credential",
+        version="7",
+        key=None,
+        advertised_key=None,
+        material_identity=None,
+        lifecycle=SigningKeyLifecycle.ACTIVE,
+        generation=1,
+        provider_namespace="history-provider",
+        lifecycle_namespace="lifecycle",
+    ):
         self.key = key or Ed25519PrivateKey.generate()
         self.role = role
         self.provider_role = provider_role
         self.credential_id = credential_id
         self.version = version
         self.advertised_key = advertised_key or self.public()
-        self.material_identity = material_identity or public_key_material_identity(self.advertised_key)
+        self.material_identity = material_identity or public_key_material_identity(
+            self.advertised_key
+        )
         self.lifecycle = lifecycle
         self.generation = generation
         self.provider_namespace = provider_namespace
@@ -61,14 +71,27 @@ class Signer:
 
     @property
     def identity(self):
-        return ProviderIdentity(self.provider_role, SecurityProfileIdentity(SecurityProfile.PRODUCTION_LOCAL, "tenant-a"), self.provider_namespace)
+        return ProviderIdentity(
+            self.provider_role,
+            SecurityProfileIdentity(SecurityProfile.PRODUCTION_LOCAL, "tenant-a"),
+            self.provider_namespace,
+        )
 
     @property
     def capabilities(self):
         return None
 
     def credential_identities(self):
-        return (CredentialRoleIdentity(self.role, self.credential_id, self.provider_namespace, self.version, self.lifecycle_namespace, self.material_identity),)
+        return (
+            CredentialRoleIdentity(
+                self.role,
+                self.credential_id,
+                self.provider_namespace,
+                self.version,
+                self.lifecycle_namespace,
+                self.material_identity,
+            ),
+        )
 
     def active_credential_identity(self):
         if self.lifecycle is not SigningKeyLifecycle.ACTIVE:
@@ -92,12 +115,22 @@ class Signer:
         return self.lifecycle
 
     def public(self):
-        return self.key.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+        return self.key.public_key().public_bytes(
+            serialization.Encoding.Raw, serialization.PublicFormat.Raw
+        )
 
 
 @pytest.fixture
 def stream():
-    return HistoryStreamIdentity("account-genesis-history", "IndependentAccountGenesisRootProofIssuer", "PRODUCTION_LOCAL", "production", "tenant-a", "product-a", 1)
+    return HistoryStreamIdentity(
+        "account-genesis-history",
+        "IndependentAccountGenesisRootProofIssuer",
+        "PRODUCTION_LOCAL",
+        "production",
+        "tenant-a",
+        "product-a",
+        1,
+    )
 
 
 def identity(n=1):
@@ -109,7 +142,11 @@ def committed(stream, count=1):
     records = []
     expected = NO_PREDECESSOR
     for n in range(1, count + 1):
-        record, replay = history.append(expected_digest=expected, event_identity=identity(n), payload={"account_id": "ą", "generation": n, "enabled": True, "optional": None})
+        record, replay = history.append(
+            expected_digest=expected,
+            event_identity=identity(n),
+            payload={"account_id": "ą", "generation": n, "enabled": True, "optional": None},
+        )
         assert not replay
         records.append(record)
         expected = record.authenticated_digest
@@ -126,15 +163,19 @@ def signed_history(stream, count=1, signer=None):
 
 def reconcile(history, head, signer, checkpoint_authority):
     return reconcile_checkpoint(
-        history=history, history_head=head,
-        verification_authority=signer, checkpoint_authority=checkpoint_authority,
+        history=history,
+        history_head=head,
+        verification_authority=signer,
+        checkpoint_authority=checkpoint_authority,
     )
 
 
 def checkpoint_authority(stream, history, head, signer):
     authority = LocalCheckpointProvider("cp", stream)
     authority.advance(
-        expected_revision=0, history=history, head=head,
+        expected_revision=0,
+        history=history,
+        head=head,
         verification_authority=signer,
     )
     return authority
@@ -150,6 +191,7 @@ def test_canonicalization_is_order_independent_and_exact_typed():
 def test_build_record_rejects_mapping_subclass_and_snapshots_nested_payload(stream):
     class HostileDict(dict):
         pass
+
     with pytest.raises(TypeError, match="exact canonical JSON dict"):
         build_record(stream, 1, NO_PREDECESSOR, identity(), HostileDict(x=1))
     nested = {"items": [{"value": 1}]}
@@ -161,18 +203,32 @@ def test_build_record_rejects_mapping_subclass_and_snapshots_nested_payload(stre
 def test_models_reject_subclasses_bool_int_and_bytes_subclasses(stream):
     class StreamSubclass(HistoryStreamIdentity):
         pass
+
     subclass = StreamSubclass(*stream.material().values())
     with pytest.raises(TypeError):
         build_record(subclass, 1, NO_PREDECESSOR, identity(), {})
     with pytest.raises(TypeError):
         build_record(stream, True, NO_PREDECESSOR, identity(), {})
+
     class BytesSubclass(bytes):
         pass
+
     with pytest.raises(TypeError):
-        AttestedHistoryHead(stream, 1, "d", Signer().credential_identities()[0], BytesSubclass(b"x"), b"s")
+        AttestedHistoryHead(
+            stream, 1, "d", Signer().credential_identities()[0], BytesSubclass(b"x"), b"s"
+        )
 
 
-@pytest.mark.parametrize("field,value", [("environment", "test"), ("trust_domain", "tenant-b"), ("product_scope", "product-b"), ("stream_id", "other-history"), ("security_epoch", 2)])
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("environment", "test"),
+        ("trust_domain", "tenant-b"),
+        ("product_scope", "product-b"),
+        ("stream_id", "other-history"),
+        ("security_epoch", 2),
+    ],
+)
 def test_cross_boundary_head_replay_fails(stream, field, value):
     _, records = committed(stream)
     signer = Signer()
@@ -183,14 +239,22 @@ def test_cross_boundary_head_replay_fails(stream, field, value):
 
 def test_exact_append_replay_and_lost_response(stream):
     history, records = committed(stream)
-    replay, was_replay = history.append(expected_digest="ignored-on-replay", event_identity=identity(), payload={"optional": None, "enabled": True, "generation": 1, "account_id": "ą"})
+    replay, was_replay = history.append(
+        expected_digest="ignored-on-replay",
+        event_identity=identity(),
+        payload={"optional": None, "enabled": True, "generation": 1, "account_id": "ą"},
+    )
     assert was_replay and replay == records[0]
 
 
 def test_conflicting_append_replay(stream):
     history, records = committed(stream)
     with pytest.raises(HistoryContractError, match="conflicting"):
-        history.append(expected_digest=records[0].authenticated_digest, event_identity=identity(), payload={"generation": 2})
+        history.append(
+            expected_digest=records[0].authenticated_digest,
+            event_identity=identity(),
+            payload={"generation": 2},
+        )
 
 
 def test_stale_predecessor_and_duplicate_successor_fail_closed(stream):
@@ -208,7 +272,9 @@ def test_payload_tamper_detected(stream):
 
 def test_predecessor_digest_tamper_detected(stream):
     history, records = committed(stream, 2)
-    object.__setattr__(history._records[1], "predecessor_authenticated_digest", "sha256:" + "1" * 64)
+    object.__setattr__(
+        history._records[1], "predecessor_authenticated_digest", "sha256:" + "1" * 64
+    )
     with pytest.raises(HistoryContractError):
         history.verify()
 
@@ -247,7 +313,9 @@ def test_valid_signature_under_attacker_key_cannot_launder_trusted_identity(stre
     forged = replace(legitimate, signature=attacker.sign(legitimate.canonical_attestation_bytes))
     with pytest.raises(HistoryContractError, match="signature"):
         verify_head(forged, trusted, expected_stream=stream)
-    attacker_public = attacker.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+    attacker_public = attacker.public_key().public_bytes(
+        serialization.Encoding.Raw, serialization.PublicFormat.Raw
+    )
     with pytest.raises(HistoryContractError, match="authority"):
         verify_head(forged, attacker_public, expected_stream=stream)  # type: ignore[arg-type]
 
@@ -255,26 +323,36 @@ def test_valid_signature_under_attacker_key_cannot_launder_trusted_identity(stre
 def test_key_material_identity_mismatch_fails_before_signature_acceptance(stream):
     _, records = committed(stream)
     key = Ed25519PrivateKey.generate()
-    other = Ed25519PrivateKey.generate().public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+    other = (
+        Ed25519PrivateKey.generate()
+        .public_key()
+        .public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+    )
     signer = Signer(key=key, material_identity=public_key_material_identity(other))
     head = attest_head(records[0], signer)
     with pytest.raises(HistoryContractError, match="material identity mismatch"):
         verify_head(head, signer, expected_stream=stream)
 
 
-@pytest.mark.parametrize("field,value", [("credential_identity", "wrong"), ("key_handle_or_version", "8")])
+@pytest.mark.parametrize(
+    "field,value", [("credential_identity", "wrong"), ("key_handle_or_version", "8")]
+)
 def test_wrong_declared_credential_or_version_with_correct_key_fails(stream, field, value):
     _, _, signer, head, _ = signed_history(stream)
-    forged = replace(head, signing_credential_identity=replace(
-        head.signing_credential_identity, **{field: value}
-    ))
+    forged = replace(
+        head,
+        signing_credential_identity=replace(head.signing_credential_identity, **{field: value}),
+    )
     with pytest.raises(HistoryContractError):
         verify_head(forged, signer, expected_stream=stream)
 
 
 def test_root_proof_role_cannot_sign_or_verify_history(stream):
     _, records = committed(stream)
-    root = Signer(role=CredentialSemanticRole.ROOT_PROOF_ISSUER_SIGNING, provider_role=ProviderRole.ROOT_PROOF_SIGNING)
+    root = Signer(
+        role=CredentialSemanticRole.ROOT_PROOF_ISSUER_SIGNING,
+        provider_role=ProviderRole.ROOT_PROOF_SIGNING,
+    )
     with pytest.raises(HistoryContractError, match="HISTORY"):
         attest_head(records[0], root)
     history_signer = Signer(key=root.key)
@@ -288,7 +366,11 @@ def test_cross_role_key_alias_is_rejected_by_history_authority_role(stream):
     shared = Ed25519PrivateKey.generate()
     history = Signer(key=shared)
     head = attest_head(records[0], history)
-    root = Signer(key=shared, role=CredentialSemanticRole.ROOT_PROOF_ISSUER_SIGNING, provider_role=ProviderRole.ROOT_PROOF_SIGNING)
+    root = Signer(
+        key=shared,
+        role=CredentialSemanticRole.ROOT_PROOF_ISSUER_SIGNING,
+        provider_role=ProviderRole.ROOT_PROOF_SIGNING,
+    )
     with pytest.raises(HistoryContractError):
         verify_head(head, root, expected_stream=stream)
 
@@ -315,12 +397,14 @@ def test_active_verify_only_revoked_historical_verification_matrix(stream):
     head = attest_head(records[0], active)
     verify_head(head, active, expected_stream=stream)
     verify_head(
-        head, Signer(key=active.key, lifecycle=SigningKeyLifecycle.VERIFY_ONLY),
+        head,
+        Signer(key=active.key, lifecycle=SigningKeyLifecycle.VERIFY_ONLY),
         expected_stream=stream,
     )
     with pytest.raises(HistoricalRevokedSignatureVerificationUnavailable):
         verify_head(
-            head, Signer(key=active.key, lifecycle=SigningKeyLifecycle.REVOKED),
+            head,
+            Signer(key=active.key, lifecycle=SigningKeyLifecycle.REVOKED),
             expected_stream=stream,
         )
 
@@ -329,19 +413,26 @@ def test_checkpoint_reverifies_authority_and_rejects_forged_higher_head(stream):
     history, _, signer, head, _ = signed_history(stream)
     checkpoints = LocalCheckpointProvider("local-checkpoint", stream)
     checkpoints.advance(
-        expected_revision=0, history=history, head=head,
+        expected_revision=0,
+        history=history,
+        head=head,
         verification_authority=signer,
     )
     forged = replace(
-        head, sequence=99, record_digest="sha256:" + "f" * 64,
+        head,
+        sequence=99,
+        record_digest="sha256:" + "f" * 64,
         signing_credential_identity=replace(
             head.signing_credential_identity,
-            credential_identity="arbitrary", key_handle_or_version="999",
+            credential_identity="arbitrary",
+            key_handle_or_version="999",
         ),
     )
     with pytest.raises(HistoryContractError, match="current verified history"):
         checkpoints.advance(
-            expected_revision=1, history=history, head=forged,
+            expected_revision=1,
+            history=history,
+            head=forged,
             verification_authority=signer,
         )
 
@@ -349,15 +440,19 @@ def test_checkpoint_reverifies_authority_and_rejects_forged_higher_head(stream):
 def test_copied_seal_and_recomputed_material_exploit_has_no_authority_path(stream):
     history, _, signer, valid_head, legitimate = signed_history(stream)
     forged_head = replace(
-        valid_head, sequence=valid_head.sequence + 100,
+        valid_head,
+        sequence=valid_head.sequence + 100,
         record_digest="sha256:" + "f" * 64,
     )
     fake = object.__new__(VerifiedHistoryHead)
     object.__setattr__(fake, "head", forged_head)
     recomputed_material = (
-        forged_head.stream, forged_head.sequence, forged_head.record_digest,
+        forged_head.stream,
+        forged_head.sequence,
+        forged_head.record_digest,
         forged_head.signing_credential_identity,
-        forged_head.canonical_attestation_bytes, forged_head.signature,
+        forged_head.canonical_attestation_bytes,
+        forged_head.signature,
     )
     # The fixed value has no transferable _bound_material or _seal slots.
     with pytest.raises(AttributeError):
@@ -369,7 +464,9 @@ def test_copied_seal_and_recomputed_material_exploit_has_no_authority_path(strea
         checkpoints.advance(expected_revision=0, verified_head=fake)  # type: ignore[call-arg]
     with pytest.raises(HistoryContractError):
         checkpoints.advance(
-            expected_revision=0, history=history, head=forged_head,
+            expected_revision=0,
+            history=history,
+            head=forged_head,
             verification_authority=signer,
         )
 
@@ -377,14 +474,17 @@ def test_copied_seal_and_recomputed_material_exploit_has_no_authority_path(strea
 def test_mutated_legitimate_evidence_is_not_an_authorization_capability(stream):
     history, _, signer, head, evidence = signed_history(stream)
     object.__setattr__(
-        evidence, "head",
+        evidence,
+        "head",
         replace(head, sequence=101, record_digest="sha256:" + "e" * 64),
     )
     checkpoints = LocalCheckpointProvider("local-checkpoint", stream)
     with pytest.raises(TypeError, match="verified_head"):
         checkpoints.advance(expected_revision=0, verified_head=evidence)  # type: ignore[call-arg]
     checkpoint, replay = checkpoints.advance(
-        expected_revision=0, history=history, head=head,
+        expected_revision=0,
+        history=history,
+        head=head,
         verification_authority=signer,
     )
     assert not replay and checkpoint.history_sequence == head.sequence
@@ -398,29 +498,44 @@ def test_checkpoint_replay_behind_ahead_rewind_and_split_brain(stream):
     prefix._records, prefix._events = [records[0]], {records[0].event_identity: records[0]}
     checkpoints = LocalCheckpointProvider("local-checkpoint", stream)
     cp1, replay = checkpoints.advance(
-        expected_revision=0, history=prefix, head=h1, verification_authority=signer,
+        expected_revision=0,
+        history=prefix,
+        head=h1,
+        verification_authority=signer,
     )
     assert not replay and reconcile(history, h2, signer, checkpoints) is ReconciliationOutcome.STALE
     cp1_again, replay = checkpoints.advance(
-        expected_revision=1, history=prefix, head=h1, verification_authority=signer,
+        expected_revision=1,
+        history=prefix,
+        head=h1,
+        verification_authority=signer,
     )
     assert replay and cp1_again == cp1
     cp2, _ = checkpoints.advance(
-        expected_revision=1, history=history, head=h2, verification_authority=signer,
+        expected_revision=1,
+        history=history,
+        head=h2,
+        verification_authority=signer,
     )
     assert reconcile(prefix, h1, signer, checkpoints) is ReconciliationOutcome.CORRUPT
     with pytest.raises(HistoryContractError, match="rewind"):
         checkpoints.advance(
-            expected_revision=2, history=prefix, head=h1,
+            expected_revision=2,
+            history=prefix,
+            head=h1,
             verification_authority=signer,
         )
 
 
 def checkpoint_for(head, stream, **changes):
-    values = dict(checkpoint_id="cp", stream=stream, history_sequence=head.sequence,
-                  authenticated_head_digest=head.record_digest,
-                  history_signing_credential_identity=head.signing_credential_identity,
-                  checkpoint_revision=1)
+    values = dict(
+        checkpoint_id="cp",
+        stream=stream,
+        history_sequence=head.sequence,
+        authenticated_head_digest=head.record_digest,
+        history_signing_credential_identity=head.signing_credential_identity,
+        checkpoint_revision=1,
+    )
     values.update(changes)
     return LocalCheckpoint(**values)
 
@@ -433,7 +548,9 @@ def test_fabricated_checkpoint_cannot_authorize_exact_committed(stream):
     assert reconcile(history, head, signer, authority) is ReconciliationOutcome.STALE
     with pytest.raises(TypeError):
         reconcile_checkpoint(
-            history=history, history_head=head, verification_authority=signer,
+            history=history,
+            history_head=head,
+            verification_authority=signer,
             checkpoint=fabricated,  # type: ignore[call-arg]
         )
 
@@ -444,8 +561,11 @@ def test_raw_forged_head_cannot_produce_exact_or_stale(stream):
     forged_exact = replace(head, canonical_attestation_bytes=b"forged", signature=b"forged")
     assert reconcile(history, forged_exact, signer, authority) is ReconciliationOutcome.CORRUPT
     forged_higher = replace(
-        head, sequence=head.sequence + 1, record_digest="sha256:" + "a" * 64,
-        canonical_attestation_bytes=b"forged", signature=b"forged",
+        head,
+        sequence=head.sequence + 1,
+        record_digest="sha256:" + "a" * 64,
+        canonical_attestation_bytes=b"forged",
+        signature=b"forged",
     )
     assert reconcile(history, forged_higher, signer, authority) is ReconciliationOutcome.CORRUPT
 
@@ -466,21 +586,29 @@ def test_authority_paths_reject_fabricated_subclasses(stream):
         pass
 
     subclass_head = HeadSubclass(
-        head.stream, head.sequence, head.record_digest, head.signing_credential_identity,
-        head.canonical_attestation_bytes, head.signature,
+        head.stream,
+        head.sequence,
+        head.record_digest,
+        head.signing_credential_identity,
+        head.canonical_attestation_bytes,
+        head.signature,
     )
     checkpoints = LocalCheckpointProvider("local-checkpoint", stream)
     with pytest.raises((TypeError, HistoryContractError)):
         checkpoints.advance(
-            expected_revision=0, history=history, head=subclass_head,
+            expected_revision=0,
+            history=history,
+            head=subclass_head,
             verification_authority=signer,
         )
     with pytest.raises(TypeError):
         reconcile(history, head, signer, CheckpointProviderSubclass("cp", stream))
     with pytest.raises(TypeError):
         reconcile_checkpoint(
-            history=HistorySubclass(stream), history_head=None,
-            verification_authority=None, checkpoint_authority=checkpoints,
+            history=HistorySubclass(stream),
+            history_head=None,
+            verification_authority=None,
+            checkpoint_authority=checkpoints,
         )
     subclass_stream = StreamSubclass(*stream.material().values())
     with pytest.raises(TypeError):
@@ -495,12 +623,15 @@ def test_reconcile_exact_uses_authoritative_committed_checkpoint(stream):
 
 @pytest.mark.parametrize("difference", ["provider", "material", "lifecycle"])
 def test_same_local_id_and_version_different_exact_identity_is_not_committed(
-    stream, difference,
+    stream,
+    difference,
 ):
     history, records = committed(stream)
     signer_a = Signer(
-        credential_id="same-local-id", version="same-local-version",
-        provider_namespace="provider-A", lifecycle_namespace="lifecycle-A",
+        credential_id="same-local-id",
+        version="same-local-version",
+        provider_namespace="provider-A",
+        lifecycle_namespace="lifecycle-A",
     )
     head_a = attest_head(records[0], signer_a)
     checkpoints = checkpoint_authority(stream, history, head_a, signer_a)
@@ -526,20 +657,28 @@ def test_same_local_id_and_version_different_exact_identity_is_not_committed(
 def test_revoked_acceptance_for_a_cannot_authorize_namespaced_replacement_b(stream):
     history, records = committed(stream)
     signer_a = Signer(
-        credential_id="same-local-id", version="same-local-version",
-        provider_namespace="provider-A", lifecycle_namespace="lifecycle-A",
+        credential_id="same-local-id",
+        version="same-local-version",
+        provider_namespace="provider-A",
+        lifecycle_namespace="lifecycle-A",
     )
     head_a = attest_head(records[0], signer_a)
     checkpoints = checkpoint_authority(stream, history, head_a, signer_a)
     signer_b = Signer(
-        credential_id="same-local-id", version="same-local-version",
-        provider_namespace="provider-B", lifecycle_namespace="lifecycle-B",
+        credential_id="same-local-id",
+        version="same-local-version",
+        provider_namespace="provider-B",
+        lifecycle_namespace="lifecycle-B",
     )
     head_b = attest_head(records[0], signer_b)
     revoked_b = Signer(
-        key=signer_b.key, credential_id="same-local-id", version="same-local-version",
-        provider_namespace="provider-B", lifecycle_namespace="lifecycle-B",
-        lifecycle=SigningKeyLifecycle.REVOKED, generation=2,
+        key=signer_b.key,
+        credential_id="same-local-id",
+        version="same-local-version",
+        provider_namespace="provider-B",
+        lifecycle_namespace="lifecycle-B",
+        lifecycle=SigningKeyLifecycle.REVOKED,
+        generation=2,
     )
 
     with pytest.raises(HistoricalRevokedSignatureVerificationUnavailable):
@@ -551,18 +690,20 @@ def test_v1_weak_head_material_is_rejected(stream):
     signer = Signer()
     head = attest_head(records[0], signer)
     weak = {
-        "stream": stream.material(), "sequence": head.sequence,
+        "stream": stream.material(),
+        "sequence": head.sequence,
         "record_digest": head.record_digest,
         "signing_role": "HISTORY_ATTESTATION_SIGNING",
         "signing_credential_id": signer.credential_id,
         "signing_key_version": signer.version,
     }
-    canonical = (
-        b"CryptoHunter/M0.5/IssuerAuthenticatedHistoryHead/v1\0"
-        + canonical_json_bytes(weak)
+    canonical = b"CryptoHunter/M0.5/IssuerAuthenticatedHistoryHead/v1\0" + canonical_json_bytes(
+        weak
     )
     old_head = replace(
-        head, canonical_attestation_bytes=canonical, signature=signer.key.sign(canonical),
+        head,
+        canonical_attestation_bytes=canonical,
+        signature=signer.key.sign(canonical),
     )
     with pytest.raises(HistoryContractError, match="non-canonical"):
         history.verify_attested_head(old_head, signer)
@@ -573,7 +714,11 @@ def test_checkpoint_behind_is_stale_for_verified_history(stream):
     signer = Signer()
     h1, h2 = attest_head(records[0], signer), attest_head(records[1], signer)
     prefix = ReferenceAuthenticatedHistory(stream)
-    prefix.append(expected_digest=NO_PREDECESSOR, event_identity=identity(1), payload={"account_id": "ą", "generation": 1, "enabled": True, "optional": None})
+    prefix.append(
+        expected_digest=NO_PREDECESSOR,
+        event_identity=identity(1),
+        payload={"account_id": "ą", "generation": 1, "enabled": True, "optional": None},
+    )
     authority = checkpoint_authority(stream, prefix, h1, signer)
     assert reconcile(history, h2, signer, authority) is ReconciliationOutcome.STALE
 
@@ -613,8 +758,12 @@ def _run_race(*operations):
 def test_concurrent_append_append_has_exactly_one_cas_winner(stream):
     history = ReferenceAuthenticatedHistory(stream)
     results = _run_race(
-        lambda: history.append(expected_digest=NO_PREDECESSOR, event_identity=identity(1), payload={"winner": "a"}),
-        lambda: history.append(expected_digest=NO_PREDECESSOR, event_identity=identity(2), payload={"winner": "b"}),
+        lambda: history.append(
+            expected_digest=NO_PREDECESSOR, event_identity=identity(1), payload={"winner": "a"}
+        ),
+        lambda: history.append(
+            expected_digest=NO_PREDECESSOR, event_identity=identity(2), payload={"winner": "b"}
+        ),
     )
     assert [status for status, _ in results].count("ok") == 1
     error = next(value for status, value in results if status == "error")
@@ -626,7 +775,9 @@ def test_concurrent_append_append_has_exactly_one_cas_winner(stream):
 def test_concurrent_same_event_exact_retry_inserts_once(stream):
     history = ReferenceAuthenticatedHistory(stream)
     operation = lambda: history.append(
-        expected_digest=NO_PREDECESSOR, event_identity=identity(), payload={"same": True},
+        expected_digest=NO_PREDECESSOR,
+        event_identity=identity(),
+        payload={"same": True},
     )
     results = _run_race(operation, operation)
     assert all(status == "ok" for status, _ in results)
@@ -640,8 +791,12 @@ def test_concurrent_same_event_exact_retry_inserts_once(stream):
 def test_concurrent_same_event_conflicting_payload_has_one_winner(stream):
     history = ReferenceAuthenticatedHistory(stream)
     results = _run_race(
-        lambda: history.append(expected_digest=NO_PREDECESSOR, event_identity=identity(), payload={"value": 1}),
-        lambda: history.append(expected_digest=NO_PREDECESSOR, event_identity=identity(), payload={"value": 2}),
+        lambda: history.append(
+            expected_digest=NO_PREDECESSOR, event_identity=identity(), payload={"value": 1}
+        ),
+        lambda: history.append(
+            expected_digest=NO_PREDECESSOR, event_identity=identity(), payload={"value": 2}
+        ),
     )
     assert [status for status, _ in results].count("ok") == 1
     error = next(value for status, value in results if status == "error")
@@ -652,8 +807,16 @@ def test_concurrent_same_event_conflicting_payload_has_one_winner(stream):
 def test_concurrent_exact_retry_and_new_append_preserve_identity(stream):
     history, records = committed(stream)
     results = _run_race(
-        lambda: history.append(expected_digest="ignored", event_identity=identity(), payload={"account_id": "ą", "generation": 1, "enabled": True, "optional": None}),
-        lambda: history.append(expected_digest=records[0].authenticated_digest, event_identity=identity(2), payload={"new": True}),
+        lambda: history.append(
+            expected_digest="ignored",
+            event_identity=identity(),
+            payload={"account_id": "ą", "generation": 1, "enabled": True, "optional": None},
+        ),
+        lambda: history.append(
+            expected_digest=records[0].authenticated_digest,
+            event_identity=identity(2),
+            payload={"new": True},
+        ),
     )
     assert all(status == "ok" for status, _ in results)
     retry, successor = (value for _, value in results)
@@ -684,8 +847,10 @@ def test_verify_during_append_uses_one_coherent_history_snapshot(stream):
         verifying = executor.submit(history.verify_attested_head, head, blocking)
         assert entered.wait(timeout=5)
         appending = executor.submit(
-            history.append, expected_digest=records[0].authenticated_digest,
-            event_identity=identity(2), payload={"new": True},
+            history.append,
+            expected_digest=records[0].authenticated_digest,
+            event_identity=identity(2),
+            payload={"new": True},
         )
         assert not appending.done()
         release.set()
@@ -697,7 +862,8 @@ def test_verify_during_append_uses_one_coherent_history_snapshot(stream):
 def _candidate(stream, signer, number):
     history = ReferenceAuthenticatedHistory(stream)
     record, _ = history.append(
-        expected_digest=NO_PREDECESSOR, event_identity=identity(number),
+        expected_digest=NO_PREDECESSOR,
+        event_identity=identity(number),
         payload={"candidate": number},
     )
     return history, attest_head(record, signer)
@@ -716,8 +882,12 @@ def test_concurrent_checkpoint_same_revision_has_one_winner(stream):
     history_b, head_b = _candidate(stream, signer, 2)
     checkpoints = LocalCheckpointProvider("cp", stream)
     results = _run_race(
-        lambda: checkpoints.advance(expected_revision=0, history=history_a, head=head_a, verification_authority=signer),
-        lambda: checkpoints.advance(expected_revision=0, history=history_b, head=head_b, verification_authority=signer),
+        lambda: checkpoints.advance(
+            expected_revision=0, history=history_a, head=head_a, verification_authority=signer
+        ),
+        lambda: checkpoints.advance(
+            expected_revision=0, history=history_b, head=head_b, verification_authority=signer
+        ),
     )
     assert [status for status, _ in results].count("ok") == 1
     error = next(value for status, value in results if status == "error")
@@ -729,8 +899,12 @@ def test_concurrent_checkpoint_exact_replay_has_one_mutation(stream):
     history, _, signer, head, _ = signed_history(stream)
     checkpoints = LocalCheckpointProvider("cp", stream)
     results = _run_race(
-        lambda: checkpoints.advance(expected_revision=0, history=history, head=head, verification_authority=signer),
-        lambda: checkpoints.advance(expected_revision=0, history=history, head=head, verification_authority=signer),
+        lambda: checkpoints.advance(
+            expected_revision=0, history=history, head=head, verification_authority=signer
+        ),
+        lambda: checkpoints.advance(
+            expected_revision=0, history=history, head=head, verification_authority=signer
+        ),
     )
     assert [status for status, _ in results].count("ok") == 1
     assert [status for status, _ in results].count("error") == 1
@@ -746,7 +920,10 @@ def test_checkpoint_head_mutation_toctou_uses_verified_snapshot(stream):
     checkpoints = LocalCheckpointProvider("cp", stream)
     with ThreadPoolExecutor(max_workers=2) as executor:
         future = executor.submit(
-            checkpoints.advance, expected_revision=0, history=history, head=head,
+            checkpoints.advance,
+            expected_revision=0,
+            history=history,
+            head=head,
             verification_authority=blocking,
         )
         assert entered.wait(timeout=5)
@@ -768,8 +945,11 @@ def test_reconciliation_head_mutation_toctou_uses_verified_snapshot(stream):
     blocking = BlockingSigner(entered, release, key=base.key)
     with ThreadPoolExecutor(max_workers=2) as executor:
         future = executor.submit(
-            reconcile_checkpoint, history=history, history_head=head,
-            verification_authority=blocking, checkpoint_authority=checkpoints,
+            reconcile_checkpoint,
+            history=history,
+            history_head=head,
+            verification_authority=blocking,
+            checkpoint_authority=checkpoints,
         )
         assert entered.wait(timeout=5)
         object.__setattr__(head, "sequence", 999)
@@ -788,20 +968,27 @@ def test_reconciliation_authority_unavailability_is_not_corruption(stream):
             raise RuntimeError("provider unavailable")
 
     unavailable_key = UnavailableKeySigner(key=signer.key)
-    assert reconcile(history, head, unavailable_key, checkpoints) is ReconciliationOutcome.UNAVAILABLE
+    assert (
+        reconcile(history, head, unavailable_key, checkpoints) is ReconciliationOutcome.UNAVAILABLE
+    )
 
     class UnavailableLifecycleSigner(Signer):
         def lifecycle_state(self):
             raise RuntimeError("lifecycle unavailable")
 
     unavailable_lifecycle = UnavailableLifecycleSigner(key=signer.key)
-    assert reconcile(history, head, unavailable_lifecycle, checkpoints) is ReconciliationOutcome.UNAVAILABLE
+    assert (
+        reconcile(history, head, unavailable_lifecycle, checkpoints)
+        is ReconciliationOutcome.UNAVAILABLE
+    )
 
 
 def test_returned_history_record_mutation_cannot_change_authority(stream):
     history = ReferenceAuthenticatedHistory(stream)
     record, _ = history.append(
-        expected_digest=NO_PREDECESSOR, event_identity=identity(), payload={"value": 1},
+        expected_digest=NO_PREDECESSOR,
+        event_identity=identity(),
+        payload={"value": 1},
     )
     original_digest = record.authenticated_digest
     attacker_digest = "sha256:" + "f" * 64
@@ -809,7 +996,8 @@ def test_returned_history_record_mutation_cannot_change_authority(stream):
     assert history.current_record().authenticated_digest == original_digest
     with pytest.raises(HistoryContractError, match="stale predecessor"):
         history.append(
-            expected_digest=attacker_digest, event_identity=identity(2),
+            expected_digest=attacker_digest,
+            event_identity=identity(2),
             payload={"value": 2},
         )
 
@@ -825,12 +1013,16 @@ def test_event_identity_is_snapshotted_on_admission(stream):
     history = ReferenceAuthenticatedHistory(stream)
     event = identity()
     record, _ = history.append(
-        expected_digest=NO_PREDECESSOR, event_identity=event, payload={"value": 1},
+        expected_digest=NO_PREDECESSOR,
+        event_identity=event,
+        payload={"value": 1},
     )
     object.__setattr__(event, "logical_operation_id", "attacker")
     assert history.current_record().event_identity.logical_operation_id == "operation-1"
     replay, was_replay = history.append(
-        expected_digest="ignored", event_identity=identity(), payload={"value": 1},
+        expected_digest="ignored",
+        event_identity=identity(),
+        payload={"value": 1},
     )
     assert was_replay and replay == record and len(history._records) == 1
 
@@ -840,7 +1032,9 @@ def test_stream_identity_is_snapshotted_by_history_and_checkpoint(stream):
     checkpoints = LocalCheckpointProvider("cp", stream)
     object.__setattr__(stream, "trust_domain", "attacker-domain")
     record, _ = history.append(
-        expected_digest=NO_PREDECESSOR, event_identity=identity(), payload={"value": 1},
+        expected_digest=NO_PREDECESSOR,
+        event_identity=identity(),
+        payload={"value": 1},
     )
     assert record.stream.trust_domain == "tenant-a"
     assert checkpoints._stream.trust_domain == "tenant-a"
@@ -852,7 +1046,8 @@ def test_internal_history_corruption_blocks_new_append(stream):
     with pytest.raises(HistoryContractError):
         history.append(
             expected_digest=records[0].authenticated_digest,
-            event_identity=identity(2), payload={"value": 2},
+            event_identity=identity(2),
+            payload={"value": 2},
         )
 
 
@@ -860,7 +1055,9 @@ def test_returned_and_current_checkpoint_snapshots_are_detached(stream):
     history, _, signer, head, _ = signed_history(stream)
     checkpoints = LocalCheckpointProvider("cp", stream)
     returned, _ = checkpoints.advance(
-        expected_revision=0, history=history, head=head,
+        expected_revision=0,
+        history=history,
+        head=head,
         verification_authority=signer,
     )
     object.__setattr__(returned, "checkpoint_revision", 0)
@@ -878,17 +1075,23 @@ def test_returned_checkpoint_mutation_cannot_reuse_revision(stream):
     h1, h2 = attest_head(records[0], signer), attest_head(records[1], signer)
     prefix = ReferenceAuthenticatedHistory(stream)
     prefix.append(
-        expected_digest=NO_PREDECESSOR, event_identity=identity(1),
+        expected_digest=NO_PREDECESSOR,
+        event_identity=identity(1),
         payload={"account_id": "ą", "generation": 1, "enabled": True, "optional": None},
     )
     checkpoints = LocalCheckpointProvider("cp", stream)
     returned, _ = checkpoints.advance(
-        expected_revision=0, history=prefix, head=h1, verification_authority=signer,
+        expected_revision=0,
+        history=prefix,
+        head=h1,
+        verification_authority=signer,
     )
     object.__setattr__(returned, "checkpoint_revision", 0)
     with pytest.raises(HistoryContractError, match="CAS conflict"):
         checkpoints.advance(
-            expected_revision=0, history=history, head=h2,
+            expected_revision=0,
+            history=history,
+            head=h2,
             verification_authority=signer,
         )
     assert checkpoints.current_checkpoint().checkpoint_revision == 1
@@ -900,14 +1103,17 @@ def test_reconciliation_uses_one_detached_checkpoint_snapshot_during_advance(str
     h1, h2 = attest_head(records[0], signer), attest_head(records[1], signer)
     prefix = ReferenceAuthenticatedHistory(stream)
     prefix.append(
-        expected_digest=NO_PREDECESSOR, event_identity=identity(1),
+        expected_digest=NO_PREDECESSOR,
+        event_identity=identity(1),
         payload={"account_id": "ą", "generation": 1, "enabled": True, "optional": None},
     )
     checkpoints = checkpoint_authority(stream, prefix, h1, signer)
     results = _run_race(
         lambda: reconcile(history, h2, signer, checkpoints),
         lambda: checkpoints.advance(
-            expected_revision=1, history=history, head=h2,
+            expected_revision=1,
+            history=history,
+            head=h2,
             verification_authority=signer,
         ),
     )
@@ -922,8 +1128,10 @@ def test_revoked_evidence_exact_acceptance_enables_historical_verification(strea
     head = attest_head(records[0], active)
     checkpoints = checkpoint_authority(stream, history, head, active)
     revoked = Signer(
-        key=active.key, credential_id=active.credential_id,
-        lifecycle=SigningKeyLifecycle.REVOKED, generation=2,
+        key=active.key,
+        credential_id=active.credential_id,
+        lifecycle=SigningKeyLifecycle.REVOKED,
+        generation=2,
     )
     assert history.verify_attested_historical_head(head, revoked, checkpoints).head == head
 
@@ -935,15 +1143,20 @@ def test_revoked_evidence_missing_or_wrong_authority_is_unavailable(stream):
     revoked = Signer(key=active.key, lifecycle=SigningKeyLifecycle.REVOKED, generation=2)
     with pytest.raises(HistoricalRevokedSignatureVerificationUnavailable):
         history.verify_attested_historical_head(
-            head, revoked, LocalCheckpointProvider("cp", stream),
+            head,
+            revoked,
+            LocalCheckpointProvider("cp", stream),
         )
 
 
-@pytest.mark.parametrize("field,value", [
-    ("accepted_history_sequence", 2),
-    ("accepted_authenticated_head_digest", "sha256:" + "9" * 64),
-    ("lifecycle_generation_at_acceptance", 9),
-])
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("accepted_history_sequence", 2),
+        ("accepted_authenticated_head_digest", "sha256:" + "9" * 64),
+        ("lifecycle_generation_at_acceptance", 9),
+    ],
+)
 def test_revoked_evidence_wrong_retained_binding_fails_closed(stream, field, value):
     history, records = committed(stream)
     active = Signer()
@@ -974,7 +1187,9 @@ def test_revoked_key_cannot_commit_post_revocation_acceptance(stream):
     checkpoints = LocalCheckpointProvider("cp", stream)
     with pytest.raises(HistoricalRevokedSignatureVerificationUnavailable):
         checkpoints.advance(
-            expected_revision=0, history=history, head=head,
+            expected_revision=0,
+            history=history,
+            head=head,
             verification_authority=revoked,
         )
     assert checkpoints.historical_acceptance(head) is None
@@ -989,14 +1204,19 @@ def test_revoked_forged_post_revocation_head_is_not_self_corroborating(stream):
     forged = attest_head(forged_record, active)
     forged = replace(forged, record_digest="sha256:" + "8" * 64)
     material = {
-        "stream": stream.material(), "sequence": forged.sequence,
+        "stream": stream.material(),
+        "sequence": forged.sequence,
         "record_digest": forged.record_digest,
         "signing_credential_identity": history_contract._credential_material(
             forged.signing_credential_identity
         ),
     }
-    canonical = b"CryptoHunter/M0.5/IssuerAuthenticatedHistoryHead/v1\0" + canonical_json_bytes(material)
-    forged = replace(forged, canonical_attestation_bytes=canonical, signature=active.key.sign(canonical))
+    canonical = b"CryptoHunter/M0.5/IssuerAuthenticatedHistoryHead/v1\0" + canonical_json_bytes(
+        material
+    )
+    forged = replace(
+        forged, canonical_attestation_bytes=canonical, signature=active.key.sign(canonical)
+    )
     revoked = Signer(key=active.key, lifecycle=SigningKeyLifecycle.REVOKED, generation=2)
     with pytest.raises(HistoryContractError):
         history.verify_attested_historical_head(forged, revoked, checkpoints)
@@ -1013,15 +1233,23 @@ def test_revoked_evidence_survives_rotation_and_later_checkpoint_advance(stream)
     signer_b = Signer(credential_id="credential-b", version="2")
     head_b = attest_head(records[1], signer_b)
     checkpoints.advance(
-        expected_revision=1, history=history, head=head_b,
+        expected_revision=1,
+        history=history,
+        head=head_b,
         verification_authority=signer_b,
     )
     revoked_a = Signer(
-        key=signer_a.key, credential_id="credential-a", version="1",
-        lifecycle=SigningKeyLifecycle.REVOKED, generation=3,
+        key=signer_a.key,
+        credential_id="credential-a",
+        version="1",
+        lifecycle=SigningKeyLifecycle.REVOKED,
+        generation=3,
     )
     history.verify_attested_historical_head(head_a, revoked_a, checkpoints)
-    assert checkpoints.current_checkpoint().history_signing_credential_identity.credential_identity == "credential-b"
+    assert (
+        checkpoints.current_checkpoint().history_signing_credential_identity.credential_identity
+        == "credential-b"
+    )
 
 
 def test_concurrent_revocation_or_evidence_commit_never_accepts_revoked_state(stream):
@@ -1037,7 +1265,9 @@ def test_concurrent_revocation_or_evidence_commit_never_accepts_revoked_state(st
     results = _run_race(
         revoke,
         lambda: checkpoints.advance(
-            expected_revision=0, history=history, head=head,
+            expected_revision=0,
+            history=history,
+            head=head,
             verification_authority=signer,
         ),
     )
@@ -1052,9 +1282,7 @@ def test_concurrent_revocation_or_evidence_commit_never_accepts_revoked_state(st
 def _history_prefix(stream, records, count):
     prefix = ReferenceAuthenticatedHistory(stream)
     prefix._records = list(records[:count])
-    prefix._events = {
-        record.event_identity: record for record in records[:count]
-    }
+    prefix._events = {record.event_identity: record for record in records[:count]}
     return prefix
 
 
@@ -1064,7 +1292,9 @@ def _redigest_acceptance(evidence, **changes):
         if name != "acceptance_digest":
             object.__setattr__(candidate, name, changes.get(name, getattr(evidence, name)))
     object.__setattr__(
-        candidate, "acceptance_digest", history_contract._acceptance_digest(candidate),
+        candidate,
+        "acceptance_digest",
+        history_contract._acceptance_digest(candidate),
     )
     return candidate
 
@@ -1075,16 +1305,20 @@ def _two_head_checkpoint_state(stream):
     heads = tuple(attest_head(record, signer) for record in records)
     checkpoints = LocalCheckpointProvider("cp", stream)
     checkpoint1, _ = checkpoints.advance(
-        expected_revision=0, history=_history_prefix(stream, records, 1),
-        head=heads[0], verification_authority=signer,
+        expected_revision=0,
+        history=_history_prefix(stream, records, 1),
+        head=heads[0],
+        verification_authority=signer,
     )
     return history, records, signer, heads, checkpoints, checkpoint1
 
 
 def _advance_second(history, records, signer, heads, checkpoints):
     return checkpoints.advance(
-        expected_revision=1, history=_history_prefix(history._stream, records, 2),
-        head=heads[1], verification_authority=signer,
+        expected_revision=1,
+        history=_history_prefix(history._stream, records, 2),
+        head=heads[1],
+        verification_authority=signer,
     )
 
 
@@ -1100,7 +1334,9 @@ def test_corrupted_acceptance_blocks_next_advance_without_mutation(stream):
 def test_corrupt_acceptance_digest_blocks_next_advance(stream):
     history, records, signer, heads, checkpoints, _ = _two_head_checkpoint_state(stream)
     object.__setattr__(
-        checkpoints._acceptances[-1], "acceptance_digest", "sha256:" + "f" * 64,
+        checkpoints._acceptances[-1],
+        "acceptance_digest",
+        "sha256:" + "f" * 64,
     )
     with pytest.raises(HistoryContractError, match="acceptance chain"):
         _advance_second(history, records, signer, heads, checkpoints)
@@ -1122,7 +1358,9 @@ def test_current_checkpoint_rollback_with_newer_evidence_blocks_advance(stream):
     checkpoints._current = checkpoint1
     with pytest.raises(HistoryContractError, match="cardinality"):
         checkpoints.advance(
-            expected_revision=1, history=history, head=heads[2],
+            expected_revision=1,
+            history=history,
+            head=heads[2],
             verification_authority=signer,
         )
     assert checkpoints._current.checkpoint_revision == 1
@@ -1133,7 +1371,9 @@ def test_extra_trailing_acceptance_blocks_next_authority_operation(stream):
     history, records, signer, heads, checkpoints, _ = _two_head_checkpoint_state(stream)
     original = checkpoints._acceptances[0]
     trailing = _redigest_acceptance(
-        original, checkpoint_revision=2, accepted_history_sequence=2,
+        original,
+        checkpoint_revision=2,
+        accepted_history_sequence=2,
         predecessor_acceptance_digest=original.acceptance_digest,
     )
     checkpoints._acceptances.append(trailing)
@@ -1148,8 +1388,10 @@ def test_exact_checkpoint_replay_rejects_corrupt_evidence(stream):
     object.__setattr__(checkpoints._acceptances[0], "acceptance_digest", "broken")
     with pytest.raises(HistoryContractError, match="acceptance chain"):
         checkpoints.advance(
-            expected_revision=1, history=_history_prefix(stream, records, 1),
-            head=heads[0], verification_authority=signer,
+            expected_revision=1,
+            history=_history_prefix(stream, records, 1),
+            head=heads[0],
+            verification_authority=signer,
         )
 
 
@@ -1157,7 +1399,8 @@ def test_current_checkpoint_last_evidence_mismatch_is_detected(stream):
     _, _, _, _, checkpoints, _ = _two_head_checkpoint_state(stream)
     evidence = checkpoints._acceptances[0]
     checkpoints._acceptances[0] = _redigest_acceptance(
-        evidence, history_signing_credential_identity=replace(
+        evidence,
+        history_signing_credential_identity=replace(
             evidence.history_signing_credential_identity,
             credential_identity="different-credential",
         ),
@@ -1176,7 +1419,8 @@ def test_correctly_digested_verify_only_acceptance_is_semantically_rejected(stre
     _, _, _, _, checkpoints, _ = _two_head_checkpoint_state(stream)
     evidence = checkpoints._acceptances[0]
     checkpoints._acceptances[0] = _redigest_acceptance(
-        evidence, lifecycle_state_at_acceptance=SigningKeyLifecycle.VERIFY_ONLY,
+        evidence,
+        lifecycle_state_at_acceptance=SigningKeyLifecycle.VERIFY_ONLY,
     )
     with pytest.raises(HistoryContractError, match="chain corrupt"):
         checkpoints.current_checkpoint()
@@ -1187,7 +1431,8 @@ def test_correctly_digested_non_monotonic_acceptance_sequence_is_rejected(stream
     _advance_second(history, records, signer, heads, checkpoints)
     second = checkpoints._acceptances[1]
     checkpoints._acceptances[1] = _redigest_acceptance(
-        second, accepted_history_sequence=1,
+        second,
+        accepted_history_sequence=1,
     )
     with pytest.raises(HistoryContractError, match="chain corrupt"):
         checkpoints.current_checkpoint()
@@ -1197,13 +1442,20 @@ def test_concurrent_advance_then_rollback_is_detected_before_next_advance(stream
     history, records, signer, heads, checkpoints, checkpoint1 = _two_head_checkpoint_state(stream)
     with ThreadPoolExecutor(max_workers=1) as executor:
         future = executor.submit(
-            _advance_second, history, records, signer, heads, checkpoints,
+            _advance_second,
+            history,
+            records,
+            signer,
+            heads,
+            checkpoints,
         )
         assert future.result(timeout=5)[0].checkpoint_revision == 2
     checkpoints._current = checkpoint1
     with pytest.raises(HistoryContractError, match="cardinality"):
         checkpoints.advance(
-            expected_revision=1, history=history, head=heads[2],
+            expected_revision=1,
+            history=history,
+            head=heads[2],
             verification_authority=signer,
         )
     assert len(checkpoints._acceptances) == 2

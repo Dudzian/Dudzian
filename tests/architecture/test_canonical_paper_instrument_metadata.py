@@ -13,13 +13,34 @@ import bot_core.instruments as public
 import bot_core.instruments.paper_canonical_metadata as source
 
 FROZEN_FIELDS = (
-    "instrument_id", "workspace_id", "source_exchange_id", "market_type",
-    "instrument_type", "venue_symbol", "display_symbol", "base_asset_reference",
-    "quote_asset_reference", "settlement_asset_reference", "trading_status", "price_tick",
-    "quantity_step", "min_quantity", "max_quantity", "min_notional", "max_notional",
-    "contract_size", "contract_value_currency", "derivative_settlement_type",
-    "expiry_at_utc", "strike_price", "option_side", "accepted_source_catalog_snapshot_id",
-    "metadata_version", "observed_at_utc", "effective_at_utc", "stale_after_utc",
+    "instrument_id",
+    "workspace_id",
+    "source_exchange_id",
+    "market_type",
+    "instrument_type",
+    "venue_symbol",
+    "display_symbol",
+    "base_asset_reference",
+    "quote_asset_reference",
+    "settlement_asset_reference",
+    "trading_status",
+    "price_tick",
+    "quantity_step",
+    "min_quantity",
+    "max_quantity",
+    "min_notional",
+    "max_notional",
+    "contract_size",
+    "contract_value_currency",
+    "derivative_settlement_type",
+    "expiry_at_utc",
+    "strike_price",
+    "option_side",
+    "accepted_source_catalog_snapshot_id",
+    "metadata_version",
+    "observed_at_utc",
+    "effective_at_utc",
+    "stale_after_utc",
     "source_adapter_family_id",
 )
 M05 = json.loads(
@@ -29,9 +50,17 @@ M05 = json.loads(
     ).read_text(encoding="utf-8")
 )
 NULLABLE_FIELDS = {
-    "settlement_asset_reference", "min_quantity", "max_quantity", "min_notional",
-    "max_notional", "contract_size", "contract_value_currency",
-    "derivative_settlement_type", "expiry_at_utc", "strike_price", "option_side",
+    "settlement_asset_reference",
+    "min_quantity",
+    "max_quantity",
+    "min_notional",
+    "max_notional",
+    "contract_size",
+    "contract_value_currency",
+    "derivative_settlement_type",
+    "expiry_at_utc",
+    "strike_price",
+    "option_side",
 }
 
 
@@ -41,15 +70,31 @@ def _asset(code: str = "BASE") -> source._AssetReference:
 
 def _spot(**changes: object) -> source._CanonicalPaperInstrumentMetadata:
     record = source._CanonicalPaperInstrumentMetadata(
-        instrument_id="instr_private_candidate", workspace_id="workspace_private",
-        source_exchange_id="generic_testnet_venue", market_type="SPOT",
-        instrument_type="SPOT_PAIR", venue_symbol="PRIVATE", display_symbol="PRIVATE",
-        base_asset_reference=_asset(), quote_asset_reference=_asset("QUOTE"),
-        settlement_asset_reference=None, trading_status="TRADING", price_tick="0.01",
-        quantity_step="0.1", min_quantity=None, max_quantity=None, min_notional=None,
-        max_notional=None, contract_size=None, contract_value_currency=None,
-        derivative_settlement_type=None, expiry_at_utc=None, strike_price=None,
-        option_side=None, accepted_source_catalog_snapshot_id="ascat_private", metadata_version=1,
+        instrument_id="instr_private_candidate",
+        workspace_id="workspace_private",
+        source_exchange_id="generic_testnet_venue",
+        market_type="SPOT",
+        instrument_type="SPOT_PAIR",
+        venue_symbol="PRIVATE",
+        display_symbol="PRIVATE",
+        base_asset_reference=_asset(),
+        quote_asset_reference=_asset("QUOTE"),
+        settlement_asset_reference=None,
+        trading_status="TRADING",
+        price_tick="0.01",
+        quantity_step="0.1",
+        min_quantity=None,
+        max_quantity=None,
+        min_notional=None,
+        max_notional=None,
+        contract_size=None,
+        contract_value_currency=None,
+        derivative_settlement_type=None,
+        expiry_at_utc=None,
+        strike_price=None,
+        option_side=None,
+        accepted_source_catalog_snapshot_id="ascat_private",
+        metadata_version=1,
         observed_at_utc="2026-01-01T00:00:00Z",
         effective_at_utc="2026-01-01T00:00:00Z",
         stale_after_utc="2027-01-01T00:00:00Z",
@@ -60,9 +105,12 @@ def _spot(**changes: object) -> source._CanonicalPaperInstrumentMetadata:
 
 def _perpetual(**changes: object) -> source._CanonicalPaperInstrumentMetadata:
     values = {
-        "market_type": "PERPETUAL", "instrument_type": "PERPETUAL_CONTRACT",
-        "settlement_asset_reference": _asset("SETTLE"), "contract_size": "1",
-        "contract_value_currency": "QUOTE", "derivative_settlement_type": "LINEAR",
+        "market_type": "PERPETUAL",
+        "instrument_type": "PERPETUAL_CONTRACT",
+        "settlement_asset_reference": _asset("SETTLE"),
+        "contract_size": "1",
+        "contract_value_currency": "QUOTE",
+        "derivative_settlement_type": "LINEAR",
     }
     values.update(changes)
     return replace(_spot(), **values)
@@ -77,13 +125,25 @@ def test_frozen_field_names_types_and_nullability_have_exact_parity() -> None:
     assert hints["contract_value_currency"] == str | None
     assert hints["metadata_version"] is int
     assert set(get_args(hints["market_type"])) == {
-        "SPOT", "MARGIN", "PERPETUAL", "DELIVERY_FUTURES", "OPTIONS"
+        "SPOT",
+        "MARGIN",
+        "PERPETUAL",
+        "DELIVERY_FUTURES",
+        "OPTIONS",
     }
     assert set(get_args(hints["instrument_type"])) == {
-        "SPOT_PAIR", "MARGIN_PAIR", "PERPETUAL_CONTRACT", "DELIVERY_FUTURE", "OPTION"
+        "SPOT_PAIR",
+        "MARGIN_PAIR",
+        "PERPETUAL_CONTRACT",
+        "DELIVERY_FUTURE",
+        "OPTION",
     }
     assert set(get_args(hints["trading_status"])) == {
-        "TRADING", "HALTED", "SUSPENDED", "DELISTED", "UNKNOWN"
+        "TRADING",
+        "HALTED",
+        "SUSPENDED",
+        "DELISTED",
+        "UNKNOWN",
     }
 
 
@@ -143,9 +203,9 @@ def _recompute(entries: tuple[source._CanonicalPaperInstrumentMetadata, ...]) ->
         "content_status": source.PAPER_CANONICAL_METADATA_CONTENT_STATUS,
         "entries": [source._entry_projection(entry) for entry in entries],
     }
-    encoded = json.dumps(
-        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-    ).encode("utf-8")
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode(
+        "utf-8"
+    )
     return hashlib.sha256(encoded).hexdigest()
 
 
@@ -158,8 +218,12 @@ def test_fingerprint_exactly_binds_ordered_actual_release_projection() -> None:
     assert baseline != source._fingerprint_release_projection(
         "id", "1", "status", (replace(candidate, display_symbol="changed"),)
     )
-    nested = replace(candidate, base_asset_reference=replace(candidate.base_asset_reference,
-                                                               canonical_display_code="changed"))
+    nested = replace(
+        candidate,
+        base_asset_reference=replace(
+            candidate.base_asset_reference, canonical_display_code="changed"
+        ),
+    )
     assert baseline != source._fingerprint_release_projection("id", "1", "status", (nested,))
     other = replace(candidate, instrument_id="instr_other", venue_symbol="OTHER")
     assert source._fingerprint_release_projection("id", "1", "status", (candidate, other)) != (
@@ -199,12 +263,11 @@ def test_caller_nominal_instance_and_matching_self_hash_cannot_enroll() -> None:
 
 def test_no_runtime_writer_or_caller_controlled_input_surface() -> None:
     public_functions = {
-        name for name, value in vars(source).items()
+        name
+        for name, value in vars(source).items()
         if not name.startswith("_") and inspect.isfunction(value)
     }
-    assert public_functions == {
-        "canonical_paper_instruments", "resolve_canonical_paper_instrument"
-    }
+    assert public_functions == {"canonical_paper_instruments", "resolve_canonical_paper_instrument"}
     assert tuple(inspect.signature(source.canonical_paper_instruments).parameters) == ()
     assert tuple(inspect.signature(source.resolve_canonical_paper_instrument).parameters) == (
         "instrument_id",

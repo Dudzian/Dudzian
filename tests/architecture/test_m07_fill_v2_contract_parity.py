@@ -1,4 +1,5 @@
 """Executable parity checks between canonical M0.7 Fill versions and production."""
+
 from __future__ import annotations
 
 from copy import deepcopy
@@ -29,18 +30,31 @@ U = "01890f47-5f2d-7a31-8123-123456789abc"
 
 def v2_fill(**changes: object) -> dict[str, object]:
     value: dict[str, object] = {
-        "fill_id": f"fill_{U}", "order_id": f"ord_{U}", "environment": "PAPER",
-        "workspace_id": f"ws_{U}", "portfolio_id": f"port_{U}",
-        "exchange_account_id": f"xacc_{U}", "exchange_id": "paper_simulated_venue",
-        "instrument_id": f"instr_{U}", "instrument_metadata_version": 1,
+        "fill_id": f"fill_{U}",
+        "order_id": f"ord_{U}",
+        "environment": "PAPER",
+        "workspace_id": f"ws_{U}",
+        "portfolio_id": f"port_{U}",
+        "exchange_account_id": f"xacc_{U}",
+        "exchange_id": "paper_simulated_venue",
+        "instrument_id": f"instr_{U}",
+        "instrument_metadata_version": 1,
         "accepted_source_catalog_snapshot_id": "ascat_fake",
-        "execution_route_id": f"xroute_{U}", "venue_trade_id": "trade-1", "side": "BUY",
-        "executed_quantity": "1", "execution_price": "100",
-        "executed_at_utc": "2025-01-01T00:00:00Z", "fee_kind": "CHARGE",
-        "fee_quantity": "1", "fee_asset_reference": {
-            "venue_asset_code": "BNB", "canonical_display_code": "BNB",
-            "asset_namespace": "binance", "mapping_status": "EXACT",
-        }, "fill_fingerprint_sha256": "",
+        "execution_route_id": f"xroute_{U}",
+        "venue_trade_id": "trade-1",
+        "side": "BUY",
+        "executed_quantity": "1",
+        "execution_price": "100",
+        "executed_at_utc": "2025-01-01T00:00:00Z",
+        "fee_kind": "CHARGE",
+        "fee_quantity": "1",
+        "fee_asset_reference": {
+            "venue_asset_code": "BNB",
+            "canonical_display_code": "BNB",
+            "asset_namespace": "binance",
+            "mapping_status": "EXACT",
+        },
+        "fill_fingerprint_sha256": "",
     }
     value.update(changes)
     value["fill_fingerprint_sha256"] = canonical_fill_v2_fingerprint(value)
@@ -81,9 +95,13 @@ def test_canonical_ascat_grammar_has_one_upstream_prefix_and_matches_runtime() -
     schema = V2["field_schemas"]["accepted_source_catalog_snapshot_id"]
     upstream = M05["accepted_source_catalog_snapshot_contract"]["id_prefix"]
     assert schema == {
-        "type": "exact_str", "semantic_type": "AcceptedSourceCatalogSnapshotId",
-        "prefix": upstream + "_", "suffix": "non_empty", "nullable": False,
-        "fingerprint_input": True, "syntax_grants_trust": False,
+        "type": "exact_str",
+        "semantic_type": "AcceptedSourceCatalogSnapshotId",
+        "prefix": upstream + "_",
+        "suffix": "non_empty",
+        "nullable": False,
+        "fingerprint_input": True,
+        "syntax_grants_trust": False,
     }
     assert validate_structural_fill(v2_fill(accepted_source_catalog_snapshot_id=upstream + "_fake"))
     for malformed in (upstream, upstream + "_", "wcat_1", 1):
@@ -118,13 +136,18 @@ def test_exact_set_dispatch_matches_canonical_version_selection() -> None:
     assert validate_structural_fill(v1)
     hybrid = dict(v1, accepted_source_catalog_snapshot_id="ascat_1")
     reject(hybrid)
-    downgraded = deepcopy(v2); del downgraded["accepted_source_catalog_snapshot_id"]; reject(downgraded)
-    extra = dict(v2, extra=True); reject(extra)
+    downgraded = deepcopy(v2)
+    del downgraded["accepted_source_catalog_snapshot_id"]
+    reject(downgraded)
+    extra = dict(v2, extra=True)
+    reject(extra)
 
 
 def test_status_points_to_the_canonical_v2_contract() -> None:
     status = json.loads((DOCS / "m07_structural_full_fill_v2_status.json").read_text())
-    assert status["canonical_contract_file"] == "commands_events_order_lifecycle_and_idempotency.json"
+    assert (
+        status["canonical_contract_file"] == "commands_events_order_lifecycle_and_idempotency.json"
+    )
     assert status["canonical_v1_pointer"] == "/fill_contract"
     assert status["canonical_v2_pointer"] == "/fill_contract_versions/v2"
     assert V2["trusted_full_fill_authority"] == "NOT_AVAILABLE"

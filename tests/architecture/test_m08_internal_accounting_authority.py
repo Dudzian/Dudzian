@@ -1,4 +1,5 @@
 """S9D-C25-R1-FIX regressions for typed M0.8 source trust and journal restore."""
+
 from dataclasses import replace
 from fractions import Fraction
 
@@ -28,13 +29,32 @@ WS, PORT, XACC = f"ws_{U1}", f"port_{U1}", f"xacc_{U1}"
 BTC = AssetReference("BTC", "BTC", "binance", "EXACT")
 
 
-def economic(identity=f"evt_{U1}", *, source_type="deposit", quantity="2", workspace=WS, portfolio=PORT, environment="PAPER", account=XACC, asset=BTC, effective="2025-01-01T00:00:00Z"):
+def economic(
+    identity=f"evt_{U1}",
+    *,
+    source_type="deposit",
+    quantity="2",
+    workspace=WS,
+    portfolio=PORT,
+    environment="PAPER",
+    account=XACC,
+    asset=BTC,
+    effective="2025-01-01T00:00:00Z",
+):
     payload = {
-        "audit_event_id": identity, "source_type": source_type, "workspace_id": workspace,
-        "portfolio_id": portfolio, "environment": environment, "effective_at_utc": effective,
-        "provenance": "EXTERNAL", "exchange_account_id": account,
-        "asset_reference": vars_asset(asset), "quantity": quantity,
-        "capital_flow_kind": "EXTERNAL_CONTRIBUTION" if source_type == "deposit" else "EXTERNAL_WITHDRAWAL",
+        "audit_event_id": identity,
+        "source_type": source_type,
+        "workspace_id": workspace,
+        "portfolio_id": portfolio,
+        "environment": environment,
+        "effective_at_utc": effective,
+        "provenance": "EXTERNAL",
+        "exchange_account_id": account,
+        "asset_reference": vars_asset(asset),
+        "quantity": quantity,
+        "capital_flow_kind": "EXTERNAL_CONTRIBUTION"
+        if source_type == "deposit"
+        else "EXTERNAL_WITHDRAWAL",
         "basis_valuation_unit": vars_asset(AssetReference("USDT", "USDT", "binance", "EXACT")),
         "unit_cost_basis": "10",
     }
@@ -43,14 +63,27 @@ def economic(identity=f"evt_{U1}", *, source_type="deposit", quantity="2", works
 
 
 def vars_asset(asset):
-    return {"venue_asset_code": asset.venue_asset_code, "canonical_display_code": asset.canonical_display_code, "asset_namespace": asset.asset_namespace, "mapping_status": asset.mapping_status}
+    return {
+        "venue_asset_code": asset.venue_asset_code,
+        "canonical_display_code": asset.canonical_display_code,
+        "asset_namespace": asset.asset_namespace,
+        "mapping_status": asset.mapping_status,
+    }
 
 
 def source_authority(*payloads):
-    content, content_writer = CoreAcceptedContentAuthority.compose(InMemoryCoreAcceptedContentCarrier())
-    source, source_writer = CoreAcceptedAccountingFactProjection.compose(InMemoryAccountingFactCarrier(), content_membership=content)
+    content, content_writer = CoreAcceptedContentAuthority.compose(
+        InMemoryCoreAcceptedContentCarrier()
+    )
+    source, source_writer = CoreAcceptedAccountingFactProjection.compose(
+        InMemoryAccountingFactCarrier(), content_membership=content
+    )
     for payload in payloads:
-        content_writer.accept(CoreAcceptedContentBinding(payload["audit_event_id"], payload["source_fingerprint_sha256"]))
+        content_writer.accept(
+            CoreAcceptedContentBinding(
+                payload["audit_event_id"], payload["source_fingerprint_sha256"]
+            )
+        )
         source_writer.accept(payload)
     return source
 
@@ -62,7 +95,13 @@ def accounting(source, state=None):
 
 
 def query(view, **changes):
-    values = dict(workspace_id=WS, portfolio_id=PORT, environment="PAPER", exchange_account_id=XACC, asset_reference=BTC)
+    values = dict(
+        workspace_id=WS,
+        portfolio_id=PORT,
+        environment="PAPER",
+        exchange_account_id=XACC,
+        asset_reference=BTC,
+    )
     values.update(changes)
     return view.resolve_internal_quantity(**values)
 
@@ -76,7 +115,12 @@ def test_exact_deposit_and_withdrawal_are_derived_not_caller_postings():
     assert first.batch_fingerprint_sha256 != ""
     assert query(view).status == "INTERNAL_HISTORY_PRESENT"
     assert query(view).quantity == Fraction(0)
-    assert [entry.account_role for entry in view.journal()] == ["OWNED_AVAILABLE", "EXTERNAL_CAPITAL", "EXTERNAL_CAPITAL", "OWNED_AVAILABLE"]
+    assert [entry.account_role for entry in view.journal()] == [
+        "OWNED_AVAILABLE",
+        "EXTERNAL_CAPITAL",
+        "EXTERNAL_CAPITAL",
+        "OWNED_AVAILABLE",
+    ]
     assert carrier.read().store_revision == 2
 
 
@@ -90,21 +134,30 @@ def test_raw_unaccepted_economic_fact_is_rejected(source_type):
     assert carrier.read() == AtomicAccountingState()
 
 
-@pytest.mark.parametrize("change", [
-    {"quantity": "999"},
-    {"source_type": "withdrawal"},
-    {"workspace_id": f"ws_{U2}"},
-    {"portfolio_id": f"port_{U2}"},
-    {"environment": "LIVE"},
-    {"exchange_account_id": f"xacc_{U2}"},
-    {"asset_reference": vars_asset(AssetReference("XBT", "BTC", "binance", "EXPLICIT_ALIAS"))},
-    {"effective_at_utc": "2025-02-01T00:00:00Z"},
-])
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"quantity": "999"},
+        {"source_type": "withdrawal"},
+        {"workspace_id": f"ws_{U2}"},
+        {"portfolio_id": f"port_{U2}"},
+        {"environment": "LIVE"},
+        {"exchange_account_id": f"xacc_{U2}"},
+        {"asset_reference": vars_asset(AssetReference("XBT", "BTC", "binance", "EXPLICIT_ALIAS"))},
+        {"effective_at_utc": "2025-02-01T00:00:00Z"},
+    ],
+)
 def test_pre_enrolled_identity_and_fingerprint_cannot_authorize_changed_economics(change):
     trusted = economic()
-    content, content_writer = CoreAcceptedContentAuthority.compose(InMemoryCoreAcceptedContentCarrier())
-    content_writer.accept(CoreAcceptedContentBinding(trusted["audit_event_id"], trusted["source_fingerprint_sha256"]))
-    source, owner = CoreAcceptedAccountingFactProjection.compose(InMemoryAccountingFactCarrier(), content_membership=content)
+    content, content_writer = CoreAcceptedContentAuthority.compose(
+        InMemoryCoreAcceptedContentCarrier()
+    )
+    content_writer.accept(
+        CoreAcceptedContentBinding(trusted["audit_event_id"], trusted["source_fingerprint_sha256"])
+    )
+    source, owner = CoreAcceptedAccountingFactProjection.compose(
+        InMemoryAccountingFactCarrier(), content_membership=content
+    )
     forged = {**trusted, **change}  # deliberately retains the syntactically valid trusted SHA
     with pytest.raises(AccountingAuthorityError, match="TRUSTED_CONTEXT_FAILURE"):
         owner.accept(forged)
@@ -112,7 +165,16 @@ def test_pre_enrolled_identity_and_fingerprint_cannot_authorize_changed_economic
     assert carrier.read() == AtomicAccountingState()
 
 
-@pytest.mark.parametrize("blocked", ["fill", "internal_transfer", "capital_reservation", "capital_release", "reconciliation_correction"])
+@pytest.mark.parametrize(
+    "blocked",
+    [
+        "fill",
+        "internal_transfer",
+        "capital_reservation",
+        "capital_release",
+        "reconciliation_correction",
+    ],
+)
 def test_sources_without_required_production_upstream_context_are_explicitly_unsupported(blocked):
     payload = economic(source_type=blocked)
     source = source_authority()
@@ -166,13 +228,22 @@ def test_restore_explicitly_rejects_duplicate_ledger_entry_id():
     carrier, _, writer = accounting(source)
     writer.accept_source(payload["audit_event_id"])
     state = carrier.read()
-    forged = replace(state, journal=(state.journal[0], replace(state.journal[1], ledger_entry_id=state.journal[0].ledger_entry_id)))
+    forged = replace(
+        state,
+        journal=(
+            state.journal[0],
+            replace(state.journal[1], ledger_entry_id=state.journal[0].ledger_entry_id),
+        ),
+    )
     with pytest.raises(AccountingAuthorityError, match="CONTRACT_INCONSISTENT"):
         AccountingAuthority(InMemoryAccountingCarrier(forged), source_authority=source)
 
 
 def test_current_projection_ignores_observation_time_and_missing_is_scope_only():
-    deposit, withdrawal = economic(), economic(f"evt_{U2}", source_type="withdrawal", effective="2025-03-01T00:00:00Z")
+    deposit, withdrawal = (
+        economic(),
+        economic(f"evt_{U2}", source_type="withdrawal", effective="2025-03-01T00:00:00Z"),
+    )
     source = source_authority(deposit, withdrawal)
     carrier, view, writer = accounting(source)
     assert query(view).status == "MISSING_INTERNAL_HISTORY"
