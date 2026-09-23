@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -72,6 +74,27 @@ class ReviewedBoundary(AcceptanceBoundary):
             "cleanup": "PASS",
             "details": "reviewed boundary completed",
         }
+
+
+def test_reviewed_probe_passes_real_powershell_parser_when_available() -> None:
+    powershell = shutil.which("pwsh") or shutil.which("powershell")
+    if powershell is None:
+        pytest.skip("real PowerShell parser is not available on this host")
+    probe = Path(__file__).resolve().parents[2] / "deployment/windows_scm_probe.ps1"
+    parse_command = (
+        "$tokens = $null; $errors = $null; "
+        "[System.Management.Automation.Language.Parser]::ParseFile("
+        "$args[0], [ref]$tokens, [ref]$errors) | Out-Null; "
+        "if ($errors.Count -ne 0) { "
+        "$errors | ForEach-Object { [Console]::Error.WriteLine($_.Message) }; exit 1 }"
+    )
+    result = subprocess.run(
+        [powershell, "-NoProfile", "-NonInteractive", "-Command", parse_command, str(probe)],
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def invoke(tmp_path: Path, boundary: ReviewedBoundary, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path]:
@@ -223,8 +246,15 @@ def test_cleanup_only_same_service_name_without_matching_record_is_never_owned()
     assert "current-run service ownership is not proven" in cleanup
     assert cleanup.index("Test-BaseOwnershipRecord") < cleanup.index("$serviceOwnershipProven = $true")
     assert "$configured" in cleanup
+    assert '$ownership.ownership_phase -cne "SERVICE_PROVEN"' in cleanup
+    assert '$ownership.strict_create_result -cne "CREATED"' in cleanup
+    assert "$configured.Name -cne $service" in cleanup
     assert "$configured.StartName -cne $identity" in cleanup
+    assert "-not $expectedPath" in cleanup
     assert "$configured.PathName -cne $expectedPath" in cleanup
+    assert "-not $expectedHost" in cleanup
+    assert "$actualHost -cne $expectedHost" in cleanup
+    assert "-not $expectedSid" in cleanup
     assert "$actualSid -cne $expectedSid" in cleanup
 
 

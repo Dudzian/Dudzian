@@ -247,9 +247,23 @@ def test_workflow_release_gate_is_real_and_platform_independent() -> None:
     integration_commands = [
         step.get("run", "") for step in jobs["windows-deployment-integration"]["steps"]
     ]
-    assert any("python -m deployment.windows_acceptance --mode github" in command
-               for command in integration_commands)
-    assert not any("windows_scm_probe.ps1" in command for command in integration_commands)
+    parser_index = next(
+        index for index, command in enumerate(integration_commands)
+        if "Language.Parser]::ParseFile" in command
+    )
+    acceptance_index = next(
+        index for index, command in enumerate(integration_commands)
+        if "python -m deployment.windows_acceptance --mode github" in command
+    )
+    parser_command = integration_commands[parser_index]
+    assert parser_index < acceptance_index
+    assert 'Resolve-Path "deployment/windows_scm_probe.ps1"' in parser_command
+    assert "$errors.Count -ne 0" in parser_command
+    assert "windows_scm_probe.ps1" not in integration_commands[acceptance_index]
+    assert not any(
+        "windows_scm_probe.ps1" in command and "Language.Parser]::ParseFile" not in command
+        for command in integration_commands
+    )
     assert not any(command.lstrip().startswith("echo ") for command in integration_commands)
     assert any(step.get("uses", "").startswith("actions/upload-artifact")
                for step in jobs["windows-deployment-integration"]["steps"])
