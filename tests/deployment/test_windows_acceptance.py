@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -277,8 +279,15 @@ def test_cleanup_only_same_service_name_without_matching_record_is_never_owned()
         "$serviceOwnershipProven = $true"
     )
     assert "$configured" in cleanup
+    assert '$ownership.ownership_phase -cne "SERVICE_PROVEN"' in cleanup
+    assert '$ownership.strict_create_result -cne "CREATED"' in cleanup
+    assert "$configured.Name -cne $service" in cleanup
     assert "$configured.StartName -cne $identity" in cleanup
+    assert "-not $expectedPath" in cleanup
     assert "$configured.PathName -cne $expectedPath" in cleanup
+    assert "-not $expectedHost" in cleanup
+    assert "$actualHost -cne $expectedHost" in cleanup
+    assert "-not $expectedSid" in cleanup
     assert "$actualSid -cne $expectedSid" in cleanup
 
 
