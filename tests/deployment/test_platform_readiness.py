@@ -247,8 +247,9 @@ def test_workflow_release_gate_is_real_and_platform_independent() -> None:
     integration_commands = [
         step.get("run", "") for step in jobs["windows-deployment-integration"]["steps"]
     ]
-    assert any("deployment.platform_evidence windows-scm" in command
+    assert any("python -m deployment.windows_acceptance --mode github" in command
                for command in integration_commands)
+    assert not any("windows_scm_probe.ps1" in command for command in integration_commands)
     assert not any(command.lstrip().startswith("echo ") for command in integration_commands)
     assert any(step.get("uses", "").startswith("actions/upload-artifact")
                for step in jobs["windows-deployment-integration"]["steps"])

@@ -2,23 +2,14 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-import platform
 
 import pytest
 
 from deployment.platform_evidence import (
     EvidenceProductionError,
     aggregate_core_markers,
-    run_windows_scm_probe,
 )
 from deployment.core_test_plan import load_manifest, marker_document
-
-
-def test_windows_scm_producer_refuses_non_windows_host(tmp_path: Path) -> None:
-    if platform.system() == "Windows":
-        pytest.skip("negative host-binding test applies only to non-Windows runners")
-    with pytest.raises(EvidenceProductionError, match="actual Windows runner"):
-        run_windows_scm_probe("revision", tmp_path / "evidence.json")
 
 
 def test_core_aggregation_requires_same_revision_and_all_operating_systems(
