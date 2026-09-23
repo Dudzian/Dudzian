@@ -8,12 +8,10 @@ import json
 import os
 from pathlib import Path
 import platform
-import subprocess
 import sys
-from typing import Any, Callable
+from typing import Any
 
 from deployment.core_test_plan import MANIFEST, canonical_plan_digest, load_manifest
-from deployment.host_identity import canonical_host_os
 
 SCHEMA_VERSION = 1
 SCM_ITEMS = (
@@ -54,33 +52,6 @@ def evidence_document(
         "generated_at_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "results": results,
     }
-
-
-def run_windows_scm_probe(
-    revision: str | None, output: Path,
-    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
-) -> None:
-    """Run the reviewed SCM probe; callers cannot supply result statuses."""
-    if canonical_host_os() != "Windows":
-        raise EvidenceProductionError("Windows SCM evidence requires an actual Windows runner")
-    source_revision, provider, run_id = _identity(revision)
-    probe = Path(__file__).with_name("windows_scm_probe.ps1")
-    completed = runner(
-        ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(probe)],
-        check=False, capture_output=True, text=True,
-    )
-    if completed.returncode:
-        raise EvidenceProductionError(f"SCM probe failed: {completed.stderr.strip()}")
-    details = completed.stdout.strip()
-    results = [
-        {"item": item, "status": "PASS", "evidence_class": "LIVE_WINDOWS_INTEGRATION",
-         "test_or_probe": "windows_scm_probe.ps1", "details": details}
-        for item in SCM_ITEMS
-    ]
-    output.write_text(json.dumps(evidence_document(
-        platform_name="WINDOWS", source_revision=source_revision, ci_provider=provider,
-        ci_run_id=run_id, runner_os="Windows", runner_arch=platform.machine(), results=results,
-    ), indent=2) + "\n", encoding="utf-8")
 
 
 def aggregate_core_markers(
@@ -134,9 +105,6 @@ def aggregate_core_markers(
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Executable deployment evidence producer")
     sub = parser.add_subparsers(dest="command", required=True)
-    scm = sub.add_parser("windows-scm")
-    scm.add_argument("--source-revision")
-    scm.add_argument("--output", type=Path, required=True)
     aggregate = sub.add_parser("aggregate-core")
     aggregate.add_argument("--source-revision")
     aggregate.add_argument("--marker", action="append", type=Path, required=True)
@@ -144,13 +112,10 @@ def main(argv: list[str] | None = None) -> int:
     aggregate.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
     try:
-        if args.command == "windows-scm":
-            run_windows_scm_probe(args.source_revision, args.output)
-        else:
-            aggregate_core_markers(
-                args.source_revision, args.marker, args.output,
-                manifest_path=args.manifest,
-            )
+        aggregate_core_markers(
+            args.source_revision, args.marker, args.output,
+            manifest_path=args.manifest,
+        )
     except (EvidenceProductionError, OSError, json.JSONDecodeError) as exc:
         print(str(exc), file=sys.stderr)
         return 1
