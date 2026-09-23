@@ -192,8 +192,7 @@ class CoreHost:
         self._runtime_session_publication_hook = runtime_session_publication_hook
         if (
             catalog_runtime_configuration is not None
-            and type(catalog_runtime_configuration)
-            is not CatalogRuntimeDeploymentConfiguration
+            and type(catalog_runtime_configuration) is not CatalogRuntimeDeploymentConfiguration
         ):
             raise TypeError("exact CatalogRuntimeDeploymentConfiguration required")
         self._catalog_runtime_configuration = catalog_runtime_configuration

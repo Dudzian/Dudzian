@@ -1,4 +1,5 @@
 """S9D-C25-R1A-FIX: honest structural boundary and upstream blockers."""
+
 from copy import deepcopy
 import hashlib
 import json
@@ -6,26 +7,58 @@ import unicodedata
 
 import pytest
 
-from bot_core.accounting import AccountingAuthority, CoreAcceptedAccountingFactProjection, InMemoryAccountingCarrier, InMemoryAccountingFactCarrier
-from bot_core.execution.m07_fill_validation import FILL_FIELDS, M07FillValidationError, canonical_fill_fingerprint, validate_structural_fill
-from bot_core.m09_kill_switch_authority import CoreAcceptedContentAuthority, InMemoryCoreAcceptedContentCarrier
+from bot_core.accounting import (
+    AccountingAuthority,
+    CoreAcceptedAccountingFactProjection,
+    InMemoryAccountingCarrier,
+    InMemoryAccountingFactCarrier,
+)
+from bot_core.execution.m07_fill_validation import (
+    FILL_FIELDS,
+    M07FillValidationError,
+    canonical_fill_fingerprint,
+    validate_structural_fill,
+)
+from bot_core.m09_kill_switch_authority import (
+    CoreAcceptedContentAuthority,
+    InMemoryCoreAcceptedContentCarrier,
+)
 from bot_core.persistence.fingerprints import canonical_json_sha256
 
 U1 = "01890f47-5f2d-7a31-8123-123456789abc"
 
 
 def asset(code="BTC"):
-    return {"venue_asset_code": code, "canonical_display_code": code, "asset_namespace": "binance", "mapping_status": "EXACT"}
+    return {
+        "venue_asset_code": code,
+        "canonical_display_code": code,
+        "asset_namespace": "binance",
+        "mapping_status": "EXACT",
+    }
 
 
 def fill(**changes):
-    value = {"fill_id": f"fill_{U1}", "order_id": f"ord_{U1}", "environment": "PAPER",
-             "workspace_id": f"ws_{U1}", "portfolio_id": f"port_{U1}", "exchange_account_id": f"xacc_{U1}",
-             "exchange_id": "binance", "instrument_id": f"instr_{U1}", "instrument_metadata_version": 1,
-             "execution_route_id": f"xroute_{U1}", "venue_trade_id": "venue-1", "side": "BUY",
-             "executed_quantity": "0.8", "execution_price": "100", "executed_at_utc": "2025-01-01T00:00:00Z",
-             "fee_kind": "NONE", "fee_quantity": "0", "fee_asset_reference": None,
-             "fill_fingerprint_sha256": ""}
+    value = {
+        "fill_id": f"fill_{U1}",
+        "order_id": f"ord_{U1}",
+        "environment": "PAPER",
+        "workspace_id": f"ws_{U1}",
+        "portfolio_id": f"port_{U1}",
+        "exchange_account_id": f"xacc_{U1}",
+        "exchange_id": "binance",
+        "instrument_id": f"instr_{U1}",
+        "instrument_metadata_version": 1,
+        "execution_route_id": f"xroute_{U1}",
+        "venue_trade_id": "venue-1",
+        "side": "BUY",
+        "executed_quantity": "0.8",
+        "execution_price": "100",
+        "executed_at_utc": "2025-01-01T00:00:00Z",
+        "fee_kind": "NONE",
+        "fee_quantity": "0",
+        "fee_asset_reference": None,
+        "fill_fingerprint_sha256": "",
+    }
     value.update(changes)
     value["fill_fingerprint_sha256"] = canonical_fill_fingerprint(value)
     return value
@@ -33,7 +66,9 @@ def fill(**changes):
 
 def accounting():
     content, _ = CoreAcceptedContentAuthority.compose(InMemoryCoreAcceptedContentCarrier())
-    sources, _ = CoreAcceptedAccountingFactProjection.compose(InMemoryAccountingFactCarrier(), content_membership=content)
+    sources, _ = CoreAcceptedAccountingFactProjection.compose(
+        InMemoryAccountingFactCarrier(), content_membership=content
+    )
     return AccountingAuthority.compose(InMemoryAccountingCarrier(), source_authority=sources)
 
 
@@ -67,15 +102,18 @@ class AlwaysEqualZero:
         return other != "0"
 
 
-@pytest.mark.parametrize("replacement", [
-    lambda expected: FingerprintSubclass(expected),
-    lambda _expected: AlwaysEqualFingerprint(),
-    lambda expected: expected.upper(),
-    lambda expected: expected[:63],
-    lambda expected: expected + "0",
-    lambda expected: "g" + expected[1:],
-    lambda expected: ("0" if expected[0] != "0" else "1") + expected[1:],
-])
+@pytest.mark.parametrize(
+    "replacement",
+    [
+        lambda expected: FingerprintSubclass(expected),
+        lambda _expected: AlwaysEqualFingerprint(),
+        lambda expected: expected.upper(),
+        lambda expected: expected[:63],
+        lambda expected: expected + "0",
+        lambda expected: "g" + expected[1:],
+        lambda expected: ("0" if expected[0] != "0" else "1") + expected[1:],
+    ],
+)
 def test_terminal_fingerprint_requires_exact_plain_lowercase_sha256_and_value(replacement):
     raw = fill()
     expected = raw["fill_fingerprint_sha256"]
@@ -87,13 +125,29 @@ def test_terminal_fingerprint_requires_exact_plain_lowercase_sha256_and_value(re
 
 def test_fingerprint_projection_is_exactly_frozen_18_fields_and_excludes_terminal_hash():
     raw = fill()
-    projected = {field: raw[field] for field in (
-        "fill_id", "order_id", "environment", "workspace_id", "portfolio_id",
-        "exchange_account_id", "exchange_id", "instrument_id",
-        "instrument_metadata_version", "execution_route_id", "venue_trade_id", "side",
-        "executed_quantity", "execution_price", "executed_at_utc", "fee_kind",
-        "fee_quantity", "fee_asset_reference",
-    )}
+    projected = {
+        field: raw[field]
+        for field in (
+            "fill_id",
+            "order_id",
+            "environment",
+            "workspace_id",
+            "portfolio_id",
+            "exchange_account_id",
+            "exchange_id",
+            "instrument_id",
+            "instrument_metadata_version",
+            "execution_route_id",
+            "venue_trade_id",
+            "side",
+            "executed_quantity",
+            "execution_price",
+            "executed_at_utc",
+            "fee_kind",
+            "fee_quantity",
+            "fee_asset_reference",
+        )
+    }
     assert len(projected) == 18
     assert canonical_fill_fingerprint(raw) == canonical_json_sha256(projected)
     raw["fill_fingerprint_sha256"] = "f" * 64
@@ -101,13 +155,29 @@ def test_fingerprint_projection_is_exactly_frozen_18_fields_and_excludes_termina
 
 
 def frozen_fill_fingerprint(raw):
-    projected = {field: raw[field] for field in (
-        "fill_id", "order_id", "environment", "workspace_id", "portfolio_id",
-        "exchange_account_id", "exchange_id", "instrument_id",
-        "instrument_metadata_version", "execution_route_id", "venue_trade_id", "side",
-        "executed_quantity", "execution_price", "executed_at_utc", "fee_kind",
-        "fee_quantity", "fee_asset_reference",
-    )}
+    projected = {
+        field: raw[field]
+        for field in (
+            "fill_id",
+            "order_id",
+            "environment",
+            "workspace_id",
+            "portfolio_id",
+            "exchange_account_id",
+            "exchange_id",
+            "instrument_id",
+            "instrument_metadata_version",
+            "execution_route_id",
+            "venue_trade_id",
+            "side",
+            "executed_quantity",
+            "execution_price",
+            "executed_at_utc",
+            "fee_kind",
+            "fee_quantity",
+            "fee_asset_reference",
+        )
+    }
     serialized = json.dumps(projected, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha256(unicodedata.normalize("NFC", serialized).encode("utf-8")).hexdigest()
 
@@ -119,10 +189,14 @@ def test_unicode_fingerprint_uses_exact_frozen_nfc_and_rejects_non_nfc_digest():
     assert canonical_fill_fingerprint(decomposed) == canonical_fill_fingerprint(composed)
     assert validate_structural_fill(decomposed) == decomposed
 
-    projected = {field: decomposed[field] for field in decomposed if field != "fill_fingerprint_sha256"}
-    without_nfc = hashlib.sha256(json.dumps(
-        projected, sort_keys=True, separators=(",", ":"), ensure_ascii=False
-    ).encode("utf-8")).hexdigest()
+    projected = {
+        field: decomposed[field] for field in decomposed if field != "fill_fingerprint_sha256"
+    }
+    without_nfc = hashlib.sha256(
+        json.dumps(projected, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode(
+            "utf-8"
+        )
+    ).hexdigest()
     assert without_nfc != decomposed["fill_fingerprint_sha256"]
     decomposed["fill_fingerprint_sha256"] = without_nfc
     with pytest.raises(M07FillValidationError, match="MALFORMED_FILL"):
@@ -137,9 +211,16 @@ def test_unicode_fee_asset_reference_uses_same_frozen_nfc_algorithm():
     assert validate_structural_fill(raw) == raw
 
 
-@pytest.mark.parametrize("fee_quantity", [
-    FingerprintSubclass("0"), AlwaysEqualZero(), "0.0", "00", "-0",
-])
+@pytest.mark.parametrize(
+    "fee_quantity",
+    [
+        FingerprintSubclass("0"),
+        AlwaysEqualZero(),
+        "0.0",
+        "00",
+        "-0",
+    ],
+)
 def test_none_fee_quantity_requires_plain_canonical_decimal_zero(fee_quantity):
     raw = fill()
     raw["fee_quantity"] = fee_quantity
@@ -153,9 +234,12 @@ def test_plain_zero_none_and_canonical_positive_charge_remain_legal():
     # 0.10 is noncanonical; the exact canonical equivalent remains accepted.
     with pytest.raises(M07FillValidationError, match="MALFORMED_FILL"):
         validate_structural_fill(charged)
-    assert validate_structural_fill(fill(
-        fee_kind="CHARGE", fee_quantity="0.1", fee_asset_reference=asset()
-    ))["fee_quantity"] == "0.1"
+    assert (
+        validate_structural_fill(
+            fill(fee_kind="CHARGE", fee_quantity="0.1", fee_asset_reference=asset())
+        )["fee_quantity"]
+        == "0.1"
+    )
 
 
 @pytest.mark.parametrize("field", ["environment", "side"])
@@ -169,8 +253,10 @@ def test_unhashable_malformed_enums_fail_closed_as_malformed_fill(field):
 def test_fee_semantics_remain_exact_at_structural_boundary():
     charged = fill(fee_kind="CHARGE", fee_quantity="0.01", fee_asset_reference=asset())
     assert validate_structural_fill(charged)["fee_asset_reference"] == asset()
-    for malformed in (fill(fee_kind="NONE", fee_quantity="0.01"),
-                      fill(fee_kind="CHARGE", fee_quantity="0", fee_asset_reference=asset())):
+    for malformed in (
+        fill(fee_kind="NONE", fee_quantity="0.01"),
+        fill(fee_kind="CHARGE", fee_quantity="0", fee_asset_reference=asset()),
+    ):
         with pytest.raises(M07FillValidationError, match="MALFORMED_FILL"):
             validate_structural_fill(malformed)
 
@@ -199,7 +285,14 @@ def test_accounting_spot_fifo_rule_never_publishes_incomplete_fill_postings():
 
 
 def test_overfill_and_fifo_cannot_be_claimed_without_genuine_order_lifecycle_authority():
-    first, second = fill(executed_quantity="0.8"), fill(fill_id="fill_01890f47-5f2d-7a31-8123-123456789abd", venue_trade_id="venue-2", executed_quantity="0.8")
+    first, second = (
+        fill(executed_quantity="0.8"),
+        fill(
+            fill_id="fill_01890f47-5f2d-7a31-8123-123456789abd",
+            venue_trade_id="venue-2",
+            executed_quantity="0.8",
+        ),
+    )
     assert validate_structural_fill(first) and validate_structural_fill(second)
     # Structural validation deliberately cannot accept either fact or infer the
     # canonical Order quantity.  No mutation API exists until M0.5 membership
@@ -213,8 +306,15 @@ def test_m05_discovery_records_policy_specific_missing_anchors():
     from pathlib import Path
 
     root = Path(__file__).parents[2]
-    machine = json.loads((root / "docs/architecture/cryptohunter_product_architecture/audit_observability_alerts_and_updater.json").read_text(encoding="utf-8"))
-    closure = machine["alert_model"]["executable_authority"]["s9d_c25_m08_reconciliation_authority_disposition"]
+    machine = json.loads(
+        (
+            root
+            / "docs/architecture/cryptohunter_product_architecture/audit_observability_alerts_and_updater.json"
+        ).read_text(encoding="utf-8")
+    )
+    closure = machine["alert_model"]["executable_authority"][
+        "s9d_c25_m08_reconciliation_authority_disposition"
+    ]
     dependency = closure["m07_full_fill_authority_boundary"]["m05_historical_instrument_dependency"]
 
     assert closure["m07_full_fill_authority"] == (
@@ -224,7 +324,10 @@ def test_m05_discovery_records_policy_specific_missing_anchors():
     assert dependency["genuine_production_authority"] == "NOT_FOUND"
     assert dependency["coherent_reseal_disposition"].startswith("BLOCKED_FAIL_CLOSED")
     assert dependency["restore_disposition"].startswith("UNAVAILABLE")
-    assert "policy-specific accepted upstream Catalog/source authority" in dependency["restore_disposition"]
+    assert (
+        "policy-specific accepted upstream Catalog/source authority"
+        in dependency["restore_disposition"]
+    )
     assert "nearest_missing_prerequisite" not in dependency
 
     discovery = dependency["production_catalog_source_authority_discovery"]
@@ -265,20 +368,37 @@ def test_m05_discovery_is_split_by_exact_frozen_exchange_policy():
     from pathlib import Path
 
     root = Path(__file__).parents[2]
-    m05 = json.loads((root / "docs/architecture/cryptohunter_product_architecture/exchange_accounts_and_instruments.json").read_text(encoding="utf-8"))
-    machine = json.loads((root / "docs/architecture/cryptohunter_product_architecture/audit_observability_alerts_and_updater.json").read_text(encoding="utf-8"))
+    m05 = json.loads(
+        (
+            root
+            / "docs/architecture/cryptohunter_product_architecture/exchange_accounts_and_instruments.json"
+        ).read_text(encoding="utf-8")
+    )
+    machine = json.loads(
+        (
+            root
+            / "docs/architecture/cryptohunter_product_architecture/audit_observability_alerts_and_updater.json"
+        ).read_text(encoding="utf-8")
+    )
     registry = m05["exchange_registry_contract"]
     assert registry["closed_build_time_registry"] is True
     assert registry["runtime_config_may_extend_registry"] is False
 
-    enabled = {entry["exchange_id"]: entry for entry in registry["entries"] if entry["status"] == "ENABLED"}
+    enabled = {
+        entry["exchange_id"]: entry for entry in registry["entries"] if entry["status"] == "ENABLED"
+    }
     fields = (
-        "exchange_id", "supported_environments", "adapter_family_id",
-        "capability_discovery_policy", "instrument_catalog_discovery_policy",
+        "exchange_id",
+        "supported_environments",
+        "adapter_family_id",
+        "capability_discovery_policy",
+        "instrument_catalog_discovery_policy",
         "account_identity_discovery_policy",
     )
     expected = [{field: entry[field] for field in fields} for entry in enabled.values()]
-    dependency = machine["alert_model"]["executable_authority"]["s9d_c25_m08_reconciliation_authority_disposition"]["m07_full_fill_authority_boundary"]["m05_historical_instrument_dependency"]
+    dependency = machine["alert_model"]["executable_authority"][
+        "s9d_c25_m08_reconciliation_authority_disposition"
+    ]["m07_full_fill_authority_boundary"]["m05_historical_instrument_dependency"]
     assert dependency["enabled_frozen_exchange_policy_matrix"] == expected
 
     paper = enabled["paper_simulated_venue"]
@@ -290,6 +410,7 @@ def test_m05_discovery_is_split_by_exact_frozen_exchange_policy():
     assert testnet["supported_environments"] == ["TESTNET"]
     assert testnet["instrument_catalog_discovery_policy"] == "ADAPTER_SNAPSHOT_REQUIRED"
     assert not any("LIVE" in entry["supported_environments"] for entry in enabled.values())
+
 
 def test_raw_catalog_and_instrument_have_no_production_enrollment_or_restore_surface():
     """A coherent local reseal cannot attack an API which correctly remains absent."""
@@ -333,13 +454,11 @@ def test_existing_adapter_registries_are_not_authority_for_adapter_snapshot_prov
         assert registration.factory is CallerSuppliedFactory
         assert registration.dynamic is True
     finally:
-        unregister_native_adapter(
-            exchange_id=native_id, mode=Mode.FUTURES, allow_dynamic=True
-        )
+        unregister_native_adapter(exchange_id=native_id, mode=Mode.FUTURES, allow_dynamic=True)
 
-    bootstrap = (
-        Path(__file__).parents[2] / "bot_core/runtime/bootstrap.py"
-    ).read_text(encoding="utf-8")
+    bootstrap = (Path(__file__).parents[2] / "bot_core/runtime/bootstrap.py").read_text(
+        encoding="utf-8"
+    )
     assert "def register_adapter_factory(" in bootstrap
     assert "_DEFAULT_ADAPTERS[normalized] = factory" in bootstrap
     assert '"register_adapter_factory"' in bootstrap
@@ -349,8 +468,15 @@ def test_m07_lifecycle_discovery_records_missing_genuine_root_and_exact_answers(
     from pathlib import Path
 
     root = Path(__file__).parents[2]
-    machine = json.loads((root / "docs/architecture/cryptohunter_product_architecture/audit_observability_alerts_and_updater.json").read_text(encoding="utf-8"))
-    boundary = machine["alert_model"]["executable_authority"]["s9d_c25_m08_reconciliation_authority_disposition"]["m07_full_fill_authority_boundary"]
+    machine = json.loads(
+        (
+            root
+            / "docs/architecture/cryptohunter_product_architecture/audit_observability_alerts_and_updater.json"
+        ).read_text(encoding="utf-8")
+    )
+    boundary = machine["alert_model"]["executable_authority"][
+        "s9d_c25_m08_reconciliation_authority_disposition"
+    ]["m07_full_fill_authority_boundary"]
     dependency = boundary["m07_order_lifecycle_dependency"]
     assert dependency["status"] == "MISSING_CORE_OWNED_ACCEPTED_ORDER_LIFECYCLE_ROOT"
     assert dependency["genuine_production_authority"] == "NOT_FOUND"
@@ -365,14 +491,21 @@ def test_raw_order_event_status_hash_and_persistence_cannot_self_enroll_lifecycl
     import bot_core.execution as execution
 
     forbidden = {
-        "OrderLifecycleAuthority", "PrevalidatedOrderLifecycle",
-        "accept_order", "accept_event", "restore_order_lifecycle",
+        "OrderLifecycleAuthority",
+        "PrevalidatedOrderLifecycle",
+        "accept_order",
+        "accept_event",
+        "restore_order_lifecycle",
     }
     assert forbidden.isdisjoint(vars(execution))
 
     raw_order = {"order_id": f"ord_{U1}", "quantity": "1", "state": "FILLED"}
     raw_event = {"event_id": f"evt_{U1}", "order_id": raw_order["order_id"], "type": "ORDER_FILLED"}
-    persistence_dto = {**raw_order, "event": raw_event, "integrity": canonical_json_sha256(raw_order)}
+    persistence_dto = {
+        **raw_order,
+        "event": raw_event,
+        "integrity": canonical_json_sha256(raw_order),
+    }
     assert raw_order["state"] == "FILLED"  # a terminal string remains only caller data
     assert persistence_dto["integrity"] == canonical_json_sha256(raw_order)
     assert not hasattr(execution, "accept_order")
@@ -387,7 +520,12 @@ def test_corrected_paper_catalog_product_decision_is_fail_closed_discovery():
     from bot_core.instruments import paper_canonical_metadata as paper_metadata
 
     root = Path(__file__).parents[2]
-    machine = json.loads((root / "docs/architecture/cryptohunter_product_architecture/audit_observability_alerts_and_updater.json").read_text(encoding="utf-8"))
+    machine = json.loads(
+        (
+            root
+            / "docs/architecture/cryptohunter_product_architecture/audit_observability_alerts_and_updater.json"
+        ).read_text(encoding="utf-8")
+    )
     dependency = machine["alert_model"]["executable_authority"][
         "s9d_c25_m08_reconciliation_authority_disposition"
     ]["m07_full_fill_authority_boundary"]["m05_historical_instrument_dependency"]
@@ -412,18 +550,25 @@ def test_corrected_paper_catalog_product_decision_is_fail_closed_discovery():
     assert paper_metadata._RELEASE_OWNED_ENTRIES == ()
     assert paper_metadata.canonical_paper_instruments() == ()
     for section in (
-        "exchange_catalog_ingestion", "catalog_acceptance",
-        "manual_trading_universe", "autonomous_trading_universe",
-        "autonomous_candidate_ranking", "execution_authority_separation",
+        "exchange_catalog_ingestion",
+        "catalog_acceptance",
+        "manual_trading_universe",
+        "autonomous_trading_universe",
+        "autonomous_candidate_ranking",
+        "execution_authority_separation",
     ):
         assert decision[section]["status"] == "NOT_IMPLEMENTED"
     assert "cannot create Instrument" in decision["manual_trading_universe"]["authority"]
     assert "unknown IDs fail closed" in decision["manual_trading_universe"]["authority"]
     assert "self-enroll" in decision["autonomous_trading_universe"]["authority"]
     assert "never sufficient" in decision["execution_authority_separation"]["invariant"]
-    assert "raw results must never be accepted directly" in (
-        dependency["m05_catalog_source_policy_disposition"]["PAPER"]
-        ["canonical_metadata_discovery"]["runtime_derived_metadata"]
+    assert (
+        "raw results must never be accepted directly"
+        in (
+            dependency["m05_catalog_source_policy_disposition"]["PAPER"][
+                "canonical_metadata_discovery"
+            ]["runtime_derived_metadata"]
+        )
     )
     assert decision["testnet_disposition"].startswith("UNCHANGED")
     assert decision["live_disposition"] == "UNCHANGED_NOT_ENABLED"
@@ -437,8 +582,7 @@ def test_explicit_m05_identity_migration_design_closes_exact_decisions():
     root = Path(__file__).parents[2]
     machine = json.loads(
         (
-            root
-            / "docs/architecture/cryptohunter_product_architecture/"
+            root / "docs/architecture/cryptohunter_product_architecture/"
             "audit_observability_alerts_and_updater.json"
         ).read_text(encoding="utf-8")
     )
@@ -455,12 +599,11 @@ def test_explicit_m05_identity_migration_design_closes_exact_decisions():
         "market_type",
         "venue_symbol",
     ]
-    assert "execution_environment" not in design["chosen_identity_model"][
-        "source_product_identity"
-    ]["tuple"]
-    assert design["chosen_identity_model"]["workspace_instrument_identity"][
-        "tuple"
-    ] == [
+    assert (
+        "execution_environment"
+        not in design["chosen_identity_model"]["source_product_identity"]["tuple"]
+    )
+    assert design["chosen_identity_model"]["workspace_instrument_identity"]["tuple"] == [
         "workspace_id",
         "source_exchange_id",
         "market_type",
@@ -472,21 +615,18 @@ def test_explicit_m05_identity_migration_design_closes_exact_decisions():
         "CHOSEN_AS_BINDING_PATTERN_NOT_NEW_ENTITY",
         "REJECTED",
     ]
-    assert design["paper_simulated_venue_disposition"][
-        "instrument_source_identity_owner"
-    ] is False
-    assert "execution_environment is forbidden from source provenance" in design[
-        "catalog_snapshot_contract"
-    ]["scope"]
+    assert design["paper_simulated_venue_disposition"]["instrument_source_identity_owner"] is False
+    assert (
+        "execution_environment is forbidden from source provenance"
+        in design["catalog_snapshot_contract"]["scope"]
+    )
     assert design["source_authenticator"]["architecture_name"] == (
         "AcceptedSourceProducerMembership"
     )
-    assert design["dynamic_listing_delisting_and_completeness"][
-        "complete_proof_required"
-    ] is True
-    assert design["dynamic_listing_delisting_and_completeness"][
-        "partial_policy"
-    ].startswith("PARTIAL may be retained")
+    assert design["dynamic_listing_delisting_and_completeness"]["complete_proof_required"] is True
+    assert design["dynamic_listing_delisting_and_completeness"]["partial_policy"].startswith(
+        "PARTIAL may be retained"
+    )
     assert design["stable_identity_map"]["historical_resolution"].endswith(
         "no current-metadata fallback."
     )
@@ -510,9 +650,7 @@ def test_explicit_m05_identity_migration_design_closes_exact_decisions():
         "workspace_id",
         "accepted_source_catalog_snapshot_id",
     ]
-    assert catalog["WorkspaceCatalogProjection"]["cross_workspace"].startswith(
-        "DENIED"
-    )
+    assert catalog["WorkspaceCatalogProjection"]["cross_workspace"].startswith("DENIED")
     assert {item["target"] for item in design["downstream_impact_audit"]} == {
         "exchange_id",
         "environment",
@@ -593,8 +731,7 @@ def test_workspace_instrument_identity_is_distinct_over_one_shared_source_fact()
     root = Path(__file__).parents[2]
     machine = json.loads(
         (
-            root
-            / "docs/architecture/cryptohunter_product_architecture/"
+            root / "docs/architecture/cryptohunter_product_architecture/"
             "audit_observability_alerts_and_updater.json"
         ).read_text(encoding="utf-8")
     )
@@ -631,12 +768,10 @@ def test_workspace_instrument_identity_is_distinct_over_one_shared_source_fact()
     assert compatibility["M0.6"]["same_workspace_invariant"] == (
         "Instrument.workspace_id == ExchangeAccount.workspace_id remains required"
     )
-    assert compatibility["M0.6"]["foreign_instrument_disposition"] == (
-        "TRUSTED_CONTEXT_INVALID"
+    assert compatibility["M0.6"]["foreign_instrument_disposition"] == ("TRUSTED_CONTEXT_INVALID")
+    assert design["trading_universe_compatibility"]["cross_workspace_selection"].startswith(
+        "DENIED_FAIL_CLOSED"
     )
-    assert design["trading_universe_compatibility"][
-        "cross_workspace_selection"
-    ].startswith("DENIED_FAIL_CLOSED")
 
 
 def test_m02_frozen_instrument_dimensions_prove_explicit_migration_dependency():
@@ -646,9 +781,7 @@ def test_m02_frozen_instrument_dimensions_prove_explicit_migration_dependency():
     root = Path(__file__).parents[2]
     docs = root / "docs/architecture/cryptohunter_product_architecture"
     m02 = json.loads((docs / "canonical_domain_vocabulary.json").read_text())
-    machine = json.loads(
-        (docs / "audit_observability_alerts_and_updater.json").read_text()
-    )
+    machine = json.loads((docs / "audit_observability_alerts_and_updater.json").read_text())
     instrument = next(
         entity for entity in m02["entity_kinds"] if entity["canonical_name"] == "Instrument"
     )
@@ -660,24 +793,24 @@ def test_m02_frozen_instrument_dimensions_prove_explicit_migration_dependency():
     ]
     migration = design["m02_identity_dimensions_migration_dependency"]
 
-    assert instrument["parent"] == migration["exact_frozen_evidence"]["parent"] == (
-        "Workspace"
+    assert instrument["parent"] == migration["exact_frozen_evidence"]["parent"] == ("Workspace")
+    assert (
+        instrument["identity_dimensions"]
+        == migration["exact_frozen_evidence"]["identity_dimensions"]
+        == ["source_exchange_id", "market_type", "venue_symbol"]
     )
-    assert instrument["identity_dimensions"] == migration["exact_frozen_evidence"][
-        "identity_dimensions"
-    ] == ["source_exchange_id", "market_type", "venue_symbol"]
     assert migration["status"] == "MIGRATED_CANONICAL_1.44.0"
     assert migration["target_identity_dimensions"] == [
         "source_exchange_id",
         "market_type",
         "venue_symbol",
     ]
-    assert migration["cutover_dependency"] == (
-        "REQUIRED_BEFORE_AUTHORITATIVE_M0.5_CUTOVER"
+    assert migration["cutover_dependency"] == ("REQUIRED_BEFORE_AUTHORITATIVE_M0.5_CUTOVER")
+    assert (
+        design["m02_m06_compatibility"]["M0.2"]["ownership"]["ownership_migration_required"]
+        is False
     )
-    assert design["m02_m06_compatibility"]["M0.2"]["ownership"][
-        "ownership_migration_required"
-    ] is False
-    assert design["m02_m06_compatibility"]["M0.6"][
-        "instrument_environment_exchange_checks"
-    ] == "MIGRATED_CANONICAL_1.44.0_SOURCE_EXECUTION_ROLES_SEPARATED"
+    assert (
+        design["m02_m06_compatibility"]["M0.6"]["instrument_environment_exchange_checks"]
+        == "MIGRATED_CANONICAL_1.44.0_SOURCE_EXECUTION_ROLES_SEPARATED"
+    )

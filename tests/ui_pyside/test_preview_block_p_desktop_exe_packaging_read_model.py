@@ -1,11 +1,19 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
+import tomllib
 from typing import Any
 
 import pytest
 
 from ui.pyside_app import preview_block_p_desktop_exe_packaging_read_model as read_model
+from ui.pyside_app.preview_block_p_desktop_exe_packaging_source_inventory import (
+    build_preview_block_p_desktop_exe_packaging_source_inventory,
+)
+from ui.pyside_app.preview_block_p_desktop_exe_packaging_inventory_matrix import (
+    build_preview_block_p_desktop_exe_packaging_inventory_matrix,
+)
 from ui.pyside_app.preview_block_p_desktop_exe_packaging_contract import (
     build_preview_block_p_desktop_exe_packaging_contract,
 )
@@ -21,6 +29,32 @@ def test_expected_source_is_the_accepted_18_3_snapshot() -> None:
     assert read_model.SOURCE_IDENTITY_EXPECTED == {
         key: read_model.EXPECTED_SOURCE[key] for key in read_model.SOURCE_IDENTITY_EXPECTED
     }
+
+
+def test_current_project_dependency_count_is_preserved_through_block_p_chain() -> None:
+    root = Path(__file__).resolve().parents[2]
+    project_dependencies = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))[
+        "project"
+    ]["dependencies"]
+    source = build_preview_block_p_desktop_exe_packaging_source_inventory()
+    matrix = build_preview_block_p_desktop_exe_packaging_inventory_matrix()
+    contract = build_preview_block_p_desktop_exe_packaging_contract()
+    projected = _payload()
+
+    assert len(project_dependencies) == 26
+    assert source["python_dependency_inventory"]["project_dependency_specs"] == project_dependencies
+    assert source["python_dependency_inventory"]["project_dependency_count"] == 26
+    assert matrix["source_inventory_preservation"]["project_dependency_count"] == 26
+    assert contract["python_dependency_contract"]["declared_dependency_count"] == 26
+    assert (
+        read_model.EXPECTED_SOURCE["python_dependency_contract"]["declared_dependency_count"] == 26
+    )
+    dependency_projection = next(
+        row
+        for row in projected["domain_contract_read_model_rows"]
+        if row["domain_id"] == "python_dependency_bundle"
+    )
+    assert dependency_projection["source_contract_preserved"] is True
 
 
 def test_nominal_read_model_is_plain_complete_and_fail_closed() -> None:

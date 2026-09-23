@@ -15,15 +15,25 @@ MACHINE = DOCS / "m05_account_genesis_freshness_authority_cas_finalization_contr
 MARKDOWN = DOCS / "m05_account_genesis_freshness_authority_cas_finalization_contract.md"
 OWNER = "Future AccountGenesis freshness / anti-rollback authority"
 EXPECTED_PAYLOAD_FIELDS = {
-    "schema_version", "environment", "trust_domain", "authority_id", "generation",
-    "predecessor_generation", "predecessor_document_digest",
-    "complete_semantic_head_set", "freshness_authority_key_id",
+    "schema_version",
+    "environment",
+    "trust_domain",
+    "authority_id",
+    "generation",
+    "predecessor_generation",
+    "predecessor_document_digest",
+    "complete_semantic_head_set",
+    "freshness_authority_key_id",
     "freshness_authority_key_version",
     "finalization_request_id",
 }
 EXPECTED_CAS_ARGUMENTS = {
-    "expected_generation", "expected_document_digest", "expected_complete_heads",
-    "proposed_document_payload", "proposed_document_digest", "proposer_authentication",
+    "expected_generation",
+    "expected_document_digest",
+    "expected_complete_heads",
+    "proposed_document_payload",
+    "proposed_document_digest",
+    "proposer_authentication",
 }
 EXPECTED_CAS_PRECONDITIONS = {
     "current_full_document_matches_expected_generation",
@@ -50,38 +60,74 @@ EXPECTED_CAS_PRECONDITIONS = {
     "proposer_key_lifecycle_eligible_required",
 }
 EXPECTED_FINALIZATION_RECEIPT_FIELDS = {
-    "schema_version", "environment", "trust_domain", "authority_id",
-    "exact_predecessor_generation", "exact_predecessor_document_digest",
-    "accepted_generation", "accepted_document_digest", "complete_semantic_head_digest",
-    "finalization_request_id", "receipt_id", "freshness_authority_key_id",
-    "freshness_authority_key_version", "authentication_tag_or_signature",
+    "schema_version",
+    "environment",
+    "trust_domain",
+    "authority_id",
+    "exact_predecessor_generation",
+    "exact_predecessor_document_digest",
+    "accepted_generation",
+    "accepted_document_digest",
+    "complete_semantic_head_digest",
+    "finalization_request_id",
+    "receipt_id",
+    "freshness_authority_key_id",
+    "freshness_authority_key_version",
+    "authentication_tag_or_signature",
 }
 EXPECTED_FINALIZATION_RECEIPT_AUTH_BINDING = {
-    "finalization-receipt-authentication-domain-separator", "schema_version",
-    "environment", "trust_domain", "authority_id", "exact_predecessor_generation",
-    "exact_predecessor_document_digest", "accepted_generation",
-    "accepted_document_digest", "complete_semantic_head_digest",
-    "finalization_request_id", "receipt_id", "freshness_authority_key_id",
+    "finalization-receipt-authentication-domain-separator",
+    "schema_version",
+    "environment",
+    "trust_domain",
+    "authority_id",
+    "exact_predecessor_generation",
+    "exact_predecessor_document_digest",
+    "accepted_generation",
+    "accepted_document_digest",
+    "complete_semantic_head_digest",
+    "finalization_request_id",
+    "receipt_id",
+    "freshness_authority_key_id",
     "freshness_authority_key_version",
 }
 EXPECTED_REPLAY_IDENTITY = {
-    "environment", "trust_domain", "authority_id", "finalization_request_id",
-    "exact_predecessor_generation", "exact_predecessor_document_digest",
-    "exact_proposed_document_digest", "exact_complete_semantic_head_set_digest",
+    "environment",
+    "trust_domain",
+    "authority_id",
+    "finalization_request_id",
+    "exact_predecessor_generation",
+    "exact_predecessor_document_digest",
+    "exact_proposed_document_digest",
+    "exact_complete_semantic_head_set_digest",
 }
 EXPECTED_ORIGINAL_DECISION_IDENTITY = {
-    "environment", "trust_domain", "authority_id", "exact_predecessor_generation",
-    "exact_predecessor_document_digest", "accepted_generation",
-    "accepted_document_digest", "complete_semantic_head_digest", "finalization_request_id",
+    "environment",
+    "trust_domain",
+    "authority_id",
+    "exact_predecessor_generation",
+    "exact_predecessor_document_digest",
+    "accepted_generation",
+    "accepted_document_digest",
+    "complete_semantic_head_digest",
+    "finalization_request_id",
 }
 EXPECTED_BOOTSTRAP_DENY = {
-    "acct_A", "OperatorIdentity of acct_A", "DeviceInstallation of acct_A",
-    "Workspace of acct_A", "account-scoped authority of acct_A",
+    "acct_A",
+    "OperatorIdentity of acct_A",
+    "DeviceInstallation of acct_A",
+    "Workspace of acct_A",
+    "account-scoped authority of acct_A",
 }
 EXPECTED_PROPOSER_AUTH_FIELDS = {
-    "schema_version", "proposer_identity", "environment", "trust_domain",
-    "proposer_key_id", "proposer_key_version",
-    "signed_or_authenticated_document_digest", "authentication_tag_or_signature",
+    "schema_version",
+    "proposer_identity",
+    "environment",
+    "trust_domain",
+    "proposer_key_id",
+    "proposer_key_version",
+    "signed_or_authenticated_document_digest",
+    "authentication_tag_or_signature",
 }
 
 
@@ -137,9 +183,7 @@ def validate(value: dict) -> None:
     assert state["method_returned_true_is_historical_proof"] is False
 
     representation = value["concrete_representation_refinement"]
-    assert representation["status"] == (
-        "FROZEN_BY_IMPLEMENTATION_READINESS_RECONCILIATION"
-    )
+    assert representation["status"] == ("FROZEN_BY_IMPLEMENTATION_READINESS_RECONCILIATION")
     assert representation["semantic_preimages_changed"] is False
     assert representation["digest_algorithm"] == "SHA-256"
     assert representation["authentication_algorithm"] == "Ed25519"
@@ -164,7 +208,9 @@ def validate(value: dict) -> None:
     assert document["payload_type"] == "AccountGenesisFreshnessDocumentPayload"
     assert set(document["payload_exact_semantic_fields"]) == EXPECTED_PAYLOAD_FIELDS
     assert document["envelope_exact_fields"] == [
-        "payload", "document_digest", "authentication_tag_or_signature",
+        "payload",
+        "document_digest",
+        "authentication_tag_or_signature",
     ]
     assert document["document_digest_semantics"] == (
         "HASH(domain_separator || canonical(AccountGenesisFreshnessDocumentPayload))"
@@ -186,12 +232,12 @@ def validate(value: dict) -> None:
     proposed = document["proposed_candidate_object"]
     assert proposed["type"] == "ProposedAccountGenesisFreshnessDocument"
     assert proposed["exact_fields"] == [
-        "payload", "document_digest", "proposer_authentication",
+        "payload",
+        "document_digest",
+        "proposer_authentication",
     ]
     assert proposed["payload_type"] == "AccountGenesisFreshnessDocumentPayload"
-    assert proposed["document_digest"] == (
-        "HASH(domain_separator || canonical(payload))"
-    )
+    assert proposed["document_digest"] == ("HASH(domain_separator || canonical(payload))")
     assert proposed["proposer_authentication"].startswith("Ed25519 signature binding")
     assert proposed["authentication_algorithm"] == "Ed25519"
     assert proposed["single_source_of_candidate_truth"] is True
@@ -210,17 +256,21 @@ def validate(value: dict) -> None:
     assert cas["freshness_authority_may_modify_proposed_payload"] is False
     assert set(cas["payload_fields_validated"]) == EXPECTED_PAYLOAD_FIELDS
     race = cas["key_lifecycle_race"]
-    assert race["if_key_binding_no_longer_valid_or_eligible"] == (
-        "REJECT / REQUIRE NEW PROPOSAL"
-    )
+    assert race["if_key_binding_no_longer_valid_or_eligible"] == ("REJECT / REQUIRE NEW PROPOSAL")
     assert race["authority_may_rewrite_K1_V1_to_K2_V2_and_accept"] is False
     assert cas["proposer_authentication_failure_no_fallback"] is True
     assert cas["generation_gap"].startswith("FORBIDDEN")
     assert cas["read_compare_set_emulation"] == "FORBIDDEN / TOCTOU"
     assert cas["availability"] == "NO COMMITTED PUBLICATION"
     assert set(cas["statuses"]) == {
-        "ACCEPTED", "ALREADY_ACCEPTED_EXACT", "CAS_CONFLICT", "PREDECESSOR_MISMATCH",
-        "INVALID_DOCUMENT", "INVALID_AUTHENTICATION", "WRONG_DOMAIN", "UNAVAILABLE",
+        "ACCEPTED",
+        "ALREADY_ACCEPTED_EXACT",
+        "CAS_CONFLICT",
+        "PREDECESSOR_MISMATCH",
+        "INVALID_DOCUMENT",
+        "INVALID_AUTHENTICATION",
+        "WRONG_DOMAIN",
+        "UNAVAILABLE",
         "OUTCOME_UNKNOWN",
     }
 
@@ -249,16 +299,20 @@ def validate(value: dict) -> None:
     assert receipt_auth["provider"] == "NOT_FROZEN / NOT_SELECTED"
     assert receipt_auth["canonical_byte_encoding"].startswith("RFC 8785")
     assert receipt_auth["schema_version_authenticated_before_interpretation"] is True
-    assert receipt_auth[
-        "authenticated_key_identity_drives_receipt_verification_historical_verification_and_lifecycle"
-    ] is True
+    assert (
+        receipt_auth[
+            "authenticated_key_identity_drives_receipt_verification_historical_verification_and_lifecycle"
+        ]
+        is True
+    )
     assert receipt_auth["lifecycle_or_verifier_identity_may_use_unauthenticated_metadata"] is False
-    assert receipt_auth[
-        "provider_alias_or_material_reuse_may_bypass_receipt_key_lifecycle"
-    ] is False
-    assert receipt_auth[
-        "changing_freshness_authority_key_id_or_version_requires_new_authentication"
-    ] is True
+    assert (
+        receipt_auth["provider_alias_or_material_reuse_may_bypass_receipt_key_lifecycle"] is False
+    )
+    assert (
+        receipt_auth["changing_freshness_authority_key_id_or_version_requires_new_authentication"]
+        is True
+    )
     assert receipt_auth["K1_receipt_may_be_treated_as_K2_receipt"] is False
     assert receipt_auth["key_identity_rule"] == (
         "freshness_authority_key_id and freshness_authority_key_version used for receipt "
@@ -291,19 +345,28 @@ def validate(value: dict) -> None:
         "receipt.accepted_document_digest == original proposed_document_digest and exact "
         "finalization_request_id matches"
     )
-    assert "never ALREADY_ACCEPTED_EXACT" in value["idempotency"][
-        "different_finalization_request_id_for_otherwise_same_successor_semantics"
-    ]
+    assert (
+        "never ALREADY_ACCEPTED_EXACT"
+        in value["idempotency"][
+            "different_finalization_request_id_for_otherwise_same_successor_semantics"
+        ]
+    )
     lookup = value["idempotency"]["historical_lookup_contract"]
     assert value["idempotency"]["receipt_reissue"].startswith(
         "original receipt with unchanged authenticated preimage"
     )
     assert lookup["exact_same_authoritative_decision_required"] is True
     assert set(lookup["exact_bindings"]) == {
-        "environment", "trust_domain", "authority_id", "exact_predecessor_generation",
-        "exact_predecessor_document_digest", "accepted_generation",
-        "accepted_document_digest", "complete_semantic_head_digest",
-        "finalization_request_id", "original_decision_identity",
+        "environment",
+        "trust_domain",
+        "authority_id",
+        "exact_predecessor_generation",
+        "exact_predecessor_document_digest",
+        "accepted_generation",
+        "accepted_document_digest",
+        "complete_semantic_head_digest",
+        "finalization_request_id",
+        "original_decision_identity",
     }
     assert lookup["may_create_second_authority_decision"] is False
     assert lookup["currently_trusted_authority_evidence_required"] is True
@@ -317,9 +380,10 @@ def validate(value: dict) -> None:
     assert set(lookup["original_decision_identity_semantic_tuple"]) == (
         EXPECTED_ORIGINAL_DECISION_IDENTITY
     )
-    assert lookup[
-        "missing_currently_trusted_independent_root_may_yield_ALREADY_ACCEPTED_EXACT"
-    ] is False
+    assert (
+        lookup["missing_currently_trusted_independent_root_may_yield_ALREADY_ACCEPTED_EXACT"]
+        is False
+    )
 
     identity = value["original_decision_identity_contract"]
     assert identity["type"] == "OriginalDecisionIdentity"
@@ -342,15 +406,22 @@ def validate(value: dict) -> None:
     assert independent["revoked_key_authentication_may_participate_as_historical_artifact"] is True
     assert independent["revoked_key_authentication_may_be_ultimate_trust_root"] is False
     assert independent["proof_must_bind_exact_same_original_decision_identity"] is True
-    assert independent[
-        "proof_must_be_verifiable_without_treating_revoked_key_as_current_trust_anchor"
-    ] is True
+    assert (
+        independent["proof_must_be_verifiable_without_treating_revoked_key_as_current_trust_anchor"]
+        is True
+    )
     assert independent["proof_cannot_be_self_corroboration_of_same_revoked_credential"] is True
-    assert independent["same_revoked_key_signing_receipt_and_corroborating_record_is_independent"] is False
+    assert (
+        independent["same_revoked_key_signing_receipt_and_corroborating_record_is_independent"]
+        is False
+    )
     assert independent["missing_currently_trusted_independent_root"] == (
         "UNAVAILABLE / FAIL_CLOSED / NO LOCAL COMMITTED CLOSURE"
     )
-    assert independent["valid_signature_or_tag_under_revoked_K1_alone_establishes_corroboration"] is False
+    assert (
+        independent["valid_signature_or_tag_under_revoked_K1_alone_establishes_corroboration"]
+        is False
+    )
     shapes = independent["proof_shapes"]
     retained = shapes["retained_monotonic_authority_decision_record"]
     assert retained["belongs_to_authority_controlled_monotonic_decision_history"] is True
@@ -363,9 +434,9 @@ def validate(value: dict) -> None:
     assert successor["commits_to_exact_original_decision_identity"] is True
     assert successor["verification_reaches_currently_trusted_authority_root_or_state"] is True
     assert successor["trust_path_terminating_only_in_revoked_key_is_sufficient"] is False
-    assert successor[
-        "same_revoked_key_may_sign_receipt_and_chain_to_establish_independence"
-    ] is False
+    assert (
+        successor["same_revoked_key_may_sign_receipt_and_chain_to_establish_independence"] is False
+    )
     assert successor["may_rewrite_original_candidate_request_or_document_identity"] is False
     attested = shapes["currently_trusted_authority_attested_historical_lookup"]
     assert attested["currently_trusted_authority_evidence_required"] is True
@@ -397,12 +468,22 @@ def validate(value: dict) -> None:
     assert lifecycle["revoked_state_terminal"] is True
     assert lifecycle["REVOKED_may_transition_to_ACTIVE"] is False
     assert lifecycle["REVOKED_may_transition_to_VERIFY_ONLY"] is False
-    assert lifecycle["historical_receipt_under_REVOKED_requires_independent_authority_proof"] is True
-    assert lifecycle["revoked_receipt_authentication_alone_establishes_historical_acceptance"] is False
-    assert lifecycle["revoked_receipt_authentication_alone_establishes_ALREADY_ACCEPTED_EXACT"] is False
+    assert (
+        lifecycle["historical_receipt_under_REVOKED_requires_independent_authority_proof"] is True
+    )
+    assert (
+        lifecycle["revoked_receipt_authentication_alone_establishes_historical_acceptance"] is False
+    )
+    assert (
+        lifecycle["revoked_receipt_authentication_alone_establishes_ALREADY_ACCEPTED_EXACT"]
+        is False
+    )
     assert lifecycle["revoked_receipt_authentication_alone_establishes_recovery_direction"] is False
     assert lifecycle["revoked_receipt_authentication_alone_establishes_local_COMMITTED"] is False
-    assert lifecycle["revoked_receipt_authentication_alone_establishes_genuine_prior_finalization"] is False
+    assert (
+        lifecycle["revoked_receipt_authentication_alone_establishes_genuine_prior_finalization"]
+        is False
+    )
     assert lifecycle["missing_independent_revoked_history_proof"] == (
         "UNAVAILABLE / FAIL_CLOSED / NO LOCAL COMMITTED CLOSURE"
     )
@@ -417,9 +498,12 @@ def validate(value: dict) -> None:
     assert lifecycle["independent_key_boundary"] is True
     assert value["authentication_model"]["rule"] == "authenticity != freshness"
     assert value["authentication_model"]["valid_HMAC_alone_establishes_freshness"] is False
-    assert value["authentication_model"][
-        "successful_writer_return_without_atomic_CAS_establishes_freshness"
-    ] is False
+    assert (
+        value["authentication_model"][
+            "successful_writer_return_without_atomic_CAS_establishes_freshness"
+        ]
+        is False
+    )
 
     proposer = value["proposer_authentication_boundary"]
     assert proposer["authorized_proposer_identity"] == "CryptoHunterAccountAuthority"
@@ -440,14 +524,21 @@ def validate(value: dict) -> None:
     assert proposer["TOFU"] == "FORBIDDEN"
     assert proposer["authentication_algorithm"] == "Ed25519"
     assert set(proposer["authentication_binding"]) == {
-        "proposer-authentication-domain-separator", "schema_version", "proposer_identity",
-        "environment", "trust_domain", "proposer_key_id", "proposer_key_version",
+        "proposer-authentication-domain-separator",
+        "schema_version",
+        "proposer_identity",
+        "environment",
+        "trust_domain",
+        "proposer_key_id",
+        "proposer_key_version",
         "exact proposed_document_digest",
     }
     assert proposer["authentication_tag_or_signature_in_own_preimage"] is False
     assert proposer["authenticated_key_identity_drives_verification_and_lifecycle"] is True
     assert proposer["lifecycle_eligibility_may_use_unauthenticated_key_metadata"] is False
-    assert proposer["provider_alias_or_material_reuse_may_bypass_authenticated_key_lifecycle"] is False
+    assert (
+        proposer["provider_alias_or_material_reuse_may_bypass_authenticated_key_lifecycle"] is False
+    )
     assert proposer["changing_proposer_key_id_or_version_requires_new_authentication"] is True
     assert proposer["P1_authentication_may_be_treated_as_P2_authentication"] is False
     assert proposer["schema_version_authenticated_before_interpretation"] is True
@@ -467,16 +558,17 @@ def validate(value: dict) -> None:
     assert proposer["proposer_key_lifecycle"]["VERIFY_ONLY"].startswith(
         "historical provenance verification only"
     )
-    assert proposer["proposer_key_lifecycle"]["REVOKED"] == (
-        "cannot authorize new candidate"
-    )
+    assert proposer["proposer_key_lifecycle"]["REVOKED"] == ("cannot authorize new candidate")
     assert proposer["proposer_rotation_race"]["if_P1_not_eligible_at_CAS"] == (
         "INVALID_AUTHENTICATION / REQUIRE NEW PROPOSAL"
     )
     assert proposer["proposer_rotation_race"]["authority_may_rewrite_P1_to_P2_and_accept"] is False
-    assert proposer["proposer_rotation_race"][
-        "key_identity_version_authenticated_before_lifecycle_eligibility"
-    ] is True
+    assert (
+        proposer["proposer_rotation_race"][
+            "key_identity_version_authenticated_before_lifecycle_eligibility"
+        ]
+        is True
+    )
 
     domain = value["domain_isolation"]
     assert domain["TEST_PRODUCTION_separated"] is True
@@ -488,11 +580,13 @@ def validate(value: dict) -> None:
 
     models = value["candidate_models"]
     assert set(models) == {
-        "A_OS_KEYRING_SINGLE_DOCUMENT_CAS", "B_SEPARATE_LOCAL_MONOTONIC_STORE",
+        "A_OS_KEYRING_SINGLE_DOCUMENT_CAS",
+        "B_SEPARATE_LOCAL_MONOTONIC_STORE",
         "C_REMOTE_TRANSACTIONAL_FRESHNESS_SERVICE",
         "D_SIGNED_FINALIZATION_RECEIPT_AUTHORITY",
         "E_HARDWARE_MONOTONIC_COUNTER_OR_TPM_STYLE_ROOT",
-        "F_HYBRID_CAS_PLUS_SIGNED_FINALIZATION_RECEIPT", "G_DESIGN_BLOCKED",
+        "F_HYBRID_CAS_PLUS_SIGNED_FINALIZATION_RECEIPT",
+        "G_DESIGN_BLOCKED",
     }
     selected = value["selected_or_blocked_model"]
     assert selected["selected"] == "F_HYBRID_CAS_PLUS_SIGNED_FINALIZATION_RECEIPT"
@@ -502,9 +596,7 @@ def validate(value: dict) -> None:
 
     assert set(value["mandatory_redteam"]) == set(MANDATORY_REDTEAM_MUTATIONS)
     assert set(value["proposer_authentication_redteam"]) == set(PROPOSER_AUTH_MUTATIONS)
-    assert set(value["finalization_receipt_authentication_redteam"]) == set(
-        RECEIPT_AUTH_MUTATIONS
-    )
+    assert set(value["finalization_receipt_authentication_redteam"]) == set(RECEIPT_AUTH_MUTATIONS)
     assert set(value["freshness_finalization_lifecycle_redteam"]) == set(
         FRESHNESS_LIFECYCLE_MUTATIONS
     )
@@ -520,9 +612,7 @@ def validate(value: dict) -> None:
         "ACCOUNT_GENESIS_FRESHNESS_AUTHORITY_CONTRACT_FROZEN"
     )
     assert value["result"]["physical_persistence_unblocked"] is True
-    assert value["preserved_status"]["physical persistence protocol"] == (
-        "FROZEN ABSTRACT DESIGN"
-    )
+    assert value["preserved_status"]["physical persistence protocol"] == ("FROZEN ABSTRACT DESIGN")
     assert value["preserved_status"]["physical persistence result"] == (
         "PHYSICAL_PROTOCOL_CAN_NOW_BE_FROZEN"
     )
@@ -540,155 +630,326 @@ def test_contract_and_deterministic_projection() -> None:
 
 
 MANDATORY_REDTEAM_MUTATIONS = {
-    "CHA becomes freshness authority owner":
-        (("ownership_boundary", "authoritative_freshness_owner"), "CryptoHunterAccountAuthority"),
-    "valid HMAC alone establishes freshness":
-        (("authentication_model", "valid_HMAC_alone_establishes_freshness"), True),
-    "writer success without CAS establishes freshness":
-        (("authentication_model", "successful_writer_return_without_atomic_CAS_establishes_freshness"), True),
-    "read-compare-write emulation accepted as atomic CAS":
-        (("CAS_contract", "read_compare_set_emulation"), "ALLOWED"),
+    "CHA becomes freshness authority owner": (
+        ("ownership_boundary", "authoritative_freshness_owner"),
+        "CryptoHunterAccountAuthority",
+    ),
+    "valid HMAC alone establishes freshness": (
+        ("authentication_model", "valid_HMAC_alone_establishes_freshness"),
+        True,
+    ),
+    "writer success without CAS establishes freshness": (
+        (
+            "authentication_model",
+            "successful_writer_return_without_atomic_CAS_establishes_freshness",
+        ),
+        True,
+    ),
+    "read-compare-write emulation accepted as atomic CAS": (
+        ("CAS_contract", "read_compare_set_emulation"),
+        "ALLOWED",
+    ),
     "two N+1 successors accepted": (("concurrency", "successful_successors_per_predecessor"), 2),
     "N -> N+2 accepted": (("CAS_contract", "generation_gap"), "ALLOWED"),
-    "same generation unequal documents accepted":
-        (("concurrency", "same_generation_unequal_documents"), "ACCEPT"),
-    "TEST receipt accepted in PRODUCTION":
-        (("domain_isolation", "TEST_receipt_in_PRODUCTION"), "ACCEPT"),
-    "receipt from unknown authority accepted": (("authority_identity", "unknown_authority"), "ACCEPT"),
-    "receipt authenticity without monotonic state considered freshness":
-        (("finalization_evidence", "receipt_authenticity_alone_establishes_freshness"), True),
-    "freshness authority bootstrapped from acct_A":
-        (("authority_bootstrap", "must_not_derive_from"), ["Workspace of acct_A"]),
-    "ambiguous write assumed failed without reread":
-        (("ambiguous_outcome", "mandatory_action"), "assume failure"),
-    "ambiguous write assumed successful without evidence":
-        (("ambiguous_outcome", "initial_status"), "ACCEPTED"),
-    "anchor-ahead reconstructs missing local authority history":
-        (("recovery_semantics", "authority_N_plus_1_local_N"), "RECONSTRUCT_FROM_ANCHOR"),
-    "local state alone authorizes recovery direction":
-        (("direction_proof", "local_state_alone_may_mint_direction"), True),
+    "same generation unequal documents accepted": (
+        ("concurrency", "same_generation_unequal_documents"),
+        "ACCEPT",
+    ),
+    "TEST receipt accepted in PRODUCTION": (
+        ("domain_isolation", "TEST_receipt_in_PRODUCTION"),
+        "ACCEPT",
+    ),
+    "receipt from unknown authority accepted": (
+        ("authority_identity", "unknown_authority"),
+        "ACCEPT",
+    ),
+    "receipt authenticity without monotonic state considered freshness": (
+        ("finalization_evidence", "receipt_authenticity_alone_establishes_freshness"),
+        True,
+    ),
+    "freshness authority bootstrapped from acct_A": (
+        ("authority_bootstrap", "must_not_derive_from"),
+        ["Workspace of acct_A"],
+    ),
+    "ambiguous write assumed failed without reread": (
+        ("ambiguous_outcome", "mandatory_action"),
+        "assume failure",
+    ),
+    "ambiguous write assumed successful without evidence": (
+        ("ambiguous_outcome", "initial_status"),
+        "ACCEPTED",
+    ),
+    "anchor-ahead reconstructs missing local authority history": (
+        ("recovery_semantics", "authority_N_plus_1_local_N"),
+        "RECONSTRUCT_FROM_ANCHOR",
+    ),
+    "local state alone authorizes recovery direction": (
+        ("direction_proof", "local_state_alone_may_mint_direction"),
+        True,
+    ),
 }
 
 PROPOSER_AUTH_MUTATIONS = {
-    "arbitrary self-signed proposer accepted as CryptoHunterAccountAuthority":
-        ("boundary", "candidate_carried_key_may_establish_trust", True),
-    "unknown proposer key accepted":
-        ("boundary", "untrusted_or_unknown_proposer_key", "ACCEPT"),
-    "wrong proposer identity accepted":
-        ("boundary", "authorized_proposer_identity", "SomeOtherAuthority"),
-    "TEST proposer credential accepted in PRODUCTION":
-        ("remove_binding", "environment", None),
-    "proposer authentication key treated as freshness-finalization authority":
-        ("boundary", "must_be_distinct_security_roles", False),
-    "proposer identity binding removed":
-        ("remove_field", "proposer_identity", None),
-    "proposed digest binding removed from proposer authentication":
-        ("remove_binding", "exact proposed_document_digest", None),
-    "candidate-carried key enables TOFU":
-        ("boundary", "TOFU", "ALLOWED"),
-    "proposer key id removed from authentication binding":
-        ("remove_binding", "proposer_key_id", None),
-    "proposer key version removed from authentication binding":
-        ("remove_binding", "proposer_key_version", None),
-    "proposer schema version removed from authentication binding":
-        ("remove_binding", "schema_version", None),
-    "REVOKED proposer key may authorize new candidate":
-        ("lifecycle", "REVOKED", "may authorize new candidate"),
-    "VERIFY_ONLY proposer key may authorize new candidate":
-        ("lifecycle", "VERIFY_ONLY", "may authorize new candidate"),
-    "P1 authentication may be relabeled as P2 without new authentication":
-        ("boundary", "P1_authentication_may_be_treated_as_P2_authentication", True),
-    "proposer key lifecycle eligibility may use unauthenticated key metadata":
-        ("boundary", "lifecycle_eligibility_may_use_unauthenticated_key_metadata", True),
+    "arbitrary self-signed proposer accepted as CryptoHunterAccountAuthority": (
+        "boundary",
+        "candidate_carried_key_may_establish_trust",
+        True,
+    ),
+    "unknown proposer key accepted": ("boundary", "untrusted_or_unknown_proposer_key", "ACCEPT"),
+    "wrong proposer identity accepted": (
+        "boundary",
+        "authorized_proposer_identity",
+        "SomeOtherAuthority",
+    ),
+    "TEST proposer credential accepted in PRODUCTION": ("remove_binding", "environment", None),
+    "proposer authentication key treated as freshness-finalization authority": (
+        "boundary",
+        "must_be_distinct_security_roles",
+        False,
+    ),
+    "proposer identity binding removed": ("remove_field", "proposer_identity", None),
+    "proposed digest binding removed from proposer authentication": (
+        "remove_binding",
+        "exact proposed_document_digest",
+        None,
+    ),
+    "candidate-carried key enables TOFU": ("boundary", "TOFU", "ALLOWED"),
+    "proposer key id removed from authentication binding": (
+        "remove_binding",
+        "proposer_key_id",
+        None,
+    ),
+    "proposer key version removed from authentication binding": (
+        "remove_binding",
+        "proposer_key_version",
+        None,
+    ),
+    "proposer schema version removed from authentication binding": (
+        "remove_binding",
+        "schema_version",
+        None,
+    ),
+    "REVOKED proposer key may authorize new candidate": (
+        "lifecycle",
+        "REVOKED",
+        "may authorize new candidate",
+    ),
+    "VERIFY_ONLY proposer key may authorize new candidate": (
+        "lifecycle",
+        "VERIFY_ONLY",
+        "may authorize new candidate",
+    ),
+    "P1 authentication may be relabeled as P2 without new authentication": (
+        "boundary",
+        "P1_authentication_may_be_treated_as_P2_authentication",
+        True,
+    ),
+    "proposer key lifecycle eligibility may use unauthenticated key metadata": (
+        "boundary",
+        "lifecycle_eligibility_may_use_unauthenticated_key_metadata",
+        True,
+    ),
 }
 
 RECEIPT_AUTH_MUTATIONS = {
-    "receipt key id removed from authentication binding":
-        ("remove_binding", "freshness_authority_key_id", None),
-    "receipt key version removed from authentication binding":
-        ("remove_binding", "freshness_authority_key_version", None),
-    "receipt schema version removed from authentication binding":
-        ("remove_binding", "schema_version", None),
-    "receipt accepted document digest removed from authentication binding":
-        ("remove_binding", "accepted_document_digest", None),
-    "receipt predecessor digest removed from authentication binding":
-        ("remove_binding", "exact_predecessor_document_digest", None),
-    "receipt finalization request id removed from authentication binding":
-        ("remove_binding", "finalization_request_id", None),
-    "receipt authority id removed from authentication binding":
-        ("remove_binding", "authority_id", None),
-    "receipt id removed from authentication binding":
-        ("remove_binding", "receipt_id", None),
-    "K1 receipt may be relabeled as K2 without new authentication":
-        ("set", "K1_receipt_may_be_treated_as_K2_receipt", True),
-    "receipt lifecycle eligibility may use unauthenticated key metadata":
-        ("set", "lifecycle_or_verifier_identity_may_use_unauthenticated_metadata", True),
-    "provider alias may bypass receipt key lifecycle":
-        ("set", "provider_alias_or_material_reuse_may_bypass_receipt_key_lifecycle", True),
-    "authentication tag is included in its own preimage":
-        ("set", "authentication_tag_or_signature_in_own_preimage", True),
+    "receipt key id removed from authentication binding": (
+        "remove_binding",
+        "freshness_authority_key_id",
+        None,
+    ),
+    "receipt key version removed from authentication binding": (
+        "remove_binding",
+        "freshness_authority_key_version",
+        None,
+    ),
+    "receipt schema version removed from authentication binding": (
+        "remove_binding",
+        "schema_version",
+        None,
+    ),
+    "receipt accepted document digest removed from authentication binding": (
+        "remove_binding",
+        "accepted_document_digest",
+        None,
+    ),
+    "receipt predecessor digest removed from authentication binding": (
+        "remove_binding",
+        "exact_predecessor_document_digest",
+        None,
+    ),
+    "receipt finalization request id removed from authentication binding": (
+        "remove_binding",
+        "finalization_request_id",
+        None,
+    ),
+    "receipt authority id removed from authentication binding": (
+        "remove_binding",
+        "authority_id",
+        None,
+    ),
+    "receipt id removed from authentication binding": ("remove_binding", "receipt_id", None),
+    "K1 receipt may be relabeled as K2 without new authentication": (
+        "set",
+        "K1_receipt_may_be_treated_as_K2_receipt",
+        True,
+    ),
+    "receipt lifecycle eligibility may use unauthenticated key metadata": (
+        "set",
+        "lifecycle_or_verifier_identity_may_use_unauthenticated_metadata",
+        True,
+    ),
+    "provider alias may bypass receipt key lifecycle": (
+        "set",
+        "provider_alias_or_material_reuse_may_bypass_receipt_key_lifecycle",
+        True,
+    ),
+    "authentication tag is included in its own preimage": (
+        "set",
+        "authentication_tag_or_signature_in_own_preimage",
+        True,
+    ),
 }
 
 FRESHNESS_LIFECYCLE_MUTATIONS = {
-    "REVOKED freshness key may finalize new transition":
-        ("lifecycle", "REVOKED", "may finalize new transitions"),
-    "REVOKED receipt signature alone establishes historical acceptance":
-        ("lifecycle", "revoked_receipt_authentication_alone_establishes_historical_acceptance", True),
-    "REVOKED receipt alone yields ALREADY_ACCEPTED_EXACT":
-        ("lifecycle", "revoked_receipt_authentication_alone_establishes_ALREADY_ACCEPTED_EXACT", True),
-    "REVOKED receipt alone authorizes recovery direction":
-        ("lifecycle", "revoked_receipt_authentication_alone_establishes_recovery_direction", True),
-    "REVOKED receipt alone closes local COMMITTED state":
-        ("lifecycle", "revoked_receipt_authentication_alone_establishes_local_COMMITTED", True),
-    "planned rotation moves ACTIVE directly to REVOKED":
-        ("lifecycle", "planned_rotation_target", "REVOKED"),
-    "REVOKED key may transition back to ACTIVE":
-        ("lifecycle", "REVOKED_may_transition_to_ACTIVE", True),
-    "REVOKED key may transition back to VERIFY_ONLY":
-        ("lifecycle", "REVOKED_may_transition_to_VERIFY_ONLY", True),
-    "missing independent proof for revoked historical receipt is accepted":
-        ("lifecycle", "missing_independent_revoked_history_proof", "ACCEPT"),
-    "historical receipt under VERIFY_ONLY is rejected merely because key is not ACTIVE":
-        ("lifecycle", "VERIFY_ONLY", "historical verification forbidden"),
-    "historical lookup result may derive trust solely from revoked key":
-        ("lookup", "may_derive_trust_solely_from_historical_REVOKED_key", True),
-    "historical lookup result may represent a second authority decision":
-        ("lookup", "may_create_second_authority_decision", True),
-    "historical lookup may rewrite original finalization_request_id":
-        ("lookup", "may_change_finalization_request_id", True),
-    "historical lookup may rewrite accepted_document_digest":
-        ("lookup", "may_change_accepted_document_digest", True),
+    "REVOKED freshness key may finalize new transition": (
+        "lifecycle",
+        "REVOKED",
+        "may finalize new transitions",
+    ),
+    "REVOKED receipt signature alone establishes historical acceptance": (
+        "lifecycle",
+        "revoked_receipt_authentication_alone_establishes_historical_acceptance",
+        True,
+    ),
+    "REVOKED receipt alone yields ALREADY_ACCEPTED_EXACT": (
+        "lifecycle",
+        "revoked_receipt_authentication_alone_establishes_ALREADY_ACCEPTED_EXACT",
+        True,
+    ),
+    "REVOKED receipt alone authorizes recovery direction": (
+        "lifecycle",
+        "revoked_receipt_authentication_alone_establishes_recovery_direction",
+        True,
+    ),
+    "REVOKED receipt alone closes local COMMITTED state": (
+        "lifecycle",
+        "revoked_receipt_authentication_alone_establishes_local_COMMITTED",
+        True,
+    ),
+    "planned rotation moves ACTIVE directly to REVOKED": (
+        "lifecycle",
+        "planned_rotation_target",
+        "REVOKED",
+    ),
+    "REVOKED key may transition back to ACTIVE": (
+        "lifecycle",
+        "REVOKED_may_transition_to_ACTIVE",
+        True,
+    ),
+    "REVOKED key may transition back to VERIFY_ONLY": (
+        "lifecycle",
+        "REVOKED_may_transition_to_VERIFY_ONLY",
+        True,
+    ),
+    "missing independent proof for revoked historical receipt is accepted": (
+        "lifecycle",
+        "missing_independent_revoked_history_proof",
+        "ACCEPT",
+    ),
+    "historical receipt under VERIFY_ONLY is rejected merely because key is not ACTIVE": (
+        "lifecycle",
+        "VERIFY_ONLY",
+        "historical verification forbidden",
+    ),
+    "historical lookup result may derive trust solely from revoked key": (
+        "lookup",
+        "may_derive_trust_solely_from_historical_REVOKED_key",
+        True,
+    ),
+    "historical lookup result may represent a second authority decision": (
+        "lookup",
+        "may_create_second_authority_decision",
+        True,
+    ),
+    "historical lookup may rewrite original finalization_request_id": (
+        "lookup",
+        "may_change_finalization_request_id",
+        True,
+    ),
+    "historical lookup may rewrite accepted_document_digest": (
+        "lookup",
+        "may_change_accepted_document_digest",
+        True,
+    ),
 }
 
 REVOKED_HISTORY_PROOF_MUTATIONS = {
-    "retained decision record trusted solely because revoked key authenticates it":
-        ("retained", "record_authenticated_solely_by_revoked_key_is_sufficient", True),
-    "successor chain terminates only in revoked key":
-        ("successor", "trust_path_terminating_only_in_revoked_key_is_sufficient", True),
-    "revoked receipt self-corroborates as independent proof":
-        ("common", "proof_cannot_be_self_corroboration_of_same_revoked_credential", False),
-    "same revoked key signs receipt and corroborating history record":
-        ("common", "same_revoked_key_signing_receipt_and_corroborating_record_is_independent", True),
-    "local DB projection accepted as retained authority decision record":
-        ("retained", "local_DB_copy_alone_is_authority_proof", True),
-    "independent proof need not reach currently trusted authority root":
-        ("common", "currently_trusted_authority_root_or_state_required", False),
-    "independent proof need not bind exact original decision identity":
-        ("common", "proof_must_bind_exact_same_original_decision_identity", False),
-    "original decision identity may be caller selected":
-        ("identity", "is_caller_selected", True),
-    "original decision identity may be minted during lookup":
-        ("identity", "may_be_minted_during_historical_lookup", True),
-    "receipt_id is treated as original authority decision identity":
-        ("identity", "is_receipt_id", True),
-    "changing finalization_request_id preserves original decision identity":
-        ("identity", "changing_finalization_request_id_changes_identity", False),
-    "changing accepted_document_digest preserves original decision identity":
-        ("identity", "changing_accepted_document_digest_changes_identity", False),
-    "historical lookup can use revoked key as ultimate trust root":
-        ("lookup", "may_derive_trust_solely_from_historical_REVOKED_key", True),
-    "missing currently trusted independent root still yields ALREADY_ACCEPTED_EXACT":
-        ("lookup", "missing_currently_trusted_independent_root_may_yield_ALREADY_ACCEPTED_EXACT", True),
+    "retained decision record trusted solely because revoked key authenticates it": (
+        "retained",
+        "record_authenticated_solely_by_revoked_key_is_sufficient",
+        True,
+    ),
+    "successor chain terminates only in revoked key": (
+        "successor",
+        "trust_path_terminating_only_in_revoked_key_is_sufficient",
+        True,
+    ),
+    "revoked receipt self-corroborates as independent proof": (
+        "common",
+        "proof_cannot_be_self_corroboration_of_same_revoked_credential",
+        False,
+    ),
+    "same revoked key signs receipt and corroborating history record": (
+        "common",
+        "same_revoked_key_signing_receipt_and_corroborating_record_is_independent",
+        True,
+    ),
+    "local DB projection accepted as retained authority decision record": (
+        "retained",
+        "local_DB_copy_alone_is_authority_proof",
+        True,
+    ),
+    "independent proof need not reach currently trusted authority root": (
+        "common",
+        "currently_trusted_authority_root_or_state_required",
+        False,
+    ),
+    "independent proof need not bind exact original decision identity": (
+        "common",
+        "proof_must_bind_exact_same_original_decision_identity",
+        False,
+    ),
+    "original decision identity may be caller selected": ("identity", "is_caller_selected", True),
+    "original decision identity may be minted during lookup": (
+        "identity",
+        "may_be_minted_during_historical_lookup",
+        True,
+    ),
+    "receipt_id is treated as original authority decision identity": (
+        "identity",
+        "is_receipt_id",
+        True,
+    ),
+    "changing finalization_request_id preserves original decision identity": (
+        "identity",
+        "changing_finalization_request_id_changes_identity",
+        False,
+    ),
+    "changing accepted_document_digest preserves original decision identity": (
+        "identity",
+        "changing_accepted_document_digest_changes_identity",
+        False,
+    ),
+    "historical lookup can use revoked key as ultimate trust root": (
+        "lookup",
+        "may_derive_trust_solely_from_historical_REVOKED_key",
+        True,
+    ),
+    "missing currently trusted independent root still yields ALREADY_ACCEPTED_EXACT": (
+        "lookup",
+        "missing_currently_trusted_independent_root_may_yield_ALREADY_ACCEPTED_EXACT",
+        True,
+    ),
 }
 
 
@@ -766,9 +1027,13 @@ def test_revoked_history_independent_proof_mutations_fail(attack: str) -> None:
 @pytest.mark.parametrize(
     "field",
     [
-        "authority_id", "exact_predecessor_document_digest", "accepted_document_digest",
-        "complete_semantic_head_digest", "finalization_request_id",
-        "freshness_authority_key_id", "freshness_authority_key_version",
+        "authority_id",
+        "exact_predecessor_document_digest",
+        "accepted_document_digest",
+        "complete_semantic_head_digest",
+        "finalization_request_id",
+        "freshness_authority_key_id",
+        "freshness_authority_key_version",
         "authentication_tag_or_signature",
     ],
 )
@@ -782,8 +1047,10 @@ def test_removing_security_critical_receipt_field_fails(field: str) -> None:
 @pytest.mark.parametrize(
     "precondition",
     [
-        "authority_id_match_required", "finalization_request_identity_match_required",
-        "candidate_complete_heads_bound", "candidate_generation_is_exact_successor",
+        "authority_id_match_required",
+        "finalization_request_identity_match_required",
+        "candidate_complete_heads_bound",
+        "candidate_generation_is_exact_successor",
         "current_full_document_matches_expected_digest",
     ],
 )
@@ -797,8 +1064,11 @@ def test_weakening_security_critical_cas_precondition_fails(precondition: str) -
 @pytest.mark.parametrize(
     "binding",
     [
-        "finalization_request_id", "authority_id", "exact_predecessor_generation",
-        "exact_predecessor_document_digest", "exact_proposed_document_digest",
+        "finalization_request_id",
+        "authority_id",
+        "exact_predecessor_generation",
+        "exact_predecessor_document_digest",
+        "exact_proposed_document_digest",
         "exact_complete_semantic_head_set_digest",
     ],
 )
@@ -810,20 +1080,32 @@ def test_removing_exact_replay_binding_fails(binding: str) -> None:
 
 
 CANDIDATE_BINDING_MUTATIONS = {
-    "CAS omits proposed_document_payload":
-        ("remove_argument", "proposed_document_payload"),
-    "CAS omits proposed_document_digest":
-        ("remove_argument", "proposed_document_digest"),
-    "freshness authority rewrites proposed payload":
-        ("set", ("CAS_contract", "freshness_authority_may_modify_proposed_payload", True)),
-    "accepted digest differs from proposed digest":
-        ("set_precondition", "accepted_document_digest_must_equal_proposed_document_digest"),
-    "key lifecycle silently rewrites candidate identity":
-        ("set_race", "authority_may_rewrite_K1_V1_to_K2_V2_and_accept"),
-    "request ID excluded from digest identity":
-        ("set", ("anchor_document_contract", "finalization_request_id_is_in_digest_preimage", False)),
-    "request ID change preserves document identity":
-        ("set", ("anchor_document_contract", "changing_finalization_request_id_changes_document_identity", False)),
+    "CAS omits proposed_document_payload": ("remove_argument", "proposed_document_payload"),
+    "CAS omits proposed_document_digest": ("remove_argument", "proposed_document_digest"),
+    "freshness authority rewrites proposed payload": (
+        "set",
+        ("CAS_contract", "freshness_authority_may_modify_proposed_payload", True),
+    ),
+    "accepted digest differs from proposed digest": (
+        "set_precondition",
+        "accepted_document_digest_must_equal_proposed_document_digest",
+    ),
+    "key lifecycle silently rewrites candidate identity": (
+        "set_race",
+        "authority_may_rewrite_K1_V1_to_K2_V2_and_accept",
+    ),
+    "request ID excluded from digest identity": (
+        "set",
+        ("anchor_document_contract", "finalization_request_id_is_in_digest_preimage", False),
+    ),
+    "request ID change preserves document identity": (
+        "set",
+        (
+            "anchor_document_contract",
+            "changing_finalization_request_id_changes_document_identity",
+            False,
+        ),
+    ),
 }
 
 
@@ -847,43 +1129,48 @@ def test_candidate_binding_mutations_fail(attack: str) -> None:
 def test_cross_artifact_parity_reads_actual_sources() -> None:
     contract = load()
     topology = json.loads(
-        (DOCS / "m05_account_genesis_authority_topology_resolution_after_binding_freeze.json")
-        .read_text(encoding="utf-8")
+        (
+            DOCS / "m05_account_genesis_authority_topology_resolution_after_binding_freeze.json"
+        ).read_text(encoding="utf-8")
     )
     physical = json.loads(
-        (DOCS / "m05_account_genesis_physical_persistence_crash_atomicity_contract.json")
-        .read_text(encoding="utf-8")
+        (DOCS / "m05_account_genesis_physical_persistence_crash_atomicity_contract.json").read_text(
+            encoding="utf-8"
+        )
     )
     substrate = json.loads(
-        (DOCS / "m05_account_genesis_security_substrate_contract.json")
-        .read_text(encoding="utf-8")
+        (DOCS / "m05_account_genesis_security_substrate_contract.json").read_text(encoding="utf-8")
     )
     root_proof = json.loads(
-        (DOCS / "m05_account_genesis_root_proof_admission_binding_contract.json")
-        .read_text(encoding="utf-8")
+        (DOCS / "m05_account_genesis_root_proof_admission_binding_contract.json").read_text(
+            encoding="utf-8"
+        )
     )
     operation_binding = json.loads(
-        (DOCS / "m05_account_genesis_operation_identity_request_binding_contract.json")
-        .read_text(encoding="utf-8")
+        (DOCS / "m05_account_genesis_operation_identity_request_binding_contract.json").read_text(
+            encoding="utf-8"
+        )
     )
 
     topology_roles = {row["role"]: row for row in topology["role_matrix"]}
     freshness = topology_roles["freshness owner"]
     root_issuer = topology_roles["independent root-proof issuer"]
-    assert freshness["candidate_owner"] == contract["ownership_boundary"][
-        "authoritative_freshness_owner"
-    ]
+    assert (
+        freshness["candidate_owner"]
+        == contract["ownership_boundary"]["authoritative_freshness_owner"]
+    )
     assert freshness["must_be_independent_from_created_account"] == "YES"
-    assert topology["separation_invariants"][
-        "freshness_owner_is_genesis_semantic_decision_owner"
-    ] is False
+    assert (
+        topology["separation_invariants"]["freshness_owner_is_genesis_semantic_decision_owner"]
+        is False
+    )
     assert root_issuer["candidate_owner"] != freshness["candidate_owner"]
 
     physical_freshness = physical["freshness_ownership_boundary"]
     assert physical_freshness["owner"] == freshness["candidate_owner"]
-    assert physical_freshness[
-        "coordinator_may_unilaterally_advance_authoritative_generation"
-    ] is False
+    assert (
+        physical_freshness["coordinator_may_unilaterally_advance_authoritative_generation"] is False
+    )
     assert physical["CAS_generation_contract"]["current_external_CAS_available"] is False
     assert physical["selected_or_blocked_protocol"]["selection"] == (
         "INITIAL_BINDING_THEN_PREPARED_THEN_FRESHNESS_CAS_THEN_LOCAL_FINAL_COMMIT"

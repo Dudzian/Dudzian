@@ -1,4 +1,5 @@
 """Deterministic Catalog receipt authority available only through an explicit test path."""
+
 from __future__ import annotations
 
 import hmac

@@ -42,9 +42,7 @@ def native_keyring(monkeypatch: pytest.MonkeyPatch):
 
     values: dict[tuple[str, str], str] = {}
     lock = threading.Lock()
-    monkeypatch.setattr(
-        keyring, "get_password", lambda service, key: values.get((service, key))
-    )
+    monkeypatch.setattr(keyring, "get_password", lambda service, key: values.get((service, key)))
     monkeypatch.setattr(
         keyring,
         "set_password",
@@ -85,12 +83,8 @@ def provision(
 def test_distinct_provisioning_restart_snapshot_and_active_signing(
     tmp_path: Path, security: SecurityProfileIdentity
 ) -> None:
-    authority = provision(
-        tmp_path, security, ProviderRole.FRESHNESS_AUTHORITY_FINALIZATION_SIGNING
-    )
-    proposer = provision(
-        tmp_path, security, ProviderRole.CHA_FRESHNESS_PROPOSER_SIGNING
-    )
+    authority = provision(tmp_path, security, ProviderRole.FRESHNESS_AUTHORITY_FINALIZATION_SIGNING)
+    proposer = provision(tmp_path, security, ProviderRole.CHA_FRESHNESS_PROPOSER_SIGNING)
     authority_provider = LocalFreshnessAuthorityFinalizationSigningProvider(
         tmp_path, keyring_index_path=tmp_path / "keyring.json", security=security
     )
@@ -115,9 +109,10 @@ def test_distinct_provisioning_restart_snapshot_and_active_signing(
     assert authority_provider.credential_snapshot().key_material_identity != (
         proposer_provider.credential_snapshot().key_material_identity
     )
-    assert admin(tmp_path, security, authority.provider_role).service_namespace != admin(
-        tmp_path, security, proposer.provider_role
-    ).service_namespace
+    assert (
+        admin(tmp_path, security, authority.provider_role).service_namespace
+        != admin(tmp_path, security, proposer.provider_role).service_namespace
+    )
 
     signed = authority_provider.sign_finalization(b"receipt")
     proposal = proposer_provider.sign_freshness_proposal(b"proposal")
@@ -136,9 +131,7 @@ def test_distinct_provisioning_restart_snapshot_and_active_signing(
         ProviderRole.CHA_FRESHNESS_PROPOSER_SIGNING,
     ],
 )
-@pytest.mark.parametrize(
-    "target", [SigningKeyLifecycle.VERIFY_ONLY, SigningKeyLifecycle.REVOKED]
-)
+@pytest.mark.parametrize("target", [SigningKeyLifecycle.VERIFY_ONLY, SigningKeyLifecycle.REVOKED])
 def test_non_active_denies_signing_and_revoked_is_terminal(
     tmp_path: Path,
     security: SecurityProfileIdentity,
@@ -155,9 +148,7 @@ def test_non_active_denies_signing_and_revoked_is_terminal(
             tmp_path, keyring_index_path=tmp_path / "keyring.json", security=security
         )
     )
-    transition_local_signing_lifecycle(
-        tmp_path, security=security, role=role, target=target
-    )
+    transition_local_signing_lifecycle(tmp_path, security=security, role=role, target=target)
     operation = (
         provider.sign_finalization
         if role is ProviderRole.FRESHNESS_AUTHORITY_FINALIZATION_SIGNING
@@ -213,7 +204,10 @@ def test_rotated_credential_can_be_revoked_without_changing_current(
     )
     old = provider.sign_freshness_proposal(b"v1")
     rotate_local_freshness_signing_authority(
-        tmp_path, admin(tmp_path, security, role), security=security, role=role,
+        tmp_path,
+        admin(tmp_path, security, role),
+        security=security,
+        role=role,
         rotation_operation_id="revoke-after-rotation",
     )
     assert provider.verify_historical(b"v1", old.signature, old.snapshot)
@@ -251,12 +245,18 @@ def test_three_versions_have_independent_lifecycle_generations(
     )
     v1 = provider.credential_snapshot()
     rotate_local_freshness_signing_authority(
-        tmp_path, admin(tmp_path, security, role), security=security, role=role,
+        tmp_path,
+        admin(tmp_path, security, role),
+        security=security,
+        role=role,
         rotation_operation_id="multi-X",
     )
     v2 = provider.credential_snapshot()
     rotate_local_freshness_signing_authority(
-        tmp_path, admin(tmp_path, security, role), security=security, role=role,
+        tmp_path,
+        admin(tmp_path, security, role),
+        security=security,
+        role=role,
         rotation_operation_id="multi-Y",
     )
     v3 = provider.credential_snapshot()
@@ -355,9 +355,7 @@ def test_generated_successor_crash_matrix_replays_by_operation_identity(
 
 
 @pytest.mark.parametrize("cut", ["R3", "R4"])
-@pytest.mark.parametrize(
-    "target", [SigningKeyLifecycle.VERIFY_ONLY, SigningKeyLifecycle.REVOKED]
-)
+@pytest.mark.parametrize("target", [SigningKeyLifecycle.VERIFY_ONLY, SigningKeyLifecycle.REVOKED])
 def test_prelinearization_predecessor_descendant_is_authoritative(
     tmp_path: Path,
     security: SecurityProfileIdentity,
@@ -409,16 +407,12 @@ def test_prelinearization_predecessor_descendant_is_authoritative(
     )
     assert successor.key_version == 2
     assert successor.lifecycle_state is SigningKeyLifecycle.ACTIVE
-    retained_path = custody._retained_path(
-        tmp_path, role, old.snapshot.credential_identity
-    )
+    retained_path = custody._retained_path(tmp_path, role, old.snapshot.credential_identity)
     retained = custody._read_record(retained_path, security, role)
     assert retained.lifecycle_state is target
     assert retained.lifecycle_generation == 2
     completed = custody._read_rotation_intent(
-        custody._completed_rotation_path(
-            tmp_path, security, role, operation_id
-        ),
+        custody._completed_rotation_path(tmp_path, security, role, operation_id),
         security,
         role,
         completed=True,
@@ -428,14 +422,10 @@ def test_prelinearization_predecessor_descendant_is_authoritative(
         tmp_path, keyring_index_path=tmp_path / "keyring.json", security=security
     )
     if target is SigningKeyLifecycle.VERIFY_ONLY:
-        assert restarted.verify_historical(
-            b"prelinearization", old.signature, old.snapshot
-        )
+        assert restarted.verify_historical(b"prelinearization", old.signature, old.snapshot)
     else:
         with pytest.raises(LocalSigningLifecycleError, match="historical trust"):
-            restarted.verify_historical(
-                b"prelinearization", old.signature, old.snapshot
-            )
+            restarted.verify_historical(b"prelinearization", old.signature, old.snapshot)
         for revival in (SigningKeyLifecycle.ACTIVE, SigningKeyLifecycle.VERIFY_ONLY):
             with pytest.raises(LocalSigningLifecycleError):
                 transition_local_signing_credential_lifecycle(
@@ -446,13 +436,16 @@ def test_prelinearization_predecessor_descendant_is_authoritative(
                     expected_lifecycle_generation=2,
                     target=revival,
                 )
-        assert rotate_local_freshness_signing_authority(
-            tmp_path,
-            admin(tmp_path, security, role),
-            security=security,
-            role=role,
-            rotation_operation_id=operation_id,
-        ) == successor
+        assert (
+            rotate_local_freshness_signing_authority(
+                tmp_path,
+                admin(tmp_path, security, role),
+                security=security,
+                role=role,
+                rotation_operation_id=operation_id,
+            )
+            == successor
+        )
         assert custody._read_record(retained_path, security, role) == retained
 
 
@@ -482,9 +475,12 @@ def test_presecret_revocation_aborts_tentative_rotation_without_orphan(
     intent, _, _ = custody._rotation_paths(tmp_path, role)
     tentative = custody._read_rotation_intent(intent, security, role)
     administrator = admin(tmp_path, security, role)
-    assert administrator.read_authority_secret(
-        tentative.successor.protected_private_material_reference
-    ) is None
+    assert (
+        administrator.read_authority_secret(
+            tentative.successor.protected_private_material_reference
+        )
+        is None
+    )
     transition_local_signing_credential_lifecycle(
         tmp_path,
         security=security,
@@ -502,9 +498,12 @@ def test_presecret_revocation_aborts_tentative_rotation_without_orphan(
             rotation_operation_id="presecret-revoked",
         )
     assert not intent.exists()
-    assert administrator.read_authority_secret(
-        tentative.successor.protected_private_material_reference
-    ) is None
+    assert (
+        administrator.read_authority_secret(
+            tentative.successor.protected_private_material_reference
+        )
+        is None
+    )
     assert provider.lifecycle_state() is SigningKeyLifecycle.REVOKED
     with pytest.raises(LocalSigningLifecycleError, match="only ACTIVE"):
         rotate_local_freshness_signing_authority(
@@ -612,13 +611,16 @@ def test_r7_generated_lost_response_conflict_and_new_operation(
         rotation_operation_id="operation-Y",
     )
     assert v3.key_version == 3
-    assert rotate_local_freshness_signing_authority(
-        tmp_path,
-        restarted_admin,
-        security=security,
-        role=role,
-        rotation_operation_id="operation-Y",
-    ) == v3
+    assert (
+        rotate_local_freshness_signing_authority(
+            tmp_path,
+            restarted_admin,
+            security=security,
+            role=role,
+            rotation_operation_id="operation-Y",
+        )
+        == v3
+    )
 
 
 def test_r5_runtime_fails_closed_until_admin_recovery(
@@ -688,9 +690,7 @@ def test_completed_pending_retry_cleans_and_restores_runtime(
             rotation_operation_id="completed-pending",
             fault_injector=crash_after_completed,
         )
-    intent, retained_prepared, successor_prepared = custody._rotation_paths(
-        tmp_path, role
-    )
+    intent, retained_prepared, successor_prepared = custody._rotation_paths(tmp_path, role)
     assert all(path.exists() for path in (intent, retained_prepared, successor_prepared))
     with pytest.raises(custody.LocalSigningCustodyError, match="recovery required"):
         LocalCHAFreshnessProposerSigningProvider(
@@ -719,13 +719,16 @@ def test_completed_pending_retry_cleans_and_restores_runtime(
     )
     assert restarted.sign_freshness_proposal(b"new").snapshot.key_version == 2
     assert restarted.verify_historical(b"old", old.signature, old.snapshot)
-    assert rotate_local_freshness_signing_authority(
-        tmp_path,
-        admin(tmp_path, security, role),
-        security=security,
-        role=role,
-        rotation_operation_id="completed-pending",
-    ) == v2
+    assert (
+        rotate_local_freshness_signing_authority(
+            tmp_path,
+            admin(tmp_path, security, role),
+            security=security,
+            role=role,
+            rotation_operation_id="completed-pending",
+        )
+        == v2
+    )
 
 
 @pytest.mark.parametrize(
@@ -807,9 +810,7 @@ def test_completed_cleanup_preserves_retained_and_successor_descendants(
             rotation_operation_id="descendants",
             fault_injector=crash_after_completed,
         )
-    current = custody._read_record(
-        custody._record_path(tmp_path, role), security, role
-    )
+    current = custody._read_record(custody._record_path(tmp_path, role), security, role)
     transition_local_signing_credential_lifecycle(
         tmp_path,
         security=security,
@@ -866,9 +867,7 @@ def test_operation_id_is_namespaced_by_exact_authority_scope(
     assert results[0].credential_identity() != results[1].credential_identity()
 
 
-def test_pending_rotation_is_role_local(
-    tmp_path: Path, security: SecurityProfileIdentity
-) -> None:
+def test_pending_rotation_is_role_local(tmp_path: Path, security: SecurityProfileIdentity) -> None:
     proposer_role = ProviderRole.CHA_FRESHNESS_PROPOSER_SIGNING
     other_roles = (
         ProviderRole.FRESHNESS_AUTHORITY_FINALIZATION_SIGNING,
@@ -924,7 +923,10 @@ def test_retained_verify_and_revoke_share_one_linearization_lock(
     )
     old = provider.sign_freshness_proposal(b"old")
     rotate_local_freshness_signing_authority(
-        tmp_path, admin(tmp_path, security, role), security=security, role=role,
+        tmp_path,
+        admin(tmp_path, security, role),
+        security=security,
+        role=role,
         rotation_operation_id="verify-revoke",
     )
     entered = threading.Event()
@@ -1054,9 +1056,7 @@ def test_raw_key_material_aliases_are_rejected_across_roles(
         provision(tmp_path, security, right, seed)
 
 
-@pytest.mark.parametrize(
-    "target", [SigningKeyLifecycle.VERIFY_ONLY, SigningKeyLifecycle.REVOKED]
-)
+@pytest.mark.parametrize("target", [SigningKeyLifecycle.VERIFY_ONLY, SigningKeyLifecycle.REVOKED])
 def test_sign_transition_race_has_one_lock_linearization(
     tmp_path: Path,
     security: SecurityProfileIdentity,

@@ -30,9 +30,7 @@ def render(value: dict) -> str:
 
 
 def validate(value: dict) -> None:
-    assert value["reviewed_head_supplied"] == (
-        "76afe748f3d130684c9daa0f9e0b4368c233f227"
-    )
+    assert value["reviewed_head_supplied"] == ("76afe748f3d130684c9daa0f9e0b4368c233f227")
     provenance = value["provenance"]
     assert provenance["classification"] in {
         "EXACT_COMMIT",
@@ -63,9 +61,7 @@ def validate(value: dict) -> None:
     assert operation["terminal_outcome_immutable"] is True
     assert "RELEASED" not in operation["conceptual_states"]
     assert operation["ABORTED_to_RELEASED_operation_transition"] == "FORBIDDEN"
-    assert "reservation RESERVED alone does not imply operation RESERVED" in operation[
-        "RESERVED"
-    ]
+    assert "reservation RESERVED alone does not imply operation RESERVED" in operation["RESERVED"]
     reservation = value["reservation_state_machine"]
     assert reservation["owner"] == "DESIGN_BLOCKED"
     assert reservation["account_id_as_durable_reservation_key"] == "NOT_FROZEN"
@@ -87,9 +83,9 @@ def validate(value: dict) -> None:
     assert commit["PREPARED_grants_account_authority"] is False
     assert commit["logical_commit_closure_invariant"] == "FROZEN"
     assert "authenticated fresh recovery closure" in commit["genuine_at"]
-    assert commit[
-        "genesis_record_exists_without_verified_commit_closure_is_genuine_account"
-    ] is False
+    assert (
+        commit["genesis_record_exists_without_verified_commit_closure_is_genuine_account"] is False
+    )
     assert commit["partial_genesis_row_authority"] == "NOT SUFFICIENT FOR AUTHORITY"
     assert commit["partial_genesis_PREPARED_BOUND_PREPARED_is_COMMITTED"] is False
     assert commit["physical_genesis_row_is_commit_point"] is False
@@ -201,9 +197,12 @@ def validate(value: dict) -> None:
         "same canonical request binding",
     }
     assert recovery["caller_controlled_identity_sufficient"] is False
-    assert recovery[
-        "logical_operation_identity_and_reservation_recovery_identity_are_distinct_semantic_roles"
-    ] is True
+    assert (
+        recovery[
+            "logical_operation_identity_and_reservation_recovery_identity_are_distinct_semantic_roles"
+        ]
+        is True
+    )
     assert recovery["logical_operation_identity_equals_reservation_recovery_identity"].startswith(
         "NOT_FROZEN"
     )
@@ -214,9 +213,9 @@ def validate(value: dict) -> None:
     models = value["pre_PREPARED_recovery_models"]
     assert models["selection"] == "DESIGN_BLOCKED"
     assert models["C_DESIGN_BLOCKED"]["status"] == "SELECTED"
-    assert models[
-        "B_RESERVATION_FIRST_WITH_AUTHORITY_BOUND_RECOVERY_IDENTITY"
-    ]["status"].startswith("CONDITIONAL_CANDIDATE")
+    assert models["B_RESERVATION_FIRST_WITH_AUTHORITY_BOUND_RECOVERY_IDENTITY"][
+        "status"
+    ].startswith("CONDITIONAL_CANDIDATE")
     gap = value["critical_pre_PREPARED_identity_gap"]
     assert gap["outcome"] == "FAIL_CLOSED"
     assert gap["recover_O_by_caller_assertion"] is False
@@ -232,62 +231,52 @@ def test_markdown_is_deterministic_complete_projection() -> None:
 def test_cross_artifact_parity() -> None:
     value = load()
     uniqueness = json.loads(
-        (DOCS / "m05_cryptohunter_account_genesis_uniqueness_idempotency_design.json")
-        .read_text(encoding="utf-8")
-    )
-    authority = json.loads(
-        (DOCS / "m05_cryptohunter_account_genesis_authority_model.json").read_text(
+        (DOCS / "m05_cryptohunter_account_genesis_uniqueness_idempotency_design.json").read_text(
             encoding="utf-8"
         )
     )
+    authority = json.loads(
+        (DOCS / "m05_cryptohunter_account_genesis_authority_model.json").read_text(encoding="utf-8")
+    )
     parity = value["cross_artifact_parity"]
-    assert parity["entity_uniqueness"] == "account_id / " + uniqueness[
-        "entity_uniqueness"
-    ]["result"]
-    assert parity["subject_cardinality"] == authority["account_subject_identity"][
-        "subject_to_account_cardinality"
-    ]
-    assert "successful durable account-genesis commit" in authority[
-        "account_id_state_machine"
-    ]["genuine_at"]
+    assert (
+        parity["entity_uniqueness"] == "account_id / " + uniqueness["entity_uniqueness"]["result"]
+    )
+    assert (
+        parity["subject_cardinality"]
+        == authority["account_subject_identity"]["subject_to_account_cardinality"]
+    )
+    assert (
+        "successful durable account-genesis commit"
+        in authority["account_id_state_machine"]["genuine_at"]
+    )
     assert parity["genuine_account_only_after_genuine_genesis_commit"] is True
     assert parity["prior_commit_does_not_select_physical_DB_transaction"] is True
-    assert uniqueness["reservation_relationship"][
-        "same_logical_operation_may_remint_after_crash"
-    ] is False
+    assert (
+        uniqueness["reservation_relationship"]["same_logical_operation_may_remint_after_crash"]
+        is False
+    )
 
 
 @pytest.mark.parametrize(
     "mutation",
     [
-        lambda d: d["genesis_commit_binding"].update(
-            PREPARED_grants_account_authority=True
-        ),
-        lambda d: d["reservation_state_machine"].update(
-            missing_lookup="allocate new account_id"
-        ),
+        lambda d: d["genesis_commit_binding"].update(PREPARED_grants_account_authority=True),
+        lambda d: d["reservation_state_machine"].update(missing_lookup="allocate new account_id"),
         lambda d: d["operation_reservation_binding"].update(
             invariant="one operation -> multiple reservations"
         ),
-        lambda d: d["rollback"].update(
-            COMMITTED_to_PREPARED_valid_prefix="ACCEPT"
-        ),
+        lambda d: d["rollback"].update(COMMITTED_to_PREPARED_valid_prefix="ACCEPT"),
         lambda d: d["abort_release_semantics"].update(
             caller_may_unilaterally_abort_or_erase_history=True
         ),
-        lambda d: d["reuse_semantics"].update(
-            reuse_without_authenticated_release="PERMITTED"
-        ),
+        lambda d: d["reuse_semantics"].update(reuse_without_authenticated_release="PERMITTED"),
         lambda d: d["authentication"].update(local_hashes_sufficient=True),
         lambda d: d["genesis_commit_binding"].update(
             crash_after_genesis_record_write="mint another account"
         ),
-        lambda d: d["environment_isolation"].update(
-            TEST_prepared_to_PRODUCTION_commit="ALLOW"
-        ),
-        lambda d: d["M011_interaction"].update(
-            restored_projection_recreates_authority=True
-        ),
+        lambda d: d["environment_isolation"].update(TEST_prepared_to_PRODUCTION_commit="ALLOW"),
+        lambda d: d["M011_interaction"].update(restored_projection_recreates_authority=True),
         lambda d: d["operation_state_machine"].update(
             ABORTED_to_RELEASED_operation_transition="ALLOWED"
         ),
@@ -300,27 +289,19 @@ def test_cross_artifact_parity() -> None:
         lambda d: d["genesis_commit_binding"].update(
             partial_genesis_PREPARED_BOUND_PREPARED_is_COMMITTED=True
         ),
-        lambda d: d["genesis_commit_binding"].update(
-            physical_genesis_row_is_commit_point=True
-        ),
+        lambda d: d["genesis_commit_binding"].update(physical_genesis_row_is_commit_point=True),
         lambda d: d["logical_operation_object"].update(
             caller_may_mint_genuine_operation_identity=True
         ),
         lambda d: d["logical_operation_object"].update(
             preexisting_operation_identity_before_reservation_required=True
         ),
-        lambda d: d["recovery_identity"].update(
-            identity_gap_outcome="recover operation normally"
-        ),
+        lambda d: d["recovery_identity"].update(identity_gap_outcome="recover operation normally"),
         lambda d: d["reservation_state_machine"].update(
             account_id_alone_proves_operation_ownership=True
         ),
-        lambda d: d["logical_operation_object"].update(
-            caller_command_ID_is_handoff_authority=True
-        ),
-        lambda d: d["critical_pre_PREPARED_identity_gap"].update(
-            allocate_acct_B=True
-        ),
+        lambda d: d["logical_operation_object"].update(caller_command_ID_is_handoff_authority=True),
+        lambda d: d["critical_pre_PREPARED_identity_gap"].update(allocate_acct_B=True),
     ],
 )
 def test_mandatory_redteam_mutations_fail(mutation) -> None:

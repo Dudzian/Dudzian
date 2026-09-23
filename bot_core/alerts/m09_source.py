@@ -28,11 +28,7 @@ from bot_core.persistence.fingerprints import canonical_json_sha256
 
 
 def _stamp(value: datetime) -> str:
-    if (
-        not isinstance(value, datetime)
-        or value.tzinfo is None
-        or value.utcoffset() != timedelta(0)
-    ):
+    if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() != timedelta(0):
         raise AlertStoreError("MALFORMED_UNTRUSTED_CONTEXT")
     return value.isoformat().replace("+00:00", "Z")
 
@@ -58,10 +54,7 @@ class M09KillSwitchSourceAuthority:
     @staticmethod
     def _reference(entry: AcceptedKillSwitchAuthorityEntry, record: KillSwitchRecord) -> str:
         return (
-            "m09-reference:"
-            + entry.context.membership_id
-            + ":"
-            + record.record_fingerprint_sha256
+            "m09-reference:" + entry.context.membership_id + ":" + record.record_fingerprint_sha256
         )
 
     @staticmethod
@@ -69,7 +62,8 @@ class M09KillSwitchSourceAuthority:
         entry: AcceptedKillSwitchAuthorityEntry, scope: tuple[str, str, str]
     ) -> KillSwitchRecord:
         matches = [
-            record for record in entry.context.history
+            record
+            for record in entry.context.history
             if (record.scope_type, record.scope_id, record.environment) == scope
         ]
         if not matches:
@@ -85,7 +79,9 @@ class M09KillSwitchSourceAuthority:
 
         try:
             return self._authority.consume_current(
-                scope_type=scope_type, scope_id=scope_id, environment=environment,
+                scope_type=scope_type,
+                scope_id=scope_id,
+                environment=environment,
                 consumer=project,
             )
         except KillSwitchAuthorityError:
@@ -102,7 +98,9 @@ class M09KillSwitchSourceAuthority:
             raise AlertStoreError("SOURCE_EVIDENCE_UNACCEPTED")
         return reference
 
-    def _historical(self, reference: str) -> tuple[AcceptedKillSwitchAuthorityEntry, KillSwitchRecord]:
+    def _historical(
+        self, reference: str
+    ) -> tuple[AcceptedKillSwitchAuthorityEntry, KillSwitchRecord]:
         # Resolve from durable authority history, never from a process-local cache.
         if not isinstance(reference, str):
             raise AlertStoreError("SOURCE_EVIDENCE_UNACCEPTED")
@@ -149,19 +147,37 @@ class M09KillSwitchSourceAuthority:
         reference = M09KillSwitchSourceAuthority._reference(entry, record)
         result = "FAILING" if record.state == "ACTIVE" else "HEALTHY"
         selector = SourceSelector(
-            "KILL_SWITCH_ACTIVE", "UPSTREAM_STATE_CONDITION", record.environment,
-            condition_key, "M09_KILL_SWITCH", (source_id,), True, "CRITICAL",
+            "KILL_SWITCH_ACTIVE",
+            "UPSTREAM_STATE_CONDITION",
+            record.environment,
+            condition_key,
+            "M09_KILL_SWITCH",
+            (source_id,),
+            True,
+            "CRITICAL",
             M09_PRODUCTION_RESOLUTION_POLICY_ID,
         )
         evidence = SourceEvidence(
-            reference, selector.alert_type, selector.source_family, source_id,
-            record.environment, condition_key, selector.fact_type, condition_key,
-            record.source_revision, record.generation, result, record.effective_at_utc,
-            "CRITICAL", record.record_fingerprint_sha256,
+            reference,
+            selector.alert_type,
+            selector.source_family,
+            source_id,
+            record.environment,
+            condition_key,
+            selector.fact_type,
+            condition_key,
+            record.source_revision,
+            record.generation,
+            result,
+            record.effective_at_utc,
+            "CRITICAL",
+            record.record_fingerprint_sha256,
         )
         return ValidatedSourceFact(selector, (evidence,), result, reference)
 
-    def validate_current(self, evidence_set: SourceEvidenceSet, now_utc: datetime) -> ValidatedSourceFact:
+    def validate_current(
+        self, evidence_set: SourceEvidenceSet, now_utc: datetime
+    ) -> ValidatedSourceFact:
         result: ValidatedSourceFact | None = None
 
         def retain(fact: ValidatedSourceFact) -> Alert:
@@ -174,7 +190,9 @@ class M09KillSwitchSourceAuthority:
         return result
 
     def consume_current(
-        self, evidence_set: SourceEvidenceSet, now_utc: datetime,
+        self,
+        evidence_set: SourceEvidenceSet,
+        now_utc: datetime,
         consumer: Callable[[ValidatedSourceFact], Alert],
     ) -> Alert:
         reference = self._one(evidence_set)
@@ -182,9 +200,14 @@ class M09KillSwitchSourceAuthority:
         now = _stamp(now_utc)
 
         def consume(current_entry: AcceptedKillSwitchAuthorityEntry) -> Alert:
-            current = self._current_record(current_entry, (
-                historical.scope_type, historical.scope_id, historical.environment,
-            ))
+            current = self._current_record(
+                current_entry,
+                (
+                    historical.scope_type,
+                    historical.scope_id,
+                    historical.environment,
+                ),
+            )
             if self._reference(current_entry, current) != reference:
                 raise AlertStoreError("SOURCE_EVIDENCE_STALE")
             if _instant(now) < _instant(current.effective_at_utc):
@@ -193,8 +216,10 @@ class M09KillSwitchSourceAuthority:
 
         try:
             return self._authority.consume_current(
-                scope_type=historical.scope_type, scope_id=historical.scope_id,
-                environment=historical.environment, consumer=consume,
+                scope_type=historical.scope_type,
+                scope_id=historical.scope_id,
+                environment=historical.environment,
+                consumer=consume,
             )
         except KillSwitchAuthorityError:
             raise AlertStoreError("SOURCE_EVIDENCE_UNACCEPTED") from None
@@ -220,11 +245,19 @@ class M09KillSwitchSourceAuthority:
         except AlertStoreError:
             return False
         return (
-            identity.alert_type, identity.environment, identity.alert_scope,
-            identity.source_family, identity.fact_type, identity.condition_key,
+            identity.alert_type,
+            identity.environment,
+            identity.alert_scope,
+            identity.source_family,
+            identity.fact_type,
+            identity.condition_key,
         ) == (
-            item.alert_type, item.environment, item.alert_scope,
-            item.source_family, item.fact_type, item.condition_key,
+            item.alert_type,
+            item.environment,
+            item.alert_scope,
+            item.source_family,
+            item.fact_type,
+            item.condition_key,
         )
 
     def authorize_historical_transition(
@@ -233,8 +266,13 @@ class M09KillSwitchSourceAuthority:
         fact = self._fact(*self._historical_current(reference, transaction_time_utc))
         item = fact.evidence[0]
         decision = HistoricalSourceDecision(
-            "", reference, (reference,), transaction_time_utc, fact.result,
-            item.source_severity, fact.selector.resolution_policy_id,
+            "",
+            reference,
+            (reference,),
+            transaction_time_utc,
+            fact.result,
+            item.source_severity,
+            fact.selector.resolution_policy_id,
             ((item.source_id, item.source_generation, item.source_revision),),
         )
         return replace(decision, decision_id=_historical_source_decision_id(decision))
@@ -248,9 +286,9 @@ class M09KillSwitchSourceAuthority:
             or decision.evidence_ids != (decision.evidence_reference,)
         ):
             raise AlertStoreError("SOURCE_EVIDENCE_UNACCEPTED")
-        fact = self._fact(*self._historical_current(
-            decision.evidence_reference, decision.transaction_time_utc
-        ))
+        fact = self._fact(
+            *self._historical_current(decision.evidence_reference, decision.transaction_time_utc)
+        )
         item = fact.evidence[0]
         if (
             decision.result != fact.result

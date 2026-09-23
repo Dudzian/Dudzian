@@ -36,19 +36,37 @@ except Exception:  # pragma: no cover
     flatten_explainability = lambda report, prefix="ai_explainability": {}  # type: ignore
     parse_explainability_payload = lambda payload: None  # type: ignore
 from bot_core.ai.health import ModelHealthMonitor, ModelHealthStatus
-from bot_core.ai.opportunity_lifecycle import (
-    OpportunityAutonomyDecision,
-    OpportunityAutonomyMode,
-    OpportunityExecutionPermission,
-    OpportunityLifecycleService,
-    OpportunityPerformanceSnapshotConfig,
-    evaluate_autonomy_performance_guard,
-    evaluate_opportunity_execution_permission,
-)
-from bot_core.ai.trading_opportunity_shadow import (
-    OpportunityOutcomeLabel,
-    OpportunityShadowRepository,
-)
+
+try:  # keep the base controller importable without the optional signing runtime
+    from bot_core.ai.opportunity_lifecycle import (
+        OpportunityAutonomyDecision,
+        OpportunityAutonomyMode,
+        OpportunityExecutionPermission,
+        OpportunityLifecycleService,
+        OpportunityPerformanceSnapshotConfig,
+        evaluate_autonomy_performance_guard,
+        evaluate_opportunity_execution_permission,
+    )
+    from bot_core.ai.trading_opportunity_shadow import (
+        OpportunityOutcomeLabel,
+        OpportunityShadowRepository,
+    )
+except ModuleNotFoundError as exc:  # pragma: no cover - exercised in import isolation
+    if exc.name != "bot_core.security.signing":
+        raise
+    OpportunityAutonomyDecision = Any  # type: ignore[misc,assignment]
+    OpportunityAutonomyMode = Any  # type: ignore[misc,assignment]
+    OpportunityExecutionPermission = Any  # type: ignore[misc,assignment]
+    OpportunityLifecycleService = Any  # type: ignore[misc,assignment]
+    OpportunityPerformanceSnapshotConfig = Any  # type: ignore[misc,assignment]
+    OpportunityOutcomeLabel = Any  # type: ignore[misc,assignment]
+    OpportunityShadowRepository = Any  # type: ignore[misc,assignment]
+
+    def _signing_runtime_required(*_args: object, **_kwargs: object) -> Any:
+        raise RuntimeError("opportunity runtime requires bot_core.security.signing")
+
+    evaluate_autonomy_performance_guard = _signing_runtime_required
+    evaluate_opportunity_execution_permission = _signing_runtime_required
 
 # --- elastyczne importy (różne gałęzie mogą mieć różne ścieżki modułów) -----
 

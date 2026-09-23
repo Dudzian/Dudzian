@@ -1,4 +1,5 @@
 """Canonical durable Order authority."""
+
 from .custody import (
     KeyringOrderAuthoritySecretCustody,
     ORDER_AUTHENTICITY_ALGORITHM,

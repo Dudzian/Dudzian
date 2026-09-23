@@ -25,8 +25,9 @@ def test_manifest_is_complete_deterministic_and_points_to_tests() -> None:
     assert manifest["test_plan_id"] == "CORE_REQUIRED_SUITES_V1"
     assert manifest["required_platforms"] == ["Linux", "Windows", "macOS"]
     assert manifest["acceptance_policy"]["skips"] == 0
-    assert all(suite["platform_requirement"] == "REQUIRED_ON_ALL_THREE"
-               for suite in manifest["suites"])
+    assert all(
+        suite["platform_requirement"] == "REQUIRED_ON_ALL_THREE" for suite in manifest["suites"]
+    )
     selectors = selectors_for_platform(manifest, "Linux")
     assert selectors == selectors_for_platform(manifest, "Windows")
     assert selectors == selectors_for_platform(manifest, "macOS")
@@ -49,17 +50,26 @@ def test_canonical_host_os_rejects_unknown() -> None:
 
 
 def test_core_plan_cli_reports_unsupported_host_without_traceback(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.setattr("deployment.host_identity.platform.system", lambda: "Plan9")
 
-    result = main([
-        "--runner-os", "Linux",
-        "--source-revision", "current",
-        "--ci-run-id", "run-1",
-        "--ci-provider", "https://github.com",
-        "--output", str(tmp_path / "marker.json"),
-    ])
+    result = main(
+        [
+            "--runner-os",
+            "Linux",
+            "--source-revision",
+            "current",
+            "--ci-run-id",
+            "run-1",
+            "--ci-provider",
+            "https://github.com",
+            "--output",
+            str(tmp_path / "marker.json"),
+        ]
+    )
 
     captured = capsys.readouterr()
     assert result != 0
@@ -70,7 +80,8 @@ def test_core_plan_cli_reports_unsupported_host_without_traceback(
 
 
 def test_darwin_host_executes_canonical_macos_plan(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr("deployment.host_identity.platform.system", lambda: "Darwin")
 
@@ -84,17 +95,24 @@ def test_darwin_host_executes_canonical_macos_plan(
 
     output = tmp_path / "core-macOS.json"
     execute_plan(
-        manifest_path=Path("deployment/core_required_suites_v1.json"), runner_os="macOS",
-        source_revision="current", ci_run_id="run-1",
-        ci_provider="https://github.com", output=output, runner=successful_plan,
+        manifest_path=Path("deployment/core_required_suites_v1.json"),
+        runner_os="macOS",
+        source_revision="current",
+        ci_run_id="run-1",
+        ci_provider="https://github.com",
+        output=output,
+        runner=successful_plan,
     )
     assert json.loads(output.read_text(encoding="utf-8"))["runner_os"] == "macOS"
 
     with pytest.raises(CorePlanError, match="runner OS"):
         execute_plan(
-            manifest_path=Path("deployment/core_required_suites_v1.json"), runner_os="Windows",
-            source_revision="current", ci_run_id="run-1",
-            ci_provider="https://github.com", output=tmp_path / "wrong.json",
+            manifest_path=Path("deployment/core_required_suites_v1.json"),
+            runner_os="Windows",
+            source_revision="current",
+            ci_run_id="run-1",
+            ci_provider="https://github.com",
+            output=tmp_path / "wrong.json",
             runner=successful_plan,
         )
 
@@ -108,20 +126,25 @@ def test_smoke_subset_marker_cannot_be_aggregated_as_complete_core(
     markers = []
     for runner_os in ("Linux", "Windows", "macOS"):
         path = tmp_path / f"{runner_os}.json"
-        path.write_text(json.dumps(marker_document(
-            smoke, "current", runner_os, "run-1", "https://github.com"
-        )), encoding="utf-8")
+        path.write_text(
+            json.dumps(marker_document(smoke, "current", runner_os, "run-1", "https://github.com")),
+            encoding="utf-8",
+        )
         markers.append(path)
     with pytest.raises(EvidenceProductionError, match="stale"):
         aggregate_core_markers(
-            "current", markers, tmp_path / "evidence.json",
-            ci_run_id="run-1", ci_provider="https://github.com",
+            "current",
+            markers,
+            tmp_path / "evidence.json",
+            ci_run_id="run-1",
+            ci_provider="https://github.com",
         )
     assert not (tmp_path / "evidence.json").exists()
 
 
 def test_skip_or_failed_required_test_never_writes_marker(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr("deployment.host_identity.platform.system", lambda: "Linux")
 
@@ -136,8 +159,12 @@ def test_skip_or_failed_required_test_never_writes_marker(
     output = tmp_path / "marker.json"
     with pytest.raises(CorePlanError, match="skip policy"):
         execute_plan(
-            manifest_path=Path("deployment/core_required_suites_v1.json"), runner_os="Linux",
-            source_revision="current", ci_run_id="run-1",
-            ci_provider="https://github.com", output=output, runner=skipped_plan,
+            manifest_path=Path("deployment/core_required_suites_v1.json"),
+            runner_os="Linux",
+            source_revision="current",
+            ci_run_id="run-1",
+            ci_provider="https://github.com",
+            output=output,
+            runner=skipped_plan,
         )
     assert not output.exists()

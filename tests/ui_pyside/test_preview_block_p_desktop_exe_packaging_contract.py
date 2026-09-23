@@ -503,7 +503,7 @@ def test_section_local_isolation_matrix(
         assert payload["qml_bundle_contract"]["pyside_qml_file_count"] == 24
         assert payload["qml_bundle_contract"]["shared_qml_file_count"] == 107
     if section != "python_dependency_matrix_rows":
-        assert payload["python_dependency_contract"]["declared_dependency_count"] == 25
+        assert payload["python_dependency_contract"]["declared_dependency_count"] == 26
     if section != "existing_preview_packaging_matrix_rows":
         assert (
             payload["preview_packaging_separation_contract"]["cli_preview_entrypoint"]

@@ -28,7 +28,9 @@ def test_machine_and_markdown_projection_are_exact() -> None:
 def test_selected_model_is_isolated_semantic_verifier_plus_db_preparation() -> None:
     contract = _contract()
     selected = contract["selected_model"]
-    assert selected["name"] == "ISOLATED_SEMANTIC_VERIFIER_WITH_DB_AUTHENTICATED_ONE_TIME_PREPARATION"
+    assert (
+        selected["name"] == "ISOLATED_SEMANTIC_VERIFIER_WITH_DB_AUTHENTICATED_ONE_TIME_PREPARATION"
+    )
     assert selected["composition"] == [
         "C_ISOLATED_LOCAL_VERIFIER_PROCESS",
         "D_TWO_PHASE_DB_PREPARATION",
@@ -106,9 +108,13 @@ def test_postgresql_lifecycle_remains_sole_cas_authority_and_races_are_ordered()
     assert lifecycle["authority"].startswith("PostgreSQL retained lifecycle history")
     assert "never freezes lifecycle" in lifecycle["evidence_scope"]
     assert lifecycle["proposer_revoke_race"]["revoke_before_CAS"].startswith("REJECT")
-    assert lifecycle["proposer_revoke_race"]["CAS_before_revoke"].startswith("acceptance may commit")
+    assert lifecycle["proposer_revoke_race"]["CAS_before_revoke"].startswith(
+        "acceptance may commit"
+    )
     assert lifecycle["proposer_rotation_race"]["rotation_before_CAS"].startswith("old proposer")
-    assert lifecycle["finalization_signer_race"]["signer_loses_ACTIVE_before_CAS"].startswith("REJECT")
+    assert lifecycle["finalization_signer_race"]["signer_loses_ACTIVE_before_CAS"].startswith(
+        "REJECT"
+    )
 
 
 def test_one_time_new_decision_and_lost_response_replay_are_distinct() -> None:
@@ -121,7 +127,10 @@ def test_one_time_new_decision_and_lost_response_replay_are_distinct() -> None:
 
 def test_postgresql_crypto_discovery_does_not_claim_pgcrypto_ed25519() -> None:
     discovery = _contract()["discovery"]
-    assert discovery["postgresql_16_stock"] == "No native Ed25519 verification SQL primitive was found."
+    assert (
+        discovery["postgresql_16_stock"]
+        == "No native Ed25519 verification SQL primitive was found."
+    )
     assert "no Ed25519" in discovery["pgcrypto_1_3"]
     assert discovery["external_ed25519_extension_required_for_model_A"] is True
     assert discovery["external_extension_selected"] is False
@@ -129,20 +138,30 @@ def test_postgresql_crypto_discovery_does_not_claim_pgcrypto_ed25519() -> None:
 
 def test_production_local_limitations_and_server_ready_migration_are_explicit() -> None:
     local = _contract()["production_local"]
-    assert "host root can impersonate the verifier or steal its DB credential" in local["limitations"]
-    assert "coordinated full-host rollback remains undetected without independent checkpoint" in local["limitations"]
+    assert (
+        "host root can impersonate the verifier or steal its DB credential" in local["limitations"]
+    )
+    assert (
+        "coordinated full-host rollback remains undetected without independent checkpoint"
+        in local["limitations"]
+    )
     assert any("independently administered" in item for item in local["server_ready_migration"])
 
 
 def test_cross_artifact_parity_without_redefining_frozen_types() -> None:
     contract = _contract()
     cas = _load("m05_account_genesis_freshness_authority_cas_finalization_contract.json")
-    readiness = _load("m05_account_genesis_freshness_authority_implementation_readiness_contract.json")
+    readiness = _load(
+        "m05_account_genesis_freshness_authority_implementation_readiness_contract.json"
+    )
     selection = _load(
         "m05_account_genesis_freshness_authority_production_local_substrate_selection_contract.json"
     )
     parity = contract["cross_artifact_parity"]
-    assert cas["finalization_evidence"]["authentication_boundary"]["object_type"] == "FreshnessFinalizationReceipt"
+    assert (
+        cas["finalization_evidence"]["authentication_boundary"]["object_type"]
+        == "FreshnessFinalizationReceipt"
+    )
     assert cas["original_decision_identity_contract"]["type"] == "OriginalDecisionIdentity"
     assert readiness["finalization_receipt_durability"]["commit_rule"] == (
         "receipt record and exact acceptance decision are one atomic durable authority transaction"
@@ -173,7 +192,9 @@ def test_no_implementation_is_authorized_and_flags_remain_false() -> None:
         )
     )
     flags = contract["preserved_flags"]
-    assert flags["FRESHNESS_AUTHORITY_PRODUCTION_LOCAL_SIGNING_CUSTODY_FOUNDATION_IMPLEMENTED"] is True
+    assert (
+        flags["FRESHNESS_AUTHORITY_PRODUCTION_LOCAL_SIGNING_CUSTODY_FOUNDATION_IMPLEMENTED"] is True
+    )
     assert flags["production_substrate_selected"] is True
     assert flags["production_substrate_implemented"] is False
     assert flags["FreshnessAuthority_implemented"] is False
@@ -189,7 +210,10 @@ def test_security_definer_uses_session_user_for_caller_and_current_user_for_owne
     contract = _contract()
     boundary = contract["mutation_boundary"]
     auth = boundary["invoker_authentication"]
-    assert "session_user" in boundary["preparation_caller"] and "current_user" in boundary["preparation_caller"]
+    assert (
+        "session_user" in boundary["preparation_caller"]
+        and "current_user" in boundary["preparation_caller"]
+    )
     assert "session_user" in boundary["cas_caller"] and "current_user" in boundary["cas_caller"]
     assert auth["inside_security_definer_current_user"].startswith("MUST equal")
     assert auth["inside_preparation_session_user"].endswith("LOGIN name/OID")
@@ -208,16 +232,19 @@ def test_cross_role_same_raw_ed25519_key_material_is_unconditionally_rejected() 
         "finalization_public_key_material_identity"
     )
     assert invariant["same_exact_raw_ed25519_public_key_material"].startswith("REJECT")
-    assert "exact canonical raw 32-byte Ed25519 public key material" in invariant["comparison_basis"]
+    assert (
+        "exact canonical raw 32-byte Ed25519 public key material" in invariant["comparison_basis"]
+    )
     assert invariant["aliases_do_not_bypass"] == [
         "different credential_id",
         "different key_id",
         "different key_version",
         "different semantic role label",
     ]
-    assert "simultaneous proposer/finalization registration" in invariant[
-        "retained_authority_requirement"
-    ]
+    assert (
+        "simultaneous proposer/finalization registration"
+        in invariant["retained_authority_requirement"]
+    )
     assert any(
         "same raw Ed25519 public key material identity" in item
         for item in contract["verifier_api"]["fail_closed_before_preparation"]
@@ -229,7 +256,5 @@ def test_identity_and_exact_semantic_role_laundering_are_rejected() -> None:
     assert "MUST exactly equal" in evidence["proposer_identity_binding"]
     roles = evidence["semantic_roles"]
     assert roles["proposer"] == "ACCOUNT_GENESIS_FRESHNESS_PROPOSER_SIGNING_V1"
-    assert roles["finalization"] == (
-        "ACCOUNT_GENESIS_FRESHNESS_AUTHORITY_FINALIZATION_SIGNING_V1"
-    )
+    assert roles["finalization"] == ("ACCOUNT_GENESIS_FRESHNESS_AUTHORITY_FINALIZATION_SIGNING_V1")
     assert roles["arbitrary_text_allowed"] is False

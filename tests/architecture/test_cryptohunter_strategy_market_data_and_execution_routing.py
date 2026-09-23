@@ -2626,8 +2626,11 @@ def record_matches_exchange_registry(record):
     if (
         entry is None
         or entry["status"] != "ENABLED"
-        or (("environment" in record or "environment_scope" in record)
-            and record.get("environment", record.get("environment_scope")) not in entry["supported_environments"])
+        or (
+            ("environment" in record or "environment_scope" in record)
+            and record.get("environment", record.get("environment_scope"))
+            not in entry["supported_environments"]
+        )
         or (
             "market_type" in record and record["market_type"] not in entry["supported_market_types"]
         )
@@ -2933,7 +2936,12 @@ def validate_instrument_history_map(context, validation_time):
             identities.add(
                 tuple(
                     record[field]
-                    for field in ("workspace_id", "source_exchange_id", "market_type", "venue_symbol")
+                    for field in (
+                        "workspace_id",
+                        "source_exchange_id",
+                        "market_type",
+                        "venue_symbol",
+                    )
                 )
             )
         current = context["instruments_by_id"].get(instrument_id)
@@ -2943,7 +2951,12 @@ def validate_instrument_history_map(context, validation_time):
             and (
                 tuple(
                     current[field]
-                    for field in ("workspace_id", "source_exchange_id", "market_type", "venue_symbol")
+                    for field in (
+                        "workspace_id",
+                        "source_exchange_id",
+                        "market_type",
+                        "venue_symbol",
+                    )
                 )
                 not in identities
                 or current["metadata_version"] <= max(versions)
@@ -2963,7 +2976,8 @@ def validate_global_instrument_identity(context):
     )
     for record in records:
         identity = tuple(
-            record[field] for field in ("workspace_id", "source_exchange_id", "market_type", "venue_symbol")
+            record[field]
+            for field in ("workspace_id", "source_exchange_id", "market_type", "venue_symbol")
         )
         instrument_id = record["instrument_id"]
         if tuple_to_id.setdefault(identity, instrument_id) != instrument_id:
@@ -3059,7 +3073,11 @@ def validate_universe_record(context, record, *, historical):
             candidates += context["instrument_history_by_id"].get(instrument_id, [])
         instruments.append(
             next(
-                (item for item in candidates if item and item["accepted_source_catalog_snapshot_id"] in sources),
+                (
+                    item
+                    for item in candidates
+                    if item and item["accepted_source_catalog_snapshot_id"] in sources
+                ),
                 None,
             )
         )
@@ -3270,7 +3288,10 @@ def validate_references(context):
             or effective > validation_time
             or not catalog
             or instrument["instrument_id"] not in catalog["instrument_ids"]
-            or (instrument["source_exchange_id"] != catalog["exchange_id"] or instrument["market_type"] != catalog["market_type"])
+            or (
+                instrument["source_exchange_id"] != catalog["exchange_id"]
+                or instrument["market_type"] != catalog["market_type"]
+            )
             or instrument["source_adapter_family_id"] != catalog["adapter_family_id"]
         ):
             return False
@@ -3481,7 +3502,9 @@ def validate_references(context):
         ):
             return False
         for instrument in instruments:
-            catalog = context["catalogs_by_id"].get(instrument["accepted_source_catalog_snapshot_id"])
+            catalog = context["catalogs_by_id"].get(
+                instrument["accepted_source_catalog_snapshot_id"]
+            )
             if (
                 not catalog
                 or route["market_type"] != instrument["market_type"]
@@ -3582,7 +3605,9 @@ def validate_references(context):
         if execution:
             for iid in universe["instrument_ids"]:
                 instrument = context["instruments_by_id"][iid]
-                catalog = context["catalogs_by_id"][instrument["accepted_source_catalog_snapshot_id"]]
+                catalog = context["catalogs_by_id"][
+                    instrument["accepted_source_catalog_snapshot_id"]
+                ]
                 if (
                     instrument["workspace_id"] != instance["workspace_id"]
                     or instrument["workspace_id"] != account["workspace_id"]
@@ -4067,7 +4092,9 @@ def validate_strategy_execution_operability(request, context, operation):
         return deny(operation, policy["unsupported_pair_denial"])
     catalogs = [
         context["catalogs_by_id"][catalog_snapshot_id]
-        for catalog_snapshot_id in {instrument["accepted_source_catalog_snapshot_id"] for instrument in instruments}
+        for catalog_snapshot_id in {
+            instrument["accepted_source_catalog_snapshot_id"] for instrument in instruments
+        }
     ]
     validation_time = parse_time(context["validation_time_utc"])
     if any(
@@ -4844,7 +4871,11 @@ def make_reachability_case(operation, denial):
             workspace_id, iid, cid = f"ws_{UUID7}0f", f"instr_{UUID7}0f", f"icat_{UUID7}0f"
             instrument = copy.deepcopy(context["instruments_by_id"][IDS["instr"]])
             catalog = copy.deepcopy(context["catalogs_by_id"][IDS["icat"]])
-            instrument.update(instrument_id=iid, workspace_id=workspace_id, accepted_source_catalog_snapshot_id=cid)
+            instrument.update(
+                instrument_id=iid,
+                workspace_id=workspace_id,
+                accepted_source_catalog_snapshot_id=cid,
+            )
             instrument["venue_symbol"] = "FOREIGN-WORKSPACE-SYMBOL"
             catalog.update(catalog_snapshot_id=cid, instrument_ids=[iid])
             context["instruments_by_id"][iid] = instrument
@@ -5347,7 +5378,9 @@ def test_reverse_integrity_covers_unrelated_records():
 
     def missing_catalog(context):
         instrument = copy.deepcopy(context["instruments_by_id"][IDS["instr"]])
-        instrument.update(instrument_id=f"instr_{UUID7}0f", accepted_source_catalog_snapshot_id=f"icat_{UUID7}0f")
+        instrument.update(
+            instrument_id=f"instr_{UUID7}0f", accepted_source_catalog_snapshot_id=f"icat_{UUID7}0f"
+        )
         context["instruments_by_id"][instrument["instrument_id"]] = instrument
 
     def missing_back_reference(context):
@@ -8931,11 +8964,20 @@ def test_trading_universe_uses_canonical_workspace_source_catalog_chain():
     legacy = SCHEMAS["InstrumentCatalogProjection"]
     chain = CONTRACT["canonical_source_catalog_projection_chain"]
     source_schemas = CONTRACT["source_catalog_projection_schemas"]
-    assert source_schemas["AcceptedSourceCatalogSnapshot"]["execution_environment_forbidden"] is True
-    assert source_schemas["WorkspaceCatalogProjection"]["upstream_reference"] == "AcceptedSourceCatalogSnapshot"
-    assert universe["entity_references"]["source_catalog_snapshot_ids"] == "WorkspaceCatalogProjection"
+    assert (
+        source_schemas["AcceptedSourceCatalogSnapshot"]["execution_environment_forbidden"] is True
+    )
+    assert (
+        source_schemas["WorkspaceCatalogProjection"]["upstream_reference"]
+        == "AcceptedSourceCatalogSnapshot"
+    )
+    assert (
+        universe["entity_references"]["source_catalog_snapshot_ids"] == "WorkspaceCatalogProjection"
+    )
     assert "AcceptedSourceCatalogSnapshot" in universe["source_catalog_reference_semantics"]
     assert chain["execution_environment_in_source_chain"] is False
-    assert legacy["authority_disposition"] == "LEGACY_MIGRATION_BLOCKED_READ_ONLY_NOT_SOURCE_AUTHORITY"
+    assert (
+        legacy["authority_disposition"] == "LEGACY_MIGRATION_BLOCKED_READ_ONLY_NOT_SOURCE_AUTHORITY"
+    )
     assert legacy["may_mint_source_membership"] is False
     assert "explicitly permitted" in chain["paper_source_policy"]

@@ -44,20 +44,19 @@ jobs:
       - uses: actions/setup-python@v6
         with: {python-version: "3.11"}
       - run: python -m pip install -e ".[test]" pywin32
-      - name: Parse reviewed Windows SCM probe
+      - name: Parse Windows SCM probe without executing it
         shell: pwsh
         run: |
           $tokens = $null
-          $errors = $null
-          $probe = (Resolve-Path "deployment/windows_scm_probe.ps1").Path
+          $parseErrors = $null
           [System.Management.Automation.Language.Parser]::ParseFile(
-            $probe,
+            (Resolve-Path "deployment/windows_scm_probe.ps1"),
             [ref]$tokens,
-            [ref]$errors
+            [ref]$parseErrors
           ) | Out-Null
-          if ($errors.Count -ne 0) {
-            $errors | ForEach-Object { Write-Error $_.Message }
-            throw "Reviewed Windows SCM probe contains PowerShell parser errors"
+          if ($parseErrors.Count -ne 0) {
+            $parseErrors | ForEach-Object { Write-Error $_.Message }
+            exit 1
           }
       - name: Execute canonical reviewed Windows acceptance
         run: >-

@@ -29,7 +29,7 @@ def test_runtime_controller_import_without_ai_models_signing_module() -> None:
         repo_root = pathlib.Path.cwd()
         sys.path.insert(0, str(repo_root))
         security_module = types.ModuleType("bot_core.security")
-        security_module.__path__ = []
+        security_module.__path__ = [str(repo_root / "bot_core" / "security")]
         guards_module = types.ModuleType("bot_core.security.guards")
         guards_module.get_capability_guard = lambda: None
         sys.modules.setdefault("bot_core.security", security_module)

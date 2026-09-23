@@ -12,9 +12,13 @@ from typing import Callable, ContextManager, Iterator, Protocol, TypeVar
 from bot_core.persistence.fingerprints import canonical_json_sha256
 
 SCOPE_PREFIXES = {
-    "PRODUCT_SYSTEM": None, "WORKSPACE": "ws", "PORTFOLIO": "port",
-    "EXCHANGE_ACCOUNT": "xacc", "STRATEGY_INSTANCE": "sinst",
-    "INSTRUMENT": "instr", "EXECUTION_ROUTE": "xroute",
+    "PRODUCT_SYSTEM": None,
+    "WORKSPACE": "ws",
+    "PORTFOLIO": "port",
+    "EXCHANGE_ACCOUNT": "xacc",
+    "STRATEGY_INSTANCE": "sinst",
+    "INSTRUMENT": "instr",
+    "EXECUTION_ROUTE": "xroute",
 }
 ENVIRONMENTS = frozenset({"PAPER", "TESTNET", "LIVE"})
 STATES = frozenset({"INACTIVE", "ACTIVE"})
@@ -42,7 +46,9 @@ class AtomicCoreAcceptedContentState:
 class CoreAcceptedContentCarrier(Protocol):
     def authority_fence(self) -> ContextManager[None]: ...
     def read(self) -> AtomicCoreAcceptedContentState: ...
-    def compare_and_swap(self, expected_revision: int, state: AtomicCoreAcceptedContentState) -> None: ...
+    def compare_and_swap(
+        self, expected_revision: int, state: AtomicCoreAcceptedContentState
+    ) -> None: ...
 
 
 class InMemoryCoreAcceptedContentCarrier:
@@ -61,7 +67,9 @@ class InMemoryCoreAcceptedContentCarrier:
         with self._lock:
             return self._state
 
-    def compare_and_swap(self, expected_revision: int, state: AtomicCoreAcceptedContentState) -> None:
+    def compare_and_swap(
+        self, expected_revision: int, state: AtomicCoreAcceptedContentState
+    ) -> None:
         with self._lock:
             if self._state.store_revision != expected_revision:
                 raise RuntimeError("AUTHORITY_CAS_CONFLICT")
@@ -82,7 +90,9 @@ class CoreAcceptedContentAuthority:
     """Independent carrier-owned registry required by frozen Core bindings."""
 
     @classmethod
-    def compose(cls, carrier: CoreAcceptedContentCarrier) -> tuple[CoreAcceptedContentAuthority, _CoreAcceptedContentWriter]:
+    def compose(
+        cls, carrier: CoreAcceptedContentCarrier
+    ) -> tuple[CoreAcceptedContentAuthority, _CoreAcceptedContentWriter]:
         authority = cls(carrier)
         return authority, _CoreAcceptedContentWriter(authority)
 
@@ -120,21 +130,28 @@ class CoreAcceptedContentAuthority:
         with self._carrier.authority_fence():
             state = self._carrier.read()
             self._validate_state(state)
-            prior = next((item for item in state.accepted if item.membership_id == binding.membership_id), None)
+            prior = next(
+                (item for item in state.accepted if item.membership_id == binding.membership_id),
+                None,
+            )
             if prior is not None:
                 if prior != binding:
                     raise KillSwitchAuthorityError("TRUSTED_CONTEXT_FAILURE")
                 return
             self._carrier.compare_and_swap(
                 state.store_revision,
-                AtomicCoreAcceptedContentState(state.store_revision + 1, state.accepted + (binding,)),
+                AtomicCoreAcceptedContentState(
+                    state.store_revision + 1, state.accepted + (binding,)
+                ),
             )
 
     def resolve(self, membership_id: str) -> CoreAcceptedContentBinding | None:
         with self._carrier.authority_fence():
             state = self._carrier.read()
             self._validate_state(state)
-            return next((item for item in state.accepted if item.membership_id == membership_id), None)
+            return next(
+                (item for item in state.accepted if item.membership_id == membership_id), None
+            )
 
     def has_content_fingerprint(self, fingerprint: str) -> bool:
         """Return whether any accepted membership binds this exact content.
@@ -146,9 +163,7 @@ class CoreAcceptedContentAuthority:
         with self._carrier.authority_fence():
             state = self._carrier.read()
             self._validate_state(state)
-            return any(
-                item.content_fingerprint_sha256 == fingerprint for item in state.accepted
-            )
+            return any(item.content_fingerprint_sha256 == fingerprint for item in state.accepted)
 
 
 @dataclass(frozen=True, slots=True)
@@ -188,7 +203,9 @@ class AtomicKillSwitchAuthorityState:
 class KillSwitchAuthorityCarrier(Protocol):
     def authority_fence(self) -> ContextManager[None]: ...
     def read(self) -> AtomicKillSwitchAuthorityState: ...
-    def compare_and_swap(self, expected_revision: int, state: AtomicKillSwitchAuthorityState) -> None: ...
+    def compare_and_swap(
+        self, expected_revision: int, state: AtomicKillSwitchAuthorityState
+    ) -> None: ...
 
 
 class InMemoryKillSwitchAuthorityCarrier:
@@ -206,7 +223,9 @@ class InMemoryKillSwitchAuthorityCarrier:
         with self._lock:
             return self._state
 
-    def compare_and_swap(self, expected_revision: int, state: AtomicKillSwitchAuthorityState) -> None:
+    def compare_and_swap(
+        self, expected_revision: int, state: AtomicKillSwitchAuthorityState
+    ) -> None:
         with self._lock:
             if self.fail_next:
                 self.fail_next = False
@@ -234,7 +253,9 @@ class KillSwitchAuthority:
         authority = cls(carrier, core_membership=core_membership)
         return authority, _KillSwitchWriter(authority)
 
-    def __init__(self, carrier: KillSwitchAuthorityCarrier, *, core_membership: CoreAcceptedContentAuthority) -> None:
+    def __init__(
+        self, carrier: KillSwitchAuthorityCarrier, *, core_membership: CoreAcceptedContentAuthority
+    ) -> None:
         if not isinstance(core_membership, CoreAcceptedContentAuthority):
             raise KillSwitchAuthorityError("TRUSTED_CONTEXT_FAILURE")
         self._carrier = carrier
@@ -254,9 +275,9 @@ class KillSwitchAuthority:
 
     @staticmethod
     def context_fingerprint(context: PrevalidatedKillSwitchContext) -> str:
-        return canonical_json_sha256([
-            [asdict(record) for record in context.history], context.membership_id
-        ])
+        return canonical_json_sha256(
+            [[asdict(record) for record in context.history], context.membership_id]
+        )
 
     @staticmethod
     def _scope(record: KillSwitchRecord) -> tuple[str, str, str]:
@@ -267,20 +288,34 @@ class KillSwitchAuthority:
         if not isinstance(record, KillSwitchRecord):
             raise KillSwitchAuthorityError("TRUSTED_CONTEXT_FAILURE")
         prefix = SCOPE_PREFIXES.get(record.scope_type, "UNKNOWN")
-        valid_scope = record.scope_id == "product" if prefix is None else (
-            prefix != "UNKNOWN" and isinstance(record.scope_id, str)
-            and record.scope_id.startswith(prefix + "_")
-            and bool(UUID7.fullmatch(record.scope_id[len(prefix) + 1 :]))
+        valid_scope = (
+            record.scope_id == "product"
+            if prefix is None
+            else (
+                prefix != "UNKNOWN"
+                and isinstance(record.scope_id, str)
+                and record.scope_id.startswith(prefix + "_")
+                and bool(UUID7.fullmatch(record.scope_id[len(prefix) + 1 :]))
+            )
         )
         try:
             parsed = datetime.fromisoformat(record.effective_at_utc.removesuffix("Z") + "+00:00")
-            valid_time = record.effective_at_utc.endswith("Z") and parsed.tzinfo == timezone.utc and parsed.isoformat().replace("+00:00", "Z") == record.effective_at_utc
+            valid_time = (
+                record.effective_at_utc.endswith("Z")
+                and parsed.tzinfo == timezone.utc
+                and parsed.isoformat().replace("+00:00", "Z") == record.effective_at_utc
+            )
         except (AttributeError, ValueError):
             valid_time = False
         if (
-            not valid_scope or record.environment not in ENVIRONMENTS or record.state not in STATES
-            or type(record.source_revision) is not int or record.source_revision < 1
-            or type(record.generation) is not int or record.generation < 1 or not valid_time
+            not valid_scope
+            or record.environment not in ENVIRONMENTS
+            or record.state not in STATES
+            or type(record.source_revision) is not int
+            or record.source_revision < 1
+            or type(record.generation) is not int
+            or record.generation < 1
+            or not valid_time
             or type(record.accepted_authority_fingerprint_sha256) is not str
             or not SHA256.fullmatch(record.accepted_authority_fingerprint_sha256)
             or type(record.record_fingerprint_sha256) is not str
@@ -293,8 +328,10 @@ class KillSwitchAuthority:
     def _validate_context(self, context: object) -> PrevalidatedKillSwitchContext:
         if (
             not isinstance(context, PrevalidatedKillSwitchContext)
-            or type(context.history) is not tuple or not context.history
-            or type(context.membership_id) is not str or not context.membership_id
+            or type(context.history) is not tuple
+            or not context.history
+            or type(context.membership_id) is not str
+            or not context.membership_id
             or type(context.context_fingerprint_sha256) is not str
             or not SHA256.fullmatch(context.context_fingerprint_sha256)
         ):
@@ -307,9 +344,7 @@ class KillSwitchAuthority:
                 raise KillSwitchAuthorityError("TRUSTED_CONTEXT_FAILURE")
             generations[scope] = record.generation
             # This field is an accepted-membership reference, not merely SHA syntax.
-            if not self._core.has_content_fingerprint(
-                record.accepted_authority_fingerprint_sha256
-            ):
+            if not self._core.has_content_fingerprint(record.accepted_authority_fingerprint_sha256):
                 raise KillSwitchAuthorityError("TRUSTED_CONTEXT_FAILURE")
         binding = self._core.resolve(context.membership_id)
         if (
@@ -358,7 +393,9 @@ class KillSwitchAuthority:
             accepted_at = self._transaction_time(now_utc, error="TRUSTED_CONTEXT_FAILURE")
             known, generations, current = self._reconstructed_history(before)
             genuinely_new = self._reconcile_context(
-                context, known=known, generations=generations,
+                context,
+                known=known,
+                generations=generations,
                 error="TRUSTED_CONTEXT_FAILURE",
             )
             if before.accepted:
@@ -378,7 +415,9 @@ class KillSwitchAuthority:
             entry = AcceptedKillSwitchAuthorityEntry(revision, now_utc, context)
             for scope in genuinely_new:
                 current[scope] = context.membership_id
-            replacement = AtomicKillSwitchAuthorityState(revision, before.accepted + (entry,), tuple(current.items()))
+            replacement = AtomicKillSwitchAuthorityState(
+                revision, before.accepted + (entry,), tuple(current.items())
+            )
             self._carrier.compare_and_swap(before.store_revision, replacement)
             return entry
 
@@ -421,7 +460,9 @@ class KillSwitchAuthority:
         current: dict[tuple[str, str, str], str] = {}
         for entry in state.accepted:
             new_scopes = cls._reconcile_context(
-                entry.context, known=known, generations=generations,
+                entry.context,
+                known=known,
+                generations=generations,
                 error="CORRUPT_AUTHORITY_STATE",
             )
             for scope in new_scopes:
@@ -437,7 +478,9 @@ class KillSwitchAuthority:
         result: dict[tuple[str, str, str], datetime] = {}
         for entry in state.accepted:
             new_scopes = cls._reconcile_context(
-                entry.context, known=known, generations=generations,
+                entry.context,
+                known=known,
+                generations=generations,
                 error="CORRUPT_AUTHORITY_STATE",
             )
             accepted_at = cls._transaction_time(
@@ -452,7 +495,10 @@ class KillSwitchAuthority:
     def resolve_historical(self, membership_id: str) -> AcceptedKillSwitchAuthorityEntry | None:
         with self._carrier.authority_fence():
             state = self._validated_read()
-            return next((item for item in state.accepted if item.context.membership_id == membership_id), None)
+            return next(
+                (item for item in state.accepted if item.context.membership_id == membership_id),
+                None,
+            )
 
     def resolve_historical_record(
         self, *, membership_id: str, record_fingerprint_sha256: str
@@ -467,7 +513,8 @@ class KillSwitchAuthority:
             if entry is None:
                 return None
             matches = tuple(
-                record for record in entry.context.history
+                record
+                for record in entry.context.history
                 if record.record_fingerprint_sha256 == record_fingerprint_sha256
             )
             if len(matches) != 1:
@@ -482,14 +529,12 @@ class KillSwitchAuthority:
         with self._carrier.authority_fence():
             state = self._validated_read()
             historical = tuple(
-                entry for entry in state.accepted
-                if self._transaction_time(
-                    entry.accepted_at_utc, error="CORRUPT_AUTHORITY_STATE"
-                ) <= at
+                entry
+                for entry in state.accepted
+                if self._transaction_time(entry.accepted_at_utc, error="CORRUPT_AUTHORITY_STATE")
+                <= at
             )
-            prefix = AtomicKillSwitchAuthorityState(
-                len(historical), historical, ()
-            )
+            prefix = AtomicKillSwitchAuthorityState(len(historical), historical, ())
             _known, _generations, current = self._reconstructed_history(prefix)
             entry = next(
                 (item for item in historical if item.context.membership_id == membership_id),
@@ -498,7 +543,8 @@ class KillSwitchAuthority:
             if entry is None:
                 return None
             matches = tuple(
-                record for record in entry.context.history
+                record
+                for record in entry.context.history
                 if record.record_fingerprint_sha256 == record_fingerprint_sha256
             )
             if len(matches) != 1:
@@ -506,37 +552,54 @@ class KillSwitchAuthority:
             record = matches[0]
             if (
                 current.get(self._scope(record)) != membership_id
-                or self._transaction_time(
-                    record.effective_at_utc, error="CORRUPT_AUTHORITY_STATE"
-                ) > at
+                or self._transaction_time(record.effective_at_utc, error="CORRUPT_AUTHORITY_STATE")
+                > at
             ):
                 return None
             # A full-history context can contain an older record for a scope it
             # advances.  The reference must identify its exact latest record.
             current_record = max(
                 (
-                    item for item in entry.context.history
+                    item
+                    for item in entry.context.history
                     if self._scope(item) == self._scope(record)
                 ),
                 key=lambda item: item.generation,
             )
             return (entry, record) if current_record == record else None
 
-    def resolve_current(self, *, scope_type: str, scope_id: str, environment: str) -> AcceptedKillSwitchAuthorityEntry | None:
+    def resolve_current(
+        self, *, scope_type: str, scope_id: str, environment: str
+    ) -> AcceptedKillSwitchAuthorityEntry | None:
         with self._carrier.authority_fence():
-            return self._resolve_current(self._validated_read(), (scope_type, scope_id, environment))
+            return self._resolve_current(
+                self._validated_read(), (scope_type, scope_id, environment)
+            )
 
-    def consume_current(self, *, scope_type: str, scope_id: str, environment: str, consumer: Callable[[AcceptedKillSwitchAuthorityEntry], T]) -> T:
+    def consume_current(
+        self,
+        *,
+        scope_type: str,
+        scope_id: str,
+        environment: str,
+        consumer: Callable[[AcceptedKillSwitchAuthorityEntry], T],
+    ) -> T:
         with self._carrier.authority_fence():
-            current = self._resolve_current(self._validated_read(), (scope_type, scope_id, environment))
+            current = self._resolve_current(
+                self._validated_read(), (scope_type, scope_id, environment)
+            )
             if current is None:
                 raise KillSwitchAuthorityError("TRUSTED_CONTEXT_FAILURE")
             return consumer(current)
 
     @staticmethod
-    def _resolve_current(state: AtomicKillSwitchAuthorityState, scope: tuple[str, str, str]) -> AcceptedKillSwitchAuthorityEntry | None:
+    def _resolve_current(
+        state: AtomicKillSwitchAuthorityState, scope: tuple[str, str, str]
+    ) -> AcceptedKillSwitchAuthorityEntry | None:
         membership_id = dict(state.current).get(scope)
-        return next((item for item in state.accepted if item.context.membership_id == membership_id), None)
+        return next(
+            (item for item in state.accepted if item.context.membership_id == membership_id), None
+        )
 
     def _validated_read(self) -> AtomicKillSwitchAuthorityState:
         state = self._carrier.read()
@@ -547,15 +610,20 @@ class KillSwitchAuthority:
         try:
             if (
                 not isinstance(state, AtomicKillSwitchAuthorityState)
-                or type(state.store_revision) is not int or state.store_revision < 0
-                or type(state.accepted) is not tuple or type(state.current) is not tuple
+                or type(state.store_revision) is not int
+                or state.store_revision < 0
+                or type(state.accepted) is not tuple
+                or type(state.current) is not tuple
                 or state.store_revision != len(state.accepted)
             ):
                 raise KillSwitchAuthorityError("CORRUPT_AUTHORITY_STATE")
             memberships: set[str] = set()
             previous_time: datetime | None = None
             for revision, entry in enumerate(state.accepted, 1):
-                if not isinstance(entry, AcceptedKillSwitchAuthorityEntry) or entry.transaction_revision != revision:
+                if (
+                    not isinstance(entry, AcceptedKillSwitchAuthorityEntry)
+                    or entry.transaction_revision != revision
+                ):
                     raise KillSwitchAuthorityError("CORRUPT_AUTHORITY_STATE")
                 context = self._validate_context(entry.context)
                 accepted_at = self._transaction_time(
@@ -573,6 +641,9 @@ class KillSwitchAuthority:
             if len(actual) != len(state.current) or actual != expected:
                 raise KillSwitchAuthorityError("CORRUPT_AUTHORITY_STATE")
         except (AttributeError, TypeError, ValueError, OverflowError) as error:
-            if isinstance(error, KillSwitchAuthorityError) and str(error) == "CORRUPT_AUTHORITY_STATE":
+            if (
+                isinstance(error, KillSwitchAuthorityError)
+                and str(error) == "CORRUPT_AUTHORITY_STATE"
+            ):
                 raise
             raise KillSwitchAuthorityError("CORRUPT_AUTHORITY_STATE") from error

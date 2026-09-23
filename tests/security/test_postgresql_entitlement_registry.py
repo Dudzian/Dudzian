@@ -60,9 +60,7 @@ BASE_DSN = os.environ.get(
 
 
 def _role_dsn(role: str) -> PostgreSQLConnectionConfig:
-    return PostgreSQLConnectionConfig(
-        f"host=127.0.0.1 port=55432 dbname=postgres user={role}"
-    )
+    return PostgreSQLConnectionConfig(f"host=127.0.0.1 port=55432 dbname=postgres user={role}")
 
 
 @pytest.fixture(scope="module")
@@ -72,9 +70,7 @@ def registry() -> dict[str, object]:
         f"er_{suffix}", f"ero_{suffix}", f"err_{suffix}", f"era_{suffix}", "td_registry"
     )
     try:
-        provision_postgresql_entitlement_registry(
-            PostgreSQLConnectionConfig(BASE_DSN), setup
-        )
+        provision_postgresql_entitlement_registry(PostgreSQLConnectionConfig(BASE_DSN), setup)
     except psycopg.OperationalError as exc:
         pytest.fail(f"real PostgreSQL integration cluster unavailable: {exc}")
     runtime = PostgreSQLEntitlementRegistryProvider(
@@ -91,7 +87,9 @@ def registry() -> dict[str, object]:
     )
     yield {"setup": setup, "runtime": runtime, "admin": admin}
     with psycopg.connect(BASE_DSN, autocommit=True) as conn:
-        conn.execute(sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(setup.schema)))
+        conn.execute(
+            sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(setup.schema))
+        )
         for role in (setup.runtime_role, setup.admin_role, setup.schema_owner_role):
             conn.execute(sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(role)))
 
@@ -102,15 +100,11 @@ _counter = 0
 def _subject(prefix: str = "subject") -> RegistrySubject:
     global _counter
     _counter += 1
-    return RegistrySubject(
-        f"{prefix}-{_counter}", "PRODUCTION_LOCAL", "td_registry"
-    )
+    return RegistrySubject(f"{prefix}-{_counter}", "PRODUCTION_LOCAL", "td_registry")
 
 
 def _identity(product: str = "ProductA", generation: int = 1, raw: str = U) -> EntitlementIdentity:
-    return EntitlementIdentity(
-        f"ent_{raw}", generation, "PRODUCTION_LOCAL", "td_registry", product
-    )
+    return EntitlementIdentity(f"ent_{raw}", generation, "PRODUCTION_LOCAL", "td_registry", product)
 
 
 def _provenance(reference: str = "immutable:provision:1") -> EntitlementProvenance:
@@ -162,9 +156,7 @@ def _isolated_registry():
     finally:
         with psycopg.connect(BASE_DSN, autocommit=True) as conn:
             conn.execute(
-                sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(
-                    sql.Identifier(setup.schema)
-                )
+                sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(setup.schema))
             )
             for role in (setup.runtime_role, setup.admin_role, setup.schema_owner_role):
                 conn.execute(sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(role)))
@@ -189,18 +181,14 @@ def test_server_durability_serializable_and_metadata(registry) -> None:
         assert row[1:] == ("on", "on")
         with conn.transaction():
             conn.execute("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE")
-            isolation = conn.execute(
-                "SELECT current_setting('transaction_isolation')"
-            ).fetchone()
+            isolation = conn.execute("SELECT current_setting('transaction_isolation')").fetchone()
             assert isolation == ("serializable",)
         metadata = conn.execute(
             sql.SQL(
                 "SELECT schema_identity,schema_version,schema_owner_role,"
                 "schema_owner_role_oid,runtime_role,runtime_role_oid,"
                 "admin_role,admin_role_oid FROM {}.metadata"
-            ).format(
-                sql.Identifier(setup.schema)
-            )
+            ).format(sql.Identifier(setup.schema))
         ).fetchone()
         assert metadata is not None
         assert metadata[:2] == (SCHEMA_IDENTITY, SCHEMA_VERSION)
@@ -285,9 +273,7 @@ def test_runtime_escalation_membership_is_rejected(registry) -> None:
         ("admin_role", ("state",)),
     ],
 )
-def test_column_level_update_acl_is_rejected(
-    role_field: str, columns: tuple[str, ...]
-) -> None:
+def test_column_level_update_acl_is_rejected(role_field: str, columns: tuple[str, ...]) -> None:
     with _isolated_registry() as setup:
         role = getattr(setup, role_field)
         column_list = sql.SQL(",").join(sql.Identifier(column) for column in columns)
@@ -328,18 +314,14 @@ def test_column_acl_would_allow_semantically_valid_bound_winner_rewrite() -> Non
             trust_domain=setup.trust_domain,
         )
         requested = _subject("column-rewrite")
-        initial = _provision(
-            admin, requested, raw="018f3e70-7b5a-7c21-8b9a-000000000611"
-        )
+        initial = _provision(admin, requested, raw="018f3e70-7b5a-7c21-8b9a-000000000611")
         committed = runtime.compare_and_swap_bind(
             BindRequest(requested, predecessor_for(initial), _binding(611))
         )
         assert committed.outcome is BindOutcome.NEW_BIND_COMMITTED
         with psycopg.connect(BASE_DSN, autocommit=True) as conn:
             conn.execute(
-                sql.SQL(
-                    "GRANT UPDATE (state,state_integrity) ON {}.history TO {}"
-                ).format(
+                sql.SQL("GRANT UPDATE (state,state_integrity) ON {}.history TO {}").format(
                     sql.Identifier(setup.schema), sql.Identifier(setup.runtime_role)
                 )
             )
@@ -410,9 +392,7 @@ def test_outsider_schema_and_function_acl_is_rejected() -> None:
         ("admin_role", "provision(text,text,text,text,text,json)"),
     ],
 )
-def test_function_execute_grant_option_is_rejected(
-    role_field: str, signature: str
-) -> None:
+def test_function_execute_grant_option_is_rejected(role_field: str, signature: str) -> None:
     with _isolated_registry() as setup:
         role = getattr(setup, role_field)
         with psycopg.connect(BASE_DSN, autocommit=True) as conn:
@@ -454,9 +434,7 @@ def test_arbitrary_membership_and_set_role_escalation_are_rejected(
             with psycopg.connect(BASE_DSN, autocommit=True) as conn:
                 attributes = sql.SQL("SUPERUSER") if superuser else sql.SQL("NOSUPERUSER")
                 conn.execute(
-                    sql.SQL("CREATE ROLE {} {} NOLOGIN").format(
-                        sql.Identifier(helper), attributes
-                    )
+                    sql.SQL("CREATE ROLE {} {} NOLOGIN").format(sql.Identifier(helper), attributes)
                 )
                 conn.execute(
                     sql.SQL("GRANT {} TO {} WITH INHERIT FALSE, SET TRUE").format(
@@ -502,9 +480,7 @@ def test_session_user_current_user_laundering_is_rejected(registry) -> None:
 def test_rolinherit_true_is_rejected(registry) -> None:
     setup = registry["setup"]
     with psycopg.connect(BASE_DSN, autocommit=True) as conn:
-        conn.execute(
-            sql.SQL("ALTER ROLE {} INHERIT").format(sql.Identifier(setup.runtime_role))
-        )
+        conn.execute(sql.SQL("ALTER ROLE {} INHERIT").format(sql.Identifier(setup.runtime_role)))
     try:
         with pytest.raises(RegistryQualificationError):
             PostgreSQLEntitlementRegistryProvider(
@@ -516,9 +492,7 @@ def test_rolinherit_true_is_rejected(registry) -> None:
     finally:
         with psycopg.connect(BASE_DSN, autocommit=True) as conn:
             conn.execute(
-                sql.SQL("ALTER ROLE {} NOINHERIT").format(
-                    sql.Identifier(setup.runtime_role)
-                )
+                sql.SQL("ALTER ROLE {} NOINHERIT").format(sql.Identifier(setup.runtime_role))
             )
 
 
@@ -564,9 +538,7 @@ def test_unexpected_acl_cleanup_restores_qualification() -> None:
                 conn.execute(sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(outsider)))
 
 
-@pytest.mark.parametrize(
-    "authority_field", ["runtime_role", "admin_role", "schema_owner_role"]
-)
+@pytest.mark.parametrize("authority_field", ["runtime_role", "admin_role", "schema_owner_role"])
 @pytest.mark.parametrize("inherit_option", [False, True])
 def test_incoming_authority_membership_and_set_role_are_rejected(
     authority_field: str, inherit_option: bool
@@ -577,9 +549,7 @@ def test_incoming_authority_membership_and_set_role_are_rejected(
         try:
             with psycopg.connect(BASE_DSN, autocommit=True) as conn:
                 conn.execute(
-                    sql.SQL("CREATE ROLE {} LOGIN NOINHERIT").format(
-                        sql.Identifier(outsider)
-                    )
+                    sql.SQL("CREATE ROLE {} LOGIN NOINHERIT").format(sql.Identifier(outsider))
                 )
                 inherit = sql.SQL("TRUE") if inherit_option else sql.SQL("FALSE")
                 conn.execute(
@@ -587,9 +557,7 @@ def test_incoming_authority_membership_and_set_role_are_rejected(
                         sql.Identifier(authority), sql.Identifier(outsider), inherit
                     )
                 )
-            outsider_dsn = (
-                f"host=127.0.0.1 port=55432 dbname=postgres user={outsider}"
-            )
+            outsider_dsn = f"host=127.0.0.1 port=55432 dbname=postgres user={outsider}"
             with psycopg.connect(outsider_dsn) as conn:
                 assert conn.execute("SELECT current_user").fetchone() == (outsider,)
                 conn.execute(sql.SQL("SET ROLE {}").format(sql.Identifier(authority)))
@@ -612,9 +580,7 @@ def test_incoming_authority_membership_and_set_role_are_rejected(
                         sql.Identifier(authority), sql.Identifier(outsider)
                     )
                 )
-                conn.execute(
-                    sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(outsider))
-                )
+                conn.execute(sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(outsider)))
 
 
 def test_direct_runtime_malformed_bind_payloads_are_atomic() -> None:
@@ -622,17 +588,19 @@ def test_direct_runtime_malformed_bind_payloads_are_atomic() -> None:
 
     with _isolated_registry() as setup:
         runtime = PostgreSQLEntitlementRegistryProvider(
-            _role_dsn(setup.runtime_role), schema=setup.schema,
-            environment="PRODUCTION_LOCAL", trust_domain=setup.trust_domain,
+            _role_dsn(setup.runtime_role),
+            schema=setup.schema,
+            environment="PRODUCTION_LOCAL",
+            trust_domain=setup.trust_domain,
         )
         admin = PostgreSQLEntitlementProvisioningAdminProvider(
-            _role_dsn(setup.admin_role), schema=setup.schema,
-            environment="PRODUCTION_LOCAL", trust_domain=setup.trust_domain,
+            _role_dsn(setup.admin_role),
+            schema=setup.schema,
+            environment="PRODUCTION_LOCAL",
+            trust_domain=setup.trust_domain,
         )
         requested = _subject("malformed-bind")
-        initial = _provision(
-            admin, requested, raw="018f3e70-7b5a-7c21-8b9a-000000000701"
-        )
+        initial = _provision(admin, requested, raw="018f3e70-7b5a-7c21-8b9a-000000000701")
         valid_successor = replace(
             initial,
             binding=_binding(701),
@@ -654,10 +622,17 @@ def test_direct_runtime_malformed_bind_payloads_are_atomic() -> None:
         wrong_lifecycle = deepcopy(valid)
         wrong_lifecycle["lifecycle"] = None
         payloads = (
-            ({}, True), (None, True), (None, False),
-            ({"binding": {"kind": "BOUND"}}, True), (extra_top, True),
-            (extra_nested, True), (wrong_revision, True), (wrong_generation, True),
-            (wrong_subject, True), (wrong_binding, True), (wrong_lifecycle, True),
+            ({}, True),
+            (None, True),
+            (None, False),
+            ({"binding": {"kind": "BOUND"}}, True),
+            (extra_top, True),
+            (extra_nested, True),
+            (wrong_revision, True),
+            (wrong_generation, True),
+            (wrong_subject, True),
+            (wrong_binding, True),
+            (wrong_lifecycle, True),
         )
         before = runtime.retained_history(requested)
         for payload, as_json in payloads:
@@ -668,8 +643,10 @@ def test_direct_runtime_malformed_bind_payloads_are_atomic() -> None:
                             sql.Identifier(setup.schema)
                         ),
                         (
-                            requested.lookup_handle, requested.environment,
-                            requested.trust_domain, 1,
+                            requested.lookup_handle,
+                            requested.environment,
+                            requested.trust_domain,
+                            1,
                             psycopg.types.json.Json(payload) if as_json else None,
                         ),
                     )
@@ -692,16 +669,47 @@ def test_python_sql_text_validation_differential_parity() -> None:
         _state_json,
     )
 
-    python_whitespace = tuple(chr(codepoint) for codepoint in range(0x110000) if chr(codepoint).isspace())
+    python_whitespace = tuple(
+        chr(codepoint) for codepoint in range(0x110000) if chr(codepoint).isspace()
+    )
     assert tuple(ord(value) for value in python_whitespace) == (
-        9, 10, 11, 12, 13, 28, 29, 30, 31, 32, 133, 160, 5760,
-        8192, 8193, 8194, 8195, 8196, 8197, 8198, 8199, 8200,
-        8201, 8202, 8232, 8233, 8239, 8287, 12288,
+        9,
+        10,
+        11,
+        12,
+        13,
+        28,
+        29,
+        30,
+        31,
+        32,
+        133,
+        160,
+        5760,
+        8192,
+        8193,
+        8194,
+        8195,
+        8196,
+        8197,
+        8198,
+        8199,
+        8200,
+        8201,
+        8202,
+        8232,
+        8233,
+        8239,
+        8287,
+        12288,
     )
     paths = (
-        ("subject", "lookup_handle"), ("subject", "environment"),
-        ("subject", "trust_domain"), ("identity", "environment"),
-        ("identity", "trust_domain"), ("identity", "product_scope"),
+        ("subject", "lookup_handle"),
+        ("subject", "environment"),
+        ("subject", "trust_domain"),
+        ("identity", "environment"),
+        ("identity", "trust_domain"),
+        ("identity", "product_scope"),
         ("provenance", "provisioning_principal_id"),
         ("provenance", "claimant_key_id"),
         ("provenance", "creation_authority_identity"),
@@ -715,25 +723,28 @@ def test_python_sql_text_validation_differential_parity() -> None:
     )
     with _isolated_registry() as setup:
         runtime = PostgreSQLEntitlementRegistryProvider(
-            _role_dsn(setup.runtime_role), schema=setup.schema,
-            environment="PRODUCTION_LOCAL", trust_domain=setup.trust_domain,
+            _role_dsn(setup.runtime_role),
+            schema=setup.schema,
+            environment="PRODUCTION_LOCAL",
+            trust_domain=setup.trust_domain,
         )
         admin = PostgreSQLEntitlementProvisioningAdminProvider(
-            _role_dsn(setup.admin_role), schema=setup.schema,
-            environment="PRODUCTION_LOCAL", trust_domain=setup.trust_domain,
+            _role_dsn(setup.admin_role),
+            schema=setup.schema,
+            environment="PRODUCTION_LOCAL",
+            trust_domain=setup.trust_domain,
         )
         requested = _subject("text-parity")
-        initial = _provision(
-            admin, requested, raw="018f3e70-7b5a-7c21-8b9a-000000000711"
-        )
+        initial = _provision(admin, requested, raw="018f3e70-7b5a-7c21-8b9a-000000000711")
         successor = replace(
-            initial, binding=_binding(711),
-            authoritative_state_revision=2, predecessor_revision=1,
+            initial,
+            binding=_binding(711),
+            authoritative_state_revision=2,
+            predecessor_revision=1,
         )
         canonical = _state_json(successor)
         mutations = [
-            (("binding", "requester_principal_id"), whitespace)
-            for whitespace in python_whitespace
+            (("binding", "requester_principal_id"), whitespace) for whitespace in python_whitespace
         ] + [(path, "".join(python_whitespace)) for path in paths]
         before = runtime.retained_history(requested)
         for path, value in mutations:
@@ -765,21 +776,27 @@ def test_python_sql_nontext_validation_differential_parity() -> None:
 
     with _isolated_registry() as setup:
         runtime = PostgreSQLEntitlementRegistryProvider(
-            _role_dsn(setup.runtime_role), schema=setup.schema,
-            environment="PRODUCTION_LOCAL", trust_domain=setup.trust_domain,
+            _role_dsn(setup.runtime_role),
+            schema=setup.schema,
+            environment="PRODUCTION_LOCAL",
+            trust_domain=setup.trust_domain,
         )
         admin = PostgreSQLEntitlementProvisioningAdminProvider(
-            _role_dsn(setup.admin_role), schema=setup.schema,
-            environment="PRODUCTION_LOCAL", trust_domain=setup.trust_domain,
+            _role_dsn(setup.admin_role),
+            schema=setup.schema,
+            environment="PRODUCTION_LOCAL",
+            trust_domain=setup.trust_domain,
         )
         requested = _subject("nontext-parity")
-        initial = _provision(
-            admin, requested, raw="018f3e70-7b5a-7c21-8b9a-000000000712"
+        initial = _provision(admin, requested, raw="018f3e70-7b5a-7c21-8b9a-000000000712")
+        canonical = _state_json(
+            replace(
+                initial,
+                binding=_binding(712),
+                authoritative_state_revision=2,
+                predecessor_revision=1,
+            )
         )
-        canonical = _state_json(replace(
-            initial, binding=_binding(712),
-            authoritative_state_revision=2, predecessor_revision=1,
-        ))
         mutations = (
             (("authoritative_state_revision",), 0),
             (("authoritative_state_revision",), True),
@@ -824,22 +841,28 @@ def test_direct_json_numeric_lexical_forms_are_rejected_for_every_integer_field(
     with psycopg.connect(BASE_DSN) as conn:
         observed = {
             value: conn.execute(
-                "SELECT (%s::json #> '{value}')::text", ('{"value":' + value + '}',)
+                "SELECT (%s::json #> '{value}')::text", ('{"value":' + value + "}",)
             ).fetchone()[0]
             for value in lexical_forms
         }
     assert observed == {value: value for value in lexical_forms}
     with _isolated_registry() as setup:
         admin = PostgreSQLEntitlementProvisioningAdminProvider(
-            _role_dsn(setup.admin_role), schema=setup.schema,
-            environment="PRODUCTION_LOCAL", trust_domain=setup.trust_domain,
+            _role_dsn(setup.admin_role),
+            schema=setup.schema,
+            environment="PRODUCTION_LOCAL",
+            trust_domain=setup.trust_domain,
         )
         subject = _subject("numeric-lexical")
         initial = _provision(admin, subject, raw="018f3e70-7b5a-7c21-8b9a-000000000713")
-        canonical = postgres_registry._state_json(replace(
-            initial, binding=_binding(713),
-            authoritative_state_revision=2, predecessor_revision=1,
-        ))
+        canonical = postgres_registry._state_json(
+            replace(
+                initial,
+                binding=_binding(713),
+                authoritative_state_revision=2,
+                predecessor_revision=1,
+            )
+        )
         for path in integer_paths:
             for lexical in lexical_forms:
                 payload = deepcopy(canonical)
@@ -847,14 +870,12 @@ def test_direct_json_numeric_lexical_forms_are_rejected_for_every_integer_field(
                 raw = json.dumps(payload, sort_keys=True, separators=(",", ":"))
                 assert raw.count("777777") == 1
                 raw = raw.replace("777777", lexical)
-                with psycopg.connect(
-                    _role_dsn(setup.runtime_role).dsn, autocommit=True
-                ) as conn:
+                with psycopg.connect(_role_dsn(setup.runtime_role).dsn, autocommit=True) as conn:
                     with pytest.raises(psycopg.Error) as raised:
                         conn.execute(
-                            sql.SQL(
-                                "SELECT {}.append_bind(%s,%s,%s,%s,%s::json)"
-                            ).format(sql.Identifier(setup.schema)),
+                            sql.SQL("SELECT {}.append_bind(%s,%s,%s,%s,%s::json)").format(
+                                sql.Identifier(setup.schema)
+                            ),
                             (*_subject_params_for_test(subject), 1, raw),
                         )
                     assert raised.value.sqlstate == "22023"
@@ -864,7 +885,9 @@ def test_direct_admin_malformed_provision_payloads_have_zero_side_effects() -> N
     with _isolated_registry() as setup:
         handle = "malformed-direct-provision"
         payloads = (
-            ({}, True), (None, True), (None, False),
+            ({}, True),
+            (None, True),
+            (None, False),
             ({"subject": {"lookup_handle": handle}}, True),
         )
         with psycopg.connect(_role_dsn(setup.admin_role).dsn, autocommit=True) as conn:
@@ -875,7 +898,10 @@ def test_direct_admin_malformed_provision_payloads_have_zero_side_effects() -> N
                             sql.Identifier(setup.schema)
                         ),
                         (
-                            handle, "PRODUCTION_LOCAL", setup.trust_domain, "ProductA",
+                            handle,
+                            "PRODUCTION_LOCAL",
+                            setup.trust_domain,
+                            "ProductA",
                             "ent_018f3e70-7b5a-7c21-8b9a-000000000702",
                             psycopg.types.json.Json(payload) if as_json else None,
                         ),
@@ -895,12 +921,16 @@ def test_direct_admin_malformed_provision_payloads_have_zero_side_effects() -> N
 def test_direct_admin_malformed_revoke_and_supersede_are_atomic() -> None:
     with _isolated_registry() as setup:
         runtime = PostgreSQLEntitlementRegistryProvider(
-            _role_dsn(setup.runtime_role), schema=setup.schema,
-            environment="PRODUCTION_LOCAL", trust_domain=setup.trust_domain,
+            _role_dsn(setup.runtime_role),
+            schema=setup.schema,
+            environment="PRODUCTION_LOCAL",
+            trust_domain=setup.trust_domain,
         )
         admin = PostgreSQLEntitlementProvisioningAdminProvider(
-            _role_dsn(setup.admin_role), schema=setup.schema,
-            environment="PRODUCTION_LOCAL", trust_domain=setup.trust_domain,
+            _role_dsn(setup.admin_role),
+            schema=setup.schema,
+            environment="PRODUCTION_LOCAL",
+            trust_domain=setup.trust_domain,
         )
         requested = _subject("malformed-admin")
         _provision(admin, requested, raw="018f3e70-7b5a-7c21-8b9a-000000000703")
@@ -915,8 +945,10 @@ def test_direct_admin_malformed_revoke_and_supersede_are_atomic() -> None:
             for function, payloads in calls:
                 placeholders = "%s,%s,%s,%s,%s" if function == "revoke" else "%s,%s,%s,%s,%s,%s"
                 parameters = (
-                    requested.lookup_handle, requested.environment,
-                    requested.trust_domain, 1,
+                    requested.lookup_handle,
+                    requested.environment,
+                    requested.trust_domain,
+                    1,
                     *(psycopg.types.json.Json(payload) for payload in payloads),
                 )
                 with pytest.raises(psycopg.Error) as raised:
@@ -956,8 +988,10 @@ def test_physical_column_shape_drift_is_rejected(mutation: str) -> None:
         ):
             with pytest.raises(RegistryQualificationError):
                 provider_class(
-                    _role_dsn(role), schema=setup.schema,
-                    environment="PRODUCTION_LOCAL", trust_domain=setup.trust_domain,
+                    _role_dsn(role),
+                    schema=setup.schema,
+                    environment="PRODUCTION_LOCAL",
+                    trust_domain=setup.trust_domain,
                 )
 
 
@@ -982,8 +1016,10 @@ def test_unlogged_registry_relation_is_rejected(relation: str) -> None:
         ):
             with pytest.raises(RegistryQualificationError):
                 provider_class(
-                    _role_dsn(role), schema=setup.schema,
-                    environment="PRODUCTION_LOCAL", trust_domain=setup.trust_domain,
+                    _role_dsn(role),
+                    schema=setup.schema,
+                    environment="PRODUCTION_LOCAL",
+                    trust_domain=setup.trust_domain,
                 )
 
 
@@ -1004,27 +1040,31 @@ def test_registry_inheritance_edge_is_rejected() -> None:
                 )
             with pytest.raises(RegistryQualificationError):
                 PostgreSQLEntitlementRegistryProvider(
-                    _role_dsn(setup.runtime_role), schema=setup.schema,
-                    environment="PRODUCTION_LOCAL", trust_domain=setup.trust_domain,
+                    _role_dsn(setup.runtime_role),
+                    schema=setup.schema,
+                    environment="PRODUCTION_LOCAL",
+                    trust_domain=setup.trust_domain,
                 )
         finally:
             with psycopg.connect(BASE_DSN, autocommit=True) as conn:
                 conn.execute(
-                    sql.SQL("DROP TABLE IF EXISTS public.{} CASCADE").format(
-                        sql.Identifier(parent)
-                    )
+                    sql.SQL("DROP TABLE IF EXISTS public.{} CASCADE").format(sql.Identifier(parent))
                 )
 
 
 def test_rls_false_not_found_attack_is_rejected_at_qualification() -> None:
     with _isolated_registry() as setup:
         runtime = PostgreSQLEntitlementRegistryProvider(
-            _role_dsn(setup.runtime_role), schema=setup.schema,
-            environment="PRODUCTION_LOCAL", trust_domain=setup.trust_domain,
+            _role_dsn(setup.runtime_role),
+            schema=setup.schema,
+            environment="PRODUCTION_LOCAL",
+            trust_domain=setup.trust_domain,
         )
         admin = PostgreSQLEntitlementProvisioningAdminProvider(
-            _role_dsn(setup.admin_role), schema=setup.schema,
-            environment="PRODUCTION_LOCAL", trust_domain=setup.trust_domain,
+            _role_dsn(setup.admin_role),
+            schema=setup.schema,
+            environment="PRODUCTION_LOCAL",
+            trust_domain=setup.trust_domain,
         )
         requested = _subject("rls-hidden")
         _provision(admin, requested, raw="018f3e70-7b5a-7c21-8b9a-000000000721")
@@ -1040,21 +1080,22 @@ def test_rls_false_not_found_attack_is_rejected_at_qualification() -> None:
                     sql.SQL(
                         "CREATE POLICY hide_all ON {}.{} FOR SELECT TO {} USING (false)"
                     ).format(
-                        sql.Identifier(setup.schema), sql.Identifier(relation),
+                        sql.Identifier(setup.schema),
+                        sql.Identifier(relation),
                         sql.Identifier(setup.runtime_role),
                     )
                 )
         with psycopg.connect(_role_dsn(setup.runtime_role).dsn) as conn:
             assert conn.execute(
-                sql.SQL("SELECT count(*) FROM {}.history").format(
-                    sql.Identifier(setup.schema)
-                )
+                sql.SQL("SELECT count(*) FROM {}.history").format(sql.Identifier(setup.schema))
             ).fetchone() == (0,)
         assert runtime.retained_history(requested).outcome is RegistryReadOutcome.NOT_FOUND
         with pytest.raises(RegistryQualificationError):
             PostgreSQLEntitlementRegistryProvider(
-                _role_dsn(setup.runtime_role), schema=setup.schema,
-                environment="PRODUCTION_LOCAL", trust_domain=setup.trust_domain,
+                _role_dsn(setup.runtime_role),
+                schema=setup.schema,
+                environment="PRODUCTION_LOCAL",
+                trust_domain=setup.trust_domain,
             )
 
 
@@ -1068,8 +1109,10 @@ def test_force_rls_without_policy_is_rejected() -> None:
             )
         with pytest.raises(RegistryQualificationError):
             PostgreSQLEntitlementRegistryProvider(
-                _role_dsn(setup.runtime_role), schema=setup.schema,
-                environment="PRODUCTION_LOCAL", trust_domain=setup.trust_domain,
+                _role_dsn(setup.runtime_role),
+                schema=setup.schema,
+                environment="PRODUCTION_LOCAL",
+                trust_domain=setup.trust_domain,
             )
 
 
@@ -1091,8 +1134,10 @@ def test_unexpected_user_trigger_is_rejected_and_cleanup_restores_qualification(
             )
         with pytest.raises(RegistryQualificationError):
             PostgreSQLEntitlementRegistryProvider(
-                _role_dsn(setup.runtime_role), schema=setup.schema,
-                environment="PRODUCTION_LOCAL", trust_domain=setup.trust_domain,
+                _role_dsn(setup.runtime_role),
+                schema=setup.schema,
+                environment="PRODUCTION_LOCAL",
+                trust_domain=setup.trust_domain,
             )
         with psycopg.connect(BASE_DSN, autocommit=True) as conn:
             conn.execute(
@@ -1100,12 +1145,12 @@ def test_unexpected_user_trigger_is_rejected_and_cleanup_restores_qualification(
                     sql.Identifier(setup.schema)
                 )
             )
-            conn.execute(
-                sql.SQL("DROP FUNCTION public.{}()").format(sql.Identifier(function_name))
-            )
+            conn.execute(sql.SQL("DROP FUNCTION public.{}()").format(sql.Identifier(function_name)))
         PostgreSQLEntitlementRegistryProvider(
-            _role_dsn(setup.runtime_role), schema=setup.schema,
-            environment="PRODUCTION_LOCAL", trust_domain=setup.trust_domain,
+            _role_dsn(setup.runtime_role),
+            schema=setup.schema,
+            environment="PRODUCTION_LOCAL",
+            trust_domain=setup.trust_domain,
         )
 
 
@@ -1114,14 +1159,15 @@ def test_unexpected_rewrite_rule_is_rejected() -> None:
         with psycopg.connect(_role_dsn(setup.schema_owner_role).dsn, autocommit=True) as conn:
             conn.execute(
                 sql.SQL(
-                    "CREATE RULE unexpected AS ON INSERT TO {}.history "
-                    "DO ALSO NOTIFY registry_rule"
+                    "CREATE RULE unexpected AS ON INSERT TO {}.history DO ALSO NOTIFY registry_rule"
                 ).format(sql.Identifier(setup.schema))
             )
         with pytest.raises(RegistryQualificationError):
             PostgreSQLEntitlementRegistryProvider(
-                _role_dsn(setup.runtime_role), schema=setup.schema,
-                environment="PRODUCTION_LOCAL", trust_domain=setup.trust_domain,
+                _role_dsn(setup.runtime_role),
+                schema=setup.schema,
+                environment="PRODUCTION_LOCAL",
+                trust_domain=setup.trust_domain,
             )
 
 
@@ -1130,9 +1176,9 @@ def test_prior_function_semantics_schema_version_is_rejected(version: int) -> No
     with _isolated_registry() as setup:
         with psycopg.connect(BASE_DSN, autocommit=True) as conn:
             conn.execute(
-                sql.SQL(
-                    "UPDATE {}.metadata SET schema_version=%s,storage_family=%s"
-                ).format(sql.Identifier(setup.schema)),
+                sql.SQL("UPDATE {}.metadata SET schema_version=%s,storage_family=%s").format(
+                    sql.Identifier(setup.schema)
+                ),
                 (version, f"POSTGRESQL_APPEND_ONLY_V{version}"),
             )
         for provider_class, role in (
@@ -1141,8 +1187,10 @@ def test_prior_function_semantics_schema_version_is_rejected(version: int) -> No
         ):
             with pytest.raises(RegistryQualificationError):
                 provider_class(
-                    _role_dsn(role), schema=setup.schema,
-                    environment="PRODUCTION_LOCAL", trust_domain=setup.trust_domain,
+                    _role_dsn(role),
+                    schema=setup.schema,
+                    environment="PRODUCTION_LOCAL",
+                    trust_domain=setup.trust_domain,
                 )
 
 
@@ -1202,7 +1250,10 @@ def test_provisioning_rolls_back_when_actual_function_differs_from_code_anchor(
 ) -> None:
     suffix = uuid.uuid4().hex[:10]
     setup = PostgreSQLRegistryProvisioning(
-        f"erf_{suffix}", f"erfo_{suffix}", f"erfr_{suffix}", f"erfa_{suffix}",
+        f"erf_{suffix}",
+        f"erfo_{suffix}",
+        f"erfr_{suffix}",
+        f"erfa_{suffix}",
         "td_registry",
     )
     original = postgres_registry._reviewed_function_sources
@@ -1235,8 +1286,10 @@ def test_metadata_only_function_manifest_tamper_is_rejected() -> None:
             )
         with pytest.raises(RegistryQualificationError):
             PostgreSQLEntitlementRegistryProvider(
-                _role_dsn(setup.runtime_role), schema=setup.schema,
-                environment="PRODUCTION_LOCAL", trust_domain=setup.trust_domain,
+                _role_dsn(setup.runtime_role),
+                schema=setup.schema,
+                environment="PRODUCTION_LOCAL",
+                trust_domain=setup.trust_domain,
             )
 
 
@@ -1252,8 +1305,10 @@ def test_body_only_function_tamper_is_rejected() -> None:
             )
         with pytest.raises(RegistryQualificationError):
             PostgreSQLEntitlementRegistryProvider(
-                _role_dsn(setup.runtime_role), schema=setup.schema,
-                environment="PRODUCTION_LOCAL", trust_domain=setup.trust_domain,
+                _role_dsn(setup.runtime_role),
+                schema=setup.schema,
+                environment="PRODUCTION_LOCAL",
+                trust_domain=setup.trust_domain,
             )
 
 
@@ -1291,8 +1346,10 @@ def test_coordinated_admin_or_validator_body_and_manifest_tamper_is_rejected(
         assert persisted == fingerprint
         with pytest.raises(RegistryQualificationError):
             PostgreSQLEntitlementProvisioningAdminProvider(
-                _role_dsn(setup.admin_role), schema=setup.schema,
-                environment="PRODUCTION_LOCAL", trust_domain=setup.trust_domain,
+                _role_dsn(setup.admin_role),
+                schema=setup.schema,
+                environment="PRODUCTION_LOCAL",
+                trust_domain=setup.trust_domain,
             )
 
 
@@ -1300,22 +1357,31 @@ def test_coordinated_append_bind_exploit_and_manifest_tamper_is_rejected() -> No
     signature = "append_bind(text,text,text,bigint,json)"
     with _isolated_registry() as setup:
         runtime = PostgreSQLEntitlementRegistryProvider(
-            _role_dsn(setup.runtime_role), schema=setup.schema,
-            environment="PRODUCTION_LOCAL", trust_domain=setup.trust_domain,
+            _role_dsn(setup.runtime_role),
+            schema=setup.schema,
+            environment="PRODUCTION_LOCAL",
+            trust_domain=setup.trust_domain,
         )
         admin = PostgreSQLEntitlementProvisioningAdminProvider(
-            _role_dsn(setup.admin_role), schema=setup.schema,
-            environment="PRODUCTION_LOCAL", trust_domain=setup.trust_domain,
+            _role_dsn(setup.admin_role),
+            schema=setup.schema,
+            environment="PRODUCTION_LOCAL",
+            trust_domain=setup.trust_domain,
         )
         subject = _subject("coordinated-function-tamper")
         initial = _provision(admin, subject, raw="018f3e70-7b5a-7c21-8b9a-000000000731")
         first = replace(
-            initial, binding=_binding(731),
-            authoritative_state_revision=2, predecessor_revision=1,
+            initial,
+            binding=_binding(731),
+            authoritative_state_revision=2,
+            predecessor_revision=1,
         )
-        assert runtime.compare_and_swap_bind(
-            BindRequest(subject, predecessor_for(initial), first.binding)
-        ).outcome is BindOutcome.NEW_BIND_COMMITTED
+        assert (
+            runtime.compare_and_swap_bind(
+                BindRequest(subject, predecessor_for(initial), first.binding)
+            ).outcome
+            is BindOutcome.NEW_BIND_COMMITTED
+        )
         replacement_body = sql.SQL(
             "CREATE OR REPLACE FUNCTION {}.append_bind(p_handle text,p_environment text,p_trust text,p_expected bigint,p_state json) "
             "RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog "
@@ -1342,7 +1408,8 @@ def test_coordinated_append_bind_exploit_and_manifest_tamper_is_rejected() -> No
                     sql.Identifier(setup.schema)
                 ),
                 (
-                    *_subject_params_for_test(subject), 2,
+                    *_subject_params_for_test(subject),
+                    2,
                     psycopg.types.json.Json(postgres_registry._state_json(second)),
                 ),
             )
@@ -1353,9 +1420,13 @@ def test_coordinated_append_bind_exploit_and_manifest_tamper_is_rejected() -> No
         ):
             with pytest.raises(RegistryQualificationError):
                 provider_class(
-                    _role_dsn(role), schema=setup.schema,
-                    environment="PRODUCTION_LOCAL", trust_domain=setup.trust_domain,
+                    _role_dsn(role),
+                    schema=setup.schema,
+                    environment="PRODUCTION_LOCAL",
+                    trust_domain=setup.trust_domain,
                 )
+
+
 @pytest.mark.parametrize(
     "mutation",
     [
@@ -1387,12 +1458,12 @@ def test_function_and_privilege_shape_mutations_fail_qualification(mutation: str
                 conn.execute(sql.SQL("ALTER FUNCTION {} SECURITY INVOKER").format(append_signature))
             elif mutation == "unsafe_search_path":
                 conn.execute(
-                    sql.SQL("ALTER FUNCTION {} SET search_path = public").format(
-                        append_signature
-                    )
+                    sql.SQL("ALTER FUNCTION {} SET search_path = public").format(append_signature)
                 )
             elif mutation == "public_execute":
-                conn.execute(sql.SQL("GRANT EXECUTE ON FUNCTION {} TO PUBLIC").format(append_signature))
+                conn.execute(
+                    sql.SQL("GRANT EXECUTE ON FUNCTION {} TO PUBLIC").format(append_signature)
+                )
             elif mutation == "runtime_forbidden_dml":
                 conn.execute(
                     sql.SQL("GRANT UPDATE ON {}.history TO {}").format(
@@ -1409,9 +1480,7 @@ def test_function_and_privilege_shape_mutations_fail_qualification(mutation: str
                 conn.execute(
                     sql.SQL(
                         "GRANT EXECUTE ON FUNCTION {}.provision(text,text,text,text,text,json) TO {}"
-                    ).format(
-                        sql.Identifier(setup.schema), sql.Identifier(setup.runtime_role)
-                    )
+                    ).format(sql.Identifier(setup.schema), sql.Identifier(setup.runtime_role))
                 )
             elif mutation == "admin_forbidden_dml":
                 conn.execute(
@@ -1421,9 +1490,7 @@ def test_function_and_privilege_shape_mutations_fail_qualification(mutation: str
                 )
             elif mutation == "runtime_table_grant_option":
                 conn.execute(
-                    sql.SQL(
-                        "GRANT SELECT ON {}.history TO {} WITH GRANT OPTION"
-                    ).format(
+                    sql.SQL("GRANT SELECT ON {}.history TO {} WITH GRANT OPTION").format(
                         sql.Identifier(setup.schema), sql.Identifier(setup.runtime_role)
                     )
                 )
@@ -1462,8 +1529,7 @@ def test_missing_composite_unique_rejected_before_reverse_cardinality_break() ->
         )
         with psycopg.connect(BASE_DSN, autocommit=True) as conn:
             constraint = conn.execute(
-                "SELECT conname FROM pg_constraint WHERE conrelid=%s::regclass "
-                "AND contype='u'",
+                "SELECT conname FROM pg_constraint WHERE conrelid=%s::regclass AND contype='u'",
                 (f"{setup.schema}.lineages",),
             ).fetchone()
             assert constraint is not None
@@ -1474,12 +1540,18 @@ def test_missing_composite_unique_rejected_before_reverse_cardinality_break() ->
             )
         first = _subject("unqualified-reverse-a")
         second = _subject("unqualified-reverse-b")
-        assert admin.provision_entitlement(
-            ProvisionEntitlementRequest(first, _identity(), _provenance())
-        ).outcome is AdminOutcome.COMMITTED
-        assert admin.provision_entitlement(
-            ProvisionEntitlementRequest(second, _identity(), _provenance())
-        ).outcome is AdminOutcome.COMMITTED
+        assert (
+            admin.provision_entitlement(
+                ProvisionEntitlementRequest(first, _identity(), _provenance())
+            ).outcome
+            is AdminOutcome.COMMITTED
+        )
+        assert (
+            admin.provision_entitlement(
+                ProvisionEntitlementRequest(second, _identity(), _provenance())
+            ).outcome
+            is AdminOutcome.COMMITTED
+        )
         for provider_class, role in (
             (PostgreSQLEntitlementRegistryProvider, setup.runtime_role),
             (PostgreSQLEntitlementProvisioningAdminProvider, setup.admin_role),
@@ -1503,14 +1575,11 @@ def test_missing_composite_unique_rejected_before_reverse_cardinality_break() ->
         ("history", "f"),
     ],
 )
-def test_missing_reviewed_constraint_is_rejected(
-    relation: str, constraint_type: str
-) -> None:
+def test_missing_reviewed_constraint_is_rejected(relation: str, constraint_type: str) -> None:
     with _isolated_registry() as setup:
         with psycopg.connect(BASE_DSN, autocommit=True) as conn:
             constraint = conn.execute(
-                "SELECT conname FROM pg_constraint WHERE conrelid=%s::regclass "
-                "AND contype=%s",
+                "SELECT conname FROM pg_constraint WHERE conrelid=%s::regclass AND contype=%s",
                 (f"{setup.schema}.{relation}", constraint_type),
             ).fetchone()
             assert constraint is not None
@@ -1605,7 +1674,9 @@ def test_real_database_permissions_and_security_definer_hardening(registry) -> N
     runtime_dsn = _role_dsn(setup.runtime_role).dsn
     admin_dsn = _role_dsn(setup.admin_role).dsn
     forbidden = [
-        sql.SQL("INSERT INTO {}.history VALUES ('x','x','x',1,NULL,'{{}}')").format(sql.Identifier(setup.schema)),
+        sql.SQL("INSERT INTO {}.history VALUES ('x','x','x',1,NULL,'{{}}')").format(
+            sql.Identifier(setup.schema)
+        ),
         sql.SQL("UPDATE {}.history SET state='{{}}'").format(sql.Identifier(setup.schema)),
         sql.SQL("DELETE FROM {}.history").format(sql.Identifier(setup.schema)),
         sql.SQL("UPDATE {}.metadata SET schema_version=2").format(sql.Identifier(setup.schema)),
@@ -1642,9 +1713,7 @@ def test_transaction_abort_leaves_no_partial_or_orphan_rows(registry) -> None:
     setup = registry["setup"]
     admin = registry["admin"]
     requested = _subject("rollback")
-    state = _provision(
-        admin, requested, raw="018f3e70-7b5a-7c21-8b9a-000000000103"
-    )
+    state = _provision(admin, requested, raw="018f3e70-7b5a-7c21-8b9a-000000000103")
     runtime = registry["runtime"]
     before = runtime.retained_history(requested)
     attempted = replace(
@@ -1706,37 +1775,90 @@ def test_stored_corruption_fails_closed_without_repair(registry, tamper: str) ->
     lineage = sql.Identifier(setup.schema, "lineages")
     with psycopg.connect(_role_dsn(setup.schema_owner_role).dsn, autocommit=True) as conn:
         if tamper == "gap":
-            conn.execute(sql.SQL("DELETE FROM {} WHERE lookup_handle=%s AND revision=1").format(table), (requested.lookup_handle,))
+            conn.execute(
+                sql.SQL("DELETE FROM {} WHERE lookup_handle=%s AND revision=1").format(table),
+                (requested.lookup_handle,),
+            )
         elif tamper == "physical_revision_gap":
             conn.execute(
-                sql.SQL("UPDATE {} SET revision=3 WHERE lookup_handle=%s AND revision=2").format(table),
+                sql.SQL("UPDATE {} SET revision=3 WHERE lookup_handle=%s AND revision=2").format(
+                    table
+                ),
                 (requested.lookup_handle,),
             )
         elif tamper == "physical_predecessor":
             conn.execute(
-                sql.SQL("UPDATE {} SET predecessor_revision=999 WHERE lookup_handle=%s AND revision=2").format(table),
+                sql.SQL(
+                    "UPDATE {} SET predecessor_revision=999 WHERE lookup_handle=%s AND revision=2"
+                ).format(table),
                 (requested.lookup_handle,),
             )
         elif tamper == "rewind":
-            conn.execute(sql.SQL("UPDATE {} SET current_revision=1 WHERE lookup_handle=%s").format(lineage), (requested.lookup_handle,))
+            conn.execute(
+                sql.SQL("UPDATE {} SET current_revision=1 WHERE lookup_handle=%s").format(lineage),
+                (requested.lookup_handle,),
+            )
         elif tamper == "head_beyond":
-            conn.execute(sql.SQL("UPDATE {} SET current_revision=99 WHERE lookup_handle=%s").format(lineage), (requested.lookup_handle,))
+            conn.execute(
+                sql.SQL("UPDATE {} SET current_revision=99 WHERE lookup_handle=%s").format(lineage),
+                (requested.lookup_handle,),
+            )
         elif tamper == "subject":
-            conn.execute(sql.SQL("UPDATE {} SET state=jsonb_set(state,'{{subject,lookup_handle}}','\"other\"') WHERE lookup_handle=%s AND revision=2").format(table), (requested.lookup_handle,))
+            conn.execute(
+                sql.SQL(
+                    "UPDATE {} SET state=jsonb_set(state,'{{subject,lookup_handle}}','\"other\"') WHERE lookup_handle=%s AND revision=2"
+                ).format(table),
+                (requested.lookup_handle,),
+            )
         elif tamper == "product":
-            conn.execute(sql.SQL("UPDATE {} SET state=jsonb_set(state,'{{identity,product_scope}}','\"tampered\"') WHERE lookup_handle=%s AND revision=2").format(table), (requested.lookup_handle,))
+            conn.execute(
+                sql.SQL(
+                    "UPDATE {} SET state=jsonb_set(state,'{{identity,product_scope}}','\"tampered\"') WHERE lookup_handle=%s AND revision=2"
+                ).format(table),
+                (requested.lookup_handle,),
+            )
         elif tamper == "entitlement":
-            conn.execute(sql.SQL("UPDATE {} SET state=jsonb_set(state,'{{identity,bootstrap_entitlement_id}}','\"ent_018f3e70-7b5a-7c21-8b9a-999999999999\"') WHERE lookup_handle=%s AND revision=2").format(table), (requested.lookup_handle,))
+            conn.execute(
+                sql.SQL(
+                    "UPDATE {} SET state=jsonb_set(state,'{{identity,bootstrap_entitlement_id}}','\"ent_018f3e70-7b5a-7c21-8b9a-999999999999\"') WHERE lookup_handle=%s AND revision=2"
+                ).format(table),
+                (requested.lookup_handle,),
+            )
         elif tamper == "generation":
-            conn.execute(sql.SQL("UPDATE {} SET state=jsonb_set(state,'{{identity,entitlement_generation}}','2') WHERE lookup_handle=%s AND revision=2").format(table), (requested.lookup_handle,))
+            conn.execute(
+                sql.SQL(
+                    "UPDATE {} SET state=jsonb_set(state,'{{identity,entitlement_generation}}','2') WHERE lookup_handle=%s AND revision=2"
+                ).format(table),
+                (requested.lookup_handle,),
+            )
         elif tamper == "provenance":
-            conn.execute(sql.SQL("UPDATE {} SET state=jsonb_set(state,'{{provenance,authenticated_creation_reference}}','\"tampered\"') WHERE lookup_handle=%s AND revision=2").format(table), (requested.lookup_handle,))
+            conn.execute(
+                sql.SQL(
+                    "UPDATE {} SET state=jsonb_set(state,'{{provenance,authenticated_creation_reference}}','\"tampered\"') WHERE lookup_handle=%s AND revision=2"
+                ).format(table),
+                (requested.lookup_handle,),
+            )
         elif tamper == "bound_to_unbound":
-            conn.execute(sql.SQL("UPDATE {} SET state=jsonb_set(state,'{{binding}}','{{\"kind\":\"UNBOUND\"}}') WHERE lookup_handle=%s AND revision=2").format(table), (requested.lookup_handle,))
+            conn.execute(
+                sql.SQL(
+                    "UPDATE {} SET state=jsonb_set(state,'{{binding}}','{{\"kind\":\"UNBOUND\"}}') WHERE lookup_handle=%s AND revision=2"
+                ).format(table),
+                (requested.lookup_handle,),
+            )
         elif tamper == "bound_mutation":
-            conn.execute(sql.SQL("UPDATE {} SET state=jsonb_set(state,'{{binding,account_id}}','\"acct_018f3e70-7b5a-7c21-8b9a-999999999999\"') WHERE lookup_handle=%s AND revision=2").format(table), (requested.lookup_handle,))
+            conn.execute(
+                sql.SQL(
+                    "UPDATE {} SET state=jsonb_set(state,'{{binding,account_id}}','\"acct_018f3e70-7b5a-7c21-8b9a-999999999999\"') WHERE lookup_handle=%s AND revision=2"
+                ).format(table),
+                (requested.lookup_handle,),
+            )
         else:
-            conn.execute(sql.SQL("UPDATE {} SET state=jsonb_set(state,'{{lifecycle}}','\"REVOKED\"') WHERE lookup_handle=%s AND revision=1").format(table), (requested.lookup_handle,))
+            conn.execute(
+                sql.SQL(
+                    "UPDATE {} SET state=jsonb_set(state,'{{lifecycle}}','\"REVOKED\"') WHERE lookup_handle=%s AND revision=1"
+                ).format(table),
+                (requested.lookup_handle,),
+            )
     first = runtime.retained_history(requested)
     second = runtime.retained_history(requested)
     assert first.outcome is RegistryReadOutcome.CORRUPT
@@ -1775,9 +1897,7 @@ def test_provision_and_supersession_rollback_are_atomic(registry) -> None:
     assert runtime.authoritative_state(fresh).outcome is RegistryReadOutcome.NOT_FOUND
 
     existing = _subject("rollback-supersession")
-    current = _provision(
-        admin, existing, raw="018f3e70-7b5a-7c21-8b9a-000000000251"
-    )
+    current = _provision(admin, existing, raw="018f3e70-7b5a-7c21-8b9a-000000000251")
     supersede = SupersedeEntitlementRequest(
         admin_predecessor_for(current),
         replace(current.identity, entitlement_generation=2),
@@ -1852,8 +1972,12 @@ def test_concurrent_provision_and_bind_races_use_real_connections(registry) -> N
     raw = "018f3e70-7b5a-7c21-8b9a-000000000301"
     a, b = _subject("race-provision-a"), _subject("race-provision-b")
     provision_results = _run_pair(
-        lambda: admin.provision_entitlement(ProvisionEntitlementRequest(a, _identity(raw=raw), _provenance())),
-        lambda: admin.provision_entitlement(ProvisionEntitlementRequest(b, _identity(raw=raw), _provenance())),
+        lambda: admin.provision_entitlement(
+            ProvisionEntitlementRequest(a, _identity(raw=raw), _provenance())
+        ),
+        lambda: admin.provision_entitlement(
+            ProvisionEntitlementRequest(b, _identity(raw=raw), _provenance())
+        ),
     )
     assert sum(item.outcome is AdminOutcome.COMMITTED for item in provision_results) == 1
     winner = a if runtime.authoritative_state(a).outcome is RegistryReadOutcome.FOUND else b
@@ -1882,7 +2006,9 @@ def test_concurrent_provision_and_bind_races_use_real_connections(registry) -> N
         ("bind", "supersede"),
     ],
 )
-def test_concurrent_admin_and_runtime_races_have_one_successor(registry, left: str, right: str) -> None:
+def test_concurrent_admin_and_runtime_races_have_one_successor(
+    registry, left: str, right: str
+) -> None:
     runtime, admin = _providers(registry)
     requested = _subject(f"race-{left}-{right}")
     raw = f"018f3e70-7b5a-7c21-8b9a-{400 + _counter:012x}"
@@ -1906,13 +2032,12 @@ def test_concurrent_admin_and_runtime_races_have_one_successor(registry, left: s
 
     results = _run_pair(lambda: action(left, 500), lambda: action(right, 501))
     successes = sum(
-        result in (AdminOutcome.COMMITTED, BindOutcome.NEW_BIND_COMMITTED)
-        for result in results
+        result in (AdminOutcome.COMMITTED, BindOutcome.NEW_BIND_COMMITTED) for result in results
     )
     assert successes == 1
     history = runtime.retained_history(requested)
-    supersede_committed = (
-        left == "supersede" and results[0] is AdminOutcome.COMMITTED
-    ) or (right == "supersede" and results[1] is AdminOutcome.COMMITTED)
+    supersede_committed = (left == "supersede" and results[0] is AdminOutcome.COMMITTED) or (
+        right == "supersede" and results[1] is AdminOutcome.COMMITTED
+    )
     expected_length = 3 if supersede_committed else 2
     assert len(history.states) == expected_length

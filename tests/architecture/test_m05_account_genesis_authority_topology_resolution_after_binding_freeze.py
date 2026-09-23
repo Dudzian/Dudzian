@@ -56,7 +56,11 @@ EXPECTED_ROLE_STATUSES = {
 
 MANDATORY_REDTEAM_MUTATIONS = {
     "operation_committed_reservation_reserved": (
-        ("logical_commit_closure", "state_consistency", "operation_COMMITTED_with_reservation_RESERVED"),
+        (
+            "logical_commit_closure",
+            "state_consistency",
+            "operation_COMMITTED_with_reservation_RESERVED",
+        ),
         "PUBLISH",
     ),
     "reservation_consumed_no_genesis": (
@@ -149,17 +153,23 @@ def validate(value: dict) -> None:
     roles = {row["role"]: row for row in value["role_matrix"]}
     assert set(roles) == set(EXPECTED_ROLE_OWNERS)
     required_columns = {
-        "role", "candidate_owner", "authority_scope", "may_create_trust",
-        "may_only_validate_trust", "may_mint_identity",
+        "role",
+        "candidate_owner",
+        "authority_scope",
+        "may_create_trust",
+        "may_only_validate_trust",
+        "may_mint_identity",
         "may_mutate_durable_authority_state",
-        "must_be_independent_from_created_account", "status", "evidence",
+        "must_be_independent_from_created_account",
+        "status",
+        "evidence",
     }
     assert all(set(row) == required_columns for row in roles.values())
-    assert {
-        role: row["candidate_owner"] for role, row in roles.items()
-    } == EXPECTED_ROLE_OWNERS
+    assert {role: row["candidate_owner"] for role, row in roles.items()} == EXPECTED_ROLE_OWNERS
     assert {role: row["status"] for role, row in roles.items()} == EXPECTED_ROLE_STATUSES
-    assert roles["independent root-proof issuer"]["must_be_independent_from_created_account"] == "YES"
+    assert (
+        roles["independent root-proof issuer"]["must_be_independent_from_created_account"] == "YES"
+    )
     assert roles["root-proof validator"]["may_create_trust"] == "NO"
 
     decision_owner = roles["genesis semantic decision owner"]["candidate_owner"]
@@ -172,11 +182,13 @@ def validate(value: dict) -> None:
         "genesis_decision_owner_may_self_issue_independent_root_proof",
         "technical_ownership_grants_root_proof_issuance",
         "minting_candidate_account_id_authorizes_genuine_account",
-        "reservation_establishes_genuine_account", "root_validator_may_mint_proof",
+        "reservation_establishes_genuine_account",
+        "root_validator_may_mint_proof",
         "root_validator_may_create_trust_from_local_account_state",
         "custody_owner_is_domain_authorization_owner",
         "freshness_owner_is_genesis_semantic_decision_owner",
-        "valid_HMAC_is_authorization", "valid_HMAC_is_freshness",
+        "valid_HMAC_is_authorization",
+        "valid_HMAC_is_freshness",
         "CatalogAdmissionReceiptAuthority_has_AccountGenesis_role",
     ]
     assert all(separation[key] is False for key in false_invariants)
@@ -189,23 +201,25 @@ def validate(value: dict) -> None:
     assert ownership["logical_operation_identity_issuer"] == OWNER
     assert ownership["caller_may_issue_genuine_logical_operation_identity"] is False
     assert ownership["caller_command_id_is_genuine_logical_operation_identity"] is False
-    assert ownership["M0.11_SQLiteStateStore_role"] == (
-        "PROJECTION_CARRIER_ONLY / NOT_AUTHORITY"
-    )
+    assert ownership["M0.11_SQLiteStateStore_role"] == ("PROJECTION_CARRIER_ONLY / NOT_AUTHORITY")
 
     validation = value["root_proof_validation_role"]
-    assert roles["root-proof validator"]["candidate_owner"] == (
-        validation["host_component"]
-    ) == decision["owner_identity"] == OWNER
+    assert (
+        roles["root-proof validator"]["candidate_owner"]
+        == (validation["host_component"])
+        == decision["owner_identity"]
+        == OWNER
+    )
     assert validation["is_separate_domain_authority"] is False
     assert validation["may_issue_proof"] is False
     assert validation["may_create_independent_root_trust"] is False
     assert validation["may_validate_evidence"] is True
     assert validation["validation_result_is_final_genesis_decision"] is False
     assert validation["root_proof_validation_evidence_implies_COMMITTED"] is False
-    assert validation[
-        "independent_accepted_root_proof_validation_evidence_required_for_COMMITTED"
-    ] is True
+    assert (
+        validation["independent_accepted_root_proof_validation_evidence_required_for_COMMITTED"]
+        is True
+    )
     assert validation["accepted_proof_without_genesis_COMMITTED"] == "DO_NOT_PUBLISH"
 
     non_circular = value["non_circular_root"]
@@ -226,17 +240,23 @@ def validate(value: dict) -> None:
     assert representation["caller_selected_genuine_ids"] == "FORBIDDEN"
 
     closure = value["logical_commit_closure"]
-    assert roles["durable commit coordinator"]["candidate_owner"] == (
-        closure["coordinator"]
-    ) == decision["owner_identity"] == OWNER
+    assert (
+        roles["durable commit coordinator"]["candidate_owner"]
+        == (closure["coordinator"])
+        == decision["owner_identity"]
+        == OWNER
+    )
     assert roles["account_id mint owner"]["candidate_owner"] == OWNER
     assert roles["reservation owner"]["candidate_owner"] == OWNER
     assert roles["ABORT authorizer"]["candidate_owner"] == OWNER
     assert roles["RELEASE authorizer"]["candidate_owner"] == OWNER
     assert roles["historical resolver owner"]["candidate_owner"] == OWNER
     assert closure["required"] == [
-        "exact operation", "exact canonical request", "exact reservation",
-        "exact account_id", "accepted independent root-proof validation evidence",
+        "exact operation",
+        "exact canonical request",
+        "exact reservation",
+        "exact account_id",
+        "accepted independent root-proof validation evidence",
         "COMMITTED genesis",
     ]
     assert closure["physical_persistence_protocol"] == "NOT_SELECTED / DESIGN_BLOCKED"
@@ -295,7 +315,8 @@ def validate(value: dict) -> None:
     assert {case["id"] for case in redteam} == set(MANDATORY_REDTEAM_MUTATIONS)
     assert all(case["expected"] == "FAIL_CLOSED / DO_NOT_PUBLISH" for case in redteam)
     assert value["implementation_gates"] == {
-        "CryptoHunterAccountAuthority": "NO", "WorkspaceAuthority": "NOT_AVAILABLE",
+        "CryptoHunterAccountAuthority": "NO",
+        "WorkspaceAuthority": "NOT_AVAILABLE",
         "FullFillAuthority": "NOT_AVAILABLE",
         "M0.8": "BLOCKED / canonical current status",
         "production M0.5": "NOT_AVAILABLE",
@@ -313,21 +334,35 @@ def validate_cross_artifact_parity(value: dict) -> None:
     root = load("m05_cryptohunter_account_root_of_trust_reconciliation.json")
     authority = load("m05_cryptohunter_account_genesis_authority_model.json")
 
-    assert uniqueness["entity_uniqueness"]["account_id_is_logical_operation_idempotency_identity"] is False
+    assert (
+        uniqueness["entity_uniqueness"]["account_id_is_logical_operation_idempotency_identity"]
+        is False
+    )
     assert reservation["recovery_identity"]["identity_gap_may_allocate_new_account_id"] is False
     assert reservation["operation_state_machine"]["ABORTED"].startswith("immutable terminal")
-    assert reservation["abort_release_semantics"]["RELEASE_belongs_to"] == "reservation disposition only"
+    assert (
+        reservation["abort_release_semantics"]["RELEASE_belongs_to"]
+        == "reservation disposition only"
+    )
     upstream_closure = reservation["genesis_commit_binding"]
     consistency = value["logical_commit_closure"]["state_consistency"]
-    assert consistency["operation_state_required_for_genuine_account"] in upstream_closure["genuine_at"]
-    assert consistency["reservation_state_required_for_genuine_account"] in upstream_closure["genuine_at"]
+    assert (
+        consistency["operation_state_required_for_genuine_account"]
+        in upstream_closure["genuine_at"]
+    )
+    assert (
+        consistency["reservation_state_required_for_genuine_account"]
+        in upstream_closure["genuine_at"]
+    )
     assert upstream_closure["logical_commit_closure_invariant"] == "FROZEN"
     assert upstream_closure["only_COMMITTED_establishes_genuine_account"] is True
     assert consistency["genuine_account_only_after_complete_logical_closure"] is True
     assert substrate["frozen_inputs"]["valid_MAC_is_freshness"] is False
     assert substrate["frozen_inputs"]["catalog_authority_as_account_authority"] == "FORBIDDEN"
     assert proof["operation_binding"]["proof_id_is_operation_id"] is False
-    assert "root-proof issuance != root-proof validation" in proof["authority_boundary"]["separations"]
+    assert (
+        "root-proof issuance != root-proof validation" in proof["authority_boundary"]["separations"]
+    )
     assert operation["issuance_timing"]["status"] == "NOT_FROZEN"
     assert old_topology["selected_or_blocked_topology"]["one_final_owner_requirement"] == "FROZEN"
     supersedes = value["ownership_resolution"]["supersedes_prior_owner_resolution"]
@@ -365,12 +400,28 @@ def test_contract_and_projection() -> None:
         (("decision", "owner_identity"), "SecondAuthority"),
         (("decision", "missing_external_root_proof_blocks_topology_selection"), True),
         (("decision", "missing_external_root_proof_blocks_COMMITTED_execution"), False),
-        (("separation_invariants", "genesis_decision_owner_may_self_issue_independent_root_proof"), True),
-        (("separation_invariants", "minting_candidate_account_id_authorizes_genuine_account"), True),
+        (
+            (
+                "separation_invariants",
+                "genesis_decision_owner_may_self_issue_independent_root_proof",
+            ),
+            True,
+        ),
+        (
+            ("separation_invariants", "minting_candidate_account_id_authorizes_genuine_account"),
+            True,
+        ),
         (("separation_invariants", "reservation_establishes_genuine_account"), True),
         (("separation_invariants", "valid_HMAC_is_authorization"), True),
         (("logical_commit_closure", "partial_closure"), "PUBLISH"),
-        (("logical_commit_closure", "state_consistency", "reservation_state_required_for_genuine_account"), "RESERVED"),
+        (
+            (
+                "logical_commit_closure",
+                "state_consistency",
+                "reservation_state_required_for_genuine_account",
+            ),
+            "RESERVED",
+        ),
         (("root_proof_validation_role", "accepted_proof_without_genesis_COMMITTED"), "PUBLISH"),
         (("root_proof_validation_role", "validation_result_is_final_genesis_decision"), True),
         (("root_proof_validation_role", "is_separate_domain_authority"), True),
@@ -413,9 +464,7 @@ def test_every_mandatory_redteam_mutates_security_semantics(attack_id: str) -> N
         ("historical resolver owner", "SQLiteStateStore"),
     ],
 )
-def test_every_frozen_role_owner_mutation_fails(
-    role: str, candidate_owner: str
-) -> None:
+def test_every_frozen_role_owner_mutation_fails(role: str, candidate_owner: str) -> None:
     mutated = deepcopy(load())
     row = next(item for item in mutated["role_matrix"] if item["role"] == role)
     row["candidate_owner"] = candidate_owner

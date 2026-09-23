@@ -1,4 +1,5 @@
 """Purpose-separated secret custody for the M0.7 Order authority."""
+
 from __future__ import annotations
 
 import base64

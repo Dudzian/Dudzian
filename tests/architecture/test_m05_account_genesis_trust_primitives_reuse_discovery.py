@@ -33,9 +33,7 @@ def render(value: dict) -> str:
 def validate(value: dict) -> None:
     assert value["artifact"] == "M05_ACCOUNT_GENESIS_TRUST_PRIMITIVES_REUSE_DISCOVERY"
     assert value["iteration"] == "DISCOVERY / RECONCILIATION ONLY"
-    assert value["reviewed_head_supplied"] == (
-        "2a88c726cacebb718748b4872177e9ca639df8af"
-    )
+    assert value["reviewed_head_supplied"] == ("2a88c726cacebb718748b4872177e9ca639df8af")
     assert value["repository_head_examined"] != value["reviewed_head_supplied"]
     provenance = value["provenance"]
     assert provenance["classification"] in {
@@ -80,13 +78,9 @@ def validate(value: dict) -> None:
     isolation = value["production_test_isolation"]
     assert isolation["TEST_authentication_material_accepted_in_PRODUCTION"] is False
     assert "production.v1 versus" in isolation["authority_domain"]
-    assert value["domain_separation"]["catalog_hmac_as_account_genesis_hmac"] == (
-        "MUST_FAIL"
-    )
+    assert value["domain_separation"]["catalog_hmac_as_account_genesis_hmac"] == ("MUST_FAIL")
     assert value["domain_separation"]["m012_record_domain_reuse"] == "FORBIDDEN"
-    assert value["key_reuse_policy"]["CROSS_AUTHORITY_KEY_REUSE_POLICY"] == (
-        "NOT_FROZEN"
-    )
+    assert value["key_reuse_policy"]["CROSS_AUTHORITY_KEY_REUSE_POLICY"] == ("NOT_FROZEN")
     assert value["key_rotation"]["KEY_ROTATION_SEMANTICS"].endswith(
         "account-genesis semantics NOT_FOUND"
     )
@@ -98,8 +92,7 @@ def validate(value: dict) -> None:
     assert cross["single_shared_anchor_sufficient"] is False
     assert cross["current_anchor_detection"].startswith("NO:")
     assert value["CAS_and_generation_reuse"]["account_genesis_result"] == (
-        "REUSABLE_PATTERN_ONLY; does not directly provide "
-        "operation/reservation/account_id CAS"
+        "REUSABLE_PATTERN_ONLY; does not directly provide operation/reservation/account_id CAS"
     )
     assert value["restart_order_parity"]["result"] == "PARTIAL_MATCH"
 
@@ -154,7 +147,10 @@ def test_markdown_is_deterministic_complete_projection() -> None:
     ("path", "unsafe_value"),
     [
         (("domain_separation", "catalog_hmac_as_account_genesis_hmac"), "ACCEPT"),
-        (("production_test_isolation", "TEST_authentication_material_accepted_in_PRODUCTION"), True),
+        (
+            ("production_test_isolation", "TEST_authentication_material_accepted_in_PRODUCTION"),
+            True,
+        ),
         (("threat_boundary", "authentication_is_freshness"), True),
         (("threat_boundary", "machine_wide_rollback"), "PROTECTED"),
         (("cross_authority_anchor_analysis", "single_shared_anchor_sufficient"), True),
@@ -172,18 +168,18 @@ def test_mandatory_redteam_mutations_fail(path: tuple[str, str], unsafe_value: o
 
 
 def test_current_production_evidence_literals_remain_present() -> None:
-    receipt_source = (
-        ROOT / "bot_core/instruments/catalog_admission_receipt.py"
-    ).read_text(encoding="utf-8")
-    test_source = (
-        ROOT / "bot_core/instruments/testing_catalog_admission_receipt.py"
-    ).read_text(encoding="utf-8")
-    runtime_source = (
-        ROOT / "bot_core/instruments/catalog_runtime_acceptance.py"
-    ).read_text(encoding="utf-8")
-    membership_source = (
-        ROOT / "bot_core/instruments/source_producer_membership.py"
-    ).read_text(encoding="utf-8")
+    receipt_source = (ROOT / "bot_core/instruments/catalog_admission_receipt.py").read_text(
+        encoding="utf-8"
+    )
+    test_source = (ROOT / "bot_core/instruments/testing_catalog_admission_receipt.py").read_text(
+        encoding="utf-8"
+    )
+    runtime_source = (ROOT / "bot_core/instruments/catalog_runtime_acceptance.py").read_text(
+        encoding="utf-8"
+    )
+    membership_source = (ROOT / "bot_core/instruments/source_producer_membership.py").read_text(
+        encoding="utf-8"
+    )
     assert "CRYPTOHUNTER_M0_12_CATALOG_ADMISSION_RECEIPT_V1" in receipt_source
     assert 'service_name="dudzian.catalog-admission-receipt"' in receipt_source
     assert '_ANCHOR_SLOT = "authority-anchor-v1"' in receipt_source

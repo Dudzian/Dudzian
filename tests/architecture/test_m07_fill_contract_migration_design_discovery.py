@@ -1,4 +1,5 @@
 """Executable contract checks for the M0.7 Full Fill v2 design discovery."""
+
 from __future__ import annotations
 
 from copy import deepcopy
@@ -69,9 +70,7 @@ def validate(machine: dict[str, object]) -> None:
     assert snapshot_schema["nullable"] is False
     assert snapshot_schema["immutable"] is True
     assert snapshot_schema["syntax_grants_trust"] is False
-    assert snapshot_schema["authority_resolution"].startswith(
-        "CatalogRuntimeAcceptanceAuthority"
-    )
+    assert snapshot_schema["authority_resolution"].startswith("CatalogRuntimeAcceptanceAuthority")
     new_field = schema["new_field"]
     assert new_field["name"] == "accepted_source_catalog_snapshot_id"
     assert new_field["position"] == 10
@@ -114,15 +113,17 @@ def validate(machine: dict[str, object]) -> None:
     history = m05["instrument_contract"]["trusted_history_contract"]
     assert snapshot["binding_location"] == "FILL"
     assert snapshot["selector"] == [
-        "instrument_id", "instrument_metadata_version", "accepted_source_catalog_snapshot_id"
+        "instrument_id",
+        "instrument_metadata_version",
+        "accepted_source_catalog_snapshot_id",
     ]
     assert snapshot["caller_claim_is_proof"] is False
     assert snapshot["identifier_syntax_grants_trust"] is False
-    assert snapshot["authority_validation"].startswith(
-        "CatalogRuntimeAcceptanceAuthority resolves"
-    )
+    assert snapshot["authority_validation"].startswith("CatalogRuntimeAcceptanceAuthority resolves")
     assert snapshot["fallbacks"] == {
-        "latest_snapshot": False, "current_instrument": False, "symbol": False
+        "latest_snapshot": False,
+        "current_instrument": False,
+        "symbol": False,
     }
     assert history["snapshot_binding_field"] == "accepted_source_catalog_snapshot_id"
 
@@ -186,8 +187,7 @@ def validate(machine: dict[str, object]) -> None:
     trusted = machine["trust_boundary"]["trusted_economic_fill_v2"]
     assert trusted["future_owner"] == "M0.7 FullFillAuthority"
     assert (
-        "fee_asset_reference.asset_namespace == resolved historical "
-        "Instrument.source_exchange_id"
+        "fee_asset_reference.asset_namespace == resolved historical Instrument.source_exchange_id"
     ) in trusted["must_prove"]
     assert machine["trust_boundary"]["complete_accepted_fill_history"]["consumes"] == [
         "accepted trusted economic Fill v2 facts only"
@@ -249,31 +249,141 @@ def _set(path: tuple[str, ...], value: object) -> Mutation:
         for key in path[:-1]:
             target = target[key]
         target[path[-1]] = value
+
     return mutate
 
 
 @pytest.mark.parametrize(
     ("name", "mutate"),
     [
-        ("snapshot ID loses prefix grammar", _set(("new_fill_schema", "field_schemas", "accepted_source_catalog_snapshot_id", "type"), "non_empty_string")),
-        ("snapshot ID uses WCP prefix", _set(("new_fill_schema", "field_schemas", "accepted_source_catalog_snapshot_id", "prefix"), "wcat")),
-        ("snapshot syntax grants trust", _set(("new_fill_schema", "field_schemas", "accepted_source_catalog_snapshot_id", "syntax_grants_trust"), True)),
-        ("raw layer claims snapshot acceptance", _set(("trust_boundary", "raw_structural_fill_v2", "may_prove"), ["AcceptedSourceCatalogSnapshotId structural prefix grammar", "snapshot acceptance"])),
-        ("execution/source equality", _set(("paper_semantics", "source_execution_equality_required"), True)),
-        ("structural fee uses execution namespace", _set(("fee_asset_reference_migration", "structural_rule", "namespace_comparison"), "fee_asset_reference.asset_namespace == Fill.exchange_id")),
-        ("structural fee uses historical source namespace", _set(("fee_asset_reference_migration", "structural_rule", "namespace_comparison"), "fee_asset_reference.asset_namespace == historical Instrument.source_exchange_id")),
-        ("raw layer claims source namespace", _set(("trust_boundary", "raw_structural_fill_v2", "may_prove"), ["fee source namespace correctness"])),
-        ("semantic layer omits source namespace", _set(("trust_boundary", "trusted_economic_fill_v2", "must_prove"), ["external trade dedupe", "Fill/Order binding"])),
-        ("candidate includes semantic admission", _set(("candidate_implementation_scope", "semantic_admission_implementation_allowed"), True)),
-        ("candidate includes historical Instrument resolution", _set(("candidate_implementation_scope", "historical_instrument_resolution_in_structural_validator"), True)),
-        ("caller snapshot is proof", _set(("snapshot_binding_semantics", "caller_claim_is_proof"), True)),
-        ("latest snapshot fallback", _set(("snapshot_binding_semantics", "fallbacks"), {"latest_snapshot": True, "current_instrument": False, "symbol": False})),
-        ("current Instrument fallback", _set(("snapshot_binding_semantics", "fallbacks"), {"latest_snapshot": False, "current_instrument": True, "symbol": False})),
-        ("competing Catalog authority", _set(("catalog_runtime_authority_dependency", "single_authority_invariant"), "Another authority is permitted")),
+        (
+            "snapshot ID loses prefix grammar",
+            _set(
+                ("new_fill_schema", "field_schemas", "accepted_source_catalog_snapshot_id", "type"),
+                "non_empty_string",
+            ),
+        ),
+        (
+            "snapshot ID uses WCP prefix",
+            _set(
+                (
+                    "new_fill_schema",
+                    "field_schemas",
+                    "accepted_source_catalog_snapshot_id",
+                    "prefix",
+                ),
+                "wcat",
+            ),
+        ),
+        (
+            "snapshot syntax grants trust",
+            _set(
+                (
+                    "new_fill_schema",
+                    "field_schemas",
+                    "accepted_source_catalog_snapshot_id",
+                    "syntax_grants_trust",
+                ),
+                True,
+            ),
+        ),
+        (
+            "raw layer claims snapshot acceptance",
+            _set(
+                ("trust_boundary", "raw_structural_fill_v2", "may_prove"),
+                [
+                    "AcceptedSourceCatalogSnapshotId structural prefix grammar",
+                    "snapshot acceptance",
+                ],
+            ),
+        ),
+        (
+            "execution/source equality",
+            _set(("paper_semantics", "source_execution_equality_required"), True),
+        ),
+        (
+            "structural fee uses execution namespace",
+            _set(
+                ("fee_asset_reference_migration", "structural_rule", "namespace_comparison"),
+                "fee_asset_reference.asset_namespace == Fill.exchange_id",
+            ),
+        ),
+        (
+            "structural fee uses historical source namespace",
+            _set(
+                ("fee_asset_reference_migration", "structural_rule", "namespace_comparison"),
+                "fee_asset_reference.asset_namespace == historical Instrument.source_exchange_id",
+            ),
+        ),
+        (
+            "raw layer claims source namespace",
+            _set(
+                ("trust_boundary", "raw_structural_fill_v2", "may_prove"),
+                ["fee source namespace correctness"],
+            ),
+        ),
+        (
+            "semantic layer omits source namespace",
+            _set(
+                ("trust_boundary", "trusted_economic_fill_v2", "must_prove"),
+                ["external trade dedupe", "Fill/Order binding"],
+            ),
+        ),
+        (
+            "candidate includes semantic admission",
+            _set(
+                ("candidate_implementation_scope", "semantic_admission_implementation_allowed"),
+                True,
+            ),
+        ),
+        (
+            "candidate includes historical Instrument resolution",
+            _set(
+                (
+                    "candidate_implementation_scope",
+                    "historical_instrument_resolution_in_structural_validator",
+                ),
+                True,
+            ),
+        ),
+        (
+            "caller snapshot is proof",
+            _set(("snapshot_binding_semantics", "caller_claim_is_proof"), True),
+        ),
+        (
+            "latest snapshot fallback",
+            _set(
+                ("snapshot_binding_semantics", "fallbacks"),
+                {"latest_snapshot": True, "current_instrument": False, "symbol": False},
+            ),
+        ),
+        (
+            "current Instrument fallback",
+            _set(
+                ("snapshot_binding_semantics", "fallbacks"),
+                {"latest_snapshot": False, "current_instrument": True, "symbol": False},
+            ),
+        ),
+        (
+            "competing Catalog authority",
+            _set(
+                ("catalog_runtime_authority_dependency", "single_authority_invariant"),
+                "Another authority is permitted",
+            ),
+        ),
         ("M0.8 owns admission", _set(("m08_impact", "raw_fill_resolution_by_m08"), True)),
-        ("schema changes under old domain", _set(("fingerprint_versioning", "new", "domain"), "LEGACY_UNDOMAINED_CANONICAL_JSON_SHA256_V1")),
+        (
+            "schema changes under old domain",
+            _set(
+                ("fingerprint_versioning", "new", "domain"),
+                "LEGACY_UNDOMAINED_CANONICAL_JSON_SHA256_V1",
+            ),
+        ),
         ("legacy admitted as v2", _set(("legacy_policy", "v2_without_provenance"), "ACCEPT")),
-        ("cross-version duplicate effect", _set(("external_trade_dedupe_migration", "same_trade_duplicate_effect_possible"), True)),
+        (
+            "cross-version duplicate effect",
+            _set(("external_trade_dedupe_migration", "same_trade_duplicate_effect_possible"), True),
+        ),
         ("PAPER source rewrite", _set(("paper_semantics", "source_namespace_rewrite"), True)),
     ],
 )

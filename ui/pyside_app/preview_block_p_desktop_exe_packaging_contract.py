@@ -231,7 +231,7 @@ EXPECTED_SOURCE: Final[dict[str, Any]] = {
         "deploy_packaging_source_file_count": 46,
         "deployment_documentation_file_count": 17,
         "config_reference_row_count": 6,
-        "project_dependency_count": 25,
+        "project_dependency_count": 26,
         "desktop_optional_dependency_count": 3,
         "inventory_finding_count": 11,
         "cli_preview_remains_separate": True,
@@ -2608,7 +2608,7 @@ def build_preview_block_p_desktop_exe_packaging_contract() -> dict[str, Any]:
             "contract_satisfied": False,
         },
         "python_dependency_contract": {
-            "declared_dependency_count": 25 if dependency_rows_valid else 0,
+            "declared_dependency_count": 26 if dependency_rows_valid else 0,
             "optional_desktop_dependency_count": 3 if dependency_rows_valid else 0,
             "target_platform": "windows",
             "requires_pyside6": True,

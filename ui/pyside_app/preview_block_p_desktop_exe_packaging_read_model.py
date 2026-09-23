@@ -826,7 +826,7 @@ EXPECTED_SOURCE: Final[dict[str, Any]] = {
         "contract_satisfied": False,
     },
     "python_dependency_contract": {
-        "declared_dependency_count": 25,
+        "declared_dependency_count": 26,
         "optional_desktop_dependency_count": 3,
         "target_platform": "windows",
         "requires_pyside6": True,

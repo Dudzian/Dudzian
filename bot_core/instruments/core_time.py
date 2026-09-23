@@ -1,4 +1,5 @@
 """Core-owned UTC authority used at durable admission boundaries."""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -6,6 +7,7 @@ from datetime import datetime, timezone
 
 class ProductionCoreClock:
     """Sealed production clock with no caller-configurable provider."""
+
     __slots__ = ()
 
     def __init_subclass__(cls, **kwargs: object) -> None:

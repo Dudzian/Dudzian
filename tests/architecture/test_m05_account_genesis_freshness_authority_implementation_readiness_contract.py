@@ -74,8 +74,9 @@ def validate(value: dict) -> None:
     assert history["current_head_alone_sufficient"] is False
     assert history["negative_lookup_is_non_acceptance_proof"] is False
     assert "exact immediate successor for old predecessor" in history["lookups"]
-    assert "cryptographically linked to currently trusted authority root/state" in (
-        history["properties"]
+    assert (
+        "cryptographically linked to currently trusted authority root/state"
+        in (history["properties"])
     )
 
     receipt = value["finalization_receipt_durability"]
@@ -114,14 +115,10 @@ def validate(value: dict) -> None:
         "only authenticated lifecycle lineage"
     )
     assert crypto["authentication"]["signature_representation"] == SIGNATURE
-    assert "same role as receipt" in crypto["authentication"][
-        "authoritative_document_signing_role"
-    ]
+    assert "same role as receipt" in crypto["authentication"]["authoritative_document_signing_role"]
 
     domains = value["domain_separation_profile"]
-    assert domains["preimage_format"] == (
-        "ASCII(exact_domain_literal) || 0x00 || canonical_bytes"
-    )
+    assert domains["preimage_format"] == ("ASCII(exact_domain_literal) || 0x00 || canonical_bytes")
     literals = domains["exact_literals"]
     assert len(literals) == 6
     assert len(set(literals.values())) == len(literals)
@@ -149,20 +146,30 @@ def validate(value: dict) -> None:
 
     local = value["local_authority_adapter"]
     assert set(local["atomic_transitions"]) == {
-        "INITIAL_BINDING", "PREPARED", "REPREPARE supersession", "FINAL_COMMIT"
+        "INITIAL_BINDING",
+        "PREPARED",
+        "REPREPARE supersession",
+        "FINAL_COMMIT",
     }
     assert local["M011_SQLiteStateStore_role"] == "PROJECTION_ONLY / NOT_AUTHORITY"
     assert local["process_local_lock_sufficient"] is False
 
     matrix = {row["capability"]: row for row in value["implementation_readiness_matrix"]}
     required = {
-        "authoritative full-document CAS", "authoritative reread",
-        "retained decision history", "immediate-successor historical proof",
-        "durable finalization receipts", "canonical serialization",
-        "digest algorithm", "receipt auth algorithm/provider",
-        "proposer auth algorithm/provider", "freshness key custody",
-        "freshness key lifecycle storage", "proposer trust lineage",
-        "local transactional AccountGenesis adapter", "multi-process fencing",
+        "authoritative full-document CAS",
+        "authoritative reread",
+        "retained decision history",
+        "immediate-successor historical proof",
+        "durable finalization receipts",
+        "canonical serialization",
+        "digest algorithm",
+        "receipt auth algorithm/provider",
+        "proposer auth algorithm/provider",
+        "freshness key custody",
+        "freshness key lifecycle storage",
+        "proposer trust lineage",
+        "local transactional AccountGenesis adapter",
+        "multi-process fencing",
         "TEST/PRODUCTION separation",
     }
     assert set(matrix) == required
@@ -198,44 +205,46 @@ def validate_cross_artifact(readiness: dict, freshness: dict, physical: dict) ->
         assert refinement["canonical_profile"][freshness_key] == canonical[readiness_key]
     assert refinement["digest_algorithm"] == crypto["digest"]["algorithm"]
     assert refinement["digest_representation"] == crypto["digest"]["representation"]
-    assert refinement["signature_representation"] == crypto["authentication"][
-        "signature_representation"
-    ]
+    assert (
+        refinement["signature_representation"]
+        == crypto["authentication"]["signature_representation"]
+    )
     assert document["canonical_byte_encoding"] == canonical["serialization"]
     assert document["hash_algorithm"] == crypto["digest"]["algorithm"]
     assert document["digest_representation"] == crypto["digest"]["representation"]
-    assert document["proposed_candidate_object"]["authentication_algorithm"] == crypto[
-        "authentication"
-    ]["proposer"]
+    assert (
+        document["proposed_candidate_object"]["authentication_algorithm"]
+        == crypto["authentication"]["proposer"]
+    )
     assert proposer["authentication_algorithm"] == crypto["authentication"]["proposer"]
     assert receipt["cryptographic_algorithm"] == crypto["authentication"]["receipt"]
-    assert document["authoritative_document_authentication"]["algorithm"] == crypto[
-        "authentication"
-    ]["authoritative_document"]
-    assert receipt["signature_representation"] == crypto["authentication"][
-        "signature_representation"
-    ]
-    assert proposer["signature_representation"] == crypto["authentication"][
-        "signature_representation"
-    ]
-    assert evidence["complete_semantic_head_digest_canonical_byte_encoding"] == canonical[
-        "serialization"
-    ]
-    assert evidence["complete_semantic_head_digest_hash_algorithm"] == crypto["digest"][
-        "algorithm"
-    ]
+    assert (
+        document["authoritative_document_authentication"]["algorithm"]
+        == crypto["authentication"]["authoritative_document"]
+    )
+    assert (
+        receipt["signature_representation"] == crypto["authentication"]["signature_representation"]
+    )
+    assert (
+        proposer["signature_representation"] == crypto["authentication"]["signature_representation"]
+    )
+    assert (
+        evidence["complete_semantic_head_digest_canonical_byte_encoding"]
+        == canonical["serialization"]
+    )
+    assert evidence["complete_semantic_head_digest_hash_algorithm"] == crypto["digest"]["algorithm"]
     assert freshness["concrete_representation_refinement"]["domain_separators"] == domains
     assert refinement["domain_rules"]["runtime_or_caller_configurable"] is False
-    assert document["document_digest_domain_literal"] == domains[
-        "freshness_document_digest"
-    ]
-    assert document["authoritative_document_authentication"]["domain_literal"] == domains[
-        "authoritative_document_authentication"
-    ]
+    assert document["document_digest_domain_literal"] == domains["freshness_document_digest"]
+    assert (
+        document["authoritative_document_authentication"]["domain_literal"]
+        == domains["authoritative_document_authentication"]
+    )
     assert proposer["domain_literal"] == domains["cha_proposer_authentication"]
-    assert evidence["complete_semantic_head_digest_domain_literal"] == domains[
-        "complete_semantic_head_set_digest"
-    ]
+    assert (
+        evidence["complete_semantic_head_digest_domain_literal"]
+        == domains["complete_semantic_head_set_digest"]
+    )
     assert receipt["domain_literal"] == domains["finalization_receipt_authentication"]
     assert document["authoritative_document_authentication"]["proposer_key_role_allowed"] is False
 
@@ -243,19 +252,20 @@ def validate_cross_artifact(readiness: dict, freshness: dict, physical: dict) ->
     physical_selection = physical["selected_or_blocked_protocol"]
     physical_status = physical["preserved_status"]
     assert physical_result["physical_protocol_frozen"] is True
-    assert physical_result["selected_protocol"] == readiness["frozen_inputs"][
-        "physical_protocol"
-    ]
+    assert physical_result["selected_protocol"] == readiness["frozen_inputs"]["physical_protocol"]
     assert physical_selection["protocol_result"] == physical_result["primary_result"]
-    assert freshness["result"]["physical_persistence_unblocked"] == physical_result[
-        "physical_protocol_frozen"
-    ]
-    assert freshness["preserved_status"]["physical persistence protocol"] == physical_status[
-        "physical persistence protocol"
-    ]
-    assert freshness["preserved_status"]["physical persistence result"] == physical_selection[
-        "protocol_result"
-    ]
+    assert (
+        freshness["result"]["physical_persistence_unblocked"]
+        == physical_result["physical_protocol_frozen"]
+    )
+    assert (
+        freshness["preserved_status"]["physical persistence protocol"]
+        == physical_status["physical persistence protocol"]
+    )
+    assert (
+        freshness["preserved_status"]["physical persistence result"]
+        == physical_selection["protocol_result"]
+    )
     reason = freshness["result"]["reason"]
     assert "canonical serialization/key algorithm review" not in reason
     assert "physical persistence blockers" not in reason
@@ -267,39 +277,77 @@ def validate_cross_artifact(readiness: dict, freshness: dict, physical: dict) ->
 
 
 MUTATIONS = {
-    "read_compare_write_accepted_as_CAS": lambda x: x["production_CAS_backend_contract"]["forbidden_substitutes"].remove("read-then-write"),
-    "process_mutex_accepted_as_global_CAS": lambda x: x["production_CAS_backend_contract"]["forbidden_substitutes"].remove("process mutex"),
-    "two_successful_successors": lambda x: x["production_CAS_backend_contract"].__setitem__("winner_cardinality", "two winners allowed"),
-    "current_head_only_sufficient_history": lambda x: x["retained_authoritative_history"].__setitem__("current_head_alone_sufficient", True),
-    "negative_receipt_lookup_proves_non_acceptance": lambda x: x["retained_authoritative_history"].__setitem__("negative_lookup_is_non_acceptance_proof", True),
-    "receipt_only_in_process_memory": lambda x: x["finalization_receipt_durability"].__setitem__("memory_only_allowed", True),
-    "receipt_not_bound_to_exact_CAS_decision": lambda x: x["finalization_receipt_durability"]["exact_binding"].remove("decision sequence/id"),
-    "noncanonical_serialization_accepted": lambda x: x["canonical_representation"].__setitem__("serialization", "implementation-defined JSON"),
-    "processes_hash_same_semantics_differently": lambda x: x["canonical_representation"].__setitem__("cross_process_rule", "process-local output allowed"),
-    "unauthenticated_key_alias_selects_verifier": lambda x: x["cryptographic_profile"]["authentication"].__setitem__("verifier_selection", "caller alias"),
-    "proposer_key_reused_as_freshness_key": lambda x: x["key_custody"].__setitem__("role_reuse_forbidden", False),
+    "read_compare_write_accepted_as_CAS": lambda x: x["production_CAS_backend_contract"][
+        "forbidden_substitutes"
+    ].remove("read-then-write"),
+    "process_mutex_accepted_as_global_CAS": lambda x: x["production_CAS_backend_contract"][
+        "forbidden_substitutes"
+    ].remove("process mutex"),
+    "two_successful_successors": lambda x: x["production_CAS_backend_contract"].__setitem__(
+        "winner_cardinality", "two winners allowed"
+    ),
+    "current_head_only_sufficient_history": lambda x: x[
+        "retained_authoritative_history"
+    ].__setitem__("current_head_alone_sufficient", True),
+    "negative_receipt_lookup_proves_non_acceptance": lambda x: x[
+        "retained_authoritative_history"
+    ].__setitem__("negative_lookup_is_non_acceptance_proof", True),
+    "receipt_only_in_process_memory": lambda x: x["finalization_receipt_durability"].__setitem__(
+        "memory_only_allowed", True
+    ),
+    "receipt_not_bound_to_exact_CAS_decision": lambda x: x["finalization_receipt_durability"][
+        "exact_binding"
+    ].remove("decision sequence/id"),
+    "noncanonical_serialization_accepted": lambda x: x["canonical_representation"].__setitem__(
+        "serialization", "implementation-defined JSON"
+    ),
+    "processes_hash_same_semantics_differently": lambda x: x[
+        "canonical_representation"
+    ].__setitem__("cross_process_rule", "process-local output allowed"),
+    "unauthenticated_key_alias_selects_verifier": lambda x: x["cryptographic_profile"][
+        "authentication"
+    ].__setitem__("verifier_selection", "caller alias"),
+    "proposer_key_reused_as_freshness_key": lambda x: x["key_custody"].__setitem__(
+        "role_reuse_forbidden", False
+    ),
     "Catalog_key_reused": lambda x: x["key_custody"]["separate_roles"].pop(),
-    "TEST_key_or_state_accepted_in_PRODUCTION": lambda x: x["frozen_inputs"].__setitem__("TEST_PRODUCTION_domains_distinct", False),
-    "TOFU_proposer_admitted": lambda x: x["proposer_trust_lineage"].__setitem__("TOFU_allowed", True),
-    "candidate_self_provisions_proposer_trust": lambda x: x["proposer_trust_lineage"].__setitem__("candidate_self_provision_allowed", True),
-    "revoked_key_finalizes_new_transition": lambda x: x["key_custody"]["lifecycle"].__setitem__(2, "REVOKED may sign"),
-    "M011_projection_promoted_to_authority": lambda x: x["local_authority_adapter"].__setitem__("M011_SQLiteStateStore_role", "AUTHORITY"),
-    "local_adapter_process_lock_only": lambda x: x["local_authority_adapter"].__setitem__("process_local_lock_sufficient", True),
-    "timeout_treated_as_failed": lambda x: x["failure_model"].__setitem__("TIMEOUT_AFTER_SEND", "FAILED"),
-    "timeout_treated_as_success": lambda x: x["failure_model"].__setitem__("TIMEOUT_AFTER_SEND", "SUCCESS"),
+    "TEST_key_or_state_accepted_in_PRODUCTION": lambda x: x["frozen_inputs"].__setitem__(
+        "TEST_PRODUCTION_domains_distinct", False
+    ),
+    "TOFU_proposer_admitted": lambda x: x["proposer_trust_lineage"].__setitem__(
+        "TOFU_allowed", True
+    ),
+    "candidate_self_provisions_proposer_trust": lambda x: x["proposer_trust_lineage"].__setitem__(
+        "candidate_self_provision_allowed", True
+    ),
+    "revoked_key_finalizes_new_transition": lambda x: x["key_custody"]["lifecycle"].__setitem__(
+        2, "REVOKED may sign"
+    ),
+    "M011_projection_promoted_to_authority": lambda x: x["local_authority_adapter"].__setitem__(
+        "M011_SQLiteStateStore_role", "AUTHORITY"
+    ),
+    "local_adapter_process_lock_only": lambda x: x["local_authority_adapter"].__setitem__(
+        "process_local_lock_sufficient", True
+    ),
+    "timeout_treated_as_failed": lambda x: x["failure_model"].__setitem__(
+        "TIMEOUT_AFTER_SEND", "FAILED"
+    ),
+    "timeout_treated_as_success": lambda x: x["failure_model"].__setitem__(
+        "TIMEOUT_AFTER_SEND", "SUCCESS"
+    ),
 }
 
 
 CROSS_ARTIFACT_MUTATIONS = {
-    "readiness_SHA256_freshness_NOT_FROZEN": lambda r, f: f[
-        "anchor_document_contract"
-    ].__setitem__("hash_algorithm", "NOT_FROZEN"),
+    "readiness_SHA256_freshness_NOT_FROZEN": lambda r, f: f["anchor_document_contract"].__setitem__(
+        "hash_algorithm", "NOT_FROZEN"
+    ),
     "readiness_Ed25519_proposer_freshness_NOT_FROZEN": lambda r, f: f[
         "proposer_authentication_boundary"
     ].__setitem__("authentication_algorithm", "NOT_FROZEN"),
-    "readiness_Ed25519_receipt_freshness_NOT_FROZEN": lambda r, f: f[
-        "finalization_evidence"
-    ]["authentication_boundary"].__setitem__("cryptographic_algorithm", "NOT_FROZEN"),
+    "readiness_Ed25519_receipt_freshness_NOT_FROZEN": lambda r, f: f["finalization_evidence"][
+        "authentication_boundary"
+    ].__setitem__("cryptographic_algorithm", "NOT_FROZEN"),
     "readiness_JCS_freshness_different_encoding": lambda r, f: f[
         "anchor_document_contract"
     ].__setitem__("canonical_byte_encoding", "implementation-defined JSON"),
@@ -324,27 +372,27 @@ CROSS_ARTIFACT_MUTATIONS = {
     "unversioned_domain_separator": lambda r, f: f["anchor_document_contract"].__setitem__(
         "document_digest_domain_literal", "cryptohunter.account-genesis.document"
     ),
-    "caller_configurable_domain_separator": lambda r, f: f[
-        "concrete_representation_refinement"
-    ]["domain_rules"].__setitem__("runtime_or_caller_configurable", True),
-    "authoritative_document_auth_unspecified": lambda r, f: f[
-        "anchor_document_contract"
-    ]["authoritative_document_authentication"].__setitem__("algorithm", "NOT_FROZEN"),
-    "proposer_key_reused_for_authoritative_document": lambda r, f: f[
-        "anchor_document_contract"
-    ]["authoritative_document_authentication"].__setitem__("proposer_key_role_allowed", True),
-    "invalid_unicode_lone_surrogate_accepted": lambda r, f: f[
-        "concrete_representation_refinement"
-    ]["canonical_profile"].__setitem__("invalid_Unicode_or_lone_surrogate", "ACCEPT"),
+    "caller_configurable_domain_separator": lambda r, f: f["concrete_representation_refinement"][
+        "domain_rules"
+    ].__setitem__("runtime_or_caller_configurable", True),
+    "authoritative_document_auth_unspecified": lambda r, f: f["anchor_document_contract"][
+        "authoritative_document_authentication"
+    ].__setitem__("algorithm", "NOT_FROZEN"),
+    "proposer_key_reused_for_authoritative_document": lambda r, f: f["anchor_document_contract"][
+        "authoritative_document_authentication"
+    ].__setitem__("proposer_key_role_allowed", True),
+    "invalid_unicode_lone_surrogate_accepted": lambda r, f: f["concrete_representation_refinement"][
+        "canonical_profile"
+    ].__setitem__("invalid_Unicode_or_lone_surrogate", "ACCEPT"),
     "padded_base64url_accepted": lambda r, f: f["concrete_representation_refinement"][
         "canonical_profile"
     ].__setitem__("base64url", "padding accepted"),
     "uppercase_digest_accepted": lambda r, f: f["concrete_representation_refinement"][
         "canonical_profile"
     ].__setitem__("digest_hex", "uppercase accepted"),
-    "duplicate_JSON_keys_accepted": lambda r, f: f[
-        "concrete_representation_refinement"
-    ]["canonical_profile"].__setitem__("duplicate_object_keys", "ACCEPT"),
+    "duplicate_JSON_keys_accepted": lambda r, f: f["concrete_representation_refinement"][
+        "canonical_profile"
+    ].__setitem__("duplicate_object_keys", "ACCEPT"),
     "set_like_array_order_implementation_dependent": lambda r, f: f[
         "concrete_representation_refinement"
     ]["canonical_profile"].__setitem__("set_like_array_rule", "implementation-dependent"),
@@ -361,9 +409,9 @@ CROSS_ARTIFACT_STATUS_MUTATIONS = {
     "freshness_frozen_physical_not_frozen": lambda r, f, p: p["result"].__setitem__(
         "physical_protocol_frozen", False
     ),
-    "freshness_reason_claims_canonical_crypto_NOT_FROZEN": lambda r, f, p: f[
-        "result"
-    ].__setitem__("reason", "canonical serialization/key algorithm review does not exist"),
+    "freshness_reason_claims_canonical_crypto_NOT_FROZEN": lambda r, f, p: f["result"].__setitem__(
+        "reason", "canonical serialization/key algorithm review does not exist"
+    ),
     "freshness_reason_claims_physical_design_blockers_remain": lambda r, f, p: f[
         "result"
     ].__setitem__("reason", "physical persistence blockers remain"),
@@ -409,10 +457,10 @@ def test_cross_artifact_crypto_mutations_are_applied_and_rejected(
     mutated_physical = deepcopy(physical)
     CROSS_ARTIFACT_MUTATIONS[mutation_name](mutated_readiness, mutated_freshness)
     assert (mutated_readiness, mutated_freshness, mutated_physical) != (
-        readiness, freshness, physical
-    ), (
-        f"mutation {mutation_name} was not applied"
-    )
+        readiness,
+        freshness,
+        physical,
+    ), f"mutation {mutation_name} was not applied"
     with pytest.raises(AssertionError):
         validate_cross_artifact(mutated_readiness, mutated_freshness, mutated_physical)
 
@@ -431,7 +479,9 @@ def test_cross_artifact_status_mutations_are_applied_and_rejected(
         mutated_readiness, mutated_freshness, mutated_physical
     )
     assert (mutated_readiness, mutated_freshness, mutated_physical) != (
-        readiness, freshness, physical
+        readiness,
+        freshness,
+        physical,
     ), f"mutation {mutation_name} was not applied"
     with pytest.raises(AssertionError):
         validate_cross_artifact(mutated_readiness, mutated_freshness, mutated_physical)
@@ -454,12 +504,13 @@ def test_cross_artifact_frozen_inputs_and_boundaries() -> None:
     assert physical["selected_or_blocked_protocol"]["selection"] == (
         "INITIAL_BINDING_THEN_PREPARED_THEN_FRESHNESS_CAS_THEN_LOCAL_FINAL_COMMIT"
     )
-    assert physical["projection_boundary"][
-        "M0.11_SQLiteStateStore_CryptoHunterAccount"
-    ].startswith("PROJECTION_CARRIER_ONLY")
-    assert topology["separation_invariants"][
-        "freshness_owner_is_genesis_semantic_decision_owner"
-    ] is False
+    assert physical["projection_boundary"]["M0.11_SQLiteStateStore_CryptoHunterAccount"].startswith(
+        "PROJECTION_CARRIER_ONLY"
+    )
+    assert (
+        topology["separation_invariants"]["freshness_owner_is_genesis_semantic_decision_owner"]
+        is False
+    )
     assert security["anchor_models"]["catalog_anchor_reused"] is False
     assert security["production_test_separation"]["authority_domain"] == "DISTINCT"
     assert operation["implementation_allowed"]["CryptoHunterAccountAuthority"] is False

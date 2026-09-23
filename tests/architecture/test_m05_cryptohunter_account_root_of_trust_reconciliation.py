@@ -1,4 +1,5 @@
 """Executable checks for the M0.3/account root-of-trust reconciliation."""
+
 from __future__ import annotations
 
 from copy import deepcopy
@@ -53,8 +54,9 @@ def validate_cross_artifact(account_design: dict, reconciliation: dict) -> None:
         "UNRESOLVED_PENDING_ROOT_OF_TRUST_RECONCILIATION",
         "NOT_FROZEN",
     }
-    assert reconciliation["impact_on_current_account_design"]["account_id_owner"] == (
-        minting["account_id_owner"]
+    assert (
+        reconciliation["impact_on_current_account_design"]["account_id_owner"]
+        == (minting["account_id_owner"])
     )
     assert reservation["current_account_id_owner"] == minting["account_id_owner"]
     assert minting["status"] == "DESIGN_BLOCKED"
@@ -80,9 +82,7 @@ def validate(data: dict) -> None:
     assert data["upstream_dependency"] == (
         "external_product_provisioning_boundary production implementation"
     )
-    assert data["production_provisioning_authority_availability"] == (
-        "NOT_FOUND / NOT_AVAILABLE"
-    )
+    assert data["production_provisioning_authority_availability"] == ("NOT_FOUND / NOT_AVAILABLE")
     provenance = data["account_id_provenance"]
     assert provenance["handoff_supplies_account_id"] is True
     assert provenance["handoff_mints_account_id"] == "NOT_PROVEN"
@@ -91,9 +91,7 @@ def validate(data: dict) -> None:
     assert data["m03_existing_authorities"]["FirstRunBootstrapAuthority"]["purpose"] == (
         "INITIAL_SECURITY_ESTABLISHMENT_ONLY"
     )
-    assert data["root_candidate_evaluation"]["result"] == (
-        "VIABLE_ONLY_AFTER_ADDITIONAL_AUTHORITY"
-    )
+    assert data["root_candidate_evaluation"]["result"] == ("VIABLE_ONLY_AFTER_ADDITIONAL_AUTHORITY")
     assert data["circularity_analysis"]["classification"] == "UNRESOLVED"
     assert data["account_vs_device_ordering"]["classification"] == "UNRESOLVED"
     assert data["impact_on_current_account_design"]["classification"] == "UNRESOLVED"
@@ -160,12 +158,16 @@ def validate(data: dict) -> None:
         assert data["result"] != "ROOT_PROOF_BLOCKED_UPSTREAM"
         assert data["upstream_only_resolution_sufficient"] is False
 
-    assert data["circularity_analysis"][
-        "production_ProvisioningBoundary_AVAILABLE_solves_circularity"
-    ] is False
-    assert data["account_vs_device_ordering"][
-        "production_provisioning_authority_available_selects_model"
-    ] is False
+    assert (
+        data["circularity_analysis"]["production_ProvisioningBoundary_AVAILABLE_solves_circularity"]
+        is False
+    )
+    assert (
+        data["account_vs_device_ordering"][
+            "production_provisioning_authority_available_selects_model"
+        ]
+        is False
+    )
     assert data["account_vs_device_ordering"]["models"] == {
         "ACCOUNT_FIRST": "NOT_SELECTED / NOT_PROVEN",
         "ATOMIC_ACCOUNT_PLUS_FIRST_DEVICE": "NOT_SELECTED / NOT_PROVEN",
@@ -180,9 +182,7 @@ def validate(data: dict) -> None:
         "device startup order",
         "last writer wins",
     ]
-    same_account_race = data["account_vs_device_ordering"][
-        "same_account_first_device_race"
-    ]
+    same_account_race = data["account_vs_device_ordering"]["same_account_first_device_race"]
     assert same_account_race["claims"] == ["acct_A / dev_1", "acct_A / dev_2"]
     assert same_account_race["result"] == "DESIGN_BLOCKED"
     assert "must not create two genesis facts" in same_account_race["rule"]
@@ -229,9 +229,7 @@ def test_account_design_and_reconciliation_have_account_id_parity() -> None:
             account_id_owner="future genuine CryptoHunterAccountAuthority only"
         ),
         lambda design, _: design["id_minting"].update(status="PARTIALLY_FROZEN_WITH_OWNER"),
-        lambda design, _: design["admission"]["request_must_not_contain"].append(
-            "account_id"
-        ),
+        lambda design, _: design["admission"]["request_must_not_contain"].append("account_id"),
         lambda design, reconciliation: (
             reconciliation["account_id_reservation_problem"]["models"].update(
                 B_EXTERNAL_AUTHORITY_MINTS_ACCOUNT_ID="POSSIBLE",
@@ -268,19 +266,64 @@ def test_cross_artifact_account_id_regressions_fail(mutation) -> None:
 @pytest.mark.parametrize(
     ("name", "mutate"),
     [
-        ("caller-hash-is-authority", lambda x: x["authentication"].update(caller_generated_correct_sha="ALLOW")),
-        ("bootstrap-is-account-authority", lambda x: x["m03_existing_authorities"]["FirstRunBootstrapAuthority"].update(may_mint_account_id=True)),
-        ("bootstrapper-mints-membership", lambda x: x["m03_existing_authorities"]["Bootstrapper"].update(authority_owner=True)),
-        ("core-self-enrolls", lambda x: x["m03_existing_authorities"]["CoreHost"].update(may_accept_account_identity=True)),
-        ("syntax-proves-membership", lambda x: x["authentication"].update(claim_fingerprint_role="authority")),
+        (
+            "caller-hash-is-authority",
+            lambda x: x["authentication"].update(caller_generated_correct_sha="ALLOW"),
+        ),
+        (
+            "bootstrap-is-account-authority",
+            lambda x: x["m03_existing_authorities"]["FirstRunBootstrapAuthority"].update(
+                may_mint_account_id=True
+            ),
+        ),
+        (
+            "bootstrapper-mints-membership",
+            lambda x: x["m03_existing_authorities"]["Bootstrapper"].update(authority_owner=True),
+        ),
+        (
+            "core-self-enrolls",
+            lambda x: x["m03_existing_authorities"]["CoreHost"].update(
+                may_accept_account_identity=True
+            ),
+        ),
+        (
+            "syntax-proves-membership",
+            lambda x: x["authentication"].update(claim_fingerprint_role="authority"),
+        ),
         ("second-genesis", lambda x: x["multi_device_semantics"].update(forbidden=[])),
-        ("device-two-new-account", lambda x: x["multi_device_semantics"].update(required_proof="mint acct_B")),
-        ("replay-mints-account", lambda x: x["replay"].update(account_admission_gap="replay mints another account")),
-        ("public-sha-is-membership", lambda x: x["provisioning_claim_contract"].update(public_fingerprint_is_authenticity=True)),
-        ("carrier-is-root", lambda x: x["m03_existing_authorities"]["M0.11_durable_registry"].update(authority_owner=True)),
+        (
+            "device-two-new-account",
+            lambda x: x["multi_device_semantics"].update(required_proof="mint acct_B"),
+        ),
+        (
+            "replay-mints-account",
+            lambda x: x["replay"].update(account_admission_gap="replay mints another account"),
+        ),
+        (
+            "public-sha-is-membership",
+            lambda x: x["provisioning_claim_contract"].update(
+                public_fingerprint_is_authenticity=True
+            ),
+        ),
+        (
+            "carrier-is-root",
+            lambda x: x["m03_existing_authorities"]["M0.11_durable_registry"].update(
+                authority_owner=True
+            ),
+        ),
         ("fake-upstream-only-result", lambda x: x.update(result="ROOT_PROOF_BLOCKED_UPSTREAM")),
-        ("upstream-magically-selects-ordering", lambda x: x["account_vs_device_ordering"].update(production_provisioning_authority_available_selects_model=True)),
-        ("ownership-falsely-complete", lambda x: x["account_id_reservation_problem"].update(end_to_end_account_id_ownership_protocol="FROZEN")),
+        (
+            "upstream-magically-selects-ordering",
+            lambda x: x["account_vs_device_ordering"].update(
+                production_provisioning_authority_available_selects_model=True
+            ),
+        ),
+        (
+            "ownership-falsely-complete",
+            lambda x: x["account_id_reservation_problem"].update(
+                end_to_end_account_id_ownership_protocol="FROZEN"
+            ),
+        ),
     ],
 )
 def test_mandatory_redteam_mutations_fail(name, mutate) -> None:
@@ -292,18 +335,36 @@ def test_mandatory_redteam_mutations_fail(name, mutate) -> None:
 
 def test_required_sections_are_present() -> None:
     required = {
-        "repository_head_examined", "provenance", "m03_existing_authorities",
-        "provisioning_claim_contract", "membership_contract",
-        "production_implementation_search", "account_id_provenance",
-        "account_id_mint_owner", "account_vs_device_ordering",
-        "multi_device_semantics", "root_candidate_evaluation",
-        "circularity_analysis", "replay", "expiry", "restart_provenance",
-        "authentication", "rollback_freshness", "impact_on_current_account_design",
-        "impact_on_workspace", "account_id_reservation_problem",
-        "account_genesis_semantics", "intrinsic_root_proof_semantics",
-        "intrinsic_semantic_gaps", "upstream_dependency_status",
-        "upstream_dependency", "production_provisioning_authority_availability",
-        "upstream_only_resolution_sufficient", "supersedes_or_reopens",
-        "result", "next_stage", "preserved_status",
+        "repository_head_examined",
+        "provenance",
+        "m03_existing_authorities",
+        "provisioning_claim_contract",
+        "membership_contract",
+        "production_implementation_search",
+        "account_id_provenance",
+        "account_id_mint_owner",
+        "account_vs_device_ordering",
+        "multi_device_semantics",
+        "root_candidate_evaluation",
+        "circularity_analysis",
+        "replay",
+        "expiry",
+        "restart_provenance",
+        "authentication",
+        "rollback_freshness",
+        "impact_on_current_account_design",
+        "impact_on_workspace",
+        "account_id_reservation_problem",
+        "account_genesis_semantics",
+        "intrinsic_root_proof_semantics",
+        "intrinsic_semantic_gaps",
+        "upstream_dependency_status",
+        "upstream_dependency",
+        "production_provisioning_authority_availability",
+        "upstream_only_resolution_sufficient",
+        "supersedes_or_reopens",
+        "result",
+        "next_stage",
+        "preserved_status",
     }
     assert required <= load().keys()

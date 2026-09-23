@@ -146,7 +146,10 @@ class EntitlementIdentity:
         _positive("entitlement_generation", self.entitlement_generation)
         for name in ("environment", "trust_domain", "product_scope"):
             _text(name, getattr(self, name))
-        if type(self.intended_action) is not str or self.intended_action != "ACCOUNT_GENESIS_BOOTSTRAP":
+        if (
+            type(self.intended_action) is not str
+            or self.intended_action != "ACCOUNT_GENESIS_BOOTSTRAP"
+        ):
             raise ContractValidationError("intended_action must be ACCOUNT_GENESIS_BOOTSTRAP")
 
 
@@ -161,8 +164,10 @@ class EntitlementProvenance:
 
     def __post_init__(self) -> None:
         for name in (
-            "provisioning_principal_id", "claimant_key_id",
-            "creation_authority_identity", "authenticated_creation_reference",
+            "provisioning_principal_id",
+            "claimant_key_id",
+            "creation_authority_identity",
+            "authenticated_creation_reference",
         ):
             _text(name, getattr(self, name))
         _positive("claimant_key_version", self.claimant_key_version)
@@ -207,13 +212,18 @@ class BoundBinding:
         ):
             _digest(name, getattr(self, name))
         for name in (
-            "requester_principal_id", "requester_key_id", "provisioning_principal_id",
-            "claimant_key_id", "signed_request_canonical_bytes_reference",
+            "requester_principal_id",
+            "requester_key_id",
+            "provisioning_principal_id",
+            "claimant_key_id",
+            "signed_request_canonical_bytes_reference",
             "issuer_signing_credential_id",
         ):
             _text(name, getattr(self, name))
         for name in (
-            "entitlement_generation", "requester_key_version", "claimant_key_version",
+            "entitlement_generation",
+            "requester_key_version",
+            "claimant_key_version",
             "issuer_signing_key_version",
         ):
             _positive(name, getattr(self, name))
@@ -239,7 +249,9 @@ class AuthoritativeEntitlementState:
         identity = validate_exact_snapshot(self.identity)
         provenance = validate_exact_snapshot(self.provenance)
         binding = validate_exact_snapshot(self.binding)
-        if not isinstance(subject, RegistrySubject) or not isinstance(identity, EntitlementIdentity):
+        if not isinstance(subject, RegistrySubject) or not isinstance(
+            identity, EntitlementIdentity
+        ):
             raise ContractValidationError("invalid nested state identity")
         if not isinstance(provenance, EntitlementProvenance):
             raise ContractValidationError("invalid nested state provenance")
@@ -251,12 +263,19 @@ class AuthoritativeEntitlementState:
         if self.predecessor_revision is not None:
             _positive("predecessor_revision", self.predecessor_revision)
             if self.predecessor_revision >= self.authoritative_state_revision:
-                raise ContractValidationError("predecessor revision must be lower than current revision")
-        if subject.environment != identity.environment or subject.trust_domain != identity.trust_domain:
+                raise ContractValidationError(
+                    "predecessor revision must be lower than current revision"
+                )
+        if (
+            subject.environment != identity.environment
+            or subject.trust_domain != identity.trust_domain
+        ):
             raise ContractValidationError("subject security scope must equal identity scope")
         if type(binding) is BoundBinding:
             if binding.entitlement_generation != identity.entitlement_generation:
-                raise ContractValidationError("binding generation must equal entitlement generation")
+                raise ContractValidationError(
+                    "binding generation must equal entitlement generation"
+                )
             validate_claimant_anchor(provenance, binding)
 
 
@@ -371,23 +390,38 @@ class HistoricalStateResult:
         read = validate_exact_snapshot(self.read)
         if not isinstance(subject, RegistrySubject) or not isinstance(read, RegistryReadResult):
             raise ContractValidationError("invalid historical result nesting")
-        _positive("requested_authoritative_state_revision", self.requested_authoritative_state_revision)
+        _positive(
+            "requested_authoritative_state_revision", self.requested_authoritative_state_revision
+        )
         if read.outcome is RegistryReadOutcome.FOUND:
-            _positive("current_authoritative_state_revision", self.current_authoritative_state_revision)
+            _positive(
+                "current_authoritative_state_revision", self.current_authoritative_state_revision
+            )
             _positive(
                 "retained_from_authoritative_state_revision",
                 self.retained_from_authoritative_state_revision,
             )
             assert self.current_authoritative_state_revision is not None
             assert self.retained_from_authoritative_state_revision is not None
-            if self.requested_authoritative_state_revision > self.current_authoritative_state_revision:
-                raise ContractValidationError("requested revision is beyond current subject revision")
-            if self.retained_from_authoritative_state_revision > self.requested_authoritative_state_revision:
+            if (
+                self.requested_authoritative_state_revision
+                > self.current_authoritative_state_revision
+            ):
+                raise ContractValidationError(
+                    "requested revision is beyond current subject revision"
+                )
+            if (
+                self.retained_from_authoritative_state_revision
+                > self.requested_authoritative_state_revision
+            ):
                 raise ContractValidationError("requested revision is outside retained history")
             assert read.state is not None
             if read.state.subject != subject:
                 raise ContractValidationError("historical state belongs to another subject")
-            if read.state.authoritative_state_revision != self.requested_authoritative_state_revision:
+            if (
+                read.state.authoritative_state_revision
+                != self.requested_authoritative_state_revision
+            ):
                 raise ContractValidationError("historical state does not match requested revision")
         elif (
             self.current_authoritative_state_revision is not None
@@ -411,21 +445,36 @@ class RetainedHistoryResult:
         if type(self.states) is not tuple:
             raise ContractValidationError("history states must be exact tuple")
         if self.outcome is RegistryReadOutcome.FOUND:
-            _positive("current_authoritative_state_revision", self.current_authoritative_state_revision)
-            _positive("retained_from_authoritative_state_revision", self.retained_from_authoritative_state_revision)
+            _positive(
+                "current_authoritative_state_revision", self.current_authoritative_state_revision
+            )
+            _positive(
+                "retained_from_authoritative_state_revision",
+                self.retained_from_authoritative_state_revision,
+            )
             assert self.current_authoritative_state_revision is not None
             assert self.retained_from_authoritative_state_revision is not None
             validate_complete_lineage(self.subject, self.states)
-            if self.states[-1].authoritative_state_revision != self.current_authoritative_state_revision:
+            if (
+                self.states[-1].authoritative_state_revision
+                != self.current_authoritative_state_revision
+            ):
                 raise ContractValidationError("history does not end at current subject revision")
-            if self.states[0].authoritative_state_revision != self.retained_from_authoritative_state_revision:
-                raise ContractValidationError("retained-from revision must identify first retained state")
+            if (
+                self.states[0].authoritative_state_revision
+                != self.retained_from_authoritative_state_revision
+            ):
+                raise ContractValidationError(
+                    "retained-from revision must identify first retained state"
+                )
         elif (
             self.states
             or self.current_authoritative_state_revision is not None
             or self.retained_from_authoritative_state_revision is not None
         ):
-            raise ContractValidationError("non-FOUND history cannot carry states or revision metadata")
+            raise ContractValidationError(
+                "non-FOUND history cannot carry states or revision metadata"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -443,7 +492,9 @@ class AuthoritativelyUnboundQuery:
         validate_exact_snapshot(self.subject)
         _text("product_scope", self.product_scope)
         for name in (
-            "bootstrap_entitlement_id", "logical_operation_id", "account_id",
+            "bootstrap_entitlement_id",
+            "logical_operation_id",
+            "account_id",
             "old_issuance_attempt_id",
         ):
             lookup = "issuance_attempt_id" if name == "old_issuance_attempt_id" else name
@@ -465,11 +516,16 @@ class ProvisionEntitlementRequest:
         subject = validate_exact_snapshot(self.subject)
         identity = validate_exact_snapshot(self.identity)
         validate_exact_snapshot(self.provenance)
-        if not isinstance(subject, RegistrySubject) or not isinstance(identity, EntitlementIdentity):
+        if not isinstance(subject, RegistrySubject) or not isinstance(
+            identity, EntitlementIdentity
+        ):
             raise ContractValidationError("invalid provision request nesting")
         if identity.entitlement_generation != 1:
             raise ContractValidationError("initial provisioning requires generation 1")
-        if subject.environment != identity.environment or subject.trust_domain != identity.trust_domain:
+        if (
+            subject.environment != identity.environment
+            or subject.trust_domain != identity.trust_domain
+        ):
             raise ContractValidationError("provision subject and identity scope must match")
 
 
@@ -483,7 +539,9 @@ class SupersedeEntitlementRequest:
         expected = validate_exact_snapshot(self.expected)
         successor = validate_exact_snapshot(self.successor_identity)
         validate_exact_snapshot(self.successor_provenance)
-        if not isinstance(expected, AdminPredecessor) or not isinstance(successor, EntitlementIdentity):
+        if not isinstance(expected, AdminPredecessor) or not isinstance(
+            successor, EntitlementIdentity
+        ):
             raise ContractValidationError("invalid supersession nesting")
         prior = expected.identity
         if expected.lifecycle is not EntitlementLifecycle.ACTIVE:
@@ -491,8 +549,11 @@ class SupersedeEntitlementRequest:
         if successor.entitlement_generation != prior.entitlement_generation + 1:
             raise ContractValidationError("supersession requires exactly next generation")
         immutable_scope = (
-            "bootstrap_entitlement_id", "environment", "trust_domain",
-            "product_scope", "intended_action",
+            "bootstrap_entitlement_id",
+            "environment",
+            "trust_domain",
+            "product_scope",
+            "intended_action",
         )
         if any(getattr(successor, name) != getattr(prior, name) for name in immutable_scope):
             raise ContractValidationError("supersession cannot change immutable lineage scope")
@@ -518,7 +579,10 @@ class BindResolution:
             raise ContractValidationError("kind must be exact BindResolutionKind")
         if self.kind is BindResolutionKind.EXACT_REPLAY:
             state = validate_exact_snapshot(self.historical_bound_state)
-            if not isinstance(state, AuthoritativeEntitlementState) or type(state.binding) is not BoundBinding:
+            if (
+                not isinstance(state, AuthoritativeEntitlementState)
+                or type(state.binding) is not BoundBinding
+            ):
                 raise ContractValidationError("EXACT_REPLAY requires historical BOUND state")
         elif self.historical_bound_state is not None:
             raise ContractValidationError("only EXACT_REPLAY carries historical BOUND state")
@@ -603,10 +667,16 @@ def validate_complete_lineage(
         prior_identity = previous.identity
         next_identity = current.identity
         immutable_scope = (
-            "bootstrap_entitlement_id", "environment", "trust_domain",
-            "product_scope", "intended_action",
+            "bootstrap_entitlement_id",
+            "environment",
+            "trust_domain",
+            "product_scope",
+            "intended_action",
         )
-        if any(getattr(next_identity, name) != getattr(prior_identity, name) for name in immutable_scope):
+        if any(
+            getattr(next_identity, name) != getattr(prior_identity, name)
+            for name in immutable_scope
+        ):
             raise ContractValidationError("immutable lineage scope changed")
         if next_identity.entitlement_generation == prior_identity.entitlement_generation:
             if current.provenance != previous.provenance:
@@ -623,7 +693,9 @@ def validate_complete_lineage(
             ):
                 pass
             elif current.binding == previous.binding:
-                raise ContractValidationError("authority revision cannot represent a semantic no-op")
+                raise ContractValidationError(
+                    "authority revision cannot represent a semantic no-op"
+                )
             else:
                 raise ContractValidationError("illegal binding transition")
         else:
@@ -631,7 +703,10 @@ def validate_complete_lineage(
                 raise ContractValidationError("new generation requires superseded predecessor")
             if next_identity.entitlement_generation != prior_identity.entitlement_generation + 1:
                 raise ContractValidationError("generation must increase by exactly one")
-            if current.lifecycle is not EntitlementLifecycle.ACTIVE or type(current.binding) is not UnboundBinding:
+            if (
+                current.lifecycle is not EntitlementLifecycle.ACTIVE
+                or type(current.binding) is not UnboundBinding
+            ):
                 raise ContractValidationError("successor generation must start ACTIVE/UNBOUND")
 
 
@@ -654,7 +729,9 @@ def binding_identity_canonical_bytes(binding: RegistryBinding) -> bytes:
 
 
 def binding_identity_digest(binding: RegistryBinding) -> str:
-    return hashlib.sha256(_BINDING_DIGEST_DOMAIN + binding_identity_canonical_bytes(binding)).hexdigest()
+    return hashlib.sha256(
+        _BINDING_DIGEST_DOMAIN + binding_identity_canonical_bytes(binding)
+    ).hexdigest()
 
 
 def history_proves_authoritatively_unbound(
@@ -926,18 +1003,45 @@ def admin_predecessor_for(state: AuthoritativeEntitlementState) -> AdminPredeces
 
 
 __all__ = [
-    "AdminOutcome", "AdminPredecessor", "AdminResult", "AuthoritativeEntitlementState",
-    "AuthoritativelyUnboundQuery", "BindOutcome", "BindPredecessor", "BindRequest",
-    "BindResolution", "BindResolutionKind", "BindResult", "BindingKind", "BoundBinding",
+    "AdminOutcome",
+    "AdminPredecessor",
+    "AdminResult",
+    "AuthoritativeEntitlementState",
+    "AuthoritativelyUnboundQuery",
+    "BindOutcome",
+    "BindPredecessor",
+    "BindRequest",
+    "BindResolution",
+    "BindResolutionKind",
+    "BindResult",
+    "BindingKind",
+    "BoundBinding",
     "ContractValidationError",
-    "EntitlementIdentity", "EntitlementLifecycle", "EntitlementProvenance",
-    "EntitlementProvisioningAdminProvider", "HistoricalStateResult", "ProvisionEntitlementRequest",
-    "RegistryReadOutcome", "RegistryReadResult", "RegistrySubject", "RetainedHistoryResult",
-    "RevokeEntitlementRequest", "SupersedeEntitlementRequest", "UnboundBinding",
-    "admin_predecessor_for", "authoritative_identity_key",
-    "binding_identity_canonical_bytes", "binding_identity_digest",
-    "history_proves_authoritatively_unbound", "initial_state_for",
-    "legal_lifecycle_transition", "predecessor_for", "resolve_bind_request",
-    "revoked_state_for", "supersession_states_for",
-    "validate_claimant_anchor", "validate_complete_lineage", "validate_exact_snapshot",
+    "EntitlementIdentity",
+    "EntitlementLifecycle",
+    "EntitlementProvenance",
+    "EntitlementProvisioningAdminProvider",
+    "HistoricalStateResult",
+    "ProvisionEntitlementRequest",
+    "RegistryReadOutcome",
+    "RegistryReadResult",
+    "RegistrySubject",
+    "RetainedHistoryResult",
+    "RevokeEntitlementRequest",
+    "SupersedeEntitlementRequest",
+    "UnboundBinding",
+    "admin_predecessor_for",
+    "authoritative_identity_key",
+    "binding_identity_canonical_bytes",
+    "binding_identity_digest",
+    "history_proves_authoritatively_unbound",
+    "initial_state_for",
+    "legal_lifecycle_transition",
+    "predecessor_for",
+    "resolve_bind_request",
+    "revoked_state_for",
+    "supersession_states_for",
+    "validate_claimant_anchor",
+    "validate_complete_lineage",
+    "validate_exact_snapshot",
 ]

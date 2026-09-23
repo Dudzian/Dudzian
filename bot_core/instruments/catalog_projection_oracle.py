@@ -257,20 +257,26 @@ def validate_accepted_source_snapshot_membership_evidence(
         identity = {
             name: snapshot[name]
             for name in (
-                "source_exchange_id", "market_type", "source_adapter_family_id",
-                "source_adapter_implementation_id", "source_adapter_release_id",
+                "source_exchange_id",
+                "market_type",
+                "source_adapter_family_id",
+                "source_adapter_implementation_id",
+                "source_adapter_release_id",
                 "source_adapter_version",
             )
         }
         if not isinstance(source_producer_membership_authority, SourceProducerMembershipAuthority):
             return False
-        return source_producer_membership_authority.resolve_historical(
-            snapshot["accepted_source_producer_membership_id"],
-            snapshot["source_producer_generation"],
-            snapshot["source_producer_membership_fingerprint"],
-            identity,
-            snapshot["effective_at_utc"],
-        ) is not None
+        return (
+            source_producer_membership_authority.resolve_historical(
+                snapshot["accepted_source_producer_membership_id"],
+                snapshot["source_producer_generation"],
+                snapshot["source_producer_membership_fingerprint"],
+                identity,
+                snapshot["effective_at_utc"],
+            )
+            is not None
+        )
     except (KeyError, TypeError, ValueError):
         return False
 

@@ -19,9 +19,7 @@ from typing import Final, Literal, Mapping
 
 PAPER_CANONICAL_METADATA_SOURCE_ID: Final = "cryptohunter.product.paper-instrument-metadata"
 PAPER_CANONICAL_METADATA_SOURCE_VERSION: Final = "1.0.0"
-PAPER_CANONICAL_METADATA_CONTENT_STATUS: Final = (
-    "NO_APPROVED_CANONICAL_PAPER_INSTRUMENT_ENTRIES"
-)
+PAPER_CANONICAL_METADATA_CONTENT_STATUS: Final = "NO_APPROVED_CANONICAL_PAPER_INSTRUMENT_ENTRIES"
 
 MarketType = Literal["SPOT", "MARGIN", "PERPETUAL", "DELIVERY_FUTURES", "OPTIONS"]
 InstrumentType = Literal[
@@ -171,7 +169,12 @@ def _validate_release_entry(entry: object) -> None:
     observed, effective, stale = map(
         _timestamp, (entry.observed_at_utc, entry.effective_at_utc, entry.stale_after_utc)
     )
-    if observed is None or effective is None or stale is None or not (observed <= effective < stale):
+    if (
+        observed is None
+        or effective is None
+        or stale is None
+        or not (observed <= effective < stale)
+    ):
         raise ValueError("invalid timestamp graph")
     if not _decimal(entry.price_tick, positive=True) or not _decimal(
         entry.quantity_step, positive=True
@@ -219,7 +222,10 @@ def _validate_release_entry(entry: object) -> None:
     ):
         raise ValueError("incomplete derivative tuple")
     if entry.instrument_type == "PERPETUAL_CONTRACT":
-        if any(value is not None for value in (entry.expiry_at_utc, entry.strike_price, entry.option_side)):
+        if any(
+            value is not None
+            for value in (entry.expiry_at_utc, entry.strike_price, entry.option_side)
+        ):
             raise ValueError("perpetual has dated derivative fields")
     elif entry.instrument_type == "DELIVERY_FUTURE":
         if _timestamp(entry.expiry_at_utc) is None or any(
@@ -242,7 +248,12 @@ def _validate_release_entries(entries: tuple[_CanonicalPaperInstrumentMetadata, 
         if entry.instrument_id in seen_ids:
             raise ValueError("duplicate instrument_id")
         seen_ids.add(entry.instrument_id)
-        identity = (entry.workspace_id, entry.source_exchange_id, entry.market_type, entry.venue_symbol)
+        identity = (
+            entry.workspace_id,
+            entry.source_exchange_id,
+            entry.market_type,
+            entry.venue_symbol,
+        )
         previous = identity_to_id.setdefault(identity, entry.instrument_id)
         if previous != entry.instrument_id:
             raise ValueError("immutable identity tuple collision")
@@ -279,9 +290,9 @@ def _fingerprint_release_projection(
         "content_status": content_status,
         "entries": [_entry_projection(entry) for entry in entries],
     }
-    encoded = json.dumps(
-        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-    ).encode("utf-8")
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode(
+        "utf-8"
+    )
     return sha256(encoded).hexdigest()
 
 

@@ -87,17 +87,20 @@ def _prepare_and_finalize(authority, catalog: str, membership: str, when: str):
         membership_commitment_sha256=membership,
         accepted_at_utc=when,
     )
-    authority.finalize(receipt, {
-        "accepted_source_catalog_snapshot_id": f"ascat_{receipt.receipt_sequence:020d}",
-        "receipt_id": receipt.receipt_id,
-        "catalog_commitment_sha256": catalog,
-        "membership_commitment_sha256": membership,
-        "receipt_mac": receipt.receipt_mac,
-        "snapshot_sequence": receipt.receipt_sequence,
-        "snapshot_record_digest": hashlib.sha256(
-            f"test-catalog-record:{receipt.receipt_id}".encode()
-        ).hexdigest(),
-    })
+    authority.finalize(
+        receipt,
+        {
+            "accepted_source_catalog_snapshot_id": f"ascat_{receipt.receipt_sequence:020d}",
+            "receipt_id": receipt.receipt_id,
+            "catalog_commitment_sha256": catalog,
+            "membership_commitment_sha256": membership,
+            "receipt_mac": receipt.receipt_mac,
+            "snapshot_sequence": receipt.receipt_sequence,
+            "snapshot_record_digest": hashlib.sha256(
+                f"test-catalog-record:{receipt.receipt_id}".encode()
+            ).hexdigest(),
+        },
+    )
     return receipt
 
 
@@ -119,9 +122,18 @@ def test_production_constructor_has_no_key_injection_and_test_type_is_distinct(
 def test_frozen_purpose_and_catalog_custody_namespace_are_separate_from_backup() -> None:
     assert CATALOG_ADMISSION_RECEIPT_PURPOSE == "CRYPTOHUNTER_M0_12_CATALOG_ADMISSION_RECEIPT_V1"
     assert CATALOG_ADMISSION_RECEIPT_PURPOSE != BACKUP_AUTHENTICATION_PURPOSE
-    assert CATALOG_RECEIPT_KEY_LIFECYCLE_PURPOSE == "CRYPTOHUNTER_M0_12_CATALOG_RECEIPT_KEY_LIFECYCLE_V1"
-    assert CATALOG_RECEIPT_AUTHORITY_ANCHOR_PURPOSE == "CRYPTOHUNTER_M0_12_CATALOG_RECEIPT_AUTHORITY_ANCHOR_V1"
-    assert SecretStorageCatalogAdmissionReceiptSecureCustody._PREFIX == "dudzian.catalog-admission-receipt.v1:"
+    assert (
+        CATALOG_RECEIPT_KEY_LIFECYCLE_PURPOSE
+        == "CRYPTOHUNTER_M0_12_CATALOG_RECEIPT_KEY_LIFECYCLE_V1"
+    )
+    assert (
+        CATALOG_RECEIPT_AUTHORITY_ANCHOR_PURPOSE
+        == "CRYPTOHUNTER_M0_12_CATALOG_RECEIPT_AUTHORITY_ANCHOR_V1"
+    )
+    assert (
+        SecretStorageCatalogAdmissionReceiptSecureCustody._PREFIX
+        == "dudzian.catalog-admission-receipt.v1:"
+    )
 
 
 def test_production_custody_rejects_caller_controlled_secret_storage() -> None:
@@ -206,12 +218,12 @@ def test_finalization_tail_rollback_fails_against_external_anchor(production) ->
         first_head = db.execute(
             "SELECT * FROM catalog_receipt_finalization_head WHERE singleton=1"
         ).fetchone()
-    second = _prepare_and_finalize(
-        authority, "c" * 64, "d" * 64, "2030-01-02T03:04:06Z"
-    )
+    second = _prepare_and_finalize(authority, "c" * 64, "d" * 64, "2030-01-02T03:04:06Z")
     assert authority.verify(second)
     with sqlite3.connect(path) as db:
-        db.execute("DELETE FROM catalog_admission_receipt_finalizations WHERE finalization_sequence=2")
+        db.execute(
+            "DELETE FROM catalog_admission_receipt_finalizations WHERE finalization_sequence=2"
+        )
         db.execute("DELETE FROM catalog_receipt_finalization_head")
         db.execute("INSERT INTO catalog_receipt_finalization_head VALUES(?,?,?,?)", first_head)
         db.commit()
@@ -269,7 +281,16 @@ def test_direct_sql_mint_with_valid_public_chain_fails_closed_on_restart(product
         digest = authority._record_digest(2, canonical, previous)
         db.execute(
             "INSERT INTO catalog_admission_receipts VALUES(?,?,?,?,?,?,?,?)",
-            (2, forged.receipt_id, forged.key_id, forged.purpose, canonical, forged.receipt_mac, previous, digest),
+            (
+                2,
+                forged.receipt_id,
+                forged.key_id,
+                forged.purpose,
+                canonical,
+                forged.receipt_mac,
+                previous,
+                digest,
+            ),
         )
         db.execute(
             "UPDATE catalog_receipt_authority_head SET committed_sequence=2,committed_digest=?,last_receipt_id=? WHERE singleton=1",
@@ -285,10 +306,26 @@ def test_direct_sql_mint_with_valid_public_chain_fails_closed_on_restart(product
 @pytest.mark.parametrize(
     "kwargs",
     [
-        {"catalog_commitment_sha256": True, "membership_commitment_sha256": MEMBERSHIP, "accepted_at_utc": WHEN},
-        {"catalog_commitment_sha256": CATALOG.upper(), "membership_commitment_sha256": MEMBERSHIP, "accepted_at_utc": WHEN},
-        {"catalog_commitment_sha256": CATALOG, "membership_commitment_sha256": 1, "accepted_at_utc": WHEN},
-        {"catalog_commitment_sha256": CATALOG, "membership_commitment_sha256": MEMBERSHIP, "accepted_at_utc": "2030-01-02T03:04:05+00:00"},
+        {
+            "catalog_commitment_sha256": True,
+            "membership_commitment_sha256": MEMBERSHIP,
+            "accepted_at_utc": WHEN,
+        },
+        {
+            "catalog_commitment_sha256": CATALOG.upper(),
+            "membership_commitment_sha256": MEMBERSHIP,
+            "accepted_at_utc": WHEN,
+        },
+        {
+            "catalog_commitment_sha256": CATALOG,
+            "membership_commitment_sha256": 1,
+            "accepted_at_utc": WHEN,
+        },
+        {
+            "catalog_commitment_sha256": CATALOG,
+            "membership_commitment_sha256": MEMBERSHIP,
+            "accepted_at_utc": "2030-01-02T03:04:05+00:00",
+        },
     ],
 )
 def test_prepare_rejects_non_exact_commitments_and_noncanonical_time(production, kwargs) -> None:
@@ -358,9 +395,7 @@ def test_valid_genuine_receipt_prefix_and_old_head_rollback_fails_against_anchor
 ) -> None:
     authority, path, _secrets = production
     first = _issue(authority)
-    second = _prepare_and_finalize(
-        authority, "c" * 64, "d" * 64, "2030-01-02T03:04:06Z"
-    )
+    second = _prepare_and_finalize(authority, "c" * 64, "d" * 64, "2030-01-02T03:04:06Z")
     assert authority.verify(second)
     with sqlite3.connect(path) as db:
         first_digest = db.execute(
@@ -463,25 +498,50 @@ def test_all_lifecycle_shadow_tampering_fails_closed_on_restart(production, atta
         authority.revoke(first.key_id)
     with sqlite3.connect(path) as db:
         if attack == "revoked_to_verify_only":
-            db.execute("UPDATE catalog_receipt_authority_keys SET lifecycle_state='VERIFY_ONLY' WHERE key_id=?", (first.key_id,))
+            db.execute(
+                "UPDATE catalog_receipt_authority_keys SET lifecycle_state='VERIFY_ONLY' WHERE key_id=?",
+                (first.key_id,),
+            )
         elif attack == "revoked_to_active":
-            db.execute("UPDATE catalog_receipt_authority_keys SET lifecycle_state='VERIFY_ONLY' WHERE key_id=?", (second_key,))
-            db.execute("UPDATE catalog_receipt_authority_keys SET lifecycle_state='ACTIVE' WHERE key_id=?", (first.key_id,))
+            db.execute(
+                "UPDATE catalog_receipt_authority_keys SET lifecycle_state='VERIFY_ONLY' WHERE key_id=?",
+                (second_key,),
+            )
+            db.execute(
+                "UPDATE catalog_receipt_authority_keys SET lifecycle_state='ACTIVE' WHERE key_id=?",
+                (first.key_id,),
+            )
         elif attack == "verify_only_to_active":
-            db.execute("UPDATE catalog_receipt_authority_keys SET lifecycle_state='VERIFY_ONLY' WHERE key_id=?", (second_key,))
-            db.execute("UPDATE catalog_receipt_authority_keys SET lifecycle_state='ACTIVE' WHERE key_id=?", (first.key_id,))
+            db.execute(
+                "UPDATE catalog_receipt_authority_keys SET lifecycle_state='VERIFY_ONLY' WHERE key_id=?",
+                (second_key,),
+            )
+            db.execute(
+                "UPDATE catalog_receipt_authority_keys SET lifecycle_state='ACTIVE' WHERE key_id=?",
+                (first.key_id,),
+            )
         elif attack == "active_to_revoked":
-            db.execute("UPDATE catalog_receipt_authority_keys SET lifecycle_state='REVOKED' WHERE key_id=?", (second_key,))
+            db.execute(
+                "UPDATE catalog_receipt_authority_keys SET lifecycle_state='REVOKED' WHERE key_id=?",
+                (second_key,),
+            )
         elif attack == "custody_handle":
-            db.execute("UPDATE catalog_receipt_authority_keys SET custody_handle='catalog-material-attacker' WHERE key_id=?", (first.key_id,))
+            db.execute(
+                "UPDATE catalog_receipt_authority_keys SET custody_handle='catalog-material-attacker' WHERE key_id=?",
+                (first.key_id,),
+            )
         elif attack == "revision_increase":
             db.execute("UPDATE catalog_receipt_authority_metadata SET key_revision=key_revision+1")
         elif attack == "revision_rollback":
             db.execute("UPDATE catalog_receipt_authority_metadata SET key_revision=1")
         elif attack == "lifecycle_mac":
-            db.execute("UPDATE catalog_receipt_authority_metadata SET lifecycle_state_mac=?", ("0" * 64,))
+            db.execute(
+                "UPDATE catalog_receipt_authority_metadata SET lifecycle_state_mac=?", ("0" * 64,)
+            )
         else:
-            db.execute("UPDATE catalog_receipt_authority_metadata SET lifecycle_root_handle='catalog-lifecycle-root-attacker'")
+            db.execute(
+                "UPDATE catalog_receipt_authority_metadata SET lifecycle_root_handle='catalog-lifecycle-root-attacker'"
+            )
         db.commit()
     with pytest.raises(CatalogAdmissionReceiptAuthorityUnavailable):
         CatalogAdmissionReceiptAuthority(SQLiteCatalogAdmissionReceiptMetadataStore(path))
@@ -493,14 +553,22 @@ def test_corrupt_receipt_journal_cannot_receive_lifecycle_ack(production, operat
     receipt = _issue(authority)
     with sqlite3.connect(path) as db:
         before_metadata = db.execute("SELECT * FROM catalog_receipt_authority_metadata").fetchall()
-        before_keys = db.execute("SELECT * FROM catalog_receipt_authority_keys ORDER BY key_id").fetchall()
+        before_keys = db.execute(
+            "SELECT * FROM catalog_receipt_authority_keys ORDER BY key_id"
+        ).fetchall()
         db.execute("UPDATE catalog_admission_receipts SET receipt_mac=?", ("0" * 64,))
         db.commit()
     with pytest.raises(CatalogAdmissionReceiptAuthorityUnavailable):
         authority.rotate() if operation == "rotate" else authority.revoke(receipt.key_id)
     with sqlite3.connect(path) as db:
-        assert db.execute("SELECT * FROM catalog_receipt_authority_metadata").fetchall() == before_metadata
-        assert db.execute("SELECT * FROM catalog_receipt_authority_keys ORDER BY key_id").fetchall() == before_keys
+        assert (
+            db.execute("SELECT * FROM catalog_receipt_authority_metadata").fetchall()
+            == before_metadata
+        )
+        assert (
+            db.execute("SELECT * FROM catalog_receipt_authority_keys ORDER BY key_id").fetchall()
+            == before_keys
+        )
 
 
 def test_test_authority_is_deterministic_and_restartable(tmp_path) -> None:

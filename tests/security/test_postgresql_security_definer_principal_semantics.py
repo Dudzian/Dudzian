@@ -1,4 +1,5 @@
 """Executable PostgreSQL 16 proof for the frozen SECURITY DEFINER caller model."""
+
 from __future__ import annotations
 
 import os
@@ -34,11 +35,15 @@ def boundary() -> dict[str, str]:
         for role in ("owner", "verifier", "runtime", "outsider"):
             login = sql.SQL("NOLOGIN") if role == "owner" else sql.SQL("LOGIN")
             conn.execute(
-                sql.SQL("CREATE ROLE {} {} NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS").format(
-                    identifiers[role], login
-                )
+                sql.SQL(
+                    "CREATE ROLE {} {} NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS"
+                ).format(identifiers[role], login)
             )
-        conn.execute(sql.SQL("CREATE SCHEMA {} AUTHORIZATION {}").format(identifiers["schema"], identifiers["owner"]))
+        conn.execute(
+            sql.SQL("CREATE SCHEMA {} AUTHORIZATION {}").format(
+                identifiers["schema"], identifiers["owner"]
+            )
+        )
         for function_name, caller in (("prepare_probe", "verifier"), ("cas_probe", "runtime")):
             conn.execute(
                 sql.SQL(
@@ -69,7 +74,10 @@ def boundary() -> dict[str, str]:
             )
         conn.execute(
             sql.SQL("GRANT USAGE ON SCHEMA {} TO {},{},{}").format(
-                identifiers["schema"], identifiers["verifier"], identifiers["runtime"], identifiers["outsider"]
+                identifiers["schema"],
+                identifiers["verifier"],
+                identifiers["runtime"],
+                identifiers["outsider"],
             )
         )
     try:

@@ -24,18 +24,36 @@ from bot_core.m09_kill_switch_authority import (
 )
 from bot_core.persistence.fingerprints import canonical_json_sha256
 
-CONTRACT = Path(__file__).parents[2] / "docs/architecture/cryptohunter_product_architecture/risk_hierarchy_kill_switch_and_execution_lease.json"
+CONTRACT = (
+    Path(__file__).parents[2]
+    / "docs/architecture/cryptohunter_product_architecture/risk_hierarchy_kill_switch_and_execution_lease.json"
+)
 WS = "ws_01890f3a-2b4c-7abc-8def-0123456789ab"
 OTHER_WS = "ws_01890f3a-2b4c-7abc-8def-0123456789ac"
 
 
-def raw_record(*, authority_fingerprint: str, state: str = "INACTIVE", generation: int = 1,
-               source_revision: int = 1, scope_type: str = "WORKSPACE",
-               scope_id: str = WS, environment: str = "TESTNET",
-               effective_at_utc: str = "2026-01-01T00:00:00Z") -> KillSwitchRecord:
-    candidate = KillSwitchRecord(scope_type, scope_id, environment, state, source_revision,
-                                 effective_at_utc, generation,
-                                 authority_fingerprint, "0" * 64)
+def raw_record(
+    *,
+    authority_fingerprint: str,
+    state: str = "INACTIVE",
+    generation: int = 1,
+    source_revision: int = 1,
+    scope_type: str = "WORKSPACE",
+    scope_id: str = WS,
+    environment: str = "TESTNET",
+    effective_at_utc: str = "2026-01-01T00:00:00Z",
+) -> KillSwitchRecord:
+    candidate = KillSwitchRecord(
+        scope_type,
+        scope_id,
+        environment,
+        state,
+        source_revision,
+        effective_at_utc,
+        generation,
+        authority_fingerprint,
+        "0" * 64,
+    )
     payload = asdict(candidate)
     payload.pop("record_fingerprint_sha256")
     return replace(candidate, record_fingerprint_sha256=canonical_json_sha256(payload))
@@ -53,16 +71,23 @@ class Rig:
             "core-authority-1", canonical_json_sha256({"owner": "CoreHost", "kind": "M0.9"})
         )
 
-    def context(self, *records: KillSwitchRecord, membership_id: str | None = None,
-                enroll_authority: bool = True, enroll_history: bool = True) -> PrevalidatedKillSwitchContext:
+    def context(
+        self,
+        *records: KillSwitchRecord,
+        membership_id: str | None = None,
+        enroll_authority: bool = True,
+        enroll_history: bool = True,
+    ) -> PrevalidatedKillSwitchContext:
         if enroll_authority:
             self.core_writer.accept(self.authority_binding)
         history = tuple(records)
         membership = membership_id or f"switch-history-{len(self.core_carrier.read().accepted)}"
         if enroll_history:
-            self.core_writer.accept(CoreAcceptedContentBinding(
-                membership, KillSwitchAuthority.history_fingerprint(history)
-            ))
+            self.core_writer.accept(
+                CoreAcceptedContentBinding(
+                    membership, KillSwitchAuthority.history_fingerprint(history)
+                )
+            )
         provisional = PrevalidatedKillSwitchContext(history, membership, "0" * 64)
         return replace(
             provisional,
@@ -86,9 +111,15 @@ class Rig:
 def test_exact_production_schema_parity_with_frozen_machine_source() -> None:
     frozen = json.loads(CONTRACT.read_text())
     schemas = frozen["executable_boundary_schemas"]
-    assert [item.name for item in fields(CoreAcceptedContentBinding)] == schemas["CoreAcceptedContentBinding"]
-    assert [item.name for item in fields(PrevalidatedKillSwitchContext)] == schemas["PrevalidatedKillSwitchContext"]
-    assert [item.name for item in fields(KillSwitchRecord)] == frozen["kill_switch_contract"]["record_fields"]
+    assert [item.name for item in fields(CoreAcceptedContentBinding)] == schemas[
+        "CoreAcceptedContentBinding"
+    ]
+    assert [item.name for item in fields(PrevalidatedKillSwitchContext)] == schemas[
+        "PrevalidatedKillSwitchContext"
+    ]
+    assert [item.name for item in fields(KillSwitchRecord)] == frozen["kill_switch_contract"][
+        "record_fields"
+    ]
 
 
 def test_exploit_self_hashed_record_with_arbitrary_sha_cannot_self_enroll() -> None:
@@ -99,7 +130,10 @@ def test_exploit_self_hashed_record_with_arbitrary_sha_cannot_self_enroll() -> N
     with pytest.raises(KillSwitchAuthorityError, match="TRUSTED_CONTEXT_FAILURE"):
         rig.accept(context)
     assert rig.carrier.read() == before == AtomicKillSwitchAuthorityState()
-    assert rig.authority.resolve_current(scope_type="WORKSPACE", scope_id=WS, environment="TESTNET") is None
+    assert (
+        rig.authority.resolve_current(scope_type="WORKSPACE", scope_id=WS, environment="TESTNET")
+        is None
+    )
     assert rig.authority.resolve_historical(context.membership_id) is None
 
 
@@ -120,7 +154,9 @@ def test_unknown_accepted_authority_fingerprint_is_rejected() -> None:
         rig.accept(context)
 
 
-@pytest.mark.parametrize("defect", ["unknown_membership", "wrong_content", "wrong_authority", "context_fingerprint"])
+@pytest.mark.parametrize(
+    "defect", ["unknown_membership", "wrong_content", "wrong_authority", "context_fingerprint"]
+)
 def test_complete_core_membership_chain_rejects_each_forgery(defect: str) -> None:
     rig = Rig()
     record = rig.record()
@@ -147,15 +183,29 @@ def test_known_exact_core_binding_accepts_both_frozen_states(state: str) -> None
     context = rig.context(rig.record(state=state))
     accepted = rig.accept(context)
     assert rig.authority.resolve_historical(context.membership_id) == accepted
-    assert rig.authority.resolve_current(scope_type="WORKSPACE", scope_id=WS, environment="TESTNET") == accepted
+    assert (
+        rig.authority.resolve_current(scope_type="WORKSPACE", scope_id=WS, environment="TESTNET")
+        == accepted
+    )
 
 
 def test_current_lookup_is_exact_for_scope_and_environment() -> None:
     rig = Rig()
     accepted = rig.accept(rig.context(rig.record()))
-    assert rig.authority.resolve_current(scope_type="WORKSPACE", scope_id=WS, environment="TESTNET") == accepted
-    assert rig.authority.resolve_current(scope_type="WORKSPACE", scope_id=WS, environment="LIVE") is None
-    assert rig.authority.resolve_current(scope_type="WORKSPACE", scope_id=OTHER_WS, environment="TESTNET") is None
+    assert (
+        rig.authority.resolve_current(scope_type="WORKSPACE", scope_id=WS, environment="TESTNET")
+        == accepted
+    )
+    assert (
+        rig.authority.resolve_current(scope_type="WORKSPACE", scope_id=WS, environment="LIVE")
+        is None
+    )
+    assert (
+        rig.authority.resolve_current(
+            scope_type="WORKSPACE", scope_id=OTHER_WS, environment="TESTNET"
+        )
+        is None
+    )
 
 
 def test_generation_advance_preserves_superseded_historical_membership() -> None:
@@ -165,7 +215,10 @@ def test_generation_advance_preserves_superseded_historical_membership() -> None
     second_context = rig.context(rig.record(state="ACTIVE", generation=2), membership_id="switch-2")
     second = rig.accept(second_context)
     assert rig.authority.resolve_historical("switch-1") == first
-    assert rig.authority.resolve_current(scope_type="WORKSPACE", scope_id=WS, environment="TESTNET") == second
+    assert (
+        rig.authority.resolve_current(scope_type="WORKSPACE", scope_id=WS, environment="TESTNET")
+        == second
+    )
 
 
 def test_duplicate_core_content_fingerprint_is_legal_and_nonretroactive() -> None:
@@ -179,25 +232,23 @@ def test_duplicate_core_content_fingerprint_is_legal_and_nonretroactive() -> Non
     assert rig.core.has_content_fingerprint(fingerprint) is True
     assert len(rig.core_carrier.read().accepted) == 3
     assert rig.authority.resolve_historical("switch-1") == accepted
-    assert rig.authority.resolve_current(
-        scope_type="WORKSPACE", scope_id=WS, environment="TESTNET"
-    ) == accepted
+    assert (
+        rig.authority.resolve_current(scope_type="WORKSPACE", scope_id=WS, environment="TESTNET")
+        == accepted
+    )
     restored = KillSwitchAuthority(rig.carrier, core_membership=rig.core)
     assert restored.resolve_historical("switch-1") == accepted
-    assert restored.resolve_current(
-        scope_type="WORKSPACE", scope_id=WS, environment="TESTNET"
-    ) == accepted
+    assert (
+        restored.resolve_current(scope_type="WORKSPACE", scope_id=WS, environment="TESTNET")
+        == accepted
+    )
 
 
 def test_duplicate_core_fingerprint_preserves_superseded_history_on_restore() -> None:
     rig = Rig()
-    old = rig.accept(
-        rig.context(rig.record(generation=1), membership_id="switch-1")
-    )
+    old = rig.accept(rig.context(rig.record(generation=1), membership_id="switch-1"))
     new = rig.accept(
-        rig.context(
-            rig.record(state="ACTIVE", generation=2), membership_id="switch-2"
-        )
+        rig.context(rig.record(state="ACTIVE", generation=2), membership_id="switch-2")
     )
     fingerprint = rig.authority_binding.content_fingerprint_sha256
     rig.core_writer.accept(CoreAcceptedContentBinding("authority-B", fingerprint))
@@ -205,9 +256,9 @@ def test_duplicate_core_fingerprint_preserves_superseded_history_on_restore() ->
     restored = KillSwitchAuthority(rig.carrier, core_membership=rig.core)
     assert restored.resolve_historical("switch-1") == old
     assert restored.resolve_historical("switch-2") == new
-    assert restored.resolve_current(
-        scope_type="WORKSPACE", scope_id=WS, environment="TESTNET"
-    ) == new
+    assert (
+        restored.resolve_current(scope_type="WORKSPACE", scope_id=WS, environment="TESTNET") == new
+    )
 
 
 def test_full_history_multi_scope_overlap_advances_only_changed_scope() -> None:
@@ -223,27 +274,34 @@ def test_full_history_multi_scope_overlap_advances_only_changed_scope() -> None:
     )
 
     workspace_2 = rig.record(state="ACTIVE", generation=2)
-    context_b = rig.context(
-        system_1, workspace_1, workspace_2, membership_id="snapshot-B"
-    )
+    context_b = rig.context(system_1, workspace_1, workspace_2, membership_id="snapshot-B")
     accepted_b = rig.accept(context_b)
 
     assert accepted_a != accepted_b
     assert rig.authority.resolve_historical("snapshot-A") == accepted_a
     assert rig.authority.resolve_historical("snapshot-B") == accepted_b
-    assert rig.authority.resolve_current(
-        scope_type="PRODUCT_SYSTEM", scope_id="product", environment="TESTNET"
-    ) == system_before == accepted_a
-    assert rig.authority.resolve_current(
-        scope_type="WORKSPACE", scope_id=WS, environment="TESTNET"
-    ) == accepted_b
+    assert (
+        rig.authority.resolve_current(
+            scope_type="PRODUCT_SYSTEM", scope_id="product", environment="TESTNET"
+        )
+        == system_before
+        == accepted_a
+    )
+    assert (
+        rig.authority.resolve_current(scope_type="WORKSPACE", scope_id=WS, environment="TESTNET")
+        == accepted_b
+    )
     restored = KillSwitchAuthority(rig.carrier, core_membership=rig.core)
-    assert restored.resolve_current(
-        scope_type="PRODUCT_SYSTEM", scope_id="product", environment="TESTNET"
-    ) == accepted_a
-    assert restored.resolve_current(
-        scope_type="WORKSPACE", scope_id=WS, environment="TESTNET"
-    ) == accepted_b
+    assert (
+        restored.resolve_current(
+            scope_type="PRODUCT_SYSTEM", scope_id="product", environment="TESTNET"
+        )
+        == accepted_a
+    )
+    assert (
+        restored.resolve_current(scope_type="WORKSPACE", scope_id=WS, environment="TESTNET")
+        == accepted_b
+    )
 
 
 @pytest.mark.parametrize(
@@ -311,14 +369,13 @@ def test_exact_context_replay_is_idempotent_before_and_after_restore() -> None:
     assert rig.accept(context) == accepted
     assert rig.carrier.read() == before
 
-    restored, restored_writer = KillSwitchAuthority.compose(
-        rig.carrier, core_membership=rig.core
-    )
+    restored, restored_writer = KillSwitchAuthority.compose(rig.carrier, core_membership=rig.core)
     assert restored_writer.accept(context, now_utc="2026-01-01T00:59:00Z") == accepted
     assert rig.carrier.read() == before
-    assert restored.resolve_current(
-        scope_type="WORKSPACE", scope_id=WS, environment="TESTNET"
-    ) == accepted
+    assert (
+        restored.resolve_current(scope_type="WORKSPACE", scope_id=WS, environment="TESTNET")
+        == accepted
+    )
 
 
 def test_transaction_time_replay_precedes_temporal_validation() -> None:
@@ -331,9 +388,7 @@ def test_transaction_time_replay_precedes_temporal_validation() -> None:
     assert rig.carrier.read() == before
 
 
-@pytest.mark.parametrize(
-    "successor_time", ["2026-01-01T12:00:09Z", "2026-01-01T12:00:10Z"]
-)
+@pytest.mark.parametrize("successor_time", ["2026-01-01T12:00:09Z", "2026-01-01T12:00:10Z"])
 def test_same_scope_successor_transaction_time_is_strictly_increasing(
     successor_time: str,
 ) -> None:
@@ -342,9 +397,7 @@ def test_same_scope_successor_transaction_time_is_strictly_increasing(
         rig.context(rig.record(state="ACTIVE", generation=5), membership_id="active-5"),
         now_utc="2026-01-01T12:00:10Z",
     )
-    successor = rig.context(
-        rig.record(state="INACTIVE", generation=6), membership_id="inactive-6"
-    )
+    successor = rig.context(rig.record(state="INACTIVE", generation=6), membership_id="inactive-6")
     before = rig.carrier.read()
     with pytest.raises(KillSwitchAuthorityError, match="TRUSTED_CONTEXT_FAILURE"):
         rig.accept(successor, now_utc=successor_time)
@@ -354,9 +407,7 @@ def test_same_scope_successor_transaction_time_is_strictly_increasing(
 def test_distinct_scopes_may_share_transaction_timestamp() -> None:
     rig = Rig()
     stamp = "2026-01-01T12:00:10Z"
-    workspace = rig.accept(
-        rig.context(rig.record(), membership_id="workspace"), now_utc=stamp
-    )
+    workspace = rig.accept(rig.context(rig.record(), membership_id="workspace"), now_utc=stamp)
     system = rig.accept(
         rig.context(
             rig.record(scope_type="PRODUCT_SYSTEM", scope_id="product"),
@@ -379,9 +430,10 @@ def test_restore_rejects_backdated_or_same_time_same_scope_reseal() -> None:
     base = rig.carrier.read()
     for stamp in ("2026-01-01T12:00:09Z", "2026-01-01T12:00:10Z"):
         forged = replace(
-            base, store_revision=2,
+            base,
+            store_revision=2,
             accepted=(first, AcceptedKillSwitchAuthorityEntry(2, stamp, second_context)),
-            current=((('WORKSPACE', WS, 'TESTNET'), 'inactive-6'),),
+            current=((("WORKSPACE", WS, "TESTNET"), "inactive-6"),),
         )
         rig.carrier._state = forged  # noqa: SLF001
         with pytest.raises(KillSwitchAuthorityError, match="CORRUPT_AUTHORITY_STATE"):
@@ -401,9 +453,7 @@ def test_context_local_duplicate_and_reverse_generations_reject() -> None:
 def test_generation_equality_and_rollback_reject(generation: int) -> None:
     rig = Rig()
     rig.accept(rig.context(rig.record(generation=2), membership_id="switch-1"))
-    candidate = rig.record(
-        generation=generation, state="ACTIVE" if generation == 2 else "INACTIVE"
-    )
+    candidate = rig.record(generation=generation, state="ACTIVE" if generation == 2 else "INACTIVE")
     with pytest.raises(KillSwitchAuthorityError, match="TRUSTED_CONTEXT_FAILURE"):
         rig.accept(rig.context(candidate, membership_id="switch-2"))
 
@@ -420,11 +470,16 @@ def test_restore_current_and_shared_carrier_visibility() -> None:
     rig = Rig()
     accepted = rig.accept(rig.context(rig.record(state="ACTIVE")))
     restored = KillSwitchAuthority(rig.carrier, core_membership=rig.core)
-    assert restored.resolve_current(scope_type="WORKSPACE", scope_id=WS, environment="TESTNET") == accepted
+    assert (
+        restored.resolve_current(scope_type="WORKSPACE", scope_id=WS, environment="TESTNET")
+        == accepted
+    )
     assert rig.authority.resolve_historical(accepted.context.membership_id) == accepted
 
 
-@pytest.mark.parametrize("damage", ["generation", "fingerprint", "state", "projection", "membership"])
+@pytest.mark.parametrize(
+    "damage", ["generation", "fingerprint", "state", "projection", "membership"]
+)
 def test_restore_revalidates_full_history_and_membership_chain(damage: str) -> None:
     rig = Rig()
     accepted = rig.accept(rig.context(rig.record()))
@@ -433,11 +488,15 @@ def test_restore_revalidates_full_history_and_membership_chain(damage: str) -> N
         corrupted = replace(state, current=())
     else:
         record = accepted.context.history[0]
-        if damage == "generation": record = replace(record, generation=0)
-        elif damage == "fingerprint": record = replace(record, record_fingerprint_sha256="f" * 64)
-        elif damage == "state": record = replace(record, state="UNKNOWN")
+        if damage == "generation":
+            record = replace(record, generation=0)
+        elif damage == "fingerprint":
+            record = replace(record, record_fingerprint_sha256="f" * 64)
+        elif damage == "state":
+            record = replace(record, state="UNKNOWN")
         context = replace(accepted.context, history=(record,))
-        if damage == "membership": context = replace(context, membership_id="forged-membership")
+        if damage == "membership":
+            context = replace(context, membership_id="forged-membership")
         corrupted = replace(state, accepted=(replace(accepted, context=context),))
     rig.carrier._state = corrupted  # noqa: SLF001 - deliberate durable corruption fixture
     with pytest.raises(KillSwitchAuthorityError, match="CORRUPT_AUTHORITY_STATE"):
@@ -447,7 +506,9 @@ def test_restore_revalidates_full_history_and_membership_chain(damage: str) -> N
 def test_restore_rejects_missing_core_membership() -> None:
     rig = Rig()
     rig.accept(rig.context(rig.record()))
-    empty_core = CoreAcceptedContentAuthority(InMemoryCoreAcceptedContentCarrier(AtomicCoreAcceptedContentState()))
+    empty_core = CoreAcceptedContentAuthority(
+        InMemoryCoreAcceptedContentCarrier(AtomicCoreAcceptedContentState())
+    )
     with pytest.raises(KillSwitchAuthorityError, match="CORRUPT_AUTHORITY_STATE"):
         KillSwitchAuthority(rig.carrier, core_membership=empty_core)
 
@@ -474,10 +535,19 @@ def test_consumer_keeps_carrier_fence_until_callback_returns() -> None:
         return current.context.history[-1].state
 
     result: list[str] = []
-    consuming = Thread(target=lambda: result.append(rig.authority.consume_current(
-        scope_type="WORKSPACE", scope_id=WS, environment="TESTNET", consumer=consume)))
+    consuming = Thread(
+        target=lambda: result.append(
+            rig.authority.consume_current(
+                scope_type="WORKSPACE", scope_id=WS, environment="TESTNET", consumer=consume
+            )
+        )
+    )
     publishing = Thread(target=lambda: (rig.accept(second), published.set()))
-    consuming.start(); assert entered.wait(2)
-    publishing.start(); assert not published.wait(0.1)
-    release.set(); consuming.join(2); publishing.join(2)
+    consuming.start()
+    assert entered.wait(2)
+    publishing.start()
+    assert not published.wait(0.1)
+    release.set()
+    consuming.join(2)
+    publishing.join(2)
     assert result == ["INACTIVE"] and published.is_set()

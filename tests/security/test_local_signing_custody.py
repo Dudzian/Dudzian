@@ -90,7 +90,9 @@ def native_keyring(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(keyring, "get_password", get_password)
     monkeypatch.setattr(keyring, "set_password", set_password)
     monkeypatch.setattr(keyring, "delete_password", delete_password)
-    monkeypatch.setattr(KeyringSecretStorage, "_ensure_native_backend", lambda self, module: object())
+    monkeypatch.setattr(
+        KeyringSecretStorage, "_ensure_native_backend", lambda self, module: object()
+    )
     return values
 
 
@@ -109,7 +111,9 @@ def _admin(
     )
 
 
-def _provision_pair(path: Path, store: NativeKeyringSigningSecretAdministrator, security: SecurityProfileIdentity):
+def _provision_pair(
+    path: Path, store: NativeKeyringSigningSecretAdministrator, security: SecurityProfileIdentity
+):
     root = provision_local_signing_authority(
         path, store, security=security, role=ProviderRole.ROOT_PROOF_SIGNING
     )
@@ -123,12 +127,20 @@ def _provision_pair(path: Path, store: NativeKeyringSigningSecretAdministrator, 
 
 
 def test_offline_provisioning_is_distinct_and_restart_stable(
-    tmp_path: Path, store: NativeKeyringSigningSecretAdministrator, security: SecurityProfileIdentity
+    tmp_path: Path,
+    store: NativeKeyringSigningSecretAdministrator,
+    security: SecurityProfileIdentity,
 ) -> None:
     root, history = _provision_pair(tmp_path, store, security)
-    root_provider = LocalRootProofSigningProvider(tmp_path, keyring_index_path=tmp_path / "keyring-index.json", security=security)
-    restarted = LocalRootProofSigningProvider(tmp_path, keyring_index_path=tmp_path / "keyring-index.json", security=security)
-    history_provider = LocalHistoryAttestationSigningProvider(tmp_path, keyring_index_path=tmp_path / "keyring-index.json", security=security)
+    root_provider = LocalRootProofSigningProvider(
+        tmp_path, keyring_index_path=tmp_path / "keyring-index.json", security=security
+    )
+    restarted = LocalRootProofSigningProvider(
+        tmp_path, keyring_index_path=tmp_path / "keyring-index.json", security=security
+    )
+    history_provider = LocalHistoryAttestationSigningProvider(
+        tmp_path, keyring_index_path=tmp_path / "keyring-index.json", security=security
+    )
 
     assert root.public_key != history.public_key
     assert root.key_material_identity != history.key_material_identity
@@ -144,11 +156,17 @@ def test_offline_provisioning_is_distinct_and_restart_stable(
 
 
 def test_sign_verify_and_exclusive_role_apis(
-    tmp_path: Path, store: NativeKeyringSigningSecretAdministrator, security: SecurityProfileIdentity
+    tmp_path: Path,
+    store: NativeKeyringSigningSecretAdministrator,
+    security: SecurityProfileIdentity,
 ) -> None:
     root, history = _provision_pair(tmp_path, store, security)
-    root_provider = LocalRootProofSigningProvider(tmp_path, keyring_index_path=tmp_path / "keyring-index.json", security=security)
-    history_provider = LocalHistoryAttestationSigningProvider(tmp_path, keyring_index_path=tmp_path / "keyring-index.json", security=security)
+    root_provider = LocalRootProofSigningProvider(
+        tmp_path, keyring_index_path=tmp_path / "keyring-index.json", security=security
+    )
+    history_provider = LocalHistoryAttestationSigningProvider(
+        tmp_path, keyring_index_path=tmp_path / "keyring-index.json", security=security
+    )
     root_signature = root_provider.sign_root_proof(b"canonical-root")
     history_signature = history_provider.sign_history_head(b"canonical-history")
     Ed25519PublicKey.from_public_bytes(root.public_key).verify(root_signature, b"canonical-root")
@@ -177,9 +195,14 @@ def test_active_lifecycle_transitions_block_signing(
     second: SigningKeyLifecycle,
 ) -> None:
     provision_local_signing_authority(
-        tmp_path, _admin(tmp_path, security, ProviderRole.ROOT_PROOF_SIGNING), security=security, role=ProviderRole.ROOT_PROOF_SIGNING
+        tmp_path,
+        _admin(tmp_path, security, ProviderRole.ROOT_PROOF_SIGNING),
+        security=security,
+        role=ProviderRole.ROOT_PROOF_SIGNING,
     )
-    provider = LocalRootProofSigningProvider(tmp_path, keyring_index_path=tmp_path / "keyring-index.json", security=security)
+    provider = LocalRootProofSigningProvider(
+        tmp_path, keyring_index_path=tmp_path / "keyring-index.json", security=security
+    )
     assert provider.lifecycle_state() is first
     changed = transition_local_signing_lifecycle(
         tmp_path, security=security, role=ProviderRole.ROOT_PROOF_SIGNING, target=second
@@ -193,10 +216,15 @@ def test_active_lifecycle_transitions_block_signing(
 
 
 def test_verify_only_may_be_revoked_and_revoked_is_terminal(
-    tmp_path: Path, store: NativeKeyringSigningSecretAdministrator, security: SecurityProfileIdentity
+    tmp_path: Path,
+    store: NativeKeyringSigningSecretAdministrator,
+    security: SecurityProfileIdentity,
 ) -> None:
     provision_local_signing_authority(
-        tmp_path, _admin(tmp_path, security, ProviderRole.HISTORY_ATTESTATION_SIGNING), security=security, role=ProviderRole.HISTORY_ATTESTATION_SIGNING
+        tmp_path,
+        _admin(tmp_path, security, ProviderRole.HISTORY_ATTESTATION_SIGNING),
+        security=security,
+        role=ProviderRole.HISTORY_ATTESTATION_SIGNING,
     )
     transition_local_signing_lifecycle(
         tmp_path,
@@ -222,23 +250,35 @@ def test_verify_only_may_be_revoked_and_revoked_is_terminal(
 
 
 def test_missing_bad_secret_and_no_silent_rekey_fail_closed(
-    tmp_path: Path, store: NativeKeyringSigningSecretAdministrator, security: SecurityProfileIdentity
+    tmp_path: Path,
+    store: NativeKeyringSigningSecretAdministrator,
+    security: SecurityProfileIdentity,
 ) -> None:
     with pytest.raises(LocalSigningCustodyError):
-        LocalRootProofSigningProvider(tmp_path, keyring_index_path=tmp_path / "keyring-index.json", security=security)
+        LocalRootProofSigningProvider(
+            tmp_path, keyring_index_path=tmp_path / "keyring-index.json", security=security
+        )
     metadata = provision_local_signing_authority(
-        tmp_path, _admin(tmp_path, security, ProviderRole.ROOT_PROOF_SIGNING), security=security, role=ProviderRole.ROOT_PROOF_SIGNING
+        tmp_path,
+        _admin(tmp_path, security, ProviderRole.ROOT_PROOF_SIGNING),
+        security=security,
+        role=ProviderRole.ROOT_PROOF_SIGNING,
     )
     identity = metadata.credential_identity()
     store.create_authority_secret(
         metadata.protected_private_material_reference, base64.b64encode(b"x" * 32).decode()
     )
     with pytest.raises(LocalSigningCustodyError, match="unavailable/corrupt") as error:
-        LocalRootProofSigningProvider(tmp_path, keyring_index_path=tmp_path / "keyring-index.json", security=security)
+        LocalRootProofSigningProvider(
+            tmp_path, keyring_index_path=tmp_path / "keyring-index.json", security=security
+        )
     assert base64.b64encode(b"x" * 32).decode() not in str(error.value)
     with pytest.raises(LocalSigningCustodyError):
         provision_local_signing_authority(
-            tmp_path, _admin(tmp_path, security, ProviderRole.ROOT_PROOF_SIGNING), security=security, role=ProviderRole.ROOT_PROOF_SIGNING
+            tmp_path,
+            _admin(tmp_path, security, ProviderRole.ROOT_PROOF_SIGNING),
+            security=security,
+            role=ProviderRole.ROOT_PROOF_SIGNING,
         )
     assert metadata.credential_identity() == identity
 
@@ -265,7 +305,10 @@ def test_corrupt_or_cross_role_metadata_fails_closed(
     value: object,
 ) -> None:
     provision_local_signing_authority(
-        tmp_path, _admin(tmp_path, security, ProviderRole.ROOT_PROOF_SIGNING), security=security, role=ProviderRole.ROOT_PROOF_SIGNING
+        tmp_path,
+        _admin(tmp_path, security, ProviderRole.ROOT_PROOF_SIGNING),
+        security=security,
+        role=ProviderRole.ROOT_PROOF_SIGNING,
     )
     path = tmp_path / "root-proof-signing.json"
     document = json.loads(path.read_text())
@@ -273,7 +316,9 @@ def test_corrupt_or_cross_role_metadata_fails_closed(
     path.write_text(json.dumps(document))
     path.chmod(0o600)
     with pytest.raises(LocalSigningCustodyError, match="unavailable/corrupt"):
-        LocalRootProofSigningProvider(tmp_path, keyring_index_path=tmp_path / "keyring-index.json", security=security)
+        LocalRootProofSigningProvider(
+            tmp_path, keyring_index_path=tmp_path / "keyring-index.json", security=security
+        )
 
 
 @pytest.mark.parametrize("raw", [b"{", b"[]", b""])
@@ -284,26 +329,38 @@ def test_truncated_or_malformed_record_fails_closed(
     raw: bytes,
 ) -> None:
     provision_local_signing_authority(
-        tmp_path, _admin(tmp_path, security, ProviderRole.ROOT_PROOF_SIGNING), security=security, role=ProviderRole.ROOT_PROOF_SIGNING
+        tmp_path,
+        _admin(tmp_path, security, ProviderRole.ROOT_PROOF_SIGNING),
+        security=security,
+        role=ProviderRole.ROOT_PROOF_SIGNING,
     )
     path = tmp_path / "root-proof-signing.json"
     path.write_bytes(raw)
     path.chmod(0o600)
     with pytest.raises(LocalSigningCustodyError):
-        LocalRootProofSigningProvider(tmp_path, keyring_index_path=tmp_path / "keyring-index.json", security=security)
+        LocalRootProofSigningProvider(
+            tmp_path, keyring_index_path=tmp_path / "keyring-index.json", security=security
+        )
 
 
 def test_public_private_mismatch_and_wrong_security_fail_closed(
-    tmp_path: Path, store: NativeKeyringSigningSecretAdministrator, security: SecurityProfileIdentity
+    tmp_path: Path,
+    store: NativeKeyringSigningSecretAdministrator,
+    security: SecurityProfileIdentity,
 ) -> None:
     metadata = provision_local_signing_authority(
-        tmp_path, _admin(tmp_path, security, ProviderRole.ROOT_PROOF_SIGNING), security=security, role=ProviderRole.ROOT_PROOF_SIGNING
+        tmp_path,
+        _admin(tmp_path, security, ProviderRole.ROOT_PROOF_SIGNING),
+        security=security,
+        role=ProviderRole.ROOT_PROOF_SIGNING,
     )
     store.create_authority_secret(
         metadata.protected_private_material_reference, base64.b64encode(b"z" * 32).decode()
     )
     with pytest.raises(LocalSigningCustodyError):
-        LocalRootProofSigningProvider(tmp_path, keyring_index_path=tmp_path / "keyring-index.json", security=security)
+        LocalRootProofSigningProvider(
+            tmp_path, keyring_index_path=tmp_path / "keyring-index.json", security=security
+        )
     with pytest.raises(LocalSigningCustodyError):
         LocalRootProofSigningProvider(
             tmp_path,
@@ -319,11 +376,16 @@ def test_public_private_mismatch_and_wrong_security_fail_closed(
 
 
 def test_concurrent_provisioning_has_one_identity(
-    tmp_path: Path, store: NativeKeyringSigningSecretAdministrator, security: SecurityProfileIdentity
+    tmp_path: Path,
+    store: NativeKeyringSigningSecretAdministrator,
+    security: SecurityProfileIdentity,
 ) -> None:
     def provision():
         return provision_local_signing_authority(
-            tmp_path, _admin(tmp_path, security, ProviderRole.ROOT_PROOF_SIGNING), security=security, role=ProviderRole.ROOT_PROOF_SIGNING
+            tmp_path,
+            _admin(tmp_path, security, ProviderRole.ROOT_PROOF_SIGNING),
+            security=security,
+            role=ProviderRole.ROOT_PROOF_SIGNING,
         )
 
     with ThreadPoolExecutor(max_workers=8) as executor:
@@ -334,7 +396,9 @@ def test_concurrent_provisioning_has_one_identity(
 
 
 def test_same_physical_material_is_rejected_even_under_other_role_names(
-    tmp_path: Path, store: NativeKeyringSigningSecretAdministrator, security: SecurityProfileIdentity
+    tmp_path: Path,
+    store: NativeKeyringSigningSecretAdministrator,
+    security: SecurityProfileIdentity,
 ) -> None:
     seed = b"\x42" * 32
     provision_local_signing_authority(
@@ -355,7 +419,9 @@ def test_same_physical_material_is_rejected_even_under_other_role_names(
 
 
 def test_private_material_absent_from_files_and_public_surfaces(
-    tmp_path: Path, store: NativeKeyringSigningSecretAdministrator, security: SecurityProfileIdentity
+    tmp_path: Path,
+    store: NativeKeyringSigningSecretAdministrator,
+    security: SecurityProfileIdentity,
 ) -> None:
     seed = b"\x43" * 32
     metadata = provision_local_signing_authority(
@@ -365,7 +431,9 @@ def test_private_material_absent_from_files_and_public_surfaces(
         role=ProviderRole.ROOT_PROOF_SIGNING,
         private_seed=seed,
     )
-    provider = LocalRootProofSigningProvider(tmp_path, keyring_index_path=tmp_path / "keyring-index.json", security=security)
+    provider = LocalRootProofSigningProvider(
+        tmp_path, keyring_index_path=tmp_path / "keyring-index.json", security=security
+    )
     encoded = base64.b64encode(seed).decode()
     public_values = (
         repr(provider),
@@ -386,30 +454,77 @@ class _OtherProvider:
     capabilities: ProviderCapabilities
     credentials: tuple[CredentialRoleIdentity, ...] = ()
 
-    def credential_identities(self): return self.credentials
-    def active_bundle(self): return b"x"
-    def verify_signed_successor(self, candidate): return True
-    def authoritative_state(self, subject): return None
-    def compare_and_swap_bind(self, request): return request
-    def state_at_revision(self, subject, authoritative_state_revision): return None
-    def retained_history(self, subject): return None
-    def resolve_claimant(self, claimant_id): return None
-    def historical_claimant(self, claimant_id, generation): return None
-    def active_requester_credential(self, requester_id): return None
-    def historical_requester_credential(self, credential_id): return None
-    def current_head(self): return None
-    def append_exact_successor(self, expected_head, record): return record
-    def record_at(self, sequence): return None
-    def current_checkpoint(self): return None
-    def advance_exact_successor(self, expected, successor): return True
-    def authenticated_checkpoint_at(self, sequence): return None
-    def evidence_for(self, subject_id, history_head): return None
-    def verify_evidence(self, evidence): return True
-    def reserve_or_resolve_attempt_id(self, authorization): return None
-    def finalize_attempt(self, identity, *, expected_fence): return None
-    def replace_after_authoritative_unbound(self, authorization, evidence, *, expected_fence): return None
-    def record_recovery_resolution(self, operation_id, resolution, *, expected_fence): return None
-    def attempt(self, operation_id): return None
+    def credential_identities(self):
+        return self.credentials
+
+    def active_bundle(self):
+        return b"x"
+
+    def verify_signed_successor(self, candidate):
+        return True
+
+    def authoritative_state(self, subject):
+        return None
+
+    def compare_and_swap_bind(self, request):
+        return request
+
+    def state_at_revision(self, subject, authoritative_state_revision):
+        return None
+
+    def retained_history(self, subject):
+        return None
+
+    def resolve_claimant(self, claimant_id):
+        return None
+
+    def historical_claimant(self, claimant_id, generation):
+        return None
+
+    def active_requester_credential(self, requester_id):
+        return None
+
+    def historical_requester_credential(self, credential_id):
+        return None
+
+    def current_head(self):
+        return None
+
+    def append_exact_successor(self, expected_head, record):
+        return record
+
+    def record_at(self, sequence):
+        return None
+
+    def current_checkpoint(self):
+        return None
+
+    def advance_exact_successor(self, expected, successor):
+        return True
+
+    def authenticated_checkpoint_at(self, sequence):
+        return None
+
+    def evidence_for(self, subject_id, history_head):
+        return None
+
+    def verify_evidence(self, evidence):
+        return True
+
+    def reserve_or_resolve_attempt_id(self, authorization):
+        return None
+
+    def finalize_attempt(self, identity, *, expected_fence):
+        return None
+
+    def replace_after_authoritative_unbound(self, authorization, evidence, *, expected_fence):
+        return None
+
+    def record_recovery_resolution(self, operation_id, resolution, *, expected_fence):
+        return None
+
+    def attempt(self, operation_id):
+        return None
 
 
 def _composition_others(security: SecurityProfileIdentity) -> list[_OtherProvider]:
@@ -429,43 +544,71 @@ def _composition_others(security: SecurityProfileIdentity) -> list[_OtherProvide
             continue
         namespace = f"{security.trust_domain}.{role.value.lower()}"
         semantic = credential_roles.get(role)
-        credentials = () if semantic is None else (
-            CredentialRoleIdentity(semantic, f"cred-{role.value}", namespace, f"key-{role.value}", f"life-{role.value}", None),
+        credentials = (
+            ()
+            if semantic is None
+            else (
+                CredentialRoleIdentity(
+                    semantic,
+                    f"cred-{role.value}",
+                    namespace,
+                    f"key-{role.value}",
+                    f"life-{role.value}",
+                    None,
+                ),
+            )
         )
         capabilities = ProviderCapabilities(
             True,
             authoritative_reads=role is not ProviderRole.CHECKPOINT_AUTHORITY,
             durable_state=role not in {ProviderRole.RECONCILIATION_EVIDENCE},
-            compare_and_swap=role in {ProviderRole.ENTITLEMENT_REGISTRY, ProviderRole.CHA_ATTEMPT_STORE},
-            checkpoint=CheckpointCapabilities(True, True, True, False, False, True, True, True, True)
-            if role is ProviderRole.CHECKPOINT_AUTHORITY else None,
+            compare_and_swap=role
+            in {ProviderRole.ENTITLEMENT_REGISTRY, ProviderRole.CHA_ATTEMPT_STORE},
+            checkpoint=CheckpointCapabilities(
+                True, True, True, False, False, True, True, True, True
+            )
+            if role is ProviderRole.CHECKPOINT_AUTHORITY
+            else None,
         )
-        result.append(_OtherProvider(ProviderIdentity(role, security, namespace), capabilities, credentials))
+        result.append(
+            _OtherProvider(ProviderIdentity(role, security, namespace), capabilities, credentials)
+        )
     return result
 
 
 def test_real_local_providers_qualify_local_and_fail_server_ready(
-    tmp_path: Path, store: NativeKeyringSigningSecretAdministrator, security: SecurityProfileIdentity
+    tmp_path: Path,
+    store: NativeKeyringSigningSecretAdministrator,
+    security: SecurityProfileIdentity,
 ) -> None:
     _provision_pair(tmp_path, store, security)
-    root = LocalRootProofSigningProvider(tmp_path, keyring_index_path=tmp_path / "keyring-index.json", security=security)
-    history = LocalHistoryAttestationSigningProvider(tmp_path, keyring_index_path=tmp_path / "keyring-index.json", security=security)
+    root = LocalRootProofSigningProvider(
+        tmp_path, keyring_index_path=tmp_path / "keyring-index.json", security=security
+    )
+    history = LocalHistoryAttestationSigningProvider(
+        tmp_path, keyring_index_path=tmp_path / "keyring-index.json", security=security
+    )
     providers = [*_composition_others(security), root, history]
     local = RootProofIssuerCompositionGate().qualify(security, providers)
     assert local.qualified, local.failures
 
     server = SecurityProfileIdentity(SecurityProfile.PRODUCTION_SERVER_READY, security.trust_domain)
     server_providers = [
-        replace(item, identity=replace(item.identity, security=server)) for item in _composition_others(security)
+        replace(item, identity=replace(item.identity, security=server))
+        for item in _composition_others(security)
     ]
     # Genuine SERVER_READY qualification against the same local adapters fails
     # both profile binding and hardware/non-exportability requirements.
     result = RootProofIssuerCompositionGate().qualify(server, [*server_providers, root, history])
     assert not result.qualified
-    assert any(failure.role in {
-        ProviderRole.ROOT_PROOF_SIGNING,
-        ProviderRole.HISTORY_ATTESTATION_SIGNING,
-    } for failure in result.failures)
+    assert any(
+        failure.role
+        in {
+            ProviderRole.ROOT_PROOF_SIGNING,
+            ProviderRole.HISTORY_ATTESTATION_SIGNING,
+        }
+        for failure in result.failures
+    )
 
 
 @pytest.mark.parametrize("backend", [PlaintextMemoryStore(), object()])
@@ -481,7 +624,9 @@ def test_arbitrary_or_plaintext_secret_backend_is_not_production_custody(
         )
     with pytest.raises(TypeError):
         LocalRootProofSigningProvider(
-            tmp_path, secret_reader=backend, security=security  # type: ignore[call-arg]
+            tmp_path,
+            secret_reader=backend,
+            security=security,  # type: ignore[call-arg]
         )
 
 
@@ -509,9 +654,7 @@ def test_authority_scoped_readers_reject_opposite_role_references(
         history_reader.read_authority_secret(root.protected_private_material_reference)
 
 
-def test_authority_scoped_reader_rejects_other_trust_domain(
-    tmp_path: Path, native_keyring
-) -> None:
+def test_authority_scoped_reader_rejects_other_trust_domain(tmp_path: Path, native_keyring) -> None:
     domain_a = SecurityProfileIdentity(SecurityProfile.PRODUCTION_LOCAL, "domain-a")
     domain_b = SecurityProfileIdentity(SecurityProfile.PRODUCTION_LOCAL, "domain-b")
     directory_a = tmp_path / "domain-a"
@@ -639,7 +782,10 @@ def test_restart_uses_fresh_native_reader_and_preserves_exact_identity(
     security: SecurityProfileIdentity,
 ) -> None:
     metadata = provision_local_signing_authority(
-        tmp_path, _admin(tmp_path, security, ProviderRole.ROOT_PROOF_SIGNING), security=security, role=ProviderRole.ROOT_PROOF_SIGNING
+        tmp_path,
+        _admin(tmp_path, security, ProviderRole.ROOT_PROOF_SIGNING),
+        security=security,
+        role=ProviderRole.ROOT_PROOF_SIGNING,
     )
     first = LocalRootProofSigningProvider(
         tmp_path,
@@ -727,7 +873,10 @@ def test_concurrent_lifecycle_transitions_are_linearizable_and_monotonic(
     security: SecurityProfileIdentity,
 ) -> None:
     metadata = provision_local_signing_authority(
-        tmp_path, _admin(tmp_path, security, ProviderRole.ROOT_PROOF_SIGNING), security=security, role=ProviderRole.ROOT_PROOF_SIGNING
+        tmp_path,
+        _admin(tmp_path, security, ProviderRole.ROOT_PROOF_SIGNING),
+        security=security,
+        role=ProviderRole.ROOT_PROOF_SIGNING,
     )
     barrier = threading.Barrier(2)
 
@@ -747,7 +896,9 @@ def test_concurrent_lifecycle_transitions_are_linearizable_and_monotonic(
         ]
     committed = [future.result() for future in futures if future.exception() is None]
     errors = [future.exception() for future in futures if future.exception() is not None]
-    provider = LocalRootProofSigningProvider(tmp_path, keyring_index_path=tmp_path / "keyring-index.json", security=security)
+    provider = LocalRootProofSigningProvider(
+        tmp_path, keyring_index_path=tmp_path / "keyring-index.json", security=security
+    )
     assert provider.lifecycle_state() is SigningKeyLifecycle.REVOKED
     assert provider.lifecycle_generation() == metadata.lifecycle_generation + len(committed)
     assert all(isinstance(error, LocalSigningLifecycleError) for error in errors)
@@ -767,7 +918,10 @@ def test_sign_and_revoke_have_an_explicit_linearization_order(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     provision_local_signing_authority(
-        tmp_path, _admin(tmp_path, security, ProviderRole.ROOT_PROOF_SIGNING), security=security, role=ProviderRole.ROOT_PROOF_SIGNING
+        tmp_path,
+        _admin(tmp_path, security, ProviderRole.ROOT_PROOF_SIGNING),
+        security=security,
+        role=ProviderRole.ROOT_PROOF_SIGNING,
     )
     provider = LocalRootProofSigningProvider(
         tmp_path,
@@ -784,9 +938,7 @@ def test_sign_and_revoke_have_an_explicit_linearization_order(
             assert release.wait(5)
         return original(self, key)
 
-    monkeypatch.setattr(
-        NativeKeyringSigningSecretReader, "read_authority_secret", blocking_get
-    )
+    monkeypatch.setattr(NativeKeyringSigningSecretReader, "read_authority_secret", blocking_get)
     order: list[str] = []
 
     def sign():
@@ -842,7 +994,10 @@ def test_failed_metadata_commit_cleans_only_new_protected_secret(
     )
     with pytest.raises(OSError, match="injected"):
         provision_local_signing_authority(
-            tmp_path, _admin(tmp_path, security, ProviderRole.ROOT_PROOF_SIGNING), security=security, role=ProviderRole.ROOT_PROOF_SIGNING
+            tmp_path,
+            _admin(tmp_path, security, ProviderRole.ROOT_PROOF_SIGNING),
+            security=security,
+            role=ProviderRole.ROOT_PROOF_SIGNING,
         )
     assert len(references) == 1
     assert store.read_authority_secret(references[0]) is None
@@ -869,7 +1024,10 @@ def test_exact_security_role_and_lifecycle_boundaries(
         )
     with pytest.raises(LocalSigningProvisioningConflict):
         provision_local_signing_authority(
-            tmp_path, store, security=security, role="ROOT_PROOF_SIGNING"  # type: ignore[arg-type]
+            tmp_path,
+            store,
+            security=security,
+            role="ROOT_PROOF_SIGNING",  # type: ignore[arg-type]
         )
 
 
@@ -935,9 +1093,7 @@ def test_impossible_lifecycle_state_generation_is_rejected(
     provision_local_signing_authority(
         tmp_path, store, security=security, role=ProviderRole.ROOT_PROOF_SIGNING
     )
-    _rewrite_root_metadata(
-        tmp_path, lifecycle_state=state, lifecycle_generation=generation
-    )
+    _rewrite_root_metadata(tmp_path, lifecycle_state=state, lifecycle_generation=generation)
     with pytest.raises(LocalSigningCustodyError, match="unavailable/corrupt"):
         LocalRootProofSigningProvider(
             tmp_path,
@@ -958,9 +1114,7 @@ def test_same_scope_alternate_reference_cannot_rebind_physical_identity(
     alternate_reference = store.new_secret_reference(alternate_credential)
     alternate_seed = b"\x77" * 32
     alternate_public = (
-        Ed25519PrivateKey.from_private_bytes(alternate_seed)
-        .public_key()
-        .public_bytes_raw()
+        Ed25519PrivateKey.from_private_bytes(alternate_seed).public_key().public_bytes_raw()
     )
     store.create_authority_secret(
         alternate_reference, base64.b64encode(alternate_seed).decode("ascii")

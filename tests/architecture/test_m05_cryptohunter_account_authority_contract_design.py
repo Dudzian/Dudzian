@@ -1,4 +1,5 @@
 """Contract/design-freeze and red-team checks for account authority."""
+
 from __future__ import annotations
 
 from copy import deepcopy
@@ -40,7 +41,9 @@ def render(value: dict) -> str:
 def validate(d: dict) -> None:
     entity = d["preserved_entity_contract"]
     assert (entity["entity"], entity["id_field"], entity["id_grammar"]) == (
-        "CryptoHunterAccount", "account_id", "acct_<canonical lowercase UUIDv7>"
+        "CryptoHunterAccount",
+        "account_id",
+        "acct_<canonical lowercase UUIDv7>",
     )
     assert entity["parent"] == "none" and entity["persistent"] is True
     assert entity["secret_policy"] == "must not contain secrets"
@@ -65,7 +68,9 @@ def validate(d: dict) -> None:
     assert minting["status"] == "DESIGN_BLOCKED"
     assert minting["caller_may_choose"] == []
     assert set(d["id_minting"]["caller_fields_forbidden"]) == {
-        "accepted_account_record_id", "generation", "authority metadata"
+        "accepted_account_record_id",
+        "generation",
+        "authority metadata",
     }
     assert "account_id" not in d["admission"]["request_must_not_contain"]
     assert d["admission"]["caller_selected_account_id"] == "FORBIDDEN"
@@ -106,15 +111,18 @@ def validate(d: dict) -> None:
         "one CryptoHunterAccount may have multiple device-scoped/local StateStores"
     )
     assert partitioning["environment_partition"] == "NOT_PROVEN"
-    assert partitioning["exactly_three_identities_for_one_device_across_PAPER_TESTNET_LIVE"] is False
+    assert (
+        partitioning["exactly_three_identities_for_one_device_across_PAPER_TESTNET_LIVE"] is False
+    )
     assert topology["models"]["F_DESIGN_BLOCKED"] == "SELECTED"
-    assert topology["authority_resolver_publication_gate"][
-        "requires_every_device_projection_current"
-    ] is False
+    assert (
+        topology["authority_resolver_publication_gate"]["requires_every_device_projection_current"]
+        is False
+    )
     assert topology["projection_replica_health"]["process_start_order_may_decide"] is False
-    assert topology["projection_replica_health"][
-        "stale_remote_projection_silently_ignored"
-    ] is False
+    assert (
+        topology["projection_replica_health"]["stale_remote_projection_silently_ignored"] is False
+    )
     assert topology["projection_repair_permission"]["M011_to_authority_repair"] == "FORBIDDEN"
     environment_mapping = topology["authority_domain_to_StateStore_environment_mapping"]
     assert environment_mapping["status"] == "DESIGN_BLOCKED"
@@ -159,11 +167,15 @@ def test_markdown_is_deterministic_complete_projection() -> None:
         lambda x: x["root_of_trust"].update(self_bootstrap="ALLOWED"),
         lambda x: x["environment_isolation"].update(key_material="shared"),
         lambda x: x["rollback"].update(valid_prefix_A_B_after_A_B_C="ACCEPT"),
-        lambda x: x["m011_carrier_integration"].update(choice="SECOND_CURRENT_STORE_WITHOUT_RECONCILIATION"),
+        lambda x: x["m011_carrier_integration"].update(
+            choice="SECOND_CURRENT_STORE_WITHOUT_RECONCILIATION"
+        ),
         lambda x: x["m011_carrier_integration"].update(mismatch_on_restart="M0.11 WINS"),
         lambda x: x["concurrency"].update(last_writer_wins=True),
         lambda x: x["idempotency"].update(exact_retry="mint second account"),
-        lambda x: x["workspace_parent_binding"].update(account_authority_unblocks_WorkspaceAuthority=True),
+        lambda x: x["workspace_parent_binding"].update(
+            account_authority_unblocks_WorkspaceAuthority=True
+        ),
         lambda x: x["projection_target_partitioning"].update(
             proven_cardinality="one global M0.11 store per account"
         ),
@@ -191,16 +203,29 @@ def test_markdown_is_deterministic_complete_projection() -> None:
         lambda x: x["admission"]["request_must_not_contain"].append("account_id"),
     ],
     ids=[
-        "caller-id-syntax-becomes-authority", "carrier-becomes-authority",
-        "restored-carrier-mints-authority", "public-sha-becomes-authenticity",
-        "self-bootstrap-root", "production-test-keys-shared", "valid-prefix-rollback",
-        "second-current-store-no-reconciliation", "carrier-wins-mismatch",
-        "last-writer-wins", "duplicate-mints-second-account", "workspace-auto-unblocked",
-        "one-global-store-per-account", "all-stores-without-offline-policy",
-        "every-device-projection-gates-resolver", "stale-remote-silently-ignored",
-        "production-automatically-live", "test-automatically-paper-testnet",
-        "environment-promoted-to-identity", "three-environments-three-store-identities",
-        "account-authority-only-owner", "partially-frozen-owner", "permanent-account-id-ban",
+        "caller-id-syntax-becomes-authority",
+        "carrier-becomes-authority",
+        "restored-carrier-mints-authority",
+        "public-sha-becomes-authenticity",
+        "self-bootstrap-root",
+        "production-test-keys-shared",
+        "valid-prefix-rollback",
+        "second-current-store-no-reconciliation",
+        "carrier-wins-mismatch",
+        "last-writer-wins",
+        "duplicate-mints-second-account",
+        "workspace-auto-unblocked",
+        "one-global-store-per-account",
+        "all-stores-without-offline-policy",
+        "every-device-projection-gates-resolver",
+        "stale-remote-silently-ignored",
+        "production-automatically-live",
+        "test-automatically-paper-testnet",
+        "environment-promoted-to-identity",
+        "three-environments-three-store-identities",
+        "account-authority-only-owner",
+        "partially-frozen-owner",
+        "permanent-account-id-ban",
     ],
 )
 def test_mandatory_negative_mutations_fail(mutation) -> None:
@@ -213,22 +238,49 @@ def test_mandatory_negative_mutations_fail(mutation) -> None:
 def test_required_sections_and_crash_points_are_closed() -> None:
     d = load()
     required = {
-        "repository_head_examined", "provenance", "root_of_trust", "accepted_record",
-        "id_minting", "admission", "lifecycle", "resolver_model", "history_model",
-        "durability_model", "m011_carrier_integration", "m011_projection_topology",
-        "immutable_StateStore_identity", "StateStore_metadata_dimensions",
+        "repository_head_examined",
+        "provenance",
+        "root_of_trust",
+        "accepted_record",
+        "id_minting",
+        "admission",
+        "lifecycle",
+        "resolver_model",
+        "history_model",
+        "durability_model",
+        "m011_carrier_integration",
+        "m011_projection_topology",
+        "immutable_StateStore_identity",
+        "StateStore_metadata_dimensions",
         "projection_target_partitioning",
-        "authentication", "freshness",
-        "rollback", "restart", "crash_atomicity", "concurrency", "idempotency",
-        "environment_isolation", "workspace_parent_binding", "self_mint_resistance",
-        "missing_semantics", "design_result", "implementation_allowed", "next_stage",
-        "preserved_status", "account_id_ownership_reopened_by", "targeted_reopen_scope",
+        "authentication",
+        "freshness",
+        "rollback",
+        "restart",
+        "crash_atomicity",
+        "concurrency",
+        "idempotency",
+        "environment_isolation",
+        "workspace_parent_binding",
+        "self_mint_resistance",
+        "missing_semantics",
+        "design_result",
+        "implementation_allowed",
+        "next_stage",
+        "preserved_status",
+        "account_id_ownership_reopened_by",
+        "targeted_reopen_scope",
     }
     assert required <= d.keys()
     assert set(d["crash_atomicity"]["points"]) == {
-        "before_prepare", "after_prepare", "after_authority_record", "after_authority_head",
-        "before_freshness_anchor", "after_freshness_anchor",
-        "before_M011_projection_update", "after_M011_projection_update",
+        "before_prepare",
+        "after_prepare",
+        "after_authority_record",
+        "after_authority_head",
+        "before_freshness_anchor",
+        "after_freshness_anchor",
+        "before_M011_projection_update",
+        "after_M011_projection_update",
     }
     assert len(d["negative_requirements"]) == 20
 

@@ -70,16 +70,20 @@ class ProductionLocalFreshnessAuthorityConfig:
     database: str = "freshness_gate"
 
     def __post_init__(self) -> None:
-        if (type(self.verifier_socket_path) is not str or
-                not os.path.isabs(self.verifier_socket_path)):
+        if type(self.verifier_socket_path) is not str or not os.path.isabs(
+            self.verifier_socket_path
+        ):
             raise ValueError("verifier_socket_path must be absolute")
-        if (type(self.postgres_socket_directory) is not str or
-                not os.path.isabs(self.postgres_socket_directory)):
+        if type(self.postgres_socket_directory) is not str or not os.path.isabs(
+            self.postgres_socket_directory
+        ):
             raise ValueError("postgres_socket_directory must be absolute")
         if type(self.postgres_port) is not int or not 1 <= self.postgres_port <= 65535:
             raise ValueError("postgres_port must be an exact port")
-        if (type(self.database) is not str or
-                re.fullmatch(r"[a-z_][a-z0-9_]{0,62}", self.database) is None):
+        if (
+            type(self.database) is not str
+            or re.fullmatch(r"[a-z_][a-z0-9_]{0,62}", self.database) is None
+        ):
             raise ValueError("database must be a safe fixed identifier")
 
 
@@ -113,8 +117,10 @@ class ProductionLocalFreshnessAuthority:
         Inputs are copied immediately.  This method never creates a successor,
         changes a request identity, or accepts a caller-created preparation.
         """
-        if any(type(value) is not bytes for value in (
-                proposer_authentication, authoritative_document, finalization_receipt)):
+        if any(
+            type(value) is not bytes
+            for value in (proposer_authentication, authoritative_document, finalization_receipt)
+        ):
             return FreshnessAuthorityResult(FreshnessAuthorityOutcome.INVALID_DOCUMENT)
         proposer = bytes(proposer_authentication)
         document = bytes(authoritative_document)
@@ -124,28 +130,36 @@ class ProductionLocalFreshnessAuthority:
             return prepared_or_result
         return self._compare_and_advance(prepared_or_result, document, receipt)
 
-    def _request_preparation(self, proposer: bytes, document: bytes, receipt: bytes
-                             ) -> _Prepared | FreshnessAuthorityResult:
+    def _request_preparation(
+        self, proposer: bytes, document: bytes, receipt: bytes
+    ) -> _Prepared | FreshnessAuthorityResult:
         first = self._request_preparation_once(proposer, document, receipt)
-        if (isinstance(first, FreshnessAuthorityResult) and first.outcome is
-                FreshnessAuthorityOutcome.PREPARATION_OUTCOME_UNKNOWN):
+        if (
+            isinstance(first, FreshnessAuthorityResult)
+            and first.outcome is FreshnessAuthorityOutcome.PREPARATION_OUTCOME_UNKNOWN
+        ):
             # Only an exact retry is permitted: all three snapshots are reused.
             retry = self._request_preparation_once(proposer, document, receipt)
-            if (isinstance(retry, FreshnessAuthorityResult) and retry.outcome is
-                    FreshnessAuthorityOutcome.UNAVAILABLE):
+            if (
+                isinstance(retry, FreshnessAuthorityResult)
+                and retry.outcome is FreshnessAuthorityOutcome.UNAVAILABLE
+            ):
                 # Once authority execution may have happened, an outage cannot
                 # prove that the durable preparation did not commit.
                 return first
             return retry
         return first
 
-    def _request_preparation_once(self, proposer: bytes, document: bytes, receipt: bytes
-                                  ) -> _Prepared | FreshnessAuthorityResult:
-        request = canonical_json_bytes({
-            "proposer_authentication": _b64(proposer),
-            "authoritative_document": _b64(document),
-            "finalization_receipt": _b64(receipt),
-        })
+    def _request_preparation_once(
+        self, proposer: bytes, document: bytes, receipt: bytes
+    ) -> _Prepared | FreshnessAuthorityResult:
+        request = canonical_json_bytes(
+            {
+                "proposer_authentication": _b64(proposer),
+                "authoritative_document": _b64(document),
+                "finalization_receipt": _b64(receipt),
+            }
+        )
         state = _PreparationTransportState.NOT_CONNECTED
         try:
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
@@ -161,10 +175,12 @@ class ProductionLocalFreshnessAuthority:
                 raw_response = _receive_exact(client, length)
                 state = _PreparationTransportState.RESPONSE_RECEIVED
         except OSError:
-            outcome = (FreshnessAuthorityOutcome.UNAVAILABLE
-                       if state in {_PreparationTransportState.NOT_CONNECTED,
-                                    _PreparationTransportState.CONNECTED}
-                       else FreshnessAuthorityOutcome.PREPARATION_OUTCOME_UNKNOWN)
+            outcome = (
+                FreshnessAuthorityOutcome.UNAVAILABLE
+                if state
+                in {_PreparationTransportState.NOT_CONNECTED, _PreparationTransportState.CONNECTED}
+                else FreshnessAuthorityOutcome.PREPARATION_OUTCOME_UNKNOWN
+            )
             return FreshnessAuthorityResult(outcome)
         except (ValueError, struct.error):
             return FreshnessAuthorityResult(FreshnessAuthorityOutcome.CORRUPT)
@@ -189,9 +205,13 @@ class ProductionLocalFreshnessAuthority:
             parsed = parse_canonical_json(binding)
         except (TypeError, ValueError, UnicodeError):
             return FreshnessAuthorityResult(FreshnessAuthorityOutcome.CORRUPT)
-        if (type(preparation_id) is not str or _HEX.fullmatch(preparation_id) is None or
-                type(parsed) is not dict or set(parsed) != PREPARATION_FIELDS or
-                parsed.get("preparation_id") != preparation_id):
+        if (
+            type(preparation_id) is not str
+            or _HEX.fullmatch(preparation_id) is None
+            or type(parsed) is not dict
+            or set(parsed) != PREPARATION_FIELDS
+            or parsed.get("preparation_id") != preparation_id
+        ):
             return FreshnessAuthorityResult(FreshnessAuthorityOutcome.CORRUPT)
         return _Prepared(preparation_id, binding, parsed)
 
@@ -214,8 +234,9 @@ class ProductionLocalFreshnessAuthority:
         connection.rollback()
         return connection
 
-    def _compare_and_advance(self, prepared: _Prepared, document: bytes,
-                             receipt: bytes) -> FreshnessAuthorityResult:
+    def _compare_and_advance(
+        self, prepared: _Prepared, document: bytes, receipt: bytes
+    ) -> FreshnessAuthorityResult:
         # A native serialization failure is not semantic evidence of a stale
         # predecessor.  Retry within a small fixed bound using the identical
         # frozen evidence in new connections and SERIALIZABLE transactions.
@@ -230,14 +251,15 @@ class ProductionLocalFreshnessAuthority:
             preparation_id=prepared.preparation_id,
         )
 
-    def _compare_and_advance_once(self, prepared: _Prepared, document: bytes,
-                                  receipt: bytes
-                                  ) -> FreshnessAuthorityResult | _NativeSerializationFailure:
+    def _compare_and_advance_once(
+        self, prepared: _Prepared, document: bytes, receipt: bytes
+    ) -> FreshnessAuthorityResult | _NativeSerializationFailure:
         try:
             connection = self._connect_runtime()
         except (psycopg.Error, OSError, RuntimeError):
-            return FreshnessAuthorityResult(FreshnessAuthorityOutcome.UNAVAILABLE,
-                                             preparation_id=prepared.preparation_id)
+            return FreshnessAuthorityResult(
+                FreshnessAuthorityOutcome.UNAVAILABLE, preparation_id=prepared.preparation_id
+            )
         sent = False
         try:
             connection.execute("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE")
@@ -267,17 +289,24 @@ class ProductionLocalFreshnessAuthority:
             return FreshnessAuthorityResult(outcome, preparation_id=prepared.preparation_id)
         finally:
             connection.close()
-        if (row is None or len(row) != 3 or row[0] not in
-                {"CAS_ACCEPTED", "ALREADY_ACCEPTED_EXACT"} or
-                type(row[1]) is not int or type(row[2]) is not dict):
-            return FreshnessAuthorityResult(FreshnessAuthorityOutcome.CORRUPT,
-                                             preparation_id=prepared.preparation_id)
+        if (
+            row is None
+            or len(row) != 3
+            or row[0] not in {"CAS_ACCEPTED", "ALREADY_ACCEPTED_EXACT"}
+            or type(row[1]) is not int
+            or type(row[2]) is not dict
+        ):
+            return FreshnessAuthorityResult(
+                FreshnessAuthorityOutcome.CORRUPT, preparation_id=prepared.preparation_id
+            )
         retained = canonical_json_bytes(row[2])
         if retained != receipt:
-            return FreshnessAuthorityResult(FreshnessAuthorityOutcome.CORRUPT,
-                                             preparation_id=prepared.preparation_id)
-        return FreshnessAuthorityResult(FreshnessAuthorityOutcome(row[0]), row[1], retained,
-                                         prepared.preparation_id)
+            return FreshnessAuthorityResult(
+                FreshnessAuthorityOutcome.CORRUPT, preparation_id=prepared.preparation_id
+            )
+        return FreshnessAuthorityResult(
+            FreshnessAuthorityOutcome(row[0]), row[1], retained, prepared.preparation_id
+        )
 
 
 def _receive_exact(connection: socket.socket, count: int) -> bytes:
@@ -295,8 +324,12 @@ def _b64(value: bytes) -> str:
 
 
 def _unb64(value: object) -> bytes:
-    if (type(value) is not str or not value or "=" in value or
-            re.fullmatch(r"[A-Za-z0-9_-]+", value) is None):
+    if (
+        type(value) is not str
+        or not value
+        or "=" in value
+        or re.fullmatch(r"[A-Za-z0-9_-]+", value) is None
+    ):
         raise ValueError("invalid base64url")
     result = base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
     if _b64(result) != value:

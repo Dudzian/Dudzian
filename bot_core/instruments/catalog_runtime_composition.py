@@ -4,6 +4,7 @@ Construction is deliberately separate from provisioning.  Startup may reopen alr
 provisioned authorities, but it must never create signing custody or admit a producer
 as a side effect of composing the runtime.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -40,10 +41,7 @@ def _existing_sqlite_storage(path: Path) -> tuple[Path, ...]:
 
 def _has_reserved_sidecar_symlink(path: Path) -> bool:
     """See live and dangling symlink entries without following their targets."""
-    return any(
-        Path(f"{path}{suffix}").is_symlink()
-        for suffix in _SQLITE_WAL_SIDECAR_SUFFIXES
-    )
+    return any(Path(f"{path}{suffix}").is_symlink() for suffix in _SQLITE_WAL_SIDECAR_SUFFIXES)
 
 
 def _has_physical_cross_authority_alias(left: Path, right: Path) -> bool:
@@ -102,9 +100,7 @@ def compose_catalog_runtime_acceptance(
         raise TypeError("exact CatalogRuntimeAuthorityPaths required")
     if not paths.catalog_state.is_file() or not paths.receipt_metadata.is_file():
         raise ValueError("CATALOG_RUNTIME_STORAGE_MISSING")
-    membership = SourceProducerMembershipAuthority(
-        SQLiteMembershipCarrier(paths.catalog_state)
-    )
+    membership = SourceProducerMembershipAuthority(SQLiteMembershipCarrier(paths.catalog_state))
     receipts = CatalogAdmissionReceiptAuthority(
         SQLiteCatalogAdmissionReceiptMetadataStore(paths.receipt_metadata)
     )

@@ -1,4 +1,5 @@
 """Canonical CoreHost lifecycle gate for M0.12 Catalog runtime acceptance."""
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -20,6 +21,7 @@ from bot_core.instruments.catalog_runtime_composition import (
 )
 from bot_core.instruments.core_time import PRODUCTION_CORE_CLOCK
 
+
 class CatalogPermissionQualification(Enum):
     QUALIFIED = "QUALIFIED"
     INVALID = "INVALID"
@@ -30,9 +32,7 @@ class CatalogPermissionQualifier(ABC):
     """Platform-neutral physical permission proof boundary."""
 
     @abstractmethod
-    def qualify(
-        self, paths: CatalogRuntimeAuthorityPaths
-    ) -> CatalogPermissionQualification: ...
+    def qualify(self, paths: CatalogRuntimeAuthorityPaths) -> CatalogPermissionQualification: ...
 
 
 class PosixCatalogPermissionQualifier(CatalogPermissionQualifier):
@@ -47,9 +47,7 @@ class PosixCatalogPermissionQualifier(CatalogPermissionQualifier):
         self._stat_reader = stat_reader
         self._uid_reader = uid_reader or os.geteuid
 
-    def qualify(
-        self, paths: CatalogRuntimeAuthorityPaths
-    ) -> CatalogPermissionQualification:
+    def qualify(self, paths: CatalogRuntimeAuthorityPaths) -> CatalogPermissionQualification:
         uid = self._uid_reader()
         directories = {paths.catalog_state.parent, paths.receipt_metadata.parent}
         qualified = all(
@@ -69,9 +67,7 @@ class PosixCatalogPermissionQualifier(CatalogPermissionQualifier):
 
 
 class UnavailableCatalogPermissionQualifier(CatalogPermissionQualifier):
-    def qualify(
-        self, paths: CatalogRuntimeAuthorityPaths
-    ) -> CatalogPermissionQualification:
+    def qualify(self, paths: CatalogRuntimeAuthorityPaths) -> CatalogPermissionQualification:
         del paths
         return CatalogPermissionQualification.UNAVAILABLE
 
@@ -91,12 +87,8 @@ class CatalogRuntimeDeploymentConfiguration:
     receipt_metadata_path: Path
 
     @classmethod
-    def from_protected_mapping(
-        cls, value: object
-    ) -> "CatalogRuntimeDeploymentConfiguration":
-        if type(value) is not dict or set(value) != {
-            "catalog_state_path", "receipt_metadata_path"
-        }:
+    def from_protected_mapping(cls, value: object) -> "CatalogRuntimeDeploymentConfiguration":
+        if type(value) is not dict or set(value) != {"catalog_state_path", "receipt_metadata_path"}:
             raise ValueError("CATALOG_RUNTIME_CONFIGURATION_INVALID")
         if any(type(value[key]) is not str for key in value):
             raise ValueError("CATALOG_RUNTIME_CONFIGURATION_INVALID")
@@ -107,9 +99,7 @@ class CatalogRuntimeDeploymentConfiguration:
 
     @property
     def paths(self) -> CatalogRuntimeAuthorityPaths:
-        return CatalogRuntimeAuthorityPaths(
-            self.catalog_state_path, self.receipt_metadata_path
-        )
+        return CatalogRuntimeAuthorityPaths(self.catalog_state_path, self.receipt_metadata_path)
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,7 +119,10 @@ class CoreHostCatalogRuntimeLifecycle:
         *,
         permission_qualifier: CatalogPermissionQualifier | None = None,
     ) -> None:
-        if configuration is not None and type(configuration) is not CatalogRuntimeDeploymentConfiguration:
+        if (
+            configuration is not None
+            and type(configuration) is not CatalogRuntimeDeploymentConfiguration
+        ):
             raise TypeError("exact CatalogRuntimeDeploymentConfiguration required")
         self._configuration = configuration
         qualifier = permission_qualifier or native_catalog_permission_qualifier()
