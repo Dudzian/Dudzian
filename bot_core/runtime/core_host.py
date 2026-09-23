@@ -16,9 +16,11 @@ from typing import Any, BinaryIO, Protocol, TypeVar, cast
 
 from bot_core.persistence.runtime_session_history import RuntimeSessionPublicationResult
 from .core_host_catalog_runtime import (
+    CatalogPermissionQualifier,
     CatalogRuntimeDeploymentConfiguration,
     CatalogRuntimeStartupResult,
     CoreHostCatalogRuntimeLifecycle,
+    native_catalog_permission_qualifier,
 )
 
 from .core_host_recovery_types import (
@@ -175,6 +177,9 @@ class CoreHost:
         runtime_session_publication_hook: Callable[[str, RuntimeSession], None] | None = None,
         lock_factory: Callable[[CoreHostScope], CoreHostProcessLock] = CoreHostProcessLock,
         catalog_runtime_configuration: CatalogRuntimeDeploymentConfiguration | None = None,
+        catalog_permission_qualifier_factory: Callable[[], CatalogPermissionQualifier] = (
+            native_catalog_permission_qualifier
+        ),
     ) -> None:
         self._scope = scope
         self._runtime_session_factory = runtime_session_factory or cast(
@@ -192,6 +197,7 @@ class CoreHost:
         ):
             raise TypeError("exact CatalogRuntimeDeploymentConfiguration required")
         self._catalog_runtime_configuration = catalog_runtime_configuration
+        self._catalog_permission_qualifier_factory = catalog_permission_qualifier_factory
         self._catalog_runtime: CoreHostCatalogRuntimeLifecycle | None = None
         self._lock: CoreHostProcessLock | None = None
         self._runtime_session: SessionT | None = None
@@ -264,7 +270,8 @@ class CoreHost:
                 self._startup_disposition = CoreHostStartupDisposition.SETUP_REQUIRED
             else:
                 catalog_runtime = CoreHostCatalogRuntimeLifecycle(
-                    self._catalog_runtime_configuration
+                    self._catalog_runtime_configuration,
+                    permission_qualifier=self._catalog_permission_qualifier_factory(),
                 )
                 catalog_runtime.start_after_recovery()
                 self._catalog_runtime = catalog_runtime
