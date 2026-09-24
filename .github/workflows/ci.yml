@@ -594,6 +594,23 @@ jobs:
         run: |
           PG_BINDIR="$(pg_config --bindir)"
           export PATH="${PG_BINDIR}:${PATH}"
+          SOURCE_STAGE="$(mktemp -d /tmp/dz-peer-source-XXXXXX)"
+          trap 'sudo rm -rf "${SOURCE_STAGE}"' EXIT
+          cp -a . "${SOURCE_STAGE}/checkout"
+          rm -rf "${SOURCE_STAGE}/checkout/.git"
+          sudo chown -R root:root "${SOURCE_STAGE}"
+          sudo chmod -R a-w,u+rwX,go+rX "${SOURCE_STAGE}"
+          for identity in os_freshness_crypto_verifier os_freshness_runtime os_freshness_outsider; do
+            id "${identity}" >/dev/null 2>&1 || sudo useradd --system --no-create-home --shell /usr/sbin/nologin "${identity}"
+            sudo runuser -u "${identity}" -- test -r "${SOURCE_STAGE}/checkout/bot_core/__init__.py"
+            if sudo runuser -u "${identity}" -- test -w "${SOURCE_STAGE}/checkout/bot_core/__init__.py"; then
+              echo "peer-auth principal unexpectedly has source write access: ${identity}" >&2
+              exit 1
+            fi
+          done
+          sudo runuser -u os_freshness_crypto_verifier -- env \
+            PYTHONPATH="${SOURCE_STAGE}/checkout" \
+            python -c 'import bot_core; import bot_core.freshness_semantic_verifier'
           sudo env PATH="${PATH}" python - <<'PY'
           import os
           import shutil
@@ -602,7 +619,8 @@ jobs:
           for tool in ("runuser", "useradd", "pg_config", "initdb", "pg_ctl"):
               assert shutil.which(tool), f"required native peer-auth tool unavailable: {tool}"
           PY
-          sudo env PATH="${PATH}" python -m pytest -q \
+          cd "${SOURCE_STAGE}/checkout"
+          sudo env PATH="${PATH}" PYTHONPATH="${SOURCE_STAGE}/checkout" python -m pytest -q \
             tests/security/test_freshness_semantic_verifier_postgresql.py
 
       - name: Run fast pytest suite

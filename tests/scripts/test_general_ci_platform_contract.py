@@ -80,6 +80,15 @@ def test_ubuntu_has_authoritative_elevated_native_peer_auth_execution():
     assert '-m "' not in command
     assert "-m '" not in command
     assert "os.geteuid() == 0" in command
+    assert "mktemp -d /tmp/dz-peer-source-" in command
+    assert 'rm -rf "${SOURCE_STAGE}/checkout/.git"' in command
+    assert 'chown -R root:root "${SOURCE_STAGE}"' in command
+    assert 'chmod -R a-w,u+rwX,go+rX "${SOURCE_STAGE}"' in command
+    assert 'runuser -u "${identity}" -- test -r' in command
+    assert 'runuser -u "${identity}" -- test -w' in command
+    preflight = "python -c 'import bot_core; import bot_core.freshness_semantic_verifier'"
+    assert preflight in command
+    assert command.index(preflight) < command.index("python -m pytest -q")
     for tool in ("runuser", "useradd", "pg_config", "initdb", "pg_ctl"):
         assert f'"{tool}"' in command
 
@@ -144,6 +153,76 @@ else:
         capture_output=True,
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_direct_peer_auth_fixture_stops_before_pwd_on_simulated_windows():
+    path = ROOT / "tests/security/test_postgresql_freshness_production_local_authentication.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    pwd_line = next(
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Import) and any(alias.name == "pwd" for alias in node.names)
+    )
+    guard = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.If) and "sys.platform.startswith" in ast.unparse(node.test)
+    )
+    assert guard.lineno < pwd_line
+    assert isinstance(guard.test, ast.UnaryOp)
+
+    script = """
+import importlib.abc
+import runpy
+import sys
+import pytest
+
+class PwdBlocker(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path, target=None):
+        if fullname == "pwd":
+            raise AssertionError("pwd import was attempted before the platform boundary")
+        return None
+
+sys.modules.pop("pwd", None)
+sys.meta_path.insert(0, PwdBlocker())
+sys.platform = "win32"
+try:
+    runpy.run_path(sys.argv[1])
+except pytest.skip.Exception:
+    pass
+else:
+    raise AssertionError("direct non-Linux peer-auth collection was not skipped")
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script, str(path)], cwd=ROOT, text=True, capture_output=True
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_stale_socket_proof_remains_portable_and_uses_short_tmp_root():
+    path = ROOT / "tests/security/test_freshness_production_local_deployment.py"
+    source = path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    functions = {node.name: node for node in tree.body if isinstance(node, ast.FunctionDef)}
+    stale = functions["test_only_exact_owned_stale_socket_is_recreated"]
+    decorators = "\n".join(ast.unparse(item) for item in stale.decorator_list)
+    assert "sys.platform.startswith('linux')" not in decorators
+    assert "short_unix_socket_root" in [argument.arg for argument in stale.args.args]
+    helper = functions["short_unix_socket_root"]
+    helper_source = ast.get_source_segment(source, helper)
+    assert 'dir="/tmp"' in helper_source
+    assert "< 100" in helper_source
+
+
+def test_clean_tls_fixture_is_dynamic_and_production_expiry_policy_is_unchanged():
+    fixture = (ROOT / "tests/test_audit_tls_assets_script.py").read_text(encoding="utf-8")
+    baseline = (ROOT / "tests/test_audit_security_baseline_script.py").read_text(encoding="utf-8")
+    policy = (ROOT / "bot_core/security/certificates.py").read_text(encoding="utf-8")
+    assert "_healthy_certificate_pair" in baseline
+    assert "timedelta(days=400)" in fixture
+    assert "_CERT" not in fixture
+    assert "warn_expiring_within_days: float = 30.0" in policy
+    assert "remaining_days <= warn_expiring_within_days" in policy
 
 
 def test_semantic_verifier_keeps_crypto_portable_and_guards_only_linux_ipc_proofs():
