@@ -594,6 +594,11 @@ jobs:
         run: |
           PG_BINDIR="$(pg_config --bindir)"
           export PATH="${PG_BINDIR}:${PATH}"
+          PYTHON_BIN="$(command -v python)"
+          if [[ "${PYTHON_BIN}" != /* || ! -x "${PYTHON_BIN}" ]]; then
+            echo "active CI Python is not an absolute executable: ${PYTHON_BIN}" >&2
+            exit 1
+          fi
           SOURCE_STAGE="$(mktemp -d /tmp/dz-peer-source-XXXXXX)"
           trap 'sudo rm -rf "${SOURCE_STAGE}"' EXIT
           cp -a . "${SOURCE_STAGE}/checkout"
@@ -610,8 +615,8 @@ jobs:
           done
           sudo runuser -u os_freshness_crypto_verifier -- env \
             PYTHONPATH="${SOURCE_STAGE}/checkout" \
-            python -c 'import bot_core; import bot_core.freshness_semantic_verifier'
-          sudo env PATH="${PATH}" python - <<'PY'
+            "${PYTHON_BIN}" -c 'import bot_core; import bot_core.freshness_semantic_verifier; import psycopg'
+          sudo env PATH="${PATH}" "${PYTHON_BIN}" - <<'PY'
           import os
           import shutil
 
@@ -620,7 +625,7 @@ jobs:
               assert shutil.which(tool), f"required native peer-auth tool unavailable: {tool}"
           PY
           cd "${SOURCE_STAGE}/checkout"
-          sudo env PATH="${PATH}" PYTHONPATH="${SOURCE_STAGE}/checkout" python -m pytest -q \
+          sudo env PATH="${PATH}" PYTHONPATH="${SOURCE_STAGE}/checkout" "${PYTHON_BIN}" -m pytest -q \
             tests/security/test_freshness_semantic_verifier_postgresql.py
 
       - name: Run fast pytest suite

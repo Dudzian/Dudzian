@@ -74,7 +74,7 @@ def test_ubuntu_has_authoritative_elevated_native_peer_auth_execution():
 
     command = matching_steps[0]["run"]
     assert "sudo " in command
-    assert "python -m pytest -q" in command
+    assert '"${PYTHON_BIN}" -m pytest -q' in command
     assert "tests/security/test_freshness_semantic_verifier_postgresql.py" in command
     assert "--collect-only" not in command
     assert '-m "' not in command
@@ -86,9 +86,15 @@ def test_ubuntu_has_authoritative_elevated_native_peer_auth_execution():
     assert 'chmod -R a-w,u+rwX,go+rX "${SOURCE_STAGE}"' in command
     assert 'runuser -u "${identity}" -- test -r' in command
     assert 'runuser -u "${identity}" -- test -w' in command
-    preflight = "python -c 'import bot_core; import bot_core.freshness_semantic_verifier'"
+    assert 'PYTHON_BIN="$(command -v python)"' in command
+    assert '"${PYTHON_BIN}" != /* || ! -x "${PYTHON_BIN}"' in command
+    preflight = (
+        '"${PYTHON_BIN}" -c '
+        "'import bot_core; import bot_core.freshness_semantic_verifier; import psycopg'"
+    )
     assert preflight in command
-    assert command.index(preflight) < command.index("python -m pytest -q")
+    assert "\n            python -c " not in command
+    assert command.index(preflight) < command.index('"${PYTHON_BIN}" -m pytest -q')
     for tool in ("runuser", "useradd", "pg_config", "initdb", "pg_ctl"):
         assert f'"{tool}"' in command
 
