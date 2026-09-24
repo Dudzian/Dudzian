@@ -9,7 +9,7 @@ import pytest
 
 from bot_core.security.baseline import generate_security_baseline_report
 from scripts import audit_security_baseline as audit_security_baseline_script
-from tests.test_audit_tls_assets_script import _CERT, _KEY
+from tests.test_audit_tls_assets_script import _healthy_certificate_pair
 
 
 def _write(path: Path, content: str) -> Path:
@@ -59,8 +59,9 @@ def _stub_config_error() -> SimpleNamespace:
 
 
 def test_stub_config_secure_produces_clean_baseline(tmp_path: Path) -> None:
-    cert_path = _write(tmp_path / "cert.pem", _CERT)
-    key_path = _write(tmp_path / "key.pem", _KEY)
+    cert_pem, key_pem = _healthy_certificate_pair()
+    cert_path = _write(tmp_path / "cert.pem", cert_pem)
+    key_path = _write(tmp_path / "key.pem", key_pem)
     os.chmod(cert_path, 0o600)
     os.chmod(key_path, 0o600)
 
@@ -179,8 +180,9 @@ def test_audit_security_baseline_script_env_configuration(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    cert_path = _write(tmp_path / "cert.pem", _CERT)
-    key_path = _write(tmp_path / "key.pem", _KEY)
+    cert_pem, key_pem = _healthy_certificate_pair()
+    cert_path = _write(tmp_path / "cert.pem", cert_pem)
+    key_path = _write(tmp_path / "key.pem", key_pem)
     os.chmod(cert_path, 0o600)
     os.chmod(key_path, 0o600)
     config_path = tmp_path / "core.yaml"
@@ -231,8 +233,9 @@ def test_audit_security_baseline_script_generates_signature(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    cert_path = _write(tmp_path / "cert.pem", _CERT)
-    key_path = _write(tmp_path / "key.pem", _KEY)
+    cert_pem, key_pem = _healthy_certificate_pair()
+    cert_path = _write(tmp_path / "cert.pem", cert_pem)
+    key_path = _write(tmp_path / "key.pem", key_pem)
     os.chmod(cert_path, 0o600)
     os.chmod(key_path, 0o600)
 
@@ -276,8 +279,9 @@ def test_audit_security_baseline_script_requires_signature_without_key(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    cert_path = _write(tmp_path / "cert.pem", _CERT)
-    key_path = _write(tmp_path / "key.pem", _KEY)
+    cert_pem, key_pem = _healthy_certificate_pair()
+    cert_path = _write(tmp_path / "cert.pem", cert_pem)
+    key_path = _write(tmp_path / "key.pem", key_pem)
     os.chmod(cert_path, 0o600)
     os.chmod(key_path, 0o600)
 

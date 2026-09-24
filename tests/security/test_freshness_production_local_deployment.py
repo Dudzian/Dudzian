@@ -8,6 +8,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 import textwrap
 
 import pytest
@@ -22,6 +23,15 @@ UNIT = ROOT / "deployment/systemd/cryptohunter-freshness-verifier.service"
 class _NeverCalled:
     def verify_exact_candidate(self, *_values: bytes):
         raise AssertionError("no request expected")
+
+
+@pytest.fixture
+def short_unix_socket_root():
+    """Keep real AF_UNIX pathnames below macOS' shorter sockaddr_un limit."""
+    with tempfile.TemporaryDirectory(prefix="dz-sock-", dir="/tmp") as directory:
+        root = Path(directory)
+        assert len(str(root / "runtime" / "verifier.sock").encode()) < 100
+        yield root
 
 
 def test_systemd_unit_has_reviewed_static_sandbox_contract():
@@ -123,16 +133,16 @@ def test_qualification_imports_without_posix_account_modules_and_fails_closed():
     os.name != "posix" or not hasattr(socket, "AF_UNIX"),
     reason="ochrona socketu wymaga POSIX uid/gid i AF_UNIX",
 )
-def test_socket_substitution_fails_closed(tmp_path: Path, attack: str):
-    real = tmp_path / "real"
+def test_socket_substitution_fails_closed(short_unix_socket_root: Path, attack: str):
+    real = short_unix_socket_root / "real"
     real.mkdir(mode=0o750)
     directory = real
     if attack == "symlink-directory":
-        directory = tmp_path / "link"
+        directory = short_unix_socket_root / "link"
         directory.symlink_to(real, target_is_directory=True)
     path = directory / "verifier.sock"
     if attack == "symlink-path":
-        outside = tmp_path / "outside"
+        outside = short_unix_socket_root / "outside"
         outside.touch()
         path.symlink_to(outside)
     elif attack == "regular-path":
@@ -152,8 +162,8 @@ def test_socket_substitution_fails_closed(tmp_path: Path, attack: str):
     os.name != "posix" or not hasattr(socket, "AF_UNIX"),
     reason="ochrona socketu wymaga POSIX uid/gid i AF_UNIX",
 )
-def test_only_exact_owned_stale_socket_is_recreated(tmp_path: Path):
-    directory = tmp_path / "runtime"
+def test_only_exact_owned_stale_socket_is_recreated(short_unix_socket_root: Path):
+    directory = short_unix_socket_root / "runtime"
     directory.mkdir(mode=0o750)
     path = directory / "verifier.sock"
     stale = socket.socket(socket.AF_UNIX)

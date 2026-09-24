@@ -6,16 +6,25 @@ FreshnessAuthority schema or implementation is installed by this test.
 
 from __future__ import annotations
 
+import sys
+
+import pytest
+
+if not sys.platform.startswith("linux"):
+    pytest.skip(
+        "ten moduł jest natywnym dowodem Linux/Unix peer-auth z principalami systemowymi",
+        allow_module_level=True,
+    )
+
 import os
 from pathlib import Path
-import pwd
+import pwd  # noqa: E402 -- guarded Linux-only import
 import shutil
 import socket
 import subprocess
 import tempfile
 
 import psycopg
-import pytest
 
 AUTHORITY_ROLES = (
     "freshness_schema_owner",

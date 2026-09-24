@@ -6,7 +6,7 @@ import pytest
 
 from bot_core.security.baseline import generate_security_baseline_report
 from bot_core.runtime.file_metadata import file_reference_metadata
-from tests.test_audit_tls_assets_script import _CERT, _KEY
+from tests.test_audit_tls_assets_script import _healthy_certificate_pair
 
 
 def _write(path: Path, content: str) -> Path:
@@ -120,8 +120,9 @@ def test_security_baseline_reports_errors_when_tokens_missing() -> None:
 
 
 def test_security_baseline_reports_ok_for_hardened_config(tmp_path: Path) -> None:
-    cert_path = _write(tmp_path / "cert.pem", _CERT)
-    key_path = _write(tmp_path / "key.pem", _KEY)
+    cert_pem, key_pem = _healthy_certificate_pair()
+    cert_path = _write(tmp_path / "cert.pem", cert_pem)
+    key_path = _write(tmp_path / "key.pem", key_pem)
     os.chmod(cert_path, 0o600)
     os.chmod(key_path, 0o600)
 
