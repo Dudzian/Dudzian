@@ -51,6 +51,28 @@ def test_ubuntu_runs_external_postgresql_against_postgresql_16_service():
     test_step = next(step for step in ubuntu["steps"] if step["name"] == "Run fast pytest suite")
     for variable in ("DUDZIAN_TEST_POSTGRES_DSN", "ENTITLEMENT_REGISTRY_POSTGRES_ADMIN_DSN"):
         assert "127.0.0.1 port=55432" in test_step["env"][variable]
+    assert test_step["env"]["DUDZIAN_TEST_POSTGRES_RESTART_CONTAINER_ID"] == (
+        "${{ job.services.postgres.id }}"
+    )
+
+
+def test_postgresql_restart_proof_controls_exact_service_and_waits_on_test_dsn():
+    path = ROOT / "tests/security/test_postgresql_freshness_authority_core.py"
+    source = path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    helper = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_restart_controlled_postgresql"
+    )
+    helper_source = ast.get_source_segment(source, helper)
+    assert helper_source is not None
+    assert "DUDZIAN_TEST_POSTGRES_RESTART_CONTAINER_ID" in helper_source
+    assert '["docker", "restart", container_id]' in helper_source
+    assert "psycopg.connect(DSN" in helper_source
+    assert "time.monotonic() + 30.0" in helper_source
+    assert "shell=True" not in helper_source
+    assert '["pg_ctlcluster", "16", "main", "restart"]' not in source
 
 
 def test_non_linux_general_ci_excludes_only_the_explicit_database_marker():
