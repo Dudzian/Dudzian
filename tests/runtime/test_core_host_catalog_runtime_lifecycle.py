@@ -12,7 +12,10 @@ from bot_core.instruments.catalog_admission_receipt import (
     CatalogAdmissionReceiptAuthority,
     SQLiteCatalogAdmissionReceiptMetadataStore,
 )
-from bot_core.instruments.catalog_runtime_acceptance import _BinanceSpotCatalogProducer
+from bot_core.instruments.catalog_runtime_acceptance import (
+    CatalogRuntimeAcceptanceAuthority,
+    _BinanceSpotCatalogProducer,
+)
 from bot_core.instruments.source_producer_membership import (
     SQLiteMembershipCarrier,
     SourceProducerMembershipAuthority,
@@ -42,6 +45,58 @@ class _FixedQualifier(CatalogPermissionQualifier):
 
 
 QUALIFIED = _FixedQualifier(CatalogPermissionQualification.QUALIFIED)
+
+_RECEIPT_TABLES = (
+    "catalog_receipt_authority_metadata",
+    "catalog_receipt_authority_keys",
+    "catalog_admission_receipts",
+    "catalog_receipt_authority_head",
+    "catalog_admission_receipt_finalizations",
+    "catalog_receipt_finalization_head",
+)
+
+
+def _receipt_semantic_snapshot(path: Path) -> tuple[tuple, tuple]:
+    """Read schema and authority rows without invoking provisioning or repair."""
+    uri = f"{path.absolute().as_uri()}?mode=ro"
+    with sqlite3.connect(uri, uri=True) as db:
+        db.execute("PRAGMA query_only=ON")
+        schema = tuple(
+            db.execute(
+                "SELECT type,name,tbl_name,sql FROM sqlite_schema "
+                "WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name,tbl_name"
+            )
+        )
+        rows = tuple(
+            (table, tuple(db.execute(f'SELECT * FROM "{table}" ORDER BY rowid')))
+            for table in _RECEIPT_TABLES
+        )
+    return schema, rows
+
+
+def _sqlite_semantic_snapshot(path: Path) -> tuple[tuple, tuple]:
+    """Capture every application table and schema object through a read-only connection."""
+    uri = f"{path.absolute().as_uri()}?mode=ro"
+    with sqlite3.connect(uri, uri=True) as db:
+        db.execute("PRAGMA query_only=ON")
+        schema = tuple(
+            db.execute(
+                "SELECT type,name,tbl_name,sql FROM sqlite_schema "
+                "WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name,tbl_name"
+            )
+        )
+        tables = tuple(
+            row[0]
+            for row in db.execute(
+                "SELECT name FROM sqlite_schema "
+                "WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+            )
+        )
+        rows = tuple(
+            (table, tuple(db.execute(f'SELECT * FROM "{table}" ORDER BY rowid')))
+            for table in tables
+        )
+    return schema, rows
 
 
 @pytest.fixture
@@ -77,6 +132,7 @@ def _offline_storage(tmp_path: Path, *, custody: bool, admission: bool):
         receipt_authority.provision()
     if admission:
         assert membership.admit_release_grant("core_release_1_45_binance_spot") is not None
+    CatalogRuntimeAcceptanceAuthority(membership, receipt_authority)
     catalog.chmod(0o600)
     receipts.chmod(0o600)
     config = CatalogRuntimeDeploymentConfiguration.from_protected_mapping(
@@ -171,7 +227,11 @@ def test_restart_and_pre_fetch_crash_reopen_without_side_effects(
 ) -> None:
     config, catalog, receipts = _offline_storage(tmp_path, custody=True, admission=True)
     monkeypatch.setattr(_BinanceSpotCatalogProducer, "fetch", lambda self: pytest.fail("fetch"))
-    before = (catalog.read_bytes(), receipts.read_bytes(), dict(keyring))
+    before = (
+        _sqlite_semantic_snapshot(catalog),
+        _receipt_semantic_snapshot(receipts),
+        dict(keyring),
+    )
 
     first = CoreHostCatalogRuntimeLifecycle(config, permission_qualifier=QUALIFIED)
     assert first.start_after_recovery().ready
@@ -180,7 +240,29 @@ def test_restart_and_pre_fetch_crash_reopen_without_side_effects(
     assert second.start_after_recovery().ready
     assert second.start_after_recovery().ready
 
-    assert (catalog.read_bytes(), receipts.read_bytes(), keyring) == before
+    assert (
+        _sqlite_semantic_snapshot(catalog),
+        _receipt_semantic_snapshot(receipts),
+        keyring,
+    ) == before
+
+
+def test_receipt_reopen_rejects_missing_head_without_repair_or_fetch(
+    tmp_path, keyring, monkeypatch
+) -> None:
+    config, _catalog, receipts = _offline_storage(tmp_path, custody=True, admission=True)
+    with sqlite3.connect(receipts) as db:
+        db.execute("DELETE FROM catalog_receipt_authority_head")
+    before = (_receipt_semantic_snapshot(receipts), dict(keyring))
+    monkeypatch.setattr(_BinanceSpotCatalogProducer, "fetch", lambda self: pytest.fail("fetch"))
+
+    result = CoreHostCatalogRuntimeLifecycle(
+        config, permission_qualifier=QUALIFIED
+    ).start_after_recovery()
+
+    assert not result.ready
+    assert result.reason == "CATALOG_RUNTIME_AUTHORITY_REPLAY_FAILED"
+    assert (_receipt_semantic_snapshot(receipts), keyring) == before
 
 
 def test_corehost_orders_catalog_gate_after_lock_and_recovery_before_publication(

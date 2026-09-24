@@ -354,6 +354,16 @@ class _SQLiteCatalogAdmissionReceiptMetadataStoreBase:
 class SQLiteCatalogAdmissionReceiptMetadataStore(_SQLiteCatalogAdmissionReceiptMetadataStoreBase):
     """Core-owned production metadata; it never contains secret key bytes."""
 
+    @classmethod
+    def open_existing(cls, path: str | Path) -> "SQLiteCatalogAdmissionReceiptMetadataStore":
+        """Open durable metadata without creating or repairing any storage object."""
+        durable_path = Path(path)
+        if not durable_path.is_file():
+            raise CatalogAdmissionReceiptAuthorityUnavailable
+        store = cls.__new__(cls)
+        store.path = durable_path
+        return store
+
 
 class _CatalogAdmissionReceiptAuthorityBase:
     _AUTHORITY_DOMAIN = CATALOG_ADMISSION_RECEIPT_DOMAIN

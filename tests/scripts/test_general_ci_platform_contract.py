@@ -454,33 +454,42 @@ import os
 
 # Load the module and all platform-sensitive stdlib dependencies before the
 # simulation, then rebuild only the custody marker under the non-POSIX name.
-module_name = "tests.security." + sys.argv[1].rsplit("/", 1)[-1].removesuffix(".py")
-importlib.import_module(module_name)
+importlib.import_module(sys.argv[2])
 import tests.security._local_signing_platform as boundary
 
 os.name = "nt"
 importlib.reload(boundary)
 namespace = runpy.run_path(sys.argv[1])
-locked = namespace[sys.argv[2]]
-portable = namespace[sys.argv[3]]
+locked = namespace[sys.argv[3]]
+portable = namespace[sys.argv[4]]
 assert any(mark.name == "skipif" and mark.args == (True,) for mark in locked.pytestmark)
 assert not any(mark.name == "skipif" for mark in getattr(portable, "pytestmark", ()))
 """
     cases = (
         (
             "tests/security/test_freshness_signing_custody.py",
+            "tests.security.test_freshness_signing_custody",
             "test_distinct_provisioning_restart_snapshot_and_active_signing",
             "test_test_profile_cannot_be_provisioned_as_production",
         ),
         (
             "tests/security/test_local_signing_custody.py",
+            "tests.security.test_local_signing_custody",
             "test_offline_provisioning_is_distinct_and_restart_stable",
             "test_arbitrary_or_plaintext_secret_backend_is_not_production_custody",
         ),
     )
-    for relative_path, locked, portable in cases:
+    for relative_path, module_name, locked, portable in cases:
         result = subprocess.run(
-            [sys.executable, "-c", script, str(ROOT / relative_path), locked, portable],
+            [
+                sys.executable,
+                "-c",
+                script,
+                str(ROOT / relative_path),
+                module_name,
+                locked,
+                portable,
+            ],
             cwd=ROOT,
             text=True,
             capture_output=True,

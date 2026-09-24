@@ -426,6 +426,19 @@ class SQLiteMembershipCarrier(_SQLiteMembershipCarrierBase):
 
     _AUTHORITY_DOMAIN = "cryptohunter.source_producer_membership.production.v1"
 
+    @classmethod
+    def open_existing(cls, path: str | Path) -> "SQLiteMembershipCarrier":
+        """Open an existing carrier without provisioning or repairing its schema."""
+        durable_path = Path(path).resolve()
+        if not durable_path.is_file():
+            raise ValueError("MEMBERSHIP_AUTHORITY_STORAGE_MISSING")
+        carrier = cls.__new__(cls)
+        carrier.path = durable_path
+        with carrier._connect() as connection:
+            carrier._validate_domain(connection)
+            carrier._validated_rows(connection)
+        return carrier
+
 
 # Compatibility name for the proposed 1.45 API; storage is SQLite, not JSONL.
 JsonlMembershipCarrier = SQLiteMembershipCarrier
