@@ -3,7 +3,7 @@
 from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
-import base64, hashlib, json, os, subprocess
+import base64, hashlib, json, os, subprocess, time
 import psycopg
 from psycopg.errors import InsufficientPrivilege
 import pytest
@@ -65,6 +65,46 @@ def _cleanup():
         if _super("SELECT 1 FROM pg_roles WHERE rolname=%s", (role,), True):
             _super(f'DROP OWNED BY "{role}" CASCADE')
             _super(f'DROP ROLE "{role}"')
+
+
+def _restart_controlled_postgresql() -> None:
+    """Restart only the explicitly controlled substrate serving ``DSN``."""
+
+    container_id = os.environ.get("DUDZIAN_TEST_POSTGRES_RESTART_CONTAINER_ID", "").strip()
+    native_command = os.environ.get("DUDZIAN_TEST_POSTGRES_RESTART_COMMAND", "").strip()
+    if container_id and native_command:
+        raise AssertionError("configure exactly one PostgreSQL restart controller")
+    if container_id:
+        command = ["docker", "restart", container_id]
+    elif native_command:
+        try:
+            command = json.loads(native_command)
+        except json.JSONDecodeError as exc:
+            raise AssertionError(
+                "native PostgreSQL restart command must be a JSON argv array"
+            ) from exc
+        if not (
+            type(command) is list
+            and command
+            and all(type(argument) is str and argument for argument in command)
+        ):
+            raise AssertionError(
+                "native PostgreSQL restart command must be a non-empty JSON argv array"
+            )
+    else:
+        raise AssertionError("no restart authority configured for the PostgreSQL test DSN")
+
+    subprocess.run(command, check=True)
+    deadline = time.monotonic() + 30.0
+    last_error: Exception | None = None
+    while time.monotonic() < deadline:
+        try:
+            with psycopg.connect(DSN, connect_timeout=2):
+                return
+        except psycopg.Error as exc:
+            last_error = exc
+            time.sleep(0.25)
+    raise AssertionError(f"PostgreSQL test DSN did not recover after restart: {last_error}")
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -1163,10 +1203,10 @@ def test_postgresql_restart_after_preparation_and_after_commit_exact_recovery():
     _seed("restart", "s")
     v = _candidate("restart", authority="restart", prop="props", fin="fins")
     _prepare(v)
-    subprocess.run(["pg_ctlcluster", "16", "main", "restart"], check=True)
+    _restart_controlled_postgresql()
     accepted = _cas(v)
     assert accepted[0] == "CAS_ACCEPTED"
-    subprocess.run(["pg_ctlcluster", "16", "main", "restart"], check=True)
+    _restart_controlled_postgresql()
     recovered = _cas(v)
     assert recovered[0] == "ALREADY_ACCEPTED_EXACT" and recovered[1:] == accepted[1:]
 

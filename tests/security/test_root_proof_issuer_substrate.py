@@ -629,6 +629,9 @@ def test_identity_and_capabilities_are_captured_once():
             self.delegate = delegate
             self.identity_reads = 0
             self.capability_reads = 0
+            self.credential_reads = 0
+            self.active_reads = 0
+            self.public_key_reads = 0
 
         @property
         def identity(self):
@@ -648,12 +651,15 @@ def test_identity_and_capabilities_are_captured_once():
             return replace(self.delegate.capabilities, implemented=False)
 
         def credential_identities(self):
+            self.credential_reads += 1
             return self.delegate.credential_identities()
 
         def active_credential_identity(self):
+            self.active_reads += 1
             return self.delegate.active_credential_identity()
 
         def public_key(self, credential_identity):
+            self.public_key_reads += 1
             return self.delegate.public_key(credential_identity)
 
         def lifecycle_generation(self):
@@ -669,6 +675,9 @@ def test_identity_and_capabilities_are_captured_once():
     assert qualify(items).qualified
     assert dynamic.identity_reads == 1
     assert dynamic.capability_reads == 1
+    assert dynamic.credential_reads == 1
+    assert dynamic.active_reads == 1
+    assert dynamic.public_key_reads == 1
 
 
 def test_same_signing_handle_in_different_namespaces_with_distinct_material_is_accepted():

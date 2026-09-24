@@ -82,7 +82,7 @@ def test_missing_af_unix_fails_closed_without_starting_transport(monkeypatch, tm
     def unexpected_socket(*_args, **_kwargs):
         raise AssertionError("transport must not start without AF_UNIX")
 
-    monkeypatch.delattr(runtime_module.socket, "AF_UNIX")
+    monkeypatch.delattr(runtime_module.socket, "AF_UNIX", raising=False)
     monkeypatch.setattr(runtime_module.socket, "socket", unexpected_socket)
 
     result = authority.authenticate_and_advance(b"{}", b"{}", b"{}")

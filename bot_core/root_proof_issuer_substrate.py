@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 import hashlib
+import inspect
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Mapping, Protocol, Sequence, runtime_checkable
 
@@ -791,14 +792,8 @@ class RootProofIssuerCompositionGate:
                 )
         for snapshot in snapshots:
             role = snapshot.identity.role
-            try:
-                expected_port_satisfied = isinstance(snapshot.provider, _ROLE_PORTS[role])
-            except Exception:
-                expected_port_satisfied = False
-            methods_satisfied = all(
-                callable(getattr(snapshot.provider, method, None)) for method in _ROLE_METHODS[role]
-            )
-            if not expected_port_satisfied or not methods_satisfied:
+            methods_satisfied = self._statically_implements_role_port(snapshot.provider, role)
+            if not methods_satisfied:
                 failures.append(
                     QualificationFailure(
                         QualificationFailureCode.PROVIDER_INTERFACE_MISMATCH,
@@ -818,7 +813,7 @@ class RootProofIssuerCompositionGate:
                 if operation != role_operation.get(role)
             }
             if role in _SIGNING_ROLES and any(
-                callable(getattr(snapshot.provider, operation, None))
+                self._has_static_callable(snapshot.provider, operation)
                 for operation in opposite_methods
             ):
                 failures.append(
@@ -865,6 +860,22 @@ class RootProofIssuerCompositionGate:
     @staticmethod
     def _valid_credential_identity(candidate: object) -> bool:
         return _valid_credential_role_identity(candidate)
+
+    @staticmethod
+    def _has_static_callable(provider: object, name: str) -> bool:
+        """Inspect a port operation without invoking dynamic provider attributes."""
+
+        try:
+            member = inspect.getattr_static(provider, name)
+        except (AttributeError, TypeError):
+            return False
+        return callable(member) or isinstance(member, (staticmethod, classmethod))
+
+    @classmethod
+    def _statically_implements_role_port(cls, provider: object, role: ProviderRole) -> bool:
+        """Prove the role-specific structural port shape without rereading evidence."""
+
+        return all(cls._has_static_callable(provider, method) for method in _ROLE_METHODS[role])
 
     @classmethod
     def _capture_snapshot(
@@ -914,9 +925,7 @@ class RootProofIssuerCompositionGate:
             )
         active: CredentialRoleIdentity | None = None
         observed: str | None = None
-        interface_compatible = all(
-            callable(getattr(provider, method, None)) for method in _ROLE_METHODS[identity.role]
-        )
+        interface_compatible = cls._statically_implements_role_port(provider, identity.role)
         if identity.role in _SIGNING_ROLES and interface_compatible and len(credentials) == 1:
             try:
                 candidate = provider.active_credential_identity()  # type: ignore[attr-defined]
