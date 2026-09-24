@@ -331,3 +331,59 @@ assert not any(mark.name == "skipif" for mark in getattr(portable, "pytestmark",
         capture_output=True,
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_cha_attempt_store_keeps_portable_semantics_separate_from_posix_mode_proof():
+    path = ROOT / "tests/security/test_cha_attempt_store_production_local.py"
+    source = path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    functions = {node.name: node for node in tree.body if isinstance(node, ast.FunctionDef)}
+
+    portable = functions["test_creates_dedicated_store_with_identity_and_effective_pragmas"]
+    assert portable.decorator_list == []
+    portable_source = ast.get_source_segment(source, portable)
+    assert portable_source is not None
+    for proof in (
+        "path.is_file()",
+        "ProviderRole.CHA_ATTEMPT_STORE",
+        "SecurityProfile.PRODUCTION_LOCAL",
+        '("wal", 2, 1)',
+        "store.credential_identities() == ()",
+    ):
+        assert proof in portable_source
+    assert "st_mode" not in portable_source
+
+    posix = functions["test_posix_store_file_is_owner_read_write_only"]
+    decorators = [ast.unparse(item) for item in posix.decorator_list]
+    assert any("os.name != 'posix'" in decorator for decorator in decorators)
+    assert any(
+        "exact 0600 is a POSIX-native filesystem permission proof" in decorator
+        for decorator in decorators
+    )
+    mode_assertions = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Assert) and "st_mode" in ast.unparse(node.test)
+    ]
+    assert len(mode_assertions) == 1
+    assert mode_assertions[0] in ast.walk(posix)
+    mode_source = ast.get_source_segment(source, mode_assertions[0].test)
+    assert mode_source == "path.stat().st_mode & 0o777 == 0o600"
+
+
+def test_cha_attempt_store_production_keeps_posix_chmod_0600_guard():
+    path = ROOT / "bot_core/cha_attempt_store.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    guarded_chmods = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.If)
+        and ast.unparse(node.test) == "os.name == 'posix'"
+        and any(
+            isinstance(child, ast.Call)
+            and ast.unparse(child.func) == "os.chmod"
+            and [ast.unparse(argument) for argument in child.args] == ["path", "384"]
+            for child in ast.walk(node)
+        )
+    ]
+    assert len(guarded_chmods) == 1
