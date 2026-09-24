@@ -5,6 +5,7 @@ import base64
 from dataclasses import asdict, replace
 from pathlib import Path
 import json
+import os
 import sqlite3
 
 import pytest
@@ -105,7 +106,7 @@ def tamper_metadata(db: sqlite3.Connection, assignment: str) -> None:
     )
 
 
-def test_creates_dedicated_store_with_identity_permissions_and_effective_pragmas(
+def test_creates_dedicated_store_with_identity_and_effective_pragmas(
     tmp_path: Path,
 ) -> None:
     path = (tmp_path / "cha" / "attempts.sqlite3").resolve()
@@ -115,6 +116,16 @@ def test_creates_dedicated_store_with_identity_permissions_and_effective_pragmas
         assert store.identity.security.profile is SecurityProfile.PRODUCTION_LOCAL
         assert store.effective_pragmas == ("wal", 2, 1)
         assert store.credential_identities() == ()
+
+
+@pytest.mark.skipif(
+    os.name != "posix",
+    reason="exact 0600 is a POSIX-native filesystem permission proof",
+)
+def test_posix_store_file_is_owner_read_write_only(tmp_path: Path) -> None:
+    path = (tmp_path / "cha" / "attempts.sqlite3").resolve()
+    with open_store(path):
+        pass
     assert path.stat().st_mode & 0o777 == 0o600
 
 
