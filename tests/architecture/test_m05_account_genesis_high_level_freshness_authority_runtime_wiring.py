@@ -70,6 +70,26 @@ def test_public_boundary_is_one_semantic_operation_and_has_closed_outcomes(tmp_p
     )
 
 
+def test_missing_af_unix_fails_closed_without_starting_transport(monkeypatch, tmp_path):
+    authority = ProductionLocalFreshnessAuthority(
+        ProductionLocalFreshnessAuthorityConfig(
+            str(tmp_path / "verifier.sock"),
+            str(tmp_path),
+            5432,
+        )
+    )
+
+    def unexpected_socket(*_args, **_kwargs):
+        raise AssertionError("transport must not start without AF_UNIX")
+
+    monkeypatch.delattr(runtime_module.socket, "AF_UNIX")
+    monkeypatch.setattr(runtime_module.socket, "socket", unexpected_socket)
+
+    result = authority.authenticate_and_advance(b"{}", b"{}", b"{}")
+
+    assert result == FreshnessAuthorityResult(FreshnessAuthorityOutcome.UNAVAILABLE)
+
+
 def test_configuration_rejects_tcp_relative_and_caller_connection_material():
     with pytest.raises(ValueError):
         ProductionLocalFreshnessAuthorityConfig("relative.sock", "/run/postgresql", 5432)

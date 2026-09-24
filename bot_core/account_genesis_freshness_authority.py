@@ -153,6 +153,8 @@ class ProductionLocalFreshnessAuthority:
     def _request_preparation_once(
         self, proposer: bytes, document: bytes, receipt: bytes
     ) -> _Prepared | FreshnessAuthorityResult:
+        if not hasattr(socket, "AF_UNIX"):
+            return FreshnessAuthorityResult(FreshnessAuthorityOutcome.UNAVAILABLE)
         request = canonical_json_bytes(
             {
                 "proposer_authentication": _b64(proposer),

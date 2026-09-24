@@ -34,6 +34,17 @@ def short_unix_socket_root():
         yield root
 
 
+def _prepare_socket_parent(directory: Path) -> None:
+    """Create and prove the exact POSIX ownership contract used by the server."""
+    directory.mkdir()
+    os.chown(directory, os.geteuid(), os.getgid())
+    os.chmod(directory, 0o750)
+    status = directory.stat(follow_symlinks=False)
+    assert status.st_uid == os.geteuid()
+    assert status.st_gid == os.getgid()
+    assert status.st_mode & 0o7777 == 0o750
+
+
 def test_systemd_unit_has_reviewed_static_sandbox_contract():
     """Keep the portable unit-file contract independent of systemd tooling."""
     content = UNIT.read_text(encoding="ascii")
@@ -135,7 +146,7 @@ def test_qualification_imports_without_posix_account_modules_and_fails_closed():
 )
 def test_socket_substitution_fails_closed(short_unix_socket_root: Path, attack: str):
     real = short_unix_socket_root / "real"
-    real.mkdir(mode=0o750)
+    _prepare_socket_parent(real)
     directory = real
     if attack == "symlink-directory":
         directory = short_unix_socket_root / "link"
@@ -164,7 +175,7 @@ def test_socket_substitution_fails_closed(short_unix_socket_root: Path, attack: 
 )
 def test_only_exact_owned_stale_socket_is_recreated(short_unix_socket_root: Path):
     directory = short_unix_socket_root / "runtime"
-    directory.mkdir(mode=0o750)
+    _prepare_socket_parent(directory)
     path = directory / "verifier.sock"
     stale = socket.socket(socket.AF_UNIX)
     stale.bind(str(path))
