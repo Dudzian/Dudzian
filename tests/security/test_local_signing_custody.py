@@ -28,6 +28,7 @@ from bot_core.local_signing_custody import (
     transition_local_signing_lifecycle,
 )
 from bot_core.security.keyring_storage import KeyringSecretStorage
+from tests.security._local_signing_platform import requires_posix_custody_locking
 from bot_core.root_proof_issuer_substrate import (
     CheckpointCapabilities,
     CredentialRoleIdentity,
@@ -126,6 +127,7 @@ def _provision_pair(
     return root, history
 
 
+@requires_posix_custody_locking
 def test_offline_provisioning_is_distinct_and_restart_stable(
     tmp_path: Path,
     store: NativeKeyringSigningSecretAdministrator,
@@ -155,6 +157,7 @@ def test_offline_provisioning_is_distinct_and_restart_stable(
     assert len(root.public_key) == len(history.public_key) == 32
 
 
+@requires_posix_custody_locking
 def test_sign_verify_and_exclusive_role_apis(
     tmp_path: Path,
     store: NativeKeyringSigningSecretAdministrator,
@@ -180,6 +183,7 @@ def test_sign_verify_and_exclusive_role_apis(
     assert not callable(getattr(history_provider, "sign_root_proof", None))
 
 
+@requires_posix_custody_locking
 @pytest.mark.parametrize(
     ("first", "second"),
     [
@@ -215,6 +219,7 @@ def test_active_lifecycle_transitions_block_signing(
         provider.active_credential_identity()
 
 
+@requires_posix_custody_locking
 def test_verify_only_may_be_revoked_and_revoked_is_terminal(
     tmp_path: Path,
     store: NativeKeyringSigningSecretAdministrator,
@@ -249,6 +254,7 @@ def test_verify_only_may_be_revoked_and_revoked_is_terminal(
             )
 
 
+@requires_posix_custody_locking
 def test_missing_bad_secret_and_no_silent_rekey_fail_closed(
     tmp_path: Path,
     store: NativeKeyringSigningSecretAdministrator,
@@ -283,6 +289,7 @@ def test_missing_bad_secret_and_no_silent_rekey_fail_closed(
     assert metadata.credential_identity() == identity
 
 
+@requires_posix_custody_locking
 @pytest.mark.parametrize(
     ("field", "value"),
     [
@@ -321,6 +328,7 @@ def test_corrupt_or_cross_role_metadata_fails_closed(
         )
 
 
+@requires_posix_custody_locking
 @pytest.mark.parametrize("raw", [b"{", b"[]", b""])
 def test_truncated_or_malformed_record_fails_closed(
     tmp_path: Path,
@@ -343,6 +351,7 @@ def test_truncated_or_malformed_record_fails_closed(
         )
 
 
+@requires_posix_custody_locking
 def test_public_private_mismatch_and_wrong_security_fail_closed(
     tmp_path: Path,
     store: NativeKeyringSigningSecretAdministrator,
@@ -375,6 +384,7 @@ def test_public_private_mismatch_and_wrong_security_fail_closed(
         )
 
 
+@requires_posix_custody_locking
 def test_concurrent_provisioning_has_one_identity(
     tmp_path: Path,
     store: NativeKeyringSigningSecretAdministrator,
@@ -395,6 +405,7 @@ def test_concurrent_provisioning_has_one_identity(
     assert len({item.protected_private_material_reference for item in results}) == 1
 
 
+@requires_posix_custody_locking
 def test_same_physical_material_is_rejected_even_under_other_role_names(
     tmp_path: Path,
     store: NativeKeyringSigningSecretAdministrator,
@@ -418,6 +429,7 @@ def test_same_physical_material_is_rejected_even_under_other_role_names(
         )
 
 
+@requires_posix_custody_locking
 def test_private_material_absent_from_files_and_public_surfaces(
     tmp_path: Path,
     store: NativeKeyringSigningSecretAdministrator,
@@ -576,6 +588,7 @@ def _composition_others(security: SecurityProfileIdentity) -> list[_OtherProvide
     return result
 
 
+@requires_posix_custody_locking
 def test_real_local_providers_qualify_local_and_fail_server_ready(
     tmp_path: Path,
     store: NativeKeyringSigningSecretAdministrator,
@@ -630,6 +643,7 @@ def test_arbitrary_or_plaintext_secret_backend_is_not_production_custody(
         )
 
 
+@requires_posix_custody_locking
 def test_authority_scoped_readers_reject_opposite_role_references(
     tmp_path: Path,
     store: NativeKeyringSigningSecretAdministrator,
@@ -654,6 +668,7 @@ def test_authority_scoped_readers_reject_opposite_role_references(
         history_reader.read_authority_secret(root.protected_private_material_reference)
 
 
+@requires_posix_custody_locking
 def test_authority_scoped_reader_rejects_other_trust_domain(tmp_path: Path, native_keyring) -> None:
     domain_a = SecurityProfileIdentity(SecurityProfile.PRODUCTION_LOCAL, "domain-a")
     domain_b = SecurityProfileIdentity(SecurityProfile.PRODUCTION_LOCAL, "domain-b")
@@ -697,6 +712,7 @@ def test_authority_scoped_reader_rejects_other_trust_domain(tmp_path: Path, nati
         reader_a.read_authority_secret(material_b.protected_private_material_reference)
 
 
+@requires_posix_custody_locking
 def test_runtime_reader_is_immutable_and_provider_exposes_no_secret_capability(
     tmp_path: Path,
     store: NativeKeyringSigningSecretAdministrator,
@@ -776,6 +792,7 @@ def test_malicious_path_subclass_is_rejected_before_semantic_methods(
     assert calls == []
 
 
+@requires_posix_custody_locking
 def test_restart_uses_fresh_native_reader_and_preserves_exact_identity(
     tmp_path: Path,
     store: NativeKeyringSigningSecretAdministrator,
@@ -812,6 +829,7 @@ def test_restart_uses_fresh_native_reader_and_preserves_exact_identity(
     ) == expected
 
 
+@requires_posix_custody_locking
 def test_concurrent_cross_role_same_seed_cannot_create_alias(
     tmp_path: Path,
     native_keyring,
@@ -841,6 +859,7 @@ def test_concurrent_cross_role_same_seed_cannot_create_alias(
     assert len(records) == 1
 
 
+@requires_posix_custody_locking
 def test_concurrent_cross_role_random_material_remains_distinct(
     tmp_path: Path,
     native_keyring,
@@ -867,6 +886,7 @@ def test_concurrent_cross_role_random_material_remains_distinct(
     assert len({record.key_material_identity for record in records}) == 2
 
 
+@requires_posix_custody_locking
 def test_concurrent_lifecycle_transitions_are_linearizable_and_monotonic(
     tmp_path: Path,
     store: NativeKeyringSigningSecretAdministrator,
@@ -911,6 +931,7 @@ def test_concurrent_lifecycle_transitions_are_linearizable_and_monotonic(
         )
 
 
+@requires_posix_custody_locking
 def test_sign_and_revoke_have_an_explicit_linearization_order(
     tmp_path: Path,
     store: NativeKeyringSigningSecretAdministrator,
@@ -969,6 +990,7 @@ def test_sign_and_revoke_have_an_explicit_linearization_order(
         provider.active_credential_identity()
 
 
+@requires_posix_custody_locking
 def test_failed_metadata_commit_cleans_only_new_protected_secret(
     tmp_path: Path,
     store: NativeKeyringSigningSecretAdministrator,
@@ -1039,6 +1061,7 @@ def _rewrite_root_metadata(tmp_path: Path, **changes: object) -> None:
     path.chmod(0o600)
 
 
+@requires_posix_custody_locking
 @pytest.mark.parametrize(
     ("field", "forged"),
     [
@@ -1072,6 +1095,7 @@ def test_each_forged_persisted_identity_field_is_rejected(
         )
 
 
+@requires_posix_custody_locking
 @pytest.mark.parametrize(
     ("state", "generation"),
     [
@@ -1102,6 +1126,7 @@ def test_impossible_lifecycle_state_generation_is_rejected(
         )
 
 
+@requires_posix_custody_locking
 def test_same_scope_alternate_reference_cannot_rebind_physical_identity(
     tmp_path: Path,
     store: NativeKeyringSigningSecretAdministrator,
@@ -1133,6 +1158,7 @@ def test_same_scope_alternate_reference_cannot_rebind_physical_identity(
         )
 
 
+@requires_posix_custody_locking
 def test_complete_identity_laundering_with_same_physical_key_is_rejected(
     tmp_path: Path,
     store: NativeKeyringSigningSecretAdministrator,
