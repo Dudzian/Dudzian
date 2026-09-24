@@ -8,7 +8,6 @@ as a side effect of composing the runtime.
 from __future__ import annotations
 
 from dataclasses import dataclass
-import os
 from pathlib import Path
 
 from bot_core.instruments.catalog_admission_receipt import (
@@ -33,10 +32,23 @@ def _is_reserved_sqlite_sidecar(left: Path, right: Path) -> bool:
     )
 
 
-def _existing_sqlite_storage(path: Path) -> tuple[Path, ...]:
-    """Return the existing main/WAL/SHM objects in one authority namespace."""
+def _physical_identity(path: Path) -> tuple[int, int] | None:
+    """Snapshot one object's filesystem identity without an exists/stat race."""
+    try:
+        metadata = path.stat()
+    except FileNotFoundError:
+        # SQLite may remove a WAL or SHM object at any point during checkpoint/close.
+        return None
+    return metadata.st_dev, metadata.st_ino
+
+
+def _sqlite_storage_identities(path: Path) -> tuple[tuple[Path, tuple[int, int]], ...]:
+    """Snapshot identities for the main database and its ephemeral sidecars."""
     candidates = (path, *(Path(f"{path}{suffix}") for suffix in _SQLITE_WAL_SIDECAR_SUFFIXES))
-    return tuple(candidate for candidate in candidates if candidate.exists())
+    identities = ((candidate, _physical_identity(candidate)) for candidate in candidates)
+    return tuple(
+        (candidate, identity) for candidate, identity in identities if identity is not None
+    )
 
 
 def _has_reserved_sidecar_symlink(path: Path) -> bool:
@@ -45,11 +57,13 @@ def _has_reserved_sidecar_symlink(path: Path) -> bool:
 
 
 def _has_physical_cross_authority_alias(left: Path, right: Path) -> bool:
-    """Compare every existing object across the two SQLite storage namespaces."""
+    """Compare stable identity snapshots across the two SQLite namespaces."""
+    left_objects = _sqlite_storage_identities(left)
+    right_objects = _sqlite_storage_identities(right)
     return any(
-        os.path.samefile(left_object, right_object)
-        for left_object in _existing_sqlite_storage(left)
-        for right_object in _existing_sqlite_storage(right)
+        left_identity == right_identity
+        for left_object, left_identity in left_objects
+        for right_object, right_identity in right_objects
         if left_object != left or right_object != right
     )
 
@@ -70,7 +84,9 @@ class CatalogRuntimeAuthorityPaths:
         receipts = receipts.resolve(strict=False)
         if catalog == receipts:
             raise ValueError("CATALOG_RUNTIME_PATH_ALIAS")
-        if catalog.exists() and receipts.exists() and os.path.samefile(catalog, receipts):
+        catalog_identity = _physical_identity(catalog)
+        receipts_identity = _physical_identity(receipts)
+        if catalog_identity is not None and catalog_identity == receipts_identity:
             raise ValueError("CATALOG_RUNTIME_PHYSICAL_ALIAS")
         if _is_reserved_sqlite_sidecar(catalog, receipts):
             raise ValueError("CATALOG_RUNTIME_SQLITE_SIDECAR_ALIAS")

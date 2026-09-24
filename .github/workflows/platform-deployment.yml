@@ -44,19 +44,38 @@ jobs:
       - uses: actions/setup-python@v6
         with: {python-version: "3.11"}
       - run: python -m pip install -e ".[test]" pywin32
-      - name: Parse Windows SCM probe without executing it
-        shell: pwsh
+      - name: Prove Windows PowerShell parser and path qualification runtime
+        shell: powershell
         run: |
-          $tokens = $null
-          $parseErrors = $null
-          [System.Management.Automation.Language.Parser]::ParseFile(
-            (Resolve-Path "deployment/windows_scm_probe.ps1"),
-            [ref]$tokens,
-            [ref]$parseErrors
-          ) | Out-Null
-          if ($parseErrors.Count -ne 0) {
-            $parseErrors | ForEach-Object { Write-Error $_.Message }
-            exit 1
+          foreach ($script in @(
+            "deployment/windows_scm_probe.ps1",
+            "deployment/windows_path_qualification.ps1"
+          )) {
+            $tokens = $null
+            $parseErrors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path $script), [ref]$tokens, [ref]$parseErrors
+            ) | Out-Null
+            if ($parseErrors.Count -ne 0) {
+              $parseErrors | ForEach-Object { Write-Error $_.Message }
+              exit 1
+            }
+          }
+          . ./deployment/windows_path_qualification.ps1
+          $accepted = @(
+            'C:\Program Files\Python311\python.exe',
+            'D:\a\Dudzian\Dudzian',
+            '\\server\share\folder\file.exe'
+          )
+          $rejected = @(
+            'relative\thing', '.\thing', '..\thing', 'C:relative',
+            '\rooted-but-drive-relative', '', '   '
+          )
+          foreach ($path in $accepted) {
+            if (-not (Test-FullyQualifiedWindowsPath $path)) { throw "rejected: [$path]" }
+          }
+          foreach ($path in $rejected) {
+            if (Test-FullyQualifiedWindowsPath $path) { throw "accepted: [$path]" }
           }
       - name: Execute canonical reviewed Windows acceptance
         run: >-

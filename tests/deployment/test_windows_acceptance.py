@@ -422,6 +422,19 @@ def test_acceptance_strict_create_path_does_not_use_handle_command_line_install(
     assert "HandleCommandLine" not in strict_function.split('if __name__ == "__main__":')[0]
 
 
+def test_probe_uses_windows_powershell_compatible_fail_closed_path_qualification() -> None:
+    root = Path(__file__).resolve().parents[2]
+    probe = (root / "deployment/windows_scm_probe.ps1").read_text(encoding="utf-8")
+    helper = (root / "deployment/windows_path_qualification.ps1").read_text(encoding="utf-8")
+    workflow = (root / ".github/workflows/platform-deployment.yml").read_text(encoding="utf-8")
+
+    assert "IsPathFullyQualified" not in probe + helper
+    assert "GetFullPath" not in probe + helper
+    assert "Test-FullyQualifiedWindowsPath" in probe
+    assert "shell: powershell" in workflow
+    assert "windows_path_qualification.ps1" in workflow
+
+
 def _ownership_intent() -> dict[str, object]:
     return {
         "run_token": "a" * 64,
