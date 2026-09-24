@@ -387,3 +387,102 @@ def test_cha_attempt_store_production_keeps_posix_chmod_0600_guard():
         )
     ]
     assert len(guarded_chmods) == 1
+
+
+def test_local_signing_custody_keeps_fail_closed_non_posix_lock_contract():
+    path = ROOT / "bot_core/local_signing_custody.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    custody_lock = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_custody_lock"
+    )
+    guards = [
+        node
+        for node in custody_lock.body
+        if isinstance(node, ast.If) and ast.unparse(node.test) == "os.name != 'posix'"
+    ]
+    assert len(guards) == 1
+    assert any(
+        isinstance(node, ast.Raise)
+        and "production-local custody locking is unavailable" in ast.unparse(node)
+        for node in ast.walk(guards[0])
+    )
+
+
+def test_local_signing_custody_posix_boundary_is_granular_and_complete():
+    expected_portable = {
+        "tests/security/test_freshness_signing_custody.py": {
+            "test_test_profile_cannot_be_provisioned_as_production",
+        },
+        "tests/security/test_local_signing_custody.py": {
+            "test_arbitrary_or_plaintext_secret_backend_is_not_production_custody",
+            "test_malicious_path_subclass_is_rejected_before_semantic_methods",
+            "test_exact_security_role_and_lifecycle_boundaries",
+        },
+    }
+    for relative_path, portable_names in expected_portable.items():
+        tree = ast.parse((ROOT / relative_path).read_text(encoding="utf-8"))
+        tests = {
+            node.name: {ast.unparse(decorator) for decorator in node.decorator_list}
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef) and node.name.startswith("test_")
+        }
+        assert portable_names < tests.keys()
+        assert all("requires_posix_custody_locking" not in tests[name] for name in portable_names)
+        assert all(
+            "requires_posix_custody_locking" in decorators
+            for name, decorators in tests.items()
+            if name not in portable_names
+        )
+        assert not any(
+            isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id == "pytestmark"
+                for target in node.targets
+            )
+            for node in tree.body
+        )
+
+
+def test_simulated_windows_classifies_lock_dependent_and_portable_custody_tests():
+    script = """
+import importlib
+import runpy
+import sys
+import os
+
+# Load the module and all platform-sensitive stdlib dependencies before the
+# simulation, then rebuild only the custody marker under the non-POSIX name.
+module_name = "tests.security." + sys.argv[1].rsplit("/", 1)[-1].removesuffix(".py")
+importlib.import_module(module_name)
+import tests.security._local_signing_platform as boundary
+
+os.name = "nt"
+importlib.reload(boundary)
+namespace = runpy.run_path(sys.argv[1])
+locked = namespace[sys.argv[2]]
+portable = namespace[sys.argv[3]]
+assert any(mark.name == "skipif" and mark.args == (True,) for mark in locked.pytestmark)
+assert not any(mark.name == "skipif" for mark in getattr(portable, "pytestmark", ()))
+"""
+    cases = (
+        (
+            "tests/security/test_freshness_signing_custody.py",
+            "test_distinct_provisioning_restart_snapshot_and_active_signing",
+            "test_test_profile_cannot_be_provisioned_as_production",
+        ),
+        (
+            "tests/security/test_local_signing_custody.py",
+            "test_offline_provisioning_is_distinct_and_restart_stable",
+            "test_arbitrary_or_plaintext_secret_backend_is_not_production_custody",
+        ),
+    )
+    for relative_path, locked, portable in cases:
+        result = subprocess.run(
+            [sys.executable, "-c", script, str(ROOT / relative_path), locked, portable],
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+        )
+        assert result.returncode == 0, result.stderr
