@@ -15,6 +15,8 @@ from psycopg import sql
 from psycopg.errors import InsufficientPrivilege
 import pytest
 
+pytestmark = pytest.mark.external_postgresql
+
 import bot_core.postgresql_entitlement_registry as postgres_registry
 
 from bot_core.entitlement_registry_contract import (

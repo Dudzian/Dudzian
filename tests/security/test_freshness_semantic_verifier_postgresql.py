@@ -8,7 +8,6 @@ import json
 import hashlib
 import os
 from pathlib import Path
-import pwd
 import subprocess
 import sys
 import time
@@ -32,8 +31,17 @@ from bot_core.postgresql_freshness_authority import (
     complete_semantic_head_digest,
     provision_postgresql_freshness_authority,
 )
-from tests.security.test_freshness_semantic_verifier import fixture_candidate
-from tests.security.test_postgresql_freshness_production_local_authentication import (
+
+if not sys.platform.startswith("linux"):
+    pytest.skip(
+        "ten moduł dowodzi kompozycji Linux/Unix peer-auth i wymaga linuksowych "
+        "principalów systemowych",
+        allow_module_level=True,
+    )
+
+import pwd  # noqa: E402 -- guarded POSIX-only import
+from tests.security.test_freshness_semantic_verifier import fixture_candidate  # noqa: E402
+from tests.security.test_postgresql_freshness_production_local_authentication import (  # noqa: E402
     _as,
     isolated_peer_cluster,
 )

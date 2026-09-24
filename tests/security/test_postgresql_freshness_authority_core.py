@@ -8,6 +8,8 @@ import psycopg
 from psycopg.errors import InsufficientPrivilege
 import pytest
 
+pytestmark = pytest.mark.external_postgresql
+
 from bot_core.postgresql_freshness_authority import (
     DOCUMENT_DOMAIN,
     FINALIZATION_ROLE,

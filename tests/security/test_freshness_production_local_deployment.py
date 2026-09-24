@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import shutil
 import socket
 import subprocess
 import sys
@@ -23,15 +24,8 @@ class _NeverCalled:
         raise AssertionError("no request expected")
 
 
-def test_systemd_unit_is_valid_and_has_reviewed_effective_sandbox(tmp_path: Path):
-    import subprocess
-
-    postgres = tmp_path / "postgresql.service"
-    postgres.write_text("[Service]\nType=oneshot\nExecStart=/bin/true\n")
-    result = subprocess.run(
-        ["systemd-analyze", "verify", str(UNIT), str(postgres)], text=True, capture_output=True
-    )
-    assert result.returncode == 0, result.stderr
+def test_systemd_unit_has_reviewed_static_sandbox_contract():
+    """Keep the portable unit-file contract independent of systemd tooling."""
     content = UNIT.read_text(encoding="ascii")
     for exact in (
         "User=os_freshness_crypto_verifier",
@@ -58,6 +52,21 @@ def test_systemd_unit_is_valid_and_has_reviewed_effective_sandbox(tmp_path: Path
     ):
         assert exact in content
     assert "Restart=always" not in content
+
+
+@pytest.mark.skipif(
+    not sys.platform.startswith("linux"),
+    reason="wykonywalna walidacja unit file wymaga natywnego Linux systemd-analyze",
+)
+def test_systemd_unit_is_valid_with_native_systemd_analyze(tmp_path: Path):
+    systemd_analyze = shutil.which("systemd-analyze")
+    assert systemd_analyze is not None, "Linux CI musi zapewniać natywny systemd-analyze"
+    postgres = tmp_path / "postgresql.service"
+    postgres.write_text("[Service]\nType=oneshot\nExecStart=/bin/true\n")
+    result = subprocess.run(
+        [systemd_analyze, "verify", str(UNIT), str(postgres)], text=True, capture_output=True
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def test_reviewed_authentication_templates_are_exact():
@@ -110,6 +119,10 @@ def test_qualification_imports_without_posix_account_modules_and_fails_closed():
 
 
 @pytest.mark.parametrize("attack", ["symlink-directory", "symlink-path", "regular-path"])
+@pytest.mark.skipif(
+    os.name != "posix" or not hasattr(socket, "AF_UNIX"),
+    reason="ochrona socketu wymaga POSIX uid/gid i AF_UNIX",
+)
 def test_socket_substitution_fails_closed(tmp_path: Path, attack: str):
     real = tmp_path / "real"
     real.mkdir(mode=0o750)
@@ -135,6 +148,10 @@ def test_socket_substitution_fails_closed(tmp_path: Path, attack: str):
         )
 
 
+@pytest.mark.skipif(
+    os.name != "posix" or not hasattr(socket, "AF_UNIX"),
+    reason="ochrona socketu wymaga POSIX uid/gid i AF_UNIX",
+)
 def test_only_exact_owned_stale_socket_is_recreated(tmp_path: Path):
     directory = tmp_path / "runtime"
     directory.mkdir(mode=0o750)

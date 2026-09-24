@@ -10,6 +10,8 @@ from psycopg import sql
 from psycopg.errors import InsufficientPrivilege
 import pytest
 
+pytestmark = pytest.mark.external_postgresql
+
 BASE_DSN = os.environ.get(
     "ENTITLEMENT_REGISTRY_POSTGRES_ADMIN_DSN",
     "host=127.0.0.1 port=55432 dbname=postgres user=postgres",

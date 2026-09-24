@@ -158,6 +158,7 @@ markers = [
   "soak: długotrwałe scenariusze stabilności i anti-flap",
   "performance: benchmarki i testy SLA wydajnościowej",
   "long_poll: testy obejmujące lifecycle i teardown LocalLongPollStream",
+  "external_postgresql: testy wymagające rzeczywistego zewnętrznego klastra PostgreSQL",
 ]
 
 [project]

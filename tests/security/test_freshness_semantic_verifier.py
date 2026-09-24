@@ -4,12 +4,12 @@ import base64
 from copy import deepcopy
 import hashlib
 import json
-import multiprocessing
 import os
 from pathlib import Path
 import socket
 import struct
 import subprocess
+import sys
 import time
 
 from cryptography.hazmat.primitives import serialization
@@ -33,6 +33,11 @@ from bot_core.postgresql_freshness_authority import (
     canonical_json_bytes,
     complete_semantic_head_digest,
     parse_canonical_json,
+)
+
+requires_linux_unix_ipc = pytest.mark.skipif(
+    not sys.platform.startswith("linux"),
+    reason="ten proof wymaga Linux AF_UNIX, fork, SO_PEERCRED i rzeczywistego UID",
 )
 
 
@@ -362,6 +367,8 @@ def _ipc_exchange(path: Path, request: bytes, *, declared_length: int | None = N
 
 
 def _ipc_server(tmp_path: Path, verifier, requests: int = 1):
+    import multiprocessing
+
     tmp_path.chmod(0o755)
     tmp_path.parent.chmod(0o755)
     tmp_path.parent.parent.chmod(0o755)
@@ -390,6 +397,7 @@ def _ipc_request(values, **extra) -> bytes:
     return canonical_json_bytes(fields)
 
 
+@requires_linux_unix_ipc
 def test_unix_ipc_process_accepts_only_closed_valid_request(tmp_path):
     values = list(fixture_candidate())
     path, process = _ipc_server(tmp_path, values[0])
@@ -408,6 +416,7 @@ def test_unix_ipc_process_accepts_only_closed_valid_request(tmp_path):
         (OSError("database unavailable"), {"outcome": "UNAVAILABLE"}),
     ],
 )
+@requires_linux_unix_ipc
 def test_unix_ipc_has_closed_non_crypto_failure_outcomes(tmp_path, failure, expected):
     values = list(fixture_candidate())
 
@@ -438,6 +447,7 @@ def test_unix_ipc_has_closed_non_crypto_failure_outcomes(tmp_path, failure, expe
         ),
     ],
 )
+@requires_linux_unix_ipc
 def test_unix_ipc_process_rejects_injection_and_malformed_without_oracle(tmp_path, request_factory):
     values = list(fixture_candidate())
     path, process = _ipc_server(tmp_path, values[0])
@@ -447,6 +457,7 @@ def test_unix_ipc_process_rejects_injection_and_malformed_without_oracle(tmp_pat
 
 
 @pytest.mark.parametrize("declared", [1, 4 * 1024 * 1024 + 1])
+@requires_linux_unix_ipc
 def test_unix_ipc_process_rejects_bad_frame_lengths(tmp_path, declared):
     values = list(fixture_candidate())
     path, process = _ipc_server(tmp_path, values[0])
@@ -455,6 +466,7 @@ def test_unix_ipc_process_rejects_bad_frame_lengths(tmp_path, declared):
     assert process.exitcode == 0
 
 
+@requires_linux_unix_ipc
 def test_unix_ipc_wrong_peer_cannot_invoke_and_there_is_no_tcp_listener(tmp_path):
     values = list(fixture_candidate())
     path, process = _ipc_server(tmp_path, values[0])
