@@ -17,6 +17,7 @@ from bot_core.instruments.catalog_runtime_acceptance import (
 )
 from bot_core.instruments.catalog_runtime_composition import (
     CatalogRuntimeAuthorityPaths,
+    _physical_identity,
     compose_catalog_runtime_acceptance,
 )
 from bot_core.instruments.source_producer_membership import (
@@ -317,6 +318,43 @@ def test_runtime_paths_preserve_distinct_existing_sidecar_objects(tmp_path: Path
     assert validated.catalog_state == catalog
     assert validated.receipt_metadata == receipts
     assert all(path.is_file() for path in paths)
+
+
+def test_runtime_paths_accept_sidecar_removed_during_identity_snapshot(
+    tmp_path: Path, monkeypatch
+) -> None:
+    catalog = (tmp_path / "catalog.sqlite3").absolute()
+    receipts = (tmp_path / "receipts.sqlite3").absolute()
+    catalog.touch()
+    receipts.touch()
+    transient_wal = Path(f"{catalog}-wal")
+    transient_wal.touch()
+    real_stat = Path.stat
+
+    def remove_after_observation(path: Path, *args, **kwargs):
+        metadata = real_stat(path, *args, **kwargs)
+        if path == transient_wal:
+            transient_wal.unlink()
+        return metadata
+
+    monkeypatch.setattr(Path, "stat", remove_after_observation)
+
+    validated = CatalogRuntimeAuthorityPaths(catalog, receipts)
+
+    assert validated.catalog_state == catalog
+    assert not transient_wal.exists()
+
+
+def test_physical_identity_treats_only_disappearance_as_absent(tmp_path: Path, monkeypatch) -> None:
+    missing = tmp_path / "vanished-wal"
+    assert _physical_identity(missing) is None
+
+    def denied(path: Path):
+        raise PermissionError("denied")
+
+    monkeypatch.setattr(Path, "stat", denied)
+    with pytest.raises(PermissionError, match="denied"):
+        _physical_identity(missing)
 
 
 def test_runtime_paths_reject_real_wal_hardlinked_as_receipt_main(tmp_path: Path) -> None:

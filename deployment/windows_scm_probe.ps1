@@ -32,6 +32,8 @@ $result = [ordered]@{
   details = ""
 }
 
+. (Join-Path $PSScriptRoot "windows_path_qualification.ps1")
+
 function Wait-State([string]$Expected) {
   for ($i = 0; $i -lt 60; $i++) {
     $state = (Get-Service -Name $service -ErrorAction Stop).Status.ToString()
@@ -93,7 +95,7 @@ function Add-PlannedGrant([string]$Target) {
 
 try {
   $qualifiedPaths = @($PythonExecutable, $harness, $testRoot)
-  if ($qualifiedPaths | Where-Object { -not [System.IO.Path]::IsPathFullyQualified($_) }) {
+  if ($qualifiedPaths | Where-Object { -not (Test-FullyQualifiedWindowsPath $_) }) {
     throw "native Windows path qualification failed"
   }
   if ($WindowsAcceptanceRunToken -cnotmatch '^[a-f0-9]{64}$') {
