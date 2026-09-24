@@ -100,11 +100,13 @@ def compose_catalog_runtime_acceptance(
         raise TypeError("exact CatalogRuntimeAuthorityPaths required")
     if not paths.catalog_state.is_file() or not paths.receipt_metadata.is_file():
         raise ValueError("CATALOG_RUNTIME_STORAGE_MISSING")
-    membership = SourceProducerMembershipAuthority(SQLiteMembershipCarrier(paths.catalog_state))
-    receipts = CatalogAdmissionReceiptAuthority(
-        SQLiteCatalogAdmissionReceiptMetadataStore(paths.receipt_metadata)
+    membership = SourceProducerMembershipAuthority(
+        SQLiteMembershipCarrier.open_existing(paths.catalog_state)
     )
-    return CatalogRuntimeAcceptanceAuthority(membership, receipts)
+    receipts = CatalogAdmissionReceiptAuthority(
+        SQLiteCatalogAdmissionReceiptMetadataStore.open_existing(paths.receipt_metadata)
+    )
+    return CatalogRuntimeAcceptanceAuthority.open_existing(membership, receipts)
 
 
 __all__ = ["CatalogRuntimeAuthorityPaths", "compose_catalog_runtime_acceptance"]

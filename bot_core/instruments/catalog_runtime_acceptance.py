@@ -388,6 +388,33 @@ class CatalogRuntimeAcceptanceAuthority:
         self._path = carrier.path
         self._initialize()
 
+    @classmethod
+    def open_existing(
+        cls,
+        membership_authority: SourceProducerMembershipAuthority,
+        catalog_admission_receipt_authority: CatalogAdmissionReceiptAuthority,
+    ) -> "CatalogRuntimeAcceptanceAuthority":
+        """Reopen and replay a fully provisioned authority without schema repair."""
+        if type(membership_authority) is not SourceProducerMembershipAuthority:
+            raise TypeError("exact production membership authority required")
+        carrier = membership_authority._carrier
+        if type(carrier) is not SQLiteMembershipCarrier:
+            raise TypeError("exact production membership carrier required")
+        if type(catalog_admission_receipt_authority) is not CatalogAdmissionReceiptAuthority:
+            raise TypeError("exact production Catalog admission receipt authority required")
+        authority = cls.__new__(cls)
+        authority._membership = membership_authority
+        authority._receipts = catalog_admission_receipt_authority
+        authority._path = carrier.path
+        with authority._connect() as db:
+            tables = {
+                row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            }
+            if not _REQUIRED_CATALOG_TABLES <= tables:
+                raise ValueError("CATALOG_AUTHORITY_STORAGE_MISSING")
+            authority._replay(db)
+        return authority
+
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self._path, timeout=30, isolation_level=None)
         connection.execute("PRAGMA foreign_keys = ON")

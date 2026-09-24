@@ -60,6 +60,7 @@ def test_composition_reopens_exact_production_authorities_without_mutating_polic
     key_id = receipts.provision()
     membership = SourceProducerMembershipAuthority(SQLiteMembershipCarrier(paths.catalog_state))
     grant = membership.admit_release_grant("core_release_1_45_binance_spot")
+    CatalogRuntimeAcceptanceAuthority(membership, receipts)
 
     runtime = compose_catalog_runtime_acceptance(paths)
 
@@ -83,8 +84,11 @@ def test_composition_does_not_provision_receipt_or_admit_producer(
         (tmp_path / "catalog.sqlite3").absolute(),
         (tmp_path / "receipts.sqlite3").absolute(),
     )
-    SQLiteMembershipCarrier(paths.catalog_state)
-    SQLiteCatalogAdmissionReceiptMetadataStore(paths.receipt_metadata)
+    membership = SourceProducerMembershipAuthority(SQLiteMembershipCarrier(paths.catalog_state))
+    receipts = CatalogAdmissionReceiptAuthority(
+        SQLiteCatalogAdmissionReceiptMetadataStore(paths.receipt_metadata)
+    )
+    CatalogRuntimeAcceptanceAuthority(membership, receipts)
     monkeypatch.setattr(_BinanceSpotCatalogProducer, "fetch", lambda self: {"symbols": []})
 
     runtime = compose_catalog_runtime_acceptance(paths)
