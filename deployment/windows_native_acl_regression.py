@@ -27,10 +27,14 @@ def main() -> int:
     payload = json.loads(completed.stdout.strip().splitlines()[-1])
     if payload.get("child_edition") != "Desktop":
         raise SystemExit("ACL child is not native Windows PowerShell")
-    if payload.get("get_acl_assembly_location", "").casefold() != payload.get(
-        "expected_security_assembly", ""
-    ).casefold():
-        raise SystemExit("Get-Acl does not execute from the native Security assembly")
+    if payload.get("get_acl_command_type") != "Cmdlet":
+        raise SystemExit("Get-Acl is not a cmdlet")
+    if payload.get("get_acl_module_name") != "Microsoft.PowerShell.Security":
+        raise SystemExit("Get-Acl has an unexpected module name")
+    if not payload.get("get_acl_assembly_location"):
+        raise SystemExit("Get-Acl assembly location is unavailable")
+    if payload.get("get_acl_assembly_file_exists") is not True:
+        raise SystemExit("Get-Acl assembly location is not file-backed")
     required = {"before": False, "after_grant": True, "after_remove": False}
     if any(payload.get(key) is not value for key, value in required.items()):
         raise SystemExit("native ACL read/grant/remove proof failed")

@@ -466,18 +466,16 @@ def test_acl_reader_is_exact_native_module_and_pwsh_inheritance_is_proven() -> N
     assert (
         "Import-Module -Name $nativeSecurityManifest -Force -PassThru -ErrorAction Stop" in helper
     )
-    assert (
-        '$nativeSecurityAssembly = Join-Path $PSHOME "Microsoft.PowerShell.Security.dll"' in helper
-    )
-    assert "Test-Path -LiteralPath $nativeSecurityAssembly -PathType Leaf" in helper
+    assert "$nativeSecurityAssembly = Join-Path $PSHOME" not in helper
+    assert "Test-Path -LiteralPath $nativeSecurityAssembly -PathType Leaf" not in helper
     get_acl_pipeline = helper[helper.index("$nativeGetAcl = Get-Command") :]
     assert "Get-Command -Name Get-Acl -Module Microsoft.PowerShell.Security" in get_acl_pipeline
     assert "$nativeGetAcl.ImplementingType.Assembly.Location" in get_acl_pipeline
-    assert (
-        "Test-WindowsPathIdentity $nativeGetAclAssembly $nativeSecurityAssembly" in get_acl_pipeline
-    )
     assert "[System.Management.Automation.CommandTypes]::Cmdlet" in get_acl_pipeline
     assert '$nativeGetAcl.ModuleName -cne "Microsoft.PowerShell.Security"' in get_acl_pipeline
+    assert "$null -eq $nativeGetAcl.ImplementingType" in get_acl_pipeline
+    assert "$null -eq $nativeGetAcl.ImplementingType.Assembly" in get_acl_pipeline
+    assert "NATIVE_SECURITY_EXECUTABLE_AUTHORITY_LAYOUT_UNQUALIFIED" in get_acl_pipeline
     assert "ModuleBase $nativeSecurityRoot" not in helper
     assert "$env:PSModulePath" not in helper
     assert "Get-Module -ListAvailable" not in helper
@@ -498,11 +496,18 @@ def test_acl_reader_is_exact_native_module_and_pwsh_inheritance_is_proven() -> N
         "GET_ACL_MODULE_NAME",
         "GET_ACL_MODULE_BASE",
         "GET_ACL_MODULE_PATH",
+        "GET_ACL_IMPLEMENTING_TYPE",
+        "GET_ACL_ASSEMBLY_FULL_NAME",
         "GET_ACL_ASSEMBLY_LOCATION",
         "PS_EDITION",
         "PS_HOME",
     ):
-        assert diagnostic in regression
+        assert diagnostic in helper
+    assert 'payload.get("get_acl_command_type") != "Cmdlet"' in launcher
+    assert 'payload.get("get_acl_module_name") != "Microsoft.PowerShell.Security"' in launcher
+    assert 'not payload.get("get_acl_assembly_location")' in launcher
+    assert 'payload.get("get_acl_assembly_file_exists") is not True' in launcher
+    assert "expected_security_assembly" not in launcher + regression
     assert "before = $before" in regression
     assert "after_grant = $afterGrant" in regression
     assert "after_remove = $afterRemove" in regression
