@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import ntpath
 import os
 from pathlib import Path
 from typing import Any
@@ -46,9 +47,50 @@ def _normalize_actions(value: Any) -> list[tuple[int, int]]:
     return [(int(action), int(delay)) for action, delay in value]
 
 
+def _service_host(command_line: Any) -> str:
+    """Extract the sole executable from an SCM command line, failing closed."""
+    if not isinstance(command_line, str) or not command_line.strip():
+        raise ValueError("BinaryPathName is empty")
+    value = command_line.strip()
+    if value.startswith('"'):
+        closing_quote = value.find('"', 1)
+        if closing_quote < 0 or value[closing_quote + 1:].strip():
+            raise ValueError("BinaryPathName is ambiguous or has arguments")
+        executable = value[1:closing_quote]
+    else:
+        # An unquoted command is safe only when the complete value is one path.
+        if any(character.isspace() for character in value):
+            raise ValueError("unquoted BinaryPathName is ambiguous or has arguments")
+        executable = value
+    if not executable:
+        raise ValueError("BinaryPathName has no executable")
+    return executable
+
+
+def _windows_path_identity(path: str, win32api: Any) -> str:
+    return ntpath.normcase(win32api.GetFullPathName(path))
+
+
+def _qualification_diagnostics(
+    record: dict[str, Any], config: Any, *, observed_host: str,
+    observed_sid: str,
+) -> str:
+    return "\n".join((
+        f'EXPECTED_SERVICE_PATH_NAME={record["service_path_name"]}',
+        f"OBSERVED_SCM_BINARY_PATH_NAME={config[3]}",
+        f'EXPECTED_SERVICE_HOST={record["service_host"]}',
+        f"OBSERVED_SCM_SERVICE_HOST={observed_host}",
+        f'EXPECTED_SERVICE_IDENTITY={record["service_identity"]}',
+        f"OBSERVED_SCM_SERVICE_START_NAME={config[7]}",
+        f'EXPECTED_SERVICE_SID={record["service_sid"]}',
+        f"OBSERVED_SERVICE_SID={observed_sid}",
+        f"AUTOSTART_START_TYPE={config[1]}",
+    ))
+
+
 def configure_recovery(
     record: dict[str, Any], *, run_token: str, win32service: Any,
-    win32security: Any | None = None, mutate: bool = True,
+    win32security: Any, win32api: Any, mutate: bool = True,
 ) -> dict[str, Any]:
     """Reobserve exact SCM identity, mutate once, then query and verify the policy."""
     validate_record(record, run_token=run_token)
@@ -64,16 +106,43 @@ def configure_recovery(
             manager, SERVICE_NAME, desired_access,
         )
         config = win32service.QueryServiceConfig(service)
+        observed_host = "<unresolved>"
+        observed_sid = "<unresolved>"
+        diagnostics = lambda: _qualification_diagnostics(  # noqa: E731
+            record, config, observed_host=observed_host, observed_sid=observed_sid,
+        )
         if config[1] != win32service.SERVICE_AUTO_START:
-            raise RecoveryQualificationError("SCM service is not SERVICE_AUTO_START")
-        if config[3] != record["service_path_name"] or config[7] != record["service_identity"]:
-            raise RecoveryQualificationError("SCM configuration mismatches ownership record")
-        if not config[3].startswith(f'"{record["service_host"]}"'):
-            raise RecoveryQualificationError("SCM service host mismatches ownership record")
-        if win32security is not None:
-            sid, _, _ = win32security.LookupAccountName(None, record["service_identity"])
-            if win32security.ConvertSidToStringSid(sid) != record["service_sid"]:
-                raise RecoveryQualificationError("SCM service SID mismatches ownership record")
+            raise RecoveryQualificationError(
+                f"SCM service is not SERVICE_AUTO_START\n{diagnostics()}"
+            )
+        try:
+            observed_host = _service_host(config[3])
+            host_matches = _windows_path_identity(
+                observed_host, win32api,
+            ) == _windows_path_identity(record["service_host"], win32api)
+        except (OSError, TypeError, ValueError) as exc:
+            raise RecoveryQualificationError(
+                f"SCM BinaryPathName qualification failed: {exc}\n{diagnostics()}"
+            ) from exc
+        if not host_matches:
+            raise RecoveryQualificationError(
+                f"SCM service host mismatches ownership record\n{diagnostics()}"
+            )
+        if not isinstance(config[7], str) or not config[7]:
+            raise RecoveryQualificationError(
+                f"SCM ServiceStartName is empty\n{diagnostics()}"
+            )
+        try:
+            sid, _, _ = win32security.LookupAccountName(None, config[7])
+            observed_sid = win32security.ConvertSidToStringSid(sid)
+        except (OSError, TypeError) as exc:
+            raise RecoveryQualificationError(
+                f"SCM ServiceStartName SID resolution failed: {exc}\n{diagnostics()}"
+            ) from exc
+        if observed_sid != record["service_sid"]:
+            raise RecoveryQualificationError(
+                f"SCM service SID mismatches ownership record\n{diagnostics()}"
+            )
         policy = {
             "ResetPeriod": RESET_PERIOD_SECONDS,
             "RebootMsg": "",
@@ -112,12 +181,14 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     import win32service  # type: ignore[import-not-found]
     import win32security  # type: ignore[import-not-found]
+    import win32api  # type: ignore[import-not-found]
 
     try:
         record = json.loads(args.record.read_text(encoding="utf-8"))
         result = configure_recovery(
             record, run_token=args.run_token, win32service=win32service,
-            win32security=win32security, mutate=not args.verify_only,
+            win32security=win32security, win32api=win32api,
+            mutate=not args.verify_only,
         )
     except (OSError, json.JSONDecodeError, RecoveryQualificationError) as exc:
         print(str(exc))
