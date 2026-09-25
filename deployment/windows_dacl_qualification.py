@@ -6,6 +6,7 @@ import argparse
 import json
 import ntpath
 import os
+import stat
 from pathlib import Path
 from typing import Any
 
@@ -85,7 +86,7 @@ def qualify_native_paths(*, win32api: Any, win32file: Any) -> Any:
 
 
 def _is_reparse(path: str | Path, win32file: Any) -> bool:
-    return bool(win32file.GetFileAttributes(str(path)) & win32file.FILE_ATTRIBUTE_REPARSE_POINT)
+    return bool(win32file.GetFileAttributes(str(path)) & stat.FILE_ATTRIBUTE_REPARSE_POINT)
 
 
 def qualify_directory_dacl(
