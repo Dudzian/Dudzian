@@ -439,12 +439,8 @@ def test_acl_reader_is_exact_native_module_and_pwsh_inheritance_is_proven() -> N
     root = Path(__file__).resolve().parents[2]
     helper = (root / "deployment/windows_native_acl.ps1").read_text(encoding="utf-8")
     probe = (root / "deployment/windows_scm_probe.ps1").read_text(encoding="utf-8")
-    regression = (root / "deployment/windows_native_acl_regression.ps1").read_text(
-        encoding="utf-8"
-    )
-    launcher = (root / "deployment/windows_native_acl_regression.py").read_text(
-        encoding="utf-8"
-    )
+    regression = (root / "deployment/windows_native_acl_regression.ps1").read_text(encoding="utf-8")
+    launcher = (root / "deployment/windows_native_acl_regression.py").read_text(encoding="utf-8")
     workflow = (root / ".github/workflows/platform-deployment.yml").read_text(encoding="utf-8")
 
     assert 'Join-Path $PSHOME "Modules\\Microsoft.PowerShell.Security' in helper

@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import bot_core.runtime.core_host_catalog_runtime as catalog_runtime_lifecycle
 from bot_core.instruments.catalog_admission_receipt import (
     CatalogAdmissionReceiptAuthority,
     SQLiteCatalogAdmissionReceiptMetadataStore,
@@ -160,19 +161,50 @@ def test_protected_configuration_has_exact_keys_no_defaults_and_absolute_paths(t
 
 
 @pytest.mark.parametrize("bad_target", ["directory", "file"])
-def test_permission_qualification_blocks_without_repair(tmp_path, keyring, bad_target) -> None:
-    config, catalog, _receipts = _offline_storage(tmp_path, custody=True, admission=True)
-    target = tmp_path if bad_target == "directory" else catalog
-    before = target.read_bytes() if target.is_file() else tuple(target.iterdir())
+def test_permission_qualification_blocks_without_repair(
+    tmp_path, keyring, monkeypatch, bad_target
+) -> None:
+    config, catalog, receipts = _offline_storage(tmp_path, custody=True, admission=True)
+    calls: list[object] = []
+
+    def unexpected_composition(paths):  # type: ignore[no-untyped-def]
+        calls.append(paths)
+        pytest.fail("composition must not run after invalid permission qualification")
+
+    monkeypatch.setattr(
+        catalog_runtime_lifecycle,
+        "compose_catalog_runtime_acceptance",
+        unexpected_composition,
+    )
+    semantic_before = (
+        _sqlite_semantic_snapshot(catalog),
+        _receipt_semantic_snapshot(receipts),
+        dict(keyring),
+    )
+    permitted_sidecars = {
+        catalog.with_name(f"{catalog.name}-wal"),
+        catalog.with_name(f"{catalog.name}-shm"),
+        receipts.with_name(f"{receipts.name}-wal"),
+        receipts.with_name(f"{receipts.name}-shm"),
+    }
+    durable_entries_before = set(tmp_path.iterdir()) - permitted_sidecars
 
     result = CoreHostCatalogRuntimeLifecycle(
         config,
         permission_qualifier=_FixedQualifier(CatalogPermissionQualification.INVALID),
     ).start_after_recovery()
 
+    assert not result.ready
     assert result.reason == "CATALOG_RUNTIME_PERMISSIONS_INVALID"
-    after = target.read_bytes() if target.is_file() else tuple(target.iterdir())
-    assert after == before
+    assert calls == []
+    assert catalog.is_file()
+    assert receipts.is_file()
+    assert set(tmp_path.iterdir()) - permitted_sidecars == durable_entries_before
+    assert (
+        _sqlite_semantic_snapshot(catalog),
+        _receipt_semantic_snapshot(receipts),
+        keyring,
+    ) == semantic_before
 
 
 def test_non_posix_permission_proof_fails_closed(tmp_path, keyring) -> None:
