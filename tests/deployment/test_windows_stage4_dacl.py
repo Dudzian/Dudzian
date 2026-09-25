@@ -292,10 +292,14 @@ def test_provisioner_has_no_qualification_pass_authority():
 
 def test_scm_probe_separates_provision_from_read_only_proof():
     probe = (Path(__file__).resolve().parents[2] / "deployment/windows_scm_probe.ps1").read_text()
-    provision = probe.index("-m deployment.windows_dacl_provision provision")
-    qualification = probe.index("-m deployment.windows_dacl_qualification")
+    provision = probe.index('"deployment.windows_dacl_provision"')
+    qualification = probe.index('"deployment.windows_dacl_qualification"')
     pass_assignment = probe.index('$result.WINDOWS_ACL_QUALIFICATION = "PASS"')
     assert provision < qualification < pass_assignment
+    stage4 = probe[probe.rindex('$stage = "NATIVE_PATHS_DACL"', 0, provision) : pass_assignment]
+    assert stage4.count("Invoke-CapturedPython -Arguments") == 2
+    assert "$stage4Run.ExitCode" in stage4
+    assert "$stage4QualificationRun.ExitCode" in stage4
 
 
 def test_public_platform_acl_boundary_executes_dacl_qualification(monkeypatch):
