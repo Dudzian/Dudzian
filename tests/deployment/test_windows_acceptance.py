@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -443,13 +444,38 @@ def test_acl_reader_is_exact_native_module_and_pwsh_inheritance_is_proven() -> N
     launcher = (root / "deployment/windows_native_acl_regression.py").read_text(encoding="utf-8")
     workflow = (root / ".github/workflows/platform-deployment.yml").read_text(encoding="utf-8")
 
-    assert 'Join-Path $PSHOME "Modules\\Microsoft.PowerShell.Security' in helper
-    assert "Import-Module -Name $nativeSecurityManifest" in helper
-    assert "Get-Command -Name Get-Acl -Module Microsoft.PowerShell.Security" in helper
+    identity_function = re.search(
+        r"function Test-WindowsPathIdentity.*?^}", helper, re.MULTILINE | re.DOTALL
+    )
+    assert identity_function is not None
+    identity_contract = identity_function.group(0)
+    assert identity_contract.count("[System.IO.Path]::GetFullPath") == 2
+    assert identity_contract.count(".TrimEnd('\\')") == 2
+    assert (
+        "[StringComparer]::OrdinalIgnoreCase.Equals($actualRoot, $expectedRoot)"
+        in identity_contract
+    )
+    assert "-ceq" not in identity_contract
+    assert "-cne" not in identity_contract
+
+    manifest_assignment = (
+        "$nativeSecurityManifest = Join-Path $PSHOME "
+        '"Modules\\Microsoft.PowerShell.Security\\Microsoft.PowerShell.Security.psd1"'
+    )
+    assert manifest_assignment in helper
+    assert (
+        "Import-Module -Name $nativeSecurityManifest -Force -PassThru -ErrorAction Stop" in helper
+    )
+    get_acl_pipeline = helper[helper.index("$nativeGetAcl = Get-Command") :]
+    assert "Get-Command -Name Get-Acl -Module Microsoft.PowerShell.Security" in get_acl_pipeline
+    assert "Test-WindowsPathIdentity $_.Module.ModuleBase $nativeSecurityRoot" in get_acl_pipeline
+    assert "$env:PSModulePath" not in helper
+    assert "Get-Module -ListAvailable" not in helper
     assert "Test-NativePrincipalGrant $Target $identity $script:serviceSid" in probe
     assert "Get-Acl -LiteralPath $Target" not in probe
     assert '["powershell.exe", "-NoProfile"' in launcher
     assert 'WINDOWS_ACL_REGRESSION_PARENT_EDITION") != "Core"' in launcher
+    assert 'payload.get("child_edition") != "Desktop"' in launcher
     assert "$PSVersionTable.PSEdition" in regression
     assert "$PSHOME" in regression
     assert "$env:PSModulePath" in regression
@@ -459,6 +485,37 @@ def test_acl_reader_is_exact_native_module_and_pwsh_inheritance_is_proven() -> N
     assert "after_remove = $afterRemove" in regression
     assert "shell: pwsh" in workflow
     assert "python -m deployment.windows_native_acl_regression" in workflow
+
+
+@pytest.mark.skipif(shutil.which("powershell.exe") is None, reason="requires Windows PowerShell")
+def test_windows_path_identity_runtime_contract() -> None:
+    root = Path(__file__).resolve().parents[2]
+    helper = root / "deployment/windows_native_acl.ps1"
+    cases = (
+        (r"C:\Windows\System32\Foo", r"C:\WINDOWS\system32\Foo", True),
+        (r"C:\Path\Module", "C:\\Path\\Module\\", True),
+        (r"C:\Windows\System32\Foo", r"D:\Windows\System32\Foo", False),
+        (r"C:\Windows\System32\Foo", r"C:\Windows\SysWOW64\Foo", False),
+    )
+    assertions = "; ".join(
+        "if ((Test-WindowsPathIdentity '%s' '%s') -ne $%s) { exit 1 }"
+        % (actual, expected, str(wanted).lower())
+        for actual, expected, wanted in cases
+    )
+    completed = subprocess.run(
+        [
+            "powershell.exe",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            ". '%s'; %s" % (helper, assertions),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
 
 
 def _ownership_intent() -> dict[str, object]:

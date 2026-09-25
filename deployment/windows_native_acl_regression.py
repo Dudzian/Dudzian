@@ -25,6 +25,8 @@ def main() -> int:
             print(completed.stderr, end="")
         return completed.returncode
     payload = json.loads(completed.stdout.strip().splitlines()[-1])
+    if payload.get("child_edition") != "Desktop":
+        raise SystemExit("ACL child is not native Windows PowerShell")
     required = {"before": False, "after_grant": True, "after_remove": False}
     if any(payload.get(key) is not value for key, value in required.items()):
         raise SystemExit("native ACL read/grant/remove proof failed")
