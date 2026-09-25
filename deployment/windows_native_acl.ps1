@@ -7,33 +7,42 @@ function Test-WindowsPathIdentity([string]$Actual, [string]$Expected) {
   return [StringComparer]::OrdinalIgnoreCase.Equals($actualRoot, $expectedRoot)
 }
 
-function New-NativeSecurityPathFailure([string]$ActualRoot) {
+function New-NativeSecurityAuthorityFailure([string]$Reason) {
   return @(
-    "EXPECTED_NATIVE_SECURITY_ROOT=$nativeSecurityRoot"
-    "ACTUAL_SECURITY_MODULE_BASE=$ActualRoot"
+    "NATIVE_SECURITY_AUTHORITY_FAILURE=$Reason"
+    "EXPECTED_NATIVE_SECURITY_MANIFEST=$nativeSecurityManifest"
+    "EXPECTED_NATIVE_SECURITY_ASSEMBLY=$nativeSecurityAssembly"
     "CHILD_PS_EDITION=$($PSVersionTable.PSEdition)"
     "CHILD_PS_HOME=$PSHOME"
   ) -join [Environment]::NewLine
 }
 
 $nativeSecurityManifest = Join-Path $PSHOME "Modules\Microsoft.PowerShell.Security\Microsoft.PowerShell.Security.psd1"
+$nativeSecurityAssembly = Join-Path $PSHOME "Microsoft.PowerShell.Security.dll"
 if (-not (Test-Path -LiteralPath $nativeSecurityManifest -PathType Leaf)) {
   throw "native Windows PowerShell Security module is missing: $nativeSecurityManifest"
 }
-$nativeSecurityModule = Import-Module -Name $nativeSecurityManifest -Force -PassThru -ErrorAction Stop
-$nativeSecurityRoot = [System.IO.Path]::GetFullPath((Join-Path $PSHOME "Modules\Microsoft.PowerShell.Security"))
-$loadedSecurityRoot = [System.IO.Path]::GetFullPath($nativeSecurityModule.ModuleBase)
-if (-not (Test-WindowsPathIdentity $loadedSecurityRoot $nativeSecurityRoot)) {
-  throw (New-NativeSecurityPathFailure $loadedSecurityRoot)
+if (-not (Test-Path -LiteralPath $nativeSecurityAssembly -PathType Leaf)) {
+  throw "native Windows PowerShell Security assembly is missing: $nativeSecurityAssembly"
 }
+$nativeSecurityModule = Import-Module -Name $nativeSecurityManifest -Force -PassThru -ErrorAction Stop
 $nativeGetAcl = Get-Command -Name Get-Acl -Module Microsoft.PowerShell.Security -ErrorAction Stop |
-  Where-Object { Test-WindowsPathIdentity $_.Module.ModuleBase $nativeSecurityRoot } |
   Select-Object -First 1
 if ($null -eq $nativeGetAcl) {
-  $getAclCommand = Get-Command -Name Get-Acl -Module Microsoft.PowerShell.Security -ErrorAction SilentlyContinue |
-    Select-Object -First 1
-  $getAclModuleBase = if ($null -eq $getAclCommand) { "<UNAVAILABLE>" } else { $getAclCommand.Module.ModuleBase }
-  throw (New-NativeSecurityPathFailure $getAclModuleBase)
+  throw (New-NativeSecurityAuthorityFailure "Get-Acl is unavailable after exact manifest import")
+}
+if ($nativeGetAcl.CommandType -ne [System.Management.Automation.CommandTypes]::Cmdlet) {
+  throw (New-NativeSecurityAuthorityFailure "Get-Acl is not a native cmdlet")
+}
+if ($nativeGetAcl.ModuleName -cne "Microsoft.PowerShell.Security") {
+  throw (New-NativeSecurityAuthorityFailure "Get-Acl has an unexpected module name")
+}
+$nativeGetAclAssembly = $nativeGetAcl.ImplementingType.Assembly.Location
+if (-not $nativeGetAclAssembly) {
+  throw (New-NativeSecurityAuthorityFailure "Get-Acl implementing assembly is unavailable")
+}
+if (-not (Test-WindowsPathIdentity $nativeGetAclAssembly $nativeSecurityAssembly)) {
+  throw (New-NativeSecurityAuthorityFailure "Get-Acl implementing assembly is not the native Security assembly")
 }
 
 function Test-NativePrincipalGrant([string]$Target, [string]$Principal, [string]$PrincipalSid) {

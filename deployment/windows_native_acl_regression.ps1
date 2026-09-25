@@ -4,6 +4,16 @@ $ErrorActionPreference = "Stop"
 if ($PSVersionTable.PSEdition -cne "Desktop") {
   throw "ACL child is not native Windows PowerShell"
 }
+Write-Output "SECURITY_IMPORT_NAME=$($nativeSecurityModule.Name)"
+Write-Output "SECURITY_IMPORT_MODULE_BASE=$($nativeSecurityModule.ModuleBase)"
+Write-Output "SECURITY_IMPORT_PATH=$($nativeSecurityModule.Path)"
+Write-Output "GET_ACL_COMMAND_TYPE=$($nativeGetAcl.CommandType)"
+Write-Output "GET_ACL_MODULE_NAME=$($nativeGetAcl.ModuleName)"
+Write-Output "GET_ACL_MODULE_BASE=$($nativeGetAcl.Module.ModuleBase)"
+Write-Output "GET_ACL_MODULE_PATH=$($nativeGetAcl.Module.Path)"
+Write-Output "GET_ACL_ASSEMBLY_LOCATION=$nativeGetAclAssembly"
+Write-Output "PS_EDITION=$($PSVersionTable.PSEdition)"
+Write-Output "PS_HOME=$PSHOME"
 $principal = "NT AUTHORITY\LOCAL SERVICE"
 $principalSid = ([System.Security.Principal.NTAccount]::new($principal)).Translate(
   [System.Security.Principal.SecurityIdentifier]
@@ -23,8 +33,9 @@ try {
     parent_edition = $env:WINDOWS_ACL_REGRESSION_PARENT_EDITION
     child_edition = $PSVersionTable.PSEdition
     child_pshome = $PSHOME
-    effective_psmodulepath = $env:PSModulePath
     security_module_path = $nativeSecurityModule.Path
+    get_acl_assembly_location = $nativeGetAclAssembly
+    expected_security_assembly = $nativeSecurityAssembly
     explicit_native_import = $true
     before = $before
     after_grant = $afterGrant
