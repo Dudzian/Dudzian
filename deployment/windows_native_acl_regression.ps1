@@ -30,6 +30,9 @@ try {
     get_acl_assembly_full_name = $nativeGetAcl.ImplementingType.Assembly.FullName
     get_acl_assembly_location = $nativeGetAclAssembly
     get_acl_assembly_file_exists = $nativeGetAclAssemblyFileExists
+    get_acl_global_assembly_cache = $nativeGetAclAssemblyObject.GlobalAssemblyCache
+    native_gac_security_root = $nativeGacSecurityRoot
+    security_executable_authority_qualified = $true
     explicit_native_import = $true
     before = $before
     after_grant = $afterGrant
