@@ -26,6 +26,11 @@ def resolve_paths(environment: dict[str, str] | None = None) -> DeploymentPaths:
     missing = [name for name in required if not values.get(name)]
     if missing:
         raise WindowsDeploymentNotQualified(f"missing Windows known-folder environment: {missing}")
+    invalid = [name for name in required if not PureWindowsPath(values[name]).is_absolute()]
+    if invalid:
+        raise WindowsDeploymentNotQualified(
+            f"Windows known-folder paths must be fully qualified: {invalid}"
+        )
     install = Path(values["ProgramFiles"]) / "CryptoHunter"
     machine = Path(values["ProgramData"]) / "CryptoHunter"
     return DeploymentPaths(
@@ -55,11 +60,11 @@ def static_path_layout(
     )
 
 
-def qualify_acl() -> None:
-    """Fail closed until native ACL inspection is implemented and run on Windows."""
-    raise WindowsDeploymentNotQualified(
-        "native DACL qualification is not implemented; POSIX modes are not a substitute"
-    )
+def qualify_acl(service_sid: str | None = None) -> dict[str, str]:
+    """Invoke only the read-only native Windows DACL boundary."""
+    from deployment.windows_dacl_qualification import qualify_acl as read_only_qualify_acl
+
+    return read_only_qualify_acl(service_sid)
 
 
 def qualify_local_principal_authentication() -> None:

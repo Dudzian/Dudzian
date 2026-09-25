@@ -24,6 +24,10 @@ $stage = "INSTALL"
 $primaryFailure = $null
 $cleanupFailures = [System.Collections.Generic.List[string]]::new()
 $result = [ordered]@{
+  WINDOWS_NATIVE_PATH_INTEGRATION = "FAIL"
+  WINDOWS_PROTECTED_CONFIGURATION = "FAIL"
+  WINDOWS_PROTECTED_STATE_PATHS = "FAIL"
+  WINDOWS_ACL_QUALIFICATION = "FAIL"
   WINDOWS_SERVICE_INSTALLATION = "FAIL"
   WINDOWS_AUTOSTART = "FAIL"
   WINDOWS_SERVICE_START = "FAIL"
@@ -265,6 +269,47 @@ try {
     $serviceOwnershipProven = $true
     $serviceInstalledByProbe = $true
 
+    $stage = "NATIVE_PATHS_DACL"
+    $stage4Output = @(
+      & $PythonExecutable -m deployment.windows_dacl_provision provision `
+        --record $ownershipPath --run-token $WindowsAcceptanceRunToken 2>&1
+    )
+    if ($LASTEXITCODE -ne 0) {
+      throw "Stage-4 native path/DACL provisioning failed: $($stage4Output -join '; ')"
+    }
+    try { $stage4ProvisionPayload = $stage4Output[-1] | ConvertFrom-Json } catch {
+      throw "Stage-4 provision helper returned invalid result"
+    }
+    if (
+      $stage4ProvisionPayload.CONFIG_PROVISIONED -cne "PASS" -or
+      $stage4ProvisionPayload.STATE_PROVISIONED -cne "PASS" -or
+      $stage4ProvisionPayload.RUNTIME_PROVISIONED -cne "PASS"
+    ) { throw "Stage-4 provisioning did not pass" }
+
+    $stage = "READ_ONLY_DACL_QUALIFICATION"
+    $stage4QualificationOutput = @(
+      & $PythonExecutable -m deployment.windows_dacl_qualification `
+        --record $ownershipPath --run-token $WindowsAcceptanceRunToken 2>&1
+    )
+    if ($LASTEXITCODE -ne 0) {
+      throw "Stage-4 read-only qualification failed: $($stage4QualificationOutput -join '; ')"
+    }
+    try { $stage4QualificationPayload = $stage4QualificationOutput[-1] | ConvertFrom-Json } catch {
+      throw "Stage-4 read-only qualifier returned invalid result"
+    }
+    if (
+      $stage4QualificationPayload.NATIVE_PATHS -cne "PASS" -or
+      $stage4QualificationPayload.CONFIG_DACL -cne "PASS" -or
+      $stage4QualificationPayload.STATE_DACL -cne "PASS" -or
+      $stage4QualificationPayload.RUNTIME_DACL -cne "PASS" -or
+      $stage4QualificationPayload.READ_ONLY_QUALIFIER -cne "PASS"
+    ) { throw "Stage-4 read-only DACL qualification did not pass" }
+    $ownership = Get-Content -LiteralPath $ownershipPath -Raw | ConvertFrom-Json
+    $result.WINDOWS_NATIVE_PATH_INTEGRATION = "PASS"
+    $result.WINDOWS_PROTECTED_CONFIGURATION = "PASS"
+    $result.WINDOWS_PROTECTED_STATE_PATHS = "PASS"
+    $result.WINDOWS_ACL_QUALIFICATION = "PASS"
+
     $stage = "AUTOSTART_QUERY"
     $recoveryOutput = @(
       & $PythonExecutable -m deployment.windows_service_recovery `
@@ -359,6 +404,19 @@ try {
   if (-not $primaryFailure) { $primaryFailure = "[$stage] $($_.Exception.Message)" }
 } finally {
   if ($intentOwned) {
+    if (Test-Path -LiteralPath $ownershipPath -PathType Leaf) {
+      try { $ownership = Get-Content -LiteralPath $ownershipPath -Raw | ConvertFrom-Json } catch {
+        $cleanupFailures.Add("ownership record cannot be reloaded for cleanup")
+      }
+    }
+    if ($null -ne $ownership -and $null -ne $ownership.path_security_plan) {
+      try {
+        & $PythonExecutable -m deployment.windows_dacl_provision cleanup `
+          --record $ownershipPath --run-token $WindowsAcceptanceRunToken | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "Stage-4 helper rejected cleanup" }
+        $ownership = Get-Content -LiteralPath $ownershipPath -Raw | ConvertFrom-Json
+      } catch { $cleanupFailures.Add("Stage-4: $($_.Exception.Message)") }
+    }
     if (-not $serviceOwnershipProven -and (Get-Service $service -ErrorAction SilentlyContinue)) {
       $cleanupFailures.Add("unproven service exists after install attempt; left untouched")
     }
