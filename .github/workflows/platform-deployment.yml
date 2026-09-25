@@ -35,6 +35,11 @@ jobs:
         with: {python-version: "3.11"}
       - run: python -m pip install pytest pyyaml
       - run: python -m pytest -q tests/deployment/test_platform_readiness.py tests/deployment/test_platform_evidence.py
+      - name: Prove Windows PowerShell captured native transport
+        shell: powershell
+        run: >-
+          ./deployment/windows_captured_python_regression.ps1
+          -PythonExecutable (Get-Command python).Source
 
   windows-deployment-integration:
     runs-on: windows-latest

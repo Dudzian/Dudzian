@@ -380,7 +380,8 @@ def test_partial_acl_timeout_uses_only_recorded_planned_grants() -> None:
     probe = (Path(__file__).resolve().parents[2] / "deployment/windows_scm_probe.ps1").read_text(
         encoding="utf-8"
     )
-    plan = probe[probe.index("function Add-PlannedGrant") : probe.index("try {")]
+    plan_start = probe.index("function Add-PlannedGrant")
+    plan = probe[plan_start : probe.index("try {", plan_start)]
     assert (
         plan.index("Test-ServiceGrant")
         < plan.index("ownership.grants")

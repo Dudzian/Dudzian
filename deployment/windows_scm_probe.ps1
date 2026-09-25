@@ -41,6 +41,29 @@ $result = [ordered]@{
 . (Join-Path $PSScriptRoot "windows_path_qualification.ps1")
 . (Join-Path $PSScriptRoot "windows_native_acl.ps1")
 
+function Invoke-CapturedPython {
+  param([string[]]$Arguments)
+
+  $savedErrorActionPreference = $ErrorActionPreference
+  $captured = @()
+  $exitCode = $null
+  try {
+    $ErrorActionPreference = "Continue"
+    $captured = @(
+      & $PythonExecutable @Arguments 2>&1 |
+        ForEach-Object { $_.ToString() }
+    )
+    $exitCode = $LASTEXITCODE
+  } finally {
+    $ErrorActionPreference = $savedErrorActionPreference
+  }
+
+  return [pscustomobject]@{
+    Output = $captured
+    ExitCode = $exitCode
+  }
+}
+
 function Wait-State([string]$Expected) {
   for ($i = 0; $i -lt 60; $i++) {
     $state = (Get-Service -Name $service -ErrorAction Stop).Status.ToString()
@@ -270,11 +293,17 @@ try {
     $serviceInstalledByProbe = $true
 
     $stage = "NATIVE_PATHS_DACL"
-    $stage4Output = @(
-      & $PythonExecutable -m deployment.windows_dacl_provision provision `
-        --record $ownershipPath --run-token $WindowsAcceptanceRunToken 2>&1
+    $stage4Run = Invoke-CapturedPython -Arguments @(
+      "-m",
+      "deployment.windows_dacl_provision",
+      "provision",
+      "--record",
+      $ownershipPath,
+      "--run-token",
+      $WindowsAcceptanceRunToken
     )
-    if ($LASTEXITCODE -ne 0) {
+    $stage4Output = @($stage4Run.Output)
+    if ($stage4Run.ExitCode -ne 0) {
       throw "Stage-4 native path/DACL provisioning failed: $($stage4Output -join '; ')"
     }
     try { $stage4ProvisionPayload = $stage4Output[-1] | ConvertFrom-Json } catch {
@@ -287,11 +316,16 @@ try {
     ) { throw "Stage-4 provisioning did not pass" }
 
     $stage = "READ_ONLY_DACL_QUALIFICATION"
-    $stage4QualificationOutput = @(
-      & $PythonExecutable -m deployment.windows_dacl_qualification `
-        --record $ownershipPath --run-token $WindowsAcceptanceRunToken 2>&1
+    $stage4QualificationRun = Invoke-CapturedPython -Arguments @(
+      "-m",
+      "deployment.windows_dacl_qualification",
+      "--record",
+      $ownershipPath,
+      "--run-token",
+      $WindowsAcceptanceRunToken
     )
-    if ($LASTEXITCODE -ne 0) {
+    $stage4QualificationOutput = @($stage4QualificationRun.Output)
+    if ($stage4QualificationRun.ExitCode -ne 0) {
       throw "Stage-4 read-only qualification failed: $($stage4QualificationOutput -join '; ')"
     }
     try { $stage4QualificationPayload = $stage4QualificationOutput[-1] | ConvertFrom-Json } catch {
