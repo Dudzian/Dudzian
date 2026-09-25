@@ -458,6 +458,23 @@ def test_acl_reader_is_exact_native_module_and_pwsh_inheritance_is_proven() -> N
     assert "-ceq" not in identity_contract
     assert "-cne" not in identity_contract
 
+    containment_function = re.search(
+        r"function Test-WindowsPathWithinRoot.*?^}", helper, re.MULTILINE | re.DOTALL
+    )
+    assert containment_function is not None
+    containment_contract = containment_function.group(0)
+    assert containment_contract.count("[System.IO.Path]::GetFullPath") == 2
+    assert ".TrimEnd([char[]]@('\\', '/'))" in containment_contract
+    assert (
+        "$rootWithSeparator = $fullRoot + [System.IO.Path]::DirectorySeparatorChar"
+        in containment_contract
+    )
+    assert (
+        "$fullPath.StartsWith($rootWithSeparator, [StringComparison]::OrdinalIgnoreCase)"
+        in containment_contract
+    )
+    assert ".StartsWith($fullRoot" not in containment_contract
+
     manifest_assignment = (
         "$nativeSecurityManifest = Join-Path $PSHOME "
         '"Modules\\Microsoft.PowerShell.Security\\Microsoft.PowerShell.Security.psd1"'
@@ -468,14 +485,54 @@ def test_acl_reader_is_exact_native_module_and_pwsh_inheritance_is_proven() -> N
     )
     assert "$nativeSecurityAssembly = Join-Path $PSHOME" not in helper
     assert "Test-Path -LiteralPath $nativeSecurityAssembly -PathType Leaf" not in helper
+    assert '$nativeSecurityModule.Name -cne "Microsoft.PowerShell.Security"' in helper
+    assert "Test-WindowsPathIdentity $nativeSecurityModule.Path $nativeSecurityManifest" in helper
     get_acl_pipeline = helper[helper.index("$nativeGetAcl = Get-Command") :]
     assert "Get-Command -Name Get-Acl -Module Microsoft.PowerShell.Security" in get_acl_pipeline
-    assert "$nativeGetAcl.ImplementingType.Assembly.Location" in get_acl_pipeline
+    assert (
+        "$nativeGetAclAssemblyObject = $nativeGetAcl.ImplementingType.Assembly" in get_acl_pipeline
+    )
+    assert "$nativeGetAclAssembly = $nativeGetAclAssemblyObject.Location" in get_acl_pipeline
     assert "[System.Management.Automation.CommandTypes]::Cmdlet" in get_acl_pipeline
     assert '$nativeGetAcl.ModuleName -cne "Microsoft.PowerShell.Security"' in get_acl_pipeline
+    assert (
+        "Test-WindowsPathIdentity $nativeGetAcl.Module.Path $nativeSecurityManifest"
+        in get_acl_pipeline
+    )
     assert "$null -eq $nativeGetAcl.ImplementingType" in get_acl_pipeline
+    assert (
+        '$nativeGetAcl.ImplementingType.FullName -cne "Microsoft.PowerShell.Commands.GetAclCommand"'
+        in get_acl_pipeline
+    )
     assert "$null -eq $nativeGetAcl.ImplementingType.Assembly" in get_acl_pipeline
-    assert "NATIVE_SECURITY_EXECUTABLE_AUTHORITY_LAYOUT_UNQUALIFIED" in get_acl_pipeline
+    expected_assembly = (
+        '"Microsoft.PowerShell.Security, Version=3.0.0.0, Culture=neutral, '
+        'PublicKeyToken=31bf3856ad364e35"'
+    )
+    assert f"$nativeGetAclAssemblyIdentity = {expected_assembly}" in get_acl_pipeline
+    assert (
+        "$nativeGetAclAssemblyObject.FullName -cne $nativeGetAclAssemblyIdentity"
+        in get_acl_pipeline
+    )
+    assert 'PSObject.Properties["GlobalAssemblyCache"]' in get_acl_pipeline
+    assert "$nativeGetAclAssemblyObject.GlobalAssemblyCache -ne $true" in get_acl_pipeline
+    assert "Test-Path -LiteralPath $nativeGetAclAssembly -PathType Leaf" in get_acl_pipeline
+    assert (
+        "[System.IO.Path]::GetFileName($nativeGetAclAssembly) -cne "
+        '"Microsoft.PowerShell.Security.dll"' in get_acl_pipeline
+    )
+    assert "$nativeWindowsRoot = $PSHOME" in get_acl_pipeline
+    assert "$parentIndex -lt 3" in get_acl_pipeline
+    assert "[System.IO.Directory]::GetParent($nativeWindowsRoot)" in get_acl_pipeline
+    assert (
+        "$nativeGacSecurityRoot = Join-Path $nativeWindowsRoot "
+        '"Microsoft.Net\\assembly\\GAC_MSIL\\Microsoft.PowerShell.Security"' in get_acl_pipeline
+    )
+    assert (
+        "Test-WindowsPathWithinRoot $nativeGetAclAssembly $nativeGacSecurityRoot"
+        in get_acl_pipeline
+    )
+    assert "NATIVE_SECURITY_EXECUTABLE_AUTHORITY_LAYOUT_UNQUALIFIED" not in get_acl_pipeline
     assert "ModuleBase $nativeSecurityRoot" not in helper
     assert "$env:PSModulePath" not in helper
     assert "Get-Module -ListAvailable" not in helper
@@ -505,9 +562,18 @@ def test_acl_reader_is_exact_native_module_and_pwsh_inheritance_is_proven() -> N
         assert diagnostic in helper
     assert 'payload.get("get_acl_command_type") != "Cmdlet"' in launcher
     assert 'payload.get("get_acl_module_name") != "Microsoft.PowerShell.Security"' in launcher
+    assert (
+        'payload.get("get_acl_implementing_type") != '
+        '"Microsoft.PowerShell.Commands.GetAclCommand"' in launcher
+    )
+    assert "PublicKeyToken=31bf3856ad364e35" in launcher
     assert 'not payload.get("get_acl_assembly_location")' in launcher
     assert 'payload.get("get_acl_assembly_file_exists") is not True' in launcher
-    assert "expected_security_assembly" not in launcher + regression
+    assert 'payload.get("get_acl_global_assembly_cache") is not True' in launcher
+    assert 'payload.get("security_executable_authority_qualified") is not True' in launcher
+    assert "get_acl_global_assembly_cache" in regression
+    assert "native_gac_security_root" in regression
+    assert "security_executable_authority_qualified = $true" in regression
     assert "before = $before" in regression
     assert "after_grant = $afterGrant" in regression
     assert "after_remove = $afterRemove" in regression
