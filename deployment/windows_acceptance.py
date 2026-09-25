@@ -149,6 +149,9 @@ def _failed_scm_result(message: str) -> str:
         "START": "WINDOWS_SERVICE_START",
         "STOP": "WINDOWS_GRACEFUL_STOP",
         "RESTART": "WINDOWS_MANUAL_RESTART",
+        "AUTOSTART_QUERY": "WINDOWS_AUTOSTART",
+        "CRASH_RESTART": "WINDOWS_AUTOMATIC_CRASH_RESTART",
+        "POST_RECOVERY_GRACEFUL_STOP": "WINDOWS_AUTOMATIC_CRASH_RESTART",
         "CLEANUP": "WINDOWS_CLEANUP",
     }
     upper = message.upper()

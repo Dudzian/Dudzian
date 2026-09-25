@@ -24,6 +24,11 @@ from deployment.windows_service_ownership import (
     qualify_service_creation,
     service_cleanup_allowed,
 )
+from deployment.windows_service_recovery import (
+    RESET_PERIOD_SECONDS,
+    RecoveryQualificationError,
+    configure_recovery,
+)
 from deployment.platform_readiness import blocking_items, load_contract
 from deployment.windows_acceptance import (
     GITHUB_PROVIDER,
@@ -74,9 +79,11 @@ class ReviewedBoundary(AcceptanceBoundary):
             raise WindowsAcceptanceError("reviewed failure", self.scm_failure)
         return {
             "WINDOWS_SERVICE_INSTALLATION": "PASS",
+            "WINDOWS_AUTOSTART": "PASS",
             "WINDOWS_SERVICE_START": "PASS",
             "WINDOWS_GRACEFUL_STOP": "PASS",
             "WINDOWS_MANUAL_RESTART": "PASS",
+            "WINDOWS_AUTOMATIC_CRASH_RESTART": "PASS",
             "cleanup": "PASS",
             "details": "reviewed boundary completed",
         }
@@ -142,9 +149,11 @@ def test_failed_core_plan_publishes_no_pass_artifact(
     "item",
     [
         "WINDOWS_SERVICE_INSTALLATION",
+        "WINDOWS_AUTOSTART",
         "WINDOWS_SERVICE_START",
         "WINDOWS_GRACEFUL_STOP",
         "WINDOWS_MANUAL_RESTART",
+        "WINDOWS_AUTOMATIC_CRASH_RESTART",
         "WINDOWS_CLEANUP",
     ],
 )
@@ -170,9 +179,11 @@ def test_successful_orchestration_uses_reviewed_boundary(
     assert evidence["ci_provider"] == GITHUB_PROVIDER
     assert {result["item"] for result in evidence["results"]} == {
         "WINDOWS_SERVICE_INSTALLATION",
+        "WINDOWS_AUTOSTART",
         "WINDOWS_SERVICE_START",
         "WINDOWS_GRACEFUL_STOP",
         "WINDOWS_MANUAL_RESTART",
+        "WINDOWS_AUTOMATIC_CRASH_RESTART",
     }
     assert all(result["status"] == "PASS" for result in evidence["results"])
 
@@ -244,6 +255,20 @@ def test_probe_installs_service_before_first_service_identity_acl() -> None:
     assert "LocalSystem" not in probe
     assert "NetworkService" not in probe
     assert "Everyone" not in probe
+
+
+def test_strict_create_configures_autostart_without_update_fallback() -> None:
+    harness = (
+        Path(__file__).resolve().parents[2] / "deployment/windows_test_service.py"
+    ).read_text(encoding="utf-8")
+    strict = (
+        Path(__file__).resolve().parents[2] / "deployment/windows_strict_service_create.py"
+    ).read_text(encoding="utf-8")
+    assert "startType=win32service.SERVICE_AUTO_START" in harness
+    assert "SERVICE_DEMAND_START" not in harness
+    assert "UpdateService" not in harness
+    assert "UpdateService" not in strict
+    assert "ERROR_SERVICE_EXISTS" in strict
 
 
 def test_probe_ownership_record_is_created_after_absence_check_before_install() -> None:
@@ -733,9 +758,11 @@ def test_exact_sys_executable_is_propagated_even_when_path_python_differs(
     calls: list[list[str]] = []
     payload = {
         "WINDOWS_SERVICE_INSTALLATION": "PASS",
+        "WINDOWS_AUTOSTART": "PASS",
         "WINDOWS_SERVICE_START": "PASS",
         "WINDOWS_GRACEFUL_STOP": "PASS",
         "WINDOWS_MANUAL_RESTART": "PASS",
+        "WINDOWS_AUTOMATIC_CRASH_RESTART": "PASS",
         "cleanup": "PASS",
     }
 

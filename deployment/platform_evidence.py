@@ -16,9 +16,11 @@ from deployment.core_test_plan import MANIFEST, canonical_plan_digest, load_mani
 SCHEMA_VERSION = 1
 SCM_ITEMS = (
     "WINDOWS_SERVICE_INSTALLATION",
+    "WINDOWS_AUTOSTART",
     "WINDOWS_SERVICE_START",
     "WINDOWS_GRACEFUL_STOP",
     "WINDOWS_MANUAL_RESTART",
+    "WINDOWS_AUTOMATIC_CRASH_RESTART",
 )
 
 

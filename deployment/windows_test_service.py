@@ -53,7 +53,7 @@ def acceptance_install_strict(argv: list[str]) -> int:
             win32serviceutil.GetServiceClassString(CryptoHunterBackendTestService),
             CryptoHunterBackendTestService._svc_name_,
             CryptoHunterBackendTestService._svc_display_name_,
-            startType=win32service.SERVICE_DEMAND_START,
+            startType=win32service.SERVICE_AUTO_START,
             userName=args.username,
         ))
     except StrictCreateFailure as exc:
