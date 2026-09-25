@@ -25,9 +25,11 @@ $primaryFailure = $null
 $cleanupFailures = [System.Collections.Generic.List[string]]::new()
 $result = [ordered]@{
   WINDOWS_SERVICE_INSTALLATION = "FAIL"
+  WINDOWS_AUTOSTART = "FAIL"
   WINDOWS_SERVICE_START = "FAIL"
   WINDOWS_GRACEFUL_STOP = "FAIL"
   WINDOWS_MANUAL_RESTART = "FAIL"
+  WINDOWS_AUTOMATIC_CRASH_RESTART = "FAIL"
   cleanup = "FAIL"
   details = ""
 }
@@ -50,6 +52,44 @@ function Wait-Marker {
     Start-Sleep -Milliseconds 500
   }
   throw "health marker missing"
+}
+
+function Read-MarkerPid {
+  if (-not (Test-Path -LiteralPath $marker -PathType Leaf)) { return 0 }
+  $value = [string](Get-Content -LiteralPath $marker -Raw)
+  if ($value -notmatch '^\d+$') { throw "health marker PID is invalid" }
+  return [int]$value
+}
+
+function Get-ServiceObservation {
+  return Get-CimInstance Win32_Service -Filter "Name='$service'" -ErrorAction Stop
+}
+
+function Assert-RunningPidMatch {
+  $observed = Get-ServiceObservation
+  $markerPid = Read-MarkerPid
+  if ($observed.State -cne "Running" -or [int]$observed.ProcessId -le 0) {
+    throw "SCM service is not running with a positive PID"
+  }
+  if ($markerPid -ne [int]$observed.ProcessId) { throw "health marker PID differs from SCM PID" }
+  return [int]$observed.ProcessId
+}
+
+function Stop-OwnedServiceForCleanup {
+  $deadline = [DateTime]::UtcNow.AddSeconds(20)
+  while ([DateTime]::UtcNow -lt $deadline) {
+    $current = Get-Service $service -ErrorAction SilentlyContinue
+    if ($null -eq $current) { return }
+    if ($current.Status.ToString() -cne "Stopped") {
+      Stop-Service $service -ErrorAction SilentlyContinue
+      Start-Sleep -Milliseconds 250
+      continue
+    }
+    Start-Sleep -Milliseconds 2000
+    $stable = Get-Service $service -ErrorAction SilentlyContinue
+    if ($null -eq $stable -or $stable.Status.ToString() -ceq "Stopped") { return }
+  }
+  throw "owned service did not remain stopped during cleanup"
 }
 
 function Test-ServiceGrant([string]$Target) {
@@ -225,6 +265,20 @@ try {
     $serviceOwnershipProven = $true
     $serviceInstalledByProbe = $true
 
+    $stage = "AUTOSTART_QUERY"
+    $recoveryOutput = @(
+      & $PythonExecutable -m deployment.windows_service_recovery `
+        --record $ownershipPath --run-token $WindowsAcceptanceRunToken 2>&1
+    )
+    if ($LASTEXITCODE -ne 0) {
+      throw "native SCM autostart/recovery qualification failed: $($recoveryOutput -join '; ')"
+    }
+    try { $recoveryPayload = $recoveryOutput[-1] | ConvertFrom-Json } catch {
+      throw "native SCM recovery helper returned invalid result"
+    }
+    if ([int]$recoveryPayload.start_type -ne 2) { throw "SCM start type is not AUTO_START" }
+    $result.WINDOWS_AUTOSTART = "PASS"
+
     Add-PlannedGrant $testRoot
     & icacls.exe $testRoot /grant "${identity}:(OI)(CI)M" | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "test health directory ACL provisioning failed" }
@@ -255,8 +309,51 @@ try {
     Start-Service $service
     Wait-State "Running"
     Wait-Marker
+    [void](Assert-RunningPidMatch)
     $result.WINDOWS_MANUAL_RESTART = "PASS"
-    $result.details = "SCM install/query/start/health/graceful-stop/restart verified"
+
+    $stage = "CRASH_RESTART"
+    $originalPid = Assert-RunningPidMatch
+    Stop-Process -Id $originalPid -Force -ErrorAction Stop
+    $deadline = [DateTime]::UtcNow.AddSeconds(45)
+    $crashProven = $false
+    $lastState = "Unknown"
+    $currentPid = 0
+    $markerPid = 0
+    while ([DateTime]::UtcNow -lt $deadline) {
+      Start-Sleep -Milliseconds 250
+      $observed = Get-ServiceObservation
+      $lastState = [string]$observed.State
+      $currentPid = [int]$observed.ProcessId
+      $markerPid = Read-MarkerPid
+      $oldGone = $null -eq (Get-Process -Id $originalPid -ErrorAction SilentlyContinue)
+      if ($oldGone -and $lastState -ceq "Running" -and $currentPid -gt 0 -and
+          $currentPid -ne $originalPid -and $markerPid -eq $currentPid) {
+        $crashProven = $true
+        break
+      }
+    }
+    if (-not $crashProven) {
+      throw "automatic recovery deadline expired; state=$lastState original_pid=$originalPid current_pid=$currentPid marker_pid=$markerPid"
+    }
+    $verifyRecovery = @(
+      & $PythonExecutable -m deployment.windows_service_recovery --verify-only `
+        --record $ownershipPath --run-token $WindowsAcceptanceRunToken 2>&1
+    )
+    if ($LASTEXITCODE -ne 0) {
+      throw "post-crash SCM configuration verification failed: $($verifyRecovery -join '; ')"
+    }
+    $result.WINDOWS_AUTOMATIC_CRASH_RESTART = "PASS"
+
+    $stage = "POST_RECOVERY_GRACEFUL_STOP"
+    Stop-Service $service
+    Wait-State "Stopped"
+    if (Test-Path $marker) { throw "health marker survived post-recovery graceful stop" }
+    Start-Sleep -Milliseconds 2000
+    if ((Get-Service -Name $service).Status.ToString() -cne "Stopped" -or (Test-Path $marker)) {
+      throw "graceful stop incorrectly triggered SCM recovery"
+    }
+    $result.details = "SCM install/autostart/recovery/start/health/graceful-stop/manual-restart/crash-restart verified"
   }
 } catch {
   if (-not $primaryFailure) { $primaryFailure = "[$stage] $($_.Exception.Message)" }
@@ -269,7 +366,10 @@ try {
       $cleanupFailures.Add("unowned health marker exists after install attempt; left untouched")
     }
     if ($serviceOwnershipProven -and $serviceInstalledByProbe) {
-      try { Stop-Service $service -ErrorAction SilentlyContinue } catch {
+      try {
+        Stop-Service $service -ErrorAction SilentlyContinue
+        Stop-OwnedServiceForCleanup
+      } catch {
         $cleanupFailures.Add("stop: $($_.Exception.Message)")
       }
     }
