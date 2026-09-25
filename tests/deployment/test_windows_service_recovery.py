@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ntpath
 from copy import deepcopy
 
 import pytest
@@ -26,6 +27,9 @@ class FakeScm:
         self.changed = False
         self.requested_access = None
         self.policy = {"ResetPeriod": 0, "RebootMsg": "", "Command": "", "Actions": []}
+        self.binary_path = '"C:\\host.exe"'
+        self.start_name = r"NT SERVICE\CryptoHunterBackend"
+        self.start_type = self.SERVICE_AUTO_START
 
     def OpenSCManager(self, *_args):
         return "manager"
@@ -40,13 +44,13 @@ class FakeScm:
     def QueryServiceConfig(self, _service):
         return (
             16,
-            self.SERVICE_AUTO_START,
+            self.start_type,
             1,
-            '"C:\\host.exe" service.py',
+            self.binary_path,
             None,
             0,
             (),
-            r"NT SERVICE\CryptoHunterBackend",
+            self.start_name,
             "CryptoHunter",
         )
 
@@ -57,6 +61,36 @@ class FakeScm:
 
     def QueryServiceConfig2(self, _service, _level):
         return deepcopy(self.policy)
+
+
+class FakeSecurity:
+    def __init__(self, sid: str = "S-1-5-80-test") -> None:
+        self.sid = sid
+        self.lookups: list[str] = []
+
+    def LookupAccountName(self, _system, name):
+        self.lookups.append(name)
+        return self.sid, "domain", 5
+
+    def ConvertSidToStringSid(self, sid):
+        return sid
+
+
+class FakeWin32Api:
+    @staticmethod
+    def GetFullPathName(path):
+        return ntpath.abspath(path)
+
+
+def configure(scm: FakeScm, *, mutate: bool = True, security=None):
+    return configure_recovery(
+        record(),
+        run_token="a" * 64,
+        win32service=scm,
+        win32security=security or FakeSecurity(),
+        win32api=FakeWin32Api(),
+        mutate=mutate,
+    )
 
 
 def record() -> dict[str, object]:
@@ -74,7 +108,7 @@ def record() -> dict[str, object]:
 
 def test_exact_bounded_recovery_policy_is_written_and_queried() -> None:
     scm = FakeScm()
-    result = configure_recovery(record(), run_token="a" * 64, win32service=scm)
+    result = configure(scm)
     assert scm.changed
     assert result["start_type"] == scm.SERVICE_AUTO_START
     assert scm.policy == {
@@ -92,7 +126,7 @@ def test_exact_bounded_recovery_policy_is_written_and_queried() -> None:
 
 def test_mutation_requests_query_change_and_start_without_all_access() -> None:
     scm = FakeScm()
-    configure_recovery(record(), run_token="a" * 64, win32service=scm)
+    configure(scm)
     assert scm.requested_access == (
         scm.SERVICE_QUERY_CONFIG | scm.SERVICE_CHANGE_CONFIG | scm.SERVICE_START
     )
@@ -105,7 +139,6 @@ def test_mutation_requests_query_change_and_start_without_all_access() -> None:
         ("ownership_phase", "INTENT_CREATED"),
         ("strict_create_result", "ALREADY_EXISTS"),
         ("service_name", "ForeignService"),
-        ("service_path_name", '"C:\\foreign.exe"'),
     ],
 )
 def test_unproven_or_mismatched_ownership_blocks_mutation(field: str, value: str) -> None:
@@ -113,7 +146,13 @@ def test_unproven_or_mismatched_ownership_blocks_mutation(field: str, value: str
     owned[field] = value
     scm = FakeScm()
     with pytest.raises(RecoveryQualificationError):
-        configure_recovery(owned, run_token="a" * 64, win32service=scm)
+        configure_recovery(
+            owned,
+            run_token="a" * 64,
+            win32service=scm,
+            win32security=FakeSecurity(),
+            win32api=FakeWin32Api(),
+        )
     assert not scm.changed
 
 
@@ -125,11 +164,73 @@ def test_verify_only_never_mutates() -> None:
         "Command": "",
         "Actions": [(1, 1000), (1, 5000), (1, 30000), (0, 0)],
     }
-    configure_recovery(record(), run_token="a" * 64, win32service=scm, mutate=False)
+    configure(scm, mutate=False)
     assert not scm.changed
     assert scm.requested_access == scm.SERVICE_QUERY_CONFIG
     assert not scm.requested_access & scm.SERVICE_CHANGE_CONFIG
     assert not scm.requested_access & scm.SERVICE_START
+
+
+def test_service_host_windows_identity_allows_different_case() -> None:
+    scm = FakeScm()
+    scm.binary_path = '"c:\\HOST.EXE"'
+    configure(scm)
+    assert scm.changed
+
+
+def test_alternate_account_text_is_authorized_by_exact_sid() -> None:
+    scm = FakeScm()
+    scm.start_name = r".\CryptoHunterBackend"
+    security = FakeSecurity()
+    configure(scm, security=security)
+    assert security.lookups == [scm.start_name]
+    assert scm.changed
+
+
+@pytest.mark.parametrize(
+    "attribute,value",
+    [
+        ("binary_path", '"C:\\foreign.exe"'),
+        ("binary_path", '"C:\\host.exe" --foreign'),
+        ("binary_path", ""),
+        ("start_name", ""),
+        ("start_type", 3),
+    ],
+)
+def test_scm_qualification_mismatch_blocks_mutation(attribute: str, value) -> None:
+    scm = FakeScm()
+    setattr(scm, attribute, value)
+    with pytest.raises(RecoveryQualificationError):
+        configure(scm)
+    assert not scm.changed
+
+
+def test_resolved_sid_mismatch_blocks_mutation() -> None:
+    scm = FakeScm()
+    with pytest.raises(RecoveryQualificationError):
+        configure(scm, security=FakeSecurity("S-1-5-80-foreign"))
+    assert not scm.changed
+
+
+def test_verify_only_performs_host_account_and_autostart_qualification() -> None:
+    scenarios = (
+        ("binary_path", '"C:\\foreign.exe"', FakeSecurity()),
+        ("start_name", "", FakeSecurity()),
+        ("start_type", 3, FakeSecurity()),
+        ("start_name", r"NT SERVICE\CryptoHunterBackend", FakeSecurity("foreign")),
+    )
+    for attribute, value, security in scenarios:
+        scm = FakeScm()
+        scm.policy = {
+            "ResetPeriod": RESET_PERIOD_SECONDS,
+            "RebootMsg": "",
+            "Command": "",
+            "Actions": [(1, 1000), (1, 5000), (1, 30000), (0, 0)],
+        }
+        setattr(scm, attribute, value)
+        with pytest.raises(RecoveryQualificationError):
+            configure(scm, mutate=False, security=security)
+        assert not scm.changed
 
 
 def test_crash_interval_has_no_manual_start_and_checks_new_matching_pid() -> None:
