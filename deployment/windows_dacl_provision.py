@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +24,32 @@ class WindowsDaclProvisionError(RuntimeError):
     """Provisioning or cleanup could not prove exclusive current-run ownership."""
 
 
+def _native_failure(operation: str, exc: Exception, *, secret: str,
+                    **context: Any) -> WindowsDaclProvisionError:
+    """Render only the allow-listed, single-line details of a native failure."""
+    details = ["DACL_NATIVE_FAILURE", f"operation={operation}"]
+    details.extend(f"{key}={value}" for key, value in context.items())
+    details.append(f"error_type={type(exc).__name__}")
+    for attribute in ("winerror", "funcname"):
+        value = getattr(exc, attribute, None)
+        if value is not None:
+            details.append(f"{attribute}={value}")
+    message = " ".join(str(exc).splitlines())
+    if secret:
+        message = message.replace(secret, "[REDACTED]")
+    details.append(f"message={json.dumps(message)}")
+    return WindowsDaclProvisionError(" ".join(details))
+
+
+def _native_call(operation: str, call: Callable[[], Any], *, secret: str,
+                 **context: Any) -> Any:
+    try:
+        return call()
+    except Exception as exc:
+        # This deliberately includes pywintypes.error and binding-contract TypeError.
+        raise _native_failure(operation, exc, secret=secret, **context) from None
+
+
 def _validate_record(record: dict[str, Any], run_token: str, win32security: Any) -> str:
     required = {"run_token": run_token, "ownership_phase": SERVICE_PROVEN,
                 "strict_create_result": "CREATED", "service_name": SERVICE_NAME,
@@ -32,8 +59,19 @@ def _validate_record(record: dict[str, Any], run_token: str, win32security: Any)
     service_sid = record.get("service_sid")
     if not isinstance(service_sid, str) or not service_sid:
         raise WindowsDaclProvisionError("ownership record lacks service_sid")
-    sid, _, _ = win32security.LookupAccountName(None, SERVICE_IDENTITY)
-    if win32security.ConvertSidToStringSid(sid) != service_sid:
+    sid, _, _ = _native_call(
+        "LookupAccountName",
+        lambda: win32security.LookupAccountName(None, SERVICE_IDENTITY),
+        secret=run_token,
+        principal=SERVICE_IDENTITY,
+    )
+    live_sid = _native_call(
+        "ConvertSidToStringSid",
+        lambda: win32security.ConvertSidToStringSid(sid),
+        secret=run_token,
+        principal=SERVICE_IDENTITY,
+    )
+    if live_sid != service_sid:
         raise WindowsDaclProvisionError("live service SID mismatches ownership record")
     return service_sid
 
@@ -69,24 +107,48 @@ def provision(record_path: Path, run_token: str, *, win32api: Any, win32file: An
             raise WindowsDaclProvisionError(f"Stage-4 target pre-exists: {target}")
     record["path_security_plan"] = _plan(paths, service_sid, win32api)
     _save_record(record_path, record)  # plan is durable before the first mutation
-    owner = win32security.ConvertStringSidToSid(ADMINISTRATORS_SID)
-    sid_objects = {sid: win32security.ConvertStringSidToSid(sid)
-                   for sid in (ADMINISTRATORS_SID, "S-1-5-18", service_sid)}
+    sid_objects = {
+        sid: _native_call(
+            "ConvertStringSidToSid",
+            lambda sid=sid: win32security.ConvertStringSidToSid(sid),
+            secret=run_token,
+            principal_sid=sid,
+        )
+        for sid in (ADMINISTRATORS_SID, "S-1-5-18", service_sid)
+    }
+    owner = sid_objects[ADMINISTRATORS_SID]
     for role, target in targets:
         target.mkdir()  # atomic create; deliberately no exist_ok
         sentinel = {"run_token": run_token, "canonical_path": windows_path_identity(target, win32api),
                     "service_sid": service_sid, "role": role}
         (target / SENTINEL).write_text(json.dumps(sentinel, separators=(",", ":")), encoding="utf-8")
-        dacl = win32security.ACL()
+        dacl = _native_call("ACL", win32security.ACL, secret=run_token, role=role)
         for sid, mask, flags in expected_aces(role, service_sid):
-            dacl.AddAccessAllowedAceEx(
-                win32security.ACL_REVISION_DS, flags, mask, sid_objects[sid]
+            revision = win32security.ACL_REVISION_DS
+            _native_call(
+                "AddAccessAllowedAceEx",
+                lambda: dacl.AddAccessAllowedAceEx(revision, flags, mask, sid_objects[sid]),
+                secret=run_token,
+                role=role,
+                principal_sid=sid,
+                revision=revision,
+                flags=flags,
+                mask=mask,
             )
         info = (win32security.OWNER_SECURITY_INFORMATION |
                 win32security.DACL_SECURITY_INFORMATION |
                 win32security.PROTECTED_DACL_SECURITY_INFORMATION)
-        win32security.SetNamedSecurityInfo(str(target), win32security.SE_FILE_OBJECT,
-                                           info, owner, None, dacl, None)
+        canonical_target = windows_path_identity(target, win32api)
+        _native_call(
+            "SetNamedSecurityInfo",
+            lambda: win32security.SetNamedSecurityInfo(
+                str(target), win32security.SE_FILE_OBJECT, info, owner, None, dacl, None
+            ),
+            secret=run_token,
+            role=role,
+            target_path=canonical_target,
+            security_information=info,
+        )
     return {
         "CONFIG_PROVISIONED": "PASS",
         "STATE_PROVISIONED": "PASS",
@@ -147,13 +209,15 @@ def main(argv: list[str] | None = None) -> int:
     import win32api  # type: ignore[import-not-found]
     import win32file  # type: ignore[import-not-found]
     import win32security  # type: ignore[import-not-found]
+    import pywintypes  # type: ignore[import-not-found]
     try:
         if args.command == "provision":
             print(json.dumps(provision(args.record, args.run_token, win32api=win32api,
                                        win32file=win32file, win32security=win32security)))
         else:
             cleanup(args.record, args.run_token, win32api=win32api, win32file=win32file)
-    except (OSError, ValueError, json.JSONDecodeError, WindowsDaclProvisionError) as exc:
+    except (pywintypes.error, OSError, TypeError, ValueError, json.JSONDecodeError,
+            WindowsDaclProvisionError) as exc:
         print(str(exc))
         return 1
     return 0

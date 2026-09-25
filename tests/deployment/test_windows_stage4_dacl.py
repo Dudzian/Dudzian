@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path, PureWindowsPath
 from types import SimpleNamespace
 
@@ -361,6 +362,68 @@ class RecordingSecurity:
         self.set_calls.append((path, object_type, info, owner, group, dacl, sacl))
 
 
+class NativeTestError(Exception):
+    def __init__(self, message="native token failure", *, winerror=5, funcname="FakeNative"):
+        super().__init__(message)
+        self.winerror = winerror
+        self.funcname = funcname
+
+
+class FailingSecurity(RecordingSecurity):
+    def __init__(self, failure, exception_type=NativeTestError):
+        super().__init__()
+        self.failure = failure
+        self.exception_type = exception_type
+        self.operations = []
+
+    def _call(self, operation):
+        self.operations.append(operation)
+        if self.failure == operation:
+            raise self.exception_type()
+
+    def LookupAccountName(self, system, identity):
+        self._call("LookupAccountName")
+        return super().LookupAccountName(system, identity)
+
+    def ConvertSidToStringSid(self, sid):
+        self._call("ConvertSidToStringSid")
+        return super().ConvertSidToStringSid(sid)
+
+    def ConvertStringSidToSid(self, sid):
+        operation = f"ConvertStringSidToSid:{sid}"
+        self._call(operation)
+        return super().ConvertStringSidToSid(sid)
+
+    def ACL(self):
+        self._call("ACL")
+        parent = self
+        acl = super().ACL()
+        original = acl.AddAccessAllowedAceEx
+
+        def add(revision, flags, mask, sid):
+            parent._call("AddAccessAllowedAceEx")
+            return original(revision, flags, mask, sid)
+
+        acl.AddAccessAllowedAceEx = add
+        return acl
+
+    def SetNamedSecurityInfo(self, path, object_type, info, owner, group, dacl, sacl):
+        self._call("SetNamedSecurityInfo")
+        return super().SetNamedSecurityInfo(path, object_type, info, owner, group, dacl, sacl)
+
+
+def provision_fixture(tmp_path, monkeypatch, security_api):
+    targets = SimpleNamespace(
+        configuration=tmp_path / "Config",
+        state=tmp_path / "State",
+        runtime=tmp_path / "Runtime",
+    )
+    monkeypatch.setattr(provisioner, "qualify_native_paths", lambda **_: targets)
+    record_path = tmp_path / "record.json"
+    record_path.write_text(json.dumps(valid_record()), encoding="utf-8")
+    return record_path, targets
+
+
 def test_provisioner_uses_ds_revision_and_preserves_exact_aces(tmp_path, monkeypatch):
     targets = SimpleNamespace(
         configuration=tmp_path / "Config",
@@ -389,6 +452,92 @@ def test_provisioner_uses_ds_revision_and_preserves_exact_aces(tmp_path, monkeyp
         assert {(call.sid, call.mask, call.flags) for call in calls} == expected_aces(
             role, "S-1-5-80-123"
         )
+
+
+@pytest.mark.parametrize(
+    "failure,diagnostic_operation",
+    [
+        ("LookupAccountName", "LookupAccountName"),
+        ("ConvertSidToStringSid", "ConvertSidToStringSid"),
+        (f"ConvertStringSidToSid:{ADMINISTRATORS_SID}", "ConvertStringSidToSid"),
+        (f"ConvertStringSidToSid:{SYSTEM_SID}", "ConvertStringSidToSid"),
+        ("ConvertStringSidToSid:S-1-5-80-123", "ConvertStringSidToSid"),
+        ("ACL", "ACL"),
+        ("AddAccessAllowedAceEx", "AddAccessAllowedAceEx"),
+        ("SetNamedSecurityInfo", "SetNamedSecurityInfo"),
+    ],
+)
+def test_each_native_failure_is_normalized_and_stops_security_calls(
+    tmp_path, monkeypatch, failure, diagnostic_operation
+):
+    security_api = FailingSecurity(failure)
+    record_path, _ = provision_fixture(tmp_path, monkeypatch, security_api)
+
+    with pytest.raises(provisioner.WindowsDaclProvisionError) as caught:
+        provisioner.provision(
+            record_path, "token", win32api=Api, win32file=FileApi(), win32security=security_api
+        )
+
+    diagnostic = str(caught.value)
+    assert diagnostic.startswith(f"DACL_NATIVE_FAILURE operation={diagnostic_operation}")
+    assert "error_type=NativeTestError" in diagnostic
+    assert "winerror=5" in diagnostic
+    assert "funcname=FakeNative" in diagnostic
+    assert "token" not in diagnostic
+    assert security_api.operations[-1] == failure
+
+
+def test_add_ace_type_error_is_controlled_and_reports_contract_arguments(tmp_path, monkeypatch):
+    security_api = FailingSecurity("AddAccessAllowedAceEx", TypeError)
+    record_path, _ = provision_fixture(tmp_path, monkeypatch, security_api)
+
+    with pytest.raises(provisioner.WindowsDaclProvisionError) as caught:
+        provisioner.provision(
+            record_path, "token", win32api=Api, win32file=FileApi(), win32security=security_api
+        )
+
+    diagnostic = str(caught.value)
+    assert "operation=AddAccessAllowedAceEx" in diagnostic
+    assert "role=CONFIG" in diagnostic
+    assert any(
+        f"principal_sid={sid}" in diagnostic
+        for sid in (ADMINISTRATORS_SID, SYSTEM_SID, "S-1-5-80-123")
+    )
+    assert f"revision={security_api.ACL_REVISION_DS}" in diagnostic
+    assert f"flags={ACE_FLAGS}" in diagnostic
+    assert "mask=" in diagnostic
+    assert "error_type=TypeError" in diagnostic
+    assert "token" not in diagnostic
+    assert security_api.operations[-1] == "AddAccessAllowedAceEx"
+
+
+def test_cli_normalizes_pywintypes_style_error_without_traceback(tmp_path, monkeypatch, capsys):
+    class PywinError(NativeTestError):
+        pass
+
+    record_path = tmp_path / "record.json"
+    record_path.write_text(json.dumps(valid_record()), encoding="utf-8")
+    monkeypatch.setattr(provisioner.os, "name", "nt")
+    monkeypatch.setitem(sys.modules, "win32api", SimpleNamespace())
+    monkeypatch.setitem(sys.modules, "win32file", SimpleNamespace())
+    monkeypatch.setitem(sys.modules, "win32security", SimpleNamespace())
+    monkeypatch.setitem(sys.modules, "pywintypes", SimpleNamespace(error=PywinError))
+
+    def fail(*args, **kwargs):
+        return provisioner._native_call(
+            "LookupAccountName", lambda: (_ for _ in ()).throw(PywinError()), secret="token"
+        )
+
+    monkeypatch.setattr(provisioner, "provision", fail)
+    assert (
+        provisioner.main(["provision", "--record", str(record_path), "--run-token", "token"]) == 1
+    )
+    output = capsys.readouterr()
+    assert output.err == ""
+    assert "Traceback" not in output.out
+    assert "DACL_NATIVE_FAILURE operation=LookupAccountName" in output.out
+    assert "error_type=PywinError" in output.out
+    assert "token" not in output.out
 
 
 def cleanup_fixture(tmp_path, monkeypatch):
