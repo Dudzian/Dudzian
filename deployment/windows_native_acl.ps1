@@ -11,19 +11,18 @@ function New-NativeSecurityAuthorityFailure([string]$Reason) {
   return @(
     "NATIVE_SECURITY_AUTHORITY_FAILURE=$Reason"
     "EXPECTED_NATIVE_SECURITY_MANIFEST=$nativeSecurityManifest"
-    "EXPECTED_NATIVE_SECURITY_ASSEMBLY=$nativeSecurityAssembly"
     "CHILD_PS_EDITION=$($PSVersionTable.PSEdition)"
     "CHILD_PS_HOME=$PSHOME"
   ) -join [Environment]::NewLine
 }
 
+if ($PSVersionTable.PSEdition -cne "Desktop") {
+  throw "native ACL authority must run in Windows PowerShell Desktop"
+}
+
 $nativeSecurityManifest = Join-Path $PSHOME "Modules\Microsoft.PowerShell.Security\Microsoft.PowerShell.Security.psd1"
-$nativeSecurityAssembly = Join-Path $PSHOME "Microsoft.PowerShell.Security.dll"
 if (-not (Test-Path -LiteralPath $nativeSecurityManifest -PathType Leaf)) {
   throw "native Windows PowerShell Security module is missing: $nativeSecurityManifest"
-}
-if (-not (Test-Path -LiteralPath $nativeSecurityAssembly -PathType Leaf)) {
-  throw "native Windows PowerShell Security assembly is missing: $nativeSecurityAssembly"
 }
 $nativeSecurityModule = Import-Module -Name $nativeSecurityManifest -Force -PassThru -ErrorAction Stop
 $nativeGetAcl = Get-Command -Name Get-Acl -Module Microsoft.PowerShell.Security -ErrorAction Stop |
@@ -37,13 +36,38 @@ if ($nativeGetAcl.CommandType -ne [System.Management.Automation.CommandTypes]::C
 if ($nativeGetAcl.ModuleName -cne "Microsoft.PowerShell.Security") {
   throw (New-NativeSecurityAuthorityFailure "Get-Acl has an unexpected module name")
 }
-$nativeGetAclAssembly = $nativeGetAcl.ImplementingType.Assembly.Location
-if (-not $nativeGetAclAssembly) {
+if ($null -eq $nativeGetAcl.ImplementingType) {
+  throw (New-NativeSecurityAuthorityFailure "Get-Acl implementing type is unavailable")
+}
+if ($null -eq $nativeGetAcl.ImplementingType.Assembly) {
   throw (New-NativeSecurityAuthorityFailure "Get-Acl implementing assembly is unavailable")
 }
-if (-not (Test-WindowsPathIdentity $nativeGetAclAssembly $nativeSecurityAssembly)) {
-  throw (New-NativeSecurityAuthorityFailure "Get-Acl implementing assembly is not the native Security assembly")
+$nativeGetAclAssembly = $nativeGetAcl.ImplementingType.Assembly.Location
+if (-not $nativeGetAclAssembly) {
+  throw (New-NativeSecurityAuthorityFailure "Get-Acl implementing assembly location is unavailable")
 }
+$nativeGetAclAssemblyFileExists = Test-Path -LiteralPath $nativeGetAclAssembly -PathType Leaf
+Write-Output "SECURITY_IMPORT_NAME=$($nativeSecurityModule.Name)"
+Write-Output "SECURITY_IMPORT_MODULE_BASE=$($nativeSecurityModule.ModuleBase)"
+Write-Output "SECURITY_IMPORT_PATH=$($nativeSecurityModule.Path)"
+Write-Output "GET_ACL_COMMAND_TYPE=$($nativeGetAcl.CommandType)"
+Write-Output "GET_ACL_MODULE_NAME=$($nativeGetAcl.ModuleName)"
+Write-Output "GET_ACL_MODULE_BASE=$($nativeGetAcl.Module.ModuleBase)"
+Write-Output "GET_ACL_MODULE_PATH=$($nativeGetAcl.Module.Path)"
+Write-Output "GET_ACL_IMPLEMENTING_TYPE=$($nativeGetAcl.ImplementingType.FullName)"
+Write-Output "GET_ACL_ASSEMBLY_FULL_NAME=$($nativeGetAcl.ImplementingType.Assembly.FullName)"
+Write-Output "GET_ACL_ASSEMBLY_LOCATION=$nativeGetAclAssembly"
+Write-Output "GET_ACL_ASSEMBLY_FILE_EXISTS=$nativeGetAclAssemblyFileExists"
+Write-Output "PS_EDITION=$($PSVersionTable.PSEdition)"
+Write-Output "PS_HOME=$PSHOME"
+if (-not $nativeGetAclAssemblyFileExists) {
+  throw (New-NativeSecurityAuthorityFailure "Get-Acl implementing assembly file is unavailable")
+}
+
+# The exact manifest proves discovery provenance, but it does not expose a stable
+# executable-file authority against which Assembly.Location can yet be compared.
+# Keep the production boundary closed until a live runner supplies that layout.
+throw (New-NativeSecurityAuthorityFailure "NATIVE_SECURITY_EXECUTABLE_AUTHORITY_LAYOUT_UNQUALIFIED")
 
 function Test-NativePrincipalGrant([string]$Target, [string]$Principal, [string]$PrincipalSid) {
   if (-not $Target -or -not (Test-Path -LiteralPath $Target)) { return $false }
