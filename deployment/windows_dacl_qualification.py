@@ -167,7 +167,9 @@ def qualify_acl(service_sid: str | None = None) -> dict[str, str]:
     if os.name != "nt":
         raise WindowsDeploymentNotQualified("native Windows DACL qualification requires Windows")
     if not service_sid:
-        raise WindowsDeploymentNotQualified("proven service SID is required")
+        raise WindowsDeploymentNotQualified(
+            "proven service SID is required for native DACL qualification"
+        )
     import win32api  # type: ignore[import-not-found]
     import win32file  # type: ignore[import-not-found]
     import win32security  # type: ignore[import-not-found]
