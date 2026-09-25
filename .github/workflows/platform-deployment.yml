@@ -77,6 +77,11 @@ jobs:
           foreach ($path in $rejected) {
             if (Test-FullyQualifiedWindowsPath $path) { throw "accepted: [$path]" }
           }
+      - name: Prove native Windows PowerShell ACL runtime inherited from pwsh
+        shell: pwsh
+        run: |
+          $env:WINDOWS_ACL_REGRESSION_PARENT_EDITION = $PSVersionTable.PSEdition
+          python -m deployment.windows_native_acl_regression
       - name: Execute canonical reviewed Windows acceptance
         run: >-
           python -m deployment.windows_acceptance --mode github
