@@ -4,7 +4,7 @@ import ast
 from concurrent.futures import ThreadPoolExecutor
 import inspect
 from pathlib import Path
-from threading import Barrier, Lock
+from threading import Barrier, Event, Lock
 
 import pytest
 
@@ -235,7 +235,8 @@ def test_not_started_remains_prepared_and_never_blind_begins(tmp_path: Path, ent
         initialize(store, boundary)
         with pytest.raises(SecretHandoffError, match="did not start"):
             execution.start(handoff())
-        with pytest.raises(SecretHandoffError, match="blind retry"):
+        expected = "explicit recovery" if entry == "start" else "blind retry"
+        with pytest.raises(SecretHandoffError, match=expected):
             getattr(execution, entry)(handoff() if entry == "start" else "handoff-1")
         assert state(lifecycle.discover("handoff-1")) == "PREPARED"
         assert port.count("begin") == 1
@@ -548,6 +549,68 @@ def test_two_connection_fresh_start_exact_cardinality(tmp_path: Path) -> None:
         calls = tuple(port.calls)
         assert execution.resume("handoff-1") == final
         assert reopened.read_verified_snapshot() == snapshot and tuple(port.calls) == calls
+
+
+def test_duplicate_start_cannot_take_fresh_prepared_ownership(tmp_path: Path) -> None:
+    path = tmp_path / "state.db"
+    boundary = Boundary(record("UNINITIALIZED"))
+    port = Port()
+    initial, _, _ = setup(path, boundary, port)
+    with initial:
+        initialize(initial, boundary)
+
+    prepared = Event()
+    release_creator = Event()
+
+    class PausingLifecycle:
+        def __init__(self, lifecycle):  # type: ignore[no-untyped-def]
+            self.lifecycle = lifecycle
+
+        def prepare_with_disposition(self, value):  # type: ignore[no-untyped-def]
+            result = self.lifecycle.prepare_with_disposition(value)
+            prepared.set()
+            assert release_creator.wait(timeout=10)
+            return result
+
+        def __getattr__(self, name):  # type: ignore[no-untyped-def]
+            return getattr(self.lifecycle, name)
+
+    def run_creator():  # type: ignore[no-untyped-def]
+        creator_store = SQLiteStateStore(path)
+        creator_protected = ProtectedFreshnessHandoffCoordinator(
+            creator_store, LocalDurableEvidenceRegistry(), boundary
+        )
+        creator_lifecycle = DurableSecretHandoffLifecycleCoordinator(
+            creator_store, creator_protected
+        )
+        creator = DurableSecretHandoffExecutionCoordinator(
+            creator_store,
+            PausingLifecycle(creator_lifecycle),  # type: ignore[arg-type]
+            creator_protected,
+            port,
+        )
+        with creator_store:
+            return creator.start(handoff())
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(run_creator)
+        assert prepared.wait(timeout=10)
+        duplicate_store, _, duplicate = setup(path, boundary, port)
+        with duplicate_store:
+            with pytest.raises(SecretHandoffError, match="explicit recovery is required"):
+                duplicate.start(handoff())
+        assert port.calls == []
+        release_creator.set()
+        result = future.result(timeout=10)
+
+    assert state(result) == "CLEANUP_PENDING"
+    assert [item["state"] for item in result.history] == [
+        "PREPARED",
+        "COMMITTED",
+        "CLEANUP_PENDING",
+    ]
+    assert result.current["current_transition_revision"] == 3
+    assert port.count("begin") == 1
 
 
 def test_two_connection_prepared_resume_exact_cardinality(tmp_path: Path) -> None:
