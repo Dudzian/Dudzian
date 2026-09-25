@@ -17,6 +17,7 @@ from deployment.windows_dacl_qualification import (
     DELETE,
     SYSTEM_SID,
     WindowsDaclQualificationError,
+    expected_aces,
     is_safe_descendant,
     qualify_directory_dacl,
     qualify_record,
@@ -322,6 +323,72 @@ class FileApi:
 
     def GetFileAttributes(self, value):
         return self.FILE_ATTRIBUTE_REPARSE_POINT if Path(value) == self.reparse else 0
+
+
+class RecordingSecurity:
+    ACL_REVISION = 2
+    ACL_REVISION_DS = 4
+    OWNER_SECURITY_INFORMATION = 1
+    DACL_SECURITY_INFORMATION = 2
+    PROTECTED_DACL_SECURITY_INFORMATION = 4
+    SE_FILE_OBJECT = 1
+
+    def __init__(self):
+        self.dacls = []
+        self.set_calls = []
+
+    def LookupAccountName(self, system, identity):
+        return "S-1-5-80-123", None, None
+
+    def ConvertSidToStringSid(self, sid):
+        return sid
+
+    def ConvertStringSidToSid(self, sid):
+        return sid
+
+    def ACL(self):
+        calls = []
+        self.dacls.append(calls)
+
+        class RecordingAcl:
+            @staticmethod
+            def AddAccessAllowedAceEx(revision, flags, mask, sid):
+                calls.append(SimpleNamespace(revision=revision, flags=flags, mask=mask, sid=sid))
+
+        return RecordingAcl()
+
+    def SetNamedSecurityInfo(self, path, object_type, info, owner, group, dacl, sacl):
+        self.set_calls.append((path, object_type, info, owner, group, dacl, sacl))
+
+
+def test_provisioner_uses_ds_revision_and_preserves_exact_aces(tmp_path, monkeypatch):
+    targets = SimpleNamespace(
+        configuration=tmp_path / "Config",
+        state=tmp_path / "State",
+        runtime=tmp_path / "Runtime",
+    )
+    monkeypatch.setattr(provisioner, "qualify_native_paths", lambda **_: targets)
+    record_path = tmp_path / "record.json"
+    record_path.write_text(json.dumps(valid_record()), encoding="utf-8")
+    security_api = RecordingSecurity()
+
+    provisioner.provision(
+        record_path,
+        "token",
+        win32api=Api,
+        win32file=FileApi(),
+        win32security=security_api,
+    )
+
+    assert len(security_api.dacls) == 3
+    recorded_ace_calls = [call for dacl in security_api.dacls for call in dacl]
+    assert len(recorded_ace_calls) == 9
+    assert all(call.revision == security_api.ACL_REVISION_DS for call in recorded_ace_calls)
+    assert all(call.revision != security_api.ACL_REVISION for call in recorded_ace_calls)
+    for role, calls in zip(("CONFIG", "STATE", "RUNTIME"), security_api.dacls, strict=True):
+        assert {(call.sid, call.mask, call.flags) for call in calls} == expected_aces(
+            role, "S-1-5-80-123"
+        )
 
 
 def cleanup_fixture(tmp_path, monkeypatch):

@@ -79,7 +79,9 @@ def provision(record_path: Path, run_token: str, *, win32api: Any, win32file: An
         (target / SENTINEL).write_text(json.dumps(sentinel, separators=(",", ":")), encoding="utf-8")
         dacl = win32security.ACL()
         for sid, mask, flags in expected_aces(role, service_sid):
-            dacl.AddAccessAllowedAceEx(win32security.ACL_REVISION, flags, mask, sid_objects[sid])
+            dacl.AddAccessAllowedAceEx(
+                win32security.ACL_REVISION_DS, flags, mask, sid_objects[sid]
+            )
         info = (win32security.OWNER_SECURITY_INFORMATION |
                 win32security.DACL_SECURITY_INFORMATION |
                 win32security.PROTECTED_DACL_SECURITY_INFORMATION)
