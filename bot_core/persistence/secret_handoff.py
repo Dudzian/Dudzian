@@ -594,9 +594,11 @@ class DurableSecretHandoffExecutionCoordinator:
         self._port = port
 
     def start(self, descriptor: SecretHandoffRecord) -> DurableSecretHandoffLifecycle:
-        prepared, disposition = self._lifecycle.prepare_with_disposition(descriptor)
+        _prepared, disposition = self._lifecycle.prepare_with_disposition(descriptor)
         if disposition is PrepareDisposition.ALREADY_PRESENT:
-            return self.resume(descriptor.handoff_id)
+            raise SecretHandoffError(
+                "durable PREPARED handoff already exists; explicit recovery is required"
+            )
         durable = self._preflight(descriptor.handoff_id, expected_descriptor=descriptor)
         if self._state(durable) != "PREPARED":
             raise SecretHandoffError("newly prepared handoff is no longer PREPARED")
