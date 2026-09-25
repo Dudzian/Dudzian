@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import stat
 import sys
 from pathlib import Path, PureWindowsPath
 from types import SimpleNamespace
@@ -321,13 +322,24 @@ def test_public_platform_acl_boundary_executes_dacl_qualification(monkeypatch):
 
 
 class FileApi:
-    FILE_ATTRIBUTE_REPARSE_POINT = 0x400
-
     def __init__(self, reparse: Path | None = None):
         self.reparse = reparse
 
     def GetFileAttributes(self, value):
-        return self.FILE_ATTRIBUTE_REPARSE_POINT if Path(value) == self.reparse else 0
+        return stat.FILE_ATTRIBUTE_REPARSE_POINT if Path(value) == self.reparse else 0
+
+
+def test_file_api_does_not_supply_reparse_constant():
+    assert not hasattr(FileApi, "FILE_ATTRIBUTE_REPARSE_POINT")
+
+
+def test_is_reparse_rejects_normal_path_without_win32file_constant(tmp_path):
+    assert qualifier._is_reparse(tmp_path / "normal", FileApi()) is False
+
+
+def test_is_reparse_detects_reparse_point_without_win32file_constant(tmp_path):
+    target = tmp_path / "junction"
+    assert qualifier._is_reparse(target, FileApi(target)) is True
 
 
 class RecordingSecurity:
@@ -426,6 +438,52 @@ def provision_fixture(tmp_path, monkeypatch, security_api):
     record_path = tmp_path / "record.json"
     record_path.write_text(json.dumps(valid_record()), encoding="utf-8")
     return record_path, targets
+
+
+def test_machine_root_reparse_fails_before_mutation(tmp_path, monkeypatch):
+    security_api = RecordingSecurity()
+    record_path, targets = provision_fixture(tmp_path, monkeypatch, security_api)
+
+    with pytest.raises(provisioner.WindowsDaclProvisionError, match="machine root"):
+        provisioner.provision(
+            record_path,
+            "token",
+            win32api=Api,
+            win32file=FileApi(tmp_path),
+            win32security=security_api,
+        )
+
+    assert not any(
+        path.exists()
+        for path in (
+            targets.configuration,
+            targets.state,
+            targets.runtime,
+        )
+    )
+    assert "path_security_plan" not in json.loads(record_path.read_text())
+    assert security_api.set_calls == []
+
+
+@pytest.mark.parametrize("role", ["configuration", "state", "runtime"])
+def test_pre_existing_target_reparse_fails_before_mutation(tmp_path, monkeypatch, role):
+    security_api = RecordingSecurity()
+    record_path, targets = provision_fixture(tmp_path, monkeypatch, security_api)
+    reparse_target = getattr(targets, role)
+    reparse_target.mkdir()
+
+    with pytest.raises(provisioner.WindowsDaclProvisionError, match="reparse point"):
+        provisioner.provision(
+            record_path,
+            "token",
+            win32api=Api,
+            win32file=FileApi(reparse_target),
+            win32security=security_api,
+        )
+
+    assert reparse_target.exists()
+    assert "path_security_plan" not in json.loads(record_path.read_text())
+    assert security_api.set_calls == []
 
 
 def test_provisioner_uses_ds_revision_and_preserves_exact_aces(tmp_path, monkeypatch):
