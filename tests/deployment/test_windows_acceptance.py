@@ -78,6 +78,10 @@ class ReviewedBoundary(AcceptanceBoundary):
         if self.scm_failure:
             raise WindowsAcceptanceError("reviewed failure", self.scm_failure)
         return {
+            "WINDOWS_NATIVE_PATH_INTEGRATION": "PASS",
+            "WINDOWS_PROTECTED_CONFIGURATION": "PASS",
+            "WINDOWS_PROTECTED_STATE_PATHS": "PASS",
+            "WINDOWS_ACL_QUALIFICATION": "PASS",
             "WINDOWS_SERVICE_INSTALLATION": "PASS",
             "WINDOWS_AUTOSTART": "PASS",
             "WINDOWS_SERVICE_START": "PASS",
@@ -178,6 +182,10 @@ def test_successful_orchestration_uses_reviewed_boundary(
     assert core.exists()
     assert evidence["ci_provider"] == GITHUB_PROVIDER
     assert {result["item"] for result in evidence["results"]} == {
+        "WINDOWS_NATIVE_PATH_INTEGRATION",
+        "WINDOWS_PROTECTED_CONFIGURATION",
+        "WINDOWS_PROTECTED_STATE_PATHS",
+        "WINDOWS_ACL_QUALIFICATION",
         "WINDOWS_SERVICE_INSTALLATION",
         "WINDOWS_AUTOSTART",
         "WINDOWS_SERVICE_START",
@@ -757,6 +765,10 @@ def test_exact_sys_executable_is_propagated_even_when_path_python_differs(
 ) -> None:
     calls: list[list[str]] = []
     payload = {
+        "WINDOWS_NATIVE_PATH_INTEGRATION": "PASS",
+        "WINDOWS_PROTECTED_CONFIGURATION": "PASS",
+        "WINDOWS_PROTECTED_STATE_PATHS": "PASS",
+        "WINDOWS_ACL_QUALIFICATION": "PASS",
         "WINDOWS_SERVICE_INSTALLATION": "PASS",
         "WINDOWS_AUTOSTART": "PASS",
         "WINDOWS_SERVICE_START": "PASS",
