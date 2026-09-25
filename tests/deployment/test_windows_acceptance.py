@@ -435,6 +435,36 @@ def test_probe_uses_windows_powershell_compatible_fail_closed_path_qualification
     assert "windows_path_qualification.ps1" in workflow
 
 
+def test_acl_reader_is_exact_native_module_and_pwsh_inheritance_is_proven() -> None:
+    root = Path(__file__).resolve().parents[2]
+    helper = (root / "deployment/windows_native_acl.ps1").read_text(encoding="utf-8")
+    probe = (root / "deployment/windows_scm_probe.ps1").read_text(encoding="utf-8")
+    regression = (root / "deployment/windows_native_acl_regression.ps1").read_text(
+        encoding="utf-8"
+    )
+    launcher = (root / "deployment/windows_native_acl_regression.py").read_text(
+        encoding="utf-8"
+    )
+    workflow = (root / ".github/workflows/platform-deployment.yml").read_text(encoding="utf-8")
+
+    assert 'Join-Path $PSHOME "Modules\\Microsoft.PowerShell.Security' in helper
+    assert "Import-Module -Name $nativeSecurityManifest" in helper
+    assert "Get-Command -Name Get-Acl -Module Microsoft.PowerShell.Security" in helper
+    assert "Test-NativePrincipalGrant $Target $identity $script:serviceSid" in probe
+    assert "Get-Acl -LiteralPath $Target" not in probe
+    assert '["powershell.exe", "-NoProfile"' in launcher
+    assert 'WINDOWS_ACL_REGRESSION_PARENT_EDITION") != "Core"' in launcher
+    assert "$PSVersionTable.PSEdition" in regression
+    assert "$PSHOME" in regression
+    assert "$env:PSModulePath" in regression
+    assert "security_module_path" in regression
+    assert "before = $before" in regression
+    assert "after_grant = $afterGrant" in regression
+    assert "after_remove = $afterRemove" in regression
+    assert "shell: pwsh" in workflow
+    assert "python -m deployment.windows_native_acl_regression" in workflow
+
+
 def _ownership_intent() -> dict[str, object]:
     return {
         "run_token": "a" * 64,

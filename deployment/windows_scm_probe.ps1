@@ -33,6 +33,7 @@ $result = [ordered]@{
 }
 
 . (Join-Path $PSScriptRoot "windows_path_qualification.ps1")
+. (Join-Path $PSScriptRoot "windows_native_acl.ps1")
 
 function Wait-State([string]$Expected) {
   for ($i = 0; $i -lt 60; $i++) {
@@ -52,11 +53,7 @@ function Wait-Marker {
 }
 
 function Test-ServiceGrant([string]$Target) {
-  if (-not $Target -or -not (Test-Path -LiteralPath $Target)) { return $false }
-  return [bool]((Get-Acl -LiteralPath $Target).Access | Where-Object {
-    $_.IdentityReference.Value -ieq $identity -or
-    ($script:serviceSid -and $_.IdentityReference.Value -ceq $script:serviceSid)
-  })
+  return Test-NativePrincipalGrant $Target $identity $script:serviceSid
 }
 
 function Remove-ServiceGrant([string]$Target) {
