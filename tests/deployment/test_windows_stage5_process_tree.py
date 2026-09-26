@@ -180,10 +180,10 @@ def prepare_start(
     class Popen:
         pid = 222
 
-        def __init__(self, command, text):
+        def __init__(self, command, text, creationflags):
             self.command = command
             self.alive = True
-            popen_calls.append(command)
+            popen_calls.append((command, creationflags))
             events.append("popen_child")
 
         def terminate(self):
@@ -278,8 +278,11 @@ def test_child_job_start_sets_exact_limit_and_enforces_reviewed_interpreter_orde
         monkeypatch, tmp_path, python_executable=reviewed
     )
     result = child_job.start()
-    assert commands[0][0] == REVIEWED_PYTHON
-    assert commands[0][0] != sys.executable
+    command, creationflags = commands[0]
+    assert command[0] == REVIEWED_PYTHON
+    assert command[0] != sys.executable
+    assert creationflags == tree_module._DETACHED_PROCESS == 0x00000008
+    assert creationflags & 0x01000000 == 0  # CREATE_BREAKAWAY_FROM_JOB
     info, payload = jobs.set_payload
     assert info == jobs.JobObjectExtendedLimitInformation
     assert payload["BasicLimitInformation"]["LimitFlags"] == jobs.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
@@ -477,8 +480,8 @@ def test_grandchild_uses_child_interpreter(monkeypatch, tmp_path):
     class Grandchild:
         pid = 444
 
-        def __init__(self, command):
-            commands.append(command)
+        def __init__(self, command, creationflags):
+            commands.append((command, creationflags))
 
         def wait(self):
             return 0
@@ -486,7 +489,30 @@ def test_grandchild_uses_child_interpreter(monkeypatch, tmp_path):
     monkeypatch.setattr(child_module.subprocess, "Popen", Grandchild)
     monkeypatch.setattr(child_module.sys, "executable", REVIEWED_PYTHON)
     assert child_module.main(["child", str(gate)]) == 0
-    assert commands == [[REVIEWED_PYTHON, child_module.__file__, "--grandchild"]]
+    assert commands == [
+        (
+            [REVIEWED_PYTHON, child_module.__file__, "--grandchild"],
+            child_module._DETACHED_PROCESS,
+        )
+    ]
+    assert child_module._DETACHED_PROCESS == 0x00000008
+    assert child_module._DETACHED_PROCESS & 0x01000000 == 0  # CREATE_BREAKAWAY_FROM_JOB
+
+
+def test_grandchild_is_not_spawned_before_gate(monkeypatch, tmp_path):
+    gate = tmp_path / "process-tree.gate"
+    popen_calls = []
+    clock = iter((0.0, 0.0, child_module.TIMEOUT + 1.0))
+    monkeypatch.setattr(child_module.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(child_module.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(
+        child_module.subprocess,
+        "Popen",
+        lambda *args, **kwargs: popen_calls.append((args, kwargs)),
+    )
+
+    assert child_module.main(["child", str(gate)]) == 2
+    assert popen_calls == []
 
 
 @pytest.mark.parametrize("failure_point", ["reviewed_python_executable", "ChildJob.start"])
