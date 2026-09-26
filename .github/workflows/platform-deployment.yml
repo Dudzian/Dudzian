@@ -40,6 +40,9 @@ jobs:
         run: >-
           ./deployment/windows_captured_python_regression.ps1
           -PythonExecutable (Get-Command python).Source
+      - name: Prove Windows PowerShell ownership JSON round-trip
+        shell: powershell
+        run: ./deployment/windows_ownership_json_regression.ps1
 
   windows-deployment-integration:
     runs-on: windows-latest

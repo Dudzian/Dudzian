@@ -303,6 +303,21 @@ def test_scm_probe_separates_provision_from_read_only_proof():
     assert "$stage4QualificationRun.ExitCode" in stage4
 
 
+def test_scm_probe_preserves_ownership_json_depth_and_captures_cleanup_diagnostics():
+    probe = (Path(__file__).resolve().parents[2] / "deployment/windows_scm_probe.ps1").read_text()
+    save = probe[
+        probe.index("function Save-OwnershipRecord") : probe.index(
+            "function Test-BaseOwnershipRecord"
+        )
+    ]
+    assert "ConvertTo-Json -Depth 10 -Compress" in save
+    cleanup = probe[probe.rindex("} finally {") : probe.index("$result | ConvertTo-Json")]
+    assert "$stage4CleanupRun = Invoke-CapturedPython -Arguments" in cleanup
+    assert "$stage4CleanupRun.ExitCode -ne 0" in cleanup
+    assert "$stage4CleanupRun.Output -join '; '" in cleanup
+    assert "Stage-4 helper rejected cleanup:" in cleanup
+
+
 def test_public_platform_acl_boundary_executes_dacl_qualification(monkeypatch):
     monkeypatch.setattr(qualifier.os, "name", "nt")
     monkeypatch.setattr(qualifier, "qualify_native_paths", lambda **_: "paths")
@@ -615,6 +630,7 @@ def cleanup_fixture(tmp_path, monkeypatch):
         "run_token": "token",
         "ownership_phase": "SERVICE_PROVEN",
         "service_sid": sid,
+        "grants": [str(tmp_path), str(tmp_path / "scm-health.txt")],
         "path_security_plan": provisioner._plan(targets, sid, Api),
     }
     record_path = tmp_path / "record.json"
@@ -632,11 +648,20 @@ def cleanup_fixture(tmp_path, monkeypatch):
     return record_path, record
 
 
-def test_cleanup_exact_sentinels_is_allowed(tmp_path, monkeypatch):
+def test_cleanup_round_tripped_ownership_removes_exact_targets_and_plan(tmp_path, monkeypatch):
     record_path, record = cleanup_fixture(tmp_path, monkeypatch)
+    round_tripped = json.loads(record_path.read_text(encoding="utf-8"))
+    assert round_tripped == record
     provisioner.cleanup(record_path, "token", win32api=Api, win32file=FileApi())
+    assert [item["role"] for item in record["path_security_plan"]["targets"]] == [
+        "CONFIG",
+        "STATE",
+        "RUNTIME",
+    ]
     assert all(not Path(item["path"]).exists() for item in record["path_security_plan"]["targets"])
-    assert "path_security_plan" not in json.loads(record_path.read_text())
+    saved = json.loads(record_path.read_text())
+    assert "path_security_plan" not in saved
+    assert saved["grants"] == record["grants"]
 
 
 @pytest.mark.parametrize("failure", ["token", "foreign", "reparse"])

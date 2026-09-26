@@ -132,7 +132,7 @@ function Remove-ServiceGrant([string]$Target) {
 }
 
 function Save-OwnershipRecord {
-  $json = $script:ownership | ConvertTo-Json -Compress
+  $json = $script:ownership | ConvertTo-Json -Depth 10 -Compress
   [System.IO.File]::WriteAllText($script:ownershipTemp, $json, [System.Text.UTF8Encoding]::new($false))
   Move-Item -LiteralPath $script:ownershipTemp -Destination $script:ownershipPath -Force
 }
@@ -445,9 +445,18 @@ try {
     }
     if ($null -ne $ownership -and $null -ne $ownership.path_security_plan) {
       try {
-        & $PythonExecutable -m deployment.windows_dacl_provision cleanup `
-          --record $ownershipPath --run-token $WindowsAcceptanceRunToken | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw "Stage-4 helper rejected cleanup" }
+        $stage4CleanupRun = Invoke-CapturedPython -Arguments @(
+          "-m",
+          "deployment.windows_dacl_provision",
+          "cleanup",
+          "--record",
+          $ownershipPath,
+          "--run-token",
+          $WindowsAcceptanceRunToken
+        )
+        if ($stage4CleanupRun.ExitCode -ne 0) {
+          throw "Stage-4 helper rejected cleanup: $($stage4CleanupRun.Output -join '; ')"
+        }
         $ownership = Get-Content -LiteralPath $ownershipPath -Raw | ConvertFrom-Json
       } catch { $cleanupFailures.Add("Stage-4: $($_.Exception.Message)") }
     }
