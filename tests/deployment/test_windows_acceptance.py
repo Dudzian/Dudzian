@@ -138,6 +138,49 @@ def test_missing_dependency_rejected(
         invoke(tmp_path, ReviewedBoundary(tmp_path, dependency=reason), monkeypatch)
 
 
+def _satisfy_dependency_checks(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(windows_acceptance.importlib.util, "find_spec", lambda _name: object())
+    monkeypatch.setattr(
+        windows_acceptance.subprocess,
+        "run",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess([], 0, "", ""),
+    )
+    monkeypatch.setattr(windows_acceptance.shutil, "which", lambda name: name)
+
+
+def test_dependency_preflight_probes_program_data_without_creating_protected_targets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _satisfy_dependency_checks(monkeypatch)
+    monkeypatch.setenv("ProgramData", str(tmp_path))
+    boundary = AcceptanceBoundary()
+    staging_parent = boundary.staging_parent()
+    protected_root = tmp_path / "CryptoHunter"
+    configuration = protected_root / "Config"
+    state = protected_root / "State"
+    runtime = protected_root / "Runtime"
+
+    assert staging_parent == tmp_path
+    assert boundary.dependency_error(staging_parent) is None
+    assert configuration.exists() is False
+    assert state.exists() is False
+    assert runtime.exists() is False
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_dependency_preflight_does_not_create_missing_staging_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _satisfy_dependency_checks(monkeypatch)
+    missing = tmp_path / "missing-program-data"
+    monkeypatch.setenv("ProgramData", str(missing))
+
+    assert AcceptanceBoundary().dependency_error(missing) == (
+        "test staging location is not an existing directory"
+    )
+    assert missing.exists() is False
+
+
 def test_failed_core_plan_publishes_no_pass_artifact(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
