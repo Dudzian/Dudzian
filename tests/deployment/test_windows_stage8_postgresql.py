@@ -6,6 +6,7 @@ import threading
 import time
 
 import pytest
+from psycopg.conninfo import conninfo_to_dict
 
 import deployment.windows_stage8_postgresql_probe as probe
 from deployment.platform_evidence import WINDOWS_LIVE_ITEMS, WINDOWS_STAGE8_ITEMS
@@ -125,6 +126,78 @@ def test_stage8_evidence_contract_is_last_live_slice() -> None:
     assert WINDOWS_LIVE_ITEMS[-2:] == WINDOWS_STAGE8_ITEMS
 
 
+def test_authority_dsn_bounds_connect_statements_and_locks() -> None:
+    dsn = probe._admin_dsn(5432, probe.DATABASE)
+    parsed = conninfo_to_dict(dsn)
+    assert parsed["connect_timeout"] == "5"
+    assert parsed["options"] == "-c statement_timeout=60000 -c lock_timeout=5000"
+
+
+def test_live_session_timeout_settings_require_exact_numeric_ms_values() -> None:
+    probe._qualify_session_timeout_settings(
+        [("statement_timeout", "60000", "ms"), ("lock_timeout", "5000", "ms")]
+    )
+    with pytest.raises(probe.Stage8PostgreSQLProbeError) as failure:
+        probe._qualify_session_timeout_settings(
+            [("statement_timeout", "0", "ms"), ("lock_timeout", "5000", "ms")]
+        )
+    assert failure.value.item == probe.SUBSTRATE
+    assert failure.value.label == "POSTGRESQL_DURABILITY"
+
+
+def test_worker_publishes_terminal_success_only_after_run_probe_returns(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    status = tmp_path / "status.json"
+    events: list[str] = []
+    result = {probe.SUBSTRATE: "PASS", probe.PRINCIPAL_AUTH: "PASS"}
+
+    def completed_probe(_scratch: Path, *, status_file: Path):
+        probe._status_file = status_file
+        probe._status = {"last_phase": "CLEANUP_SCRATCH"}
+        events.extend(("cleanup-finished", "run-probe-returned"))
+        return result
+
+    original_write_status = probe._write_status
+
+    def observed_write_status(**updates: object) -> None:
+        if updates.get("completed") is True:
+            events.append("terminal-success-written")
+        original_write_status(**updates)
+
+    monkeypatch.setattr(probe, "run_probe", completed_probe)
+    monkeypatch.setattr(probe, "_write_status", observed_write_status)
+    assert probe.main(["--scratch-parent", str(tmp_path), "--status-file", str(status)]) == 0
+    assert events == ["cleanup-finished", "run-probe-returned", "terminal-success-written"]
+    terminal = probe._read_json(status)
+    assert terminal is not None
+    assert terminal["completed"] is True
+    assert terminal["results"] == result
+
+
+def test_stage8_phase_markers_flush_and_retain_failed_last_phase(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[tuple[str, bool]] = []
+    monkeypatch.setattr(
+        probe,
+        "print",
+        lambda message, **kwargs: calls.append((message, kwargs.get("flush") is True)),
+        raising=False,
+    )
+    probe._status_file = tmp_path / "status.json"
+    probe._status = {}
+    with pytest.raises(RuntimeError, match="synthetic hang"):
+        with probe._phase("MATRIX_RUNTIME"):
+            raise RuntimeError("synthetic hang")
+    assert [message.split()[1:3] for message, _flush in calls] == [
+        ["START", "MATRIX_RUNTIME"],
+        ["FAIL", "MATRIX_RUNTIME"],
+    ]
+    assert all(flush for _message, flush in calls)
+    assert probe._read_json(tmp_path / "status.json")["last_phase"] == "MATRIX_RUNTIME"
+
+
 def test_probe_source_keeps_ownership_token_and_production_boundaries() -> None:
     source = Path(probe.__file__).read_text(encoding="utf-8")
     assert "tempfile.mkdtemp" in source and "shutil.rmtree(root)" in source
@@ -198,7 +271,7 @@ def test_parent_binds_ready_pid_and_proves_token_before_fresh_go(
     monkeypatch.setattr(
         probe,
         "_assert_expected_token",
-        lambda *_a: (events.append("token-proof") or ("sid", "account")),
+        lambda *_a: events.append("token-proof") or ("sid", "account"),
     )
     original_write = probe._atomic_json
 

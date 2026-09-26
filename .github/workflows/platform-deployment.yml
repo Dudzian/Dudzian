@@ -91,6 +91,7 @@ jobs:
           $env:WINDOWS_ACL_REGRESSION_PARENT_EDITION = $PSVersionTable.PSEdition
           python -m deployment.windows_native_acl_regression
       - name: Execute canonical reviewed Windows acceptance
+        timeout-minutes: 30
         run: >-
           python -m deployment.windows_acceptance --mode github
           --core-output windows-acceptance-core.json

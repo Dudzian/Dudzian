@@ -8,6 +8,8 @@ PGDATA or a pre-installed PostgreSQL service.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from contextlib import contextmanager
+import argparse
 import json
 import os
 from pathlib import Path
@@ -29,6 +31,8 @@ MINIMUM_MAJOR = 16
 COMMAND_TIMEOUT = 30
 START_TIMEOUT = 30
 SERVICE_TIMEOUT = 20
+AUTHORITY_STATEMENT_TIMEOUT_MS = 60_000
+AUTHORITY_LOCK_TIMEOUT_MS = 5_000
 STDERR_LIMIT = 8192
 DATABASE = "stage8_freshness"
 RUNTIME_SERVICE = "CryptoHunterBackend"
@@ -59,6 +63,57 @@ DIAGNOSTIC_LABELS = (
     "STAGE8_CLEANUP",
 )
 
+PHASES = (
+    "POSTGRESQL_DISCOVERY",
+    "POSTGRESQL_CLUSTER_INIT",
+    "POSTGRESQL_START",
+    "POSTGRESQL_DURABILITY",
+    "POSTGRESQL_SCHEMA_PROVISION",
+    "POSTGRESQL_SCHEMA_QUALIFICATION",
+    "HELPER_SERVICE_PREPARE",
+    "SSPI_RUNTIME_DISCOVERY",
+    "SSPI_VERIFIER_DISCOVERY",
+    "FINAL_IDENT_WRITE",
+    "FINAL_HBA_WRITE",
+    "FINAL_HBA_OFFLINE_QUALIFICATION",
+    "FINAL_CLUSTER_RESTART",
+    "MATRIX_RUNTIME",
+    "MATRIX_VERIFIER",
+    "MATRIX_RUNTIME_TO_VERIFIER_DENIAL",
+    "MATRIX_VERIFIER_TO_RUNTIME_DENIAL",
+    "MATRIX_WRONG_ROLE_DENIAL",
+    "INTERACTIVE_OUTSIDER_DENIAL",
+    "CLEANUP_SERVICES",
+    "CLEANUP_POSTGRESQL",
+    "CLEANUP_SCRATCH",
+)
+
+_status_file: Path | None = None
+_status: dict[str, Any] = {}
+
+
+def _write_status(**updates: Any) -> None:
+    """Publish non-secret ownership and progress state for the supervising process."""
+    _status.update(updates)
+    if _status_file is not None:
+        _atomic_json(_status_file, _status)
+
+
+@contextmanager
+def _phase(name: str):
+    started = time.monotonic()
+    _write_status(last_phase=name, phase_started=started)
+    print(f"[STAGE8_PHASE] START {name}", flush=True)
+    try:
+        yield
+    except BaseException:
+        elapsed = time.monotonic() - started
+        print(f"[STAGE8_PHASE] FAIL {name} elapsed={elapsed:.3f}s", flush=True)
+        raise
+    else:
+        elapsed = time.monotonic() - started
+        print(f"[STAGE8_PHASE] PASS {name} elapsed={elapsed:.3f}s", flush=True)
+
 
 class Stage8PostgreSQLProbeError(RuntimeError):
     def __init__(self, label: str, item: str, detail: str) -> None:
@@ -79,7 +134,9 @@ def _run(command: list[str], *, timeout: int = COMMAND_TIMEOUT) -> subprocess.Co
     try:
         return subprocess.run(command, check=False, capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired as exc:
-        raise Stage8PostgreSQLProbeError("POSTGRESQL_DISCOVERY", SUBSTRATE, "bounded command timed out") from exc
+        raise Stage8PostgreSQLProbeError(
+            "POSTGRESQL_DISCOVERY", SUBSTRATE, "bounded command timed out"
+        ) from exc
 
 
 def discover_postgresql(environment: dict[str, str] | None = None) -> PostgreSQLBinaries:
@@ -102,9 +159,15 @@ def discover_postgresql(environment: dict[str, str] | None = None) -> PostgreSQL
             continue
         major = int(match.group(1))
         if major < MINIMUM_MAJOR:
-            raise Stage8PostgreSQLProbeError("POSTGRESQL_DISCOVERY", SUBSTRATE, f"PostgreSQL {major} is below required major 16")
+            raise Stage8PostgreSQLProbeError(
+                "POSTGRESQL_DISCOVERY", SUBSTRATE, f"PostgreSQL {major} is below required major 16"
+            )
         return PostgreSQLBinaries(candidate.resolve(), major)
-    raise Stage8PostgreSQLProbeError("POSTGRESQL_DISCOVERY", SUBSTRATE, "required PostgreSQL binaries were not found via PGBIN or pg_config")
+    raise Stage8PostgreSQLProbeError(
+        "POSTGRESQL_DISCOVERY",
+        SUBSTRATE,
+        "required PostgreSQL binaries were not found via PGBIN or pg_config",
+    )
 
 
 def final_hba_lines() -> tuple[str, ...]:
@@ -120,10 +183,24 @@ def final_hba_lines() -> tuple[str, ...]:
 
 
 def ident_lines(runtime_principal: str, verifier_principal: str) -> tuple[str, ...]:
-    if not runtime_principal or not verifier_principal or runtime_principal.casefold() == verifier_principal.casefold():
-        raise Stage8PostgreSQLProbeError("WINDOWS_SSPI_IDENT_QUALIFICATION", PRINCIPAL_AUTH, "virtual service accounts did not yield two distinct SSPI principals")
-    if any(re.search(r"[\s/]|\.\*|\^|\$", value) for value in (runtime_principal, verifier_principal)):
-        raise Stage8PostgreSQLProbeError("WINDOWS_SSPI_IDENT_QUALIFICATION", PRINCIPAL_AUTH, "unsafe principal syntax cannot be represented by an exact pg_ident map")
+    if (
+        not runtime_principal
+        or not verifier_principal
+        or runtime_principal.casefold() == verifier_principal.casefold()
+    ):
+        raise Stage8PostgreSQLProbeError(
+            "WINDOWS_SSPI_IDENT_QUALIFICATION",
+            PRINCIPAL_AUTH,
+            "virtual service accounts did not yield two distinct SSPI principals",
+        )
+    if any(
+        re.search(r"[\s/]|\.\*|\^|\$", value) for value in (runtime_principal, verifier_principal)
+    ):
+        raise Stage8PostgreSQLProbeError(
+            "WINDOWS_SSPI_IDENT_QUALIFICATION",
+            PRINCIPAL_AUTH,
+            "unsafe principal syntax cannot be represented by an exact pg_ident map",
+        )
     return (
         f"{MAP_NAME} {runtime_principal} {RUNTIME_ROLE}",
         f"{MAP_NAME} {verifier_principal} {VERIFIER_ROLE}",
@@ -140,20 +217,42 @@ def qualify_hba_rows(rows: list[tuple[Any, ...]]) -> None:
         ("all", "all", "reject"),
     ]
     if len(rows) != len(expected):
-        raise Stage8PostgreSQLProbeError("WINDOWS_SSPI_HBA_QUALIFICATION", PRINCIPAL_AUTH, "unexpected effective HBA row count")
+        raise Stage8PostgreSQLProbeError(
+            "WINDOWS_SSPI_HBA_QUALIFICATION", PRINCIPAL_AUTH, "unexpected effective HBA row count"
+        )
     previous = -1
     for row, wanted in zip(rows, expected, strict=True):
         line, kind, databases, users, address, netmask, method, options, error = row
         if error is not None or line <= previous or kind != "host":
-            raise Stage8PostgreSQLProbeError("WINDOWS_SSPI_HBA_QUALIFICATION", PRINCIPAL_AUTH, "invalid HBA parse result or ordering")
+            raise Stage8PostgreSQLProbeError(
+                "WINDOWS_SSPI_HBA_QUALIFICATION",
+                PRINCIPAL_AUTH,
+                "invalid HBA parse result or ordering",
+            )
         previous = line
         database, user, auth = wanted
         if databases != [database] or users != [user] or method != auth:
-            raise Stage8PostgreSQLProbeError("WINDOWS_SSPI_HBA_QUALIFICATION", PRINCIPAL_AUTH, "effective HBA does not match the exact reviewed sequence")
-        if auth == "sspi" and (address != "127.0.0.1" or netmask != "255.255.255.255" or sorted(options or []) != ["include_realm=1", f"map={MAP_NAME}"]):
-            raise Stage8PostgreSQLProbeError("WINDOWS_SSPI_HBA_QUALIFICATION", PRINCIPAL_AUTH, "online HBA is not exact loopback SSPI")
+            raise Stage8PostgreSQLProbeError(
+                "WINDOWS_SSPI_HBA_QUALIFICATION",
+                PRINCIPAL_AUTH,
+                "effective HBA does not match the exact reviewed sequence",
+            )
+        if auth == "sspi" and (
+            address != "127.0.0.1"
+            or netmask != "255.255.255.255"
+            or sorted(options or []) != ["include_realm=1", f"map={MAP_NAME}"]
+        ):
+            raise Stage8PostgreSQLProbeError(
+                "WINDOWS_SSPI_HBA_QUALIFICATION",
+                PRINCIPAL_AUTH,
+                "online HBA is not exact loopback SSPI",
+            )
         if user in {RUNTIME_ROLE, VERIFIER_ROLE} and method in FORBIDDEN_ONLINE_METHODS:
-            raise Stage8PostgreSQLProbeError("WINDOWS_SSPI_HBA_QUALIFICATION", PRINCIPAL_AUTH, "forbidden online authentication method")
+            raise Stage8PostgreSQLProbeError(
+                "WINDOWS_SSPI_HBA_QUALIFICATION",
+                PRINCIPAL_AUTH,
+                "forbidden online authentication method",
+            )
 
 
 def _qualify_effective_hba_offline(postgres: Path, data: Path) -> None:
@@ -173,7 +272,9 @@ FROM pg_catalog.pg_hba_file_rules ORDER BY line_number
             timeout=COMMAND_TIMEOUT,
         )
     except subprocess.TimeoutExpired as exc:
-        raise Stage8PostgreSQLProbeError("WINDOWS_SSPI_HBA_QUALIFICATION", PRINCIPAL_AUTH, "offline HBA parser timed out") from exc
+        raise Stage8PostgreSQLProbeError(
+            "WINDOWS_SSPI_HBA_QUALIFICATION", PRINCIPAL_AUTH, "offline HBA parser timed out"
+        ) from exc
     rows: list[tuple[Any, ...]] = []
     for line in completed.stdout.splitlines():
         try:
@@ -183,7 +284,11 @@ FROM pg_catalog.pg_hba_file_rules ORDER BY line_number
         if isinstance(value, list) and len(value) == 9:
             rows.append(tuple(value))
     if completed.returncode or not rows:
-        raise Stage8PostgreSQLProbeError("WINDOWS_SSPI_HBA_QUALIFICATION", PRINCIPAL_AUTH, (completed.stderr or completed.stdout)[-STDERR_LIMIT:])
+        raise Stage8PostgreSQLProbeError(
+            "WINDOWS_SSPI_HBA_QUALIFICATION",
+            PRINCIPAL_AUTH,
+            (completed.stderr or completed.stdout)[-STDERR_LIMIT:],
+        )
     qualify_hba_rows(rows)
 
 
@@ -193,8 +298,36 @@ def _port() -> int:
         return int(sock.getsockname()[1])
 
 
+def _postgresql_pid(data: Path) -> int | None:
+    try:
+        return int((data / "postmaster.pid").read_text(encoding="utf-8").splitlines()[0])
+    except (OSError, ValueError, IndexError):
+        return None
+
+
 def _admin_dsn(port: int, database: str = "postgres") -> str:
-    return f"host=127.0.0.1 port={port} dbname={database} user=stage8_bootstrap connect_timeout=5"
+    options = (
+        f"-c statement_timeout={AUTHORITY_STATEMENT_TIMEOUT_MS} "
+        f"-c lock_timeout={AUTHORITY_LOCK_TIMEOUT_MS}"
+    )
+    return (
+        f"host=127.0.0.1 port={port} dbname={database} user=stage8_bootstrap "
+        f"connect_timeout=5 options='{options}'"
+    )
+
+
+def _qualify_session_timeout_settings(rows: list[tuple[str, str, str]]) -> None:
+    timeout_settings = {name: (int(setting), unit) for name, setting, unit in rows}
+    expected = {
+        "statement_timeout": (AUTHORITY_STATEMENT_TIMEOUT_MS, "ms"),
+        "lock_timeout": (AUTHORITY_LOCK_TIMEOUT_MS, "ms"),
+    }
+    if timeout_settings != expected:
+        raise Stage8PostgreSQLProbeError(
+            "POSTGRESQL_DURABILITY",
+            SUBSTRATE,
+            f"unsafe acceptance SQL timeout settings: {timeout_settings}",
+        )
 
 
 def _read_json(path: Path) -> dict[str, Any] | None:
@@ -319,7 +452,10 @@ def _assert_expected_token(pid: int, expected: str) -> tuple[str, str]:
 
     sid, account = _token_identity(pid)
     expected_sid, _, _ = win32security.LookupAccountName(None, expected)
-    if sid != win32security.ConvertSidToStringSid(expected_sid) or account.casefold() != expected.casefold():
+    if (
+        sid != win32security.ConvertSidToStringSid(expected_sid)
+        or account.casefold() != expected.casefold()
+    ):
         raise RuntimeError(f"service token mismatch: pid={pid}, sid={sid}, account={account}")
     return sid, account
 
@@ -349,9 +485,7 @@ def _service_failure_label(service: str, *, identity: bool) -> str:
     return "WINDOWS_SSPI_VERIFIER_IDENTITY" if identity else "WINDOWS_SSPI_VERIFIER_CONNECT"
 
 
-def _prepare_services(
-    root: Path, owned_services: set[str]
-) -> dict[str, Path]:
+def _prepare_services(root: Path, owned_services: set[str]) -> dict[str, Path]:
     requests: dict[str, Path] = {}
     for service, account in (
         (RUNTIME_SERVICE, RUNTIME_ACCOUNT),
@@ -364,6 +498,7 @@ def _prepare_services(
         except Exception as exc:
             raise Stage8PostgreSQLProbeError(label, PRINCIPAL_AUTH, str(exc)) from exc
         owned_services.add(service)
+        _write_status(owned_services=sorted(owned_services))
         requests[service] = request
         try:
             acl = _run(
@@ -488,7 +623,7 @@ def _finish_cleanup(primary: BaseException | None, cleanup_errors: list[str]) ->
         return
     detail = "; ".join(cleanup_errors)
     if primary is not None:
-        print(f"[STAGE8_CLEANUP] secondary failure: {detail}", file=sys.stderr)
+        print(f"[STAGE8_CLEANUP] secondary failure: {detail}", file=sys.stderr, flush=True)
         return
     raise Stage8PostgreSQLProbeError("STAGE8_CLEANUP", SUBSTRATE, detail)
 
@@ -506,10 +641,22 @@ def _matrix_label(service: str, role: str, expected: bool) -> str:
     return "WINDOWS_SSPI_OUTSIDER_DENIAL"
 
 
-def run_probe(scratch_parent: Path) -> dict[str, str]:
+def run_probe(scratch_parent: Path, *, status_file: Path | None = None) -> dict[str, str]:
+    global _status_file, _status
+    _status_file = status_file
+    _status = {
+        "last_phase": None,
+        "cluster_started": False,
+        "owned_services": [],
+        "root": None,
+    }
     if canonical_host_os() != "Windows" or os.name != "nt":
-        raise Stage8PostgreSQLProbeError("POSTGRESQL_DISCOVERY", SUBSTRATE, "live Stage-8 requires a real Windows host")
-    binaries = discover_postgresql()
+        raise Stage8PostgreSQLProbeError(
+            "POSTGRESQL_DISCOVERY", SUBSTRATE, "live Stage-8 requires a real Windows host"
+        )
+    with _phase("POSTGRESQL_DISCOVERY"):
+        binaries = discover_postgresql()
+        _write_status(pgbin=str(binaries.bindir))
     primary: BaseException | None = None
     cleanup_errors: list[str] = []
     cluster_started = False
@@ -517,77 +664,191 @@ def run_probe(scratch_parent: Path) -> dict[str, str]:
     owned_services: set[str] = set()
     try:
         root = Path(tempfile.mkdtemp(prefix="CryptoHunter-Stage8-", dir=scratch_parent))
+        _write_status(root=str(root))
         data, log = root / "cluster", root / "postgresql.log"
-        init = _run([str(binaries.executable("initdb.exe")), "-D", str(data), "-U", "stage8_bootstrap", "--auth-host=trust", "--auth-local=trust"])
-        if init.returncode:
-            raise Stage8PostgreSQLProbeError("POSTGRESQL_CLUSTER_INIT", SUBSTRATE, (init.stderr or init.stdout)[-STDERR_LIMIT:])
+        with _phase("POSTGRESQL_CLUSTER_INIT"):
+            init = _run(
+                [
+                    str(binaries.executable("initdb.exe")),
+                    "-D",
+                    str(data),
+                    "-U",
+                    "stage8_bootstrap",
+                    "--auth-host=trust",
+                    "--auth-local=trust",
+                ]
+            )
+            if init.returncode:
+                raise Stage8PostgreSQLProbeError(
+                    "POSTGRESQL_CLUSTER_INIT",
+                    SUBSTRATE,
+                    (init.stderr or init.stdout)[-STDERR_LIMIT:],
+                )
         port = _port()
         with (data / "postgresql.conf").open("a", encoding="utf-8") as stream:
-            stream.write("\nlisten_addresses='127.0.0.1'\nfsync=on\nsynchronous_commit=on\nlog_connections=on\nlog_disconnections=on\nlogging_collector=off\n")
-        started = _run([str(binaries.executable("pg_ctl.exe")), "-D", str(data), "-l", str(log), "-o", f"-p {port}", "-w", "start"], timeout=START_TIMEOUT)
-        if started.returncode:
-            raise Stage8PostgreSQLProbeError("POSTGRESQL_START", SUBSTRATE, (started.stderr or started.stdout)[-STDERR_LIMIT:])
-        cluster_started = True
+            stream.write(
+                "\nlisten_addresses='127.0.0.1'\nfsync=on\nsynchronous_commit=on\nlog_connections=on\nlog_disconnections=on\nlogging_collector=off\n"
+            )
+        with _phase("POSTGRESQL_START"):
+            started = _run(
+                [
+                    str(binaries.executable("pg_ctl.exe")),
+                    "-D",
+                    str(data),
+                    "-l",
+                    str(log),
+                    "-o",
+                    f"-p {port}",
+                    "-w",
+                    "start",
+                ],
+                timeout=START_TIMEOUT,
+            )
+            if started.returncode:
+                raise Stage8PostgreSQLProbeError(
+                    "POSTGRESQL_START",
+                    SUBSTRATE,
+                    (started.stderr or started.stdout)[-STDERR_LIMIT:],
+                )
+            cluster_started = True
+            _write_status(cluster_started=True, postgresql_pid=_postgresql_pid(data))
         import psycopg
         from bot_core.postgresql_freshness_authority import (
             PostgreSQLConnectionConfig,
             provision_postgresql_freshness_authority,
             qualify_postgresql_freshness_authority,
         )
-        with psycopg.connect(_admin_dsn(port), autocommit=True) as connection:
-            settings = connection.execute("SELECT current_setting('fsync'),current_setting('synchronous_commit'),current_setting('listen_addresses'),current_setting('port'),current_setting('server_version_num')").fetchone()
-            if settings[:3] != ("on", "on", "127.0.0.1") or int(settings[4]) < 160000:
-                raise Stage8PostgreSQLProbeError("POSTGRESQL_DURABILITY", SUBSTRATE, f"unsafe settings: {settings}")
-            connection.execute(f'CREATE DATABASE "{DATABASE}"')
+
+        with _phase("POSTGRESQL_DURABILITY"):
+            with psycopg.connect(_admin_dsn(port), autocommit=True) as connection:
+                settings = connection.execute(
+                    "SELECT current_setting('fsync'),current_setting('synchronous_commit'),current_setting('listen_addresses'),current_setting('port'),current_setting('server_version_num')"
+                ).fetchone()
+                if settings[:3] != ("on", "on", "127.0.0.1") or int(settings[4]) < 160000:
+                    raise Stage8PostgreSQLProbeError(
+                        "POSTGRESQL_DURABILITY", SUBSTRATE, f"unsafe settings: {settings}"
+                    )
+                _qualify_session_timeout_settings(
+                    connection.execute(
+                        "SELECT name, setting, unit FROM pg_catalog.pg_settings "
+                        "WHERE name IN ('statement_timeout', 'lock_timeout')"
+                    ).fetchall()
+                )
+                connection.execute(f'CREATE DATABASE "{DATABASE}"')
         authority = PostgreSQLConnectionConfig(_admin_dsn(port, DATABASE))
-        try:
-            provision_postgresql_freshness_authority(authority)
-        except Exception as exc:
-            raise Stage8PostgreSQLProbeError("POSTGRESQL_SCHEMA_PROVISION", SUBSTRATE, f"{type(exc).__name__}: {exc}") from exc
-        try:
-            qualify_postgresql_freshness_authority(authority)
-        except Exception as exc:
-            raise Stage8PostgreSQLProbeError("POSTGRESQL_SCHEMA_QUALIFICATION", SUBSTRATE, f"{type(exc).__name__}: {exc}") from exc
+        with _phase("POSTGRESQL_SCHEMA_PROVISION"):
+            try:
+                provision_postgresql_freshness_authority(authority)
+            except Exception as exc:
+                raise Stage8PostgreSQLProbeError(
+                    "POSTGRESQL_SCHEMA_PROVISION", SUBSTRATE, f"{type(exc).__name__}: {exc}"
+                ) from exc
+        with _phase("POSTGRESQL_SCHEMA_QUALIFICATION"):
+            try:
+                qualify_postgresql_freshness_authority(authority)
+            except Exception as exc:
+                raise Stage8PostgreSQLProbeError(
+                    "POSTGRESQL_SCHEMA_QUALIFICATION", SUBSTRATE, f"{type(exc).__name__}: {exc}"
+                ) from exc
 
         # Temporary diagnostic-only mapping discovers what SSPI actually authenticates.
-        (data / "pg_ident.conf").write_text(f"{MAP_NAME} /^(.*)$/ stage8_bootstrap\n", encoding="utf-8")
-        (data / "pg_hba.conf").write_text(f"host {DATABASE} stage8_bootstrap 127.0.0.1/32 sspi map={MAP_NAME} include_realm=1\nhost all all 0.0.0.0/0 reject\nhost all all ::0/0 reject\n", encoding="utf-8")
+        (data / "pg_ident.conf").write_text(
+            f"{MAP_NAME} /^(.*)$/ stage8_bootstrap\n", encoding="utf-8"
+        )
+        (data / "pg_hba.conf").write_text(
+            f"host {DATABASE} stage8_bootstrap 127.0.0.1/32 sspi map={MAP_NAME} include_realm=1\nhost all all 0.0.0.0/0 reject\nhost all all ::0/0 reject\n",
+            encoding="utf-8",
+        )
         _run([str(binaries.executable("pg_ctl.exe")), "-D", str(data), "reload"])
-        service_requests = _prepare_services(root, owned_services)
+        with _phase("HELPER_SERVICE_PREPARE"):
+            service_requests = _prepare_services(root, owned_services)
+            _write_status(owned_services=sorted(owned_services))
         principals: list[str] = []
-        for service, account in ((RUNTIME_SERVICE, RUNTIME_ACCOUNT), (VERIFIER_SERVICE, VERIFIER_ACCOUNT)):
-            offset = log.stat().st_size
-            identity_label = _service_failure_label(service, identity=True)
-            payload = _invoke_service(
-                root,
-                service_requests[service],
-                service,
-                account,
-                port,
-                "stage8_bootstrap",
-                failure_label=identity_label,
-            )
-            if not payload.get("ok"):
-                raise Stage8PostgreSQLProbeError("WINDOWS_SSPI_RUNTIME_IDENTITY" if service == RUNTIME_SERVICE else "WINDOWS_SSPI_VERIFIER_IDENTITY", PRINCIPAL_AUTH, f"SSPI diagnostic connection failed: {payload}")
-            principals.append(_extract_new_principal(log, offset, identity_label))
+        for discovery_phase, service, account in (
+            ("SSPI_RUNTIME_DISCOVERY", RUNTIME_SERVICE, RUNTIME_ACCOUNT),
+            ("SSPI_VERIFIER_DISCOVERY", VERIFIER_SERVICE, VERIFIER_ACCOUNT),
+        ):
+            with _phase(discovery_phase):
+                offset = log.stat().st_size
+                identity_label = _service_failure_label(service, identity=True)
+                payload = _invoke_service(
+                    root,
+                    service_requests[service],
+                    service,
+                    account,
+                    port,
+                    "stage8_bootstrap",
+                    failure_label=identity_label,
+                )
+                if not payload.get("ok"):
+                    raise Stage8PostgreSQLProbeError(
+                        "WINDOWS_SSPI_RUNTIME_IDENTITY"
+                        if service == RUNTIME_SERVICE
+                        else "WINDOWS_SSPI_VERIFIER_IDENTITY",
+                        PRINCIPAL_AUTH,
+                        f"SSPI diagnostic connection failed: {payload}",
+                    )
+                principals.append(_extract_new_principal(log, offset, identity_label))
 
-        (data / "pg_ident.conf").write_text("\n".join(ident_lines(*principals)) + "\n", encoding="utf-8")
-        (data / "pg_hba.conf").write_text("\n".join(final_hba_lines()) + "\n", encoding="utf-8")
+        with _phase("FINAL_IDENT_WRITE"):
+            (data / "pg_ident.conf").write_text(
+                "\n".join(ident_lines(*principals)) + "\n", encoding="utf-8"
+            )
+        with _phase("FINAL_HBA_WRITE"):
+            (data / "pg_hba.conf").write_text("\n".join(final_hba_lines()) + "\n", encoding="utf-8")
         reload_result = _run([str(binaries.executable("pg_ctl.exe")), "-D", str(data), "reload"])
         if reload_result.returncode:
-            raise Stage8PostgreSQLProbeError("WINDOWS_SSPI_HBA_QUALIFICATION", PRINCIPAL_AUTH, "final configuration reload failed")
+            raise Stage8PostgreSQLProbeError(
+                "WINDOWS_SSPI_HBA_QUALIFICATION",
+                PRINCIPAL_AUTH,
+                "final configuration reload failed",
+            )
         # Stop, inspect pg_hba_file_rules through a bounded single-user backend, then
         # start again with precisely the same final files. No administrative network
         # authentication rule is introduced for this read-only qualification.
-        stopped = _run([str(binaries.executable("pg_ctl.exe")), "-D", str(data), "-m", "fast", "-w", "stop"], timeout=START_TIMEOUT)
-        if stopped.returncode:
-            raise Stage8PostgreSQLProbeError("WINDOWS_SSPI_HBA_QUALIFICATION", PRINCIPAL_AUTH, "could not stop for offline HBA qualification")
-        cluster_started = False
-        _qualify_effective_hba_offline(binaries.executable("postgres.exe"), data)
-        restarted = _run([str(binaries.executable("pg_ctl.exe")), "-D", str(data), "-l", str(log), "-o", f"-p {port}", "-w", "start"], timeout=START_TIMEOUT)
-        if restarted.returncode:
-            raise Stage8PostgreSQLProbeError("POSTGRESQL_START", SUBSTRATE, "final configured cluster restart failed")
-        cluster_started = True
+        with _phase("FINAL_HBA_OFFLINE_QUALIFICATION"):
+            stopped = _run(
+                [
+                    str(binaries.executable("pg_ctl.exe")),
+                    "-D",
+                    str(data),
+                    "-m",
+                    "fast",
+                    "-w",
+                    "stop",
+                ],
+                timeout=START_TIMEOUT,
+            )
+            if stopped.returncode:
+                raise Stage8PostgreSQLProbeError(
+                    "WINDOWS_SSPI_HBA_QUALIFICATION",
+                    PRINCIPAL_AUTH,
+                    "could not stop for offline HBA qualification",
+                )
+            cluster_started = False
+            _write_status(cluster_started=False, postgresql_pid=None)
+            _qualify_effective_hba_offline(binaries.executable("postgres.exe"), data)
+        with _phase("FINAL_CLUSTER_RESTART"):
+            restarted = _run(
+                [
+                    str(binaries.executable("pg_ctl.exe")),
+                    "-D",
+                    str(data),
+                    "-l",
+                    str(log),
+                    "-o",
+                    f"-p {port}",
+                    "-w",
+                    "start",
+                ],
+                timeout=START_TIMEOUT,
+            )
+            if restarted.returncode:
+                raise Stage8PostgreSQLProbeError(
+                    "POSTGRESQL_START", SUBSTRATE, "final configured cluster restart failed"
+                )
+            cluster_started = True
+            _write_status(cluster_started=True, postgresql_pid=_postgresql_pid(data))
         matrix = (
             (RUNTIME_SERVICE, RUNTIME_ACCOUNT, RUNTIME_ROLE, True, DATABASE),
             (VERIFIER_SERVICE, VERIFIER_ACCOUNT, VERIFIER_ROLE, True, DATABASE),
@@ -595,54 +856,195 @@ def run_probe(scratch_parent: Path) -> dict[str, str]:
             (VERIFIER_SERVICE, VERIFIER_ACCOUNT, RUNTIME_ROLE, False, DATABASE),
             (RUNTIME_SERVICE, RUNTIME_ACCOUNT, "stage8_bootstrap", False, DATABASE),
         )
-        for service, account, role, expected, database in matrix:
-            payload = _invoke_service(
-                root,
-                service_requests[service],
-                service,
-                account,
-                port,
-                role,
-                database,
-                failure_label=_matrix_label(service, role, expected),
-            )
-            if bool(payload.get("ok")) != expected or (expected and payload.get("session_user") != role):
-                raise Stage8PostgreSQLProbeError(_matrix_label(service, role, expected), PRINCIPAL_AUTH, f"connection matrix mismatch: service={service}, requested_role={role}, result={payload}")
-        for role in (RUNTIME_ROLE, VERIFIER_ROLE):
-            try:
-                psycopg.connect(host="127.0.0.1", port=port, dbname=DATABASE, user=role, connect_timeout=5)
-            except psycopg.Error:
-                pass
-            else:
-                raise Stage8PostgreSQLProbeError("WINDOWS_SSPI_OUTSIDER_DENIAL", PRINCIPAL_AUTH, f"interactive caller reached {role}")
+        matrix_phases = (
+            "MATRIX_RUNTIME",
+            "MATRIX_VERIFIER",
+            "MATRIX_RUNTIME_TO_VERIFIER_DENIAL",
+            "MATRIX_VERIFIER_TO_RUNTIME_DENIAL",
+            "MATRIX_WRONG_ROLE_DENIAL",
+        )
+        for matrix_phase, (service, account, role, expected, database) in zip(
+            matrix_phases, matrix, strict=True
+        ):
+            with _phase(matrix_phase):
+                payload = _invoke_service(
+                    root,
+                    service_requests[service],
+                    service,
+                    account,
+                    port,
+                    role,
+                    database,
+                    failure_label=_matrix_label(service, role, expected),
+                )
+                if bool(payload.get("ok")) != expected or (
+                    expected and payload.get("session_user") != role
+                ):
+                    raise Stage8PostgreSQLProbeError(
+                        _matrix_label(service, role, expected),
+                        PRINCIPAL_AUTH,
+                        f"connection matrix mismatch: service={service}, requested_role={role}, result={payload}",
+                    )
+        with _phase("INTERACTIVE_OUTSIDER_DENIAL"):
+            for role in (RUNTIME_ROLE, VERIFIER_ROLE):
+                try:
+                    psycopg.connect(
+                        host="127.0.0.1", port=port, dbname=DATABASE, user=role, connect_timeout=5
+                    )
+                except psycopg.Error:
+                    pass
+                else:
+                    raise Stage8PostgreSQLProbeError(
+                        "WINDOWS_SSPI_OUTSIDER_DENIAL",
+                        PRINCIPAL_AUTH,
+                        f"interactive caller reached {role}",
+                    )
         # Re-qualify schema state before final shutdown. The exact qualifier itself
         # already covers roles, memberships, owners, ACLs, functions and raw DML.
         # Final HBA is parsed by the server; use a temporary offline local socket is
         # impossible on Windows, therefore validate its exact text and reject syntax.
-        if tuple((data / "pg_hba.conf").read_text(encoding="utf-8").splitlines()) != final_hba_lines():
-            raise Stage8PostgreSQLProbeError("WINDOWS_SSPI_HBA_QUALIFICATION", PRINCIPAL_AUTH, "final HBA changed after reload")
-        if tuple((data / "pg_ident.conf").read_text(encoding="utf-8").splitlines()) != ident_lines(*principals):
-            raise Stage8PostgreSQLProbeError("WINDOWS_SSPI_IDENT_QUALIFICATION", PRINCIPAL_AUTH, "final ident changed after reload")
-        return {SUBSTRATE: "PASS", PRINCIPAL_AUTH: "PASS", "details": f"PostgreSQL {binaries.major}; distinct SSPI principals; isolated port {port}"}
+        if (
+            tuple((data / "pg_hba.conf").read_text(encoding="utf-8").splitlines())
+            != final_hba_lines()
+        ):
+            raise Stage8PostgreSQLProbeError(
+                "WINDOWS_SSPI_HBA_QUALIFICATION", PRINCIPAL_AUTH, "final HBA changed after reload"
+            )
+        if tuple((data / "pg_ident.conf").read_text(encoding="utf-8").splitlines()) != ident_lines(
+            *principals
+        ):
+            raise Stage8PostgreSQLProbeError(
+                "WINDOWS_SSPI_IDENT_QUALIFICATION",
+                PRINCIPAL_AUTH,
+                "final ident changed after reload",
+            )
+        return {
+            SUBSTRATE: "PASS",
+            PRINCIPAL_AUTH: "PASS",
+            "details": f"PostgreSQL {binaries.major}; distinct SSPI principals; isolated port {port}",
+        }
     except BaseException as exc:
         primary = exc
         raise
     finally:
-        for name in tuple(owned_services):
-            try:
-                cleanup_errors.extend(_cleanup_service(name))
-            except Exception as exc:
-                cleanup_errors.append(f"service cleanup {name}: {exc}")
+        try:
+            with _phase("CLEANUP_SERVICES"):
+                for name in tuple(owned_services):
+                    try:
+                        cleanup_errors.extend(_cleanup_service(name))
+                    except Exception as exc:
+                        cleanup_errors.append(f"service cleanup {name}: {exc}")
+                if cleanup_errors:
+                    raise RuntimeError("; ".join(cleanup_errors))
+        except RuntimeError:
+            pass
         if cluster_started and root is not None:
             try:
-                stopped = _run([str(binaries.executable("pg_ctl.exe")), "-D", str(root / "cluster"), "-m", "fast", "-w", "stop"], timeout=START_TIMEOUT)
-                if stopped.returncode:
-                    cleanup_errors.append("PostgreSQL did not stop cleanly")
+                with _phase("CLEANUP_POSTGRESQL"):
+                    stopped = _run(
+                        [
+                            str(binaries.executable("pg_ctl.exe")),
+                            "-D",
+                            str(root / "cluster"),
+                            "-m",
+                            "fast",
+                            "-w",
+                            "stop",
+                        ],
+                        timeout=START_TIMEOUT,
+                    )
+                    if stopped.returncode:
+                        raise RuntimeError("PostgreSQL did not stop cleanly")
+                    _write_status(cluster_started=False, postgresql_pid=None)
             except Exception as exc:
                 cleanup_errors.append(f"PostgreSQL cleanup: {exc}")
+        else:
+            with _phase("CLEANUP_POSTGRESQL"):
+                pass
         if root is not None:
             try:
-                shutil.rmtree(root)
+                with _phase("CLEANUP_SCRATCH"):
+                    shutil.rmtree(root)
+                    _write_status(root=None)
             except OSError as exc:
                 cleanup_errors.append(f"scratch cleanup: {exc}")
+        else:
+            with _phase("CLEANUP_SCRATCH"):
+                pass
         _finish_cleanup(primary, cleanup_errors)
+
+
+def emergency_cleanup(status: dict[str, Any], scratch_parent: Path) -> list[str]:
+    """Bounded cleanup after the supervisor terminates a stuck Stage-8 worker."""
+    errors: list[str] = []
+    owned = status.get("owned_services", [])
+    if isinstance(owned, list):
+        for name in owned:
+            if name not in {RUNTIME_SERVICE, VERIFIER_SERVICE}:
+                errors.append(f"refused unexpected service ownership marker: {name}")
+                continue
+            errors.extend(_cleanup_service(name))
+    root_value = status.get("root")
+    root = Path(root_value) if isinstance(root_value, str) else None
+    try:
+        safe_root = (
+            root is not None
+            and root.name.startswith("CryptoHunter-Stage8-")
+            and root.resolve().parent == scratch_parent.resolve()
+        )
+    except OSError:
+        safe_root = False
+    if root is not None and not safe_root:
+        errors.append("refused scratch cleanup outside Stage-8-owned root")
+        return errors
+    if safe_root and status.get("cluster_started") is True:
+        pgbin = status.get("pgbin")
+        if isinstance(pgbin, str):
+            try:
+                stopped = _run(
+                    [
+                        str(Path(pgbin) / "pg_ctl.exe"),
+                        "-D",
+                        str(root / "cluster"),
+                        "-m",
+                        "immediate",
+                        "-w",
+                        "stop",
+                    ],
+                    timeout=10,
+                )
+                if stopped.returncode:
+                    errors.append("emergency PostgreSQL stop failed")
+            except Exception as exc:
+                errors.append(f"emergency PostgreSQL stop: {exc}")
+        else:
+            errors.append("emergency PostgreSQL stop lacks reviewed binary path")
+    if safe_root:
+        try:
+            shutil.rmtree(root)
+        except OSError as exc:
+            errors.append(f"emergency scratch cleanup: {exc}")
+    return errors
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Internal reviewed Windows Stage-8 worker")
+    parser.add_argument("--scratch-parent", type=Path, required=True)
+    parser.add_argument("--status-file", type=Path, required=True)
+    args = parser.parse_args(argv)
+    try:
+        result = run_probe(args.scratch_parent, status_file=args.status_file)
+    except Stage8PostgreSQLProbeError as exc:
+        _write_status(failed_item=exc.item, error=str(exc))
+        print(json.dumps({"item": exc.item, "error": str(exc)}), file=sys.stderr, flush=True)
+        return 1
+    _write_status(
+        completed=True,
+        results={item: result[item] for item in WINDOWS_STAGE8_ITEMS},
+    )
+    print(json.dumps(result), flush=True)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
