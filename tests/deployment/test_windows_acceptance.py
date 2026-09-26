@@ -50,6 +50,7 @@ class ReviewedBoundary(AcceptanceBoundary):
         core_failure: bool = False,
         scm_failure: str | None = None,
         stage6_failure: str | None = None,
+        stage7_failure: str | None = None,
     ) -> None:
         self.tmp_path = tmp_path
         self.host = host
@@ -58,6 +59,7 @@ class ReviewedBoundary(AcceptanceBoundary):
         self.core_failure = core_failure
         self.scm_failure = scm_failure
         self.stage6_failure = stage6_failure
+        self.stage7_failure = stage7_failure
 
     def host_os(self) -> str:
         return self.host
@@ -83,6 +85,7 @@ class ReviewedBoundary(AcceptanceBoundary):
             **{item: "PASS" for item in windows_acceptance.SCM_ITEMS},
             "cleanup": "PASS",
             "details": "reviewed boundary completed",
+            "WINDOWS_SAFE_OS_SHUTDOWN": "PASS",
         }
 
     def run_stage6(self, scratch_parent: Path) -> dict[str, str]:
@@ -94,6 +97,13 @@ class ReviewedBoundary(AcceptanceBoundary):
             "WINDOWS_FILE_LOCKING": "PASS",
             "WINDOWS_SQLITE_CRASH_INTEGRITY": "PASS",
         }
+
+    def run_stage7_network(self, scratch_parent: Path) -> dict[str, str]:
+        if self.stage7_failure:
+            raise windows_acceptance.Stage7NetworkProbeError(
+                "NETWORK_RECOVERY_VERIFY", "reviewed Stage-7 failure"
+            )
+        return {"WINDOWS_NETWORK_RECOVERY": "PASS"}
 
 
 def invoke(
@@ -246,6 +256,8 @@ def test_successful_orchestration_uses_reviewed_boundary(
         "WINDOWS_PERSISTENT_LOGGING",
         "WINDOWS_FILE_LOCKING",
         "WINDOWS_SQLITE_CRASH_INTEGRITY",
+        "WINDOWS_NETWORK_RECOVERY",
+        "WINDOWS_SAFE_OS_SHUTDOWN",
     }
     assert all(result["status"] == "PASS" for result in evidence["results"])
 
@@ -266,6 +278,16 @@ def test_stage6_failure_is_labelled_and_publishes_no_evidence(
         invoke(tmp_path, boundary, monkeypatch)
     assert failure.value.result == item
     assert not (tmp_path / "core.json").exists()
+    assert not (tmp_path / "scm.json").exists()
+
+
+def test_stage7_network_failure_is_labelled_and_publishes_no_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    boundary = ReviewedBoundary(tmp_path, stage7_failure="WINDOWS_NETWORK_RECOVERY")
+    with pytest.raises(WindowsAcceptanceError, match=r"\[NETWORK_RECOVERY_VERIFY\]") as failure:
+        invoke(tmp_path, boundary, monkeypatch)
+    assert failure.value.result == "WINDOWS_NETWORK_RECOVERY"
     assert not (tmp_path / "scm.json").exists()
 
 
@@ -852,6 +874,7 @@ def test_exact_sys_executable_is_propagated_even_when_path_python_differs(
         "WINDOWS_PROCESS_TREE": "PASS",
         "WINDOWS_NO_ORPHAN_CHILDREN": "PASS",
         "WINDOWS_PERSISTENT_LOGGING": "PASS",
+        "WINDOWS_SAFE_OS_SHUTDOWN": "PASS",
         "cleanup": "PASS",
     }
 

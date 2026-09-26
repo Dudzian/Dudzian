@@ -21,9 +21,14 @@ from deployment.platform_evidence import (
     SCM_ITEMS,
     WINDOWS_LIVE_ITEMS,
     WINDOWS_STAGE6_ITEMS,
+    WINDOWS_STAGE7_ITEMS,
     evidence_document,
 )
 from deployment.windows_stage6_probe import Stage6ProbeError, run_probe
+from deployment.windows_stage7_network_probe import (
+    Stage7NetworkProbeError,
+    run_probe as run_network_probe,
+)
 
 GITHUB_PROVIDER = "https://github.com"
 LOCAL_PROVIDER = "LOCAL_REVIEWED_WINDOWS_EXECUTION"
@@ -54,8 +59,10 @@ class AcceptanceBoundary:
         if importlib.util.find_spec("win32serviceutil") is None:
             return "pywin32 is required"
         completed = subprocess.run(
-            [sys.executable, "-m", "pip", "check"], check=False,
-            capture_output=True, text=True,
+            [sys.executable, "-m", "pip", "check"],
+            check=False,
+            capture_output=True,
+            text=True,
         )
         if completed.returncode:
             return f"project dependency check failed: {completed.stdout.strip()}"
@@ -81,32 +88,50 @@ class AcceptanceBoundary:
 
     def run_core(self, revision: str, provider: str, run_id: str, output: Path) -> None:
         execute_plan(
-            manifest_path=MANIFEST, runner_os="Windows", source_revision=revision,
-            ci_run_id=run_id, ci_provider=provider, output=output,
+            manifest_path=MANIFEST,
+            runner_os="Windows",
+            source_revision=revision,
+            ci_run_id=run_id,
+            ci_provider=provider,
+            output=output,
         )
 
     def run_scm(self) -> dict[str, str]:
         probe = Path(__file__).with_name("windows_scm_probe.ps1")
         run_token = secrets.token_hex(32)
         command = [
-            "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(probe),
-            "-PythonExecutable", sys.executable,
-            "-WindowsAcceptanceRunToken", run_token,
+            "powershell",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(probe),
+            "-PythonExecutable",
+            sys.executable,
+            "-WindowsAcceptanceRunToken",
+            run_token,
         ]
         try:
             completed = subprocess.run(
-                command, check=False, capture_output=True, text=True, timeout=180,
+                command,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=180,
             )
         except subprocess.TimeoutExpired as exc:
             cleanup_confirmed = False
             try:
                 cleanup = subprocess.run(
-                    [*command, "-CleanupOnly"], check=False, capture_output=True,
-                    text=True, timeout=60,
+                    [*command, "-CleanupOnly"],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
                 )
-                cleanup_confirmed = json.loads(cleanup.stdout.strip().splitlines()[-1]).get(
-                    "cleanup"
-                ) == "PASS"
+                cleanup_confirmed = (
+                    json.loads(cleanup.stdout.strip().splitlines()[-1]).get("cleanup") == "PASS"
+                )
             except (subprocess.TimeoutExpired, IndexError, json.JSONDecodeError):
                 pass
             diagnostic = "[TIMEOUT] SCM probe timed out"
@@ -125,15 +150,26 @@ class AcceptanceBoundary:
         for item in SCM_ITEMS:
             if payload.get(item) != "PASS":
                 raise WindowsAcceptanceError(f"SCM result was not PASS: {item}", item)
+        if payload.get("WINDOWS_SAFE_OS_SHUTDOWN") != "PASS":
+            raise WindowsAcceptanceError(
+                "SCM Stage-7 shutdown result was not PASS", "WINDOWS_SAFE_OS_SHUTDOWN"
+            )
         return payload
 
     def run_stage6(self, scratch_parent: Path) -> dict[str, str]:
         return run_probe(scratch_parent)
 
+    def run_stage7_network(self, scratch_parent: Path) -> dict[str, str]:
+        return run_network_probe(scratch_parent)
+
 
 def publish_artifacts(
-    staged_core: Path, core_output: Path, staged_evidence: Path, evidence_output: Path,
-    *, replace: Callable[[Path, Path], None] | None = None,
+    staged_core: Path,
+    core_output: Path,
+    staged_evidence: Path,
+    evidence_output: Path,
+    *,
+    replace: Callable[[Path, Path], None] | None = None,
 ) -> None:
     """Publish a new pair, rolling both paths back if either replacement fails."""
     if core_output.exists() or evidence_output.exists():
@@ -179,6 +215,11 @@ def _failed_scm_result(message: str) -> str:
         "NATIVE_PATHS_DACL": "WINDOWS_ACL_QUALIFICATION",
         "READ_ONLY_DACL_QUALIFICATION": "WINDOWS_ACL_QUALIFICATION",
         "CLEANUP": "WINDOWS_CLEANUP",
+        "SAFE_OS_SHUTDOWN_ACCEPTANCE_QUERY": "WINDOWS_SAFE_OS_SHUTDOWN",
+        "SAFE_OS_SHUTDOWN_CONTROL": "WINDOWS_SAFE_OS_SHUTDOWN",
+        "SAFE_OS_SHUTDOWN_STOP": "WINDOWS_SAFE_OS_SHUTDOWN",
+        "SAFE_OS_SHUTDOWN_PROCESS_TREE": "WINDOWS_SAFE_OS_SHUTDOWN",
+        "SAFE_OS_SHUTDOWN_LOGGING": "WINDOWS_SAFE_OS_SHUTDOWN",
     }
     upper = message.upper()
     return next((result for label, result in labels.items() if f"[{label}]" in upper), SCM_ITEMS[0])
@@ -186,8 +227,10 @@ def _failed_scm_result(message: str) -> str:
 
 def _revision(explicit: str | None) -> str:
     completed = subprocess.run(
-        ["git", "rev-parse", "--verify", "HEAD"], check=False,
-        capture_output=True, text=True,
+        ["git", "rev-parse", "--verify", "HEAD"],
+        check=False,
+        capture_output=True,
+        text=True,
     )
     git_revision = completed.stdout.strip() if completed.returncode == 0 else ""
     value = explicit or git_revision
@@ -197,7 +240,10 @@ def _revision(explicit: str | None) -> str:
         if value != git_revision:
             raise WindowsAcceptanceError("SOURCE_REVISION_DOES_NOT_MATCH_CHECKOUT")
         status = subprocess.run(
-            ["git", "status", "--porcelain"], check=False, capture_output=True, text=True,
+            ["git", "status", "--porcelain"],
+            check=False,
+            capture_output=True,
+            text=True,
         )
         if status.returncode or status.stdout.strip():
             raise WindowsAcceptanceError("SOURCE_REVISION_HAS_UNCOMMITTED_CHANGES")
@@ -209,7 +255,9 @@ def _identity(mode: str, revision: str | None) -> tuple[str, str, str]:
         source_revision = revision or os.environ.get("GITHUB_SHA", "")
         if not source_revision or source_revision.lower() in {"unknown", "latest", "working-tree"}:
             raise WindowsAcceptanceError("SOURCE_REVISION_REQUIRED")
-        if os.environ.get("GITHUB_SERVER_URL") != GITHUB_PROVIDER or not os.environ.get("GITHUB_RUN_ID"):
+        if os.environ.get("GITHUB_SERVER_URL") != GITHUB_PROVIDER or not os.environ.get(
+            "GITHUB_RUN_ID"
+        ):
             raise WindowsAcceptanceError("GITHUB_RELEASE_IDENTITY_REQUIRED")
         if source_revision != os.environ.get("GITHUB_SHA"):
             raise WindowsAcceptanceError("SOURCE_REVISION_DOES_NOT_MATCH_GITHUB_SHA")
@@ -219,7 +267,11 @@ def _identity(mode: str, revision: str | None) -> tuple[str, str, str]:
 
 
 def run_acceptance(
-    *, mode: str, revision: str | None, core_output: Path, evidence_output: Path,
+    *,
+    mode: str,
+    revision: str | None,
+    core_output: Path,
+    evidence_output: Path,
     boundary: AcceptanceBoundary | None = None,
     publisher: Callable[[Path, Path, Path, Path], None] = publish_artifacts,
 ) -> None:
@@ -260,25 +312,83 @@ def run_acceptance(
         for item in WINDOWS_STAGE6_ITEMS:
             if stage6.get(item) != "PASS":
                 raise WindowsAcceptanceError(f"Stage-6 result was not PASS: {item}", item)
+        try:
+            stage7_network = live.run_stage7_network(staging_parent)
+        except Stage7NetworkProbeError as exc:
+            raise WindowsAcceptanceError(str(exc), exc.item) from exc
+        except Exception as exc:
+            raise WindowsAcceptanceError(
+                f"[NETWORK_RECOVERY_VERIFY] {type(exc).__name__}: {exc}",
+                "WINDOWS_NETWORK_RECOVERY",
+            ) from exc
+        if stage7_network.get("WINDOWS_NETWORK_RECOVERY") != "PASS":
+            raise WindowsAcceptanceError(
+                "Stage-7 network result was not PASS", "WINDOWS_NETWORK_RECOVERY"
+            )
+        stage7 = {
+            **stage7_network,
+            "WINDOWS_SAFE_OS_SHUTDOWN": scm.get("WINDOWS_SAFE_OS_SHUTDOWN", "FAIL"),
+        }
+        for item in WINDOWS_STAGE7_ITEMS:
+            if stage7.get(item) != "PASS":
+                raise WindowsAcceptanceError(f"Stage-7 result was not PASS: {item}", item)
         results = [
-            {"item": item, "status": "PASS", "evidence_class": "LIVE_WINDOWS_INTEGRATION",
-             "test_or_probe": "deployment.windows_acceptance/windows_scm_probe.ps1",
-             "details": scm.get("details", "reviewed SCM lifecycle and cleanup verified")}
+            {
+                "item": item,
+                "status": "PASS",
+                "evidence_class": "LIVE_WINDOWS_INTEGRATION",
+                "test_or_probe": "deployment.windows_acceptance/windows_scm_probe.ps1",
+                "details": scm.get("details", "reviewed SCM lifecycle and cleanup verified"),
+            }
             for item in SCM_ITEMS
         ]
         results.extend(
-            {"item": item, "status": "PASS", "evidence_class": "LIVE_WINDOWS_INTEGRATION",
-             "test_or_probe": "deployment.windows_stage6_probe",
-             "details": "live Windows forced-termination probe passed"}
+            {
+                "item": item,
+                "status": "PASS",
+                "evidence_class": "LIVE_WINDOWS_INTEGRATION",
+                "test_or_probe": "deployment.windows_stage6_probe",
+                "details": "live Windows forced-termination probe passed",
+            }
             for item in WINDOWS_STAGE6_ITEMS
         )
+        results.extend(
+            (
+                {
+                    "item": "WINDOWS_NETWORK_RECOVERY",
+                    "status": "PASS",
+                    "evidence_class": "LIVE_WINDOWS_INTEGRATION",
+                    "test_or_probe": "deployment.windows_stage7_network_probe",
+                    "details": "one production request recovered from a real loopback TCP reset",
+                },
+                {
+                    "item": "WINDOWS_SAFE_OS_SHUTDOWN",
+                    "status": "PASS",
+                    "evidence_class": "LIVE_WINDOWS_INTEGRATION",
+                    "test_or_probe": "deployment.windows_scm_probe.ps1 / SvcShutdown acceptance",
+                    "details": scm.get(
+                        "details", "live accepted-controls and shutdown cleanup verified"
+                    ),
+                },
+            )
+        )
         evidence_temp = Path(temporary) / "scm.json"
-        evidence_temp.write_text(json.dumps(evidence_document(
-            platform_name="WINDOWS", source_revision=source_revision, ci_provider=provider,
-            ci_run_id=run_id, runner_os="Windows", runner_arch=os.environ.get(
-                "PROCESSOR_ARCHITECTURE", "unknown"
-            ), results=results,
-        ), indent=2) + "\n", encoding="utf-8")
+        evidence_temp.write_text(
+            json.dumps(
+                evidence_document(
+                    platform_name="WINDOWS",
+                    source_revision=source_revision,
+                    ci_provider=provider,
+                    ci_run_id=run_id,
+                    runner_os="Windows",
+                    runner_arch=os.environ.get("PROCESSOR_ARCHITECTURE", "unknown"),
+                    results=results,
+                ),
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
         publisher(core_temp, core_output, evidence_temp, evidence_output)
 
 
@@ -291,7 +401,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         run_acceptance(
-            mode=args.mode, revision=args.source_revision, core_output=args.core_output,
+            mode=args.mode,
+            revision=args.source_revision,
+            core_output=args.core_output,
             evidence_output=args.evidence_output,
         )
     except WindowsAcceptanceError as exc:
