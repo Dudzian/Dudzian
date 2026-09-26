@@ -46,6 +46,7 @@ $result = [ordered]@{
   WINDOWS_PROCESS_TREE = "FAIL"
   WINDOWS_NO_ORPHAN_CHILDREN = "FAIL"
   WINDOWS_PERSISTENT_LOGGING = "FAIL"
+  WINDOWS_SAFE_OS_SHUTDOWN = "FAIL"
   cleanup = "FAIL"
   details = ""
 }
@@ -642,7 +643,49 @@ try {
     $result.WINDOWS_PROCESS_TREE = "PASS"
     $result.WINDOWS_NO_ORPHAN_CHILDREN = "PASS"
     $result.WINDOWS_PERSISTENT_LOGGING = "PASS"
-    $result.details = "SCM install/autostart/recovery/start/health/graceful-stop/manual-restart/crash-restart verified"
+
+    # Stage 7 begins only after every frozen Stage-5 lifecycle assertion above passed.
+    $stage = "SAFE_OS_SHUTDOWN_ACCEPTANCE_QUERY"
+    Start-Service $service
+    Wait-State "Running"
+    Wait-Marker
+    $shutdownPid = Assert-RunningPidMatch
+    $shutdownTree = Get-Tree $shutdownPid
+    Assert-Tree $shutdownTree "SAFE_OS_SHUTDOWN"
+    $acceptedRun = Invoke-CapturedPython -Arguments @(
+      "-m", "deployment.windows_stage7_scm", "query", "--service", $service)
+    if ($acceptedRun.ExitCode -ne 0) {
+      throw "QueryServiceStatusEx accepted-controls qualification failed: $($acceptedRun.Output -join '; ')"
+    }
+    try { $accepted = $acceptedRun.Output[-1] | ConvertFrom-Json } catch {
+      throw "QueryServiceStatusEx returned invalid accepted-controls evidence"
+    }
+    if (-not $accepted.accepts_shutdown -or [int]$accepted.controls_accepted -le 0) {
+      throw "running service did not advertise SERVICE_ACCEPT_SHUTDOWN"
+    }
+
+    $stage = "SAFE_OS_SHUTDOWN_CONTROL"
+    $controlRun = Invoke-CapturedPython -Arguments @(
+      "-m", "deployment.windows_stage7_scm", "shutdown", "--service", $service)
+    if ($controlRun.ExitCode -ne 0) {
+      throw "acceptance-only shutdown control failed: $($controlRun.Output -join '; ')"
+    }
+    $stage = "SAFE_OS_SHUTDOWN_STOP"
+    Wait-State "Stopped"
+    if ($null -ne (Get-Process -Id $shutdownPid -ErrorAction SilentlyContinue)) {
+      throw "service process survived shutdown path"
+    }
+    if (Test-Path -LiteralPath $marker) { throw "health marker survived shutdown path" }
+    $stage = "SAFE_OS_SHUTDOWN_PROCESS_TREE"
+    Wait-TreeGone $shutdownTree "SAFE_OS_SHUTDOWN"
+    foreach ($transient in @($treeMarker, $treeGate, "$treeMarker.tmp", (Join-Path $runtime "process-tree.tmp"))) {
+      if (Test-Path -LiteralPath $transient) { throw "Runtime transient survived shutdown path: $transient" }
+    }
+    $stage = "SAFE_OS_SHUTDOWN_LOGGING"
+    Assert-LogEvent "SERVICE_SHUTDOWN_REQUEST" $shutdownPid
+    Assert-LogEvent "SERVICE_STOP" $shutdownPid
+    $result.WINDOWS_SAFE_OS_SHUTDOWN = "PASS"
+    $result.details = "SCM lifecycle verified; live SCM advertised SERVICE_ACCEPT_SHUTDOWN; SvcShutdown ran via reviewed custom control 200 with bounded cleanup; host shutdown/reboot was not performed"
   }
 } catch {
   if (-not $primaryFailure) { $primaryFailure = "[$stage] $($_.Exception.Message)" }

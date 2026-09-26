@@ -8,6 +8,8 @@ import os
 from pathlib import Path
 import sys
 
+STAGE7_ACCEPTANCE_SHUTDOWN_CONTROL = 200
+
 from deployment.windows_strict_service_create import (
     StrictCreateFailure,
     strict_create_service,
@@ -46,10 +48,24 @@ class CryptoHunterBackendTestService(win32serviceutil.ServiceFramework):
         self.ownership_record = self.machine_root / "windows-acceptance-ownership.json"
         self.tree: ChildJob | None = None
         self.logger = None
+        self.stop_reason = "stop"
 
-    def SvcStop(self) -> None:
+    def _request_stop(self, reason: str) -> None:
+        self.stop_reason = reason
         self.ReportServiceStatus(win32service.SERVICE_STOP_PENDING)
         win32event.SetEvent(self.stop_event)
+
+    def SvcStop(self) -> None:
+        self._request_stop("stop")
+
+    def SvcShutdown(self) -> None:
+        self._request_stop("shutdown")
+
+    def SvcOther(self, control: int) -> None:
+        if control == STAGE7_ACCEPTANCE_SHUTDOWN_CONTROL:
+            self.SvcShutdown()
+            return
+        super().SvcOther(control)
 
     def SvcDoRun(self) -> None:
         self.marker.parent.mkdir(parents=True, exist_ok=True)
@@ -93,6 +109,8 @@ class CryptoHunterBackendTestService(win32serviceutil.ServiceFramework):
             self.logger.info("PROCESS_TREE_READY")
             servicemanager.LogInfoMsg("CryptoHunter SCM acceptance harness running")
             win32event.WaitForSingleObject(self.stop_event, win32event.INFINITE)
+            if self.stop_reason == "shutdown":
+                self.logger.info("SERVICE_SHUTDOWN_REQUEST")
             self.logger.info("SERVICE_STOP")
         finally:
             if self.tree is not None:
