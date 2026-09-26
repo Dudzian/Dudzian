@@ -52,14 +52,40 @@ class CryptoHunterBackendTestService(win32serviceutil.ServiceFramework):
     def SvcDoRun(self) -> None:
         self.marker.parent.mkdir(parents=True, exist_ok=True)
         self.marker.write_text(str(os.getpid()), encoding="ascii")
-        self.logger = configure_service_logger(self.machine_root / "Logs")
+        try:
+            self.logger = configure_service_logger(self.machine_root / "Logs")
+        except Exception as exc:
+            # The persistent sink is not available.  Do not create a second artifact:
+            # use the SCM/event-log channel which already owns service diagnostics.
+            servicemanager.LogErrorMsg(
+                "PROCESS_TREE_START_FAILURE "
+                f"service_name={self._svc_name_} "
+                f"exception_type={type(exc).__name__} exception_message={exc} "
+                f"service_pid={os.getpid()}"
+            )
+            self.marker.unlink(missing_ok=True)
+            raise
         self.logger.info("SERVICE_START")
         try:
-            child_python = reviewed_python_executable(self.ownership_record)
-            self.tree = ChildJob(self.machine_root / "Runtime", python_executable=child_python,
-                                 win32api=win32api,
-                                 win32con=win32con, win32job=win32job)
-            self.tree.start()
+            try:
+                child_python = reviewed_python_executable(self.ownership_record)
+                self.tree = ChildJob(
+                    self.machine_root / "Runtime",
+                    python_executable=child_python,
+                    win32api=win32api,
+                    win32con=win32con,
+                    win32job=win32job,
+                )
+                self.tree.start()
+            except Exception as exc:
+                self.logger.exception(
+                    "PROCESS_TREE_START_FAILURE exception_type=%s exception_message=%s "
+                    "service_pid=%d",
+                    type(exc).__name__,
+                    str(exc),
+                    os.getpid(),
+                )
+                raise
             self.logger.info("PROCESS_TREE_READY")
             servicemanager.LogInfoMsg("CryptoHunter SCM acceptance harness running")
             win32event.WaitForSingleObject(self.stop_event, win32event.INFINITE)

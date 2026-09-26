@@ -27,7 +27,11 @@ $serviceOwnershipProven = $false
 $ownership = $null
 $stage = "INSTALL"
 $primaryFailure = $null
+$startupDiagnosticSinceUtc = $null
+$startupServicePid = 0
 $cleanupFailures = [System.Collections.Generic.List[string]]::new()
+$startupDiagnostics = [System.Collections.Generic.List[string]]::new()
+$diagnosticFailures = [System.Collections.Generic.List[string]]::new()
 $result = [ordered]@{
   WINDOWS_NATIVE_PATH_INTEGRATION = "FAIL"
   WINDOWS_PROTECTED_CONFIGURATION = "FAIL"
@@ -101,6 +105,61 @@ function Get-Tree([int]$ServicePid) {
     Start-Sleep -Milliseconds 500
   }
   throw "tree creation deadline expired service_pid=$ServicePid"
+}
+
+function Get-ProcessTreeStartupDiagnostic([int]$ServicePid, [DateTime]$SinceUtc) {
+  $lines = [System.Collections.Generic.List[string]]::new()
+  $observed = Get-CimInstance Win32_Service -Filter "Name='$service'" -ErrorAction Stop
+  $lines.Add("PROCESS_TREE_START_DIAGNOSTIC scm_state=$($observed.State) scm_pid=$([int]$observed.ProcessId)")
+
+  $markerExists = Test-Path -LiteralPath $marker
+  $markerPid = 0
+  if ($markerExists) {
+    $markerItem = Get-Item -LiteralPath $marker -Force -ErrorAction Stop
+    if (-not $markerItem.PSIsContainer -and
+        -not $markerItem.Attributes.HasFlag([IO.FileAttributes]::ReparsePoint)) {
+      $markerValue = [string](Get-Content -LiteralPath $marker -Raw -ErrorAction Stop)
+      if ($markerValue -match '^\d+$') { $markerPid = [int]$markerValue }
+    }
+  }
+  $treeExists = Test-Path -LiteralPath $treeMarker -PathType Leaf
+  $gateExists = Test-Path -LiteralPath $treeGate -PathType Leaf
+  $lines.Add("PROCESS_TREE_START_DIAGNOSTIC health_marker=$markerExists health_pid=$markerPid process_tree_json=$treeExists process_tree_gate=$gateExists")
+
+  foreach ($name in @("backend.log", "backend.log.1", "backend.log.2", "backend.log.3", "backend.log.4")) {
+    $candidate = Join-Path $logs $name
+    if (-not (Test-Path -LiteralPath $candidate)) { continue }
+    $item = Get-Item -LiteralPath $candidate -Force -ErrorAction Stop
+    if ($item.PSIsContainer -or $item.Attributes.HasFlag([IO.FileAttributes]::ReparsePoint)) {
+      $lines.Add("PROCESS_TREE_START_DIAGNOSTIC log=$name skipped=non_regular")
+      continue
+    }
+    foreach ($match in @(Select-String -LiteralPath $candidate -SimpleMatch "PROCESS_TREE_START_FAILURE" -ErrorAction Stop)) {
+      $lines.Add("PROCESS_TREE_START_DIAGNOSTIC log=$name event=$($match.Line)")
+    }
+  }
+
+  try {
+    $eventQuery = @{ LogName = "Application"; StartTime = $SinceUtc }
+    foreach ($event in @(Get-WinEvent -FilterHashtable $eventQuery -MaxEvents 128 -ErrorAction Stop)) {
+      $messageLine = @(
+        ([string]$event.Message -split "`r?`n") |
+          Where-Object { $_ -match 'PROCESS_TREE_START_FAILURE' } |
+          Select-Object -First 1
+      )
+      if ($messageLine.Count -ne 1) { continue }
+      $messageLine = [string]$messageLine[0]
+      if ($messageLine -notmatch 'service_name=CryptoHunterBackend(?:\s|$)') { continue }
+      if ($ServicePid -gt 0 -and
+          $messageLine -notmatch "service_pid=$ServicePid(?:\s|$)") { continue }
+      $lines.Add("PROCESS_TREE_START_DIAGNOSTIC event_log=Application event=$messageLine")
+    }
+  } catch {
+    $script:diagnosticFailures.Add(
+      "[PROCESS_TREE_START_DIAGNOSTIC_EVENT_LOG] $($_.Exception.Message)"
+    )
+  }
+  return $lines
 }
 
 function Assert-Tree($Tree, [string]$Phase) {
@@ -475,10 +534,12 @@ try {
     $result.WINDOWS_SERVICE_INSTALLATION = "PASS"
 
     $stage = "START"
+    $startupDiagnosticSinceUtc = [DateTime]::UtcNow
     Start-Service $service
     Wait-State "Running"
     Wait-Marker
     $pid1 = Assert-RunningPidMatch
+    $startupServicePid = $pid1
     $stage = "PROCESS_TREE_START"
     $tree1 = Get-Tree $pid1
     Assert-Tree $tree1 "START"
@@ -585,6 +646,23 @@ try {
   }
 } catch {
   if (-not $primaryFailure) { $primaryFailure = "[$stage] $($_.Exception.Message)" }
+  if (
+    ($stage -ceq "PROCESS_TREE_START" -and
+      $_.Exception.Message -like "tree creation deadline expired*") -or
+    $stage -ceq "START"
+  ) {
+    try {
+      # Capture and publish while the owned Logs tree still exists; cleanup follows.
+      foreach ($line in @(
+        Get-ProcessTreeStartupDiagnostic $startupServicePid $startupDiagnosticSinceUtc
+      )) {
+        $startupDiagnostics.Add([string]$line)
+        Write-Output $line
+      }
+    } catch {
+      $diagnosticFailures.Add("[PROCESS_TREE_START_DIAGNOSTIC] $($_.Exception.Message)")
+    }
+  }
 } finally {
   if ($intentOwned) {
     if (Test-Path -LiteralPath $ownershipPath -PathType Leaf) {
@@ -686,6 +764,12 @@ try {
 $result | ConvertTo-Json -Compress | Write-Output
 $reportedFailures = [System.Collections.Generic.List[string]]::new()
 if ($primaryFailure) { $reportedFailures.Add($primaryFailure) }
+if ($startupDiagnostics.Count -gt 0) {
+  $reportedFailures.Add($startupDiagnostics -join "; ")
+}
+if ($diagnosticFailures.Count -gt 0) {
+  $reportedFailures.Add($diagnosticFailures -join "; ")
+}
 if ($cleanupFailures.Count -gt 0) {
   $reportedFailures.Add("[CLEANUP] $($cleanupFailures -join '; ')")
 }
