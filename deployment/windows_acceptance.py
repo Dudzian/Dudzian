@@ -18,7 +18,6 @@ from typing import Callable
 from deployment.core_test_plan import MANIFEST, execute_plan
 from deployment.host_identity import canonical_host_os
 from deployment.platform_evidence import SCM_ITEMS, evidence_document
-from deployment.platforms.windows import resolve_paths
 
 GITHUB_PROVIDER = "https://github.com"
 LOCAL_PROVIDER = "LOCAL_REVIEWED_WINDOWS_EXECUTION"
@@ -58,8 +57,9 @@ class AcceptanceBoundary:
             return "ProgramData is unavailable"
         if shutil.which("powershell") is None or shutil.which("sc.exe") is None:
             return "Windows SCM tooling is unavailable"
+        if not staging_parent.is_dir():
+            return "test staging location is not an existing directory"
         try:
-            staging_parent.mkdir(parents=True, exist_ok=True)
             with tempfile.NamedTemporaryFile(dir=staging_parent, delete=True):
                 pass
         except OSError as exc:
@@ -67,8 +67,11 @@ class AcceptanceBoundary:
         return None
 
     def staging_parent(self) -> Path:
-        """Qualify native known-folder paths before creating any live-test state."""
-        return resolve_paths().runtime / "AcceptanceStaging"
+        """Return the existing native root outside the protected Stage-4 layout."""
+        program_data = os.environ.get("ProgramData")
+        if not program_data:
+            raise RuntimeError("ProgramData is unavailable")
+        return Path(program_data)
 
     def run_core(self, revision: str, provider: str, run_id: str, output: Path) -> None:
         execute_plan(
