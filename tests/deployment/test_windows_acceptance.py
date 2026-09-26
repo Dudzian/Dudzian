@@ -201,6 +201,9 @@ def test_failed_core_plan_publishes_no_pass_artifact(
         "WINDOWS_GRACEFUL_STOP",
         "WINDOWS_MANUAL_RESTART",
         "WINDOWS_AUTOMATIC_CRASH_RESTART",
+        "WINDOWS_PROCESS_TREE",
+        "WINDOWS_NO_ORPHAN_CHILDREN",
+        "WINDOWS_PERSISTENT_LOGGING",
         "WINDOWS_CLEANUP",
     ],
 )
@@ -235,6 +238,9 @@ def test_successful_orchestration_uses_reviewed_boundary(
         "WINDOWS_GRACEFUL_STOP",
         "WINDOWS_MANUAL_RESTART",
         "WINDOWS_AUTOMATIC_CRASH_RESTART",
+        "WINDOWS_PROCESS_TREE",
+        "WINDOWS_NO_ORPHAN_CHILDREN",
+        "WINDOWS_PERSISTENT_LOGGING",
     }
     assert all(result["status"] == "PASS" for result in evidence["results"])
 
@@ -819,6 +825,9 @@ def test_exact_sys_executable_is_propagated_even_when_path_python_differs(
         "WINDOWS_GRACEFUL_STOP": "PASS",
         "WINDOWS_MANUAL_RESTART": "PASS",
         "WINDOWS_AUTOMATIC_CRASH_RESTART": "PASS",
+        "WINDOWS_PROCESS_TREE": "PASS",
+        "WINDOWS_NO_ORPHAN_CHILDREN": "PASS",
+        "WINDOWS_PERSISTENT_LOGGING": "PASS",
         "cleanup": "PASS",
     }
 
@@ -839,6 +848,46 @@ def test_exact_sys_executable_is_propagated_even_when_path_python_differs(
     AcceptanceBoundary().run_scm()
     assert calls[0][calls[0].index("-PythonExecutable") + 1] == windows_acceptance.sys.executable
     assert "python" not in calls[0]
+
+
+@pytest.mark.parametrize(
+    "stage,expected",
+    [
+        ("STAGE5_LOGS_PROVISION", "WINDOWS_PERSISTENT_LOGGING"),
+        ("STAGE5_LOGS_QUALIFICATION", "WINDOWS_PERSISTENT_LOGGING"),
+        ("PROCESS_TREE_START", "WINDOWS_PROCESS_TREE"),
+        ("PROCESS_TREE_MANUAL_RESTART", "WINDOWS_PROCESS_TREE"),
+        ("PROCESS_TREE_CRASH_RESTART", "WINDOWS_PROCESS_TREE"),
+        ("NO_ORPHAN_GRACEFUL_STOP", "WINDOWS_NO_ORPHAN_CHILDREN"),
+        ("NO_ORPHAN_CRASH_RESTART", "WINDOWS_NO_ORPHAN_CHILDREN"),
+        ("NO_ORPHAN_FINAL_STOP", "WINDOWS_NO_ORPHAN_CHILDREN"),
+        ("PERSISTENT_LOGGING_START", "WINDOWS_PERSISTENT_LOGGING"),
+        ("PERSISTENT_LOGGING_MANUAL_RESTART", "WINDOWS_PERSISTENT_LOGGING"),
+        ("PERSISTENT_LOGGING_CRASH_RESTART", "WINDOWS_PERSISTENT_LOGGING"),
+        ("PERSISTENT_LOGGING_FINAL_STOP", "WINDOWS_PERSISTENT_LOGGING"),
+    ],
+)
+def test_each_stage5_probe_label_has_exact_failure_attribution(stage: str, expected: str) -> None:
+    assert windows_acceptance._failed_scm_result(f"[{stage}] controlled failure") == expected
+
+
+def test_cleanup_only_contract_preserves_order_and_diagnostics() -> None:
+    source = Path("deployment/windows_scm_probe.ps1").read_text(encoding="utf-8")
+    final = source[source.index("} finally {\n  if ($intentOwned)") :]
+    positions = [
+        final.index("Stop-OwnedServiceForCleanup"),
+        final.index("Remove-OwnedProcessTreeArtifacts $ownership"),
+        final.index('"deployment.windows_logging_provision", "cleanup"'),
+        final.index('"deployment.windows_dacl_provision"'),
+        final.index("foreach ($target in @($ownership.grants))"),
+        final.index("$harness remove"),
+        final.index("Remove-Item -LiteralPath $ownershipPath"),
+    ]
+    assert positions == sorted(positions)
+    assert "$null -ne $ownership.logging_security_plan" in final
+    assert "Stage-5 helper rejected cleanup: $($loggingCleanup.Output -join '; ')" in final
+    assert 'foreach ($name in @("process-tree.json", "process-tree.gate",' in source
+    assert "Remove-Item -LiteralPath $runtime" not in source
 
 
 def test_timeout_invokes_cleanup_only_with_same_exact_interpreter(
