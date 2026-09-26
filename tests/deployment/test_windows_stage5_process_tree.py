@@ -16,6 +16,7 @@ from deployment.windows_process_tree import (
     ChildJob,
     JOB_PREFIX,
     ProcessTreeError,
+    job_security_attributes,
     job_name,
     reviewed_python_executable,
 )
@@ -45,8 +46,10 @@ class QualifierJobApi:
 
     def __init__(self, pids=(20, 30), flags=0x2000, open_error=None):
         self.pids, self.flags, self.open_error = pids, flags, open_error
+        self.open_calls = []
 
-    def OpenJobObject(self, *_):
+    def OpenJobObject(self, *args):
+        self.open_calls.append(args)
         if self.open_error:
             raise self.open_error
         return Handle()
@@ -63,6 +66,7 @@ class NativeError(Exception):
 
 
 class StartJobApi:
+    JOB_OBJECT_QUERY = 0x0004
     JobObjectExtendedLimitInformation = 2
     JobObjectBasicProcessIdList = 3
     JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
@@ -75,8 +79,8 @@ class StartJobApi:
         self.set_payload = None
         self.extended_queries = 0
 
-    def CreateJobObject(self, _security, name):
-        self.events.append(("create", name))
+    def CreateJobObject(self, security, name):
+        self.events.append(("create", security, name))
         return self.handle
 
     def QueryInformationJobObject(self, _handle, info):
@@ -115,6 +119,42 @@ CON = SimpleNamespace(PROCESS_SET_QUOTA=1, PROCESS_TERMINATE=2, PROCESS_QUERY_LI
 REVIEWED_PYTHON = r"C:\hostedtoolcache\windows\Python\3.11.x\x64\python.exe"
 
 
+class SecurityApi:
+    ACL_REVISION = 2
+    WinBuiltinAdministratorsSid = 26
+    WinLocalSystemSid = 22
+
+    def __init__(self):
+        self.created_sids = []
+        self.acl = SimpleNamespace(aces=[])
+        self.acl.AddAccessAllowedAce = lambda revision, mask, sid: self.acl.aces.append(
+            (revision, mask, sid)
+        )
+        self.descriptor = SimpleNamespace(dacl_call=None)
+        self.descriptor.SetSecurityDescriptorDacl = lambda present, dacl, defaulted: setattr(
+            self.descriptor, "dacl_call", (present, dacl, defaulted)
+        )
+
+    def CreateWellKnownSid(self, sid_type, domain):
+        assert domain is None
+        self.created_sids.append(sid_type)
+        return f"SID:{sid_type}"
+
+    def ACL(self):
+        return self.acl
+
+    def SECURITY_DESCRIPTOR(self):
+        return self.descriptor
+
+
+class PyWinTypesApi:
+    def __init__(self):
+        self.attributes = SimpleNamespace(SECURITY_DESCRIPTOR=None, bInheritHandle=None)
+
+    def SECURITY_ATTRIBUTES(self):
+        return self.attributes
+
+
 def load_service_module(monkeypatch):
     class ServiceFramework:
         def __init__(self, _args):
@@ -128,8 +168,10 @@ def load_service_module(monkeypatch):
         "win32con": SimpleNamespace(),
         "win32event": SimpleNamespace(INFINITE=-1),
         "win32job": SimpleNamespace(),
+        "win32security": SimpleNamespace(),
         "win32service": SimpleNamespace(SERVICE_STOP_PENDING=3, SERVICE_AUTO_START=2),
         "win32serviceutil": SimpleNamespace(ServiceFramework=ServiceFramework),
+        "pywintypes": SimpleNamespace(),
     }
     for name, module in modules.items():
         monkeypatch.setitem(sys.modules, name, module)
@@ -175,6 +217,8 @@ def prepare_start(
     events = []
     api = StartApi(events, last_error)
     jobs = StartJobApi(events, query_flag=query_flag, assignment_error=assignment_error)
+    security = SecurityApi()
+    pywintypes = PyWinTypesApi()
     popen_calls = []
 
     class Popen:
@@ -216,6 +260,8 @@ def prepare_start(
         win32api=api,
         win32con=CON,
         win32job=jobs,
+        win32security=security,
+        pywintypes=pywintypes,
     )
     release = child_job._release_gate
     monkeypatch.setattr(
@@ -236,7 +282,14 @@ def test_job_name_depends_only_on_positive_service_pid():
 
 def test_child_job_requires_explicit_interpreter(tmp_path):
     with pytest.raises(TypeError):
-        ChildJob(tmp_path, win32api=object(), win32con=object(), win32job=object())
+        ChildJob(
+            tmp_path,
+            win32api=object(),
+            win32con=object(),
+            win32job=object(),
+            win32security=object(),
+            pywintypes=object(),
+        )
     with pytest.raises(ProcessTreeError, match="required"):
         ChildJob(
             tmp_path,
@@ -244,7 +297,37 @@ def test_child_job_requires_explicit_interpreter(tmp_path):
             win32api=object(),
             win32con=object(),
             win32job=object(),
+            win32security=object(),
+            pywintypes=object(),
         )
+
+
+def test_job_security_is_explicit_non_inheritable_and_query_only():
+    security = SecurityApi()
+    pywintypes = PyWinTypesApi()
+    jobs = SimpleNamespace(JOB_OBJECT_QUERY=0x0004)
+
+    attributes = job_security_attributes(
+        pywintypes=pywintypes, win32job=jobs, win32security=security
+    )
+
+    assert attributes is pywintypes.attributes
+    assert attributes.bInheritHandle is False
+    assert attributes.SECURITY_DESCRIPTOR is security.descriptor
+    assert security.descriptor.dacl_call == (True, security.acl, False)
+    assert security.created_sids == [
+        security.WinBuiltinAdministratorsSid,
+        security.WinLocalSystemSid,
+    ]
+    assert security.acl.aces == [
+        (security.ACL_REVISION, jobs.JOB_OBJECT_QUERY, "SID:26"),
+        (security.ACL_REVISION, jobs.JOB_OBJECT_QUERY, "SID:22"),
+    ]
+    forbidden = 0x0001 | 0x0002 | 0x0008 | 0x00040000 | 0x00080000
+    assert all(
+        mask == jobs.JOB_OBJECT_QUERY and mask & forbidden == 0
+        for _revision, mask, _sid in security.acl.aces
+    )
 
 
 def test_existing_job_fails_closed_before_child(monkeypatch, tmp_path):
@@ -253,6 +336,9 @@ def test_existing_job_fails_closed_before_child(monkeypatch, tmp_path):
         child_job.start()
     assert jobs.handle.closed
     assert popen == []
+    create = next(event for event in _events if isinstance(event, tuple) and event[0] == "create")
+    assert create[1] is not None
+    assert not any("SetNamedSecurityInfo" in str(event) for event in _events)
 
 
 def test_child_job_start_sets_exact_limit_and_enforces_reviewed_interpreter_order(
@@ -380,7 +466,12 @@ def test_read_only_qualifier_requires_exact_child_set(tmp_path, pids):
 def test_read_only_qualifier_passes_exact_contract(tmp_path):
     path = tmp_path / "process-tree.json"
     write_marker(path)
-    assert qualify(path, 10, win32job=QualifierJobApi()) == {"WINDOWS_PROCESS_TREE": "PASS"}
+    jobs = QualifierJobApi()
+    assert qualify(path, 10, win32job=jobs) == {"WINDOWS_PROCESS_TREE": "PASS"}
+    assert jobs.open_calls == [(jobs.JOB_OBJECT_QUERY, False, job_name(10))]
+    source = Path("deployment/windows_process_tree_qualification.py").read_text(encoding="utf-8")
+    assert "SetNamedSecurityInfo" not in source
+    assert "SetSecurityDescriptorDacl" not in source
 
 
 def test_read_only_qualifier_requires_exact_kill_limit(tmp_path):
