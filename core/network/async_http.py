@@ -43,12 +43,19 @@ class RateLimitedAsyncClient:
             max_connections=max_connections,
             max_keepalive_connections=max_keepalive_connections,
         )
-        self._client = httpx.AsyncClient(
-            base_url=base_url,
-            timeout=timeout,
-            limits=limits,
-            transport=transport,
-        )
+        if base_url is None:
+            self._client = httpx.AsyncClient(
+                timeout=timeout,
+                limits=limits,
+                transport=transport,
+            )
+        else:
+            self._client = httpx.AsyncClient(
+                base_url=base_url,
+                timeout=timeout,
+                limits=limits,
+                transport=transport,
+            )
         low, high = (
             (float(jitter_range[0]), float(jitter_range[1]))
             if len(jitter_range) >= 2
