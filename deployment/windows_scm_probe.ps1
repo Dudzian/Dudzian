@@ -11,6 +11,11 @@ $identity = "NT SERVICE\CryptoHunterBackend"
 $harness = Join-Path $PSScriptRoot "windows_test_service.py"
 $testRoot = Join-Path $env:ProgramData "CryptoHunter"
 $marker = Join-Path $testRoot "scm-health.txt"
+$runtime = Join-Path $testRoot "Runtime"
+$treeMarker = Join-Path $runtime "process-tree.json"
+$treeGate = Join-Path $runtime "process-tree.gate"
+$logs = Join-Path $testRoot "Logs"
+$logFile = Join-Path $logs "backend.log"
 $ownershipPath = Join-Path $testRoot "windows-acceptance-ownership.json"
 $ownershipTemp = "$ownershipPath.$WindowsAcceptanceRunToken.tmp"
 $ownershipProofTemp = "$ownershipPath.$WindowsAcceptanceRunToken.prove.tmp"
@@ -34,6 +39,9 @@ $result = [ordered]@{
   WINDOWS_GRACEFUL_STOP = "FAIL"
   WINDOWS_MANUAL_RESTART = "FAIL"
   WINDOWS_AUTOMATIC_CRASH_RESTART = "FAIL"
+  WINDOWS_PROCESS_TREE = "FAIL"
+  WINDOWS_NO_ORPHAN_CHILDREN = "FAIL"
+  WINDOWS_PERSISTENT_LOGGING = "FAIL"
   cleanup = "FAIL"
   details = ""
 }
@@ -79,6 +87,74 @@ function Wait-Marker {
     Start-Sleep -Milliseconds 500
   }
   throw "health marker missing"
+}
+
+function Get-Tree([int]$ServicePid) {
+  for ($i = 0; $i -lt 40; $i++) {
+    if (Test-Path -LiteralPath $treeMarker -PathType Leaf) {
+      try {
+        $tree = Get-Content -LiteralPath $treeMarker -Raw | ConvertFrom-Json
+        if ([int]$tree.service_pid -eq $ServicePid -and [int]$tree.child_pid -gt 0 -and
+            [int]$tree.grandchild_pid -gt 0) { return $tree }
+      } catch {}
+    }
+    Start-Sleep -Milliseconds 500
+  }
+  throw "tree creation deadline expired service_pid=$ServicePid"
+}
+
+function Assert-Tree($Tree, [string]$Phase) {
+  $qualify = Invoke-CapturedPython -Arguments @(
+    "-m", "deployment.windows_process_tree_qualification", "--runtime", $runtime,
+    "--service-pid", [string]$Tree.service_pid)
+  if ($qualify.ExitCode -ne 0) { throw "$Phase tree qualifier failed: $($qualify.Output -join '; ')" }
+  $child = Get-CimInstance Win32_Process -Filter "ProcessId=$($Tree.child_pid)"
+  $grandchild = Get-CimInstance Win32_Process -Filter "ProcessId=$($Tree.grandchild_pid)"
+  if ($null -eq $child -or [int]$child.ParentProcessId -ne [int]$Tree.service_pid -or
+      $null -eq $grandchild -or [int]$grandchild.ParentProcessId -ne [int]$Tree.child_pid) {
+    throw "$Phase parent relationship mismatch"
+  }
+}
+
+function Wait-TreeGone($Tree, [string]$Phase) {
+  for ($i = 0; $i -lt 60; $i++) {
+    $childAlive = $null -ne (Get-Process -Id $Tree.child_pid -ErrorAction SilentlyContinue)
+    $grandchildAlive = $null -ne (Get-Process -Id $Tree.grandchild_pid -ErrorAction SilentlyContinue)
+    $jobAlive = $true
+    $check = Invoke-CapturedPython -Arguments @(
+      "-m", "deployment.windows_process_tree_qualification", "--runtime", $runtime,
+      "--service-pid", [string]$Tree.service_pid, "--expect-absent")
+    if ($check.ExitCode -eq 0) { $jobAlive = $false }
+    if (-not $childAlive -and -not $grandchildAlive -and -not $jobAlive) { return }
+    Start-Sleep -Milliseconds 250
+  }
+  throw "$Phase orphan deadline expired service_pid=$($Tree.service_pid) child_pid=$($Tree.child_pid) grandchild_pid=$($Tree.grandchild_pid) job_name=$($Tree.job_name)"
+}
+
+function Assert-LogEvent([string]$Event, [int]$Pid) {
+  if (-not (Test-Path -LiteralPath $logFile -PathType Leaf)) { throw "backend.log missing" }
+  $content = Get-Content -LiteralPath $logFile -Raw
+  if ($content -notmatch "pid=$Pid .*$Event") { throw "log event missing event=$Event pid=$Pid" }
+}
+
+function Remove-OwnedProcessTreeArtifacts($Record) {
+  $runtimePlan = @($Record.path_security_plan.targets | Where-Object { $_.role -ceq "RUNTIME" })
+  $sentinelPath = Join-Path $runtime ".stage4-ownership.json"
+  if ($runtimePlan.Count -ne 1 -or -not (Test-Path -LiteralPath $sentinelPath -PathType Leaf)) {
+    throw "Runtime ownership proof is missing"
+  }
+  $sentinel = Get-Content -LiteralPath $sentinelPath -Raw | ConvertFrom-Json
+  if (
+    $sentinel.run_token -cne $WindowsAcceptanceRunToken -or
+    $sentinel.role -cne "RUNTIME" -or
+    $sentinel.service_sid -cne $Record.service_sid -or
+    -not [string]::Equals([string]$sentinel.canonical_path, [string]$runtimePlan[0].path,
+      [StringComparison]::OrdinalIgnoreCase)
+  ) { throw "Runtime ownership sentinel mismatch" }
+  foreach ($name in @("process-tree.json", "process-tree.gate", "process-tree.json.tmp", "process-tree.tmp")) {
+    $target = Join-Path $runtime $name
+    if (Test-Path -LiteralPath $target) { Remove-Item -LiteralPath $target -Force -ErrorAction Stop }
+  }
 }
 
 function Read-MarkerPid {
@@ -344,6 +420,17 @@ try {
     $result.WINDOWS_PROTECTED_STATE_PATHS = "PASS"
     $result.WINDOWS_ACL_QUALIFICATION = "PASS"
 
+    $stage = "STAGE5_LOGS_PROVISION"
+    $loggingRun = Invoke-CapturedPython -Arguments @(
+      "-m", "deployment.windows_logging_provision", "provision", "--record", $ownershipPath,
+      "--run-token", $WindowsAcceptanceRunToken)
+    if ($loggingRun.ExitCode -ne 0) { throw "Stage-5 Logs provisioning failed: $($loggingRun.Output -join '; ')" }
+    $stage = "STAGE5_LOGS_QUALIFICATION"
+    $loggingQualification = Invoke-CapturedPython -Arguments @(
+      "-m", "deployment.windows_logging_qualification", "--record", $ownershipPath,
+      "--run-token", $WindowsAcceptanceRunToken)
+    if ($loggingQualification.ExitCode -ne 0) { throw "Stage-5 Logs read-only qualification failed" }
+
     $stage = "AUTOSTART_QUERY"
     $recoveryOutput = @(
       & $PythonExecutable -m deployment.windows_service_recovery `
@@ -376,23 +463,41 @@ try {
     Start-Service $service
     Wait-State "Running"
     Wait-Marker
+    $pid1 = Assert-RunningPidMatch
+    $stage = "PROCESS_TREE_START"
+    $tree1 = Get-Tree $pid1
+    Assert-Tree $tree1 "START"
+    $stage = "PERSISTENT_LOGGING_START"
+    Assert-LogEvent "SERVICE_START" $pid1
     $result.WINDOWS_SERVICE_START = "PASS"
 
     $stage = "STOP"
     Stop-Service $service
     Wait-State "Stopped"
     if (Test-Path $marker) { throw "health marker survived graceful stop" }
+    $stage = "NO_ORPHAN_GRACEFUL_STOP"
+    Wait-TreeGone $tree1 "GRACEFUL_STOP"
+    $stage = "PERSISTENT_LOGGING_START"
+    Assert-LogEvent "SERVICE_STOP" $pid1
     $result.WINDOWS_GRACEFUL_STOP = "PASS"
 
     $stage = "RESTART"
     Start-Service $service
     Wait-State "Running"
     Wait-Marker
-    [void](Assert-RunningPidMatch)
+    $pid2 = Assert-RunningPidMatch
+    $stage = "PROCESS_TREE_MANUAL_RESTART"
+    $tree2 = Get-Tree $pid2
+    Assert-Tree $tree2 "MANUAL_RESTART"
+    if ($pid2 -eq $pid1) { throw "manual restart reused service PID" }
+    $stage = "PERSISTENT_LOGGING_MANUAL_RESTART"
+    Assert-LogEvent "SERVICE_START" $pid1
+    Assert-LogEvent "SERVICE_START" $pid2
     $result.WINDOWS_MANUAL_RESTART = "PASS"
 
     $stage = "CRASH_RESTART"
     $originalPid = Assert-RunningPidMatch
+    $crashedTree = $tree2
     Stop-Process -Id $originalPid -Force -ErrorAction Stop
     $deadline = [DateTime]::UtcNow.AddSeconds(45)
     $crashProven = $false
@@ -415,6 +520,13 @@ try {
     if (-not $crashProven) {
       throw "automatic recovery deadline expired; state=$lastState original_pid=$originalPid current_pid=$currentPid marker_pid=$markerPid"
     }
+    $stage = "NO_ORPHAN_CRASH_RESTART"
+    Wait-TreeGone $crashedTree "CRASH_RESTART"
+    $stage = "PROCESS_TREE_CRASH_RESTART"
+    $tree3 = Get-Tree $currentPid
+    Assert-Tree $tree3 "CRASH_RESTART"
+    $stage = "PERSISTENT_LOGGING_CRASH_RESTART"
+    Assert-LogEvent "SERVICE_START" $currentPid
     $verifyRecovery = @(
       & $PythonExecutable -m deployment.windows_service_recovery --verify-only `
         --record $ownershipPath --run-token $WindowsAcceptanceRunToken 2>&1
@@ -432,6 +544,21 @@ try {
     if ((Get-Service -Name $service).Status.ToString() -cne "Stopped" -or (Test-Path $marker)) {
       throw "graceful stop incorrectly triggered SCM recovery"
     }
+    $stage = "NO_ORPHAN_FINAL_STOP"
+    Wait-TreeGone $tree3 "POST_RECOVERY_GRACEFUL_STOP"
+    $stage = "PERSISTENT_LOGGING_FINAL_STOP"
+    Assert-LogEvent "SERVICE_STOP" $currentPid
+    $allowedLogs = @("backend.log", "backend.log.1", "backend.log.2", "backend.log.3", "backend.log.4", ".stage5-logging-ownership.json")
+    foreach ($entry in Get-ChildItem -LiteralPath $logs -Force) {
+      if ($entry.PSIsContainer -or $entry.Name -cnotin $allowedLogs -or
+          $entry.Attributes.HasFlag([IO.FileAttributes]::ReparsePoint)) {
+        throw "invalid Logs entry: $($entry.Name)"
+      }
+    }
+    if ((Get-Item -LiteralPath $logFile).Length -le 0) { throw "backend.log is empty" }
+    $result.WINDOWS_PROCESS_TREE = "PASS"
+    $result.WINDOWS_NO_ORPHAN_CHILDREN = "PASS"
+    $result.WINDOWS_PERSISTENT_LOGGING = "PASS"
     $result.details = "SCM install/autostart/recovery/start/health/graceful-stop/manual-restart/crash-restart verified"
   }
 } catch {
@@ -443,7 +570,29 @@ try {
         $cleanupFailures.Add("ownership record cannot be reloaded for cleanup")
       }
     }
+    if ($serviceOwnershipProven -and $serviceInstalledByProbe) {
+      try {
+        Stop-Service $service -ErrorAction SilentlyContinue
+        Stop-OwnedServiceForCleanup
+      } catch { $cleanupFailures.Add("stop: $($_.Exception.Message)") }
+    }
+    if ($serviceOwnershipProven -and $null -ne $ownership.path_security_plan) {
+      try { Remove-OwnedProcessTreeArtifacts $ownership } catch {
+        $cleanupFailures.Add("Stage-5 process tree: $($_.Exception.Message)")
+      }
+    }
     if ($null -ne $ownership -and $null -ne $ownership.path_security_plan) {
+      if ($null -ne $ownership.logging_security_plan) {
+        try {
+          $loggingCleanup = Invoke-CapturedPython -Arguments @(
+            "-m", "deployment.windows_logging_provision", "cleanup", "--record", $ownershipPath,
+            "--run-token", $WindowsAcceptanceRunToken)
+          if ($loggingCleanup.ExitCode -ne 0) {
+            throw "Stage-5 helper rejected cleanup: $($loggingCleanup.Output -join '; ')"
+          }
+          $ownership = Get-Content -LiteralPath $ownershipPath -Raw | ConvertFrom-Json
+        } catch { $cleanupFailures.Add("Stage-5 Logs: $($_.Exception.Message)") }
+      }
       try {
         $stage4CleanupRun = Invoke-CapturedPython -Arguments @(
           "-m",
@@ -465,14 +614,6 @@ try {
     }
     if (-not $serviceOwnershipProven -and (Test-Path -LiteralPath $marker)) {
       $cleanupFailures.Add("unowned health marker exists after install attempt; left untouched")
-    }
-    if ($serviceOwnershipProven -and $serviceInstalledByProbe) {
-      try {
-        Stop-Service $service -ErrorAction SilentlyContinue
-        Stop-OwnedServiceForCleanup
-      } catch {
-        $cleanupFailures.Add("stop: $($_.Exception.Message)")
-      }
     }
     if ($serviceOwnershipProven) {
       try { Remove-Item $marker -Force -ErrorAction Stop } catch {
