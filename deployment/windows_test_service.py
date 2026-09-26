@@ -28,8 +28,10 @@ import win32api  # type: ignore[import-not-found]
 import win32con  # type: ignore[import-not-found]
 import win32event  # type: ignore[import-not-found]
 import win32job  # type: ignore[import-not-found]
+import win32security  # type: ignore[import-not-found]
 import win32service  # type: ignore[import-not-found]
 import win32serviceutil  # type: ignore[import-not-found]
+import pywintypes  # type: ignore[import-not-found]
 
 
 class CryptoHunterBackendTestService(win32serviceutil.ServiceFramework):
@@ -75,6 +77,8 @@ class CryptoHunterBackendTestService(win32serviceutil.ServiceFramework):
                     win32api=win32api,
                     win32con=win32con,
                     win32job=win32job,
+                    win32security=win32security,
+                    pywintypes=pywintypes,
                 )
                 self.tree.start()
             except Exception as exc:

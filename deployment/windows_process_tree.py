@@ -82,16 +82,35 @@ def wait_for_exact_pids(job: Any, expected: set[int], *, win32job: Any,
     raise ProcessTreeError(f"job PID set mismatch expected={sorted(expected)} observed={sorted(observed)}")
 
 
+def job_security_attributes(*, pywintypes: Any, win32job: Any,
+                            win32security: Any) -> Any:
+    """Build the immutable, query-only DACL used at named-job creation."""
+    administrators = win32security.CreateWellKnownSid(
+        win32security.WinBuiltinAdministratorsSid, None)
+    system = win32security.CreateWellKnownSid(win32security.WinLocalSystemSid, None)
+    dacl = win32security.ACL()
+    for sid in (administrators, system):
+        dacl.AddAccessAllowedAce(
+            win32security.ACL_REVISION, win32job.JOB_OBJECT_QUERY, sid)
+    descriptor = win32security.SECURITY_DESCRIPTOR()
+    descriptor.SetSecurityDescriptorDacl(True, dacl, False)
+    attributes = pywintypes.SECURITY_ATTRIBUTES()
+    attributes.SECURITY_DESCRIPTOR = descriptor
+    attributes.bInheritHandle = False
+    return attributes
+
+
 class ChildJob:
     """Own a kill-on-close job and its deliberately gated qualification child."""
 
     def __init__(self, runtime: Path, *, python_executable: str, win32api: Any, win32con: Any,
-                 win32job: Any) -> None:
+                 win32job: Any, win32security: Any, pywintypes: Any) -> None:
         if not isinstance(python_executable, str) or not python_executable:
             raise ProcessTreeError("reviewed python_executable is required")
         self.runtime = runtime
         self.python_executable = python_executable
         self.win32api, self.win32con, self.win32job = win32api, win32con, win32job
+        self.win32security, self.pywintypes = win32security, pywintypes
         self.service_pid = os.getpid()
         self.name = job_name(self.service_pid)
         self.handle: Any = None
@@ -102,7 +121,12 @@ class ChildJob:
         marker = self.runtime / MARKER_NAME
         gate.unlink(missing_ok=True)
         marker.unlink(missing_ok=True)
-        self.handle = self.win32job.CreateJobObject(None, self.name)
+        security = job_security_attributes(
+            pywintypes=self.pywintypes,
+            win32job=self.win32job,
+            win32security=self.win32security,
+        )
+        self.handle = self.win32job.CreateJobObject(security, self.name)
         # CreateJobObject may return an existing named object: never adopt it.
         if self.win32api.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
             self.close()
