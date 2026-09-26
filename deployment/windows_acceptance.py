@@ -17,11 +17,17 @@ from typing import Callable
 
 from deployment.core_test_plan import MANIFEST, execute_plan
 from deployment.host_identity import canonical_host_os
-from deployment.platform_evidence import SCM_ITEMS, evidence_document
+from deployment.platform_evidence import (
+    SCM_ITEMS,
+    WINDOWS_LIVE_ITEMS,
+    WINDOWS_STAGE6_ITEMS,
+    evidence_document,
+)
+from deployment.windows_stage6_probe import Stage6ProbeError, run_probe
 
 GITHUB_PROVIDER = "https://github.com"
 LOCAL_PROVIDER = "LOCAL_REVIEWED_WINDOWS_EXECUTION"
-RESULT_NAMES = ("WINDOWS_CORE_PLAN", *SCM_ITEMS)
+RESULT_NAMES = ("WINDOWS_CORE_PLAN", *WINDOWS_LIVE_ITEMS)
 
 
 class WindowsAcceptanceError(RuntimeError):
@@ -120,6 +126,9 @@ class AcceptanceBoundary:
             if payload.get(item) != "PASS":
                 raise WindowsAcceptanceError(f"SCM result was not PASS: {item}", item)
         return payload
+
+    def run_stage6(self, scratch_parent: Path) -> dict[str, str]:
+        return run_probe(scratch_parent)
 
 
 def publish_artifacts(
@@ -239,12 +248,30 @@ def run_acceptance(
         except Exception as exc:
             raise WindowsAcceptanceError(str(exc), "WINDOWS_CORE_PLAN") from exc
         scm = live.run_scm()
+        try:
+            stage6 = live.run_stage6(staging_parent)
+        except Stage6ProbeError as exc:
+            raise WindowsAcceptanceError(str(exc), exc.item) from exc
+        except Exception as exc:
+            raise WindowsAcceptanceError(
+                f"[SQLITE_POST_CRASH_VERIFY] {type(exc).__name__}: {exc}",
+                "WINDOWS_SQLITE_CRASH_INTEGRITY",
+            ) from exc
+        for item in WINDOWS_STAGE6_ITEMS:
+            if stage6.get(item) != "PASS":
+                raise WindowsAcceptanceError(f"Stage-6 result was not PASS: {item}", item)
         results = [
             {"item": item, "status": "PASS", "evidence_class": "LIVE_WINDOWS_INTEGRATION",
              "test_or_probe": "deployment.windows_acceptance/windows_scm_probe.ps1",
              "details": scm.get("details", "reviewed SCM lifecycle and cleanup verified")}
             for item in SCM_ITEMS
         ]
+        results.extend(
+            {"item": item, "status": "PASS", "evidence_class": "LIVE_WINDOWS_INTEGRATION",
+             "test_or_probe": "deployment.windows_stage6_probe",
+             "details": "live Windows forced-termination probe passed"}
+            for item in WINDOWS_STAGE6_ITEMS
+        )
         evidence_temp = Path(temporary) / "scm.json"
         evidence_temp.write_text(json.dumps(evidence_document(
             platform_name="WINDOWS", source_revision=source_revision, ci_provider=provider,

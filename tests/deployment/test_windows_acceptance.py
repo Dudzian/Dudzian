@@ -49,6 +49,7 @@ class ReviewedBoundary(AcceptanceBoundary):
         dependency: str | None = None,
         core_failure: bool = False,
         scm_failure: str | None = None,
+        stage6_failure: str | None = None,
     ) -> None:
         self.tmp_path = tmp_path
         self.host = host
@@ -56,6 +57,7 @@ class ReviewedBoundary(AcceptanceBoundary):
         self.dependency = dependency
         self.core_failure = core_failure
         self.scm_failure = scm_failure
+        self.stage6_failure = stage6_failure
 
     def host_os(self) -> str:
         return self.host
@@ -78,18 +80,19 @@ class ReviewedBoundary(AcceptanceBoundary):
         if self.scm_failure:
             raise WindowsAcceptanceError("reviewed failure", self.scm_failure)
         return {
-            "WINDOWS_NATIVE_PATH_INTEGRATION": "PASS",
-            "WINDOWS_PROTECTED_CONFIGURATION": "PASS",
-            "WINDOWS_PROTECTED_STATE_PATHS": "PASS",
-            "WINDOWS_ACL_QUALIFICATION": "PASS",
-            "WINDOWS_SERVICE_INSTALLATION": "PASS",
-            "WINDOWS_AUTOSTART": "PASS",
-            "WINDOWS_SERVICE_START": "PASS",
-            "WINDOWS_GRACEFUL_STOP": "PASS",
-            "WINDOWS_MANUAL_RESTART": "PASS",
-            "WINDOWS_AUTOMATIC_CRASH_RESTART": "PASS",
+            **{item: "PASS" for item in windows_acceptance.SCM_ITEMS},
             "cleanup": "PASS",
             "details": "reviewed boundary completed",
+        }
+
+    def run_stage6(self, scratch_parent: Path) -> dict[str, str]:
+        if self.stage6_failure:
+            raise windows_acceptance.Stage6ProbeError(
+                "SQLITE_POST_CRASH_VERIFY", self.stage6_failure, "reviewed Stage-6 failure"
+            )
+        return {
+            "WINDOWS_FILE_LOCKING": "PASS",
+            "WINDOWS_SQLITE_CRASH_INTEGRITY": "PASS",
         }
 
 
@@ -241,8 +244,29 @@ def test_successful_orchestration_uses_reviewed_boundary(
         "WINDOWS_PROCESS_TREE",
         "WINDOWS_NO_ORPHAN_CHILDREN",
         "WINDOWS_PERSISTENT_LOGGING",
+        "WINDOWS_FILE_LOCKING",
+        "WINDOWS_SQLITE_CRASH_INTEGRITY",
     }
     assert all(result["status"] == "PASS" for result in evidence["results"])
+
+
+def test_reviewed_boundary_returns_complete_current_scm_contract(tmp_path: Path) -> None:
+    result = ReviewedBoundary(tmp_path).run_scm()
+    assert {item: result[item] for item in windows_acceptance.SCM_ITEMS} == {
+        item: "PASS" for item in windows_acceptance.SCM_ITEMS
+    }
+
+
+@pytest.mark.parametrize("item", ["WINDOWS_FILE_LOCKING", "WINDOWS_SQLITE_CRASH_INTEGRITY"])
+def test_stage6_failure_is_labelled_and_publishes_no_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, item: str
+) -> None:
+    boundary = ReviewedBoundary(tmp_path, stage6_failure=item)
+    with pytest.raises(WindowsAcceptanceError, match=r"\[SQLITE_POST_CRASH_VERIFY\]") as failure:
+        invoke(tmp_path, boundary, monkeypatch)
+    assert failure.value.result == item
+    assert not (tmp_path / "core.json").exists()
+    assert not (tmp_path / "scm.json").exists()
 
 
 def test_local_identity_cannot_satisfy_github_gate_but_github_scm_items_can(
