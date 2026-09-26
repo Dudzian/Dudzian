@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 import ctypes
 import importlib.util
 import json
@@ -13,6 +14,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from typing import Callable
 
 from deployment.core_test_plan import MANIFEST, execute_plan
@@ -30,14 +32,32 @@ from deployment.windows_stage7_network_probe import (
     Stage7NetworkProbeError,
     run_probe as run_network_probe,
 )
-from deployment.windows_stage8_postgresql_probe import (
-    Stage8PostgreSQLProbeError,
-    run_probe as run_stage8_postgresql_probe,
-)
+from deployment import windows_stage8_postgresql_probe as stage8_probe
+from deployment.windows_stage8_postgresql_probe import Stage8PostgreSQLProbeError
 
 GITHUB_PROVIDER = "https://github.com"
 LOCAL_PROVIDER = "LOCAL_REVIEWED_WINDOWS_EXECUTION"
 RESULT_NAMES = ("WINDOWS_CORE_PLAN", *WINDOWS_LIVE_ITEMS)
+STAGE8_DEADLINE_SECONDS = 15 * 60
+
+
+@contextmanager
+def _acceptance_phase(name: str):
+    started = time.monotonic()
+    print(f"[WINDOWS_ACCEPTANCE_PHASE] START {name}", flush=True)
+    try:
+        yield
+    except BaseException:
+        print(
+            f"[WINDOWS_ACCEPTANCE_PHASE] FAIL {name} elapsed={time.monotonic() - started:.3f}s",
+            flush=True,
+        )
+        raise
+    else:
+        print(
+            f"[WINDOWS_ACCEPTANCE_PHASE] PASS {name} elapsed={time.monotonic() - started:.3f}s",
+            flush=True,
+        )
 
 
 class WindowsAcceptanceError(RuntimeError):
@@ -168,7 +188,164 @@ class AcceptanceBoundary:
         return run_network_probe(scratch_parent)
 
     def run_stage8(self, scratch_parent: Path) -> dict[str, str]:
-        return run_stage8_postgresql_probe(scratch_parent)
+        status_file = scratch_parent / f".stage8-supervisor-{secrets.token_hex(16)}.json"
+        command = [
+            sys.executable,
+            "-u",
+            "-m",
+            "deployment.windows_stage8_postgresql_probe",
+            "--scratch-parent",
+            str(scratch_parent),
+            "--status-file",
+            str(status_file),
+        ]
+        started = time.monotonic()
+        process = subprocess.Popen(command)
+        final_status: dict[str, object] = {}
+        try:
+            returncode = process.wait(timeout=STAGE8_DEADLINE_SECONDS)
+        except subprocess.TimeoutExpired as exc:
+            secondary_errors: list[str] = []
+            worker_exit_confirmed = False
+            try:
+                process.terminate()
+            except (OSError, PermissionError) as termination_exc:
+                secondary_errors.append(f"[STAGE8_TERMINATION] terminate failed: {termination_exc}")
+            try:
+                process.wait(timeout=10)
+                worker_exit_confirmed = True
+            except subprocess.TimeoutExpired:
+                secondary_errors.append("[STAGE8_TERMINATION] worker did not exit after terminate")
+            except OSError as termination_exc:
+                secondary_errors.append(
+                    f"[STAGE8_TERMINATION] wait after terminate failed: {termination_exc}"
+                )
+            if not worker_exit_confirmed:
+                try:
+                    process.kill()
+                except (OSError, PermissionError) as termination_exc:
+                    secondary_errors.append(f"[STAGE8_TERMINATION] kill failed: {termination_exc}")
+                try:
+                    process.wait(timeout=10)
+                    worker_exit_confirmed = True
+                except subprocess.TimeoutExpired:
+                    secondary_errors.append(
+                        "[STAGE8_TERMINATION] worker process exit not confirmed after kill"
+                    )
+                except OSError as termination_exc:
+                    secondary_errors.append(
+                        f"[STAGE8_TERMINATION] wait after kill failed: {termination_exc}"
+                    )
+            status = stage8_probe._read_json(status_file) or {}
+            try:
+                _capture_stage8_timeout_observations(status)
+            except Exception as diagnostic_exc:
+                secondary_errors.append(
+                    f"[STAGE8_DIAGNOSTIC] capture failed: {type(diagnostic_exc).__name__}: "
+                    f"{diagnostic_exc}"
+                )
+            try:
+                cleanup_errors = stage8_probe.emergency_cleanup(status, scratch_parent)
+            except Exception as cleanup_exc:
+                cleanup_errors = [
+                    f"[STAGE8_CLEANUP] emergency cleanup raised: {type(cleanup_exc).__name__}: "
+                    f"{cleanup_exc}"
+                ]
+            secondary_errors.extend(cleanup_errors)
+            diagnostic = _stage8_timeout_diagnostic(
+                status, time.monotonic() - started, secondary_errors
+            )
+            last_phase = str(status.get("last_phase", "UNKNOWN"))
+            item = (
+                "WINDOWS_LOCAL_PRINCIPAL_AUTHENTICATION"
+                if _stage8_principal_phase(last_phase)
+                else "WINDOWS_POSTGRESQL_SUBSTRATE"
+            )
+            raise Stage8PostgreSQLProbeError("STAGE8_TIMEOUT", item, diagnostic) from exc
+        else:
+            final_status = stage8_probe._read_json(status_file) or {}
+        finally:
+            status_file.unlink(missing_ok=True)
+        if returncode:
+            item = str(final_status.get("failed_item", "WINDOWS_POSTGRESQL_SUBSTRATE"))
+            raise Stage8PostgreSQLProbeError(
+                "STAGE8_WORKER",
+                item,
+                str(final_status.get("error", "Stage-8 worker failed")),
+            )
+        results = final_status.get("results")
+        expected = {item: "PASS" for item in WINDOWS_STAGE8_ITEMS}
+        if final_status.get("completed") is not True or results != expected:
+            raise Stage8PostgreSQLProbeError(
+                "STAGE8_WORKER_RESULT_INVALID",
+                "WINDOWS_POSTGRESQL_SUBSTRATE",
+                "worker exited successfully without exact terminal Stage-8 PASS proof",
+            )
+        return expected
+
+
+def _stage8_principal_phase(phase: str) -> bool:
+    return phase.startswith(("SSPI_", "FINAL_", "MATRIX_", "INTERACTIVE_", "HELPER_"))
+
+
+def _stage8_timeout_diagnostic(
+    status: dict[str, object], elapsed: float, cleanup_errors: list[str]
+) -> str:
+    last_phase = str(status.get("last_phase", "UNKNOWN"))
+    services = status.get("owned_services", [])
+    observations = status.get("timeout_service_observations", [])
+    if not isinstance(observations, list):
+        observations = []
+    if not observations and isinstance(services, list):
+        for name in services:
+            if name in {stage8_probe.RUNTIME_SERVICE, stage8_probe.VERIFIER_SERVICE}:
+                try:
+                    state, pid = stage8_probe._service_observation(str(name))
+                    observations.append(f"{name}:state={state},pid={pid}")
+                except Exception as exc:
+                    observations.append(f"{name}:state-unavailable={exc}")
+    log_tail = str(status.get("timeout_log_tail", ""))
+    root = status.get("root")
+    if isinstance(root, str):
+        try:
+            log_tail = (Path(root) / "postgresql.log").read_text(
+                encoding="utf-8", errors="replace"
+            )[-stage8_probe.STDERR_LIMIT :]
+        except OSError:
+            pass
+    cleanup = "; ".join(cleanup_errors) if cleanup_errors else "PASS"
+    if cleanup_errors:
+        print(f"[STAGE8_CLEANUP] secondary failure: {cleanup}", file=sys.stderr, flush=True)
+    return (
+        f"STAGE8_TIMEOUT last_phase={last_phase} elapsed={elapsed:.3f}s "
+        f"postgresql_cluster_started={'yes' if status.get('cluster_started') is True else 'no'} "
+        f"helper_services_created={'yes' if services else 'no'} "
+        f"service_observations={observations!r} postgresql_log_tail={log_tail!r} "
+        f"cleanup={cleanup}"
+    )
+
+
+def _capture_stage8_timeout_observations(status: dict[str, object]) -> None:
+    """Capture volatile diagnostics before emergency cleanup removes owned resources."""
+    observations: list[str] = []
+    services = status.get("owned_services", [])
+    if isinstance(services, list):
+        for name in services:
+            if name in {stage8_probe.RUNTIME_SERVICE, stage8_probe.VERIFIER_SERVICE}:
+                try:
+                    state, pid = stage8_probe._service_observation(str(name))
+                    observations.append(f"{name}:state={state},pid={pid}")
+                except Exception as exc:
+                    observations.append(f"{name}:state-unavailable={exc}")
+    status["timeout_service_observations"] = observations
+    root = status.get("root")
+    if isinstance(root, str):
+        try:
+            status["timeout_log_tail"] = (Path(root) / "postgresql.log").read_text(
+                encoding="utf-8", errors="replace"
+            )[-stage8_probe.STDERR_LIMIT :]
+        except OSError:
+            pass
 
 
 def publish_artifacts(
@@ -304,12 +481,15 @@ def run_acceptance(
     with tempfile.TemporaryDirectory(dir=core_output.parent) as temporary:
         core_temp = Path(temporary) / "core.json"
         try:
-            live.run_core(source_revision, provider, run_id, core_temp)
+            with _acceptance_phase("CORE"):
+                live.run_core(source_revision, provider, run_id, core_temp)
         except Exception as exc:
             raise WindowsAcceptanceError(str(exc), "WINDOWS_CORE_PLAN") from exc
-        scm = live.run_scm()
+        with _acceptance_phase("SCM_STAGE0_5_AND_STAGE7_SHUTDOWN"):
+            scm = live.run_scm()
         try:
-            stage6 = live.run_stage6(staging_parent)
+            with _acceptance_phase("STAGE6"):
+                stage6 = live.run_stage6(staging_parent)
         except Stage6ProbeError as exc:
             raise WindowsAcceptanceError(str(exc), exc.item) from exc
         except Exception as exc:
@@ -321,7 +501,8 @@ def run_acceptance(
             if stage6.get(item) != "PASS":
                 raise WindowsAcceptanceError(f"Stage-6 result was not PASS: {item}", item)
         try:
-            stage7_network = live.run_stage7_network(staging_parent)
+            with _acceptance_phase("STAGE7_NETWORK"):
+                stage7_network = live.run_stage7_network(staging_parent)
         except Stage7NetworkProbeError as exc:
             raise WindowsAcceptanceError(str(exc), exc.item) from exc
         except Exception as exc:
@@ -341,7 +522,8 @@ def run_acceptance(
             if stage7.get(item) != "PASS":
                 raise WindowsAcceptanceError(f"Stage-7 result was not PASS: {item}", item)
         try:
-            stage8 = live.run_stage8(staging_parent)
+            with _acceptance_phase("STAGE8"):
+                stage8 = live.run_stage8(staging_parent)
         except Stage8PostgreSQLProbeError as exc:
             raise WindowsAcceptanceError(str(exc), exc.item) from exc
         except Exception as exc:
@@ -352,74 +534,93 @@ def run_acceptance(
         for item in WINDOWS_STAGE8_ITEMS:
             if stage8.get(item) != "PASS":
                 raise WindowsAcceptanceError(f"Stage-8 result was not PASS: {item}", item)
-        results = [
-            {
-                "item": item,
-                "status": "PASS",
-                "evidence_class": "LIVE_WINDOWS_INTEGRATION",
-                "test_or_probe": "deployment.windows_acceptance/windows_scm_probe.ps1",
-                "details": scm.get("details", "reviewed SCM lifecycle and cleanup verified"),
-            }
-            for item in SCM_ITEMS
-        ]
-        results.extend(
-            {
-                "item": item,
-                "status": "PASS",
-                "evidence_class": "LIVE_WINDOWS_INTEGRATION",
-                "test_or_probe": "deployment.windows_stage6_probe",
-                "details": "live Windows forced-termination probe passed",
-            }
-            for item in WINDOWS_STAGE6_ITEMS
-        )
-        results.extend(
-            (
+        evidence_started = time.monotonic()
+        print("[WINDOWS_ACCEPTANCE_PHASE] START EVIDENCE_BUILD", flush=True)
+        try:
+            results = [
                 {
-                    "item": "WINDOWS_NETWORK_RECOVERY",
+                    "item": item,
                     "status": "PASS",
                     "evidence_class": "LIVE_WINDOWS_INTEGRATION",
-                    "test_or_probe": "deployment.windows_stage7_network_probe",
-                    "details": "one production request recovered from a real loopback TCP reset",
-                },
+                    "test_or_probe": "deployment.windows_acceptance/windows_scm_probe.ps1",
+                    "details": scm.get("details", "reviewed SCM lifecycle and cleanup verified"),
+                }
+                for item in SCM_ITEMS
+            ]
+            results.extend(
                 {
-                    "item": "WINDOWS_SAFE_OS_SHUTDOWN",
+                    "item": item,
                     "status": "PASS",
                     "evidence_class": "LIVE_WINDOWS_INTEGRATION",
-                    "test_or_probe": "deployment.windows_scm_probe.ps1 / SvcShutdown acceptance",
-                    "details": scm.get(
-                        "details", "live accepted-controls and shutdown cleanup verified"
+                    "test_or_probe": "deployment.windows_stage6_probe",
+                    "details": "live Windows forced-termination probe passed",
+                }
+                for item in WINDOWS_STAGE6_ITEMS
+            )
+            results.extend(
+                (
+                    {
+                        "item": "WINDOWS_NETWORK_RECOVERY",
+                        "status": "PASS",
+                        "evidence_class": "LIVE_WINDOWS_INTEGRATION",
+                        "test_or_probe": "deployment.windows_stage7_network_probe",
+                        "details": "one production request recovered from a real loopback TCP reset",
+                    },
+                    {
+                        "item": "WINDOWS_SAFE_OS_SHUTDOWN",
+                        "status": "PASS",
+                        "evidence_class": "LIVE_WINDOWS_INTEGRATION",
+                        "test_or_probe": "deployment.windows_scm_probe.ps1 / SvcShutdown acceptance",
+                        "details": scm.get(
+                            "details", "live accepted-controls and shutdown cleanup verified"
+                        ),
+                    },
+                )
+            )
+            results.extend(
+                {
+                    "item": item,
+                    "status": "PASS",
+                    "evidence_class": "LIVE_WINDOWS_INTEGRATION",
+                    "test_or_probe": "deployment.windows_stage8_postgresql_probe",
+                    "details": stage8.get(
+                        "details",
+                        "isolated PostgreSQL and distinct SSPI service principals qualified",
                     ),
-                },
+                }
+                for item in WINDOWS_STAGE8_ITEMS
             )
-        )
-        results.extend(
-            {
-                "item": item,
-                "status": "PASS",
-                "evidence_class": "LIVE_WINDOWS_INTEGRATION",
-                "test_or_probe": "deployment.windows_stage8_postgresql_probe",
-                "details": stage8.get("details", "isolated PostgreSQL and distinct SSPI service principals qualified"),
-            }
-            for item in WINDOWS_STAGE8_ITEMS
-        )
-        evidence_temp = Path(temporary) / "scm.json"
-        evidence_temp.write_text(
-            json.dumps(
-                evidence_document(
-                    platform_name="WINDOWS",
-                    source_revision=source_revision,
-                    ci_provider=provider,
-                    ci_run_id=run_id,
-                    runner_os="Windows",
-                    runner_arch=os.environ.get("PROCESSOR_ARCHITECTURE", "unknown"),
-                    results=results,
-                ),
-                indent=2,
+            evidence_temp = Path(temporary) / "scm.json"
+            evidence_temp.write_text(
+                json.dumps(
+                    evidence_document(
+                        platform_name="WINDOWS",
+                        source_revision=source_revision,
+                        ci_provider=provider,
+                        ci_run_id=run_id,
+                        runner_os="Windows",
+                        runner_arch=os.environ.get("PROCESSOR_ARCHITECTURE", "unknown"),
+                        results=results,
+                    ),
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
             )
-            + "\n",
-            encoding="utf-8",
-        )
-        publisher(core_temp, core_output, evidence_temp, evidence_output)
+            print(
+                "[WINDOWS_ACCEPTANCE_PHASE] PASS EVIDENCE_BUILD "
+                f"elapsed={time.monotonic() - evidence_started:.3f}s",
+                flush=True,
+            )
+        except BaseException:
+            print(
+                "[WINDOWS_ACCEPTANCE_PHASE] FAIL EVIDENCE_BUILD "
+                f"elapsed={time.monotonic() - evidence_started:.3f}s",
+                flush=True,
+            )
+            raise
+        with _acceptance_phase("ARTIFACT_PUBLICATION"):
+            publisher(core_temp, core_output, evidence_temp, evidence_output)
 
 
 def main(argv: list[str] | None = None) -> int:

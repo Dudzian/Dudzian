@@ -315,6 +315,12 @@ def test_workflow_release_gate_is_real_and_platform_independent() -> None:
         "python -m deployment.windows_acceptance --mode github" in command
         for command in integration_commands
     )
+    acceptance_step = next(
+        step
+        for step in jobs["windows-deployment-integration"]["steps"]
+        if "python -m deployment.windows_acceptance --mode github" in step.get("run", "")
+    )
+    assert acceptance_step["timeout-minutes"] == 30
     parser_index = next(
         index
         for index, command in enumerate(integration_commands)

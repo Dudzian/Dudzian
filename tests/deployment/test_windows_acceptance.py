@@ -278,6 +278,332 @@ def test_successful_orchestration_uses_reviewed_boundary(
     assert all(result["status"] == "PASS" for result in evidence["results"])
 
 
+def test_canonical_phase_markers_are_ordered_and_flushed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[tuple[str, bool]] = []
+    monkeypatch.setattr(
+        windows_acceptance,
+        "print",
+        lambda message, **kwargs: calls.append((message, kwargs.get("flush") is True)),
+        raising=False,
+    )
+    invoke(tmp_path, ReviewedBoundary(tmp_path), monkeypatch)
+    starts = [message.split()[2] for message, _flush in calls if " START " in message]
+    assert starts == [
+        "CORE",
+        "SCM_STAGE0_5_AND_STAGE7_SHUTDOWN",
+        "STAGE6",
+        "STAGE7_NETWORK",
+        "STAGE8",
+        "EVIDENCE_BUILD",
+        "ARTIFACT_PUBLICATION",
+    ]
+    assert all(flush for _message, flush in calls)
+
+
+class _HungStage8Process:
+    def __init__(self) -> None:
+        self.waits = 0
+        self.terminated = False
+
+    def wait(self, timeout: float) -> int:
+        self.waits += 1
+        if self.waits == 1:
+            raise subprocess.TimeoutExpired(["stage8"], timeout)
+        return 1
+
+    def terminate(self) -> None:
+        self.terminated = True
+
+    def kill(self) -> None:
+        raise AssertionError("bounded terminate should have completed")
+
+
+class _ScriptedHungStage8Process:
+    def __init__(
+        self,
+        waits: list[object],
+        *,
+        terminate_error: OSError | None = None,
+        kill_error: OSError | None = None,
+    ) -> None:
+        self.waits = iter(waits)
+        self.terminate_error = terminate_error
+        self.kill_error = kill_error
+        self.terminated = False
+        self.killed = False
+
+    def wait(self, timeout: float) -> int:
+        result = next(self.waits)
+        if isinstance(result, BaseException):
+            raise result
+        return int(result)
+
+    def terminate(self) -> None:
+        self.terminated = True
+        if self.terminate_error is not None:
+            raise self.terminate_error
+
+    def kill(self) -> None:
+        self.killed = True
+        if self.kill_error is not None:
+            raise self.kill_error
+
+
+def _install_timed_out_stage8_process(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    process: _ScriptedHungStage8Process,
+    cleanup: object,
+) -> list[str]:
+    cleaned: list[str] = []
+
+    def popen(command: list[str]):
+        status = Path(command[command.index("--status-file") + 1])
+        status.write_text(
+            json.dumps(
+                {
+                    "last_phase": "POSTGRESQL_START",
+                    "cluster_started": False,
+                    "owned_services": [],
+                    "root": None,
+                }
+            ),
+            encoding="utf-8",
+        )
+        return process
+
+    def emergency_cleanup(_status: object, _parent: Path):
+        cleaned.append("cleanup")
+        if isinstance(cleanup, BaseException):
+            raise cleanup
+        return cleanup
+
+    monkeypatch.setattr(windows_acceptance.subprocess, "Popen", popen)
+    monkeypatch.setattr(windows_acceptance.stage8_probe, "emergency_cleanup", emergency_cleanup)
+    return cleaned
+
+
+def _deadline_timeout() -> subprocess.TimeoutExpired:
+    return subprocess.TimeoutExpired(["stage8"], 0)
+
+
+def test_outer_stage8_timeout_is_typed_diagnostic_and_runs_cleanup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    process = _HungStage8Process()
+    cleaned: list[str] = []
+
+    def popen(command: list[str]):
+        status = Path(command[command.index("--status-file") + 1])
+        status.write_text(
+            json.dumps(
+                {
+                    "last_phase": "MATRIX_RUNTIME",
+                    "phase_started": 0,
+                    "cluster_started": True,
+                    "owned_services": [],
+                    "root": None,
+                }
+            ),
+            encoding="utf-8",
+        )
+        return process
+
+    monkeypatch.setattr(windows_acceptance.subprocess, "Popen", popen)
+    monkeypatch.setattr(
+        windows_acceptance.stage8_probe,
+        "emergency_cleanup",
+        lambda _status, _parent: cleaned.append("cleanup") or ["secondary"],
+    )
+    with pytest.raises(windows_acceptance.Stage8PostgreSQLProbeError) as failure:
+        windows_acceptance.AcceptanceBoundary().run_stage8(tmp_path)
+    assert process.terminated is True
+    assert cleaned == ["cleanup"]
+    assert failure.value.label == "STAGE8_TIMEOUT"
+    assert failure.value.item == "WINDOWS_LOCAL_PRINCIPAL_AUTHENTICATION"
+    assert "STAGE8_TIMEOUT" in failure.value.detail
+    assert "last_phase=MATRIX_RUNTIME" in failure.value.detail
+    assert "elapsed=" in failure.value.detail
+    assert "cleanup=secondary" in failure.value.detail
+
+
+def test_stage8_terminate_timeout_kills_then_cleans_up(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    process = _ScriptedHungStage8Process([_deadline_timeout(), _deadline_timeout(), 1])
+    cleaned = _install_timed_out_stage8_process(tmp_path, monkeypatch, process, [])
+    with pytest.raises(windows_acceptance.Stage8PostgreSQLProbeError) as failure:
+        windows_acceptance.AcceptanceBoundary().run_stage8(tmp_path)
+    assert process.terminated is True
+    assert process.killed is True
+    assert cleaned == ["cleanup"]
+    assert failure.value.label == "STAGE8_TIMEOUT"
+
+
+def test_stage8_kill_wait_timeout_still_cleans_up_and_preserves_primary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    process = _ScriptedHungStage8Process(
+        [_deadline_timeout(), _deadline_timeout(), _deadline_timeout()]
+    )
+    cleaned = _install_timed_out_stage8_process(tmp_path, monkeypatch, process, [])
+    with pytest.raises(windows_acceptance.Stage8PostgreSQLProbeError) as failure:
+        windows_acceptance.AcceptanceBoundary().run_stage8(tmp_path)
+    assert process.killed is True
+    assert cleaned == ["cleanup"]
+    assert failure.value.label == "STAGE8_TIMEOUT"
+    assert "worker process exit not confirmed after kill" in failure.value.detail
+
+
+def test_stage8_terminate_exception_still_cleans_up_and_preserves_primary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    process = _ScriptedHungStage8Process(
+        [_deadline_timeout(), _deadline_timeout(), 1],
+        terminate_error=OSError("terminate denied"),
+    )
+    cleaned = _install_timed_out_stage8_process(tmp_path, monkeypatch, process, [])
+    with pytest.raises(windows_acceptance.Stage8PostgreSQLProbeError) as failure:
+        windows_acceptance.AcceptanceBoundary().run_stage8(tmp_path)
+    assert cleaned == ["cleanup"]
+    assert failure.value.label == "STAGE8_TIMEOUT"
+    assert "terminate failed: terminate denied" in failure.value.detail
+
+
+def test_stage8_kill_exception_still_cleans_up_and_preserves_primary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    process = _ScriptedHungStage8Process(
+        [_deadline_timeout(), _deadline_timeout(), _deadline_timeout()],
+        kill_error=OSError("kill denied"),
+    )
+    cleaned = _install_timed_out_stage8_process(tmp_path, monkeypatch, process, [])
+    with pytest.raises(windows_acceptance.Stage8PostgreSQLProbeError) as failure:
+        windows_acceptance.AcceptanceBoundary().run_stage8(tmp_path)
+    assert cleaned == ["cleanup"]
+    assert failure.value.label == "STAGE8_TIMEOUT"
+    assert "kill failed: kill denied" in failure.value.detail
+
+
+def test_stage8_emergency_cleanup_exception_is_secondary_to_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    process = _ScriptedHungStage8Process([_deadline_timeout(), 1])
+    cleaned = _install_timed_out_stage8_process(
+        tmp_path, monkeypatch, process, OSError("cleanup exploded")
+    )
+    with pytest.raises(windows_acceptance.Stage8PostgreSQLProbeError) as failure:
+        windows_acceptance.AcceptanceBoundary().run_stage8(tmp_path)
+    assert cleaned == ["cleanup"]
+    assert failure.value.label == "STAGE8_TIMEOUT"
+    assert "emergency cleanup raised: OSError: cleanup exploded" in failure.value.detail
+
+
+def test_stage8_timeout_publishes_no_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class TimeoutBoundary(ReviewedBoundary):
+        def run_stage8(self, scratch_parent: Path) -> dict[str, str]:
+            raise windows_acceptance.Stage8PostgreSQLProbeError(
+                "STAGE8_TIMEOUT",
+                "WINDOWS_POSTGRESQL_SUBSTRATE",
+                "STAGE8_TIMEOUT last_phase=POSTGRESQL_START elapsed=0.010s",
+            )
+
+    with pytest.raises(WindowsAcceptanceError) as failure:
+        invoke(tmp_path, TimeoutBoundary(tmp_path), monkeypatch)
+    assert failure.value.result == "WINDOWS_POSTGRESQL_SUBSTRATE"
+    assert not (tmp_path / "core.json").exists()
+    assert not (tmp_path / "scm.json").exists()
+
+
+def _install_fast_stage8_worker(
+    monkeypatch: pytest.MonkeyPatch,
+    payload: object | None,
+    *,
+    returncode: int = 0,
+) -> None:
+    class FastProcess:
+        def wait(self, timeout: float) -> int:
+            return returncode
+
+    def popen(command: list[str]):
+        if payload is not None:
+            status = Path(command[command.index("--status-file") + 1])
+            status.write_text(json.dumps(payload), encoding="utf-8")
+        return FastProcess()
+
+    monkeypatch.setattr(windows_acceptance.subprocess, "Popen", popen)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        None,
+        {"completed": False},
+        {
+            "completed": True,
+            "results": {"WINDOWS_POSTGRESQL_SUBSTRATE": "PASS"},
+        },
+        {
+            "completed": True,
+            "results": {
+                "WINDOWS_POSTGRESQL_SUBSTRATE": "PASS",
+                "WINDOWS_LOCAL_PRINCIPAL_AUTHENTICATION": "FAIL",
+            },
+        },
+        {"completed": True, "results": ["PASS", "PASS"]},
+    ],
+)
+def test_zero_exit_without_exact_terminal_stage8_proof_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, payload: object | None
+) -> None:
+    _install_fast_stage8_worker(monkeypatch, payload)
+    with pytest.raises(
+        windows_acceptance.Stage8PostgreSQLProbeError,
+        match="STAGE8_WORKER_RESULT_INVALID",
+    ) as failure:
+        windows_acceptance.AcceptanceBoundary().run_stage8(tmp_path)
+    assert failure.value.item == "WINDOWS_POSTGRESQL_SUBSTRATE"
+
+
+def test_exact_terminal_stage8_proof_returns_both_pass_items(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    expected = {
+        "WINDOWS_POSTGRESQL_SUBSTRATE": "PASS",
+        "WINDOWS_LOCAL_PRINCIPAL_AUTHENTICATION": "PASS",
+    }
+    _install_fast_stage8_worker(
+        monkeypatch,
+        {"completed": True, "results": expected},
+    )
+    assert windows_acceptance.AcceptanceBoundary().run_stage8(tmp_path) == {
+        "WINDOWS_POSTGRESQL_SUBSTRATE": "PASS",
+        "WINDOWS_LOCAL_PRINCIPAL_AUTHENTICATION": "PASS",
+    }
+
+
+def test_nonzero_exit_cannot_pass_even_with_terminal_success_claim(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _install_fast_stage8_worker(
+        monkeypatch,
+        {
+            "completed": True,
+            "results": {
+                "WINDOWS_POSTGRESQL_SUBSTRATE": "PASS",
+                "WINDOWS_LOCAL_PRINCIPAL_AUTHENTICATION": "PASS",
+            },
+        },
+        returncode=1,
+    )
+    with pytest.raises(windows_acceptance.Stage8PostgreSQLProbeError, match="STAGE8_WORKER"):
+        windows_acceptance.AcceptanceBoundary().run_stage8(tmp_path)
+
+
 def test_reviewed_boundary_returns_complete_current_scm_contract(tmp_path: Path) -> None:
     result = ReviewedBoundary(tmp_path).run_scm()
     assert {item: result[item] for item in windows_acceptance.SCM_ITEMS} == {
