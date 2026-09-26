@@ -9,6 +9,8 @@ import sys
 import time
 
 TIMEOUT = 20.0
+# Win32 DETACHED_PROCESS, defined locally so static imports remain portable.
+_DETACHED_PROCESS = 0x00000008
 
 
 def main(argv: list[str]) -> int:
@@ -21,7 +23,10 @@ def main(argv: list[str]) -> int:
         time.sleep(0.05)
     if not gate.is_file():
         return 2
-    child = subprocess.Popen([sys.executable, __file__, "--grandchild"])
+    child = subprocess.Popen(
+        [sys.executable, __file__, "--grandchild"],
+        creationflags=_DETACHED_PROCESS,
+    )
     temporary = gate.with_suffix(".tmp")
     temporary.write_text(str(child.pid), encoding="ascii")
     os.replace(temporary, gate)

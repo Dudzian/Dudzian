@@ -17,6 +17,9 @@ SCHEMA_VERSION = 1
 POLL_INTERVAL = 0.05
 TREE_TIMEOUT = 20.0
 CHILD_EXIT_TIMEOUT = 5.0
+# Win32 DETACHED_PROCESS.  Keep this private Stage-5 constant import-safe on
+# non-Windows hosts, where subprocess does not expose Windows creation flags.
+_DETACHED_PROCESS = 0x00000008
 TRANSIENT_NAMES = (
     MARKER_NAME,
     GATE_NAME,
@@ -120,7 +123,10 @@ class ChildJob:
         assignment_proven = False
         try:
             self.child = subprocess.Popen(
-                [self.python_executable, str(helper), str(gate)], text=True)
+                [self.python_executable, str(helper), str(gate)],
+                text=True,
+                creationflags=_DETACHED_PROCESS,
+            )
             process = self.win32api.OpenProcess(
                 self.win32con.PROCESS_SET_QUOTA | self.win32con.PROCESS_TERMINATE |
                 self.win32con.PROCESS_QUERY_LIMITED_INFORMATION, False, self.child.pid)
