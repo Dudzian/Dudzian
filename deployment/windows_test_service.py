@@ -12,12 +12,22 @@ from deployment.windows_strict_service_create import (
     StrictCreateFailure,
     strict_create_service,
 )
+from deployment.windows_persistent_logging import close_service_logger, configure_service_logger
+from deployment.windows_process_tree import (
+    ChildJob,
+    GATE_NAME,
+    MARKER_NAME,
+    reviewed_python_executable,
+)
 
 if os.name != "nt":
     raise RuntimeError("SCM test service is Windows-only")
 
 import servicemanager  # type: ignore[import-not-found]
+import win32api  # type: ignore[import-not-found]
+import win32con  # type: ignore[import-not-found]
 import win32event  # type: ignore[import-not-found]
+import win32job  # type: ignore[import-not-found]
 import win32service  # type: ignore[import-not-found]
 import win32serviceutil  # type: ignore[import-not-found]
 
@@ -30,6 +40,10 @@ class CryptoHunterBackendTestService(win32serviceutil.ServiceFramework):
         super().__init__(args)
         self.stop_event = win32event.CreateEvent(None, 0, 0, None)
         self.marker = Path(os.environ.get("ProgramData", r"C:\ProgramData")) / "CryptoHunter" / "scm-health.txt"
+        self.machine_root = self.marker.parent
+        self.ownership_record = self.machine_root / "windows-acceptance-ownership.json"
+        self.tree: ChildJob | None = None
+        self.logger = None
 
     def SvcStop(self) -> None:
         self.ReportServiceStatus(win32service.SERVICE_STOP_PENDING)
@@ -38,9 +52,26 @@ class CryptoHunterBackendTestService(win32serviceutil.ServiceFramework):
     def SvcDoRun(self) -> None:
         self.marker.parent.mkdir(parents=True, exist_ok=True)
         self.marker.write_text(str(os.getpid()), encoding="ascii")
-        servicemanager.LogInfoMsg("CryptoHunter SCM acceptance harness running")
-        win32event.WaitForSingleObject(self.stop_event, win32event.INFINITE)
-        self.marker.unlink(missing_ok=True)
+        self.logger = configure_service_logger(self.machine_root / "Logs")
+        self.logger.info("SERVICE_START")
+        try:
+            child_python = reviewed_python_executable(self.ownership_record)
+            self.tree = ChildJob(self.machine_root / "Runtime", python_executable=child_python,
+                                 win32api=win32api,
+                                 win32con=win32con, win32job=win32job)
+            self.tree.start()
+            self.logger.info("PROCESS_TREE_READY")
+            servicemanager.LogInfoMsg("CryptoHunter SCM acceptance harness running")
+            win32event.WaitForSingleObject(self.stop_event, win32event.INFINITE)
+            self.logger.info("SERVICE_STOP")
+        finally:
+            if self.tree is not None:
+                self.tree.close()
+            for name in (MARKER_NAME, GATE_NAME):
+                (self.machine_root / "Runtime" / name).unlink(missing_ok=True)
+            self.marker.unlink(missing_ok=True)
+            if self.logger is not None:
+                close_service_logger(self.logger)
 
 
 def acceptance_install_strict(argv: list[str]) -> int:

@@ -43,7 +43,7 @@ def is_safe_descendant(path: str | Path, root: str | Path, win32api: Any) -> boo
 
 def expected_aces(role: str, service_sid: str) -> set[tuple[str, int, int]]:
     service_mask = FILE_GENERIC_READ | FILE_GENERIC_EXECUTE
-    if role in {"STATE", "RUNTIME"}:
+    if role in {"STATE", "RUNTIME", "LOGS"}:
         service_mask |= FILE_GENERIC_WRITE | DELETE
     return {
         (ADMINISTRATORS_SID, FILE_ALL_ACCESS, ACE_FLAGS),
