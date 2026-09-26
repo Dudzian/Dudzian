@@ -3,6 +3,8 @@ from __future__ import annotations
 import inspect
 import json
 import logging
+import shutil
+import subprocess
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from types import SimpleNamespace
@@ -463,6 +465,52 @@ def test_crash_and_final_logging_proofs_recheck_all_historical_events():
         'Assert-LogEvent "SERVICE_STOP" $currentPid',
         source.index('$stage = "PERSISTENT_LOGGING_FINAL_STOP"'),
     )
+
+
+def test_log_event_helper_uses_non_reserved_service_pid_and_exact_log_proof():
+    source = Path("deployment/windows_scm_probe.ps1").read_text(encoding="utf-8")
+    helper = source[
+        source.index("function Assert-LogEvent") : source.index(
+            "function Remove-OwnedProcessTreeArtifacts"
+        )
+    ]
+    assert "[int]$Pid" not in helper
+    assert "$Pid" not in helper
+    assert "[int]$ServicePid" in helper
+    assert '"pid=$ServicePid .*$Event"' in helper
+    assert '"log event missing event=$Event pid=$ServicePid"' in helper
+
+
+@pytest.mark.skipif(shutil.which("pwsh") is None, reason="requires PowerShell Core")
+def test_log_event_helper_accepts_positional_pid_without_automatic_pid_collision(tmp_path):
+    source = Path("deployment/windows_scm_probe.ps1").read_text(encoding="utf-8")
+    helper = source[
+        source.index("function Assert-LogEvent") : source.index(
+            "function Remove-OwnedProcessTreeArtifacts"
+        )
+    ]
+    logs = tmp_path / "Logs"
+    logs.mkdir()
+    (logs / "backend.log").write_text(
+        "2026-01-01 00:00:00 INFO pid=4242 SERVICE_START\n", encoding="utf-8"
+    )
+    script = tmp_path / "assert-log-event.ps1"
+    escaped_logs = str(logs).replace("'", "''")
+    script.write_text(
+        f"$logs = '{escaped_logs}'\n{helper}\nAssert-LogEvent 'SERVICE_START' 4242\n",
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        ["pwsh", "-NoProfile", "-NonInteractive", "-File", str(script)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    output = completed.stdout + completed.stderr
+    assert completed.returncode == 0, output
+    assert "Cannot overwrite variable Pid" not in output
 
 
 def test_frozen_bounded_append_utf8_contract(tmp_path):

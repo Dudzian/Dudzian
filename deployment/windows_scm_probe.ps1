@@ -190,7 +190,7 @@ function Wait-TreeGone($Tree, [string]$Phase) {
   throw "$Phase orphan deadline expired service_pid=$($Tree.service_pid) child_pid=$($Tree.child_pid) grandchild_pid=$($Tree.grandchild_pid) job_name=$($Tree.job_name)"
 }
 
-function Assert-LogEvent([string]$Event, [int]$Pid) {
+function Assert-LogEvent([string]$Event, [int]$ServicePid) {
   $found = $false
   foreach ($name in @("backend.log", "backend.log.1", "backend.log.2", "backend.log.3", "backend.log.4")) {
     $candidate = Join-Path $logs $name
@@ -199,10 +199,10 @@ function Assert-LogEvent([string]$Event, [int]$Pid) {
       if ($item.Attributes.HasFlag([IO.FileAttributes]::ReparsePoint)) {
         throw "log family contains a reparse point: $name"
       }
-      if ((Get-Content -LiteralPath $candidate -Raw) -match "pid=$Pid .*$Event") { $found = $true }
+      if ((Get-Content -LiteralPath $candidate -Raw) -match "pid=$ServicePid .*$Event") { $found = $true }
     }
   }
-  if (-not $found) { throw "log event missing event=$Event pid=$Pid" }
+  if (-not $found) { throw "log event missing event=$Event pid=$ServicePid" }
 }
 
 function Remove-OwnedProcessTreeArtifacts($Record) {
