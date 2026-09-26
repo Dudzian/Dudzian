@@ -67,8 +67,12 @@ def qualify_acl(service_sid: str | None = None) -> dict[str, str]:
     return read_only_qualify_acl(service_sid)
 
 
-def qualify_local_principal_authentication() -> None:
-    """Fail closed: localhost/password or caller claims are deliberately unacceptable."""
-    raise WindowsDeploymentNotQualified(
-        "reviewed Windows PostgreSQL authenticated-principal mechanism is not implemented"
-    )
+def qualify_local_principal_authentication(scratch_parent: Path | None = None) -> dict[str, str]:
+    """Delegate to the reviewed live SSPI qualification; never repair production state."""
+    if scratch_parent is None:
+        raise WindowsDeploymentNotQualified(
+            "a caller-owned Stage-8 scratch parent and live Windows proof are required"
+        )
+    from deployment.windows_stage8_postgresql_probe import run_probe
+
+    return run_probe(scratch_parent)

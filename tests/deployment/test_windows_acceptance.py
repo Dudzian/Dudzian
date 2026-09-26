@@ -51,6 +51,7 @@ class ReviewedBoundary(AcceptanceBoundary):
         scm_failure: str | None = None,
         stage6_failure: str | None = None,
         stage7_failure: str | None = None,
+        stage8_failure: str | None = None,
     ) -> None:
         self.tmp_path = tmp_path
         self.host = host
@@ -60,6 +61,7 @@ class ReviewedBoundary(AcceptanceBoundary):
         self.scm_failure = scm_failure
         self.stage6_failure = stage6_failure
         self.stage7_failure = stage7_failure
+        self.stage8_failure = stage8_failure
 
     def host_os(self) -> str:
         return self.host
@@ -104,6 +106,18 @@ class ReviewedBoundary(AcceptanceBoundary):
                 "NETWORK_RECOVERY_VERIFY", "reviewed Stage-7 failure"
             )
         return {"WINDOWS_NETWORK_RECOVERY": "PASS"}
+
+    def run_stage8(self, scratch_parent: Path) -> dict[str, str]:
+        if self.stage8_failure:
+            raise windows_acceptance.Stage8PostgreSQLProbeError(
+                "WINDOWS_SSPI_HBA_QUALIFICATION",
+                self.stage8_failure,
+                "reviewed Stage-8 failure",
+            )
+        return {
+            "WINDOWS_POSTGRESQL_SUBSTRATE": "PASS",
+            "WINDOWS_LOCAL_PRINCIPAL_AUTHENTICATION": "PASS",
+        }
 
 
 def invoke(
@@ -258,6 +272,8 @@ def test_successful_orchestration_uses_reviewed_boundary(
         "WINDOWS_SQLITE_CRASH_INTEGRITY",
         "WINDOWS_NETWORK_RECOVERY",
         "WINDOWS_SAFE_OS_SHUTDOWN",
+        "WINDOWS_POSTGRESQL_SUBSTRATE",
+        "WINDOWS_LOCAL_PRINCIPAL_AUTHENTICATION",
     }
     assert all(result["status"] == "PASS" for result in evidence["results"])
 
@@ -288,6 +304,17 @@ def test_stage7_network_failure_is_labelled_and_publishes_no_evidence(
     with pytest.raises(WindowsAcceptanceError, match=r"\[NETWORK_RECOVERY_VERIFY\]") as failure:
         invoke(tmp_path, boundary, monkeypatch)
     assert failure.value.result == "WINDOWS_NETWORK_RECOVERY"
+    assert not (tmp_path / "scm.json").exists()
+
+
+@pytest.mark.parametrize("item", windows_acceptance.WINDOWS_STAGE8_ITEMS)
+def test_stage8_failure_is_labelled_and_publishes_no_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, item: str
+) -> None:
+    boundary = ReviewedBoundary(tmp_path, stage8_failure=item)
+    with pytest.raises(WindowsAcceptanceError) as failure:
+        invoke(tmp_path, boundary, monkeypatch)
+    assert failure.value.result == item
     assert not (tmp_path / "scm.json").exists()
 
 

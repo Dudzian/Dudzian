@@ -34,7 +34,7 @@
       "identity": "NT SERVICE\\CryptoHunterBackend",
       "ipc": "ACL-protected named pipe",
       "permissions": "Windows DACL",
-      "principal_auth": "REVIEW_REQUIRED: PostgreSQL-visible Windows authenticated identity; SSPI feasibility not yet frozen",
+      "principal_auth": "PostgreSQL SSPI candidate with exact pg_ident mapping; distinct virtual-service principals require live proof",
       "paths": "ProgramFiles/ProgramData/LOCALAPPDATA known-folder boundary"
     },
     "LINUX": {
@@ -173,8 +173,8 @@
     },
     "WINDOWS_LOCAL_PRINCIPAL_AUTHENTICATION": {
       "owner": "WINDOWS",
-      "status": "NOT_IMPLEMENTED",
-      "evidence": "SSPI or equivalent requires architecture review",
+      "status": "NOT_TESTED",
+      "evidence": "Stage-8 SSPI probe is implemented; PASS requires two distinct live SCM service principals on Windows Server",
       "evidence_class": "LIVE_WINDOWS_INTEGRATION"
     },
     "WINDOWS_SQLITE_CRASH_INTEGRITY": {
@@ -227,8 +227,8 @@
     },
     "WINDOWS_POSTGRESQL_SUBSTRATE": {
       "owner": "WINDOWS",
-      "status": "NOT_IMPLEMENTED",
-      "evidence": "install/auth/backup/ordering not frozen",
+      "status": "NOT_TESTED",
+      "evidence": "isolated PostgreSQL >=16 Stage-8 probe is implemented; no live Windows result is recorded and production installation remains Stage-9 work",
       "evidence_class": "LIVE_WINDOWS_INTEGRATION"
     },
     "WINDOWS_GUI_BACKEND_LIFECYCLE": {

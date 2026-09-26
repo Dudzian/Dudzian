@@ -22,12 +22,17 @@ from deployment.platform_evidence import (
     WINDOWS_LIVE_ITEMS,
     WINDOWS_STAGE6_ITEMS,
     WINDOWS_STAGE7_ITEMS,
+    WINDOWS_STAGE8_ITEMS,
     evidence_document,
 )
 from deployment.windows_stage6_probe import Stage6ProbeError, run_probe
 from deployment.windows_stage7_network_probe import (
     Stage7NetworkProbeError,
     run_probe as run_network_probe,
+)
+from deployment.windows_stage8_postgresql_probe import (
+    Stage8PostgreSQLProbeError,
+    run_probe as run_stage8_postgresql_probe,
 )
 
 GITHUB_PROVIDER = "https://github.com"
@@ -161,6 +166,9 @@ class AcceptanceBoundary:
 
     def run_stage7_network(self, scratch_parent: Path) -> dict[str, str]:
         return run_network_probe(scratch_parent)
+
+    def run_stage8(self, scratch_parent: Path) -> dict[str, str]:
+        return run_stage8_postgresql_probe(scratch_parent)
 
 
 def publish_artifacts(
@@ -332,6 +340,18 @@ def run_acceptance(
         for item in WINDOWS_STAGE7_ITEMS:
             if stage7.get(item) != "PASS":
                 raise WindowsAcceptanceError(f"Stage-7 result was not PASS: {item}", item)
+        try:
+            stage8 = live.run_stage8(staging_parent)
+        except Stage8PostgreSQLProbeError as exc:
+            raise WindowsAcceptanceError(str(exc), exc.item) from exc
+        except Exception as exc:
+            raise WindowsAcceptanceError(
+                f"[POSTGRESQL_DISCOVERY] {type(exc).__name__}: {exc}",
+                "WINDOWS_POSTGRESQL_SUBSTRATE",
+            ) from exc
+        for item in WINDOWS_STAGE8_ITEMS:
+            if stage8.get(item) != "PASS":
+                raise WindowsAcceptanceError(f"Stage-8 result was not PASS: {item}", item)
         results = [
             {
                 "item": item,
@@ -371,6 +391,16 @@ def run_acceptance(
                     ),
                 },
             )
+        )
+        results.extend(
+            {
+                "item": item,
+                "status": "PASS",
+                "evidence_class": "LIVE_WINDOWS_INTEGRATION",
+                "test_or_probe": "deployment.windows_stage8_postgresql_probe",
+                "details": stage8.get("details", "isolated PostgreSQL and distinct SSPI service principals qualified"),
+            }
+            for item in WINDOWS_STAGE8_ITEMS
         )
         evidence_temp = Path(temporary) / "scm.json"
         evidence_temp.write_text(
