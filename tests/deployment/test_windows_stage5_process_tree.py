@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import importlib.util
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 import sys
@@ -111,6 +113,38 @@ class StartApi:
 
 CON = SimpleNamespace(PROCESS_SET_QUOTA=1, PROCESS_TERMINATE=2, PROCESS_QUERY_LIMITED_INFORMATION=4)
 REVIEWED_PYTHON = r"C:\hostedtoolcache\windows\Python\3.11.x\x64\python.exe"
+
+
+def load_service_module(monkeypatch):
+    class ServiceFramework:
+        def __init__(self, _args):
+            pass
+
+    modules = {
+        "servicemanager": SimpleNamespace(
+            LogInfoMsg=lambda _message: None, LogErrorMsg=lambda _message: None
+        ),
+        "win32api": SimpleNamespace(),
+        "win32con": SimpleNamespace(),
+        "win32event": SimpleNamespace(INFINITE=-1),
+        "win32job": SimpleNamespace(),
+        "win32service": SimpleNamespace(SERVICE_STOP_PENDING=3, SERVICE_AUTO_START=2),
+        "win32serviceutil": SimpleNamespace(ServiceFramework=ServiceFramework),
+    }
+    for name, module in modules.items():
+        monkeypatch.setitem(sys.modules, name, module)
+    spec = importlib.util.spec_from_file_location(
+        "_windows_test_service_startup_test", Path("deployment/windows_test_service.py")
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    original_os_name = os.name
+    os.name = "nt"
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        os.name = original_os_name
+    return module
 
 
 def write_marker(path: Path):
@@ -455,6 +489,100 @@ def test_grandchild_uses_child_interpreter(monkeypatch, tmp_path):
     assert commands == [[REVIEWED_PYTHON, child_module.__file__, "--grandchild"]]
 
 
+@pytest.mark.parametrize("failure_point", ["reviewed_python_executable", "ChildJob.start"])
+def test_service_logs_process_tree_start_failure_and_propagates(
+    monkeypatch, tmp_path, failure_point
+):
+    service_module = load_service_module(monkeypatch)
+    messages = []
+
+    class Logger:
+        def info(self, *_args):
+            pass
+
+        def exception(self, message, *args):
+            messages.append(message % args)
+
+    class FailingJob:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def start(self):
+            raise ValueError("child start exploded")
+
+        def close(self):
+            pass
+
+    service = service_module.CryptoHunterBackendTestService.__new__(
+        service_module.CryptoHunterBackendTestService
+    )
+    service.marker = tmp_path / "scm-health.txt"
+    service.machine_root = tmp_path
+    service.ownership_record = tmp_path / "windows-acceptance-ownership.json"
+    service.tree = None
+    service.logger = None
+    service.stop_event = object()
+    monkeypatch.setattr(service_module, "configure_service_logger", lambda _path: Logger())
+    monkeypatch.setattr(service_module, "close_service_logger", lambda _logger: None)
+    monkeypatch.setattr(service_module, "ChildJob", FailingJob)
+    if failure_point == "reviewed_python_executable":
+        monkeypatch.setattr(
+            service_module,
+            "reviewed_python_executable",
+            lambda _record: (_ for _ in ()).throw(RuntimeError("authority exploded")),
+        )
+        expected_type, expected_message = "RuntimeError", "authority exploded"
+    else:
+        monkeypatch.setattr(
+            service_module, "reviewed_python_executable", lambda _record: REVIEWED_PYTHON
+        )
+        expected_type, expected_message = "ValueError", "child start exploded"
+
+    with pytest.raises(Exception, match=expected_message):
+        service.SvcDoRun()
+
+    diagnostic = "\n".join(messages)
+    assert "PROCESS_TREE_START_FAILURE" in diagnostic
+    assert f"exception_type={expected_type}" in diagnostic
+    assert f"exception_message={expected_message}" in diagnostic
+    assert "service_pid=" in diagnostic
+    assert "run_token" not in diagnostic
+    assert not service.marker.exists()
+
+
+def test_service_logger_configuration_failure_uses_event_log_and_propagates(monkeypatch, tmp_path):
+    service_module = load_service_module(monkeypatch)
+    event_messages = []
+    monkeypatch.setattr(service_module.servicemanager, "LogErrorMsg", event_messages.append)
+    monkeypatch.setattr(
+        service_module,
+        "configure_service_logger",
+        lambda _path: (_ for _ in ()).throw(OSError("persistent logger exploded")),
+    )
+    service = service_module.CryptoHunterBackendTestService.__new__(
+        service_module.CryptoHunterBackendTestService
+    )
+    service.marker = tmp_path / "scm-health.txt"
+    service.machine_root = tmp_path
+    service.ownership_record = tmp_path / "windows-acceptance-ownership.json"
+    service.tree = None
+    service.logger = None
+    service.stop_event = object()
+
+    with pytest.raises(OSError, match="persistent logger exploded"):
+        service.SvcDoRun()
+
+    assert len(event_messages) == 1
+    diagnostic = event_messages[0]
+    assert "PROCESS_TREE_START_FAILURE" in diagnostic
+    assert "service_name=CryptoHunterBackend" in diagnostic
+    assert "exception_type=OSError" in diagnostic
+    assert "exception_message=persistent logger exploded" in diagnostic
+    assert "service_pid=" in diagnostic
+    assert "run_token" not in diagnostic
+    assert not service.marker.exists()
+
+
 def test_powershell_lifecycle_contract_is_specific_and_bounded():
     source = Path("deployment/windows_scm_probe.ps1").read_text(encoding="utf-8")
     assert 'Get-CimInstance Win32_Process -Filter "ProcessId=$($Tree.child_pid)"' in source
@@ -486,3 +614,56 @@ def test_powershell_lifecycle_contract_is_specific_and_bounded():
         "Remove-Item -LiteralPath $target"
     )
     assert "Remove-Item -LiteralPath $runtime" not in source
+
+
+def test_start_timeout_diagnostic_is_safe_bounded_and_precedes_cleanup():
+    source = Path("deployment/windows_scm_probe.ps1").read_text(encoding="utf-8")
+    diagnostic = source[
+        source.index("function Get-ProcessTreeStartupDiagnostic") : source.index(
+            "function Assert-Tree"
+        )
+    ]
+    assert "Win32_Service" in diagnostic
+    assert "health_marker=" in diagnostic and "health_pid=" in diagnostic
+    assert "process_tree_json=" in diagnostic and "process_tree_gate=" in diagnostic
+    for name in ("backend.log", "backend.log.1", "backend.log.2", "backend.log.3", "backend.log.4"):
+        assert f'"{name}"' in diagnostic
+    assert "Select-String" in diagnostic and '"PROCESS_TREE_START_FAILURE"' in diagnostic
+    assert "ReparsePoint" in diagnostic and "$item.PSIsContainer" in diagnostic
+    assert "Get-WinEvent -FilterHashtable $eventQuery -MaxEvents 128" in diagnostic
+    assert 'LogName = "Application"; StartTime = $SinceUtc' in diagnostic
+    assert "service_name=CryptoHunterBackend" in diagnostic
+    assert '"service_pid=$ServicePid(?:\\s|$)"' in diagnostic
+    assert "Where-Object { $_ -match 'PROCESS_TREE_START_FAILURE' }" in diagnostic
+    assert "Select-Object -First 1" in diagnostic
+    assert "$messageLine.Count -ne 1" in diagnostic
+    assert "event=$messageLine" in diagnostic
+    assert "$event.Message" in diagnostic
+    assert "$event |" not in diagnostic
+    assert "ownershipPath" not in diagnostic
+    assert "WindowsAcceptanceRunToken" not in diagnostic
+    catch = source.index('($stage -ceq "PROCESS_TREE_START"')
+    cleanup = source.index("} finally {", catch)
+    capture = source.index("foreach ($line in @(", catch)
+    lookup = source.index("Get-ProcessTreeStartupDiagnostic $startupServicePid", capture)
+    assert catch < capture < lookup < source.index("Write-Output $line", capture) < cleanup
+    assert '$primaryFailure = "[$stage] $($_.Exception.Message)"' in source[:cleanup]
+    assert "$diagnosticFailures.Add" in source[catch:cleanup]
+    report = source[source.index("$reportedFailures =") :]
+    assert report.index("$primaryFailure") < report.index("$startupDiagnostics")
+    assert report.index("$primaryFailure") < report.index("$diagnosticFailures")
+
+
+def test_event_log_lookup_failure_is_secondary_to_process_tree_primary():
+    source = Path("deployment/windows_scm_probe.ps1").read_text(encoding="utf-8")
+    diagnostic = source[
+        source.index("function Get-ProcessTreeStartupDiagnostic") : source.index(
+            "function Assert-Tree"
+        )
+    ]
+    event_lookup = diagnostic.index("Get-WinEvent")
+    event_failure = diagnostic.index("$script:diagnosticFailures.Add", event_lookup)
+    assert event_lookup < event_failure
+    assert "throw" not in diagnostic[event_failure:]
+    report = source[source.index("$reportedFailures =") :]
+    assert report.index("$primaryFailure") < report.index("$diagnosticFailures")
