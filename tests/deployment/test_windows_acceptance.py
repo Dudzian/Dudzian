@@ -110,7 +110,7 @@ class ReviewedBoundary(AcceptanceBoundary):
     def run_stage8(self, scratch_parent: Path) -> dict[str, str]:
         if self.stage8_failure:
             raise windows_acceptance.Stage8PostgreSQLProbeError(
-                "WINDOWS_SSPI_HBA_QUALIFICATION",
+                "WINDOWS_TLS_HBA_QUALIFICATION",
                 self.stage8_failure,
                 "reviewed Stage-8 failure",
             )

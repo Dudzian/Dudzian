@@ -68,7 +68,7 @@ def qualify_acl(service_sid: str | None = None) -> dict[str, str]:
 
 
 def qualify_local_principal_authentication(scratch_parent: Path | None = None) -> dict[str, str]:
-    """Delegate to the reviewed live SSPI qualification; never repair production state."""
+    """Delegate to the reviewed live mTLS qualification; never repair production state."""
     if scratch_parent is None:
         raise WindowsDeploymentNotQualified(
             "a caller-owned Stage-8 scratch parent and live Windows proof are required"

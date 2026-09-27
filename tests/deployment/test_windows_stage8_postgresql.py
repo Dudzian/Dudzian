@@ -56,49 +56,46 @@ def test_missing_binaries_fail(tmp_path: Path) -> None:
         probe.discover_postgresql({"PGBIN": str(tmp_path)})
 
 
-def test_final_hba_is_exact_ordered_loopback_sspi_then_reject() -> None:
+def test_final_hba_is_exact_ordered_loopback_cert_then_reject() -> None:
     lines = probe.final_hba_lines()
     assert lines[:2] == (
-        "host stage8_freshness freshness_crypto_verifier 127.0.0.1/32 sspi map=stage8_sspi include_realm=1",
-        "host stage8_freshness freshness_runtime 127.0.0.1/32 sspi map=stage8_sspi include_realm=1",
+        "hostssl stage8_freshness freshness_crypto_verifier 127.0.0.1/32 cert map=stage8_cert",
+        "hostssl stage8_freshness freshness_runtime 127.0.0.1/32 cert map=stage8_cert",
     )
     assert all(method not in "\n".join(lines[:2]) for method in probe.FORBIDDEN_ONLINE_METHODS)
     assert all("reject" in line for line in lines[2:])
 
 
-def test_ident_is_exact_and_principals_must_be_distinct() -> None:
-    assert probe.ident_lines("HOST\\runtime", "HOST\\verifier") == (
-        "stage8_sspi HOST\\runtime freshness_runtime",
-        "stage8_sspi HOST\\verifier freshness_crypto_verifier",
+def test_ident_is_exact_without_wildcards() -> None:
+    assert probe.ident_lines() == (
+        "stage8_cert CryptoHunterBackend freshness_runtime",
+        "stage8_cert CryptoHunterFreshnessVerifier freshness_crypto_verifier",
     )
-    with pytest.raises(probe.Stage8PostgreSQLProbeError, match="two distinct"):
-        probe.ident_lines("HOST$@REALM", "host$@realm")
-    with pytest.raises(probe.Stage8PostgreSQLProbeError, match="unsafe"):
-        probe.ident_lines(".*", "HOST\\verifier")
+    assert not any("*" in line or "/" in line for line in probe.ident_lines())
 
 
 def test_effective_hba_rows_require_parser_success_and_order() -> None:
     rows = [
         (
             1,
-            "host",
+            "hostssl",
             [probe.DATABASE],
             [probe.VERIFIER_ROLE],
             "127.0.0.1",
             "255.255.255.255",
-            "sspi",
-            ["map=stage8_sspi", "include_realm=1"],
+            "cert",
+            ["map=stage8_cert"],
             None,
         ),
         (
             2,
-            "host",
+            "hostssl",
             [probe.DATABASE],
             [probe.RUNTIME_ROLE],
             "127.0.0.1",
             "255.255.255.255",
-            "sspi",
-            ["map=stage8_sspi", "include_realm=1"],
+            "cert",
+            ["map=stage8_cert"],
             None,
         ),
         (
@@ -211,6 +208,8 @@ def test_probe_source_keeps_ownership_token_and_production_boundaries() -> None:
     assert "pg_hba_file_rules" in source
     assert "timeout=" in source
     assert 'os.environ["PGDATA"]' not in source
+    assert '_qualify_private_key_dacl(tls["ca_key"], owner_contract)' in source
+    assert '_qualify_private_key_dacl(tls["server_key"], owner_contract)' in source
 
 
 def _completed(
@@ -327,11 +326,192 @@ def test_child_requires_fresh_go_before_connecting(
     # Existing GO from another invocation is deliberately placed at the fresh path.
     go.write_text('{"invocation_token":"stale","pid":1,"go":true}', encoding="utf-8")
     calls: list[str] = []
-    child._connect(request, lambda **_kwargs: calls.append("connected"), wait_timeout=0)
+    child._connect(
+        request, child.RUNTIME_SERVICE, lambda **_kwargs: calls.append("connected"), wait_timeout=0
+    )
     assert calls == []
     payload = __import__("json").loads(result.read_text(encoding="utf-8"))
     assert payload["invocation_token"] == token
     assert payload["ok"] is False
+
+
+def test_ephemeral_pki_has_distinct_clients_matching_keys_and_exact_server_san(
+    tmp_path: Path,
+) -> None:
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+
+    assets = probe._provision_tls_pki(tmp_path)
+    runtime = x509.load_pem_x509_certificate(assets["runtime_cert"].read_bytes())
+    verifier = x509.load_pem_x509_certificate(assets["verifier_cert"].read_bytes())
+    server = x509.load_pem_x509_certificate(assets["server_cert"].read_bytes())
+    assert runtime.fingerprint(hashes.SHA256()) != verifier.fingerprint(hashes.SHA256())
+    for name, certificate in (("runtime", runtime), ("verifier", verifier)):
+        key = serialization.load_pem_private_key(assets[f"{name}_key"].read_bytes(), password=None)
+        assert key.public_key().public_numbers() == certificate.public_key().public_numbers()
+    san = server.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
+    assert [str(value) for value in san.get_values_for_type(x509.IPAddress)] == ["127.0.0.1"]
+
+
+SYSTEM_SID = "S-1-5-18"
+SERVICE_SID = "S-1-5-80-111"
+FOREIGN_SID = "S-1-5-32-545"
+
+
+def _exact_client_key_aces() -> list[tuple[str, int, int, int]]:
+    return [
+        (
+            SYSTEM_SID,
+            probe.PRIVATE_KEY_ALLOW_ACE_TYPE,
+            probe.PRIVATE_KEY_FULL_MASK,
+            probe.PRIVATE_KEY_ACE_FLAGS,
+        ),
+        (
+            SERVICE_SID,
+            probe.PRIVATE_KEY_ALLOW_ACE_TYPE,
+            probe.PRIVATE_KEY_READ_MASK,
+            probe.PRIVATE_KEY_ACE_FLAGS,
+        ),
+    ]
+
+
+def test_exact_client_private_key_aces_pass() -> None:
+    exact = _exact_client_key_aces()
+    probe._qualify_exact_private_key_aces(exact, exact)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        # Service FULL and service READ+WRITE are both forbidden.
+        lambda aces: [aces[0], (*aces[1][:2], probe.PRIVATE_KEY_FULL_MASK, aces[1][3])],
+        lambda aces: [
+            aces[0],
+            (*aces[1][:2], probe.PRIVATE_KEY_READ_MASK | 0x00000116, aces[1][3]),
+        ],
+        # Duplicate service and duplicate SYSTEM ACEs must not be hidden by SID deduplication.
+        lambda aces: [*aces, (SERVICE_SID, 0, 0x00000116, 0)],
+        lambda aces: [aces[0], aces[0], aces[1]],
+        # SYSTEM underprivilege and a third foreign SID are forbidden.
+        lambda aces: [(*aces[0][:2], probe.PRIVATE_KEY_READ_MASK, aces[0][3]), aces[1]],
+        lambda aces: [*aces, (FOREIGN_SID, 0, probe.PRIVATE_KEY_READ_MASK, 0)],
+        # No inherited/object flags and no deny ACE are accepted.
+        lambda aces: [aces[0], (*aces[1][:3], 0x10)],
+        lambda aces: [aces[0], (SERVICE_SID, 1, probe.PRIVATE_KEY_READ_MASK, 0)],
+    ],
+    ids=[
+        "service-full",
+        "service-read-write",
+        "duplicate-service",
+        "duplicate-system",
+        "system-read-only",
+        "foreign-sid",
+        "inherited-or-object-flags",
+        "deny-ace",
+    ],
+)
+def test_client_private_key_acl_rejects_every_non_exact_shape(mutation) -> None:
+    exact = _exact_client_key_aces()
+    with pytest.raises(RuntimeError, match="differs from exact contract"):
+        probe._qualify_exact_private_key_aces(mutation(exact), exact)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="requires real Win32 DACL persistence")
+def test_real_windows_private_key_dacl_round_trip_and_overprivilege_denial(tmp_path: Path) -> None:
+    """Exercise production provision/read APIs so Win32 mask normalization is covered."""
+    import ntsecuritycon
+    import win32api
+    import win32security
+
+    account = win32api.GetUserName()
+    system_sid = probe._account_sid("SYSTEM", win32security)
+    account_sid = probe._account_sid(account, win32security)
+    path = tmp_path / "client.key"
+    path.write_bytes(b"not-secret-test-fixture")
+    exact = [(system_sid, probe.PRIVATE_KEY_FULL_MASK), (account_sid, probe.PRIVATE_KEY_READ_MASK)]
+
+    probe._protect_private_key(path, account)
+    probe._qualify_private_key_dacl(path, exact)
+
+    system, _, _ = win32security.LookupAccountName(None, "SYSTEM")
+    principal, _, _ = win32security.LookupAccountName(None, account)
+    widened = win32security.ACL()
+    widened.AddAccessAllowedAce(win32security.ACL_REVISION, ntsecuritycon.FILE_ALL_ACCESS, system)
+    widened.AddAccessAllowedAce(
+        win32security.ACL_REVISION, ntsecuritycon.FILE_ALL_ACCESS, principal
+    )
+    win32security.SetNamedSecurityInfo(
+        str(path),
+        win32security.SE_FILE_OBJECT,
+        win32security.DACL_SECURITY_INFORMATION | win32security.PROTECTED_DACL_SECURITY_INFORMATION,
+        None,
+        None,
+        widened,
+        None,
+    )
+    with pytest.raises(RuntimeError, match="differs from exact contract"):
+        probe._qualify_private_key_dacl(path, exact)
+
+    probe._protect_private_key(path, account)
+    probe._qualify_private_key_dacl(path, exact)
+
+
+def test_child_selects_fixed_runtime_mtls_material_not_request_paths(tmp_path: Path) -> None:
+    from deployment import windows_stage8_postgresql_service as child
+    import json
+    import os
+
+    token = "f" * 64
+    pki = tmp_path / "pki"
+    (pki / "runtime").mkdir(parents=True)
+    (pki / "verifier").mkdir()
+    for path in (pki / "ca.crt", pki / "runtime" / "client.crt", pki / "runtime" / "client.key"):
+        path.write_text("fixture", encoding="utf-8")
+    ready, go, result = (tmp_path / name for name in ("ready", "go", "result"))
+    request = tmp_path / "request.json"
+    request.write_text(
+        json.dumps(
+            {
+                "invocation_token": token,
+                "port": 5432,
+                "database": "db",
+                "role": "role",
+                "ready": str(ready),
+                "go": str(go),
+                "result": str(result),
+                "sslkey": "caller-controlled.key",
+            }
+        ),
+        encoding="utf-8",
+    )
+    go.write_text(
+        json.dumps({"invocation_token": token, "pid": os.getpid(), "go": True}), encoding="utf-8"
+    )
+    observed: dict[str, object] = {}
+
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def execute(self, _sql):
+            return self
+
+        def fetchone(self):
+            return ("role",)
+
+    def connect(**kwargs):
+        observed.update(kwargs)
+        return Connection()
+
+    child._connect(request, child.RUNTIME_SERVICE, connect)
+    assert observed["sslmode"] == "verify-full"
+    assert observed["sslkey"] == str(pki / "runtime" / "client.key")
+    assert observed["sslcert"] == str(pki / "runtime" / "client.crt")
+    assert observed["sslrootcert"] == str(pki / "ca.crt")
+    assert "password" not in observed
 
 
 def test_service_stopped_wait_is_bounded_and_required(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -453,10 +633,10 @@ def test_standalone_cleanup_failure_fails_closed() -> None:
 @pytest.mark.parametrize(
     ("service", "role", "expected", "label"),
     [
-        (probe.RUNTIME_SERVICE, probe.RUNTIME_ROLE, True, "WINDOWS_SSPI_RUNTIME_CONNECT"),
-        (probe.VERIFIER_SERVICE, probe.VERIFIER_ROLE, True, "WINDOWS_SSPI_VERIFIER_CONNECT"),
-        (probe.RUNTIME_SERVICE, probe.VERIFIER_ROLE, False, "WINDOWS_SSPI_CROSS_ROLE_DENIAL"),
-        (probe.VERIFIER_SERVICE, probe.RUNTIME_ROLE, False, "WINDOWS_SSPI_CROSS_ROLE_DENIAL"),
+        (probe.RUNTIME_SERVICE, probe.RUNTIME_ROLE, True, "WINDOWS_TLS_RUNTIME_CONNECT"),
+        (probe.VERIFIER_SERVICE, probe.VERIFIER_ROLE, True, "WINDOWS_TLS_VERIFIER_CONNECT"),
+        (probe.RUNTIME_SERVICE, probe.VERIFIER_ROLE, False, "WINDOWS_TLS_CROSS_ROLE_DENIAL"),
+        (probe.VERIFIER_SERVICE, probe.RUNTIME_ROLE, False, "WINDOWS_TLS_CROSS_ROLE_DENIAL"),
     ],
 )
 def test_matrix_failures_have_specific_labels(
@@ -502,7 +682,7 @@ def test_child_cancellation_before_go_ends_wait_and_never_connects(tmp_path: Pat
     connected: list[bool] = []
     worker = threading.Thread(
         target=child._connect,
-        args=(request, lambda **_kwargs: connected.append(True)),
+        args=(request, child.RUNTIME_SERVICE, lambda **_kwargs: connected.append(True)),
         kwargs={"cancelled": cancelled.is_set, "wait_timeout": 2},
     )
     worker.start()
@@ -549,7 +729,7 @@ def test_token_proof_failure_publishes_no_go_and_is_typed(
             probe.RUNTIME_ROLE,
         )
     assert failure.value.item == probe.PRINCIPAL_AUTH
-    assert failure.value.label == "WINDOWS_SSPI_RUNTIME_CONNECT"
+    assert failure.value.label == "WINDOWS_TLS_RUNTIME_CONNECT"
     assert not list(tmp_path.glob("invocations/*/go.json"))
 
 
@@ -614,8 +794,8 @@ def test_alive_helper_or_process_exit_timeout_blocks_delete(
 @pytest.mark.parametrize(
     ("service", "label"),
     [
-        (probe.RUNTIME_SERVICE, "WINDOWS_SSPI_RUNTIME_CONNECT"),
-        (probe.VERIFIER_SERVICE, "WINDOWS_SSPI_VERIFIER_CONNECT"),
+        (probe.RUNTIME_SERVICE, "WINDOWS_TLS_RUNTIME_CONNECT"),
+        (probe.VERIFIER_SERVICE, "WINDOWS_TLS_VERIFIER_CONNECT"),
     ],
 )
 def test_service_start_failures_are_typed_principal_errors(
@@ -626,15 +806,6 @@ def test_service_start_failures_are_typed_principal_errors(
         probe._invoke_service(tmp_path, tmp_path / "request", service, "account", 1, "role")
     assert failure.value.item == probe.PRINCIPAL_AUTH
     assert failure.value.label == label
-
-
-def test_missing_logged_sspi_identity_is_typed_principal_error(tmp_path: Path) -> None:
-    log = tmp_path / "postgres.log"
-    log.write_text("no authenticated identity here", encoding="utf-8")
-    with pytest.raises(probe.Stage8PostgreSQLProbeError) as failure:
-        probe._extract_new_principal(log, 0, "WINDOWS_SSPI_RUNTIME_IDENTITY")
-    assert failure.value.item == probe.PRINCIPAL_AUTH
-    assert failure.value.label == "WINDOWS_SSPI_RUNTIME_IDENTITY"
 
 
 def test_pg_ctl_runner_uses_real_files_not_anonymous_pipes(

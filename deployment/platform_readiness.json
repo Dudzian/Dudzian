@@ -34,7 +34,7 @@
       "identity": "NT SERVICE\\CryptoHunterBackend",
       "ipc": "ACL-protected named pipe",
       "permissions": "Windows DACL",
-      "principal_auth": "PostgreSQL SSPI candidate with exact pg_ident mapping; distinct virtual-service principals require live proof",
+      "principal_auth": "PostgreSQL TLS client certificates with exact pg_ident mapping and service-SID-protected private keys; live proof required",
       "paths": "ProgramFiles/ProgramData/LOCALAPPDATA known-folder boundary"
     },
     "LINUX": {
@@ -174,7 +174,7 @@
     "WINDOWS_LOCAL_PRINCIPAL_AUTHENTICATION": {
       "owner": "WINDOWS",
       "status": "NOT_TESTED",
-      "evidence": "Stage-8 SSPI probe is implemented; PASS requires two distinct live SCM service principals on Windows Server",
+      "evidence": "Stage-8 mTLS corrective is implemented; PASS requires live service-token key isolation and certificate matrix proof on Windows",
       "evidence_class": "LIVE_WINDOWS_INTEGRATION"
     },
     "WINDOWS_SQLITE_CRASH_INTEGRITY": {
