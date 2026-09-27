@@ -34,6 +34,9 @@ SERVICE_TIMEOUT = 20
 AUTHORITY_STATEMENT_TIMEOUT_MS = 60_000
 AUTHORITY_LOCK_TIMEOUT_MS = 5_000
 STDERR_LIMIT = 8192
+# postmaster.pid records whole Unix seconds while Win32 FILETIME has sub-second
+# precision; three seconds also covers the short spawn-to-pidfile-write interval.
+POSTMASTER_START_TOLERANCE_SECONDS = 3.0
 DATABASE = "stage8_freshness"
 RUNTIME_SERVICE = "CryptoHunterBackend"
 VERIFIER_SERVICE = "CryptoHunterFreshnessVerifier"
@@ -128,6 +131,95 @@ class PostgreSQLBinaries:
 
     def executable(self, name: str) -> Path:
         return self.bindir / name
+
+
+@dataclass(frozen=True)
+class PgCtlResult:
+    """Bounded result from the special no-pipe pg_ctl process boundary."""
+
+    returncode: int | None
+    elapsed: float
+    timed_out: bool
+    stdout_tail: str
+    stderr_tail: str
+
+
+@dataclass(frozen=True)
+class PostmasterPidFile:
+    pid: int
+    data: Path
+    start_time: float
+
+
+@dataclass(frozen=True)
+class PostmasterWitness:
+    pid: int
+    process: Any
+    start_time: float
+    executable: Path
+
+
+@dataclass(frozen=True)
+class ProcessIdentitySnapshot:
+    pid: int
+    process: Any
+    creation_time: float
+    executable: Path
+
+
+def _tail(path: Path, limit: int = STDERR_LIMIT) -> str:
+    try:
+        with path.open("rb") as stream:
+            stream.seek(0, os.SEEK_END)
+            size = stream.tell()
+            stream.seek(max(0, size - limit))
+            return stream.read(limit).decode("utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
+def _run_pg_ctl(
+    pg_ctl: Path,
+    data: Path,
+    diagnostic_root: Path,
+    operation: str,
+    arguments: list[str],
+    *,
+    timeout: int = START_TIMEOUT,
+) -> PgCtlResult:
+    """Run pg_ctl with real files so a postgres child cannot retain a Python pipe."""
+    token = f"{operation}-{time.time_ns()}"
+    stdout_path = diagnostic_root / f"pg_ctl-{token}.stdout.log"
+    stderr_path = diagnostic_root / f"pg_ctl-{token}.stderr.log"
+    command = [str(pg_ctl), "-D", str(data), *arguments]
+    started = time.monotonic()
+    process: subprocess.Popen[bytes] | None = None
+    timed_out = False
+    returncode: int | None = None
+    # Binary file handles are deliberately passed directly to Popen. In particular,
+    # neither stream is PIPE and there is no communicate()/pipe-EOF dependency.
+    with stdout_path.open("wb") as stdout, stderr_path.open("wb") as stderr:
+        process = subprocess.Popen(command, stdout=stdout, stderr=stderr)
+        try:
+            returncode = process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            process.terminate()
+            try:
+                returncode = process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                try:
+                    returncode = process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    returncode = None
+    return PgCtlResult(
+        returncode=returncode,
+        elapsed=time.monotonic() - started,
+        timed_out=timed_out,
+        stdout_tail=_tail(stdout_path),
+        stderr_tail=_tail(stderr_path),
+    )
 
 
 def _run(command: list[str], *, timeout: int = COMMAND_TIMEOUT) -> subprocess.CompletedProcess[str]:
@@ -303,6 +395,307 @@ def _postgresql_pid(data: Path) -> int | None:
         return int((data / "postmaster.pid").read_text(encoding="utf-8").splitlines()[0])
     except (OSError, ValueError, IndexError):
         return None
+
+
+def _postmaster_pidfile(data: Path) -> PostmasterPidFile | None:
+    try:
+        lines = (data / "postmaster.pid").read_text(encoding="utf-8").splitlines()
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise Stage8PostgreSQLProbeError(
+            "POSTGRESQL_PROCESS_IDENTITY", SUBSTRATE, f"could not read owned postmaster.pid: {exc}"
+        ) from exc
+    if len(lines) < 3:
+        raise Stage8PostgreSQLProbeError(
+            "POSTGRESQL_PROCESS_IDENTITY", SUBSTRATE, "owned postmaster.pid is truncated"
+        )
+    try:
+        pid = int(lines[0])
+        start_time = float(lines[2])
+    except ValueError as exc:
+        raise Stage8PostgreSQLProbeError(
+            "POSTGRESQL_PROCESS_IDENTITY", SUBSTRATE, "owned postmaster.pid identity is malformed"
+        ) from exc
+    if pid <= 0 or not lines[1].strip() or start_time <= 0:
+        raise Stage8PostgreSQLProbeError(
+            "POSTGRESQL_PROCESS_IDENTITY", SUBSTRATE, "owned postmaster.pid identity is invalid"
+        )
+    pid_data = Path(lines[1])
+    try:
+        matches = os.path.normcase(str(pid_data.resolve())) == os.path.normcase(str(data.resolve()))
+    except OSError as exc:
+        raise Stage8PostgreSQLProbeError(
+            "POSTGRESQL_PROCESS_IDENTITY", SUBSTRATE, f"could not canonicalize owned PGDATA: {exc}"
+        ) from exc
+    if not matches:
+        raise Stage8PostgreSQLProbeError(
+            "POSTGRESQL_PROCESS_IDENTITY",
+            SUBSTRATE,
+            f"postmaster.pid data directory does not match exact owned PGDATA: {pid_data}",
+        )
+    return PostmasterPidFile(pid, pid_data, start_time)
+
+
+def _filetime_seconds(value: Any) -> float:
+    timestamp = getattr(value, "timestamp", None)
+    if callable(timestamp):
+        return float(timestamp())
+    return float(value)
+
+
+def _query_process_image_path(process_handle: Any) -> Path:
+    """Read a process image through minimal-rights QueryFullProcessImageNameW."""
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    query = kernel32.QueryFullProcessImageNameW
+    query.argtypes = (
+        wintypes.HANDLE,
+        wintypes.DWORD,
+        wintypes.LPWSTR,
+        ctypes.POINTER(wintypes.DWORD),
+    )
+    query.restype = wintypes.BOOL
+    # The Win32 extended path limit is 32,767 UTF-16 code units.  Supplying
+    # that bound avoids truncating a reviewed executable identity.
+    capacity = 32_768
+    buffer = ctypes.create_unicode_buffer(capacity)
+    length = wintypes.DWORD(capacity)
+    try:
+        native_handle = wintypes.HANDLE(int(process_handle))
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise Stage8PostgreSQLProbeError(
+            "POSTGRESQL_PROCESS_IDENTITY", SUBSTRATE, "could not convert the Win32 process handle"
+        ) from exc
+    if not query(native_handle, 0, buffer, ctypes.byref(length)):
+        error = ctypes.get_last_error()
+        raise Stage8PostgreSQLProbeError(
+            "POSTGRESQL_PROCESS_IDENTITY",
+            SUBSTRATE,
+            f"QueryFullProcessImageNameW failed: winerror={error}",
+        )
+    if length.value <= 0 or length.value >= capacity:
+        raise Stage8PostgreSQLProbeError(
+            "POSTGRESQL_PROCESS_IDENTITY", SUBSTRATE, "invalid process image path length"
+        )
+    return Path(buffer.value)
+
+
+def _process_identity_snapshot(pid: int) -> ProcessIdentitySnapshot | None:
+    """Open and describe one live Win32 process object; caller owns the handle."""
+    import pywintypes
+    import win32api
+    import win32con
+    import win32event
+    import win32process
+
+    access = win32con.SYNCHRONIZE | win32con.PROCESS_QUERY_LIMITED_INFORMATION
+    try:
+        process = win32api.OpenProcess(access, False, pid)
+    except pywintypes.error as exc:
+        if exc.winerror == 87:
+            return None
+        raise Stage8PostgreSQLProbeError(
+            "POSTGRESQL_PROCESS_IDENTITY",
+            SUBSTRATE,
+            f"process identity query failed for pid={pid}: winerror={exc.winerror}",
+        ) from exc
+    try:
+        state = win32event.WaitForSingleObject(process, 0)
+        if state == win32event.WAIT_OBJECT_0:
+            process.Close()
+            return None
+        if state != win32event.WAIT_TIMEOUT:
+            raise RuntimeError(f"unexpected wait result {state}")
+        image = _query_process_image_path(process)
+        creation = _filetime_seconds(win32process.GetProcessTimes(process)["CreationTime"])
+        return ProcessIdentitySnapshot(pid, process, creation, image)
+    except Exception as exc:
+        process.Close()
+        raise Stage8PostgreSQLProbeError(
+            "POSTGRESQL_PROCESS_IDENTITY",
+            SUBSTRATE,
+            f"process identity query was ambiguous for pid={pid}: {exc}",
+        ) from exc
+
+
+def _postmaster_witness(data: Path, postgres: Path) -> PostmasterWitness | None:
+    """Bind pidfile identity to one live Win32 process object without mutation."""
+    identity = _postmaster_pidfile(data)
+    if identity is None:
+        return None
+    snapshot = _process_identity_snapshot(identity.pid)
+    if snapshot is None:
+        return None
+    try:
+        image_matches = os.path.normcase(str(snapshot.executable.resolve())) == os.path.normcase(
+            str(postgres.resolve())
+        )
+        time_matches = (
+            abs(snapshot.creation_time - identity.start_time) <= POSTMASTER_START_TOLERANCE_SECONDS
+        )
+        if not image_matches or not time_matches:
+            snapshot.process.Close()
+            mismatch = "executable" if not image_matches else "creation time"
+            raise Stage8PostgreSQLProbeError(
+                "POSTGRESQL_PROCESS_IDENTITY",
+                SUBSTRATE,
+                f"live PID does not match owned postmaster {mismatch}: pid={identity.pid}",
+            )
+        return PostmasterWitness(
+            identity.pid, snapshot.process, identity.start_time, snapshot.executable
+        )
+    except Stage8PostgreSQLProbeError:
+        raise
+    except Exception as exc:
+        snapshot.process.Close()
+        raise Stage8PostgreSQLProbeError(
+            "POSTGRESQL_PROCESS_IDENTITY",
+            SUBSTRATE,
+            f"postmaster identity query was ambiguous for pid={identity.pid}: {exc}",
+        ) from exc
+
+
+def _close_postmaster_witness(witness: PostmasterWitness) -> None:
+    witness.process.Close()
+
+
+def _require_exact_owned_data(data: Path, root: Path) -> None:
+    try:
+        matches = data.resolve() == (root / "cluster").resolve()
+    except OSError as exc:
+        raise Stage8PostgreSQLProbeError(
+            "POSTGRESQL_PROCESS_IDENTITY",
+            SUBSTRATE,
+            f"could not canonicalize Stage-8 PGDATA: {exc}",
+        ) from exc
+    if not matches:
+        raise Stage8PostgreSQLProbeError(
+            "POSTGRESQL_PROCESS_IDENTITY",
+            SUBSTRATE,
+            "PGDATA is not the exact Stage-8-owned cluster",
+        )
+
+
+def _process_exists(pid: int | None) -> bool:
+    """Query process liveness on Windows without signalling or mutating it."""
+    if pid is None or pid <= 0:
+        return False
+    import pywintypes
+    import win32api
+    import win32con
+    import win32event
+
+    try:
+        process = win32api.OpenProcess(win32con.SYNCHRONIZE, False, pid)
+    except pywintypes.error as exc:
+        # ERROR_INVALID_PARAMETER is returned for a PID with no process object.
+        if exc.winerror == 87:
+            return False
+        raise Stage8PostgreSQLProbeError(
+            "POSTGRESQL_PROCESS_STATE",
+            SUBSTRATE,
+            f"non-destructive process-state query failed for pid={pid}: winerror={exc.winerror}",
+        ) from exc
+    try:
+        state = win32event.WaitForSingleObject(process, 0)
+        if state == win32event.WAIT_TIMEOUT:
+            return True
+        if state == win32event.WAIT_OBJECT_0:
+            return False
+        raise Stage8PostgreSQLProbeError(
+            "POSTGRESQL_PROCESS_STATE",
+            SUBSTRATE,
+            f"unexpected process-state result for pid={pid}: wait_result={state}",
+        )
+    finally:
+        process.Close()
+
+
+def _cluster_running(pg_ctl: Path, data: Path, root: Path) -> tuple[bool, int | None]:
+    """Require exact pidfile, process identity and exact-PGDATA pg_ctl status."""
+    _require_exact_owned_data(data, root)
+    witness = _postmaster_witness(data, pg_ctl.with_name("postgres.exe"))
+    if witness is None:
+        return False, _postgresql_pid(data)
+    try:
+        status = _run_pg_ctl(pg_ctl, data, root, "status", ["status"], timeout=10)
+        return not status.timed_out and status.returncode == 0, witness.pid
+    finally:
+        _close_postmaster_witness(witness)
+
+
+def _pg_ctl_failure_detail(
+    operation: str, result: PgCtlResult, data: Path, running: bool, pid: int | None, log: Path
+) -> str:
+    return (
+        f"pg_ctl operation={operation} returncode={result.returncode} "
+        f"timed_out={result.timed_out} elapsed={result.elapsed:.3f}s cluster={data} "
+        f"postmaster_pid={pid} cluster_running={running}; "
+        f"stdout_tail={result.stdout_tail[-STDERR_LIMIT:]!r}; "
+        f"stderr_tail={result.stderr_tail[-STDERR_LIMIT:]!r}; "
+        f"postgresql_log_tail={_tail(log)!r}"
+    )
+
+
+def _stop_owned_cluster(
+    pg_ctl: Path,
+    data: Path,
+    root: Path,
+    log: Path,
+    *,
+    mode: str = "fast",
+    timeout: int = START_TIMEOUT,
+) -> str | None:
+    _require_exact_owned_data(data, root)
+    witness = _postmaster_witness(data, pg_ctl.with_name("postgres.exe"))
+    if witness is None:
+        return None
+    pid = witness.pid
+    witness_error: str | None = None
+    try:
+        result = _run_pg_ctl(
+            pg_ctl, data, root, "stop", ["-m", mode, "-w", "stop"], timeout=timeout
+        )
+        status = _run_pg_ctl(pg_ctl, data, root, "status", ["status"], timeout=10)
+        running = not status.timed_out and status.returncode == 0
+        try:
+            _wait_process_exit(witness.process, timeout=timeout)
+        except Exception as exc:
+            witness_error = str(exc)
+        status_stopped = not status.timed_out and status.returncode == 3
+        if (
+            result.timed_out
+            or result.returncode != 0
+            or not status_stopped
+            or witness_error is not None
+        ):
+            detail = _pg_ctl_failure_detail("stop", result, data, running, pid, log)
+            detail += (
+                f"; status_returncode={status.returncode}; status_timed_out={status.timed_out}"
+            )
+            return detail if witness_error is None else f"{detail}; process_exit={witness_error}"
+        return None
+    finally:
+        _close_postmaster_witness(witness)
+
+
+def _stop_if_owned_cluster_running(
+    pg_ctl: Path,
+    data: Path,
+    root: Path,
+    log: Path,
+    *,
+    cluster_started: bool,
+    mode: str = "fast",
+    timeout: int = START_TIMEOUT,
+) -> str | None:
+    """Stop based on live cluster state, not solely on the possibly stale marker."""
+    # The stale cache marker is deliberately not authority to signal anything.
+    # _stop_owned_cluster obtains one exact identity witness before invoking pg_ctl.
+    return _stop_owned_cluster(pg_ctl, data, root, log, mode=mode, timeout=timeout)
 
 
 def _admin_dsn(port: int, database: str = "postgres") -> str:
@@ -690,11 +1083,12 @@ def run_probe(scratch_parent: Path, *, status_file: Path | None = None) -> dict[
                 "\nlisten_addresses='127.0.0.1'\nfsync=on\nsynchronous_commit=on\nlog_connections=on\nlog_disconnections=on\nlogging_collector=off\n"
             )
         with _phase("POSTGRESQL_START"):
-            started = _run(
+            started = _run_pg_ctl(
+                binaries.executable("pg_ctl.exe"),
+                data,
+                root,
+                "start",
                 [
-                    str(binaries.executable("pg_ctl.exe")),
-                    "-D",
-                    str(data),
                     "-l",
                     str(log),
                     "-o",
@@ -704,14 +1098,15 @@ def run_probe(scratch_parent: Path, *, status_file: Path | None = None) -> dict[
                 ],
                 timeout=START_TIMEOUT,
             )
-            if started.returncode:
+            running, pid = _cluster_running(binaries.executable("pg_ctl.exe"), data, root)
+            if started.timed_out or started.returncode != 0 or not running or pid is None:
                 raise Stage8PostgreSQLProbeError(
                     "POSTGRESQL_START",
                     SUBSTRATE,
-                    (started.stderr or started.stdout)[-STDERR_LIMIT:],
+                    _pg_ctl_failure_detail("start", started, data, running, pid, log),
                 )
             cluster_started = True
-            _write_status(cluster_started=True, postgresql_pid=_postgresql_pid(data))
+            _write_status(cluster_started=True, postgresql_pid=pid)
         import psycopg
         from bot_core.postgresql_freshness_authority import (
             PostgreSQLConnectionConfig,
@@ -759,7 +1154,7 @@ def run_probe(scratch_parent: Path, *, status_file: Path | None = None) -> dict[
             f"host {DATABASE} stage8_bootstrap 127.0.0.1/32 sspi map={MAP_NAME} include_realm=1\nhost all all 0.0.0.0/0 reject\nhost all all ::0/0 reject\n",
             encoding="utf-8",
         )
-        _run([str(binaries.executable("pg_ctl.exe")), "-D", str(data), "reload"])
+        _run_pg_ctl(binaries.executable("pg_ctl.exe"), data, root, "reload", ["reload"])
         with _phase("HELPER_SERVICE_PREPARE"):
             service_requests = _prepare_services(root, owned_services)
             _write_status(owned_services=sorted(owned_services))
@@ -796,8 +1191,10 @@ def run_probe(scratch_parent: Path, *, status_file: Path | None = None) -> dict[
             )
         with _phase("FINAL_HBA_WRITE"):
             (data / "pg_hba.conf").write_text("\n".join(final_hba_lines()) + "\n", encoding="utf-8")
-        reload_result = _run([str(binaries.executable("pg_ctl.exe")), "-D", str(data), "reload"])
-        if reload_result.returncode:
+        reload_result = _run_pg_ctl(
+            binaries.executable("pg_ctl.exe"), data, root, "reload", ["reload"]
+        )
+        if reload_result.timed_out or reload_result.returncode != 0:
             raise Stage8PostgreSQLProbeError(
                 "WINDOWS_SSPI_HBA_QUALIFICATION",
                 PRINCIPAL_AUTH,
@@ -807,33 +1204,23 @@ def run_probe(scratch_parent: Path, *, status_file: Path | None = None) -> dict[
         # start again with precisely the same final files. No administrative network
         # authentication rule is introduced for this read-only qualification.
         with _phase("FINAL_HBA_OFFLINE_QUALIFICATION"):
-            stopped = _run(
-                [
-                    str(binaries.executable("pg_ctl.exe")),
-                    "-D",
-                    str(data),
-                    "-m",
-                    "fast",
-                    "-w",
-                    "stop",
-                ],
-                timeout=START_TIMEOUT,
-            )
-            if stopped.returncode:
+            stop_error = _stop_owned_cluster(binaries.executable("pg_ctl.exe"), data, root, log)
+            if stop_error:
                 raise Stage8PostgreSQLProbeError(
                     "WINDOWS_SSPI_HBA_QUALIFICATION",
                     PRINCIPAL_AUTH,
-                    "could not stop for offline HBA qualification",
+                    f"could not stop for offline HBA qualification: {stop_error}",
                 )
             cluster_started = False
             _write_status(cluster_started=False, postgresql_pid=None)
             _qualify_effective_hba_offline(binaries.executable("postgres.exe"), data)
         with _phase("FINAL_CLUSTER_RESTART"):
-            restarted = _run(
+            restarted = _run_pg_ctl(
+                binaries.executable("pg_ctl.exe"),
+                data,
+                root,
+                "restart",
                 [
-                    str(binaries.executable("pg_ctl.exe")),
-                    "-D",
-                    str(data),
                     "-l",
                     str(log),
                     "-o",
@@ -843,12 +1230,15 @@ def run_probe(scratch_parent: Path, *, status_file: Path | None = None) -> dict[
                 ],
                 timeout=START_TIMEOUT,
             )
-            if restarted.returncode:
+            running, pid = _cluster_running(binaries.executable("pg_ctl.exe"), data, root)
+            if restarted.timed_out or restarted.returncode != 0 or not running or pid is None:
                 raise Stage8PostgreSQLProbeError(
-                    "POSTGRESQL_START", SUBSTRATE, "final configured cluster restart failed"
+                    "POSTGRESQL_START",
+                    SUBSTRATE,
+                    _pg_ctl_failure_detail("restart", restarted, data, running, pid, log),
                 )
             cluster_started = True
-            _write_status(cluster_started=True, postgresql_pid=_postgresql_pid(data))
+            _write_status(cluster_started=True, postgresql_pid=pid)
         matrix = (
             (RUNTIME_SERVICE, RUNTIME_ACCOUNT, RUNTIME_ROLE, True, DATABASE),
             (VERIFIER_SERVICE, VERIFIER_ACCOUNT, VERIFIER_ROLE, True, DATABASE),
@@ -938,30 +1328,28 @@ def run_probe(scratch_parent: Path, *, status_file: Path | None = None) -> dict[
                     raise RuntimeError("; ".join(cleanup_errors))
         except RuntimeError:
             pass
-        if cluster_started and root is not None:
+        postgresql_cleanup_ok = True
+        if root is not None:
             try:
                 with _phase("CLEANUP_POSTGRESQL"):
-                    stopped = _run(
-                        [
-                            str(binaries.executable("pg_ctl.exe")),
-                            "-D",
-                            str(root / "cluster"),
-                            "-m",
-                            "fast",
-                            "-w",
-                            "stop",
-                        ],
-                        timeout=START_TIMEOUT,
+                    data, log = root / "cluster", root / "postgresql.log"
+                    stop_error = _stop_if_owned_cluster_running(
+                        binaries.executable("pg_ctl.exe"),
+                        data,
+                        root,
+                        log,
+                        cluster_started=cluster_started,
                     )
-                    if stopped.returncode:
-                        raise RuntimeError("PostgreSQL did not stop cleanly")
+                    if stop_error:
+                        raise RuntimeError(stop_error)
                     _write_status(cluster_started=False, postgresql_pid=None)
             except Exception as exc:
+                postgresql_cleanup_ok = False
                 cleanup_errors.append(f"PostgreSQL cleanup: {exc}")
         else:
             with _phase("CLEANUP_POSTGRESQL"):
                 pass
-        if root is not None:
+        if root is not None and postgresql_cleanup_ok:
             try:
                 with _phase("CLEANUP_SCRATCH"):
                     shutil.rmtree(root)
@@ -997,29 +1385,32 @@ def emergency_cleanup(status: dict[str, Any], scratch_parent: Path) -> list[str]
     if root is not None and not safe_root:
         errors.append("refused scratch cleanup outside Stage-8-owned root")
         return errors
-    if safe_root and status.get("cluster_started") is True:
+    postgresql_cleanup_ok = True
+    if safe_root:
         pgbin = status.get("pgbin")
         if isinstance(pgbin, str):
             try:
-                stopped = _run(
-                    [
-                        str(Path(pgbin) / "pg_ctl.exe"),
-                        "-D",
-                        str(root / "cluster"),
-                        "-m",
-                        "immediate",
-                        "-w",
-                        "stop",
-                    ],
+                pg_ctl = Path(pgbin) / "pg_ctl.exe"
+                data, log = root / "cluster", root / "postgresql.log"
+                stop_error = _stop_if_owned_cluster_running(
+                    pg_ctl,
+                    data,
+                    root,
+                    log,
+                    cluster_started=status.get("cluster_started") is True,
+                    mode="immediate",
                     timeout=10,
                 )
-                if stopped.returncode:
-                    errors.append("emergency PostgreSQL stop failed")
+                if stop_error:
+                    postgresql_cleanup_ok = False
+                    errors.append(f"emergency PostgreSQL stop failed: {stop_error}")
             except Exception as exc:
+                postgresql_cleanup_ok = False
                 errors.append(f"emergency PostgreSQL stop: {exc}")
-        else:
+        elif status.get("cluster_started") is True or _postgresql_pid(root / "cluster") is not None:
+            postgresql_cleanup_ok = False
             errors.append("emergency PostgreSQL stop lacks reviewed binary path")
-    if safe_root:
+    if safe_root and postgresql_cleanup_ok:
         try:
             shutil.rmtree(root)
         except OSError as exc:
