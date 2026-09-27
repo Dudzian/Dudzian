@@ -115,6 +115,24 @@ jobs:
         run: dotnet tool install --global wix --version 7.0.0
       - name: Install production build dependencies
         run: python -m pip install -e ".[test]" pyinstaller pywin32
+      - name: Block WiX 7 build pending recorded OSMF EULA acceptance
+        shell: pwsh
+        run: |
+          Write-Error @"
+          WINDOWS_CLEAN_INSTALL = BLOCKED_ON_WIX7_EULA_ACCEPTANCE
+          EXE_BUILD = NOT_RUN
+          WIX_COMPILE = BLOCKED_ON_EULA
+          MSI_CREATED = NO
+          MSI_INSTALL = NOT_RUN
+          CLEAN_INSTALL_PROBE = NOT_RUN
+
+          The project owner has not yet recorded conscious acceptance of the
+          WiX 7 OSMF EULA. After that approval is recorded, this explicit gate
+          may be replaced by the audited build invocation using:
+              wix build -acceptEula wix7 ...
+          Do not use per-user `wix eula accept wix7` state on this runner.
+          "@
+          exit 1
       - name: Build and run canonical Stage-9 proof
         timeout-minutes: 30
         run: >-

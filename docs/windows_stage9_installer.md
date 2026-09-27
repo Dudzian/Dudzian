@@ -18,6 +18,21 @@ scoped verifier, a PostgreSQL SCM host which owns its child process tree, and
 the privileged installer provisioner.  The MSI embeds those executables and
 the checksum-verified PostgreSQL 17 payload; installation is offline.
 
+## WiX 7 OSMF EULA CI gate
+
+The project owner has not yet recorded conscious acceptance of the WiX 7 OSMF
+EULA.  Therefore the clean-install workflow fails explicitly with
+`WINDOWS_CLEAN_INSTALL = BLOCKED_ON_WIX7_EULA_ACCEPTANCE`; it must not classify
+the result as an MSI installation failure or publish Stage-9 runtime proof.
+The blocked attempt is classified as `EXE_BUILD = NOT_RUN`,
+`WIX_COMPILE = BLOCKED_ON_EULA`, `MSI_CREATED = NO`, `MSI_INSTALL = NOT_RUN`,
+and `CLEAN_INSTALL_PROBE = NOT_RUN`.
+
+Only after the owner records that acceptance may the workflow gate be replaced
+by an auditable command-line acceptance at the build invocation:
+`wix build -acceptEula wix7 ...`.  CI must not rely on ephemeral per-user
+`wix eula accept wix7` state.
+
 The verifier is demand-start because the frozen semantic verifier performs a
 bounded privileged verification operation rather than continuous product
 work.  PostgreSQL and backend are automatic; backend declares an SCM

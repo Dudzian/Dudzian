@@ -482,6 +482,14 @@ jobs:
         run: |
           python scripts/ci/preflight_test_env.py
 
+      - name: Verify explicitly loaded pytest-asyncio plugin
+        shell: bash
+        env:
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+        run: >-
+          python -m pytest -p asyncio --trace-config --collect-only -q
+          tests/core/test_async_http.py
+
       - name: Run fast pytest suite
         shell: bash
         env:
@@ -491,7 +499,7 @@ jobs:
           DUDZIAN_ALLOW_LONG_POLL: "0"
         run: |
           mkdir -p test-results
-          python -m pytest \
+          python -m pytest -p asyncio \
             --fast \
             -m "not integration and not external_postgresql and not e2e_demo_paper and not retraining and not soak and not performance and not qml" \
             --ignore=tests/e2e \

@@ -37,16 +37,12 @@ def test_pg16_and_pg17_relation_acl_differ_only_by_owner_maintain():
     pg17 = _expected_relation_acl(CONFIG, 170000)
 
     assert not _maintain_grantees(160000)
-    assert pg17 - pg16 == {
-        (table, CONFIG.schema_owner_role, "MAINTAIN", False) for table in TABLES
-    }
+    assert pg17 - pg16 == {(table, CONFIG.schema_owner_role, "MAINTAIN", False) for table in TABLES}
     assert not pg16 - pg17
 
 
 def test_pg17_maintain_is_never_granted_to_non_owner_roles_or_sequence():
-    assert _maintain_grantees(170000) == {
-        (table, CONFIG.schema_owner_role) for table in TABLES
-    }
+    assert _maintain_grantees(170000) == {(table, CONFIG.schema_owner_role) for table in TABLES}
     assert all(
         privilege != "MAINTAIN"
         for relation, grantee, privilege, grantable in _expected_relation_acl(CONFIG, 170000)
@@ -91,8 +87,7 @@ def test_missing_or_unexpected_privilege_remains_an_exact_acl_failure(version, m
 
 def test_acl_difference_diagnostic_is_bounded():
     expected = {
-        (f"table_{number:02}", CONFIG.schema_owner_role, "SELECT", False)
-        for number in range(25)
+        (f"table_{number:02}", CONFIG.schema_owner_role, "SELECT", False) for number in range(25)
     }
     diagnostic = _relation_acl_difference(set(), expected)
 
