@@ -88,9 +88,10 @@ PHASES = (
     "POSTGRESQL_SCHEMA_QUALIFICATION",
     "TLS_RUNTIME_KEY_ACCESS",
     "TLS_VERIFIER_KEY_ACCESS",
+    "HBA_BOOTSTRAP_SESSION_OPEN",
     "FINAL_IDENT_WRITE",
     "FINAL_HBA_WRITE",
-    "FINAL_HBA_OFFLINE_QUALIFICATION",
+    "FINAL_HBA_PARSER_QUALIFICATION",
     "FINAL_CLUSTER_RESTART",
     "MATRIX_RUNTIME",
     "MATRIX_VERIFIER",
@@ -311,12 +312,28 @@ def ident_lines() -> tuple[str, ...]:
 
 def qualify_hba_rows(rows: list[tuple[Any, ...]]) -> None:
     expected = [
-        ("hostssl", DATABASE, VERIFIER_ROLE, "cert"),
-        ("hostssl", DATABASE, RUNTIME_ROLE, "cert"),
-        ("host", DATABASE, "all", "reject"),
-        ("host", "all", "all", "reject"),
-        ("host", "all", "all", "reject"),
-        ("host", "all", "all", "reject"),
+        (
+            "hostssl",
+            DATABASE,
+            VERIFIER_ROLE,
+            "127.0.0.1",
+            "255.255.255.255",
+            "cert",
+            [f"map={MAP_NAME}"],
+        ),
+        (
+            "hostssl",
+            DATABASE,
+            RUNTIME_ROLE,
+            "127.0.0.1",
+            "255.255.255.255",
+            "cert",
+            [f"map={MAP_NAME}"],
+        ),
+        ("host", DATABASE, "all", "127.0.0.1", "255.255.255.255", "reject", None),
+        ("host", "all", "all", "127.0.0.1", "255.255.255.255", "reject", None),
+        ("host", "all", "all", "0.0.0.0", "0.0.0.0", "reject", None),
+        ("host", "all", "all", "::", "::", "reject", None),
     ]
     if len(rows) != len(expected):
         raise Stage8PostgreSQLProbeError(
@@ -325,7 +342,15 @@ def qualify_hba_rows(rows: list[tuple[Any, ...]]) -> None:
     previous = -1
     for row, wanted in zip(rows, expected, strict=True):
         line, kind, databases, users, address, netmask, method, options, error = row
-        expected_kind, database, user, auth = wanted
+        (
+            expected_kind,
+            database,
+            user,
+            expected_address,
+            expected_netmask,
+            auth,
+            expected_options,
+        ) = wanted
         if error is not None or line <= previous or kind != expected_kind:
             raise Stage8PostgreSQLProbeError(
                 "WINDOWS_TLS_HBA_QUALIFICATION",
@@ -333,17 +358,20 @@ def qualify_hba_rows(rows: list[tuple[Any, ...]]) -> None:
                 "invalid HBA parse result or ordering",
             )
         previous = line
-        if databases != [database] or users != [user] or method != auth:
+        if (
+            databases != [database]
+            or users != [user]
+            or address != expected_address
+            or netmask != expected_netmask
+            or method != auth
+            or options != expected_options
+        ):
             raise Stage8PostgreSQLProbeError(
                 "WINDOWS_TLS_HBA_QUALIFICATION",
                 PRINCIPAL_AUTH,
                 "effective HBA does not match the exact reviewed sequence",
             )
-        if auth == "cert" and (
-            address != "127.0.0.1"
-            or netmask != "255.255.255.255"
-            or (options or []) != [f"map={MAP_NAME}"]
-        ):
+        if auth == "cert" and (address != "127.0.0.1" or netmask != "255.255.255.255"):
             raise Stage8PostgreSQLProbeError(
                 "WINDOWS_TLS_HBA_QUALIFICATION",
                 PRINCIPAL_AUTH,
@@ -357,41 +385,49 @@ def qualify_hba_rows(rows: list[tuple[Any, ...]]) -> None:
             )
 
 
-def _qualify_effective_hba_offline(postgres: Path, data: Path) -> None:
-    """Read the server's parser output without adding an administrative HBA rule."""
-    query = """COPY (
-SELECT json_build_array(line_number,type,database,user_name,address,netmask,auth_method,options,error)
-FROM pg_catalog.pg_hba_file_rules ORDER BY line_number
-) TO STDOUT;
-"""
-    try:
-        completed = subprocess.run(
-            [str(postgres), "--single", "-D", str(data), DATABASE],
-            input=query,
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=COMMAND_TIMEOUT,
-        )
-    except subprocess.TimeoutExpired as exc:
-        raise Stage8PostgreSQLProbeError(
-            "WINDOWS_TLS_HBA_QUALIFICATION", PRINCIPAL_AUTH, "offline HBA parser timed out"
-        ) from exc
-    rows: list[tuple[Any, ...]] = []
-    for line in completed.stdout.splitlines():
-        try:
-            value = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(value, list) and len(value) == 9:
-            rows.append(tuple(value))
-    if completed.returncode or not rows:
-        raise Stage8PostgreSQLProbeError(
-            "WINDOWS_TLS_HBA_QUALIFICATION",
-            PRINCIPAL_AUTH,
-            (completed.stderr or completed.stdout)[-STDERR_LIMIT:],
-        )
+def _qualify_hba_via_connection(connection: Any) -> None:
+    """Qualify the current HBA using PostgreSQL's parser on an existing session."""
+    rows = connection.execute(
+        "SELECT line_number, type, database, user_name, address, netmask, "
+        "auth_method, options, error FROM pg_catalog.pg_hba_file_rules "
+        "ORDER BY line_number"
+    ).fetchall()
     qualify_hba_rows(rows)
+
+
+def _install_and_qualify_final_auth(
+    psycopg: Any, port: int, data: Path, pg_ctl: Path, root: Path
+) -> None:
+    """Lock down auth while retaining one bounded, pre-lockdown parser session."""
+    connection: Any | None = None
+    try:
+        with _principal_auth_phase("HBA_BOOTSTRAP_SESSION_OPEN", "WINDOWS_TLS_HBA_QUALIFICATION"):
+            connection = psycopg.connect(_admin_dsn(port, DATABASE), autocommit=True)
+            identity = connection.execute("SELECT session_user, current_database()").fetchone()
+            if identity != ("stage8_bootstrap", DATABASE):
+                raise Stage8PostgreSQLProbeError(
+                    "WINDOWS_TLS_HBA_QUALIFICATION",
+                    PRINCIPAL_AUTH,
+                    f"unexpected bootstrap session identity: {identity}",
+                )
+        with _principal_auth_phase("FINAL_IDENT_WRITE", "WINDOWS_TLS_IDENT_QUALIFICATION"):
+            (data / "pg_ident.conf").write_text("\n".join(ident_lines()) + "\n", encoding="utf-8")
+        with _principal_auth_phase("FINAL_HBA_WRITE", "WINDOWS_TLS_HBA_QUALIFICATION"):
+            (data / "pg_hba.conf").write_text("\n".join(final_hba_lines()) + "\n", encoding="utf-8")
+            reload_result = _run_pg_ctl(pg_ctl, data, root, "reload", ["reload"])
+            if reload_result.timed_out or reload_result.returncode != 0:
+                raise Stage8PostgreSQLProbeError(
+                    "WINDOWS_TLS_HBA_QUALIFICATION",
+                    PRINCIPAL_AUTH,
+                    "final configuration reload failed",
+                )
+        with _principal_auth_phase(
+            "FINAL_HBA_PARSER_QUALIFICATION", "WINDOWS_TLS_HBA_QUALIFICATION"
+        ):
+            _qualify_hba_via_connection(connection)
+    finally:
+        if connection is not None:
+            connection.close()
 
 
 def _write_private_key(path: Path, key: Any) -> None:
@@ -1448,35 +1484,9 @@ def run_probe(scratch_parent: Path, *, status_file: Path | None = None) -> dict[
                         f"service-token private-key access mismatch: {keys}",
                     )
 
-        with _principal_auth_phase("FINAL_IDENT_WRITE", "WINDOWS_TLS_IDENT_QUALIFICATION"):
-            (data / "pg_ident.conf").write_text("\n".join(ident_lines()) + "\n", encoding="utf-8")
-        with _principal_auth_phase("FINAL_HBA_WRITE", "WINDOWS_TLS_HBA_QUALIFICATION"):
-            (data / "pg_hba.conf").write_text("\n".join(final_hba_lines()) + "\n", encoding="utf-8")
-            reload_result = _run_pg_ctl(
-                binaries.executable("pg_ctl.exe"), data, root, "reload", ["reload"]
-            )
-            if reload_result.timed_out or reload_result.returncode != 0:
-                raise Stage8PostgreSQLProbeError(
-                    "WINDOWS_TLS_HBA_QUALIFICATION",
-                    PRINCIPAL_AUTH,
-                    "final configuration reload failed",
-                )
-        # Stop, inspect pg_hba_file_rules through a bounded single-user backend, then
-        # start again with precisely the same final files. No administrative network
-        # authentication rule is introduced for this read-only qualification.
-        with _principal_auth_phase(
-            "FINAL_HBA_OFFLINE_QUALIFICATION", "WINDOWS_TLS_HBA_QUALIFICATION"
-        ):
-            stop_error = _stop_owned_cluster(binaries.executable("pg_ctl.exe"), data, root, log)
-            if stop_error:
-                raise Stage8PostgreSQLProbeError(
-                    "WINDOWS_TLS_HBA_QUALIFICATION",
-                    PRINCIPAL_AUTH,
-                    f"could not stop for offline HBA qualification: {stop_error}",
-                )
-            cluster_started = False
-            _write_status(cluster_started=False, postgresql_pid=None)
-            _qualify_effective_hba_offline(binaries.executable("postgres.exe"), data)
+        _install_and_qualify_final_auth(
+            psycopg, port, data, binaries.executable("pg_ctl.exe"), root
+        )
         with _phase("FINAL_CLUSTER_RESTART"):
             restarted = _run_pg_ctl(
                 binaries.executable("pg_ctl.exe"),
@@ -1558,7 +1568,7 @@ def run_probe(scratch_parent: Path, *, status_file: Path | None = None) -> dict[
                         f"client certificate reached bootstrap role: service={service}",
                     )
         with _principal_auth_phase("INTERACTIVE_OUTSIDER_DENIAL", "WINDOWS_TLS_OUTSIDER_DENIAL"):
-            for role in (RUNTIME_ROLE, VERIFIER_ROLE):
+            for role in (RUNTIME_ROLE, VERIFIER_ROLE, "stage8_bootstrap"):
                 try:
                     psycopg.connect(
                         host="127.0.0.1",
@@ -1579,8 +1589,8 @@ def run_probe(scratch_parent: Path, *, status_file: Path | None = None) -> dict[
                     )
         # Re-qualify schema state before final shutdown. The exact qualifier itself
         # already covers roles, memberships, owners, ACLs, functions and raw DML.
-        # Final HBA is parsed by the server; use a temporary offline local socket is
-        # impossible on Windows, therefore validate its exact text and reject syntax.
+        # The server parser has already qualified the final HBA through the bounded
+        # pre-lockdown session; retain an exact-text drift check after the matrix.
         if (
             tuple((data / "pg_hba.conf").read_text(encoding="utf-8").splitlines())
             != final_hba_lines()
