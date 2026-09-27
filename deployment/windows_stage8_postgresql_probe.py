@@ -319,7 +319,7 @@ def qualify_hba_rows(rows: list[tuple[Any, ...]]) -> None:
             "127.0.0.1",
             "255.255.255.255",
             "cert",
-            [f"map={MAP_NAME}"],
+            [f"map={MAP_NAME}", "clientcert=verify-full"],
         ),
         (
             "hostssl",
@@ -328,7 +328,7 @@ def qualify_hba_rows(rows: list[tuple[Any, ...]]) -> None:
             "127.0.0.1",
             "255.255.255.255",
             "cert",
-            [f"map={MAP_NAME}"],
+            [f"map={MAP_NAME}", "clientcert=verify-full"],
         ),
         ("host", DATABASE, "all", "127.0.0.1", "255.255.255.255", "reject", None),
         ("host", "all", "all", "127.0.0.1", "255.255.255.255", "reject", None),
@@ -340,7 +340,7 @@ def qualify_hba_rows(rows: list[tuple[Any, ...]]) -> None:
             "WINDOWS_TLS_HBA_QUALIFICATION", PRINCIPAL_AUTH, "unexpected effective HBA row count"
         )
     previous = -1
-    for row, wanted in zip(rows, expected, strict=True):
+    for index, (row, wanted) in enumerate(zip(rows, expected, strict=True)):
         line, kind, databases, users, address, netmask, method, options, error = row
         (
             expected_kind,
@@ -366,10 +366,11 @@ def qualify_hba_rows(rows: list[tuple[Any, ...]]) -> None:
             or method != auth
             or options != expected_options
         ):
+            observed = (kind, databases, users, address, netmask, method, options)
             raise Stage8PostgreSQLProbeError(
                 "WINDOWS_TLS_HBA_QUALIFICATION",
                 PRINCIPAL_AUTH,
-                "effective HBA does not match the exact reviewed sequence",
+                f"HBA row mismatch index={index} expected={wanted!r} observed={observed!r}",
             )
         if auth == "cert" and (address != "127.0.0.1" or netmask != "255.255.255.255"):
             raise Stage8PostgreSQLProbeError(

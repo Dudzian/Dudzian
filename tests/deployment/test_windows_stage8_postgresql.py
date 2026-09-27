@@ -85,7 +85,7 @@ def _valid_hba_rows() -> list[tuple[object, ...]]:
             "127.0.0.1",
             "255.255.255.255",
             "cert",
-            ["map=stage8_cert"],
+            ["map=stage8_cert", "clientcert=verify-full"],
             None,
         ),
         (
@@ -96,7 +96,7 @@ def _valid_hba_rows() -> list[tuple[object, ...]]:
             "127.0.0.1",
             "255.255.255.255",
             "cert",
-            ["map=stage8_cert"],
+            ["map=stage8_cert", "clientcert=verify-full"],
             None,
         ),
         (
@@ -122,6 +122,43 @@ def test_effective_hba_rows_require_parser_success_and_order() -> None:
     rows[1] = (*rows[1][:-1], "parse error")
     with pytest.raises(probe.Stage8PostgreSQLProbeError):
         probe.qualify_hba_rows(rows)
+
+
+@pytest.mark.parametrize(
+    "options",
+    (
+        ["map=stage8_cert"],
+        ["map=stage8_cert", "clientcert=verify-ca"],
+        ["clientcert=verify-full", "map=stage8_cert"],
+        ["map=stage8_cert", "clientcert=verify-full", "clientcert=verify-ca"],
+    ),
+    ids=("missing-verify-full", "wrong-verify-level", "reversed-options", "extra-option"),
+)
+def test_effective_cert_options_are_exact_and_ordered(options: list[str]) -> None:
+    rows = _valid_hba_rows()
+    rows[0] = (*rows[0][:7], options, rows[0][8])
+
+    with pytest.raises(probe.Stage8PostgreSQLProbeError) as failure:
+        probe.qualify_hba_rows(rows)
+
+    assert failure.value.label == "WINDOWS_TLS_HBA_QUALIFICATION"
+    assert failure.value.item == probe.PRINCIPAL_AUTH
+    assert "HBA row mismatch index=0" in str(failure.value)
+    assert "clientcert=verify-full" in str(failure.value)
+
+
+def test_reject_rows_require_null_options() -> None:
+    rows = _valid_hba_rows()
+    rows[2] = (*rows[2][:7], [], rows[2][8])
+
+    with pytest.raises(probe.Stage8PostgreSQLProbeError) as failure:
+        probe.qualify_hba_rows(rows)
+
+    assert failure.value.label == "WINDOWS_TLS_HBA_QUALIFICATION"
+    assert failure.value.item == probe.PRINCIPAL_AUTH
+    assert "HBA row mismatch index=2" in str(failure.value)
+    assert "expected=('host', 'stage8_freshness', 'all'" in str(failure.value)
+    assert "observed=('host', ['stage8_freshness'], ['all']" in str(failure.value)
 
 
 @pytest.mark.parametrize(
