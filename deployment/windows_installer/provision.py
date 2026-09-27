@@ -1,0 +1,677 @@
+"""Elevated, non-interactive Stage-9 installation transaction provisioner."""
+
+from __future__ import annotations
+import argparse
+from datetime import datetime, timedelta, timezone
+import ipaddress
+import json
+import os
+from pathlib import Path
+import secrets
+import shutil
+import subprocess
+import sys
+from typing import Any
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.x509.oid import NameOID, ExtendedKeyUsageOID
+from bot_core.postgresql_freshness_authority import (
+    PostgreSQLConnectionConfig,
+    provision_postgresql_freshness_authority,
+    qualify_postgresql_freshness_authority,
+)
+from deployment.windows_installer.contract import CONTRACT
+from deployment.windows_installer.corehost_composition import (
+    load_windows_external_provisioning_handoff,
+    materialize_canonical_pre_state,
+)
+from deployment.windows_dacl_qualification import (
+    ADMINISTRATORS_SID,
+    FILE_ALL_ACCESS,
+    FILE_GENERIC_EXECUTE,
+    FILE_GENERIC_READ,
+    FILE_GENERIC_WRITE,
+    DELETE,
+    SYSTEM_SID,
+    expected_aces,
+)
+
+TRANSACTION_JOURNAL = ".CryptoHunter.stage9-transaction.json"
+OWNERSHIP_RECORD = ".stage9-install-ownership.json"
+SCHEMA = 1
+SERVICES = (CONTRACT.postgresql_service, CONTRACT.backend_service, CONTRACT.verifier_service)
+from deployment.windows_postgresql_auth_contract import (
+    final_hba_lines,
+    ident_lines,
+    qualify_hba_rows,
+)
+
+FINAL_HBA = final_hba_lines("freshness_gate")
+IDENT = ident_lines()
+
+
+class ProvisionError(RuntimeError):
+    pass
+
+
+def _write(path: Path, value: dict[str, Any]) -> None:
+    temp = path.with_suffix(".tmp")
+    temp.write_text(json.dumps(value, sort_keys=True), encoding="utf-8")
+    os.replace(temp, path)
+
+
+def transaction_path(program_data: Path) -> Path:
+    return program_data.parent / TRANSACTION_JOURNAL
+
+
+def create_journal(program_files: Path, program_data: Path) -> tuple[Path, dict[str, Any]]:
+    path = transaction_path(program_data)
+    if path.exists() or program_data.exists():
+        raise ProvisionError("clean-install target pre-exists")
+    value = {
+        "schema_version": SCHEMA,
+        "transaction_id": secrets.token_hex(32),
+        "program_files": str(program_files.resolve()),
+        "program_data": str(program_data.resolve()),
+        "service_names": list(SERVICES),
+        "resources_created": [],
+        "state": "PROVISIONING",
+    }
+    _write(path, value)
+    if os.name == "nt":
+        grants = {ADMINISTRATORS_SID: FILE_ALL_ACCESS, SYSTEM_SID: FILE_ALL_ACCESS}
+        _protect(path, grants, inherit=False)
+        _qualify_protected(path, grants, inherit=False)
+    return path, value
+
+
+def checkpoint(path: Path, journal: dict[str, Any], resource: Path) -> None:
+    journal["resources_created"].append(str(resource.resolve()))
+    _write(path, journal)
+
+
+def _service_sids() -> dict[str, str]:
+    import win32security  # type: ignore[import-not-found]
+
+    result = {}
+    for name in SERVICES:
+        sid, _, _ = win32security.LookupAccountName(None, rf"NT SERVICE\{name}")
+        result[name] = win32security.ConvertSidToStringSid(sid)
+    return result
+
+
+def _protect(path: Path, grants: dict[str, int], *, inherit: bool) -> None:
+    import win32security  # type: ignore[import-not-found]
+
+    acl = win32security.ACL()
+    flags = 3 if inherit else 0
+    for principal, mask in grants.items():
+        sid = (
+            win32security.ConvertStringSidToSid(principal)
+            if principal.startswith("S-")
+            else win32security.LookupAccountName(None, principal)[0]
+        )
+        acl.AddAccessAllowedAceEx(win32security.ACL_REVISION_DS, flags, mask, sid)
+    owner = win32security.ConvertStringSidToSid("S-1-5-32-544")
+    win32security.SetNamedSecurityInfo(
+        str(path),
+        win32security.SE_FILE_OBJECT,
+        win32security.OWNER_SECURITY_INFORMATION
+        | win32security.DACL_SECURITY_INFORMATION
+        | win32security.PROTECTED_DACL_SECURITY_INFORMATION,
+        owner,
+        None,
+        acl,
+        None,
+    )
+
+
+def _qualify_protected(path: Path, grants: dict[str, int], *, inherit: bool) -> None:
+    import win32security  # type: ignore[import-not-found]
+
+    descriptor = win32security.GetNamedSecurityInfo(
+        str(path),
+        win32security.SE_FILE_OBJECT,
+        win32security.OWNER_SECURITY_INFORMATION | win32security.DACL_SECURITY_INFORMATION,
+    )
+    control, _ = descriptor.GetSecurityDescriptorControl()
+    if not control & win32security.SE_DACL_PROTECTED:
+        raise ProvisionError(f"unprotected DACL: {path}")
+    dacl = descriptor.GetSecurityDescriptorDacl()
+    expected_flags = 3 if inherit else 0
+    observed = {}
+    for index in range(dacl.GetAceCount()):
+        header, mask, sid = dacl.GetAce(index)
+        if header[0] != win32security.ACCESS_ALLOWED_ACE_TYPE or header[1] != expected_flags:
+            raise ProvisionError(f"unexpected ACE: {path}")
+        observed[win32security.ConvertSidToStringSid(sid)] = mask
+    expected = {
+        (
+            principal
+            if principal.startswith("S-")
+            else win32security.ConvertSidToStringSid(
+                win32security.LookupAccountName(None, principal)[0]
+            )
+        ): mask
+        for principal, mask in grants.items()
+    }
+    if observed != expected or dacl.GetAceCount() != len(expected):
+        raise ProvisionError(f"DACL differs: {path}")
+
+
+def _certificate(
+    common_name: str, issuer: x509.Name, issuer_key: Any, *, server: bool = False
+) -> tuple[bytes, bytes]:
+    key = rsa.generate_private_key(public_exponent=65537, key_size=3072)
+    now = datetime.now(timezone.utc)
+    subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, common_name)])
+    builder = (
+        x509.CertificateBuilder()
+        .subject_name(subject)
+        .issuer_name(issuer)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - timedelta(minutes=5))
+        .not_valid_after(now + timedelta(days=825))
+    )
+    eku = ExtendedKeyUsageOID.SERVER_AUTH if server else ExtendedKeyUsageOID.CLIENT_AUTH
+    builder = builder.add_extension(x509.ExtendedKeyUsage([eku]), critical=True)
+    if server:
+        builder = builder.add_extension(
+            x509.SubjectAlternativeName(
+                [x509.IPAddress(ipaddress.ip_address(CONTRACT.postgresql_host))]
+            ),
+            critical=False,
+        )
+    cert = builder.sign(issuer_key, hashes.SHA256())
+    return (
+        key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        ),
+        cert.public_bytes(serialization.Encoding.PEM),
+    )
+
+
+def _pki(security: Path, sids: dict[str, str]) -> None:
+    ca_key = rsa.generate_private_key(public_exponent=65537, key_size=3072)
+    now = datetime.now(timezone.utc)
+    ca_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "CryptoHunter Local CA")])
+    ca = (
+        x509.CertificateBuilder()
+        .subject_name(ca_name)
+        .issuer_name(ca_name)
+        .public_key(ca_key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - timedelta(minutes=5))
+        .not_valid_after(now + timedelta(days=3650))
+        .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
+        .sign(ca_key, hashes.SHA256())
+    )
+    (security / "ca.crt").write_bytes(ca.public_bytes(serialization.Encoding.PEM))
+    (security / "ca.key").write_bytes(
+        ca_key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+    )
+    for folder, identity, service, server in (
+        ("server", "127.0.0.1", CONTRACT.postgresql_service, True),
+        ("runtime", CONTRACT.backend_service, CONTRACT.backend_service, False),
+        ("verifier", CONTRACT.verifier_service, CONTRACT.verifier_service, False),
+    ):
+        target = security / folder
+        target.mkdir()
+        key, cert = _certificate(identity, ca_name, ca_key, server=server)
+        stem = "server" if server else "client"
+        (target / f"{stem}.key").write_bytes(key)
+        (target / f"{stem}.crt").write_bytes(cert)
+        directory_grants = {
+            ADMINISTRATORS_SID: FILE_ALL_ACCESS,
+            SYSTEM_SID: FILE_ALL_ACCESS,
+            sids[service]: FILE_GENERIC_READ | FILE_GENERIC_EXECUTE,
+        }
+        _protect(target, directory_grants, inherit=True)
+        _qualify_protected(target, directory_grants, inherit=True)
+        certificate_grants = {
+            ADMINISTRATORS_SID: FILE_ALL_ACCESS,
+            SYSTEM_SID: FILE_ALL_ACCESS,
+            sids[service]: FILE_GENERIC_READ,
+        }
+        _protect(target / f"{stem}.crt", certificate_grants, inherit=False)
+        _qualify_protected(target / f"{stem}.crt", certificate_grants, inherit=False)
+        _protect(
+            target / f"{stem}.key",
+            {SYSTEM_SID: FILE_ALL_ACCESS, sids[service]: FILE_GENERIC_READ},
+            inherit=False,
+        )
+        _qualify_protected(
+            target / f"{stem}.key",
+            {SYSTEM_SID: FILE_ALL_ACCESS, sids[service]: FILE_GENERIC_READ},
+            inherit=False,
+        )
+    _protect(security / "ca.key", {SYSTEM_SID: FILE_ALL_ACCESS}, inherit=False)
+    _qualify_protected(security / "ca.key", {SYSTEM_SID: FILE_ALL_ACCESS}, inherit=False)
+
+
+def _configure_database(program_files: Path, data: Path, security: Path) -> None:
+    bindir = program_files / "PostgreSQL" / "bin"
+    initdb = bindir / "initdb.exe"
+    pg_ctl = bindir / "pg_ctl.exe"
+    subprocess.run(
+        [
+            str(initdb),
+            "-D",
+            str(data),
+            "--encoding=UTF8",
+            "--auth-local=reject",
+            "--auth-host=reject",
+            "--username=postgres",
+        ],
+        check=True,
+        timeout=120,
+    )
+    ca = (security / "ca.crt").as_posix()
+    cert = (security / "server/server.crt").as_posix()
+    key = (security / "server/server.key").as_posix()
+    (data / "postgresql.conf").write_text(
+        (data / "postgresql.conf").read_text()
+        + f"\nlisten_addresses='127.0.0.1'\nport={CONTRACT.postgresql_port}\nssl=on\nssl_ca_file='{ca}'\nssl_cert_file='{cert}'\nssl_key_file='{key}'\n",
+        encoding="utf-8",
+    )
+    # Bootstrap exists only while the postmaster is installer-owned and is replaced before final start.
+    (data / "pg_hba.conf").write_text("host all postgres 127.0.0.1/32 trust\n", encoding="utf-8")
+    subprocess.run(
+        [str(pg_ctl), "start", "-D", str(data), "-w", "-t", "60"], check=True, timeout=70
+    )
+    try:
+        dsn = f"host=127.0.0.1 port={CONTRACT.postgresql_port} dbname=postgres user=postgres"
+        import psycopg
+
+        with psycopg.connect(dsn, autocommit=True) as connection:
+            connection.execute("CREATE DATABASE freshness_gate")
+        authority = PostgreSQLConnectionConfig(
+            f"host=127.0.0.1 port={CONTRACT.postgresql_port} dbname=freshness_gate user=postgres"
+        )
+        provision_postgresql_freshness_authority(authority)
+        qualify_postgresql_freshness_authority(authority)
+        (data / "pg_hba.conf").write_text("\n".join(FINAL_HBA) + "\n", encoding="utf-8")
+        (data / "pg_ident.conf").write_text("\n".join(IDENT) + "\n", encoding="utf-8")
+        with psycopg.connect(dsn) as connection:
+            rows = connection.execute(
+                "SELECT line_number,type,database,user_name,address,netmask,auth_method,options,error "
+                "FROM pg_catalog.pg_hba_file_rules ORDER BY line_number"
+            ).fetchall()
+            try:
+                qualify_hba_rows(rows, "freshness_gate")
+            except ValueError as exc:
+                raise ProvisionError("final HBA parser qualification failed") from exc
+    finally:
+        subprocess.run(
+            [str(pg_ctl), "stop", "-D", str(data), "-m", "fast", "-w", "-t", "30"],
+            check=True,
+            timeout=40,
+        )
+
+
+def _recovery() -> None:
+    import win32service  # type: ignore[import-not-found]
+
+    manager = win32service.OpenSCManager(None, None, win32service.SC_MANAGER_CONNECT)
+    service = win32service.OpenService(
+        manager,
+        CONTRACT.backend_service,
+        win32service.SERVICE_CHANGE_CONFIG | win32service.SERVICE_QUERY_CONFIG,
+    )
+    try:
+        policy = {
+            "ResetPeriod": 86400,
+            "RebootMsg": "",
+            "Command": "",
+            "Actions": [(win32service.SC_ACTION_RESTART, d) for d in (1000, 5000, 30000)]
+            + [(win32service.SC_ACTION_NONE, 0)],
+        }
+        win32service.ChangeServiceConfig2(
+            service, win32service.SERVICE_CONFIG_FAILURE_ACTIONS, policy
+        )
+        observed = win32service.QueryServiceConfig2(
+            service, win32service.SERVICE_CONFIG_FAILURE_ACTIONS
+        )
+        if observed["ResetPeriod"] != 86400 or observed["Actions"] != policy["Actions"]:
+            raise ProvisionError("recovery read-back mismatch")
+    finally:
+        win32service.CloseServiceHandle(service)
+        win32service.CloseServiceHandle(manager)
+
+
+def install(program_files: Path, program_data: Path) -> None:
+    journal_path, journal = create_journal(program_files, program_data)
+    sids = _service_sids()
+    program_data.mkdir()
+    checkpoint(journal_path, journal, program_data)
+    for name in ("Config", "State", "Logs", "Runtime", "Updates", "PostgreSQL", "Security"):
+        path = program_data / name
+        path.mkdir()
+        checkpoint(journal_path, journal, path)
+    data = program_data / "PostgreSQL" / "Data"
+    data.mkdir()
+    checkpoint(journal_path, journal, data)
+    verifier_runtime = program_data / "Runtime" / "Verifier"
+    verifier_runtime.mkdir()
+    checkpoint(journal_path, journal, verifier_runtime)
+    base = {ADMINISTRATORS_SID: FILE_ALL_ACCESS, SYSTEM_SID: FILE_ALL_ACCESS}
+    policies = {}
+    for role in ("CONFIG", "STATE", "RUNTIME", "LOGS"):
+        policies[role.title()] = {
+            sid: mask for sid, mask, _ in expected_aces(role, sids[CONTRACT.backend_service])
+        }
+    policies["Updates"] = base
+    security_readers = {
+        sids[CONTRACT.backend_service]: FILE_GENERIC_READ | FILE_GENERIC_EXECUTE,
+        sids[CONTRACT.verifier_service]: FILE_GENERIC_READ | FILE_GENERIC_EXECUTE,
+        sids[CONTRACT.postgresql_service]: FILE_GENERIC_READ | FILE_GENERIC_EXECUTE,
+    }
+    policies["Security"] = {**base, **security_readers}
+    for name, grants in policies.items():
+        _protect(program_data / name, grants, inherit=True)
+        _qualify_protected(program_data / name, grants, inherit=True)
+    verifier_runtime_grants = {
+        ADMINISTRATORS_SID: FILE_ALL_ACCESS,
+        SYSTEM_SID: FILE_ALL_ACCESS,
+        sids[CONTRACT.verifier_service]: (
+            FILE_GENERIC_READ | FILE_GENERIC_EXECUTE | FILE_GENERIC_WRITE | DELETE
+        ),
+    }
+    _protect(verifier_runtime, verifier_runtime_grants, inherit=True)
+    _qualify_protected(verifier_runtime, verifier_runtime_grants, inherit=True)
+    pg_grants = {**base, sids[CONTRACT.postgresql_service]: FILE_ALL_ACCESS}
+    _protect(program_data / "PostgreSQL", pg_grants, inherit=True)
+    _protect(data, pg_grants, inherit=True)
+    _qualify_protected(data, pg_grants, inherit=True)
+    _pki(program_data / "Security", sids)
+    ca_public = {**base, **{sid: FILE_GENERIC_READ for sid in security_readers}}
+    _protect(program_data / "Security" / "ca.crt", ca_public, inherit=False)
+    _qualify_protected(program_data / "Security" / "ca.crt", ca_public, inherit=False)
+    # The adapter is deliberately external to the MSI.  No account/device or
+    # claim authority is synthesized by installation code.
+    provisioning = load_windows_external_provisioning_handoff()
+    materialize_canonical_pre_state(data.parent.parent / "State" / "corehost.sqlite", provisioning)
+    _configure_database(program_files, data, program_data / "Security")
+    _recovery()
+    journal["state"] = "PROVISIONED"
+    _write(journal_path, journal)
+
+
+def rollback(program_files: Path, program_data: Path) -> None:
+    path = transaction_path(program_data)
+    if not path.is_file():
+        return
+    value = json.loads(path.read_text())
+    expected = {
+        "schema_version": SCHEMA,
+        "program_files": str(program_files.resolve()),
+        "program_data": str(program_data.resolve()),
+        "service_names": list(SERVICES),
+    }
+    if any(value.get(k) != v for k, v in expected.items()) or value.get("state") not in {
+        "PROVISIONING",
+        "PROVISIONED",
+    }:
+        return
+    roots = [Path(p) for p in value.get("resources_created", [])]
+    if any(
+        program_data.resolve() not in p.resolve().parents and p.resolve() != program_data.resolve()
+        for p in roots
+    ):
+        raise ProvisionError("rollback journal escaped ProgramData")
+    for resource in reversed(roots):
+        if resource.exists():
+            shutil.rmtree(resource) if resource.is_dir() else resource.unlink()
+    path.unlink(missing_ok=True)
+
+
+def commit(program_files: Path, program_data: Path) -> None:
+    path = transaction_path(program_data)
+    value = json.loads(path.read_text(encoding="utf-8"))
+    if value.get("state") != "PROVISIONED" or value.get("program_files") != str(
+        program_files.resolve()
+    ):
+        raise ProvisionError("only a provisioned transaction may commit")
+    value["state"] = "COMMITTED"
+    ownership = program_data / OWNERSHIP_RECORD
+    _write(ownership, value)
+    if os.name == "nt":
+        grants = {ADMINISTRATORS_SID: FILE_ALL_ACCESS, SYSTEM_SID: FILE_ALL_ACCESS}
+        _protect(ownership, grants, inherit=False)
+        _qualify_protected(ownership, grants, inherit=False)
+    path.unlink()
+
+
+def _committed_record(program_data: Path) -> dict[str, Any]:
+    journal = json.loads((program_data / OWNERSHIP_RECORD).read_text(encoding="utf-8"))
+    if journal.get("state") != "COMMITTED" or journal.get("program_data") != str(
+        program_data.resolve()
+    ):
+        raise ProvisionError("committed ownership record absent")
+    return journal
+
+
+def qualify_dacl(program_files: Path, program_data: Path) -> None:
+    _committed_record(program_data)
+    data = program_data / "PostgreSQL" / "Data"
+    sids = _service_sids()
+    for role in ("CONFIG", "STATE", "RUNTIME", "LOGS"):
+        grants = {sid: mask for sid, mask, _ in expected_aces(role, sids[CONTRACT.backend_service])}
+        _qualify_protected(program_data / role.title(), grants, inherit=True)
+    base = {ADMINISTRATORS_SID: FILE_ALL_ACCESS, SYSTEM_SID: FILE_ALL_ACCESS}
+    _qualify_protected(
+        data, {**base, sids[CONTRACT.postgresql_service]: FILE_ALL_ACCESS}, inherit=True
+    )
+    security = program_data / "Security"
+    readers = {sids[name]: FILE_GENERIC_READ | FILE_GENERIC_EXECUTE for name in SERVICES}
+    _qualify_protected(security, {**base, **readers}, inherit=True)
+    _qualify_protected(
+        security / "ca.crt", {**base, **{sid: FILE_GENERIC_READ for sid in readers}}, inherit=False
+    )
+    for folder, stem, service in (
+        ("runtime", "client", CONTRACT.backend_service),
+        ("verifier", "client", CONTRACT.verifier_service),
+        ("server", "server", CONTRACT.postgresql_service),
+    ):
+        _qualify_protected(
+            security / folder,
+            {**base, sids[service]: FILE_GENERIC_READ | FILE_GENERIC_EXECUTE},
+            inherit=True,
+        )
+        _qualify_protected(
+            security / folder / f"{stem}.crt",
+            {**base, sids[service]: FILE_GENERIC_READ},
+            inherit=False,
+        )
+        _qualify_protected(
+            security / folder / f"{stem}.key",
+            {SYSTEM_SID: FILE_ALL_ACCESS, sids[service]: FILE_GENERIC_READ},
+            inherit=False,
+        )
+    _qualify_protected(security / "ca.key", {SYSTEM_SID: FILE_ALL_ACCESS}, inherit=False)
+
+
+def qualify(program_files: Path, program_data: Path) -> None:
+    """Aggregate read-only final qualification; proof authorities call narrower functions."""
+    qualify_dacl(program_files, program_data)
+    qualify_postgresql(program_files, program_data)
+    _recovery()
+
+
+def _wait_service(name: str, state: int, timeout: float = 30.0) -> dict[str, Any]:
+    import time
+    import win32service  # type: ignore[import-not-found]
+
+    manager = win32service.OpenSCManager(None, None, win32service.SC_MANAGER_CONNECT)
+    service = win32service.OpenService(manager, name, win32service.SERVICE_QUERY_STATUS)
+    try:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            value = win32service.QueryServiceStatusEx(service)
+            if value["CurrentState"] == state:
+                return value
+            time.sleep(0.1)
+        raise ProvisionError(f"service state deadline expired: {name}")
+    finally:
+        win32service.CloseServiceHandle(service)
+        win32service.CloseServiceHandle(manager)
+
+
+def qualify_postgresql(program_files: Path, program_data: Path) -> None:
+    import win32service  # type: ignore[import-not-found]
+
+    _wait_service(CONTRACT.postgresql_service, win32service.SERVICE_RUNNING)
+    data = program_data / "PostgreSQL" / "Data"
+    if tuple(filter(None, (data / "pg_hba.conf").read_text().splitlines())) != FINAL_HBA:
+        raise ProvisionError("final HBA differs")
+    if tuple(filter(None, (data / "pg_ident.conf").read_text().splitlines())) != IDENT:
+        raise ProvisionError("final ident differs")
+    postgres = program_files / "PostgreSQL" / "bin" / "postgres.exe"
+    if (
+        " 17.11"
+        not in subprocess.run(
+            [str(postgres), "--version"], check=True, capture_output=True, text=True
+        ).stdout
+    ):
+        raise ProvisionError("private PostgreSQL version differs")
+    pg_isready = postgres.with_name("pg_isready.exe")
+    subprocess.run(
+        [
+            str(pg_isready),
+            "-h",
+            CONTRACT.postgresql_host,
+            "-p",
+            str(CONTRACT.postgresql_port),
+            "-d",
+            "freshness_gate",
+        ],
+        check=True,
+        timeout=10,
+    )
+
+
+def qualify_mtls(program_files: Path, program_data: Path) -> None:
+    import time
+    import psycopg
+
+    subprocess.run(["sc.exe", "start", CONTRACT.verifier_service], check=True, capture_output=True)
+    markers = (
+        program_data / "Runtime" / "backend-readiness.json",
+        program_data / "Runtime" / "Verifier" / "verifier-readiness.json",
+    )
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline and not all(path.is_file() for path in markers):
+        time.sleep(0.1)
+    values = [json.loads(path.read_text()) for path in markers]
+    expected_roles = ("freshness_runtime", "freshness_crypto_verifier")
+    if any(
+        value.get("db_role") != role
+        or value.get("cross_key_denied") is not True
+        or value.get("cross_roles_denied") is not True
+        for value, role in zip(values, expected_roles, strict=True)
+    ):
+        raise ProvisionError("service-token mTLS matrix marker differs")
+    for role in (*expected_roles, "postgres"):
+        try:
+            psycopg.connect(
+                host=CONTRACT.postgresql_host,
+                port=CONTRACT.postgresql_port,
+                dbname="freshness_gate",
+                user=role,
+                sslmode="verify-full",
+                sslrootcert=str(program_data / "Security" / "ca.crt"),
+                connect_timeout=5,
+            )
+        except psycopg.Error:
+            pass
+        else:
+            raise ProvisionError(f"interactive no-cert connection entered {role}")
+    subprocess.run(["sc.exe", "stop", CONTRACT.verifier_service], check=True, capture_output=True)
+
+
+def qualify_backend(program_files: Path, program_data: Path) -> None:
+    import time
+    import win32service  # type: ignore[import-not-found]
+
+    first = _wait_service(CONTRACT.backend_service, win32service.SERVICE_RUNNING)
+    marker = json.loads((program_data / "Runtime" / "backend-readiness.json").read_text())
+    if marker.get("pid") != first["ProcessId"] or marker.get("corehost_lock") is not True:
+        raise ProvisionError("backend readiness identity differs")
+    time.sleep(3)
+    second = _wait_service(CONTRACT.backend_service, win32service.SERVICE_RUNNING)
+    if second["ProcessId"] != first["ProcessId"]:
+        raise ProvisionError("backend was not stable")
+
+
+def qualify_logging(program_files: Path, program_data: Path) -> None:
+    import win32service  # type: ignore[import-not-found]
+
+    log = program_data / "Logs" / "backend.log"
+    before = log.read_bytes()
+    subprocess.run(["sc.exe", "stop", CONTRACT.backend_service], check=True, capture_output=True)
+    _wait_service(CONTRACT.backend_service, win32service.SERVICE_STOPPED)
+    subprocess.run(["sc.exe", "start", CONTRACT.backend_service], check=True, capture_output=True)
+    _wait_service(CONTRACT.backend_service, win32service.SERVICE_RUNNING)
+    after = log.read_bytes()
+    if len(after) <= len(before) or not after.startswith(before):
+        raise ProvisionError("persistent backend log did not survive restart")
+    sids = _service_sids()
+    grants = {sid: mask for sid, mask, _ in expected_aces("LOGS", sids[CONTRACT.backend_service])}
+    _qualify_protected(program_data / "Logs", grants, inherit=True)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "command",
+        choices=(
+            "install",
+            "rollback",
+            "commit",
+            "qualify",
+            "qualify-dacl",
+            "qualify-postgresql",
+            "qualify-mtls",
+            "qualify-backend",
+            "qualify-logging",
+        ),
+    )
+    parser.add_argument("--program-files", required=True, type=Path)
+    parser.add_argument("--program-data", required=True, type=Path)
+    args = parser.parse_args(argv)
+    if os.name != "nt":
+        print("Windows required", file=sys.stderr)
+        return 1
+    try:
+        if args.command == "install":
+            install(args.program_files, args.program_data)
+        elif args.command == "rollback":
+            rollback(args.program_files, args.program_data)
+        elif args.command == "commit":
+            commit(args.program_files, args.program_data)
+        elif args.command == "qualify":
+            qualify(args.program_files, args.program_data)
+        else:
+            {
+                "qualify-dacl": qualify_dacl,
+                "qualify-postgresql": qualify_postgresql,
+                "qualify-mtls": qualify_mtls,
+                "qualify-backend": qualify_backend,
+                "qualify-logging": qualify_logging,
+            }[args.command](args.program_files, args.program_data)
+    except Exception as exc:
+        print(f"provisioning failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

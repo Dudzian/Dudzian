@@ -96,7 +96,7 @@
     "WINDOWS_CLEAN_INSTALL": {
       "owner": "WINDOWS",
       "status": "NOT_IMPLEMENTED",
-      "evidence": "no canonical production installer",
+      "evidence": "corrective Stage-9 production implementation and live clean-install proof remain incomplete",
       "evidence_class": "LIVE_WINDOWS_INTEGRATION"
     },
     "WINDOWS_SERVICE_INSTALLATION": {

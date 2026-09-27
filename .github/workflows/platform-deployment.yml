@@ -101,6 +101,40 @@ jobs:
           name: windows-scm-evidence
           path: windows-scm-evidence.json
 
+  windows-clean-install-integration:
+    runs-on: windows-latest
+    needs: [windows-deployment-contract, windows-deployment-integration]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with: {python-version: "3.11", architecture: "x64"}
+      - uses: actions/setup-dotnet@v5
+        with: {dotnet-version: "10.0.x"}
+      - name: Install exact WiX production compiler
+        shell: pwsh
+        run: dotnet tool install --global wix --version 7.0.0
+      - name: Install production build dependencies
+        run: python -m pip install -e ".[test]" pyinstaller pywin32
+      - name: Build and run canonical Stage-9 proof
+        timeout-minutes: 30
+        run: >-
+          python -m deployment.windows_stage9_clean_install
+          --version 0.1.0 --receipt dist/windows/windows-clean-install-receipt.json
+      - name: Produce revision-bound Stage-9 evidence
+        run: >-
+          python -m deployment.platform_evidence windows-clean-install
+          --receipt dist/windows/windows-clean-install-receipt.json
+          --msi dist/windows/CryptoHunter-0.1.0-windows-x64.msi
+          --manifest dist/windows/installer-manifest.json
+          --output dist/windows/windows-clean-install-evidence.json
+      - uses: actions/upload-artifact@v6
+        with:
+          name: windows-clean-install-evidence
+          path: |
+            dist/windows/installer-manifest.json
+            dist/windows/windows-clean-install-evidence.json
+            dist/windows/logs/*.log
+
   linux-deployment-integration:
     runs-on: ubuntu-latest
     steps:
@@ -128,6 +162,7 @@ jobs:
       - core-macos
       - windows-deployment-contract
       - windows-deployment-integration
+      - windows-clean-install-integration
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -137,6 +172,10 @@ jobs:
           pattern: core-evidence-*
           path: evidence
           merge-multiple: true
+      - uses: actions/download-artifact@v7
+        with:
+          name: windows-clean-install-evidence
+          path: evidence
       - uses: actions/download-artifact@v7
         with:
           name: windows-scm-evidence
@@ -153,3 +192,4 @@ jobs:
           python -m deployment.platform_readiness --platform WINDOWS
           --evidence evidence/core-matrix.json
           --evidence evidence/windows-scm-evidence.json
+          --evidence evidence/windows-clean-install-evidence.json
