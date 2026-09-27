@@ -1,4 +1,4 @@
-"""SCM child used only by the live Stage-8 PostgreSQL SSPI probe.
+"""SCM child used only by the live Stage-8 PostgreSQL mTLS probe.
 
 The parent owns the service and request file.  This process merely opens one
 new libpq connection under the token assigned by SCM and publishes a bounded
@@ -17,6 +17,8 @@ import time
 from typing import Any, Callable
 
 MAX_RESULT_BYTES = 16_384
+RUNTIME_SERVICE = "CryptoHunterBackend"
+VERIFIER_SERVICE = "CryptoHunterFreshnessVerifier"
 
 
 def _atomic_json(path: Path, value: dict[str, Any]) -> None:
@@ -49,6 +51,7 @@ def _read_matching_go(path: Path, invocation_token: str, pid: int) -> bool:
 
 def _connect(
     request: Path,
+    service_name: str,
     connect: Any | None = None,
     *,
     cancelled: Callable[[], bool] | None = None,
@@ -100,6 +103,35 @@ def _connect(
             },
         )
         return
+    if service_name == RUNTIME_SERVICE:
+        credential = "runtime"
+    elif service_name == VERIFIER_SERVICE:
+        credential = "verifier"
+    else:
+        raise RuntimeError("unowned service identity")
+    # Credential locations are fixed by the reviewed service command, never by
+    # request JSON.  The service token must still pass the private-key DACL.
+    pki = request.parent / "pki"
+    certificate = pki / credential / "client.crt"
+    private_key = pki / credential / "client.key"
+    root_certificate = pki / "ca.crt"
+    probes: dict[str, dict[str, Any]] = {}
+    for name in ("runtime", "verifier"):
+        candidate = pki / name / "client.key"
+        try:
+            with candidate.open("rb") as stream:
+                stream.read(1)
+        except OSError as exc:
+            probes[name] = {
+                "accessible": False,
+                "error_type": type(exc).__name__,
+                "winerror": getattr(exc, "winerror", None),
+            }
+        else:
+            probes[name] = {"accessible": True}
+    if value.get("operation") == "key_probe":
+        _atomic_json(result, {"invocation_token": invocation_token, "pid": pid, "keys": probes})
+        return
     if connect is None:
         import psycopg
 
@@ -110,6 +142,10 @@ def _connect(
             port=int(value["port"]),
             dbname=value["database"],
             user=value["role"],
+            sslmode="verify-full",
+            sslrootcert=str(root_certificate),
+            sslcert=str(certificate),
+            sslkey=str(private_key),
             connect_timeout=5,
         ) as connection:
             row = connection.execute("SELECT session_user").fetchone()
@@ -154,7 +190,7 @@ def main(argv: list[str] | None = None) -> int:
             _signal_service_stop(self, self._stop_requested)
 
         def SvcDoRun(self) -> None:  # noqa: N802 - pywin32 API
-            _connect(request, cancelled=self._stop_requested.is_set)
+            _connect(request, service_name, cancelled=self._stop_requested.is_set)
 
     servicemanager.Initialize()
     servicemanager.PrepareToHostSingle(OneConnectionService)

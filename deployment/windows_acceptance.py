@@ -285,7 +285,7 @@ class AcceptanceBoundary:
 
 
 def _stage8_principal_phase(phase: str) -> bool:
-    return phase.startswith(("SSPI_", "FINAL_", "MATRIX_", "INTERACTIVE_", "HELPER_"))
+    return phase.startswith(("TLS_", "FINAL_", "MATRIX_", "INTERACTIVE_", "HELPER_"))
 
 
 def _stage8_timeout_diagnostic(
@@ -585,7 +585,7 @@ def run_acceptance(
                     "test_or_probe": "deployment.windows_stage8_postgresql_probe",
                     "details": stage8.get(
                         "details",
-                        "isolated PostgreSQL and distinct SSPI service principals qualified",
+                        "isolated PostgreSQL and service-SID-bound distinct mTLS credentials qualified",
                     ),
                 }
                 for item in WINDOWS_STAGE8_ITEMS

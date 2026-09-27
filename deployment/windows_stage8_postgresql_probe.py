@@ -1,4 +1,4 @@
-"""Live, fail-closed Windows PostgreSQL substrate and SSPI qualification.
+"""Live, fail-closed Windows PostgreSQL substrate and service-SID-bound mTLS qualification.
 
 This is an acceptance probe, not an installer.  It owns an isolated temporary
 cluster and temporary SCM helper services and never opens or changes a system
@@ -22,6 +22,8 @@ import sys
 import tempfile
 import time
 from typing import Any
+from datetime import datetime, timedelta, timezone
+import ipaddress
 
 from deployment.host_identity import canonical_host_os
 from deployment.platform_evidence import WINDOWS_STAGE8_ITEMS
@@ -44,10 +46,18 @@ RUNTIME_ACCOUNT = rf"NT SERVICE\{RUNTIME_SERVICE}"
 VERIFIER_ACCOUNT = rf"NT SERVICE\{VERIFIER_SERVICE}"
 RUNTIME_ROLE = "freshness_runtime"
 VERIFIER_ROLE = "freshness_crypto_verifier"
-MAP_NAME = "stage8_sspi"
+MAP_NAME = "stage8_cert"
+RUNTIME_CERT_IDENTITY = RUNTIME_SERVICE
+VERIFIER_CERT_IDENTITY = VERIFIER_SERVICE
+# Win32 returns these stable, concrete file masks from GetAce() for the values
+# passed to AddAccessAllowedAce().  Keep them independent of pywin32 so the
+# exact ACL-shape contract is executable on every CI platform.
+PRIVATE_KEY_FULL_MASK = 0x001F01FF
+PRIVATE_KEY_READ_MASK = 0x00120089
+PRIVATE_KEY_ACE_FLAGS = 0
+PRIVATE_KEY_ALLOW_ACE_TYPE = 0
 REQUIRED_BINARIES = ("initdb.exe", "postgres.exe", "pg_ctl.exe", "psql.exe")
-FORBIDDEN_ONLINE_METHODS = frozenset({"trust", "password", "md5", "scram-sha-256"})
-AUTHENTICATED_RE = re.compile(r'connection authenticated: identity="([^"]+)" method=sspi')
+FORBIDDEN_ONLINE_METHODS = frozenset({"trust", "password", "md5", "scram-sha-256", "sspi"})
 DIAGNOSTIC_LABELS = (
     "POSTGRESQL_DISCOVERY",
     "POSTGRESQL_CLUSTER_INIT",
@@ -55,14 +65,12 @@ DIAGNOSTIC_LABELS = (
     "POSTGRESQL_DURABILITY",
     "POSTGRESQL_SCHEMA_PROVISION",
     "POSTGRESQL_SCHEMA_QUALIFICATION",
-    "WINDOWS_SSPI_RUNTIME_IDENTITY",
-    "WINDOWS_SSPI_VERIFIER_IDENTITY",
-    "WINDOWS_SSPI_RUNTIME_CONNECT",
-    "WINDOWS_SSPI_VERIFIER_CONNECT",
-    "WINDOWS_SSPI_CROSS_ROLE_DENIAL",
-    "WINDOWS_SSPI_OUTSIDER_DENIAL",
-    "WINDOWS_SSPI_HBA_QUALIFICATION",
-    "WINDOWS_SSPI_IDENT_QUALIFICATION",
+    "WINDOWS_TLS_RUNTIME_CONNECT",
+    "WINDOWS_TLS_VERIFIER_CONNECT",
+    "WINDOWS_TLS_CROSS_ROLE_DENIAL",
+    "WINDOWS_TLS_OUTSIDER_DENIAL",
+    "WINDOWS_TLS_HBA_QUALIFICATION",
+    "WINDOWS_TLS_IDENT_QUALIFICATION",
     "STAGE8_CLEANUP",
 )
 
@@ -74,8 +82,10 @@ PHASES = (
     "POSTGRESQL_SCHEMA_PROVISION",
     "POSTGRESQL_SCHEMA_QUALIFICATION",
     "HELPER_SERVICE_PREPARE",
-    "SSPI_RUNTIME_DISCOVERY",
-    "SSPI_VERIFIER_DISCOVERY",
+    "TLS_PKI_PROVISION",
+    "TLS_KEY_DACL_QUALIFICATION",
+    "TLS_RUNTIME_KEY_ACCESS",
+    "TLS_VERIFIER_KEY_ACCESS",
     "FINAL_IDENT_WRITE",
     "FINAL_HBA_WRITE",
     "FINAL_HBA_OFFLINE_QUALIFICATION",
@@ -263,10 +273,10 @@ def discover_postgresql(environment: dict[str, str] | None = None) -> PostgreSQL
 
 
 def final_hba_lines() -> tuple[str, ...]:
-    options = f"sspi map={MAP_NAME} include_realm=1"
+    options = f"cert map={MAP_NAME}"
     return (
-        f"host {DATABASE} {VERIFIER_ROLE} 127.0.0.1/32 {options}",
-        f"host {DATABASE} {RUNTIME_ROLE} 127.0.0.1/32 {options}",
+        f"hostssl {DATABASE} {VERIFIER_ROLE} 127.0.0.1/32 {options}",
+        f"hostssl {DATABASE} {RUNTIME_ROLE} 127.0.0.1/32 {options}",
         f"host {DATABASE} all 127.0.0.1/32 reject",
         "host all all 127.0.0.1/32 reject",
         "host all all 0.0.0.0/0 reject",
@@ -274,74 +284,56 @@ def final_hba_lines() -> tuple[str, ...]:
     )
 
 
-def ident_lines(runtime_principal: str, verifier_principal: str) -> tuple[str, ...]:
-    if (
-        not runtime_principal
-        or not verifier_principal
-        or runtime_principal.casefold() == verifier_principal.casefold()
-    ):
-        raise Stage8PostgreSQLProbeError(
-            "WINDOWS_SSPI_IDENT_QUALIFICATION",
-            PRINCIPAL_AUTH,
-            "virtual service accounts did not yield two distinct SSPI principals",
-        )
-    if any(
-        re.search(r"[\s/]|\.\*|\^|\$", value) for value in (runtime_principal, verifier_principal)
-    ):
-        raise Stage8PostgreSQLProbeError(
-            "WINDOWS_SSPI_IDENT_QUALIFICATION",
-            PRINCIPAL_AUTH,
-            "unsafe principal syntax cannot be represented by an exact pg_ident map",
-        )
+def ident_lines() -> tuple[str, ...]:
     return (
-        f"{MAP_NAME} {runtime_principal} {RUNTIME_ROLE}",
-        f"{MAP_NAME} {verifier_principal} {VERIFIER_ROLE}",
+        f"{MAP_NAME} {RUNTIME_CERT_IDENTITY} {RUNTIME_ROLE}",
+        f"{MAP_NAME} {VERIFIER_CERT_IDENTITY} {VERIFIER_ROLE}",
     )
 
 
 def qualify_hba_rows(rows: list[tuple[Any, ...]]) -> None:
     expected = [
-        (DATABASE, VERIFIER_ROLE, "sspi"),
-        (DATABASE, RUNTIME_ROLE, "sspi"),
-        (DATABASE, "all", "reject"),
-        ("all", "all", "reject"),
-        ("all", "all", "reject"),
-        ("all", "all", "reject"),
+        ("hostssl", DATABASE, VERIFIER_ROLE, "cert"),
+        ("hostssl", DATABASE, RUNTIME_ROLE, "cert"),
+        ("host", DATABASE, "all", "reject"),
+        ("host", "all", "all", "reject"),
+        ("host", "all", "all", "reject"),
+        ("host", "all", "all", "reject"),
     ]
     if len(rows) != len(expected):
         raise Stage8PostgreSQLProbeError(
-            "WINDOWS_SSPI_HBA_QUALIFICATION", PRINCIPAL_AUTH, "unexpected effective HBA row count"
+            "WINDOWS_TLS_HBA_QUALIFICATION", PRINCIPAL_AUTH, "unexpected effective HBA row count"
         )
     previous = -1
     for row, wanted in zip(rows, expected, strict=True):
         line, kind, databases, users, address, netmask, method, options, error = row
-        if error is not None or line <= previous or kind != "host":
+        expected_kind, database, user, auth = wanted
+        if error is not None or line <= previous or kind != expected_kind:
             raise Stage8PostgreSQLProbeError(
-                "WINDOWS_SSPI_HBA_QUALIFICATION",
+                "WINDOWS_TLS_HBA_QUALIFICATION",
                 PRINCIPAL_AUTH,
                 "invalid HBA parse result or ordering",
             )
         previous = line
-        database, user, auth = wanted
         if databases != [database] or users != [user] or method != auth:
             raise Stage8PostgreSQLProbeError(
-                "WINDOWS_SSPI_HBA_QUALIFICATION",
+                "WINDOWS_TLS_HBA_QUALIFICATION",
                 PRINCIPAL_AUTH,
                 "effective HBA does not match the exact reviewed sequence",
             )
-        if auth == "sspi" and (
+        if auth == "cert" and (
             address != "127.0.0.1"
             or netmask != "255.255.255.255"
-            or sorted(options or []) != ["include_realm=1", f"map={MAP_NAME}"]
+            or (options or []) != [f"map={MAP_NAME}"]
         ):
             raise Stage8PostgreSQLProbeError(
-                "WINDOWS_SSPI_HBA_QUALIFICATION",
+                "WINDOWS_TLS_HBA_QUALIFICATION",
                 PRINCIPAL_AUTH,
-                "online HBA is not exact loopback SSPI",
+                "online HBA is not exact loopback certificate authentication",
             )
         if user in {RUNTIME_ROLE, VERIFIER_ROLE} and method in FORBIDDEN_ONLINE_METHODS:
             raise Stage8PostgreSQLProbeError(
-                "WINDOWS_SSPI_HBA_QUALIFICATION",
+                "WINDOWS_TLS_HBA_QUALIFICATION",
                 PRINCIPAL_AUTH,
                 "forbidden online authentication method",
             )
@@ -365,7 +357,7 @@ FROM pg_catalog.pg_hba_file_rules ORDER BY line_number
         )
     except subprocess.TimeoutExpired as exc:
         raise Stage8PostgreSQLProbeError(
-            "WINDOWS_SSPI_HBA_QUALIFICATION", PRINCIPAL_AUTH, "offline HBA parser timed out"
+            "WINDOWS_TLS_HBA_QUALIFICATION", PRINCIPAL_AUTH, "offline HBA parser timed out"
         ) from exc
     rows: list[tuple[Any, ...]] = []
     for line in completed.stdout.splitlines():
@@ -377,11 +369,220 @@ FROM pg_catalog.pg_hba_file_rules ORDER BY line_number
             rows.append(tuple(value))
     if completed.returncode or not rows:
         raise Stage8PostgreSQLProbeError(
-            "WINDOWS_SSPI_HBA_QUALIFICATION",
+            "WINDOWS_TLS_HBA_QUALIFICATION",
             PRINCIPAL_AUTH,
             (completed.stderr or completed.stdout)[-STDERR_LIMIT:],
         )
     qualify_hba_rows(rows)
+
+
+def _write_private_key(path: Path, key: Any) -> None:
+    from cryptography.hazmat.primitives import serialization
+
+    path.write_bytes(
+        key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.TraditionalOpenSSL,
+            serialization.NoEncryption(),
+        )
+    )
+
+
+def _provision_tls_pki(root: Path) -> dict[str, Path]:
+    """Create and validate an ephemeral CA, server identity and two client identities."""
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa, padding
+    from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
+
+    pki = root / "pki"
+    (pki / "runtime").mkdir(parents=True)
+    (pki / "verifier").mkdir()
+    now = datetime.now(timezone.utc)
+    ca_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    ca_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "CryptoHunter Stage8 CA")])
+    ca_cert = (
+        x509.CertificateBuilder().subject_name(ca_name).issuer_name(ca_name)
+        .public_key(ca_key.public_key()).serial_number(x509.random_serial_number())
+        .not_valid_before(now - timedelta(minutes=5)).not_valid_after(now + timedelta(days=2))
+        .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
+        .sign(ca_key, hashes.SHA256())
+    )
+    assets: dict[str, Path] = {"pki": pki, "ca_cert": pki / "ca.crt", "ca_key": pki / "ca.key"}
+    _write_private_key(assets["ca_key"], ca_key)
+    assets["ca_cert"].write_bytes(ca_cert.public_bytes(serialization.Encoding.PEM))
+
+    issued: dict[str, tuple[Any, Any]] = {}
+    specifications = (
+        ("server", "127.0.0.1", ExtendedKeyUsageOID.SERVER_AUTH, pki),
+        ("runtime", RUNTIME_CERT_IDENTITY, ExtendedKeyUsageOID.CLIENT_AUTH, pki / "runtime"),
+        ("verifier", VERIFIER_CERT_IDENTITY, ExtendedKeyUsageOID.CLIENT_AUTH, pki / "verifier"),
+    )
+    for name, common_name, eku, directory in specifications:
+        key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        builder = (
+            x509.CertificateBuilder()
+            .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, common_name)]))
+            .issuer_name(ca_name).public_key(key.public_key())
+            .serial_number(x509.random_serial_number())
+            .not_valid_before(now - timedelta(minutes=5)).not_valid_after(now + timedelta(days=1))
+            .add_extension(x509.ExtendedKeyUsage([eku]), critical=False)
+        )
+        if name == "server":
+            builder = builder.add_extension(
+                x509.SubjectAlternativeName([x509.IPAddress(ipaddress.ip_address("127.0.0.1"))]),
+                critical=False,
+            )
+        certificate = builder.sign(ca_key, hashes.SHA256())
+        key_path = directory / ("server.key" if name == "server" else "client.key")
+        cert_path = directory / ("server.crt" if name == "server" else "client.crt")
+        _write_private_key(key_path, key)
+        cert_path.write_bytes(certificate.public_bytes(serialization.Encoding.PEM))
+        assets[f"{name}_key"], assets[f"{name}_cert"] = key_path, cert_path
+        issued[name] = (key, certificate)
+
+    # Executable cryptographic qualification: signature, key pairing, SAN, EKU,
+    # validity and distinct client certificates are all checked before use.
+    fingerprints: set[bytes] = set()
+    for name, (key, certificate) in issued.items():
+        ca_key.public_key().verify(
+            certificate.signature, certificate.tbs_certificate_bytes,
+            padding.PKCS1v15(), certificate.signature_hash_algorithm,
+        )
+        if key.public_key().public_bytes(
+            serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo
+        ) != certificate.public_key().public_bytes(
+            serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo
+        ):
+            raise RuntimeError(f"{name} private key does not match certificate")
+        if not (certificate.not_valid_before_utc <= now <= certificate.not_valid_after_utc):
+            raise RuntimeError(f"{name} certificate is outside its validity period")
+        if name != "server":
+            eku = certificate.extensions.get_extension_for_class(x509.ExtendedKeyUsage).value
+            if ExtendedKeyUsageOID.CLIENT_AUTH not in eku:
+                raise RuntimeError(f"{name} certificate lacks clientAuth EKU")
+            fingerprints.add(certificate.fingerprint(hashes.SHA256()))
+    san = issued["server"][1].extensions.get_extension_for_class(x509.SubjectAlternativeName).value
+    if ipaddress.ip_address("127.0.0.1") not in san.get_values_for_type(x509.IPAddress):
+        raise RuntimeError("server certificate lacks exact 127.0.0.1 IP SAN")
+    if len(fingerprints) != 2:
+        raise RuntimeError("client certificates are not distinct")
+    return assets
+
+
+def _protect_private_key(path: Path, account: str) -> None:
+    """Install a protected exact allow-list DACL on one private key."""
+    import ntsecuritycon
+    import win32security
+
+    system, _, _ = win32security.LookupAccountName(None, "SYSTEM")
+    service, _, _ = win32security.LookupAccountName(None, account)
+    dacl = win32security.ACL()
+    if (
+        ntsecuritycon.FILE_ALL_ACCESS != PRIVATE_KEY_FULL_MASK
+        or ntsecuritycon.FILE_GENERIC_READ != PRIVATE_KEY_READ_MASK
+    ):
+        raise RuntimeError("pywin32 private-key rights differ from the reviewed mask contract")
+    dacl.AddAccessAllowedAce(win32security.ACL_REVISION, PRIVATE_KEY_FULL_MASK, system)
+    dacl.AddAccessAllowedAce(win32security.ACL_REVISION, PRIVATE_KEY_READ_MASK, service)
+    win32security.SetNamedSecurityInfo(
+        str(path), win32security.SE_FILE_OBJECT,
+        win32security.DACL_SECURITY_INFORMATION | win32security.PROTECTED_DACL_SECURITY_INFORMATION,
+        None, None, dacl, None,
+    )
+
+
+def _protect_owner_private_key(path: Path) -> None:
+    """Keep CA/server material usable by the acceptance/PostgreSQL owner only."""
+    import ntsecuritycon
+    import win32api
+    import win32con
+    import win32security
+
+    token = win32security.OpenProcessToken(win32api.GetCurrentProcess(), win32con.TOKEN_QUERY)
+    try:
+        owner = win32security.GetTokenInformation(token, win32security.TokenUser)[0]
+    finally:
+        token.Close()
+    system, _, _ = win32security.LookupAccountName(None, "SYSTEM")
+    if ntsecuritycon.FILE_ALL_ACCESS != PRIVATE_KEY_FULL_MASK:
+        raise RuntimeError("pywin32 private-key full rights differ from reviewed mask contract")
+    dacl = win32security.ACL()
+    for sid in {win32security.ConvertSidToStringSid(system): system,
+                win32security.ConvertSidToStringSid(owner): owner}.values():
+        dacl.AddAccessAllowedAce(win32security.ACL_REVISION, PRIVATE_KEY_FULL_MASK, sid)
+    win32security.SetNamedSecurityInfo(
+        str(path), win32security.SE_FILE_OBJECT,
+        win32security.DACL_SECURITY_INFORMATION | win32security.PROTECTED_DACL_SECURITY_INFORMATION,
+        None, None, dacl, None,
+    )
+
+
+def _qualify_exact_private_key_aces(
+    observed: list[tuple[str, int, int, int]],
+    expected: list[tuple[str, int, int, int]],
+) -> None:
+    """Require the exact ACE count, order, SID, type, mask and flags."""
+    if len(observed) != len(expected) or observed != expected:
+        raise RuntimeError(
+            f"private key DACL differs from exact contract: expected={expected!r}, "
+            f"observed={observed!r}"
+        )
+
+
+def _account_sid(account: str, win32security: Any) -> str:
+    sid, _, _ = win32security.LookupAccountName(None, account)
+    return str(win32security.ConvertSidToStringSid(sid))
+
+
+def _current_process_sid(win32security: Any) -> str:
+    import win32api
+    import win32con
+
+    token = win32security.OpenProcessToken(win32api.GetCurrentProcess(), win32con.TOKEN_QUERY)
+    try:
+        sid = win32security.GetTokenInformation(token, win32security.TokenUser)[0]
+        return str(win32security.ConvertSidToStringSid(sid))
+    finally:
+        token.Close()
+
+
+def _qualify_private_key_dacl(path: Path, expected: list[tuple[str, int]]) -> None:
+    import win32security
+
+    descriptor = win32security.GetNamedSecurityInfo(
+        str(path), win32security.SE_FILE_OBJECT, win32security.DACL_SECURITY_INFORMATION
+    )
+    control = descriptor.GetSecurityDescriptorControl()[0]
+    if not control & win32security.SE_DACL_PRESENT:
+        raise RuntimeError(f"private key DACL is not present: {path.name}")
+    if not control & win32security.SE_DACL_PROTECTED:
+        raise RuntimeError(f"private key DACL is not protected: {path.name}")
+    dacl = descriptor.GetSecurityDescriptorDacl()
+    if dacl is None:
+        raise RuntimeError(f"private key has a null DACL: {path.name}")
+    ace_count = dacl.GetAceCount()
+    if ace_count != len(expected):
+        raise RuntimeError(
+            f"private key DACL has unexpected ACE count: expected={len(expected)}, "
+            f"observed={ace_count}"
+        )
+    observed: list[tuple[str, int, int, int]] = []
+    for index in range(ace_count):
+        header, mask, sid = dacl.GetAce(index)
+        observed.append(
+            (
+                str(win32security.ConvertSidToStringSid(sid)),
+                int(header[0]),
+                int(mask),
+                int(header[1]),
+            )
+        )
+    exact = [
+        (sid, PRIVATE_KEY_ALLOW_ACE_TYPE, mask, PRIVATE_KEY_ACE_FLAGS)
+        for sid, mask in expected
+    ]
+    _qualify_exact_private_key_aces(observed, exact)
 
 
 def _port() -> int:
@@ -874,8 +1075,8 @@ def _close_process_exit_witness(process: Any) -> None:
 
 def _service_failure_label(service: str, *, identity: bool) -> str:
     if service == RUNTIME_SERVICE:
-        return "WINDOWS_SSPI_RUNTIME_IDENTITY" if identity else "WINDOWS_SSPI_RUNTIME_CONNECT"
-    return "WINDOWS_SSPI_VERIFIER_IDENTITY" if identity else "WINDOWS_SSPI_VERIFIER_CONNECT"
+        return "WINDOWS_TLS_RUNTIME_KEY_ACCESS" if identity else "WINDOWS_TLS_RUNTIME_CONNECT"
+    return "WINDOWS_TLS_VERIFIER_KEY_ACCESS" if identity else "WINDOWS_TLS_VERIFIER_CONNECT"
 
 
 def _prepare_services(root: Path, owned_services: set[str]) -> dict[str, Path]:
@@ -920,6 +1121,7 @@ def _invoke_service(
     database: str = DATABASE,
     *,
     failure_label: str | None = None,
+    operation: str = "connect",
 ) -> dict[str, Any]:
     label = failure_label or _service_failure_label(service, identity=False)
     invocation_token = secrets.token_hex(32)
@@ -933,6 +1135,7 @@ def _invoke_service(
             "port": port,
             "database": database,
             "role": role,
+            "operation": operation,
             "ready": str(ready),
             "go": str(go),
             "result": str(result),
@@ -966,16 +1169,6 @@ def _invoke_service(
     finally:
         if witness is not None:
             _close_process_exit_witness(witness)
-
-
-def _extract_new_principal(log: Path, offset: int, label: str) -> str:
-    text = log.read_text(encoding="utf-8", errors="replace")[offset:]
-    found = AUTHENTICATED_RE.findall(text)
-    if not found:
-        raise Stage8PostgreSQLProbeError(
-            label, PRINCIPAL_AUTH, "PostgreSQL did not log an SSPI authenticated identity"
-        )
-    return found[-1]
 
 
 def _cleanup_service(name: str) -> list[str]:
@@ -1023,15 +1216,15 @@ def _finish_cleanup(primary: BaseException | None, cleanup_errors: list[str]) ->
 
 def _matrix_label(service: str, role: str, expected: bool) -> str:
     if expected and service == RUNTIME_SERVICE and role == RUNTIME_ROLE:
-        return "WINDOWS_SSPI_RUNTIME_CONNECT"
+        return "WINDOWS_TLS_RUNTIME_CONNECT"
     if expected and service == VERIFIER_SERVICE and role == VERIFIER_ROLE:
-        return "WINDOWS_SSPI_VERIFIER_CONNECT"
+        return "WINDOWS_TLS_VERIFIER_CONNECT"
     if (service, role) in {
         (RUNTIME_SERVICE, VERIFIER_ROLE),
         (VERIFIER_SERVICE, RUNTIME_ROLE),
     }:
-        return "WINDOWS_SSPI_CROSS_ROLE_DENIAL"
-    return "WINDOWS_SSPI_OUTSIDER_DENIAL"
+        return "WINDOWS_TLS_CROSS_ROLE_DENIAL"
+    return "WINDOWS_TLS_OUTSIDER_DENIAL"
 
 
 def run_probe(scratch_parent: Path, *, status_file: Path | None = None) -> dict[str, str]:
@@ -1077,10 +1270,45 @@ def run_probe(scratch_parent: Path, *, status_file: Path | None = None) -> dict[
                     SUBSTRATE,
                     (init.stderr or init.stdout)[-STDERR_LIMIT:],
                 )
+        with _phase("TLS_PKI_PROVISION"):
+            tls = _provision_tls_pki(root)
+            _protect_private_key(tls["runtime_key"], RUNTIME_ACCOUNT)
+            _protect_private_key(tls["verifier_key"], VERIFIER_ACCOUNT)
+            _protect_owner_private_key(tls["server_key"])
+            _protect_owner_private_key(tls["ca_key"])
+        with _phase("TLS_KEY_DACL_QUALIFICATION"):
+            import win32security
+
+            system_sid = _account_sid("SYSTEM", win32security)
+            owner_sid = _current_process_sid(win32security)
+            runtime_sid = _account_sid(RUNTIME_ACCOUNT, win32security)
+            verifier_sid = _account_sid(VERIFIER_ACCOUNT, win32security)
+            _qualify_private_key_dacl(
+                tls["runtime_key"],
+                [(system_sid, PRIVATE_KEY_FULL_MASK), (runtime_sid, PRIVATE_KEY_READ_MASK)],
+            )
+            _qualify_private_key_dacl(
+                tls["verifier_key"],
+                [(system_sid, PRIVATE_KEY_FULL_MASK), (verifier_sid, PRIVATE_KEY_READ_MASK)],
+            )
+            owner_contract = list(
+                {
+                    system_sid: (system_sid, PRIVATE_KEY_FULL_MASK),
+                    owner_sid: (owner_sid, PRIVATE_KEY_FULL_MASK),
+                }.values()
+            )
+            _qualify_private_key_dacl(tls["ca_key"], owner_contract)
+            _qualify_private_key_dacl(tls["server_key"], owner_contract)
         port = _port()
+        def pg_path(path: Path) -> str:
+            return str(path).replace("\\", "/").replace("'", "''")
         with (data / "postgresql.conf").open("a", encoding="utf-8") as stream:
             stream.write(
-                "\nlisten_addresses='127.0.0.1'\nfsync=on\nsynchronous_commit=on\nlog_connections=on\nlog_disconnections=on\nlogging_collector=off\n"
+                "\nlisten_addresses='127.0.0.1'\nfsync=on\nsynchronous_commit=on\n"
+                "log_connections=on\nlog_disconnections=on\nlogging_collector=off\nssl=on\n"
+                f"ssl_cert_file='{pg_path(tls['server_cert'])}'\n"
+                f"ssl_key_file='{pg_path(tls['server_key'])}'\n"
+                f"ssl_ca_file='{pg_path(tls['ca_cert'])}'\n"
             )
         with _phase("POSTGRESQL_START"):
             started = _run_pg_ctl(
@@ -1146,48 +1374,30 @@ def run_probe(scratch_parent: Path, *, status_file: Path | None = None) -> dict[
                     "POSTGRESQL_SCHEMA_QUALIFICATION", SUBSTRATE, f"{type(exc).__name__}: {exc}"
                 ) from exc
 
-        # Temporary diagnostic-only mapping discovers what SSPI actually authenticates.
-        (data / "pg_ident.conf").write_text(
-            f"{MAP_NAME} /^(.*)$/ stage8_bootstrap\n", encoding="utf-8"
-        )
-        (data / "pg_hba.conf").write_text(
-            f"host {DATABASE} stage8_bootstrap 127.0.0.1/32 sspi map={MAP_NAME} include_realm=1\nhost all all 0.0.0.0/0 reject\nhost all all ::0/0 reject\n",
-            encoding="utf-8",
-        )
-        _run_pg_ctl(binaries.executable("pg_ctl.exe"), data, root, "reload", ["reload"])
         with _phase("HELPER_SERVICE_PREPARE"):
             service_requests = _prepare_services(root, owned_services)
             _write_status(owned_services=sorted(owned_services))
-        principals: list[str] = []
-        for discovery_phase, service, account in (
-            ("SSPI_RUNTIME_DISCOVERY", RUNTIME_SERVICE, RUNTIME_ACCOUNT),
-            ("SSPI_VERIFIER_DISCOVERY", VERIFIER_SERVICE, VERIFIER_ACCOUNT),
+        for access_phase, service, account, own, other in (
+            ("TLS_RUNTIME_KEY_ACCESS", RUNTIME_SERVICE, RUNTIME_ACCOUNT, "runtime", "verifier"),
+            ("TLS_VERIFIER_KEY_ACCESS", VERIFIER_SERVICE, VERIFIER_ACCOUNT, "verifier", "runtime"),
         ):
-            with _phase(discovery_phase):
-                offset = log.stat().st_size
-                identity_label = _service_failure_label(service, identity=True)
+            with _phase(access_phase):
                 payload = _invoke_service(
-                    root,
-                    service_requests[service],
-                    service,
-                    account,
-                    port,
-                    "stage8_bootstrap",
-                    failure_label=identity_label,
+                    root, service_requests[service], service, account, port,
+                    RUNTIME_ROLE if service == RUNTIME_SERVICE else VERIFIER_ROLE,
+                    failure_label=_service_failure_label(service, identity=True),
+                    operation="key_probe",
                 )
-                if not payload.get("ok"):
+                keys = payload.get("keys", {})
+                if keys.get(own, {}).get("accessible") is not True or keys.get(other, {}).get("accessible") is not False:
                     raise Stage8PostgreSQLProbeError(
-                        "WINDOWS_SSPI_RUNTIME_IDENTITY"
-                        if service == RUNTIME_SERVICE
-                        else "WINDOWS_SSPI_VERIFIER_IDENTITY",
-                        PRINCIPAL_AUTH,
-                        f"SSPI diagnostic connection failed: {payload}",
+                        _service_failure_label(service, identity=True), PRINCIPAL_AUTH,
+                        f"service-token private-key access mismatch: {keys}",
                     )
-                principals.append(_extract_new_principal(log, offset, identity_label))
 
         with _phase("FINAL_IDENT_WRITE"):
             (data / "pg_ident.conf").write_text(
-                "\n".join(ident_lines(*principals)) + "\n", encoding="utf-8"
+                "\n".join(ident_lines()) + "\n", encoding="utf-8"
             )
         with _phase("FINAL_HBA_WRITE"):
             (data / "pg_hba.conf").write_text("\n".join(final_hba_lines()) + "\n", encoding="utf-8")
@@ -1196,7 +1406,7 @@ def run_probe(scratch_parent: Path, *, status_file: Path | None = None) -> dict[
         )
         if reload_result.timed_out or reload_result.returncode != 0:
             raise Stage8PostgreSQLProbeError(
-                "WINDOWS_SSPI_HBA_QUALIFICATION",
+                "WINDOWS_TLS_HBA_QUALIFICATION",
                 PRINCIPAL_AUTH,
                 "final configuration reload failed",
             )
@@ -1207,7 +1417,7 @@ def run_probe(scratch_parent: Path, *, status_file: Path | None = None) -> dict[
             stop_error = _stop_owned_cluster(binaries.executable("pg_ctl.exe"), data, root, log)
             if stop_error:
                 raise Stage8PostgreSQLProbeError(
-                    "WINDOWS_SSPI_HBA_QUALIFICATION",
+                    "WINDOWS_TLS_HBA_QUALIFICATION",
                     PRINCIPAL_AUTH,
                     f"could not stop for offline HBA qualification: {stop_error}",
                 )
@@ -1244,14 +1454,12 @@ def run_probe(scratch_parent: Path, *, status_file: Path | None = None) -> dict[
             (VERIFIER_SERVICE, VERIFIER_ACCOUNT, VERIFIER_ROLE, True, DATABASE),
             (RUNTIME_SERVICE, RUNTIME_ACCOUNT, VERIFIER_ROLE, False, DATABASE),
             (VERIFIER_SERVICE, VERIFIER_ACCOUNT, RUNTIME_ROLE, False, DATABASE),
-            (RUNTIME_SERVICE, RUNTIME_ACCOUNT, "stage8_bootstrap", False, DATABASE),
         )
         matrix_phases = (
             "MATRIX_RUNTIME",
             "MATRIX_VERIFIER",
             "MATRIX_RUNTIME_TO_VERIFIER_DENIAL",
             "MATRIX_VERIFIER_TO_RUNTIME_DENIAL",
-            "MATRIX_WRONG_ROLE_DENIAL",
         )
         for matrix_phase, (service, account, role, expected, database) in zip(
             matrix_phases, matrix, strict=True
@@ -1275,17 +1483,33 @@ def run_probe(scratch_parent: Path, *, status_file: Path | None = None) -> dict[
                         PRINCIPAL_AUTH,
                         f"connection matrix mismatch: service={service}, requested_role={role}, result={payload}",
                     )
+        with _phase("MATRIX_WRONG_ROLE_DENIAL"):
+            for service, account in (
+                (RUNTIME_SERVICE, RUNTIME_ACCOUNT),
+                (VERIFIER_SERVICE, VERIFIER_ACCOUNT),
+            ):
+                payload = _invoke_service(
+                    root, service_requests[service], service, account, port,
+                    "stage8_bootstrap", DATABASE,
+                    failure_label=_matrix_label(service, "stage8_bootstrap", False),
+                )
+                if payload.get("ok") is not False:
+                    raise Stage8PostgreSQLProbeError(
+                        _matrix_label(service, "stage8_bootstrap", False), PRINCIPAL_AUTH,
+                        f"client certificate reached bootstrap role: service={service}",
+                    )
         with _phase("INTERACTIVE_OUTSIDER_DENIAL"):
             for role in (RUNTIME_ROLE, VERIFIER_ROLE):
                 try:
                     psycopg.connect(
-                        host="127.0.0.1", port=port, dbname=DATABASE, user=role, connect_timeout=5
+                        host="127.0.0.1", port=port, dbname=DATABASE, user=role,
+                        sslmode="verify-full", sslrootcert=str(tls["ca_cert"]), connect_timeout=5
                     )
                 except psycopg.Error:
                     pass
                 else:
                     raise Stage8PostgreSQLProbeError(
-                        "WINDOWS_SSPI_OUTSIDER_DENIAL",
+                        "WINDOWS_TLS_OUTSIDER_DENIAL",
                         PRINCIPAL_AUTH,
                         f"interactive caller reached {role}",
                     )
@@ -1298,20 +1522,18 @@ def run_probe(scratch_parent: Path, *, status_file: Path | None = None) -> dict[
             != final_hba_lines()
         ):
             raise Stage8PostgreSQLProbeError(
-                "WINDOWS_SSPI_HBA_QUALIFICATION", PRINCIPAL_AUTH, "final HBA changed after reload"
+                "WINDOWS_TLS_HBA_QUALIFICATION", PRINCIPAL_AUTH, "final HBA changed after reload"
             )
-        if tuple((data / "pg_ident.conf").read_text(encoding="utf-8").splitlines()) != ident_lines(
-            *principals
-        ):
+        if tuple((data / "pg_ident.conf").read_text(encoding="utf-8").splitlines()) != ident_lines():
             raise Stage8PostgreSQLProbeError(
-                "WINDOWS_SSPI_IDENT_QUALIFICATION",
+                "WINDOWS_TLS_IDENT_QUALIFICATION",
                 PRINCIPAL_AUTH,
                 "final ident changed after reload",
             )
         return {
             SUBSTRATE: "PASS",
             PRINCIPAL_AUTH: "PASS",
-            "details": f"PostgreSQL {binaries.major}; distinct SSPI principals; isolated port {port}",
+            "details": f"PostgreSQL {binaries.major}; service-SID-bound distinct mTLS certificates; isolated port {port}",
         }
     except BaseException as exc:
         primary = exc
