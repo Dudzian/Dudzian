@@ -145,14 +145,14 @@ Ocena bezpieczeństwa:
 
 ## 4. Rekomendacja: model C
 
-Revision 2 zachowuje **C — ATOMIC ACCOUNT AUTHORITY + PROVISIONING ISSUER PROTOCOL** oraz
+Revision 3 zachowuje **C — ATOMIC ACCOUNT AUTHORITY + PROVISIONING ISSUER PROTOCOL** oraz
 wybór:
 
 ```text
 ATOMIC_ACCOUNT_PLUS_FIRST_DEVICE
 ```
 
-Względem proposal v1 revision 2:
+Względem proposal v1 revision 3:
 
 1. ustanawia pre-account ownera `provisioning_subject_id`, zamiast pozwalać LPPI rezerwować
    niezakorzenioną identity;
@@ -184,7 +184,7 @@ stability across retries = NOT_PROVEN
 stability across restart = NOT_PROVEN
 ```
 
-Revision 2 proponuje nowego, jednoznacznego ownera:
+Revision 3 proponuje nowego, jednoznacznego ownera:
 
 ```text
 provisioning_subject_id owner = Product Deployment Security Authority (PDSA)
@@ -419,7 +419,7 @@ jest potrzebny i jest zabroniony w first-run flow.
 
 ## 9. Frozen RootProofIssuer requester chain
 
-Revision 2 zachowuje bez zmian frozen requester ownership:
+Revision 3 zachowuje bez zmian frozen requester ownership:
 
 ```text
 LPPI
@@ -458,7 +458,7 @@ provisioning head/TPM anchor według write protocol. Stan terminalny nie może b
 commit; wymaga resolution. `GENESIS_COMMITTED` nigdy nie abortuje i musi być doprowadzony do tego
 samego `MEMBERSHIP_COMMITTED`. Timeout nie jest dowodem failure.
 
-Revision 2 nie tworzy drugiego CHA lifecycle. CHA używa istniejących frozen reservation,
+Revision 3 nie tworzy drugiego CHA lifecycle. CHA używa istniejących frozen reservation,
 `INITIAL_BINDING -> PREPARED -> COMMITTED`, operation-attempt, root-proof admission,
 freshness CAS/finalization i receipt contracts. LPPI przechowuje authenticated references do tych
 stanów, a nie ich kopie udające authority.
@@ -517,82 +517,205 @@ same enrollment reference + proposed new operation while nonterminal or success 
 
 Wall-clock, PID, caller random retry ID i local startup order nigdy nie rozstrzygają replay.
 
-## 13. Exact native TPM 2.0 anti-rollback profile
+## 13. TPM 2.0 anti-rollback: Windows feasibility przed freeze
 
-Revision 2 shorthand `(generation,digest)` CAS is wycofany: TPM 2.0 nie jest traktowany jak
-arbitrary tuple CAS. Porównanie implementowalnych profili:
+Revision 3 wycofuje shorthand `(generation,digest)` CAS. TPM 2.0 nie jest arbitrary tuple CAS,
+a sam standard TPM nie dowodzi, że wymagany command path jest dostępny dla produktu przez Windows.
+W szczególności **nie zamrażamy** `TPMA_NV_PLATFORMCREATE` ani rzekomego
+„controlled platform-provisioning boundary”. Normalne Windows 10/11 automatycznie provisionuje TPM;
+CryptoHunter/MSI nie posiada z tego powodu platform hierarchy authorization ani owner authorization.
 
-| Model | Native primitives | Crash complexity | Digest hardware-bound | Ocena |
-|---|---|---|---|---|
-| A — NV counter + signed DB head | jeden `TPM_NT_COUNTER`, `TPM2_NV_Increment`, `TPM2_NV_Read`; signed immutable DB head zawiera counter | najmniejsza; pending DB jednoznacznie domyka increment | pośrednio przez unikalny generation i non-forking signing protocol | **SELECTED** |
-| B — counter + ordinary digest NV | counter oraz osobny ordinary NV zapis | trzeba rozwiązać increment i digest write jako dwa nieatomowe TPM kroki | bezpośrednio po obu krokach | odrzucony: więcej ambiguous cuts bez atomic tuple |
-| C — dwa ordinary slots + counter/selector | dwa ordinary NV commitments, counter i selector/protocol | największa, trzy niezależne mutacje NV | tak | odrzucony: zbędna złożoność i wear |
+### Windows TPM/NV access inventory
 
-### Wybrany model A: counter, nie tuple CAS
-
-* Index ma stały product/profile name i `TPMA_NV_TPM_NT=COUNTER`, 8-bajtową wartość oraz
-  atrybuty `POLICYWRITE`, `POLICYREAD`, `NO_DA` i `PLATFORMCREATE`. Nie istnieje ordinary digest
-  slot ani mutable selector.
-* `authPolicy` jest precomputed `PolicyOR` dwóch branchy, obu autoryzowanych przez dedykowany
-  checkpoint authorization public key: read branch ogranicza command code do `TPM2_NV_Read`, a
-  write branch do `TPM2_NV_Increment`. Runtime nie otrzymuje platform/owner hierarchy secret i nie
-  może wykonać `NV_UndefineSpace`.
-* Checkpoint authorization key jest oddzielnym, non-exportable TPM/CNG **ECDSA P-256/SHA-256**
-  key. Policy signature autoryzuje exact NV Name, command code, expected current counter,
-  `pending_head_digest` i request nonce. TPM natywnie atomowo inkrementuje wyłącznie counter;
-  digest pozostaje w podpisanym DB record.
-* Initial creation odbywa się raz, po poprawnym PDSA enrollment, przez kontrolowany platform-
-  provisioning boundary. Public NV Name, policy digest, initial read `0`, TPM identity i key ID są
-  zapisywane w signed enrollment receipt. Istniejący index o innym Name/policy/type lub counter
-  różny od oczekiwanego nie jest adoptowany.
-
-Signed `ProvisioningHeadV1(g, head_digest, predecessor_digest, operation_id, transition_digest)`
-ma dokładnie jeden dopuszczalny record per generation. LPPI signing key podpisuje head przed
-increment, a unique DB constraints i retained predecessor zabraniają drugiego podpisanego head
-dla `g+1`. Hardware counter zapewnia monotonic generation; podpisany non-forking history protocol
-wiąże digest do tej generation.
-
-Exact commit/recovery protocol:
-
-1. przy odczytanym NV=`g` SERIALIZABLE DB transaction zapisuje jedyny signed
-   `PENDING_NV_INCREMENT(g -> g+1, head_digest)` i nie publikuje current;
-2. po commit LPPI uzyskuje policy authorization i wykonuje dokładnie jedno
-   `TPM2_NV_Increment`; command nie przyjmuje digest ani expected tuple;
-3. LPPI odczytuje counter przez `TPM2_NV_Read`;
-4. gdy NV=`g+1`, idempotent DB transaction oznacza ten sam pending head `ANCHORED_CURRENT`;
-5. resolver akceptuje wyłącznie complete signed chain, jeden pending/current relation i DB current
-   generation równą fizycznemu NV counter.
-
-Crash cuts:
-
-| Cut | Obserwacja po restarcie | Jedyna reakcja |
+| Element | Ustalenie dla zwykłego Windows 11 | Konsekwencja |
 |---|---|---|
-| przed DB pending commit | DB current=`g`, NV=`g` | brak efektu; operation retry może ponownie przygotować ten sam head |
-| DB pending, przed TPM increment | pending `g+1`, NV=`g` | zweryfikuj exact signed pending i wykonaj jeden increment |
-| TPM increment wykonał się, response lost | pending `g+1`, NV=`g+1` | nie incrementuj ponownie; finalize dokładnie pending |
-| TPM przed finalnym DB | pending `g+1`, NV=`g+1` | finalize dokładnie pending |
-| final DB commit | current=`g+1`, NV=`g+1` | success/idempotent replay |
-| stale disk/DB restore | DB current/pending `< NV` albo brak exact pending dla `NV` | fail closed; restore authority backup exact-bound do NV lub PDSA recovery |
-| stale authority backup | backup head generation/digest nie domyka exact physical NV | reject; backup nie może decrementować counter |
-| DB generation `> NV` | niemożliwe w legalnym protocol poza corruption/fabrication | fail closed; nigdy loop increments do DB |
+| TPM Base Services (`TBS`) | `Tbsi_Context_Create`/`Tbsip_Submit_Command` są transportem raw command bytes i arbitrem współdzielenia TPM; nie nadają hierarchy authorization. Windows stosuje własną command-blocking policy. | Sam sukces otwarcia TBS nie dowodzi prawa do `TPM2_NV_DefineSpace`, policy session ani increment. Bez zmiany systemowej allow-list probe musi przejść na konfiguracji domyślnej. |
+| `TPM2_NV_DefineSpace` | Command wymaga autoryzacji `authHandle`; dla `TPM_RH_PLATFORM` tworzy index z `TPMA_NV_PLATFORMCREATE`, dla `TPM_RH_OWNER` owner-created index bez tego bitu. | Bit atrybutu nie jest sposobem uzyskania authority. Caller musi już móc autoryzować wskazaną hierarchy. |
+| `TPM_RH_PLATFORM` | Platform hierarchy jest kontrolowana przez firmware/OS; produkt nie może zakładać znajomości ani ustawienia jej authorization. | Wariant A (`PLATFORMCREATE`) jest **odrzucony jako baseline** bez OEM/firmware contract. |
+| `TPM_RH_OWNER` | Windows auto-provisioning przejmuje/provisionuje TPM i zarządza storage owner authorization; produkt nie może zakładać, że otrzyma reusable owner secret. | Wariant B jest wyłącznie kandydatem do realnego probe, nie zamrożonym prawem produktu. |
+| auto-provisioning / owner clear | Wyłączenie auto-provisioning, manual takeover, clear lub przejęcie hierarchy zmienia systemowy trust lifecycle. | Żaden z tych kroków nie jest dopuszczalnym installer prerequisite ani remediation. |
+| Windows privilege | Administrator/elevated service może być wymagany przez Windows/TBS dla uprzywilejowanych komend, ale token administratora nie jest hierarchy authorization. | Probe działa jako dedykowany elevated test process/service i raportuje zarówno Win32/TBS, jak i TPM response code; MSI custom action nie jest substytutem proof. |
+| physical presence | Zdefiniowanie owner-created index co do zasady nie wymaga physical presence w TPM; platform/firmware policy może ją wymusić dla platform operations. | Baseline nie może wymagać UEFI promptu ani physical-presence ceremony. |
+| command allow-list | Windows może blokować komendy niezależnie od TPM authorization. Registry override/zmiana allow-list jest poza produktem. | Każda wymagana komenda musi przejść bez systemowego override. |
+| Microsoft Platform Crypto Provider | CNG/KSP udostępnia TPM-backed asymetryczne keys i operacje key custody; nie jest udokumentowanym API do arbitralnego product-owned NV countera. | KSP może chronić signing key, lecz nie zastępuje monotonic NV generation. |
 
-Counter jest 64-bitowy, ale capacity nie zastępuje endurance qualification. LPPI wykonuje najwyżej
-jeden increment na zaakceptowany provisioning-authority transition, rate-limit oraz serialization;
-deployment qualification sprawdza vendor TPM properties i wymagany lifecycle budget. Approaching
-vendor endurance limit, niedostępny index albo permanent TPM error blokują nowe transition i
-wymagają PDSA-authorized migration/replacement — nigdy resetu lub software counter fallback.
+Źródła normatywne do qualification: Microsoft Learn — [TPM Base Services](https://learn.microsoft.com/windows/win32/tbs/tpm-base-services-portal),
+[TPM fundamentals / auto-provisioning](https://learn.microsoft.com/windows/security/hardware-security/tpm/trusted-platform-module-overview),
+[TPM group policy and blocked commands](https://learn.microsoft.com/windows/security/hardware-security/tpm/trusted-platform-module-services-group-policy-settings),
+[Microsoft Platform Crypto Provider](https://learn.microsoft.com/windows/win32/api/ncrypt/nf-ncrypt-ncryptopenstorageprovider),
+oraz TCG — [TPM 2.0 Library Specification](https://trustedcomputinggroup.org/resource/tpm-library-specification/),
+Part 3 (`NV_DefineSpace`, `PolicyNV`, `PolicyCommandCode`, `PolicySigned`, `PolicyAuthorize`,
+`NV_Increment`, `NV_Read`). Link do KSP opisuje wspólny Windows CNG provider model; qualification
+musi dodatkowo potwierdzić dokładny provider name i hardware properties, nie tylko nazwę providera.
 
-TPM clear albo motherboard replacement usuwa/zmienia index Name i key; oznacza
-`ANCHOR_UNAVAILABLE`, nie `UNSEEN`. PDSA-signed `TPM_ANCHOR_REPLACEMENT` wskazuje subject, stary
-TPM/NV Name, ostatni retained head/counter, nowe attestation/key/NV Name i monotonic recovery
-sequence. Po weryfikacji authoritative history nowy counter jest inicjalizowany przez kontrolowane
-increments do recovery generation przed publikacją; dla niepraktycznie wysokiej generation nowy
-epoch wymaga osobnego signed epoch-transition contract i nie może aliasować starej generation.
-Bez PDSA evidence pozostaje fail closed.
+### Porównanie creation authority i decyzja
 
-Provisioning domain nadal jest osobny od Stage-8/AccountGenesis i restore freshness. Osobne są
-authority identity, role, schema, domain separator, signing/authorization keys, DB head, counter
-index/Name oraz generation.
+| Wariant | Creation | Runtime | Ocena na normalnym consumer Windows |
+|---|---|---|---|
+| A — platform-created | `TPM_RH_PLATFORM`, `TPMA_NV_PLATFORMCREATE` | policy-only | **NIE WYBRANY**: produkt nie ma udowodnionej platform auth; OEM/UEFI boundary byłby innym deployment contract. |
+| B — owner-created | `TPM_RH_OWNER`, bez `PLATFORMCREATE` | docelowo policy-only po define | **PREFEROWANY KANDYDAT MODELU A (counter + signed DB head)**, ale creation przez auto-provisioned Windows owner i policy command path wymagają realnego proof. |
+| C — higher-level Windows primitive | Microsoft Platform Crypto Provider/CNG key | sign/unwrap, brak app counter API | Wspierany dla keys, ale nie daje udokumentowanego monotonic countera ani compare-and-increment dla application state. Nie jest równoważnym lokalnym anti-rollback substrate. |
+
+```text
+NV_DEFINE_AUTHORITY = NOT_SELECTED; CANDIDATE TPM_RH_OWNER
+WINDOWS_API_PATH = CANDIDATE TBS 2.0 raw-command path; MUST BE PROVEN (CNG KSP is not NV API)
+REQUIRED_WINDOWS_PRIVILEGE = CANDIDATE elevated dedicated probe/service; privilege != hierarchy auth
+REQUIRES_HIERARCHY_AUTH = YES, TPM_RH_OWNER for candidate creation; runtime target is policy-only
+REQUIRES_PHYSICAL_PRESENCE = MUST BE NO for supported baseline
+SUPPORTED_ON_NORMAL_WINDOWS_11 = NOT_PROVEN
+ROOT_OF_TRUST_FREEZE = BLOCKED_ON_WINDOWS_TPM_SUBSTRATE_PROOF
+```
+
+Nie istnieje obecnie udowodniony portable raw-NV wariant. Dlatego frozen production baseline **nie
+wymusza TPM NV**, a implementacja Stage-9 providera zatrzymuje się. Windows-supported CNG key może
+uwierzytelniać signed DB history, lecz bez NV nie wykrywa cofnięcia całego dysku. Jedyny bezpieczny
+fallback to zewnętrzny, niezależnie retained PDSA checkpoint/transparency service sprawdzany przed
+publikacją readiness: wykrywa rollback względem ostatniego checkpointu, ale traci pełne offline
+startup i availability zależy od kontaktu/recovery ceremony. Ten tradeoff wymaga osobnego wyboru;
+nie jest cichym zastępstwem TPM ani zgodą na implementację.
+
+### Exact policy program — kandydat do zweryfikowania, nie frozen contract
+
+Proste `PolicyNV(g) -> PolicyCommandCode(NV_Increment) -> PolicySigned` **nie działa jako jeden
+statyczny `authPolicy` dla wszystkich generacji**, ponieważ operand `g` zmienia policy digest.
+`PolicySigned` nie resetuje zmiennego digest. Poprawnym kandydatem jest dynamiczny approved policy
+zatwierdzany przez `PolicyAuthorize`:
+
+```text
+# S_inc: policy session przekazana jako authorization dla TPM2_NV_Increment
+StartAuthSession(TPM_SE_POLICY) -> S_inc, nonceTPM_inc
+PolicyNV(S_inc, authHandle = NV_COUNTER, nvIndex = NV_COUNTER,
+         operandB = UINT64_BE(g), offset = 0, operation = TPM_EO_EQ,
+         authorization = S_cmp)
+PolicyCommandCode(S_inc, TPM2_CC_NV_Increment)
+approvedPolicy = policyDigest(S_inc)
+VerifySignature(CHECKPOINT_KEY, signature(
+    Hash(approvedPolicy || policyRef))) -> ticket
+PolicyAuthorize(S_inc, approvedPolicy, policyRef, CHECKPOINT_KEY.Name, ticket)
+PolicyOR(S_inc, [authorized_increment_branch, authorized_read_branch,
+                 authorized_compare_branch])
+TPM2_NV_Increment(authHandle = NV_COUNTER, nvIndex = NV_COUNTER,
+                  authorization = S_inc)
+
+# osobna autoryzowana operacja odczytu po increment
+StartAuthSession(TPM_SE_POLICY) -> S_read
+PolicyCommandCode(S_read, TPM2_CC_NV_Read)
+PolicyAuthorize(S_read, approvedPolicy_read, READ_POLICY_REF,
+                CHECKPOINT_KEY.Name, read_ticket)
+PolicyOR(S_read, [authorized_increment_branch, authorized_read_branch,
+                  authorized_compare_branch])
+TPM2_NV_Read(authHandle = NV_COUNTER, nvIndex = NV_COUNTER,
+             size = 8, offset = 0, authorization = S_read)
+```
+
+`S_cmp` jest **oddzielną sesją autoryzującą użycie countera jako `authHandle` przez
+`TPM2_PolicyNV`**. Jej dokładny approved branch (`PolicyCommandCode(TPM2_CC_PolicyNV)` plus
+`PolicyAuthorize`) i zdolność Windows/TBS do przekazania równocześnie obu sessions muszą przejść
+probe; nie zakładamy circular self-authorization. Jeśli liczba session handles, Name resolution lub
+policy authorization nie przejdą na wspieranych TPM-ach, kandydat jest odrzucony.
+
+Wszystkie integer/command encodings są canonical TPM wire encodings. Dla `H = SHA-256` trial digest
+kandydata jest liczony dokładnie według Part 3:
+
+```text
+d0 = 0x00 * 32
+argsHash = H(operandB || UINT16_BE(offset) || UINT16_BE(TPM_EO_EQ))
+d1 = H(d0 || UINT32_BE(TPM2_CC_PolicyNV) || argsHash || NV_COUNTER.Name)
+d2 = H(d1 || UINT32_BE(TPM2_CC_PolicyCommandCode) || UINT32_BE(TPM2_CC_NV_Increment))
+d_authorized_increment = H(d0 || UINT32_BE(TPM2_CC_PolicyAuthorize)
+                              || CHECKPOINT_KEY.Name || INCREMENT_POLICY_REF)
+authPolicy = H(d0 || UINT32_BE(TPM2_CC_PolicyOR)
+                   || d_authorized_increment
+                   || d_authorized_read
+                   || d_authorized_compare)
+```
+
+`PolicyAuthorize` sprawdza, że ticket zatwierdza dynamiczne `approvedPolicy=d2`, po czym resetuje
+digest do stałego branch digest. Następujący `PolicyOR` składa stałą, uporządkowaną listę trzech
+branch digests do jednego finalnego `authPolicy`; dlatego public area NV może zawierać jeden digest
+mimo zmiennego `g`. `policyRef` dla increment jest stałą, domain-separated wartością, np.
+`H("CryptoHunter/LPPI/NV_INCREMENT/V1" || NV public template digest)`. Read i compare-auth używają
+innych stałych `policyRef` i, jeżeli mają być branchami jednego NV `authPolicy`, wymagają dokładnie
+policzonego `PolicyOR` nad finalnymi branch digests. Exact marshalled vectors i wyliczony hex digest
+zależą od finalnego public template/Name/key Name i są mandatory artifact probe; nie wolno wpisać
+zmyślonej wartości przed utworzeniem tych inputs.
+
+Dla podpisu autoryzacyjnego:
+
+| Pole | Binding | Zmienność |
+|---|---|---|
+| `signing key Name` | argument `PolicyAuthorize` i finalny digest | stałe dla wersji policy; rotation wymaga nowego index/recovery contract |
+| `policyRef` | domain separation w podpisie i finalnym digest | stałe per branch/domain; **nie** per transition |
+| `nonceTPM` | freshness podpisu sesji, jeśli authorization service podpisuje online session | per session; nie przechowuje się w `authPolicy` |
+| `cpHashA` | opcjonalnie exact command parameters/handles dla konkretnego increment | per command; binduje command instance, nie DB head |
+| `expiration` | lifetime ticket/session authorization | per authorization; zero albo krótkie ujemne timeout zgodnie z wybranym profilem |
+| `approvedPolicy` | zawiera wynik `PolicyNV(g)` i command code | per generation |
+
+W wariancie `PolicyAuthorize` podpis/ticket zatwierdza `approvedPolicy || policyRef`; `nonceTPM`,
+`cpHashA` i `expiration` należą do `PolicySigned` tylko wtedy, gdy probe wykaże potrzebę dodatkowego
+online authorization przed `PolicyAuthorize`. Nie wolno twierdzić, że `PolicyAuthorize` sam wiąże te
+pola. `pending_head_digest` **nie jest inputem żadnego z powyższych TPM policy commands** i TPM go
+nie zna. Aplikacyjny authorization service może odmówić podpisania approved policy bez poprawnego
+pending record, ale to jest signed-DB/application invariant, nie hardware comparison.
+
+### Hardware-enforced i application-signed fakty
+
+```text
+TPM ENFORCES (dopiero jeśli probe przejdzie):
+- fizycznie monotoniczny 64-bitowy NV counter;
+- autoryzację wybranego command code;
+- expected-current generation g przez PolicyNV(EQ), jeśli exact self-read authorization przejdzie;
+- jeden atomowy increment; TPM nie przyjmuje head_digest.
+
+SIGNED DB HISTORY ENFORCES:
+- ProvisioningHeadV1(generation, head_digest, predecessor_digest,
+                     operation_id, transition_digest);
+- dokładnie jeden podpisany head per generation;
+- head_digest, predecessor_digest, operation_id i transition_digest;
+- semantic non-forking history oraz zgodność signed pending z operation.
+```
+
+Model A pozostaje preferowany **warunkowo**: counter + signed DB head, bez ordinary digest NV slotu.
+TPM nie przechowuje ani nie porównuje `head_digest`.
+
+Exact commit/recovery zachowuje lost-response invariant:
+
+1. przy NV=`g` SERIALIZABLE transaction tworzy dokładnie jeden signed
+   `PENDING_NV_INCREMENT(g+1, ProvisioningHeadV1(...))`, nie publikując current;
+2. `pending g+1 + physical NV g` po pełnej walidacji może wykonać **jeden** increment;
+3. odczyt po komendzie rozstrzyga outcome;
+4. `pending g+1 + physical NV g+1` **nigdy nie incrementuje ponownie** i finalizuje ten sam pending;
+5. DB/head za fizycznym counterem albo brak exact pending failuje closed; DB przed counterem nigdy
+   nie powoduje pętli incrementów.
+
+### Mandatory Windows substrate qualification gate (nie Stage-9 MSI)
+
+Mały, disposable probe działa na zwykłym, aktualnym Windows 11 + TPM 2.0, z włączonym domyślnym
+auto-provisioning, bez UEFI zmian, takeover, registry hacks i allow-list zmian. Używa losowego
+vendor-range test indexu, usuwa go tylko jeśli sam go utworzył, zachowuje raw request/response,
+TPM RC, Win32/TBS error, token/OS/TPM properties i zredagowany transcript. Nie używa production
+keys, package ani danych. To substrate qualification, **nie** `WINDOWS_CLEAN_INSTALL` i nie MSI.
+
+```text
+CAN_CREATE_REQUIRED_NV_INDEX = NOT_RUN
+CAN_READ_REQUIRED_NV_INDEX = NOT_RUN
+CAN_INCREMENT_REQUIRED_NV_INDEX = NOT_RUN
+CAN_OPEN_POLICY_SESSION = NOT_RUN
+CAN_SATISFY_SELECTED_POLICY = NOT_RUN
+CAN_SURVIVE_SERVICE_RESTART = NOT_RUN
+CAN_DETECT_DISK_STATE_BEHIND_COUNTER = NOT_RUN
+```
+
+Gate wymaga PASS na wspieranej macierzy TPM producentów, reboot/service restart, lost-response
+fault injection oraz restoration kopii DB sprzed incrementu. Musi też wygenerować finalny public
+NV template, Names, marshalled policy vectors, SHA-256 intermediate/final digests i niezależne
+odtworzenie digestu. Ten host jest Linux (`uname`/brak TBS), więc probe nie był uruchamiany i żaden
+wynik nie został sfabrykowany. Do PASS gate i review transcriptu:
+
+```text
+ROOT_OF_TRUST_FREEZE = BLOCKED_ON_WINDOWS_TPM_SUBSTRATE_PROOF
+WINDOWS_STAGE9_READY_FOR_LIVE_CLEAN_INSTALL = NO
+```
 
 ## 14. Product Protected State Authority
 
@@ -711,6 +834,37 @@ provisionuje keys/state, ustanawia authenticated configuration, kwalifikuje read
 idempotent readiness commit zmieniający docelową start policy Protected/Secret/Backend. Zmiana SCM
 start policy jest orchestration effect związanym z terminalnym enrollment receipt, nie authority.
 Failed enrollment pozostawia backend stopped/demand i nie promuje częściowej readiness.
+
+### MSI repair, maintenance i same-version reinstall
+
+Repair/maintenance/same-version reinstall zachowują ten sam podział ownership: MSI jest jedynym
+ownerem wszystkich sześciu SCM definitions, a first-run ani repair nie tworzą nowych service
+objects. Repair może wyłącznie kwalifikować istniejące MSI-owned definitions, naprawić MSI-owned
+binary/service metadata (w tym SID type, dependencies, failure actions i bazowe ACL) oraz zastosować
+start policy wynikającą z **uwierzytelnionego** enrollment/readiness receipt.
+
+```text
+authenticated UNENROLLED
+-> CryptoHunterBackend = DEMAND / STOPPED
+-> CryptoHunterProtectedStateAuthority = DEMAND / STOPPED
+-> CryptoHunterSecretResourceAuthority = DEMAND / STOPPED
+
+authenticated ENROLLED + terminal readiness receipt
+-> CryptoHunterBackend = expected production policy (AUTO; start tylko po dependency/readiness checks)
+-> CryptoHunterProtectedStateAuthority = expected production policy (AUTO)
+-> CryptoHunterSecretResourceAuthority = expected production policy (AUTO)
+
+missing / invalid / conflicting receipt
+-> fail closed; nigdy infer ENROLLED; nie nadpisuj authority state
+```
+
+Receipt verification obejmuje pinned trust domain/signer, schema/version, machine/subject binding,
+terminal enrollment operation, exact service-policy profile oraz non-rollback current designation.
+Sama obecność katalogu, DB, usługi, binary, TPM object, package albo preserved state **nie jest**
+dowodem enrollment. Repair nie resetuje poprawnie enrolled systemu do `DEMAND`, nie mintuje receipt,
+nie odtwarza trust z filesystem heuristics i nie uruchamia backendu przy niejednoznacznym stanie.
+Zmiana start policy jest idempotentną projekcją authenticated receipt; nie jest nową authority
+decision.
 
 ### Uninstall i rollback ownership
 
@@ -844,35 +998,31 @@ Freeze validators muszą odrzucić co najmniej:
 Stage 0–8
 [██████████] DONE
 
-Stage-9 Windows implementation
-[█████████░] STATICALLY NEAR-COMPLETE
+Model C / authority ownership
+[██████████] CLOSED IN FREEZE CANDIDATE
 
-Account-ID owner
-[██████████] PROPOSED — CHA
+Offline PDSA ceremony
+[██████████] CLOSED IN FREEZE CANDIDATE
 
-Account/first-device ordering
-[██████████] PROPOSED — ATOMIC_ACCOUNT_PLUS_FIRST_DEVICE
+Release-policy root chain
+[██████████] CLOSED IN FREEZE CANDIDATE
 
-Provisioning subject authority
-[██████████] PROPOSED — PDSA SIGNED OFFLINE IDENTITY
-
-First-install trust ceremony
-[██████████] PROPOSED — SIGNED ONE-TIME CHALLENGE + OFFLINE ENROLLMENT PACKAGE
-
-Provisioning rollback resistance
-[██████████] PROPOSED — TPM 2.0 NV_COUNTER + SIGNED DB HEAD + PDSA RECOVERY
+LPPI state/recovery/idempotency
+[██████████] CLOSED IN FREEZE CANDIDATE
 
 Service topology
-[██████████] PROPOSED — MSI OWNS ALL SCM DEFINITIONS
+[██████████] CLOSED IN FREEZE CANDIDATE
 
-Protected state authority
-[██████████] PROPOSED — DEDICATED SERVICE + DISTINCT TPM NV DOMAIN
+TPM anti-rollback semantics
+[████████░░] BLOCKED — exact Windows NV creation/policy proof
 
-Secret resource authority
-[██████████] PROPOSED — DEDICATED VAULT + CNG/TPM ENVELOPE
+MSI maintenance semantics
+[█████████░] SMALL FREEZE GAP CLOSED IN REVISION 3; AWAITS FORMAL FREEZE
 
 ROOT-OF-TRUST CLOSURE
 [█████████░] REVISION 3 — FREEZE CANDIDATE / NOT ACCEPTED / NOT FROZEN
+
+ROOT_OF_TRUST_FREEZE = BLOCKED_ON_WINDOWS_TPM_SUBSTRATE_PROOF
 
 WINDOWS_CLEAN_INSTALL
 [░░░░░░░░░░] NOT_IMPLEMENTED
