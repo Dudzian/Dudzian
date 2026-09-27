@@ -65,6 +65,8 @@ DIAGNOSTIC_LABELS = (
     "POSTGRESQL_DURABILITY",
     "POSTGRESQL_SCHEMA_PROVISION",
     "POSTGRESQL_SCHEMA_QUALIFICATION",
+    "WINDOWS_TLS_PKI_PROVISION",
+    "WINDOWS_TLS_KEY_DACL_QUALIFICATION",
     "WINDOWS_TLS_RUNTIME_CONNECT",
     "WINDOWS_TLS_VERIFIER_CONNECT",
     "WINDOWS_TLS_CROSS_ROLE_DENIAL",
@@ -77,13 +79,13 @@ DIAGNOSTIC_LABELS = (
 PHASES = (
     "POSTGRESQL_DISCOVERY",
     "POSTGRESQL_CLUSTER_INIT",
+    "HELPER_SERVICE_PREPARE",
+    "TLS_PKI_PROVISION",
+    "TLS_KEY_DACL_QUALIFICATION",
     "POSTGRESQL_START",
     "POSTGRESQL_DURABILITY",
     "POSTGRESQL_SCHEMA_PROVISION",
     "POSTGRESQL_SCHEMA_QUALIFICATION",
-    "HELPER_SERVICE_PREPARE",
-    "TLS_PKI_PROVISION",
-    "TLS_KEY_DACL_QUALIFICATION",
     "TLS_RUNTIME_KEY_ACCESS",
     "TLS_VERIFIER_KEY_ACCESS",
     "FINAL_IDENT_WRITE",
@@ -126,6 +128,22 @@ def _phase(name: str):
     else:
         elapsed = time.monotonic() - started
         print(f"[STAGE8_PHASE] PASS {name} elapsed={elapsed:.3f}s", flush=True)
+
+
+@contextmanager
+def _principal_auth_phase(name: str, label: str):
+    """Attribute every failure in an mTLS phase to principal authentication."""
+    with _phase(name):
+        try:
+            yield
+        except Stage8PostgreSQLProbeError as exc:
+            if exc.item == PRINCIPAL_AUTH:
+                raise
+            raise Stage8PostgreSQLProbeError(label, PRINCIPAL_AUTH, str(exc)) from exc
+        except Exception as exc:
+            raise Stage8PostgreSQLProbeError(
+                label, PRINCIPAL_AUTH, f"{type(exc).__name__}: {exc}"
+            ) from exc
 
 
 class Stage8PostgreSQLProbeError(RuntimeError):
@@ -402,9 +420,13 @@ def _provision_tls_pki(root: Path) -> dict[str, Path]:
     ca_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     ca_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "CryptoHunter Stage8 CA")])
     ca_cert = (
-        x509.CertificateBuilder().subject_name(ca_name).issuer_name(ca_name)
-        .public_key(ca_key.public_key()).serial_number(x509.random_serial_number())
-        .not_valid_before(now - timedelta(minutes=5)).not_valid_after(now + timedelta(days=2))
+        x509.CertificateBuilder()
+        .subject_name(ca_name)
+        .issuer_name(ca_name)
+        .public_key(ca_key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - timedelta(minutes=5))
+        .not_valid_after(now + timedelta(days=2))
         .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
         .sign(ca_key, hashes.SHA256())
     )
@@ -423,9 +445,11 @@ def _provision_tls_pki(root: Path) -> dict[str, Path]:
         builder = (
             x509.CertificateBuilder()
             .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, common_name)]))
-            .issuer_name(ca_name).public_key(key.public_key())
+            .issuer_name(ca_name)
+            .public_key(key.public_key())
             .serial_number(x509.random_serial_number())
-            .not_valid_before(now - timedelta(minutes=5)).not_valid_after(now + timedelta(days=1))
+            .not_valid_before(now - timedelta(minutes=5))
+            .not_valid_after(now + timedelta(days=1))
             .add_extension(x509.ExtendedKeyUsage([eku]), critical=False)
         )
         if name == "server":
@@ -446,8 +470,10 @@ def _provision_tls_pki(root: Path) -> dict[str, Path]:
     fingerprints: set[bytes] = set()
     for name, (key, certificate) in issued.items():
         ca_key.public_key().verify(
-            certificate.signature, certificate.tbs_certificate_bytes,
-            padding.PKCS1v15(), certificate.signature_hash_algorithm,
+            certificate.signature,
+            certificate.tbs_certificate_bytes,
+            padding.PKCS1v15(),
+            certificate.signature_hash_algorithm,
         )
         if key.public_key().public_bytes(
             serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo
@@ -486,9 +512,13 @@ def _protect_private_key(path: Path, account: str) -> None:
     dacl.AddAccessAllowedAce(win32security.ACL_REVISION, PRIVATE_KEY_FULL_MASK, system)
     dacl.AddAccessAllowedAce(win32security.ACL_REVISION, PRIVATE_KEY_READ_MASK, service)
     win32security.SetNamedSecurityInfo(
-        str(path), win32security.SE_FILE_OBJECT,
+        str(path),
+        win32security.SE_FILE_OBJECT,
         win32security.DACL_SECURITY_INFORMATION | win32security.PROTECTED_DACL_SECURITY_INFORMATION,
-        None, None, dacl, None,
+        None,
+        None,
+        dacl,
+        None,
     )
 
 
@@ -508,13 +538,19 @@ def _protect_owner_private_key(path: Path) -> None:
     if ntsecuritycon.FILE_ALL_ACCESS != PRIVATE_KEY_FULL_MASK:
         raise RuntimeError("pywin32 private-key full rights differ from reviewed mask contract")
     dacl = win32security.ACL()
-    for sid in {win32security.ConvertSidToStringSid(system): system,
-                win32security.ConvertSidToStringSid(owner): owner}.values():
+    for sid in {
+        win32security.ConvertSidToStringSid(system): system,
+        win32security.ConvertSidToStringSid(owner): owner,
+    }.values():
         dacl.AddAccessAllowedAce(win32security.ACL_REVISION, PRIVATE_KEY_FULL_MASK, sid)
     win32security.SetNamedSecurityInfo(
-        str(path), win32security.SE_FILE_OBJECT,
+        str(path),
+        win32security.SE_FILE_OBJECT,
         win32security.DACL_SECURITY_INFORMATION | win32security.PROTECTED_DACL_SECURITY_INFORMATION,
-        None, None, dacl, None,
+        None,
+        None,
+        dacl,
+        None,
     )
 
 
@@ -579,8 +615,7 @@ def _qualify_private_key_dacl(path: Path, expected: list[tuple[str, int]]) -> No
             )
         )
     exact = [
-        (sid, PRIVATE_KEY_ALLOW_ACE_TYPE, mask, PRIVATE_KEY_ACE_FLAGS)
-        for sid, mask in expected
+        (sid, PRIVATE_KEY_ALLOW_ACE_TYPE, mask, PRIVATE_KEY_ACE_FLAGS) for sid, mask in expected
     ]
     _qualify_exact_private_key_aces(observed, exact)
 
@@ -1270,13 +1305,22 @@ def run_probe(scratch_parent: Path, *, status_file: Path | None = None) -> dict[
                     SUBSTRATE,
                     (init.stderr or init.stdout)[-STDERR_LIMIT:],
                 )
-        with _phase("TLS_PKI_PROVISION"):
+        # SCM service creation is the authority that makes both NT SERVICE
+        # identities resolvable.  The inherited scratch grant is deliberately
+        # installed first; each private key is then replaced with a protected,
+        # exact DACL and qualified before any service is started.
+        with _principal_auth_phase("HELPER_SERVICE_PREPARE", "WINDOWS_TLS_PKI_PROVISION"):
+            service_requests = _prepare_services(root, owned_services)
+            _write_status(owned_services=sorted(owned_services))
+        with _principal_auth_phase("TLS_PKI_PROVISION", "WINDOWS_TLS_PKI_PROVISION"):
             tls = _provision_tls_pki(root)
             _protect_private_key(tls["runtime_key"], RUNTIME_ACCOUNT)
             _protect_private_key(tls["verifier_key"], VERIFIER_ACCOUNT)
             _protect_owner_private_key(tls["server_key"])
             _protect_owner_private_key(tls["ca_key"])
-        with _phase("TLS_KEY_DACL_QUALIFICATION"):
+        with _principal_auth_phase(
+            "TLS_KEY_DACL_QUALIFICATION", "WINDOWS_TLS_KEY_DACL_QUALIFICATION"
+        ):
             import win32security
 
             system_sid = _account_sid("SYSTEM", win32security)
@@ -1300,8 +1344,10 @@ def run_probe(scratch_parent: Path, *, status_file: Path | None = None) -> dict[
             _qualify_private_key_dacl(tls["ca_key"], owner_contract)
             _qualify_private_key_dacl(tls["server_key"], owner_contract)
         port = _port()
+
         def pg_path(path: Path) -> str:
             return str(path).replace("\\", "/").replace("'", "''")
+
         with (data / "postgresql.conf").open("a", encoding="utf-8") as stream:
             stream.write(
                 "\nlisten_addresses='127.0.0.1'\nfsync=on\nsynchronous_commit=on\n"
@@ -1374,46 +1420,53 @@ def run_probe(scratch_parent: Path, *, status_file: Path | None = None) -> dict[
                     "POSTGRESQL_SCHEMA_QUALIFICATION", SUBSTRATE, f"{type(exc).__name__}: {exc}"
                 ) from exc
 
-        with _phase("HELPER_SERVICE_PREPARE"):
-            service_requests = _prepare_services(root, owned_services)
-            _write_status(owned_services=sorted(owned_services))
         for access_phase, service, account, own, other in (
             ("TLS_RUNTIME_KEY_ACCESS", RUNTIME_SERVICE, RUNTIME_ACCOUNT, "runtime", "verifier"),
             ("TLS_VERIFIER_KEY_ACCESS", VERIFIER_SERVICE, VERIFIER_ACCOUNT, "verifier", "runtime"),
         ):
-            with _phase(access_phase):
+            with _principal_auth_phase(
+                access_phase, _service_failure_label(service, identity=True)
+            ):
                 payload = _invoke_service(
-                    root, service_requests[service], service, account, port,
+                    root,
+                    service_requests[service],
+                    service,
+                    account,
+                    port,
                     RUNTIME_ROLE if service == RUNTIME_SERVICE else VERIFIER_ROLE,
                     failure_label=_service_failure_label(service, identity=True),
                     operation="key_probe",
                 )
                 keys = payload.get("keys", {})
-                if keys.get(own, {}).get("accessible") is not True or keys.get(other, {}).get("accessible") is not False:
+                if (
+                    keys.get(own, {}).get("accessible") is not True
+                    or keys.get(other, {}).get("accessible") is not False
+                ):
                     raise Stage8PostgreSQLProbeError(
-                        _service_failure_label(service, identity=True), PRINCIPAL_AUTH,
+                        _service_failure_label(service, identity=True),
+                        PRINCIPAL_AUTH,
                         f"service-token private-key access mismatch: {keys}",
                     )
 
-        with _phase("FINAL_IDENT_WRITE"):
-            (data / "pg_ident.conf").write_text(
-                "\n".join(ident_lines()) + "\n", encoding="utf-8"
-            )
-        with _phase("FINAL_HBA_WRITE"):
+        with _principal_auth_phase("FINAL_IDENT_WRITE", "WINDOWS_TLS_IDENT_QUALIFICATION"):
+            (data / "pg_ident.conf").write_text("\n".join(ident_lines()) + "\n", encoding="utf-8")
+        with _principal_auth_phase("FINAL_HBA_WRITE", "WINDOWS_TLS_HBA_QUALIFICATION"):
             (data / "pg_hba.conf").write_text("\n".join(final_hba_lines()) + "\n", encoding="utf-8")
-        reload_result = _run_pg_ctl(
-            binaries.executable("pg_ctl.exe"), data, root, "reload", ["reload"]
-        )
-        if reload_result.timed_out or reload_result.returncode != 0:
-            raise Stage8PostgreSQLProbeError(
-                "WINDOWS_TLS_HBA_QUALIFICATION",
-                PRINCIPAL_AUTH,
-                "final configuration reload failed",
+            reload_result = _run_pg_ctl(
+                binaries.executable("pg_ctl.exe"), data, root, "reload", ["reload"]
             )
+            if reload_result.timed_out or reload_result.returncode != 0:
+                raise Stage8PostgreSQLProbeError(
+                    "WINDOWS_TLS_HBA_QUALIFICATION",
+                    PRINCIPAL_AUTH,
+                    "final configuration reload failed",
+                )
         # Stop, inspect pg_hba_file_rules through a bounded single-user backend, then
         # start again with precisely the same final files. No administrative network
         # authentication rule is introduced for this read-only qualification.
-        with _phase("FINAL_HBA_OFFLINE_QUALIFICATION"):
+        with _principal_auth_phase(
+            "FINAL_HBA_OFFLINE_QUALIFICATION", "WINDOWS_TLS_HBA_QUALIFICATION"
+        ):
             stop_error = _stop_owned_cluster(binaries.executable("pg_ctl.exe"), data, root, log)
             if stop_error:
                 raise Stage8PostgreSQLProbeError(
@@ -1464,7 +1517,7 @@ def run_probe(scratch_parent: Path, *, status_file: Path | None = None) -> dict[
         for matrix_phase, (service, account, role, expected, database) in zip(
             matrix_phases, matrix, strict=True
         ):
-            with _phase(matrix_phase):
+            with _principal_auth_phase(matrix_phase, _matrix_label(service, role, expected)):
                 payload = _invoke_service(
                     root,
                     service_requests[service],
@@ -1483,27 +1536,38 @@ def run_probe(scratch_parent: Path, *, status_file: Path | None = None) -> dict[
                         PRINCIPAL_AUTH,
                         f"connection matrix mismatch: service={service}, requested_role={role}, result={payload}",
                     )
-        with _phase("MATRIX_WRONG_ROLE_DENIAL"):
+        with _principal_auth_phase("MATRIX_WRONG_ROLE_DENIAL", "WINDOWS_TLS_OUTSIDER_DENIAL"):
             for service, account in (
                 (RUNTIME_SERVICE, RUNTIME_ACCOUNT),
                 (VERIFIER_SERVICE, VERIFIER_ACCOUNT),
             ):
                 payload = _invoke_service(
-                    root, service_requests[service], service, account, port,
-                    "stage8_bootstrap", DATABASE,
+                    root,
+                    service_requests[service],
+                    service,
+                    account,
+                    port,
+                    "stage8_bootstrap",
+                    DATABASE,
                     failure_label=_matrix_label(service, "stage8_bootstrap", False),
                 )
                 if payload.get("ok") is not False:
                     raise Stage8PostgreSQLProbeError(
-                        _matrix_label(service, "stage8_bootstrap", False), PRINCIPAL_AUTH,
+                        _matrix_label(service, "stage8_bootstrap", False),
+                        PRINCIPAL_AUTH,
                         f"client certificate reached bootstrap role: service={service}",
                     )
-        with _phase("INTERACTIVE_OUTSIDER_DENIAL"):
+        with _principal_auth_phase("INTERACTIVE_OUTSIDER_DENIAL", "WINDOWS_TLS_OUTSIDER_DENIAL"):
             for role in (RUNTIME_ROLE, VERIFIER_ROLE):
                 try:
                     psycopg.connect(
-                        host="127.0.0.1", port=port, dbname=DATABASE, user=role,
-                        sslmode="verify-full", sslrootcert=str(tls["ca_cert"]), connect_timeout=5
+                        host="127.0.0.1",
+                        port=port,
+                        dbname=DATABASE,
+                        user=role,
+                        sslmode="verify-full",
+                        sslrootcert=str(tls["ca_cert"]),
+                        connect_timeout=5,
                     )
                 except psycopg.Error:
                     pass
@@ -1524,7 +1588,10 @@ def run_probe(scratch_parent: Path, *, status_file: Path | None = None) -> dict[
             raise Stage8PostgreSQLProbeError(
                 "WINDOWS_TLS_HBA_QUALIFICATION", PRINCIPAL_AUTH, "final HBA changed after reload"
             )
-        if tuple((data / "pg_ident.conf").read_text(encoding="utf-8").splitlines()) != ident_lines():
+        if (
+            tuple((data / "pg_ident.conf").read_text(encoding="utf-8").splitlines())
+            != ident_lines()
+        ):
             raise Stage8PostgreSQLProbeError(
                 "WINDOWS_TLS_IDENT_QUALIFICATION",
                 PRINCIPAL_AUTH,
