@@ -149,6 +149,14 @@ Semantic fingerprints mają jawne wykonywalne tryby zgodne z owner contracts: ca
 
 Historia rezerwacji wykonuje oba warianty M0.8 bez generycznych skrótów: `capital_reservation.quantity` jest dodatnim canonical decimal, `asset_reference` jest dokładnym zamkniętym M0.5/M0.8 `AssetReference.trusted`, `provenance` jest niepustym stringiem, a środowisko, discriminator i terminal states są wiązane z literalnymi rejestrami. `source_fingerprint_sha256` jest ponownie liczony z kompletnego DTO bez pola fingerprint po canonical NFC JSON, lecz authority nadal wymaga wcześniejszego `CoreAcceptedAccountingFactProjection` membership.
 
+## Stage 9 — external provisioning architecture closure proposal
+
+[`stage9_external_provisioning_architecture_closure_proposal.md`](stage9_external_provisioning_architecture_closure_proposal.md)
+inwentaryzuje aktualne authority contracts i proponuje model C dla brakującego produkcyjnego
+`external_product_provisioning_boundary`. Dokument ma status `REVISION 3 PROPOSAL — FREEZE CANDIDATE / NOT ACCEPTED / NOT FROZEN`;
+nie zmienia zamrożonego baseline'u, nie zezwala na implementację providera i nie zmienia
+statusu Stage 9.
+
 M0.11 rewaliduje autorytet historii rezerwacji poza integralnością rekordu: restore wymaga istniejącego wcześniej, nieprzenoszonego w backupie członkostwa `CoreAcceptedAccountingFactProjection` oraz zapieczętowanego kontekstu zaakceptowanej komendy M0.7 `SUBMIT_ORDER` albo zaakceptowanego terminalnego zdarzenia M0.7. Kandydat, jego source hash ani wrapper hash nie mogą samodzielnie utworzyć tego członkostwa (no self-enrollment).
 
 ## Status M0.12 — IN PROGRESS
