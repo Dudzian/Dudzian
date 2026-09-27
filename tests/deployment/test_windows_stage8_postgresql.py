@@ -1094,6 +1094,118 @@ def test_pg_ctl_runner_uses_real_files_not_anonymous_pipes(
     assert "capture_output" not in observed
 
 
+def _write_final_auth_files(data: Path) -> None:
+    data.mkdir()
+    (data / "pg_hba.conf").write_text("\n".join(probe.final_hba_lines()) + "\n", encoding="utf-8")
+    (data / "pg_ident.conf").write_text("\n".join(probe.ident_lines()) + "\n", encoding="utf-8")
+
+
+def test_final_restart_stops_before_start_and_replaces_exact_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    data = tmp_path / "cluster"
+    _write_final_auth_files(data)
+    events: list[object] = []
+    witnesses = iter(
+        (
+            probe.PostmasterWitness(41, object(), 10.0, Path("postgres.exe")),
+            probe.PostmasterWitness(41, object(), 20.0, Path("postgres.exe")),
+        )
+    )
+    monkeypatch.setattr(probe, "_postmaster_witness", lambda *_a: next(witnesses))
+    monkeypatch.setattr(probe, "_close_postmaster_witness", lambda *_a: None)
+    monkeypatch.setattr(
+        probe,
+        "_stop_owned_cluster",
+        lambda *_a, **_k: events.append("old-process-exit-confirmed") or None,
+    )
+
+    def run_pg_ctl(_pg_ctl, _data, _root, operation, arguments, **_kwargs):
+        events.append((operation, arguments))
+        return probe.PgCtlResult(0, 0.01, False, "", "")
+
+    monkeypatch.setattr(probe, "_run_pg_ctl", run_pg_ctl)
+    monkeypatch.setattr(probe, "_cluster_running", lambda *_a: (True, 41))
+
+    pid = probe._restart_owned_cluster(
+        Path("pg_ctl.exe"),
+        data,
+        tmp_path,
+        tmp_path / "postgresql.log",
+        5432,
+        on_stopped=lambda: events.append("stopped-published"),
+    )
+
+    assert pid == 41  # PID reuse is safe because creation identity changed.
+    assert events == [
+        "old-process-exit-confirmed",
+        "stopped-published",
+        ("start", ["-l", str(tmp_path / "postgresql.log"), "-o", "-p 5432", "-w", "start"]),
+    ]
+
+
+def test_final_restart_stop_failure_never_starts_second_server(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    data = tmp_path / "cluster"
+    data.mkdir()
+    monkeypatch.setattr(
+        probe,
+        "_postmaster_witness",
+        lambda *_a: probe.PostmasterWitness(41, object(), 10.0, Path("postgres.exe")),
+    )
+    monkeypatch.setattr(probe, "_close_postmaster_witness", lambda *_a: None)
+    monkeypatch.setattr(probe, "_stop_owned_cluster", lambda *_a, **_k: "primary stop detail")
+    monkeypatch.setattr(probe, "_run_pg_ctl", lambda *_a, **_k: pytest.fail("unexpected start"))
+    with pytest.raises(probe.Stage8PostgreSQLProbeError, match="primary stop detail"):
+        probe._restart_owned_cluster(
+            Path("pg_ctl.exe"),
+            data,
+            tmp_path,
+            tmp_path / "postgresql.log",
+            5432,
+            on_stopped=lambda: pytest.fail("stopped state must not be published"),
+        )
+
+
+@pytest.mark.parametrize(
+    "result,running",
+    [
+        (probe.PgCtlResult(None, 30.0, True, "", "timeout"), (False, None)),
+        (probe.PgCtlResult(1, 0.1, False, "", "failed"), (False, None)),
+        (probe.PgCtlResult(0, 0.1, False, "", ""), (False, None)),
+    ],
+)
+def test_final_restart_start_failure_keeps_stopped_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    result: probe.PgCtlResult,
+    running: tuple[bool, int | None],
+) -> None:
+    data = tmp_path / "cluster"
+    data.mkdir()
+    state = {"started": True}
+    monkeypatch.setattr(
+        probe,
+        "_postmaster_witness",
+        lambda *_a: probe.PostmasterWitness(41, object(), 10.0, Path("postgres.exe")),
+    )
+    monkeypatch.setattr(probe, "_close_postmaster_witness", lambda *_a: None)
+    monkeypatch.setattr(probe, "_stop_owned_cluster", lambda *_a, **_k: None)
+    monkeypatch.setattr(probe, "_run_pg_ctl", lambda *_a, **_k: result)
+    monkeypatch.setattr(probe, "_cluster_running", lambda *_a: running)
+    with pytest.raises(probe.Stage8PostgreSQLProbeError):
+        probe._restart_owned_cluster(
+            Path("pg_ctl.exe"),
+            data,
+            tmp_path,
+            tmp_path / "postgresql.log",
+            5432,
+            on_stopped=lambda: state.update(started=False),
+        )
+    assert state == {"started": False}
+
+
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX executable fixture")
 def test_pg_ctl_runner_does_not_wait_for_descendant_inherited_output_handles(
     tmp_path: Path,
@@ -1194,11 +1306,11 @@ def test_emergency_cleanup_refuses_unsafe_root(tmp_path: Path) -> None:
     assert errors == ["refused scratch cleanup outside Stage-8-owned root"]
 
 
-def test_initial_start_and_final_restart_share_reviewed_runner() -> None:
-    source = Path(probe.__file__).read_text(encoding="utf-8")
-    assert re.search(r"_run_pg_ctl\([\s\S]{0,150}?root,\s*\"start\"", source)
-    assert re.search(r"_run_pg_ctl\([\s\S]{0,150}?root,\s*\"restart\"", source)
-    assert source.count("_run_pg_ctl(") >= 5
+def test_pg_ctl_restart_mode_is_not_used() -> None:
+    tree = ast.parse(Path(probe.__file__).read_text(encoding="utf-8"))
+    assert not any(
+        isinstance(node, ast.Constant) and node.value == "restart" for node in ast.walk(tree)
+    )
 
 
 @pytest.mark.parametrize(("status_code", "expected"), [(0, True), (3, False)])

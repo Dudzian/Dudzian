@@ -21,7 +21,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from typing import Any
+from typing import Any, Callable
 from datetime import datetime, timedelta, timezone
 import ipaddress
 
@@ -971,6 +971,74 @@ def _stop_if_owned_cluster_running(
     return _stop_owned_cluster(pg_ctl, data, root, log, mode=mode, timeout=timeout)
 
 
+def _restart_owned_cluster(
+    pg_ctl: Path,
+    data: Path,
+    root: Path,
+    log: Path,
+    port: int,
+    *,
+    on_stopped: Callable[[], None],
+) -> int:
+    """Stop the exact owned postmaster, then start and identify its replacement."""
+    old_witness = _postmaster_witness(data, pg_ctl.with_name("postgres.exe"))
+    if old_witness is None:
+        raise Stage8PostgreSQLProbeError(
+            "POSTGRESQL_START", SUBSTRATE, "no owned postmaster identity before final restart"
+        )
+    old_identity = (old_witness.pid, old_witness.start_time)
+    _close_postmaster_witness(old_witness)
+
+    stop_error = _stop_owned_cluster(pg_ctl, data, root, log, timeout=START_TIMEOUT)
+    if stop_error is not None:
+        raise Stage8PostgreSQLProbeError("POSTGRESQL_START", SUBSTRATE, stop_error)
+    on_stopped()
+
+    started = _run_pg_ctl(
+        pg_ctl,
+        data,
+        root,
+        "start",
+        ["-l", str(log), "-o", f"-p {port}", "-w", "start"],
+        timeout=START_TIMEOUT,
+    )
+    running, pid = _cluster_running(pg_ctl, data, root)
+    if started.timed_out or started.returncode != 0 or not running or pid is None:
+        raise Stage8PostgreSQLProbeError(
+            "POSTGRESQL_START",
+            SUBSTRATE,
+            _pg_ctl_failure_detail("start", started, data, running, pid, log),
+        )
+
+    new_witness = _postmaster_witness(data, pg_ctl.with_name("postgres.exe"))
+    if new_witness is None:
+        raise Stage8PostgreSQLProbeError(
+            "POSTGRESQL_START", SUBSTRATE, "no owned postmaster identity after final restart"
+        )
+    try:
+        new_identity = (new_witness.pid, new_witness.start_time)
+        if new_witness.pid != pid or new_identity == old_identity:
+            raise Stage8PostgreSQLProbeError(
+                "POSTGRESQL_START",
+                SUBSTRATE,
+                f"postmaster identity was not replaced: old={old_identity!r}; new={new_identity!r}",
+            )
+    finally:
+        _close_postmaster_witness(new_witness)
+
+    if tuple((data / "pg_hba.conf").read_text(encoding="utf-8").splitlines()) != final_hba_lines():
+        raise Stage8PostgreSQLProbeError(
+            "WINDOWS_TLS_HBA_QUALIFICATION", PRINCIPAL_AUTH, "final HBA changed across restart"
+        )
+    if tuple((data / "pg_ident.conf").read_text(encoding="utf-8").splitlines()) != ident_lines():
+        raise Stage8PostgreSQLProbeError(
+            "WINDOWS_TLS_IDENT_QUALIFICATION",
+            PRINCIPAL_AUTH,
+            "final ident changed across restart",
+        )
+    return pid
+
+
 def _admin_dsn(port: int, database: str = "postgres") -> str:
     options = (
         f"-c statement_timeout={AUTHORITY_STATEMENT_TIMEOUT_MS} "
@@ -1489,28 +1557,19 @@ def run_probe(scratch_parent: Path, *, status_file: Path | None = None) -> dict[
             psycopg, port, data, binaries.executable("pg_ctl.exe"), root
         )
         with _phase("FINAL_CLUSTER_RESTART"):
-            restarted = _run_pg_ctl(
+            def publish_stopped() -> None:
+                nonlocal cluster_started
+                cluster_started = False
+                _write_status(cluster_started=False, postgresql_pid=None)
+
+            pid = _restart_owned_cluster(
                 binaries.executable("pg_ctl.exe"),
                 data,
                 root,
-                "restart",
-                [
-                    "-l",
-                    str(log),
-                    "-o",
-                    f"-p {port}",
-                    "-w",
-                    "start",
-                ],
-                timeout=START_TIMEOUT,
+                log,
+                port,
+                on_stopped=publish_stopped,
             )
-            running, pid = _cluster_running(binaries.executable("pg_ctl.exe"), data, root)
-            if restarted.timed_out or restarted.returncode != 0 or not running or pid is None:
-                raise Stage8PostgreSQLProbeError(
-                    "POSTGRESQL_START",
-                    SUBSTRATE,
-                    _pg_ctl_failure_detail("restart", restarted, data, running, pid, log),
-                )
             cluster_started = True
             _write_status(cluster_started=True, postgresql_pid=pid)
         matrix = (
