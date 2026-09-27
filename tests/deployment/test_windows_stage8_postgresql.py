@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import ast
+import ctypes
 from pathlib import Path
 import subprocess
+import sys
+import re
 import threading
 import time
 
@@ -631,3 +635,467 @@ def test_missing_logged_sspi_identity_is_typed_principal_error(tmp_path: Path) -
         probe._extract_new_principal(log, 0, "WINDOWS_SSPI_RUNTIME_IDENTITY")
     assert failure.value.item == probe.PRINCIPAL_AUTH
     assert failure.value.label == "WINDOWS_SSPI_RUNTIME_IDENTITY"
+
+
+def test_pg_ctl_runner_uses_real_files_not_anonymous_pipes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    observed: dict[str, object] = {}
+
+    class Process:
+        def __init__(self, _command, **kwargs):
+            observed.update(kwargs)
+
+        def wait(self, timeout):
+            return 0
+
+    monkeypatch.setattr(probe.subprocess, "Popen", Process)
+    result = probe._run_pg_ctl(Path("pg_ctl"), tmp_path, tmp_path, "start", ["start"])
+    assert result.returncode == 0
+    assert observed["stdout"] is not subprocess.PIPE
+    assert observed["stderr"] is not subprocess.PIPE
+    assert "capture_output" not in observed
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX executable fixture")
+def test_pg_ctl_runner_does_not_wait_for_descendant_inherited_output_handles(
+    tmp_path: Path,
+) -> None:
+    executable = tmp_path / "fake-pg-ctl"
+    executable.write_text(
+        "#!/usr/bin/env python3\n"
+        "import subprocess, sys\n"
+        "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(2)'])\n",
+        encoding="utf-8",
+    )
+    executable.chmod(0o755)
+    started = time.monotonic()
+    result = probe._run_pg_ctl(executable, tmp_path / "data", tmp_path, "start", ["start"])
+    assert result.returncode == 0
+    assert time.monotonic() - started < 1
+
+
+@pytest.mark.parametrize("marker", [False, True])
+def test_cleanup_stops_live_owned_cluster_even_with_stale_marker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, marker: bool
+) -> None:
+    events: list[str] = []
+    witness = probe.PostmasterWitness(123, object(), 1.0, Path("postgres.exe"))
+    monkeypatch.setattr(probe, "_postmaster_witness", lambda *_a: witness)
+    monkeypatch.setattr(probe, "_close_postmaster_witness", lambda *_a: None)
+    monkeypatch.setattr(
+        probe, "_stop_owned_cluster", lambda *_a, **_k: events.append("stop") or None
+    )
+    assert (
+        probe._stop_if_owned_cluster_running(
+            Path("pg_ctl"),
+            tmp_path / "cluster",
+            tmp_path,
+            tmp_path / "postgresql.log",
+            cluster_started=marker,
+        )
+        is None
+    )
+    assert events == ["stop"]
+
+
+def test_cleanup_does_not_stop_cluster_qualified_as_stopped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(probe, "_postmaster_witness", lambda *_a: None)
+    monkeypatch.setattr(probe, "_run_pg_ctl", lambda *_a, **_k: pytest.fail("unexpected stop"))
+    assert (
+        probe._stop_if_owned_cluster_running(
+            Path("pg_ctl"),
+            tmp_path / "cluster",
+            tmp_path,
+            tmp_path / "postgresql.log",
+            cluster_started=False,
+        )
+        is None
+    )
+
+
+def test_emergency_cleanup_stale_boolean_stops_before_delete(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "CryptoHunter-Stage8-owned"
+    root.mkdir()
+    events: list[str] = []
+    monkeypatch.setattr(
+        probe,
+        "_stop_if_owned_cluster_running",
+        lambda *_a, **_k: events.append("stop") or None,
+    )
+    monkeypatch.setattr(probe.shutil, "rmtree", lambda _root: events.append("delete"))
+    errors = probe.emergency_cleanup(
+        {"root": str(root), "pgbin": str(tmp_path / "bin"), "cluster_started": False},
+        tmp_path,
+    )
+    assert errors == []
+    assert events == ["stop", "delete"]
+
+
+def test_emergency_stop_failure_preserves_scratch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "CryptoHunter-Stage8-owned"
+    root.mkdir()
+    monkeypatch.setattr(probe, "_stop_if_owned_cluster_running", lambda *_a, **_k: "still running")
+    monkeypatch.setattr(probe.shutil, "rmtree", lambda _root: pytest.fail("unsafe deletion"))
+    errors = probe.emergency_cleanup(
+        {"root": str(root), "pgbin": str(tmp_path / "bin"), "cluster_started": False},
+        tmp_path,
+    )
+    assert "still running" in errors[0]
+
+
+def test_emergency_cleanup_refuses_unsafe_root(tmp_path: Path) -> None:
+    errors = probe.emergency_cleanup(
+        {"root": str(tmp_path.parent / "foreign"), "cluster_started": True}, tmp_path
+    )
+    assert errors == ["refused scratch cleanup outside Stage-8-owned root"]
+
+
+def test_initial_start_and_final_restart_share_reviewed_runner() -> None:
+    source = Path(probe.__file__).read_text(encoding="utf-8")
+    assert re.search(r"_run_pg_ctl\([\s\S]{0,150}?root,\s*\"start\"", source)
+    assert re.search(r"_run_pg_ctl\([\s\S]{0,150}?root,\s*\"restart\"", source)
+    assert source.count("_run_pg_ctl(") >= 5
+
+
+@pytest.mark.parametrize(("status_code", "expected"), [(0, True), (3, False)])
+def test_cluster_running_requires_live_owned_pid_and_exact_pgdata_status(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    status_code: int,
+    expected: bool,
+) -> None:
+    data = tmp_path / "cluster"
+    data.mkdir()
+    witness = probe.PostmasterWitness(123, object(), 1.0, Path("postgres.exe"))
+    monkeypatch.setattr(probe, "_postmaster_witness", lambda *_a: witness)
+    monkeypatch.setattr(probe, "_close_postmaster_witness", lambda *_a: None)
+    calls: list[tuple[Path, list[str]]] = []
+
+    def run_pg_ctl(_pg_ctl, observed_data, _root, _operation, arguments, **_kwargs):
+        calls.append((observed_data, arguments))
+        return probe.PgCtlResult(status_code, 0.01, False, "", "")
+
+    monkeypatch.setattr(probe, "_run_pg_ctl", run_pg_ctl)
+    running, pid = probe._cluster_running(Path("pg_ctl"), data, tmp_path)
+    assert running is expected
+    assert pid == 123
+    assert calls == [(data, ["status"])]
+
+
+@pytest.mark.parametrize("contents", ["123\n", "bad\nC:\\data\n100\n", "0\nC:\\data\n100\n"])
+def test_malformed_or_truncated_postmaster_pid_is_rejected(tmp_path: Path, contents: str) -> None:
+    data = tmp_path / "cluster"
+    data.mkdir()
+    (data / "postmaster.pid").write_text(contents, encoding="utf-8")
+    with pytest.raises(probe.Stage8PostgreSQLProbeError) as failure:
+        probe._postmaster_pidfile(data)
+    assert failure.value.label == "POSTGRESQL_PROCESS_IDENTITY"
+
+
+def test_postmaster_pid_data_directory_must_match_exact_owned_pgdata(tmp_path: Path) -> None:
+    data = tmp_path / "cluster"
+    data.mkdir()
+    (data / "postmaster.pid").write_text(f"123\n{tmp_path / 'foreign'}\n100\n", encoding="utf-8")
+    with pytest.raises(probe.Stage8PostgreSQLProbeError, match="exact owned PGDATA"):
+        probe._postmaster_pidfile(data)
+
+
+@pytest.mark.parametrize(
+    ("image", "creation", "matches"),
+    [("postgres.exe", 100.0, True), ("foreign.exe", 100.0, False), ("postgres.exe", 110.0, False)],
+)
+def test_postmaster_identity_requires_exact_image_and_creation_time(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    image: str,
+    creation: float,
+    matches: bool,
+) -> None:
+    data = tmp_path / "cluster"
+    data.mkdir()
+    postgres = tmp_path / "postgres.exe"
+    (data / "postmaster.pid").write_text(f"123\n{data}\n100\n", encoding="utf-8")
+
+    class Handle:
+        def __init__(self) -> None:
+            self.closed = False
+
+        def Close(self) -> None:
+            self.closed = True
+
+    handle = Handle()
+    snapshot = probe.ProcessIdentitySnapshot(123, handle, creation, tmp_path / image)
+    monkeypatch.setattr(probe, "_process_identity_snapshot", lambda _pid: snapshot)
+    if matches:
+        witness = probe._postmaster_witness(data, postgres)
+        assert witness is not None and witness.process is handle
+        probe._close_postmaster_witness(witness)
+    else:
+        with pytest.raises(probe.Stage8PostgreSQLProbeError):
+            probe._postmaster_witness(data, postgres)
+    assert handle.closed is True
+
+
+def test_foreign_identity_blocks_pg_ctl_stop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        probe,
+        "_postmaster_witness",
+        lambda *_a: (_ for _ in ()).throw(
+            probe.Stage8PostgreSQLProbeError(
+                "POSTGRESQL_PROCESS_IDENTITY", probe.SUBSTRATE, "executable mismatch"
+            )
+        ),
+    )
+    monkeypatch.setattr(probe, "_run_pg_ctl", lambda *_a, **_k: pytest.fail("unsafe pg_ctl"))
+    with pytest.raises(probe.Stage8PostgreSQLProbeError, match="executable mismatch"):
+        probe._stop_if_owned_cluster_running(
+            Path("pg_ctl.exe"),
+            tmp_path / "cluster",
+            tmp_path,
+            tmp_path / "postgresql.log",
+            cluster_started=True,
+        )
+
+
+def test_process_state_query_failure_is_typed_fail_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class WinError(Exception):
+        winerror = 5
+
+    fake_api = type(
+        "Api", (), {"OpenProcess": staticmethod(lambda *_a: (_ for _ in ()).throw(WinError()))}
+    )
+    monkeypatch.setitem(sys.modules, "pywintypes", type("PyWinTypes", (), {"error": WinError}))
+    monkeypatch.setitem(sys.modules, "win32api", fake_api)
+    monkeypatch.setitem(sys.modules, "win32con", type("Con", (), {"SYNCHRONIZE": 1}))
+    monkeypatch.setitem(sys.modules, "win32event", type("Event", (), {})())
+    with pytest.raises(probe.Stage8PostgreSQLProbeError) as failure:
+        probe._process_exists(123)
+    assert failure.value.label == "POSTGRESQL_PROCESS_STATE"
+
+
+def test_native_image_query_converts_pyhandle_without_taking_ownership(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    observed: list[int] = []
+
+    class Handle:
+        def __int__(self) -> int:
+            return 456
+
+    class Query:
+        argtypes = None
+        restype = None
+
+        def __call__(self, native_handle, _flags, buffer, length) -> int:
+            observed.append(native_handle.value)
+            buffer.value = str(tmp_path / "python.exe")
+            length._obj.value = len(buffer.value)
+            return 1
+
+    query = Query()
+    kernel32 = type("Kernel32", (), {"QueryFullProcessImageNameW": query})()
+    monkeypatch.setattr(ctypes, "WinDLL", lambda *_a, **_k: kernel32, raising=False)
+    assert probe._query_process_image_path(Handle()) == tmp_path / "python.exe"
+    assert observed == [456]
+    assert query.argtypes is not None and query.restype is not None
+
+
+def test_native_image_query_failure_is_typed_and_snapshot_closes_handle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Handle:
+        closed = False
+
+        def __int__(self) -> int:
+            return 789
+
+        def Close(self) -> None:
+            self.closed = True
+
+    class Query:
+        argtypes = None
+        restype = None
+
+        def __call__(self, *_args) -> int:
+            return 0
+
+    handle = Handle()
+    kernel32 = type("Kernel32", (), {"QueryFullProcessImageNameW": Query()})()
+    monkeypatch.setattr(ctypes, "WinDLL", lambda *_a, **_k: kernel32, raising=False)
+    monkeypatch.setattr(ctypes, "get_last_error", lambda: 5, raising=False)
+
+    class WinError(Exception):
+        winerror = 87
+
+    monkeypatch.setitem(sys.modules, "pywintypes", type("PyWinTypes", (), {"error": WinError}))
+    monkeypatch.setitem(
+        sys.modules,
+        "win32api",
+        type("Api", (), {"OpenProcess": staticmethod(lambda *_a: handle)}),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "win32con",
+        type("Con", (), {"SYNCHRONIZE": 1, "PROCESS_QUERY_LIMITED_INFORMATION": 2}),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "win32event",
+        type(
+            "Event",
+            (),
+            {
+                "WAIT_OBJECT_0": 0,
+                "WAIT_TIMEOUT": 258,
+                "WaitForSingleObject": staticmethod(lambda *_a: 258),
+            },
+        ),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "win32process",
+        type(
+            "Process", (), {"GetProcessTimes": staticmethod(lambda *_a: pytest.fail("unexpected"))}
+        ),
+    )
+    with pytest.raises(probe.Stage8PostgreSQLProbeError, match="winerror=5") as failure:
+        probe._process_identity_snapshot(123)
+    assert failure.value.label == "POSTGRESQL_PROCESS_IDENTITY"
+    assert handle.closed is True
+
+
+def test_stage8_process_liveness_does_not_use_os_kill() -> None:
+    tree = ast.parse(Path(probe.__file__).read_text(encoding="utf-8"))
+    forbidden = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "os"
+        and node.func.attr == "kill"
+    ]
+    assert forbidden == []
+
+
+def test_stop_uses_pre_stop_process_witness_and_exact_stopped_status(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    data = tmp_path / "cluster"
+    data.mkdir()
+    events: list[str] = []
+    handle = object()
+    witness = probe.PostmasterWitness(123, handle, 1.0, Path("postgres.exe"))
+    monkeypatch.setattr(
+        probe, "_postmaster_witness", lambda *_a: events.append("identity") or witness
+    )
+    monkeypatch.setattr(
+        probe, "_wait_process_exit", lambda value, **_k: events.append("exit-confirmed")
+    )
+    monkeypatch.setattr(probe, "_close_postmaster_witness", lambda value: events.append("close"))
+    results = iter(
+        (
+            probe.PgCtlResult(0, 0.01, False, "", ""),
+            probe.PgCtlResult(3, 0.01, False, "", ""),
+        )
+    )
+    monkeypatch.setattr(
+        probe,
+        "_run_pg_ctl",
+        lambda *_a, **_k: events.append("pg_ctl") or next(results),
+    )
+    assert (
+        probe._stop_owned_cluster(Path("pg_ctl"), data, tmp_path, tmp_path / "postgresql.log")
+        is None
+    )
+    assert events == ["identity", "pg_ctl", "pg_ctl", "exit-confirmed", "close"]
+
+
+def test_stop_rejects_status_that_still_reports_running(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    data = tmp_path / "cluster"
+    data.mkdir()
+    witness = probe.PostmasterWitness(123, object(), 1.0, Path("postgres.exe"))
+    monkeypatch.setattr(probe, "_postmaster_witness", lambda *_a: witness)
+    monkeypatch.setattr(probe, "_close_postmaster_witness", lambda *_a: None)
+    results = iter(
+        (
+            probe.PgCtlResult(0, 0.01, False, "", ""),
+            probe.PgCtlResult(0, 0.01, False, "", ""),
+        )
+    )
+    monkeypatch.setattr(probe, "_run_pg_ctl", lambda *_a, **_k: next(results))
+    error = probe._stop_owned_cluster(Path("pg_ctl"), data, tmp_path, tmp_path / "postgresql.log")
+    assert error is not None
+    assert "status_returncode=0" in error
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="real Win32 process-liveness contract")
+def test_windows_process_alive_check_is_non_destructive() -> None:
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    try:
+        assert probe._process_exists(child.pid) is True
+        assert child.poll() is None
+        assert probe._process_exists(child.pid) is True
+        assert child.poll() is None
+    finally:
+        child.terminate()
+        child.wait(timeout=10)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="real Win32 process-liveness contract")
+def test_windows_exited_process_is_reported_stopped() -> None:
+    child = subprocess.Popen([sys.executable, "-c", "pass"])
+    child.wait(timeout=10)
+    assert probe._process_exists(child.pid) is False
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="real Win32 process-identity contract")
+def test_windows_live_foreign_pid_is_rejected_without_mutation(tmp_path: Path) -> None:
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    try:
+        snapshot = probe._process_identity_snapshot(child.pid)
+        assert snapshot is not None
+        creation = snapshot.creation_time
+        snapshot.process.Close()
+        data = tmp_path / "cluster"
+        data.mkdir()
+        (data / "postmaster.pid").write_text(f"{child.pid}\n{data}\n{creation}\n", encoding="utf-8")
+        with pytest.raises(probe.Stage8PostgreSQLProbeError, match="executable"):
+            probe._postmaster_witness(data, tmp_path / "pgbin" / "postgres.exe")
+        assert child.poll() is None
+    finally:
+        child.terminate()
+        child.wait(timeout=10)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="real Win32 process-identity contract")
+def test_windows_process_creation_time_is_stable_and_non_destructive() -> None:
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    try:
+        first = probe._process_identity_snapshot(child.pid)
+        second = probe._process_identity_snapshot(child.pid)
+        assert first is not None and second is not None
+        try:
+            assert first.creation_time == second.creation_time > 0
+            assert first.executable.resolve() == second.executable.resolve()
+            assert first.executable.resolve() == Path(sys.executable).resolve()
+            assert child.poll() is None
+        finally:
+            first.process.Close()
+            second.process.Close()
+    finally:
+        child.terminate()
+        child.wait(timeout=10)
