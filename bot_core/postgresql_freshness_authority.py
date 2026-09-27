@@ -38,6 +38,21 @@ PRODUCTION_LOCAL_REVIEWED_IDENTIFIERS = (
     "freshness_runtime",
     "freshness_reader",
 )
+_REVIEWED_TABLES = frozenset(
+    {
+        "metadata",
+        "key_material_role_bindings",
+        "credentials",
+        "key_lifecycle_history",
+        "authority_lineages",
+        "authority_generation_heads",
+        "prepared_verifications",
+        "authoritative_documents",
+        "decisions",
+        "finalization_receipts",
+    }
+)
+_REVIEWED_SEQUENCE = "decisions_decision_sequence_seq"
 DOCUMENT_DOMAIN = b"cryptohunter.account-genesis.freshness-document-digest.v1\x00"
 RECEIPT_DOMAIN = (
     b"cryptohunter.account-genesis.freshness-finalization-receipt-authentication.v1\x00"
@@ -155,6 +170,66 @@ class PostgreSQLFreshnessAuthorityProvisioning:
             raise ValueError("all authority roles must be distinct")
         if names != PRODUCTION_LOCAL_REVIEWED_IDENTIFIERS:
             raise ValueError("PRODUCTION_LOCAL authority identifiers are frozen")
+
+
+def _expected_relation_acl(
+    config: PostgreSQLFreshnessAuthorityProvisioning, server_version: int
+) -> set[tuple[str, str, str, bool]]:
+    """Return the exact reviewed relation ACL for a supported server version."""
+    if server_version < 160000:
+        raise ValueError("PostgreSQL >=16 required")
+    owner_table_privileges = {
+        "SELECT",
+        "INSERT",
+        "UPDATE",
+        "DELETE",
+        "TRUNCATE",
+        "REFERENCES",
+        "TRIGGER",
+    }
+    if server_version >= 170000:
+        # PostgreSQL 17 added MAINTAIN to the natural table-owner ACL.
+        owner_table_privileges.add("MAINTAIN")
+    expected = {
+        (table, config.schema_owner_role, privilege, False)
+        for table in _REVIEWED_TABLES
+        for privilege in owner_table_privileges
+    }
+    expected |= {
+        (table, config.function_owner_role, privilege, False)
+        for table in _REVIEWED_TABLES
+        for privilege in ("SELECT", "INSERT", "UPDATE", "DELETE")
+    }
+    expected |= {(table, config.reader_role, "SELECT", False) for table in _REVIEWED_TABLES}
+    expected |= {
+        (_REVIEWED_SEQUENCE, config.schema_owner_role, privilege, False)
+        for privilege in ("USAGE", "SELECT", "UPDATE")
+    }
+    expected |= {
+        (_REVIEWED_SEQUENCE, config.function_owner_role, privilege, False)
+        for privilege in ("USAGE", "SELECT")
+    }
+    return expected
+
+
+def _relation_acl_difference(
+    actual: set[tuple[str, str, str, bool]],
+    expected: set[tuple[str, str, str, bool]],
+    *,
+    limit: int = 20,
+) -> str:
+    """Render a deterministic, bounded and non-secret ACL difference."""
+
+    def bounded(values: set[tuple[str, str, str, bool]]) -> str:
+        ordered = sorted(values)
+        shown = ordered[:limit]
+        suffix = f", ... ({len(ordered) - limit} more)" if len(ordered) > limit else ""
+        return "[" + ", ".join(repr(value) for value in shown) + suffix + "]"
+
+    return (
+        f"missing ACL tuples={bounded(expected - actual)}; "
+        f"unexpected ACL tuples={bounded(actual - expected)}"
+    )
 
 
 def canonical_json_bytes(value: object) -> bytes:
@@ -768,19 +843,7 @@ def qualify_postgresql_freshness_authority(
         immutable = {k: hashlib.sha256(v.encode()).hexdigest() for k, v in expected.items()}
         if not meta or tuple(meta[:2]) != (SCHEMA_IDENTITY, SCHEMA_VERSION) or meta[2] != immutable:
             problems.append("manifest")
-        expected_relations = {
-            "metadata",
-            "key_material_role_bindings",
-            "credentials",
-            "key_lifecycle_history",
-            "authority_lineages",
-            "authority_generation_heads",
-            "prepared_verifications",
-            "authoritative_documents",
-            "decisions",
-            "finalization_receipts",
-            "decisions_decision_sequence_seq",
-        }
+        expected_relations = _REVIEWED_TABLES | {_REVIEWED_SEQUENCE}
         rels = conn.execute(
             "SELECT c.relname,c.relkind,c.relpersistence,r.rolname,c.relrowsecurity,c.relforcerowsecurity FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace JOIN pg_catalog.pg_roles r ON r.oid=c.relowner WHERE n.nspname=%s AND c.relkind IN ('r','S')",
             (config.schema,),
@@ -824,34 +887,11 @@ def qualify_postgresql_freshness_authority(
             """SELECT c.relname,CASE WHEN x.grantee=0 THEN 'PUBLIC' ELSE r.rolname END,x.privilege_type,x.is_grantable FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace CROSS JOIN LATERAL pg_catalog.aclexplode(coalesce(c.relacl,pg_catalog.acldefault(CASE c.relkind WHEN 'S' THEN 's'::"char" ELSE 'r'::"char" END,c.relowner))) x LEFT JOIN pg_catalog.pg_roles r ON r.oid=x.grantee WHERE n.nspname=%s AND c.relkind IN ('r','S')""",
             (config.schema,),
         ).fetchall()
-        tables = expected_relations - {"decisions_decision_sequence_seq"}
-        owner_table_privs = {
-            "SELECT",
-            "INSERT",
-            "UPDATE",
-            "DELETE",
-            "TRUNCATE",
-            "REFERENCES",
-            "TRIGGER",
-        }
-        expected_tacl = (
-            {(t, config.schema_owner_role, p, False) for t in tables for p in owner_table_privs}
-            | {
-                (t, config.function_owner_role, p, False)
-                for t in tables
-                for p in ("SELECT", "INSERT", "UPDATE", "DELETE")
-            }
-            | {(t, config.reader_role, "SELECT", False) for t in tables}
-        )
-        expected_tacl |= {
-            ("decisions_decision_sequence_seq", config.schema_owner_role, p, False)
-            for p in ("USAGE", "SELECT", "UPDATE")
-        } | {
-            ("decisions_decision_sequence_seq", config.function_owner_role, p, False)
-            for p in ("USAGE", "SELECT")
-        }
+        expected_tacl = _expected_relation_acl(config, max(conn.info.server_version, 160000))
         if set(table_acl) != expected_tacl:
-            problems.append("relation ACL")
+            problems.append(
+                "relation ACL (" + _relation_acl_difference(set(table_acl), expected_tacl) + ")"
+            )
         rules = conn.execute(
             "SELECT count(*) FROM pg_catalog.pg_rewrite w JOIN pg_catalog.pg_class c ON c.oid=w.ev_class JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=%s AND w.rulename<>'_RETURN'",
             (config.schema,),

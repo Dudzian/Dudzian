@@ -17,6 +17,8 @@ from bot_core.postgresql_freshness_authority import (
     PROPOSER_ROLE,
     FreshnessAuthorityQualificationError,
     PostgreSQLConnectionConfig,
+    PostgreSQLFreshnessAuthorityProvisioning,
+    _expected_relation_acl,
     canonical_json_bytes,
     complete_semantic_head_digest,
     normalize_complete_semantic_head_set,
@@ -285,6 +287,36 @@ def test_fresh_provisioning_qualification_roles_owner_oids_and_exact_acl():
     assert {r[0] for r in rows if r[1]} == {"freshness_crypto_verifier", "freshness_runtime"}
     assert all(not any(r[2:8]) for r in rows)
     assert len({r[8] for r in rows}) == 6
+
+    # Executable catalog diagnostic: on a freshly provisioned PG17+ cluster,
+    # the complete difference from the reviewed PG16 contract is owner MAINTAIN.
+    with psycopg.connect(DSN) as connection:
+        version = connection.info.server_version
+        actual_acl = set(
+            connection.execute(
+                """SELECT c.relname,CASE WHEN x.grantee=0 THEN 'PUBLIC' ELSE r.rolname END,x.privilege_type,x.is_grantable FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace CROSS JOIN LATERAL pg_catalog.aclexplode(coalesce(c.relacl,pg_catalog.acldefault(CASE c.relkind WHEN 'S' THEN 's'::\"char\" ELSE 'r'::\"char\" END,c.relowner))) x LEFT JOIN pg_catalog.pg_roles r ON r.oid=x.grantee WHERE n.nspname='freshness_authority' AND c.relkind IN ('r','S')"""
+            ).fetchall()
+        )
+    expected = _expected_relation_acl(PostgreSQLFreshnessAuthorityProvisioning(), version)
+    assert actual_acl == expected
+    if version >= 170000:
+        pg16_expected = _expected_relation_acl(PostgreSQLFreshnessAuthorityProvisioning(), 160000)
+        assert actual_acl - pg16_expected == {
+            (table, "freshness_schema_owner", "MAINTAIN", False)
+            for table in {
+                "metadata",
+                "key_material_role_bindings",
+                "credentials",
+                "key_lifecycle_history",
+                "authority_lineages",
+                "authority_generation_heads",
+                "prepared_verifications",
+                "authoritative_documents",
+                "decisions",
+                "finalization_receipts",
+            }
+        }
+        assert not pg16_expected - actual_acl
 
 
 def test_raw_dml_denied_runtime_verifier_admin_and_offline_admin_boundary():
@@ -1261,6 +1293,22 @@ def test_acl_function_source_manifest_role_owner_schema_and_relation_tamper_fail
             qualify_postgresql_freshness_authority(CFG)
         _super(undo)
         qualify_postgresql_freshness_authority(CFG)
+
+
+def test_pg17_missing_owner_maintain_reports_exact_relation_acl_difference():
+    with psycopg.connect(DSN) as connection:
+        if connection.info.server_version < 170000:
+            pytest.skip("PostgreSQL 17+ catalog regression")
+    _super("REVOKE MAINTAIN ON freshness_authority.metadata FROM freshness_schema_owner")
+    try:
+        with pytest.raises(
+            FreshnessAuthorityQualificationError,
+            match=r"qualification failed: relation ACL .*missing ACL tuples=.*MAINTAIN",
+        ):
+            qualify_postgresql_freshness_authority(CFG)
+    finally:
+        _super("GRANT MAINTAIN ON freshness_authority.metadata TO freshness_schema_owner")
+    qualify_postgresql_freshness_authority(CFG)
 
 
 def test_selector_constraint_active_predicate_and_unexpected_object_inventory_tamper():
