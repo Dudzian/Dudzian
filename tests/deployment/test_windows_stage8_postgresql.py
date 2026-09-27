@@ -8,6 +8,7 @@ import sys
 import re
 import threading
 import time
+import uuid
 
 import pytest
 from psycopg.conninfo import conninfo_to_dict
@@ -197,6 +198,75 @@ def test_stage8_phase_markers_flush_and_retain_failed_last_phase(
     ]
     assert all(flush for _message, flush in calls)
     assert probe._read_json(tmp_path / "status.json")["last_phase"] == "MATRIX_RUNTIME"
+
+
+def test_principal_auth_phase_types_raw_pki_and_dacl_failures() -> None:
+    for phase, label in (
+        ("TLS_PKI_PROVISION", "WINDOWS_TLS_PKI_PROVISION"),
+        ("TLS_KEY_DACL_QUALIFICATION", "WINDOWS_TLS_KEY_DACL_QUALIFICATION"),
+    ):
+        with pytest.raises(probe.Stage8PostgreSQLProbeError) as failure:
+            with probe._principal_auth_phase(phase, label):
+                raise RuntimeError("native security failure")
+        assert failure.value.item == probe.PRINCIPAL_AUTH
+        assert failure.value.label == label
+
+
+def test_helper_creation_precedes_pki_and_pki_failure_cleans_services_and_scratch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    events: list[str] = []
+    root_seen: list[Path] = []
+    binaries = probe.PostgreSQLBinaries(tmp_path / "bin", probe.MINIMUM_MAJOR)
+    monkeypatch.setattr(probe, "canonical_host_os", lambda: "Windows")
+    real_os = probe.os
+
+    class WindowsOsProxy:
+        name = "nt"
+
+        def __getattr__(self, name: str):
+            return getattr(real_os, name)
+
+    monkeypatch.setattr(probe, "os", WindowsOsProxy())
+    monkeypatch.setattr(probe, "discover_postgresql", lambda: binaries)
+    monkeypatch.setattr(probe, "_run", lambda *_a, **_k: _completed())
+
+    def prepare(root: Path, owned: set[str]) -> dict[str, Path]:
+        events.append("services-created")
+        root_seen.append(root)
+        owned.update((probe.RUNTIME_SERVICE, probe.VERIFIER_SERVICE))
+        return {}
+
+    def fail_pki(_root: Path):
+        events.append("pki-failed")
+        raise RuntimeError("synthetic PKI failure")
+
+    monkeypatch.setattr(probe, "_prepare_services", prepare)
+    monkeypatch.setattr(probe, "_provision_tls_pki", fail_pki)
+    monkeypatch.setattr(
+        probe,
+        "_cleanup_service",
+        lambda name: events.append(f"deleted:{name}") or [],
+    )
+    monkeypatch.setattr(probe, "_stop_if_owned_cluster_running", lambda *_a, **_k: None)
+
+    with pytest.raises(probe.Stage8PostgreSQLProbeError) as failure:
+        probe.run_probe(tmp_path)
+
+    assert failure.value.item == probe.PRINCIPAL_AUTH
+    assert failure.value.label == "WINDOWS_TLS_PKI_PROVISION"
+    assert events[:2] == ["services-created", "pki-failed"]
+    assert set(events[2:]) == {
+        f"deleted:{probe.RUNTIME_SERVICE}",
+        f"deleted:{probe.VERIFIER_SERVICE}",
+    }
+    assert root_seen and not root_seen[0].exists()
+
+
+def test_phase_contract_places_service_creation_before_pki_and_dacl() -> None:
+    helper = probe.PHASES.index("HELPER_SERVICE_PREPARE")
+    assert helper < probe.PHASES.index("TLS_PKI_PROVISION")
+    assert helper < probe.PHASES.index("TLS_KEY_DACL_QUALIFICATION")
 
 
 def test_probe_source_keeps_ownership_token_and_production_boundaries() -> None:
@@ -454,6 +524,56 @@ def test_real_windows_private_key_dacl_round_trip_and_overprivilege_denial(tmp_p
 
     probe._protect_private_key(path, account)
     probe._qualify_private_key_dacl(path, exact)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="requires real Windows SCM")
+def test_real_service_sid_resolves_only_after_reviewed_scm_creation(tmp_path: Path) -> None:
+    import win32security
+
+    service = f"DudzianStage8Sid{uuid.uuid4().hex[:12]}"
+    account = rf"NT SERVICE\{service}"
+    request = tmp_path / "request.json"
+    assert probe._service_is_absent(probe._sc("query", service))
+    try:
+        probe._create_service(service, account, request)
+        sid, _, _ = win32security.LookupAccountName(None, account)
+        assert win32security.IsValidSid(sid)
+        assert re.fullmatch(r"S-1-5-80(?:-\d+){5}", win32security.ConvertSidToStringSid(sid))
+    finally:
+        cleanup_errors = probe._cleanup_service(service)
+    assert cleanup_errors == []
+    assert probe._service_is_absent(probe._sc("query", service))
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="requires real Windows SCM and DACL")
+def test_real_service_specific_key_dacl_after_service_creation(tmp_path: Path) -> None:
+    import win32security
+
+    service = f"DudzianStage8Key{uuid.uuid4().hex[:12]}"
+    account = rf"NT SERVICE\{service}"
+    request = tmp_path / "request.json"
+    try:
+        probe._create_service(service, account, request)
+        sid = probe._account_sid(account, win32security)
+        root_acl = probe._run(
+            ["icacls.exe", str(tmp_path), "/grant", f"{account}:(OI)(CI)F"],
+            timeout=probe.COMMAND_TIMEOUT,
+        )
+        assert root_acl.returncode == 0, root_acl.stderr or root_acl.stdout
+        key = tmp_path / "service-client.key"
+        key.write_bytes(b"non-secret regression fixture")
+        probe._protect_private_key(key, account)
+        probe._qualify_private_key_dacl(
+            key,
+            [
+                (probe._account_sid("SYSTEM", win32security), probe.PRIVATE_KEY_FULL_MASK),
+                (sid, probe.PRIVATE_KEY_READ_MASK),
+            ],
+        )
+    finally:
+        cleanup_errors = probe._cleanup_service(service)
+    assert cleanup_errors == []
+    assert probe._service_is_absent(probe._sc("query", service))
 
 
 def test_child_selects_fixed_runtime_mtls_material_not_request_paths(tmp_path: Path) -> None:
