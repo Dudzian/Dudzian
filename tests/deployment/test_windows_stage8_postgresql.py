@@ -75,8 +75,8 @@ def test_ident_is_exact_without_wildcards() -> None:
     assert not any("*" in line or "/" in line for line in probe.ident_lines())
 
 
-def test_effective_hba_rows_require_parser_success_and_order() -> None:
-    rows = [
+def _valid_hba_rows() -> list[tuple[object, ...]]:
+    return [
         (
             1,
             "hostssl",
@@ -114,10 +114,113 @@ def test_effective_hba_rows_require_parser_success_and_order() -> None:
         (5, "host", ["all"], ["all"], "0.0.0.0", "0.0.0.0", "reject", None, None),
         (6, "host", ["all"], ["all"], "::", "::", "reject", None, None),
     ]
+
+
+def test_effective_hba_rows_require_parser_success_and_order() -> None:
+    rows = _valid_hba_rows()
     probe.qualify_hba_rows(rows)
     rows[1] = (*rows[1][:-1], "parse error")
     with pytest.raises(probe.Stage8PostgreSQLProbeError):
         probe.qualify_hba_rows(rows)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        lambda rows: rows + [rows[-1]],
+        lambda rows: rows[:-1],
+        lambda rows: [(*rows[0][:-1], "parse error"), *rows[1:]],
+        lambda rows: [(*rows[0][:6], "trust", *rows[0][7:]), *rows[1:]],
+        lambda rows: [(*rows[0][:7], ["map=wrong"], rows[0][8]), *rows[1:]],
+        lambda rows: [(*rows[0][:4], "192.0.2.1", *rows[0][5:]), *rows[1:]],
+    ),
+)
+def test_effective_hba_rows_reject_every_non_exact_parser_result(mutation) -> None:
+    with pytest.raises(probe.Stage8PostgreSQLProbeError) as failure:
+        probe.qualify_hba_rows(mutation(_valid_hba_rows()))
+    assert failure.value.label == "WINDOWS_TLS_HBA_QUALIFICATION"
+    assert failure.value.item == probe.PRINCIPAL_AUTH
+
+
+class _ParserConnection:
+    def __init__(self, events: list[str], rows: list[tuple[object, ...]]) -> None:
+        self.events = events
+        self.rows = rows
+        self.closed = False
+
+    def execute(self, query: str):
+        if "session_user" in query:
+            self.events.append("identity")
+            return self
+        self.events.append("parser")
+        return self
+
+    def fetchone(self):
+        return ("stage8_bootstrap", probe.DATABASE)
+
+    def fetchall(self):
+        return self.rows
+
+    def close(self) -> None:
+        self.closed = True
+        self.events.append("close")
+
+
+def test_final_hba_uses_one_preexisting_bootstrap_session_and_closes_before_restart(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    events: list[str] = []
+    connection = _ParserConnection(events, _valid_hba_rows())
+
+    class Psycopg:
+        @staticmethod
+        def connect(*_args, **_kwargs):
+            events.append("connect")
+            return connection
+
+    def pg_ctl(_pg_ctl, data, _root, operation, _arguments):
+        assert operation == "reload"
+        assert (data / "pg_hba.conf").exists()
+        events.append("reload")
+        return probe.PgCtlResult(0, 0.0, False, "", "")
+
+    monkeypatch.setattr(probe, "_run_pg_ctl", pg_ctl)
+    probe._install_and_qualify_final_auth(
+        Psycopg, 5432, tmp_path, tmp_path / "pg_ctl.exe", tmp_path
+    )
+    events.append("restart")
+
+    assert events == ["connect", "identity", "reload", "parser", "close", "restart"]
+    assert connection.closed
+    assert (tmp_path / "pg_hba.conf").read_text(encoding="utf-8").splitlines() == list(
+        probe.final_hba_lines()
+    )
+
+
+def test_bootstrap_session_closes_when_parser_qualification_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    events: list[str] = []
+    connection = _ParserConnection(events, _valid_hba_rows()[:-1])
+
+    class Psycopg:
+        @staticmethod
+        def connect(*_args, **_kwargs):
+            return connection
+
+    monkeypatch.setattr(
+        probe,
+        "_run_pg_ctl",
+        lambda *_a, **_k: probe.PgCtlResult(0, 0.0, False, "", ""),
+    )
+    with pytest.raises(probe.Stage8PostgreSQLProbeError) as failure:
+        probe._install_and_qualify_final_auth(
+            Psycopg, 5432, tmp_path, tmp_path / "pg_ctl.exe", tmp_path
+        )
+    assert failure.value.label == "WINDOWS_TLS_HBA_QUALIFICATION"
+    assert failure.value.item == probe.PRINCIPAL_AUTH
+    assert events[-1] == "close"
+    assert connection.closed
 
 
 def test_stage8_evidence_contract_is_last_live_slice() -> None:
@@ -267,6 +370,10 @@ def test_phase_contract_places_service_creation_before_pki_and_dacl() -> None:
     helper = probe.PHASES.index("HELPER_SERVICE_PREPARE")
     assert helper < probe.PHASES.index("TLS_PKI_PROVISION")
     assert helper < probe.PHASES.index("TLS_KEY_DACL_QUALIFICATION")
+    parser = probe.PHASES.index("FINAL_HBA_PARSER_QUALIFICATION")
+    assert probe.PHASES.index("FINAL_HBA_WRITE") < parser
+    assert parser < probe.PHASES.index("FINAL_CLUSTER_RESTART")
+    assert "FINAL_HBA_OFFLINE_QUALIFICATION" not in probe.PHASES
 
 
 def test_probe_source_keeps_ownership_token_and_production_boundaries() -> None:
@@ -276,6 +383,8 @@ def test_probe_source_keeps_ownership_token_and_production_boundaries() -> None:
     assert "provision_postgresql_freshness_authority(authority)" in source
     assert "qualify_postgresql_freshness_authority(authority)" in source
     assert "pg_hba_file_rules" in source
+    assert '"--single"' not in source
+    assert 'for role in (RUNTIME_ROLE, VERIFIER_ROLE, "stage8_bootstrap")' in source
     assert "timeout=" in source
     assert 'os.environ["PGDATA"]' not in source
     assert '_qualify_private_key_dacl(tls["ca_key"], owner_contract)' in source
