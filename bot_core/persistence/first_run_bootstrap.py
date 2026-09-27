@@ -162,6 +162,17 @@ class DurableFirstRunBootstrapRegistry:
             raise FirstRunBootstrapError("BOOTSTRAP_AUTHORITY_DENIED")
         return cast(str, current.state_fingerprint_sha256)
 
+    def current_pre_state(self) -> CoreCurrentBootstrapState:
+        """Return the sole verified current PRE state for production composition."""
+        family = self._family()
+        current = family[-1]
+        if (
+            current.initial_security_lifecycle != "PRE_INITIAL_SECURITY"
+            or current.first_operator_presence != "ABSENT"
+        ):
+            raise FirstRunBootstrapError("BOOTSTRAP_AUTHORITY_DENIED")
+        return current
+
     def terminal_state(
         self, account_id: str, device_installation_id: str
     ) -> CoreCurrentBootstrapState:

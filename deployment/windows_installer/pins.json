@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "wix": {"version": "7.0.0"},
+  "postgresql": {
+    "version": "17.11",
+    "packaging_revision": "4",
+    "archive": "postgresql-17.11-4-windows-x64-binaries.zip",
+    "source_url": "https://get.enterprisedb.com/postgresql/postgresql-17.11-4-windows-x64-binaries.zip",
+    "sha256": "b9424ee7bc60b52450ff910a3630225df32e633f3cb29c1d126d9299d59aea28"
+  }
+}

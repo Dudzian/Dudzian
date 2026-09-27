@@ -298,6 +298,7 @@ def test_workflow_release_gate_is_real_and_platform_independent() -> None:
         "core-macos",
         "windows-deployment-contract",
         "windows-deployment-integration",
+        "windows-clean-install-integration",
     }
     assert "linux-deployment-integration" not in release["needs"]
     assert "macos-deployment-integration" not in release["needs"]
@@ -306,6 +307,7 @@ def test_workflow_release_gate_is_real_and_platform_independent() -> None:
         "python -m deployment.platform_readiness --platform WINDOWS" in command
         and "--evidence evidence/core-matrix.json" in command
         and "--evidence evidence/windows-scm-evidence.json" in command
+        and "--evidence evidence/windows-clean-install-evidence.json" in command
         for command in release_commands
     )
     integration_commands = [

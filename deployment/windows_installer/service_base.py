@@ -1,0 +1,75 @@
+"""Production-only pywin32 SCM lifecycle boundary."""
+
+from __future__ import annotations
+import logging
+from pathlib import Path
+import threading
+from typing import Callable, Protocol
+
+
+class StatusReporter(Protocol):
+    def __call__(self, status: int, *, wait_hint: int = 0) -> None: ...
+
+
+Worker = Callable[[threading.Event, StatusReporter], None]
+
+
+def run_service(name: str, worker: Worker) -> None:
+    """Host a worker which alone decides when SCM may observe RUNNING."""
+    import servicemanager  # type: ignore[import-not-found]
+    import win32event  # type: ignore[import-not-found]
+    import win32service  # type: ignore[import-not-found]
+    import win32serviceutil  # type: ignore[import-not-found]
+
+    class ProductionService(win32serviceutil.ServiceFramework):
+        _svc_name_ = name
+        _svc_display_name_ = name
+
+        def __init__(self, args: list[str]) -> None:
+            super().__init__(args)
+            self.stop_event = threading.Event()
+            self.stopped = win32event.CreateEvent(None, 1, 0, None)
+
+        def report(self, status: int, *, wait_hint: int = 0) -> None:
+            self.ReportServiceStatus(status, waitHint=wait_hint)
+
+        def SvcRun(self) -> None:
+            # ServiceFramework's default reports RUNNING before SvcDoRun.  The
+            # production boundary deliberately keeps START_PENDING instead.
+            self.report(win32service.SERVICE_START_PENDING, wait_hint=60_000)
+            try:
+                worker(self.stop_event, self.report)
+            finally:
+                self.report(win32service.SERVICE_STOPPED)
+
+        def SvcStop(self) -> None:
+            self.report(win32service.SERVICE_STOP_PENDING, wait_hint=30_000)
+            self.stop_event.set()
+            win32event.SetEvent(self.stopped)
+
+        def SvcShutdown(self) -> None:
+            self.SvcStop()
+
+        def SvcDoRun(self) -> None:
+            raise RuntimeError("SvcRun owns the explicit readiness lifecycle")
+
+    servicemanager.Initialize()
+    servicemanager.PrepareToHostSingle(ProductionService)
+    servicemanager.StartServiceCtrlDispatcher()
+
+
+def machine_root() -> Path:
+    import os
+
+    root = os.environ.get("ProgramData")
+    if not root:
+        raise RuntimeError("ProgramData is unavailable")
+    return Path(root) / "CryptoHunter"
+
+
+def service_logger(name: str) -> logging.Logger:
+    from deployment.windows_persistent_logging import configure_service_logger
+
+    logger = configure_service_logger(machine_root() / "Logs")
+    logger.name = name
+    return logger
