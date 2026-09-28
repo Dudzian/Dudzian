@@ -51,13 +51,13 @@
     </StandardDirectory>
 
     <CustomAction Id="ProvisionMachine" FileRef="ProvisionExe"
-      ExeCommand="install --program-files &quot;[INSTALLFOLDER]&quot; --program-data &quot;[PROGRAMDATAROOT]&quot;"
+      ExeCommand="install --program-files &quot;[INSTALLFOLDER].&quot; --program-data &quot;[PROGRAMDATAROOT].&quot;"
       Execute="deferred" Impersonate="no" Return="check" HideTarget="yes" />
     <CustomAction Id="RollbackProvisionMachine" FileRef="ProvisionExe"
-      ExeCommand="rollback --program-files &quot;[INSTALLFOLDER]&quot; --program-data &quot;[PROGRAMDATAROOT]&quot;"
+      ExeCommand="rollback --program-files &quot;[INSTALLFOLDER].&quot; --program-data &quot;[PROGRAMDATAROOT].&quot;"
       Execute="rollback" Impersonate="no" Return="ignore" HideTarget="yes" />
     <CustomAction Id="CommitProvisionMachine" FileRef="ProvisionExe"
-      ExeCommand="commit --program-files &quot;[INSTALLFOLDER]&quot; --program-data &quot;[PROGRAMDATAROOT]&quot;"
+      ExeCommand="commit --program-files &quot;[INSTALLFOLDER].&quot; --program-data &quot;[PROGRAMDATAROOT].&quot;"
       Execute="commit" Impersonate="no" Return="check" HideTarget="yes" />
     <InstallExecuteSequence>
       <!-- InstallServices creates all live SCM authorities before SID lookup/DACL. -->

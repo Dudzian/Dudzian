@@ -58,6 +58,17 @@ def test_service_sid_exists_before_privileged_provisioning() -> None:
     assert 'Execute="deferred" Impersonate="no" Return="check" HideTarget="yes"' in WXS
 
 
+def test_provisioning_custom_actions_quote_trailing_directory_separators_safely() -> None:
+    for action in ("ProvisionMachine", "RollbackProvisionMachine", "CommitProvisionMachine"):
+        custom_action = re.search(rf'<CustomAction Id="{action}"[^>]+>', WXS)
+        assert custom_action is not None
+        definition = custom_action.group()
+        assert "&quot;[INSTALLFOLDER].&quot;" in definition
+        assert "&quot;[PROGRAMDATAROOT].&quot;" in definition
+        assert "&quot;[INSTALLFOLDER]&quot;" not in definition
+        assert "&quot;[PROGRAMDATAROOT]&quot;" not in definition
+
+
 def test_program_data_is_preserved_and_secrets_are_not_payload() -> None:
     assert "RemoveFolder" not in WXS
     assert '<Directory Id="PROGRAMDATAROOT" Name="CryptoHunter" />' in WXS
