@@ -225,6 +225,7 @@ dev = [
   "packaging>=23.2",
   "types-requests>=2.31",
   "typing_extensions>=4.7",
+  "pywin32>=312; platform_system == 'Windows'",
 ]
 test = [
   "pytest>=7.4",
@@ -239,6 +240,7 @@ test = [
   "joblib>=1.3",
   "pytest-timeout>=2.3",
   "typing_extensions>=4.7",
+  "pywin32>=312; platform_system == 'Windows'",
 ]
 codegen = [
   "grpcio-tools==1.71.2",
