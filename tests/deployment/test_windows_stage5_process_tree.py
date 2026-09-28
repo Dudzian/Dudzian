@@ -156,6 +156,12 @@ class PyWinTypesApi:
 
 
 def load_service_module(monkeypatch):
+    class WindowsOsProxy:
+        name = "nt"
+
+        def __getattr__(self, attribute):
+            return getattr(os, attribute)
+
     class ServiceFramework:
         def __init__(self, _args):
             pass
@@ -180,12 +186,12 @@ def load_service_module(monkeypatch):
     )
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
-    original_os_name = os.name
-    os.name = "nt"
+    real_os = sys.modules["os"]
+    sys.modules["os"] = WindowsOsProxy()
     try:
         spec.loader.exec_module(module)
     finally:
-        os.name = original_os_name
+        sys.modules["os"] = real_os
     return module
 
 
