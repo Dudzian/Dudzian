@@ -137,6 +137,16 @@ def test_wix_version_is_exact_stable_or_reviewed_metadata() -> None:
             canonical_wix_version(bad)
 
 
+def test_canonical_workflow_uses_only_per_invocation_wix_eula_acceptance() -> None:
+    workflow = (ROOT / ".github/workflows/platform-deployment.yml").read_text(encoding="utf-8")
+    builder = (ROOT / "deployment/windows_installer/build.py").read_text(encoding="utf-8")
+    assert "BLOCKED_ON_WIX7_EULA_ACCEPTANCE" not in workflow
+    assert re.search(r'"build",\s*"-acceptEula",\s*"wix7",', builder)
+    combined = workflow + builder
+    assert "wix eula accept wix7" not in combined
+    assert "eula accept" not in combined.lower()
+
+
 @pytest.mark.parametrize(("source", "expected"), [("1.2.3", "1.2.3"), ("1.2.3-rc.1", "1.2.3")])
 def test_semver_has_deterministic_legal_msi_mapping(source: str, expected: str) -> None:
     assert msi_version(source) == expected
