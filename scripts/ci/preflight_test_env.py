@@ -16,12 +16,25 @@ REQUIRED_MODULES = {
     "httpx": "httpx",
 }
 
+WINDOWS_REQUIRED_MODULES = {
+    "ntsecuritycon": "pywin32 (ntsecuritycon)",
+    "win32security": "pywin32 (win32security)",
+    "win32serviceutil": "pywin32 (win32serviceutil)",
+}
+
 
 def _import_module(name: str):
     try:
         return importlib.import_module(name)
     except (ModuleNotFoundError, ImportError) as exc:
         raise RuntimeError(name) from exc
+
+
+def _required_modules(platform: str) -> dict[str, str]:
+    required_modules = dict(REQUIRED_MODULES)
+    if platform == "win32":
+        required_modules.update(WINDOWS_REQUIRED_MODULES)
+    return required_modules
 
 
 def main() -> int:
@@ -44,7 +57,7 @@ def main() -> int:
     if pip_version.returncode != 0:
         print(f"pip returncode: {pip_version.returncode}")
 
-    for module_name, display_name in REQUIRED_MODULES.items():
+    for module_name, display_name in _required_modules(sys.platform).items():
         try:
             module = _import_module(module_name)
         except RuntimeError as exc:
