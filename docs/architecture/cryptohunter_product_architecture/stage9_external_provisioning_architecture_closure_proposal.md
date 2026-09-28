@@ -992,40 +992,71 @@ Freeze validators muszą odrzucić co najmniej:
 
 Żaden krok nie rozpoczyna Stage 10 ani nie pozwala zadeklarować produkcyjnej gotowości.
 
-## 21. Formalny status po revision 3
+### 20.1. Zachowane live evidence z fizycznego TPM
+
+Pierwszy fizyczny run odbył się na Windows 11 Home, build 26200,
+`ProductType = 1`, z TPM producenta INTC w wersji 600.18.30.2330. TPM był
+obecny, gotowy i zgodny z TPM 2.0, a TBS był dostępny. Live-proven wyniki to:
 
 ```text
-Stage 0–8
-[██████████] DONE
+CAN_CREATE_REQUIRED_NV_INDEX = PASS
+CAN_READ_REQUIRED_NV_INDEX = PASS
+CAN_INCREMENT_REQUIRED_NV_INDEX = PASS
+CAN_OPEN_POLICY_SESSION = PASS
+```
 
-Model C / authority ownership
-[██████████] CLOSED IN FREEZE CANDIDATE
+Inicjalizacja realnego licznika wykonała przejście `None -> 1`, a następne
+monotoniczne przejście `1 -> 2`. Zarejestrowane z `TPM_RC_SUCCESS` polecenia
+obejmują `GetCapability`, `NV_DefineSpace`, `NV_ReadPublic`, `NV_Increment`,
+`NV_Read`, ponowne `NV_Increment` i `NV_Read`, `StartAuthSession`, `PolicyNV`,
+`PolicyGetDigest`, `PolicyCommandCode`, ponowne `PolicyGetDigest`,
+`FlushContext`, `NV_UndefineSpace` oraz końcowe `GetCapability`. Cleanup NV,
+scratch i kontekstu TBS zakończył się `PASS`.
 
-Offline PDSA ceremony
-[██████████] CLOSED IN FREEZE CANDIDATE
+Live blocker wystąpił jako `NEW_PROCESS_READ_FAILED` przed uruchomieniem
+disposable SCM harness (`cleanup.service = NOT_RUN`), dlatego
+`CAN_DETECT_DISK_STATE_BEHIND_COUNTER = NOT_RUN`. Root cause to zmiana Name po
+pierwszym zapisie, gdy `TPMA_NV_WRITTEN` przechodzi z `CLEAR` do `SET`; Name
+odczytany przed tym zapisem nie jest canonical persistence identity.
 
-Release-policy root chain
-[██████████] CLOSED IN FREEZE CANDIDATE
+## 21. Formalny status po pierwszym fizycznym Windows 11 / TPM 2.0 live run
 
-LPPI state/recovery/idempotency
-[██████████] CLOSED IN FREEZE CANDIDATE
+```text
+TPM Owner-created NV counter
+[██████████] LIVE PASS
 
-Service topology
-[██████████] CLOSED IN FREEZE CANDIDATE
+TPM counter read
+[██████████] LIVE PASS
 
-TPM anti-rollback semantics
-[████████░░] BLOCKED — exact Windows NV creation/policy proof
+TPM monotonic increment
+[██████████] LIVE PASS
 
-MSI maintenance semantics
-[█████████░] SMALL FREEZE GAP CLOSED IN REVISION 3; AWAITS FORMAL FREEZE
+TPM policy session
+[██████████] LIVE PASS
+
+PolicyNV + PolicyCommandCode
+[██████████] LIVE PASS
+
+Cross-process persistence
+[██████░░░░] LIVE BLOCKED — PRE/POST-WRITE NV NAME BUG IDENTIFIED
+
+SCM restart persistence
+[░░░░░░░░░░] NOT_RUN
+
+Lost-response recovery
+[░░░░░░░░░░] NOT_RUN
+
+Stale-disk detection
+[░░░░░░░░░░] NOT_RUN
+
+PolicyAuthorize candidate
+[██████░░░░] IMPLEMENTATION BLOCKED / NOT YET TESTED
+
+Windows TPM/NV substrate
+[████████░░] PARTIAL LIVE PASS
 
 ROOT-OF-TRUST CLOSURE
-[█████████░] REVISION 3 — FREEZE CANDIDATE / NOT ACCEPTED / NOT FROZEN
-
-ROOT_OF_TRUST_FREEZE = BLOCKED_ON_WINDOWS_TPM_SUBSTRATE_PROOF
-
-WINDOWS_CLEAN_INSTALL
-[░░░░░░░░░░] NOT_IMPLEMENTED
+[█████████░] BLOCKED ON REMAINING TPM POLICY/PERSISTENCE PROOF
 
 STAGE 9
 [████████░░] IN PROGRESS
@@ -1033,7 +1064,14 @@ STAGE 9
 CAŁY BLOK WINDOWS 0–14
 [██████░░░░] 60.0% — 9/15 DONE
 
-WINDOWS_STAGE9_READY_FOR_LIVE_CLEAN_INSTALL = NO
 WINDOWS_PRODUCTION_READY = NOT_READY
 STAGE10 = NOT_STARTED
 ```
+
+Live run wykonano na fizycznym Windows 11 Home (build 26200, ProductType 1) z
+gotowym TPM 2.0 INTC 600.18.30.2330 oraz dostępnym TBS. Utworzenie, odczyt i
+dwa monotoniczne przejścia licznika, a także rzeczywista sesja `PolicyNV` +
+`PolicyCommandCode`, zakończyły się `TPM_RC_SUCCESS`. Cleanup NV, scratch i
+kontekstu TBS zakończył się `PASS`. Cross-process pozostał `BLOCKED` przed
+uruchomieniem disposable SCM harness: przyczyną jest zidentyfikowane użycie
+pre-write Name sprzed ustawienia dynamicznego atrybutu `TPMA_NV_WRITTEN`.
