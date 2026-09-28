@@ -368,6 +368,10 @@ def test_response_unmarshal_and_rc_decode() -> None:
     assert "0x00000BAD" in decode_tpm_rc(0xBAD)
 
 
+def test_tpm_rc_value_decoder_preserves_raw_rc() -> None:
+    assert decode_tpm_rc(0x84) == "TPM_RC_VALUE(0x00000084)"
+
+
 @pytest.mark.parametrize(
     ("raw", "expected_name"),
     (

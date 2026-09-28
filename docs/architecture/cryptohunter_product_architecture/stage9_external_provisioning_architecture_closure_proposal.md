@@ -1112,14 +1112,11 @@ negative/cross-branch qualification.
 ## 21. Formalny status po pełnym fizycznym Windows 11 / TPM 2.0 live run
 
 ```text
-PolicyAuthorize candidate
+Two-branch physical proof
 [██████████] LIVE PASS
 
-Windows TPM/NV substrate
-[██████████] 7/7 FORMAL OUTPUTS LIVE PASS
-
 ROOT-OF-TRUST CLOSURE
-[█████████░] TOPOLOGY DEFINED / PRODUCTION VECTOR + TWO-BRANCH LIVE PROOF + FREEZE REMAIN
+[█████████░] TWO-BRANCH TOPOLOGY LIVE PROVEN / PRODUCTION VECTOR FREEZE REMAINS
 
 STAGE 9
 [████████░░] IN PROGRESS
@@ -1132,6 +1129,7 @@ STAGE10 = NOT_STARTED
 ```
 
 Stage 0–8 pozostają frozen i niezmienione. Stage 9 nie jest `DONE`; Stage 10 nie został rozpoczęty.
-MSI i `WindowsExternalProvisioningHandoff` pozostają bez zmian. Następny gate to produkcyjne public
-key material, canonical two-branch policy vector oraz jego fizyczna kwalifikacja — nie ponowne
-dowodzenie samej dostępności komendy `PolicyAuthorize`.
+MSI i `WindowsExternalProvisioningHandoff` pozostają bez zmian. Fizyczny probe dwóch branchy ma
+pełny PASS (łącznie z negatywnym cross-authority i reversed-OR oraz cleanup), ale Stage 9 pozostaje
+`IN PROGRESS`. Następny gate to fizyczny cross-check byte-complete canonical vectora, a następnie
+osobny freeze produkcyjnego public key material, manifestu i reguł migracji.

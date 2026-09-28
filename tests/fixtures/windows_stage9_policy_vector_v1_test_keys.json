@@ -1,0 +1,7 @@
+{
+  "purpose": "TEST_ONLY",
+  "schema": "CryptoHunter.Stage9CanonicalVectorTestKeysV1",
+  "warning": "Deterministic disposable test keys; never production authority material",
+  "k_psa_private_scalar_hex": "0000000000000000000000000000000000000000000000000000000000000001",
+  "k_recovery_private_scalar_hex": "0000000000000000000000000000000000000000000000000000000000000002"
+}

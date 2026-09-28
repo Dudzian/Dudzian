@@ -32,3 +32,14 @@ any `FAIL` forces a nonzero process exit and `failure.reason=CLEANUP_FAILED`.
 Inspect all evidence and cleanup fields. Until a physical run succeeds,
 this file and static tests prove executable construction only, not live TPM
 qualification.
+
+## Wynik fizyczny
+
+Fizyczny Windows 11 / TPM 2.0 zakończył probe kodem `0`. Branch bootstrap/recovery
+i normalny oraz negatywne cross-authority i reversed-OR mają `PASS`; wszystkie
+sesje, oba klucze zewnętrzne, NV oraz kontekst TBS mają cleanup `PASS`.
+Cross-authority zwrócił raw `0x00000084` (`TPM_RC_VALUE`). Reversed `PolicyOR`
+był poprawną operacją, ale wytworzył inny digest, więc późniejszy
+`NV_Increment` został oczekiwanie odrzucony jako `TPM_RC_POLICY_FAIL`.
+Probe-specific refs w tym dowodzie pozostają niezmienione i nie są refs
+canonical `ReleasePolicyV1`.
