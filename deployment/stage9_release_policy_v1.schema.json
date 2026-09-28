@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cryptohunter.invalid/schemas/stage9-release-policy-v1.json",
+  "title": "CryptoHunter ReleasePolicyV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "purpose", "release_policy_id", "serialization_profile", "product_release_root", "pdsa_verification_keys", "k_recovery", "k_psa_profile", "policy_refs", "nv_template", "branch_order"],
+  "properties": {
+    "schema": {"const": "CryptoHunter.ReleasePolicyV1"},
+    "purpose": {"enum": ["PRODUCTION", "TEST_ONLY"]},
+    "release_policy_id": {"type": "string", "pattern": "^[A-Za-z0-9._-]+$"},
+    "serialization_profile": {"const": "CRYPTOHUNTER_CANONICAL_JSON_V1"},
+    "product_release_root": {
+      "type": "object", "additionalProperties": false,
+      "required": ["trust_anchor_source", "algorithm", "threshold", "public_keys_hex"],
+      "properties": {
+        "trust_anchor_source": {"const": "EXTERNALLY_PINNED"},
+        "algorithm": {"const": "Ed25519"}, "threshold": {"const": 2},
+        "public_keys_hex": {"type": "array", "minItems": 3, "maxItems": 3, "uniqueItems": true, "items": {"$ref": "#/$defs/hex32"}}
+      }
+    },
+    "pdsa_verification_keys": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/hex32"}},
+    "k_recovery": {"$ref": "#/$defs/recoveryKey"},
+    "k_psa_profile": {
+      "type": "object", "additionalProperties": false,
+      "required": ["role", "type", "name_algorithm", "object_attributes", "auth_policy_size", "scheme", "scheme_hash", "curve", "kdf"],
+      "properties": {
+        "role": {"const": "LOCAL_PSA_POLICY_AUTHORITY"}, "type": {"const": "TPM_ALG_ECC"},
+        "name_algorithm": {"const": "TPM_ALG_SHA256"}, "object_attributes": {"const": "000400b2"},
+        "auth_policy_size": {"const": 32}, "scheme": {"const": "TPM_ALG_ECDSA"},
+        "scheme_hash": {"const": "TPM_ALG_SHA256"}, "curve": {"const": "TPM_ECC_NIST_P256"}, "kdf": {"const": "TPM_ALG_NULL"}
+      }
+    },
+    "policy_refs": {
+      "type": "object", "additionalProperties": false,
+      "required": ["derivation", "normal_label", "normal_hex", "recovery_label", "recovery_hex"],
+      "properties": {
+        "derivation": {"const": "SHA256_ASCII_LABEL"},
+        "normal_label": {"const": "CryptoHunter.Stage9.NV.Normal.v1"}, "normal_hex": {"$ref": "#/$defs/hex32"},
+        "recovery_label": {"const": "CryptoHunter.Stage9.NV.BootstrapRecovery.v1"}, "recovery_hex": {"$ref": "#/$defs/hex32"}
+      }
+    },
+    "nv_template": {
+      "type": "object", "additionalProperties": false,
+      "required": ["index", "name_algorithm", "attributes", "data_size", "auth_value"],
+      "properties": {
+        "index": {"type": "string", "pattern": "^01[89ab][0-9a-f]{5}$"}, "name_algorithm": {"const": "TPM_ALG_SHA256"},
+        "attributes": {"const": "02040018"}, "data_size": {"const": 8}, "auth_value": {"const": "EMPTY"}
+      }
+    },
+    "branch_order": {"type": "array", "prefixItems": [{"const": "NORMAL"}, {"const": "BOOTSTRAP_RECOVERY"}], "items": false, "minItems": 2, "maxItems": 2}
+  },
+  "allOf": [
+    {"if": {"properties": {"purpose": {"const": "PRODUCTION"}}}, "then": {"properties": {"k_recovery": {"properties": {"provenance": {"const": "PRODUCTION_PROVISIONED"}}}}}},
+    {"if": {"properties": {"purpose": {"const": "TEST_ONLY"}}}, "then": {"properties": {"k_recovery": {"properties": {"provenance": {"const": "TEST_FIXTURE"}}}}}}
+  ],
+  "$defs": {
+    "hex32": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "recoveryKey": {
+      "type": "object", "additionalProperties": false,
+      "required": ["key_id", "role", "type", "name_algorithm", "object_attributes", "auth_policy_size", "scheme", "scheme_hash", "curve", "kdf", "public_hex", "provenance"],
+      "properties": {
+        "key_id": {"type": "string", "minLength": 1}, "role": {"const": "OFFLINE_BOOTSTRAP_RECOVERY_POLICY_AUTHORITY"},
+        "type": {"const": "TPM_ALG_ECC"}, "name_algorithm": {"const": "TPM_ALG_SHA256"}, "object_attributes": {"const": "00040040"},
+        "auth_policy_size": {"const": 0}, "scheme": {"const": "TPM_ALG_ECDSA"}, "scheme_hash": {"const": "TPM_ALG_SHA256"},
+        "curve": {"const": "TPM_ECC_NIST_P256"}, "kdf": {"const": "TPM_ALG_NULL"},
+        "public_hex": {"type": "string", "pattern": "^[0-9a-f]+$", "minLength": 2},
+        "provenance": {"enum": ["PRODUCTION_PROVISIONED", "TEST_FIXTURE"]}
+      }
+    }
+  }
+}

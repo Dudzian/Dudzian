@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cryptohunter.invalid/schemas/stage9-enrollment-policy-material-v1.json",
+  "title": "CryptoHunter Stage9EnrollmentPolicyMaterialV1",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema", "purpose", "serialization_profile", "enrollment_id", "device_binding", "target_tpm", "release_policy_digest", "k_psa", "vector_generation"],
+  "properties": {
+    "schema": {"const": "CryptoHunter.Stage9EnrollmentPolicyMaterialV1"},
+    "purpose": {"enum": ["PRODUCTION", "TEST_ONLY"]},
+    "serialization_profile": {"const": "CRYPTOHUNTER_CANONICAL_JSON_V1"},
+    "enrollment_id": {"type": "string", "pattern": "^[A-Za-z0-9._-]+$"},
+    "device_binding": {"type": "string", "minLength": 1},
+    "target_tpm": {
+      "type": "object", "additionalProperties": false, "required": ["ek_sha256", "ak_sha256"],
+      "properties": {"ek_sha256": {"$ref": "#/$defs/hex32"}, "ak_sha256": {"$ref": "#/$defs/hex32"}}
+    },
+    "release_policy_digest": {"$ref": "#/$defs/hex32"},
+    "k_psa": {"$ref": "#/$defs/psaKey"},
+    "vector_generation": {"type": "string", "pattern": "^(0|[1-9][0-9]{0,19})$"}
+  },
+  "allOf": [
+    {"if": {"properties": {"purpose": {"const": "PRODUCTION"}}}, "then": {"properties": {"k_psa": {"properties": {"provenance": {"const": "PRODUCTION_PROVISIONED"}}}}}},
+    {"if": {"properties": {"purpose": {"const": "TEST_ONLY"}}}, "then": {"properties": {"k_psa": {"properties": {"provenance": {"const": "TEST_FIXTURE"}}}}}}
+  ],
+  "$defs": {
+    "hex32": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "psaKey": {
+      "type": "object", "additionalProperties": false,
+      "required": ["key_id", "role", "type", "name_algorithm", "object_attributes", "auth_policy_size", "scheme", "scheme_hash", "curve", "kdf", "public_hex", "provenance", "binding_authority"],
+      "properties": {
+        "key_id": {"type": "string", "minLength": 1}, "role": {"const": "LOCAL_PSA_POLICY_AUTHORITY"},
+        "type": {"const": "TPM_ALG_ECC"}, "name_algorithm": {"const": "TPM_ALG_SHA256"}, "object_attributes": {"const": "000400b2"},
+        "auth_policy_size": {"const": 32}, "scheme": {"const": "TPM_ALG_ECDSA"}, "scheme_hash": {"const": "TPM_ALG_SHA256"},
+        "curve": {"const": "TPM_ECC_NIST_P256"}, "kdf": {"const": "TPM_ALG_NULL"},
+        "public_hex": {"type": "string", "pattern": "^[0-9a-f]+$", "minLength": 2},
+        "provenance": {"enum": ["PRODUCTION_PROVISIONED", "TEST_FIXTURE"]}, "binding_authority": {"const": "PDSA_ENROLLMENT_PACKAGE_V1"}
+      }
+    }
+  }
+}

@@ -68,7 +68,7 @@ records the private scalar. The final digest is independently checked using
 the TPM 2.0 Part 3 SHA-256 policy-update equation, rather than by comparing a
 codec helper with itself.
 
-Before a physical execution all seven claims remain:
+The evidence object starts fail-closed; before a physical execution all seven claims remain:
 
 ```text
 CAN_CREATE_REQUIRED_NV_INDEX = NOT_RUN
@@ -94,6 +94,22 @@ resolve self-authorization/circularity or freeze the **production root policy
 topology**, Product Release Root, PDSA, or external provisioning handoff.
 Those production decisions remain separate Stage-9 work. Stage 10 is not
 started.
+
+## Latest retained physical evidence
+
+The latest physical Windows 11 / TPM 2.0 execution produced `PASS` for all
+seven formal outputs, including service restart and stale-disk detection.
+`LoadExternal`, `VerifySignature`, and `PolicyAuthorize` returned
+`TPM_RC_SUCCESS`; the final digest matched the independently computed
+`PolicyAuthorize` digest. The verification ticket was owner-backed
+(`TPM_ST_VERIFIED`, `TPM_RH_OWNER`, nonempty digest), and cleanup of the
+external key, policy session, NV index, service, scratch state, and TBS context
+all passed.
+
+This retained result establishes `PolicyAuthorize candidate = LIVE PASS` and
+does not alter the isolation rule above. In particular, its disposable key is
+not production Product Release Root material, and the probe still does not
+manufacture a duplicate-branch `PolicyOR`.
 
 Before opening TBS, the probe qualifies machine-readable CIM values. The OS
 must have `ProductType == 1` (Windows client, never Windows Server) and a

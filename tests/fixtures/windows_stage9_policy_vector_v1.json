@@ -1,0 +1,119 @@
+{
+  "enrollment_policy_material": {
+    "device_binding": "TEST_DEVICE_ONLY",
+    "enrollment_id": "TEST_ENROLLMENT_STAGE9_V1",
+    "k_psa": {
+      "auth_policy_size": 32,
+      "binding_authority": "PDSA_ENROLLMENT_PACKAGE_V1",
+      "curve": "TPM_ECC_NIST_P256",
+      "kdf": "TPM_ALG_NULL",
+      "key_id": "TEST_K_PSA",
+      "name_algorithm": "TPM_ALG_SHA256",
+      "object_attributes": "000400b2",
+      "provenance": "TEST_FIXTURE",
+      "public_hex": "0023000b000400b20020aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa00100018000b0003001000206b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c29600204fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5",
+      "role": "LOCAL_PSA_POLICY_AUTHORITY",
+      "scheme": "TPM_ALG_ECDSA",
+      "scheme_hash": "TPM_ALG_SHA256",
+      "type": "TPM_ALG_ECC"
+    },
+    "purpose": "TEST_ONLY",
+    "release_policy_digest": "9fffb72d9558071d82679e424e7621bc175118e601f67534a31ffae06e0b9b39",
+    "schema": "CryptoHunter.Stage9EnrollmentPolicyMaterialV1",
+    "serialization_profile": "CRYPTOHUNTER_CANONICAL_JSON_V1",
+    "target_tpm": {
+      "ak_sha256": "6666666666666666666666666666666666666666666666666666666666666666",
+      "ek_sha256": "5555555555555555555555555555555555555555555555555555555555555555"
+    },
+    "vector_generation": "7"
+  },
+  "policy_vector": {
+    "bootstrap_approved_policy": "e3a630b813c0bc9ff1788b03344472a75aa3d4e1af7f542ff2a22b882a1d1a07",
+    "bootstrap_increment_cp_hash": "a81fec35e4e5eeffb5589b7d0990b8dc42363da8b7d659ca6fd9da963dd1a718",
+    "branch_order": [
+      "NORMAL",
+      "BOOTSTRAP_RECOVERY"
+    ],
+    "k_psa_name": "000b3e40ac55edff43d81deaf082814d3f517a3f97cd5f7b4517160885335244910e",
+    "k_recovery_name": "000b43b0b5772397a3cfddf6d63aadda1ffb7712161bce1147b57edbc8cbe8b8cd80",
+    "normal_approved_policy": "ead8658263fd2e94688813bbc174d3095222dc4133855bb69a44bb874dc93559",
+    "normal_branch_digest": "7bb141d27754f45412848347a1b74d480996c3b7a2ab803cb22c0ee156691f50",
+    "normal_generation": "7",
+    "normal_policy_ref": "f3ebd28ea16e4fbb02b0367cf5ba7919bc9db724dba4b9367561929bd23addbf",
+    "nv_name_post_write": "000bb34a3a41b728a3de3afa2c610e5af92f8f96f8590a3003758961212571548753",
+    "nv_name_pre_write": "000b96e2557076d41f1be01c2bde7d6eb2bffed45f6dd9421ea9fd70569f978e7edc",
+    "nv_public_post_write": "018f0001000b2204001800209e6c888c830f14e1ca5e0610eaa48d24e669c548a47be6f35441f798c3969e5b0008",
+    "nv_public_pre_write": "018f0001000b0204001800209e6c888c830f14e1ca5e0610eaa48d24e669c548a47be6f35441f798c3969e5b0008",
+    "post_write_recovery_approved_policy": "ebccb4e1be58d111d97b9c718c53b84b4789353a174bcbb4492391561a02dc76",
+    "post_write_recovery_increment_cp_hash": "229973cb45d0a1b83da84721f8145c0c66695958d6ce89358a64faf0c8d61c50",
+    "production_root_policy_digest": "9e6c888c830f14e1ca5e0610eaa48d24e669c548a47be6f35441f798c3969e5b",
+    "recovery_branch_digest": "23d2af647c456155696797feb01fd95370fa9ab94f10bfc4bb66f842f713fae2",
+    "recovery_policy_ref": "9458726e85a3e0a747233e6ea473ad9baa26fce513cc9814259c286df7ca62ed",
+    "schema": "CryptoHunter.Stage9PolicyVectorV1",
+    "source_enrollment_material_digest": "1dcc9c74a21db63391d48c33f8f15bfb32db3dff4f825c21a5625c7fabaf11df",
+    "source_release_policy_digest": "9fffb72d9558071d82679e424e7621bc175118e601f67534a31ffae06e0b9b39"
+  },
+  "release_policy": {
+    "branch_order": [
+      "NORMAL",
+      "BOOTSTRAP_RECOVERY"
+    ],
+    "k_psa_profile": {
+      "auth_policy_size": 32,
+      "curve": "TPM_ECC_NIST_P256",
+      "kdf": "TPM_ALG_NULL",
+      "name_algorithm": "TPM_ALG_SHA256",
+      "object_attributes": "000400b2",
+      "role": "LOCAL_PSA_POLICY_AUTHORITY",
+      "scheme": "TPM_ALG_ECDSA",
+      "scheme_hash": "TPM_ALG_SHA256",
+      "type": "TPM_ALG_ECC"
+    },
+    "k_recovery": {
+      "auth_policy_size": 0,
+      "curve": "TPM_ECC_NIST_P256",
+      "kdf": "TPM_ALG_NULL",
+      "key_id": "TEST_K_RECOVERY",
+      "name_algorithm": "TPM_ALG_SHA256",
+      "object_attributes": "00040040",
+      "provenance": "TEST_FIXTURE",
+      "public_hex": "0023000b00040040000000100018000b0003001000207cf27b188d034f7e8a52380304b51ac3c08969e277f21b35a60b48fc47669978002007775510db8ed040293d9ac69f7430dbba7dade63ce982299e04b79d227873d1",
+      "role": "OFFLINE_BOOTSTRAP_RECOVERY_POLICY_AUTHORITY",
+      "scheme": "TPM_ALG_ECDSA",
+      "scheme_hash": "TPM_ALG_SHA256",
+      "type": "TPM_ALG_ECC"
+    },
+    "nv_template": {
+      "attributes": "02040018",
+      "auth_value": "EMPTY",
+      "data_size": 8,
+      "index": "018f0001",
+      "name_algorithm": "TPM_ALG_SHA256"
+    },
+    "pdsa_verification_keys": [
+      "4444444444444444444444444444444444444444444444444444444444444444"
+    ],
+    "policy_refs": {
+      "derivation": "SHA256_ASCII_LABEL",
+      "normal_hex": "f3ebd28ea16e4fbb02b0367cf5ba7919bc9db724dba4b9367561929bd23addbf",
+      "normal_label": "CryptoHunter.Stage9.NV.Normal.v1",
+      "recovery_hex": "9458726e85a3e0a747233e6ea473ad9baa26fce513cc9814259c286df7ca62ed",
+      "recovery_label": "CryptoHunter.Stage9.NV.BootstrapRecovery.v1"
+    },
+    "product_release_root": {
+      "algorithm": "Ed25519",
+      "public_keys_hex": [
+        "1111111111111111111111111111111111111111111111111111111111111111",
+        "2222222222222222222222222222222222222222222222222222222222222222",
+        "3333333333333333333333333333333333333333333333333333333333333333"
+      ],
+      "threshold": 2,
+      "trust_anchor_source": "EXTERNALLY_PINNED"
+    },
+    "purpose": "TEST_ONLY",
+    "release_policy_id": "TEST_RELEASE_STAGE9_V1",
+    "schema": "CryptoHunter.ReleasePolicyV1",
+    "serialization_profile": "CRYPTOHUNTER_CANONICAL_JSON_V1"
+  },
+  "warning": "TEST_ONLY deterministic public material; never a production authority"
+}
