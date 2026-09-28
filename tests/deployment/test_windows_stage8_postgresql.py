@@ -683,8 +683,8 @@ def test_real_service_sid_resolves_only_after_reviewed_scm_creation(tmp_path: Pa
     try:
         probe._create_service(service, account, request)
         sid, _, _ = win32security.LookupAccountName(None, account)
-        assert win32security.IsValidSid(sid)
-        assert re.fullmatch(r"S-1-5-80(?:-\d+){5}", win32security.ConvertSidToStringSid(sid))
+        string_sid = win32security.ConvertSidToStringSid(sid)
+        assert re.fullmatch(r"S-1-5-80(?:-\d+){5}", string_sid)
     finally:
         cleanup_errors = probe._cleanup_service(service)
     assert cleanup_errors == []
