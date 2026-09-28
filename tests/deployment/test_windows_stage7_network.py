@@ -157,7 +157,8 @@ def test_failure_diagnostic_preserves_phase_exception_and_exited_peer_stderr() -
     assert "peer exploded" in detail
 
 
-def test_direct_loopback_proxy_isolation_preserves_and_exactly_restores_environment(
+@pytest.mark.skipif(os.name == "nt", reason="POSIX preserves proxy aliases independently")
+def test_direct_loopback_proxy_isolation_preserves_posix_aliases_and_restores_environment(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("NO_PROXY", "internal.example")
@@ -167,6 +168,41 @@ def test_direct_loopback_proxy_isolation_preserves_and_exactly_restores_environm
         assert os.environ["no_proxy"] == "127.0.0.1,localhost"
     assert os.environ["NO_PROXY"] == "internal.example"
     assert "no_proxy" not in os.environ
+
+
+def _effective_windows_no_proxy() -> str | None:
+    matches = [value for name, value in os.environ.items() if name.casefold() == "no_proxy"]
+    assert len(matches) <= 1
+    return matches[0] if matches else None
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows environment semantics required")
+def test_direct_loopback_proxy_isolation_restores_absent_windows_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("NO_PROXY", raising=False)
+    monkeypatch.delenv("no_proxy", raising=False)
+    assert _effective_windows_no_proxy() is None
+
+    with probe._direct_loopback_environment():
+        assert _effective_windows_no_proxy() == "127.0.0.1,localhost"
+
+    assert _effective_windows_no_proxy() is None
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows environment semantics required")
+def test_direct_loopback_proxy_isolation_preserves_and_restores_windows_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("NO_PROXY", raising=False)
+    monkeypatch.delenv("no_proxy", raising=False)
+    monkeypatch.setenv("NO_PROXY", "internal.example")
+    assert _effective_windows_no_proxy() == "internal.example"
+
+    with probe._direct_loopback_environment():
+        assert _effective_windows_no_proxy() == "internal.example,127.0.0.1,localhost"
+
+    assert _effective_windows_no_proxy() == "internal.example"
 
 
 def test_every_external_wait_and_socket_operation_is_bounded() -> None:
