@@ -319,7 +319,11 @@ def test_scm_probe_preserves_ownership_json_depth_and_captures_cleanup_diagnosti
 
 
 def test_public_platform_acl_boundary_executes_dacl_qualification(monkeypatch):
-    monkeypatch.setattr(qualifier.os, "name", "nt")
+    real_os = qualifier.os
+    host_os_name = real_os.name
+    monkeypatch.setattr(qualifier, "os", SimpleNamespace(name="nt"))
+    assert qualifier.os.name == "nt"
+    assert real_os.name == host_os_name
     monkeypatch.setattr(qualifier, "qualify_native_paths", lambda **_: "paths")
     called = {}
     monkeypatch.setattr(
@@ -334,6 +338,7 @@ def test_public_platform_acl_boundary_executes_dacl_qualification(monkeypatch):
 
     assert qualify_acl("S-1-5-80-123") == {"CONFIG_DACL": "PASS"}
     assert called == {"paths": "paths", "sid": "S-1-5-80-123"}
+    assert real_os.name == host_os_name
 
 
 class FileApi:
@@ -594,7 +599,7 @@ def test_cli_normalizes_pywintypes_style_error_without_traceback(tmp_path, monke
 
     record_path = tmp_path / "record.json"
     record_path.write_text(json.dumps(valid_record()), encoding="utf-8")
-    monkeypatch.setattr(provisioner.os, "name", "nt")
+    monkeypatch.setattr(provisioner, "os", SimpleNamespace(name="nt"))
     monkeypatch.setitem(sys.modules, "win32api", SimpleNamespace())
     monkeypatch.setitem(sys.modules, "win32file", SimpleNamespace())
     monkeypatch.setitem(sys.modules, "win32security", SimpleNamespace())
