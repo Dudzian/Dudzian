@@ -25,6 +25,9 @@ import sys
 import tempfile
 from typing import Any, Callable, Iterable
 
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import ec, utils
+
 
 OUTPUT_NAMES = (
     "CAN_CREATE_REQUIRED_NV_INDEX",
@@ -51,6 +54,9 @@ TPM_CC_POLICY_COMMAND_CODE = 0x0000016C
 TPM_CC_POLICY_OR = 0x00000171
 TPM_CC_POLICY_GET_DIGEST = 0x00000189
 TPM_CC_FLUSH_CONTEXT = 0x00000165
+TPM_CC_LOAD_EXTERNAL = 0x00000167
+TPM_CC_POLICY_AUTHORIZE = 0x0000016A
+TPM_CC_VERIFY_SIGNATURE = 0x00000177
 TPM_RH_OWNER = 0x40000001
 TPM_RH_NULL = 0x40000007
 TPM_RS_PW = 0x40000009
@@ -58,6 +64,10 @@ TPM_CAP_HANDLES = 0x00000001
 TPM_HT_NV_INDEX = 0x01
 TPM_ALG_SHA256 = 0x000B
 TPM_ALG_NULL = 0x0010
+TPM_ALG_ECDSA = 0x0018
+TPM_ALG_ECC = 0x0023
+TPM_ECC_NIST_P256 = 0x0003
+TPM_ST_VERIFIED = 0x8022
 TPM_SE_POLICY = 0x01
 TPM_EO_EQ = 0x0000
 TPMA_NV_OWNERWRITE = 0x00000002
@@ -75,6 +85,10 @@ WINDOWS_11_MINIMUM_BUILD = 22000
 MAX_RESPONSE = 16 * 1024
 NV_OWNER_FIRST = 0x01800000
 NV_OWNER_LAST = 0x01BFFFFF
+TPMA_OBJECT_USERWITHAUTH = 0x00000040
+TPMA_OBJECT_SIGN_ENCRYPT = 0x00040000
+POLICY_REF_LABEL = "CryptoHunter.Stage9.TPM.PolicyAuthorize.Acceptance.v1"
+POLICY_REF = POLICY_REF_LABEL.encode("ascii")
 
 TPM_RC_SUCCESS = 0x000
 TPM_RC_ATTRIBUTES = 0x082
@@ -187,6 +201,97 @@ def response_parameters(response: bytes) -> bytes:
     return response[offset:]
 
 
+@dataclass(frozen=True)
+class VerificationTicket:
+    tag: int
+    hierarchy: int
+    digest: bytes
+
+    def marshal(self) -> bytes:
+        return u16(self.tag) + u32(self.hierarchy) + tpm2b(self.digest)
+
+
+def parse_verification_ticket(data: bytes, offset: int = 0) -> tuple[VerificationTicket, int]:
+    tag, offset = read_u16(data, offset)
+    hierarchy, offset = read_u32(data, offset)
+    digest, offset = read_tpm2b(data, offset)
+    if tag != TPM_ST_VERIFIED:
+        raise ProbeError("INVALID_VERIFICATION_TICKET", f"tag=0x{tag:04X}")
+    return VerificationTicket(tag, hierarchy, digest), offset
+
+
+def ecc_public_area(x: bytes, y: bytes) -> bytes:
+    """Marshal a verification-only ECDSA P-256 TPMT_PUBLIC."""
+    if len(x) != 32 or len(y) != 32:
+        raise ValueError("P-256 coordinates must be 32 bytes")
+    attributes = TPMA_OBJECT_USERWITHAUTH | TPMA_OBJECT_SIGN_ENCRYPT
+    return (
+        u16(TPM_ALG_ECC)
+        + u16(TPM_ALG_SHA256)
+        + u32(attributes)
+        + tpm2b(b"")
+        + u16(TPM_ALG_NULL)  # symmetric
+        + u16(TPM_ALG_ECDSA)
+        + u16(TPM_ALG_SHA256)
+        + u16(TPM_ECC_NIST_P256)
+        + u16(TPM_ALG_NULL)  # kdf
+        + tpm2b(x)
+        + tpm2b(y)
+    )
+
+
+def ecdsa_signature(r: bytes, s: bytes) -> bytes:
+    if not r or not s or len(r) > 32 or len(s) > 32:
+        raise ValueError("invalid P-256 ECDSA component")
+    return u16(TPM_ALG_ECDSA) + u16(TPM_ALG_SHA256) + tpm2b(r) + tpm2b(s)
+
+
+def load_external_request(public: bytes, hierarchy: int) -> bytes:
+    parameters = tpm2b(b"") + tpm2b(public) + u32(hierarchy)
+    return command_packet(
+        TPM_CC_LOAD_EXTERNAL,
+        (),
+        parameters,
+        auth=False,
+    )
+
+
+def verify_signature_request(handle: int, digest: bytes, signature: bytes) -> bytes:
+    return command_packet(
+        TPM_CC_VERIFY_SIGNATURE, (handle,), tpm2b(digest) + signature, auth=False
+    )
+
+
+def policy_authorize_request(
+    session: int,
+    approved_policy: bytes,
+    policy_ref: bytes,
+    key_name: bytes,
+    ticket: VerificationTicket,
+) -> bytes:
+    parameters = tpm2b(approved_policy) + tpm2b(policy_ref) + tpm2b(key_name) + ticket.marshal()
+    return command_packet(TPM_CC_POLICY_AUTHORIZE, (session,), parameters, auth=False)
+
+
+def expected_policy_authorize_digest(key_name: bytes, policy_ref: bytes) -> bytes:
+    """Independent Part 3 PolicyAuthorize update, for a SHA-256 session."""
+    first = hashlib.sha256(bytes(32) + u32(TPM_CC_POLICY_AUTHORIZE) + key_name).digest()
+    return hashlib.sha256(first + policy_ref).digest()
+
+
+def validate_acceptance_ticket(ticket: VerificationTicket) -> None:
+    """Reject tickets which cannot prove owner-associated TPM verification."""
+    if ticket.tag != TPM_ST_VERIFIED:
+        raise ProbeError("INVALID_VERIFICATION_TICKET", f"tag=0x{ticket.tag:04X}")
+    if ticket.hierarchy != TPM_RH_OWNER:
+        raise ProbeError(
+            "VERIFICATION_TICKET_HIERARCHY_MISMATCH",
+            f"expected=0x{TPM_RH_OWNER:08X}, actual=0x{ticket.hierarchy:08X}",
+        )
+    if not ticket.digest:
+        raise ProbeError("EMPTY_VERIFICATION_TICKET_DIGEST", "owner ticket digest is empty")
+
+
 def reconcile_pending(pending: int, observed: int, increment: Callable[[], int]) -> tuple[int, int]:
     """Recover one lost response without ever issuing a duplicate increment."""
     if observed == pending:
@@ -227,6 +332,7 @@ def blank_evidence(revision: str, timestamp: str) -> dict[str, Any]:
         "commands": [],
         "responses": [],
         "policy_digests": {},
+        "policy_authorize": None,
         "counter_transitions": [],
         "lost_response_cases": {},
         "cleanup": {"nv": "NOT_RUN", "service": "NOT_RUN"},
@@ -458,6 +564,43 @@ class NvProbe:
         params = u32(len(branches)) + b"".join(tpm2b(branch) for branch in branches)
         request = command_packet(TPM_CC_POLICY_OR, (session,), params, auth=False)
         response_parameters(self.t.submit(TPM_CC_POLICY_OR, request))
+
+    def load_external(self, public: bytes, hierarchy: int) -> tuple[int, bytes]:
+        data = response_parameters(
+            self.t.submit(TPM_CC_LOAD_EXTERNAL, load_external_request(public, hierarchy))
+        )
+        handle, offset = read_u32(data)
+        name, offset = read_tpm2b(data, offset)
+        if offset != len(data):
+            raise ProbeError("MALFORMED_LOAD_EXTERNAL_RESPONSE", "trailing response bytes")
+        expected_name = u16(TPM_ALG_SHA256) + hashlib.sha256(public).digest()
+        if name != expected_name:
+            raise ProbeError("EXTERNAL_KEY_NAME_MISMATCH", "TPM Name does not match public area")
+        return handle, name
+
+    def verify_signature(
+        self, handle: int, digest: bytes, signature: bytes
+    ) -> VerificationTicket:
+        request = verify_signature_request(handle, digest, signature)
+        data = response_parameters(self.t.submit(TPM_CC_VERIFY_SIGNATURE, request))
+        ticket, offset = parse_verification_ticket(data)
+        if offset != len(data):
+            raise ProbeError("MALFORMED_VERIFICATION_TICKET", "trailing response bytes")
+        validate_acceptance_ticket(ticket)
+        return ticket
+
+    def policy_authorize(
+        self,
+        session: int,
+        approved_policy: bytes,
+        policy_ref: bytes,
+        key_name: bytes,
+        ticket: VerificationTicket,
+    ) -> None:
+        request = policy_authorize_request(
+            session, approved_policy, policy_ref, key_name, ticket
+        )
+        response_parameters(self.t.submit(TPM_CC_POLICY_AUTHORIZE, request))
 
     def flush(self, handle: int) -> None:
         request = command_packet(TPM_CC_FLUSH_CONTEXT, (handle,), b"", auth=False)
@@ -765,6 +908,7 @@ def run_probe(output: Path) -> int:
     selected: int | None = None
     created = False
     session: int | None = None
+    external_key_handle: int | None = None
     fatal_reason: str | None = None
     active_output = OUTPUT_NAMES[0]
     scratch = Path(tempfile.mkdtemp(prefix="cryptohunter-tpm-acceptance-"))
@@ -814,24 +958,80 @@ def run_probe(output: Path) -> int:
         nv.policy_nv(session, selected, after)
         evidence["policy_digests"]["after_policy_nv"] = nv.policy_digest(session).hex()
         nv.policy_command_code(session, TPM_CC_NV_INCREMENT)
-        branch = nv.policy_digest(session)
-        evidence["policy_digests"]["after_policy_command_code"] = branch.hex()
+        approved_policy = nv.policy_digest(session)
+        evidence["policy_digests"]["after_policy_command_code"] = approved_policy.hex()
         evidence["policy_digests"]["policy_or"] = {
             "status": "NOT_RUN",
             "reason": "ONLY_ONE_REAL_CANDIDATE_BRANCH_AVAILABLE",
-            "branches": [branch.hex()],
+            "branches": [approved_policy.hex()],
         }
-        evidence["policy_digests"]["approvedPolicy"] = None
-        evidence["policy_digests"]["policyRef"] = ""
-        evidence["policy_digests"]["keySign_name"] = None
-        evidence["policy_digests"]["verification_ticket"] = None
-        evidence["policy_digests"]["final_policy_digest"] = None
-        _set(
-            evidence,
-            OUTPUT_NAMES[4],
-            "BLOCKED",
-            "POLICY_AUTHORIZE_COMMAND_PATH_NOT_IMPLEMENTED",
+        evidence["policy_digests"]["approvedPolicy"] = approved_policy.hex()
+
+        # Acceptance-only authority: the private scalar remains in this process
+        # and only the public TPMT_PUBLIC is submitted to the TPM or evidence.
+        private_key = ec.generate_private_key(ec.SECP256R1())
+        numbers = private_key.public_key().public_numbers()
+        x = numbers.x.to_bytes(32, "big")
+        y = numbers.y.to_bytes(32, "big")
+        external_public = ecc_public_area(x, y)
+        external_key_handle, external_key_name = nv.load_external(
+            external_public, TPM_RH_OWNER
         )
+        a_hash = hashlib.sha256(approved_policy + POLICY_REF).digest()
+        der_signature = private_key.sign(
+            a_hash, ec.ECDSA(utils.Prehashed(hashes.SHA256()))
+        )
+        r_int, s_int = utils.decode_dss_signature(der_signature)
+        r = r_int.to_bytes(32, "big")
+        s = s_int.to_bytes(32, "big")
+        signature = ecdsa_signature(r, s)
+        ticket = nv.verify_signature(external_key_handle, a_hash, signature)
+        nv.policy_authorize(
+            session, approved_policy, POLICY_REF, external_key_name, ticket
+        )
+        final_digest = nv.policy_digest(session)
+        independent_digest = expected_policy_authorize_digest(external_key_name, POLICY_REF)
+        verified = final_digest == independent_digest and final_digest != approved_policy
+        evidence["policy_authorize"] = {
+            "key": {
+                "type": "ECDSA_P256",
+                "name_alg": "SHA256",
+                "name": external_key_name.hex(),
+                "handle": f"0x{external_key_handle:08X}",
+                "external_key_public": external_public.hex(),
+                "curve": "TPM_ECC_NIST_P256",
+                "scheme": "TPM_ALG_ECDSA",
+                "hierarchy": "TPM_RH_OWNER",
+            },
+            "approved_policy": approved_policy.hex(),
+            "policy_ref": POLICY_REF.hex(),
+            "policy_ref_label": POLICY_REF_LABEL,
+            "a_hash": a_hash.hex(),
+            "signature": {
+                "scheme": "ECDSA",
+                "hash_alg": "SHA256",
+                "r": r.hex(),
+                "s": s.hex(),
+            },
+            "verification_ticket": {
+                "tag": f"0x{ticket.tag:04X}",
+                "hierarchy": f"0x{ticket.hierarchy:08X}",
+                "digest": ticket.digest.hex(),
+            },
+            "final_policy_digest": final_digest.hex(),
+            "independent_expected_digest": independent_digest.hex(),
+            "verified": verified,
+        }
+        evidence["policy_digests"]["policyRef"] = POLICY_REF.hex()
+        evidence["policy_digests"]["keySign_name"] = external_key_name.hex()
+        evidence["policy_digests"]["verification_ticket"] = ticket.digest.hex()
+        evidence["policy_digests"]["final_policy_digest"] = final_digest.hex()
+        if not verified:
+            raise ProbeError(
+                "POLICY_AUTHORIZE_DIGEST_MISMATCH",
+                f"actual={final_digest.hex()}, expected={independent_digest.hex()}",
+            )
+        _set(evidence, OUTPUT_NAMES[4], "PASS")
 
         active_output = OUTPUT_NAMES[5]
         evidence["new_process"] = _new_process_read(
@@ -884,7 +1084,8 @@ def run_probe(output: Path) -> int:
             except json.JSONDecodeError:
                 evidence["new_process"] = {"detail": exc.detail[:1000]}
         if evidence["outputs"][active_output]["status"] == "NOT_RUN":
-            _set(evidence, active_output, "BLOCKED", exc.reason)
+            reason = f"{exc.reason}:{exc.detail}" if active_output == OUTPUT_NAMES[4] else exc.reason
+            _set(evidence, active_output, "BLOCKED", reason)
     except Exception as exc:
         fatal_reason = "UNEXPECTED_PROBE_ERROR"
         if evidence["outputs"][active_output]["status"] == "NOT_RUN":
@@ -894,8 +1095,15 @@ def run_probe(output: Path) -> int:
         if session is not None:
             try:
                 NvProbe(transport).flush(session)
+                evidence["cleanup"]["policy_session"] = "PASS"
             except Exception as exc:
                 evidence["cleanup"]["policy_session"] = f"FAIL:{type(exc).__name__}"
+        if external_key_handle is not None:
+            try:
+                NvProbe(transport).flush(external_key_handle)
+                evidence["cleanup"]["external_key"] = "PASS"
+            except Exception as exc:
+                evidence["cleanup"]["external_key"] = f"FAIL:{type(exc).__name__}"
         if selected is not None and may_cleanup(selected, created, selected):
             try:
                 NvProbe(transport).undefine(selected)
@@ -915,7 +1123,14 @@ def run_probe(output: Path) -> int:
             )
         cleanup_failures = [
             name
-            for name in ("nv", "service", "scratch", "tbs_context")
+            for name in (
+                "nv",
+                "service",
+                "scratch",
+                "tbs_context",
+                "policy_session",
+                "external_key",
+            )
             if str(evidence["cleanup"].get(name, "")).startswith("FAIL")
         ]
         if cleanup_failures:
@@ -925,8 +1140,6 @@ def run_probe(output: Path) -> int:
         for name in OUTPUT_NAMES:
             print(f"{name} = {evidence['outputs'][name]['status']}")
     all_pass = all(evidence["outputs"][name]["status"] == "PASS" for name in OUTPUT_NAMES)
-    # Candidate policy is deliberately expected to remain BLOCKED until the
-    # live evidence proves a non-circular PolicyAuthorize construction.
     return 0 if all_pass and fatal_reason is None else 1
 
 
