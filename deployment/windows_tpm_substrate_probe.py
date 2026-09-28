@@ -221,6 +221,9 @@ def blank_evidence(revision: str, timestamp: str) -> dict[str, Any]:
         "selected_nv_index": None,
         "nv_public": None,
         "nv_name": None,
+        "nv_name_recomputed": None,
+        "nv_identity_transition": None,
+        "new_process": None,
         "commands": [],
         "responses": [],
         "policy_digests": {},
@@ -543,7 +546,7 @@ def qualify_new_counter(
     transitions: list[dict[str, Any]],
     mark_created: Callable[[], None],
     mark_read: Callable[[], None],
-) -> tuple[bytes, bytes, int, int]:
+) -> tuple[bytes, bytes, int, int, dict[str, Any]]:
     """Create and qualify a fresh counter in the only valid command order.
 
     ``mark_created`` runs immediately after DefineSpace succeeds so cleanup
@@ -553,7 +556,7 @@ def qualify_new_counter(
     """
     nv.define(handle)
     mark_created()
-    public, name = nv.read_public(handle)
+    pre_write_public, pre_write_name = nv.read_public(handle)
 
     # TPMA_NV_WRITTEN is clear after DefineSpace.  The first increment is the
     # initializing write; an NV_Read before it may return NV_UNINITIALIZED.
@@ -562,12 +565,32 @@ def qualify_new_counter(
     mark_read()
     transitions.append({"purpose": "initialization", "before": None, "after": initialized})
 
+    # TPMA_NV_WRITTEN is now set and is part of TPMS_NV_PUBLIC.  Consequently
+    # this second Name, rather than the pre-write Name, is the stable identity
+    # which persistence checks must carry across processes and service starts.
+    post_write_public, post_write_name = nv.read_public(handle)
+
     nv.increment(handle)
     after = nv.read(handle)
     transitions.append({"purpose": "monotonic_transition", "before": initialized, "after": after})
     if after != initialized + 1:
         raise ProbeError("COUNTER_NOT_MONOTONIC", f"before={initialized}, after={after}")
-    return public, name, initialized, after
+    pre_write_recomputed = u16(TPM_ALG_SHA256) + hashlib.sha256(pre_write_public).digest()
+    post_write_recomputed = u16(TPM_ALG_SHA256) + hashlib.sha256(post_write_public).digest()
+    if pre_write_name != pre_write_recomputed:
+        raise ProbeError("PRE_WRITE_NV_NAME_INVALID", "returned Name does not match public area")
+    if post_write_name != post_write_recomputed:
+        raise ProbeError("POST_WRITE_NV_NAME_INVALID", "returned Name does not match public area")
+    identity_transition = {
+        "pre_write_public": pre_write_public.hex(),
+        "pre_write_name": pre_write_name.hex(),
+        "pre_write_name_recomputed": pre_write_recomputed.hex(),
+        "post_write_public": post_write_public.hex(),
+        "post_write_name": post_write_name.hex(),
+        "post_write_name_recomputed": post_write_recomputed.hex(),
+        "name_changed_after_first_write": pre_write_name != post_write_name,
+    }
+    return post_write_public, post_write_name, initialized, after, identity_transition
 
 
 def _write_json(path: Path, value: dict[str, Any]) -> None:
@@ -592,22 +615,58 @@ def _read_child(handle: int, expected_name: str, output: Path) -> int:
         transport.close()
 
 
-def _new_process_read(handle: int, name: str, output: Path) -> dict[str, Any]:
-    result = subprocess.run(
-        [
-            sys.executable,
-            str(Path(__file__).resolve()),
-            "--read-existing",
-            hex(handle),
-            name,
-            str(output),
-        ],
-        timeout=60,
-        check=False,
-    )
-    if result.returncode != 0 or not output.exists():
-        raise ProbeError("NEW_PROCESS_READ_FAILED", f"exit={result.returncode}")
-    return json.loads(output.read_text(encoding="utf-8"))
+def _new_process_read(
+    handle: int, name: str, value: int, public: str, output: Path
+) -> dict[str, Any]:
+    command = [
+        sys.executable,
+        str(Path(__file__).resolve()),
+        "--read-existing",
+        hex(handle),
+        name,
+        str(output),
+    ]
+    try:
+        result = subprocess.run(
+            command, timeout=60, check=False, capture_output=True, text=True
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ProbeError(
+            "NEW_PROCESS_EXECUTION_FAILED",
+            json.dumps({"exception": type(exc).__name__, "output_exists": output.exists()}),
+        ) from exc
+
+    diagnostic: dict[str, Any] = {
+        "returncode": result.returncode,
+        "stdout_tail": result.stdout[-500:],
+        "stderr_tail": result.stderr[-500:],
+        "output_exists": output.exists(),
+    }
+    child: dict[str, Any] | None = None
+    if output.exists():
+        try:
+            loaded = json.loads(output.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                child = loaded
+                diagnostic["child"] = child
+        except (OSError, json.JSONDecodeError) as exc:
+            diagnostic["output_error"] = type(exc).__name__
+
+    def fail(reason: str) -> None:
+        raise ProbeError(reason, json.dumps(diagnostic, sort_keys=True))
+
+    if child is not None:
+        if child.get("handle") != handle:
+            fail("NEW_PROCESS_HANDLE_MISMATCH")
+        if child.get("name") != name:
+            fail("NEW_PROCESS_NAME_MISMATCH")
+        if child.get("value") != value:
+            fail("NEW_PROCESS_VALUE_MISMATCH")
+        if child.get("public") != public:
+            fail("NEW_PROCESS_PUBLIC_MISMATCH")
+    if result.returncode != 0 or child is None:
+        fail("NEW_PROCESS_EXECUTION_FAILED" if child is None else "NEW_PROCESS_READ_FAILED")
+    return diagnostic
 
 
 def _scm_restart_check(handle: int, name: str, scratch: Path, evidence: dict[str, Any]) -> None:
@@ -731,9 +790,10 @@ def run_probe(output: Path) -> int:
             _set(evidence, OUTPUT_NAMES[1], "PASS")
             active_output = OUTPUT_NAMES[2]
 
-        public, name, _g, after = qualify_new_counter(
+        public, name, _g, after, identity_transition = qualify_new_counter(
             nv, selected, evidence["counter_transitions"], mark_created, mark_read
         )
+        evidence["nv_identity_transition"] = identity_transition
         evidence["nv_public"] = public.hex()
         evidence["nv_name"] = name.hex()
         evidence["nv_name_recomputed"] = (
@@ -774,11 +834,9 @@ def run_probe(output: Path) -> int:
         )
 
         active_output = OUTPUT_NAMES[5]
-        child = _new_process_read(selected, name.hex(), scratch / "new-process.json")
-        if child["value"] != after or child["name"] != name.hex():
-            raise ProbeError(
-                "NEW_PROCESS_PERSISTENCE_MISMATCH", "counter changed across process boundary"
-            )
+        evidence["new_process"] = _new_process_read(
+            selected, name.hex(), after, public.hex(), scratch / "new-process.json"
+        )
         _scm_restart_check(selected, name.hex(), scratch, evidence)
         _set(evidence, OUTPUT_NAMES[5], "PASS")
 
@@ -820,6 +878,11 @@ def run_probe(output: Path) -> int:
         _set(evidence, OUTPUT_NAMES[6], "PASS")
     except ProbeError as exc:
         fatal_reason = exc.reason
+        if exc.reason.startswith("NEW_PROCESS_"):
+            try:
+                evidence["new_process"] = json.loads(exc.detail)
+            except json.JSONDecodeError:
+                evidence["new_process"] = {"detail": exc.detail[:1000]}
         if evidence["outputs"][active_output]["status"] == "NOT_RUN":
             _set(evidence, active_output, "BLOCKED", exc.reason)
     except Exception as exc:

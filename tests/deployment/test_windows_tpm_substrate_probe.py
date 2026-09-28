@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import ctypes
 import inspect
+from pathlib import Path
 import struct
 from types import SimpleNamespace
 
@@ -270,13 +271,28 @@ def test_fresh_counter_qualification_never_reads_before_initial_increment() -> N
         def __init__(self) -> None:
             self.events: list[str] = []
             self.read_values = iter((0x1234_5678, 0x1234_5679))
+            pre_public = b"pre-public"
+            post_public = b"post-public"
+            self.names = iter(
+                (
+                    (
+                        pre_public,
+                        probe.u16(probe.TPM_ALG_SHA256) + probe.hashlib.sha256(pre_public).digest(),
+                    ),
+                    (
+                        post_public,
+                        probe.u16(probe.TPM_ALG_SHA256)
+                        + probe.hashlib.sha256(post_public).digest(),
+                    ),
+                )
+            )
 
         def define(self, handle: int) -> None:
             self.events.append("define")
 
         def read_public(self, handle: int) -> tuple[bytes, bytes]:
             self.events.append("read_public")
-            return b"public", b"name"
+            return next(self.names)
 
         def increment(self, handle: int) -> None:
             self.events.append("increment")
@@ -289,7 +305,7 @@ def test_fresh_counter_qualification_never_reads_before_initial_increment() -> N
     transitions: list[dict[str, object]] = []
     milestones: list[str] = []
 
-    public, name, initialized, after = qualify_new_counter(
+    public, name, initialized, after, identity = qualify_new_counter(
         fake,
         NV_OWNER_FIRST,
         transitions,
@@ -297,10 +313,21 @@ def test_fresh_counter_qualification_never_reads_before_initial_increment() -> N
         lambda: milestones.append("read"),
     )
 
-    assert fake.events == ["define", "read_public", "increment", "read", "increment", "read"]
+    assert fake.events == [
+        "define",
+        "read_public",
+        "increment",
+        "read",
+        "read_public",
+        "increment",
+        "read",
+    ]
     assert fake.events[:2] != ["define", "read"]
     assert milestones == ["created", "read"]
-    assert (public, name) == (b"public", b"name")
+    assert public == b"post-public"
+    assert name.hex() == identity["post_write_name"]
+    assert identity["pre_write_name"] != identity["post_write_name"]
+    assert identity["name_changed_after_first_write"] is True
     assert after == initialized + 1
     assert transitions == [
         {"purpose": "initialization", "before": None, "after": initialized},
@@ -314,6 +341,76 @@ def test_initial_evidence_is_static_not_live_proof() -> None:
     assert tuple(evidence["outputs"]) == OUTPUT_NAMES
     assert {item["status"] for item in evidence["outputs"].values()} == {"NOT_RUN"}
     assert evidence["live_physical_tpm_execution"] is False
+
+
+def test_new_process_read_accepts_matching_post_write_identity(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    output = tmp_path / "child.json"
+    output.write_text(
+        '{"handle":25165824,"name":"post","public":"stable","value":9}',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        probe.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout="ok", stderr=""),
+    )
+
+    result = probe._new_process_read(0x01800000, "post", 9, "stable", output)
+
+    assert result["returncode"] == 0
+    assert result["output_exists"] is True
+    assert result["child"]["name"] == "post"
+
+
+def test_new_process_read_prioritizes_name_mismatch_when_failed_child_wrote_output(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    output = tmp_path / "child.json"
+    output.write_text(
+        '{"handle":25165824,"name":"pre","public":"stable","value":9}',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        probe.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(
+            returncode=1, stdout="x" * 700, stderr="diagnostic"
+        ),
+    )
+
+    with pytest.raises(probe.ProbeError, match="NEW_PROCESS_NAME_MISMATCH") as failure:
+        probe._new_process_read(0x01800000, "post", 9, "stable", output)
+
+    detail = probe.json.loads(failure.value.detail)
+    assert detail["child"]["name"] == "pre"
+    assert len(detail["stdout_tail"]) == 500
+    assert detail["stderr_tail"] == "diagnostic"
+
+
+def test_new_process_read_reports_execution_failure_without_output(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    output = tmp_path / "missing.json"
+    monkeypatch.setattr(
+        probe.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(
+            returncode=7, stdout="launcher output", stderr="launcher error"
+        ),
+    )
+
+    with pytest.raises(probe.ProbeError, match="NEW_PROCESS_EXECUTION_FAILED") as failure:
+        probe._new_process_read(0x01800000, "post", 9, "stable", output)
+
+    detail = probe.json.loads(failure.value.detail)
+    assert detail == {
+        "output_exists": False,
+        "returncode": 7,
+        "stderr_tail": "launcher error",
+        "stdout_tail": "launcher output",
+    }
 
 
 def test_evidence_rejects_unexplained_block() -> None:
