@@ -59,8 +59,9 @@ The acceptance path rejects a ticket unless its tag is `TPM_ST_VERIFIED`, its
 hierarchy is `TPM_RH_OWNER`, and its digest is nonempty. Evidence records both
 the verification-key hierarchy and the hierarchy returned in the ticket.
 
-The versioned acceptance-only policy reference is
-`CryptoHunter.Stage9.TPM.PolicyAuthorize.Acceptance.v1`. Evidence records the
+The versioned acceptance-only policy reference label is
+`CryptoHunter.Stage9.TPM.PolicyAuthorize.Acceptance.v1`; its SHA-256 digest is
+used as the deterministic, 32-byte wire-level `TPM2B_NONCE`. Evidence records the
 public key, Name, transient handle, approved policy, policy reference, digest,
 signature components, verification ticket, and final policy digest. It never
 records the private scalar. The final digest is independently checked using

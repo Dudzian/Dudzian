@@ -88,13 +88,14 @@ NV_OWNER_LAST = 0x01BFFFFF
 TPMA_OBJECT_USERWITHAUTH = 0x00000040
 TPMA_OBJECT_SIGN_ENCRYPT = 0x00040000
 POLICY_REF_LABEL = "CryptoHunter.Stage9.TPM.PolicyAuthorize.Acceptance.v1"
-POLICY_REF = POLICY_REF_LABEL.encode("ascii")
+POLICY_REF = hashlib.sha256(POLICY_REF_LABEL.encode("ascii")).digest()
 
 TPM_RC_SUCCESS = 0x000
 TPM_RC_ATTRIBUTES = 0x082
 TPM_RC_HANDLE = 0x08B
 TPM_RC_AUTH_FAIL = 0x08E
 TPM_RC_SCHEME = 0x092
+TPM_RC_SIZE = 0x095
 TPM_RC_INSUFFICIENT = 0x09A
 TPM_RC_POLICY_FAIL = 0x09D
 TPM_RC_FAILURE = 0x101
@@ -110,6 +111,7 @@ RC_NAMES = {
     TPM_RC_HANDLE: "TPM_RC_HANDLE",
     TPM_RC_AUTH_FAIL: "TPM_RC_AUTH_FAIL",
     TPM_RC_SCHEME: "TPM_RC_SCHEME",
+    TPM_RC_SIZE: "TPM_RC_SIZE",
     TPM_RC_INSUFFICIENT: "TPM_RC_INSUFFICIENT",
     TPM_RC_POLICY_FAIL: "TPM_RC_POLICY_FAIL",
     TPM_RC_FAILURE: "TPM_RC_FAILURE",
@@ -986,12 +988,9 @@ def run_probe(output: Path) -> int:
         s = s_int.to_bytes(32, "big")
         signature = ecdsa_signature(r, s)
         ticket = nv.verify_signature(external_key_handle, a_hash, signature)
-        nv.policy_authorize(
+        policy_authorize_packet = policy_authorize_request(
             session, approved_policy, POLICY_REF, external_key_name, ticket
         )
-        final_digest = nv.policy_digest(session)
-        independent_digest = expected_policy_authorize_digest(external_key_name, POLICY_REF)
-        verified = final_digest == independent_digest and final_digest != approved_policy
         evidence["policy_authorize"] = {
             "key": {
                 "type": "ECDSA_P256",
@@ -1018,10 +1017,32 @@ def run_probe(output: Path) -> int:
                 "hierarchy": f"0x{ticket.hierarchy:08X}",
                 "digest": ticket.digest.hex(),
             },
-            "final_policy_digest": final_digest.hex(),
-            "independent_expected_digest": independent_digest.hex(),
-            "verified": verified,
+            "request_diagnostics": {
+                "approved_policy_size": len(approved_policy),
+                "policy_ref_size": len(POLICY_REF),
+                "key_sign_name_size": len(external_key_name),
+                "ticket_tag": f"0x{ticket.tag:04X}",
+                "ticket_hierarchy": f"0x{ticket.hierarchy:08X}",
+                "ticket_digest_size": len(ticket.digest),
+                "policy_authorize_request_size": len(policy_authorize_packet),
+            },
+            "final_policy_digest": None,
+            "independent_expected_digest": None,
+            "verified": False,
         }
+        nv.policy_authorize(
+            session, approved_policy, POLICY_REF, external_key_name, ticket
+        )
+        final_digest = nv.policy_digest(session)
+        independent_digest = expected_policy_authorize_digest(external_key_name, POLICY_REF)
+        verified = final_digest == independent_digest and final_digest != approved_policy
+        evidence["policy_authorize"].update(
+            {
+                "final_policy_digest": final_digest.hex(),
+                "independent_expected_digest": independent_digest.hex(),
+                "verified": verified,
+            }
+        )
         evidence["policy_digests"]["policyRef"] = POLICY_REF.hex()
         evidence["policy_digests"]["keySign_name"] = external_key_name.hex()
         evidence["policy_digests"]["verification_ticket"] = ticket.digest.hex()

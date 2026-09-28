@@ -146,10 +146,63 @@ def test_owner_verification_ticket_requires_nonempty_digest() -> None:
 
 def test_policy_authorize_digest_matches_spec_derived_vector() -> None:
     key_name = bytes.fromhex("000b" + "11" * 32)
-    policy_ref = b"CryptoHunter.Stage9.TPM.PolicyAuthorize.Acceptance.v1"
+    policy_ref = probe.POLICY_REF
+    assert len(policy_ref) == 32
+    assert policy_ref == probe.hashlib.sha256(probe.POLICY_REF_LABEL.encode("ascii")).digest()
     assert probe.expected_policy_authorize_digest(key_name, policy_ref).hex() == (
-        "f6a074703ccb6bee7e5021273044344779ca1a6f9226e8ae2c4aa35c184982c4"
+        "9cef0e82e040812a8fad1fe9f2c2726da0e3c1bb6286ab92488c71b5993f20ce"
     )
+
+
+def test_policy_authorize_request_has_complete_independent_wire_structure() -> None:
+    session = 0x03000000
+    approved_policy = bytes.fromhex("aa" * 32)
+    key_name = bytes.fromhex("000b" + "cc" * 32)
+    ticket_digest = bytes.fromhex("dd" * 17)
+    ticket = probe.VerificationTicket(probe.TPM_ST_VERIFIED, probe.TPM_RH_OWNER, ticket_digest)
+
+    request = probe.policy_authorize_request(
+        session, approved_policy, probe.POLICY_REF, key_name, ticket
+    )
+
+    tag, total_size, command_code = struct.unpack_from(">HII", request, 0)
+    assert tag == probe.TPM_ST_NO_SESSIONS
+    assert total_size == len(request)
+    assert command_code == probe.TPM_CC_POLICY_AUTHORIZE
+    offset = 10
+    parsed_session = struct.unpack_from(">I", request, offset)[0]
+    offset += 4
+
+    def parse_tpm2b_independently() -> bytes:
+        nonlocal offset
+        size = struct.unpack_from(">H", request, offset)[0]
+        offset += 2
+        value = request[offset : offset + size]
+        assert len(value) == size
+        offset += size
+        return value
+
+    parsed_approved_policy = parse_tpm2b_independently()
+    parsed_policy_ref = parse_tpm2b_independently()
+    parsed_key_name = parse_tpm2b_independently()
+    ticket_tag = struct.unpack_from(">H", request, offset)[0]
+    offset += 2
+    ticket_hierarchy = struct.unpack_from(">I", request, offset)[0]
+    offset += 4
+    parsed_ticket_digest = parse_tpm2b_independently()
+
+    assert parsed_session == session
+    assert parsed_approved_policy == approved_policy
+    assert parsed_policy_ref == probe.POLICY_REF
+    assert len(parsed_policy_ref) == 32
+    assert parsed_key_name == key_name
+    assert ticket_tag == probe.TPM_ST_VERIFIED
+    assert ticket_hierarchy == probe.TPM_RH_OWNER
+    assert parsed_ticket_digest == ticket_digest
+    assert offset == len(request)
+    assert len(request) == 10 + 4 + sum(
+        (2 + len(value) for value in (approved_policy, probe.POLICY_REF, key_name))
+    ) + 2 + 4 + 2 + len(ticket_digest)
 
 
 def test_signature_and_authorization_inputs_fail_closed_when_modified() -> None:
@@ -319,6 +372,7 @@ def test_response_unmarshal_and_rc_decode() -> None:
     ("raw", "expected_name"),
     (
         (0x092, "TPM_RC_SCHEME"),
+        (0x095, "TPM_RC_SIZE"),
         (0x09A, "TPM_RC_INSUFFICIENT"),
         (0x09D, "TPM_RC_POLICY_FAIL"),
         (0x146, "TPM_RC_NV_RANGE"),
