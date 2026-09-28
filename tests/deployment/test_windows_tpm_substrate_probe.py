@@ -8,6 +8,9 @@ import struct
 from types import SimpleNamespace
 
 import pytest
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import ec, utils
 
 from deployment import windows_tpm_substrate_probe as probe
 from deployment.windows_tpm_substrate_probe import (
@@ -54,15 +57,130 @@ def test_tpm_library_constant_values_used_by_wire_codec() -> None:
         "TPM_CC_POLICY_OR": 0x00000171,
         "TPM_CC_POLICY_GET_DIGEST": 0x00000189,
         "TPM_CC_FLUSH_CONTEXT": 0x00000165,
+        "TPM_CC_LOAD_EXTERNAL": 0x00000167,
+        "TPM_CC_POLICY_AUTHORIZE": 0x0000016A,
+        "TPM_CC_VERIFY_SIGNATURE": 0x00000177,
         "TPM_RH_OWNER": 0x40000001,
         "TPM_RH_NULL": 0x40000007,
         "TPM_ALG_SHA256": 0x000B,
         "TPM_ALG_NULL": 0x0010,
+        "TPM_ALG_ECDSA": 0x0018,
+        "TPM_ALG_ECC": 0x0023,
+        "TPM_ECC_NIST_P256": 0x0003,
+        "TPM_ST_VERIFIED": 0x8022,
         "TPMA_NV_OWNERWRITE": 0x00000002,
         "TPMA_NV_TPM2_NT_COUNTER": 0x00000010,
         "TPMA_NV_OWNERREAD": 0x00020000,
     }
     assert {name: getattr(probe, name) for name in expected} == expected
+
+
+def test_acceptance_command_marshalling_matches_independent_wire_vectors() -> None:
+    public = bytes.fromhex("0023000b00040040000000100018000b00030010") + bytes.fromhex(
+        "0020" + "11" * 32 + "0020" + "22" * 32
+    )
+    load = probe.load_external_request(public, probe.TPM_RH_OWNER)
+    assert load.hex() == ("80010000006a00000167" + "0000" + "0058" + public.hex() + "40000001")
+
+    # LoadExternal has no command handles: the first bytes after commandCode
+    # are the empty TPM2B_SENSITIVE, and hierarchy is the final parameter.
+    assert load[10:12] == b"\x00\x00"
+    assert load[10:14] != probe.u32(probe.TPM_RH_OWNER)
+    assert load[-4:] == probe.u32(probe.TPM_RH_OWNER)
+
+    signature = probe.ecdsa_signature(bytes.fromhex("01" * 32), bytes.fromhex("02" * 32))
+    assert signature.hex() == "0018000b0020" + "01" * 32 + "0020" + "02" * 32
+    verify = probe.verify_signature_request(0x80000000, bytes.fromhex("aa" * 32), signature)
+    assert verify.hex() == ("80010000007800000177800000000020" + "aa" * 32 + signature.hex())
+
+    ticket = probe.VerificationTicket(0x8022, 0x40000007, bytes.fromhex("dd" * 32))
+    authorize = probe.policy_authorize_request(
+        0x03000000,
+        bytes.fromhex("aa" * 32),
+        b"ref",
+        bytes.fromhex("000b" + "cc" * 32),
+        ticket,
+    )
+    assert authorize.hex() == (
+        "8001000000810000016a03000000"
+        "0020" + "aa" * 32 + "00037265660022000b" + "cc" * 32 + "8022400000070020" + "dd" * 32
+    )
+
+
+def test_verified_ticket_parser_matches_independent_vector() -> None:
+    raw = bytes.fromhex("8022400000070004deadbeef")
+    ticket, offset = probe.parse_verification_ticket(raw)
+    assert (ticket.tag, ticket.hierarchy, ticket.digest, offset) == (
+        0x8022,
+        0x40000007,
+        bytes.fromhex("deadbeef"),
+        len(raw),
+    )
+    with pytest.raises(probe.ProbeError, match="INVALID_VERIFICATION_TICKET"):
+        probe.parse_verification_ticket(bytes.fromhex("8021400000070000"))
+
+
+def test_null_empty_verification_ticket_cannot_qualify_acceptance() -> None:
+    raw = bytes.fromhex("8022400000070000")
+    ticket, offset = probe.parse_verification_ticket(raw)
+    assert offset == len(raw)
+    assert ticket == probe.VerificationTicket(
+        probe.TPM_ST_VERIFIED,
+        probe.TPM_RH_NULL,
+        b"",
+    )
+
+    with pytest.raises(
+        probe.ProbeError,
+        match="VERIFICATION_TICKET_HIERARCHY_MISMATCH",
+    ):
+        probe.validate_acceptance_ticket(ticket)
+
+
+def test_owner_verification_ticket_requires_nonempty_digest() -> None:
+    with pytest.raises(probe.ProbeError, match="EMPTY_VERIFICATION_TICKET_DIGEST"):
+        probe.validate_acceptance_ticket(
+            probe.VerificationTicket(probe.TPM_ST_VERIFIED, probe.TPM_RH_OWNER, b"")
+        )
+
+
+def test_policy_authorize_digest_matches_spec_derived_vector() -> None:
+    key_name = bytes.fromhex("000b" + "11" * 32)
+    policy_ref = b"CryptoHunter.Stage9.TPM.PolicyAuthorize.Acceptance.v1"
+    assert probe.expected_policy_authorize_digest(key_name, policy_ref).hex() == (
+        "f6a074703ccb6bee7e5021273044344779ca1a6f9226e8ae2c4aa35c184982c4"
+    )
+
+
+def test_signature_and_authorization_inputs_fail_closed_when_modified() -> None:
+    private_key = ec.derive_private_key(1, ec.SECP256R1())
+    approved = bytes.fromhex("33" * 32)
+    policy_ref = probe.POLICY_REF
+    digest = probe.hashlib.sha256(approved + policy_ref).digest()
+    signature = private_key.sign(digest, ec.ECDSA(utils.Prehashed(hashes.SHA256())))
+    public_key = private_key.public_key()
+    public_key.verify(signature, digest, ec.ECDSA(utils.Prehashed(hashes.SHA256())))
+
+    wrong_signature = bytearray(signature)
+    wrong_signature[-1] ^= 1
+    cases = (
+        (bytes(wrong_signature), digest),
+        (signature, probe.hashlib.sha256(bytes.fromhex("34" * 32) + policy_ref).digest()),
+        (signature, probe.hashlib.sha256(approved + policy_ref + b"!").digest()),
+    )
+    for candidate_signature, candidate_digest in cases:
+        with pytest.raises(InvalidSignature):
+            public_key.verify(
+                candidate_signature,
+                candidate_digest,
+                ec.ECDSA(utils.Prehashed(hashes.SHA256())),
+            )
+
+    right_name = bytes.fromhex("000b" + "44" * 32)
+    wrong_name = bytes.fromhex("000b" + "45" * 32)
+    assert probe.expected_policy_authorize_digest(right_name, policy_ref) != (
+        probe.expected_policy_authorize_digest(wrong_name, policy_ref)
+    )
 
 
 def test_tbs_transport_uses_canonical_context_entrypoint(monkeypatch: pytest.MonkeyPatch) -> None:

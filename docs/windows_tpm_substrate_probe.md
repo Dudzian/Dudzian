@@ -45,6 +45,28 @@ the `cleanup` object; any cleanup failure is an operator action item. The JSON
 contains command sizes and return codes, but no auth values, nonces, private
 keys, or product secrets.
 
+For the selected-policy claim the probe creates a disposable in-memory ECDSA
+P-256 key. It loads only its public area and associates the transient object
+with `TPM_RH_OWNER`, so `VerifySignature` returns a real TPM-backed,
+non-NULL verification ticket. `LoadExternal` does not authorize or take over
+the owner hierarchy, alter ownership, or persist the object. The probe then
+obtains the real policy digest after `PolicyNV` and `PolicyCommandCode`, and
+signs `SHA256(approvedPolicy || policyRef)` with prehashed ECDSA. It then executes
+real `VerifySignature` and `PolicyAuthorize` commands on the same policy
+session. The verification ticket is TPM-produced, never synthesized. The
+external object and policy session are both flushed in the cleanup path.
+The acceptance path rejects a ticket unless its tag is `TPM_ST_VERIFIED`, its
+hierarchy is `TPM_RH_OWNER`, and its digest is nonempty. Evidence records both
+the verification-key hierarchy and the hierarchy returned in the ticket.
+
+The versioned acceptance-only policy reference is
+`CryptoHunter.Stage9.TPM.PolicyAuthorize.Acceptance.v1`. Evidence records the
+public key, Name, transient handle, approved policy, policy reference, digest,
+signature components, verification ticket, and final policy digest. It never
+records the private scalar. The final digest is independently checked using
+the TPM 2.0 Part 3 SHA-256 policy-update equation, rather than by comparing a
+codec helper with itself.
+
 Before a physical execution all seven claims remain:
 
 ```text
@@ -58,14 +80,19 @@ CAN_DETECT_DISK_STATE_BEHIND_COUNTER = NOT_RUN
 ```
 
 A nonzero exit is expected whenever the complete required substrate has not
-been demonstrated. The current implementation executes a real policy session,
-`PolicyNV`, and `PolicyCommandCode`. It does **not** execute `PolicyAuthorize`;
-the machine-readable reason is
-`POLICY_AUTHORIZE_COMMAND_PATH_NOT_IMPLEMENTED`. It also does not execute a
-fake `PolicyOR` with duplicate digests: one real candidate branch is recorded
-and `PolicyOR` remains `NOT_RUN` until two genuine branches exist. These are
-implementation limits, not TPM feasibility findings. Do not infer production
-feasibility from the static tests or from partial PASS results.
+been demonstrated. `CAN_SATISFY_SELECTED_POLICY` becomes `PASS` only during a
+physical live run in which `LoadExternal`, `VerifySignature`, and
+`PolicyAuthorize` succeed and the independently calculated final digest
+matches. Static and mocked tests cannot publish live PASS evidence. The probe
+does not execute a fake `PolicyOR` with duplicate digests: one real candidate
+branch is recorded and `PolicyOR` remains `NOT_RUN` until two genuine branches
+exist.
+
+This proves only **TPM PolicyAuthorize substrate feasibility**. It does not
+resolve self-authorization/circularity or freeze the **production root policy
+topology**, Product Release Root, PDSA, or external provisioning handoff.
+Those production decisions remain separate Stage-9 work. Stage 10 is not
+started.
 
 Before opening TBS, the probe qualifies machine-readable CIM values. The OS
 must have `ProductType == 1` (Windows client, never Windows Server) and a
