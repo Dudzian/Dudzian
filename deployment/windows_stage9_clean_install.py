@@ -66,8 +66,28 @@ def _msiexec(arguments: list[str], log: Path, timeout: int = 600) -> int:
         ["msiexec.exe", *arguments, "/qn", "/norestart", "/l*v", str(log)], timeout=timeout
     )
     if process.returncode != 0:
-        raise CleanInstallError(f"msiexec failed with {process.returncode}")
+        raise CleanInstallError(f"msiexec failed with {process.returncode}; log={log}")
     return process.returncode
+
+
+def _install_and_prove(msi: Path, manifest: Path, install_log: Path) -> tuple[int, dict[str, str]]:
+    try:
+        install_code = _msiexec(["/i", str(msi)], install_log)
+    except Exception:
+        print("MSI_INSTALL = FAIL", flush=True)
+        print(f"MSI_INSTALL_LOG = {install_log}", flush=True)
+        raise
+    else:
+        print("MSI_INSTALL = PASS", flush=True)
+
+    try:
+        proofs = _proof_install(manifest)
+    except Exception:
+        print("CLEAN_INSTALL_PROBE = FAIL", flush=True)
+        raise
+    else:
+        print("CLEAN_INSTALL_PROBE = PASS", flush=True)
+        return install_code, proofs
 
 
 def prove_files(root: Path, machine: Path, manifest: dict[str, object]) -> None:
@@ -284,10 +304,7 @@ def run(args: argparse.Namespace) -> None:
     )
     msi = args.output / f"CryptoHunter-{args.version}-windows-x64.msi"
     manifest = args.output / "installer-manifest.json"
-    install_code = _msiexec(["/i", str(msi)], args.logs / "install.log")
-    print("MSI_INSTALL = PASS", flush=True)
-    proofs = _proof_install(manifest)
-    print("CLEAN_INSTALL_PROBE = PASS", flush=True)
+    install_code, proofs = _install_and_prove(msi, manifest, args.logs / "install.log")
     uninstall_code = _msiexec(["/x", str(msi)], args.logs / "uninstall.log")
     if (
         any(

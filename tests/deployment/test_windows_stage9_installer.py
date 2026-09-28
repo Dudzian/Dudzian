@@ -3,10 +3,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import re
+import subprocess
 import zipfile
 
 import pytest
 
+from deployment import windows_stage9_clean_install as clean_install
 from deployment.windows_installer.build import (
     InstallerBuildError,
     canonical_wix_version,
@@ -145,6 +147,122 @@ def test_canonical_workflow_uses_only_per_invocation_wix_eula_acceptance() -> No
     combined = workflow + builder
     assert "wix eula accept wix7" not in combined
     assert "eula accept" not in combined.lower()
+
+
+def test_failed_msi_install_reports_failure_and_leaves_probe_not_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    proof_invoked = False
+
+    def fail_msiexec(arguments: list[str], log: Path, timeout: int = 600) -> int:
+        raise clean_install.CleanInstallError("msiexec failed with 1603")
+
+    def record_proof(manifest: Path) -> dict[str, str]:
+        nonlocal proof_invoked
+        proof_invoked = True
+        return {}
+
+    monkeypatch.setattr(clean_install, "_msiexec", fail_msiexec)
+    monkeypatch.setattr(clean_install, "_proof_install", record_proof)
+
+    with pytest.raises(clean_install.CleanInstallError, match="1603"):
+        clean_install._install_and_prove(
+            tmp_path / "product.msi",
+            tmp_path / "installer-manifest.json",
+            tmp_path / "logs" / "install.log",
+        )
+
+    output = capsys.readouterr().out
+    assert "MSI_INSTALL = FAIL" in output
+    assert "MSI_INSTALL = PASS" not in output
+    assert not proof_invoked
+    assert "CLEAN_INSTALL_PROBE = FAIL" not in output
+    assert "CLEAN_INSTALL_PROBE = PASS" not in output
+
+
+def test_msi_timeout_reports_failure_and_propagates_original_exception(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    timeout = subprocess.TimeoutExpired("msiexec.exe", 600)
+    monkeypatch.setattr(
+        clean_install, "_msiexec", lambda *args, **kwargs: (_ for _ in ()).throw(timeout)
+    )
+
+    with pytest.raises(subprocess.TimeoutExpired) as raised:
+        clean_install._install_and_prove(
+            tmp_path / "product.msi",
+            tmp_path / "installer-manifest.json",
+            tmp_path / "logs" / "install.log",
+        )
+
+    assert raised.value is timeout
+    output = capsys.readouterr().out
+    assert "MSI_INSTALL = FAIL" in output
+    assert "MSI_INSTALL = PASS" not in output
+
+
+def test_failed_install_proof_reports_failure_after_successful_install(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(clean_install, "_msiexec", lambda *args, **kwargs: 0)
+
+    def fail_proof(manifest: Path) -> dict[str, str]:
+        raise clean_install.CleanInstallError("proof failed")
+
+    monkeypatch.setattr(clean_install, "_proof_install", fail_proof)
+
+    with pytest.raises(clean_install.CleanInstallError, match="proof failed"):
+        clean_install._install_and_prove(
+            tmp_path / "product.msi",
+            tmp_path / "installer-manifest.json",
+            tmp_path / "logs" / "install.log",
+        )
+
+    output = capsys.readouterr().out
+    assert "MSI_INSTALL = PASS" in output
+    assert "CLEAN_INSTALL_PROBE = FAIL" in output
+    assert "CLEAN_INSTALL_PROBE = PASS" not in output
+
+
+def test_unexpected_install_proof_failure_is_reported_and_propagated(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    failure = FileNotFoundError("installed manifest disappeared")
+    monkeypatch.setattr(clean_install, "_msiexec", lambda *args, **kwargs: 0)
+    monkeypatch.setattr(
+        clean_install, "_proof_install", lambda manifest: (_ for _ in ()).throw(failure)
+    )
+
+    with pytest.raises(FileNotFoundError) as raised:
+        clean_install._install_and_prove(
+            tmp_path / "product.msi",
+            tmp_path / "installer-manifest.json",
+            tmp_path / "logs" / "install.log",
+        )
+
+    assert raised.value is failure
+    output = capsys.readouterr().out
+    assert "MSI_INSTALL = PASS" in output
+    assert "CLEAN_INSTALL_PROBE = FAIL" in output
+    assert "CLEAN_INSTALL_PROBE = PASS" not in output
+
+
+def test_stage9_workflow_always_preserves_msi_diagnostics_without_weakening_gate() -> None:
+    workflow = (ROOT / ".github/workflows/platform-deployment.yml").read_text(encoding="utf-8")
+    clean_install_job = workflow.split("  windows-clean-install-integration:", 1)[1].split(
+        "\n  linux-deployment-integration:", 1
+    )[0]
+    diagnostic_step = clean_install_job.split("- name: Preserve Stage-9 MSI diagnostics", 1)[1]
+    diagnostic_step = diagnostic_step.split("\n      - uses:", 1)[0]
+    canonical_step = clean_install_job.split("- name: Build and run canonical Stage-9 proof", 1)[1]
+    canonical_step = canonical_step.split("\n      - name:", 1)[0]
+
+    assert "if: always()" in diagnostic_step
+    assert "name: windows-clean-install-diagnostics" in diagnostic_step
+    assert "dist/windows/logs/*.log" in diagnostic_step
+    assert "dist/windows/installer-manifest.json" in diagnostic_step
+    assert "if-no-files-found: ignore" in diagnostic_step
+    assert "continue-on-error: true" not in canonical_step
 
 
 @pytest.mark.parametrize(("source", "expected"), [("1.2.3", "1.2.3"), ("1.2.3-rc.1", "1.2.3")])
