@@ -263,6 +263,11 @@ def run(args: argparse.Namespace) -> None:
         raise CleanInstallError("native Windows x64 required")
     if WINDOWS_STAGE9_ITEMS != ("WINDOWS_CLEAN_INSTALL",):
         raise CleanInstallError("Stage-9 item contract changed")
+    print("EXE_BUILD = NOT_RUN", flush=True)
+    print("WIX_COMPILE = NOT_RUN", flush=True)
+    print("MSI_CREATED = NO", flush=True)
+    print("MSI_INSTALL = NOT_RUN", flush=True)
+    print("CLEAN_INSTALL_PROBE = NOT_RUN", flush=True)
     fresh_preconditions()
     build_main(
         [
@@ -280,7 +285,9 @@ def run(args: argparse.Namespace) -> None:
     msi = args.output / f"CryptoHunter-{args.version}-windows-x64.msi"
     manifest = args.output / "installer-manifest.json"
     install_code = _msiexec(["/i", str(msi)], args.logs / "install.log")
+    print("MSI_INSTALL = PASS", flush=True)
     proofs = _proof_install(manifest)
+    print("CLEAN_INSTALL_PROBE = PASS", flush=True)
     uninstall_code = _msiexec(["/x", str(msi)], args.logs / "uninstall.log")
     if (
         any(

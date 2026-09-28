@@ -17,6 +17,9 @@ from urllib.request import urlopen
 import zipfile
 from .contract import CONTRACT
 
+WIX_EULA_ACCEPTANCE = "PER_INVOCATION"
+WIX_EULA_ACCEPTANCE_FLAG = "-acceptEula wix7"
+
 
 class InstallerBuildError(RuntimeError):
     """A build input or output violates the reviewed installer contract."""
@@ -173,14 +176,21 @@ def build(args: argparse.Namespace) -> Path:
         payload = root / "Payload"
         payload.mkdir()
         executables = build_executables(payload, root / "pyinstaller")
+        print("EXE_BUILD = PASS", flush=True)
         archive = acquire_postgresql(pins, args.postgresql_archive, args.cache)
         normalize_postgresql_archive(archive, payload / "PostgreSQL")
         artifact = args.output / f"CryptoHunter-{args.version}-windows-x64.msi"
         source = Path(__file__).with_name("Product.wxs")
+        print(f"WIX_VERSION = {CONTRACT.wix_version}", flush=True)
+        print(f"WIX_EULA_ACCEPTANCE = {WIX_EULA_ACCEPTANCE}", flush=True)
+        print(f"WIX_EULA_ACCEPTANCE_FLAG = {WIX_EULA_ACCEPTANCE_FLAG}", flush=True)
+        print("WIX_COMPILE = NOT_RUN", flush=True)
         subprocess.run(
             [
                 "wix",
                 "build",
+                "-acceptEula",
+                "wix7",
                 str(source),
                 "-arch",
                 "x64",
@@ -193,12 +203,18 @@ def build(args: argparse.Namespace) -> Path:
             ],
             check=True,
         )
+        print("WIX_COMPILE = PASS", flush=True)
+        if not artifact.is_file():
+            raise InstallerBuildError("WiX exited successfully without creating the canonical MSI")
+        print("MSI_CREATED = YES", flush=True)
         manifest = {
             "schema_version": 1,
             "product_version": args.version,
             "architecture": "x64",
             "msi": {"file": artifact.name, "sha256": sha256(artifact)},
             "wix_version": wix_version,
+            "wix_eula_acceptance": WIX_EULA_ACCEPTANCE,
+            "wix_eula_acceptance_flag": WIX_EULA_ACCEPTANCE_FLAG,
             "postgresql_version": pins["postgresql"]["version"],
             "postgresql_packaging_revision": pins["postgresql"]["packaging_revision"],
             "postgresql_source_url": pins["postgresql"]["source_url"],
