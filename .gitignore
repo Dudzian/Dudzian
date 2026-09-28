@@ -43,5 +43,6 @@ bot_core/logs/
 
 # Generated preview EXE artifacts
 /dist/preview/
+/dist/windows/
 /var/build/preview/
 var/artifacts/

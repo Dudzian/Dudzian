@@ -18,6 +18,7 @@ from deployment.windows_tpm_substrate_probe import (
     NvProbe,
     ProbeError,
     TbsTransport,
+    VerificationTicket,
     TPM_ALG_SHA256,
     TPM_CC_NV_DEFINE_SPACE,
     TPM_CC_NV_INCREMENT,
@@ -71,13 +72,14 @@ def sign_authorize(
     key: ec.EllipticCurvePrivateKey,
     handle: int,
     name: bytes,
-) -> None:
+) -> VerificationTicket:
     digest = h(approved, ref)
     der = key.sign(digest, ec.ECDSA(utils.Prehashed(hashes.SHA256())))
     r, s = utils.decode_dss_signature(der)
     signature = ecdsa_signature(r.to_bytes(32, "big"), s.to_bytes(32, "big"))
     ticket = nv.verify_signature(handle, digest, signature)
     nv.policy_authorize(session, approved, ref, name, ticket)
+    return ticket
 
 
 def define(nv: NvProbe, handle: int, auth_policy: bytes) -> None:
