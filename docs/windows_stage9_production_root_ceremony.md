@@ -48,7 +48,9 @@ skalar pozostaje offline.
 policy refs, szablonem NV, kolejnością gałęzi, jawnym numerem wersji i jawnymi `valid_from`
 oraz `valid_until`. Wynik przechodzi istniejący schema validator i canonical serializer.
 Wylicz deterministic `ceremony_id` i signing request. Podpisywane bajty to wyłącznie
-`RELEASE_DOMAIN || SHA256(canonical payload)`, wskazane w `message_to_sign_hex`.
+`RELEASE_DOMAIN || SHA256(canonical payload)`, wskazane w `message_to_sign_hex`. Publiczny,
+immutable `Stage9CeremonyContextV1` jest zawsze rekonstruowany z root digest, release payload,
+wersji i środowiska; operator ani dokument requestu nie może nadać własnego ceremony ID.
 
 ## Phase E — Offline signatures
 
@@ -64,7 +66,9 @@ składa envelope dopiero po ważnym quorum 2 z 3.
 przypiętego genesis: sequence 1, zero32 previous digest, puste listy odwołań i authority
 `PRODUCT_RELEASE_ROOT_QUORUM`. Utwórz osobny request dla
 `REVOCATION_DOMAIN || SHA256(canonical payload)`, zbierz drugie quorum root i uruchom
-`assemble-signed-revocation`. Lokalny zegar nie jest wejściem konstrukcji.
+`assemble-signed-revocation`. Request revocation przyjmuje ten sam zweryfikowany context co
+release, więc zgodność samych kluczy root nie wystarcza. Lokalny zegar nie jest wejściem
+konstrukcji.
 
 ## Phase G — Verification
 
@@ -77,13 +81,23 @@ warunku oznacza kod wyjścia różny od zera oraz **FINAL FREEZE NOT PUBLISHED**
 
 Po PASS `build-freeze-manifest` buduje istniejący `FreezeManifestV1` zawierający source
 revision i hashe, po czym `verify-freeze-manifest` sprawdza go canonical production
-verifierem. Publiczny `CryptoHunter.Stage9CeremonyAuditV1` zapisuje ID i wersję narzędzia,
-revision, środowisko, publiczne ID/digesty/Name, przyjętych signerów, progi, jawnie podane
-timestampy, digest manifestu i końcowy status — nigdy sekrety.
+verifierem. Faza CLI `build-audit-transcript` wyprowadza audit wyłącznie z kompletnego
+`VerifiedStage9CeremonyV1`. Wynik przechowuje authority artifacts jako canonical immutable
+bytes, a każda krytyczna faza odtwarza pełną weryfikację przed użyciem cached projection.
+Publiczny `CryptoHunter.Stage9CeremonyAuditV1` zapisuje ID i wersję narzędzia, revision
+pochodzący wyłącznie ze zweryfikowanego FreezeManifest, środowisko, publiczne
+ID/digesty/Name, przyjętych signerów, progi, jawnie podane timestampy, digest manifestu i
+końcowy status — nigdy sekrety.
 
-Publikacja używa `output/.staging/`, a dopiero kompletny zweryfikowany zestaw jest atomowo
-przenoszony do `output/final/<ceremony_id>/`. Istniejący finalny katalog nigdy nie jest
-nadpisywany; retry musi mieć nową, jawnie rozróżnioną sesję/revision.
+`publish-final` publikuje root/PDSA/recovery bundles, oba payloady, oba signing requesty,
+oba signed envelopes, freeze manifest i audit. Canonical
+`CryptoHunter.Stage9CeremonyPackageManifestV1` wiąże digest każdego pliku oraz digesty
+ceremony. Publikacja używa `output/.staging/`, a dopiero kompletny zweryfikowany zestaw jest
+atomowo przenoszony do `output/final/<ceremony_id>/`. `verify-final-package` przelicza
+wszystkie dowody niezależnie od revision checkoutu weryfikatora. Istniejący finalny katalog
+nigdy nie jest nadpisywany; retry musi mieć nową, jawnie rozróżnioną sesję/revision.
+Bundle PDSA jest związany z podpisanym release przez keys, key IDs, threshold i purpose;
+bundle K_RECOVERY dodatkowo przez key ID, provenance, pełny TPMT_PUBLIC, Name i profil.
 
 ## Phase I — Approval gate
 
