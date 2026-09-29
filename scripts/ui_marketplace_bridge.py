@@ -27,6 +27,10 @@ from bot_core.marketplace import (
 )
 from bot_core.marketplace.assignments import PresetAssignmentStore
 from bot_core.marketplace.preferences import PresetPreferenceStore
+from bot_core.marketplace.signing_key_policy import (
+    resolve_hmac_signing_key,
+    validate_signing_identity,
+)
 from bot_core.strategies.catalog import (
     StrategyCatalog,
     StrategyPresetProfile,
@@ -68,13 +72,19 @@ def _parse_signing_key(value: str) -> tuple[str, bytes]:
     return key_id, secret.encode("utf-8")
 
 
-def _load_signing_keys(values: list[str], files: list[str]) -> dict[str, bytes]:
+def _load_signing_keys(
+    values: list[str], files: list[str], *, environment: str = "dev"
+) -> dict[str, bytes]:
     keys: dict[str, bytes] = {}
+    if environment == "production" and values:
+        raise SystemExit(
+            "PRODUCTION review signing forbids inline --signing-key; use an external --signing-key-file"
+        )
     for item in values:
         key_id, payload = _parse_signing_key(item)
         keys[key_id] = payload
     for file_path in files:
-        path = Path(file_path)
+        path = resolve_hmac_signing_key(file_path, environment=environment)
         payload = _load_json(path)
         if isinstance(payload, Mapping):
             for key_id, secret in payload.items():
@@ -1077,7 +1087,9 @@ def _command_unassign(args: argparse.Namespace) -> None:
 
 
 def _command_sync_reviews(args: argparse.Namespace) -> None:
-    signing_keys = _load_signing_keys(args.signing_key or [], args.signing_key_file or [])
+    signing_keys = _load_signing_keys(
+        args.signing_key or [], args.signing_key_file or [], environment=args.environment
+    )
     if not signing_keys:
         raise SystemExit(
             "sync-reviews wymaga przekazania klucza HMAC (--signing-key lub --signing-key-file)"
@@ -1098,7 +1110,9 @@ def _command_submit_review(args: argparse.Namespace) -> None:
     presets_dir = Path(args.presets_dir)
     licenses_path = Path(args.licenses_path)
     reviews_dir = Path(args.reviews_dir)
-    signing_keys = _load_signing_keys(args.signing_key or [], args.signing_key_file or [])
+    signing_keys = _load_signing_keys(
+        args.signing_key or [], args.signing_key_file or [], environment=args.environment
+    )
     if not signing_keys:
         raise SystemExit(
             "submit-review wymaga przekazania kluczy podpisów (--signing-key/--signing-key-file)"
@@ -1108,6 +1122,9 @@ def _command_submit_review(args: argparse.Namespace) -> None:
         raise SystemExit(
             "submit-review wymaga parametru --review-key-id wskazującego klucz podpisu"
         )
+    review_key_id = validate_signing_identity(
+        review_key_id, environment=args.environment, option_name="--review-key-id"
+    )
     review_key = signing_keys.get(review_key_id)
     if review_key is None:
         raise SystemExit(
@@ -1185,6 +1202,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--fingerprint", help="Nadpisanie fingerprintu sprzętowego (dla testów/diagnostyki)"
     )
+    parser.add_argument("--environment", choices=("dev", "test", "production"), default="dev")
     parser.add_argument(
         "--signing-key", action="append", help="Klucz HMAC w formacie KEY_ID=SECRET"
     )

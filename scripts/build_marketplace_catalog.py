@@ -29,6 +29,12 @@ from bot_core.config_marketplace.schema import (  # noqa: E402
     MarketplaceCatalog,
     MarketplacePackageMetadata,
 )
+from bot_core.marketplace.signing_key_policy import (  # noqa: E402
+    resolve_hmac_signing_key,
+    resolve_signing_private_key,
+    validate_signing_identity,
+    validate_signing_issuer,
+)
 
 MARKETPLACE_CLI_MODULE = "scripts.marketplace_cli"
 DEFAULT_PRESETS_DIR = REPO_ROOT / "config" / "marketplace" / "presets"
@@ -496,7 +502,7 @@ def build_catalog(
     return catalog
 
 
-def _load_signing_keys(entries: Iterable[str]) -> dict[str, bytes]:
+def _load_signing_keys(entries: Iterable[str], *, environment: str) -> dict[str, bytes]:
     mapping: dict[str, bytes] = {}
     for entry in entries:
         key_id, _, location = entry.partition(":")
@@ -504,7 +510,11 @@ def _load_signing_keys(entries: Iterable[str]) -> dict[str, bytes]:
             raise ValueError(
                 "Oczekiwano formatu KEY_ID:/sciezka/do/klucza dla kluczy podpisu katalogu."
             )
-        mapping[key_id] = Path(location).expanduser().read_bytes()
+        validated_key_id = validate_signing_identity(
+            key_id, environment=environment, option_name="--signing-key KEY_ID"
+        )
+        secret_path = resolve_hmac_signing_key(location, environment=environment)
+        mapping[validated_key_id] = secret_path.read_bytes()
     return mapping
 
 
@@ -528,6 +538,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--private-key", required=True, help="Klucz prywatny Ed25519 do podpisu presetów."
+    )
+    parser.add_argument(
+        "--environment",
+        choices=("dev", "test", "production"),
+        default="dev",
+        help="Domena zaufania podpisu; production wymusza klucz spoza repozytorium.",
     )
     parser.add_argument(
         "--key-id", required=True, help="Identyfikator klucza Ed25519 do podpisu presetów."
@@ -556,18 +572,35 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    key_id = validate_signing_identity(
+        args.key_id, environment=args.environment, option_name="--key-id"
+    )
+    catalog_signature_key = (
+        validate_signing_identity(
+            args.catalog_signature_key,
+            environment=args.environment,
+            option_name="--catalog-signature-key",
+        )
+        if args.catalog_signature_key
+        else None
+    )
     presets_dir = Path(args.presets).resolve()
     packages_dir = Path(args.packages).resolve()
     catalog_path = Path(args.catalog).resolve()
     markdown_path = Path(args.markdown).resolve()
-    private_key = Path(args.private_key).expanduser().resolve()
+    private_key = resolve_signing_private_key(args.private_key, environment=args.environment)
     catalog_ed25519_path = (
-        Path(args.catalog_ed25519_key).expanduser().resolve()
+        resolve_signing_private_key(args.catalog_ed25519_key, environment=args.environment)
         if args.catalog_ed25519_key
         else private_key
     )
-    signing_keys = _load_signing_keys(args.signing_key)
-    catalog_ed25519_key_id = args.catalog_ed25519_key_id or args.key_id
+    signing_keys = _load_signing_keys(args.signing_key, environment=args.environment)
+    issuer = validate_signing_issuer(args.issuer, environment=args.environment)
+    catalog_ed25519_key_id = validate_signing_identity(
+        args.catalog_ed25519_key_id or key_id,
+        environment=args.environment,
+        option_name="--catalog-ed25519-key-id",
+    )
     catalog_ed25519_key = (
         _load_ed25519_private_key(catalog_ed25519_path) if catalog_ed25519_key_id else None
     )
@@ -578,10 +611,10 @@ def main(argv: list[str] | None = None) -> int:
         catalog_path=catalog_path,
         markdown_path=markdown_path,
         private_key=private_key,
-        key_id=args.key_id,
+        key_id=key_id,
         signing_keys=signing_keys,
-        issuer=args.issuer,
-        catalog_signature_key=args.catalog_signature_key,
+        issuer=issuer,
+        catalog_signature_key=catalog_signature_key,
         catalog_ed25519_key=catalog_ed25519_key,
         catalog_ed25519_key_id=catalog_ed25519_key_id,
     )
