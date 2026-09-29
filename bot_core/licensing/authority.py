@@ -13,6 +13,12 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from .activation_request import ActivationRequestV1, EnrollmentDecisionV1
 from .canonical import canonical_json_bytes, digest
 from .enrollment import DOMAIN, unsigned_payload
+from .tpm_attestation import (
+    PendingChallengeStore,
+    ProductionTPMAttestationVerifier,
+    TPMEnrollmentChallengeV1,
+    TestOnlyTPMAttestationVerifier,
+)
 
 PRODUCTION_PATH_MARKER = "cryptohunter-production-authority"
 _TEST_ONLY_PROVENANCE = "TEST_ONLY"
@@ -86,8 +92,15 @@ class TestOnlyPDSAAuthority:
         return cls.from_test_material(_TEST_ONLY_PROVENANCE, keys)
 
     def issue(self, request: ActivationRequestV1, decision: EnrollmentDecisionV1) -> dict[str, Any]:
+        if request.document["tpm"]["evidence_profile"].startswith("WindowsTPM2-TBS-"):
+            raise ValueError("ATTESTED_EXCHANGE_ISSUER_REQUIRED")
         signer_ids = list(self._keys)[:2]
         payload = unsigned_payload(request, decision, self.key_set_digest, signer_ids, 2)
+        return self._sign_unsigned_payload(payload, signer_ids)
+
+    def _sign_unsigned_payload(
+        self, payload: dict[str, Any], signer_ids: list[str]
+    ) -> dict[str, Any]:
         message = DOMAIN + hashlib.sha256(canonical_json_bytes(payload)).digest()
         result = dict(payload)
         result["signature_block"] = [
@@ -112,3 +125,62 @@ class OfflineEnrollmentAuthority(EnrollmentAuthority):
 
 class MockOnlineEnrollmentAuthority(OfflineEnrollmentAuthority):
     """Test double proving online automation cannot alter signed semantics."""
+
+
+class AttestedEnrollmentIssuer:
+    """Consequential boundary: always reverifies canonical exchange bytes before signing."""
+
+    def __init__(self, signer: TestOnlyPDSAAuthority) -> None:
+        self._signer = signer
+        self._verifier = ProductionTPMAttestationVerifier()
+        self.last_exchange_reference: str | None = None
+
+    def issue(
+        self,
+        *,
+        activation_request_raw: bytes,
+        decision: EnrollmentDecisionV1,
+        enrollment_request_raw: bytes,
+        challenge_raw: bytes,
+        response_raw: bytes,
+        pending: PendingChallengeStore,
+        expected_release_policy_digest: str,
+    ) -> dict[str, Any]:
+        request = _canonical_activation_request(activation_request_raw)
+        if decision.document["request_id"] != request.document["request_id"]:
+            raise ValueError("DECISION_ACTIVATION_REQUEST_MISMATCH")
+        signer_ids = list(self._signer._keys)[:2]
+        payload = unsigned_payload(request, decision, self._signer.key_set_digest, signer_ids, 2)
+        verified = self._verifier.verify(
+            activation_request_raw,
+            enrollment_request_raw,
+            challenge_raw,
+            response_raw,
+            pending=pending,
+            expected_release_policy_digest=expected_release_policy_digest,
+        )
+        package = self._signer._sign_unsigned_payload(payload, signer_ids)
+        challenge = TPMEnrollmentChallengeV1.from_canonical_bytes(challenge_raw)
+        pending.consume(challenge)
+        self.last_exchange_reference = verified.exchange_reference
+        return package
+
+
+class TestOnlyAttestedEnrollmentIssuer(AttestedEnrollmentIssuer):
+    """Dedicated harness for exchange/signing regressions; never a production verifier."""
+
+    __test__ = False
+
+    def __init__(self, signer: TestOnlyPDSAAuthority) -> None:
+        self._signer = signer
+        self._verifier = TestOnlyTPMAttestationVerifier()
+        self.last_exchange_reference = None
+
+
+def _canonical_activation_request(raw: bytes) -> ActivationRequestV1:
+    import json
+
+    value = json.loads(raw)
+    if canonical_json_bytes(value) != raw:
+        raise ValueError("noncanonical activation request")
+    return ActivationRequestV1.from_mapping(value)
