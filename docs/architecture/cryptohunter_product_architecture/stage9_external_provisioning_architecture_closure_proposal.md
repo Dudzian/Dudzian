@@ -778,8 +778,9 @@ measured-boot enforcement and remains outside this guarantee.
 5. Only after that evidence, implement the production NV owner and PSA/recovery ceremony. Keep
    `WindowsExternalProvisioningHandoff` and MSI unchanged until the production vector is frozen.
 
-This construction is non-circular, but production material and the new two-branch physical evidence
-do not yet exist. Therefore no production integration is authorized by this proposal.
+This construction is non-circular. Two-branch and canonical-vector physical evidence now exists,
+but production material has not been provisioned. Therefore no production integration is authorized
+by this proposal.
 
 The first static implementation layer now consists of:
 
@@ -796,11 +797,13 @@ The first static implementation layer now consists of:
   fixture material and a deterministic byte-complete vector. It is not production authority
   material and is rejected if relabelled as disposable acceptance material.
 
-`deployment/windows_stage9_two_branch_probe.py` is the next disposable executable qualification
-artifact. It uses two ephemeral TEST-only keys and executes both genuine command paths plus negative
-cross-authority and reversed-`PolicyOR` cases. It does not provision an authority or authorize
-MSI/handoff integration. Production public keys and signatures remain external inputs to the later
-freeze ceremony; no production private key is generated or stored here.
+`deployment/windows_stage9_two_branch_probe.py` and the canonical cross-check use ephemeral
+TEST-only keys and execute both genuine command paths plus negative cross-authority and
+reversed-`PolicyOR` cases. They do not provision an authority or authorize MSI/handoff integration.
+Production public keys and signatures remain external inputs to the freeze ceremony; no production
+private key is generated or stored here. The public-only production freeze schemas, verifier,
+migration rules and manifest contract are defined in
+`docs/windows_stage9_production_root_of_trust_freeze.md`.
 
 ## 14. Product Protected State Authority
 
@@ -1104,32 +1107,33 @@ PolicyAuthorize candidate = LIVE PASS
 ```
 
 Ten dowód pozostaje acceptance-only. Disposable key/material nie jest i nie może zostać
-przeniesiony do production Product Release Root, PDSA, PSA ani Recovery Policy Key. Probe nie
-uruchamia pozornego `PolicyOR`; dowodzi jednej candidate ścieżki `PolicyAuthorize`. Nowa produkcyjna
-topologia dwóch rzeczywistych branchy z sekcji 13 nadal wymaga osobnego canonical vector i live
-negative/cross-branch qualification.
+przeniesiony do production Product Release Root, PDSA, PSA ani Recovery Policy Key. Późniejszy
+canonical cross-check potwierdził oba rzeczywiste branche, `PolicyOR`, cykl NV Name, `cpHash`,
+fixture generation `7` oraz observed/runtime generation `13` i final generation `14`. Generator,
+niezależny verifier i fizyczny TPM były zgodne; cleanup zakończył się PASS.
 
 ## 21. Formalny status po pełnym fizycznym Windows 11 / TPM 2.0 live run
 
 ```text
-Two-branch physical proof
+Canonical vector ↔ TPM cross-check
 [██████████] LIVE PASS
 
 ROOT-OF-TRUST CLOSURE
-[█████████░] TWO-BRANCH TOPOLOGY LIVE PROVEN / PRODUCTION VECTOR FREEZE REMAINS
+[█████████░] POLICY TOPOLOGY + CANONICAL TPM SEMANTICS LIVE PROVEN / PRODUCTION FREEZE REMAINS
 
 STAGE 9
-[████████░░] IN PROGRESS
+[█████████░] IN PROGRESS
 
 CAŁY BLOK WINDOWS 0–14
 [██████░░░░] 60.0% — 9/15 DONE
 
 WINDOWS_PRODUCTION_READY = NOT_READY
 STAGE10 = NOT_STARTED
+PRODUCTION_ROOT_MATERIAL = NOT_PROVISIONED
 ```
 
 Stage 0–8 pozostają frozen i niezmienione. Stage 9 nie jest `DONE`; Stage 10 nie został rozpoczęty.
-MSI i `WindowsExternalProvisioningHandoff` pozostają bez zmian. Fizyczny probe dwóch branchy ma
-pełny PASS (łącznie z negatywnym cross-authority i reversed-OR oraz cleanup), ale Stage 9 pozostaje
-`IN PROGRESS`. Następny gate to fizyczny cross-check byte-complete canonical vectora, a następnie
-osobny freeze produkcyjnego public key material, manifestu i reguł migracji.
+MSI i `WindowsExternalProvisioningHandoff` pozostają bez zmian. Fizyczny canonical cross-check ma
+pełny PASS, ale Stage 9 pozostaje `IN PROGRESS`. Publiczny freeze layer jest implementation-ready;
+następny gate wymaga rzeczywistych publicznych trust anchors i podpisów z ceremony. **PRODUCTION
+MATERIAL REQUIRED — DO NOT GENERATE SUBSTITUTE KEYS.**

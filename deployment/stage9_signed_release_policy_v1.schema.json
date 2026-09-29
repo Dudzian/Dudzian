@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cryptohunter.invalid/schemas/stage9-signed-release-policy-v1.json",
+  "title": "CryptoHunter SignedReleasePolicyV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "version", "serialization_profile", "payload", "payload_digest", "signature_profile", "threshold", "signatures"],
+  "properties": {
+    "schema": {"const": "CryptoHunter.SignedReleasePolicyV1"},
+    "version": {"const": 1},
+    "serialization_profile": {"const": "CRYPTOHUNTER_CANONICAL_JSON_V1"},
+    "payload": {"type": "object"},
+    "payload_digest": {"$ref": "#/$defs/hex32"},
+    "signature_profile": {"const": "Ed25519-SHA256-DIGEST-CH-STAGE9-RELEASE-V1"},
+    "threshold": {"type": "integer", "minimum": 1},
+    "signatures": {
+      "type": "array", "minItems": 1,
+      "items": {"type": "object", "additionalProperties": false, "required": ["signer_id", "signature_hex"], "properties": {
+        "signer_id": {"$ref": "#/$defs/keyId"}, "signature_hex": {"type": "string", "pattern": "^[0-9a-f]{128}$"}
+      }}
+    }
+  },
+  "$defs": {
+    "hex32": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "keyId": {"type": "string", "pattern": "^[A-Za-z0-9._-]{1,64}$"}
+  }
+}

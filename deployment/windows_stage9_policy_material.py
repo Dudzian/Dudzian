@@ -13,6 +13,10 @@ import jsonschema
 ROOT = Path(__file__).resolve().parent
 RELEASE_SCHEMA = ROOT / "stage9_release_policy_v1.schema.json"
 ENROLLMENT_SCHEMA = ROOT / "stage9_enrollment_policy_material_v1.schema.json"
+SIGNED_RELEASE_SCHEMA = ROOT / "stage9_signed_release_policy_v1.schema.json"
+PDSA_PACKAGE_SCHEMA = ROOT / "stage9_pdsa_enrollment_package_v1.schema.json"
+FREEZE_MANIFEST_SCHEMA = ROOT / "stage9_root_of_trust_freeze_manifest_v1.schema.json"
+REVOCATION_SCHEMA = ROOT / "stage9_revocation_state_v1.schema.json"
 
 
 class PolicyVectorError(ValueError):
