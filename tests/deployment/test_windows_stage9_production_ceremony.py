@@ -2,20 +2,27 @@ from __future__ import annotations
 
 import ast
 from copy import deepcopy
+from dataclasses import replace
 from datetime import datetime, timezone
 import json
 from pathlib import Path
+import shutil
 
 import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from deployment.windows_stage9_policy_material import PolicyVectorError, canonical_digest
+from deployment.windows_stage9_policy_material import (
+    PolicyVectorError,
+    canonical_digest,
+    canonical_json_bytes,
+)
 from deployment.windows_stage9_production_ceremony import (
     RELEASE_SIGNATURE_PROFILE,
     REVOCATION_SIGNATURE_PROFILE,
     assemble_signed_artifact,
     build_audit_transcript,
+    build_ceremony_context,
     build_initial_revocation_payload,
     build_pdsa_public_bundle,
     build_recovery_public_bundle,
@@ -26,6 +33,7 @@ from deployment.windows_stage9_production_ceremony import (
     import_detached_signatures,
     publish_final,
     verify_ceremony,
+    verify_final_package,
     verify_pdsa_public_bundle,
     verify_recovery_public_bundle,
     verify_root_anchor_bundle,
@@ -107,27 +115,31 @@ def ceremony_material():
         nv_template=fixture["nv_template"],
         branch_order=fixture["branch_order"],
     )
-    cid = ceremony_id(pinned.key_set_digest, payload, pinned.environment)
-    return roots, root_bundle, pinned, pdsa_bundle, recovery, payload, cid
+    context = build_ceremony_context(pinned_root=pinned, release_payload=payload)
+    return roots, root_bundle, pinned, pdsa_bundle, recovery, payload, context
 
 
 def test_complete_test_only_offline_style_ceremony(ceremony_material, tmp_path):
-    roots, root_bundle, pinned, pdsa, recovery, payload, cid = ceremony_material
+    roots, root_bundle, pinned, pdsa, recovery, payload, context = ceremony_material
     release_request = build_signing_request(
-        artifact_type="RELEASE_POLICY", payload=payload, pinned_root=pinned, ceremony=cid
+        artifact_type="RELEASE_POLICY", payload=payload, pinned_root=pinned, context=context
     )
     release_signatures = [
         _signature(release_request, name, roots[name][0]) for name in ("root-1", "root-2")
     ]
     signed_release = assemble_signed_artifact(
-        request=release_request, payload=payload, signatures=release_signatures, pinned_root=pinned
+        request=release_request,
+        payload=payload,
+        signatures=release_signatures,
+        pinned_root=pinned,
+        context=context,
     )
     revocation_payload = build_initial_revocation_payload(effective_at="2026-01-01T00:00:00Z")
     revocation_request = build_signing_request(
         artifact_type="INITIAL_REVOCATION",
         payload=revocation_payload,
         pinned_root=pinned,
-        ceremony=cid,
+        context=context,
     )
     revocation_signatures = [
         _signature(revocation_request, name, roots[name][0]) for name in ("root-1", "root-2")
@@ -137,38 +149,182 @@ def test_complete_test_only_offline_style_ceremony(ceremony_material, tmp_path):
         payload=revocation_payload,
         signatures=revocation_signatures,
         pinned_root=pinned,
+        context=context,
     )
     verified = verify_ceremony(
         signed_release=signed_release,
         signed_revocation=signed_revocation,
+        release_request=release_request,
+        revocation_request=revocation_request,
         root_bundle=root_bundle,
         verification_time=NOW,
     )
-    manifest = build_frozen_manifest(verified, artifact_source_revision="a" * 40)
-    verify_freeze_manifest(manifest, verified_release=verified)
+    manifest = build_frozen_manifest(verified.verified_release, artifact_source_revision="a" * 40)
+    verify_freeze_manifest(manifest, verified_release=verified.verified_release)
     audit = build_audit_transcript(
-        ceremony=cid,
-        release=verified,
+        ceremony=verified,
         manifest=manifest,
-        source_revision_value="a" * 40,
-        environment="UNIT_TEST_ONLY",
     )
+    with pytest.raises(TypeError):
+        verified.signed_release["signatures"][0]["signature_hex"] = "00" * 64
+    with pytest.raises(TypeError):
+        verified.signed_release["payload"]["release_policy_id"] = "MUTATED"
+    with pytest.raises(TypeError):
+        verified.signed_revocation["payload"]["sequence"] = 2
+    with pytest.raises(TypeError):
+        verified.release_request["ceremony_id"] = "0" * 64
+    with pytest.raises(TypeError):
+        verified.revocation_request["ceremony_id"] = "0" * 64
+    with pytest.raises(TypeError):
+        verified.root_bundle["environment"] = "MUTATED"
+
+    mutation_cases = {
+        "signed_release_bytes": ("signatures", 0, "signature_hex", "00" * 64),
+        "signed_revocation_bytes": ("payload", "sequence", 2),
+        "release_request_bytes": ("ceremony_id", "0" * 64),
+        "revocation_request_bytes": ("ceremony_id", "0" * 64),
+        "root_bundle_bytes": ("environment", "MUTATED"),
+    }
+    for field, path in mutation_cases.items():
+        document = json.loads(getattr(verified, field))
+        target = document
+        for key in path[:-2]:
+            target = target[key]
+        target[path[-2]] = path[-1]
+        corrupted = replace(verified, **{field: canonical_json_bytes(document)})
+        with pytest.raises(PolicyVectorError):
+            publish_final(
+                tmp_path,
+                ceremony=corrupted,
+                pdsa_bundle=pdsa,
+                recovery_bundle=recovery,
+                manifest=manifest,
+                audit=audit,
+            )
+        assert not (tmp_path / "final").exists()
+
+    wrong_pdsa = deepcopy(pdsa)
+    wrong_pdsa["threshold"] = 1
+    with pytest.raises(PolicyVectorError, match="not bound"):
+        publish_final(
+            tmp_path,
+            ceremony=verified,
+            pdsa_bundle=wrong_pdsa,
+            recovery_bundle=recovery,
+            manifest=manifest,
+            audit=audit,
+        )
+    wrong_recovery_id = deepcopy(recovery)
+    wrong_recovery_id["key_id"] = "ATTACKER_LABEL"
+    with pytest.raises(PolicyVectorError, match="not bound"):
+        publish_final(
+            tmp_path,
+            ceremony=verified,
+            pdsa_bundle=pdsa,
+            recovery_bundle=wrong_recovery_id,
+            manifest=manifest,
+            audit=audit,
+        )
+    wrong_recovery_metadata = deepcopy(recovery)
+    wrong_recovery_metadata["profile"]["role"] = "ATTACKER_ROLE"
+    with pytest.raises(PolicyVectorError):
+        publish_final(
+            tmp_path,
+            ceremony=verified,
+            pdsa_bundle=pdsa,
+            recovery_bundle=wrong_recovery_metadata,
+            manifest=manifest,
+            audit=audit,
+        )
+    wrong_audit = deepcopy(audit)
+    wrong_audit["ceremony_id"] = "0" * 64
+    with pytest.raises(PolicyVectorError, match="audit transcript"):
+        publish_final(
+            tmp_path,
+            ceremony=verified,
+            pdsa_bundle=pdsa,
+            recovery_bundle=recovery,
+            manifest=manifest,
+            audit=wrong_audit,
+        )
+    assert not (tmp_path / "final").exists()
+    wrong_revision_audit = deepcopy(audit)
+    wrong_revision_audit["source_revision"] = "b" * 40
+    with pytest.raises(PolicyVectorError, match="audit transcript"):
+        publish_final(
+            tmp_path,
+            ceremony=verified,
+            pdsa_bundle=pdsa,
+            recovery_bundle=recovery,
+            manifest=manifest,
+            audit=wrong_revision_audit,
+        )
+    assert not (tmp_path / "final").exists()
     final = publish_final(
-        tmp_path, ceremony=cid, verified_release=verified, manifest=manifest, audit=audit
+        tmp_path,
+        ceremony=verified,
+        pdsa_bundle=pdsa,
+        recovery_bundle=recovery,
+        manifest=manifest,
+        audit=audit,
     )
     assert manifest["status"] == audit["final_status"] == "TEST_ONLY_ROOT_OF_TRUST_FROZEN"
     assert final.is_dir()
+    assert verify_final_package(final, verification_time=NOW).ceremony_id == context.ceremony_id
+    assert (final / "package_manifest.json").is_file()
+    assert json.loads((final / "ceremony_audit.json").read_text())["source_revision"] == "a" * 40
+    broken = tmp_path / context.ceremony_id
+    shutil.copytree(final, broken)
+    altered = json.loads((broken / "unsigned_release_policy.json").read_text())
+    altered["release_policy_id"] = "TAMPERED"
+    (broken / "unsigned_release_policy.json").write_text(json.dumps(altered))
+    with pytest.raises(PolicyVectorError, match="payload copy mismatch|digest mismatch"):
+        verify_final_package(broken, verification_time=NOW)
+    digest_broken = tmp_path / "digest-broken" / context.ceremony_id
+    shutil.copytree(final, digest_broken)
+    package_manifest = json.loads((digest_broken / "package_manifest.json").read_text())
+    package_manifest["artifacts"][0]["sha256"] = "0" * 64
+    (digest_broken / "package_manifest.json").write_text(json.dumps(package_manifest))
+    with pytest.raises(PolicyVectorError, match="artifact digest mismatch"):
+        verify_final_package(digest_broken, verification_time=NOW)
+    for missing in (
+        "signed_release_policy.json",
+        "signed_initial_revocation.json",
+        "ceremony_audit.json",
+        "freeze_manifest.json",
+    ):
+        incomplete = tmp_path / f"missing-{missing}"
+        shutil.copytree(final, incomplete)
+        (incomplete / missing).unlink()
+        with pytest.raises(PolicyVectorError, match="incomplete"):
+            verify_final_package(incomplete, verification_time=NOW)
     with pytest.raises(PolicyVectorError, match="already exists"):
         publish_final(
-            tmp_path, ceremony=cid, verified_release=verified, manifest=manifest, audit=audit
+            tmp_path,
+            ceremony=verified,
+            pdsa_bundle=pdsa,
+            recovery_bundle=recovery,
+            manifest=manifest,
+            audit=audit,
         )
 
 
 def test_signature_import_failures(ceremony_material):
-    roots, _, pinned, _, _, payload, cid = ceremony_material
+    roots, _, pinned, _, _, payload, context = ceremony_material
     request = build_signing_request(
-        artifact_type="RELEASE_POLICY", payload=payload, pinned_root=pinned, ceremony=cid
+        artifact_type="RELEASE_POLICY", payload=payload, pinned_root=pinned, context=context
     )
+    arbitrary = replace(context, ceremony_id="0" * 64)
+    with pytest.raises(PolicyVectorError, match="context invariant"):
+        build_signing_request(
+            artifact_type="RELEASE_POLICY", payload=payload, pinned_root=pinned, context=arbitrary
+        )
+    mismatched = deepcopy(request)
+    mismatched["ceremony_id"] = "0" * 64
+    with pytest.raises(PolicyVectorError, match="request invariant"):
+        assemble_signed_artifact(
+            request=mismatched, payload=payload, signatures=[], pinned_root=pinned, context=context
+        )
     good = _signature(request, "root-1", roots["root-1"][0])
     with pytest.raises(PolicyVectorError, match="insufficient"):
         import_detached_signatures(request, [good], pinned)
@@ -190,9 +346,9 @@ def test_signature_import_failures(ceremony_material):
         )
     changed = deepcopy(payload)
     changed["release_policy_id"] = "ANOTHER"
-    with pytest.raises(PolicyVectorError, match="request"):
+    with pytest.raises(PolicyVectorError, match="invariant"):
         assemble_signed_artifact(
-            request=request, payload=changed, signatures=[], pinned_root=pinned
+            request=request, payload=changed, signatures=[], pinned_root=pinned, context=context
         )
 
 
@@ -222,10 +378,55 @@ def test_public_bundle_tampering_and_genesis_contract(ceremony_material):
     )
 
 
+def test_release_and_revocation_from_different_ceremonies_are_rejected(ceremony_material):
+    roots, root_bundle, pinned, _, _, payload, context_a = ceremony_material
+    release_request = build_signing_request(
+        artifact_type="RELEASE_POLICY", payload=payload, pinned_root=pinned, context=context_a
+    )
+    signed_release = assemble_signed_artifact(
+        request=release_request,
+        payload=payload,
+        signatures=[
+            _signature(release_request, signer, roots[signer][0]) for signer in ("root-1", "root-2")
+        ],
+        pinned_root=pinned,
+        context=context_a,
+    )
+    other_release = deepcopy(payload)
+    other_release["release_policy_id"] = "OTHER_VALID_CEREMONY"
+    context_b = build_ceremony_context(pinned_root=pinned, release_payload=other_release)
+    revocation_payload = build_initial_revocation_payload(effective_at="2026-01-01T00:00:00Z")
+    revocation_request = build_signing_request(
+        artifact_type="INITIAL_REVOCATION",
+        payload=revocation_payload,
+        pinned_root=pinned,
+        context=context_b,
+    )
+    signed_revocation = assemble_signed_artifact(
+        request=revocation_request,
+        payload=revocation_payload,
+        signatures=[
+            _signature(revocation_request, signer, roots[signer][0])
+            for signer in ("root-1", "root-2")
+        ],
+        pinned_root=pinned,
+        context=context_b,
+    )
+    with pytest.raises(PolicyVectorError, match="signing request invariant"):
+        verify_ceremony(
+            release_request=release_request,
+            revocation_request=revocation_request,
+            signed_release=signed_release,
+            signed_revocation=signed_revocation,
+            root_bundle=root_bundle,
+            verification_time=NOW,
+        )
+
+
 def test_partial_ceremony_never_publishes_final(ceremony_material, tmp_path):
-    roots, _, pinned, _, _, payload, cid = ceremony_material
+    roots, _, pinned, _, _, payload, context = ceremony_material
     request = build_signing_request(
-        artifact_type="RELEASE_POLICY", payload=payload, pinned_root=pinned, ceremony=cid
+        artifact_type="RELEASE_POLICY", payload=payload, pinned_root=pinned, context=context
     )
     with pytest.raises(PolicyVectorError):
         assemble_signed_artifact(
@@ -233,6 +434,7 @@ def test_partial_ceremony_never_publishes_final(ceremony_material, tmp_path):
             payload=payload,
             signatures=[_signature(request, "root-1", roots["root-1"][0])],
             pinned_root=pinned,
+            context=context,
         )
     assert not (tmp_path / "final").exists()
 

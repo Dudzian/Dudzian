@@ -13,8 +13,10 @@ import json
 import os
 import shutil
 import tempfile
-from datetime import datetime, timezone
+from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Mapping, Sequence
 
 from cryptography.exceptions import InvalidSignature
@@ -60,6 +62,98 @@ RECOVERY_PROFILE = {
     "curve": "TPM_ECC_NIST_P256",
     "kdf": "TPM_ALG_NULL",
 }
+
+CEREMONY_PROFILE = "STAGE9_PRODUCTION_CEREMONY_V1"
+PACKAGE_ARTIFACT_NAMES = {
+    "root_anchor_bundle",
+    "pdsa_public_bundle",
+    "recovery_public_bundle",
+    "unsigned_release_policy",
+    "release_signing_request",
+    "signed_release_policy",
+    "initial_revocation_payload",
+    "revocation_signing_request",
+    "signed_initial_revocation",
+    "freeze_manifest",
+    "ceremony_audit",
+}
+
+
+@dataclass(frozen=True)
+class Stage9CeremonyContextV1:
+    """Immutable identity derived only from public root and release material."""
+
+    ceremony_id: str
+    root_key_set_digest: str
+    release_payload_digest: str
+    release_version: int
+    environment: str
+    ceremony_profile: str = CEREMONY_PROFILE
+
+
+@dataclass(frozen=True)
+class VerifiedStage9CeremonyV1:
+    """Complete verification result consumed by audit and publication."""
+
+    context: Stage9CeremonyContextV1
+    verified_release: VerifiedReleasePolicyV1
+    verification_time: datetime
+    root_bundle_bytes: bytes
+    release_request_bytes: bytes
+    revocation_request_bytes: bytes
+    signed_release_bytes: bytes
+    signed_revocation_bytes: bytes
+
+    @property
+    def ceremony_id(self) -> str:
+        return self.context.ceremony_id
+
+    @property
+    def signed_release_digest(self) -> str:
+        return hashlib.sha256(self.signed_release_bytes).hexdigest()
+
+    @property
+    def signed_revocation_digest(self) -> str:
+        return hashlib.sha256(self.signed_revocation_bytes).hexdigest()
+
+    @property
+    def root_bundle(self) -> Mapping[str, Any]:
+        return _immutable_document(self.root_bundle_bytes)
+
+    @property
+    def release_request(self) -> Mapping[str, Any]:
+        return _immutable_document(self.release_request_bytes)
+
+    @property
+    def revocation_request(self) -> Mapping[str, Any]:
+        return _immutable_document(self.revocation_request_bytes)
+
+    @property
+    def signed_release(self) -> Mapping[str, Any]:
+        return _immutable_document(self.signed_release_bytes)
+
+    @property
+    def signed_revocation(self) -> Mapping[str, Any]:
+        return _immutable_document(self.signed_revocation_bytes)
+
+
+def _deep_freeze(value: Any) -> Any:
+    if isinstance(value, dict):
+        return MappingProxyType({key: _deep_freeze(item) for key, item in value.items()})
+    if isinstance(value, list):
+        return tuple(_deep_freeze(item) for item in value)
+    return value
+
+
+def _document(serialized: bytes) -> dict[str, Any]:
+    document = json.loads(serialized)
+    if not isinstance(document, dict) or canonical_json_bytes(document) != serialized:
+        raise PolicyVectorError("verified ceremony artifact is not canonical")
+    return document
+
+
+def _immutable_document(serialized: bytes) -> Mapping[str, Any]:
+    return _deep_freeze(_document(serialized))
 
 
 def _require_exact_keys(value: Mapping[str, Any], required: set[str]) -> None:
@@ -285,16 +379,60 @@ def build_unsigned_release_policy(
 def ceremony_id(
     root_key_set_digest: str, release_payload: Mapping[str, Any], environment: str
 ) -> str:
+    return _ceremony_id_from_material(
+        root_key_set_digest=root_key_set_digest,
+        release_payload_digest=canonical_digest(dict(release_payload)).hex(),
+        release_version=release_payload["production_contract"]["release_version"],
+        environment=environment,
+        ceremony_profile=CEREMONY_PROFILE,
+    )
+
+
+def _ceremony_id_from_material(
+    *,
+    root_key_set_digest: str,
+    release_payload_digest: str,
+    release_version: int,
+    environment: str,
+    ceremony_profile: str,
+) -> str:
     material = {
         "schema": "CryptoHunter.Stage9CeremonyIdMaterialV1",
         "version": 1,
         "root_key_set_digest": root_key_set_digest,
-        "release_payload_digest": canonical_digest(dict(release_payload)).hex(),
-        "release_version": release_payload["production_contract"]["release_version"],
+        "release_payload_digest": release_payload_digest,
+        "release_version": release_version,
         "environment": environment,
-        "ceremony_profile": "STAGE9_PRODUCTION_CEREMONY_V1",
+        "ceremony_profile": ceremony_profile,
     }
     return hashlib.sha256(CEREMONY_ID_DOMAIN + canonical_json_bytes(material)).hexdigest()
+
+
+def build_ceremony_context(
+    *, pinned_root: PinnedProductReleaseRootV1, release_payload: Mapping[str, Any]
+) -> Stage9CeremonyContextV1:
+    """Recompute, rather than accept, the authority identity of a ceremony."""
+    validate_schema(dict(release_payload), RELEASE_SCHEMA)
+    digest = canonical_digest(dict(release_payload)).hex()
+    return Stage9CeremonyContextV1(
+        ceremony_id=ceremony_id(
+            pinned_root.key_set_digest, release_payload, pinned_root.environment
+        ),
+        root_key_set_digest=pinned_root.key_set_digest,
+        release_payload_digest=digest,
+        release_version=release_payload["production_contract"]["release_version"],
+        environment=pinned_root.environment,
+    )
+
+
+def _verify_context(
+    context: Stage9CeremonyContextV1,
+    *,
+    pinned_root: PinnedProductReleaseRootV1,
+    release_payload: Mapping[str, Any],
+) -> None:
+    if context != build_ceremony_context(pinned_root=pinned_root, release_payload=release_payload):
+        raise PolicyVectorError("ceremony context invariant failed")
 
 
 def build_signing_request(
@@ -302,7 +440,7 @@ def build_signing_request(
     artifact_type: str,
     payload: Mapping[str, Any],
     pinned_root: PinnedProductReleaseRootV1,
-    ceremony: str,
+    context: Stage9CeremonyContextV1,
 ) -> dict[str, Any]:
     profiles = {
         "RELEASE_POLICY": (RELEASE_DOMAIN, RELEASE_SIGNATURE_PROFILE),
@@ -310,6 +448,22 @@ def build_signing_request(
     }
     if artifact_type not in profiles:
         raise PolicyVectorError("unsupported signing artifact type")
+    release_payload = payload if artifact_type == "RELEASE_POLICY" else None
+    if release_payload is not None:
+        _verify_context(context, pinned_root=pinned_root, release_payload=release_payload)
+    elif (
+        context.root_key_set_digest != pinned_root.key_set_digest
+        or context.environment != pinned_root.environment
+        or context.ceremony_id
+        != _ceremony_id_from_material(
+            root_key_set_digest=context.root_key_set_digest,
+            release_payload_digest=context.release_payload_digest,
+            release_version=context.release_version,
+            environment=context.environment,
+            ceremony_profile=context.ceremony_profile,
+        )
+    ):
+        raise PolicyVectorError("ceremony context authority mismatch")
     domain, _ = profiles[artifact_type]
     digest = canonical_digest(dict(payload))
     return {
@@ -323,7 +477,7 @@ def build_signing_request(
         "allowed_signer_ids": list(pinned_root.keys),
         "required_threshold": pinned_root.threshold,
         "root_key_set_digest": pinned_root.key_set_digest,
-        "ceremony_id": ceremony,
+        "ceremony_id": context.ceremony_id,
     }
 
 
@@ -332,6 +486,7 @@ def verify_signing_request(
     *,
     payload: Mapping[str, Any],
     pinned_root: PinnedProductReleaseRootV1,
+    context: Stage9CeremonyContextV1,
 ) -> None:
     """Recompute every security-relevant request field from payload and pins."""
     _require_exact_keys(
@@ -356,7 +511,7 @@ def verify_signing_request(
         artifact_type=request["artifact_type"],
         payload=payload,
         pinned_root=pinned_root,
-        ceremony=request["ceremony_id"],
+        context=context,
     )
     if dict(request) != expected:
         raise PolicyVectorError("signing request invariant failed")
@@ -453,8 +608,9 @@ def assemble_signed_artifact(
     payload: Mapping[str, Any],
     signatures: Sequence[Mapping[str, Any]],
     pinned_root: PinnedProductReleaseRootV1,
+    context: Stage9CeremonyContextV1,
 ) -> dict[str, Any]:
-    verify_signing_request(request, payload=payload, pinned_root=pinned_root)
+    verify_signing_request(request, payload=payload, pinned_root=pinned_root, context=context)
     accepted = import_detached_signatures(request, signatures, pinned_root)
     release = request["artifact_type"] == "RELEASE_POLICY"
     return {
@@ -473,12 +629,27 @@ def assemble_signed_artifact(
 
 def verify_ceremony(
     *,
+    release_request: Mapping[str, Any],
+    revocation_request: Mapping[str, Any],
     signed_release: Mapping[str, Any],
     signed_revocation: Mapping[str, Any],
     root_bundle: Mapping[str, Any],
     verification_time: datetime,
-) -> VerifiedReleasePolicyV1:
+) -> VerifiedStage9CeremonyV1:
     pinned = verify_root_anchor_bundle(root_bundle)
+    release_payload = signed_release.get("payload")
+    revocation_payload = signed_revocation.get("payload")
+    if not isinstance(release_payload, Mapping) or not isinstance(revocation_payload, Mapping):
+        raise PolicyVectorError("signed ceremony payload is missing")
+    context = build_ceremony_context(pinned_root=pinned, release_payload=release_payload)
+    verify_signing_request(
+        release_request, payload=release_payload, pinned_root=pinned, context=context
+    )
+    verify_signing_request(
+        revocation_request, payload=revocation_payload, pinned_root=pinned, context=context
+    )
+    if release_request["ceremony_id"] != revocation_request["ceremony_id"]:
+        raise PolicyVectorError("release and revocation belong to different ceremonies")
     revocation = verify_revocation_state(
         canonical_json_bytes(dict(signed_revocation)),
         pinned,
@@ -490,31 +661,89 @@ def verify_ceremony(
         if pinned.purpose == "PRODUCTION"
         else verify_test_only_signed_release_policy
     )
-    return verifier(
+    release = verifier(
         canonical_json_bytes(dict(signed_release)),
         pinned,
         verification_time=verification_time,
         revocations=revocation,
     )
+    return VerifiedStage9CeremonyV1(
+        context=context,
+        verified_release=release,
+        verification_time=verification_time,
+        root_bundle_bytes=canonical_json_bytes(dict(root_bundle)),
+        release_request_bytes=canonical_json_bytes(dict(release_request)),
+        revocation_request_bytes=canonical_json_bytes(dict(revocation_request)),
+        signed_release_bytes=canonical_json_bytes(dict(signed_release)),
+        signed_revocation_bytes=canonical_json_bytes(dict(signed_revocation)),
+    )
+
+
+def _revalidate_ceremony(ceremony: VerifiedStage9CeremonyV1) -> VerifiedStage9CeremonyV1:
+    """Recreate verified state from its immutable canonical evidence."""
+    fresh = verify_ceremony(
+        release_request=_document(ceremony.release_request_bytes),
+        revocation_request=_document(ceremony.revocation_request_bytes),
+        signed_release=_document(ceremony.signed_release_bytes),
+        signed_revocation=_document(ceremony.signed_revocation_bytes),
+        root_bundle=_document(ceremony.root_bundle_bytes),
+        verification_time=ceremony.verification_time,
+    )
+
+    def projection(release: VerifiedReleasePolicyV1) -> tuple[Any, ...]:
+        return (
+            release.serialized_envelope,
+            release.purpose,
+            release.payload_digest,
+            release.release_policy_id,
+            release.release_version,
+            tuple(release.root_keys),
+            release.root_threshold,
+            tuple(release.pdsa_keys),
+            release.pdsa_key_set_digest,
+            release.pdsa_threshold,
+            release.valid_from,
+            release.valid_until,
+            release.verification_time,
+            release.recovery_public_digest,
+            release.recovery_name,
+            release.serialization_profile,
+            release.revocations.serialized_envelope,
+            release.revocations.state_digest,
+            release.pinned_root.canonical_key_set_bytes,
+            release.pinned_root.environment,
+        )
+
+    if (
+        fresh.context != ceremony.context
+        or projection(fresh.verified_release) != projection(ceremony.verified_release)
+        or fresh.root_bundle_bytes != ceremony.root_bundle_bytes
+        or fresh.release_request_bytes != ceremony.release_request_bytes
+        or fresh.revocation_request_bytes != ceremony.revocation_request_bytes
+        or fresh.signed_release_bytes != ceremony.signed_release_bytes
+        or fresh.signed_revocation_bytes != ceremony.signed_revocation_bytes
+    ):
+        raise PolicyVectorError("cached ceremony projection failed revalidation")
+    return fresh
 
 
 def build_audit_transcript(
     *,
-    ceremony: str,
-    release: VerifiedReleasePolicyV1,
+    ceremony: VerifiedStage9CeremonyV1,
     manifest: Mapping[str, Any],
-    source_revision_value: str,
-    environment: str,
 ) -> dict[str, Any]:
+    ceremony = _revalidate_ceremony(ceremony)
+    release = ceremony.verified_release
+    verify_freeze_manifest(dict(manifest), verified_release=release)
     release_envelope = json.loads(release.serialized_envelope)
     revocation_envelope = json.loads(release.revocations.serialized_envelope)
     return {
         "schema": "CryptoHunter.Stage9CeremonyAuditV1",
         "version": 1,
-        "ceremony_id": ceremony,
+        "ceremony_id": ceremony.ceremony_id,
         "tool_version": TOOL_VERSION,
-        "source_revision": source_revision_value,
-        "environment": environment,
+        "source_revision": manifest["source_revision"],
+        "environment": ceremony.context.environment,
         "root_key_set_digest": release.pinned_root.key_set_digest,
         "root_key_ids": list(release.root_keys),
         "pdsa_key_set_digest": release.pdsa_key_set_digest,
@@ -522,7 +751,8 @@ def build_audit_transcript(
         "k_recovery_digest": release.recovery_public_digest,
         "k_recovery_name": release.recovery_name,
         "release_payload_digest": release.payload_digest,
-        "signed_release_digest": hashlib.sha256(release.serialized_envelope).hexdigest(),
+        "signed_release_digest": ceremony.signed_release_digest,
+        "signed_revocation_digest": ceremony.signed_revocation_digest,
         "revocation_state_digest": release.revocations.state_digest,
         "revocation_sequence": release.revocations.sequence,
         "accepted_release_signer_ids": [s["signer_id"] for s in release_envelope["signatures"]],
@@ -540,31 +770,165 @@ def build_audit_transcript(
     }
 
 
+def _artifact_digest(document: Mapping[str, Any]) -> str:
+    return hashlib.sha256(canonical_json_bytes(dict(document))).hexdigest()
+
+
+def build_package_manifest(
+    ceremony: VerifiedStage9CeremonyV1, artifacts: Mapping[str, Mapping[str, Any]]
+) -> dict[str, Any]:
+    ceremony = _revalidate_ceremony(ceremony)
+    if set(artifacts) != PACKAGE_ARTIFACT_NAMES:
+        raise PolicyVectorError("final ceremony package is incomplete")
+    immutable_expected = {
+        "root_anchor_bundle": ceremony.root_bundle_bytes,
+        "unsigned_release_policy": canonical_json_bytes(
+            _document(ceremony.signed_release_bytes)["payload"]
+        ),
+        "release_signing_request": ceremony.release_request_bytes,
+        "signed_release_policy": ceremony.signed_release_bytes,
+        "initial_revocation_payload": canonical_json_bytes(
+            _document(ceremony.signed_revocation_bytes)["payload"]
+        ),
+        "revocation_signing_request": ceremony.revocation_request_bytes,
+        "signed_initial_revocation": ceremony.signed_revocation_bytes,
+    }
+    if any(
+        canonical_json_bytes(dict(artifacts[name])) != expected
+        for name, expected in immutable_expected.items()
+    ):
+        raise PolicyVectorError("package artifact differs from verified ceremony bytes")
+    return {
+        "schema": "CryptoHunter.Stage9CeremonyPackageManifestV1",
+        "version": 1,
+        "ceremony_id": ceremony.ceremony_id,
+        "root_key_set_digest": ceremony.context.root_key_set_digest,
+        "release_payload_digest": ceremony.context.release_payload_digest,
+        "signed_release_digest": ceremony.signed_release_digest,
+        "revocation_state_digest": ceremony.verified_release.revocations.state_digest,
+        "signed_revocation_digest": ceremony.signed_revocation_digest,
+        "freeze_manifest_digest": _artifact_digest(artifacts["freeze_manifest"]),
+        "audit_digest": _artifact_digest(artifacts["ceremony_audit"]),
+        "artifacts": [
+            {"artifact_name": f"{name}.json", "sha256": _artifact_digest(document)}
+            for name, document in sorted(artifacts.items())
+        ],
+    }
+
+
+def verify_package_manifest(
+    manifest: Mapping[str, Any],
+    *,
+    ceremony: VerifiedStage9CeremonyV1,
+    artifacts: Mapping[str, Mapping[str, Any]],
+) -> None:
+    if dict(manifest) != build_package_manifest(ceremony, artifacts):
+        raise PolicyVectorError("package artifact digest mismatch")
+
+
+def _package_artifacts(
+    ceremony: VerifiedStage9CeremonyV1,
+    pdsa_bundle: Mapping[str, Any],
+    recovery_bundle: Mapping[str, Any],
+    extra: Mapping[str, Mapping[str, Any]],
+) -> dict[str, Mapping[str, Any]]:
+    return {
+        "root_anchor_bundle": _document(ceremony.root_bundle_bytes),
+        "pdsa_public_bundle": pdsa_bundle,
+        "recovery_public_bundle": recovery_bundle,
+        "unsigned_release_policy": _document(ceremony.signed_release_bytes)["payload"],
+        "release_signing_request": _document(ceremony.release_request_bytes),
+        "signed_release_policy": _document(ceremony.signed_release_bytes),
+        "initial_revocation_payload": _document(ceremony.signed_revocation_bytes)["payload"],
+        "revocation_signing_request": _document(ceremony.revocation_request_bytes),
+        "signed_initial_revocation": _document(ceremony.signed_revocation_bytes),
+        **extra,
+    }
+
+
+def _verify_audit(
+    audit: Mapping[str, Any], ceremony: VerifiedStage9CeremonyV1, manifest: Mapping[str, Any]
+) -> None:
+    expected = build_audit_transcript(
+        ceremony=ceremony,
+        manifest=manifest,
+    )
+    if dict(audit) != expected:
+        raise PolicyVectorError("audit transcript is not bound to the verified ceremony")
+
+
+def _verify_authority_bundles(
+    ceremony: VerifiedStage9CeremonyV1,
+    pdsa_bundle: Mapping[str, Any],
+    recovery_bundle: Mapping[str, Any],
+) -> None:
+    ceremony = _revalidate_ceremony(ceremony)
+    purpose = ceremony.verified_release.pinned_root.purpose
+    pdsa = verify_pdsa_public_bundle(pdsa_bundle, expected_purpose=purpose)
+    recovery = verify_recovery_public_bundle(recovery_bundle, expected_purpose=purpose)
+    release_payload = _document(ceremony.signed_release_bytes)["payload"]
+    signed_recovery = release_payload["k_recovery"]
+    expected_recovery_profile = {
+        key: signed_recovery[key]
+        for key in (
+            "role",
+            "type",
+            "name_algorithm",
+            "object_attributes",
+            "auth_policy_size",
+            "scheme",
+            "scheme_hash",
+            "curve",
+            "kdf",
+        )
+    }
+    if (
+        pdsa["canonical_key_set_digest"] != ceremony.verified_release.pdsa_key_set_digest
+        or pdsa["threshold"] != ceremony.verified_release.pdsa_threshold
+        or [record["key_id"] for record in pdsa["keys"]]
+        != list(ceremony.verified_release.pdsa_keys)
+        or pdsa["purpose"] != release_payload["purpose"]
+        or recovery["tpmt_public_sha256"] != ceremony.verified_release.recovery_public_digest
+        or recovery["key_id"] != signed_recovery["key_id"]
+        or recovery["purpose"] != release_payload["purpose"]
+        or recovery["provenance"] != signed_recovery["provenance"]
+        or recovery["tpmt_public_hex"] != signed_recovery["public_hex"]
+        or recovery["derived_name"] != ceremony.verified_release.recovery_name
+        or recovery["profile"] != expected_recovery_profile
+    ):
+        raise PolicyVectorError("public authority bundle is not bound to the release")
+
+
 def publish_final(
     output: Path,
     *,
-    ceremony: str,
-    verified_release: VerifiedReleasePolicyV1,
+    ceremony: VerifiedStage9CeremonyV1,
+    pdsa_bundle: Mapping[str, Any],
+    recovery_bundle: Mapping[str, Any],
     manifest: Mapping[str, Any],
     audit: Mapping[str, Any],
 ) -> Path:
-    """Atomically publish only a completely verified final directory; never overwrite."""
-    verify_freeze_manifest(dict(manifest), verified_release=verified_release)
-    if (
-        audit.get("schema") != "CryptoHunter.Stage9CeremonyAuditV1"
-        or audit.get("ceremony_id") != ceremony
-        or audit.get("freeze_manifest_digest") != canonical_digest(dict(manifest)).hex()
-        or audit.get("final_status") != manifest["status"]
-    ):
-        raise PolicyVectorError("audit transcript is not bound to the verified final manifest")
-    final = output / "final" / ceremony
+    """Verify and atomically publish all public evidence; never overwrite."""
+    ceremony = _revalidate_ceremony(ceremony)
+    _verify_authority_bundles(ceremony, pdsa_bundle, recovery_bundle)
+    verify_freeze_manifest(dict(manifest), verified_release=ceremony.verified_release)
+    _verify_audit(audit, ceremony, manifest)
+    artifacts = _package_artifacts(
+        ceremony,
+        pdsa_bundle,
+        recovery_bundle,
+        {"freeze_manifest": manifest, "ceremony_audit": audit},
+    )
+    package_manifest = build_package_manifest(ceremony, artifacts)
+    verify_package_manifest(package_manifest, ceremony=ceremony, artifacts=artifacts)
+    final = output / "final" / ceremony.ceremony_id
     if final.exists():
         raise PolicyVectorError("completed ceremony already exists")
     staging_root = output / ".staging"
     staging_root.mkdir(parents=True, exist_ok=True)
-    temporary = Path(tempfile.mkdtemp(prefix=f"{ceremony}.", dir=staging_root))
+    temporary = Path(tempfile.mkdtemp(prefix=f"{ceremony.ceremony_id}.", dir=staging_root))
     try:
-        artifacts = {"freeze_manifest": manifest, "audit": audit}
+        artifacts = {**artifacts, "package_manifest": package_manifest}
         for name, document in artifacts.items():
             (temporary / f"{name}.json").write_bytes(canonical_json_bytes(dict(document)) + b"\n")
         (output / "final").mkdir(parents=True, exist_ok=True)
@@ -573,6 +937,52 @@ def publish_final(
         shutil.rmtree(temporary, ignore_errors=True)
         raise
     return final
+
+
+def verify_final_package(path: Path, *, verification_time: datetime) -> VerifiedStage9CeremonyV1:
+    """Independently verify a published package, without trusting this checkout revision."""
+    required = {
+        "root_anchor_bundle",
+        "pdsa_public_bundle",
+        "recovery_public_bundle",
+        "unsigned_release_policy",
+        "release_signing_request",
+        "signed_release_policy",
+        "initial_revocation_payload",
+        "revocation_signing_request",
+        "signed_initial_revocation",
+        "freeze_manifest",
+        "ceremony_audit",
+        "package_manifest",
+    }
+    present = {item.stem for item in path.glob("*.json")}
+    if present != required:
+        raise PolicyVectorError("final ceremony package is incomplete")
+    documents = {name: _read(str(path / f"{name}.json")) for name in required}
+    ceremony = verify_ceremony(
+        release_request=documents["release_signing_request"],
+        revocation_request=documents["revocation_signing_request"],
+        signed_release=documents["signed_release_policy"],
+        signed_revocation=documents["signed_initial_revocation"],
+        root_bundle=documents["root_anchor_bundle"],
+        verification_time=verification_time,
+    )
+    _verify_authority_bundles(
+        ceremony, documents["pdsa_public_bundle"], documents["recovery_public_bundle"]
+    )
+    if (
+        documents["unsigned_release_policy"] != _document(ceremony.signed_release_bytes)["payload"]
+        or documents["initial_revocation_payload"]
+        != _document(ceremony.signed_revocation_bytes)["payload"]
+    ):
+        raise PolicyVectorError("package payload copy mismatch")
+    verify_freeze_manifest(documents["freeze_manifest"], verified_release=ceremony.verified_release)
+    _verify_audit(documents["ceremony_audit"], ceremony, documents["freeze_manifest"])
+    artifacts = {name: documents[name] for name in required - {"package_manifest"}}
+    verify_package_manifest(documents["package_manifest"], ceremony=ceremony, artifacts=artifacts)
+    if path.name != ceremony.ceremony_id:
+        raise PolicyVectorError("package directory ceremony ID mismatch")
+    return ceremony
 
 
 def _read(path: str) -> dict[str, Any]:
@@ -602,12 +1012,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         "verify-ceremony",
         "build-freeze-manifest",
         "verify-freeze-manifest",
+        "build-audit-transcript",
+        "publish-final",
+        "verify-final-package",
     ):
         command = sub.add_parser(name)
         command.add_argument("--input", required=True, help="phase-specific canonical JSON input")
         command.add_argument("--output", required=True)
     args = parser.parse_args(argv)
     data = _read(args.input)
+    publish_result: Path | None = None
     # The CLI's phase documents provide named arguments.  Keeping phases separate
     # prevents an accidental online all-in-one signer path.
     if args.phase == "prepare-root-anchor":
@@ -620,33 +1034,73 @@ def main(argv: Sequence[str] | None = None) -> int:
         result = build_unsigned_release_policy(**data)
     elif args.phase == "prepare-signing-request":
         pinned = verify_root_anchor_bundle(data.pop("root_bundle"))
-        result = build_signing_request(pinned_root=pinned, **data)
+        release_payload = data.pop("release_payload")
+        context = build_ceremony_context(pinned_root=pinned, release_payload=release_payload)
+        result = build_signing_request(pinned_root=pinned, context=context, **data)
     elif args.phase == "prepare-initial-revocation":
         result = build_initial_revocation_payload(**data)
     elif args.phase in ("assemble-signed-release", "assemble-signed-revocation"):
         pinned = verify_root_anchor_bundle(data.pop("root_bundle"))
-        result = assemble_signed_artifact(pinned_root=pinned, **data)
+        release_payload = data.pop("release_payload")
+        context = build_ceremony_context(pinned_root=pinned, release_payload=release_payload)
+        result = assemble_signed_artifact(pinned_root=pinned, context=context, **data)
     elif args.phase == "verify-ceremony":
         data["verification_time"] = datetime.fromisoformat(
             data["verification_time"].replace("Z", "+00:00")
         )
-        release = verify_ceremony(**data)
-        result = {"status": "PASS", "release_payload_digest": release.payload_digest}
+        ceremony = verify_ceremony(**data)
+        result = {
+            "status": "PASS",
+            "ceremony_id": ceremony.ceremony_id,
+            "release_payload_digest": ceremony.context.release_payload_digest,
+        }
     elif args.phase == "build-freeze-manifest":
         data["verification_time"] = datetime.fromisoformat(
             data["verification_time"].replace("Z", "+00:00")
         )
-        release = verify_ceremony(**data)
-        result = build_frozen_manifest(release, artifact_source_revision=source_revision())
-    else:
+        ceremony = verify_ceremony(**data)
+        result = build_frozen_manifest(
+            ceremony.verified_release, artifact_source_revision=source_revision()
+        )
+    elif args.phase == "verify-freeze-manifest":
         manifest = data.pop("manifest")
         data["verification_time"] = datetime.fromisoformat(
             data["verification_time"].replace("Z", "+00:00")
         )
-        release = verify_ceremony(**data)
-        verify_freeze_manifest(manifest, verified_release=release)
+        ceremony = verify_ceremony(**data)
+        verify_freeze_manifest(manifest, verified_release=ceremony.verified_release)
         result = {"status": "PASS"}
-    _write(args.output, result)
+    elif args.phase == "build-audit-transcript":
+        manifest = data.pop("manifest")
+        data["verification_time"] = datetime.fromisoformat(
+            data["verification_time"].replace("Z", "+00:00")
+        )
+        ceremony = verify_ceremony(**data)
+        result = build_audit_transcript(ceremony=ceremony, manifest=manifest)
+    elif args.phase == "publish-final":
+        manifest, audit = data.pop("manifest"), data.pop("audit")
+        pdsa, recovery = data.pop("pdsa_bundle"), data.pop("recovery_bundle")
+        data["verification_time"] = datetime.fromisoformat(
+            data["verification_time"].replace("Z", "+00:00")
+        )
+        ceremony = verify_ceremony(**data)
+        publish_result = publish_final(
+            Path(args.output),
+            ceremony=ceremony,
+            pdsa_bundle=pdsa,
+            recovery_bundle=recovery,
+            manifest=manifest,
+            audit=audit,
+        )
+        result = {}
+    else:
+        verification_time = datetime.fromisoformat(data["verification_time"].replace("Z", "+00:00"))
+        ceremony = verify_final_package(
+            Path(data["package_path"]), verification_time=verification_time
+        )
+        result = {"status": "PASS", "ceremony_id": ceremony.ceremony_id}
+    if publish_result is None:
+        _write(args.output, result)
     return 0
 
 
