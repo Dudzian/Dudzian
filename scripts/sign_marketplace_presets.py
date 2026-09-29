@@ -14,6 +14,13 @@ from typing import Iterable
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
 
+from bot_core.marketplace.signing_key_policy import (
+    resolve_hmac_signing_key,
+    resolve_signing_private_key,
+    validate_signing_identity,
+    validate_signing_issuer,
+)
+
 
 def _load_hmac_key(path: Path) -> bytes:
     key = path.read_bytes().strip()
@@ -117,7 +124,7 @@ def _serialize(payload: dict) -> str:
     return json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--root",
@@ -127,38 +134,51 @@ def main() -> int:
     )
     parser.add_argument(
         "--hmac-key",
-        default="config/marketplace/keys/dev-hmac.key",
-        help="Ścieżka do klucza HMAC (default: config/marketplace/keys/dev-hmac.key)",
+        help="Jawna ścieżka klucza HMAC; obowiązkowa i zewnętrzna dla production.",
     )
     parser.add_argument(
         "--hmac-key-id",
-        default="dev-hmac",
         help="Identyfikator klucza HMAC",
     )
     parser.add_argument(
         "--ed25519-key",
-        default="config/marketplace/keys/dev-presets-ed25519.key",
-        help="Ścieżka do klucza Ed25519 (default: config/marketplace/keys/dev-presets-ed25519.key)",
+        "--private-key",
+        dest="private_key",
+        help="Jawna ścieżka klucza Ed25519; obowiązkowa dla production.",
     )
+    parser.add_argument("--environment", choices=("dev", "test", "production"), default="dev")
     parser.add_argument(
         "--ed25519-key-id",
-        default="dev-presets-ed25519",
         help="Identyfikator klucza Ed25519",
     )
     parser.add_argument("--issuer", help="Opcjonalny identyfikator wystawcy podpisu")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
+    hmac_key_id = validate_signing_identity(
+        args.hmac_key_id or ("dev-hmac" if args.environment != "production" else None),
+        environment=args.environment,
+        option_name="--hmac-key-id",
+    )
+    ed25519_key_id = validate_signing_identity(
+        args.ed25519_key_id
+        or ("dev-presets-ed25519" if args.environment != "production" else None),
+        environment=args.environment,
+        option_name="--ed25519-key-id",
+    )
     roots = [Path(entry).expanduser().resolve() for entry in args.root]
-    hmac_key = _load_hmac_key(Path(args.hmac_key).expanduser())
-    ed_key = _load_ed25519_key(Path(args.ed25519_key).expanduser())
+    hmac_key_path = resolve_hmac_signing_key(args.hmac_key, environment=args.environment)
+    hmac_key = _load_hmac_key(hmac_key_path)
+    private_key = resolve_signing_private_key(args.private_key, environment=args.environment)
+    issuer = validate_signing_issuer(args.issuer, environment=args.environment)
+    ed_key = _load_ed25519_key(private_key)
 
     count = sign_presets(
         roots=roots,
         hmac_key=hmac_key,
-        hmac_key_id=args.hmac_key_id,
+        hmac_key_id=hmac_key_id,
         ed25519_key=ed_key,
-        ed25519_key_id=args.ed25519_key_id,
-        issuer=args.issuer,
+        ed25519_key_id=ed25519_key_id,
+        issuer=issuer,
     )
     print(f"Podpisano {count} plików presetów")
     return 0

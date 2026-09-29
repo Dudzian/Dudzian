@@ -13,11 +13,15 @@ from pathlib import Path
 from typing import Iterable, Mapping
 
 from bot_core.marketplace import reconcile_exchange_presets, validate_exchange_presets
+from bot_core.marketplace.signing_key_policy import (
+    resolve_signing_private_key,
+    validate_signing_identity,
+    validate_signing_issuer,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_EXCHANGES_DIR = REPO_ROOT / "config" / "exchanges"
 DEFAULT_OUTPUT_DIR = REPO_ROOT / "config" / "marketplace" / "presets" / "exchanges"
-DEFAULT_PRIVATE_KEY = REPO_ROOT / "config" / "marketplace" / "keys" / "dev-presets-ed25519.key"
 DEFAULT_PUBLIC_KEY = REPO_ROOT / "config" / "marketplace" / "keys" / "dev-presets-ed25519.pub"
 
 
@@ -68,23 +72,20 @@ def _parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--private-key",
         type=Path,
-        default=DEFAULT_PRIVATE_KEY,
-        help="Ed25519 private key used to sign presets.",
+        help="Explicit Ed25519 private key; required and external in production.",
     )
+    parser.add_argument("--environment", choices=("dev", "test", "production"), default="dev")
     parser.add_argument(
         "--public-key",
         type=Path,
-        default=DEFAULT_PUBLIC_KEY,
-        help="Optional Ed25519 public key to verify signatures after regeneration.",
+        help="Ed25519 public key used to verify regenerated presets; required in production.",
     )
     parser.add_argument(
         "--key-id",
-        default="dev-presets",
         help="Identifier written to the signature block.",
     )
     parser.add_argument(
         "--issuer",
-        default="marketplace-ci",
         help="Optional issuer recorded in signature metadata.",
     )
     parser.add_argument(
@@ -119,13 +120,30 @@ def _parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
 def main(argv: Iterable[str] | None = None) -> int:
     args = _parse_args(argv)
 
+    key_id = validate_signing_identity(
+        args.key_id or ("dev-presets" if args.environment != "production" else None),
+        environment=args.environment,
+        option_name="--key-id",
+    )
+    issuer = validate_signing_issuer(
+        args.issuer or ("marketplace-ci" if args.environment != "production" else None),
+        environment=args.environment,
+    )
+
+    if args.environment == "production" and args.public_key is None:
+        raise SystemExit(
+            "PRODUCTION reconciliation requires explicit --public-key verification material"
+        )
+    if args.public_key is None:
+        args.public_key = DEFAULT_PUBLIC_KEY
+
     signing_keys: Mapping[str, bytes] | None = None
     try:
         pub_bytes = _load_key_material(args.public_key)
     except OSError as exc:
         raise SystemExit(f"Failed to read public key: {exc}") from exc
     if pub_bytes:
-        signing_keys = {args.key_id: pub_bytes}
+        signing_keys = {key_id: pub_bytes}
 
     if args.check_only:
         print("Validating existing exchange presets...")
@@ -143,15 +161,18 @@ def main(argv: Iterable[str] | None = None) -> int:
         # preserving auxiliary catalog fields if they already exist. Validation ensures the
         # payload matches the current spec-hash fingerprint and the signature verifies.
         try:
-            private_key = _load_key_material(args.private_key)
+            private_key_path = resolve_signing_private_key(
+                args.private_key, environment=args.environment
+            )
+            private_key = _load_key_material(private_key_path)
         except OSError as exc:
             raise SystemExit(f"Failed to read private key: {exc}") from exc
         results = reconcile_exchange_presets(
             exchanges_dir=args.exchanges_dir,
             output_dir=args.output_dir,
             private_key=private_key,
-            key_id=args.key_id,
-            issuer=args.issuer,
+            key_id=key_id,
+            issuer=issuer,
             version=args.version,
             signing_keys=signing_keys,
             remove_orphans=not args.keep_orphans,

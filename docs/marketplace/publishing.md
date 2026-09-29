@@ -23,6 +23,7 @@ Nowy proces bazuje na skrypcie `scripts/build_marketplace_catalog.py`, który po
 2. Uruchom:
    ```bash
    python scripts/build_marketplace_catalog.py \
+     --environment dev \
      --private-key config/marketplace/keys/dev-presets-ed25519.key \
      --key-id dev-presets \
      --signing-key dev-hmac:config/marketplace/keys/dev-hmac.key
@@ -30,6 +31,11 @@ Nowy proces bazuje na skrypcie `scripts/build_marketplace_catalog.py`, który po
 3. Skrypt zapisze podpisane dokumenty w `config/marketplace/packages/…`, policzy sumy SHA-256 i uzupełni podpis HMAC (`signature.value`).
 4. Wygenerowany `config/marketplace/catalog.json` będzie miał schemat `1.1` oraz zaktualizowane znaczniki `release`, `exchange_compatibility` i `versioning`.
 5. Zweryfikuj wynik `git status` – brak zmian po uruchomieniu oznacza, że repozytorium jest zsynchronizowane z katalogiem publicznym.
+
+Powyższy klucz jest deterministycznym fixture'em **DEV/TEST ONLY**. Produkcyjny rollout
+korzysta z `--environment production` i obowiązkowego `--private-key` wskazującego
+chroniony magazyn poza repozytorium. Loader fail-closed odrzuca każdy klucz wewnątrz
+repozytorium (w tym plik śledzony, `.git`, symlink, junction lub ścieżkę względną).
 
 ## 3. Walidacja lokalna
 
