@@ -58,6 +58,7 @@ TPM_ALG_CFB = 0x0043
 TPM_ECC_NIST_P256 = 0x0003
 TPM_ST_HASHCHECK = 0x8024
 TPM_SE_POLICY = 0x01
+TPMA_SESSION_CONTINUESESSION = 0x01
 K_PSA_ATTRIBUTES = 0x000400B2
 AK_ATTRIBUTES = 0x00050072
 EK_ATTRIBUTES = 0x000300B2
@@ -92,10 +93,14 @@ def _session_command_packet(
     code: int,
     handles: tuple[int, ...],
     parameters: bytes,
-    sessions: tuple[int, ...],
+    sessions: tuple[CommandSession, ...],
 ) -> bytes:
     authorization = b"".join(
-        u32(session) + tpm2b(b"") + b"\x00" + tpm2b(b"") for session in sessions
+        u32(session.handle)
+        + tpm2b(b"")
+        + bytes((session.attributes,))
+        + tpm2b(b"")
+        for session in sessions
     )
     body = b"".join(u32(handle) for handle in handles)
     body += u32(len(authorization)) + authorization + parameters
@@ -119,6 +124,14 @@ class PrimaryPublic:
     name: bytes
     creation_hash: bytes
     creation_ticket: bytes
+
+
+@dataclass(frozen=True)
+class CommandSession:
+    """Authorization session and the attributes serialized for this command."""
+
+    handle: int
+    attributes: int
 
 
 @dataclass(frozen=True)
@@ -307,7 +320,7 @@ class PhysicalWindowsTPMEnrollmentSubstrate:
                 TPM_CC_SIGN,
                 (k_psa.handle,),
                 tpm2b(digest) + scheme + validation,
-                (session,),
+                (CommandSession(session, TPMA_SESSION_CONTINUESESSION),),
             )
             parsed = parse_tpm_response(
                 self.transport.submit(TPM_CC_SIGN, request), response_handle_count=0
@@ -349,7 +362,7 @@ class PhysicalWindowsTPMEnrollmentSubstrate:
             TPM_CC_POLICY_SECRET,
             (TPM_RH_ENDORSEMENT, session),
             parameters,
-            (TPM_RS_PW,),
+            (CommandSession(TPM_RS_PW, 0),),
         )
         parse_tpm_response(
             self.transport.submit(TPM_CC_POLICY_SECRET, request), response_handle_count=0
@@ -365,7 +378,10 @@ class PhysicalWindowsTPMEnrollmentSubstrate:
                 TPM_CC_ACTIVATE_CREDENTIAL,
                 (ak.handle, ek.handle),
                 tpm2b(credential_blob) + tpm2b(encrypted_secret),
-                (TPM_RS_PW, session),
+                (
+                    CommandSession(TPM_RS_PW, 0),
+                    CommandSession(session, TPMA_SESSION_CONTINUESESSION),
+                ),
             )
             parsed = parse_tpm_response(
                 self.transport.submit(TPM_CC_ACTIVATE_CREDENTIAL, request),
