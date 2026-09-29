@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cryptohunter.invalid/schemas/stage9-root-of-trust-freeze-manifest-v1.json",
+  "title": "CryptoHunter Stage9RootOfTrustFreezeManifestV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "version", "status", "source_revision", "serialization_profile", "release_policy_payload_digest", "signed_release_policy_digest", "revocation_state_digest", "revocation_sequence", "product_root_key_set_digest", "product_release_root", "pdsa_key_set_digest", "k_recovery", "policy_refs", "nv_template", "branch_order", "root_policy_derivation", "supported_migration_version", "tool"],
+  "properties": {
+    "schema": {"const": "CryptoHunter.Stage9RootOfTrustFreezeManifestV1"},
+    "version": {"const": 1},
+    "status": {"enum": ["PRODUCTION_ROOT_MATERIAL_NOT_PROVISIONED", "PRODUCTION_ROOT_OF_TRUST_FROZEN", "TEST_ONLY_ROOT_OF_TRUST_FROZEN"]},
+    "source_revision": {"anyOf": [{"const": "UNKNOWN"}, {"type": "string", "pattern": "^[0-9a-f]{40,64}$"}]},
+    "serialization_profile": {"const": "CRYPTOHUNTER_CANONICAL_JSON_V1"},
+    "release_policy_payload_digest": {"$ref": "#/$defs/digestOrPending"},
+    "signed_release_policy_digest": {"$ref": "#/$defs/digestOrPending"},
+    "revocation_state_digest": {"$ref": "#/$defs/digestOrPending"},
+    "revocation_sequence": {"anyOf": [{"const": "PENDING_CEREMONY"}, {"type": "integer", "minimum": 1, "maximum": 9007199254740991}]},
+    "product_root_key_set_digest": {"$ref": "#/$defs/digestOrPending"},
+    "product_release_root": {
+      "type": "object", "additionalProperties": false,
+      "required": ["material_status", "algorithm", "encoding", "threshold", "key_ids", "public_keys_hex"],
+      "properties": {
+        "material_status": {"enum": ["NOT_PROVISIONED", "PROVISIONED"]},
+        "algorithm": {"const": "Ed25519"}, "encoding": {"const": "RFC8032_RAW_32_BYTES_LOWER_HEX"},
+        "threshold": {"const": 2},
+        "key_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "pattern": "^[A-Za-z0-9._-]{1,64}$"}},
+        "public_keys_hex": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/hex32"}}
+      }
+    },
+    "pdsa_key_set_digest": {"$ref": "#/$defs/digestOrPending"},
+    "k_recovery": {
+      "type": "object", "additionalProperties": false,
+      "required": ["material_status", "tpmt_public_digest", "name"],
+      "properties": {
+        "material_status": {"enum": ["NOT_PROVISIONED", "PROVISIONED"]},
+        "tpmt_public_digest": {"$ref": "#/$defs/digestOrPending"},
+        "name": {"anyOf": [{"const": "PENDING_CEREMONY"}, {"type": "string", "pattern": "^000b[0-9a-f]{64}$"}]}
+      }
+    },
+    "policy_refs": {"type": "object"}, "nv_template": {"type": "object"},
+    "branch_order": {"type": "array", "prefixItems": [{"const": "NORMAL"}, {"const": "BOOTSTRAP_RECOVERY"}], "items": false},
+    "root_policy_derivation": {"const": "SHA256(zero32||TPM_CC_PolicyOR||normal_branch||recovery_branch); K_PSA.Name is per-device"},
+    "supported_migration_version": {"const": 1},
+    "tool": {"type": "object", "additionalProperties": false, "required": ["name", "version"], "properties": {"name": {"const": "deployment.windows_stage9_root_of_trust_freeze"}, "version": {"const": 1}}}
+  },
+  "$defs": {
+    "hex32": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "digestOrPending": {"anyOf": [{"const": "PENDING_CEREMONY"}, {"$ref": "#/$defs/hex32"}]}
+  }
+}
