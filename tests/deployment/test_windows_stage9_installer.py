@@ -4,11 +4,14 @@ import json
 from pathlib import Path
 import re
 import subprocess
+import sys
+from types import SimpleNamespace
 import zipfile
 
 import pytest
 
 from deployment import windows_stage9_clean_install as clean_install
+from deployment.windows_installer import provision
 from deployment.windows_installer.build import (
     InstallerBuildError,
     canonical_wix_version,
@@ -17,7 +20,12 @@ from deployment.windows_installer.build import (
     verify_postgresql,
 )
 from deployment.windows_installer.contract import CONTRACT
-from deployment.windows_installer.provision import commit, create_journal, rollback
+from deployment.windows_installer.provision import (
+    _first_exception_type,
+    commit,
+    create_journal,
+    rollback,
+)
 from deployment.windows_installer.postgresql_service import (
     create_suspended_in_job,
     require_clean_exit,
@@ -45,9 +53,11 @@ def test_exact_service_contract_and_native_removal() -> None:
         assert f'Account="NT SERVICE\\{name}"' in WXS
         assert re.search(rf'<ServiceControl[^>]+Name="{name}"[^>]+Remove="uninstall"', WXS)
     assert (
-        'Name="CryptoHunterBackend"\n             DisplayName="CryptoHunter Backend" Type="ownProcess" Start="auto"'
+        'Name="CryptoHunterBackend"\n             DisplayName="CryptoHunter Backend" Type="ownProcess" Start="demand"'
         in WXS
     )
+    backend_control = re.search(r'<ServiceControl Id="BackendControl"[^>]+>', WXS)
+    assert backend_control is not None and 'Start="install"' not in backend_control.group()
     assert '<ServiceDependency Id="CryptoHunterPostgreSQL" />' in WXS
     assert "LocalSystem" not in WXS
 
@@ -520,10 +530,350 @@ def test_postgresql_clean_stop_requires_signaled_zero_exit() -> None:
 
 def test_probe_has_separate_executable_authority_for_each_install_proof() -> None:
     source = (ROOT / "deployment/windows_stage9_clean_install.py").read_text()
-    for name in ("files", "services", "dacl", "postgresql", "mtls_matrix", "backend", "logging"):
+    for name in (
+        "files",
+        "services",
+        "dacl",
+        "postgresql",
+        "authority_absent",
+        "production_enrollment_fail_closed",
+    ):
         assert f"def prove_{name}" in source
         assert f'proofs["{name}"] = "PASS"' in source
     assert 'return {name: "PASS"' not in source
+
+
+def test_msi_install_never_invokes_production_enrollment() -> None:
+    provision = (ROOT / "deployment/windows_installer/provision.py").read_text()
+    install_body = provision.split("def install(", 1)[1].split("def enroll(", 1)[0]
+    assert "load_windows_external_provisioning_handoff" not in install_body
+    assert "materialize_canonical_pre_state" not in install_body
+    assert "enroll" not in WXS.lower()
+
+
+def test_enrollment_is_explicit_fail_closed_and_only_then_activates_backend() -> None:
+    provision = (ROOT / "deployment/windows_installer/provision.py").read_text()
+    enroll_body = provision.split("def enroll(", 1)[1].split("def rollback(", 1)[0]
+    assert enroll_body.index("load_windows_external_provisioning_handoff()") < enroll_body.index(
+        "materialize_canonical_pre_state"
+    )
+    assert enroll_body.index("materialize_canonical_pre_state") < enroll_body.index(
+        "_commit_backend_start_type()"
+    )
+    assert "TEST_ONLY" not in enroll_body and "development" not in enroll_body.lower()
+
+
+def test_clean_install_never_claims_production_enrollment_passed() -> None:
+    source = (ROOT / "deployment/windows_stage9_clean_install.py").read_text()
+    assert 'proofs["production_enrollment"] = "PASS"' not in source
+    assert 'proofs["production_enrollment_fail_closed"] = "PASS"' in source
+    assert '"post_enrollment_live_qualification": "REQUIRED"' in source
+    assert "POST_ENROLLMENT_LIVE_QUALIFICATION = REQUIRED" in source
+
+
+def test_safe_diagnostic_identifies_first_exception_without_rendering_it() -> None:
+    secret = RuntimeError("private-ceremony-material")
+    try:
+        try:
+            raise secret
+        except RuntimeError:
+            raise OSError("cleanup failure")
+    except OSError as outer:
+        assert _first_exception_type(outer) == "RuntimeError"
+
+
+def test_fail_closed_proof_rejects_unexpected_first_exception(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "root"
+    machine = tmp_path / "machine"
+    (machine / "State").mkdir(parents=True)
+
+    class Result:
+        returncode = 1
+        stderr = b"provisioning failed: operation=enroll first_exception=FileNotFoundError\n"
+
+    monkeypatch.setattr(clean_install.subprocess, "run", lambda *args, **kwargs: Result())
+    with pytest.raises(clean_install.CleanInstallError, match="expected cause"):
+        clean_install.prove_production_enrollment_fail_closed(root, machine)
+
+
+def test_fail_closed_proof_accepts_only_exact_unavailable_adapter_diagnostic(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "root"
+    machine = tmp_path / "machine"
+    (machine / "State").mkdir(parents=True)
+
+    class Result:
+        returncode = 1
+        stderr = (
+            b"provisioning failed: operation=enroll "
+            b"first_exception=WindowsProvisioningAdapterUnavailable\n"
+        )
+
+    monkeypatch.setattr(clean_install.subprocess, "run", lambda *args, **kwargs: Result())
+    clean_install.prove_production_enrollment_fail_closed(root, machine)
+
+
+def _installed_machine(tmp_path: Path) -> tuple[Path, Path]:
+    program_files = tmp_path / "Program Files" / "CryptoHunter"
+    program_data = tmp_path / "ProgramData" / "CryptoHunter"
+    program_files.mkdir(parents=True)
+    (program_data / "State").mkdir(parents=True)
+    (program_data / provision.OWNERSHIP_RECORD).write_text(
+        json.dumps(
+            {
+                "state": "COMMITTED",
+                "program_data": str(program_data.resolve()),
+            }
+        )
+    )
+    return program_files, program_data
+
+
+@pytest.mark.parametrize(
+    "failure_step",
+    ("materialize", "start_type", "recovery", "start_service"),
+)
+def test_enrollment_finalization_resumes_after_each_effect_boundary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure_step: str
+) -> None:
+    program_files, program_data = _installed_machine(tmp_path)
+    accepted_claim = __import__(
+        "tests.persistence.test_durable_first_run_bootstrap", fromlist=["claim"]
+    ).claim()
+    provider = object()
+    calls: list[str] = []
+    failed = False
+
+    monkeypatch.setattr(provision, "load_windows_external_provisioning_handoff", lambda: provider)
+    monkeypatch.setattr(
+        provision,
+        "resolve_accepted_handoff",
+        lambda value: (accepted_claim.claim_fingerprint_sha256, accepted_claim, object()),
+    )
+
+    def effect(name: str):
+        def run(*args):
+            nonlocal failed
+            calls.append(name)
+            if name == failure_step and not failed:
+                failed = True
+                raise OSError("injected crash")
+            if name == "materialize":
+                (program_data / "State" / "corehost.sqlite").touch()
+
+        return run
+
+    monkeypatch.setattr(provision, "materialize_canonical_pre_state", effect("materialize"))
+    monkeypatch.setattr(provision, "_commit_backend_start_type", effect("start_type"))
+    monkeypatch.setattr(provision, "_recovery", effect("recovery"))
+    monkeypatch.setattr(provision, "_ensure_backend_running", effect("start_service"))
+    monkeypatch.setattr(provision, "_verify_backend_activation", effect("verify"))
+
+    with pytest.raises(OSError, match="injected crash"):
+        provision.enroll(program_files, program_data)
+    provision.enroll(program_files, program_data)
+    record = json.loads((program_data / "State" / provision.ENROLLMENT_FINALIZATION).read_text())
+    assert record["phase"] == "COMMITTED"
+    assert calls.count(failure_step) == 2
+
+
+def test_committed_enrollment_is_idempotently_reverified(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    program_files, program_data = _installed_machine(tmp_path)
+    accepted_claim = __import__(
+        "tests.persistence.test_durable_first_run_bootstrap", fromlist=["claim"]
+    ).claim()
+    provider = object()
+    monkeypatch.setattr(provision, "load_windows_external_provisioning_handoff", lambda: provider)
+    monkeypatch.setattr(
+        provision,
+        "resolve_accepted_handoff",
+        lambda value: (accepted_claim.claim_fingerprint_sha256, accepted_claim, object()),
+    )
+    for name in (
+        "materialize_canonical_pre_state",
+        "_commit_backend_start_type",
+        "_recovery",
+        "_ensure_backend_running",
+        "_verify_backend_activation",
+    ):
+        monkeypatch.setattr(provision, name, lambda *args: None)
+    provision.enroll(program_files, program_data)
+    provision.enroll(program_files, program_data)
+    record = json.loads((program_data / "State" / provision.ENROLLMENT_FINALIZATION).read_text())
+    assert record["phase"] == "COMMITTED"
+
+
+def test_enrollment_finalization_rejects_conflicting_durable_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    program_files, program_data = _installed_machine(tmp_path)
+    accepted_claim = __import__(
+        "tests.persistence.test_durable_first_run_bootstrap", fromlist=["claim"]
+    ).claim()
+    path = program_data / "State" / provision.ENROLLMENT_FINALIZATION
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "claim_reference": "f" * 64,
+                "account_id": accepted_claim.account_id,
+                "device_installation_id": accepted_claim.device_installation_id,
+                "phase": "PRE_MATERIALIZED",
+            }
+        )
+    )
+    monkeypatch.setattr(provision, "load_windows_external_provisioning_handoff", lambda: object())
+    monkeypatch.setattr(
+        provision,
+        "resolve_accepted_handoff",
+        lambda value: (accepted_claim.claim_fingerprint_sha256, accepted_claim, object()),
+    )
+    with pytest.raises(provision.ProvisionError, match="identity conflict"):
+        provision.enroll(program_files, program_data)
+
+
+@pytest.mark.parametrize("initial_start_type", ("auto", "demand"))
+def test_backend_start_type_uses_minimum_query_and_change_rights(
+    monkeypatch: pytest.MonkeyPatch, initial_start_type: str
+) -> None:
+    calls: list[object] = []
+    state = {"start_type": 2 if initial_start_type == "auto" else 3}
+
+    def open_service(manager, name, access):
+        calls.append(("access", access))
+        assert access & 0x0001  # SERVICE_QUERY_CONFIG
+        assert access & 0x0002  # SERVICE_CHANGE_CONFIG
+        assert not access & 0x0010  # SERVICE_START
+        return object()
+
+    def query_config(service):
+        calls.append("query")
+        return (None, state["start_type"])
+
+    def change_config(service, service_type, start_type, *args):
+        calls.append("change")
+        state["start_type"] = start_type
+
+    fake = SimpleNamespace(
+        SERVICE_QUERY_CONFIG=0x0001,
+        SERVICE_CHANGE_CONFIG=0x0002,
+        SERVICE_START=0x0010,
+        SERVICE_AUTO_START=2,
+        SERVICE_NO_CHANGE=-1,
+        SC_MANAGER_CONNECT=1,
+        OpenSCManager=lambda *args: object(),
+        OpenService=open_service,
+        QueryServiceConfig=query_config,
+        ChangeServiceConfig=change_config,
+        CloseServiceHandle=lambda handle: None,
+    )
+    monkeypatch.setitem(sys.modules, "win32service", fake)
+    provision._commit_backend_start_type()
+    assert state["start_type"] == fake.SERVICE_AUTO_START
+    assert calls.count("query") == 2
+    assert calls.count("change") == (0 if initial_start_type == "auto" else 1)
+
+
+@pytest.mark.parametrize(
+    ("checkpoint", "prior_phase"),
+    (
+        ("PRE_MATERIALIZED", "AUTHORITY_ACCEPTED"),
+        ("BACKEND_START_TYPE_COMMITTED", "PRE_MATERIALIZED"),
+        ("RECOVERY_POLICY_COMMITTED", "BACKEND_START_TYPE_COMMITTED"),
+        ("BACKEND_RUNNING_VERIFIED", "RECOVERY_POLICY_COMMITTED"),
+    ),
+)
+def test_enrollment_retry_reconciles_after_effect_before_checkpoint_crash(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    checkpoint: str,
+    prior_phase: str,
+) -> None:
+    program_files, program_data = _installed_machine(tmp_path)
+    accepted_claim = __import__(
+        "tests.persistence.test_durable_first_run_bootstrap", fromlist=["claim"]
+    ).claim()
+    provider = object()
+    physical = {
+        "pre": False,
+        "start_type": "demand",
+        "recovery": False,
+        "running": False,
+    }
+    observations = {"pre_reused": 0, "start_changes": 0, "starts": 0}
+    monkeypatch.setattr(provision, "load_windows_external_provisioning_handoff", lambda: provider)
+    monkeypatch.setattr(
+        provision,
+        "resolve_accepted_handoff",
+        lambda value: (accepted_claim.claim_fingerprint_sha256, accepted_claim, object()),
+    )
+
+    def materialize(*args):
+        if physical["pre"]:
+            observations["pre_reused"] += 1
+        physical["pre"] = True
+
+    def start_type():
+        if physical["start_type"] != "auto":
+            physical["start_type"] = "auto"
+            observations["start_changes"] += 1
+
+    def recovery():
+        physical["recovery"] = True
+
+    def start_service():
+        if not physical["running"]:
+            physical["running"] = True
+            observations["starts"] += 1
+
+    def verify():
+        assert physical == {
+            "pre": True,
+            "start_type": "auto",
+            "recovery": True,
+            "running": True,
+        }
+
+    monkeypatch.setattr(provision, "materialize_canonical_pre_state", materialize)
+    monkeypatch.setattr(provision, "_commit_backend_start_type", start_type)
+    monkeypatch.setattr(provision, "_recovery", recovery)
+    monkeypatch.setattr(provision, "_ensure_backend_running", start_service)
+    monkeypatch.setattr(provision, "_verify_backend_activation", verify)
+    real_write_phase = provision._write_enrollment_phase
+    crashed = False
+
+    def crash_before_checkpoint(path, record, phase):
+        nonlocal crashed
+        if phase == checkpoint and not crashed:
+            crashed = True
+            raise OSError("after-effect crash before checkpoint")
+        real_write_phase(path, record, phase)
+
+    monkeypatch.setattr(provision, "_write_enrollment_phase", crash_before_checkpoint)
+    with pytest.raises(OSError, match="after-effect"):
+        provision.enroll(program_files, program_data)
+    durable = json.loads((program_data / "State" / provision.ENROLLMENT_FINALIZATION).read_text())
+    assert durable["phase"] == prior_phase
+
+    state_at_crash = {
+        "PRE_MATERIALIZED": "pre",
+        "BACKEND_START_TYPE_COMMITTED": "start_type",
+        "RECOVERY_POLICY_COMMITTED": "recovery",
+        "BACKEND_RUNNING_VERIFIED": "running",
+    }[checkpoint]
+    assert physical[state_at_crash] is True or physical[state_at_crash] == "auto"
+    provision.enroll(program_files, program_data)
+    durable = json.loads((program_data / "State" / provision.ENROLLMENT_FINALIZATION).read_text())
+    assert durable["phase"] == "COMMITTED"
+    assert observations["start_changes"] == 1
+    assert observations["starts"] == 1
+    if checkpoint == "PRE_MATERIALIZED":
+        assert observations["pre_reused"] == 1
 
 
 def test_production_dacl_reuses_frozen_stage4_expected_aces() -> None:

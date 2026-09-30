@@ -25,6 +25,7 @@ from deployment.windows_installer.contract import CONTRACT
 from deployment.windows_installer.corehost_composition import (
     load_windows_external_provisioning_handoff,
     materialize_canonical_pre_state,
+    resolve_accepted_handoff,
 )
 from deployment.windows_dacl_qualification import (
     ADMINISTRATORS_SID,
@@ -39,6 +40,7 @@ from deployment.windows_dacl_qualification import (
 
 TRANSACTION_JOURNAL = ".CryptoHunter.stage9-transaction.json"
 OWNERSHIP_RECORD = ".stage9-install-ownership.json"
+ENROLLMENT_FINALIZATION = "enrollment-finalization.json"
 SCHEMA = 1
 SERVICES = (CONTRACT.postgresql_service, CONTRACT.backend_service, CONTRACT.verifier_service)
 from deployment.windows_postgresql_auth_contract import (
@@ -53,6 +55,19 @@ IDENT = ident_lines()
 
 class ProvisionError(RuntimeError):
     pass
+
+
+def _first_exception_type(exc: BaseException) -> str:
+    """Return the oldest chained failure type without exposing sensitive text."""
+    seen: set[int] = set()
+    current = exc
+    while id(current) not in seen:
+        seen.add(id(current))
+        earlier = current.__cause__ or current.__context__
+        if earlier is None:
+            break
+        current = earlier
+    return type(current).__name__
 
 
 def _write(path: Path, value: dict[str, Any]) -> None:
@@ -347,7 +362,86 @@ def _recovery() -> None:
         win32service.CloseServiceHandle(manager)
 
 
+def _commit_backend_start_type() -> None:
+    """Idempotently set and read back the enrolled backend start type."""
+    import win32service  # type: ignore[import-not-found]
+
+    manager = win32service.OpenSCManager(None, None, win32service.SC_MANAGER_CONNECT)
+    service = win32service.OpenService(
+        manager,
+        CONTRACT.backend_service,
+        win32service.SERVICE_CHANGE_CONFIG | win32service.SERVICE_QUERY_CONFIG,
+    )
+    try:
+        if win32service.QueryServiceConfig(service)[1] != win32service.SERVICE_AUTO_START:
+            win32service.ChangeServiceConfig(
+                service,
+                win32service.SERVICE_NO_CHANGE,
+                win32service.SERVICE_AUTO_START,
+                win32service.SERVICE_NO_CHANGE,
+                None,
+                None,
+                0,
+                None,
+                None,
+                None,
+                None,
+            )
+        if win32service.QueryServiceConfig(service)[1] != win32service.SERVICE_AUTO_START:
+            raise ProvisionError("backend start type read-back mismatch")
+    finally:
+        win32service.CloseServiceHandle(service)
+        win32service.CloseServiceHandle(manager)
+
+
+def _ensure_backend_running() -> None:
+    import win32service  # type: ignore[import-not-found]
+
+    manager = win32service.OpenSCManager(None, None, win32service.SC_MANAGER_CONNECT)
+    service = win32service.OpenService(
+        manager,
+        CONTRACT.backend_service,
+        win32service.SERVICE_QUERY_STATUS | win32service.SERVICE_START,
+    )
+    try:
+        if win32service.QueryServiceStatus(service)[1] != win32service.SERVICE_RUNNING:
+            win32service.StartService(service, None)
+    finally:
+        win32service.CloseServiceHandle(service)
+        win32service.CloseServiceHandle(manager)
+    _wait_service(CONTRACT.backend_service, win32service.SERVICE_RUNNING)
+
+
+def _enrollment_record_path(program_data: Path) -> Path:
+    return program_data / "State" / ENROLLMENT_FINALIZATION
+
+
+def _write_enrollment_phase(path: Path, record: dict[str, Any], phase: str) -> None:
+    _write(path, {**record, "phase": phase})
+
+
+def _verify_backend_activation() -> None:
+    import win32service  # type: ignore[import-not-found]
+
+    manager = win32service.OpenSCManager(None, None, win32service.SC_MANAGER_CONNECT)
+    service = win32service.OpenService(
+        manager,
+        CONTRACT.backend_service,
+        win32service.SERVICE_QUERY_CONFIG | win32service.SERVICE_QUERY_STATUS,
+    )
+    try:
+        if win32service.QueryServiceConfig(service)[1] != win32service.SERVICE_AUTO_START:
+            raise ProvisionError("backend start type read-back mismatch")
+        if win32service.QueryServiceStatus(service)[1] != win32service.SERVICE_RUNNING:
+            raise ProvisionError("backend running read-back mismatch")
+    finally:
+        win32service.CloseServiceHandle(service)
+        win32service.CloseServiceHandle(manager)
+    _recovery()
+
+
 def install(program_files: Path, program_data: Path) -> None:
+    """Install machine-scoped resources without creating product authority."""
     journal_path, journal = create_journal(program_files, program_data)
     sids = _service_sids()
     program_data.mkdir()
@@ -395,14 +489,56 @@ def install(program_files: Path, program_data: Path) -> None:
     ca_public = {**base, **{sid: FILE_GENERIC_READ for sid in security_readers}}
     _protect(program_data / "Security" / "ca.crt", ca_public, inherit=False)
     _qualify_protected(program_data / "Security" / "ca.crt", ca_public, inherit=False)
-    # The adapter is deliberately external to the MSI.  No account/device or
-    # claim authority is synthesized by installation code.
-    provisioning = load_windows_external_provisioning_handoff()
-    materialize_canonical_pre_state(data.parent.parent / "State" / "corehost.sqlite", provisioning)
     _configure_database(program_files, data, program_data / "Security")
-    _recovery()
     journal["state"] = "PROVISIONED"
     _write(journal_path, journal)
+
+
+def enroll(program_files: Path, program_data: Path) -> None:
+    """Resume durable local finalization of accepted production enrollment."""
+    _committed_record(program_data)
+    state = program_data / "State" / "corehost.sqlite"
+    provisioning = load_windows_external_provisioning_handoff()
+    reference, claim, _ = resolve_accepted_handoff(provisioning)
+    path = _enrollment_record_path(program_data)
+    identity = {
+        "schema_version": 1,
+        "claim_reference": reference,
+        "account_id": claim.account_id,
+        "device_installation_id": claim.device_installation_id,
+    }
+    if path.exists():
+        record = json.loads(path.read_text(encoding="utf-8"))
+        if any(record.get(key) != value for key, value in identity.items()):
+            raise ProvisionError("enrollment finalization identity conflict")
+    else:
+        record = {**identity, "phase": "AUTHORITY_ACCEPTED"}
+        _write_enrollment_phase(path, record, "AUTHORITY_ACCEPTED")
+    phase = record.get("phase")
+    phases = (
+        "AUTHORITY_ACCEPTED",
+        "PRE_MATERIALIZED",
+        "BACKEND_START_TYPE_COMMITTED",
+        "RECOVERY_POLICY_COMMITTED",
+        "BACKEND_RUNNING_VERIFIED",
+        "COMMITTED",
+    )
+    if phase not in phases:
+        raise ProvisionError("enrollment finalization phase invalid")
+    materialize_canonical_pre_state(state, provisioning)
+    if phases.index(str(phase)) < phases.index("PRE_MATERIALIZED"):
+        _write_enrollment_phase(path, record, "PRE_MATERIALIZED")
+    _commit_backend_start_type()
+    if phases.index(str(phase)) < phases.index("BACKEND_START_TYPE_COMMITTED"):
+        _write_enrollment_phase(path, record, "BACKEND_START_TYPE_COMMITTED")
+    _recovery()
+    if phases.index(str(phase)) < phases.index("RECOVERY_POLICY_COMMITTED"):
+        _write_enrollment_phase(path, record, "RECOVERY_POLICY_COMMITTED")
+    _ensure_backend_running()
+    if phases.index(str(phase)) < phases.index("BACKEND_RUNNING_VERIFIED"):
+        _write_enrollment_phase(path, record, "BACKEND_RUNNING_VERIFIED")
+    _verify_backend_activation()
+    _write_enrollment_phase(path, record, "COMMITTED")
 
 
 def rollback(program_files: Path, program_data: Path) -> None:
@@ -634,6 +770,7 @@ def main(argv: list[str] | None = None) -> int:
         "command",
         choices=(
             "install",
+            "enroll",
             "rollback",
             "commit",
             "qualify",
@@ -653,6 +790,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "install":
             install(args.program_files, args.program_data)
+        elif args.command == "enroll":
+            enroll(args.program_files, args.program_data)
         elif args.command == "rollback":
             rollback(args.program_files, args.program_data)
         elif args.command == "commit":
@@ -668,7 +807,13 @@ def main(argv: list[str] | None = None) -> int:
                 "qualify-logging": qualify_logging,
             }[args.command](args.program_files, args.program_data)
     except Exception as exc:
-        print(f"provisioning failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+        # Preserve the first failure class without leaking provider exception
+        # text, which may contain credentials or private ceremony material.
+        print(
+            f"provisioning failed: operation={args.command} "
+            f"first_exception={_first_exception_type(exc)}",
+            file=sys.stderr,
+        )
         return 1
     return 0
 

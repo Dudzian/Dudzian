@@ -1,5 +1,6 @@
 from __future__ import annotations
 from pathlib import Path
+from dataclasses import replace
 import pytest
 from bot_core.persistence.first_run_bootstrap import DurableFirstRunBootstrapRegistry
 from bot_core.persistence.state_store import SQLiteStateStore
@@ -66,3 +67,35 @@ def test_acceptance_handoff_materializes_pre_through_durable_coordinator(tmp_pat
     with SQLiteStateStore(path) as store:
         recovery = host._startup_recovery_factory(scope, store)
         assert isinstance(recovery, CoreHostStartupRecoveryCoordinator)
+
+
+def test_same_accepted_handoff_resumes_existing_canonical_pre(tmp_path: Path) -> None:
+    path = tmp_path / "state.sqlite"
+    provider = AcceptanceProvisioning(tmp_path / "seed.sqlite")
+    first = materialize_canonical_pre_state(path, provider)
+    second = materialize_canonical_pre_state(path, provider)
+    assert second == first
+
+
+def test_metadata_only_interruption_resumes_pre_materialization(tmp_path: Path) -> None:
+    path = tmp_path / "state.sqlite"
+    provider = AcceptanceProvisioning(tmp_path / "seed.sqlite")
+    with SQLiteStateStore(path) as store:
+        prepared = store.derive_prepared_metadata(
+            provider.metadata, expected_current_generation=None
+        )
+        store.commit_prepared_metadata(prepared, expected_current_generation=None)
+    materialize_canonical_pre_state(path, provider)
+    with SQLiteStateStore(path) as store:
+        assert DurableFirstRunBootstrapRegistry(store).current_pre_state().account_id == (
+            provider.item.account_id
+        )
+
+
+def test_conflicting_existing_state_store_is_rejected(tmp_path: Path) -> None:
+    path = tmp_path / "state.sqlite"
+    provider = AcceptanceProvisioning(tmp_path / "seed.sqlite")
+    materialize_canonical_pre_state(path, provider)
+    provider.metadata = replace(provider.metadata, state_store_identity_fingerprint_sha256="f" * 64)
+    with pytest.raises(ValueError, match="conflicts"):
+        materialize_canonical_pre_state(path, provider)

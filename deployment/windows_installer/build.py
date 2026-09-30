@@ -220,6 +220,19 @@ def build(args: argparse.Namespace) -> Path:
             "postgresql_source_url": pins["postgresql"]["source_url"],
             "postgresql_payload_sha256": pins["postgresql"]["sha256"],
             "production_executables": {p.name: sha256(p) for p in executables},
+            "installed_files": {
+                str(
+                    (Path("PostgreSQL") / path.relative_to(payload / "PostgreSQL"))
+                    if path.is_relative_to(payload / "PostgreSQL")
+                    else (
+                        Path("PostgreSQL") / path.name
+                        if path.name == "CryptoHunterPostgreSQL.exe"
+                        else Path(path.name)
+                    )
+                ).replace("\\", "/"): sha256(path)
+                for path in sorted(payload.rglob("*"))
+                if path.is_file()
+            },
         }
         (args.output / "installer-manifest.json").write_text(
             json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
