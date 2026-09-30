@@ -650,6 +650,7 @@ def test_install_failure_diagnostic_survives_rollback_and_commit_clears_it(
         "POSTGRES_QUALIFY_FRESHNESS_AUTHORITY",
         "POSTGRES_FINAL_HBA_WRITE",
         "POSTGRES_FINAL_HBA_QUALIFY",
+        "POSTGRES_FINAL_ADMIN_REJECTION",
         "POSTGRES_BOOTSTRAP_STOP",
     ),
 )
@@ -667,6 +668,8 @@ def test_database_effect_boundaries_set_exact_stage_before_effect(
     (security / "server" / "server.key").write_text("key", encoding="utf-8")
 
     class Connection:
+        statement = ""
+
         def __enter__(self):
             return self
 
@@ -674,15 +677,35 @@ def test_database_effect_boundaries_set_exact_stage_before_effect(
             return None
 
         def execute(self, statement: str):
-            del statement
+            self.statement = statement
             return self
 
         def fetchall(self):
             return []
 
+        def fetchone(self):
+            if self.statement == "SELECT 1":
+                return (1,)
+            return ("postgres", "postgres")
+
+    class OperationalError(Exception):
+        pass
+
+    connections = 0
+
+    def connect(*args, **kwargs):
+        nonlocal connections
+        del args, kwargs
+        connections += 1
+        if connections == 3:
+            raise OperationalError("connection requires a valid client certificate")
+        return Connection()
+
     monkeypatch.setattr(provision.subprocess, "run", lambda *args, **kwargs: None)
     monkeypatch.setitem(
-        sys.modules, "psycopg", SimpleNamespace(connect=lambda *a, **k: Connection())
+        sys.modules,
+        "psycopg",
+        SimpleNamespace(connect=connect, OperationalError=OperationalError),
     )
     monkeypatch.setattr(provision, "provision_postgresql_freshness_authority", lambda *args: None)
     monkeypatch.setattr(provision, "qualify_postgresql_freshness_authority", lambda *args: None)
@@ -694,6 +717,144 @@ def test_database_effect_boundaries_set_exact_stage_before_effect(
 
     with pytest.raises(RuntimeError, match="controlled failure"):
         provision._configure_database(tmp_path, data, security, inject)
+
+
+def test_final_hba_cutover_reuses_admin_session_and_rejects_new_admin_connection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    data = tmp_path / "data"
+    security = tmp_path / "security"
+    data.mkdir()
+    (security / "server").mkdir(parents=True)
+    (data / "postgresql.conf").write_text("", encoding="utf-8")
+    for path in (
+        security / "ca.crt",
+        security / "server" / "server.crt",
+        security / "server" / "server.key",
+    ):
+        path.write_text("x", encoding="utf-8")
+
+    events: list[str] = []
+    cutover = False
+
+    class OperationalError(Exception):
+        pass
+
+    class Result:
+        def __init__(self, row=None, rows=None):
+            self.row = row
+            self.rows = rows
+
+        def fetchone(self):
+            return self.row
+
+        def fetchall(self):
+            return self.rows
+
+    class Connection:
+        def __init__(self, name: str):
+            self.name = name
+
+        def __enter__(self):
+            events.append(f"enter:{self.name}")
+            return self
+
+        def __exit__(self, *_args):
+            events.append(f"close:{self.name}")
+
+        def execute(self, statement: str):
+            nonlocal cutover
+            if "session_user" in statement:
+                events.append("admin-session-active")
+                return Result(("postgres", "postgres"))
+            if "pg_hba_file_rules" in statement:
+                assert cutover
+                events.append("final-parser-qualification")
+                return Result(rows=_valid_hba_rows_for_stage9())
+            if statement == "SELECT 1":
+                events.append("server-live-on-existing-session")
+                return Result((1,))
+            return Result()
+
+    connect_count = 0
+
+    def connect(*_args, **_kwargs):
+        nonlocal connect_count
+        connect_count += 1
+        if cutover:
+            events.append("new-admin-rejected")
+            raise OperationalError("connection requires a valid client certificate")
+        return Connection(f"connection-{connect_count}")
+
+    original_write_text = Path.write_text
+
+    def write_text(path: Path, value: str, *args, **kwargs):
+        nonlocal cutover
+        result = original_write_text(path, value, *args, **kwargs)
+        if path == data / "pg_hba.conf" and value != "host all postgres 127.0.0.1/32 trust\n":
+            cutover = True
+            events.append("final-hba-written")
+        return result
+
+    commands: list[str] = []
+
+    def run(command, **_kwargs):
+        commands.append(command[1])
+
+    monkeypatch.setattr(Path, "write_text", write_text)
+    monkeypatch.setattr(provision.subprocess, "run", run)
+    monkeypatch.setitem(
+        sys.modules,
+        "psycopg",
+        SimpleNamespace(connect=connect, OperationalError=OperationalError),
+    )
+    monkeypatch.setattr(provision, "provision_postgresql_freshness_authority", lambda *_: None)
+    monkeypatch.setattr(provision, "qualify_postgresql_freshness_authority", lambda *_: None)
+
+    provision._configure_database(tmp_path, data, security, events.append)
+
+    assert connect_count == 3  # database creation, retained admin, rejected proof
+    assert events.index("admin-session-active") < events.index("final-hba-written")
+    assert events.index("final-hba-written") < events.index("final-parser-qualification")
+    assert events.index("new-admin-rejected") < events.index("server-live-on-existing-session")
+    assert events.index("server-live-on-existing-session") < events.index("close:connection-2")
+    assert commands[-1] == "stop"
+    final_hba = (data / "pg_hba.conf").read_text(encoding="utf-8").splitlines()
+    assert final_hba == list(provision.FINAL_HBA)
+    assert not any("trust" in line for line in final_hba)
+
+
+def _valid_hba_rows_for_stage9() -> list[tuple[object, ...]]:
+    # Use the shared contract to avoid weakening the exact production expectations.
+    database = "freshness_gate"
+    return [
+        (
+            1,
+            "hostssl",
+            [database],
+            ["freshness_crypto_verifier"],
+            "127.0.0.1",
+            "255.255.255.255",
+            "cert",
+            ["map=stage8_cert", "clientcert=verify-full"],
+            None,
+        ),
+        (
+            2,
+            "hostssl",
+            [database],
+            ["freshness_runtime"],
+            "127.0.0.1",
+            "255.255.255.255",
+            "cert",
+            ["map=stage8_cert", "clientcert=verify-full"],
+            None,
+        ),
+        (3, "host", [database], ["all"], "127.0.0.1", "255.255.255.255", "reject", None, None),
+        (4, "host", ["all"], ["all"], "127.0.0.1", "255.255.255.255", "reject", None, None),
+        (5, "host", ["all"], ["all"], "0.0.0.0", "0.0.0.0", "reject", None, None),
+        (6, "host", ["all"], ["all"], "::", "::", "reject", None, None),
+    ]
 
 
 def test_clean_install_copies_and_prints_only_safe_failure_fields(
