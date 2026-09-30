@@ -23,9 +23,8 @@ PROOFS = (
     "services",
     "dacl",
     "postgresql",
-    "mtls_matrix",
-    "backend",
-    "logging",
+    "authority_absent",
+    "production_enrollment_fail_closed",
     "uninstall",
     "acceptance_cleanup",
 )
@@ -103,6 +102,16 @@ def prove_files(root: Path, machine: Path, manifest: dict[str, object]) -> None:
         expected = manifest["production_executables"][name]  # type: ignore[index]
         if _sha(path) != expected:
             raise CleanInstallError(f"installed executable hash differs: {name}")
+    installed_files = manifest.get("installed_files")
+    if not isinstance(installed_files, dict) or not installed_files:
+        raise CleanInstallError("installed file hash manifest absent")
+    observed = {
+        path.relative_to(root).as_posix(): _sha(path)
+        for path in root.rglob("*")
+        if path.is_file()
+    }
+    if observed != installed_files:
+        raise CleanInstallError("installed file set or SHA-256 differs")
     pg = root / "PostgreSQL"
     for relative in (
         "bin/postgres.exe",
@@ -166,8 +175,8 @@ def prove_services(root: Path) -> None:
         ),
         CONTRACT.backend_service: (
             root / "CryptoHunterBackend.exe",
-            win32service.SERVICE_AUTO_START,
-            win32service.SERVICE_RUNNING,
+            win32service.SERVICE_DEMAND_START,
+            win32service.SERVICE_STOPPED,
         ),
         CONTRACT.verifier_service: (
             root / "CryptoHunterFreshnessVerifier.exe",
@@ -225,6 +234,37 @@ def prove_logging(root: Path, machine: Path) -> None:
     _qualifier(root, machine, "qualify-logging")
 
 
+def prove_authority_absent(machine: Path) -> None:
+    if (machine / "State" / "corehost.sqlite").exists():
+        raise CleanInstallError("machine installation created product authority")
+
+
+def prove_production_enrollment_fail_closed(root: Path, machine: Path) -> None:
+    result = subprocess.run(
+        [
+            str(root / "CryptoHunterProvision.exe"),
+            "enroll",
+            "--program-files",
+            str(root),
+            "--program-data",
+            str(machine),
+        ],
+        capture_output=True,
+        timeout=120,
+    )
+    stderr = result.stderr.decode(errors="replace")
+    expected = (
+        "provisioning failed: operation=enroll "
+        "first_exception=WindowsProvisioningAdapterUnavailable"
+    )
+    if (
+        result.returncode == 0
+        or (machine / "State" / "corehost.sqlite").exists()
+        or expected not in stderr.splitlines()
+    ):
+        raise CleanInstallError("production enrollment did not fail closed for expected cause")
+
+
 def _proof_install(manifest_path: Path) -> dict[str, str]:
     root = Path(os.environ["ProgramFiles"]) / "CryptoHunter"
     machine = Path(os.environ["ProgramData"]) / "CryptoHunter"
@@ -238,12 +278,10 @@ def _proof_install(manifest_path: Path) -> dict[str, str]:
     proofs["dacl"] = "PASS"
     prove_postgresql(root, machine)
     proofs["postgresql"] = "PASS"
-    prove_mtls_matrix(root, machine)
-    proofs["mtls_matrix"] = "PASS"
-    prove_backend(root, machine)
-    proofs["backend"] = "PASS"
-    prove_logging(root, machine)
-    proofs["logging"] = "PASS"
+    prove_authority_absent(machine)
+    proofs["authority_absent"] = "PASS"
+    prove_production_enrollment_fail_closed(root, machine)
+    proofs["production_enrollment_fail_closed"] = "PASS"
     return proofs
 
 
@@ -288,6 +326,7 @@ def run(args: argparse.Namespace) -> None:
     print("MSI_CREATED = NO", flush=True)
     print("MSI_INSTALL = NOT_RUN", flush=True)
     print("CLEAN_INSTALL_PROBE = NOT_RUN", flush=True)
+    print("POST_ENROLLMENT_LIVE_QUALIFICATION = REQUIRED", flush=True)
     fresh_preconditions()
     build_main(
         [
@@ -337,6 +376,7 @@ def run(args: argparse.Namespace) -> None:
         "install_exit_code": install_code,
         "uninstall_exit_code": uninstall_code,
         "proofs": proofs,
+        "post_enrollment_live_qualification": "REQUIRED",
     }
     args.receipt.write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
 

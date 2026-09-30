@@ -13,12 +13,12 @@
         <Component Id="BackendComponent" Guid="*" Bitness="always64">
           <File Id="BackendExe" Source="$(PayloadDir)\CryptoHunterBackend.exe" KeyPath="yes" />
           <ServiceInstall Id="BackendInstall" Name="CryptoHunterBackend"
-             DisplayName="CryptoHunter Backend" Type="ownProcess" Start="auto"
+             DisplayName="CryptoHunter Backend" Type="ownProcess" Start="demand"
              Account="NT SERVICE\CryptoHunterBackend" ErrorControl="normal" Vital="yes">
             <ServiceDependency Id="CryptoHunterPostgreSQL" />
           </ServiceInstall>
           <ServiceControl Id="BackendControl" Name="CryptoHunterBackend"
-             Start="install" Stop="both" Remove="uninstall" Wait="yes" />
+             Stop="both" Remove="uninstall" Wait="yes" />
         </Component>
         <Component Id="VerifierComponent" Guid="*" Bitness="always64">
           <File Id="VerifierExe" Source="$(PayloadDir)\CryptoHunterFreshnessVerifier.exe" KeyPath="yes" />
