@@ -1,0 +1,29 @@
+{
+  "schema_version": "cryptohunter.stage9_external_provisioning_architecture_freeze.v1",
+  "freeze_id": "STAGE9_EXTERNAL_PRODUCT_PROVISIONING_ARCHITECTURE",
+  "status": "FROZEN",
+  "implementation_architecturally_authorized": true,
+  "production_provisioning_ready": false,
+  "production_ceremony": "NOT_STARTED",
+  "production_material_dependency": "PRODUCTION MATERIAL REQUIRED — DO NOT GENERATE SUBSTITUTE KEYS.",
+  "artifacts": [
+    {
+      "canonical_artifact": "docs/architecture/cryptohunter_product_architecture/stage9_external_provisioning_architecture_contract.json",
+      "canonical_schema_version": "cryptohunter.stage9_external_provisioning_architecture.v1",
+      "sha256": "6538a75d8cf3a6e3cdab8f4a9022277a21d98e1a61923aa8d8eae9b80ae1d67d",
+      "covers": [
+        "account_id authority ownership",
+        "first-account/first-device ordering",
+        "provisioning_subject_id",
+        "operation identity",
+        "provisioning membership",
+        "PDSA trust domain",
+        "protected freshness ownership",
+        "secret resource ownership",
+        "post-install ordering",
+        "Windows handoff contract",
+        "production material dependency"
+      ]
+    }
+  ]
+}

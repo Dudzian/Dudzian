@@ -172,3 +172,13 @@ M0.12 S9A ustanawia foundation contract dla durable audit evidence, observabilit
 ## FROZEN ARCHITECTURE BASELINE — M0.2–M0.11
 
 M0.2–M0.11 stanowią zamrożony baseline architektury chroniony przez [canonical freeze manifest](architecture_baseline_freeze.json) oraz jego [projekcję Markdown](architecture_baseline_freeze.md). Późniejsze prace produkcyjne nie mogą potajemnie zmieniać tych kontraktów. Zmiana baseline'u wymaga jawnego architecture change, aktualizacji właściwego canonical JSON, a następnie świadomej aktualizacji freeze manifestu.
+
+## Stage 9 external provisioning
+
+The current canonical closure is
+[`stage9_external_provisioning_architecture_contract.json`](stage9_external_provisioning_architecture_contract.json),
+with its exact bytes guarded by
+[`stage9_external_provisioning_architecture_freeze.json`](stage9_external_provisioning_architecture_freeze.json).
+The Revision 4 proposal is historical and explicitly superseded. Architecture is frozen and
+implementation is architecturally authorized; production activation remains unavailable until the
+real offline-ceremony public trust package exists.

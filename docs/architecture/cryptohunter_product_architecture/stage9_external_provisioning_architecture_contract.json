@@ -1,0 +1,727 @@
+{
+  "schema_version": "cryptohunter.stage9_external_provisioning_architecture.v1",
+  "contract_id": "STAGE9_EXTERNAL_PRODUCT_PROVISIONING_ARCHITECTURE",
+  "status": "FROZEN",
+  "implementation_authorized": true,
+  "production_provisioning_ready": false,
+  "stage_status": {
+    "stage_9": "IN_PROGRESS",
+    "windows_0_14": "9/15 DONE = 60.0%",
+    "windows_production_ready": "NOT_READY",
+    "stage_10": "NOT_STARTED",
+    "windows_tpm_activation_bridge": "LIVE_PASS",
+    "production_root_material": "PROVISIONED_LOCALLY",
+    "production_ceremony": "NOT_STARTED"
+  },
+  "selected_model": "C_ATOMIC_ACCOUNT_AUTHORITY_PLUS_PROVISIONING_ISSUER_PROTOCOL",
+  "authority_ownership": {
+    "account_genesis": {
+      "owner": "CryptoHunterAccountAuthority",
+      "owner_count": 1,
+      "role": "FINAL_ACCOUNT_GENESIS_DECISION_OWNER",
+      "pdsa_is_owner": false,
+      "lppi_is_owner": false
+    },
+    "account_id": {
+      "mint_and_reservation_owner": "CryptoHunterAccountAuthority",
+      "owner_count": 1,
+      "caller_selectable": false
+    },
+    "root_proof": {
+      "requester": "CryptoHunterAccountAuthority",
+      "issuer": "IndependentAccountGenesisRootProofIssuer",
+      "pdsa_may_request": false,
+      "lppi_may_request": false
+    },
+    "provisioning": {
+      "authorization_owner": "ProductDeploymentSecurityAuthority",
+      "local_protocol_owner": "LocalProductProvisioningIssuer",
+      "is_account_genesis_owner": false
+    }
+  },
+  "atomic_account_plus_first_device": {
+    "ordering": "ATOMIC_ACCOUNT_PLUS_FIRST_DEVICE",
+    "atomicity": "LOGICAL_PROTOCOL_NOT_DISTRIBUTED_SQL_TRANSACTION",
+    "invariants": [
+      "ONE_LOGICAL_PROVISIONING_OPERATION",
+      "ONE_ACCOUNT_WINNER",
+      "ONE_FIRST_DEVICE_WINNER",
+      "DURABLE_RECOVERY",
+      "IDEMPOTENT_RETRY",
+      "NO_SPLIT_BRAIN_ACCOUNT_DEVICE_PAIRING"
+    ],
+    "durable_progression": [
+      "ISSUED",
+      "ENROLLMENT_ACCEPTED",
+      "PREPARED",
+      "ACCOUNT_COMMITTED",
+      "FIRST_DEVICE_COMMITTED",
+      "MEMBERSHIP_COMMITTED",
+      "MATERIALIZED",
+      "CONSUMED"
+    ],
+    "transition_rule": "each step is durable before its external effect or response; recovery resumes the same operation and reconciles an ambiguous effect before retry",
+    "second_operation_after_winner": "REJECT"
+  },
+  "provisioning_subject_id": {
+    "owner_issuer": "ProductDeploymentSecurityAuthority",
+    "schema": "psub_<canonical-lowercase-UUIDv7>",
+    "canonical_encoding": "ASCII lowercase; UUID hyphen form; JCS string in signed payload",
+    "purpose_domain": "CryptoHunter.Stage9.ProvisioningSubjectId.v1",
+    "issuance": "canonical UUIDv7: timestamp component follows the selected UUIDv7 profile, remaining random fields are CSPRNG-generated, and PDSA durably reserves the identifier before response; never derived from caller, Windows identity, account, user, or hardware",
+    "caller_selectable": false,
+    "stable_across_retry": true,
+    "stable_across_restart": true,
+    "operation_binding": "PDSA package binds provisioning_subject_id and enrollment_reference only; after package verification LPPI separately binds its newly issued provisioning_operation_id to the exact package digest and those identities"
+  },
+  "pre_enrollment_request": {
+    "artifact": "PreEnrollmentRequestV1",
+    "relationship_to_existing_contracts": "canonical envelope over the existing TPMEnrollmentRequestV1, TPMEnrollmentChallengeV1, TPMEnrollmentChallengeResponseV1 and their VerifiedTPMEnrollmentExchangeV1 result; it does not replace or rename those wire contracts",
+    "canonicalization": "RFC 8785 JCS encoded as UTF-8",
+    "canonical_payload_fields": [
+      "schema_version",
+      "environment",
+      "product",
+      "product_profile",
+      "pdsa_trust_domain",
+      "pdsa_challenge_id",
+      "pdsa_challenge_digest_sha256",
+      "pdsa_challenge_nonce_digest_sha256",
+      "tpm_enrollment_request_digest_sha256",
+      "tpm_enrollment_challenge_digest_sha256",
+      "tpm_enrollment_response_digest_sha256",
+      "verified_tpm_exchange_reference",
+      "verified_tpm_public_projection_id",
+      "ek_public_digest",
+      "ak_public_digest",
+      "tpm_attestation_evidence_reference",
+      "pre_enrollment_public_key_algorithm_profile",
+      "pre_enrollment_public_key_canonical_bytes",
+      "pre_enrollment_public_key_fingerprint_sha256",
+      "release_policy_digest_sha256",
+      "release_policy_generation",
+      "request_nonce_hex"
+    ],
+    "canonical_digest": {
+      "field": "pre_enrollment_request_digest_sha256",
+      "derivation": "SHA256(exact RFC8785 JCS UTF-8 canonical payload bytes)"
+    },
+    "authentication": {
+      "tpm": "ProductionTPMAttestationVerifier must accept the exact retained TPMEnrollmentRequestV1/challenge/response exchange; public projection ID, EK/AK digests and exchange reference must equal this payload",
+      "challenge": "PDSA challenge is issuer-generated, signed, retained as ISSUED, exact-bound by ID/digest/nonce digest, and atomically consumed only with the accepted request digest",
+      "mutable_device_fields_after_authentication": false,
+      "request_signature_profile": {
+        "algorithm": "ECDSA-P256-SHA256",
+        "verification_key": "exact pre_enrollment_public_key_canonical_bytes after canonical SEC1 validation and fingerprint recomputation",
+        "domain": "CryptoHunter.Stage9.PreEnrollmentRequest.v1",
+        "signed_bytes": "UTF8(\"CryptoHunter.Stage9.PreEnrollmentRequest.v1\") || 0x00 || pre_enrollment_request_digest_sha256 (32 raw bytes decoded from its 64-character lowercase hex encoding)",
+        "signature_encoding": "strict minimal ASN.1 DER SEQUENCE(INTEGER r, INTEGER low-S s)",
+        "rejections": [
+          "non-minimal DER",
+          "trailing bytes",
+          "r outside 1..P-256-order-1",
+          "s outside 1..P-256-order-1",
+          "high-S signature",
+          "verification key fingerprint mismatch"
+        ]
+      },
+      "public_key_fingerprint_verification": "pre_enrollment_public_key_fingerprint_sha256 MUST equal lowercase hex SHA256(exact decoded 65-byte pre_enrollment_public_key_canonical_bytes); recompute before signature verification"
+    },
+    "pre_enrollment_key": {
+      "algorithm_profile": "ECDSA-P256-SHA256",
+      "algorithm": "ECDSA",
+      "curve": "NIST_P256",
+      "hash": "SHA256",
+      "public_key_encoding": "SEC1_UNCOMPRESSED_P256_65_BYTES",
+      "public_key_bytes": "0x04 || X32 || Y32",
+      "public_key_validation": "exactly 65 bytes, first byte 0x04, X and Y each exactly 32-byte unsigned big-endian values, point is on NIST P-256 and is not point-at-infinity",
+      "fingerprint_derivation": "lowercase hex SHA256(exact 65 canonical SEC1 uncompressed public-key bytes)",
+      "fingerprint_length_and_alphabet": "exactly 64 lowercase hexadecimal characters",
+      "forbidden_fingerprint_inputs": [
+        "SubjectPublicKeyInfo DER",
+        "CNG ECCPUBLIC_BLOB",
+        "PEM",
+        "JSON",
+        "base64",
+        "TPMT_PUBLIC"
+      ],
+      "signature_encoding": "strict minimal ASN.1 DER SEQUENCE(INTEGER r, INTEGER low-S s); reject non-minimal DER, trailing bytes, r/s outside valid P-256 order range, and high-S",
+      "accepted_alternative_algorithms": [],
+      "custody_profile": "WINDOWS_PLATFORM_CRYPTO_PROVIDER_TPM_ECDSA_P256_PRE_ENROLLMENT_V1",
+      "custody_requirements": {
+        "provider": "Microsoft Platform Crypto Provider",
+        "location": "target TPM before PDSA package issuance",
+        "private_key_exportable": false,
+        "private_key_in_package": false,
+        "verification": "TPM-backed creation/custody evidence and request-key proof of possession exact-bound to target TPM projection"
+      },
+      "proof_of_possession_required": true
+    },
+    "retained_acceptance": "PDSA stores exact canonical request bytes and digest with challenge consumption before package publication",
+    "field_encodings": {
+      "pre_enrollment_public_key_canonical_bytes": "exactly 130 lowercase hexadecimal characters encoding SEC1 0x04 || X32 || Y32",
+      "pre_enrollment_public_key_fingerprint_sha256": "exactly 64 lowercase hexadecimal characters"
+    }
+  },
+  "pdsa_enrollment_authorization_package": {
+    "artifact": "PDSAEnrollmentAuthorizationPackageV1",
+    "issuer": "ProductDeploymentSecurityAuthority",
+    "purpose_domain": "CryptoHunter.Stage9.PDSAEnrollmentAuthorization.v1",
+    "canonicalization": "RFC 8785 JCS encoded as UTF-8",
+    "canonical_payload_fields": [
+      "schema_version",
+      "environment",
+      "pdsa_trust_domain",
+      "provisioning_subject_id",
+      "enrollment_reference",
+      "pdsa_challenge_id",
+      "pdsa_challenge_digest_sha256",
+      "pre_enrollment_request_digest_sha256",
+      "verified_tpm_exchange_reference",
+      "verified_tpm_public_projection_id",
+      "target_tpm_ek_public_digest",
+      "target_tpm_ak_public_digest",
+      "pre_enrollment_public_key_algorithm_profile",
+      "pre_enrollment_public_key_fingerprint_sha256",
+      "authorization_generation",
+      "authorization_version",
+      "issued_at_utc",
+      "expires_at_utc",
+      "release_policy_digest_sha256",
+      "release_policy_generation",
+      "product_profile",
+      "predecessor_package_digest_or_null",
+      "lineage_generation"
+    ],
+    "expiration_rule": "expires_at_utc is REQUIRED canonical UTC; package is rejected at or after expiry and no implicit no-expiry is allowed",
+    "signature_profile": {
+      "algorithm": "Ed25519",
+      "threshold": "2_OF_3_PDSA_KEYS",
+      "signed_bytes": "UTF8(\"CryptoHunter.Stage9.PDSAEnrollmentAuthorization.v1\") || 0x00 || SHA256(JCS_UTF8(canonical_payload))",
+      "key_source": "verified production release-policy PDSA key set only"
+    },
+    "contains_provisioning_operation_id": false,
+    "invariant": "PDSA_ENROLLMENT_PACKAGE_CONTAINS_PROVISIONING_OPERATION_ID = FALSE",
+    "request_and_device_binding": {
+      "challenge_rule": "package challenge ID/digest must equal the PDSA-retained challenge consumed by the exact accepted pre-enrollment request; unknown, unconsumed or differently bound challenge is rejected",
+      "request_rule": "pre_enrollment_request_digest_sha256 equals SHA256 of exact accepted canonical PreEnrollmentRequestV1 bytes",
+      "tpm_rule": "package exchange reference, public projection ID and EK/AK digests equal both the accepted verified TPM exchange and the enrolling host live verified public projection",
+      "request_key_rule": "package algorithm profile and fingerprint equal the accepted request key after verifier recomputes lowercase hex SHA256 of exact 65-byte SEC1 key; LPPI proves possession of its non-exportable target-TPM private key before package acceptance",
+      "cloning_rule": "any mismatch in request digest, challenge, TPM projection/EK/AK, exchange reference, request-key profile or fingerprint returns REJECT_PACKAGE_TARGET_MISMATCH",
+      "exact_target_comparisons": [
+        {
+          "package_field": "pre_enrollment_request_digest_sha256",
+          "request_field": "request_digest",
+          "host_field": null
+        },
+        {
+          "package_field": "pdsa_challenge_id",
+          "request_field": "challenge_id",
+          "host_field": null
+        },
+        {
+          "package_field": "pdsa_challenge_digest_sha256",
+          "request_field": "challenge_digest",
+          "host_field": null
+        },
+        {
+          "package_field": "verified_tpm_exchange_reference",
+          "request_field": "exchange_reference",
+          "host_field": null
+        },
+        {
+          "package_field": "verified_tpm_public_projection_id",
+          "request_field": "projection_id",
+          "host_field": "projection_id"
+        },
+        {
+          "package_field": "target_tpm_ek_public_digest",
+          "request_field": "ek_digest",
+          "host_field": "ek_digest"
+        },
+        {
+          "package_field": "target_tpm_ak_public_digest",
+          "request_field": "ak_digest",
+          "host_field": "ak_digest"
+        },
+        {
+          "package_field": "pre_enrollment_public_key_fingerprint_sha256",
+          "request_field": "key_fingerprint",
+          "host_field": "key_fingerprint"
+        }
+      ],
+      "required_live_proofs": [
+        "TPM_ATTESTATION_EXCHANGE_REVERIFIED",
+        "PRE_ENROLLMENT_REQUEST_KEY_PROOF_OF_POSSESSION_VERIFIED"
+      ]
+    },
+    "retained_issuance_record": {
+      "fields": [
+        "pdsa_challenge_id",
+        "pdsa_challenge_digest_sha256",
+        "pre_enrollment_request_digest_sha256",
+        "pdsa_package_digest_sha256",
+        "provisioning_subject_id",
+        "enrollment_reference"
+      ],
+      "commit": "atomically persist challenge consumption, exact request digest and exact package bytes/digest before response",
+      "same_request_retry": "RETURN_EXACT_SAME_PACKAGE_BYTES",
+      "same_challenge_different_request": "REJECT_CHALLENGE_REPLAY_CONFLICT"
+    }
+  },
+  "lppi_authority_key_lifecycle": {
+    "selection": "SUCCESSOR_KEY_AFTER_PACKAGE_VERIFICATION",
+    "pre_enrollment_key": "generated before package, device-local and non-exportable; its fingerprint is signed by PDSA package",
+    "authority_key": "generated only on the verified target after package acceptance as a non-exportable TPM-backed Microsoft Platform Crypto Provider ECDSA P-256 key; private material is device-local and absent from package",
+    "binding_artifact": {
+      "artifact": "LPPIAuthorityKeyBindingV1",
+      "canonicalization": "RFC 8785 JCS encoded as UTF-8",
+      "canonical_payload_fields": [
+        "schema_version",
+        "environment",
+        "pdsa_trust_domain",
+        "pdsa_package_digest_sha256",
+        "pre_enrollment_request_digest_sha256",
+        "pre_enrollment_public_key_algorithm_profile",
+        "pre_enrollment_public_key_fingerprint_sha256",
+        "lppi_authority_public_key_algorithm_profile",
+        "lppi_authority_public_key_fingerprint_sha256",
+        "custody_profile",
+        "lppi_authority_key_tpm_name",
+        "lppi_authority_tpmt_public_sha256",
+        "cng_provider_name",
+        "cng_key_name",
+        "cng_key_unique_name",
+        "tpm_creation_attestation_sha256",
+        "verified_tpm_public_projection_id",
+        "verified_tpm_exchange_reference",
+        "provisioning_subject_id",
+        "enrollment_reference",
+        "generation",
+        "created_at_utc"
+      ],
+      "required_values": {
+        "lppi_authority_public_key_algorithm_profile": "ECDSA-P256-SHA256",
+        "custody_profile": "WINDOWS_PLATFORM_CRYPTO_PROVIDER_TPM_ECDSA_P256_V1",
+        "cng_provider_name": "Microsoft Platform Crypto Provider"
+      },
+      "continuity_signature_profile": {
+        "algorithm": "ECDSA-P256-SHA256",
+        "signing_key": "exact pre-enrollment key authenticated in PreEnrollmentRequestV1",
+        "domain": "CryptoHunter.Stage9.LPPIAuthorityKeyContinuity.v1",
+        "signed_bytes": "UTF8(\"CryptoHunter.Stage9.LPPIAuthorityKeyContinuity.v1\") || 0x00 || SHA256(JCS_UTF8(LPPIAuthorityKeyBindingV1 canonical payload))",
+        "signature_encoding": "strict minimal ASN.1 DER SEQUENCE(INTEGER r, INTEGER low-S s)",
+        "public_key_encoding": "SEC1 uncompressed P-256 point, exactly 65 bytes 0x04 || X32 || Y32",
+        "wrong_key_result": "REJECT_CONTINUITY_SIGNATURE_KEY_MISMATCH",
+        "signing_key_fingerprint_source": "LPPIAuthorityKeyBindingV1.pre_enrollment_public_key_fingerprint_sha256",
+        "public_key_fingerprint_verification": "continuity verifier decodes the exact request SEC1 key bytes, recomputes lowercase hex SHA256, and requires equality with request, package, binding and continuity signer fingerprint before signature verification"
+      },
+      "authority_key_pop_profile": {
+        "algorithm": "ECDSA-P256-SHA256",
+        "signing_key": "exact candidate LPPI authority key in binding payload",
+        "domain": "CryptoHunter.Stage9.LPPIAuthorityKeyPoP.v1",
+        "challenge_fields": [
+          "lppi_authority_key_binding_digest_sha256",
+          "pdsa_package_digest_sha256",
+          "pre_enrollment_request_digest_sha256",
+          "lppi_authority_public_key_fingerprint_sha256",
+          "verified_tpm_public_projection_id",
+          "verified_tpm_exchange_reference"
+        ],
+        "signed_bytes": "UTF8(\"CryptoHunter.Stage9.LPPIAuthorityKeyPoP.v1\") || 0x00 || SHA256(JCS_UTF8(canonical challenge_fields object))",
+        "signature_encoding": "strict minimal ASN.1 DER SEQUENCE(INTEGER r, INTEGER low-S s)",
+        "missing_result": "REJECT_AUTHORITY_KEY_POP_MISSING",
+        "signing_key_fingerprint_source": "LPPIAuthorityKeyBindingV1.lppi_authority_public_key_fingerprint_sha256"
+      },
+      "verification_gates": [
+        "REQUIRED_VALUES_MATCH",
+        "CONTINUITY_SIGNATURE_VERIFIED_WITH_EXACT_PRE_ENROLLMENT_KEY",
+        "AUTHORITY_KEY_POP_VERIFIED_WITH_EXACT_CANDIDATE_KEY",
+        "CUSTODY_EVIDENCE_VERIFIED",
+        "PACKAGE_REQUEST_TPM_BINDINGS_MATCH"
+      ],
+      "status_progression": [
+        "CANDIDATE",
+        "CONTINUITY_SIGNATURE_VERIFIED",
+        "AUTHORITY_KEY_POP_VERIFIED",
+        "CUSTODY_EVIDENCE_VERIFIED",
+        "VERIFIED_CONTINUITY",
+        "ACTIVE"
+      ]
+    },
+    "trust_gate": "ProvisioningMembershipBinding and LPPIAuthenticatedProvisioningOperationBinding verify only with the exact ACTIVE key profile and fingerprint from active_key_record; key status alone, alias, key ID or caller key is insufficient",
+    "authority_key_profile": {
+      "invariant": "LPPI_AUTHORITY_KEY_ALGORITHM = ECDSA-P256-SHA256",
+      "algorithm": "ECDSA-P256-SHA256",
+      "curve": "NIST_P256",
+      "hash": "SHA256",
+      "public_key_encoding": "canonical TPMT_PUBLIC bytes for the TPM-backed CNG key",
+      "public_key_fingerprint_derivation": "lowercase hex SHA256(canonical TPMT_PUBLIC bytes)",
+      "tpm_name_encoding": "lowercase hex 0x000b || SHA256(canonical TPMT_PUBLIC bytes)",
+      "signature_encoding": "strict minimal ASN.1 DER SEQUENCE(INTEGER r, INTEGER low-S s); reject non-minimal, trailing bytes, out-of-range or high-S signatures",
+      "accepted_alternative_algorithms": []
+    },
+    "custody": {
+      "custody_profile_enum": [
+        "WINDOWS_PLATFORM_CRYPTO_PROVIDER_TPM_ECDSA_P256_V1"
+      ],
+      "selected_custody_profile": "WINDOWS_PLATFORM_CRYPTO_PROVIDER_TPM_ECDSA_P256_V1",
+      "private_key_location": "target TPM through Microsoft Platform Crypto Provider; service opens a persisted machine key by exact provider/key identity",
+      "non_exportability_enforcement": "TPM-backed persisted CNG key with export policy forbidding private export; verifier rejects software provider, exportable key, missing TPM attestation or mismatched public area/Name",
+      "public_identifier_fields": [
+        "lppi_authority_key_tpm_name",
+        "lppi_authority_tpmt_public_sha256"
+      ],
+      "custody_evidence_fields": [
+        "cng_provider_name",
+        "cng_key_name",
+        "cng_key_unique_name",
+        "tpm_creation_attestation_sha256",
+        "tpm_public_projection_id"
+      ],
+      "verifier_rules": [
+        "provider equals Microsoft Platform Crypto Provider",
+        "hardware/TPM-backed attestation verifies against target TPM projection",
+        "canonical TPMT_PUBLIC digest and recomputed TPM Name equal binding payload",
+        "private export policy is disabled and signing usage is enabled",
+        "provider fallback and caller-supplied custody references are rejected"
+      ],
+      "field_constraints": {
+        "lppi_authority_key_tpm_name": "^000b[0-9a-f]{64}$",
+        "lppi_authority_tpmt_public_sha256": "^[0-9a-f]{64}$",
+        "tpm_creation_attestation_sha256": "^[0-9a-f]{64}$",
+        "tpm_public_projection_id": "^[0-9a-f]{64}$",
+        "cng_provider_name": "exact:Microsoft Platform Crypto Provider",
+        "cng_key_name": "^[A-Za-z0-9._-]{1,128}$",
+        "cng_key_unique_name": "^[A-Za-z0-9._\\\\:-]{1,256}$"
+      }
+    },
+    "active_key_record": {
+      "unique_key": [
+        "pdsa_trust_domain",
+        "provisioning_subject_id",
+        "generation"
+      ],
+      "fields": [
+        "status",
+        "lppi_authority_public_key_algorithm_profile",
+        "lppi_authority_public_key_fingerprint_sha256",
+        "custody_profile",
+        "lppi_authority_key_tpm_name",
+        "lppi_authority_tpmt_public_sha256",
+        "binding_digest_sha256"
+      ],
+      "active_invariant": "exactly one ACTIVE record; profile, fingerprint, custody and TPM Name are immutable and must exact-match every LPPI-signed artifact verifier input",
+      "consumer_match_fields": [
+        "lppi_authority_public_key_algorithm_profile",
+        "lppi_authority_public_key_fingerprint_sha256",
+        "custody_profile"
+      ]
+    }
+  },
+  "operation_identity": {
+    "provisioning_operation_id": {
+      "owner_issuer": "LocalProductProvisioningIssuer",
+      "schema": "prvop_<canonical-lowercase-UUIDv7>",
+      "purpose_domain": "CryptoHunter.Stage9.ProvisioningOperation.v1",
+      "issuance": "LPPI generates canonical UUIDv7 only after successful exact production PDSA package verification, using the selected UUIDv7 timestamp profile plus CSPRNG random bits, then durably reserves it before publication or effect",
+      "caller_selectable": false,
+      "uniqueness": "unique within PDSA trust domain"
+    },
+    "cha_logical_operation_id": {
+      "owner_issuer": "CryptoHunterAccountAuthority",
+      "schema": "ago_<canonical-lowercase-UUIDv7>",
+      "caller_selectable": false
+    },
+    "mapping": {
+      "cardinality": "ONE_TO_ONE_BIJECTION",
+      "registry_key": "(pdsa_trust_domain, provisioning_operation_id)",
+      "rule": "CHA durably assigns exactly one logical_operation_id to the authenticated provisioning operation before account reservation; the mapping is immutable",
+      "same_operation_replay": "RETURN_SAME_RESULT_OR_DURABLY_RESUME",
+      "same_id_different_request": "REJECT",
+      "new_operation_after_first_winner": "REJECT",
+      "precondition": "device/request-bound PDSA package and LPPIAuthorityKeyBindingV1 are verified, then LPPI authenticated operation binding is committed before CHA assignment"
+    },
+    "status": "FROZEN",
+    "lppi_authenticated_operation_binding": {
+      "artifact": "LPPIAuthenticatedProvisioningOperationBindingV1",
+      "issuer": "LocalProductProvisioningIssuer",
+      "created_after": "PDSA_PACKAGE_VERIFIED_AND_PRVOP_DURABLY_RESERVED",
+      "canonicalization": "RFC 8785 JCS encoded as UTF-8",
+      "canonical_payload_fields": [
+        "schema_version",
+        "environment",
+        "pdsa_trust_domain",
+        "pdsa_package_digest_sha256",
+        "provisioning_subject_id",
+        "enrollment_reference",
+        "provisioning_operation_id",
+        "binding_generation",
+        "created_at_utc"
+      ],
+      "signature_profile": {
+        "algorithm": "ECDSA-P256-SHA256",
+        "domain": "CryptoHunter.Stage9.LPPIAuthenticatedProvisioningOperationBinding.v1",
+        "signed_bytes": "UTF8(\"CryptoHunter.Stage9.LPPIAuthenticatedProvisioningOperationBinding.v1\") || 0x00 || SHA256(JCS_UTF8(canonical payload))",
+        "signature_encoding": "strict minimal ASN.1 DER SEQUENCE(INTEGER r, INTEGER low-S s)",
+        "key_match": "algorithm profile and public-key fingerprint must exact-match the immutable ACTIVE LPPI authority key record",
+        "non_active_key_result": "REJECT_NON_ACTIVE_LPPI_SIGNING_KEY",
+        "active_key_match_fields": [
+          "lppi_authority_public_key_algorithm_profile",
+          "lppi_authority_public_key_fingerprint_sha256",
+          "custody_profile"
+        ]
+      },
+      "immutability": "append-only exact package/subject/enrollment/operation tuple; conflicting retry is rejected"
+    },
+    "protocol_ordering": [
+      "PDSA_CHALLENGE_ISSUED",
+      "TPM_BOUND_PRE_ENROLLMENT_REQUEST_AUTHENTICATED",
+      "PDSA_CHALLENGE_AND_REQUEST_VERIFIED",
+      "PDSA_CHALLENGE_CONSUMED_WITH_REQUEST_DIGEST",
+      "PDSA_DEVICE_REQUEST_BOUND_PACKAGE_SIGNED",
+      "PDSA_PACKAGE_VERIFIED_ON_EXACT_TARGET",
+      "LPPI_AUTHORITY_KEY_BINDING_VERIFIED",
+      "LPPI_PRVOP_DURABLY_RESERVED",
+      "LPPI_AUTHENTICATED_OPERATION_BINDING_COMMITTED",
+      "CHA_AGO_ASSIGNED",
+      "PRVOP_AGO_BIJECTION_COMMITTED"
+    ]
+  },
+  "provisioning_membership": {
+    "artifact": "ProvisioningMembershipBinding",
+    "issuer": "LocalProductProvisioningIssuer after PDSA authorization and CHA account commit",
+    "authentication": {
+      "profile": "CryptoHunter.Stage9.ProvisioningMembershipBinding.v1/JCS-SHA256-ECDSA-P256-v1",
+      "algorithm": "ECDSA-P256-SHA256",
+      "domain": "CryptoHunter.Stage9.ProvisioningMembershipBinding.v1",
+      "signed_bytes": "UTF8(\"CryptoHunter.Stage9.ProvisioningMembershipBinding.v1\") || 0x00 || SHA256(JCS_UTF8(canonical payload))",
+      "signature_encoding": "strict minimal ASN.1 DER SEQUENCE(INTEGER r, INTEGER low-S s)",
+      "sha256_alone_is_authentication": false,
+      "key_match": "algorithm profile and public-key fingerprint must exact-match the immutable ACTIVE LPPI authority key record selected by verified LPPIAuthorityKeyBindingV1",
+      "non_active_key_result": "REJECT_NON_ACTIVE_LPPI_SIGNING_KEY",
+      "active_key_match_fields": [
+        "lppi_authority_public_key_algorithm_profile",
+        "lppi_authority_public_key_fingerprint_sha256",
+        "custody_profile"
+      ]
+    },
+    "canonical_payload": [
+      "schema_version",
+      "environment",
+      "trust_domain",
+      "provisioning_subject_id",
+      "provisioning_operation_id",
+      "logical_operation_id",
+      "account_id",
+      "device_installation_id",
+      "claim_fingerprint_sha256",
+      "authority_source",
+      "issuance_generation",
+      "issued_at_utc",
+      "expires_at_utc_or_null",
+      "predecessor_digest_or_null"
+    ],
+    "registry": "append-only LPPI membership registry with a unique current designation per subject/account/first-device slot",
+    "durability": "commit signed canonical bytes and current CAS before publication",
+    "lookup": "exact claim reference plus current non-revoked designation",
+    "expiration": "null unless signed policy specifies an instant; expiry fails closed",
+    "revocation": "signed monotonic successor; deletion is forbidden",
+    "rollback_resistance": "LPPI retained head plus separate protected freshness TPM NV anchor; disk state behind the anchor fails closed"
+  },
+  "pdsa_trust_domain": {
+    "profile": "PDSA_PRODUCTION_2_OF_3_ED25519",
+    "threshold": 2,
+    "key_count": 3,
+    "algorithm": "Ed25519",
+    "private_material_location": "OFF_REPOSITORY_OFF_HOST",
+    "production_verifier_input": "REAL_FROZEN_PUBLIC_TRUST_PACKAGE_FROM_OFFLINE_CEREMONY_ONLY",
+    "test_policy": "existing TEST_ONLY fixtures may be used only by test composition",
+    "production_accepts_test_or_dev_keys": false,
+    "substitute_production_keys_forbidden": true
+  },
+  "protected_freshness_authority": {
+    "port": "ProtectedFreshnessAuthorityPort",
+    "owner": "ProductProtectedStateAuthority",
+    "separate_from_provisioning": true,
+    "lifecycle": [
+      "UNINITIALIZED",
+      "PREPARED",
+      "COMMITTED"
+    ],
+    "responsibility": "current-designation monotonicity and disk rollback detection outside restorable StateStore",
+    "tpm_nv": {
+      "role": "owner-hierarchy NV counter and policy-bound head authorization for monotonic local anti-rollback only",
+      "hierarchy": "TPM_RH_OWNER",
+      "failure": "mismatch, ambiguous increment, missing policy or disk-behind-counter fails closed",
+      "tpm_loss_recovery": "signed PDSA/recovery replacement binding retained predecessor and advancing lineage; never automatic unseen state",
+      "forbidden": [
+        "TPM_RH_PLATFORM",
+        "TPMA_NV_PLATFORMCREATE",
+        "TPM_CLEAR",
+        "OWNERSHIP_TAKEOVER",
+        "DISABLE_WINDOWS_TPM_AUTO_PROVISIONING"
+      ],
+      "definition_hierarchy": {
+        "value": "TPM_RH_OWNER",
+        "purpose": "defines and manages the NV index; it does not authorize increment through ownerAuth"
+      },
+      "index_type": "TPMA_NV_COUNTER",
+      "attributes": {
+        "TPMA_NV_COUNTER": {
+          "state": "SET",
+          "reason": "the index is a monotonic TPM NV counter incremented with TPM2_NV_Increment"
+        },
+        "TPMA_NV_POLICYWRITE": {
+          "state": "SET",
+          "reason": "TPM2_NV_Increment requires the frozen policy session authorization path"
+        },
+        "TPMA_NV_POLICYREAD": {
+          "state": "CLEAR",
+          "reason": "the selected public-counter profile intentionally permits read through the fixed empty index authValue instead of a policy session"
+        },
+        "TPMA_NV_OWNERWRITE": {
+          "state": "CLEAR",
+          "reason": "ownerAuth must not bypass policy-only increment authorization"
+        },
+        "TPMA_NV_OWNERREAD": {
+          "state": "CLEAR",
+          "reason": "ownerAuth is not a read path; the selected non-secret counter read uses only the frozen empty index authValue"
+        },
+        "TPMA_NV_AUTHWRITE": {
+          "state": "CLEAR",
+          "reason": "index authValue/password/HMAC must not bypass policy-only increment authorization"
+        },
+        "TPMA_NV_AUTHREAD": {
+          "state": "SET",
+          "reason": "counter value is non-secret and may be read with the fixed empty NV authValue; this does not authorize increment"
+        },
+        "TPMA_NV_PLATFORMCREATE": {
+          "state": "CLEAR",
+          "reason": "the index is owner-hierarchy defined and platform hierarchy is forbidden"
+        },
+        "TPMA_NV_NO_DA": {
+          "state": "SET",
+          "reason": "the fixed empty read authValue must not consume dictionary-attack budget; write remains policy-only"
+        }
+      },
+      "write_authorization": {
+        "command": "TPM2_NV_Increment",
+        "required_path": "TPMA_NV_POLICYWRITE with the exact frozen authPolicy",
+        "owner_auth_bypass": false,
+        "auth_value_or_hmac_bypass": false
+      },
+      "read_authorization": {
+        "command": "TPM2_NV_Read",
+        "required_path": "TPMA_NV_AUTHREAD with the frozen empty NV authValue using an ordinary password session",
+        "less_restricted_than_increment": true,
+        "may_authorize_increment": false
+      },
+      "operation_rule": "durable signed pending head precedes increment; after lost response LPPI rereads through the frozen AUTHREAD path and reconciles without issuing a second increment"
+    }
+  },
+  "secret_resource_authority": {
+    "port": "SecretExternalResourcePort",
+    "owner": "ProductSecretResourceAuthority",
+    "separate_from_provisioning": true,
+    "test_secret_port_is_production_provider": false,
+    "operations": {
+      "begin": "create or return resource for immutable durable operation identity",
+      "reconcile": "resolve ambiguous begin/cleanup before retry",
+      "cleanup": "idempotently remove only the resource owned by the exact operation"
+    },
+    "durable_identity": "provisioning_operation_id plus secret operation generation and resource reference",
+    "crash_recovery": "persist intent before effect; reconcile external state before repeating",
+    "idempotency": "same operation returns same reference/state; conflicting payload is rejected"
+  },
+  "windows_post_install": {
+    "mode": "POST_INSTALL_FIRST_RUN_ENROLLMENT",
+    "msi_must_not": [
+      "MINT_ACCOUNT_IDENTITY",
+      "MINT_PROVISIONING_MEMBERSHIP",
+      "SYNTHESIZE_FIRST_RUN_BOOTSTRAP_CLAIM",
+      "BECOME_ROOT_AUTHORITY"
+    ],
+    "msi_may": [
+      "INSTALL_CODE",
+      "INSTALL_AND_CONFIGURE_SERVICES",
+      "INSTALL_PUBLIC_TRUST_ARTIFACTS",
+      "ESTABLISH_FILESYSTEM_AND_ACL_LAYOUT",
+      "INVOKE_EXPLICIT_FIRST_RUN_ENROLLMENT_BOUNDARY"
+    ],
+    "backend_before_accepted_terminal_transition": "DEMAND_START_STOPPED",
+    "corehost_before_accepted_provisioning_transition": "MUST_NOT_START",
+    "runtime_gate": "verified membership, materialized canonical scope, committed protected freshness and reconciled secret resources"
+  },
+  "windows_handoff": {
+    "protocol": "WindowsExternalProvisioningHandoff",
+    "production_contract": [
+      "resolve authenticated accepted FirstRunBootstrapClaim",
+      "resolve cryptographically authenticated ProvisioningMembershipBinding",
+      "supply initial StateStore metadata matching accepted claim",
+      "supply independent ProtectedFreshnessAuthorityPort",
+      "supply independent SecretExternalResourcePort"
+    ],
+    "loader": "load_windows_external_provisioning_handoff",
+    "missing_real_ceremony_package": "WindowsProvisioningAdapterUnavailable",
+    "silent_fallback": false,
+    "test_or_dev_trust_in_production": false
+  },
+  "production_material_dependency": {
+    "required": "REAL_SIGNED_PRODUCTION_PUBLIC_TRUST_PACKAGE_FROM_OFFLINE_CEREMONY",
+    "message": "PRODUCTION MATERIAL REQUIRED — DO NOT GENERATE SUBSTITUTE KEYS.",
+    "ceremony_performed": false,
+    "absence_behavior": "FAIL_CLOSED",
+    "implementation_architecturally_authorized": true,
+    "production_activation_authorized": false
+  },
+  "supersession": [
+    {
+      "source_contract": "m05_cryptohunter_account_root_of_trust_reconciliation.json#/account_id_mint_owner",
+      "prior_value": "NOT_FOUND",
+      "superseding_contract": "m05_account_genesis_authority_topology_resolution_after_binding_freeze.json#/ownership_resolution",
+      "current_value": "CryptoHunterAccountAuthority",
+      "reason": "later topology freeze explicitly supersedes prior account-id owner resolution; this contract applies it to provisioning"
+    },
+    {
+      "source_contract": "m05_cryptohunter_account_root_of_trust_reconciliation.json#/account_vs_device_ordering",
+      "prior_value": "DESIGN_BLOCKED",
+      "superseding_contract": "stage9_external_provisioning_architecture_contract.json#/atomic_account_plus_first_device",
+      "current_value": "ATOMIC_ACCOUNT_PLUS_FIRST_DEVICE",
+      "reason": "logical saga progression now freezes winner, retry and recovery semantics"
+    },
+    {
+      "source_contract": "m05_account_genesis_operation_identity_request_binding_contract.json#/selected_or_blocked_model",
+      "prior_value": "F_DESIGN_BLOCKED",
+      "superseding_contract": "m05_account_genesis_authority_topology_resolution_after_binding_freeze.json#/ownership_resolution plus stage9_external_provisioning_architecture_contract.json#/operation_identity",
+      "current_value": "PDSA-authorized prvop mapped bijectively to CHA-issued ago",
+      "reason": "later CHA owner freeze and this cross-boundary mapping close both namespaces without transferring CHA ownership"
+    },
+    {
+      "source_contract": "stage9_external_provisioning_architecture_closure_proposal.md",
+      "prior_value": "NOT_ACCEPTED_NOT_FROZEN",
+      "superseding_contract": "stage9_external_provisioning_architecture_contract.json",
+      "current_value": "FROZEN_IMPLEMENTATION_ARCHITECTURALLY_AUTHORIZED",
+      "reason": "proposal is retained as historical rationale only"
+    },
+    {
+      "source_contract": "production external provisioning adapter search",
+      "prior_value": "NOT_FOUND",
+      "superseding_contract": null,
+      "current_value": "NOT_AVAILABLE_PENDING_REAL_CEREMONY_PUBLIC_PACKAGE",
+      "reason": "architecture is frozen, but production composition remains intentionally unavailable"
+    }
+  ],
+  "forbidden_compositions": [
+    "PDSA_AS_ACCOUNT_GENESIS_OWNER",
+    "LPPI_AS_ACCOUNT_GENESIS_OWNER",
+    "CALLER_CHOSEN_PROVISIONING_IDENTITY",
+    "HASH_ONLY_MEMBERSHIP_AUTHENTICATION",
+    "MSI_MINTED_AUTHORITY_FACT",
+    "COREHOST_BEFORE_FIRST_RUN_GATE",
+    "TEST_OR_DEV_KEY_ACCEPTED_IN_PRODUCTION",
+    "PROTECTED_FRESHNESS_HIDDEN_IN_PROVISIONING_ADAPTER",
+    "SECRET_RESOURCE_HIDDEN_IN_PROVISIONING_ADAPTER",
+    "PRODUCTION_FALLBACK_WITHOUT_CEREMONY_PACKAGE"
+  ]
+}
