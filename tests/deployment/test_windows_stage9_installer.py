@@ -425,11 +425,7 @@ def test_postgresql_is_created_suspended_and_assigned_before_resume(tmp_path: Pa
 
         @staticmethod
         def QueryInformationJobObject(_job, kind):
-            return (
-                {"BasicLimitInformation": {"LimitFlags": 0}}
-                if kind == 1
-                else {"ProcessIdList": [41]}
-            )
+            return {"BasicLimitInformation": {"LimitFlags": 0}} if kind == 1 else (41,)
 
         @staticmethod
         def SetInformationJobObject(*args):
@@ -462,8 +458,128 @@ def test_postgresql_is_created_suspended_and_assigned_before_resume(tmp_path: Pa
         "CONFIGURE_JOB_OBJECT",
         "CREATE_SUSPENDED_PROCESS",
         "ASSIGN_JOB",
+        "VERIFY_JOB_MEMBERSHIP",
         "RESUME_PROCESS",
     ]
+
+
+@pytest.mark.parametrize("observed", [(), (99,), (41, 99), ("malformed",)])
+def test_postgresql_job_membership_query_back_fails_closed(
+    tmp_path: Path, observed: tuple[object, ...]
+) -> None:
+    events: list[str] = []
+
+    class Handle:
+        def __init__(self) -> None:
+            self.closed = False
+
+        def Close(self) -> None:
+            self.closed = True
+
+    process, thread, job = Handle(), Handle(), Handle()
+
+    class ProcessApi:
+        STARTUPINFO = Handle
+
+        @staticmethod
+        def CreateProcess(*_args):
+            return process, thread, 41, 42
+
+        @staticmethod
+        def ResumeThread(_thread):
+            events.append("resume")
+
+    class JobApi:
+        JobObjectExtendedLimitInformation = 1
+        JobObjectBasicProcessIdList = 2
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
+
+        @staticmethod
+        def CreateJobObject(_attributes, _name):
+            return job
+
+        @staticmethod
+        def QueryInformationJobObject(_job, kind):
+            if kind == JobApi.JobObjectExtendedLimitInformation:
+                return {"BasicLimitInformation": {"LimitFlags": 0}}
+            return observed
+
+        @staticmethod
+        def SetInformationJobObject(*_args):
+            pass
+
+        @staticmethod
+        def AssignProcessToJobObject(*_args):
+            pass
+
+    with pytest.raises(RuntimeError):
+        create_suspended_in_job(
+            ["postgres.exe"],
+            tmp_path,
+            win32api=object(),
+            win32con=SimpleNamespace(CREATE_SUSPENDED=4),
+            win32job=JobApi,
+            win32process=ProcessApi,
+            stage=events.append,
+        )
+    assert "VERIFY_JOB_MEMBERSHIP" in events
+    assert "RESUME_PROCESS" not in events
+    assert "resume" not in events
+    assert job.closed and process.closed and thread.closed
+
+
+def test_postgresql_assign_failure_precedes_membership_verification(tmp_path: Path) -> None:
+    events: list[str] = []
+
+    class Handle:
+        def __init__(self) -> None:
+            self.closed = False
+
+        def Close(self) -> None:
+            self.closed = True
+
+    process, thread, job = Handle(), Handle(), Handle()
+
+    class ProcessApi:
+        STARTUPINFO = Handle
+
+        @staticmethod
+        def CreateProcess(*_args):
+            return process, thread, 41, 42
+
+        @staticmethod
+        def ResumeThread(_thread):
+            events.append("resume")
+
+    class JobApi:
+        JobObjectExtendedLimitInformation = 1
+        JobObjectBasicProcessIdList = 2
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
+        CreateJobObject = staticmethod(lambda *_args: job)
+        QueryInformationJobObject = staticmethod(
+            lambda _job, _kind: {"BasicLimitInformation": {"LimitFlags": 0}}
+        )
+        SetInformationJobObject = staticmethod(lambda *_args: None)
+
+        @staticmethod
+        def AssignProcessToJobObject(*_args):
+            raise OSError("assign")
+
+    with pytest.raises(OSError, match="assign"):
+        create_suspended_in_job(
+            ["postgres.exe"],
+            tmp_path,
+            win32api=object(),
+            win32con=SimpleNamespace(CREATE_SUSPENDED=4),
+            win32job=JobApi,
+            win32process=ProcessApi,
+            stage=events.append,
+        )
+    assert "ASSIGN_JOB" in events
+    assert "VERIFY_JOB_MEMBERSHIP" not in events
+    assert "RESUME_PROCESS" not in events
+    assert "resume" not in events
+    assert job.closed and process.closed and thread.closed
 
 
 @pytest.mark.parametrize("failure_point", ["query", "set", "startup"])
@@ -659,6 +775,11 @@ def test_scm_event_collection_requires_exact_service_identity(
             "SERVICE_HOST_START_FAILURE",
         ),
         ({"stage": "ASSIGN_JOB", "first_exception": "OSError"}, [], "JOB_ASSIGNMENT_FAILURE"),
+        (
+            {"stage": "VERIFY_JOB_MEMBERSHIP", "first_exception": "ValueError"},
+            [],
+            "JOB_MEMBERSHIP_VERIFICATION_FAILURE",
+        ),
         (
             {"stage": "WAIT_READY", "first_exception": "RuntimeError", "child_exit_code": 1},
             [],

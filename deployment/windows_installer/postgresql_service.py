@@ -23,6 +23,7 @@ STARTUP_STAGES = (
     "CONFIGURE_JOB_OBJECT",
     "CREATE_SUSPENDED_PROCESS",
     "ASSIGN_JOB",
+    "VERIFY_JOB_MEMBERSHIP",
     "RESUME_PROCESS",
     "POSTGRES_PROCESS_ALIVE",
     "WAIT_READY",
@@ -122,10 +123,14 @@ def create_suspended_in_job(
         )
         stage("ASSIGN_JOB")
         win32job.AssignProcessToJobObject(job, process)
+        stage("VERIFY_JOB_MEMBERSHIP")
         observed = win32job.QueryInformationJobObject(job, win32job.JobObjectBasicProcessIdList)
-        pids = {
-            int(value) for value in observed.get("ProcessIdList", observed.get("ProcessIds", []))
-        }
+        try:
+            pids = {int(value) for value in observed}
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(
+                "unexpected JobObjectBasicProcessIdList result"
+            ) from exc
         if pids != {pid}:
             raise RuntimeError("PostgreSQL root Job assignment query-back failed")
         stage("RESUME_PROCESS")
