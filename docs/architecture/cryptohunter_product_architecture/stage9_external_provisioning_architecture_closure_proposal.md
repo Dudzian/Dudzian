@@ -4,17 +4,19 @@
 
 | Pole | Wartość |
 |---|---|
-| status | `REVISION 4 PROPOSAL — ROOT-OF-TRUST TOPOLOGY CLOSED / NOT ACCEPTED / NOT FROZEN` |
+| status | `SUPERSEDED — HISTORICAL REVISION 4 PROPOSAL / NOT CURRENT CANONICAL` |
 | zakres | domknięcie upstream dla `external_product_provisioning_boundary` |
-| implementacja produkcyjna | `NOT AUTHORIZED` |
+| implementacja produkcyjna | `SUPERSEDED BY FROZEN CONTRACT; ARCHITECTURALLY AUTHORIZED, ACTIVATION NOT READY` |
 | Stage 0–8 | `DONE` (bez zmiany) |
 | Stage 9 | `IN PROGRESS` (bez zmiany) |
 | Stage 10 | `NOT_STARTED` |
 
-Ten dokument jest wynikiem inventory aktualnego HEAD. Nie superseduje zamrożonych kontraktów,
-nie jest sam w sobie authority i nie zezwala na implementację
-`WindowsExternalProvisioningHandoff`. Jego zaakceptowanie wymaga osobnego architecture change,
-aktualizacji kanonicznych JSON-ów i freeze manifestu. MSI pozostaje wyłącznie orkiestratorem:
+> **Supersession:** current machine-checkable authority is `stage9_external_provisioning_architecture_contract.json`, frozen by `stage9_external_provisioning_architecture_freeze.json`. Statements below that say `DESIGN_BLOCKED`, `NOT_FOUND`, `NOT ACCEPTED`, `NOT FROZEN`, or `NOT AUTHORIZED` are retained as historical proposal rationale and are not current canonical values. Production composition remains fail-closed until the real ceremony public package exists.
+
+Ten dokument był wynikiem inventory ówczesnego HEAD. Jako zachowany proposal nie superseduje
+zamrożonych kontraktów i nie jest current authority. Wymagany architecture change, canonical JSON
+oraz freeze manifest istnieją teraz w artefaktach wskazanych powyżej; production activation nadal
+wymaga realnego publicznego outputu ceremony. MSI pozostaje wyłącznie orkiestratorem:
 `MSI != account authority`, `MSI != identity mint owner` i
 `MSI != provisioning membership authority`.
 
