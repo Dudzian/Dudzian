@@ -167,6 +167,8 @@ def classify_service_start_failure(
         failed = diagnostic["first_exception"] != "NONE"
         if failed and stage == "SCM_DISPATCHER":
             return "SERVICE_HOST_START_FAILURE"
+        if failed and stage in {"CREATE_JOB_OBJECT", "CONFIGURE_JOB_OBJECT"}:
+            return "JOB_OBJECT_SETUP_FAILURE"
         if failed and stage == "CREATE_SUSPENDED_PROCESS":
             return "POSTGRES_CREATEPROCESS_FAILURE"
         if failed and stage == "ASSIGN_JOB":

@@ -19,6 +19,8 @@ STARTUP_STAGES = (
     "SERVICE_ENTRY",
     "SCM_DISPATCHER",
     "QUALIFY_PATHS",
+    "CREATE_JOB_OBJECT",
+    "CONFIGURE_JOB_OBJECT",
     "CREATE_SUSPENDED_PROCESS",
     "ASSIGN_JOB",
     "RESUME_PROCESS",
@@ -98,14 +100,22 @@ def create_suspended_in_job(
     win32process: Any, stage: Any = lambda _value: None,
 ) -> tuple[Any, Any, Any, int]:
     """Create suspended, assign and query-back before any child can spawn."""
-    job = win32job.CreateJobObject(None, None)
-    limits = win32job.QueryInformationJobObject(job, win32job.JobObjectExtendedLimitInformation)
-    limits["BasicLimitInformation"]["LimitFlags"] |= win32job.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
-    win32job.SetInformationJobObject(job, win32job.JobObjectExtendedLimitInformation, limits)
-    startup = win32process.STARTUPINFO()
-    process = thread = None
+    job = process = thread = None
     try:
+        stage("CREATE_JOB_OBJECT")
+        job = win32job.CreateJobObject(None, "")
+        stage("CONFIGURE_JOB_OBJECT")
+        limits = win32job.QueryInformationJobObject(
+            job, win32job.JobObjectExtendedLimitInformation
+        )
+        limits["BasicLimitInformation"]["LimitFlags"] |= (
+            win32job.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        )
+        win32job.SetInformationJobObject(
+            job, win32job.JobObjectExtendedLimitInformation, limits
+        )
         stage("CREATE_SUSPENDED_PROCESS")
+        startup = win32process.STARTUPINFO()
         process, thread, pid, _ = win32process.CreateProcess(
             None, subprocess.list2cmdline(command), None, None, False,
             win32con.CREATE_SUSPENDED, None, str(cwd), startup,
@@ -121,7 +131,8 @@ def create_suspended_in_job(
         stage("RESUME_PROCESS")
         win32process.ResumeThread(thread)
     except BaseException:
-        job.Close()
+        if job is not None:
+            job.Close()
         if process is not None:
             process.Close()
         if thread is not None:

@@ -416,7 +416,10 @@ def test_postgresql_is_created_suspended_and_assigned_before_resume(tmp_path: Pa
         JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
 
         @staticmethod
-        def CreateJobObject(*args):
+        def CreateJobObject(attributes, name):
+            assert attributes is None
+            if not isinstance(name, str):
+                raise TypeError("name must be str")
             events.append("job")
             return job
 
@@ -439,7 +442,10 @@ def test_postgresql_is_created_suspended_and_assigned_before_resume(tmp_path: Pa
     class Con:
         CREATE_SUSPENDED = 4
 
-    create_suspended_in_job(
+    with pytest.raises(TypeError, match="name must be str"):
+        JobApi.CreateJobObject(None, None)
+
+    created_job, created_process, created_thread, pid = create_suspended_in_job(
         ["postgres.exe"],
         tmp_path,
         win32api=object(),
@@ -448,9 +454,63 @@ def test_postgresql_is_created_suspended_and_assigned_before_resume(tmp_path: Pa
         win32process=ProcessApi,
         stage=lambda value: events.append(value),
     )
+    assert (created_job, created_process, created_thread, pid) == (job, process, thread, 41)
     assert events.index("assign") < events.index("resume")
     boundaries = [value for value in events if value in STARTUP_STAGES]
-    assert boundaries == ["CREATE_SUSPENDED_PROCESS", "ASSIGN_JOB", "RESUME_PROCESS"]
+    assert boundaries == [
+        "CREATE_JOB_OBJECT",
+        "CONFIGURE_JOB_OBJECT",
+        "CREATE_SUSPENDED_PROCESS",
+        "ASSIGN_JOB",
+        "RESUME_PROCESS",
+    ]
+
+
+@pytest.mark.parametrize("failure_point", ["query", "set", "startup"])
+def test_postgresql_job_is_closed_when_setup_fails(tmp_path: Path, failure_point: str) -> None:
+    class Handle:
+        closed = False
+
+        def Close(self):
+            self.closed = True
+
+    job = Handle()
+
+    class JobApi:
+        JobObjectExtendedLimitInformation = 1
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
+
+        @staticmethod
+        def CreateJobObject(attributes, name):
+            assert (attributes, name) == (None, "")
+            return job
+
+        @staticmethod
+        def QueryInformationJobObject(*_args):
+            if failure_point == "query":
+                raise OSError("query")
+            return {"BasicLimitInformation": {"LimitFlags": 0}}
+
+        @staticmethod
+        def SetInformationJobObject(*_args):
+            if failure_point == "set":
+                raise OSError("set")
+
+    class ProcessApi:
+        @staticmethod
+        def STARTUPINFO():
+            raise OSError("startup")
+
+    with pytest.raises(OSError, match=failure_point):
+        create_suspended_in_job(
+            ["postgres.exe"],
+            tmp_path,
+            win32api=object(),
+            win32con=object(),
+            win32job=JobApi,
+            win32process=ProcessApi,
+        )
+    assert job.closed
 
 
 def test_service_startup_diagnostic_is_allowlisted_and_secret_free(
@@ -578,6 +638,16 @@ def test_scm_event_collection_requires_exact_service_identity(
 @pytest.mark.parametrize(
     ("diagnostic", "events", "expected"),
     [
+        (
+            {"stage": "CREATE_JOB_OBJECT", "first_exception": "TypeError"},
+            [],
+            "JOB_OBJECT_SETUP_FAILURE",
+        ),
+        (
+            {"stage": "CONFIGURE_JOB_OBJECT", "first_exception": "OSError"},
+            [],
+            "JOB_OBJECT_SETUP_FAILURE",
+        ),
         (
             {"stage": "CREATE_SUSPENDED_PROCESS", "first_exception": "OSError"},
             [],
