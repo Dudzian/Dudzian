@@ -28,8 +28,12 @@ from deployment.windows_installer.provision import (
     rollback,
 )
 from deployment.windows_installer.postgresql_service import (
+    STARTUP_STAGES,
     create_suspended_in_job,
+    main as postgresql_service_main,
     require_clean_exit,
+    startup_diagnostic_path,
+    try_write_startup_diagnostic,
     wait_ready,
 )
 
@@ -442,8 +446,178 @@ def test_postgresql_is_created_suspended_and_assigned_before_resume(tmp_path: Pa
         win32con=Con,
         win32job=JobApi,
         win32process=ProcessApi,
+        stage=lambda value: events.append(value),
     )
     assert events.index("assign") < events.index("resume")
+    boundaries = [value for value in events if value in STARTUP_STAGES]
+    assert boundaries == ["CREATE_SUSPENDED_PROCESS", "ASSIGN_JOB", "RESUME_PROCESS"]
+
+
+def test_service_startup_diagnostic_is_allowlisted_and_secret_free(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("ProgramData", str(tmp_path))
+    secret = "password=private-key-material"
+    startup_diagnostic_path().write_text("install window", encoding="utf-8")
+    assert try_write_startup_diagnostic("WAIT_READY", RuntimeError(secret), 23)
+    value = json.loads((tmp_path / ".CryptoHunter.postgresql-service-startup.json").read_text())
+    assert value == {
+        "service": "CryptoHunterPostgreSQL",
+        "stage": "WAIT_READY",
+        "first_exception": "RuntimeError",
+        "child_exit_code": 23,
+    }
+    assert secret not in json.dumps(value)
+
+
+def test_post_commit_service_restart_does_not_recreate_diagnostic(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    program_files = tmp_path / "Program Files" / "CryptoHunter"
+    program_files.mkdir(parents=True)
+    program_data = tmp_path / "ProgramData" / "CryptoHunter"
+    program_data.parent.mkdir(parents=True)
+    monkeypatch.setenv("ProgramData", str(program_data.parent))
+    journal_path, journal = create_journal(program_files, program_data)
+    program_data.mkdir()
+    journal["state"] = "PROVISIONED"
+    journal_path.write_text(json.dumps(journal), encoding="utf-8")
+    startup_diagnostic_path().write_text("install window", encoding="utf-8")
+    assert startup_diagnostic_path().is_file()
+    commit(program_files, program_data)
+    assert not startup_diagnostic_path().exists()
+    calls = []
+    monkeypatch.setattr(
+        "deployment.windows_installer.postgresql_service.run_service",
+        lambda name, worker: calls.append((name, worker)),
+    )
+
+    postgresql_service_main()
+
+    assert calls and calls[0][0] == "CryptoHunterPostgreSQL"
+    assert not startup_diagnostic_path().exists()
+
+
+def test_telemetry_write_failure_does_not_prevent_dispatcher(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("ProgramData", str(tmp_path))
+    diagnostic = startup_diagnostic_path()
+    diagnostic.write_text("install window", encoding="utf-8")
+    monkeypatch.setattr(
+        Path, "open", lambda *args, **kwargs: (_ for _ in ()).throw(OSError("denied"))
+    )
+    dispatched = []
+    monkeypatch.setattr(
+        "deployment.windows_installer.postgresql_service.run_service",
+        lambda name, worker: dispatched.append(name),
+    )
+
+    postgresql_service_main()
+
+    assert dispatched == ["CryptoHunterPostgreSQL"]
+
+
+def test_dispatcher_failure_records_exact_exception_without_masking(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("ProgramData", str(tmp_path))
+    startup_diagnostic_path().write_text("install window", encoding="utf-8")
+    original = OSError("dispatcher detail must not be persisted")
+    monkeypatch.setattr(
+        "deployment.windows_installer.postgresql_service.run_service",
+        lambda *_args: (_ for _ in ()).throw(original),
+    )
+
+    with pytest.raises(OSError) as raised:
+        postgresql_service_main()
+
+    assert raised.value is original
+    assert json.loads(startup_diagnostic_path().read_text(encoding="utf-8")) == {
+        "service": "CryptoHunterPostgreSQL",
+        "stage": "SCM_DISPATCHER",
+        "first_exception": "OSError",
+    }
+
+
+def test_dispatcher_telemetry_failure_does_not_mask_original(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original = OSError("dispatcher")
+    monkeypatch.setattr(
+        "deployment.windows_installer.postgresql_service.try_write_startup_diagnostic",
+        lambda *_args, **_kwargs: False,
+    )
+    monkeypatch.setattr(
+        "deployment.windows_installer.postgresql_service.run_service",
+        lambda *_args: (_ for _ in ()).throw(original),
+    )
+    with pytest.raises(OSError) as raised:
+        postgresql_service_main()
+    assert raised.value is original
+
+
+@pytest.mark.parametrize(
+    ("identity", "accepted"),
+    [
+        ("CryptoHunterPostgreSQL", True),
+        ("CryptoHunter Private PostgreSQL", True),
+        ("UnrelatedService", False),
+    ],
+)
+def test_scm_event_collection_requires_exact_service_identity(
+    identity: str, accepted: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result = subprocess.CompletedProcess(
+        [], 0, json.dumps([{"id": 7000, "properties": [identity, "%%193"]}]), ""
+    )
+    monkeypatch.setattr(clean_install.subprocess, "run", lambda *args, **kwargs: result)
+    assert bool(clean_install._collect_scm_events()) is accepted
+
+
+@pytest.mark.parametrize(
+    ("diagnostic", "events", "expected"),
+    [
+        (
+            {"stage": "CREATE_SUSPENDED_PROCESS", "first_exception": "OSError"},
+            [],
+            "POSTGRES_CREATEPROCESS_FAILURE",
+        ),
+        (
+            {"stage": "SCM_DISPATCHER", "first_exception": "OSError"},
+            [],
+            "SERVICE_HOST_START_FAILURE",
+        ),
+        ({"stage": "ASSIGN_JOB", "first_exception": "OSError"}, [], "JOB_ASSIGNMENT_FAILURE"),
+        (
+            {"stage": "WAIT_READY", "first_exception": "RuntimeError", "child_exit_code": 1},
+            [],
+            "POSTGRES_EARLY_EXIT",
+        ),
+        (
+            {"stage": "WAIT_READY", "first_exception": "PostgreSQLReadinessTimeout"},
+            [],
+            "POSTGRES_READINESS_TIMEOUT",
+        ),
+        ({"stage": "WAIT_READY", "first_exception": "OSError"}, [], "UNCLASSIFIED"),
+        ({"stage": "REPORT_RUNNING", "first_exception": "OSError"}, [], "SCM_REPORTING_FAILURE"),
+        (None, [{"id": 7038, "properties": ["CryptoHunterPostgreSQL"]}], "SERVICE_LOGON_FAILURE"),
+        (
+            None,
+            [{"id": 7000, "properties": ["CryptoHunterPostgreSQL", "%%193"]}],
+            "SERVICE_HOST_START_FAILURE",
+        ),
+        (None, [{"id": 7000, "properties": ["CryptoHunterPostgreSQL", "%%1067"]}], "UNCLASSIFIED"),
+    ],
+)
+def test_native_start_failure_categories_require_defining_evidence(
+    diagnostic: dict[str, object] | None,
+    events: list[dict[str, object]],
+    expected: str,
+) -> None:
+    if diagnostic is not None:
+        diagnostic = {"service": "CryptoHunterPostgreSQL", **diagnostic}
+    assert clean_install.classify_service_start_failure(diagnostic, events) == expected
 
 
 def test_postgresql_never_ready_fails_closed_without_sleep_guess(tmp_path: Path) -> None:

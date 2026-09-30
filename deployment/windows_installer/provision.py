@@ -22,6 +22,11 @@ from bot_core.postgresql_freshness_authority import (
     qualify_postgresql_freshness_authority,
 )
 from deployment.windows_installer.contract import CONTRACT
+from deployment.windows_installer.postgresql_service import (
+    SERVICE_NAME as POSTGRESQL_SERVICE_NAME,
+    STARTUP_DIAGNOSTIC,
+    startup_diagnostic_path,
+)
 from deployment.windows_installer.corehost_composition import (
     load_windows_external_provisioning_handoff,
     materialize_canonical_pre_state,
@@ -572,6 +577,26 @@ def install(
     journal_path, journal = create_journal(program_files, program_data)
     set_stage("RESOLVE_SERVICE_SIDS")
     sids = _service_sids()
+    set_stage("PREPARE_POSTGRES_SERVICE_DIAGNOSTIC")
+    diagnostic = startup_diagnostic_path()
+    diagnostic.write_text(
+        json.dumps(
+            {
+                "service": POSTGRESQL_SERVICE_NAME,
+                "stage": "SERVICE_ENTRY",
+                "first_exception": "NONE",
+            },
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    diagnostic_grants = {
+        ADMINISTRATORS_SID: FILE_ALL_ACCESS,
+        SYSTEM_SID: FILE_ALL_ACCESS,
+        sids[CONTRACT.postgresql_service]: FILE_GENERIC_READ | FILE_GENERIC_WRITE,
+    }
+    _protect(diagnostic, diagnostic_grants, inherit=False)
+    _qualify_protected(diagnostic, diagnostic_grants, inherit=False)
     set_stage("CREATE_PROGRAMDATA_LAYOUT")
     program_data.mkdir()
     checkpoint(journal_path, journal, program_data)
@@ -715,6 +740,7 @@ def commit(program_files: Path, program_data: Path) -> None:
         _protect(ownership, grants, inherit=False)
         _qualify_protected(ownership, grants, inherit=False)
     path.unlink()
+    (program_data.parent / STARTUP_DIAGNOSTIC).unlink(missing_ok=True)
 
 
 def _committed_record(program_data: Path) -> dict[str, Any]:
