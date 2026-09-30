@@ -21,6 +21,7 @@ class InstallerContract:
     backend_service: str = "CryptoHunterBackend"
     verifier_service: str = "CryptoHunterFreshnessVerifier"
     postgresql_service: str = "CryptoHunterPostgreSQL"
+    postgresql_display_name: str = "CryptoHunter Private PostgreSQL"
 
     @property
     def backend_identity(self) -> str:

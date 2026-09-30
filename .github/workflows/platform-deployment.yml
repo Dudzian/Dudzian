@@ -135,7 +135,7 @@ jobs:
           if-no-files-found: ignore
           path: |
             dist/windows/logs/*.log
-            dist/windows/logs/provision-failure.json
+            dist/windows/logs/*.json
             dist/windows/installer-manifest.json
       - uses: actions/upload-artifact@v6
         with:

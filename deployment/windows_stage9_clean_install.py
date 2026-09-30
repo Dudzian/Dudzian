@@ -17,6 +17,12 @@ from deployment.platform_evidence import WINDOWS_STAGE9_ITEMS
 from deployment.windows_installer.build import main as build_main
 from deployment.windows_installer.contract import CONTRACT
 from deployment.windows_installer.provision import read_safe_failure, safe_failure_path
+from deployment.windows_installer.postgresql_service import (
+    SERVICE_NAME as POSTGRESQL_SERVICE_NAME,
+    STARTUP_DIAGNOSTIC,
+    STARTUP_STAGES,
+    startup_diagnostic_path,
+)
 
 PROBE_ID = "cryptohunter.windows.clean-install.v1"
 PROOFS = (
@@ -87,11 +93,137 @@ def _capture_provision_failure(logs: Path) -> None:
     )
 
 
+def _read_service_startup_diagnostic() -> dict[str, object] | None:
+    try:
+        value = json.loads(startup_diagnostic_path().read_text(encoding="utf-8"))
+    except (KeyError, FileNotFoundError, OSError, ValueError):
+        return None
+    required = {"service", "stage", "first_exception"}
+    if (
+        not isinstance(value, dict)
+        or not required <= set(value) <= required | {"child_exit_code"}
+        or value.get("service") != POSTGRESQL_SERVICE_NAME
+        or value.get("stage") not in STARTUP_STAGES
+        or not isinstance(value.get("first_exception"), str)
+        or (
+            "child_exit_code" in value
+            and not isinstance(value["child_exit_code"], int)
+        )
+    ):
+        return None
+    return value
+
+
+def _collect_scm_events() -> list[dict[str, object]]:
+    """Collect structured SCM fields, not unrestricted event messages."""
+    script = rf"""
+$start = (Get-Date).AddMinutes(-15)
+$events = Get-WinEvent -FilterHashtable @{{LogName='System'; ProviderName='Service Control Manager'; StartTime=$start}} -ErrorAction Stop
+$safe = foreach ($event in $events) {{
+  $properties = @($event.Properties | ForEach-Object {{ [string]$_.Value }})
+  if (($properties -contains '{POSTGRESQL_SERVICE_NAME}') -or ($properties -contains '{CONTRACT.postgresql_display_name}')) {{
+    [pscustomobject]@{{time=$event.TimeCreated.ToUniversalTime().ToString('o'); id=$event.Id; properties=$properties}}
+  }}
+}}
+@($safe) | ConvertTo-Json -Compress -Depth 4
+"""
+    try:
+        result = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        value = json.loads(result.stdout or "[]")
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return []
+    if isinstance(value, dict):
+        value = [value]
+    if not isinstance(value, list):
+        return []
+    return [
+        item
+        for item in value
+        if isinstance(item, dict) and event_belongs_to_postgresql(item)
+    ]
+
+
+def event_belongs_to_postgresql(event: dict[str, object]) -> bool:
+    """Match exact structured identities; never inspect localized messages."""
+    properties = event.get("properties", [])
+    return isinstance(properties, list) and any(
+        value in {CONTRACT.postgresql_service, CONTRACT.postgresql_display_name}
+        for value in properties
+    )
+
+
+def classify_service_start_failure(
+    diagnostic: dict[str, object] | None, events: list[dict[str, object]]
+) -> str:
+    """Return a category only when its defining evidence is present."""
+    if diagnostic is not None:
+        stage = diagnostic["stage"]
+        failed = diagnostic["first_exception"] != "NONE"
+        if failed and stage == "SCM_DISPATCHER":
+            return "SERVICE_HOST_START_FAILURE"
+        if failed and stage == "CREATE_SUSPENDED_PROCESS":
+            return "POSTGRES_CREATEPROCESS_FAILURE"
+        if failed and stage == "ASSIGN_JOB":
+            return "JOB_ASSIGNMENT_FAILURE"
+        if failed and "child_exit_code" in diagnostic and stage in {
+            "POSTGRES_PROCESS_ALIVE",
+            "WAIT_READY",
+        }:
+            return "POSTGRES_EARLY_EXIT"
+        if (
+            failed
+            and stage == "WAIT_READY"
+            and diagnostic["first_exception"] == "PostgreSQLReadinessTimeout"
+        ):
+            return "POSTGRES_READINESS_TIMEOUT"
+        if failed and stage == "REPORT_RUNNING":
+            return "SCM_REPORTING_FAILURE"
+    for event in events:
+        if not event_belongs_to_postgresql(event):
+            continue
+        if event.get("id") == 7038:
+            return "SERVICE_LOGON_FAILURE"
+        properties = event.get("properties", [])
+        if event.get("id") == 7000 and isinstance(properties, list) and any(
+            value in {"%%2", "%%193"} for value in properties
+        ):
+            return "SERVICE_HOST_START_FAILURE"
+    # Event 7000 alone is deliberately not enough: it is the generic SCM
+    # wrapper for several distinct failures, including child/readiness faults.
+    return "UNCLASSIFIED"
+
+
+def _capture_service_start_failure(logs: Path) -> None:
+    logs.mkdir(parents=True, exist_ok=True)
+    diagnostic = _read_service_startup_diagnostic()
+    events = _collect_scm_events()
+    evidence = {
+        "category": classify_service_start_failure(diagnostic, events),
+        "service_diagnostic": diagnostic,
+        "scm_events": events,
+    }
+    (logs / "postgresql-service-startup-evidence.json").write_text(
+        json.dumps(evidence, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    if diagnostic is not None:
+        (logs / STARTUP_DIAGNOSTIC).write_text(
+            json.dumps(diagnostic, sort_keys=True) + "\n", encoding="utf-8"
+        )
+    print(f"POSTGRES_SERVICE_START_FAILURE = {evidence['category']}", flush=True)
+
+
 def _install_and_prove(msi: Path, manifest: Path, install_log: Path) -> tuple[int, dict[str, str]]:
     try:
         install_code = _msiexec(["/i", str(msi)], install_log)
     except Exception:
         _capture_provision_failure(install_log.parent)
+        _capture_service_start_failure(install_log.parent)
         print("MSI_INSTALL = FAIL", flush=True)
         print(f"MSI_INSTALL_LOG = {install_log}", flush=True)
         raise
