@@ -372,7 +372,7 @@ def _configure_database(
     subprocess.run(
         [str(pg_ctl), "start", "-D", str(data), "-w", "-t", "60"], check=True, timeout=70
     )
-    primary_failure = False
+    primary_failure: BaseException | None = None
     try:
         dsn = f"host=127.0.0.1 port={CONTRACT.postgresql_port} dbname=postgres user=postgres"
         import psycopg
@@ -387,11 +387,23 @@ def _configure_database(
         provision_postgresql_freshness_authority(authority)
         set_stage("POSTGRES_QUALIFY_FRESHNESS_AUTHORITY")
         qualify_postgresql_freshness_authority(authority)
-        set_stage("POSTGRES_FINAL_HBA_WRITE")
-        (data / "pg_hba.conf").write_text("\n".join(FINAL_HBA) + "\n", encoding="utf-8")
-        (data / "pg_ident.conf").write_text("\n".join(IDENT) + "\n", encoding="utf-8")
-        set_stage("POSTGRES_FINAL_HBA_QUALIFY")
-        with psycopg.connect(dsn) as connection:
+        # Open the final parser-qualification session before removing bootstrap
+        # access. PostgreSQL applies a replaced HBA immediately to new sessions,
+        # while this already-authenticated session remains valid.
+        with psycopg.connect(dsn, autocommit=True) as connection:
+            identity = connection.execute(
+                "SELECT session_user,current_database()"
+            ).fetchone()
+            if tuple(identity) != ("postgres", "postgres"):
+                raise ProvisionError("bootstrap administrator session qualification failed")
+            set_stage("POSTGRES_FINAL_HBA_WRITE")
+            (data / "pg_hba.conf").write_text(
+                "\n".join(FINAL_HBA) + "\n", encoding="utf-8"
+            )
+            (data / "pg_ident.conf").write_text(
+                "\n".join(IDENT) + "\n", encoding="utf-8"
+            )
+            set_stage("POSTGRES_FINAL_HBA_QUALIFY")
             rows = connection.execute(
                 "SELECT line_number,type,database,user_name,address,netmask,auth_method,options,error "
                 "FROM pg_catalog.pg_hba_file_rules ORDER BY line_number"
@@ -400,17 +412,46 @@ def _configure_database(
                 qualify_hba_rows(rows, "freshness_gate")
             except ValueError as exc:
                 raise ProvisionError("final HBA parser qualification failed") from exc
-    except BaseException:
-        primary_failure = True
+            set_stage("POSTGRES_FINAL_ADMIN_REJECTION")
+            try:
+                unexpected = psycopg.connect(dsn)
+            except psycopg.OperationalError as exc:
+                rejection = str(exc).lower()
+                if getattr(exc, "sqlstate", None) != "28000" and not any(
+                    marker in rejection
+                    for marker in (
+                        "no pg_hba.conf entry",
+                        "pg_hba.conf rejects connection",
+                        "requires a valid client certificate",
+                        "certificate authentication failed",
+                    )
+                ):
+                    raise ProvisionError(
+                        "new administrator connection did not prove HBA rejection"
+                    ) from exc
+                # Distinguish an authentication rejection from server unavailability.
+                if connection.execute("SELECT 1").fetchone() != (1,):
+                    raise ProvisionError("bootstrap PostgreSQL liveness proof failed")
+            else:
+                # This path is a contract violation, but do not leak the
+                # unexpectedly accepted privileged session while reporting it.
+                unexpected.close()
+                raise ProvisionError("final HBA accepted a new administrator connection")
+    except BaseException as exc:
+        primary_failure = exc
         raise
     finally:
-        if not primary_failure:
+        if primary_failure is None:
             set_stage("POSTGRES_BOOTSTRAP_STOP")
-        subprocess.run(
-            [str(pg_ctl), "stop", "-D", str(data), "-m", "fast", "-w", "-t", "30"],
-            check=True,
-            timeout=40,
-        )
+        try:
+            subprocess.run(
+                [str(pg_ctl), "stop", "-D", str(data), "-m", "fast", "-w", "-t", "30"],
+                check=True,
+                timeout=40,
+            )
+        except BaseException:
+            if primary_failure is None:
+                raise
 
 
 def _recovery() -> None:
