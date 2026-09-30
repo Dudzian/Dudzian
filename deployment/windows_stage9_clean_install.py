@@ -14,6 +14,11 @@ import sys
 import time
 from typing import Callable
 from deployment.platform_evidence import WINDOWS_STAGE9_ITEMS
+from deployment.windows_stage9_evidence_contract import (
+    CLEAN_INSTALL_PRECEREMONY_PROOFS,
+    CLEAN_INSTALL_RECEIPT_KEYS,
+    POST_ENROLLMENT_QUALIFICATION_STATE,
+)
 from deployment.windows_installer.build import main as build_main
 from deployment.windows_installer.contract import CONTRACT
 from deployment.windows_installer.provision import read_safe_failure, safe_failure_path
@@ -25,16 +30,7 @@ from deployment.windows_installer.postgresql_service import (
 )
 
 PROBE_ID = "cryptohunter.windows.clean-install.v1"
-PROOFS = (
-    "files",
-    "services",
-    "dacl",
-    "postgresql",
-    "authority_absent",
-    "production_enrollment_fail_closed",
-    "uninstall",
-    "acceptance_cleanup",
-)
+PROOFS = CLEAN_INSTALL_PRECEREMONY_PROOFS
 
 
 class CleanInstallError(RuntimeError):
@@ -536,8 +532,10 @@ def run(args: argparse.Namespace) -> None:
         "install_exit_code": install_code,
         "uninstall_exit_code": uninstall_code,
         "proofs": proofs,
-        "post_enrollment_live_qualification": "REQUIRED",
+        "post_enrollment_live_qualification": POST_ENROLLMENT_QUALIFICATION_STATE,
     }
+    if set(receipt) != CLEAN_INSTALL_RECEIPT_KEYS or set(proofs) != set(PROOFS):
+        raise CleanInstallError("internal clean-install receipt contract mismatch")
     args.receipt.write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
 
 

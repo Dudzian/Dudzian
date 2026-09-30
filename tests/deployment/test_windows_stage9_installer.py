@@ -286,7 +286,10 @@ def test_stage9_workflow_always_preserves_msi_diagnostics_without_weakening_gate
     assert "if: always()" in diagnostic_step
     assert "name: windows-clean-install-diagnostics" in diagnostic_step
     assert "dist/windows/logs/*.log" in diagnostic_step
+    assert "dist/windows/logs/*.json" in diagnostic_step
     assert "dist/windows/installer-manifest.json" in diagnostic_step
+    assert "dist/windows/windows-clean-install-receipt.json" in diagnostic_step
+    assert "dist/windows/windows-clean-install-evidence.json" in diagnostic_step
     assert "if-no-files-found: ignore" in diagnostic_step
     assert "continue-on-error: true" not in canonical_step
 
@@ -933,7 +936,7 @@ def test_clean_install_never_claims_production_enrollment_passed() -> None:
     source = (ROOT / "deployment/windows_stage9_clean_install.py").read_text()
     assert 'proofs["production_enrollment"] = "PASS"' not in source
     assert 'proofs["production_enrollment_fail_closed"] = "PASS"' in source
-    assert '"post_enrollment_live_qualification": "REQUIRED"' in source
+    assert '"post_enrollment_live_qualification": POST_ENROLLMENT_QUALIFICATION_STATE' in source
     assert "POST_ENROLLMENT_LIVE_QUALIFICATION = REQUIRED" in source
 
 

@@ -134,9 +134,11 @@ jobs:
           name: windows-clean-install-diagnostics
           if-no-files-found: ignore
           path: |
+            dist/windows/windows-clean-install-receipt.json
+            dist/windows/windows-clean-install-evidence.json
+            dist/windows/installer-manifest.json
             dist/windows/logs/*.log
             dist/windows/logs/*.json
-            dist/windows/installer-manifest.json
       - uses: actions/upload-artifact@v6
         with:
           name: windows-clean-install-evidence

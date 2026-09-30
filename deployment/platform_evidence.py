@@ -14,6 +14,11 @@ import sys
 from typing import Any
 
 from deployment.core_test_plan import MANIFEST, canonical_plan_digest, load_manifest
+from deployment.windows_stage9_evidence_contract import (
+    CLEAN_INSTALL_PRECEREMONY_PROOFS,
+    CLEAN_INSTALL_RECEIPT_KEYS,
+    POST_ENROLLMENT_QUALIFICATION_STATE,
+)
 
 SCHEMA_VERSION = 1
 SCM_ITEMS = (
@@ -176,34 +181,8 @@ def produce_windows_clean_install_evidence(
         raise EvidenceProductionError("clean-install PASS requires a GitHub Windows runner")
     value = json.loads(receipt.read_text(encoding="utf-8"))
     manifest_value = json.loads(manifest.read_text(encoding="utf-8"))
-    required = {
-        "schema_version",
-        "source_revision",
-        "ci_provider",
-        "ci_run_id",
-        "runner_os",
-        "runner_arch",
-        "probe_id",
-        "msi_sha256",
-        "manifest_sha256",
-        "product_version",
-        "install_exit_code",
-        "proofs",
-        "uninstall_exit_code",
-    }
-    if not isinstance(value, dict) or set(value) != required:
+    if not isinstance(value, dict) or set(value) != CLEAN_INSTALL_RECEIPT_KEYS:
         raise EvidenceProductionError("malformed clean-install receipt")
-    proofs = {
-        "files",
-        "services",
-        "dacl",
-        "postgresql",
-        "mtls_matrix",
-        "backend",
-        "logging",
-        "uninstall",
-        "acceptance_cleanup",
-    }
     if (
         value["schema_version"] != 1
         or value["source_revision"] != source_revision
@@ -214,6 +193,8 @@ def produce_windows_clean_install_evidence(
         or value["probe_id"] != "cryptohunter.windows.clean-install.v1"
         or value["install_exit_code"] != 0
         or value["uninstall_exit_code"] != 0
+        or value["post_enrollment_live_qualification"]
+        != POST_ENROLLMENT_QUALIFICATION_STATE
         or not re.fullmatch(r"[0-9a-f]{64}", value["msi_sha256"])
         or not re.fullmatch(r"[0-9a-f]{64}", value["manifest_sha256"])
         or value["msi_sha256"] != hashlib.sha256(msi.read_bytes()).hexdigest()
@@ -225,7 +206,7 @@ def produce_windows_clean_install_evidence(
         or manifest_value.get("postgresql_version") != "17.11"
         or manifest_value.get("postgresql_packaging_revision") != "4"
         or not isinstance(value["proofs"], dict)
-        or set(value["proofs"]) != proofs
+        or set(value["proofs"]) != set(CLEAN_INSTALL_PRECEREMONY_PROOFS)
         or any(result != "PASS" for result in value["proofs"].values())
     ):
         raise EvidenceProductionError("clean-install receipt is incomplete or failed")
