@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -580,6 +581,146 @@ def test_safe_diagnostic_identifies_first_exception_without_rendering_it() -> No
             raise OSError("cleanup failure")
     except OSError as outer:
         assert _first_exception_type(outer) == "RuntimeError"
+
+
+def test_safe_failure_is_secret_free_atomic_and_cannot_be_redirected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    machine_root = tmp_path / "ProgramData"
+    machine_root.mkdir()
+    monkeypatch.setenv("ProgramData", str(machine_root))
+    secret = "password=correct-horse-private-key"
+
+    provision.write_safe_failure("install", "POSTGRES_INITDB", RuntimeError(secret))
+
+    path = machine_root / provision.SAFE_FAILURE_DIAGNOSTIC
+    value = json.loads(path.read_text(encoding="utf-8"))
+    assert value == {
+        "schema_version": 1,
+        "operation": "install",
+        "stage": "POSTGRES_INITDB",
+        "first_exception": "RuntimeError",
+    }
+    assert secret not in path.read_text(encoding="utf-8")
+    assert not path.with_suffix(".tmp").exists()
+    with pytest.raises(provision.ProvisionError, match="not canonical"):
+        provision.read_safe_failure(tmp_path / "caller-selected.json")
+
+
+def test_install_failure_diagnostic_survives_rollback_and_commit_clears_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    machine_root = tmp_path / "ProgramData"
+    machine_root.mkdir()
+    monkeypatch.setenv("ProgramData", str(machine_root))
+    monkeypatch.setattr(
+        provision,
+        "os",
+        SimpleNamespace(name="nt", environ=os.environ, replace=os.replace),
+    )
+    monkeypatch.setattr(
+        provision,
+        "install",
+        lambda pf, pd, stage: (
+            stage("POSTGRES_BOOTSTRAP_START"),
+            (_ for _ in ()).throw(subprocess.CalledProcessError(1, "secret-command")),
+        ),
+    )
+    common = ["--program-files", str(tmp_path / "pf"), "--program-data", str(tmp_path / "pd")]
+    assert provision.main(["install", *common]) == 1
+    diagnostic = provision.safe_failure_path()
+    assert diagnostic.is_file()
+
+    monkeypatch.setattr(provision, "rollback", lambda *args: None)
+    assert provision.main(["rollback", *common]) == 0
+    assert diagnostic.is_file()
+
+    monkeypatch.setattr(provision, "commit", lambda *args: None)
+    assert provision.main(["commit", *common]) == 0
+    assert not diagnostic.exists()
+
+
+@pytest.mark.parametrize(
+    "expected",
+    (
+        "POSTGRES_INITDB",
+        "POSTGRES_BOOTSTRAP_START",
+        "POSTGRES_CREATE_DATABASE",
+        "POSTGRES_PROVISION_FRESHNESS_AUTHORITY",
+        "POSTGRES_QUALIFY_FRESHNESS_AUTHORITY",
+        "POSTGRES_FINAL_HBA_WRITE",
+        "POSTGRES_FINAL_HBA_QUALIFY",
+        "POSTGRES_BOOTSTRAP_STOP",
+    ),
+)
+def test_database_effect_boundaries_set_exact_stage_before_effect(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, expected: str
+) -> None:
+    data = tmp_path / "data"
+    security = tmp_path / "security"
+    data.mkdir()
+    security.mkdir()
+    (data / "postgresql.conf").write_text("", encoding="utf-8")
+    (security / "ca.crt").write_text("ca", encoding="utf-8")
+    (security / "server").mkdir()
+    (security / "server" / "server.crt").write_text("cert", encoding="utf-8")
+    (security / "server" / "server.key").write_text("key", encoding="utf-8")
+
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def execute(self, statement: str):
+            del statement
+            return self
+
+        def fetchall(self):
+            return []
+
+    monkeypatch.setattr(provision.subprocess, "run", lambda *args, **kwargs: None)
+    monkeypatch.setitem(
+        sys.modules, "psycopg", SimpleNamespace(connect=lambda *a, **k: Connection())
+    )
+    monkeypatch.setattr(provision, "provision_postgresql_freshness_authority", lambda *args: None)
+    monkeypatch.setattr(provision, "qualify_postgresql_freshness_authority", lambda *args: None)
+    monkeypatch.setattr(provision, "qualify_hba_rows", lambda *args: None)
+
+    def inject(stage: str) -> None:
+        if stage == expected:
+            raise RuntimeError("controlled failure with secret text")
+
+    with pytest.raises(RuntimeError, match="controlled failure"):
+        provision._configure_database(tmp_path, data, security, inject)
+
+
+def test_clean_install_copies_and_prints_only_safe_failure_fields(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    machine_root = tmp_path / "ProgramData"
+    logs = tmp_path / "dist" / "windows" / "logs"
+    machine_root.mkdir()
+    logs.mkdir(parents=True)
+    monkeypatch.setenv("ProgramData", str(machine_root))
+    provision.write_safe_failure("install", "POSTGRES_INITDB", ValueError("dsn=secret"))
+    monkeypatch.setattr(
+        clean_install, "_msiexec", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError())
+    )
+
+    with pytest.raises(RuntimeError):
+        clean_install._install_and_prove(
+            tmp_path / "x.msi", tmp_path / "manifest.json", logs / "install.log"
+        )
+
+    copied = json.loads((logs / "provision-failure.json").read_text(encoding="utf-8"))
+    assert copied["stage"] == "POSTGRES_INITDB"
+    assert copied["first_exception"] == "ValueError"
+    assert "secret" not in json.dumps(copied)
+    output = capsys.readouterr().out
+    assert "PROVISION_FAILURE_STAGE = POSTGRES_INITDB" in output
+    assert "PROVISION_FAILURE_EXCEPTION = ValueError" in output
 
 
 def test_fail_closed_proof_rejects_unexpected_first_exception(

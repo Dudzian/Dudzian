@@ -11,7 +11,7 @@ import secrets
 import shutil
 import subprocess
 import sys
-from typing import Any
+from typing import Any, Callable
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
@@ -39,9 +39,13 @@ from deployment.windows_dacl_qualification import (
 )
 
 TRANSACTION_JOURNAL = ".CryptoHunter.stage9-transaction.json"
+SAFE_FAILURE_DIAGNOSTIC = ".CryptoHunter.stage9-install-failure.json"
 OWNERSHIP_RECORD = ".stage9-install-ownership.json"
 ENROLLMENT_FINALIZATION = "enrollment-finalization.json"
 SCHEMA = 1
+SAFE_FAILURE_FIELDS = frozenset(
+    {"schema_version", "operation", "stage", "first_exception"}
+)
 SERVICES = (CONTRACT.postgresql_service, CONTRACT.backend_service, CONTRACT.verifier_service)
 from deployment.windows_postgresql_auth_contract import (
     final_hba_lines,
@@ -55,6 +59,10 @@ IDENT = ident_lines()
 
 class ProvisionError(RuntimeError):
     pass
+
+
+def _ignore_stage(stage: str) -> None:
+    del stage
 
 
 def _first_exception_type(exc: BaseException) -> str:
@@ -74,6 +82,56 @@ def _write(path: Path, value: dict[str, Any]) -> None:
     temp = path.with_suffix(".tmp")
     temp.write_text(json.dumps(value, sort_keys=True), encoding="utf-8")
     os.replace(temp, path)
+
+
+def safe_failure_path() -> Path:
+    """Return the fixed machine-level diagnostic path; CLI paths cannot redirect it."""
+    return Path(os.environ["ProgramData"]) / SAFE_FAILURE_DIAGNOSTIC
+
+
+def _valid_safe_failure(value: object) -> bool:
+    return (
+        isinstance(value, dict)
+        and set(value) == SAFE_FAILURE_FIELDS
+        and value.get("schema_version") == SCHEMA
+        and value.get("operation") == "install"
+        and all(
+            isinstance(value.get(field), str) and bool(value[field])
+            for field in ("stage", "first_exception")
+        )
+    )
+
+
+def read_safe_failure(path: Path | None = None) -> dict[str, Any] | None:
+    """Read only the strict, secret-free schema from the canonical path."""
+    canonical = safe_failure_path()
+    if path is not None and path.resolve() != canonical.resolve():
+        raise ProvisionError("safe diagnostic path is not canonical")
+    try:
+        value = json.loads(canonical.read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, ValueError):
+        return None
+    return value if _valid_safe_failure(value) else None
+
+
+def clear_safe_failure() -> None:
+    """Remove only a canonical diagnostic which has the exact approved schema."""
+    path = safe_failure_path()
+    if read_safe_failure() is not None:
+        path.unlink(missing_ok=True)
+
+
+def write_safe_failure(operation: str, stage: str, exc: BaseException) -> None:
+    """Atomically persist allowlisted failure metadata, never exception text."""
+    _write(
+        safe_failure_path(),
+        {
+            "schema_version": SCHEMA,
+            "operation": operation,
+            "stage": stage,
+            "first_exception": _first_exception_type(exc),
+        },
+    )
 
 
 def transaction_path(program_data: Path) -> Path:
@@ -210,7 +268,10 @@ def _certificate(
     )
 
 
-def _pki(security: Path, sids: dict[str, str]) -> None:
+def _pki(
+    security: Path, sids: dict[str, str], set_stage: Callable[[str], None] = _ignore_stage
+) -> None:
+    set_stage("CREATE_LOCAL_PKI")
     ca_key = rsa.generate_private_key(public_exponent=65537, key_size=3072)
     now = datetime.now(timezone.utc)
     ca_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "CryptoHunter Local CA")])
@@ -238,12 +299,14 @@ def _pki(security: Path, sids: dict[str, str]) -> None:
         ("runtime", CONTRACT.backend_service, CONTRACT.backend_service, False),
         ("verifier", CONTRACT.verifier_service, CONTRACT.verifier_service, False),
     ):
+        set_stage("CREATE_LOCAL_PKI")
         target = security / folder
         target.mkdir()
         key, cert = _certificate(identity, ca_name, ca_key, server=server)
         stem = "server" if server else "client"
         (target / f"{stem}.key").write_bytes(key)
         (target / f"{stem}.crt").write_bytes(cert)
+        set_stage("QUALIFY_LOCAL_PKI")
         directory_grants = {
             ADMINISTRATORS_SID: FILE_ALL_ACCESS,
             SYSTEM_SID: FILE_ALL_ACCESS,
@@ -272,10 +335,16 @@ def _pki(security: Path, sids: dict[str, str]) -> None:
     _qualify_protected(security / "ca.key", {SYSTEM_SID: FILE_ALL_ACCESS}, inherit=False)
 
 
-def _configure_database(program_files: Path, data: Path, security: Path) -> None:
+def _configure_database(
+    program_files: Path,
+    data: Path,
+    security: Path,
+    set_stage: Callable[[str], None] = _ignore_stage,
+) -> None:
     bindir = program_files / "PostgreSQL" / "bin"
     initdb = bindir / "initdb.exe"
     pg_ctl = bindir / "pg_ctl.exe"
+    set_stage("POSTGRES_INITDB")
     subprocess.run(
         [
             str(initdb),
@@ -299,22 +368,29 @@ def _configure_database(program_files: Path, data: Path, security: Path) -> None
     )
     # Bootstrap exists only while the postmaster is installer-owned and is replaced before final start.
     (data / "pg_hba.conf").write_text("host all postgres 127.0.0.1/32 trust\n", encoding="utf-8")
+    set_stage("POSTGRES_BOOTSTRAP_START")
     subprocess.run(
         [str(pg_ctl), "start", "-D", str(data), "-w", "-t", "60"], check=True, timeout=70
     )
+    primary_failure = False
     try:
         dsn = f"host=127.0.0.1 port={CONTRACT.postgresql_port} dbname=postgres user=postgres"
         import psycopg
 
+        set_stage("POSTGRES_CREATE_DATABASE")
         with psycopg.connect(dsn, autocommit=True) as connection:
             connection.execute("CREATE DATABASE freshness_gate")
         authority = PostgreSQLConnectionConfig(
             f"host=127.0.0.1 port={CONTRACT.postgresql_port} dbname=freshness_gate user=postgres"
         )
+        set_stage("POSTGRES_PROVISION_FRESHNESS_AUTHORITY")
         provision_postgresql_freshness_authority(authority)
+        set_stage("POSTGRES_QUALIFY_FRESHNESS_AUTHORITY")
         qualify_postgresql_freshness_authority(authority)
+        set_stage("POSTGRES_FINAL_HBA_WRITE")
         (data / "pg_hba.conf").write_text("\n".join(FINAL_HBA) + "\n", encoding="utf-8")
         (data / "pg_ident.conf").write_text("\n".join(IDENT) + "\n", encoding="utf-8")
+        set_stage("POSTGRES_FINAL_HBA_QUALIFY")
         with psycopg.connect(dsn) as connection:
             rows = connection.execute(
                 "SELECT line_number,type,database,user_name,address,netmask,auth_method,options,error "
@@ -324,7 +400,12 @@ def _configure_database(program_files: Path, data: Path, security: Path) -> None
                 qualify_hba_rows(rows, "freshness_gate")
             except ValueError as exc:
                 raise ProvisionError("final HBA parser qualification failed") from exc
+    except BaseException:
+        primary_failure = True
+        raise
     finally:
+        if not primary_failure:
+            set_stage("POSTGRES_BOOTSTRAP_STOP")
         subprocess.run(
             [str(pg_ctl), "stop", "-D", str(data), "-m", "fast", "-w", "-t", "30"],
             check=True,
@@ -440,10 +521,17 @@ def _verify_backend_activation() -> None:
     _recovery()
 
 
-def install(program_files: Path, program_data: Path) -> None:
+def install(
+    program_files: Path,
+    program_data: Path,
+    set_stage: Callable[[str], None] = _ignore_stage,
+) -> None:
     """Install machine-scoped resources without creating product authority."""
+    set_stage("CREATE_JOURNAL")
     journal_path, journal = create_journal(program_files, program_data)
+    set_stage("RESOLVE_SERVICE_SIDS")
     sids = _service_sids()
+    set_stage("CREATE_PROGRAMDATA_LAYOUT")
     program_data.mkdir()
     checkpoint(journal_path, journal, program_data)
     for name in ("Config", "State", "Logs", "Runtime", "Updates", "PostgreSQL", "Security"):
@@ -456,6 +544,7 @@ def install(program_files: Path, program_data: Path) -> None:
     verifier_runtime = program_data / "Runtime" / "Verifier"
     verifier_runtime.mkdir()
     checkpoint(journal_path, journal, verifier_runtime)
+    set_stage("APPLY_BASE_DACL")
     base = {ADMINISTRATORS_SID: FILE_ALL_ACCESS, SYSTEM_SID: FILE_ALL_ACCESS}
     policies = {}
     for role in ("CONFIG", "STATE", "RUNTIME", "LOGS"):
@@ -485,11 +574,12 @@ def install(program_files: Path, program_data: Path) -> None:
     _protect(program_data / "PostgreSQL", pg_grants, inherit=True)
     _protect(data, pg_grants, inherit=True)
     _qualify_protected(data, pg_grants, inherit=True)
-    _pki(program_data / "Security", sids)
+    _pki(program_data / "Security", sids, set_stage)
     ca_public = {**base, **{sid: FILE_GENERIC_READ for sid in security_readers}}
     _protect(program_data / "Security" / "ca.crt", ca_public, inherit=False)
     _qualify_protected(program_data / "Security" / "ca.crt", ca_public, inherit=False)
-    _configure_database(program_files, data, program_data / "Security")
+    _configure_database(program_files, data, program_data / "Security", set_stage)
+    set_stage("FINALIZE_PROVISIONING_JOURNAL")
     journal["state"] = "PROVISIONED"
     _write(journal_path, journal)
 
@@ -787,15 +877,23 @@ def main(argv: list[str] | None = None) -> int:
     if os.name != "nt":
         print("Windows required", file=sys.stderr)
         return 1
+    current_stage = "UNCLASSIFIED"
+
+    def set_stage(stage: str) -> None:
+        nonlocal current_stage
+        current_stage = stage
+
     try:
         if args.command == "install":
-            install(args.program_files, args.program_data)
+            clear_safe_failure()
+            install(args.program_files, args.program_data, set_stage)
         elif args.command == "enroll":
             enroll(args.program_files, args.program_data)
         elif args.command == "rollback":
             rollback(args.program_files, args.program_data)
         elif args.command == "commit":
             commit(args.program_files, args.program_data)
+            clear_safe_failure()
         elif args.command == "qualify":
             qualify(args.program_files, args.program_data)
         else:
@@ -809,6 +907,8 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:
         # Preserve the first failure class without leaking provider exception
         # text, which may contain credentials or private ceremony material.
+        if args.command == "install":
+            write_safe_failure(args.command, current_stage, exc)
         print(
             f"provisioning failed: operation={args.command} "
             f"first_exception={_first_exception_type(exc)}",

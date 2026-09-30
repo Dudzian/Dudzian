@@ -16,6 +16,7 @@ from typing import Callable
 from deployment.platform_evidence import WINDOWS_STAGE9_ITEMS
 from deployment.windows_installer.build import main as build_main
 from deployment.windows_installer.contract import CONTRACT
+from deployment.windows_installer.provision import read_safe_failure, safe_failure_path
 
 PROBE_ID = "cryptohunter.windows.clean-install.v1"
 PROOFS = (
@@ -69,10 +70,28 @@ def _msiexec(arguments: list[str], log: Path, timeout: int = 600) -> int:
     return process.returncode
 
 
+def _capture_provision_failure(logs: Path) -> None:
+    """Copy the strict machine diagnostic before reporting the MSI failure."""
+    try:
+        diagnostic = read_safe_failure()
+    except KeyError:
+        # Non-Windows unit-test hosts do not define the canonical machine root.
+        return
+    if diagnostic is None:
+        return
+    target = logs / "provision-failure.json"
+    target.write_text(json.dumps(diagnostic, sort_keys=True) + "\n", encoding="utf-8")
+    print(f"PROVISION_FAILURE_STAGE = {diagnostic['stage']}", flush=True)
+    print(
+        f"PROVISION_FAILURE_EXCEPTION = {diagnostic['first_exception']}", flush=True
+    )
+
+
 def _install_and_prove(msi: Path, manifest: Path, install_log: Path) -> tuple[int, dict[str, str]]:
     try:
         install_code = _msiexec(["/i", str(msi)], install_log)
     except Exception:
+        _capture_provision_failure(install_log.parent)
         print("MSI_INSTALL = FAIL", flush=True)
         print(f"MSI_INSTALL_LOG = {install_log}", flush=True)
         raise
@@ -314,6 +333,11 @@ def acceptance_owned_purge(machine: Path) -> None:
         if machine.resolve() not in path.resolve().parents and path.resolve() != machine.resolve():
             raise CleanInstallError("acceptance cleanup path escaped machine root")
     shutil.rmtree(machine)
+    # A successful commit normally removed this already.  Acceptance may clean
+    # a valid residue only after the run had its opportunity to collect evidence.
+    diagnostic = read_safe_failure()
+    if diagnostic is not None:
+        safe_failure_path().unlink(missing_ok=True)
 
 
 def run(args: argparse.Namespace) -> None:
