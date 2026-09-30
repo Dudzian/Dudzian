@@ -173,6 +173,8 @@ def classify_service_start_failure(
             return "POSTGRES_CREATEPROCESS_FAILURE"
         if failed and stage == "ASSIGN_JOB":
             return "JOB_ASSIGNMENT_FAILURE"
+        if failed and stage == "VERIFY_JOB_MEMBERSHIP":
+            return "JOB_MEMBERSHIP_VERIFICATION_FAILURE"
         if failed and "child_exit_code" in diagnostic and stage in {
             "POSTGRES_PROCESS_ALIVE",
             "WAIT_READY",
