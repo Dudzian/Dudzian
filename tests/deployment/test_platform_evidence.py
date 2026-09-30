@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any, Callable
 
 import pytest
 
@@ -11,6 +12,10 @@ from deployment.platform_evidence import (
     produce_windows_clean_install_evidence,
 )
 from deployment.core_test_plan import load_manifest, marker_document
+from deployment.windows_stage9_evidence_contract import (
+    CLEAN_INSTALL_PRECEREMONY_PROOFS,
+    POST_ENROLLMENT_QUALIFICATION_STATE,
+)
 
 
 def test_core_aggregation_requires_same_revision_and_all_operating_systems(
@@ -55,10 +60,31 @@ def test_core_aggregation_requires_same_revision_and_all_operating_systems(
         )
 
 
-def test_clean_install_evidence_requires_complete_live_receipt(
+def _current_clean_install_receipt(msi_hash: str, manifest_hash: str) -> dict[str, object]:
+    """Build the schema emitted by the Stage-9 producer without simulating Windows."""
+    return {
+        "schema_version": 1,
+        "source_revision": "revision",
+        "ci_provider": "https://github.com",
+        "ci_run_id": "42",
+        "runner_os": "Windows",
+        "probe_id": "cryptohunter.windows.clean-install.v1",
+        "msi_sha256": msi_hash,
+        "manifest_sha256": manifest_hash,
+        "product_version": "1.2.3",
+        "runner_arch": "X64",
+        "install_exit_code": 0,
+        "uninstall_exit_code": 0,
+        "proofs": {name: "PASS" for name in CLEAN_INSTALL_PRECEREMONY_PROOFS},
+        "post_enrollment_live_qualification": POST_ENROLLMENT_QUALIFICATION_STATE,
+    }
+
+
+@pytest.fixture
+def clean_install_contract_files(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-) -> None:
+) -> tuple[Path, Path, Path, Path]:
     monkeypatch.setenv("GITHUB_SERVER_URL", "https://github.com")
     monkeypatch.setenv("GITHUB_RUN_ID", "42")
     monkeypatch.setenv("RUNNER_OS", "Windows")
@@ -85,46 +111,65 @@ def test_clean_install_evidence_requires_complete_live_receipt(
     receipt = tmp_path / "receipt.json"
     receipt.write_text(
         json.dumps(
-            {
-                "schema_version": 1,
-                "source_revision": "revision",
-                "ci_provider": "https://github.com",
-                "ci_run_id": "42",
-                "runner_os": "Windows",
-                "probe_id": "cryptohunter.windows.clean-install.v1",
-                "msi_sha256": msi_hash,
-                "manifest_sha256": hashlib.sha256(manifest.read_bytes()).hexdigest(),
-                "product_version": "1.2.3",
-                "runner_arch": "X64",
-                "install_exit_code": 0,
-                "uninstall_exit_code": 0,
-                "proofs": {
-                    name: "PASS"
-                    for name in (
-                        "files",
-                        "services",
-                        "dacl",
-                        "postgresql",
-                        "mtls_matrix",
-                        "backend",
-                        "logging",
-                        "uninstall",
-                        "acceptance_cleanup",
-                    )
-                },
-            }
+            _current_clean_install_receipt(
+                msi_hash, hashlib.sha256(manifest.read_bytes()).hexdigest()
+            )
         ),
         encoding="utf-8",
     )
     output = tmp_path / "evidence.json"
+    return receipt, output, msi, manifest
+
+
+def test_current_producer_receipt_is_accepted_by_evidence_consumer(
+    clean_install_contract_files: tuple[Path, Path, Path, Path],
+) -> None:
+    receipt, output, msi, manifest = clean_install_contract_files
     produce_windows_clean_install_evidence("revision", receipt, output, msi=msi, manifest=manifest)
     evidence = json.loads(output.read_text(encoding="utf-8"))
     assert evidence["results"][0]["item"] == "WINDOWS_CLEAN_INSTALL"
     assert evidence["results"][0]["status"] == "PASS"
-    receipt_value = json.loads(receipt.read_text())
-    receipt_value["proofs"]["mtls_matrix"] = "FAIL"
-    receipt.write_text(json.dumps(receipt_value))
-    with pytest.raises(EvidenceProductionError, match="incomplete or failed"):
+    assert evidence["results"][0]["evidence_class"] == "LIVE_WINDOWS_INTEGRATION"
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda value: value.pop("post_enrollment_live_qualification"),
+        lambda value: value.update(post_enrollment_live_qualification="OPTIONAL"),
+        lambda value: value["proofs"].pop("authority_absent"),
+        lambda value: value["proofs"].pop("production_enrollment_fail_closed"),
+        lambda value: (
+            value["proofs"].pop("authority_absent"),
+            value["proofs"].update(mtls_matrix="PASS"),
+        ),
+        lambda value: (
+            value["proofs"].pop("production_enrollment_fail_closed"),
+            value["proofs"].update(backend="PASS", logging="PASS"),
+        ),
+        lambda value: value.update(unknown="PASS"),
+        lambda value: value["proofs"].update(files="FAIL"),
+    ],
+    ids=[
+        "missing-qualification",
+        "wrong-qualification",
+        "missing-authority-absent",
+        "missing-enrollment-fail-closed",
+        "mtls-substitution",
+        "backend-logging-substitution",
+        "unknown-receipt-key",
+        "failed-proof",
+    ],
+)
+def test_clean_install_evidence_rejects_contract_drift(
+    clean_install_contract_files: tuple[Path, Path, Path, Path],
+    mutation: Callable[[dict[str, Any]], object],
+) -> None:
+    receipt, output, msi, manifest = clean_install_contract_files
+    receipt_value = json.loads(receipt.read_text(encoding="utf-8"))
+    mutation(receipt_value)
+    receipt.write_text(json.dumps(receipt_value), encoding="utf-8")
+    with pytest.raises(EvidenceProductionError, match="clean-install receipt"):
         produce_windows_clean_install_evidence(
             "revision", receipt, output, msi=msi, manifest=manifest
         )
