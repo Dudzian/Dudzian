@@ -90,11 +90,15 @@ def validate_unique_wheel_versions(wheelhouse: Path) -> None:
         try:
             with zipfile.ZipFile(wheel) as archive:
                 metadata_files = [
-                    path for path in archive.namelist() if path.endswith(".dist-info/METADATA")
+                    path
+                    for path in archive.namelist()
+                    if len(path.split("/")) == 2
+                    and path.split("/")[0].endswith(".dist-info")
+                    and path.split("/")[1] == "METADATA"
                 ]
                 if len(metadata_files) != 1:
                     raise ValueError(
-                        f"{wheel.name} must contain exactly one .dist-info/METADATA file"
+                        f"{wheel.name} must contain exactly one top-level .dist-info/METADATA file"
                     )
                 metadata = BytesParser().parsebytes(archive.read(metadata_files[0]))
         except (OSError, zipfile.BadZipFile, KeyError) as exc:
