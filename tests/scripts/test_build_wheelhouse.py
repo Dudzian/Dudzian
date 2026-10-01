@@ -111,3 +111,25 @@ def test_wheelhouse_accepts_one_version_per_normalized_package(tmp_path: Path) -
     (tmp_path / "PySide6-6.7.0-cp39-abi3-manylinux_2_28_x86_64.whl").touch()
     (tmp_path / "requests-2.33.0-py3-none-any.whl").touch()
     build_wheelhouse.validate_unique_wheel_versions(tmp_path)
+
+
+def test_wheelhouse_validates_actual_desktop_target(monkeypatch) -> None:
+    calls: list[tuple[list[str], bool]] = []
+    monkeypatch.setattr(
+        build_wheelhouse.subprocess,
+        "run",
+        lambda command, check: calls.append((command, check)),
+    )
+    build_wheelhouse.validate_desktop_resolution("python3.11", "desktop.lock")
+    assert calls == [
+        (
+            [
+                "python3.11",
+                "scripts/ci/validate_locked_resolution.py",
+                "desktop.lock",
+                "--target",
+                ".[desktop]",
+            ],
+            True,
+        )
+    ]

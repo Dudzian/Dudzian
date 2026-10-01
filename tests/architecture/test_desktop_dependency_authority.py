@@ -86,7 +86,7 @@ def test_cross_platform_jobs_validate_native_plan_before_wheelhouse() -> None:
     assert workflow.index(validation) < workflow.index("Build wheelhouse")
     assert f"--requirements {LOCK_TEXT}" in workflow
     builder = _text("scripts/ci/build_wheelhouse.py")
-    assert 'validate_target_resolution(Path(args.requirements), ".[desktop]"' in builder
+    assert "validate_desktop_resolution(args.python, args.requirements)" in builder
 
 
 @pytest.mark.parametrize(

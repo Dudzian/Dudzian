@@ -13,8 +13,6 @@ from typing import Iterable
 
 from packaging.utils import parse_wheel_filename
 
-from scripts.ci.validate_locked_resolution import validate_target_resolution
-
 
 def sha256sum(path: Path) -> str:
     h = hashlib.sha256()
@@ -64,6 +62,19 @@ def build_download_cmd(
 
 def ensure_wheelhouse(wheelhouse: Path) -> None:
     wheelhouse.mkdir(parents=True, exist_ok=True)
+
+
+def validate_desktop_resolution(python_executable: str, requirements: str) -> None:
+    subprocess.run(
+        [
+            python_executable,
+            "scripts/ci/validate_locked_resolution.py",
+            requirements,
+            "--target",
+            ".[desktop]",
+        ],
+        check=True,
+    )
 
 
 def validate_unique_wheel_versions(wheelhouse: Path) -> None:
@@ -151,7 +162,7 @@ def main(argv: list[str]) -> int:
     download(wheelhouse, build_download_cmd(wheelhouse, args, [".[tools]"], args.python))
 
     # Desktop extras are required by manual runtime UI parity proof jobs.
-    validate_target_resolution(Path(args.requirements), ".[desktop]", python=args.python)
+    validate_desktop_resolution(args.python, args.requirements)
     download(wheelhouse, build_download_cmd(wheelhouse, args, [".[desktop]"], args.python))
 
     # Dev extras are required by lint/type-check jobs running in wheelhouse-only mode.
