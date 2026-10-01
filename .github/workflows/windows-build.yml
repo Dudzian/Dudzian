@@ -35,11 +35,11 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path build/reports | Out-Null
-          python -m pip install --upgrade pip
+          python scripts/ci/bootstrap_locked_pip.py deploy/packaging/requirements-desktop.lock
           python scripts/ci/validate_locked_resolution.py deploy/packaging/requirements-desktop.lock --target ".[desktop]"
           python -m pip install --no-deps -r deploy/packaging/requirements-desktop.lock
-          python -m pip install --no-deps -e .[dev,desktop]
-          python -m pip install pytest mypy ruff openpyxl
+          python -m pip install --no-build-isolation --no-deps -e .[dev,desktop]
+          python -m pip install --no-deps -r deploy/packaging/requirements-windows-build-tools.lock
           python -m pip check
           python -m pip freeze | Out-File -FilePath build/reports/pip-freeze.txt -Encoding utf8
 

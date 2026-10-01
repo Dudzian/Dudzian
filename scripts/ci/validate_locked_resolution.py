@@ -11,47 +11,83 @@ import tempfile
 from pathlib import Path
 from typing import Callable, Sequence
 
-from packaging.requirements import Requirement
-from packaging.utils import canonicalize_name
+if __package__:
+    from scripts.ci.bootstrap_dependency import (
+        canonicalize_package_name,
+        locked_versions,
+        project_requirements,
+    )
+else:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from bootstrap_dependency import (
+        canonicalize_package_name,
+        locked_versions,
+        project_requirements,
+    )
 
 
-def locked_versions(path: Path) -> dict[str, str]:
-    result: dict[str, str] = {}
-    for raw in path.read_text(encoding="utf-8").splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        requirement = Requirement(line)
-        pins = [
-            specifier.version for specifier in requirement.specifier if specifier.operator == "=="
-        ]
-        if len(pins) != 1:
-            raise ValueError(f"non-exact lock entry: {line}")
-        result[canonicalize_name(requirement.name)] = pins[0]
-    return result
+def parse_pip_report(report: Path) -> dict[str, str]:
+    """Read a pip installation report, rejecting incomplete or ambiguous metadata."""
+    payload = json.loads(report.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict) or not isinstance(payload.get("install"), list):
+        raise ValueError(f"malformed pip report: {report}")
+
+    planned: dict[str, str] = {}
+    for item in payload["install"]:
+        if not isinstance(item, dict):
+            raise ValueError(f"malformed pip report item: {report}")
+        requested = item.get("requested", False)
+        if not isinstance(requested, bool):
+            raise ValueError(f"malformed requested flag in pip report: {report}")
+        metadata = item.get("metadata")
+        if not isinstance(metadata, dict):
+            raise ValueError(f"missing pip report metadata: {report}")
+        raw_name = metadata.get("name")
+        version = metadata.get("version")
+        if not isinstance(raw_name, str) or not raw_name.strip():
+            raise ValueError(f"missing package name in pip report: {report}")
+        if not isinstance(version, str) or not version.strip():
+            raise ValueError(f"missing package version in pip report: {report}")
+        name = canonicalize_package_name(raw_name.strip())
+        if name in planned:
+            raise ValueError(f"duplicate package in pip report: {name}")
+        planned[name] = version.strip()
+    return planned
 
 
-def validate_report(lock: Path, report: Path, *, ignore_requested_targets: bool = False) -> None:
-    """Reject every dependency missing from, or version-mismatched with, the lock."""
-    locked = locked_versions(lock)
-    planned = json.loads(report.read_text(encoding="utf-8")).get("install", [])
-    escaped: list[str] = []
-    for item in planned:
-        # For a project target such as .[desktop], the root project is expected
-        # not to occur in its dependency lock. Only that explicitly requested
-        # target is excluded; every dependency remains subject to the lock.
-        if ignore_requested_targets and item.get("requested", False):
-            continue
-        metadata = item["metadata"]
-        name = canonicalize_name(metadata["name"])
-        version = metadata["version"]
-        if locked.get(name) != version:
-            escaped.append(f"{name}=={version} (lock: {locked.get(name, 'missing')})")
+def validate_reports(active_lock_report: Path, desktop_report: Path) -> None:
+    """Prove that the actual desktop plan is a subset of the native-active lock plan."""
+    active_lock = parse_pip_report(active_lock_report)
+    desktop = parse_pip_report(desktop_report)
+    escaped = [
+        f"{name}=={version} (native lock: {active_lock.get(name, 'missing')})"
+        for name, version in desktop.items()
+        if active_lock.get(name) != version
+    ]
     if escaped:
-        raise SystemExit("pip resolution escaped canonical lock: " + ", ".join(sorted(escaped)))
+        raise SystemExit(
+            "pip resolution escaped native-active canonical lock: " + ", ".join(escaped)
+        )
 
 
-def build_plan_command(python: str, lock: Path, report: Path, target: str) -> list[str]:
+def build_active_lock_command(python: str, lock: Path, report: Path) -> list[str]:
+    return [
+        python,
+        "-m",
+        "pip",
+        "install",
+        "--dry-run",
+        "--ignore-installed",
+        "--report",
+        str(report),
+        "--requirement",
+        str(lock),
+    ]
+
+
+def build_target_plan_command(
+    python: str, lock: Path, report: Path, requirements: Sequence[str]
+) -> list[str]:
     return [
         python,
         "-m",
@@ -63,7 +99,7 @@ def build_plan_command(python: str, lock: Path, report: Path, target: str) -> li
         str(report),
         "--constraint",
         str(lock),
-        target,
+        *requirements,
     ]
 
 
@@ -72,13 +108,22 @@ def validate_target_resolution(
     target: str = ".[desktop]",
     *,
     python: str = sys.executable,
+    project: Path = Path("pyproject.toml"),
     runner: Callable[..., object] = subprocess.run,
 ) -> None:
     """Resolve an actual project target, then prove all dependencies are locked."""
+    if target != ".[desktop]":
+        raise ValueError(f"unsupported project dependency target: {target}")
+    # Keep structural validation independent from pip's marker evaluation and
+    # read project metadata without invoking its PEP 517 backend.
+    locked_versions(lock)
+    requirements = project_requirements(project, ("desktop",))
     with tempfile.TemporaryDirectory() as directory:
-        report = Path(directory) / "pip-report.json"
-        runner(build_plan_command(python, lock, report, target), check=True)
-        validate_report(lock, report, ignore_requested_targets=True)
+        active_lock_report = Path(directory) / "native-lock-plan.json"
+        desktop_report = Path(directory) / "desktop-plan.json"
+        runner(build_active_lock_command(python, lock, active_lock_report), check=True)
+        runner(build_target_plan_command(python, lock, desktop_report, requirements), check=True)
+        validate_reports(active_lock_report, desktop_report)
 
 
 def main(argv: Sequence[str]) -> int:
@@ -87,7 +132,7 @@ def main(argv: Sequence[str]) -> int:
     parser.add_argument("--target", default=".[desktop]")
     args = parser.parse_args(argv)
     validate_target_resolution(args.lock, args.target)
-    print(f"Native {args.target} dependency plan is contained in {args.lock}")
+    print(f"Native {args.target} dependency plan is contained in the active plan for {args.lock}")
     return 0
 
 
