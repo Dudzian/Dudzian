@@ -112,9 +112,23 @@
 3. **RC/GA**: pełna lista strategii, marketplace presetów, harmonogram retrainingu, compliance
    (licencje/HWID), opcjonalny cloud z ręczną akceptacją developera.
 
+## Post-GA capability — Trading Intelligence Hardening
+
+Po ustabilizowaniu platformy i zamknięciu Stage 10 planowany jest obowiązkowy blok wzmacniający
+jakość inteligencji tradingowej przed uruchomieniem Autonomous Strategy Discovery. Zakres obejmuje:
+Regime Intelligence v2, Market Microstructure & Reversal Intelligence, Execution Optimizer/TCA v2,
+Anti-Overfitting & Research Validation Guard, Live Edge Decay Monitor, Dynamic Capital Allocation v2
+oraz L2/Trades Market Replay dla strategii zależnych od mikrostruktury.
+
+Celem TIH jest zapewnienie, że Strategy Discovery korzysta z realistycznego modelu rynku, kosztów,
+płynności, execution i walidacji oraz że potrafimy wcześnie wykrywać utratę edge'u.
+
+Szczegółowy zakres TIH-1–TIH-7 i kryteria zamknięcia opisuje:
+[`docs/roadmap/trading_intelligence_hardening.md`](../roadmap/trading_intelligence_hardening.md).
+
 ## Post-GA capability — Autonomous Strategy Discovery & Promotion
 
-Po ustabilizowaniu platformy i zamknięciu Stage 10 planowany jest osobny blok umożliwiający AI/ML
+Ten blok rozpoczyna się **dopiero po zamknięciu Trading Intelligence Hardening**. Umożliwia AI/ML
 samodzielne generowanie kandydatów strategii, ich automatyczną walidację oraz kontrolowaną promocję
 przez `RESEARCH → SHADOW → PAPER → CANARY_LIVE → CHALLENGER → CHAMPION`.
 
@@ -124,3 +138,17 @@ a Risk Engine, ExecutionLease i kill switch pozostają nadrzędne względem wars
 
 Szczegółowy zakres, fazy ASD-1–ASD-6 oraz kryteria wejścia/wyjścia opisuje:
 [`docs/roadmap/autonomous_strategy_discovery_and_promotion.md`](../roadmap/autonomous_strategy_discovery_and_promotion.md).
+
+Docelowa kolejność post-GA:
+
+```text
+Stage 10 closure
+    ↓
+Trading Intelligence Hardening
+    ↓
+Autonomous Strategy Discovery & Promotion
+    ↓
+Shadow / Paper / Canary Live
+    ↓
+continuous self-improving strategy portfolio
+```
