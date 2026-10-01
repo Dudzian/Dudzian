@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any, Callable
@@ -92,8 +93,6 @@ def clean_install_contract_files(
     msi = tmp_path / "product.msi"
     manifest = tmp_path / "installer-manifest.json"
     msi.write_bytes(b"msi")
-    import hashlib
-
     msi_hash = hashlib.sha256(msi.read_bytes()).hexdigest()
     manifest.write_text(
         json.dumps(
@@ -130,6 +129,61 @@ def test_current_producer_receipt_is_accepted_by_evidence_consumer(
     assert evidence["results"][0]["item"] == "WINDOWS_CLEAN_INSTALL"
     assert evidence["results"][0]["status"] == "PASS"
     assert evidence["results"][0]["evidence_class"] == "LIVE_WINDOWS_INTEGRATION"
+
+
+def _write_manifest_and_rebind_receipt(
+    manifest: Path, receipt: Path, manifest_value: dict[str, object]
+) -> None:
+    manifest.write_text(json.dumps(manifest_value), encoding="utf-8")
+    receipt_value = json.loads(receipt.read_text(encoding="utf-8"))
+    receipt_value["manifest_sha256"] = hashlib.sha256(manifest.read_bytes()).hexdigest()
+    receipt.write_text(json.dumps(receipt_value), encoding="utf-8")
+
+
+def test_clean_install_evidence_accepts_wix_build_metadata(
+    clean_install_contract_files: tuple[Path, Path, Path, Path],
+) -> None:
+    receipt, output, msi, manifest = clean_install_contract_files
+    manifest_value = json.loads(manifest.read_text(encoding="utf-8"))
+    manifest_value["wix_version"] = "7.0.0+b8977d6"
+    _write_manifest_and_rebind_receipt(manifest, receipt, manifest_value)
+
+    produce_windows_clean_install_evidence("revision", receipt, output, msi=msi, manifest=manifest)
+    evidence = json.loads(output.read_text(encoding="utf-8"))
+    assert evidence["results"][0]["status"] == "PASS"
+
+
+@pytest.mark.parametrize(
+    "wix_version",
+    ["7.0.1", "7.0.0-preview.1", "7.0.01", "7.0.0 unexpected", "7.0.0+", None],
+)
+def test_clean_install_evidence_rejects_unreviewed_wix_version(
+    clean_install_contract_files: tuple[Path, Path, Path, Path],
+    wix_version: object,
+) -> None:
+    receipt, output, msi, manifest = clean_install_contract_files
+    manifest_value = json.loads(manifest.read_text(encoding="utf-8"))
+    manifest_value["wix_version"] = wix_version
+    _write_manifest_and_rebind_receipt(manifest, receipt, manifest_value)
+
+    with pytest.raises(EvidenceProductionError, match="clean-install receipt"):
+        produce_windows_clean_install_evidence(
+            "revision", receipt, output, msi=msi, manifest=manifest
+        )
+
+
+def test_clean_install_evidence_rejects_missing_wix_version(
+    clean_install_contract_files: tuple[Path, Path, Path, Path],
+) -> None:
+    receipt, output, msi, manifest = clean_install_contract_files
+    manifest_value = json.loads(manifest.read_text(encoding="utf-8"))
+    manifest_value.pop("wix_version")
+    _write_manifest_and_rebind_receipt(manifest, receipt, manifest_value)
+
+    with pytest.raises(EvidenceProductionError, match="clean-install receipt"):
+        produce_windows_clean_install_evidence(
+            "revision", receipt, output, msi=msi, manifest=manifest
+        )
 
 
 @pytest.mark.parametrize(

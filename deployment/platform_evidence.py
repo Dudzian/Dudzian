@@ -14,6 +14,7 @@ import sys
 from typing import Any
 
 from deployment.core_test_plan import MANIFEST, canonical_plan_digest, load_manifest
+from deployment.windows_installer.contract import is_reviewed_wix_version
 from deployment.windows_stage9_evidence_contract import (
     CLEAN_INSTALL_PRECEREMONY_PROOFS,
     CLEAN_INSTALL_RECEIPT_KEYS,
@@ -202,7 +203,7 @@ def produce_windows_clean_install_evidence(
         or value["product_version"] != manifest_value.get("product_version")
         or value["msi_sha256"] != manifest_value.get("msi", {}).get("sha256")
         or manifest_value.get("architecture") != "x64"
-        or manifest_value.get("wix_version") != "7.0.0"
+        or not is_reviewed_wix_version(manifest_value.get("wix_version"))
         or manifest_value.get("postgresql_version") != "17.11"
         or manifest_value.get("postgresql_packaging_revision") != "4"
         or not isinstance(value["proofs"], dict)
