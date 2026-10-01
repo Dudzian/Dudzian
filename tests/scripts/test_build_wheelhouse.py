@@ -131,6 +131,25 @@ def test_wheelhouse_accepts_one_version_per_normalized_package(tmp_path: Path) -
     build_wheelhouse.validate_unique_wheel_versions(tmp_path)
 
 
+def test_wheelhouse_ignores_vendored_metadata_when_identifying_owner(tmp_path: Path) -> None:
+    wheel = tmp_path / "setuptools-84.0.0-py3-none-any.whl"
+    with zipfile.ZipFile(wheel, "w") as archive:
+        archive.writestr(
+            "setuptools-84.0.0.dist-info/METADATA",
+            "Metadata-Version: 2.1\nName: setuptools\nVersion: 84.0.0\n",
+        )
+        archive.writestr(
+            "setuptools/_vendor/foo-1.0.dist-info/METADATA",
+            "Metadata-Version: 2.1\nName: foo\nVersion: 1.0\n",
+        )
+        archive.writestr(
+            "setuptools/_vendor/bar-2.0.dist-info/METADATA",
+            "Metadata-Version: 2.1\nName: bar\nVersion: 2.0\n",
+        )
+
+    build_wheelhouse.validate_unique_wheel_versions(tmp_path)
+
+
 def test_bootstrap_paths_execute_without_site_packages(tmp_path: Path) -> None:
     lock = tmp_path / "desktop.lock"
     lock.write_text("Example_Package==1.2.3 ; python_version >= '3.11'\n", encoding="utf-8")
@@ -292,8 +311,11 @@ def test_wheelhouse_requires_exactly_one_metadata_file(tmp_path: Path, metadata_
                 "Metadata-Version: 2.1\nName: demo\nVersion: 1\n",
             )
         if metadata_count == 0:
-            archive.writestr("demo.py", "")
-    with pytest.raises(ValueError, match="exactly one .dist-info/METADATA"):
+            archive.writestr(
+                "vendor/foo-1.0.dist-info/METADATA",
+                "Metadata-Version: 2.1\nName: foo\nVersion: 1.0\n",
+            )
+    with pytest.raises(ValueError, match="exactly one top-level .dist-info/METADATA"):
         build_wheelhouse.validate_unique_wheel_versions(tmp_path)
 
 
