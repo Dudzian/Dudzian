@@ -13,6 +13,7 @@ def test_build_download_cmd_appends_extra_pip_args() -> None:
         extra_index_url=None,
         find_links=None,
         only_binary=":all:",
+        requirements=None,
     )
 
     cmd = build_wheelhouse.build_download_cmd(
@@ -84,3 +85,51 @@ def test_download_rejects_attempts_less_than_one(attempts: int) -> None:
             cmd=["python", "-m", "pip", "download", "PySide6==6.10.2"],
             attempts=attempts,
         )
+
+
+def test_download_command_constrains_every_resolution_to_release_lock() -> None:
+    args = SimpleNamespace(
+        no_binary=None,
+        index_url=None,
+        extra_index_url=None,
+        find_links=None,
+        only_binary=":all:",
+        requirements="deploy/packaging/requirements-desktop.lock",
+    )
+    cmd = build_wheelhouse.build_download_cmd(Path("wheelhouse"), args, [".[desktop]"], "python")
+    assert cmd[-3:] == ["--constraint", args.requirements, ".[desktop]"]
+
+
+def test_wheelhouse_rejects_duplicate_normalized_package_versions(tmp_path: Path) -> None:
+    (tmp_path / "PySide6-6.7.0-cp39-abi3-manylinux_2_28_x86_64.whl").touch()
+    (tmp_path / "pyside6-6.10.2-cp39-abi3-manylinux_2_34_x86_64.whl").touch()
+    with pytest.raises(SystemExit, match=r"pyside6=6.10.2,6.7.0"):
+        build_wheelhouse.validate_unique_wheel_versions(tmp_path)
+
+
+def test_wheelhouse_accepts_one_version_per_normalized_package(tmp_path: Path) -> None:
+    (tmp_path / "PySide6-6.7.0-cp39-abi3-manylinux_2_28_x86_64.whl").touch()
+    (tmp_path / "requests-2.33.0-py3-none-any.whl").touch()
+    build_wheelhouse.validate_unique_wheel_versions(tmp_path)
+
+
+def test_wheelhouse_validates_actual_desktop_target(monkeypatch) -> None:
+    calls: list[tuple[list[str], bool]] = []
+    monkeypatch.setattr(
+        build_wheelhouse.subprocess,
+        "run",
+        lambda command, check: calls.append((command, check)),
+    )
+    build_wheelhouse.validate_desktop_resolution("python3.11", "desktop.lock")
+    assert calls == [
+        (
+            [
+                "python3.11",
+                "scripts/ci/validate_locked_resolution.py",
+                "desktop.lock",
+                "--target",
+                ".[desktop]",
+            ],
+            True,
+        )
+    ]

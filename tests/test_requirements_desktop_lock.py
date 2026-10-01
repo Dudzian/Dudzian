@@ -4,14 +4,20 @@ from pathlib import Path
 
 import re
 
+from packaging.requirements import Requirement
+
 LOCK_PATH = Path("deploy/packaging/requirements-desktop.lock")
 REQUIREMENTS_PATH = Path("deploy/packaging/requirements-desktop.txt")
 
 
 def _iter_requirements(path: Path) -> list[tuple[str, str]]:
+    return _iter_requirements_text(path.read_text())
+
+
+def _iter_requirements_text(contents: str) -> list[tuple[str, str]]:
     pattern = re.compile(r"^(?P<name>[A-Za-z0-9_.-]+)==(?P<version>.+)$")
     parsed: list[tuple[str, str]] = []
-    for raw_line in path.read_text().splitlines():
+    for raw_line in contents.splitlines():
         line = raw_line.strip()
         if not line or line.startswith("#"):
             continue
@@ -61,9 +67,18 @@ def test_lockfile_has_only_pinned_versions():
     for name, version in parsed:
         assert name and version, "Pusty wpis w lockfile"
         assert "==" not in name, "Nazwa pakietu nie powinna zawierać separatora wersji"
-        assert version and " " not in version, "Wersja powinna być pojedynczym tokenem"
+        requirement = Requirement(f"{name}=={version}")
+        pins = [item.version for item in requirement.specifier if item.operator == "=="]
+        assert len(pins) == 1, "Wersja powinna być pojedynczym exact pinem"
 
 
 def test_lockfile_is_sorted():
-    names = [name.lower() for name, _ in _iter_requirements(LOCK_PATH)]
-    assert names == sorted(names), "Lockfile powinien być posortowany alfabetycznie"
+    text = LOCK_PATH.read_text()
+    safe, separator, unsafe = text.partition(
+        "# The following packages are considered to be unsafe in a requirements file:"
+    )
+    safe_names = [name.lower() for name, _ in _iter_requirements_text(safe)]
+    assert safe_names == sorted(safe_names), "Lockfile powinien być posortowany alfabetycznie"
+    if separator:
+        unsafe_names = [name.lower() for name, _ in _iter_requirements_text(unsafe)]
+        assert unsafe_names == sorted(unsafe_names), "Sekcja unsafe powinna być posortowana"

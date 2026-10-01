@@ -70,7 +70,7 @@ ui_packaging_macos() {
 prepare_wheelhouse() {
   activate_venv
   TARGET_WHEELHOUSE=${WHEELHOUSE_DIR:-wheelhouse}
-  run python scripts/ci/build_wheelhouse.py --wheelhouse "${TARGET_WHEELHOUSE}" --pyside6-version "${PYSIDE6_VERSION:-6.7.0}" --only-binary :all:
+  run python scripts/ci/build_wheelhouse.py --wheelhouse "${TARGET_WHEELHOUSE}" --only-binary :all:
   run ls -la "${TARGET_WHEELHOUSE}"
 }
 

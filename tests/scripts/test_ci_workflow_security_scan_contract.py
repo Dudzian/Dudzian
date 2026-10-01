@@ -21,7 +21,7 @@ def test_dependency_vulnerability_scan_pip_audit_contract() -> None:
 
     assert "name: Dependency vulnerability scan" in block
     assert "python -m pip_audit" in block
-    assert "--requirement requirements.txt" in block
+    assert "--requirement deploy/packaging/requirements-desktop.lock" in block
     assert "--format json" in block
     assert "--output pip-audit-report.json" in block
 

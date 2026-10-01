@@ -121,7 +121,7 @@ function Prepare-Wheelhouse {
     Activate-Venv -VenvPath (".venv-" + $Job)
     $target = $Wheelhouse
     if (-not $target) { $target = "wheelhouse" }
-    Run "python scripts/ci/build_wheelhouse.py --wheelhouse `"$target`" --pyside6-version `"$env:PYSIDE6_VERSION`" --only-binary :all:"
+    Run "python scripts/ci/build_wheelhouse.py --wheelhouse `"$target`" --only-binary :all:"
     Run "Get-ChildItem -Force $target"
 }
 

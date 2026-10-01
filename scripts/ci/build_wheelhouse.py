@@ -5,12 +5,13 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import os
 import time
 import subprocess
 import sys
 from pathlib import Path
 from typing import Iterable
+
+from packaging.utils import parse_wheel_filename
 
 
 def sha256sum(path: Path) -> str:
@@ -50,6 +51,11 @@ def build_download_cmd(
         cmd.extend(["--only-binary", args.only_binary])
     if extra_pip_args:
         cmd.extend(extra_pip_args)
+    # Every independent pip resolution is bounded by the release lock. This
+    # prevents project extras from selecting a second version of a locked
+    # package (notably the PySide6 stack).
+    if args.requirements:
+        cmd.extend(["--constraint", args.requirements])
     cmd.extend(packages)
     return cmd
 
@@ -58,11 +64,41 @@ def ensure_wheelhouse(wheelhouse: Path) -> None:
     wheelhouse.mkdir(parents=True, exist_ok=True)
 
 
+def validate_desktop_resolution(python_executable: str, requirements: str) -> None:
+    subprocess.run(
+        [
+            python_executable,
+            "scripts/ci/validate_locked_resolution.py",
+            requirements,
+            "--target",
+            ".[desktop]",
+        ],
+        check=True,
+    )
+
+
+def validate_unique_wheel_versions(wheelhouse: Path) -> None:
+    """Fail closed when an inventory contains two versions of one project."""
+    versions: dict[str, set[str]] = {}
+    for wheel in wheelhouse.glob("*.whl"):
+        name, version, _build, _tags = parse_wheel_filename(wheel.name)
+        versions.setdefault(str(name), set()).add(str(version))
+    duplicates = {name: found for name, found in versions.items() if len(found) > 1}
+    if duplicates:
+        details = ", ".join(
+            f"{name}={','.join(sorted(found))}" for name, found in sorted(duplicates.items())
+        )
+        raise SystemExit(f"Wheelhouse contains duplicate package versions: {details}")
+
+
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build wheelhouse for offline installs")
     parser.add_argument("--wheelhouse", default="wheelhouse", help="Target wheelhouse directory")
-    parser.add_argument("--pyside6-version", default=os.environ.get("PYSIDE6_VERSION", "6.7.0"))
-    parser.add_argument("--requirements", help="Optional requirements file to download")
+    parser.add_argument(
+        "--requirements",
+        default="deploy/packaging/requirements-desktop.lock",
+        help="Canonical exact release lock (default: %(default)s)",
+    )
     parser.add_argument("--index-url", help="Primary index URL")
     parser.add_argument("--extra-index-url", help="Extra index URL")
     parser.add_argument("--find-links", help="Additional find-links for preloaded wheels")
@@ -101,34 +137,10 @@ def main(argv: list[str]) -> int:
     args = parse_args(argv)
     wheelhouse = Path(args.wheelhouse).expanduser().resolve()
     ensure_wheelhouse(wheelhouse)
-
-    # PySide6 stack
-    pyside_packages = [
-        f"PySide6=={args.pyside6_version}",
-        f"PySide6_Addons=={args.pyside6_version}",
-        f"PySide6_Essentials=={args.pyside6_version}",
-        f"shiboken6=={args.pyside6_version}",
-    ]
-    download(
-        wheelhouse,
-        build_download_cmd(
-            wheelhouse,
-            args,
-            pyside_packages,
-            args.python,
-            extra_pip_args=[
-                "--no-cache-dir",
-                "--progress-bar",
-                "off",
-                "--timeout",
-                "120",
-                "--retries",
-                "5",
-            ],
-        ),
-        attempts=3,
-        retry_delay_seconds=5,
-    )
+    # Never retain artifacts from an older dependency resolution.
+    for artifact in wheelhouse.iterdir():
+        if artifact.is_file():
+            artifact.unlink()
 
     # PEP 517 build backend tooling required by pyproject.toml
     bootstrap_packages = ["wheel", "setuptools>=68"]
@@ -150,6 +162,7 @@ def main(argv: list[str]) -> int:
     download(wheelhouse, build_download_cmd(wheelhouse, args, [".[tools]"], args.python))
 
     # Desktop extras are required by manual runtime UI parity proof jobs.
+    validate_desktop_resolution(args.python, args.requirements)
     download(wheelhouse, build_download_cmd(wheelhouse, args, [".[desktop]"], args.python))
 
     # Dev extras are required by lint/type-check jobs running in wheelhouse-only mode.
@@ -165,6 +178,7 @@ def main(argv: list[str]) -> int:
             build_download_cmd(wheelhouse, args, [f"-r{args.requirements}"], args.python),
         )
 
+    validate_unique_wheel_versions(wheelhouse)
     write_manifest(wheelhouse)
     return 0
 
