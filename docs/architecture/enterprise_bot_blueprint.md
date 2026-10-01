@@ -139,6 +139,29 @@ a Risk Engine, ExecutionLease i kill switch pozostają nadrzędne względem wars
 Szczegółowy zakres, fazy ASD-1–ASD-6 oraz kryteria wejścia/wyjścia opisuje:
 [`docs/roadmap/autonomous_strategy_discovery_and_promotion.md`](../roadmap/autonomous_strategy_discovery_and_promotion.md).
 
+## Post-GA capability — Profitability & Edge Optimization
+
+Po uruchomieniu podstawowego lifecycle'u ASD planowany jest końcowy blok optymalizacji jakości
+przewagi. Zakres obejmuje Meta-Labeling & Opportunity Filter, Probability Calibration & Uncertainty,
+Cross-Asset/Lead-Lag Intelligence, Smart Venue Selection, warunkowe On-Chain Intelligence,
+Event Intelligence, Profit Attribution, Adaptive Trading Horizon, Capacity & Market Impact oraz
+Safe Online Learning.
+
+Celem nie jest zwiększanie liczby transakcji ani ryzyka, lecz poprawa **net expectancy na jednostkę
+ryzyka**, jakości decyzji `SKIP`, sizingu, wyboru horyzontu i execution.
+
+Szczegółowy zakres PEO-1–PEO-10, priorytety i kryteria zamknięcia opisuje:
+[`docs/roadmap/profitability_edge_optimization.md`](../roadmap/profitability_edge_optimization.md).
+
+## Roadmap scope freeze
+
+Po dodaniu bloku Profitability & Edge Optimization aktywna roadmapa funkcjonalna zostaje
+**zamrożona do czasu realizacji i praktycznej weryfikacji obecnie zapisanych bloków**.
+
+Nowe funkcje bez krytycznego uzasadnienia trafiają wyłącznie do backlogu pomysłów. Wyjątkiem są:
+krytyczne luki bezpieczeństwa, blockery realizacji, wymagania giełd/API/regulacyjne oraz wyniki
+PAPER/LIVE dowodzące, że istniejące założenie roadmapy wymaga korekty.
+
 Docelowa kolejność post-GA:
 
 ```text
@@ -150,5 +173,7 @@ Autonomous Strategy Discovery & Promotion
     ↓
 Shadow / Paper / Canary Live
     ↓
-continuous self-improving strategy portfolio
+Profitability & Edge Optimization
+    ↓
+mature continuous optimization
 ```
