@@ -80,7 +80,7 @@
 ## Minimalne wymagania implementacyjne (checklista dewelopera)
 - [ ] Utrzymać pełną separację core ↔ UI ↔ cloud; cloud startuje tylko po pozytywnej walidacji
       `validate_runtime_cloud_flag`.
-- [ ] Stosować typowanie PEP 484 + walidację danych (pydantic/dataclasses) w nowych modułach.
+- [ ] Stosować typowanie PEP 484 + walidację danych (pydantic/dataclasses) w nowych modułach.
 - [ ] Każdy plugin strategii musi rejestrować się w katalogu i emitować audyt decyzji.
 - [ ] Nowe integracje giełdowe implementować przez `ExchangeClient` z polityką retry/rate-limit.
 - [ ] Backtesty i symulacje muszą raportować koszty i poślizg oraz zapisywać equity curve.
@@ -111,3 +111,16 @@
    dashboard PnL i alerty SLA feedu.
 3. **RC/GA**: pełna lista strategii, marketplace presetów, harmonogram retrainingu, compliance
    (licencje/HWID), opcjonalny cloud z ręczną akceptacją developera.
+
+## Post-GA capability — Autonomous Strategy Discovery & Promotion
+
+Po ustabilizowaniu platformy i zamknięciu Stage 10 planowany jest osobny blok umożliwiający AI/ML
+samodzielne generowanie kandydatów strategii, ich automatyczną walidację oraz kontrolowaną promocję
+przez `RESEARCH → SHADOW → PAPER → CANARY_LIVE → CHALLENGER → CHAMPION`.
+
+Blok nie pozwala modelowi na bezpośrednie wprowadzanie wygenerowanej strategii do LIVE. Każdy
+kandydat musi przejść niezależne gate'y walk-forward, strict OOS, robustness, kosztów i ryzyka,
+a Risk Engine, ExecutionLease i kill switch pozostają nadrzędne względem warstwy discovery.
+
+Szczegółowy zakres, fazy ASD-1–ASD-6 oraz kryteria wejścia/wyjścia opisuje:
+[`docs/roadmap/autonomous_strategy_discovery_and_promotion.md`](../roadmap/autonomous_strategy_discovery_and_promotion.md).
