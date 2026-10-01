@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 
@@ -37,3 +38,10 @@ class InstallerContract:
 
 
 CONTRACT = InstallerContract()
+
+
+def is_reviewed_wix_version(observed: object) -> bool:
+    """Return whether WiX reports the pinned release, with optional build metadata."""
+    return isinstance(observed, str) and re.fullmatch(
+        rf"{re.escape(CONTRACT.wix_version)}(?:\+[0-9A-Za-z.-]+)?", observed.strip()
+    ) is not None

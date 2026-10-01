@@ -15,7 +15,8 @@ import sys
 import tempfile
 from urllib.request import urlopen
 import zipfile
-from .contract import CONTRACT
+
+from .contract import CONTRACT, is_reviewed_wix_version
 
 WIX_EULA_ACCEPTANCE = "PER_INVOCATION"
 WIX_EULA_ACCEPTANCE_FLAG = "-acceptEula wix7"
@@ -61,9 +62,10 @@ def qualify_windows_x64() -> None:
 
 
 def canonical_wix_version(output: str) -> str:
-    match = re.fullmatch(r"7\.0\.0(?:\+[0-9A-Za-z.-]+)?", output.strip())
-    if not match:
-        raise InstallerBuildError(f"expected stable WiX 7.0.0, observed {output.strip()!r}")
+    if not is_reviewed_wix_version(output):
+        raise InstallerBuildError(
+            f"expected stable WiX {CONTRACT.wix_version}, observed {output.strip()!r}"
+        )
     return output.strip()
 
 
