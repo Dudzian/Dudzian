@@ -302,8 +302,8 @@ def test_workflow_uses_isolated_artifact_smoke_and_lockfile():
     job = workflow["jobs"]["build-windows"]
     assert job["runs-on"] == "windows-latest"
     text = workflow_path.read_text()
-    assert "python -m pip install -r deploy/packaging/requirements-desktop.lock" in text
-    assert "python -m pip install -e .[dev,desktop]" in text
+    assert "python -m pip install --no-deps -r deploy/packaging/requirements-desktop.lock" in text
+    assert "python -m pip install --no-deps -e .[dev,desktop]" in text
     assert "python -m pip install -e .[dev,desktop] --no-deps" not in text
     assert "python -m pip check" in text
     assert "python scripts/verify_windows_pyinstaller_collectors.py" in text

@@ -20,7 +20,7 @@ concurrency:
 
 env:
   PYTHON_VERSION: "3.11"
-  PYSIDE6_VERSION: "6.10.2"
+  PYSIDE6_VERSION: "6.7.0"
   AQTINSTALL_VERSION: "3.2.1"
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
   QT_DESKTOP_MODULES: "qtcharts"
@@ -60,14 +60,18 @@ jobs:
           echo "NO_PROXY=${NO_PROXY:-}"
           python -m pip config debug -v
 
+      - name: Validate exact lock resolution on ${{ runner.os }}
+        shell: bash
+        run: python scripts/ci/validate_locked_resolution.py deploy/packaging/requirements-desktop.lock --target ".[desktop]"
+
       - name: Build wheelhouse
         shell: bash
         run: |
           python -m pip install --upgrade pip
           python scripts/ci/build_wheelhouse.py \
             --wheelhouse "${WHEELHOUSE_DIR}" \
-            --pyside6-version "${PYSIDE6_VERSION}" \
-            --only-binary :all:
+            --only-binary :all: \
+            --requirements deploy/packaging/requirements-desktop.lock
 
       - name: Upload wheelhouse artifact
         uses: actions/upload-artifact@v6
@@ -118,11 +122,11 @@ jobs:
           python -m pip install --upgrade pip setuptools wheel
           python -m pip install pip-audit
 
-      - name: Run pip-audit (requirements.txt)
+      - name: Run pip-audit (canonical desktop release lock)
         run: |
           # PYSEC-2024-277 / CVE-2024-34997 affects joblib 1.4.2; pip-audit reports no fixed versions (fix_versions: []) and marks it disputed. Keep this narrow and revisit when a fixed version exists.
           python -m pip_audit \
-            --requirement requirements.txt \
+            --requirement deploy/packaging/requirements-desktop.lock \
             --ignore-vuln PYSEC-2024-277 \
             --format json \
             --output pip-audit-report.json
