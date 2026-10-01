@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "probe_id": "cryptohunter.windows.stage10.lifecycle.v1",
+  "results": {
+    "WINDOWS_REBOOT_RECOVERY": [
+      "boot_changed",
+      "current_revision_runtime_bound",
+      "service_autostarted",
+      "readiness_contract_after_reboot"
+    ],
+    "WINDOWS_LONG_RUNNING_LIFECYCLE": [
+      "duration_at_least_24h",
+      "current_revision_runtime_bound",
+      "same_service_instance",
+      "readiness_contract_before_after"
+    ]
+  }
+}

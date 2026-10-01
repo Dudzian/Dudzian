@@ -144,8 +144,83 @@ jobs:
           name: windows-clean-install-evidence
           path: |
             dist/windows/installer-manifest.json
+            dist/windows/windows-clean-install-receipt.json
             dist/windows/windows-clean-install-evidence.json
             dist/windows/logs/*.log
+
+  windows-stage10-prepare-and-schedule-reboot:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: [self-hosted, Windows, X64, cryptohunter-stage10]
+    needs: [windows-deployment-integration, windows-clean-install-integration]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with: {python-version: "3.11", architecture: "x64"}
+      - uses: actions/download-artifact@v7
+        with:
+          name: windows-clean-install-evidence
+          path: stage10-qualified
+      - name: Capture same-host continuity state
+        shell: pwsh
+        run: >-
+          ./deployment/windows_stage10_live.ps1 -Mode prepare-reboot
+          -State stage10-continuity.json
+          -QualifiedManifest stage10-qualified/installer-manifest.json
+          -CleanInstallReceipt stage10-qualified/windows-clean-install-receipt.json
+      - uses: actions/upload-artifact@v6
+        with:
+          name: stage10-continuity
+          path: stage10-continuity.json
+      - name: Schedule reboot after runner post-job cleanup
+        shell: pwsh
+        run: shutdown.exe /r /t 75 /d p:4:1 /c "CryptoHunter Stage-10 qualification"
+
+  windows-stage10-reboot-barrier:
+    if: github.event_name == 'workflow_dispatch'
+    needs: windows-stage10-prepare-and-schedule-reboot
+    runs-on: ubuntu-latest
+    steps:
+      - name: Keep the rebooting host unavailable to the next job
+        run: sleep 240
+
+  windows-stage10-qualify-after-reboot:
+    if: github.event_name == 'workflow_dispatch'
+    needs: windows-stage10-reboot-barrier
+    runs-on: [self-hosted, Windows, X64, cryptohunter-stage10]
+    timeout-minutes: 1800
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with: {python-version: "3.11", architecture: "x64"}
+      - uses: actions/download-artifact@v7
+        with: {name: stage10-continuity, path: stage10}
+      - name: Qualify reboot and the 24-hour lifecycle
+        shell: pwsh
+        run: |
+          Start-Transcript -Path stage10/windows-stage10-transcript.log
+          try {
+            ./deployment/windows_stage10_live.ps1 -Mode qualify `
+              -State stage10/stage10-continuity.json `
+              -Output stage10/windows-stage10-receipt.json
+          } finally {
+            Stop-Transcript
+          }
+      - name: Produce same-run revision/runner/machine-bound LIVE evidence
+        run: >-
+          python -m deployment.platform_evidence windows-stage10
+          --receipt stage10/windows-stage10-receipt.json
+          --output stage10/windows-stage10-evidence.json
+      - name: Preserve Stage-10 lifecycle diagnostics
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: windows-stage10-lifecycle-evidence
+          if-no-files-found: ignore
+          path: |
+            stage10/stage10-continuity.json
+            stage10/windows-stage10-receipt.json
+            stage10/windows-stage10-evidence.json
+            stage10/windows-stage10-transcript.log
 
   linux-deployment-integration:
     runs-on: ubuntu-latest
@@ -175,6 +250,9 @@ jobs:
       - windows-deployment-contract
       - windows-deployment-integration
       - windows-clean-install-integration
+      - windows-stage10-prepare-and-schedule-reboot
+      - windows-stage10-reboot-barrier
+      - windows-stage10-qualify-after-reboot
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -192,6 +270,11 @@ jobs:
         with:
           name: windows-scm-evidence
           path: evidence
+      - uses: actions/download-artifact@v7
+        if: github.event_name == 'workflow_dispatch'
+        with:
+          name: windows-stage10-lifecycle-evidence
+          path: evidence
       - name: Aggregate revision-bound cross-OS core evidence
         run: >-
           python -m deployment.platform_evidence aggregate-core
@@ -200,8 +283,17 @@ jobs:
           --marker evidence/core-macOS.json
           --output evidence/core-matrix.json
       - name: Enforce canonical Windows production readiness
+        if: github.event_name != 'workflow_dispatch'
         run: >-
           python -m deployment.platform_readiness --platform WINDOWS
           --evidence evidence/core-matrix.json
           --evidence evidence/windows-scm-evidence.json
           --evidence evidence/windows-clean-install-evidence.json
+      - name: Enforce canonical Windows production readiness with Stage-10 lifecycle
+        if: github.event_name == 'workflow_dispatch'
+        run: >-
+          python -m deployment.platform_readiness --platform WINDOWS
+          --evidence evidence/core-matrix.json
+          --evidence evidence/windows-scm-evidence.json
+          --evidence evidence/windows-clean-install-evidence.json
+          --evidence evidence/windows-stage10-evidence.json

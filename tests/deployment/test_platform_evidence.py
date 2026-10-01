@@ -7,11 +7,205 @@ from typing import Any, Callable
 
 import pytest
 
+from deployment import platform_evidence
 from deployment.platform_evidence import (
     EvidenceProductionError,
     aggregate_core_markers,
     produce_windows_clean_install_evidence,
+    produce_windows_stage10_evidence,
 )
+from deployment.platform_readiness import blocking_items, load_contract, production_ready
+
+
+def _stage10_receipt() -> dict[str, object]:
+    contract = json.loads(platform_evidence.WINDOWS_STAGE10_CONTRACT.read_text())
+    proof_names = contract["results"]
+    return {
+        "schema_version": 1,
+        "source_revision": "revision",
+        "ci_provider": "https://github.com",
+        "ci_run_id": "42",
+        "runner_os": "Windows",
+        "runner_arch": "X64",
+        "runner_name": "stage10-host",
+        "machine_guid": "machine-a",
+        "probe_id": "cryptohunter.windows.stage10.lifecycle.v1",
+        "runtime_provenance": {
+            "source_revision": "revision",
+            "ci_run_id": "42",
+            "product_version": "1.2.3",
+            "qualified_manifest_sha256": "a" * 64,
+            "qualified_msi_sha256": "b" * 64,
+            "installed_backend_sha256": "c" * 64,
+        },
+        "results": {
+            item: {
+                "status": "PASS",
+                "proofs": {p: "PASS" for p in proofs},
+                "details": f"native proof for {item}",
+            }
+            for item, proofs in proof_names.items()
+        },
+    }
+
+
+def test_stage10_current_native_receipt_is_consumable(tmp_path, monkeypatch) -> None:
+    for key, value in {
+        "GITHUB_SERVER_URL": "https://github.com",
+        "GITHUB_RUN_ID": "42",
+        "RUNNER_OS": "Windows",
+        "RUNNER_ARCH": "X64",
+        "RUNNER_NAME": "stage10-host",
+    }.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setattr(platform_evidence, "_current_windows_machine_guid", lambda: "machine-a")
+    receipt, output = tmp_path / "receipt.json", tmp_path / "evidence.json"
+    receipt.write_text(json.dumps(_stage10_receipt()), encoding="utf-8")
+    produce_windows_stage10_evidence("revision", receipt, output)
+    results = json.loads(output.read_text())["results"]
+    assert {r["item"] for r in results} == set(_stage10_receipt()["results"])
+    assert all(
+        r["status"] == "PASS" and r["evidence_class"] == "LIVE_WINDOWS_INTEGRATION" for r in results
+    )
+    contract = load_contract()
+    contract["release_gates"]["WINDOWS_PRODUCTION_READY"] = list(_stage10_receipt()["results"])
+    assert production_ready(
+        "WINDOWS",
+        contract,
+        [json.loads(output.read_text())],
+        "revision",
+        "https://github.com",
+        "42",
+    )
+
+
+def test_canonical_contract_accepts_lifecycle_but_keeps_update_gates_blocking(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    for key, value in {
+        "GITHUB_SERVER_URL": "https://github.com",
+        "GITHUB_RUN_ID": "42",
+        "RUNNER_OS": "Windows",
+        "RUNNER_ARCH": "X64",
+        "RUNNER_NAME": "stage10-host",
+    }.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setattr(platform_evidence, "_current_windows_machine_guid", lambda: "machine-a")
+    receipt, output = tmp_path / "receipt.json", tmp_path / "evidence.json"
+    receipt.write_text(json.dumps(_stage10_receipt()))
+    produce_windows_stage10_evidence("revision", receipt, output)
+    evidence = json.loads(output.read_text())
+    data = load_contract()
+    blockers = blocking_items("WINDOWS", data, [evidence], "revision", "https://github.com", "42")
+    assert "WINDOWS_REBOOT_RECOVERY" not in blockers
+    assert "WINDOWS_LONG_RUNNING_LIFECYCLE" not in blockers
+    assert "WINDOWS_UPDATE_RESTART" in blockers
+    assert "WINDOWS_FAILED_UPDATE_SAFE_BEHAVIOR" in blockers
+    assert not production_ready("WINDOWS", data, [evidence], "revision", "https://github.com", "42")
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda r: r.update(source_revision="stale"),
+        lambda r: r.update(ci_run_id="old-run"),
+        lambda r: r.update(ci_provider="untrusted"),
+        lambda r: r.update(runner_name="other"),
+        lambda r: r.update(runner_arch="ARM64"),
+        lambda r: r.update(machine_guid="machine-b"),
+        lambda r: r.pop("runtime_provenance"),
+        lambda r: r["runtime_provenance"].update(qualified_manifest_sha256="d" * 63),
+        lambda r: r["runtime_provenance"].update(qualified_msi_sha256="d" * 63),
+        lambda r: r["results"].pop("WINDOWS_REBOOT_RECOVERY"),
+        lambda r: r["results"].update(EXTRA_RESULT={}),
+        lambda r: r["results"]["WINDOWS_REBOOT_RECOVERY"].update(status="FAIL"),
+        (
+            lambda r: r["results"]["WINDOWS_LONG_RUNNING_LIFECYCLE"]["proofs"].pop(
+                "readiness_contract_before_after"
+            )
+        ),
+    ],
+)
+def test_stage10_rejects_stale_missing_or_failed_receipt(tmp_path, monkeypatch, mutation) -> None:
+    for key, value in {
+        "GITHUB_SERVER_URL": "https://github.com",
+        "GITHUB_RUN_ID": "42",
+        "RUNNER_OS": "Windows",
+        "RUNNER_ARCH": "X64",
+        "RUNNER_NAME": "stage10-host",
+    }.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setattr(platform_evidence, "_current_windows_machine_guid", lambda: "machine-a")
+    value = _stage10_receipt()
+    mutation(value)
+    receipt = tmp_path / "receipt.json"
+    receipt.write_text(json.dumps(value))
+    with pytest.raises(EvidenceProductionError):
+        produce_windows_stage10_evidence("revision", receipt, tmp_path / "out.json")
+
+
+@pytest.mark.parametrize("observed", [None, "", 7])
+def test_stage10_rejects_missing_empty_or_wrong_type_machine_guid(
+    tmp_path,
+    monkeypatch,
+    observed,
+) -> None:
+    for key, value in {
+        "GITHUB_SERVER_URL": "https://github.com",
+        "GITHUB_RUN_ID": "42",
+        "RUNNER_OS": "Windows",
+        "RUNNER_ARCH": "X64",
+        "RUNNER_NAME": "stage10-host",
+    }.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setattr(platform_evidence, "_current_windows_machine_guid", lambda: observed)
+    receipt = tmp_path / "receipt.json"
+    receipt.write_text(json.dumps(_stage10_receipt()))
+    with pytest.raises(EvidenceProductionError):
+        produce_windows_stage10_evidence("revision", receipt, tmp_path / "out.json")
+
+
+def test_machine_guid_reader_fails_closed_when_registry_key_is_missing(monkeypatch) -> None:
+    class MissingWinreg:
+        HKEY_LOCAL_MACHINE = object()
+
+        @staticmethod
+        def OpenKey(*_args):
+            raise FileNotFoundError("missing MachineGuid key")
+
+    monkeypatch.setitem(__import__("sys").modules, "winreg", MissingWinreg)
+    with pytest.raises(EvidenceProductionError, match="MachineGuid is unavailable"):
+        platform_evidence._current_windows_machine_guid()
+
+
+@pytest.mark.parametrize("probe_id", [None, "", "cryptohunter.windows.stage10.other.v1"])
+def test_stage10_rejects_invalid_shared_contract_probe_id(
+    tmp_path,
+    monkeypatch,
+    probe_id,
+) -> None:
+    for key, value in {
+        "GITHUB_SERVER_URL": "https://github.com",
+        "GITHUB_RUN_ID": "42",
+        "RUNNER_OS": "Windows",
+        "RUNNER_ARCH": "X64",
+        "RUNNER_NAME": "stage10-host",
+    }.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setattr(platform_evidence, "_current_windows_machine_guid", lambda: "machine-a")
+    contract = json.loads(platform_evidence.WINDOWS_STAGE10_CONTRACT.read_text())
+    contract["probe_id"] = probe_id
+    contract_path = tmp_path / "contract.json"
+    contract_path.write_text(json.dumps(contract))
+    receipt = tmp_path / "receipt.json"
+    receipt.write_text(json.dumps(_stage10_receipt()))
+    with pytest.raises(EvidenceProductionError, match="lifecycle contract"):
+        produce_windows_stage10_evidence(
+            "revision", receipt, tmp_path / "out.json", contract_path=contract_path
+        )
+
+
 from deployment.core_test_plan import load_manifest, marker_document
 from deployment.windows_stage9_evidence_contract import (
     CLEAN_INSTALL_PRECEREMONY_PROOFS,
