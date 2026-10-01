@@ -57,9 +57,9 @@ jobs:
       - name: Install packaging requirements (POSIX)
         if: matrix.name != 'windows'
         run: |
-          python -m pip install --upgrade pip
+          python scripts/ci/bootstrap_locked_pip.py deploy/packaging/requirements-desktop.lock
           python scripts/ci/validate_locked_resolution.py deploy/packaging/requirements-desktop.lock --target ".[desktop]"
-          pip install --no-deps -r deploy/packaging/requirements-desktop.lock
+          python -m pip install --no-deps -r deploy/packaging/requirements-desktop.lock
         shell: bash
 
       - name: Validate marketplace presets
@@ -74,9 +74,9 @@ jobs:
       - name: Install packaging requirements (Windows)
         if: matrix.name == 'windows'
         run: |
-          python -m pip install --upgrade pip
+          python scripts/ci/bootstrap_locked_pip.py deploy/packaging/requirements-desktop.lock
           python scripts/ci/validate_locked_resolution.py deploy/packaging/requirements-desktop.lock --target ".[desktop]"
-          pip install --no-deps -r deploy/packaging/requirements-desktop.lock
+          python -m pip install --no-deps -r deploy/packaging/requirements-desktop.lock
         shell: pwsh
 
       - name: Validate marketplace presets (Windows)

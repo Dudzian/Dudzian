@@ -11,12 +11,14 @@ import pytest
 from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
 
+from scripts.ci.bootstrap_dependency import project_requirements
 from scripts.ci.require_python311 import require_python311
 from scripts.ci.validate_locked_resolution import locked_versions, validate_target_resolution
 
 LOCK = Path("deploy/packaging/requirements-desktop.lock")
 LOCK_TEXT = str(LOCK)
 PYSIDE_STACK = {"pyside6", "pyside6-addons", "pyside6-essentials", "shiboken6"}
+PIP_BOOTSTRAP = f"python scripts/ci/bootstrap_locked_pip.py {LOCK_TEXT}"
 
 
 def _text(path: str) -> str:
@@ -34,6 +36,55 @@ def test_release_workflows_install_and_audit_canonical_lock() -> None:
     assert packaging.count(f"validate_locked_resolution.py {LOCK_TEXT}") == 3
     assert cross_installer.count(f"validate_locked_resolution.py {LOCK_TEXT}") == 2
     assert f"--requirement {LOCK_TEXT}" in audit
+
+
+def test_release_build_environments_have_no_loose_python_resolver_mutations() -> None:
+    windows = _text(".github/workflows/windows-build.yml")
+    packaging = _text(".github/workflows/main.yml")
+    cross_installer = _text("deploy/ci/github_actions_cross_installer.yml")
+    ci = _text(".github/workflows/ci.yml")
+    wheelhouse_job = ci[ci.index("  prepare-wheelhouse:") : ci.index("  sbom:")]
+
+    assert windows.count(PIP_BOOTSTRAP) == 1
+    assert packaging.count(PIP_BOOTSTRAP) == 3
+    assert cross_installer.count(PIP_BOOTSTRAP) == 2
+    assert wheelhouse_job.count(PIP_BOOTSTRAP) == 1
+    bootstrap = wheelhouse_job.index("- name: Bootstrap canonical pip")
+    validation = wheelhouse_job.index("- name: Validate exact lock resolution")
+    build = wheelhouse_job.index("- name: Build wheelhouse")
+    assert bootstrap < validation < build
+    for release_path in (windows, packaging, cross_installer, wheelhouse_job):
+        assert "pip install --upgrade pip" not in release_path
+        assert "pip install -U pip" not in release_path
+
+    loose_tools = "python -m pip install pytest mypy ruff openpyxl"
+    exact_tools = (
+        "python -m pip install --no-deps -r deploy/packaging/requirements-windows-build-tools.lock"
+    )
+    assert loose_tools not in windows
+    assert exact_tools in windows
+
+
+def test_cross_installer_binds_release_install_to_bootstrapped_python() -> None:
+    cross_installer = _text("deploy/ci/github_actions_cross_installer.yml")
+    bound_install = f"python -m pip install --no-deps -r {LOCK_TEXT}"
+    assert cross_installer.count(bound_install) == 2
+    assert not re.search(
+        rf"(?m)^\s+pip install --no-deps -r {re.escape(LOCK_TEXT)}$", cross_installer
+    )
+
+
+def test_windows_build_tooling_authority_is_exact_and_separate_from_runtime() -> None:
+    tooling_lock = Path("deploy/packaging/requirements-windows-build-tools.lock")
+    tooling = locked_versions(tooling_lock)
+    assert tooling == {
+        "colorama": "0.4.6",
+        "iniconfig": "2.3.0",
+        "pluggy": "1.6.0",
+        "pytest": "9.0.2",
+    }
+    runtime = locked_versions(LOCK)
+    assert "pytest" not in runtime
 
 
 def test_canonical_pyside_stack_has_one_version_everywhere() -> None:
@@ -87,6 +138,9 @@ def test_cross_platform_jobs_validate_native_plan_before_wheelhouse() -> None:
     assert f"--requirements {LOCK_TEXT}" in workflow
     builder = _text("scripts/ci/build_wheelhouse.py")
     assert "validate_desktop_resolution(args.python, args.requirements)" in builder
+    assert builder.count(".[desktop]") == 1  # validator CLI compatibility only
+    for local_target in (".[tools]", ".[dev]", ".[test,codegen]"):
+        assert local_target not in builder
 
 
 @pytest.mark.parametrize(
@@ -98,22 +152,19 @@ def test_actual_desktop_target_rejects_missing_or_mismatched_dependency(
 ) -> None:
     def fake_runner(command: list[str], *, check: bool) -> object:
         assert check is True
-        assert command[-1] == ".[desktop]"
-        assert command[command.index("--constraint") + 1] == LOCK_TEXT
         report = Path(command[command.index("--report") + 1])
-        report.write_text(
-            json.dumps(
-                {
-                    "install": [
-                        {
-                            "requested": True,
-                            "metadata": {"name": "dudzian-bot", "version": "0.1.0"},
-                        },
-                        {"requested": False, "metadata": {"name": name, "version": version}},
-                    ]
-                }
-            )
-        )
+        if "--requirement" in command:
+            assert command[command.index("--requirement") + 1] == LOCK_TEXT
+            install = []
+        else:
+            assert command[command.index("--constraint") + 1] == LOCK_TEXT
+            assert ".[desktop]" not in command
+            assert "pyarrow>=21.0.0" in command
+            assert "pyinstaller>=6.5" in command
+            install = [
+                {"requested": True, "metadata": {"name": name, "version": version}},
+            ]
+        report.write_text(json.dumps({"install": install}))
         return object()
 
     with pytest.raises(SystemExit, match=expected):
@@ -130,6 +181,24 @@ def test_every_desktop_direct_dependency_is_in_canonical_lock() -> None:
         if canonicalize_name((requirement := Requirement(raw)).name) not in locked
     ]
     assert not missing
+
+
+def test_every_build_system_requirement_is_satisfied_by_canonical_lock() -> None:
+    build_requirements = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))[
+        "build-system"
+    ]["requires"]
+    locked = locked_versions(LOCK)
+    for raw in build_requirements:
+        requirement = Requirement(raw)
+        name = canonicalize_name(requirement.name)
+        assert name in locked
+        assert requirement.specifier.contains(locked[name], prereleases=True)
+
+
+def test_validator_reads_static_base_and_desktop_dependencies() -> None:
+    requirements = project_requirements(Path("pyproject.toml"), ("desktop",))
+    assert "pyarrow>=21.0.0" in requirements
+    assert "pyinstaller>=6.5" in requirements
 
 
 def test_every_lock_entry_is_an_exact_pin() -> None:

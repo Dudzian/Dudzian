@@ -5,13 +5,19 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import time
 import subprocess
 import sys
+import time
+import zipfile
+from email.parser import BytesParser
 from pathlib import Path
 from typing import Iterable
 
-from packaging.utils import parse_wheel_filename
+if __package__:
+    from scripts.ci.bootstrap_dependency import canonicalize_package_name, project_requirements
+else:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from bootstrap_dependency import canonicalize_package_name, project_requirements
 
 
 def sha256sum(path: Path) -> str:
@@ -81,8 +87,27 @@ def validate_unique_wheel_versions(wheelhouse: Path) -> None:
     """Fail closed when an inventory contains two versions of one project."""
     versions: dict[str, set[str]] = {}
     for wheel in wheelhouse.glob("*.whl"):
-        name, version, _build, _tags = parse_wheel_filename(wheel.name)
-        versions.setdefault(str(name), set()).add(str(version))
+        try:
+            with zipfile.ZipFile(wheel) as archive:
+                metadata_files = [
+                    path for path in archive.namelist() if path.endswith(".dist-info/METADATA")
+                ]
+                if len(metadata_files) != 1:
+                    raise ValueError(
+                        f"{wheel.name} must contain exactly one .dist-info/METADATA file"
+                    )
+                metadata = BytesParser().parsebytes(archive.read(metadata_files[0]))
+        except (OSError, zipfile.BadZipFile, KeyError) as exc:
+            raise ValueError(f"cannot read wheel metadata from {wheel.name}: {exc}") from exc
+
+        names = metadata.get_all("Name", [])
+        found_versions = metadata.get_all("Version", [])
+        if len(names) != 1 or not names[0].strip():
+            raise ValueError(f"{wheel.name} metadata must contain exactly one Name")
+        if len(found_versions) != 1 or not found_versions[0].strip():
+            raise ValueError(f"{wheel.name} metadata must contain exactly one Version")
+        name = canonicalize_package_name(names[0].strip())
+        versions.setdefault(name, set()).add(found_versions[0].strip())
     duplicates = {name: found for name, found in versions.items() if len(found) > 1}
     if duplicates:
         details = ", ".join(
@@ -154,20 +179,43 @@ def main(argv: list[str]) -> int:
     lint_tooling_packages = ["mypy==1.10.0", "ruff==0.14.11"]
     download(wheelhouse, build_download_cmd(wheelhouse, args, lint_tooling_packages, args.python))
 
-    # Project dependencies
-    project_target = ".[test,codegen]" if not args.skip_dev else ".[codegen]"
-    download(wheelhouse, build_download_cmd(wheelhouse, args, [project_target], args.python))
+    project = Path("pyproject.toml")
+
+    # Project dependencies are read statically: pip must not create an
+    # independently resolved PEP 517 environment merely to inspect metadata.
+    project_extras = ("test", "codegen") if not args.skip_dev else ("codegen",)
+    download(
+        wheelhouse,
+        build_download_cmd(
+            wheelhouse, args, project_requirements(project, project_extras), args.python
+        ),
+    )
 
     # Tooling extras used by CI jobs (including marketing parity checks).
-    download(wheelhouse, build_download_cmd(wheelhouse, args, [".[tools]"], args.python))
+    download(
+        wheelhouse,
+        build_download_cmd(
+            wheelhouse, args, project_requirements(project, ("tools",)), args.python
+        ),
+    )
 
     # Desktop extras are required by manual runtime UI parity proof jobs.
     validate_desktop_resolution(args.python, args.requirements)
-    download(wheelhouse, build_download_cmd(wheelhouse, args, [".[desktop]"], args.python))
+    download(
+        wheelhouse,
+        build_download_cmd(
+            wheelhouse, args, project_requirements(project, ("desktop",)), args.python
+        ),
+    )
 
     # Dev extras are required by lint/type-check jobs running in wheelhouse-only mode.
     if not args.skip_dev:
-        download(wheelhouse, build_download_cmd(wheelhouse, args, [".[dev]"], args.python))
+        download(
+            wheelhouse,
+            build_download_cmd(
+                wheelhouse, args, project_requirements(project, ("dev",)), args.python
+            ),
+        )
 
     # Installed explicitly by lint-and-test in CI.
     download(wheelhouse, build_download_cmd(wheelhouse, args, ["pre-commit"], args.python))

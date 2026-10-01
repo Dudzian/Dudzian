@@ -1,0 +1,6 @@
+# Reviewed exact tooling used only by .github/workflows/windows-build.yml.
+# Runtime and build dependencies remain authoritative in requirements-desktop.lock.
+colorama==0.4.6 ; platform_system == "Windows"
+iniconfig==2.3.0
+pluggy==1.6.0
+pytest==9.0.2
