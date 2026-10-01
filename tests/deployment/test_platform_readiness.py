@@ -299,6 +299,9 @@ def test_workflow_release_gate_is_real_and_platform_independent() -> None:
         "windows-deployment-contract",
         "windows-deployment-integration",
         "windows-clean-install-integration",
+        "windows-stage10-prepare-and-schedule-reboot",
+        "windows-stage10-reboot-barrier",
+        "windows-stage10-qualify-after-reboot",
     }
     assert "linux-deployment-integration" not in release["needs"]
     assert "macos-deployment-integration" not in release["needs"]
@@ -340,4 +343,83 @@ def test_workflow_release_gate_is_real_and_platform_independent() -> None:
     assert any(
         step.get("uses", "").startswith("actions/upload-artifact")
         for step in jobs["windows-deployment-integration"]["steps"]
+    )
+
+
+def test_stage10_workflow_uses_real_reboot_soak_and_evidence_producer() -> None:
+    root = Path(__file__).resolve().parents[2]
+    workflow = yaml.safe_load(
+        (root / ".github/workflows/platform-deployment.yml").read_text(encoding="utf-8")
+    )
+    jobs = workflow["jobs"]
+    assert jobs["windows-stage10-prepare-and-schedule-reboot"]["runs-on"] == [
+        "self-hosted",
+        "Windows",
+        "X64",
+        "cryptohunter-stage10",
+    ]
+    prepare = "\n".join(
+        step.get("run", "") for step in jobs["windows-stage10-prepare-and-schedule-reboot"]["steps"]
+    )
+    prepare_steps = jobs["windows-stage10-prepare-and-schedule-reboot"]["steps"]
+    download_index = next(
+        index
+        for index, step in enumerate(prepare_steps)
+        if step.get("with", {}).get("name") == "windows-clean-install-evidence"
+    )
+    prepare_index = next(
+        index
+        for index, step in enumerate(prepare_steps)
+        if "windows_stage10_live.ps1 -Mode prepare-reboot" in step.get("run", "")
+    )
+    assert download_index < prepare_index
+    assert "-QualifiedManifest stage10-qualified/installer-manifest.json" in prepare
+    assert "-CleanInstallReceipt stage10-qualified/windows-clean-install-receipt.json" in prepare
+    qualify = "\n".join(
+        step.get("run", "") for step in jobs["windows-stage10-qualify-after-reboot"]["steps"]
+    )
+    assert "windows_stage10_live.ps1 -Mode prepare-reboot" in prepare
+    assert "shutdown.exe /r" in prepare
+    assert "windows_stage10_live.ps1 -Mode qualify" in qualify
+    assert "platform_evidence windows-stage10" in qualify
+    assert jobs["windows-stage10-qualify-after-reboot"]["timeout-minutes"] >= 24 * 60
+    assert jobs["windows-stage10-reboot-barrier"]["runs-on"] == "ubuntu-latest"
+    assert (
+        jobs["windows-stage10-reboot-barrier"]["needs"]
+        == "windows-stage10-prepare-and-schedule-reboot"
+    )
+    assert jobs["windows-stage10-qualify-after-reboot"]["needs"] == "windows-stage10-reboot-barrier"
+    barrier = "\n".join(
+        step.get("run", "") for step in jobs["windows-stage10-reboot-barrier"]["steps"]
+    )
+    assert "sleep 240" in barrier
+    assert "shutdown.exe /r /t 75" in prepare
+    probe = (root / "deployment/windows_stage10_live.ps1").read_text(encoding="utf-8")
+    assert "Start-Sleep" in probe and "$SoakHours -lt 24" in probe
+    assert "System.Diagnostics.Stopwatch" in probe
+    assert "backend-readiness.json" in probe
+    assert "runtime_provenance = $provenance" in probe
+    assert probe.count("Service-Snapshot $runtimeProvenance.installed_backend_sha256") >= 3
+    assert "missing or stale runtime provenance" in probe
+    assert "installed backend executable changed" in probe
+    assert "Get-AuthenticodeSignature" not in probe and "msiexec.exe" not in probe
+    workflow_text = (root / ".github/workflows/platform-deployment.yml").read_text()
+    assert "signtool" not in workflow_text
+    diagnostic = next(
+        step
+        for step in jobs["windows-stage10-qualify-after-reboot"]["steps"]
+        if step.get("name") == "Preserve Stage-10 lifecycle diagnostics"
+    )
+    assert diagnostic["if"] == "always()"
+    assert "windows-stage10-transcript.log" in diagnostic["with"]["path"]
+    download = next(
+        step
+        for step in jobs["windows-release-gate"]["steps"]
+        if step.get("with", {}).get("name") == "windows-stage10-lifecycle-evidence"
+    )
+    assert download["if"] == "github.event_name == 'workflow_dispatch'"
+    release_commands = [step.get("run", "") for step in jobs["windows-release-gate"]["steps"]]
+    assert any(
+        "--evidence evidence/windows-stage10-evidence.json" in command
+        for command in release_commands
     )
