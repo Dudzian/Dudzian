@@ -2,9 +2,12 @@
 
 ## Status
 
-**PLANNED — post-foundation capability block**
+**PLANNED — post-Trading-Intelligence-Hardening capability block**
 
-Ten blok jest planowany po zamknięciu aktualnego fundamentu platformy i **nie zmienia zamrożonych kontraktów architektury M0 ani numeracji Windows Stage 0–14**. Implementacja produkcyjna może rozpocząć się dopiero po zamknięciu Stage 10 i potwierdzeniu stabilności runtime'u, updatera, lifecycle'u, persistence, risk i execution.
+Ten blok jest planowany po zamknięciu aktualnego fundamentu platformy oraz bloku **Trading Intelligence Hardening (TIH)** i **nie zmienia zamrożonych kontraktów architektury M0 ani numeracji Windows Stage 0–14**. Implementacja produkcyjna może rozpocząć się dopiero po zamknięciu Stage 10, zamknięciu TIH i potwierdzeniu stabilności runtime'u, updatera, lifecycle'u, persistence, risk i execution.
+
+Bezpośredni prerequisite:
+[`docs/roadmap/trading_intelligence_hardening.md`](trading_intelligence_hardening.md).
 
 ## Cel nadrzędny
 
@@ -44,6 +47,7 @@ Champion / Challenger / Retired
 6. Walidacja musi uwzględniać maker/taker fees, spread, slippage, latency oraz ograniczenia płynności.
 7. Każdy kandydat, test, awans, degradacja i odrzucenie muszą być audytowalne i reprodukowalne.
 8. Brak wystarczającego edge'u oznacza `ABSTAIN/REJECT`, a nie wymuszone znalezienie strategii.
+9. ASD korzysta z TIH Regime v2, Microstructure/Reversal Intelligence, Execution Optimizer, Anti-Overfitting Guard, Live Edge Decay Monitor i Dynamic Capital Allocation zamiast tworzyć ich równoległe odpowiedniki.
 
 ## Zakres funkcjonalny
 
@@ -79,7 +83,8 @@ Każdy kandydat przechodzi co najmniej:
 - testy na różnych reżimach rynku;
 - kontrolę look-ahead bias, leakage i survivorship bias;
 - kontrolę liczby prób / data snooping oraz korektę selection bias;
-- test minimalnej liczby transakcji i czasu obserwacji.
+- test minimalnej liczby transakcji i czasu obserwacji;
+- obowiązkowe przejście przez TIH Anti-Overfitting & Research Validation Guard.
 
 ### 4. Objective scoring
 
@@ -130,7 +135,9 @@ Canary Live musi posiadać:
 - limit liczby równoległych pozycji;
 - niezależny kill switch;
 - automatyczne zatrzymanie przy rozjeździe LIVE vs expected/paper;
-- minimalny okres i minimalną liczbę obserwacji przed promocją.
+- minimalny okres i minimalną liczbę obserwacji przed promocją;
+- aktywny TIH Live Edge Decay Monitor;
+- execution przez TIH Execution Optimizer/TCA v2, jeżeli strategia wymaga aktywnego execution optimization.
 
 ### 6. Champion / Challenger lifecycle
 
@@ -170,11 +177,17 @@ Blok ma wykorzystać istniejące komponenty zamiast je duplikować:
 - `bot_core.strategies` / Strategy Registry;
 - `bot_core.backtest` i walk-forward;
 - `bot_core.ai` / retraining / model artifacts;
-- `bot_core.market_intel.regime`;
+- `bot_core.market_intel.regime` oraz TIH Regime Intelligence v2;
+- TIH Market Microstructure & Reversal Intelligence;
 - `DecisionOrchestrator`;
 - `AutoTrader` / AI Governor;
+- contextual bandits / strategy advisors;
 - `bot_core.risk`;
 - `ExecutionLease` i execution layer;
+- TIH Execution Optimizer / TCA v2;
+- TIH Anti-Overfitting Guard;
+- TIH Live Edge Decay Monitor;
+- TIH Dynamic Capital Allocation v2;
 - paper trading;
 - decision journal / audit artifacts;
 - monitoring driftu i jakości danych.
@@ -202,7 +215,7 @@ Blok ma wykorzystać istniejące komponenty zamiast je duplikować:
 - automatyczny backtest;
 - WFO/OOS;
 - robustness, Monte Carlo i cost stress;
-- leakage/overfit guards;
+- TIH Anti-Overfitting Guard;
 - deterministic promotion report.
 
 ### ASD-4 — Shadow & Paper Promotion
@@ -218,7 +231,9 @@ Blok ma wykorzystać istniejące komponenty zamiast je duplikować:
 - niezależne limity canary;
 - rollback/degrade;
 - parity PAPER/LIVE;
-- incident evidence.
+- incident evidence;
+- TIH Edge Decay Monitor;
+- TIH Dynamic Capital Allocation v2.
 
 ### ASD-6 — Champion/Challenger Automation
 
@@ -233,6 +248,14 @@ Blok ma wykorzystać istniejące komponenty zamiast je duplikować:
 Blok nie powinien wejść do implementacji produkcyjnej przed spełnieniem wszystkich warunków:
 
 - Stage 10 zamknięty i zaakceptowany;
+- **Trading Intelligence Hardening zamknięty i zaakceptowany**;
+- TIH Regime Intelligence v2 gotowy;
+- TIH Microstructure/Reversal Intelligence gotowy w zakresie wymaganym przez generowane strategie;
+- TIH Execution Optimizer/TCA v2 gotowy;
+- TIH Anti-Overfitting & Research Validation Guard działa fail-closed;
+- TIH Live Edge Decay Monitor gotowy;
+- TIH Dynamic Capital Allocation v2 gotowy;
+- L2/Trades Replay gotowy dla klas strategii, które od mikrostruktury zależą;
 - stabilne PAPER/TESTNET/LIVE execution contracts;
 - działający i zweryfikowany Risk Engine + kill switch + ExecutionLease;
 - stabilny persistence/audit trail;
@@ -265,7 +288,11 @@ Stage 9 closure
     ↓
 Stage 10 closure / platform stabilization
     ↓
+Trading Intelligence Hardening
+    ↓
 Autonomous Strategy Discovery & Promotion
+    ↓
+Shadow / Paper / Canary Live
     ↓
 continuous self-improving strategy portfolio
 ```
