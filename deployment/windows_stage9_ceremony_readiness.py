@@ -20,7 +20,7 @@ from deployment.windows_stage9_production_ceremony import (
 ROOT = Path(__file__).resolve().parents[1]
 EXPECTED_MANIFEST = Path(__file__).with_name("stage9_expected_public_authorities.json")
 CURRENT_STATUS = Path(__file__).with_name("stage9_current_status.json")
-DEFAULT_AUTHORITY_DIRECTORY = Path(r"C:\CryptoHunter-Production-Authority")
+DEFAULT_AUTHORITY_DIRECTORY = Path(r"C:\CryptoHunter-Production-Authority\public")
 TOOL_VERSION = 1
 EVIDENCE_SCHEMA = "CryptoHunter.Stage9AuthorityPreflightEvidenceV1"
 
@@ -128,14 +128,51 @@ def public_authority_preflight(
     """Recompute public identities; this function never reads or accepts private material."""
     expected = _load(manifest_path)
     validate_expected_manifest(expected)
+    return _verify_public_authorities(
+        root_bundle=_load(authority_directory / "product_root_anchor_bundle.json"),
+        pdsa_bundle=_load(authority_directory / "pdsa_public_bundle.json"),
+        recovery_bundle=_load(authority_directory / "recovery_public_bundle.json"),
+        expected=expected,
+        revision=revision,
+        timestamp=timestamp,
+    )
+
+
+def final_package_public_preflight(
+    final_package_directory: Path,
+    *,
+    manifest_path: Path = EXPECTED_MANIFEST,
+    revision: str,
+    timestamp: str | None = None,
+) -> dict[str, Any]:
+    """Verify the historical public-authority filenames in a final ceremony package."""
+    expected = _load(manifest_path)
+    validate_expected_manifest(expected)
+    return _verify_public_authorities(
+        root_bundle=_load(final_package_directory / "root_anchor_bundle.json"),
+        pdsa_bundle=_load(final_package_directory / "pdsa_public_bundle.json"),
+        recovery_bundle=_load(final_package_directory / "recovery_public_bundle.json"),
+        expected=expected,
+        revision=revision,
+        timestamp=timestamp,
+    )
+
+
+def _verify_public_authorities(
+    *,
+    root_bundle: Mapping[str, Any],
+    pdsa_bundle: Mapping[str, Any],
+    recovery_bundle: Mapping[str, Any],
+    expected: Mapping[str, Any],
+    revision: str,
+    timestamp: str | None,
+) -> dict[str, Any]:
+    """Apply the shared production profiles and expected authority identities."""
     try:
-        root = verify_root_anchor_bundle(_load(authority_directory / "root_anchor_bundle.json"))
-        pdsa = verify_pdsa_public_bundle(
-            _load(authority_directory / "pdsa_public_bundle.json"), expected_purpose="PRODUCTION"
-        )
+        root = verify_root_anchor_bundle(root_bundle)
+        pdsa = verify_pdsa_public_bundle(pdsa_bundle, expected_purpose="PRODUCTION")
         recovery = verify_recovery_public_bundle(
-            _load(authority_directory / "recovery_public_bundle.json"),
-            expected_purpose="PRODUCTION",
+            recovery_bundle, expected_purpose="PRODUCTION"
         )
     except (PolicyVectorError, KeyError, TypeError, ValueError) as exc:
         raise ReadinessError(f"INVALID_PUBLIC_AUTHORITY:{exc}") from exc
@@ -313,16 +350,56 @@ def ceremony_entry_gate(
     return sorted(set(reasons))
 
 
+def final_package_public_preflight_gate(
+    *,
+    repo: Path,
+    reviewed_revision: str,
+    final_package_directory: Path,
+    manifest_path: Path | None = None,
+) -> list[str]:
+    """Bind final-package authority validation to the canonical reviewed manifest."""
+    reasons = []
+    canonical_manifest = repo / "deployment/stage9_expected_public_authorities.json"
+    if manifest_path is not None and manifest_path.resolve() != canonical_manifest.resolve():
+        reasons.append("NONCANONICAL_MANIFEST_PATH")
+    head = _git(repo, "rev-parse", "HEAD")
+    if head != reviewed_revision:
+        reasons.append("REVISION_MISMATCH")
+    if _git(repo, "status", "--porcelain"):
+        reasons.append("WORKTREE_NOT_CLEAN")
+    manifest_binding = _revision_bound_file(
+        repo,
+        reviewed_revision,
+        "deployment/stage9_expected_public_authorities.json",
+        "MANIFEST_REVISION_BINDING_FAILED",
+    )
+    reasons.extend(manifest_binding)
+    if not manifest_binding and "NONCANONICAL_MANIFEST_PATH" not in reasons:
+        try:
+            final_package_public_preflight(
+                final_package_directory,
+                manifest_path=canonical_manifest,
+                revision=head,
+            )
+        except ReadinessError as exc:
+            reasons.append(str(exc))
+    return sorted(set(reasons))
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
     preflight = sub.add_parser("public-preflight")
+    final_preflight = sub.add_parser("final-package-public-preflight")
     gate = sub.add_parser("entry-gate")
     for command in (preflight, gate):
         command.add_argument("--authority-dir", type=Path, default=DEFAULT_AUTHORITY_DIRECTORY)
+    for command in (preflight, final_preflight, gate):
         command.add_argument("--reviewed-revision", required=True)
     preflight.add_argument("--expected-manifest", type=Path, default=EXPECTED_MANIFEST)
     preflight.add_argument("--evidence-output", type=Path)
+    final_preflight.add_argument("--final-package-dir", type=Path, required=True)
+    final_preflight.add_argument("--repo", type=Path, default=ROOT)
     gate.add_argument("--repo", type=Path, default=ROOT)
     gate.add_argument("--expected-manifest", type=Path)
     gate.add_argument("--status", type=Path)
@@ -338,6 +415,22 @@ def main(argv: Sequence[str] | None = None) -> int:
                 if args.evidence_output.exists():
                     raise ReadinessError("EVIDENCE_REFUSES_OVERWRITE")
                 args.evidence_output.write_bytes(canonical_json_bytes(evidence) + b"\n")
+            print(json.dumps(evidence, sort_keys=True))
+            return 0
+        if args.command == "final-package-public-preflight":
+            reasons = final_package_public_preflight_gate(
+                repo=args.repo,
+                reviewed_revision=args.reviewed_revision,
+                final_package_directory=args.final_package_dir,
+            )
+            if reasons:
+                print("BLOCKED " + " ".join(reasons))
+                return 1
+            evidence = final_package_public_preflight(
+                args.final_package_dir,
+                manifest_path=args.repo / "deployment/stage9_expected_public_authorities.json",
+                revision=args.reviewed_revision,
+            )
             print(json.dumps(evidence, sort_keys=True))
             return 0
         reasons = ceremony_entry_gate(
