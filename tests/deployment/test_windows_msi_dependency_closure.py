@@ -126,6 +126,29 @@ def test_packaged_smoke_is_read_only_and_fail_closed(
     assert build_smoke_requested(["install"]) is False
 
 
+def test_packaged_smoke_failure_preserves_bounded_stderr(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    executable = tmp_path / "CryptoHunterBackend.exe"
+    executable.write_bytes(b"exe")
+    stderr = "discarded-prefix:" + ("x" * 4096) + "diagnostic-tail"
+    monkeypatch.setattr(
+        "deployment.windows_installer.build.subprocess.run",
+        lambda *args, **kwargs: SimpleNamespace(
+            returncode=1, stdout="smoke stdout", stderr=stderr
+        ),
+    )
+
+    with pytest.raises(InstallerBuildError) as failure:
+        smoke_executable(executable)
+
+    message = str(failure.value)
+    assert "CryptoHunterBackend.exe (exit=1)" in message
+    assert "stdout='smoke stdout'" in message
+    assert "diagnostic-tail" in message
+    assert "discarded-prefix" not in message
+
+
 def test_builder_smokes_all_four_packaged_executables(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -136,8 +159,10 @@ def test_builder_smokes_all_four_packaged_executables(
     openblas.parent.mkdir()
     openblas.write_bytes(b"dll")
     smoked: list[str] = []
+    pyinstaller_commands: list[list[str]] = []
 
     def run(command: list[str], **kwargs: object) -> SimpleNamespace:
+        pyinstaller_commands.append(command)
         name = command[command.index("--name") + 1]
         warning = work / name / name / f"warn-{name}.txt"
         warning.parent.mkdir(parents=True)
@@ -160,4 +185,12 @@ def test_builder_smokes_all_four_packaged_executables(
         lambda path: smoked.append(path.name),
     )
     build_executables(payload, work)
+    assert len(pyinstaller_commands) == len(ENTRYPOINTS) == 4
+    for command in pyinstaller_commands:
+        hidden_imports = [
+            command[index + 1]
+            for index, argument in enumerate(command)
+            if argument == "--hidden-import"
+        ]
+        assert hidden_imports == list(REQUIRED_WIN32_MODULES)
     assert smoked == [f"{name}.exe" for name in ENTRYPOINTS]

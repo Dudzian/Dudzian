@@ -22,6 +22,7 @@ from .dependency_contract import REQUIRED_WIN32_MODULES
 
 WIX_EULA_ACCEPTANCE = "PER_INVOCATION"
 WIX_EULA_ACCEPTANCE_FLAG = "-acceptEula wix7"
+SMOKE_OUTPUT_LIMIT = 4096
 
 
 class InstallerBuildError(RuntimeError):
@@ -187,9 +188,11 @@ def smoke_executable(executable: Path) -> None:
         [str(executable), "--build-smoke"], capture_output=True, text=True, timeout=60
     )
     if result.returncode != 0 or "BUILD_SMOKE = PASS" not in result.stdout:
+        stdout = result.stdout[-SMOKE_OUTPUT_LIMIT:]
+        stderr = result.stderr[-SMOKE_OUTPUT_LIMIT:]
         raise InstallerBuildError(
             f"packaged executable smoke failed: {executable.name} "
-            f"(exit={result.returncode})"
+            f"(exit={result.returncode}); stdout={stdout!r}; stderr={stderr!r}"
         )
 
 
@@ -201,6 +204,11 @@ def build_executables(payload: Path, work: Path) -> list[Path]:
     print("WIN32_IMPORT_PREFLIGHT = PASS", flush=True)
     print(f"NUMPY_OPENBLAS = {openblas.name}", flush=True)
     for name, script in ENTRYPOINTS.items():
+        hidden_import_args = [
+            argument
+            for module in REQUIRED_WIN32_MODULES
+            for argument in ("--hidden-import", module)
+        ]
         subprocess.run(
             [
                 sys.executable,
@@ -217,8 +225,7 @@ def build_executables(payload: Path, work: Path) -> list[Path]:
                 str(work / name),
                 "--specpath",
                 str(work),
-                "--hidden-import",
-                "win32timezone",
+                *hidden_import_args,
                 "--add-binary",
                 f"{openblas}{os.pathsep}numpy.libs",
                 str(source_root / script),
