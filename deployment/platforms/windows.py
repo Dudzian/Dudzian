@@ -11,6 +11,7 @@ SERVICE_NAME = "CryptoHunterBackend"
 # Virtual service account: distinct from an interactive user and not LocalSystem.
 SERVICE_IDENTITY = rf"NT SERVICE\{SERVICE_NAME}"
 IPC_NAME = rf"\\.\pipe\{SERVICE_NAME}\freshness-v1"
+PRODUCTION_TRUST_DIRECTORY_NAME = "ProductionTrust"
 
 
 class WindowsDeploymentNotQualified(RuntimeError):
@@ -20,13 +21,19 @@ class WindowsDeploymentNotQualified(RuntimeError):
 def resolve_paths(environment: dict[str, str] | None = None) -> DeploymentPaths:
     """Resolve Windows-native roots; fail rather than inventing drive paths."""
     if os.name != "nt":
-        raise WindowsDeploymentNotQualified("native Windows paths require a real Windows host")
+        raise WindowsDeploymentNotQualified(
+            "native Windows paths require a real Windows host"
+        )
     values = os.environ if environment is None else environment
     required = ("ProgramFiles", "ProgramData", "LOCALAPPDATA")
     missing = [name for name in required if not values.get(name)]
     if missing:
-        raise WindowsDeploymentNotQualified(f"missing Windows known-folder environment: {missing}")
-    invalid = [name for name in required if not PureWindowsPath(values[name]).is_absolute()]
+        raise WindowsDeploymentNotQualified(
+            f"missing Windows known-folder environment: {missing}"
+        )
+    invalid = [
+        name for name in required if not PureWindowsPath(values[name]).is_absolute()
+    ]
     if invalid:
         raise WindowsDeploymentNotQualified(
             f"Windows known-folder paths must be fully qualified: {invalid}"
@@ -41,6 +48,17 @@ def resolve_paths(environment: dict[str, str] | None = None) -> DeploymentPaths:
         runtime=machine / "Runtime",
         update_staging=machine / "Updates",
         gui_user_state=Path(values["LOCALAPPDATA"]) / "CryptoHunter",
+    )
+
+
+def production_trust_package_path(
+    ceremony_id: str, environment: dict[str, str] | None = None
+) -> Path:
+    """Canonical installer-owned, runtime-read-only public trust package location."""
+    return (
+        resolve_paths(environment).configuration
+        / PRODUCTION_TRUST_DIRECTORY_NAME
+        / ceremony_id
     )
 
 
@@ -62,12 +80,16 @@ def static_path_layout(
 
 def qualify_acl(service_sid: str | None = None) -> dict[str, str]:
     """Invoke only the read-only native Windows DACL boundary."""
-    from deployment.windows_dacl_qualification import qualify_acl as read_only_qualify_acl
+    from deployment.windows_dacl_qualification import (
+        qualify_acl as read_only_qualify_acl,
+    )
 
     return read_only_qualify_acl(service_sid)
 
 
-def qualify_local_principal_authentication(scratch_parent: Path | None = None) -> dict[str, str]:
+def qualify_local_principal_authentication(
+    scratch_parent: Path | None = None,
+) -> dict[str, str]:
     """Delegate to the reviewed live mTLS qualification; never repair production state."""
     if scratch_parent is None:
         raise WindowsDeploymentNotQualified(

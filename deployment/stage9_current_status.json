@@ -14,10 +14,10 @@
   "a_01_dependency_release_security": "PASS",
   "a_02_external_provisioning": "PASS",
   "production_root_material": "PROVISIONED_LOCALLY",
-  "production_ceremony": "NOT_STARTED",
+  "production_ceremony": "COMPLETE",
   "production_provisioning_ready": false,
   "windows_production_ready": "NOT_READY",
   "stage_10_implementation": "EXISTS",
   "stage_10_production_lifecycle_live": "NOT_STARTED",
-  "stage_10_prerequisite": "BLOCKED_UNTIL_CEREMONY_AND_LEGAL_ENROLLMENT"
+  "stage_10_prerequisite": "BLOCKED_UNTIL_LEGAL_ENROLLMENT"
 }

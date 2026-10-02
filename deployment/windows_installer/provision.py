@@ -571,6 +571,8 @@ def install(
     program_files: Path,
     program_data: Path,
     set_stage: Callable[[str], None] = _ignore_stage,
+    *,
+    production_trust_source: Path | None = None,
 ) -> None:
     """Install machine-scoped resources without creating product authority."""
     set_stage("CREATE_JOURNAL")
@@ -640,6 +642,16 @@ def install(
     _protect(program_data / "PostgreSQL", pg_grants, inherit=True)
     _protect(data, pg_grants, inherit=True)
     _qualify_protected(data, pg_grants, inherit=True)
+    if production_trust_source is not None:
+        from deployment.windows_stage9_production_trust import (
+            CEREMONY_ID,
+            install_public_production_trust,
+        )
+        set_stage("INSTALL_PUBLIC_PRODUCTION_TRUST")
+        install_public_production_trust(
+            production_trust_source,
+            program_data / "Config" / "ProductionTrust" / CEREMONY_ID,
+        )
     _pki(program_data / "Security", sids, set_stage)
     ca_public = {**base, **{sid: FILE_GENERIC_READ for sid in security_readers}}
     _protect(program_data / "Security" / "ca.crt", ca_public, inherit=False)

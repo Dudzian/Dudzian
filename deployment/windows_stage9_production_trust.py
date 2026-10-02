@@ -1,0 +1,205 @@
+"""Canonical product-side activation of the public Stage-9 production trust package."""
+
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import tempfile
+from datetime import datetime, timezone
+from pathlib import Path
+from types import MappingProxyType
+from typing import Mapping
+
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+from deployment.windows_stage9_policy_material import (
+    PolicyVectorError,
+    canonical_json_bytes,
+)
+from deployment.windows_stage9_production_ceremony import verify_final_package
+
+CEREMONY_ID = "390299aaa1ea928a6c2bfdd81a4c50cfde82a7744cd054e8628d5937b90f1699"
+RELEASE_PAYLOAD_DIGEST = (
+    "7ade98f8f1d3573b243556b6404d119a40429f6e1d738ebbab6698d64293c5a9"
+)
+ROOT_KEY_SET_DIGEST = "d0e2ff6672da5979688433fe5f9cac9bee0844baa1a307b52b36c0e37e6a5e7a"
+PDSA_KEY_SET_DIGEST = "3203b496f67d571787e59bb74d62f69fc1bda9debda74cab3294b546f5884c14"
+RECOVERY_PUBLIC_DIGEST = (
+    "06e957b575380ee019ee311d9f149c8b888a2f3b4fa1ae7e4168bc3dfe2584b7"
+)
+
+
+class ProductionTrustUnavailable(RuntimeError):
+    """The installed public package is absent or does not match frozen production trust."""
+
+
+class ProductionTrustContext:
+    """Opaque immutable projection produced only after full final-package verification."""
+
+    __slots__ = (
+        "ceremony_id",
+        "release_payload_digest",
+        "release_version",
+        "pdsa_keys",
+        "_capability",
+    )
+
+    def __init__(self, token: object, **values: object) -> None:
+        if token is not _CONTEXT_TOKEN:
+            raise TypeError(
+                "ProductionTrustContext comes only from load_production_trust"
+            )
+        for name, value in values.items():
+            object.__setattr__(self, name, value)
+        object.__setattr__(self, "_capability", _CONTEXT_CAPABILITY)
+
+    def __setattr__(self, name: str, value: object) -> None:
+        raise TypeError("ProductionTrustContext is immutable")
+
+
+_CONTEXT_TOKEN = object()
+_CONTEXT_CAPABILITY = object()
+
+
+def require_verified_production_trust_context(
+    context: object,
+) -> ProductionTrustContext:
+    """Require the complete immutable capability minted by the canonical loader."""
+    if not isinstance(context, ProductionTrustContext):
+        raise ProductionTrustUnavailable("VERIFIED_PRODUCTION_TRUST_CONTEXT_REQUIRED")
+    try:
+        valid = (
+            context._capability is _CONTEXT_CAPABILITY
+            and context.ceremony_id == CEREMONY_ID
+            and context.release_payload_digest == RELEASE_PAYLOAD_DIGEST
+            and type(context.release_version) is int
+            and context.release_version >= 1
+            and isinstance(context.pdsa_keys, MappingProxyType)
+            and len(context.pdsa_keys) == 3
+            and all(
+                isinstance(key, Ed25519PublicKey) for key in context.pdsa_keys.values()
+            )
+        )
+    except (AttributeError, TypeError):
+        valid = False
+    if not valid:
+        raise ProductionTrustUnavailable("VERIFIED_PRODUCTION_TRUST_CONTEXT_REQUIRED")
+    return context
+
+
+def _canonical_document(path: Path) -> dict:
+    raw = path.read_bytes()
+    if not raw.endswith(b"\n"):
+        raise PolicyVectorError("final package artifact lacks canonical newline")
+    value = json.loads(raw)
+    if raw != canonical_json_bytes(value) + b"\n":
+        raise PolicyVectorError("final package artifact is noncanonical")
+    return value
+
+
+def verify_production_trust_for_audit(
+    path: Path, *, verification_time: datetime
+) -> ProductionTrustContext:
+    """Audit/test API with an explicit historical verification instant."""
+    try:
+        for artifact in path.glob("*.json"):
+            _canonical_document(artifact)
+        ceremony = verify_final_package(path, verification_time=verification_time)
+        release = ceremony.verified_release
+        pdsa = _canonical_document(path / "pdsa_public_bundle.json")
+        freeze = _canonical_document(path / "freeze_manifest.json")
+        bindings = (
+            ceremony.ceremony_id,
+            release.payload_digest,
+            release.pinned_root.key_set_digest,
+            release.pdsa_key_set_digest,
+            release.recovery_public_digest,
+            release.purpose,
+            release.pinned_root.environment,
+            release.pdsa_threshold,
+            freeze.get("status"),
+        )
+        expected = (
+            CEREMONY_ID,
+            RELEASE_PAYLOAD_DIGEST,
+            ROOT_KEY_SET_DIGEST,
+            PDSA_KEY_SET_DIGEST,
+            RECOVERY_PUBLIC_DIGEST,
+            "PRODUCTION",
+            "PRODUCTION",
+            2,
+            "PRODUCTION_ROOT_OF_TRUST_FROZEN",
+        )
+        if bindings != expected or pdsa.get("threshold") != 2:
+            raise PolicyVectorError(
+                "final package does not match frozen production authority"
+            )
+        keys = {
+            item["key_id"]: Ed25519PublicKey.from_public_bytes(
+                bytes.fromhex(item["public_key_hex"])
+            )
+            for item in pdsa["keys"]
+        }
+        if tuple(keys) != tuple(release.pdsa_keys) or len(keys) != 3:
+            raise PolicyVectorError("PDSA projection differs from signed release")
+        return ProductionTrustContext(
+            _CONTEXT_TOKEN,
+            ceremony_id=ceremony.ceremony_id,
+            release_payload_digest=release.payload_digest,
+            release_version=release.release_version,
+            pdsa_keys=MappingProxyType(keys),
+        )
+    except (OSError, ValueError, KeyError, TypeError, PolicyVectorError) as exc:
+        raise ProductionTrustUnavailable(
+            f"PRODUCTION_TRUST_UNAVAILABLE: {exc}"
+        ) from exc
+
+
+def load_production_trust(path: Path) -> ProductionTrustContext:
+    """Runtime API: verify production trust only at the current UTC instant."""
+    return verify_production_trust_for_audit(
+        path, verification_time=datetime.now(timezone.utc)
+    )
+
+
+def install_public_production_trust(source: Path, destination: Path) -> Path:
+    """Verify, stage, byte-qualify and atomically publish the public package once."""
+    if destination.exists():
+        raise ProductionTrustUnavailable("PRODUCTION_TRUST_OVERWRITE_FORBIDDEN")
+    context = load_production_trust(source)
+    required = {item.name for item in source.glob("*.json")}
+    if len(required) != 12 or any(
+        marker in name.lower()
+        for name in required
+        for marker in ("pem", "private", "password", "seed")
+    ):
+        raise ProductionTrustUnavailable("PUBLIC_FINAL_PACKAGE_ALLOWLIST_VIOLATION")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    staging_root = Path(
+        tempfile.mkdtemp(prefix=".production-trust-", dir=destination.parent)
+    )
+    staging = staging_root / CEREMONY_ID
+    staging.mkdir()
+    try:
+        for name in required:
+            raw = (source / name).read_bytes()
+            if any(
+                marker in raw.lower()
+                for marker in (b"private key", b"password", b"seed")
+            ):
+                raise ProductionTrustUnavailable("PRIVATE_MATERIAL_IN_PUBLIC_PACKAGE")
+            (staging / name).write_bytes(raw)
+            if (staging / name).read_bytes() != raw:
+                raise ProductionTrustUnavailable("PRODUCTION_TRUST_COPY_MISMATCH")
+        staged = verify_production_trust_for_audit(
+            staging, verification_time=datetime.now(timezone.utc)
+        )
+        if staged.ceremony_id != context.ceremony_id:
+            raise ProductionTrustUnavailable("PRODUCTION_TRUST_COPY_MISMATCH")
+        os.rename(staging, destination)
+        staging_root.rmdir()
+    except Exception:
+        shutil.rmtree(staging_root, ignore_errors=True)
+        raise
+    return destination

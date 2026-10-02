@@ -42,9 +42,19 @@ from deployment.windows_stage9_root_of_trust_freeze import (
     build_frozen_manifest,
     verify_freeze_manifest,
 )
+from deployment.windows_stage9_production_trust import (
+    ProductionTrustUnavailable,
+    verify_production_trust_for_audit,
+)
 
-FIXTURE = Path(__file__).resolve().parents[1] / "fixtures/windows_stage9_policy_vector_v1.json"
-MODULE = Path(__file__).resolve().parents[2] / "deployment/windows_stage9_production_ceremony.py"
+FIXTURE = (
+    Path(__file__).resolve().parents[1]
+    / "fixtures/windows_stage9_policy_vector_v1.json"
+)
+MODULE = (
+    Path(__file__).resolve().parents[2]
+    / "deployment/windows_stage9_production_ceremony.py"
+)
 NOW = datetime(2026, 6, 1, tzinfo=timezone.utc)
 
 
@@ -81,10 +91,14 @@ def _signature(request, signer_id, private):
         "artifact_type": request["artifact_type"],
         "payload_digest": request["payload_digest"],
         "signer_id": signer_id,
-        "signature_profile": RELEASE_SIGNATURE_PROFILE
-        if request["artifact_type"] == "RELEASE_POLICY"
-        else REVOCATION_SIGNATURE_PROFILE,
-        "signature_hex": private.sign(bytes.fromhex(request["message_to_sign_hex"])).hex(),
+        "signature_profile": (
+            RELEASE_SIGNATURE_PROFILE
+            if request["artifact_type"] == "RELEASE_POLICY"
+            else REVOCATION_SIGNATURE_PROFILE
+        ),
+        "signature_hex": private.sign(
+            bytes.fromhex(request["message_to_sign_hex"])
+        ).hex(),
     }
 
 
@@ -95,7 +109,9 @@ def ceremony_material():
     root_bundle, pinned = build_root_anchor_bundle(
         _records(roots), purpose="TEST_ONLY", environment="UNIT_TEST_ONLY"
     )
-    pdsa_bundle = build_pdsa_public_bundle(_records(pdsa), threshold=2, purpose="TEST_ONLY")
+    pdsa_bundle = build_pdsa_public_bundle(
+        _records(pdsa), threshold=2, purpose="TEST_ONLY"
+    )
     recovery = build_recovery_public_bundle(
         key_id="TEST_K_RECOVERY",
         tpmt_public_hex=fixture["k_recovery"]["public_hex"],
@@ -122,10 +138,14 @@ def ceremony_material():
 def test_complete_test_only_offline_style_ceremony(ceremony_material, tmp_path):
     roots, root_bundle, pinned, pdsa, recovery, payload, context = ceremony_material
     release_request = build_signing_request(
-        artifact_type="RELEASE_POLICY", payload=payload, pinned_root=pinned, context=context
+        artifact_type="RELEASE_POLICY",
+        payload=payload,
+        pinned_root=pinned,
+        context=context,
     )
     release_signatures = [
-        _signature(release_request, name, roots[name][0]) for name in ("root-1", "root-2")
+        _signature(release_request, name, roots[name][0])
+        for name in ("root-1", "root-2")
     ]
     signed_release = assemble_signed_artifact(
         request=release_request,
@@ -134,7 +154,9 @@ def test_complete_test_only_offline_style_ceremony(ceremony_material, tmp_path):
         pinned_root=pinned,
         context=context,
     )
-    revocation_payload = build_initial_revocation_payload(effective_at="2026-01-01T00:00:00Z")
+    revocation_payload = build_initial_revocation_payload(
+        effective_at="2026-01-01T00:00:00Z"
+    )
     revocation_request = build_signing_request(
         artifact_type="INITIAL_REVOCATION",
         payload=revocation_payload,
@@ -142,7 +164,8 @@ def test_complete_test_only_offline_style_ceremony(ceremony_material, tmp_path):
         context=context,
     )
     revocation_signatures = [
-        _signature(revocation_request, name, roots[name][0]) for name in ("root-1", "root-2")
+        _signature(revocation_request, name, roots[name][0])
+        for name in ("root-1", "root-2")
     ]
     signed_revocation = assemble_signed_artifact(
         request=revocation_request,
@@ -159,7 +182,9 @@ def test_complete_test_only_offline_style_ceremony(ceremony_material, tmp_path):
         root_bundle=root_bundle,
         verification_time=NOW,
     )
-    manifest = build_frozen_manifest(verified.verified_release, artifact_source_revision="a" * 40)
+    manifest = build_frozen_manifest(
+        verified.verified_release, artifact_source_revision="a" * 40
+    )
     verify_freeze_manifest(manifest, verified_release=verified.verified_release)
     audit = build_audit_transcript(
         ceremony=verified,
@@ -268,17 +293,29 @@ def test_complete_test_only_offline_style_ceremony(ceremony_material, tmp_path):
         manifest=manifest,
         audit=audit,
     )
-    assert manifest["status"] == audit["final_status"] == "TEST_ONLY_ROOT_OF_TRUST_FROZEN"
+    assert (
+        manifest["status"] == audit["final_status"] == "TEST_ONLY_ROOT_OF_TRUST_FROZEN"
+    )
     assert final.is_dir()
-    assert verify_final_package(final, verification_time=NOW).ceremony_id == context.ceremony_id
+    assert (
+        verify_final_package(final, verification_time=NOW).ceremony_id
+        == context.ceremony_id
+    )
+    with pytest.raises(ProductionTrustUnavailable, match="frozen production authority"):
+        verify_production_trust_for_audit(final, verification_time=NOW)
     assert (final / "package_manifest.json").is_file()
-    assert json.loads((final / "ceremony_audit.json").read_text())["source_revision"] == "a" * 40
+    assert (
+        json.loads((final / "ceremony_audit.json").read_text())["source_revision"]
+        == "a" * 40
+    )
     broken = tmp_path / context.ceremony_id
     shutil.copytree(final, broken)
     altered = json.loads((broken / "unsigned_release_policy.json").read_text())
     altered["release_policy_id"] = "TAMPERED"
     (broken / "unsigned_release_policy.json").write_text(json.dumps(altered))
-    with pytest.raises(PolicyVectorError, match="payload copy mismatch|digest mismatch"):
+    with pytest.raises(
+        PolicyVectorError, match="payload copy mismatch|digest mismatch"
+    ):
         verify_final_package(broken, verification_time=NOW)
     digest_broken = tmp_path / "digest-broken" / context.ceremony_id
     shutil.copytree(final, digest_broken)
@@ -309,21 +346,85 @@ def test_complete_test_only_offline_style_ceremony(ceremony_material, tmp_path):
         )
 
 
+def test_production_trust_loader_fails_closed_when_package_is_missing(tmp_path):
+    with pytest.raises(
+        ProductionTrustUnavailable, match="PRODUCTION_TRUST_UNAVAILABLE"
+    ):
+        verify_production_trust_for_audit(tmp_path / "missing", verification_time=NOW)
+
+
+def test_runtime_trust_loader_uses_current_utc_not_caller_time(tmp_path, monkeypatch):
+    import deployment.windows_stage9_production_trust as trust
+
+    observed = {}
+
+    def capture(path, *, verification_time):
+        observed["path"] = path
+        observed["time"] = verification_time
+        return object()
+
+    monkeypatch.setattr(trust, "verify_production_trust_for_audit", capture)
+    before = datetime.now(timezone.utc)
+    trust.load_production_trust(tmp_path)
+    after = datetime.now(timezone.utc)
+    assert observed["path"] == tmp_path
+    assert before <= observed["time"] <= after
+
+
+def test_public_trust_installer_copies_atomically_and_refuses_overwrite(
+    tmp_path, monkeypatch
+):
+    from types import SimpleNamespace
+    import deployment.windows_stage9_production_trust as trust
+
+    source = tmp_path / "source"
+    source.mkdir()
+    for number in range(12):
+        (source / f"artifact-{number}.json").write_text(
+            '{"public":"value"}\n', encoding="utf-8"
+        )
+    verified = SimpleNamespace(ceremony_id=trust.CEREMONY_ID)
+    monkeypatch.setattr(trust, "load_production_trust", lambda path: verified)
+    monkeypatch.setattr(
+        trust,
+        "verify_production_trust_for_audit",
+        lambda path, verification_time: verified,
+    )
+    destination = tmp_path / "Config" / "ProductionTrust" / trust.CEREMONY_ID
+    assert trust.install_public_production_trust(source, destination) == destination
+    assert {item.name: item.read_bytes() for item in destination.iterdir()} == {
+        item.name: item.read_bytes() for item in source.iterdir()
+    }
+    assert not list(destination.parent.glob(".production-trust-*"))
+    with pytest.raises(trust.ProductionTrustUnavailable, match="OVERWRITE_FORBIDDEN"):
+        trust.install_public_production_trust(source, destination)
+
+
 def test_signature_import_failures(ceremony_material):
     roots, _, pinned, _, _, payload, context = ceremony_material
     request = build_signing_request(
-        artifact_type="RELEASE_POLICY", payload=payload, pinned_root=pinned, context=context
+        artifact_type="RELEASE_POLICY",
+        payload=payload,
+        pinned_root=pinned,
+        context=context,
     )
     arbitrary = replace(context, ceremony_id="0" * 64)
     with pytest.raises(PolicyVectorError, match="context invariant"):
         build_signing_request(
-            artifact_type="RELEASE_POLICY", payload=payload, pinned_root=pinned, context=arbitrary
+            artifact_type="RELEASE_POLICY",
+            payload=payload,
+            pinned_root=pinned,
+            context=arbitrary,
         )
     mismatched = deepcopy(request)
     mismatched["ceremony_id"] = "0" * 64
     with pytest.raises(PolicyVectorError, match="request invariant"):
         assemble_signed_artifact(
-            request=mismatched, payload=payload, signatures=[], pinned_root=pinned, context=context
+            request=mismatched,
+            payload=payload,
+            signatures=[],
+            pinned_root=pinned,
+            context=context,
         )
     good = _signature(request, "root-1", roots["root-1"][0])
     with pytest.raises(PolicyVectorError, match="insufficient"):
@@ -348,7 +449,11 @@ def test_signature_import_failures(ceremony_material):
     changed["release_policy_id"] = "ANOTHER"
     with pytest.raises(PolicyVectorError, match="invariant"):
         assemble_signed_artifact(
-            request=request, payload=changed, signatures=[], pinned_root=pinned, context=context
+            request=request,
+            payload=changed,
+            signatures=[],
+            pinned_root=pinned,
+            context=context,
         )
 
 
@@ -378,24 +483,34 @@ def test_public_bundle_tampering_and_genesis_contract(ceremony_material):
     )
 
 
-def test_release_and_revocation_from_different_ceremonies_are_rejected(ceremony_material):
+def test_release_and_revocation_from_different_ceremonies_are_rejected(
+    ceremony_material,
+):
     roots, root_bundle, pinned, _, _, payload, context_a = ceremony_material
     release_request = build_signing_request(
-        artifact_type="RELEASE_POLICY", payload=payload, pinned_root=pinned, context=context_a
+        artifact_type="RELEASE_POLICY",
+        payload=payload,
+        pinned_root=pinned,
+        context=context_a,
     )
     signed_release = assemble_signed_artifact(
         request=release_request,
         payload=payload,
         signatures=[
-            _signature(release_request, signer, roots[signer][0]) for signer in ("root-1", "root-2")
+            _signature(release_request, signer, roots[signer][0])
+            for signer in ("root-1", "root-2")
         ],
         pinned_root=pinned,
         context=context_a,
     )
     other_release = deepcopy(payload)
     other_release["release_policy_id"] = "OTHER_VALID_CEREMONY"
-    context_b = build_ceremony_context(pinned_root=pinned, release_payload=other_release)
-    revocation_payload = build_initial_revocation_payload(effective_at="2026-01-01T00:00:00Z")
+    context_b = build_ceremony_context(
+        pinned_root=pinned, release_payload=other_release
+    )
+    revocation_payload = build_initial_revocation_payload(
+        effective_at="2026-01-01T00:00:00Z"
+    )
     revocation_request = build_signing_request(
         artifact_type="INITIAL_REVOCATION",
         payload=revocation_payload,
@@ -426,7 +541,10 @@ def test_release_and_revocation_from_different_ceremonies_are_rejected(ceremony_
 def test_partial_ceremony_never_publishes_final(ceremony_material, tmp_path):
     roots, _, pinned, _, _, payload, context = ceremony_material
     request = build_signing_request(
-        artifact_type="RELEASE_POLICY", payload=payload, pinned_root=pinned, context=context
+        artifact_type="RELEASE_POLICY",
+        payload=payload,
+        pinned_root=pinned,
+        context=context,
     )
     with pytest.raises(PolicyVectorError):
         assemble_signed_artifact(
@@ -441,9 +559,16 @@ def test_partial_ceremony_never_publishes_final(ceremony_material, tmp_path):
 
 def test_production_module_has_no_private_key_operations():
     tree = ast.parse(MODULE.read_text(encoding="utf-8"))
-    forbidden = {"Ed25519PrivateKey", "from_private_bytes", "private_bytes", "generate_private_key"}
+    forbidden = {
+        "Ed25519PrivateKey",
+        "from_private_bytes",
+        "private_bytes",
+        "generate_private_key",
+    }
     names = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
-    attributes = {node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)}
+    attributes = {
+        node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)
+    }
     imports = {
         alias.name.rsplit(".", 1)[-1]
         for node in ast.walk(tree)

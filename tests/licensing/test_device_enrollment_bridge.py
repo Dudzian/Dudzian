@@ -18,7 +18,10 @@ from bot_core.licensing.device_enrollment import (
     verify_activation_request_bundle,
 )
 
-FIXTURE = Path(__file__).resolve().parents[1] / "fixtures/windows_stage9_policy_vector_v1.json"
+FIXTURE = (
+    Path(__file__).resolve().parents[1]
+    / "fixtures/windows_stage9_policy_vector_v1.json"
+)
 
 
 def material():
@@ -79,10 +82,14 @@ def test_tampered_evidence_and_caller_key_overrides_are_rejected(field):
         changed[field]["name"] = "000b" + "00" * 32
     else:
         changed[field]["public_digest"] = "00" * 32
-    changed["evidence_id"] = digest({k: v for k, v in changed.items() if k != "evidence_id"})
+    changed["evidence_id"] = digest(
+        {k: v for k, v in changed.items() if k != "evidence_id"}
+    )
     with pytest.raises(ValueError):
         verify_activation_request_bundle(
-            request.canonical_bytes, canonical_json_bytes(changed), allowed_release=release
+            request.canonical_bytes,
+            canonical_json_bytes(changed),
+            allowed_release=release,
         )
     with pytest.raises(TypeError):
         build_activation_request(
@@ -113,8 +120,12 @@ def test_wrong_returned_name_and_public_area_mismatch_stop_before_request():
             evidence_profile="x",
             substrate_profile="x",
         )
-    value["k_psa"]["public_area"]["hex"] = value["k_psa"]["public_area"]["hex"][:-2] + "00"
-    value["evidence_id"] = digest({k: v for k, v in value.items() if k != "evidence_id"})
+    value["k_psa"]["public_area"]["hex"] = (
+        value["k_psa"]["public_area"]["hex"][:-2] + "00"
+    )
+    value["evidence_id"] = digest(
+        {k: v for k, v in value.items() if k != "evidence_id"}
+    )
     with pytest.raises(ValueError, match=NAME_STOP):
         TPMPublicProjectionV1.verify(value)
 
@@ -133,11 +144,15 @@ def test_wrong_reference_device_release_and_noncanonical_inputs_rejected():
         changed["request_id"] = digest(identity)
         with pytest.raises(ValueError, match="binding mismatch"):
             verify_activation_request_bundle(
-                canonical_json_bytes(changed), evidence.canonical_bytes, allowed_release=release
+                canonical_json_bytes(changed),
+                evidence.canonical_bytes,
+                allowed_release=release,
             )
     with pytest.raises(ValueError, match="noncanonical evidence"):
         verify_activation_request_bundle(
-            request.canonical_bytes, b" " + evidence.canonical_bytes, allowed_release=release
+            request.canonical_bytes,
+            b" " + evidence.canonical_bytes,
+            allowed_release=release,
         )
 
 
@@ -160,6 +175,31 @@ def test_evidence_id_tamper_and_production_fail_closed():
             installation_id="x",
             architecture="AMD64",
             environment="PRODUCTION",
+        )
+
+
+def test_forged_production_context_is_rejected():
+    from deployment.windows_stage9_production_trust import ProductionTrustContext
+
+    evidence, _, release = material()
+    context = object.__new__(ProductionTrustContext)
+    object.__setattr__(context, "release_payload_digest", release[0])
+    object.__setattr__(context, "release_version", release[1])
+
+    with pytest.raises(RuntimeError, match=PRODUCTION_STOP):
+        build_activation_request(
+            evidence=evidence,
+            release_policy_digest=release[0],
+            release_policy_version=release[1],
+            requested_entitlements={
+                "product": "CryptoHunter",
+                "edition": "pro",
+                "requested_features": [],
+            },
+            installation_id="x",
+            architecture="AMD64",
+            environment="PRODUCTION",
+            production_trust_context=context,
         )
 
 

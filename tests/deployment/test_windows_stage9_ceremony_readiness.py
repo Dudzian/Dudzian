@@ -60,7 +60,9 @@ def authorities(tmp_path: Path):
     root, _ = build_root_anchor_bundle(
         _records("root", (1, 2, 3)), purpose="PRODUCTION", environment="PRODUCTION"
     )
-    pdsa = build_pdsa_public_bundle(_records("pdsa", (4, 5, 6)), threshold=2, purpose="PRODUCTION")
+    pdsa = build_pdsa_public_bundle(
+        _records("pdsa", (4, 5, 6)), threshold=2, purpose="PRODUCTION"
+    )
     release = json.loads(FIXTURE.read_text())["release_policy"]
     recovery = build_recovery_public_bundle(
         key_id="PRODUCTION_K_RECOVERY",
@@ -73,9 +75,13 @@ def authorities(tmp_path: Path):
         ("pdsa_public_bundle", pdsa),
         ("recovery_public_bundle", recovery),
     ):
-        (public_directory / f"{name}.json").write_bytes(canonical_json_bytes(value) + b"\n")
+        (public_directory / f"{name}.json").write_bytes(
+            canonical_json_bytes(value) + b"\n"
+        )
     expected = json.loads(EXPECTED_MANIFEST.read_text())
-    expected["product_release_root"]["canonical_key_set_sha256"] = root["canonical_key_set_digest"]
+    expected["product_release_root"]["canonical_key_set_sha256"] = root[
+        "canonical_key_set_digest"
+    ]
     expected["pdsa"]["canonical_key_set_sha256"] = pdsa["canonical_key_set_digest"]
     expected["k_recovery"]["tpmt_public_sha256"] = recovery["tpmt_public_sha256"]
     expected["k_recovery"]["name"] = recovery["derived_name"]
@@ -101,7 +107,10 @@ def final_package(authorities, tmp_path: Path):
 def test_committed_manifest_is_canonical_public_authority():
     value = json.loads(EXPECTED_MANIFEST.read_text())
     validate_expected_manifest(value)
-    assert value["k_recovery"]["name"] == "000b" + value["k_recovery"]["tpmt_public_sha256"]
+    assert (
+        value["k_recovery"]["name"]
+        == "000b" + value["k_recovery"]["tpmt_public_sha256"]
+    )
     assert len(manifest_digest(value)) == 64
     forbidden = {"private", "seed", "password", "pin", "auth_value", "secret"}
     assert not any(word in EXPECTED_MANIFEST.read_text().lower() for word in forbidden)
@@ -110,7 +119,10 @@ def test_committed_manifest_is_canonical_public_authority():
 def test_public_preflight_passes_and_revision_binds_evidence(authorities):
     directory, manifest, expected = authorities
     evidence = public_authority_preflight(
-        directory, manifest_path=manifest, revision="a" * 40, timestamp="2026-10-02T00:00:00Z"
+        directory,
+        manifest_path=manifest,
+        revision="a" * 40,
+        timestamp="2026-10-02T00:00:00Z",
     )
     assert evidence["result"] == "PASS"
     assert evidence["git_revision"] == "a" * 40
@@ -148,7 +160,9 @@ def test_public_preflight_passes_and_revision_binds_evidence(authorities):
         ("PRODUCTION", "PRODUCTION_CEREMONY"),
     ],
 )
-def test_root_wrong_purpose_or_environment_fails_with_same_keys(authorities, purpose, environment):
+def test_root_wrong_purpose_or_environment_fails_with_same_keys(
+    authorities, purpose, environment
+):
     directory, manifest, expected = authorities
     wrong_root, _ = build_root_anchor_bundle(
         _records("root", (1, 2, 3)), purpose=purpose, environment=environment
@@ -177,8 +191,13 @@ def test_pdsa_wrong_threshold_fails_with_same_keys_and_digest(authorities, thres
     wrong_pdsa = build_pdsa_public_bundle(
         _records("pdsa", (4, 5, 6)), threshold=threshold, purpose="PRODUCTION"
     )
-    assert wrong_pdsa["canonical_key_set_digest"] == expected["pdsa"]["canonical_key_set_sha256"]
-    (directory / "pdsa_public_bundle.json").write_bytes(canonical_json_bytes(wrong_pdsa) + b"\n")
+    assert (
+        wrong_pdsa["canonical_key_set_digest"]
+        == expected["pdsa"]["canonical_key_set_sha256"]
+    )
+    (directory / "pdsa_public_bundle.json").write_bytes(
+        canonical_json_bytes(wrong_pdsa) + b"\n"
+    )
     with pytest.raises(ReadinessError, match="PDSA_PROFILE_MISMATCH"):
         public_authority_preflight(directory, manifest_path=manifest, revision="a" * 40)
 
@@ -193,11 +212,15 @@ def test_wrong_authority_fails_closed(authorities, field):
         "recovery_digest": ("k_recovery", "tpmt_public_sha256"),
         "recovery_name": ("k_recovery", "name"),
     }[field]
-    wrong[target[0]][target[1]] = ("000b" if field == "recovery_name" else "") + "0" * 64
+    wrong[target[0]][target[1]] = (
+        "000b" if field == "recovery_name" else ""
+    ) + "0" * 64
     if field == "recovery_digest":
         wrong["k_recovery"]["name"] = "000b" + "0" * 64
     manifest.write_bytes(canonical_json_bytes(wrong))
-    with pytest.raises(ReadinessError, match="AUTHORITY_MISMATCH|EXPECTED_RECOVERY_NAME"):
+    with pytest.raises(
+        ReadinessError, match="AUTHORITY_MISMATCH|EXPECTED_RECOVERY_NAME"
+    ):
         public_authority_preflight(directory, manifest_path=manifest, revision="a" * 40)
 
 
@@ -223,17 +246,21 @@ def test_missing_malformed_and_unexpected_profile_fail(authorities):
         validate_expected_manifest(malformed)
 
 
-def test_canonical_public_subdirectory_passes_and_authority_root_fails_closed(authorities):
+def test_canonical_public_subdirectory_passes_and_authority_root_fails_closed(
+    authorities,
+):
     public_directory, manifest, _ = authorities
     authority_root = public_directory.parent
     assert (
-        public_authority_preflight(public_directory, manifest_path=manifest, revision="a" * 40)[
-            "result"
-        ]
+        public_authority_preflight(
+            public_directory, manifest_path=manifest, revision="a" * 40
+        )["result"]
         == "PASS"
     )
     with pytest.raises(ReadinessError, match="MISSING_OR_MALFORMED_PUBLIC_ARTIFACT"):
-        public_authority_preflight(authority_root, manifest_path=manifest, revision="a" * 40)
+        public_authority_preflight(
+            authority_root, manifest_path=manifest, revision="a" * 40
+        )
 
 
 @pytest.mark.parametrize(
@@ -248,12 +275,16 @@ def test_missing_canonical_public_bundle_fails_closed(authorities, filename):
     public_directory, manifest, _ = authorities
     (public_directory / filename).unlink()
     with pytest.raises(ReadinessError, match="MISSING_OR_MALFORMED_PUBLIC_ARTIFACT"):
-        public_authority_preflight(public_directory, manifest_path=manifest, revision="a" * 40)
+        public_authority_preflight(
+            public_directory, manifest_path=manifest, revision="a" * 40
+        )
 
 
 def test_final_package_public_preflight_accepts_historical_layout(final_package):
     directory, manifest, _ = final_package
-    evidence = final_package_public_preflight(directory, manifest_path=manifest, revision="b" * 40)
+    evidence = final_package_public_preflight(
+        directory, manifest_path=manifest, revision="b" * 40
+    )
     assert evidence["result"] == "PASS"
     assert evidence["git_revision"] == "b" * 40
 
@@ -265,23 +296,35 @@ def test_final_package_wrong_root_digest_fails_closed(final_package):
         purpose="PRODUCTION",
         environment="PRODUCTION",
     )
-    (directory / "root_anchor_bundle.json").write_bytes(canonical_json_bytes(wrong_root))
-    with pytest.raises(ReadinessError, match="AUTHORITY_MISMATCH:product_release_root_sha256"):
-        final_package_public_preflight(directory, manifest_path=manifest, revision="b" * 40)
+    (directory / "root_anchor_bundle.json").write_bytes(
+        canonical_json_bytes(wrong_root)
+    )
+    with pytest.raises(
+        ReadinessError, match="AUTHORITY_MISMATCH:product_release_root_sha256"
+    ):
+        final_package_public_preflight(
+            directory, manifest_path=manifest, revision="b" * 40
+        )
 
 
 def test_final_package_wrong_root_profile_fails_closed(final_package):
     directory, manifest, expected = final_package
     wrong_root, _ = build_root_anchor_bundle(
-        _records("root", (1, 2, 3)), purpose="PRODUCTION", environment="WRONG_ENVIRONMENT"
+        _records("root", (1, 2, 3)),
+        purpose="PRODUCTION",
+        environment="WRONG_ENVIRONMENT",
     )
     expected["product_release_root"]["canonical_key_set_sha256"] = wrong_root[
         "canonical_key_set_digest"
     ]
     manifest.write_bytes(canonical_json_bytes(expected))
-    (directory / "root_anchor_bundle.json").write_bytes(canonical_json_bytes(wrong_root))
+    (directory / "root_anchor_bundle.json").write_bytes(
+        canonical_json_bytes(wrong_root)
+    )
     with pytest.raises(ReadinessError, match="ROOT_PROFILE_MISMATCH"):
-        final_package_public_preflight(directory, manifest_path=manifest, revision="b" * 40)
+        final_package_public_preflight(
+            directory, manifest_path=manifest, revision="b" * 40
+        )
 
 
 def test_final_package_wrong_pdsa_threshold_fails_closed(final_package):
@@ -289,9 +332,13 @@ def test_final_package_wrong_pdsa_threshold_fails_closed(final_package):
     wrong_pdsa = build_pdsa_public_bundle(
         _records("pdsa", (4, 5, 6)), threshold=3, purpose="PRODUCTION"
     )
-    (directory / "pdsa_public_bundle.json").write_bytes(canonical_json_bytes(wrong_pdsa))
+    (directory / "pdsa_public_bundle.json").write_bytes(
+        canonical_json_bytes(wrong_pdsa)
+    )
     with pytest.raises(ReadinessError, match="PDSA_PROFILE_MISMATCH"):
-        final_package_public_preflight(directory, manifest_path=manifest, revision="b" * 40)
+        final_package_public_preflight(
+            directory, manifest_path=manifest, revision="b" * 40
+        )
 
 
 @pytest.mark.parametrize("field", ["tpmt_public_sha256", "name"])
@@ -301,24 +348,38 @@ def test_final_package_wrong_recovery_identity_fails_closed(final_package, field
     if field == "tpmt_public_sha256":
         expected["k_recovery"]["name"] = "000b" + "0" * 64
     manifest.write_bytes(canonical_json_bytes(expected))
-    with pytest.raises(ReadinessError, match="AUTHORITY_MISMATCH|EXPECTED_RECOVERY_NAME"):
-        final_package_public_preflight(directory, manifest_path=manifest, revision="b" * 40)
+    with pytest.raises(
+        ReadinessError, match="AUTHORITY_MISMATCH|EXPECTED_RECOVERY_NAME"
+    ):
+        final_package_public_preflight(
+            directory, manifest_path=manifest, revision="b" * 40
+        )
 
 
 def test_final_package_missing_root_bundle_fails_closed(final_package):
     directory, manifest, _ = final_package
     (directory / "root_anchor_bundle.json").unlink()
     with pytest.raises(ReadinessError, match="MISSING_OR_MALFORMED_PUBLIC_ARTIFACT"):
-        final_package_public_preflight(directory, manifest_path=manifest, revision="b" * 40)
+        final_package_public_preflight(
+            directory, manifest_path=manifest, revision="b" * 40
+        )
 
 
 def test_current_status_and_contradiction_regressions():
     status = json.loads(CURRENT_STATUS.read_text())
     assert validate_current_status(status) == []
     cases = [
-        ("production_provisioning_ready", True, "PROVISIONING_BEFORE_CEREMONY"),
+        (
+            "production_provisioning_ready",
+            True,
+            "PROVISIONING_WITHOUT_LEGAL_ENROLLMENT",
+        ),
         ("windows_0_14", "9/15 DONE", "STALE_WINDOWS_COUNT"),
-        ("stage_10_production_lifecycle_live", "LIVE_PASS", "STAGE10_BEFORE_CEREMONY"),
+        (
+            "stage_10_production_lifecycle_live",
+            "LIVE_PASS",
+            "STAGE10_BEFORE_WINDOWS_READY",
+        ),
     ]
     for key, value, reason in cases:
         broken = deepcopy(status)
@@ -330,31 +391,48 @@ def test_current_status_and_contradiction_regressions():
         assert validate_current_status(broken)
 
 
-def _reviewed_repo(tmp_path: Path, manifest: Path, *, include_manifest=True, include_status=True):
+def _reviewed_repo(
+    tmp_path: Path, manifest: Path, *, include_manifest=True, include_status=True
+):
     repo = tmp_path / "repo"
     repo.mkdir()
     subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
-    subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=repo, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.invalid"], cwd=repo, check=True
+    )
     subprocess.run(["git", "config", "user.name", "test"], cwd=repo, check=True)
     deployment = repo / "deployment"
     deployment.mkdir()
     if include_manifest:
-        (deployment / "stage9_expected_public_authorities.json").write_bytes(manifest.read_bytes())
+        (deployment / "stage9_expected_public_authorities.json").write_bytes(
+            manifest.read_bytes()
+        )
     if include_status:
-        (deployment / "stage9_current_status.json").write_bytes(CURRENT_STATUS.read_bytes())
+        (deployment / "stage9_current_status.json").write_bytes(
+            CURRENT_STATUS.read_bytes()
+        )
     subprocess.run(["git", "add", "."], cwd=repo, check=True)
     subprocess.run(["git", "commit", "-qm", "test"], cwd=repo, check=True)
     head = subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=repo, check=True, capture_output=True, text=True
+        ["git", "rev-parse", "HEAD"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
     ).stdout.strip()
     return repo, head
 
 
-def test_entry_gate_checks_canonical_paths_revision_clean_tree_and_authority(authorities, tmp_path):
+def test_entry_gate_checks_canonical_paths_revision_clean_tree_and_authority(
+    authorities, tmp_path
+):
     directory, manifest, _ = authorities
     repo, head = _reviewed_repo(tmp_path, manifest)
     assert (
-        ceremony_entry_gate(repo=repo, reviewed_revision=head, authority_directory=directory) == []
+        ceremony_entry_gate(
+            repo=repo, reviewed_revision=head, authority_directory=directory
+        )
+        == []
     )
     assert "REVISION_MISMATCH" in ceremony_entry_gate(
         repo=repo, reviewed_revision="0" * 40, authority_directory=directory
@@ -386,7 +464,9 @@ def test_entry_gate_rejects_external_manifest_and_status(authorities, tmp_path):
     )
 
 
-def test_formal_final_package_preflight_binds_canonical_reviewed_manifest(final_package, tmp_path):
+def test_formal_final_package_preflight_binds_canonical_reviewed_manifest(
+    final_package, tmp_path
+):
     directory, manifest, _ = final_package
     repo, head = _reviewed_repo(tmp_path, manifest)
     assert (
@@ -399,7 +479,9 @@ def test_formal_final_package_preflight_binds_canonical_reviewed_manifest(final_
     )
 
 
-def test_formal_final_package_preflight_rejects_modified_working_manifest(final_package, tmp_path):
+def test_formal_final_package_preflight_rejects_modified_working_manifest(
+    final_package, tmp_path
+):
     directory, manifest, _ = final_package
     repo, head = _reviewed_repo(tmp_path, manifest)
     canonical = repo / "deployment/stage9_expected_public_authorities.json"
@@ -426,7 +508,9 @@ def test_formal_final_package_preflight_rejects_manifest_absent_from_review(
     assert "MANIFEST_REVISION_BINDING_FAILED" in reasons
 
 
-def test_formal_final_package_preflight_rejects_revision_mismatch(final_package, tmp_path):
+def test_formal_final_package_preflight_rejects_revision_mismatch(
+    final_package, tmp_path
+):
     directory, manifest, _ = final_package
     repo, _ = _reviewed_repo(tmp_path, manifest)
     reasons = final_package_public_preflight_gate(
@@ -449,7 +533,9 @@ def test_formal_final_package_preflight_rejects_dirty_worktree(final_package, tm
     assert "WORKTREE_NOT_CLEAN" in reasons
 
 
-def test_formal_final_package_preflight_rejects_external_manifest(final_package, tmp_path):
+def test_formal_final_package_preflight_rejects_external_manifest(
+    final_package, tmp_path
+):
     directory, manifest, _ = final_package
     repo, head = _reviewed_repo(tmp_path, manifest)
     external = tmp_path / "external-manifest.json"
@@ -466,7 +552,10 @@ def test_formal_final_package_preflight_rejects_external_manifest(final_package,
 @pytest.mark.parametrize(
     ("relative_path", "reason"),
     [
-        ("deployment/stage9_expected_public_authorities.json", "MANIFEST_REVISION_BINDING_FAILED"),
+        (
+            "deployment/stage9_expected_public_authorities.json",
+            "MANIFEST_REVISION_BINDING_FAILED",
+        ),
         ("deployment/stage9_current_status.json", "STATUS_REVISION_BINDING_FAILED"),
     ],
 )
@@ -476,7 +565,9 @@ def test_entry_gate_rejects_working_file_different_from_reviewed_commit(
     directory, manifest, _ = authorities
     repo, head = _reviewed_repo(tmp_path, manifest)
     (repo / relative_path).write_bytes(b"{}\n")
-    reasons = ceremony_entry_gate(repo=repo, reviewed_revision=head, authority_directory=directory)
+    reasons = ceremony_entry_gate(
+        repo=repo, reviewed_revision=head, authority_directory=directory
+    )
     assert reason in reasons
     assert "WORKTREE_NOT_CLEAN" in reasons
 
@@ -493,9 +584,14 @@ def test_entry_gate_rejects_file_absent_from_reviewed_commit(
 ):
     directory, manifest, _ = authorities
     repo, head = _reviewed_repo(
-        tmp_path, manifest, include_manifest=include_manifest, include_status=include_status
+        tmp_path,
+        manifest,
+        include_manifest=include_manifest,
+        include_status=include_status,
     )
-    reasons = ceremony_entry_gate(repo=repo, reviewed_revision=head, authority_directory=directory)
+    reasons = ceremony_entry_gate(
+        repo=repo, reviewed_revision=head, authority_directory=directory
+    )
     assert reason in reasons
 
 
@@ -530,9 +626,9 @@ def test_runbook_operator_contract():
         "verify-final-package",
     ):
         assert phrase in text
-    independent_post_check = text.split("### Independent post-check", 1)[1].split("### No-copy", 1)[
-        0
-    ]
+    independent_post_check = text.split("### Independent post-check", 1)[1].split(
+        "### No-copy", 1
+    )[0]
     assert "--expected-manifest" not in independent_post_check
     path_binding = independent_post_check.index("FINAL_PACKAGE_PATH_BINDING_PASS")
     package_verification = independent_post_check.index(
@@ -541,7 +637,13 @@ def test_runbook_operator_contract():
     authority_preflight = independent_post_check.index("final-package-public-preflight")
     revision_binding = independent_post_check.index("REVISION_BINDING_PASS")
     final_pass = independent_post_check.index("INDEPENDENT_POST_CHECK_PASS")
-    assert path_binding < package_verification < authority_preflight < revision_binding < final_pass
+    assert (
+        path_binding
+        < package_verification
+        < authority_preflight
+        < revision_binding
+        < final_pass
+    )
     assert "expected=pathlib.Path(r'$FinalPackage').resolve()" in independent_post_check
     assert "--final-package-dir $FinalPackage" in independent_post_check
     assert "p=pathlib.Path(r'$FinalPackage')" in independent_post_check

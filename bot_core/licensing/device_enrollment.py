@@ -92,7 +92,10 @@ class TPMPublicProjectionV1:
         for role in ("ek", "ak"):
             fields = {"public_area", "name", "public_digest"}
             if role == "ek":
-                fields |= {"manufacturer_certificate", "manufacturer_certificate_digest"}
+                fields |= {
+                    "manufacturer_certificate",
+                    "manufacturer_certificate_digest",
+                }
             exact(value[role], fields, role)
             exact(value[role]["public_area"], {"hex"}, f"{role} TPMT_PUBLIC")
         exact(value["tpm"], {"manufacturer", "model"}, "tpm")
@@ -112,7 +115,10 @@ class TPMPublicProjectionV1:
             if value[role]["public_digest"] != hashlib.sha256(public).hexdigest():
                 raise ValueError(f"{role} public digest mismatch")
             _hex_fields.append(value[role]["public_digest"])
-        if value["ek"]["manufacturer_certificate"] not in {"AVAILABLE", "NOT_AVAILABLE"}:
+        if value["ek"]["manufacturer_certificate"] not in {
+            "AVAILABLE",
+            "NOT_AVAILABLE",
+        }:
             raise ValueError("invalid EK manufacturer certificate status")
         certificate_digest = value["ek"]["manufacturer_certificate_digest"]
         if (certificate_digest is None) != (
@@ -169,7 +175,9 @@ def make_evidence(
         "ek": {
             "public_area": {"hex": ek_public_area_hex},
             "name": ek_name,
-            "public_digest": hashlib.sha256(bytes.fromhex(ek_public_area_hex)).hexdigest(),
+            "public_digest": hashlib.sha256(
+                bytes.fromhex(ek_public_area_hex)
+            ).hexdigest(),
             "manufacturer_certificate": (
                 "AVAILABLE" if ek_certificate_digest is not None else "NOT_AVAILABLE"
             ),
@@ -178,7 +186,9 @@ def make_evidence(
         "ak": {
             "public_area": {"hex": ak_public_area_hex},
             "name": ak_name,
-            "public_digest": hashlib.sha256(bytes.fromhex(ak_public_area_hex)).hexdigest(),
+            "public_digest": hashlib.sha256(
+                bytes.fromhex(ak_public_area_hex)
+            ).hexdigest(),
         },
         "tpm": {"manufacturer": manufacturer, "model": model},
         "source": {"substrate": "Windows-TBS", "profile": substrate_profile},
@@ -205,16 +215,32 @@ def build_activation_request(
     installation_id: str,
     architecture: str,
     environment: str,
+    production_trust_context: object | None = None,
     created_at_utc: str | None = None,
     nonce: str | None = None,
 ) -> ActivationRequestV1:
     if environment == "PRODUCTION":
-        raise RuntimeError(PRODUCTION_STOP)
-    if environment != "TEST_ONLY":
+        from deployment.windows_stage9_production_trust import (
+            require_verified_production_trust_context,
+        )
+
+        try:
+            production_trust_context = require_verified_production_trust_context(
+                production_trust_context
+            )
+        except RuntimeError as exc:
+            raise RuntimeError(PRODUCTION_STOP) from exc
+        if (
+            release_policy_digest != production_trust_context.release_payload_digest
+            or release_policy_version != production_trust_context.release_version
+        ):
+            raise RuntimeError("PRODUCTION_RELEASE_POLICY_MISMATCH")
+    if environment not in ("TEST_ONLY", "PRODUCTION"):
         raise ValueError("environment must be TEST_ONLY or PRODUCTION")
     value = evidence.document
     return ActivationRequestV1.create(
-        created_at_utc=created_at_utc or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        created_at_utc=created_at_utc
+        or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         installation_id=installation_id,
         device={
             "device_id": derive_device_id(evidence),
@@ -229,7 +255,10 @@ def build_activation_request(
             "manufacturer": value["tpm"]["manufacturer"],
             "model": value["tpm"]["model"],
         },
-        k_psa={key: value["k_psa"][key] for key in ("public_area", "name", "algorithm_profile")},
+        k_psa={
+            key: value["k_psa"][key]
+            for key in ("public_area", "name", "algorithm_profile")
+        },
         release={
             "release_policy_digest": release_policy_digest,
             "release_policy_version": release_policy_version,
@@ -243,7 +272,9 @@ def verify_activation_request_bundle(
     request_raw: bytes,
     evidence_raw: bytes,
     *,
-    allowed_release: tuple[str, int],
+    environment: str = "TEST_ONLY",
+    allowed_release: tuple[str, int] | None = None,
+    production_trust_context: object | None = None,
 ) -> tuple[ActivationRequestV1, TPMPublicProjectionV1]:
     request_value = json.loads(request_raw)
     if canonical_json_bytes(request_value) != request_raw:
@@ -251,14 +282,30 @@ def verify_activation_request_bundle(
     request = ActivationRequestV1.from_mapping(request_value)
     evidence = TPMPublicProjectionV1.from_canonical_bytes(evidence_raw)
     req, ev = request.document, evidence.document
+    if environment == "TEST_ONLY":
+        if allowed_release is None or production_trust_context is not None:
+            raise ValueError("TEST_ONLY verification requires only allowed_release")
+        release = allowed_release
+    elif environment == "PRODUCTION":
+        from deployment.windows_stage9_production_trust import (
+            require_verified_production_trust_context,
+        )
+
+        if allowed_release is not None:
+            raise ValueError("caller-supplied production release is forbidden")
+        context = require_verified_production_trust_context(production_trust_context)
+        release = (context.release_payload_digest, context.release_version)
+    else:
+        raise ValueError("environment must be TEST_ONLY or PRODUCTION")
     expected = build_activation_request(
         evidence=evidence,
-        release_policy_digest=allowed_release[0],
-        release_policy_version=allowed_release[1],
+        release_policy_digest=release[0],
+        release_policy_version=release[1],
         requested_entitlements=req["requested_entitlements"],
         installation_id=req["installation_id"],
         architecture=req["device"]["architecture"],
-        environment="TEST_ONLY",
+        environment=environment,
+        production_trust_context=production_trust_context,
         created_at_utc=req["created_at_utc"],
         nonce=req["nonce"],
     ).document
@@ -273,14 +320,21 @@ def export_bundle(
     request: ActivationRequestV1,
     evidence: TPMPublicProjectionV1,
     *,
-    allowed_release: tuple[str, int],
+    environment: str = "TEST_ONLY",
+    allowed_release: tuple[str, int] | None = None,
+    production_trust_context: object | None = None,
 ) -> Path:
     verify_activation_request_bundle(
         request.canonical_bytes,
         evidence.canonical_bytes,
+        environment=environment,
         allowed_release=allowed_release,
+        production_trust_context=production_trust_context,
     )
-    folder = output / f"CryptoHunter-Activation-Request-{request.document['request_id'][:12]}"
+    folder = (
+        output
+        / f"CryptoHunter-Activation-Request-{request.document['request_id'][:12]}"
+    )
     folder.mkdir(parents=True, exist_ok=False)
     files = {
         "activation-request.json": request.canonical_bytes,
@@ -294,6 +348,8 @@ def export_bundle(
     verify_activation_request_bundle(
         (folder / "activation-request.json").read_bytes(),
         (folder / "tpm-evidence.json").read_bytes(),
+        environment=environment,
         allowed_release=allowed_release,
+        production_trust_context=production_trust_context,
     )
     return folder
