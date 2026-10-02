@@ -137,6 +137,7 @@ initial revocation, a PDSA pozostaje przypięta przez release policy.
 ```powershell
 $Repo = "C:\Users\kamil\Documents\GitHub\Dudzian"
 $Authority = "C:\CryptoHunter-Production-Authority"
+$AuthorityPublic = "$Authority\public"
 $Session = "$Authority\ceremony-session"
 $Evidence = "$Authority\evidence"
 $Result = "$Authority\ceremony-results"
@@ -145,10 +146,10 @@ $Status = "$Repo\deployment\stage9_current_status.json"
 $ReviewedRevision = "<40-HEX-APPROVED-COMMIT-SHA>"
 ```
 
-Canonical public inputs are exactly `$Authority\root_anchor_bundle.json`,
-`$Authority\pdsa_public_bundle.json`, and `$Authority\recovery_public_bundle.json`. Ceremony phase
-inputs and detached public signatures are under `$Session`; public preflight evidence is
-`$Evidence\authority-preflight.json`; the atomic result is
+Canonical public inputs are exactly `$AuthorityPublic\product_root_anchor_bundle.json`,
+`$AuthorityPublic\pdsa_public_bundle.json`, and `$AuthorityPublic\recovery_public_bundle.json`.
+Ceremony phase inputs and detached public signatures are under `$Session`; public preflight
+evidence is `$Evidence\authority-preflight.json`; the atomic result is
 `$Result\final\<ceremony_id>\`. Override is allowed only by explicitly changing these variables
 before any command and recording the resolved paths in the operator record.
 
@@ -168,12 +169,12 @@ if (git status --porcelain) { throw "ABORT: dirty tree" }
 git show --no-patch --format=fuller $ReviewedRevision
 
 python -m deployment.windows_stage9_ceremony_readiness public-preflight `
-  --reviewed-revision $ReviewedRevision --authority-dir $Authority `
+  --reviewed-revision $ReviewedRevision --authority-dir $AuthorityPublic `
   --expected-manifest $Expected --evidence-output "$Evidence\authority-preflight.json"
 
 # Canonical fail-closed, read-only entry gate (no output artifact):
 python -m deployment.windows_stage9_ceremony_readiness entry-gate `
-  --reviewed-revision $ReviewedRevision --repo $Repo --authority-dir $Authority
+  --reviewed-revision $ReviewedRevision --repo $Repo --authority-dir $AuthorityPublic
 
 # Dry verification of already assembled ceremony inputs; choose a NEW output filename.
 python -m deployment.windows_stage9_production_ceremony verify-ceremony `
@@ -228,13 +229,30 @@ Do not trust the text “ceremony succeeded”. A second operator in a clean che
 resulting public files and executes:
 
 ```powershell
+$FinalPackage = "$Result\final\<ceremony_id>"
+
+python -c "import json,pathlib,sys; i=json.loads(pathlib.Path(r'$Session\verify-final-package-input.json').read_text()); actual=pathlib.Path(i['package_path']).resolve(); expected=pathlib.Path(r'$FinalPackage').resolve(); sys.exit(f'FINAL_PACKAGE_PATH_MISMATCH: {actual} != {expected}') if actual != expected else print('FINAL_PACKAGE_PATH_BINDING_PASS')"
+if ($LASTEXITCODE -ne 0) {
+    throw "ABORT: FINAL_PACKAGE_PATH_BINDING_FAILED"
+}
 python -m deployment.windows_stage9_production_ceremony verify-final-package `
   --input "$Session\verify-final-package-input.json" `
   --output "$Evidence\independent-final-verification.json"
-python -m deployment.windows_stage9_ceremony_readiness public-preflight `
+if ($LASTEXITCODE -ne 0) {
+    throw "ABORT: VERIFY_FINAL_PACKAGE_FAILED"
+}
+python -m deployment.windows_stage9_ceremony_readiness final-package-public-preflight `
   --reviewed-revision $ReviewedRevision `
-  --authority-dir "$Result\final\<ceremony_id>" --expected-manifest $Expected
-python -c "import json,pathlib; p=pathlib.Path(r'$Result\final\<ceremony_id>'); a=json.loads((p/'ceremony_audit.json').read_text()); f=json.loads((p/'freeze_manifest.json').read_text()); assert a['schema']=='CryptoHunter.Stage9CeremonyAuditV1' and a['source_revision']=='$ReviewedRevision' and f['artifact_source_revision']=='$ReviewedRevision'; print('REVISION_BINDING_PASS')"
+  --repo $Repo `
+  --final-package-dir $FinalPackage
+if ($LASTEXITCODE -ne 0) {
+    throw "ABORT: FINAL_PACKAGE_PUBLIC_PREFLIGHT_FAILED"
+}
+python -c "import json,pathlib,sys; p=pathlib.Path(r'$FinalPackage'); a=json.loads((p/'ceremony_audit.json').read_text()); f=json.loads((p/'freeze_manifest.json').read_text()); valid=a.get('schema')=='CryptoHunter.Stage9CeremonyAuditV1' and a.get('source_revision')=='$ReviewedRevision' and f.get('artifact_source_revision')=='$ReviewedRevision'; sys.exit('REVISION_BINDING_FAILED') if not valid else print('REVISION_BINDING_PASS')"
+if ($LASTEXITCODE -ne 0) {
+    throw "ABORT: REVISION_BINDING_FAILED"
+}
+Write-Host "INDEPENDENT_POST_CHECK_PASS"
 ```
 
 The verifier must recompute public trust material, package artifact digests, schema/version,
