@@ -1,0 +1,23 @@
+{
+  "schema": "CryptoHunter.Stage9CurrentStatusV1",
+  "version": 1,
+  "authority": "CURRENT_STATUS",
+  "supersedes_historical_snapshots": [
+    "docs/windows_stage9_production_root_of_trust_freeze.md",
+    "docs/windows_stage9_production_root_ceremony.md",
+    "docs/architecture/cryptohunter_product_architecture/stage9_external_provisioning_architecture_contract.json"
+  ],
+  "windows_clean_install": "LIVE_PASS",
+  "windows_tpm_activation_bridge": "LIVE_PASS",
+  "windows_0_14": "10/15 DONE",
+  "stage_9": "IN_PROGRESS",
+  "a_01_dependency_release_security": "PASS",
+  "a_02_external_provisioning": "PASS",
+  "production_root_material": "PROVISIONED_LOCALLY",
+  "production_ceremony": "NOT_STARTED",
+  "production_provisioning_ready": false,
+  "windows_production_ready": "NOT_READY",
+  "stage_10_implementation": "EXISTS",
+  "stage_10_production_lifecycle_live": "NOT_STARTED",
+  "stage_10_prerequisite": "BLOCKED_UNTIL_CEREMONY_AND_LEGAL_ENROLLMENT"
+}
