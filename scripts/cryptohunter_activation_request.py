@@ -78,6 +78,9 @@ def _release(path: Path) -> tuple[str, int]:
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     trust_context = None
+    if args.command == "cleanup" and args.environment != "TEST_ONLY":
+        print("cleanup is TEST_ONLY; PRODUCTION cleanup is forbidden", file=sys.stderr)
+        return 2
     if args.environment == "PRODUCTION":
         try:
             trust_context = load_production_trust(

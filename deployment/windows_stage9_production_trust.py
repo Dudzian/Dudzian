@@ -167,14 +167,24 @@ def install_public_production_trust(source: Path, destination: Path) -> Path:
     """Verify, stage, byte-qualify and atomically publish the public package once."""
     if destination.exists():
         raise ProductionTrustUnavailable("PRODUCTION_TRUST_OVERWRITE_FORBIDDEN")
+    if source.is_symlink() or not source.is_dir():
+        raise ProductionTrustUnavailable("PUBLIC_FINAL_PACKAGE_DIRECTORY_REQUIRED")
     context = load_production_trust(source)
-    required = {item.name for item in source.glob("*.json")}
-    if len(required) != 12 or any(
-        marker in name.lower()
-        for name in required
-        for marker in ("pem", "private", "password", "seed")
+    entries = tuple(source.iterdir())
+    if any(item.is_symlink() or not item.is_file() for item in entries):
+        raise ProductionTrustUnavailable("PUBLIC_FINAL_PACKAGE_ALLOWLIST_VIOLATION")
+    required = {item.name for item in entries if item.suffix == ".json"}
+    if (
+        len(entries) != 12
+        or len(required) != 12
+        or any(
+            marker in name.lower()
+            for name in required
+            for marker in ("pem", "private", "password", "seed")
+        )
     ):
         raise ProductionTrustUnavailable("PUBLIC_FINAL_PACKAGE_ALLOWLIST_VIOLATION")
+    parent_preexisted = destination.parent.exists()
     destination.parent.mkdir(parents=True, exist_ok=True)
     staging_root = Path(
         tempfile.mkdtemp(prefix=".production-trust-", dir=destination.parent)
@@ -198,8 +208,19 @@ def install_public_production_trust(source: Path, destination: Path) -> Path:
         if staged.ceremony_id != context.ceremony_id:
             raise ProductionTrustUnavailable("PRODUCTION_TRUST_COPY_MISMATCH")
         os.rename(staging, destination)
-        staging_root.rmdir()
     except Exception:
         shutil.rmtree(staging_root, ignore_errors=True)
+        if not parent_preexisted:
+            try:
+                destination.parent.rmdir()
+            except OSError:
+                pass
         raise
+    # The rename is the commit point.  Failure to remove an already-empty
+    # staging container must never turn a committed publication into an
+    # ambiguous exception visible to the caller.
+    try:
+        staging_root.rmdir()
+    except OSError:
+        shutil.rmtree(staging_root, ignore_errors=True)
     return destination

@@ -30,6 +30,7 @@ from cryptography.hazmat.primitives.asymmetric.utils import (
 )
 
 from .canonical import canonical_json_bytes
+from .product_profile import PRODUCTION_PRODUCT_PROFILE
 
 PDSA_DOMAIN = b"CryptoHunter.Stage9.PDSAEnrollmentAuthorization.v1\x00"
 MEMBERSHIP_DOMAIN = b"CryptoHunter.Stage9.ProvisioningMembershipBinding.v1\x00"
@@ -530,7 +531,7 @@ class ProductionProvisioningPackageVerifier(_PDSAProvisioningPackageVerifier):
             trust_context.pdsa_keys,
             environment="PRODUCTION",
             trust_domain="PDSA_PRODUCTION_2_OF_3_ED25519",
-            product_profile="CRYPTOHUNTER_PRODUCTION",
+            product_profile=PRODUCTION_PRODUCT_PROFILE,
             release_digest=trust_context.release_payload_digest,
             release_generation=trust_context.release_version,
         )
