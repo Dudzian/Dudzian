@@ -10,7 +10,7 @@ import threading
 import time
 from typing import Any
 from deployment.windows_installer.contract import CONTRACT
-from deployment.windows_installer.service_base import machine_root, run_service
+from deployment.windows_installer.service_base import build_smoke_requested, machine_root, run_service
 
 SERVICE_NAME = CONTRACT.postgresql_service
 READY_TIMEOUT = 60.0
@@ -258,6 +258,8 @@ def _run(stop: threading.Event, report: object) -> None:
 
 
 def main() -> None:
+    if build_smoke_requested():
+        return
     try_write_startup_diagnostic("SERVICE_ENTRY")
     try_write_startup_diagnostic("SCM_DISPATCHER")
     try:

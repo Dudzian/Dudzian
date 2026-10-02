@@ -18,6 +18,24 @@ scoped verifier, a PostgreSQL SCM host which owns its child process tree, and
 the privileged installer provisioner.  The MSI embeds those executables and
 the checksum-verified PostgreSQL 17 payload; installation is offline.
 
+The canonical build runs on CPython 3.11.9.  The cross-platform desktop lock
+was generated on the Python 3.11 Linux lock authority, so pip correctly
+discarded the `platform_system == 'Windows'` project requirement while
+compiling it.  `requirements-windows-runtime.lock` is the reviewed native
+supplement and pins `pywin32==312`; both locks are installed with `--no-deps`
+before the project is installed without dependency resolution.
+
+Before any PyInstaller invocation the builder imports the centrally reviewed
+Win32 surface: `servicemanager`, `win32api`, `win32con`, `win32event`,
+`win32job`, `win32process`, `win32security`, `win32service`,
+`win32serviceutil`, and `win32timezone`.  Each of the four generated warning
+files is then rejected if it reports one of those required modules missing.
+Optional backend warnings remain permitted.  The production CoreHost graph
+reaches NumPy, so NumPy 1.26.4's wheel-owned `numpy.libs/libopenblas*.dll` is
+required and explicitly collected.  Finally every packaged executable runs
+the read-only `--build-smoke` path, which imports NumPy and the Win32 surface
+without contacting SCM, installing the product, or performing enrollment.
+
 ## WiX 7 OSMF EULA acceptance in CI
 
 The project owner recorded conscious acceptance of the WiX 7 OSMF EULA on

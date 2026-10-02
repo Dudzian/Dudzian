@@ -23,6 +23,7 @@ from bot_core.postgresql_freshness_authority import (
     qualify_postgresql_freshness_authority,
 )
 from deployment.windows_installer.contract import CONTRACT
+from deployment.windows_installer.service_base import build_smoke_requested
 from deployment.windows_installer.postgresql_service import (
     SERVICE_NAME as POSTGRESQL_SERVICE_NAME,
     STARTUP_DIAGNOSTIC,
@@ -1171,6 +1172,8 @@ def qualify_logging(program_files: Path, program_data: Path) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    if build_smoke_requested(argv):
+        return 0
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "command",

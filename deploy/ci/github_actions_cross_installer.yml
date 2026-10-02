@@ -77,6 +77,7 @@ jobs:
           python scripts/ci/bootstrap_locked_pip.py deploy/packaging/requirements-desktop.lock
           python scripts/ci/validate_locked_resolution.py deploy/packaging/requirements-desktop.lock --target ".[desktop]"
           python -m pip install --no-deps -r deploy/packaging/requirements-desktop.lock
+          python -m pip install --no-deps -r deploy/packaging/requirements-windows-runtime.lock
         shell: pwsh
 
       - name: Validate marketplace presets (Windows)

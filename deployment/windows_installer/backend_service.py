@@ -5,7 +5,9 @@ import json
 import os
 import threading
 import psycopg
-from deployment.windows_installer.service_base import machine_root, run_service, service_logger
+from deployment.windows_installer.service_base import (
+    build_smoke_requested, machine_root, run_service, service_logger
+)
 from deployment.windows_installer.contract import CONTRACT
 from deployment.windows_installer.corehost_composition import (
     build_production_core_host,
@@ -87,6 +89,8 @@ def _run(stop: threading.Event, report: object) -> None:
 
 
 def main() -> None:
+    if build_smoke_requested():
+        return
     run_service(SERVICE_NAME, _run)
 
 
