@@ -1,0 +1,34 @@
+{
+  "schema": "CryptoHunter.Stage9ExpectedPublicAuthoritiesV1",
+  "version": 1,
+  "generation": "PRODUCTION_AUTHORITY_GENERATION_1",
+  "source_freeze_artifact": "docs/windows_stage9_production_root_of_trust_freeze.md",
+  "serialization_profile": "CRYPTOHUNTER_CANONICAL_JSON_V1",
+  "product_release_root": {
+    "purpose": "PRODUCTION",
+    "environment": "PRODUCTION_CEREMONY",
+    "algorithm": "Ed25519",
+    "encoding": "RFC8032_RAW_32_BYTES_LOWER_HEX",
+    "threshold": 2,
+    "key_count": 3,
+    "canonical_key_set_sha256": "d0e2ff6672da5979688433fe5f9cac9bee0844baa1a307b52b36c0e37e6a5e7a"
+  },
+  "pdsa": {
+    "purpose": "PRODUCTION",
+    "algorithm": "Ed25519",
+    "encoding": "RFC8032_RAW_32_BYTES_LOWER_HEX",
+    "threshold": 2,
+    "key_count": 3,
+    "canonical_key_set_sha256": "3203b496f67d571787e59bb74d62f69fc1bda9debda74cab3294b546f5884c14"
+  },
+  "k_recovery": {
+    "type": "TPM_ALG_ECC",
+    "name_algorithm": "TPM_ALG_SHA256",
+    "curve": "TPM_ECC_NIST_P256",
+    "scheme": "TPM_ALG_ECDSA",
+    "scheme_hash": "TPM_ALG_SHA256",
+    "object_attributes": "00040040",
+    "tpmt_public_sha256": "06e957b575380ee019ee311d9f149c8b888a2f3b4fa1ae7e4168bc3dfe2584b7",
+    "name": "000b06e957b575380ee019ee311d9f149c8b888a2f3b4fa1ae7e4168bc3dfe2584b7"
+  }
+}
