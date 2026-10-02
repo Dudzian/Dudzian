@@ -6,6 +6,26 @@ from pathlib import Path
 import threading
 from typing import Callable, Protocol
 
+from deployment.windows_installer.dependency_contract import REQUIRED_WIN32_MODULES
+
+
+def build_smoke_requested(argv: list[str] | None = None) -> bool:
+    """Run the dependency closure only; never contact SCM or mutate the host."""
+    import sys
+
+    arguments = sys.argv[1:] if argv is None else argv
+    if arguments != ["--build-smoke"]:
+        return False
+    import importlib
+
+    import numpy  # noqa: F401
+
+    for module in REQUIRED_WIN32_MODULES:
+        importlib.import_module(module)
+
+    print("BUILD_SMOKE = PASS")
+    return True
+
 
 class StatusReporter(Protocol):
     def __call__(self, status: int, *, wait_hint: int = 0) -> None: ...

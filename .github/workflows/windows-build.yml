@@ -30,6 +30,7 @@ jobs:
             pyproject.toml
             deploy/packaging/requirements-desktop.txt
             deploy/packaging/requirements-desktop.lock
+            deploy/packaging/requirements-windows-runtime.lock
 
       - name: Install dependencies
         shell: pwsh
@@ -38,6 +39,7 @@ jobs:
           python scripts/ci/bootstrap_locked_pip.py deploy/packaging/requirements-desktop.lock
           python scripts/ci/validate_locked_resolution.py deploy/packaging/requirements-desktop.lock --target ".[desktop]"
           python -m pip install --no-deps -r deploy/packaging/requirements-desktop.lock
+          python -m pip install --no-deps -r deploy/packaging/requirements-windows-runtime.lock
           python -m pip install --no-build-isolation --no-deps -e .[dev,desktop]
           python -m pip install --no-deps -r deploy/packaging/requirements-windows-build-tools.lock
           python -m pip check

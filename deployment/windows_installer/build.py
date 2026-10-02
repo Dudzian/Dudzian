@@ -3,6 +3,7 @@
 from __future__ import annotations
 import argparse
 import hashlib
+import importlib
 import json
 import os
 from pathlib import Path
@@ -17,6 +18,7 @@ from urllib.request import urlopen
 import zipfile
 
 from .contract import CONTRACT, is_reviewed_wix_version
+from .dependency_contract import REQUIRED_WIN32_MODULES
 
 WIX_EULA_ACCEPTANCE = "PER_INVOCATION"
 WIX_EULA_ACCEPTANCE_FLAG = "-acceptEula wix7"
@@ -57,7 +59,10 @@ def verify_postgresql(archive: Path, expected_sha256: str) -> None:
 def qualify_windows_x64() -> None:
     if sys.platform != "win32" or platform.machine().upper() not in {"AMD64", "X86_64"}:
         raise InstallerBuildError("canonical MSI requires a native Windows x64 runner")
-    if struct.calcsize("P") != 8 or os.environ.get("PROCESSOR_ARCHITEW6432", "").upper() == "AMD64":
+    if (
+        struct.calcsize("P") != 8
+        or os.environ.get("PROCESSOR_ARCHITEW6432", "").upper() == "AMD64"
+    ):
         raise InstallerBuildError("build tool must be native x64, not WOW64")
 
 
@@ -107,7 +112,9 @@ def normalize_postgresql_archive(archive: Path, destination: Path) -> None:
             shutil.copytree(Path(temporary) / "pgsql", destination)
 
 
-def acquire_postgresql(pins: dict[str, object], supplied: Path | None, cache: Path) -> Path:
+def acquire_postgresql(
+    pins: dict[str, object], supplied: Path | None, cache: Path
+) -> Path:
     pg = pins["postgresql"]
     assert isinstance(pg, dict)
     archive = supplied or cache / str(pg["archive"])
@@ -132,9 +139,67 @@ ENTRYPOINTS = {
 }
 
 
+def qualify_win32_imports() -> None:
+    """Fail before packaging unless the reviewed pywin32 surface is importable."""
+    missing: list[str] = []
+    for module in REQUIRED_WIN32_MODULES:
+        try:
+            importlib.import_module(module)
+        except ImportError:
+            missing.append(module)
+    if missing:
+        raise InstallerBuildError(
+            "required pywin32 imports unavailable: " + ", ".join(missing)
+        )
+
+
+def numpy_openblas_dll() -> Path:
+    """Locate NumPy's wheel-owned BLAS runtime required by production imports."""
+    numpy = importlib.import_module("numpy")
+    package = Path(numpy.__file__).resolve().parent
+    candidates = sorted(package.parent.glob("numpy.libs/libopenblas*.dll"))
+    if len(candidates) != 1:
+        raise InstallerBuildError(
+            f"expected one NumPy OpenBLAS runtime DLL, found {len(candidates)}"
+        )
+    return candidates[0]
+
+
+def qualify_pyinstaller_warnings(warning_file: Path) -> None:
+    """Reject missing required Win32 modules without banning optional backends."""
+    if not warning_file.is_file():
+        raise InstallerBuildError(f"PyInstaller warning file absent: {warning_file}")
+    warnings = warning_file.read_text(encoding="utf-8", errors="replace")
+    missing = [
+        module
+        for module in REQUIRED_WIN32_MODULES
+        if re.search(rf"missing module named ['\"]{re.escape(module)}['\"]", warnings)
+    ]
+    if missing:
+        raise InstallerBuildError(
+            "PyInstaller reports missing required Win32 imports: " + ", ".join(missing)
+        )
+
+
+def smoke_executable(executable: Path) -> None:
+    """Exercise the packaged import graph through a read-only CLI path."""
+    result = subprocess.run(
+        [str(executable), "--build-smoke"], capture_output=True, text=True, timeout=60
+    )
+    if result.returncode != 0 or "BUILD_SMOKE = PASS" not in result.stdout:
+        raise InstallerBuildError(
+            f"packaged executable smoke failed: {executable.name} "
+            f"(exit={result.returncode})"
+        )
+
+
 def build_executables(payload: Path, work: Path) -> list[Path]:
     outputs = []
     source_root = Path(__file__).parent
+    qualify_win32_imports()
+    openblas = numpy_openblas_dll()
+    print("WIN32_IMPORT_PREFLIGHT = PASS", flush=True)
+    print(f"NUMPY_OPENBLAS = {openblas.name}", flush=True)
     for name, script in ENTRYPOINTS.items():
         subprocess.run(
             [
@@ -154,13 +219,19 @@ def build_executables(payload: Path, work: Path) -> list[Path]:
                 str(work),
                 "--hidden-import",
                 "win32timezone",
+                "--add-binary",
+                f"{openblas}{os.pathsep}numpy.libs",
                 str(source_root / script),
             ],
             check=True,
         )
         output = payload / f"{name}.exe"
+        qualify_pyinstaller_warnings(work / name / name / f"warn-{name}.txt")
         qualify_pe_x64(output)
+        smoke_executable(output)
         outputs.append(output)
+    print("PYINSTALLER_WIN32_WARNINGS = PASS", flush=True)
+    print("PACKAGED_EXE_SMOKE = PASS", flush=True)
     return outputs
 
 
@@ -170,7 +241,9 @@ def build(args: argparse.Namespace) -> Path:
     if pins["wix"]["version"] != CONTRACT.wix_version:
         raise InstallerBuildError("WiX pin differs from reviewed contract")
     wix_version = canonical_wix_version(
-        subprocess.run(["wix", "--version"], check=True, capture_output=True, text=True).stdout
+        subprocess.run(
+            ["wix", "--version"], check=True, capture_output=True, text=True
+        ).stdout
     )
     args.output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="cryptohunter-build-") as temporary:
@@ -207,7 +280,9 @@ def build(args: argparse.Namespace) -> Path:
         )
         print("WIX_COMPILE = PASS", flush=True)
         if not artifact.is_file():
-            raise InstallerBuildError("WiX exited successfully without creating the canonical MSI")
+            raise InstallerBuildError(
+                "WiX exited successfully without creating the canonical MSI"
+            )
         print("MSI_CREATED = YES", flush=True)
         manifest = {
             "schema_version": 1,
@@ -248,7 +323,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--postgresql-archive", type=Path)
     parser.add_argument("--cache", type=Path, default=Path(".cache/windows-installer"))
     parser.add_argument("--output", type=Path, default=Path("dist/windows"))
-    parser.add_argument("--pins", type=Path, default=Path(__file__).with_name("pins.json"))
+    parser.add_argument(
+        "--pins", type=Path, default=Path(__file__).with_name("pins.json")
+    )
     build(parser.parse_args(argv))
     return 0
 
