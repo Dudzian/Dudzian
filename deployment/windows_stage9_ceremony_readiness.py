@@ -10,7 +10,10 @@ from pathlib import Path
 import subprocess
 from typing import Any, Mapping, Sequence
 
-from deployment.windows_stage9_policy_material import PolicyVectorError, canonical_json_bytes
+from deployment.windows_stage9_policy_material import (
+    PolicyVectorError,
+    canonical_json_bytes,
+)
 from deployment.windows_stage9_production_ceremony import (
     verify_pdsa_public_bundle,
     verify_recovery_public_bundle,
@@ -60,16 +63,33 @@ def validate_expected_manifest(value: Mapping[str, Any]) -> None:
         or value["serialization_profile"] != "CRYPTOHUNTER_CANONICAL_JSON_V1"
     ):
         raise ReadinessError("EXPECTED_MANIFEST_PROFILE")
-    root, pdsa, recovery = value["product_release_root"], value["pdsa"], value["k_recovery"]
-    common = {"algorithm", "encoding", "threshold", "key_count", "canonical_key_set_sha256"}
-    if set(root) != common | {"purpose", "environment"} or set(pdsa) != common | {"purpose"}:
+    root, pdsa, recovery = (
+        value["product_release_root"],
+        value["pdsa"],
+        value["k_recovery"],
+    )
+    common = {
+        "algorithm",
+        "encoding",
+        "threshold",
+        "key_count",
+        "canonical_key_set_sha256",
+    }
+    if set(root) != common | {"purpose", "environment"} or set(pdsa) != common | {
+        "purpose"
+    }:
         raise ReadinessError("EXPECTED_ED25519_FIELDS")
     if root["purpose"] != "PRODUCTION" or root["environment"] != "PRODUCTION":
         raise ReadinessError("EXPECTED_ROOT_PROFILE")
     if pdsa["purpose"] != "PRODUCTION":
         raise ReadinessError("EXPECTED_PDSA_PROFILE")
     for label, item in (("ROOT", root), ("PDSA", pdsa)):
-        if (item["algorithm"], item["encoding"], item["threshold"], item["key_count"]) != (
+        if (
+            item["algorithm"],
+            item["encoding"],
+            item["threshold"],
+            item["key_count"],
+        ) != (
             "Ed25519",
             "RFC8032_RAW_32_BYTES_LOWER_HEX",
             2,
@@ -89,7 +109,14 @@ def validate_expected_manifest(value: Mapping[str, Any]) -> None:
     }
     if set(recovery) != required_recovery or tuple(
         recovery[k]
-        for k in ("type", "name_algorithm", "curve", "scheme", "scheme_hash", "object_attributes")
+        for k in (
+            "type",
+            "name_algorithm",
+            "curve",
+            "scheme",
+            "scheme_hash",
+            "object_attributes",
+        )
     ) != (
         "TPM_ALG_ECC",
         "TPM_ALG_SHA256",
@@ -186,7 +213,14 @@ def _verify_public_authorities(
     }
     expected_root_profile = {
         key: expected["product_release_root"][key]
-        for key in ("purpose", "environment", "algorithm", "encoding", "threshold", "key_count")
+        for key in (
+            "purpose",
+            "environment",
+            "algorithm",
+            "encoding",
+            "threshold",
+            "key_count",
+        )
     }
     if root_profile != expected_root_profile:
         raise ReadinessError("ROOT_PROFILE_MISMATCH")
@@ -210,7 +244,9 @@ def _verify_public_authorities(
         "k_recovery_name": recovery["derived_name"],
     }
     wanted = {
-        "product_release_root_sha256": expected["product_release_root"]["canonical_key_set_sha256"],
+        "product_release_root_sha256": expected["product_release_root"][
+            "canonical_key_set_sha256"
+        ],
         "pdsa_sha256": expected["pdsa"]["canonical_key_set_sha256"],
         "k_recovery_tpmt_public_sha256": expected["k_recovery"]["tpmt_public_sha256"],
         "k_recovery_name": expected["k_recovery"]["name"],
@@ -230,7 +266,8 @@ def _verify_public_authorities(
             "pdsa": pdsa_profile,
         },
         "result": "PASS",
-        "timestamp_utc": timestamp or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "timestamp_utc": timestamp
+        or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     }
 
 
@@ -245,12 +282,12 @@ def validate_current_status(status: Mapping[str, Any]) -> list[str]:
         "a_01_dependency_release_security": "PASS",
         "a_02_external_provisioning": "PASS",
         "production_root_material": "PROVISIONED_LOCALLY",
-        "production_ceremony": "NOT_STARTED",
+        "production_ceremony": "COMPLETE",
         "production_provisioning_ready": False,
         "windows_production_ready": "NOT_READY",
         "stage_10_implementation": "EXISTS",
         "stage_10_production_lifecycle_live": "NOT_STARTED",
-        "stage_10_prerequisite": "BLOCKED_UNTIL_CEREMONY_AND_LEGAL_ENROLLMENT",
+        "stage_10_prerequisite": "BLOCKED_UNTIL_LEGAL_ENROLLMENT",
     }
     if (
         status.get("schema") != "CryptoHunter.Stage9CurrentStatusV1"
@@ -263,10 +300,10 @@ def validate_current_status(status: Mapping[str, Any]) -> list[str]:
         if status.get(key) != value
     )
     if (
-        status.get("production_ceremony") == "NOT_STARTED"
-        and status.get("production_provisioning_ready") is not False
+        status.get("production_provisioning_ready") is not False
+        and status.get("windows_production_ready") != "READY"
     ):
-        reasons.append("PROVISIONING_BEFORE_CEREMONY")
+        reasons.append("PROVISIONING_WITHOUT_LEGAL_ENROLLMENT")
     if (
         status.get("windows_clean_install") == "LIVE_PASS"
         and status.get("windows_0_14") == "9/15 DONE"
@@ -274,9 +311,9 @@ def validate_current_status(status: Mapping[str, Any]) -> list[str]:
         reasons.append("STALE_WINDOWS_COUNT")
     if (
         status.get("stage_10_production_lifecycle_live") == "LIVE_PASS"
-        and status.get("production_ceremony") != "COMPLETE"
+        and status.get("windows_production_ready") != "READY"
     ):
-        reasons.append("STAGE10_BEFORE_CEREMONY")
+        reasons.append("STAGE10_BEFORE_WINDOWS_READY")
     return sorted(set(reasons))
 
 
@@ -287,7 +324,9 @@ def _git(repo: Path, *args: str) -> str:
     return result.stdout.strip()
 
 
-def _revision_bound_file(repo: Path, revision: str, relative_path: str, failure: str) -> list[str]:
+def _revision_bound_file(
+    repo: Path, revision: str, relative_path: str, failure: str
+) -> list[str]:
     """Require a working file to be byte-identical to the reviewed Git object."""
     result = subprocess.run(
         ["git", "show", f"{revision}:{relative_path}"], cwd=repo, capture_output=True
@@ -312,7 +351,10 @@ def ceremony_entry_gate(
     reasons = []
     canonical_manifest = repo / "deployment/stage9_expected_public_authorities.json"
     canonical_status = repo / "deployment/stage9_current_status.json"
-    if manifest_path is not None and manifest_path.resolve() != canonical_manifest.resolve():
+    if (
+        manifest_path is not None
+        and manifest_path.resolve() != canonical_manifest.resolve()
+    ):
         reasons.append("NONCANONICAL_MANIFEST_PATH")
     if status_path is not None and status_path.resolve() != canonical_status.resolve():
         reasons.append("NONCANONICAL_STATUS_PATH")
@@ -360,7 +402,10 @@ def final_package_public_preflight_gate(
     """Bind final-package authority validation to the canonical reviewed manifest."""
     reasons = []
     canonical_manifest = repo / "deployment/stage9_expected_public_authorities.json"
-    if manifest_path is not None and manifest_path.resolve() != canonical_manifest.resolve():
+    if (
+        manifest_path is not None
+        and manifest_path.resolve() != canonical_manifest.resolve()
+    ):
         reasons.append("NONCANONICAL_MANIFEST_PATH")
     head = _git(repo, "rev-parse", "HEAD")
     if head != reviewed_revision:
@@ -393,7 +438,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     final_preflight = sub.add_parser("final-package-public-preflight")
     gate = sub.add_parser("entry-gate")
     for command in (preflight, gate):
-        command.add_argument("--authority-dir", type=Path, default=DEFAULT_AUTHORITY_DIRECTORY)
+        command.add_argument(
+            "--authority-dir", type=Path, default=DEFAULT_AUTHORITY_DIRECTORY
+        )
     for command in (preflight, final_preflight, gate):
         command.add_argument("--reviewed-revision", required=True)
     preflight.add_argument("--expected-manifest", type=Path, default=EXPECTED_MANIFEST)
@@ -428,7 +475,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 return 1
             evidence = final_package_public_preflight(
                 args.final_package_dir,
-                manifest_path=args.repo / "deployment/stage9_expected_public_authorities.json",
+                manifest_path=args.repo
+                / "deployment/stage9_expected_public_authorities.json",
                 revision=args.reviewed_revision,
             )
             print(json.dumps(evidence, sort_keys=True))

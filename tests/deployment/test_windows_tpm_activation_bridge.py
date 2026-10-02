@@ -247,8 +247,10 @@ def test_preflight_report_never_claims_unimplemented_attestation_pass():
 
 def test_cli_has_explicit_preflight_physical_and_negative_flows():
     source = Path("scripts/cryptohunter_activation_request.py").read_text(encoding="utf-8")
-    assert 'print("ACTIVATION REQUEST = BLOCKED", file=sys.stderr)' in source
-    assert "return 3" in source
+    assert "load_production_trust" in source
+    assert "production_trust_package_path" in source
+    assert 'print("PRODUCTION_TRUST_UNAVAILABLE", file=sys.stderr)' in source
+    assert "production_trust_context=trust_context" in source
     assert 'args.command == "physical-test"' in source
     assert 'args.command == "negative-test"' in source
 

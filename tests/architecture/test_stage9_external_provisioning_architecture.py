@@ -58,7 +58,10 @@ def _validate(value: dict[str, Any]) -> None:
         "pdsa_is_owner": False,
         "lppi_is_owner": False,
     }
-    assert owners["account_id"]["mint_and_reservation_owner"] == "CryptoHunterAccountAuthority"
+    assert (
+        owners["account_id"]["mint_and_reservation_owner"]
+        == "CryptoHunterAccountAuthority"
+    )
     assert owners["account_id"]["owner_count"] == 1
     assert owners["provisioning"]["is_account_genesis_owner"] is False
 
@@ -113,7 +116,9 @@ def _validate(value: dict[str, Any]) -> None:
         "request_nonce_hex",
     }
     assert required_request_bindings <= set(request["canonical_payload_fields"])
-    assert request["authentication"]["mutable_device_fields_after_authentication"] is False
+    assert (
+        request["authentication"]["mutable_device_fields_after_authentication"] is False
+    )
     request_key = request["pre_enrollment_key"]
     assert request_key["algorithm_profile"] == "ECDSA-P256-SHA256"
     assert (request_key["algorithm"], request_key["curve"], request_key["hash"]) == (
@@ -196,7 +201,9 @@ def _validate(value: dict[str, Any]) -> None:
     }
     retained = package["retained_issuance_record"]
     assert retained["same_request_retry"] == "RETURN_EXACT_SAME_PACKAGE_BYTES"
-    assert retained["same_challenge_different_request"] == ("REJECT_CHALLENGE_REPLAY_CONFLICT")
+    assert retained["same_challenge_different_request"] == (
+        "REJECT_CHALLENGE_REPLAY_CONFLICT"
+    )
     assert {
         "pdsa_challenge_id",
         "pdsa_challenge_digest_sha256",
@@ -248,7 +255,9 @@ def _validate(value: dict[str, Any]) -> None:
     )
     assert "strict minimal ASN.1 DER" in profile["signature_encoding"]
     custody = lifecycle["custody"]
-    assert custody["custody_profile_enum"] == ["WINDOWS_PLATFORM_CRYPTO_PROVIDER_TPM_ECDSA_P256_V1"]
+    assert custody["custody_profile_enum"] == [
+        "WINDOWS_PLATFORM_CRYPTO_PROVIDER_TPM_ECDSA_P256_V1"
+    ]
     assert custody["selected_custody_profile"] == custody["custody_profile_enum"][0]
     assert authority_binding["required_values"] == {
         "lppi_authority_public_key_algorithm_profile": "ECDSA-P256-SHA256",
@@ -291,13 +300,22 @@ def _validate(value: dict[str, Any]) -> None:
     operation = value["operation_identity"]
     assert operation["status"] == "FROZEN"
     assert (
-        operation["provisioning_operation_id"]["owner_issuer"] == "LocalProductProvisioningIssuer"
+        operation["provisioning_operation_id"]["owner_issuer"]
+        == "LocalProductProvisioningIssuer"
     )
     assert operation["provisioning_operation_id"]["caller_selectable"] is False
-    assert operation["cha_logical_operation_id"]["owner_issuer"] == "CryptoHunterAccountAuthority"
+    assert (
+        operation["cha_logical_operation_id"]["owner_issuer"]
+        == "CryptoHunterAccountAuthority"
+    )
     assert operation["mapping"]["cardinality"] == "ONE_TO_ONE_BIJECTION"
-    assert operation["mapping"]["same_operation_replay"] == "RETURN_SAME_RESULT_OR_DURABLY_RESUME"
-    assert operation["lppi_authenticated_operation_binding"]["canonical_payload_fields"] == [
+    assert (
+        operation["mapping"]["same_operation_replay"]
+        == "RETURN_SAME_RESULT_OR_DURABLY_RESUME"
+    )
+    assert operation["lppi_authenticated_operation_binding"][
+        "canonical_payload_fields"
+    ] == [
         "schema_version",
         "environment",
         "pdsa_trust_domain",
@@ -308,7 +326,9 @@ def _validate(value: dict[str, Any]) -> None:
         "binding_generation",
         "created_at_utc",
     ]
-    operation_signature = operation["lppi_authenticated_operation_binding"]["signature_profile"]
+    operation_signature = operation["lppi_authenticated_operation_binding"][
+        "signature_profile"
+    ]
     assert operation_signature["algorithm"] == profile["algorithm"]
     assert operation_signature["domain"] == (
         "CryptoHunter.Stage9.LPPIAuthenticatedProvisioningOperationBinding.v1"
@@ -345,7 +365,9 @@ def _validate(value: dict[str, Any]) -> None:
     assert membership["authentication"]["domain"] == (
         "CryptoHunter.Stage9.ProvisioningMembershipBinding.v1"
     )
-    assert "strict minimal ASN.1 DER" in membership["authentication"]["signature_encoding"]
+    assert (
+        "strict minimal ASN.1 DER" in membership["authentication"]["signature_encoding"]
+    )
     assert (
         membership["authentication"]["active_key_match_fields"]
         == lifecycle["active_key_record"]["consumer_match_fields"]
@@ -369,7 +391,11 @@ def _validate(value: dict[str, Any]) -> None:
         assert membership[field]
 
     pdsa = value["pdsa_trust_domain"]
-    assert (pdsa["threshold"], pdsa["key_count"], pdsa["algorithm"]) == (2, 3, "Ed25519")
+    assert (pdsa["threshold"], pdsa["key_count"], pdsa["algorithm"]) == (
+        2,
+        3,
+        "Ed25519",
+    )
     assert pdsa["production_accepts_test_or_dev_keys"] is False
     assert pdsa["substitute_production_keys_forbidden"] is True
 
@@ -392,11 +418,15 @@ def _validate(value: dict[str, Any]) -> None:
         "TPMA_NV_PLATFORMCREATE": "CLEAR",
     }
     attributes = protected["tpm_nv"]["attributes"]
-    assert {name: setting["state"] for name, setting in attributes.items()} == expected_attributes
+    assert {
+        name: setting["state"] for name, setting in attributes.items()
+    } == expected_attributes
     assert all(setting["reason"] for setting in attributes.values())
     write = protected["tpm_nv"]["write_authorization"]
     assert write["command"] == "TPM2_NV_Increment"
-    assert write["required_path"] == "TPMA_NV_POLICYWRITE with the exact frozen authPolicy"
+    assert (
+        write["required_path"] == "TPMA_NV_POLICYWRITE with the exact frozen authPolicy"
+    )
     assert write["owner_auth_bypass"] is False
     assert write["auth_value_or_hmac_bypass"] is False
     read = protected["tpm_nv"]["read_authorization"]
@@ -416,8 +446,12 @@ def _validate(value: dict[str, Any]) -> None:
 
     windows = value["windows_post_install"]
     assert windows["mode"] == "POST_INSTALL_FIRST_RUN_ENROLLMENT"
-    assert windows["backend_before_accepted_terminal_transition"] == "DEMAND_START_STOPPED"
-    assert windows["corehost_before_accepted_provisioning_transition"] == "MUST_NOT_START"
+    assert (
+        windows["backend_before_accepted_terminal_transition"] == "DEMAND_START_STOPPED"
+    )
+    assert (
+        windows["corehost_before_accepted_provisioning_transition"] == "MUST_NOT_START"
+    )
     assert {
         "MINT_ACCOUNT_IDENTITY",
         "MINT_PROVISIONING_MEMBERSHIP",
@@ -426,18 +460,32 @@ def _validate(value: dict[str, Any]) -> None:
     } == set(windows["msi_must_not"])
 
     handoff = value["windows_handoff"]
-    assert handoff["missing_real_ceremony_package"] == "WindowsProvisioningAdapterUnavailable"
+    assert (
+        handoff["missing_real_ceremony_package"]
+        == "WindowsProvisioningAdapterUnavailable"
+    )
     assert handoff["silent_fallback"] is False
     assert handoff["test_or_dev_trust_in_production"] is False
-    assert "supply independent ProtectedFreshnessAuthorityPort" in handoff["production_contract"]
-    assert "supply independent SecretExternalResourcePort" in handoff["production_contract"]
+    assert (
+        "supply independent ProtectedFreshnessAuthorityPort"
+        in handoff["production_contract"]
+    )
+    assert (
+        "supply independent SecretExternalResourcePort"
+        in handoff["production_contract"]
+    )
 
     material = value["production_material_dependency"]
     assert material["ceremony_performed"] is False
     assert material["absence_behavior"] == "FAIL_CLOSED"
     assert material["production_activation_authorized"] is False
-    assert material["message"] == "PRODUCTION MATERIAL REQUIRED — DO NOT GENERATE SUBSTITUTE KEYS."
-    assert not any(item["current_value"] == "DESIGN_BLOCKED" for item in value["supersession"])
+    assert (
+        material["message"]
+        == "PRODUCTION MATERIAL REQUIRED — DO NOT GENERATE SUBSTITUTE KEYS."
+    )
+    assert not any(
+        item["current_value"] == "DESIGN_BLOCKED" for item in value["supersession"]
+    )
 
 
 def test_frozen_topology_and_all_negative_guards() -> None:
@@ -485,13 +533,17 @@ def _verify_package_target(
     enrolling_host: dict[str, str],
 ) -> None:
     """Executable projection of the frozen exact-target acceptance relation."""
-    binding = contract["pdsa_enrollment_authorization_package"]["request_and_device_binding"]
+    binding = contract["pdsa_enrollment_authorization_package"][
+        "request_and_device_binding"
+    ]
     for comparison in binding["exact_target_comparisons"]:
         request_value = request[comparison["request_field"]]
         assert package[comparison["package_field"]] == request_value
         if comparison["host_field"] is not None:
             assert enrolling_host[comparison["host_field"]] == request_value
-    assert set(enrolling_host["verified_live_proofs"]) == set(binding["required_live_proofs"])
+    assert set(enrolling_host["verified_live_proofs"]) == set(
+        binding["required_live_proofs"]
+    )
 
 
 def test_package_cloning_to_other_tpm_and_request_key_is_rejected() -> None:
@@ -558,7 +610,9 @@ def _canonical_pre_enrollment_key_fingerprint(canonical_hex: str) -> str:
     assert len(key) == 65 and key[0] == 0x04
     x, y = int.from_bytes(key[1:33], "big"), int.from_bytes(key[33:], "big")
     assert x < P256_PRIME and y < P256_PRIME
-    assert (pow(y, 2, P256_PRIME) - (pow(x, 3, P256_PRIME) - 3 * x + P256_B)) % P256_PRIME == 0
+    assert (
+        pow(y, 2, P256_PRIME) - (pow(x, 3, P256_PRIME) - 3 * x + P256_B)
+    ) % P256_PRIME == 0
     return hashlib.sha256(key).hexdigest()
 
 
@@ -641,7 +695,9 @@ def test_noncanonical_pre_enrollment_key_or_signature_is_rejected(
             + P256_GENERATOR_SEC1
         )
         request["pre_enrollment_public_key_canonical_bytes"] = spki.hex()
-        request["pre_enrollment_public_key_fingerprint_sha256"] = hashlib.sha256(spki).hexdigest()
+        request["pre_enrollment_public_key_fingerprint_sha256"] = hashlib.sha256(
+            spki
+        ).hexdigest()
     elif mutation == "algorithm":
         request["pre_enrollment_public_key_algorithm_profile"] = str(value)
     elif mutation in {"short_key", "wrong_prefix"}:
@@ -670,7 +726,9 @@ def _verify_lppi_key_activation(
 ) -> dict[str, Any]:
     lifecycle = contract["lppi_authority_key_lifecycle"]
     frozen = lifecycle["binding_artifact"]
-    assert all(binding.get(key) == value for key, value in frozen["required_values"].items())
+    assert all(
+        binding.get(key) == value for key, value in frozen["required_values"].items()
+    )
     constraints = lifecycle["custody"]["field_constraints"]
     for field, constraint in constraints.items():
         value = binding.get(field)
@@ -700,14 +758,17 @@ def _verify_lppi_key_activation(
 
 
 def _verify_lppi_signed_artifact(
-    contract: dict[str, Any], active: dict[str, Any], artifact: dict[str, Any], kind: str
+    contract: dict[str, Any],
+    active: dict[str, Any],
+    artifact: dict[str, Any],
+    kind: str,
 ) -> None:
     if kind == "membership":
         signature = contract["provisioning_membership"]["authentication"]
     else:
-        signature = contract["operation_identity"]["lppi_authenticated_operation_binding"][
-            "signature_profile"
-        ]
+        signature = contract["operation_identity"][
+            "lppi_authenticated_operation_binding"
+        ]["signature_profile"]
     assert active["status"] == "ACTIVE"
     assert artifact["signature_present"] is True
     assert artifact["signature_algorithm"] == signature["algorithm"]
@@ -750,9 +811,9 @@ def test_lppi_crypto_profile_and_exact_active_key_relations() -> None:
             "signature_algorithm": "ECDSA-P256-SHA256",
             **{
                 field: active[field]
-                for field in contract["lppi_authority_key_lifecycle"]["active_key_record"][
-                    "consumer_match_fields"
-                ]
+                for field in contract["lppi_authority_key_lifecycle"][
+                    "active_key_record"
+                ]["consumer_match_fields"]
             },
         }
         _verify_lppi_signed_artifact(contract, active, artifact, kind)
@@ -768,7 +829,9 @@ def test_lppi_crypto_profile_and_exact_active_key_relations() -> None:
         ("tpm_name", "not-a-tpm-name"),
     ],
 )
-def test_invalid_lppi_authority_crypto_or_custody_is_rejected(mutation: str, value: Any) -> None:
+def test_invalid_lppi_authority_crypto_or_custody_is_rejected(
+    mutation: str, value: Any
+) -> None:
     contract = _load(CONTRACT_PATH)
     binding, evidence = _valid_lppi_binding_and_evidence()
     if mutation == "algorithm":
@@ -786,7 +849,9 @@ def test_invalid_lppi_authority_crypto_or_custody_is_rejected(mutation: str, val
 
 
 @pytest.mark.parametrize("kind", ["membership", "operation"])
-def test_non_active_or_fingerprint_mismatched_lppi_signing_key_is_rejected(kind: str) -> None:
+def test_non_active_or_fingerprint_mismatched_lppi_signing_key_is_rejected(
+    kind: str,
+) -> None:
     contract = _load(CONTRACT_PATH)
     binding, evidence = _valid_lppi_binding_and_evidence()
     active = _verify_lppi_key_activation(contract, binding, evidence)
@@ -810,7 +875,9 @@ def test_freeze_manifest_guards_exact_contract_bytes_and_coverage() -> None:
     assert len(freeze["artifacts"]) == 1
     artifact = freeze["artifacts"][0]
     assert set(artifact["covers"]) == REQUIRED_COVERAGE
-    assert artifact["canonical_schema_version"] == _load(CONTRACT_PATH)["schema_version"]
+    assert (
+        artifact["canonical_schema_version"] == _load(CONTRACT_PATH)["schema_version"]
+    )
     assert artifact["sha256"] == hashlib.sha256(CONTRACT_PATH.read_bytes()).hexdigest()
 
 
@@ -821,10 +888,29 @@ def test_freeze_manifest_guards_exact_contract_bytes_and_coverage() -> None:
         (("authority_ownership", "account_genesis", "pdsa_is_owner"), True),
         (("provisioning_subject_id", "owner_issuer"), ""),
         (("provisioning_subject_id", "caller_selectable"), True),
-        (("pdsa_enrollment_authorization_package", "contains_provisioning_operation_id"), True),
+        (
+            (
+                "pdsa_enrollment_authorization_package",
+                "contains_provisioning_operation_id",
+            ),
+            True,
+        ),
         (("operation_identity", "status"), "DESIGN_BLOCKED"),
-        (("provisioning_membership", "authentication", "sha256_alone_is_authentication"), True),
-        (("windows_post_install", "corehost_before_accepted_provisioning_transition"), "MAY_START"),
+        (
+            (
+                "provisioning_membership",
+                "authentication",
+                "sha256_alone_is_authentication",
+            ),
+            True,
+        ),
+        (
+            (
+                "windows_post_install",
+                "corehost_before_accepted_provisioning_transition",
+            ),
+            "MAY_START",
+        ),
         (("pdsa_trust_domain", "production_accepts_test_or_dev_keys"), True),
         (("protected_freshness_authority", "separate_from_provisioning"), False),
         (
@@ -887,13 +973,17 @@ def test_removing_request_device_key_or_challenge_binding_fails_closed(
     removed_field: str,
 ) -> None:
     value = copy.deepcopy(_load(CONTRACT_PATH))
-    value["pdsa_enrollment_authorization_package"]["canonical_payload_fields"].remove(removed_field)
+    value["pdsa_enrollment_authorization_package"]["canonical_payload_fields"].remove(
+        removed_field
+    )
     with pytest.raises(AssertionError):
         _validate(value)
 
 
 def test_msi_source_does_not_mint_authority_facts() -> None:
-    source = (ROOT / "deployment/windows_installer/provision.py").read_text(encoding="utf-8")
+    source = (ROOT / "deployment/windows_installer/provision.py").read_text(
+        encoding="utf-8"
+    )
     forbidden = (
         "FirstRunBootstrapClaim(",
         "ProvisioningMembershipBinding(",
@@ -904,12 +994,15 @@ def test_msi_source_does_not_mint_authority_facts() -> None:
     assert not any(token in source for token in forbidden)
 
 
-def test_production_loader_remains_unconditionally_fail_closed() -> None:
+def test_production_loader_has_no_silent_or_test_only_fallback() -> None:
     source = (ROOT / "deployment/windows_installer/corehost_composition.py").read_text(
         encoding="utf-8"
     )
     body = source.split("def load_windows_external_provisioning_handoff", 1)[1].split(
         "def materialize_canonical_pre_state", 1
     )[0]
-    assert "raise WindowsProvisioningAdapterUnavailable" in body
+    assert "load_production_trust" in body
+    assert "PRODUCTION_TRUST_UNAVAILABLE" in body
+    assert "LEGAL_PRODUCTION_ENROLLMENT_NOT_COMPLETED" in body
+    assert "TEST_ONLY" not in body
     assert "fallback" not in body.lower()
