@@ -400,6 +400,117 @@ def test_public_trust_installer_copies_atomically_and_refuses_overwrite(
         trust.install_public_production_trust(source, destination)
 
 
+def test_public_trust_installer_rejects_non_public_extra_before_mutation(
+    tmp_path, monkeypatch
+):
+    from types import SimpleNamespace
+    import deployment.windows_stage9_production_trust as trust
+
+    source = tmp_path / "source"
+    source.mkdir()
+    for number in range(12):
+        (source / f"artifact-{number}.json").write_text("{}\n", encoding="utf-8")
+    (source / "private.pem").write_text("PRIVATE KEY", encoding="utf-8")
+    monkeypatch.setattr(
+        trust,
+        "load_production_trust",
+        lambda path: SimpleNamespace(ceremony_id=trust.CEREMONY_ID),
+    )
+    destination = tmp_path / "Config" / "ProductionTrust" / trust.CEREMONY_ID
+    with pytest.raises(trust.ProductionTrustUnavailable, match="ALLOWLIST"):
+        trust.install_public_production_trust(source, destination)
+    assert not destination.exists()
+
+
+def test_public_trust_failure_before_rename_removes_staging_and_owned_parent(
+    tmp_path, monkeypatch
+):
+    from types import SimpleNamespace
+    import deployment.windows_stage9_production_trust as trust
+
+    source = tmp_path / "source"
+    source.mkdir()
+    for number in range(12):
+        (source / f"artifact-{number}.json").write_text("{}\n", encoding="utf-8")
+    verified = SimpleNamespace(ceremony_id=trust.CEREMONY_ID)
+    monkeypatch.setattr(trust, "load_production_trust", lambda path: verified)
+    monkeypatch.setattr(
+        trust,
+        "verify_production_trust_for_audit",
+        lambda path, verification_time: verified,
+    )
+    monkeypatch.setattr(
+        trust.os,
+        "rename",
+        lambda source, destination: (_ for _ in ()).throw(OSError("before rename")),
+    )
+    destination = tmp_path / "Config" / "ProductionTrust" / trust.CEREMONY_ID
+    with pytest.raises(OSError, match="before rename"):
+        trust.install_public_production_trust(source, destination)
+    assert not destination.exists()
+    assert not destination.parent.exists()
+
+
+def test_staging_verification_failure_has_no_publication_or_residue(
+    tmp_path, monkeypatch
+):
+    from types import SimpleNamespace
+    import deployment.windows_stage9_production_trust as trust
+
+    source = tmp_path / "source"
+    source.mkdir()
+    for number in range(12):
+        (source / f"artifact-{number}.json").write_text("{}\n", encoding="utf-8")
+    monkeypatch.setattr(
+        trust,
+        "load_production_trust",
+        lambda path: SimpleNamespace(ceremony_id=trust.CEREMONY_ID),
+    )
+    monkeypatch.setattr(
+        trust,
+        "verify_production_trust_for_audit",
+        lambda path, verification_time: (_ for _ in ()).throw(
+            ValueError("staged invalid")
+        ),
+    )
+    destination = tmp_path / "Config" / "ProductionTrust" / trust.CEREMONY_ID
+    with pytest.raises(ValueError, match="staged invalid"):
+        trust.install_public_production_trust(source, destination)
+    assert not destination.exists()
+    assert not destination.parent.exists()
+
+
+def test_cleanup_failure_after_rename_is_committed_and_unambiguous(
+    tmp_path, monkeypatch
+):
+    from types import SimpleNamespace
+    import deployment.windows_stage9_production_trust as trust
+
+    source = tmp_path / "source"
+    source.mkdir()
+    for number in range(12):
+        (source / f"artifact-{number}.json").write_text("{}\n", encoding="utf-8")
+    verified = SimpleNamespace(ceremony_id=trust.CEREMONY_ID)
+    monkeypatch.setattr(trust, "load_production_trust", lambda path: verified)
+    monkeypatch.setattr(
+        trust,
+        "verify_production_trust_for_audit",
+        lambda path, verification_time: verified,
+    )
+    original_rmdir = Path.rmdir
+
+    def fail_staging_rmdir(path):
+        if path.name.startswith(".production-trust-"):
+            raise OSError("simulated cleanup failure")
+        return original_rmdir(path)
+
+    monkeypatch.setattr(Path, "rmdir", fail_staging_rmdir)
+    destination = tmp_path / "Config" / "ProductionTrust" / trust.CEREMONY_ID
+    assert trust.install_public_production_trust(source, destination) == destination
+    assert destination.is_dir()
+    assert not list(destination.parent.glob(".production-trust-*"))
+
+
 def test_signature_import_failures(ceremony_material):
     roots, _, pinned, _, _, payload, context = ceremony_material
     request = build_signing_request(
