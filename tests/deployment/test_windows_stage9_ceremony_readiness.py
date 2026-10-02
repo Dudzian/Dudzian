@@ -58,7 +58,7 @@ def authorities(tmp_path: Path):
     public_directory = authority_root / "public"
     public_directory.mkdir(parents=True)
     root, _ = build_root_anchor_bundle(
-        _records("root", (1, 2, 3)), purpose="PRODUCTION", environment="PRODUCTION_CEREMONY"
+        _records("root", (1, 2, 3)), purpose="PRODUCTION", environment="PRODUCTION"
     )
     pdsa = build_pdsa_public_bundle(_records("pdsa", (4, 5, 6)), threshold=2, purpose="PRODUCTION")
     release = json.loads(FIXTURE.read_text())["release_policy"]
@@ -124,7 +124,7 @@ def test_public_preflight_passes_and_revision_binds_evidence(authorities):
     assert evidence["actual_public_authority_profiles"] == {
         "product_release_root": {
             "purpose": "PRODUCTION",
-            "environment": "PRODUCTION_CEREMONY",
+            "environment": "PRODUCTION",
             "algorithm": "Ed25519",
             "encoding": "RFC8032_RAW_32_BYTES_LOWER_HEX",
             "threshold": 2,
@@ -145,6 +145,7 @@ def test_public_preflight_passes_and_revision_binds_evidence(authorities):
     [
         ("TEST_ONLY", "UNIT_TEST_ONLY"),
         ("PRODUCTION", "WRONG_PRODUCTION_ENVIRONMENT"),
+        ("PRODUCTION", "PRODUCTION_CEREMONY"),
     ],
 )
 def test_root_wrong_purpose_or_environment_fails_with_same_keys(authorities, purpose, environment):
@@ -161,6 +162,13 @@ def test_root_wrong_purpose_or_environment_fails_with_same_keys(authorities, pur
     manifest.write_bytes(canonical_json_bytes(expected))
     with pytest.raises(ReadinessError, match="ROOT_PROFILE_MISMATCH"):
         public_authority_preflight(directory, manifest_path=manifest, revision="a" * 40)
+
+
+def test_product_root_environment_is_not_the_ceremony_profile():
+    """The immutable root uses PRODUCTION; ceremony lifecycle/profile is a separate concern."""
+    expected = json.loads(EXPECTED_MANIFEST.read_text())
+    assert expected["product_release_root"]["environment"] == "PRODUCTION"
+    assert expected["product_release_root"]["environment"] != "PRODUCTION_CEREMONY"
 
 
 @pytest.mark.parametrize("threshold", [1, 3])
@@ -255,7 +263,7 @@ def test_final_package_wrong_root_digest_fails_closed(final_package):
     wrong_root, _ = build_root_anchor_bundle(
         _records("wrong-root", (7, 8, 9)),
         purpose="PRODUCTION",
-        environment="PRODUCTION_CEREMONY",
+        environment="PRODUCTION",
     )
     (directory / "root_anchor_bundle.json").write_bytes(canonical_json_bytes(wrong_root))
     with pytest.raises(ReadinessError, match="AUTHORITY_MISMATCH:product_release_root_sha256"):

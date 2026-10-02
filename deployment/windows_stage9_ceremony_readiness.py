@@ -64,7 +64,7 @@ def validate_expected_manifest(value: Mapping[str, Any]) -> None:
     common = {"algorithm", "encoding", "threshold", "key_count", "canonical_key_set_sha256"}
     if set(root) != common | {"purpose", "environment"} or set(pdsa) != common | {"purpose"}:
         raise ReadinessError("EXPECTED_ED25519_FIELDS")
-    if root["purpose"] != "PRODUCTION" or root["environment"] != "PRODUCTION_CEREMONY":
+    if root["purpose"] != "PRODUCTION" or root["environment"] != "PRODUCTION":
         raise ReadinessError("EXPECTED_ROOT_PROFILE")
     if pdsa["purpose"] != "PRODUCTION":
         raise ReadinessError("EXPECTED_PDSA_PROFILE")
