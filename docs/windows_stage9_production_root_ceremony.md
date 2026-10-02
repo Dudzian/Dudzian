@@ -159,8 +159,11 @@ Run from an elevated PowerShell whose transcript destination is approved for **p
 These commands only read/hash/validate, except that the optional preflight command creates one new
 public evidence file and refuses to overwrite it:
 
-Public preflight wymaga pełnego profilu root `PRODUCTION / PRODUCTION_CEREMONY` oraz PDSA
-`PRODUCTION`, Ed25519, dokładnie 2-of-3; zgodność samego digestu nie wystarcza.
+Public preflight wymaga pełnego profilu Product Release Root `PRODUCTION / PRODUCTION` oraz PDSA
+`PRODUCTION`, Ed25519, dokładnie 2-of-3; zgodność samego digestu nie wystarcza. Wartość
+`Product Release Root.environment` opisuje niezmienny profil authority i nie jest profilem ani
+stanem cyklu życia ceremonii; etykiety ceremonii, takie jak `STAGE9_PRODUCTION_CEREMONY_V1`, są
+odrębnym kontraktem.
 
 ```powershell
 Set-Location $Repo

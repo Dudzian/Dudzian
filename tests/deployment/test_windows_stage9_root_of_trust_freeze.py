@@ -539,7 +539,7 @@ def test_actual_custody_head_prevents_revoked_root_rollback_successor():
     with pytest.raises(PolicyVectorError, match="revoked signer"):
         verify_revocation_state(
             canonical_json_bytes(successor),
-            _pinned_root(roots, purpose="PRODUCTION", environment="PRODUCTION_CEREMONY"),
+            _pinned_root(roots, purpose="PRODUCTION", environment="PRODUCTION"),
             retained_head=actual_head,
             verification_time=NOW,
         )

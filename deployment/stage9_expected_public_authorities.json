@@ -6,7 +6,7 @@
   "serialization_profile": "CRYPTOHUNTER_CANONICAL_JSON_V1",
   "product_release_root": {
     "purpose": "PRODUCTION",
-    "environment": "PRODUCTION_CEREMONY",
+    "environment": "PRODUCTION",
     "algorithm": "Ed25519",
     "encoding": "RFC8032_RAW_32_BYTES_LOWER_HEX",
     "threshold": 2,
