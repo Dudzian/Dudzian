@@ -6,12 +6,11 @@ from types import SimpleNamespace
 import pytest
 
 pytest.importorskip("PySide6", reason="UI/QML tests require PySide6")
-from PySide6.QtCore import QCoreApplication, QMetaObject, Qt, Q_ARG
+from PySide6.QtCore import QCoreApplication, QMetaObject, Qt, Q_ARG, Q_RETURN_ARG
 
 from ui.backend.runtime_service import RuntimeService
 from tests.ui._qt_invoke_safe import (
     assert_has_overload,
-    invoke_safe_qvariantmap,
     invoke_safe_variant,
 )
 
@@ -188,30 +187,29 @@ def test_runtime_service_operator_action_can_be_invoked_via_qt_metaobject() -> N
     app = QCoreApplication.instance() or QCoreApplication([])
     service = RuntimeService(decision_loader=lambda limit: [])
 
-    if sys.platform == "win32":
-        assert_has_overload(service, "triggerOperatorAction(QString)")
-        assert_has_overload(service, "triggerOperatorAction(QString,QVariant)")
-        assert_has_overload(service, "triggerOperatorAction(QString,QVariantMap)")
-        ok = service.triggerOperatorAction("requestFreeze")
-    else:
-        entry_payload = {
-            "event": "risk_blocked",
-            "timestamp": "2025-01-02T09:15:00+00:00",
-            "id": "decision-meta",
-        }
-        ok = QMetaObject.invokeMethod(
-            service,
-            "triggerOperatorAction",
-            Qt.ConnectionType.DirectConnection,
-            Q_ARG("QString", "requestFreeze"),
-            Q_ARG("QVariantMap", invoke_safe_qvariantmap(entry_payload)),
-        )
+    assert_has_overload(service, "triggerOperatorAction(QString)")
+    assert_has_overload(service, "triggerOperatorAction(QString,QVariant)")
+    assert_has_overload(service, "triggerOperatorAction(QString,QVariantMap)")
+    ok = QMetaObject.invokeMethod(
+        service,
+        "triggerOperatorAction",
+        Qt.ConnectionType.DirectConnection,
+        Q_RETURN_ARG(bool),
+        Q_ARG("QString", "requestFreeze"),
+    )
 
     assert app is not None
     assert ok is True
     assert service.lastOperatorAction["action"] == "freeze"
-    if sys.platform == "win32":
-        assert service.lastOperatorAction["entry"] == {}
+    assert service.lastOperatorAction["entry"] == {}
+
+    entry_payload = {
+        "event": "risk_blocked",
+        "timestamp": "2025-01-02T09:15:00+00:00",
+        "id": "decision-meta",
+    }
+    assert service.triggerOperatorAction("requestFreeze", entry_payload) is True
+    assert service.lastOperatorAction["entry"]["id"] == "decision-meta"
 
 
 def test_runtime_service_operator_action_can_be_invoked_via_qvariant_signature() -> None:
@@ -232,6 +230,7 @@ def test_runtime_service_operator_action_can_be_invoked_via_qvariant_signature()
             service,
             "triggerOperatorAction",
             Qt.ConnectionType.DirectConnection,
+            Q_RETURN_ARG(bool),
             Q_ARG("QString", "requestFreeze"),
             Q_ARG("QVariant", invoke_safe_variant(entry_payload)),
         )
@@ -263,6 +262,7 @@ def test_runtime_service_request_freeze_can_be_invoked_via_qvariant_signature() 
             service,
             "requestFreeze",
             Qt.ConnectionType.DirectConnection,
+            Q_RETURN_ARG(bool),
             Q_ARG("QVariant", invoke_safe_variant(entry_payload)),
         )
 

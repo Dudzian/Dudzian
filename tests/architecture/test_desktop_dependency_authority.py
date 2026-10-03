@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import sys
@@ -18,9 +19,10 @@ from scripts.ci.require_python311 import require_python311
 from scripts.ci.validate_locked_resolution import locked_versions, validate_target_resolution
 
 LOCK = Path("deploy/packaging/requirements-desktop.lock")
-LOCK_TEXT = LOCK.as_posix()
+LOCK_REPOSITORY_TEXT = LOCK.as_posix()
+LOCK_NATIVE = os.fspath(LOCK)
 PYSIDE_STACK = {"pyside6", "pyside6-addons", "pyside6-essentials", "shiboken6"}
-PIP_BOOTSTRAP = f"python scripts/ci/bootstrap_locked_pip.py {LOCK_TEXT}"
+PIP_BOOTSTRAP = f"python scripts/ci/bootstrap_locked_pip.py {LOCK_REPOSITORY_TEXT}"
 
 
 def _text(path: str) -> str:
@@ -32,12 +34,12 @@ def test_release_workflows_install_and_audit_canonical_lock() -> None:
     packaging = _text(".github/workflows/main.yml")
     cross_installer = _text("deploy/ci/github_actions_cross_installer.yml")
     audit = _text(".github/workflows/ci.yml")
-    assert f"pip install --no-deps -r {LOCK_TEXT}" in windows
-    assert packaging.count(f"pip install --no-deps -r {LOCK_TEXT}") == 3
-    assert cross_installer.count(f"pip install --no-deps -r {LOCK_TEXT}") == 2
-    assert packaging.count(f"validate_locked_resolution.py {LOCK_TEXT}") == 3
-    assert cross_installer.count(f"validate_locked_resolution.py {LOCK_TEXT}") == 2
-    assert f"--requirement {LOCK_TEXT}" in audit
+    assert f"pip install --no-deps -r {LOCK_REPOSITORY_TEXT}" in windows
+    assert packaging.count(f"pip install --no-deps -r {LOCK_REPOSITORY_TEXT}") == 3
+    assert cross_installer.count(f"pip install --no-deps -r {LOCK_REPOSITORY_TEXT}") == 2
+    assert packaging.count(f"validate_locked_resolution.py {LOCK_REPOSITORY_TEXT}") == 3
+    assert cross_installer.count(f"validate_locked_resolution.py {LOCK_REPOSITORY_TEXT}") == 2
+    assert f"--requirement {LOCK_REPOSITORY_TEXT}" in audit
 
 
 def test_mypy_uses_fixed_vendor_pyside_stubs_and_checks_project_sources() -> None:
@@ -98,10 +100,10 @@ def test_release_build_environments_have_no_loose_python_resolver_mutations() ->
 
 def test_cross_installer_binds_release_install_to_bootstrapped_python() -> None:
     cross_installer = _text("deploy/ci/github_actions_cross_installer.yml")
-    bound_install = f"python -m pip install --no-deps -r {LOCK_TEXT}"
+    bound_install = f"python -m pip install --no-deps -r {LOCK_REPOSITORY_TEXT}"
     assert cross_installer.count(bound_install) == 2
     assert not re.search(
-        rf"(?m)^\s+pip install --no-deps -r {re.escape(LOCK_TEXT)}$", cross_installer
+        rf"(?m)^\s+pip install --no-deps -r {re.escape(LOCK_REPOSITORY_TEXT)}$", cross_installer
     )
 
 
@@ -162,11 +164,11 @@ def test_lock_generation_authority_is_self_consistent() -> None:
 def test_cross_platform_jobs_validate_native_plan_before_wheelhouse() -> None:
     workflow = _text(".github/workflows/ci.yml")
     assert "os: [ubuntu-latest, windows-latest, macos-latest]" in workflow
-    validation = f"validate_locked_resolution.py {LOCK_TEXT}"
+    validation = f"validate_locked_resolution.py {LOCK_REPOSITORY_TEXT}"
     assert validation in workflow
     assert '--target ".[desktop]"' in workflow
     assert workflow.index(validation) < workflow.index("Build wheelhouse")
-    assert f"--requirements {LOCK_TEXT}" in workflow
+    assert f"--requirements {LOCK_REPOSITORY_TEXT}" in workflow
     builder = _text("scripts/ci/build_wheelhouse.py")
     assert "validate_desktop_resolution(args.python, args.requirements)" in builder
     assert builder.count(".[desktop]") == 1  # validator CLI compatibility only
@@ -185,10 +187,10 @@ def test_actual_desktop_target_rejects_missing_or_mismatched_dependency(
         assert check is True
         report = Path(command[command.index("--report") + 1])
         if "--requirement" in command:
-            assert command[command.index("--requirement") + 1] == LOCK_TEXT
+            assert command[command.index("--requirement") + 1] == LOCK_NATIVE
             install = []
         else:
-            assert command[command.index("--constraint") + 1] == LOCK_TEXT
+            assert command[command.index("--constraint") + 1] == LOCK_NATIVE
             assert ".[desktop]" not in command
             assert "pyarrow>=21.0.0" in command
             assert "pyinstaller>=6.5" in command
@@ -200,6 +202,16 @@ def test_actual_desktop_target_rejects_missing_or_mismatched_dependency(
 
     with pytest.raises(SystemExit, match=expected):
         validate_target_resolution(LOCK, ".[desktop]", runner=fake_runner)
+
+
+def test_lock_path_representations_keep_repository_text_separate_from_native_paths() -> None:
+    assert LOCK_REPOSITORY_TEXT == "deploy/packaging/requirements-desktop.lock"
+    assert "\\" not in LOCK_REPOSITORY_TEXT
+    assert LOCK_NATIVE == str(LOCK) == os.fspath(LOCK)
+    if os.name == "nt":
+        assert LOCK_NATIVE == r"deploy\packaging\requirements-desktop.lock"
+    else:
+        assert LOCK_NATIVE == LOCK_REPOSITORY_TEXT
 
 
 def test_every_desktop_direct_dependency_is_in_canonical_lock() -> None:

@@ -2216,8 +2216,6 @@ class RuntimeService(QObject):
     @Slot("QString", result=bool)
     @Slot("QString", "QVariantMap", result=bool)
     @Slot("QString", "QVariant", result=bool)
-    @Slot(str, "QVariantMap", result=bool)
-    @Slot(str, "QVariant", result=bool)
     @Slot("QVariant", "QVariantMap", result=bool)
     @Slot("QVariant", "QVariant", result=bool)
     def triggerOperatorAction(self, action: object, entry: object = None) -> bool:  # type: ignore[override]

@@ -75,7 +75,7 @@ def test_source_inventory_counts_preserved() -> None:
     assert s["pyside_qml_file_count"] == 24
     assert s["shared_qml_file_count"] == 107
     assert s["additional_qml_support_asset_count"] == 0
-    assert s["deploy_packaging_source_file_count"] == 46
+    assert s["deploy_packaging_source_file_count"] == 48
     assert s["deployment_documentation_file_count"] == 17
     assert s["config_reference_row_count"] == 6
     assert s["inventory_finding_count"] == 11
@@ -620,7 +620,7 @@ def test_metadata_preview_local_valid_isolation(monkeypatch: pytest.MonkeyPatch)
     preservation = payload["source_inventory_preservation"]
     assert evidence["packaging_metadata_valid"] is True
     assert evidence["preview_packaging_valid"] is False
-    assert preservation["deploy_packaging_source_file_count"] == 46
+    assert preservation["deploy_packaging_source_file_count"] == 48
     assert preservation["deployment_documentation_file_count"] == 17
     assert preservation["cli_preview_remains_separate"] is False
 
