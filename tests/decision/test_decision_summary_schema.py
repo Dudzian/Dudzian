@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import subprocess
+import sys
+
 import pytest
 from pydantic import ValidationError
 
@@ -7,6 +10,17 @@ from bot_core.decision.schema import (
     DecisionEngineSummary as SchemaDecisionEngineSummary,
 )
 from bot_core.decision.schemas import DecisionEngineSummary
+
+
+def test_decision_engine_schema_import_has_clean_stderr() -> None:
+    result = subprocess.run(
+        [sys.executable, "-W", "default", "-c", "import bot_core.decision.schema"],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0
+    assert result.stderr == ""
 
 
 def test_decision_engine_summary_validates_minimal_payload() -> None:

@@ -64,7 +64,9 @@ class DecisionEngineSummary(BaseModel):
     latest_recommended_position_size: float | None = None
     latest_recommended_risk_score: float | None = None
 
-    model_config = ConfigDict(extra="allow")
+    # ``model_usage`` and ``model_breakdown`` are intentional domain fields,
+    # not members of Pydantic's model API.
+    model_config = ConfigDict(extra="allow", protected_namespaces=())
 
 
 __all__ = ["DecisionEngineSummary"]

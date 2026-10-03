@@ -44,23 +44,17 @@ from deployment.windows_tpm_activation_bridge import (
 
 
 def parser() -> argparse.ArgumentParser:
-    result = argparse.ArgumentParser(
-        description="CryptoHunter TEST_ONLY TPM activation bridge"
-    )
+    result = argparse.ArgumentParser(description="CryptoHunter TEST_ONLY TPM activation bridge")
     sub = result.add_subparsers(dest="command", required=True)
     for command in ("create", "physical-test", "negative-test"):
         item = sub.add_parser(command)
-        item.add_argument(
-            "--environment", required=True, choices=("TEST_ONLY", "PRODUCTION")
-        )
+        item.add_argument("--environment", required=True, choices=("TEST_ONLY", "PRODUCTION"))
         item.add_argument("--output", required=True, type=Path)
         item.add_argument("--release-policy", type=Path)
         item.add_argument("--edition", default="pro")
         item.add_argument("--feature", action="append", default=["core_bot"])
     cleanup = sub.add_parser("cleanup")
-    cleanup.add_argument(
-        "--environment", required=True, choices=("TEST_ONLY", "PRODUCTION")
-    )
+    cleanup.add_argument("--environment", required=True, choices=("TEST_ONLY", "PRODUCTION"))
     cleanup.add_argument("--output", required=True, type=Path)
     return result
 
@@ -69,9 +63,7 @@ def _release(path: Path) -> tuple[str, int]:
     value = json.loads(path.read_text(encoding="utf-8"))
     validate_schema(value, RELEASE_SCHEMA)
     if value["purpose"] != "TEST_ONLY":
-        raise ValueError(
-            "physical rehearsal requires an existing TEST_ONLY ReleasePolicyV1"
-        )
+        raise ValueError("physical rehearsal requires an existing TEST_ONLY ReleasePolicyV1")
     return canonical_digest(value).hex(), 1
 
 
@@ -83,9 +75,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     if args.environment == "PRODUCTION":
         try:
-            trust_context = load_production_trust(
-                production_trust_package_path(CEREMONY_ID)
-            )
+            trust_context = load_production_trust(production_trust_package_path(CEREMONY_ID))
         except ProductionTrustUnavailable:
             print("PRODUCTION_TRUST_UNAVAILABLE", file=sys.stderr)
             return 2
@@ -166,9 +156,7 @@ def main(argv: list[str] | None = None) -> int:
             qualifying = certify_qualifying_data(
                 issuer_nonce, hashlib.sha256(activation.canonical_bytes).digest()
             )
-            attest, certify_signature = substrate.certify_creation(
-                ak, k_psa, qualifying
-            )
+            attest, certify_signature = substrate.certify_creation(ak, k_psa, qualifying)
             response = TPMEnrollmentChallengeResponseV1.create(
                 challenge,
                 activated_credential_digest=hashlib.sha256(recovered).hexdigest(),
@@ -182,9 +170,7 @@ def main(argv: list[str] | None = None) -> int:
             if args.command == "negative-test":
                 changed = response.document
                 changed["credential_activation_proof_hex"] = "00" * 32
-                response_raw = json.dumps(
-                    changed, sort_keys=True, separators=(",", ":")
-                ).encode()
+                response_raw = json.dumps(changed, sort_keys=True, separators=(",", ":")).encode()
                 try:
                     ProductionTPMAttestationVerifier().verify(
                         activation.canonical_bytes,
@@ -235,9 +221,7 @@ def main(argv: list[str] | None = None) -> int:
         }.items():
             (folder / name).write_bytes(raw)
     target = args.output / "physical-preflight.json"
-    target.write_text(
-        json.dumps(report, sort_keys=True, separators=(",", ":")), encoding="utf-8"
-    )
+    target.write_text(json.dumps(report, sort_keys=True, separators=(",", ":")), encoding="utf-8")
     print(f"PUBLIC TPM PROJECTION = IMPLEMENTED\n{target}")
     if args.command == "create":
         folder = export_bundle(

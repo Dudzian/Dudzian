@@ -169,9 +169,7 @@ class PDSAAuthorizationRequestV1:
 
     def __post_init__(self) -> None:
         _bounded(self.pdsa_challenge_id, "pdsa_challenge_id")
-        _bounded(
-            self.verified_tpm_exchange_reference, "verified_tpm_exchange_reference"
-        )
+        _bounded(self.verified_tpm_exchange_reference, "verified_tpm_exchange_reference")
         for name in (
             "pdsa_challenge_digest_sha256",
             "pre_enrollment_request_digest_sha256",
@@ -217,20 +215,13 @@ def _iso(value: str) -> datetime:
         parsed = datetime.fromisoformat(value[:-1] + "+00:00")
     except ValueError as exc:
         raise ProvisioningError("INVALID_CANONICAL_UTC") from exc
-    if (
-        parsed.tzinfo != timezone.utc
-        or parsed.isoformat().replace("+00:00", "Z") != value
-    ):
+    if parsed.tzinfo != timezone.utc or parsed.isoformat().replace("+00:00", "Z") != value:
         raise ProvisioningError("INVALID_CANONICAL_UTC")
     return parsed
 
 
 def _hex_digest(value: object, name: str) -> str:
-    if (
-        not isinstance(value, str)
-        or len(value) != 64
-        or any(c not in HEX64 for c in value)
-    ):
+    if not isinstance(value, str) or len(value) != 64 or any(c not in HEX64 for c in value):
         raise ProvisioningError(f"INVALID_{name.upper()}")
     return value
 
@@ -374,10 +365,7 @@ class TestOnlyProvisioningAuthority:
         return {key_id: key.public_key() for key_id, key in self._keys.items()}
 
     def issue(self, payload: Mapping[str, Any]) -> bytes:
-        if (
-            set(payload) != PACKAGE_FIELDS
-            or payload.get("schema_version") != PACKAGE_SCHEMA
-        ):
+        if set(payload) != PACKAGE_FIELDS or payload.get("schema_version") != PACKAGE_SCHEMA:
             raise ProvisioningError("PACKAGE_PAYLOAD_SCHEMA_MISMATCH")
         message = PDSA_DOMAIN + hashlib.sha256(canonical_json_bytes(payload)).digest()
         signatures = [
@@ -388,9 +376,7 @@ class TestOnlyProvisioningAuthority:
             }
             for key_id in sorted(self._keys)[:2]
         ]
-        return canonical_json_bytes(
-            {"payload": dict(payload), "signatures": signatures}
-        )
+        return canonical_json_bytes({"payload": dict(payload), "signatures": signatures})
 
 
 class _PDSAProvisioningPackageVerifier(ProvisioningPackageVerifier):
@@ -462,15 +448,9 @@ class _PDSAProvisioningPackageVerifier(ProvisioningPackageVerifier):
         predecessor = payload["predecessor_package_digest_or_null"]
         if predecessor is not None:
             _hex_digest(predecessor, "predecessor_package_digest_or_null")
-        if (
-            payload["pre_enrollment_public_key_algorithm_profile"]
-            != "ECDSA-P256-SHA256"
-        ):
+        if payload["pre_enrollment_public_key_algorithm_profile"] != "ECDSA-P256-SHA256":
             raise ProvisioningError("WRONG_DEVICE_KEY_ALGORITHM")
-        if (
-            payload["pre_enrollment_public_key_fingerprint_sha256"]
-            != expected_device_key
-        ):
+        if payload["pre_enrollment_public_key_fingerprint_sha256"] != expected_device_key:
             raise ProvisioningError("REJECT_PACKAGE_TARGET_MISMATCH")
         if (
             self._release_digest is not None
@@ -482,9 +462,7 @@ class _PDSAProvisioningPackageVerifier(ProvisioningPackageVerifier):
             and payload["release_policy_generation"] != self._release_generation
         ):
             raise ProvisioningError("RELEASE_POLICY_GENERATION_MISMATCH")
-        issued_at, expires_at = _iso(payload["issued_at_utc"]), _iso(
-            payload["expires_at_utc"]
-        )
+        issued_at, expires_at = _iso(payload["issued_at_utc"]), _iso(payload["expires_at_utc"])
         if issued_at >= expires_at:
             raise ProvisioningError("INVALID_PACKAGE_VALIDITY_WINDOW")
         if now.tzinfo != timezone.utc or now < issued_at:
@@ -503,14 +481,10 @@ class _PDSAProvisioningPackageVerifier(ProvisioningPackageVerifier):
                 ):
                     raise ProvisioningError("UNKNOWN_OR_DUPLICATE_PDSA_SIGNER")
                 seen.add(key_id)
-                self._keys[key_id].verify(
-                    bytes.fromhex(signature["signature_hex"]), message
-                )
+                self._keys[key_id].verify(bytes.fromhex(signature["signature_hex"]), message)
         except (InvalidSignature, ValueError) as exc:
             raise ProvisioningError("INVALID_PDSA_SIGNATURE") from exc
-        return VerifiedProvisioningPackage(
-            payload, hashlib.sha256(raw).hexdigest(), raw
-        )
+        return VerifiedProvisioningPackage(payload, hashlib.sha256(raw).hexdigest(), raw)
 
 
 class ProductionProvisioningPackageVerifier(_PDSAProvisioningPackageVerifier):
@@ -524,9 +498,7 @@ class ProductionProvisioningPackageVerifier(_PDSAProvisioningPackageVerifier):
         try:
             trust_context = require_verified_production_trust_context(trust_context)
         except RuntimeError as exc:
-            raise ProductionVerifierUnavailable(
-                "PRODUCTION_TRUST_CONTEXT_REQUIRED"
-            ) from exc
+            raise ProductionVerifierUnavailable("PRODUCTION_TRUST_CONTEXT_REQUIRED") from exc
         super().__init__(
             trust_context.pdsa_keys,
             environment="PRODUCTION",
@@ -670,9 +642,7 @@ class ProvisioningRepository:
             ).fetchone()
             if row is None:
                 raise ConflictError("ILLEGAL_ACCOUNT_TRANSITION")
-            if row["account_id"] not in (None, account) or row[
-                "logical_operation_id"
-            ] not in (
+            if row["account_id"] not in (None, account) or row["logical_operation_id"] not in (
                 None,
                 logical,
             ):
@@ -708,9 +678,9 @@ class ProvisioningRepository:
                 current = db.execute(
                     "SELECT state FROM provisioning_operations WHERE prvop=?", (prvop,)
                 ).fetchone()
-                if current is None or progression.index(
-                    SagaState(current[0])
-                ) < progression.index(after):
+                if current is None or progression.index(SagaState(current[0])) < progression.index(
+                    after
+                ):
                     raise ConflictError("ILLEGAL_SAGA_TRANSITION")
 
 
@@ -764,9 +734,7 @@ class Stage9ProvisioningService:
         if isinstance(verifier, ProductionProvisioningPackageVerifier) and isinstance(
             membership_signer, TestOnlyMembershipSigner
         ):
-            raise ValueError(
-                "TEST_ONLY membership signer forbidden with production verifier"
-            )
+            raise ValueError("TEST_ONLY membership signer forbidden with production verifier")
         self.repository, self.verifier = repository, verifier
         self.membership_signer = membership_signer
         self.cha = Stage9AccountGenesisAuthority(repository)
@@ -775,9 +743,7 @@ class Stage9ProvisioningService:
     def provision(
         self, raw: bytes, *, expected_device_key: str, now: datetime
     ) -> ProvisioningOutcome:
-        verified = self.verifier.verify(
-            raw, expected_device_key=expected_device_key, now=now
-        )
+        verified = self.verifier.verify(raw, expected_device_key=expected_device_key, now=now)
         stamp = now.isoformat().replace("+00:00", "Z")
         operation = self.repository.reserve(verified, stamp)
         self.crash_hook("AFTER_PRVOP_BEFORE_CHA")
@@ -822,9 +788,7 @@ class Stage9ProvisioningService:
             op = self.repository.operation(prvop)
         if op["state"] == SagaState.MATERIALIZED.value:
             self._verify_membership(op)
-            self.repository.transition(
-                prvop, SagaState.MATERIALIZED, SagaState.CONSUMED, stamp
-            )
+            self.repository.transition(prvop, SagaState.MATERIALIZED, SagaState.CONSUMED, stamp)
             op = self.repository.operation(prvop)
         if op["state"] != SagaState.CONSUMED.value:
             raise ProvisioningError("UNRECOVERABLE_SAGA_STATE")

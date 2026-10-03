@@ -32,9 +32,7 @@ def test_win32_import_preflight_requires_complete_surface(
             raise ModuleNotFoundError(name)
         return object()
 
-    monkeypatch.setattr(
-        "deployment.windows_installer.build.importlib.import_module", importer
-    )
+    monkeypatch.setattr("deployment.windows_installer.build.importlib.import_module", importer)
     with pytest.raises(InstallerBuildError, match="win32timezone"):
         qualify_win32_imports()
     assert observed == list(REQUIRED_WIN32_MODULES)
@@ -56,11 +54,7 @@ def test_required_surface_covers_all_production_pywin32_imports() -> None:
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 imported.update(alias.name for alias in node.names)
-    used = {
-        name
-        for name in imported
-        if name == "servicemanager" or name.startswith("win32")
-    }
+    used = {name for name in imported if name == "servicemanager" or name.startswith("win32")}
     assert used <= set(REQUIRED_WIN32_MODULES)
     assert set(REQUIRED_WIN32_MODULES) == {
         "servicemanager",
@@ -80,9 +74,7 @@ def test_pyinstaller_warning_qualifier_rejects_only_required_win32(
     tmp_path: Path,
 ) -> None:
     warnings = tmp_path / "warn.txt"
-    warnings.write_text(
-        "missing module named optional_database_backend\n", encoding="utf-8"
-    )
+    warnings.write_text("missing module named optional_database_backend\n", encoding="utf-8")
     qualify_pyinstaller_warnings(warnings)
     warnings.write_text("missing module named 'win32security'\n", encoding="utf-8")
     with pytest.raises(InstallerBuildError, match="win32security"):
@@ -134,9 +126,7 @@ def test_packaged_smoke_failure_preserves_bounded_stderr(
     stderr = "discarded-prefix:" + ("x" * 4096) + "diagnostic-tail"
     monkeypatch.setattr(
         "deployment.windows_installer.build.subprocess.run",
-        lambda *args, **kwargs: SimpleNamespace(
-            returncode=1, stdout="smoke stdout", stderr=stderr
-        ),
+        lambda *args, **kwargs: SimpleNamespace(returncode=1, stdout="smoke stdout", stderr=stderr),
     )
 
     with pytest.raises(InstallerBuildError) as failure:
@@ -170,16 +160,10 @@ def test_builder_smokes_all_four_packaged_executables(
         (payload / f"{name}.exe").write_bytes(b"MZ")
         return SimpleNamespace(returncode=0)
 
-    monkeypatch.setattr(
-        "deployment.windows_installer.build.qualify_win32_imports", lambda: None
-    )
-    monkeypatch.setattr(
-        "deployment.windows_installer.build.numpy_openblas_dll", lambda: openblas
-    )
+    monkeypatch.setattr("deployment.windows_installer.build.qualify_win32_imports", lambda: None)
+    monkeypatch.setattr("deployment.windows_installer.build.numpy_openblas_dll", lambda: openblas)
     monkeypatch.setattr("deployment.windows_installer.build.subprocess.run", run)
-    monkeypatch.setattr(
-        "deployment.windows_installer.build.qualify_pe_x64", lambda path: None
-    )
+    monkeypatch.setattr("deployment.windows_installer.build.qualify_pe_x64", lambda path: None)
     monkeypatch.setattr(
         "deployment.windows_installer.build.smoke_executable",
         lambda path: smoked.append(path.name),

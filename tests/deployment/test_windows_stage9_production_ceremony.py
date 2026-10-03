@@ -47,14 +47,8 @@ from deployment.windows_stage9_production_trust import (
     verify_production_trust_for_audit,
 )
 
-FIXTURE = (
-    Path(__file__).resolve().parents[1]
-    / "fixtures/windows_stage9_policy_vector_v1.json"
-)
-MODULE = (
-    Path(__file__).resolve().parents[2]
-    / "deployment/windows_stage9_production_ceremony.py"
-)
+FIXTURE = Path(__file__).resolve().parents[1] / "fixtures/windows_stage9_policy_vector_v1.json"
+MODULE = Path(__file__).resolve().parents[2] / "deployment/windows_stage9_production_ceremony.py"
 NOW = datetime(2026, 6, 1, tzinfo=timezone.utc)
 
 
@@ -96,9 +90,7 @@ def _signature(request, signer_id, private):
             if request["artifact_type"] == "RELEASE_POLICY"
             else REVOCATION_SIGNATURE_PROFILE
         ),
-        "signature_hex": private.sign(
-            bytes.fromhex(request["message_to_sign_hex"])
-        ).hex(),
+        "signature_hex": private.sign(bytes.fromhex(request["message_to_sign_hex"])).hex(),
     }
 
 
@@ -109,9 +101,7 @@ def ceremony_material():
     root_bundle, pinned = build_root_anchor_bundle(
         _records(roots), purpose="TEST_ONLY", environment="UNIT_TEST_ONLY"
     )
-    pdsa_bundle = build_pdsa_public_bundle(
-        _records(pdsa), threshold=2, purpose="TEST_ONLY"
-    )
+    pdsa_bundle = build_pdsa_public_bundle(_records(pdsa), threshold=2, purpose="TEST_ONLY")
     recovery = build_recovery_public_bundle(
         key_id="TEST_K_RECOVERY",
         tpmt_public_hex=fixture["k_recovery"]["public_hex"],
@@ -144,8 +134,7 @@ def test_complete_test_only_offline_style_ceremony(ceremony_material, tmp_path):
         context=context,
     )
     release_signatures = [
-        _signature(release_request, name, roots[name][0])
-        for name in ("root-1", "root-2")
+        _signature(release_request, name, roots[name][0]) for name in ("root-1", "root-2")
     ]
     signed_release = assemble_signed_artifact(
         request=release_request,
@@ -154,9 +143,7 @@ def test_complete_test_only_offline_style_ceremony(ceremony_material, tmp_path):
         pinned_root=pinned,
         context=context,
     )
-    revocation_payload = build_initial_revocation_payload(
-        effective_at="2026-01-01T00:00:00Z"
-    )
+    revocation_payload = build_initial_revocation_payload(effective_at="2026-01-01T00:00:00Z")
     revocation_request = build_signing_request(
         artifact_type="INITIAL_REVOCATION",
         payload=revocation_payload,
@@ -164,8 +151,7 @@ def test_complete_test_only_offline_style_ceremony(ceremony_material, tmp_path):
         context=context,
     )
     revocation_signatures = [
-        _signature(revocation_request, name, roots[name][0])
-        for name in ("root-1", "root-2")
+        _signature(revocation_request, name, roots[name][0]) for name in ("root-1", "root-2")
     ]
     signed_revocation = assemble_signed_artifact(
         request=revocation_request,
@@ -182,9 +168,7 @@ def test_complete_test_only_offline_style_ceremony(ceremony_material, tmp_path):
         root_bundle=root_bundle,
         verification_time=NOW,
     )
-    manifest = build_frozen_manifest(
-        verified.verified_release, artifact_source_revision="a" * 40
-    )
+    manifest = build_frozen_manifest(verified.verified_release, artifact_source_revision="a" * 40)
     verify_freeze_manifest(manifest, verified_release=verified.verified_release)
     audit = build_audit_transcript(
         ceremony=verified,
@@ -293,29 +277,19 @@ def test_complete_test_only_offline_style_ceremony(ceremony_material, tmp_path):
         manifest=manifest,
         audit=audit,
     )
-    assert (
-        manifest["status"] == audit["final_status"] == "TEST_ONLY_ROOT_OF_TRUST_FROZEN"
-    )
+    assert manifest["status"] == audit["final_status"] == "TEST_ONLY_ROOT_OF_TRUST_FROZEN"
     assert final.is_dir()
-    assert (
-        verify_final_package(final, verification_time=NOW).ceremony_id
-        == context.ceremony_id
-    )
+    assert verify_final_package(final, verification_time=NOW).ceremony_id == context.ceremony_id
     with pytest.raises(ProductionTrustUnavailable, match="frozen production authority"):
         verify_production_trust_for_audit(final, verification_time=NOW)
     assert (final / "package_manifest.json").is_file()
-    assert (
-        json.loads((final / "ceremony_audit.json").read_text())["source_revision"]
-        == "a" * 40
-    )
+    assert json.loads((final / "ceremony_audit.json").read_text())["source_revision"] == "a" * 40
     broken = tmp_path / context.ceremony_id
     shutil.copytree(final, broken)
     altered = json.loads((broken / "unsigned_release_policy.json").read_text())
     altered["release_policy_id"] = "TAMPERED"
     (broken / "unsigned_release_policy.json").write_text(json.dumps(altered))
-    with pytest.raises(
-        PolicyVectorError, match="payload copy mismatch|digest mismatch"
-    ):
+    with pytest.raises(PolicyVectorError, match="payload copy mismatch|digest mismatch"):
         verify_final_package(broken, verification_time=NOW)
     digest_broken = tmp_path / "digest-broken" / context.ceremony_id
     shutil.copytree(final, digest_broken)
@@ -347,9 +321,7 @@ def test_complete_test_only_offline_style_ceremony(ceremony_material, tmp_path):
 
 
 def test_production_trust_loader_fails_closed_when_package_is_missing(tmp_path):
-    with pytest.raises(
-        ProductionTrustUnavailable, match="PRODUCTION_TRUST_UNAVAILABLE"
-    ):
+    with pytest.raises(ProductionTrustUnavailable, match="PRODUCTION_TRUST_UNAVAILABLE"):
         verify_production_trust_for_audit(tmp_path / "missing", verification_time=NOW)
 
 
@@ -371,18 +343,14 @@ def test_runtime_trust_loader_uses_current_utc_not_caller_time(tmp_path, monkeyp
     assert before <= observed["time"] <= after
 
 
-def test_public_trust_installer_copies_atomically_and_refuses_overwrite(
-    tmp_path, monkeypatch
-):
+def test_public_trust_installer_copies_atomically_and_refuses_overwrite(tmp_path, monkeypatch):
     from types import SimpleNamespace
     import deployment.windows_stage9_production_trust as trust
 
     source = tmp_path / "source"
     source.mkdir()
     for number in range(12):
-        (source / f"artifact-{number}.json").write_text(
-            '{"public":"value"}\n', encoding="utf-8"
-        )
+        (source / f"artifact-{number}.json").write_text('{"public":"value"}\n', encoding="utf-8")
     verified = SimpleNamespace(ceremony_id=trust.CEREMONY_ID)
     monkeypatch.setattr(trust, "load_production_trust", lambda path: verified)
     monkeypatch.setattr(
@@ -400,9 +368,7 @@ def test_public_trust_installer_copies_atomically_and_refuses_overwrite(
         trust.install_public_production_trust(source, destination)
 
 
-def test_public_trust_installer_rejects_non_public_extra_before_mutation(
-    tmp_path, monkeypatch
-):
+def test_public_trust_installer_rejects_non_public_extra_before_mutation(tmp_path, monkeypatch):
     from types import SimpleNamespace
     import deployment.windows_stage9_production_trust as trust
 
@@ -422,9 +388,7 @@ def test_public_trust_installer_rejects_non_public_extra_before_mutation(
     assert not destination.exists()
 
 
-def test_public_trust_failure_before_rename_removes_staging_and_owned_parent(
-    tmp_path, monkeypatch
-):
+def test_public_trust_failure_before_rename_removes_staging_and_owned_parent(tmp_path, monkeypatch):
     from types import SimpleNamespace
     import deployment.windows_stage9_production_trust as trust
 
@@ -451,9 +415,7 @@ def test_public_trust_failure_before_rename_removes_staging_and_owned_parent(
     assert not destination.parent.exists()
 
 
-def test_staging_verification_failure_has_no_publication_or_residue(
-    tmp_path, monkeypatch
-):
+def test_staging_verification_failure_has_no_publication_or_residue(tmp_path, monkeypatch):
     from types import SimpleNamespace
     import deployment.windows_stage9_production_trust as trust
 
@@ -469,9 +431,7 @@ def test_staging_verification_failure_has_no_publication_or_residue(
     monkeypatch.setattr(
         trust,
         "verify_production_trust_for_audit",
-        lambda path, verification_time: (_ for _ in ()).throw(
-            ValueError("staged invalid")
-        ),
+        lambda path, verification_time: (_ for _ in ()).throw(ValueError("staged invalid")),
     )
     destination = tmp_path / "Config" / "ProductionTrust" / trust.CEREMONY_ID
     with pytest.raises(ValueError, match="staged invalid"):
@@ -480,9 +440,7 @@ def test_staging_verification_failure_has_no_publication_or_residue(
     assert not destination.parent.exists()
 
 
-def test_cleanup_failure_after_rename_is_committed_and_unambiguous(
-    tmp_path, monkeypatch
-):
+def test_cleanup_failure_after_rename_is_committed_and_unambiguous(tmp_path, monkeypatch):
     from types import SimpleNamespace
     import deployment.windows_stage9_production_trust as trust
 
@@ -608,20 +566,15 @@ def test_release_and_revocation_from_different_ceremonies_are_rejected(
         request=release_request,
         payload=payload,
         signatures=[
-            _signature(release_request, signer, roots[signer][0])
-            for signer in ("root-1", "root-2")
+            _signature(release_request, signer, roots[signer][0]) for signer in ("root-1", "root-2")
         ],
         pinned_root=pinned,
         context=context_a,
     )
     other_release = deepcopy(payload)
     other_release["release_policy_id"] = "OTHER_VALID_CEREMONY"
-    context_b = build_ceremony_context(
-        pinned_root=pinned, release_payload=other_release
-    )
-    revocation_payload = build_initial_revocation_payload(
-        effective_at="2026-01-01T00:00:00Z"
-    )
+    context_b = build_ceremony_context(pinned_root=pinned, release_payload=other_release)
+    revocation_payload = build_initial_revocation_payload(effective_at="2026-01-01T00:00:00Z")
     revocation_request = build_signing_request(
         artifact_type="INITIAL_REVOCATION",
         payload=revocation_payload,
@@ -677,9 +630,7 @@ def test_production_module_has_no_private_key_operations():
         "generate_private_key",
     }
     names = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
-    attributes = {
-        node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)
-    }
+    attributes = {node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)}
     imports = {
         alias.name.rsplit(".", 1)[-1]
         for node in ast.walk(tree)

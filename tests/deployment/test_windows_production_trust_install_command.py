@@ -85,9 +85,7 @@ def test_command_requires_committed_base_without_mutation(tmp_path: Path) -> Non
     assert tuple(tmp_path.iterdir()) == (source,)
 
 
-@pytest.mark.parametrize(
-    "field", ("state", "program_files", "program_data", "service_names")
-)
+@pytest.mark.parametrize("field", ("state", "program_files", "program_data", "service_names"))
 def test_command_rejects_invalid_ownership_before_publish(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, field: str
 ) -> None:
@@ -107,9 +105,7 @@ def test_command_installs_exact_canonical_public_package(
 ) -> None:
     program_files, program_data, source = _base(tmp_path)
     loads = _qualified(monkeypatch, program_data)
-    destination = provision.install_production_trust(
-        program_files, program_data, source
-    )
+    destination = provision.install_production_trust(program_files, program_data, source)
     assert destination == program_data / "Config" / "ProductionTrust" / CEREMONY_ID
     assert len(tuple(destination.iterdir())) == 12
     assert provision._package_hashes(destination) == provision._package_hashes(source)
@@ -124,9 +120,7 @@ def test_caller_controlled_fake_program_files_is_rejected(
     fake_program_files.mkdir(parents=True)
     _rewrite_ownership(program_data, fake_program_files)
     _qualified(monkeypatch, program_data)
-    with pytest.raises(
-        provision.ProvisionError, match="ProgramFiles.*native canonical"
-    ):
+    with pytest.raises(provision.ProvisionError, match="ProgramFiles.*native canonical"):
         provision.install_production_trust(fake_program_files, program_data, source)
     assert not (program_data / "Config" / "ProductionTrust").exists()
 
@@ -154,9 +148,7 @@ def test_both_caller_controlled_roots_are_rejected(
     shutil.copytree(canonical_data, fake_data)
     _rewrite_ownership(fake_data, fake_files, fake_data)
     _qualified(monkeypatch, canonical_data)
-    with pytest.raises(
-        provision.ProvisionError, match="ProgramFiles.*native canonical"
-    ):
+    with pytest.raises(provision.ProvisionError, match="ProgramFiles.*native canonical"):
         provision.install_production_trust(fake_files, fake_data, source)
     assert not (fake_data / "Config" / "ProductionTrust").exists()
 
@@ -236,22 +228,15 @@ def test_cli_exposes_separate_source_only_command() -> None:
     source = Path(provision.__file__).read_text(encoding="utf-8")
     assert '"install-production-trust"' in source
     assert 'parser.add_argument("--source", type=Path)' in source
-    assert (
-        "install_production_trust(args.program_files, args.program_data, args.source)"
-        in source
-    )
+    assert "install_production_trust(args.program_files, args.program_data, args.source)" in source
     function = source[
-        source.index("def install_production_trust(") : source.index(
-            "def qualify_dacl("
-        )
+        source.index("def install_production_trust(") : source.index("def qualify_dacl(")
     ]
     assert "enroll(" not in function
 
 
 def test_lifecycle_status_remains_pre_enrollment_and_stage10_not_started() -> None:
-    status = json.loads(
-        Path("deployment/stage9_current_status.json").read_text(encoding="utf-8")
-    )
+    status = json.loads(Path("deployment/stage9_current_status.json").read_text(encoding="utf-8"))
     assert status["production_provisioning_ready"] is False
     assert status["windows_production_ready"] == "NOT_READY"
     assert status["stage_9"] == "IN_PROGRESS"

@@ -232,7 +232,9 @@ class DecisionEngineBreakdownEntry(BaseModel):
 class DecisionEngineSummary(BaseModel):
     """Walidowany schemat raportu Decision Engine."""
 
-    model_config = ConfigDict(extra="allow")
+    # ``model_usage`` and ``model_breakdown`` are intentional domain fields,
+    # not members of Pydantic's model API.
+    model_config = ConfigDict(extra="allow", protected_namespaces=())
 
     type: Literal["decision_engine_summary"] = "decision_engine_summary"
     total: int

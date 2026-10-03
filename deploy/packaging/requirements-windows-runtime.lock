@@ -1,3 +1,4 @@
 # Reviewed Windows-only supplement to requirements-desktop.lock.
 # Generated/reviewed for CPython 3.11 x64; install with --no-deps.
 pywin32==312
+colorama==0.4.6

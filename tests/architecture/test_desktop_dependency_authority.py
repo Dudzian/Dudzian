@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
+import sys
 import tomllib
 from pathlib import Path
 
@@ -16,7 +18,7 @@ from scripts.ci.require_python311 import require_python311
 from scripts.ci.validate_locked_resolution import locked_versions, validate_target_resolution
 
 LOCK = Path("deploy/packaging/requirements-desktop.lock")
-LOCK_TEXT = str(LOCK)
+LOCK_TEXT = LOCK.as_posix()
 PYSIDE_STACK = {"pyside6", "pyside6-addons", "pyside6-essentials", "shiboken6"}
 PIP_BOOTSTRAP = f"python scripts/ci/bootstrap_locked_pip.py {LOCK_TEXT}"
 
@@ -36,6 +38,35 @@ def test_release_workflows_install_and_audit_canonical_lock() -> None:
     assert packaging.count(f"validate_locked_resolution.py {LOCK_TEXT}") == 3
     assert cross_installer.count(f"validate_locked_resolution.py {LOCK_TEXT}") == 2
     assert f"--requirement {LOCK_TEXT}" in audit
+
+
+def test_mypy_uses_fixed_vendor_pyside_stubs_and_checks_project_sources() -> None:
+    config = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))["tool"]["mypy"]
+    assert config["follow_imports"] == "skip"
+    assert "mypy_path" not in config
+    assert "ui" in config["files"]
+    assert not Path("typings/PySide6").exists()
+    assert locked_versions(LOCK)["pyside6-essentials"] == "6.7.2"
+
+
+def test_vendor_qtcore_typing_still_rejects_invalid_api_use(tmp_path: Path) -> None:
+    pytest.importorskip("PySide6.QtCore")
+    pytest.importorskip("mypy")
+    config = tmp_path / "mypy.ini"
+    config.write_text("[mypy]\nfollow_imports = normal\n", encoding="utf-8")
+    fixture = tmp_path / "invalid_qtcore.py"
+    fixture.write_text(
+        'from PySide6.QtCore import QTimer\nQTimer().setInterval("not-an-int")\n',
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        [sys.executable, "-m", "mypy", "--config-file", str(config), str(fixture)],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 1
+    assert 'incompatible type "str"; expected "int"' in result.stdout
 
 
 def test_release_build_environments_have_no_loose_python_resolver_mutations() -> None:
