@@ -1145,8 +1145,15 @@ def test_database_effect_boundaries_set_exact_stage_before_effect(
         provision._configure_database(tmp_path, data, security, inject)
 
 
-def test_final_hba_cutover_reuses_admin_session_and_rejects_new_admin_connection(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    "rejection_message",
+    (
+        "połączenie zostało odrzucone przez reguły uwierzytelniania",
+        "localized-provider-message-which-must-never-be-security-authority",
+    ),
+)
+def test_final_hba_cutover_ignores_localized_rejection_text(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, rejection_message: str
 ) -> None:
     data = tmp_path / "data"
     security = tmp_path / "security"
@@ -1209,7 +1216,7 @@ def test_final_hba_cutover_reuses_admin_session_and_rejects_new_admin_connection
         connect_count += 1
         if cutover:
             events.append("new-admin-rejected")
-            raise OperationalError("connection requires a valid client certificate")
+            raise OperationalError(rejection_message)
         return Connection(f"connection-{connect_count}")
 
     original_write_text = Path.write_text
@@ -1242,6 +1249,7 @@ def test_final_hba_cutover_reuses_admin_session_and_rejects_new_admin_connection
     assert connect_count == 3  # database creation, retained admin, rejected proof
     assert events.index("admin-session-active") < events.index("final-hba-written")
     assert events.index("final-hba-written") < events.index("final-parser-qualification")
+    assert events.index("final-parser-qualification") < events.index("new-admin-rejected")
     assert events.index("new-admin-rejected") < events.index("server-live-on-existing-session")
     assert events.index("server-live-on-existing-session") < events.index("close:connection-2")
     assert commands[-1] == "stop"
@@ -1281,6 +1289,115 @@ def _valid_hba_rows_for_stage9() -> list[tuple[object, ...]]:
         (5, "host", ["all"], ["all"], "0.0.0.0", "0.0.0.0", "reject", None, None),
         (6, "host", ["all"], ["all"], "::", "::", "reject", None, None),
     ]
+
+
+@pytest.mark.parametrize("alive", (None, (0,)))
+def test_final_admin_rejection_requires_retained_session_liveness(alive) -> None:
+    class OperationalError(Exception):
+        pass
+
+    class Retained:
+        def execute(self, statement: str):
+            assert statement == "SELECT 1"
+            if alive is None:
+                raise RuntimeError("postmaster unavailable")
+            return SimpleNamespace(fetchone=lambda: alive)
+
+    provider = SimpleNamespace(
+        OperationalError=OperationalError,
+        connect=lambda _dsn: (_ for _ in ()).throw(OperationalError("arbitrary text")),
+    )
+    with pytest.raises(
+        provision.ProvisionError, match="bootstrap PostgreSQL liveness proof failed"
+    ):
+        provision._prove_final_admin_rejection(provider, "not-a-real-dsn", Retained())
+
+
+def test_final_admin_rejection_closes_unexpected_accepted_connection() -> None:
+    class OperationalError(Exception):
+        pass
+
+    accepted = SimpleNamespace(closed=False)
+    accepted.close = lambda: setattr(accepted, "closed", True)
+    provider = SimpleNamespace(OperationalError=OperationalError, connect=lambda _dsn: accepted)
+
+    with pytest.raises(
+        provision.ProvisionError,
+        match="final HBA accepted a new administrator connection",
+    ):
+        provision._prove_final_admin_rejection(provider, "not-a-real-dsn", object())
+    assert accepted.closed
+
+
+def test_final_hba_parser_failure_prevents_rejection_and_liveness_proofs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    data = tmp_path / "data"
+    security = tmp_path / "security"
+    data.mkdir()
+    (security / "server").mkdir(parents=True)
+    (data / "postgresql.conf").write_text("", encoding="utf-8")
+    for path in (
+        security / "ca.crt",
+        security / "server" / "server.crt",
+        security / "server" / "server.key",
+    ):
+        path.write_text("x", encoding="utf-8")
+
+    events: list[str] = []
+
+    class Connection:
+        statement = ""
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            events.append("retained-close")
+
+        def execute(self, statement: str):
+            self.statement = statement
+            if "session_user" in statement:
+                events.append("identity")
+                return SimpleNamespace(fetchone=lambda: ("postgres", "postgres"))
+            if "pg_hba_file_rules" in statement:
+                events.append("parser-query")
+                return SimpleNamespace(fetchall=_valid_hba_rows_for_stage9)
+            if statement == "CREATE DATABASE freshness_gate":
+                return SimpleNamespace()
+            raise AssertionError("liveness must not run")
+
+    connect_count = 0
+
+    def connect(*_args, **_kwargs):
+        nonlocal connect_count
+        connect_count += 1
+        if connect_count > 2:
+            raise AssertionError("new administrator proof must not run")
+        return Connection()
+
+    def reject_parser(*_args):
+        events.append("parser-rejected")
+        raise ValueError("exact contract mismatch")
+
+    monkeypatch.setattr(provision.subprocess, "run", lambda *_args, **_kwargs: None)
+    monkeypatch.setitem(
+        sys.modules,
+        "psycopg",
+        SimpleNamespace(connect=connect, OperationalError=RuntimeError),
+    )
+    monkeypatch.setattr(provision, "provision_postgresql_freshness_authority", lambda *_: None)
+    monkeypatch.setattr(provision, "qualify_postgresql_freshness_authority", lambda *_: None)
+    monkeypatch.setattr(provision, "qualify_hba_rows", reject_parser)
+
+    with pytest.raises(provision.ProvisionError, match="parser qualification failed"):
+        provision._configure_database(tmp_path, data, security, events.append)
+
+    assert connect_count == 2
+    assert events.index("identity") < events.index("parser-query")
+    assert events.index("parser-query") < events.index("parser-rejected")
+    assert events.index("parser-rejected") < len(events) - 1
+    assert events[-1] == "retained-close"
 
 
 def test_clean_install_copies_and_prints_only_safe_failure_fields(

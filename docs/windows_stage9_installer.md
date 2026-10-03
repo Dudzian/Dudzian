@@ -106,6 +106,10 @@ Final `pg_hba.conf` preserves the Stage-8 source form `cert map=stage8_cert`;
 PostgreSQL reports the implicit `clientcert=verify-full` only in its parsed representation,
 and `pg_ident.conf` maps `CryptoHunterBackend` to `freshness_runtime` and
 `CryptoHunterFreshnessVerifier` to `freshness_crypto_verifier` exactly.
+Final administrator rejection is locale-independent: it combines that exact
+parsed HBA qualification with a failed fresh administrator connection and
+liveness of the retained authenticated session, never human-readable libpq or
+PostgreSQL error text.
 
 Stage 10 update behavior, GUI lifecycle, reboot qualification, and soak are
 explicitly outside this installer.
