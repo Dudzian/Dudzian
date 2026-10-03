@@ -12,11 +12,11 @@ pytestmark = pytest.mark.qml
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 try:  # pragma: no cover - zależne od środowiska CI
-    from PySide6.QtCore import QObject, QMetaObject, QUrl
+    from PySide6.QtCore import QObject, QMetaObject, Qt, QUrl
     from PySide6.QtQml import QQmlApplicationEngine
     from PySide6.QtWidgets import QApplication
 except Exception:  # pragma: no cover - brak Qt
-    QObject = QMetaObject = QUrl = QQmlApplicationEngine = QApplication = None  # type: ignore[assignment]
+    QObject = QMetaObject = Qt = QUrl = QQmlApplicationEngine = QApplication = None  # type: ignore[assignment]
 try:  # pragma: no cover - zależne od środowiska CI
     from PySide6.QtQuick import QQuickItem  # noqa: F401
 except Exception:  # pragma: no cover - brak QtQuick
@@ -424,7 +424,7 @@ from pathlib import Path
         )
 
     print(f"Using runbook action button: {button.objectName()}")
-    QMetaObject.invokeMethod(button, "click")
+    assert QMetaObject.invokeMethod(button, "clicked", Qt.DirectConnection)
     app.processEvents()
 
     assert (actions_dir / "ui_action_invoked.txt").exists(), (

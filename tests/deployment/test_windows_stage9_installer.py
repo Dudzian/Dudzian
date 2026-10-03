@@ -36,10 +36,6 @@ from deployment.windows_installer.postgresql_service import (
     try_write_startup_diagnostic,
     wait_ready,
 )
-from deployment.windows_installer.corehost_composition import (
-    WindowsProvisioningAdapterUnavailable,
-)
-from deployment.windows_stage9_production_trust import ProductionTrustUnavailable
 
 
 ROOT = Path(__file__).parents[2]
@@ -958,14 +954,12 @@ def test_safe_diagnostic_identifies_first_exception_without_rendering_it() -> No
 def test_enroll_cli_reports_missing_production_trust_as_root_cause(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    def fail_before_legal_enrollment(program_files: Path, program_data: Path) -> None:
-        del program_files, program_data
-        try:
-            raise ProductionTrustUnavailable("PRODUCTION_TRUST_UNAVAILABLE")
-        except ProductionTrustUnavailable as exc:
-            raise WindowsProvisioningAdapterUnavailable("PRODUCTION_TRUST_UNAVAILABLE") from exc
-
-    monkeypatch.setattr(provision, "enroll", fail_before_legal_enrollment)
+    program_files, program_data = _installed_machine(tmp_path)
+    missing_trust = tmp_path / "canonical-production-trust-is-absent"
+    monkeypatch.setattr(
+        "deployment.platforms.windows.production_trust_package_path",
+        lambda ceremony_id: missing_trust,
+    )
     monkeypatch.setattr(provision, "os", SimpleNamespace(name="nt"))
 
     assert (
@@ -973,16 +967,17 @@ def test_enroll_cli_reports_missing_production_trust_as_root_cause(
             [
                 "enroll",
                 "--program-files",
-                str(tmp_path / "ProgramFiles"),
+                str(program_files),
                 "--program-data",
-                str(tmp_path / "ProgramData"),
+                str(program_data),
             ]
         )
         == 1
     )
     assert capsys.readouterr().err.splitlines() == [
-        "provisioning failed: operation=enroll first_exception=ProductionTrustUnavailable"
+        "provisioning failed: operation=enroll first_exception=PolicyVectorError"
     ]
+    assert not (program_data / "State" / "corehost.sqlite").exists()
 
 
 def test_safe_failure_is_secret_free_atomic_and_cannot_be_redirected(
@@ -1311,9 +1306,7 @@ def test_fail_closed_proof_accepts_only_exact_missing_production_trust_diagnosti
 
     class Result:
         returncode = 1
-        stderr = (
-            b"provisioning failed: operation=enroll first_exception=ProductionTrustUnavailable\n"
-        )
+        stderr = b"provisioning failed: operation=enroll first_exception=PolicyVectorError\n"
 
     monkeypatch.setattr(clean_install.subprocess, "run", lambda *args, **kwargs: Result())
     clean_install.prove_production_enrollment_fail_closed(root, machine)
