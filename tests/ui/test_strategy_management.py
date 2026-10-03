@@ -353,9 +353,9 @@ def test_strategy_management_clone_refreshes_presets(tmp_path: Path) -> None:
         assert len(saved_presets) == 2
         assert runtime_service.list_calls == 1
 
-        preset_preview = root.property("presetPreview")
-        assert preset_preview is not None
-        assert preset_preview["ok"] is True
+        preset_preview = qml_value_to_python(root.property("presetPreview"))
+        assert isinstance(preset_preview, dict)
+        assert preset_preview.get("ok") is True
 
         clone_dialog = root.findChild(QObject, "cloneDialog")
         assert clone_dialog is not None
@@ -446,16 +446,29 @@ def test_strategy_management_clone_refreshes_presets(tmp_path: Path) -> None:
             f"availableSelectors={bundle_selector_names!r}; "
             f"repeaterItems={bundle_selector_items!r}"
         )
-        # Toggle the CheckBox state through its Qt 6.7 meta-object API so the
-        # production onToggled handler updates bundleSelection before export.
-        assert (
-            QMetaObject.invokeMethod(alpha_selector, "toggle", Qt.DirectConnection) is True
-        )
-        assert QMetaObject.invokeMethod(beta_selector, "toggle", Qt.DirectConnection) is True
+
+        selector_meta_object = alpha_selector.metaObject()
+        assert selector_meta_object.indexOfMethod("toggle()") >= 0
+        assert selector_meta_object.indexOfMethod("toggled()") >= 0
+
+        # Qt 6.7 exposes state mutation and interactive notification separately:
+        # toggle() changes checked, while toggled() runs the production onToggled handler.
+        assert QMetaObject.invokeMethod(alpha_selector, "toggle", Qt.DirectConnection) is True
+        assert alpha_selector.property("checked") is True
+        assert QMetaObject.invokeMethod(alpha_selector, "toggled", Qt.DirectConnection) is True
         app.processEvents()
 
-        assert alpha_selector.property("checked") is True
+        alpha_bundle_selection = qml_value_to_python(root.property("bundleSelection"))
+        assert isinstance(alpha_bundle_selection, list)
+        assert {
+            entry.get("presetId") for entry in alpha_bundle_selection if isinstance(entry, dict)
+        } == {"alpha-momentum"}
+
+        assert QMetaObject.invokeMethod(beta_selector, "toggle", Qt.DirectConnection) is True
         assert beta_selector.property("checked") is True
+        assert QMetaObject.invokeMethod(beta_selector, "toggled", Qt.DirectConnection) is True
+        app.processEvents()
+
         bundle_selection = qml_value_to_python(root.property("bundleSelection"))
         assert isinstance(bundle_selection, list)
         assert len(bundle_selection) == 2

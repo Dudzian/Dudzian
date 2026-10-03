@@ -41,7 +41,7 @@ def test_settle_qt_application_runs_when_enabled_in_ci(monkeypatch) -> None:
     assert calls == ["settle"]
 
 
-def test_settle_qt_application_runs_by_default_outside_ci(monkeypatch) -> None:
+def test_settle_qt_application_skips_by_default_outside_ci(monkeypatch) -> None:
     calls: list[str] = []
 
     monkeypatch.setattr(ui_conftest, "_PYSIDE6_AVAILABLE", True)
@@ -51,4 +51,4 @@ def test_settle_qt_application_runs_by_default_outside_ci(monkeypatch) -> None:
 
     ui_conftest._settle_qt_application_best_effort()
 
-    assert calls == ["settle"]
+    assert calls == []
