@@ -20,24 +20,40 @@ def provenance_files(tmp_path: Path) -> tuple[Path, Path, Path]:
     backend = tmp_path / "CryptoHunterBackend.exe"
     backend.write_bytes(b"current backend")
     manifest = tmp_path / "installer-manifest.json"
-    manifest.write_text(json.dumps({
-        "schema_version": 1, "product_version": "1.2.3", "architecture": "x64",
-        "msi": {"file": "current.msi", "sha256": "a" * 64},
-        "production_executables": {"CryptoHunterBackend.exe": _sha(backend)},
-    }))
+    manifest.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "product_version": "1.2.3",
+                "architecture": "x64",
+                "msi": {"file": "current.msi", "sha256": "a" * 64},
+                "production_executables": {"CryptoHunterBackend.exe": _sha(backend)},
+            }
+        )
+    )
     receipt = tmp_path / "clean-receipt.json"
-    receipt.write_text(json.dumps({
-        "source_revision": "current", "ci_run_id": "42",
-        "ci_provider": "https://github.com", "runner_os": "Windows",
-        "product_version": "1.2.3", "manifest_sha256": _sha(manifest),
-        "msi_sha256": "a" * 64,
-    }))
+    receipt.write_text(
+        json.dumps(
+            {
+                "source_revision": "current",
+                "ci_run_id": "42",
+                "ci_provider": "https://github.com",
+                "runner_os": "Windows",
+                "product_version": "1.2.3",
+                "manifest_sha256": _sha(manifest),
+                "msi_sha256": "a" * 64,
+            }
+        )
+    )
     return manifest, receipt, backend
 
 
 def qualify(paths: tuple[Path, Path, Path]) -> dict[str, str]:
     return qualify_runtime_provenance(
-        *paths, "1.2.3", source_revision="current", ci_run_id="42",
+        *paths,
+        "1.2.3",
+        source_revision="current",
+        ci_run_id="42",
         ci_provider="https://github.com",
     )
 
@@ -46,8 +62,11 @@ def test_current_run_manifest_is_bound_to_installed_backend(tmp_path: Path) -> N
     manifest, receipt, backend = provenance_files(tmp_path)
     result = qualify((manifest, receipt, backend))
     assert result == {
-        "source_revision": "current", "ci_run_id": "42", "product_version": "1.2.3",
-        "qualified_manifest_sha256": _sha(manifest), "qualified_msi_sha256": "a" * 64,
+        "source_revision": "current",
+        "ci_run_id": "42",
+        "product_version": "1.2.3",
+        "qualified_manifest_sha256": _sha(manifest),
+        "qualified_msi_sha256": "a" * 64,
         "installed_backend_sha256": _sha(backend),
     }
 
@@ -65,7 +84,8 @@ def test_current_run_manifest_is_bound_to_installed_backend(tmp_path: Path) -> N
     ],
 )
 def test_stale_revision_run_manifest_msi_or_backend_is_rejected(
-    tmp_path: Path, mutation,
+    tmp_path: Path,
+    mutation,
 ) -> None:
     manifest_path, receipt_path, backend = provenance_files(tmp_path)
     manifest = json.loads(manifest_path.read_text())
@@ -89,7 +109,10 @@ def test_missing_installed_backend_and_unexpected_product_version_are_rejected(
     paths = provenance_files(tmp_path)
     with pytest.raises(RuntimeProvenanceError, match="not the current-run"):
         qualify_runtime_provenance(
-            *paths, "9.9.9", source_revision="current", ci_run_id="42",
+            *paths,
+            "9.9.9",
+            source_revision="current",
+            ci_run_id="42",
             ci_provider="https://github.com",
         )
 

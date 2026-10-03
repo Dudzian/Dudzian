@@ -175,9 +175,7 @@ def make_evidence(
         "ek": {
             "public_area": {"hex": ek_public_area_hex},
             "name": ek_name,
-            "public_digest": hashlib.sha256(
-                bytes.fromhex(ek_public_area_hex)
-            ).hexdigest(),
+            "public_digest": hashlib.sha256(bytes.fromhex(ek_public_area_hex)).hexdigest(),
             "manufacturer_certificate": (
                 "AVAILABLE" if ek_certificate_digest is not None else "NOT_AVAILABLE"
             ),
@@ -186,9 +184,7 @@ def make_evidence(
         "ak": {
             "public_area": {"hex": ak_public_area_hex},
             "name": ak_name,
-            "public_digest": hashlib.sha256(
-                bytes.fromhex(ak_public_area_hex)
-            ).hexdigest(),
+            "public_digest": hashlib.sha256(bytes.fromhex(ak_public_area_hex)).hexdigest(),
         },
         "tpm": {"manufacturer": manufacturer, "model": model},
         "source": {"substrate": "Windows-TBS", "profile": substrate_profile},
@@ -239,8 +235,7 @@ def build_activation_request(
         raise ValueError("environment must be TEST_ONLY or PRODUCTION")
     value = evidence.document
     return ActivationRequestV1.create(
-        created_at_utc=created_at_utc
-        or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        created_at_utc=created_at_utc or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         installation_id=installation_id,
         device={
             "device_id": derive_device_id(evidence),
@@ -255,10 +250,7 @@ def build_activation_request(
             "manufacturer": value["tpm"]["manufacturer"],
             "model": value["tpm"]["model"],
         },
-        k_psa={
-            key: value["k_psa"][key]
-            for key in ("public_area", "name", "algorithm_profile")
-        },
+        k_psa={key: value["k_psa"][key] for key in ("public_area", "name", "algorithm_profile")},
         release={
             "release_policy_digest": release_policy_digest,
             "release_policy_version": release_policy_version,
@@ -331,10 +323,7 @@ def export_bundle(
         allowed_release=allowed_release,
         production_trust_context=production_trust_context,
     )
-    folder = (
-        output
-        / f"CryptoHunter-Activation-Request-{request.document['request_id'][:12]}"
-    )
+    folder = output / f"CryptoHunter-Activation-Request-{request.document['request_id'][:12]}"
     folder.mkdir(parents=True, exist_ok=False)
     files = {
         "activation-request.json": request.canonical_bytes,

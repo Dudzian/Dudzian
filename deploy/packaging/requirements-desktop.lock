@@ -201,13 +201,13 @@ pynacl==1.6.2
     # via dudzian-bot (pyproject.toml)
 pyproject-hooks==1.2.0
     # via build
-pyside6==6.7.0
+pyside6==6.7.2
     # via
     #   -r deploy/packaging/requirements-desktop.txt
     #   dudzian-bot (pyproject.toml)
-pyside6-addons==6.7.0
+pyside6-addons==6.7.2
     # via pyside6
-pyside6-essentials==6.7.0
+pyside6-essentials==6.7.2
     # via
     #   pyside6
     #   pyside6-addons
@@ -259,7 +259,7 @@ secretstorage==3.5.0 ; platform_system == "Linux"
     # via
     #   dudzian-bot (pyproject.toml)
     #   keyring
-shiboken6==6.7.0
+shiboken6==6.7.2
     # via
     #   pyside6
     #   pyside6-addons

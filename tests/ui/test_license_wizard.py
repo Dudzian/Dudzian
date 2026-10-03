@@ -236,7 +236,9 @@ def test_license_wizard_happy_path(tmp_path: Path) -> None:
             break
         qt_wait(10)
     assert apply_button.property("enabled") is True
-    QMetaObject.invokeMethod(apply_button, "click", Qt.DirectConnection)
+    # Qt 6.7's QML AbstractButton exposes ``clicked`` but not the later
+    # invokable ``click()`` helper. Invoke the actual signal synchronously.
+    assert QMetaObject.invokeMethod(apply_button, "clicked", Qt.DirectConnection)
     app.processEvents()
 
     assert controller.licenseAccepted is True

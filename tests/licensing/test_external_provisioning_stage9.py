@@ -81,9 +81,7 @@ def authority():
 def runtime(tmp_path, authority):
     repository = ProvisioningRepository(tmp_path / "provisioning.db")
     verifier = TestOnlyProvisioningPackageVerifier(authority.public_keys)
-    return repository, Stage9ProvisioningService(
-        repository, verifier, TestOnlyMembershipSigner()
-    )
+    return repository, Stage9ProvisioningService(repository, verifier, TestOnlyMembershipSigner())
 
 
 def counts(repository):
@@ -102,10 +100,7 @@ def counts(repository):
 def test_complete_saga_and_ten_exact_retries_are_one_outcome(runtime, authority):
     repository, service = runtime
     package = authority.issue(payload())
-    outcomes = [
-        service.provision(package, expected_device_key=DEVICE, now=NOW)
-        for _ in range(10)
-    ]
+    outcomes = [service.provision(package, expected_device_key=DEVICE, now=NOW) for _ in range(10)]
     assert len(set(outcomes)) == 1
     assert outcomes[0].state is SagaState.CONSUMED
     assert outcomes[0].provisioning_operation_id.startswith("prvop_")
@@ -164,34 +159,25 @@ def test_rejected_package_has_zero_durable_side_effects(runtime, authority, muta
     else:
         package["payload"]["provisioning_operation_id"] = "caller-controlled"
     with pytest.raises(ProvisioningError):
-        service.provision(
-            canonical_json_bytes(package), expected_device_key=DEVICE, now=NOW
-        )
+        service.provision(canonical_json_bytes(package), expected_device_key=DEVICE, now=NOW)
     assert counts(repository) == (0, 0, 0, 0)
 
 
 def test_single_use_authorization_is_consumed_by_logical_operation(runtime, authority):
     repository, service = runtime
-    first = service.provision(
-        authority.issue(payload()), expected_device_key=DEVICE, now=NOW
-    )
+    first = service.provision(authority.issue(payload()), expected_device_key=DEVICE, now=NOW)
     changed = payload(subject="psub_test-2")
     with pytest.raises(ConflictError, match="AUTHORIZATION_ALREADY_CONSUMED"):
         service.provision(authority.issue(changed), expected_device_key=DEVICE, now=NOW)
     assert (
-        service.provision(
-            authority.issue(payload()), expected_device_key=DEVICE, now=NOW
-        )
-        == first
+        service.provision(authority.issue(payload()), expected_device_key=DEVICE, now=NOW) == first
     )
     assert counts(repository) == (1, 1, 1, 1)
 
 
 def test_same_subject_new_authorization_creates_new_operation(runtime, authority):
     repository, service = runtime
-    one = service.provision(
-        authority.issue(payload()), expected_device_key=DEVICE, now=NOW
-    )
+    one = service.provision(authority.issue(payload()), expected_device_key=DEVICE, now=NOW)
     two = service.provision(
         authority.issue(payload(reference="auth-test-2")),
         expected_device_key=DEVICE,
@@ -204,9 +190,7 @@ def test_same_subject_new_authorization_creates_new_operation(runtime, authority
 
 def test_storage_constraints_reject_duplicate_cha_and_membership(runtime, authority):
     repository, service = runtime
-    outcome = service.provision(
-        authority.issue(payload()), expected_device_key=DEVICE, now=NOW
-    )
+    outcome = service.provision(authority.issue(payload()), expected_device_key=DEVICE, now=NOW)
     with repository._connect() as db:
         cha = db.execute("SELECT * FROM cha_genesis").fetchone()
         member = db.execute("SELECT * FROM first_device_memberships").fetchone()
@@ -231,9 +215,7 @@ def test_storage_constraints_reject_duplicate_cha_and_membership(runtime, author
 
 def test_illegal_state_transition_fails_closed(runtime, authority):
     repository, service = runtime
-    result = service.provision(
-        authority.issue(payload()), expected_device_key=DEVICE, now=NOW
-    )
+    result = service.provision(authority.issue(payload()), expected_device_key=DEVICE, now=NOW)
     with pytest.raises(ConflictError, match="ILLEGAL_SAGA_TRANSITION"):
         repository.transition(
             result.provisioning_operation_id,
@@ -268,9 +250,7 @@ def test_pdsa_package_requires_exactly_two_signatures(authority, runtime, count)
     else:
         package["signatures"].append(dict(package["signatures"][0]))
     with pytest.raises(ProvisioningError, match="PDSA_THRESHOLD_NOT_MET"):
-        service.provision(
-            canonical_json_bytes(package), expected_device_key=DEVICE, now=NOW
-        )
+        service.provision(canonical_json_bytes(package), expected_device_key=DEVICE, now=NOW)
 
 
 def test_noncanonical_and_altered_decoded_payload_are_rejected(runtime, authority):
@@ -281,9 +261,7 @@ def test_noncanonical_and_altered_decoded_payload_are_rejected(runtime, authorit
     decoded = json.loads(package)
     decoded["payload"]["product_profile"] = "altered"
     with pytest.raises(ProvisioningError):
-        service.provision(
-            canonical_json_bytes(decoded), expected_device_key=DEVICE, now=NOW
-        )
+        service.provision(canonical_json_bytes(decoded), expected_device_key=DEVICE, now=NOW)
     assert counts(repository) == (0, 0, 0, 0)
 
 
@@ -327,9 +305,7 @@ def test_concurrent_exact_retries_are_constraint_idempotent(runtime, authority):
     with ThreadPoolExecutor(max_workers=8) as pool:
         outcomes = list(
             pool.map(
-                lambda _: service.provision(
-                    package, expected_device_key=DEVICE, now=NOW
-                ),
+                lambda _: service.provision(package, expected_device_key=DEVICE, now=NOW),
                 range(16),
             )
         )
@@ -391,12 +367,8 @@ def _provision_and_membership(runtime, authority):
         ("logical_operation_id", "ago_tampered"),
     ],
 )
-def test_membership_storage_tamper_is_rejected_on_exact_replay(
-    runtime, authority, column, value
-):
-    repository, service, package, outcome = _provision_and_membership(
-        runtime, authority
-    )
+def test_membership_storage_tamper_is_rejected_on_exact_replay(runtime, authority, column, value):
+    repository, service, package, outcome = _provision_and_membership(runtime, authority)
     with repository._connect() as db:
         db.execute(
             f"UPDATE first_device_memberships SET {column}=? WHERE prvop=?",
@@ -407,44 +379,30 @@ def test_membership_storage_tamper_is_rejected_on_exact_replay(
     assert counts(repository) == (1, 1, 1, 1)
 
 
-def test_valid_signed_membership_cannot_be_misbound_to_another_account(
-    runtime, authority
-):
-    repository, service, package, outcome = _provision_and_membership(
-        runtime, authority
-    )
+def test_valid_signed_membership_cannot_be_misbound_to_another_account(runtime, authority):
+    repository, service, package, outcome = _provision_and_membership(runtime, authority)
     with repository._connect() as db:
         db.execute(
             "UPDATE first_device_memberships SET account_id=? WHERE prvop=?",
             ("acct_account-b", outcome.provisioning_operation_id),
         )
-    with pytest.raises(
-        ConflictError, match="MEMBERSHIP_AUTHENTICATION_BINDING_CONFLICT"
-    ):
+    with pytest.raises(ConflictError, match="MEMBERSHIP_AUTHENTICATION_BINDING_CONFLICT"):
         service.provision(package, expected_device_key=DEVICE, now=NOW)
 
 
-def test_valid_signed_membership_cannot_be_misbound_to_another_device(
-    runtime, authority
-):
-    repository, service, package, outcome = _provision_and_membership(
-        runtime, authority
-    )
+def test_valid_signed_membership_cannot_be_misbound_to_another_device(runtime, authority):
+    repository, service, package, outcome = _provision_and_membership(runtime, authority)
     with repository._connect() as db:
         db.execute(
             "UPDATE first_device_memberships SET device_key=? WHERE prvop=?",
             ("c" * 64, outcome.provisioning_operation_id),
         )
-    with pytest.raises(
-        ConflictError, match="MEMBERSHIP_AUTHENTICATION_BINDING_CONFLICT"
-    ):
+    with pytest.raises(ConflictError, match="MEMBERSHIP_AUTHENTICATION_BINDING_CONFLICT"):
         service.provision(package, expected_device_key=DEVICE, now=NOW)
 
 
 def test_membership_high_s_signature_is_rejected_on_replay(runtime, authority):
-    repository, service, package, outcome = _provision_and_membership(
-        runtime, authority
-    )
+    repository, service, package, outcome = _provision_and_membership(runtime, authority)
     with repository._connect() as db:
         signature = db.execute(
             "SELECT signature FROM first_device_memberships WHERE prvop=?",
@@ -461,9 +419,7 @@ def test_membership_high_s_signature_is_rejected_on_replay(runtime, authority):
 
 
 def test_membership_wrong_valid_p256_key_is_rejected_on_replay(runtime, authority):
-    repository, service, package, outcome = _provision_and_membership(
-        runtime, authority
-    )
+    repository, service, package, outcome = _provision_and_membership(runtime, authority)
     with repository._connect() as db:
         digest = db.execute(
             "SELECT membership_digest FROM first_device_memberships WHERE prvop=?",

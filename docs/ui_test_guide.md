@@ -43,8 +43,8 @@ Install Python dependencies (re-using the wheelhouse if available):
 ```bash
 python -m pip install --upgrade pip
 python scripts/ci/pip_install.py --wheelhouse wheelhouse -- \
-  PySide6==${PYSIDE6_VERSION:-6.7.0} PySide6_Addons==${PYSIDE6_VERSION:-6.7.0} \
-  PySide6_Essentials==${PYSIDE6_VERSION:-6.7.0} shiboken6==${PYSIDE6_VERSION:-6.7.0}
+  PySide6==${PYSIDE6_VERSION:-6.7.2} PySide6_Addons==${PYSIDE6_VERSION:-6.7.2} \
+  PySide6_Essentials==${PYSIDE6_VERSION:-6.7.2} shiboken6==${PYSIDE6_VERSION:-6.7.2}
 python scripts/ci/pip_install.py --wheelhouse wheelhouse -- .[dev]
 ```
 

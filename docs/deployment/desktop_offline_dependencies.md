@@ -13,7 +13,7 @@ pionowanymi wersjami zapewniającymi deterministyczne buildy:
 - `joblib==1.4.2`
 - `pyinstaller==6.5.0`
 - `briefcase==0.3.18`
-- `PySide6==6.7.0`
+- `PySide6==6.7.2`
 - `packaging==25.0`
 - `cryptography==42.0.8`
 

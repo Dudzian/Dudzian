@@ -2183,6 +2183,8 @@ DEPLOY_PACKAGING_SOURCE_FILES_18_1: Final[list[str]] = [
     "deploy/packaging/profiles/windows.toml",
     "deploy/packaging/requirements-desktop.lock",
     "deploy/packaging/requirements-desktop.txt",
+    "deploy/packaging/requirements-windows-build-tools.lock",
+    "deploy/packaging/requirements-windows-runtime.lock",
 ]
 DEPLOYMENT_DOCUMENTATION_FILES_18_1: Final[list[str]] = [
     "docs/deployment/bitmex_go_live.md",
@@ -2234,6 +2236,9 @@ PROJECT_DEPENDENCY_SPECS_18_1: Final[list[str]] = [
 DESKTOP_OPTIONAL_DEPENDENCY_SPECS_18_1: Final[list[str]] = [
     "pyinstaller>=6.5",
     "briefcase>=0.3.18",
+    "macholib>=1.16.3",
+    "pefile>=2023.2.7",
+    "pywin32-ctypes>=0.2.3",
     "PySide6>=6.7,<6.11",
 ]
 SETUPTOOLS_PACKAGE_INCLUDE_PATTERNS_18_1: Final[list[str]] = [

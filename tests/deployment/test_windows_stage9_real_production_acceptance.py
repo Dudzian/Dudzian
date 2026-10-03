@@ -26,10 +26,7 @@ from deployment.windows_stage9_production_trust import (
 )
 
 PACKAGE_ENV = "CRYPTOHUNTER_STAGE9_FINAL_PACKAGE"
-FIXTURE = (
-    Path(__file__).resolve().parents[1]
-    / "fixtures/windows_stage9_policy_vector_v1.json"
-)
+FIXTURE = Path(__file__).resolve().parents[1] / "fixtures/windows_stage9_policy_vector_v1.json"
 
 
 def _real_package() -> Path:
