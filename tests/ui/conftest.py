@@ -58,8 +58,7 @@ def _flush_qt_deferred_deletes_best_effort() -> None:
         gc.collect()
         return
 
-    default_flush = "0" if os.getenv("CI") else "1"
-    flush_enabled = os.getenv("DUDZIAN_QML_FLUSH_DELETES", default_flush).strip().lower()
+    flush_enabled = os.getenv("DUDZIAN_QML_FLUSH_DELETES", "0").strip().lower()
     if flush_enabled not in {"1", "true", "yes", "on"}:
         logger.debug(
             "Skipping Qt deferred-delete flush: DUDZIAN_QML_FLUSH_DELETES=%s", flush_enabled
@@ -136,8 +135,7 @@ def _settle_qt_application_best_effort() -> None:
         logger.debug("Skipping Qt settle: PySide6 unavailable.")
         return
 
-    default_settle = "0" if os.getenv("CI") else "1"
-    settle_enabled = os.getenv("DUDZIAN_QML_SETTLE_APP", default_settle).strip().lower()
+    settle_enabled = os.getenv("DUDZIAN_QML_SETTLE_APP", "0").strip().lower()
     if settle_enabled not in {"1", "true", "yes", "on"}:
         logger.debug("Skipping Qt settle: DUDZIAN_QML_SETTLE_APP=%s", settle_enabled)
         return
