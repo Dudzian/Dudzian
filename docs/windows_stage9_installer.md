@@ -25,6 +25,31 @@ compiling it.  `requirements-windows-runtime.lock` is the reviewed native
 supplement and pins `pywin32==312`; both locks are installed with `--no-deps`
 before the project is installed without dependency resolution.
 
+## Build reproducibility and artifact identity
+
+The canonical builder freezes the payload inputs rather than claiming
+byte-for-byte reproducibility of the complete MSI.  `pins.json` is authority
+for CPython 3.11.9, PyInstaller 6.5.0, `PYTHONHASHSEED=0`, and the fixed release
+epoch `SOURCE_DATE_EPOCH=1790962380` (`2026-10-02T17:33:00Z`).  Every
+PyInstaller process receives those environment values from the builder and
+uses `--noupx`, so caller environment variables and an opportunistically
+available UPX binary cannot alter the frozen executable payload.
+
+The manifest records the observed Python and PyInstaller versions (which are
+checked against the pins), the reproducibility profile, and
+`installed_payload_sha256`.  That payload identity is SHA-256 over the
+UTF-8 canonical JSON map from relative installed paths to their file hashes,
+with sorted keys and fixed compact separators.  It permits payload comparison
+between builds without treating the complete MSI hash as a reproducibility
+digest.  `msi.sha256` remains the identity of one exact installer artifact.
+
+The production rule is **not rebuild-and-trust, but prove-and-promote**.  After
+the canonical clean-install, qualification, uninstall, and revision-bound
+evidence succeed, CI uploads the same, unmodified MSI with its manifest,
+receipt, and evidence as `windows-stage9-qualified-msi`.  A later persistent
+installation must use that qualified artifact for the intended final source
+revision; it must not use a local rebuild presumed to have the same MSI hash.
+
 Before any PyInstaller invocation the builder imports the centrally reviewed
 Win32 surface: `servicemanager`, `win32api`, `win32con`, `win32event`,
 `win32job`, `win32process`, `win32security`, `win32service`,

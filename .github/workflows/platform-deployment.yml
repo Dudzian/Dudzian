@@ -3,6 +3,12 @@ name: Platform deployment tracks
 on:
   pull_request:
   workflow_dispatch:
+    inputs:
+      run_stage10:
+        description: "Run destructive/reboot Stage-10 lifecycle qualification"
+        required: true
+        type: boolean
+        default: false
 
 jobs:
   core-linux:
@@ -153,9 +159,19 @@ jobs:
             dist/windows/windows-clean-install-receipt.json
             dist/windows/windows-clean-install-evidence.json
             dist/windows/logs/*.log
+      - name: Promote exactly the qualified Stage-9 MSI
+        uses: actions/upload-artifact@v6
+        with:
+          name: windows-stage9-qualified-msi
+          if-no-files-found: error
+          path: |
+            dist/windows/CryptoHunter-0.1.0-windows-x64.msi
+            dist/windows/installer-manifest.json
+            dist/windows/windows-clean-install-receipt.json
+            dist/windows/windows-clean-install-evidence.json
 
   windows-stage10-prepare-and-schedule-reboot:
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' && inputs.run_stage10 == true
     runs-on: [self-hosted, Windows, X64, cryptohunter-stage10]
     needs: [windows-deployment-integration, windows-clean-install-integration]
     steps:
@@ -182,7 +198,7 @@ jobs:
         run: shutdown.exe /r /t 75 /d p:4:1 /c "CryptoHunter Stage-10 qualification"
 
   windows-stage10-reboot-barrier:
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' && inputs.run_stage10 == true
     needs: windows-stage10-prepare-and-schedule-reboot
     runs-on: ubuntu-latest
     steps:
@@ -190,7 +206,7 @@ jobs:
         run: sleep 240
 
   windows-stage10-qualify-after-reboot:
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' && inputs.run_stage10 == true
     needs: windows-stage10-reboot-barrier
     runs-on: [self-hosted, Windows, X64, cryptohunter-stage10]
     timeout-minutes: 1800
@@ -229,6 +245,7 @@ jobs:
             stage10/windows-stage10-transcript.log
 
   linux-deployment-integration:
+    if: github.event_name == 'pull_request' || inputs.run_stage10 == true
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -238,6 +255,7 @@ jobs:
         run: python -m deployment.platform_readiness --platform LINUX
 
   macos-deployment-integration:
+    if: github.event_name == 'pull_request' || inputs.run_stage10 == true
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v5
@@ -247,7 +265,7 @@ jobs:
         run: python -m deployment.platform_readiness --platform MACOS
 
   windows-release-gate:
-    if: always()
+    if: always() && (github.event_name == 'pull_request' || inputs.run_stage10 == true)
     runs-on: windows-latest
     needs:
       - core-linux
@@ -277,7 +295,7 @@ jobs:
           name: windows-scm-evidence
           path: evidence
       - uses: actions/download-artifact@v7
-        if: github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'workflow_dispatch' && inputs.run_stage10 == true
         with:
           name: windows-stage10-lifecycle-evidence
           path: evidence
@@ -296,7 +314,7 @@ jobs:
           --evidence evidence/windows-scm-evidence.json
           --evidence evidence/windows-clean-install-evidence.json
       - name: Enforce canonical Windows production readiness with Stage-10 lifecycle
-        if: github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'workflow_dispatch' && inputs.run_stage10 == true
         run: >-
           python -m deployment.platform_readiness --platform WINDOWS
           --evidence evidence/core-matrix.json
