@@ -36,6 +36,10 @@ from deployment.windows_installer.postgresql_service import (
     try_write_startup_diagnostic,
     wait_ready,
 )
+from deployment.windows_installer.corehost_composition import (
+    WindowsProvisioningAdapterUnavailable,
+)
+from deployment.windows_stage9_production_trust import ProductionTrustUnavailable
 
 
 ROOT = Path(__file__).parents[2]
@@ -951,6 +955,36 @@ def test_safe_diagnostic_identifies_first_exception_without_rendering_it() -> No
         assert _first_exception_type(outer) == "RuntimeError"
 
 
+def test_enroll_cli_reports_missing_production_trust_as_root_cause(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def fail_before_legal_enrollment(program_files: Path, program_data: Path) -> None:
+        del program_files, program_data
+        try:
+            raise ProductionTrustUnavailable("PRODUCTION_TRUST_UNAVAILABLE")
+        except ProductionTrustUnavailable as exc:
+            raise WindowsProvisioningAdapterUnavailable("PRODUCTION_TRUST_UNAVAILABLE") from exc
+
+    monkeypatch.setattr(provision, "enroll", fail_before_legal_enrollment)
+    monkeypatch.setattr(provision, "os", SimpleNamespace(name="nt"))
+
+    assert (
+        provision.main(
+            [
+                "enroll",
+                "--program-files",
+                str(tmp_path / "ProgramFiles"),
+                "--program-data",
+                str(tmp_path / "ProgramData"),
+            ]
+        )
+        == 1
+    )
+    assert capsys.readouterr().err.splitlines() == [
+        "provisioning failed: operation=enroll first_exception=ProductionTrustUnavailable"
+    ]
+
+
 def test_safe_failure_is_secret_free_atomic_and_cannot_be_redirected(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1268,7 +1302,7 @@ def test_fail_closed_proof_rejects_unexpected_first_exception(
         clean_install.prove_production_enrollment_fail_closed(root, machine)
 
 
-def test_fail_closed_proof_accepts_only_exact_unavailable_adapter_diagnostic(
+def test_fail_closed_proof_accepts_only_exact_missing_production_trust_diagnostic(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     root = tmp_path / "root"
@@ -1278,8 +1312,7 @@ def test_fail_closed_proof_accepts_only_exact_unavailable_adapter_diagnostic(
     class Result:
         returncode = 1
         stderr = (
-            b"provisioning failed: operation=enroll "
-            b"first_exception=WindowsProvisioningAdapterUnavailable\n"
+            b"provisioning failed: operation=enroll first_exception=ProductionTrustUnavailable\n"
         )
 
     monkeypatch.setattr(clean_install.subprocess, "run", lambda *args, **kwargs: Result())

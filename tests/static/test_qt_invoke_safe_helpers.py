@@ -8,7 +8,7 @@ def test_invoke_safe_qvariantmap_returns_none_on_win32(monkeypatch):
     assert safe.invoke_safe_qvariantmap({"a": 1}) is None
 
 
-def test_invoke_safe_qvariantmap_passthrough_on_non_win32(monkeypatch):
+def test_invoke_safe_qvariantmap_never_marshals_structured_dict(monkeypatch):
     monkeypatch.setattr(safe.sys, "platform", "linux")
     payload = {"a": 1}
-    assert safe.invoke_safe_qvariantmap(payload) is payload
+    assert safe.invoke_safe_qvariantmap(payload) is None

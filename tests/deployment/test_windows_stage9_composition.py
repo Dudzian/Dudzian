@@ -11,6 +11,7 @@ from deployment.windows_installer.corehost_composition import (
     load_windows_external_provisioning_handoff,
     materialize_canonical_pre_state,
 )
+from deployment.windows_stage9_production_trust import ProductionTrustUnavailable
 from tests.persistence.test_durable_first_run_bootstrap import (
     Provisioning,
     claim,
@@ -48,9 +49,16 @@ class AcceptanceProvisioning(Provisioning):
         return SecretPort()
 
 
-def test_missing_production_provisioning_adapter_fails_closed() -> None:
-    with pytest.raises(WindowsProvisioningAdapterUnavailable):
+def test_missing_production_provisioning_adapter_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "deployment.platforms.windows.production_trust_package_path",
+        lambda ceremony_id: tmp_path / ceremony_id / "production-trust.json",
+    )
+    with pytest.raises(WindowsProvisioningAdapterUnavailable) as raised:
         load_windows_external_provisioning_handoff()
+    assert isinstance(raised.value.__cause__, ProductionTrustUnavailable)
 
 
 def test_acceptance_handoff_materializes_pre_through_durable_coordinator(tmp_path: Path) -> None:

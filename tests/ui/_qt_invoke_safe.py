@@ -132,13 +132,13 @@ def invoke_safe_qvariantmap(arg: Any) -> Any:
 
     Test-only helper for invokeMethod arguments; do not use in production paths.
 
-    On win32, structured QVariantMap marshalling in invokeMethod may crash before
-    entering Python slot logic. For dispatch/meta-call tests use ``None``.
-    On non-win32 this function is pass-through.
+    PySide6 6.7.2 structured QVariantMap marshalling in invokeMethod may crash
+    before entering Python slot logic on Windows, Linux, and macOS. For a
+    dispatch/meta-call test this helper therefore always returns ``None``.
+    Exercise structured mapping semantics through a normal Python call instead.
     """
-    if sys.platform == "win32":
-        return None
-    return arg
+    del arg
+    return None
 
 
 def assert_has_overload(qobj: Any, signature: str) -> None:

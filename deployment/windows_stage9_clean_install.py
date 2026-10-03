@@ -406,7 +406,7 @@ def prove_production_enrollment_fail_closed(root: Path, machine: Path) -> None:
     stderr = result.stderr.decode(errors="replace")
     expected = (
         "provisioning failed: operation=enroll "
-        "first_exception=WindowsProvisioningAdapterUnavailable"
+        "first_exception=ProductionTrustUnavailable"
     )
     if (
         result.returncode == 0

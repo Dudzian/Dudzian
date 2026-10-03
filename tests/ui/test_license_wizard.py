@@ -287,7 +287,7 @@ def test_license_wizard_shows_error_on_invalid_payload(tmp_path: Path) -> None:
             break
         qt_wait(10)
     assert apply_button.property("enabled") is True
-    QMetaObject.invokeMethod(apply_button, "click", Qt.DirectConnection)
+    assert QMetaObject.invokeMethod(apply_button, "clicked", Qt.DirectConnection)
 
     pending_status_id = "licenseWizard.status.pending"
     for _ in range(30):
