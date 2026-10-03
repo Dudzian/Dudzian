@@ -157,7 +157,7 @@ def test_strategy_manager_view_triggers_actions(tmp_path: Path) -> None:
             f"quickInstallButtons={quick_install_names!r}; "
             f"assignButtons={assign_button_names!r}"
         )
-        assert QMetaObject.invokeMethod(quick_install_button, "click", Qt.DirectConnection)
+        assert QMetaObject.invokeMethod(quick_install_button, "clicked", Qt.DirectConnection)
         app.processEvents()
 
         assert controller.install_calls[-1] == ("scalping_ai", "desk-1")
@@ -172,7 +172,7 @@ def test_strategy_manager_view_triggers_actions(tmp_path: Path) -> None:
             f"assignButtons={assign_button_names!r}"
         )
         assert assign_button.property("enabled") is True
-        assert QMetaObject.invokeMethod(assign_button, "click", Qt.DirectConnection)
+        assert QMetaObject.invokeMethod(assign_button, "clicked", Qt.DirectConnection)
         app.processEvents()
 
         assert controller.assign_calls[-1] == ("swing_guard", "desk-1")

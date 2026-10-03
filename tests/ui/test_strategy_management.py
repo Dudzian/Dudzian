@@ -4,7 +4,6 @@ from pathlib import Path
 import pytest
 
 from tests.ui._qml_tree import find_by_object_name
-from tests.ui._qt_invoke_safe import has_overload
 
 try:
     import yaml  # type: ignore
@@ -447,24 +446,16 @@ def test_strategy_management_clone_refreshes_presets(tmp_path: Path) -> None:
             f"availableSelectors={bundle_selector_names!r}; "
             f"repeaterItems={bundle_selector_items!r}"
         )
-        click_signature = "click()"
-        if not has_overload(alpha_selector, click_signature) or not has_overload(
-            beta_selector, click_signature
-        ):
-            pytest.skip(
-                "Bundle selector interaction requires AbstractButton.click() "
-                "(Qt >= 6.8); CI pins PySide6 via PYSIDE6_VERSION.",
-                allow_module_level=False,
-            )
-
-        # `setProperty("checked", ...)` only flips the visual state and `toggle()`
-        # does not reliably trigger the interactive `onToggled` path used by the
-        # bundle selectors. Use `click()` to mirror a real user interaction so the
-        # QML handler updates bundleSelection before export.
-        assert QMetaObject.invokeMethod(alpha_selector, "click", Qt.DirectConnection) is True
-        assert QMetaObject.invokeMethod(beta_selector, "click", Qt.DirectConnection) is True
+        # Toggle the CheckBox state through its Qt 6.7 meta-object API so the
+        # production onToggled handler updates bundleSelection before export.
+        assert (
+            QMetaObject.invokeMethod(alpha_selector, "toggle", Qt.DirectConnection) is True
+        )
+        assert QMetaObject.invokeMethod(beta_selector, "toggle", Qt.DirectConnection) is True
         app.processEvents()
 
+        assert alpha_selector.property("checked") is True
+        assert beta_selector.property("checked") is True
         bundle_selection = qml_value_to_python(root.property("bundleSelection"))
         assert isinstance(bundle_selection, list)
         assert len(bundle_selection) == 2

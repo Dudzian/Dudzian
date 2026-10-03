@@ -122,7 +122,7 @@ def test_strategy_setup_step_updates_service() -> None:
     api_key.setProperty("text", "APIKEY")
     api_secret.setProperty("text", "SECRET")
 
-    QMetaObject.invokeMethod(save_button, "click", Qt.DirectConnection)
+    assert QMetaObject.invokeMethod(save_button, "clicked", Qt.DirectConnection)
     app.processEvents()
 
     assert service.configurationReady is True

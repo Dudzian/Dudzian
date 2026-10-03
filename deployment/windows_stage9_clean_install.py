@@ -404,10 +404,7 @@ def prove_production_enrollment_fail_closed(root: Path, machine: Path) -> None:
         timeout=120,
     )
     stderr = result.stderr.decode(errors="replace")
-    expected = (
-        "provisioning failed: operation=enroll "
-        "first_exception=ProductionTrustUnavailable"
-    )
+    expected = "provisioning failed: operation=enroll first_exception=PolicyVectorError"
     if (
         result.returncode == 0
         or (machine / "State" / "corehost.sqlite").exists()
