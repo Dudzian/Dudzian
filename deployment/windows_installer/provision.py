@@ -50,9 +50,7 @@ SAFE_FAILURE_DIAGNOSTIC = ".CryptoHunter.stage9-install-failure.json"
 OWNERSHIP_RECORD = ".stage9-install-ownership.json"
 ENROLLMENT_FINALIZATION = "enrollment-finalization.json"
 SCHEMA = 1
-SAFE_FAILURE_FIELDS = frozenset(
-    {"schema_version", "operation", "stage", "first_exception"}
-)
+SAFE_FAILURE_FIELDS = frozenset({"schema_version", "operation", "stage", "first_exception"})
 SERVICES = (
     CONTRACT.postgresql_service,
     CONTRACT.backend_service,
@@ -149,9 +147,7 @@ def transaction_path(program_data: Path) -> Path:
     return program_data.parent / TRANSACTION_JOURNAL
 
 
-def create_journal(
-    program_files: Path, program_data: Path
-) -> tuple[Path, dict[str, Any]]:
+def create_journal(program_files: Path, program_data: Path) -> tuple[Path, dict[str, Any]]:
     path = transaction_path(program_data)
     if path.exists() or program_data.exists():
         raise ProvisionError("clean-install target pre-exists")
@@ -219,8 +215,7 @@ def _qualify_protected(path: Path, grants: dict[str, int], *, inherit: bool) -> 
     descriptor = win32security.GetNamedSecurityInfo(
         str(path),
         win32security.SE_FILE_OBJECT,
-        win32security.OWNER_SECURITY_INFORMATION
-        | win32security.DACL_SECURITY_INFORMATION,
+        win32security.OWNER_SECURITY_INFORMATION | win32security.DACL_SECURITY_INFORMATION,
     )
     control, _ = descriptor.GetSecurityDescriptorControl()
     if not control & win32security.SE_DACL_PROTECTED:
@@ -230,10 +225,7 @@ def _qualify_protected(path: Path, grants: dict[str, int], *, inherit: bool) -> 
     observed = {}
     for index in range(dacl.GetAceCount()):
         header, mask, sid = dacl.GetAce(index)
-        if (
-            header[0] != win32security.ACCESS_ALLOWED_ACE_TYPE
-            or header[1] != expected_flags
-        ):
+        if header[0] != win32security.ACCESS_ALLOWED_ACE_TYPE or header[1] != expected_flags:
             raise ProvisionError(f"unexpected ACE: {path}")
         observed[win32security.ConvertSidToStringSid(sid)] = mask
     expected = {
@@ -293,9 +285,7 @@ def _pki(
     set_stage("CREATE_LOCAL_PKI")
     ca_key = rsa.generate_private_key(public_exponent=65537, key_size=3072)
     now = datetime.now(timezone.utc)
-    ca_name = x509.Name(
-        [x509.NameAttribute(NameOID.COMMON_NAME, "CryptoHunter Local CA")]
-    )
+    ca_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "CryptoHunter Local CA")])
     ca = (
         x509.CertificateBuilder()
         .subject_name(ca_name)
@@ -353,9 +343,7 @@ def _pki(
             inherit=False,
         )
     _protect(security / "ca.key", {SYSTEM_SID: FILE_ALL_ACCESS}, inherit=False)
-    _qualify_protected(
-        security / "ca.key", {SYSTEM_SID: FILE_ALL_ACCESS}, inherit=False
-    )
+    _qualify_protected(security / "ca.key", {SYSTEM_SID: FILE_ALL_ACCESS}, inherit=False)
 
 
 def _configure_database(
@@ -390,9 +378,7 @@ def _configure_database(
         encoding="utf-8",
     )
     # Bootstrap exists only while the postmaster is installer-owned and is replaced before final start.
-    (data / "pg_hba.conf").write_text(
-        "host all postgres 127.0.0.1/32 trust\n", encoding="utf-8"
-    )
+    (data / "pg_hba.conf").write_text("host all postgres 127.0.0.1/32 trust\n", encoding="utf-8")
     set_stage("POSTGRES_BOOTSTRAP_START")
     subprocess.run(
         [str(pg_ctl), "start", "-D", str(data), "-w", "-t", "60"],
@@ -418,20 +404,12 @@ def _configure_database(
         # access. PostgreSQL applies a replaced HBA immediately to new sessions,
         # while this already-authenticated session remains valid.
         with psycopg.connect(dsn, autocommit=True) as connection:
-            identity = connection.execute(
-                "SELECT session_user,current_database()"
-            ).fetchone()
+            identity = connection.execute("SELECT session_user,current_database()").fetchone()
             if tuple(identity) != ("postgres", "postgres"):
-                raise ProvisionError(
-                    "bootstrap administrator session qualification failed"
-                )
+                raise ProvisionError("bootstrap administrator session qualification failed")
             set_stage("POSTGRES_FINAL_HBA_WRITE")
-            (data / "pg_hba.conf").write_text(
-                "\n".join(FINAL_HBA) + "\n", encoding="utf-8"
-            )
-            (data / "pg_ident.conf").write_text(
-                "\n".join(IDENT) + "\n", encoding="utf-8"
-            )
+            (data / "pg_hba.conf").write_text("\n".join(FINAL_HBA) + "\n", encoding="utf-8")
+            (data / "pg_ident.conf").write_text("\n".join(IDENT) + "\n", encoding="utf-8")
             set_stage("POSTGRES_FINAL_HBA_QUALIFY")
             rows = connection.execute(
                 "SELECT line_number,type,database,user_name,address,netmask,auth_method,options,error "
@@ -442,32 +420,7 @@ def _configure_database(
             except ValueError as exc:
                 raise ProvisionError("final HBA parser qualification failed") from exc
             set_stage("POSTGRES_FINAL_ADMIN_REJECTION")
-            try:
-                unexpected = psycopg.connect(dsn)
-            except psycopg.OperationalError as exc:
-                rejection = str(exc).lower()
-                if getattr(exc, "sqlstate", None) != "28000" and not any(
-                    marker in rejection
-                    for marker in (
-                        "no pg_hba.conf entry",
-                        "pg_hba.conf rejects connection",
-                        "requires a valid client certificate",
-                        "certificate authentication failed",
-                    )
-                ):
-                    raise ProvisionError(
-                        "new administrator connection did not prove HBA rejection"
-                    ) from exc
-                # Distinguish an authentication rejection from server unavailability.
-                if connection.execute("SELECT 1").fetchone() != (1,):
-                    raise ProvisionError("bootstrap PostgreSQL liveness proof failed")
-            else:
-                # This path is a contract violation, but do not leak the
-                # unexpectedly accepted privileged session while reporting it.
-                unexpected.close()
-                raise ProvisionError(
-                    "final HBA accepted a new administrator connection"
-                )
+            _prove_final_admin_rejection(psycopg, dsn, connection)
     except BaseException as exc:
         primary_failure = exc
         raise
@@ -485,6 +438,26 @@ def _configure_database(
                 raise
 
 
+def _prove_final_admin_rejection(psycopg: Any, dsn: str, connection: Any) -> None:
+    """Prove a parser-qualified final HBA rejects fresh privileged sessions."""
+    try:
+        unexpected = psycopg.connect(dsn)
+    except psycopg.OperationalError:
+        # Error text and SQLSTATE are provider- and locale-dependent, so neither
+        # is security input. Retained-session liveness distinguishes a policy
+        # rejection from loss of the postmaster.
+        try:
+            alive = connection.execute("SELECT 1").fetchone()
+        except Exception as exc:
+            raise ProvisionError("bootstrap PostgreSQL liveness proof failed") from exc
+        if alive != (1,):
+            raise ProvisionError("bootstrap PostgreSQL liveness proof failed")
+    else:
+        # Do not leak the unexpectedly accepted privileged session while failing.
+        unexpected.close()
+        raise ProvisionError("final HBA accepted a new administrator connection")
+
+
 def _recovery() -> None:
     import win32service  # type: ignore[import-not-found]
 
@@ -499,9 +472,7 @@ def _recovery() -> None:
             "ResetPeriod": 86400,
             "RebootMsg": "",
             "Command": "",
-            "Actions": [
-                (win32service.SC_ACTION_RESTART, d) for d in (1000, 5000, 30000)
-            ]
+            "Actions": [(win32service.SC_ACTION_RESTART, d) for d in (1000, 5000, 30000)]
             + [(win32service.SC_ACTION_NONE, 0)],
         }
         win32service.ChangeServiceConfig2(
@@ -528,10 +499,7 @@ def _commit_backend_start_type() -> None:
         win32service.SERVICE_CHANGE_CONFIG | win32service.SERVICE_QUERY_CONFIG,
     )
     try:
-        if (
-            win32service.QueryServiceConfig(service)[1]
-            != win32service.SERVICE_AUTO_START
-        ):
+        if win32service.QueryServiceConfig(service)[1] != win32service.SERVICE_AUTO_START:
             win32service.ChangeServiceConfig(
                 service,
                 win32service.SERVICE_NO_CHANGE,
@@ -545,10 +513,7 @@ def _commit_backend_start_type() -> None:
                 None,
                 None,
             )
-        if (
-            win32service.QueryServiceConfig(service)[1]
-            != win32service.SERVICE_AUTO_START
-        ):
+        if win32service.QueryServiceConfig(service)[1] != win32service.SERVICE_AUTO_START:
             raise ProvisionError("backend start type read-back mismatch")
     finally:
         win32service.CloseServiceHandle(service)
@@ -591,10 +556,7 @@ def _verify_backend_activation() -> None:
         win32service.SERVICE_QUERY_CONFIG | win32service.SERVICE_QUERY_STATUS,
     )
     try:
-        if (
-            win32service.QueryServiceConfig(service)[1]
-            != win32service.SERVICE_AUTO_START
-        ):
+        if win32service.QueryServiceConfig(service)[1] != win32service.SERVICE_AUTO_START:
             raise ProvisionError("backend start type read-back mismatch")
         if win32service.QueryServiceStatus(service)[1] != win32service.SERVICE_RUNNING:
             raise ProvisionError("backend running read-back mismatch")
@@ -660,8 +622,7 @@ def install(
     policies = {}
     for role in ("CONFIG", "STATE", "RUNTIME", "LOGS"):
         policies[role.title()] = {
-            sid: mask
-            for sid, mask, _ in expected_aces(role, sids[CONTRACT.backend_service])
+            sid: mask for sid, mask, _ in expected_aces(role, sids[CONTRACT.backend_service])
         }
     policies["Updates"] = base
     security_readers = {
@@ -754,17 +715,14 @@ def rollback(program_files: Path, program_data: Path) -> None:
         "program_data": str(program_data.resolve()),
         "service_names": list(SERVICES),
     }
-    if any(value.get(k) != v for k, v in expected.items()) or value.get(
-        "state"
-    ) not in {
+    if any(value.get(k) != v for k, v in expected.items()) or value.get("state") not in {
         "PROVISIONING",
         "PROVISIONED",
     }:
         return
     roots = [Path(p) for p in value.get("resources_created", [])]
     if any(
-        program_data.resolve() not in p.resolve().parents
-        and p.resolve() != program_data.resolve()
+        program_data.resolve() not in p.resolve().parents and p.resolve() != program_data.resolve()
         for p in roots
     ):
         raise ProvisionError("rollback journal escaped ProgramData")
@@ -794,9 +752,7 @@ def commit(program_files: Path, program_data: Path) -> None:
 
 def _committed_record(program_data: Path) -> dict[str, Any]:
     try:
-        journal = json.loads(
-            (program_data / OWNERSHIP_RECORD).read_text(encoding="utf-8")
-        )
+        journal = json.loads((program_data / OWNERSHIP_RECORD).read_text(encoding="utf-8"))
     except (OSError, ValueError, TypeError) as exc:
         raise ProvisionError("committed ownership record absent") from exc
     if (
@@ -811,9 +767,7 @@ def _committed_record(program_data: Path) -> dict[str, Any]:
 def _is_reparse_point(path: Path) -> bool:
     """Recognize symlinks and native Windows reparse points without following them."""
     try:
-        return path.is_symlink() or bool(
-            getattr(path.lstat(), "st_file_attributes", 0) & 0x400
-        )
+        return path.is_symlink() or bool(getattr(path.lstat(), "st_file_attributes", 0) & 0x400)
     except OSError as exc:
         raise ProvisionError(f"cannot qualify path: {path}") from exc
 
@@ -846,9 +800,7 @@ def qualify_production_trust_dacl(path: Path) -> None:
         backend: FILE_GENERIC_READ | FILE_GENERIC_EXECUTE,
     }
     entries = (path, *sorted(path.iterdir()))
-    if len(entries) != 13 or any(
-        item != path and not item.is_file() for item in entries
-    ):
+    if len(entries) != 13 or any(item != path and not item.is_file() for item in entries):
         raise ProvisionError("production trust artifact set differs")
     for item in entries:
         if _is_reparse_point(item):
@@ -856,12 +808,9 @@ def qualify_production_trust_dacl(path: Path) -> None:
         descriptor = win32security.GetNamedSecurityInfo(
             str(item),
             win32security.SE_FILE_OBJECT,
-            win32security.OWNER_SECURITY_INFORMATION
-            | win32security.DACL_SECURITY_INFORMATION,
+            win32security.OWNER_SECURITY_INFORMATION | win32security.DACL_SECURITY_INFORMATION,
         )
-        owner = win32security.ConvertSidToStringSid(
-            descriptor.GetSecurityDescriptorOwner()
-        )
+        owner = win32security.ConvertSidToStringSid(descriptor.GetSecurityDescriptorOwner())
         if owner == backend:
             raise ProvisionError("backend owns production trust")
         dacl = descriptor.GetSecurityDescriptorDacl()
@@ -881,9 +830,7 @@ def qualify_production_trust_dacl(path: Path) -> None:
             raise ProvisionError("production trust DACL differs")
 
 
-def install_production_trust(
-    program_files: Path, program_data: Path, source: Path
-) -> Path:
+def install_production_trust(program_files: Path, program_data: Path, source: Path) -> Path:
     """Install only public production trust into an already committed base install."""
     from deployment.platforms.windows import (
         production_trust_package_path,
@@ -912,20 +859,13 @@ def install_production_trust(
     native_program_data = native.configuration.parent
     destination = production_trust_package_path(CEREMONY_ID)
     if program_files.resolve() != native.install.resolve():
-        raise ProvisionError(
-            "ProgramFiles path is not the native canonical install root"
-        )
+        raise ProvisionError("ProgramFiles path is not the native canonical install root")
     if program_data.resolve() != native_program_data.resolve():
-        raise ProvisionError(
-            "ProgramData path is not the native canonical machine root"
-        )
+        raise ProvisionError("ProgramData path is not the native canonical machine root")
     config = program_data / "Config"
     if not config.is_dir() or config.resolve() != native.configuration.resolve():
         raise ProvisionError("canonical Config directory required")
-    if (
-        destination.resolve()
-        != (native.configuration / "ProductionTrust" / CEREMONY_ID).resolve()
-    ):
+    if destination.resolve() != (native.configuration / "ProductionTrust" / CEREMONY_ID).resolve():
         raise ProvisionError("production trust destination is not canonical")
     for path in (program_files, program_data, config):
         if _is_reparse_point(path):
@@ -933,9 +873,7 @@ def install_production_trust(
     if destination.exists() or destination.is_symlink():
         raise ProvisionError("production trust overwrite forbidden")
     if destination.parent.exists() and _is_reparse_point(destination.parent):
-        raise ProvisionError(
-            "production trust destination escapes through reparse point"
-        )
+        raise ProvisionError("production trust destination escapes through reparse point")
     _reject_reparse_tree(source)
     load_production_trust(source)
     source_hashes = _package_hashes(source)
@@ -979,19 +917,14 @@ def qualify_dacl(program_files: Path, program_data: Path) -> None:
     data = program_data / "PostgreSQL" / "Data"
     sids = _service_sids()
     for role in ("CONFIG", "STATE", "RUNTIME", "LOGS"):
-        grants = {
-            sid: mask
-            for sid, mask, _ in expected_aces(role, sids[CONTRACT.backend_service])
-        }
+        grants = {sid: mask for sid, mask, _ in expected_aces(role, sids[CONTRACT.backend_service])}
         _qualify_protected(program_data / role.title(), grants, inherit=True)
     base = {ADMINISTRATORS_SID: FILE_ALL_ACCESS, SYSTEM_SID: FILE_ALL_ACCESS}
     _qualify_protected(
         data, {**base, sids[CONTRACT.postgresql_service]: FILE_ALL_ACCESS}, inherit=True
     )
     security = program_data / "Security"
-    readers = {
-        sids[name]: FILE_GENERIC_READ | FILE_GENERIC_EXECUTE for name in SERVICES
-    }
+    readers = {sids[name]: FILE_GENERIC_READ | FILE_GENERIC_EXECUTE for name in SERVICES}
     _qualify_protected(security, {**base, **readers}, inherit=True)
     _qualify_protected(
         security / "ca.crt",
@@ -1018,9 +951,7 @@ def qualify_dacl(program_files: Path, program_data: Path) -> None:
             {SYSTEM_SID: FILE_ALL_ACCESS, sids[service]: FILE_GENERIC_READ},
             inherit=False,
         )
-    _qualify_protected(
-        security / "ca.key", {SYSTEM_SID: FILE_ALL_ACCESS}, inherit=False
-    )
+    _qualify_protected(security / "ca.key", {SYSTEM_SID: FILE_ALL_ACCESS}, inherit=False)
 
 
 def qualify(program_files: Path, program_data: Path) -> None:
@@ -1054,10 +985,7 @@ def qualify_postgresql(program_files: Path, program_data: Path) -> None:
 
     _wait_service(CONTRACT.postgresql_service, win32service.SERVICE_RUNNING)
     data = program_data / "PostgreSQL" / "Data"
-    if (
-        tuple(filter(None, (data / "pg_hba.conf").read_text().splitlines()))
-        != FINAL_HBA
-    ):
+    if tuple(filter(None, (data / "pg_hba.conf").read_text().splitlines())) != FINAL_HBA:
         raise ProvisionError("final HBA differs")
     if tuple(filter(None, (data / "pg_ident.conf").read_text().splitlines())) != IDENT:
         raise ProvisionError("final ident differs")
@@ -1089,9 +1017,7 @@ def qualify_mtls(program_files: Path, program_data: Path) -> None:
     import time
     import psycopg
 
-    subprocess.run(
-        ["sc.exe", "start", CONTRACT.verifier_service], check=True, capture_output=True
-    )
+    subprocess.run(["sc.exe", "start", CONTRACT.verifier_service], check=True, capture_output=True)
     markers = (
         program_data / "Runtime" / "backend-readiness.json",
         program_data / "Runtime" / "Verifier" / "verifier-readiness.json",
@@ -1123,9 +1049,7 @@ def qualify_mtls(program_files: Path, program_data: Path) -> None:
             pass
         else:
             raise ProvisionError(f"interactive no-cert connection entered {role}")
-    subprocess.run(
-        ["sc.exe", "stop", CONTRACT.verifier_service], check=True, capture_output=True
-    )
+    subprocess.run(["sc.exe", "stop", CONTRACT.verifier_service], check=True, capture_output=True)
 
 
 def qualify_backend(program_files: Path, program_data: Path) -> None:
@@ -1133,13 +1057,8 @@ def qualify_backend(program_files: Path, program_data: Path) -> None:
     import win32service  # type: ignore[import-not-found]
 
     first = _wait_service(CONTRACT.backend_service, win32service.SERVICE_RUNNING)
-    marker = json.loads(
-        (program_data / "Runtime" / "backend-readiness.json").read_text()
-    )
-    if (
-        marker.get("pid") != first["ProcessId"]
-        or marker.get("corehost_lock") is not True
-    ):
+    marker = json.loads((program_data / "Runtime" / "backend-readiness.json").read_text())
+    if marker.get("pid") != first["ProcessId"] or marker.get("corehost_lock") is not True:
         raise ProvisionError("backend readiness identity differs")
     time.sleep(3)
     second = _wait_service(CONTRACT.backend_service, win32service.SERVICE_RUNNING)
@@ -1152,22 +1071,15 @@ def qualify_logging(program_files: Path, program_data: Path) -> None:
 
     log = program_data / "Logs" / "backend.log"
     before = log.read_bytes()
-    subprocess.run(
-        ["sc.exe", "stop", CONTRACT.backend_service], check=True, capture_output=True
-    )
+    subprocess.run(["sc.exe", "stop", CONTRACT.backend_service], check=True, capture_output=True)
     _wait_service(CONTRACT.backend_service, win32service.SERVICE_STOPPED)
-    subprocess.run(
-        ["sc.exe", "start", CONTRACT.backend_service], check=True, capture_output=True
-    )
+    subprocess.run(["sc.exe", "start", CONTRACT.backend_service], check=True, capture_output=True)
     _wait_service(CONTRACT.backend_service, win32service.SERVICE_RUNNING)
     after = log.read_bytes()
     if len(after) <= len(before) or not after.startswith(before):
         raise ProvisionError("persistent backend log did not survive restart")
     sids = _service_sids()
-    grants = {
-        sid: mask
-        for sid, mask, _ in expected_aces("LOGS", sids[CONTRACT.backend_service])
-    }
+    grants = {sid: mask for sid, mask, _ in expected_aces("LOGS", sids[CONTRACT.backend_service])}
     _qualify_protected(program_data / "Logs", grants, inherit=True)
 
 
