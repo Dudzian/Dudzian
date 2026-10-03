@@ -352,6 +352,27 @@ def test_stage10_workflow_uses_real_reboot_soak_and_evidence_producer() -> None:
         (root / ".github/workflows/platform-deployment.yml").read_text(encoding="utf-8")
     )
     jobs = workflow["jobs"]
+    dispatch = workflow[True]["workflow_dispatch"]
+    assert dispatch["inputs"]["run_stage10"] == {
+        "description": "Run destructive/reboot Stage-10 lifecycle qualification",
+        "required": True,
+        "type": "boolean",
+        "default": False,
+    }
+    opt_in = "github.event_name == 'workflow_dispatch' && inputs.run_stage10 == true"
+    for job_name in (
+        "windows-stage10-prepare-and-schedule-reboot",
+        "windows-stage10-reboot-barrier",
+        "windows-stage10-qualify-after-reboot",
+    ):
+        assert jobs[job_name]["if"] == opt_in
+    assert jobs["windows-release-gate"]["if"] == (
+        "always() && (github.event_name == 'pull_request' || inputs.run_stage10 == true)"
+    )
+    for job_name in ("linux-deployment-integration", "macos-deployment-integration"):
+        assert jobs[job_name]["if"] == (
+            "github.event_name == 'pull_request' || inputs.run_stage10 == true"
+        )
     assert jobs["windows-stage10-prepare-and-schedule-reboot"]["runs-on"] == [
         "self-hosted",
         "Windows",
@@ -417,7 +438,7 @@ def test_stage10_workflow_uses_real_reboot_soak_and_evidence_producer() -> None:
         for step in jobs["windows-release-gate"]["steps"]
         if step.get("with", {}).get("name") == "windows-stage10-lifecycle-evidence"
     )
-    assert download["if"] == "github.event_name == 'workflow_dispatch'"
+    assert download["if"] == opt_in
     release_commands = [step.get("run", "") for step in jobs["windows-release-gate"]["steps"]]
     assert any(
         "--evidence evidence/windows-stage10-evidence.json" in command

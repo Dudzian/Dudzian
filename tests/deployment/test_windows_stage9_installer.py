@@ -16,6 +16,7 @@ from deployment.windows_installer import provision
 from deployment.windows_installer.build import (
     InstallerBuildError,
     canonical_wix_version,
+    installed_payload_digest,
     msi_version,
     normalize_postgresql_archive,
     verify_postgresql,
@@ -103,6 +104,11 @@ def test_postgresql_and_wix_are_exactly_pinned() -> None:
     pins = json.loads((ROOT / "deployment/windows_installer/pins.json").read_text())
     assert pins["wix"]["version"] == CONTRACT.wix_version
     assert pins["postgresql"]["version"] == "17.11"
+    assert pins["reproducibility"] == {
+        "python_hash_seed": "0",
+        "source_date_epoch": 1790962380,
+        "upx": False,
+    }
     assert pins["postgresql"]["packaging_revision"] == "4"
     assert pins["postgresql"]["source_url"].endswith(pins["postgresql"]["archive"])
     assert len(pins["postgresql"]["sha256"]) == 64
@@ -292,6 +298,29 @@ def test_stage9_workflow_always_preserves_msi_diagnostics_without_weakening_gate
     assert "dist/windows/windows-clean-install-evidence.json" in diagnostic_step
     assert "if-no-files-found: ignore" in diagnostic_step
     assert "continue-on-error: true" not in canonical_step
+
+
+def test_stage9_workflow_promotes_exact_qualified_msi() -> None:
+    workflow = (ROOT / ".github/workflows/platform-deployment.yml").read_text(encoding="utf-8")
+    promotion = workflow.split("- name: Promote exactly the qualified Stage-9 MSI", 1)[1]
+    promotion = promotion.split("\n\n  windows-stage10", 1)[0]
+    assert "name: windows-stage9-qualified-msi" in promotion
+    assert "if-no-files-found: error" in promotion
+    for path in (
+        "dist/windows/CryptoHunter-0.1.0-windows-x64.msi",
+        "dist/windows/installer-manifest.json",
+        "dist/windows/windows-clean-install-receipt.json",
+        "dist/windows/windows-clean-install-evidence.json",
+    ):
+        assert path in promotion
+
+
+def test_installed_payload_digest_is_canonical_and_content_sensitive() -> None:
+    first = {"z/file.exe": "a" * 64, "a/file.dll": "b" * 64}
+    reordered = {"a/file.dll": "b" * 64, "z/file.exe": "a" * 64}
+    changed = dict(first, **{"z/file.exe": "c" * 64})
+    assert installed_payload_digest(first) == installed_payload_digest(reordered)
+    assert installed_payload_digest(first) != installed_payload_digest(changed)
 
 
 @pytest.mark.parametrize(("source", "expected"), [("1.2.3", "1.2.3"), ("1.2.3-rc.1", "1.2.3")])

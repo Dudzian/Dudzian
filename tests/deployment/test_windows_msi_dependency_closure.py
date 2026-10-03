@@ -150,9 +150,11 @@ def test_builder_smokes_all_four_packaged_executables(
     openblas.write_bytes(b"dll")
     smoked: list[str] = []
     pyinstaller_commands: list[list[str]] = []
+    pyinstaller_environments: list[dict[str, str]] = []
 
     def run(command: list[str], **kwargs: object) -> SimpleNamespace:
         pyinstaller_commands.append(command)
+        pyinstaller_environments.append(kwargs["env"])  # type: ignore[arg-type]
         name = command[command.index("--name") + 1]
         warning = work / name / name / f"warn-{name}.txt"
         warning.parent.mkdir(parents=True)
@@ -168,13 +170,28 @@ def test_builder_smokes_all_four_packaged_executables(
         "deployment.windows_installer.build.smoke_executable",
         lambda path: smoked.append(path.name),
     )
-    build_executables(payload, work)
+    monkeypatch.setenv("PYTHONHASHSEED", "attacker-controlled")
+    monkeypatch.setenv("SOURCE_DATE_EPOCH", "1")
+    build_executables(
+        payload,
+        work,
+        {
+            "python_hash_seed": "0",
+            "source_date_epoch": 1790962380,
+            "upx": False,
+        },
+    )
     assert len(pyinstaller_commands) == len(ENTRYPOINTS) == 4
     for command in pyinstaller_commands:
+        assert "--noupx" in command
         hidden_imports = [
             command[index + 1]
             for index, argument in enumerate(command)
             if argument == "--hidden-import"
         ]
         assert hidden_imports == list(REQUIRED_WIN32_MODULES)
+    assert all(environment["PYTHONHASHSEED"] == "0" for environment in pyinstaller_environments)
+    assert all(
+        environment["SOURCE_DATE_EPOCH"] == "1790962380" for environment in pyinstaller_environments
+    )
     assert smoked == [f"{name}.exe" for name in ENTRYPOINTS]

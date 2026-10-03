@@ -1,5 +1,14 @@
 {
   "schema_version": 1,
+  "build_runtime": {
+    "python_version": "3.11.9",
+    "pyinstaller_version": "6.5.0"
+  },
+  "reproducibility": {
+    "python_hash_seed": "0",
+    "source_date_epoch": 1790962380,
+    "upx": false
+  },
   "wix": {"version": "7.0.0"},
   "postgresql": {
     "version": "17.11",

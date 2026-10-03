@@ -1,9 +1,10 @@
-"""Deterministic end-to-end builder for the canonical Windows x64 MSI."""
+"""Canonical Windows x64 MSI builder with a reproducible frozen payload."""
 
 from __future__ import annotations
 import argparse
 import hashlib
 import importlib
+from importlib.metadata import version as distribution_version
 import json
 import os
 from pathlib import Path
@@ -60,10 +61,7 @@ def verify_postgresql(archive: Path, expected_sha256: str) -> None:
 def qualify_windows_x64() -> None:
     if sys.platform != "win32" or platform.machine().upper() not in {"AMD64", "X86_64"}:
         raise InstallerBuildError("canonical MSI requires a native Windows x64 runner")
-    if (
-        struct.calcsize("P") != 8
-        or os.environ.get("PROCESSOR_ARCHITEW6432", "").upper() == "AMD64"
-    ):
+    if struct.calcsize("P") != 8 or os.environ.get("PROCESSOR_ARCHITEW6432", "").upper() == "AMD64":
         raise InstallerBuildError("build tool must be native x64, not WOW64")
 
 
@@ -113,9 +111,7 @@ def normalize_postgresql_archive(archive: Path, destination: Path) -> None:
             shutil.copytree(Path(temporary) / "pgsql", destination)
 
 
-def acquire_postgresql(
-    pins: dict[str, object], supplied: Path | None, cache: Path
-) -> Path:
+def acquire_postgresql(pins: dict[str, object], supplied: Path | None, cache: Path) -> Path:
     pg = pins["postgresql"]
     assert isinstance(pg, dict)
     archive = supplied or cache / str(pg["archive"])
@@ -149,9 +145,7 @@ def qualify_win32_imports() -> None:
         except ImportError:
             missing.append(module)
     if missing:
-        raise InstallerBuildError(
-            "required pywin32 imports unavailable: " + ", ".join(missing)
-        )
+        raise InstallerBuildError("required pywin32 imports unavailable: " + ", ".join(missing))
 
 
 def numpy_openblas_dll() -> Path:
@@ -196,7 +190,40 @@ def smoke_executable(executable: Path) -> None:
         )
 
 
-def build_executables(payload: Path, work: Path) -> list[Path]:
+def validate_build_profile(pins: dict[str, object]) -> tuple[dict[str, object], str, str]:
+    reproducibility = pins.get("reproducibility")
+    expected = {
+        "python_hash_seed": "0",
+        "source_date_epoch": 1790962380,
+        "upx": False,
+    }
+    if reproducibility != expected:
+        raise InstallerBuildError("invalid frozen reproducibility profile")
+    runtime = pins.get("build_runtime")
+    if not isinstance(runtime, dict):
+        raise InstallerBuildError("build_runtime pin is required")
+    python_version = platform.python_version()
+    pyinstaller_version = distribution_version("pyinstaller")
+    if python_version != runtime.get("python_version"):
+        raise InstallerBuildError(
+            f"expected Python {runtime.get('python_version')}, observed {python_version}"
+        )
+    if pyinstaller_version != runtime.get("pyinstaller_version"):
+        raise InstallerBuildError(
+            "expected PyInstaller "
+            f"{runtime.get('pyinstaller_version')}, observed {pyinstaller_version}"
+        )
+    return reproducibility, python_version, pyinstaller_version
+
+
+def installed_payload_digest(installed_files: dict[str, str]) -> str:
+    canonical = json.dumps(
+        installed_files, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
+
+
+def build_executables(payload: Path, work: Path, reproducibility: dict[str, object]) -> list[Path]:
     outputs = []
     source_root = Path(__file__).parent
     qualify_win32_imports()
@@ -209,6 +236,9 @@ def build_executables(payload: Path, work: Path) -> list[Path]:
             for module in REQUIRED_WIN32_MODULES
             for argument in ("--hidden-import", module)
         ]
+        environment = os.environ.copy()
+        environment["PYTHONHASHSEED"] = str(reproducibility["python_hash_seed"])
+        environment["SOURCE_DATE_EPOCH"] = str(reproducibility["source_date_epoch"])
         subprocess.run(
             [
                 sys.executable,
@@ -217,6 +247,7 @@ def build_executables(payload: Path, work: Path) -> list[Path]:
                 "--noconfirm",
                 "--clean",
                 "--onefile",
+                "--noupx",
                 "--name",
                 name,
                 "--distpath",
@@ -231,6 +262,7 @@ def build_executables(payload: Path, work: Path) -> list[Path]:
                 str(source_root / script),
             ],
             check=True,
+            env=environment,
         )
         output = payload / f"{name}.exe"
         qualify_pyinstaller_warnings(work / name / name / f"warn-{name}.txt")
@@ -245,19 +277,18 @@ def build_executables(payload: Path, work: Path) -> list[Path]:
 def build(args: argparse.Namespace) -> Path:
     qualify_windows_x64()
     pins = json.loads(args.pins.read_text(encoding="utf-8"))
+    reproducibility, python_version, pyinstaller_version = validate_build_profile(pins)
     if pins["wix"]["version"] != CONTRACT.wix_version:
         raise InstallerBuildError("WiX pin differs from reviewed contract")
     wix_version = canonical_wix_version(
-        subprocess.run(
-            ["wix", "--version"], check=True, capture_output=True, text=True
-        ).stdout
+        subprocess.run(["wix", "--version"], check=True, capture_output=True, text=True).stdout
     )
     args.output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="cryptohunter-build-") as temporary:
         root = Path(temporary)
         payload = root / "Payload"
         payload.mkdir()
-        executables = build_executables(payload, root / "pyinstaller")
+        executables = build_executables(payload, root / "pyinstaller", reproducibility)
         print("EXE_BUILD = PASS", flush=True)
         archive = acquire_postgresql(pins, args.postgresql_archive, args.cache)
         normalize_postgresql_archive(archive, payload / "PostgreSQL")
@@ -287,10 +318,21 @@ def build(args: argparse.Namespace) -> Path:
         )
         print("WIX_COMPILE = PASS", flush=True)
         if not artifact.is_file():
-            raise InstallerBuildError(
-                "WiX exited successfully without creating the canonical MSI"
-            )
+            raise InstallerBuildError("WiX exited successfully without creating the canonical MSI")
         print("MSI_CREATED = YES", flush=True)
+        installed_files = {
+            str(
+                (Path("PostgreSQL") / path.relative_to(payload / "PostgreSQL"))
+                if path.is_relative_to(payload / "PostgreSQL")
+                else (
+                    Path("PostgreSQL") / path.name
+                    if path.name == "CryptoHunterPostgreSQL.exe"
+                    else Path(path.name)
+                )
+            ).replace("\\", "/"): sha256(path)
+            for path in sorted(payload.rglob("*"))
+            if path.is_file()
+        }
         manifest = {
             "schema_version": 1,
             "product_version": args.version,
@@ -299,24 +341,16 @@ def build(args: argparse.Namespace) -> Path:
             "wix_version": wix_version,
             "wix_eula_acceptance": WIX_EULA_ACCEPTANCE,
             "wix_eula_acceptance_flag": WIX_EULA_ACCEPTANCE_FLAG,
+            "reproducibility": reproducibility,
+            "python_version": python_version,
+            "pyinstaller_version": pyinstaller_version,
             "postgresql_version": pins["postgresql"]["version"],
             "postgresql_packaging_revision": pins["postgresql"]["packaging_revision"],
             "postgresql_source_url": pins["postgresql"]["source_url"],
             "postgresql_payload_sha256": pins["postgresql"]["sha256"],
             "production_executables": {p.name: sha256(p) for p in executables},
-            "installed_files": {
-                str(
-                    (Path("PostgreSQL") / path.relative_to(payload / "PostgreSQL"))
-                    if path.is_relative_to(payload / "PostgreSQL")
-                    else (
-                        Path("PostgreSQL") / path.name
-                        if path.name == "CryptoHunterPostgreSQL.exe"
-                        else Path(path.name)
-                    )
-                ).replace("\\", "/"): sha256(path)
-                for path in sorted(payload.rglob("*"))
-                if path.is_file()
-            },
+            "installed_files": installed_files,
+            "installed_payload_sha256": installed_payload_digest(installed_files),
         }
         (args.output / "installer-manifest.json").write_text(
             json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
@@ -330,9 +364,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--postgresql-archive", type=Path)
     parser.add_argument("--cache", type=Path, default=Path(".cache/windows-installer"))
     parser.add_argument("--output", type=Path, default=Path("dist/windows"))
-    parser.add_argument(
-        "--pins", type=Path, default=Path(__file__).with_name("pins.json")
-    )
+    parser.add_argument("--pins", type=Path, default=Path(__file__).with_name("pins.json"))
     build(parser.parse_args(argv))
     return 0
 
