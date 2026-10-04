@@ -157,6 +157,21 @@ def _inside(root: Path, path: Path) -> bool:
     return resolved == resolved_root or resolved_root in resolved.parents
 
 
+def qualify_output_path(receipt: Path) -> tuple[Path, Path]:
+    """Resolve output paths and prove neither can affect product-owned trees."""
+    resolved_receipt = receipt.resolve()
+    uninstall_log = resolved_receipt.with_suffix(".uninstall.log")
+    forbidden_roots = tuple(path.resolve() for path in canonical_paths())
+    for output in (resolved_receipt, uninstall_log):
+        if any(
+            _inside(root, candidate)
+            for root in forbidden_roots
+            for candidate in (output, output.parent)
+        ):
+            raise ResetError("receipt and uninstall log must be outside product-owned trees")
+    return resolved_receipt, uninstall_log
+
+
 def qualify_preserved_program_data(program_files: Path, machine: Path) -> dict[str, Any]:
     if not machine.is_dir() or _is_reparse_point(machine):
         raise ResetError("canonical ProgramData base is absent or a reparse point")
@@ -274,9 +289,10 @@ def _product_code(msi: Path) -> str:
     ).stdout.strip()
 
 
-def product_registered(product_code: str) -> bool:
+def require_product_unregistered(product_code: str) -> None:
     state = ctypes.windll.msi.MsiQueryProductStateW(product_code)
-    return state not in {-1, 2}
+    if state != -1:
+        raise ResetError(f"Windows Installer product remains registered (state {state})")
 
 
 def uninstall(msi: Path, log: Path) -> int:
@@ -320,6 +336,8 @@ def _receipt_template(
 
 
 def run(args: argparse.Namespace) -> dict[str, Any]:
+    receipt_path, log = qualify_output_path(args.receipt)
+    args._qualified_receipt = receipt_path
     require_host(execute=args.execute)
     msi, manifest_path = args.installed_msi.resolve(), args.installed_manifest.resolve()
     manifest, installed = qualify_artifact(msi, manifest_path)
@@ -345,7 +363,6 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             receipt["result"] = "PASS"
             print("MUTATION = NOT_PERFORMED")
             return receipt
-        log = args.receipt.resolve().with_suffix(".uninstall.log")
         log.parent.mkdir(parents=True, exist_ok=True)
         product_code = _product_code(msi)
         code = uninstall(msi, log)
@@ -353,8 +370,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         if code != 0:
             raise ResetError(f"normal MSI uninstall failed with exit code {code}")
         remaining = query_services()
-        if program_files.exists() or remaining or product_registered(product_code):
+        if program_files.exists() or remaining:
             raise ResetError("post-uninstall MSI-owned resources remain")
+        require_product_unregistered(product_code)
         receipt["post_uninstall"] = "PASS"
         qualify_preserved_program_data(program_files, machine)
         receipt["authority_absent_recheck"] = "PASS"
@@ -391,16 +409,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--execute", action="store_true")
     args = parser.parse_args(argv)
     args._receipt_value = None
+    args._qualified_receipt = None
     try:
         value = run(args)
     except Exception as exc:
         value = args._receipt_value
         if value is not None:
             value["result"] = "FAIL"
-            _write_receipt(args.receipt, value)
+            _write_receipt(args._qualified_receipt, value)
         print(f"PRE_ENROLLMENT_RESET = FAIL ({type(exc).__name__})", file=sys.stderr)
         return 1
-    _write_receipt(args.receipt, value)
+    _write_receipt(args._qualified_receipt, value)
     return 0
 
 
