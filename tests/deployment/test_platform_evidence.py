@@ -19,6 +19,15 @@ from deployment.windows_stage9_evidence_contract import PRODUCTION_TRUST_CEREMON
 
 CEREMONY_ID = PRODUCTION_TRUST_CEREMONY_ID
 PUBLIC_PACKAGE_FILENAMES = {"package_manifest.json"}
+CANONICAL_TEST_PACKAGE_MANIFEST = b"{}\n"
+
+
+def _write_test_production_trust_package(parent: Path) -> Path:
+    trust_package = parent / CEREMONY_ID
+    trust_package.mkdir()
+    for name in PUBLIC_PACKAGE_FILENAMES:
+        (trust_package / name).write_bytes(CANONICAL_TEST_PACKAGE_MANIFEST)
+    return trust_package
 
 
 def _stage10_receipt() -> dict[str, object]:
@@ -143,10 +152,7 @@ def test_stage10_rejects_stale_missing_or_failed_receipt(tmp_path, monkeypatch, 
     monkeypatch.setattr(platform_evidence, "_current_windows_machine_guid", lambda: "machine-a")
     value = _stage10_receipt()
     mutation(value)
-    trust_package = tmp_path / CEREMONY_ID
-    trust_package.mkdir()
-    for name in PUBLIC_PACKAGE_FILENAMES:
-        (trust_package / name).write_text("{}\n", encoding="utf-8")
+    _write_test_production_trust_package(tmp_path)
 
     receipt = tmp_path / "receipt.json"
     receipt.write_text(json.dumps(value))
@@ -169,10 +175,7 @@ def test_stage10_rejects_missing_empty_or_wrong_type_machine_guid(
     }.items():
         monkeypatch.setenv(key, value)
     monkeypatch.setattr(platform_evidence, "_current_windows_machine_guid", lambda: observed)
-    trust_package = tmp_path / CEREMONY_ID
-    trust_package.mkdir()
-    for name in PUBLIC_PACKAGE_FILENAMES:
-        (trust_package / name).write_text("{}\n", encoding="utf-8")
+    _write_test_production_trust_package(tmp_path)
 
     receipt = tmp_path / "receipt.json"
     receipt.write_text(json.dumps(_stage10_receipt()))
@@ -212,10 +215,7 @@ def test_stage10_rejects_invalid_shared_contract_probe_id(
     contract["probe_id"] = probe_id
     contract_path = tmp_path / "contract.json"
     contract_path.write_text(json.dumps(contract))
-    trust_package = tmp_path / CEREMONY_ID
-    trust_package.mkdir()
-    for name in PUBLIC_PACKAGE_FILENAMES:
-        (trust_package / name).write_text("{}\n", encoding="utf-8")
+    _write_test_production_trust_package(tmp_path)
 
     receipt = tmp_path / "receipt.json"
     receipt.write_text(json.dumps(_stage10_receipt()))
@@ -288,7 +288,9 @@ def _current_clean_install_receipt(msi_hash: str, manifest_hash: str) -> dict[st
         "product_version": "1.2.3",
         "runner_arch": "X64",
         "production_trust_ceremony_id": CEREMONY_ID,
-        "production_trust_package_manifest_sha256": hashlib.sha256(b"{}\n").hexdigest(),
+        "production_trust_package_manifest_sha256": hashlib.sha256(
+            CANONICAL_TEST_PACKAGE_MANIFEST
+        ).hexdigest(),
         "production_trust_artifact_run_id": "37216551602",
         "install_exit_code": 0,
         "uninstall_exit_code": 0,
@@ -323,10 +325,7 @@ def clean_install_contract_files(
         )
     )
 
-    trust_package = tmp_path / CEREMONY_ID
-    trust_package.mkdir()
-    for name in PUBLIC_PACKAGE_FILENAMES:
-        (trust_package / name).write_text("{}\n", encoding="utf-8")
+    _write_test_production_trust_package(tmp_path)
 
     receipt = tmp_path / "receipt.json"
     receipt.write_text(
@@ -339,6 +338,19 @@ def clean_install_contract_files(
     )
     output = tmp_path / "evidence.json"
     return receipt, output, msi, manifest
+
+
+def test_production_trust_fixture_uses_canonical_manifest_bytes(
+    clean_install_contract_files: tuple[Path, Path, Path, Path],
+) -> None:
+    receipt, _, _, _ = clean_install_contract_files
+    package_manifest = receipt.parent / CEREMONY_ID / "package_manifest.json"
+    receipt_value = json.loads(receipt.read_text(encoding="utf-8"))
+
+    assert package_manifest.read_bytes() == b"{}\n"
+    assert hashlib.sha256(package_manifest.read_bytes()).hexdigest() == (
+        receipt_value["production_trust_package_manifest_sha256"]
+    )
 
 
 def test_current_producer_receipt_is_accepted_by_evidence_consumer(
