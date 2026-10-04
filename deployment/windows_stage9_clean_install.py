@@ -19,7 +19,7 @@ from deployment.windows_stage9_evidence_contract import (
     CLEAN_INSTALL_RECEIPT_KEYS,
     POST_ENROLLMENT_QUALIFICATION_STATE,
 )
-from deployment.windows_stage9_production_trust import validate_public_package_layout
+from deployment.windows_stage9_production_trust import CEREMONY_ID, validate_public_package_layout
 from deployment.windows_installer.build import main as build_main
 from deployment.windows_installer.contract import CONTRACT
 from deployment.windows_installer.provision import read_safe_failure, safe_failure_path
@@ -85,9 +85,7 @@ def _capture_provision_failure(logs: Path) -> None:
     target = logs / "provision-failure.json"
     target.write_text(json.dumps(diagnostic, sort_keys=True) + "\n", encoding="utf-8")
     print(f"PROVISION_FAILURE_STAGE = {diagnostic['stage']}", flush=True)
-    print(
-        f"PROVISION_FAILURE_EXCEPTION = {diagnostic['first_exception']}", flush=True
-    )
+    print(f"PROVISION_FAILURE_EXCEPTION = {diagnostic['first_exception']}", flush=True)
 
 
 def _read_service_startup_diagnostic() -> dict[str, object] | None:
@@ -102,10 +100,7 @@ def _read_service_startup_diagnostic() -> dict[str, object] | None:
         or value.get("service") != POSTGRESQL_SERVICE_NAME
         or value.get("stage") not in STARTUP_STAGES
         or not isinstance(value.get("first_exception"), str)
-        or (
-            "child_exit_code" in value
-            and not isinstance(value["child_exit_code"], int)
-        )
+        or ("child_exit_code" in value and not isinstance(value["child_exit_code"], int))
     ):
         return None
     return value
@@ -139,11 +134,7 @@ $safe = foreach ($event in $events) {{
         value = [value]
     if not isinstance(value, list):
         return []
-    return [
-        item
-        for item in value
-        if isinstance(item, dict) and event_belongs_to_postgresql(item)
-    ]
+    return [item for item in value if isinstance(item, dict) and event_belongs_to_postgresql(item)]
 
 
 def event_belongs_to_postgresql(event: dict[str, object]) -> bool:
@@ -172,10 +163,15 @@ def classify_service_start_failure(
             return "JOB_ASSIGNMENT_FAILURE"
         if failed and stage == "VERIFY_JOB_MEMBERSHIP":
             return "JOB_MEMBERSHIP_VERIFICATION_FAILURE"
-        if failed and "child_exit_code" in diagnostic and stage in {
-            "POSTGRES_PROCESS_ALIVE",
-            "WAIT_READY",
-        }:
+        if (
+            failed
+            and "child_exit_code" in diagnostic
+            and stage
+            in {
+                "POSTGRES_PROCESS_ALIVE",
+                "WAIT_READY",
+            }
+        ):
             return "POSTGRES_EARLY_EXIT"
         if (
             failed
@@ -191,8 +187,10 @@ def classify_service_start_failure(
         if event.get("id") == 7038:
             return "SERVICE_LOGON_FAILURE"
         properties = event.get("properties", [])
-        if event.get("id") == 7000 and isinstance(properties, list) and any(
-            value in {"%%2", "%%193"} for value in properties
+        if (
+            event.get("id") == 7000
+            and isinstance(properties, list)
+            and any(value in {"%%2", "%%193"} for value in properties)
         ):
             return "SERVICE_HOST_START_FAILURE"
     # Event 7000 alone is deliberately not enough: it is the generic SCM
@@ -258,9 +256,7 @@ def prove_files(root: Path, machine: Path, manifest: dict[str, object]) -> None:
     if not isinstance(installed_files, dict) or not installed_files:
         raise CleanInstallError("installed file hash manifest absent")
     observed = {
-        path.relative_to(root).as_posix(): _sha(path)
-        for path in root.rglob("*")
-        if path.is_file()
+        path.relative_to(root).as_posix(): _sha(path) for path in root.rglob("*") if path.is_file()
     }
     if observed != installed_files:
         raise CleanInstallError("installed file set or SHA-256 differs")
@@ -520,6 +516,7 @@ def run(args: argparse.Namespace) -> None:
     manifest = args.output / "installer-manifest.json"
     install_code, proofs = _install_and_prove(msi, manifest, args.logs / "install.log")
     prove_frozen_production_trust(args.production_trust_package)
+    proofs["frozen_production_trust"] = "PASS"
     uninstall_code = _msiexec(["/x", str(msi)], args.logs / "uninstall.log")
     if (
         any(
@@ -553,6 +550,11 @@ def run(args: argparse.Namespace) -> None:
         "uninstall_exit_code": uninstall_code,
         "proofs": proofs,
         "post_enrollment_live_qualification": POST_ENROLLMENT_QUALIFICATION_STATE,
+        "production_trust_ceremony_id": CEREMONY_ID,
+        "production_trust_package_manifest_sha256": _sha(
+            args.production_trust_package / "package_manifest.json"
+        ),
+        "production_trust_artifact_run_id": args.production_trust_artifact_run_id,
     }
     if set(receipt) != CLEAN_INSTALL_RECEIPT_KEYS or set(proofs) != set(PROOFS):
         raise CleanInstallError("internal clean-install receipt contract mismatch")
@@ -567,6 +569,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--logs", type=Path, default=Path("dist/windows/logs"))
     p.add_argument("--receipt", type=Path, required=True)
     p.add_argument("--production-trust-package", type=Path, required=True)
+    p.add_argument("--production-trust-artifact-run-id", required=True)
     args = p.parse_args(argv)
     args.output.mkdir(parents=True, exist_ok=True)
     args.logs.mkdir(parents=True, exist_ok=True)

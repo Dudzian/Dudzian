@@ -6,11 +6,13 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from typing import Callable
 
 import pytest
 import yaml
 
 from deployment.platform_readiness import blocking_items, load_contract, production_ready
+from deployment.windows_stage9_evidence_contract import PRODUCTION_TRUST_CEREMONY_ID
 from deployment.platforms.windows import (
     SERVICE_IDENTITY,
     WindowsDeploymentNotQualified,
@@ -160,9 +162,20 @@ def _complete_windows_evidence(
         if acceptance[item]["evidence_class"] == "LIVE_WINDOWS_INTEGRATION"
     ]
     core = [_result("CORE_REQUIRED_SUITES", "CROSS_OS_CI_MATRIX")]
-    return _document("WINDOWS", "Windows", revision, live), _document(
+    windows = _document("WINDOWS", "Windows", revision, live)
+    windows["production_trust"] = _production_trust()
+    return windows, _document(
         "CROSS_PLATFORM_CORE", "Windows", revision, core
     )
+
+
+def _production_trust() -> dict[str, str]:
+    return {
+        "ceremony_id": PRODUCTION_TRUST_CEREMONY_ID,
+        "package_manifest_sha256": "a" * 64,
+        "artifact_run_id": "37216551602",
+        "frozen_production_trust": "PASS",
+    }
 
 
 def test_current_windows_evidence_is_accepted_only_when_complete() -> None:
@@ -171,6 +184,51 @@ def test_current_windows_evidence_is_accepted_only_when_complete() -> None:
     assert production_ready("WINDOWS", data, [windows, core], "current") is True
     windows["results"].pop()
     assert production_ready("WINDOWS", data, [windows, core], "current") is False
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda document: document.pop("production_trust"),
+        lambda document: document["production_trust"].update(extra="forbidden"),
+        lambda document: document["production_trust"].update(ceremony_id="0" * 64),
+        lambda document: document["production_trust"].update(package_manifest_sha256="abc"),
+        lambda document: document["production_trust"].update(package_manifest_sha256="A" * 64),
+        lambda document: document["production_trust"].update(artifact_run_id="0"),
+        lambda document: document["production_trust"].update(artifact_run_id="not-a-run"),
+        lambda document: document["production_trust"].update(frozen_production_trust="FAIL"),
+    ],
+    ids=[
+        "missing-production-trust",
+        "extra-production-trust-key",
+        "wrong-ceremony-id",
+        "malformed-manifest-sha",
+        "uppercase-manifest-sha",
+        "zero-artifact-run-id",
+        "nonnumeric-artifact-run-id",
+        "failed-frozen-production-trust",
+    ],
+)
+def test_clean_install_production_trust_fails_closed(
+    mutation: Callable[[dict[str, object]], object],
+) -> None:
+    data = load_contract()
+    windows, core = _complete_windows_evidence(data, "current")
+    mutation(windows)
+    assert production_ready("WINDOWS", data, [windows, core], "current") is False
+
+
+def test_production_trust_is_forbidden_without_clean_install_result() -> None:
+    data = load_contract()
+    evidence = _document(
+        "WINDOWS",
+        "Windows",
+        "current",
+        [_result("WINDOWS_SERVICE_INSTALLATION", "LIVE_WINDOWS_INTEGRATION")],
+    )
+    evidence["production_trust"] = _production_trust()
+    blockers = blocking_items("WINDOWS", data, [evidence], "current")
+    assert blockers == ["INVALID_EVIDENCE:malformed evidence document"]
 
 
 def test_current_scm_slice_evidence_satisfies_only_its_exact_items() -> None:

@@ -18,8 +18,9 @@ from deployment.windows_stage9_policy_material import (
     canonical_json_bytes,
 )
 from deployment.windows_stage9_production_ceremony import verify_final_package
+from deployment.windows_stage9_evidence_contract import PRODUCTION_TRUST_CEREMONY_ID
 
-CEREMONY_ID = "390299aaa1ea928a6c2bfdd81a4c50cfde82a7744cd054e8628d5937b90f1699"
+CEREMONY_ID = PRODUCTION_TRUST_CEREMONY_ID
 PUBLIC_PACKAGE_FILENAMES = frozenset(
     {
         "root_anchor_bundle.json",
