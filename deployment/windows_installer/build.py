@@ -19,11 +19,16 @@ from urllib.request import urlopen
 import zipfile
 
 from .contract import CONTRACT, is_reviewed_wix_version
-from .dependency_contract import REQUIRED_WIN32_MODULES
+from .dependency_contract import (
+    AI_DEFAULTS_PACKAGE,
+    AI_DEFAULTS_SMOKE_MARKER,
+    REQUIRED_WIN32_MODULES,
+)
 
 WIX_EULA_ACCEPTANCE = "PER_INVOCATION"
 WIX_EULA_ACCEPTANCE_FLAG = "-acceptEula wix7"
 SMOKE_OUTPUT_LIMIT = 4096
+MISSING_AI_DEFAULTS_WARNING = "Default risk thresholds resource missing"
 
 
 class InstallerBuildError(RuntimeError):
@@ -181,7 +186,12 @@ def smoke_executable(executable: Path) -> None:
     result = subprocess.run(
         [str(executable), "--build-smoke"], capture_output=True, text=True, timeout=60
     )
-    if result.returncode != 0 or "BUILD_SMOKE = PASS" not in result.stdout:
+    if (
+        result.returncode != 0
+        or "BUILD_SMOKE = PASS" not in result.stdout
+        or AI_DEFAULTS_SMOKE_MARKER not in result.stdout
+        or MISSING_AI_DEFAULTS_WARNING in result.stderr
+    ):
         stdout = result.stdout[-SMOKE_OUTPUT_LIMIT:]
         stderr = result.stderr[-SMOKE_OUTPUT_LIMIT:]
         raise InstallerBuildError(
@@ -236,6 +246,7 @@ def build_executables(payload: Path, work: Path, reproducibility: dict[str, obje
             for module in REQUIRED_WIN32_MODULES
             for argument in ("--hidden-import", module)
         ]
+        hidden_import_args.extend(("--hidden-import", AI_DEFAULTS_PACKAGE))
         environment = os.environ.copy()
         environment["PYTHONHASHSEED"] = str(reproducibility["python_hash_seed"])
         environment["SOURCE_DATE_EPOCH"] = str(reproducibility["source_date_epoch"])
@@ -257,6 +268,8 @@ def build_executables(payload: Path, work: Path, reproducibility: dict[str, obje
                 "--specpath",
                 str(work),
                 *hidden_import_args,
+                "--collect-data",
+                AI_DEFAULTS_PACKAGE,
                 "--add-binary",
                 f"{openblas}{os.pathsep}numpy.libs",
                 str(source_root / script),

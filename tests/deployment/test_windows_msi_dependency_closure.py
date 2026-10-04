@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -15,8 +16,16 @@ from deployment.windows_installer.build import (
     qualify_win32_imports,
     smoke_executable,
 )
-from deployment.windows_installer.dependency_contract import REQUIRED_WIN32_MODULES
-from deployment.windows_installer.service_base import build_smoke_requested
+from deployment.windows_installer.dependency_contract import (
+    AI_DEFAULTS_PACKAGE,
+    AI_DEFAULTS_RESOURCE,
+    AI_DEFAULTS_SMOKE_MARKER,
+    REQUIRED_WIN32_MODULES,
+)
+from deployment.windows_installer.service_base import (
+    build_smoke_requested,
+    qualify_ai_defaults_resource,
+)
 
 ROOT = Path(__file__).parents[2]
 
@@ -110,12 +119,60 @@ def test_packaged_smoke_is_read_only_and_fail_closed(
 
     def run(command: list[str], **kwargs: object) -> SimpleNamespace:
         calls.append((command, kwargs))
-        return SimpleNamespace(returncode=0, stdout="BUILD_SMOKE = PASS\n")
+        return SimpleNamespace(
+            returncode=0,
+            stdout=f"{AI_DEFAULTS_SMOKE_MARKER}\nBUILD_SMOKE = PASS\n",
+            stderr="",
+        )
 
     monkeypatch.setattr("deployment.windows_installer.build.subprocess.run", run)
     smoke_executable(executable)
     assert calls[0][0] == [str(executable), "--build-smoke"]
     assert build_smoke_requested(["install"]) is False
+
+
+def test_packaged_smoke_rejects_missing_ai_defaults_warning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    executable = tmp_path / "CryptoHunterBackend.exe"
+    executable.write_bytes(b"exe")
+    monkeypatch.setattr(
+        "deployment.windows_installer.build.subprocess.run",
+        lambda *args, **kwargs: SimpleNamespace(
+            returncode=0,
+            stdout=f"{AI_DEFAULTS_SMOKE_MARKER}\nBUILD_SMOKE = PASS\n",
+            stderr=("Default risk thresholds resource missing; using minimal built-in defaults\n"),
+        ),
+    )
+
+    with pytest.raises(InstallerBuildError, match="packaged executable smoke failed"):
+        smoke_executable(executable)
+
+
+def test_build_smoke_reads_canonical_ai_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    opened: list[tuple[str, str]] = []
+
+    class Resource:
+        def joinpath(self, name: str) -> Resource:
+            opened.append((AI_DEFAULTS_PACKAGE, name))
+            return self
+
+        def open(self, mode: str, encoding: str):
+            return __import__("io").StringIO("market_regime: {}\n")
+
+    monkeypatch.setattr(
+        "deployment.windows_installer.service_base.resources.files", lambda package: Resource()
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "yaml",
+        SimpleNamespace(safe_load=lambda stream: {"market_regime": {}}),
+    )
+
+    qualify_ai_defaults_resource()
+    assert opened == [(AI_DEFAULTS_PACKAGE, AI_DEFAULTS_RESOURCE)]
 
 
 def test_packaged_smoke_failure_preserves_bounded_stderr(
@@ -189,7 +246,13 @@ def test_builder_smokes_all_four_packaged_executables(
             for index, argument in enumerate(command)
             if argument == "--hidden-import"
         ]
-        assert hidden_imports == list(REQUIRED_WIN32_MODULES)
+        assert hidden_imports == [*REQUIRED_WIN32_MODULES, AI_DEFAULTS_PACKAGE]
+        collect_data = [
+            command[index + 1]
+            for index, argument in enumerate(command)
+            if argument == "--collect-data"
+        ]
+        assert collect_data == [AI_DEFAULTS_PACKAGE]
     assert all(environment["PYTHONHASHSEED"] == "0" for environment in pyinstaller_environments)
     assert all(
         environment["SOURCE_DATE_EPOCH"] == "1790962380" for environment in pyinstaller_environments

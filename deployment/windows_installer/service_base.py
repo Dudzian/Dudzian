@@ -1,12 +1,33 @@
 """Production-only pywin32 SCM lifecycle boundary."""
 
 from __future__ import annotations
+from importlib import resources
 import logging
 from pathlib import Path
 import threading
 from typing import Callable, Protocol
 
-from deployment.windows_installer.dependency_contract import REQUIRED_WIN32_MODULES
+from deployment.windows_installer.dependency_contract import (
+    AI_DEFAULTS_PACKAGE,
+    AI_DEFAULTS_RESOURCE,
+    AI_DEFAULTS_SMOKE_MARKER,
+    REQUIRED_WIN32_MODULES,
+)
+
+
+def qualify_ai_defaults_resource() -> None:
+    """Read and parse the canonical defaults without accepting a fallback."""
+    import importlib
+    import yaml
+
+    importlib.import_module(AI_DEFAULTS_PACKAGE)
+    resource = resources.files(AI_DEFAULTS_PACKAGE).joinpath(AI_DEFAULTS_RESOURCE)
+    with resource.open("r", encoding="utf8") as stream:
+        defaults = yaml.safe_load(stream)
+    if not isinstance(defaults, dict) or not defaults:
+        raise RuntimeError(
+            f"canonical AI defaults are invalid: {AI_DEFAULTS_PACKAGE}/{AI_DEFAULTS_RESOURCE}"
+        )
 
 
 def build_smoke_requested(argv: list[str] | None = None) -> bool:
@@ -23,6 +44,9 @@ def build_smoke_requested(argv: list[str] | None = None) -> bool:
     for module in REQUIRED_WIN32_MODULES:
         importlib.import_module(module)
 
+    # This direct proof cannot silently succeed through config_loader's fallback.
+    qualify_ai_defaults_resource()
+    print(AI_DEFAULTS_SMOKE_MARKER)
     print("BUILD_SMOKE = PASS")
     return True
 
