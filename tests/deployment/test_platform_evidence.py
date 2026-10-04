@@ -348,8 +348,9 @@ def test_production_trust_fixture_uses_canonical_manifest_bytes(
     receipt_value = json.loads(receipt.read_text(encoding="utf-8"))
 
     assert package_manifest.read_bytes() == b"{}\n"
-    assert hashlib.sha256(package_manifest.read_bytes()).hexdigest() == (
-        receipt_value["production_trust_package_manifest_sha256"]
+    assert (
+        hashlib.sha256(package_manifest.read_bytes()).hexdigest()
+        == (receipt_value["production_trust_package_manifest_sha256"])
     )
 
 
