@@ -7,7 +7,10 @@ from datetime import datetime
 import json
 import os
 from pathlib import Path
+import re
 from typing import Any
+
+from deployment.windows_stage9_evidence_contract import PRODUCTION_TRUST_CEREMONY_ID
 
 CONTRACT = Path(__file__).with_name("platform_readiness.json")
 PASS = "PASS"
@@ -16,6 +19,14 @@ REQUIRES_EXECUTION_EVIDENCE = {
     "LIVE_LINUX_INTEGRATION",
     "LIVE_MACOS_INTEGRATION",
     "CROSS_OS_CI_MATRIX",
+}
+BASE_EVIDENCE_FIELDS = {
+    "schema_version", "platform", "source_revision", "ci_provider", "ci_run_id",
+    "runner_os", "runner_arch", "generated_at_utc", "results",
+}
+PRODUCTION_TRUST_FIELDS = {
+    "ceremony_id", "package_manifest_sha256", "artifact_run_id",
+    "frozen_production_trust",
 }
 
 
@@ -39,19 +50,44 @@ def _validated_results(
         "CROSS_OS_CI_MATRIX": ("CROSS_PLATFORM_CORE", None),
     }
     for document in evidence:
-        required = {
-            "schema_version", "platform", "source_revision", "ci_provider", "ci_run_id",
-            "runner_os", "runner_arch", "generated_at_utc", "results",
-        }
-        if not isinstance(document, dict) or set(document) != required:
+        if not isinstance(document, dict) or not set(document).issubset(
+            BASE_EVIDENCE_FIELDS | {"production_trust"}
+        ):
             raise EvidenceValidationError("malformed evidence document")
+        if not isinstance(document.get("results"), list):
+            raise EvidenceValidationError("results must be a list")
+        contains_clean_install = any(
+            isinstance(result, dict) and result.get("item") == "WINDOWS_CLEAN_INSTALL"
+            for result in document["results"]
+        )
+        required = BASE_EVIDENCE_FIELDS | (
+            {"production_trust"} if contains_clean_install else set()
+        )
+        if set(document) != required:
+            raise EvidenceValidationError("malformed evidence document")
+        if contains_clean_install:
+            trust = document["production_trust"]
+            if (
+                not isinstance(trust, dict)
+                or set(trust) != PRODUCTION_TRUST_FIELDS
+                or trust["ceremony_id"] != PRODUCTION_TRUST_CEREMONY_ID
+                or not isinstance(trust["package_manifest_sha256"], str)
+                or not re.fullmatch(r"[0-9a-f]{64}", trust["package_manifest_sha256"])
+                or not isinstance(trust["artifact_run_id"], str)
+                or not re.fullmatch(r"[1-9][0-9]*", trust["artifact_run_id"])
+                or trust["frozen_production_trust"] != PASS
+            ):
+                raise EvidenceValidationError("malformed production trust evidence")
         if document["schema_version"] != 1 or document["source_revision"] != current_revision:
             raise EvidenceValidationError("unsupported schema or stale source revision")
         if document["ci_provider"] != expected_ci_provider:
             raise EvidenceValidationError("untrusted CI provider")
         if document["ci_run_id"] != expected_ci_run_id:
             raise EvidenceValidationError("stale CI run")
-        if not all(isinstance(document[name], str) and document[name] for name in required - {"schema_version", "results"}):
+        identity_fields = BASE_EVIDENCE_FIELDS - {"schema_version", "results"}
+        if not all(
+            isinstance(document[name], str) and document[name] for name in identity_fields
+        ):
             raise EvidenceValidationError("empty evidence identity field")
         try:
             if not document["generated_at_utc"].endswith("Z"):
@@ -63,8 +99,6 @@ def _validated_results(
                 raise ValueError
         except ValueError as exc:
             raise EvidenceValidationError("invalid evidence timestamp") from exc
-        if not isinstance(document["results"], list):
-            raise EvidenceValidationError("results must be a list")
         for result in document["results"]:
             result_fields = {"item", "status", "evidence_class", "test_or_probe", "details"}
             if not isinstance(result, dict) or set(result) != result_fields:
