@@ -201,11 +201,18 @@ def runnable(tmp_path, monkeypatch):
     return pf, pd, msi, manifest
 
 
+class WindowsTestPath(type(Path())):
+    """A Windows-looking path whose resolution can be exercised on Linux."""
+
+    def resolve(self, *args, **kwargs):
+        return self
+
+
 def args(tmp_path, msi, manifest, *, execute):
     return argparse.Namespace(
         installed_msi=msi,
         installed_manifest=manifest,
-        receipt=tmp_path / "receipt.json",
+        receipt=WindowsTestPath(r"C:\safe\receipt.json"),
         execute=execute,
         _receipt_value=None,
         _qualified_receipt=None,
@@ -257,13 +264,91 @@ def test_receipt_in_product_tree_fails_before_any_work(
 
 
 def test_external_receipt_and_derived_log_are_outside_product_roots(tmp_path, monkeypatch):
-    pf, pd = machine(tmp_path, monkeypatch)
-    receipt, log = qualify_output_path(tmp_path / "evidence/pre-enrollment-reset.json")
-    assert receipt == (tmp_path / "evidence/pre-enrollment-reset.json").resolve()
-    assert log == (tmp_path / "evidence/pre-enrollment-reset.uninstall.log").resolve()
-    for output in (receipt, log):
-        assert pf.resolve() not in output.parents
-        assert pd.resolve() not in output.parents
+    monkeypatch.setenv("ProgramFiles", r"D:\Program Files")
+    monkeypatch.setenv("ProgramData", r"D:\ProgramData")
+    receipt, log = qualify_output_path(WindowsTestPath(r"C:\evidence\pre-enrollment-reset.json"))
+    assert receipt == Path(r"C:\evidence\pre-enrollment-reset.json")
+    assert log == Path(r"C:\evidence\pre-enrollment-reset.uninstall.log")
+
+
+@pytest.mark.parametrize(
+    "receipt",
+    [
+        r"\\?\C:\ProgramData\CryptoHunter\receipt.json",
+        r"\\?\C:\evidence\receipt.json",
+        r"\\.\C:\ProgramData\CryptoHunter\receipt.json",
+        r"\\localhost\C$\ProgramData\CryptoHunter\receipt.json",
+        r"\\server\share\receipt.json",
+        r"\\?\UNC\server\share\receipt.json",
+        r"C:evidence\receipt.json",
+    ],
+)
+def test_non_local_output_namespace_fails_before_any_work(tmp_path, monkeypatch, capsys, receipt):
+    _, _, msi, manifest = runnable(tmp_path, monkeypatch)
+    called = []
+    monkeypatch.setattr(
+        "deployment.windows_stage9_pre_enrollment_reset.Path.resolve",
+        lambda self: called.append("resolve") or self,
+    )
+    for name in (
+        "require_host",
+        "_product_code",
+        "uninstall",
+        "guarded_purge",
+        "_write_receipt",
+    ):
+        monkeypatch.setattr(
+            f"deployment.windows_stage9_pre_enrollment_reset.{name}",
+            lambda *_, _name=name, **__: called.append(_name),
+        )
+
+    result = main(
+        [
+            "--installed-msi",
+            str(msi),
+            "--installed-manifest",
+            str(manifest),
+            "--receipt",
+            receipt,
+        ]
+    )
+
+    assert result == 1
+    assert called == []
+    assert "PRE_ENROLLMENT_RESET = FAIL (ResetError)" in capsys.readouterr().err
+
+
+def test_relative_receipt_resolved_to_local_dos_path_passes(monkeypatch):
+    monkeypatch.setenv("ProgramFiles", r"D:\Program Files")
+    monkeypatch.setenv("ProgramData", r"D:\ProgramData")
+    original_resolve = Path.resolve
+
+    def resolve(path):
+        if path == Path(r"evidence\receipt.json"):
+            return Path(r"C:\safe\evidence\receipt.json")
+        return original_resolve(path)
+
+    monkeypatch.setattr("deployment.windows_stage9_pre_enrollment_reset.Path.resolve", resolve)
+    receipt, log = qualify_output_path(Path(r"evidence\receipt.json"))
+    assert receipt == Path(r"C:\safe\evidence\receipt.json")
+    assert log == Path(r"C:\safe\evidence\receipt.uninstall.log")
+
+
+@pytest.mark.parametrize(
+    "resolved",
+    [
+        r"\\server\share\receipt.json",
+        r"\\?\C:\safe\receipt.json",
+        r"\\.\C:\safe\receipt.json",
+    ],
+)
+def test_relative_receipt_resolved_to_non_local_namespace_fails(monkeypatch, resolved):
+    monkeypatch.setattr(
+        "deployment.windows_stage9_pre_enrollment_reset.Path.resolve",
+        lambda self: Path(resolved),
+    )
+    with pytest.raises(ResetError, match="local DOS path"):
+        qualify_output_path(Path(r"evidence\receipt.json"))
 
 
 @pytest.mark.parametrize(
