@@ -12,7 +12,7 @@ import ctypes
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 import platform
 import shutil
 import subprocess
@@ -157,8 +157,20 @@ def _inside(root: Path, path: Path) -> bool:
     return resolved == resolved_root or resolved_root in resolved.parents
 
 
+def _reject_windows_stream_syntax(path: Path) -> None:
+    """Reject NTFS stream syntax while allowing an ordinary drive prefix."""
+    windows_path = PureWindowsPath(path)
+    drive = windows_path.drive
+    if ":" in drive and not (len(drive) == 2 and drive[0].isalpha() and drive[1] == ":"):
+        raise ResetError("receipt path must not contain Windows stream syntax")
+    for component in windows_path.parts:
+        if component != windows_path.anchor and ":" in component:
+            raise ResetError("receipt path must not contain Windows stream syntax")
+
+
 def qualify_output_path(receipt: Path) -> tuple[Path, Path]:
     """Resolve output paths and prove neither can affect product-owned trees."""
+    _reject_windows_stream_syntax(receipt)
     resolved_receipt = receipt.resolve()
     uninstall_log = resolved_receipt.with_suffix(".uninstall.log")
     forbidden_roots = tuple(path.resolve() for path in canonical_paths())

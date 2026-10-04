@@ -256,6 +256,73 @@ def test_receipt_in_product_tree_fails_before_any_work(
     assert "PRE_ENROLLMENT_RESET = FAIL (ResetError)" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize(
+    "receipt_kind",
+    [
+        "program-data-root",
+        "program-files-root",
+        "external-file-stream",
+        "explicit-default-stream",
+        "intermediate-component-stream",
+    ],
+)
+@pytest.mark.parametrize("execute", [False, True])
+def test_receipt_stream_syntax_fails_before_any_work(
+    tmp_path, monkeypatch, capsys, receipt_kind, execute
+):
+    pf, pd, msi, manifest = runnable(tmp_path, monkeypatch)
+    receipts = {
+        "program-data-root": pd.parent / "CryptoHunter:reset.json",
+        "program-files-root": pf.parent / "CryptoHunter:reset.json",
+        "external-file-stream": Path(r"C:\evidence\reset.json:stream"),
+        "explicit-default-stream": Path(r"C:\evidence\reset.json::$DATA"),
+        "intermediate-component-stream": Path(r"C:\evidence:stream\reset.json"),
+    }
+    receipt = receipts[receipt_kind]
+    called = []
+    monkeypatch.setattr(
+        "deployment.windows_stage9_pre_enrollment_reset.require_host",
+        lambda **_: called.append("host"),
+    )
+    monkeypatch.setattr(
+        "deployment.windows_stage9_pre_enrollment_reset._product_code",
+        lambda _: called.append("product-code"),
+    )
+    monkeypatch.setattr(
+        "deployment.windows_stage9_pre_enrollment_reset.uninstall",
+        lambda *_: called.append("uninstall"),
+    )
+    monkeypatch.setattr(
+        "deployment.windows_stage9_pre_enrollment_reset.guarded_purge",
+        lambda *_: called.append("purge"),
+    )
+
+    result = main(
+        [
+            "--installed-msi",
+            str(msi),
+            "--installed-manifest",
+            str(manifest),
+            "--receipt",
+            str(receipt),
+            *(["--execute"] if execute else []),
+        ]
+    )
+
+    assert result == 1
+    assert called == []
+    assert not receipt.exists()
+    assert not receipt.with_suffix(".uninstall.log").exists()
+    assert "PRE_ENROLLMENT_RESET = FAIL (ResetError)" in capsys.readouterr().err
+
+
+def test_windows_drive_separator_is_not_stream_syntax(tmp_path, monkeypatch):
+    machine(tmp_path, monkeypatch)
+    receipt, log = qualify_output_path(Path(r"C:\evidence\pre-enrollment-reset.json"))
+    assert receipt.name == r"C:\evidence\pre-enrollment-reset.json"
+    assert log.name == r"C:\evidence\pre-enrollment-reset.uninstall.log"
+
+
 def test_external_receipt_and_derived_log_are_outside_product_roots(tmp_path, monkeypatch):
     pf, pd = machine(tmp_path, monkeypatch)
     receipt, log = qualify_output_path(tmp_path / "evidence/pre-enrollment-reset.json")
