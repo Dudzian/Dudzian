@@ -248,11 +248,19 @@ def qualify_preserved_program_data(program_files: Path, machine: Path) -> dict[s
     return record
 
 
-def query_services() -> dict[str, dict[str, str]]:
+def query_services() -> dict[str, dict[str, Any]]:
     names = ",".join(f"'{name}'" for name in SERVICES)
     script = (
+        "$ErrorActionPreference='Stop';"
         f"@(Get-CimInstance Win32_Service | Where-Object {{$_.Name -in @({names})}} | "
-        "Select-Object Name,PathName,StartMode,State,StartName,Dependencies) | "
+        "ForEach-Object {"
+        "$service=$_;"
+        "$dependencies=@((Get-Service -Name $service.Name -ErrorAction Stop)."
+        "ServicesDependedOn | ForEach-Object {$_.Name});"
+        "[PSCustomObject]@{Name=$service.Name;PathName=$service.PathName;"
+        "StartMode=$service.StartMode;State=$service.State;StartName=$service.StartName;"
+        "Dependencies=$dependencies}"
+        "}) | "
         "ConvertTo-Json -Compress"
     )
     result = subprocess.run(
