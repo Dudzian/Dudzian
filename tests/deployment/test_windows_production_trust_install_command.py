@@ -248,17 +248,20 @@ def test_command_reports_allowlisted_failure_stage_without_exception_text(
     )
     monkeypatch.setattr(provision, "os", SimpleNamespace(name="nt"))
 
-    assert provision.main(
-        [
-            "install-production-trust",
-            "--program-files",
-            str(program_files),
-            "--program-data",
-            str(program_data),
-            "--source",
-            str(source),
-        ]
-    ) == 1
+    assert (
+        provision.main(
+            [
+                "install-production-trust",
+                "--program-files",
+                str(program_files),
+                "--program-data",
+                str(program_data),
+                "--source",
+                str(source),
+            ]
+        )
+        == 1
+    )
     error = capsys.readouterr().err
     assert "stage=PRE_PUBLISH_DACL_QUALIFICATION" in error
     assert "first_exception=FileNotFoundError" in error

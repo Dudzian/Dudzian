@@ -164,9 +164,7 @@ def _complete_windows_evidence(
     core = [_result("CORE_REQUIRED_SUITES", "CROSS_OS_CI_MATRIX")]
     windows = _document("WINDOWS", "Windows", revision, live)
     windows["production_trust"] = _production_trust()
-    return windows, _document(
-        "CROSS_PLATFORM_CORE", "Windows", revision, core
-    )
+    return windows, _document("CROSS_PLATFORM_CORE", "Windows", revision, core)
 
 
 def _production_trust() -> dict[str, str]:

@@ -461,9 +461,7 @@ def test_early_staging_failures_leave_no_publication_or_residue(
         original_mkdir = Path.mkdir
 
         def fail_staging_mkdir(path, *args, **kwargs):
-            if path.name == trust.CEREMONY_ID and path.parent.name.startswith(
-                ".production-trust-"
-            ):
+            if path.name == trust.CEREMONY_ID and path.parent.name.startswith(".production-trust-"):
                 raise OSError("staging creation failed")
             return original_mkdir(path, *args, **kwargs)
 

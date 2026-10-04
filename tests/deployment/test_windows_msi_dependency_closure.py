@@ -124,8 +124,7 @@ def test_packaged_smoke_is_read_only_and_fail_closed(
         return SimpleNamespace(
             returncode=0,
             stdout=(
-                f"{AI_DEFAULTS_SMOKE_MARKER}\nBUILD_SMOKE = PASS\n"
-                "STAGE9_SCHEMA_RESOURCES = PASS\n"
+                f"{AI_DEFAULTS_SMOKE_MARKER}\nBUILD_SMOKE = PASS\nSTAGE9_SCHEMA_RESOURCES = PASS\n"
             ),
             stderr="",
         )
@@ -259,18 +258,14 @@ def test_builder_smokes_all_four_packaged_executables(
         ]
         assert collect_data == [AI_DEFAULTS_PACKAGE]
         add_data = [
-            command[index + 1]
-            for index, argument in enumerate(command)
-            if argument == "--add-data"
+            command[index + 1] for index, argument in enumerate(command) if argument == "--add-data"
         ]
         if command[command.index("--name") + 1] == "CryptoHunterProvision":
             assert len(add_data) == len(STAGE9_SCHEMA_NAMES)
-            assert {
-                Path(value.split(os.pathsep, 1)[0]).name for value in add_data
-            } == set(STAGE9_SCHEMA_NAMES)
-            assert all(
-                value.endswith(f"{os.pathsep}deployment") for value in add_data
+            assert {Path(value.split(os.pathsep, 1)[0]).name for value in add_data} == set(
+                STAGE9_SCHEMA_NAMES
             )
+            assert all(value.endswith(f"{os.pathsep}deployment") for value in add_data)
         else:
             assert add_data == []
     assert all(environment["PYTHONHASHSEED"] == "0" for environment in pyinstaller_environments)
