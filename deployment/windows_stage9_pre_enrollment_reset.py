@@ -167,13 +167,36 @@ def _reject_ntfs_stream_path(path: Path) -> None:
             raise ResetError("receipt and uninstall log must not use NTFS streams")
 
 
+def _validate_output_namespace(path: Path, *, resolved: bool) -> None:
+    """Allow only ordinary local DOS output paths (or unresolved relative paths)."""
+    windows_path = PureWindowsPath(str(path))
+    drive = windows_path.drive
+    ordinary_drive = (
+        len(drive) == 2 and drive[0].isascii() and drive[0].isalpha() and drive[1] == ":"
+    )
+    drive_rooted = ordinary_drive and windows_path.root == "\\"
+
+    if drive:
+        valid = drive_rooted
+    else:
+        valid = not windows_path.root and not resolved
+    if not valid:
+        raise ResetError("receipt and uninstall log must use a local DOS path")
+
+
 def qualify_output_path(receipt: Path) -> tuple[Path, Path]:
     """Resolve output paths and prove neither can affect product-owned trees."""
     unresolved_log = receipt.with_suffix(".uninstall.log")
+    _validate_output_namespace(receipt, resolved=False)
+    _validate_output_namespace(unresolved_log, resolved=False)
     _reject_ntfs_stream_path(receipt)
     _reject_ntfs_stream_path(unresolved_log)
     resolved_receipt = receipt.resolve()
     uninstall_log = resolved_receipt.with_suffix(".uninstall.log")
+    _validate_output_namespace(resolved_receipt, resolved=True)
+    _validate_output_namespace(uninstall_log, resolved=True)
+    _reject_ntfs_stream_path(resolved_receipt)
+    _reject_ntfs_stream_path(uninstall_log)
     forbidden_roots = tuple(path.resolve() for path in canonical_paths())
     for output in (resolved_receipt, uninstall_log):
         if any(
