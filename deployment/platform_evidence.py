@@ -19,6 +19,7 @@ from deployment.windows_stage9_evidence_contract import (
     CLEAN_INSTALL_PRECEREMONY_PROOFS,
     CLEAN_INSTALL_RECEIPT_KEYS,
     POST_ENROLLMENT_QUALIFICATION_STATE,
+    PRODUCTION_TRUST_CEREMONY_ID,
 )
 
 SCHEMA_VERSION = 1
@@ -181,6 +182,7 @@ def produce_windows_clean_install_evidence(
     *,
     msi: Path,
     manifest: Path,
+    production_trust_package: Path,
 ) -> None:
     """Publish Stage-9 PASS only from the exact live-MSI proof receipt."""
     source_revision, provider, run_id = _identity(revision)
@@ -188,6 +190,11 @@ def produce_windows_clean_install_evidence(
         raise EvidenceProductionError("clean-install PASS requires a GitHub Windows runner")
     value = json.loads(receipt.read_text(encoding="utf-8"))
     manifest_value = json.loads(manifest.read_text(encoding="utf-8"))
+    if production_trust_package.name != PRODUCTION_TRUST_CEREMONY_ID:
+        raise EvidenceProductionError("Production Trust ceremony directory differs")
+    package_manifest_sha256 = hashlib.sha256(
+        (production_trust_package / "package_manifest.json").read_bytes()
+    ).hexdigest()
     if not isinstance(value, dict) or set(value) != CLEAN_INSTALL_RECEIPT_KEYS:
         raise EvidenceProductionError("malformed clean-install receipt")
     if (
@@ -200,8 +207,11 @@ def produce_windows_clean_install_evidence(
         or value["probe_id"] != "cryptohunter.windows.clean-install.v1"
         or value["install_exit_code"] != 0
         or value["uninstall_exit_code"] != 0
-        or value["post_enrollment_live_qualification"]
-        != POST_ENROLLMENT_QUALIFICATION_STATE
+        or value["post_enrollment_live_qualification"] != POST_ENROLLMENT_QUALIFICATION_STATE
+        or value["production_trust_ceremony_id"] != PRODUCTION_TRUST_CEREMONY_ID
+        or not re.fullmatch(r"[0-9a-f]{64}", value["production_trust_package_manifest_sha256"])
+        or value["production_trust_package_manifest_sha256"] != package_manifest_sha256
+        or not re.fullmatch(r"[1-9][0-9]*", value["production_trust_artifact_run_id"])
         or not re.fullmatch(r"[0-9a-f]{64}", value["msi_sha256"])
         or not re.fullmatch(r"[0-9a-f]{64}", value["manifest_sha256"])
         or value["msi_sha256"] != hashlib.sha256(msi.read_bytes()).hexdigest()
@@ -221,30 +231,37 @@ def produce_windows_clean_install_evidence(
         f"MSI sha256={value['msi_sha256']}; version={value['product_version']}; "
         f"architecture={value['runner_arch']}"
     )
-    output.write_text(
-        json.dumps(
-            evidence_document(
-                platform_name="WINDOWS", source_revision=source_revision,
-                ci_provider=provider, ci_run_id=run_id, runner_os="Windows",
-                runner_arch=value["runner_arch"],
-                results=[{
-                    "item": WINDOWS_STAGE9_ITEMS[0], "status": "PASS",
-                    "evidence_class": "LIVE_WINDOWS_INTEGRATION",
-                    "test_or_probe": "canonical Stage-9 MSI clean-install proof",
-                    "details": details,
-                }],
-            ), indent=2,
-        ) + "\n", encoding="utf-8",
+    document = evidence_document(
+        platform_name="WINDOWS",
+        source_revision=source_revision,
+        ci_provider=provider,
+        ci_run_id=run_id,
+        runner_os="Windows",
+        runner_arch=value["runner_arch"],
+        results=[
+            {
+                "item": WINDOWS_STAGE9_ITEMS[0],
+                "status": "PASS",
+                "evidence_class": "LIVE_WINDOWS_INTEGRATION",
+                "test_or_probe": "canonical Stage-9 MSI clean-install proof",
+                "details": details,
+            }
+        ],
     )
+    document["production_trust"] = {
+        "ceremony_id": value["production_trust_ceremony_id"],
+        "package_manifest_sha256": value["production_trust_package_manifest_sha256"],
+        "artifact_run_id": value["production_trust_artifact_run_id"],
+        "frozen_production_trust": value["proofs"]["frozen_production_trust"],
+    }
+    output.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
 
 
 def _current_windows_machine_guid() -> str:
     import winreg
 
     try:
-        with winreg.OpenKey(
-            winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Cryptography"
-        ) as key:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Cryptography") as key:
             value, _ = winreg.QueryValueEx(key, "MachineGuid")
     except OSError as exc:
         raise EvidenceProductionError("current Windows MachineGuid is unavailable") from exc
@@ -254,8 +271,11 @@ def _current_windows_machine_guid() -> str:
 
 
 def produce_windows_stage10_evidence(
-    revision: str | None, receipt: Path, output: Path,
-    *, contract_path: Path = WINDOWS_STAGE10_CONTRACT,
+    revision: str | None,
+    receipt: Path,
+    output: Path,
+    *,
+    contract_path: Path = WINDOWS_STAGE10_CONTRACT,
 ) -> None:
     """Publish lifecycle evidence from the native, reboot-capable Stage-10 host."""
     source_revision, provider, run_id = _identity(revision)
@@ -263,9 +283,17 @@ def produce_windows_stage10_evidence(
         raise EvidenceProductionError("Stage-10 PASS requires a GitHub Windows runner")
     value = json.loads(receipt.read_text(encoding="utf-8"))
     required = {
-        "schema_version", "source_revision", "ci_provider", "ci_run_id",
-        "runner_os", "runner_arch", "runner_name", "machine_guid",
-        "probe_id", "runtime_provenance", "results",
+        "schema_version",
+        "source_revision",
+        "ci_provider",
+        "ci_run_id",
+        "runner_os",
+        "runner_arch",
+        "runner_name",
+        "machine_guid",
+        "probe_id",
+        "runtime_provenance",
+        "results",
     }
     if not isinstance(value, dict) or set(value) != required:
         raise EvidenceProductionError("malformed Stage-10 receipt")
@@ -290,8 +318,11 @@ def produce_windows_stage10_evidence(
     current_machine_guid = _current_windows_machine_guid()
     runtime_provenance = value.get("runtime_provenance")
     provenance_keys = {
-        "source_revision", "ci_run_id", "product_version",
-        "qualified_manifest_sha256", "qualified_msi_sha256",
+        "source_revision",
+        "ci_run_id",
+        "product_version",
+        "qualified_manifest_sha256",
+        "qualified_msi_sha256",
         "installed_backend_sha256",
     }
     provenance_ok = (
@@ -305,7 +336,8 @@ def produce_windows_stage10_evidence(
             isinstance(runtime_provenance.get(key), str)
             and re.fullmatch(r"[0-9a-f]{64}", runtime_provenance[key]) is not None
             for key in (
-                "qualified_manifest_sha256", "qualified_msi_sha256",
+                "qualified_manifest_sha256",
+                "qualified_msi_sha256",
                 "installed_backend_sha256",
             )
         )
@@ -332,7 +364,8 @@ def produce_windows_stage10_evidence(
             not isinstance(result, dict)
             or set(result) != {"status", "proofs", "details"}
             or result["status"] != "PASS"
-            or not isinstance(result["details"], str) or not result["details"]
+            or not isinstance(result["details"], str)
+            or not result["details"]
             or not isinstance(result["proofs"], dict)
             or set(result["proofs"]) != proofs
             or any(proof != "PASS" for proof in result["proofs"].values())
@@ -348,11 +381,22 @@ def produce_windows_stage10_evidence(
         }
         for item in WINDOWS_STAGE10_ITEMS
     ]
-    output.write_text(json.dumps(evidence_document(
-        platform_name="WINDOWS", source_revision=source_revision,
-        ci_provider=provider, ci_run_id=run_id, runner_os="Windows",
-        runner_arch=value["runner_arch"], results=results,
-    ), indent=2) + "\n", encoding="utf-8")
+    output.write_text(
+        json.dumps(
+            evidence_document(
+                platform_name="WINDOWS",
+                source_revision=source_revision,
+                ci_provider=provider,
+                ci_run_id=run_id,
+                runner_os="Windows",
+                runner_arch=value["runner_arch"],
+                results=results,
+            ),
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -369,6 +413,7 @@ def main(argv: list[str] | None = None) -> int:
     clean.add_argument("--output", type=Path, required=True)
     clean.add_argument("--msi", type=Path, required=True)
     clean.add_argument("--manifest", type=Path, required=True)
+    clean.add_argument("--production-trust-package", type=Path, required=True)
     stage10 = sub.add_parser("windows-stage10")
     stage10.add_argument("--source-revision")
     stage10.add_argument("--receipt", type=Path, required=True)
@@ -389,6 +434,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.output,
                 msi=args.msi,
                 manifest=args.manifest,
+                production_trust_package=args.production_trust_package,
             )
         else:
             produce_windows_stage10_evidence(args.source_revision, args.receipt, args.output)

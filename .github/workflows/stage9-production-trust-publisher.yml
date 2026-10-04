@@ -1,0 +1,41 @@
+name: Publish Stage-9 public Production Trust
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish-existing-public-package:
+    runs-on: [self-hosted, Windows, X64, cryptohunter-production-authority]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with: {python-version: "3.11.9", architecture: "x64"}
+      - name: Install reviewed verifier dependencies
+        shell: pwsh
+        run: |
+          python scripts/ci/bootstrap_locked_pip.py deploy/packaging/requirements-desktop.lock
+          python -m pip install --no-deps -r deploy/packaging/requirements-desktop.lock
+          python -m pip install --no-build-isolation --no-deps -e .
+          python -m pip check
+      - name: Verify and stage existing immutable public package byte-for-byte
+        shell: pwsh
+        run: >-
+          python -m deployment.windows_stage9_trust_publisher
+          --source "C:\CryptoHunter-Production-Authority\ceremony-results\final\390299aaa1ea928a6c2bfdd81a4c50cfde82a7744cd054e8628d5937b90f1699"
+          --output "${{ runner.temp }}\stage9-publication"
+          --receipt "${{ runner.temp }}\stage9-publication-evidence.json"
+      - name: Upload canonical twelve-file public package
+        uses: actions/upload-artifact@v6
+        with:
+          name: stage9-public-production-trust
+          if-no-files-found: error
+          path: ${{ runner.temp }}\stage9-publication\390299aaa1ea928a6c2bfdd81a4c50cfde82a7744cd054e8628d5937b90f1699\*.json
+      - name: Upload public publication evidence separately
+        uses: actions/upload-artifact@v6
+        with:
+          name: stage9-public-production-trust-publication-evidence
+          if-no-files-found: error
+          path: ${{ runner.temp }}\stage9-publication-evidence.json

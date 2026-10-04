@@ -150,12 +150,14 @@ jobs:
           python -m deployment.windows_stage9_clean_install
           --version 0.1.0 --receipt dist/windows/windows-clean-install-receipt.json
           --production-trust-package "${{ runner.temp }}/390299aaa1ea928a6c2bfdd81a4c50cfde82a7744cd054e8628d5937b90f1699"
+          --production-trust-artifact-run-id "${{ vars.STAGE9_PRODUCTION_TRUST_ARTIFACT_RUN_ID }}"
       - name: Produce revision-bound Stage-9 evidence
         run: >-
           python -m deployment.platform_evidence windows-clean-install
           --receipt dist/windows/windows-clean-install-receipt.json
           --msi dist/windows/CryptoHunter-0.1.0-windows-x64.msi
           --manifest dist/windows/installer-manifest.json
+          --production-trust-package "${{ runner.temp }}/390299aaa1ea928a6c2bfdd81a4c50cfde82a7744cd054e8628d5937b90f1699"
           --output dist/windows/windows-clean-install-evidence.json
       - name: Preserve Stage-9 MSI diagnostics
         if: always()
