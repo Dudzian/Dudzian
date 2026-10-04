@@ -29,6 +29,14 @@ WIX_EULA_ACCEPTANCE = "PER_INVOCATION"
 WIX_EULA_ACCEPTANCE_FLAG = "-acceptEula wix7"
 SMOKE_OUTPUT_LIMIT = 4096
 MISSING_AI_DEFAULTS_WARNING = "Default risk thresholds resource missing"
+STAGE9_SCHEMA_NAMES = (
+    "stage9_release_policy_v1.schema.json",
+    "stage9_enrollment_policy_material_v1.schema.json",
+    "stage9_signed_release_policy_v1.schema.json",
+    "stage9_pdsa_enrollment_package_v1.schema.json",
+    "stage9_root_of_trust_freeze_manifest_v1.schema.json",
+    "stage9_revocation_state_v1.schema.json",
+)
 
 
 class InstallerBuildError(RuntimeError):
@@ -189,6 +197,10 @@ def smoke_executable(executable: Path) -> None:
     if (
         result.returncode != 0
         or "BUILD_SMOKE = PASS" not in result.stdout
+        or (
+            executable.name == "CryptoHunterProvision.exe"
+            and "STAGE9_SCHEMA_RESOURCES = PASS" not in result.stdout
+        )
         or AI_DEFAULTS_SMOKE_MARKER not in result.stdout
         or MISSING_AI_DEFAULTS_WARNING in result.stderr
     ):
@@ -238,6 +250,12 @@ def build_executables(payload: Path, work: Path, reproducibility: dict[str, obje
     source_root = Path(__file__).parent
     qualify_win32_imports()
     openblas = numpy_openblas_dll()
+    schema_paths = tuple(source_root.parent / name for name in STAGE9_SCHEMA_NAMES)
+    missing_schemas = [path.name for path in schema_paths if not path.is_file()]
+    if missing_schemas:
+        raise InstallerBuildError(
+            "required Stage-9 schema data absent: " + ", ".join(missing_schemas)
+        )
     print("WIN32_IMPORT_PREFLIGHT = PASS", flush=True)
     print(f"NUMPY_OPENBLAS = {openblas.name}", flush=True)
     for name, script in ENTRYPOINTS.items():
@@ -247,6 +265,15 @@ def build_executables(payload: Path, work: Path, reproducibility: dict[str, obje
             for argument in ("--hidden-import", module)
         ]
         hidden_import_args.extend(("--hidden-import", AI_DEFAULTS_PACKAGE))
+        schema_data_args = (
+            [
+                argument
+                for schema in schema_paths
+                for argument in ("--add-data", f"{schema}{os.pathsep}deployment")
+            ]
+            if name == "CryptoHunterProvision"
+            else []
+        )
         environment = os.environ.copy()
         environment["PYTHONHASHSEED"] = str(reproducibility["python_hash_seed"])
         environment["SOURCE_DATE_EPOCH"] = str(reproducibility["source_date_epoch"])
@@ -272,6 +299,7 @@ def build_executables(payload: Path, work: Path, reproducibility: dict[str, obje
                 AI_DEFAULTS_PACKAGE,
                 "--add-binary",
                 f"{openblas}{os.pathsep}numpy.libs",
+                *schema_data_args,
                 str(source_root / script),
             ],
             check=True,

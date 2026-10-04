@@ -17,10 +17,29 @@ SIGNED_RELEASE_SCHEMA = ROOT / "stage9_signed_release_policy_v1.schema.json"
 PDSA_PACKAGE_SCHEMA = ROOT / "stage9_pdsa_enrollment_package_v1.schema.json"
 FREEZE_MANIFEST_SCHEMA = ROOT / "stage9_root_of_trust_freeze_manifest_v1.schema.json"
 REVOCATION_SCHEMA = ROOT / "stage9_revocation_state_v1.schema.json"
+STAGE9_SCHEMAS = (
+    RELEASE_SCHEMA,
+    ENROLLMENT_SCHEMA,
+    SIGNED_RELEASE_SCHEMA,
+    PDSA_PACKAGE_SCHEMA,
+    FREEZE_MANIFEST_SCHEMA,
+    REVOCATION_SCHEMA,
+)
 
 
 class PolicyVectorError(ValueError):
     """Canonical policy source or derived vector is invalid."""
+
+
+def qualify_schema_resources() -> None:
+    """Fail a frozen build smoke unless every verifier schema is bundled and parseable."""
+    for schema_path in STAGE9_SCHEMAS:
+        try:
+            value = json.loads(schema_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise PolicyVectorError("Stage-9 schema resource unavailable") from exc
+        if not isinstance(value, dict) or not value:
+            raise PolicyVectorError("Stage-9 schema resource invalid")
 
 
 def canonical_json_bytes(value: Any) -> bytes:

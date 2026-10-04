@@ -830,7 +830,12 @@ def qualify_production_trust_dacl(path: Path) -> None:
             raise ProvisionError("production trust DACL differs")
 
 
-def install_production_trust(program_files: Path, program_data: Path, source: Path) -> Path:
+def install_production_trust(
+    program_files: Path,
+    program_data: Path,
+    source: Path,
+    report_stage: Callable[[str], None] = _ignore_stage,
+) -> Path:
     """Install only public production trust into an already committed base install."""
     from deployment.platforms.windows import (
         production_trust_package_path,
@@ -843,6 +848,7 @@ def install_production_trust(program_files: Path, program_data: Path, source: Pa
     )
 
     # Complete every read-only precondition before the installer mutates anything.
+    report_stage("BASE_OWNERSHIP_QUALIFICATION")
     if not program_files.is_dir() or not program_data.is_dir():
         raise ProvisionError("committed base installation required")
     record = _committed_record(program_data)
@@ -855,6 +861,7 @@ def install_production_trust(program_files: Path, program_data: Path, source: Pa
     }
     if any(record.get(name) != value for name, value in expected_record.items()):
         raise ProvisionError("ownership ProgramFiles differs")
+    report_stage("CANONICAL_PATH_QUALIFICATION")
     native = resolve_paths()
     native_program_data = native.configuration.parent
     destination = production_trust_package_path(CEREMONY_ID)
@@ -874,8 +881,11 @@ def install_production_trust(program_files: Path, program_data: Path, source: Pa
         raise ProvisionError("production trust overwrite forbidden")
     if destination.parent.exists() and _is_reparse_point(destination.parent):
         raise ProvisionError("production trust destination escapes through reparse point")
+    report_stage("SOURCE_REPARSE_QUALIFICATION")
     _reject_reparse_tree(source)
+    report_stage("SOURCE_CRYPTOGRAPHIC_VERIFICATION")
     load_production_trust(source)
+    report_stage("SOURCE_HASH_QUALIFICATION")
     source_hashes = _package_hashes(source)
     if (
         len(source_hashes) != 12
@@ -883,16 +893,20 @@ def install_production_trust(program_files: Path, program_data: Path, source: Pa
         or any(Path(name).suffix != ".json" for name in source_hashes)
     ):
         raise ProvisionError("public final package must contain exactly 12 JSON files")
+    report_stage("PRE_PUBLISH_DACL_QUALIFICATION")
     qualify_dacl(program_files, program_data)
 
     published = False
     parent_preexisted = destination.parent.exists()
     try:
-        install_public_production_trust(source, destination)
+        install_public_production_trust(source, destination, report_stage)
         published = True
+        report_stage("INSTALLED_PACKAGE_VERIFICATION")
         load_production_trust(destination)
         qualify_dacl(program_files, program_data)
+        report_stage("PRODUCTION_TRUST_DACL_QUALIFICATION")
         qualify_production_trust_dacl(destination)
+        report_stage("FINAL_SOURCE_DESTINATION_HASH_COMPARISON")
         if _package_hashes(destination) != source_hashes:
             raise ProvisionError("source and installed production trust differ")
     except Exception:
@@ -1085,6 +1099,10 @@ def qualify_logging(program_files: Path, program_data: Path) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     if build_smoke_requested(argv):
+        from deployment.windows_stage9_policy_material import qualify_schema_resources
+
+        qualify_schema_resources()
+        print("STAGE9_SCHEMA_RESOURCES = PASS")
         return 0
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -1123,7 +1141,9 @@ def main(argv: list[str] | None = None) -> int:
             clear_safe_failure()
             install(args.program_files, args.program_data, set_stage)
         elif args.command == "install-production-trust":
-            install_production_trust(args.program_files, args.program_data, args.source)
+            install_production_trust(
+                args.program_files, args.program_data, args.source, set_stage
+            )
         elif args.command == "enroll":
             enroll(args.program_files, args.program_data)
         elif args.command == "rollback":
@@ -1146,8 +1166,11 @@ def main(argv: list[str] | None = None) -> int:
         # text, which may contain credentials or private ceremony material.
         if args.command == "install":
             write_safe_failure(args.command, current_stage, exc)
+        stage_diagnostic = (
+            f" stage={current_stage}" if args.command == "install-production-trust" else ""
+        )
         print(
-            f"provisioning failed: operation={args.command} "
+            f"provisioning failed: operation={args.command}{stage_diagnostic} "
             f"first_exception={_first_exception_type(exc)}",
             file=sys.stderr,
         )
