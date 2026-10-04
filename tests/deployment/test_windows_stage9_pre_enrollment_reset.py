@@ -5,6 +5,7 @@ import ctypes
 import hashlib
 import json
 from pathlib import Path
+import subprocess
 from types import SimpleNamespace
 
 import pytest
@@ -20,6 +21,7 @@ from deployment.windows_stage9_pre_enrollment_reset import (
     qualify_output_path,
     qualify_preserved_program_data,
     qualify_services,
+    query_services,
     require_product_unregistered,
     run,
 )
@@ -170,6 +172,85 @@ def test_service_contract_is_exact(tmp_path, service, field, value):
     values[service][field] = value
     with pytest.raises(ResetError, match="SCM contract"):
         qualify_services(pf, values)
+
+
+@pytest.mark.parametrize(
+    "service,dependencies",
+    [
+        ("CryptoHunterBackend", ["WrongService"]),
+        ("CryptoHunterBackend", ["CryptoHunterPostgreSQL", "ExtraService"]),
+        ("CryptoHunterFreshnessVerifier", ["CryptoHunterPostgreSQL"]),
+        ("CryptoHunterPostgreSQL", ["RpcSs"]),
+    ],
+)
+def test_service_contract_rejects_wrong_or_extra_dependencies(tmp_path, service, dependencies):
+    pf = tmp_path / "CryptoHunter"
+    values = services(pf)
+    values[service]["Dependencies"] = dependencies
+    with pytest.raises(ResetError, match="SCM contract"):
+        qualify_services(pf, values)
+
+
+def test_query_services_reads_backend_dependency_from_service_controller(monkeypatch):
+    observed = {}
+    payload = [
+        {
+            "Name": "CryptoHunterBackend",
+            "PathName": r'"C:\Program Files\CryptoHunter\CryptoHunterBackend.exe"',
+            "StartMode": "Manual",
+            "State": "Stopped",
+            "StartName": r"NT SERVICE\CryptoHunterBackend",
+            "Dependencies": ["CryptoHunterPostgreSQL"],
+        }
+    ]
+
+    def completed(command, **kwargs):
+        observed["command"] = command
+        observed["kwargs"] = kwargs
+        return SimpleNamespace(stdout=json.dumps(payload))
+
+    monkeypatch.setattr(subprocess, "run", completed)
+
+    assert query_services()["CryptoHunterBackend"]["Dependencies"] == ["CryptoHunterPostgreSQL"]
+    script = observed["command"][-1]
+    assert "Get-CimInstance Win32_Service" in script
+    assert "Get-Service -Name $service.Name -ErrorAction Stop" in script
+    assert "ServicesDependedOn" in script
+    assert "ForEach-Object {$_.Name}" in script
+    assert "Select-Object Name,PathName,StartMode,State,StartName,Dependencies" not in script
+    assert observed["kwargs"]["check"] is True
+
+
+def test_service_contract_accepts_only_backend_to_postgresql_dependency(tmp_path):
+    pf = tmp_path / "CryptoHunter"
+
+    qualify_services(pf, services(pf))
+
+
+def test_scm_dependency_read_failure_prevents_uninstall_and_purge(tmp_path, monkeypatch):
+    _, pd, msi, manifest = runnable(tmp_path, monkeypatch)
+    mutations = []
+
+    def dependency_read_failure():
+        raise subprocess.CalledProcessError(1, ["powershell.exe"])
+
+    monkeypatch.setattr(
+        "deployment.windows_stage9_pre_enrollment_reset.query_services",
+        dependency_read_failure,
+    )
+    monkeypatch.setattr(
+        "deployment.windows_stage9_pre_enrollment_reset.uninstall",
+        lambda *_: mutations.append("uninstall"),
+    )
+    monkeypatch.setattr(
+        "deployment.windows_stage9_pre_enrollment_reset.guarded_purge",
+        lambda *_: mutations.append("purge"),
+    )
+
+    with pytest.raises(subprocess.CalledProcessError):
+        run(args(tmp_path, msi, manifest, execute=True))
+    assert mutations == []
+    assert pd.exists()
 
 
 def test_cli_has_no_force_or_bypass(capsys):
