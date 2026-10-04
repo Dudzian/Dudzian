@@ -139,7 +139,9 @@ jobs:
         uses: actions/download-artifact@v7
         with:
           name: stage9-public-production-trust
-          path: ${{ runner.temp }}/stage9-production-trust
+          # The operator archive must contain the 12 JSON files directly at its
+          # root. download-artifact materializes that root as this canonical ID.
+          path: ${{ runner.temp }}/390299aaa1ea928a6c2bfdd81a4c50cfde82a7744cd054e8628d5937b90f1699
           run-id: ${{ vars.STAGE9_PRODUCTION_TRUST_ARTIFACT_RUN_ID }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Build and run canonical Stage-9 proof
@@ -147,7 +149,7 @@ jobs:
         run: >-
           python -m deployment.windows_stage9_clean_install
           --version 0.1.0 --receipt dist/windows/windows-clean-install-receipt.json
-          --production-trust-package "${{ runner.temp }}/stage9-production-trust"
+          --production-trust-package "${{ runner.temp }}/390299aaa1ea928a6c2bfdd81a4c50cfde82a7744cd054e8628d5937b90f1699"
       - name: Produce revision-bound Stage-9 evidence
         run: >-
           python -m deployment.platform_evidence windows-clean-install

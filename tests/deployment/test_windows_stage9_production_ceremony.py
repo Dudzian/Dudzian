@@ -347,10 +347,10 @@ def test_public_trust_installer_copies_atomically_and_refuses_overwrite(tmp_path
     from types import SimpleNamespace
     import deployment.windows_stage9_production_trust as trust
 
-    source = tmp_path / "source"
+    source = tmp_path / trust.CEREMONY_ID
     source.mkdir()
-    for number in range(12):
-        (source / f"artifact-{number}.json").write_text('{"public":"value"}\n', encoding="utf-8")
+    for name in trust.PUBLIC_PACKAGE_FILENAMES:
+        (source / name).write_text('{"public":"value"}\n', encoding="utf-8")
     verified = SimpleNamespace(ceremony_id=trust.CEREMONY_ID)
     monkeypatch.setattr(trust, "load_production_trust", lambda path: verified)
     monkeypatch.setattr(
@@ -372,10 +372,10 @@ def test_public_trust_installer_rejects_non_public_extra_before_mutation(tmp_pat
     from types import SimpleNamespace
     import deployment.windows_stage9_production_trust as trust
 
-    source = tmp_path / "source"
+    source = tmp_path / trust.CEREMONY_ID
     source.mkdir()
-    for number in range(12):
-        (source / f"artifact-{number}.json").write_text("{}\n", encoding="utf-8")
+    for name in trust.PUBLIC_PACKAGE_FILENAMES:
+        (source / name).write_text("{}\n", encoding="utf-8")
     (source / "private.pem").write_text("PRIVATE KEY", encoding="utf-8")
     monkeypatch.setattr(
         trust,
@@ -392,10 +392,10 @@ def test_public_trust_failure_before_rename_removes_staging_and_owned_parent(tmp
     from types import SimpleNamespace
     import deployment.windows_stage9_production_trust as trust
 
-    source = tmp_path / "source"
+    source = tmp_path / trust.CEREMONY_ID
     source.mkdir()
-    for number in range(12):
-        (source / f"artifact-{number}.json").write_text("{}\n", encoding="utf-8")
+    for name in trust.PUBLIC_PACKAGE_FILENAMES:
+        (source / name).write_text("{}\n", encoding="utf-8")
     verified = SimpleNamespace(ceremony_id=trust.CEREMONY_ID)
     monkeypatch.setattr(trust, "load_production_trust", lambda path: verified)
     monkeypatch.setattr(
@@ -419,10 +419,10 @@ def test_staging_verification_failure_has_no_publication_or_residue(tmp_path, mo
     from types import SimpleNamespace
     import deployment.windows_stage9_production_trust as trust
 
-    source = tmp_path / "source"
+    source = tmp_path / trust.CEREMONY_ID
     source.mkdir()
-    for number in range(12):
-        (source / f"artifact-{number}.json").write_text("{}\n", encoding="utf-8")
+    for name in trust.PUBLIC_PACKAGE_FILENAMES:
+        (source / name).write_text("{}\n", encoding="utf-8")
     monkeypatch.setattr(
         trust,
         "load_production_trust",
@@ -447,10 +447,10 @@ def test_early_staging_failures_leave_no_publication_or_residue(
     from types import SimpleNamespace
     import deployment.windows_stage9_production_trust as trust
 
-    source = tmp_path / "source"
+    source = tmp_path / trust.CEREMONY_ID
     source.mkdir()
-    for number in range(12):
-        (source / f"artifact-{number}.json").write_text("{}\n", encoding="utf-8")
+    for name in trust.PUBLIC_PACKAGE_FILENAMES:
+        (source / name).write_text("{}\n", encoding="utf-8")
     monkeypatch.setattr(
         trust,
         "load_production_trust",
@@ -489,10 +489,10 @@ def test_cleanup_failure_after_rename_is_committed_and_unambiguous(tmp_path, mon
     from types import SimpleNamespace
     import deployment.windows_stage9_production_trust as trust
 
-    source = tmp_path / "source"
+    source = tmp_path / trust.CEREMONY_ID
     source.mkdir()
-    for number in range(12):
-        (source / f"artifact-{number}.json").write_text("{}\n", encoding="utf-8")
+    for name in trust.PUBLIC_PACKAGE_FILENAMES:
+        (source / name).write_text("{}\n", encoding="utf-8")
     verified = SimpleNamespace(ceremony_id=trust.CEREMONY_ID)
     monkeypatch.setattr(trust, "load_production_trust", lambda path: verified)
     monkeypatch.setattr(

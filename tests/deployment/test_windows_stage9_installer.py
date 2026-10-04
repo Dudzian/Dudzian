@@ -311,6 +311,9 @@ def test_stage9_workflow_promotes_exact_qualified_msi() -> None:
     qualification = workflow[package_gate:promotion_offset]
     assert "STAGE9_PRODUCTION_TRUST_ARTIFACT_RUN_ID is required" in qualification
     assert "--production-trust-package" in qualification
+    ceremony_id = "390299aaa1ea928a6c2bfdd81a4c50cfde82a7744cd054e8628d5937b90f1699"
+    assert qualification.count(f"${{{{ runner.temp }}}}/{ceremony_id}") == 2
+    assert "${{ runner.temp }}/stage9-production-trust" not in qualification
     assert "continue-on-error" not in qualification
     promotion = workflow.split("- name: Promote exactly the qualified Stage-9 MSI", 1)[1]
     promotion = promotion.split("\n\n  windows-stage10", 1)[0]
@@ -332,7 +335,8 @@ def test_clean_install_runs_frozen_trust_test_before_uninstall() -> None:
     qualification = source.index("prove_frozen_production_trust(args.production_trust_package)")
     uninstall = source.index('uninstall_code = _msiexec(["/x"')
     assert qualification < uninstall
-    assert "tests/deployment/test_windows_frozen_production_trust_integration.py" in source
+    assert '"deployment.windows_stage9_frozen_proof"' in source
+    assert '"pytest"' not in source
     assert 'p.add_argument("--production-trust-package", type=Path, required=True)' in source
 
 

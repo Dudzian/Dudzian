@@ -19,6 +19,7 @@ from deployment.windows_stage9_evidence_contract import (
     CLEAN_INSTALL_RECEIPT_KEYS,
     POST_ENROLLMENT_QUALIFICATION_STATE,
 )
+from deployment.windows_stage9_production_trust import validate_public_package_layout
 from deployment.windows_installer.build import main as build_main
 from deployment.windows_installer.contract import CONTRACT
 from deployment.windows_installer.provision import read_safe_failure, safe_failure_path
@@ -473,18 +474,14 @@ def prove_frozen_production_trust(package: Path) -> None:
     """Run the native frozen lifecycle while the exact MSI is still installed."""
     if not package.is_dir():
         raise CleanInstallError("operator public production trust package required")
-    environment = os.environ.copy()
-    environment["CRYPTOHUNTER_STAGE9_FINAL_PACKAGE"] = str(package.resolve())
     result = subprocess.run(
         [
             sys.executable,
             "-m",
-            "pytest",
-            "-q",
-            "-s",
-            "tests/deployment/test_windows_frozen_production_trust_integration.py",
+            "deployment.windows_stage9_frozen_proof",
+            "--source",
+            str(package.resolve()),
         ],
-        env=environment,
         timeout=300,
     )
     if result.returncode != 0:
@@ -496,6 +493,9 @@ def run(args: argparse.Namespace) -> None:
         raise CleanInstallError("native Windows x64 required")
     if WINDOWS_STAGE9_ITEMS != ("WINDOWS_CLEAN_INSTALL",):
         raise CleanInstallError("Stage-9 item contract changed")
+    # Reject archive wrappers, wrong identities, and incomplete operator artifacts
+    # before building or installing anything on the clean qualification host.
+    validate_public_package_layout(args.production_trust_package)
     print("EXE_BUILD = NOT_RUN", flush=True)
     print("WIX_COMPILE = NOT_RUN", flush=True)
     print("MSI_CREATED = NO", flush=True)

@@ -20,6 +20,22 @@ from deployment.windows_stage9_policy_material import (
 from deployment.windows_stage9_production_ceremony import verify_final_package
 
 CEREMONY_ID = "390299aaa1ea928a6c2bfdd81a4c50cfde82a7744cd054e8628d5937b90f1699"
+PUBLIC_PACKAGE_FILENAMES = frozenset(
+    {
+        "root_anchor_bundle.json",
+        "pdsa_public_bundle.json",
+        "recovery_public_bundle.json",
+        "unsigned_release_policy.json",
+        "release_signing_request.json",
+        "signed_release_policy.json",
+        "initial_revocation_payload.json",
+        "revocation_signing_request.json",
+        "signed_initial_revocation.json",
+        "freeze_manifest.json",
+        "ceremony_audit.json",
+        "package_manifest.json",
+    }
+)
 RELEASE_PAYLOAD_DIGEST = (
     "7ade98f8f1d3573b243556b6404d119a40429f6e1d738ebbab6698d64293c5a9"
 )
@@ -163,6 +179,20 @@ def load_production_trust(path: Path) -> ProductionTrustContext:
     )
 
 
+def validate_public_package_layout(path: Path) -> None:
+    """Enforce the operator artifact's directory identity and exact flat layout."""
+    if path.name != CEREMONY_ID:
+        raise ProductionTrustUnavailable("PUBLIC_FINAL_PACKAGE_CEREMONY_DIRECTORY_REQUIRED")
+    if path.is_symlink() or not path.is_dir():
+        raise ProductionTrustUnavailable("PUBLIC_FINAL_PACKAGE_DIRECTORY_REQUIRED")
+    entries = tuple(path.iterdir())
+    if (
+        {item.name for item in entries} != PUBLIC_PACKAGE_FILENAMES
+        or any(item.is_symlink() or not item.is_file() for item in entries)
+    ):
+        raise ProductionTrustUnavailable("PUBLIC_FINAL_PACKAGE_ALLOWLIST_VIOLATION")
+
+
 def install_public_production_trust(
     source: Path,
     destination: Path,
@@ -172,25 +202,11 @@ def install_public_production_trust(
     report = report_stage or (lambda stage: None)
     if destination.exists():
         raise ProductionTrustUnavailable("PRODUCTION_TRUST_OVERWRITE_FORBIDDEN")
-    if source.is_symlink() or not source.is_dir():
-        raise ProductionTrustUnavailable("PUBLIC_FINAL_PACKAGE_DIRECTORY_REQUIRED")
+    validate_public_package_layout(source)
     # These labels are deliberately stable and contain no caller-controlled data.
     report("SOURCE_CRYPTOGRAPHIC_VERIFICATION")
     context = load_production_trust(source)
-    entries = tuple(source.iterdir())
-    if any(item.is_symlink() or not item.is_file() for item in entries):
-        raise ProductionTrustUnavailable("PUBLIC_FINAL_PACKAGE_ALLOWLIST_VIOLATION")
-    required = {item.name for item in entries if item.suffix == ".json"}
-    if (
-        len(entries) != 12
-        or len(required) != 12
-        or any(
-            marker in name.lower()
-            for name in required
-            for marker in ("pem", "private", "password", "seed")
-        )
-    ):
-        raise ProductionTrustUnavailable("PUBLIC_FINAL_PACKAGE_ALLOWLIST_VIOLATION")
+    required = PUBLIC_PACKAGE_FILENAMES
     parent_preexisted = destination.parent.exists()
     staging_root: Path | None = None
     preexisting_staging = (
