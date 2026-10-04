@@ -302,6 +302,16 @@ def test_stage9_workflow_always_preserves_msi_diagnostics_without_weakening_gate
 
 def test_stage9_workflow_promotes_exact_qualified_msi() -> None:
     workflow = (ROOT / ".github/workflows/platform-deployment.yml").read_text(encoding="utf-8")
+    package_gate = workflow.index(
+        "- name: Require operator-published public Production Trust package"
+    )
+    canonical = workflow.index("- name: Build and run canonical Stage-9 proof")
+    promotion_offset = workflow.index("- name: Promote exactly the qualified Stage-9 MSI")
+    assert package_gate < canonical < promotion_offset
+    qualification = workflow[package_gate:promotion_offset]
+    assert "STAGE9_PRODUCTION_TRUST_ARTIFACT_RUN_ID is required" in qualification
+    assert "--production-trust-package" in qualification
+    assert "continue-on-error" not in qualification
     promotion = workflow.split("- name: Promote exactly the qualified Stage-9 MSI", 1)[1]
     promotion = promotion.split("\n\n  windows-stage10", 1)[0]
     assert "name: windows-stage9-qualified-msi" in promotion
@@ -313,6 +323,17 @@ def test_stage9_workflow_promotes_exact_qualified_msi() -> None:
         "dist/windows/windows-clean-install-evidence.json",
     ):
         assert path in promotion
+
+
+def test_clean_install_runs_frozen_trust_test_before_uninstall() -> None:
+    source = (ROOT / "deployment/windows_stage9_clean_install.py").read_text(
+        encoding="utf-8"
+    )
+    qualification = source.index("prove_frozen_production_trust(args.production_trust_package)")
+    uninstall = source.index('uninstall_code = _msiexec(["/x"')
+    assert qualification < uninstall
+    assert "tests/deployment/test_windows_frozen_production_trust_integration.py" in source
+    assert 'p.add_argument("--production-trust-package", type=Path, required=True)' in source
 
 
 def test_installed_payload_digest_is_canonical_and_content_sensitive() -> None:

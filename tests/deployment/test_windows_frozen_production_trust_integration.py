@@ -27,23 +27,27 @@ def _hashes(path: Path) -> dict[str, str]:
     }
 
 
+def _enrollment_markers(program_data: Path) -> tuple[Path, ...]:
+    return (
+        program_data / "State" / "corehost.sqlite",
+        program_data / "State" / "enrollment-finalization.json",
+        program_data / "Runtime" / "backend-readiness.json",
+        program_data / "Runtime" / "Verifier" / "verifier-readiness.json",
+    )
+
+
 @pytest.mark.skipif(sys.platform != "win32", reason="native Windows frozen proof")
 def test_installed_frozen_production_trust_lifecycle() -> None:
     source_value = os.environ.get("CRYPTOHUNTER_STAGE9_FINAL_PACKAGE")
     if not source_value:
-        pytest.skip("operator public package not supplied")
+        pytest.fail("operator public package is required for frozen qualification")
 
     source = Path(source_value)
     program_files = Path(os.environ["ProgramFiles"]) / "CryptoHunter"
     program_data = Path(os.environ["ProgramData"]) / "CryptoHunter"
     executable = program_files / "CryptoHunterProvision.exe"
     destination = program_data / "Config" / "ProductionTrust" / CEREMONY_ID
-    markers = (
-        program_data / "State" / "corehost.sqlite",
-        program_data / "enrollment-finalization.json",
-        program_data / "Runtime" / "backend-readiness.json",
-        program_data / "Runtime" / "Verifier" / "verifier-readiness.json",
-    )
+    markers = _enrollment_markers(program_data)
     assert executable.is_file()
     assert not destination.exists()
     assert not any(path.exists() for path in markers)
@@ -91,3 +95,14 @@ def test_installed_frozen_production_trust_lifecycle() -> None:
             parent.rmdir()
     assert not destination.exists()
     assert not tuple((program_data / "Config").glob("ProductionTrust/.production-trust-*"))
+    print("FROZEN_PRODUCTION_TRUST_CLEANUP = PASS")
+
+
+def test_no_enrollment_marker_paths_are_canonical() -> None:
+    program_data = Path("C:/ProgramData/CryptoHunter")
+    assert _enrollment_markers(program_data) == (
+        program_data / "State/corehost.sqlite",
+        program_data / "State/enrollment-finalization.json",
+        program_data / "Runtime/backend-readiness.json",
+        program_data / "Runtime/Verifier/verifier-readiness.json",
+    )
