@@ -101,6 +101,39 @@ durable `COMMITTED` ownership record inside ProgramData.  Rollback removes
 only journaled resources in the first two states, while normal uninstall
 preserves the committed record and user data.
 
+## Pre-enrollment base replacement reset
+
+Normal uninstall continues to preserve `%ProgramData%\CryptoHunter`. Replacing
+an already committed Stage-9 base therefore requires a separate, explicit
+operator command; it is not part of MSI uninstall and does not install a new
+MSI:
+
+```powershell
+python -m deployment.windows_stage9_pre_enrollment_reset `
+  --installed-msi C:\qualified-old\CryptoHunter.msi `
+  --installed-manifest C:\qualified-old\installer-manifest.json `
+  --receipt C:\evidence\pre-enrollment-reset.json
+```
+
+The command is read-only by default. `--execute` is the sole mutation switch
+and requires native x64 Windows and an elevated Administrator token. There is
+no force or bypass option. The old artifact, installed file set, committed
+ownership, canonical paths, exact SCM configuration, base ProgramData shape,
+and absence of reviewed authority, enrollment, first-run, transaction, and
+failure markers must all qualify first.
+
+Execution invokes ordinary `msiexec.exe /x` and requires exit code zero, then
+proves Program Files, SCM services, and MSI registration absent. It repeats the
+complete authority-free and reparse-point qualification before removing
+exactly `%ProgramData%\CryptoHunter`, and finally proves clean installer
+preconditions. There is no automatic retry, repair, or deletion rollback.
+
+This operation is only for an exact committed base before Production Trust
+publication or legal production enrollment. It is not recovery,
+decommissioning, or a generic wipe and is forbidden once enrollment begins.
+It never touches external Production Authority, TPM state, ceremony state,
+Production Trust, or Stage 10.
+
 Private keys are generated on the target and never enter the MSI or manifest.
 Final `pg_hba.conf` preserves the Stage-8 source form `cert map=stage8_cert`;
 PostgreSQL reports the implicit `clientcert=verify-full` only in its parsed representation,
