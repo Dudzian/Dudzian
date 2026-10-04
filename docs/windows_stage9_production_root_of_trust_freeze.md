@@ -30,6 +30,23 @@ PRODUCTION_ROOT_MATERIAL = NOT_PROVISIONED
 This layer is **IMPLEMENTATION READY / AWAITING PRODUCTION KEY CEREMONY**. It neither starts Stage
 10 nor changes the updater, MSI, `WindowsExternalProvisioningHandoff`, or frozen Stages 0–8.
 
+## Operator-published CI artifact contract
+
+The `stage9-public-production-trust` artifact is published by an operator from the completed
+ceremony run; no workflow in this repository produces it and the immutable package is not checked
+in. Its archive root MUST contain exactly the following 12 regular JSON files, with no wrapper
+directory, subdirectory, symlink, or additional entry: `root_anchor_bundle.json`,
+`pdsa_public_bundle.json`, `recovery_public_bundle.json`, `unsigned_release_policy.json`,
+`release_signing_request.json`, `signed_release_policy.json`, `initial_revocation_payload.json`,
+`revocation_signing_request.json`, `signed_initial_revocation.json`, `freeze_manifest.json`,
+`ceremony_audit.json`, and `package_manifest.json`.
+
+The consumer downloads that flat archive root directly into a directory named
+`390299aaa1ea928a6c2bfdd81a4c50cfde82a7744cd054e8628d5937b90f1699`. A missing or extra file,
+an archive-side wrapper layer, or any other destination basename fails qualification before trust
+installation. The run ID is operator-configured and mandatory; the artifact is never implicitly
+taken from the current workflow run.
+
 ## Existing-authority review and acyclic dependency graph
 
 The review preserves the existing ownership boundaries: PDSA establishes pre-account device
