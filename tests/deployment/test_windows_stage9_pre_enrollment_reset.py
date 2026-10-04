@@ -1,0 +1,298 @@
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+from pathlib import Path
+
+import pytest
+
+from deployment.windows_installer.build import installed_payload_digest
+from deployment.windows_stage9_pre_enrollment_reset import (
+    AUTHORITY_MARKERS,
+    BASE_TOP_LEVEL,
+    ResetError,
+    main,
+    qualify_artifact,
+    qualify_installed_payload,
+    qualify_preserved_program_data,
+    qualify_services,
+    run,
+)
+
+
+def _sha(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def artifact(tmp_path: Path) -> tuple[Path, Path, dict[str, str]]:
+    msi = tmp_path / "CryptoHunter.msi"
+    msi.write_bytes(b"msi")
+    files = {
+        "CryptoHunterBackend.exe": "1" * 64,
+        "CryptoHunterFreshnessVerifier.exe": "2" * 64,
+        "CryptoHunterProvision.exe": "3" * 64,
+        "PostgreSQL/CryptoHunterPostgreSQL.exe": "4" * 64,
+    }
+    manifest = tmp_path / "installer-manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "architecture": "x64",
+                "msi": {"file": msi.name, "sha256": _sha(msi)},
+                "installed_files": files,
+                "installed_payload_sha256": installed_payload_digest(files),
+            }
+        ),
+        encoding="utf-8",
+    )
+    return msi, manifest, files
+
+
+def machine(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path]:
+    program_files = tmp_path / "Program Files" / "CryptoHunter"
+    program_data = tmp_path / "ProgramData" / "CryptoHunter"
+    program_files.mkdir(parents=True)
+    program_data.mkdir(parents=True)
+    monkeypatch.setenv("ProgramFiles", str(program_files.parent))
+    monkeypatch.setenv("ProgramData", str(program_data.parent))
+    for name in BASE_TOP_LEVEL - {".stage9-install-ownership.json"}:
+        (program_data / name).mkdir()
+    record = {
+        "schema_version": 1,
+        "state": "COMMITTED",
+        "program_files": str(program_files.resolve()),
+        "program_data": str(program_data.resolve()),
+        "service_names": [
+            "CryptoHunterPostgreSQL",
+            "CryptoHunterBackend",
+            "CryptoHunterFreshnessVerifier",
+        ],
+        "resources_created": [str(program_data.resolve())],
+    }
+    (program_data / ".stage9-install-ownership.json").write_text(json.dumps(record))
+    return program_files, program_data
+
+
+def services(program_files: Path):
+    return {
+        "CryptoHunterPostgreSQL": {
+            "PathName": str(program_files / "PostgreSQL/CryptoHunterPostgreSQL.exe"),
+            "StartMode": "Auto",
+            "StartName": r"NT SERVICE\CryptoHunterPostgreSQL",
+            "State": "Running",
+            "Dependencies": [],
+        },
+        "CryptoHunterBackend": {
+            "PathName": str(program_files / "CryptoHunterBackend.exe"),
+            "StartMode": "Manual",
+            "StartName": r"NT SERVICE\CryptoHunterBackend",
+            "State": "Stopped",
+            "Dependencies": ["CryptoHunterPostgreSQL"],
+        },
+        "CryptoHunterFreshnessVerifier": {
+            "PathName": str(program_files / "CryptoHunterFreshnessVerifier.exe"),
+            "StartMode": "Manual",
+            "StartName": r"NT SERVICE\CryptoHunterFreshnessVerifier",
+            "State": "Stopped",
+            "Dependencies": [],
+        },
+    }
+
+
+def test_exact_artifact_and_payload_qualify(tmp_path: Path):
+    msi, manifest, files = artifact(tmp_path)
+    assert qualify_artifact(msi, manifest)[1] == files
+    root = tmp_path / "installed"
+    for name in files:
+        path = root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(name.encode())
+        files[name] = _sha(path)
+    qualify_installed_payload(root, files)
+    (root / "extra").write_bytes(b"no")
+    with pytest.raises(ResetError, match="file set"):
+        qualify_installed_payload(root, files)
+
+
+@pytest.mark.parametrize(
+    "field,value", [("state", "PROVISIONED"), ("program_data", "C:/wrong"), ("service_names", [])]
+)
+def test_ownership_contract_rejects_differences(tmp_path, monkeypatch, field, value):
+    pf, pd = machine(tmp_path, monkeypatch)
+    path = pd / ".stage9-install-ownership.json"
+    record = json.loads(path.read_text())
+    record[field] = value
+    path.write_text(json.dumps(record))
+    with pytest.raises(ResetError, match="ownership"):
+        qualify_preserved_program_data(pf, pd)
+
+
+@pytest.mark.parametrize("marker", AUTHORITY_MARKERS)
+def test_every_reviewed_authority_marker_blocks(tmp_path, monkeypatch, marker):
+    pf, pd = machine(tmp_path, monkeypatch)
+    target = pd / marker
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.touch() if target.suffix else target.mkdir()
+    with pytest.raises(ResetError, match="authority/enrollment"):
+        qualify_preserved_program_data(pf, pd)
+
+
+def test_extra_top_level_and_nested_symlink_block(tmp_path, monkeypatch):
+    pf, pd = machine(tmp_path, monkeypatch)
+    (pd / "foreign").touch()
+    with pytest.raises(ResetError, match="shape"):
+        qualify_preserved_program_data(pf, pd)
+    (pd / "foreign").unlink()
+    (pd / "State" / "link").symlink_to(tmp_path)
+    with pytest.raises(ResetError, match="reparse"):
+        qualify_preserved_program_data(pf, pd)
+
+
+@pytest.mark.parametrize(
+    "service,field,value",
+    [
+        ("CryptoHunterBackend", "State", "Running"),
+        ("CryptoHunterFreshnessVerifier", "State", "Running"),
+        ("CryptoHunterPostgreSQL", "StartName", "LocalSystem"),
+        ("CryptoHunterBackend", "Dependencies", []),
+    ],
+)
+def test_service_contract_is_exact(tmp_path, service, field, value):
+    pf = tmp_path / "CryptoHunter"
+    values = services(pf)
+    qualify_services(pf, values)
+    values[service][field] = value
+    with pytest.raises(ResetError, match="SCM contract"):
+        qualify_services(pf, values)
+
+
+def test_cli_has_no_force_or_bypass(capsys):
+    with pytest.raises(SystemExit):
+        main(["--force"])
+    help_text = capsys.readouterr().err
+    assert "unrecognized arguments" not in help_text  # required args fail first
+    source = Path("deployment/windows_stage9_pre_enrollment_reset.py").read_text()
+    assert 'add_argument("--force"' not in source
+    assert 'add_argument("--bypass"' not in source
+    assert "CryptoHunter-Production-Authority" not in source
+
+
+def runnable(tmp_path, monkeypatch):
+    pf, pd = machine(tmp_path, monkeypatch)
+    msi, manifest, files = artifact(tmp_path)
+    for name in files:
+        path = pf / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(name.encode())
+        files[name] = _sha(path)
+    value = json.loads(manifest.read_text())
+    value["installed_files"] = files
+    value["installed_payload_sha256"] = installed_payload_digest(files)
+    manifest.write_text(json.dumps(value))
+    monkeypatch.setattr(
+        "deployment.windows_stage9_pre_enrollment_reset.require_host", lambda **_: None
+    )
+    return pf, pd, msi, manifest
+
+
+def args(tmp_path, msi, manifest, *, execute):
+    return argparse.Namespace(
+        installed_msi=msi,
+        installed_manifest=manifest,
+        receipt=tmp_path / "receipt.json",
+        execute=execute,
+        _receipt_value=None,
+    )
+
+
+def test_valid_dry_run_never_uninstalls_or_deletes(tmp_path, monkeypatch, capsys):
+    pf, pd, msi, manifest = runnable(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        "deployment.windows_stage9_pre_enrollment_reset.query_services",
+        lambda: services(pf),
+    )
+    monkeypatch.setattr(
+        "deployment.windows_stage9_pre_enrollment_reset.uninstall",
+        lambda *_: pytest.fail("dry-run invoked uninstall"),
+    )
+    receipt = run(args(tmp_path, msi, manifest, execute=False))
+    assert receipt["result"] == "PASS"
+    assert pd.exists()
+    output = capsys.readouterr().out
+    assert "RESET_ELIGIBLE = YES" in output
+    assert "MUTATION = NOT_PERFORMED" in output
+
+
+def test_uninstall_failure_preserves_program_data(tmp_path, monkeypatch):
+    pf, pd, msi, manifest = runnable(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        "deployment.windows_stage9_pre_enrollment_reset.query_services",
+        lambda: services(pf),
+    )
+    monkeypatch.setattr(
+        "deployment.windows_stage9_pre_enrollment_reset._product_code", lambda _: "code"
+    )
+    monkeypatch.setattr("deployment.windows_stage9_pre_enrollment_reset.uninstall", lambda *_: 1603)
+    with pytest.raises(ResetError, match="1603"):
+        run(args(tmp_path, msi, manifest, execute=True))
+    assert pd.exists()
+
+
+def test_toctou_authority_marker_prevents_purge(tmp_path, monkeypatch):
+    pf, pd, msi, manifest = runnable(tmp_path, monkeypatch)
+    calls = iter([services(pf), {}])
+    monkeypatch.setattr(
+        "deployment.windows_stage9_pre_enrollment_reset.query_services",
+        lambda: next(calls),
+    )
+    monkeypatch.setattr(
+        "deployment.windows_stage9_pre_enrollment_reset._product_code", lambda _: "code"
+    )
+    monkeypatch.setattr(
+        "deployment.windows_stage9_pre_enrollment_reset.product_registered", lambda _: False
+    )
+
+    def uninstall_with_race(*_):
+        import shutil
+
+        shutil.rmtree(pf)
+        (pd / "State/corehost.sqlite").touch()
+        return 0
+
+    monkeypatch.setattr(
+        "deployment.windows_stage9_pre_enrollment_reset.uninstall", uninstall_with_race
+    )
+    with pytest.raises(ResetError, match="authority/enrollment"):
+        run(args(tmp_path, msi, manifest, execute=True))
+    assert pd.exists()
+
+
+def test_successful_execute_reaches_clean_target(tmp_path, monkeypatch):
+    pf, pd, msi, manifest = runnable(tmp_path, monkeypatch)
+    calls = iter([services(pf), {}, {}])
+    monkeypatch.setattr(
+        "deployment.windows_stage9_pre_enrollment_reset.query_services",
+        lambda: next(calls),
+    )
+    monkeypatch.setattr(
+        "deployment.windows_stage9_pre_enrollment_reset._product_code", lambda _: "code"
+    )
+    monkeypatch.setattr(
+        "deployment.windows_stage9_pre_enrollment_reset.product_registered", lambda _: False
+    )
+
+    def normal_uninstall(*_):
+        import shutil
+
+        shutil.rmtree(pf)
+        return 0
+
+    monkeypatch.setattr(
+        "deployment.windows_stage9_pre_enrollment_reset.uninstall", normal_uninstall
+    )
+    receipt = run(args(tmp_path, msi, manifest, execute=True))
+    assert receipt["result"] == "PASS"
+    assert receipt["final_clean_preconditions"] == "PASS"
+    assert not pf.exists() and not pd.exists()
