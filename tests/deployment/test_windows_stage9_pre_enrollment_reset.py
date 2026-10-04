@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import ctypes
 import hashlib
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -15,8 +17,10 @@ from deployment.windows_stage9_pre_enrollment_reset import (
     main,
     qualify_artifact,
     qualify_installed_payload,
+    qualify_output_path,
     qualify_preserved_program_data,
     qualify_services,
+    require_product_unregistered,
     run,
 )
 
@@ -204,7 +208,73 @@ def args(tmp_path, msi, manifest, *, execute):
         receipt=tmp_path / "receipt.json",
         execute=execute,
         _receipt_value=None,
+        _qualified_receipt=None,
     )
+
+
+@pytest.mark.parametrize("owned_tree", ["ProgramData", "Program Files"])
+@pytest.mark.parametrize("execute", [False, True])
+def test_receipt_in_product_tree_fails_before_any_work(
+    tmp_path, monkeypatch, capsys, owned_tree, execute
+):
+    pf, pd, msi, manifest = runnable(tmp_path, monkeypatch)
+    root = pd if owned_tree == "ProgramData" else pf
+    receipt = root / "evidence/reset.json"
+    called = []
+    monkeypatch.setattr(
+        "deployment.windows_stage9_pre_enrollment_reset.require_host",
+        lambda **_: called.append("host"),
+    )
+    monkeypatch.setattr(
+        "deployment.windows_stage9_pre_enrollment_reset._product_code",
+        lambda _: called.append("product-code"),
+    )
+    monkeypatch.setattr(
+        "deployment.windows_stage9_pre_enrollment_reset.uninstall",
+        lambda *_: called.append("uninstall"),
+    )
+    monkeypatch.setattr(
+        "deployment.windows_stage9_pre_enrollment_reset.guarded_purge",
+        lambda *_: called.append("purge"),
+    )
+
+    result = main(
+        [
+            "--installed-msi",
+            str(msi),
+            "--installed-manifest",
+            str(manifest),
+            "--receipt",
+            str(receipt),
+            *(["--execute"] if execute else []),
+        ]
+    )
+
+    assert result == 1
+    assert called == []
+    assert not receipt.parent.exists()
+    assert "PRE_ENROLLMENT_RESET = FAIL (ResetError)" in capsys.readouterr().err
+
+
+def test_external_receipt_and_derived_log_are_outside_product_roots(tmp_path, monkeypatch):
+    pf, pd = machine(tmp_path, monkeypatch)
+    receipt, log = qualify_output_path(tmp_path / "evidence/pre-enrollment-reset.json")
+    assert receipt == (tmp_path / "evidence/pre-enrollment-reset.json").resolve()
+    assert log == (tmp_path / "evidence/pre-enrollment-reset.uninstall.log").resolve()
+    for output in (receipt, log):
+        assert pf.resolve() not in output.parents
+        assert pd.resolve() not in output.parents
+
+
+@pytest.mark.parametrize("state", [-1, 2, 3, 5, 999])
+def test_product_registration_requires_unknown(monkeypatch, state):
+    msi = SimpleNamespace(MsiQueryProductStateW=lambda _: state)
+    monkeypatch.setattr(ctypes, "windll", SimpleNamespace(msi=msi), raising=False)
+    if state == -1:
+        require_product_unregistered("code")
+    else:
+        with pytest.raises(ResetError, match=rf"registered \(state {state}\)"):
+            require_product_unregistered("code")
 
 
 def test_valid_dry_run_never_uninstalls_or_deletes(tmp_path, monkeypatch, capsys):
@@ -251,7 +321,8 @@ def test_toctou_authority_marker_prevents_purge(tmp_path, monkeypatch):
         "deployment.windows_stage9_pre_enrollment_reset._product_code", lambda _: "code"
     )
     monkeypatch.setattr(
-        "deployment.windows_stage9_pre_enrollment_reset.product_registered", lambda _: False
+        "deployment.windows_stage9_pre_enrollment_reset.require_product_unregistered",
+        lambda _: None,
     )
 
     def uninstall_with_race(*_):
@@ -269,6 +340,38 @@ def test_toctou_authority_marker_prevents_purge(tmp_path, monkeypatch):
     assert pd.exists()
 
 
+def test_msi_absent_state_fails_closed_before_program_data_purge(tmp_path, monkeypatch):
+    pf, pd, msi, manifest = runnable(tmp_path, monkeypatch)
+    calls = iter([services(pf), {}])
+    monkeypatch.setattr(
+        "deployment.windows_stage9_pre_enrollment_reset.query_services",
+        lambda: next(calls),
+    )
+    monkeypatch.setattr(
+        "deployment.windows_stage9_pre_enrollment_reset._product_code", lambda _: "code"
+    )
+    msi_api = SimpleNamespace(MsiQueryProductStateW=lambda _: 2)
+    monkeypatch.setattr(ctypes, "windll", SimpleNamespace(msi=msi_api), raising=False)
+
+    def normal_uninstall(*_):
+        import shutil
+
+        shutil.rmtree(pf)
+        return 0
+
+    monkeypatch.setattr(
+        "deployment.windows_stage9_pre_enrollment_reset.uninstall", normal_uninstall
+    )
+    monkeypatch.setattr(
+        "deployment.windows_stage9_pre_enrollment_reset.guarded_purge",
+        lambda *_: pytest.fail("MSI state 2 allowed ProgramData purge"),
+    )
+
+    with pytest.raises(ResetError, match=r"registered \(state 2\)"):
+        run(args(tmp_path, msi, manifest, execute=True))
+    assert pd.exists()
+
+
 def test_successful_execute_reaches_clean_target(tmp_path, monkeypatch):
     pf, pd, msi, manifest = runnable(tmp_path, monkeypatch)
     calls = iter([services(pf), {}, {}])
@@ -280,7 +383,8 @@ def test_successful_execute_reaches_clean_target(tmp_path, monkeypatch):
         "deployment.windows_stage9_pre_enrollment_reset._product_code", lambda _: "code"
     )
     monkeypatch.setattr(
-        "deployment.windows_stage9_pre_enrollment_reset.product_registered", lambda _: False
+        "deployment.windows_stage9_pre_enrollment_reset.require_product_unregistered",
+        lambda _: None,
     )
 
     def normal_uninstall(*_):
