@@ -12,7 +12,7 @@ import ctypes
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 import platform
 import shutil
 import subprocess
@@ -157,8 +157,21 @@ def _inside(root: Path, path: Path) -> bool:
     return resolved == resolved_root or resolved_root in resolved.parents
 
 
+def _reject_ntfs_stream_path(path: Path) -> None:
+    """Reject NTFS alternate data stream syntax using Windows path semantics."""
+    windows_path = PureWindowsPath(str(path))
+    for index, part in enumerate(windows_path.parts):
+        if index == 0 and part in {windows_path.drive, windows_path.anchor}:
+            continue
+        if ":" in part:
+            raise ResetError("receipt and uninstall log must not use NTFS streams")
+
+
 def qualify_output_path(receipt: Path) -> tuple[Path, Path]:
     """Resolve output paths and prove neither can affect product-owned trees."""
+    unresolved_log = receipt.with_suffix(".uninstall.log")
+    _reject_ntfs_stream_path(receipt)
+    _reject_ntfs_stream_path(unresolved_log)
     resolved_receipt = receipt.resolve()
     uninstall_log = resolved_receipt.with_suffix(".uninstall.log")
     forbidden_roots = tuple(path.resolve() for path in canonical_paths())

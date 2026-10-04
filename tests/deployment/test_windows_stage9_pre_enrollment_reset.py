@@ -266,6 +266,64 @@ def test_external_receipt_and_derived_log_are_outside_product_roots(tmp_path, mo
         assert pd.resolve() not in output.parents
 
 
+@pytest.mark.parametrize(
+    "receipt",
+    [
+        r"C:\ProgramData\CryptoHunter:reset.json",
+        r"C:\Program Files\CryptoHunter:reset.json",
+        r"C:\evidence\reset.json:stream",
+        r"C:\evidence\reset.json::$DATA",
+        r"C:\evidence:stream\reset.json",
+    ],
+)
+@pytest.mark.parametrize("execute", [False, True])
+def test_ntfs_stream_receipt_fails_before_any_work(tmp_path, monkeypatch, capsys, receipt, execute):
+    _, _, msi, manifest = runnable(tmp_path, monkeypatch)
+    called = []
+    monkeypatch.setattr(
+        "deployment.windows_stage9_pre_enrollment_reset.Path.resolve",
+        lambda self: called.append("resolve") or self,
+    )
+    for name in (
+        "require_host",
+        "_product_code",
+        "uninstall",
+        "guarded_purge",
+        "_write_receipt",
+    ):
+        monkeypatch.setattr(
+            f"deployment.windows_stage9_pre_enrollment_reset.{name}",
+            lambda *_, _name=name, **__: called.append(_name),
+        )
+
+    result = main(
+        [
+            "--installed-msi",
+            str(msi),
+            "--installed-manifest",
+            str(manifest),
+            "--receipt",
+            receipt,
+            *(["--execute"] if execute else []),
+        ]
+    )
+
+    assert result == 1
+    assert called == []
+    assert "PRE_ENROLLMENT_RESET = FAIL (ResetError)" in capsys.readouterr().err
+
+
+def test_normal_windows_receipt_path_is_not_an_ntfs_stream(monkeypatch):
+    monkeypatch.setenv("ProgramFiles", r"D:\Program Files")
+    monkeypatch.setenv("ProgramData", r"D:\ProgramData")
+    monkeypatch.setattr(
+        "deployment.windows_stage9_pre_enrollment_reset.Path.resolve", lambda self: self
+    )
+    receipt, log = qualify_output_path(Path(r"C:\evidence\pre-enrollment-reset.json"))
+    assert receipt == Path(r"C:\evidence\pre-enrollment-reset.json")
+    assert log == Path(r"C:\evidence\pre-enrollment-reset.uninstall.log")
+
+
 @pytest.mark.parametrize("state", [-1, 2, 3, 5, 999])
 def test_product_registration_requires_unknown(monkeypatch, state):
     msi = SimpleNamespace(MsiQueryProductStateW=lambda _: state)
