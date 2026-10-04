@@ -127,11 +127,27 @@ jobs:
           python -m pip install --no-deps -r deploy/packaging/requirements-windows-runtime.lock
           python -m pip install --no-build-isolation --no-deps -e .
           python -m pip check
+      - name: Require operator-published public Production Trust package
+        shell: pwsh
+        env:
+          PRODUCTION_TRUST_ARTIFACT_RUN_ID: ${{ vars.STAGE9_PRODUCTION_TRUST_ARTIFACT_RUN_ID }}
+        run: |
+          if ($env:PRODUCTION_TRUST_ARTIFACT_RUN_ID -notmatch '^[1-9][0-9]*$') {
+            throw "STAGE9_PRODUCTION_TRUST_ARTIFACT_RUN_ID is required; MSI promotion is blocked"
+          }
+      - name: Fetch operator-published public Production Trust package
+        uses: actions/download-artifact@v7
+        with:
+          name: stage9-public-production-trust
+          path: ${{ runner.temp }}/stage9-production-trust
+          run-id: ${{ vars.STAGE9_PRODUCTION_TRUST_ARTIFACT_RUN_ID }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Build and run canonical Stage-9 proof
         timeout-minutes: 30
         run: >-
           python -m deployment.windows_stage9_clean_install
           --version 0.1.0 --receipt dist/windows/windows-clean-install-receipt.json
+          --production-trust-package "${{ runner.temp }}/stage9-production-trust"
       - name: Produce revision-bound Stage-9 evidence
         run: >-
           python -m deployment.platform_evidence windows-clean-install

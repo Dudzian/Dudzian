@@ -440,6 +440,51 @@ def test_staging_verification_failure_has_no_publication_or_residue(tmp_path, mo
     assert not destination.parent.exists()
 
 
+@pytest.mark.parametrize("failure_point", ["creation", "copy"])
+def test_early_staging_failures_leave_no_publication_or_residue(
+    tmp_path, monkeypatch, failure_point
+):
+    from types import SimpleNamespace
+    import deployment.windows_stage9_production_trust as trust
+
+    source = tmp_path / "source"
+    source.mkdir()
+    for number in range(12):
+        (source / f"artifact-{number}.json").write_text("{}\n", encoding="utf-8")
+    monkeypatch.setattr(
+        trust,
+        "load_production_trust",
+        lambda path: SimpleNamespace(ceremony_id=trust.CEREMONY_ID),
+    )
+    destination = tmp_path / "Config" / "ProductionTrust" / trust.CEREMONY_ID
+    if failure_point == "creation":
+        original_mkdir = Path.mkdir
+
+        def fail_staging_mkdir(path, *args, **kwargs):
+            if path.name == trust.CEREMONY_ID and path.parent.name.startswith(
+                ".production-trust-"
+            ):
+                raise OSError("staging creation failed")
+            return original_mkdir(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "mkdir", fail_staging_mkdir)
+    else:
+        original_write_bytes = Path.write_bytes
+
+        def fail_staging_copy(path, data):
+            if any(part.startswith(".production-trust-") for part in path.parts):
+                raise OSError("staging copy failed")
+            return original_write_bytes(path, data)
+
+        monkeypatch.setattr(Path, "write_bytes", fail_staging_copy)
+
+    with pytest.raises(OSError, match=f"staging {failure_point} failed"):
+        trust.install_public_production_trust(source, destination)
+    assert not destination.exists()
+    assert not destination.parent.exists()
+    assert not list(tmp_path.rglob(".production-trust-*"))
+
+
 def test_cleanup_failure_after_rename_is_committed_and_unambiguous(tmp_path, monkeypatch):
     from types import SimpleNamespace
     import deployment.windows_stage9_production_trust as trust

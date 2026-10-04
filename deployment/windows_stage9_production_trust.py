@@ -192,15 +192,21 @@ def install_public_production_trust(
     ):
         raise ProductionTrustUnavailable("PUBLIC_FINAL_PACKAGE_ALLOWLIST_VIOLATION")
     parent_preexisted = destination.parent.exists()
-    report("DESTINATION_PARENT_CREATION")
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    report("STAGING_CREATION")
-    staging_root = Path(
-        tempfile.mkdtemp(prefix=".production-trust-", dir=destination.parent)
+    staging_root: Path | None = None
+    preexisting_staging = (
+        set(destination.parent.glob(".production-trust-*"))
+        if parent_preexisted
+        else set()
     )
-    staging = staging_root / CEREMONY_ID
-    staging.mkdir()
     try:
+        report("DESTINATION_PARENT_CREATION")
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        report("STAGING_CREATION")
+        staging_root = Path(
+            tempfile.mkdtemp(prefix=".production-trust-", dir=destination.parent)
+        )
+        staging = staging_root / CEREMONY_ID
+        staging.mkdir()
         report("STAGING_COPY")
         for name in required:
             raw = (source / name).read_bytes()
@@ -221,7 +227,12 @@ def install_public_production_trust(
         report("ATOMIC_PUBLISH")
         os.rename(staging, destination)
     except Exception:
-        shutil.rmtree(staging_root, ignore_errors=True)
+        if staging_root is not None:
+            shutil.rmtree(staging_root, ignore_errors=True)
+        if destination.parent.is_dir():
+            for residue in destination.parent.glob(".production-trust-*"):
+                if residue not in preexisting_staging:
+                    shutil.rmtree(residue, ignore_errors=True)
         if not parent_preexisted:
             try:
                 destination.parent.rmdir()

@@ -469,6 +469,28 @@ def acceptance_owned_purge(machine: Path) -> None:
         safe_failure_path().unlink(missing_ok=True)
 
 
+def prove_frozen_production_trust(package: Path) -> None:
+    """Run the native frozen lifecycle while the exact MSI is still installed."""
+    if not package.is_dir():
+        raise CleanInstallError("operator public production trust package required")
+    environment = os.environ.copy()
+    environment["CRYPTOHUNTER_STAGE9_FINAL_PACKAGE"] = str(package.resolve())
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-q",
+            "-s",
+            "tests/deployment/test_windows_frozen_production_trust_integration.py",
+        ],
+        env=environment,
+        timeout=300,
+    )
+    if result.returncode != 0:
+        raise CleanInstallError("frozen Production Trust qualification failed")
+
+
 def run(args: argparse.Namespace) -> None:
     if os.name != "nt" or platform.machine().upper() not in {"AMD64", "X86_64"}:
         raise CleanInstallError("native Windows x64 required")
@@ -497,6 +519,7 @@ def run(args: argparse.Namespace) -> None:
     msi = args.output / f"CryptoHunter-{args.version}-windows-x64.msi"
     manifest = args.output / "installer-manifest.json"
     install_code, proofs = _install_and_prove(msi, manifest, args.logs / "install.log")
+    prove_frozen_production_trust(args.production_trust_package)
     uninstall_code = _msiexec(["/x", str(msi)], args.logs / "uninstall.log")
     if (
         any(
@@ -543,6 +566,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--output", type=Path, default=Path("dist/windows"))
     p.add_argument("--logs", type=Path, default=Path("dist/windows/logs"))
     p.add_argument("--receipt", type=Path, required=True)
+    p.add_argument("--production-trust-package", type=Path, required=True)
     args = p.parse_args(argv)
     args.output.mkdir(parents=True, exist_ok=True)
     args.logs.mkdir(parents=True, exist_ok=True)
