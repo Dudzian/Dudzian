@@ -9,7 +9,7 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from types import MappingProxyType
-from typing import Mapping
+from typing import Callable, Mapping
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
@@ -163,12 +163,19 @@ def load_production_trust(path: Path) -> ProductionTrustContext:
     )
 
 
-def install_public_production_trust(source: Path, destination: Path) -> Path:
+def install_public_production_trust(
+    source: Path,
+    destination: Path,
+    report_stage: Callable[[str], None] | None = None,
+) -> Path:
     """Verify, stage, byte-qualify and atomically publish the public package once."""
+    report = report_stage or (lambda stage: None)
     if destination.exists():
         raise ProductionTrustUnavailable("PRODUCTION_TRUST_OVERWRITE_FORBIDDEN")
     if source.is_symlink() or not source.is_dir():
         raise ProductionTrustUnavailable("PUBLIC_FINAL_PACKAGE_DIRECTORY_REQUIRED")
+    # These labels are deliberately stable and contain no caller-controlled data.
+    report("SOURCE_CRYPTOGRAPHIC_VERIFICATION")
     context = load_production_trust(source)
     entries = tuple(source.iterdir())
     if any(item.is_symlink() or not item.is_file() for item in entries):
@@ -185,13 +192,16 @@ def install_public_production_trust(source: Path, destination: Path) -> Path:
     ):
         raise ProductionTrustUnavailable("PUBLIC_FINAL_PACKAGE_ALLOWLIST_VIOLATION")
     parent_preexisted = destination.parent.exists()
+    report("DESTINATION_PARENT_CREATION")
     destination.parent.mkdir(parents=True, exist_ok=True)
+    report("STAGING_CREATION")
     staging_root = Path(
         tempfile.mkdtemp(prefix=".production-trust-", dir=destination.parent)
     )
     staging = staging_root / CEREMONY_ID
     staging.mkdir()
     try:
+        report("STAGING_COPY")
         for name in required:
             raw = (source / name).read_bytes()
             if any(
@@ -202,11 +212,13 @@ def install_public_production_trust(source: Path, destination: Path) -> Path:
             (staging / name).write_bytes(raw)
             if (staging / name).read_bytes() != raw:
                 raise ProductionTrustUnavailable("PRODUCTION_TRUST_COPY_MISMATCH")
+        report("STAGING_VERIFICATION")
         staged = verify_production_trust_for_audit(
             staging, verification_time=datetime.now(timezone.utc)
         )
         if staged.ceremony_id != context.ceremony_id:
             raise ProductionTrustUnavailable("PRODUCTION_TRUST_COPY_MISMATCH")
+        report("ATOMIC_PUBLISH")
         os.rename(staging, destination)
     except Exception:
         shutil.rmtree(staging_root, ignore_errors=True)

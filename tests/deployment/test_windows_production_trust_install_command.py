@@ -56,7 +56,8 @@ def _qualified(monkeypatch: pytest.MonkeyPatch, program_data: Path) -> list[Path
     monkeypatch.setattr(provision, "qualify_dacl", lambda *args: None)
     monkeypatch.setattr(provision, "qualify_production_trust_dacl", lambda path: None)
 
-    def install(source: Path, target: Path) -> Path:
+    def install(source: Path, target: Path, report_stage=None) -> Path:
+        del report_stage
         target.parent.mkdir(parents=True)
         shutil.copytree(source, target)
         return target
@@ -228,11 +229,62 @@ def test_cli_exposes_separate_source_only_command() -> None:
     source = Path(provision.__file__).read_text(encoding="utf-8")
     assert '"install-production-trust"' in source
     assert 'parser.add_argument("--source", type=Path)' in source
-    assert "install_production_trust(args.program_files, args.program_data, args.source)" in source
+    assert "install_production_trust(" in source
     function = source[
         source.index("def install_production_trust(") : source.index("def qualify_dacl(")
     ]
     assert "enroll(" not in function
+
+
+def test_command_reports_allowlisted_failure_stage_without_exception_text(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    program_files, program_data, source = _base(tmp_path)
+    _qualified(monkeypatch, program_data)
+    monkeypatch.setattr(
+        provision,
+        "qualify_dacl",
+        lambda *args: (_ for _ in ()).throw(FileNotFoundError("SECRET-PATH")),
+    )
+    monkeypatch.setattr(provision, "os", SimpleNamespace(name="nt"))
+
+    assert provision.main(
+        [
+            "install-production-trust",
+            "--program-files",
+            str(program_files),
+            "--program-data",
+            str(program_data),
+            "--source",
+            str(source),
+        ]
+    ) == 1
+    error = capsys.readouterr().err
+    assert "stage=PRE_PUBLISH_DACL_QUALIFICATION" in error
+    assert "first_exception=FileNotFoundError" in error
+    assert "SECRET-PATH" not in error
+
+
+def test_command_exposes_all_production_trust_diagnostic_stages() -> None:
+    source = Path(provision.__file__).read_text(encoding="utf-8")
+    expected = {
+        "BASE_OWNERSHIP_QUALIFICATION",
+        "CANONICAL_PATH_QUALIFICATION",
+        "SOURCE_REPARSE_QUALIFICATION",
+        "SOURCE_CRYPTOGRAPHIC_VERIFICATION",
+        "SOURCE_HASH_QUALIFICATION",
+        "PRE_PUBLISH_DACL_QUALIFICATION",
+        "DESTINATION_PARENT_CREATION",
+        "STAGING_CREATION",
+        "STAGING_COPY",
+        "STAGING_VERIFICATION",
+        "ATOMIC_PUBLISH",
+        "INSTALLED_PACKAGE_VERIFICATION",
+        "PRODUCTION_TRUST_DACL_QUALIFICATION",
+        "FINAL_SOURCE_DESTINATION_HASH_COMPARISON",
+    }
+    trust_source = Path("deployment/windows_stage9_production_trust.py").read_text(encoding="utf-8")
+    assert all(stage in source or stage in trust_source for stage in expected)
 
 
 def test_lifecycle_status_remains_pre_enrollment_and_stage10_not_started() -> None:

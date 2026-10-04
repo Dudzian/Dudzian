@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import os
 from pathlib import Path
 import sys
 from types import SimpleNamespace
@@ -10,6 +11,7 @@ import pytest
 from deployment.windows_installer.build import (
     InstallerBuildError,
     ENTRYPOINTS,
+    STAGE9_SCHEMA_NAMES,
     build_executables,
     numpy_openblas_dll,
     qualify_pyinstaller_warnings,
@@ -121,7 +123,10 @@ def test_packaged_smoke_is_read_only_and_fail_closed(
         calls.append((command, kwargs))
         return SimpleNamespace(
             returncode=0,
-            stdout=f"{AI_DEFAULTS_SMOKE_MARKER}\nBUILD_SMOKE = PASS\n",
+            stdout=(
+                f"{AI_DEFAULTS_SMOKE_MARKER}\nBUILD_SMOKE = PASS\n"
+                "STAGE9_SCHEMA_RESOURCES = PASS\n"
+            ),
             stderr="",
         )
 
@@ -253,6 +258,21 @@ def test_builder_smokes_all_four_packaged_executables(
             if argument == "--collect-data"
         ]
         assert collect_data == [AI_DEFAULTS_PACKAGE]
+        add_data = [
+            command[index + 1]
+            for index, argument in enumerate(command)
+            if argument == "--add-data"
+        ]
+        if command[command.index("--name") + 1] == "CryptoHunterProvision":
+            assert len(add_data) == len(STAGE9_SCHEMA_NAMES)
+            assert {
+                Path(value.split(os.pathsep, 1)[0]).name for value in add_data
+            } == set(STAGE9_SCHEMA_NAMES)
+            assert all(
+                value.endswith(f"{os.pathsep}deployment") for value in add_data
+            )
+        else:
+            assert add_data == []
     assert all(environment["PYTHONHASHSEED"] == "0" for environment in pyinstaller_environments)
     assert all(
         environment["SOURCE_DATE_EPOCH"] == "1790962380" for environment in pyinstaller_environments
