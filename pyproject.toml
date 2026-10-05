@@ -178,7 +178,7 @@ license = {text = "Proprietary"}
 authors = [{name = "Zespół Dudzian"}]
 dependencies = [
   "pyarrow>=21.0.0",
-  "protobuf>=4.24,<6",
+  "protobuf>=4.24,<8",
   "grpcio>=1.62,<2",
   "PyYAML>=6.0",
   "cryptography>=50.0.1,<51",
@@ -214,7 +214,7 @@ dev = [
   "pytest-xdist>=3.5",
   "hypothesis>=6,<7",
   "grpcio>=1.62,<2",
-  "protobuf>=4.24,<6",
+  "protobuf>=4.24,<8",
   "PyYAML>=6.0",
   "cryptography>=50.0.1,<51",
   "PyNaCl>=1.5.0,<2",
