@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import re
-
 from packaging.requirements import Requirement
 
 LOCK_PATH = Path("deploy/packaging/requirements-desktop.lock")
@@ -15,16 +13,16 @@ def _iter_requirements(path: Path) -> list[tuple[str, str]]:
 
 
 def _iter_requirements_text(contents: str) -> list[tuple[str, str]]:
-    pattern = re.compile(r"^(?P<name>[A-Za-z0-9_.-]+)==(?P<version>.+)$")
     parsed: list[tuple[str, str]] = []
     for raw_line in contents.splitlines():
         line = raw_line.strip()
         if not line or line.startswith("#"):
             continue
-        match = pattern.match(line)
-        if not match:
+        requirement = Requirement(line)
+        pins = [item.version for item in requirement.specifier if item.operator == "=="]
+        if len(pins) != 1:
             raise AssertionError(f"Niepoprawny format wpisu: '{raw_line}'")
-        parsed.append((match.group("name"), match.group("version")))
+        parsed.append((requirement.name, pins[0]))
     return parsed
 
 

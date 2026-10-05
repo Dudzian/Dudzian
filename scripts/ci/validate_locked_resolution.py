@@ -78,6 +78,7 @@ def build_active_lock_command(python: str, lock: Path, report: Path) -> list[str
         "install",
         "--dry-run",
         "--ignore-installed",
+        "--no-deps",
         "--report",
         str(report),
         "--requirement",

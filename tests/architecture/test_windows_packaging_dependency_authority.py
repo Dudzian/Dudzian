@@ -41,4 +41,4 @@ def test_all_canonical_windows_packaging_authorities_install_runtime_lock() -> N
 
 def test_windows_runtime_lock_is_an_exact_closed_contract() -> None:
     lock = ROOT / "deploy/packaging/requirements-windows-runtime.lock"
-    assert locked_versions(lock) == {"colorama": "0.4.6", "pywin32": "312"}
+    assert locked_versions(lock) == {"pywin32": "312"}
