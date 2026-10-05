@@ -1,0 +1,82 @@
+rules:
+  - id: cryptohunter-http-request-requires-timeout
+    message: Network requests must set an explicit timeout at the call boundary.
+    languages: [python]
+    severity: ERROR
+    patterns:
+      - pattern-either:
+          - pattern: requests.$METHOD(...)
+          - pattern: httpx.$METHOD(...)
+      - metavariable-regex:
+          metavariable: $METHOD
+          regex: "^(get|post|put|patch|delete|head|options|request)$"
+      - pattern-not: requests.$METHOD(..., timeout=$TIMEOUT, ...)
+      - pattern-not: httpx.$METHOD(..., timeout=$TIMEOUT, ...)
+    paths:
+      exclude:
+        - /tests/**
+        - /archive/**
+        - /ccxt/**
+
+  - id: cryptohunter-tls-verification-disabled
+    message: TLS verification must not be disabled in production code.
+    languages: [python]
+    severity: ERROR
+    pattern-either:
+      - pattern: requests.$METHOD(..., verify=False, ...)
+      - pattern: httpx.$METHOD(..., verify=False, ...)
+      - pattern: httpx.Client(..., verify=False, ...)
+      - pattern: httpx.AsyncClient(..., verify=False, ...)
+    paths:
+      exclude:
+        - /tests/**
+        - /archive/**
+        - /ccxt/**
+
+  - id: cryptohunter-subprocess-shell-true
+    message: Avoid shell=True; pass a reviewed argument vector to subprocess.
+    languages: [python]
+    severity: ERROR
+    pattern-either:
+      - pattern: subprocess.run(..., shell=True, ...)
+      - pattern: subprocess.call(..., shell=True, ...)
+      - pattern: subprocess.Popen(..., shell=True, ...)
+    paths:
+      exclude:
+        - /tests/**
+        - /archive/**
+
+  - id: cryptohunter-dynamic-code-execution
+    message: Dynamic eval/exec is forbidden in production paths.
+    languages: [python]
+    severity: ERROR
+    pattern-either:
+      - pattern: eval(...)
+      - pattern: exec(...)
+    paths:
+      exclude:
+        - /tests/**
+        - /archive/**
+        - /ccxt/**
+
+  - id: cryptohunter-signature-exception-fail-open
+    message: Signature or verification exceptions must never return success.
+    languages: [python]
+    severity: ERROR
+    patterns:
+      - pattern: |
+          try:
+            ...
+          except $EXC:
+            ...
+            return True
+      - metavariable-regex:
+          metavariable: $EXC
+          regex: ".*(InvalidSignature|SignatureError|VerificationError).*"
+    paths:
+      include:
+        - /bot_core/security/**
+        - /bot_core/licensing/**
+        - /core/security/**
+        - /core/licensing/**
+        - /deployment/**

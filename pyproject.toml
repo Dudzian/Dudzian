@@ -145,8 +145,15 @@ filterwarnings = [
   "ignore::DeprecationWarning",
 ]
 markers = [
+  "unit: szybkie, hermetyczne testy jednostkowe",
   "timeout: oznaczenie testów z ograniczeniem czasu wykonywania",
   "integration: testy wymagające środowisk demo/sandbox lub zewnętrznych zasobów",
+  "security: testy negatywnych ścieżek i invariantów bezpieczeństwa",
+  "tpm: testy logiki TPM; fizyczny hardware wymaga dodatkowego opt-in",
+  "hardware: testy wymagające fizycznego sprzętu i jawnego opt-in",
+  "destructive: testy mogące zmieniać stan hosta; wyłącznie manual/self-hosted",
+  "qualification: testy kwalifikacyjne release/security",
+  "slow: testy z założenia zbyt wolne dla szybkiej pętli lokalnej",
   "network: testy wymagające dostępu do sieci lub jawnej zgody",
   "requires_trading_stubs: test wymaga wygenerowanych stubów trading_pb2",
   "e2e_demo_paper: scenariusz demo→paper wykonywany lokalnie",
@@ -205,6 +212,7 @@ dev = [
   "pytest-cov>=4.1",
   "pytest-timeout>=2.3",
   "pytest-xdist>=3.5",
+  "hypothesis>=6,<7",
   "grpcio>=1.62,<2",
   "protobuf>=4.24,<6",
   "PyYAML>=6.0",
@@ -239,6 +247,7 @@ test = [
   "pandas>=2.2",
   "joblib>=1.3",
   "pytest-timeout>=2.3",
+  "hypothesis>=6,<7",
   "typing_extensions>=4.7",
   "pywin32>=312; platform_system == 'Windows'",
 ]
@@ -258,6 +267,14 @@ tools = [
   "pandas>=2.2",
   "joblib>=1.3",
   "pyarrow>=12.0",
+]
+quality = [
+  "ruff==0.14.11",
+  "mypy==1.10.0",
+  "pre-commit>=4,<5",
+  "coverage>=7.10,<8",
+  "diff-cover>=9,<10",
+  "pip-audit>=2.9,<3",
 ]
 desktop = [
   "pyinstaller>=6.5",

@@ -11,6 +11,8 @@ repos:
     rev: v1.10.0
     hooks:
       - id: mypy
+        # The repository deliberately scopes mypy via pyproject.toml. Passing every
+        # staged filename would silently widen that contract and break the ratchet.
         pass_filenames: false
         args: ["--config-file=pyproject.toml"]
         additional_dependencies:
@@ -19,3 +21,11 @@ repos:
           - grpcio>=1.62
           - protobuf>=4.24
           - packaging
+  - repo: local
+    hooks:
+      - id: betterleaks-staged
+        name: Betterleaks (changed files, offline)
+        entry: python scripts/quality/betterleaks_hook.py
+        language: system
+        pass_filenames: true
+        exclude: '^(archive|ccxt|build|dist|\.cache|\.venv[^/]*)/'

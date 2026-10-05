@@ -288,6 +288,10 @@ class RiskManagement:
             with capture_pandas_warnings(self.logger, component="risk.position_sizing"):
                 signal_strength = float(signal_data.get("strength", 0.5))
                 signal_confidence = float(signal_data.get("confidence", 0.5))
+                if not math.isfinite(signal_strength) or not math.isfinite(signal_confidence):
+                    raise ValueError("signal strength and confidence must be finite")
+                if not 0.0 <= signal_strength <= 1.0 or not 0.0 <= signal_confidence <= 1.0:
+                    raise ValueError("signal strength and confidence must be between 0 and 1")
 
                 returns = (
                     market_data["close"].pct_change().dropna()
@@ -325,6 +329,20 @@ class RiskManagement:
                 final_size = combined_size * float(correlation_adjustment)
 
                 max_allowed = float(self._calculate_max_position_size(current_portfolio))
+                if not all(
+                    math.isfinite(value)
+                    for value in (
+                        kelly_size,
+                        vol_adjusted_size,
+                        risk_parity_size,
+                        heat_adjusted_size,
+                        correlation_adjustment,
+                        combined_size,
+                        final_size,
+                        max_allowed,
+                    )
+                ):
+                    raise ValueError("position sizing produced a non-finite value")
                 recommended_size = float(max(0.0, min(final_size, max_allowed)))
 
                 if recommended_size == 0.0:
@@ -377,10 +395,10 @@ class RiskManagement:
                 context={"symbol": symbol},
             )
             return PositionSizing(
-                recommended_size=0.01,
-                max_allowed_size=0.02,
-                kelly_size=0.01,
-                risk_adjusted_size=0.01,
+                recommended_size=0.0,
+                max_allowed_size=0.0,
+                kelly_size=0.0,
+                risk_adjusted_size=0.0,
                 confidence_level=0.1,
                 reasoning=f"Error in calculation: {exc}",
             )
@@ -443,8 +461,8 @@ class RiskManagement:
     ) -> tuple[bool, str]:
         try:
             size = float(position.get("size", 0.0))
-            if size <= 0:
-                return False, "Position size must be positive"
+            if not math.isfinite(size) or size <= 0:
+                return False, "Position size must be positive and finite"
 
             symbol = str(position.get("symbol", ""))
             sector = str(position.get("sector", ""))
@@ -452,7 +470,10 @@ class RiskManagement:
             if size > self.max_risk_per_trade:
                 return False, "Exceeds max risk per trade"
 
-            total_portfolio_risk = float(self._calculate_portfolio_heat(current_portfolio)) + size
+            portfolio_heat = float(self._calculate_portfolio_heat(current_portfolio))
+            if not math.isfinite(portfolio_heat):
+                return False, "Portfolio risk must be finite"
+            total_portfolio_risk = portfolio_heat + size
             if total_portfolio_risk > self.max_portfolio_risk:
                 return False, "Portfolio risk limit reached"
 
@@ -462,6 +483,8 @@ class RiskManagement:
                     for pos in current_portfolio.values()
                     if pos.get("sector") == sector
                 )
+                if not math.isfinite(sector_exposure):
+                    return False, "Sector exposure must be finite"
                 if sector_exposure + size > self.max_sector_concentration:
                     return False, "Sector concentration limit"
 

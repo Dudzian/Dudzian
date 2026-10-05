@@ -1,0 +1,181 @@
+name: Quality and Security
+
+on:
+  pull_request:
+    branches: ["**"]
+  push:
+    branches: [main]
+  schedule:
+    - cron: "20 2 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.11"
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  quality-ratchet:
+    name: Quality ratchet
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - name: Install test and quality tools
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[test]" "ruff==0.14.11" "mypy==1.10.0" "diff-cover>=9,<10"
+      - name: Ruff baseline gate
+        run: python -m ruff check bot_core core scripts tests deploy stage6_samples ui
+      - name: Mypy configured scope
+        run: python -m mypy
+      - name: Property and critical pure-logic tests with branch coverage
+        env:
+          HYPOTHESIS_PROFILE: ci
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+          DUDZIAN_TEST_MODE: "1"
+          DUDZIAN_ALLOW_LONG_POLL: "0"
+        run: >-
+          python -m pytest -p asyncio -p pytest_cov
+          tests/property
+          tests/test_risk_portfolio_management.py
+          tests/deployment/test_windows_tpm_substrate_probe.py
+          --cov=bot_core.risk.portfolio
+          --cov=bot_core.licensing.canonical
+          --cov=bot_core.security.license
+          --cov=deployment.windows_tpm_substrate_probe
+          --cov-config=.coveragerc
+          --cov-report=term-missing
+          --cov-report=xml:coverage.xml
+          -q
+      - name: Changed-code coverage ratchet
+        if: github.event_name == 'pull_request'
+        run: diff-cover coverage.xml --compare-branch "origin/${{ github.base_ref }}" --fail-under=70
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: quality-ratchet-coverage
+          path: coverage.xml
+          if-no-files-found: error
+          retention-days: 7
+
+  security-static:
+    name: Semgrep and working-tree secrets
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - name: Install Semgrep CE
+        run: python -m pip install "semgrep==1.179.0"
+      - name: Semgrep maintained community baseline (advisory)
+        continue-on-error: true
+        run: >-
+          semgrep scan
+          --config p/python
+          --config p/security-audit
+          --metrics=off
+          --disable-version-check
+          --json
+          --output semgrep-community.json
+          --exclude tests
+          --exclude archive
+          --exclude ccxt
+          bot_core core deployment scripts
+      - name: Semgrep CryptoHunter blocking rules
+        run: >-
+          semgrep scan
+          --config .semgrep/cryptohunter.yml
+          --metrics=off
+          --disable-version-check
+          --error
+          bot_core core deployment scripts
+      - name: Install verified Betterleaks stable
+        shell: bash
+        run: |
+          asset=betterleaks_1.9.0_linux_x64.tar.gz
+          curl --fail --location --silent --show-error \
+            --output "$asset" \
+            https://github.com/betterleaks/betterleaks/releases/download/v1.9.0/betterleaks_1.9.0_linux_x64.tar.gz
+          curl --fail --location --silent --show-error \
+            --output checksums.txt \
+            https://github.com/betterleaks/betterleaks/releases/download/v1.9.0/checksums.txt
+          grep 'betterleaks_1.9.0_linux_x64.tar.gz$' checksums.txt > expected.sha256
+          sha256sum --check expected.sha256
+          tar -xzf "$asset" betterleaks
+          chmod +x betterleaks
+          ./betterleaks version
+      - name: Betterleaks working tree (offline, blocking)
+        run: >-
+          ./betterleaks dir
+          --baseline-path .betterleaks-baseline.json
+          --redact=100
+          --no-banner
+          --no-color
+          --report-format json
+          --report-path betterleaks-working-tree.json
+          .
+      - name: Upload security reports
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: quality-security-reports
+          path: |
+            semgrep-community.json
+            betterleaks-working-tree.json
+          if-no-files-found: warn
+          retention-days: 7
+
+  history-secrets:
+    name: Full Git history secrets (advisory baseline)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Install verified Betterleaks stable
+        shell: bash
+        run: |
+          asset=betterleaks_1.9.0_linux_x64.tar.gz
+          curl --fail --location --silent --show-error \
+            --output "$asset" \
+            https://github.com/betterleaks/betterleaks/releases/download/v1.9.0/betterleaks_1.9.0_linux_x64.tar.gz
+          curl --fail --location --silent --show-error \
+            --output checksums.txt \
+            https://github.com/betterleaks/betterleaks/releases/download/v1.9.0/checksums.txt
+          grep 'betterleaks_1.9.0_linux_x64.tar.gz$' checksums.txt | sha256sum --check
+          tar -xzf "$asset" betterleaks
+          chmod +x betterleaks
+      - name: Scan complete history without credential validation
+        run: >-
+          ./betterleaks git
+          --redact=100
+          --no-banner
+          --no-color
+          --report-format json
+          --report-path betterleaks-history.json
+          --log-opts=--all
+          .
+      - name: Upload redacted history report
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: betterleaks-history
+          path: betterleaks-history.json
+          if-no-files-found: warn
+          retention-days: 7

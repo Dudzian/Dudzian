@@ -1,4 +1,6 @@
 [run]
+branch = True
+relative_files = True
 omit =
     tests/*
     KryptoLowca/*
@@ -11,6 +13,7 @@ omit =
     bot_core/strategies/statistical_arbitrage.py
 
 [report]
+show_missing = True
 exclude_lines =
     pragma: no cover
     if __name__ == "__main__":

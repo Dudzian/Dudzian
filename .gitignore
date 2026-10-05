@@ -31,6 +31,9 @@ tmp/
 # Local developer environment
 .python-version
 .venv311/
+.venv-quality/
+.hypothesis/
+.semgrep-cache/
 bot_core/logs/
 
 # Runtime/test generated artifacts
