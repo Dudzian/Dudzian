@@ -175,12 +175,30 @@ def _verify_ed25519_with_openssl(
 
 
 def _verify_ed25519_block(
-    content: bytes, signature: Mapping[str, Any], key: bytes | None
+    content: bytes,
+    signature: Mapping[str, Any],
+    key: bytes | None,
+    *,
+    expected_key_id: str | None = None,
+    expected_issuer: str | None = None,
+    expected_environment: str | None = None,
 ) -> list[str]:
     if not signature:
         return []
     if key is None:
         return ["Brak klucza publicznego Ed25519 do weryfikacji katalogu Marketplace."]
+    if expected_key_id is not None and signature.get("key_id") != expected_key_id:
+        return ["Podpis katalogu używa nieznanego lub niedozwolonego key_id."]
+    if expected_issuer is not None and signature.get("issuer") != expected_issuer:
+        return ["Issuer podpisu katalogu nie jest zaufany."]
+    if expected_environment is not None:
+        artifact_environment = signature.get("environment")
+        legacy_test_signature = artifact_environment in (None, "") and expected_environment in {
+            "development",
+            "test",
+        }
+        if artifact_environment != expected_environment and not legacy_test_signature:
+            return ["Domena zaufania podpisu katalogu nie odpowiada środowisku buildu."]
     value = signature.get("value")
     if not isinstance(value, str):
         return ["Podpis Ed25519 katalogu nie zawiera wartości 'value'."]
@@ -191,6 +209,19 @@ def _verify_ed25519_block(
     algorithm = str(signature.get("algorithm") or "").lower() or "ed25519"
     if algorithm != "ed25519":
         return [f"Nieobsługiwany algorytm podpisu katalogu: {algorithm}"]
+    embedded = signature.get("public_key")
+    if embedded not in (None, "") and ed25519 is not None and serialization is not None:
+        try:
+            embedded_key = _load_ed25519_public_key(str(embedded).encode("utf-8"))
+            trusted_key = _load_ed25519_public_key(key)
+            if embedded_key.public_bytes(
+                serialization.Encoding.Raw, serialization.PublicFormat.Raw
+            ) != trusted_key.public_bytes(
+                serialization.Encoding.Raw, serialization.PublicFormat.Raw
+            ):
+                return ["Osadzony public_key katalogu nie odpowiada zaufanemu trust anchorowi."]
+        except (ValueError, TypeError):
+            return ["Osadzony public_key katalogu jest niepoprawny."]
 
     if ed25519 is not None and serialization is not None:
         try:
@@ -222,6 +253,9 @@ def verify_catalog_signature(
     hmac_key: bytes | None,
     ed25519_key: bytes | None,
     target_path: Path | None = None,
+    expected_ed25519_key_id: str | None = None,
+    expected_issuer: str | None = None,
+    expected_environment: str | None = None,
 ) -> list[str]:
     """Waliduje podpis katalogu Marketplace.
 
@@ -248,7 +282,14 @@ def verify_catalog_signature(
                 errors.append("Nie udało się zinterpretować pola 'target' w podpisie katalogu.")
 
     hmac_errors = _verify_hmac_block(content, signature.get("hmac") or {}, hmac_key)
-    ed_errors = _verify_ed25519_block(content, signature.get("ed25519") or {}, ed25519_key)
+    ed_errors = _verify_ed25519_block(
+        content,
+        signature.get("ed25519") or {},
+        ed25519_key,
+        expected_key_id=expected_ed25519_key_id,
+        expected_issuer=expected_issuer,
+        expected_environment=expected_environment,
+    )
 
     if not signature.get("hmac") and not signature.get("ed25519"):
         errors.append("Podpis katalogu nie zawiera sekcji HMAC ani Ed25519.")
@@ -263,6 +304,9 @@ def verify_catalog_signature_file(
     *,
     hmac_key: bytes | None,
     ed25519_key: bytes | None,
+    expected_ed25519_key_id: str | None = None,
+    expected_issuer: str | None = None,
+    expected_environment: str | None = None,
 ) -> list[str]:
     """Waliduje podpis dla wskazanego pliku katalogu (JSON/Markdown)."""
 
@@ -277,6 +321,9 @@ def verify_catalog_signature_file(
         hmac_key=hmac_key,
         ed25519_key=ed25519_key,
         target_path=path,
+        expected_ed25519_key_id=expected_ed25519_key_id,
+        expected_issuer=expected_issuer,
+        expected_environment=expected_environment,
     )
 
 

@@ -23,6 +23,7 @@ def test_installer_validates_signature_and_fingerprint(tmp_path: Path) -> None:
     repository = PresetRepository(tmp_path / "presets")
     installer = MarketplacePresetInstaller(
         repository,
+        signing_keys={"demo-publisher": (MARKETPLACE_DIR / "keys/demo-publisher.pub").read_bytes()},
         catalog_path=MARKETPLACE_DIR,
         licenses_dir=LICENSES_DIR,
         hwid_provider=HwIdProvider(fingerprint_reader=lambda: "OEM-TEST-12345"),
@@ -42,6 +43,7 @@ def test_installer_reports_missing_license(tmp_path: Path) -> None:
     repository = PresetRepository(tmp_path / "presets")
     installer = MarketplacePresetInstaller(
         repository,
+        signing_keys={"demo-publisher": (MARKETPLACE_DIR / "keys/demo-publisher.pub").read_bytes()},
         catalog_path=MARKETPLACE_DIR,
         licenses_dir=tmp_path / "licenses",  # brak licencji
         hwid_provider=HwIdProvider(fingerprint_reader=lambda: "OEM-TEST-00001"),

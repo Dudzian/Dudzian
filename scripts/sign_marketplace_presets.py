@@ -7,12 +7,17 @@ import argparse
 import base64
 import hashlib
 import hmac
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path = [entry for entry in sys.path if Path(entry or ".").resolve() != REPO_ROOT / "scripts"]
+sys.path.insert(0, str(REPO_ROOT))
 
 from bot_core.marketplace.signing_key_policy import (
     resolve_hmac_signing_key,
@@ -49,6 +54,7 @@ def _signature_payload(
     ed25519_key: ed25519.Ed25519PrivateKey,
     ed25519_key_id: str,
     issuer: str | None,
+    environment: str,
 ) -> dict:
     timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     sha256 = hashlib.sha256(content).hexdigest()
@@ -67,6 +73,7 @@ def _signature_payload(
             "algorithm": "ed25519",
             "key_id": ed25519_key_id,
             "issuer": issuer,
+            "environment": "development" if environment == "dev" else environment,
             "signed_at": timestamp,
             "value": base64.b64encode(ed_signature).decode("ascii"),
             "public_key": base64.b64encode(ed_public).decode("ascii"),
@@ -88,6 +95,7 @@ def sign_presets(
     ed25519_key: ed25519.Ed25519PrivateKey,
     ed25519_key_id: str,
     issuer: str | None,
+    environment: str,
 ) -> int:
     signed = 0
     for root in roots:
@@ -100,6 +108,7 @@ def sign_presets(
                 ed25519_key=ed25519_key,
                 ed25519_key_id=ed25519_key_id,
                 issuer=issuer,
+                environment=environment,
             )
             path.with_suffix(path.suffix + ".sig").write_text(_serialize(payload), encoding="utf-8")
             signed += 1
@@ -112,6 +121,7 @@ def sign_presets(
                 ed25519_key=ed25519_key,
                 ed25519_key_id=ed25519_key_id,
                 issuer=issuer,
+                environment=environment,
             )
             path.with_suffix(path.suffix + ".sig").write_text(_serialize(payload), encoding="utf-8")
             signed += 1
@@ -179,6 +189,7 @@ def main(argv: list[str] | None = None) -> int:
         ed25519_key=ed_key,
         ed25519_key_id=ed25519_key_id,
         issuer=issuer,
+        environment=args.environment,
     )
     print(f"Podpisano {count} plików presetów")
     return 0

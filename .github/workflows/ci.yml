@@ -2088,7 +2088,12 @@ jobs:
             --catalog config/marketplace/catalog.json \
             --markdown config/marketplace/catalog.md \
             --packages config/marketplace/packages \
-            --minimum-qa-strategies 15
+            --minimum-qa-strategies 15 \
+            --environment test \
+            --catalog-hmac-key config/marketplace/keys/dev-hmac.key \
+            --catalog-ed25519-key config/marketplace/keys/dev-presets-ed25519.pub \
+            --catalog-ed25519-key-id dev-presets-ed25519 \
+            --trusted-issuer marketplace-ci
 
       - name: Ensure repository is clean
         shell: bash
@@ -2309,23 +2314,49 @@ jobs:
 
       - name: Build signed marketplace catalog
         shell: bash
+        env:
+          MARKETPLACE_SIGNING_KEY: ${{ secrets.MARKETPLACE_PRODUCTION_ED25519_PRIVATE_KEY }}
+          MARKETPLACE_HMAC_KEY: ${{ secrets.MARKETPLACE_PRODUCTION_HMAC_KEY }}
+          MARKETPLACE_KEY_ID: ${{ vars.MARKETPLACE_PRODUCTION_KEY_ID }}
+          MARKETPLACE_ISSUER: ${{ vars.MARKETPLACE_PRODUCTION_ISSUER }}
         run: |
+          : "${MARKETPLACE_SIGNING_KEY:?production Marketplace signing secret is required}"
+          : "${MARKETPLACE_HMAC_KEY:?production Marketplace HMAC secret is required}"
+          : "${MARKETPLACE_KEY_ID:?production Marketplace key id is required}"
+          : "${MARKETPLACE_ISSUER:?production Marketplace issuer is required}"
+          umask 077
+          printf '%s' "$MARKETPLACE_SIGNING_KEY" > "$RUNNER_TEMP/marketplace-production.key"
+          printf '%s' "$MARKETPLACE_HMAC_KEY" > "$RUNNER_TEMP/marketplace-production-hmac.key"
           python scripts/build_marketplace_catalog.py \
-            --environment test \
-            --private-key config/marketplace/keys/dev-presets-ed25519.key \
-            --key-id dev-presets-ed25519 \
-            --issuer marketplace-ci \
-            --signing-key dev-hmac:config/marketplace/keys/dev-hmac.key \
-            --catalog-signature-key dev-hmac
+            --environment production \
+            --private-key "$RUNNER_TEMP/marketplace-production.key" \
+            --key-id "$MARKETPLACE_KEY_ID" \
+            --issuer "$MARKETPLACE_ISSUER" \
+            --signing-key "$MARKETPLACE_KEY_ID:$RUNNER_TEMP/marketplace-production-hmac.key" \
+            --catalog-signature-key "$MARKETPLACE_KEY_ID"
 
       - name: Synchronize installer marketplace bundle
         shell: bash
+        env:
+          MARKETPLACE_PUBLIC_KEY: ${{ secrets.MARKETPLACE_PRODUCTION_ED25519_PUBLIC_KEY }}
+          MARKETPLACE_HMAC_KEY: ${{ secrets.MARKETPLACE_PRODUCTION_HMAC_KEY }}
+          MARKETPLACE_KEY_ID: ${{ vars.MARKETPLACE_PRODUCTION_KEY_ID }}
+          MARKETPLACE_ISSUER: ${{ vars.MARKETPLACE_PRODUCTION_ISSUER }}
         run: |
+          : "${MARKETPLACE_PUBLIC_KEY:?production Marketplace public trust anchor is required}"
+          : "${MARKETPLACE_HMAC_KEY:?production Marketplace HMAC secret is required}"
+          printf '%s' "$MARKETPLACE_PUBLIC_KEY" > "$RUNNER_TEMP/marketplace-production.pub"
+          printf '%s' "$MARKETPLACE_HMAC_KEY" > "$RUNNER_TEMP/marketplace-production-hmac.key"
           python scripts/build_release_bundle.py \
             --catalog config/marketplace/catalog.json \
             --markdown config/marketplace/catalog.md \
             --packages config/marketplace/packages \
-            --installer-root deploy/packaging/samples
+            --installer-root deploy/packaging/samples \
+            --environment production \
+            --catalog-hmac-key "$RUNNER_TEMP/marketplace-production-hmac.key" \
+            --catalog-ed25519-key "$RUNNER_TEMP/marketplace-production.pub" \
+            --catalog-ed25519-key-id "$MARKETPLACE_KEY_ID" \
+            --trusted-issuer "$MARKETPLACE_ISSUER"
 
       - name: Publish catalog release artefacts
         uses: actions/upload-artifact@v7

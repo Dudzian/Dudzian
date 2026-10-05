@@ -20,6 +20,12 @@ def test_committed_exchange_presets_are_signed_and_current() -> None:
         exchanges_dir=_EXCHANGES_DIR,
         output_dir=_PRESETS_DIR,
         version_strategy="spec-hash",
+        signing_keys={
+            "dev-presets": (
+                Path(__file__).resolve().parents[2]
+                / "config/marketplace/keys/dev-presets-ed25519.pub"
+            ).read_bytes()
+        },
     )
 
     assert results, "Oczekiwano co najmniej jednego presetu giełdowego w repozytorium."

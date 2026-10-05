@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import string
 
+from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
 
 from bot_core.marketplace import (
@@ -12,6 +13,15 @@ from bot_core.marketplace import (
     validate_exchange_presets,
 )
 from bot_core.marketplace.presets import parse_preset_document
+
+
+def _trusted(key_id: str, private_key: ed25519.Ed25519PrivateKey) -> dict[str, bytes]:
+    return {
+        key_id: private_key.public_key().public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw,
+        )
+    }
 
 
 def test_generate_exchange_presets_creates_signed_files(tmp_path: Path) -> None:
@@ -49,7 +59,11 @@ live:
     output_files = list(output_dir.glob("*.json"))
     assert output_files
     payload = json.loads(output_files[0].read_text(encoding="utf-8"))
-    parsed = parse_preset_document(json.dumps(payload).encode("utf-8"), source=output_files[0])
+    parsed = parse_preset_document(
+        json.dumps(payload).encode("utf-8"),
+        source=output_files[0],
+        signing_keys=_trusted("generator", private_key),
+    )
 
     assert parsed.verification.verified is True
     assert parsed.preset_id.startswith("exchange_")
@@ -98,6 +112,7 @@ paper:
         exchanges_dir=exchanges_dir,
         output_dir=output_dir,
         version="1.0.0",
+        signing_keys=_trusted("validator", private_key),
     )
     assert len(results) == 1
     current = results[0]
@@ -122,6 +137,7 @@ paper:
         exchanges_dir=exchanges_dir,
         output_dir=output_dir,
         version="1.0.0",
+        signing_keys=_trusted("validator", private_key),
     )
     assert len(results) == 1
     stale = results[0]
@@ -140,6 +156,7 @@ paper:
         exchanges_dir=exchanges_dir,
         output_dir=output_dir,
         version="1.0.0",
+        signing_keys=_trusted("validator", private_key),
     )
     assert len(results) == 2
     orphan = next(result for result in results if result.preset_path == orphan_path)
@@ -253,6 +270,10 @@ paper:
         issuer="tests",
         version="3.1.4",
         remove_orphans=True,
+        signing_keys={
+            **_trusted("initial", private_key),
+            **_trusted("reconcile", private_key),
+        },
     )
 
     assert all(result.issues == tuple() for result in results)
@@ -307,6 +328,7 @@ paper:
         exchanges_dir=exchanges_dir,
         output_dir=output_dir,
         selected_exchanges=["binance"],
+        signing_keys=_trusted("selection", private_key),
     )
 
     assert len(results) == 1
@@ -360,6 +382,10 @@ paper:
         issuer="tests",
         selected_exchanges=["binance"],
         remove_orphans=True,
+        signing_keys={
+            **_trusted("initial", private_key),
+            **_trusted("repair", private_key),
+        },
     )
 
     assert len(results) == 1
@@ -417,6 +443,7 @@ live:
         exchanges_dir=exchanges_dir,
         output_dir=output_dir,
         version_strategy="spec-hash",
+        signing_keys=_trusted("hashing", private_key),
     )
 
     assert len(results) == 1
@@ -442,6 +469,7 @@ live:
         exchanges_dir=exchanges_dir,
         output_dir=output_dir,
         version_strategy="spec-hash",
+        signing_keys=_trusted("hashing", private_key),
     )
 
     assert len(stale_results) == 1
@@ -457,6 +485,7 @@ live:
         issuer="tests",
         version="2.5.0",
         version_strategy="spec-hash",
+        signing_keys=_trusted("hashing", private_key),
     )
 
     assert len(repaired_results) == 1

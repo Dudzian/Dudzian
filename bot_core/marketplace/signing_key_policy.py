@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import subprocess
 from pathlib import Path
 
@@ -11,10 +13,24 @@ DEV_FIXTURE_RELATIVE_PATH = Path("config/marketplace/keys/dev-presets-ed25519.ke
 DEV_HMAC_FIXTURE_RELATIVE_PATH = Path("config/marketplace/keys/dev-hmac.key")
 RESERVED_DEV_SIGNING_IDENTITIES = frozenset({"dev-hmac", "dev-presets", "dev-presets-ed25519"})
 RESERVED_DEV_SIGNING_ISSUERS = frozenset({"marketplace-ci"})
+KNOWN_DEV_PUBLIC_KEY_SHA256 = frozenset(
+    {"c9950e9d553fcff4306531184569aaafacc9ed73b5c8592fee1e820c0f2ad6c6"}
+)
 
 
 class SigningKeyPolicyError(ValueError):
     """Raised when a signing key crosses the DEV/TEST/PRODUCTION trust boundary."""
+
+
+def is_known_dev_public_key(material: bytes) -> bool:
+    """Identify the committed DEV fixture by material, not by its filename or ID."""
+
+    stripped = bytes(material).strip()
+    try:
+        decoded = base64.b64decode(stripped, validate=True)
+    except ValueError:
+        decoded = stripped
+    return hashlib.sha256(decoded).hexdigest() in KNOWN_DEV_PUBLIC_KEY_SHA256
 
 
 def validate_signing_identity(key_id: str | None, *, environment: str, option_name: str) -> str:
@@ -157,10 +173,12 @@ __all__ = [
     "DEV_HMAC_FIXTURE_RELATIVE_PATH",
     "DEV_TEST_ENVIRONMENTS",
     "PRODUCTION_ENVIRONMENT",
+    "KNOWN_DEV_PUBLIC_KEY_SHA256",
     "RESERVED_DEV_SIGNING_IDENTITIES",
     "RESERVED_DEV_SIGNING_ISSUERS",
     "SigningKeyPolicyError",
     "repository_root",
+    "is_known_dev_public_key",
     "resolve_hmac_signing_key",
     "resolve_signing_secret",
     "resolve_signing_private_key",

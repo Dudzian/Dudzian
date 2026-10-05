@@ -369,7 +369,11 @@ def generate_exchange_presets(
     )
     documents: list[PresetDocument] = []
     base_version = version or "1.0.0"
-    service = MarketplaceService()
+    public_key = resolved_key.public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    service = MarketplaceService(signing_keys={key_id: public_key})
 
     for spec in specs:
         preset_version = _resolve_preset_version(

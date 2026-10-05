@@ -35,6 +35,7 @@ from .signatures import (
 )
 from .signed import MarketplaceSyncResult, SignedPresetMarketplace
 from .service import MarketplaceService
+from .trust import MarketplaceTrustPolicy, TrustedMarketplaceKey
 
 __all__ = [
     "MarketplaceIndex",
@@ -65,4 +66,6 @@ __all__ = [
     "build_marketplace_preset",
     "SignedPresetMarketplace",
     "MarketplaceSyncResult",
+    "MarketplaceTrustPolicy",
+    "TrustedMarketplaceKey",
 ]

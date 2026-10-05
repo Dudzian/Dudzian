@@ -39,6 +39,7 @@ class SignatureDocumentModel(BaseModel):
     public_key: str | None = None
     signed_at: str | None = None
     issuer: str | None = None
+    environment: str | None = None
 
     model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
@@ -99,6 +100,7 @@ class PresetSignature:
     public_key: str | None = None
     signed_at: str | None = None
     issuer: str | None = None
+    environment: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         document: dict[str, Any] = {
@@ -113,6 +115,8 @@ class PresetSignature:
             document["signed_at"] = self.signed_at
         if self.issuer:
             document["issuer"] = self.issuer
+        if self.environment:
+            document["environment"] = self.environment
         return document
 
 
