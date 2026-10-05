@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "main": "dist/main/main.js",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "dev": "concurrently --kill-others-on-fail \"npm:dev:main\" \"npm:dev:renderer\"",
     "dev:main": "ts-node --project tsconfig.json -r tsconfig-paths/register src/main/main.ts",
