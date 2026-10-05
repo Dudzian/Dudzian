@@ -14,13 +14,13 @@ jobs:
   core-linux:
     runs-on: ubuntu-latest
     steps: &core_steps
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with: {python-version: "3.11"}
       - run: python -m pip install -e ".[test]"
       - name: Execute complete canonical cross-platform core plan
         run: python -m deployment.core_test_plan --runner-os "${{ runner.os }}" --output "core-${{ runner.os }}.json"
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: core-evidence-${{ runner.os }}
           path: core-${{ runner.os }}.json
@@ -36,8 +36,8 @@ jobs:
   windows-deployment-contract:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with: {python-version: "3.11"}
       - run: python -m pip install pytest pyyaml
       - run: python -m pytest -q tests/deployment/test_platform_readiness.py tests/deployment/test_platform_evidence.py
@@ -54,8 +54,8 @@ jobs:
     runs-on: windows-latest
     needs: windows-deployment-contract
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with: {python-version: "3.11"}
       - run: python -m pip install -e ".[test]" pywin32
       - name: Prove Windows PowerShell parser and path qualification runtime
@@ -102,7 +102,7 @@ jobs:
           python -m deployment.windows_acceptance --mode github
           --core-output windows-acceptance-core.json
           --evidence-output windows-scm-evidence.json
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: windows-scm-evidence
           path: windows-scm-evidence.json
@@ -111,10 +111,10 @@ jobs:
     runs-on: windows-latest
     needs: [windows-deployment-contract, windows-deployment-integration]
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with: {python-version: "3.11.9", architecture: "x64"}
-      - uses: actions/setup-dotnet@v5
+      - uses: actions/setup-dotnet@v6
         with: {dotnet-version: "10.0.x"}
       - name: Install exact WiX production compiler
         shell: pwsh
@@ -136,7 +136,7 @@ jobs:
             throw "STAGE9_PRODUCTION_TRUST_ARTIFACT_RUN_ID is required; MSI promotion is blocked"
           }
       - name: Fetch operator-published public Production Trust package
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: stage9-public-production-trust
           # The operator archive must contain the 12 JSON files directly at its
@@ -161,7 +161,7 @@ jobs:
           --output dist/windows/windows-clean-install-evidence.json
       - name: Preserve Stage-9 MSI diagnostics
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: windows-clean-install-diagnostics
           if-no-files-found: ignore
@@ -171,7 +171,7 @@ jobs:
             dist/windows/installer-manifest.json
             dist/windows/logs/*.log
             dist/windows/logs/*.json
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: windows-clean-install-evidence
           path: |
@@ -180,7 +180,7 @@ jobs:
             dist/windows/windows-clean-install-evidence.json
             dist/windows/logs/*.log
       - name: Promote exactly the qualified Stage-9 MSI
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: windows-stage9-qualified-msi
           if-no-files-found: error
@@ -195,10 +195,10 @@ jobs:
     runs-on: [self-hosted, Windows, X64, cryptohunter-stage10]
     needs: [windows-deployment-integration, windows-clean-install-integration]
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with: {python-version: "3.11", architecture: "x64"}
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
           name: windows-clean-install-evidence
           path: stage10-qualified
@@ -209,7 +209,7 @@ jobs:
           -State stage10-continuity.json
           -QualifiedManifest stage10-qualified/installer-manifest.json
           -CleanInstallReceipt stage10-qualified/windows-clean-install-receipt.json
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: stage10-continuity
           path: stage10-continuity.json
@@ -231,10 +231,10 @@ jobs:
     runs-on: [self-hosted, Windows, X64, cryptohunter-stage10]
     timeout-minutes: 1800
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with: {python-version: "3.11", architecture: "x64"}
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with: {name: stage10-continuity, path: stage10}
       - name: Qualify reboot and the 24-hour lifecycle
         shell: pwsh
@@ -254,7 +254,7 @@ jobs:
           --output stage10/windows-stage10-evidence.json
       - name: Preserve Stage-10 lifecycle diagnostics
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: windows-stage10-lifecycle-evidence
           if-no-files-found: ignore
@@ -268,8 +268,8 @@ jobs:
     if: github.event_name == 'pull_request' || inputs.run_stage10 == true
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with: {python-version: "3.11"}
       - name: Enforce recorded Linux integration evidence
         run: python -m deployment.platform_readiness --platform LINUX
@@ -278,8 +278,8 @@ jobs:
     if: github.event_name == 'pull_request' || inputs.run_stage10 == true
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with: {python-version: "3.11"}
       - name: Enforce recorded macOS integration evidence
         run: python -m deployment.platform_readiness --platform MACOS
@@ -298,23 +298,23 @@ jobs:
       - windows-stage10-reboot-barrier
       - windows-stage10-qualify-after-reboot
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with: {python-version: "3.11"}
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
           pattern: core-evidence-*
           path: evidence
           merge-multiple: true
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
           name: windows-clean-install-evidence
           path: evidence
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
           name: windows-scm-evidence
           path: evidence
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         if: github.event_name == 'workflow_dispatch' && inputs.run_stage10 == true
         with:
           name: windows-stage10-lifecycle-evidence

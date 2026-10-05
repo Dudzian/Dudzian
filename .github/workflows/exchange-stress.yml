@@ -19,10 +19,10 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: "3.11"
 
@@ -185,7 +185,7 @@ jobs:
 
       - name: Upload exchange stress artifact
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: exchange-stress-report
           path: logs/loadtests/exchange_stress.json

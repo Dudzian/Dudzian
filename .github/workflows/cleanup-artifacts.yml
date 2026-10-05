@@ -19,7 +19,7 @@ jobs:
       # - Keep everything updated in the last 7 days.
       # - Delete only artifacts older than 7 days that are not protected by global/name keepers.
       - name: Enforce artifact retention policy
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const config = {

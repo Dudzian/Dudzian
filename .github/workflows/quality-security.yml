@@ -23,10 +23,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
@@ -62,7 +62,7 @@ jobs:
         run: diff-cover coverage.xml --compare-branch "origin/${{ github.base_ref }}" --fail-under=70
       - name: Upload coverage
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: quality-ratchet-coverage
           path: coverage.xml
@@ -74,8 +74,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
@@ -136,7 +136,7 @@ jobs:
           .
       - name: Upload security reports
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: quality-security-reports
           path: |
@@ -152,7 +152,7 @@ jobs:
     timeout-minutes: 20
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: Install verified Betterleaks stable
@@ -187,7 +187,7 @@ jobs:
           .
       - name: Upload redacted history report
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: betterleaks-history
           path: ${{ runner.temp }}/betterleaks-history.json
