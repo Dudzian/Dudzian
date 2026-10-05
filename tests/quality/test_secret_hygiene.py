@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -65,33 +66,110 @@ def test_baseline_has_no_runtime_secret_store_entries() -> None:
     assert {finding["File"] for finding in baseline}.isdisjoint(FORBIDDEN_TRACKED_STORES)
 
 
-def test_new_synthetic_secret_is_blocked(monkeypatch, tmp_path: Path) -> None:
-    candidate = tmp_path / "ordinary.txt"
-    candidate.write_text("synthetic-secret-for-gate-regression", encoding="utf-8")
+def _git(repository: Path, *args: str) -> None:
+    subprocess.run(["git", *args], cwd=repository, check=True, capture_output=True)
+
+
+def _repository(tmp_path: Path) -> Path:
+    repository = tmp_path / "repo with spaces"
+    repository.mkdir()
+    _git(repository, "init", "-q")
+    (repository / ".gitignore").write_text(".env\n/secrets/*.json\n", encoding="utf-8")
+    _git(repository, "add", ".gitignore")
+    _git(
+        repository,
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.invalid",
+        "commit",
+        "-qm",
+        "fixture",
+    )
+    return repository
+
+
+def _capture_scanner(monkeypatch, returncode: int = 0) -> list[list[str]]:
+    calls: list[list[str]] = []
+    real_run = subprocess.run
     monkeypatch.setattr(betterleaks_hook, "_find_betterleaks", lambda: "betterleaks")
 
-    def fake_run(command: list[str], *, check: bool) -> subprocess.CompletedProcess[str]:
-        assert check is False
-        assert command[-1] == "."
-        assert "gate-regression" in candidate.read_text(encoding="utf-8")
-        return subprocess.CompletedProcess(command, 1)
+    def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        if command[0] == "git":
+            return real_run(command, **kwargs)
+        calls.append(command)
+        return subprocess.CompletedProcess(command, returncode)
 
     monkeypatch.setattr(betterleaks_hook.subprocess, "run", fake_run)
+    return calls
 
-    assert betterleaks_hook.main([str(candidate)]) == 1
+
+def test_ignored_runtime_stores_are_not_scanned(monkeypatch, tmp_path: Path) -> None:
+    repository = _repository(tmp_path)
+    (repository / ".env").write_text("SYNTHETIC_TOKEN=fixture-only", encoding="utf-8")
+    (repository / "secrets").mkdir()
+    (repository / "secrets/operator-runtime.json").write_text(
+        '{"token":"synthetic-fixture-only"}', encoding="utf-8"
+    )
+    monkeypatch.chdir(repository)
+    calls = _capture_scanner(monkeypatch)
+
+    assert betterleaks_hook.main([]) == 0
+    assert calls == []
+
+
+def test_force_added_runtime_store_is_scanned(monkeypatch, tmp_path: Path) -> None:
+    repository = _repository(tmp_path)
+    store = repository / "secrets/operator-runtime.json"
+    store.parent.mkdir()
+    store.write_text('{"token":"synthetic-fixture-only"}', encoding="utf-8")
+    _git(repository, "add", "-f", "secrets/operator-runtime.json")
+    monkeypatch.chdir(repository)
+    calls = _capture_scanner(monkeypatch, returncode=1)
+
+    assert betterleaks_hook.main([]) == 1
+    assert len(calls) == 1
+    assert calls[0][-1] == "secrets/operator-runtime.json"
+
+
+def test_new_synthetic_secret_is_blocked(monkeypatch, tmp_path: Path) -> None:
+    repository = _repository(tmp_path)
+    candidate = repository / "source with ünicode.txt"
+    candidate.write_text("synthetic-secret-for-gate-regression", encoding="utf-8")
+    _git(repository, "add", candidate.name)
+    monkeypatch.chdir(repository)
+    calls = _capture_scanner(monkeypatch, returncode=1)
+
+    assert betterleaks_hook.main([]) == 1
+    assert len(calls) == 1
+    assert calls[0][-1] == candidate.name
 
 
 def test_reviewed_false_positive_uses_baseline_and_passes(monkeypatch, tmp_path: Path) -> None:
-    candidate = tmp_path / "reviewed.txt"
+    repository = _repository(tmp_path)
+    candidate = repository / "reviewed.txt"
     candidate.write_text("documented-synthetic-fixture", encoding="utf-8")
-    monkeypatch.chdir(ROOT)
+    (repository / ".betterleaks-baseline.json").write_text("[]", encoding="utf-8")
+    monkeypatch.chdir(repository)
     monkeypatch.setattr(betterleaks_hook, "_find_betterleaks", lambda: "betterleaks")
 
-    def fake_run(command: list[str], *, check: bool) -> subprocess.CompletedProcess[str]:
-        assert check is False
-        assert command[command.index("--baseline-path") + 1] == ".betterleaks-baseline.json"
+    def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        assert kwargs["check"] is False
+        assert Path(command[command.index("--baseline-path") + 1]) == (
+            repository / ".betterleaks-baseline.json"
+        )
+        assert command[-1] == os.path.relpath(candidate, repository).replace(os.sep, "/")
         return subprocess.CompletedProcess(command, 0)
 
     monkeypatch.setattr(betterleaks_hook.subprocess, "run", fake_run)
 
     assert betterleaks_hook.main([str(candidate)]) == 0
+
+
+def test_no_staged_files_does_not_start_scanner(monkeypatch, tmp_path: Path) -> None:
+    repository = _repository(tmp_path)
+    monkeypatch.chdir(repository)
+    calls = _capture_scanner(monkeypatch)
+
+    assert betterleaks_hook.main([]) == 0
+    assert calls == []

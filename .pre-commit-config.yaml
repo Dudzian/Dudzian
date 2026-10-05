@@ -24,10 +24,10 @@ repos:
   - repo: local
     hooks:
       - id: betterleaks-staged
-        name: Betterleaks (working tree, offline)
+        name: Betterleaks (staged files, offline)
         entry: python scripts/quality/betterleaks_hook.py
         language: system
-        # Scan once from the repository root. Filename batching changes scanner
-        # fingerprints and can prevent reviewed baseline entries from matching.
+        # The wrapper reads the complete staged set and scans it once. Letting
+        # pre-commit batch filenames changes scanner fingerprints.
         pass_filenames: false
         exclude: '^(archive|ccxt|build|dist|\.cache|\.venv[^/]*)/'
