@@ -23,8 +23,10 @@ inspection, not a substitute for reading or testing the implementation.
 - pip-audit checks the canonical desktop lock file. Dependency updates are
   reviewed and tested; `--fix` is not used automatically.
 - Betterleaks 1.9.0 is the only secret scanner. Validation against providers is
-  disabled. The redacted baseline contains 28 reviewed fixture/example findings;
-  findings not in that baseline block the working-tree gate.
+  disabled. The redacted baseline contains 20 reviewed public-digest,
+  fixture, or example findings, individually justified in
+  `docs/security/betterleaks-baseline-review.md`; findings not in that baseline
+  block the working-tree gate.
 - Dependabot covers pip, the desktop npm project, and GitHub Actions weekly.
 - CodeQL runs Python and JavaScript/TypeScript `security-extended` queries.
 
@@ -43,8 +45,8 @@ From PowerShell:
 ./scripts/quality/run_fast.ps1
 ```
 
-This runs the repository Ruff baseline and an offline Betterleaks scan of changed
-files. Add `-IncludeTypes` before a PR to run the configured mypy scope. Normal
+This runs the repository Ruff baseline and an offline Betterleaks working-tree
+scan. Add `-IncludeTypes` before a PR to run the configured mypy scope. Normal
 pre-commit hooks run Ruff, formatting checks, mypy, and the staged secret scan.
 
 ### Tier B: normal pull request
@@ -71,8 +73,10 @@ workflow never invokes them.
 
 ## Security invariants now encoded
 
-- Non-finite or out-of-range signal strength/confidence yields a zero-sized
-  position; calculation errors no longer return a non-zero fallback position.
+- Signal strength has the signed `[-1, 1]` contract (direction plus magnitude),
+  while sizing uses its magnitude. Non-finite or out-of-range strength/confidence
+  yields a zero-sized position; calculation errors no longer return a non-zero
+  fallback position.
 - Non-finite position size, portfolio heat, or sector exposure fails the risk
   gate closed.
 - Canonical license JSON round-trips only inside the interoperable integer range,

@@ -24,8 +24,10 @@ repos:
   - repo: local
     hooks:
       - id: betterleaks-staged
-        name: Betterleaks (changed files, offline)
+        name: Betterleaks (working tree, offline)
         entry: python scripts/quality/betterleaks_hook.py
         language: system
-        pass_filenames: true
+        # Scan once from the repository root. Filename batching changes scanner
+        # fingerprints and can prevent reviewed baseline entries from matching.
+        pass_filenames: false
         exclude: '^(archive|ccxt|build|dist|\.cache|\.venv[^/]*)/'

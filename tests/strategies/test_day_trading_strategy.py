@@ -70,6 +70,7 @@ def test_day_trading_strategy_short_stop_loss() -> None:
 
     enter = strategy.decide(_snapshot("ETHUSDT", 198.0, 0.01, high=199.0, low=197.0, timestamp=2))
     assert enter and enter[0].side == "sell"
+    assert enter[0].metadata["signal_strength"] == -1.0
 
     stop = strategy.decide(_snapshot("ETHUSDT", 202.0, 0.01, high=203.0, low=201.5, timestamp=3))
     assert stop and stop[0].side == "buy"

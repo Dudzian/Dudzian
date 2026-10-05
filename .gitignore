@@ -7,7 +7,8 @@ env/
 .venv/
 .coverage
 coverage.xml
-env.example
+.env
+!env.example
 build/
 *.egg-info/
 tests/assets/coverage_sample/ohlcv_manifest.sqlite
@@ -43,6 +44,12 @@ bot_core/logs/
 /logs/security_admin.log
 /var/runtime/
 /var/observability/
+
+# Local runtime credential stores (reviewed examples may be committed explicitly).
+/secrets/*.json
+!/secrets/*.example.json
+/var/secrets/*.json
+!/var/secrets/*.example.json
 
 # Generated preview EXE artifacts
 /dist/preview/
