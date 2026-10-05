@@ -209,6 +209,9 @@ def _write_pip_report(
     ("active", "desktop", "escaped"),
     [
         ([], [("secretstorage", "3.5.0")], "secretstorage==3.5.0"),
+        ([], [("dmgbuild", "1.6.7")], "dmgbuild==1.6.7"),
+        ([], [("ds-store", "1.3.3")], "ds-store==1.3.3"),
+        ([], [("mac-alias", "2.2.3")], "mac-alias==2.2.3"),
         ([("requests", "2.33.0")], [("requests", "2.32.5")], "requests==2.32.5"),
         ([], [("foo", "1")], "foo==1"),
     ],

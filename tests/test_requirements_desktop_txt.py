@@ -79,3 +79,24 @@ def test_pinned_versions_cover_pyproject_dependencies() -> None:
             section=source,
             spec=requirement.specifier or "(brak specyfikatora)",
         )
+
+
+def test_macos_closure_pins_are_darwin_only() -> None:
+    requirements = {
+        canonicalize_name(requirement.name): requirement
+        for raw in REQUIREMENTS_PATH.read_text().splitlines()
+        if (line := raw.strip())
+        and not line.startswith("#")
+        and canonicalize_name((requirement := Requirement(line)).name)
+        in {"dmgbuild", "ds-store", "mac-alias"}
+    }
+    assert {name: str(requirement.specifier) for name, requirement in requirements.items()} == {
+        "dmgbuild": "==1.6.7",
+        "ds-store": "==1.3.3",
+        "mac-alias": "==2.2.3",
+    }
+    for requirement in requirements.values():
+        assert requirement.marker is not None
+        assert requirement.marker.evaluate({"platform_system": "Darwin"})
+        assert not requirement.marker.evaluate({"platform_system": "Windows"})
+        assert not requirement.marker.evaluate({"platform_system": "Linux"})
