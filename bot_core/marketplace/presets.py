@@ -365,6 +365,7 @@ class PresetRepository:
                 target_path.read_bytes(),
                 source=target_path,
                 signing_keys=signing_keys,
+                trust_policy=trust_policy,
             )
             existing_version = existing_doc.version
             if document.version and existing_version and document.version == existing_version:
@@ -384,11 +385,17 @@ class PresetRepository:
         *,
         format: str = "json",
         signing_keys: Mapping[str, bytes | str] | None = None,
+        trust_policy: "MarketplaceTrustPolicy | None" = None,
     ) -> tuple[PresetDocument, bytes]:
         path = self._path_for(preset_id)
         if not path.exists():
             raise FileNotFoundError(f"Nie znaleziono presetu {preset_id}")
-        document = parse_preset_document(path.read_bytes(), source=path, signing_keys=signing_keys)
+        document = parse_preset_document(
+            path.read_bytes(),
+            source=path,
+            signing_keys=signing_keys,
+            trust_policy=trust_policy,
+        )
         if format.lower().strip() != document.fmt:
             # Wygeneruj tymczasowy dokument z nowym formatem (bez zapisu na dysk)
             document = PresetDocument(

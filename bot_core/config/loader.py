@@ -5282,6 +5282,13 @@ def load_runtime_app_config(path: str | Path) -> RuntimeAppConfig:
         presets_path=presets_path,
         signing_keys=signing_keys,
         allow_unsigned=bool(marketplace_section.get("allow_unsigned", False)),
+        trust_environment=str(marketplace_section.get("trust_environment", "development")),
+        trusted_key_id=_format_optional_text(marketplace_section.get("trusted_key_id")),
+        trusted_public_key=_format_optional_text(marketplace_section.get("trusted_public_key")),
+        trusted_issuer=_format_optional_text(marketplace_section.get("trusted_issuer")),
+        allow_legacy_missing_environment=bool(
+            marketplace_section.get("allow_legacy_missing_environment", False)
+        ),
     )
 
     cloud_settings = _load_cloud_settings(raw.get("cloud"))

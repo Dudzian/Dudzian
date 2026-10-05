@@ -48,7 +48,7 @@ from bot_core.config.loader import load_core_config, load_runtime_app_config
 from bot_core.config.models import CoreConfig, RuntimeAppConfig, RuntimeEntrypointConfig
 from bot_core.data.base import OHLCVRequest
 from bot_core.data.intervals import interval_to_milliseconds
-from bot_core.marketplace import PresetRepository, decode_key_material
+from bot_core.marketplace import MarketplaceTrustPolicy, PresetRepository, decode_key_material
 from bot_core.execution.base import ExecutionContext, ExecutionService
 from bot_core.execution.paper import MarketMetadata, PaperTradingExecutionService
 from bot_core.generated import trading_pb2, trading_pb2_grpc
@@ -717,6 +717,8 @@ class LocalRuntimeContext:
     alert_sink_token: str | None = None
     marketplace_repository: PresetRepository | None = None
     marketplace_signing_keys: Mapping[str, bytes] = field(default_factory=dict)
+    marketplace_trust_policy: MarketplaceTrustPolicy | None = None
+    marketplace_environment: str = "development"
     marketplace_allow_unsigned: bool = False
     marketplace_enabled: bool = True
     auto_mode_alerts: MutableMapping[str, Any] = field(default_factory=dict)
@@ -833,7 +835,14 @@ class LocalRuntimeContext:
         if not self.marketplace_enabled or self.marketplace_repository is None:
             return ()
         try:
-            return self.marketplace_repository.load_all(signing_keys=self.marketplace_signing_keys)
+            return self.marketplace_repository.load_all(
+                signing_keys=(
+                    self.marketplace_signing_keys
+                    if self.marketplace_environment != "production"
+                    else None
+                ),
+                trust_policy=self.marketplace_trust_policy,
+            )
         except Exception:  # pragma: no cover - diagnostyka presetów
             _LOGGER.debug("Nie udało się odczytać presetów Marketplace", exc_info=True)
             return ()
@@ -844,9 +853,11 @@ class LocalRuntimeContext:
         if not self.marketplace_enabled or repo is None:
             return documents
         try:
-            DEFAULT_STRATEGY_CATALOG.load_presets_from_directory(
+            DEFAULT_STRATEGY_CATALOG.sync_signed_marketplace(
                 repo.root,
                 signing_keys=self.marketplace_signing_keys,
+                trust_policy=self.marketplace_trust_policy,
+                environment=self.marketplace_environment,
                 hwid_provider=None,
             )
         except FileNotFoundError:
@@ -866,7 +877,12 @@ class LocalRuntimeContext:
         document = self.marketplace_repository.import_payload(
             payload,
             filename=filename,
-            signing_keys=self.marketplace_signing_keys,
+            signing_keys=(
+                self.marketplace_signing_keys
+                if self.marketplace_environment != "production"
+                else None
+            ),
+            trust_policy=self.marketplace_trust_policy,
             require_signature=not self.marketplace_allow_unsigned,
         )
         self.reload_marketplace_presets()
@@ -880,7 +896,12 @@ class LocalRuntimeContext:
         return self.marketplace_repository.export_preset(
             preset_id,
             format=format,
-            signing_keys=self.marketplace_signing_keys,
+            signing_keys=(
+                self.marketplace_signing_keys
+                if self.marketplace_environment != "production"
+                else None
+            ),
+            trust_policy=self.marketplace_trust_policy,
         )
 
     def remove_marketplace_preset(self, preset_id: str) -> bool:
@@ -900,7 +921,12 @@ class LocalRuntimeContext:
             document, _ = repo.export_preset(
                 preset_id,
                 format="json",
-                signing_keys=self.marketplace_signing_keys,
+                signing_keys=(
+                    self.marketplace_signing_keys
+                    if self.marketplace_environment != "production"
+                    else None
+                ),
+                trust_policy=self.marketplace_trust_policy,
             )
         except FileNotFoundError:
             return None
@@ -2753,10 +2779,18 @@ def build_local_runtime_context(
     marketplace_cfg = getattr(runtime_config, "marketplace", None)
     marketplace_repository: PresetRepository | None = None
     marketplace_signing_keys: dict[str, bytes] = {}
+    marketplace_trust_policy: MarketplaceTrustPolicy | None = None
+    marketplace_environment = "development"
     marketplace_allow_unsigned = False
     marketplace_enabled = True
     if marketplace_cfg is not None:
         marketplace_enabled = bool(getattr(marketplace_cfg, "enabled", True))
+        marketplace_environment = (
+            str(getattr(marketplace_cfg, "trust_environment", "development")).strip().lower()
+        )
+        # This is a startup/security configuration operation.  Do not place it
+        # inside artifact-level exception handling: production must fail hard.
+        marketplace_trust_policy = marketplace_cfg.build_trust_policy()
         presets_location = getattr(marketplace_cfg, "presets_path", "config/marketplace/presets")
         presets_path = Path(presets_location)
         if not presets_path.is_absolute():
@@ -2775,20 +2809,6 @@ def build_local_runtime_context(
                         exc_info=True,
                     )
         marketplace_allow_unsigned = bool(getattr(marketplace_cfg, "allow_unsigned", False))
-        if marketplace_enabled:
-            try:
-                DEFAULT_STRATEGY_CATALOG.load_presets_from_directory(
-                    presets_path,
-                    signing_keys=marketplace_signing_keys,
-                    hwid_provider=None,
-                )
-            except FileNotFoundError:
-                pass
-            except Exception:  # pragma: no cover - diagnostyka
-                _LOGGER.debug(
-                    "Nie udało się wczytać presetów Marketplace przy inicjalizacji",
-                    exc_info=True,
-                )
     presets_root_env = os.environ.get("BOTCORE_STRATEGY_PRESETS_DIR")
     if presets_root_env:
         strategy_presets_dir = Path(presets_root_env).expanduser().resolve()
@@ -2814,6 +2834,8 @@ def build_local_runtime_context(
         alert_sink_token=alert_sink_token,
         marketplace_repository=marketplace_repository,
         marketplace_signing_keys=marketplace_signing_keys,
+        marketplace_trust_policy=marketplace_trust_policy,
+        marketplace_environment=marketplace_environment,
         marketplace_allow_unsigned=marketplace_allow_unsigned,
         marketplace_enabled=marketplace_enabled,
         strategy_presets_dir=strategy_presets_dir,
@@ -2821,13 +2843,7 @@ def build_local_runtime_context(
         retrain_scheduler=retrain_scheduler,
     )
     if marketplace_repository is not None and marketplace_enabled:
-        try:
-            context.reload_marketplace_presets()
-        except Exception:  # pragma: no cover - diagnostyka
-            _LOGGER.debug(
-                "Nie udało się zainicjalizować katalogu Marketplace w runtime",
-                exc_info=True,
-            )
+        context.reload_marketplace_presets()
     return context
 
 

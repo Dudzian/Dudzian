@@ -28,10 +28,17 @@ class MarketplaceService:
         repository_root: str | Path | None = None,
         repository: PresetRepository | None = None,
         trust_policy: MarketplaceTrustPolicy | None = None,
+        environment: str = "development",
     ) -> None:
+        effective_environment = (
+            trust_policy.environment if trust_policy is not None else environment
+        )
+        if effective_environment == "production" and trust_policy is None:
+            raise ValueError("production Marketplace service requires an external trust policy")
         self._signing_keys = dict(signing_keys) if signing_keys else None
         self._providers = providers
         self._trust_policy = trust_policy
+        self._environment = effective_environment
         self._repository = repository or (
             PresetRepository(repository_root) if repository_root is not None else None
         )
@@ -128,6 +135,7 @@ class MarketplaceService:
             self._repository.root,
             signing_keys=self._signing_keys or {},
             trust_policy=self._trust_policy,
+            environment=self._environment,
         )
         return marketplace.sync(catalog, hwid_provider=hwid_provider)
 

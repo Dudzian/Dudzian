@@ -33,11 +33,14 @@ class SignedPresetMarketplace:
         self,
         root: str | Path,
         *,
-        signing_keys: Mapping[str, bytes | str],
+        signing_keys: Mapping[str, bytes | str] | None = None,
         trust_policy: MarketplaceTrustPolicy | None = None,
         environment: str = "production",
     ) -> None:
-        if environment == "production" and trust_policy is None:
+        effective_environment = (
+            trust_policy.environment if trust_policy is not None else environment
+        )
+        if effective_environment == "production" and trust_policy is None:
             raise ValueError("production Marketplace runtime requires an external trust policy")
         self._service = MarketplaceService(
             repository_root=root, signing_keys=signing_keys, trust_policy=trust_policy
