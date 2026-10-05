@@ -11,6 +11,7 @@ from bot_core.marketplace.signatures import SignatureProvider, sign_preset_paylo
 
 from .models import PresetDocument, PresetSignature
 from .presets import PresetRepository, serialize_preset_document
+from .trust import MarketplaceTrustPolicy
 
 if TYPE_CHECKING:
     from bot_core.marketplace.signed import MarketplaceSyncResult
@@ -26,9 +27,11 @@ class MarketplaceService:
         providers: tuple[SignatureProvider, ...] | None = None,
         repository_root: str | Path | None = None,
         repository: PresetRepository | None = None,
+        trust_policy: MarketplaceTrustPolicy | None = None,
     ) -> None:
         self._signing_keys = dict(signing_keys) if signing_keys else None
         self._providers = providers
+        self._trust_policy = trust_policy
         self._repository = repository or (
             PresetRepository(repository_root) if repository_root is not None else None
         )
@@ -40,6 +43,10 @@ class MarketplaceService:
     @property
     def signing_keys(self) -> Mapping[str, bytes | str] | None:
         return self._signing_keys
+
+    @property
+    def trust_policy(self) -> MarketplaceTrustPolicy | None:
+        return self._trust_policy
 
     def load(
         self,
@@ -61,6 +68,7 @@ class MarketplaceService:
             source=source,
             signing_keys=self._signing_keys,
             providers=self._providers,
+            trust_policy=self._trust_policy,
         )
         if require_signature and not document.verification.verified:
             raise ValueError("Preset musi zawierać zweryfikowany podpis.")
@@ -91,6 +99,7 @@ class MarketplaceService:
         key_id: str,
         issuer: str | None = None,
         include_public_key: bool = True,
+        environment: str | None = None,
         signed_at=None,
     ) -> PresetSignature:
         raw_payload = payload.payload if isinstance(payload, PresetDocument) else payload
@@ -100,6 +109,7 @@ class MarketplaceService:
             key_id=key_id,
             issuer=issuer,
             include_public_key=include_public_key,
+            environment=environment,
             signed_at=signed_at,
         )
 
@@ -117,6 +127,7 @@ class MarketplaceService:
         marketplace = SignedPresetMarketplace(
             self._repository.root,
             signing_keys=self._signing_keys or {},
+            trust_policy=self._trust_policy,
         )
         return marketplace.sync(catalog, hwid_provider=hwid_provider)
 

@@ -28,6 +28,7 @@ from bot_core.marketplace.signatures import (
 
 if TYPE_CHECKING:
     from .signatures import SignatureProvider
+    from .trust import MarketplaceTrustPolicy
 
 LOGGER = logging.getLogger(__name__)
 
@@ -221,6 +222,7 @@ def parse_preset_document(
     source: Path | None = None,
     signing_keys: Mapping[str, bytes | str] | None = None,
     providers: tuple["SignatureProvider", ...] | None = None,
+    trust_policy: "MarketplaceTrustPolicy | None" = None,
 ) -> PresetDocument:
     """Parsuje dokument presetu z JSON lub YAML."""
 
@@ -248,6 +250,7 @@ def parse_preset_document(
         signature_doc,
         signing_keys=signing_keys,
         providers=providers,
+        trust_policy=trust_policy,
     )
     issues: list[str] = list(verification.issues)
     if not payload.get("metadata"):
@@ -308,6 +311,7 @@ class PresetRepository:
         self,
         *,
         signing_keys: Mapping[str, bytes | str] | None = None,
+        trust_policy: "MarketplaceTrustPolicy | None" = None,
     ) -> tuple[PresetDocument, ...]:
         documents: list[PresetDocument] = []
         if not self.root.exists():
@@ -323,7 +327,10 @@ class PresetRepository:
         for path in files:
             try:
                 doc = parse_preset_document(
-                    path.read_bytes(), source=path, signing_keys=signing_keys
+                    path.read_bytes(),
+                    source=path,
+                    signing_keys=signing_keys,
+                    trust_policy=trust_policy,
                 )
             except Exception:
                 LOGGER.exception("Nie udało się wczytać presetu %s", path)
@@ -338,8 +345,11 @@ class PresetRepository:
         filename: str | None = None,
         signing_keys: Mapping[str, bytes | str] | None = None,
         require_signature: bool = True,
+        trust_policy: "MarketplaceTrustPolicy | None" = None,
     ) -> PresetDocument:
-        document = parse_preset_document(payload, source=None, signing_keys=signing_keys)
+        document = parse_preset_document(
+            payload, source=None, signing_keys=signing_keys, trust_policy=trust_policy
+        )
         if require_signature and (document.signature is None or not document.verification.verified):
             raise ValueError("Preset musi zawierać zweryfikowany podpis.")
         preset_id = document.preset_id

@@ -33,6 +33,11 @@ def _strip_conflicting_paths() -> None:
 
 _strip_conflicting_paths()
 import packaging.version  # ensure zależność dostępna zanim załadujemy bot_core
+from bot_core.marketplace.signing_key_policy import (
+    RESERVED_DEV_SIGNING_IDENTITIES,
+    RESERVED_DEV_SIGNING_ISSUERS,
+    is_known_dev_public_key,
+)
 
 _CATALOG_SIGNATURES_PATH = REPO_ROOT / "bot_core" / "security" / "catalog_signatures.py"
 _catalog_signatures_spec = importlib.util.spec_from_file_location(
@@ -142,8 +147,11 @@ def verify_catalog_signatures(
     *,
     catalog_path: Path,
     markdown_path: Path,
-    hmac_key: bytes,
+    hmac_key: bytes | None,
     ed25519_key: bytes,
+    key_id: str | None = None,
+    issuer: str | None = None,
+    environment: str | None = None,
 ) -> None:
     errors: list[str] = []
     for candidate in (catalog_path, markdown_path):
@@ -152,6 +160,9 @@ def verify_catalog_signatures(
                 candidate,
                 hmac_key=hmac_key,
                 ed25519_key=ed25519_key,
+                expected_ed25519_key_id=key_id,
+                expected_issuer=issuer,
+                expected_environment=environment,
             )
         )
     if errors:
@@ -225,15 +236,20 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--catalog-hmac-key",
         type=Path,
-        default=DEFAULT_MARKETPLACE_DIR / "keys" / "dev-hmac.key",
+        default=None,
         help="Klucz HMAC używany do weryfikacji podpisu catalog.json i catalog.md.",
     )
     parser.add_argument(
         "--catalog-ed25519-key",
         type=Path,
-        default=DEFAULT_MARKETPLACE_DIR / "keys" / "dev-presets-ed25519.pub",
+        required=True,
         help="Publiczny klucz Ed25519 do weryfikacji podpisu katalogu Marketplace.",
     )
+    parser.add_argument(
+        "--environment", choices=("development", "test", "production"), default="production"
+    )
+    parser.add_argument("--catalog-ed25519-key-id", required=True)
+    parser.add_argument("--trusted-issuer", required=True)
     parser.add_argument(
         "--installer-root",
         action="append",
@@ -265,13 +281,24 @@ def main(argv: Sequence[str] | None = None) -> int:
     catalog_path = args.catalog.expanduser().resolve()
     markdown_path = args.markdown.expanduser().resolve()
     packages_dir = args.packages.expanduser().resolve()
-    hmac_key = _load_key(
-        args.catalog_hmac_key.expanduser().resolve(), "Klucz HMAC katalogu Marketplace"
+    hmac_key = (
+        _load_key(args.catalog_hmac_key.expanduser().resolve(), "Klucz HMAC katalogu Marketplace")
+        if args.catalog_hmac_key
+        else None
     )
+    if args.environment == "production":
+        if args.catalog_ed25519_key_id.lower() in RESERVED_DEV_SIGNING_IDENTITIES:
+            raise ReleaseBundleError(
+                "Production bundle rejects DEV/TEST Marketplace key identities"
+            )
+        if args.trusted_issuer.lower() in RESERVED_DEV_SIGNING_ISSUERS:
+            raise ReleaseBundleError("Production bundle rejects DEV/TEST Marketplace issuers")
     ed25519_key = _load_key(
         args.catalog_ed25519_key.expanduser().resolve(),
         "Publiczny klucz Ed25519 katalogu Marketplace",
     )
+    if args.environment == "production" and is_known_dev_public_key(ed25519_key):
+        raise ReleaseBundleError("Production bundle rejects known DEV Marketplace key material")
 
     catalog = _load_catalog(catalog_path)
     ensure_minimum_qa_reviews(catalog, minimum=args.minimum_qa_strategies)
@@ -280,6 +307,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         markdown_path=markdown_path,
         hmac_key=hmac_key,
         ed25519_key=ed25519_key,
+        key_id=args.catalog_ed25519_key_id,
+        issuer=args.trusted_issuer,
+        environment=args.environment,
     )
     if args.require_clean:
         ensure_git_clean([markdown_path, _signature_path(markdown_path)])

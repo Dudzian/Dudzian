@@ -11,6 +11,7 @@ from bot_core.marketplace import (
     sign_preset_payload,
 )
 from bot_core.marketplace.signed import SignedPresetMarketplace
+from bot_core.marketplace.trust import MarketplaceTrustPolicy, TrustedMarketplaceKey
 
 
 class _DummyDescriptor:
@@ -30,7 +31,13 @@ class _DummyCatalog:
 def _write_signed_preset(
     path: Path, payload: dict[str, object], private_key: ed25519.Ed25519PrivateKey
 ) -> None:
-    signature = sign_preset_payload(payload, private_key=private_key, key_id="demo")
+    signature = sign_preset_payload(
+        payload,
+        private_key=private_key,
+        key_id="demo",
+        issuer="marketplace-tests",
+        environment="test",
+    )
     document = {
         "preset": payload,
         "signature": signature.as_dict(),
@@ -77,7 +84,18 @@ def test_signed_marketplace_import_and_update_plan(tmp_path: Path) -> None:
     assert plan_payload["upgrades"][0]["presetId"] == "beta"
 
     catalog = _DummyCatalog()
-    marketplace = SignedPresetMarketplace(tmp_path, signing_keys={})
+    public_key = key.public_key().public_bytes_raw()
+    policy = MarketplaceTrustPolicy(
+        environment="test",
+        keys={
+            "demo": TrustedMarketplaceKey(
+                public_key=public_key,
+                issuers=frozenset({"marketplace-tests"}),
+                environments=frozenset({"test"}),
+            )
+        },
+    )
+    marketplace = SignedPresetMarketplace(tmp_path, signing_keys={}, trust_policy=policy)
     sync_result = marketplace.sync(catalog)
 
     assert set(sync_result.installed) == {"alpha", "beta"}

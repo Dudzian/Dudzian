@@ -15,11 +15,26 @@ import pytest
 from scripts import build_release_bundle as brb
 
 
+def _raw_public(key: ed25519.Ed25519PrivateKey) -> bytes:
+    return key.public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+
+
 def _build_catalog(packages: list[dict[str, object]]) -> dict[str, object]:
     return {"schema_version": "1.1", "packages": packages}
 
 
-def _write_signature(target: Path, *, hmac_key: bytes, ed_key: ed25519.Ed25519PrivateKey) -> None:
+def _write_signature(
+    target: Path,
+    *,
+    hmac_key: bytes,
+    ed_key: ed25519.Ed25519PrivateKey,
+    key_id: str = "test-ed25519",
+    issuer: str = "tests",
+    environment: str = "test",
+) -> None:
     content = target.read_bytes()
     timestamp = "2025-01-01T00:00:00Z"
     payload = {
@@ -35,7 +50,9 @@ def _write_signature(target: Path, *, hmac_key: bytes, ed_key: ed25519.Ed25519Pr
         },
         "ed25519": {
             "algorithm": "ed25519",
-            "key_id": "test-ed25519",
+            "key_id": key_id,
+            "issuer": issuer,
+            "environment": environment,
             "signed_at": timestamp,
             "value": base64.b64encode(ed_key.sign(content)).decode("ascii"),
             "public_key": base64.b64encode(
@@ -189,6 +206,76 @@ def test_verify_catalog_signatures_rejects_tamper(tmp_path: Path) -> None:
             markdown_path=markdown_path,
             hmac_key=hmac_key,
             ed25519_key=public_key,
+        )
+
+
+def test_production_bundle_accepts_only_production_catalog_metadata(tmp_path: Path) -> None:
+    hmac_key = b"catalog-secret"
+    production_key = ed25519.Ed25519PrivateKey.generate()
+    catalog_path = tmp_path / "catalog.json"
+    markdown_path = tmp_path / "catalog.md"
+    catalog_path.write_text("{}", encoding="utf-8")
+    markdown_path.write_text("# Catalog", encoding="utf-8")
+    for path in (catalog_path, markdown_path):
+        _write_signature(
+            path,
+            hmac_key=hmac_key,
+            ed_key=production_key,
+            key_id="marketplace-production-2026",
+            issuer="cryptohunter-marketplace-release",
+            environment="production",
+        )
+    public_key = _raw_public(production_key)
+
+    brb.verify_catalog_signatures(
+        catalog_path=catalog_path,
+        markdown_path=markdown_path,
+        hmac_key=hmac_key,
+        ed25519_key=public_key,
+        key_id="marketplace-production-2026",
+        issuer="cryptohunter-marketplace-release",
+        environment="production",
+    )
+
+    for path in (catalog_path, markdown_path):
+        _write_signature(
+            path,
+            hmac_key=hmac_key,
+            ed_key=production_key,
+            key_id="dev-presets-ed25519",
+            issuer="marketplace-ci",
+            environment="test",
+        )
+    with pytest.raises(brb.ReleaseBundleError, match="key_id|Issuer|Domena"):
+        brb.verify_catalog_signatures(
+            catalog_path=catalog_path,
+            markdown_path=markdown_path,
+            hmac_key=hmac_key,
+            ed25519_key=public_key,
+            key_id="marketplace-production-2026",
+            issuer="cryptohunter-marketplace-release",
+            environment="production",
+        )
+
+
+def test_production_bundle_cannot_fallback_to_renamed_dev_anchor(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    with pytest.raises(brb.ReleaseBundleError, match="known DEV"):
+        brb.main(
+            [
+                "--catalog",
+                str(tmp_path / "catalog.json"),
+                "--markdown",
+                str(tmp_path / "catalog.md"),
+                "--packages",
+                str(tmp_path / "packages"),
+                "--catalog-ed25519-key",
+                str(repo_root / "config/marketplace/keys/dev-presets-ed25519.pub"),
+                "--catalog-ed25519-key-id",
+                "renamed-production-key",
+                "--trusted-issuer",
+                "cryptohunter-marketplace-release",
+            ]
         )
 
 

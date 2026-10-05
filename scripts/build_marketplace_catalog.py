@@ -22,8 +22,12 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
+sys.path = [
+    entry
+    for entry in sys.path
+    if Path(entry or ".").resolve() not in {REPO_ROOT / "scripts", REPO_ROOT / "deploy"}
+]
+sys.path.insert(0, str(REPO_ROOT))
 
 from bot_core.config_marketplace.schema import (  # noqa: E402
     MarketplaceCatalog,
@@ -168,6 +172,7 @@ def _package_spec(
     private_key: Path,
     key_id: str,
     issuer: str | None,
+    environment: str,
     signed_at: datetime | None,
     ensure_ascii: bool = True,
 ) -> None:
@@ -188,6 +193,8 @@ def _package_spec(
         key_id,
         "--format",
         "yaml" if format_arg in {"yaml", "yml"} else "json",
+        "--environment",
+        "development" if environment == "dev" else environment,
     ]
     if issuer:
         cli_args.extend(["--issuer", issuer])
@@ -302,6 +309,7 @@ def _write_signature(
     ed25519_key: ed25519.Ed25519PrivateKey | None,
     ed25519_key_id: str | None,
     issuer: str | None,
+    environment: str = "dev",
     signed_at: datetime | None = None,
 ) -> None:
     if not hmac_key_id and not (ed25519_key and ed25519_key_id):
@@ -333,6 +341,7 @@ def _write_signature(
             "algorithm": "ed25519",
             "key_id": ed25519_key_id,
             "issuer": issuer,
+            "environment": "development" if environment == "dev" else environment,
             "signed_at": timestamp,
             "value": base64.b64encode(signature).decode("ascii"),
             "public_key": base64.b64encode(
@@ -362,6 +371,7 @@ def build_catalog(
     key_id: str,
     signing_keys: dict[str, bytes],
     issuer: str | None = None,
+    environment: str = "dev",
     catalog_signature_key: str | None = None,
     catalog_ed25519_key: ed25519.Ed25519PrivateKey | None = None,
     catalog_ed25519_key_id: str | None = None,
@@ -400,6 +410,7 @@ def build_catalog(
                 private_key=private_key,
                 key_id=key_id,
                 issuer=issuer,
+                environment=environment,
                 signed_at=signed_at,
                 ensure_ascii=True,
             )
@@ -483,6 +494,7 @@ def build_catalog(
         ed25519_key=catalog_ed25519_key,
         ed25519_key_id=catalog_ed25519_key_id,
         issuer=issuer,
+        environment=environment,
         signed_at=catalog.generated_at,
     )
 
@@ -497,6 +509,7 @@ def build_catalog(
         ed25519_key=catalog_ed25519_key,
         ed25519_key_id=catalog_ed25519_key_id,
         issuer=issuer,
+        environment=environment,
         signed_at=catalog.generated_at,
     )
     return catalog
@@ -614,6 +627,7 @@ def main(argv: list[str] | None = None) -> int:
         key_id=key_id,
         signing_keys=signing_keys,
         issuer=issuer,
+        environment=args.environment,
         catalog_signature_key=catalog_signature_key,
         catalog_ed25519_key=catalog_ed25519_key,
         catalog_ed25519_key_id=catalog_ed25519_key_id,

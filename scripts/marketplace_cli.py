@@ -15,6 +15,7 @@ from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 import yaml
+from cryptography.hazmat.primitives import serialization
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -336,12 +337,17 @@ def _cmd_package(repo: MarketplaceRepository, args: argparse.Namespace) -> int:
     payload = _load_preset_spec(spec_path)
     signed_at = _parse_signed_at(args.signed_at)
     private_key = load_private_key(Path(args.private_key).expanduser())
-    service = MarketplaceService()
+    public_key = private_key.public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    service = MarketplaceService(signing_keys={args.key_id: public_key})
     signature = service.sign(
         payload,
         private_key=private_key,
         key_id=args.key_id,
         issuer=args.issuer,
+        environment=args.environment,
         signed_at=signed_at,
         include_public_key=not args.omit_public_key,
     )
@@ -533,6 +539,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Ścieżka do klucza prywatnego Ed25519 (PEM/base64/hex).",
     )
     cmd_package.add_argument("--issuer", help="Opcjonalny identyfikator wystawcy podpisu.")
+    cmd_package.add_argument(
+        "--environment",
+        choices=("development", "test", "production"),
+        default="development",
+        help="Domena zaufania zapisywana w podpisie.",
+    )
     cmd_package.add_argument(
         "--signed-at",
         help="Wymuś znacznik czasu podpisu (ISO-8601, domyślnie bieżący czas).",

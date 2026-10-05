@@ -17,6 +17,7 @@ from .models import (
     PresetSignatureVerification,
     canonical_preset_bytes,
 )
+from .trust import MarketplaceTrustPolicy
 
 DEFAULT_SIGNATURE_ALGORITHM = "ed25519"
 
@@ -87,6 +88,7 @@ class SignatureProvider(ABC):
         signature_doc: Mapping[str, Any] | None,
         *,
         signing_keys: Mapping[str, bytes | str] | None = None,
+        trust_policy: MarketplaceTrustPolicy | None = None,
     ) -> tuple[PresetSignatureVerification, PresetSignature | None]:
         """Weryfikuje podpis dla podanego payloadu."""
 
@@ -105,6 +107,7 @@ class Ed25519SignatureProvider(SignatureProvider):
         signature_doc: Mapping[str, Any] | None,
         *,
         signing_keys: Mapping[str, bytes | str] | None = None,
+        trust_policy: MarketplaceTrustPolicy | None = None,
     ) -> tuple[PresetSignatureVerification, PresetSignature | None]:
         if not signature_doc:
             return PresetSignatureVerification(False, ("missing-signature",)), None
@@ -137,16 +140,19 @@ class Ed25519SignatureProvider(SignatureProvider):
             ), None
 
         public_key_bytes: bytes | None = None
-        raw_public_key = signature_doc.get("public_key")
-        if raw_public_key not in (None, ""):
+        if trust_policy is not None:
+            trusted, issues = trust_policy.authorize(
+                key_id=key_id_text,
+                issuer=signature_doc.get("issuer"),
+                environment=signature_doc.get("environment"),
+            )
+            if trusted is None:
+                return PresetSignatureVerification(False, issues, self.algorithm, key_id_text), None
             try:
-                public_key_bytes = decode_key_material(raw_public_key)
+                public_key_bytes = decode_key_material(trusted.public_key)
             except ValueError as exc:
                 return PresetSignatureVerification(
-                    False,
-                    (f"public-key-invalid:{exc}",),
-                    self.algorithm,
-                    key_id_text,
+                    False, (f"trusted-key-invalid:{exc}",), self.algorithm, key_id_text
                 ), None
         elif signing_keys and key_id_text:
             candidate = signing_keys.get(key_id_text)
@@ -155,16 +161,29 @@ class Ed25519SignatureProvider(SignatureProvider):
                     public_key_bytes = decode_key_material(candidate)
                 except ValueError as exc:
                     return PresetSignatureVerification(
-                        False,
-                        (f"signing-key-invalid:{exc}",),
-                        self.algorithm,
-                        key_id_text,
+                        False, (f"signing-key-invalid:{exc}",), self.algorithm, key_id_text
                     ), None
+
+        raw_public_key = signature_doc.get("public_key")
+        if raw_public_key not in (None, ""):
+            try:
+                embedded_key = decode_key_material(raw_public_key)
+            except ValueError as exc:
+                return PresetSignatureVerification(
+                    False,
+                    (f"public-key-invalid:{exc}",),
+                    self.algorithm,
+                    key_id_text,
+                ), None
+            if public_key_bytes is not None and embedded_key != public_key_bytes:
+                return PresetSignatureVerification(
+                    False, ("embedded-public-key-mismatch",), self.algorithm, key_id_text
+                ), None
 
         if public_key_bytes is None:
             return PresetSignatureVerification(
                 False,
-                ("missing-public-key",),
+                ("missing-trust-anchor",),
                 self.algorithm,
                 key_id_text,
             ), None
@@ -196,6 +215,7 @@ class Ed25519SignatureProvider(SignatureProvider):
             public_key=base64.b64encode(public_key_bytes).decode("ascii"),
             signed_at=str(signature_doc.get("signed_at") or "").strip() or None,
             issuer=str(signature_doc.get("issuer") or "").strip() or None,
+            environment=str(signature_doc.get("environment") or "").strip() or None,
         )
         return PresetSignatureVerification(True, (), self.algorithm, key_id_text), signature
 
@@ -206,6 +226,7 @@ class Ed25519SignatureProvider(SignatureProvider):
         private_key: ed25519.Ed25519PrivateKey,
         key_id: str,
         issuer: str | None = None,
+        environment: str | None = None,
         include_public_key: bool = True,
         signed_at: datetime | None = None,
     ) -> PresetSignature:
@@ -229,6 +250,9 @@ class Ed25519SignatureProvider(SignatureProvider):
             ),
             signed_at=timestamp.replace(microsecond=0).isoformat().replace("+00:00", "Z"),
             issuer=issuer.strip() if isinstance(issuer, str) and issuer.strip() else None,
+            environment=environment.strip()
+            if isinstance(environment, str) and environment.strip()
+            else None,
         )
 
 
@@ -242,7 +266,15 @@ class HmacSha256SignatureProvider(SignatureProvider):
         signature_doc: Mapping[str, Any] | None,
         *,
         signing_keys: Mapping[str, bytes | str] | None = None,
+        trust_policy: MarketplaceTrustPolicy | None = None,
     ) -> tuple[PresetSignatureVerification, PresetSignature | None]:
+        if trust_policy is not None:
+            return PresetSignatureVerification(
+                False,
+                ("algorithm-not-authorized-by-trust-policy",),
+                self.algorithm,
+                None,
+            ), None
         if not signature_doc:
             return PresetSignatureVerification(False, ("missing-signature",)), None
 
@@ -275,6 +307,7 @@ def verify_preset_signature(
     *,
     signing_keys: Mapping[str, bytes | str] | None = None,
     providers: tuple[SignatureProvider, ...] | None = None,
+    trust_policy: MarketplaceTrustPolicy | None = None,
 ) -> tuple[PresetSignatureVerification, PresetSignature | None]:
     """Weryfikuje podpis z użyciem zadanego adaptera."""
 
@@ -289,7 +322,14 @@ def verify_preset_signature(
 
     for provider in available:
         if provider.supports(normalized_algorithm):
-            return provider.verify(payload, signature_doc, signing_keys=signing_keys)
+            if trust_policy is None:
+                return provider.verify(payload, signature_doc, signing_keys=signing_keys)
+            return provider.verify(
+                payload,
+                signature_doc,
+                signing_keys=signing_keys,
+                trust_policy=trust_policy,
+            )
 
     return PresetSignatureVerification(
         False,
@@ -305,6 +345,7 @@ def sign_preset_payload(
     private_key: ed25519.Ed25519PrivateKey,
     key_id: str,
     issuer: str | None = None,
+    environment: str | None = None,
     include_public_key: bool = True,
     signed_at: datetime | None = None,
 ) -> PresetSignature:
@@ -314,6 +355,7 @@ def sign_preset_payload(
         private_key=private_key,
         key_id=key_id,
         issuer=issuer,
+        environment=environment,
         include_public_key=include_public_key,
         signed_at=signed_at,
     )
