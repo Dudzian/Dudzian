@@ -17,27 +17,27 @@
     "test:e2e": "npm run build && playwright test"
   },
   "dependencies": {
-    "electron": "26.2.0",
-    "react": "18.2.0",
-    "react-dom": "18.2.0",
+    "electron": "26.6.10",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
     "react-hook-form": "7.89.0",
-    "zod": "3.22.4",
-    "@hookform/resolvers": "3.1.1"
+    "zod": "3.25.76",
+    "@hookform/resolvers": "3.10.0"
   },
   "devDependencies": {
     "@electron-toolkit/preload": "2.0.0",
-    "@electron-toolkit/utils": "2.0.0",
-    "@types/node": "20.4.1",
+    "@electron-toolkit/utils": "2.0.1",
+    "@types/node": "20.19.43",
     "@types/react": "18.2.14",
     "@types/react-dom": "18.2.7",
-    "@vitejs/plugin-react": "4.0.0",
+    "@vitejs/plugin-react": "4.7.0",
     "@playwright/test": "1.63.0",
-    "concurrently": "8.2.0",
+    "concurrently": "8.2.2",
     "eslint": "8.46.0",
     "eslint-plugin-react": "7.37.5",
     "ts-node": "10.9.2",
-    "typescript": "5.1.6",
-    "vite": "4.4.9",
+    "typescript": "5.9.3",
+    "vite": "4.5.14",
     "tsconfig-paths": "4.2.0"
   }
 }
