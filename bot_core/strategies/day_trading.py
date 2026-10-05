@@ -238,13 +238,16 @@ class DayTradingStrategy(BaseStrategy):
         direction: str,
         exit_reason: str | None = None,
     ) -> StrategySignal:
+        # Strategy strength has a shared signed [-1, 1] contract: sign carries
+        # direction while magnitude carries conviction.
+        normalized_strength = max(-1.0, min(float(strength), 1.0))
         metadata = build_signal_metadata(
             strategy_type="day_trading",
             profile="intraday_momentum",
             risk_label="intraday",
             position=direction,
             exit_reason=exit_reason,
-            extra={"signal_strength": strength, "volatility": volatility},
+            extra={"signal_strength": normalized_strength, "volatility": volatility},
         )
         return StrategySignal(
             symbol=snapshot.symbol,
