@@ -1,6 +1,7 @@
 {
   "ed25519": {
     "algorithm": "ed25519",
+    "environment": "test",
     "issuer": "marketplace-ci",
     "key_id": "dev-presets-ed25519",
     "public_key": "wnD5eTEGDB3CPb6r3oMOmRjFtjCxHISZXHlHX0TIKhY=",

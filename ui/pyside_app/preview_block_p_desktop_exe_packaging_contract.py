@@ -232,7 +232,7 @@ EXPECTED_SOURCE: Final[dict[str, Any]] = {
         "deployment_documentation_file_count": 17,
         "config_reference_row_count": 6,
         "project_dependency_count": 26,
-        "desktop_optional_dependency_count": 6,
+        "desktop_optional_dependency_count": 10,
         "inventory_finding_count": 11,
         "cli_preview_remains_separate": True,
         "all_source_approvals_false": True,

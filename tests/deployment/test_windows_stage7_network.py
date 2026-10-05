@@ -17,7 +17,7 @@ SOURCE = Path(probe.__file__).read_text(encoding="utf-8")
 
 
 def _wait_state(path: Path, phase: str) -> dict[str, object]:
-    deadline = time.monotonic() + 3
+    deadline = time.monotonic() + probe.STATE_TIMEOUT_SECONDS
     while time.monotonic() < deadline:
         state = probe._read_state(path)
         if state is not None and state.get("phase") == phase:
