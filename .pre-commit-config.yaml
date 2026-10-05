@@ -21,6 +21,7 @@ repos:
           - grpcio>=1.62
           - protobuf>=4.24
           - packaging
+          - cryptography>=50.0.1,<51
   - repo: local
     hooks:
       - id: betterleaks-staged
