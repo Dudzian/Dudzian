@@ -2236,9 +2236,13 @@ PROJECT_DEPENDENCY_SPECS_18_1: Final[list[str]] = [
 DESKTOP_OPTIONAL_DEPENDENCY_SPECS_18_1: Final[list[str]] = [
     "pyinstaller>=6.5",
     "briefcase>=0.3.18",
+    "dmgbuild>=1.6.4,<2.0; platform_system == 'Darwin'",
+    "ds-store>=1.1.0; platform_system == 'Darwin'",
+    "mac-alias>=2.2.2; platform_system == 'Darwin'",
     "macholib>=1.16.3",
     "pefile>=2023.2.7",
     "pywin32-ctypes>=0.2.3",
+    "colorama>=0.4.6; platform_system == 'Windows'",
     "PySide6>=6.7,<6.11",
 ]
 SETUPTOOLS_PACKAGE_INCLUDE_PATTERNS_18_1: Final[list[str]] = [

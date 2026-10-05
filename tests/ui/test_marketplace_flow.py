@@ -16,6 +16,7 @@ def _build_service(tmp_path: Path) -> MarketplaceService:
     repository = PresetRepository(tmp_path / "presets")
     installer = MarketplacePresetInstaller(
         repository,
+        signing_keys={"demo-publisher": (MARKETPLACE_DIR / "keys/demo-publisher.pub").read_bytes()},
         catalog_path=MARKETPLACE_DIR,
         licenses_dir=LICENSES_DIR,
         hwid_provider=HwIdProvider(fingerprint_reader=lambda: "OEM-TEST-DEVICE"),
