@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -173,3 +174,41 @@ def test_no_staged_files_does_not_start_scanner(monkeypatch, tmp_path: Path) -> 
 
     assert betterleaks_hook.main([]) == 0
     assert calls == []
+
+
+@pytest.mark.parametrize("explicit", [True, False])
+def test_cli_uses_explicit_paths_or_staged_index(tmp_path: Path, explicit: bool) -> None:
+    repository = _repository(tmp_path)
+    staged = repository / "staged.txt"
+    explicit_path = repository / "explicit.txt"
+    staged.write_text("staged fixture", encoding="utf-8")
+    explicit_path.write_text("explicit fixture", encoding="utf-8")
+    _git(repository, "add", staged.name)
+
+    log = repository / "scanner-arguments.json"
+    (repository / "dir").write_text(
+        "import json, os, sys\n"
+        "from pathlib import Path\n"
+        "Path(os.environ['SCANNER_ARGUMENT_LOG']).write_text(json.dumps(sys.argv[1:]))\n",
+        encoding="utf-8",
+    )
+    command = [sys.executable, str(ROOT / "scripts/quality/betterleaks_hook.py")]
+    if explicit:
+        command.append(str(explicit_path))
+    completed = subprocess.run(
+        command,
+        cwd=repository,
+        env={
+            **os.environ,
+            "BETTERLEAKS_BIN": sys.executable,
+            "SCANNER_ARGUMENT_LOG": str(log),
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    scanner_arguments = json.loads(log.read_text(encoding="utf-8"))
+    separator = scanner_arguments.index("--")
+    assert scanner_arguments[separator + 1 :] == [explicit_path.name if explicit else staged.name]
