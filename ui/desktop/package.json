@@ -26,7 +26,7 @@
   },
   "devDependencies": {
     "@electron-toolkit/preload": "2.0.0",
-    "@electron-toolkit/utils": "2.0.0",
+    "@electron-toolkit/utils": "4.0.0",
     "@types/node": "20.4.1",
     "@types/react": "18.2.14",
     "@types/react-dom": "18.2.7",
