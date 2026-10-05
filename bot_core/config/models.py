@@ -2056,6 +2056,68 @@ class RuntimeMarketplaceSettings:
     presets_path: str = "config/marketplace/presets"
     signing_keys: Mapping[str, str] = field(default_factory=dict)
     allow_unsigned: bool = False
+    trust_environment: str = "development"
+    trusted_key_id: str | None = None
+    trusted_public_key: str | None = None
+    trusted_issuer: str | None = None
+    allow_legacy_missing_environment: bool = False
+
+    def build_trust_policy(self):
+        """Build the single runtime trust authority from configuration.
+
+        Legacy ``signing_keys`` are deliberately not consulted here.  In
+        particular, production can never fall back to that compatibility map.
+        """
+        from bot_core.marketplace.trust import MarketplaceTrustPolicy, TrustedMarketplaceKey
+
+        environment = str(self.trust_environment or "").strip()
+        if environment.lower() == "production" and self.allow_unsigned:
+            raise ValueError("production Marketplace runtime cannot allow unsigned artifacts")
+        if environment.lower() == "production" and self.allow_legacy_missing_environment:
+            raise ValueError("production Marketplace runtime cannot enable legacy environments")
+        values = (self.trusted_key_id, self.trusted_public_key, self.trusted_issuer)
+        configured = [isinstance(value, str) and bool(value.strip()) for value in values]
+        if environment.lower() == "production" and not all(configured):
+            raise ValueError(
+                "production Marketplace trust configuration requires trusted_key_id, "
+                "trusted_public_key, and trusted_issuer"
+            )
+        if any(configured) and not all(configured):
+            raise ValueError("Marketplace trust configuration is incomplete")
+        if not any(configured):
+            # Development/test may explicitly retain the old verifier composition.
+            MarketplaceTrustPolicy(environment=environment, keys={})
+            return None
+        assert self.trusted_key_id and self.trusted_public_key and self.trusted_issuer
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric import ed25519
+
+        from bot_core.marketplace.signatures import decode_key_material
+
+        material = decode_key_material(self.trusted_public_key)
+        try:
+            ed25519.Ed25519PublicKey.from_public_bytes(material)
+        except ValueError:
+            try:
+                loaded_key = serialization.load_pem_public_key(material)
+            except ValueError as exc:
+                raise ValueError(
+                    "Marketplace trusted_public_key is not a valid Ed25519 key"
+                ) from exc
+            if not isinstance(loaded_key, ed25519.Ed25519PublicKey):
+                raise ValueError("Marketplace trusted_public_key is not an Ed25519 key")
+        key_id = self.trusted_key_id.strip()
+        return MarketplaceTrustPolicy(
+            environment=environment,
+            keys={
+                key_id: TrustedMarketplaceKey(
+                    public_key=self.trusted_public_key.strip(),
+                    issuers=frozenset({self.trusted_issuer.strip()}),
+                    environments=frozenset({environment}),
+                )
+            },
+            allow_legacy_missing_environment=self.allow_legacy_missing_environment,
+        )
 
 
 @dataclass(slots=True)

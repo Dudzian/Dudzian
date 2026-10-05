@@ -32,6 +32,7 @@ from bot_core.security.messages import ValidationMessage
 if TYPE_CHECKING:
     from bot_core.backtest.walk_forward import TransactionCostModel
     from bot_core.marketplace.signed import MarketplaceSyncResult
+    from bot_core.marketplace.trust import MarketplaceTrustPolicy
     from .testing import StrategyParameterTester
 
 from .base import StrategyEngine
@@ -1023,6 +1024,7 @@ class StrategyCatalog:
         path: Path,
         *,
         signing_keys: Mapping[str, bytes] | None,
+        trust_policy: "MarketplaceTrustPolicy | None" = None,
         hwid_provider: HwIdProvider | None,
     ) -> StrategyPresetDescriptor:
         try:
@@ -1057,6 +1059,7 @@ class StrategyCatalog:
                 preset_payload,
                 signature_doc,
                 signing_keys=signing_keys,
+                trust_policy=trust_policy,
             )
         else:
             verification = PresetSignatureVerification(False, ("missing-signature",))
@@ -1123,6 +1126,7 @@ class StrategyCatalog:
         directory: str | Path,
         *,
         signing_keys: Mapping[str, bytes] | None = None,
+        trust_policy: "MarketplaceTrustPolicy | None" = None,
         hwid_provider: HwIdProvider | None = None,
     ) -> tuple[StrategyPresetDescriptor, ...]:
         base_path = Path(directory)
@@ -1135,6 +1139,7 @@ class StrategyCatalog:
             descriptor = self._load_preset_file(
                 candidate,
                 signing_keys=signing_keys,
+                trust_policy=trust_policy,
                 hwid_provider=hwid_provider,
             )
             descriptors.append(descriptor)
@@ -1193,14 +1198,21 @@ class StrategyCatalog:
         self,
         root: str | Path,
         *,
-        signing_keys: Mapping[str, bytes | str],
+        signing_keys: Mapping[str, bytes | str] | None = None,
+        trust_policy: "MarketplaceTrustPolicy | None" = None,
+        environment: str = "production",
         hwid_provider: HwIdProvider | None = None,
     ) -> "MarketplaceSyncResult":
         """Synchronizuje katalog z lokalnym marketplace'em podpisanych presetów."""
 
         from bot_core.marketplace.signed import SignedPresetMarketplace
 
-        marketplace = SignedPresetMarketplace(root, signing_keys=signing_keys)
+        marketplace = SignedPresetMarketplace(
+            root,
+            signing_keys=signing_keys if environment != "production" else None,
+            trust_policy=trust_policy,
+            environment=environment,
+        )
         return marketplace.sync(self, hwid_provider=hwid_provider)
 
     def describe_presets(

@@ -133,6 +133,7 @@ def _build_marketplace_service(config_path: Path) -> tuple[MarketplaceService | 
         return None, "Marketplace jest wyłączony w konfiguracji runtime"
     repo_root = _resolve_repo_path(config_path, marketplace_settings.presets_path)
     signing_keys = _load_signing_keys(config_path, marketplace_settings.signing_keys)
+    trust_policy = marketplace_settings.build_trust_policy()
     catalog_root = _resolve_catalog_path(repo_root)
     catalog_json = catalog_root / "catalog.json"
     repository = PresetRepository(repo_root)
@@ -157,6 +158,8 @@ def _build_marketplace_service(config_path: Path) -> tuple[MarketplaceService | 
         catalog_path=catalog_root,
         licenses_dir=licenses_dir,
         signing_keys=signing_keys or None,
+        trust_policy=trust_policy,
+        environment=marketplace_settings.trust_environment,
         hwid_provider=HwIdProvider(),
     )
     return MarketplaceService(installer, repository), None

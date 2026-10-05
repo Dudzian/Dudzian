@@ -284,6 +284,13 @@ cloud:
 marketplace:
   enabled: true
   presets_path: config/marketplace/presets
+  # Production deployments must provide the complete external trust tuple below.
+  trust_environment: development
+  trusted_key_id: null
+  trusted_public_key: null
+  trusted_issuer: null
+  allow_legacy_missing_environment: false
+  # Compatibility-only verifier inputs for development/test; never used in production.
   signing_keys: {}
   allow_unsigned: false
 

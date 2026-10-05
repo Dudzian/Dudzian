@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from bot_core.marketplace import MarketplaceService, PresetDocument, PresetRepository
+from bot_core.marketplace.trust import MarketplaceTrustPolicy
 from bot_core.security.hwid import HwIdProvider, HwIdProviderError
 from bot_core.security.license import (
     _parse_seat_policy,
@@ -63,10 +64,18 @@ class MarketplacePresetInstaller:
         catalog_path: str | Path | None = None,
         licenses_dir: str | Path | None = None,
         signing_keys: Mapping[str, bytes | str] | None = None,
+        trust_policy: MarketplaceTrustPolicy | None = None,
+        environment: str = "development",
         hwid_provider: HwIdProvider | None = None,
     ) -> None:
         self._repository = repository
-        self._service = MarketplaceService(signing_keys=signing_keys)
+        if environment == "production" and trust_policy is None:
+            raise ValueError("production Marketplace installer requires an external trust policy")
+        self._service = MarketplaceService(
+            signing_keys=signing_keys if environment != "production" else None,
+            trust_policy=trust_policy,
+            environment=environment,
+        )
         if catalog is not None:
             self._catalog = catalog
         else:
@@ -115,6 +124,7 @@ class MarketplacePresetInstaller:
                 payload,
                 filename=path.name,
                 signing_keys=self._service.signing_keys,
+                trust_policy=self._service.trust_policy,
                 require_signature=False,
             )
             installed_path = installed_doc.path
