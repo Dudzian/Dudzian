@@ -1,5 +1,5 @@
 # Zależności wymagane do przygotowania bundla desktopowego w środowiskach offline.
-numpy==1.26.4
+numpy==2.4.6
 pandas==2.2.2
 joblib==1.4.2
 pydantic==2.7.4
