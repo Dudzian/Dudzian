@@ -270,7 +270,7 @@ tools = [
 ]
 quality = [
   "ruff==0.14.11",
-  "mypy==1.10.0",
+  "mypy==2.4.0",
   "pre-commit>=4,<5",
   "coverage>=7.10,<8",
   "diff-cover>=9,<10",
