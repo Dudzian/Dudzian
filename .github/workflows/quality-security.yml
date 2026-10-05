@@ -15,6 +15,7 @@ permissions:
 env:
   PYTHON_VERSION: "3.11"
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  BETTERLEAKS_1_9_0_LINUX_X64_SHA256: "f8b185a39ffcece2a1ca82bf3a4e7435cd81963ffd16b7a9128daf75f35f6de7"
 
 jobs:
   quality-ratchet:
@@ -89,7 +90,7 @@ jobs:
           --metrics=off
           --disable-version-check
           --json
-          --output semgrep-community.json
+          --output "$RUNNER_TEMP/semgrep-community.json"
           --exclude tests
           --exclude archive
           --exclude ccxt
@@ -105,27 +106,33 @@ jobs:
       - name: Install verified Betterleaks stable
         shell: bash
         run: |
-          asset=betterleaks_1.9.0_linux_x64.tar.gz
+          install_dir="$RUNNER_TEMP/betterleaks"
+          mkdir -p "$install_dir"
+          asset="$install_dir/betterleaks_1.9.0_linux_x64.tar.gz"
           curl --fail --location --silent --show-error \
             --output "$asset" \
             https://github.com/betterleaks/betterleaks/releases/download/v1.9.0/betterleaks_1.9.0_linux_x64.tar.gz
+          printf '%s  %s\n' "$BETTERLEAKS_1_9_0_LINUX_X64_SHA256" "$asset" \
+            | sha256sum --check --strict
           curl --fail --location --silent --show-error \
-            --output checksums.txt \
+            --output "$install_dir/checksums.txt" \
             https://github.com/betterleaks/betterleaks/releases/download/v1.9.0/checksums.txt
-          grep 'betterleaks_1.9.0_linux_x64.tar.gz$' checksums.txt > expected.sha256
-          sha256sum --check expected.sha256
-          tar -xzf "$asset" betterleaks
-          chmod +x betterleaks
-          ./betterleaks version
+          grep 'betterleaks_1.9.0_linux_x64.tar.gz$' "$install_dir/checksums.txt" \
+            > "$install_dir/expected.sha256"
+          (cd "$install_dir" && sha256sum --check expected.sha256)
+          tar -xzf "$asset" -C "$install_dir" betterleaks
+          chmod +x "$install_dir/betterleaks"
+          echo "$install_dir" >> "$GITHUB_PATH"
+          "$install_dir/betterleaks" version
       - name: Betterleaks working tree (offline, blocking)
         run: >-
-          ./betterleaks dir
+          betterleaks dir
           --baseline-path .betterleaks-baseline.json
           --redact=100
           --no-banner
           --no-color
           --report-format json
-          --report-path betterleaks-working-tree.json
+          --report-path "$RUNNER_TEMP/betterleaks-working-tree.json"
           .
       - name: Upload security reports
         if: always()
@@ -133,8 +140,8 @@ jobs:
         with:
           name: quality-security-reports
           path: |
-            semgrep-community.json
-            betterleaks-working-tree.json
+            ${{ runner.temp }}/semgrep-community.json
+            ${{ runner.temp }}/betterleaks-working-tree.json
           if-no-files-found: warn
           retention-days: 7
 
@@ -151,24 +158,31 @@ jobs:
       - name: Install verified Betterleaks stable
         shell: bash
         run: |
-          asset=betterleaks_1.9.0_linux_x64.tar.gz
+          install_dir="$RUNNER_TEMP/betterleaks"
+          mkdir -p "$install_dir"
+          asset="$install_dir/betterleaks_1.9.0_linux_x64.tar.gz"
           curl --fail --location --silent --show-error \
             --output "$asset" \
             https://github.com/betterleaks/betterleaks/releases/download/v1.9.0/betterleaks_1.9.0_linux_x64.tar.gz
+          printf '%s  %s\n' "$BETTERLEAKS_1_9_0_LINUX_X64_SHA256" "$asset" \
+            | sha256sum --check --strict
           curl --fail --location --silent --show-error \
-            --output checksums.txt \
+            --output "$install_dir/checksums.txt" \
             https://github.com/betterleaks/betterleaks/releases/download/v1.9.0/checksums.txt
-          grep 'betterleaks_1.9.0_linux_x64.tar.gz$' checksums.txt | sha256sum --check
-          tar -xzf "$asset" betterleaks
-          chmod +x betterleaks
+          grep 'betterleaks_1.9.0_linux_x64.tar.gz$' "$install_dir/checksums.txt" \
+            > "$install_dir/expected.sha256"
+          (cd "$install_dir" && sha256sum --check expected.sha256)
+          tar -xzf "$asset" -C "$install_dir" betterleaks
+          chmod +x "$install_dir/betterleaks"
+          echo "$install_dir" >> "$GITHUB_PATH"
       - name: Scan complete history without credential validation
         run: >-
-          ./betterleaks git
+          betterleaks git
           --redact=100
           --no-banner
           --no-color
           --report-format json
-          --report-path betterleaks-history.json
+          --report-path "$RUNNER_TEMP/betterleaks-history.json"
           --log-opts=--all
           .
       - name: Upload redacted history report
@@ -176,6 +190,6 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: betterleaks-history
-          path: betterleaks-history.json
+          path: ${{ runner.temp }}/betterleaks-history.json
           if-no-files-found: warn
           retention-days: 7

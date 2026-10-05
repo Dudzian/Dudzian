@@ -47,7 +47,7 @@ def test_position_limit_never_accepts_excess_risk(size: float, existing: float) 
 @given(
     strength=st.one_of(
         st.sampled_from([math.nan, math.inf, -math.inf]),
-        st.floats(max_value=-0.000001, allow_nan=False, allow_infinity=False),
+        st.floats(max_value=-1.000001, allow_nan=False, allow_infinity=False),
         st.floats(min_value=1.000001, allow_nan=False, allow_infinity=False),
     ),
 )
@@ -65,3 +65,19 @@ def test_invalid_signal_fails_closed_without_position(strength: float) -> None:
     assert result.recommended_size == 0.0
     assert result.max_allowed_size == 0.0
     assert math.isfinite(result.risk_adjusted_size)
+
+
+def test_valid_short_signal_uses_strength_magnitude_for_sizing() -> None:
+    manager = RiskManagement({"max_portfolio_risk": 0.25, "max_risk_per_trade": 0.05})
+    market = pd.DataFrame({"close": [100.0, 101.0, 99.0]})
+
+    short = manager.calculate_position_size(
+        "BTC/USDT", {"strength": -0.8, "confidence": 0.8}, market, {}
+    )
+    long = manager.calculate_position_size(
+        "BTC/USDT", {"strength": 0.8, "confidence": 0.8}, market, {}
+    )
+
+    assert short.recommended_size > 0.0
+    assert short.recommended_size == long.recommended_size
+    assert short.risk_adjusted_size == long.risk_adjusted_size
