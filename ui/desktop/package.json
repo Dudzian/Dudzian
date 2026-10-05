@@ -14,7 +14,7 @@
     "test:e2e": "npm run build && playwright test"
   },
   "dependencies": {
-    "electron": "26.2.0",
+    "electron": "44.5.1",
     "react": "18.2.0",
     "react-dom": "18.2.0",
     "react-hook-form": "7.45.1",
