@@ -279,6 +279,11 @@ quality = [
 desktop = [
   "pyinstaller>=6.5",
   "briefcase>=0.3.18",
+  # Briefcase's macOS packaging closure is explicit so the shared exact lock
+  # remains complete when consumers deliberately install it with --no-deps.
+  "dmgbuild>=1.6.4,<2.0; platform_system == 'Darwin'",
+  "ds-store>=1.1.0; platform_system == 'Darwin'",
+  "mac-alias>=2.2.2; platform_system == 'Darwin'",
   # Cross-platform PyInstaller runtime dependencies are explicit so one lock
   # is complete when resolved natively on Linux, Windows, and macOS.
   "macholib>=1.16.3",

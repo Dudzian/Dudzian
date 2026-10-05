@@ -22,6 +22,11 @@ LOCK = Path("deploy/packaging/requirements-desktop.lock")
 LOCK_REPOSITORY_TEXT = LOCK.as_posix()
 LOCK_NATIVE = os.fspath(LOCK)
 PYSIDE_STACK = {"pyside6", "pyside6-addons", "pyside6-essentials", "shiboken6"}
+MACOS_BRIEFCASE_CLOSURE = {
+    "dmgbuild": "1.6.7",
+    "ds-store": "1.3.3",
+    "mac-alias": "2.2.3",
+}
 PIP_BOOTSTRAP = f"python scripts/ci/bootstrap_locked_pip.py {LOCK_REPOSITORY_TEXT}"
 
 
@@ -136,6 +141,26 @@ def test_windows_colorama_dependency_is_owned_by_canonical_desktop_authority() -
     )
 
 
+def test_macos_briefcase_closure_is_owned_by_canonical_desktop_authority() -> None:
+    project = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))["project"]
+    desktop = {
+        canonicalize_name(requirement.name): requirement
+        for raw in project["optional-dependencies"]["desktop"]
+        if canonicalize_name((requirement := Requirement(raw)).name) in MACOS_BRIEFCASE_CLOSURE
+    }
+    assert set(desktop) == set(MACOS_BRIEFCASE_CLOSURE)
+    for name, version in MACOS_BRIEFCASE_CLOSURE.items():
+        requirement = desktop[name]
+        assert requirement.marker is not None
+        assert requirement.marker.evaluate({"platform_system": "Darwin"})
+        assert not requirement.marker.evaluate({"platform_system": "Windows"})
+        assert not requirement.marker.evaluate({"platform_system": "Linux"})
+        assert requirement.specifier.contains(version)
+    assert {name: locked_versions(LOCK)[name] for name in MACOS_BRIEFCASE_CLOSURE} == (
+        MACOS_BRIEFCASE_CLOSURE
+    )
+
+
 def test_canonical_pyside_stack_has_one_version_everywhere() -> None:
     locked = locked_versions(LOCK)
     versions = {locked[name] for name in PYSIDE_STACK}
@@ -196,8 +221,9 @@ def test_cross_platform_jobs_validate_native_plan_before_wheelhouse() -> None:
     ("name", "version", "expected"),
     [
         ("colorama", "0.4.6", "colorama==0.4.6"),
-        ("foo", "1.2.3", "foo==1.2.3"),
-        ("requests", "0.0.1", "requests==0.0.1"),
+        ("dmgbuild", "1.6.7", "dmgbuild==1.6.7"),
+        ("ds-store", "1.3.3", "ds-store==1.3.3"),
+        ("mac-alias", "2.2.3", "mac-alias==2.2.3"),
     ],
 )
 def test_actual_desktop_target_rejects_missing_or_mismatched_dependency(

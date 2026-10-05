@@ -68,6 +68,12 @@ cryptography==50.0.1
     #   ccxt
     #   dudzian-bot (pyproject.toml)
     #   secretstorage
+dmgbuild==1.6.7
+    # via dudzian-bot (pyproject.toml)
+ds-store==1.3.3
+    # via
+    #   dmgbuild
+    #   dudzian-bot (pyproject.toml)
 frozenlist==1.8.0
     # via
     #   aiohttp
@@ -121,6 +127,11 @@ keyring==25.7.0
     # via dudzian-bot (pyproject.toml)
 lightgbm==4.7.0
     # via dudzian-bot (pyproject.toml)
+mac-alias==2.2.3
+    # via
+    #   dmgbuild
+    #   ds-store
+    #   dudzian-bot (pyproject.toml)
 macholib==1.16.3
     # via
     #   -r deploy/packaging/requirements-desktop.txt
