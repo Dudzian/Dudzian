@@ -29,9 +29,6 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
 
-    files = [str(Path(value)) for value in (argv or sys.argv[1:]) if Path(value).is_file()]
-    if not files:
-        return 0
     baseline = Path(".betterleaks-baseline.json")
     baseline_args = ["--baseline-path", str(baseline)] if baseline.is_file() else []
     completed = subprocess.run(
@@ -43,7 +40,10 @@ def main(argv: list[str] | None = None) -> int:
             "--no-banner",
             "--no-color",
             "--exit-code=1",
-            *files,
+            # Scan from the repository root as one target. Passing pre-commit's
+            # chunked filename batches changes Betterleaks fingerprints and can
+            # make reviewed baseline entries fail to match.
+            ".",
         ],
         check=False,
     )

@@ -290,8 +290,13 @@ class RiskManagement:
                 signal_confidence = float(signal_data.get("confidence", 0.5))
                 if not math.isfinite(signal_strength) or not math.isfinite(signal_confidence):
                     raise ValueError("signal strength and confidence must be finite")
-                if not 0.0 <= signal_strength <= 1.0 or not 0.0 <= signal_confidence <= 1.0:
-                    raise ValueError("signal strength and confidence must be between 0 and 1")
+                if not -1.0 <= signal_strength <= 1.0 or not 0.0 <= signal_confidence <= 1.0:
+                    raise ValueError(
+                        "signal strength must be between -1 and 1 and confidence between 0 and 1"
+                    )
+                # Strength is directional at the strategy boundary. Position sizing is
+                # direction-agnostic, so only its magnitude may influence exposure.
+                signal_magnitude = abs(signal_strength)
 
                 returns = (
                     market_data["close"].pct_change().dropna()
@@ -301,7 +306,7 @@ class RiskManagement:
 
                 kelly_size = self._calculate_kelly_criterion(returns, signal_confidence)
                 volatility = self.volatility_estimator.ewma_volatility(returns)
-                vol_adjusted_size = self._volatility_adjusted_size(volatility, signal_strength)
+                vol_adjusted_size = self._volatility_adjusted_size(volatility, signal_magnitude)
                 risk_parity_size = self._risk_parity_sizing(current_portfolio, volatility)
                 portfolio_heat = self._calculate_portfolio_heat(current_portfolio)
                 heat_adjusted_size = self._heat_adjusted_sizing(portfolio_heat)
