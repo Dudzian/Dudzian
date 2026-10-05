@@ -58,6 +58,8 @@ click==8.3.3
     # via cookiecutter
 coincurve==21.0.0
     # via ccxt
+colorama==0.4.6
+    # via dudzian-bot (pyproject.toml)
 cookiecutter==2.6.0
     # via briefcase
 cryptography==50.0.1

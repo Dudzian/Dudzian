@@ -111,13 +111,29 @@ def test_windows_build_tooling_authority_is_exact_and_separate_from_runtime() ->
     tooling_lock = Path("deploy/packaging/requirements-windows-build-tools.lock")
     tooling = locked_versions(tooling_lock)
     assert tooling == {
-        "colorama": "0.4.6",
         "iniconfig": "2.3.0",
         "pluggy": "1.6.0",
         "pytest": "9.0.2",
     }
     runtime = locked_versions(LOCK)
     assert "pytest" not in runtime
+
+
+def test_windows_colorama_dependency_is_owned_by_canonical_desktop_authority() -> None:
+    project = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))["project"]
+    desktop = [Requirement(raw) for raw in project["optional-dependencies"]["desktop"]]
+    colorama = next(requirement for requirement in desktop if requirement.name == "colorama")
+    assert colorama.marker is not None
+    assert colorama.marker.evaluate({"platform_system": "Windows"})
+    assert not colorama.marker.evaluate({"platform_system": "Linux"})
+    assert colorama.specifier.contains("0.4.6")
+    assert locked_versions(LOCK)["colorama"] == "0.4.6"
+    assert "colorama" not in locked_versions(
+        Path("deploy/packaging/requirements-windows-runtime.lock")
+    )
+    assert "colorama" not in locked_versions(
+        Path("deploy/packaging/requirements-windows-build-tools.lock")
+    )
 
 
 def test_canonical_pyside_stack_has_one_version_everywhere() -> None:
@@ -178,7 +194,11 @@ def test_cross_platform_jobs_validate_native_plan_before_wheelhouse() -> None:
 
 @pytest.mark.parametrize(
     ("name", "version", "expected"),
-    [("foo", "1.2.3", "foo==1.2.3"), ("requests", "0.0.1", "requests==0.0.1")],
+    [
+        ("colorama", "0.4.6", "colorama==0.4.6"),
+        ("foo", "1.2.3", "foo==1.2.3"),
+        ("requests", "0.0.1", "requests==0.0.1"),
+    ],
 )
 def test_actual_desktop_target_rejects_missing_or_mismatched_dependency(
     name: str, version: str, expected: str
@@ -188,6 +208,7 @@ def test_actual_desktop_target_rejects_missing_or_mismatched_dependency(
         report = Path(command[command.index("--report") + 1])
         if "--requirement" in command:
             assert command[command.index("--requirement") + 1] == LOCK_NATIVE
+            assert "--no-deps" in command
             install = []
         else:
             assert command[command.index("--constraint") + 1] == LOCK_NATIVE

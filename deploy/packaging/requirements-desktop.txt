@@ -12,3 +12,4 @@ cryptography==50.0.1
 macholib==1.16.3
 pefile==2024.8.26
 pywin32-ctypes==0.2.3
+colorama==0.4.6; platform_system == "Windows"

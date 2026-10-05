@@ -21,17 +21,14 @@ def _iter_pinned_requirements() -> list[tuple[str, str]]:
         if not line or line.startswith("#"):
             continue
 
-        if "==" not in line:
+        requirement = Requirement(line)
+        pins = [item.version for item in requirement.specifier if item.operator == "=="]
+        if len(pins) != 1:
             raise AssertionError(
                 "Każdy wpis w requirements-desktop.txt powinien mieć przypiętą wersję "
                 f"(znaleziono: '{raw_line}')"
             )
-
-        name, version = line.split("==", 1)
-        name = name.strip()
-        version = version.strip()
-        assert name and version, "Niepoprawny wpis w requirements-desktop.txt"
-        entries.append((name, version))
+        entries.append((requirement.name, pins[0]))
     return entries
 
 
