@@ -10,8 +10,8 @@ jobs:
   publish-existing-public-package:
     runs-on: [self-hosted, Windows, X64, cryptohunter-production-authority]
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with: {python-version: "3.11.9", architecture: "x64"}
       - name: Install reviewed verifier dependencies
         shell: pwsh
@@ -28,13 +28,13 @@ jobs:
           --output "${{ runner.temp }}\stage9-publication"
           --receipt "${{ runner.temp }}\stage9-publication-evidence.json"
       - name: Upload canonical twelve-file public package
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: stage9-public-production-trust
           if-no-files-found: error
           path: ${{ runner.temp }}\stage9-publication\390299aaa1ea928a6c2bfdd81a4c50cfde82a7744cd054e8628d5937b90f1699\*.json
       - name: Upload public publication evidence separately
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: stage9-public-production-trust-publication-evidence
           if-no-files-found: error

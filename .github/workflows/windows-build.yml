@@ -17,10 +17,10 @@ jobs:
       DUDZIAN_QML_FLUSH_DELETES: '0'
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: '3.11'
           architecture: x64
@@ -168,7 +168,7 @@ jobs:
 
       - name: Upload app ZIP
         if: success()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: CryptoHunter-windows-${{ github.run_number }}-${{ github.sha }}
           path: build/output/CryptoHunter-windows-${{ github.run_number }}-${{ github.sha }}.zip
@@ -176,7 +176,7 @@ jobs:
 
       - name: Upload build reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: CryptoHunter-windows-reports-${{ github.run_number }}-${{ github.sha }}
           path: |
