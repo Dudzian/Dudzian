@@ -273,7 +273,7 @@ quality = [
   "mypy==1.10.0",
   "pre-commit>=4,<5",
   "coverage>=7.10,<8",
-  "diff-cover>=9,<10",
+  "diff-cover>=9,<11",
   "pip-audit>=2.9,<3",
 ]
 desktop = [
