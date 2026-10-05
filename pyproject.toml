@@ -201,7 +201,7 @@ dependencies = [
   "respx>=0.20",
   "jsonschema>=4.21",
   "sqlalchemy[asyncio]>=2.0",
-  "PySide6>=6.7,<6.11",
+  "PySide6>=6.7,<6.12",
   "packaging>=23.2",
 ]
 
@@ -252,7 +252,7 @@ test = [
   "pywin32>=312; platform_system == 'Windows'",
 ]
 codegen = [
-  "grpcio-tools==1.71.2",
+  "grpcio-tools==1.84.0",
 ]
 tools = [
   # Dependencies for CI tooling/scripts (reports, marketplace, parity checks).
@@ -269,8 +269,8 @@ tools = [
   "pyarrow>=12.0",
 ]
 quality = [
-  "ruff==0.14.11",
-  "mypy==1.10.0",
+  "ruff==0.16.10",
+  "mypy==1.20.2",
   "pre-commit>=4,<5",
   "coverage>=7.10,<8",
   "diff-cover>=9,<11",
@@ -292,7 +292,7 @@ desktop = [
   # build and click require this on Windows; keep the shared exact lock closed
   # when consumers deliberately install it with --no-deps.
   "colorama>=0.4.6; platform_system == 'Windows'",
-  "PySide6>=6.7,<6.11",
+  "PySide6>=6.7,<6.12",
 ]
 compression = [
   "brotli>=1.1; platform_python_implementation != 'PyPy'",
