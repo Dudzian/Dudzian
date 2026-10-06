@@ -1,0 +1,14 @@
+{
+  "schema_version": "cryptohunter.stage9_lppi_authority_key_binding_freeze.v1",
+  "status": "FROZEN",
+  "implementation_architecturally_authorized": true,
+  "production_provisioning_ready": false,
+  "parent_contract_sha256": "6538a75d8cf3a6e3cdab8f4a9022277a21d98e1a61923aa8d8eae9b80ae1d67d",
+  "artifacts": [
+    {
+      "canonical_artifact": "docs/architecture/cryptohunter_product_architecture/stage9_lppi_authority_key_binding_contract.json",
+      "canonical_schema_version": "cryptohunter.stage9_lppi_authority_key_binding_contract.v1",
+      "sha256": "4f201676b786f2c2c7d816457f75d7aaaf40a3cb4f21ab7653b425b48638f1a8"
+    }
+  ]
+}
