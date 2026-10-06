@@ -24,6 +24,10 @@ from bot_core.licensing.production_pre_enrollment import (
 from bot_core.licensing.production_tpm_custody import ProductionTPMChallengeStore
 from bot_core.licensing.tpm_attestation import TPMEnrollmentRequestV1
 from deployment.platforms.windows import production_trust_package_path, resolve_paths
+from deployment.production_enrollment_issuer import (
+    require_production_pdsa_store,
+    require_production_tpm_store,
+)
 from deployment.windows_stage9_production_trust import (
     CEREMONY_ID,
     load_production_trust,
@@ -123,11 +127,10 @@ def accept_retained_production_request(
     it does not deploy the PDSA service or turn a client-chosen database into
     issuer authority. A returned receipt records authentication only.
     """
-    if (
-        type(challenge_store) is not PDSAChallengeStore
-        or type(pending) is not ProductionTPMChallengeStore
-    ):
-        raise TypeError("exact production issuer stores required")
+    issuer = require_production_pdsa_store(challenge_store, context=context)
+    require_production_tpm_store(
+        pending, context=context, pdsa_store=challenge_store, issuer=issuer
+    )
     previous = challenge_store.retry_exact_accepted(
         request_raw=request_raw, challenge_raw=challenge_raw
     )

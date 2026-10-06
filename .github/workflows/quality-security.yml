@@ -57,6 +57,7 @@ jobs:
           tests/deployment/test_windows_cng_custody_bridge.py
           tests/deployment/test_windows_production_pre_enrollment.py
           tests/deployment/test_windows_stage9_production_trust_provenance.py
+          tests/deployment/test_production_enrollment_issuer.py
           tests/architecture/test_stage9_external_provisioning_architecture.py
           tests/architecture/test_stage9_pdsa_enrollment_challenge_contract.py
           tests/architecture/test_stage9_production_tpm_custody_contract.py
@@ -73,6 +74,7 @@ jobs:
           --cov=deployment.windows_cng_custody_bridge
           --cov=deployment.windows_production_pre_enrollment
           --cov=deployment.windows_stage9_production_trust
+          --cov=deployment.production_enrollment_issuer
           --cov-config=.coveragerc
           --cov-report=term-missing
           --cov-report=xml:coverage.xml

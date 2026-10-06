@@ -12,11 +12,12 @@ import hashlib
 import hmac
 import re
 import sqlite3
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Mapping, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Iterator, Mapping, TypeVar, cast
 from weakref import WeakKeyDictionary
 
 from cryptography.exceptions import InvalidSignature
@@ -43,6 +44,10 @@ from bot_core.licensing.tpm_attestation import (
     credential_activation_proof,
     make_credential_ecc,
     test_only_sign_policy_digest,
+)
+from deployment.production_enrollment_issuer import (
+    ProductionEnrollmentIssuerContext,
+    require_production_tpm_store,
 )
 from deployment.windows_stage9_production_trust import (
     PDSA_KEY_SET_DIGEST,
@@ -571,9 +576,9 @@ def _activation_and_request(
 
 
 class ProductionTPMChallengeStore:
-    """Issuer-side durable MakeCredential state; secrets and nonces are never caller supplied."""
+    """SQLite mechanics; production authority requires the installed issuer factory."""
 
-    __slots__ = ("_path",)
+    __slots__ = ("_path", "__weakref__")
     _path: Path
 
     def __init__(self, path: Path) -> None:
@@ -597,8 +602,16 @@ class ProductionTPMChallengeStore:
     def __setattr__(self, name: str, value: object) -> None:
         raise TypeError("production TPM challenge store configuration is immutable")
 
-    def _connect(self) -> sqlite3.Connection:
-        return sqlite3.connect(self._path, timeout=30)
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
+        database = sqlite3.connect(self._path, timeout=30)
+        try:
+            database.execute("PRAGMA journal_mode=WAL")
+            database.execute("PRAGMA synchronous=FULL")
+            with database:
+                yield database
+        finally:
+            database.close()
 
     def issue(
         self,
@@ -612,8 +625,7 @@ class ProductionTPMChallengeStore:
     ) -> TPMEnrollmentChallengeV1:
         from .pdsa_enrollment_challenge import require_verified_issued_challenge
 
-        if type(self) is not ProductionTPMChallengeStore:
-            raise ProductionTPMCustodyError("EXACT_PRODUCTION_TPM_CHALLENGE_STORE_REQUIRED")
+        issuer = require_production_tpm_store(self, context=context, pdsa_store=pdsa_store)
         trusted = require_verified_production_trust_context(context)
         approved = _require_endorsement(endorsement, trusted)
         pdsa = require_verified_issued_challenge(pdsa_challenge, store=pdsa_store, context=trusted)
@@ -628,20 +640,23 @@ class ProductionTPMChallengeStore:
         with self._connect() as database:
             database.execute("BEGIN IMMEDIATE")
             # Recheck live authority after waiting for the issuer write lock.
+            require_production_tpm_store(
+                self, context=trusted, issuer=issuer, pdsa_store=pdsa_store
+            )
             require_verified_production_trust_context(trusted)
             pdsa = require_verified_issued_challenge(
                 pdsa_challenge, store=pdsa_store, context=trusted
             )
             approved = _require_endorsement(endorsement, trusted)
             recorded = database.execute(
-                "SELECT challenge,endorsement_digest FROM tpm_challenges "
+                "SELECT challenge,endorsement_digest,state FROM tpm_challenges "
                 "WHERE request=? AND pdsa_digest=?",
                 (request_raw, pdsa.digest_sha256),
             ).fetchone()
             if recorded is not None:
                 if recorded[1] != approved.digest_sha256:
                     raise ProductionTPMCustodyError("TPM_CHALLENGE_ISSUANCE_CONFLICT")
-                if expiry <= _utc_now():
+                if recorded[2] == "EXPIRED" or expiry <= _utc_now():
                     raise ProductionTPMCustodyError("PRODUCTION_TPM_CHALLENGE_EXPIRED")
                 return cast(
                     TPMEnrollmentChallengeV1,
@@ -678,7 +693,9 @@ class ProductionTPMChallengeStore:
         return challenge
 
     def _record(self, challenge: TPMEnrollmentChallengeV1) -> tuple[Any, ...]:
+        issuer = require_production_tpm_store(self)
         with self._connect() as database:
+            require_production_tpm_store(self, issuer=issuer)
             row = database.execute(
                 "SELECT * FROM tpm_challenges WHERE challenge_id=?",
                 (challenge.document["challenge_id"],),
@@ -687,6 +704,8 @@ class ProductionTPMChallengeStore:
             raise ProductionTPMCustodyError("UNKNOWN_OR_CHANGED_PRODUCTION_TPM_CHALLENGE")
         if _time(challenge.document["expires_at_utc"]) <= _utc_now() or row[9] == "EXPIRED":
             with self._connect() as database:
+                database.execute("BEGIN IMMEDIATE")
+                require_production_tpm_store(self, issuer=issuer)
                 database.execute(
                     "UPDATE tpm_challenges SET state='EXPIRED' "
                     "WHERE challenge_id=? AND state='ISSUED'",
@@ -709,8 +728,12 @@ class ProductionTPMChallengeStore:
     ) -> None:
         from .pdsa_enrollment_challenge import require_verified_issued_challenge
 
+        issuer = require_production_tpm_store(self, context=context, pdsa_store=pdsa_store)
         with self._connect() as database:
             database.execute("BEGIN IMMEDIATE")
+            require_production_tpm_store(
+                self, context=context, issuer=issuer, pdsa_store=pdsa_store
+            )
             require_verified_production_trust_context(context)
             pdsa = require_verified_issued_challenge(
                 pdsa_challenge, store=pdsa_store, context=context
@@ -763,6 +786,7 @@ class ProductionTPMEnrollmentVerifier:
             or type(pending) is not ProductionTPMChallengeStore
         ):
             raise ProductionTPMCustodyError("EXACT_PRODUCTION_TPM_VERIFIER_AND_STORE_REQUIRED")
+        issuer = require_production_tpm_store(pending, context=context, pdsa_store=pdsa_store)
         trusted = require_verified_production_trust_context(context)
         approved = _require_endorsement(endorsement, trusted)
         pdsa = require_verified_issued_challenge(pdsa_challenge, store=pdsa_store, context=trusted)
@@ -856,13 +880,19 @@ class ProductionTPMEnrollmentVerifier:
             projection_raw=projection.canonical_bytes,
             pending=pending,
             pending_path=pending._path,
+            issuer=issuer,
+            pdsa_store=pdsa_store,
             endorsement=approved,
             pdsa_digest=pdsa.digest_sha256,
         )
 
 
 def require_verified_production_tpm_exchange(
-    value: object, *, context: object, pending: ProductionTPMChallengeStore | None = None
+    value: object,
+    *,
+    context: object,
+    pending: ProductionTPMChallengeStore | None = None,
+    issuer: ProductionEnrollmentIssuerContext | None = None,
 ) -> VerifiedProductionTPMExchange:
     snapshot = _require_context(value, VerifiedProductionTPMExchange, context)
     source = snapshot["pending"]
@@ -872,6 +902,15 @@ def require_verified_production_tpm_exchange(
         or (pending is not None and source is not pending)
     ):
         raise ProductionTPMCustodyError("PRODUCTION_TPM_EXCHANGE_STORE_MISMATCH")
+    retained_issuer = snapshot["issuer"]
+    if issuer is not None and issuer is not retained_issuer:
+        raise ProductionTPMCustodyError("PRODUCTION_TPM_EXCHANGE_ISSUER_MISMATCH")
+    require_production_tpm_store(
+        source,
+        context=context,
+        issuer=retained_issuer,
+        pdsa_store=snapshot["pdsa_store"],
+    )
     _require_endorsement(snapshot["endorsement"], context)
     challenge = cast(
         TPMEnrollmentChallengeV1,

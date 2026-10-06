@@ -23,6 +23,10 @@ from weakref import WeakKeyDictionary
 
 from cryptography.exceptions import InvalidSignature
 
+from deployment.production_enrollment_issuer import (
+    ProductionEnrollmentIssuerContext,
+    require_production_pdsa_store,
+)
 from deployment.windows_stage9_production_trust import (
     PDSA_KEY_SET_DIGEST,
     ProductionTrustContext,
@@ -262,6 +266,7 @@ class _IssuedSnapshot:
     store: PDSAChallengeStore
     store_path: Path
     context: ProductionTrustContext
+    issuer: ProductionEnrollmentIssuerContext
 
 
 _ISSUED: WeakKeyDictionary[VerifiedIssuedPDSAChallenge, _IssuedSnapshot] = WeakKeyDictionary()
@@ -272,6 +277,7 @@ def require_verified_issued_challenge(
     *,
     store: PDSAChallengeStore | None = None,
     context: object | None = None,
+    issuer: ProductionEnrollmentIssuerContext | None = None,
 ) -> VerifiedIssuedPDSAChallenge:
     """Recheck provenance, unchanged bytes, retained ISSUED state and current UTC."""
     if type(value) is not VerifiedIssuedPDSAChallenge:
@@ -292,21 +298,29 @@ def require_verified_issued_challenge(
         valid = False
     if not valid:
         raise PDSAChallengeError("VERIFIED_ISSUED_PDSA_CHALLENGE_REQUIRED")
+    registered_issuer = require_production_pdsa_store(
+        snapshot.store, context=snapshot.context, issuer=snapshot.issuer
+    )
+    if issuer is not None and issuer is not registered_issuer:
+        raise PDSAChallengeError("VERIFIED_ISSUED_PDSA_CHALLENGE_REQUIRED")
     _verify_signatures(snapshot.raw, snapshot.context)
     snapshot.store._require_issued(snapshot.raw)
     return value
 
 
 class PDSAChallengeStore:
-    """Trusted PDSA service state; its custody is a production deployment prerequisite.
+    """SQLite mechanics; only the installed issuer factory grants store authority.
 
     The database must remain under issuer custody. Its path is never accepted from
     the enrollment transport caller. SQLite FULL synchronization and one immediate
     transaction protect publication/consume atomicity, not arbitrary file rollback.
     """
 
+    __slots__ = ("_path", "__weakref__")
+    _path: Path
+
     def __init__(self, path: Path) -> None:
-        self.path = Path(path)
+        object.__setattr__(self, "_path", Path(path))
         with self._connect() as db:
             db.execute(
                 """CREATE TABLE IF NOT EXISTS pdsa_challenges (
@@ -325,6 +339,13 @@ class PDSAChallengeStore:
                 )"""
             )
 
+    def __setattr__(self, name: str, value: object) -> None:
+        raise TypeError("PDSAChallengeStore configuration is immutable")
+
+    @property
+    def path(self) -> Path:
+        return self._path
+
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
         db = sqlite3.connect(self.path, timeout=30, isolation_level=None)
@@ -342,6 +363,7 @@ class PDSAChallengeStore:
         signature_provider: Callable[[bytes], list[dict[str, str]]],
     ) -> bytes:
         """Generate issuer freshness, verify external quorum, commit before return."""
+        require_production_pdsa_store(self, context=context)
         trusted = require_current_production_trust_context(context)
         issued = _utc_now().replace(microsecond=0)
         millis = int(issued.timestamp()) * 1000
@@ -374,6 +396,7 @@ class PDSAChallengeStore:
         # already-expired artifact.
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
+            require_production_pdsa_store(self, context=trusted)
             require_current_production_trust_context(trusted)
             # Acquiring the writer lock can wait. Check the deadline only after
             # acquiring it, so delayed signing/lock contention cannot publish an
@@ -411,10 +434,12 @@ class PDSAChallengeStore:
         return row
 
     def _require_issued(self, raw: bytes) -> None:
+        require_production_pdsa_store(self)
         payload = PDSAEnrollmentChallengeV1.from_canonical_bytes(raw).document["payload"]
         expired = False
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
+            require_production_pdsa_store(self)
             row = self._exact_row(db, raw)
             if row["state"] == "EXPIRED":
                 raise PDSAChallengeError("CHALLENGE_EXPIRED")
@@ -435,6 +460,7 @@ class PDSAChallengeStore:
             raise PDSAChallengeError("CHALLENGE_EXPIRED")
 
     def verify_issued(self, raw: bytes, context: object) -> VerifiedIssuedPDSAChallenge:
+        issuer = require_production_pdsa_store(self, context=context)
         trusted = require_current_production_trust_context(context)
         challenge = _verify_signatures(raw, trusted)
         self._require_issued(raw)
@@ -443,14 +469,22 @@ class PDSAChallengeStore:
         object.__setattr__(result, "digest_sha256", challenge.digest_sha256)
         object.__setattr__(result, "nonce_digest_sha256", challenge.nonce_digest_sha256)
         _ISSUED[result] = _IssuedSnapshot(
-            raw, challenge.digest_sha256, challenge.nonce_digest_sha256, self, self.path, trusted
+            raw,
+            challenge.digest_sha256,
+            challenge.nonce_digest_sha256,
+            self,
+            self.path,
+            trusted,
+            issuer,
         )
         return result
 
     def retry_exact_accepted(self, *, request_raw: bytes, challenge_raw: bytes) -> bytes | None:
         """Return only a previously stored result; no new authority is established."""
+        require_production_pdsa_store(self)
         request = PreEnrollmentRequestV1.from_canonical_bytes(request_raw)
         with self._connect() as db:
+            require_production_pdsa_store(self)
             row = self._exact_row(db, challenge_raw)
             if row["state"] == "CONSUMED":
                 if (
@@ -467,7 +501,9 @@ class PDSAChallengeStore:
         """Atomic acceptance boundary; package issuance and subject minting stay separate."""
         from .production_pre_enrollment import require_authenticated_pre_enrollment
 
+        require_production_pdsa_store(self)
         accepted = require_authenticated_pre_enrollment(value, challenge_store=self)
+        require_production_pdsa_store(self, context=accepted.context)
         request_raw, challenge_raw = accepted.request_raw, accepted.challenge_raw
         request = PreEnrollmentRequestV1.from_canonical_bytes(request_raw)
         challenge = PDSAEnrollmentChallengeV1.from_canonical_bytes(challenge_raw)
@@ -493,6 +529,7 @@ class PDSAChallengeStore:
         expired = False
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
+            require_production_pdsa_store(self, context=accepted.context)
             row = self._exact_row(db, challenge_raw)
             if row["state"] == "CONSUMED":
                 if (

@@ -98,13 +98,13 @@ of the decoded issuer-generated 32-byte nonce. Issuance uses UTC seconds, exactl
 604800 seconds of validity, and canonical issuer-generated `pchal_<UUIDv7>`.
 Unknown fields and noncanonical bytes are rejected.
 
-`PDSAChallengeStore` is protected, durable **off-host issuer** state. SQLite
+`PDSAChallengeStore` is durable **off-host issuer** state. SQLite
 FULL durability retains exact `ISSUED` bytes before publication. Writer-locked
 consumption binds exact authenticated request bytes/digest and a receipt.
 `EXPIRED` and `CONSUMED` are terminal; an identical retry retrieves the prior
-receipt, and another request returns `CHALLENGE_REPLAY_CONFLICT`. A database path
-chosen by a client is not issuer authority. The service must configure and
-protect its own store; this PR does not deploy that service.
+receipt, and another request returns `CHALLENGE_REPLAY_CONFLICT`. Production
+authority additionally requires the factory provenance described below; the
+SQLite schema, its records and an exact Python type do not establish it.
 
 `stage9_production_tpm_custody_contract.json` and its separate freeze define
 production-only exchange PoP and CertifyCreation domains, strict TPMT_PUBLIC,
@@ -147,6 +147,68 @@ enforces provider/machine/export properties locally; the issuer's cryptographic
 custody proof establishes target TPM origin and key identity. A provider-name
 string alone does not prove Windows CNG properties remotely. Network service
 deployment and complete provisioning-package publication remain separate work.
+
+## Issuer retained-state provenance
+
+Follow-up review confirmed that the initial implementation could issue a
+`VerifiedIssuedPDSAChallenge` from a caller-selected database containing a valid
+signed challenge and a reconstructed `ISSUED` row. The TPM pending store had the
+same missing authority boundary. A copy made before canonical consumption could
+therefore carry stale retained state into another store instance. The existing
+subordinate contract already excludes caller-selected paths, database copies and
+software fixtures as issuer authority; its freeze does not need to change.
+
+`deployment.production_enrollment_issuer.open_installed_production_enrollment_issuer()`
+is the production bootstrap. It accepts no arguments, environment overrides,
+paths, connection, backend or caller-supplied factory. Its reviewed Linux
+configuration is:
+
+- OS service account `cryptohunter-pdsa-enrollment`, with a non-root UID and its
+  exact primary GID as the running process identity.
+- State directory `/var/lib/cryptohunter/pdsa-enrollment`, owned by that account
+  with mode `0700`, under root-owned ancestors that deny group/world writes.
+- Fixed files `pdsa-challenges.sqlite3` and `tpm-challenges.sqlite3`, owned by the
+  service account with mode `0600` and one filesystem link.
+- Current public Production Trust package at
+  `/etc/cryptohunter/production-trust/<CEREMONY_ID>`, under protected root-owned
+  directories, verified by the current-runtime loader.
+
+Bootstrap fails on an unsupported platform, wrong principal, unsafe permissions,
+symlinked/resolved-path mismatch or an unavailable current trust package. It does
+not install the account, repair permissions, select another directory, or perform
+the service deployment ceremony. The protected installed code and the OS service
+boundary remain deployment prerequisites.
+
+The factory issues an opaque `ProductionEnrollmentIssuerContext` and registers
+its exact PDSA/TPM store pair in private weak registries. The service retains that
+context for the bundle's lifetime; store references alone cannot prolong it.
+Immutable snapshots bind
+the configured trust object, store instances and directory/database source
+identities: path, device, inode, owner/group and mode. Consequential store guards
+recheck provenance and these identities; combining stores from distinct issuer
+contexts is rejected, including two separately opened contexts for the same
+canonical files. Constructors over arbitrary SQLite paths remain mechanics only
+and cannot mint production challenge/exchange capabilities or consume an
+authenticated request. Copying Python fields, rows or the entire database does
+not register the copied instance as authority.
+
+`close()` revokes the issuer context and both stores. After a legal service
+restart, the same no-argument factory requalifies the protected canonical
+configuration and reopens the durable files with fresh process-local provenance.
+Previously consumed challenges and their exact receipts remain consumed;
+process-local capabilities are neither serialized nor recovered from copied
+tokens. A genuine reopen supports exact receipt retrieval and retained exchange
+retry. Receipt retrieval grants no new authority or renewal of expired trust.
+A stale `ISSUED` copy at another location cannot replay through production
+verification. SQLite crash/concurrency consistency is preserved; independent
+rollback protection against replacement of trusted canonical state is a separate
+deployment/freshness responsibility.
+
+Factory-provenance tests replace the private installed-configuration/current-trust
+boundaries in explicit TEST_ONLY harnesses. That does not expose a production
+registrar or persistence injection API. This PR supplies the factory and guards;
+it does not deploy a live PDSA network service, perform legal enrollment, or change
+Stage 9 readiness.
 
 ## Operator preparation and qualification
 
@@ -235,7 +297,8 @@ hosted Windows DLL smoke tests do not establish physical TPM custody.
 
 The old unavailable-definition blockers are resolved by the subordinate freezes
 and executable verification. Earlier operational prerequisites remain: installed
-current Production Trust, protected issuer stores and service integration,
+current Production Trust, qualification of the canonical issuer account and
+protected filesystem configuration, live issuer-service integration,
 independently issued production EK approval, retained live challenge/exchange,
 and native/physical custody qualification. These must pass before legal
 production enrollment. LPPI successor-key and membership-signing closure,

@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 import hashlib
+import shutil
 import sqlite3
-from datetime import datetime, timezone
-from types import MappingProxyType, SimpleNamespace
+from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import pytest
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, utils
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from bot_core.licensing import production_tpm_custody as module
 from bot_core.licensing.canonical import canonical_json_bytes
@@ -27,6 +28,15 @@ from bot_core.licensing.tpm_attestation import (
     TPMEnrollmentRequestV1,
     credential_activation_proof,
 )
+from deployment import windows_stage9_production_trust as trust_module
+from deployment.production_enrollment_issuer import (
+    ProductionEnrollmentIssuerError,
+    require_production_tpm_store,
+)
+from tests.licensing import test_pdsa_enrollment_challenge as test_challenge
+
+challenge_harness = test_challenge.harness
+NOW = test_challenge.NOW
 
 
 def _b(raw):
@@ -76,24 +86,16 @@ def _signature(key, attest):
 
 
 @pytest.fixture
-def simulation(monkeypatch, tmp_path):
-    """Replace authority guards only inside this TEST_ONLY cryptographic unit harness."""
-    from bot_core.licensing import pdsa_enrollment_challenge
-
-    authority = {f"TEST_ONLY_PDSA_{index}": Ed25519PrivateKey.generate() for index in range(3)}
-    context = SimpleNamespace(
-        release_payload_digest="aa" * 32,
-        release_version=1,
-        pdsa_keys=MappingProxyType({name: key.public_key() for name, key in authority.items()}),
+def simulation(challenge_harness, monkeypatch):
+    """Real store provenance around explicit TEST_ONLY trust-package/hardware boundaries."""
+    harness = challenge_harness
+    authority, context = harness.keys, harness.context
+    monkeypatch.setattr(
+        module,
+        "require_verified_production_trust_context",
+        trust_module.require_verified_production_trust_context,
     )
-
-    def test_only_guard(candidate):
-        if candidate is not context:
-            raise RuntimeError("VERIFIED_PRODUCTION_TRUST_CONTEXT_REQUIRED")
-        return context
-
-    monkeypatch.setattr(module, "require_verified_production_trust_context", test_only_guard)
-    monkeypatch.setattr(module, "_utc_now", lambda: datetime(2026, 1, 2, tzinfo=timezone.utc))
+    monkeypatch.setattr(module, "_utc_now", lambda: NOW)
     keys = {
         role: ec.generate_private_key(ec.SECP256R1())
         for role in ("ek", "ak", "k_psa", "pre_enrollment")
@@ -129,8 +131,8 @@ def simulation(monkeypatch, tmp_path):
         "hardware_origin_verification": "MANUFACTURER_CHAIN_AND_EK_CERTIFICATE_BINDING_VERIFIED",
         "release_policy_digest_sha256": context.release_payload_digest,
         "release_policy_generation": 1,
-        "issued_at_utc": "2026-01-01T00:00:00Z",
-        "expires_at_utc": "2026-01-08T00:00:00Z",
+        "issued_at_utc": "2026-10-06T12:00:00Z",
+        "expires_at_utc": "2026-10-13T12:00:00Z",
         "signature_algorithm_profile": "PDSA-2-OF-3-ED25519",
         "signer_key_ids": sorted(authority)[:2],
     }
@@ -158,36 +160,9 @@ def simulation(monkeypatch, tmp_path):
 
     endorsement_raw = signed_endorsement(payload)
     endorsement = module.verify_production_tpm_endorsement(endorsement_raw, context=context)
-    pdsa_raw = canonical_json_bytes(
-        {
-            "payload": {
-                "challenge_id": "pchal_019ba13c-5c00-7000-8000-000000000002",
-                "nonce_hex": "22" * 32,
-                "expires_at_utc": "2026-01-08T00:00:00Z",
-            }
-        }
-    )
-    pdsa = SimpleNamespace(
-        canonical_bytes=pdsa_raw,
-        digest_sha256=hashlib.sha256(pdsa_raw).hexdigest(),
-        document={
-            "payload": {
-                "challenge_id": "pchal_019ba13c-5c00-7000-8000-000000000002",
-                "nonce_hex": "22" * 32,
-                "expires_at_utc": "2026-01-08T00:00:00Z",
-            }
-        },
-    )
-    pdsa_store = object()
-
-    def test_only_pdsa_guard(value, *, store=None, context=None):
-        if value is not pdsa or store is not pdsa_store:
-            raise ValueError("VERIFIED_ISSUED_PDSA_CHALLENGE_REQUIRED")
-        return value
-
-    monkeypatch.setattr(
-        pdsa_enrollment_challenge, "require_verified_issued_challenge", test_only_pdsa_guard
-    )
+    pdsa_store = harness.store
+    pdsa_raw = pdsa_store.issue(context, harness.sign)
+    pdsa = pdsa_store.verify_issued(pdsa_raw, context)
     activation = build_activation_request(
         evidence=projection,
         release_policy_digest=context.release_payload_digest,
@@ -206,7 +181,7 @@ def simulation(monkeypatch, tmp_path):
     tpm_request = TPMEnrollmentRequestV1.create(
         activation_request=activation, public_projection=projection
     )
-    pending = module.ProductionTPMChallengeStore(tmp_path / "TEST_ONLY_PENDING.sqlite")
+    pending = harness.issuer.tpm_store
     challenge = pending.issue(
         activation.canonical_bytes,
         tpm_request.canonical_bytes,
@@ -216,7 +191,8 @@ def simulation(monkeypatch, tmp_path):
         context=context,
     )
     # TEST_ONLY hardware emulation reads issuer state; callers cannot supply this secret.
-    secret = pending._record(challenge)[2]
+    issued_row = pending._record(challenge)
+    secret = issued_row[2]
     nonce = bytes.fromhex(challenge.document["issuer_nonce_hex"])
     qualify = module.production_exchange_qualifying_data(
         nonce,
@@ -266,7 +242,7 @@ def simulation(monkeypatch, tmp_path):
             "pdsa_trust_domain": PDSA_TRUST_DOMAIN,
             "pdsa_challenge_id": pdsa.document["payload"]["challenge_id"],
             "pdsa_challenge_digest_sha256": pdsa.digest_sha256,
-            "pdsa_challenge_nonce_digest_sha256": hashlib.sha256(b"\x22" * 32).hexdigest(),
+            "pdsa_challenge_nonce_digest_sha256": pdsa.nonce_digest_sha256,
             "tpm_enrollment_request_digest_sha256": hashlib.sha256(raw_items[1]).hexdigest(),
             "tpm_enrollment_challenge_digest_sha256": hashlib.sha256(raw_items[2]).hexdigest(),
             "tpm_enrollment_response_digest_sha256": hashlib.sha256(raw_items[3]).hexdigest(),
@@ -283,10 +259,6 @@ def simulation(monkeypatch, tmp_path):
             "request_nonce_hex": "44" * 32,
         }
     )
-    # Request's own trust gate is tested elsewhere; this harness isolates TPM algorithms.
-    import deployment.windows_stage9_production_trust as trust_module
-
-    monkeypatch.setattr(trust_module, "require_verified_production_trust_context", test_only_guard)
     subject_attest = _attest(
         names["pre_enrollment"],
         b"\x66" * 32,
@@ -326,8 +298,23 @@ def test_test_only_simulated_production_algorithms_and_exact_retry(simulation):
         .exchange_reference
         == item.exchange.exchange_reference
     )
-    reopened = module.ProductionTPMChallengeStore(item.pending._path)
-    assert reopened._record(item.challenge)[9] == "VERIFIED"
+    reference = item.exchange.exchange_reference
+    item.harness.issuer.close()
+    with pytest.raises(ProductionEnrollmentIssuerError, match="STORE_REQUIRED"):
+        module.require_verified_production_tpm_exchange(item.exchange, context=item.context)
+    reopened = item.harness.reopen()
+    assert reopened.tpm_store._record(item.challenge)[9] == "VERIFIED"
+    pdsa = reopened.pdsa_store.verify_issued(item.pdsa_raw, item.context)
+    retried = module.ProductionTPMEnrollmentVerifier().verify(
+        *item.raw_items,
+        **{
+            **item.arguments,
+            "pending": reopened.tpm_store,
+            "pdsa_store": reopened.pdsa_store,
+            "pdsa_challenge": pdsa,
+        },
+    )
+    assert retried.exchange_reference == reference
 
 
 @pytest.mark.parametrize(
@@ -375,8 +362,8 @@ def test_mutated_custody_is_rejected(simulation, field):
         ("release_policy_generation", True),
         ("release_policy_digest_sha256", "ff" * 32),
         ("ek_name", "000b" + "ff" * 32),
-        ("expires_at_utc", "2026-01-02T00:00:00Z"),
-        ("issued_at_utc", "2026-01-03T00:00:00Z"),
+        ("expires_at_utc", "2026-10-06T12:00:00Z"),
+        ("issued_at_utc", "2026-10-07T12:00:00Z"),
         ("signer_key_ids", ["CALLER_SELECTED_KEY"]),
         ("signer_key_ids", ["TEST_ONLY_PDSA_0"]),
     ],
@@ -477,7 +464,7 @@ def test_exchange_conflict_unknown_store_and_expiration(simulation, monkeypatch,
         database.execute("UPDATE tpm_challenges SET response=?", (b"modified",))
     with pytest.raises(ValueError, match="RETAINED"):
         module.require_verified_production_tpm_exchange(item.exchange, context=item.context)
-    monkeypatch.setattr(module, "_utc_now", lambda: datetime(2026, 1, 9, tzinfo=timezone.utc))
+    monkeypatch.setattr(module, "_utc_now", lambda: datetime(2026, 10, 14, tzinfo=timezone.utc))
     with pytest.raises(ValueError, match="EXPIRED"):
         module._require_endorsement(item.endorsement, item.context)
 
@@ -508,3 +495,180 @@ def test_malformed_creation_structure_and_certify_substitution(simulation):
     for malformed in (raw[:-1], raw + b"\x00", bytes(4) + raw[4:], raw[:4] + b"\x80\x17" + raw[6:]):
         with pytest.raises(ValueError):
             module.parse_production_creation_attestation(malformed)
+
+
+@pytest.mark.parametrize(
+    "attack", ["empty", "copied_database", "reconstructed_verified", "stale_issued", "same_path"]
+)
+def test_unissued_store_cannot_verify_copied_or_reconstructed_pending_state(
+    simulation, tmp_path, attack
+):
+    item = simulation
+    target = tmp_path / f"{attack}.sqlite"
+    if attack == "copied_database":
+        # All retained bytes, including the valid response and credential secret,
+        # are present. A bit-for-bit SQLite copy still has no issuer issuance.
+        with sqlite3.connect(item.pending._path) as database:
+            database.execute("PRAGMA wal_checkpoint(FULL)")
+        shutil.copyfile(item.pending._path, target)
+        assert target.read_bytes() == item.pending._path.read_bytes()
+    if attack == "same_path":
+        target = item.pending._path
+    counterfeit = module.ProductionTPMChallengeStore(target)
+    if attack in {"reconstructed_verified", "stale_issued"}:
+        with sqlite3.connect(item.pending._path) as database:
+            retained = database.execute("SELECT * FROM tpm_challenges").fetchone()
+        assert retained[9] == "VERIFIED"
+        row = item.issued_row if attack == "stale_issued" else retained
+        with sqlite3.connect(target) as database:
+            database.execute("INSERT INTO tpm_challenges VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", row)
+    with pytest.raises(ProductionEnrollmentIssuerError, match="STORE_REQUIRED"):
+        module.ProductionTPMEnrollmentVerifier().verify(
+            *item.raw_items, **{**item.arguments, "pending": counterfeit}
+        )
+    with pytest.raises(ProductionEnrollmentIssuerError, match="STORE_REQUIRED"):
+        counterfeit._record(item.challenge)
+    with pytest.raises(ProductionEnrollmentIssuerError, match="STORE_REQUIRED"):
+        counterfeit.issue(
+            *item.raw_items[:2],
+            pdsa_challenge=item.pdsa,
+            pdsa_store=item.pdsa_store,
+            endorsement=item.endorsement,
+            context=item.context,
+        )
+    with pytest.raises(ProductionEnrollmentIssuerError, match="STORE_REQUIRED"):
+        counterfeit._retain_verified(
+            item.challenge,
+            item.raw_items[3],
+            item.exchange.exchange_reference,
+            expected_record=item.issued_row,
+            pdsa_challenge=item.pdsa,
+            pdsa_store=item.pdsa_store,
+            endorsement=item.endorsement,
+            context=item.context,
+        )
+    assert (
+        module.require_verified_production_tpm_exchange(item.exchange, context=item.context)
+        is item.exchange
+    )
+
+
+def test_copied_python_store_fields_never_register_issuer_provenance(simulation):
+    item = simulation
+    counterfeit = object.__new__(module.ProductionTPMChallengeStore)
+    object.__setattr__(counterfeit, "_path", item.pending._path)
+    with pytest.raises(TypeError, match="immutable"):
+        counterfeit._path = item.pending._path
+    with pytest.raises(ProductionEnrollmentIssuerError, match="STORE_REQUIRED"):
+        require_production_tpm_store(counterfeit, context=item.context)
+    with pytest.raises(ProductionEnrollmentIssuerError, match="STORE_REQUIRED"):
+        module.ProductionTPMEnrollmentVerifier().verify(
+            *item.raw_items, **{**item.arguments, "pending": counterfeit}
+        )
+
+
+def test_genuine_stores_from_different_issuer_contexts_cannot_be_mixed(simulation):
+    item = simulation
+    other = item.harness.reopen()
+    assert other is not item.harness.issuer
+    assert require_production_tpm_store(other.tpm_store, context=item.context) is other
+    with pytest.raises(ProductionEnrollmentIssuerError, match="CONTEXT_MISMATCH"):
+        module.ProductionTPMEnrollmentVerifier().verify(
+            *item.raw_items, **{**item.arguments, "pending": other.tpm_store}
+        )
+    with pytest.raises(ProductionEnrollmentIssuerError, match="CONTEXT_MISMATCH"):
+        item.pending.issue(
+            *item.raw_items[:2],
+            pdsa_challenge=item.pdsa,
+            pdsa_store=other.pdsa_store,
+            endorsement=item.endorsement,
+            context=item.context,
+        )
+    with pytest.raises(ProductionEnrollmentIssuerError, match="CONTEXT_MISMATCH"):
+        module.ProductionTPMEnrollmentVerifier().verify(
+            *item.raw_items, **{**item.arguments, "context": object()}
+        )
+    with pytest.raises(ValueError, match="ISSUER_MISMATCH"):
+        module.require_verified_production_tpm_exchange(
+            item.exchange, context=item.context, issuer=other
+        )
+
+
+def test_pending_mechanics_preserve_wal_full_and_close_connections(simulation):
+    with simulation.pending._connect() as database:
+        assert database.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+        assert database.execute("PRAGMA synchronous").fetchone()[0] == 2
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        database.execute("SELECT 1")
+
+
+def test_terminal_expired_pending_cannot_be_republished_after_clock_rollback(
+    simulation, monkeypatch
+):
+    item = simulation
+    # Model the originally retained ISSUED state before any response acceptance.
+    with sqlite3.connect(item.pending._path) as database:
+        database.execute(
+            "UPDATE tpm_challenges SET state='ISSUED',exchange_reference=NULL,response=NULL"
+        )
+    monkeypatch.setattr(module, "_utc_now", lambda: NOW + timedelta(days=8))
+    with pytest.raises(ValueError, match="EXPIRED"):
+        item.pending._record(item.challenge)
+    monkeypatch.setattr(module, "_utc_now", lambda: NOW)
+    with pytest.raises(ValueError, match="EXPIRED"):
+        item.pending.issue(
+            *item.raw_items[:2],
+            pdsa_challenge=item.pdsa,
+            pdsa_store=item.pdsa_store,
+            endorsement=item.endorsement,
+            context=item.context,
+        )
+    with sqlite3.connect(item.pending._path) as database:
+        assert database.execute("SELECT state FROM tpm_challenges").fetchone()[0] == "EXPIRED"
+
+
+@pytest.mark.parametrize("operation", ["issue", "retain"])
+@pytest.mark.parametrize("change", ["close_issuer", "expire_endorsement"])
+def test_writer_lock_rechecks_issuer_and_clock_before_tpm_publication(
+    simulation, monkeypatch, operation, change
+):
+    item = simulation
+    original_connect = module.ProductionTPMChallengeStore._connect
+    with sqlite3.connect(item.pending._path) as database:
+        before = database.execute("SELECT * FROM tpm_challenges").fetchone()
+
+    class TestOnlyWriterLock:
+        def __init__(self, database):
+            self.database = database
+
+        def execute(self, statement, *parameters):
+            result = self.database.execute(statement, *parameters)
+            if statement == "BEGIN IMMEDIATE":
+                # Model a writer-lock wait that ends after the authority/time
+                # changed. The real SQLite writer lock has been acquired here.
+                if change == "close_issuer":
+                    item.harness.issuer.close()
+                else:
+                    monkeypatch.setattr(module, "_utc_now", lambda: NOW + timedelta(days=8))
+            return result
+
+    @contextmanager
+    def delayed_connect(store):
+        with original_connect(store) as database:
+            yield TestOnlyWriterLock(database) if store is item.pending else database
+
+    monkeypatch.setattr(module.ProductionTPMChallengeStore, "_connect", delayed_connect)
+    expected = "STORE_REQUIRED" if change == "close_issuer" else "EXPIRED"
+    with pytest.raises(ValueError, match=expected):
+        if operation == "issue":
+            item.pending.issue(
+                *item.raw_items[:2],
+                pdsa_challenge=item.pdsa,
+                pdsa_store=item.pdsa_store,
+                endorsement=item.endorsement,
+                context=item.context,
+            )
+        else:
+            module.ProductionTPMEnrollmentVerifier().verify(*item.raw_items, **item.arguments)
+    with sqlite3.connect(item.pending._path) as database:
+        assert database.execute("SELECT * FROM tpm_challenges").fetchone() == before

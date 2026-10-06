@@ -16,6 +16,11 @@ from pathlib import Path
 from typing import cast
 from weakref import WeakKeyDictionary
 
+from deployment.production_enrollment_issuer import (
+    ProductionEnrollmentIssuerContext,
+    require_production_pdsa_store,
+    require_production_tpm_store,
+)
 from deployment.windows_cng_pre_enrollment import require_verified_production_cng_key
 from deployment.windows_stage9_production_trust import (
     ProductionTrustContext,
@@ -71,9 +76,17 @@ def build_production_pre_enrollment_request(
     digest. The public evidence-reference field remains the projection reference
     to avoid a circular request/evidence digest dependency.
     """
+    issuer = require_production_pdsa_store(challenge_store, context=context)
+    require_production_tpm_store(
+        pending, context=context, pdsa_store=challenge_store, issuer=issuer
+    )
     trusted = require_current_production_trust_context(context)
-    issued = require_verified_issued_challenge(challenge, store=challenge_store, context=trusted)
-    verified = require_verified_production_tpm_exchange(exchange, context=trusted, pending=pending)
+    issued = require_verified_issued_challenge(
+        challenge, store=challenge_store, context=trusted, issuer=issuer
+    )
+    verified = require_verified_production_tpm_exchange(
+        exchange, context=trusted, pending=pending, issuer=issuer
+    )
     qualified = require_verified_production_cng_key(key)
     activation_raw, request_raw, challenge_raw, response_raw = verified.retained_bytes
     result = build_local_production_pre_enrollment_request(
@@ -206,6 +219,7 @@ class _AuthenticationSnapshot:
     exchange: VerifiedProductionTPMExchange
     pending: ProductionTPMChallengeStore
     custody: VerifiedProductionPreEnrollmentKeyCustody
+    issuer: ProductionEnrollmentIssuerContext
 
 
 _AUTHENTICATED: WeakKeyDictionary[AuthenticatedProductionPreEnrollment, _AuthenticationSnapshot] = (
@@ -243,12 +257,11 @@ def authenticate_production_pre_enrollment(
     accepted in place of the dedicated production exchange/custody verifiers.
     Only the store's subsequent atomic consume commits acceptance.
     """
+    issuer = require_production_pdsa_store(challenge_store, context=context)
+    require_production_tpm_store(
+        pending, context=context, pdsa_store=challenge_store, issuer=issuer
+    )
     trusted = require_current_production_trust_context(context)
-    if (
-        type(challenge_store) is not PDSAChallengeStore
-        or type(pending) is not ProductionTPMChallengeStore
-    ):
-        raise ProductionPreEnrollmentError("EXACT_PRODUCTION_ISSUER_STORES_REQUIRED")
     request = PreEnrollmentRequestV1.from_canonical_bytes(request_raw)
     request.require_production_trust_binding(trusted)
     challenge = challenge_store.verify_issued(challenge_raw, trusted)
@@ -291,6 +304,7 @@ def authenticate_production_pre_enrollment(
         exchange,
         pending,
         custody,
+        issuer,
     )
     return require_authenticated_pre_enrollment(accepted, challenge_store=challenge_store)
 
@@ -304,6 +318,15 @@ def require_authenticated_pre_enrollment(
     not reactivate CONSUMED challenges; exact retries only retrieve prior results.
     """
     snapshot = _snapshot(value)
+    require_production_pdsa_store(
+        snapshot.challenge_store, context=snapshot.context, issuer=snapshot.issuer
+    )
+    require_production_tpm_store(
+        snapshot.pending,
+        context=snapshot.context,
+        issuer=snapshot.issuer,
+        pdsa_store=snapshot.challenge_store,
+    )
     if snapshot.challenge_store.path != snapshot.challenge_store_path or (
         challenge_store is not None and challenge_store is not snapshot.challenge_store
     ):
@@ -313,7 +336,7 @@ def require_authenticated_pre_enrollment(
     request.require_production_trust_binding(trusted)
     request.verify_signature(snapshot.signature)
     exchange = require_verified_production_tpm_exchange(
-        snapshot.exchange, context=trusted, pending=snapshot.pending
+        snapshot.exchange, context=trusted, pending=snapshot.pending, issuer=snapshot.issuer
     )
     require_verified_pre_enrollment_custody(
         snapshot.custody, context=trusted, request=request, exchange=exchange

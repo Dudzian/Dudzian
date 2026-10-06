@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import shutil
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -16,6 +17,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec, ed25519
 
 import bot_core.licensing.pdsa_enrollment_challenge as challenge
+import deployment.production_enrollment_issuer as issuer
 import deployment.windows_stage9_production_trust as trust
 from bot_core.licensing.canonical import canonical_json_bytes
 from bot_core.licensing.pre_enrollment import (
@@ -79,7 +81,22 @@ def harness(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
         trust.require_verified_production_trust_context,
     )
     monkeypatch.setattr(challenge, "_utc_now", lambda: NOW)
-    store = challenge.PDSAChallengeStore(tmp_path / "trusted-test-only-issuer.sqlite")
+    monkeypatch.setattr(
+        issuer,
+        "require_current_production_trust_context",
+        trust.require_verified_production_trust_context,
+    )
+    # Substitute only the installed service configuration boundary. The genuine
+    # factory and private issuer/store registries remain active in this TEST_ONLY
+    # harness; arbitrary path constructors never receive production authority.
+    monkeypatch.setattr(
+        issuer,
+        "_installed_service_configuration",
+        lambda: issuer._InstalledIssuerConfiguration(
+            state_directory=tmp_path / "TEST_ONLY_ISSUER", trust=context
+        ),
+    )
+    installed = issuer.open_installed_production_enrollment_issuer()
 
     def sign(message: bytes):
         return [
@@ -87,7 +104,14 @@ def harness(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
             for key_id, key in list(keys.items())[:2]
         ]
 
-    return SimpleNamespace(context=context, keys=keys, store=store, sign=sign)
+    return SimpleNamespace(
+        context=context,
+        keys=keys,
+        issuer=installed,
+        store=installed.pdsa_store,
+        sign=sign,
+        reopen=issuer.open_installed_production_enrollment_issuer,
+    )
 
 
 def _request(raw: bytes, *, nonce: str = "ab" * 32) -> PreEnrollmentRequestV1:
@@ -162,7 +186,9 @@ def test_issuer_generated_signed_canonical_challenge_retained_before_return(harn
     verified.require_request_binding(_request(raw))
     with pytest.raises(TypeError, match="immutable"):
         verified.canonical_bytes = b"changed"
-    assert challenge.PDSAChallengeStore(harness.store.path).verify_issued(raw, harness.context)
+    reopened = harness.reopen()
+    assert reopened.pdsa_store.verify_issued(raw, harness.context)
+    assert issuer.require_production_pdsa_store(reopened.pdsa_store) is reopened
 
 
 def test_issuer_freshness_is_independent_and_not_caller_selectable(harness):
@@ -176,10 +202,10 @@ def test_issuer_freshness_is_independent_and_not_caller_selectable(harness):
 
 @pytest.mark.parametrize("context", [None, object(), SimpleNamespace(environment="PRODUCTION")])
 def test_arbitrary_caller_selected_trust_keys_rejected(harness, context):
-    with pytest.raises(trust.ProductionTrustUnavailable):
+    with pytest.raises((trust.ProductionTrustUnavailable, issuer.ProductionEnrollmentIssuerError)):
         harness.store.issue(context, harness.sign)
     raw = harness.store.issue(harness.context, harness.sign)
-    with pytest.raises(trust.ProductionTrustUnavailable):
+    with pytest.raises((trust.ProductionTrustUnavailable, issuer.ProductionEnrollmentIssuerError)):
         harness.store.verify_issued(raw, context)
 
 
@@ -384,11 +410,12 @@ def test_noncanonical_and_changed_envelope_bytes_rejected(harness):
         harness.store.verify_issued(canonical_json_bytes(document), harness.context)
 
 
-def test_unknown_retained_id_rejected(harness, tmp_path):
+def test_unknown_retained_id_rejected(harness):
     raw = harness.store.issue(harness.context, harness.sign)
-    empty = challenge.PDSAChallengeStore(tmp_path / "another-trusted-test-only-store.sqlite")
+    with harness.store._connect() as db:
+        db.execute("DELETE FROM pdsa_challenges")
     with pytest.raises(challenge.PDSAChallengeError, match="UNKNOWN_RETAINED"):
-        empty.verify_issued(raw, harness.context)
+        harness.store.verify_issued(raw, harness.context)
 
 
 def test_expiry_is_current_clock_terminal_and_invalidates_existing_capability(harness, monkeypatch):
@@ -401,6 +428,10 @@ def test_expiry_is_current_clock_terminal_and_invalidates_existing_capability(ha
     monkeypatch.setattr(challenge, "_utc_now", lambda: NOW)
     with pytest.raises(challenge.PDSAChallengeError, match="EXPIRED"):
         harness.store.verify_issued(raw, harness.context)
+    harness.issuer.close()
+    restarted = harness.reopen()
+    with pytest.raises(challenge.PDSAChallengeError, match="EXPIRED"):
+        restarted.pdsa_store.verify_issued(raw, harness.context)
 
 
 def test_future_challenge_rejected_and_slow_signer_cannot_publish_expired(harness, monkeypatch):
@@ -420,15 +451,16 @@ def test_future_challenge_rejected_and_slow_signer_cannot_publish_expired(harnes
 
 
 def test_issuance_rechecks_expiry_after_waiting_for_database_lock(harness, monkeypatch):
-    original_connect = harness.store._connect
+    original_connect = challenge.PDSAChallengeStore._connect
 
     @contextmanager
-    def delayed_database():
-        with original_connect() as db:
-            monkeypatch.setattr(challenge, "_utc_now", lambda: NOW + timedelta(days=7))
+    def delayed_database(store):
+        with original_connect(store) as db:
+            if store is harness.store:
+                monkeypatch.setattr(challenge, "_utc_now", lambda: NOW + timedelta(days=7))
             yield db
 
-    monkeypatch.setattr(harness.store, "_connect", delayed_database)
+    monkeypatch.setattr(challenge.PDSAChallengeStore, "_connect", delayed_database)
     with pytest.raises(challenge.PDSAChallengeError, match="EXPIRED"):
         harness.store.issue(harness.context, harness.sign)
     assert _rows(harness.store) == []
@@ -442,15 +474,16 @@ def test_current_trust_rechecked_after_database_lock_wait(harness, monkeypatch, 
         marker = _mechanics_capability(
             monkeypatch, _request(raw).canonical_bytes, raw, harness.context
         )
-    original_connect = harness.store._connect
+    original_connect = challenge.PDSAChallengeStore._connect
     original_guard = challenge.require_current_production_trust_context
     lock_acquired = False
 
     @contextmanager
-    def delayed_database():
+    def delayed_database(store):
         nonlocal lock_acquired
-        with original_connect() as db:
-            lock_acquired = True
+        with original_connect(store) as db:
+            if store is harness.store:
+                lock_acquired = True
             yield db
 
     def changed_current_trust(context):
@@ -458,7 +491,7 @@ def test_current_trust_rechecked_after_database_lock_wait(harness, monkeypatch, 
             raise trust.ProductionTrustUnavailable("TEST_ONLY release expired while waiting")
         return original_guard(context)
 
-    monkeypatch.setattr(harness.store, "_connect", delayed_database)
+    monkeypatch.setattr(challenge.PDSAChallengeStore, "_connect", delayed_database)
     monkeypatch.setattr(
         challenge, "require_current_production_trust_context", changed_current_trust
     )
@@ -518,7 +551,9 @@ def test_authenticated_consume_retains_exact_request_receipt_and_retry(harness, 
     assert row["receipt_raw"] == receipt
     assert harness.store.consume_authenticated_request(marker) == receipt
     assert json.loads(receipt)["legal_enrollment"] == "NOT_PERFORMED"
-    reopened = challenge.PDSAChallengeStore(harness.store.path)
+    harness.issuer.close()
+    restarted = harness.reopen()
+    reopened = restarted.pdsa_store
     monkeypatch.setattr(challenge, "_utc_now", lambda: NOW + timedelta(days=8))
     assert (
         reopened.retry_exact_accepted(request_raw=request.canonical_bytes, challenge_raw=raw)
@@ -579,3 +614,130 @@ def test_connection_requires_full_synchronization_and_closes(harness):
         assert db.execute("PRAGMA synchronous").fetchone()[0] == 2
     with pytest.raises(sqlite3.ProgrammingError, match="closed"):
         db.execute("SELECT 1")
+
+
+def test_arbitrary_path_store_cannot_issue_or_verify_even_with_signed_issuer_bytes(
+    harness, tmp_path
+):
+    raw = harness.store.issue(harness.context, harness.sign)
+    mechanics = challenge.PDSAChallengeStore(tmp_path / "CALLER_SELECTED.sqlite")
+    called = False
+
+    def forbidden_signer(message):
+        nonlocal called
+        called = True
+        return harness.sign(message)
+
+    with pytest.raises(issuer.ProductionEnrollmentIssuerError, match="STORE_REQUIRED"):
+        mechanics.issue(harness.context, forbidden_signer)
+    assert called is False
+    assert _rows(mechanics) == []
+    with pytest.raises(issuer.ProductionEnrollmentIssuerError, match="STORE_REQUIRED"):
+        mechanics.verify_issued(raw, harness.context)
+    # Provenance is checked before parsing, authentication, or receipt retrieval.
+    with pytest.raises(issuer.ProductionEnrollmentIssuerError, match="STORE_REQUIRED"):
+        mechanics.verify_issued(b"malformed", harness.context)
+    with pytest.raises(issuer.ProductionEnrollmentIssuerError, match="STORE_REQUIRED"):
+        mechanics.retry_exact_accepted(request_raw=b"malformed", challenge_raw=b"malformed")
+    with pytest.raises(issuer.ProductionEnrollmentIssuerError, match="STORE_REQUIRED"):
+        mechanics.consume_authenticated_request(object())
+
+
+def test_manually_reconstructed_schema_and_valid_issued_row_have_no_provenance(harness, tmp_path):
+    raw = harness.store.issue(harness.context, harness.sign)
+    path = tmp_path / "RECONSTRUCTED_ISSUED.sqlite"
+    with harness.store._connect() as source:
+        schema = source.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='pdsa_challenges'"
+        ).fetchone()[0]
+        row = source.execute("SELECT * FROM pdsa_challenges").fetchone()
+    with sqlite3.connect(path) as reconstructed:
+        reconstructed.execute(schema)
+        reconstructed.execute("INSERT INTO pdsa_challenges VALUES (?,?,?,?,?,?,?,?)", tuple(row))
+    mechanics = challenge.PDSAChallengeStore(path)
+    assert _rows(mechanics)[0]["challenge_raw"] == raw
+    with pytest.raises(issuer.ProductionEnrollmentIssuerError, match="STORE_REQUIRED"):
+        mechanics.verify_issued(raw, harness.context)
+
+
+def test_byte_for_byte_sqlite_copy_cannot_mint_verified_issued_capability(harness, tmp_path):
+    raw = harness.store.issue(harness.context, harness.sign)
+    with harness.store._connect() as db:
+        db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    path = tmp_path / "BYTE_COPY_ISSUED.sqlite"
+    shutil.copyfile(harness.store.path, path)
+    assert path.read_bytes() == harness.store.path.read_bytes()
+    copied = challenge.PDSAChallengeStore(path)
+    with pytest.raises(issuer.ProductionEnrollmentIssuerError, match="STORE_REQUIRED"):
+        copied.verify_issued(raw, harness.context)
+
+
+def test_preconsumption_issued_snapshot_cannot_replay_after_canonical_consume(
+    harness, tmp_path, monkeypatch
+):
+    raw = harness.store.issue(harness.context, harness.sign)
+    verified = harness.store.verify_issued(raw, harness.context)
+    with harness.store._connect() as db:
+        db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    path = tmp_path / "STALE_ISSUED_SNAPSHOT.sqlite"
+    shutil.copyfile(harness.store.path, path)
+    copied = challenge.PDSAChallengeStore(path)
+    request = _request(raw)
+    marker = _mechanics_capability(monkeypatch, request.canonical_bytes, raw, harness.context)
+    receipt = harness.store.consume_authenticated_request(marker)
+    assert _rows(copied)[0]["state"] == "ISSUED"
+    assert _rows(harness.store)[0]["state"] == "CONSUMED"
+    with pytest.raises(issuer.ProductionEnrollmentIssuerError, match="STORE_REQUIRED"):
+        copied.verify_issued(raw, harness.context)
+    with pytest.raises(issuer.ProductionEnrollmentIssuerError, match="STORE_REQUIRED"):
+        copied.consume_authenticated_request(marker)
+    with pytest.raises(challenge.PDSAChallengeError, match="ALREADY_CONSUMED"):
+        challenge.require_verified_issued_challenge(verified)
+    harness.issuer.close()
+    restarted = harness.reopen()
+    reopened = restarted.pdsa_store
+    assert (
+        reopened.retry_exact_accepted(request_raw=request.canonical_bytes, challenge_raw=raw)
+        == receipt
+    )
+    with pytest.raises(challenge.PDSAChallengeError, match="ALREADY_CONSUMED"):
+        reopened.verify_issued(raw, harness.context)
+
+
+def test_store_python_fields_and_configured_path_do_not_transfer_factory_provenance(harness):
+    raw = harness.store.issue(harness.context, harness.sign)
+    forged = object.__new__(challenge.PDSAChallengeStore)
+    object.__setattr__(forged, "_path", harness.store.path)
+    for store in (forged, challenge.PDSAChallengeStore(harness.store.path)):
+        with pytest.raises(issuer.ProductionEnrollmentIssuerError, match="STORE_REQUIRED"):
+            store.verify_issued(raw, harness.context)
+    with pytest.raises(TypeError, match="immutable"):
+        copy.copy(harness.store)
+    with pytest.raises(TypeError, match="immutable"):
+        harness.store.path = harness.store.path
+
+
+def test_registered_store_configuration_mutation_invalidates_store_and_capability(harness):
+    raw = harness.store.issue(harness.context, harness.sign)
+    verified = harness.store.verify_issued(raw, harness.context)
+    object.__setattr__(harness.store, "_path", harness.store.path.with_name("MUTATED.sqlite"))
+    with pytest.raises(issuer.ProductionEnrollmentIssuerError, match="SOURCE_CHANGED"):
+        harness.store.verify_issued(raw, harness.context)
+    with pytest.raises(challenge.PDSAChallengeError, match="VERIFIED_ISSUED"):
+        challenge.require_verified_issued_challenge(verified)
+
+
+def test_verified_issued_capability_is_bound_to_exact_issuer_context(harness):
+    raw = harness.store.issue(harness.context, harness.sign)
+    verified = harness.store.verify_issued(raw, harness.context)
+    reopened = harness.reopen()
+    assert (
+        challenge.require_verified_issued_challenge(
+            verified, store=harness.store, context=harness.context, issuer=harness.issuer
+        )
+        is verified
+    )
+    with pytest.raises(challenge.PDSAChallengeError, match="VERIFIED_ISSUED"):
+        challenge.require_verified_issued_challenge(verified, issuer=reopened)
+    with pytest.raises(challenge.PDSAChallengeError, match="VERIFIED_ISSUED"):
+        challenge.require_verified_issued_challenge(verified, store=reopened.pdsa_store)

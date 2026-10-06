@@ -34,7 +34,17 @@ from bot_core.licensing.tpm_attestation import (
     TPMEnrollmentRequestV1,
     credential_activation_proof,
 )
-from deployment import windows_cng_pre_enrollment as cng, windows_stage9_production_trust as trust
+from deployment import (
+    windows_cng_pre_enrollment as cng,
+    windows_production_pre_enrollment as installed,
+    windows_stage9_production_trust as trust,
+)
+from deployment.production_enrollment_issuer import (
+    ProductionEnrollmentIssuerError,
+    open_installed_production_enrollment_issuer,
+    require_production_pdsa_store,
+    require_production_tpm_store,
+)
 from tests.deployment.test_windows_cng_pre_enrollment import TestOnlyNCryptDLL
 from tests.licensing import test_pdsa_enrollment_challenge as test_challenge
 from tests.licensing.test_production_tpm_custody import _attest, _public, _signature
@@ -49,6 +59,11 @@ def integration(challenge_harness, monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
     authority = challenge_harness
     monkeypatch.setattr(
         production,
+        "require_current_production_trust_context",
+        trust.require_verified_production_trust_context,
+    )
+    monkeypatch.setattr(
+        installed,
         "require_current_production_trust_context",
         trust.require_verified_production_trust_context,
     )
@@ -143,7 +158,7 @@ def integration(challenge_harness, monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
     tpm_request = TPMEnrollmentRequestV1.create(
         activation_request=activation, public_projection=projection
     )
-    pending = custody.ProductionTPMChallengeStore(tmp_path / "TEST_ONLY_TPM_PENDING.sqlite")
+    pending = authority.issuer.tpm_store
     tpm_challenge = pending.issue(
         activation.canonical_bytes,
         tpm_request.canonical_bytes,
@@ -237,6 +252,42 @@ def _authenticate(item, **changes):
     return production.authenticate_production_pre_enrollment(**(item.arguments | changes))
 
 
+def _accept(item, **changes):
+    return installed.accept_retained_production_request(**(item.arguments | changes))
+
+
+def _copy_database(source: Path, target: Path) -> None:
+    """Copy every database byte, including the latest checkpointed issuer rows."""
+    with sqlite3.connect(source) as db:
+        db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    original = source.read_bytes()
+    target.write_bytes(original)
+    assert target.read_bytes() == original
+
+
+def _reconstruct_database(source: Path, target: Path, *, table: str) -> None:
+    """Create independent SQLite schema and transplant the exact public/retained row."""
+    select, insert = {
+        "pdsa_challenges": (
+            "SELECT * FROM pdsa_challenges",
+            "INSERT INTO pdsa_challenges VALUES (?,?,?,?,?,?,?,?)",
+        ),
+        "tpm_challenges": (
+            "SELECT * FROM tpm_challenges",
+            "INSERT INTO tpm_challenges VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+        ),
+    }[table]
+    with sqlite3.connect(source) as db:
+        schema = db.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table,)
+        ).fetchone()[0]
+        row = db.execute(select).fetchone()
+    with sqlite3.connect(target) as db:
+        db.execute(schema)
+        db.execute(insert, row)
+        assert db.execute(select).fetchone() == row
+
+
 def _state(item):
     with sqlite3.connect(item.authority.store.path) as db:
         return db.execute("SELECT state FROM pdsa_challenges").fetchone()[0]
@@ -326,16 +377,18 @@ def test_forged_or_copied_context_cannot_authenticate(integration, kind):
     elif kind == "copied_capability":
         value = object.__new__(trust.ProductionTrustContext)
         object.__setattr__(value, "_capability", item.authority.context._capability)
-    with pytest.raises(trust.ProductionTrustUnavailable):
+    error = trust.ProductionTrustUnavailable if kind == "none" else ProductionEnrollmentIssuerError
+    message = (
+        "VERIFIED_PRODUCTION_TRUST" if kind == "none" else "PRODUCTION_ISSUER_CONTEXT_MISMATCH"
+    )
+    with pytest.raises(error, match=message):
         _authenticate(item, context=value)
     assert _state(item) == "ISSUED"
 
 
 @pytest.mark.parametrize("field", ["challenge_store", "pending"])
 def test_arbitrary_issuer_store_shape_rejected(integration, field):
-    with pytest.raises(
-        production.ProductionPreEnrollmentError, match="EXACT_PRODUCTION_ISSUER_STORES"
-    ):
+    with pytest.raises(ProductionEnrollmentIssuerError, match="PRODUCTION_ISSUER_STORE_REQUIRED"):
         _authenticate(
             integration, **{field: SimpleNamespace(path=integration.authority.store.path)}
         )
@@ -360,7 +413,7 @@ def test_builder_requires_exact_retaining_store_identity(integration, field):
         if field == "challenge_store"
         else custody.ProductionTPMChallengeStore(item.pending._path)
     )
-    with pytest.raises((ValueError, RuntimeError), match="REQUIRED|STORE_MISMATCH"):
+    with pytest.raises(ProductionEnrollmentIssuerError, match="PRODUCTION_ISSUER_STORE_REQUIRED"):
         production.build_production_pre_enrollment_request(**(item.build_args | {field: value}))
 
 
@@ -509,7 +562,7 @@ def test_consumption_requires_original_store_object(integration):
     item = integration
     accepted = _authenticate(item)
     copied_store = challenge.PDSAChallengeStore(item.authority.store.path)
-    with pytest.raises(production.ProductionPreEnrollmentError, match="ISSUER_STORE_MISMATCH"):
+    with pytest.raises(ProductionEnrollmentIssuerError, match="PRODUCTION_ISSUER_STORE_REQUIRED"):
         copied_store.consume_authenticated_request(accepted)
     assert _state(item) == "ISSUED"
 
@@ -517,8 +570,8 @@ def test_consumption_requires_original_store_object(integration):
 def test_changed_issuer_store_path_revokes_acceptance(integration, tmp_path):
     item = integration
     accepted = _authenticate(item)
-    item.authority.store.path = tmp_path / "different.sqlite"
-    with pytest.raises(production.ProductionPreEnrollmentError, match="ISSUER_STORE_MISMATCH"):
+    object.__setattr__(item.authority.store, "_path", tmp_path / "different.sqlite")
+    with pytest.raises(ProductionEnrollmentIssuerError, match="PRODUCTION_ISSUER_SOURCE_CHANGED"):
         production.require_authenticated_pre_enrollment(accepted)
 
 
@@ -536,18 +589,19 @@ def test_shorter_endorsement_expiry_during_writer_lock_prevents_consumption(
 ):
     item = integration
     accepted = _authenticate(item)
-    original_connect = item.authority.store._connect
+    original_connect = challenge.PDSAChallengeStore._connect
 
     @contextmanager
-    def delayed_database():
-        with original_connect() as db:
+    def delayed_database(store):
+        with original_connect(store) as db:
             # PDSA remains live for seven days, but the hardware approval and
             # its derived TPM challenge expire after one day in this harness.
-            monkeypatch.setattr(challenge, "_utc_now", lambda: NOW + timedelta(days=1))
-            monkeypatch.setattr(custody, "_utc_now", lambda: NOW + timedelta(days=1))
+            if store is item.authority.store:
+                monkeypatch.setattr(challenge, "_utc_now", lambda: NOW + timedelta(days=1))
+                monkeypatch.setattr(custody, "_utc_now", lambda: NOW + timedelta(days=1))
             yield db
 
-    monkeypatch.setattr(item.authority.store, "_connect", delayed_database)
+    monkeypatch.setattr(challenge.PDSAChallengeStore, "_connect", delayed_database)
     with pytest.raises(custody.ProductionTPMCustodyError, match="ENDORSEMENT_EXPIRED"):
         item.authority.store.consume_authenticated_request(accepted)
     assert _state(item) == "ISSUED"
@@ -631,12 +685,14 @@ def test_changed_challenge_quorum_signature_rejected_in_composition(integration)
     assert _state(item) == "ISSUED"
 
 
-def test_unknown_retained_challenge_rejected_in_composition(integration, tmp_path):
+def test_unknown_retained_challenge_rejected_in_composition(integration):
     item = integration
-    foreign_store = challenge.PDSAChallengeStore(tmp_path / "unknown-issuer.sqlite")
+    with sqlite3.connect(item.authority.store.path) as db:
+        db.execute("DELETE FROM pdsa_challenges")
     with pytest.raises(challenge.PDSAChallengeError, match="UNKNOWN_RETAINED"):
-        _authenticate(item, challenge_store=foreign_store)
-    assert _state(item) == "ISSUED"
+        _authenticate(item)
+    with sqlite3.connect(item.authority.store.path) as db:
+        assert db.execute("SELECT count(*) FROM pdsa_challenges").fetchone()[0] == 0
 
 
 def test_changed_endorsement_quorum_signature_rejected_in_composition(integration):
@@ -662,7 +718,7 @@ def test_authenticated_capability_rejects_changed_pending_store_path(integration
     copied_path = tmp_path / "copied-pending.sqlite"
     copied_path.write_bytes(item.pending._path.read_bytes())
     object.__setattr__(item.pending, "_path", copied_path)
-    with pytest.raises(custody.ProductionTPMCustodyError, match="STORE|CONFIGURATION"):
+    with pytest.raises(ProductionEnrollmentIssuerError, match="PRODUCTION_ISSUER_SOURCE_CHANGED"):
         item.authority.store.consume_authenticated_request(accepted)
     assert _state(item) == "ISSUED"
 
@@ -684,3 +740,183 @@ def test_authenticated_capability_rejects_changed_retained_tpm_source(integratio
     with pytest.raises(custody.ProductionTPMCustodyError):
         item.authority.store.consume_authenticated_request(accepted)
     assert _state(item) == "ISSUED"
+
+
+def test_installed_boundary_accepts_only_genuine_factory_stores_and_persisted_exact_retry(
+    integration,
+):
+    item = integration
+    assert (
+        require_production_pdsa_store(item.authority.store, context=item.authority.context)
+        is item.authority.issuer
+    )
+    assert (
+        require_production_tpm_store(
+            item.pending,
+            context=item.authority.context,
+            pdsa_store=item.authority.store,
+            issuer=item.authority.issuer,
+        )
+        is item.authority.issuer
+    )
+    receipt = _accept(item)
+    assert _state(item) == "CONSUMED"
+    assert json.loads(receipt)["legal_enrollment"] == "NOT_PERFORMED"
+    assert _accept(item) == receipt
+
+
+@pytest.mark.parametrize("boundary", [_authenticate, _accept], ids=["authenticate", "accept"])
+@pytest.mark.parametrize("field", ["challenge_store", "pending"])
+@pytest.mark.parametrize(
+    "attack", ["constructor", "database_copy", "reconstructed", "fields", "empty"]
+)
+def test_unissued_store_cannot_authenticate_even_with_identical_retained_state(
+    integration, tmp_path, boundary, field, attack
+):
+    item = integration
+    source = item.authority.store if field == "challenge_store" else item.pending
+    source_path = source.path if field == "challenge_store" else source._path
+    table = "pdsa_challenges" if field == "challenge_store" else "tpm_challenges"
+    target = tmp_path / f"attacker-{field}-{attack}.sqlite"
+    if attack == "fields":
+        forged = object.__new__(type(source))
+        for slot in type(source).__slots__:
+            if slot != "__weakref__":
+                object.__setattr__(forged, slot, getattr(source, slot))
+    elif attack == "empty":
+        forged = object.__new__(type(source))
+    else:
+        if attack == "database_copy":
+            _copy_database(source_path, target)
+        elif attack == "reconstructed":
+            _reconstruct_database(source_path, target, table=table)
+        forged = type(source)(target if attack != "constructor" else source_path)
+    # Every other artifact remains genuine, including quorum signatures, request
+    # PoP, custody and (for TPM attacks) the exact previously VERIFIED response.
+    with pytest.raises(ProductionEnrollmentIssuerError, match="PRODUCTION_ISSUER_STORE_REQUIRED"):
+        boundary(item, **{field: forged})
+    assert _state(item) == "ISSUED"
+
+
+@pytest.mark.parametrize("boundary", [_authenticate, _accept], ids=["authenticate", "accept"])
+def test_stale_issued_database_snapshot_cannot_replay_after_canonical_consume(
+    integration, tmp_path, boundary
+):
+    item = integration
+    copied_pdsa_path = tmp_path / "stale-issued.sqlite"
+    copied_tpm_path = tmp_path / "stale-verified.sqlite"
+    _copy_database(item.authority.store.path, copied_pdsa_path)
+    _copy_database(item.pending._path, copied_tpm_path)
+    copied_pdsa = challenge.PDSAChallengeStore(copied_pdsa_path)
+    copied_pending = custody.ProductionTPMChallengeStore(copied_tpm_path)
+    receipt = _accept(item)
+    assert _state(item) == "CONSUMED"
+    with sqlite3.connect(copied_pdsa_path) as db:
+        assert db.execute("SELECT state FROM pdsa_challenges").fetchone()[0] == "ISSUED"
+    with sqlite3.connect(copied_tpm_path) as db:
+        assert db.execute("SELECT state FROM tpm_challenges").fetchone()[0] == "VERIFIED"
+    with pytest.raises(ProductionEnrollmentIssuerError, match="PRODUCTION_ISSUER_STORE_REQUIRED"):
+        copied_pdsa.verify_issued(item.pdsa_raw, item.authority.context)
+    with pytest.raises(ProductionEnrollmentIssuerError, match="PRODUCTION_ISSUER_STORE_REQUIRED"):
+        boundary(item, challenge_store=copied_pdsa, pending=copied_pending)
+    assert _accept(item) == receipt
+
+
+@pytest.mark.parametrize("boundary", [_authenticate, _accept], ids=["authenticate", "accept"])
+@pytest.mark.parametrize("field", ["challenge_store", "pending"])
+def test_separately_factory_issued_bundles_cannot_mix_in_authentication(
+    integration, boundary, field
+):
+    item = integration
+    other = open_installed_production_enrollment_issuer()
+    try:
+        assert require_production_pdsa_store(other.pdsa_store) is other
+        assert require_production_tpm_store(other.tpm_store) is other
+        assert other is not item.authority.issuer
+        replacement = other.pdsa_store if field == "challenge_store" else other.tpm_store
+        with pytest.raises(
+            ProductionEnrollmentIssuerError, match="PRODUCTION_ISSUER_CONTEXT_MISMATCH"
+        ):
+            boundary(item, **{field: replacement})
+        assert _state(item) == "ISSUED"
+    finally:
+        other.close()
+
+
+def test_restart_reopens_canonical_consumed_state_and_returns_persisted_receipt_after_expiry(
+    integration, monkeypatch
+):
+    item = integration
+    accepted = _authenticate(item)
+    receipt = item.authority.store.consume_authenticated_request(accepted)
+    old_pdsa_store, old_pending = item.authority.store, item.pending
+    item.authority.issuer.close()
+    reopened = item.authority.reopen()
+    try:
+        assert reopened.pdsa_store is not old_pdsa_store
+        assert reopened.tpm_store is not old_pending
+        assert reopened.pdsa_store.path == old_pdsa_store.path
+        assert reopened.tpm_store._path == old_pending._path
+        with sqlite3.connect(reopened.pdsa_store.path) as db:
+            assert db.execute("SELECT state FROM pdsa_challenges").fetchone()[0] == "CONSUMED"
+        with pytest.raises(
+            ProductionEnrollmentIssuerError, match="PRODUCTION_ISSUER_STORE_REQUIRED"
+        ):
+            production.require_authenticated_pre_enrollment(accepted)
+        monkeypatch.setattr(challenge, "_utc_now", lambda: NOW + timedelta(days=8))
+        monkeypatch.setattr(custody, "_utc_now", lambda: NOW + timedelta(days=8))
+        assert (
+            _accept(item, challenge_store=reopened.pdsa_store, pending=reopened.tpm_store)
+            == receipt
+        )
+        assert (
+            reopened.pdsa_store.retry_exact_accepted(
+                request_raw=item.request.canonical_bytes, challenge_raw=item.pdsa_raw
+            )
+            == receipt
+        )
+        other = _changed_request(item, request_nonce_hex="dd" * 32)
+        with pytest.raises(challenge.PDSAChallengeError, match="CHALLENGE_REPLAY_CONFLICT"):
+            reopened.pdsa_store.retry_exact_accepted(
+                request_raw=other.canonical_bytes, challenge_raw=item.pdsa_raw
+            )
+    finally:
+        reopened.close()
+
+
+def test_restart_reverifies_issued_challenge_retained_exchange_and_custody(integration):
+    item = integration
+    old_acceptance = _authenticate(item)
+    item.authority.issuer.close()
+    reopened = item.authority.reopen()
+    try:
+        with pytest.raises(
+            ProductionEnrollmentIssuerError, match="PRODUCTION_ISSUER_STORE_REQUIRED"
+        ):
+            production.require_authenticated_pre_enrollment(old_acceptance)
+        issued = reopened.pdsa_store.verify_issued(item.pdsa_raw, item.authority.context)
+        exact_tpm_retry = reopened.tpm_store.issue(
+            item.activation.canonical_bytes,
+            item.tpm_request.canonical_bytes,
+            pdsa_challenge=issued,
+            pdsa_store=reopened.pdsa_store,
+            endorsement=item.endorsement,
+            context=item.authority.context,
+        )
+        assert exact_tpm_retry.canonical_bytes == item.tpm_challenge.canonical_bytes
+        fresh_acceptance = _authenticate(
+            item, challenge_store=reopened.pdsa_store, pending=reopened.tpm_store
+        )
+        assert fresh_acceptance is not old_acceptance
+        receipt = reopened.pdsa_store.consume_authenticated_request(fresh_acceptance)
+        assert (
+            _accept(item, challenge_store=reopened.pdsa_store, pending=reopened.tpm_store)
+            == receipt
+        )
+        with sqlite3.connect(reopened.tpm_store._path) as db:
+            assert db.execute("SELECT count(*), state FROM tpm_challenges").fetchone() == (
+                1,
+                "VERIFIED",
+            )
+    finally:
+        reopened.close()
