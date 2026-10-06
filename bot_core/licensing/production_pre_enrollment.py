@@ -54,7 +54,11 @@ from .production_tpm_custody import (
     require_verified_production_tpm_exchange,
     verify_production_tpm_endorsement,
 )
-from .tpm_attestation import EXCHANGE_REFERENCE_DOMAIN, TPMEnrollmentRequestV1
+from .tpm_attestation import (
+    EXCHANGE_REFERENCE_DOMAIN,
+    TPMEnrollmentChallengeV1,
+    TPMEnrollmentRequestV1,
+)
 
 
 class ProductionPreEnrollmentError(ValueError):
@@ -344,3 +348,26 @@ def require_authenticated_pre_enrollment(
     # Exact type and issuance have already been checked; public properties are
     # derived from the private registered snapshot and cannot be copied to mint it.
     return cast(AuthenticatedProductionPreEnrollment, value)
+
+
+def authenticated_package_expiry(value: object) -> str:
+    """Derive the initial authorization deadline from live verified sources.
+
+    The retained TPM challenge already caps its deadline to both the signed PDSA
+    challenge and the curated endorsement. Parsing caller JSON cannot create the
+    registered exchange capability used here.
+    """
+    require_authenticated_pre_enrollment(value)
+    snapshot = _snapshot(value)
+    exchange = require_verified_production_tpm_exchange(
+        snapshot.exchange,
+        context=snapshot.context,
+        pending=snapshot.pending,
+        issuer=snapshot.issuer,
+    )
+    pdsa_expiry: str = snapshot.challenge.document["payload"]["expires_at_utc"]
+    tpm_challenge = TPMEnrollmentChallengeV1.from_canonical_bytes(exchange.retained_bytes[2])
+    tpm_expiry: str = tpm_challenge.document["expires_at_utc"]
+    # Both artifacts require exact canonical UTC seconds, so lexical ordering
+    # agrees with chronological ordering after their trusted parsers validate.
+    return min(pdsa_expiry, tpm_expiry)

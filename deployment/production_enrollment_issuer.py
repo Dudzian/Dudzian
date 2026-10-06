@@ -160,6 +160,12 @@ class ProductionEnrollmentIssuerContext:
     def tpm_store(self) -> ProductionTPMChallengeStore:
         return _snapshot(self).tpm_store
 
+    def sign_enrollment_authorization(self, payload_raw: bytes) -> list[dict[str, str]]:
+        """Use the fixed installed quorum service, never a transport-selected signer."""
+        from deployment.production_pdsa_signing import _sign_enrollment_authorization
+
+        return _sign_enrollment_authorization(self, payload_raw)
+
     def close(self) -> None:
         """Invalidate this process bundle and all capabilities bound to it."""
         snapshot = _ISSUERS.pop(self, None)

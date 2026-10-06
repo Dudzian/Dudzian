@@ -1,4 +1,4 @@
-"""Stage 9 external provisioning runtime (positive paths are TEST_ONLY).
+"""Stage 9 external provisioning runtime (membership positive paths are TEST_ONLY).
 
 The module implements the frozen authority split: PDSA authorizes, LPPI owns
 ``prvop`` and the CryptoHunter Account Authority (CHA) alone mints accounts.
@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Mapping
+from weakref import WeakKeyDictionary
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes, serialization
@@ -203,7 +204,9 @@ class PDSAAuthorizationRequestV1:
                 "pdsa_challenge_digest_sha256": self.pdsa_challenge_digest_sha256,
                 "pre_enrollment_request_digest_sha256": self.pre_enrollment_request_digest_sha256,
                 "verified_tpm_exchange_reference": self.verified_tpm_exchange_reference,
-                "pre_enrollment_public_key_fingerprint_sha256": self.pre_enrollment_public_key_fingerprint_sha256,
+                "pre_enrollment_public_key_fingerprint_sha256": (
+                    self.pre_enrollment_public_key_fingerprint_sha256
+                ),
             }
         )
 
@@ -240,13 +243,19 @@ def _uuid7(prefix: str) -> str:
 
 
 def _strict_package(raw: bytes) -> tuple[dict[str, Any], list[dict[str, str]]]:
+    if type(raw) is not bytes:
+        raise ProvisioningError("INVALID_PACKAGE_CANONICAL_BYTES")
     if len(raw) > 32_768:
         raise ProvisioningError("PACKAGE_TOO_LARGE")
     try:
         value = json.loads(raw)
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+    except (UnicodeDecodeError, ValueError, RecursionError) as exc:
         raise ProvisioningError("INVALID_PACKAGE_JSON") from exc
-    if canonical_json_bytes(value) != raw or not isinstance(value, dict):
+    try:
+        canonical = canonical_json_bytes(value)
+    except (ValueError, TypeError, RecursionError) as exc:
+        raise ProvisioningError("NONCANONICAL_PACKAGE") from exc
+    if canonical != raw or not isinstance(value, dict):
         raise ProvisioningError("NONCANONICAL_PACKAGE")
     if set(value) != {"payload", "signatures"}:
         raise ProvisioningError("PACKAGE_SCHEMA_MISMATCH")
@@ -260,6 +269,11 @@ def _strict_package(raw: bytes) -> tuple[dict[str, Any], list[dict[str, str]]]:
     expected = {"algorithm", "key_id", "signature_hex"}
     if any(not isinstance(item, dict) or set(item) != expected for item in signatures):
         raise ProvisioningError("SIGNATURE_SCHEMA_MISMATCH")
+    for signature in signatures:
+        _bounded(signature["key_id"], "pdsa_signer_id")
+        encoded = signature["signature_hex"]
+        if type(encoded) is not str or len(encoded) != 128 or any(c not in HEX64 for c in encoded):
+            raise ProvisioningError("INVALID_PDSA_SIGNATURE")
     return payload, signatures
 
 
@@ -404,6 +418,9 @@ class _PDSAProvisioningPackageVerifier(ProvisioningPackageVerifier):
     def verify(
         self, raw: bytes, *, expected_device_key: str, now: datetime
     ) -> VerifiedProvisioningPackage:
+        _hex_digest(expected_device_key, "expected_device_key")
+        if type(now) is not datetime or now.tzinfo != timezone.utc:
+            raise ProvisioningError("INVALID_VERIFICATION_TIME")
         payload, signatures = _strict_package(raw)
         for field in PACKAGE_FIELDS - {"predecessor_package_digest_or_null"}:
             if payload[field] is None:
@@ -465,7 +482,7 @@ class _PDSAProvisioningPackageVerifier(ProvisioningPackageVerifier):
         issued_at, expires_at = _iso(payload["issued_at_utc"]), _iso(payload["expires_at_utc"])
         if issued_at >= expires_at:
             raise ProvisioningError("INVALID_PACKAGE_VALIDITY_WINDOW")
-        if now.tzinfo != timezone.utc or now < issued_at:
+        if now < issued_at:
             raise ProvisioningError("PACKAGE_NOT_YET_VALID")
         if now >= expires_at:
             raise ProvisioningError("PACKAGE_EXPIRED")
@@ -496,6 +513,8 @@ class ProductionProvisioningPackageVerifier(_PDSAProvisioningPackageVerifier):
         )
 
         try:
+            if type(self) is not ProductionProvisioningPackageVerifier:
+                raise ProductionVerifierUnavailable("EXACT_PRODUCTION_VERIFIER_REQUIRED")
             trust_context = require_verified_production_trust_context(trust_context)
         except RuntimeError as exc:
             raise ProductionVerifierUnavailable("PRODUCTION_TRUST_CONTEXT_REQUIRED") from exc
@@ -507,6 +526,112 @@ class ProductionProvisioningPackageVerifier(_PDSAProvisioningPackageVerifier):
             release_digest=trust_context.release_payload_digest,
             release_generation=trust_context.release_version,
         )
+        _PRODUCTION_VERIFIERS[self] = trust_context
+
+    def verify(
+        self, raw: bytes, *, expected_device_key: str, now: datetime
+    ) -> VerifiedProvisioningPackage:
+        """Verify public package authority and the frozen initial issuance profile.
+
+        A caller-supplied fingerprint restricts the target; it does not establish
+        issuer authority or prove possession. The issuer uses the authenticated
+        variant for the complete request and retained TPM bindings.
+        """
+        from deployment.windows_stage9_production_trust import (
+            require_current_production_trust_context,
+        )
+
+        from .pdsa_enrollment_authorization import validate_initial_production_payload
+
+        try:
+            trusted = require_current_production_trust_context(_production_verifier_context(self))
+        except RuntimeError as exc:
+            raise ProductionVerifierUnavailable(
+                "CURRENT_PRODUCTION_TRUST_CONTEXT_REQUIRED"
+            ) from exc
+        # Mutable inherited attributes are mechanics inputs only. Production
+        # authority is rederived from the privately registered current context.
+        verifier = _PDSAProvisioningPackageVerifier(
+            trusted.pdsa_keys,
+            environment="PRODUCTION",
+            trust_domain="PDSA_PRODUCTION_2_OF_3_ED25519",
+            product_profile=PRODUCTION_PRODUCT_PROFILE,
+            release_digest=trusted.release_payload_digest,
+            release_generation=trusted.release_version,
+        )
+        package = verifier.verify(raw, expected_device_key=expected_device_key, now=now)
+        try:
+            validate_initial_production_payload(dict(package.payload))
+        except ValueError as exc:
+            raise ProvisioningError("INVALID_PRODUCTION_PACKAGE_PROFILE") from exc
+        signatures = json.loads(raw)["signatures"]
+        key_ids = [signature["key_id"] for signature in signatures]
+        if key_ids != sorted(key_ids):
+            raise ProvisioningError("NONCANONICAL_PDSA_SIGNATURE_ORDER")
+        return package
+
+    def verify_authenticated(
+        self, raw: bytes, value: object, *, now: datetime
+    ) -> VerifiedProvisioningPackage:
+        """Recheck issuer capabilities and every frozen request/TPM target binding."""
+        from .pre_enrollment import PreEnrollmentRequestV1
+        from .production_pre_enrollment import (
+            authenticated_package_expiry,
+            require_authenticated_pre_enrollment,
+        )
+
+        try:
+            authenticated = require_authenticated_pre_enrollment(value)
+            if authenticated.context is not _production_verifier_context(self):
+                raise ProvisioningError("REJECT_PACKAGE_TARGET_MISMATCH")
+            request = PreEnrollmentRequestV1.from_canonical_bytes(authenticated.request_raw)
+            expected_expiry = authenticated_package_expiry(authenticated)
+        except (ValueError, RuntimeError) as exc:
+            raise ProvisioningError("REJECT_PACKAGE_TARGET_MISMATCH") from exc
+        source = request.document
+        package = self.verify(
+            raw,
+            expected_device_key=source["pre_enrollment_public_key_fingerprint_sha256"],
+            now=now,
+        )
+        expected = {
+            "pdsa_challenge_id": source["pdsa_challenge_id"],
+            "pdsa_challenge_digest_sha256": source["pdsa_challenge_digest_sha256"],
+            "pre_enrollment_request_digest_sha256": request.digest_sha256,
+            "verified_tpm_exchange_reference": source["verified_tpm_exchange_reference"],
+            "verified_tpm_public_projection_id": source["verified_tpm_public_projection_id"],
+            "target_tpm_ek_public_digest": source["ek_public_digest"],
+            "target_tpm_ak_public_digest": source["ak_public_digest"],
+            "pre_enrollment_public_key_algorithm_profile": source[
+                "pre_enrollment_public_key_algorithm_profile"
+            ],
+            "pre_enrollment_public_key_fingerprint_sha256": source[
+                "pre_enrollment_public_key_fingerprint_sha256"
+            ],
+            "release_policy_digest_sha256": source["release_policy_digest_sha256"],
+            "release_policy_generation": source["release_policy_generation"],
+            "product_profile": source["product_profile"],
+            "expires_at_utc": expected_expiry,
+        }
+        if any(
+            package.payload[field] != expected_value for field, expected_value in expected.items()
+        ):
+            raise ProvisioningError("REJECT_PACKAGE_TARGET_MISMATCH")
+        return package
+
+
+_PRODUCTION_VERIFIERS: WeakKeyDictionary[ProductionProvisioningPackageVerifier, Any] = (
+    WeakKeyDictionary()
+)
+
+
+def _production_verifier_context(value: ProductionProvisioningPackageVerifier) -> Any:
+    if type(value) is not ProductionProvisioningPackageVerifier:
+        raise ProductionVerifierUnavailable("EXACT_PRODUCTION_VERIFIER_REQUIRED")
+    context = _PRODUCTION_VERIFIERS.get(value)
+    if context is None:
+        raise ProductionVerifierUnavailable("PRODUCTION_VERIFIER_PROVENANCE_REQUIRED")
+    return context
 
 
 class TestOnlyProvisioningPackageVerifier(_PDSAProvisioningPackageVerifier):
@@ -582,7 +707,8 @@ class ProvisioningRepository:
             prvop = _uuid7("prvop")
             try:
                 db.execute(
-                    "INSERT INTO provisioning_operations VALUES(?,?,?,?,?,'PREPARED',NULL,NULL,NULL,?,?)",
+                    "INSERT INTO provisioning_operations "
+                    "VALUES(?,?,?,?,?,'PREPARED',NULL,NULL,NULL,?,?)",
                     (
                         prvop,
                         package.package_digest_sha256,
@@ -649,7 +775,8 @@ class ProvisioningRepository:
                 raise ConflictError("ACCOUNT_OUTCOME_CONFLICT")
             if row["state"] == "PREPARED":
                 db.execute(
-                    "UPDATE provisioning_operations SET logical_operation_id=?,account_id=?,state='ACCOUNT_COMMITTED',updated_at=? WHERE prvop=?",
+                    "UPDATE provisioning_operations SET logical_operation_id=?,account_id=?,"
+                    "state='ACCOUNT_COMMITTED',updated_at=? WHERE prvop=?",
                     (logical, account, now, prvop),
                 )
             db.commit()
@@ -668,10 +795,16 @@ class ProvisioningRepository:
         with self._connect() as db:
             values: tuple[Any, ...]
             if membership:
-                sql = "UPDATE provisioning_operations SET state=?,membership_digest=?,updated_at=? WHERE prvop=? AND state=?"
+                sql = (
+                    "UPDATE provisioning_operations SET state=?,membership_digest=?,"
+                    "updated_at=? WHERE prvop=? AND state=?"
+                )
                 values = (after.value, membership, now, prvop, before.value)
             else:
-                sql = "UPDATE provisioning_operations SET state=?,updated_at=? WHERE prvop=? AND state=?"
+                sql = (
+                    "UPDATE provisioning_operations SET state=?,updated_at=? "
+                    "WHERE prvop=? AND state=?"
+                )
                 values = (after.value, now, prvop, before.value)
             changed = db.execute(sql, values).rowcount
             if changed != 1:
