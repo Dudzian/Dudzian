@@ -4,7 +4,8 @@ This store belongs to the trusted off-host PDSA service. Selecting a local SQLit
 path does not establish that service's authority. Production composition must
 use its retained issuer store, the canonical Production Trust loader, and the
 independent production pre-enrollment authentication capability before consume.
-No private authority keys, legal enrollment packages or subjects are generated.
+The same issuer-owned database also retains production package reservations;
+private authority keys remain exclusively in the off-host signing service.
 """
 
 from __future__ import annotations
@@ -339,6 +340,28 @@ class PDSAChallengeStore:
                         AND request_digest IS NULL AND receipt_raw IS NULL))
                 )"""
             )
+            db.execute(
+                """CREATE TABLE IF NOT EXISTS pdsa_authorization_issuances (
+                    pdsa_challenge_id TEXT PRIMARY KEY,
+                    pdsa_challenge_digest_sha256 TEXT NOT NULL,
+                    pre_enrollment_request_digest_sha256 TEXT NOT NULL UNIQUE,
+                    request_raw BLOB NOT NULL,
+                    payload_raw BLOB NOT NULL,
+                    provisioning_subject_id TEXT NOT NULL UNIQUE,
+                    enrollment_reference TEXT NOT NULL UNIQUE,
+                    issued_at_utc TEXT NOT NULL,
+                    expires_at_utc TEXT NOT NULL,
+                    signer_ids_raw BLOB NOT NULL,
+                    state TEXT NOT NULL CHECK(state IN ('RESERVED','SIGNED','COMMITTED')),
+                    package_raw BLOB,
+                    pdsa_package_digest_sha256 TEXT UNIQUE,
+                    CHECK((state='RESERVED' AND package_raw IS NULL
+                        AND pdsa_package_digest_sha256 IS NULL)
+                        OR (state IN ('SIGNED','COMMITTED') AND package_raw IS NOT NULL
+                        AND pdsa_package_digest_sha256 IS NOT NULL)),
+                    FOREIGN KEY(pdsa_challenge_id) REFERENCES pdsa_challenges(challenge_id)
+                )"""
+            )
 
     def __setattr__(self, name: str, value: object) -> None:
         raise TypeError("PDSAChallengeStore configuration is immutable")
@@ -543,6 +566,12 @@ class PDSAChallengeStore:
                 return bytes(row["receipt_raw"])
             if row["state"] == "EXPIRED":
                 raise PDSAChallengeError("CHALLENGE_EXPIRED")
+            reservation = db.execute(
+                "SELECT 1 FROM pdsa_authorization_issuances WHERE pdsa_challenge_id=?",
+                (payload["challenge_id"],),
+            ).fetchone()
+            if reservation is not None:
+                raise PDSAChallengeError("CHALLENGE_RESERVED_FOR_PACKAGE_ISSUANCE")
             # The TPM challenge or EK endorsement can expire earlier than the
             # PDSA challenge while acquiring this writer lock. Recheck the full
             # composed capability at the acceptance boundary, without renewing it.
