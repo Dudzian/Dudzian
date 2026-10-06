@@ -1,0 +1,449 @@
+{
+  "schema_version": "cryptohunter.stage9_production_tpm_custody_contract.v1",
+  "status": "FROZEN",
+  "implementation_authorized": true,
+  "production_provisioning_ready": false,
+  "parent_contract": {
+    "path": "docs/architecture/cryptohunter_product_architecture/stage9_external_provisioning_architecture_contract.json",
+    "sha256": "6538a75d8cf3a6e3cdab8f4a9022277a21d98e1a61923aa8d8eae9b80ae1d67d",
+    "relationship": "Subordinate encoding and authentication closure; no top-level fields or historical snapshots changed."
+  },
+  "canonical_encoding": {
+    "json": "RFC8785 JCS UTF-8, no BOM or trailing newline",
+    "unknown_fields": "REJECT",
+    "digest": "lowercase hex SHA256(exact canonical bytes)",
+    "binary": "lowercase even-length hexadecimal"
+  },
+  "endorsement": {
+    "wire_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "payload",
+        "payload_digest_sha256",
+        "signatures"
+      ],
+      "properties": {
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "ek_certificate_digest_sha256",
+            "ek_name",
+            "ek_public_digest",
+            "endorsement_id",
+            "endorsement_profile",
+            "environment",
+            "expires_at_utc",
+            "hardware_origin_verification",
+            "issued_at_utc",
+            "manufacturer_chain_digest_sha256",
+            "manufacturer_chain_verification_record_digest_sha256",
+            "pdsa_trust_domain",
+            "product",
+            "product_profile",
+            "release_policy_digest_sha256",
+            "release_policy_generation",
+            "schema_version",
+            "signature_algorithm_profile",
+            "signer_key_ids"
+          ],
+          "properties": {
+            "manufacturer_chain_digest_sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "signature_algorithm_profile": {
+              "const": "PDSA-2-OF-3-ED25519"
+            },
+            "environment": {
+              "const": "PRODUCTION"
+            },
+            "expires_at_utc": {
+              "type": "string",
+              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+            },
+            "release_policy_generation": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "endorsement_profile": {
+              "const": "PDSA_CURATED_MANUFACTURER_VERIFIED_TPM2_ECC_EK_V1"
+            },
+            "release_policy_digest_sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "ek_certificate_digest_sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "endorsement_id": {
+              "type": "string",
+              "pattern": "^ptpm_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            },
+            "product": {
+              "const": "CryptoHunter"
+            },
+            "ek_public_digest": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "issued_at_utc": {
+              "type": "string",
+              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+            },
+            "product_profile": {
+              "const": "CryptoHunter"
+            },
+            "manufacturer_chain_verification_record_digest_sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "ek_name": {
+              "type": "string",
+              "pattern": "^000b[0-9a-f]{64}$"
+            },
+            "pdsa_trust_domain": {
+              "const": "PDSA_PRODUCTION_2_OF_3_ED25519"
+            },
+            "hardware_origin_verification": {
+              "const": "MANUFACTURER_CHAIN_AND_EK_CERTIFICATE_BINDING_VERIFIED"
+            },
+            "signer_key_ids": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 3,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "schema_version": {
+              "const": "ProductionTPMEndorsementV1"
+            }
+          }
+        },
+        "payload_digest_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "signatures": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 3,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "algorithm",
+              "authority_key_set_digest",
+              "key_id",
+              "signature_hex"
+            ],
+            "properties": {
+              "algorithm": {
+                "const": "Ed25519"
+              },
+              "key_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "authority_key_set_digest": {
+                "const": "3203b496f67d571787e59bb74d62f69fc1bda9debda74cab3294b546f5884c14"
+              },
+              "signature_hex": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{128}$"
+              }
+            }
+          }
+        }
+      }
+    },
+    "signature_domain_hex": "43727970746f48756e7465722e5374616765392e50726f64756374696f6e54504d456e646f7273656d656e742e763100",
+    "signed_bytes": "ENDORSEMENT_DOMAIN || SHA256(JCS(payload))",
+    "authority": "Only current genuine loader-issued ProductionTrustContext PDSA key set; 2-of-3 unique sorted signers; no caller roots, keys, time override or TEST_ONLY authority.",
+    "hardware_trust_model": "PDSA independently validates manufacturer certificate chain against its curated OEM anchors, exact EK certificate/public-key binding and physical hardware-origin eligibility BEFORE issuing endorsement. PDSA retains the independent verification record referenced by its signed SHA256. Client verifies this PDSA hardware approval, not an independent local OEM chain. A self-consistent projection or caller certificate/chain digest supplies no hardware authority.",
+    "chain_digest": "SHA256(RFC8785 JCS UTF8 array of lowercase DER hex certificate strings in leaf-to-root order), retained in independent PDSA verification record",
+    "certificate_digest": "SHA256(exact DER EK certificate) referenced by projection and signed approval",
+    "validity": "issued_at_utc <= current trusted service UTC < expires_at_utc; positive window <=604800 seconds; exact signed release digest and generation",
+    "id": "Issuer-generated canonical UUIDv7 ptpm_<lowercase RFC9562 UUID>; no caller-selected identifier; retained verification record before response",
+    "issuance_in_this_change": "NOT_PERFORMED; no production signing key, substitute endorsement or OEM anchor generated."
+  },
+  "production_projection": {
+    "schema": "WindowsTPMPublicProjectionV1 unchanged",
+    "evidence_profile": "WindowsTPM2-PCP-Stage9-PRODUCTION-v1",
+    "source": {
+      "substrate": "Windows-TBS",
+      "profile": "Stage9-PCP-persistent-production-v1"
+    },
+    "k_psa_algorithm_profile": "Stage9.K_PSA.ECC_P256_SHA256.PRODUCTION",
+    "ek_certificate_status": "AVAILABLE and exact endorsed DER certificate digest",
+    "names": "0x000b || SHA256(exact TPMT_PUBLIC)"
+  },
+  "tpm_public": {
+    "type": 35,
+    "name_algorithm": 11,
+    "curve": 3,
+    "kdf": 16,
+    "coordinate_bytes": 32,
+    "point_validation": "SEC1 uncompressed P256 finite on-curve; reject truncated structures and trailing bytes",
+    "attributes": {
+      "mandatory_fixedTPM": 2,
+      "mandatory_fixedParent": 16,
+      "mandatory_sensitiveDataOrigin": 32,
+      "accepted_exact_values": {
+        "pre_enrollment": [
+          262258,
+          263282
+        ],
+        "ak": [
+          327794,
+          328818
+        ],
+        "k_psa": [
+          262322,
+          263346
+        ],
+        "ek": [
+          196786,
+          197810
+        ]
+      }
+    },
+    "schemes": {
+      "pre_enrollment": [
+        {
+          "algorithm": 24,
+          "hash": 11
+        },
+        {
+          "algorithm": 16
+        }
+      ],
+      "ak": {
+        "algorithm": 24,
+        "hash": 11
+      },
+      "k_psa": {
+        "algorithm": 24,
+        "hash": 11
+      },
+      "ek": {
+        "algorithm": 16
+      }
+    },
+    "auth_policy": {
+      "pre_enrollment_bytes": 0,
+      "ak_bytes": 0,
+      "k_psa_bytes": 32,
+      "k_psa_reject": "zero32 and historical TEST_ONLY PolicyCommandCode(Sign) digest",
+      "ek_hex": "837197674484b3f81a90cc8d46a5d724fd52d76e06520b64f2a1da1b331469aa"
+    },
+    "symmetric": {
+      "signing_roles": 16,
+      "ek": {
+        "algorithm": 6,
+        "key_bits": 128,
+        "mode": 67
+      }
+    }
+  },
+  "creation_attestation": {
+    "magic": 4283712327,
+    "type": 32794,
+    "required": "Actual TPM2_CertifyCreation validates creationTicket association with exact subject Name and creationHash; ordinary Certify / NCryptCreateClaim Certify evidence is insufficient.",
+    "qualified_signer": "Exactly SHA256 Qualified Name shape 0x000b+32bytes; signer identity authenticated by endorsed, activated restricted AK signature. Never equate Qualified Name to AK Name. Native collector compares to independently ReadPublic-returned AK Qualified Name when available.",
+    "extra_data_bytes": 32,
+    "object_name_bytes": 34,
+    "creation_hash_bytes": 32,
+    "clock_safe_values": [
+      0,
+      1
+    ],
+    "clock_security": "TPM clock is parsed but is not service freshness authority; current retained issuer challenge enforces freshness.",
+    "signature": {
+      "algorithm": 24,
+      "hash": 11,
+      "r_s_bytes": [
+        1,
+        32
+      ],
+      "r_s_range": "1..P256-order-1",
+      "message": "SHA256(exact TPMS_ATTEST bytes), ECDSA Prehashed equivalently ECDSA SHA256 over bytes"
+    }
+  },
+  "production_exchange": {
+    "wire_contracts_unchanged": [
+      "TPMEnrollmentRequestV1",
+      "TPMEnrollmentChallengeV1",
+      "TPMEnrollmentChallengeResponseV1"
+    ],
+    "creation_domain_hex": "43727970746f48756e7465722e5374616765392e50726f64756374696f6e54504d456e726f6c6c6d656e742e436572746966794372656174696f6e2e763100",
+    "qualifying_data": "SHA256(EXCHANGE_CREATION_DOMAIN || issuer_nonce32 || activation_request_digest32 || signed_PDSA_challenge_digest32)",
+    "pop_domain_hex": "43727970746f48756e7465722e5374616765392e50726f64756374696f6e54504d456e726f6c6c6d656e742e4b5f5053412e50726f6f664f66506f7373657373696f6e2e763100",
+    "k_psa_pop_digest": "SHA256(EXCHANGE_POP_DOMAIN || issuer_nonce32 || signed_PDSA_challenge_digest32)",
+    "credential_activation": "Internally random MakeCredential secret and ephemeral ECC key; no caller-supplied secret/scalar; proof HMAC domain and exact TPM challenge ID from unchanged prior wire contract.",
+    "retention": "ProductionTPMChallengeStore SQLite; durable ISSUED before challenge return; exact signed PDSA challenge capability/store/context, endorsement digest, activation/request bytes and release identity retained. Exact verified response/exchange persisted atomically as VERIFIED. Different response after VERIFIED is TPM_EXCHANGE_REPLAY_CONFLICT. Expired issued rows terminal EXPIRED. Issuer database is confidential service state, never a transport artifact.",
+    "exchange_reference_domain_hex": "43727970746f48756e7465722e54504d456e726f6c6c6d656e7445786368616e67655265666572656e6365563100",
+    "exchange_reference": "SHA256(EXCHANGE_REFERENCE_DOMAIN || activation_digest32 || request_digest32 || challenge_digest32 || response_digest32)",
+    "rejections": [
+      "historical TEST_ONLY proofs/projections/policies",
+      "wrong EK/AK/key/Name/public profile",
+      "wrong production signature/domain",
+      "unknown or changed retained challenge",
+      "changed PDSA challenge/release",
+      "caller-selected pending secret",
+      "software-generated TPM assertions without genuine PDSA hardware endorsement"
+    ]
+  },
+  "custody": {
+    "wire_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ak_public_digest",
+        "certify_creation_attest_hex",
+        "certify_creation_signature_hex",
+        "creation_attestation_digest_sha256",
+        "custody_profile",
+        "ek_public_digest",
+        "environment",
+        "pdsa_challenge_digest_sha256",
+        "pre_enrollment_public_key_canonical_bytes",
+        "pre_enrollment_public_key_fingerprint_sha256",
+        "pre_enrollment_request_digest_sha256",
+        "provider_name",
+        "release_policy_digest_sha256",
+        "release_policy_generation",
+        "schema_version",
+        "subject_creation_hash",
+        "subject_tpm_name",
+        "subject_tpmt_public_hex",
+        "verified_tpm_exchange_reference",
+        "verified_tpm_public_projection_id"
+      ],
+      "properties": {
+        "verified_tpm_exchange_reference": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "environment": {
+          "const": "PRODUCTION"
+        },
+        "creation_attestation_digest_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "pre_enrollment_public_key_canonical_bytes": {
+          "type": "string",
+          "pattern": "^04[0-9a-f]{128}$"
+        },
+        "certify_creation_signature_hex": {
+          "type": "string",
+          "pattern": "^(?:[0-9a-f]{2})+$",
+          "maxLength": 32768
+        },
+        "release_policy_generation": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "certify_creation_attest_hex": {
+          "type": "string",
+          "pattern": "^(?:[0-9a-f]{2})+$",
+          "maxLength": 32768
+        },
+        "pdsa_challenge_digest_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "release_policy_digest_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "ak_public_digest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "subject_tpmt_public_hex": {
+          "type": "string",
+          "pattern": "^(?:[0-9a-f]{2})+$",
+          "maxLength": 32768
+        },
+        "custody_profile": {
+          "const": "WINDOWS_PLATFORM_CRYPTO_PROVIDER_TPM_ECDSA_P256_PRE_ENROLLMENT_V1"
+        },
+        "ek_public_digest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "subject_creation_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "pre_enrollment_public_key_fingerprint_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "pre_enrollment_request_digest_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "provider_name": {
+          "const": "Microsoft Platform Crypto Provider"
+        },
+        "subject_tpm_name": {
+          "type": "string",
+          "pattern": "^000b[0-9a-f]{64}$"
+        },
+        "schema_version": {
+          "const": "ProductionPreEnrollmentKeyCustodyEvidenceV1"
+        },
+        "verified_tpm_public_projection_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "creation_domain_hex": "43727970746f48756e7465722e5374616765392e50726f64756374696f6e507265456e726f6c6c6d656e744b6579437573746f64792e436572746966794372656174696f6e2e763100",
+    "qualifying_data": "SHA256(CUSTODY_CREATION_DOMAIN || SHA256(exact PreEnrollmentRequestV1 canonical bytes))",
+    "evidence_reference_semantics": "PreEnrollmentRequestV1.tpm_attestation_evidence_reference remains exact target projection evidence_id, equal to verified_tpm_public_projection_id. Separate request-bound custody artifact is not hashed into request; no digest cycle.",
+    "binding": "Recompute SEC1 fingerprint and TPM Name/public digest. Compare request/exchange/projection/EK/AK/PDSA challenge/release fields exactly. Verify real AK-signed CREATION attestation for exact subject Name and creationHash and full request-bound qualifyingData.",
+    "acceptance_layers": [
+      "A: local Microsoft PCP hardware/machine/signing/nonexportable qualification",
+      "B: independent PDSA hardware endorsement + production ActivateCredential + actual exact-key CertifyCreation",
+      "C: exact PreEnrollmentRequestV1 strict DER low-S PoP"
+    ],
+    "verified_result": "Immutable verifier-issued weak registry capability; identity, unchanged raw bytes, current Production Trust and source retained store checked; copying public fields cannot transfer authority."
+  },
+  "native_bridge": {
+    "source": "Exact reopened, qualified CNG subject; same provider-owned TBS context; open-only exact retained AK; no alternate/generated/imported key.",
+    "properties": [
+      "PCP_PLATFORMHANDLE",
+      "PCP_TPM2BNAME",
+      "PCP_KEY_CREATIONHASH",
+      "PCP_KEY_CREATIONTICKET"
+    ],
+    "ownership": "Do not close/flush borrowed PCP TBS context or TPM handles; release only owned NCrypt references.",
+    "fallback": "Missing or malformed creation evidence => fail closed; no downgrade to property checks or ordinary Certify.",
+    "qualification": "WINDOWS_NATIVE_PRODUCTION_KEY_QUALIFICATION=NOT_RUN; PHYSICAL_TPM_CREATION_CUSTODY_QUALIFICATION=NOT_RUN"
+  },
+  "state": {
+    "stage_9": "IN_PROGRESS",
+    "production_provisioning_ready": false,
+    "windows_production_ready": "NOT_READY",
+    "stage_10_production_lifecycle_live": "NOT_STARTED",
+    "stage_10_prerequisite": "BLOCKED_UNTIL_LEGAL_ENROLLMENT",
+    "legal_production_enrollment": "NOT_PERFORMED"
+  },
+  "sources": [
+    "https://raw.githubusercontent.com/microsoft/win32metadata/main/generation/WinSDK/RecompiledIdlHeaders/um/ncrypt.h",
+    "https://learn.microsoft.com/en-us/windows-server/identity/ad-ds/manage/component-updates/tpm-key-attestation",
+    "https://trustedcomputinggroup.org/wp-content/uploads/TPM-2.0-1.83-Part-3-Commands.pdf",
+    "https://trustedcomputinggroup.org/wp-content/uploads/TPM-2.0-1.83-Part-2-Structures.pdf"
+  ]
+}
