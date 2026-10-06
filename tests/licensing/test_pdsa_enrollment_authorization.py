@@ -68,6 +68,7 @@ def issuance(integration, monkeypatch):
     )
     monkeypatch.setattr(authorization, "_utc_now", lambda: NOW)
     calls = []
+    item.available_signer_ids = set(item.authority.keys)
 
     def test_only_sign(service, payload_raw):
         # This monkeypatch is confined to the fixture: the public production
@@ -78,6 +79,9 @@ def issuance(integration, monkeypatch):
         assert canonical_json_bytes(payload) == payload_raw
         assert set(payload) == PACKAGE_FIELDS
         calls.append(payload_raw)
+        selected = sorted(item.available_signer_ids & item.authority.keys.keys())[:2]
+        if len(selected) != 2:
+            raise issuer.ProductionEnrollmentIssuerError("TEST_ONLY_QUORUM_UNAVAILABLE")
         message = PDSA_DOMAIN + hashlib.sha256(payload_raw).digest()
         return [
             {
@@ -85,7 +89,7 @@ def issuance(integration, monkeypatch):
                 "algorithm": "Ed25519",
                 "signature_hex": item.authority.keys[key_id].sign(message).hex(),
             }
-            for key_id in sorted(item.authority.keys)[:2]
+            for key_id in selected
         ]
 
     monkeypatch.setattr(
@@ -130,6 +134,16 @@ def _assert_pending(item, state):
     assert records[0]["pre_enrollment_request_digest_sha256"] == item.request.digest_sha256
     assert records[0]["provisioning_subject_id"]
     assert records[0]["enrollment_reference"]
+    assert records[0]["authorized_signer_ids_raw"] == canonical_json_bytes(
+        sorted(item.authority.context.pdsa_keys)
+    )
+    assert records[0]["required_threshold"] == 2
+    if state == "RESERVED":
+        assert records[0]["signer_ids_raw"] is None
+    else:
+        assert records[0]["signer_ids_raw"] == canonical_json_bytes(
+            [entry["key_id"] for entry in json.loads(records[0]["package_raw"])["signatures"]]
+        )
     assert _retry(item) is None
     assert (
         authorization.lookup_production_pdsa_enrollment_authorization(
@@ -159,6 +173,13 @@ def _assert_committed(item, raw):
     assert record["payload_raw"] == canonical_json_bytes(payload)
     assert record["package_raw"] == raw
     assert record["pdsa_package_digest_sha256"] == digest
+    assert record["authorized_signer_ids_raw"] == canonical_json_bytes(
+        sorted(item.authority.context.pdsa_keys)
+    )
+    assert record["required_threshold"] == 2
+    assert record["signer_ids_raw"] == canonical_json_bytes(
+        [entry["key_id"] for entry in value["signatures"]]
+    )
     for name in (
         "provisioning_subject_id",
         "enrollment_reference",
@@ -296,9 +317,211 @@ def test_psub_and_reference_are_independent_cs_random_uuidv7(issuance, monkeypat
     assert len(draws) == 4
 
 
+@pytest.mark.parametrize("microsecond", [789123, 999999])
+def test_uuidv7_retains_reservation_milliseconds_while_wire_time_uses_seconds(
+    issuance, monkeypatch, microsecond
+):
+    item = issuance
+    reservation_now = NOW.replace(microsecond=microsecond)
+    expected_ms = 1_791_288_000_000 + microsecond // 1000
+    monkeypatch.setattr(authorization, "_utc_now", lambda: reservation_now)
+    payload = _assert_committed(item, _issue(item))
+    assert payload["issued_at_utc"] == "2026-10-06T12:00:00Z"
+    for field in ("provisioning_subject_id", "enrollment_reference"):
+        assert uuid.UUID(payload[field][5:]).int >> 80 == expected_ms
+
+
+def test_both_uuidv7_ids_capture_one_instant_across_second_rollover(issuance, monkeypatch):
+    item = issuance
+    captured = NOW.replace(microsecond=999999)
+    clock_reads = []
+    minted = []
+    original = authorization._mint_uuidv7
+
+    def clock():
+        value = captured if not minted else NOW + timedelta(seconds=1)
+        clock_reads.append(value)
+        return value
+
+    def mint(prefix, timestamp):
+        value = original(prefix, timestamp)
+        minted.append(value)
+        return value
+
+    monkeypatch.setattr(authorization, "_utc_now", clock)
+    monkeypatch.setattr(authorization, "_mint_uuidv7", mint)
+    payload = _assert_committed(item, _issue(item))
+    assert clock_reads[-1] == NOW + timedelta(seconds=1)
+    assert payload["issued_at_utc"] == "2026-10-06T12:00:00Z"
+    assert len(minted) == 2
+    assert {uuid.UUID(value[5:]).int >> 80 for value in minted} == {1_791_288_000_999}
+
+
+@pytest.mark.parametrize("pair", [(0, 1), (0, 2), (1, 2)], ids=["K1+K2", "K1+K3", "K2+K3"])
+def test_any_two_authorized_signers_issue_and_verify(issuance, monkeypatch, pair):
+    item = issuance
+    keys = sorted(item.authority.keys)
+    item.available_signer_ids = {keys[index] for index in pair}
+    accepted = _authenticate(item)
+    raw = _issue(item, accepted)
+    assert [entry["key_id"] for entry in json.loads(raw)["signatures"]] == sorted(
+        item.available_signer_ids
+    )
+    monkeypatch.setattr(
+        trust,
+        "require_current_production_trust_context",
+        trust.require_verified_production_trust_context,
+    )
+    verifier = ProductionProvisioningPackageVerifier(item.authority.context)
+    assert (
+        verifier.verify(
+            raw,
+            expected_device_key=item.request.document[
+                "pre_enrollment_public_key_fingerprint_sha256"
+            ],
+            now=NOW,
+        ).canonical_package
+        == raw
+    )
+    _assert_committed(item, raw)
+
+
+def test_only_one_available_signer_keeps_reservation_unpublished(issuance):
+    item = issuance
+    item.available_signer_ids = {sorted(item.authority.keys)[2]}
+    with pytest.raises(issuer.ProductionEnrollmentIssuerError, match="QUORUM_UNAVAILABLE"):
+        _issue(item)
+    _assert_pending(item, "RESERVED")
+
+
+def test_signed_pair_survives_issuer_restart_and_restored_signer(issuance, monkeypatch):
+    item = issuance
+    keys = sorted(item.authority.keys)
+    item.available_signer_ids = set(keys[1:])
+    with monkeypatch.context() as patch:
+
+        def crash_before_final_commit(value):
+            raise TestOnlyCrash("SIGNED before final commit")
+
+        patch.setattr(authorization, "_finalize_issuance", crash_before_final_commit)
+        with pytest.raises(TestOnlyCrash):
+            _issue(item)
+    retained = _assert_pending(item, "SIGNED")["package_raw"]
+    assert [entry["key_id"] for entry in json.loads(retained)["signatures"]] == keys[1:]
+    _restart(item)
+    item.available_signer_ids = set(keys)
+    assert _issue(item) == retained
+    assert len(item.sign_calls) == 1
+    _assert_committed(item, retained)
+
+
+def test_other_valid_quorum_cannot_replace_pair_after_signed_retention(issuance):
+    item = issuance
+    accepted = _authenticate(item)
+    reservation = authorization._reserve_issuance(accepted)
+    first = canonical_json_bytes(
+        {
+            "payload": json.loads(reservation.payload_raw),
+            "signatures": item.test_only_sign(item.authority.issuer, reservation.payload_raw),
+        }
+    )
+    authorization._persist_signed_package(accepted, first)
+    _assert_pending(item, "SIGNED")
+    item.available_signer_ids = set(sorted(item.authority.keys)[1:])
+    alternate = canonical_json_bytes(
+        {
+            "payload": json.loads(reservation.payload_raw),
+            "signatures": item.test_only_sign(item.authority.issuer, reservation.payload_raw),
+        }
+    )
+    assert alternate != first
+    authorization._verify_package_signatures(alternate, item.authority.context)
+    with pytest.raises(ValueError, match="SIGNATURE_RETRY_CONFLICT"):
+        authorization._persist_signed_package(accepted, alternate)
+    assert _assert_pending(item, "SIGNED")["package_raw"] == first
+    assert _issue(item, accepted) == first
+
+
+@pytest.mark.parametrize(
+    ("column", "replacement"),
+    [
+        (
+            "authorized_signer_ids_raw",
+            canonical_json_bytes(["UNKNOWN_1", "UNKNOWN_2", "UNKNOWN_3"]),
+        ),
+        ("production_trust_raw", canonical_json_bytes({"ceremony_id": "DIFFERENT"})),
+    ],
+)
+def test_frozen_reservation_authority_tampering_blocks_signing(issuance, column, replacement):
+    item = issuance
+    accepted = _authenticate(item)
+    authorization._reserve_issuance(accepted)
+    with sqlite3.connect(item.authority.store.path) as db:
+        # Identifiers are restricted to the two literal test cases above.
+        statement = {
+            "authorized_signer_ids_raw": "UPDATE pdsa_authorization_issuances SET authorized_signer_ids_raw=?",
+            "production_trust_raw": "UPDATE pdsa_authorization_issuances SET production_trust_raw=?",
+        }[column]
+        db.execute(statement, (replacement,))
+    with pytest.raises(ValueError):
+        item.authority.issuer.sign_enrollment_authorization(_rows(item)[1][0]["payload_raw"])
+    assert item.sign_calls == []
+    assert _rows(item)[0][0]["state"] == "ISSUED"
+    assert _rows(item)[1][0]["state"] == "RESERVED"
+
+
+@pytest.mark.parametrize("changed_field", ["public_key", "ceremony_id", "release_digest"])
+def test_well_formed_reservation_trust_mismatch_fails_closed(issuance, changed_field):
+    item = issuance
+    accepted = _authenticate(item)
+    reservation = authorization._reserve_issuance(accepted)
+    record = _assert_pending(item, "RESERVED")
+    snapshot = json.loads(record["production_trust_raw"])
+    if changed_field == "public_key":
+        # The exact same eligible IDs/ceremony/release cannot hide key rotation.
+        snapshot["pdsa_public_keys"][0]["public_key_hex"] = "12" * 32
+    elif changed_field == "ceremony_id":
+        snapshot["ceremony_id"] += "-different"
+    else:
+        snapshot["release_policy_digest_sha256"] = "12" * 32
+    with sqlite3.connect(item.authority.store.path) as db:
+        db.execute(
+            "UPDATE pdsa_authorization_issuances SET production_trust_raw=?",
+            (canonical_json_bytes(snapshot),),
+        )
+    with pytest.raises(ValueError, match="EXACT_SIGNING_RESERVATION_REQUIRED"):
+        authorization._require_signing_reservation(item.authority.issuer, reservation.payload_raw)
+    with pytest.raises(ValueError, match="TARGET_MISMATCH"):
+        _issue(item, accepted)
+    assert item.sign_calls == []
+    assert _rows(item)[0][0]["state"] == "ISSUED"
+
+
+@pytest.mark.parametrize("millis", [-1, 1 << 48, 1.0, True, None])
+def test_uuidv7_invalid_timestamp_fails_before_randomness(monkeypatch, millis):
+    def unexpected_randomness(bits):
+        raise AssertionError("invalid UUID timestamp must fail before CSPRNG")
+
+    monkeypatch.setattr(authorization.secrets, "randbits", unexpected_randomness)
+    with pytest.raises(authorization.PDSAAuthorizationError, match="INVALID_PACKAGE_TIMESTAMP"):
+        authorization._mint_uuidv7("psub_", millis)
+
+
 @pytest.mark.parametrize(
     "name",
-    ["provisioning_subject_id", "enrollment_reference", "context", "signer", "signatures", "keys"],
+    [
+        "provisioning_subject_id",
+        "enrollment_reference",
+        "context",
+        "signer",
+        "signatures",
+        "keys",
+        "signer_ids",
+        "threshold",
+        "now",
+        "endpoint",
+        "callback",
+    ],
 )
 def test_transport_cannot_choose_identity_trust_or_signing_authority(issuance, name):
     accepted = _authenticate(issuance)
@@ -845,7 +1068,7 @@ def test_final_transaction_rolls_back_both_consumption_and_package_publication(
         "duplicate_signer",
         "wrong_signature",
         "foreign_signer",
-        "changed_signer_set",
+        "unordered_signers",
     ],
 )
 def test_invalid_quorum_service_output_never_consumes_or_publishes(issuance, monkeypatch, kind):
@@ -863,6 +1086,8 @@ def test_invalid_quorum_service_output_never_consumes_or_publishes(issuance, mon
         if kind == "foreign_signer":
             signatures[0]["key_id"] = "TEST_ONLY_FOREIGN_AUTHORITY"
             return signatures
+        if kind == "unordered_signers":
+            return list(reversed(signatures))
         key_id = sorted(item.authority.keys)[2]
         third = {
             "key_id": key_id,
@@ -871,9 +1096,7 @@ def test_invalid_quorum_service_output_never_consumes_or_publishes(issuance, mon
             .sign(PDSA_DOMAIN + hashlib.sha256(payload_raw).digest())
             .hex(),
         }
-        if kind == "three_signatures":
-            return signatures + [third]
-        return signatures[1:] + [third]
+        return signatures + [third]
 
     monkeypatch.setattr(
         issuer.ProductionEnrollmentIssuerContext,

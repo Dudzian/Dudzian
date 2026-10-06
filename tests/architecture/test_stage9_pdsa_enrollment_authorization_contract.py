@@ -140,8 +140,27 @@ def test_initial_lineage_and_exact_two_signature_policy_are_frozen() -> None:
     assert signature["domain"].encode() + b"\x00" == executable.PDSA_DOMAIN
     assert signature["caller_selected_signer_or_threshold"] is False
     assert "lexical order" in signature["signature_order"]
-    assert "first two key_id values in lexical order" in signature["signer_selection"]
+    assert (
+        "exactly all three authorized key IDs and public keys" in signature["eligible_signer_set"]
+    )
+    assert "current ProductionTrustContext.pdsa_keys" in signature["eligible_signer_set"]
+    assert "immutable" in signature["eligible_signer_set"]
+    assert "any two distinct eligible keys" in signature["signer_selection"]
+    assert "only by the trusted signing authority" in signature["signer_selection"]
+    assert "never the required pair" in signature["signer_selection"]
+    assert (
+        "authorized_signer_ids = exact reserved three-key set"
+        in signature["signing_service_request"]
+    )
+    assert "required_threshold = 2" in signature["signing_service_request"]
     assert "exact first durable response" in signature["service_retry"]
+    assert "selected signer IDs and exact signature bytes" in signature["service_retry"]
+    assert "lost response, issuer crash or service restart" in signature["service_retry"]
+    assert "without reselecting the pair" in signature["service_retry"]
+    assert (
+        "exact reserved/current Production Trust identity and key set"
+        in signature["service_authority"]
+    )
     profile = _schema()["properties"]["signatures"]
     assert (profile["minItems"], profile["maxItems"]) == (2, 2)
     assert set(profile["items"]["required"]) == {"algorithm", "key_id", "signature_hex"}
@@ -157,10 +176,20 @@ def test_identity_validity_and_retention_do_not_grant_authority_early() -> None:
     assert identity["owner"] == "ProductDeploymentSecurityAuthority"
     assert identity["caller_selected_identities"] is False
     assert identity["contains_secret"] is False
+    assert "floor(internal Unix epoch milliseconds)" in identity["uuid_timestamp"]
+    assert (
+        "one captured sub-second-precision UTC reservation instant shared by both identities"
+        in (identity["uuid_timestamp"])
+    )
+    assert (
+        "do not derive milliseconds from issued_at_utc whole seconds" in identity["uuid_timestamp"]
+    )
     assert "independent CSPRNG" in identity["uuid_randomness"]
     assert "penr_<RFC9562 UUIDv7>" in identity["enrollment_reference_profile"]
     assert validity["fixed_package_ttl_seconds"] is None
     assert validity["challenge_duration_is_package_ttl"] is False
+    assert "same captured internal reservation UTC instant" in validity["issued_at_utc"]
+    assert "truncated to whole UTC seconds" in validity["issued_at_utc"]
     assert validity["expires_at_utc"] == (
         "minimum(exact signed retained PDSAEnrollmentChallengeV1.expires_at_utc, "
         "exact retained verified TPMEnrollmentChallengeV1.expires_at_utc)"
@@ -169,10 +198,38 @@ def test_identity_validity_and_retention_do_not_grant_authority_early() -> None:
     assert retained["states"] == ["RESERVED", "SIGNED", "COMMITTED"]
     assert retained["legal_transitions"] == [["RESERVED", "SIGNED"], ["SIGNED", "COMMITTED"]]
     assert retained["terminal_state"] == "COMMITTED"
+    assert "all three authorized signer IDs and threshold 2" in retained["reserved"]
+    assert "exact Production Trust identity/public key set" in retained["reserved"]
+    assert (
+        "no selected pair is required before trusted signing-service selection"
+        in retained["reserved"]
+    )
     assert "outside SQLite write transactions" in retained["signing"]
+    assert "exact selected signer IDs" in retained["signed"]
+    assert (
+        "SIGNED/COMMITTED retry requires the same selected pair and signature bytes"
+        in retained["signed"]
+    )
     assert "no publication" in retained["signed"]
     assert "atomically" in retained["committed"]
     assert "exact immutable joins" in retained["retained_field_resolution"]
+    assert {
+        "production_trust_identity",
+        "production_trust_key_set",
+        "authorized_signer_ids",
+        "required_threshold",
+        "selected_signer_ids",
+    } <= set(retained["minimum_retained_fields"])
+    assert "exact first durable selected pair and signature bytes" in retained["crash_recovery"]
+    assert "even before local SIGNED retention" in retained["crash_recovery"]
+    assert (
+        "fail closed when populated legacy issuance storage"
+        in retained["legacy_fixed_pair_storage"]
+    )
+    assert (
+        "never reconstruct or rebind retained authority to current trust automatically"
+        in (retained["legacy_fixed_pair_storage"])
+    )
     assert retained["same_request_retry"] == "RETURN_EXACT_SAME_PACKAGE_BYTES"
     assert retained["same_challenge_different_request"] == "REJECT_CHALLENGE_REPLAY_CONFLICT"
     assert value["target_binding"]["required_live_proofs"] == [

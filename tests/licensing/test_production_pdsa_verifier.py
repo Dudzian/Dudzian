@@ -98,6 +98,27 @@ def _verify(item, raw=_DEFAULT_PACKAGE, *, now=NOW):
     )
 
 
+@pytest.mark.parametrize("pair", [(0, 1), (0, 2), (1, 2)], ids=["K1+K2", "K1+K3", "K2+K3"])
+def test_all_distinct_authorized_quorum_pairs_verify(package, pair):
+    item = package
+    key_ids = sorted(item.authority.keys)
+    message = PDSA_DOMAIN + hashlib.sha256(canonical_json_bytes(item.payload)).digest()
+    signatures = [
+        {
+            "key_id": key_ids[index],
+            "algorithm": "Ed25519",
+            "signature_hex": item.authority.keys[key_ids[index]].sign(message).hex(),
+        }
+        for index in pair
+    ]
+    raw = canonical_json_bytes({"payload": item.payload, "signatures": signatures})
+    assert _verify(item, raw).canonical_package == raw
+    assert (
+        item.verifier.verify_authenticated(raw, item.authenticated, now=NOW).canonical_package
+        == raw
+    )
+
+
 def test_exact_frozen_initial_package_and_authenticated_targets_are_verified(package):
     verified = _verify(package)
     assert set(verified.payload) == PACKAGE_FIELDS
