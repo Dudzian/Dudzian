@@ -246,6 +246,21 @@ def socket_boundary(installed, monkeypatch, tmp_path):
     )
     identity = signing._SocketIdentity(1, 2, 0, 123456, 0o660)
     monkeypatch.setattr(signing, "_installed_signing_socket_identity", lambda: identity)
+    # The production transport is Linux-only, but these are transport mechanics
+    # tests and intentionally replace the real socket boundary. Keep the simulated
+    # constants available on Windows/macOS where Python may not expose them.
+    monkeypatch.setattr(
+        signing.socket,
+        "AF_UNIX",
+        getattr(signing.socket, "AF_UNIX", 1),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        signing.socket,
+        "SO_PEERCRED",
+        getattr(signing.socket, "SO_PEERCRED", 17),
+        raising=False,
+    )
 
     class TestOnlyQuorumSocket:
         def __init__(self, family, kind):
