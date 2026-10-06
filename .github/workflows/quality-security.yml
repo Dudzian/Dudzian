@@ -49,10 +49,30 @@ jobs:
           tests/property
           tests/test_risk_portfolio_management.py
           tests/deployment/test_windows_tpm_substrate_probe.py
+          tests/licensing/test_pre_enrollment.py
+          tests/licensing/test_pdsa_enrollment_challenge.py
+          tests/licensing/test_production_tpm_custody.py
+          tests/licensing/test_production_pre_enrollment.py
+          tests/deployment/test_windows_cng_pre_enrollment.py
+          tests/deployment/test_windows_cng_custody_bridge.py
+          tests/deployment/test_windows_production_pre_enrollment.py
+          tests/deployment/test_windows_stage9_production_trust_provenance.py
+          tests/architecture/test_stage9_external_provisioning_architecture.py
+          tests/architecture/test_stage9_pdsa_enrollment_challenge_contract.py
+          tests/architecture/test_stage9_production_tpm_custody_contract.py
+          -m "not hardware and not destructive and not network"
           --cov=bot_core.risk.portfolio
           --cov=bot_core.licensing.canonical
           --cov=bot_core.security.license
           --cov=deployment.windows_tpm_substrate_probe
+          --cov=bot_core.licensing.pre_enrollment
+          --cov=bot_core.licensing.pdsa_enrollment_challenge
+          --cov=bot_core.licensing.production_tpm_custody
+          --cov=bot_core.licensing.production_pre_enrollment
+          --cov=deployment.windows_cng_pre_enrollment
+          --cov=deployment.windows_cng_custody_bridge
+          --cov=deployment.windows_production_pre_enrollment
+          --cov=deployment.windows_stage9_production_trust
           --cov-config=.coveragerc
           --cov-report=term-missing
           --cov-report=xml:coverage.xml

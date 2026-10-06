@@ -100,6 +100,7 @@ class _VerifiedTrustSnapshot:
 _ISSUED_CONTEXTS: WeakKeyDictionary[ProductionTrustContext, _VerifiedTrustSnapshot] = (
     WeakKeyDictionary()
 )
+_RUNTIME_CONTEXTS: WeakKeyDictionary[ProductionTrustContext, Path] = WeakKeyDictionary()
 
 
 def _pdsa_public_snapshot(
@@ -228,7 +229,31 @@ def verify_production_trust_for_audit(
 
 def load_production_trust(path: Path) -> ProductionTrustContext:
     """Runtime API: verify production trust only at the current UTC instant."""
-    return verify_production_trust_for_audit(path, verification_time=datetime.now(timezone.utc))
+    context = verify_production_trust_for_audit(path, verification_time=datetime.now(timezone.utc))
+    _RUNTIME_CONTEXTS[context] = path.resolve()
+    return context
+
+
+def require_current_production_trust_context(context: object) -> ProductionTrustContext:
+    """Require runtime provenance and reverify installed authority at current UTC.
+
+    Historical audit capabilities cannot authorize new production challenges or
+    enrollment proofs. A runtime capability also ceases to authorize use when its
+    package disappears, expires, changes authority, or changes release identity.
+    """
+    trusted = require_verified_production_trust_context(context)
+    path = _RUNTIME_CONTEXTS.get(trusted)
+    if path is None:
+        raise ProductionTrustUnavailable("CURRENT_RUNTIME_PRODUCTION_TRUST_CONTEXT_REQUIRED")
+    current = verify_production_trust_for_audit(path, verification_time=datetime.now(timezone.utc))
+    if (
+        current.ceremony_id != trusted.ceremony_id
+        or current.release_payload_digest != trusted.release_payload_digest
+        or current.release_version != trusted.release_version
+        or _pdsa_public_snapshot(current.pdsa_keys) != _pdsa_public_snapshot(trusted.pdsa_keys)
+    ):
+        raise ProductionTrustUnavailable("CURRENT_PRODUCTION_TRUST_IDENTITY_CHANGED")
+    return trusted
 
 
 def validate_public_package_layout(path: Path) -> None:

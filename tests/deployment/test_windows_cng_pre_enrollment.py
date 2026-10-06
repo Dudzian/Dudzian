@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import ctypes
+import gc
 import json
 import struct
 import sys
+import weakref
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -219,6 +221,26 @@ def dll(monkeypatch: pytest.MonkeyPatch) -> TestOnlyNCryptDLL:
     return simulation
 
 
+@pytest.fixture
+def reserved_dll(dll: TestOnlyNCryptDLL, tmp_path: Path) -> TestOnlyNCryptDLL:
+    """Recoverable reservation from ambiguous finalization of our own creation."""
+    dll.finalize_error, dll.finalize_lost_response = 0x80090020, True
+    with pytest.raises(adapter.WindowsCNGPreEnrollmentError, match="FINALIZE_KEY"):
+        adapter.WindowsCNGPreEnrollmentKey.open_or_create(tmp_path)
+    assert dll.persisted
+    assert json.loads((tmp_path / adapter._STATE_NAME).read_bytes()) == {
+        "schema": "WindowsCNGPreEnrollmentIdentityV1",
+        "version": 1,
+        "provider": adapter.PROVIDER,
+        "key_name": adapter.KEY_NAME,
+        "lifecycle": "CREATION_RESERVED",
+        "public_key_fingerprint_sha256": None,
+    }
+    dll.finalize_error, dll.finalize_lost_response = 0, False
+    dll.calls.clear()
+    return dll
+
+
 def request_for(public: bytes) -> PreEnrollmentRequestV1:
     value = dict.fromkeys(PAYLOAD_FIELDS, "a" * 64)
     value.update(
@@ -275,25 +297,79 @@ def test_fixed_provider_generation_and_public_only_evidence(
     assert dll.persisted  # Close releases handles; it never deletes a persisted key.
 
 
-def test_retry_and_new_process_reuse_exact_identity(dll: TestOnlyNCryptDLL, tmp_path: Path) -> None:
+def test_retry_and_new_process_reuse_exact_identity(
+    dll: TestOnlyNCryptDLL,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     with adapter.WindowsCNGPreEnrollmentKey.open_or_create(tmp_path) as first:
         identity = first.public_key_bytes
+    committed = (tmp_path / adapter._STATE_NAME).read_bytes()
+
+    def forbid_state_write(*arguments: object, **keywords: object) -> None:
+        pytest.fail("exact committed identity reuse must not rewrite state")
+
+    monkeypatch.setattr(adapter, "_write_state", forbid_state_write)
     with adapter.WindowsCNGPreEnrollmentKey.open_or_create(tmp_path) as second:
         assert second.public_key_bytes == identity
     assert sum(call[0] == "create" for call in dll.calls) == 1
+    assert (tmp_path / adapter._STATE_NAME).read_bytes() == committed
     state = json.loads((tmp_path / adapter._STATE_NAME).read_bytes())
     assert state["lifecycle"] == "COMMITTED"
     assert state["public_key_fingerprint_sha256"] == public_key_fingerprint(identity)
 
 
-def test_existing_qualified_key_reused_locally_not_authority(
+@pytest.mark.parametrize("foreign_profile", [False, True])
+def test_preexisting_unreserved_key_rejected_without_identity_effects_or_signing(
     dll: TestOnlyNCryptDLL,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    test_only_trust: object,
+    foreign_profile: bool,
 ) -> None:
     dll.persisted = True
+    original_private = dll.private
+    if foreign_profile:
+        dll.properties[(11, "Name")] = wide("Microsoft Software Key Storage Provider")
+
+    def forbid_identity_effect(*arguments: object, **keywords: object) -> None:
+        pytest.fail("unreserved preexisting identity must not be written, renamed or deleted")
+
+    monkeypatch.setattr(adapter, "_write_state", forbid_identity_effect)
+    monkeypatch.setattr(adapter.os, "replace", forbid_identity_effect)
+    monkeypatch.setattr(dll, "NCryptDeleteKey", forbid_identity_effect, raising=False)
+    with (
+        pytest.raises(
+            adapter.WindowsCNGPreEnrollmentError, match="^PREEXISTING_UNRESERVED_IDENTITY$"
+        ),
+        adapter.WindowsCNGPreEnrollmentKey.open_or_create(tmp_path) as key,
+    ):
+        key.sign_request(
+            request_for(key.public_key_bytes), production_trust_context=test_only_trust
+        )
+    assert dll.persisted and dll.private is original_private
+    assert dll.calls == [
+        ("provider", adapter.PROVIDER, 0),
+        ("open", adapter.KEY_NAME, adapter.MACHINE_KEY),
+        ("free", 22),
+        ("free", 11),
+    ]
+    assert not (tmp_path / adapter._STATE_NAME).exists()
+    assert sorted(path.name for path in tmp_path.iterdir()) == [adapter._LOCK_NAME]
+
+
+def test_reserved_qualified_key_reconciles_exact_identity(
+    reserved_dll: TestOnlyNCryptDLL,
+    tmp_path: Path,
+) -> None:
     with adapter.WindowsCNGPreEnrollmentKey.open_or_create(tmp_path) as key:
         assert key.public_evidence["tpm_attestation"] == "NOT_VERIFIED"
-    assert not any(call[0] == "create" for call in dll.calls)
+        identity = key.public_key_bytes
+    state = json.loads((tmp_path / adapter._STATE_NAME).read_bytes())
+    assert state["lifecycle"] == "COMMITTED"
+    assert state["public_key_fingerprint_sha256"] == public_key_fingerprint(identity)
+    assert not any(call[0] in {"create", "set", "finalize", "sign"} for call in reserved_dll.calls)
+    assert reserved_dll.persisted
 
 
 @pytest.mark.parametrize(
@@ -321,18 +397,19 @@ def test_existing_qualified_key_reused_locally_not_authority(
     ],
 )
 def test_existing_wrong_profile_fails_without_replacement(
-    dll: TestOnlyNCryptDLL,
+    reserved_dll: TestOnlyNCryptDLL,
     tmp_path: Path,
     handle: int,
     property_name: str,
     raw: bytes,
 ) -> None:
-    dll.persisted = True
-    dll.properties[(handle, property_name)] = raw
+    original = (tmp_path / adapter._STATE_NAME).read_bytes()
+    reserved_dll.properties[(handle, property_name)] = raw
     with pytest.raises(adapter.WindowsCNGPreEnrollmentError):
         adapter.WindowsCNGPreEnrollmentKey.open_or_create(tmp_path)
-    assert not any(call[0] == "create" for call in dll.calls)
-    assert not (tmp_path / adapter._STATE_NAME).exists()
+    assert not any(call[0] == "create" for call in reserved_dll.calls)
+    assert (tmp_path / adapter._STATE_NAME).read_bytes() == original
+    assert reserved_dll.persisted
 
 
 @pytest.mark.parametrize(
@@ -351,14 +428,16 @@ def test_existing_wrong_profile_fails_without_replacement(
     ],
 )
 def test_missing_required_property_fails_closed(
-    dll: TestOnlyNCryptDLL,
+    reserved_dll: TestOnlyNCryptDLL,
     tmp_path: Path,
     property_name: str,
 ) -> None:
-    dll.persisted = True
-    dll.property_error = property_name
+    original = (tmp_path / adapter._STATE_NAME).read_bytes()
+    reserved_dll.property_error = property_name
     with pytest.raises(adapter.WindowsCNGPreEnrollmentError, match="READ_REQUIRED_PROPERTY"):
         adapter.WindowsCNGPreEnrollmentKey.open_or_create(tmp_path)
+    assert (tmp_path / adapter._STATE_NAME).read_bytes() == original
+    assert not any(call[0] in {"create", "sign"} for call in reserved_dll.calls)
 
 
 @pytest.mark.parametrize(
@@ -428,13 +507,33 @@ def test_finalize_lost_response_reconciles_without_new_identity(
     assert json.loads((tmp_path / adapter._STATE_NAME).read_bytes())["lifecycle"] == "COMMITTED"
 
 
+def test_reserved_missing_key_never_regenerated(
+    reserved_dll: TestOnlyNCryptDLL,
+    tmp_path: Path,
+) -> None:
+    original = (tmp_path / adapter._STATE_NAME).read_bytes()
+    reserved_dll.persisted = False
+    with pytest.raises(
+        adapter.WindowsCNGPreEnrollmentError,
+        match="^PREVIOUS_IDENTITY_MISSING_RECONCILIATION_REQUIRED$",
+    ):
+        adapter.WindowsCNGPreEnrollmentKey.open_or_create(tmp_path)
+    assert (tmp_path / adapter._STATE_NAME).read_bytes() == original
+    assert not any(call[0] in {"create", "set", "finalize", "sign"} for call in reserved_dll.calls)
+    assert not reserved_dll.persisted
+
+
 def test_committed_missing_key_never_regenerated(dll: TestOnlyNCryptDLL, tmp_path: Path) -> None:
     with adapter.WindowsCNGPreEnrollmentKey.open_or_create(tmp_path):
         pass
+    original = (tmp_path / adapter._STATE_NAME).read_bytes()
     dll.persisted = False
     with pytest.raises(adapter.WindowsCNGPreEnrollmentError, match="RECONCILIATION_REQUIRED"):
         adapter.WindowsCNGPreEnrollmentKey.open_or_create(tmp_path)
     assert sum(call[0] == "create" for call in dll.calls) == 1
+    assert (tmp_path / adapter._STATE_NAME).read_bytes() == original
+    assert not any(call[0] == "sign" for call in dll.calls)
+    assert not dll.persisted
 
 
 def test_committed_changed_identity_rejected(dll: TestOnlyNCryptDLL, tmp_path: Path) -> None:
@@ -446,6 +545,24 @@ def test_committed_changed_identity_rejected(dll: TestOnlyNCryptDLL, tmp_path: P
         adapter.WindowsCNGPreEnrollmentKey.open_or_create(tmp_path)
     assert (tmp_path / adapter._STATE_NAME).read_bytes() == original
     assert sum(call[0] == "create" for call in dll.calls) == 1
+    assert not any(call[0] == "sign" for call in dll.calls)
+    assert dll.persisted
+
+
+def test_committed_exact_key_with_changed_profile_rejected(
+    dll: TestOnlyNCryptDLL,
+    tmp_path: Path,
+) -> None:
+    with adapter.WindowsCNGPreEnrollmentKey.open_or_create(tmp_path):
+        pass
+    original = (tmp_path / adapter._STATE_NAME).read_bytes()
+    dll.properties[(22, "Export Policy")] = struct.pack("<I", 1)
+    with pytest.raises(adapter.WindowsCNGPreEnrollmentError, match="KEY_PROVIDER_PROFILE_REJECTED"):
+        adapter.WindowsCNGPreEnrollmentKey.open_or_create(tmp_path)
+    assert (tmp_path / adapter._STATE_NAME).read_bytes() == original
+    assert sum(call[0] == "create" for call in dll.calls) == 1
+    assert not any(call[0] == "sign" for call in dll.calls)
+    assert dll.persisted
 
 
 def test_malformed_state_fail_closed(dll: TestOnlyNCryptDLL, tmp_path: Path) -> None:
@@ -532,11 +649,13 @@ def test_native_malformed_signature_rejected(
     test_only_trust: object,
 ) -> None:
     dll.signature_override = bytes(64)
-    with adapter.WindowsCNGPreEnrollmentKey.open_or_create(tmp_path) as key:
-        with pytest.raises(adapter.WindowsCNGPreEnrollmentError, match="INVALID_NATIVE_SIGNATURE"):
-            key.sign_request(
-                request_for(key.public_key_bytes), production_trust_context=test_only_trust
-            )
+    with (
+        adapter.WindowsCNGPreEnrollmentKey.open_or_create(tmp_path) as key,
+        pytest.raises(adapter.WindowsCNGPreEnrollmentError, match="INVALID_NATIVE_SIGNATURE"),
+    ):
+        key.sign_request(
+            request_for(key.public_key_bytes), production_trust_context=test_only_trust
+        )
 
 
 @pytest.mark.parametrize("context", [None, object(), SimpleNamespace(environment="PRODUCTION")])
@@ -547,11 +666,13 @@ def test_unverified_production_trust_cannot_sign(
 ) -> None:
     from deployment.windows_stage9_production_trust import ProductionTrustUnavailable
 
-    with adapter.WindowsCNGPreEnrollmentKey.open_or_create(tmp_path) as key:
-        with pytest.raises(
+    with (
+        adapter.WindowsCNGPreEnrollmentKey.open_or_create(tmp_path) as key,
+        pytest.raises(
             ProductionTrustUnavailable, match="VERIFIED_PRODUCTION_TRUST_CONTEXT_REQUIRED"
-        ):
-            key.sign_request(request_for(key.public_key_bytes), production_trust_context=context)
+        ),
+    ):
+        key.sign_request(request_for(key.public_key_bytes), production_trust_context=context)
     assert not any(call[0] == "sign" for call in dll.calls)
 
 
@@ -606,3 +727,204 @@ def test_only_public_state_is_written(dll: TestOnlyNCryptDLL, tmp_path: Path) ->
             adapter._STATE_NAME,
         ]
     )
+
+
+def test_factory_key_capability_current_qualification_and_exact_reopen(
+    dll: TestOnlyNCryptDLL,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with adapter.WindowsCNGPreEnrollmentKey.open_or_create(tmp_path) as key:
+        identity = key.public_key_bytes
+        original = (tmp_path / adapter._STATE_NAME).read_bytes()
+        dll.calls.clear()
+
+        def forbid_state_write(*arguments: object, **keywords: object) -> None:
+            pytest.fail("CNG capability verification must not write identity state")
+
+        monkeypatch.setattr(adapter, "_write_state", forbid_state_write)
+        assert adapter.require_verified_production_cng_key(key) is key
+        assert (tmp_path / adapter._STATE_NAME).read_bytes() == original
+        assert any(call[0] == "property" for call in dll.calls)
+        assert any(call[0] == "export" for call in dll.calls)
+        assert not any(call[0] in {"create", "set", "finalize", "sign"} for call in dll.calls)
+    with adapter.WindowsCNGPreEnrollmentKey.open_or_create(tmp_path) as reopened:
+        assert reopened.public_key_bytes == identity
+        assert adapter.require_verified_production_cng_key(reopened) is reopened
+    assert (tmp_path / adapter._STATE_NAME).read_bytes() == original
+
+
+@pytest.mark.parametrize("copy_fields", [False, True])
+@pytest.mark.parametrize("subclass", [False, True])
+def test_copied_key_fields_cannot_transfer_factory_provenance(
+    dll: TestOnlyNCryptDLL,
+    tmp_path: Path,
+    test_only_trust: object,
+    copy_fields: bool,
+    subclass: bool,
+) -> None:
+    with adapter.WindowsCNGPreEnrollmentKey.open_or_create(tmp_path) as key:
+        request = request_for(key.public_key_bytes)
+
+        class CopiedKey(adapter.WindowsCNGPreEnrollmentKey):
+            pass
+
+        forged = object.__new__(CopiedKey if subclass else adapter.WindowsCNGPreEnrollmentKey)
+        if copy_fields:
+            for name in adapter.WindowsCNGPreEnrollmentKey.__slots__:
+                if name != "__weakref__":
+                    setattr(forged, name, getattr(key, name))
+        dll.calls.clear()
+        with pytest.raises(
+            adapter.WindowsCNGPreEnrollmentError, match="^VERIFIED_PRODUCTION_CNG_KEY_REQUIRED$"
+        ):
+            adapter.require_verified_production_cng_key(forged)
+        with pytest.raises(
+            adapter.WindowsCNGPreEnrollmentError, match="^VERIFIED_PRODUCTION_CNG_KEY_REQUIRED$"
+        ):
+            _ = forged.public_evidence
+        with pytest.raises(
+            adapter.WindowsCNGPreEnrollmentError, match="^VERIFIED_PRODUCTION_CNG_KEY_REQUIRED$"
+        ):
+            forged.sign_request(request, production_trust_context=test_only_trust)
+        assert dll.calls == []
+        assert adapter.require_verified_production_cng_key(key) is key
+
+
+@pytest.mark.parametrize("value", [None, object(), SimpleNamespace(environment="PRODUCTION")])
+def test_non_native_key_objects_cannot_establish_cng_capability(value: object) -> None:
+    with pytest.raises(
+        adapter.WindowsCNGPreEnrollmentError, match="^VERIFIED_PRODUCTION_CNG_KEY_REQUIRED$"
+    ):
+        adapter.require_verified_production_cng_key(value)
+
+
+@pytest.mark.parametrize(
+    "attribute",
+    ["_native", "_provider", "_key", "_public", "_unique_name", "_state_directory", "dll"],
+)
+def test_changed_key_capability_snapshot_rejected_before_native_effects(
+    dll: TestOnlyNCryptDLL,
+    tmp_path: Path,
+    attribute: str,
+) -> None:
+    with adapter.WindowsCNGPreEnrollmentKey.open_or_create(tmp_path) as key:
+        owner = key._native if attribute == "dll" else key
+        original = getattr(owner, attribute)
+        replacements = {
+            "_native": object.__new__(adapter._NCryptAPI),
+            "_provider": 12,
+            "_key": 23,
+            "_public": bytes(65),
+            "_unique_name": "copied-unique-name",
+            "_state_directory": tmp_path / "another-state",
+            "dll": TestOnlyNCryptDLL(),
+        }
+        dll.calls.clear()
+        try:
+            setattr(owner, attribute, replacements[attribute])
+            with pytest.raises(
+                adapter.WindowsCNGPreEnrollmentError, match="^VERIFIED_PRODUCTION_CNG_KEY_REQUIRED$"
+            ):
+                adapter.require_verified_production_cng_key(key)
+            assert dll.calls == []
+        finally:
+            setattr(owner, attribute, original)
+        assert adapter.require_verified_production_cng_key(key) is key
+
+
+@pytest.mark.parametrize("change", ["public", "unique_name", "export_policy", "export_allowed"])
+def test_current_native_key_qualification_changes_revoke_capability(
+    dll: TestOnlyNCryptDLL,
+    tmp_path: Path,
+    change: str,
+) -> None:
+    with adapter.WindowsCNGPreEnrollmentKey.open_or_create(tmp_path) as key:
+        original = (tmp_path / adapter._STATE_NAME).read_bytes()
+        if change == "public":
+            dll.private = ec.derive_private_key(72, ec.SECP256R1())
+        elif change == "unique_name":
+            dll.properties[(22, "Unique Name")] = wide("different-unique-name")
+        elif change == "export_policy":
+            dll.properties[(22, "Export Policy")] = struct.pack("<I", 1)
+        else:
+            dll.properties[(22, "PCP_EXPORT_ALLOWED")] = b"\x01"
+        dll.calls.clear()
+        with pytest.raises(
+            adapter.WindowsCNGPreEnrollmentError, match="^VERIFIED_PRODUCTION_CNG_KEY_REQUIRED$"
+        ):
+            adapter.require_verified_production_cng_key(key)
+        assert (tmp_path / adapter._STATE_NAME).read_bytes() == original
+        assert not any(call[0] in {"create", "set", "finalize", "sign"} for call in dll.calls)
+
+
+@pytest.mark.parametrize("change", ["absent", "reserved", "fingerprint", "malformed"])
+def test_key_capability_requires_unchanged_exact_committed_state(
+    dll: TestOnlyNCryptDLL,
+    tmp_path: Path,
+    change: str,
+) -> None:
+    with adapter.WindowsCNGPreEnrollmentKey.open_or_create(tmp_path) as key:
+        state = tmp_path / adapter._STATE_NAME
+        if change == "absent":
+            state.unlink()
+            retained = None
+        elif change == "malformed":
+            state.write_bytes(b"not canonical JSON")
+            retained = state.read_bytes()
+        else:
+            value = json.loads(state.read_bytes())
+            if change == "reserved":
+                value["lifecycle"] = "CREATION_RESERVED"
+                value["public_key_fingerprint_sha256"] = None
+            else:
+                value["public_key_fingerprint_sha256"] = "a" * 64
+            state.write_bytes(canonical_json_bytes(value))
+            retained = state.read_bytes()
+        dll.calls.clear()
+        with pytest.raises(
+            adapter.WindowsCNGPreEnrollmentError, match="^VERIFIED_PRODUCTION_CNG_KEY_REQUIRED$"
+        ):
+            adapter.require_verified_production_cng_key(key)
+        assert dll.calls == []
+        if retained is None:
+            assert not state.exists()
+        else:
+            assert state.read_bytes() == retained
+
+
+def test_closed_key_cannot_restore_registration_by_copying_handles(
+    dll: TestOnlyNCryptDLL,
+    tmp_path: Path,
+) -> None:
+    key = adapter.WindowsCNGPreEnrollmentKey.open_or_create(tmp_path)
+    original_handles = key._provider, key._key
+    key.close()
+    dll.calls.clear()
+    for restore_handles in (False, True):
+        if restore_handles:
+            key._provider, key._key = original_handles
+        with pytest.raises(
+            adapter.WindowsCNGPreEnrollmentError, match="^VERIFIED_PRODUCTION_CNG_KEY_REQUIRED$"
+        ):
+            adapter.require_verified_production_cng_key(key)
+    key._provider, key._key = 0, 0
+    assert dll.calls == []
+
+
+def test_cng_key_registry_does_not_retain_dead_key_objects(
+    dll: TestOnlyNCryptDLL,
+    tmp_path: Path,
+) -> None:
+    key = adapter.WindowsCNGPreEnrollmentKey.open_or_create(tmp_path)
+    reference = weakref.ref(key)
+    native, handles = key._native, (key._key, key._provider)
+    original_size = len(adapter._ISSUED_CNG_KEYS)
+    del key
+    gc.collect()
+    try:
+        assert reference() is None
+        assert len(adapter._ISSUED_CNG_KEYS) == original_size - 1
+    finally:
+        for handle in handles:
+            native.free(handle)

@@ -330,10 +330,13 @@ def test_runtime_trust_loader_uses_current_utc_not_caller_time(tmp_path, monkeyp
 
     observed = {}
 
+    class TestOnlyAuditResult:
+        """Weak-referenceable timing sentinel; never a trusted capability."""
+
     def capture(path, *, verification_time):
         observed["path"] = path
         observed["time"] = verification_time
-        return object()
+        return TestOnlyAuditResult()
 
     monkeypatch.setattr(trust, "verify_production_trust_for_audit", capture)
     before = datetime.now(timezone.utc)

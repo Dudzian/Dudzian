@@ -97,6 +97,51 @@ def test_verified_loader_issues_unchanged_context(issued_context):
         issued_context.release_version = 2
 
 
+def test_historical_audit_context_cannot_authorize_runtime_use(issued_context):
+    with pytest.raises(trust.ProductionTrustUnavailable, match="CURRENT_RUNTIME"):
+        trust.require_current_production_trust_context(issued_context)
+
+
+def test_runtime_context_reverifies_package_at_current_time(
+    verified_context_loader, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    verified_context_loader()  # Installs the TEST_ONLY verifier boundary.
+    context = trust.load_production_trust(tmp_path)
+    assert trust.require_current_production_trust_context(context) is context
+    calls = []
+
+    def missing_or_expired(path: Path, *, verification_time: datetime):
+        calls.append((path, verification_time))
+        raise ValueError("TEST_ONLY_CURRENT_PACKAGE_EXPIRED")
+
+    monkeypatch.setattr(trust, "verify_final_package", missing_or_expired)
+    with pytest.raises(trust.ProductionTrustUnavailable, match="CURRENT_PACKAGE_EXPIRED"):
+        trust.require_current_production_trust_context(context)
+    assert calls[0][0] == tmp_path.resolve()
+    assert calls[0][1].tzinfo is timezone.utc
+
+
+def test_runtime_capability_copy_does_not_transfer_provenance(
+    verified_context_loader, tmp_path: Path
+):
+    verified_context_loader()
+    context = trust.load_production_trust(tmp_path)
+    with pytest.raises(trust.ProductionTrustUnavailable):
+        trust.require_current_production_trust_context(_forged_projection(context))
+
+
+def test_runtime_reverification_rejects_changed_release(
+    verified_context_loader, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    verified_context_loader()
+    context = trust.load_production_trust(tmp_path)
+    changed = verified_context_loader()
+    object.__setattr__(changed, "release_version", context.release_version + 1)
+    monkeypatch.setattr(trust, "verify_production_trust_for_audit", lambda *args, **kwargs: changed)
+    with pytest.raises(trust.ProductionTrustUnavailable, match="IDENTITY_CHANGED"):
+        trust.require_current_production_trust_context(context)
+
+
 @pytest.mark.parametrize(
     "forged", [None, SimpleNamespace(), object.__new__(trust.ProductionTrustContext)]
 )

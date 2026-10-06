@@ -3,6 +3,7 @@
 This adapter does not authenticate a TPM enrollment exchange or a PDSA challenge.
 Its public commitment records local identity continuity, not authority or TOFU
 acceptance. The caller must keep the state directory in trusted machine storage.
+TPM creation origin requires separate cryptographic attestation.
 """
 
 from __future__ import annotations
@@ -14,9 +15,12 @@ import re
 import stat
 import struct
 import sys
+from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
+from weakref import WeakKeyDictionary
 
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec, utils
@@ -218,7 +222,8 @@ class _NCryptAPI:
             raise WindowsCNGPreEnrollmentError("INVALID_NUMERIC_PROPERTY")
         return int(struct.unpack("<I", raw)[0])
 
-    def imported_or_exportable(self, handle: int) -> bool:
+    def export_allowed(self, handle: int) -> bool:
+        """Read the PCP export permission; key origin requires TPM attestation."""
         # PCP_EXPORT_ALLOWED is a BOOLEAN, unlike the DWORD Export Policy.
         raw = self.property(handle, "PCP_EXPORT_ALLOWED")
         if raw not in (b"\0", b"\x01"):
@@ -434,16 +439,41 @@ def _write_state(path: Path, *, fingerprint: str | None) -> None:
         temporary.unlink(missing_ok=True)
 
 
+@dataclass(frozen=True)
+class _VerifiedCNGKeySnapshot:
+    native: _NCryptAPI
+    dll: object
+    provider: int
+    key: int
+    public: bytes
+    unique_name: str
+    state_directory: Path
+
+
+_ISSUED_CNG_KEYS: WeakKeyDictionary[WindowsCNGPreEnrollmentKey, _VerifiedCNGKeySnapshot] = (
+    WeakKeyDictionary()
+)
+
+
 class WindowsCNGPreEnrollmentKey:
     """Provider-owned key handle for qualification and request possession proof."""
 
-    __slots__ = ("_native", "_provider", "_key", "_public", "_unique_name")
+    __slots__ = (
+        "_native",
+        "_provider",
+        "_key",
+        "_public",
+        "_unique_name",
+        "_state_directory",
+        "__weakref__",
+    )
 
     _native: _NCryptAPI
     _provider: int
     _key: int
     _public: bytes
     _unique_name: str
+    _state_directory: Path
 
     def __init__(self) -> None:
         raise TypeError("use WindowsCNGPreEnrollmentKey.open_or_create()")
@@ -462,6 +492,8 @@ class WindowsCNGPreEnrollmentKey:
             with _state_lock(state_directory) as state_path:
                 state = _read_state(state_path)
                 instance._key = native.open_key(instance._provider) or 0
+                if state is None and instance._key:
+                    raise WindowsCNGPreEnrollmentError("PREEXISTING_UNRESERVED_IDENTITY")
                 if not instance._key:
                     if state is not None:
                         raise WindowsCNGPreEnrollmentError(
@@ -481,8 +513,18 @@ class WindowsCNGPreEnrollmentKey:
                     if state["public_key_fingerprint_sha256"] != fingerprint:
                         raise WindowsCNGPreEnrollmentError("COMMITTED_IDENTITY_MISMATCH")
                 else:
-                    # Pin only continuity. This does not authenticate an existing key.
+                    # Commit only creation reserved by this lifecycle, including recovery.
                     _write_state(state_path, fingerprint=fingerprint)
+                instance._state_directory = state_path.parent
+            _ISSUED_CNG_KEYS[instance] = _VerifiedCNGKeySnapshot(
+                instance._native,
+                instance._native.dll,
+                instance._provider,
+                instance._key,
+                instance._public,
+                instance._unique_name,
+                instance._state_directory,
+            )
             return instance
         except BaseException:
             instance.close()
@@ -515,7 +557,7 @@ class WindowsCNGPreEnrollmentKey:
             or native.number(key, "Length") != 256
             or native.number(key, "Key Usage") != SIGNING_ONLY
             or native.number(key, "Export Policy") != 0
-            or native.imported_or_exportable(key)
+            or native.export_allowed(key)
             or native.number(key, "Key Type") != MACHINE_KEY
             or native.text(key, "Name") != KEY_NAME
         ):
@@ -533,6 +575,7 @@ class WindowsCNGPreEnrollmentKey:
 
     @property
     def public_evidence(self) -> dict[str, Any]:
+        require_verified_production_cng_key(self)
         return {
             "schema": "WindowsCNGPreEnrollmentQualificationV1",
             "environment": "PRODUCTION",
@@ -560,8 +603,9 @@ class WindowsCNGPreEnrollmentKey:
             raise TypeError("exact canonical PreEnrollmentRequestV1 required")
         validated = PreEnrollmentRequestV1.from_canonical_bytes(request.canonical_bytes)
         validated.require_production_trust_binding(production_trust_context)
+        require_verified_production_cng_key(self)
         document = validated.document
-        current, _unique = self._qualify()
+        current = self._public
         if current != self._public or (
             document["pre_enrollment_public_key_canonical_bytes"] != current.hex()
             or document["pre_enrollment_public_key_fingerprint_sha256"]
@@ -578,6 +622,7 @@ class WindowsCNGPreEnrollmentKey:
         return signature
 
     def close(self) -> None:
+        _ISSUED_CNG_KEYS.pop(self, None)
         failures: list[Exception] = []
         for attribute in ("_key", "_provider"):
             handle = getattr(self, attribute, 0)
@@ -595,3 +640,43 @@ class WindowsCNGPreEnrollmentKey:
 
     def __exit__(self, *_: object) -> None:
         self.close()
+
+
+def require_verified_production_cng_key(value: object) -> WindowsCNGPreEnrollmentKey:
+    """Require factory-issued identity, current qualification and committed continuity."""
+    if type(value) is not WindowsCNGPreEnrollmentKey:
+        raise WindowsCNGPreEnrollmentError("VERIFIED_PRODUCTION_CNG_KEY_REQUIRED")
+    try:
+        snapshot = _ISSUED_CNG_KEYS.get(value)
+        valid = (
+            snapshot is not None
+            and type(value._native) is _NCryptAPI
+            and value._native is snapshot.native
+            and value._native.dll is snapshot.dll
+            and type(value._provider) is int
+            and value._provider == snapshot.provider > 0
+            and type(value._key) is int
+            and value._key == snapshot.key > 0
+            and type(value._public) is bytes
+            and value._public == snapshot.public
+            and type(value._unique_name) is str
+            and value._unique_name == snapshot.unique_name
+            and type(value._state_directory) is type(snapshot.state_directory)
+            and value._state_directory == snapshot.state_directory
+        )
+        if not valid or snapshot is None:
+            raise WindowsCNGPreEnrollmentError("VERIFIED_PRODUCTION_CNG_KEY_REQUIRED")
+        with _state_lock(snapshot.state_directory) as state_path:
+            state = _read_state(state_path)
+            if (
+                state is None
+                or state["lifecycle"] != "COMMITTED"
+                or state["public_key_fingerprint_sha256"] != public_key_fingerprint(snapshot.public)
+            ):
+                raise WindowsCNGPreEnrollmentError("VERIFIED_PRODUCTION_CNG_KEY_REQUIRED")
+            public, unique = value._qualify()
+            if public != snapshot.public or unique != snapshot.unique_name:
+                raise WindowsCNGPreEnrollmentError("VERIFIED_PRODUCTION_CNG_KEY_REQUIRED")
+    except (AttributeError, TypeError, ValueError, OSError, WindowsCNGPreEnrollmentError) as exc:
+        raise WindowsCNGPreEnrollmentError("VERIFIED_PRODUCTION_CNG_KEY_REQUIRED") from exc
+    return value

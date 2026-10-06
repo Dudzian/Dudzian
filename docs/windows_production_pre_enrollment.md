@@ -1,4 +1,4 @@
-# Stage 9 production Windows pre-enrollment foundations
+# Stage 9 production Windows pre-enrollment
 
 `deployment/stage9_current_status.json` remains the canonical current-status
 authority. Historical architecture/freeze snapshots remain unchanged. Stage 9
@@ -79,39 +79,74 @@ The substrate probe's software signing key cannot supply production custody.
 Codebase Memory was unavailable in this session; findings were verified directly
 against source.
 
-## Conflicting authentication portions stopped
+## Subordinate frozen production contracts
 
-The frozen request requires a signed issuer-generated PDSA challenge retained as
-`ISSUED`, bound by ID, exact challenge digest and nonce digest. The closure
-proposal's offline challenge round trip names `PDSAEnrollmentChallengeV1`, with
-production/product/profile/policy bindings, signature/key identity and a seven-day
-window. The existing `PDSAChallengeV1` in `external_provisioning.py` is unsigned
-and lacks those bindings. The frozen snapshot does not specify the signed
-challenge envelope, canonical field encodings or signature domain bytes. A
-production verifier cannot safely guess them.
+The audit found three gaps: adoption of an existing unreserved CNG identity,
+an unsigned historical `PDSAChallengeV1`, and the historical TPM verifier's
+shared TEST_ONLY proof domains. The historical public projection also did not
+establish manufacturer trust; a software-generated EK/AK could pass that verifier.
+The expressly authorized subordinate contracts close these definitions without
+modifying the parent freeze or promoting historical artifacts.
 
-The frozen request also requires raw-byte reverification by
-`ProductionTPMAttestationVerifier` and TPM creation/custody evidence binding the
-exact pre-enrollment key to the target projection. The current verifier shares
-`POP_DOMAIN` and `CERTIFY_QUALIFYING_DOMAIN` containing `TEST_ONLY` with the
-rehearsal verifier. `TPMPublicProjectionV1` checks Names/digests but does not
-authenticate production profile labels. The convenience
-`VerifiedTPMEnrollmentExchangeV1` is explicitly not authority. Neither object nor
-a locally qualified CNG key establishes the required attestation.
+`stage9_pdsa_enrollment_challenge_contract.json` and its separate freeze define
+`PDSAEnrollmentChallengeV1`: exact 13-field production payload, JCS envelope
+`{payload, signatures}`, two or three distinct authorized Ed25519 signatures,
+and the existing Production Trust threshold of two. The signing message is
+`CryptoHunter.Stage9.PDSAEnrollmentChallenge.v1\0 || SHA256(JCS(payload))`.
+The request references SHA-256 of the exact complete signed envelope and SHA-256
+of the decoded issuer-generated 32-byte nonce. Issuance uses UTC seconds, exactly
+604800 seconds of validity, and canonical issuer-generated `pchal_<UUIDv7>`.
+Unknown fields and noncanonical bytes are rejected.
 
-Per the task's instruction to stop conflicting portions, production request
-authentication fails closed with:
+`PDSAChallengeStore` is protected, durable **off-host issuer** state. SQLite
+FULL durability retains exact `ISSUED` bytes before publication. Writer-locked
+consumption binds exact authenticated request bytes/digest and a receipt.
+`EXPIRED` and `CONSUMED` are terminal; an identical retry retrieves the prior
+receipt, and another request returns `CHALLENGE_REPLAY_CONFLICT`. A database path
+chosen by a client is not issuer authority. The service must configure and
+protect its own store; this PR does not deploy that service.
 
-```text
-SIGNED_PRODUCTION_PDSA_CHALLENGE_CONTRACT_UNAVAILABLE
-PRODUCTION_TPM_CREATION_CUSTODY_ATTESTATION_UNAVAILABLE
-```
+`stage9_production_tpm_custody_contract.json` and its separate freeze define
+production-only exchange PoP and CertifyCreation domains, strict TPMT_PUBLIC,
+TPMS_ATTEST and TPMT_SIGNATURE parsers, and
+`ProductionPreEnrollmentKeyCustodyEvidenceV1`. Custody binds the exact SEC1 key,
+subject Name/public area/creation hash, AK signature, target EK/AK/projection,
+complete request digest, challenge and release. TPM attributes must establish
+fixedTPM, fixedParent and sensitiveDataOrigin; software/imported/migratable
+profiles are rejected. The request's evidence-reference field remains the
+activation/projection reference, avoiding a request/evidence digest cycle.
 
-The canonical request model, binding comparisons and signature verifier are
-executable transport-neutral primitives. Parsing or proving possession does not
-authenticate a PDSA challenge or TPM custody. This PR is an implementation of
-those foundations, not closure of every acceptance criterion for an authenticated
-production pre-enrollment flow. No TEST_ONLY artifact is promoted to authority.
+The same contract defines `ProductionTPMEndorsementV1`: the genuine PDSA 2-of-3
+quorum approves the exact hardware EK and certificate after independent issuer
+manufacturer-chain validation and EK/public-key binding. This client verifies
+the quorum approval and exact EK binding, then credential activation and AK
+attestation. It does **not** independently validate an OEM chain from a signed
+digest. A generic challenge, caller certificate flag, software fixture or
+self-signed certificate cannot substitute for this endorsement. No actual
+production endorsement or authority private key is generated by this PR.
+
+All consequential operations require runtime-issued Production Trust and
+reverify its package at current UTC; historical audit contexts cannot authorize
+new requests. Verifier capabilities use issuance registries and immutable
+snapshots; copied public fields do not transfer provenance.
+
+## Composed local and issuer boundaries
+
+`prepare_installed_production_request` selects installed paths and the fixed
+CNG key, enforces local qualification (A), collects request-bound TPM creation
+evidence (B), and signs exact request bytes (C). It returns public transport data,
+not issuer authority. The client verifies challenge signatures/time; retained
+issuer state is checked independently off host.
+
+`authenticate_production_pre_enrollment` re-verifies raw challenge, endorsement,
+retained production exchange, exact release/projection/key bindings, custody
+attestation and request PoP. `accept_retained_production_request` commits its
+sealed result through issuer-owned challenge consumption. It accepts no native
+CNG handle or caller assertion of local qualification. The Windows producer
+enforces provider/machine/export properties locally; the issuer's cryptographic
+custody proof establishes target TPM origin and key identity. A provider-name
+string alone does not prove Windows CNG properties remotely. Network service
+deployment and complete provisioning-package publication remain separate work.
 
 ## Operator preparation and qualification
 
@@ -125,8 +160,8 @@ This operation creates or reuses persistent production key state. It selects
 installed known-folder paths, the fixed provider and key name, and the canonical
 Production Trust loader. It accepts no trust roots, PDSA keys, software private
 key, backend, or arbitrary release-policy identity. Evidence contains public
-material and qualification metadata only; it explicitly retains the blocked
-request-authentication status. Run it only as the separate operator live gate.
+material and qualification metadata only; it lists actual authentication
+artifacts still required. Run it only as the separate operator live gate.
 
 Local provider qualification, independent TPM attestation and cryptographic
 proof of possession remain separate. Successful NCrypt property checks are a
@@ -134,8 +169,9 @@ local provider guarantee, not a verified manufacturer certificate, TPM quote or
 legal enrollment. No CNG/TPM physical execution was performed in Codex:
 
 ```text
-WINDOWS_NATIVE_QUALIFICATION = NOT_RUN
-PHYSICAL_TPM_QUALIFICATION = NOT_RUN
+WINDOWS_NATIVE_PRODUCTION_KEY_QUALIFICATION=NOT_RUN
+PHYSICAL_TPM_CREATION_CUSTODY_QUALIFICATION=NOT_RUN
+LEGAL_PRODUCTION_ENROLLMENT=NOT_PERFORMED
 ```
 
 ## Key lifecycle and secret handling
@@ -145,10 +181,14 @@ The adapter opens the fixed machine key before considering creation. Only
 A public `CREATION_RESERVED` record is durably written before the native effect.
 Creation never requests overwrite. Finalized keys are reopened and qualified by
 their actual provider handle, hardware implementation, ECDSA P-256 public blob,
-machine scope, signing-only usage, zero export policy and PCP imported/export
-origin flag. Unsupported or unavailable properties stop qualification.
+machine scope, signing-only usage, zero export policy and the PCP export-allowed
+BOOLEAN. That BOOLEAN establishes export permission, not imported-key origin;
+independent CertifyCreation evidence establishes origin. Unsupported or
+unavailable properties stop qualification.
 
-An existing qualified key is reused. A committed public fingerprint must match
+An existing key with absent state is rejected with
+`PREEXISTING_UNRESERVED_IDENTITY` before qualification, commitment or signing.
+A committed public fingerprint must match
 on every reopen; a disappeared committed key stops. An interrupted reservation
 with an existing key can be reconciled to that exact qualified identity. A
 reservation with no key stops for operator reconciliation instead of generating
@@ -174,13 +214,32 @@ public identifiers/digests and safe metadata, never private blobs, credentials o
 TPM authorization values. CLI failures emit a fixed diagnostic without raw
 exception data.
 
+## Native custody bridge qualification
+
+`windows_cng_custody_bridge.py` opens the already-retained machine AK only and
+compares its exact TPM public area/Name to the target projection. It borrows the
+PCP TBS context and transient TPM handles, performs ReadPublic/CertifyCreation,
+and never closes/flushes borrowed resources or generates substitute keys.
+Creation-hash inputs are only exact raw32 or TPM2B_DIGEST(size32); creation ticket
+is only an exactly marshaled TPMT_TK_CREATION with creation tag, an approved
+hierarchy and a 32/64-byte digest. Other encodings, unavailable properties,
+password/policy requirements or TPM errors fail closed.
+
+Microsoft headers expose creation-property names but do not establish property
+availability or exact framing for reopened persistent ECDSA keys. The bridge's
+supported input profile is explicit; only physical qualification can establish
+its availability on the target Windows/PCP version. ABI/crypto simulations and
+hosted Windows DLL smoke tests do not establish physical TPM custody.
+
 ## Remaining Stage 9 work
 
-Resolve/freeze the signed production challenge wire/signature contract and the
-independent production key-attestation binding before emitting authenticated
-requests. The next planned Stage 9 implementation block remains the production
-LPPI successor-key and membership-signing closure, including
-`LPPIAuthorityKeyBindingV1`, after those prerequisites. The existing
+The old unavailable-definition blockers are resolved by the subordinate freezes
+and executable verification. Earlier operational prerequisites remain: installed
+current Production Trust, protected issuer stores and service integration,
+independently issued production EK approval, retained live challenge/exchange,
+and native/physical custody qualification. These must pass before legal
+production enrollment. LPPI successor-key and membership-signing closure,
+including `LPPIAuthorityKeyBindingV1`, follow those prerequisites. The existing
 `ProductionMembershipSignerUnavailable` and production handoff remain fail-closed.
 Production freshness, secret resources, full handoff and legal enrollment are
 still outstanding. Ceremony trust and provider qualification do not satisfy them.
