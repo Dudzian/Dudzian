@@ -225,24 +225,41 @@ Market data → Strategy → Decision → Risk → Reservation → Order → Pap
 
 # M4 — Desktop Productization
 
-**Purpose:** turn the working Core into a coherent operator product.
+**Purpose:** turn the working Core into a coherent operator product with a production UI that is fully interactive before the first beta.
+
+## M4.1 — UI/UX Production Implementation
+
+The first-beta UI is an implemented product surface, not a static preview or mockup. Design decisions are validated through working vertical slices connected to the real Core.
+
+Required principles:
+
+- define and implement the production information architecture before broad visual polish
+- build the production DesktopShell and navigation as working runtime surfaces
+- use a complete Command Center vertical slice as the first integration proof
+- connect visible state to real Core/read-model contracts rather than fixture-only preview data
+- every visible interactive control must either perform its real action or be explicitly disabled with the reason exposed to the operator
+- implement loading, empty, degraded, offline/reconnecting, permission-denied and error states where applicable
+- preserve Core ownership of privileged state; UI actions request capabilities but never manufacture authority
+- support the target Windows scaling/resolution matrix and keyboard/focus accessibility expected for beta
+- evaluate UX by operating the running product, not by screenshot approval alone
 
 ## Product surfaces
 
-- production DesktopShell
-- tray/background lifecycle
-- autostart
-- Core connection/reconnect UX
-- first-run onboarding
-- account and credential setup
-- exchange/instrument management
-- strategy management
-- orders/fills/history
+The production UI must cover, at minimum:
+
+- Command Center / operational overview
+- trading, orders, fills and execution state
 - portfolio, P&L and capital
-- risk configuration and kill switch
-- alerts and audit views
-- update/rollback UI
-- environment visibility and explicit LIVE distinction
+- strategies and trading intelligence
+- risk configuration, exposure, blocks and kill switch
+- market/exchange/account connectivity and health
+- backtesting/simulation workflows required by the beta scope
+- alerts, audit and diagnostics
+- update/rollback status
+- system/settings and environment visibility
+- explicit PAPER / TESTNET / LIVE distinction
+
+Existing preview/QML surfaces may be reused only when their runtime behavior, ownership and UX fit the canonical architecture. Static mock behavior does not count as implementation evidence.
 
 ## Packaging
 
@@ -256,10 +273,173 @@ Market data → Strategy → Decision → Risk → Reservation → Order → Pap
 
 ### M4 exit criteria
 
-- A non-developer can install and operate PAPER/TESTNET without CLI intervention.
+- A non-developer can install and operate the beta-scope PAPER/TESTNET product without CLI intervention.
+- All beta-critical UI workflows are clickable and functional end to end against real runtime contracts.
+- No beta-critical control is a silent placeholder or mock-only action.
+- Required loading/error/degraded/offline states are implemented and understandable without reading raw logs.
 - Closing the GUI behaves according to Core/Tray lifecycle contract.
 - UI cannot manufacture privileged state or bypass Core gates.
 - Build is repeatable and smoke-tested.
+- Remaining visual polish items may be deferred only when they do not impair correctness, discoverability or operation.
+
+---
+
+# PB — First Beta Readiness Gate
+
+**Purpose:** freeze the first-beta feature surface, audit the entire repository after the production UI is integrated, remediate defects and establish a reproducible Beta Baseline before any public/limited beta build is cut.
+
+This gate is mandatory between M4 and M5. It is not a cosmetic review and must not be replaced by green CI alone.
+
+## PB.1 — Beta scope / feature freeze
+
+Before repository-wide audit begins:
+
+- production beta-scope UI from M4 is integrated
+- no new features enter the beta branch except changes required to fix an accepted audit finding or unblock beta qualification
+- architecture and product contracts required by the beta scope are frozen
+- new opportunistic redesign is prohibited unless an identified defect proves the current design unsafe, incorrect or unmaintainable at beta risk level
+
+“Could be cleaner” or “could be rewritten more elegantly” is not, by itself, an audit finding.
+
+## PB.2 — Full repository inventory and module audit
+
+Audit the complete repository, module by module. The audit must cover executable code, tests, configuration, CI, packaging, deployment and relevant canonical documentation.
+
+The audit explicitly searches for:
+
+- logic defects and invalid assumptions
+- edge cases and boundary-condition failures
+- race conditions, ordering and concurrency hazards
+- retry, recovery, lifecycle and cleanup defects
+- persistence/rebuild/migration inconsistencies
+- stale, duplicate or competing authority paths
+- dead or obsolete production-reachable code
+- architecture drift and contract/implementation mismatch
+- unsafe defaults and fail-open behavior
+- error-handling paths that hide or corrupt state
+- performance/resource defects that can affect beta operation
+
+## PB.3 — Cross-module and architecture-drift audit
+
+After module-level review, perform a separate repository-wide integration pass focused on boundaries that can appear correct in isolation.
+
+Verify, at minimum:
+
+- producer/consumer contract compatibility
+- identity, ownership and lifecycle continuity across modules
+- environment semantics across PAPER / TESTNET / LIVE
+- retry/idempotency semantics across process/network boundaries
+- persistence ↔ recovery ↔ reconciliation consistency
+- UI ↔ Core authority boundaries
+- packaging/runtime/version compatibility
+- consistency between canonical architecture, machine-readable contracts and implementation
+
+## PB.4 — Security and trust-boundary audit
+
+Perform a dedicated security pass covering the beta-reachable surface, including:
+
+- trust boundaries and capability provenance
+- signing/key identity and verification
+- TPM / provisioning / licensing paths in scope
+- secret handling and credential references
+- privilege boundaries
+- input validation and canonicalization
+- fail-closed semantics
+- persistence and recovery security
+- release/update artifact integrity
+
+Hosted/cloud checks do not substitute for native Windows or physical-hardware qualification where the contract requires those environments.
+
+## PB.5 — Test and quality audit
+
+Do not treat existing green tests as proof that the right behavior is tested.
+
+Audit for:
+
+- missing negative tests
+- false-positive or implementation-mirroring tests
+- missing integration and cross-module tests
+- missing property/fuzz tests where they provide material value
+- failure-injection and recovery coverage
+- Windows-specific qualification gaps
+- coverage of beta-critical operator workflows and UI states
+- CI gates that can pass while required behavior remains unverified
+
+## PB.6 — CI, build, dependency and release-surface audit
+
+Review:
+
+- GitHub Actions and release workflows
+- dependency declarations and lock authority
+- reproducibility
+- build/package contents
+- installer/update/rollback paths
+- artifact provenance and verification
+- platform parity
+- configuration/environment leakage
+- security and quality gates
+
+## PB.7 — Finding ledger and remediation policy
+
+Every accepted finding is recorded in one audit ledger with:
+
+- unique ID
+- affected module/boundary
+- evidence
+- severity
+- user/security/financial impact
+- remediation decision
+- validating tests/qualification
+- PR/commit
+- final disposition
+
+Severity classes:
+
+- **BLOCKER** — beta cannot start
+- **HIGH** — beta cannot start
+- **MEDIUM** — fix before beta unless explicitly accepted with written rationale, bounded impact and follow-up owner
+- **LOW** — does not block beta by default; retain in backlog unless cheap/risk-reducing to fix during an already-open remediation
+
+Remediation is done in controlled, reviewable PRs. A single repository-wide mega-PR is prohibited.
+
+## PB.8 — Independent re-audit
+
+After remediation, perform one independent repository-wide re-audit from the current Beta Candidate state rather than merely checking the previous finding list.
+
+Normal policy is a maximum of **two complete repository-wide audit rounds**:
+
+1. initial full audit → remediation
+2. independent re-audit → final remediation/acceptance
+
+A third full audit is justified only if the independent re-audit discovers a new class of BLOCKER/HIGH systemic defect that invalidates the previous coverage model.
+
+## PB.9 — Final native qualification and Beta Baseline
+
+Before cutting the first beta:
+
+- run all required native Windows qualification
+- run required TPM/hardware qualification that cannot be established in cloud
+- complete beta-scope E2E, installer/update/rollback and recovery qualification
+- record all explicitly accepted MEDIUM and LOW residual risks
+- create the immutable **Beta Baseline SHA/tag**
+
+### First Beta exit criteria
+
+The first beta may be cut only when:
+
+- the complete repository has been covered by the defined audit scope
+- cross-module and architecture-drift audits are complete
+- **BLOCKER = 0**
+- **HIGH = 0**
+- every remaining MEDIUM has an explicit written acceptance and follow-up disposition
+- CI, quality and security gates are green for the Beta Candidate
+- required Windows-native and physical TPM/hardware qualification is PASS
+- no unresolved canonical architecture conflict remains in the beta scope
+- all beta-critical UI flows are functional, connected to real runtime contracts and free of silent mock/placeholder actions
+- the independent re-audit is complete
+- Beta Baseline SHA/tag and residual-risk register are recorded
+
+Once these criteria are met, beta begins. Further pre-beta redesign or polish is not allowed merely because a newer model, tool or alternative implementation appears more attractive; subsequent changes are driven by beta evidence, regressions, accepted findings or explicitly re-opened scope.
 
 ---
 
