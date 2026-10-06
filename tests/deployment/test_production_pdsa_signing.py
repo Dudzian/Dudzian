@@ -686,12 +686,35 @@ def test_wrong_payload_authority_rejected_before_rpc(installed, socket_boundary,
     assert socket_boundary.connections == []
 
 
-def test_forged_closed_or_changed_issuer_cannot_sign(installed, socket_boundary):
+def test_forged_closed_or_changed_issuer_cannot_sign(
+    installed, socket_boundary, monkeypatch
+):
     forged = object.__new__(issuer.ProductionEnrollmentIssuerContext)
     for authority in (forged, copy.copy(installed.issuer)):
         with pytest.raises(issuer.ProductionEnrollmentIssuerError, match="CONTEXT_REQUIRED"):
             authority.sign_enrollment_authorization(installed.raw)
-    installed.issuer.pdsa_store.path.chmod(0o666)
+
+    # chmod has intentionally different semantics on Windows and POSIX. Simulate
+    # an exact retained source-identity drift instead so this provenance guard is
+    # deterministic on every CI platform.
+    original_source_identity = issuer._source_identity
+    pdsa_path = installed.issuer.pdsa_store.path
+
+    def changed_source_identity(path, *, directory):
+        identity = original_source_identity(path, directory=directory)
+        if not directory and os.fspath(path) == os.fspath(pdsa_path):
+            return issuer._SourceIdentity(
+                identity.path,
+                identity.device,
+                identity.inode,
+                identity.uid,
+                identity.gid,
+                identity.mode ^ 0o002,
+                identity.directory,
+            )
+        return identity
+
+    monkeypatch.setattr(issuer, "_source_identity", changed_source_identity)
     with pytest.raises(issuer.ProductionEnrollmentIssuerError, match="SOURCE_CHANGED"):
         installed.issuer.sign_enrollment_authorization(installed.raw)
     assert socket_boundary.connections == []
