@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import os
 import sqlite3
+from contextlib import closing
 from dataclasses import replace
 from types import SimpleNamespace
 
@@ -126,7 +127,10 @@ def test_source_permission_change_invalidates_entire_pair(installed, source):
 def test_database_replaced_by_exact_copy_at_original_path_invalidates_pair(installed, source):
     store = installed.store if source == "pdsa" else installed.issuer.tpm_store
     replacement = store._path.with_suffix(".replacement")
-    with sqlite3.connect(store._path) as database, sqlite3.connect(replacement) as target:
+    with (
+        closing(sqlite3.connect(store._path)) as database,
+        closing(sqlite3.connect(replacement)) as target,
+    ):
         database.backup(target)
     replacement.chmod(0o600)
     os.replace(replacement, store._path)
