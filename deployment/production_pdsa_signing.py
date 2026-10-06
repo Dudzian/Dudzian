@@ -6,10 +6,12 @@ the off-host quorum service. Its deployment must authenticate the issuer's peer
 credentials and durably reserve each payload digest before signing. A retry must
 return the retained exact reply; service restart must not forget reservations.
 
-The fixed signer pair and Ed25519 message prevent quorum substitution. They do
-not prove remote retention: deployment/qualification must establish the remote
-idempotency guarantee. The client verifies every returned signature and fails
-closed when that installed service or current production authority is absent.
+The exact authorized three-key set, two-signature threshold and Ed25519 message
+prevent quorum substitution. The service chooses any two available authorized
+keys and durably retains that selection and exact reply before responding. These
+client checks do not prove remote retention: deployment/qualification must
+establish the remote idempotency guarantee. The client verifies every returned
+signature and fails closed when the service or current authority is absent.
 """
 
 from __future__ import annotations
@@ -169,9 +171,11 @@ def _sign_enrollment_authorization(
         or payload.get("release_policy_generation") != trust.release_version
     ):
         raise ProductionEnrollmentIssuerError("PRODUCTION_PDSA_SIGNING_PAYLOAD_INVALID")
-    signer_ids = sorted(trust.pdsa_keys)[:2]
+    authorized_signer_ids = sorted(trust.pdsa_keys)
     # TEST_ONLY keys are never a fallback in installed production composition.
-    if any(key_id.startswith("TEST_ONLY") for key_id in trust.pdsa_keys):
+    if len(authorized_signer_ids) != 3 or any(
+        key_id.startswith("TEST_ONLY") for key_id in authorized_signer_ids
+    ):
         raise ProductionEnrollmentIssuerError("PRODUCTION_PDSA_SIGNING_AUTHORITY_REQUIRED")
     from bot_core.licensing.pdsa_enrollment_authorization import (
         PDSAAuthorizationError,
@@ -191,7 +195,8 @@ def _sign_enrollment_authorization(
             "reservation_id": digest,
             "payload_canonical_hex": payload_raw.hex(),
             "signature_domain": PDSA_DOMAIN[:-1].decode("ascii"),
-            "required_signer_ids": signer_ids,
+            "authorized_signer_ids": authorized_signer_ids,
+            "required_threshold": 2,
         }
     )
     reply_raw = _exchange_request(request_raw)
@@ -208,18 +213,23 @@ def _sign_enrollment_authorization(
             raise ValueError("reply schema or reservation mismatch")
         message = PDSA_DOMAIN + bytes.fromhex(digest)
         result: list[dict[str, str]] = []
-        for key_id, record in zip(signer_ids, signatures, strict=True):
+        selected_signer_ids: list[str] = []
+        for record in signatures:
             if (
                 type(record) is not dict
                 or set(record) != _SIGNATURE_FIELDS
                 or any(type(value) is not str for value in record.values())
-                or record["key_id"] != key_id
+                or record["key_id"] not in authorized_signer_ids
                 or record["algorithm"] != "Ed25519"
                 or len(record["signature_hex"]) != 128
                 or any(character not in "0123456789abcdef" for character in record["signature_hex"])
             ):
                 raise ValueError("noncanonical quorum record")
+            key_id = record["key_id"]
+            if selected_signer_ids and key_id <= selected_signer_ids[-1]:
+                raise ValueError("quorum signer IDs must be distinct and sorted")
             trust.pdsa_keys[key_id].verify(bytes.fromhex(record["signature_hex"]), message)
+            selected_signer_ids.append(key_id)
             result.append(dict(record))
     except (ValueError, TypeError, KeyError, RecursionError, InvalidSignature) as exc:
         raise ProductionEnrollmentIssuerError("PRODUCTION_PDSA_SIGNING_REPLY_INVALID") from exc

@@ -8,15 +8,17 @@ signing boundary. Public parsing and terminal lookups never confer authority.
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import secrets
 import sqlite3
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives import serialization
 
 from deployment.production_enrollment_issuer import (
     require_production_enrollment_issuer,
@@ -202,9 +204,20 @@ def _verify_package_signatures(raw: bytes, context: object) -> PDSAEnrollmentAut
     return package
 
 
-def _mint_uuidv7(prefix: str, issued: datetime) -> str:
-    millis = int(issued.timestamp()) * 1000
+def _reservation_epoch_milliseconds(reservation_now: datetime) -> int:
+    if reservation_now.utcoffset() != timedelta(0):
+        raise PDSAAuthorizationError("INVALID_PACKAGE_TIMESTAMP")
+    elapsed = reservation_now - datetime(1970, 1, 1, tzinfo=timezone.utc)
+    # Integer timedelta arithmetic floors sub-millisecond precision, including
+    # instants before the epoch, without float timestamp rounding at boundaries.
+    millis = elapsed.days * 86_400_000 + elapsed.seconds * 1000 + elapsed.microseconds // 1000
     if not 0 <= millis < 1 << 48:
+        raise PDSAAuthorizationError("INVALID_PACKAGE_TIMESTAMP")
+    return millis
+
+
+def _mint_uuidv7(prefix: str, millis: int) -> str:
+    if type(millis) is not int or not 0 <= millis < 1 << 48:
         raise PDSAAuthorizationError("INVALID_PACKAGE_TIMESTAMP")
     raw_id = (millis << 80) | (7 << 76) | (secrets.randbits(12) << 64)
     raw_id |= (2 << 62) | secrets.randbits(62)
@@ -283,6 +296,7 @@ def _check_exact_request(row: sqlite3.Row, request_raw: bytes, challenge_raw: by
 
 def _check_reservation(row: sqlite3.Row, accepted: AuthenticatedProductionPreEnrollment) -> None:
     _check_exact_request(row, accepted.request_raw, accepted.challenge_raw)
+    _check_quorum_reservation(row, accepted.context)
     expected = _payload(
         accepted,
         subject=row["provisioning_subject_id"],
@@ -293,8 +307,109 @@ def _check_reservation(row: sqlite3.Row, accepted: AuthenticatedProductionPreEnr
     if (
         row["payload_raw"] != canonical_json_bytes(expected)
         or row["expires_at_utc"] != expected["expires_at_utc"]
-        or row["signer_ids_raw"] != canonical_json_bytes(sorted(accepted.context.pdsa_keys)[:2])
     ):
+        raise PDSAAuthorizationError("REJECT_PACKAGE_TARGET_MISMATCH")
+
+
+def _production_trust_snapshot(context: object) -> bytes:
+    trusted = require_current_production_trust_context(context)
+    raw: bytes = canonical_json_bytes(
+        {
+            "ceremony_id": trusted.ceremony_id,
+            "release_policy_digest_sha256": trusted.release_payload_digest,
+            "release_policy_generation": trusted.release_version,
+            "pdsa_public_keys": [
+                {
+                    "key_id": key_id,
+                    "public_key_hex": key.public_bytes(
+                        serialization.Encoding.Raw, serialization.PublicFormat.Raw
+                    ).hex(),
+                }
+                for key_id, key in sorted(trusted.pdsa_keys.items())
+            ],
+        }
+    )
+    return raw
+
+
+def _retained_quorum_metadata(row: sqlite3.Row) -> list[str]:
+    """Check frozen metadata without renewing terminal package authority."""
+    try:
+        authorized = _retained_signer_ids(row["authorized_signer_ids_raw"], 3)
+        trust = parse_canonical(row["production_trust_raw"])
+        valid = (
+            type(row["required_threshold"]) is int
+            and row["required_threshold"] == 2
+            and type(trust) is dict
+            and set(trust)
+            == {
+                "ceremony_id",
+                "release_policy_digest_sha256",
+                "release_policy_generation",
+                "pdsa_public_keys",
+            }
+            and type(trust["ceremony_id"]) is str
+            and bool(trust["ceremony_id"])
+            and type(trust["release_policy_digest_sha256"]) is str
+            and _HEX64.fullmatch(trust["release_policy_digest_sha256"]) is not None
+            and type(trust["release_policy_generation"]) is int
+            and 1 <= trust["release_policy_generation"] <= MAX_EXACT_INTEGER
+            and type(trust["pdsa_public_keys"]) is list
+            and len(trust["pdsa_public_keys"]) == 3
+        )
+        if valid:
+            valid = all(
+                type(record) is dict
+                and set(record) == {"key_id", "public_key_hex"}
+                and record["key_id"] == key_id
+                and type(record["public_key_hex"]) is str
+                and _HEX64.fullmatch(record["public_key_hex"]) is not None
+                for key_id, record in zip(authorized, trust["pdsa_public_keys"], strict=True)
+            )
+        if valid and row["state"] == "RESERVED":
+            valid = (
+                row["signer_ids_raw"] is None
+                and row["package_raw"] is None
+                and row["pdsa_package_digest_sha256"] is None
+            )
+        elif valid and row["state"] in ("SIGNED", "COMMITTED"):
+            selected = _retained_signer_ids(row["signer_ids_raw"], 2)
+            valid = (
+                all(key_id in authorized for key_id in selected)
+                and type(row["package_raw"]) is bytes
+                and type(row["pdsa_package_digest_sha256"]) is str
+            )
+        else:
+            valid = False
+    except (ValueError, TypeError, KeyError, RecursionError):
+        valid = False
+    if not valid:
+        raise PDSAAuthorizationError("INVALID_RETAINED_QUORUM_RESERVATION")
+    return authorized
+
+
+def _retained_signer_ids(raw: object, count: int) -> list[str]:
+    if type(raw) is not bytes:
+        raise PDSAAuthorizationError("INVALID_RETAINED_QUORUM_RESERVATION")
+    ids = json.loads(raw)
+    if (
+        type(ids) is not list
+        or len(ids) != count
+        or any(type(key_id) is not str or _KEY_ID.fullmatch(key_id) is None for key_id in ids)
+        or ids != sorted(set(ids))
+        or canonical_json_bytes(ids) != raw
+    ):
+        raise PDSAAuthorizationError("INVALID_RETAINED_QUORUM_RESERVATION")
+    result: list[str] = ids
+    return result
+
+
+def _check_quorum_reservation(row: sqlite3.Row, context: object) -> None:
+    authorized = _retained_quorum_metadata(row)
+    trusted = require_current_production_trust_context(context)
+    if authorized != sorted(trusted.pdsa_keys) or row[
+        "production_trust_raw"
+    ] != _production_trust_snapshot(trusted):
         raise PDSAAuthorizationError("REJECT_PACKAGE_TARGET_MISMATCH")
 
 
@@ -310,9 +425,11 @@ def _require_live_challenge(row: sqlite3.Row, raw: bytes) -> None:
 
 
 def _retained_package(row: sqlite3.Row) -> bytes:
+    _retained_quorum_metadata(row)
     raw = bytes(row["package_raw"])
     package = PDSAEnrollmentAuthorizationPackageV1.from_canonical_bytes(raw)
     payload = package.document["payload"]
+    trust = parse_canonical(row["production_trust_raw"])
     if (
         package.digest_sha256 != row["pdsa_package_digest_sha256"]
         or canonical_json_bytes(payload) != row["payload_raw"]
@@ -324,6 +441,8 @@ def _retained_package(row: sqlite3.Row) -> bytes:
         != row["pre_enrollment_request_digest_sha256"]
         or canonical_json_bytes([entry["key_id"] for entry in package.document["signatures"]])
         != row["signer_ids_raw"]
+        or payload["release_policy_digest_sha256"] != trust["release_policy_digest_sha256"]
+        or payload["release_policy_generation"] != trust["release_policy_generation"]
     ):
         raise PDSAAuthorizationError("RETAINED_PACKAGE_BYTES_MISMATCH")
     return raw
@@ -356,11 +475,13 @@ def _reserve_issuance(accepted: AuthenticatedProductionPreEnrollment) -> _Reserv
         _require_live_challenge(challenge_row, accepted.challenge_raw)
         require_authenticated_pre_enrollment(accepted, challenge_store=store)
         expires = authenticated_package_expiry(accepted)
-        issued = _utc_now().replace(microsecond=0)
+        reservation_now = _utc_now()
+        reservation_ms = _reservation_epoch_milliseconds(reservation_now)
+        issued = reservation_now.replace(microsecond=0)
         if not issued < _timestamp(expires):
             raise PDSAAuthorizationError("PACKAGE_EXPIRED")
-        subject = _mint_uuidv7("psub_", issued)
-        reference = _mint_uuidv7("penr_", issued)
+        subject = _mint_uuidv7("psub_", reservation_ms)
+        reference = _mint_uuidv7("penr_", reservation_ms)
         issued_text = issued.strftime("%Y-%m-%dT%H:%M:%SZ")
         payload_raw = canonical_json_bytes(
             _payload(
@@ -373,7 +494,8 @@ def _reserve_issuance(accepted: AuthenticatedProductionPreEnrollment) -> _Reserv
                     pdsa_challenge_id,pdsa_challenge_digest_sha256,
                     pre_enrollment_request_digest_sha256,request_raw,payload_raw,
                     provisioning_subject_id,enrollment_reference,issued_at_utc,
-                    expires_at_utc,signer_ids_raw,state) VALUES (?,?,?,?,?,?,?,?,?,?,'RESERVED')""",
+                    expires_at_utc,production_trust_raw,authorized_signer_ids_raw,
+                    required_threshold,state) VALUES (?,?,?,?,?,?,?,?,?,?,?,?, 'RESERVED')""",
                 (
                     challenge_id,
                     request.document["pdsa_challenge_digest_sha256"],
@@ -384,7 +506,9 @@ def _reserve_issuance(accepted: AuthenticatedProductionPreEnrollment) -> _Reserv
                     reference,
                     issued_text,
                     expires,
-                    canonical_json_bytes(sorted(accepted.context.pdsa_keys)[:2]),
+                    _production_trust_snapshot(accepted.context),
+                    canonical_json_bytes(sorted(accepted.context.pdsa_keys)),
+                    2,
                 ),
             )
             db.commit()
@@ -407,15 +531,17 @@ def _persist_signed_package(
         if row is None:
             raise PDSAAuthorizationError("UNKNOWN_PACKAGE_ISSUANCE_RESERVATION")
         _check_exact_request(row, accepted.request_raw, accepted.challenge_raw)
+        _check_quorum_reservation(row, accepted.context)
         if canonical_json_bytes(package.document["payload"]) != row["payload_raw"]:
             raise PDSAAuthorizationError("REJECT_PACKAGE_TARGET_MISMATCH")
-        if (
-            canonical_json_bytes([entry["key_id"] for entry in package.document["signatures"]])
-            != row["signer_ids_raw"]
-        ):
-            raise PDSAAuthorizationError("PACKAGE_SIGNATURE_RETRY_CONFLICT")
+        selected_signer_ids_raw = canonical_json_bytes(
+            [entry["key_id"] for entry in package.document["signatures"]]
+        )
         if row["state"] in ("SIGNED", "COMMITTED"):
-            if _retained_package(row) != package_raw:
+            if (
+                row["signer_ids_raw"] != selected_signer_ids_raw
+                or _retained_package(row) != package_raw
+            ):
                 raise PDSAAuthorizationError("PACKAGE_SIGNATURE_RETRY_CONFLICT")
             return
         require_authenticated_pre_enrollment(accepted, challenge_store=store)
@@ -427,8 +553,9 @@ def _persist_signed_package(
             raise PDSAAuthorizationError("PACKAGE_EXPIRED")
         db.execute(
             """UPDATE pdsa_authorization_issuances SET state='SIGNED',package_raw=?,
-                pdsa_package_digest_sha256=? WHERE pdsa_challenge_id=? AND state='RESERVED'""",
-            (package_raw, package.digest_sha256, row["pdsa_challenge_id"]),
+                pdsa_package_digest_sha256=?,signer_ids_raw=?
+                WHERE pdsa_challenge_id=? AND state='RESERVED'""",
+            (package_raw, package.digest_sha256, selected_signer_ids_raw, row["pdsa_challenge_id"]),
         )
         db.commit()
 
@@ -530,11 +657,14 @@ def _require_signing_reservation(issuer: object, payload_raw: bytes) -> None:
             row is None
             or row["state"] not in ("RESERVED", "SIGNED")
             or row["payload_raw"] != payload_raw
-            or row["signer_ids_raw"] != canonical_json_bytes(sorted(trusted.pdsa_keys)[:2])
             or payload["release_policy_digest_sha256"] != trusted.release_payload_digest
             or payload["release_policy_generation"] != trusted.release_version
         ):
             raise PDSAAuthorizationError("EXACT_SIGNING_RESERVATION_REQUIRED")
+        try:
+            _check_quorum_reservation(row, trusted)
+        except PDSAAuthorizationError as exc:
+            raise PDSAAuthorizationError("EXACT_SIGNING_RESERVATION_REQUIRED") from exc
         challenge = db.execute(
             "SELECT * FROM pdsa_challenges WHERE challenge_id=?", (payload["pdsa_challenge_id"],)
         ).fetchone()

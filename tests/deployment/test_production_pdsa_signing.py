@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import json
 import os
+import sqlite3
 import stat
 import struct
 from pathlib import Path
@@ -102,6 +104,7 @@ def installed(monkeypatch, tmp_path, request):
         payload=parse_canonical(reservation.payload_raw),
         raw=reservation.payload_raw,
         accepted=accepted,
+        composition=item,
     )
     try:
         next(composition)
@@ -109,12 +112,133 @@ def installed(monkeypatch, tmp_path, request):
         pass
 
 
+class TestOnlyDurableQuorumService:
+    """TEST_ONLY software signer with a disk-backed remote idempotency journal."""
+
+    __test__ = False
+
+    def __init__(self, path, keys):
+        assert path.name.startswith("TEST_ONLY")
+        self.path = path
+        self.keys = keys
+        self.available = set(keys)
+        self.fault = None
+        self.signature_calls = []
+        with sqlite3.connect(path) as db:
+            db.execute("PRAGMA synchronous=FULL")
+            db.execute(
+                """CREATE TABLE IF NOT EXISTS test_only_quorum_reservations (
+                    reservation_id TEXT PRIMARY KEY,
+                    request_raw BLOB NOT NULL,
+                    selected_signer_ids_raw BLOB NOT NULL,
+                    reply_raw BLOB
+                )"""
+            )
+
+    @property
+    def retained(self):
+        with sqlite3.connect(self.path) as db:
+            return {
+                digest: parse_canonical(raw)
+                for digest, raw in db.execute(
+                    "SELECT reservation_id,reply_raw FROM test_only_quorum_reservations "
+                    "WHERE reply_raw IS NOT NULL"
+                )
+            }
+
+    def handle(self, request_raw):
+        request = parse_canonical(request_raw)
+        assert set(request) == {
+            "schema_version",
+            "reservation_id",
+            "payload_canonical_hex",
+            "signature_domain",
+            "authorized_signer_ids",
+            "required_threshold",
+        }
+        assert request["schema_version"] == signing.REQUEST_SCHEMA
+        payload_raw = bytes.fromhex(request["payload_canonical_hex"])
+        digest = hashlib.sha256(payload_raw).hexdigest()
+        assert request["reservation_id"] == digest
+        assert request["signature_domain"].encode() + b"\x00" == PDSA_DOMAIN
+        assert request["authorized_signer_ids"] == sorted(self.keys)
+        assert len(request["authorized_signer_ids"]) == 3
+        assert type(request["required_threshold"]) is int
+        assert request["required_threshold"] == 2
+        with sqlite3.connect(self.path) as db:
+            db.execute("PRAGMA synchronous=FULL")
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT request_raw,selected_signer_ids_raw,reply_raw "
+                "FROM test_only_quorum_reservations WHERE reservation_id=?",
+                (digest,),
+            ).fetchone()
+            if row is None:
+                selected = sorted(set(request["authorized_signer_ids"]) & self.available)[:2]
+                if len(selected) != 2:
+                    raise ConnectionError("TEST_ONLY available quorum below required threshold")
+                db.execute(
+                    "INSERT INTO test_only_quorum_reservations VALUES (?,?,?,NULL)",
+                    (digest, request_raw, canonical_json_bytes(selected)),
+                )
+                db.commit()
+                reply_raw = None
+            else:
+                retained_request, selected_raw, reply_raw = row
+                assert retained_request == request_raw
+                selected = json.loads(selected_raw)
+        if reply_raw is not None:
+            return reply_raw
+        if self.fault == "after_selection":
+            raise ConnectionAbortedError("TEST_ONLY service crash after durable selection")
+        if not set(selected) <= self.available:
+            raise ConnectionError("TEST_ONLY retained quorum currently unavailable")
+        signatures = []
+        for key_id in selected:
+            self.signature_calls.append((digest, key_id))
+            signatures.append(
+                {
+                    "key_id": key_id,
+                    "algorithm": "Ed25519",
+                    "signature_hex": self.keys[key_id]
+                    .sign(PDSA_DOMAIN + bytes.fromhex(digest))
+                    .hex(),
+                }
+            )
+        if self.fault == "after_signing":
+            raise ConnectionAbortedError("TEST_ONLY service crash before durable reply")
+        reply_raw = canonical_json_bytes(
+            {
+                "schema_version": signing.REPLY_SCHEMA,
+                "reservation_id": digest,
+                "signatures": signatures,
+            }
+        )
+        with sqlite3.connect(self.path) as db:
+            db.execute("PRAGMA synchronous=FULL")
+            db.execute("BEGIN IMMEDIATE")
+            db.execute(
+                "UPDATE test_only_quorum_reservations SET reply_raw=? "
+                "WHERE reservation_id=? AND reply_raw IS NULL",
+                (reply_raw, digest),
+            )
+            retained_raw = db.execute(
+                "SELECT reply_raw FROM test_only_quorum_reservations WHERE reservation_id=?",
+                (digest,),
+            ).fetchone()[0]
+            db.commit()
+        if self.fault == "after_reply_commit":
+            raise ConnectionAbortedError("TEST_ONLY service crash after durable reply")
+        return retained_raw
+
+
 @pytest.fixture
-def socket_boundary(installed, monkeypatch):
+def socket_boundary(installed, monkeypatch, tmp_path):
     boundary = SimpleNamespace(
         requests=[],
         connections=[],
-        retained={},
+        service=TestOnlyDurableQuorumService(tmp_path / "TEST_ONLY_QUORUM.sqlite", installed.keys),
+        reply_raws=[],
         peer_uid=0,
         fault=None,
         change_reply=lambda reply: reply,
@@ -157,29 +281,12 @@ def socket_boundary(installed, monkeypatch):
                 raise TimeoutError("TEST_ONLY send timeout")
             length = struct.unpack("!I", frame[:4])[0]
             assert length == len(frame) - 4
-            request = parse_canonical(frame[4:])
+            request_raw = frame[4:]
+            request = parse_canonical(request_raw)
             boundary.requests.append(request)
-            payload_raw = bytes.fromhex(request["payload_canonical_hex"])
-            digest = hashlib.sha256(payload_raw).hexdigest()
-            assert request["reservation_id"] == digest
-            assert request["signature_domain"].encode() + b"\x00" == PDSA_DOMAIN
-            assert request["required_signer_ids"] == sorted(installed.keys)[:2]
-            if digest not in boundary.retained:
-                boundary.retained[digest] = {
-                    "schema_version": signing.REPLY_SCHEMA,
-                    "reservation_id": digest,
-                    "signatures": [
-                        {
-                            "key_id": key_id,
-                            "algorithm": "Ed25519",
-                            "signature_hex": installed.keys[key_id]
-                            .sign(PDSA_DOMAIN + hashlib.sha256(payload_raw).digest())
-                            .hex(),
-                        }
-                        for key_id in request["required_signer_ids"]
-                    ],
-                }
-            reply = boundary.change_reply(copy.deepcopy(boundary.retained[digest]))
+            retained_raw = boundary.service.handle(request_raw)
+            boundary.reply_raws.append(retained_raw)
+            reply = boundary.change_reply(parse_canonical(retained_raw))
             raw = reply if type(reply) is bytes else canonical_json_bytes(reply)
             size = len(raw) if boundary.frame_size is None else boundary.frame_size
             self.reply = struct.pack("!I", size) + raw
@@ -196,17 +303,141 @@ def socket_boundary(installed, monkeypatch):
     return boundary
 
 
-def test_fixed_rpc_verifies_exact_quorum_and_retains_retry_after_restart(
+@pytest.mark.parametrize("pair", [(0, 1), (0, 2), (1, 2)])
+def test_fixed_rpc_verifies_every_authorized_quorum(installed, socket_boundary, pair):
+    selected = [sorted(installed.keys)[index] for index in pair]
+    socket_boundary.service.available = set(selected)
+    result = installed.issuer.sign_enrollment_authorization(installed.raw)
+    assert [record["key_id"] for record in result] == selected
+    request = socket_boundary.requests[0]
+    assert request["authorized_signer_ids"] == sorted(installed.keys)
+    assert request["required_threshold"] == 2
+    assert "required_signer_ids" not in request
+
+
+def test_fixed_rpc_retains_selected_quorum_and_exact_reply_after_both_restarts(
     installed, socket_boundary
 ):
+    selected = sorted(installed.keys)[1:]
+    socket_boundary.service.available = set(selected)
     result = installed.issuer.sign_enrollment_authorization(installed.raw)
+    old_service = socket_boundary.service
+    assert len(old_service.signature_calls) == 2
     installed.issuer.close()
     restarted = issuer.open_installed_production_enrollment_issuer()
+    socket_boundary.service = TestOnlyDurableQuorumService(old_service.path, installed.keys)
+    assert socket_boundary.service.available == set(installed.keys)
     assert restarted.sign_enrollment_authorization(installed.raw) == result
     assert len(result) == 2
-    assert [record["key_id"] for record in result] == sorted(installed.keys)[:2]
+    assert [record["key_id"] for record in result] == selected
     assert socket_boundary.requests[0] == socket_boundary.requests[1]
-    assert len(socket_boundary.retained) == 1
+    assert socket_boundary.reply_raws[0] == socket_boundary.reply_raws[1]
+    assert len(socket_boundary.service.retained) == 1
+    assert socket_boundary.service.signature_calls == []
+    restarted.close()
+
+
+def test_one_available_signer_cannot_issue_a_quorum(installed, socket_boundary):
+    socket_boundary.service.available = {sorted(installed.keys)[1]}
+    with pytest.raises(issuer.ProductionEnrollmentIssuerError, match="SIGNING_UNAVAILABLE"):
+        authorization.issue_production_pdsa_enrollment_authorization(installed.accepted)
+    assert socket_boundary.service.retained == {}
+    assert socket_boundary.service.signature_calls == []
+    with installed.issuer.pdsa_store._connect() as db:
+        row = db.execute("SELECT state,signer_ids_raw FROM pdsa_authorization_issuances").fetchone()
+        assert tuple(row) == ("RESERVED", None)
+
+
+def test_first_signer_unavailable_still_issues_authorized_package(installed, socket_boundary):
+    selected = sorted(installed.keys)[1:]
+    socket_boundary.service.available = set(selected)
+    raw = authorization.issue_production_pdsa_enrollment_authorization(installed.accepted)
+    document = parse_canonical(raw)
+    assert [entry["key_id"] for entry in document["signatures"]] == selected
+    with installed.issuer.pdsa_store._connect() as db:
+        row = db.execute(
+            "SELECT state,signer_ids_raw,package_raw FROM pdsa_authorization_issuances"
+        ).fetchone()
+        assert tuple(row) == ("COMMITTED", canonical_json_bytes(selected), raw)
+
+
+@pytest.mark.parametrize("cut", ["read", "after_reply_commit"])
+def test_durable_reply_lost_before_local_signed_commit_retries_exact_package(
+    installed, socket_boundary, cut
+):
+    selected = sorted(installed.keys)[1:]
+    old_service = socket_boundary.service
+    old_service.available = set(selected)
+    if cut == "read":
+        socket_boundary.fault = cut
+    else:
+        old_service.fault = cut
+    with pytest.raises(issuer.ProductionEnrollmentIssuerError, match="SIGNING_UNAVAILABLE"):
+        authorization.issue_production_pdsa_enrollment_authorization(installed.accepted)
+    digest = hashlib.sha256(installed.raw).hexdigest()
+    first_reply = old_service.retained[digest]
+    with sqlite3.connect(old_service.path) as db:
+        retained_reply_raw = db.execute(
+            "SELECT reply_raw FROM test_only_quorum_reservations WHERE reservation_id=?",
+            (digest,),
+        ).fetchone()[0]
+    expected_raw = canonical_json_bytes(
+        {"payload": installed.payload, "signatures": first_reply["signatures"]}
+    )
+    assert [entry["key_id"] for entry in first_reply["signatures"]] == selected
+    with installed.issuer.pdsa_store._connect() as db:
+        row = db.execute(
+            "SELECT state,signer_ids_raw,package_raw FROM pdsa_authorization_issuances"
+        ).fetchone()
+        assert tuple(row) == ("RESERVED", None, None)
+    installed.issuer.close()
+    restarted = issuer.open_installed_production_enrollment_issuer()
+    item = installed.composition
+    item.authority.issuer = restarted
+    item.authority.store = restarted.pdsa_store
+    item.arguments["challenge_store"] = restarted.pdsa_store
+    item.arguments["pending"] = restarted.tpm_store
+    socket_boundary.service = TestOnlyDurableQuorumService(old_service.path, installed.keys)
+    socket_boundary.fault = None
+    accepted = pre_enrollment_tests._authenticate(item)
+    raw = authorization.issue_production_pdsa_enrollment_authorization(accepted)
+    assert raw == expected_raw
+    assert socket_boundary.service.signature_calls == []
+    assert socket_boundary.service.retained[digest] == first_reply
+    assert socket_boundary.reply_raws[-1] == retained_reply_raw
+    assert (
+        authorization.retry_production_pdsa_enrollment_authorization(
+            restarted, request_raw=accepted.request_raw, challenge_raw=accepted.challenge_raw
+        )
+        == expected_raw
+    )
+    with restarted.pdsa_store._connect() as db:
+        row = db.execute(
+            "SELECT state,signer_ids_raw,package_raw FROM pdsa_authorization_issuances"
+        ).fetchone()
+        assert tuple(row) == ("COMMITTED", canonical_json_bytes(selected), expected_raw)
+    restarted.close()
+
+
+@pytest.mark.parametrize("cut", ["after_selection", "after_signing"])
+def test_service_crash_before_reply_cannot_reselect_reserved_quorum(
+    installed, socket_boundary, cut
+):
+    selected = sorted(installed.keys)[1:]
+    old_service = socket_boundary.service
+    old_service.available = set(selected)
+    old_service.fault = cut
+    with pytest.raises(issuer.ProductionEnrollmentIssuerError, match="SIGNING_UNAVAILABLE"):
+        installed.issuer.sign_enrollment_authorization(installed.raw)
+    assert old_service.retained == {}
+    with sqlite3.connect(old_service.path) as db:
+        selected_raw = db.execute(
+            "SELECT selected_signer_ids_raw FROM test_only_quorum_reservations"
+        ).fetchone()[0]
+        assert json.loads(selected_raw) == selected
+    socket_boundary.service = TestOnlyDurableQuorumService(old_service.path, installed.keys)
+    result = installed.issuer.sign_enrollment_authorization(installed.raw)
+    assert [record["key_id"] for record in result] == selected
 
 
 @pytest.mark.parametrize("installed", ["TEST_ONLY_PDSA"], indirect=True)
@@ -216,7 +447,23 @@ def test_test_only_trust_never_enters_production_socket(installed, socket_bounda
     assert socket_boundary.connections == []
 
 
-@pytest.mark.parametrize("argument", ["signer", "callback", "socket", "backend", "path", "keys"])
+@pytest.mark.parametrize(
+    "argument",
+    [
+        "signer",
+        "signer_ids",
+        "authorized_signer_ids",
+        "required_threshold",
+        "threshold",
+        "public_keys",
+        "endpoint",
+        "callback",
+        "socket",
+        "backend",
+        "path",
+        "keys",
+    ],
+)
 def test_no_transport_selected_signer_or_configuration(installed, argument):
     with pytest.raises(TypeError):
         installed.issuer.sign_enrollment_authorization(installed.raw, **{argument: object()})
@@ -265,23 +512,26 @@ def test_socket_replacement_fails_closed(installed, socket_boundary, monkeypatch
     assert len(socket_boundary.requests) == (0 if replacement_call == 2 else 1)
 
 
-def test_other_valid_quorum_cannot_change_reserved_signer_pair(installed, socket_boundary):
-    def alternate(reply):
+def test_valid_signature_from_unauthorized_fourth_key_fails_closed(installed, socket_boundary):
+    fourth_key = ed25519.Ed25519PrivateKey.from_private_bytes(b"\x04" * 32)
+
+    def unauthorized(reply):
         digest = bytes.fromhex(reply["reservation_id"])
-        key_id = sorted(installed.keys)[2]
         reply["signatures"][1] = {
-            "key_id": key_id,
+            "key_id": "pdsa-service-4",
             "algorithm": "Ed25519",
-            "signature_hex": installed.keys[key_id].sign(PDSA_DOMAIN + digest).hex(),
+            "signature_hex": fourth_key.sign(PDSA_DOMAIN + digest).hex(),
         }
         return reply
 
-    socket_boundary.change_reply = alternate
+    socket_boundary.change_reply = unauthorized
     with pytest.raises(issuer.ProductionEnrollmentIssuerError, match="REPLY_INVALID"):
         installed.issuer.sign_enrollment_authorization(installed.raw)
 
 
-@pytest.mark.parametrize("change", ["missing", "payload", "signers", "committed"])
+@pytest.mark.parametrize(
+    "change", ["missing", "payload", "authorized_signers", "trust", "committed"]
+)
 def test_only_exact_unpublished_reserved_payload_can_be_signed(installed, socket_boundary, change):
     with installed.issuer.pdsa_store._connect() as db:
         if change == "missing":
@@ -293,10 +543,15 @@ def test_only_exact_unpublished_reserved_payload_can_be_signed(installed, socket
                 "UPDATE pdsa_authorization_issuances SET payload_raw=?",
                 (canonical_json_bytes(payload),),
             )
-        elif change == "signers":
+        elif change == "authorized_signers":
             db.execute(
-                "UPDATE pdsa_authorization_issuances SET signer_ids_raw=?",
+                "UPDATE pdsa_authorization_issuances SET authorized_signer_ids_raw=?",
                 (canonical_json_bytes(sorted(installed.keys)[1:]),),
+            )
+        elif change == "trust":
+            db.execute(
+                "UPDATE pdsa_authorization_issuances SET production_trust_raw=?",
+                (canonical_json_bytes({"ceremony_id": "different-authority"}),),
             )
         else:
             # The SQL CHECK intentionally prevents a fabricated terminal state.
