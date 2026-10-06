@@ -146,6 +146,61 @@ def _state():
     return lifecycle._read(lifecycle._state_path())
 
 
+def _forbid_successor_authority_gates(monkeypatch):
+    def forbidden(*args, **kwargs):
+        pytest.fail("foreign successor identity reached an authority gate")
+
+    for module, name in (
+        (native_key, "_qualify"),
+        (lifecycle, "collect_lppi_authority_key_custody"),
+        (lifecycle, "build_lppi_authority_key_binding"),
+        (cng.WindowsCNGPreEnrollmentKey, "sign_authority_continuity"),
+        (native_key.WindowsLPPIAuthorityKey, "sign_binding_pop"),
+    ):
+        monkeypatch.setattr(module, name, forbidden)
+
+
+def _assert_no_successor_authority(lppi, outcome):
+    state = _state()
+    assert state["status"] == "CREATION_RESERVED"
+    assert state["history"] == ["CREATION_RESERVED"]
+    assert state["creation_outcome"] == outcome
+    for field in (
+        "authority_sec1_hex",
+        "authority_unique_name",
+        "custody_raw_hex",
+        "binding_raw_hex",
+        "continuity_signature_hex",
+        "authority_pop_signature_hex",
+    ):
+        assert state[field] is None
+    assert not lppi.successor_tbs.commands
+    assert not any(
+        call[0] in {"property", "export", "sign", "set", "finalize", "overwrite", "delete"}
+        for call in lppi.successor.calls
+    )
+
+
+def _foreign_key_after_probe(lppi, monkeypatch):
+    original = lifecycle._write
+    inserted = {"done": False}
+
+    def write_then_foreign_create(path, state):
+        original(path, state)
+        if state["creation_outcome"] == "NOT_ATTEMPTED" and not inserted["done"]:
+            assert not lppi.successor.persisted
+            assert [call for call in lppi.successor.calls if call[0] == "open"] == [
+                ("open", native_key.KEY_NAME, cng.MACHINE_KEY)
+            ]
+            assert not any(call[0] == "create" for call in lppi.successor.calls)
+            # A separate TEST_ONLY process persists an otherwise fully qualified key.
+            lppi.successor.persisted = True
+            inserted["done"] = True
+
+    monkeypatch.setattr(lifecycle, "_write", write_then_foreign_create)
+    return inserted
+
+
 def test_complete_real_crypto_lifecycle_exact_binding_and_restart(lppi):
     accepted = lppi.accept()
     active = lifecycle.establish_installed_lppi_authority_key(accepted)
@@ -172,6 +227,9 @@ def test_complete_real_crypto_lifecycle_exact_binding_and_restart(lppi):
     assert fresh.binding.canonical_bytes == retained
     assert _state() == state
     assert sum(call[0] == "create" for call in lppi.successor.calls) == 1
+    assert [call for call in lppi.successor.calls if call[0] == "create"] == [
+        ("create", cng.ALGORITHM, native_key.KEY_NAME, cng.MACHINE_KEY)
+    ]
     assert lppi.item.dll.persisted
     fresh.close()
 
@@ -301,25 +359,296 @@ def test_crash_after_each_durable_gate_restores_exact_candidate(lppi, monkeypatc
 
 
 def test_ambiguous_create_reconciles_existing_without_remint(lppi):
+    accepted = lppi.accept()
+    public = lppi.successor.private.public_key().public_numbers()
+    unique = lppi.successor.properties[(22, "Unique Name")]
     lppi.successor.finalize_error = 0x80090020
     lppi.successor.finalize_lost_response = True
     with pytest.raises(RuntimeError):
-        lifecycle.establish_installed_lppi_authority_key(lppi.accept())
-    assert _state()["status"] == "CREATION_RESERVED" and lppi.successor.persisted
+        lifecycle.establish_installed_lppi_authority_key(accepted)
+    retained = _state()
+    assert retained["status"] == "CREATION_RESERVED" and lppi.successor.persisted
+    assert retained["creation_outcome"] == "OWN_FINALIZE_PENDING"
+    assert retained["authority_sec1_hex"] is not None
+    assert retained["authority_unique_name"] == "TEST_ONLY-successor-unique"
+    assert sum(call[0] == "create" for call in lppi.successor.calls) == 1
+    assert sum(call[0] == "finalize" for call in lppi.successor.calls) == 1
+    create_index = next(
+        index for index, call in enumerate(lppi.successor.calls) if call[0] == "create"
+    )
+    assert sum(call[0] == "open" for call in lppi.successor.calls[:create_index]) == 1
     lppi.successor.finalize_error = 0
     active = lifecycle.establish_installed_lppi_authority_key(lppi.accept())
     assert active.active_key_record["status"] == "ACTIVE"
     assert sum(call[0] == "create" for call in lppi.successor.calls) == 1
+    assert sum(call[0] == "finalize" for call in lppi.successor.calls) == 1
+    assert lppi.successor.private.public_key().public_numbers() == public
+    assert lppi.successor.properties[(22, "Unique Name")] == unique
+    assert _state()["reservation_id"] == retained["reservation_id"]
+    assert _state()["created_at_utc"] == retained["created_at_utc"]
+    assert _state()["authority_sec1_hex"] == retained["authority_sec1_hex"]
+    assert _state()["authority_unique_name"] == retained["authority_unique_name"]
+    assert _state()["creation_outcome"] == "OWN_FINALIZED"
     active.close()
 
 
-def test_missing_ambiguous_reserved_identity_never_reminted(lppi):
-    lppi.successor.create_error = 0x80090020
+def test_lost_finalize_response_before_identity_retention_reconciles_without_remint(
+    lppi, monkeypatch
+):
+    accepted = lppi.accept()
+    original = lppi.successor.NCryptFinalizeKey.function
+
+    def finalize_then_lose_response(*args):
+        assert original(*args) == 0
+        raise RuntimeError("TEST_ONLY_LOST_FINALIZE_RESPONSE")
+
+    monkeypatch.setattr(lppi.successor.NCryptFinalizeKey, "function", finalize_then_lose_response)
+    with pytest.raises(RuntimeError, match="TEST_ONLY_LOST_FINALIZE_RESPONSE"):
+        lifecycle.establish_installed_lppi_authority_key(accepted)
+    retained = _state()
+    assert lppi.successor.persisted
+    assert retained["status"] == "CREATION_RESERVED"
+    assert retained["history"] == ["CREATION_RESERVED"]
+    assert retained["creation_outcome"] == "OWN_FINALIZE_PENDING"
+    assert retained["authority_sec1_hex"] is None
+    assert retained["authority_unique_name"] is None
+    assert retained["binding_raw_hex"] is None
+    assert not lppi.successor_tbs.commands
+    assert sum(call[0] == "create" for call in lppi.successor.calls) == 1
+    assert sum(call[0] == "finalize" for call in lppi.successor.calls) == 1
+    with lifecycle._locked_state() as path:
+        reservation, _ = lifecycle._reserve(path, accepted)
+        descriptor = lifecycle.require_lppi_authority_key_reservation(reservation, accepted)
+        assert descriptor.mode == "reconcile"
+    monkeypatch.setattr(lppi.successor.NCryptFinalizeKey, "function", original)
+    active = lifecycle.establish_installed_lppi_authority_key(lppi.accept())
+    assert active.active_key_record["status"] == "ACTIVE"
+    state = _state()
+    assert state["creation_outcome"] == "OWN_FINALIZED"
+    assert state["reservation_id"] == retained["reservation_id"]
+    assert state["created_at_utc"] == retained["created_at_utc"]
+    assert state["authority_unique_name"] == "TEST_ONLY-successor-unique"
+    assert state["authority_sec1_hex"] is not None
+    assert sum(call[0] == "create" for call in lppi.successor.calls) == 1
+    assert sum(call[0] == "finalize" for call in lppi.successor.calls) == 1
+    active.close()
+
+
+def test_race_after_probe_never_adopts_foreign_successor(lppi, monkeypatch):
+    accepted = lppi.accept()
+    foreign_private = lppi.successor.private
+    foreign_properties = dict(lppi.successor.properties)
+    inserted = _foreign_key_after_probe(lppi, monkeypatch)
+    _forbid_successor_authority_gates(monkeypatch)
+    with pytest.raises(RuntimeError, match="LPPI_AUTHORITY_CREATE_COLLISION"):
+        lifecycle.establish_installed_lppi_authority_key(accepted)
+    assert inserted["done"] and lppi.successor.persisted
+    _assert_no_successor_authority(lppi, "CREATE_COLLISION")
+    assert [call[0] for call in lppi.successor.calls if call[0] in {"open", "create"}] == [
+        "open",
+        "create",
+    ]
+    assert ("create", cng.ALGORITHM, native_key.KEY_NAME, cng.MACHINE_KEY) in lppi.successor.calls
+    assert lppi.successor.private is foreign_private
+    assert lppi.successor.properties == foreign_properties
+
+
+@pytest.mark.parametrize("status", [cng.NTE_EXISTS, cng.NTE_EXISTS - (1 << 32)])
+def test_native_nte_exists_never_establishes_creation_ownership(lppi, monkeypatch, status):
+    accepted = lppi.accept()
+    lppi.successor.create_error = status
+    _forbid_successor_authority_gates(monkeypatch)
+    with pytest.raises(RuntimeError, match="LPPI_AUTHORITY_CREATE_COLLISION"):
+        lifecycle.establish_installed_lppi_authority_key(accepted)
+    _assert_no_successor_authority(lppi, "CREATE_COLLISION")
+    assert sum(call[0] == "create" for call in lppi.successor.calls) == 1
+    assert sum(call[0] == "open" for call in lppi.successor.calls) == 1
+    assert not lppi.successor.persisted
+
+
+def test_collision_then_restart_never_reconciles_foreign_successor(lppi, monkeypatch):
+    accepted = lppi.accept()
+    foreign_private = lppi.successor.private
+    foreign_properties = dict(lppi.successor.properties)
+    _foreign_key_after_probe(lppi, monkeypatch)
+    _forbid_successor_authority_gates(monkeypatch)
+    with pytest.raises(RuntimeError, match="LPPI_AUTHORITY_CREATE_COLLISION"):
+        lifecycle.establish_installed_lppi_authority_key(accepted)
+    retained_raw = lifecycle._state_path().read_bytes()
+    calls = list(lppi.successor.calls)
+    for _ in range(2):
+        with pytest.raises(RuntimeError, match="LPPI_AUTHORITY_CREATE_COLLISION"):
+            lifecycle.establish_installed_lppi_authority_key(lppi.accept())
+        assert lppi.successor.calls == calls
+        assert lifecycle._state_path().read_bytes() == retained_raw
+    _assert_no_successor_authority(lppi, "CREATE_COLLISION")
+    assert lppi.successor.persisted
+    assert lppi.successor.private is foreign_private
+    assert lppi.successor.properties == foreign_properties
+    assert sum(call[0] == "create" for call in lppi.successor.calls) == 1
+
+
+def test_finalize_nte_exists_is_terminal_collision_without_qualification(lppi, monkeypatch):
+    accepted = lppi.accept()
+    _forbid_successor_authority_gates(monkeypatch)
+    lppi.successor.finalize_error = cng.NTE_EXISTS
+    lppi.successor.finalize_lost_response = True
+    with pytest.raises(RuntimeError, match="LPPI_AUTHORITY_CREATE_COLLISION"):
+        lifecycle.establish_installed_lppi_authority_key(accepted)
+    state = _state()
+    assert state["creation_outcome"] == "CREATE_COLLISION"
+    assert state["status"] == "CREATION_RESERVED"
+    assert state["history"] == ["CREATION_RESERVED"]
+    assert state["authority_sec1_hex"] is None
+    assert state["binding_raw_hex"] is None
+    assert not lppi.successor_tbs.commands
+    assert not any(call[0] in {"property", "export", "sign"} for call in lppi.successor.calls)
+    assert sum(call[0] == "create" for call in lppi.successor.calls) == 1
+    assert sum(call[0] == "finalize" for call in lppi.successor.calls) == 1
+    retained_raw = lifecycle._state_path().read_bytes()
+    calls = list(lppi.successor.calls)
+    with pytest.raises(RuntimeError, match="LPPI_AUTHORITY_CREATE_COLLISION"):
+        lifecycle.establish_installed_lppi_authority_key(lppi.accept())
+    assert lppi.successor.calls == calls
+    assert lifecycle._state_path().read_bytes() == retained_raw
+    assert lppi.successor.persisted
+
+
+@pytest.mark.parametrize("status", [0x80090020, 0x80090029, 0x8009000B])
+@pytest.mark.parametrize("foreign_on_restart", [False, True])
+def test_missing_ambiguous_reserved_identity_never_reminted(
+    lppi, monkeypatch, status, foreign_on_restart
+):
+    accepted = lppi.accept()
+    _forbid_successor_authority_gates(monkeypatch)
+    lppi.successor.create_error = status
+    with pytest.raises(RuntimeError, match=f"CREATE_LPPI_AUTHORITY_KEY:0x{status:08X}"):
+        lifecycle.establish_installed_lppi_authority_key(accepted)
+    _assert_no_successor_authority(lppi, "CREATE_FAILED")
+    retained_raw = lifecycle._state_path().read_bytes()
+    calls = list(lppi.successor.calls)
+    lppi.successor.persisted = foreign_on_restart
+    lppi.successor.create_error = 0
+    with pytest.raises(RuntimeError, match="LPPI_AUTHORITY_CREATION_OWNERSHIP_NOT_ESTABLISHED"):
+        lifecycle.establish_installed_lppi_authority_key(lppi.accept())
+    assert lppi.successor.calls == calls
+    assert lifecycle._state_path().read_bytes() == retained_raw
+    _assert_no_successor_authority(lppi, "CREATE_FAILED")
+    assert sum(call[0] == "create" for call in lppi.successor.calls) == 1
+
+
+def test_success_status_without_create_handle_never_establishes_ownership(lppi, monkeypatch):
+    accepted = lppi.accept()
+    _forbid_successor_authority_gates(monkeypatch)
+
+    def create_without_handle(provider, output, algorithm, name, spec, flags):
+        lppi.successor.calls.append(("create", algorithm, name, flags))
+        return 0
+
+    monkeypatch.setattr(lppi.successor.NCryptCreatePersistedKey, "function", create_without_handle)
+    with pytest.raises(RuntimeError, match="EMPTY_AUTHORITY_KEY_HANDLE"):
+        lifecycle.establish_installed_lppi_authority_key(accepted)
+    _assert_no_successor_authority(lppi, "CREATE_FAILED")
+    assert not lppi.successor.persisted
+    retained_raw = lifecycle._state_path().read_bytes()
+    calls = list(lppi.successor.calls)
+    foreign_private = lppi.successor.private
+    foreign_properties = dict(lppi.successor.properties)
+    lppi.successor.persisted = True
+    with pytest.raises(RuntimeError, match="LPPI_AUTHORITY_CREATION_OWNERSHIP_NOT_ESTABLISHED"):
+        lifecycle.establish_installed_lppi_authority_key(lppi.accept())
+    assert lppi.successor.calls == calls
+    assert lifecycle._state_path().read_bytes() == retained_raw
+    assert lppi.successor.private is foreign_private
+    assert lppi.successor.properties == foreign_properties
+    _assert_no_successor_authority(lppi, "CREATE_FAILED")
+
+
+def test_stale_native_creation_reservation_cannot_remint(lppi):
+    accepted = lppi.accept()
+    native = native_key._load_native()
+    with lifecycle._locked_state() as path:
+        reservation, _ = lifecycle._reserve(path, accepted)
+        provider = native.open_provider()
+        try:
+            handle = native.create_key(provider, accepted_package=accepted, reservation=reservation)
+            native.free(handle)
+            assert _state()["creation_outcome"] == "OWN_FINALIZED"
+            retained_raw = path.read_bytes()
+            calls = list(lppi.successor.calls)
+            with pytest.raises(RuntimeError, match="FIRST_NATIVE_CREATION_RESERVATION_REQUIRED"):
+                native.create_key(provider, accepted_package=accepted, reservation=reservation)
+            assert lppi.successor.calls == calls
+            assert path.read_bytes() == retained_raw
+            assert lppi.successor.persisted
+            assert sum(call[0] == "create" for call in lppi.successor.calls) == 1
+            assert not any(call[0] == "sign" for call in lppi.successor.calls)
+            assert not lppi.successor_tbs.commands
+        finally:
+            native.free(provider)
+
+
+def test_missing_own_ambiguous_finalize_identity_never_reminted(lppi):
+    lppi.successor.finalize_error = 0x80090020
     with pytest.raises(RuntimeError):
         lifecycle.establish_installed_lppi_authority_key(lppi.accept())
-    lppi.successor.create_error = 0
+    assert _state()["creation_outcome"] == "OWN_FINALIZE_PENDING"
+    assert not lppi.successor.persisted
+    lppi.successor.finalize_error = 0
     with pytest.raises(RuntimeError, match="RETAINED_AUTHORITY_KEY_MISSING"):
         lifecycle.establish_installed_lppi_authority_key(lppi.accept())
+    assert sum(call[0] == "create" for call in lppi.successor.calls) == 1
+
+
+@pytest.mark.parametrize("field", ["public", "unique"])
+def test_own_ambiguous_finalize_requires_exact_created_identity(lppi, field):
+    lppi.successor.finalize_error = 0x80090020
+    lppi.successor.finalize_lost_response = True
+    with pytest.raises(RuntimeError):
+        lifecycle.establish_installed_lppi_authority_key(lppi.accept())
+    assert _state()["creation_outcome"] == "OWN_FINALIZE_PENDING"
+    lppi.successor.finalize_error = 0
+    if field == "public":
+        lppi.successor.private = ec.derive_private_key(107, ec.SECP256R1())
+    else:
+        lppi.successor.properties[(22, "Unique Name")] = wide("TEST_ONLY-foreign-unique")
+    with pytest.raises(RuntimeError, match="RETAINED_AUTHORITY_IDENTITY_MISMATCH"):
+        lifecycle.establish_installed_lppi_authority_key(lppi.accept())
+    assert _state()["status"] == "CREATION_RESERVED"
+    assert not lppi.successor_tbs.commands
+    assert not any(call[0] == "sign" for call in lppi.successor.calls)
+    assert sum(call[0] == "create" for call in lppi.successor.calls) == 1
+
+
+@pytest.mark.parametrize("property_name", ["Export Policy", "Key Usage"])
+def test_failed_creation_profile_cannot_reconcile_a_later_foreign_key(
+    lppi, monkeypatch, property_name
+):
+    accepted = lppi.accept()
+    original = lppi.successor.NCryptSetProperty.function
+
+    def fail_set(key, name, *args):
+        result = original(key, name, *args)
+        return 0x80090029 if name == property_name else result
+
+    monkeypatch.setattr(lppi.successor.NCryptSetProperty, "function", fail_set)
+    with pytest.raises(RuntimeError):
+        lifecycle.establish_installed_lppi_authority_key(accepted)
+    assert _state()["creation_outcome"] == "CREATE_FAILED"
+    assert _state()["status"] == "CREATION_RESERVED"
+    assert not lppi.successor.persisted
+    assert not any(call[0] in {"finalize", "export", "sign"} for call in lppi.successor.calls)
+    assert not lppi.successor_tbs.commands
+    retained_raw = lifecycle._state_path().read_bytes()
+    calls = list(lppi.successor.calls)
+    foreign_properties = dict(lppi.successor.properties)
+    lppi.successor.persisted = True
+    _forbid_successor_authority_gates(monkeypatch)
+    with pytest.raises(RuntimeError, match="LPPI_AUTHORITY_CREATION_OWNERSHIP_NOT_ESTABLISHED"):
+        lifecycle.establish_installed_lppi_authority_key(lppi.accept())
+    assert lppi.successor.calls == calls
+    assert lppi.successor.properties == foreign_properties
+    assert lifecycle._state_path().read_bytes() == retained_raw
     assert sum(call[0] == "create" for call in lppi.successor.calls) == 1
 
 
@@ -328,6 +657,10 @@ def test_preexisting_unreserved_identity_not_adopted(lppi):
     with pytest.raises(RuntimeError, match="PREEXISTING_UNRESERVED_LPPI_AUTHORITY_IDENTITY"):
         lifecycle.establish_installed_lppi_authority_key(lppi.accept())
     assert _state() is None
+    assert lppi.successor.persisted
+    assert not any(
+        call[0] in {"create", "set", "finalize", "sign"} for call in lppi.successor.calls
+    )
 
 
 @pytest.mark.parametrize(
@@ -335,6 +668,7 @@ def test_preexisting_unreserved_identity_not_adopted(lppi):
     [
         "status",
         "history",
+        "creation_outcome",
         "binding_raw_hex",
         "authority_unique_name",
         "package_raw_hex",
@@ -586,7 +920,7 @@ def test_public_active_rows_or_duplicate_records_do_not_construct_capability(lpp
     active.close()
 
 
-def test_successor_native_abi_has_fixed_machine_key_name(monkeypatch):
+def test_successor_native_abi_declares_handle_status_and_fixed_machine_open(monkeypatch):
     dll = TestOnlyNCryptDLL()
     dll.properties[(22, "Name")] = wide(native_key.KEY_NAME)
     monkeypatch.setattr(cng.sys, "platform", "win32")
@@ -595,9 +929,10 @@ def test_successor_native_abi_has_fixed_machine_key_name(monkeypatch):
     assert dll.NCryptCreatePersistedKey.argtypes[0] is cng._HANDLE
     assert dll.NCryptSignHash.restype is cng._STATUS
     provider = native.open_provider()
-    native.create_key(provider)
-    assert ("create", cng.ALGORITHM, native_key.KEY_NAME, cng.MACHINE_KEY) in dll.calls
-    assert not any(call[0] == "create" and call[2] == cng.KEY_NAME for call in dll.calls)
+    assert native.open_key(provider) is None
+    native.free(provider)
+    assert ("open", native_key.KEY_NAME, cng.MACHINE_KEY) in dll.calls
+    assert not any(call[0] == "create" for call in dll.calls)
 
 
 def test_installed_entrypoint_opens_retained_key_only_and_fixed_trust(lppi, monkeypatch):
@@ -654,23 +989,31 @@ def test_live_wrong_ak_signer_cannot_accept_package(lppi):
     assert not lppi.successor.persisted and _state() is None
 
 
+@pytest.mark.parametrize("foreign_on_restart", [False, True])
 def test_crash_after_creation_attempt_marker_before_native_effect_has_no_authority(
-    lppi, monkeypatch
+    lppi, monkeypatch, foreign_on_restart
 ):
     original = lifecycle._write
 
     def marker_then_crash(path, state):
         original(path, state)
-        if state["creation_attempted"]:
+        if state["creation_outcome"] == "ATTEMPT_STARTED":
             raise RuntimeError("TEST_ONLY_CRASH_BEFORE_CNG_CREATE")
 
     monkeypatch.setattr(lifecycle, "_write", marker_then_crash)
     with pytest.raises(RuntimeError, match="TEST_ONLY_CRASH_BEFORE_CNG_CREATE"):
         lifecycle.establish_installed_lppi_authority_key(lppi.accept())
     assert not lppi.successor.persisted
+    retained_raw = lifecycle._state_path().read_bytes()
+    calls = list(lppi.successor.calls)
     monkeypatch.setattr(lifecycle, "_write", original)
-    with pytest.raises(RuntimeError, match="RETAINED_AUTHORITY_KEY_MISSING"):
+    lppi.successor.persisted = foreign_on_restart
+    _forbid_successor_authority_gates(monkeypatch)
+    with pytest.raises(RuntimeError, match="LPPI_AUTHORITY_CREATION_OWNERSHIP_NOT_ESTABLISHED"):
         lifecycle.establish_installed_lppi_authority_key(lppi.accept())
+    assert lppi.successor.calls == calls
+    assert lifecycle._state_path().read_bytes() == retained_raw
+    _assert_no_successor_authority(lppi, "ATTEMPT_STARTED")
     assert not any(call[0] == "create" for call in lppi.successor.calls)
 
 

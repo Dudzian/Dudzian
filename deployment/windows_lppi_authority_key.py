@@ -50,26 +50,67 @@ class _AuthorityNCryptAPI(cng._NCryptAPI):
             raise WindowsLPPIAuthorityKeyError("EMPTY_AUTHORITY_KEY_HANDLE")
         return int(handle.value)
 
-    def create_key(self, provider: int) -> int:
-        handle = cng._HANDLE()
-        cng._check(
-            self.dll.NCryptCreatePersistedKey(
-                provider, ctypes.byref(handle), ALGORITHM, KEY_NAME, 0, cng.MACHINE_KEY
-            ),
-            "CREATE_LPPI_AUTHORITY_KEY",
+    def create_key(self, provider: int, *, accepted_package: object, reservation: object) -> int:
+        from deployment.windows_production_lppi_authority import (
+            _record_creation_identity,
+            _record_creation_outcome,
         )
+
+        accepted = _require_acceptance(accepted_package)
+        descriptor = _reservation(accepted, reservation)
+        _require_descriptor(accepted, descriptor)
+        if descriptor.mode != "create":
+            raise WindowsLPPIAuthorityKeyError("FIRST_NATIVE_CREATION_RESERVATION_REQUIRED")
+        handle = cng._HANDLE()
+        status = self.dll.NCryptCreatePersistedKey(
+            provider, ctypes.byref(handle), ALGORITHM, KEY_NAME, 0, cng.MACHINE_KEY
+        )
+        if status & 0xFFFFFFFF:
+            collision = status & 0xFFFFFFFF == cng.NTE_EXISTS
+            _record_creation_outcome(
+                reservation,
+                accepted_package,
+                "CREATE_COLLISION" if collision else "CREATE_FAILED",
+            )
+            if collision:
+                raise WindowsLPPIAuthorityKeyError("LPPI_AUTHORITY_CREATE_COLLISION")
+            cng._check(status, "CREATE_LPPI_AUTHORITY_KEY")
         if not handle.value:
+            _record_creation_outcome(reservation, accepted_package, "CREATE_FAILED")
             raise WindowsLPPIAuthorityKeyError("EMPTY_AUTHORITY_KEY_HANDLE")
         try:
-            for name, value in (("Export Policy", 0), ("Key Usage", cng.SIGNING_ONLY)):
-                number = cng._DWORD(value)
-                cng._check(
-                    self.dll.NCryptSetProperty(
-                        handle.value, name, ctypes.byref(number), ctypes.sizeof(number), 0
-                    ),
-                    "SET_LPPI_AUTHORITY_KEY_PROFILE",
-                )
-            cng._check(self.dll.NCryptFinalizeKey(handle.value, 0), "FINALIZE_LPPI_AUTHORITY_KEY")
+            try:
+                for name, value in (("Export Policy", 0), ("Key Usage", cng.SIGNING_ONLY)):
+                    number = cng._DWORD(value)
+                    cng._check(
+                        self.dll.NCryptSetProperty(
+                            handle.value, name, ctypes.byref(number), ctypes.sizeof(number), 0
+                        ),
+                        "SET_LPPI_AUTHORITY_KEY_PROFILE",
+                    )
+            except BaseException:
+                _record_creation_outcome(reservation, accepted_package, "CREATE_FAILED")
+                raise
+            # Only our successful Create and configured handle permit ambiguity.
+            # A pre-create attempt marker alone never establishes ownership.
+            _record_creation_outcome(reservation, accepted_package, "OWN_FINALIZE_PENDING")
+            status = self.dll.NCryptFinalizeKey(handle.value, 0)
+            if status & 0xFFFFFFFF == cng.NTE_EXISTS:
+                _record_creation_outcome(reservation, accepted_package, "CREATE_COLLISION")
+                raise WindowsLPPIAuthorityKeyError("LPPI_AUTHORITY_CREATE_COLLISION")
+            if status & 0xFFFFFFFF:
+                # A returned lost response can still leave our handle readable.
+                # Preserve its exact identity, never one opened by fixed name.
+                try:
+                    public, unique, _ = _qualify(self, int(handle.value))
+                except (cng.WindowsCNGPreEnrollmentError, WindowsLPPIAuthorityKeyError, ValueError):
+                    pass
+                else:
+                    _record_creation_identity(reservation, accepted_package, public, unique)
+            cng._check(status, "FINALIZE_LPPI_AUTHORITY_KEY")
+            _record_creation_outcome(reservation, accepted_package, "OWN_FINALIZED")
+            public, unique, _ = _qualify(self, int(handle.value))
+            _record_creation_identity(reservation, accepted_package, public, unique)
         except BaseException:
             self.free(handle.value)
             raise
@@ -298,16 +339,24 @@ def open_or_create_production_lppi_authority_key(
     instance._native, instance._provider, instance._key = native, 0, 0
     try:
         instance._provider = native.open_provider()
-        instance._key = native.open_key(instance._provider) or 0
-        if not instance._key:
-            if descriptor.mode != "create":
-                raise WindowsLPPIAuthorityKeyError("RETAINED_AUTHORITY_KEY_MISSING")
-            instance._key = native.create_key(instance._provider)
+        created = descriptor.mode == "create"
+        if created:
+            # No open-first fallback: a racing fixed-name key is a collision.
+            instance._key = native.create_key(
+                instance._provider, accepted_package=accepted, reservation=reservation
+            )
             native.free(instance._key)
             instance._key = 0
-            instance._key = native.open_key(instance._provider) or 0
-            if not instance._key:
-                raise WindowsLPPIAuthorityKeyError("CREATED_AUTHORITY_KEY_NOT_REOPENABLE")
+            descriptor = _reservation(accepted, reservation)
+            _require_descriptor(accepted, descriptor)
+        instance._key = native.open_key(instance._provider) or 0
+        if not instance._key:
+            error = (
+                "CREATED_AUTHORITY_KEY_NOT_REOPENABLE"
+                if created
+                else "RETAINED_AUTHORITY_KEY_MISSING"
+            )
+            raise WindowsLPPIAuthorityKeyError(error)
         instance._public, instance._unique_name, instance._public_blob_sha256 = _qualify(
             native, instance._key
         )

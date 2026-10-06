@@ -668,7 +668,7 @@
     ],
     "scope": "one initial successor lifecycle in the trusted configured local machine state path; immutable package/request/subject/enrollment/target identity; no replacement generations",
     "reservation": "durably reserve exact acceptance bindings, Production Trust identity, fixed provider/key name and created_at_utc before any native identity-generating effect; acquire exclusive lifecycle ownership",
-    "recovery": "a valid existing reservation may reconcile only the exact fixed CNG key; no new key after ambiguous create, missing reserved identity, lost signature response or restart",
+    "recovery": "RECONCILE opens the exact fixed CNG name only when creation_outcome is OWN_FINALIZE_PENDING or OWN_FINALIZED, proving successful own Create with a nonempty handle and applied properties before Finalize. If exact SEC1/Unique Name is retained, RECOVER must match it. An attempt marker, qualified public profile, CREATE_COLLISION or CREATE_FAILED never permits adoption; missing owned identity fails closed without remint.",
     "candidate_commit": "persist exact reopened qualified CNG Unique Name, raw TPMT_PUBLIC, recomputed fingerprint/Name, attestation, canonical binding and creation timestamp; mismatches fail closed",
     "signature_retention": "persist exact continuity and successor PoP signature bytes before progression; retry reuses retained bytes after cryptographic revalidation and never changes candidate identity",
     "history": "retain every frozen status in order, with exact immutable binding and evidence; trusted restart loader re-verifies proofs and the complete history rather than trusting status flags",
@@ -713,6 +713,7 @@
         "acceptance_live_attestation_hex",
         "acceptance_live_signature_hex",
         "creation_attempted",
+        "creation_outcome",
         "authority_sec1_hex",
         "authority_unique_name",
         "custody_raw_hex",
@@ -727,10 +728,93 @@
       ],
       "boundary": "installer-owned trusted machine state; caller-selected paths and reconstructed public rows cannot issue runtime authority"
     },
-    "creation_attempt": "creation_attempted=false is durable reservation before any attempted effect; set true and fsync before calling NCrypt. Only the private reservation issued for that first invocation may create an absent key. Restart of attempted creation opens existing exact fixed name only; missing identity fails closed and needs reconciliation. A pre-attempt crash may resume the never-attempted reservation.",
-    "candidate_identity_retention": "persist exact SEC1 and CNG Unique Name immediately after reopen qualification, even while CREATION_RESERVED; subsequently retain full TPMT_PUBLIC and binding at CANDIDATE. Any missing or changed retained identity fails closed.",
+    "creation_attempt": "NOT_ATTEMPTED and creation_attempted=false are a durable reservation before any attempted effect; set ATTEMPT_STARTED and creation_attempted=true and fsync before NCryptCreatePersistedKey. Only the first invocation private reservation may attempt native Create, without open-first fallback. Restart of ATTEMPT_STARTED fails closed before open/create. A never-attempted reservation may resume its sole first attempt. Successful own Create with a nonempty handle and applied properties permits OWN_FINALIZE_PENDING, durably fsynced before the sole Finalize call; only OWN_FINALIZE_PENDING or OWN_FINALIZED permits open-only reconciliation.",
+    "candidate_identity_retention": "When own native handle can be qualified after successful or returned ambiguous non-collision Finalize, persist its exact SEC1 and CNG Unique Name before free/reopen and require exact matching thereafter. NTE_EXISTS never permits qualification. If own-handle qualification after ambiguous Finalize is unavailable, or process crash precedes retention, retain OWN_FINALIZE_PENDING and permit only own-stage-authorized open-only reconciliation. After qualified reopen retain exact SEC1/Unique Name while CREATION_RESERVED and set OWN_FINALIZED; subsequently retain full TPMT_PUBLIC and binding at CANDIDATE. Missing or changed retained identity fails closed.",
     "conflict_error": "LPPI_AUTHORITY_KEY_LIFECYCLE_CONFLICT",
-    "active_requalification": "Before restoring or consuming ACTIVE capability: independently reverify all retained signatures and acceptance audit evidence, exact status history and package expiry; open exact successor CNG identity, perform live TPM ReadPublic/CertifyCreation and compare all qualifying-data fields with retained custody, then verify fresh successor private-key PoP without replacing retained binding/signatures."
+    "active_requalification": "Before restoring or consuming ACTIVE capability: independently reverify all retained signatures and acceptance audit evidence, exact status history and package expiry; open exact successor CNG identity, perform live TPM ReadPublic/CertifyCreation and compare all qualifying-data fields with retained custody, then verify fresh successor private-key PoP without replacing retained binding/signatures.",
+    "creation_outcomes": [
+      "NOT_ATTEMPTED",
+      "ATTEMPT_STARTED",
+      "CREATE_COLLISION",
+      "CREATE_FAILED",
+      "OWN_FINALIZE_PENDING",
+      "OWN_FINALIZED"
+    ],
+    "creation_ownership": {
+      "create": {
+        "first_identity_operation": "NCryptCreatePersistedKey",
+        "open_before_create": false,
+        "overwrite_or_delete": false,
+        "authorization": "only the first invocation exact private creation reservation"
+      },
+      "reconcile": {
+        "allowed_outcomes": [
+          "OWN_FINALIZE_PENDING",
+          "OWN_FINALIZED"
+        ],
+        "native_operation": "NCryptOpenKey_ONLY",
+        "remint": false,
+        "retained_identity_match": "exact SEC1 and CNG Unique Name when already retained"
+      },
+      "recover": {
+        "allowed_outcomes": [
+          "OWN_FINALIZE_PENDING",
+          "OWN_FINALIZED"
+        ],
+        "native_operation": "NCryptOpenKey_ONLY",
+        "exact_retained_identity_required": true
+      },
+      "ownership_marker": {
+        "outcome": "OWN_FINALIZE_PENDING",
+        "prerequisites": [
+          "OWN_NCryptCreatePersistedKey_SUCCESS",
+          "NONEMPTY_OWN_HANDLE",
+          "REQUIRED_PROPERTIES_APPLIED"
+        ],
+        "durably_fsynced_before": "NCryptFinalizeKey"
+      },
+      "collision": {
+        "status": "0x8009000f",
+        "symbol": "NTE_EXISTS",
+        "native_operations": [
+          "NCryptCreatePersistedKey",
+          "NCryptFinalizeKey"
+        ],
+        "outcome": "CREATE_COLLISION",
+        "terminal": true,
+        "restart_open_or_create": false,
+        "qualification_signing_custody_or_active": false
+      },
+      "definitive_create_failure": {
+        "cases": [
+          "OTHER_NCryptCreatePersistedKey_ERROR",
+          "SUCCESS_WITH_EMPTY_HANDLE",
+          "REQUIRED_PROPERTY_FAILURE"
+        ],
+        "outcome": "CREATE_FAILED",
+        "default": "FAIL_CLOSED",
+        "restart_open_or_create": false
+      },
+      "attempt_without_ownership": {
+        "outcome": "ATTEMPT_STARTED",
+        "restart_open_or_create": false,
+        "profile_qualification_establishes_ownership": false
+      },
+      "ambiguous_finalize": {
+        "outcome": "OWN_FINALIZE_PENDING",
+        "own_handle_identity_retention": "after Finalize when own handle qualification succeeds, before free/reopen",
+        "qualification_unavailable_or_process_crash": "retain own-stage-authorized open-only reconciliation without remint",
+        "qualified_reconciliation_outcome": "OWN_FINALIZED"
+      },
+      "legacy_record_without_creation_outcome": {
+        "load": "REJECT",
+        "automatic_migration": false
+      },
+      "candidate_ownership": {
+        "from_status": "CANDIDATE",
+        "required_outcome": "OWN_FINALIZED"
+      }
+    }
   },
   "active_capability": {
     "name": "VerifiedActiveLPPIAuthorityKey",

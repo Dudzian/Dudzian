@@ -55,6 +55,15 @@ STATUSES = (
     "VERIFIED_CONTINUITY",
     "ACTIVE",
 )
+CREATION_OUTCOMES = (
+    "NOT_ATTEMPTED",
+    "ATTEMPT_STARTED",
+    "CREATE_COLLISION",
+    "CREATE_FAILED",
+    "OWN_FINALIZE_PENDING",
+    "OWN_FINALIZED",
+)
+_OWN_CREATION_OUTCOMES = frozenset({"OWN_FINALIZE_PENDING", "OWN_FINALIZED"})
 _FIELDS = frozenset(
     {
         "schema_version",
@@ -71,6 +80,7 @@ _FIELDS = frozenset(
         "acceptance_live_attestation_hex",
         "acceptance_live_signature_hex",
         "creation_attempted",
+        "creation_outcome",
         "authority_sec1_hex",
         "authority_unique_name",
         "custody_raw_hex",
@@ -170,6 +180,11 @@ def _read(path: Path) -> dict[str, Any] | None:
             or type(state["creation_attempted"]) is not bool
         ):
             raise ValueError("state initial generation")
+        outcome = state["creation_outcome"]
+        if outcome not in CREATION_OUTCOMES or state["creation_attempted"] != (
+            outcome != "NOT_ATTEMPTED"
+        ):
+            raise ValueError("state creation outcome")
         if (
             type(state["reservation_id"]) is not str
             or len(bytes.fromhex(state["reservation_id"])) != 32
@@ -180,9 +195,11 @@ def _read(path: Path) -> dict[str, Any] | None:
             public is not None and (type(public) is not str or type(unique) is not str)
         ):
             raise ValueError("state identity")
+        if public is not None and outcome not in _OWN_CREATION_OUTCOMES:
+            raise ValueError("state unowned identity")
         stage = STATUSES.index(status)
         if stage >= 1:
-            if public is None or not state["creation_attempted"]:
+            if public is None or outcome != "OWN_FINALIZED":
                 raise ValueError("state candidate")
             binding = LPPIAuthorityKeyBindingV1.from_canonical_bytes(
                 bytes.fromhex(state["binding_raw_hex"])
@@ -342,14 +359,20 @@ def require_lppi_authority_key_reservation(
     if state is None or state["reservation_id"] != snapshot.reservation_id:
         raise LPPIAuthorityLifecycleError("LPPI_AUTHORITY_KEY_LIFECYCLE_CONFLICT")
     _targets(state, accepted)
+    outcome = state["creation_outcome"]
+    if outcome == "CREATE_COLLISION":
+        raise LPPIAuthorityLifecycleError("LPPI_AUTHORITY_CREATE_COLLISION")
+    if outcome == "CREATE_FAILED" or (
+        outcome == "ATTEMPT_STARTED" and not snapshot.creation_authorized
+    ):
+        raise LPPIAuthorityLifecycleError("LPPI_AUTHORITY_CREATION_OWNERSHIP_NOT_ESTABLISHED")
     public = state["authority_sec1_hex"]
-    mode = (
-        "recover"
-        if public is not None
-        else "create"
-        if snapshot.creation_authorized
-        else "reconcile"
-    )
+    if outcome in _OWN_CREATION_OUTCOMES:
+        mode = "recover" if public is not None else "reconcile"
+    elif outcome == "ATTEMPT_STARTED" and snapshot.creation_authorized:
+        mode = "create"
+    else:
+        raise LPPIAuthorityLifecycleError("LPPI_AUTHORITY_CREATION_OWNERSHIP_NOT_ESTABLISHED")
     return LPPIAuthorityKeyReservationDescriptor(
         mode,
         bytes.fromhex(public) if public is not None else None,
@@ -358,6 +381,69 @@ def require_lppi_authority_key_reservation(
         accepted.pre_enrollment_key_unique_name,
         snapshot.reservation_id,
     )
+
+
+def _record_creation_outcome(reservation: object, accepted_package: object, outcome: str) -> None:
+    """Journal native progress only for this invocation's private reservation."""
+    snapshot, state = _native_creation_state(reservation, accepted_package)
+    if not snapshot.creation_authorized:
+        raise LPPIAuthorityLifecycleError("TRUSTED_LPPI_CREATION_RESERVATION_REQUIRED")
+    transitions = {
+        "ATTEMPT_STARTED": {"CREATE_COLLISION", "CREATE_FAILED", "OWN_FINALIZE_PENDING"},
+        "OWN_FINALIZE_PENDING": {"CREATE_COLLISION", "OWN_FINALIZED"},
+    }
+    if outcome not in transitions.get(state["creation_outcome"], set()):
+        raise LPPIAuthorityLifecycleError("LPPI_AUTHORITY_CREATION_OUTCOME_ORDER_VIOLATION")
+    state["creation_outcome"] = outcome
+    _write(snapshot.path, state)
+
+
+def _native_creation_state(
+    reservation: object, accepted_package: object
+) -> tuple[_ReservationSnapshot, dict[str, Any]]:
+    # Journaling an effect/failure must not depend on a new live TPM proof that
+    # could fail after the effect. Authority issuance still performs full guards.
+    if type(reservation) is not _CreationReservation:
+        raise LPPIAuthorityLifecycleError("TRUSTED_LPPI_CREATION_RESERVATION_REQUIRED")
+    snapshot = _RESERVATIONS.get(reservation)
+    if (
+        snapshot is None
+        or snapshot.accepted is not accepted_package
+        or snapshot.path != _state_path()
+    ):
+        raise LPPIAuthorityLifecycleError("TRUSTED_LPPI_CREATION_RESERVATION_REQUIRED")
+    state = _read(snapshot.path)
+    if (
+        state is None
+        or state["reservation_id"] != snapshot.reservation_id
+        or state["status"] != "CREATION_RESERVED"
+    ):
+        raise LPPIAuthorityLifecycleError("LPPI_AUTHORITY_KEY_LIFECYCLE_CONFLICT")
+    return snapshot, state
+
+
+def _record_creation_identity(
+    reservation: object, accepted_package: object, public: bytes, unique: str
+) -> None:
+    """Retain the qualified own handle before releasing it for fixed-name reopen."""
+    from bot_core.licensing.pre_enrollment import validate_public_key
+
+    snapshot, state = _native_creation_state(reservation, accepted_package)
+    if not snapshot.creation_authorized or state["creation_outcome"] not in _OWN_CREATION_OUTCOMES:
+        raise LPPIAuthorityLifecycleError("TRUSTED_LPPI_CREATION_RESERVATION_REQUIRED")
+    validate_public_key(public)
+    if (
+        public == snapshot.accepted.pre_enrollment_public_key_bytes
+        or unique == snapshot.accepted.pre_enrollment_key_unique_name
+    ):
+        raise LPPIAuthorityLifecycleError("SUCCESSOR_AUTHORITY_KEY_MUST_BE_DISTINCT")
+    if state["authority_sec1_hex"] is not None and (
+        state["authority_sec1_hex"] != public.hex() or state["authority_unique_name"] != unique
+    ):
+        raise LPPIAuthorityLifecycleError("RETAINED_AUTHORITY_IDENTITY_MISMATCH")
+    state["authority_sec1_hex"] = public.hex()
+    state["authority_unique_name"] = unique
+    _write(snapshot.path, state)
 
 
 def _reserve(
@@ -383,6 +469,7 @@ def _reserve(
             "acceptance_live_attestation_hex": accepted.live_attestation_raw.hex(),
             "acceptance_live_signature_hex": accepted.live_signature.hex(),
             "creation_attempted": False,
+            "creation_outcome": "NOT_ATTEMPTED",
             "authority_sec1_hex": None,
             "authority_unique_name": None,
             "custody_raw_hex": None,
@@ -397,9 +484,14 @@ def _reserve(
         }
         _write(path, state)
     _targets(state, accepted)
+    if state["creation_outcome"] == "CREATE_COLLISION":
+        raise LPPIAuthorityLifecycleError("LPPI_AUTHORITY_CREATE_COLLISION")
+    if state["creation_outcome"] in {"ATTEMPT_STARTED", "CREATE_FAILED"}:
+        raise LPPIAuthorityLifecycleError("LPPI_AUTHORITY_CREATION_OWNERSHIP_NOT_ESTABLISHED")
     creation_authorized = not state["creation_attempted"]
     if creation_authorized:
         state["creation_attempted"] = True
+        state["creation_outcome"] = "ATTEMPT_STARTED"
         _write(path, state)
     reservation = object.__new__(_CreationReservation)
     _RESERVATIONS[reservation] = _ReservationSnapshot(
@@ -547,6 +639,14 @@ def establish_installed_lppi_authority_key(
         reservation, state = _reserve(path, accepted)
         key = open_or_create_production_lppi_authority_key(accepted, reservation)
         try:
+            # Native phase journaling may have advanced the durable record.
+            current = _read(path)
+            if current is None or current["reservation_id"] != state["reservation_id"]:
+                raise LPPIAuthorityLifecycleError("LPPI_AUTHORITY_KEY_LIFECYCLE_CONFLICT")
+            state = current
+            if state["creation_outcome"] == "OWN_FINALIZE_PENDING":
+                state["creation_outcome"] = "OWN_FINALIZED"
+                _write(path, state)
             if state["authority_sec1_hex"] is None:
                 state["authority_sec1_hex"] = key.public_key_bytes.hex()
                 state["authority_unique_name"] = key.key_unique_name

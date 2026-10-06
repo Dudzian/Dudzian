@@ -47,11 +47,40 @@ exclusive lock i atomic replace po fsync. Installer-owned machine state musi
 zachować istniejącą ochronę katalogu `State`; publiczny JSON nie jest authority.
 Nie jest to authenticated rollback-proof storage ani Protected Freshness.
 
+Ownership oddziela się od CNG qualification. Prawidłowy hardware-backed profil
+foreign key nie daje tej rezerwacji prawa do adopcji. Wcześniejszy flow
+`probe absent → reserve → foreign key appears → open_key` mógł adoptować taki key.
+CREATE wykonuje teraz `NCryptCreatePersistedKey` jako pierwszą operację na
+successor identity, bez `open_key` ani overwrite/delete. `NTE_EXISTS=0x8009000F`
+z Create lub Finalize zapisuje terminal `CREATE_COLLISION`. Retry odmawia przed
+open/create, więc collision nie zamienia się w RECONCILE.
+
+Exact durable pole `creation_outcome` przyjmuje: `NOT_ATTEMPTED`,
+`ATTEMPT_STARTED`, `CREATE_COLLISION`, `CREATE_FAILED`, `OWN_FINALIZE_PENDING`
+albo `OWN_FINALIZED`. `ATTEMPT_STARTED` jest fsynced przed native Create, ale
+nie ustanawia ownership. Inny błąd Create, pusty handle lub failure wymaganych
+properties zapisuje `CREATE_FAILED`; restart również odmawia przed open/create.
+Record bez `creation_outcome` zostaje odrzucony bez automatycznej migracji.
+
+`OWN_FINALIZE_PENDING` wymaga successful own Create, niepustego własnego handle
+i zastosowania properties. Marker jest fsynced przed jedynym `NCryptFinalizeKey`.
+Tylko `OWN_FINALIZE_PENDING` albo `OWN_FINALIZED` pozwala na open-only RECONCILE.
+Po successful lub returned ambiguous non-collision Finalize można zakwalifikować
+własny nadal otwarty handle; gdy to się uda, jego SEC1 i Unique Name są utrwalane
+przed free/reopen. RECOVER wymaga exact retained identity. Gdy kwalifikacja
+własnego handle po ambiguous Finalize jest niedostępna lub proces wcześniej
+ulega awarii, pozostaje own-stage-authorized reconciliation bez drugiego mintu.
+Qualified reconciliation kończy się `OWN_FINALIZED`.
+`CANDIDATE` i dalsze statusy wymagają dokładnie tego outcome.
+
 | Cut-point | Recovery |
 | --- | --- |
-| Rezerwacja, native creation jeszcze nie próbowano | Resume tej samej rezerwacji; brak authority przed gates. |
-| Marker native attempt, klucza brak | Reconciliation required; brak ponownego mintu. |
-| Niejednoznaczny create, klucz istnieje | Otwórz i zakwalifikuj exact fixed identity. |
+| `NOT_ATTEMPTED`, native creation jeszcze nie próbowano | Resume tej samej rezerwacji i jej jedynej pierwszej próby; brak authority przed gates. |
+| `ATTEMPT_STARTED`, crash przed native effect albo own markerem | Ownership nieustanowione; restart odmawia przed open/create, także gdy istnieje foreign key. |
+| Race after probe albo `NTE_EXISTS` | Terminal `CREATE_COLLISION`; bez kwalifikacji, custody, podpisów, binding i ACTIVE; retry również odmawia. |
+| Inny Create error, pusty handle lub property failure | `CREATE_FAILED`; bez adopcji późniejszego existing key i bez kolejnego mintu. |
+| `OWN_FINALIZE_PENDING`, własny Finalize response lost, klucz istnieje | Open-only RECONCILE; exact comparison retained identity, jeśli dostępna; qualification i dalsze gates bez remint. |
+| Own outcome, retained key missing | Fail-closed; brak kolejnego mintu. |
 | Klucz reopened, record nadal reserved | Zachowaj exact SEC1/Unique Name; dokończ custody/binding. |
 | Continuity/PoP już retained | Zweryfikuj i użyj exact retained bytes oraz candidate. |
 | Custody verified, ACTIVE jeszcze nie committed | Resume exact candidate; powtórz kompletne gates. |

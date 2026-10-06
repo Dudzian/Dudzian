@@ -94,6 +94,7 @@ def test_runtime_parent_exact_fields_domains_profiles_and_state():
         == parent["binding_artifact"]["status_progression"]
     )
     assert set(value["durable_lifecycle"]["storage"]["record_fields"]) == lifecycle._FIELDS
+    assert value["durable_lifecycle"]["creation_outcomes"] == list(lifecycle.CREATION_OUTCOMES)
     assert set(value["custody_evidence"]["canonical_fields"]) == custody.CUSTODY_FIELDS
     assert set(value["custody_evidence"]["qualifying_data_fields"]) == custody.BINDING_FIELDS
     assert value["custody_evidence"]["domain"].encode() + b"\0" == custody.CUSTODY_CREATION_DOMAIN
@@ -105,6 +106,60 @@ def test_runtime_parent_exact_fields_domains_profiles_and_state():
         value["target_package_acceptance"]["domain"].encode() + b"\0"
         == acceptance.PACKAGE_ACCEPTANCE_DOMAIN
     )
+
+
+def test_creation_ownership_excludes_collision_and_attempt_only_reconciliation():
+    ownership = contract()["durable_lifecycle"]["creation_ownership"]
+    assert ownership["create"]["first_identity_operation"] == "NCryptCreatePersistedKey"
+    assert ownership["create"]["open_before_create"] is False
+    assert ownership["create"]["overwrite_or_delete"] is False
+    own_outcomes = ["OWN_FINALIZE_PENDING", "OWN_FINALIZED"]
+    assert set(own_outcomes) == lifecycle._OWN_CREATION_OUTCOMES
+    for mode in ("reconcile", "recover"):
+        assert ownership[mode]["allowed_outcomes"] == own_outcomes
+        assert ownership[mode]["native_operation"] == "NCryptOpenKey_ONLY"
+    assert ownership["reconcile"]["remint"] is False
+    assert ownership["recover"]["exact_retained_identity_required"] is True
+    assert ownership["ownership_marker"] == {
+        "outcome": "OWN_FINALIZE_PENDING",
+        "prerequisites": [
+            "OWN_NCryptCreatePersistedKey_SUCCESS",
+            "NONEMPTY_OWN_HANDLE",
+            "REQUIRED_PROPERTIES_APPLIED",
+        ],
+        "durably_fsynced_before": "NCryptFinalizeKey",
+    }
+    collision = ownership["collision"]
+    assert int(collision["status"], 16) == 0x8009000F
+    assert collision["symbol"] == "NTE_EXISTS"
+    assert collision["native_operations"] == ["NCryptCreatePersistedKey", "NCryptFinalizeKey"]
+    assert collision["outcome"] == "CREATE_COLLISION"
+    assert collision["terminal"] is True
+    assert collision["restart_open_or_create"] is False
+    assert collision["qualification_signing_custody_or_active"] is False
+    failure = ownership["definitive_create_failure"]
+    assert failure["cases"] == [
+        "OTHER_NCryptCreatePersistedKey_ERROR",
+        "SUCCESS_WITH_EMPTY_HANDLE",
+        "REQUIRED_PROPERTY_FAILURE",
+    ]
+    assert failure["outcome"] == "CREATE_FAILED"
+    assert failure["default"] == "FAIL_CLOSED"
+    assert failure["restart_open_or_create"] is False
+    attempt = ownership["attempt_without_ownership"]
+    assert attempt["outcome"] == "ATTEMPT_STARTED"
+    assert attempt["restart_open_or_create"] is False
+    assert attempt["profile_qualification_establishes_ownership"] is False
+    assert ownership["ambiguous_finalize"]["outcome"] == "OWN_FINALIZE_PENDING"
+    assert ownership["ambiguous_finalize"]["qualified_reconciliation_outcome"] == "OWN_FINALIZED"
+    assert ownership["legacy_record_without_creation_outcome"] == {
+        "load": "REJECT",
+        "automatic_migration": False,
+    }
+    assert ownership["candidate_ownership"] == {
+        "from_status": "CANDIDATE",
+        "required_outcome": "OWN_FINALIZED",
+    }
 
 
 @pytest.mark.parametrize(
