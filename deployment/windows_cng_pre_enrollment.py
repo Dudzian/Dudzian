@@ -530,6 +530,49 @@ class WindowsCNGPreEnrollmentKey:
             instance.close()
             raise
 
+    @classmethod
+    def open_existing(cls, state_directory: Path) -> WindowsCNGPreEnrollmentKey:
+        """Open committed production identity without reserving or generating a key."""
+        if cls is not WindowsCNGPreEnrollmentKey:
+            raise TypeError("production CNG adapter cannot be substituted")
+        native = _load_native()
+        if type(native) is not _NCryptAPI:
+            raise TypeError("production CNG adapter requires the exact native boundary")
+        instance = object.__new__(cls)
+        instance._native, instance._provider, instance._key = native, 0, 0
+        try:
+            instance._provider = native.open_provider()
+            with _state_lock(state_directory) as state_path:
+                state = _read_state(state_path)
+                instance._key = native.open_key(instance._provider) or 0
+                if state is None:
+                    raise WindowsCNGPreEnrollmentError("RETAINED_PRE_ENROLLMENT_IDENTITY_REQUIRED")
+                if state["lifecycle"] != "COMMITTED":
+                    raise WindowsCNGPreEnrollmentError("COMMITTED_PRE_ENROLLMENT_IDENTITY_REQUIRED")
+                if not instance._key:
+                    raise WindowsCNGPreEnrollmentError(
+                        "PREVIOUS_IDENTITY_MISSING_RECONCILIATION_REQUIRED"
+                    )
+                instance._public, instance._unique_name = instance._qualify()
+                if state["public_key_fingerprint_sha256"] != public_key_fingerprint(
+                    instance._public
+                ):
+                    raise WindowsCNGPreEnrollmentError("COMMITTED_IDENTITY_MISMATCH")
+                instance._state_directory = state_path.parent
+            _ISSUED_CNG_KEYS[instance] = _VerifiedCNGKeySnapshot(
+                native,
+                native.dll,
+                instance._provider,
+                instance._key,
+                instance._public,
+                instance._unique_name,
+                instance._state_directory,
+            )
+            return require_verified_production_cng_key(instance)
+        except BaseException:
+            instance.close()
+            raise
+
     def _qualify(self) -> tuple[bytes, str]:
         if not self._key:
             raise WindowsCNGPreEnrollmentError("KEY_HANDLE_CLOSED")
@@ -618,6 +661,59 @@ class WindowsCNGPreEnrollmentKey:
             signature,
             digest,
             ec.ECDSA(utils.Prehashed(hashes.SHA256())),
+        )
+        return signature
+
+    def sign_package_acceptance(
+        self, challenge_raw: bytes, *, production_trust_context: object
+    ) -> bytes:
+        """Sign only the frozen package acceptance challenge with the retained key."""
+        from bot_core.licensing.lppi_package_acceptance import (
+            PACKAGE_ACCEPTANCE_DOMAIN,
+            validate_package_acceptance_challenge,
+        )
+        from deployment.windows_stage9_production_trust import (
+            require_current_production_trust_context,
+        )
+
+        require_current_production_trust_context(production_trust_context)
+        require_verified_production_cng_key(self)
+        challenge = validate_package_acceptance_challenge(challenge_raw)
+        if challenge["pre_enrollment_public_key_fingerprint_sha256"] != public_key_fingerprint(
+            self.public_key_bytes
+        ):
+            raise WindowsCNGPreEnrollmentError("PACKAGE_ACCEPTANCE_KEY_MISMATCH")
+        return self._sign_lppi_bytes(
+            PACKAGE_ACCEPTANCE_DOMAIN + hashlib.sha256(challenge_raw).digest()
+        )
+
+    def sign_authority_continuity(
+        self, binding_raw: bytes, *, production_trust_context: object
+    ) -> bytes:
+        """Sign the exact initial successor binding with its pre-enrollment key."""
+        from bot_core.licensing.lppi_package_acceptance import validate_continuity_payload
+        from deployment.windows_stage9_production_trust import (
+            require_current_production_trust_context,
+        )
+
+        require_current_production_trust_context(production_trust_context)
+        require_verified_production_cng_key(self)
+        binding = validate_continuity_payload(binding_raw)
+        if binding["pre_enrollment_public_key_fingerprint_sha256"] != public_key_fingerprint(
+            self.public_key_bytes
+        ):
+            raise WindowsCNGPreEnrollmentError("REJECT_CONTINUITY_SIGNATURE_KEY_MISMATCH")
+        return self._sign_lppi_bytes(
+            b"CryptoHunter.Stage9.LPPIAuthorityKeyContinuity.v1\x00"
+            + hashlib.sha256(binding_raw).digest()
+        )
+
+    def _sign_lppi_bytes(self, signing_bytes: bytes) -> bytes:
+        require_verified_production_cng_key(self)
+        digest = hashlib.sha256(signing_bytes).digest()
+        signature = self._native.sign_digest(self._key, digest)
+        validate_public_key(self.public_key_bytes).verify(
+            signature, digest, ec.ECDSA(utils.Prehashed(hashes.SHA256()))
         )
         return signature
 
