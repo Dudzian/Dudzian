@@ -38,7 +38,7 @@ def test_exact_subordinate_freeze_and_parent_integrity():
     assert freeze["parent_contract_sha256"] == PARENT_SHA
     assert freeze["artifacts"] == [
         {
-            "canonical_artifact": str(CONTRACT.relative_to(ROOT)),
+            "canonical_artifact": CONTRACT.relative_to(ROOT).as_posix(),
             "canonical_schema_version": value["schema_version"],
             "sha256": hashlib.sha256(CONTRACT.read_bytes()).hexdigest(),
         }
