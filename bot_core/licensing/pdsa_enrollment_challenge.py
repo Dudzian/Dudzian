@@ -310,6 +310,79 @@ def require_verified_issued_challenge(
     return value
 
 
+def _prepare_authorization_schema(db: sqlite3.Connection) -> None:
+    """Never invent full trust metadata for a prior fixed-pair reservation."""
+    db.execute("BEGIN IMMEDIATE")
+    columns = {
+        row["name"]: row for row in db.execute("PRAGMA table_info(pdsa_authorization_issuances)")
+    }
+    legacy_columns = {
+        "pdsa_challenge_id",
+        "pdsa_challenge_digest_sha256",
+        "pre_enrollment_request_digest_sha256",
+        "request_raw",
+        "payload_raw",
+        "provisioning_subject_id",
+        "enrollment_reference",
+        "issued_at_utc",
+        "expires_at_utc",
+        "signer_ids_raw",
+        "state",
+        "package_raw",
+        "pdsa_package_digest_sha256",
+    }
+    expected_columns = legacy_columns | {
+        "production_trust_raw",
+        "authorized_signer_ids_raw",
+        "required_threshold",
+    }
+    if columns:
+        if set(columns) == legacy_columns and columns["signer_ids_raw"]["notnull"] == 1:
+            if db.execute("SELECT 1 FROM pdsa_authorization_issuances LIMIT 1").fetchone():
+                raise PDSAChallengeError("PDSA_AUTHORIZATION_ISSUANCE_SCHEMA_MISMATCH")
+            # An empty old table carries no identity or quorum result to preserve.
+            db.execute("DROP TABLE pdsa_authorization_issuances")
+        elif (
+            set(columns) != expected_columns
+            or columns["signer_ids_raw"]["notnull"] != 0
+            or any(
+                columns[name]["notnull"] != 1
+                for name in (
+                    "production_trust_raw",
+                    "authorized_signer_ids_raw",
+                    "required_threshold",
+                )
+            )
+        ):
+            raise PDSAChallengeError("PDSA_AUTHORIZATION_ISSUANCE_SCHEMA_MISMATCH")
+    db.execute(
+        """CREATE TABLE IF NOT EXISTS pdsa_authorization_issuances (
+            pdsa_challenge_id TEXT PRIMARY KEY,
+            pdsa_challenge_digest_sha256 TEXT NOT NULL,
+            pre_enrollment_request_digest_sha256 TEXT NOT NULL UNIQUE,
+            request_raw BLOB NOT NULL,
+            payload_raw BLOB NOT NULL,
+            provisioning_subject_id TEXT NOT NULL UNIQUE,
+            enrollment_reference TEXT NOT NULL UNIQUE,
+            issued_at_utc TEXT NOT NULL,
+            expires_at_utc TEXT NOT NULL,
+            production_trust_raw BLOB NOT NULL,
+            authorized_signer_ids_raw BLOB NOT NULL,
+            required_threshold INTEGER NOT NULL CHECK(required_threshold=2),
+            signer_ids_raw BLOB,
+            state TEXT NOT NULL CHECK(state IN ('RESERVED','SIGNED','COMMITTED')),
+            package_raw BLOB,
+            pdsa_package_digest_sha256 TEXT UNIQUE,
+            CHECK((state='RESERVED' AND package_raw IS NULL
+                AND pdsa_package_digest_sha256 IS NULL AND signer_ids_raw IS NULL)
+                OR (state IN ('SIGNED','COMMITTED') AND package_raw IS NOT NULL
+                AND pdsa_package_digest_sha256 IS NOT NULL AND signer_ids_raw IS NOT NULL)),
+            FOREIGN KEY(pdsa_challenge_id) REFERENCES pdsa_challenges(challenge_id)
+        )"""
+    )
+    db.commit()
+
+
 class PDSAChallengeStore:
     """SQLite mechanics; only the installed issuer factory grants store authority.
 
@@ -340,28 +413,7 @@ class PDSAChallengeStore:
                         AND request_digest IS NULL AND receipt_raw IS NULL))
                 )"""
             )
-            db.execute(
-                """CREATE TABLE IF NOT EXISTS pdsa_authorization_issuances (
-                    pdsa_challenge_id TEXT PRIMARY KEY,
-                    pdsa_challenge_digest_sha256 TEXT NOT NULL,
-                    pre_enrollment_request_digest_sha256 TEXT NOT NULL UNIQUE,
-                    request_raw BLOB NOT NULL,
-                    payload_raw BLOB NOT NULL,
-                    provisioning_subject_id TEXT NOT NULL UNIQUE,
-                    enrollment_reference TEXT NOT NULL UNIQUE,
-                    issued_at_utc TEXT NOT NULL,
-                    expires_at_utc TEXT NOT NULL,
-                    signer_ids_raw BLOB NOT NULL,
-                    state TEXT NOT NULL CHECK(state IN ('RESERVED','SIGNED','COMMITTED')),
-                    package_raw BLOB,
-                    pdsa_package_digest_sha256 TEXT UNIQUE,
-                    CHECK((state='RESERVED' AND package_raw IS NULL
-                        AND pdsa_package_digest_sha256 IS NULL)
-                        OR (state IN ('SIGNED','COMMITTED') AND package_raw IS NOT NULL
-                        AND pdsa_package_digest_sha256 IS NOT NULL)),
-                    FOREIGN KEY(pdsa_challenge_id) REFERENCES pdsa_challenges(challenge_id)
-                )"""
-            )
+            _prepare_authorization_schema(db)
 
     def __setattr__(self, name: str, value: object) -> None:
         raise TypeError("PDSAChallengeStore configuration is immutable")

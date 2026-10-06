@@ -616,6 +616,137 @@ def test_connection_requires_full_synchronization_and_closes(harness):
         db.execute("SELECT 1")
 
 
+_TEST_ONLY_LEGACY_AUTHORIZATION_SCHEMA = """CREATE TABLE pdsa_authorization_issuances (
+    pdsa_challenge_id TEXT PRIMARY KEY,
+    pdsa_challenge_digest_sha256 TEXT NOT NULL,
+    pre_enrollment_request_digest_sha256 TEXT NOT NULL UNIQUE,
+    request_raw BLOB NOT NULL,
+    payload_raw BLOB NOT NULL,
+    provisioning_subject_id TEXT NOT NULL UNIQUE,
+    enrollment_reference TEXT NOT NULL UNIQUE,
+    issued_at_utc TEXT NOT NULL,
+    expires_at_utc TEXT NOT NULL,
+    signer_ids_raw BLOB NOT NULL,
+    state TEXT NOT NULL CHECK(state IN ('RESERVED','SIGNED','COMMITTED')),
+    package_raw BLOB,
+    pdsa_package_digest_sha256 TEXT UNIQUE,
+    CHECK((state='RESERVED' AND package_raw IS NULL
+        AND pdsa_package_digest_sha256 IS NULL)
+        OR (state IN ('SIGNED','COMMITTED') AND package_raw IS NOT NULL
+        AND pdsa_package_digest_sha256 IS NOT NULL)),
+    FOREIGN KEY(pdsa_challenge_id) REFERENCES pdsa_challenges(challenge_id)
+)"""
+
+
+def _test_only_legacy_authorization_database(tmp_path: Path, *, state: str | None) -> Path:
+    path = tmp_path / "TEST_ONLY_LEGACY_AUTHORIZATION.sqlite"
+    with sqlite3.connect(path) as db:
+        db.execute(_TEST_ONLY_LEGACY_AUTHORIZATION_SCHEMA)
+        if state is not None:
+            db.execute(
+                "INSERT INTO pdsa_authorization_issuances VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    "TEST_ONLY_CHALLENGE",
+                    "ab" * 32,
+                    "cd" * 32,
+                    b"TEST_ONLY_EXACT_REQUEST",
+                    b"TEST_ONLY_EXACT_PAYLOAD",
+                    "TEST_ONLY_DURABLE_SUBJECT",
+                    "TEST_ONLY_DURABLE_REFERENCE",
+                    "2026-10-06T12:00:00Z",
+                    "2026-10-06T13:00:00Z",
+                    canonical_json_bytes(["TEST_ONLY_K1", "TEST_ONLY_K2"]),
+                    state,
+                    None if state == "RESERVED" else b"TEST_ONLY_EXACT_SIGNED_PACKAGE",
+                    None if state == "RESERVED" else "ef" * 32,
+                ),
+            )
+    return path
+
+
+def test_empty_legacy_authorization_schema_upgrades_without_inventing_quorum(tmp_path):
+    path = _test_only_legacy_authorization_database(tmp_path, state=None)
+    store = challenge.PDSAChallengeStore(path)
+    with store._connect() as db:
+        columns = {
+            row["name"]: row
+            for row in db.execute("PRAGMA table_info(pdsa_authorization_issuances)")
+        }
+        assert columns["production_trust_raw"]["notnull"] == 1
+        assert columns["authorized_signer_ids_raw"]["notnull"] == 1
+        assert columns["required_threshold"]["notnull"] == 1
+        assert columns["signer_ids_raw"]["notnull"] == 0
+        assert db.execute("SELECT * FROM pdsa_authorization_issuances").fetchall() == []
+    # Reopening the current schema is idempotent and does not create a reservation.
+    challenge.PDSAChallengeStore(path)
+    with sqlite3.connect(path) as db:
+        assert db.execute("SELECT * FROM pdsa_authorization_issuances").fetchall() == []
+
+
+@pytest.mark.parametrize("state", ["RESERVED", "SIGNED", "COMMITTED"])
+def test_populated_legacy_authorization_schema_fails_closed_and_preserves_exact_rows(
+    tmp_path, state
+):
+    path = _test_only_legacy_authorization_database(tmp_path, state=state)
+    with sqlite3.connect(path) as db:
+        schema_before = db.execute(
+            "SELECT sql,rootpage FROM sqlite_master WHERE name='pdsa_authorization_issuances'"
+        ).fetchone()
+        rows_before = db.execute("SELECT * FROM pdsa_authorization_issuances").fetchall()
+    with pytest.raises(
+        challenge.PDSAChallengeError, match="PDSA_AUTHORIZATION_ISSUANCE_SCHEMA_MISMATCH"
+    ):
+        challenge.PDSAChallengeStore(path)
+    with sqlite3.connect(path) as db:
+        assert (
+            db.execute(
+                "SELECT sql,rootpage FROM sqlite_master WHERE name='pdsa_authorization_issuances'"
+            ).fetchone()
+            == schema_before
+        )
+        assert db.execute("SELECT * FROM pdsa_authorization_issuances").fetchall() == rows_before
+        assert "production_trust_raw" not in {
+            row[1] for row in db.execute("PRAGMA table_info(pdsa_authorization_issuances)")
+        }
+
+
+@pytest.mark.parametrize(
+    "malformed_schema",
+    [
+        "CREATE TABLE pdsa_authorization_issuances (pdsa_challenge_id TEXT PRIMARY KEY)",
+        _TEST_ONLY_LEGACY_AUTHORIZATION_SCHEMA.replace(
+            "signer_ids_raw BLOB NOT NULL,",
+            "production_trust_raw BLOB NOT NULL,authorized_signer_ids_raw BLOB NOT NULL,"
+            "required_threshold INTEGER NOT NULL,signer_ids_raw BLOB NOT NULL,",
+        ),
+        _TEST_ONLY_LEGACY_AUTHORIZATION_SCHEMA.replace(
+            "signer_ids_raw BLOB NOT NULL,",
+            "production_trust_raw BLOB,authorized_signer_ids_raw BLOB NOT NULL,"
+            "required_threshold INTEGER NOT NULL,signer_ids_raw BLOB,",
+        ),
+    ],
+    ids=["missing_quorum_columns", "selected_pair_required_while_reserved", "trust_not_required"],
+)
+def test_partial_authorization_schema_fails_closed_without_replacement(tmp_path, malformed_schema):
+    path = tmp_path / "TEST_ONLY_PARTIAL_AUTHORIZATION.sqlite"
+    with sqlite3.connect(path) as db:
+        db.execute(malformed_schema)
+        before = db.execute(
+            "SELECT sql,rootpage FROM sqlite_master WHERE name='pdsa_authorization_issuances'"
+        ).fetchone()
+    with pytest.raises(
+        challenge.PDSAChallengeError, match="PDSA_AUTHORIZATION_ISSUANCE_SCHEMA_MISMATCH"
+    ):
+        challenge.PDSAChallengeStore(path)
+    with sqlite3.connect(path) as db:
+        assert (
+            db.execute(
+                "SELECT sql,rootpage FROM sqlite_master WHERE name='pdsa_authorization_issuances'"
+            ).fetchone()
+            == before
+        )
+
+
 def test_arbitrary_path_store_cannot_issue_or_verify_even_with_signed_issuer_bytes(
     harness, tmp_path
 ):

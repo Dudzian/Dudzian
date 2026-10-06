@@ -259,7 +259,7 @@
     "owner": "ProductDeploymentSecurityAuthority",
     "provisioning_subject_id_profile": "psub_<RFC9562 UUIDv7>; canonical lowercase hyphenated UUID, version 7, RFC variant 10",
     "enrollment_reference_profile": "penr_<RFC9562 UUIDv7>; canonical lowercase hyphenated UUID, version 7, RFC variant 10",
-    "uuid_timestamp": "unsigned 48-bit internal Unix epoch milliseconds captured during reservation; timestamp is neither authority, uniqueness proof nor winner selection",
+    "uuid_timestamp": "unsigned 48-bit floor(internal Unix epoch milliseconds) from one captured sub-second-precision UTC reservation instant shared by both identities; do not derive milliseconds from issued_at_utc whole seconds; timestamp is neither authority, uniqueness proof nor winner selection",
     "uuid_randomness": "independent CSPRNG 12-bit rand_a and 62-bit rand_b for each identity; never derive either identity from caller, hardware, user, account, request nonce or the other identity",
     "caller_selected_identities": false,
     "contains_secret": false,
@@ -280,7 +280,7 @@
   "validity_policy": {
     "profile": "AUTHENTICATED_SOURCE_BOUNDED_INITIAL_AUTHORIZATION_V1",
     "timestamps": "real calendar UTC YYYY-MM-DDTHH:MM:SSZ; no offset, fractions or leap seconds",
-    "issued_at_utc": "internal issuer UTC seconds at durable reservation; no caller clock or timestamp override",
+    "issued_at_utc": "the same captured internal reservation UTC instant used for both UUIDv7 timestamps, truncated to whole UTC seconds for canonical wire encoding; no caller clock or timestamp override",
     "expires_at_utc": "minimum(exact signed retained PDSAEnrollmentChallengeV1.expires_at_utc, exact retained verified TPMEnrollmentChallengeV1.expires_at_utc)",
     "endorsement_bound": "ProductionTPMChallengeStore already limits its TPM challenge to the earlier signed PDSA challenge and curated signed TPM endorsement deadline; use only the verifier-issued exchange's retained raw challenge",
     "fixed_package_ttl_seconds": null,
@@ -304,10 +304,12 @@
     "private_material_location": "OFF_REPOSITORY_OFF_WINDOWS_CLIENT_OFF_MSI_OFF_CI_ARTIFACTS",
     "signing_boundary": "fixed trusted issuer-deployment internal quorum service; public issuance accepts no signer callback, private key, endpoint, service path or public keys",
     "caller_selected_signer_or_threshold": false,
-    "signer_selection": "reserve the first two key_id values in lexical order from current ProductionTrustContext.pdsa_keys before signing; the service may not substitute a different signer set on retry",
+    "eligible_signer_set": "exactly all three authorized key IDs and public keys from the current ProductionTrustContext.pdsa_keys, immutable with the exact Production Trust identity at reservation",
+    "signer_selection": "any two distinct eligible keys chosen only by the trusted signing authority; lexical order determines envelope ordering, never the required pair",
+    "signing_service_request": "authorized_signer_ids = exact reserved three-key set; required_threshold = 2; caller cannot select signers, threshold, public keys, endpoint or callback",
     "service_idempotency_key": "lowercase hex SHA256(exact reserved JCS UTF-8 canonical payload bytes)",
-    "service_retry": "idempotently return the exact first durable response for the reserved payload digest and signer set; conflicting response fails closed",
-    "service_authority": "a signing-service response establishes no package authority until local exact-message, exact-signer-set and current Production Trust verification followed by atomic terminal commit"
+    "service_retry": "persist the exact first durable response for the reservation/payload digest, including selected signer IDs and exact signature bytes, before returning it; lost response, issuer crash or service restart must return that same response without reselecting the pair; conflicting response fails closed",
+    "service_authority": "a signing-service response establishes no package authority until local exact-message verification of exactly two distinct lexically ordered eligible signers, both signatures and exact reserved/current Production Trust identity and key set followed by atomic terminal commit"
   },
   "target_binding": {
     "source": "genuine require_authenticated_pre_enrollment(AuthenticatedProductionPreEnrollment) for the same ProductionEnrollmentIssuerContext, PDSAChallengeStore and ProductionTrustContext",
@@ -351,9 +353,9 @@
       ]
     ],
     "terminal_state": "COMMITTED",
-    "reserved": "durably record immutable exact accepted request/challenge identity, source deadlines, both CSPRNG identities, generations, timestamps, canonical payload and exact signer IDs; no public enrollment authority",
+    "reserved": "durably record immutable exact accepted request/challenge identity, source deadlines, both CSPRNG identities, generations, timestamps, canonical payload, exact Production Trust identity/public key set, all three authorized signer IDs and threshold 2; no selected pair is required before trusted signing-service selection; no public enrollment authority",
     "signing": "quorum signing and reconciliation run outside SQLite write transactions; durable payload digest identifies the same signing-service operation across restart",
-    "signed": "verify and retain exact canonical envelope bytes and SHA256 digest for the reserved payload and signers; no publication or final challenge consumption",
+    "signed": "verify and retain exact canonical envelope bytes, SHA256 digest and exact selected signer IDs for the reserved payload and authorized key set; SIGNED/COMMITTED retry requires the same selected pair and signature bytes; no publication or final challenge consumption",
     "committed": "BEGIN IMMEDIATE; recheck provenance and live authentication; atomically retain accepted request, acceptance receipt, exact package bytes/digest, subject/reference and transition challenge ISSUED to CONSUMED plus issuance SIGNED to COMMITTED before response",
     "minimum_retained_fields": [
       "pdsa_challenge_id",
@@ -367,7 +369,11 @@
       "payload_raw",
       "package_raw",
       "receipt_raw",
-      "signer_ids",
+      "production_trust_identity",
+      "production_trust_key_set",
+      "authorized_signer_ids",
+      "required_threshold",
+      "selected_signer_ids",
       "issued_at_utc",
       "expires_at_utc",
       "authorization_generation",
@@ -381,7 +387,8 @@
     "same_challenge_different_request": "REJECT_CHALLENGE_REPLAY_CONFLICT",
     "same_reference_conflicting_package": "REJECT_ISSUANCE_CONFLICT",
     "legacy_acceptance_only_consumed": "no automatic package backfill or subject minting; fail closed because the retained acceptance receipt alone cannot reestablish live issuance authority",
-    "crash_recovery": "reuse durable identities and payload; reconcile the signing service by reserved payload digest; only COMMITTED rows may return a package",
+    "legacy_fixed_pair_storage": "fail closed when populated legacy issuance storage lacks the exact reserved Production Trust identity and three-key public set; preserve records and files; never reconstruct or rebind retained authority to current trust automatically",
+    "crash_recovery": "reuse durable identities, payload, exact Production Trust identity/key set, all three authorized signer IDs and threshold; reconcile the signing service by reserved payload digest to recover the exact first durable selected pair and signature bytes even before local SIGNED retention; only COMMITTED rows may return a package",
     "storage_guarantee": "SQLite WAL/synchronous FULL plus trusted issuer custody provide crash/concurrency consistency; this does not claim arbitrary issuer-disk rollback protection"
   },
   "production_material_dependency": {
