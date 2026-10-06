@@ -182,12 +182,22 @@ boundary remain deployment prerequisites.
 The factory issues an opaque `ProductionEnrollmentIssuerContext` and registers
 its exact PDSA/TPM store pair in private weak registries. The service retains that
 context for the bundle's lifetime; store references alone cannot prolong it.
-Immutable snapshots bind
-the configured trust object, store instances and directory/database source
-identities: path, device, inode, owner/group and mode. Consequential store guards
-recheck provenance and these identities; combining stores from distinct issuer
-contexts is rejected, including two separately opened contexts for the same
-canonical files. Constructors over arbitrary SQLite paths remain mechanics only
+Immutable snapshots bind the configured trust object, store instances and
+directory/database source identities: exact built-in `str` path, device, inode,
+owner/group and mode. These private path strings are independent of the public
+`Path` objects and their mutable caches. Guards require the expected concrete
+platform `Path` type and exact built-in filesystem text matching the snapshot.
+They reject fake `PathLike` objects with misleading equality, redirected cached
+`Path` strings and text subclasses with custom comparison behavior.
+
+For registered production stores, SQLite connects directly from the private
+canonical string after provenance qualification. It does not convert the public
+path again when opening the connection, so changing that object between the
+guard and SQLite open cannot redirect the connection to a copied database.
+Consequential store guards recheck provenance and source identities. Combining
+stores from distinct issuer contexts is rejected, including two separately
+opened contexts for the same canonical files. Constructors over arbitrary SQLite
+paths remain mechanics only
 and cannot mint production challenge/exchange capabilities or consume an
 authenticated request. Copying Python fields, rows or the entire database does
 not register the copied instance as authority.

@@ -47,6 +47,7 @@ from bot_core.licensing.tpm_attestation import (
 )
 from deployment.production_enrollment_issuer import (
     ProductionEnrollmentIssuerContext,
+    _configured_database_path,
     require_production_tpm_store,
 )
 from deployment.windows_stage9_production_trust import (
@@ -604,7 +605,7 @@ class ProductionTPMChallengeStore:
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
-        database = sqlite3.connect(self._path, timeout=30)
+        database = sqlite3.connect(_configured_database_path(self, self._path), timeout=30)
         try:
             database.execute("PRAGMA journal_mode=WAL")
             database.execute("PRAGMA synchronous=FULL")

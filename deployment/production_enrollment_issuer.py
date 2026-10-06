@@ -47,7 +47,7 @@ class _InstalledIssuerConfiguration:
 
 @dataclass(frozen=True, slots=True)
 class _SourceIdentity:
-    path: Path
+    path: str
     device: int
     inode: int
     uid: int
@@ -58,6 +58,12 @@ class _SourceIdentity:
 
 def _source_identity(path: Path, *, directory: bool) -> _SourceIdentity:
     try:
+        # Keep only immutable built-in text in the private snapshot. A Path has
+        # mutable caches, even when its public operations appear immutable.
+        configured_path = os.fspath(path)
+        if type(configured_path) is not str:
+            raise ProductionEnrollmentIssuerError("PRODUCTION_ISSUER_SOURCE_CHANGED")
+        path = Path(configured_path)
         metadata = path.lstat()
         kind = stat.S_ISDIR(metadata.st_mode) if directory else stat.S_ISREG(metadata.st_mode)
         expected_mode = 0o700 if directory else 0o600
@@ -70,7 +76,7 @@ def _source_identity(path: Path, *, directory: bool) -> _SourceIdentity:
         ):
             raise ProductionEnrollmentIssuerError("PRODUCTION_ISSUER_SOURCE_CHANGED")
         return _SourceIdentity(
-            path,
+            configured_path,
             metadata.st_dev,
             metadata.st_ino,
             metadata.st_uid,
@@ -197,15 +203,45 @@ def require_production_enrollment_issuer(
     if context is not None and context is not snapshot.configuration.trust:
         raise ProductionEnrollmentIssuerError("PRODUCTION_ISSUER_CONTEXT_MISMATCH")
     if (
-        snapshot.pdsa_store.path != snapshot.pdsa_source.path
-        or snapshot.tpm_store._path != snapshot.tpm_source.path
-        or _source_identity(snapshot.directory.path, directory=True) != snapshot.directory
-        or _source_identity(snapshot.pdsa_source.path, directory=False) != snapshot.pdsa_source
-        or _source_identity(snapshot.tpm_source.path, directory=False) != snapshot.tpm_source
+        not _matches_configured_path(snapshot.pdsa_store.path, snapshot.pdsa_source.path)
+        or not _matches_configured_path(snapshot.tpm_store._path, snapshot.tpm_source.path)
+        or _source_identity(Path(snapshot.directory.path), directory=True) != snapshot.directory
+        or _source_identity(Path(snapshot.pdsa_source.path), directory=False)
+        != snapshot.pdsa_source
+        or _source_identity(Path(snapshot.tpm_source.path), directory=False) != snapshot.tpm_source
     ):
         raise ProductionEnrollmentIssuerError("PRODUCTION_ISSUER_SOURCE_CHANGED")
     # Exact type was established by _snapshot before any caller property access.
     return cast(ProductionEnrollmentIssuerContext, value)
+
+
+def _matches_configured_path(value: object, configured_path: str) -> bool:
+    if type(value) is not type(Path(configured_path)):
+        return False
+    try:
+        actual_path = os.fspath(cast(Path, value))
+    except (AttributeError, TypeError, ValueError):
+        return False
+    return type(actual_path) is str and actual_path == configured_path
+
+
+def _configured_database_path(value: object, mechanics_path: Path) -> str:
+    """Resolve registered connections from private immutable issuer state."""
+    reference = _STORE_ISSUERS.get(value)
+    if reference is None:
+        # Constructors initialize SQLite mechanics before factory registration.
+        # They never grant authority; every production operation checks first.
+        path = os.fspath(mechanics_path)
+        if type(path) is not str:
+            raise ProductionEnrollmentIssuerError("PRODUCTION_ISSUER_SOURCE_CHANGED")
+        return path
+    issuer = reference()
+    snapshot = _snapshot(require_production_enrollment_issuer(issuer))
+    if value is snapshot.pdsa_store:
+        return snapshot.pdsa_source.path
+    if value is snapshot.tpm_store:
+        return snapshot.tpm_source.path
+    raise ProductionEnrollmentIssuerError("PRODUCTION_ISSUER_CONTEXT_MISMATCH")
 
 
 def _store_issuer(value: object) -> ProductionEnrollmentIssuerContext:
@@ -285,8 +321,8 @@ def open_installed_production_enrollment_issuer() -> ProductionEnrollmentIssuerC
     # directory; no production registrar or injectable factory is exposed.
     configuration.state_directory.mkdir(mode=0o700, parents=False, exist_ok=True)
     directory = _source_identity(configuration.state_directory, directory=True)
-    pdsa_path = directory.path / PDSA_DATABASE_NAME
-    tpm_path = directory.path / TPM_DATABASE_NAME
+    pdsa_path = Path(directory.path) / PDSA_DATABASE_NAME
+    tpm_path = Path(directory.path) / TPM_DATABASE_NAME
     _prepare_database(pdsa_path, directory)
     _prepare_database(tpm_path, directory)
     pdsa_store = PDSAChallengeStore(pdsa_path)

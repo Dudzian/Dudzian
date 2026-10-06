@@ -25,6 +25,7 @@ from cryptography.exceptions import InvalidSignature
 
 from deployment.production_enrollment_issuer import (
     ProductionEnrollmentIssuerContext,
+    _configured_database_path,
     require_production_pdsa_store,
 )
 from deployment.windows_stage9_production_trust import (
@@ -348,7 +349,9 @@ class PDSAChallengeStore:
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
-        db = sqlite3.connect(self.path, timeout=30, isolation_level=None)
+        db = sqlite3.connect(
+            _configured_database_path(self, self._path), timeout=30, isolation_level=None
+        )
         try:
             db.row_factory = sqlite3.Row
             db.execute("PRAGMA journal_mode=WAL")

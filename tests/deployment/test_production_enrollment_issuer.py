@@ -7,13 +7,15 @@ import os
 import sqlite3
 from contextlib import closing
 from dataclasses import replace
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 import deployment.production_enrollment_issuer as issuer
-from bot_core.licensing.pdsa_enrollment_challenge import PDSAChallengeStore
+from bot_core.licensing.pdsa_enrollment_challenge import PDSAChallengeError, PDSAChallengeStore
 from bot_core.licensing.production_tpm_custody import ProductionTPMChallengeStore
+from tests.licensing import test_production_pre_enrollment as pre_enrollment_tests
 from tests.licensing.test_pdsa_enrollment_challenge import harness as challenge_harness
 
 installed_configuration_boundary = issuer._installed_service_configuration
@@ -22,6 +24,41 @@ installed_configuration_boundary = issuer._installed_service_configuration
 @pytest.fixture
 def installed(monkeypatch, tmp_path):
     return challenge_harness.__wrapped__(monkeypatch, tmp_path)
+
+
+@pytest.fixture
+def cryptographic_installed(installed, monkeypatch, tmp_path):
+    """Reuse actual signatures, exchange, custody and PoP; keep provenance guards active."""
+    yield from pre_enrollment_tests.integration.__wrapped__(installed, monkeypatch, tmp_path)
+
+
+class _EqualPathLike:
+    def __init__(self, target: str):
+        self.target = target
+
+    def __eq__(self, other: object) -> bool:
+        return True
+
+    def __ne__(self, other: object) -> bool:
+        return False
+
+    def __fspath__(self) -> str:
+        return self.target
+
+
+class _EqualText(str):
+    def __eq__(self, other: object) -> bool:
+        return True
+
+    def __ne__(self, other: object) -> bool:
+        return False
+
+
+def _checkpointed_copy(source: Path, target: Path) -> None:
+    with closing(sqlite3.connect(source)) as database:
+        database.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    target.write_bytes(source.read_bytes())
+    assert target.read_bytes() == source.read_bytes()
 
 
 def test_factory_pair_shares_exact_opaque_context(installed):
@@ -78,6 +115,113 @@ def test_same_canonical_path_constructor_and_copied_object_do_not_register(insta
     for copier in (copy.copy, copy.deepcopy):
         with pytest.raises(TypeError, match="immutable"):
             copier(genuine)
+
+
+def test_registered_source_paths_are_independent_exact_immutable_strings(installed):
+    snapshot = issuer._snapshot(installed.issuer)
+    assert type(snapshot.directory.path) is str
+    assert type(snapshot.pdsa_source.path) is str
+    assert type(snapshot.tpm_source.path) is str
+    assert snapshot.pdsa_source.path == os.fspath(installed.store.path)
+    assert snapshot.tpm_source.path == os.fspath(installed.issuer.tpm_store._path)
+
+
+@pytest.mark.parametrize("store_kind", ["pdsa", "tpm"])
+@pytest.mark.parametrize("attack", ["path_like", "cached_path", "string_subclass"])
+def test_registered_store_rejects_path_comparison_and_cached_string_forgeries(
+    installed, tmp_path, store_kind, attack
+):
+    genuine = installed.store if store_kind == "pdsa" else installed.issuer.tpm_store
+    canonical = os.fspath(genuine._path)
+    copied_database = tmp_path / f"cloned-{store_kind}.sqlite3"
+    _checkpointed_copy(genuine._path, copied_database)
+    if attack == "path_like":
+        forged = _EqualPathLike(os.fspath(copied_database))
+    else:
+        forged = Path(canonical)
+        # Populate platform/version-specific pathlib comparison caches before
+        # poisoning its display/filesystem string. The concrete Path type and
+        # cached path parts remain indistinguishable by ordinary equality.
+        assert forged == Path(canonical)
+        forged_string = os.fspath(copied_database)
+        if attack == "string_subclass":
+            forged_string = _EqualText(forged_string)
+            assert forged_string == canonical
+        object.__setattr__(forged, "_str", forged_string)
+    assert forged == Path(canonical)
+    assert not forged != Path(canonical)
+    assert os.fspath(forged) == os.fspath(copied_database)
+    object.__setattr__(genuine, "_path", forged)
+    with pytest.raises(issuer.ProductionEnrollmentIssuerError, match="SOURCE_CHANGED"):
+        issuer.require_production_enrollment_issuer(installed.issuer)
+    guard = (
+        issuer.require_production_pdsa_store
+        if store_kind == "pdsa"
+        else issuer.require_production_tpm_store
+    )
+    with pytest.raises(issuer.ProductionEnrollmentIssuerError, match="SOURCE_CHANGED"):
+        guard(genuine)
+
+
+@pytest.mark.parametrize("store_kind", ["pdsa", "tpm"])
+def test_sqlite_open_uses_private_canonical_string_during_public_path_mutation(
+    cryptographic_installed, monkeypatch, tmp_path, store_kind
+):
+    item = cryptographic_installed
+    store = item.authority.store if store_kind == "pdsa" else item.pending
+    public_path = store._path
+    private_snapshot = issuer._snapshot(item.authority.issuer)
+    canonical = (
+        private_snapshot.pdsa_source.path
+        if store_kind == "pdsa"
+        else private_snapshot.tpm_source.path
+    )
+    clone = tmp_path / f"stale-{store_kind}.sqlite3"
+    _checkpointed_copy(public_path, clone)
+    if store_kind == "tpm":
+        # A stale issuer snapshot predates verification of the retained response.
+        with closing(sqlite3.connect(clone)) as database:
+            with database:
+                database.execute(
+                    "UPDATE tpm_challenges SET state='ISSUED',exchange_reference=NULL,response=NULL"
+                )
+    receipt = pre_enrollment_tests._accept(item)
+    assert receipt
+    with closing(sqlite3.connect(clone)) as database:
+        query = (
+            "SELECT state FROM pdsa_challenges"
+            if store_kind == "pdsa"
+            else "SELECT state FROM tpm_challenges"
+        )
+        assert database.execute(query).fetchone()[0] == "ISSUED"
+    real_connect = sqlite3.connect
+    opened = []
+
+    def mutate_after_resolution(database, *arguments, **options):
+        if type(database) is str and database == canonical:
+            # The production helper has already resolved the registered source.
+            # Alter public configuration at the final OS/SQLite call boundary,
+            # then restore it before the production guard rechecks after locks.
+            object.__setattr__(store, "_path", _EqualPathLike(os.fspath(clone)))
+            try:
+                assert type(database) is str
+                assert database == canonical
+                opened.append(database)
+                return real_connect(database, *arguments, **options)
+            finally:
+                object.__setattr__(store, "_path", public_path)
+        assert os.fspath(database) != canonical
+        return real_connect(database, *arguments, **options)
+
+    monkeypatch.setattr(sqlite3, "connect", mutate_after_resolution)
+    if store_kind == "pdsa":
+        with pytest.raises(PDSAChallengeError, match="CONSUMED"):
+            store.verify_issued(item.pdsa_raw, item.authority.context)
+    else:
+        assert store._record(item.tpm_challenge)[9] == "VERIFIED"
+    assert opened
+    assert all(type(path) is str and path == canonical for path in opened)
+    assert issuer.require_production_enrollment_issuer(item.authority.issuer)
 
 
 def test_genuine_contexts_cannot_be_mixed_even_for_same_canonical_files(installed):
