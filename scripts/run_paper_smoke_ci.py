@@ -1907,7 +1907,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             output_dir=output_dir,
         )
     except RuntimeError as exc:
-        _LOGGER.error("Audyt tokenów RBAC nie powiódł się: %s", exc)
+        _LOGGER.error("Audyt poświadczeń RBAC nie powiódł się (%s)", type(exc).__name__)
         return 1
 
     token_report = token_audit_artifacts.get("report")
