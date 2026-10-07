@@ -77,7 +77,7 @@ def _trigger_failover(webhook: str | None) -> dict[str, Any]:
         method="POST",
     )
     try:
-        with urlopen(require_http_request(request), timeout=10) as response:  # nosemgrep
+        with urlopen(require_http_request(request), timeout=10) as response:  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
             return {"status": response.status, "reason": response.reason}
     except URLError as exc:  # pragma: no cover - zależne od środowiska
         return {"error": f"webhook_unreachable:{exc}"}
@@ -148,7 +148,7 @@ def _http_scalar(prometheus_url: str | None, query: str) -> str | None:
 
 def _http_json(url: str, *, timeout: int = 10) -> Any:
     request = Request(require_http_url(url), headers={"Accept": "application/json"})
-    with urlopen(require_http_request(request), timeout=timeout) as response:  # nosemgrep
+    with urlopen(require_http_request(request), timeout=timeout) as response:  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
         payload = response.read()
     return json.loads(payload.decode("utf-8"))
 
