@@ -13,6 +13,7 @@ import json
 import multiprocessing
 import os
 import uuid
+from contextlib import contextmanager
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -734,21 +735,34 @@ def test_invalid_reservation_clock_fails_before_durable_identity_or_native_sign(
 
 @pytest.mark.skipif(os.name == "nt", reason="TEST_ONLY inherited native ABI needs fork")
 def test_two_processes_have_one_reservation_and_nonblocking_busy(active, monkeypatch):
+    # Covered current-ACTIVE qualification can take longer under parallel CI.
+    # Keep that setup budget separate from the real signing lock's BUSY deadline.
+    requalification_timeout, busy_timeout, process_exit_timeout = 120, 5, 30
     context = multiprocessing.get_context("fork")
     released = context.Event()
+    contender_lock_attempt = context.Event()
     first_reader, first_writer = context.Pipe(duplex=False)
     second_reader, second_writer = context.Pipe(duplex=False)
     original = installed.sign_active_lppi_authenticated_operation_binding
+    original_locked_signing = installed._locked_signing
+
+    @contextmanager
+    def contender_locked_signing():
+        contender_lock_attempt.set()
+        with original_locked_signing() as path:
+            yield path
 
     def slow_native_sign(*args, **kwargs):
         retained = _state()
         first_writer.send(("reserved", retained["provisioning_operation_id"]))
-        if not released.wait(15):
+        if not released.wait(requalification_timeout + busy_timeout + process_exit_timeout):
             raise RuntimeError("TEST_ONLY_CONCURRENT_SIGN_RELEASE_TIMEOUT")
         return original(*args, **kwargs)
 
-    def establish(pipe):
+    def establish(pipe, contender=False):
         try:
+            if contender:
+                monkeypatch.setattr(installed, "_locked_signing", contender_locked_signing)
             value = installed.establish_installed_lppi_authenticated_operation(active)
             pipe.send(
                 (
@@ -767,23 +781,32 @@ def test_two_processes_have_one_reservation_and_nonblocking_busy(active, monkeyp
         installed, "sign_active_lppi_authenticated_operation_binding", slow_native_sign
     )
     first = context.Process(target=establish, args=(first_writer,))
-    second = context.Process(target=establish, args=(second_writer,))
+    second = context.Process(target=establish, args=(second_writer, True))
     first.start()
     try:
-        assert first_reader.poll(10), "first process did not durably reserve before signing"
+        assert first_reader.poll(requalification_timeout), (
+            "first process did not durably reserve before signing"
+        )
         status, identity = first_reader.recv()
         assert status == "reserved"
         second.start()
-        assert second_reader.poll(5), "second process blocked instead of returning busy"
+        assert contender_lock_attempt.wait(requalification_timeout), (
+            "second process did not finish current-ACTIVE qualification before its lock attempt"
+        )
+        assert second_reader.poll(busy_timeout), (
+            "second process blocked at the signing lock boundary instead of returning busy"
+        )
         assert second_reader.recv() == ("error", "LPPI_AUTHENTICATED_OPERATION_BUSY")
         released.set()
         # The response includes three independent current-ACTIVE capability reads.
         # Allow native requalification under coverage; the busy deadline stays short.
-        assert first_reader.poll(60), "first process did not commit after signing was released"
+        assert first_reader.poll(requalification_timeout), (
+            "first process did not commit after signing was released"
+        )
         status, committed_id, raw, signature = first_reader.recv()
         assert status == "ok" and committed_id == identity
-        first.join(10)
-        second.join(10)
+        first.join(process_exit_timeout)
+        second.join(process_exit_timeout)
         assert first.exitcode == second.exitcode == 0
         monkeypatch.setattr(installed, "sign_active_lppi_authenticated_operation_binding", original)
         retry = installed.establish_installed_lppi_authenticated_operation(active)
@@ -794,7 +817,7 @@ def test_two_processes_have_one_reservation_and_nonblocking_busy(active, monkeyp
         released.set()
         for process in (first, second):
             if process.pid is not None:
-                process.join(10)
+                process.join(process_exit_timeout)
                 if process.is_alive():
                     process.terminate()
                     process.join(5)

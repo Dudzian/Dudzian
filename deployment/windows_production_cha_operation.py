@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 import re
 import stat
+import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -77,22 +78,18 @@ def _safe(path: Path, *, directory: bool = False) -> None:
 
 
 def _create_directory(directory: Path) -> None:
-    """Fence metadata only for directories created by this invocation."""
+    """Fence parent metadata, including directories left by a failed earlier fence."""
     _safe(directory, directory=True)
     for component in (*reversed(directory.parents), directory):
         _safe(component, directory=True)
-        if component.exists():
-            # Revalidate after the existence probe so a path swap between the
-            # first qualification and the probe cannot silently bypass _safe.
-            _safe(component, directory=True)
-            continue
         try:
-            component.mkdir(mode=0o700)
-        except FileExistsError:
-            # A racing creator is acceptable only when the resulting component
-            # still satisfies the exact safe-directory boundary.
-            _safe(component, directory=True)
-            continue
+            component.lstat()
+        except FileNotFoundError:
+            try:
+                component.mkdir(mode=0o700)
+            except FileExistsError:
+                # A concurrent creator must still have installed a safe directory.
+                pass
         _safe(component, directory=True)
         if component.parent != component:
             flush_created_directory_metadata(component.parent)
@@ -130,18 +127,17 @@ def _locked_state() -> Iterator[Path]:
                 finally:
                     stream.seek(0)
                     windows_lock.locking(stream.fileno(), windows_lock.LK_UNLCK, 1)
-            elif os.name == "posix":
+            elif sys.platform != "win32" and os.name == "posix":
                 import fcntl
 
-                posix_lock: Any = fcntl
                 try:
-                    posix_lock.flock(stream.fileno(), posix_lock.LOCK_EX | posix_lock.LOCK_NB)
+                    fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
                 except OSError as exc:
                     raise CHAOperationError("CHA_LOGICAL_OPERATION_BUSY") from exc
                 try:
                     yield path
                 finally:
-                    posix_lock.flock(stream.fileno(), posix_lock.LOCK_UN)
+                    fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
             else:
                 raise CHAOperationError("UNSUPPORTED_CHA_LOGICAL_OPERATION_PLATFORM")
     except OSError as exc:

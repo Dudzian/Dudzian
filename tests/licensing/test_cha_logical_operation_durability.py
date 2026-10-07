@@ -511,6 +511,61 @@ def test_hosted_windows_publication_calls_native_write_through_abi(monkeypatch, 
     assert move.restype is ctypes.wintypes.BOOL
 
 
+@pytest.mark.parametrize("concurrent_creator", [False, True])
+def test_existing_directory_ancestors_are_checked_without_attempting_mkdir(
+    monkeypatch, tmp_path, concurrent_creator
+):
+    """Host the Windows existing-root mkdir denial while retaining real path checks."""
+    directory = tmp_path / "TEST_ONLY-new-parent" / "new-child"
+    components = (*reversed(directory.parents), directory)
+    original_mkdir = Path.mkdir
+    original_safe = operation._safe
+    original_flush = operation.flush_created_directory_metadata
+    attempts, checked, fenced = [], [], []
+
+    def mkdir(path, *args, **kwargs):
+        if path.exists():
+            raise PermissionError("TEST_ONLY-existing-Windows-ancestor-mkdir-denied")
+        attempts.append(path)
+        original_mkdir(path, *args, **kwargs)
+        if concurrent_creator:
+            raise FileExistsError("TEST_ONLY-concurrent-directory-creator")
+
+    def safe(path, *, directory=False):
+        checked.append((path, directory))
+        original_safe(path, directory=directory)
+
+    def flush(path):
+        fenced.append(path)
+        original_flush(path)
+
+    monkeypatch.setattr(Path, "mkdir", mkdir)
+    monkeypatch.setattr(operation, "_safe", safe)
+    monkeypatch.setattr(operation, "flush_created_directory_metadata", flush)
+    operation._create_directory(directory)
+
+    assert attempts == [directory.parent, directory]
+    assert all((component, True) in checked for component in components)
+    assert fenced == [component.parent for component in components if component.parent != component]
+    assert directory.is_dir()
+
+
+def test_concurrent_directory_creator_cannot_install_a_regular_file(monkeypatch, tmp_path):
+    directory = tmp_path / "TEST_ONLY-concurrent-unsafe-directory"
+    original_mkdir = Path.mkdir
+
+    def mkdir(path, *args, **kwargs):
+        if path == directory:
+            path.write_bytes(b"TEST_ONLY-regular-file-is-not-a-state-directory")
+            raise FileExistsError("TEST_ONLY-concurrent-unsafe-creator")
+        return original_mkdir(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "mkdir", mkdir)
+    with pytest.raises(operation.CHAOperationError, match="UNSAFE_CHA_LOGICAL_OPERATION_PATH"):
+        operation._create_directory(directory)
+    assert directory.is_file()
+
+
 @pytest.mark.skipif(os.name != "posix", reason="POSIX parent-directory durability fences")
 def test_new_nested_state_directory_fences_every_created_ancestor(monkeypatch, tmp_path):
     directory = tmp_path / "TEST_ONLY-new-parent" / "new-child"

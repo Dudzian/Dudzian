@@ -15,6 +15,7 @@ import multiprocessing
 import os
 import sqlite3
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -604,21 +605,34 @@ def test_unknown_duplicate_or_noncanonical_record_fails_closed(cha):
 
 @pytest.mark.skipif(os.name == "nt", reason="TEST_ONLY inherited native ABI requires fork")
 def test_two_processes_keep_one_mapping_and_nonblocking_busy(committed, monkeypatch):
+    # Covered current-upstream qualification can take longer under parallel CI.
+    # Measure BUSY only once that qualification has reached the real lock boundary.
+    requalification_timeout, busy_timeout, process_exit_timeout = 120, 5, 30
     context = multiprocessing.get_context("fork")
     released = context.Event()
+    contender_lock_attempt = context.Event()
     first_reader, first_writer = context.Pipe(duplex=False)
     second_reader, second_writer = context.Pipe(duplex=False)
     original = installed._write
+    original_locked_state = installed._locked_state
+
+    @contextmanager
+    def contender_locked_state():
+        contender_lock_attempt.set()
+        with original_locked_state() as path:
+            yield path
 
     def reserved_then_pause(path, state):
         original(path, state)
         if state["status"] == "AGO_RESERVED":
             first_writer.send(("reserved", state["logical_operation_id"]))
-            if not released.wait(15):
+            if not released.wait(requalification_timeout + busy_timeout + process_exit_timeout):
                 raise RuntimeError("TEST_ONLY_CHA_RELEASE_TIMEOUT")
 
-    def establish(pipe):
+    def establish(pipe, contender=False):
         try:
+            if contender:
+                monkeypatch.setattr(installed, "_locked_state", contender_locked_state)
             value = installed.establish_installed_cha_logical_operation(committed.value)
             pipe.send(
                 (
@@ -635,21 +649,28 @@ def test_two_processes_keep_one_mapping_and_nonblocking_busy(committed, monkeypa
 
     monkeypatch.setattr(installed, "_write", reserved_then_pause)
     first = context.Process(target=establish, args=(first_writer,))
-    second = context.Process(target=establish, args=(second_writer,))
+    second = context.Process(target=establish, args=(second_writer, True))
     first.start()
     try:
-        assert first_reader.poll(10), "first process did not durably reserve"
+        assert first_reader.poll(requalification_timeout), "first process did not durably reserve"
         status, identity = first_reader.recv()
         assert status == "reserved"
         second.start()
-        assert second_reader.poll(5), "second process blocked instead of returning stable BUSY"
+        assert contender_lock_attempt.wait(requalification_timeout), (
+            "second process did not finish current-upstream qualification before its lock attempt"
+        )
+        assert second_reader.poll(busy_timeout), (
+            "second process blocked at the lock boundary instead of returning stable BUSY"
+        )
         assert second_reader.recv() == ("error", "CHA_LOGICAL_OPERATION_BUSY")
         released.set()
-        assert first_reader.poll(60), "first process did not commit after release"
+        assert first_reader.poll(requalification_timeout), (
+            "first process did not commit after release"
+        )
         status, winner, prvop, source = first_reader.recv()
         assert status == "ok" and winner == identity
-        first.join(10)
-        second.join(10)
+        first.join(process_exit_timeout)
+        second.join(process_exit_timeout)
         assert first.exitcode == second.exitcode == 0
         monkeypatch.setattr(installed, "_write", original)
         monkeypatch.setattr(authorization.secrets, "randbits", _forbid_remint)
@@ -662,7 +683,7 @@ def test_two_processes_keep_one_mapping_and_nonblocking_busy(committed, monkeypa
         released.set()
         for process in (first, second):
             if process.pid is not None:
-                process.join(10)
+                process.join(process_exit_timeout)
                 if process.is_alive():
                     process.terminate()
                     process.join(5)

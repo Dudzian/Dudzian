@@ -21,7 +21,7 @@ jobs:
   quality-ratchet:
     name: Quality ratchet
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
         with:
@@ -45,7 +45,7 @@ jobs:
           DUDZIAN_TEST_MODE: "1"
           DUDZIAN_ALLOW_LONG_POLL: "0"
         run: >-
-          python -m pytest -p asyncio -p pytest_cov
+          python -m pytest -p asyncio -p pytest_cov -p xdist.plugin -n 4
           tests/property
           tests/test_risk_portfolio_management.py
           tests/deployment/test_windows_tpm_substrate_probe.py

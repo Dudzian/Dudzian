@@ -8,10 +8,10 @@ signing lock. A signed result becomes authority only after its durable commit.
 from __future__ import annotations
 
 import ctypes
-import hashlib
 import os
 import secrets
 import stat
+import sys
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -121,18 +121,21 @@ def _lock(name: str) -> Iterator[Path]:
             finally:
                 stream.seek(0)
                 windows_lock.locking(stream.fileno(), windows_lock.LK_UNLCK, 1)
-        else:
+        elif sys.platform != "win32":
             import fcntl
 
-            posix_lock: Any = fcntl
             try:
-                posix_lock.flock(stream.fileno(), posix_lock.LOCK_EX | posix_lock.LOCK_NB)
+                fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
             except OSError as exc:
                 raise LPPIAuthenticatedOperationError("LPPI_AUTHENTICATED_OPERATION_BUSY") from exc
             try:
                 yield path
             finally:
-                posix_lock.flock(stream.fileno(), posix_lock.LOCK_UN)
+                fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+        else:
+            raise LPPIAuthenticatedOperationError(
+                "UNSUPPORTED_LPPI_AUTHENTICATED_OPERATION_PLATFORM"
+            )
 
 
 @contextmanager
