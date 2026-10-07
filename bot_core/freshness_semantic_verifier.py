@@ -693,7 +693,7 @@ def serve_local_unix_socket(
         listener.bind(path)
         if socket_gid is not None:
             os.chown(path, -1, socket_gid)
-        os.chmod(path, 0o660)  # nosemgrep -- intentional owner/group-only Unix socket ACL
+        os.chmod(path, 0o660)  # nosemgrep: python.lang.security.audit.insecure-file-permissions.insecure-file-permissions -- intentional owner/group-only Unix socket ACL
         listener.listen(8)
         while stop_after is None or handled < stop_after:
             connection, _ = listener.accept()
