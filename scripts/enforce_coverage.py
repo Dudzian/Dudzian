@@ -7,11 +7,30 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Mapping
-import xml.etree.ElementTree as ET
+import xml.etree.ElementTree as ET  # nosemgrep: python.lang.security.use-defused-xml.use-defused-xml
 
 
 class CoverageValidationError(RuntimeError):
     """Błąd walidacji pliku pokrycia."""
+
+
+MAX_COVERAGE_XML_BYTES = 16 * 1024 * 1024
+
+
+def _parse_coverage_xml(path: Path) -> ET.Element:
+    try:
+        if path.stat().st_size > MAX_COVERAGE_XML_BYTES:
+            raise CoverageValidationError("Raport coverage przekracza limit rozmiaru")
+        raw = path.read_bytes()
+    except OSError as exc:
+        raise CoverageValidationError(f"Nie udało się odczytać XML z {path}") from exc
+    upper = raw.upper()
+    if b"<!DOCTYPE" in upper or b"<!ENTITY" in upper:
+        raise CoverageValidationError("Raport coverage zawiera niedozwoloną deklarację XML")
+    try:
+        return ET.fromstring(raw)  # nosemgrep: python.lang.security.use-defused-xml-parse.use-defused-xml-parse
+    except ET.ParseError as exc:
+        raise CoverageValidationError(f"Nie udało się odczytać XML z {path}") from exc
 
 
 @dataclass(slots=True)
@@ -70,12 +89,7 @@ def _load_summary(path: Path) -> CoverageSummary:
     if not path.exists():
         raise CoverageValidationError(f"Plik coverage '{path}' nie istnieje")
 
-    try:
-        tree = ET.parse(path)
-    except ET.ParseError as exc:  # pragma: no cover - niepoprawny XML
-        raise CoverageValidationError(f"Nie udało się odczytać XML z {path}") from exc
-
-    root = tree.getroot()
+    root = _parse_coverage_xml(path)
     line_rate = root.get("line-rate") or root.get("line_rate")
     if line_rate is None:
         raise CoverageValidationError("Raport coverage nie zawiera pola line-rate")
