@@ -116,9 +116,9 @@ class SignalChannel(AlertChannel):
     def _build_ssl_context(self) -> ssl.SSLContext | None:
         if self.service_url.lower().startswith("http://"):
             return None
-        if self.verify_tls:
-            return ssl.create_default_context()
-        return ssl._create_unverified_context()  # type: ignore[attr-defined]  # pragma: no cover
+        if not self.verify_tls:
+            raise ValueError("Signal HTTPS transport requires TLS certificate verification")
+        return ssl.create_default_context()
 
 
 __all__ = ["SignalChannel"]
