@@ -42,26 +42,15 @@ from typing import (
     cast,
 )
 
-try:  # pragma: no cover - środowisko testowe może nie mieć joblib
-    import joblib
-except Exception:  # pragma: no cover - fallback na pickle
-    joblib = None  # type: ignore
-    import pickle
+import joblib
 
-    def _joblib_dump(obj: Any, path: Path) -> None:
-        with path.open("wb") as fh:
-            pickle.dump(obj, fh)
 
-    def _joblib_load(path: Path) -> Any:
-        with path.open("rb") as fh:
-            return pickle.load(fh)
-else:
+def _joblib_dump(obj: Any, path: Path) -> None:
+    joblib.dump(obj, path)
 
-    def _joblib_dump(obj: Any, path: Path) -> None:
-        joblib.dump(obj, path)
 
-    def _joblib_load(path: Path) -> Any:
-        return joblib.load(path)
+def _joblib_load(path: Path) -> Any:
+    return joblib.load(path)
 
 
 import numpy as np
