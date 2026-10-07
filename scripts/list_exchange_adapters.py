@@ -36,6 +36,7 @@ from packaging.version import InvalidVersion, Version
 
 from bot_core.config.loader import load_core_config
 from bot_core.config.long_poll import LONG_POLL_MAX_AGE_MINUTES
+from bot_core.security.http_url import require_http_request, require_http_url
 from bot_core.exchanges.bitmex.futures import BitmexFuturesAdapter
 from bot_core.exchanges.deribit.futures import DeribitFuturesAdapter
 from bot_core.exchanges.paper_simulator import PaperFuturesSimulator
@@ -190,13 +191,13 @@ def _push_dashboard_snapshot(
     if endpoint:
         data = report_path.read_bytes()
         request = urllib.request.Request(
-            endpoint,
+            require_http_url(endpoint),
             data=data,
             headers={"Content-Type": "text/csv"},
             method="POST",
         )
         try:
-            urllib.request.urlopen(request, timeout=10)
+            urllib.request.urlopen(require_http_request(request), timeout=10)  # nosemgrep
         except urllib.error.URLError as exc:  # pragma: no cover - zależy od środowiska CI
             raise RuntimeError(
                 f"Nie udało się wypchnąć CSV do endpointu dashboardu: {exc}"
