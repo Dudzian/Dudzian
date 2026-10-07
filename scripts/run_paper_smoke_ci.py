@@ -2179,7 +2179,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if manifest_exit != 0:
         _LOGGER.error("export_manifest_metrics.py zakończył się kodem %s", manifest_exit)
     if token_exit != 0:
-        _LOGGER.error("audit_service_tokens.py zakończył się kodem %s", token_exit)
+        _LOGGER.error("Audyt poświadczeń usługowych zakończył się kodem %s", token_exit)
     if tls_exit != 0:
         _LOGGER.error("audit_tls_assets.py zakończył się kodem %s", tls_exit)
     if baseline_exit != 0:
