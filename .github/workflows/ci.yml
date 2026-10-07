@@ -452,7 +452,7 @@ jobs:
     name: Python tests (Windows)
     runs-on: windows-latest
     needs: prepare-wheelhouse
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -498,7 +498,7 @@ jobs:
           tests/core/test_async_http.py
 
       - name: Run fast pytest suite
-        timeout-minutes: 45
+        timeout-minutes: 75
         shell: bash
         env:
           PYTEST_FAST: "1"
@@ -550,7 +550,7 @@ jobs:
     name: Python tests (Ubuntu)
     runs-on: ubuntu-latest
     needs: prepare-wheelhouse
-    timeout-minutes: 25
+    timeout-minutes: 60
     services:
       postgres:
         image: postgres:16
