@@ -11,6 +11,7 @@ from typing import Dict, Protocol, Sequence
 from urllib import request
 
 from bot_core.alerts.base import AlertChannel, AlertDeliveryError, AlertMessage
+from bot_core.security.http_url import require_http_request
 
 
 class _SignalHttpOpener(Protocol):
@@ -29,7 +30,7 @@ def _default_signal_opener(
     timeout: float,
     context: ssl.SSLContext | None,
 ) -> request.addinfourl:
-    return request.urlopen(req, timeout=timeout, context=context)  # noqa: S310 - kontrolujemy docelowy serwer
+    return request.urlopen(require_http_request(req), timeout=timeout, context=context)  # nosemgrep
 
 
 @dataclass(slots=True)
