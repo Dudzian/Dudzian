@@ -17,6 +17,7 @@ import grpc
 from google.protobuf import empty_pb2
 
 from bot_core.generated import trading_pb2_grpc
+from bot_core.security.http_url import require_http_request, require_http_url
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -57,8 +58,8 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def _http_json(url: str, *, timeout: int = 10) -> Any:
-    request = Request(url, headers={"Accept": "application/json"})
-    with urlopen(request, timeout=timeout) as response:
+    request = Request(require_http_url(url), headers={"Accept": "application/json"})
+    with urlopen(require_http_request(request), timeout=timeout) as response:  # nosemgrep
         payload = response.read()
     return json.loads(payload.decode("utf-8"))
 
