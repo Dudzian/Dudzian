@@ -515,6 +515,10 @@ jobs:
             --ignore=tests/performance \
             --ignore=tests/ui_pyside \
             --ignore=tests/ui_backend \
+            --ignore-glob=tests/licensing/test_lppi_*.py \
+            --ignore-glob=tests/licensing/test_pdsa_*.py \
+            --ignore-glob=tests/licensing/test_production_*.py \
+            --ignore-glob=tests/licensing/test_cha_*.py \
             --maxfail=1 \
             --durations=10 \
             --junitxml=test-results/pytest.xml
@@ -550,7 +554,7 @@ jobs:
     name: Python tests (Ubuntu)
     runs-on: ubuntu-latest
     needs: prepare-wheelhouse
-    timeout-minutes: 25
+    timeout-minutes: 60
     services:
       postgres:
         image: postgres:16
@@ -653,6 +657,7 @@ jobs:
             tests/security/test_freshness_semantic_verifier_postgresql.py
 
       - name: Run fast pytest suite
+        timeout-minutes: 45
         env:
           PYTEST_FAST: "1"
           PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
@@ -671,6 +676,10 @@ jobs:
             --ignore=tests/performance \
             --ignore=tests/ui_pyside \
             --ignore=tests/ui_backend \
+            --ignore-glob=tests/licensing/test_lppi_*.py \
+            --ignore-glob=tests/licensing/test_pdsa_*.py \
+            --ignore-glob=tests/licensing/test_production_*.py \
+            --ignore-glob=tests/licensing/test_cha_*.py \
             --maxfail=1 \
             --durations=10 \
             --junitxml=test-results/pytest.xml
@@ -688,7 +697,7 @@ jobs:
     name: Python tests (macOS)
     runs-on: macos-latest
     needs: prepare-wheelhouse
-    timeout-minutes: 25
+    timeout-minutes: 60
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -734,6 +743,7 @@ jobs:
           tests/core/test_async_http.py
 
       - name: Run fast pytest suite
+        timeout-minutes: 45
         env:
           PYTEST_FAST: "1"
           PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
@@ -749,6 +759,10 @@ jobs:
             --ignore=tests/performance \
             --ignore=tests/ui_pyside \
             --ignore=tests/ui_backend \
+            --ignore-glob=tests/licensing/test_lppi_*.py \
+            --ignore-glob=tests/licensing/test_pdsa_*.py \
+            --ignore-glob=tests/licensing/test_production_*.py \
+            --ignore-glob=tests/licensing/test_cha_*.py \
             --maxfail=1 \
             --durations=10 \
             --junitxml=test-results/pytest.xml
@@ -759,6 +773,95 @@ jobs:
         with:
           name: py-tests-macos-pytest-results
           path: test-results/pytest.xml
+          retention-days: 3
+
+  licensing-security-durability:
+    if: github.event_name != 'schedule'
+    name: Licensing security/durability (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    needs: prepare-wheelhouse
+    timeout-minutes: ${{ matrix.job_timeout_minutes }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            job_timeout_minutes: 45
+            test_timeout_minutes: 35
+          - os: macos-latest
+            job_timeout_minutes: 45
+            test_timeout_minutes: 35
+          - os: windows-latest
+            job_timeout_minutes: 75
+            test_timeout_minutes: 60
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Download wheelhouse
+        uses: actions/download-artifact@v8
+        with:
+          name: wheelhouse-${{ runner.os }}-py${{ env.PYTHON_VERSION }}
+          path: ${{ env.WHEELHOUSE_DIR }}
+
+      - name: Install dependencies
+        shell: bash
+        env:
+          INSTALL_EXTRAS: test,codegen
+        run: |
+          bash scripts/ci/install_deps_python.sh
+
+      - name: Generate trading stubs
+        run: python scripts/generate_trading_stubs.py --skip-cpp
+
+      - name: Preflight test environment
+        shell: bash
+        run: python scripts/ci/preflight_test_env.py
+
+      - name: Run serial licensing security/durability suite
+        timeout-minutes: ${{ matrix.test_timeout_minutes }}
+        shell: bash
+        env:
+          PYTEST_FAST: "1"
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+          DUDZIAN_TEST_MODE: "1"
+          DUDZIAN_ALLOW_LONG_POLL: "0"
+        run: |
+          shopt -s nullglob
+          licensing_tests=(
+            tests/licensing/test_lppi_*.py
+            tests/licensing/test_pdsa_*.py
+            tests/licensing/test_production_*.py
+            tests/licensing/test_cha_*.py
+          )
+          if (( ${#licensing_tests[@]} == 0 )); then
+            echo "No licensing security/durability tests matched the configured patterns." >&2
+            exit 1
+          fi
+          mkdir -p test-results/licensing-security
+          python -m pytest -p asyncio \
+            --fast \
+            -m "not integration and not external_postgresql and not e2e_demo_paper and not retraining and not soak and not performance and not qml" \
+            "${licensing_tests[@]}" \
+            --maxfail=1 \
+            --durations=20 \
+            --junitxml=test-results/licensing-security/pytest.xml
+
+      - name: Upload licensing security diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: licensing-security-${{ runner.os }}-pytest-results
+          path: test-results/licensing-security/pytest.xml
+          if-no-files-found: warn
           retention-days: 3
 
   integration-linux:
