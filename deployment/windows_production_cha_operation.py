@@ -82,6 +82,9 @@ def _create_directory(directory: Path) -> None:
     for component in (*reversed(directory.parents), directory):
         _safe(component, directory=True)
         if component.exists():
+            # Revalidate after the existence probe so a path swap between the
+            # first qualification and the probe cannot silently bypass _safe.
+            _safe(component, directory=True)
             continue
         try:
             component.mkdir(mode=0o700)
