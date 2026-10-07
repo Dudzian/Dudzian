@@ -50,6 +50,23 @@ def cha_committed(reserved):
     return SimpleNamespace(state=state, reservation=reserved, path=path)
 
 
+def test_directory_creation_never_recreates_existing_ancestor(monkeypatch, tmp_path):
+    target = tmp_path / "nested" / "state"
+    original_mkdir = Path.mkdir
+    attempted = []
+
+    def guarded_mkdir(path, *args, **kwargs):
+        if path.exists():
+            attempted.append(path)
+            raise PermissionError("existing ancestor must never be recreated")
+        return original_mkdir(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "mkdir", guarded_mkdir)
+    operation._create_directory(target)
+    assert target.is_dir()
+    assert attempted == []
+
+
 def test_single_fixed_lifecycle_retains_complete_authenticated_upstream(reserved):
     state = reserved.state
     assert reserved.path == upstream_installed._state_path().with_name(
