@@ -686,9 +686,7 @@ def test_wrong_payload_authority_rejected_before_rpc(installed, socket_boundary,
     assert socket_boundary.connections == []
 
 
-def test_forged_closed_or_changed_issuer_cannot_sign(
-    installed, socket_boundary, monkeypatch
-):
+def test_forged_closed_or_changed_issuer_cannot_sign(installed, socket_boundary, monkeypatch):
     forged = object.__new__(issuer.ProductionEnrollmentIssuerContext)
     for authority in (forged, copy.copy(installed.issuer)):
         with pytest.raises(issuer.ProductionEnrollmentIssuerError, match="CONTEXT_REQUIRED"):
