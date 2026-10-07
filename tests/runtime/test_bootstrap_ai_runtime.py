@@ -77,17 +77,34 @@ def stub_on_pipeline_result(selection: object) -> None:
 @pytest.fixture
 def temp_model_file(tmp_path: Path) -> Path:
     model_path = tmp_path / "btc_light.json"
+    feature_names = ["open", "high", "low", "close", "volume"]
+    feature_scalers = {name: {"mean": 0.0, "stdev": 1.0} for name in feature_names}
     model_path.write_text(
         json.dumps(
             {
+                "artifact": {
+                    "feature_names": feature_names,
+                    "model_state": {
+                        "learning_rate": 0.1,
+                        "n_estimators": 0,
+                        "initial_prediction": 0.018,
+                        "feature_names": feature_names,
+                        "feature_scalers": feature_scalers,
+                        "stumps": [],
+                    },
+                    "trained_at": "2024-01-01T00:00:00+00:00",
+                    "metrics": {},
+                    "metadata": {"source": "test_bootstrap_ai_runtime"},
+                    "target_scale": 1.0,
+                    "training_rows": 1,
+                    "validation_rows": 0,
+                    "test_rows": 0,
+                    "feature_scalers": feature_scalers,
+                    "backend": "builtin",
+                },
                 "input_size": 5,
                 "seq_len": 1,
-                "model_type": "linear",
-                "feature_names": ["open", "high", "low", "close", "volume"],
-                "weights": [0.0, 0.0, 0.0, 0.0, 0.0],
-                "bias": 0.018,
-                "trained_at": "2024-01-01T00:00:00+00:00",
-                "training_rows": 1,
+                "model_type": "light",
             }
         ),
         encoding="utf-8",
