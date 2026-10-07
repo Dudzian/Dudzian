@@ -57,6 +57,9 @@ jobs:
           tests/licensing/test_external_provisioning_stage9.py
           tests/licensing/test_production_pdsa_verifier.py
           tests/licensing/test_lppi_authority_lifecycle.py
+          tests/licensing/test_lppi_authenticated_operation.py
+          tests/licensing/test_lppi_authenticated_operation_native.py
+          tests/licensing/test_lppi_authenticated_operation_durability.py
           tests/deployment/test_windows_cng_pre_enrollment.py
           tests/deployment/test_windows_cng_custody_bridge.py
           tests/deployment/test_windows_production_pre_enrollment.py
@@ -68,6 +71,7 @@ jobs:
           tests/architecture/test_stage9_production_tpm_custody_contract.py
           tests/architecture/test_stage9_pdsa_enrollment_authorization_contract.py
           tests/architecture/test_stage9_lppi_authority_key_binding_contract.py
+          tests/architecture/test_stage9_lppi_authenticated_operation_binding_contract.py
           -m "not hardware and not destructive and not network"
           --cov=bot_core.risk.portfolio
           --cov=bot_core.licensing.canonical
@@ -82,11 +86,13 @@ jobs:
           --cov=bot_core.licensing.lppi_package_acceptance
           --cov=bot_core.licensing.lppi_authority_key
           --cov=bot_core.licensing.lppi_authority_custody
+          --cov=bot_core.licensing.lppi_authenticated_operation
           --cov=deployment.windows_cng_pre_enrollment
           --cov=deployment.windows_cng_custody_bridge
           --cov=deployment.windows_lppi_authority_key
           --cov=deployment.windows_lppi_authority_custody
           --cov=deployment.windows_production_lppi_authority
+          --cov=deployment.windows_production_lppi_operation
           --cov=deployment.windows_production_pre_enrollment
           --cov=deployment.windows_stage9_production_trust
           --cov=deployment.production_enrollment_issuer
