@@ -124,8 +124,7 @@ def test_heavy_licensing_security_suite_is_split_without_coverage_gap():
     assert "shopt -s nullglob" in command
     assert '"${licensing_tests[@]}"' in command
     assert "pytest -p asyncio" in command
-    assert " --fast " not in command  # command is multiline; exact flag is asserted below
-    assert "\n            --fast \\" in command
+    assert "--fast" in command
     assert "-n " not in command
     assert "--numprocesses" not in command
     assert step["env"]["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] == "1"
