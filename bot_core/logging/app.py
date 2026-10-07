@@ -89,7 +89,7 @@ class VectorHttpHandler(logging.Handler):
                 headers={"Content-Type": "application/json"},
                 method="POST",
             )
-            urllib.request.urlopen(require_http_request(request), timeout=self.timeout).read()  # nosemgrep
+            urllib.request.urlopen(require_http_request(request), timeout=self.timeout).read()  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
         except Exception:
             self.handleError(record)
 
