@@ -104,7 +104,10 @@ def _set_deadline(connection: socket.socket, deadline: float) -> None:
     remaining = deadline - time.monotonic()
     if remaining <= 0:
         raise ProductionEnrollmentIssuerError("PRODUCTION_PDSA_SIGNING_UNAVAILABLE")
-    connection.settimeout(remaining)
+    # Floating-point cancellation around large monotonic clock values can make
+    # the computed remainder infinitesimally larger than the configured budget.
+    # Clamp explicitly so a socket timeout never exceeds the fixed RPC bound.
+    connection.settimeout(min(remaining, RPC_TIMEOUT_SECONDS))
 
 
 def _read_exact(connection: socket.socket, size: int, deadline: float) -> bytes:
