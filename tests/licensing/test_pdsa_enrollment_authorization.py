@@ -1242,12 +1242,21 @@ def test_deployment_b_and_trust_b_cannot_retrieve_deployment_a_package(
 
 def test_copy_replacing_original_database_cannot_retain_issuer_authority(issuance, tmp_path):
     item = issuance
-    _issue(item)
+    issued = _issue(item)
     original = item.authority.store.path
     replacement = tmp_path / "TEST_ONLY_REPLACEMENT.sqlite3"
     _copy_database(original, replacement)
     replacement.chmod(0o600)
-    replacement.replace(original)
+    try:
+        replacement.replace(original)
+    except PermissionError:
+        # Windows may refuse replacing a live SQLite database outright. That is
+        # already a fail-closed outcome for this attack: the original database
+        # remains in place and exact retry must still return the retained package.
+        assert original.exists()
+        assert replacement.exists()
+        assert _retry(item) == issued
+        return
     with pytest.raises(issuer.ProductionEnrollmentIssuerError, match="SOURCE_CHANGED"):
         _retry(item)
 
