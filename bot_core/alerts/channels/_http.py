@@ -18,7 +18,7 @@ class HttpOpener(Protocol):
 def default_opener(req: request.Request, *, timeout: float) -> addinfourl:
     """Domyślne wywołanie `urllib.request.urlopen` z kontrolą czasu."""
 
-    return request.urlopen(require_http_request(req), timeout=timeout)  # nosemgrep
+    return request.urlopen(require_http_request(req), timeout=timeout)  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
 
 
 __all__ = ["HttpOpener", "default_opener"]
