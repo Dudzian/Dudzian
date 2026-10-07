@@ -86,7 +86,9 @@ def push_metrics(
 
     request = urllib.request.Request(target_url, data=payload, method="PUT", headers=dict(headers))
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
+        with (
+            urllib.request.urlopen(request, timeout=timeout) as response
+        ):  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
             response.read()
     except urllib.error.HTTPError as exc:  # pragma: no cover - handled in CLI
         raise RuntimeError(f"Pushgateway responded with HTTP {exc.code}: {exc.reason}") from exc
