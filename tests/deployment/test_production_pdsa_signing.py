@@ -592,6 +592,19 @@ def test_only_exact_unpublished_reserved_payload_can_be_signed(installed, socket
     assert socket_boundary.connections == []
 
 
+def test_set_deadline_clamps_float_roundoff_to_configured_budget(monkeypatch):
+    class TestOnlyConnection:
+        timeout = None
+
+        def settimeout(self, timeout):
+            self.timeout = timeout
+
+    connection = TestOnlyConnection()
+    monkeypatch.setattr(signing.time, "monotonic", lambda: 999.9999999999999)
+    signing._set_deadline(connection, 1005.0)
+    assert connection.timeout == signing.RPC_TIMEOUT_SECONDS
+
+
 def test_total_rpc_deadline_cannot_be_extended_by_partial_reads(
     installed, socket_boundary, monkeypatch
 ):
