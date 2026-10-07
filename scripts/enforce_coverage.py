@@ -28,7 +28,9 @@ def _parse_coverage_xml(path: Path) -> ET.Element:
     if b"<!DOCTYPE" in upper or b"<!ENTITY" in upper:
         raise CoverageValidationError("Raport coverage zawiera niedozwoloną deklarację XML")
     try:
-        return ET.fromstring(raw)  # nosemgrep: python.lang.security.use-defused-xml-parse.use-defused-xml-parse
+        return ET.fromstring(
+            raw
+        )  # nosemgrep: python.lang.security.use-defused-xml-parse.use-defused-xml-parse
     except ET.ParseError as exc:
         raise CoverageValidationError(f"Nie udało się odczytać XML z {path}") from exc
 
