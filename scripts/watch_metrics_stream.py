@@ -2703,7 +2703,11 @@ def _load_auth_token(token: str | None, token_file: str | None) -> str | None:
             LOGGER.error("Nie znaleziono pliku danych uwierzytelniających: %s", token_file)
             raise SystemExit(2) from exc
         except OSError as exc:  # pragma: no cover - zależne od platformy
-            LOGGER.error("Nie udało się odczytać pliku z tokenem %s: %s", token_file, exc)
+            LOGGER.error(
+                "Nie udało się odczytać pliku danych uwierzytelniających %s (%s)",
+                token_file,
+                type(exc).__name__,
+            )
             raise SystemExit(2) from exc
         token = data.strip()
         if not token:
