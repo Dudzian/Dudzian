@@ -250,7 +250,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if json_sync_cfg.backend.lower() == "s3":
             secret_manager = _create_secret_manager(args)
     except SecretStorageError as exc:
-        _LOGGER.error("Błąd podczas inicjalizacji SecretManager: %s", exc)
+        _LOGGER.error("Błąd inicjalizacji bezpiecznego magazynu (%s)", type(exc).__name__)
         result = _SyncResult(status="error", error="secret_manager_error")
         print(_serialize_result(result, as_json=args.json))
         return 3
