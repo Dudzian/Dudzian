@@ -19,6 +19,8 @@ from typing import Any, Iterator
 WINDOWS_NETWORK_RECOVERY = "WINDOWS_NETWORK_RECOVERY"
 STATE_TIMEOUT_SECONDS = 10.0
 POLL_INTERVAL_SECONDS = 0.02
+STATE_REPLACE_TIMEOUT_SECONDS = 2.0
+STATE_REPLACE_RETRY_SECONDS = 0.01
 PEER_TIMEOUT_SECONDS = 15.0
 HTTP_TIMEOUT_SECONDS = 3.0
 STDERR_LIMIT = 8_192
@@ -42,6 +44,23 @@ class Stage7NetworkProbeError(RuntimeError):
         super().__init__(f"[{label}] {detail}")
 
 
+def _replace_state_snapshot(temporary: Path, path: Path) -> None:
+    """Replace one snapshot, tolerating only transient Windows sharing races."""
+    deadline = time.monotonic() + STATE_REPLACE_TIMEOUT_SECONDS
+    while True:
+        try:
+            os.replace(temporary, path)
+            return
+        except PermissionError as exc:
+            if (
+                os.name != "nt"
+                or getattr(exc, "winerror", None) not in {5, 32}
+                or time.monotonic() >= deadline
+            ):
+                raise
+            time.sleep(STATE_REPLACE_RETRY_SECONDS)
+
+
 def _write_state(path: Path, state: dict[str, Any]) -> None:
     """Publish one complete peer snapshot; readers never observe partial JSON."""
     temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
@@ -49,7 +68,7 @@ def _write_state(path: Path, state: dict[str, Any]) -> None:
         json.dump(state, stream, separators=(",", ":"))
         stream.flush()
         os.fsync(stream.fileno())
-    os.replace(temporary, path)
+    _replace_state_snapshot(temporary, path)
 
 
 def _record(path: Path, state: dict[str, Any], phase: str) -> None:

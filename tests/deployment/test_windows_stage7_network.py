@@ -63,6 +63,53 @@ def test_atomic_state_update_uses_flushed_temporary_then_replace(
     assert probe._read_state(destination)["port"] == 12345  # type: ignore[index]
 
 
+def test_windows_state_publish_retries_only_transient_sharing_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    destination = tmp_path / "peer-state.json"
+    temporary = tmp_path / "peer-state.tmp"
+    temporary.write_text("{}", encoding="utf-8")
+    real_replace = os.replace
+    calls: list[int] = []
+
+    def flaky_replace(source: Path, target: Path) -> None:
+        calls.append(1)
+        if len(calls) == 1:
+            error = PermissionError("TEST_ONLY Windows sharing violation")
+            error.winerror = 32
+            raise error
+        real_replace(source, target)
+
+    monkeypatch.setattr(probe.os, "name", "nt")
+    monkeypatch.setattr(probe.os, "replace", flaky_replace)
+    monkeypatch.setattr(probe.time, "sleep", lambda _: None)
+    probe._replace_state_snapshot(temporary, destination)
+    assert destination.read_text(encoding="utf-8") == "{}"
+    assert len(calls) == 2
+
+
+def test_windows_state_publish_does_not_retry_unrelated_permission_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    destination = tmp_path / "peer-state.json"
+    temporary = tmp_path / "peer-state.tmp"
+    temporary.write_text("{}", encoding="utf-8")
+    calls: list[int] = []
+
+    def denied(source: Path, target: Path) -> None:
+        del source, target
+        calls.append(1)
+        error = PermissionError("TEST_ONLY unrelated access denial")
+        error.winerror = 1314
+        raise error
+
+    monkeypatch.setattr(probe.os, "name", "nt")
+    monkeypatch.setattr(probe.os, "replace", denied)
+    with pytest.raises(PermissionError, match="unrelated access denial"):
+        probe._replace_state_snapshot(temporary, destination)
+    assert len(calls) == 1
+
+
 def test_real_peer_records_dynamic_port_and_exact_order_without_stdout(tmp_path: Path) -> None:
     state_path = tmp_path / "peer-state.json"
     process = subprocess.Popen(

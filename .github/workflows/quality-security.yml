@@ -21,7 +21,7 @@ jobs:
   quality-ratchet:
     name: Quality ratchet
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
         with:
@@ -35,7 +35,7 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e ".[test]" "ruff==0.14.11" "mypy==1.10.0" "diff-cover>=9,<10"
       - name: Ruff baseline gate
-        run: python -m ruff check bot_core core scripts tests deploy stage6_samples ui
+        run: python -m ruff check bot_core core scripts tests deploy stage6_samples ui deployment/windows_production_cha_operation.py
       - name: Mypy configured scope
         run: python -m mypy
       - name: Property and critical pure-logic tests with branch coverage
@@ -45,7 +45,7 @@ jobs:
           DUDZIAN_TEST_MODE: "1"
           DUDZIAN_ALLOW_LONG_POLL: "0"
         run: >-
-          python -m pytest -p asyncio -p pytest_cov
+          python -m pytest -p asyncio -p pytest_cov -p xdist.plugin -n 4
           tests/property
           tests/test_risk_portfolio_management.py
           tests/deployment/test_windows_tpm_substrate_probe.py
@@ -60,6 +60,8 @@ jobs:
           tests/licensing/test_lppi_authenticated_operation.py
           tests/licensing/test_lppi_authenticated_operation_native.py
           tests/licensing/test_lppi_authenticated_operation_durability.py
+          tests/licensing/test_cha_logical_operation.py
+          tests/licensing/test_cha_logical_operation_durability.py
           tests/deployment/test_windows_cng_pre_enrollment.py
           tests/deployment/test_windows_cng_custody_bridge.py
           tests/deployment/test_windows_production_pre_enrollment.py
@@ -72,6 +74,7 @@ jobs:
           tests/architecture/test_stage9_pdsa_enrollment_authorization_contract.py
           tests/architecture/test_stage9_lppi_authority_key_binding_contract.py
           tests/architecture/test_stage9_lppi_authenticated_operation_binding_contract.py
+          tests/architecture/test_stage9_cha_logical_operation_contract.py
           -m "not hardware and not destructive and not network"
           --cov=bot_core.risk.portfolio
           --cov=bot_core.licensing.canonical
@@ -87,12 +90,15 @@ jobs:
           --cov=bot_core.licensing.lppi_authority_key
           --cov=bot_core.licensing.lppi_authority_custody
           --cov=bot_core.licensing.lppi_authenticated_operation
+          --cov=bot_core.licensing.cha_logical_operation
+          --cov=bot_core.uuid7
           --cov=deployment.windows_cng_pre_enrollment
           --cov=deployment.windows_cng_custody_bridge
           --cov=deployment.windows_lppi_authority_key
           --cov=deployment.windows_lppi_authority_custody
           --cov=deployment.windows_production_lppi_authority
           --cov=deployment.windows_production_lppi_operation
+          --cov=deployment.windows_production_cha_operation
           --cov=deployment.windows_production_pre_enrollment
           --cov=deployment.windows_stage9_production_trust
           --cov=deployment.production_enrollment_issuer
