@@ -20,7 +20,7 @@ class _SmsHttpOpener(Protocol):
 
 
 def _default_sms_opener(req: request.Request, *, timeout: float) -> request.addinfourl:
-    return request.urlopen(require_http_request(req), timeout=timeout)  # nosemgrep
+    return request.urlopen(require_http_request(req), timeout=timeout)  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
 
 
 @dataclass(slots=True)
