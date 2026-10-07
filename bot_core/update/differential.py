@@ -267,7 +267,10 @@ class DifferentialUpdateManager:
             resolved = self._downloader(source, destination)
         elif parsed.scheme in {"http", "https"}:
             remote_url = require_http_url(source)
-            with urllib.request.urlopen(remote_url) as response, destination.open("wb") as handle:  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
+            with (
+                urllib.request.urlopen(remote_url) as response,
+                destination.open("wb") as handle,
+            ):  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
                 shutil.copyfileobj(response, handle)
             resolved = destination
         else:
