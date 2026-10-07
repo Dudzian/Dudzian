@@ -135,7 +135,7 @@ def acquire_postgresql(pins: dict[str, object], supplied: Path | None, cache: Pa
         temporary = archive.with_suffix(".download")
         source_url = require_http_url(str(pg["source_url"]))
         with (
-            urlopen(source_url, timeout=120) as response,  # nosemgrep
+            urlopen(source_url, timeout=120) as response,  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
             temporary.open("wb") as output,
         ):
             shutil.copyfileobj(response, output)
