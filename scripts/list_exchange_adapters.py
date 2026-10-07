@@ -197,7 +197,9 @@ def _push_dashboard_snapshot(
             method="POST",
         )
         try:
-            urllib.request.urlopen(require_http_request(request), timeout=10)  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
+            urllib.request.urlopen(
+                require_http_request(request), timeout=10
+            )  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
         except urllib.error.URLError as exc:  # pragma: no cover - zależy od środowiska CI
             raise RuntimeError(
                 f"Nie udało się wypchnąć CSV do endpointu dashboardu: {exc}"
