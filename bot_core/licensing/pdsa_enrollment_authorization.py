@@ -10,15 +10,21 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-import secrets
 import sqlite3
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import serialization
+
+from bot_core.uuid7 import (
+    UUID7Error,
+    mint_uuid7,
+    reservation_epoch_milliseconds,
+    secrets as secrets,
+)
 
 from deployment.production_enrollment_issuer import (
     require_production_enrollment_issuer,
@@ -205,23 +211,17 @@ def _verify_package_signatures(raw: bytes, context: object) -> PDSAEnrollmentAut
 
 
 def _reservation_epoch_milliseconds(reservation_now: datetime) -> int:
-    if reservation_now.utcoffset() != timedelta(0):
-        raise PDSAAuthorizationError("INVALID_PACKAGE_TIMESTAMP")
-    elapsed = reservation_now - datetime(1970, 1, 1, tzinfo=timezone.utc)
-    # Integer timedelta arithmetic floors sub-millisecond precision, including
-    # instants before the epoch, without float timestamp rounding at boundaries.
-    millis = elapsed.days * 86_400_000 + elapsed.seconds * 1000 + elapsed.microseconds // 1000
-    if not 0 <= millis < 1 << 48:
-        raise PDSAAuthorizationError("INVALID_PACKAGE_TIMESTAMP")
-    return millis
+    try:
+        return reservation_epoch_milliseconds(reservation_now)
+    except UUID7Error as exc:
+        raise PDSAAuthorizationError("INVALID_PACKAGE_TIMESTAMP") from exc
 
 
 def _mint_uuidv7(prefix: str, millis: int) -> str:
-    if type(millis) is not int or not 0 <= millis < 1 << 48:
-        raise PDSAAuthorizationError("INVALID_PACKAGE_TIMESTAMP")
-    raw_id = (millis << 80) | (7 << 76) | (secrets.randbits(12) << 64)
-    raw_id |= (2 << 62) | secrets.randbits(62)
-    return prefix + str(uuid.UUID(int=raw_id))
+    try:
+        return mint_uuid7(prefix, millis)
+    except UUID7Error as exc:
+        raise PDSAAuthorizationError("INVALID_PACKAGE_TIMESTAMP") from exc
 
 
 def _payload(

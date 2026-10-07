@@ -1,0 +1,346 @@
+{
+  "schema_version": "cryptohunter.stage9_cha_logical_operation_contract.v1",
+  "contract_id": "STAGE9_INITIAL_CHA_LOGICAL_OPERATION",
+  "status": "FROZEN",
+  "implementation_authorized": true,
+  "production_provisioning_ready": false,
+  "legal_production_enrollment": "NOT_PERFORMED",
+  "parent_contract": {
+    "canonical_artifact": "docs/architecture/cryptohunter_product_architecture/stage9_external_provisioning_architecture_contract.json",
+    "sha256": "6538a75d8cf3a6e3cdab8f4a9022277a21d98e1a61923aa8d8eae9b80ae1d67d",
+    "section": "operation_identity",
+    "extension_kind": "SUBORDINATE_INITIAL_CHA_ASSIGNMENT_AND_DURABLE_BIJECTION_CLOSURE",
+    "historical_parent_bytes_unchanged": true
+  },
+  "upstream_contract": {
+    "canonical_artifact": "docs/architecture/cryptohunter_product_architecture/stage9_lppi_authenticated_operation_binding_contract.json",
+    "sha256": "f75494b163137374d39d9147b5e328aa30e772d2887255deb8980cb442457ca2",
+    "historical_upstream_bytes_unchanged": true
+  },
+  "stage_status": {
+    "stage_9": "IN_PROGRESS",
+    "windows_production_ready": "NOT_READY",
+    "stage_10_production_lifecycle_live": "NOT_STARTED",
+    "stage_10_prerequisite": "BLOCKED_UNTIL_LEGAL_ENROLLMENT"
+  },
+  "closure_rationale": {
+    "schema": "parent freezes CHA ownership and bijection, but not the exact durable CHA record",
+    "source": "parent requires authenticated exact LPPI operation; this child selects reuse of its complete verified immutable retained snapshot",
+    "generation": "parent does not select initial mapping generation or successor support",
+    "timestamp": "parent freezes ago UUIDv7 syntax, but does not select assignment UTC precision or timestamp correspondence",
+    "durable_lifecycle": "parent requires durable assignment before account reservation, but does not select crash cuts, exact-byte retry, filesystem protocol or capability reconstruction"
+  },
+  "scope": {
+    "mode": "INITIAL_LOGICAL_OPERATION_ONLY",
+    "owner_issuer": "CryptoHunterAccountAuthority",
+    "source_authority": "VerifiedLPPIAuthenticatedProvisioningOperation",
+    "source_guard": "require_verified_lppi_authenticated_operation",
+    "completion": "PRVOP_AGO_BIJECTION_COMMITTED",
+    "mapping_generation": 1,
+    "replacement_supported": false,
+    "retirement_supported": false,
+    "caller_selected_identity_clock_or_state_path": false,
+    "canonical_account_genesis_request": false
+  },
+  "canonicalization": {
+    "profile": "RFC8785 JCS UTF-8",
+    "unknown_fields": "REJECT",
+    "missing_fields": "REJECT",
+    "duplicate_fields": "REJECT",
+    "noncanonical_bytes": "REJECT",
+    "floats_and_nonfinite_numbers": "REJECT",
+    "boolean_for_integer": "REJECT",
+    "canonical_utc": "YYYY-MM-DDTHH:MM:SS.sssZ; exactly three fractional digits, real Gregorian UTC date, no offset or leap seconds",
+    "lowercase_hex_only": true
+  },
+  "operation_identity": {
+    "owner_issuer": "CryptoHunterAccountAuthority",
+    "schema": "ago_<canonical-lowercase-UUIDv7>",
+    "caller_selectable": false,
+    "issuance": "capture one internal actual UTC assignment instant; retain ago and exact source durably before commit or publication",
+    "uuid_timestamp": "unsigned 48-bit floor(actual captured internal UTC assignment Unix epoch milliseconds); integer timedelta arithmetic, no float rounding, no uint48 masking",
+    "uuid_randomness": "CSPRNG 12-bit rand_a and 62-bit rand_b; version 7 and RFC variant 10",
+    "profile_source": "bot_core/uuid7.py",
+    "assigned_at_uuid_timestamp_match": "decode ago UUIDv7 timestamp and compare with exact millisecond assigned_at_utc",
+    "account_id_is_logical_operation_id": false,
+    "example": {
+      "captured_assignment_instant_utc": "2026-10-07T12:00:00.789123Z",
+      "uuid_timestamp_milliseconds": 1791374400789,
+      "assigned_at_utc": "2026-10-07T12:00:00.789Z"
+    }
+  },
+  "source_binding": {
+    "canonical_tuple_fields": [
+      "environment",
+      "pdsa_trust_domain",
+      "pdsa_package_digest_sha256",
+      "provisioning_subject_id",
+      "enrollment_reference",
+      "provisioning_operation_id",
+      "binding_generation",
+      "lppi_authenticated_operation_binding_digest_sha256"
+    ],
+    "derivation": "derive seven semantic fields from exact verified retained LPPI binding; binding digest is lowercase hex SHA256(exact canonical LPPI binding bytes)",
+    "retained_representation": "lppi_operation_state_raw_hex is the complete exact canonical LPPI committed private snapshot obtained only after its source guard",
+    "retained_signer_lineage": "complete upstream snapshot retains authority binding digest/profile/fingerprint/custody, exact authority binding bytes, exact operation binding and signature; no duplicate signer fields are minted",
+    "conflict_identity": "exact complete retained LPPI snapshot bytes plus (pdsa_trust_domain, provisioning_operation_id); derived content digest alone is never authority",
+    "raw_snapshot_or_binding_as_authority": false,
+    "source_binding_property": "exact public LPPI binding after current upstream and committed CHA verification; transport alone grants no authority"
+  },
+  "bijection": {
+    "cardinality": "ONE_TO_ONE_BIJECTION",
+    "registry_key": "(pdsa_trust_domain, provisioning_operation_id)",
+    "registry_scope": "one-entry initial installed CHA lifecycle; fixed machine state path in the same installed LPPI lifecycle directory",
+    "forward_uniqueness": "one exact authenticated prvop can have only the retained ago",
+    "reverse_uniqueness": "the sole retained ago can refer only to its exact retained authenticated prvop",
+    "same_operation_replay": "RETURN_SAME_RESULT_OR_DURABLY_RESUME",
+    "same_id_different_request": "REJECT",
+    "new_operation_after_first_winner": "REJECT",
+    "different_source_while_reserved": "REJECT_WITHOUT_MUTATION",
+    "immutability": "reservation pins every field except status/history; committed exact record bytes cannot change",
+    "cross_host_global_registry_provided": false,
+    "subject_account_cardinality_selected": false
+  },
+  "durable_lifecycle": {
+    "protocol_ordering": [
+      "LPPI_AUTHENTICATED_OPERATION_BINDING_COMMITTED",
+      "CHA_AGO_ASSIGNED",
+      "PRVOP_AGO_BIJECTION_COMMITTED"
+    ],
+    "status_progression": [
+      "AGO_RESERVED",
+      "PRVOP_AGO_BIJECTION_COMMITTED"
+    ],
+    "publication": "only after complete durable mapping commit and independently reverified exact source and retained record",
+    "source_guard_before_lock_files": true,
+    "expensive_source_requalification_outside_write_lock": true,
+    "locks": "one nonblocking cross-process state lock; reserve and commit are short critical sections, each validates the pinned record",
+    "storage": {
+      "schema_version": "CHAInitialLogicalOperationV1",
+      "file": "initial-cha-logical-operation.json",
+      "state_lock": "initial-cha-logical-operation.lock",
+      "record_fields": [
+        "schema_version",
+        "status",
+        "history",
+        "mapping_generation",
+        "pdsa_trust_domain",
+        "provisioning_operation_id",
+        "logical_operation_id",
+        "assigned_at_utc",
+        "lppi_operation_state_raw_hex"
+      ],
+      "json_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "schema_version",
+          "status",
+          "history",
+          "mapping_generation",
+          "pdsa_trust_domain",
+          "provisioning_operation_id",
+          "logical_operation_id",
+          "assigned_at_utc",
+          "lppi_operation_state_raw_hex"
+        ],
+        "properties": {
+          "schema_version": {
+            "const": "CHAInitialLogicalOperationV1"
+          },
+          "status": {
+            "enum": [
+              "AGO_RESERVED",
+              "PRVOP_AGO_BIJECTION_COMMITTED"
+            ]
+          },
+          "history": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "AGO_RESERVED",
+                "PRVOP_AGO_BIJECTION_COMMITTED"
+              ]
+            },
+            "minItems": 1,
+            "maxItems": 2
+          },
+          "mapping_generation": {
+            "type": "integer",
+            "const": 1
+          },
+          "pdsa_trust_domain": {
+            "const": "PDSA_PRODUCTION_2_OF_3_ED25519"
+          },
+          "provisioning_operation_id": {
+            "type": "string",
+            "pattern": "^prvop_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$(?![\\s\\S])"
+          },
+          "logical_operation_id": {
+            "type": "string",
+            "pattern": "^ago_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$(?![\\s\\S])"
+          },
+          "assigned_at_utc": {
+            "type": "string",
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]\\.[0-9]{3}Z$(?![\\s\\S])"
+          },
+          "lppi_operation_state_raw_hex": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 2097152,
+            "pattern": "^(?:[0-9a-f]{2})+$(?![\\s\\S])"
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "status": {
+                  "const": "AGO_RESERVED"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "history": {
+                  "const": [
+                    "AGO_RESERVED"
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "status": {
+                  "const": "PRVOP_AGO_BIJECTION_COMMITTED"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "history": {
+                  "const": [
+                    "AGO_RESERVED",
+                    "PRVOP_AGO_BIJECTION_COMMITTED"
+                  ]
+                }
+              }
+            }
+          }
+        ]
+      },
+      "maximum_state_bytes": 4194304,
+      "payload": "exact RFC8785 JCS UTF-8 canonical record; exact upstream state encoded as lowercase hex",
+      "durability": "fsync temporary file before replacement; POSIX directory fsync after atomic replace, Windows MoveFileExW with MOVEFILE_WRITE_THROUGH",
+      "unsafe_files": "reject symlink/reparse path, nonregular file, hardlink and oversized state",
+      "disk_rollback_protection": "NOT PROVIDED BY THIS LAYER"
+    },
+    "crash_retry": [
+      {
+        "cut_point": "BEFORE_AGO_RESERVATION",
+        "outcome": "safe first reservation or fail-closed; no identifier published"
+      },
+      {
+        "cut_point": "AFTER_AGO_RESERVATION",
+        "outcome": "resume exact retained ago, instant and upstream snapshot; never remint"
+      },
+      {
+        "cut_point": "BEFORE_MAPPING_COMMIT",
+        "outcome": "resume exact pinned reservation after upstream requalification"
+      },
+      {
+        "cut_point": "AFTER_MAPPING_COMMIT_BEFORE_RESPONSE",
+        "outcome": "return exact retained mapping after reverification; never remint"
+      },
+      {
+        "cut_point": "LOST_RESPONSE",
+        "outcome": "return exact committed mapping after reverification"
+      },
+      {
+        "cut_point": "RESTART",
+        "outcome": "restore upstream through its production loader, then verify existing committed CHA record; loader never creates or remints"
+      }
+    ],
+    "concurrency": "racing process observes pinned/committed winner or stable bounded BUSY/retry; never a second ago for this initial lifecycle",
+    "ambiguous_persistence_failure": "do not publish; retry rereads and reconciles existing canonical durable state before any mint"
+  },
+  "cryptographic_boundary": {
+    "new_cha_signer_required": false,
+    "software_root_key_created": false,
+    "test_only_signer_accepted": false,
+    "authority": "verified current upstream LPPI capability + CHA ownership + immutable durable mapping + private verifier-issued capability provenance",
+    "sha256_alone_is_authentication": false,
+    "protected_freshness_provided": false
+  },
+  "operation_capability": {
+    "type": "VerifiedCHALogicalOperation",
+    "source_guard": "require_verified_cha_logical_operation",
+    "issuer": "trusted installed CHA verifier only after durable bijection commit",
+    "public_constructor": false,
+    "exact_type_required": true,
+    "private_registry_required": true,
+    "immutable_snapshot": true,
+    "copy_subclass_or_object_new_as_authority": false,
+    "properties": [
+      "provisioning_operation_id",
+      "logical_operation_id",
+      "source_binding",
+      "source_tuple"
+    ],
+    "each_use": [
+      "REVERIFY_UPSTREAM_LPPI_CAPABILITY",
+      "READ_COMMITTED_CHA_STATE",
+      "MATCH_EXACT_RETAINED_CHA_BYTES",
+      "MATCH_PRVOP_AGO",
+      "MATCH_EXACT_UPSTREAM_SNAPSHOT_AND_DERIVED_SOURCE_TUPLE"
+    ],
+    "restart": "load_installed_cha_logical_operation accepts only newly reverified upstream capability and existing committed exact record; raw state cannot restore provenance"
+  },
+  "production_api": {
+    "module": "deployment/windows_production_cha_operation.py",
+    "establish": "establish_installed_cha_logical_operation",
+    "load": "load_installed_cha_logical_operation",
+    "validate": "validate_retained_cha_operation",
+    "input": "exact VerifiedLPPIAuthenticatedProvisioningOperation only",
+    "caller_ago_clock_path_or_signer": false,
+    "legacy_row_as_authority": false
+  },
+  "audit_reconciliation": {
+    "legacy": "Stage9AccountGenesisAuthority, ProvisioningRepository and Stage9ProvisioningService remain compatibility / LPPI_TEST_ONLY flow; their rows, float-and-mask UUID mint and reserve-generated prvop are not new production authority",
+    "historical_M05": "retain original bytes and earlier NOT_FROZEN/DESIGN_BLOCKED findings; CHA owner is superseded by later topology ownership_resolution and ago syntax/ordering by frozen Stage9 parent",
+    "not_superseded_by_this_child": "account reservation, exact AccountGenesis canonical semantic request/root-proof closure, genuine account commit, independent freshness and business subject/account cardinality",
+    "reuse": "shared corrected UUIDv7 and existing hardened LPPI filesystem/locking primitives only; no CHA attempt store/root-proof authorization or legacy rows establish this boundary"
+  },
+  "expected_status": {
+    "LPPI_AUTHENTICATED_OPERATION": "IMPLEMENTED",
+    "CHA_LOGICAL_OPERATION_ID": "IMPLEMENTED",
+    "PRVOP_AGO_BIJECTION": "IMPLEMENTED",
+    "ACCOUNT_ID": "NOT_MINTED",
+    "ACCOUNT_RESERVATION": "NOT_STARTED",
+    "ACCOUNT_GENESIS": "NOT_STARTED",
+    "PROVISIONING_MEMBERSHIP": "BLOCKED",
+    "PROTECTED_FRESHNESS": "NOT_STARTED",
+    "SECRET_RESOURCE": "NOT_STARTED",
+    "LEGAL_PRODUCTION_ENROLLMENT": "NOT_PERFORMED"
+  },
+  "live_qualification": {
+    "WINDOWS_NATIVE_CHA_LOGICAL_OPERATION_QUALIFICATION": "NOT_RUN",
+    "LEGAL_PRODUCTION_ENROLLMENT": "NOT_PERFORMED",
+    "hosted_mock_tests_are_physical_qualification": false
+  },
+  "scope_exclusions": [
+    "account_id_mint",
+    "account_reservation",
+    "account_genesis",
+    "first_device_membership",
+    "ProvisioningMembershipBinding",
+    "ProtectedFreshnessAuthority",
+    "TPM_NV_counter",
+    "SecretExternalResourcePort",
+    "WindowsExternalProvisioningHandoff",
+    "Stage10"
+  ]
+}
