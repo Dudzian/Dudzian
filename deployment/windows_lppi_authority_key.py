@@ -23,7 +23,10 @@ from deployment import windows_cng_pre_enrollment as cng
 
 if TYPE_CHECKING:
     from bot_core.licensing.lppi_package_acceptance import VerifiedLPPIClientPackageAcceptance
-    from deployment.windows_production_lppi_authority import LPPIAuthorityKeyReservationDescriptor
+    from deployment.windows_production_lppi_authority import (
+        LPPIAuthorityKeyReservationDescriptor,
+        _ActiveSnapshot,
+    )
 
 PROVIDER = cng.PROVIDER
 KEY_NAME = "CryptoHunter.Stage9.Production.LPPI.Authority.v1"
@@ -297,6 +300,91 @@ class WindowsLPPIAuthorityKey:
             raise WindowsLPPIAuthorityKeyError("AUTHORITY_BINDING_PROOF_FAILED") from exc
         return cast(bytes, signature)
 
+    def sign_authenticated_operation_binding(
+        self, binding_raw: bytes, *, active_authority: object
+    ) -> bytes:
+        """Sign one enrollment operation through the exact currently ACTIVE key."""
+        from bot_core.licensing.canonical import parse_canonical
+        from bot_core.licensing.lppi_authenticated_operation import (
+            LPPIAuthenticatedProvisioningOperationBindingV1,
+            authenticated_operation_signed_bytes,
+        )
+        from bot_core.licensing.lppi_authority_custody import (
+            LPPIAuthorityKeyCustodyEvidenceV1,
+            parse_lppi_authority_public,
+        )
+        from bot_core.licensing.lppi_authority_key import (
+            ALGORITHM_PROFILE,
+            LPPIAuthorityKeyBindingV1,
+            verify_low_s_signature,
+        )
+        from deployment.windows_production_lppi_operation import (
+            require_reserved_operation_binding,
+        )
+
+        source = _active_operation_source(active_authority)
+        if source.key is not self:
+            raise WindowsLPPIAuthorityKeyError("REJECT_NON_ACTIVE_LPPI_SIGNING_KEY")
+        qualified = _qualified_snapshot(self)
+        operation = LPPIAuthenticatedProvisioningOperationBindingV1.from_canonical_bytes(
+            binding_raw
+        )
+        retained = parse_canonical(source.state_raw)
+        authority = LPPIAuthorityKeyBindingV1.from_canonical_bytes(
+            bytes.fromhex(retained["binding_raw_hex"])
+        ).document
+        custody = LPPIAuthorityKeyCustodyEvidenceV1.from_canonical_bytes(
+            bytes.fromhex(retained["custody_raw_hex"])
+        )
+        public = parse_lppi_authority_public(
+            bytes.fromhex(custody.document["subject_tpmt_public_hex"])
+        )
+        if (
+            authority["lppi_authority_public_key_algorithm_profile"] != ALGORITHM_PROFILE
+            or authority["lppi_authority_public_key_fingerprint_sha256"]
+            != hashlib.sha256(public.raw).hexdigest()
+            or authority["custody_profile"] != QUALIFICATION_PROFILE
+            or authority["cng_key_unique_name"] != qualified.unique_name
+            or public.sec1 != qualified.public
+        ):
+            raise WindowsLPPIAuthorityKeyError("REJECT_NON_ACTIVE_LPPI_SIGNING_KEY")
+        package = source.accepted.package
+        expected = {
+            "pdsa_trust_domain": package.payload["pdsa_trust_domain"],
+            "pdsa_package_digest_sha256": package.package_digest_sha256,
+            "provisioning_subject_id": package.payload["provisioning_subject_id"],
+            "enrollment_reference": package.payload["enrollment_reference"],
+        }
+        document = operation.document
+        if any(
+            document[field] != value or authority[field] != value
+            for field, value in expected.items()
+        ):
+            raise WindowsLPPIAuthorityKeyError("LPPI_AUTHENTICATED_OPERATION_SOURCE_CONFLICT")
+        require_reserved_operation_binding(operation.canonical_bytes, active_authority)
+        signed = authenticated_operation_signed_bytes(operation.canonical_bytes)
+        # Requalify the exact native handle immediately before consequential sign.
+        require_verified_production_lppi_authority_key(self)
+        current = _active_operation_source(active_authority)
+        if current.key is not self or current.state_raw != source.state_raw:
+            raise WindowsLPPIAuthorityKeyError("REJECT_NON_ACTIVE_LPPI_SIGNING_KEY")
+        try:
+            signature = qualified.native.sign_digest(qualified.key, hashlib.sha256(signed).digest())
+            verify_low_s_signature(
+                qualified.public,
+                signature,
+                signed,
+                error="INVALID_LPPI_AUTHENTICATED_OPERATION_SIGNATURE",
+            )
+        except Exception as exc:
+            raise WindowsLPPIAuthorityKeyError(
+                "LPPI_AUTHENTICATED_OPERATION_SIGNING_FAILED"
+            ) from exc
+        current = _active_operation_source(active_authority)
+        if current.key is not self or current.state_raw != source.state_raw:
+            raise WindowsLPPIAuthorityKeyError("REJECT_NON_ACTIVE_LPPI_SIGNING_KEY")
+        return cast(bytes, signature)
+
     def close(self) -> None:
         _ISSUED_AUTHORITY_KEYS.pop(self, None)
         failures: list[Exception] = []
@@ -323,6 +411,32 @@ class WindowsLPPIAuthorityKey:
 
 # The qualified capability is the exact factory-issued native key, not a wrapper.
 QualifiedLPPIAuthorityKey = WindowsLPPIAuthorityKey
+
+
+def _active_operation_source(value: object) -> _ActiveSnapshot:
+    from deployment import windows_production_lppi_authority as lifecycle
+
+    try:
+        active = lifecycle.require_verified_active_lppi_authority_key(value)
+        source = lifecycle._ACTIVE.get(active)
+        if source is None:
+            raise WindowsLPPIAuthorityKeyError("REJECT_NON_ACTIVE_LPPI_SIGNING_KEY")
+        return source
+    except (ValueError, RuntimeError, TypeError) as exc:
+        raise WindowsLPPIAuthorityKeyError("REJECT_NON_ACTIVE_LPPI_SIGNING_KEY") from exc
+
+
+def sign_active_lppi_authenticated_operation_binding(
+    active_authority: object, binding_raw: bytes
+) -> bytes:
+    """Purpose-specific production entry point without an injected signer."""
+    source = _active_operation_source(active_authority)
+    return cast(
+        bytes,
+        source.key.sign_authenticated_operation_binding(
+            binding_raw, active_authority=active_authority
+        ),
+    )
 
 
 def open_or_create_production_lppi_authority_key(
