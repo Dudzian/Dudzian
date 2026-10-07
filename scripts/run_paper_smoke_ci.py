@@ -1198,7 +1198,7 @@ def _run_token_audit(
     ]
 
     _LOGGER.info(
-        "Uruchamiam audyt tokenów usługowych przy pomocy audit_service_tokens.py (%s)",
+        "Uruchamiam audyt poświadczeń usługowych (%s)",
         config_path,
     )
 
