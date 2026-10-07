@@ -379,7 +379,7 @@ class _FeedWebhookAlertChannel(AlertChannel):
             headers={"Content-Type": "application/json"},
         )
         try:
-            urllib_request.urlopen(require_http_request(req), timeout=self._timeout)  # nosemgrep
+            urllib_request.urlopen(require_http_request(req), timeout=self._timeout)  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
         except urllib_error.URLError as exc:  # pragma: no cover - zależne od środowiska CI
             raise AlertDeliveryError(f"Webhook HyperCare odrzucił alert: {exc}") from exc
 
