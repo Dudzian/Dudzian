@@ -42,28 +42,6 @@ from typing import (
     cast,
 )
 
-try:  # pragma: no cover - środowisko testowe może nie mieć joblib
-    import joblib
-except Exception:  # pragma: no cover - fallback na pickle
-    joblib = None  # type: ignore
-    import pickle
-
-    def _joblib_dump(obj: Any, path: Path) -> None:
-        with path.open("wb") as fh:
-            pickle.dump(obj, fh)
-
-    def _joblib_load(path: Path) -> Any:
-        with path.open("rb") as fh:
-            return pickle.load(fh)
-else:
-
-    def _joblib_dump(obj: Any, path: Path) -> None:
-        joblib.dump(obj, path)
-
-    def _joblib_load(path: Path) -> Any:
-        return joblib.load(path)
-
-
 import numpy as np
 import pandas as pd
 
@@ -439,7 +417,24 @@ def _build_fallback_ai_models() -> type:
                 return
             self._coef = np.nan_to_num(X.mean(axis=1).mean(axis=0))
             if model_out:
-                _joblib_dump(self, Path(model_out))
+                self.save_model(model_out)
+
+        def save_model(self, path: str | Path) -> Path:
+            target = Path(path)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(
+                json.dumps(
+                    {
+                        "input_size": self.input_size,
+                        "seq_len": self.seq_len,
+                        "model_type": self.model_type,
+                        "coef": self._coef.tolist(),
+                    },
+                    separators=(",", ":"),
+                ),
+                encoding="utf-8",
+            )
+            return target
 
         def predict(self, X: np.ndarray) -> np.ndarray:
             if X.ndim == 3:
@@ -460,8 +455,21 @@ def _build_fallback_ai_models() -> type:
             return pd.Series(preds, index=df.index)
 
         @staticmethod
-        def load_model(path: str) -> "_DefaultAIModels":
-            return _joblib_load(Path(path))
+        def load_model(path: str | Path) -> "_DefaultAIModels":
+            source = Path(path)
+            payload = json.loads(source.read_text(encoding="utf-8"))
+            if not isinstance(payload, Mapping):
+                raise ValueError("fallback model file must contain a JSON object")
+            model = _DefaultAIModels(
+                input_size=int(payload["input_size"]),
+                seq_len=int(payload["seq_len"]),
+                model_type=str(payload.get("model_type", "rf")),
+            )
+            coef = np.asarray(payload["coef"], dtype=float)
+            if coef.ndim != 1 or coef.size != model.input_size:
+                raise ValueError("fallback model coefficient shape mismatch")
+            model._coef = coef
+            return model
 
     return _DefaultAIModels
 
@@ -3179,14 +3187,9 @@ class AIManager:
 
     def _load_model_from_disk(self, path: Path) -> Any:
         loader = getattr(_AIModels, "load_model", None)
-        if callable(loader):
-            try:
-                model = loader(path)
-                self._mark_backend_ready(model)
-                return model
-            except Exception:
-                logger.debug("Nowy loader modeli nie powiódł się dla %s", path, exc_info=True)
-        model = _joblib_load(path)
+        if not callable(loader):
+            raise RuntimeError("configured AI backend does not expose a safe model loader")
+        model = loader(path)
         self._mark_backend_ready(model)
         return model
 
@@ -4149,8 +4152,11 @@ class AIManager:
             self.models[key] = model
             target = self.model_dir / f"{symbol_key}:{model_type.lower()}.joblib"
             if target != model_path:
+                saver = getattr(model, "save_model", None)
+                if not callable(saver):
+                    raise RuntimeError("imported AI model does not expose a safe serializer")
                 target.parent.mkdir(parents=True, exist_ok=True)
-                await asyncio.to_thread(_joblib_dump, model, target)
+                await asyncio.to_thread(saver, target)
 
         logger.info("Zaimportowano model %s z pliku %s", key, model_path)
 

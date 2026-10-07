@@ -10,7 +10,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
-import xml.etree.ElementTree as ET
+import xml.etree.ElementTree as ET  # nosemgrep: python.lang.security.use-defused-xml.use-defused-xml
 from typing import Any, Callable
 
 from deployment.host_identity import canonical_host_os
@@ -21,6 +21,25 @@ MARKER_SCHEMA_VERSION = 1
 
 class CorePlanError(RuntimeError):
     pass
+
+
+MAX_CORE_XML_REPORT_BYTES = 16 * 1024 * 1024
+
+
+def _parse_core_xml_report(path: Path) -> ET.Element:
+    try:
+        if path.stat().st_size > MAX_CORE_XML_REPORT_BYTES:
+            raise CorePlanError("core XML report exceeds size limit")
+        raw = path.read_bytes()
+    except OSError as exc:
+        raise CorePlanError("unable to read core XML report") from exc
+    upper = raw.upper()
+    if b"<!DOCTYPE" in upper or b"<!ENTITY" in upper:
+        raise CorePlanError("unsafe XML declaration in core report")
+    try:
+        return ET.fromstring(raw)  # nosemgrep: python.lang.security.use-defused-xml-parse.use-defused-xml-parse
+    except ET.ParseError as exc:
+        raise CorePlanError("invalid core XML report") from exc
 
 
 def load_manifest(path: Path = MANIFEST) -> dict[str, Any]:
@@ -78,7 +97,7 @@ def execute_plan(
         )
         if completed.returncode != manifest["acceptance_policy"]["pytest_exit_code"]:
             raise CorePlanError("required core pytest plan failed")
-        root = ET.parse(report).getroot()
+        root = _parse_core_xml_report(report)
         totals = {name: sum(int(node.attrib.get(name, 0)) for node in root.iter("testsuite"))
                   for name in ("failures", "errors", "skipped")}
         if totals != {"failures": 0, "errors": 0, "skipped": 0}:

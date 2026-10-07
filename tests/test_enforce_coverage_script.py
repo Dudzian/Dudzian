@@ -55,6 +55,16 @@ def test_script_errors_on_missing_package(coverage_file: Path) -> None:
     assert exit_code == 1
 
 
+def test_script_rejects_doctype_xml(tmp_path: Path) -> None:
+    xml = tmp_path / "coverage.xml"
+    xml.write_text(
+        '<!DOCTYPE coverage [<!ENTITY xxe SYSTEM "file:///etc/passwd">]>'
+        '<coverage line-rate="1.0"><packages/></coverage>',
+        encoding="utf-8",
+    )
+    assert enforce_coverage.main(["--coverage-file", str(xml)]) == 2
+
+
 def test_script_errors_when_file_missing(tmp_path: Path) -> None:
     missing = tmp_path / "absent.xml"
     exit_code = enforce_coverage.main(["--coverage-file", str(missing)])

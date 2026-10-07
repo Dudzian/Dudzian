@@ -15,6 +15,7 @@ from pathlib import Path, PurePosixPath
 from typing import Callable, Mapping, MutableMapping, TYPE_CHECKING
 
 from bot_core.security.hwid import HwIdProvider, HwIdProviderError
+from bot_core.security.http_url import require_http_url
 from bot_core.security.signing import validate_hmac_signature
 
 try:  # pragma: no cover - opcjonalna zależność
@@ -265,7 +266,11 @@ class DifferentialUpdateManager:
         if self._downloader is not None:
             resolved = self._downloader(source, destination)
         elif parsed.scheme in {"http", "https"}:
-            with urllib.request.urlopen(source) as response, destination.open("wb") as handle:
+            remote_url = require_http_url(source)
+            with (
+                urllib.request.urlopen(remote_url) as response,
+                destination.open("wb") as handle,
+            ):  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
                 shutil.copyfileobj(response, handle)
             resolved = destination
         else:

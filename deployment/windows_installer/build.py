@@ -18,6 +18,8 @@ import tempfile
 from urllib.request import urlopen
 import zipfile
 
+from bot_core.security.http_url import require_http_url
+
 from .contract import CONTRACT, is_reviewed_wix_version
 from .dependency_contract import (
     AI_DEFAULTS_PACKAGE,
@@ -131,10 +133,11 @@ def acquire_postgresql(pins: dict[str, object], supplied: Path | None, cache: Pa
     if supplied is None and not archive.exists():
         cache.mkdir(parents=True, exist_ok=True)
         temporary = archive.with_suffix(".download")
+        source_url = require_http_url(str(pg["source_url"]))
         with (
-            urlopen(str(pg["source_url"]), timeout=120) as response,
+            urlopen(source_url, timeout=120) as response,  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
             temporary.open("wb") as output,
-        ):  # noqa: S310
+        ):
             shutil.copyfileobj(response, output)
         temporary.replace(archive)
     verify_postgresql(archive, str(pg["sha256"]))

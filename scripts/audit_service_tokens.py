@@ -150,7 +150,7 @@ def main(argv: list[str] | None = None) -> int:
     if not config_path.exists():
         raise FileNotFoundError(f"Plik konfiguracji '{config_path}' nie istnieje")
 
-    LOGGER.info("Audytuję tokeny usługowe na podstawie %s", config_path)
+    LOGGER.info("Audytuję poświadczenia usługowe na podstawie %s", config_path)
     core_config = load_core_config(str(config_path))
     report = audit_service_tokens(
         core_config,

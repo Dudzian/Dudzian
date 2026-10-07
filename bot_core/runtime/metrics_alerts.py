@@ -17,6 +17,7 @@ from urllib import error as urllib_error, request as urllib_request
 
 from bot_core.alerts import AlertMessage, DefaultAlertRouter, InMemoryAlertAuditLog
 from bot_core.alerts.base import AlertChannel, AlertDeliveryError
+from bot_core.security.http_url import require_http_request, require_http_url
 from bot_core.observability._tag_utils import extract_tag
 
 try:  # pragma: no cover - security guard jest opcjonalny w light runtime
@@ -359,7 +360,7 @@ class _FeedWebhookAlertChannel(AlertChannel):
 
     def __init__(self, url: str, *, name: str = "hypercare-webhook", timeout: float = 3.0) -> None:
         self.name = name
-        self._url = url
+        self._url = require_http_url(url)
         self._timeout = timeout
 
     def send(self, message: AlertMessage) -> None:
@@ -378,7 +379,9 @@ class _FeedWebhookAlertChannel(AlertChannel):
             headers={"Content-Type": "application/json"},
         )
         try:
-            urllib_request.urlopen(req, timeout=self._timeout)
+            urllib_request.urlopen(
+                require_http_request(req), timeout=self._timeout
+            )  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
         except urllib_error.URLError as exc:  # pragma: no cover - zależne od środowiska CI
             raise AlertDeliveryError(f"Webhook HyperCare odrzucił alert: {exc}") from exc
 

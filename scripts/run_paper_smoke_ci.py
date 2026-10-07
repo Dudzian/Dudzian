@@ -1198,7 +1198,7 @@ def _run_token_audit(
     ]
 
     _LOGGER.info(
-        "Uruchamiam audyt tokenów usługowych przy pomocy audit_service_tokens.py (%s)",
+        "Uruchamiam audyt poświadczeń usługowych (%s)",
         config_path,
     )
 
@@ -1711,7 +1711,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         " ".join(map(shlex.quote, command)),
     )
 
-    completed = subprocess.run(command, text=True, check=False)
+    completed = subprocess.run(
+        command,
+        text=True,
+        check=False,
+        shell=False,
+    )  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
 
     if completed.returncode != 0:
         _LOGGER.error("Smoke test zakończył się kodem %s", completed.returncode)
@@ -1902,7 +1907,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             output_dir=output_dir,
         )
     except RuntimeError as exc:
-        _LOGGER.error("Audyt tokenów RBAC nie powiódł się: %s", exc)
+        _LOGGER.error("Audyt poświadczeń RBAC nie powiódł się (%s)", type(exc).__name__)
         return 1
 
     token_report = token_audit_artifacts.get("report")
@@ -2174,7 +2179,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if manifest_exit != 0:
         _LOGGER.error("export_manifest_metrics.py zakończył się kodem %s", manifest_exit)
     if token_exit != 0:
-        _LOGGER.error("audit_service_tokens.py zakończył się kodem %s", token_exit)
+        _LOGGER.error("Audyt poświadczeń usługowych zakończył się kodem %s", token_exit)
     if tls_exit != 0:
         _LOGGER.error("audit_tls_assets.py zakończył się kodem %s", tls_exit)
     if baseline_exit != 0:

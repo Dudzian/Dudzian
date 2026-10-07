@@ -11,6 +11,7 @@ from typing import Dict, Protocol, Sequence
 from urllib import request
 
 from bot_core.alerts.base import AlertChannel, AlertDeliveryError, AlertMessage
+from bot_core.security.http_url import require_http_request
 
 
 class _SignalHttpOpener(Protocol):
@@ -29,7 +30,9 @@ def _default_signal_opener(
     timeout: float,
     context: ssl.SSLContext | None,
 ) -> request.addinfourl:
-    return request.urlopen(req, timeout=timeout, context=context)  # noqa: S310 - kontrolujemy docelowy serwer
+    return request.urlopen(
+        require_http_request(req), timeout=timeout, context=context
+    )  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
 
 
 @dataclass(slots=True)
@@ -116,9 +119,9 @@ class SignalChannel(AlertChannel):
     def _build_ssl_context(self) -> ssl.SSLContext | None:
         if self.service_url.lower().startswith("http://"):
             return None
-        if self.verify_tls:
-            return ssl.create_default_context()
-        return ssl._create_unverified_context()  # type: ignore[attr-defined]  # pragma: no cover
+        if not self.verify_tls:
+            raise ValueError("Signal HTTPS transport requires TLS certificate verification")
+        return ssl.create_default_context()
 
 
 __all__ = ["SignalChannel"]

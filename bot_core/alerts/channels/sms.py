@@ -12,6 +12,7 @@ from urllib import parse, request
 
 from bot_core.alerts.base import AlertChannel, AlertDeliveryError, AlertMessage
 from bot_core.alerts.channels.providers import SmsProviderConfig
+from bot_core.security.http_url import require_http_request
 
 
 class _SmsHttpOpener(Protocol):
@@ -19,7 +20,9 @@ class _SmsHttpOpener(Protocol):
 
 
 def _default_sms_opener(req: request.Request, *, timeout: float) -> request.addinfourl:
-    return request.urlopen(req, timeout=timeout)  # noqa: S310 - kontrolujemy docelowe API
+    return request.urlopen(
+        require_http_request(req), timeout=timeout
+    )  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
 
 
 @dataclass(slots=True)

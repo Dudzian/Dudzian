@@ -117,6 +117,33 @@ def test_darwin_host_executes_canonical_macos_plan(
         )
 
 
+def test_core_plan_rejects_doctype_xml_report(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("deployment.host_identity.platform.system", lambda: "Linux")
+
+    def malicious_plan(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        report_arg = next(value for value in command if value.startswith("--junitxml="))
+        Path(report_arg.split("=", 1)[1]).write_text(
+            '<!DOCTYPE testsuites [<!ENTITY xxe SYSTEM "file:///etc/passwd">]>'
+            '<testsuites><testsuite tests="1" failures="0" errors="0" skipped="0"/></testsuites>',
+            encoding="utf-8",
+        )
+        return subprocess.CompletedProcess(command, 0)
+
+    with pytest.raises(CorePlanError, match="unsafe XML declaration"):
+        execute_plan(
+            manifest_path=Path("deployment/core_required_suites_v1.json"),
+            runner_os="Linux",
+            source_revision="current",
+            ci_run_id="run-1",
+            ci_provider="https://github.com",
+            output=tmp_path / "marker.json",
+            runner=malicious_plan,
+        )
+
+
 def test_smoke_subset_marker_cannot_be_aggregated_as_complete_core(
     tmp_path: Path,
 ) -> None:

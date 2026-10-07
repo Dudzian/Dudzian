@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import abc
 import json
-import pickle
+
+import joblib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping, MutableSequence, Protocol, Sequence
@@ -50,7 +51,7 @@ class MLModelAdapter(abc.ABC):
         """Zwraca prognozy w tej samej liczbie wierszy co wejście."""
 
     def save(self, path: Path) -> None:
-        """Domyślna serializacja modelem pickle/joblib."""
+        """Domyślna serializacja modelu przez wymagane joblib."""
 
         path = Path(path)
         if path.suffix == ".json":
@@ -60,13 +61,7 @@ class MLModelAdapter(abc.ABC):
             }
             path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
             return
-        try:
-            import joblib
-        except ImportError:  # pragma: no cover - środowiska bez joblib
-            with path.open("wb") as handle:
-                pickle.dump(self, handle)
-        else:  # pragma: no cover - joblib testowany tylko gdy dostępny
-            joblib.dump(self, path)
+        joblib.dump(self, path)
 
     def load(self, path: Path) -> None:
         """Odtwarza parametry z pliku json."""

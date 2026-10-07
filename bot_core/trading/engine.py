@@ -694,11 +694,11 @@ class TechnicalIndicatorsService:
     def _get_cache_key(self, data: pd.DataFrame, params: TradingParameters) -> str:
         """Generate cache key for indicators."""
         # Use hash of data characteristics and parameters
-        data_hash = hashlib.md5(
+        data_hash = hashlib.sha256(
             (str(data.index[0]) + str(data.index[-1]) + str(len(data))).encode()
         ).hexdigest()[:8]
 
-        params_hash = hashlib.md5(str(params).encode()).hexdigest()[:8]
+        params_hash = hashlib.sha256(str(params).encode()).hexdigest()[:8]
         return f"{data_hash}_{params_hash}"
 
     def _calculate_rsi_optimized(self, series: pd.Series, period: int) -> pd.Series:

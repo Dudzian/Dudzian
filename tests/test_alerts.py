@@ -651,6 +651,16 @@ def test_signal_channel_builds_payload(sample_message: AlertMessage) -> None:
     assert channel.health_check()["status"] == "ok"
 
 
+def test_signal_channel_rejects_disabled_https_verification() -> None:
+    with pytest.raises(ValueError, match="TLS certificate verification"):
+        SignalChannel(
+            service_url="https://signal-gateway.local",
+            sender_number="+48500100999",
+            recipients=("+48555111222",),
+            verify_tls=False,
+        )
+
+
 def test_whatsapp_channel_formats_messages(sample_message: AlertMessage) -> None:
     captured: list[request.Request] = []
 
