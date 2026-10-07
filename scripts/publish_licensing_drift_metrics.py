@@ -75,9 +75,18 @@ def push_metrics(
     if not payload.strip():
         raise ValueError(f"Prometheus file is empty: {prom_path}")
 
+    parsed_target = urllib.parse.urlsplit(target_url)
+    if (
+        parsed_target.scheme.lower() not in {"http", "https"}
+        or not parsed_target.hostname
+        or parsed_target.username is not None
+        or parsed_target.password is not None
+    ):
+        raise ValueError("Pushgateway target must be an http(s) URL without embedded credentials")
+
     request = urllib.request.Request(target_url, data=payload, method="PUT", headers=dict(headers))
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:  # type: ignore[call-arg]
+        with urllib.request.urlopen(request, timeout=timeout) as response:  # nosemgrep
             response.read()
     except urllib.error.HTTPError as exc:  # pragma: no cover - handled in CLI
         raise RuntimeError(f"Pushgateway responded with HTTP {exc.code}: {exc.reason}") from exc
