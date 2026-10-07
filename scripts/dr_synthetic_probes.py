@@ -59,7 +59,9 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def _http_json(url: str, *, timeout: int = 10) -> Any:
     request = Request(require_http_url(url), headers={"Accept": "application/json"})
-    with urlopen(require_http_request(request), timeout=timeout) as response:  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
+    with (
+        urlopen(require_http_request(request), timeout=timeout) as response
+    ):  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
         payload = response.read()
     return json.loads(payload.decode("utf-8"))
 
