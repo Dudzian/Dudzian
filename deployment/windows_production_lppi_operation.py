@@ -124,14 +124,15 @@ def _lock(name: str) -> Iterator[Path]:
         else:
             import fcntl
 
+            posix_lock: Any = fcntl
             try:
-                fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                posix_lock.flock(stream.fileno(), posix_lock.LOCK_EX | posix_lock.LOCK_NB)
             except OSError as exc:
                 raise LPPIAuthenticatedOperationError("LPPI_AUTHENTICATED_OPERATION_BUSY") from exc
             try:
                 yield path
             finally:
-                fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+                posix_lock.flock(stream.fileno(), posix_lock.LOCK_UN)
 
 
 @contextmanager
