@@ -27,6 +27,11 @@ from bot_core.config_marketplace.schema import (  # noqa: E402
     load_catalog,
     load_repository_config,
 )
+from bot_core.security.http_url import (  # noqa: E402
+    UnsafeHttpUrl,
+    require_http_request,
+    require_http_url,
+)
 from bot_core.security.marketplace_validator import (  # noqa: E402
     MarketplaceValidator,
     MarketplaceVerificationError,
@@ -143,9 +148,15 @@ class MarketplaceRepository:
         headers = {"User-Agent": "marketplace-cli/1.0"}
         if etag:
             headers["If-None-Match"] = etag
-        request = Request(url, headers=headers)
         try:
-            with urlopen(request, timeout=timeout) as response:  # type: ignore[call-arg]
+            remote_url = require_http_url(url)
+        except UnsafeHttpUrl as exc:
+            raise MarketplaceVerificationError(
+                "Zdalny katalog Marketplace musi używać http:// lub https:// bez credentials w URL"
+            ) from exc
+        request = Request(remote_url, headers=headers)
+        try:
+            with urlopen(require_http_request(request), timeout=timeout) as response:  # nosemgrep
                 body = response.read()
                 return body, response.headers.get("ETag")
         except HTTPError as exc:  # pragma: no cover - I/O
