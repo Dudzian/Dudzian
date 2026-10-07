@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import pickle
 from datetime import datetime
 from pathlib import Path
 from collections.abc import Sequence
@@ -76,9 +75,23 @@ def stub_on_pipeline_result(selection: object) -> None:
 
 @pytest.fixture
 def temp_model_file(tmp_path: Path) -> Path:
-    model_path = tmp_path / "btc_light.pkl"
-    with model_path.open("wb") as handle:
-        pickle.dump(DummyModel(), handle)
+    model_path = tmp_path / "btc_light.json"
+    model_path.write_text(
+        yaml.safe_dump(
+            {
+                "input_size": 5,
+                "seq_len": 1,
+                "model_type": "linear",
+                "feature_names": ["open", "high", "low", "close", "volume"],
+                "weights": [0.0, 0.0, 0.0, 0.0, 0.0],
+                "bias": 0.018,
+                "trained_at": "2024-01-01T00:00:00+00:00",
+                "training_rows": 1,
+            },
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
     return model_path
 
 
