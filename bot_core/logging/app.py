@@ -15,6 +15,8 @@ from logging.handlers import QueueHandler, QueueListener, RotatingFileHandler
 from pathlib import Path
 from typing import Iterable, Optional
 
+from bot_core.security.http_url import require_http_request, require_http_url
+
 try:  # pragma: no cover - optional dependency in minimal installations
     from pythonjsonlogger import jsonlogger
 except Exception:  # pragma: no cover - json logging is optional in tests/CI
@@ -74,7 +76,7 @@ class VectorHttpHandler(logging.Handler):
 
     def __init__(self, endpoint: str, timeout: float = 2.0) -> None:
         super().__init__()
-        self.endpoint = endpoint
+        self.endpoint = require_http_url(endpoint)
         self.timeout = timeout
 
     def emit(self, record: logging.LogRecord) -> None:  # pragma: no cover - network side effects
@@ -87,7 +89,7 @@ class VectorHttpHandler(logging.Handler):
                 headers={"Content-Type": "application/json"},
                 method="POST",
             )
-            urllib.request.urlopen(request, timeout=self.timeout).read()
+            urllib.request.urlopen(require_http_request(request), timeout=self.timeout).read()  # nosemgrep
         except Exception:
             self.handleError(record)
 
