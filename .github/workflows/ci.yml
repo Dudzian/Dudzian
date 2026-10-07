@@ -1131,16 +1131,17 @@ jobs:
             -H 'Accept: application/vnd.github+json' \
             "/repos/${{ github.repository }}/actions/workflows/stress-lab-report.yml/runs" \
             -f "branch=${BRANCH_NAME}" \
+            -f "head_sha=${GITHUB_SHA}" \
             -f "status=success" \
             -f "per_page=1" \
             --jq '.workflow_runs[0].id')"
 
           if [ -z "${run_id}" ] || [ "${run_id}" = "null" ]; then
             if [ "${is_protected_context}" = "true" ]; then
-              echo "::error::No successful stress-lab-report workflow run found for protected branch '${BRANCH_NAME}'."
+              echo "::error::No successful stress-lab-report workflow run found for protected branch '${BRANCH_NAME}' at SHA ${GITHUB_SHA}."
               exit 1
             fi
-            echo "::warning::No successful stress-lab-report workflow run found for feature branch '${BRANCH_NAME}'. Marketing parity will be reported as skipped."
+            echo "::warning::No successful stress-lab-report workflow run found for feature branch '${BRANCH_NAME}' at SHA ${GITHUB_SHA}. Marketing parity will be reported as skipped."
             echo "run_id=" >> "$GITHUB_OUTPUT"
             echo "missing=true" >> "$GITHUB_OUTPUT"
             exit 0
