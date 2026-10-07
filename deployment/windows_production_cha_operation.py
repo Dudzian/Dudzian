@@ -77,13 +77,19 @@ def _safe(path: Path, *, directory: bool = False) -> None:
 
 
 def _create_directory(directory: Path) -> None:
-    """Fence parent metadata, including directories left by a failed earlier fence."""
+    """Fence metadata only for directories created by this invocation."""
     _safe(directory, directory=True)
     for component in (*reversed(directory.parents), directory):
+        _safe(component, directory=True)
+        if component.exists():
+            continue
         try:
             component.mkdir(mode=0o700)
         except FileExistsError:
+            # A racing creator is acceptable only when the resulting component
+            # still satisfies the exact safe-directory boundary.
             _safe(component, directory=True)
+            continue
         _safe(component, directory=True)
         if component.parent != component:
             flush_created_directory_metadata(component.parent)
@@ -124,14 +130,15 @@ def _locked_state() -> Iterator[Path]:
             elif os.name == "posix":
                 import fcntl
 
+                posix_lock: Any = fcntl
                 try:
-                    fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    posix_lock.flock(stream.fileno(), posix_lock.LOCK_EX | posix_lock.LOCK_NB)
                 except OSError as exc:
                     raise CHAOperationError("CHA_LOGICAL_OPERATION_BUSY") from exc
                 try:
                     yield path
                 finally:
-                    fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+                    posix_lock.flock(stream.fileno(), posix_lock.LOCK_UN)
             else:
                 raise CHAOperationError("UNSUPPORTED_CHA_LOGICAL_OPERATION_PLATFORM")
     except OSError as exc:
