@@ -156,7 +156,9 @@ class MarketplaceRepository:
             ) from exc
         request = Request(remote_url, headers=headers)
         try:
-            with urlopen(require_http_request(request), timeout=timeout) as response:  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
+            with (
+                urlopen(require_http_request(request), timeout=timeout) as response
+            ):  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
                 body = response.read()
                 return body, response.headers.get("ETag")
         except HTTPError as exc:  # pragma: no cover - I/O
