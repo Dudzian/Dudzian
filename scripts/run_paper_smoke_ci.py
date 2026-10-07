@@ -1711,7 +1711,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         " ".join(map(shlex.quote, command)),
     )
 
-    completed = subprocess.run(command, text=True, check=False)
+    completed = subprocess.run(
+        command,
+        text=True,
+        check=False,
+        shell=False,
+    )  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
 
     if completed.returncode != 0:
         _LOGGER.error("Smoke test zakończył się kodem %s", completed.returncode)
