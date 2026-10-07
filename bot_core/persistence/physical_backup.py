@@ -261,7 +261,9 @@ class PhysicalBackupAdmissionValidator:
         self, artifact: TrustedPhysicalBackupArtifact
     ) -> AuthenticatedPhysicalBackupCandidate:
         directory = Path(tempfile.mkdtemp(prefix="physical-backup-admission-"))
-        os.chmod(directory, 0o700)  # nosemgrep: python.lang.security.audit.insecure-file-permissions.insecure-file-permissions -- owner-only staging directory
+        os.chmod(
+            directory, 0o700
+        )  # nosemgrep: python.lang.security.audit.insecure-file-permissions.insecure-file-permissions -- owner-only staging directory
         staged = directory / "candidate.sqlite"
         try:
             envelope = validate_backup_envelope(artifact.backup_envelope)
