@@ -20,6 +20,13 @@ EXTERNAL_POSTGRESQL_TESTS = (
     "tests/security/test_postgresql_freshness_authority_core.py",
 )
 
+SERIAL_LICENSING_GLOBS = (
+    "tests/licensing/test_lppi_*.py",
+    "tests/licensing/test_pdsa_*.py",
+    "tests/licensing/test_production_*.py",
+    "tests/licensing/test_cha_*.py",
+)
+
 
 def _general_ci_jobs() -> dict:
     document = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
@@ -79,6 +86,49 @@ def test_non_linux_general_ci_excludes_only_the_explicit_database_marker():
     jobs = _general_ci_jobs()
     for job_name in ("py-tests-windows", "py-tests-macos"):
         assert "not external_postgresql" in _pytest_command(jobs[job_name])
+
+
+def test_heavy_licensing_security_suite_is_split_without_coverage_gap():
+    jobs = _general_ci_jobs()
+    general_jobs = ("py-tests-windows", "py-tests-ubuntu", "py-tests-macos")
+    for job_name in general_jobs:
+        job = jobs[job_name]
+        command = _pytest_command(job)
+        for pattern in SERIAL_LICENSING_GLOBS:
+            assert f"--ignore-glob={pattern}" in command
+        test_step = next(step for step in job["steps"] if step["name"] == "Run fast pytest suite")
+        assert test_step["timeout-minutes"] == 45
+        assert job["timeout-minutes"] >= 60
+
+    heavy = jobs["licensing-security-durability"]
+    assert heavy["strategy"]["fail-fast"] is False
+    budgets = {
+        item["os"]: (item["job_timeout_minutes"], item["test_timeout_minutes"])
+        for item in heavy["strategy"]["matrix"]["include"]
+    }
+    assert budgets == {
+        "ubuntu-latest": (45, 35),
+        "macos-latest": (45, 35),
+        "windows-latest": (75, 60),
+    }
+    assert heavy["timeout-minutes"] == "${{ matrix.job_timeout_minutes }}"
+
+    step = next(
+        step
+        for step in heavy["steps"]
+        if step["name"] == "Run serial licensing security/durability suite"
+    )
+    command = step["run"]
+    for pattern in SERIAL_LICENSING_GLOBS:
+        assert pattern in command
+    assert "shopt -s nullglob" in command
+    assert '"${licensing_tests[@]}"' in command
+    assert "pytest -p asyncio" in command
+    assert " --fast " not in command  # command is multiline; exact flag is asserted below
+    assert "\n            --fast \\" in command
+    assert "-n " not in command
+    assert "--numprocesses" not in command
+    assert step["env"]["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] == "1"
 
 
 def test_ubuntu_has_authoritative_elevated_native_peer_auth_execution():
