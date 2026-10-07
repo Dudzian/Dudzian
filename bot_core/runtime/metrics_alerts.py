@@ -17,7 +17,7 @@ from urllib import error as urllib_error, request as urllib_request
 
 from bot_core.alerts import AlertMessage, DefaultAlertRouter, InMemoryAlertAuditLog
 from bot_core.alerts.base import AlertChannel, AlertDeliveryError
-from bot_core.security.http_url import require_http_request, require_http_url
+from bot_core.http_url import require_http_request, require_http_url
 from bot_core.observability._tag_utils import extract_tag
 
 try:  # pragma: no cover - security guard jest opcjonalny w light runtime
