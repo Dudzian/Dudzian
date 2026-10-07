@@ -293,7 +293,11 @@ def test_noncanonical_and_invalid_canonical_input_fails_closed(package, mutation
         _verify(package, raw)
 
 
-@pytest.mark.parametrize("raw", [None, "{}", bytearray(b"{}"), b"x" * 32769, b"[" * 2000])
+@pytest.mark.parametrize(
+    "raw",
+    [None, "{}", bytearray(b"{}"), b"x" * 32769, b"[" * 2000],
+    ids=["none", "text", "bytearray", "oversized", "deep"],
+)
 def test_untrusted_raw_type_size_and_depth_fail_closed(package, raw):
     with pytest.raises(ProvisioningError):
         _verify(package, raw)
