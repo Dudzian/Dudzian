@@ -30,7 +30,7 @@ def _default_signal_opener(
     timeout: float,
     context: ssl.SSLContext | None,
 ) -> request.addinfourl:
-    return request.urlopen(require_http_request(req), timeout=timeout, context=context)  # nosemgrep
+    return request.urlopen(require_http_request(req), timeout=timeout, context=context)  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
 
 
 @dataclass(slots=True)
