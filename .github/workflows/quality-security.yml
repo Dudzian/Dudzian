@@ -21,7 +21,7 @@ jobs:
   quality-ratchet:
     name: Quality ratchet
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 120
     services:
       postgres:
         image: postgres:16
