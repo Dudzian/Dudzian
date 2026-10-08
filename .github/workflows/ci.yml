@@ -852,7 +852,6 @@ jobs:
           DUDZIAN_ALLOW_LONG_POLL: "0"
         run: |
           shopt -s nullglob
-          pytest_extra=()
           case "${{ matrix.shard }}" in
             all)
               licensing_tests=(
@@ -870,8 +869,13 @@ jobs:
               )
               ;;
             cha-core)
-              licensing_tests=(tests/licensing/test_cha_*.py)
-              pytest_extra+=(--ignore-glob=tests/licensing/test_cha_root_proof*.py)
+              licensing_tests=()
+              for candidate in tests/licensing/test_cha_*.py; do
+                case "${candidate}" in
+                  tests/licensing/test_cha_root_proof*.py) continue ;;
+                esac
+                licensing_tests+=("${candidate}")
+              done
               ;;
             cha-root-proof)
               licensing_tests=(tests/licensing/test_cha_root_proof*.py)
@@ -889,7 +893,6 @@ jobs:
           python -m pytest -p asyncio \
             --fast \
             -m "not integration and not external_postgresql and not e2e_demo_paper and not retraining and not soak and not performance and not qml" \
-            "${pytest_extra[@]}" \
             "${licensing_tests[@]}" \
             --maxfail=1 \
             --durations=20 \
