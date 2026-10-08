@@ -34,6 +34,8 @@ files = [
   "core/security",
   "core/licensing",
   "bot_core/uuid7.py",
+  "bot_core/cha_attempt_store.py",
+  "bot_core/licensing/cha_root_proof_attempt_reservation.py",
   "bot_core/licensing/cha_logical_operation.py",
   "bot_core/licensing/cha_account_reservation.py",
   "bot_core/licensing/lppi_authenticated_operation.py",

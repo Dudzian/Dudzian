@@ -1,0 +1,450 @@
+{
+  "schema_version": "cryptohunter.stage9_root_proof_attempt_reservation_contract.v1",
+  "status": "FROZEN",
+  "implementation_architecturally_authorized": true,
+  "production_provisioning_ready": false,
+  "owner": "CryptoHunterAccountAuthority",
+  "boundary": [
+    "VerifiedAccountGenesisInitialBinding",
+    "VerifiedRootProofIssuanceAuthorization",
+    "RootProofIssuanceAttemptReservationV1",
+    "RESERVED_AWAITING_SIGNATURES",
+    "VerifiedRootProofIssuanceAttemptReservation"
+  ],
+  "upstream": {
+    "canonical_artifact": "docs/architecture/cryptohunter_product_architecture/stage9_account_initial_binding_contract.json",
+    "sha256": "c2a5e51df106e6c762a735fd9daef54a751187e6e7d56a4743ace5bb7fa1f255",
+    "historical_bytes_unchanged": true,
+    "required_capability": "VerifiedAccountGenesisInitialBinding",
+    "required_guard": "require_verified_account_initial_binding",
+    "state": "INITIAL_BINDING_COMMITTED",
+    "account_status": "CANDIDATE_RESERVED_NOT_GENUINE",
+    "reservation_id": "NONE",
+    "recovery_model": "A_OPERATION_ID_BEFORE_OR_WITH_RESERVATION",
+    "recovery_key": [
+      "pdsa_trust_domain",
+      "logical_operation_id"
+    ],
+    "canonical_request_mutated": false,
+    "initial_binding_sha256_semantics_changed": false
+  },
+  "historical_reconciliation": {
+    "independent_root_proof_issuer": {
+      "canonical_artifact": "docs/architecture/cryptohunter_product_architecture/m05_account_genesis_independent_root_proof_issuer_contract.json",
+      "sha256": "36cd0d26f918769313c6f572541f40877b1f0ca9808a5fc69a9dac3a6bf6d30d",
+      "historical_bytes_unchanged": true
+    },
+    "root_proof_admission": {
+      "canonical_artifact": "docs/architecture/cryptohunter_product_architecture/m05_account_genesis_root_proof_admission_binding_contract.json",
+      "sha256": "ce4b6a67ec085e9225d1cbbecba5ae934abe6f7094a9ec2596705a4b26014e39",
+      "historical_bytes_unchanged": true
+    },
+    "physical_persistence_crash_atomicity": {
+      "canonical_artifact": "docs/architecture/cryptohunter_product_architecture/m05_account_genesis_physical_persistence_crash_atomicity_contract.json",
+      "sha256": "190bce7d24bf000e1e71d114c6e8d5ab46db326cc8a2afa484171b692ffcc630",
+      "historical_bytes_unchanged": true
+    },
+    "operation_identity_request_binding": {
+      "canonical_artifact": "docs/architecture/cryptohunter_product_architecture/m05_account_genesis_operation_identity_request_binding_contract.json",
+      "sha256": "63c8abf6847e78bea901770047fec816c252fa3ed1fbe1bc959791f1e4a0ba3d",
+      "historical_bytes_unchanged": true
+    },
+    "production_substrate_selection": {
+      "canonical_artifact": "docs/architecture/cryptohunter_product_architecture/m05_account_genesis_root_proof_issuer_production_substrate_selection_contract.json",
+      "sha256": "68d2a71f8673cd0bd34c2eb3284f4bdacff530b4a81152cea4dd04a617457490",
+      "historical_bytes_unchanged": true
+    },
+    "reservation_identity": "The historical exact schema was not selected. Its TEST conformance vector with res_ remains byte-identical. This subordinate contract selects a deterministic representation of the already retained INITIAL_BINDING relation for the Stage 9 production path; it does not create an independent reservation authority.",
+    "attempt_identity": "The historical fully signed immutable attempt identity is downstream. This child freezes only its preceding reservation and does not manufacture signatures, canonical signed request bytes or an immutable attempt digest.",
+    "initial_binding_authenticity_model": "CHA_AUTHENTICATED_EXACT_INITIAL_BINDING_DIGEST_AND_REFERENCE",
+    "required_digest_semantic_slots": [
+      "logical_operation_id",
+      "account_id",
+      "reservation_identity_and_relation",
+      "canonical_genesis_request_fingerprint_sha256",
+      "environment",
+      "trust_domain"
+    ],
+    "sha256_alone_is_authority_or_authentication": false
+  },
+  "reservation_identity": {
+    "relation": "EXACT_OPERATION_ACCOUNT",
+    "represents": "Exact current durable INITIAL_BINDING operation/account/request relation",
+    "random_id_minted": false,
+    "caller_selectable": false,
+    "new_authority": false,
+    "new_recovery_root": false,
+    "source": "Exact requalified VerifiedAccountGenesisInitialBinding and exact current retained binding bytes only",
+    "deterministic_fields": [
+      "schema_version",
+      "environment",
+      "pdsa_trust_domain",
+      "logical_operation_id",
+      "account_id",
+      "reservation_relation",
+      "canonical_genesis_request_fingerprint_sha256",
+      "initial_binding_sha256",
+      "retained_initial_binding_sha256"
+    ],
+    "profile": {
+      "schema_version": "InitialBindingReservationRelationV1",
+      "domain_literal": "CRYPTOHUNTER_STAGE9_INITIAL_BINDING_RESERVATION_RELATION_V1",
+      "preimage": "ASCII(domain_literal) || 0x00 || UTF8(JCS(closed relation payload))",
+      "encoding": "RFC8785/JCS UTF-8",
+      "fields": [
+        "schema_version",
+        "environment",
+        "pdsa_trust_domain",
+        "logical_operation_id",
+        "account_id",
+        "reservation_relation",
+        "canonical_genesis_request_fingerprint_sha256",
+        "initial_binding_sha256",
+        "retained_initial_binding_sha256"
+      ],
+      "representation": "ibr_<lowercase 64-character SHA-256 hexadecimal>",
+      "prefix": "ibr_",
+      "exact_retained_bytes_binding": "retained_initial_binding_sha256 = SHA256(exact complete verified CURRENT INITIAL_BINDING bytes)",
+      "is_authority_or_authentication": false
+    }
+  },
+  "initial_binding_reference": {
+    "caller_supplied": false,
+    "source": "Exact requalified current INITIAL_BINDING only",
+    "separate_from_initial_binding_sha256": true,
+    "initial_binding_sha256_retained_meaning": "Unchanged upstream SHA256 of the JCS retained record without initial_binding_sha256; ordinary integrity only",
+    "digest_covers_reservation_identity_and_relation": true,
+    "sha256_alone_is_authority_or_authentication": false,
+    "profile": {
+      "schema_version": "RootProofInitialBindingReferenceV1",
+      "domain_literal": "CRYPTOHUNTER_STAGE9_ROOT_PROOF_INITIAL_BINDING_REFERENCE_V1",
+      "preimage": "ASCII(domain_literal) || 0x00 || UTF8(JCS(closed reference payload))",
+      "encoding": "RFC8785/JCS UTF-8",
+      "fields": [
+        "schema_version",
+        "environment",
+        "pdsa_trust_domain",
+        "logical_operation_id",
+        "account_id",
+        "reservation_relation",
+        "canonical_genesis_request_fingerprint_sha256",
+        "initial_binding_sha256",
+        "retained_initial_binding_sha256",
+        "reservation_identity"
+      ],
+      "digest_representation": "lowercase 64-character SHA-256 hexadecimal",
+      "reference_prefix": "initial-binding-v1:",
+      "reference_representation": "initial-binding-v1:<initial_binding_digest_sha256>",
+      "trust_domain_mapping": "Historical semantic trust_domain is exact retained pdsa_trust_domain; no environment/profile aliasing",
+      "reservation_identity_and_relation_mapping": [
+        "reservation_identity",
+        "reservation_relation"
+      ]
+    }
+  },
+  "authorization": {
+    "type": "VerifiedRootProofIssuanceAuthorization",
+    "public_constructor": false,
+    "exact_type_required": true,
+    "private_provenance_required": true,
+    "raw_attempt_authorization_grants_stage9_authority": false,
+    "caller_entitlement_requester_claimant_ids_accepted": false,
+    "source": "Genuine pre-account authoritative provider resolution and live requalification",
+    "binding_fields_source": "Exact requalified CURRENT INITIAL_BINDING",
+    "provider_fields": [
+      "bootstrap_entitlement_id",
+      "entitlement_generation",
+      "requester_principal_id",
+      "requester_credential_role",
+      "requester_key_id",
+      "requester_key_version",
+      "provisioning_principal_id",
+      "claimant_key_id",
+      "claimant_key_version"
+    ],
+    "entitlement_registry": "Existing PostgreSQLEntitlementRegistryProvider implementing EntitlementRegistryProvider; no second registry or CHA provisioning/BIND authority",
+    "requester_registry_port": "RequesterCredentialRegistry",
+    "claimant_registry_port": "ClaimantIdentityRegistry",
+    "requester_claimant_production_adapter_availability": "NOT_IMPLEMENTED",
+    "runtime_behavior_without_genuine_adapter": "FAIL_CLOSED_BEFORE_RESERVATION_MUTATION",
+    "test_harness": "TEST_ONLY provider output is confined to tests and grants no PRODUCTION authority",
+    "live_requalification": true,
+    "provider_evidence": {
+      "persisted_field": "authorization_evidence_sha256",
+      "preimage": "Exact RFC8785/JCS bytes of provider-originated live evidence; SHA256 is tuple integrity and establishes no authority by itself",
+      "closed_fields": [
+        "context",
+        "resolution",
+        "entitlement",
+        "requester",
+        "claimant",
+        "providers"
+      ],
+      "provider_fields": [
+        "identity",
+        "capabilities",
+        "credentials"
+      ],
+      "providers": [
+        "entitlement",
+        "requester",
+        "claimant"
+      ],
+      "binds": "Exact entitlement revision and requester/claimant registry revisions, lifecycle and key versions; exact provider identities, capabilities and credential role evidence",
+      "changed_evidence_same_ids_and_generation": "CONFLICT / FAIL_CLOSED"
+    },
+    "provider_qualification": "Trusted exact aggregate adapter allowlist plus live adapter requalify returning None; capture existing three registry ports once, apply ProviderQualificationPolicy and credential role/namespace/alias checks, match requester/claimant credential identities, ACTIVE requester/claimant and ACTIVE/UNBOUND authoritative entitlement, exact entitlement claimant provenance",
+    "production_adapter_allowlist_empty": true,
+    "properties": [
+      "authorization"
+    ]
+  },
+  "environment_and_security_profile": {
+    "semantic_environment": "PRODUCTION",
+    "selected_provider_security_profile": "PRODUCTION_LOCAL",
+    "semantic_environment_relabelled_to_security_profile": false,
+    "validation": "Validate semantic environment and provider security/deployment profile independently, and require exact trust domain equality",
+    "TEST_authorizes_PRODUCTION": false,
+    "PRODUCTION_SERVER_READY_automatically_promoted": false
+  },
+  "attempt_store": {
+    "module": "bot_core/cha_attempt_store.py",
+    "implementation": "SQLiteCHAAttemptStore",
+    "second_store_created": false,
+    "schema_version": 5,
+    "previous_schema_version": 4,
+    "schema_v4_behavior": "EXPLICIT_UNSUPPORTED_SCHEMA; no automatic or best-effort migration",
+    "scope": "One controlled-host CHA installation; separate environment/trust-domain namespace; supported local filesystem SQLite locking required",
+    "transaction": "BEGIN IMMEDIATE",
+    "journal_mode": "WAL",
+    "synchronous": "FULL",
+    "atomic_write": "Immutable reservation insert plus current fenced pointer insert in one transaction",
+    "state": "RESERVED_AWAITING_SIGNATURES",
+    "current_attempt_fence": 1,
+    "canonicalization": "bot_core.licensing.canonical.canonical_json_bytes / RFC8785 JCS UTF-8",
+    "unknown_or_noncanonical_persisted_fields": "FAIL_CLOSED",
+    "idempotency": {
+      "domain_literal": "CRYPTOHUNTER_CHA_ATTEMPT_RESERVATION_IDEMPOTENCY_V1",
+      "preimage": "ASCII(domain_literal) || 0x00 || UTF8(JCS(all exact AttemptAuthorization fields))",
+      "representation": "lowercase 64-character SHA-256 hexadecimal",
+      "all_exact_authorization_fields_included": true,
+      "caller_selectable": false,
+      "is_authority_or_authentication": false
+    },
+    "same_exact_authorization_retry": "Same retained rpa_ after exact reverification",
+    "same_operation_changed_authorization": "CONFLICT / FAIL_CLOSED",
+    "changed_account_request_or_INITIAL_BINDING": "REJECT",
+    "loader_mints": false,
+    "second_current_attempt": "FORBIDDEN in this Stage 9 boundary; future authoritative replacement is outside scope",
+    "process_local_mutex_establishes_authority": false,
+    "independent_anti_rollback": false,
+    "issuer_registry_mutated": false,
+    "authorization_fields": [
+      "environment",
+      "trust_domain",
+      "product_scope",
+      "logical_operation_id",
+      "account_id",
+      "canonical_genesis_request_fingerprint_sha256",
+      "initial_binding_reference",
+      "initial_binding_digest_sha256",
+      "bootstrap_entitlement_id",
+      "entitlement_generation",
+      "requester_principal_id",
+      "requester_credential_role",
+      "requester_key_id",
+      "requester_key_version",
+      "provisioning_principal_id",
+      "claimant_key_id",
+      "claimant_key_version",
+      "reservation_identity",
+      "reservation_relation",
+      "initial_binding_sha256",
+      "authorization_evidence_sha256"
+    ],
+    "stage9_required_fields": [
+      "reservation_identity",
+      "reservation_relation",
+      "initial_binding_sha256",
+      "authorization_evidence_sha256"
+    ],
+    "legacy_compatibility": "Existing legacy store finalization/recovery APIs remain outside the Stage 9 production boundary. New optional authorization fields are all absent in legacy DTOs or all four present in Stage 9; schema5 records freeze the changed payload interpretation. No schema4 migration.",
+    "reservation_record_view": {
+      "type": "RootProofIssuanceAttemptReservationV1",
+      "representation": "Logical child-contract record view of existing AttemptReservation and SQLite reservations row; actual persisted schema is CHA attempt store version5, with no second store or serializer",
+      "fields": [
+        "authorization",
+        "exact_idempotency_key",
+        "issuance_attempt_id",
+        "reservation_state"
+      ],
+      "reservation_state": "RESERVED_AWAITING_SIGNATURES"
+    }
+  },
+  "issuance_attempt_id": {
+    "schema": "rpa_<canonical-lowercase-UUIDv7>",
+    "issuer": "CryptoHunterAccountAuthority",
+    "caller_selectable": false,
+    "caller_time_selectable": false,
+    "shared_uuid_owner": "bot_core.uuid7",
+    "captured_internal_UTC_instants": 1,
+    "timestamp": "Integer Unix milliseconds, full uint48 validation, no masking",
+    "randomness": "CSPRNG 12 + 62 bits",
+    "version": 7,
+    "RFC_variant_bits": "10"
+  },
+  "reservation_capability": {
+    "type": "VerifiedRootProofIssuanceAttemptReservation",
+    "means": "Exact durable authority-owned issuance attempt reservation exists",
+    "public_constructor": false,
+    "exact_type_required": true,
+    "private_provenance_required": true,
+    "subclass_copy_deepcopy_object_new_as_authority": false,
+    "raw_SQLite_row_rpa_string_attempt_authorization_as_authority": false,
+    "each_consequential_use": [
+      "REQUALIFY_EXACT_UPSTREAM_VERIFIED_INITIAL_BINDING",
+      "MATCH_EXACT_CURRENT_INITIAL_BINDING_DURABLE_BYTES",
+      "LIVE_REQUALIFY_EXACT_AUTHORIZATION_PROVIDER_EVIDENCE",
+      "LOAD_EXACT_CURRENT_CHA_ATTEMPT_RESERVATION",
+      "MATCH_EXACT_AUTHORIZATION_AND_IDEMPOTENCY_TUPLE",
+      "MATCH_EXACT_RETAINED_RPA",
+      "MATCH_EXACT_CURRENT_FENCE_AND_RESERVED_STATE"
+    ],
+    "signed_request_or_claimant_authorization": false,
+    "issuer_decision_or_root_proof_or_PREPARED": false,
+    "properties": [
+      "issuance_attempt_id",
+      "state",
+      "fence",
+      "reservation_identity"
+    ]
+  },
+  "production_api": {
+    "module": "bot_core/licensing/cha_root_proof_attempt_reservation.py",
+    "resolve_authorization": "resolve_root_proof_issuance_authorization",
+    "require_authorization": "require_verified_root_proof_issuance_authorization",
+    "reserve": "reserve_root_proof_issuance_attempt",
+    "load": "load_root_proof_issuance_attempt",
+    "require_reservation": "require_verified_root_proof_issuance_attempt_reservation",
+    "resolve_parameters": [
+      "binding"
+    ],
+    "reserve_and_load_parameters": [
+      "binding",
+      "authorization"
+    ],
+    "caller_ids_time_path_or_provider": false,
+    "loader_mints": false
+  },
+  "durability": {
+    "same_tuple_two_processes_or_threads": "One durable rpa_; loser resolves exact winner or bounded conflict/busy; never two current attempts",
+    "before_commit": "No published attempt or capability",
+    "after_commit_before_response": "Retry resolves exact retained rpa_",
+    "lost_response": "Retry resolves exact retained rpa_",
+    "restart": "Requalify upstream and provider evidence; load retained exact reservation; never mint",
+    "pointer_failure": "SQLite transaction rolls back reservation and current pointer atomically",
+    "ambiguous_failure": "Do not publish a capability; reread durable state on exact retry",
+    "disk_rollback_protection": "NOT PROVIDED BY THIS LAYER"
+  },
+  "current_status_authority": {
+    "canonical_artifact": "deployment/stage9_current_status.json",
+    "authority": "CURRENT_STATUS",
+    "child_is_global_status_authority": false,
+    "conflict_policy": "FAIL",
+    "parity_fields": [
+      "local_cha_attempt_reservation_boundary",
+      "root_proof_issuance_authorization_boundary",
+      "semantic_root_proof_issuer_runtime",
+      "requester_claimant_production_provider",
+      "root_proof",
+      "root_proof_admission",
+      "account_id",
+      "account_genesis",
+      "prepared",
+      "production_provisioning_ready",
+      "windows_production_ready",
+      "legal_production_enrollment",
+      "stage_10_production_lifecycle_live",
+      "provisioning_membership",
+      "protected_freshness",
+      "secret_resource"
+    ]
+  },
+  "current_status": {
+    "local_cha_attempt_reservation_boundary": "IMPLEMENTED",
+    "root_proof_issuance_authorization_boundary": "IMPLEMENTED_AS_LOGIC / BLOCKED_ON_GENUINE_PRODUCTION_PROVIDER",
+    "semantic_root_proof_issuer_runtime": "NOT_IMPLEMENTED / BLOCKED",
+    "requester_claimant_production_provider": "NOT_IMPLEMENTED / BLOCKED",
+    "root_proof": "NOT_ISSUED",
+    "root_proof_admission": "NOT_STARTED",
+    "account_id": "CANDIDATE_RESERVED_NOT_GENUINE",
+    "account_genesis": "INITIAL_BINDING_ONLY",
+    "prepared": "NOT_STARTED",
+    "production_provisioning_ready": false,
+    "windows_production_ready": "NOT_READY",
+    "legal_production_enrollment": "NOT_PERFORMED",
+    "stage_10_production_lifecycle_live": "NOT_STARTED",
+    "provisioning_membership": "BLOCKED",
+    "protected_freshness": "NOT_STARTED",
+    "secret_resource": "NOT_STARTED",
+    "production_local_historical_implemented": false,
+    "production_local_historical_deployment_available_now": false
+  },
+  "scope_exclusions": [
+    "requester_signature",
+    "claimant_signature",
+    "immutable_signed_attempt_finalization",
+    "SIGNED_IMMUTABLE_DURABLE_NOT_SENT",
+    "external_RootProofIssuer_send",
+    "entitlement_UNBOUND_to_BOUND",
+    "issuer_BOUND",
+    "root_proof",
+    "rpf_",
+    "RootProofAdmissionEvidence",
+    "PREPARED",
+    "Freshness_CAS",
+    "final_AccountGenesis_COMMITTED",
+    "membership",
+    "device",
+    "Secret_Resource",
+    "Stage10"
+  ],
+  "live_qualification": {
+    "physical_hardware_qualification": "NOT_RUN",
+    "legal_production_enrollment": "NOT_PERFORMED",
+    "hosted_TEST_ONLY_harness_is_production_qualification": false
+  },
+  "conformance_vector": {
+    "purpose": "Identity computation only; synthetic raw bytes do not satisfy the upstream retained-state schema and establish no INITIAL_BINDING provenance or PRODUCTION authority",
+    "source_bytes_are_authority": false,
+    "synthetic_binding_raw_hex": "7b226163636f756e745f6964223a22616363745f30313866336537302d376235632d376332312d386239612d303132333435363738396162222c2263616e6f6e6963616c5f726571756573745f7261775f686578223a22376232323635366537363639373236663665366436353665373432323361323235303532346634343535343335343439346634653232326332323730373236663634373536333734356637333633366637303635323233613232343337323739373037343666343837353665373436353732323232633232373236353733363537323736363137343639366636653566373236353663363137343639366636653232336132323435353834313433353435663466353034353532343135343439346634653566343134333433346635353465353432323764222c2263616e6f6e6963616c5f726571756573745f736861323536223a2231313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131222c22696e697469616c5f62696e64696e675f736861323536223a2232323232323232323232323232323232323232323232323232323232323232323232323232323232323232323232323232323232323232323232323232323232222c226c6f676963616c5f6f7065726174696f6e5f6964223a2261676f5f30313866336537302d376235622d376332312d386239612d303132333435363738396162222c22706473615f74727573745f646f6d61696e223a2274645f766563746f725fe99baa227d",
+    "relation_payload": {
+      "schema_version": "InitialBindingReservationRelationV1",
+      "environment": "PRODUCTION",
+      "pdsa_trust_domain": "td_vector_雪",
+      "logical_operation_id": "ago_018f3e70-7b5b-7c21-8b9a-0123456789ab",
+      "account_id": "acct_018f3e70-7b5c-7c21-8b9a-0123456789ab",
+      "reservation_relation": "EXACT_OPERATION_ACCOUNT",
+      "canonical_genesis_request_fingerprint_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "initial_binding_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+      "retained_initial_binding_sha256": "5701a984aa15443a0c7dce3fa43e20499aedac7875e5aa83493c814b39f0abdc"
+    },
+    "relation_canonical_jcs_utf8": "{\"account_id\":\"acct_018f3e70-7b5c-7c21-8b9a-0123456789ab\",\"canonical_genesis_request_fingerprint_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"environment\":\"PRODUCTION\",\"initial_binding_sha256\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"logical_operation_id\":\"ago_018f3e70-7b5b-7c21-8b9a-0123456789ab\",\"pdsa_trust_domain\":\"td_vector_雪\",\"reservation_relation\":\"EXACT_OPERATION_ACCOUNT\",\"retained_initial_binding_sha256\":\"5701a984aa15443a0c7dce3fa43e20499aedac7875e5aa83493c814b39f0abdc\",\"schema_version\":\"InitialBindingReservationRelationV1\"}",
+    "reservation_identity": "ibr_d569aac4fd8da09ea4b57fe7afa5e4760d6ce690b80941ed0a7069e7d0461c1d",
+    "reference_payload": {
+      "schema_version": "RootProofInitialBindingReferenceV1",
+      "environment": "PRODUCTION",
+      "pdsa_trust_domain": "td_vector_雪",
+      "logical_operation_id": "ago_018f3e70-7b5b-7c21-8b9a-0123456789ab",
+      "account_id": "acct_018f3e70-7b5c-7c21-8b9a-0123456789ab",
+      "reservation_relation": "EXACT_OPERATION_ACCOUNT",
+      "canonical_genesis_request_fingerprint_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "initial_binding_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+      "retained_initial_binding_sha256": "5701a984aa15443a0c7dce3fa43e20499aedac7875e5aa83493c814b39f0abdc",
+      "reservation_identity": "ibr_d569aac4fd8da09ea4b57fe7afa5e4760d6ce690b80941ed0a7069e7d0461c1d"
+    },
+    "reference_canonical_jcs_utf8": "{\"account_id\":\"acct_018f3e70-7b5c-7c21-8b9a-0123456789ab\",\"canonical_genesis_request_fingerprint_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"environment\":\"PRODUCTION\",\"initial_binding_sha256\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"logical_operation_id\":\"ago_018f3e70-7b5b-7c21-8b9a-0123456789ab\",\"pdsa_trust_domain\":\"td_vector_雪\",\"reservation_identity\":\"ibr_d569aac4fd8da09ea4b57fe7afa5e4760d6ce690b80941ed0a7069e7d0461c1d\",\"reservation_relation\":\"EXACT_OPERATION_ACCOUNT\",\"retained_initial_binding_sha256\":\"5701a984aa15443a0c7dce3fa43e20499aedac7875e5aa83493c814b39f0abdc\",\"schema_version\":\"RootProofInitialBindingReferenceV1\"}",
+    "initial_binding_digest_sha256": "2678e0f58a98152d963e06aab87d298aea89fc7470d42c7b7221fdcca66e8a40",
+    "initial_binding_reference": "initial-binding-v1:2678e0f58a98152d963e06aab87d298aea89fc7470d42c7b7221fdcca66e8a40"
+  }
+}
