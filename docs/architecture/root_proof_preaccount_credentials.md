@@ -15,6 +15,10 @@ and lookup also binds the exact deployment trust domain. Requester ownership is
 `ACCOUNT_GENESIS_ROOT_PROOF_ISSUANCE_REQUESTER_V1`; claimant ownership is the
 pre-account `provisioning_principal_id` provisioned by deployment/security
 administration. The candidate account supplies neither authority.
+Live composition rejects a claimant provisioning principal that exactly equals
+the current initial binding's candidate account ID or logical operation ID.
+This equality check does not establish the principal's temporal pre-account
+history.
 
 Both verifier-side registry ports add
 `public_key(credential_identity: str) -> bytes`. The returned material is exactly
@@ -50,6 +54,14 @@ IDs and key IDs differ. The paired installer gives each schema owner only the
 peer immutable public credential-table read needed for that constraint; it gives
 no peer runtime/admin authority. Future complete composition must also check
 issuer, freshness, Catalog and storage credential roles.
+
+The runtime DDL prohibition covers persistent database schemas and credential
+authority objects. Existing database `PUBLIC TEMP` grants remain unchanged and
+may permit isolated temporary workspace. Such workspace grants no credential
+authority: reviewed procedures pin `pg_catalog` as their search path and use
+fully qualified authority tables, preventing temporary objects from shadowing
+credential state. The forbidden `PUBLIC` privileges refer to the reviewed
+authority schemas, tables and functions.
 
 `PostgreSQLRootProofIssuanceAuthority` composes exactly these genuine providers
 with the existing `PostgreSQLEntitlementRegistryProvider`. The internal installed

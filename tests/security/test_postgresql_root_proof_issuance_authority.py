@@ -126,7 +126,9 @@ def _connection(role):
 
 
 @contextmanager
-def _installed_authorities(monkeypatch, trust_domain):
+def _installed_authorities(
+    monkeypatch, trust_domain, provisioning_principal="deployment-provisioning-principal"
+):
     """Install exact reviewed production names into the temporary real cluster."""
 
     requester = credentials.PostgreSQLCredentialRegistryProvisioning(
@@ -173,7 +175,7 @@ def _installed_authorities(monkeypatch, trust_domain):
             public_key=b"R" * 32,
         )
         pair.claimant_admin.provision_credential(
-            principal_id="deployment-provisioning-principal",
+            principal_id=provisioning_principal,
             credential_id="claimant-credential",
             key_id="claimant-key",
             key_version=1,
@@ -197,7 +199,7 @@ def _installed_authorities(monkeypatch, trust_domain):
                     "CryptoHunter",
                 ),
                 EntitlementProvenance(
-                    "deployment-provisioning-principal",
+                    provisioning_principal,
                     "claimant-key",
                     1,
                     "deployment-security-authority",
@@ -345,6 +347,32 @@ def test_genuine_aggregate_rejects_context_scope_and_live_material_tampering(mon
             )
         with pytest.raises(composition.ProductionLocalIssuanceAuthorityError, match="UNAVAILABLE"):
             composition._configured_root_proof_issuance_authority()
+
+
+@pytest.mark.external_postgresql
+@pytest.mark.parametrize("candidate_field", ["account_id", "logical_operation_id"])
+def test_genuine_claimant_principal_cannot_be_candidate_account_or_operation(
+    monkeypatch, candidate_field
+):
+    context = {
+        "environment": "PRODUCTION",
+        "pdsa_trust_domain": "td_authority",
+        "product_scope": "CryptoHunter",
+        "reservation_relation": "EXACT_OPERATION_ACCOUNT",
+        "account_id": "acct_018f3e70-7b5c-7c21-8b9a-0123456789ab",
+        "logical_operation_id": "ago_018f3e70-7b5c-7c21-8b9a-0123456789ab",
+    }
+    with _installed_authorities(monkeypatch, "td_authority", context[candidate_field]) as (pair, _):
+        authority = composition._configured_root_proof_issuance_authority()
+        assert (
+            pair.claimant.resolve_claimant(context[candidate_field]).provisioning_principal_id
+            == context[candidate_field]
+        )
+        with pytest.raises(
+            composition.ProductionLocalIssuanceAuthorityError,
+            match="PREACCOUNT_CLAIMANT_PRINCIPAL_REQUIRED",
+        ):
+            authority.resolve_initial_binding(canonical_json_bytes(context))
 
 
 @pytest.mark.external_postgresql

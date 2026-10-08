@@ -205,6 +205,31 @@ def test_exact_dtos_and_public_lookup_are_verifier_authority_only():
     assert CONTRACT["requester"]["credential_role"] == credentials.REQUESTER_CREDENTIAL_ROLE
 
 
+def test_runtime_ddl_scope_and_claimant_alias_checks_do_not_overclaim_authority():
+    registry = CONTRACT["postgresql"]
+    assert registry["runtime"]["DDL"] is False
+    assert registry["runtime"]["DDL_scope"] == (
+        "Persistent database schemas and credential-authority objects"
+    )
+    assert registry["runtime"]["temporary_workspace"] == {
+        "database_PUBLIC_TEMP": "UNCHANGED / MAY_BE_ALLOWED",
+        "grants_credential_authority": False,
+        "authority_lookup": (
+            "Pinned pg_catalog search_path and fully qualified authority tables "
+            "prevent temporary-workspace shadowing"
+        ),
+    }
+    assert registry["PUBLIC_privileges_scope"] == (
+        "Reviewed credential-authority schemas, tables and functions; "
+        "database TEMP grants are outside this scope"
+    )
+    assert CONTRACT["claimant"]["exact_principal_alias_rejected"] == [
+        "INITIAL_BINDING.account_id",
+        "INITIAL_BINDING.logical_operation_id",
+    ]
+    assert CONTRACT["claimant"]["temporal_preaccount_principal_history_established"] is False
+
+
 def test_key_versions_lifecycle_and_namespace_are_distinct():
     life = CONTRACT["lifecycle_and_history"]
     assert life["states"] == [state.value for state in credentials.CredentialLifecycle]

@@ -198,6 +198,11 @@ class PostgreSQLRootProofIssuanceAuthority:
             or type(state.binding) is not UnboundBinding
         ):
             raise ProductionLocalIssuanceAuthorityError("ACTIVE_UNBOUND_ENTITLEMENT_REQUIRED")
+        if state.provenance.provisioning_principal_id in (
+            context.get("account_id"),
+            context.get("logical_operation_id"),
+        ):
+            raise ProductionLocalIssuanceAuthorityError("PREACCOUNT_CLAIMANT_PRINCIPAL_REQUIRED")
         return _ProviderResolution(
             subject, REQUESTER_PRINCIPAL, state.provenance.provisioning_principal_id
         )

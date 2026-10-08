@@ -433,6 +433,15 @@ def test_concurrent_rotation_retains_old_material_and_one_current_winner(registr
     assert [item.key_version for item in history] == [1, 1, 2]
     assert runtime.public_key(first.credential_id) == b"A" * 32
     assert runtime.historical_generation(first.credential_id, 1) == first
+    if kind == "requester":
+        assert runtime.historical_requester_credential(first.credential_id) == history[1]
+        with pytest.raises(credentials.CredentialResolutionError):
+            runtime.active_requester_credential("different-principal")
+    else:
+        assert runtime.historical_claimant(principal, 1) == first
+        assert runtime.historical_claimant(principal, 2) == history[1]
+        with pytest.raises(credentials.CredentialResolutionError):
+            runtime.historical_claimant(principal, 999)
 
 
 @pytest.mark.parametrize("kind", ["requester", "claimant"])
@@ -519,6 +528,10 @@ def test_historical_key_revocation_retains_current_active_replacement(registry, 
     assert runtime.public_key(first.credential_id) == first.public_key
     assert runtime.historical_generation(first.credential_id, 1) == first
     assert runtime.historical_generation(first.credential_id, 4) == revoked
+    if kind == "requester":
+        assert runtime.historical_requester_credential(first.credential_id) == revoked
+    else:
+        assert runtime.historical_claimant(principal, 4) == revoked
 
 
 def test_concurrent_cross_role_material_alias_has_one_authoritative_winner(registry) -> None:
