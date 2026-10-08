@@ -184,6 +184,17 @@ def test_real_server_durability_and_separate_authorities(registry: _RegistryPair
         assert row is not None and "PostgreSQL 16" in row[0]
         assert row[1:] == ("on", "on")
         for authority in (setup.requester, setup.claimant):
+            role_login = dict(
+                conn.execute(
+                    "SELECT rolname,rolcanlogin FROM pg_roles WHERE rolname=ANY(%s)",
+                    ([authority.schema_owner_role, authority.runtime_role, authority.admin_role],),
+                ).fetchall()
+            )
+            assert role_login == {
+                authority.schema_owner_role: False,
+                authority.runtime_role: True,
+                authority.admin_role: True,
+            }
             owners = conn.execute(
                 "SELECT DISTINCT r.rolname FROM pg_class c "
                 "JOIN pg_namespace n ON n.oid=c.relnamespace "
@@ -198,6 +209,41 @@ def test_real_server_durability_and_separate_authorities(registry: _RegistryPair
                 (authority.schema,),
             ).fetchone()
             assert public_execute == (0,)
+
+
+@pytest.mark.parametrize("kind", ["requester", "claimant"])
+def test_schema_owner_cannot_authenticate_and_admin_functions_keep_owner_authority(
+    registry, kind
+) -> None:
+    setup, runtime, admin, principal = _authority(registry, kind)
+    with pytest.raises(psycopg.OperationalError, match="not permitted to log in"):
+        with psycopg.connect(_connection(setup.schema_owner_role).dsn):
+            pytest.fail("NOLOGIN schema owner unexpectedly authenticated")
+    first = _provision(admin, principal)
+    assert runtime.public_key(first.key_id) == first.public_key
+    with psycopg.connect(BASE_DSN, autocommit=True) as conn:
+        function_owner = conn.execute(
+            "SELECT r.rolname,r.rolcanlogin,p.prosecdef FROM pg_proc p "
+            "JOIN pg_namespace n ON n.oid=p.pronamespace JOIN pg_roles r ON r.oid=p.proowner "
+            "WHERE n.nspname=%s AND p.proname='apply'",
+            (setup.schema,),
+        ).fetchone()
+        assert function_owner == (setup.schema_owner_role, False, True)
+
+
+@pytest.mark.parametrize("kind", ["requester", "claimant"])
+def test_schema_owner_login_escalation_is_detected_by_both_authorities(registry, kind) -> None:
+    setup, _, _, _ = _authority(registry, kind)
+    with psycopg.connect(BASE_DSN, autocommit=True) as conn:
+        conn.execute(sql.SQL("ALTER ROLE {} LOGIN").format(sql.Identifier(setup.schema_owner_role)))
+    for provider in (
+        registry.requester,
+        registry.claimant,
+        registry.requester_admin,
+        registry.claimant_admin,
+    ):
+        with pytest.raises(RegistryQualificationError, match="role attributes"):
+            provider.retained_history("qualification-probe")
 
 
 @pytest.mark.parametrize("kind", ["requester", "claimant"])

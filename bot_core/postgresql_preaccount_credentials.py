@@ -4,6 +4,8 @@ The paired offline installer creates two independent PostgreSQL authorities.
 Only their narrowly reviewed admin functions can mutate credentials. Retained
 history is append-only through these APIs; a host/schema owner is necessarily
 trusted and PostgreSQL alone cannot detect rollback to an earlier valid prefix.
+Schema owners cannot authenticate directly. The offline bootstrap principal
+activates them to install objects; SECURITY DEFINER execution needs no login.
 """
 
 from __future__ import annotations
@@ -486,11 +488,12 @@ def provision_postgresql_preaccount_registries(
         conn.execute("SET LOCAL search_path=pg_catalog")
         for item, _, _ in pairs:
             for role_name in (item.schema_owner_role, item.runtime_role, item.admin_role):
+                login = sql.SQL("NOLOGIN" if role_name == item.schema_owner_role else "LOGIN")
                 conn.execute(
                     sql.SQL(
-                        "CREATE ROLE {} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE "
+                        "CREATE ROLE {} {} NOSUPERUSER NOCREATEDB NOCREATEROLE "
                         "NOINHERIT NOREPLICATION NOBYPASSRLS"
-                    ).format(sql.Identifier(role_name))
+                    ).format(sql.Identifier(role_name), login)
                 )
         oids: dict[str, int] = dict(
             conn.execute("SELECT rolname,oid FROM pg_catalog.pg_roles").fetchall()
@@ -725,8 +728,10 @@ class _PostgreSQLCredentialAuthority:
             "WHERE rolname=ANY(%s)",
             (names,),
         ).fetchall()
+        owner_roles = {config.schema_owner_role, peer.schema_owner_role}
         if len(roles) != 6 or any(
-            row[2:] != (True, False, False, False, False, False, False) for row in roles
+            row[2:] != (row[0] not in owner_roles, False, False, False, False, False, False)
+            for row in roles
         ):
             raise RegistryQualificationError("authority role attributes mismatch")
         oids = {row[0]: row[1] for row in roles}

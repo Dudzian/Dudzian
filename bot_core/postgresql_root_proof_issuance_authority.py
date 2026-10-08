@@ -214,7 +214,11 @@ class PostgreSQLRootProofIssuanceAuthority:
         requester_evidence: tuple[CredentialRoleIdentity, ...],
         claimant_evidence: tuple[CredentialRoleIdentity, ...],
     ) -> None:
-        """Bind ACTIVE records to exact retained version, lifecycle and material."""
+        """Bind selected ACTIVE identities to exact version, lifecycle and material.
+
+        Population-wide qualification remains in requalify(); these identities
+        alone belong to the resolved operation's retained authorization evidence.
+        """
 
         from bot_core.licensing.cha_root_proof_attempt_reservation import (
             _ClaimantIdentityV1,

@@ -55,6 +55,15 @@ peer immutable public credential-table read needed for that constraint; it gives
 no peer runtime/admin authority. Future complete composition must also check
 issuer, freshness, Catalog and storage credential roles.
 
+Requester and claimant schema-owner roles are `NOLOGIN`; runtime and admin
+roles remain `LOGIN`. Offline installation authenticates with the privileged
+bootstrap connection and activates ownership through `SET LOCAL ROLE`.
+`SECURITY DEFINER` procedures still execute as their owner. The owner remains
+a full trusted mutation authority when activated by privileged bootstrap or a
+superuser and can bypass the admin API. `NOLOGIN` removes direct owner
+authentication; it does not remove ownership privileges. Runtime/admin
+membership in authority-owner roles remains forbidden.
+
 The runtime DDL prohibition covers persistent database schemas and credential
 authority objects. Existing database `PUBLIC TEMP` grants remain unchanged and
 may permit isolated temporary workspace. Such workspace grants no credential
@@ -77,12 +86,32 @@ aggregate also support explicit safe identifiers for isolated authority tests.
 The public Stage 9 functions accept only the verified upstream capability and,
 where required, verified authorization.
 
+Retained authorization evidence uses
+`RootProofOperationScopedAuthorizationEvidenceV1` with scope
+`EXACT_OPERATION_SCOPED`. Its canonical payload contains the exact initial
+binding context, provider resolution, authoritative entitlement state,
+requester and claimant `ACTIVE` records, each selected `CredentialRoleIdentity`
+and public-key material identity recomputed from authoritative raw bytes, and
+the three provider identities/capabilities. Each selected credential must match
+exactly one resolved key ID, semantic role, provider namespace, key version and
+current lifecycle generation/revision.
+
+Full requester/claimant credential populations remain live qualification inputs
+outside the authorization hash. Qualification still checks all retained role,
+namespace and canonical evidence, global forbidden material aliases, and the
+live schema/role/ACL/durability/environment boundaries. Structural corruption
+or a new global alias fails closed. Successful provisioning, rotation or
+lifecycle changes for an unrelated claimant preserve another operation's
+authorization evidence hash and existing `rpa_`. Both resolution passes perform
+global qualification; they compare provider identity/capabilities and selected
+operation evidence instead of requiring unrelated population equality.
+
 The completed boundary ends at live requalified
 `VerifiedRootProofIssuanceAuthorization` and the existing durable
 `RESERVED_AWAITING_SIGNATURES` reservation. Exact evidence and retry/restart
 retain the same `rpa_`; changed credential revision, lifecycle, key identity,
-material or provider evidence invalidates the capability. Entitlements remain
-`ACTIVE + UNBOUND`.
+material or provider evidence belonging to that operation invalidates the
+capability. Entitlements remain `ACTIVE + UNBOUND`.
 
 `deployment/stage9_current_status.json` remains the global current-status
 source. Public credential providers and composition are `IMPLEMENTED`.

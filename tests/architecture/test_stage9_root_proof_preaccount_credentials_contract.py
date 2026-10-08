@@ -303,7 +303,7 @@ def test_genuine_aggregate_allowlist_and_config_have_no_public_stage9_input():
     with pytest.raises(TypeError):
         type("UnreviewedAggregateSubclass", (aggregate,), {})
     assert CONTRACT["production_composition"]["entitlement_BIND"] is False
-    assert CONTRACT["production_composition"]["evidence_schema_changed"] is False
+    assert CONTRACT["production_composition"]["evidence_schema_changed"] is True
     assert CONTRACT["production_composition"]["stop_state"] == "RESERVED_AWAITING_SIGNATURES"
     aliases = CONTRACT["credential_role_evidence"]
     assert (
@@ -312,6 +312,69 @@ def test_genuine_aggregate_allowlist_and_config_have_no_public_stage9_input():
     )
     assert aliases["labels_replace_raw_material_comparison"] is False
     assert aliases["global_future_role_aliases_solved_here"] is False
+
+
+def test_retained_evidence_is_exact_operation_scoped_with_global_qualification_separate():
+    evidence = CONTRACT["production_composition"]["authorization_evidence"]
+    assert evidence["schema_version"] == "RootProofOperationScopedAuthorizationEvidenceV1"
+    assert evidence["scope"] == "EXACT_OPERATION_SCOPED"
+    assert evidence["closed_fields"] == [
+        "schema_version",
+        "scope",
+        "context",
+        "resolution",
+        "entitlement",
+        "requester",
+        "claimant",
+        "requester_credential",
+        "claimant_credential",
+        "providers",
+    ]
+    assert evidence["resolved_credential_fields"] == [
+        "identity",
+        "public_key_material_identity",
+    ]
+    assert evidence["providers"] == ["entitlement", "requester", "claimant"]
+    assert evidence["provider_fields"] == ["identity", "capabilities"]
+    assert evidence["full_registry_credential_population_in_hash"] is False
+    assert (
+        evidence[
+            "unrelated_principal_mutations_do_not_alter_another_operations_authorization_identity"
+        ]
+        is True
+    )
+    assert evidence["unrelated_mutation_precondition"] == (
+        "Global provider/substrate qualification remains valid"
+    )
+    assert evidence["unrelated_claimant_mutations"] == [
+        "provision additional principal",
+        "rotate another principal",
+        "transition another principal to VERIFY_ONLY",
+        "revoke another principal's retained historical credential",
+    ]
+    assert evidence["global_qualification_outside_hash"] == [
+        "Full requester and claimant current/historically relevant credential_identities() populations",
+        "Provider structure and canonical credential semantic-role/namespace evidence",
+        "Global forbidden cross-role public-key material aliases",
+        "Exact live PostgreSQL schema/version/owner/runtime/admin role and ACL evidence",
+        "Durability and environment/trust-domain/security-profile qualification",
+    ]
+    assert evidence["global_qualification_failure"] == (
+        "FAIL_CLOSED even when operation-scoped evidence is unchanged"
+    )
+
+
+def test_schema_owner_cannot_authenticate_but_retains_trusted_mutation_authority():
+    authentication = CONTRACT["postgresql"]["role_authentication"]
+    assert authentication["schema_owner_LOGIN"] is False
+    assert authentication["runtime_LOGIN"] is True
+    assert authentication["admin_LOGIN"] is True
+    assert authentication["direct_schema_owner_login_required"] is False
+    assert authentication["runtime_admin_owner_membership"] == "FORBIDDEN"
+    assert "Supported with NOLOGIN" in authentication["SECURITY_DEFINER_owner_execution"]
+    assert "SET LOCAL ROLE owner" in authentication["SECURITY_DEFINER_owner_execution"]
+    assert "can bypass the admin API" in authentication["owner_trust_assumption"]
+    assert "NOLOGIN removes direct authentication only" in authentication["owner_trust_assumption"]
 
 
 def test_canonical_status_separates_implementation_from_provisioning():
