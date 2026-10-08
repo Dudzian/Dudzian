@@ -102,15 +102,22 @@ def test_heavy_licensing_security_suite_is_split_without_coverage_gap():
 
     heavy = jobs["licensing-security-durability"]
     assert heavy["strategy"]["fail-fast"] is False
-    budgets = {
-        item["os"]: (item["job_timeout_minutes"], item["test_timeout_minutes"])
+    variants = {
+        (item["os"], item["shard"]): (
+            item["label"],
+            item["job_timeout_minutes"],
+            item["test_timeout_minutes"],
+        )
         for item in heavy["strategy"]["matrix"]["include"]
     }
-    assert budgets == {
-        "ubuntu-latest": (75, 65),
-        "macos-latest": (75, 65),
-        "windows-latest": (105, 90),
+    assert variants == {
+        ("ubuntu-latest", "all"): ("ubuntu-latest", 75, 65),
+        ("macos-latest", "all"): ("macos-latest", 75, 65),
+        ("windows-latest", "upstream"): ("windows-latest", 55, 45),
+        ("windows-latest", "cha-core"): ("windows-latest, cha-core", 70, 60),
+        ("windows-latest", "cha-root-proof"): ("windows-latest, cha-root-proof", 60, 50),
     }
+    assert heavy["name"] == "Licensing security/durability (${{ matrix.label }})"
     assert heavy["timeout-minutes"] == "${{ matrix.job_timeout_minutes }}"
 
     step = next(
@@ -121,13 +128,24 @@ def test_heavy_licensing_security_suite_is_split_without_coverage_gap():
     command = step["run"]
     for pattern in SERIAL_LICENSING_GLOBS:
         assert pattern in command
+    assert 'case "${{ matrix.shard }}" in' in command
+    assert "cha-core)" in command
+    assert "cha-root-proof)" in command
+    assert "--ignore-glob=tests/licensing/test_cha_root_proof*.py" in command
+    assert "tests/licensing/test_cha_root_proof*.py" in command
     assert "shopt -s nullglob" in command
+    assert '"${pytest_extra[@]}"' in command
     assert '"${licensing_tests[@]}"' in command
     assert "pytest -p asyncio" in command
     assert "--fast" in command
     assert "-n " not in command
     assert "--numprocesses" not in command
     assert step["env"]["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] == "1"
+
+    upload = next(
+        step for step in heavy["steps"] if step["name"] == "Upload licensing security diagnostics"
+    )
+    assert "${{ matrix.shard }}" in upload["with"]["name"]
 
 
 def test_ubuntu_has_authoritative_elevated_native_peer_auth_execution():
