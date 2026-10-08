@@ -797,9 +797,19 @@ jobs:
             test_timeout_minutes: 65
           - os: windows-latest
             label: windows-latest
-            shard: upstream
-            job_timeout_minutes: 55
-            test_timeout_minutes: 45
+            shard: lppi-core
+            job_timeout_minutes: 45
+            test_timeout_minutes: 35
+          - os: windows-latest
+            label: windows-latest, lppi-durability
+            shard: lppi-durability
+            job_timeout_minutes: 45
+            test_timeout_minutes: 35
+          - os: windows-latest
+            label: windows-latest, pdsa-production
+            shard: pdsa-production
+            job_timeout_minutes: 40
+            test_timeout_minutes: 30
           - os: windows-latest
             label: windows-latest, cha-core
             shard: cha-core
@@ -861,9 +871,18 @@ jobs:
                 tests/licensing/test_cha_*.py
               )
               ;;
-            upstream)
+            lppi-core)
               licensing_tests=(
-                tests/licensing/test_lppi_*.py
+                tests/licensing/test_lppi_authenticated_operation.py
+                tests/licensing/test_lppi_authenticated_operation_native.py
+                tests/licensing/test_lppi_authority_lifecycle.py
+              )
+              ;;
+            lppi-durability)
+              licensing_tests=(tests/licensing/test_lppi_authenticated_operation_durability.py)
+              ;;
+            pdsa-production)
+              licensing_tests=(
                 tests/licensing/test_pdsa_*.py
                 tests/licensing/test_production_*.py
               )
