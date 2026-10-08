@@ -28,13 +28,30 @@ reserved = runtime.reserved
 
 
 def test_crash_after_memory_mint_before_commit_publishes_nothing(cha, monkeypatch):
+    prepared = []
+    issued_before = set(runtime.capability._ISSUED)
+    entropy = iter((0, 0, 1, 1))
+    monkeypatch.setattr(installed, "_utc_now", lambda: runtime.NOW)
+    monkeypatch.setattr(runtime.uuid7.secrets, "randbits", lambda bits: next(entropy))
+
+    def crash_before_commit(path, state):
+        runtime.assert_exact_request_binding(state)
+        prepared.append(state)
+        raise RuntimeError("TEST_ONLY-crash")
+
     with monkeypatch.context() as patch:
-        patch.setattr(installed, "_write", Mock(side_effect=RuntimeError("TEST_ONLY-crash")))
+        patch.setattr(installed, "_write", crash_before_commit)
         with pytest.raises(RuntimeError, match="TEST_ONLY-crash"):
             installed.establish_installed_account_initial_binding(cha)
+    assert len(prepared) == 1
     assert not installed._state_path().exists()
+    assert set(runtime.capability._ISSUED) == issued_before
     value = installed.establish_installed_account_initial_binding(cha)
-    assert value.account_id.startswith("acct_")
+    state = installed._read(installed._state_path())
+    runtime.assert_exact_request_binding(state)
+    assert value.account_id == state["account_id"] != prepared[0]["account_id"]
+    assert state["canonical_request_raw_hex"] != prepared[0]["canonical_request_raw_hex"]
+    assert state["canonical_request_sha256"] != prepared[0]["canonical_request_sha256"]
 
 
 def test_commit_before_response_lost_response_retains_exact_candidate(cha, monkeypatch):
@@ -47,10 +64,16 @@ def test_commit_before_response_lost_response_retains_exact_candidate(cha, monke
         with pytest.raises(RuntimeError, match="TEST_ONLY-lost-response"):
             installed.establish_installed_account_initial_binding(cha)
     state = installed._read(installed._state_path())
+    committed_raw = installed._state_path().read_bytes()
+    runtime.assert_exact_request_binding(state)
     monkeypatch.setattr(installed, "mint_uuid7", runtime.forbidden)
-    assert (
-        installed.establish_installed_account_initial_binding(cha).account_id == state["account_id"]
-    )
+    monkeypatch.setattr(installed, "_utc_now", runtime.forbidden)
+    retried = installed.establish_installed_account_initial_binding(cha)
+    loaded = installed.load_installed_account_initial_binding(cha)
+    assert retried.account_id == loaded.account_id == state["account_id"]
+    assert installed._state_path().read_bytes() == committed_raw == canonical_json_bytes(state)
+    for restored in (retried, loaded):
+        assert runtime.capability._initial_binding_snapshot(restored).state_raw == committed_raw
 
 
 @pytest.mark.skipif(os.name != "posix", reason="physical POSIX fence failures")
@@ -89,13 +112,17 @@ def test_every_physical_fence_and_ambiguous_replace_fails_without_publication(ch
             assert retained is None
         else:
             assert retained["status"] == installed.STATUS
+            runtime.assert_exact_request_binding(retained)
+            retained_raw = path.read_bytes()
         assert not list(path.parent.glob(f".{path.name}.*"))
         with monkeypatch.context() as patch:
             if retained is not None:
                 patch.setattr(installed, "mint_uuid7", runtime.forbidden)
+                patch.setattr(installed, "_utc_now", runtime.forbidden)
             value = installed.establish_installed_account_initial_binding(cha)
             if retained is not None:
                 assert value.account_id == retained["account_id"]
+                assert path.read_bytes() == retained_raw == canonical_json_bytes(retained)
         path.unlink()
 
 
@@ -110,7 +137,14 @@ def test_loader_failed_fence_never_issues_then_repairs_exact_winner(reserved, mo
             installed.load_installed_account_initial_binding(upstream)
     assert path.read_bytes() == canonical_json_bytes(state)
     monkeypatch.setattr(installed, "mint_uuid7", runtime.forbidden)
-    assert installed.load_installed_account_initial_binding(upstream).account_id == identity
+    monkeypatch.setattr(installed, "_utc_now", runtime.forbidden)
+    loaded = installed.load_installed_account_initial_binding(upstream)
+    assert loaded.account_id == identity
+    assert path.read_bytes() == canonical_json_bytes(state)
+    assert runtime.capability._initial_binding_snapshot(loaded).state_raw == canonical_json_bytes(
+        state
+    )
+    runtime.assert_exact_request_binding(installed._read(path))
 
 
 def test_unsafe_oversized_noncanonical_and_unknown_records(reserved, monkeypatch, tmp_path):

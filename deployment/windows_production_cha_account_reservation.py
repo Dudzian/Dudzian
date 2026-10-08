@@ -157,17 +157,31 @@ def _upstream_state(raw: object) -> dict[str, Any]:
     return cast(dict[str, Any], upstream)
 
 
-def _canonical_request(upstream_raw: bytes) -> bytes:
+def _canonical_request(upstream_raw: bytes, account_id: str) -> bytes:
     upstream = _upstream_state(upstream_raw)
+    lppi = parse_canonical(bytes.fromhex(upstream["lppi_operation_state_raw_hex"]))
+    source_binding = parse_canonical(bytes.fromhex(lppi["binding_raw_hex"]))
     return cast(
         bytes,
         canonical_json_bytes(
             {
                 "schema_version": "AccountGenesisInitialRequestV1",
+                "request_domain": "cryptohunter.m0.5.account-genesis-request.v1",
                 "purpose": "INITIAL_INSTALLED_ACCOUNT_RESERVATION",
+                "environment": source_binding["environment"],
+                "intended_action": "ACCOUNT_GENESIS_BOOTSTRAP",
+                "product_scope": "CryptoHunter",
                 "pdsa_trust_domain": upstream["pdsa_trust_domain"],
                 "logical_operation_id": upstream["logical_operation_id"],
                 "provisioning_operation_id": upstream["provisioning_operation_id"],
+                "account_id": account_id,
+                "reservation_relation": "EXACT_OPERATION_ACCOUNT",
+                "root_proof_handoff": {
+                    "timing": "FROZEN_AFTER_INITIAL_BINDING_BEFORE_PREPARED",
+                    "initial_binding_authenticity_model": (
+                        "CHA_AUTHENTICATED_EXACT_INITIAL_BINDING_DIGEST_AND_REFERENCE"
+                    ),
+                },
                 "cha_state_sha256": hashlib.sha256(upstream_raw).hexdigest(),
             }
         ),
@@ -219,7 +233,7 @@ def _validate_state(value: object) -> dict[str, Any]:
     if int(account[5:].replace("-", "")[:12], 16) != milliseconds:
         raise ValueError("account reservation instant mismatch")
     request_raw = _decode_hex(value["canonical_request_raw_hex"], 4096)
-    if request_raw != _canonical_request(upstream_raw):
+    if request_raw != _canonical_request(upstream_raw, account):
         raise ValueError("account reservation request mismatch")
     if value["canonical_request_sha256"] != hashlib.sha256(request_raw).hexdigest():
         raise ValueError("account reservation request fingerprint mismatch")
@@ -288,7 +302,8 @@ def _targets(state: dict[str, Any], upstream_raw: bytes) -> None:
     upstream = _upstream_state(upstream_raw)
     if (
         state["cha_operation_state_raw_hex"] != upstream_raw.hex()
-        or state["canonical_request_raw_hex"] != _canonical_request(upstream_raw).hex()
+        or state["canonical_request_raw_hex"]
+        != _canonical_request(upstream_raw, state["account_id"]).hex()
         or any(
             state[field] != upstream[field]
             for field in ("pdsa_trust_domain", "logical_operation_id", "provisioning_operation_id")
@@ -304,9 +319,9 @@ def _reserve(path: Path, upstream_raw: bytes) -> dict[str, Any]:
     else:
         try:
             upstream = _upstream_state(upstream_raw)
-            request_raw = _canonical_request(upstream_raw)
             captured = _utc_now()
             account_id = mint_uuid7("acct_", reservation_epoch_milliseconds(captured))
+            request_raw = _canonical_request(upstream_raw, account_id)
             assigned = captured.isoformat(timespec="milliseconds").replace("+00:00", "Z")
         except (UUID7Error, ValueError, TypeError, KeyError, RecursionError) as exc:
             raise AccountReservationError("INVALID_CHA_ACCOUNT_RESERVATION") from exc
