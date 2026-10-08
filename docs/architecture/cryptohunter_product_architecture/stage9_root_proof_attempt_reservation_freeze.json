@@ -8,7 +8,7 @@
     {
       "canonical_artifact": "docs/architecture/cryptohunter_product_architecture/stage9_root_proof_attempt_reservation_contract.json",
       "canonical_schema_version": "cryptohunter.stage9_root_proof_attempt_reservation_contract.v1",
-      "sha256": "bb1fd2d3e88ffe6d1e9126c670289a12cc92ef3168c32b976e374537b368a271"
+      "sha256": "b6a0f5422d6eab5ca8b901821b81d9bc124aa707715bc57951bbc011c99ca4f7"
     }
   ],
   "protected_artifacts": [

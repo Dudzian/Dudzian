@@ -21,7 +21,32 @@ ROOT = Path(__file__).resolve().parents[2]
 DOCS = ROOT / "docs/architecture/cryptohunter_product_architecture"
 CONTRACT_PATH = DOCS / "stage9_root_proof_attempt_reservation_contract.json"
 FREEZE_PATH = DOCS / "stage9_root_proof_attempt_reservation_freeze.json"
+CURRENT_STATUS_PATH = ROOT / "deployment/stage9_current_status.json"
 CONTRACT = json.loads(CONTRACT_PATH.read_bytes())
+STAGE_STATUS = {
+    "local_cha_attempt_reservation_boundary": "IMPLEMENTED",
+    "root_proof_issuance_authorization_boundary": (
+        "IMPLEMENTED_AS_LOGIC / BLOCKED_ON_GENUINE_PRODUCTION_PROVIDER"
+    ),
+    "semantic_root_proof_issuer_runtime": "NOT_IMPLEMENTED / BLOCKED",
+    "requester_claimant_production_provider": "NOT_IMPLEMENTED / BLOCKED",
+    "root_proof": "NOT_ISSUED",
+    "root_proof_admission": "NOT_STARTED",
+    "account_id": "CANDIDATE_RESERVED_NOT_GENUINE",
+    "account_genesis": "INITIAL_BINDING_ONLY",
+    "prepared": "NOT_STARTED",
+    "production_provisioning_ready": False,
+    "windows_production_ready": "NOT_READY",
+    "legal_production_enrollment": "NOT_PERFORMED",
+    "stage_10_production_lifecycle_live": "NOT_STARTED",
+    "provisioning_membership": "BLOCKED",
+    "protected_freshness": "NOT_STARTED",
+    "secret_resource": "NOT_STARTED",
+}
+HISTORICAL_PROFILE_STATUS_FIELDS = {
+    "production_local_historical_implemented",
+    "production_local_historical_deployment_available_now",
+}
 PROTECTED_HASHES = {
     "stage9_account_initial_binding_contract.json": (
         "c2a5e51df106e6c762a735fd9daef54a751187e6e7d56a4743ace5bb7fa1f255"
@@ -72,6 +97,90 @@ PROTECTED_HASHES = {
         "66696fdd7ff972cd25d5f5c290385170eb95e93ffccc462c57cd96788317ee99"
     ),
 }
+
+
+def _assert_current_status_parity(contract, current):
+    assert contract["current_status_authority"] == {
+        "canonical_artifact": CURRENT_STATUS_PATH.relative_to(ROOT).as_posix(),
+        "authority": "CURRENT_STATUS",
+        "child_is_global_status_authority": False,
+        "conflict_policy": "FAIL",
+        "parity_fields": list(STAGE_STATUS),
+    }
+    assert current.get("schema") == "CryptoHunter.Stage9CurrentStatusV1"
+    assert type(current.get("version")) is int and current["version"] == 1
+    assert current.get("authority") == "CURRENT_STATUS"
+    projected = contract["current_status"]
+    # Historical profile assertions are checked against the protected parent,
+    # while every current boundary/readiness field belongs to CURRENT_STATUS.
+    assert set(projected) == set(STAGE_STATUS) | HISTORICAL_PROFILE_STATUS_FIELDS
+    for field, expected in STAGE_STATUS.items():
+        assert field in current, f"CURRENT_STATUS missing {field}"
+        assert type(projected[field]) is type(expected), field
+        assert type(current[field]) is type(expected), field
+        assert projected[field] == current[field] == expected, field
+
+
+def test_canonical_current_status_owns_every_child_boundary_and_readiness_field():
+    current = json.loads(CURRENT_STATUS_PATH.read_bytes())
+    _assert_current_status_parity(CONTRACT, current)
+    assert current["windows_0_14"] == "10/15 DONE"
+    assert current["stage_9"] == "IN_PROGRESS"
+    assert (
+        current["legal_production_enrollment"]
+        == CONTRACT["live_qualification"]["legal_production_enrollment"]
+        == "NOT_PERFORMED"
+    )
+
+
+@pytest.mark.parametrize("field", STAGE_STATUS)
+@pytest.mark.parametrize("mutation", ["missing", "different"])
+def test_parity_rejects_missing_or_conflicting_current_status_fields(field, mutation):
+    current = json.loads(CURRENT_STATUS_PATH.read_bytes())
+    if mutation == "missing":
+        current.pop(field)
+    else:
+        current[field] = True if STAGE_STATUS[field] is False else "CONTRADICTORY_STATUS"
+    with pytest.raises(AssertionError):
+        _assert_current_status_parity(CONTRACT, current)
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("semantic_root_proof_issuer_runtime", "IMPLEMENTED"),
+        ("requester_claimant_production_provider", "IMPLEMENTED"),
+        ("root_proof", "ISSUED"),
+        ("prepared", "PREPARED"),
+        ("account_id", "GENUINE"),
+        ("account_genesis", "COMMITTED"),
+        ("production_provisioning_ready", True),
+        ("production_provisioning_ready", 0),
+        ("windows_production_ready", "READY"),
+        ("provisioning_membership", "READY"),
+        ("protected_freshness", "STARTED"),
+        ("stage_10_production_lifecycle_live", "STARTED"),
+    ],
+)
+def test_parity_rejects_matching_premature_readiness_in_both_sources(field, value):
+    contract = deepcopy(CONTRACT)
+    current = json.loads(CURRENT_STATUS_PATH.read_bytes())
+    contract["current_status"][field] = current[field] = value
+    with pytest.raises(AssertionError):
+        _assert_current_status_parity(contract, current)
+
+
+@pytest.mark.parametrize("authority", [None, "LOCAL_BOUNDARY"])
+def test_child_cannot_replace_canonical_current_status_authority(authority):
+    current = json.loads(CURRENT_STATUS_PATH.read_bytes())
+    current["authority"] = authority
+    with pytest.raises(AssertionError):
+        _assert_current_status_parity(CONTRACT, current)
+    current["authority"] = "CURRENT_STATUS"
+    contract = deepcopy(CONTRACT)
+    contract["current_status_authority"]["child_is_global_status_authority"] = True
+    with pytest.raises(AssertionError):
+        _assert_current_status_parity(contract, current)
 
 
 def _profile_payloads(raw):

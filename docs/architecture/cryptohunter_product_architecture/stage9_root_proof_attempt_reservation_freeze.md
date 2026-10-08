@@ -69,3 +69,13 @@ admission and PREPARED are `NOT_STARTED`, and
 `production_provisioning_ready = false`. Hosted tests do not establish physical
 qualification or legal production enrollment. SQLite durability provides no
 independent protection against a privileged coherent host rollback.
+
+Canonical current state is owned by
+[`deployment/stage9_current_status.json`](../../../deployment/stage9_current_status.json)
+with `authority = CURRENT_STATUS`. This child contract projects that state;
+executable parity covers every listed boundary and readiness field and fails on
+missing fields, conflicting values or premature readiness. Historical profile
+assertions remain tied to their protected parent contract. Authorization logic
+is implemented and blocked on genuine production providers. The Windows
+counter remains `10/15 DONE`: this local reservation boundary has no formal
+mapping to a newly completed Windows acceptance checklist item.

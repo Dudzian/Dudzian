@@ -346,8 +346,33 @@
     "ambiguous_failure": "Do not publish a capability; reread durable state on exact retry",
     "disk_rollback_protection": "NOT PROVIDED BY THIS LAYER"
   },
+  "current_status_authority": {
+    "canonical_artifact": "deployment/stage9_current_status.json",
+    "authority": "CURRENT_STATUS",
+    "child_is_global_status_authority": false,
+    "conflict_policy": "FAIL",
+    "parity_fields": [
+      "local_cha_attempt_reservation_boundary",
+      "root_proof_issuance_authorization_boundary",
+      "semantic_root_proof_issuer_runtime",
+      "requester_claimant_production_provider",
+      "root_proof",
+      "root_proof_admission",
+      "account_id",
+      "account_genesis",
+      "prepared",
+      "production_provisioning_ready",
+      "windows_production_ready",
+      "legal_production_enrollment",
+      "stage_10_production_lifecycle_live",
+      "provisioning_membership",
+      "protected_freshness",
+      "secret_resource"
+    ]
+  },
   "current_status": {
     "local_cha_attempt_reservation_boundary": "IMPLEMENTED",
+    "root_proof_issuance_authorization_boundary": "IMPLEMENTED_AS_LOGIC / BLOCKED_ON_GENUINE_PRODUCTION_PROVIDER",
     "semantic_root_proof_issuer_runtime": "NOT_IMPLEMENTED / BLOCKED",
     "requester_claimant_production_provider": "NOT_IMPLEMENTED / BLOCKED",
     "root_proof": "NOT_ISSUED",
@@ -356,6 +381,12 @@
     "account_genesis": "INITIAL_BINDING_ONLY",
     "prepared": "NOT_STARTED",
     "production_provisioning_ready": false,
+    "windows_production_ready": "NOT_READY",
+    "legal_production_enrollment": "NOT_PERFORMED",
+    "stage_10_production_lifecycle_live": "NOT_STARTED",
+    "provisioning_membership": "BLOCKED",
+    "protected_freshness": "NOT_STARTED",
+    "secret_resource": "NOT_STARTED",
     "production_local_historical_implemented": false,
     "production_local_historical_deployment_available_now": false
   },
