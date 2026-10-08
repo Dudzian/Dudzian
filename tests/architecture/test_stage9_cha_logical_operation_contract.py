@@ -282,8 +282,11 @@ def test_production_modules_stop_before_account_and_independent_effects():
 def test_current_status_preserves_incomplete_production_scope():
     value = _contract()
     current = json.loads((ROOT / "deployment/stage9_current_status.json").read_bytes())
+    # Historical upstream status remains frozen; the child advances only its own boundary.
+    child = json.loads((DOCS / "stage9_account_initial_binding_contract.json").read_bytes())
     for key, expected in value["expected_status"].items():
-        assert current[key.lower()] == expected
+        field = key.lower()
+        assert current[field] == child["current_status"].get(field, expected)
     assert current["stage_9"] == "IN_PROGRESS"
     assert current["production_provisioning_ready"] is False
     assert current["windows_production_ready"] == "NOT_READY"

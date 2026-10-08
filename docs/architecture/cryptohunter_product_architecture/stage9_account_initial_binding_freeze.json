@@ -1,0 +1,15 @@
+{
+  "schema_version": "cryptohunter.stage9_account_initial_binding_freeze.v1",
+  "status": "FROZEN",
+  "implementation_architecturally_authorized": true,
+  "production_provisioning_ready": false,
+  "parent_contract_sha256": "6538a75d8cf3a6e3cdab8f4a9022277a21d98e1a61923aa8d8eae9b80ae1d67d",
+  "upstream_contract_sha256": "f93964523631033a65822fa834e55326e813755376553d21ebb16eb4a047286c",
+  "artifacts": [
+    {
+      "canonical_artifact": "docs/architecture/cryptohunter_product_architecture/stage9_account_initial_binding_contract.json",
+      "canonical_schema_version": "cryptohunter.stage9_account_initial_binding_contract.v1",
+      "sha256": "c2a5e51df106e6c762a735fd9daef54a751187e6e7d56a4743ace5bb7fa1f255"
+    }
+  ]
+}

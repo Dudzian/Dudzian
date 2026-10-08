@@ -1,0 +1,305 @@
+{
+  "schema_version": "cryptohunter.stage9_account_initial_binding_contract.v1",
+  "status": "FROZEN",
+  "parent_contract_sha256": "6538a75d8cf3a6e3cdab8f4a9022277a21d98e1a61923aa8d8eae9b80ae1d67d",
+  "upstream_contract_sha256": "f93964523631033a65822fa834e55326e813755376553d21ebb16eb4a047286c",
+  "boundary": [
+    "VerifiedCHALogicalOperation",
+    "INITIAL_BINDING_COMMITTED",
+    "VerifiedAccountGenesisInitialBinding"
+  ],
+  "owner": "CryptoHunterAccountAuthority",
+  "recovery_model": "A_OPERATION_ID_BEFORE_OR_WITH_RESERVATION",
+  "registry_key": [
+    "pdsa_trust_domain",
+    "logical_operation_id"
+  ],
+  "reservation_id": "NONE",
+  "installed_scope": "Initial installed lifecycle singleton; not general subject-to-account cardinality",
+  "state_machine": [
+    "NO_ACCOUNT_RESERVATION",
+    "INITIAL_BINDING_COMMITTED"
+  ],
+  "account_id": {
+    "schema": "acct_<canonical-lowercase-UUIDv7>",
+    "caller_selectable": false,
+    "status": "CANDIDATE_RESERVED_NOT_GENUINE",
+    "mint": "bot_core.uuid7; one captured internal UTC instant; integer uint48 milliseconds; no masking; CSPRNG 12+62; version7; RFC variant10"
+  },
+  "request": {
+    "schema_version": "AccountGenesisInitialRequestV1",
+    "fields": [
+      "schema_version",
+      "request_domain",
+      "purpose",
+      "environment",
+      "pdsa_trust_domain",
+      "intended_action",
+      "product_scope",
+      "logical_operation_id",
+      "provisioning_operation_id",
+      "account_id",
+      "reservation_relation",
+      "root_proof_handoff",
+      "cha_state_sha256"
+    ],
+    "purpose": "INITIAL_INSTALLED_ACCOUNT_RESERVATION",
+    "construction": "Entirely internal: requalify exact VerifiedCHALogicalOperation and capture exact retained CHA snapshot; capture one UTC instant; mint unpublished candidate acct_; then build the request from that candidate and guarded snapshot. environment is derived from the exact nested LPPI binding; no caller request DTO accepted.",
+    "encoding": "RFC8785/JCS UTF-8; exact fields; unknown fields reject",
+    "digest_authority": false,
+    "caller_inputs": "Only exact VerifiedCHALogicalOperation; no IDs, timestamps, paths, authority or source tuples",
+    "request_domain": "cryptohunter.m0.5.account-genesis-request.v1",
+    "environment": "PRODUCTION",
+    "intended_action": "ACCOUNT_GENESIS_BOOTSTRAP",
+    "product_scope": "CryptoHunter",
+    "reservation_relation": "EXACT_OPERATION_ACCOUNT",
+    "root_proof_handoff": {
+      "timing": "FROZEN_AFTER_INITIAL_BINDING_BEFORE_PREPARED",
+      "initial_binding_authenticity_model": "CHA_AUTHENTICATED_EXACT_INITIAL_BINDING_DIGEST_AND_REFERENCE"
+    },
+    "fingerprint": {
+      "algorithm": "SHA-256",
+      "preimage": "Exact RFC8785/JCS UTF-8 bytes of all closed request fields, including candidate account_id and request_domain",
+      "fields": [
+        "schema_version",
+        "request_domain",
+        "purpose",
+        "environment",
+        "pdsa_trust_domain",
+        "intended_action",
+        "product_scope",
+        "logical_operation_id",
+        "provisioning_operation_id",
+        "account_id",
+        "reservation_relation",
+        "root_proof_handoff",
+        "cha_state_sha256"
+      ],
+      "explicit_unique_domain_separation": "request_domain in the canonical fingerprinted preimage",
+      "is_authority": false,
+      "is_authentication": false,
+      "is_freshness": false
+    },
+    "json_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "request_domain",
+        "purpose",
+        "environment",
+        "pdsa_trust_domain",
+        "intended_action",
+        "product_scope",
+        "logical_operation_id",
+        "provisioning_operation_id",
+        "account_id",
+        "reservation_relation",
+        "root_proof_handoff",
+        "cha_state_sha256"
+      ],
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "AccountGenesisInitialRequestV1"
+        },
+        "request_domain": {
+          "type": "string",
+          "const": "cryptohunter.m0.5.account-genesis-request.v1"
+        },
+        "purpose": {
+          "type": "string",
+          "const": "INITIAL_INSTALLED_ACCOUNT_RESERVATION"
+        },
+        "environment": {
+          "type": "string",
+          "const": "PRODUCTION"
+        },
+        "intended_action": {
+          "type": "string",
+          "const": "ACCOUNT_GENESIS_BOOTSTRAP"
+        },
+        "product_scope": {
+          "type": "string",
+          "const": "CryptoHunter"
+        },
+        "reservation_relation": {
+          "type": "string",
+          "const": "EXACT_OPERATION_ACCOUNT"
+        },
+        "pdsa_trust_domain": {
+          "type": "string",
+          "minLength": 1
+        },
+        "logical_operation_id": {
+          "type": "string",
+          "pattern": "^ago_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "provisioning_operation_id": {
+          "type": "string",
+          "pattern": "^prvop_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "account_id": {
+          "type": "string",
+          "pattern": "^acct_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "root_proof_handoff": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "timing",
+            "initial_binding_authenticity_model"
+          ],
+          "properties": {
+            "timing": {
+              "type": "string",
+              "const": "FROZEN_AFTER_INITIAL_BINDING_BEFORE_PREPARED"
+            },
+            "initial_binding_authenticity_model": {
+              "type": "string",
+              "const": "CHA_AUTHENTICATED_EXACT_INITIAL_BINDING_DIGEST_AND_REFERENCE"
+            }
+          }
+        },
+        "cha_state_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "semantic_mapping": {
+      "request_schema_version": [
+        "schema_version",
+        "request_domain"
+      ],
+      "environment/trust_domain": [
+        "environment",
+        "pdsa_trust_domain"
+      ],
+      "requested_genesis_action": [
+        "intended_action"
+      ],
+      "product/account_scope": [
+        "product_scope",
+        "account_id"
+      ],
+      "candidate account_id": [
+        "account_id"
+      ],
+      "reservation relationship": [
+        "reservation_relation",
+        "pdsa_trust_domain",
+        "logical_operation_id",
+        "account_id"
+      ],
+      "root-proof reference or handoff expectation": [
+        "root_proof_handoff"
+      ]
+    },
+    "nonsemantic_or_forbidden": [
+      "timestamps",
+      "root_proof_id before proof existence",
+      "reservation_id",
+      "caller authority/source tuple",
+      "caller paths",
+      "correlation_id",
+      "causation_id",
+      "caller command_id",
+      "subject/cardinality"
+    ]
+  },
+  "retained_fields": [
+    "schema_version",
+    "status",
+    "reservation_generation",
+    "pdsa_trust_domain",
+    "logical_operation_id",
+    "provisioning_operation_id",
+    "account_id",
+    "assigned_at_utc",
+    "canonical_request_raw_hex",
+    "canonical_request_sha256",
+    "cha_operation_state_raw_hex",
+    "initial_binding_sha256"
+  ],
+  "retained_schema_version": "AccountGenesisInitialBindingV1",
+  "reservation_generation": 1,
+  "canonical_binding": "Exact canonical request bytes plus SHA256 integrity, including candidate account_id, environment/trust, action/product scope, reservation relationship and authenticated root-proof handoff expectation; exact ago, prvop, candidate acct and complete guarded CHA retained bytes; initial_binding_sha256 is SHA256 of JCS record without that field, detecting ordinary retained field corruption only, never authentication, authority, anti-rollback or freshness proof.",
+  "first_winner": "Exact retry resumes retained winner; changed request/source or second ago rejects; no remint after durable binding; loader never mints",
+  "publication": "Commit-before-response. In-memory mint before durable binding is unpublished. Failed replace/fsync rereads retained state and raises without capability; retry refences exact retained winner before issuance.",
+  "persistence": {
+    "state_path": "Fixed installed authority directory / initial-cha-account-reservation.json",
+    "lock": "Nonblocking cross-process dedicated lock",
+    "validation": "Safe directory/path; symlink/reparse/hardlink reject; regular file only; bounded canonical records",
+    "posix": "fsync temporary and published file plus directory",
+    "windows": "Atomic MoveFileExW replacement with WRITE_THROUGH plus file flush",
+    "max_state_bytes": 16777216,
+    "max_cha_bytes": 4194304
+  },
+  "capability": {
+    "name": "VerifiedAccountGenesisInitialBinding",
+    "authority": "Private provenance registry; exact type; immutable opaque instance; public constructor/subclass/copy/deepcopy/object.__new__/JSON/retained row/string/DTO confer no authority",
+    "consequential_use": "Requalify upstream with require_verified_cha_logical_operation, reread fixed durable binding, compare exact bytes, ago/prvop/acct/request/source"
+  },
+  "separation": [
+    "candidate account != genuine account",
+    "reservation != authorization",
+    "INITIAL_BINDING != PREPARED",
+    "INITIAL_BINDING != COMMITTED",
+    "root-proof still required downstream",
+    "freshness CAS still required downstream"
+  ],
+  "disk_rollback_protection": "NOT PROVIDED BY THIS LAYER",
+  "protected_directory_precondition": "Installed machine-protected authority directory; coherent privileged offline rewrite after restart is not cryptographically excluded",
+  "excluded": [
+    "root-proof admission",
+    "PREPARED genesis",
+    "external freshness CAS",
+    "final AccountGenesis COMMITTED",
+    "first device",
+    "ProvisioningMembershipBinding",
+    "Protected Freshness",
+    "Secret Resource",
+    "Windows handoff",
+    "Stage 10"
+  ],
+  "current_status": {
+    "account_id": "CANDIDATE_RESERVED_NOT_GENUINE",
+    "account_reservation": "IMPLEMENTED",
+    "account_genesis": "INITIAL_BINDING_ONLY",
+    "production_provisioning_ready": false
+  },
+  "historical_request_reconciliation": {
+    "canonical_artifact": "docs/architecture/cryptohunter_product_architecture/m05_account_genesis_operation_identity_request_binding_contract.json",
+    "sha256": "63c8abf6847e78bea901770047fec816c252fa3ed1fbe1bc959791f1e4a0ba3d",
+    "historical_exact_schema_status": "SEMANTIC_REQUIREMENTS_PARTIALLY_FROZEN / EXACT_SCHEMA_DESIGN_BLOCKED",
+    "semantic_required_slots_already_frozen": [
+      "request_schema_version",
+      "environment/trust_domain",
+      "requested_genesis_action",
+      "product/account_scope",
+      "candidate account_id",
+      "reservation relationship",
+      "root-proof reference or handoff expectation"
+    ],
+    "frozen_semantic_requirement_may_disappear_from_fingerprint_contract": false,
+    "stage9_exact_schema_status": "FROZEN",
+    "statement": "The historical exact schema was DESIGN_BLOCKED while its required semantic slots were already frozen. This child freezes the exact Stage 9 initial request schema, serialization and domain without removing any previously frozen semantic slot or rewriting historical statuses.",
+    "domain_selection": "Select historical fingerprint_contract.candidate_domain_literal as the exact request_domain; the historical exact domain was NOT_FROZEN.",
+    "reservation_recovery": "A_OPERATION_ID_BEFORE_OR_WITH_RESERVATION: exact operation/account relation is recovered by (pdsa_trust_domain, logical_operation_id); no separate reservation_id is created.",
+    "upstream_source_binding": "cha_state_sha256 covers the complete exact retained CHA snapshot; environment/trust and ago/prvop are derived from that same snapshot.",
+    "retained_environment_binding": "Exact canonical request bytes and complete retained CHA source bytes preserve environment/trust scope without adding duplicate retained fields.",
+    "root_proof_handoff": {
+      "canonical_artifact": "docs/architecture/cryptohunter_product_architecture/m05_account_genesis_independent_root_proof_issuer_contract.json",
+      "sha256": "36cd0d26f918769313c6f572541f40877b1f0ca9808a5fc69a9dac3a6bf6d30d",
+      "timing": "FROZEN_AFTER_INITIAL_BINDING_BEFORE_PREPARED",
+      "initial_binding_authenticity_model": "CHA_AUTHENTICATED_EXACT_INITIAL_BINDING_DIGEST_AND_REFERENCE",
+      "expectation_only": true,
+      "root_proof_present": false,
+      "root_proof_issuance_or_admission_implemented": false,
+      "authorized_arrival_mutates_canonical_request": false,
+      "rule": "A downstream root proof must satisfy the already bound authenticated handoff after INITIAL_BINDING and before PREPARED. No root_proof_id exists here; the future model requires authenticated CHA resolution and does not turn initial_binding_sha256 into authentication or authority."
+    }
+  }
+}
