@@ -113,7 +113,17 @@ def test_heavy_licensing_security_suite_is_split_without_coverage_gap():
     assert variants == {
         ("ubuntu-latest", "all"): ("ubuntu-latest", 75, 65),
         ("macos-latest", "all"): ("macos-latest", 75, 65),
-        ("windows-latest", "upstream"): ("windows-latest", 55, 45),
+        ("windows-latest", "lppi-core"): ("windows-latest", 45, 35),
+        ("windows-latest", "lppi-durability"): (
+            "windows-latest, lppi-durability",
+            45,
+            35,
+        ),
+        ("windows-latest", "pdsa-production"): (
+            "windows-latest, pdsa-production",
+            40,
+            30,
+        ),
         ("windows-latest", "cha-core"): ("windows-latest, cha-core", 70, 60),
         ("windows-latest", "cha-root-proof"): ("windows-latest, cha-root-proof", 60, 50),
     }
@@ -129,8 +139,17 @@ def test_heavy_licensing_security_suite_is_split_without_coverage_gap():
     for pattern in SERIAL_LICENSING_GLOBS:
         assert pattern in command
     assert 'case "${{ matrix.shard }}" in' in command
+    assert "lppi-core)" in command
+    assert "lppi-durability)" in command
+    assert "pdsa-production)" in command
     assert "cha-core)" in command
     assert "cha-root-proof)" in command
+    assert "tests/licensing/test_lppi_authenticated_operation.py" in command
+    assert "tests/licensing/test_lppi_authenticated_operation_durability.py" in command
+    assert "tests/licensing/test_lppi_authenticated_operation_native.py" in command
+    assert "tests/licensing/test_lppi_authority_lifecycle.py" in command
+    assert "tests/licensing/test_pdsa_*.py" in command
+    assert "tests/licensing/test_production_*.py" in command
     assert "for candidate in tests/licensing/test_cha_*.py; do" in command
     assert 'case "${candidate}" in' in command
     assert "tests/licensing/test_cha_root_proof*.py) continue ;;" in command
