@@ -270,6 +270,37 @@ def test_provider_security_profile_is_independent_of_protocol_environment(provid
     assert not capability._attempt_store_path().exists()
 
 
+@pytest.mark.parametrize("mutation", ["role_evidence", "active_revision"])
+def test_concurrent_credential_change_cannot_mix_resolution_snapshots(
+    provider, monkeypatch, mutation
+):
+    binding, authority = provider
+    port = authority.requester_registry
+    original = port.active_requester_credential
+    reads = 0
+
+    def changing_current(principal):
+        nonlocal reads
+        reads += 1
+        record = original(principal)
+        if mutation == "role_evidence" and reads == 1:
+            port.credentials = (
+                replace(
+                    port.credentials[0], custody_lifecycle_namespace="TEST_ONLY-changed-revision"
+                ),
+            )
+        if mutation == "active_revision" and reads == 2:
+            return replace(record, registry_revision=record.registry_revision + 1)
+        return record
+
+    monkeypatch.setattr(port, "active_requester_credential", changing_current)
+    with pytest.raises(
+        capability.RootProofAttemptReservationError, match="CHANGED_DURING_RESOLUTION"
+    ):
+        capability.resolve_root_proof_issuance_authorization(binding)
+    assert not capability._attempt_store_path().exists()
+
+
 def test_exact_deterministic_relation_and_separate_initial_binding_digest(reserved):
     _, binding, _, state = reserved
     raw = canonical_json_bytes(state)

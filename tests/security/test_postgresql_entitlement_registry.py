@@ -12,6 +12,7 @@ import uuid
 
 import psycopg
 from psycopg import sql
+from psycopg.conninfo import make_conninfo
 from psycopg.errors import InsufficientPrivilege
 import pytest
 
@@ -97,6 +98,55 @@ def registry() -> dict[str, object]:
 
 
 _counter = 0
+
+
+@pytest.mark.parametrize("synchronous_commit", ["on", "off"])
+def test_session_search_path_cannot_spoof_durability_qualification(synchronous_commit) -> None:
+    with _isolated_registry() as setup:
+        shadow = f"catalog_shadow_{uuid.uuid4().hex[:10]}"
+        try:
+            with psycopg.connect(BASE_DSN, autocommit=True) as conn:
+                conn.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(shadow)))
+                conn.execute(
+                    sql.SQL(
+                        "CREATE FUNCTION {}.current_setting(text) RETURNS text "
+                        "LANGUAGE SQL AS 'SELECT ''on''::text'"
+                    ).format(sql.Identifier(shadow))
+                )
+                conn.execute(
+                    sql.SQL("GRANT USAGE ON SCHEMA {} TO {}").format(
+                        sql.Identifier(shadow), sql.Identifier(setup.runtime_role)
+                    )
+                )
+            connection = PostgreSQLConnectionConfig(
+                make_conninfo(
+                    _role_dsn(setup.runtime_role).dsn,
+                    options=(
+                        f"-c search_path={shadow},pg_catalog "
+                        f"-c synchronous_commit={synchronous_commit}"
+                    ),
+                )
+            )
+            with psycopg.connect(connection.dsn) as conn:
+                assert conn.execute("SELECT current_setting('synchronous_commit')").fetchone() == (
+                    "on",
+                )
+                assert conn.execute(
+                    "SELECT pg_catalog.current_setting('synchronous_commit')"
+                ).fetchone() == (synchronous_commit,)
+            arguments = dict(
+                schema=setup.schema, environment="PRODUCTION_LOCAL", trust_domain=setup.trust_domain
+            )
+            if synchronous_commit == "off":
+                with pytest.raises(RegistryQualificationError, match="durability"):
+                    PostgreSQLEntitlementRegistryProvider(connection, **arguments)
+            else:
+                PostgreSQLEntitlementRegistryProvider(connection, **arguments)
+        finally:
+            with psycopg.connect(BASE_DSN, autocommit=True) as conn:
+                conn.execute(
+                    sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(shadow))
+                )
 
 
 def _subject(prefix: str = "subject") -> RegistrySubject:

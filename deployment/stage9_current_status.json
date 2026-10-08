@@ -22,8 +22,8 @@
   "account_reservation": "IMPLEMENTED",
   "account_genesis": "INITIAL_BINDING_ONLY",
   "local_cha_attempt_reservation_boundary": "IMPLEMENTED",
-  "root_proof_issuance_authorization_boundary": "IMPLEMENTED_AS_LOGIC / BLOCKED_ON_GENUINE_PRODUCTION_PROVIDER",
-  "requester_claimant_production_provider": "NOT_IMPLEMENTED / BLOCKED",
+  "root_proof_issuance_authorization_boundary": "IMPLEMENTED",
+  "requester_claimant_production_provider": "IMPLEMENTED",
   "semantic_root_proof_issuer_runtime": "NOT_IMPLEMENTED / BLOCKED",
   "root_proof": "NOT_ISSUED",
   "root_proof_admission": "NOT_STARTED",
@@ -36,5 +36,11 @@
   "windows_production_ready": "NOT_READY",
   "stage_10_implementation": "EXISTS",
   "stage_10_production_lifecycle_live": "NOT_STARTED",
-  "stage_10_prerequisite": "BLOCKED_UNTIL_LEGAL_ENROLLMENT"
+  "stage_10_prerequisite": "BLOCKED_UNTIL_LEGAL_ENROLLMENT",
+  "requester_credential_registry": "IMPLEMENTED",
+  "claimant_identity_registry": "IMPLEMENTED",
+  "root_proof_issuance_provider_composition": "IMPLEMENTED",
+  "production_preaccount_credentials": "NOT_PROVISIONED",
+  "root_proof_issuance_authorization_live_availability": "BLOCKED_UNTIL_PROVISIONING",
+  "signed_immutable_attempt": "NOT_STARTED"
 }

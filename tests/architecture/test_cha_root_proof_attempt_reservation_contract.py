@@ -16,6 +16,9 @@ from bot_core import cha_attempt_store as store
 from bot_core.licensing import cha_root_proof_attempt_reservation as boundary
 from bot_core.licensing.canonical import canonical_json_bytes, parse_canonical
 from bot_core.licensing.cha_account_reservation import AccountInitialBindingError
+from bot_core.postgresql_root_proof_issuance_authority import (
+    PostgreSQLRootProofIssuanceAuthority,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 DOCS = ROOT / "docs/architecture/cryptohunter_product_architecture"
@@ -23,6 +26,9 @@ CONTRACT_PATH = DOCS / "stage9_root_proof_attempt_reservation_contract.json"
 FREEZE_PATH = DOCS / "stage9_root_proof_attempt_reservation_freeze.json"
 CURRENT_STATUS_PATH = ROOT / "deployment/stage9_current_status.json"
 CONTRACT = json.loads(CONTRACT_PATH.read_bytes())
+PREACCOUNT_CONTRACT = json.loads(
+    (DOCS / "stage9_root_proof_preaccount_credentials_contract.json").read_bytes()
+)
 STAGE_STATUS = {
     "local_cha_attempt_reservation_boundary": "IMPLEMENTED",
     "root_proof_issuance_authorization_boundary": (
@@ -111,14 +117,15 @@ def _assert_current_status_parity(contract, current):
     assert type(current.get("version")) is int and current["version"] == 1
     assert current.get("authority") == "CURRENT_STATUS"
     projected = contract["current_status"]
-    # Historical profile assertions are checked against the protected parent,
-    # while every current boundary/readiness field belongs to CURRENT_STATUS.
+    # Preserve the exact #3086 snapshot. The subordinate credential contract
+    # advances implemented provider availability without rewriting that snapshot.
     assert set(projected) == set(STAGE_STATUS) | HISTORICAL_PROFILE_STATUS_FIELDS
     for field, expected in STAGE_STATUS.items():
         assert field in current, f"CURRENT_STATUS missing {field}"
         assert type(projected[field]) is type(expected), field
         assert type(current[field]) is type(expected), field
-        assert projected[field] == current[field] == expected, field
+        assert projected[field] == expected, field
+        assert current[field] == PREACCOUNT_CONTRACT["current_status"].get(field, expected), field
 
 
 def test_canonical_current_status_owns_every_child_boundary_and_readiness_field():
@@ -368,10 +375,10 @@ def test_persisted_schema_authorization_and_domain_profiles_match_runtime():
     assert contract["independent_anti_rollback"] is False
 
 
-def test_provider_origin_and_live_evidence_are_separate_from_raw_dtos():
+def test_provider_origin_and_live_evidence_are_separate_from_raw_dtos(monkeypatch):
     contract = CONTRACT["authorization"]
     assert contract["production_adapter_allowlist_empty"] is True
-    assert boundary._TRUSTED_PROVIDER_TYPES == ()
+    assert boundary._TRUSTED_PROVIDER_TYPES == (PostgreSQLRootProofIssuanceAuthority,)
     assert contract["raw_attempt_authorization_grants_stage9_authority"] is False
     assert contract["caller_entitlement_requester_claimant_ids_accepted"] is False
     assert contract["runtime_behavior_without_genuine_adapter"] == (
@@ -386,7 +393,12 @@ def test_provider_origin_and_live_evidence_are_separate_from_raw_dtos():
         "providers",
     ]
     assert contract["provider_evidence"]["persisted_field"] == "authorization_evidence_sha256"
-    with pytest.raises(boundary.RootProofAttemptReservationError, match="MISSING_PRODUCTION"):
+    for name in PREACCOUNT_CONTRACT["production_composition"]["deployment_config_names"]:
+        monkeypatch.delenv(name, raising=False)
+    with pytest.raises(
+        boundary.RootProofAttemptReservationError,
+        match="MISSING_PRODUCTION_AUTHORITY_CONFIGURATION",
+    ):
         boundary._issuance_authority_provider()
     environment = CONTRACT["environment_and_security_profile"]
     assert environment["semantic_environment"] == "PRODUCTION"

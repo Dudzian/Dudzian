@@ -22,6 +22,18 @@ jobs:
     name: Quality ratchet
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v7
         with:
@@ -36,8 +48,19 @@ jobs:
           python -m pip install -e ".[test]" "ruff==0.14.11" "mypy==1.10.0" "diff-cover>=9,<10"
       - name: Ruff baseline gate
         run: python -m ruff check bot_core core scripts tests deploy stage6_samples ui deployment/windows_production_cha_operation.py deployment/windows_production_cha_account_reservation.py
+      - name: Format pre-account credential substrate
+        run: >-
+          python -m ruff format --check
+          bot_core/postgresql_preaccount_credentials.py
+          bot_core/postgresql_root_proof_issuance_authority.py
+          tests/architecture/test_stage9_root_proof_preaccount_credentials_contract.py
+          tests/security/test_postgresql_preaccount_credential_contract.py
+          tests/security/test_postgresql_preaccount_credentials_integration.py
+          tests/security/test_postgresql_root_proof_issuance_authority.py
       - name: Mypy configured scope
         run: python -m mypy
+      - name: Mypy Windows configured scope
+        run: python -m mypy --platform win32
       - name: Property and critical pure-logic tests with branch coverage
         env:
           HYPOTHESIS_PROFILE: ci
@@ -151,6 +174,32 @@ jobs:
           --cov=bot_core.cha_attempt_store
           --cov-append --cov-config=.coveragerc
           --cov-report=term-missing --cov-report=xml:coverage.xml -q
+      - name: Pre-account credential authorities and provider composition (serial)
+        env:
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+          DUDZIAN_TEST_MODE: "1"
+          DUDZIAN_ALLOW_LONG_POLL: "0"
+          DUDZIAN_TEST_POSTGRES_DSN: "host=127.0.0.1 port=55432 dbname=postgres user=postgres"
+        run: >-
+          python -m pytest -p asyncio -p pytest_cov
+          tests/architecture/test_stage9_root_proof_preaccount_credentials_contract.py
+          tests/security/test_postgresql_preaccount_credential_contract.py
+          tests/security/test_postgresql_preaccount_credentials_integration.py
+          tests/security/test_postgresql_root_proof_issuance_authority.py
+          tests/security/test_postgresql_entitlement_registry.py
+          tests/security/test_root_proof_issuer_substrate.py
+          tests/security/test_local_signing_custody.py
+          tests/architecture/test_m05_account_genesis_independent_root_proof_issuer_contract.py
+          tests/architecture/test_m05_account_genesis_root_proof_issuer_implementation_readiness_contract.py
+          tests/architecture/test_m05_account_genesis_root_proof_issuer_production_substrate_selection_contract.py
+          -m "not hardware and not destructive and not network"
+          --cov=bot_core.postgresql_preaccount_credentials
+          --cov=bot_core.postgresql_root_proof_issuance_authority
+          --cov=bot_core.postgresql_entitlement_registry
+          --cov=bot_core.root_proof_issuer_substrate
+          --cov=bot_core.licensing.cha_root_proof_attempt_reservation
+          --cov-append --cov-config=.coveragerc
+          --cov-report=term-missing --cov-report=xml:coverage.xml -q
       - name: Changed-code coverage ratchet
         if: github.event_name == 'pull_request'
         run: diff-cover coverage.xml --compare-branch "origin/${{ github.base_ref }}" --fail-under=70
@@ -197,6 +246,11 @@ jobs:
           --disable-version-check
           --error
           bot_core core deployment scripts
+      - name: Semgrep CryptoHunter rule fixtures
+        run: >-
+          semgrep scan --test
+          --config .semgrep/cryptohunter.yml .semgrep/cryptohunter.py
+          --metrics=off --disable-version-check --jobs 1
       - name: Install verified Betterleaks stable
         shell: bash
         run: |
