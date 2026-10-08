@@ -10,21 +10,20 @@ the supported threat boundary.
 
 from __future__ import annotations
 
-from contextlib import contextmanager
 import base64
 import binascii
-from dataclasses import asdict, dataclass
-from enum import Enum
 import hashlib
-import json
 import os
-from pathlib import Path
 import re
-import secrets
 import sqlite3
-import time
-from typing import Iterator
+from contextlib import contextmanager
+from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
+from enum import Enum
+from pathlib import Path
+from typing import Any, Iterator, cast
 
+from bot_core.licensing.canonical import canonical_json_bytes, exact, parse_canonical
 from bot_core.root_proof_issuer_substrate import (
     CredentialRoleIdentity,
     ProviderCapabilities,
@@ -33,10 +32,10 @@ from bot_core.root_proof_issuer_substrate import (
     SecurityProfile,
     SecurityProfileIdentity,
 )
-
+from bot_core.uuid7 import mint_uuid7, reservation_epoch_milliseconds
 
 _SCHEMA_IDENTITY = "CRYPT0HUNTER_CHA_ATTEMPT_STORE"
-_SCHEMA_VERSION = 4
+_SCHEMA_VERSION = 5
 _ATTEMPT_DOMAIN = b"CRYPTOHUNTER_ACCOUNT_GENESIS_ROOT_PROOF_ISSUANCE_ATTEMPT_IDENTITY_V1\x00"
 _IDEMPOTENCY_DOMAIN = b"CRYPTOHUNTER_CHA_ATTEMPT_RESERVATION_IDEMPOTENCY_V1\x00"
 _HEX64 = re.compile(r"[0-9a-f]{64}\Z")
@@ -44,6 +43,10 @@ _RPA_ID = re.compile(r"rpa_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3
 _ACCOUNT_ID = re.compile(
     r"acct_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\Z"
 )
+_OPERATION_ID = re.compile(
+    r"ago_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\Z"
+)
+_RESERVATION_IDENTITY = re.compile(r"ibr_[0-9a-f]{64}\Z")
 _REQUESTER_ROLE = "ACCOUNT_GENESIS_ROOT_PROOF_ISSUANCE_REQUESTER_V1"
 _ISSUANCE_PROFILE = (
     "CRYPTOHUNTER_ACCOUNT_GENESIS_ROOT_PROOF_ISSUANCE_REQUEST_V1/JCS-SHA256-Ed25519-v1"
@@ -100,7 +103,7 @@ _REPLACEMENT_ELIGIBLE_STATES = {
     AttemptState.SIGNED_IMMUTABLE_DURABLE_NOT_SENT,
     AttemptState.MAY_HAVE_BEEN_SENT_OUTCOME_UNKNOWN,
 }
-_STABLE_AUTHORIZATION_BINDING_FIELDS = (
+_LEGACY_STABLE_AUTHORIZATION_BINDING_FIELDS = (
     "environment",
     "trust_domain",
     "product_scope",
@@ -112,10 +115,26 @@ _STABLE_AUTHORIZATION_BINDING_FIELDS = (
     "initial_binding_reference",
     "initial_binding_digest_sha256",
 )
+_STAGE9_AUTHORIZATION_BINDING_FIELDS = (
+    "reservation_identity",
+    "reservation_relation",
+    "initial_binding_sha256",
+    "authorization_evidence_sha256",
+)
+_STABLE_AUTHORIZATION_BINDING_FIELDS = (
+    _LEGACY_STABLE_AUTHORIZATION_BINDING_FIELDS + _STAGE9_AUTHORIZATION_BINDING_FIELDS
+)
 
 
 @dataclass(frozen=True, slots=True)
 class AttemptAuthorization:
+    """Exact persistence tuple; this value object grants no Stage 9 authority.
+
+    The optional fields distinguish the reconciled Stage 9 tuple from the
+    historical store API. All four must be present together. Production
+    callers reach this store through the verified Stage 9 boundary.
+    """
+
     environment: str
     trust_domain: str
     product_scope: str
@@ -133,8 +152,44 @@ class AttemptAuthorization:
     provisioning_principal_id: str
     claimant_key_id: str
     claimant_key_version: int
+    reservation_identity: str | None = None
+    reservation_relation: str | None = None
+    initial_binding_sha256: str | None = None
+    authorization_evidence_sha256: str | None = None
 
     def __post_init__(self) -> None:
+        stage9_fields = (
+            self.reservation_identity,
+            self.reservation_relation,
+            self.initial_binding_sha256,
+            self.authorization_evidence_sha256,
+        )
+        if any(value is not None for value in stage9_fields):
+            if any(value is None for value in stage9_fields):
+                raise ValueError("Stage 9 binding fields must be present together")
+            if self.environment != "PRODUCTION":
+                raise ValueError("Stage 9 semantic environment must be PRODUCTION")
+            if (
+                type(self.logical_operation_id) is not str
+                or _OPERATION_ID.fullmatch(self.logical_operation_id) is None
+            ):
+                raise ValueError("logical_operation_id must be a canonical lowercase UUIDv7 ago id")
+            if self.reservation_relation != "EXACT_OPERATION_ACCOUNT":
+                raise ValueError("reservation_relation must be EXACT_OPERATION_ACCOUNT")
+            if (
+                type(self.reservation_identity) is not str
+                or _RESERVATION_IDENTITY.fullmatch(self.reservation_identity) is None
+            ):
+                raise ValueError("reservation_identity must be a canonical ibr_ SHA-256 relation")
+            if (
+                type(self.initial_binding_reference) is not str
+                or type(self.initial_binding_digest_sha256) is not str
+                or self.initial_binding_reference
+                != "initial-binding-v1:" + self.initial_binding_digest_sha256
+            ):
+                raise ValueError(
+                    "initial_binding_reference must exactly represent the binding digest"
+                )
         if type(self.account_id) is not str or _ACCOUNT_ID.fullmatch(self.account_id) is None:
             raise ValueError("account_id must be a canonical lowercase UUIDv7 acct id")
         if (
@@ -143,6 +198,14 @@ class AttemptAuthorization:
         ):
             raise ValueError("requester_credential_role is not the frozen value")
         for name, value in asdict(self).items():
+            if name in {
+                "reservation_identity",
+                "reservation_relation",
+                "initial_binding_sha256",
+                "authorization_evidence_sha256",
+            }:
+                if value is None:
+                    continue
             if name.endswith("_sha256"):
                 if type(value) is not str or _HEX64.fullmatch(value) is None:
                     raise ValueError(f"{name} must be lowercase SHA-256 hex")
@@ -217,8 +280,8 @@ class AttemptIdentity:
             if type(value) is not str or not value.strip():
                 raise ValueError("attempt identity string fields cannot be blank")
 
-    def payload(self) -> dict[str, str | int]:
-        result: dict[str, str | int] = {
+    def payload(self) -> dict[str, str | int | None]:
+        result: dict[str, str | int | None] = {
             "schema_version": "1",
             **asdict(self.authorization),
             "issuance_attempt_id": self.issuance_attempt_id,
@@ -373,7 +436,7 @@ class CurrentAttempt:
 
 def _exact_slot_values(
     value: object, expected: type[object], fields: tuple[str, ...]
-) -> tuple[object, ...]:
+) -> tuple[Any, ...]:
     if type(value) is not expected:
         raise TypeError(f"value must be an exact {expected.__name__}")
     try:
@@ -461,7 +524,25 @@ def _validate_expected_fence(value: object) -> int:
 
 
 def _canonical(value: object) -> bytes:
-    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    return cast(bytes, canonical_json_bytes(value))
+
+
+def _persisted_json(raw: object) -> dict[str, Any]:
+    if type(raw) is not bytes:
+        raise ValueError("persisted security payload must be a JSON BLOB")
+    return cast(dict[str, Any], parse_canonical(raw))
+
+
+def _authorization_from_json(raw: object) -> AttemptAuthorization:
+    data = _persisted_json(raw)
+    exact(data, set(AttemptAuthorization.__dataclass_fields__), "AttemptAuthorization")
+    return AttemptAuthorization(**data)
+
+
+def _semantic_environment(auth: AttemptAuthorization) -> str:
+    # SecurityProfile is a deployment domain. Only the historical store tuple
+    # uses its old spelling as an environment; Stage 9 retains PRODUCTION.
+    return "PRODUCTION" if auth.reservation_identity is not None else "PRODUCTION_LOCAL"
 
 
 def _validate_ed25519_signature_representation(value: object) -> None:
@@ -489,17 +570,24 @@ def _decision_key(kind: str, value: object) -> str:
 
 
 def _stable_authorization_binding(value: object) -> tuple[object, ...]:
-    return tuple(getattr(value, field) for field in _STABLE_AUTHORIZATION_BINDING_FIELDS)
+    if type(value) is AuthoritativeUnboundEvidence:
+        # This frozen legacy evidence schema does not authenticate any Stage 9
+        # binding fields. Explicit absence preserves legacy reconciliation and
+        # prevents its use to replace a Stage 9 reservation.
+        evidence = _snapshot_unbound_evidence(value)
+        return tuple(
+            object.__getattribute__(evidence, field)
+            for field in _LEGACY_STABLE_AUTHORIZATION_BINDING_FIELDS
+        ) + (None, None, None, None)
+    auth = _snapshot_authorization(value)
+    return tuple(
+        object.__getattribute__(auth, field) for field in _STABLE_AUTHORIZATION_BINDING_FIELDS
+    )
 
 
 def _new_rpa_id() -> str:
-    millis = int(time.time() * 1000) & ((1 << 48) - 1)
-    random_bits = secrets.randbits(74)
-    value = (millis << 80) | (0x7 << 76) | ((random_bits >> 62) << 64)
-    value |= 0b10 << 62
-    value |= random_bits & ((1 << 62) - 1)
-    raw = f"{value:032x}"
-    return f"rpa_{raw[:8]}-{raw[8:12]}-{raw[12:16]}-{raw[16:20]}-{raw[20:]}"
+    reservation_now = datetime.now(timezone.utc)
+    return cast(str, mint_uuid7("rpa_", reservation_epoch_milliseconds(reservation_now)))
 
 
 class SQLiteCHAAttemptStore:
@@ -770,12 +858,12 @@ class SQLiteCHAAttemptStore:
         ):
             attempt_id, operation_id, key, auth_json, state, kind, decision_key = row
             try:
-                auth = AttemptAuthorization(**json.loads(bytes(auth_json)))
-            except (TypeError, ValueError, UnicodeError, json.JSONDecodeError) as exc:
+                auth = _authorization_from_json(auth_json)
+            except (TypeError, ValueError, UnicodeError) as exc:
                 raise AttemptCorruptError("persisted reservation is malformed") from exc
             if (
                 auth.logical_operation_id != operation_id
-                or auth.environment != self._security.profile.value
+                or auth.environment != _semantic_environment(auth)
                 or auth.trust_domain != self._security.trust_domain
                 or key != _idempotency_key(auth)
                 or state != AttemptState.RESERVED_AWAITING_SIGNATURES.value
@@ -793,13 +881,14 @@ class SQLiteCHAAttemptStore:
             "SELECT attempt_id,digest,identity_json FROM immutable_attempts"
         ):
             try:
-                data = json.loads(bytes(identity_json))
+                data = _persisted_json(identity_json)
                 auth_fields = {
                     name: data.pop(name) for name in AttemptAuthorization.__dataclass_fields__
                 }
-                data.pop("schema_version")
+                if data.pop("schema_version") != "1":
+                    raise ValueError("immutable attempt schema_version is unsupported")
                 identity = AttemptIdentity(AttemptAuthorization(**auth_fields), **data)
-            except (KeyError, TypeError, ValueError, UnicodeError, json.JSONDecodeError) as exc:
+            except (KeyError, TypeError, ValueError, UnicodeError) as exc:
                 raise AttemptCorruptError("persisted immutable attempt is malformed") from exc
             if (
                 identity.issuance_attempt_id != attempt_id
@@ -968,9 +1057,9 @@ class SQLiteCHAAttemptStore:
             leaf_state = states[leaf]
             if leaf_state is AttemptState.SUPERSEDED_AFTER_AUTHORITATIVE_UNBOUND_RECONCILIATION:
                 raise AttemptCorruptError("replacement chain leaf is superseded")
-            identity = identities.get(leaf)
-            digest_status = "DEFINED" if identity is not None else "NOT_YET_DEFINED"
-            digest = identity.digest_sha256 if identity is not None else None
+            leaf_identity = identities.get(leaf)
+            digest_status = "DEFINED" if leaf_identity is not None else "NOT_YET_DEFINED"
+            digest = leaf_identity.digest_sha256 if leaf_identity is not None else None
             expected_current = (
                 operation_id,
                 leaf,
@@ -1087,6 +1176,10 @@ class SQLiteCHAAttemptStore:
             if self._connection.in_transaction:
                 self._connection.execute("ROLLBACK")
             raise AttemptStoreUnavailableError("SQLite authority transaction failed") from exc
+        except Exception:
+            if self._connection.in_transaction:
+                self._connection.execute("ROLLBACK")
+            raise
 
     @contextmanager
     def _read(self) -> Iterator[sqlite3.Connection]:
@@ -1102,6 +1195,10 @@ class SQLiteCHAAttemptStore:
             if self._connection.in_transaction:
                 self._connection.execute("ROLLBACK")
             raise AttemptStoreUnavailableError("SQLite authority read failed") from exc
+        except Exception:
+            if self._connection.in_transaction:
+                self._connection.execute("ROLLBACK")
+            raise
 
     def _authoritative_current(self, operation_id: str, db: sqlite3.Connection) -> CurrentAttempt:
         self._validate_persisted_history_integrity(db)
@@ -1109,7 +1206,7 @@ class SQLiteCHAAttemptStore:
 
     def _check_auth(self, auth: AttemptAuthorization) -> None:
         if (
-            auth.environment != self._security.profile.value
+            auth.environment != _semantic_environment(auth)
             or auth.trust_domain != self._security.trust_domain
         ):
             raise AttemptConflictError("authorization environment/trust_domain mismatch")
@@ -1326,7 +1423,7 @@ class SQLiteCHAAttemptStore:
                 "authenticated_digest_sha256": resolution.authenticated_digest_sha256,
             }
         )
-        decision_key = _decision_key("RECOVERY", json.loads(resolution_json))
+        decision_key = _decision_key("RECOVERY", parse_canonical(resolution_json))
         with self._write() as db:
             self._validate_persisted_history_integrity(db)
             previous = db.execute(
@@ -1384,15 +1481,15 @@ class SQLiteCHAAttemptStore:
     def _recovery_from_row(self, row: tuple[object, ...]) -> RecoveryResolution:
         _, attempt_id, _, outcome, decision_key, resolution_json = row
         try:
-            data = json.loads(bytes(resolution_json))
+            data = _persisted_json(resolution_json)
             data["outcome"] = AttemptState(data["outcome"])
             resolution = RecoveryResolution(**data)
-        except (KeyError, TypeError, ValueError, UnicodeError, json.JSONDecodeError) as exc:
+        except (KeyError, TypeError, ValueError, UnicodeError) as exc:
             raise AttemptCorruptError("persisted recovery resolution is malformed") from exc
         if (
             attempt_id != resolution.issuance_attempt_id
             or outcome != resolution.outcome.value
-            or decision_key != _decision_key("RECOVERY", json.loads(bytes(resolution_json)))
+            or decision_key != _decision_key("RECOVERY", _persisted_json(resolution_json))
         ):
             raise AttemptCorruptError("persisted recovery resolution identity is inconsistent")
         return resolution
@@ -1426,9 +1523,9 @@ class SQLiteCHAAttemptStore:
     ) -> tuple[AttemptAuthorization, AuthoritativeUnboundEvidence]:
         old_id, new_id, evidence_json, authorization_json, evidence_digest, decision_key = row
         try:
-            auth = AttemptAuthorization(**json.loads(bytes(authorization_json)))
-            evidence = AuthoritativeUnboundEvidence(**json.loads(bytes(evidence_json)))
-        except (TypeError, ValueError, UnicodeError, json.JSONDecodeError) as exc:
+            auth = _authorization_from_json(authorization_json)
+            evidence = AuthoritativeUnboundEvidence(**_persisted_json(evidence_json))
+        except (TypeError, ValueError, UnicodeError) as exc:
             raise AttemptCorruptError("persisted replacement relation is malformed") from exc
         identity = {
             "authorization": asdict(auth),
@@ -1515,11 +1612,10 @@ class SQLiteCHAAttemptStore:
         if reservation_row is None:
             raise AttemptCorruptError("current pointer target is missing")
         try:
-            auth_data = json.loads(bytes(reservation_row[2]))
-            auth = AttemptAuthorization(**auth_data)
+            auth = _authorization_from_json(reservation_row[2])
             reservation_state = AttemptState(reservation_row[3])
             state = AttemptState(state_raw)
-        except (TypeError, ValueError, UnicodeError, json.JSONDecodeError) as exc:
+        except (TypeError, ValueError, UnicodeError) as exc:
             raise AttemptCorruptError("persisted reservation/state is malformed") from exc
         try:
             reservation = AttemptReservation(
@@ -1530,7 +1626,7 @@ class SQLiteCHAAttemptStore:
         if (
             reservation_row[0] != operation_id
             or auth.logical_operation_id != operation_id
-            or auth.environment != self._security.profile.value
+            or auth.environment != _semantic_environment(auth)
             or auth.trust_domain != self._security.trust_domain
             or reservation.exact_idempotency_key != _idempotency_key(auth)
             or reservation.reservation_state is not AttemptState.RESERVED_AWAITING_SIGNATURES
@@ -1568,13 +1664,14 @@ class SQLiteCHAAttemptStore:
             if attempt_row is None:
                 raise AttemptCorruptError("current immutable attempt target is missing")
             try:
-                data = json.loads(bytes(attempt_row[0]))
+                data = _persisted_json(attempt_row[0])
                 auth_fields = {
                     name: data.pop(name) for name in AttemptAuthorization.__dataclass_fields__
                 }
-                data.pop("schema_version")
+                if data.pop("schema_version") != "1":
+                    raise ValueError("immutable attempt schema_version is unsupported")
                 identity = AttemptIdentity(AttemptAuthorization(**auth_fields), **data)
-            except (KeyError, TypeError, ValueError, UnicodeError, json.JSONDecodeError) as exc:
+            except (KeyError, TypeError, ValueError, UnicodeError) as exc:
                 raise AttemptCorruptError("persisted immutable attempt is malformed") from exc
             if identity.digest_sha256 != digest:
                 raise AttemptCorruptError("immutable attempt digest mismatch")

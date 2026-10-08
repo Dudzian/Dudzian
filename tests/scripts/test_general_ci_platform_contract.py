@@ -107,9 +107,9 @@ def test_heavy_licensing_security_suite_is_split_without_coverage_gap():
         for item in heavy["strategy"]["matrix"]["include"]
     }
     assert budgets == {
-        "ubuntu-latest": (45, 35),
-        "macos-latest": (45, 35),
-        "windows-latest": (75, 60),
+        "ubuntu-latest": (75, 65),
+        "macos-latest": (75, 65),
+        "windows-latest": (105, 90),
     }
     assert heavy["timeout-minutes"] == "${{ matrix.job_timeout_minutes }}"
 

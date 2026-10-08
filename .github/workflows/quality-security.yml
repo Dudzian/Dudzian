@@ -21,7 +21,7 @@ jobs:
   quality-ratchet:
     name: Quality ratchet
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v7
         with:
@@ -122,6 +122,33 @@ jobs:
           -m "not hardware and not destructive and not network"
           --cov=bot_core.licensing.cha_account_reservation
           --cov=deployment.windows_production_cha_account_reservation
+          --cov-append --cov-config=.coveragerc
+          --cov-report=term-missing --cov-report=xml:coverage.xml -q
+      - name: Canonical JCS profile vectors (serial)
+        env:
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+          DUDZIAN_TEST_MODE: "1"
+          DUDZIAN_ALLOW_LONG_POLL: "0"
+        run: >-
+          python -m pytest -p asyncio -p pytest_cov
+          tests/licensing/test_cha_canonical_jcs.py
+          --cov=deployment.canonical_json
+          --cov-append --cov-config=.coveragerc
+          --cov-report=term-missing --cov-report=xml:coverage.xml -q
+      - name: Root-proof attempt reservation security and durability (serial)
+        env:
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+          DUDZIAN_TEST_MODE: "1"
+          DUDZIAN_ALLOW_LONG_POLL: "0"
+        run: >-
+          python -m pytest -p asyncio -p pytest_cov
+          tests/architecture/test_cha_root_proof_attempt_reservation_contract.py
+          tests/licensing/test_cha_root_proof_attempt_reservation.py
+          tests/licensing/test_cha_attempt_store_stage9.py
+          tests/security/test_cha_attempt_store_production_local.py
+          -m "not hardware and not destructive and not network"
+          --cov=bot_core.licensing.cha_root_proof_attempt_reservation
+          --cov=bot_core.cha_attempt_store
           --cov-append --cov-config=.coveragerc
           --cov-report=term-missing --cov-report=xml:coverage.xml -q
       - name: Changed-code coverage ratchet
