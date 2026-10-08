@@ -131,10 +131,13 @@ def test_heavy_licensing_security_suite_is_split_without_coverage_gap():
     assert 'case "${{ matrix.shard }}" in' in command
     assert "cha-core)" in command
     assert "cha-root-proof)" in command
-    assert "--ignore-glob=tests/licensing/test_cha_root_proof*.py" in command
+    assert "for candidate in tests/licensing/test_cha_*.py; do" in command
+    assert 'case "${candidate}" in' in command
+    assert "tests/licensing/test_cha_root_proof*.py) continue ;;" in command
+    assert 'licensing_tests+=("${candidate}")' in command
     assert "tests/licensing/test_cha_root_proof*.py" in command
+    assert "--ignore-glob=tests/licensing/test_cha_root_proof*.py" not in command
     assert "shopt -s nullglob" in command
-    assert '"${pytest_extra[@]}"' in command
     assert '"${licensing_tests[@]}"' in command
     assert "pytest -p asyncio" in command
     assert "--fast" in command
