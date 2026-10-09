@@ -182,11 +182,12 @@
       "after_send_or_ambiguous": "use authoritative reconciliation rules",
       "historical_digest_semantics": "superseded proven-unsendable reservation may permanently retain NOT_YET_DEFINED; not every historical rpa_id acquires a digest",
       "state": "SUPERSEDED_PRE_SEND_PROVEN_UNSENDABLE",
-      "executable_proofs": "exact installed local-only RESERVE/SIGN/FINALIZE grants; no immutable attempt, no complete two-signature envelope, no recovery/BOUND record; exact current fence and InitialBinding",
+      "executable_proofs": "exact installed local-only RESERVE/SIGN/FINALIZE grants; no completed immutable externally-sendable attempt; no recovery/BOUND record; exact current fence and InitialBinding; staged checkpoints alone grant no send authority",
       "retained_relation": "existing immutable replacement_relations, typed LocalPreSendUnsendableV1 evidence; no schema change",
       "eligible_states": [
         "RESERVED_AWAITING_SIGNATURES",
-        "REQUEST_SIGNED_BY_REQUESTER"
+        "REQUEST_SIGNED_BY_REQUESTER",
+        "CLAIMANT_AUTHORIZED"
       ],
       "replacement_authorization": "fresh genuine provider requalification; new credential tuple; old authorization and request/checkpoints remain immutable"
     }

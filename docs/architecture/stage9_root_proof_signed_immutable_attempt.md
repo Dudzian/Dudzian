@@ -136,10 +136,13 @@ Changed credentials cannot be substituted inside an old `rpa_`. The explicit
 qualifies fresh genuine provider authorization and requires the exact existing
 InitialBinding/operation/entitlement, a changed eligible credential tuple and the
 current fence. Executable proofs require installed grants to be exactly local
-RESERVE/SIGN/FINALIZE, no immutable attempt, no complete two-signature envelope and
-no issuer recovery/BOUND record. Completed or ambiguous history fails closed.
+RESERVE/SIGN/FINALIZE, no immutable attempt, no finalized immutable attempt and
+no issuer recovery/BOUND record. Finalized or ambiguous history fails closed.
 The conservative eligible states are RESERVED_AWAITING_SIGNATURES and
-REQUEST_SIGNED_BY_REQUESTER, including intent-only interruptions.
+REQUEST_SIGNED_BY_REQUESTER and CLAIMANT_AUTHORIZED, including intent-only
+interruptions and both checkpoints durable before finalization. Two checkpoints
+alone grant no send authority: the authority-owned immutable finalization is
+required before an externally-sendable attempt can exist.
 
 One transaction appends a typed `LocalPreSendUnsendableV1` proof to the existing
 immutable replacement relation, records SUPERSEDED_PRE_SEND_PROVEN_UNSENDABLE on

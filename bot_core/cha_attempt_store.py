@@ -1138,6 +1138,7 @@ class SQLiteCHAAttemptStore:
                     in {
                         AttemptState.RESERVED_AWAITING_SIGNATURES,
                         AttemptState.REQUEST_SIGNED_BY_REQUESTER,
+                        AttemptState.CLAIMANT_AUTHORIZED,
                     }
                     and state is AttemptState.SUPERSEDED_PRE_SEND_PROVEN_UNSENDABLE
                     and attempt_id in replacements
@@ -1643,6 +1644,7 @@ class SQLiteCHAAttemptStore:
             if live != current or current.state not in {
                 AttemptState.RESERVED_AWAITING_SIGNATURES,
                 AttemptState.REQUEST_SIGNED_BY_REQUESTER,
+                AttemptState.CLAIMANT_AUTHORIZED,
             }:
                 raise AttemptConflictError("EXACT_PRE_SEND_CURRENT_FENCE_REQUIRED")
             proof = pre_send_evidence(db, old_auth, old_id)

@@ -3,7 +3,7 @@
   "version": 1,
   "authority": "SUBORDINATE_IMPLEMENTATION_FREEZE",
   "contract_path": "docs/architecture/cryptohunter_product_architecture/stage9_root_proof_signed_immutable_attempt_contract.json",
-  "contract_bytes_sha256": "b7ebededac70d530db0a658bb833c26640160ead6caf3ef0d62e3d0fdc1024a0",
+  "contract_bytes_sha256": "0844c311daecc8bbb337a1971c5c5f2d2df4898f0cc914939bc3bebca0f9c72b",
   "parent_sha256": [
     {
       "path": "m05_account_genesis_independent_root_proof_issuer_contract.json",

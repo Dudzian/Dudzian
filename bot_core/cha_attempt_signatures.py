@@ -76,15 +76,14 @@ def pre_send_evidence(db: sqlite3.Connection, auth: AttemptAuthorization, attemp
     ):
         raise AttemptConflictError("PRE_SEND_PROVEN_UNSENDABLE_REQUIRED")
     value = load_request(db, auth, attempt_id)
-    if value is not None and value.claimant is not None:
-        raise AttemptConflictError("COMPLETED_SIGNED_ENVELOPE_CANNOT_BE_SUPERSEDED")
     return {
         "schema_version": "LocalPreSendUnsendableV1",
         "old_issuance_attempt_id": attempt_id,
         "old_authorization": asdict(auth),
         "request_reference": value.reference if value else None,
         "authority_grants": sorted(_INSTALLED_ISSUANCE_GRANTS),
-        "no_completed_signed_envelope": True,
+        "no_completed_immutable_attempt": True,
+        "no_external_send_authority": True,
         "no_issuer_bound_decision": True,
     }
 

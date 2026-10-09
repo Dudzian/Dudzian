@@ -950,7 +950,8 @@ def test_unequal_retained_signing_intent_fails_closed(store_flow, role, field):
 
 
 @pytest.mark.parametrize(
-    "phase", ["reservation", "intent", "requester_checkpoint", "claimant_intent"]
+    "phase",
+    ["reservation", "intent", "requester_checkpoint", "claimant_intent", "both_checkpoints"],
 )
 def test_pre_send_supersession_retains_history_and_requires_explicit_decision(store_flow, phase):
     path, auth, current, keys, identities = store_flow
@@ -963,10 +964,12 @@ def test_pre_send_supersession_retains_history_and_requires_explicit_decision(st
     with persistence.SQLiteCHAAttemptStore(path, auth.trust_domain) as store:
         if phase == "intent":
             store.prepare_signature(current, identities[0])
-        if phase in {"requester_checkpoint", "claimant_intent"}:
+        if phase in {"requester_checkpoint", "claimant_intent", "both_checkpoints"}:
             current = checkpoint(store, current, keys[0], identities[0])
         if phase == "claimant_intent":
             store.prepare_signature(current, identities[1])
+        if phase == "both_checkpoints":
+            current = checkpoint(store, current, keys[1], identities[1])
         retained = {
             table: store._connection.execute(f"SELECT * FROM {table}").fetchall()
             for table in (
@@ -1014,7 +1017,6 @@ def test_pre_send_supersession_retains_history_and_requires_explicit_decision(st
 @pytest.mark.parametrize(
     "phase",
     [
-        "both_checkpoints",
         "finalized",
         "changed_binding",
         "same_credentials",
