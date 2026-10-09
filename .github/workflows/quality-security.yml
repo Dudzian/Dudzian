@@ -48,12 +48,19 @@ jobs:
           python -m pip install -e ".[test]" "ruff==0.14.11" "mypy==1.10.0" "diff-cover>=9,<10"
       - name: Ruff baseline gate
         run: python -m ruff check bot_core core scripts tests deploy stage6_samples ui deployment/windows_production_cha_operation.py deployment/windows_production_cha_account_reservation.py
-      - name: Format pre-account credential substrate
+      - name: Format Stage 9 signing and credential substrate
         run: >-
           python -m ruff format --check
           bot_core/postgresql_preaccount_credentials.py
           bot_core/postgresql_root_proof_issuance_authority.py
+          bot_core/cha_attempt_store.py
+          bot_core/cha_attempt_signatures.py
+          bot_core/cha_issuance_request.py
+          bot_core/cha_root_proof_signing_custody.py
+          bot_core/licensing/cha_root_proof_signed_attempt.py
           tests/architecture/test_stage9_root_proof_preaccount_credentials_contract.py
+          tests/architecture/test_stage9_root_proof_signed_immutable_attempt_contract.py
+          tests/licensing/test_cha_root_proof_signed_attempt.py
           tests/security/test_postgresql_preaccount_credential_contract.py
           tests/security/test_postgresql_preaccount_credentials_integration.py
           tests/security/test_postgresql_root_proof_issuance_authority.py
