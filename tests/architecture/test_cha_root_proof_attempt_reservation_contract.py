@@ -350,7 +350,12 @@ def test_persisted_schema_authorization_and_domain_profiles_match_runtime():
     contract = CONTRACT["attempt_store"]
     assert contract["module"] == "bot_core/cha_attempt_store.py"
     assert contract["implementation"] == store.SQLiteCHAAttemptStore.__name__
-    assert contract["schema_version"] == store._SCHEMA_VERSION == 5
+    assert contract["schema_version"] == 5  # immutable historical schema freeze
+    child = json.loads(
+        (DOCS / "stage9_root_proof_signed_immutable_attempt_contract.json").read_bytes()
+    )
+    assert store._SCHEMA_VERSION == child["durability"]["schema_version"] == 6
+    assert child["durability"]["migration"]["from_version"] == 5
     assert contract["previous_schema_version"] == 4
     assert [field.name for field in fields(store.AttemptAuthorization)] == contract[
         "authorization_fields"

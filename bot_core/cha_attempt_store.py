@@ -23,6 +23,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Iterator, cast
 
+from bot_core.cha_attempt_signatures import RetainedIssuanceRequest
+from bot_core.cha_issuance_request import IssuanceSignerIdentity, IssuanceSigningRole
 from bot_core.licensing.canonical import canonical_json_bytes, exact, parse_canonical
 from bot_core.root_proof_issuer_substrate import (
     CredentialRoleIdentity,
@@ -35,7 +37,7 @@ from bot_core.root_proof_issuer_substrate import (
 from bot_core.uuid7 import mint_uuid7, reservation_epoch_milliseconds
 
 _SCHEMA_IDENTITY = "CRYPT0HUNTER_CHA_ATTEMPT_STORE"
-_SCHEMA_VERSION = 5
+_SCHEMA_VERSION = 6
 _ATTEMPT_DOMAIN = b"CRYPTOHUNTER_ACCOUNT_GENESIS_ROOT_PROOF_ISSUANCE_ATTEMPT_IDENTITY_V1\x00"
 _IDEMPOTENCY_DOMAIN = b"CRYPTOHUNTER_CHA_ATTEMPT_RESERVATION_IDEMPOTENCY_V1\x00"
 _HEX64 = re.compile(r"[0-9a-f]{64}\Z")
@@ -80,8 +82,14 @@ class AttemptSchemaUnsupportedError(AttemptStoreError):
     pass
 
 
+def _persistence_cut(name: str) -> None:
+    """Crash-test seam. All writes around this seam remain in one transaction."""
+
+
 class AttemptState(str, Enum):
     RESERVED_AWAITING_SIGNATURES = "RESERVED_AWAITING_SIGNATURES"
+    REQUEST_SIGNED_BY_REQUESTER = "REQUEST_SIGNED_BY_REQUESTER"
+    CLAIMANT_AUTHORIZED = "CLAIMANT_AUTHORIZED"
     SIGNED_IMMUTABLE_DURABLE_NOT_SENT = "SIGNED_IMMUTABLE_DURABLE_NOT_SENT"
     MAY_HAVE_BEEN_SENT_OUTCOME_UNKNOWN = "MAY_HAVE_BEEN_SENT_OUTCOME_UNKNOWN"
     EXACT_BOUND_RECOVERED = "EXACT_BOUND_RECOVERED"
@@ -414,10 +422,11 @@ class CurrentAttempt:
         if type(self.fence) is not int or self.fence < 1:
             raise ValueError("fence must be a positive exact int")
         if self.identity is None:
-            if (
-                self.immutable_attempt_digest_sha256 is not None
-                or self.state is not AttemptState.RESERVED_AWAITING_SIGNATURES
-            ):
+            if self.immutable_attempt_digest_sha256 is not None or self.state not in {
+                AttemptState.RESERVED_AWAITING_SIGNATURES,
+                AttemptState.REQUEST_SIGNED_BY_REQUESTER,
+                AttemptState.CLAIMANT_AUTHORIZED,
+            }:
                 raise ValueError("unsigned current attempt has an invalid state/digest union")
         elif (
             type(self.identity) is not AttemptIdentity
@@ -610,7 +619,7 @@ class SQLiteCHAAttemptStore:
                 "SELECT 1 FROM sqlite_master WHERE type='table' LIMIT 1"
             ).fetchone()
             if existing_schema is not None:
-                self._connection.execute("BEGIN")
+                self._connection.execute("BEGIN IMMEDIATE")
             try:
                 self._open_schema()
                 if self._connection.in_transaction:
@@ -676,10 +685,15 @@ class SQLiteCHAAttemptStore:
         if len(rows) != 1:
             raise AttemptCorruptError("store identity cardinality is corrupt")
         identity, version, profile, trust_domain = rows[0]
-        if identity != _SCHEMA_IDENTITY or type(version) is not int or version != _SCHEMA_VERSION:
+        if (
+            identity != _SCHEMA_IDENTITY
+            or type(version) is not int
+            or version not in {5, _SCHEMA_VERSION}
+        ):
             raise AttemptSchemaUnsupportedError("CHA attempt store schema is unsupported")
         if profile != self._security.profile.value or trust_domain != self._security.trust_domain:
             raise AttemptConflictError("persisted profile or trust_domain does not match")
+        self._schema_version = version
         required_tables = {
             "store_metadata",
             "reservations",
@@ -701,6 +715,15 @@ class SQLiteCHAAttemptStore:
             )
             for operation in ("update", "delete")
         }
+        from bot_core.cha_attempt_signatures import CREATE_STATEMENTS, TABLES
+
+        if version == 6:
+            required_tables.update(TABLES)
+            required_triggers.update(
+                f"{table}_immutable_{operation}"
+                for table in TABLES
+                for operation in ("update", "delete")
+            )
         triggers = {
             row[0]: row[1]
             for row in self._connection.execute(
@@ -717,6 +740,17 @@ class SQLiteCHAAttemptStore:
             "recoveries": ("recovery_resolutions", "recovery"),
             "transitions": ("attempt_transitions", "transition"),
         }
+        if version == 6:
+            trigger_tables.update({table: (table, table) for table in TABLES})
+            for statement in CREATE_STATEMENTS[:3]:
+                table = statement.split("(")[0].split()[-1]
+                actual_sql = self._connection.execute(
+                    "SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table,)
+                ).fetchone()
+                if actual_sql is None or self._normalize_schema_sql(
+                    actual_sql[0]
+                ) != self._normalize_schema_sql(statement):
+                    raise AttemptCorruptError("security-critical signing table contract differs")
         for prefix, (table, label) in trigger_tables.items():
             for operation in ("update", "delete"):
                 name = f"{prefix}_immutable_{operation}"
@@ -792,13 +826,25 @@ class SQLiteCHAAttemptStore:
                 "NONE",
             ),
         }
+        if version == 6:
+            for table, parent, child, target in (
+                ("issuance_requests", "reservations", "attempt_id", "attempt_id"),
+                ("signing_intents", "reservations", "attempt_id", "attempt_id"),
+                ("signing_intents", "issuance_requests", "request_reference", "reference"),
+                ("signature_checkpoints", "signing_intents", "attempt_id", "attempt_id"),
+                ("signature_checkpoints", "signing_intents", "role", "role"),
+                ("signature_checkpoints", "issuance_requests", "request_reference", "reference"),
+            ):
+                expected_foreign_keys.add(
+                    (table, parent, child, target, "NO ACTION", "NO ACTION", "NONE")
+                )
         actual_foreign_keys: set[tuple[str, str, str, str, str, str, str]] = set()
         for table in required_tables:
             for row in self._connection.execute(f"PRAGMA foreign_key_list({table})"):
                 actual_foreign_keys.add((table, row[2], row[3], row[4], row[5], row[6], row[7]))
         if expected_foreign_keys != actual_foreign_keys:
             raise AttemptCorruptError("security-critical CHA foreign key contract differs")
-        required_unique_keys = {
+        required_unique_keys: dict[str, set[tuple[str, ...]]] = {
             "current_attempts": {("operation_id",)},
             "reservations": {("attempt_id",), ("decision_key",)},
             "immutable_attempts": {("attempt_id",), ("digest",)},
@@ -810,10 +856,65 @@ class SQLiteCHAAttemptStore:
             "recovery_resolutions": {("recovery_sequence",), ("decision_key",)},
             "attempt_transitions": {("transition_id",), ("decision_key",)},
         }
+        if version == 6:
+            required_unique_keys.update(
+                {
+                    "issuance_requests": {("attempt_id",), ("reference",), ("digest",)},
+                    "signing_intents": {("attempt_id", "role")},
+                    "signature_checkpoints": {("attempt_id", "role"), ("decision_key",)},
+                }
+            )
         for table, required in required_unique_keys.items():
             if required != self._unique_keys(table):
                 raise AttemptCorruptError("security-critical UNIQUE/PRIMARY KEY contract differs")
+        if version == 5 and any(
+            self._connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
+            for table in (
+                "immutable_attempts",
+                "attempt_transitions",
+                "replacement_relations",
+                "recovery_resolutions",
+            )
+        ):
+            raise AttemptSchemaUnsupportedError(
+                "v5 migration supports exact unsigned reservations only; "
+                "signed bytes cannot be reconstructed"
+            )
         self._validate_persisted_history_integrity(self._connection)
+        if version == 5:
+            self._migrate_v5()
+            self._open_schema()
+
+    def _migrate_v5(self) -> None:
+        from bot_core.cha_attempt_signatures import create_schema
+
+        db = self._connection
+        if not db.in_transaction:
+            raise AttemptStoreUnavailableError("migration requires the startup transaction")
+        row = db.execute("SELECT schema_version FROM store_metadata").fetchone()
+        if row == (6,):
+            return
+        if row != (5,):
+            raise AttemptSchemaUnsupportedError("v5 migration source changed")
+        self._validate_persisted_history_integrity(db)
+        if any(
+            db.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
+            for table in (
+                "immutable_attempts",
+                "attempt_transitions",
+                "replacement_relations",
+                "recovery_resolutions",
+            )
+        ):
+            raise AttemptSchemaUnsupportedError(
+                "v5 migration supports exact unsigned reservations only; signed bytes cannot be reconstructed"
+            )
+        create_schema(db)
+        db.execute("DROP TRIGGER store_metadata_immutable_update")
+        db.execute("UPDATE store_metadata SET schema_version=6")
+        db.execute(
+            "CREATE TRIGGER store_metadata_immutable_update BEFORE UPDATE ON store_metadata BEGIN SELECT RAISE(ABORT,'immutable metadata'); END"
+        )
 
     @staticmethod
     def _normalize_schema_sql(sql: str) -> str:
@@ -964,6 +1065,11 @@ class SQLiteCHAAttemptStore:
             )
             decision_kind[key] = "REPLACEMENT"
 
+        if getattr(self, "_schema_version", 6) == 6:
+            from bot_core.cha_attempt_signatures import validate_history
+
+            validate_history(db, reservations, identities, expected, decision_kind)
+
         transition_rows = db.execute(
             "SELECT attempt_id,state,evidence_reference,evidence_digest,decision_key "
             "FROM attempt_transitions ORDER BY transition_id"
@@ -987,9 +1093,24 @@ class SQLiteCHAAttemptStore:
             kind = decision_kind[key]
             if kind == "FINALIZATION":
                 legal = (
-                    current is AttemptState.RESERVED_AWAITING_SIGNATURES
+                    current
+                    is (
+                        AttemptState.CLAIMANT_AUTHORIZED
+                        if reservations[attempt_id][0].reservation_identity is not None
+                        else AttemptState.RESERVED_AWAITING_SIGNATURES
+                    )
                     and state is AttemptState.SIGNED_IMMUTABLE_DURABLE_NOT_SENT
                     and attempt_id in identities
+                )
+            elif kind == AttemptState.REQUEST_SIGNED_BY_REQUESTER.value:
+                legal = (
+                    current is AttemptState.RESERVED_AWAITING_SIGNATURES
+                    and state is AttemptState.REQUEST_SIGNED_BY_REQUESTER
+                )
+            elif kind == AttemptState.CLAIMANT_AUTHORIZED.value:
+                legal = (
+                    current is AttemptState.REQUEST_SIGNED_BY_REQUESTER
+                    and state is AttemptState.CLAIMANT_AUTHORIZED
                 )
             elif kind == "RECOVERY":
                 legal = recovery_predecessors[
@@ -1144,6 +1265,10 @@ class SQLiteCHAAttemptStore:
             """
         )
         try:
+            from bot_core.cha_attempt_signatures import create_schema
+
+            create_schema(self._connection)
+            self._schema_version = 6
             self._connection.execute(
                 "INSERT INTO store_metadata VALUES(?,?,?,?)",
                 (
@@ -1271,10 +1396,22 @@ class SQLiteCHAAttemptStore:
                 if existing != (identity.digest_sha256, payload):
                     raise AttemptCorruptError("same attempt id has unequal immutable identity")
                 return current
+            if identity.authorization.reservation_identity is not None:
+                from bot_core.cha_attempt_signatures import load_request, verify_final_identity
+
+                if (
+                    current.state is not AttemptState.CLAIMANT_AUTHORIZED
+                    or current.reservation.authorization != identity.authorization
+                ):
+                    raise AttemptConflictError("exact claimant-authorized current attempt required")
+                verify_final_identity(
+                    identity, load_request(db, identity.authorization, identity.issuance_attempt_id)
+                )
             db.execute(
                 "INSERT INTO immutable_attempts VALUES(?,?,?)",
                 (identity.issuance_attempt_id, identity.digest_sha256, payload),
             )
+            _persistence_cut("finalization:identity_inserted")
             db.execute(
                 "INSERT INTO attempt_transitions(attempt_id,state,decision_key) VALUES(?,?,?)",
                 (
@@ -1283,6 +1420,7 @@ class SQLiteCHAAttemptStore:
                     _decision_key("FINALIZATION", identity.payload()),
                 ),
             )
+            _persistence_cut("finalization:transition_inserted")
             self._cas(
                 db,
                 identity.authorization.logical_operation_id,
@@ -1292,7 +1430,139 @@ class SQLiteCHAAttemptStore:
                 AttemptState.SIGNED_IMMUTABLE_DURABLE_NOT_SENT,
                 identity.digest_sha256,
             )
+            _persistence_cut("finalization:cas_written")
             return self._read_current(identity.authorization.logical_operation_id, db)
+
+    def prepare_signature(
+        self, current: CurrentAttempt, signer: IssuanceSignerIdentity
+    ) -> RetainedIssuanceRequest:
+        """Commit invocation latch BEFORE calling private custody; never reset it."""
+        from bot_core.cha_attempt_signatures import load_request
+        from bot_core.cha_issuance_request import request_bytes, request_reference
+
+        current = _snapshot_current_attempt(current)
+        if type(signer) is not IssuanceSignerIdentity:
+            raise TypeError("exact signing identity required")
+        signer = IssuanceSignerIdentity.from_bytes(_canonical(signer.payload()))
+        auth = current.reservation.authorization
+        signer.require_authorization(auth)
+        attempt_id = current.reservation.issuance_attempt_id
+        with self._write() as db:
+            live = self._authoritative_current(auth.logical_operation_id, db)
+            if live != current:
+                raise AttemptConflictError("signing fence/current changed")
+            predecessor = (
+                AttemptState.RESERVED_AWAITING_SIGNATURES
+                if signer.role is IssuanceSigningRole.REQUESTER
+                else AttemptState.REQUEST_SIGNED_BY_REQUESTER
+            )
+            if current.state is not predecessor or auth.reservation_identity is None:
+                raise AttemptConflictError("exact signing predecessor required")
+            value = load_request(db, auth, attempt_id)
+            if value is None:
+                raw = request_bytes(auth, attempt_id)
+                db.execute(
+                    "INSERT INTO issuance_requests VALUES(?,?,?,?)",
+                    (attempt_id, request_reference(raw), hashlib.sha256(raw).hexdigest(), raw),
+                )
+                value = load_request(db, auth, attempt_id)
+            if value is None:
+                raise AttemptCorruptError("request persistence failed")
+            if signer.role is IssuanceSigningRole.CLAIMANT and (
+                value.requester is None
+                or value.requester[0].public_key_hex == signer.public_key_hex
+            ):
+                raise AttemptCorruptError("distinct retained requester authorization required")
+            if db.execute(
+                "SELECT 1 FROM signing_intents WHERE attempt_id=? AND role=?",
+                (attempt_id, signer.role.value),
+            ).fetchone():
+                raise AttemptConflictError(
+                    "SIGNATURE_OUTCOME_NOT_DURABLE: invocation cannot be repeated"
+                )
+            db.execute(
+                "INSERT INTO signing_intents VALUES(?,?,?,?)",
+                (attempt_id, signer.role.value, value.reference, _canonical(signer.payload())),
+            )
+            return value
+
+    def persist_signature(
+        self, current: CurrentAttempt, signer: IssuanceSignerIdentity, signature: str
+    ) -> CurrentAttempt:
+        """Verify and atomically append a checkpoint and its fenced projection."""
+        from bot_core.cha_attempt_signatures import checkpoint_decision, load_request
+
+        current = _snapshot_current_attempt(current)
+        if type(signer) is not IssuanceSignerIdentity:
+            raise TypeError("exact signing identity required")
+        signer = IssuanceSignerIdentity.from_bytes(_canonical(signer.payload()))
+        auth, attempt_id = (
+            current.reservation.authorization,
+            current.reservation.issuance_attempt_id,
+        )
+        signer.require_authorization(auth)
+        with self._write() as db:
+            live = self._authoritative_current(auth.logical_operation_id, db)
+            value = load_request(db, auth, attempt_id)
+            if value is None:
+                raise AttemptCorruptError("signature has no durable request")
+            signer.verify(value.canonical_bytes, signature)
+            signer_raw = _canonical(signer.payload())
+            intent = db.execute(
+                "SELECT request_reference,signer_json FROM signing_intents WHERE attempt_id=? AND role=?",
+                (attempt_id, signer.role.value),
+            ).fetchone()
+            if intent != (value.reference, signer_raw):
+                raise AttemptCorruptError("signature differs from durable invocation identity")
+            old = db.execute(
+                "SELECT signature FROM signature_checkpoints WHERE attempt_id=? AND role=?",
+                (attempt_id, signer.role.value),
+            ).fetchone()
+            if old is not None:
+                if old != (signature,):
+                    raise AttemptCorruptError("same attempt/role has unequal signature")
+                return live
+            if live != current:
+                raise AttemptConflictError("signing checkpoint fence/current changed")
+            predecessor, state = (
+                (
+                    AttemptState.RESERVED_AWAITING_SIGNATURES,
+                    AttemptState.REQUEST_SIGNED_BY_REQUESTER,
+                )
+                if signer.role is IssuanceSigningRole.REQUESTER
+                else (AttemptState.REQUEST_SIGNED_BY_REQUESTER, AttemptState.CLAIMANT_AUTHORIZED)
+            )
+            if live.state is not predecessor:
+                raise AttemptConflictError("signing checkpoint predecessor mismatch")
+            decision = checkpoint_decision(attempt_id, signer, value.reference, signature)
+            db.execute(
+                "INSERT INTO signature_checkpoints VALUES(?,?,?,?,?,?)",
+                (attempt_id, signer.role.value, value.reference, signer_raw, signature, decision),
+            )
+            _persistence_cut(signer.role.value + ":signature_inserted")
+            db.execute(
+                "INSERT INTO attempt_transitions(attempt_id,state,evidence_reference,evidence_digest,decision_key) VALUES(?,?,?,?,?)",
+                (attempt_id, state.value, value.reference, value.digest, decision),
+            )
+            _persistence_cut(signer.role.value + ":transition_inserted")
+            self._cas(
+                db, auth.logical_operation_id, attempt_id, current.fence, attempt_id, state, None
+            )
+            _persistence_cut(signer.role.value + ":cas_written")
+            return self._authoritative_current(auth.logical_operation_id, db)
+
+    def signed_request(self, operation_id: str) -> RetainedIssuanceRequest:
+        from bot_core.cha_attempt_signatures import load_request
+
+        operation_id = _validate_operation_id(operation_id)
+        with self._read() as db:
+            current = self._authoritative_current(operation_id, db)
+            value = load_request(
+                db, current.reservation.authorization, current.reservation.issuance_attempt_id
+            )
+            if value is None:
+                raise AttemptNotFoundError("canonical issuance request is not retained")
+            return value
 
     def replace_after_authoritative_unbound(
         self,

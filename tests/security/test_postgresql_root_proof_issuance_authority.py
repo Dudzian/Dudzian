@@ -147,7 +147,12 @@ def _assert_operation_invalidated(binding, authorization):
 
 @contextmanager
 def _installed_authorities(
-    monkeypatch, trust_domain, provisioning_principal="deployment-provisioning-principal"
+    monkeypatch,
+    trust_domain,
+    provisioning_principal="deployment-provisioning-principal",
+    *,
+    requester_public=b"R" * 32,
+    claimant_public=b"C" * 32,
 ):
     """Install exact reviewed production names into the temporary real cluster."""
 
@@ -192,14 +197,14 @@ def _installed_authorities(
             credential_id="requester-credential",
             key_id="requester-key",
             key_version=1,
-            public_key=b"R" * 32,
+            public_key=requester_public,
         )
         pair.claimant_admin.provision_credential(
             principal_id=provisioning_principal,
             credential_id="claimant-credential",
             key_id="claimant-key",
             key_version=1,
-            public_key=b"C" * 32,
+            public_key=claimant_public,
         )
         subject = RegistrySubject("deployment-entitlement-lookup", "PRODUCTION", trust_domain)
         admin = PostgreSQLEntitlementProvisioningAdminProvider(

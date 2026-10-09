@@ -42,5 +42,9 @@
   "root_proof_issuance_provider_composition": "IMPLEMENTED",
   "production_preaccount_credentials": "NOT_PROVISIONED",
   "root_proof_issuance_authorization_live_availability": "BLOCKED_UNTIL_PROVISIONING",
-  "signed_immutable_attempt": "NOT_STARTED"
+  "signed_immutable_attempt": "IMPLEMENTED",
+  "requester_signing_custody_implementation": "IMPLEMENTED",
+  "claimant_authorization_signing_custody_implementation": "IMPLEMENTED",
+  "signed_immutable_attempt_boundary": "IMPLEMENTED",
+  "signed_immutable_attempt_live_availability": "BLOCKED_UNTIL_PRODUCTION_CREDENTIAL_PROVISIONING"
 }

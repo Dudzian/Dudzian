@@ -1,0 +1,217 @@
+{
+  "schema": "CryptoHunter.Stage9.RootProofSignedImmutableAttemptContractV1",
+  "version": 1,
+  "authority": "SUBORDINATE_IMPLEMENTATION_FREEZE",
+  "frozen_parent_sha256": [
+    {
+      "path": "m05_account_genesis_independent_root_proof_issuer_contract.json",
+      "bytes_sha256": "36cd0d26f918769313c6f572541f40877b1f0ca9808a5fc69a9dac3a6bf6d30d"
+    },
+    {
+      "path": "stage9_root_proof_attempt_reservation_contract.json",
+      "bytes_sha256": "b6a0f5422d6eab5ca8b901821b81d9bc124aa707715bc57951bbc011c99ca4f7"
+    },
+    {
+      "path": "stage9_root_proof_attempt_reservation_freeze.json",
+      "bytes_sha256": "9c759d15c7f080ab1b1df7df01d48ba5e7ffc3f9f322a2ab87a85f1a048bfbd7"
+    },
+    {
+      "path": "stage9_root_proof_preaccount_credentials_contract.json",
+      "bytes_sha256": "a1111021da583ef9043c2eef29db61adb9e329506babf2945aaa0fac8ba54d06"
+    },
+    {
+      "path": "stage9_root_proof_preaccount_credentials_freeze.json",
+      "bytes_sha256": "8acf388c804fda5e65063090f76a2c98eb333ad3a1cb1f8ad37ed3706f6415e4"
+    }
+  ],
+  "boundary": "SIGNED_IMMUTABLE_DURABLE_NOT_SENT",
+  "request": {
+    "object_type": "RootProofIssuanceRequestV1",
+    "signed_payload_fields": [
+      "schema_version",
+      "environment",
+      "trust_domain",
+      "issuer_target_namespace",
+      "entitlement_id",
+      "entitlement_generation",
+      "logical_operation_id",
+      "account_id",
+      "canonical_genesis_request_fingerprint_sha256",
+      "initial_binding_reference",
+      "initial_binding_digest_sha256",
+      "requester_id",
+      "requester_key_id",
+      "requester_key_version",
+      "provisioning_principal_id",
+      "claimant_key_id",
+      "claimant_key_version",
+      "issuance_attempt_id"
+    ],
+    "schema_version": "1",
+    "canonicalization": "UTF-8 RFC 8785 JCS via repository canonical_json_bytes",
+    "issuer_target_namespace": "CryptoHunter.Stage9.RootProofIssuer.V1",
+    "issuer_target_namespace_owner": "Stage 9 subordinate contract; no existing production value is frozen in parent/source",
+    "namespace_caller_selected": false,
+    "namespace_stable_across_retry_restart": true,
+    "environment_trust_domain_separation": "Explicit signed environment and trust_domain fields; custody is PRODUCTION/PRODUCTION_LOCAL only",
+    "signed_payload_digest": "lowercase SHA-256(exact retained canonical bytes); no domain prefix",
+    "attempt_digest_in_request": false
+  },
+  "signatures": {
+    "requester": {
+      "domain": "CRYPTOHUNTER_ACCOUNT_GENESIS_ROOT_PROOF_ISSUANCE_REQUEST_V1",
+      "preimage": "ASCII(domain) || 0x00 || exact same UTF-8 JCS signed payload",
+      "algorithm": "Ed25519",
+      "encoding": "canonical unpadded base64url of exactly 64 bytes",
+      "profile": "CRYPTOHUNTER_ACCOUNT_GENESIS_ROOT_PROOF_ISSUANCE_REQUEST_V1/JCS-SHA256-Ed25519-v1"
+    },
+    "claimant": {
+      "domain": "CRYPTOHUNTER_ACCOUNT_GENESIS_ROOT_PROOF_ENTITLEMENT_CLAIM_V1",
+      "preimage": "ASCII(domain) || 0x00 || exact same UTF-8 JCS signed payload",
+      "algorithm": "Ed25519",
+      "encoding": "canonical unpadded base64url of exactly 64 bytes",
+      "profile": "CRYPTOHUNTER_ACCOUNT_GENESIS_ROOT_PROOF_ENTITLEMENT_CLAIM_V1/JCS-SHA256-Ed25519-v1"
+    }
+  },
+  "custody": {
+    "requester_owner": "CryptoHunterAccountAuthority",
+    "requester_role": "CHA_ROOT_PROOF_ISSUANCE_REQUESTER_CUSTODY",
+    "claimant_owner": "pre-account provisioning/deployment security authority",
+    "claimant_role": "PREACCOUNT_ROOT_PROOF_ENTITLEMENT_CLAIMANT_CUSTODY",
+    "claimant_operation": "authorize_entitlement_claim only; not CHA generic signing on behalf of claimant",
+    "storage": "Dedicated native KeyringSecretStorage; hardened local_signing_custody file publication/locking primitives",
+    "service_scope": "SHA-256 of canonical schema + PRODUCTION + trust_domain + role + principal; role is also explicit in service prefix",
+    "service_prefix": "dudzian.stage9.<lowercase custody role>.",
+    "credential_namespace": "<service>.credentials",
+    "lifecycle_namespace": "<service>.lifecycle",
+    "key_handle": "<service>.key:<canonical public material identity>",
+    "separate_directories": [
+      "cha-root-proof-requester-custody",
+      "preaccount-root-proof-claimant-custody/<authority-derived principal scope SHA-256>"
+    ],
+    "separate_keys": true,
+    "raw_public_key_comparison_required": true,
+    "registry_binding": "Exact principal/role/environment/trust/key id/version/ACTIVE and derived private public bytes == authoritative public bytes/material identity",
+    "prohibited_existing_roles": "RootProof issuer, CHA freshness proposer, FreshnessAuthority, Catalog and storage remain separate. Current main has no installed runtime factory supplying these local signing identities. No alias guarantee is claimed for unavailable providers. Global requester/claimant registry alias qualification remains mandatory.",
+    "runtime_can_generate_rotate_delete_export_or_change_lifecycle": false,
+    "windows_native_custody": "BLOCKED: inherited custody primitives currently require POSIX locking"
+  },
+  "provisioning": {
+    "access": "offline/admin-only, outside public Stage 9 API",
+    "ceremony": [
+      "durably publish STAGED public draft before keyring creation",
+      "create private seed in dedicated native keyring service; return public draft only",
+      "offline provision exact public credential in genuine PostgreSQL registry",
+      "derive private public key and requalify genuine ACTIVE registry; publish ACTIVE local metadata"
+    ],
+    "distributed_atomicity": false,
+    "missing_key_after_staged_draft": "FAIL_CLOSED; never regenerate/substitute material on retry; administrator must reconcile or abandon ceremony",
+    "public_only_pair": "cannot authorize without ACTIVE private custody",
+    "private_only_pair": "cannot activate/authorize without exact ACTIVE public registry",
+    "local_lifecycle": [
+      "STAGED",
+      "ACTIVE",
+      "VERIFY_ONLY",
+      "REVOKED"
+    ]
+  },
+  "durability": {
+    "states": [
+      "RESERVED_AWAITING_SIGNATURES",
+      "REQUEST_SIGNED_BY_REQUESTER",
+      "CLAIMANT_AUTHORIZED",
+      "SIGNED_IMMUTABLE_DURABLE_NOT_SENT"
+    ],
+    "request_bytes": "immutable issuance_requests BLOB, persisted in same transaction as requester invocation latch before signing",
+    "reference": "immutable:req:sha256:<lowercase SHA256 of exact canonical bytes>",
+    "reference_owner": "authority-generated; unique reference and digest; exact reference plus unequal bytes is corruption",
+    "tables": [
+      "issuance_requests",
+      "signing_intents",
+      "signature_checkpoints",
+      "immutable_attempts"
+    ],
+    "immutable_records": true,
+    "schema_version": 6,
+    "migration": {
+      "from_version": 5,
+      "to_version": 6,
+      "transaction": "startup BEGIN IMMEDIATE; schema verification, source-history verification, extension DDL, metadata version update, trigger restoration and destination verification commit atomically",
+      "eligible": "only exact unsigned reservation history; no immutable attempts/transitions/replacement/recovery history",
+      "preserve": "all reservation rows and authorization BLOB bytes, rpa ids, current state and fence unchanged",
+      "ambiguous_signed_v5": "FAIL_CLOSED; exact signed request bytes cannot be fabricated",
+      "remint_or_fabricate_signatures": false
+    },
+    "invocation_latch": "append-only role/attempt/request-reference/exact signer identity committed BEFORE private invocation",
+    "resigning_allowed": false,
+    "uncommitted_signature": "SIGNATURE_OUTCOME_NOT_DURABLE; latch stays spent after abrupt exit/rollback; no second invocation, no remint, no send",
+    "crash_model": "Local deterministic Ed25519 may return before SQLite signature commit. Durable latch removes ambiguity from authorization: any intent without a checkpoint blocks forever, including crash before actual private invocation. No claim of atomic keyring/PostgreSQL/SQLite signing or lossless recovery.",
+    "concurrency": "protected-host cross-process advisory lock across latch/sign/checkpoint commits; SQLite BEGIN IMMEDIATE, unique immutable rows and exact fenced CAS",
+    "live_authorization": "before each new signature and finalization, requalify exact InitialBinding, operation evidence, reserved lineage and both ACTIVE custody/public identities. Changed authorization fails closed, including after either retained checkpoint. Independent authorities are not one distributed transaction.",
+    "finalize": "existing finalize_attempt(identity, expected_fence=current.fence), from CLAIMANT_AUTHORIZED; exact duplicates converge on same retained identity and digest"
+  },
+  "attempt_identity": {
+    "owner": "existing AttemptIdentity",
+    "digest": "SHA-256(domain || JCS(AttemptIdentity.payload()))",
+    "domain": "CRYPTOHUNTER_ACCOUNT_GENESIS_ROOT_PROOF_ISSUANCE_ATTEMPT_IDENTITY_V1\\x00",
+    "request_digest_is_attempt_digest": false,
+    "same_rpa": true,
+    "verify_both_signatures_before_finalization": true
+  },
+  "capability": {
+    "type": "VerifiedSignedImmutableRootProofIssuanceAttempt",
+    "exact_type_only": true,
+    "public_constructor": false,
+    "subclass_copy_deepcopy": false,
+    "raw_rows_identity_or_signatures_grant_authority": false,
+    "consequential_access": "requalify upstream/custody and exact current durable identity/digest/request bytes"
+  },
+  "public_api": {
+    "sign_root_proof_issuance_attempt": [
+      "VerifiedRootProofIssuanceAttemptReservation"
+    ],
+    "resume_root_proof_issuance_attempt": [
+      "existing verified InitialBinding",
+      "existing verified issuance authorization"
+    ],
+    "caller_selected_private_key_path_dsn_signer_key_version_attempt_id_reference_signature_namespace": false
+  },
+  "current_status": {
+    "requester_signing_custody_implementation": "IMPLEMENTED",
+    "claimant_authorization_signing_custody_implementation": "IMPLEMENTED",
+    "signed_immutable_attempt": "IMPLEMENTED",
+    "signed_immutable_attempt_boundary": "IMPLEMENTED",
+    "signed_immutable_attempt_live_availability": "BLOCKED_UNTIL_PRODUCTION_CREDENTIAL_PROVISIONING",
+    "production_preaccount_credentials": "NOT_PROVISIONED",
+    "semantic_root_proof_issuer_runtime": "NOT_IMPLEMENTED / BLOCKED",
+    "account_genesis": "INITIAL_BINDING_ONLY",
+    "root_proof": "NOT_ISSUED",
+    "root_proof_admission": "NOT_STARTED",
+    "prepared": "NOT_STARTED",
+    "production_provisioning_ready": false,
+    "windows_production_ready": "NOT_READY",
+    "legal_production_enrollment": "NOT_PERFORMED",
+    "windows_0_14": "10/15 DONE",
+    "protected_freshness": "NOT_STARTED",
+    "provisioning_membership": "BLOCKED",
+    "secret_resource": "NOT_STARTED",
+    "stage_10_production_lifecycle_live": "NOT_STARTED"
+  },
+  "forbidden": [
+    "external issuer send",
+    "HTTP/gRPC issuer transport",
+    "entitlement CAS/BIND",
+    "MAY_HAVE_BEEN_SENT_OUTCOME_UNKNOWN implementation",
+    "issuer BOUND",
+    "authenticated issuer history",
+    "checkpoint/reconciliation implementation",
+    "rpf_ proof",
+    "root-proof admission",
+    "PREPARED",
+    "Protected Freshness",
+    "AccountGenesis COMMITTED",
+    "first-device/membership",
+    "Secret Resource",
+    "Stage 10"
+  ]
+}

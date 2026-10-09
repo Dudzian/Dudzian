@@ -126,6 +126,7 @@ def test_heavy_licensing_security_suite_is_split_without_coverage_gap():
         ),
         ("windows-latest", "cha-core"): ("windows-latest, cha-core", 70, 60),
         ("windows-latest", "cha-root-proof"): ("windows-latest, cha-root-proof", 60, 50),
+        ("windows-latest", "cha-signed-attempt"): ("windows-latest, cha-signed-attempt", 45, 35),
     }
     assert heavy["name"] == "Licensing security/durability (${{ matrix.label }})"
     assert heavy["timeout-minutes"] == "${{ matrix.job_timeout_minutes }}"
@@ -144,6 +145,8 @@ def test_heavy_licensing_security_suite_is_split_without_coverage_gap():
     assert "pdsa-production)" in command
     assert "cha-core)" in command
     assert "cha-root-proof)" in command
+    assert "cha-signed-attempt)" in command
+    assert "tests/licensing/test_cha_root_proof_signed*.py) continue ;;" in command
     assert "tests/licensing/test_lppi_authenticated_operation.py" in command
     assert "tests/licensing/test_lppi_authenticated_operation_durability.py" in command
     assert "tests/licensing/test_lppi_authenticated_operation_native.py" in command
