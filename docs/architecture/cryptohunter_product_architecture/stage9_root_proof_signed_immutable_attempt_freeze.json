@@ -3,7 +3,7 @@
   "version": 1,
   "authority": "SUBORDINATE_IMPLEMENTATION_FREEZE",
   "contract_path": "docs/architecture/cryptohunter_product_architecture/stage9_root_proof_signed_immutable_attempt_contract.json",
-  "contract_bytes_sha256": "b14b66ff83ef56bc8d25ba04c914315c1987bb5c367096bc667ab7f158ba531f",
+  "contract_bytes_sha256": "b7ebededac70d530db0a658bb833c26640160ead6caf3ef0d62e3d0fdc1024a0",
   "parent_sha256": [
     {
       "path": "m05_account_genesis_independent_root_proof_issuer_contract.json",
@@ -46,6 +46,7 @@
     "protected_freshness": "NOT_STARTED",
     "provisioning_membership": "BLOCKED",
     "secret_resource": "NOT_STARTED",
-    "stage_10_production_lifecycle_live": "NOT_STARTED"
+    "stage_10_production_lifecycle_live": "NOT_STARTED",
+    "signed_immutable_attempt_platform_support": "POSIX_AND_WINDOWS_NATIVE"
   }
 }

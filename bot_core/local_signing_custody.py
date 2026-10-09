@@ -13,6 +13,7 @@ signs the already-canonical bytes supplied by its distinct frozen role port.
 from __future__ import annotations
 
 import base64
+import errno
 from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import Enum
@@ -23,6 +24,7 @@ from pathlib import Path
 import re
 import secrets
 import stat
+import time
 import uuid
 from typing import Callable
 
@@ -417,13 +419,23 @@ def _snapshot_security(security: SecurityProfileIdentity) -> SecurityProfileIden
 
 @contextmanager
 def _custody_lock(directory: Path, *, exclusive: bool):
-    """Cross-process advisory lock shared by both signing roles and lifecycle."""
+    """POSIX shared/exclusive locks; Windows serializes all custody operations.
 
-    if os.name != "posix":
+    The Windows byte-range primitive cannot safely represent shared ownership.
+    Using exclusive ownership for readers too preserves lifecycle linearization.
+    Contention waits at most five seconds, then fails closed.
+    """
+
+    if os.name not in {"posix", "nt"}:
         raise LocalSigningCustodyError("production-local custody locking is unavailable")
-    import fcntl
 
     path = directory / _LOCK_FILENAME
+    if path.is_symlink() or (
+        path.exists()
+        and getattr(path.lstat(), "st_file_attributes", 0)
+        & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+    ):
+        raise LocalSigningCustodyError("custody lock path is unsafe")
     try:
         descriptor = os.open(path, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
     except OSError as exc:
@@ -432,21 +444,57 @@ def _custody_lock(directory: Path, *, exclusive: bool):
         info = os.fstat(descriptor)
         if (
             not stat.S_ISREG(info.st_mode)
-            or info.st_uid != os.geteuid()
-            or stat.S_IMODE(info.st_mode) & 0o077
+            or info.st_nlink != 1
+            or (
+                os.name == "posix"
+                and (info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) & 0o077)
+            )
         ):
             raise LocalSigningCustodyError("custody lock ownership or permissions are unsafe")
-        try:
-            fcntl.flock(descriptor, fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH)
-        except OSError as exc:
-            raise LocalSigningCustodyError("custody locking failed") from exc
-        try:
-            yield
-        finally:
+        if os.name == "nt":
+            import msvcrt
+
+            deadline = time.monotonic() + 5.0
+            while True:
+                os.lseek(descriptor, 0, os.SEEK_SET)
+                try:
+                    msvcrt.locking(descriptor, msvcrt.LK_NBLCK, 1)
+                    break
+                except OSError as exc:
+                    if exc.errno not in {errno.EACCES, errno.EAGAIN, errno.EDEADLK}:
+                        raise LocalSigningCustodyError("custody locking failed") from exc
+                    if time.monotonic() >= deadline:
+                        raise LocalSigningCustodyError("custody locking timed out") from exc
+                    time.sleep(0.01)
             try:
-                fcntl.flock(descriptor, fcntl.LOCK_UN)
+                # Windows byte-range locks may cover bytes beyond EOF. Publish
+                # the sentinel only after ownership, so concurrent creators
+                # cannot write into another process's newly locked byte.
+                if os.fstat(descriptor).st_size == 0:
+                    os.lseek(descriptor, 0, os.SEEK_SET)
+                    os.write(descriptor, b"\0")
+                    os.fsync(descriptor)
+                yield
+            finally:
+                os.lseek(descriptor, 0, os.SEEK_SET)
+                try:
+                    msvcrt.locking(descriptor, msvcrt.LK_UNLCK, 1)
+                except OSError as exc:
+                    raise LocalSigningCustodyError("custody unlock failed") from exc
+        else:
+            import fcntl
+
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH)
             except OSError as exc:
-                raise LocalSigningCustodyError("custody unlock failed") from exc
+                raise LocalSigningCustodyError("custody locking failed") from exc
+            try:
+                yield
+            finally:
+                try:
+                    fcntl.flock(descriptor, fcntl.LOCK_UN)
+                except OSError as exc:
+                    raise LocalSigningCustodyError("custody unlock failed") from exc
     finally:
         os.close(descriptor)
 

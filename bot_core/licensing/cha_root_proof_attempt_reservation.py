@@ -618,7 +618,7 @@ def _reserved_current(current: CurrentAttempt, authorization: AttemptAuthorizati
         type(current) is not CurrentAttempt
         or current.state is not AttemptState.RESERVED_AWAITING_SIGNATURES
         or current.identity is not None
-        or current.fence != 1
+        or current.fence < 1
         or current.reservation.authorization != authorization
     ):
         raise RootProofAttemptReservationError("EXACT_CURRENT_RESERVED_ATTEMPT_REQUIRED")

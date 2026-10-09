@@ -204,11 +204,14 @@ def require_verified_signed_immutable_root_proof_issuance_attempt(
 def _finish(
     binding: object, authorization: object, original: CurrentAttempt | None = None
 ) -> VerifiedSignedImmutableRootProofIssuanceAttempt:
+    from bot_core.cha_attempt_signatures import require_local_only_issuance_scope
+
+    require_local_only_issuance_scope()
     upstream = reservation_boundary._exact_binding_authorization(binding, authorization)
     auth = upstream.authorization
     path = reservation_boundary._attempt_store_path()
     # Separate SQLite commits cannot hold a SQLite writer lock across the durable
-    # latch. The protected-host advisory lock serializes the entire ceremony.
+    # intent. The protected-host advisory lock serializes the entire ceremony.
     directory = _validate_directory(path.parent, create=False)
     with (
         _custody_lock(directory, exclusive=True),
@@ -233,8 +236,8 @@ def _finish(
             _cut(role.value + ":before_intent")
             retained = store.prepare_signature(current, signer)
             _cut(role.value + ":intent_durable")
-            # Recheck operation authorization after latch commit and immediately
-            # before the one private operation. Failure leaves the latch spent.
+            # Recheck live authorization for an exact operation, including a
+            # recovery of an intent whose signature checkpoint never committed.
             _qualified_pair(authorization)
             signature = (
                 custody[0].sign_issuance_request(retained.canonical_bytes, signer)
@@ -272,6 +275,27 @@ def _finish(
     _SIGNED[result] = _SignedSnapshot(binding, authorization, path, current)
     _signed_snapshot(result)
     return result
+
+
+def supersede_root_proof_issuance_attempt_pre_send(
+    binding: object, authorization: object
+) -> reservation_boundary.VerifiedRootProofIssuanceAttemptReservation:
+    """Explicitly supersede an unsendable reservation for new eligible credentials.
+
+    Fresh genuine public authorization qualifies the replacement; private
+    custody must separately be provisioned and qualified before signing it.
+    """
+    upstream = reservation_boundary._exact_binding_authorization(binding, authorization)
+    auth = upstream.authorization
+    path = reservation_boundary._attempt_store_path()
+    with (
+        _custody_lock(_validate_directory(path.parent, create=False), exclusive=True),
+        reservation_boundary._open_store(auth.trust_domain) as store,
+    ):
+        current = store.attempt(auth.logical_operation_id)
+        reservation_boundary._exact_binding_authorization(binding, authorization)
+        current = store.supersede_pre_send(current, auth)
+    return reservation_boundary._issue_reservation(binding, authorization, current)
 
 
 def sign_root_proof_issuance_attempt(

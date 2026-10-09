@@ -29,7 +29,7 @@ from bot_core.root_proof_issuer_substrate import (
     SecurityProfileIdentity,
 )
 from bot_core.security.keyring_storage import KeyringSecretStorage
-from tests.security._local_signing_platform import requires_posix_custody_locking
+from tests.security._local_signing_platform import requires_native_custody_locking
 
 
 @pytest.fixture
@@ -81,7 +81,7 @@ def provision(
     )
 
 
-@requires_posix_custody_locking
+@requires_native_custody_locking
 def test_distinct_provisioning_restart_snapshot_and_active_signing(
     tmp_path: Path, security: SecurityProfileIdentity
 ) -> None:
@@ -126,7 +126,7 @@ def test_distinct_provisioning_restart_snapshot_and_active_signing(
     )
 
 
-@requires_posix_custody_locking
+@requires_native_custody_locking
 @pytest.mark.parametrize(
     "role",
     [
@@ -173,7 +173,7 @@ def test_non_active_denies_signing_and_revoked_is_terminal(
             )
 
 
-@requires_posix_custody_locking
+@requires_native_custody_locking
 def test_planned_rotation_separates_version_generation_and_retains_verification(
     tmp_path: Path, security: SecurityProfileIdentity
 ) -> None:
@@ -198,7 +198,7 @@ def test_planned_rotation_separates_version_generation_and_retains_verification(
     assert current.snapshot.lifecycle_generation == 1
 
 
-@requires_posix_custody_locking
+@requires_native_custody_locking
 def test_rotated_credential_can_be_revoked_without_changing_current(
     tmp_path: Path, security: SecurityProfileIdentity
 ) -> None:
@@ -240,7 +240,7 @@ def test_rotated_credential_can_be_revoked_without_changing_current(
             )
 
 
-@requires_posix_custody_locking
+@requires_native_custody_locking
 def test_three_versions_have_independent_lifecycle_generations(
     tmp_path: Path, security: SecurityProfileIdentity
 ) -> None:
@@ -280,7 +280,7 @@ def test_three_versions_have_independent_lifecycle_generations(
         assert provider.credential_snapshot() == v3
 
 
-@requires_posix_custody_locking
+@requires_native_custody_locking
 @pytest.mark.parametrize("cut", [f"R{number}" for number in range(8)])
 def test_every_rotation_crash_cut_recovers_without_v3(
     tmp_path: Path,
@@ -320,7 +320,7 @@ def test_every_rotation_crash_cut_recovers_without_v3(
     assert provider.credential_snapshot().key_version == 2
 
 
-@requires_posix_custody_locking
+@requires_native_custody_locking
 @pytest.mark.parametrize("cut", [f"R{number}" for number in range(8)])
 def test_generated_successor_crash_matrix_replays_by_operation_identity(
     tmp_path: Path,
@@ -362,7 +362,7 @@ def test_generated_successor_crash_matrix_replays_by_operation_identity(
     assert recovered.key_version == 2
 
 
-@requires_posix_custody_locking
+@requires_native_custody_locking
 @pytest.mark.parametrize("cut", ["R3", "R4"])
 @pytest.mark.parametrize("target", [SigningKeyLifecycle.VERIFY_ONLY, SigningKeyLifecycle.REVOKED])
 def test_prelinearization_predecessor_descendant_is_authoritative(
@@ -458,7 +458,7 @@ def test_prelinearization_predecessor_descendant_is_authoritative(
         assert custody._read_record(retained_path, security, role) == retained
 
 
-@requires_posix_custody_locking
+@requires_native_custody_locking
 def test_presecret_revocation_aborts_tentative_rotation_without_orphan(
     tmp_path: Path, security: SecurityProfileIdentity
 ) -> None:
@@ -525,7 +525,7 @@ def test_presecret_revocation_aborts_tentative_rotation_without_orphan(
         )
 
 
-@requires_posix_custody_locking
+@requires_native_custody_locking
 def test_r6_revoke_survives_stale_intent_recovery_and_restart(
     tmp_path: Path, security: SecurityProfileIdentity
 ) -> None:
@@ -574,7 +574,7 @@ def test_r6_revoke_survives_stale_intent_recovery_and_restart(
         restarted.verify_historical(b"old", old.signature, old.snapshot)
 
 
-@requires_posix_custody_locking
+@requires_native_custody_locking
 def test_r7_generated_lost_response_conflict_and_new_operation(
     tmp_path: Path, security: SecurityProfileIdentity
 ) -> None:
@@ -635,7 +635,7 @@ def test_r7_generated_lost_response_conflict_and_new_operation(
     )
 
 
-@requires_posix_custody_locking
+@requires_native_custody_locking
 def test_r5_runtime_fails_closed_until_admin_recovery(
     tmp_path: Path, security: SecurityProfileIdentity
 ) -> None:
@@ -680,7 +680,7 @@ def test_r5_runtime_fails_closed_until_admin_recovery(
     assert provider.verify_historical(b"old", old.signature, old.snapshot)
 
 
-@requires_posix_custody_locking
+@requires_native_custody_locking
 def test_completed_pending_retry_cleans_and_restores_runtime(
     tmp_path: Path, security: SecurityProfileIdentity
 ) -> None:
@@ -745,7 +745,7 @@ def test_completed_pending_retry_cleans_and_restores_runtime(
     )
 
 
-@requires_posix_custody_locking
+@requires_native_custody_locking
 @pytest.mark.parametrize(
     "cleanup_cut",
     [
@@ -802,7 +802,7 @@ def test_repeated_cleanup_crashes_converge(
     assert not custody._pending_rotation(tmp_path, role)
 
 
-@requires_posix_custody_locking
+@requires_native_custody_locking
 def test_completed_cleanup_preserves_retained_and_successor_descendants(
     tmp_path: Path, security: SecurityProfileIdentity
 ) -> None:
@@ -859,7 +859,7 @@ def test_completed_cleanup_preserves_retained_and_successor_descendants(
         restarted.verify_historical(b"old", old.signature, old.snapshot)
 
 
-@requires_posix_custody_locking
+@requires_native_custody_locking
 def test_operation_id_is_namespaced_by_exact_authority_scope(
     tmp_path: Path, security: SecurityProfileIdentity
 ) -> None:
@@ -884,7 +884,7 @@ def test_operation_id_is_namespaced_by_exact_authority_scope(
     assert results[0].credential_identity() != results[1].credential_identity()
 
 
-@requires_posix_custody_locking
+@requires_native_custody_locking
 def test_pending_rotation_is_role_local(tmp_path: Path, security: SecurityProfileIdentity) -> None:
     proposer_role = ProviderRole.CHA_FRESHNESS_PROPOSER_SIGNING
     other_roles = (
@@ -929,7 +929,7 @@ def test_pending_rotation_is_role_local(tmp_path: Path, security: SecurityProfil
         )
 
 
-@requires_posix_custody_locking
+@requires_native_custody_locking
 def test_retained_verify_and_revoke_share_one_linearization_lock(
     tmp_path: Path,
     security: SecurityProfileIdentity,
@@ -991,7 +991,7 @@ def test_retained_verify_and_revoke_share_one_linearization_lock(
         provider.verify_historical(b"old", old.signature, old.snapshot)
 
 
-@requires_posix_custody_locking
+@requires_native_custody_locking
 def test_rotate_and_sign_share_one_linearization_lock(
     tmp_path: Path,
     security: SecurityProfileIdentity,
@@ -1042,7 +1042,7 @@ def test_rotate_and_sign_share_one_linearization_lock(
     assert provider.sign_finalization(b"new").snapshot.key_version == 2
 
 
-@requires_posix_custody_locking
+@requires_native_custody_locking
 @pytest.mark.parametrize(
     ("left", "right"),
     [
@@ -1077,7 +1077,7 @@ def test_raw_key_material_aliases_are_rejected_across_roles(
         provision(tmp_path, security, right, seed)
 
 
-@requires_posix_custody_locking
+@requires_native_custody_locking
 @pytest.mark.parametrize("target", [SigningKeyLifecycle.VERIFY_ONLY, SigningKeyLifecycle.REVOKED])
 def test_sign_transition_race_has_one_lock_linearization(
     tmp_path: Path,

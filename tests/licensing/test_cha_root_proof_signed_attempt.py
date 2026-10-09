@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import multiprocessing
 import os
 import sqlite3
+from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, replace
 
@@ -39,7 +41,7 @@ from bot_core.root_proof_issuer_substrate import public_key_material_identity
 from tests.licensing import test_cha_root_proof_attempt_reservation as upstream_tests
 from tests.licensing.test_cha_attempt_store_stage9 import authorization
 from tests.security import test_local_signing_custody as native_custody_tests
-from tests.security._local_signing_platform import requires_posix_custody_locking
+from tests.security._local_signing_platform import requires_native_custody_locking
 
 native_keyring = native_custody_tests.native_keyring
 
@@ -48,6 +50,79 @@ operation_resolution = upstream_tests.operation_resolution
 
 class InjectedCrash(RuntimeError):
     pass
+
+
+def _process_checkpoint_flow(path, auth, seeds, identities, ready, start, results):
+    """Spawned processes use real SQLite, Ed25519 and native OS locking."""
+    from bot_core.local_signing_custody import _custody_lock
+
+    ready.put(True)
+    if not start.wait(10):
+        raise RuntimeError("process start barrier timed out")
+    calls = [0, 0]
+    with _custody_lock(Path(path).parent, exclusive=True):
+        with persistence.SQLiteCHAAttemptStore(Path(path), auth.trust_domain) as store:
+            current = store.attempt(auth.logical_operation_id)
+            for offset, predecessor in enumerate(
+                (
+                    persistence.AttemptState.RESERVED_AWAITING_SIGNATURES,
+                    persistence.AttemptState.REQUEST_SIGNED_BY_REQUESTER,
+                )
+            ):
+                if current.state is predecessor:
+                    current = checkpoint(
+                        store,
+                        current,
+                        Ed25519PrivateKey.from_private_bytes(seeds[offset]),
+                        identities[offset],
+                    )
+                    calls[offset] += 1
+            identity = final_identity(store, current)
+            current = store.finalize_attempt(identity, expected_fence=current.fence)
+            results.put((current.reservation.issuance_attempt_id, identity.digest_sha256, calls))
+
+
+@requires_native_custody_locking
+def test_two_spawned_processes_checkpoint_and_finalize_once(store_flow):
+    path, auth, current, keys, identities = store_flow
+    seeds = tuple(
+        key.private_bytes(
+            serialization.Encoding.Raw,
+            serialization.PrivateFormat.Raw,
+            serialization.NoEncryption(),
+        )
+        for key in keys
+    )
+    context = multiprocessing.get_context("spawn")
+    ready, results, start = context.Queue(), context.Queue(), context.Event()
+    processes = [
+        context.Process(
+            target=_process_checkpoint_flow,
+            args=(str(path), auth, seeds, identities, ready, start, results),
+        )
+        for _ in range(2)
+    ]
+    try:
+        for process in processes:
+            process.start()
+        for _ in processes:
+            assert ready.get(timeout=20)
+        start.set()
+        outcomes = [results.get(timeout=20) for _ in processes]
+        for process in processes:
+            process.join(10)
+            assert process.exitcode == 0
+        assert outcomes[0][:2] == outcomes[1][:2]
+        assert outcomes[0][0] == current.reservation.issuance_attempt_id
+        assert [sum(outcome[2][role] for outcome in outcomes) for role in (0, 1)] == [1, 1]
+    finally:
+        for process in processes:
+            if process.is_alive():
+                process.terminate()
+            if process.pid is not None:
+                process.join(10)
+        ready.close()
+        results.close()
 
 
 def signer_identity(role, auth, private):
@@ -287,7 +362,7 @@ def test_checkpoints_reload_exact_bytes_and_final_digest(store_flow):
         )
 
 
-@requires_posix_custody_locking
+@requires_native_custody_locking
 @pytest.mark.parametrize(
     "cut,expected_calls,state",
     [
@@ -338,7 +413,7 @@ def test_crash_and_lost_response_resume_without_resigning(
     assert calls == [1, 1]
 
 
-@requires_posix_custody_locking
+@requires_native_custody_locking
 @pytest.mark.parametrize("role", list(IssuanceSigningRole))
 @pytest.mark.parametrize(
     "where",
@@ -350,7 +425,7 @@ def test_crash_and_lost_response_resume_without_resigning(
         "cas_written",
     ],
 )
-def test_uncommitted_signature_never_authorizes_second_invocation(
+def test_exact_uncommitted_signing_operation_is_recoverable(
     simulated_signed_flow, monkeypatch, role, where
 ):
     binding, _, auth, reservation, calls, _ = simulated_signed_flow
@@ -364,22 +439,31 @@ def test_uncommitted_signature_never_authorizes_second_invocation(
     monkeypatch.setattr(persistence, "_persistence_cut", crash)
     with pytest.raises(InjectedCrash):
         signed.sign_root_proof_issuance_attempt(reservation)
-    before = calls.copy()
+    with upstream._open_store(auth.authorization.trust_domain) as store:
+        before = store.signed_request(auth.authorization.logical_operation_id)
+        attempt_id = before.attempt_id
+        retained_requester = before.requester
+    expected_calls = [1, 1]
+    if where != "intent_durable":
+        expected_calls[0 if role is IssuanceSigningRole.REQUESTER else 1] += 1
     monkeypatch.setattr(signed, "_cut", lambda name: None)
     monkeypatch.setattr(persistence, "_persistence_cut", lambda name: None)
-    with pytest.raises(persistence.AttemptConflictError, match="SIGNATURE_OUTCOME_NOT_DURABLE"):
-        signed.resume_root_proof_issuance_attempt(binding, auth)
-    assert calls == before
-    assert calls[0] <= 1 and calls[1] <= 1
+    result = signed.resume_root_proof_issuance_attempt(binding, auth)
+    assert result.issuance_attempt_id == attempt_id
+    assert result.canonical_request_bytes == before.canonical_bytes
+    assert calls == expected_calls
     with upstream._open_store(auth.authorization.trust_domain) as store:
-        assert store.attempt(auth.authorization.logical_operation_id).state is (
-            persistence.AttemptState.RESERVED_AWAITING_SIGNATURES
-            if role is IssuanceSigningRole.REQUESTER
-            else persistence.AttemptState.REQUEST_SIGNED_BY_REQUESTER
-        )
+        after = store.signed_request(auth.authorization.logical_operation_id)
+        after.requester[0].verify(after.canonical_bytes, after.requester[1])
+        after.claimant[0].verify(after.canonical_bytes, after.claimant[1])
+        assert store._connection.execute("SELECT count(*) FROM reservations").fetchone() == (1,)
+    if retained_requester is not None:
+        assert after.requester == retained_requester
+    assert signed.resume_root_proof_issuance_attempt(binding, auth).identity == result.identity
+    assert calls == expected_calls
 
 
-@requires_posix_custody_locking
+@requires_native_custody_locking
 @pytest.mark.parametrize("cut", ["identity_inserted", "transition_inserted", "cas_written"])
 def test_atomic_finalization_cutpoints(simulated_signed_flow, monkeypatch, cut):
     binding, _, auth, reservation, calls, _ = simulated_signed_flow
@@ -407,7 +491,7 @@ def test_atomic_finalization_cutpoints(simulated_signed_flow, monkeypatch, cut):
     assert result.identity.claimant_authorization_signature_base64url == retained.claimant[1]
 
 
-@requires_posix_custody_locking
+@requires_native_custody_locking
 def test_two_threads_converge_on_one_private_invocation_per_role(simulated_signed_flow):
     binding, _, auth, reservation, calls, _ = simulated_signed_flow
     with ThreadPoolExecutor(max_workers=2) as pool:
@@ -422,24 +506,24 @@ def test_two_threads_converge_on_one_private_invocation_per_role(simulated_signe
 
 
 @pytest.mark.skipif(not hasattr(os, "fork"), reason="abrupt process crash proof requires fork")
-@requires_posix_custody_locking
+@requires_native_custody_locking
 @pytest.mark.parametrize(
-    "cut,blocked",
+    "cut,requester_calls",
     [
-        (IssuanceSigningRole.REQUESTER.value + ":intent_durable", True),
-        (IssuanceSigningRole.REQUESTER.value + ":signer_returned", True),
-        (IssuanceSigningRole.REQUESTER.value + ":checkpoint_durable", False),
-        (IssuanceSigningRole.CLAIMANT.value + ":checkpoint_durable", False),
-        ("finalization:cas_written", False),
-        ("finalization_durable", False),
+        (IssuanceSigningRole.REQUESTER.value + ":intent_durable", 1),
+        (IssuanceSigningRole.REQUESTER.value + ":signer_returned", 2),
+        (IssuanceSigningRole.REQUESTER.value + ":checkpoint_durable", 1),
+        (IssuanceSigningRole.CLAIMANT.value + ":checkpoint_durable", 1),
+        ("finalization:cas_written", 1),
+        ("finalization_durable", 1),
     ],
 )
-def test_abrupt_process_exit_retains_checkpoints_or_blocks_uncertain_invocation(
+def test_abrupt_process_exit_recovers_exact_operation_and_retains_checkpoints(
     simulated_signed_flow,
     monkeypatch,
     tmp_path,
     cut,
-    blocked,
+    requester_calls,
 ):
     binding, _, auth, reservation, _, _ = simulated_signed_flow
     log = tmp_path / "signer-calls"
@@ -480,18 +564,12 @@ def test_abrupt_process_exit_retains_checkpoints_or_blocks_uncertain_invocation(
         os._exit(98)
     _, status = os.waitpid(child, 0)
     assert os.waitstatus_to_exitcode(status) == 17
-    before = log.read_bytes() if log.exists() else b""
-    if blocked:
-        with pytest.raises(persistence.AttemptConflictError, match="SIGNATURE_OUTCOME_NOT_DURABLE"):
-            signed.resume_root_proof_issuance_attempt(binding, auth)
-        assert (log.read_bytes() if log.exists() else b"") == before
-    else:
-        result = signed.resume_root_proof_issuance_attempt(binding, auth)
-        assert result.state is persistence.AttemptState.SIGNED_IMMUTABLE_DURABLE_NOT_SENT
-        assert log.read_bytes() == b"requester\nclaimant\n"
+    result = signed.resume_root_proof_issuance_attempt(binding, auth)
+    assert result.state is persistence.AttemptState.SIGNED_IMMUTABLE_DURABLE_NOT_SENT
+    assert log.read_bytes() == b"requester\n" * requester_calls + b"claimant\n"
 
 
-@requires_posix_custody_locking
+@requires_native_custody_locking
 @pytest.mark.parametrize("role", [0, 1])
 @pytest.mark.parametrize("state", ["VERIFY_ONLY", "REVOKED"])
 def test_inactive_custody_before_signing_fails_closed(simulated_signed_flow, role, state):
@@ -502,7 +580,7 @@ def test_inactive_custody_before_signing_fails_closed(simulated_signed_flow, rol
     assert calls == [0, 0]
 
 
-@requires_posix_custody_locking
+@requires_native_custody_locking
 @pytest.mark.parametrize(
     "role,cut",
     [
@@ -530,7 +608,7 @@ def test_changed_custody_after_checkpoint_never_substitutes_key(
     assert calls == before
 
 
-@requires_posix_custody_locking
+@requires_native_custody_locking
 @pytest.mark.parametrize("role", ["requester", "claimant"])
 def test_relevant_registry_version_changes_fail_before_signing(simulated_signed_flow, role):
     _, provider, _, reservation, calls, _ = simulated_signed_flow
@@ -562,7 +640,7 @@ def test_raw_identity_signature_and_rows_never_grant_authority(store_flow):
         type("Fake", (signed.VerifiedSignedImmutableRootProofIssuanceAttempt,), {})
 
 
-@requires_posix_custody_locking
+@requires_native_custody_locking
 def test_capability_is_uncopyable_and_revalidates_current_state(simulated_signed_flow):
     _, provider, _, reservation, _, _ = simulated_signed_flow
     result = signed.sign_root_proof_issuance_attempt(reservation)
@@ -676,7 +754,7 @@ def test_privileged_rewrite_is_corruption(store_flow, mutation):
         persistence.SQLiteCHAAttemptStore(path, auth.trust_domain)
 
 
-@requires_posix_custody_locking
+@requires_native_custody_locking
 def test_distinct_namespace_and_raw_key_binding_and_no_runtime_provisioning(
     simulated_signed_flow, monkeypatch
 ):
@@ -709,7 +787,7 @@ def test_distinct_namespace_and_raw_key_binding_and_no_runtime_provisioning(
     assert record.lifecycle == "ACTIVE" and record.public_key_hex == requester.public_key_hex
 
 
-@requires_posix_custody_locking
+@requires_native_custody_locking
 def test_missing_private_key_after_public_draft_never_regenerates(
     native_keyring, tmp_path, monkeypatch
 ):
@@ -734,7 +812,7 @@ def test_missing_private_key_after_public_draft_never_regenerates(
         admin.stage(key_id="key", key_version=1)
 
 
-@requires_posix_custody_locking
+@requires_native_custody_locking
 def test_wrong_trust_domain_and_caller_namespace_rejected(simulated_signed_flow):
     _, _, auth, reservation, calls, _ = simulated_signed_flow
     requester_path, _ = signed._custody_directories(auth.authorization)
@@ -818,7 +896,7 @@ def test_signed_v5_history_cannot_fabricate_request_bytes(store_flow):
         assert db.execute("SELECT schema_version FROM store_metadata").fetchone() == (5,)
 
 
-@requires_posix_custody_locking
+@requires_native_custody_locking
 @pytest.mark.parametrize("role", ["requester", "claimant"])
 def test_registry_change_after_durable_signature_never_signs_again(
     simulated_signed_flow, monkeypatch, role
@@ -845,3 +923,182 @@ def test_registry_change_after_durable_signature_never_signs_again(
     with pytest.raises(upstream.RootProofAttemptReservationError):
         signed.resume_root_proof_issuance_attempt(binding, auth)
     assert calls == before
+
+
+@pytest.mark.parametrize("role", list(IssuanceSigningRole))
+@pytest.mark.parametrize("field", ["public_key", "namespace", "lifecycle_generation"])
+def test_unequal_retained_signing_intent_fails_closed(store_flow, role, field):
+    path, auth, current, keys, identities = store_flow
+    offset = 0 if role is IssuanceSigningRole.REQUESTER else 1
+    with persistence.SQLiteCHAAttemptStore(path, auth.trust_domain) as store:
+        if offset:
+            current = checkpoint(store, current, keys[0], identities[0])
+        before = store.prepare_signature(current, identities[offset])
+        altered = (
+            signer_identity(role, auth, Ed25519PrivateKey.generate())
+            if field == "public_key"
+            else replace(
+                identities[offset],
+                **{"service_namespace": "other"}
+                if field == "namespace"
+                else {"lifecycle_generation": 2},
+            )
+        )
+        with pytest.raises(persistence.AttemptConflictError, match="EXACT_SIGNING_OPERATION"):
+            store.prepare_signature(current, altered)
+        assert store.prepare_signature(current, identities[offset]) == before
+
+
+@pytest.mark.parametrize(
+    "phase", ["reservation", "intent", "requester_checkpoint", "claimant_intent"]
+)
+def test_pre_send_supersession_retains_history_and_requires_explicit_decision(store_flow, phase):
+    path, auth, current, keys, identities = store_flow
+    new_auth = replace(
+        auth,
+        requester_key_id="replacement-requester",
+        requester_key_version=2,
+        authorization_evidence_sha256="f" * 64,
+    )
+    with persistence.SQLiteCHAAttemptStore(path, auth.trust_domain) as store:
+        if phase == "intent":
+            store.prepare_signature(current, identities[0])
+        if phase in {"requester_checkpoint", "claimant_intent"}:
+            current = checkpoint(store, current, keys[0], identities[0])
+        if phase == "claimant_intent":
+            store.prepare_signature(current, identities[1])
+        retained = {
+            table: store._connection.execute(f"SELECT * FROM {table}").fetchall()
+            for table in (
+                "reservations",
+                "issuance_requests",
+                "signing_intents",
+                "signature_checkpoints",
+            )
+        }
+        with pytest.raises(persistence.AttemptConflictError):
+            store.reserve_or_resolve_attempt_id(new_auth)
+        replacement = store.supersede_pre_send(current, new_auth)
+        assert (
+            replacement.reservation.issuance_attempt_id != current.reservation.issuance_attempt_id
+        )
+        assert replacement.fence == current.fence + 1
+        assert replacement.state is persistence.AttemptState.RESERVED_AWAITING_SIGNATURES
+        assert replacement.identity is None and replacement.immutable_attempt_digest_sha256 is None
+        assert store.supersede_pre_send(current, new_auth) == replacement
+        for table, rows in retained.items():
+            assert (
+                store._connection.execute(f"SELECT * FROM {table}").fetchall()[: len(rows)] == rows
+            )
+        assert store._connection.execute(
+            "SELECT state FROM attempt_transitions WHERE attempt_id=? ORDER BY transition_id DESC LIMIT 1",
+            (current.reservation.issuance_attempt_id,),
+        ).fetchone() == ("SUPERSEDED_PRE_SEND_PROVEN_UNSENDABLE",)
+        with pytest.raises(persistence.AttemptConflictError):
+            store.supersede_pre_send(current, replace(new_auth, requester_key_id="other"))
+    with persistence.SQLiteCHAAttemptStore(path, auth.trust_domain) as store:
+        assert store.attempt(auth.logical_operation_id) == replacement
+        assert store.reserve_or_resolve_attempt_id(new_auth) == replacement
+        replacement_keys = (Ed25519PrivateKey.generate(), Ed25519PrivateKey.generate())
+        for role, private in zip(IssuanceSigningRole, replacement_keys, strict=True):
+            replacement = checkpoint(
+                store, replacement, private, signer_identity(role, new_auth, private)
+            )
+        identity = final_identity(store, replacement)
+        assert (
+            store.finalize_attempt(identity, expected_fence=replacement.fence).state
+            is persistence.AttemptState.SIGNED_IMMUTABLE_DURABLE_NOT_SENT
+        )
+
+
+@pytest.mark.parametrize(
+    "phase",
+    [
+        "both_checkpoints",
+        "finalized",
+        "changed_binding",
+        "same_credentials",
+        "stale_fence",
+        "transport_grant",
+        "bound_grant",
+    ],
+)
+def test_unsafe_pre_send_supersession_fails_closed(store_flow, monkeypatch, phase):
+    from bot_core import cha_attempt_signatures
+
+    path, auth, current, keys, identities = store_flow
+    new_auth = replace(auth, requester_key_id="replacement-key", requester_key_version=2)
+    with persistence.SQLiteCHAAttemptStore(path, auth.trust_domain) as store:
+        if phase in {"both_checkpoints", "finalized"}:
+            current = checkpoint(store, current, keys[0], identities[0])
+            current = checkpoint(store, current, keys[1], identities[1])
+        if phase == "finalized":
+            current = store.finalize_attempt(
+                final_identity(store, current), expected_fence=current.fence
+            )
+        if phase == "changed_binding":
+            new_auth = replace(new_auth, initial_binding_sha256="f" * 64)
+        if phase == "same_credentials":
+            new_auth = auth
+        if phase == "stale_fence":
+            current = replace(current, fence=current.fence + 1)
+        if phase in {"transport_grant", "bound_grant"}:
+            monkeypatch.setattr(
+                cha_attempt_signatures,
+                "_INSTALLED_ISSUANCE_GRANTS",
+                cha_attempt_signatures._INSTALLED_ISSUANCE_GRANTS
+                | {"EXTERNAL_SEND" if phase == "transport_grant" else "ISSUER_BOUND"},
+            )
+        with pytest.raises(persistence.AttemptConflictError):
+            store.supersede_pre_send(current, new_auth)
+        assert store._connection.execute("SELECT count(*) FROM reservations").fetchone() == (1,)
+        assert store._connection.execute(
+            "SELECT count(*) FROM replacement_relations"
+        ).fetchone() == (0,)
+
+
+@pytest.mark.parametrize("cut", ["pre_send:decision_inserted", "pre_send:cas_written"])
+def test_pre_send_supersession_rollback_never_hides_new_reservation(store_flow, monkeypatch, cut):
+    path, auth, current, _, _ = store_flow
+    new_auth = replace(auth, claimant_key_id="replacement-key", claimant_key_version=2)
+
+    def crash(name):
+        if name == cut:
+            raise InjectedCrash(name)
+
+    monkeypatch.setattr(persistence, "_persistence_cut", crash)
+    with persistence.SQLiteCHAAttemptStore(path, auth.trust_domain) as store:
+        with pytest.raises(InjectedCrash):
+            store.supersede_pre_send(current, new_auth)
+    monkeypatch.setattr(persistence, "_persistence_cut", lambda name: None)
+    with persistence.SQLiteCHAAttemptStore(path, auth.trust_domain) as store:
+        assert store.attempt(auth.logical_operation_id) == current
+        assert store._connection.execute("SELECT count(*) FROM reservations").fetchone() == (1,)
+        assert store.supersede_pre_send(current, new_auth).fence == current.fence + 1
+
+
+@requires_native_custody_locking
+def test_changed_registry_key_requires_explicit_public_boundary_supersession(simulated_signed_flow):
+    binding, provider, old_auth, reservation, calls, _ = simulated_signed_flow
+    old_id = reservation.issuance_attempt_id
+    port = provider.requester_registry
+    port.record = replace(port.record, requester_key_version=2)
+    upstream_tests._refresh_active_credential_identity(port)
+    new_auth = upstream.resolve_root_proof_issuance_authorization(binding)
+    with pytest.raises(upstream.RootProofAttemptReservationError):
+        signed.resume_root_proof_issuance_attempt(binding, old_auth)
+    with pytest.raises(persistence.AttemptConflictError):
+        upstream.reserve_root_proof_issuance_attempt(binding, new_auth)
+    replacement = signed.supersede_root_proof_issuance_attempt_pre_send(binding, new_auth)
+    assert replacement.issuance_attempt_id != old_id
+    assert (
+        signed.supersede_root_proof_issuance_attempt_pre_send(binding, new_auth).issuance_attempt_id
+        == replacement.issuance_attempt_id
+    )
+    assert (
+        upstream.load_root_proof_issuance_attempt(binding, new_auth).issuance_attempt_id
+        == replacement.issuance_attempt_id
+    )
+    with pytest.raises(ValueError):
+        signed.sign_root_proof_issuance_attempt(replacement)
+    assert calls == [0, 0]

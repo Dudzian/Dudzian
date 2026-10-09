@@ -94,7 +94,12 @@
     "registry_binding": "Exact principal/role/environment/trust/key id/version/ACTIVE and derived private public bytes == authoritative public bytes/material identity",
     "prohibited_existing_roles": "RootProof issuer, CHA freshness proposer, FreshnessAuthority, Catalog and storage remain separate. Current main has no installed runtime factory supplying these local signing identities. No alias guarantee is claimed for unavailable providers. Global requester/claimant registry alias qualification remains mandatory.",
     "runtime_can_generate_rotate_delete_export_or_change_lifecycle": false,
-    "windows_native_custody": "BLOCKED: inherited custody primitives currently require POSIX locking"
+    "windows_native_custody": "IMPLEMENTED: msvcrt.LK_NBLCK one-byte cross-process exclusive ownership for all custody operations; explicit unlock; bounded contention; no unlocked fallback",
+    "platform_locking": {
+      "posix": "fcntl.flock shared/exclusive",
+      "windows": "msvcrt.locking exclusive-only; safe stronger serialization for readers and lifecycle writers",
+      "authority": "native cross-process locking; no process-local mutex as authority"
+    }
   },
   "provisioning": {
     "access": "offline/admin-only, outside public Stage 9 API",
@@ -122,7 +127,7 @@
       "CLAIMANT_AUTHORIZED",
       "SIGNED_IMMUTABLE_DURABLE_NOT_SENT"
     ],
-    "request_bytes": "immutable issuance_requests BLOB, persisted in same transaction as requester invocation latch before signing",
+    "request_bytes": "immutable issuance_requests BLOB, persisted with exact requester signing intent before private invocation",
     "reference": "immutable:req:sha256:<lowercase SHA256 of exact canonical bytes>",
     "reference_owner": "authority-generated; unique reference and digest; exact reference plus unequal bytes is corruption",
     "tables": [
@@ -142,13 +147,49 @@
       "ambiguous_signed_v5": "FAIL_CLOSED; exact signed request bytes cannot be fabricated",
       "remint_or_fabricate_signatures": false
     },
-    "invocation_latch": "append-only role/attempt/request-reference/exact signer identity committed BEFORE private invocation",
-    "resigning_allowed": false,
-    "uncommitted_signature": "SIGNATURE_OUTCOME_NOT_DURABLE; latch stays spent after abrupt exit/rollback; no second invocation, no remint, no send",
-    "crash_model": "Local deterministic Ed25519 may return before SQLite signature commit. Durable latch removes ambiguity from authorization: any intent without a checkpoint blocks forever, including crash before actual private invocation. No claim of atomic keyring/PostgreSQL/SQLite signing or lossless recovery.",
-    "concurrency": "protected-host cross-process advisory lock across latch/sign/checkpoint commits; SQLite BEGIN IMMEDIATE, unique immutable rows and exact fenced CAS",
+    "uncommitted_signature": "pre-finalization deterministic Ed25519 may re-obtain missing checkpoint for same exact rpa/request/key/role under current ACTIVE lifecycle and unchanged authorization; never remint",
+    "crash_model": "intent is an exact operation identity, not a permanently spent invocation latch; private signing and SQLite checkpoint are separate commits",
+    "concurrency": "protected-host native cross-process advisory lock across intent/sign/checkpoint commits; SQLite BEGIN IMMEDIATE, unique immutable rows and exact fenced CAS",
     "live_authorization": "before each new signature and finalization, requalify exact InitialBinding, operation evidence, reserved lineage and both ACTIVE custody/public identities. Changed authorization fails closed, including after either retained checkpoint. Independent authorities are not one distributed transaction.",
-    "finalize": "existing finalize_attempt(identity, expected_fence=current.fence), from CLAIMANT_AUTHORIZED; exact duplicates converge on same retained identity and digest"
+    "finalize": "existing finalize_attempt(identity, expected_fence=current.fence), from CLAIMANT_AUTHORIZED; exact duplicates converge on same retained identity and digest",
+    "signing_intent": "append-only exact attempt/role/domain/profile/request reference/digest/signer/key identity; identical missing-checkpoint retry may recover; unequal identity fails closed",
+    "recovery": {
+      "pre_finalization_missing_signature_reobtain_allowed": true,
+      "same_rpa_request_key_role_required": true,
+      "durable_checkpoint_always_reused": true,
+      "post_finalization_resigning_allowed": false,
+      "post_send_resigning_allowed": false,
+      "permanent_intent_exhaustion": false,
+      "credential_substitution_requires_safe_supersession": true,
+      "parent_reservation_crash_recovery": {
+        "reservation_durable_no_requester_signature": "recover same reserved rpa_id; never remint",
+        "requester_signature_claimant_missing": "recover same reserved rpa_id and exact request identity; never remint",
+        "both_signatures_attempt_not_persisted": "reservation remains authoritative; use only durably staged authenticated material or re-obtain signatures for same rpa_id under lifecycle rules; never remint",
+        "immutable_attempt_durable_before_send": "existing persist-before-send recovery applies",
+        "credential_rotation_before_signing": "reservation fields never silently change; if credentials no longer eligible require explicit safe pre-send supersession, never mint behind unresolved reservation"
+      }
+    },
+    "pre_send_reservation_supersession": {
+      "distinct_from_post_send_replacement": true,
+      "requires": [
+        "proof no external send was possible",
+        "proof no completed externally-sendable attempt exists",
+        "proof no issuer BOUND decision can exist"
+      ],
+      "old_history_retained": true,
+      "new_rpa_id_required": true,
+      "unresolved_reservation_allows_hidden_new_id": false,
+      "after_send_or_ambiguous": "use authoritative reconciliation rules",
+      "historical_digest_semantics": "superseded proven-unsendable reservation may permanently retain NOT_YET_DEFINED; not every historical rpa_id acquires a digest",
+      "state": "SUPERSEDED_PRE_SEND_PROVEN_UNSENDABLE",
+      "executable_proofs": "exact installed local-only RESERVE/SIGN/FINALIZE grants; no immutable attempt, no complete two-signature envelope, no recovery/BOUND record; exact current fence and InitialBinding",
+      "retained_relation": "existing immutable replacement_relations, typed LocalPreSendUnsendableV1 evidence; no schema change",
+      "eligible_states": [
+        "RESERVED_AWAITING_SIGNATURES",
+        "REQUEST_SIGNED_BY_REQUESTER"
+      ],
+      "replacement_authorization": "fresh genuine provider requalification; new credential tuple; old authorization and request/checkpoints remain immutable"
+    }
   },
   "attempt_identity": {
     "owner": "existing AttemptIdentity",
@@ -174,7 +215,11 @@
       "existing verified InitialBinding",
       "existing verified issuance authorization"
     ],
-    "caller_selected_private_key_path_dsn_signer_key_version_attempt_id_reference_signature_namespace": false
+    "caller_selected_private_key_path_dsn_signer_key_version_attempt_id_reference_signature_namespace": false,
+    "supersede_root_proof_issuance_attempt_pre_send": [
+      "existing verified InitialBinding",
+      "fresh existing verified issuance authorization"
+    ]
   },
   "current_status": {
     "requester_signing_custody_implementation": "IMPLEMENTED",
@@ -195,7 +240,8 @@
     "protected_freshness": "NOT_STARTED",
     "provisioning_membership": "BLOCKED",
     "secret_resource": "NOT_STARTED",
-    "stage_10_production_lifecycle_live": "NOT_STARTED"
+    "stage_10_production_lifecycle_live": "NOT_STARTED",
+    "signed_immutable_attempt_platform_support": "POSIX_AND_WINDOWS_NATIVE"
   },
   "forbidden": [
     "external issuer send",

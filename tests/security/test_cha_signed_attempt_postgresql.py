@@ -18,7 +18,7 @@ from tests.security import (
     test_postgresql_preaccount_credentials_integration as registries,
     test_postgresql_root_proof_issuance_authority as genuine,
 )
-from tests.security._local_signing_platform import requires_posix_custody_locking
+from tests.security._local_signing_platform import requires_native_custody_locking
 
 native_keyring = native_custody_tests.native_keyring
 
@@ -34,7 +34,7 @@ reserved = genuine.reserved
 
 
 @pytest.mark.external_postgresql
-@requires_posix_custody_locking
+@requires_native_custody_locking
 def test_genuine_registry_private_binding_through_guarded_initial_binding(
     reserved,
     native_keyring,
@@ -102,7 +102,7 @@ def test_genuine_registry_private_binding_through_guarded_initial_binding(
 
 
 @pytest.mark.external_postgresql
-@requires_posix_custody_locking
+@requires_native_custody_locking
 @pytest.mark.parametrize("role", list(IssuanceSigningRole))
 def test_genuine_registry_mismatch_cannot_activate_staged_private_key(
     role,

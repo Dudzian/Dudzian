@@ -61,6 +61,7 @@ jobs:
           tests/architecture/test_stage9_root_proof_preaccount_credentials_contract.py
           tests/architecture/test_stage9_root_proof_signed_immutable_attempt_contract.py
           tests/licensing/test_cha_root_proof_signed_attempt.py
+          tests/security/test_native_custody_locking.py
           tests/security/test_postgresql_preaccount_credential_contract.py
           tests/security/test_postgresql_preaccount_credentials_integration.py
           tests/security/test_postgresql_root_proof_issuance_authority.py
@@ -190,8 +191,10 @@ jobs:
         run: >-
           python -m pytest -p asyncio -p pytest_cov
           tests/licensing/test_cha_root_proof_signed_attempt.py
+          tests/security/test_native_custody_locking.py
           tests/architecture/test_stage9_root_proof_signed_immutable_attempt_contract.py
           -m "not hardware and not destructive and not network"
+          --cov=bot_core.local_signing_custody
           --cov=bot_core.cha_issuance_request
           --cov=bot_core.cha_attempt_signatures
           --cov=bot_core.cha_root_proof_signing_custody

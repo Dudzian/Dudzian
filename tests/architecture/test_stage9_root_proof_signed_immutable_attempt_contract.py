@@ -70,7 +70,7 @@ def test_schema_and_immutable_signing_tables():
     assert cha_attempt_store._SCHEMA_VERSION == CONTRACT["durability"]["schema_version"] == 6
     assert list(cha_attempt_signatures.TABLES) == CONTRACT["durability"]["tables"][:3]
     assert CONTRACT["durability"]["migration"]["from_version"] == 5
-    assert CONTRACT["durability"]["resigning_allowed"] is False
+    assert "resigning_allowed" not in CONTRACT["durability"]
     assert (
         CONTRACT["durability"]["reference"]
         == "immutable:req:sha256:<lowercase SHA256 of exact canonical bytes>"
@@ -191,3 +191,98 @@ def test_custody_runtime_ports_do_not_expose_provisioning_or_private_export():
         is False
     )
     assert CONTRACT["provisioning"]["distributed_atomicity"] is False
+
+
+def assert_parent_recovery_parity(contract):
+    parent = json.loads(
+        (DOCS / "m05_account_genesis_independent_root_proof_issuer_contract.json").read_bytes()
+    )
+    recovery = contract["durability"]["recovery"]
+    assert recovery["parent_reservation_crash_recovery"] == parent["reservation_crash_recovery"]
+    assert recovery["pre_finalization_missing_signature_reobtain_allowed"] is True
+    assert recovery["same_rpa_request_key_role_required"] is True
+    assert recovery["durable_checkpoint_always_reused"] is True
+    assert recovery["permanent_intent_exhaustion"] is False
+    assert recovery["post_finalization_resigning_allowed"] is False
+    assert recovery["post_send_resigning_allowed"] is False
+    assert recovery["credential_substitution_requires_safe_supersession"] is True
+    assert "resigning_allowed" not in contract["durability"]
+    supersession = contract["durability"]["pre_send_reservation_supersession"]
+    for field, value in parent["pre_send_reservation_supersession"].items():
+        assert type(supersession[field]) is type(value) and supersession[field] == value
+    assert (
+        supersession["state"]
+        == cha_attempt_store.AttemptState.SUPERSEDED_PRE_SEND_PROVEN_UNSENDABLE.value
+    )
+    assert supersession["state"] in parent["attempt_subordinate_states"]
+
+
+def test_phase_specific_recovery_conforms_to_frozen_parent():
+    assert_parent_recovery_parity(CONTRACT)
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("pre_finalization_missing_signature_reobtain_allowed", False),
+        ("durable_checkpoint_always_reused", False),
+        ("permanent_intent_exhaustion", True),
+        ("post_finalization_resigning_allowed", True),
+        ("post_send_resigning_allowed", True),
+        ("credential_substitution_requires_safe_supersession", False),
+    ],
+)
+def test_child_recovery_mutations_cannot_redefine_parent(field, value):
+    import copy
+
+    changed = copy.deepcopy(CONTRACT)
+    changed["durability"]["recovery"][field] = value
+    with pytest.raises(AssertionError):
+        assert_parent_recovery_parity(changed)
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "old_history_retained",
+        "new_rpa_id_required",
+        "unresolved_reservation_allows_hidden_new_id",
+        "distinct_from_post_send_replacement",
+    ],
+)
+def test_child_supersession_mutations_cannot_redefine_parent(field):
+    import copy
+
+    changed = copy.deepcopy(CONTRACT)
+    changed["durability"]["pre_send_reservation_supersession"][field] = not changed["durability"][
+        "pre_send_reservation_supersession"
+    ][field]
+    with pytest.raises(AssertionError):
+        assert_parent_recovery_parity(changed)
+
+
+def test_current_platform_support_matches_native_custody_and_child():
+    from tests.security._local_signing_platform import requires_native_custody_locking
+
+    assert (
+        CONTRACT["current_status"]["signed_immutable_attempt_platform_support"]
+        == "POSIX_AND_WINDOWS_NATIVE"
+    )
+    assert "LK_NBLCK" in inspect.getsource(cha_root_proof_signing_custody._custody_lock)
+    assert "flock" in inspect.getsource(cha_root_proof_signing_custody._custody_lock)
+    assert requires_native_custody_locking.args == (False,)
+
+
+def test_child_never_claims_permanent_pre_sign_intent_exhaustion():
+    assert_parent_recovery_parity(CONTRACT)
+    text = json.dumps(CONTRACT["durability"]).lower()
+    for forbidden in (
+        "blocks forever",
+        "permanently blocks",
+        "invocation cannot be repeated",
+        "latch stays spent",
+    ):
+        assert forbidden not in text
+    source = inspect.getsource(cha_attempt_store.SQLiteCHAAttemptStore.prepare_signature)
+    assert "SIGNATURE_OUTCOME_NOT_DURABLE" not in source
+    assert "EXACT_SIGNING_OPERATION_REQUIRED" in source
