@@ -42,6 +42,7 @@ from bot_core.root_proof_issuer_substrate import (
     ProviderRole,
     SecurityProfile,
     SecurityProfileIdentity,
+    public_key_material_identity,
 )
 from deployment import windows_production_cha_account_reservation as installed
 from tests.licensing import test_cha_account_reservation as upstream_tests
@@ -72,9 +73,39 @@ class TEST_ONLYPort:
             True, authoritative_reads=True, durable_state=True, compare_and_swap=True
         )
         self.credentials = credentials
+        self.public_keys = {}
 
     def credential_identities(self):
         return self.credentials
+
+    def public_key(self, key_id):
+        return self.public_keys[key_id]
+
+
+def _refresh_active_credential_identity(port):
+    record = port.record
+    requester = port.identity.role is ProviderRole.REQUESTER_CREDENTIAL_REGISTRY
+    key_id = record.requester_key_id if requester else record.claimant_key_id
+    version = record.requester_key_version if requester else record.claimant_key_version
+    role = (
+        CredentialSemanticRole.ROOT_PROOF_REQUESTER
+        if requester
+        else CredentialSemanticRole.ROOT_PROOF_CLAIMANT
+    )
+    port.public_keys.setdefault(
+        key_id, hashlib.sha256(("TEST_ONLY-public-key:" + key_id).encode()).digest()
+    )
+    namespace = port.identity.provider_namespace
+    port.credentials = (
+        CredentialRoleIdentity(
+            role,
+            key_id,
+            namespace,
+            f"{key_id}:v{version}",
+            f"{namespace}:public-lifecycle:1:{record.registry_revision}:{record.lifecycle}",
+            public_key_material_identity(port.public_key(key_id)),
+        ),
+    )
 
 
 class TEST_ONLYEntitlementPort(TEST_ONLYPort):
@@ -129,29 +160,8 @@ class TEST_ONLYIssuanceAuthority:
         self.claimant_registry.record = capability._ClaimantIdentityV1(
             "TEST_ONLY-provisioning-principal", "TEST_ONLY-claimant-key-雪", 1, "ACTIVE", 9
         )
-        for port, role, key in (
-            (
-                self.requester_registry,
-                CredentialSemanticRole.ROOT_PROOF_REQUESTER,
-                self.requester_registry.record.requester_key_id,
-            ),
-            (
-                self.claimant_registry,
-                CredentialSemanticRole.ROOT_PROOF_CLAIMANT,
-                self.claimant_registry.record.claimant_key_id,
-            ),
-        ):
-            port.credentials = (
-                CredentialRoleIdentity(
-                    role,
-                    key,
-                    port.identity.provider_namespace,
-                    "TEST_ONLY-key-handle:" + key,
-                    "TEST_ONLY-custody:" + key,
-                    "sha256:"
-                    + ("1" if role is CredentialSemanticRole.ROOT_PROOF_REQUESTER else "2") * 64,
-                ),
-            )
+        for port in (self.requester_registry, self.claimant_registry):
+            _refresh_active_credential_identity(port)
         self.subject = RegistrySubject("TEST_ONLY-lookup", "PRODUCTION", trust)
         self.entitlement_registry.state = AuthoritativeEntitlementState(
             self.subject,
@@ -216,6 +226,336 @@ def attempt(authorized):
     return binding, authority, authorization, reservation
 
 
+@pytest.fixture
+def operation_resolution(monkeypatch):
+    """Isolate evidence selection while lineage regressions use genuine bindings."""
+
+    authority = TEST_ONLYIssuanceAuthority("TEST_ONLY-operation-evidence-trust")
+    binding = object()
+    context = {
+        "environment": "PRODUCTION",
+        "pdsa_trust_domain": authority.subject.trust_domain,
+        "product_scope": "CryptoHunter",
+        "logical_operation_id": "ago_018f3e70-7b5c-7c21-8b9a-0123456789ab",
+        "account_id": "acct_018f3e70-7b5c-7c21-8b9a-0123456789ab",
+        "reservation_identity": "ibr_" + "4" * 64,
+        "reservation_relation": "EXACT_OPERATION_ACCOUNT",
+        "canonical_genesis_request_fingerprint_sha256": "5" * 64,
+        "initial_binding_reference": "initial-binding-v1:" + "6" * 64,
+        "initial_binding_digest_sha256": "6" * 64,
+        "initial_binding_sha256": "7" * 64,
+    }
+    monkeypatch.setattr(capability, "_TRUSTED_PROVIDER_TYPES", (TEST_ONLYIssuanceAuthority,))
+    monkeypatch.setattr(capability, "_issuance_authority_provider", lambda: authority)
+    monkeypatch.setattr(capability, "_binding_context", lambda value: (b"TEST_ONLY", context))
+    return binding, authority, context
+
+
+def _unrelated_claimant_identity(port, *, version=1, revision=1, lifecycle="ACTIVE"):
+    key_id = f"TEST_ONLY-unrelated-claimant-v{version}"
+    raw = hashlib.sha256(key_id.encode()).digest()
+    port.public_keys[key_id] = raw
+    namespace = port.identity.provider_namespace
+    return CredentialRoleIdentity(
+        CredentialSemanticRole.ROOT_PROOF_CLAIMANT,
+        key_id,
+        namespace,
+        f"{key_id}:v{version}",
+        f"{namespace}:public-lifecycle:{revision}:{revision}:{lifecycle}",
+        public_key_material_identity(raw),
+    )
+
+
+def test_operation_evidence_retains_exact_selected_identity_and_recomputed_material(
+    operation_resolution,
+):
+    binding, authority, context = operation_resolution
+    _, authorization, raw = capability._resolve_from_provider(binding, authority)
+    evidence = parse_canonical(raw)
+    assert set(evidence) == {
+        "schema_version",
+        "scope",
+        "context",
+        "resolution",
+        "entitlement",
+        "requester",
+        "claimant",
+        "requester_credential",
+        "claimant_credential",
+        "providers",
+    }
+    assert evidence["schema_version"] == "RootProofOperationScopedAuthorizationEvidenceV1"
+    assert evidence["scope"] == "EXACT_OPERATION_SCOPED"
+    assert evidence["context"] == context
+    assert authorization.authorization_evidence_sha256 == hashlib.sha256(raw).hexdigest()
+    for name in ("requester", "claimant"):
+        port = getattr(authority, name + "_registry")
+        selected = evidence[name + "_credential"]
+        assert selected["identity"] == asdict(port.credentials[0])
+        assert selected["public_key_material_identity"] == public_key_material_identity(
+            port.public_key(port.credentials[0].credential_identity)
+        )
+    assert all(
+        set(value) == {"identity", "capabilities"} for value in evidence["providers"].values()
+    )
+
+
+@pytest.mark.parametrize("population", ["missing", "ambiguous"])
+def test_operation_selected_identity_must_exist_exactly_once(operation_resolution, population):
+    binding, authority, _ = operation_resolution
+    port = authority.claimant_registry
+    selected = port.credentials[0]
+    unrelated = _unrelated_claimant_identity(port)
+    port.credentials = (unrelated,) if population == "missing" else (selected, selected, unrelated)
+    with pytest.raises(capability.RootProofAttemptReservationError, match="EXACT_OPERATION"):
+        capability._resolve_from_provider(binding, authority)
+
+
+@pytest.mark.parametrize(
+    "lifecycle",
+    [
+        "0:9:ACTIVE",
+        "01:9:ACTIVE",
+        "9007199254740992:9:ACTIVE",
+        "١:9:ACTIVE",
+        "1:09:ACTIVE",
+        "1:8:ACTIVE",
+        "1:9:VERIFY_ONLY",
+        "1:9:REVOKED",
+        "1:9:ACTIVE:extra",
+    ],
+)
+def test_operation_selected_lifecycle_evidence_is_exact(operation_resolution, lifecycle):
+    binding, authority, _ = operation_resolution
+    port = authority.claimant_registry
+    port.credentials = (
+        replace(
+            port.credentials[0],
+            custody_lifecycle_namespace=port.identity.provider_namespace
+            + ":public-lifecycle:"
+            + lifecycle,
+        ),
+    )
+    with pytest.raises(capability.RootProofAttemptReservationError, match="OPERATION_CREDENTIAL"):
+        capability._resolve_from_provider(binding, authority)
+
+
+@pytest.mark.parametrize("mutation", ["version", "material_identity", "raw_material"])
+def test_operation_selected_key_evidence_is_exact(operation_resolution, mutation):
+    binding, authority, _ = operation_resolution
+    port = authority.claimant_registry
+    identity = port.credentials[0]
+    if mutation == "version":
+        port.credentials = (
+            replace(identity, key_handle_or_version=identity.credential_identity + ":v2"),
+        )
+    elif mutation == "material_identity":
+        port.credentials = (
+            replace(identity, key_material_identity=public_key_material_identity(b"z" * 32)),
+        )
+    else:
+        port.public_keys[identity.credential_identity] = b"z" * 32
+    with pytest.raises(capability.RootProofAttemptReservationError, match="OPERATION_CREDENTIAL"):
+        capability._resolve_from_provider(binding, authority)
+
+
+def test_operation_unrelated_population_changes_preserve_authorization_identity(
+    operation_resolution,
+):
+    binding, authority, _ = operation_resolution
+    port = authority.claimant_registry
+    selected = port.credentials[0]
+    authorization = capability.resolve_root_proof_issuance_authorization(binding)
+    baseline = capability._resolve_from_provider(binding, authority)
+    first = _unrelated_claimant_identity(port)
+    second = _unrelated_claimant_identity(port, version=2, revision=2)
+    for population in (
+        (selected, first),
+        (
+            selected,
+            replace(
+                first,
+                custody_lifecycle_namespace=port.identity.provider_namespace
+                + ":public-lifecycle:2:2:VERIFY_ONLY",
+            ),
+            second,
+        ),
+        (
+            selected,
+            replace(
+                first,
+                custody_lifecycle_namespace=port.identity.provider_namespace
+                + ":public-lifecycle:3:3:REVOKED",
+            ),
+            replace(
+                second,
+                custody_lifecycle_namespace=port.identity.provider_namespace
+                + ":public-lifecycle:4:4:VERIFY_ONLY",
+            ),
+        ),
+        (selected, second, _unrelated_claimant_identity(port, version=3, revision=5)),
+    ):
+        port.credentials = population
+        assert capability._resolve_from_provider(binding, authority) == baseline
+        assert (
+            capability.require_verified_root_proof_issuance_authorization(authorization)
+            is authorization
+        )
+        assert (
+            authorization.authorization.authorization_evidence_sha256
+            == baseline[1].authorization_evidence_sha256
+        )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "unrelated",
+        "alias",
+        "unrelated_wrong_role",
+        "unrelated_wrong_namespace",
+        "selected_lifecycle",
+        "selected_generation",
+    ],
+)
+def test_operation_fresh_snapshot_allows_only_valid_unrelated_changes(
+    operation_resolution,
+    monkeypatch,
+    mutation,
+):
+    binding, authority, _ = operation_resolution
+    port = authority.claimant_registry
+    captured = port.credentials
+    unrelated = _unrelated_claimant_identity(port)
+    if mutation == "alias":
+        unrelated = replace(
+            unrelated,
+            key_material_identity=authority.requester_registry.credentials[0].key_material_identity,
+        )
+    elif mutation == "unrelated_wrong_role":
+        unrelated = replace(unrelated, semantic_role=CredentialSemanticRole.ROOT_PROOF_REQUESTER)
+    elif mutation == "unrelated_wrong_namespace":
+        unrelated = replace(unrelated, provider_namespace="TEST_ONLY-wrong-provider")
+    fresh = captured + (unrelated,)
+    if mutation == "selected_lifecycle":
+        fresh = (
+            replace(
+                captured[0],
+                custody_lifecycle_namespace=port.identity.provider_namespace
+                + ":public-lifecycle:2:10:ACTIVE",
+            ),
+            unrelated,
+        )
+    elif mutation == "selected_generation":
+        fresh = (
+            replace(
+                captured[0],
+                custody_lifecycle_namespace=port.identity.provider_namespace
+                + ":public-lifecycle:2:9:ACTIVE",
+            ),
+            unrelated,
+        )
+    reads = 0
+
+    def changing_population():
+        nonlocal reads
+        reads += 1
+        return captured if reads == 1 else fresh
+
+    baseline = capability._resolve_from_provider(binding, authority)
+    monkeypatch.setattr(port, "credential_identities", changing_population)
+    if mutation == "unrelated":
+        assert capability._resolve_from_provider(binding, authority) == baseline
+    else:
+        if mutation == "alias":
+            expected = "FORBIDDEN_CREDENTIAL_ALIAS"
+        elif mutation.startswith("unrelated_wrong_"):
+            expected = "CREDENTIAL_ROLE_OR_NAMESPACE_MISMATCH"
+        else:
+            expected = "EVIDENCE_CHANGED"
+        with pytest.raises(capability.RootProofAttemptReservationError, match=expected):
+            capability._resolve_from_provider(binding, authority)
+
+
+@pytest.mark.parametrize("role", ["requester", "claimant"])
+def test_operation_public_material_changed_between_snapshots_fails_closed(
+    operation_resolution, monkeypatch, role
+):
+    binding, authority, _ = operation_resolution
+    port = getattr(authority, role + "_registry")
+    key_id = port.credentials[0].credential_identity
+    original = port.public_key(key_id)
+    reads = 0
+
+    def changing_material(key):
+        nonlocal reads
+        assert key == key_id
+        reads += 1
+        return original if reads == 1 else b"z" * 32
+
+    monkeypatch.setattr(port, "public_key", changing_material)
+    with pytest.raises(capability.RootProofAttemptReservationError, match="EVIDENCE_CHANGED"):
+        capability._resolve_from_provider(binding, authority)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "claimant_revision",
+        "claimant_rotation",
+        "requester_rotation",
+        "entitlement_revision",
+        "provider_namespace",
+        "context",
+    ],
+)
+def test_operation_relevant_evidence_changes_invalidate_retained_authorization(
+    operation_resolution,
+    mutation,
+):
+    binding, authority, context = operation_resolution
+    authorization = capability.resolve_root_proof_issuance_authorization(binding)
+    if mutation == "claimant_revision":
+        port = authority.claimant_registry
+        port.record = replace(port.record, registry_revision=port.record.registry_revision + 1)
+        _refresh_active_credential_identity(port)
+    elif mutation == "claimant_rotation":
+        port = authority.claimant_registry
+        port.record = replace(port.record, claimant_key_version=2, registry_revision=10)
+        _refresh_active_credential_identity(port)
+        entitlement = authority.entitlement_registry
+        entitlement.state = replace(
+            entitlement.state,
+            provenance=replace(entitlement.state.provenance, claimant_key_version=2),
+        )
+    elif mutation == "requester_rotation":
+        port = authority.requester_registry
+        port.record = replace(
+            port.record,
+            requester_key_id="TEST_ONLY-rotated-requester",
+            requester_key_version=2,
+            registry_revision=port.record.registry_revision + 1,
+        )
+        _refresh_active_credential_identity(port)
+    elif mutation == "entitlement_revision":
+        port = authority.entitlement_registry
+        port.state = replace(
+            port.state, authoritative_state_revision=port.state.authoritative_state_revision + 1
+        )
+    elif mutation == "provider_namespace":
+        port = authority.claimant_registry
+        port.identity = replace(
+            port.identity, provider_namespace="TEST_ONLY-new-claimant-namespace"
+        )
+        _refresh_active_credential_identity(port)
+    else:
+        context["initial_binding_sha256"] = "8" * 64
+    with pytest.raises(
+        capability.RootProofAttemptReservationError, match="AUTHORIZATION_EVIDENCE_CHANGED"
+    ):
+        capability.require_verified_root_proof_issuance_authorization(authorization)
+
+
 def test_production_missing_provider_and_exact_binding_provenance(reserved, monkeypatch):
     _, binding, _, state = reserved
     with pytest.raises(capability.RootProofAttemptReservationError, match="MISSING_PRODUCTION"):
@@ -267,6 +607,35 @@ def test_provider_security_profile_is_independent_of_protocol_environment(provid
     authorization = capability.resolve_root_proof_issuance_authorization(binding).authorization
     assert authorization.environment == "PRODUCTION"
     assert port.identity.security.profile is SecurityProfile.PRODUCTION_LOCAL
+    assert not capability._attempt_store_path().exists()
+
+
+@pytest.mark.parametrize("mutation", ["role_evidence", "active_revision"])
+def test_concurrent_credential_change_cannot_mix_resolution_snapshots(
+    provider, monkeypatch, mutation
+):
+    binding, authority = provider
+    port = authority.requester_registry
+    original = port.active_requester_credential
+    reads = 0
+
+    def changing_current(principal):
+        nonlocal reads
+        reads += 1
+        record = original(principal)
+        if mutation == "role_evidence" and reads == 1:
+            port.credentials = (
+                replace(
+                    port.credentials[0], custody_lifecycle_namespace="TEST_ONLY-changed-revision"
+                ),
+            )
+        if mutation == "active_revision" and reads == 2:
+            return replace(record, registry_revision=record.registry_revision + 1)
+        return record
+
+    monkeypatch.setattr(port, "active_requester_credential", changing_current)
+    with pytest.raises(capability.RootProofAttemptReservationError, match="EVIDENCE_CHANGED"):
+        capability.resolve_root_proof_issuance_authorization(binding)
     assert not capability._attempt_store_path().exists()
 
 
@@ -482,6 +851,7 @@ def test_retry_lost_response_and_restart_retain_same_attempt(authorized, reserve
     restarted_provider.requester_registry.record = replace(
         restarted_provider.requester_registry.record, registry_revision=8
     )
+    _refresh_active_credential_identity(restarted_provider.requester_registry)
     changed_authorization = capability.resolve_root_proof_issuance_authorization(
         reconstructed_binding
     )
@@ -562,6 +932,7 @@ def test_same_operation_changed_provider_tuple_conflicts_without_replacement(att
     authority.requester_registry.record = replace(
         authority.requester_registry.record, requester_key_version=2, registry_revision=8
     )
+    _refresh_active_credential_identity(authority.requester_registry)
     with pytest.raises(capability.RootProofAttemptReservationError, match="EVIDENCE_CHANGED"):
         capability.reserve_root_proof_issuance_attempt(binding, authorization)
     current_authorization = capability.resolve_root_proof_issuance_authorization(binding)

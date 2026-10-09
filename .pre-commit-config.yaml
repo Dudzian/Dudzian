@@ -22,6 +22,7 @@ repos:
           - protobuf>=4.24
           - packaging
           - cryptography>=50.0.1,<51
+          - psycopg[binary]>=3.2,<4
   - repo: local
     hooks:
       - id: betterleaks-staged

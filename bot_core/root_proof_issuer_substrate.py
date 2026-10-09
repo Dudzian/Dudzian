@@ -309,12 +309,18 @@ class EntitlementRegistryProvider(SecurityProvider, Protocol):
 class ClaimantIdentityRegistry(SecurityProvider, Protocol):
     def resolve_claimant(self, claimant_id: str) -> object: ...
     def historical_claimant(self, claimant_id: str, generation: int) -> object: ...
+    def public_key(self, credential_identity: str) -> bytes:
+        """Resolve retained canonical raw Ed25519 material from this registry."""
+        ...
 
 
 @runtime_checkable
 class RequesterCredentialRegistry(SecurityProvider, Protocol):
     def active_requester_credential(self, requester_id: str) -> object: ...
     def historical_requester_credential(self, credential_id: str) -> object: ...
+    def public_key(self, credential_identity: str) -> bytes:
+        """Resolve retained canonical raw Ed25519 material from this registry."""
+        ...
 
 
 @runtime_checkable
@@ -546,10 +552,15 @@ _ROLE_METHODS: Mapping[ProviderRole, tuple[str, ...]] = MappingProxyType(
             "state_at_revision",
             "retained_history",
         ),
-        ProviderRole.CLAIMANT_IDENTITY_REGISTRY: ("resolve_claimant", "historical_claimant"),
+        ProviderRole.CLAIMANT_IDENTITY_REGISTRY: (
+            "resolve_claimant",
+            "historical_claimant",
+            "public_key",
+        ),
         ProviderRole.REQUESTER_CREDENTIAL_REGISTRY: (
             "active_requester_credential",
             "historical_requester_credential",
+            "public_key",
         ),
         ProviderRole.ROOT_PROOF_SIGNING: (
             "active_credential_identity",

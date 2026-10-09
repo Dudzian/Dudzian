@@ -671,6 +671,7 @@ class _PostgreSQLRegistryBase:
     def _qualify(self) -> None:
         try:
             with self._connect() as conn, conn.transaction():
+                conn.execute("SET LOCAL search_path = pg_catalog")
                 metadata = conn.execute(
                     sql.SQL(
                         "SELECT schema_identity,schema_version,profile,trust_domain,"

@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
+import hashlib
 import json
 from pathlib import Path
 import threading
@@ -498,6 +499,9 @@ class _OtherProvider:
 
     def historical_requester_credential(self, credential_id):
         return None
+
+    def public_key(self, credential_identity):
+        return hashlib.sha256(credential_identity.encode()).digest()
 
     def current_head(self):
         return None

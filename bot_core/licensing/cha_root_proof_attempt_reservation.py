@@ -1,8 +1,8 @@
-"""Stage 9 local reservation boundary; production identity resolution fails closed.
+"""Stage 9 authorization and durable reservation from genuine public authorities.
 
-Only installed, trusted pre-account adapters may supply authorization. No such
-requester/claimant adapter is currently implemented. Registry ports and DTOs are
-not authority. Tests simulate adapter output exclusively in test modules.
+Only the reviewed PostgreSQL composition may supply production authorization.
+Registry ports and DTOs alone are not authority. This boundary stops at a local
+reservation awaiting requester and claimant signatures.
 """
 
 from __future__ import annotations
@@ -28,9 +28,15 @@ from bot_core.entitlement_registry_contract import (
     UnboundBinding,
     validate_exact_snapshot,
 )
+from bot_core.postgresql_root_proof_issuance_authority import (
+    PostgreSQLRootProofIssuanceAuthority,
+    ProductionLocalIssuanceAuthorityError,
+    _configured_root_proof_issuance_authority,
+)
 from bot_core.root_proof_issuer_substrate import (
     ClaimantIdentityRegistry,
     CredentialRoleIdentity,
+    CredentialSemanticRole,
     EntitlementRegistryProvider,
     ProviderCapabilities,
     ProviderIdentity,
@@ -40,6 +46,7 @@ from bot_core.root_proof_issuer_substrate import (
     RootProofIssuerCompositionGate,
     SecurityProfile,
     _ProviderQualificationSnapshot,
+    public_key_material_identity,
 )
 
 from .canonical import canonical_json_bytes, parse_canonical
@@ -50,9 +57,8 @@ _INITIAL_BINDING_REFERENCE_DOMAIN = (
     b"CRYPTOHUNTER_STAGE9_ROOT_PROOF_INITIAL_BINDING_REFERENCE_V1\x00"
 )
 _REQUESTER_ROLE = "ACCOUNT_GENESIS_ROOT_PROOF_ISSUANCE_REQUESTER_V1"
-# Populated only when an installed, genuine adapter implementation is reviewed.
 # Caller-supplied implementations and capability flags cannot register authority.
-_TRUSTED_PROVIDER_TYPES: tuple[type, ...] = ()
+_TRUSTED_PROVIDER_TYPES: tuple[type, ...] = (PostgreSQLRootProofIssuanceAuthority,)
 
 
 class RootProofAttemptReservationError(RuntimeError):
@@ -118,9 +124,14 @@ class _ProviderResolution:
 
 
 class _IssuanceAuthorityProvider(Protocol):
-    entitlement_registry: EntitlementRegistryProvider
-    requester_registry: RequesterCredentialRegistry
-    claimant_registry: ClaimantIdentityRegistry
+    @property
+    def entitlement_registry(self) -> EntitlementRegistryProvider: ...
+
+    @property
+    def requester_registry(self) -> RequesterCredentialRegistry: ...
+
+    @property
+    def claimant_registry(self) -> ClaimantIdentityRegistry: ...
 
     def requalify(self) -> object:
         """Return None after live substrate, privilege, lifecycle and durability checks."""
@@ -130,7 +141,10 @@ class _IssuanceAuthorityProvider(Protocol):
 
 
 def _issuance_authority_provider() -> _IssuanceAuthorityProvider:
-    raise RootProofAttemptReservationError("MISSING_PRODUCTION_REQUESTER_CLAIMANT_PROVIDER")
+    try:
+        return _configured_root_proof_issuance_authority()
+    except ProductionLocalIssuanceAuthorityError as exc:
+        raise RootProofAttemptReservationError(str(exc)) from None
 
 
 def _binding_context(binding: object) -> tuple[bytes, dict[str, Any]]:
@@ -207,6 +221,59 @@ def _qualified_port(
     return snapshot
 
 
+@dataclass(frozen=True, slots=True)
+class _OperationCredentialEvidence:
+    identity: CredentialRoleIdentity
+    public_key_material_identity: str
+
+
+def _operation_credential_evidence(
+    port: RequesterCredentialRegistry | ClaimantIdentityRegistry,
+    snapshot: _ProviderQualificationSnapshot,
+    *,
+    key_id: str,
+    key_version: int,
+    registry_revision: int,
+    semantic_role: CredentialSemanticRole,
+) -> _OperationCredentialEvidence:
+    """Select one resolved ACTIVE credential without retaining registry population."""
+
+    matches = tuple(value for value in snapshot.credentials if value.credential_identity == key_id)
+    if len(matches) != 1:
+        raise RootProofAttemptReservationError("EXACT_OPERATION_CREDENTIAL_IDENTITY_REQUIRED")
+    identity = matches[0]
+    lifecycle_prefix = snapshot.identity.provider_namespace + ":public-lifecycle:"
+    lifecycle = identity.custody_lifecycle_namespace.removeprefix(lifecycle_prefix).split(":")
+    if (
+        identity.semantic_role is not semantic_role
+        or identity.provider_namespace != snapshot.identity.provider_namespace
+        or identity.key_handle_or_version != f"{key_id}:v{key_version}"
+        or not identity.custody_lifecycle_namespace.startswith(lifecycle_prefix)
+        or len(lifecycle) != 3
+        or not lifecycle[0].isascii()
+        or not lifecycle[0].isdigit()
+        or not 1 <= int(lifecycle[0]) <= 9_007_199_254_740_991
+        or str(int(lifecycle[0])) != lifecycle[0]
+        or lifecycle[1:] != [str(registry_revision), "ACTIVE"]
+    ):
+        raise RootProofAttemptReservationError("OPERATION_CREDENTIAL_EVIDENCE_CHANGED")
+    material_identity = public_key_material_identity(port.public_key(key_id))
+    if identity.key_material_identity != material_identity:
+        raise RootProofAttemptReservationError("OPERATION_CREDENTIAL_EVIDENCE_CHANGED")
+    return _OperationCredentialEvidence(identity, material_identity)
+
+
+def _require_global_credential_qualification(
+    snapshots: dict[str, _ProviderQualificationSnapshot],
+) -> None:
+    """Global cross-role checks are required independently of operation hashing."""
+
+    if RootProofIssuerCompositionGate._alias_failures(
+        tuple(credential for snapshot in snapshots.values() for credential in snapshot.credentials)
+    ):
+        raise RootProofAttemptReservationError("FORBIDDEN_CREDENTIAL_ALIAS")
+
+
 def _resolve_from_provider(
     binding: object, provider: _IssuanceAuthorityProvider
 ) -> tuple[bytes, AttemptAuthorization, bytes]:
@@ -226,10 +293,7 @@ def _resolve_from_provider(
         ),
         "claimant": _qualified_port(claimant_port, ProviderRole.CLAIMANT_IDENTITY_REGISTRY, trust),
     }
-    if RootProofIssuerCompositionGate._alias_failures(
-        tuple(credential for port in ports.values() for credential in port.credentials)
-    ):
-        raise RootProofAttemptReservationError("FORBIDDEN_CREDENTIAL_ALIAS")
+    _require_global_credential_qualification(ports)
     resolution = _exact_record(
         provider.resolve_initial_binding(canonical_json_bytes(context)), _ProviderResolution
     )
@@ -266,28 +330,95 @@ def _resolve_from_provider(
         or state.provenance.claimant_key_id != claimant.claimant_key_id
         or state.provenance.claimant_key_version != claimant.claimant_key_version
         or requester.requester_key_id == claimant.claimant_key_id
-        or not any(
-            credential.credential_identity == requester.requester_key_id
-            for credential in ports["requester"].credentials
-        )
-        or not any(
-            credential.credential_identity == claimant.claimant_key_id
-            for credential in ports["claimant"].credentials
-        )
     ):
         raise RootProofAttemptReservationError("INEXACT_PROVIDER_AUTHORIZATION")
+    requester_credential = _operation_credential_evidence(
+        requester_port,
+        ports["requester"],
+        key_id=requester.requester_key_id,
+        key_version=requester.requester_key_version,
+        registry_revision=requester.registry_revision,
+        semantic_role=CredentialSemanticRole.ROOT_PROOF_REQUESTER,
+    )
+    claimant_credential = _operation_credential_evidence(
+        claimant_port,
+        ports["claimant"],
+        key_id=claimant.claimant_key_id,
+        key_version=claimant.claimant_key_version,
+        registry_revision=claimant.registry_revision,
+        semantic_role=CredentialSemanticRole.ROOT_PROOF_CLAIMANT,
+    )
+    if type(provider) is PostgreSQLRootProofIssuanceAuthority:
+        provider.validate_resolved_credentials(
+            requester, claimant, (requester_credential.identity,), (claimant_credential.identity,)
+        )
+    # Resolution comprises independent read-only authorities. Require the same
+    # exact evidence on a second pass so a concurrent rotation or lifecycle
+    # transition cannot combine captured old identities with a new ACTIVE DTO.
+    fresh_ports = {}
+    for name, port, role in (
+        ("entitlement", entitlement_port, ProviderRole.ENTITLEMENT_REGISTRY),
+        ("requester", requester_port, ProviderRole.REQUESTER_CREDENTIAL_REGISTRY),
+        ("claimant", claimant_port, ProviderRole.CLAIMANT_IDENTITY_REGISTRY),
+    ):
+        fresh = _qualified_port(port, role, trust)
+        fresh_ports[name] = fresh
+        captured = ports[name]
+        if (fresh.identity, fresh.capabilities) != (captured.identity, captured.capabilities):
+            raise RootProofAttemptReservationError(
+                "AUTHORIZATION_EVIDENCE_CHANGED_DURING_RESOLUTION"
+            )
+    _require_global_credential_qualification(fresh_ports)
+    if (
+        _operation_credential_evidence(
+            requester_port,
+            fresh_ports["requester"],
+            key_id=requester.requester_key_id,
+            key_version=requester.requester_key_version,
+            registry_revision=requester.registry_revision,
+            semantic_role=CredentialSemanticRole.ROOT_PROOF_REQUESTER,
+        )
+        != requester_credential
+        or _operation_credential_evidence(
+            claimant_port,
+            fresh_ports["claimant"],
+            key_id=claimant.claimant_key_id,
+            key_version=claimant.claimant_key_version,
+            registry_revision=claimant.registry_revision,
+            semantic_role=CredentialSemanticRole.ROOT_PROOF_CLAIMANT,
+        )
+        != claimant_credential
+    ):
+        raise RootProofAttemptReservationError("AUTHORIZATION_EVIDENCE_CHANGED_DURING_RESOLUTION")
+    if (
+        entitlement_port.authoritative_state(subject) != result
+        or _exact_record(
+            requester_port.active_requester_credential(resolution.requester_principal_id),
+            _RequesterCredentialV1,
+        )
+        != requester
+        or _exact_record(
+            claimant_port.resolve_claimant(resolution.provisioning_principal_id),
+            _ClaimantIdentityV1,
+        )
+        != claimant
+    ):
+        raise RootProofAttemptReservationError("AUTHORIZATION_EVIDENCE_CHANGED_DURING_RESOLUTION")
     evidence_raw = canonical_json_bytes(
         {
+            "schema_version": "RootProofOperationScopedAuthorizationEvidenceV1",
+            "scope": "EXACT_OPERATION_SCOPED",
             "context": context,
             "resolution": asdict(resolution),
             "entitlement": asdict(state),
             "requester": asdict(requester),
             "claimant": asdict(claimant),
+            "requester_credential": asdict(requester_credential),
+            "claimant_credential": asdict(claimant_credential),
             "providers": {
                 role: {
                     "identity": asdict(port.identity),
                     "capabilities": asdict(port.capabilities),
-                    "credentials": [asdict(value) for value in port.credentials],
                 }
                 for role, port in ports.items()
             },

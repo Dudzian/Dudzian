@@ -86,6 +86,9 @@ class EntitlementFake(GenericProvider):
 
 
 class ClaimantFake(GenericProvider):
+    def public_key(self, credential_identity: str) -> bytes:
+        return _test_public_key_bytes(credential_identity)
+
     def resolve_claimant(self, claimant_id: str) -> object:
         return claimant_id
 
@@ -94,6 +97,9 @@ class ClaimantFake(GenericProvider):
 
 
 class RequesterFake(GenericProvider):
+    def public_key(self, credential_identity: str) -> bytes:
+        return _test_public_key_bytes(credential_identity)
+
     def active_requester_credential(self, requester_id: str) -> object:
         return requester_id
 
