@@ -244,6 +244,9 @@ def test_native_windows_rejects_untrusted_write_dacl(tmp_path, target):
     from bot_core.windows_custody_filesystem import open_custody_file
 
     security = importlib.import_module("win32security")
+    security_flags = (
+        security.PROTECTED_DACL_SECURITY_INFORMATION | security.DACL_SECURITY_INFORMATION
+    )
     path = (
         tmp_path
         if target == "directory"
@@ -263,7 +266,7 @@ def test_native_windows_rejects_untrusted_write_dacl(tmp_path, target):
     dacl.AddAccessAllowedAce(2, 0x1F01FF, sid)
     dacl.AddAccessAllowedAce(2, 0x1F01FF, security.ConvertStringSidToSid("S-1-1-0"))
     security.SetNamedSecurityInfo(
-        str(path), security.SE_FILE_OBJECT, 0x80000004, None, None, dacl, None
+        str(path), security.SE_FILE_OBJECT, security_flags, None, None, dacl, None
     )
     try:
         with pytest.raises(custody.LocalSigningCustodyError, match="DACL"):
@@ -277,7 +280,7 @@ def test_native_windows_rejects_untrusted_write_dacl(tmp_path, target):
         security.SetNamedSecurityInfo(
             str(path),
             security.SE_FILE_OBJECT,
-            0x80000004,
+            security_flags,
             None,
             None,
             original.GetSecurityDescriptorDacl(),
