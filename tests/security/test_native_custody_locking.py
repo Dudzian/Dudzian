@@ -482,6 +482,7 @@ def modeled_windows_handles(monkeypatch):
             self.closed = False
 
         def __int__(self):
+            assert self.descriptor is not None
             return self.descriptor
 
         def Detach(self):
@@ -489,27 +490,25 @@ def modeled_windows_handles(monkeypatch):
 
         def Close(self):
             if not self.closed:
-                os.close(self.descriptor)
+                if self.descriptor is not None:
+                    os.close(self.descriptor)
                 self.closed = True
 
     handles = []
 
     def create(name, access, share, attributes, disposition, flags, template):
         assert share == 3 and flags & 0x200000
-        opening = (
-            os.O_RDONLY
-            if flags & 0x2000000
-            else (
-                (os.O_RDWR if access & 0x40000000 else os.O_RDONLY)
-                | (os.O_CREAT if disposition == 4 else 0)
-            )
+        opening = (os.O_RDWR if access & 0x40000000 else os.O_RDONLY) | (
+            os.O_CREAT if disposition == 4 else 0
         )
-        handle = Handle(name, os.open(name, opening, 0o600))
+        # The modeled directory handle has no CRT descriptor: Windows cannot
+        # open directories through os.open, which is why production uses Win32.
+        handle = Handle(name, None if flags & 0x2000000 else os.open(name, opening, 0o600))
         handles.append(handle)
         return handle
 
     def info(handle):
-        value = os.fstat(handle.descriptor)
+        value = os.stat(handle.path) if handle.descriptor is None else os.fstat(handle.descriptor)
         return (
             0x10 if stat.S_ISDIR(value.st_mode) else 0,
             None,
