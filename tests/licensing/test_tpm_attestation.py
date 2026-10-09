@@ -306,8 +306,14 @@ def test_exchange_rejects_changed_response_binding_before_hardware_verification(
     [
         ("activated_credential_digest", lambda value: "00" * 32),
         ("credential_activation_proof_hex", lambda value: "00" * 32),
-        ("k_psa_pop_signature_der_hex", lambda value: value[:-2] + "00"),
-        ("certify_creation_signature_hex", lambda value: value[:-2] + "00"),
+        (
+            "k_psa_pop_signature_der_hex",
+            lambda value: value[:-2] + f"{int(value[-2:], 16) ^ 1:02x}",
+        ),
+        (
+            "certify_creation_signature_hex",
+            lambda value: value[:-2] + f"{int(value[-2:], 16) ^ 1:02x}",
+        ),
         ("certify_creation_attest_hex", lambda value: "00" * 4 + value[8:]),
         ("certify_creation_attest_hex", lambda value: value[:8] + "0000" + value[12:]),
         (
