@@ -51,7 +51,7 @@ _LOCAL_ISSUANCE_MODULES = _EXECUTION_CONSUMERS | {
     "bot_core.cha_issuance_request",
     "bot_core.cha_root_proof_signing_custody",
 }
-_TRANSPORT_IMPORTS = {"requests", "httpx", "grpc", "socket", "aiohttp", "urllib"}
+_TRANSPORT_IMPORTS = {"requests", "httpx", "http", "grpc", "socket", "aiohttp", "urllib"}
 _INFRASTRUCTURE_SOCKET_MODULES = {
     "bot_core.security.fingerprint",  # Hostname collection, not issuer transport.
     "deployment.production_pdsa_signing",  # Existing protected local AF_UNIX signing IPC.
@@ -68,6 +68,13 @@ _RETAINED_REQUEST_REFERENCES = {
 def _source_imports(tree, path):
     imports = set()
     package = Path(path).parent.parts
+    literal_importers = {"__import__"} | {
+        alias.asname or alias.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom) and node.module == "importlib" and not node.level
+        for alias in node.names
+        if alias.name == "import_module"
+    }
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             imports.update(alias.name for alias in node.names)
@@ -83,7 +90,7 @@ def _source_imports(tree, path):
             and isinstance(node.args[0].value, str)
             and (
                 isinstance(node.func, ast.Name)
-                and node.func.id == "__import__"
+                and node.func.id in literal_importers
                 or isinstance(node.func, ast.Attribute)
                 and node.func.attr == "import_module"
             )
@@ -199,6 +206,12 @@ def test_production_issuance_effects_and_consumers_preserve_local_dispatch_owner
         "import importlib\n"
         "attempts = importlib.import_module('bot_core.licensing.cha_root_proof_signed_attempt')\n"
         "import socket\n",
+        "from importlib import import_module as load\n"
+        "attempts = load('bot_core.licensing.cha_root_proof_signed_attempt')\n"
+        "import httpx\n",
+        "from bot_core.licensing.cha_root_proof_signed_attempt import "
+        "VerifiedSignedImmutableRootProofIssuanceAttempt as Attempt\n"
+        "from http.client import HTTPSConnection\n",
         "import httpx\n"
         "def issue(attempt):\n"
         "    return httpx.post('https://issuer.invalid', content=attempt.canonical_request_bytes)\n",
@@ -223,7 +236,7 @@ def test_retained_request_reexports_cannot_hide_a_future_transport():
         )
 
 
-@pytest.mark.parametrize("transport", ["httpx", "grpc", "socket"])
+@pytest.mark.parametrize("transport", ["httpx", "http.client", "grpc", "socket"])
 def test_delegating_a_signed_attempt_to_a_transport_helper_fails(transport):
     with pytest.raises(AssertionError, match="issuer transport"):
         _assert_local_issuance_execution_ownership(
