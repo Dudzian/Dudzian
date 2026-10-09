@@ -11,7 +11,9 @@ import hashlib
 import multiprocessing
 import os
 import sqlite3
+import uuid
 from pathlib import Path
+from types import SimpleNamespace
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, replace
 
@@ -52,7 +54,9 @@ class InjectedCrash(RuntimeError):
     pass
 
 
-def _process_checkpoint_flow(path, auth, seeds, identities, ready, start, results):
+def _process_checkpoint_flow(
+    path, auth, seeds, identities, ready, start, results, native_paths=None
+):
     """Spawned processes use real SQLite, Ed25519 and native OS locking."""
     from bot_core.local_signing_custody import _custody_lock
 
@@ -70,12 +74,27 @@ def _process_checkpoint_flow(path, auth, seeds, identities, ready, start, result
                 )
             ):
                 if current.state is predecessor:
-                    current = checkpoint(
-                        store,
-                        current,
-                        Ed25519PrivateKey.from_private_bytes(seeds[offset]),
-                        identities[offset],
-                    )
+                    if native_paths is None:
+                        current = checkpoint(
+                            store,
+                            current,
+                            Ed25519PrivateKey.from_private_bytes(seeds[offset]),
+                            identities[offset],
+                        )
+                    else:
+                        value = store.prepare_signature(current, identities[offset])
+                        signature = (
+                            custody.LocalCHARequesterSigningCustody(
+                                Path(native_paths[0]), trust_domain=auth.trust_domain
+                            ).sign_issuance_request(value.canonical_bytes, identities[0])
+                            if offset == 0
+                            else custody.LocalPreaccountClaimantAuthorizationCustody(
+                                Path(native_paths[1]),
+                                trust_domain=auth.trust_domain,
+                                provisioning_principal=auth.provisioning_principal_id,
+                            ).authorize_entitlement_claim(value.canonical_bytes, identities[1])
+                        )
+                        current = store.persist_signature(current, identities[offset], signature)
                     calls[offset] += 1
             identity = final_identity(store, current)
             current = store.finalize_attempt(identity, expected_fence=current.fence)
@@ -123,6 +142,135 @@ def test_two_spawned_processes_checkpoint_and_finalize_once(store_flow):
                 process.join(10)
         ready.close()
         results.close()
+
+
+@pytest.mark.skipif(
+    os.name != "nt", reason="genuine Windows Credential Manager requires native Windows"
+)
+def test_windows_credential_manager_custody_lifecycle_and_spawned_finalization(
+    tmp_path, monkeypatch
+):
+    """Real native keyring and custody; only public registry activation is simulated.
+
+    Genuine PostgreSQL public/private binding runs in the separate Linux suite.
+    Spawned signers receive only public identities, never private seeds.
+    """
+    import keyring
+    from bot_core.security.keyring_storage import KeyringSecretStorage
+
+    auth = authorization(trust_domain="TEST_ONLY-native-windows-" + uuid.uuid4().hex)
+    path = tmp_path / "attempts.sqlite3"
+    paths = (tmp_path / "requester", tmp_path / "claimant")
+    admins = []
+    identities = []
+    processes = []
+    context = multiprocessing.get_context("spawn")
+    ready, results, start = context.Queue(), context.Queue(), context.Event()
+
+    def simulated_public_binding(value, port):
+        if value["public_key_hex"] != port.public_key(value["key_id"]).hex():
+            raise custody.LocalSigningCustodyError("test public/private binding mismatch")
+
+    monkeypatch.setattr(custody, "_require_registry", simulated_public_binding)
+    try:
+        for role, directory in zip(IssuanceSigningRole, paths, strict=True):
+            requester = role is IssuanceSigningRole.REQUESTER
+            principal = auth.requester_principal_id if requester else auth.provisioning_principal_id
+            key_id = auth.requester_key_id if requester else auth.claimant_key_id
+            admin = custody.OfflineIssuanceCustodyAdministrator(
+                directory, role=role, trust_domain=auth.trust_domain, principal=principal
+            )
+            admins.append(admin)
+            draft = admin.stage(key_id=key_id, key_version=1)
+            public = bytes.fromhex(draft.public_key_hex)
+            with pytest.raises(custody.LocalSigningCustodyError, match="binding mismatch"):
+                admin.activate(SimpleNamespace(public_key=lambda key: b"Z" * 32))
+            identities.append(
+                admin.activate(SimpleNamespace(public_key=lambda key, public=public: public))
+            )
+        backend = keyring.get_keyring()
+        assert type(backend).__module__ == "keyring.backends.Windows"
+        assert type(backend).__name__ == "WinVaultKeyring"
+        assert identities[0].public_key_hex != identities[1].public_key_hex
+        with persistence.SQLiteCHAAttemptStore(path, auth.trust_domain) as store:
+            current = store.reserve_or_resolve_attempt_id(auth)
+        processes = [
+            context.Process(
+                target=_process_checkpoint_flow,
+                args=(
+                    str(path),
+                    auth,
+                    None,
+                    tuple(identities),
+                    ready,
+                    start,
+                    results,
+                    tuple(map(str, paths)),
+                ),
+            )
+            for _ in range(2)
+        ]
+        for process in processes:
+            process.start()
+        for _ in processes:
+            assert ready.get(timeout=20)
+        start.set()
+        outcomes = [results.get(timeout=30) for _ in processes]
+        for process in processes:
+            process.join(10)
+            assert process.exitcode == 0
+        assert outcomes[0][:2] == outcomes[1][:2]
+        assert outcomes[0][0] == current.reservation.issuance_attempt_id
+        assert [sum(outcome[2][role] for outcome in outcomes) for role in (0, 1)] == [1, 1]
+        with persistence.SQLiteCHAAttemptStore(path, auth.trust_domain) as store:
+            retained = store.signed_request(auth.logical_operation_id)
+            assert (
+                store.attempt(auth.logical_operation_id).state
+                is persistence.AttemptState.SIGNED_IMMUTABLE_DURABLE_NOT_SENT
+            )
+            for checkpoint_value in (retained.requester, retained.claimant):
+                checkpoint_value[0].verify(retained.canonical_bytes, checkpoint_value[1])
+        runtime = (
+            custody.LocalCHARequesterSigningCustody(paths[0], trust_domain=auth.trust_domain),
+            custody.LocalPreaccountClaimantAuthorizationCustody(
+                paths[1],
+                trust_domain=auth.trust_domain,
+                provisioning_principal=auth.provisioning_principal_id,
+            ),
+        )
+        assert tuple(port.identity() for port in runtime) == tuple(identities)
+        with pytest.raises(custody.LocalSigningCustodyError):
+            runtime[0].sign_issuance_request(retained.canonical_bytes, identities[1])
+        with pytest.raises(custody.LocalSigningCustodyError):
+            runtime[1].authorize_entitlement_claim(retained.canonical_bytes, identities[0])
+        for admin, port in zip(admins, runtime, strict=True):
+            for state in ("VERIFY_ONLY", "REVOKED"):
+                admin.transition_lifecycle(state)
+                with pytest.raises(ValueError, match="ACTIVE"):
+                    port.identity()
+    finally:
+        for process in processes:
+            if process.is_alive():
+                process.terminate()
+            if process.pid is not None:
+                process.join(10)
+        ready.close()
+        results.close()
+        # Exact test-owned native namespaces only; never touch installed credentials.
+        for admin, directory in zip(admins, paths, strict=False):
+            role = admin._role
+            if (directory / "custody.json").exists():
+                value = custody._read(directory, role, auth.trust_domain, admin._principal)
+                custody._storage(
+                    directory, role, auth.trust_domain, admin._principal
+                ).delete_secret(value["secret_reference"])
+            try:
+                keyring.delete_password(
+                    custody._scope(role, auth.trust_domain, admin._principal),
+                    KeyringSecretStorage.MASTER_KEY_SLOT,
+                )
+            except keyring.errors.PasswordDeleteError:
+                pass
 
 
 def signer_identity(role, auth, private):

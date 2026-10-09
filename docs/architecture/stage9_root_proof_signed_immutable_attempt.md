@@ -85,8 +85,14 @@ this primitive does not supply safe shared ownership. Contention retries for at
 most five seconds and fails closed; there is no unlocked fallback or process-local
 mutex authority. Native process tests cover concurrent exclusion, exceptions and
 abrupt process termination. Unix mode-bit checks remain POSIX-specific.
-Tests mock the OS keyring layer beneath the actual custody adapters; they do not
-provision installed production credentials or perform legal enrollment.
+Most tests mock the OS keyring layer beneath the actual custody adapters. The
+Windows-only integration test instead creates isolated test-owned namespaces in
+the real Windows Credential Manager, activates separate role keys, and signs and
+finalizes through two spawned processes. It checks public/private binding,
+cross-role rejection and lifecycle revocation, then deletes its own credentials.
+Only its public registry activation is simulated; genuine PostgreSQL binding is
+covered separately. Tests do not provision installed production credentials or
+perform legal enrollment.
 
 ## Schema and persistence
 
