@@ -23,16 +23,14 @@ if TYPE_CHECKING:
     from bot_core.cha_attempt_store import AttemptAuthorization, AttemptIdentity
 
 TABLES = ("issuance_requests", "signing_intents", "signature_checkpoints")
-# Installed authority grants stop at local finalization. Supersession must be
-# requalified if a future installation adds transport or issuer decision ports.
-_INSTALLED_ISSUANCE_GRANTS = frozenset({"RESERVE", "SIGN", "FINALIZE"})
+# The V1 historical proof vocabulary is immutable, independent of installation.
+_LOCAL_PRE_SEND_GRANTS_V1 = ("FINALIZE", "RESERVE", "SIGN")
 
 
 def require_local_only_issuance_scope() -> None:
-    from bot_core.cha_attempt_store import AttemptConflictError
+    from bot_core.cha_issuance_execution import require_local_only_execution
 
-    if _INSTALLED_ISSUANCE_GRANTS != frozenset({"RESERVE", "SIGN", "FINALIZE"}):
-        raise AttemptConflictError("PRE_SEND_LOCAL_ONLY_AUTHORITY_REQUIRED")
+    require_local_only_execution()
 
 
 def pre_send_binding(auth: object) -> tuple[object, ...]:
@@ -65,11 +63,19 @@ def require_replacement_credentials(old: AttemptAuthorization, new: AttemptAutho
 
 
 def pre_send_evidence(db: sqlite3.Connection, auth: AttemptAuthorization, attempt_id: str) -> dict:
+    """Authorize a NEW decision using the currently executable installation."""
+    require_local_only_issuance_scope()
+    return retained_pre_send_evidence(db, auth, attempt_id)
+
+
+def retained_pre_send_evidence(
+    db: sqlite3.Connection, auth: AttemptAuthorization, attempt_id: str
+) -> dict:
+    """Reconstruct V1 immutable facts without consulting current capabilities."""
     from dataclasses import asdict
 
     from bot_core.cha_attempt_store import AttemptConflictError
 
-    require_local_only_issuance_scope()
     if auth.reservation_identity is None or any(
         db.execute(f"SELECT 1 FROM {table} WHERE attempt_id=?", (attempt_id,)).fetchone()
         for table in ("immutable_attempts", "recovery_resolutions")
@@ -81,7 +87,7 @@ def pre_send_evidence(db: sqlite3.Connection, auth: AttemptAuthorization, attemp
         "old_issuance_attempt_id": attempt_id,
         "old_authorization": asdict(auth),
         "request_reference": value.reference if value else None,
-        "authority_grants": sorted(_INSTALLED_ISSUANCE_GRANTS),
+        "authority_grants": list(_LOCAL_PRE_SEND_GRANTS_V1),
         "no_completed_immutable_attempt": True,
         "no_external_send_authority": True,
         "no_issuer_bound_decision": True,

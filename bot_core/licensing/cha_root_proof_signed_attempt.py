@@ -21,6 +21,7 @@ from bot_core.cha_issuance_request import (
     IssuanceSignerIdentity,
     IssuanceSigningRole,
 )
+from bot_core.cha_issuance_execution import execute_local_issuance
 from bot_core.cha_root_proof_signing_custody import (
     LocalCHARequesterSigningCustody,
     LocalPreaccountClaimantAuthorizationCustody,
@@ -234,19 +235,23 @@ def _finish(
             offset = 0 if role is IssuanceSigningRole.REQUESTER else 1
             signer = identities[offset]
             _cut(role.value + ":before_intent")
-            retained = store.prepare_signature(current, signer)
+            retained = execute_local_issuance("PREPARE_SIGNATURE", store, current, signer)
             _cut(role.value + ":intent_durable")
             # Recheck live authorization for an exact operation, including a
             # recovery of an intent whose signature checkpoint never committed.
             _qualified_pair(authorization)
             signature = (
-                custody[0].sign_issuance_request(retained.canonical_bytes, signer)
+                execute_local_issuance(
+                    "REQUESTER_SIGNATURE", custody[0], retained.canonical_bytes, signer
+                )
                 if role is IssuanceSigningRole.REQUESTER
-                else custody[1].authorize_entitlement_claim(retained.canonical_bytes, signer)
+                else execute_local_issuance(
+                    "CLAIMANT_AUTHORIZATION", custody[1], retained.canonical_bytes, signer
+                )
             )
             _cut(role.value + ":signer_returned")
             _qualified_pair(authorization)
-            current = store.persist_signature(current, signer, signature)
+            current = execute_local_issuance("PERSIST_SIGNATURE", store, current, signer, signature)
             _cut(role.value + ":checkpoint_durable")
         _, _, identities = _qualified_pair(authorization)
         retained = store.signed_request(auth.logical_operation_id)
@@ -269,7 +274,7 @@ def _finish(
         }:
             raise SignedIssuanceAttemptError("SIGNING_SCOPE_STOP_REQUIRED")
         _cut("before_finalization")
-        current = store.finalize_attempt(identity, expected_fence=current.fence)
+        current = execute_local_issuance("FINALIZE", store, identity, expected_fence=current.fence)
         _cut("finalization_durable")
     result = object.__new__(VerifiedSignedImmutableRootProofIssuanceAttempt)
     _SIGNED[result] = _SignedSnapshot(binding, authorization, path, current)

@@ -32,6 +32,7 @@ from bot_core.local_signing_custody import (
     LocalSigningCustodyError,
     _custody_lock,
     _exact_path_snapshot,
+    _open_custody_descriptor,
     _replace_record,
     _validate_directory,
     _write_new_record,
@@ -97,17 +98,17 @@ def _storage(directory: Path, role: IssuanceSigningRole, trust: str, principal: 
 
 
 def _read(directory: Path, role: IssuanceSigningRole, trust: str, principal: str) -> dict:
-    descriptor = os.open(directory / "custody.json", os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
-    with os.fdopen(descriptor, "rb") as stream:
-        info = os.fstat(stream.fileno())
-        if not stat.S_ISREG(info.st_mode):
-            raise LocalSigningCustodyError("unsafe issuance custody metadata")
-        if sys.platform != "win32":
-            if os.name == "posix" and (
-                info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) & 0o077
-            ):
+    with _open_custody_descriptor(directory / "custody.json") as descriptor:
+        with os.fdopen(descriptor, "rb", closefd=False) as stream:
+            info = os.fstat(stream.fileno())
+            if not stat.S_ISREG(info.st_mode):
                 raise LocalSigningCustodyError("unsafe issuance custody metadata")
-        raw = stream.read()
+            if sys.platform != "win32":
+                if os.name == "posix" and (
+                    info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) & 0o077
+                ):
+                    raise LocalSigningCustodyError("unsafe issuance custody metadata")
+            raw = stream.read()
     value = parse_canonical(raw)
     if (
         set(value) != _IDENTITY_FIELDS | {"schema", "secret_reference"}

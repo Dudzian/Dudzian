@@ -3,16 +3,36 @@
 from __future__ import annotations
 
 import errno
+from contextlib import contextmanager
+import importlib
 import multiprocessing
 import os
 from pathlib import Path
+import stat
+import subprocess
 import sys
+import time
 from types import SimpleNamespace
 
 import pytest
 
 from bot_core import local_signing_custody as custody
 from tests.security._local_signing_platform import requires_native_custody_locking
+
+
+@pytest.fixture
+def descriptor_only_adapter(monkeypatch):
+    """Isolate byte-lock unit tests; native NTFS tests below use the real API."""
+
+    @contextmanager
+    def opened(path, *, write=False, create=False):
+        descriptor = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            yield descriptor
+        finally:
+            os.close(descriptor)
+
+    monkeypatch.setattr(custody, "_open_custody_descriptor", opened)
 
 
 def _lock_worker(path, exclusive, entered, release, outcome):
@@ -95,7 +115,7 @@ def test_exception_releases_native_custody_lock(tmp_path):
 
 @pytest.mark.parametrize("exclusive", [False, True])
 def test_windows_adapter_uses_one_byte_exclusive_ownership_and_explicit_unlock(
-    tmp_path, monkeypatch, exclusive
+    tmp_path, monkeypatch, exclusive, descriptor_only_adapter
 ):
     calls = []
 
@@ -120,7 +140,9 @@ def test_windows_adapter_uses_one_byte_exclusive_ownership_and_explicit_unlock(
 
 
 @pytest.mark.parametrize("error", [errno.EIO, errno.EACCES])
-def test_windows_adapter_lock_error_never_yields_unlocked(tmp_path, monkeypatch, error):
+def test_windows_adapter_lock_error_never_yields_unlocked(
+    tmp_path, monkeypatch, error, descriptor_only_adapter
+):
     def locking(descriptor, mode, length):
         raise OSError(error, "injected lock failure")
 
@@ -154,3 +176,420 @@ def test_unsupported_platform_has_no_unlocked_fallback(tmp_path, monkeypatch):
     with pytest.raises(custody.LocalSigningCustodyError, match="unavailable"):
         with custody._custody_lock(tmp_path, exclusive=True):
             pytest.fail("unsupported platform")
+
+
+@requires_native_custody_locking
+def test_delayed_holder_allows_waiter_after_release(tmp_path):
+    context = multiprocessing.get_context("spawn")
+    entered, release, outcomes = context.Event(), context.Event(), context.Queue()
+    holder = context.Process(
+        target=_lock_worker, args=(str(tmp_path), True, entered, release, outcomes)
+    )
+    try:
+        holder.start()
+        assert entered.wait(20)
+        # Delay a genuine holder, rather than substituting the native lock/clock.
+        import threading
+
+        timer = threading.Timer(1.0, release.set)
+        timer.start()
+        started = time.monotonic()
+        with custody._custody_lock(tmp_path, exclusive=True):
+            assert release.is_set()
+            assert time.monotonic() - started >= 0.8
+        timer.join(5)
+        assert outcomes.get(timeout=10) == "released"
+        holder.join(10)
+        assert holder.exitcode == 0
+    finally:
+        release.set()
+        if holder.is_alive():
+            holder.terminate()
+        holder.join(10)
+        outcomes.close()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="actual Windows five-second acquisition budget")
+def test_native_windows_timeout_is_retryable_and_never_enters_unlocked(tmp_path):
+    context = multiprocessing.get_context("spawn")
+    entered, release, outcomes = context.Event(), context.Event(), context.Queue()
+    holder = context.Process(
+        target=_lock_worker, args=(str(tmp_path), True, entered, release, outcomes)
+    )
+    try:
+        holder.start()
+        assert entered.wait(20)
+        started = time.monotonic()
+        with pytest.raises(custody.LocalSigningCustodyBusy, match="timed out"):
+            with custody._custody_lock(tmp_path, exclusive=True):
+                pytest.fail("timeout granted ownership")
+        assert 4.8 <= time.monotonic() - started < 8.0
+        assert not release.is_set() and holder.is_alive()
+        release.set()
+        assert outcomes.get(timeout=10) == "released"
+        holder.join(10)
+        with custody._custody_lock(tmp_path, exclusive=True):
+            pass  # Busy left no latch or surviving ownership.
+    finally:
+        release.set()
+        if holder.is_alive():
+            holder.terminate()
+        holder.join(10)
+        outcomes.close()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="native NTFS DACL qualification")
+@pytest.mark.parametrize("target", ["directory", "lock", "metadata"])
+def test_native_windows_rejects_untrusted_write_dacl(tmp_path, target):
+    from bot_core.windows_custody_filesystem import open_custody_file
+
+    security = importlib.import_module("win32security")
+    path = (
+        tmp_path
+        if target == "directory"
+        else tmp_path / (custody._LOCK_FILENAME if target == "lock" else "custody.json")
+    )
+    if target != "directory":
+        path.write_bytes(b"\0")
+    original = security.GetNamedSecurityInfo(str(path), security.SE_FILE_OBJECT, 0x4)
+    dacl = security.ACL()
+    api = importlib.import_module("win32api")
+    token = security.OpenProcessToken(api.GetCurrentProcess(), 0x8)
+    try:
+        user = security.GetTokenInformation(token, security.TokenUser)
+        sid = user[0] if isinstance(user, tuple) else user
+    finally:
+        token.Close()
+    dacl.AddAccessAllowedAce(2, 0x1F01FF, sid)
+    dacl.AddAccessAllowedAce(2, 0x1F01FF, security.ConvertStringSidToSid("S-1-1-0"))
+    security.SetNamedSecurityInfo(
+        str(path), security.SE_FILE_OBJECT, 0x80000004, None, None, dacl, None
+    )
+    try:
+        with pytest.raises(custody.LocalSigningCustodyError, match="DACL"):
+            if target == "metadata":
+                with open_custody_file(path):
+                    pytest.fail("untrusted metadata opened")
+            else:
+                with custody._custody_lock(tmp_path, exclusive=True):
+                    pytest.fail("untrusted object locked")
+    finally:
+        security.SetNamedSecurityInfo(
+            str(path),
+            security.SE_FILE_OBJECT,
+            0x80000004,
+            None,
+            None,
+            original.GetSecurityDescriptorDacl(),
+            None,
+        )
+
+
+@pytest.mark.skipif(os.name != "nt", reason="native NTFS junction and hardlink qualification")
+@pytest.mark.parametrize("redirection", ["junction", "hardlink"])
+def test_native_windows_rejects_redirected_custody_objects(tmp_path, redirection):
+    directory = tmp_path / "custody"
+    directory.mkdir()
+    if redirection == "junction":
+        link = tmp_path / "junction"
+        result = subprocess.run(
+            ["cmd", "/c", "mklink", "/J", str(link), str(directory)],
+            capture_output=True,
+            timeout=10,
+            check=True,
+        )
+        assert result.returncode == 0
+        path = link / "child"
+        (directory / "child").mkdir()
+    else:
+        file = directory / custody._LOCK_FILENAME
+        file.write_bytes(b"\0")
+        os.link(file, tmp_path / "alias")
+        path = directory
+    try:
+        with pytest.raises(custody.LocalSigningCustodyError):
+            with custody._custody_lock(path, exclusive=True):
+                pytest.fail("redirected object locked")
+    finally:
+        if redirection == "junction":
+            link.rmdir()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="native NTFS opened object identity")
+def test_native_windows_detects_swap_between_path_check_and_open(tmp_path, monkeypatch):
+    files = importlib.import_module("win32file")
+    original = files.CreateFile
+    path = tmp_path / custody._LOCK_FILENAME
+    path.write_bytes(b"old")
+    replacement = tmp_path / "replacement"
+    replacement.write_bytes(b"new")
+
+    def swapped(name, *args):
+        if name == str(path):
+            os.replace(replacement, path)
+        return original(name, *args)
+
+    monkeypatch.setattr(files, "CreateFile", swapped)
+    with pytest.raises(custody.LocalSigningCustodyError, match="changed before native open"):
+        with custody._custody_lock(tmp_path, exclusive=True):
+            pytest.fail("substituted object locked")
+
+
+@pytest.mark.skipif(os.name != "nt", reason="native NTFS share-delete exclusion")
+def test_native_windows_pins_directory_and_lock_against_replacement(tmp_path):
+    directory = tmp_path / "custody"
+    directory.mkdir()
+    replacement = tmp_path / "replacement"
+    replacement.write_bytes(b"untrusted")
+    with custody._custody_lock(directory, exclusive=True):
+        with pytest.raises(OSError):
+            os.replace(replacement, directory / custody._LOCK_FILENAME)
+        with pytest.raises(OSError):
+            directory.rename(tmp_path / "moved")
+    assert replacement.read_bytes() == b"untrusted"
+
+
+def _acl_model(*, owner="owner", aces=(), null=False):
+    dacl = None if null else SimpleNamespace(GetAceCount=lambda: len(aces), GetAce=aces.__getitem__)
+    descriptor = SimpleNamespace(
+        GetSecurityDescriptorOwner=lambda: owner, GetSecurityDescriptorDacl=lambda: dacl
+    )
+    return SimpleNamespace(
+        SE_FILE_OBJECT=1, GetSecurityInfo=lambda *args: descriptor, ConvertSidToStringSid=str
+    )
+
+
+@pytest.mark.parametrize("custody_object", [False, True])
+@pytest.mark.parametrize("right", [0x10000, 0x40000, 0x80000, 0x10000000, 0x40000000, 0x2, 0x100])
+def test_ntfs_acl_policy_rejects_untrusted_mutation(right, custody_object):
+    from bot_core.windows_custody_filesystem import _qualify_acl
+
+    security = _acl_model(aces=(((0, 0), right, "untrusted"),))
+    with pytest.raises(custody.LocalSigningCustodyError, match="untrusted modification"):
+        _qualify_acl(object(), security, frozenset({"owner"}), custody=custody_object)
+
+
+@pytest.mark.parametrize("defect", ["owner", "null", "unsupported", "object_write"])
+def test_ntfs_acl_policy_rejects_missing_or_unqualified_authority(defect):
+    from bot_core.windows_custody_filesystem import _qualify_acl
+
+    security = _acl_model(
+        owner="other" if defect == "owner" else "owner",
+        null=defect == "null",
+        aces=(((9, 0), 0, "owner"),)
+        if defect == "unsupported"
+        else ((((5, 0), 0x2, None, None, "untrusted"),) if defect == "object_write" else ()),
+    )
+    with pytest.raises(custody.LocalSigningCustodyError):
+        _qualify_acl(object(), security, frozenset({"owner"}), custody=True)
+
+
+def test_ntfs_acl_policy_accepts_trusted_writers_and_read_only_untrusted_aces():
+    from bot_core.windows_custody_filesystem import _qualify_acl
+
+    security = _acl_model(
+        aces=(
+            ((0, 0), 0x1F01FF, "owner"),
+            ((0, 0), 0x120089, "reader"),
+            ((1, 0), 0x1F01FF, "denied"),
+            ((0, 8), 0x1F01FF, "inherit_only"),
+        )
+    )
+    _qualify_acl(object(), security, frozenset({"owner"}), custody=True)
+    # Ancestor creation rights cannot replace an existing pinned directory.
+    _qualify_acl(
+        object(), _acl_model(aces=(((0, 0), 4, "creator"),)), frozenset({"owner"}), custody=False
+    )
+    with pytest.raises(custody.LocalSigningCustodyError):
+        _qualify_acl(
+            object(), _acl_model(aces=(((0, 0), 4, "creator"),)), frozenset({"owner"}), custody=True
+        )
+
+
+@pytest.mark.parametrize("defect", ["reparse", "directory", "device", "hardlink", "redirected"])
+def test_ntfs_opened_object_qualification_rejects_unsafe_object(tmp_path, defect):
+    from bot_core.windows_custody_filesystem import _qualify
+
+    info = (
+        0x400 if defect == "reparse" else 0x10 if defect == "directory" else 0,
+        None,
+        None,
+        None,
+        1,
+        0,
+        0,
+        2 if defect == "hardlink" else 1,
+        0,
+        1,
+    )
+    files = SimpleNamespace(
+        GetFileInformationByHandle=lambda handle: info,
+        GetFileType=lambda handle: 2 if defect == "device" else 1,
+        GetFinalPathNameByHandle=lambda handle, flags: str(tmp_path / "other")
+        if defect == "redirected"
+        else str(tmp_path),
+    )
+    with pytest.raises(custody.LocalSigningCustodyError):
+        _qualify(
+            object(),
+            tmp_path,
+            (files, _acl_model(), None),
+            frozenset({"owner"}),
+            directory=False,
+            custody=True,
+        )
+
+
+def test_ntfs_path_normalization_preserves_unc_and_drive_identity():
+    from bot_core.windows_custody_filesystem import _normalized
+
+    assert _normalized(r"\\?\C:\State\Custody") == _normalized(r"c:\state\custody")
+    assert _normalized(r"\\?\UNC\server\share\custody") == _normalized(r"\\server\share\custody")
+
+
+def test_ntfs_directory_handles_pin_all_ancestors_without_share_delete(tmp_path, monkeypatch):
+    from bot_core import windows_custody_filesystem as filesystem
+
+    opened, closed = [], []
+
+    def create(name, access, share, attributes, disposition, flags, template):
+        assert access & 0x20000 and share == 3 and disposition == 3
+        assert flags & 0x200000 and flags & 0x2000000
+        opened.append(name)
+        return SimpleNamespace(Close=lambda: closed.append(name))
+
+    monkeypatch.setattr(
+        filesystem, "_native", lambda: (SimpleNamespace(CreateFile=create), None, None)
+    )
+    monkeypatch.setattr(filesystem, "_trusted_sids", lambda *args: frozenset({"owner"}))
+    monkeypatch.setattr(filesystem, "_qualify", lambda *args, **kwargs: None)
+    with pytest.raises(RuntimeError, match="injected"):
+        with filesystem.pinned_directory(tmp_path):
+            assert not closed
+            raise RuntimeError("injected")
+    assert opened == [str(p) for p in (*reversed(tmp_path.parents), tmp_path)]
+    assert closed == list(reversed(opened))
+
+
+@pytest.fixture
+def modeled_windows_handles(monkeypatch):
+    """Exercise handle ownership/error paths on Linux; native tests are separate."""
+    from bot_core import windows_custody_filesystem as filesystem
+
+    class Handle:
+        def __init__(self, path, descriptor):
+            self.path, self.descriptor = path, descriptor
+            self.closed = False
+
+        def __int__(self):
+            return self.descriptor
+
+        def Detach(self):
+            self.closed = True  # transferred to CRT
+
+        def Close(self):
+            if not self.closed:
+                os.close(self.descriptor)
+                self.closed = True
+
+    handles = []
+
+    def create(name, access, share, attributes, disposition, flags, template):
+        assert share == 3 and flags & 0x200000
+        opening = (
+            os.O_RDONLY
+            if flags & 0x2000000
+            else (
+                (os.O_RDWR if access & 0x40000000 else os.O_RDONLY)
+                | (os.O_CREAT if disposition == 4 else 0)
+            )
+        )
+        handle = Handle(name, os.open(name, opening, 0o600))
+        handles.append(handle)
+        return handle
+
+    def info(handle):
+        value = os.fstat(handle.descriptor)
+        return (
+            0x10 if stat.S_ISDIR(value.st_mode) else 0,
+            None,
+            None,
+            None,
+            value.st_dev,
+            0,
+            0,
+            value.st_nlink,
+            value.st_ino >> 32,
+            value.st_ino & 0xFFFFFFFF,
+        )
+
+    files = SimpleNamespace(
+        CreateFile=create,
+        GetFileInformationByHandle=info,
+        GetFileType=lambda handle: 1,
+        GetFinalPathNameByHandle=lambda handle, flags: handle.path,
+    )
+    token = SimpleNamespace(Close=lambda: None)
+    security = _acl_model()
+    security.OpenProcessToken = lambda *args: token
+    security.TokenUser = 1
+    security.GetTokenInformation = lambda *args: ("owner", 0)
+    security.LookupAccountName = lambda *args: ("service", None, None)
+    api = SimpleNamespace(GetCurrentProcess=lambda: 1, error=OSError)
+    monkeypatch.setattr(filesystem, "_native", lambda: (files, security, api))
+    platform_os = SimpleNamespace(**{name: getattr(os, name) for name in dir(os)})
+    platform_os.O_BINARY = 0
+    monkeypatch.setattr(filesystem, "os", platform_os)
+    monkeypatch.setitem(
+        sys.modules, "msvcrt", SimpleNamespace(open_osfhandle=lambda handle, flags: handle)
+    )
+    return filesystem, files, handles
+
+
+@pytest.mark.parametrize("create", [False, True])
+def test_windows_descriptor_adapter_transfers_verified_handle_and_closes_on_exception(
+    tmp_path, modeled_windows_handles, create
+):
+    filesystem, _, handles = modeled_windows_handles
+    path = tmp_path / "record"
+    if not create:
+        path.write_bytes(b"data")
+    with pytest.raises(RuntimeError, match="injected"):
+        with filesystem.open_custody_file(path, write=True, create=create) as descriptor:
+            os.write(descriptor, b"safe")
+            assert path.read_bytes() == b"safe"
+            raise RuntimeError("injected")
+    assert all(handle.closed for handle in handles)
+    with pytest.raises(OSError):
+        os.fstat(descriptor)
+
+
+def test_windows_descriptor_adapter_closes_all_handles_on_substitution(
+    tmp_path, modeled_windows_handles
+):
+    filesystem, files, handles = modeled_windows_handles
+    path, replacement = tmp_path / "record", tmp_path / "replacement"
+    path.write_bytes(b"old")
+    replacement.write_bytes(b"new")
+    original = files.CreateFile
+
+    def swapped(name, *args):
+        if name == str(path):
+            os.replace(replacement, path)
+        return original(name, *args)
+
+    files.CreateFile = swapped
+    with pytest.raises(custody.LocalSigningCustodyError, match="changed before native open"):
+        with filesystem.open_custody_file(path):
+            pytest.fail("substitution accepted")
+    assert all(handle.closed for handle in handles)
+
+
+def test_windows_directory_adapter_creates_under_pinned_qualified_parent(
+    tmp_path, modeled_windows_handles
+):
+    filesystem, _, handles = modeled_windows_handles
+    directory = tmp_path / "new" / "custody"
+    with filesystem.pinned_directory(directory, create=True):
+        assert directory.is_dir()
+    assert all(handle.closed for handle in handles)

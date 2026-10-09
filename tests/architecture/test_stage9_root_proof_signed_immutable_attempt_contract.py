@@ -4,6 +4,7 @@ import ast
 import hashlib
 import inspect
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -12,6 +13,7 @@ from bot_core import (
     cha_attempt_signatures,
     cha_attempt_store,
     cha_issuance_request,
+    cha_issuance_execution,
     cha_root_proof_signing_custody,
 )
 from bot_core.licensing import cha_root_proof_signed_attempt
@@ -134,6 +136,7 @@ def test_public_api_has_only_existing_upstream_capability_inputs():
     [
         cha_issuance_request,
         cha_attempt_signatures,
+        cha_issuance_execution,
         cha_root_proof_signing_custody,
         cha_root_proof_signed_attempt,
     ],
@@ -261,15 +264,29 @@ def test_child_supersession_mutations_cannot_redefine_parent(field):
         assert_parent_recovery_parity(changed)
 
 
-def test_current_platform_support_matches_native_custody_and_child():
+def test_current_platform_support_matches_native_custody_and_child(tmp_path):
     from tests.security._local_signing_platform import requires_native_custody_locking
 
     assert (
         CONTRACT["current_status"]["signed_immutable_attempt_platform_support"]
         == "POSIX_AND_WINDOWS_NATIVE"
     )
-    assert "LK_NBLCK" in inspect.getsource(cha_root_proof_signing_custody._custody_lock)
-    assert "flock" in inspect.getsource(cha_root_proof_signing_custody._custody_lock)
+    from bot_core.local_signing_custody import _LOCK_FILENAME
+
+    with cha_root_proof_signing_custody._custody_lock(tmp_path, exclusive=False):
+        descriptor = os.open(tmp_path / _LOCK_FILENAME, os.O_RDWR)
+        try:
+            with pytest.raises(OSError):
+                if os.name == "nt":
+                    import msvcrt
+
+                    msvcrt.locking(descriptor, msvcrt.LK_NBLCK, 1)
+                else:
+                    import fcntl
+
+                    fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        finally:
+            os.close(descriptor)
     assert requires_native_custody_locking.args == (False,)
 
 
@@ -283,6 +300,24 @@ def test_child_never_claims_permanent_pre_sign_intent_exhaustion():
         "latch stays spent",
     ):
         assert forbidden not in text
-    source = inspect.getsource(cha_attempt_store.SQLiteCHAAttemptStore.prepare_signature)
-    assert "SIGNATURE_OUTCOME_NOT_DURABLE" not in source
-    assert "EXACT_SIGNING_OPERATION_REQUIRED" in source
+
+
+def test_runtime_reuses_an_exact_intent_and_rejects_unequal_identity(tmp_path):
+    from dataclasses import replace
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    from tests.licensing.test_cha_attempt_store_stage9 import authorization
+    from tests.licensing.test_cha_root_proof_signed_attempt import signer_identity
+
+    auth = authorization()
+    signer = signer_identity(
+        cha_issuance_request.IssuanceSigningRole.REQUESTER, auth, Ed25519PrivateKey.generate()
+    )
+    with cha_attempt_store.SQLiteCHAAttemptStore(
+        tmp_path / "intent.sqlite3", auth.trust_domain
+    ) as store:
+        current = store.reserve_or_resolve_attempt_id(auth)
+        original = store.prepare_signature(current, signer)
+        assert store.prepare_signature(current, signer) == original
+        with pytest.raises(cha_attempt_store.AttemptConflictError, match="EXACT_SIGNING_OPERATION"):
+            store.prepare_signature(current, replace(signer, service_namespace="changed"))
+        assert store.attempt(auth.logical_operation_id) == current

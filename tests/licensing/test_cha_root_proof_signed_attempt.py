@@ -380,25 +380,16 @@ def simulated_signed_flow(operation_resolution, native_keyring, monkeypatch, tmp
     auth = upstream.resolve_root_proof_issuance_authorization(binding)
     reservation = upstream.reserve_root_proof_issuance_attempt(binding, auth)
     calls = [0, 0]
-    requester_sign = custody.LocalCHARequesterSigningCustody.sign_issuance_request
-    claimant_sign = custody.LocalPreaccountClaimantAuthorizationCustody.authorize_entitlement_claim
+    execute = signed.execute_local_issuance
 
-    def counted_requester(self, raw, identity):
-        calls[0] += 1
-        return requester_sign(self, raw, identity)
+    def counted_execution(operation, receiver, *args, **kwargs):
+        if operation == "REQUESTER_SIGNATURE":
+            calls[0] += 1
+        elif operation == "CLAIMANT_AUTHORIZATION":
+            calls[1] += 1
+        return execute(operation, receiver, *args, **kwargs)
 
-    def counted_claimant(self, raw, identity):
-        calls[1] += 1
-        return claimant_sign(self, raw, identity)
-
-    monkeypatch.setattr(
-        custody.LocalCHARequesterSigningCustody, "sign_issuance_request", counted_requester
-    )
-    monkeypatch.setattr(
-        custody.LocalPreaccountClaimantAuthorizationCustody,
-        "authorize_entitlement_claim",
-        counted_claimant,
-    )
+    monkeypatch.setattr(signed, "execute_local_issuance", counted_execution)
     return binding, provider, auth, reservation, calls, admins
 
 
@@ -676,26 +667,20 @@ def test_abrupt_process_exit_recovers_exact_operation_and_retains_checkpoints(
     binding, _, auth, reservation, _, _ = simulated_signed_flow
     log = tmp_path / "signer-calls"
     parent_pid = os.getpid()
-    for cls, method, label in (
-        (custody.LocalCHARequesterSigningCustody, "sign_issuance_request", b"requester\n"),
-        (
-            custody.LocalPreaccountClaimantAuthorizationCustody,
-            "authorize_entitlement_claim",
-            b"claimant\n",
-        ),
-    ):
-        original = getattr(cls, method)
+    original = signed.execute_local_issuance
 
-        def counted(self, raw, identity, original=original, label=label):
+    def counted(operation, receiver, *args, **kwargs):
+        labels = {"REQUESTER_SIGNATURE": b"requester\n", "CLAIMANT_AUTHORIZATION": b"claimant\n"}
+        if operation in labels:
             descriptor = os.open(log, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
             try:
-                os.write(descriptor, label)
+                os.write(descriptor, labels[operation])
                 os.fsync(descriptor)
             finally:
                 os.close(descriptor)
-            return original(self, raw, identity)
+        return original(operation, receiver, *args, **kwargs)
 
-        monkeypatch.setattr(cls, method, counted)
+    monkeypatch.setattr(signed, "execute_local_issuance", counted)
 
     def terminate(name):
         if os.getpid() != parent_pid and name == cut:
@@ -972,7 +957,9 @@ def test_wrong_trust_domain_and_caller_namespace_rejected(simulated_signed_flow)
     value = parse_canonical(raw)
     value["issuer_target_namespace"] = "caller-selected"
     with pytest.raises(custody.LocalSigningCustodyError):
-        request.sign_issuance_request(canonical_json_bytes(value), request.identity())
+        signed.execute_local_issuance(
+            "REQUESTER_SIGNATURE", request, canonical_json_bytes(value), request.identity()
+        )
     assert calls == [1, 0]  # instrumented operation rejected before private signing
 
 
@@ -1174,7 +1161,7 @@ def test_pre_send_supersession_retains_history_and_requires_explicit_decision(st
     ],
 )
 def test_unsafe_pre_send_supersession_fails_closed(store_flow, monkeypatch, phase):
-    from bot_core import cha_attempt_signatures
+    from bot_core import cha_issuance_execution
 
     path, auth, current, keys, identities = store_flow
     new_auth = replace(auth, requester_key_id="replacement-key", requester_key_version=2)
@@ -1194,10 +1181,15 @@ def test_unsafe_pre_send_supersession_fails_closed(store_flow, monkeypatch, phas
             current = replace(current, fence=current.fence + 1)
         if phase in {"transport_grant", "bound_grant"}:
             monkeypatch.setattr(
-                cha_attempt_signatures,
-                "_INSTALLED_ISSUANCE_GRANTS",
-                cha_attempt_signatures._INSTALLED_ISSUANCE_GRANTS
-                | {"EXTERNAL_SEND" if phase == "transport_grant" else "ISSUER_BOUND"},
+                cha_issuance_execution,
+                "_INSTALLED_OPERATIONS",
+                {
+                    **cha_issuance_execution._INSTALLED_OPERATIONS,
+                    "EXTERNAL_SEND" if phase == "transport_grant" else "ISSUER_BOUND": (
+                        object,
+                        lambda receiver: pytest.fail("external operation must not execute"),
+                    ),
+                },
             )
         with pytest.raises(persistence.AttemptConflictError):
             store.supersede_pre_send(current, new_auth)
@@ -1225,6 +1217,128 @@ def test_pre_send_supersession_rollback_never_hides_new_reservation(store_flow, 
         assert store.attempt(auth.logical_operation_id) == current
         assert store._connection.execute("SELECT count(*) FROM reservations").fetchone() == (1,)
         assert store.supersede_pre_send(current, new_auth).fence == current.fence + 1
+
+
+@pytest.mark.parametrize(
+    "external_operation", ["EXTERNAL_SEND", "ISSUER_BOUND", "OTHER_REMOTE_PORT"]
+)
+def test_installed_external_route_blocks_new_decisions_without_rewriting_history(
+    store_flow, monkeypatch, external_operation
+):
+    from bot_core import cha_issuance_execution as execution
+
+    path, auth, current, _, _ = store_flow
+    replacement_auth = replace(auth, requester_key_id="new-requester", requester_key_version=2)
+    with persistence.SQLiteCHAAttemptStore(path, auth.trust_domain) as store:
+        replacement = store.supersede_pre_send(current, replacement_auth)
+        retained = store._connection.execute("SELECT * FROM replacement_relations").fetchall()
+
+    def external_handler(receiver):
+        pytest.fail("external port must never execute through local issuance")
+
+    monkeypatch.setattr(
+        execution,
+        "_INSTALLED_OPERATIONS",
+        {**execution._INSTALLED_OPERATIONS, external_operation: (object, external_handler)},
+    )
+    # Startup verifies the old proof independently of the NEW executable routes.
+    for _ in range(2):
+        with persistence.SQLiteCHAAttemptStore(path, auth.trust_domain) as store:
+            assert store.attempt(auth.logical_operation_id) == replacement
+            assert store.supersede_pre_send(current, replacement_auth) == replacement
+            assert (
+                store._connection.execute("SELECT * FROM replacement_relations").fetchall()
+                == retained
+            )
+            with pytest.raises(persistence.AttemptConflictError, match="LOCAL_ONLY"):
+                store.supersede_pre_send(
+                    replacement,
+                    replace(replacement_auth, requester_key_version=3),
+                )
+            with pytest.raises(persistence.AttemptConflictError, match="LOCAL_ONLY"):
+                execution.execute_local_issuance(external_operation, object())
+            assert store._connection.execute("SELECT count(*) FROM reservations").fetchone() == (2,)
+
+
+@pytest.mark.parametrize("mutation", ["missing", "substituted", "malformed", "unavailable"])
+def test_executable_local_scope_requires_available_exact_handlers(
+    store_flow, monkeypatch, mutation
+):
+    from bot_core import cha_issuance_execution as execution
+
+    path, auth, current, _, _ = store_flow
+    installed = dict(execution._INSTALLED_OPERATIONS)
+    if mutation == "missing":
+        installed.pop("REQUESTER_SIGNATURE")
+    elif mutation == "substituted":
+        installed["REQUESTER_SIGNATURE"] = (
+            object,
+            lambda receiver: pytest.fail("substituted handler"),
+        )
+    elif mutation == "malformed":
+        installed["REQUESTER_SIGNATURE"] = "SIGN"
+    else:
+        installed = None
+    monkeypatch.setattr(execution, "_INSTALLED_OPERATIONS", installed)
+    with persistence.SQLiteCHAAttemptStore(path, auth.trust_domain) as store:
+        with pytest.raises(persistence.AttemptConflictError, match="LOCAL_ONLY"):
+            store.supersede_pre_send(current, replace(auth, claimant_key_version=2))
+        assert store.attempt(auth.logical_operation_id) == current
+
+
+def test_dispatcher_executes_the_actual_local_reservation_and_rejects_raw_receivers(tmp_path):
+    from bot_core.cha_issuance_execution import execute_local_issuance, require_local_only_execution
+
+    auth = authorization()
+    assert require_local_only_execution() == {"RESERVE", "SIGN", "FINALIZE"}
+    with persistence.SQLiteCHAAttemptStore(
+        tmp_path / "actual-executor.sqlite3", auth.trust_domain
+    ) as store:
+        current = execute_local_issuance("RESERVE", store, auth)
+        assert current == store.attempt(auth.logical_operation_id)
+    with pytest.raises(persistence.AttemptConflictError, match="EXECUTOR_REQUIRED"):
+        execute_local_issuance("RESERVE", object(), auth)
+    with pytest.raises(persistence.AttemptConflictError, match="OPERATION_REQUIRED"):
+        execute_local_issuance("UNKNOWN", object())
+
+
+def test_external_route_never_inherits_the_local_sign_grant(monkeypatch):
+    from types import MappingProxyType
+    from bot_core import cha_issuance_execution as execution
+
+    extended = MappingProxyType(
+        {**execution._LOCAL_OPERATIONS, "EXTERNAL_SEND": (object, lambda receiver: None)}
+    )
+    monkeypatch.setattr(execution, "_LOCAL_OPERATIONS", extended)
+    monkeypatch.setattr(execution, "_INSTALLED_OPERATIONS", extended)
+    with pytest.raises(persistence.AttemptConflictError, match="LOCAL_ONLY"):
+        execution.require_local_only_execution()
+
+
+@pytest.mark.parametrize("mutation", ["grant", "send_proof", "request_reference"])
+def test_retained_pre_send_proof_corruption_still_fails_closed(store_flow, mutation):
+    from bot_core.licensing.canonical import canonical_json_bytes, parse_canonical
+
+    path, auth, current, _, _ = store_flow
+    with persistence.SQLiteCHAAttemptStore(path, auth.trust_domain) as store:
+        store.supersede_pre_send(current, replace(auth, requester_key_version=2))
+        raw = store._connection.execute(
+            "SELECT evidence_json FROM replacement_relations"
+        ).fetchone()[0]
+        proof = parse_canonical(raw)
+        if mutation == "grant":
+            proof["authority_grants"].append("EXTERNAL_SEND")
+        elif mutation == "send_proof":
+            proof["no_external_send_authority"] = False
+        else:
+            proof["request_reference"] = "immutable:req:sha256:" + "f" * 64
+        # Host/schema-owner corruption must still be detected on the next read.
+        store._connection.execute("DROP TRIGGER replacements_immutable_update")
+        store._connection.execute(
+            "UPDATE replacement_relations SET evidence_json=?", (canonical_json_bytes(proof),)
+        )
+        with pytest.raises(persistence.AttemptCorruptError):
+            store.attempt(auth.logical_operation_id)
 
 
 @requires_native_custody_locking

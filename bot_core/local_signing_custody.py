@@ -84,6 +84,10 @@ class LocalSigningCustodyError(RuntimeError):
     """Fail-closed custody loading or signing failure."""
 
 
+class LocalSigningCustodyBusy(LocalSigningCustodyError):
+    """Retryable lock acquisition timeout; no custody operation was performed."""
+
+
 class LocalSigningProvisioningConflict(LocalSigningCustodyError):
     """An existing authority conflicts with the requested provisioning."""
 
@@ -395,6 +399,11 @@ _LOCAL_CAPABILITIES = ProviderCapabilities(
 
 def _validate_directory(directory: Path, *, create: bool) -> Path:
     path = _exact_path_snapshot(directory, label="custody directory")
+    if os.name == "nt":
+        from bot_core.windows_custody_filesystem import pinned_directory
+
+        with pinned_directory(path, create=create):
+            return path
     if create:
         path.mkdir(mode=0o700, parents=True, exist_ok=True)
     if not path.exists() or not path.is_dir() or path.is_symlink():
@@ -418,12 +427,35 @@ def _snapshot_security(security: SecurityProfileIdentity) -> SecurityProfileIden
 
 
 @contextmanager
+def _open_custody_descriptor(path: Path, *, write: bool = False, create: bool = False):
+    if os.name == "nt":
+        from bot_core.windows_custody_filesystem import open_custody_file
+
+        with open_custody_file(path, write=write, create=create) as descriptor:
+            yield descriptor
+        return
+    flags = (os.O_RDWR if write else os.O_RDONLY) | getattr(os, "O_NOFOLLOW", 0)
+    if create:
+        flags |= os.O_CREAT
+    try:
+        descriptor = os.open(path, flags, 0o600)
+    except OSError as exc:
+        raise LocalSigningCustodyError("custody file open failed") from exc
+    try:
+        yield descriptor
+    finally:
+        os.close(descriptor)
+
+
+@contextmanager
 def _custody_lock(directory: Path, *, exclusive: bool):
     """POSIX shared/exclusive locks; Windows serializes all custody operations.
 
     The Windows byte-range primitive cannot safely represent shared ownership.
     Using exclusive ownership for readers too preserves lifecycle linearization.
-    Contention waits at most five seconds, then fails closed.
+    Windows acquisition waits at most five seconds, then raises retryable Busy.
+    This does not cancel or bound the holder's Credential Manager, PostgreSQL,
+    or I/O operations; retry must reload the retained exact attempt identity.
     """
 
     if os.name not in {"posix", "nt"}:
@@ -436,11 +468,7 @@ def _custody_lock(directory: Path, *, exclusive: bool):
         & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
     ):
         raise LocalSigningCustodyError("custody lock path is unsafe")
-    try:
-        descriptor = os.open(path, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
-    except OSError as exc:
-        raise LocalSigningCustodyError("custody locking failed") from exc
-    try:
+    with _open_custody_descriptor(path, write=True, create=True) as descriptor:
         info = os.fstat(descriptor)
         if (
             not stat.S_ISREG(info.st_mode)
@@ -464,7 +492,7 @@ def _custody_lock(directory: Path, *, exclusive: bool):
                     if exc.errno not in {errno.EACCES, errno.EAGAIN, errno.EDEADLK}:
                         raise LocalSigningCustodyError("custody locking failed") from exc
                     if time.monotonic() >= deadline:
-                        raise LocalSigningCustodyError("custody locking timed out") from exc
+                        raise LocalSigningCustodyBusy("custody locking timed out") from exc
                     time.sleep(0.01)
             try:
                 # Windows byte-range locks may cover bytes beyond EOF. Publish
@@ -495,8 +523,6 @@ def _custody_lock(directory: Path, *, exclusive: bool):
                     fcntl.flock(descriptor, fcntl.LOCK_UN)
                 except OSError as exc:
                     raise LocalSigningCustodyError("custody unlock failed") from exc
-    finally:
-        os.close(descriptor)
 
 
 def _record_path(directory: Path, role: ProviderRole) -> Path:
@@ -776,7 +802,12 @@ def _read_record(
             info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) & 0o077
         ):
             raise LocalSigningCustodyError("custody material unavailable/corrupt")
-        raw = path.read_bytes()
+        if os.name == "nt":
+            with _open_custody_descriptor(path) as descriptor:
+                with os.fdopen(descriptor, "rb", closefd=False) as stream:
+                    raw = stream.read()
+        else:
+            raw = path.read_bytes()
     except (OSError, LocalSigningCustodyError) as exc:
         raise LocalSigningCustodyError("custody material unavailable/corrupt") from exc
     return _decode_record(raw, expected_security=security, expected_role=role)

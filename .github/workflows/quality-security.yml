@@ -195,6 +195,8 @@ jobs:
           tests/architecture/test_stage9_root_proof_signed_immutable_attempt_contract.py
           -m "not hardware and not destructive and not network"
           --cov=bot_core.local_signing_custody
+          --cov=bot_core.windows_custody_filesystem
+          --cov=bot_core.cha_issuance_execution
           --cov=bot_core.cha_issuance_request
           --cov=bot_core.cha_attempt_signatures
           --cov=bot_core.cha_root_proof_signing_custody

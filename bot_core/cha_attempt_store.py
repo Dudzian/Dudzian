@@ -1927,8 +1927,8 @@ class SQLiteCHAAttemptStore:
             data = _persisted_json(evidence_json)
             if data.get("schema_version") == "LocalPreSendUnsendableV1":
                 from bot_core.cha_attempt_signatures import (
-                    pre_send_evidence,
                     require_replacement_credentials,
+                    retained_pre_send_evidence,
                 )
 
                 old_row = db.execute(
@@ -1946,7 +1946,7 @@ class SQLiteCHAAttemptStore:
                     or old_id == new_id
                 ):
                     raise ValueError("invalid pre-send lineage identifiers")
-                raw = _canonical(pre_send_evidence(db, old_auth, old_id))
+                raw = _canonical(retained_pre_send_evidence(db, old_auth, old_id))
                 key = _decision_key(
                     "PRE_SEND_SUPERSESSION", {"authorization": asdict(auth), "evidence": data}
                 )
