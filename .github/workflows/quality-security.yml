@@ -48,15 +48,23 @@ jobs:
           python -m pip install -e ".[test]" "ruff==0.14.11" "mypy==1.10.0" "diff-cover>=9,<10"
       - name: Ruff baseline gate
         run: python -m ruff check bot_core core scripts tests deploy stage6_samples ui deployment/windows_production_cha_operation.py deployment/windows_production_cha_account_reservation.py
-      - name: Format pre-account credential substrate
+      - name: Format Stage 9 signing and credential substrate
         run: >-
           python -m ruff format --check
           bot_core/postgresql_preaccount_credentials.py
           bot_core/postgresql_root_proof_issuance_authority.py
+          bot_core/cha_attempt_store.py
+          bot_core/cha_attempt_signatures.py
+          bot_core/cha_issuance_request.py
+          bot_core/cha_root_proof_signing_custody.py
+          bot_core/licensing/cha_root_proof_signed_attempt.py
           tests/architecture/test_stage9_root_proof_preaccount_credentials_contract.py
+          tests/architecture/test_stage9_root_proof_signed_immutable_attempt_contract.py
+          tests/licensing/test_cha_root_proof_signed_attempt.py
           tests/security/test_postgresql_preaccount_credential_contract.py
           tests/security/test_postgresql_preaccount_credentials_integration.py
           tests/security/test_postgresql_root_proof_issuance_authority.py
+          tests/security/test_cha_signed_attempt_postgresql.py
       - name: Mypy configured scope
         run: python -m mypy
       - name: Mypy Windows configured scope
@@ -174,6 +182,23 @@ jobs:
           --cov=bot_core.cha_attempt_store
           --cov-append --cov-config=.coveragerc
           --cov-report=term-missing --cov-report=xml:coverage.xml -q
+      - name: Signed immutable issuance attempt security and durability (serial)
+        env:
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+          DUDZIAN_TEST_MODE: "1"
+          DUDZIAN_ALLOW_LONG_POLL: "0"
+        run: >-
+          python -m pytest -p asyncio -p pytest_cov
+          tests/licensing/test_cha_root_proof_signed_attempt.py
+          tests/architecture/test_stage9_root_proof_signed_immutable_attempt_contract.py
+          -m "not hardware and not destructive and not network"
+          --cov=bot_core.cha_issuance_request
+          --cov=bot_core.cha_attempt_signatures
+          --cov=bot_core.cha_root_proof_signing_custody
+          --cov=bot_core.licensing.cha_root_proof_signed_attempt
+          --cov=bot_core.cha_attempt_store
+          --cov-append --cov-config=.coveragerc
+          --cov-report=term-missing --cov-report=xml:coverage.xml -q
       - name: Pre-account credential authorities and provider composition (serial)
         env:
           PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
@@ -186,6 +211,7 @@ jobs:
           tests/security/test_postgresql_preaccount_credential_contract.py
           tests/security/test_postgresql_preaccount_credentials_integration.py
           tests/security/test_postgresql_root_proof_issuance_authority.py
+          tests/security/test_cha_signed_attempt_postgresql.py
           tests/security/test_postgresql_entitlement_registry.py
           tests/security/test_root_proof_issuer_substrate.py
           tests/security/test_local_signing_custody.py
@@ -193,6 +219,8 @@ jobs:
           tests/architecture/test_m05_account_genesis_root_proof_issuer_implementation_readiness_contract.py
           tests/architecture/test_m05_account_genesis_root_proof_issuer_production_substrate_selection_contract.py
           -m "not hardware and not destructive and not network"
+          --cov=bot_core.cha_root_proof_signing_custody
+          --cov=bot_core.licensing.cha_root_proof_signed_attempt
           --cov=bot_core.postgresql_preaccount_credentials
           --cov=bot_core.postgresql_root_proof_issuance_authority
           --cov=bot_core.postgresql_entitlement_registry

@@ -1,0 +1,51 @@
+{
+  "schema": "CryptoHunter.Stage9.RootProofSignedImmutableAttemptFreezeV1",
+  "version": 1,
+  "authority": "SUBORDINATE_IMPLEMENTATION_FREEZE",
+  "contract_path": "docs/architecture/cryptohunter_product_architecture/stage9_root_proof_signed_immutable_attempt_contract.json",
+  "contract_bytes_sha256": "b14b66ff83ef56bc8d25ba04c914315c1987bb5c367096bc667ab7f158ba531f",
+  "parent_sha256": [
+    {
+      "path": "m05_account_genesis_independent_root_proof_issuer_contract.json",
+      "bytes_sha256": "36cd0d26f918769313c6f572541f40877b1f0ca9808a5fc69a9dac3a6bf6d30d"
+    },
+    {
+      "path": "stage9_root_proof_attempt_reservation_contract.json",
+      "bytes_sha256": "b6a0f5422d6eab5ca8b901821b81d9bc124aa707715bc57951bbc011c99ca4f7"
+    },
+    {
+      "path": "stage9_root_proof_attempt_reservation_freeze.json",
+      "bytes_sha256": "9c759d15c7f080ab1b1df7df01d48ba5e7ffc3f9f322a2ab87a85f1a048bfbd7"
+    },
+    {
+      "path": "stage9_root_proof_preaccount_credentials_contract.json",
+      "bytes_sha256": "a1111021da583ef9043c2eef29db61adb9e329506babf2945aaa0fac8ba54d06"
+    },
+    {
+      "path": "stage9_root_proof_preaccount_credentials_freeze.json",
+      "bytes_sha256": "8acf388c804fda5e65063090f76a2c98eb333ad3a1cb1f8ad37ed3706f6415e4"
+    }
+  ],
+  "boundary": "SIGNED_IMMUTABLE_DURABLE_NOT_SENT",
+  "current_status": {
+    "requester_signing_custody_implementation": "IMPLEMENTED",
+    "claimant_authorization_signing_custody_implementation": "IMPLEMENTED",
+    "signed_immutable_attempt": "IMPLEMENTED",
+    "signed_immutable_attempt_boundary": "IMPLEMENTED",
+    "signed_immutable_attempt_live_availability": "BLOCKED_UNTIL_PRODUCTION_CREDENTIAL_PROVISIONING",
+    "production_preaccount_credentials": "NOT_PROVISIONED",
+    "semantic_root_proof_issuer_runtime": "NOT_IMPLEMENTED / BLOCKED",
+    "account_genesis": "INITIAL_BINDING_ONLY",
+    "root_proof": "NOT_ISSUED",
+    "root_proof_admission": "NOT_STARTED",
+    "prepared": "NOT_STARTED",
+    "production_provisioning_ready": false,
+    "windows_production_ready": "NOT_READY",
+    "legal_production_enrollment": "NOT_PERFORMED",
+    "windows_0_14": "10/15 DONE",
+    "protected_freshness": "NOT_STARTED",
+    "provisioning_membership": "BLOCKED",
+    "secret_resource": "NOT_STARTED",
+    "stage_10_production_lifecycle_live": "NOT_STARTED"
+  }
+}

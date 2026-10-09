@@ -820,6 +820,11 @@ jobs:
             shard: cha-root-proof
             job_timeout_minutes: 60
             test_timeout_minutes: 50
+          - os: windows-latest
+            label: windows-latest, cha-signed-attempt
+            shard: cha-signed-attempt
+            job_timeout_minutes: 45
+            test_timeout_minutes: 35
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -897,7 +902,16 @@ jobs:
               done
               ;;
             cha-root-proof)
-              licensing_tests=(tests/licensing/test_cha_root_proof*.py)
+              licensing_tests=()
+              for candidate in tests/licensing/test_cha_root_proof*.py; do
+                case "${candidate}" in
+                  tests/licensing/test_cha_root_proof_signed*.py) continue ;;
+                esac
+                licensing_tests+=("${candidate}")
+              done
+              ;;
+            cha-signed-attempt)
+              licensing_tests=(tests/licensing/test_cha_root_proof_signed*.py)
               ;;
             *)
               echo "Unknown licensing security/durability shard: ${{ matrix.shard }}" >&2

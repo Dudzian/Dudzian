@@ -229,7 +229,7 @@ def test_schema_four_is_explicitly_unsupported_without_migration(tmp_path: Path)
         retained = store.reserve_or_resolve_attempt_id(auth)
         assert store._connection.execute(
             "SELECT schema_version FROM store_metadata"
-        ).fetchone() == (5,)
+        ).fetchone() == (6,)
     db = sqlite3.connect(path)
     db.execute("DROP TRIGGER store_metadata_immutable_update")
     db.execute("UPDATE store_metadata SET schema_version=4")

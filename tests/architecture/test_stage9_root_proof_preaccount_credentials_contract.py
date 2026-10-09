@@ -67,7 +67,11 @@ def _assert_status(contract, current):
     for name, expected in STATUS.items():
         assert type(contract["current_status"][name]) is type(expected), name
         assert type(current[name]) is type(expected), name
-        assert contract["current_status"][name] == current[name] == expected, name
+        assert contract["current_status"][name] == expected, name
+        # This historical child remains byte-identical. The signed-attempt
+        # child now advances only the implementation status of this boundary.
+        current_expected = "IMPLEMENTED" if name == "signed_immutable_attempt" else expected
+        assert current[name] == current_expected, name
 
 
 def test_child_freeze_and_all_historical_inputs_keep_exact_bytes():
