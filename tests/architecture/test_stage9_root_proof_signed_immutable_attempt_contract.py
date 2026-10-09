@@ -25,6 +25,220 @@ FREEZE_PATH = DOCS / "stage9_root_proof_signed_immutable_attempt_freeze.json"
 CONTRACT = json.loads(CONTRACT_PATH.read_bytes())
 FREEZE = json.loads(FREEZE_PATH.read_bytes())
 
+_EXECUTION_OWNER = "bot_core.cha_issuance_execution"
+_EXECUTION_CONSUMERS = {
+    _EXECUTION_OWNER,
+    "bot_core.licensing.cha_root_proof_attempt_reservation",
+    "bot_core.licensing.cha_root_proof_signed_attempt",
+}
+_ISSUANCE_EFFECTS = {
+    "reserve_or_resolve_attempt_id",
+    "prepare_signature",
+    "sign_issuance_request",
+    "authorize_entitlement_claim",
+    "persist_signature",
+    "finalize_attempt",
+}
+_EXECUTION_PRIVATE_REFERENCES = {
+    "_INSTALLED_OPERATIONS",
+    "_LOCAL_OPERATIONS",
+    "_LOCAL_GRANT_BY_OPERATION",
+    "_qualified_operations",
+}
+_LOCAL_ISSUANCE_MODULES = _EXECUTION_CONSUMERS | {
+    "bot_core.cha_attempt_store",
+    "bot_core.cha_attempt_signatures",
+    "bot_core.cha_issuance_request",
+    "bot_core.cha_root_proof_signing_custody",
+}
+_TRANSPORT_IMPORTS = {"requests", "httpx", "grpc", "socket", "aiohttp", "urllib"}
+_INFRASTRUCTURE_SOCKET_MODULES = {
+    "bot_core.security.fingerprint",  # Hostname collection, not issuer transport.
+    "deployment.production_pdsa_signing",  # Existing protected local AF_UNIX signing IPC.
+    "deployment.windows_stage8_postgresql_probe",  # Existing PostgreSQL connectivity probe.
+}
+_RETAINED_REQUEST_REFERENCES = {
+    "RetainedIssuanceRequest",
+    "VerifiedSignedImmutableRootProofIssuanceAttempt",
+    "canonical_request_bytes",
+    "signed_request",
+}
+
+
+def _source_imports(tree, path):
+    imports = set()
+    package = Path(path).parent.parts
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imports.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            prefix = package[: len(package) - node.level + 1] if node.level else ()
+            module = ".".join((*prefix, node.module)) if node.module else ".".join(prefix)
+            imports.add(module)
+            imports.update(f"{module}.{alias.name}" for alias in node.names)
+        elif (
+            isinstance(node, ast.Call)
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+            and isinstance(node.args[0].value, str)
+            and (
+                isinstance(node.func, ast.Name)
+                and node.func.id == "__import__"
+                or isinstance(node.func, ast.Attribute)
+                and node.func.attr == "import_module"
+            )
+        ):
+            imports.add(node.args[0].value)
+    return imports
+
+
+def _assert_local_issuance_execution_ownership(sources):
+    """Review gate for static production paths, including future importers.
+
+    References are checked, not just calls: taking a bound-method alias must not
+    escape dispatch. Import closures cover request/handle re-exports and delegated sends.
+    This protects accidental architectural changes, not hostile dynamic Python.
+    """
+    dependencies = {}
+    consumers = set(_LOCAL_ISSUANCE_MODULES)
+    for path, source in sources.items():
+        module = ".".join(Path(path).with_suffix("").parts).removesuffix(".__init__")
+        tree = ast.parse(source, filename=path)
+        imports = _source_imports(tree, path)
+        dependencies[module] = imports
+        references = (
+            {node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)}
+            | {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
+            | {
+                alias.name
+                for node in ast.walk(tree)
+                if isinstance(node, ast.ImportFrom)
+                for alias in node.names
+            }
+        )
+        references.update(
+            node.args[1].value
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in {"getattr", "setattr"}
+            and len(node.args) > 1
+            and isinstance(node.args[1], ast.Constant)
+            and isinstance(node.args[1].value, str)
+        )
+        if references & _RETAINED_REQUEST_REFERENCES:
+            consumers.add(module)
+        if module != _EXECUTION_OWNER:
+            assert not references & (_ISSUANCE_EFFECTS | _EXECUTION_PRIVATE_REFERENCES), (
+                f"issuance effect bypass in {path}"
+            )
+        if module not in _EXECUTION_CONSUMERS:
+            assert "execute_local_issuance" not in references, (
+                f"unreviewed issuance dispatcher consumer in {path}"
+            )
+
+    while True:
+        expanded = consumers | {
+            module for module, imports in dependencies.items() if imports & consumers
+        }
+        if expanded == consumers:
+            break
+        consumers = expanded
+    # A new boundary consumer must not delegate transport to a generic helper.
+    reachable = set(consumers)
+    while True:
+        expanded = reachable | {
+            imported
+            for module in reachable
+            for imported in dependencies.get(module, ())
+            if imported in dependencies
+        }
+        if expanded == reachable:
+            break
+        reachable = expanded
+    for module in reachable & dependencies.keys():
+        forbidden = {imported.split(".")[0] for imported in dependencies[module]}
+        if module in _INFRASTRUCTURE_SOCKET_MODULES and module not in consumers:
+            forbidden.discard("socket")
+        assert not forbidden & _TRANSPORT_IMPORTS, f"issuer transport bypass in {module}"
+
+
+def test_production_issuance_effects_and_consumers_preserve_local_dispatch_ownership():
+    sources = {
+        path.relative_to(ROOT).as_posix(): path.read_text(encoding="utf-8-sig")
+        for root in ("bot_core", "core", "scripts", "deployment", "deploy", "ui")
+        for path in (ROOT / root).rglob("*.py")
+    }
+    assert sources
+    _assert_local_issuance_execution_ownership(sources)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "def issue(store, identity):\n    return store.finalize_attempt(identity)\n",
+        "def issue(store, auth):\n    return store.reserve_or_resolve_attempt_id(auth)\n",
+        "def issue(store, signature):\n    return store.persist_signature(signature)\n",
+        "def issue(signer):\n    aliased = signer.sign_issuance_request\n    return aliased\n",
+        "from bot_core.cha_attempt_store import SQLiteCHAAttemptStore as Store\n"
+        "prepare = Store.prepare_signature\n",
+        "def issue(claimant):\n    return getattr(claimant, 'authorize_entitlement_claim')\n",
+        "from bot_core.cha_issuance_execution import execute_local_issuance as issue\n",
+        "from bot_core.cha_issuance_execution import *\n"
+        "def issue(store):\n    return execute_local_issuance('RESERVE', store)\n",
+        "import bot_core.cha_issuance_execution as executor\n"
+        "issue = executor.execute_local_issuance\n",
+        "from bot_core.cha_issuance_execution import _INSTALLED_OPERATIONS as routes\n",
+        "from bot_core.licensing.cha_root_proof_signed_attempt import "
+        "VerifiedSignedImmutableRootProofIssuanceAttempt as Attempt\n"
+        "import httpx\n"
+        "def send(attempt: Attempt):\n"
+        "    return httpx.post('https://issuer.invalid', content=attempt.canonical_request_bytes)\n",
+        "from bot_core.licensing import cha_root_proof_signed_attempt as attempts\n"
+        "from urllib.request import urlopen as send\n",
+        "import importlib\n"
+        "attempts = importlib.import_module('bot_core.licensing.cha_root_proof_signed_attempt')\n"
+        "import socket\n",
+        "import httpx\n"
+        "def issue(attempt):\n"
+        "    return httpx.post('https://issuer.invalid', content=attempt.canonical_request_bytes)\n",
+    ],
+)
+def test_added_execution_paths_cannot_bypass_local_only_review_gate(source):
+    with pytest.raises(AssertionError, match="issuance|issuer transport"):
+        _assert_local_issuance_execution_ownership({"bot_core/future_issuer_transport.py": source})
+
+
+def test_retained_request_reexports_cannot_hide_a_future_transport():
+    with pytest.raises(AssertionError, match="issuer transport"):
+        _assert_local_issuance_execution_ownership(
+            {
+                "bot_core/retained_attempt_api.py": (
+                    "from bot_core.cha_attempt_signatures import RetainedIssuanceRequest as Request\n"
+                ),
+                "bot_core/issuance/future_transport.py": (
+                    "from ..retained_attempt_api import Request\nimport aiohttp\n"
+                ),
+            }
+        )
+
+
+@pytest.mark.parametrize("transport", ["httpx", "grpc", "socket"])
+def test_delegating_a_signed_attempt_to_a_transport_helper_fails(transport):
+    with pytest.raises(AssertionError, match="issuer transport"):
+        _assert_local_issuance_execution_ownership(
+            {
+                "bot_core/future_issuer.py": (
+                    "from bot_core.licensing.cha_root_proof_signed_attempt import "
+                    "VerifiedSignedImmutableRootProofIssuanceAttempt as Attempt\n"
+                    "from core.future_network_helper import publish\n"
+                    "def issue(attempt: Attempt):\n"
+                    "    return publish(attempt.canonical_request_bytes)\n"
+                ),
+                "core/future_network_helper.py": f"import {transport}\n",
+            }
+        )
+
 
 def test_child_freeze_and_historical_parent_bytes():
     assert FREEZE["contract_bytes_sha256"] == hashlib.sha256(CONTRACT_PATH.read_bytes()).hexdigest()

@@ -8,6 +8,8 @@ No chmod, ACL repair, path-following fallback, or caller-selected trust list.
 from __future__ import annotations
 
 from contextlib import contextmanager, ExitStack
+import ctypes
+from ctypes import wintypes
 import importlib
 import ntpath
 import os
@@ -21,6 +23,8 @@ _DIRECTORY = 0x10
 _INHERIT_ONLY = 0x08
 _REPLACE_RIGHTS = 0x10000000 | 0x000D0040  # GENERIC_ALL, DELETE, WRITE_DAC/OWNER, DELETE_CHILD
 _WRITE_RIGHTS = _REPLACE_RIGHTS | 0x40000000 | 0x00000116
+_DRIVE_FIXED = 3
+_FILE_PERSISTENT_ACLS = 0x8
 
 
 def _native():
@@ -73,11 +77,75 @@ def _qualify_acl(handle, security, trusted: frozenset[str], *, custody: bool) ->
 
 
 def _normalized(path: str) -> str:
-    if path.startswith("\\\\?\\UNC\\"):
+    if path[:8].upper() == "\\\\?\\UNC\\":
         path = "\\\\" + path[8:]
     elif path.startswith("\\\\?\\"):
         path = path[4:]
     return ntpath.normcase(ntpath.normpath(path))
+
+
+def _qualify_local_path(path: Path, files) -> None:
+    drive, tail = ntpath.splitdrive(_normalized(str(path)))
+    # Reject UNC/device namespaces before touching the remote path. A mapped
+    # SMB drive has DOS syntax but reports DRIVE_REMOTE, not DRIVE_FIXED.
+    if (
+        len(drive) != 2
+        or drive[1] != ":"
+        or not tail.startswith("\\")
+        or files.GetDriveType(drive + "\\") != _DRIVE_FIXED
+    ):
+        raise LocalSigningCustodyError("custody requires an absolute local fixed-drive path")
+
+
+def _volume_information(handle) -> tuple[int, int, str]:
+    """Query the opened object, rather than a mutable drive-letter mapping."""
+    windows_ctypes = importlib.import_module("ctypes")
+    query = windows_ctypes.WinDLL("kernel32", use_last_error=True).GetVolumeInformationByHandleW
+    query.argtypes = (
+        wintypes.HANDLE,
+        wintypes.LPWSTR,
+        wintypes.DWORD,
+        ctypes.POINTER(wintypes.DWORD),
+        ctypes.POINTER(wintypes.DWORD),
+        ctypes.POINTER(wintypes.DWORD),
+        wintypes.LPWSTR,
+        wintypes.DWORD,
+    )
+    query.restype = wintypes.BOOL
+    serial, maximum_component, flags = wintypes.DWORD(), wintypes.DWORD(), wintypes.DWORD()
+    filesystem = ctypes.create_unicode_buffer(32)
+    if not query(
+        int(handle),
+        None,
+        0,
+        ctypes.byref(serial),
+        ctypes.byref(maximum_component),
+        ctypes.byref(flags),
+        filesystem,
+        len(filesystem),
+    ):
+        raise windows_ctypes.WinError(windows_ctypes.get_last_error())
+    return serial.value, flags.value, filesystem.value
+
+
+def _qualify_volume(handle, files, serial: int) -> None:
+    # VOLUME_NAME_GUID does not resolve an SMB share. Both drive type and FS
+    # identity are checked against the actual pinned handle's local volume.
+    volume_path = files.GetFinalPathNameByHandle(handle, 0x1)
+    root, _ = ntpath.splitdrive(volume_path)
+    if (
+        not root.lower().startswith("\\\\?\\volume{")
+        or not root.endswith("}")
+        or files.GetDriveType(root + "\\") != _DRIVE_FIXED
+    ):
+        raise LocalSigningCustodyError("custody opened object is not on a local fixed volume")
+    actual_serial, flags, filesystem = _volume_information(handle)
+    if (
+        actual_serial != serial & 0xFFFFFFFF
+        or filesystem != "NTFS"
+        or not flags & _FILE_PERSISTENT_ACLS
+    ):
+        raise LocalSigningCustodyError("custody opened volume is not qualified local NTFS")
 
 
 def _qualify(handle, path: Path, native, trusted, *, directory: bool, custody: bool):
@@ -91,6 +159,7 @@ def _qualify(handle, path: Path, native, trusted, *, directory: bool, custody: b
         or _normalized(files.GetFinalPathNameByHandle(handle, 0)) != _normalized(str(path))
     ):
         raise LocalSigningCustodyError("custody opened object is redirected or unsafe")
+    _qualify_volume(handle, files, info[4])
     _qualify_acl(handle, security, trusted, custody=custody)
     return info
 
@@ -102,6 +171,7 @@ def pinned_directory(directory: Path, *, create: bool = False):
         try:
             native = _native()
             files, security, api = native
+            _qualify_local_path(directory, files)
             trusted = _trusted_sids(security, api)
             for path in (*reversed(directory.parents), directory):
                 if create and not path.exists():

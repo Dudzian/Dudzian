@@ -15,6 +15,7 @@ import uuid
 from pathlib import Path
 from types import SimpleNamespace
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import asdict, replace
 
 import pytest
@@ -34,11 +35,13 @@ from bot_core.cha_issuance_request import (
     request_reference,
     signature_bytes,
 )
+from bot_core.entitlement_registry_contract import EntitlementLifecycle
 from bot_core.licensing import (
     cha_root_proof_attempt_reservation as upstream,
     cha_root_proof_signed_attempt as signed,
 )
 from bot_core.licensing.canonical import canonical_json_bytes, parse_canonical
+from bot_core.local_signing_custody import LocalSigningCustodyBusy
 from bot_core.root_proof_issuer_substrate import public_key_material_identity
 from tests.licensing import test_cha_root_proof_attempt_reservation as upstream_tests
 from tests.licensing.test_cha_attempt_store_stage9 import authorization
@@ -642,6 +645,141 @@ def test_two_threads_converge_on_one_private_invocation_per_role(simulated_signe
 
     assert signed.resume_root_proof_issuance_attempt(binding, auth).identity == results[0].identity
     assert calls == [1, 1]
+
+
+def _inject_custody_busy(monkeypatch, cut):
+    """Inject acquisition failure; native timeout timing is tested separately."""
+    pending = cut == "entry"
+    native_lock = signed._custody_lock
+    busy = LocalSigningCustodyBusy("custody locking timed out")
+
+    def arm(name):
+        nonlocal pending
+        if name == cut:
+            pending = True
+
+    @contextmanager
+    def lock(directory, *, exclusive):
+        nonlocal pending
+        if pending:
+            pending = False
+            raise busy
+        with native_lock(directory, exclusive=exclusive):
+            yield
+
+    monkeypatch.setattr(signed, "_cut", arm)
+    monkeypatch.setattr(signed, "_custody_lock", lock)
+    monkeypatch.setattr(custody, "_custody_lock", lock)
+    return busy
+
+
+@requires_native_custody_locking
+@pytest.mark.parametrize("retry", ["sign", "resume"])
+@pytest.mark.parametrize(
+    "cut,expected_calls",
+    [
+        ("entry", [1, 1]),
+        (IssuanceSigningRole.REQUESTER.value + ":intent_durable", [1, 1]),
+        (IssuanceSigningRole.REQUESTER.value + ":signer_returned", [2, 1]),
+        (IssuanceSigningRole.REQUESTER.value + ":checkpoint_durable", [1, 1]),
+        (IssuanceSigningRole.CLAIMANT.value + ":intent_durable", [1, 1]),
+        (IssuanceSigningRole.CLAIMANT.value + ":checkpoint_durable", [1, 1]),
+        ("finalization_durable", [1, 1]),
+    ],
+)
+def test_busy_retries_retained_operation_without_remint_or_duplicate_finalization(
+    simulated_signed_flow, monkeypatch, cut, expected_calls, retry
+):
+    binding, _, auth, reservation, calls, _ = simulated_signed_flow
+    attempt_id = reservation.issuance_attempt_id
+    busy = _inject_custody_busy(monkeypatch, cut)
+    with pytest.raises(LocalSigningCustodyBusy) as raised:
+        signed.sign_root_proof_issuance_attempt(reservation)
+    assert raised.value is busy
+    with upstream._open_store(auth.authorization.trust_domain) as store:
+        before = {
+            table: store._connection.execute(f"SELECT * FROM {table}").fetchall()
+            for table in ("issuance_requests", "signing_intents", "signature_checkpoints")
+        }
+        assert (
+            store.attempt(auth.authorization.logical_operation_id).reservation.issuance_attempt_id
+            == attempt_id
+        )
+
+    def forbidden_remint():
+        pytest.fail("Busy retry attempted to mint another issuance attempt")
+
+    monkeypatch.setattr(persistence, "_new_rpa_id", forbidden_remint)
+    monkeypatch.setattr(signed, "_cut", lambda name: None)
+    result = (
+        signed.sign_root_proof_issuance_attempt(reservation)
+        if retry == "sign"
+        else signed.resume_root_proof_issuance_attempt(binding, auth)
+    )
+    assert result.issuance_attempt_id == attempt_id
+    assert result.state is persistence.AttemptState.SIGNED_IMMUTABLE_DURABLE_NOT_SENT
+    assert calls == expected_calls
+    with upstream._open_store(auth.authorization.trust_domain) as store:
+        for table, rows in before.items():
+            assert set(rows) <= set(store._connection.execute(f"SELECT * FROM {table}").fetchall())
+        assert store._connection.execute("SELECT count(*) FROM reservations").fetchone() == (1,)
+        assert store._connection.execute("SELECT count(*) FROM immutable_attempts").fetchone() == (
+            1,
+        )
+        assert store._connection.execute(
+            "SELECT count(*) FROM attempt_transitions WHERE state=?",
+            (persistence.AttemptState.SIGNED_IMMUTABLE_DURABLE_NOT_SENT.value,),
+        ).fetchone() == (1,)
+        assert store.attempt(auth.authorization.logical_operation_id).fence == 4
+
+
+@requires_native_custody_locking
+def test_busy_waiter_can_resume_after_another_exact_caller_finalizes(
+    simulated_signed_flow, monkeypatch
+):
+    binding, _, auth, reservation, calls, _ = simulated_signed_flow
+    _inject_custody_busy(monkeypatch, "entry")
+    with pytest.raises(LocalSigningCustodyBusy):
+        signed.sign_root_proof_issuance_attempt(reservation)
+    completed = signed.sign_root_proof_issuance_attempt(reservation)
+    assert signed.resume_root_proof_issuance_attempt(binding, auth).identity == completed.identity
+    assert calls == [1, 1]
+    with upstream._open_store(auth.authorization.trust_domain) as store:
+        assert store.attempt(auth.authorization.logical_operation_id).fence == 4
+        assert store._connection.execute("SELECT count(*) FROM immutable_attempts").fetchone() == (
+            1,
+        )
+
+
+@requires_native_custody_locking
+@pytest.mark.parametrize("revoked", ["registry", "custody"])
+def test_busy_retry_rechecks_authorization_and_never_reuses_revoked_custody(
+    simulated_signed_flow, monkeypatch, revoked
+):
+    binding, provider, auth, reservation, calls, admins = simulated_signed_flow
+    retained_auth, attempt_id = auth.authorization, reservation.issuance_attempt_id
+    _inject_custody_busy(monkeypatch, IssuanceSigningRole.REQUESTER.value + ":checkpoint_durable")
+    with pytest.raises(LocalSigningCustodyBusy):
+        signed.sign_root_proof_issuance_attempt(reservation)
+    assert calls == [1, 0]
+    monkeypatch.setattr(signed, "_cut", lambda name: None)
+    if revoked == "registry":
+        port = provider.entitlement_registry
+        port.state = replace(port.state, lifecycle=EntitlementLifecycle.REVOKED)
+        expected = upstream.RootProofAttemptReservationError
+    else:
+        admins[1].transition_lifecycle("REVOKED")
+        expected = ValueError
+    with pytest.raises(expected):
+        signed.resume_root_proof_issuance_attempt(binding, auth)
+    assert calls == [1, 0]
+    with upstream._open_store(retained_auth.trust_domain) as store:
+        current = store.attempt(retained_auth.logical_operation_id)
+        assert current.reservation.issuance_attempt_id == attempt_id
+        assert current.state is persistence.AttemptState.REQUEST_SIGNED_BY_REQUESTER
+        assert store._connection.execute("SELECT count(*) FROM immutable_attempts").fetchone() == (
+            0,
+        )
 
 
 @pytest.mark.skipif(not hasattr(os, "fork"), reason="abrupt process crash proof requires fork")

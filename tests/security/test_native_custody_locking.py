@@ -7,7 +7,7 @@ from contextlib import contextmanager
 import importlib
 import multiprocessing
 import os
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 import stat
 import subprocess
 import sys
@@ -450,6 +450,148 @@ def test_ntfs_path_normalization_preserves_unc_and_drive_identity():
     assert _normalized(r"\\?\UNC\server\share\custody") == _normalized(r"\\server\share\custody")
 
 
+@pytest.mark.parametrize(
+    "path",
+    [
+        r"\\server\share\custody",
+        r"\\?\UNC\server\share\custody",
+        r"\\?\unc\server\share\custody",
+        r"\\.\C:\custody",
+        r"C:custody",
+    ],
+)
+def test_ntfs_path_policy_rejects_unc_and_device_paths_before_native_access(path):
+    from bot_core.windows_custody_filesystem import _qualify_local_path
+
+    files = SimpleNamespace(GetDriveType=lambda root: pytest.fail("remote path was queried"))
+    with pytest.raises(custody.LocalSigningCustodyError, match="absolute local fixed-drive"):
+        _qualify_local_path(PureWindowsPath(path), files)
+
+
+@pytest.mark.parametrize("drive_type", [0, 1, 2, 4, 5, 6])
+def test_ntfs_path_policy_rejects_mapped_network_and_other_nonfixed_drives(drive_type):
+    from bot_core.windows_custody_filesystem import _qualify_local_path
+
+    queried = []
+
+    def drive(root):
+        queried.append(root)
+        return drive_type
+
+    with pytest.raises(custody.LocalSigningCustodyError, match="local fixed-drive"):
+        _qualify_local_path(PureWindowsPath(r"Z:\custody"), SimpleNamespace(GetDriveType=drive))
+    assert queried == ["z:\\"]
+
+
+@pytest.mark.parametrize("path", [r"C:\custody", r"\\?\C:\custody"])
+def test_ntfs_path_policy_accepts_local_absolute_drive_syntax(path):
+    from bot_core.windows_custody_filesystem import _qualify_local_path
+
+    _qualify_local_path(PureWindowsPath(path), SimpleNamespace(GetDriveType=lambda root: 3))
+
+
+def test_mapped_network_directory_is_rejected_before_create_or_open(monkeypatch):
+    from bot_core import windows_custody_filesystem as filesystem
+
+    files = SimpleNamespace(
+        GetDriveType=lambda root: 4,
+        CreateFile=lambda *args: pytest.fail("mapped network object opened"),
+    )
+    monkeypatch.setattr(filesystem, "_native", lambda: (files, None, None))
+    monkeypatch.setattr(
+        filesystem, "_trusted_sids", lambda *args: pytest.fail("path validation was deferred")
+    )
+    with pytest.raises(custody.LocalSigningCustodyError, match="local fixed-drive"):
+        with filesystem.pinned_directory(PureWindowsPath(r"Z:\custody"), create=True):
+            pytest.fail("mapped network directory yielded")
+
+
+@pytest.mark.parametrize(
+    "defect", ["UNC", "mapped", "FAT32", "exFAT", "ReFS", "unknown", "acl", "serial"]
+)
+def test_file_type_disk_does_not_qualify_remote_or_unsupported_volume(monkeypatch, defect):
+    from bot_core import windows_custody_filesystem as filesystem
+
+    path = PureWindowsPath(r"C:\custody\record")
+    info = (0, None, None, None, 123, 0, 0, 1, 0, 1)
+    files = SimpleNamespace(
+        GetFileInformationByHandle=lambda handle: info,
+        GetFileType=lambda handle: 1,  # SMB also reports FILE_TYPE_DISK.
+        GetFinalPathNameByHandle=lambda handle, flags: (
+            r"\\server\share\record"
+            if defect == "UNC"
+            else r"\\?\Volume{01234567-89ab-cdef-0123-456789abcdef}\custody\record"
+        )
+        if flags == 1
+        else str(path),
+        GetDriveType=lambda root: 4 if defect == "mapped" else 3,
+    )
+    monkeypatch.setattr(
+        filesystem,
+        "_volume_information",
+        lambda handle: (
+            124 if defect == "serial" else 123,
+            0 if defect == "acl" else 8,
+            ""
+            if defect == "unknown"
+            else defect
+            if defect in {"FAT32", "exFAT", "ReFS"}
+            else "NTFS",
+        ),
+    )
+    with pytest.raises(custody.LocalSigningCustodyError, match="volume"):
+        filesystem._qualify(
+            object(),
+            path,
+            (files, _acl_model(), None),
+            frozenset({"owner"}),
+            directory=False,
+            custody=True,
+        )
+
+
+def test_ntfs_handle_volume_query_uses_native_handle_and_preserves_dword_serial(monkeypatch):
+    from bot_core import windows_custody_filesystem as filesystem
+
+    class Query:
+        def __call__(self, handle, volume, volume_size, serial, maximum, flags, name, name_size):
+            assert handle == 123 and volume is None and volume_size == 0
+            serial._obj.value, maximum._obj.value, flags._obj.value = 0xF0123456, 255, 8
+            name.value = "NTFS"
+            assert name_size == 32
+            return 1
+
+    query = Query()
+    monkeypatch.setattr(
+        filesystem.ctypes,
+        "WinDLL",
+        lambda name, **kwargs: SimpleNamespace(GetVolumeInformationByHandleW=query),
+        raising=False,
+    )
+    assert filesystem._volume_information(123) == (0xF0123456, 8, "NTFS")
+    assert len(query.argtypes) == 8 and query.restype is filesystem.wintypes.BOOL
+
+
+@pytest.mark.skipif(os.name != "nt", reason="native opened-handle volume identity and NTFS")
+def test_native_windows_volume_qualification_uses_real_handle(tmp_path):
+    from bot_core import windows_custody_filesystem as filesystem
+
+    path = tmp_path / "volume-record"
+    path.write_bytes(b"local NTFS")
+    files = importlib.import_module("win32file")
+    handle = files.CreateFile(str(path), 0x80020000, 3, None, 3, 0x200000, None)
+    try:
+        info = files.GetFileInformationByHandle(handle)
+        serial, flags, name = filesystem._volume_information(handle)
+        assert serial == info[4] & 0xFFFFFFFF and flags & 8 and name == "NTFS"
+        filesystem._qualify_local_path(path, files)
+        filesystem._qualify_volume(handle, files, info[4])
+    finally:
+        handle.Close()
+    with filesystem.open_custody_file(path) as descriptor:
+        assert os.read(descriptor, 32) == b"local NTFS"
+
+
 def test_ntfs_directory_handles_pin_all_ancestors_without_share_delete(tmp_path, monkeypatch):
     from bot_core import windows_custody_filesystem as filesystem
 
@@ -465,6 +607,7 @@ def test_ntfs_directory_handles_pin_all_ancestors_without_share_delete(tmp_path,
         filesystem, "_native", lambda: (SimpleNamespace(CreateFile=create), None, None)
     )
     monkeypatch.setattr(filesystem, "_trusted_sids", lambda *args: frozenset({"owner"}))
+    monkeypatch.setattr(filesystem, "_qualify_local_path", lambda *args: None)
     monkeypatch.setattr(filesystem, "_qualify", lambda *args, **kwargs: None)
     with pytest.raises(RuntimeError, match="injected"):
         with filesystem.pinned_directory(tmp_path):
@@ -529,7 +672,12 @@ def modeled_windows_handles(monkeypatch):
         CreateFile=create,
         GetFileInformationByHandle=info,
         GetFileType=lambda handle: 1,
-        GetFinalPathNameByHandle=lambda handle, flags: handle.path,
+        GetFinalPathNameByHandle=lambda handle, flags: (
+            r"\\?\Volume{01234567-89ab-cdef-0123-456789abcdef}\modeled"
+            if flags == 1
+            else handle.path
+        ),
+        GetDriveType=lambda root: 3,
     )
     token = SimpleNamespace(Close=lambda: None)
     security = _acl_model()
@@ -539,6 +687,12 @@ def modeled_windows_handles(monkeypatch):
     security.LookupAccountName = lambda *args: ("service", None, None)
     api = SimpleNamespace(GetCurrentProcess=lambda: 1, error=OSError)
     monkeypatch.setattr(filesystem, "_native", lambda: (files, security, api))
+    # POSIX paths and volume replies are explicit models. Dedicated Windows
+    # tests exercise real path syntax and the opened-handle native query.
+    monkeypatch.setattr(filesystem, "_qualify_local_path", lambda *args: None)
+    monkeypatch.setattr(
+        filesystem, "_volume_information", lambda handle: (info(handle)[4] & 0xFFFFFFFF, 8, "NTFS")
+    )
     platform_os = SimpleNamespace(**{name: getattr(os, name) for name in dir(os)})
     platform_os.O_BINARY = 0
     monkeypatch.setattr(filesystem, "os", platform_os)
@@ -546,6 +700,29 @@ def modeled_windows_handles(monkeypatch):
         sys.modules, "msvcrt", SimpleNamespace(open_osfhandle=lambda handle, flags: handle)
     )
     return filesystem, files, handles
+
+
+@pytest.mark.parametrize("error", [OSError, AttributeError])
+@pytest.mark.parametrize("target", ["parent", "file"])
+def test_windows_adapter_closes_handles_when_native_volume_query_fails(
+    tmp_path, modeled_windows_handles, monkeypatch, error, target
+):
+    filesystem, _, handles = modeled_windows_handles
+    original = filesystem._volume_information
+    path = tmp_path / "record"
+    path.write_bytes(b"unchanged")
+
+    def failed(handle):
+        if target == "parent" or handle.path == str(path):
+            raise error("native volume query unavailable")
+        return original(handle)
+
+    monkeypatch.setattr(filesystem, "_volume_information", failed)
+    with pytest.raises(custody.LocalSigningCustodyError, match="qualification failed"):
+        with filesystem.open_custody_file(path, write=True):
+            pytest.fail("unqualified volume yielded")
+    assert handles and all(handle.closed for handle in handles)
+    assert path.read_bytes() == b"unchanged"
 
 
 @pytest.mark.parametrize("create", [False, True])
