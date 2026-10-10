@@ -53,6 +53,9 @@ jobs:
           python -m ruff format --check
           bot_core/postgresql_preaccount_credentials.py
           bot_core/postgresql_root_proof_issuance_authority.py
+          bot_core/postgresql_authenticated_issuer_history.py
+          bot_core/postgresql_issuer_history_schema.py
+          bot_core/postgresql_issuer_history_canonical_sql.py
           bot_core/root_proof_issuer_runtime.py
           bot_core/cha_attempt_store.py
           bot_core/cha_attempt_signatures.py
@@ -66,6 +69,9 @@ jobs:
           tests/security/test_postgresql_preaccount_credential_contract.py
           tests/security/test_postgresql_preaccount_credentials_integration.py
           tests/security/test_postgresql_root_proof_issuance_authority.py
+          tests/security/test_postgresql_authenticated_issuer_history.py
+          tests/security/test_postgresql_authenticated_issuer_history_integration.py
+          tests/security/test_postgresql_issuer_history_security.py
           tests/security/test_cha_signed_attempt_postgresql.py
           tests/security/test_root_proof_issuer_runtime.py
       - name: Mypy configured scope
@@ -156,6 +162,28 @@ jobs:
           -m "not hardware and not destructive and not network"
           --cov=bot_core.licensing.cha_account_reservation
           --cov=deployment.windows_production_cha_account_reservation
+          --cov-append --cov-config=.coveragerc
+          --cov-report=term-missing --cov-report=xml:coverage.xml -q
+      - name: Durable issuer history security and PostgreSQL recovery (serial)
+        env:
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+          DUDZIAN_TEST_MODE: "1"
+          DUDZIAN_ALLOW_LONG_POLL: "0"
+          DUDZIAN_TEST_POSTGRES_DSN: "host=127.0.0.1 port=55432 dbname=postgres user=postgres"
+        run: >-
+          python -m pytest -p asyncio -p pytest_cov
+          tests/security/test_authenticated_issuer_history_contract.py
+          tests/security/test_postgresql_authenticated_issuer_history.py
+          tests/security/test_postgresql_authenticated_issuer_history_integration.py
+          tests/security/test_postgresql_issuer_history_security.py
+          tests/architecture/test_m05_account_genesis_root_proof_issuer_production_substrate_selection_contract.py
+          tests/architecture/test_m05_account_genesis_independent_root_proof_issuer_contract.py
+          tests/architecture/test_m05_account_genesis_physical_persistence_crash_atomicity_contract.py
+          -m "not hardware and not destructive and not network"
+          --cov=bot_core.authenticated_issuer_history
+          --cov=bot_core.postgresql_authenticated_issuer_history
+          --cov=bot_core.postgresql_issuer_history_schema
+          --cov=bot_core.postgresql_issuer_history_canonical_sql
           --cov-append --cov-config=.coveragerc
           --cov-report=term-missing --cov-report=xml:coverage.xml -q
       - name: Canonical JCS profile vectors (serial)
