@@ -219,7 +219,6 @@ jobs:
           tests/security/test_postgresql_preaccount_credentials_integration.py
           tests/security/test_postgresql_root_proof_issuance_authority.py
           tests/security/test_cha_signed_attempt_postgresql.py
-          tests/security/test_root_proof_issuer_runtime.py
           tests/security/test_postgresql_entitlement_registry.py
           tests/security/test_root_proof_issuer_substrate.py
           tests/security/test_local_signing_custody.py
@@ -231,7 +230,6 @@ jobs:
           --cov=bot_core.licensing.cha_root_proof_signed_attempt
           --cov=bot_core.postgresql_preaccount_credentials
           --cov=bot_core.postgresql_root_proof_issuance_authority
-          --cov=bot_core.root_proof_issuer_runtime
           --cov=bot_core.postgresql_entitlement_registry
           --cov=bot_core.root_proof_issuer_substrate
           --cov=bot_core.licensing.cha_root_proof_attempt_reservation
@@ -246,6 +244,67 @@ jobs:
         with:
           name: quality-ratchet-coverage
           path: coverage.xml
+          if-no-files-found: error
+          retention-days: 7
+
+  # Successful baseline ratchets took 80-108 minutes; genuine semantic lineage
+  # adds an estimated 85-100 minutes. Separate runners also isolate authority schemas.
+  semantic-issuer-preflight:
+    name: Semantic issuer preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - name: Install semantic issuer test tools
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[test]" "diff-cover>=9,<10"
+      - name: Semantic issuer preflight security and integration (serial)
+        env:
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+          DUDZIAN_TEST_MODE: "1"
+          DUDZIAN_ALLOW_LONG_POLL: "0"
+          DUDZIAN_TEST_POSTGRES_DSN: "host=127.0.0.1 port=55432 dbname=postgres user=postgres"
+        run: >-
+          python -m pytest -p asyncio -p pytest_cov
+          tests/security/test_root_proof_issuer_runtime.py
+          -m "not hardware and not destructive and not network"
+          --cov=bot_core.root_proof_issuer_runtime
+          --cov=bot_core.licensing.cha_root_proof_signed_attempt
+          --cov-branch --cov-config=.coveragerc
+          --cov-report=term-missing
+          --cov-report=xml:semantic-preflight-coverage.xml -q
+      - name: Changed-code coverage ratchet
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: >-
+          diff-cover semantic-preflight-coverage.xml
+          --compare-branch "origin/$BASE_REF" --fail-under=70
+      - name: Upload semantic issuer coverage
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: semantic-issuer-preflight-coverage
+          path: semantic-preflight-coverage.xml
           if-no-files-found: error
           retention-days: 7
 
