@@ -11,7 +11,7 @@ inspection, not a substitute for reading or testing the implementation.
 - Ruff 0.14.11 remains the single Python linter/formatter. The existing narrow
   rule baseline is retained; broader rules are applied to new files and reviewed
   incrementally rather than rewriting legacy code.
-- mypy 1.10.0 remains the single type checker. Its configured 260-file scope is
+- mypy 1.10.0 remains the single type checker. Its configured file scope is
   a ratchet and must not be silently widened by pre-commit filename arguments.
 - pytest remains the test runner. Hypothesis adds property tests only around
   risk, licensing, canonical serialization, and hardware-independent TPM logic.
@@ -56,6 +56,16 @@ set with branch coverage, a 70% diff-coverage ratchet, maintained Semgrep rules
 as advisory output, custom Semgrep rules as blocking checks, and the baselined
 offline Betterleaks working-tree scan. Existing CI continues to own the larger
 pytest, pip-audit, and SBOM jobs.
+
+The production-local issuer-history component uses the existing PostgreSQL 16
+service in the serial quality-ratchet job. Its durability and security tests
+append branch coverage for the existing history oracle and all three new
+PostgreSQL modules to the same coverage report and 70% changed-code gate.
+Existing tests and coverage scopes remain enabled. All three new modules enter
+the configured mypy scope and its existing Linux and Windows checks; job
+timeouts are unchanged.
+See [issuer-history limits and qualification](architecture/issuer_history_production_local.md)
+for the storage scope and measured test result.
 
 ### Tier C: heavy and scheduled
 
