@@ -108,6 +108,10 @@ Implement:
 - instrument catalog and symbol aliases
 - TradingUniverse
 - environment-aware capability resolution
+- exact per-account identity (including multiple subaccounts of the same venue), environment binding and Core-owned capability/credential authority
+- **permanent Zonda exclusion**: no active Zonda account, credential, adapter or venue capability; preserve immutable historical financial records through an explicit versioned retirement/migration
+
+The binding audit, legacy disposition and acceptance gates are specified in [multi-exchange beta readiness](../../roadmap/multi_exchange_multi_account_beta_readiness.md) and [complete Zonda retirement](../../roadmap/zonda_retirement.md).
 
 ## M1.4 — Strategy, market-data and execution routing
 
@@ -119,6 +123,9 @@ Implement:
 - deterministic routing validation
 - adapter lifecycle and health
 - route failure handling
+- multiple simultaneously active account-scoped adapters, never only `{"primary": adapter}` as effective product composition
+- independent concurrently executing strategies with atomic aggregate portfolio risk/capital reservations; no implicit cross-account or cross-environment order fallback
+- exact account-bound cancellation/retry/reconciliation after ambiguous network outcomes, partial fills and restart
 
 ## M1.5 — Orders, fills and accounting
 
@@ -156,6 +163,12 @@ Classify old code and finish migration:
 - REWRITE — behavior retained but implementation replaced
 - DELETE — legacy, duplicate or preview-only runtime candidate
 
+## M1.8 — Zonda full retirement (mandatory)
+
+**Decision: permanently remove Zonda as a supported or executable venue.** This is a retirement/removal task, not a maintenance or adapter repair effort. Remove all production-reachable native/CCXT Zonda code, runtime registrations, active account/config/marketplace entries, packaged resources, UI choices and promotion paths; update impacted fixtures/tests/scripts and preserve signed artifact integrity. Historical persisted ExchangeAccounts/orders/fills remain verifiable and read-only using a reviewed migration; frozen historical contracts are not rewritten. Negative scans and restart/restore tests must prove no activation or fallback to Zonda is possible.
+
+**Status: PLANNED / NOT REMOVED.** Implementation requires separate reviewed code/migration PRs, not only this roadmap amendment. Detailed inventory, controls and exit evidence: [Zonda retirement](../../roadmap/zonda_retirement.md).
+
 ### M1 exit criteria
 
 - Core can start, persist state, restart and rebuild deterministically.
@@ -163,6 +176,8 @@ Classify old code and finish migration:
 - Domain/account/routing/order/ledger/risk/security foundations execute in code, not preview models.
 - LIVE remains closed.
 - Legacy paths no longer create competing authority.
+- Zonda has no executable or selectable supported product path; historical audit records remain readable and exact.
+- Multi-account Core composition and risk/route identity are validated without `primary` legacy aliasing.
 
 ---
 
@@ -236,6 +251,17 @@ Market data → Strategy → Decision → Risk → Reservation → Order → Pap
 - instrument aliases
 - venue-specific capability restrictions
 - deterministic failover rules where allowed
+- simultaneous independent strategies and separate accounts on different venues or distinct subaccounts, with exact order/cancel/fill binding
+- atomic cross-venue aggregate portfolio exposure, risk caps and capital reservations; no double-spending of risk under concurrency
+- fail-closed uncertain-execution reconciliation before retry/cross-venue fallback; no broadcast cancellation on missing order binding
+
+## M3.5 — Multi-Exchange & Multi-Account Production Readiness (beta blocker)
+
+**Status: PLANNED.** Audit all available real exchange adapters and variants, record an evidence-backed per-venue/market/environment support matrix, then qualify the **approved first-beta venue set** on genuine TESTNET where supported. Prioritize evaluation of Binance, Kraken, Bybit and OKX; do not advertise unsupported spot/futures sandboxes or claim all registered adapter classes are operational. Zonda is permanently **RETIRED**, not a candidate.
+
+Prove at least two independently authenticated venue/account integrations can trade concurrently through canonical Core; verify routing, private identity, least-privilege API keys, secrets, order lifecycle, crash/reconnect recovery, throttling, partial fills, idempotency, global portfolio risk and exact-account cancel without unintended venue crossover. Integration must reach the Windows packaged application's real UI. Review failure scenarios per venue rather than trusting mocks only.
+
+Complete work contract: [Multi-Exchange & Multi-Account Production Readiness](../../roadmap/multi_exchange_multi_account_beta_readiness.md). This is a mandatory **M3 and PB gate before the first beta**; it does not authorize M5 LIVE.
 
 ### M3 exit criteria
 
@@ -243,6 +269,9 @@ Market data → Strategy → Decision → Risk → Reservation → Order → Pap
 - Reconnect/retry cannot create duplicate economic execution.
 - Exchange state reconciles with local state after restart.
 - At least the production-target exchange set required for v1 is validated.
+- Two distinct qualified TESTNET venue/account paths execute and reconcile independent orders concurrently with no risk/capital leakage.
+- Venue support status is evidence-backed; Zonda is fully retired and absent from the active product.
+- All beta-supported venues are configurable from the real UI without editing YAML or invoking CLI.
 - LIVE remains explicitly blocked.
 
 ---
@@ -285,6 +314,18 @@ The production UI must cover, at minimum:
 
 Existing preview/QML surfaces may be reused only when their runtime behavior, ownership and UX fit the canonical architecture. Static mock behavior does not count as implementation evidence.
 
+## M4.2 — Production UI Overhaul & Core Integration (first-beta BLOCKER)
+
+**Status: PLANNED.** This is a dedicated rebuild/adaptation workstream, not an optional styling pass. Inventory all existing PySide6/QML controls and legacy UI alternatives; classify KEEP/ADAPT/REWRITE/DELETE. Replace misleading preview-only screens and dead controls with coherent, real Core-connected vertical slices before first beta. Implement an operator-ready Command Center, orders/fills, strategies, portfolio/PnL, risk/kill switch, market scanner, alerts/audit/diagnostics, updater and system/settings, with working loading/offline/reconnection/error/permission states. No static mock can count as a functional beta screen.
+
+**Dedicated Settings → Exchanges & Accounts:** create/manage multiple venue accounts and subaccounts, choose PAPER/TESTNET/LIVE only where permitted, choose spot/margin/futures when supported, securely write API key/secret/passphrase into OS-backed Core custody, verify identity/permissions/connection, rotate/revoke, configure portfolio/account routes and risk caps, and show actual balances, open orders and per-venue health. UI read models contain only masked state/opaque secret references, never material. Unsupported venues (including Zonda), unavailable sandboxes and LIVE without authority cannot be selected or activated. A SAVE/CONNECT/TEST button must perform the corresponding real Core operation or be explicitly disabled with an explanation.
+
+Detailed work and test contract: [Production UI Overhaul & Core Integration](../../roadmap/production_ui_overhaul.md).
+
+## M4.3 — UI native end-to-end qualification
+
+Run the Windows packaged PySide6/QML product through actual first-launch → account onboarding → independent PAPER/TESTNET trading → account/portfolio state → risk/kill switch → restart/reconnect → audit and diagnostics. Confirm keyboard/DPI, consistent navigation, no secrets in logs, no live bypass and no silent placeholders. These checks must be supported by integration and native UI automation, not screenshots alone.
+
 ## Packaging
 
 - canonical Windows entrypoint
@@ -299,6 +340,8 @@ Existing preview/QML surfaces may be reused only when their runtime behavior, ow
 
 - A non-developer can install and operate the beta-scope PAPER/TESTNET product without CLI intervention.
 - All beta-critical UI workflows are clickable and functional end to end against real runtime contracts.
+- Settings → Exchanges & Accounts stores credentials securely, verifies accounts and supports multiple qualified TESTNET accounts without CLI/config editing.
+- The dedicated UI overhaul M4.2 and native qualification M4.3 have complete evidence; Zonda is not shown or reachable.
 - No beta-critical control is a silent placeholder or mock-only action.
 - Required loading/error/degraded/offline states are implemented and understandable without reading raw logs.
 - Closing the GUI behaves according to Core/Tray lifecycle contract.
@@ -319,6 +362,7 @@ This gate is mandatory between M4 and M5. It is not a cosmetic review and must n
 Before repository-wide audit begins:
 
 - production beta-scope UI from M4 is integrated
+- MEX multi-exchange/account E2E and M4.2/M4.3 production UI gates have PASS evidence; Zonda removal/migration is closed
 - no new features enter the beta branch except changes required to fix an accepted audit finding or unblock beta qualification
 - architecture and product contracts required by the beta scope are frozen
 - new opportunistic redesign is prohibited unless an identified defect proves the current design unsafe, incorrect or unmaintainable at beta risk level
@@ -460,6 +504,8 @@ The first beta may be cut only when:
 - required Windows-native and physical TPM/hardware qualification is PASS
 - no unresolved canonical architecture conflict remains in the beta scope
 - all beta-critical UI flows are functional, connected to real runtime contracts and free of silent mock/placeholder actions
+- supported venues/credential profiles are manageable without CLI, two qualified independent TESTNET accounts operate simultaneously, and Zonda has no reachable execution/configuration/UI path
+- cross-venue cancellation, retry, order identity and aggregate portfolio risk are proven safe by negative E2E tests
 - the independent re-audit is complete
 - Beta Baseline SHA/tag and residual-risk register are recorded
 
