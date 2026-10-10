@@ -1,10 +1,10 @@
-# Roadmap — Autonomous Strategy Discovery & Promotion
+# Roadmap — Stage 12: Autonomous Strategy Discovery & Promotion
 
 ## Status
 
-**PLANNED — post-Trading-Intelligence-Hardening capability block**
+**PLANNED — Stage 12; begins only after accepted Stage 11 (Trading Intelligence Hardening) closure**
 
-Ten blok jest planowany po zamknięciu aktualnego fundamentu platformy oraz bloku **Trading Intelligence Hardening (TIH)** i **nie zmienia zamrożonych kontraktów architektury M0 ani numeracji Windows Stage 0–14**. Implementacja produkcyjna może rozpocząć się dopiero po zamknięciu Stage 10, zamknięciu TIH i potwierdzeniu stabilności runtime'u, updatera, lifecycle'u, persistence, risk i execution.
+**Stage 12 (ASD-1–ASD-6)** jest planowany po zamknięciu aktualnego fundamentu platformy oraz **Stage 11 — Trading Intelligence Hardening (TIH)** i **nie zmienia zamrożonych kontraktów architektury M0–M6 ani numeracji Windows Stage 0–14**. Implementacja produkcyjna może rozpocząć się dopiero po zamknięciu Stage 10, zamknięciu TIH i potwierdzeniu stabilności runtime'u, updatera, lifecycle'u, persistence, risk i execution.
 
 Bezpośredni prerequisite:
 [`docs/roadmap/trading_intelligence_hardening.md`](trading_intelligence_hardening.md).
@@ -248,7 +248,7 @@ Blok ma wykorzystać istniejące komponenty zamiast je duplikować:
 Blok nie powinien wejść do implementacji produkcyjnej przed spełnieniem wszystkich warunków:
 
 - Stage 10 zamknięty i zaakceptowany;
-- **Trading Intelligence Hardening zamknięty i zaakceptowany**;
+- **Stage 11 — Trading Intelligence Hardening zamknięty i zaakceptowany**;
 - TIH Regime Intelligence v2 gotowy;
 - TIH Microstructure/Reversal Intelligence gotowy w zakresie wymaganym przez generowane strategie;
 - TIH Execution Optimizer/TCA v2 gotowy;
@@ -288,13 +288,13 @@ Stage 9 closure
     ↓
 Stage 10 closure / platform stabilization
     ↓
-Trading Intelligence Hardening
+Stage 11 — Trading Intelligence Hardening (TIH-1–TIH-7)
     ↓
-Autonomous Strategy Discovery & Promotion
+Stage 12 — Autonomous Strategy Discovery & Promotion (ASD-1–ASD-6)
     ↓
 Shadow / Paper / Canary Live
     ↓
 continuous self-improving strategy portfolio
 ```
 
-To jest blok rozwojowy CryptoHuntera, a nie rozszerzenie Windows Stage 0–14. Nazwa i numeracja techniczna mogą zostać przypisane dopiero przy otwarciu implementacji, żeby nie naruszyć istniejących kontraktów etapów.
+To jest **Stage 12 roadmapy rozwoju produktu CryptoHunter**, a nie rozszerzenie Windows Stage 0–14 ani zmiana kamieni milowych M0–M6. Numerację Stage 12 formalizuje roadmapa; implementacja nadal jest PLANNED i wymaga zamknięcia Stage 11.
