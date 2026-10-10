@@ -112,6 +112,14 @@
 3. **RC/GA**: pełna lista strategii, marketplace presetów, harmonogram retrainingu, compliance
    (licencje/HWID), opcjonalny cloud z ręczną akceptacją developera.
 
+## First-beta gates — multi-exchange, retired venues and production UI
+
+Before the first beta, the canonical M1/M3/M4/PB roadmap requires **real, concurrently functioning multi-exchange/multi-account PAPER/TESTNET execution** and a **working PySide6/QML production UI**, not only adapter classes or preview screens. Each selected venue must have evidence for environment availability, account/credential scope, order/fill/cancel/recovery and aggregate portfolio risk. The operator must configure multiple accounts and protected API credentials from the UI without manually editing YAML.
+
+**Zonda is permanently excluded** from the target CryptoHunter product. Its currently existing adapter sources, active config and marketplace support are to be removed in dedicated reviewed migrations; retained historical order/account records must remain auditable. The removal is a pre-beta blocker, not a planned future Zonda integration.
+
+Work items and acceptance: [Multi-Exchange readiness](../roadmap/multi_exchange_multi_account_beta_readiness.md), [Zonda retirement](../roadmap/zonda_retirement.md) and [Production UI overhaul](../roadmap/production_ui_overhaul.md). None of this relaxes LIVE authorization; PAPER/TESTNET qualification precedes M5 LIVE Canary.
+
 ## Post-GA capability — Stage 11: Trading Intelligence Hardening
 
 Po ustabilizowaniu platformy i zamknięciu Stage 10 planowany jest obowiązkowy blok wzmacniający
