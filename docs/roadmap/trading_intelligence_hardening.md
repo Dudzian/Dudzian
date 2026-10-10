@@ -1,10 +1,10 @@
-# Roadmap — Trading Intelligence Hardening
+# Roadmap — Stage 11: Trading Intelligence Hardening
 
 ## Status
 
-**PLANNED — required capability block before Autonomous Strategy Discovery & Promotion**
+**PLANNED — Stage 11; required prerequisite for Stage 12 (Autonomous Strategy Discovery & Promotion)**
 
-Ten blok jest planowany **po zamknięciu Stage 10 i przed rozpoczęciem produkcyjnego Autonomous Strategy Discovery & Promotion (ASD)**. Nie zmienia zamrożonych kontraktów M0 ani numeracji Windows Stage 0–14. Jego zadaniem jest wzmocnienie jakości danych, rozpoznawania rynku, walidacji, execution i alokacji kapitału tak, aby późniejszy Strategy Discovery nie optymalizował strategii na słabym modelu rynku lub nierealistycznym execution.
+**Stage 11 (TIH-1–TIH-7)** jest planowany **po zamknięciu Stage 10 i przed rozpoczęciem produkcyjnego Stage 12 — Autonomous Strategy Discovery & Promotion (ASD)**. Numeracja dotyczy etapów rozwoju produktu: nie zmienia zamrożonych kontraktów M0–M6 ani Windows Stage 0–14. Jego zadaniem jest wzmocnienie jakości danych, rozpoznawania rynku, walidacji, execution i alokacji kapitału tak, aby późniejszy Strategy Discovery nie optymalizował strategii na słabym modelu rynku lub nierealistycznym execution.
 
 ## Cel nadrzędny
 
@@ -405,9 +405,9 @@ S9-S10-PRE-01 — dedykowany self-hosted Windows runner
     ↓
 Stage 10 closure / platform stabilization
     ↓
-Trading Intelligence Hardening
+Stage 11 — Trading Intelligence Hardening (TIH-1–TIH-7)
     ↓
-Autonomous Strategy Discovery & Promotion
+Stage 12 — Autonomous Strategy Discovery & Promotion (ASD-1–ASD-6)
     ↓
 Shadow / Paper / Canary Live
     ↓

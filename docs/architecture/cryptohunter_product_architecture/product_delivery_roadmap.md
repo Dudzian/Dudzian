@@ -33,6 +33,18 @@ CryptoHunter v1 is complete when it is a stable installable Windows desktop prod
 
 **Exit criteria:** approved runner and MSI handoff runbook; dedicated runner identity and persistence setup verified without reboot; repeatable hash/provenance verification and fail-closed mismatches demonstrated; a reviewed plan for installing the exact current-run qualified MSI on the self-hosted machine; and independent sign-off that the live restart and 24-hour soak remain disabled until their separate authorization. This gate is **PREPARED**, not Stage 10 `PASS`.
 
+## Numbered capabilities after Stage 10 — Stage 11 and Stage 12
+
+**Status: PLANNED; numbering formalized, implementation not started.** These are product capability stages ordered after the Windows Stage 10 live lifecycle qualification. They do **not** renumber or extend frozen Windows Stage 0–14 acceptance items, or replace the canonical M0–M6 product milestone taxonomy. Neither stage may claim readiness solely from design documents, existing preview code or the presence of a workflow.
+
+1. **Stage 11 — Trading Intelligence Hardening (TIH-1–TIH-7).** After Stage 10 closure and platform stabilization, harden regime classification, market microstructure and reversal intelligence, execution/TCA, anti-overfitting validation, live edge-decay monitoring, capital allocation and L2/trades replay. Detailed scope and acceptance criteria: [Stage 11 roadmap](../../roadmap/trading_intelligence_hardening.md).
+2. **Stage 12 — Autonomous Strategy Discovery & Promotion (ASD-1–ASD-6).** Begin only after Stage 11's full accepted closure and stable risk/execution/persistence capabilities. Implement declarative strategy candidate generation, research/validation, guarded Shadow → Paper → Canary Live promotion and Champion/Challenger continuous discovery. Detailed scope and acceptance criteria: [Stage 12 roadmap](../../roadmap/autonomous_strategy_discovery_and_promotion.md).
+3. **Following Stage 12 — Profitability & Edge Optimization (PEO-1–PEO-10).** Remains a named post-ASD capability block; it is **not** assigned a numbered stage by this change. Detailed scope and acceptance criteria: [PEO roadmap](../../roadmap/profitability_edge_optimization.md).
+
+**Required order:** Stage 9 closure → S9-S10-PRE-01 → Stage 10 live qualification and closure → **Stage 11 / TIH** → **Stage 12 / ASD** → **PEO**.
+
+No implementation, deployments, release gates, explicit Stage 10 opt-in policy, or Stage 9/10 readiness status are changed by assigning these planning numbers.
+
 ---
 
 # M0 — Product Architecture Contract
