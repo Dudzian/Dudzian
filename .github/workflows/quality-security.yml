@@ -53,6 +53,7 @@ jobs:
           python -m ruff format --check
           bot_core/postgresql_preaccount_credentials.py
           bot_core/postgresql_root_proof_issuance_authority.py
+          bot_core/root_proof_issuer_runtime.py
           bot_core/cha_attempt_store.py
           bot_core/cha_attempt_signatures.py
           bot_core/cha_issuance_request.py
@@ -66,6 +67,7 @@ jobs:
           tests/security/test_postgresql_preaccount_credentials_integration.py
           tests/security/test_postgresql_root_proof_issuance_authority.py
           tests/security/test_cha_signed_attempt_postgresql.py
+          tests/security/test_root_proof_issuer_runtime.py
       - name: Mypy configured scope
         run: python -m mypy
       - name: Mypy Windows configured scope
@@ -217,6 +219,7 @@ jobs:
           tests/security/test_postgresql_preaccount_credentials_integration.py
           tests/security/test_postgresql_root_proof_issuance_authority.py
           tests/security/test_cha_signed_attempt_postgresql.py
+          tests/security/test_root_proof_issuer_runtime.py
           tests/security/test_postgresql_entitlement_registry.py
           tests/security/test_root_proof_issuer_substrate.py
           tests/security/test_local_signing_custody.py
@@ -228,6 +231,7 @@ jobs:
           --cov=bot_core.licensing.cha_root_proof_signed_attempt
           --cov=bot_core.postgresql_preaccount_credentials
           --cov=bot_core.postgresql_root_proof_issuance_authority
+          --cov=bot_core.root_proof_issuer_runtime
           --cov=bot_core.postgresql_entitlement_registry
           --cov=bot_core.root_proof_issuer_substrate
           --cov=bot_core.licensing.cha_root_proof_attempt_reservation

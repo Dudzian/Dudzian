@@ -174,13 +174,23 @@ _SIGNED: WeakKeyDictionary[VerifiedSignedImmutableRootProofIssuanceAttempt, _Sig
 
 
 def _signed_snapshot(value: object) -> tuple[CurrentAttempt, RetainedIssuanceRequest]:
+    _, current, retained = _read_issuer_preflight_source(value)
+    return current, retained
+
+
+def _read_issuer_preflight_source(
+    value: object,
+) -> tuple[reservation_boundary._AuthorizationSnapshot, CurrentAttempt, RetainedIssuanceRequest]:
+    """Read genuine local CHA evidence without granting transport authority."""
     if type(value) is not VerifiedSignedImmutableRootProofIssuanceAttempt or value not in _SIGNED:
         raise SignedIssuanceAttemptError("VERIFIED_SIGNED_IMMUTABLE_ATTEMPT_REQUIRED")
     snapshot = _SIGNED[value]
     upstream = reservation_boundary._exact_binding_authorization(
         snapshot.binding, snapshot.authorization
     )
-    _, _, identities = _qualified_pair(snapshot.authorization)
+    qualified, _, identities = _qualified_pair(snapshot.authorization)
+    if qualified != upstream:
+        raise SignedIssuanceAttemptError("PREFLIGHT_AUTHORIZATION_CHANGED")
     if snapshot.path != reservation_boundary._attempt_store_path():
         raise SignedIssuanceAttemptError("ATTEMPT_STORE_OWNER_CHANGED")
     with reservation_boundary._open_store(upstream.authorization.trust_domain) as store:
@@ -192,7 +202,7 @@ def _signed_snapshot(value: object) -> tuple[CurrentAttempt, RetainedIssuanceReq
     ):
         raise SignedIssuanceAttemptError("SIGNED_IMMUTABLE_ATTEMPT_CHANGED")
     _retained_pair_matches(retained, identities)
-    return current, retained
+    return upstream, current, retained
 
 
 def require_verified_signed_immutable_root_proof_issuance_attempt(

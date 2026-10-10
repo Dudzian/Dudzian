@@ -43,6 +43,7 @@ files = [
   "bot_core/licensing/cha_root_proof_signed_attempt.py",
   "bot_core/postgresql_preaccount_credentials.py",
   "bot_core/postgresql_root_proof_issuance_authority.py",
+  "bot_core/root_proof_issuer_runtime.py",
   "bot_core/licensing/cha_root_proof_attempt_reservation.py",
   "bot_core/licensing/cha_logical_operation.py",
   "bot_core/licensing/cha_account_reservation.py",
