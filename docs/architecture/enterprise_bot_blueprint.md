@@ -112,7 +112,7 @@
 3. **RC/GA**: pełna lista strategii, marketplace presetów, harmonogram retrainingu, compliance
    (licencje/HWID), opcjonalny cloud z ręczną akceptacją developera.
 
-## Post-GA capability — Trading Intelligence Hardening
+## Post-GA capability — Stage 11: Trading Intelligence Hardening
 
 Po ustabilizowaniu platformy i zamknięciu Stage 10 planowany jest obowiązkowy blok wzmacniający
 jakość inteligencji tradingowej przed uruchomieniem Autonomous Strategy Discovery. Zakres obejmuje:
@@ -126,9 +126,9 @@ płynności, execution i walidacji oraz że potrafimy wcześnie wykrywać utrat�
 Szczegółowy zakres TIH-1–TIH-7 i kryteria zamknięcia opisuje:
 [`docs/roadmap/trading_intelligence_hardening.md`](../roadmap/trading_intelligence_hardening.md).
 
-## Post-GA capability — Autonomous Strategy Discovery & Promotion
+## Post-GA capability — Stage 12: Autonomous Strategy Discovery & Promotion
 
-Ten blok rozpoczyna się **dopiero po zamknięciu Trading Intelligence Hardening**. Umożliwia AI/ML
+Stage 12 rozpoczyna się **dopiero po zamknięciu Stage 11 — Trading Intelligence Hardening**. Umożliwia AI/ML
 samodzielne generowanie kandydatów strategii, ich automatyczną walidację oraz kontrolowaną promocję
 przez `RESEARCH → SHADOW → PAPER → CANARY_LIVE → CHALLENGER → CHAMPION`.
 
@@ -139,7 +139,7 @@ a Risk Engine, ExecutionLease i kill switch pozostają nadrzędne względem wars
 Szczegółowy zakres, fazy ASD-1–ASD-6 oraz kryteria wejścia/wyjścia opisuje:
 [`docs/roadmap/autonomous_strategy_discovery_and_promotion.md`](../roadmap/autonomous_strategy_discovery_and_promotion.md).
 
-## Post-GA capability — Profitability & Edge Optimization
+## Post-GA capability — Profitability & Edge Optimization (post-Stage-12; unnumbered)
 
 Po uruchomieniu podstawowego lifecycle'u ASD planowany jest końcowy blok optymalizacji jakości
 przewagi. Zakres obejmuje Meta-Labeling & Opportunity Filter, Probability Calibration & Uncertainty,
@@ -167,9 +167,9 @@ Docelowa kolejność post-GA:
 ```text
 Stage 10 closure
     ↓
-Trading Intelligence Hardening
+Stage 11 — Trading Intelligence Hardening (TIH-1–TIH-7)
     ↓
-Autonomous Strategy Discovery & Promotion
+Stage 12 — Autonomous Strategy Discovery & Promotion (ASD-1–ASD-6)
     ↓
 Shadow / Paper / Canary Live
     ↓
