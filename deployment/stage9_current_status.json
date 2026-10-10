@@ -46,5 +46,6 @@
   "requester_signing_custody_implementation": "IMPLEMENTED",
   "claimant_authorization_signing_custody_implementation": "IMPLEMENTED",
   "signed_immutable_attempt_boundary": "IMPLEMENTED",
-  "signed_immutable_attempt_live_availability": "BLOCKED_UNTIL_PRODUCTION_CREDENTIAL_PROVISIONING"
+  "signed_immutable_attempt_live_availability": "BLOCKED_UNTIL_PRODUCTION_CREDENTIAL_PROVISIONING",
+  "signed_immutable_attempt_platform_support": "POSIX_AND_WINDOWS_NATIVE"
 }

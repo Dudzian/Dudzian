@@ -93,6 +93,7 @@ class AttemptState(str, Enum):
     SIGNED_IMMUTABLE_DURABLE_NOT_SENT = "SIGNED_IMMUTABLE_DURABLE_NOT_SENT"
     MAY_HAVE_BEEN_SENT_OUTCOME_UNKNOWN = "MAY_HAVE_BEEN_SENT_OUTCOME_UNKNOWN"
     EXACT_BOUND_RECOVERED = "EXACT_BOUND_RECOVERED"
+    SUPERSEDED_PRE_SEND_PROVEN_UNSENDABLE = "SUPERSEDED_PRE_SEND_PROVEN_UNSENDABLE"
     SUPERSEDED_AFTER_AUTHORITATIVE_UNBOUND_RECONCILIATION = (
         "SUPERSEDED_AFTER_AUTHORITATIVE_UNBOUND_RECONCILIATION"
     )
@@ -1038,6 +1039,10 @@ class SQLiteCHAAttemptStore:
             "evidence_digest,decision_key FROM replacement_relations"
         ):
             auth, evidence = self._validate_replacement_row(row, db)
+            pre_send = type(evidence) is AttemptAuthorization
+            from bot_core.cha_attempt_signatures import pre_send_binding
+
+            binding = pre_send_binding if pre_send else _stable_authorization_binding
             old_id, new_id, key = str(row[0]), str(row[1]), str(row[5])
             if key in expected:
                 raise AttemptCorruptError("authority decisions have duplicate identities")
@@ -1047,23 +1052,34 @@ class SQLiteCHAAttemptStore:
                 or old_id in replacements
                 or new_id in incoming
                 or reservations[new_id] != (auth, "REPLACEMENT", key)
-                or _stable_authorization_binding(reservations[old_id][0])
-                != _stable_authorization_binding(auth)
-                or _stable_authorization_binding(reservations[old_id][0])
-                != _stable_authorization_binding(evidence)
+                or binding(reservations[old_id][0]) != binding(auth)
+                or binding(reservations[old_id][0]) != binding(evidence)
             ):
                 raise AttemptCorruptError("replacement lineage binding is inconsistent")
             replacements[old_id] = new_id
             incoming[new_id] = old_id
             replacement_keys[old_id] = key
+            legacy_evidence = cast(AuthoritativeUnboundEvidence, evidence)
             expected[key] = (
                 old_id,
-                AttemptState.SUPERSEDED_AFTER_AUTHORITATIVE_UNBOUND_RECONCILIATION.value,
-                evidence.authority_authenticated_evidence_reference,
-                evidence.authority_authenticated_evidence_digest_sha256,
+                (
+                    AttemptState.SUPERSEDED_PRE_SEND_PROVEN_UNSENDABLE.value
+                    if pre_send
+                    else AttemptState.SUPERSEDED_AFTER_AUTHORITATIVE_UNBOUND_RECONCILIATION.value
+                ),
+                (
+                    "immutable:pre-send:sha256:" + str(row[4])
+                    if pre_send
+                    else legacy_evidence.authority_authenticated_evidence_reference
+                ),
+                (
+                    row[4]
+                    if pre_send
+                    else legacy_evidence.authority_authenticated_evidence_digest_sha256
+                ),
                 key,
             )
-            decision_kind[key] = "REPLACEMENT"
+            decision_kind[key] = "PRE_SEND_SUPERSESSION" if pre_send else "REPLACEMENT"
 
         if getattr(self, "_schema_version", 6) == 6:
             from bot_core.cha_attempt_signatures import validate_history
@@ -1116,6 +1132,18 @@ class SQLiteCHAAttemptStore:
                 legal = recovery_predecessors[
                     key
                 ] == current.value and state in _RECOVERY_TRANSITIONS.get(current, set())
+            elif kind == "PRE_SEND_SUPERSESSION":
+                legal = (
+                    current
+                    in {
+                        AttemptState.RESERVED_AWAITING_SIGNATURES,
+                        AttemptState.REQUEST_SIGNED_BY_REQUESTER,
+                        AttemptState.CLAIMANT_AUTHORIZED,
+                    }
+                    and state is AttemptState.SUPERSEDED_PRE_SEND_PROVEN_UNSENDABLE
+                    and attempt_id in replacements
+                    and attempt_id not in identities
+                )
             else:
                 legal = (
                     current in _REPLACEMENT_ELIGIBLE_STATES
@@ -1176,7 +1204,10 @@ class SQLiteCHAAttemptStore:
             if visited != attempt_ids:
                 raise AttemptCorruptError("reservation is orphaned or replacement chain forks")
             leaf_state = states[leaf]
-            if leaf_state is AttemptState.SUPERSEDED_AFTER_AUTHORITATIVE_UNBOUND_RECONCILIATION:
+            if leaf_state in {
+                AttemptState.SUPERSEDED_AFTER_AUTHORITATIVE_UNBOUND_RECONCILIATION,
+                AttemptState.SUPERSEDED_PRE_SEND_PROVEN_UNSENDABLE,
+            }:
                 raise AttemptCorruptError("replacement chain leaf is superseded")
             leaf_identity = identities.get(leaf)
             digest_status = "DEFINED" if leaf_identity is not None else "NOT_YET_DEFINED"
@@ -1436,7 +1467,7 @@ class SQLiteCHAAttemptStore:
     def prepare_signature(
         self, current: CurrentAttempt, signer: IssuanceSignerIdentity
     ) -> RetainedIssuanceRequest:
-        """Commit invocation latch BEFORE calling private custody; never reset it."""
+        """Retain the exact signing operation; missing checkpoints may be recovered."""
         from bot_core.cha_attempt_signatures import load_request
         from bot_core.cha_issuance_request import request_bytes, request_reference
 
@@ -1473,17 +1504,19 @@ class SQLiteCHAAttemptStore:
                 or value.requester[0].public_key_hex == signer.public_key_hex
             ):
                 raise AttemptCorruptError("distinct retained requester authorization required")
-            if db.execute(
-                "SELECT 1 FROM signing_intents WHERE attempt_id=? AND role=?",
+            signer_raw = _canonical(signer.payload())
+            intent = db.execute(
+                "SELECT request_reference,signer_json FROM signing_intents WHERE attempt_id=? AND role=?",
                 (attempt_id, signer.role.value),
-            ).fetchone():
-                raise AttemptConflictError(
-                    "SIGNATURE_OUTCOME_NOT_DURABLE: invocation cannot be repeated"
+            ).fetchone()
+            if intent is not None:
+                if intent != (value.reference, signer_raw):
+                    raise AttemptConflictError("EXACT_SIGNING_OPERATION_REQUIRED")
+            else:
+                db.execute(
+                    "INSERT INTO signing_intents VALUES(?,?,?,?)",
+                    (attempt_id, signer.role.value, value.reference, signer_raw),
                 )
-            db.execute(
-                "INSERT INTO signing_intents VALUES(?,?,?,?)",
-                (attempt_id, signer.role.value, value.reference, _canonical(signer.payload())),
-            )
             return value
 
     def persist_signature(
@@ -1563,6 +1596,103 @@ class SQLiteCHAAttemptStore:
             if value is None:
                 raise AttemptNotFoundError("canonical issuance request is not retained")
             return value
+
+    def supersede_pre_send(
+        self, current: CurrentAttempt, auth: AttemptAuthorization
+    ) -> CurrentAttempt:
+        """Explicit local-only supersession; preserve every predecessor record.
+
+        The existing immutable replacement relation retains a separate typed
+        proof. No schema change or post-send reconciliation evidence is used.
+        """
+        from bot_core.cha_attempt_signatures import (
+            pre_send_evidence,
+            require_replacement_credentials,
+        )
+
+        current, auth = _snapshot_current_attempt(current), _snapshot_authorization(auth)
+        self._check_auth(auth)
+        old_auth = current.reservation.authorization
+        old_id = current.reservation.issuance_attempt_id
+        with self._write() as db:
+            live = self._authoritative_current(auth.logical_operation_id, db)
+            if old_auth == auth and live == current:
+                successor_relation = db.execute(
+                    "SELECT old_attempt_id,new_attempt_id,evidence_json,authorization_json,evidence_digest,decision_key "
+                    "FROM replacement_relations WHERE new_attempt_id=?",
+                    (old_id,),
+                ).fetchone()
+                if successor_relation is not None:
+                    previous_auth, old_evidence = self._validate_replacement_row(
+                        successor_relation, db
+                    )
+                    if previous_auth == auth and type(old_evidence) is AttemptAuthorization:
+                        return live
+            require_replacement_credentials(old_auth, auth)
+            previous = db.execute(
+                "SELECT old_attempt_id,new_attempt_id,evidence_json,authorization_json,evidence_digest,decision_key "
+                "FROM replacement_relations WHERE old_attempt_id=?",
+                (old_id,),
+            ).fetchone()
+            if previous is not None:
+                previous_auth, evidence = self._validate_replacement_row(previous, db)
+                if type(evidence) is not AttemptAuthorization or previous_auth != auth:
+                    raise AttemptConflictError("predecessor already has a different supersession")
+                return self._require_current_descendant(
+                    str(previous[1]), auth.logical_operation_id, db
+                )
+            if live != current or current.state not in {
+                AttemptState.RESERVED_AWAITING_SIGNATURES,
+                AttemptState.REQUEST_SIGNED_BY_REQUESTER,
+                AttemptState.CLAIMANT_AUTHORIZED,
+            }:
+                raise AttemptConflictError("EXACT_PRE_SEND_CURRENT_FENCE_REQUIRED")
+            proof = pre_send_evidence(db, old_auth, old_id)
+            raw = _canonical(proof)
+            digest = hashlib.sha256(raw).hexdigest()
+            decision_key = _decision_key(
+                "PRE_SEND_SUPERSESSION", {"authorization": asdict(auth), "evidence": proof}
+            )
+            new_id = _new_rpa_id()
+            db.execute(
+                "INSERT INTO reservations VALUES(?,?,?,?,?,?,?)",
+                (
+                    new_id,
+                    auth.logical_operation_id,
+                    _idempotency_key(auth),
+                    _canonical(asdict(auth)),
+                    AttemptState.RESERVED_AWAITING_SIGNATURES.value,
+                    "REPLACEMENT",
+                    decision_key,
+                ),
+            )
+            db.execute(
+                "INSERT INTO replacement_relations VALUES(?,?,?,?,?,?)",
+                (old_id, new_id, raw, _canonical(asdict(auth)), digest, decision_key),
+            )
+            db.execute(
+                "INSERT INTO attempt_transitions(attempt_id,state,evidence_reference,evidence_digest,decision_key) "
+                "VALUES(?,?,?,?,?)",
+                (
+                    old_id,
+                    AttemptState.SUPERSEDED_PRE_SEND_PROVEN_UNSENDABLE.value,
+                    "immutable:pre-send:sha256:" + digest,
+                    digest,
+                    decision_key,
+                ),
+            )
+            _persistence_cut("pre_send:decision_inserted")
+            self._cas(
+                db,
+                auth.logical_operation_id,
+                old_id,
+                current.fence,
+                new_id,
+                AttemptState.RESERVED_AWAITING_SIGNATURES,
+                None,
+            )
+            _persistence_cut("pre_send:cas_written")
+            return self._authoritative_current(auth.logical_operation_id, db)
 
     def replace_after_authoritative_unbound(
         self,
@@ -1790,12 +1920,50 @@ class SQLiteCHAAttemptStore:
 
     def _validate_replacement_row(
         self, row: tuple[object, ...], db: sqlite3.Connection
-    ) -> tuple[AttemptAuthorization, AuthoritativeUnboundEvidence]:
+    ) -> tuple[AttemptAuthorization, AuthoritativeUnboundEvidence | AttemptAuthorization]:
         old_id, new_id, evidence_json, authorization_json, evidence_digest, decision_key = row
         try:
             auth = _authorization_from_json(authorization_json)
-            evidence = AuthoritativeUnboundEvidence(**_persisted_json(evidence_json))
-        except (TypeError, ValueError, UnicodeError) as exc:
+            data = _persisted_json(evidence_json)
+            if data.get("schema_version") == "LocalPreSendUnsendableV1":
+                from bot_core.cha_attempt_signatures import (
+                    require_replacement_credentials,
+                    retained_pre_send_evidence,
+                )
+
+                old_row = db.execute(
+                    "SELECT authorization_json FROM reservations WHERE attempt_id=?", (old_id,)
+                ).fetchone()
+                if old_row is None:
+                    raise ValueError("missing superseded reservation")
+                old_auth = _authorization_from_json(old_row[0])
+                require_replacement_credentials(old_auth, auth)
+                if (
+                    type(old_id) is not str
+                    or _RPA_ID.fullmatch(old_id) is None
+                    or type(new_id) is not str
+                    or _RPA_ID.fullmatch(new_id) is None
+                    or old_id == new_id
+                ):
+                    raise ValueError("invalid pre-send lineage identifiers")
+                raw = _canonical(retained_pre_send_evidence(db, old_auth, old_id))
+                key = _decision_key(
+                    "PRE_SEND_SUPERSESSION", {"authorization": asdict(auth), "evidence": data}
+                )
+                if (
+                    evidence_json != raw
+                    or evidence_digest != hashlib.sha256(raw).hexdigest()
+                    or decision_key != key
+                    or db.execute(
+                        "SELECT reservation_kind,decision_key FROM reservations WHERE attempt_id=?",
+                        (new_id,),
+                    ).fetchone()
+                    != ("REPLACEMENT", key)
+                ):
+                    raise ValueError("pre-send supersession proof differs from immutable history")
+                return auth, old_auth
+            evidence = AuthoritativeUnboundEvidence(**data)
+        except (TypeError, ValueError, UnicodeError, AttemptConflictError) as exc:
             raise AttemptCorruptError("persisted replacement relation is malformed") from exc
         identity = {
             "authorization": asdict(auth),

@@ -37,6 +37,8 @@ files = [
   "bot_core/cha_attempt_store.py",
   "bot_core/cha_issuance_request.py",
   "bot_core/cha_attempt_signatures.py",
+  "bot_core/cha_issuance_execution.py",
+  "bot_core/windows_custody_filesystem.py",
   "bot_core/cha_root_proof_signing_custody.py",
   "bot_core/licensing/cha_root_proof_signed_attempt.py",
   "bot_core/postgresql_preaccount_credentials.py",

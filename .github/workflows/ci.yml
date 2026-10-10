@@ -911,7 +911,7 @@ jobs:
               done
               ;;
             cha-signed-attempt)
-              licensing_tests=(tests/licensing/test_cha_root_proof_signed*.py)
+              licensing_tests=(tests/licensing/test_cha_root_proof_signed*.py tests/security/test_native_custody_locking.py)
               ;;
             *)
               echo "Unknown licensing security/durability shard: ${{ matrix.shard }}" >&2

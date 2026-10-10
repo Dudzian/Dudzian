@@ -1,8 +1,8 @@
-"""Schema v6 append-only request, invocation latch and signature decisions.
+"""Schema v6 append-only request, exact signing operations and checkpoints.
 
-An invocation latch without a signature blocks continuation permanently. It is
-never erased on rollback or inferred to mean 'not signed'. This deliberately
-trades availability for the frozen no-resigning requirement.
+An intent fences the request, attempt, role and signer identity. Before
+finalization, the same deterministic Ed25519 operation may recover a missing
+checkpoint under live lifecycle checks; durable checkpoints are always reused.
 """
 
 from __future__ import annotations
@@ -23,6 +23,77 @@ if TYPE_CHECKING:
     from bot_core.cha_attempt_store import AttemptAuthorization, AttemptIdentity
 
 TABLES = ("issuance_requests", "signing_intents", "signature_checkpoints")
+# The V1 historical proof vocabulary is immutable, independent of installation.
+_LOCAL_PRE_SEND_GRANTS_V1 = ("FINALIZE", "RESERVE", "SIGN")
+
+
+def require_local_only_issuance_scope() -> None:
+    from bot_core.cha_issuance_execution import require_local_only_execution
+
+    require_local_only_execution()
+
+
+def pre_send_binding(auth: object) -> tuple[object, ...]:
+    from bot_core.cha_attempt_store import _STABLE_AUTHORIZATION_BINDING_FIELDS
+
+    # Requalified replacement credentials necessarily change authorization
+    # evidence; the operation, entitlement and exact InitialBinding cannot change.
+    return tuple(
+        getattr(auth, name)
+        for name in _STABLE_AUTHORIZATION_BINDING_FIELDS
+        if name != "authorization_evidence_sha256"
+    )
+
+
+def require_replacement_credentials(old: AttemptAuthorization, new: AttemptAuthorization) -> None:
+    from bot_core.cha_attempt_store import AttemptConflictError
+
+    if pre_send_binding(old) != pre_send_binding(new) or not any(
+        getattr(old, name) != getattr(new, name)
+        for name in (
+            "requester_principal_id",
+            "requester_key_id",
+            "requester_key_version",
+            "provisioning_principal_id",
+            "claimant_key_id",
+            "claimant_key_version",
+        )
+    ):
+        raise AttemptConflictError("EXACT_BINDING_AND_REQUALIFIED_REPLACEMENT_CREDENTIAL_REQUIRED")
+
+
+def pre_send_evidence(db: sqlite3.Connection, auth: AttemptAuthorization, attempt_id: str) -> dict:
+    """Authorize a NEW decision using the currently executable installation."""
+    require_local_only_issuance_scope()
+    return retained_pre_send_evidence(db, auth, attempt_id)
+
+
+def retained_pre_send_evidence(
+    db: sqlite3.Connection, auth: AttemptAuthorization, attempt_id: str
+) -> dict:
+    """Reconstruct V1 immutable facts without consulting current capabilities."""
+    from dataclasses import asdict
+
+    from bot_core.cha_attempt_store import AttemptConflictError
+
+    if auth.reservation_identity is None or any(
+        db.execute(f"SELECT 1 FROM {table} WHERE attempt_id=?", (attempt_id,)).fetchone()
+        for table in ("immutable_attempts", "recovery_resolutions")
+    ):
+        raise AttemptConflictError("PRE_SEND_PROVEN_UNSENDABLE_REQUIRED")
+    value = load_request(db, auth, attempt_id)
+    return {
+        "schema_version": "LocalPreSendUnsendableV1",
+        "old_issuance_attempt_id": attempt_id,
+        "old_authorization": asdict(auth),
+        "request_reference": value.reference if value else None,
+        "authority_grants": list(_LOCAL_PRE_SEND_GRANTS_V1),
+        "no_completed_immutable_attempt": True,
+        "no_external_send_authority": True,
+        "no_issuer_bound_decision": True,
+    }
+
+
 CREATE_STATEMENTS = (
     "CREATE TABLE issuance_requests("
     "attempt_id TEXT PRIMARY KEY REFERENCES reservations(attempt_id), "

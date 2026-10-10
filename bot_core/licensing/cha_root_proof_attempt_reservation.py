@@ -618,7 +618,7 @@ def _reserved_current(current: CurrentAttempt, authorization: AttemptAuthorizati
         type(current) is not CurrentAttempt
         or current.state is not AttemptState.RESERVED_AWAITING_SIGNATURES
         or current.identity is not None
-        or current.fence != 1
+        or current.fence < 1
         or current.reservation.authorization != authorization
     ):
         raise RootProofAttemptReservationError("EXACT_CURRENT_RESERVED_ATTEMPT_REQUIRED")
@@ -665,9 +665,11 @@ def _issue_reservation(
 def reserve_root_proof_issuance_attempt(
     binding: object, authorization: object
 ) -> VerifiedRootProofIssuanceAttemptReservation:
+    from bot_core.cha_issuance_execution import execute_local_issuance
+
     snapshot = _exact_binding_authorization(binding, authorization)
     with _open_store(snapshot.authorization.trust_domain) as store:
-        current = store.reserve_or_resolve_attempt_id(snapshot.authorization)
+        current = execute_local_issuance("RESERVE", store, snapshot.authorization)
     _reserved_current(current, snapshot.authorization)
     return _issue_reservation(binding, authorization, current)
 

@@ -77,11 +77,22 @@ must reconcile or abandon an incomplete ceremony outside the runtime API.
 Lifecycle can advance ACTIVE → VERIFY_ONLY → REVOKED, or ACTIVE → REVOKED.
 Runtime cannot generate, rotate, delete, change lifecycle or export private keys.
 
-Existing hardened publication and locking primitives are reused. Their current
-PRODUCTION_LOCAL lock implementation requires POSIX. Windows native custody is
-therefore blocked; Windows readiness remains NOT_READY. Tests mock the native OS
-keyring layer; they do not provision installed production credentials or perform
-legal enrollment.
+Existing hardened publication primitives are reused. POSIX custody keeps
+`fcntl.flock` shared/exclusive ownership. Windows uses the repository's reviewed
+`msvcrt.locking` pattern: one byte at offset zero, `LK_NBLCK` exclusive ownership
+and explicit `LK_UNLCK` in `finally`. Readers also take the exclusive lock because
+this primitive does not supply safe shared ownership. Contention retries for at
+most five seconds and fails closed; there is no unlocked fallback or process-local
+mutex authority. Native process tests cover concurrent exclusion, exceptions and
+abrupt process termination. Unix mode-bit checks remain POSIX-specific.
+Most tests mock the OS keyring layer beneath the actual custody adapters. The
+Windows-only integration test instead creates isolated test-owned namespaces in
+the real Windows Credential Manager, activates separate role keys, and signs and
+finalizes through two spawned processes. It checks public/private binding,
+cross-role rejection and lifecycle revocation, then deletes its own credentials.
+Only its public registry activation is simulated; genuine PostgreSQL binding is
+covered separately. Tests do not provision installed production credentials or
+perform legal enrollment.
 
 ## Schema and persistence
 
@@ -105,25 +116,48 @@ An injected migration failure rolls back DDL, metadata and trigger changes.
 
 The four states are RESERVED_AWAITING_SIGNATURES → REQUEST_SIGNED_BY_REQUESTER →
 CLAIMANT_AUTHORIZED → SIGNED_IMMUTABLE_DURABLE_NOT_SENT. Each role has one immutable
-invocation latch, bound to the request reference and complete signer identity.
-Its latch is committed **before** the private operation. After the operation,
-signature verification, signature append, transition append and current-state
-CAS commit together. Finalization appends existing AttemptIdentity, its transition
-and fenced current projection atomically, without changing the `rpa_`.
+signing-operation identity binding the exact request reference/digest, `rpa_`,
+key, principal, role/domain/profile and custody lifecycle identity. It commits
+**before** the private operation. Signature verification, checkpoint append,
+transition and current-state CAS commit together. Finalization appends the existing
+AttemptIdentity and its fenced projection without changing the reserved `rpa_`.
 
-Local deterministic Ed25519 may return before its signature transaction commits.
-If the process dies in that interval, the durable latch survives. An intent
-without a checkpoint returns `SIGNATURE_OUTCOME_NOT_DURABLE` and permanently
-blocks that role/attempt. It is never cleared, treated as evidence of no signing,
-or retried. A crash after the latch but before the actual invocation also blocks.
-This intentionally sacrifices availability to honor `resigning_allowed=false`.
-There is no claim of lossless recovery or atomic signing across stores.
+The frozen parent's reservation crash recovery permits re-obtaining missing
+signatures for the same `rpa_` under lifecycle rules. A permanently spent invocation
+latch contradicted that rule, even before private invocation. Local Ed25519 is
+deterministic for the exact same domain-separated bytes and private key, so an
+identical retained intent without a checkpoint can resume after requalifying
+unchanged authorization and ACTIVE original credentials. An unequal intent fails
+closed. No intent is deleted or interpreted as proof that signing never occurred.
 
-After a committed checkpoint, restart reuses the exact retained signature and
-request bytes. Lost finalization response converges on the same identity and
-digest with no signer call. Relevant credential changes fail closed even after
-either signature; VERIFY_ONLY historical verification never authorizes completion
-of a new UNBOUND request. No key substitution occurs.
+A durable requester checkpoint is verified and reused; requester custody is never
+invoked again while completing claimant authorization. The same rule applies to
+a claimant checkpoint. Finalized attempt retries reuse the retained identity and
+digest with zero signer calls. The parent's post-send/BOUND prohibition on
+re-signing remains phase-specific. Independent stores are not a distributed
+transaction.
+
+Changed credentials cannot be substituted inside an old `rpa_`. The explicit
+`supersede_root_proof_issuance_attempt_pre_send(binding, fresh_authorization)` API
+qualifies fresh genuine provider authorization and requires the exact existing
+InitialBinding/operation/entitlement, a changed eligible credential tuple and the
+current fence. Executable proofs require installed grants to be exactly local
+RESERVE/SIGN/FINALIZE, no immutable attempt, no finalized immutable attempt and
+no issuer recovery/BOUND record. Finalized or ambiguous history fails closed.
+The conservative eligible states are RESERVED_AWAITING_SIGNATURES and
+REQUEST_SIGNED_BY_REQUESTER and CLAIMANT_AUTHORIZED, including intent-only
+interruptions and both checkpoints durable before finalization. Two checkpoints
+alone grant no send authority: the authority-owned immutable finalization is
+required before an externally-sendable attempt can exist.
+
+One transaction appends a typed `LocalPreSendUnsendableV1` proof to the existing
+immutable replacement relation, records SUPERSEDED_PRE_SEND_PROVEN_UNSENDABLE on
+the old history and points to an authority-minted new `rpa_`. Original authorization,
+request bytes, intents and checkpoints remain unchanged. The old digest can remain
+NOT_YET_DEFINED. Exact decision retries converge; rollback leaves no hidden new
+reservation. Private replacement custody must separately be provisioned and
+qualified before any signature. This is distinct from authoritative UNBOUND
+post-send reconciliation. Schema v6 and v5→v6 migration remain unchanged.
 
 A protected-host advisory lock serializes the complete signing sequence across
 separate SQLite commits and processes. SQLite writer transactions, immutable unique
@@ -134,7 +168,8 @@ Independent live PostgreSQL checks and SQLite commits are not a distributed
 transaction; final capability access requalifies current operation evidence.
 
 Tests cover every write/CAS cut, abrupt `os._exit` without Python transaction
-cleanup, restart, lost response, one invocation per role, concurrent exact callers,
+cleanup, restart, lost response, exact pre-finalization recovery, checkpoint call counts,
+concurrent exact callers, explicit safe supersession,
 canonical Unicode/control-character vectors, replay, tampering, migration rollback
 and genuine PostgreSQL binding through the guarded InitialBinding lineage.
 

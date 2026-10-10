@@ -481,7 +481,7 @@ def test_cha_attempt_store_production_keeps_posix_chmod_0600_guard():
     assert len(guarded_chmods) == 1
 
 
-def test_local_signing_custody_keeps_fail_closed_non_posix_lock_contract():
+def test_local_signing_custody_keeps_fail_closed_unsupported_platform_lock_contract():
     path = ROOT / "bot_core/local_signing_custody.py"
     tree = ast.parse(path.read_text(encoding="utf-8"))
     custody_lock = next(
@@ -492,7 +492,7 @@ def test_local_signing_custody_keeps_fail_closed_non_posix_lock_contract():
     guards = [
         node
         for node in custody_lock.body
-        if isinstance(node, ast.If) and ast.unparse(node.test) == "os.name != 'posix'"
+        if isinstance(node, ast.If) and ast.unparse(node.test) == "os.name not in {'posix', 'nt'}"
     ]
     assert len(guards) == 1
     assert any(
@@ -502,7 +502,7 @@ def test_local_signing_custody_keeps_fail_closed_non_posix_lock_contract():
     )
 
 
-def test_local_signing_custody_posix_boundary_is_granular_and_complete():
+def test_local_signing_custody_native_boundary_is_granular_and_complete():
     expected_portable = {
         "tests/security/test_freshness_signing_custody.py": {
             "test_test_profile_cannot_be_provisioned_as_production",
@@ -521,9 +521,9 @@ def test_local_signing_custody_posix_boundary_is_granular_and_complete():
             if isinstance(node, ast.FunctionDef) and node.name.startswith("test_")
         }
         assert portable_names < tests.keys()
-        assert all("requires_posix_custody_locking" not in tests[name] for name in portable_names)
+        assert all("requires_native_custody_locking" not in tests[name] for name in portable_names)
         assert all(
-            "requires_posix_custody_locking" in decorators
+            "requires_native_custody_locking" in decorators
             for name, decorators in tests.items()
             if name not in portable_names
         )
@@ -537,7 +537,7 @@ def test_local_signing_custody_posix_boundary_is_granular_and_complete():
         )
 
 
-def test_simulated_windows_classifies_lock_dependent_and_portable_custody_tests():
+def test_simulated_windows_keeps_native_custody_tests_enabled():
     script = """
 import importlib
 import runpy
@@ -554,7 +554,7 @@ importlib.reload(boundary)
 namespace = runpy.run_path(sys.argv[1])
 locked = namespace[sys.argv[3]]
 portable = namespace[sys.argv[4]]
-assert any(mark.name == "skipif" and mark.args == (True,) for mark in locked.pytestmark)
+assert any(mark.name == "skipif" and mark.args == (False,) for mark in locked.pytestmark)
 assert not any(mark.name == "skipif" for mark in getattr(portable, "pytestmark", ()))
 """
     cases = (

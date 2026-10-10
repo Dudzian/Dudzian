@@ -7,7 +7,7 @@ import os
 import pytest
 
 
-requires_posix_custody_locking = pytest.mark.skipif(
-    os.name != "posix",
-    reason="production-local signing custody currently requires POSIX cross-process locking",
+requires_native_custody_locking = pytest.mark.skipif(
+    os.name not in {"posix", "nt"},
+    reason="production-local signing custody requires POSIX or Windows native process locking",
 )
