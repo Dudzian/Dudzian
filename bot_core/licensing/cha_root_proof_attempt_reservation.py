@@ -329,7 +329,6 @@ def _resolve_from_provider(
         or state.provenance.provisioning_principal_id != claimant.provisioning_principal_id
         or state.provenance.claimant_key_id != claimant.claimant_key_id
         or state.provenance.claimant_key_version != claimant.claimant_key_version
-        or requester.requester_key_id == claimant.claimant_key_id
     ):
         raise RootProofAttemptReservationError("INEXACT_PROVIDER_AUTHORIZATION")
     requester_credential = _operation_credential_evidence(

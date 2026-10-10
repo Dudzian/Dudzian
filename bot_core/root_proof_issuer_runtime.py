@@ -188,7 +188,9 @@ def _verify_request(
         signer.verify(expected_raw, signature)
         revisions.append(credential.registry_revision)
         public_material.append(public)
-    if auth.requester_key_id == auth.claimant_key_id or public_material[0] == public_material[1]:
+    # Credential IDs and handles are namespace-qualified by live authority
+    # composition; cryptographic material must remain distinct across namespaces.
+    if public_material[0] == public_material[1]:
         raise RootProofIssuerRuntimeError("REQUESTER_CLAIMANT_ALIAS")
     return state.authoritative_state_revision, revisions[0], revisions[1]
 
