@@ -339,6 +339,9 @@ Current foundation
     ↓
 Stage 9 closure
     ↓
+S9-S10-PRE-01 — dedykowany self-hosted Windows runner
++ przekazanie i weryfikacja qualified MSI z bieżącego runu
+    ↓
 Stage 10 closure / platform stabilization
     ↓
 Trading Intelligence Hardening
