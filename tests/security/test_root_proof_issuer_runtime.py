@@ -44,7 +44,11 @@ from bot_core.licensing import (
 )
 from bot_core.licensing.canonical import canonical_json_bytes, parse_canonical
 from bot_core.postgresql_preaccount_credentials import CredentialLifecycle
-from bot_core.root_proof_issuer_substrate import public_key_material_identity
+from bot_core.postgresql_root_proof_issuance_authority import ProductionLocalIssuanceAuthorityError
+from bot_core.root_proof_issuer_substrate import (
+    CredentialSemanticRole,
+    public_key_material_identity,
+)
 from tests.security import (
     test_local_signing_custody as native_custody_tests,
     test_postgresql_preaccount_credentials_integration as registries,
@@ -66,7 +70,7 @@ reserved = genuine.reserved
 
 
 @pytest.fixture
-def installed_signed_attempt(reserved, native_keyring, tmp_path: Path, monkeypatch):
+def installed_signed_attempt(reserved, native_keyring, tmp_path: Path, monkeypatch, request):
     """Generate actual distinct Ed25519 keys, public rows and a durable attempt."""
 
     _, binding, _, retained = reserved
@@ -90,15 +94,17 @@ def installed_signed_attempt(reserved, native_keyring, tmp_path: Path, monkeypat
             signed._custody_directories(scope), IssuanceSigningRole, strict=True
         )
     )
+    key_ids = getattr(request, "param", ("requester-key", "claimant-key"))
     drafts = tuple(
-        admin.stage(key_id=key, key_version=1)
-        for admin, key in zip(admins, ("requester-key", "claimant-key"), strict=True)
+        admin.stage(key_id=key, key_version=1) for admin, key in zip(admins, key_ids, strict=True)
     )
     with genuine._installed_authorities(
         monkeypatch,
         trust,
         requester_public=bytes.fromhex(drafts[0].public_key_hex),
         claimant_public=bytes.fromhex(drafts[1].public_key_hex),
+        requester_key_id=key_ids[0],
+        claimant_key_id=key_ids[1],
     ) as (pair, subject, entitlement_admin):
         admins[0].activate(pair.requester)
         admins[1].activate(pair.claimant)
@@ -121,6 +127,7 @@ def installed_signed_attempt(reserved, native_keyring, tmp_path: Path, monkeypat
             path=path,
             trust=trust,
             principal=principal,
+            key_ids=key_ids,
         )
 
 
@@ -135,6 +142,12 @@ def _reject_mutations(*args, **kwargs):
 
 @pytest.mark.external_postgresql
 @requires_native_custody_locking
+@pytest.mark.parametrize(
+    "installed_signed_attempt",
+    [("requester-key", "claimant-key"), ("shared-key", "shared-key")],
+    indirect=True,
+    ids=["distinct-key-ids", "shared-key-id-across-namespaces"],
+)
 def test_real_semantic_preflight_reports_exact_current_tuple_without_issuance(
     installed_signed_attempt, monkeypatch
 ):
@@ -143,6 +156,35 @@ def test_real_semantic_preflight_reports_exact_current_tuple_without_issuance(
     entitlement = value.authority.entitlement_registry.authoritative_state(value.subject)
     requester = value.pair.requester.active_requester_credential("CryptoHunterAccountAuthority")
     claimant = value.pair.claimant.resolve_claimant(value.principal)
+    requester_generation = value.pair.requester._current("CryptoHunterAccountAuthority")
+    claimant_generation = value.pair.claimant._current(value.principal)
+    assert (requester_generation.key_id, claimant_generation.key_id) == value.key_ids
+    assert (
+        requester_generation.lifecycle
+        is claimant_generation.lifecycle
+        is CredentialLifecycle.ACTIVE
+    )
+    assert requester_generation.semantic_role is CredentialSemanticRole.ROOT_PROOF_REQUESTER
+    assert claimant_generation.semantic_role is CredentialSemanticRole.ROOT_PROOF_CLAIMANT
+    assert requester_generation.public_key != claimant_generation.public_key
+    assert (
+        value.pair.requester.identity.provider_namespace
+        != value.pair.claimant.identity.provider_namespace
+    )
+    assert requester_generation.key_id == value.authorization.authorization.requester_key_id
+    assert claimant_generation.key_id == value.authorization.authorization.claimant_key_id
+    requester_signer, claimant_signer = value.retained.requester[0], value.retained.claimant[0]
+    assert requester_signer.role is IssuanceSigningRole.REQUESTER
+    assert claimant_signer.role is IssuanceSigningRole.CLAIMANT
+    assert all(
+        getattr(requester_signer, field) != getattr(claimant_signer, field)
+        for field in (
+            "service_namespace",
+            "credential_namespace",
+            "lifecycle_namespace",
+            "key_handle",
+        )
+    )
     monkeypatch.setattr(signed, "execute_local_issuance", _reject_mutations)
     monkeypatch.setattr(custody._RuntimeCustody, "_sign", _reject_mutations)
     monkeypatch.setattr(
@@ -436,6 +478,70 @@ def _self_consistent_request(value, raw, requester_signature, claimant_signature
         value.current, identity=identity, immutable_attempt_digest_sha256=identity.digest_sha256
     )
     return current, retained
+
+
+@pytest.mark.external_postgresql
+@requires_native_custody_locking
+def test_real_public_key_alias_fails_composition_preflight_and_independent_verifier(
+    installed_signed_attempt,
+):
+    value = installed_signed_attempt
+    source, _, retained = signed._read_issuer_preflight_source(value.opaque)
+    requester_private, _ = _test_private_pair(value)
+    public = value.pair.requester.public_key(source.authorization.requester_key_id)
+    claimant = value.pair.claimant._current(value.principal)
+    assert source.authorization.requester_key_id != source.authorization.claimant_key_id
+    # A privileged rewrite is isolated adversarial fixture state, not a legal
+    # credential enrollment. Exact genuine providers still read the real rows.
+    with psycopg.connect(registries.BASE_DSN, autocommit=True) as connection:
+        connection.execute(
+            sql.SQL(
+                "UPDATE {}.credentials SET public_key=%s,key_material_identity=%s "
+                "WHERE credential_id=%s"
+            ).format(sql.Identifier(value.pair.setup.claimant.schema)),
+            (public, public_key_material_identity(public), claimant.credential_id),
+        )
+    aliased_claimant = value.pair.claimant._current(value.principal)
+    assert aliased_claimant.lifecycle is CredentialLifecycle.ACTIVE
+    assert aliased_claimant.public_key == public
+    aliased_signer = replace(
+        retained.claimant[0],
+        public_key_hex=public.hex(),
+        key_material_identity=public_key_material_identity(public),
+    )
+    claimant_signature = encode_signature(
+        requester_private.sign(CLAIMANT_DOMAIN.encode("ascii") + b"\x00" + retained.canonical_bytes)
+    )
+    current, changed = _self_consistent_request(
+        value, retained.canonical_bytes, retained.requester[1], claimant_signature
+    )
+    changed = replace(changed, claimant=(aliased_signer, claimant_signature))
+    for signer, signature in (changed.requester, changed.claimant):
+        signer.require_authorization(source.authorization)
+        signer.verify(changed.canonical_bytes, signature)
+    before = _database_dump(value.path)
+    authority_before = tuple(
+        registries._physical_snapshot(setup.schema)
+        for setup in (value.pair.setup.requester, value.pair.setup.claimant)
+    )
+    # Valid domain-separated signatures and exact live public signers reach the
+    # independent runtime's global material guard; no production check is patched.
+    with pytest.raises(runtime.RootProofIssuerRuntimeError, match="^REQUESTER_CLAIMANT_ALIAS$"):
+        runtime._verify_request(source, current, changed)
+    with pytest.raises(ProductionLocalIssuanceAuthorityError, match="FORBIDDEN_CREDENTIAL_ALIAS"):
+        value.authority.requalify()
+    with pytest.raises(
+        runtime.RootProofIssuerRuntimeError, match="^PREFLIGHT_AUTHORITY_OR_REQUEST_UNAVAILABLE$"
+    ):
+        runtime.preflight_root_proof_issuance_attempt(value.opaque)
+    assert _database_dump(value.path) == before
+    assert (
+        tuple(
+            registries._physical_snapshot(setup.schema)
+            for setup in (value.pair.setup.requester, value.pair.setup.claimant)
+        )
+        == authority_before
+    )
 
 
 @pytest.mark.external_postgresql

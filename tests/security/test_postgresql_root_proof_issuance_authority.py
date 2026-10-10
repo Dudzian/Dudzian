@@ -153,6 +153,8 @@ def _installed_authorities(
     *,
     requester_public=b"R" * 32,
     claimant_public=b"C" * 32,
+    requester_key_id="requester-key",
+    claimant_key_id="claimant-key",
 ):
     """Install exact reviewed production names into the temporary real cluster."""
 
@@ -195,14 +197,14 @@ def _installed_authorities(
         pair.requester_admin.provision_credential(
             principal_id=composition.REQUESTER_PRINCIPAL,
             credential_id="requester-credential",
-            key_id="requester-key",
+            key_id=requester_key_id,
             key_version=1,
             public_key=requester_public,
         )
         pair.claimant_admin.provision_credential(
             principal_id=provisioning_principal,
             credential_id="claimant-credential",
-            key_id="claimant-key",
+            key_id=claimant_key_id,
             key_version=1,
             public_key=claimant_public,
         )
@@ -225,7 +227,7 @@ def _installed_authorities(
                 ),
                 EntitlementProvenance(
                     provisioning_principal,
-                    "claimant-key",
+                    claimant_key_id,
                     1,
                     "deployment-security-authority",
                     "provisioning:exact:1",
