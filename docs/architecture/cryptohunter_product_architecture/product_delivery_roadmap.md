@@ -21,6 +21,18 @@ CryptoHunter v1 is complete when it is a stable installable Windows desktop prod
 9. **Milestone exits require evidence.** A milestone closes only when its acceptance tests and audit are complete; feature presence alone is insufficient.
 10. **Every substantial PR declares its roadmap target.** PR descriptions should state the milestone/sub-step and whether they change contract, runtime, migration, tests or release surfaces.
 
+## Windows Stage 9 → Stage 10 preflight — S9-S10-PRE-01
+
+**Status: PLANNED.** This is a mandatory operational handoff **after Stage 9 closure and before Stage 10 live reboot / 24-hour qualification**. Preparing the infrastructure may begin earlier, but preparation must not activate Stage 10 or bypass legal production enrollment. This prerequisite does not add or close a numbered Windows Stage 0–14 acceptance item and does not change the M0–M6 product milestone taxonomy.
+
+- **Dedicated physical Windows runner:** provision and harden a persistent Windows x64 GitHub Actions self-hosted runner with exact labels `self-hosted`, `Windows`, `X64`, `cryptohunter-stage10`. Establish dedicated host ownership, minimal GitHub/OS permissions, runner startup after reboot, host continuity and isolation from general PR/untrusted workloads.
+- **Qualified MSI transfer:** define a reproducible, operator-approved procedure that retrieves `windows-stage9-qualified-msi` from the **same canonical workflow run** as the Stage 10 qualification, together with `installer-manifest.json`, `windows-clean-install-receipt.json` and `windows-clean-install-evidence.json`. Check the artifact digest, exact MSI/payload hashes, source revision, CI run ID, Production Trust identity and revision-bound evidence; reject stale, mixed-run, substituted or locally rebuilt installers.
+- **Target-host deployment:** document and implement a reviewed, explicitly authorized elevated installation/handoff on that runner. Verify that the installed `CryptoHunterBackend.exe`, installed product version, Windows SCM service, runtime readiness and PostgreSQL/ACL boundaries match the qualified manifest and current-run provenance. Never silently replace an enrolled installation or treat a GitHub-hosted clean-install as proof that the self-hosted target has the same installed MSI.
+- **Non-destructive rehearsal:** before enabling the destructive workflow, verify runner registration/labels and post-reboot startup configuration, artifact availability and hash lineage, administrative approval path, logging/evidence collection and read-only host preflight. Do not perform installation, reboot, TPM/NV mutations, enrollment or 24-hour soak as part of roadmap preparation alone.
+- **Explicit Stage 10 gate:** actual lifecycle execution still requires completed legal production enrollment, satisfied readiness prerequisites and a separate operator-approved `workflow_dispatch` with `run_stage10=true`. The existing Stage 10 prepare job downloads clean-install evidence but does **not** install the MSI onto the self-hosted runner; that delivery gap must be resolved and reviewed before any reboot qualification.
+
+**Exit criteria:** approved runner and MSI handoff runbook; dedicated runner identity and persistence setup verified without reboot; repeatable hash/provenance verification and fail-closed mismatches demonstrated; a reviewed plan for installing the exact current-run qualified MSI on the self-hosted machine; and independent sign-off that the live restart and 24-hour soak remain disabled until their separate authorization. This gate is **PREPARED**, not Stage 10 `PASS`.
+
 ---
 
 # M0 — Product Architecture Contract
