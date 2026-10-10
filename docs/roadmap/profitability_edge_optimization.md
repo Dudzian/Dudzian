@@ -2,9 +2,9 @@
 
 ## Status
 
-**PLANNED — required post-ASD capability block**
+**PLANNED — post-Stage-12 capability block; no numbered stage assigned**
 
-Ten blok jest planowany po zamknięciu **Trading Intelligence Hardening (TIH)** oraz wdrożeniu podstawowego **Autonomous Strategy Discovery & Promotion (ASD)**. Nie zmienia zamrożonych kontraktów M0 ani numeracji Windows Stage 0–14.
+Ten blok jest planowany po zamknięciu **Stage 11 — Trading Intelligence Hardening (TIH)** oraz wdrożeniu podstawowego **Stage 12 — Autonomous Strategy Discovery & Promotion (ASD)**. Nie zmienia zamrożonych kontraktów M0 ani numeracji Windows Stage 0–14.
 
 Celem bloku nie jest zwiększanie liczby transakcji ani agresywności. Celem jest zwiększanie **netto expectancy na jednostkę ryzyka** przez lepszą filtrację okazji, kalibrację prawdopodobieństw, analizę zależności między rynkami, attribution i bezpieczne uczenie online.
 
@@ -344,13 +344,13 @@ S9-S10-PRE-01 — dedykowany self-hosted Windows runner
     ↓
 Stage 10 closure / platform stabilization
     ↓
-Trading Intelligence Hardening
+Stage 11 — Trading Intelligence Hardening (TIH-1–TIH-7)
     ↓
-Autonomous Strategy Discovery & Promotion
+Stage 12 — Autonomous Strategy Discovery & Promotion (ASD-1–ASD-6)
     ↓
 Shadow / Paper / Canary Live
     ↓
-Profitability & Edge Optimization
+Profitability & Edge Optimization (post-Stage-12; unnumbered)
     ↓
 mature continuous optimization
 ```
