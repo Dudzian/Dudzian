@@ -25,6 +25,11 @@ establish an independent remote issuer endpoint. Independent reads across stores
 are not a distributed transaction. Later mutation must perform fresh
 authorization and the existing authority-owned CAS.
 
+The inherited validator opens SQLite through its normal local-store adapter,
+including WAL, permission and schema maintenance and locking. The read-only
+scope concerns issuance operations and logical attempt/authority state;
+filesystem bytes and database connection mode are outside that guarantee.
+
 The frozen requirements come from:
 
 - `cryptohunter_product_architecture/m05_account_genesis_independent_root_proof_issuer_contract.json`
