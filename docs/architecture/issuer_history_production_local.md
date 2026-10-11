@@ -12,6 +12,11 @@ records the principal-guard and malformed-encoding corrections, current-main
 integration, 100/1,000/10,000-record performance measurements and remaining
 qualification limits.
 
+The subsequent [performance remediation](issuer_history_performance_remediation_pr3100.md)
+documents private canonical member extraction, preserved full-chain validation,
+49 added regressions and comparable before/after measurements. The corrective
+audit remains the historical baseline.
+
 ## Source discovery and contract reuse
 
 The implementation was reviewed against approved main

@@ -21,6 +21,9 @@ Latency samples are uninstrumented. Separate tracemalloc probes deliberately
 report their instrumentation overhead. PostgreSQL statistics are observed, not
 reset or reconfigured; schema relation counters provide isolated workload
 evidence while global database/WAL deltas may include unrelated server work.
+An additional append, after the comparable samples, uses an independent
+pg_locks observer to bound the granted stream-relation transaction marker.
+It does not supply exact row-lock telemetry or alter primary measurements.
 """
 
 from __future__ import annotations
@@ -38,6 +41,7 @@ import sys
 import time
 import tracemalloc
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from functools import partial
@@ -255,6 +259,8 @@ def _measure(
         traced_current, traced_peak = None, None
     after_usage = resource.getrusage(resource.RUSAGE_SELF)
     after_stats = _stats(observer, schema)
+    database_delta = _difference(after_stats, before_stats)
+    record_stats = database_delta["tables"]["records"]
     return result, {
         "elapsed_seconds": elapsed,
         "python_user_cpu_seconds": after_usage.ru_utime - before_usage.ru_utime,
@@ -265,8 +271,147 @@ def _measure(
         "python_tracemalloc_current_bytes": traced_current,
         "python_tracemalloc_peak_bytes": traced_peak,
         "tracemalloc_enabled": trace,
-        "db_delta": _difference(after_stats, before_stats),
+        "db_delta": database_delta,
+        "record_tuples_visited": record_stats[1] + record_stats[3],
         "host_load_average": list(os.getloadavg()),
+    }
+
+
+def _lock_probe(
+    dsn: str,
+    config: PostgreSQLIssuerHistoryProvisioning,
+    stream: HistoryStreamIdentity,
+    predecessor: HistoryRecord,
+    *,
+    poll_seconds: float = 0.01,
+) -> dict[str, Any]:
+    """Observe one separate append; never instrument primary latency samples.
+
+    PostgreSQL does not expose every uncontended row lock in pg_locks. The
+    granted RowShareLock on the exact streams relation identifies SELECT FOR
+    UPDATE entering its lock-holding transaction. Its observed duration is a
+    transaction marker, not exact row-lock telemetry. The isolated fixture has
+    one stream and one writer, with no lock contention.
+    """
+    application_name = "issuer-history-lock-probe-" + uuid.uuid4().hex
+    runtime = PostgreSQLAuthenticatedIssuerHistory(
+        PostgreSQLConnectionConfig(
+            make_conninfo(dsn, user=config.runtime_role, application_name=application_name)
+        ),
+        schema=config.schema,
+        stream=stream,
+    )
+    number = predecessor.sequence + 1
+
+    def append() -> tuple[HistoryRecord, bool, float, float]:
+        started = time.perf_counter()
+        record, replayed = runtime.append(
+            expected_digest=predecessor.authenticated_digest,
+            event_identity=_event(number),
+            payload=_payload(number),
+        )
+        return record, replayed, started, time.perf_counter()
+
+    with psycopg.connect(dsn, autocommit=True) as observer:
+        relation_oid = observer.execute(
+            "SELECT pg_catalog.to_regclass(%s)::oid", (f"{config.schema}.streams",)
+        ).fetchone()[0]
+        if relation_oid is None:
+            raise RuntimeError("lock probe streams relation is missing")
+        started = time.perf_counter()
+        last_absent: tuple[float, float] | None = None
+        first_present: tuple[float, float] | None = None
+        last_present: tuple[float, float] | None = None
+        first_absent_after: tuple[float, float] | None = None
+        polls = 0
+        present_polls = 0
+        observed_pid: int | None = None
+        maximum_observation_gap = 0.0
+        previous_query_end = started
+
+        def observe() -> tuple[bool, tuple[float, float]]:
+            nonlocal polls, observed_pid, maximum_observation_gap, previous_query_end
+            query_start = time.perf_counter()
+            rows = observer.execute(
+                "SELECT DISTINCT l.pid FROM pg_catalog.pg_locks l "
+                "JOIN pg_catalog.pg_stat_activity a ON a.pid=l.pid "
+                "WHERE l.locktype='relation' AND l.relation=%s "
+                "AND l.mode='RowShareLock' AND l.granted "
+                "AND a.usename=%s AND a.application_name=%s",
+                (relation_oid, config.runtime_role, application_name),
+            ).fetchall()
+            query_end = time.perf_counter()
+            maximum_observation_gap = max(maximum_observation_gap, query_start - previous_query_end)
+            previous_query_end = query_end
+            polls += 1
+            if rows:
+                if len(rows) != 1 or (observed_pid is not None and observed_pid != rows[0][0]):
+                    raise RuntimeError("lock probe did not identify one exact runtime backend")
+                observed_pid = rows[0][0]
+            return bool(rows), (query_start - started, query_end - started)
+
+        present, last_absent = observe()
+        if present:
+            raise RuntimeError("lock probe unexpectedly observed a lock before its append")
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            pending = executor.submit(append)
+            while True:
+                present, interval = observe()
+                if present:
+                    present_polls += 1
+                    if first_present is None:
+                        first_present = interval
+                    last_present = interval
+                elif first_present is not None:
+                    first_absent_after = interval
+                    break
+                else:
+                    last_absent = interval
+                    if pending.done():
+                        # Propagate an append exception instead of inventing a
+                        # lock duration for an operation that failed.
+                        pending.result()
+                        raise RuntimeError("append lock interval was not observed")
+                time.sleep(poll_seconds)
+            record, replayed, append_started, append_finished = pending.result()
+        if replayed or record.sequence != number:
+            raise RuntimeError("lock probe did not commit one exact successor")
+        if last_absent is None or first_present is None or last_present is None:
+            raise RuntimeError("lock probe acquisition bounds are missing")
+        if first_absent_after is None:
+            raise RuntimeError("lock probe release bounds are missing")
+        # Each query observes pg_locks sometime between its start and end.
+        # These conservative bounds include the query's own uncertainty.
+        acquisition_bounds = (last_absent[0], first_present[1])
+        release_bounds = (last_present[0], first_absent_after[1])
+        verification_started = time.perf_counter()
+        if runtime.current_head() != record:
+            raise RuntimeError("lock probe append lacks an exact authoritative retained head")
+        verification_elapsed = time.perf_counter() - verification_started
+    return {
+        "retained_before": predecessor.sequence,
+        "verified_sequence_after": number,
+        "measurement": "Independent pg_locks observer; granted streams RowShareLock marker.",
+        "row_lock_telemetry": False,
+        "uncontended_single_stream_single_writer": True,
+        "excluded_from_primary_latency_and_memory_samples": True,
+        "poll_interval_seconds": poll_seconds,
+        "poll_count": polls,
+        "present_poll_count": present_polls,
+        "maximum_gap_between_observation_queries_seconds": maximum_observation_gap,
+        "acquisition_bounds_relative_seconds": list(acquisition_bounds),
+        "release_bounds_relative_seconds": list(release_bounds),
+        "lock_marker_duration_lower_seconds": max(0.0, release_bounds[0] - acquisition_bounds[1]),
+        "lock_marker_duration_upper_seconds": release_bounds[1] - acquisition_bounds[0],
+        "separate_append_wall_seconds": append_finished - append_started,
+        "post_probe_authoritative_read_seconds": verification_elapsed,
+        "runtime_backend_pid": observed_pid,
+        "limitations": (
+            "Relation RowShareLock begins before the row lock is acquired and lasts until "
+            "transaction end. Bounds describe that granted transaction marker; they do not "
+            "claim exact row-lock acquisition or waiting time. Observer queries can perturb "
+            "this separate probe and are absent from all primary latency samples."
+        ),
     }
 
 
@@ -453,6 +598,10 @@ def _worker(size: int, samples: int) -> dict[str, Any]:
             }
             for operation in ("read", "append", "replay")
         }
+        report["append_lock_probe"] = _lock_probe(dsn, config, stream, tail)
+        print(
+            f"retained={size}: separate observed lock probe complete", file=sys.stderr, flush=True
+        )
     return report
 
 
@@ -479,6 +628,15 @@ def main() -> None:
         "platform": platform.platform(),
         "cpu_count": os.cpu_count(),
         "samples_per_operation": args.samples,
+        "validation_work_source_review": {
+            "authoritative_read": {"complete_sql_chain_passes": 1, "python_snapshots": 1},
+            "new_append": {"complete_sql_chain_passes": 4, "python_snapshots": 2},
+            "exact_replay": {"complete_sql_chain_passes": 1, "python_snapshots": 1},
+            "evidence": (
+                "Reviewed control flow in the source-hashed adapter/schema; not runtime "
+                "function-call telemetry. Relation tuple visits are observed separately."
+            ),
+        },
         "git_commit": subprocess.run(
             ["git", "rev-parse", "HEAD"], check=True, stdout=subprocess.PIPE, text=True
         ).stdout.strip(),
@@ -556,6 +714,8 @@ def main() -> None:
             "and memory probes; tracemalloc excludes libpq and PostgreSQL backend allocations.",
             "EXPLAIN profiles server read_stream separately, excludes adapter qualification/"
             "Python decoding, and changes neither runtime code nor server configuration.",
+            "Lock-duration bounds observe a granted stream-relation RowShareLock in a separate "
+            "uncontended append after all comparable samples; they are not exact row-lock timing.",
         ],
         "results": [],
     }

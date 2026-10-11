@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import sys
 import uuid
@@ -461,3 +462,251 @@ def test_invalid_intermediate_encoding_is_corrupt_for_reads_writes_and_reconcili
         ).fetchall()
     assert [row[0] for row in retained] == [1, 2, 3]
     assert retained[1][1] == malformed_record
+
+
+def _extract_members(boundary: Boundary, raw: bytes, fields: list[str]) -> list[bytes]:
+    with psycopg.connect(BASE_DSN) as conn:
+        row = conn.execute(
+            sql.SQL("SELECT {}.canonical_object_members(%s,%s::text[])").format(
+                sql.Identifier(boundary.setup.schema)
+            ),
+            (raw, fields),
+        ).fetchone()
+    assert row is not None
+    return row[0]
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        {},
+        {"a": None},
+        {"a": {}, "b": [], "c": [True, False, None, 0, -1, 10**500, -(10**500)]},
+        {
+            "controls": {chr(number): chr(number) for number in range(32)},
+            "nested": [None, True, False, {"escaped": '\\"/', "unicode": "ą😀\u2028\x7f"}],
+            "ordering": {"\x00": 1, "a": 2, "é": 3, "\ue000": 4, "𐀀": 5, "😀": 6},
+        },
+        {"\x01": "\x01", "\b": "\b", "\n": "\n", '"': '"', "\\": "\\", "é": "é", "𐀀": "𐀀"},
+    ],
+)
+def test_private_multi_member_extractor_returns_exact_frozen_bytes(boundary, value):
+    fields = sorted(value)
+    extracted = _extract_members(boundary, canonical_json_bytes(value), fields)
+    assert extracted == [
+        json.dumps(value[field], ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode(
+            "utf-8"
+        )
+        for field in fields
+    ]
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        b'{"a":0,"a":1,"b":2}',
+        b'{"b":2,"a":1}',
+        b'{"":0,"a":1,"b":2}',
+        b'{"a": 1,"b":2}',
+        b'{"a":1,"b":2}\n',
+        b'{"a":1,"b":{"z":0,"a":0}}',
+        b'{"a":1,"b":{"x":0,"x":0}}',
+        b'{"a":1,"b":{"":0}}',
+        b'{"a":1,"b":[{"x":1e0}]}',
+        b'{"a":1,"b":[{"x":1.0}]}',
+        b'{"a":1,"b":[{"x":-0}]}',
+        b'{"a":1,"b":{"x":"\\u0061"}}',
+        b'{"a":1,"b":{"x":"\\u000a"}}',
+        b'{"a":1,"b":{"x":"\\u001F"}}',
+        b'{"a":1,"b":{"x":"\\/"}}',
+        b'{"a":1,"b":{"x":"\xff"}}',
+        b'{"a":1,"b":{"x":"\x00"}}',
+        b'{"a":1,"b":[0,]}',
+    ],
+)
+def test_private_multi_member_extractor_validates_every_child_and_trailing_bytes(boundary, raw):
+    with pytest.raises(psycopg.Error):
+        _extract_members(boundary, raw, ["a", "b"])
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [[], ["a"], ["a", "b", "c"], ["b", "a"], ["a", "a"], ["", "b"]],
+)
+def test_private_multi_member_extractor_rejects_inventory_mismatch(boundary, fields):
+    with pytest.raises(psycopg.Error):
+        _extract_members(boundary, b'{"a":1,"b":2}', fields)
+
+
+@pytest.mark.parametrize("fields", [None, [None, "b"], [["a", "b"]]])
+def test_private_multi_member_extractor_rejects_malformed_selector_arrays(boundary, fields):
+    with psycopg.connect(BASE_DSN) as conn:
+        with pytest.raises(psycopg.errors.CheckViolation):
+            conn.execute(
+                sql.SQL("SELECT {}.canonical_object_members(%s,%s::text[])").format(
+                    sql.Identifier(boundary.setup.schema)
+                ),
+                (b'{"a":1,"b":2}', fields),
+            )
+
+
+def test_private_multi_member_extractor_rejects_nonstandard_selector_lower_bound(boundary):
+    with psycopg.connect(BASE_DSN) as conn:
+        with pytest.raises(psycopg.errors.CheckViolation):
+            conn.execute(
+                sql.SQL("SELECT {}.canonical_object_members(%s,%s::text[])").format(
+                    sql.Identifier(boundary.setup.schema)
+                ),
+                (b'{"a":1,"b":2}', "[0:1]={a,b}"),
+            )
+
+
+@pytest.mark.parametrize("role_field", ["runtime_role", "admin_role"])
+def test_multi_member_extractor_is_not_a_public_authority_port(boundary, role_field):
+    with psycopg.connect(boundary.connection(getattr(boundary.setup, role_field)).dsn) as conn:
+        with pytest.raises(InsufficientPrivilege):
+            conn.execute(
+                sql.SQL("SELECT {}.canonical_object_members(%s,%s::text[])").format(
+                    sql.Identifier(boundary.setup.schema)
+                ),
+                (b'{"a":1}', ["a"]),
+            )
+
+
+@pytest.mark.parametrize("grantee_field", [None, "runtime_role", "admin_role"])
+def test_multi_member_helper_acl_drift_blocks_live_qualification(boundary, grantee_field):
+    runtime = boundary.runtime()
+    grantee = (
+        sql.SQL("PUBLIC")
+        if grantee_field is None
+        else sql.Identifier(getattr(boundary.setup, grantee_field))
+    )
+    with psycopg.connect(BASE_DSN, autocommit=True) as conn:
+        conn.execute(
+            sql.SQL(
+                "GRANT EXECUTE ON FUNCTION {}.canonical_object_members(bytea,text[]) TO {}"
+            ).format(sql.Identifier(boundary.setup.schema), grantee)
+        )
+    with pytest.raises(HistoryStorageUnavailable):
+        runtime.current_record()
+
+
+def test_coordinated_multi_member_source_and_manifest_tamper_fails_qualification(boundary):
+    signature = "canonical_object_members(bytea,text[])"
+    replacement = "BEGIN RETURN ARRAY[]::bytea[]; END"
+    schema = sql.Identifier(boundary.setup.schema)
+    with psycopg.connect(BASE_DSN, autocommit=True) as conn:
+        conn.execute(
+            sql.SQL(
+                "CREATE OR REPLACE FUNCTION {}.canonical_object_members"
+                "(p_bytes bytea,p_fields text[]) "
+                "RETURNS bytea[] LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS {}"
+            ).format(schema, sql.Literal(replacement))
+        )
+        manifest = conn.execute(
+            sql.SQL("SELECT function_definition_sha256 FROM {}.metadata").format(schema)
+        ).fetchone()[0]
+        manifest[signature] = history_schema._source_fingerprint(signature, replacement)
+        conn.execute(
+            sql.SQL("UPDATE {}.metadata SET function_definition_sha256=%s").format(schema),
+            (Jsonb(manifest),),
+        )
+    with pytest.raises(HistoryStorageUnavailable):
+        boundary.runtime()
+
+
+@pytest.mark.parametrize(
+    "malicious_payload",
+    [
+        b'{"a":{"z":0,"a":0}}',
+        b'{"a":{"x":0,"x":0}}',
+        b'{"a":{"":0}}',
+        b'{"a":[{"x":1e0}]}',
+        b'{"a":{"x":"\\u0061"}}',
+    ],
+)
+def test_recomputed_complete_chain_cannot_hide_noncanonical_intermediate_payload(
+    boundary, malicious_payload
+):
+    runtime = boundary.runtime()
+    records = []
+    predecessor = NO_PREDECESSOR
+    for number in range(1, 4):
+        record, _ = runtime.append(
+            expected_digest=predecessor,
+            event_identity=HistoryEventIdentity(
+                f"rehash-op-{number}", f"rehash-attempt-{number}", f"rehash-proof-{number}"
+            ),
+            payload={"fixture": number},
+        )
+        records.append(record)
+        predecessor = record.authenticated_digest
+    predecessor = NO_PREDECESSOR
+    with psycopg.connect(BASE_DSN) as conn:
+        for record in records:
+            payload = (
+                malicious_payload
+                if record.sequence == 2
+                else canonical_json_bytes({"fixture": record.sequence})
+            )
+            event_digest = "sha256:" + hashlib.sha256(EVENT_DOMAIN + payload).hexdigest()
+            event = canonical_json_bytes(record.event_identity.material())
+            raw = (
+                b'{"canonical_event_payload":'
+                + payload
+                + b',"event_digest":"'
+                + event_digest.encode("ascii")
+                + b'","event_identity":'
+                + event
+                + b',"predecessor_authenticated_digest":"'
+                + predecessor.encode("ascii")
+                + b'","sequence":'
+                + str(record.sequence).encode("ascii")
+                + b',"stream":'
+                + canonical_json_bytes(boundary.stream.material())
+                + b"}"
+            )
+            digest = "sha256:" + hashlib.sha256(RECORD_DOMAIN + raw).hexdigest()
+            conn.execute(
+                sql.SQL(
+                    "UPDATE {}.records SET predecessor_authenticated_digest=%s,event_digest=%s,"
+                    "authenticated_digest=%s,canonical_record=%s WHERE sequence=%s"
+                ).format(sql.Identifier(boundary.setup.schema)),
+                (predecessor, event_digest, digest, raw, record.sequence),
+            )
+            predecessor = digest
+        conn.execute(
+            sql.SQL("UPDATE {}.streams SET head_digest=%s").format(
+                sql.Identifier(boundary.setup.schema)
+            ),
+            (predecessor,),
+        )
+    for operation in (
+        runtime.current_record,
+        runtime.verify,
+        lambda: runtime.append(
+            expected_digest=predecessor,
+            event_identity=HistoryEventIdentity(
+                "rehash-op-4", "rehash-attempt-4", "rehash-proof-4"
+            ),
+            payload={"fixture": 4},
+        ),
+        lambda: runtime.append(
+            expected_digest=NO_PREDECESSOR,
+            event_identity=records[0].event_identity,
+            payload={"fixture": 1},
+        ),
+    ):
+        with pytest.raises(HistoryContractError) as failure:
+            operation()
+        assert type(failure.value) is HistoryContractError
+    assert (
+        runtime.reconcile(
+            head=None,
+            verification_authority=None,
+            checkpoint_authority=LocalCheckpointProvider(
+                "recomputed-chain-checkpoint", boundary.stream
+            ),
+        )
+        is ReconciliationOutcome.CORRUPT
+    )

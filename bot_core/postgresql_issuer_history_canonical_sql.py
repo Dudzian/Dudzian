@@ -15,6 +15,7 @@ CANONICAL_FUNCTION_RETURNS = {
     "canonical_value(bytea,integer)": "integer",
     "validate_canonical_json(bytea)": "void",
     "canonical_object_member(bytea,text)": "bytea",
+    "canonical_object_members(bytea,text[])": "bytea[]",
 }
 _SAFE_IDENTIFIER = re.compile(r"[a-z_][a-z0-9_]{0,62}\Z")
 
@@ -241,6 +242,86 @@ BEGIN
     END IF;
     IF pg_catalog.get_byte($1,finish) = 125 THEN RETURN NULL; END IF;
     pos := finish + 1;
+  END LOOP;
+END
+""".replace("@SCHEMA@", namespace),
+        "canonical_object_members(bytea,text[])": r"""
+DECLARE
+  size integer := pg_catalog.octet_length($1);
+  pos integer := 1;
+  finish integer;
+  value_start integer;
+  field_index integer := 1;
+  field_name text;
+  wanted_keys bytea[] := ARRAY[]::bytea[];
+  prior_key bytea := NULL;
+  wanted bytea;
+  item record;
+  result bytea[] := ARRAY[]::bytea[];
+BEGIN
+  IF $2 IS NULL OR (pg_catalog.cardinality($2)>0 AND
+     (pg_catalog.array_ndims($2) IS DISTINCT FROM 1 OR
+      pg_catalog.array_lower($2,1) IS DISTINCT FROM 1)) THEN
+    RAISE EXCEPTION 'canonical JSON member inventory required' USING ERRCODE='23514';
+  END IF;
+  FOREACH field_name IN ARRAY $2 LOOP
+    IF field_name IS NULL OR field_name='' THEN
+      RAISE EXCEPTION 'canonical JSON member name required' USING ERRCODE='23514';
+    END IF;
+    wanted := pg_catalog.convert_to(field_name,'UTF8');
+    IF prior_key IS NOT NULL AND wanted<=prior_key THEN
+      RAISE EXCEPTION 'canonical JSON inventory order or duplicate' USING ERRCODE='23514';
+    END IF;
+    wanted_keys := pg_catalog.array_append(wanted_keys,wanted);
+    prior_key := wanted;
+  END LOOP;
+  IF $1 IS NULL OR size<2 OR pg_catalog.get_byte($1,0)<>123 THEN
+    RAISE EXCEPTION 'canonical JSON object root required' USING ERRCODE='23514';
+  END IF;
+  BEGIN
+    PERFORM pg_catalog.convert_from($1,'UTF8');
+  EXCEPTION WHEN character_not_in_repertoire OR untranslatable_character THEN
+    RAISE EXCEPTION 'invalid canonical JSON encoding' USING ERRCODE='23514';
+  END;
+  IF pg_catalog.get_byte($1,pos)=125 THEN
+    IF size<>2 OR pg_catalog.cardinality(wanted_keys)<>0 THEN
+      RAISE EXCEPTION 'canonical JSON member inventory differs' USING ERRCODE='23514';
+    END IF;
+    RETURN result;
+  END IF;
+  prior_key := NULL;
+  LOOP
+    SELECT * INTO STRICT item FROM @SCHEMA@.canonical_string($1,pos);
+    IF pg_catalog.octet_length(item.decoded_key)=0 OR
+       (prior_key IS NOT NULL AND item.decoded_key<=prior_key) THEN
+      RAISE EXCEPTION 'noncanonical JSON object key order or duplicate' USING ERRCODE='23514';
+    END IF;
+    IF item.decoded_key IS DISTINCT FROM wanted_keys[field_index] THEN
+      RAISE EXCEPTION 'canonical JSON member inventory differs' USING ERRCODE='23514';
+    END IF;
+    prior_key := item.decoded_key;
+    pos := item.next_position;
+    IF pos>=size OR pg_catalog.get_byte($1,pos)<>58 THEN
+      RAISE EXCEPTION 'canonical JSON object colon required' USING ERRCODE='23514';
+    END IF;
+    value_start := pos+1;
+    finish := @SCHEMA@.canonical_value($1,value_start);
+    result := pg_catalog.array_append(result,
+      pg_catalog.substring($1,value_start+1,finish-value_start));
+    field_index := field_index+1;
+    IF finish>=size THEN
+      RAISE EXCEPTION 'unterminated canonical JSON object' USING ERRCODE='23514';
+    END IF;
+    IF pg_catalog.get_byte($1,finish)=125 THEN
+      IF finish+1<>size OR field_index<>pg_catalog.cardinality(wanted_keys)+1 THEN
+        RAISE EXCEPTION 'canonical JSON member inventory differs' USING ERRCODE='23514';
+      END IF;
+      RETURN result;
+    END IF;
+    IF pg_catalog.get_byte($1,finish)<>44 THEN
+      RAISE EXCEPTION 'canonical JSON object separator required' USING ERRCODE='23514';
+    END IF;
+    pos := finish+1;
   END LOOP;
 END
 """.replace("@SCHEMA@", namespace),

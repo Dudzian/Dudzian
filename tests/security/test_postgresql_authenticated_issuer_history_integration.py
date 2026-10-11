@@ -25,7 +25,9 @@ from bot_core import (
     postgresql_issuer_history_schema as history_schema,
 )
 from bot_core.authenticated_issuer_history import (
+    ATTESTATION_DOMAIN,
     NO_PREDECESSOR,
+    HistoricalRevokedSignatureVerificationUnavailable,
     HistoryContractError,
     HistoryEventIdentity,
     HistoryRecord,
@@ -692,6 +694,176 @@ def test_second_valid_signer_cannot_replace_retained_head_for_same_sequence(hist
     with pytest.raises(HistoryContractError, match="conflict"):
         history.runtime.retain_attested_head(second_head, second_signer)
     assert history.runtime.retained_attested_head(verification_authority=first_signer) == first_head
+
+
+def test_retained_historical_heads_match_oracle_with_exact_checkpoint_acceptance(monkeypatch):
+    with _isolated_history(
+        stream_changes={
+            "stream_id": "historical\x00history",
+            "trust_domain": "historical\x00trust",
+            "product_scope": "product\tą",
+            "security_epoch": 2**70,
+        }
+    ) as boundary:
+        oracle = ReferenceAuthenticatedHistory(boundary.stream)
+        checkpoint = LocalCheckpointProvider("historical-reference-checkpoint", boundary.stream)
+        signer = _HistorySigner(boundary.stream.trust_domain)
+        signer.identity = replace(signer.identity, provider_namespace="signing\x00ą")
+        first, replayed = oracle.append(
+            expected_digest=NO_PREDECESSOR, event_identity=_event(1), payload=_payload(1)
+        )
+        assert boundary.runtime.append(
+            expected_digest=NO_PREDECESSOR, event_identity=_event(1), payload=_payload(1)
+        ) == (first, replayed)
+        first_head = attest_head(first, signer)
+        assert boundary.runtime.retain_attested_head(first_head, signer) == (first_head, False)
+        checkpoint.advance(
+            expected_revision=0, history=oracle, head=first_head, verification_authority=signer
+        )
+        second, replayed = oracle.append(
+            expected_digest=first.authenticated_digest,
+            event_identity=_event(2),
+            payload={"nested": [None, True, {"\x00ą": [2**120, -(2**120)]}]},
+        )
+        assert boundary.runtime.append_exact_successor(first, second) == (second, replayed)
+        second_head = attest_head(second, signer)
+        assert boundary.runtime.retain_attested_head(second_head, signer) == (second_head, False)
+        checkpoint.advance(
+            expected_revision=1, history=oracle, head=second_head, verification_authority=signer
+        )
+        restarted = _runtime(boundary)
+        assert restarted.retained_history() == (first, second)
+        assert restarted.current_record() == oracle.current_record()
+        assert restarted.current_head() == oracle.current_record()
+        assert restarted.record_at(1) == first
+        assert restarted.record_at(2) == oracle.current_record()
+        assert restarted.retained_attested_head(1, verification_authority=signer) == first_head
+        assert restarted.retained_attested_head(verification_authority=signer) == second_head
+        assert restarted.retain_attested_head(first_head, signer) == (first_head, True)
+        assert restarted.append(
+            expected_digest=NO_PREDECESSOR, event_identity=_event(1), payload=_payload(1)
+        ) == oracle.append(
+            expected_digest=NO_PREDECESSOR, event_identity=_event(1), payload=_payload(1)
+        )
+        assert restarted.verify_attested_head(second_head, signer) == oracle.verify_attested_head(
+            second_head, signer
+        )
+        assert restarted.verify_attested_historical_head(
+            first_head, signer, checkpoint
+        ) == oracle.verify_attested_historical_head(first_head, signer, checkpoint)
+        for implementation in (oracle, restarted):
+            with pytest.raises(HistoryContractError):
+                implementation.verify_attested_head(first_head, signer)
+        monkeypatch.setattr(signer, "lifecycle_state", lambda: SigningKeyLifecycle.REVOKED)
+        monkeypatch.setattr(signer, "lifecycle_generation", lambda: 2)
+        assert restarted.verify_attested_historical_head(
+            first_head, signer, checkpoint
+        ) == oracle.verify_attested_historical_head(first_head, signer, checkpoint)
+        assert (
+            restarted.retained_attested_head(
+                1, verification_authority=signer, historical_evidence_authority=checkpoint
+            )
+            == first_head
+        )
+        assert restarted.retain_attested_head(first_head, signer, checkpoint) == (first_head, True)
+        with pytest.raises(HistoricalRevokedSignatureVerificationUnavailable):
+            restarted.retained_attested_head(1, verification_authority=signer)
+        for implementation in (oracle, restarted):
+            with pytest.raises(HistoricalRevokedSignatureVerificationUnavailable):
+                implementation.verify_attested_head(second_head, signer)
+        assert (
+            restarted.reconcile(
+                head=second_head, verification_authority=signer, checkpoint_authority=checkpoint
+            )
+            == oracle.reconcile(
+                head=second_head, verification_authority=signer, checkpoint_authority=checkpoint
+            )
+            == ReconciliationOutcome.EXACT_COMMITTED
+        )
+
+
+@pytest.mark.parametrize("field", ["stream", "sequence", "record_digest", "credential"])
+def test_corrupt_historical_attestation_binding_blocks_complete_history(history, field):
+    oracle = ReferenceAuthenticatedHistory(history.stream)
+    records = []
+    signer = _HistorySigner(history.stream.trust_domain)
+    heads = []
+    for number in (1, 2):
+        record = _append(history, number)
+        assert oracle.append(
+            expected_digest=NO_PREDECESSOR if number == 1 else records[-1].authenticated_digest,
+            event_identity=_event(number),
+            payload=_payload(number),
+        ) == (record, False)
+        records.append(record)
+        head = attest_head(record, signer)
+        history.runtime.retain_attested_head(head, signer)
+        heads.append(head)
+    historical = heads[0]
+    material = json.loads(historical.canonical_attestation_bytes[len(ATTESTATION_DOMAIN) :])
+    changes = {}
+    if field == "stream":
+        changed_stream = replace(history.stream, product_scope="other-product")
+        material["stream"] = changed_stream.material()
+        changes["stream"] = changed_stream
+    elif field == "sequence":
+        material["sequence"] = 2
+        changes["sequence"] = 2
+    elif field == "record_digest":
+        material["record_digest"] = records[1].authenticated_digest
+        changes["record_digest"] = records[1].authenticated_digest
+    else:
+        changed_credential = replace(
+            historical.signing_credential_identity, provider_namespace="other-provider"
+        )
+        material["signing_credential_identity"]["provider_namespace"] = "other-provider"
+        changes["signing_credential_identity"] = changed_credential
+    canonical = ATTESTATION_DOMAIN + canonical_json_bytes(material)
+    signature = signer.sign_history_head(canonical)
+    malformed = replace(
+        historical, **changes, canonical_attestation_bytes=canonical, signature=signature
+    )
+    checkpoint = LocalCheckpointProvider("historical-reference-checkpoint", history.stream)
+    with pytest.raises(HistoryContractError):
+        oracle.verify_attested_historical_head(malformed, signer, checkpoint)
+    with psycopg.connect(BASE_DSN) as conn:
+        conn.execute(
+            sql.SQL(
+                "UPDATE {}.attestations SET canonical_head=%s,signature=%s WHERE sequence=1"
+            ).format(sql.Identifier(history.setup.schema)),
+            (canonical, signature),
+        )
+    operations = (
+        history.runtime.current_record,
+        history.runtime.retained_history,
+        history.runtime.verify,
+        lambda: history.runtime.record_at(2),
+        lambda: history.runtime.retained_attested_head(verification_authority=signer),
+        lambda: history.runtime.verify_attested_historical_head(historical, signer, checkpoint),
+        lambda: history.runtime.append(
+            expected_digest=records[-1].authenticated_digest,
+            event_identity=_event(3),
+            payload=_payload(3),
+        ),
+        lambda: history.runtime.append(
+            expected_digest=NO_PREDECESSOR, event_identity=_event(1), payload=_payload(1)
+        ),
+    )
+    for operation in operations:
+        with pytest.raises(HistoryContractError):
+            operation()
+    assert (
+        history.runtime.reconcile(
+            head=heads[-1], verification_authority=signer, checkpoint_authority=checkpoint
+        )
+        is ReconciliationOutcome.CORRUPT
+    )
+    with psycopg.connect(BASE_DSN) as conn:
+        assert conn.execute(
+            sql.SQL("SELECT count(*),max(sequence) FROM {}.records").format(
+                sql.Identifier(history.setup.schema)
+            )
+        ).fetchone() == (2, 2)
 
 
 @pytest.mark.parametrize("function", ["read_stream", "append_record", "retain_head"])

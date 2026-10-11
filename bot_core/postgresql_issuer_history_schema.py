@@ -141,59 +141,58 @@ BEGIN
 END
 """,
         "validate_stream(bytea)": """
-DECLARE key_name text; member bytea;
+DECLARE field_index integer; members bytea[]; member bytea;
 BEGIN
  IF p_stream IS NULL THEN RAISE EXCEPTION 'missing stream' USING ERRCODE='22023'; END IF;
- PERFORM {s}.validate_members(p_stream,ARRAY['environment','issuer_authority_identity',
+ members := {s}.canonical_object_members(p_stream,ARRAY['environment','issuer_authority_identity',
   'product_scope','security_epoch','security_profile','stream_id','trust_domain']);
- FOREACH key_name IN ARRAY ARRAY['environment','issuer_authority_identity','product_scope',
-  'security_profile','stream_id','trust_domain'] LOOP
-  member := {s}.canonical_object_member(p_stream,key_name);
+ FOREACH field_index IN ARRAY ARRAY[1,2,3,5,6,7] LOOP
+  member := members[field_index];
   IF pg_catalog.get_byte(member,0) <> 34 OR pg_catalog.octet_length(member)=2 THEN
    RAISE EXCEPTION 'malformed stream field' USING ERRCODE='22023';
   END IF;
  END LOOP;
- IF {s}.canonical_object_member(p_stream,'security_profile') IS DISTINCT FROM
+ IF members[5] IS DISTINCT FROM
     pg_catalog.convert_to('\"PRODUCTION_LOCAL\"','UTF8')
- OR pg_catalog.convert_from({s}.canonical_object_member(p_stream,'security_epoch'),'UTF8') !~
-  '^[1-9][0-9]*$'
- OR {s}.canonical_object_member(p_stream,'trust_domain') IS DISTINCT FROM
+ OR pg_catalog.convert_from(members[4],'UTF8') !~ '^[1-9][0-9]*$'
+ OR members[7] IS DISTINCT FROM
     (SELECT trust_domain FROM {s}.metadata WHERE singleton)
  THEN RAISE EXCEPTION 'stream security scope mismatch' USING ERRCODE='22023'; END IF;
+ RETURN members;
 END
 """,
         "verify_stream(bytea)": """
 DECLARE st {s}.streams%ROWTYPE; r {s}.records%ROWTYPE; h {s}.attestations%ROWTYPE;
  seq bigint := 0; predecessor text := 'NO_PREDECESSOR';
- digest text; head_body bytea; field_name text; payload_bytes bytea; rebuilt bytea;
+ digest text; head_body bytea; field_index integer; payload_bytes bytea; rebuilt bytea;
+ stream_members bytea[]; record_members bytea[]; event_members bytea[];
+ head_members bytea[]; credential_members bytea[];
 BEGIN
- PERFORM {s}.validate_stream(p_stream);
+ stream_members := {s}.validate_stream(p_stream);
  SELECT * INTO st FROM {s}.streams WHERE stream_identity=p_stream;
  IF NOT FOUND THEN RAISE EXCEPTION 'unprovisioned history stream' USING ERRCODE='42501'; END IF;
- IF st.stream_id IS DISTINCT FROM {s}.canonical_object_member(p_stream,'stream_id')
- OR st.issuer_authority_identity IS DISTINCT FROM {s}.canonical_object_member(p_stream,
-  'issuer_authority_identity')
- OR st.security_profile IS DISTINCT FROM {s}.canonical_object_member(p_stream,'security_profile')
- OR st.environment IS DISTINCT FROM {s}.canonical_object_member(p_stream,'environment')
- OR st.trust_domain IS DISTINCT FROM {s}.canonical_object_member(p_stream,'trust_domain')
- OR st.product_scope IS DISTINCT FROM {s}.canonical_object_member(p_stream,'product_scope')
- OR st.security_epoch IS DISTINCT FROM
-  pg_catalog.convert_from({s}.canonical_object_member(p_stream,'security_epoch'),'UTF8')
+ IF st.stream_id IS DISTINCT FROM stream_members[6]
+ OR st.issuer_authority_identity IS DISTINCT FROM stream_members[2]
+ OR st.security_profile IS DISTINCT FROM stream_members[5]
+ OR st.environment IS DISTINCT FROM stream_members[1]
+ OR st.trust_domain IS DISTINCT FROM stream_members[7]
+ OR st.product_scope IS DISTINCT FROM stream_members[3]
+ OR st.security_epoch IS DISTINCT FROM pg_catalog.convert_from(stream_members[4],'UTF8')
  THEN RAISE EXCEPTION 'physical stream identity corrupt' USING ERRCODE='22023'; END IF;
  FOR r IN SELECT * FROM {s}.records WHERE stream_identity=p_stream ORDER BY sequence LOOP
   seq := seq + 1;
-  PERFORM {s}.validate_canonical_json(r.canonical_record);
-  PERFORM {s}.validate_canonical_json(r.event_identity);
-  PERFORM {s}.validate_members(r.event_identity,ARRAY['issuance_attempt_id',
+  record_members := {s}.canonical_object_members(r.canonical_record,
+   ARRAY['canonical_event_payload','event_digest','event_identity',
+    'predecessor_authenticated_digest','sequence','stream']);
+  event_members := {s}.canonical_object_members(r.event_identity,ARRAY['issuance_attempt_id',
   'logical_operation_id','root_proof_id']);
-  FOREACH field_name IN ARRAY ARRAY['issuance_attempt_id','logical_operation_id',
-  'root_proof_id'] LOOP
-   payload_bytes := {s}.canonical_object_member(r.event_identity,field_name);
+  FOREACH field_index IN ARRAY ARRAY[1,2,3] LOOP
+   payload_bytes := event_members[field_index];
    IF pg_catalog.get_byte(payload_bytes,0) <> 34 OR pg_catalog.octet_length(payload_bytes)=2 THEN
     RAISE EXCEPTION 'retained event identity corrupt' USING ERRCODE='22023';
    END IF;
   END LOOP;
-  payload_bytes := {s}.canonical_object_member(r.canonical_record,'canonical_event_payload');
+  payload_bytes := record_members[1];
   rebuilt := pg_catalog.convert_to('{"canonical_event_payload":','UTF8') || payload_bytes
    || pg_catalog.convert_to(',"event_digest":','UTF8')
    || pg_catalog.convert_to(pg_catalog.to_json(r.event_digest)::text,'UTF8')
@@ -206,11 +205,9 @@ BEGIN
   OR r.canonical_record IS DISTINCT FROM rebuilt
   OR r.sequence IS DISTINCT FROM seq
   OR r.predecessor_authenticated_digest IS DISTINCT FROM predecessor
-  OR r.logical_operation_id IS DISTINCT FROM {s}.canonical_object_member(r.event_identity,
-  'logical_operation_id')
-  OR r.issuance_attempt_id IS DISTINCT FROM {s}.canonical_object_member(r.event_identity,
-  'issuance_attempt_id')
-  OR r.root_proof_id IS DISTINCT FROM {s}.canonical_object_member(r.event_identity,'root_proof_id')
+  OR r.logical_operation_id IS DISTINCT FROM event_members[2]
+  OR r.issuance_attempt_id IS DISTINCT FROM event_members[1]
+  OR r.root_proof_id IS DISTINCT FROM event_members[3]
   OR r.event_digest IS DISTINCT FROM 'sha256:' || pg_catalog.encode(pg_catalog.sha256(
      pg_catalog.decode('{event_domain}','hex') || payload_bytes),'hex')
   OR r.authenticated_digest IS DISTINCT FROM 'sha256:' || pg_catalog.encode(pg_catalog.sha256(
@@ -227,33 +224,31 @@ BEGIN
    RAISE EXCEPTION 'retained attestation envelope corrupt' USING ERRCODE='22023';
   END IF;
   head_body := pg_catalog.substring(h.canonical_head,{attestation_offset});
-  PERFORM {s}.validate_members(head_body,
+  head_members := {s}.canonical_object_members(head_body,
    ARRAY['record_digest','sequence','signing_credential_identity','stream']);
-  PERFORM {s}.validate_members(h.credential_identity,
+  credential_members := {s}.canonical_object_members(h.credential_identity,
    ARRAY['credential_identity','custody_lifecycle_namespace','key_handle_or_version',
     'key_material_identity','provider_namespace','semantic_role']);
   SELECT authenticated_digest INTO digest FROM {s}.records WHERE stream_identity=p_stream AND
   sequence=h.sequence;
   IF NOT FOUND OR digest IS DISTINCT FROM h.record_digest
-  OR {s}.canonical_object_member(head_body,'stream') IS DISTINCT FROM p_stream
-  OR {s}.canonical_object_member(head_body,'sequence') IS DISTINCT FROM
+  OR head_members[4] IS DISTINCT FROM p_stream
+  OR head_members[2] IS DISTINCT FROM
   pg_catalog.convert_to(h.sequence::text,'UTF8')
-  OR {s}.canonical_object_member(head_body,'record_digest') IS DISTINCT FROM
+  OR head_members[1] IS DISTINCT FROM
   pg_catalog.convert_to(pg_catalog.to_json(h.record_digest)::text,'UTF8')
-  OR {s}.canonical_object_member(head_body,'signing_credential_identity') IS DISTINCT FROM
-  h.credential_identity
-  OR {s}.canonical_object_member(h.credential_identity,'semantic_role') IS DISTINCT FROM
+  OR head_members[3] IS DISTINCT FROM h.credential_identity
+  OR credential_members[6] IS DISTINCT FROM
   pg_catalog.convert_to('\"HISTORY_ATTESTATION_SIGNING\"','UTF8')
   THEN RAISE EXCEPTION 'retained attestation relation corrupt' USING ERRCODE='22023'; END IF;
-  FOREACH field_name IN ARRAY ARRAY['credential_identity','custody_lifecycle_namespace',
-  'provider_namespace'] LOOP
-   payload_bytes := {s}.canonical_object_member(h.credential_identity,field_name);
+  FOREACH field_index IN ARRAY ARRAY[1,2,5] LOOP
+   payload_bytes := credential_members[field_index];
    IF pg_catalog.get_byte(payload_bytes,0) <> 34 OR pg_catalog.octet_length(payload_bytes)=2 THEN
     RAISE EXCEPTION 'retained attestation credential corrupt' USING ERRCODE='22023';
    END IF;
   END LOOP;
-  FOREACH field_name IN ARRAY ARRAY['key_handle_or_version','key_material_identity'] LOOP
-   payload_bytes := {s}.canonical_object_member(h.credential_identity,field_name);
+  FOREACH field_index IN ARRAY ARRAY[3,4] LOOP
+   payload_bytes := credential_members[field_index];
    IF (pg_catalog.get_byte(payload_bytes,0) <> 34 AND payload_bytes <>
   pg_catalog.convert_to('null','UTF8'))
    OR pg_catalog.octet_length(payload_bytes)=2 THEN
@@ -484,6 +479,7 @@ REVOKE ALL ON ALL TABLES IN SCHEMA {s} FROM PUBLIC;
 
 
 _FUNCTION_DECLARATIONS = {
+    "canonical_object_members(bytea,text[])": ("p_bytes bytea,p_fields text[]", "bytea[]"),
     "validate_members(bytea,text[])": ("p_bytes bytea,p_fields text[]", "void"),
     "canonical_object_member(bytea,text)": ("p_bytes bytea,p_key text", "bytea"),
     "canonical_string(bytea,integer)": (
@@ -492,7 +488,7 @@ _FUNCTION_DECLARATIONS = {
     ),
     "canonical_value(bytea,integer)": ("p_bytes bytea,p_position integer", "integer"),
     "validate_canonical_json(bytea)": ("p_bytes bytea", "void"),
-    "validate_stream(bytea)": ("p_stream bytea", "void"),
+    "validate_stream(bytea)": ("p_stream bytea", "bytea[]"),
     "verify_stream(bytea)": ("p_stream bytea", "void"),
     "provision_stream(bytea)": ("p_stream bytea", "void"),
     "read_stream(bytea,boolean)": ("p_stream bytea,p_lock boolean", "jsonb"),
