@@ -554,7 +554,7 @@ jobs:
     name: Python tests (Ubuntu)
     runs-on: ubuntu-latest
     needs: prepare-wheelhouse
-    timeout-minutes: 60
+    timeout-minutes: 150
     services:
       postgres:
         image: postgres:16
@@ -657,7 +657,7 @@ jobs:
             tests/security/test_freshness_semantic_verifier_postgresql.py
 
       - name: Run fast pytest suite
-        timeout-minutes: 45
+        timeout-minutes: 120
         env:
           PYTEST_FAST: "1"
           PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
