@@ -320,6 +320,8 @@ Existing preview/QML surfaces may be reused only when their runtime behavior, ow
 
 **Dedicated Settings → Exchanges & Accounts:** create/manage multiple venue accounts and subaccounts, choose PAPER/TESTNET/LIVE only where permitted, choose spot/margin/futures when supported, securely write API key/secret/passphrase into OS-backed Core custody, verify identity/permissions/connection, rotate/revoke, configure portfolio/account routes and risk caps, and show actual balances, open orders and per-venue health. UI read models contain only masked state/opaque secret references, never material. Unsupported venues (including Zonda), unavailable sandboxes and LIVE without authority cannot be selected or activated. A SAVE/CONNECT/TEST button must perform the corresponding real Core operation or be explicitly disabled with an explanation.
 
+**Translation-ready foundation (first-beta preparation, not a multilingual launch):** While rebuilding the canonical PySide6/QML DesktopShell in M4.2, use Qt-compatible translatable UI strings/message IDs and keep Core-owned error/status codes separate from presentation text. Avoid introducing new hard-coded user-facing strings that would force a second UI rewrite. Full language catalogs, a runtime language switcher and multi-locale completeness testing are explicitly **post-first-beta**, not M4.2/M4.3/PB release blockers. The independent [post-beta I18N roadmap](../../roadmap/post_beta_internationalization_localization.md) defines their scope and tests.
+
 Detailed work and test contract: [Production UI Overhaul & Core Integration](../../roadmap/production_ui_overhaul.md).
 
 ## M4.3 — UI native end-to-end qualification
@@ -597,6 +599,29 @@ CryptoHunter v1 is considered complete only when:
 - Desktop packaging, update and rollback are release-grade.
 - Soak/hardening acceptance criteria pass.
 - Final production audit records remaining limitations explicitly.
+
+---
+
+# POST-BETA-I18N — Internationalization & Localization (I18N-1–I18N-6)
+
+**Status: PLANNED — after the first beta begins.** This is an independently scheduled product-experience workstream, not an additional numbered Windows Stage, not Stage 11/12, and not a prerequisite for the first beta, M5 LIVE Canary or M6 unless a future release explicitly opts into shipping a new locale.
+
+**Pre-beta architectural seam:** M4.2 makes the production PySide6/QML DesktopShell translation-ready as the real Core-bound UI is built. Translation extraction and separation of presentation text from Core-owned status/error codes should avoid a costly later rewrite. Full catalogs, user-facing language switching and multi-language qualification are deferred until after the first beta.
+
+**Post-beta user experience:** A visible language control in the application header and/or Settings displays a recognizable icon/flag, native language name and locale code. A click opens an accessible language picker; selecting a locale immediately retranslates the running app without restart. The chosen locale survives app restart. A flag is only a visual aid, not a one-to-one language identity.
+
+**Planned delivery:**
+
+- **I18N-1 — UI text inventory and translation infrastructure.** Inventory real QML/PySide6 surfaces, dialogs, menus, tray, toasts, notices, dynamic status/error messages and confirmation flows. Introduce Qt-compatible translation catalogs and stable message identifiers without crossing the Core authority boundary.
+- **I18N-2 — Initial language catalogs.** Plan Polish (`pl-PL`) and English (`en`/reviewed regional variant) as the first candidate locales; approve exact shipped locales and translation owners at implementation time. Additional locales use versioned catalogs within the same application, not separate executables.
+- **I18N-3 — Live switching and accessible picker.** Show flag/icon **plus** language name/code, retranslate existing and newly opened QML/PySide6/tray surfaces without restarting Core, losing unsaved input or cancelling asynchronous operations. Cover plural forms, parameter substitution and locale fallback.
+- **I18N-4 — Preference persistence and safe fallback.** Store the selected locale in normal per-user UI settings; restore it after restart and recover predictably from missing/incomplete/invalid catalogs without exposing secrets or modifying trading state.
+- **I18N-5 — Locale-aware presentation.** Localize display-only dates, times, number grouping, decimal separators and help text; keep monetary amounts, instrument symbols, API identifiers, canonical serialization, signed bytes, audit/security identifiers and execution semantics invariant. Warnings for PAPER/TESTNET/LIVE, orders, risk and kill switch must remain unambiguous.
+- **I18N-6 — Native end-to-end localization qualification.** Test immediate switching during PAPER/TESTNET activity, changing languages repeatedly, reopen/restart persistence, missing translation fallback, long strings/DPI/accessibility, error dialogs, confirmation/warning parity and translation coverage for each shipped locale. No mock-only selector counts as implemented.
+
+**Acceptance:** A real, fully interactive header/Settings selector switches all supported user-facing surfaces at runtime and retains preference after restart; all shipped catalogs meet reviewed coverage/terminology rules; untranslated keys have safe, observable fallback; UI text changes cannot affect Core/risk/credentials/order state or safety confirmations. Document evidence from packaged native Windows UI tests. Any new language remains unshipped until its review/tests pass.
+
+Detailed backlog, boundaries and test contract: [Post-beta Internationalization & Localization](../../roadmap/post_beta_internationalization_localization.md). This section creates no new first-beta gate and does not change existing milestone status.
 
 ---
 

@@ -32,6 +32,7 @@ Every visible beta-critical control must be a real command, action or explicit d
 - Global loading, empty, stale, disconnected, reconnecting, degraded, blocked, permission denied, invalid input, retry and fatal error states; accessible keyboard/focus support, readable layouts and Windows DPI/resolution handling.
 - Per-venue and aggregate status/health and clear separation of PAPER/TESTNET/LIVE. No simultaneous account ambiguity in any order/strategy action.
 - Model safe cancellation, confirmation for sensitive actions, asynchronous progress and completion/error receipts, and persistence of user settings across restarts.
+- **Translation-ready foundation only:** when implementing real QML/PySide6 controls, use Qt-extractable translated text/message IDs rather than embedding unextractable user-facing strings; keep raw Core error/status codes stable and map their presentation separately. Do not deliver a fake language picker, require complete foreign-language catalogs, or expand first-beta M4.2/M4.3/PB gates for the post-beta feature. See [I18N roadmap](post_beta_internationalization_localization.md).
 - Do not grant execution authority through display state or UI controls. Core remains owner of validation, credentials, portfolio capital, routes and licensing.
 
 ## UI-5 — Qualification and beta exit
