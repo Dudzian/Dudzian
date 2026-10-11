@@ -60,6 +60,8 @@ jobs:
           bot_core/postgresql_checkpoint_schema.py
           bot_core/root_proof_issuer_runtime.py
           bot_core/root_proof_issuance_reconciliation.py
+          bot_core/root_proof_issuer_orchestration.py
+          bot_core/root_proof_issuer_recovery.py
           bot_core/cha_attempt_store.py
           bot_core/cha_attempt_signatures.py
           bot_core/cha_issuance_request.py
@@ -81,6 +83,8 @@ jobs:
           tests/security/test_cha_attempt_store_readonly.py
           tests/security/test_root_proof_issuance_reconciliation.py
           tests/security/test_root_proof_issuance_reconciliation_integration.py
+          tests/security/test_root_proof_issuer_orchestration.py
+          tests/security/test_root_proof_issuer_orchestration_integration.py
       - name: Mypy configured scope
         run: python -m mypy
       - name: Mypy Windows configured scope
@@ -185,6 +189,7 @@ jobs:
           tests/security/test_postgresql_issuer_history_security.py
           tests/security/test_postgresql_checkpoint_authority.py
           tests/security/test_root_proof_issuance_reconciliation.py
+          tests/security/test_root_proof_issuer_orchestration.py
           tests/architecture/test_m05_account_genesis_root_proof_issuer_production_substrate_selection_contract.py
           tests/architecture/test_m05_account_genesis_independent_root_proof_issuer_contract.py
           tests/architecture/test_m05_account_genesis_physical_persistence_crash_atomicity_contract.py
@@ -196,6 +201,8 @@ jobs:
           --cov=bot_core.postgresql_checkpoint_authority
           --cov=bot_core.postgresql_checkpoint_schema
           --cov=bot_core.root_proof_issuance_reconciliation
+          --cov=bot_core.root_proof_issuer_orchestration
+          --cov=bot_core.root_proof_issuer_recovery
           --cov-append --cov-config=.coveragerc
           --cov-report=term-missing --cov-report=xml:coverage.xml -q
       - name: Canonical JCS profile vectors (serial)
@@ -328,9 +335,12 @@ jobs:
           python -m pytest -p asyncio -p pytest_cov
           tests/security/test_root_proof_issuer_runtime.py
           tests/security/test_root_proof_issuance_reconciliation_integration.py
+          tests/security/test_root_proof_issuer_orchestration_integration.py
           -m "not hardware and not destructive and not network"
           --cov=bot_core.root_proof_issuer_runtime
           --cov=bot_core.licensing.cha_root_proof_signed_attempt
+          --cov=bot_core.root_proof_issuer_orchestration
+          --cov=bot_core.root_proof_issuer_recovery
           --cov-branch --cov-config=.coveragerc
           --cov-report=term-missing
           --cov-report=xml:semantic-preflight-coverage.xml -q

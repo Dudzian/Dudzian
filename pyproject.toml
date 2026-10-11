@@ -50,6 +50,8 @@ files = [
   "bot_core/postgresql_checkpoint_schema.py",
   "bot_core/root_proof_issuer_runtime.py",
   "bot_core/root_proof_issuance_reconciliation.py",
+  "bot_core/root_proof_issuer_orchestration.py",
+  "bot_core/root_proof_issuer_recovery.py",
   "bot_core/licensing/cha_root_proof_attempt_reservation.py",
   "bot_core/licensing/cha_logical_operation.py",
   "bot_core/licensing/cha_account_reservation.py",
