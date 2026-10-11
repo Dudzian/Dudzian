@@ -173,6 +173,33 @@ def test_raw_runtime_append_preserves_entire_frozen_canonical_domain(boundary):
     boundary.runtime().verify()
 
 
+@pytest.mark.parametrize(
+    "payload",
+    [
+        '{"a":{"x":"\\uaąą"}}'.encode("utf-8"),
+        '{"a":{"x":"\\u00€"}}'.encode("utf-8"),
+        '{"a":{"x":"\\u000😀"}}'.encode("utf-8"),
+        '{"a":{"\\uaąą":0}}'.encode("utf-8"),
+    ],
+)
+def test_multibyte_malformed_unicode_escape_is_a_canonical_data_error(boundary, payload):
+    # The whole input is valid UTF-8, but the four-byte escape slice splits a scalar.
+    payload.decode("utf-8")
+    with psycopg.connect(BASE_DSN, autocommit=True) as conn:
+        for query, parameters in (
+            ("SELECT {}.validate_canonical_json(%s)", (payload,)),
+            ("SELECT {}.canonical_object_members(%s,%s::text[])", (payload, ["a"])),
+        ):
+            with pytest.raises(psycopg.errors.CheckViolation) as failure:
+                conn.execute(
+                    sql.SQL(query).format(sql.Identifier(boundary.setup.schema)), parameters
+                )
+            assert failure.value.sqlstate == "23514"
+    with pytest.raises(psycopg.errors.CheckViolation):
+        _raw_append(boundary, payload)
+    assert boundary.runtime().current_record() is None
+
+
 def test_deep_canonical_payload_matches_reference_with_runtime_recursion_budget(boundary):
     original_limit = sys.getrecursionlimit()
     try:
@@ -623,6 +650,10 @@ def test_coordinated_multi_member_source_and_manifest_tamper_fails_qualification
         b'{"a":{"":0}}',
         b'{"a":[{"x":1e0}]}',
         b'{"a":{"x":"\\u0061"}}',
+        '{"a":{"x":"\\uaąą"}}'.encode("utf-8"),
+        '{"a":{"x":"\\u00€"}}'.encode("utf-8"),
+        '{"a":{"x":"\\u000😀"}}'.encode("utf-8"),
+        '{"a":{"\\uaąą":0}}'.encode("utf-8"),
     ],
 )
 def test_recomputed_complete_chain_cannot_hide_noncanonical_intermediate_payload(
