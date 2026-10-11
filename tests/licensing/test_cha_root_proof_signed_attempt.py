@@ -298,17 +298,26 @@ def test_checkpoint_parent_fails_closed_on_unrecoverable_outcomes(failure):
         assert joined == ["first", "second", "retry"]
 
 
+def _prepared_checkpoint_lock_holder(path, ready, acquire, entered, release, outcomes):
+    ready.put(True)
+    # The parent bounds startup with ready.get and terminates us in finally.
+    # Do not consume the native holder's ten-second budget while peers import.
+    acquire.wait()
+    native_locking_tests._lock_worker(path, True, entered, release, outcomes)
+
+
 @pytest.mark.skipif(os.name != "nt", reason="actual Windows five-second acquisition budget")
 def test_windows_spawned_checkpoint_busy_reloads_exact_attempt_after_holder_exit(store_flow):
     path, auth, current, keys, identities = store_flow
     seeds = tuple(key.private_bytes_raw() for key in keys)
     context = multiprocessing.get_context("spawn")
     ready, results, start = context.Queue(), context.Queue(), context.Event()
-    entered, release, holder_results = context.Event(), context.Event(), context.Queue()
+    acquire, entered, release = context.Event(), context.Event(), context.Event()
+    holder_results = context.Queue()
     process_args = (str(path), auth, seeds, identities, ready, start, results)
     holder = context.Process(
-        target=native_locking_tests._lock_worker,
-        args=(str(path.parent), True, entered, release, holder_results),
+        target=_prepared_checkpoint_lock_holder,
+        args=(str(path.parent), ready, acquire, entered, release, holder_results),
     )
     processes = [context.Process(target=_process_checkpoint_flow, args=process_args)]
 
@@ -321,9 +330,11 @@ def test_windows_spawned_checkpoint_busy_reloads_exact_attempt_after_holder_exit
 
     try:
         holder.start()
-        assert entered.wait(20)
+        assert ready.get(timeout=20)
         processes[0].start()
         assert ready.get(timeout=20)
+        acquire.set()
+        assert entered.wait(20)
         start.set()
         busy = results.get(timeout=20)
         assert busy[0] == "busy" and busy[3] == [0, 0], busy
