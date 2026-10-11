@@ -13,6 +13,7 @@ import os
 import sqlite3
 import uuid
 from pathlib import Path
+from queue import Queue
 from types import SimpleNamespace
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
@@ -46,6 +47,7 @@ from bot_core.root_proof_issuer_substrate import public_key_material_identity
 from tests.licensing import test_cha_root_proof_attempt_reservation as upstream_tests
 from tests.licensing.test_cha_attempt_store_stage9 import authorization
 from tests.security import test_local_signing_custody as native_custody_tests
+from tests.security import test_native_custody_locking as native_locking_tests
 from tests.security._local_signing_platform import requires_native_custody_locking
 
 native_keyring = native_custody_tests.native_keyring
@@ -63,45 +65,295 @@ def _process_checkpoint_flow(
     """Spawned processes use real SQLite, Ed25519 and native OS locking."""
     from bot_core.local_signing_custody import _custody_lock
 
-    ready.put(True)
-    if not start.wait(10):
-        raise RuntimeError("process start barrier timed out")
     calls = [0, 0]
-    with _custody_lock(Path(path).parent, exclusive=True):
-        with persistence.SQLiteCHAAttemptStore(Path(path), auth.trust_domain) as store:
-            current = store.attempt(auth.logical_operation_id)
-            for offset, predecessor in enumerate(
-                (
-                    persistence.AttemptState.RESERVED_AWAITING_SIGNATURES,
-                    persistence.AttemptState.REQUEST_SIGNED_BY_REQUESTER,
+    lock_acquired = False
+    try:
+        ready.put(True)
+        if not start.wait(10):
+            raise RuntimeError("process start barrier timed out")
+        with _custody_lock(Path(path).parent, exclusive=True):
+            lock_acquired = True
+            with persistence.SQLiteCHAAttemptStore(Path(path), auth.trust_domain) as store:
+                current = store.attempt(auth.logical_operation_id)
+                for offset, predecessor in enumerate(
+                    (
+                        persistence.AttemptState.RESERVED_AWAITING_SIGNATURES,
+                        persistence.AttemptState.REQUEST_SIGNED_BY_REQUESTER,
+                    )
+                ):
+                    if current.state is predecessor:
+                        if native_paths is None:
+                            current = checkpoint(
+                                store,
+                                current,
+                                Ed25519PrivateKey.from_private_bytes(seeds[offset]),
+                                identities[offset],
+                            )
+                        else:
+                            value = store.prepare_signature(current, identities[offset])
+                            signature = (
+                                custody.LocalCHARequesterSigningCustody(
+                                    Path(native_paths[0]), trust_domain=auth.trust_domain
+                                ).sign_issuance_request(value.canonical_bytes, identities[0])
+                                if offset == 0
+                                else custody.LocalPreaccountClaimantAuthorizationCustody(
+                                    Path(native_paths[1]),
+                                    trust_domain=auth.trust_domain,
+                                    provisioning_principal=auth.provisioning_principal_id,
+                                ).authorize_entitlement_claim(value.canonical_bytes, identities[1])
+                            )
+                            current = store.persist_signature(
+                                current, identities[offset], signature
+                            )
+                        calls[offset] += 1
+                identity = final_identity(store, current)
+                current = store.finalize_attempt(identity, expected_fence=current.fence)
+                outcome = (
+                    "success",
+                    current.reservation.issuance_attempt_id,
+                    identity.digest_sha256,
+                    calls,
                 )
-            ):
-                if current.state is predecessor:
-                    if native_paths is None:
-                        current = checkpoint(
-                            store,
-                            current,
-                            Ed25519PrivateKey.from_private_bytes(seeds[offset]),
-                            identities[offset],
-                        )
-                    else:
-                        value = store.prepare_signature(current, identities[offset])
-                        signature = (
-                            custody.LocalCHARequesterSigningCustody(
-                                Path(native_paths[0]), trust_domain=auth.trust_domain
-                            ).sign_issuance_request(value.canonical_bytes, identities[0])
-                            if offset == 0
-                            else custody.LocalPreaccountClaimantAuthorizationCustody(
-                                Path(native_paths[1]),
-                                trust_domain=auth.trust_domain,
-                                provisioning_principal=auth.provisioning_principal_id,
-                            ).authorize_entitlement_claim(value.canonical_bytes, identities[1])
-                        )
-                        current = store.persist_signature(current, identities[offset], signature)
-                    calls[offset] += 1
-            identity = final_identity(store, current)
-            current = store.finalize_attempt(identity, expected_fence=current.fence)
-            results.put((current.reservation.issuance_attempt_id, identity.digest_sha256, calls))
+    except LocalSigningCustodyBusy as exc:
+        # Only outer-lock contention can come from the competing worker. A
+        # nested custody timeout after acquisition is an unexpected failure.
+        outcome = ("error" if lock_acquired else "busy", str(exc), None, calls)
+    except Exception as exc:
+        outcome = ("error", f"{type(exc).__name__}: {exc}", None, calls)
+    # Reporting success only after both contexts exit also proves lock cleanup.
+    results.put(outcome)
+
+
+def _collect_checkpoint_outcomes(processes, results, start_retry, *, timeout):
+    outcomes = [results.get(timeout=timeout) for _ in processes]
+    for process in processes:
+        process.join(10)
+        assert process.exitcode == 0, outcomes
+    assert all(outcome[0] in {"success", "busy"} for outcome in outcomes), outcomes
+    busy = [offset for offset, outcome in enumerate(outcomes) if outcome[0] == "busy"]
+    if busy:
+        assert len(busy) == 1 and len(outcomes) == 2, outcomes
+        assert outcomes[busy[0]][3] == [0, 0], outcomes
+        # Every competing process has exited, so its native lock is released.
+        # Reuse the exact worker arguments; never reserve a replacement attempt.
+        retry = start_retry()
+        outcome = results.get(timeout=timeout)
+        retry.join(10)
+        assert retry.exitcode == 0, outcome
+        assert outcome[0] == "success", outcome
+        outcomes[busy[0]] = outcome
+    return [outcome[1:] for outcome in outcomes]
+
+
+@pytest.mark.parametrize(
+    ("failure", "status", "detail"),
+    [
+        (None, "success", None),
+        ("outer_busy", "busy", "injected outer contention"),
+        ("checkpoint_error", "error", "ValueError: injected checkpoint failure"),
+        ("barrier", "error", "RuntimeError: process start barrier timed out"),
+        ("nested_busy", "error", "injected nested contention"),
+    ],
+)
+def test_checkpoint_worker_reports_outcome_after_lock_cleanup(
+    store_flow, monkeypatch, failure, status, detail
+):
+    from bot_core import local_signing_custody
+
+    path, auth, current, keys, identities = store_flow
+    seeds = tuple(key.private_bytes_raw() for key in keys)
+    lock_events = []
+
+    @contextmanager
+    def injected_lock(directory, *, exclusive):
+        assert directory == path.parent and exclusive
+        if failure == "outer_busy":
+            raise LocalSigningCustodyBusy("injected outer contention")
+        lock_events.append("acquired")
+        try:
+            yield
+        finally:
+            lock_events.append("released")
+
+    def failed_checkpoint(*args):
+        if failure == "nested_busy":
+            raise LocalSigningCustodyBusy("injected nested contention")
+        raise ValueError("injected checkpoint failure")
+
+    monkeypatch.setattr(local_signing_custody, "_custody_lock", injected_lock)
+    if failure in {"checkpoint_error", "nested_busy"}:
+        monkeypatch.setitem(_process_checkpoint_flow.__globals__, "checkpoint", failed_checkpoint)
+    ready, results = Queue(), Queue()
+
+    def report(outcome):
+        assert lock_events in ([], ["acquired", "released"])
+        results.put(outcome)
+
+    _process_checkpoint_flow(
+        str(path),
+        auth,
+        seeds,
+        identities,
+        ready,
+        SimpleNamespace(wait=lambda timeout: failure != "barrier"),
+        SimpleNamespace(put=report),
+    )
+    assert ready.get_nowait() is True
+    outcome = results.get_nowait()
+    assert ready.empty() and results.empty()
+    assert outcome[0] == status
+    if status == "success":
+        assert outcome[1] == current.reservation.issuance_attempt_id
+        assert outcome[3] == [1, 1]
+        with persistence.SQLiteCHAAttemptStore(path, auth.trust_domain) as store:
+            assert (
+                outcome[2]
+                == final_identity(store, store.attempt(auth.logical_operation_id)).digest_sha256
+            )
+    else:
+        assert outcome == (status, detail, None, [0, 0])
+        with persistence.SQLiteCHAAttemptStore(path, auth.trust_domain) as store:
+            assert store.attempt(auth.logical_operation_id) == current
+
+
+def _checkpoint_process(joined, label, *, exitcode=0):
+    process = SimpleNamespace(exitcode=None)
+
+    def join(timeout):
+        assert timeout == 10
+        joined.append(label)
+        process.exitcode = exitcode
+
+    process.join = join
+    return process
+
+
+def test_checkpoint_parent_retries_only_after_both_original_workers_exit():
+    joined = []
+    processes = [_checkpoint_process(joined, label) for label in ("busy", "success")]
+    results = Queue()
+    for outcome in (
+        ("busy", "outer contention", None, [0, 0]),
+        ("success", "exact-attempt", "exact-digest", [1, 1]),
+        ("success", "exact-attempt", "exact-digest", [0, 0]),
+    ):
+        results.put(outcome)
+
+    def start_retry():
+        assert joined == ["busy", "success"]
+        assert all(process.exitcode == 0 for process in processes)
+        return _checkpoint_process(joined, "retry")
+
+    assert _collect_checkpoint_outcomes(processes, results, start_retry, timeout=1) == [
+        ("exact-attempt", "exact-digest", [0, 0]),
+        ("exact-attempt", "exact-digest", [1, 1]),
+    ]
+    assert joined == ["busy", "success", "retry"]
+    assert results.empty()
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        "error",
+        "two_busy",
+        "signed_busy",
+        "worker_exit",
+        "worker_alive",
+        "retry_busy",
+        "retry_error",
+    ],
+)
+def test_checkpoint_parent_fails_closed_on_unrecoverable_outcomes(failure):
+    joined = []
+    processes = [
+        _checkpoint_process(joined, "first", exitcode=1 if failure == "worker_exit" else 0),
+        _checkpoint_process(joined, "second", exitcode=None if failure == "worker_alive" else 0),
+    ]
+    results = Queue()
+    first = ("busy", "outer contention", None, [1, 0] if failure == "signed_busy" else [0, 0])
+    second = ("success", "exact-attempt", "exact-digest", [1, 1])
+    if failure == "error":
+        first = ("error", "unexpected failure", None, [0, 0])
+    elif failure == "two_busy":
+        second = ("busy", "outer contention", None, [0, 0])
+    retry_outcome = (
+        ("error", "unexpected retry failure", None, [0, 0])
+        if failure == "retry_error"
+        else ("busy", "repeated contention", None, [0, 0])
+    )
+    for outcome in (first, second, retry_outcome):
+        results.put(outcome)
+    retries = []
+
+    def start_retry():
+        assert joined == ["first", "second"]
+        retries.append(True)
+        return _checkpoint_process(joined, "retry")
+
+    with pytest.raises(AssertionError):
+        _collect_checkpoint_outcomes(processes, results, start_retry, timeout=1)
+    assert retries == ([True] if failure in {"retry_busy", "retry_error"} else [])
+    if retries:
+        assert joined == ["first", "second", "retry"]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="actual Windows five-second acquisition budget")
+def test_windows_spawned_checkpoint_busy_reloads_exact_attempt_after_holder_exit(store_flow):
+    path, auth, current, keys, identities = store_flow
+    seeds = tuple(key.private_bytes_raw() for key in keys)
+    context = multiprocessing.get_context("spawn")
+    ready, results, start = context.Queue(), context.Queue(), context.Event()
+    entered, release, holder_results = context.Event(), context.Event(), context.Queue()
+    process_args = (str(path), auth, seeds, identities, ready, start, results)
+    holder = context.Process(
+        target=native_locking_tests._lock_worker,
+        args=(str(path.parent), True, entered, release, holder_results),
+    )
+    processes = [context.Process(target=_process_checkpoint_flow, args=process_args)]
+
+    def start_worker():
+        process = context.Process(target=_process_checkpoint_flow, args=process_args)
+        processes.append(process)
+        process.start()
+        assert ready.get(timeout=20)
+        return process
+
+    try:
+        holder.start()
+        assert entered.wait(20)
+        processes[0].start()
+        assert ready.get(timeout=20)
+        start.set()
+        busy = results.get(timeout=20)
+        assert busy[0] == "busy" and busy[3] == [0, 0], busy
+        assert holder.is_alive() and not release.is_set()
+        with persistence.SQLiteCHAAttemptStore(path, auth.trust_domain) as store:
+            assert store.attempt(auth.logical_operation_id) == current
+        release.set()
+        assert holder_results.get(timeout=10) == "released"
+        holder.join(10)
+        assert holder.exitcode == 0
+        results.put(busy)
+        start_worker()
+        outcomes = _collect_checkpoint_outcomes(processes, results, start_worker, timeout=20)
+        assert outcomes[0][:2] == outcomes[1][:2]
+        assert outcomes[0][0] == current.reservation.issuance_attempt_id
+        assert [sum(outcome[2][role] for outcome in outcomes) for role in (0, 1)] == [1, 1]
+        with persistence.SQLiteCHAAttemptStore(path, auth.trust_domain) as store:
+            retained = store.signed_request(auth.logical_operation_id)
+            for checkpoint_value in (retained.requester, retained.claimant):
+                checkpoint_value[0].verify(retained.canonical_bytes, checkpoint_value[1])
+    finally:
+        release.set()
+        for process in [holder, *processes]:
+            if process.is_alive():
+                process.terminate()
+            if process.pid is not None:
+                process.join(10)
+        ready.close()
+        results.close()
+        holder_results.close()
 
 
 @requires_native_custody_locking
@@ -117,23 +369,29 @@ def test_two_spawned_processes_checkpoint_and_finalize_once(store_flow):
     )
     context = multiprocessing.get_context("spawn")
     ready, results, start = context.Queue(), context.Queue(), context.Event()
+    process_args = (str(path), auth, seeds, identities, ready, start, results)
     processes = [
         context.Process(
             target=_process_checkpoint_flow,
-            args=(str(path), auth, seeds, identities, ready, start, results),
+            args=process_args,
         )
         for _ in range(2)
     ]
+
+    def start_retry():
+        process = context.Process(target=_process_checkpoint_flow, args=process_args)
+        processes.append(process)
+        process.start()
+        assert ready.get(timeout=20)
+        return process
+
     try:
         for process in processes:
             process.start()
         for _ in processes:
             assert ready.get(timeout=20)
         start.set()
-        outcomes = [results.get(timeout=20) for _ in processes]
-        for process in processes:
-            process.join(10)
-            assert process.exitcode == 0
+        outcomes = _collect_checkpoint_outcomes(processes, results, start_retry, timeout=20)
         assert outcomes[0][:2] == outcomes[1][:2]
         assert outcomes[0][0] == current.reservation.issuance_attempt_id
         assert [sum(outcome[2][role] for outcome in outcomes) for role in (0, 1)] == [1, 1]
@@ -197,31 +455,33 @@ def test_windows_credential_manager_custody_lifecycle_and_spawned_finalization(
         assert identities[0].public_key_hex != identities[1].public_key_hex
         with persistence.SQLiteCHAAttemptStore(path, auth.trust_domain) as store:
             current = store.reserve_or_resolve_attempt_id(auth)
+        process_args = (
+            str(path),
+            auth,
+            None,
+            tuple(identities),
+            ready,
+            start,
+            results,
+            tuple(map(str, paths)),
+        )
         processes = [
-            context.Process(
-                target=_process_checkpoint_flow,
-                args=(
-                    str(path),
-                    auth,
-                    None,
-                    tuple(identities),
-                    ready,
-                    start,
-                    results,
-                    tuple(map(str, paths)),
-                ),
-            )
-            for _ in range(2)
+            context.Process(target=_process_checkpoint_flow, args=process_args) for _ in range(2)
         ]
+
+        def start_retry():
+            process = context.Process(target=_process_checkpoint_flow, args=process_args)
+            processes.append(process)
+            process.start()
+            assert ready.get(timeout=20)
+            return process
+
         for process in processes:
             process.start()
         for _ in processes:
             assert ready.get(timeout=20)
         start.set()
-        outcomes = [results.get(timeout=30) for _ in processes]
-        for process in processes:
-            process.join(10)
-            assert process.exitcode == 0
+        outcomes = _collect_checkpoint_outcomes(processes, results, start_retry, timeout=30)
         assert outcomes[0][:2] == outcomes[1][:2]
         assert outcomes[0][0] == current.reservation.issuance_attempt_id
         assert [sum(outcome[2][role] for outcome in outcomes) for role in (0, 1)] == [1, 1]
