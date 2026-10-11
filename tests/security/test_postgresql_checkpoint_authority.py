@@ -37,6 +37,7 @@ from bot_core.authenticated_issuer_history import (
     ReferenceAuthenticatedHistory,
     VerifiedHistoryHead,
     attest_head,
+    build_record,
     canonical_json_bytes,
 )
 from bot_core.local_signing_custody import SigningKeyLifecycle
@@ -367,6 +368,103 @@ print(json.dumps({'revision': current.checkpoint_revision,
     assert restarted.authenticated_checkpoint_at(4) is None
 
 
+def test_authenticated_snapshots_keep_empty_and_uncheckpointed_history_distinct(boundary):
+    checkpoint = boundary.checkpoint.authenticated_read_snapshot()
+    history = boundary.history.authenticated_read_snapshot(
+        verification_authorities=(boundary.signer,),
+        historical_evidence_authority=boundary.checkpoint,
+    )
+    assert checkpoint.current is None
+    assert checkpoint.checkpoints == checkpoint.acceptances == checkpoint.heads == ()
+    assert checkpoint.checkpoint_id == boundary.checkpoint_id
+    assert checkpoint.authority_identity == boundary.checkpoint.identity.provider_namespace
+    assert checkpoint.stream == history.stream == boundary.stream
+    assert history.records == history.heads == ()
+
+    head = _append_head(boundary, 1)
+    history = boundary.history.authenticated_read_snapshot(
+        verification_authorities=(boundary.signer,),
+        historical_evidence_authority=boundary.checkpoint,
+    )
+    assert history.heads == (head,)
+    assert history.records[0].authenticated_digest == head.record_digest
+    assert boundary.checkpoint.authenticated_read_snapshot() == checkpoint
+
+
+def test_authenticated_snapshots_are_detached_repeatable_and_survive_restart(boundary):
+    heads = _accept_heads(boundary, count=2)
+    checkpoint = boundary.checkpoint.authenticated_read_snapshot()
+    history = boundary.history.authenticated_read_snapshot(
+        verification_authorities=(boundary.signer,),
+        historical_evidence_authority=boundary.checkpoint,
+    )
+    assert checkpoint.current == boundary.checkpoint.current_checkpoint()
+    assert checkpoint.heads == history.heads == tuple(heads)
+    assert checkpoint.acceptances == boundary.checkpoint.retained_acceptances()
+    assert [item.checkpoint_revision for item in checkpoint.checkpoints] == [1, 2]
+    assert history.records == boundary.history.retained_history()
+    assert boundary.checkpoint.authenticated_read_snapshot() == checkpoint
+    assert boundary.restart().authenticated_read_snapshot() == checkpoint
+    restarted_history = PostgreSQLAuthenticatedIssuerHistory(
+        _connection(boundary.history_setup.runtime_role),
+        schema=boundary.history_setup.schema,
+        stream=boundary.stream,
+    )
+    assert (
+        restarted_history.authenticated_read_snapshot(
+            verification_authorities=(boundary.signer,),
+            historical_evidence_authority=boundary.checkpoint,
+        )
+        == history
+    )
+    with pytest.raises(AttributeError):
+        checkpoint.authority_identity = "caller-substitution"
+    with pytest.raises(AttributeError):
+        history.heads = ()
+    with pytest.raises(TypeError):
+        history.records[0].canonical_event_payload["caller"] = "substitution"
+    object.__setattr__(checkpoint.current, "checkpoint_revision", 999)
+    object.__setattr__(history.heads[0], "signature", b"\x00" * 64)
+    assert boundary.checkpoint.current_checkpoint().checkpoint_revision == 2
+    assert boundary.history.authenticated_read_snapshot(
+        verification_authorities=(boundary.signer,),
+        historical_evidence_authority=boundary.checkpoint,
+    ).heads == tuple(heads)
+
+
+def test_history_read_snapshot_checks_every_retained_signature(boundary):
+    _accept_heads(boundary, count=2)
+    with psycopg.connect(BASE_DSN, autocommit=True) as conn:
+        conn.execute(
+            sql.SQL("UPDATE {}.attestations SET signature=%s WHERE sequence=1").format(
+                sql.Identifier(boundary.history_setup.schema)
+            ),
+            (b"\x00" * 64,),
+        )
+    # Zwykły odczyt weryfikuje cały łańcuch, ale nie podpisy attestations.
+    assert len(boundary.history.retained_history()) == 2
+    with pytest.raises(HistoryContractError, match="invalid history-head signature"):
+        boundary.history.authenticated_read_snapshot(
+            verification_authorities=(boundary.signer,),
+            historical_evidence_authority=boundary.checkpoint,
+        )
+
+
+def test_history_read_snapshot_rejects_unselected_or_ambiguous_signers(boundary):
+    _append_head(boundary, 1)
+    foreign_signer = _Signer(boundary.stream.trust_domain)
+    for authorities in ((foreign_signer,), (boundary.signer, boundary.signer)):
+        with pytest.raises(HistoryContractError, match="not uniquely selected"):
+            boundary.history.authenticated_read_snapshot(verification_authorities=authorities)
+    for authorities in ((), [boundary.signer]):
+        with pytest.raises(TypeError, match="nonempty exact tuple"):
+            boundary.history.authenticated_read_snapshot(verification_authorities=authorities)
+    with pytest.raises(TypeError, match="historical evidence authority must be exact"):
+        boundary.history.authenticated_read_snapshot(
+            verification_authorities=(boundary.signer,), historical_evidence_authority=object()
+        )
+
+
 def test_cas_replay_and_resolver_follow_reference_oracle(boundary):
     oracle_history = ReferenceAuthenticatedHistory(boundary.stream)
     oracle = LocalCheckpointProvider(boundary.checkpoint_id, boundary.stream)
@@ -564,10 +662,58 @@ def test_history_valid_prefix_rollback_cannot_revalidate_newer_checkpoint(bounda
             (heads[0].record_digest,),
         )
     boundary.history.verify()
-    with pytest.raises(HistoryContractError):
+    with pytest.raises(implementation.CheckpointHistoryMismatchError) as rejected:
         boundary.checkpoint.current_checkpoint()
+    assert rejected.value.reason == "CHECKPOINT_AHEAD_OF_HISTORY"
+    assert rejected.value.history_sequence == 1
+    assert rejected.value.checkpoint_sequence == 2
+    assert rejected.value.checkpoint_record_digest == heads[1].record_digest
+    assert rejected.value.observed_record_digest is None
+    with pytest.raises(implementation.CheckpointHistoryMismatchError):
+        boundary.checkpoint.authenticated_read_snapshot()
     with pytest.raises(HistoryContractError):
         boundary.restart()
+
+
+def test_checkpoint_read_snapshot_reports_exact_divergent_history_prefix(boundary):
+    head = _append_head(boundary, 1)
+    boundary.checkpoint.advance(expected_revision=0, head=head)
+    divergent = build_record(
+        boundary.stream, 1, NO_PREDECESSOR, _event(1), {"fixture": "divergent-history-prefix"}
+    )
+    schema = sql.Identifier(boundary.history_setup.schema)
+    with psycopg.connect(BASE_DSN) as conn:
+        conn.execute(sql.SQL("DELETE FROM {}.attestations").format(schema))
+        conn.execute(
+            sql.SQL(
+                "UPDATE {}.records SET event_digest=%s,authenticated_digest=%s,canonical_record=%s"
+                " WHERE sequence=1"
+            ).format(schema),
+            (
+                divergent.event_digest,
+                divergent.authenticated_digest,
+                canonical_json_bytes(divergent.unsigned_material()),
+            ),
+        )
+        conn.execute(
+            sql.SQL("UPDATE {}.streams SET head_digest=%s").format(schema),
+            (divergent.authenticated_digest,),
+        )
+    assert boundary.history.retained_history() == (divergent,)
+    with pytest.raises(implementation.CheckpointHistoryMismatchError) as rejected:
+        boundary.checkpoint.authenticated_read_snapshot()
+    assert rejected.value.reason == "RETAINED_PREFIX_MISMATCH"
+    assert rejected.value.history_sequence == rejected.value.checkpoint_sequence == 1
+    assert rejected.value.checkpoint_record_digest == head.record_digest
+    assert rejected.value.observed_record_digest == divergent.authenticated_digest
+    assert (
+        boundary.history.reconcile(
+            head=attest_head(divergent, boundary.signer),
+            verification_authority=boundary.signer,
+            checkpoint_authority=boundary.checkpoint,
+        )
+        is ReconciliationOutcome.CORRUPT
+    )
 
 
 def test_missing_acceptance_rejects_historical_signature_after_revocation(boundary):
@@ -593,6 +739,10 @@ def test_active_acceptance_remains_verifiable_after_later_revocation_and_restart
     assert restarted.current_checkpoint() == committed
     assert restarted.historical_acceptance(head) == evidence
     assert restarted.verify_historical_acceptance(head, current_lifecycle_generation=2) is None
+    assert restarted.authenticated_read_snapshot().heads == (head,)
+    assert boundary.history.authenticated_read_snapshot(
+        verification_authorities=(boundary.signer,), historical_evidence_authority=restarted
+    ).heads == (head,)
     assert (
         boundary.history.verify_attested_historical_head(head, boundary.signer, restarted).head
         == head

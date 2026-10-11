@@ -610,6 +610,7 @@ class SQLiteCHAAttemptStore:
             raise ValueError("trust_domain must be a non-empty exact str")
         self._path = path
         self._security = SecurityProfileIdentity(SecurityProfile.PRODUCTION_LOCAL, trust_domain)
+        self._readonly = False
         try:
             path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
             self._connection = sqlite3.connect(path, timeout=timeout, isolation_level=None)
@@ -635,6 +636,64 @@ class SQLiteCHAAttemptStore:
                 connection.close()
             raise AttemptStoreUnavailableError("unable to open durable CHA attempt store") from exc
 
+    @classmethod
+    def open_readonly(
+        cls, path: Path, trust_domain: str, *, timeout: float = 5.0
+    ) -> SQLiteCHAAttemptStore:
+        """Read an existing v6 authority without creating or migrating its state.
+
+        SQLite's normal WAL reader is retained, so committed WAL contents remain
+        visible. This handle never changes journal mode, file permissions or
+        schema and cannot acquire a mutation capability.
+        """
+        if cls is not SQLiteCHAAttemptStore:
+            raise TypeError("read-only CHA authority must use the exact reviewed adapter")
+        if not isinstance(path, Path) or str(path) == ":memory:" or not path.is_absolute():
+            raise ValueError("attempt database must be an absolute dedicated file path")
+        if type(trust_domain) is not str or not trust_domain.strip():
+            raise ValueError("trust_domain must be a non-empty exact str")
+        store = object.__new__(cls)
+        store._path = path
+        store._security = SecurityProfileIdentity(SecurityProfile.PRODUCTION_LOCAL, trust_domain)
+        store._readonly = True
+        try:
+            if not path.is_file():
+                raise AttemptNotFoundError("durable CHA attempt store does not exist")
+            store._connection = sqlite3.connect(
+                path.as_uri() + "?mode=ro", uri=True, timeout=timeout, isolation_level=None
+            )
+            store._connection.execute("PRAGMA query_only=ON")
+            store._connection.execute("PRAGMA foreign_keys=ON")
+            with store._read() as db:
+                metadata = db.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='store_metadata'"
+                ).fetchone()
+                if metadata is None:
+                    raise AttemptSchemaUnsupportedError("database has no CHA store schema identity")
+                versions = db.execute("SELECT schema_version FROM store_metadata").fetchall()
+                if len(versions) != 1:
+                    raise AttemptCorruptError("store identity cardinality is corrupt")
+                if versions[0] != (_SCHEMA_VERSION,):
+                    raise AttemptSchemaUnsupportedError(
+                        "read-only CHA access requires the current schema; migration is forbidden"
+                    )
+                store._open_schema()
+            return store
+        except Exception as exc:
+            connection = getattr(store, "_connection", None)
+            if connection is not None:
+                connection.close()
+            if isinstance(exc, sqlite3.Error) and getattr(exc, "sqlite_errorcode", 0) & 0xFF in {
+                sqlite3.SQLITE_CORRUPT,
+                sqlite3.SQLITE_NOTADB,
+            }:
+                raise AttemptCorruptError("durable CHA database is corrupt") from exc
+            if isinstance(exc, (OSError, sqlite3.Error)):
+                raise AttemptStoreUnavailableError(
+                    "unable to read durable CHA attempt store"
+                ) from exc
+            raise
+
     @property
     def identity(self) -> ProviderIdentity:
         return ProviderIdentity(
@@ -644,7 +703,10 @@ class SQLiteCHAAttemptStore:
     @property
     def capabilities(self) -> ProviderCapabilities:
         return ProviderCapabilities(
-            True, authoritative_reads=True, durable_state=True, compare_and_swap=True
+            True,
+            authoritative_reads=True,
+            durable_state=True,
+            compare_and_swap=not self._readonly,
         )
 
     def credential_identities(self) -> tuple[CredentialRoleIdentity, ...]:
@@ -1316,6 +1378,8 @@ class SQLiteCHAAttemptStore:
 
     @contextmanager
     def _write(self) -> Iterator[sqlite3.Connection]:
+        if self._readonly:
+            raise AttemptStoreUnavailableError("read-only CHA handle cannot mutate authority state")
         try:
             self._connection.execute("BEGIN IMMEDIATE")
             yield self._connection
@@ -1350,6 +1414,11 @@ class SQLiteCHAAttemptStore:
         except sqlite3.Error as exc:
             if self._connection.in_transaction:
                 self._connection.execute("ROLLBACK")
+            if self._readonly and getattr(exc, "sqlite_errorcode", 0) & 0xFF in {
+                sqlite3.SQLITE_CORRUPT,
+                sqlite3.SQLITE_NOTADB,
+            }:
+                raise AttemptCorruptError("durable CHA database is corrupt") from exc
             raise AttemptStoreUnavailableError("SQLite authority read failed") from exc
         except Exception:
             if self._connection.in_transaction:
