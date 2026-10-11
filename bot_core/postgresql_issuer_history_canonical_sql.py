@@ -65,7 +65,11 @@ BEGIN
         decoded := decoded || pg_catalog.set_byte(pg_catalog.decode('00','hex'),0,control);
         pos := pos + 2;
       ELSIF escaped = 117 AND pos + 5 < size THEN
-        hex_control := pg_catalog.convert_from(pg_catalog.substring($1,pos+3,4),'UTF8');
+        BEGIN
+          hex_control := pg_catalog.convert_from(pg_catalog.substring($1,pos+3,4),'UTF8');
+        EXCEPTION WHEN character_not_in_repertoire OR untranslatable_character THEN
+          RAISE EXCEPTION 'noncanonical JSON unicode escape' USING ERRCODE='23514';
+        END;
         IF hex_control !~ '^00[01][0-9a-f]$' THEN
           RAISE EXCEPTION 'noncanonical JSON unicode escape' USING ERRCODE='23514';
         END IF;
