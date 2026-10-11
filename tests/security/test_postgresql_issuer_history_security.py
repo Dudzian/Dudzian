@@ -22,6 +22,8 @@ from bot_core.authenticated_issuer_history import (
     HistoryContractError,
     HistoryEventIdentity,
     HistoryStreamIdentity,
+    LocalCheckpointProvider,
+    ReconciliationOutcome,
     ReferenceAuthenticatedHistory,
     canonical_json_bytes,
 )
@@ -392,3 +394,70 @@ def test_non_tail_corruption_blocks_read_append_and_exact_replay(boundary):
             operation()
     with pytest.raises(psycopg.Error):
         _raw_append(boundary, b"{}")
+
+
+@pytest.mark.parametrize("malformed_record", [b'{"x":"\xff"}', b'{"x":"\x00"}'])
+def test_invalid_intermediate_encoding_is_corrupt_for_reads_writes_and_reconciliation(
+    boundary, malformed_record
+):
+    runtime = boundary.runtime()
+    records = []
+    expected = NO_PREDECESSOR
+    for number in range(1, 4):
+        record, _ = runtime.append(
+            expected_digest=expected,
+            event_identity=HistoryEventIdentity(
+                f"encoding-op-{number}", f"encoding-attempt-{number}", f"encoding-proof-{number}"
+            ),
+            payload={"fixture": number},
+        )
+        records.append(record)
+        expected = record.authenticated_digest
+    with psycopg.connect(BASE_DSN, autocommit=True) as conn:
+        conn.execute(
+            sql.SQL("UPDATE {}.records SET canonical_record=%s WHERE sequence=2").format(
+                sql.Identifier(boundary.setup.schema)
+            ),
+            (malformed_record,),
+        )
+    operations = (
+        runtime.current_record,
+        runtime.current_head,
+        runtime.verify,
+        runtime.retained_history,
+        lambda: runtime.record_at(1),
+        lambda: runtime.record_at(3),
+        lambda: runtime.append(
+            expected_digest=expected,
+            event_identity=HistoryEventIdentity(
+                "encoding-op-4", "encoding-attempt-4", "encoding-proof-4"
+            ),
+            payload={"fixture": 4},
+        ),
+        lambda: runtime.append(
+            expected_digest=NO_PREDECESSOR,
+            event_identity=records[0].event_identity,
+            payload={"fixture": 1},
+        ),
+    )
+    for operation in operations:
+        with pytest.raises(HistoryContractError) as failure:
+            operation()
+        assert type(failure.value) is HistoryContractError
+        assert failure.value.__cause__.sqlstate == "23514"
+    assert (
+        runtime.reconcile(
+            head=None,
+            verification_authority=None,
+            checkpoint_authority=LocalCheckpointProvider("encoding-checkpoint", boundary.stream),
+        )
+        is ReconciliationOutcome.CORRUPT
+    )
+    with psycopg.connect(BASE_DSN) as conn:
+        retained = conn.execute(
+            sql.SQL("SELECT sequence,canonical_record FROM {}.records ORDER BY sequence").format(
+                sql.Identifier(boundary.setup.schema)
+            )
+        ).fetchall()
+    assert [row[0] for row in retained] == [1, 2, 3]
+    assert retained[1][1] == malformed_record

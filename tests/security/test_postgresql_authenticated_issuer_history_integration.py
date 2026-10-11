@@ -142,7 +142,7 @@ def _runtime(boundary: _HistoryBoundary, *, stream=None, role=None):
 
 
 @contextmanager
-def _isolated_history(*, stream_changes=None):
+def _isolated_history(*, stream_changes=None, roles=None):
     suffix = uuid.uuid4().hex[:10]
     stream = HistoryStreamIdentity(
         f"isolated-history-{suffix}",
@@ -155,17 +155,24 @@ def _isolated_history(*, stream_changes=None):
     )
     if stream_changes is not None:
         stream = replace(stream, **stream_changes)
-    setup = history_schema.PostgreSQLIssuerHistoryProvisioning(
-        f"ih_{suffix}",
+    schema_owner_role, runtime_role, admin_role = roles or (
         f"iho_{suffix}",
         f"ihr_{suffix}",
         f"iha_{suffix}",
+    )
+    setup = history_schema.PostgreSQLIssuerHistoryProvisioning(
+        f"ih_{suffix}",
+        schema_owner_role,
+        runtime_role,
+        admin_role,
         stream.trust_domain,
     )
+    installed = False
     try:
         history_schema.provision_postgresql_issuer_history(
             PostgreSQLConnectionConfig(BASE_DSN), setup
         )
+        installed = True
         history_schema.provision_postgresql_issuer_history_stream(
             _connection(setup.admin_role), schema=setup.schema, stream=stream
         )
@@ -174,12 +181,13 @@ def _isolated_history(*, stream_changes=None):
         )
         yield _HistoryBoundary(setup, stream, runtime)
     finally:
-        with psycopg.connect(BASE_DSN, autocommit=True) as conn:
-            conn.execute(
-                sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(setup.schema))
-            )
-            for role in (setup.runtime_role, setup.admin_role, setup.schema_owner_role):
-                conn.execute(sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(role)))
+        if installed:
+            with psycopg.connect(BASE_DSN, autocommit=True) as conn:
+                conn.execute(
+                    sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(setup.schema))
+                )
+                for role in (setup.runtime_role, setup.admin_role, setup.schema_owner_role):
+                    conn.execute(sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(role)))
 
 
 @pytest.fixture
@@ -292,6 +300,79 @@ def test_real_provider_identity_and_durable_role_boundary(history):
         )
         assert roles[history.setup.schema_owner_role] is False
         assert roles[history.setup.runtime_role] is True
+
+
+@pytest.mark.parametrize("runtime_name", ["hist", None], ids=["literal", "unique"])
+def test_overlapping_principal_names_preserve_admin_and_runtime_boundaries(runtime_name):
+    """Accept the hist/hist_owner/hist_admin pattern without rewriting owner identity."""
+    runtime_role = runtime_name or f"hist_{uuid.uuid4().hex[:10]}"
+    roles = (f"{runtime_role}_owner", runtime_role, f"{runtime_role}_admin")
+    with _isolated_history(roles=roles) as boundary:
+        setup = boundary.setup
+        assert setup.schema_owner_role == f"{setup.runtime_role}_owner"
+        assert setup.admin_role == f"{setup.runtime_role}_admin"
+        record = _append(boundary, 1)
+        other_stream = replace(boundary.stream, stream_id="other-overlapping-role-stream")
+        stream_bytes = canonical_json_bytes(other_stream.material())
+        schema = sql.Identifier(setup.schema)
+        with psycopg.connect(_connection(setup.admin_role).dsn) as conn:
+            conn.execute(sql.SQL("SELECT {}.provision_stream(%s)").format(schema), (stream_bytes,))
+        other_runtime = _runtime(boundary, stream=other_stream)
+        assert other_runtime.current_record() is None
+        with psycopg.connect(_connection(setup.runtime_role).dsn) as conn:
+            snapshot = conn.execute(
+                sql.SQL("SELECT {}.read_stream(%s,false)").format(schema),
+                (canonical_json_bytes(boundary.stream.material()),),
+            ).fetchone()[0]
+        assert snapshot["head_sequence"] == 1
+        assert snapshot["head_digest"] == record.authenticated_digest
+        denied_calls = (
+            (
+                setup.runtime_role,
+                "provision_stream(bytea)",
+                sql.SQL("SELECT {}.provision_stream(%s)"),
+            ),
+            (
+                setup.admin_role,
+                "read_stream(bytea,boolean)",
+                sql.SQL("SELECT {}.read_stream(%s,false)"),
+            ),
+            (
+                setup.admin_role,
+                "append_record(bytea,text,json,bytea)",
+                sql.SQL("SELECT {}.append_record(%s,NULL,NULL,NULL)"),
+            ),
+            (
+                setup.admin_role,
+                "retain_head(bytea,json,bytea,bytea)",
+                sql.SQL("SELECT {}.retain_head(%s,NULL,NULL,NULL)"),
+            ),
+        )
+        for role, signature, query in denied_calls:
+            with psycopg.connect(_connection(role).dsn) as conn:
+                with pytest.raises(InsufficientPrivilege):
+                    conn.execute(query.format(schema), (stream_bytes,))
+            # The intrinsic login guard must also reject wrong callers if an
+            # operator accidentally widens EXECUTE. Restore the reviewed ACL.
+            with psycopg.connect(BASE_DSN, autocommit=True) as conn:
+                conn.execute(
+                    sql.SQL("GRANT EXECUTE ON FUNCTION {}.{} TO {}").format(
+                        schema, sql.SQL(signature), sql.Identifier(role)
+                    )
+                )
+            try:
+                with psycopg.connect(_connection(role).dsn) as conn:
+                    with pytest.raises(InsufficientPrivilege, match="wrong history principal"):
+                        conn.execute(query.format(schema), (stream_bytes,))
+            finally:
+                with psycopg.connect(BASE_DSN, autocommit=True) as conn:
+                    conn.execute(
+                        sql.SQL("REVOKE EXECUTE ON FUNCTION {}.{} FROM {}").format(
+                            schema, sql.SQL(signature), sql.Identifier(role)
+                        )
+                    )
+        assert boundary.runtime.retained_history() == (record,)
+        assert other_runtime.current_record() is None
 
 
 def test_complete_history_and_attested_head_survive_fresh_processes(history):

@@ -208,7 +208,11 @@ BEGIN
   IF $1 IS NULL OR size < 2 OR pg_catalog.get_byte($1,0) <> 123 THEN
     RAISE EXCEPTION 'canonical JSON object root required' USING ERRCODE='23514';
   END IF;
-  PERFORM pg_catalog.convert_from($1,'UTF8');
+  BEGIN
+    PERFORM pg_catalog.convert_from($1,'UTF8');
+  EXCEPTION WHEN character_not_in_repertoire OR untranslatable_character THEN
+    RAISE EXCEPTION 'invalid canonical JSON encoding' USING ERRCODE='23514';
+  END;
   finish := @SCHEMA@.canonical_value($1,0);
   IF finish <> size THEN
     RAISE EXCEPTION 'noncanonical trailing JSON bytes' USING ERRCODE='23514';

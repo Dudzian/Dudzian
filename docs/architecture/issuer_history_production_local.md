@@ -7,6 +7,11 @@ model in `bot_core.authenticated_issuer_history` and keeps
 history is one production component; it does not complete or activate Semantic
 RootProofIssuer.
 
+The [PR #3100 corrective audit](issuer_history_corrective_audit_pr3100.md)
+records the principal-guard and malformed-encoding corrections, current-main
+integration, 100/1,000/10,000-record performance measurements and remaining
+qualification limits.
+
 ## Source discovery and contract reuse
 
 The implementation was reviewed against approved main

@@ -97,18 +97,26 @@ def _source_fingerprint(signature: str, source: str) -> str:
     ).hexdigest()
 
 
-def _function_sources(config: PostgreSQLIssuerHistoryProvisioning) -> dict[str, str]:
-    s = '"' + config.schema + '"'
-    runtime_guard = (
-        f"IF session_user <> '{config.runtime_role}' OR current_user <> "
-        f"'{config.schema_owner_role}' THEN RAISE EXCEPTION 'wrong history principal' "
+def _principal_guard(*, login_role: str, schema_owner_role: str) -> str:
+    return (
+        f"IF session_user <> '{login_role}' OR current_user <> "
+        f"'{schema_owner_role}' THEN RAISE EXCEPTION 'wrong history principal' "
         "USING ERRCODE='42501'; END IF;"
         " IF pg_catalog.current_setting('server_version_num')::integer < 160000 "
         "OR pg_catalog.current_setting('fsync') <> 'on' "
         "OR pg_catalog.current_setting('synchronous_commit') <> 'on' THEN "
         "RAISE EXCEPTION 'history durability settings mismatch' USING ERRCODE='42501'; END IF;"
     )
-    admin_guard = runtime_guard.replace(config.runtime_role, config.admin_role)
+
+
+def _function_sources(config: PostgreSQLIssuerHistoryProvisioning) -> dict[str, str]:
+    s = '"' + config.schema + '"'
+    runtime_guard = _principal_guard(
+        login_role=config.runtime_role, schema_owner_role=config.schema_owner_role
+    )
+    admin_guard = _principal_guard(
+        login_role=config.admin_role, schema_owner_role=config.schema_owner_role
+    )
     record_domain = RECORD_DOMAIN.hex()
     event_domain = _EVENT_DOMAIN.hex()
     attestation_domain = ATTESTATION_DOMAIN.hex()
