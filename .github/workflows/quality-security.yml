@@ -56,6 +56,8 @@ jobs:
           bot_core/postgresql_authenticated_issuer_history.py
           bot_core/postgresql_issuer_history_schema.py
           bot_core/postgresql_issuer_history_canonical_sql.py
+          bot_core/postgresql_checkpoint_authority.py
+          bot_core/postgresql_checkpoint_schema.py
           bot_core/root_proof_issuer_runtime.py
           bot_core/cha_attempt_store.py
           bot_core/cha_attempt_signatures.py
@@ -72,6 +74,7 @@ jobs:
           tests/security/test_postgresql_authenticated_issuer_history.py
           tests/security/test_postgresql_authenticated_issuer_history_integration.py
           tests/security/test_postgresql_issuer_history_security.py
+          tests/security/test_postgresql_checkpoint_authority.py
           tests/security/test_cha_signed_attempt_postgresql.py
           tests/security/test_root_proof_issuer_runtime.py
       - name: Mypy configured scope
@@ -176,6 +179,7 @@ jobs:
           tests/security/test_postgresql_authenticated_issuer_history.py
           tests/security/test_postgresql_authenticated_issuer_history_integration.py
           tests/security/test_postgresql_issuer_history_security.py
+          tests/security/test_postgresql_checkpoint_authority.py
           tests/architecture/test_m05_account_genesis_root_proof_issuer_production_substrate_selection_contract.py
           tests/architecture/test_m05_account_genesis_independent_root_proof_issuer_contract.py
           tests/architecture/test_m05_account_genesis_physical_persistence_crash_atomicity_contract.py
@@ -184,6 +188,8 @@ jobs:
           --cov=bot_core.postgresql_authenticated_issuer_history
           --cov=bot_core.postgresql_issuer_history_schema
           --cov=bot_core.postgresql_issuer_history_canonical_sql
+          --cov=bot_core.postgresql_checkpoint_authority
+          --cov=bot_core.postgresql_checkpoint_schema
           --cov-append --cov-config=.coveragerc
           --cov-report=term-missing --cov-report=xml:coverage.xml -q
       - name: Canonical JCS profile vectors (serial)

@@ -13,7 +13,7 @@ import hashlib
 import json
 from threading import RLock
 from types import MappingProxyType
-from typing import Any, Mapping, Protocol
+from typing import TYPE_CHECKING, Any, Mapping, Protocol, TypeGuard
 import uuid
 
 from cryptography.exceptions import InvalidSignature
@@ -28,6 +28,9 @@ from bot_core.root_proof_issuer_substrate import (
     ProviderRole,
     public_key_material_identity,
 )
+
+if TYPE_CHECKING:
+    from bot_core.postgresql_checkpoint_authority import PostgreSQLCheckpointAuthority
 
 
 RECORD_DOMAIN = b"CryptoHunter/M0.5/IssuerAuthenticatedHistoryRecord/v1\0"
@@ -365,12 +368,56 @@ def _trusted_history_credential(
     return credential, public_key, lifecycle, generation
 
 
+def _is_checkpoint_authority(
+    authority: object,
+) -> TypeGuard[LocalCheckpointProvider | PostgreSQLCheckpointAuthority]:
+    """Dopuść wyłącznie dokładne, przeglądane implementacje wybrane w composition.
+
+    Sprawdzenie typu nie ustanawia zaufanego pochodzenia. Composition root
+    dostarcza kanoniczny autorytet, a weryfikacja odpytuje jego własny retained
+    state; publiczny evidence ani zgodność strukturalnego Protocol nie uprawniają.
+    """
+    if authority is None:
+        return False
+    if type(authority) is LocalCheckpointProvider:
+        return True
+    # Trwały adapter importuje ten model wartości. Jego dokładny typ ładowany
+    # jest dopiero podczas operacji autorytetu, bez circular import przy starcie.
+    from bot_core.postgresql_checkpoint_authority import PostgreSQLCheckpointAuthority
+
+    return type(authority) is PostgreSQLCheckpointAuthority
+
+
+def _checkpoint_failure_outcome(error: HistoryContractError) -> ReconciliationOutcome:
+    """Zachowaj niedostępny lub nieznany wynik trwałego autorytetu przy odczycie."""
+    from bot_core.postgresql_authenticated_issuer_history import (
+        HistoryOperationIndeterminate,
+        HistoryStorageUnavailable,
+    )
+    from bot_core.postgresql_checkpoint_authority import (
+        CheckpointOperationIndeterminate,
+        CheckpointStorageUnavailable,
+    )
+
+    if type(error) in (
+        CheckpointStorageUnavailable,
+        HistoryStorageUnavailable,
+        HistorySigningAuthorityUnavailable,
+    ):
+        return ReconciliationOutcome.UNAVAILABLE
+    if type(error) in (CheckpointOperationIndeterminate, HistoryOperationIndeterminate):
+        return ReconciliationOutcome.INDETERMINATE
+    return ReconciliationOutcome.CORRUPT
+
+
 def verify_head(
     head: AttestedHistoryHead,
     authority: HistoryAttestationSigningProvider,
     *,
     expected_stream: HistoryStreamIdentity,
-    historical_evidence_authority: LocalCheckpointProvider | None = None,
+    historical_evidence_authority: LocalCheckpointProvider
+    | PostgreSQLCheckpointAuthority
+    | None = None,
 ) -> None:
     if type(head) is not AttestedHistoryHead or type(expected_stream) is not HistoryStreamIdentity:
         raise TypeError("head and expected_stream must be exact contract objects")
@@ -391,7 +438,7 @@ def verify_head(
     except (ValueError, InvalidSignature) as exc:
         raise HistoryContractError("invalid history-head signature") from exc
     if lifecycle is SigningKeyLifecycle.REVOKED:
-        if type(historical_evidence_authority) is not LocalCheckpointProvider:
+        if not _is_checkpoint_authority(historical_evidence_authority):
             raise HistoricalRevokedSignatureVerificationUnavailable(
                 "revoked historical signature lacks its trusted checkpoint authority"
             )
@@ -475,7 +522,9 @@ class ReferenceAuthenticatedHistory:
         self,
         head: AttestedHistoryHead,
         authority: HistoryAttestationSigningProvider,
-        historical_evidence_authority: LocalCheckpointProvider | None = None,
+        historical_evidence_authority: LocalCheckpointProvider
+        | PostgreSQLCheckpointAuthority
+        | None = None,
     ) -> VerifiedHistoryHead:
         """Verify the complete retained chain, exact head relation, and attestation."""
         with self._lock:
@@ -504,10 +553,10 @@ class ReferenceAuthenticatedHistory:
         self,
         head: AttestedHistoryHead,
         authority: HistoryAttestationSigningProvider,
-        historical_evidence_authority: LocalCheckpointProvider,
+        historical_evidence_authority: LocalCheckpointProvider | PostgreSQLCheckpointAuthority,
     ) -> VerifiedHistoryHead:
         """Verify one exact retained record using checkpoint-owned acceptance."""
-        if type(historical_evidence_authority) is not LocalCheckpointProvider:
+        if not _is_checkpoint_authority(historical_evidence_authority):
             raise TypeError("historical evidence authority must be exact")
         with self._lock:
             snapshot = _snapshot_head(head)
@@ -530,18 +579,18 @@ class ReferenceAuthenticatedHistory:
         *,
         head: AttestedHistoryHead | None,
         verification_authority: HistoryAttestationSigningProvider | None,
-        checkpoint_authority: LocalCheckpointProvider,
+        checkpoint_authority: LocalCheckpointProvider | PostgreSQLCheckpointAuthority,
     ) -> ReconciliationOutcome:
         """Verify authoritative history before classifying its checkpoint."""
-        if type(checkpoint_authority) is not LocalCheckpointProvider:
-            raise TypeError("checkpoint authority must be the exact reference provider")
+        if not _is_checkpoint_authority(checkpoint_authority):
+            raise TypeError("checkpoint authority must be an exact reviewed provider")
         if not self._records:
             if head is not None:
                 return ReconciliationOutcome.CORRUPT
             try:
                 checkpoint = checkpoint_authority.current_checkpoint()
-            except HistoryContractError:
-                return ReconciliationOutcome.CORRUPT
+            except HistoryContractError as exc:
+                return _checkpoint_failure_outcome(exc)
             return (
                 ReconciliationOutcome.NOT_FOUND
                 if checkpoint is None
@@ -559,12 +608,14 @@ class ReferenceAuthenticatedHistory:
             raise
         except HistorySigningAuthorityUnavailable:
             return ReconciliationOutcome.UNAVAILABLE
-        except (HistoryContractError, TypeError):
+        except HistoryContractError as exc:
+            return _checkpoint_failure_outcome(exc)
+        except TypeError:
             return ReconciliationOutcome.CORRUPT
         try:
             checkpoint = checkpoint_authority.current_checkpoint()
-        except HistoryContractError:
-            return ReconciliationOutcome.CORRUPT
+        except HistoryContractError as exc:
+            return _checkpoint_failure_outcome(exc)
         return _compare_verified_checkpoint(verified.head, checkpoint)
 
 
@@ -735,7 +786,7 @@ class LocalCheckpointProvider:
         self._checkpoint_id = _text(checkpoint_id, "checkpoint_id")
         self._stream = _snapshot_stream(stream)
         self._authority_identity = f"local-checkpoint-authority:{uuid.uuid4().hex}"
-        self._current = None
+        self._current: LocalCheckpoint | None = None
         self._acceptances: list[HistoricalHeadAcceptanceEvidence] = []
         self._lock = RLock()
 
@@ -973,7 +1024,7 @@ def reconcile_checkpoint(
     history: ReferenceAuthenticatedHistory,
     history_head: AttestedHistoryHead | None,
     verification_authority: HistoryAttestationSigningProvider | None,
-    checkpoint_authority: LocalCheckpointProvider,
+    checkpoint_authority: LocalCheckpointProvider | PostgreSQLCheckpointAuthority,
 ) -> ReconciliationOutcome:
     """Authority operation; a raw head is never sufficient evidence."""
     if type(history) is not ReferenceAuthenticatedHistory:
