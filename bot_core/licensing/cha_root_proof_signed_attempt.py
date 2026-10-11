@@ -8,28 +8,36 @@ from pathlib import Path
 from typing import cast
 from weakref import WeakKeyDictionary
 
-from bot_core.cha_attempt_signatures import RetainedIssuanceRequest
+from bot_core.cha_attempt_signatures import RetainedIssuanceRequest, verify_final_identity
 from bot_core.cha_attempt_store import (
     AttemptAuthorization,
+    AttemptConflictError,
+    AttemptCorruptError,
     AttemptIdentity,
+    AttemptNotFoundError,
     AttemptState,
     CurrentAttempt,
+    SQLiteCHAAttemptStore,
 )
+from bot_core.cha_issuance_execution import execute_local_issuance
 from bot_core.cha_issuance_request import (
     CLAIMANT_PROFILE,
     REQUESTER_PROFILE,
     IssuanceSignerIdentity,
     IssuanceSigningRole,
+    request_bytes,
+    request_reference,
 )
-from bot_core.cha_issuance_execution import execute_local_issuance
 from bot_core.cha_root_proof_signing_custody import (
     LocalCHARequesterSigningCustody,
     LocalPreaccountClaimantAuthorizationCustody,
 )
 from bot_core.local_signing_custody import _custody_lock, _validate_directory
+from bot_core.postgresql_root_proof_issuance_authority import PostgreSQLRootProofIssuanceAuthority
 
 from . import cha_root_proof_attempt_reservation as reservation_boundary
-from .canonical import parse_canonical
+from .canonical import canonical_json_bytes, parse_canonical
+from .cha_account_reservation import VerifiedAccountGenesisInitialBinding
 
 
 class SignedIssuanceAttemptError(RuntimeError):
@@ -203,6 +211,101 @@ def _read_issuer_preflight_source(
         raise SignedIssuanceAttemptError("SIGNED_IMMUTABLE_ATTEMPT_CHANGED")
     _retained_pair_matches(retained, identities)
     return upstream, current, retained
+
+
+@dataclass(frozen=True, slots=True)
+class _IssuanceReconciliationSource:
+    """Retained local observation, separate from live issuance authorization."""
+
+    binding: VerifiedAccountGenesisInitialBinding
+    binding_state_raw: bytes
+    context_raw: bytes
+    authorization: AttemptAuthorization
+    current: CurrentAttempt
+    retained: RetainedIssuanceRequest | None
+    authority: PostgreSQLRootProofIssuanceAuthority
+
+
+def _read_issuance_reconciliation_source(binding: object) -> _IssuanceReconciliationSource:
+    """Resolve genuine retained CHA evidence through the deployment composition.
+
+    This read deliberately does not require current UNBOUND entitlement or
+    active private custody: those live preconditions belong to issuance, while
+    reconciliation must also observe later BOUND and revoked states. Public
+    credential provenance must be verified by the reconciliation consumer.
+    """
+    from deployment.windows_production_cha_account_reservation import _safe
+
+    # This verifier rejects caller DTOs and revalidates the retained binding
+    # against its genuine installed upstream authority on every invocation.
+    state_raw, context = reservation_boundary._binding_context(binding)
+    authority = reservation_boundary._issuance_authority_provider()
+    if type(authority) is not PostgreSQLRootProofIssuanceAuthority:
+        raise SignedIssuanceAttemptError("EXACT_PUBLIC_ISSUER_AUTHORITY_REQUIRED")
+    authority.requalify()
+    if (
+        authority._entitlement_subject.environment != context["environment"]
+        or authority._entitlement_subject.trust_domain != context["pdsa_trust_domain"]
+    ):
+        raise AttemptConflictError("retained initial binding has a different authority scope")
+    path = reservation_boundary._attempt_store_path()
+    if not path.is_absolute():
+        raise SignedIssuanceAttemptError("UNSAFE_ATTEMPT_STORE_PATH")
+    _safe(path.parent, directory=True)
+    for target in (path, path.with_name(path.name + "-wal"), path.with_name(path.name + "-shm")):
+        _safe(target)
+    with SQLiteCHAAttemptStore.open_readonly(path, context["pdsa_trust_domain"]) as store:
+        current = store.attempt(context["logical_operation_id"])
+        try:
+            retained = store.signed_request(context["logical_operation_id"])
+        except AttemptNotFoundError:
+            if current.state is not AttemptState.RESERVED_AWAITING_SIGNATURES:
+                raise AttemptCorruptError(
+                    "signed attempt has no retained canonical request"
+                ) from None
+            retained = None
+    auth = current.reservation.authorization
+    for name in (
+        "environment",
+        "product_scope",
+        "logical_operation_id",
+        "account_id",
+        "canonical_genesis_request_fingerprint_sha256",
+        "initial_binding_reference",
+        "initial_binding_digest_sha256",
+        "reservation_identity",
+        "reservation_relation",
+        "initial_binding_sha256",
+    ):
+        if getattr(auth, name) != context[name]:
+            raise AttemptConflictError("retained attempt differs from exact initial binding")
+    if auth.trust_domain != context["pdsa_trust_domain"]:
+        raise AttemptConflictError("retained attempt has a different trust domain")
+    if retained is not None:
+        expected_raw = request_bytes(auth, current.reservation.issuance_attempt_id)
+        if (
+            retained.canonical_bytes != expected_raw
+            or retained.reference != request_reference(expected_raw)
+            or retained.digest != hashlib.sha256(expected_raw).hexdigest()
+        ):
+            raise AttemptCorruptError("retained signing request identity differs")
+    if current.identity is not None:
+        verify_final_identity(current.identity, retained)
+    # Re-read the genuine InitialBinding after the independent local reads.
+    # Equality detects change; it does not establish a global atomic snapshot.
+    if reservation_boundary._binding_context(binding) != (state_raw, context):
+        raise AttemptConflictError("retained initial binding changed during reconciliation")
+    if path != reservation_boundary._attempt_store_path():
+        raise AttemptConflictError("retained attempt store owner changed during reconciliation")
+    return _IssuanceReconciliationSource(
+        cast(VerifiedAccountGenesisInitialBinding, binding),
+        state_raw,
+        canonical_json_bytes(context),
+        auth,
+        current,
+        retained,
+        authority,
+    )
 
 
 def require_verified_signed_immutable_root_proof_issuance_attempt(

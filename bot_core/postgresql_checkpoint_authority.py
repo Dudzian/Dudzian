@@ -31,6 +31,7 @@ from bot_core.authenticated_issuer_history import (
     _credential_material,
     _digest,
     _integer,
+    _snapshot_acceptance,
     _snapshot_checkpoint,
     _snapshot_head,
     _snapshot_stream,
@@ -71,6 +72,26 @@ class CheckpointStorageUnavailable(HistoryContractError):
 
 class CheckpointOperationIndeterminate(HistoryContractError):
     """Nieznany wynik zapisu; wymagany dokładny odczyt, bez nowej tożsamości."""
+
+
+class CheckpointHistoryMismatchError(HistoryContractError):
+    """Checkpoint nie odpowiada retained history; brak dowodu kierunku restore."""
+
+    def __init__(
+        self,
+        *,
+        reason: str,
+        history_sequence: int,
+        checkpoint_sequence: int,
+        checkpoint_record_digest: str,
+        observed_record_digest: str | None,
+    ) -> None:
+        super().__init__("checkpoint ahead of history or retained prefix rolled back")
+        self.reason = reason
+        self.history_sequence = history_sequence
+        self.checkpoint_sequence = checkpoint_sequence
+        self.checkpoint_record_digest = checkpoint_record_digest
+        self.observed_record_digest = observed_record_digest
 
 
 def _persistence_cut(name: str) -> None:
@@ -181,6 +202,22 @@ def _head_from_bytes(raw: bytes, signature: bytes) -> AttestedHistoryHead:
         raw,
         signature,
     )
+
+
+@dataclass(frozen=True, slots=True)
+class CheckpointReadSnapshot:
+    """Odłączony raport jednego odczytu autorytetu; nie nadaje uprawnień."""
+
+    authority_identity: str
+    checkpoint_id: str
+    stream: HistoryStreamIdentity
+    checkpoints: tuple[LocalCheckpoint, ...]
+    acceptances: tuple[HistoricalHeadAcceptanceEvidence, ...]
+    heads: tuple[AttestedHistoryHead, ...]
+
+    @property
+    def current(self) -> LocalCheckpoint | None:
+        return self.checkpoints[-1] if self.checkpoints else None
 
 
 @dataclass(frozen=True, slots=True)
@@ -379,12 +416,22 @@ class PostgreSQLCheckpointAuthority:
         records = self._history.retained_history()
         oracle = self._oracle(state)
         for head in state.heads:
-            if (
-                head.sequence > len(records)
-                or records[head.sequence - 1].authenticated_digest != head.record_digest
-            ):
-                raise HistoryContractError(
-                    "checkpoint ahead of history or retained prefix rolled back"
+            record_digest = (
+                records[head.sequence - 1].authenticated_digest
+                if head.sequence <= len(records)
+                else None
+            )
+            if record_digest != head.record_digest:
+                raise CheckpointHistoryMismatchError(
+                    reason=(
+                        "CHECKPOINT_AHEAD_OF_HISTORY"
+                        if record_digest is None
+                        else "RETAINED_PREFIX_MISMATCH"
+                    ),
+                    history_sequence=len(records),
+                    checkpoint_sequence=head.sequence,
+                    checkpoint_record_digest=head.record_digest,
+                    observed_record_digest=record_digest,
                 )
             verify_head(
                 head,
@@ -433,6 +480,23 @@ class PostgreSQLCheckpointAuthority:
 
     def current_checkpoint(self) -> LocalCheckpoint | None:
         return self._read_authenticated().current
+
+    def authenticated_read_snapshot(self) -> CheckpointReadSnapshot:
+        """Zweryfikuj cały retained state bez zapisu lub globalnego snapshotu.
+
+        Transakcja checkpointu kończy się przed odczytem historii i custody.
+        Raport grupuje jeden snapshot checkpointu; nie dowodzi atomowości
+        pomiędzy autorytetami i nie może zastąpić ich kolejnej weryfikacji.
+        """
+        state = self._read_authenticated()
+        return CheckpointReadSnapshot(
+            state.authority_identity,
+            self._checkpoint_id,
+            _snapshot_stream(self._stream),
+            tuple(_snapshot_checkpoint(item) for item in state.checkpoints),
+            tuple(_snapshot_acceptance(item) for item in state.acceptances),
+            tuple(_snapshot_head(item) for item in state.heads),
+        )
 
     def retained_acceptances(self) -> tuple[HistoricalHeadAcceptanceEvidence, ...]:
         return self._read_authenticated().acceptances

@@ -217,6 +217,15 @@ def _head_from_row(row: object, stream: HistoryStreamIdentity) -> AttestedHistor
 
 
 @dataclass(frozen=True, slots=True)
+class HistoryReadSnapshot:
+    """Detached verified history report; never an authorization capability."""
+
+    stream: HistoryStreamIdentity
+    records: tuple[HistoryRecord, ...]
+    heads: tuple[AttestedHistoryHead, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class _HistorySnapshot:
     records: tuple[HistoryRecord, ...]
     heads: tuple[AttestedHistoryHead, ...]
@@ -366,6 +375,61 @@ class PostgreSQLAuthenticatedIssuerHistory:
 
     def retained_history(self) -> tuple[HistoryRecord, ...]:
         return self._read(lambda snapshot: snapshot.records)
+
+    def authenticated_read_snapshot(
+        self,
+        *,
+        verification_authorities: tuple[HistoryAttestationSigningProvider, ...],
+        historical_evidence_authority: LocalCheckpointProvider
+        | PostgreSQLCheckpointAuthority
+        | None = None,
+    ) -> HistoryReadSnapshot:
+        """Verify records and every retained signature in one read-only snapshot.
+
+        Trusted composition supplies the signing ports and checkpoint authority;
+        caller-created reporting values cannot provide those authorities. Reads
+        of lifecycle and historical acceptance remain separate authority reads,
+        so this report does not establish a global atomic snapshot.
+        """
+        if type(verification_authorities) is not tuple or not verification_authorities:
+            raise TypeError("trusted verification authorities must be a nonempty exact tuple")
+        if historical_evidence_authority is not None and not _is_checkpoint_authority(
+            historical_evidence_authority
+        ):
+            raise TypeError("historical evidence authority must be exact")
+
+        def read(snapshot: _HistorySnapshot) -> HistoryReadSnapshot:
+            heads = []
+            for head in snapshot.heads:
+                matches = []
+                for authority in verification_authorities:
+                    try:
+                        if head.signing_credential_identity in authority.credential_identities():
+                            matches.append(authority)
+                    except Exception as exc:
+                        raise HistorySigningAuthorityUnavailable(
+                            "selected signing authority unavailable"
+                        ) from exc
+                if len(matches) != 1:
+                    raise HistoryContractError(
+                        "head signer is not uniquely selected by trusted composition"
+                    )
+                heads.append(
+                    self._verify_head_in_snapshot(
+                        snapshot,
+                        head,
+                        matches[0],
+                        historical_evidence_authority,
+                        current=False,
+                    ).head
+                )
+            return HistoryReadSnapshot(
+                _snapshot_stream(self._stream),
+                tuple(_snapshot_record(record) for record in snapshot.records),
+                tuple(heads),
+            )
+
+        return self._read(read)
 
     def record_at(self, sequence: int) -> HistoryRecord | None:
         if type(sequence) is not int or sequence < GENESIS_SEQUENCE:
