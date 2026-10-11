@@ -14,18 +14,18 @@ Negatywny test `fsync=off` używa odrębnego izolowanego klastra.
 | Zestaw | PASS | FAIL/ERROR | SKIP |
 | --- | ---: | ---: | ---: |
 | Historia, checkpoint oraz trzy zamrożone kontrakty M0.5 | 782 | 0 | 0 |
-| Ostateczny pełny plik checkpointu, po ostatniej poprawce klasyfikacji overflow | 69 | 0 | 0 |
+| Ostateczny pełny plik checkpointu, po poprawkach overflow i izolacji raportów | 70 | 0 | 0 |
 | Custody, substrate, readiness, admission i zamrożone kontrakty podpisanej próby oraz credentials | 475 | 0 | 0 |
 | Oddzielny scenariusz SIGKILL serwera PostgreSQL i WAL recovery | 1 | 0 | 0 |
 
-Pierwsze dwa wiersze współdzielą 68 testów. Łącznie zaliczono **1258 unikalnych
+Pierwsze dwa wiersze współdzielą 68 testów. Łącznie zaliczono **1259 unikalnych
 testów pytest** i jeden dodatkowy scenariusz awarii serwera. Nie sumujemy
 powtórzeń, wcześniejszych bazowych 714 testów ani pomocniczych smoke tests.
-Przebieg 782 testów trwał 151,95 s, ostateczne 69 testów 94,99 s,
-a dodatkowe 475 testów 18,33 s. Oba przebiegi coverage miały jedno ostrzeżenie
+Przebieg 782 testów trwał 151,95 s, ostateczne 70 testów 107,78 s,
+a dodatkowe 475 testów 18,33 s. Przebiegi coverage miały jedno ostrzeżenie
 o ponownym imporcie NumPy przez pandas; bez pomijania lub zmiany asercji.
 
-Coverage dla ostatecznego kodu: **88% zmienionych linii** — 545 objętych
+Coverage dla ostatecznego kodu: **88% zmienionych linii** — 544 objęte
 pomiarami linii, 61 brakujących, bramka pozostaje 70%. Branch-aware coverage
 nowego adaptera wynosi 88%, a nowego modułu instalacji/kwalifikacji 85%.
 Pomiar coverage.py dotyczy Python; nie jest pomiarem gałęzi PL/pgSQL.
@@ -82,6 +82,9 @@ niepoprawnego sprzętowego potwierdzania zapisów.
    Jawne odrzucenie SQL `NumericValueOutOfRange` jest teraz błędem integralności.
 5. Mypy wykrył niewłaściwie wywnioskowany typ listy reviewed SQL types;
    poprawiono adnotację bez wyciszania kontroli.
+6. Wynik nowego `advance` współdzielił stream z konfiguracją autorytetu.
+   Zwracana jest teraz odłączona kopia, jak w reference oracle; mutacja
+   zagnieżdżonego raportu nie może zmienić kolejnego odczytu ani replay.
 
 Początkowy dodatkowy zestaw custody miał 50 ERROR z powodu braku `keyring`
 w izolowanym venv. Po instalacji brakującej zależności wszystkie 475 testów

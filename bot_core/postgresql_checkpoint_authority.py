@@ -31,6 +31,7 @@ from bot_core.authenticated_issuer_history import (
     _credential_material,
     _digest,
     _integer,
+    _snapshot_checkpoint,
     _snapshot_head,
     _snapshot_stream,
     _text,
@@ -608,7 +609,7 @@ class PostgreSQLCheckpointAuthority:
                     else NO_PREDECESSOR,
                 ),
             )
-            return successor, False
+            return _snapshot_checkpoint(successor), False
         except (
             psycopg.errors.InvalidParameterValue,
             psycopg.errors.CheckViolation,

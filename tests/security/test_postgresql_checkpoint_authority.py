@@ -1204,3 +1204,17 @@ def test_retained_sequence_overflow_is_corruption_not_storage_unavailability(bou
     with pytest.raises(HistoryContractError) as caught:
         boundary.checkpoint.current_checkpoint()
     assert type(caught.value) is HistoryContractError
+
+
+def test_advance_result_mutation_cannot_change_configured_authority_or_replay(boundary):
+    head = _append_head(boundary, 1)
+    returned, replay = boundary.checkpoint.advance(expected_revision=0, head=head)
+    assert replay is False
+    expected = boundary.checkpoint.current_checkpoint()
+    object.__setattr__(returned.stream, "environment", "caller-replaced-environment")
+    object.__setattr__(
+        returned.history_signing_credential_identity, "provider_namespace", "caller-namespace"
+    )
+    assert boundary.checkpoint.current_checkpoint() == expected
+    assert boundary.checkpoint.advance(expected_revision=1, head=head) == (expected, True)
+    assert boundary.checkpoint.retained_attested_heads() == (head,)
