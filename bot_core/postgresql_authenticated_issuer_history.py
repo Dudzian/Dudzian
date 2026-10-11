@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from typing import Any, Callable, Mapping, TypeVar
+from typing import TYPE_CHECKING, Any, Callable, Mapping, TypeVar
 
 import psycopg
 from psycopg import sql
@@ -31,8 +31,10 @@ from bot_core.authenticated_issuer_history import (
     LocalCheckpointProvider,
     ReconciliationOutcome,
     VerifiedHistoryHead,
+    _checkpoint_failure_outcome,
     _compare_verified_checkpoint,
     _credential_material,
+    _is_checkpoint_authority,
     _plain,
     _snapshot_event_identity,
     _snapshot_head,
@@ -57,6 +59,9 @@ from bot_core.root_proof_issuer_substrate import (
     SecurityProfile,
     SecurityProfileIdentity,
 )
+
+if TYPE_CHECKING:
+    from bot_core.postgresql_checkpoint_authority import PostgreSQLCheckpointAuthority
 
 _SAFE_IDENTIFIER = re.compile(r"[a-z_][a-z0-9_]{0,62}\Z")
 _T = TypeVar("_T")
@@ -498,7 +503,9 @@ class PostgreSQLAuthenticatedIssuerHistory:
         snapshot: _HistorySnapshot,
         head: AttestedHistoryHead,
         authority: HistoryAttestationSigningProvider,
-        historical_evidence_authority: LocalCheckpointProvider | None,
+        historical_evidence_authority: LocalCheckpointProvider
+        | PostgreSQLCheckpointAuthority
+        | None,
         *,
         current: bool,
     ) -> VerifiedHistoryHead:
@@ -524,7 +531,9 @@ class PostgreSQLAuthenticatedIssuerHistory:
         self,
         head: AttestedHistoryHead,
         authority: HistoryAttestationSigningProvider,
-        historical_evidence_authority: LocalCheckpointProvider | None = None,
+        historical_evidence_authority: LocalCheckpointProvider
+        | PostgreSQLCheckpointAuthority
+        | None = None,
     ) -> VerifiedHistoryHead:
         return self._read(
             lambda snapshot: self._verify_head_in_snapshot(
@@ -536,9 +545,9 @@ class PostgreSQLAuthenticatedIssuerHistory:
         self,
         head: AttestedHistoryHead,
         authority: HistoryAttestationSigningProvider,
-        historical_evidence_authority: LocalCheckpointProvider,
+        historical_evidence_authority: LocalCheckpointProvider | PostgreSQLCheckpointAuthority,
     ) -> VerifiedHistoryHead:
-        if type(historical_evidence_authority) is not LocalCheckpointProvider:
+        if not _is_checkpoint_authority(historical_evidence_authority):
             raise TypeError("historical evidence authority must be exact")
         return self._read(
             lambda snapshot: self._verify_head_in_snapshot(
@@ -550,7 +559,9 @@ class PostgreSQLAuthenticatedIssuerHistory:
         self,
         head: AttestedHistoryHead,
         authority: HistoryAttestationSigningProvider,
-        historical_evidence_authority: LocalCheckpointProvider | None = None,
+        historical_evidence_authority: LocalCheckpointProvider
+        | PostgreSQLCheckpointAuthority
+        | None = None,
     ) -> tuple[AttestedHistoryHead, bool]:
         admitted = _snapshot_head(head)
         try:
@@ -609,7 +620,9 @@ class PostgreSQLAuthenticatedIssuerHistory:
         sequence: int | None = None,
         *,
         verification_authority: HistoryAttestationSigningProvider,
-        historical_evidence_authority: LocalCheckpointProvider | None = None,
+        historical_evidence_authority: LocalCheckpointProvider
+        | PostgreSQLCheckpointAuthority
+        | None = None,
     ) -> AttestedHistoryHead | None:
         if sequence is not None and (type(sequence) is not int or sequence < GENESIS_SEQUENCE):
             raise TypeError("sequence must be an exact int >= 1 or None")
@@ -634,11 +647,11 @@ class PostgreSQLAuthenticatedIssuerHistory:
         *,
         head: AttestedHistoryHead | None,
         verification_authority: HistoryAttestationSigningProvider | None,
-        checkpoint_authority: LocalCheckpointProvider,
+        checkpoint_authority: LocalCheckpointProvider | PostgreSQLCheckpointAuthority,
     ) -> ReconciliationOutcome:
         """Read-only oracle classification; this does not advance a checkpoint."""
-        if type(checkpoint_authority) is not LocalCheckpointProvider:
-            raise TypeError("checkpoint authority must be the exact reference provider")
+        if not _is_checkpoint_authority(checkpoint_authority):
+            raise TypeError("checkpoint authority must be an exact reviewed provider")
 
         def compare(snapshot: _HistorySnapshot) -> ReconciliationOutcome:
             if not snapshot.records:
@@ -664,5 +677,7 @@ class PostgreSQLAuthenticatedIssuerHistory:
             raise
         except (HistoryStorageUnavailable, HistorySigningAuthorityUnavailable):
             return ReconciliationOutcome.UNAVAILABLE
-        except (HistoryContractError, TypeError):
+        except HistoryContractError as exc:
+            return _checkpoint_failure_outcome(exc)
+        except TypeError:
             return ReconciliationOutcome.CORRUPT
