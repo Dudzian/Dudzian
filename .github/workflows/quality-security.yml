@@ -72,6 +72,8 @@ jobs:
           bot_core/postgresql_root_proof_issuance_authority.py
           bot_core/postgresql_root_proof_retention.py
           bot_core/postgresql_root_proof_retention_schema.py
+          bot_core/postgresql_root_proof_signing_intent.py
+          bot_core/postgresql_root_proof_signing_intent_schema.py
           bot_core/postgresql_authenticated_issuer_history.py
           bot_core/postgresql_issuer_history_schema.py
           bot_core/postgresql_issuer_history_canonical_sql.py
@@ -94,6 +96,8 @@ jobs:
           tests/security/test_postgresql_preaccount_credentials_integration.py
           tests/security/test_postgresql_root_proof_issuance_authority.py
           tests/security/test_postgresql_root_proof_retention.py
+          tests/security/test_postgresql_root_proof_signing_intent.py
+          tests/security/test_postgresql_root_proof_signing_intent_schema.py
           tests/security/test_postgresql_authenticated_issuer_history.py
           tests/security/test_postgresql_authenticated_issuer_history_integration.py
           tests/security/test_postgresql_issuer_history_security.py
@@ -211,6 +215,7 @@ jobs:
           tests/security/test_postgresql_checkpoint_authority.py
           tests/security/test_root_proof_issuance_reconciliation.py
           tests/security/test_postgresql_root_proof_retention.py
+          tests/security/test_postgresql_root_proof_signing_intent_schema.py
           tests/security/test_root_proof_issuer_orchestration.py
           tests/architecture/test_m05_account_genesis_root_proof_issuer_production_substrate_selection_contract.py
           tests/architecture/test_m05_account_genesis_independent_root_proof_issuer_contract.py
@@ -224,6 +229,7 @@ jobs:
           --cov=bot_core.postgresql_checkpoint_schema
           --cov=bot_core.postgresql_root_proof_retention
           --cov=bot_core.postgresql_root_proof_retention_schema
+          --cov=bot_core.postgresql_root_proof_signing_intent_schema
           --cov=bot_core.root_proof_issuance_reconciliation
           --cov=bot_core.root_proof_issuer_orchestration
           --cov=bot_core.root_proof_issuer_recovery
@@ -360,11 +366,13 @@ jobs:
           tests/security/test_root_proof_issuer_runtime.py
           tests/security/test_root_proof_issuance_reconciliation_integration.py
           tests/security/test_root_proof_issuer_orchestration_integration.py
+          tests/security/test_postgresql_root_proof_signing_intent.py
           -m "not hardware and not destructive and not network"
           --cov=bot_core.root_proof_issuer_runtime
           --cov=bot_core.licensing.cha_root_proof_signed_attempt
           --cov=bot_core.root_proof_issuer_orchestration
           --cov=bot_core.root_proof_issuer_recovery
+          --cov=bot_core.postgresql_root_proof_signing_intent
           --cov-branch --cov-config=.coveragerc
           --cov-report=term-missing
           --cov-report=xml:semantic-preflight-coverage.xml -q

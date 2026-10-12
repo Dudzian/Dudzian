@@ -79,6 +79,28 @@ wyłączone `fsync`, aby sprawdzić odmowę instalacji i runtime. Pierwszy klast
 zachowuje trwałe ustawienia. To infrastruktura negatywnego testu CI; nie zmienia
 konfiguracji wdrożenia ani bramek kwalifikacji sprzętowej.
 
+Trwały signing intent korzysta z dwóch istniejących seryjnych bramek PostgreSQL 16.
+Test schematu dopisuje pokrycie gałęzi `postgresql_root_proof_signing_intent_schema.py`
+do `coverage.xml` w `quality-ratchet`. Testy runtime z pełną genuine lineage
+działają w `semantic-issuer-preflight` i rozszerzają jego
+`semantic-preflight-coverage.xml` o `postgresql_root_proof_signing_intent.py`.
+Istniejący w tym raporcie `cha_root_proof_signed_attempt.py` obejmuje również
+nowy wewnętrzny selector blokady. Obie istniejące bramki changed-code pozostają 70%.
+Oba moduły obejmuje skonfigurowany mypy na Linux
+i Windows, a moduły i testy obejmuje jawna bramka formatowania Ruff. Istniejące
+scope, timeouty i bramki sprzętowe nie są ograniczone.
+[Dokumentacja signing intent](architecture/stage9_durable_root_proof_signing_intent.md)
+opisuje stan `RESERVED`, izolację `issuer_writer`, exact retry oraz brak
+uprawnienia do emisji.
+
+Podział nowych testów zachowuje timeouty 120 i 180 minut oraz wszystkie wcześniejsze
+testy i zakresy pokrycia. Komentarz workflow podaje wcześniejsze udane przebiegi
+`quality-ratchet` 80–108 minut; 85–100 minut dla istniejącej semantic lineage jest
+szacunkiem, a nie pomiarem z tej sesji. Przy szacowanych 60–70 minutach nowego runtime
+semantic job wymaga około 145–170 minut. Pełne oba jobs nie zostały tu uruchomione;
+lokalna walidacja obejmuje odpowiednie testy PostgreSQL i dwa raporty ze scope
+zgodnymi z tym podziałem, obok raportu łącznego.
+
 ### Tier C: heavy and scheduled
 
 CodeQL runs weekly and on normal main/PR events. Full-history Betterleaks runs
