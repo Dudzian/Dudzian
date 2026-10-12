@@ -186,6 +186,22 @@ def _signed_snapshot(value: object) -> tuple[CurrentAttempt, RetainedIssuanceReq
     return current, retained
 
 
+def _signed_attempt_lock_selector(value: object) -> str:
+    """Zwróć zachowany locator wyłącznie do wyboru blokady, bez autoryzacji.
+
+    Ten odczyt pamięci nie potwierdza bieżącego stanu ani autentyczności źródeł.
+    Konsument musi po uzyskaniu blokady ponownie zweryfikować pełne capability
+    przez _read_issuer_preflight_source i porównać zweryfikowany attempt ID.
+    Selector nie zezwala na odczyt proof, alokację ID, podpis ani zapis.
+    """
+    if type(value) is not VerifiedSignedImmutableRootProofIssuanceAttempt or value not in _SIGNED:
+        raise SignedIssuanceAttemptError("VERIFIED_SIGNED_IMMUTABLE_ATTEMPT_REQUIRED")
+    selector = _SIGNED[value].current.reservation.issuance_attempt_id
+    if type(selector) is not str or not selector:
+        raise SignedIssuanceAttemptError("EXACT_RETAINED_ATTEMPT_LOCK_SELECTOR_REQUIRED")
+    return selector
+
+
 def _read_issuer_preflight_source(
     value: object,
 ) -> tuple[reservation_boundary._AuthorizationSnapshot, CurrentAttempt, RetainedIssuanceRequest]:

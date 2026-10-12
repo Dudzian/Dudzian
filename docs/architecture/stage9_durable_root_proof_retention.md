@@ -71,6 +71,12 @@ lub wynik `read_prepared() == None` nie uprawniają do utworzenia nowego ID ani
 ponownego podpisania. Brakująca granica podpisywania i rezerwacji jest częścią
 blokady pełnego issuera.
 
+Osobny [magazyn trwałego signing intent](stage9_durable_root_proof_signing_intent.md)
+utrwala niepodpisany payload i `root_proof_id` w stanie `RESERVED` przed
+podpisywaniem. Nie zmienia tego backendu `STAGED`, nie nadaje prawa do emisji
+i nie łączy retencji z BIND lub historią. Jego writer wymaga odrębnej,
+kwalifikowanej izolacji w kompozycji wdrożenia.
+
 ## Granice zaufania i lifecycle
 
 To wewnętrzny backend zaufanej kompozycji. Konstruktor przypina dokładny provider
