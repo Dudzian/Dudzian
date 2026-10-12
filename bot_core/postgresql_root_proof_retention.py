@@ -9,12 +9,16 @@ port; wymagałoby to niezależnego, uwierzytelnionego checkpointu.
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import re
+import sys
 from dataclasses import asdict, dataclass
 from typing import Any, Literal, NoReturn, cast
 
 import psycopg
+from cryptography.exceptions import UnsupportedAlgorithm
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from psycopg import sql
 from psycopg.errors import UniqueViolation
 
@@ -30,6 +34,8 @@ from bot_core.cha_issuance_request import (
 from bot_core.licensing.canonical import canonical_json_bytes, exact, parse_canonical
 from bot_core.local_signing_custody import (
     LocalRootProofSigningProvider,
+    LocalSigningCustodyBusy,
+    LocalSigningCustodyError,
     SigningCredentialSnapshot,
     SigningKeyLifecycle,
 )
@@ -410,6 +416,77 @@ def _envelope(
     )
 
 
+def _historical_verification_unavailable(error: Exception) -> bool:
+    """Rozpoznaj wyłącznie potwierdzone operacyjne odmowy dokładnego custody.
+
+    Custody współdzieli niektóre wyjątki I/O i integralności. Tylko znane
+    wrappery z jawną przyczyną operacyjną mogą oznaczać UNAVAILABLE; nieznana
+    odmowa, niebezpieczne ACL i sprzeczne fakty pozostają fail-closed CORRUPT.
+    """
+    if type(error) is LocalSigningCustodyBusy:
+        return True
+    if type(error) is LocalSigningCustodyError and str(error) in {
+        "rotation recovery required",
+        "production-local custody locking is unavailable",
+        "native Windows custody filesystem is unavailable",
+    }:
+        return True
+    # _read_record/_open_custody_descriptor/_custody_lock oraz kwalifikacja NTFS.
+    # Nie zaglądamy pod wyjątki walidacji ani dowolne inne odmowy custody.
+    seen: set[int] = set()
+    native_windows_wrapper = False
+    while type(error) is LocalSigningCustodyError and str(error) in {
+        "custody material unavailable/corrupt",
+        "custody file open failed",
+        "custody locking failed",
+        "custody unlock failed",
+        "custody NTFS directory qualification failed",
+        "custody NTFS file qualification failed",
+    }:
+        if id(error) in seen or not isinstance(error.__cause__, Exception):
+            return False
+        seen.add(id(error))
+        native_windows_wrapper |= str(error) in {
+            "custody NTFS directory qualification failed",
+            "custody NTFS file qualification failed",
+        }
+        error = error.__cause__
+    # PyWin32 nie gwarantuje dziedziczenia error po OSError. Uznaj wyłącznie
+    # file/path not found, access denied i sharing/lock violation rzeczywistej
+    # zależności NTFS. Potwierdzone unsafe DACL nie używa tych wyjątków.
+    native_windows = sys.modules.get("pywintypes")
+    if (
+        native_windows_wrapper
+        and native_windows is not None
+        and type(error) is getattr(native_windows, "error", None)
+    ):
+        return (
+            bool(error.args) and type(error.args[0]) is int and error.args[0] in {2, 3, 5, 32, 33}
+        )
+    if isinstance(error, UnsupportedAlgorithm):
+        return True
+    if type(error) is ModuleNotFoundError:
+        return error.name in {"fcntl", "msvcrt", "win32file", "win32security", "win32api"}
+    return isinstance(error, OSError) and error.errno in {
+        errno.EACCES,
+        errno.EAGAIN,
+        errno.EBUSY,
+        errno.EDEADLK,
+        errno.EIO,
+        errno.EMFILE,
+        errno.ENFILE,
+        errno.ENODEV,
+        errno.ENOENT,
+        errno.ENOLCK,
+        errno.ENOMEM,
+        errno.ENOSPC,
+        errno.ENOSYS,
+        errno.ENXIO,
+        errno.EROFS,
+        errno.ETIMEDOUT,
+    }
+
+
 class PostgreSQLRootProofRetention:
     """Dokładny runtime PostgreSQL z przypiętym, rzeczywistym weryfikatorem custody."""
 
@@ -515,6 +592,21 @@ class PostgreSQLRootProofRetention:
             expected = _envelope(self.__scope, auth, request, payload, signature, snapshot, fields)
             if envelope != expected:
                 raise ValueError("FULL_ORIGINAL_RETENTION_ENVELOPE_MISMATCH")
+        except Exception:
+            raise RootProofRetentionCorrupt("RETAINED_ROOT_PROOF_EVIDENCE_REJECTED") from None
+        try:
+            # Publiczny snapshot może jedynie odrzucić niepoprawny podpis.
+            # Ustanowienie zaufania nadal wymaga przypiętego verify_historical.
+            Ed25519PublicKey.from_public_bytes(snapshot.public_key).verify(
+                signature, ROOT_PROOF_SIGNING_DOMAIN + payload
+            )
+        except UnsupportedAlgorithm:
+            raise RootProofRetentionUnavailable(
+                "RETAINED_ROOT_PROOF_CRYPTOGRAPHY_UNAVAILABLE"
+            ) from None
+        except Exception:
+            raise RootProofRetentionCorrupt("RETAINED_ROOT_PROOF_EVIDENCE_REJECTED") from None
+        try:
             if (
                 self.__verification_authority.verify_historical(
                     ROOT_PROOF_SIGNING_DOMAIN + payload, signature, snapshot
@@ -522,6 +614,13 @@ class PostgreSQLRootProofRetention:
                 is not True
             ):
                 raise ValueError("PINNED_ROOT_PROOF_SIGNATURE_INVALID")
+        except Exception as exc:
+            if _historical_verification_unavailable(exc):
+                raise RootProofRetentionUnavailable(
+                    "RETAINED_ROOT_PROOF_CUSTODY_UNAVAILABLE"
+                ) from None
+            raise RootProofRetentionCorrupt("RETAINED_ROOT_PROOF_EVIDENCE_REJECTED") from None
+        try:
             return PreparedRootProof(
                 RootProofRetentionScope(**asdict(self.__scope)),
                 auth,
