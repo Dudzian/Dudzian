@@ -67,6 +67,18 @@ timeouts are unchanged.
 See [issuer-history limits and qualification](architecture/issuer_history_production_local.md)
 for the storage scope and measured test result.
 
+Trwałe przechowywanie Root Proof korzysta z tego samego PostgreSQL 16 i seryjnego
+kroku testów historii. Testy `test_postgresql_root_proof_retention.py` dopisują
+pokrycie gałęzi obu modułów retention do istniejącego raportu i progu 70%.
+Moduły obejmują również istniejące bramki mypy na Linux i Windows oraz sprawdzanie
+formatowania. Zakres pozostałych testów, timeouty i bramki sprzętowe pozostają
+bez zmian. Granice tego nieautoryzującego magazynu opisuje
+[dokumentacja retention](architecture/stage9_durable_root_proof_retention.md).
+Drugi, odizolowany i jednorazowy klaster PostgreSQL 16 ma w tym zadaniu testowym
+wyłączone `fsync`, aby sprawdzić odmowę instalacji i runtime. Pierwszy klaster
+zachowuje trwałe ustawienia. To infrastruktura negatywnego testu CI; nie zmienia
+konfiguracji wdrożenia ani bramek kwalifikacji sprzętowej.
+
 ### Tier C: heavy and scheduled
 
 CodeQL runs weekly and on normal main/PR events. Full-history Betterleaks runs
