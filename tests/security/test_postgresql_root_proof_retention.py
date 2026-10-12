@@ -7,9 +7,11 @@ nie otrzymują sekretów keyring ani uprawnienia do podpisania nowego dowodu.
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import multiprocessing
 import os
+import sys
 import uuid
 from contextlib import contextmanager
 from dataclasses import FrozenInstanceError, replace
@@ -19,10 +21,16 @@ from unittest.mock import patch
 
 import psycopg
 import pytest
+from cryptography.exceptions import UnsupportedAlgorithm
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from psycopg import sql
 from psycopg.conninfo import make_conninfo
-from psycopg.errors import InsufficientPrivilege
+from psycopg.errors import (
+    CheckViolation,
+    InsufficientPrivilege,
+    InvalidParameterValue,
+    UniqueViolation,
+)
 
 from bot_core import (
     local_signing_custody as custody,
@@ -344,6 +352,48 @@ def _row(value):
         ).fetchall()
 
 
+def _direct_retain(value, envelope, payload, signature):
+    """Wywołuje SQL jako runtime bez weryfikacji Ed25519 w backendzie Python."""
+    fields = parse_canonical(envelope)
+    with psycopg.connect(value.connection.dsn) as conn:
+        assert conn.execute("SELECT session_user::text,current_user::text").fetchone() == (
+            value.setup.runtime_role,
+            value.setup.runtime_role,
+        )
+        return conn.execute(
+            sql.SQL(
+                "SELECT envelope,payload,signature FROM {}.retain_prepared(%s,%s,%s,%s,%s,%s,%s,%s)"
+            ).format(sql.Identifier(value.setup.schema)),
+            (
+                canonical_json_bytes(fields["scope"]),
+                canonical_json_bytes(value.retained.attempt_id),
+                canonical_json_bytes(value.auth.logical_operation_id),
+                canonical_json_bytes(
+                    {
+                        "bootstrap_entitlement_id": value.auth.bootstrap_entitlement_id,
+                        "entitlement_generation": value.auth.entitlement_generation,
+                    }
+                ),
+                canonical_json_bytes(ROOT_ID),
+                envelope,
+                payload,
+                signature,
+            ),
+        ).fetchall()
+
+
+def _candidate_envelope(value, signature):
+    return retention._envelope(
+        value.scope,
+        value.auth,
+        value.retained,
+        value.payload,
+        signature,
+        value.signer.credential_snapshot(),
+        parse_canonical(value.payload),
+    )
+
+
 def _privileged_mutation(value, statement, parameters=()):
     """Symuluje jawnie uprzywilejowanego administratora spoza granicy runtime."""
     with psycopg.connect(BASE_DSN) as conn:
@@ -509,6 +559,81 @@ def test_changed_signature_for_same_identifier_is_rejected(prepared_boundary):
     with pytest.raises(retention.RootProofRetentionConflict):
         _retain(value, signature=changed)
     assert _read(value) == original
+
+
+def test_direct_sql_invalid_signature_durably_fences_retry_but_never_becomes_proof(
+    prepared_boundary, monkeypatch
+):
+    """EXECUTE pozwala zatrzymać tożsamość, lecz nie ominąć weryfikacji proof.
+
+    To test istniejącej granicy zaufania: runtime SQL nie dowodzi, że caller
+    wykonał wcześniej weryfikację kryptograficzną Python.
+    """
+    value = prepared_boundary
+    invalid = bytes([value.signature[0] ^ 1]) + value.signature[1:]
+    snapshot = value.signer.credential_snapshot()
+    assert value.signer.verify_historical(ROOT_DOMAIN + value.payload, value.signature, snapshot)
+    assert value.signer.verify_historical(ROOT_DOMAIN + value.payload, invalid, snapshot) is False
+    poisoned_envelope = _candidate_envelope(value, invalid)
+    correct_envelope = _candidate_envelope(value, value.signature)
+    poisoned_bytes = (poisoned_envelope, value.payload, invalid)
+
+    assert _direct_retain(value, *poisoned_bytes) == [poisoned_bytes]
+    assert _row(value) == [(*poisoned_bytes, "STAGED")]
+    # Nowe połączenie i exact SQL retry zachowują oryginalny, niepoprawny podpis.
+    assert _direct_retain(value, *poisoned_bytes) == [poisoned_bytes]
+    restarted = _provider(value)
+
+    def prohibit_signing(*args, **kwargs):
+        pytest.fail("zatrucie STAGED wywołało podpisanie nowych danych")
+
+    monkeypatch.setattr(custody.LocalRootProofSigningProvider, "sign_root_proof", prohibit_signing)
+    with pytest.raises(retention.RootProofRetentionCorrupt):
+        _read(value, restarted)
+    with pytest.raises(retention.RootProofRetentionCorrupt):
+        _retain(value, restarted)
+    with pytest.raises(retention.RootProofRetentionCorrupt):
+        restarted.require_issued(authorization=value.auth, retained_request=value.retained)
+    with pytest.raises(UniqueViolation, match="conflicting retained bytes"):
+        _direct_retain(value, correct_envelope, value.payload, value.signature)
+    for statement in (
+        "UPDATE {}.prepared SET signature=%s",
+        "DELETE FROM {}.prepared WHERE signature=%s",
+        "TRUNCATE {}.prepared",
+    ):
+        parameters = () if statement.startswith("TRUNCATE") else (value.signature,)
+        with psycopg.connect(value.connection.dsn) as conn:
+            with pytest.raises(InsufficientPrivilege):
+                conn.execute(
+                    sql.SQL(statement).format(sql.Identifier(value.setup.schema)), parameters
+                )
+    assert _row(value) == [(*poisoned_bytes, "STAGED")]
+
+
+@pytest.mark.parametrize(
+    "malformed", ["signature_length", "payload_identity", "noncanonical", "issued"]
+)
+def test_direct_sql_still_rejects_structure_identity_and_issuance_grant(
+    prepared_boundary, malformed
+):
+    value = prepared_boundary
+    envelope = _candidate_envelope(value, value.signature)
+    payload, signature = value.payload, value.signature
+    if malformed == "signature_length":
+        signature = signature[:-1]
+    elif malformed == "payload_identity":
+        fields = parse_canonical(payload)
+        fields["account_id"] = "acct_018f3e70-7b5c-7c21-8b9a-0123456789ac"
+        payload = canonical_json_bytes(fields)
+    elif malformed == "noncanonical":
+        payload = b" " + payload
+    else:
+        fields = parse_canonical(envelope)
+        fields["state"] = "ISSUED"
+        envelope = canonical_json_bytes(fields)
+    with pytest.raises((CheckViolation, InvalidParameterValue)):
+        _direct_retain(value, envelope, payload, signature)
+    assert _row(value) == []
 
 
 @pytest.mark.parametrize("collision", ["operation", "entitlement", "account", "root_proof"])
@@ -801,11 +926,12 @@ def test_privileged_valid_rollback_exposes_storage_limit_without_issuance(prepar
         restarted.require_issued(authorization=value.auth, retained_request=value.retained)
 
 
-@pytest.mark.parametrize("operation", ["UPDATE", "DELETE", "TRUNCATE", "SELECT"])
+@pytest.mark.parametrize("operation", ["INSERT", "UPDATE", "DELETE", "TRUNCATE", "SELECT"])
 def test_runtime_role_has_no_direct_table_access(prepared_boundary, operation):
     value = prepared_boundary
     _retain(value)
     statements = {
+        "INSERT": "INSERT INTO {}.prepared DEFAULT VALUES",
         "UPDATE": "UPDATE {}.prepared SET status='STAGED'",
         "DELETE": "DELETE FROM {}.prepared",
         "TRUNCATE": "TRUNCATE {}.prepared",
@@ -1058,3 +1184,274 @@ def test_genuine_signed_attempt_retention_keeps_public_orchestration_blocked(
             assert _durable_snapshot(authorities) == before
             assert _read(value, _provider(value)) == retained_proof
             assert retained_proof.authorizes_operations is False
+
+
+def _denied(value, expected):
+    for operation in (
+        lambda: _read(value),
+        lambda: _retain(value),
+        lambda: value.provider.require_issued(
+            authorization=value.auth, retained_request=value.retained
+        ),
+    ):
+        with pytest.raises(expected):
+            operation()
+
+
+def _raised(error, cause=None):
+    if cause is not None:
+        error.__cause__ = cause
+    return error
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        custody.LocalSigningCustodyBusy("custody locking timed out"),
+        custody.LocalSigningCustodyError("rotation recovery required"),
+        custody.LocalSigningCustodyError("production-local custody locking is unavailable"),
+        custody.LocalSigningCustodyError("native Windows custody filesystem is unavailable"),
+        OSError(errno.EIO, "custody disk unavailable"),
+        UnsupportedAlgorithm("Ed25519 unavailable"),
+        ModuleNotFoundError("native dependency unavailable", name="win32file"),
+        _raised(
+            custody.LocalSigningCustodyError("custody NTFS file qualification failed"),
+            _raised(
+                custody.LocalSigningCustodyError("custody NTFS directory qualification failed"),
+                ModuleNotFoundError("native dependency unavailable", name="win32security"),
+            ),
+        ),
+        _raised(
+            custody.LocalSigningCustodyError("custody locking failed"),
+            OSError(errno.ENOLCK, "locks unavailable"),
+        ),
+    ],
+    ids=["busy", "rotation", "locking", "windows", "io", "crypto", "import", "ntfs", "lock-io"],
+)
+def test_historical_operational_refusal_is_unavailable_and_exact_retry_recovers(
+    prepared_boundary, monkeypatch, error
+):
+    value = prepared_boundary
+    original = _retain(value)
+    rows = _row(value)
+
+    def fail(*args):
+        raise error
+
+    with monkeypatch.context() as outage:
+        outage.setattr(custody.LocalRootProofSigningProvider, "verify_historical", fail)
+        _denied(value, retention.RootProofRetentionUnavailable)
+        assert _row(value) == rows
+    recovered = _retain(value)
+    assert recovered == original
+    assert recovered.state == "STAGED"
+    assert recovered.authorizes_operations is False
+    with pytest.raises(retention.RootProofRetentionNotIssued):
+        value.provider.require_issued(authorization=value.auth, retained_request=value.retained)
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        custody.LocalSigningCustodyError("custody material unavailable/corrupt"),
+        _raised(
+            custody.LocalSigningCustodyError(
+                "historical credential facts are stale or do not match"
+            ),
+            OSError(errno.EIO, "unrelated outage"),
+        ),
+        _raised(
+            custody.LocalSigningCustodyError("custody material unavailable/corrupt"),
+            _raised(ValueError("invalid custody record"), OSError(errno.EIO, "unrelated outage")),
+        ),
+        _raised(
+            custody.LocalSigningCustodyError("custody NTFS DACL permits untrusted modification"),
+            OSError(errno.EACCES, "unrelated permissions error"),
+        ),
+        _raised(
+            custody.LocalSigningLifecycleError(
+                "REVOKED credential cannot establish historical trust"
+            ),
+            OSError(errno.EIO, "unrelated outage"),
+        ),
+        custody.LocalSigningLifecycleError("unknown signing credential"),
+        _raised(
+            custody.LocalSigningCustodyError("custody file open failed"),
+            OSError(errno.ELOOP, "unsafe symlink"),
+        ),
+        OSError(errno.EINVAL, "ambiguous operation"),
+        ModuleNotFoundError("unexpected module", name="unreviewed_dependency"),
+    ],
+    ids=[
+        "ambiguous",
+        "identity",
+        "mixed-cause",
+        "acl",
+        "revoked",
+        "unknown",
+        "symlink",
+        "errno",
+        "import",
+    ],
+)
+def test_historical_integrity_and_ambiguous_refusal_remain_corrupt(
+    prepared_boundary, monkeypatch, error
+):
+    value = prepared_boundary
+    _retain(value)
+    rows = _row(value)
+
+    def fail(*args):
+        raise error
+
+    monkeypatch.setattr(custody.LocalRootProofSigningProvider, "verify_historical", fail)
+    _denied(value, retention.RootProofRetentionCorrupt)
+    assert _row(value) == rows
+
+
+@pytest.mark.parametrize("failure_errno", [errno.EACCES, errno.EIO, errno.ENOENT])
+def test_actual_custody_record_io_failure_is_unavailable(
+    prepared_boundary, monkeypatch, failure_errno
+):
+    value = prepared_boundary
+    original = _retain(value)
+    record = custody._record_path(value.directory, ProviderRole.ROOT_PROOF_SIGNING)
+    read_bytes = Path.read_bytes
+
+    def unreadable(path):
+        if path == record:
+            raise OSError(failure_errno, "testowa niedostępność publicznego custody")
+        return read_bytes(path)
+
+    with monkeypatch.context() as outage:
+        outage.setattr(Path, "read_bytes", unreadable)
+        _denied(value, retention.RootProofRetentionUnavailable)
+    assert _retain(value) == original
+
+
+def test_actual_pending_rotation_refuses_without_claiming_corruption(prepared_boundary):
+    value = prepared_boundary
+    original = _retain(value)
+    intent, _, _ = custody._rotation_paths(value.directory, ProviderRole.ROOT_PROOF_SIGNING)
+    intent.parent.mkdir()
+    intent.write_bytes(b"unfinished offline rotation")
+    try:
+        _denied(value, retention.RootProofRetentionUnavailable)
+    finally:
+        intent.unlink()
+    assert _retain(value) == original
+
+
+@pytest.mark.parametrize("change", ["decode", "permissions"])
+def test_actual_custody_record_integrity_failure_remains_corrupt(prepared_boundary, change):
+    value = prepared_boundary
+    original = _retain(value)
+    record = custody._record_path(value.directory, ProviderRole.ROOT_PROOF_SIGNING)
+    raw, mode = record.read_bytes(), record.stat().st_mode
+    if change == "permissions" and os.name != "posix":
+        pytest.skip("Negatywny tryb POSIX; odmowę DACL NTFS sprawdza osobny przypadek")
+    try:
+        if change == "decode":
+            record.write_bytes(b"malformed public custody metadata")
+        else:
+            record.chmod(0o666)
+        _denied(value, retention.RootProofRetentionCorrupt)
+    finally:
+        record.write_bytes(raw)
+        record.chmod(mode)
+    assert _retain(value) == original
+
+
+@pytest.mark.parametrize("change", ["envelope", "signature"])
+def test_retained_integrity_failure_precedes_custody_outage(prepared_boundary, monkeypatch, change):
+    value = prepared_boundary
+    original = _retain(value)
+    envelope = parse_canonical(original.canonical_envelope)
+    signature = original.signature
+    if change == "envelope":
+        envelope["canonical_payload_sha256"] = "f" * 64
+    else:
+        signature = bytes([signature[0] ^ 1]) + signature[1:]
+        envelope["signature_ed25519_base64url"] = retention.encode_signature(signature)
+    _privileged_mutation(
+        value,
+        sql.SQL("UPDATE {}.prepared SET canonical_envelope=%s,signature=%s").format(
+            sql.Identifier(value.setup.schema)
+        ),
+        (canonical_json_bytes(envelope), signature),
+    )
+
+    def custody_not_reached(*args):
+        pytest.fail("uszkodzone zachowane bajty dotarły do niedostępnego custody")
+
+    monkeypatch.setattr(
+        custody.LocalRootProofSigningProvider, "verify_historical", custody_not_reached
+    )
+    _denied(value, retention.RootProofRetentionCorrupt)
+
+
+def test_local_signature_check_cannot_replace_pinned_custody_trust(prepared_boundary, monkeypatch):
+    value = prepared_boundary
+    _retain(value)
+
+    def reject(*args):
+        return False
+
+    monkeypatch.setattr(custody.LocalRootProofSigningProvider, "verify_historical", reject)
+    _denied(value, retention.RootProofRetentionCorrupt)
+
+
+def test_local_crypto_infrastructure_failure_is_unavailable(prepared_boundary, monkeypatch):
+    value = prepared_boundary
+    _retain(value)
+
+    def unsupported(*args):
+        raise UnsupportedAlgorithm("testowa niedostępność Ed25519")
+
+    monkeypatch.setattr(
+        retention, "Ed25519PublicKey", SimpleNamespace(from_public_bytes=unsupported)
+    )
+    _denied(value, retention.RootProofRetentionUnavailable)
+
+
+@pytest.mark.parametrize("code", [2, 3, 5, 32, 33, 999])
+@pytest.mark.parametrize("wrapped", [True, False])
+def test_native_windows_unavailability_requires_actual_error_and_ntfs_wrapper(
+    prepared_boundary, monkeypatch, code, wrapped
+):
+    value = prepared_boundary
+    _retain(value)
+
+    class NativeWindowsError(Exception):
+        pass
+
+    monkeypatch.setitem(sys.modules, "pywintypes", SimpleNamespace(error=NativeWindowsError))
+    error = NativeWindowsError(code, "CreateFile", "testowa blokada NTFS")
+    if wrapped:
+        error = _raised(
+            custody.LocalSigningCustodyError("custody NTFS file qualification failed"), error
+        )
+
+    def busy(*args):
+        raise error
+
+    monkeypatch.setattr(custody.LocalRootProofSigningProvider, "verify_historical", busy)
+    _denied(
+        value,
+        retention.RootProofRetentionUnavailable
+        if wrapped and code in {2, 3, 5, 32, 33}
+        else retention.RootProofRetentionCorrupt,
+    )
+
+
+def test_spoofed_native_windows_busy_attribute_remains_corrupt(prepared_boundary, monkeypatch):
+    value = prepared_boundary
+    _retain(value)
+    error = RuntimeError("niejednoznaczna odmowa z winerror=32")
+    error.winerror = 32
+
+    def fail(*args):
+        raise custody.LocalSigningCustodyError("custody NTFS file qualification failed") from error
+
+    monkeypatch.setattr(custody.LocalRootProofSigningProvider, "verify_historical", fail)
+    _denied(value, retention.RootProofRetentionCorrupt)

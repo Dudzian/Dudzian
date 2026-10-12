@@ -94,6 +94,61 @@ niezależnego checkpointu dowodzącego kierunku rollback; zatwierdzone recovery
 wymaga powiązania z taką niezależną historią i acceptance. Techniczny odczyt
 `STAGED` nigdy nie jest odzyskaniem zatwierdzonego proof.
 
+Odczyt i exact retry najpierw sprawdzają integralność zachowanych bajtów. Negatywna
+kontrola Ed25519 względem zachowanego klucza odrzuca nieważny podpis również podczas
+awarii custody; pozytywny wynik nadal wymaga przypiętego `verify_historical()`.
+Jednoznaczna blokada custody, oczekująca rotacja i rozpoznana niedostępność
+infrastruktury oznaczają odmowę `UNAVAILABLE`. Niespójność bajtów, niezgodna
+tożsamość, niebezpieczne ACL, `REVOKED` i niejednoznaczna odmowa pozostają
+`CORRUPT`. Klasyfikacja dotyczy tylko dostępności weryfikacji; żaden z tych
+stanów nie nadaje uprawnień, nie naprawia rekordu ani nie zastępuje exact retry.
+
+## Bezpośredni SQL i zatrucie STAGED: otwarte wymaganie architektoniczne
+
+Runtime principal ma `EXECUTE` na `retain_prepared(bytea,bytea,bytea,bytea,bytea,
+bytea,bytea,bytea)` jako funkcji `SECURITY DEFINER`. Funkcja sprawdza kanoniczność,
+zgodność przechowywanych tożsamości, stan `STAGED`, długość podpisu 64 bajtów oraz
+trwałość PostgreSQL. Nie weryfikuje Ed25519; ta weryfikacja należy do przypiętego
+`LocalRootProofSigningProvider` w backendzie Python. Kwalifikacja definicji SQL
+i ACL nie dowodzi, że bezpośredni caller wykonał wcześniej tę weryfikację.
+
+Posiadacz poświadczeń runtime, również kod wykonujący bezpośrednie SQL w tej
+sesji, może zapisać spójny kanoniczny envelope i payload z niepoprawnym podpisem.
+Commit zachowuje taki rekord trwale. Ponieważ bajty są niezmienne i unikalność
+fencingu nie zależy od poprawności podpisu, rekord może zablokować późniejszy
+poprawny kandydat: globalnie dla attempt i Root Proof ID, a w zakresie scope
+także dla operation, entitlement/generation i account. Jest to ryzyko utraty
+dostępności oraz zanieczyszczenia magazynu przez runtime spoza zaufanej ścieżki
+Python. Samo ograniczenie dostępu do tabel nie eliminuje tej możliwości.
+
+Test `test_direct_sql_invalid_signature_durably_fences_retry_but_never_becomes_proof`
+wywołuje SQL jako rzeczywisty direct-login runtime. Potwierdza trwały zapis i
+exact SQL retry niepoprawnego podpisu, konflikt poprawnego retry oraz odmowę
+naprawy przez `UPDATE`, `DELETE` i `TRUNCATE`. Nowe połączenie backendu Python
+odrzuca odczyt i retry jako `CORRUPT`; `require_issued()` również odmawia i nie
+zwraca proof. Testy struktury SQL potwierdzają odmowę niekanonicznych bajtów,
+niespójnej tożsamości, niewłaściwej długości podpisu i stanu `ISSUED`.
+Wynik funkcji SQL nie jest `PreparedRootProof`, poprawnym proof ani autoryzacją.
+Dotychczasowe kontrakty `authorizes_operations=False` oraz odmowa emisji dla
+poprawnego `STAGED` nadal obowiązują.
+
+W aktualnej granicy ACL brak niewielkiego zabezpieczenia dowodzącego poprawności
+podpisu przed commitem: ta sama rola wywołuje SQL po weryfikacji Python i może
+wywołać go bez niej. Dodatkowy digest, flaga „zweryfikowano” lub kontrola kształtu
+nie zapewnią pochodzenia ani weryfikacji kryptograficznej. Usuwanie lub zastępowanie
+niepoprawnego rekordu przez runtime naruszyłoby niezmienność i exact retry;
+nie jest mechanizmem naprawy tej granicy zaufania.
+
+Osobne wymaganie architektoniczne: przed uznaniem retencji za odporną na
+bezpośrednie wywołania przez niezaufany runtime należy ustanowić audytowaną
+granicę, która przed trwałym zajęciem tożsamości dowodzi podpisu, przypiętej
+tożsamości custody i zgodnego lifecycle. Wymaga to przejrzanego autorytetu zapisu
+oddzielonego od callerów SQL albo rzeczywistej kwalifikowanej weryfikacji
+kryptograficznej po stronie PostgreSQL wraz z modelem zaufania do klucza i
+lifecycle. Żadna z tych możliwości nie istnieje w obecnym schemacie i ACL;
+ten PR nie dodaje nowego autorytetu, rozszerzenia PostgreSQL ani obejścia
+transakcyjnego i nie deklaruje eliminacji ryzyka.
+
 ## Kwalifikacja i operacje zablokowane
 
 Instalacja i runtime muszą kwalifikować rzeczywisty PostgreSQL 16, trwałość,

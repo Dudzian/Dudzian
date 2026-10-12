@@ -90,15 +90,19 @@ def test_non_linux_general_ci_excludes_only_the_explicit_database_marker():
 
 def test_heavy_licensing_security_suite_is_split_without_coverage_gap():
     jobs = _general_ci_jobs()
-    general_jobs = ("py-tests-windows", "py-tests-ubuntu", "py-tests-macos")
-    for job_name in general_jobs:
+    general_jobs = {
+        "py-tests-windows": (45, 60),
+        "py-tests-ubuntu": (120, 150),
+        "py-tests-macos": (45, 60),
+    }
+    for job_name, (test_timeout_minutes, job_timeout_minutes) in general_jobs.items():
         job = jobs[job_name]
         command = _pytest_command(job)
         for pattern in SERIAL_LICENSING_GLOBS:
             assert f"--ignore-glob={pattern}" in command
         test_step = next(step for step in job["steps"] if step["name"] == "Run fast pytest suite")
-        assert test_step["timeout-minutes"] == 45
-        assert job["timeout-minutes"] >= 60
+        assert test_step["timeout-minutes"] == test_timeout_minutes
+        assert job["timeout-minutes"] == job_timeout_minutes
 
     heavy = jobs["licensing-security-durability"]
     assert heavy["strategy"]["fail-fast"] is False
