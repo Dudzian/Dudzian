@@ -795,19 +795,16 @@ def _read_record(
     try:
         if path.is_symlink():
             raise LocalSigningCustodyError("custody material unavailable/corrupt")
-        info = path.stat()
-        if not stat.S_ISREG(info.st_mode):
-            raise LocalSigningCustodyError("custody material unavailable/corrupt")
-        if os.name == "posix" and (
-            info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) & 0o077
-        ):
-            raise LocalSigningCustodyError("custody material unavailable/corrupt")
-        if os.name == "nt":
-            with _open_custody_descriptor(path) as descriptor:
-                with os.fdopen(descriptor, "rb", closefd=False) as stream:
-                    raw = stream.read()
-        else:
-            raw = path.read_bytes()
+        with _open_custody_descriptor(path) as descriptor:
+            info = os.fstat(descriptor)
+            if not stat.S_ISREG(info.st_mode):
+                raise LocalSigningCustodyError("custody material unavailable/corrupt")
+            if os.name == "posix" and (
+                info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) & 0o077
+            ):
+                raise LocalSigningCustodyError("custody material unavailable/corrupt")
+            with os.fdopen(descriptor, "rb", closefd=False) as stream:
+                raw = stream.read()
     except (OSError, LocalSigningCustodyError) as exc:
         raise LocalSigningCustodyError("custody material unavailable/corrupt") from exc
     return _decode_record(raw, expected_security=security, expected_role=role)
@@ -1036,7 +1033,12 @@ def transition_local_signing_credential_lifecycle(
     expected_lifecycle_generation: int,
     target: SigningKeyLifecycle,
 ) -> LocalSigningMetadata:
-    """CAS-like lifecycle update of one exact authority-owned credential."""
+    """Legacy local CAS; it does not fence or publish PostgreSQL lifecycle state.
+
+    Production V2 administration uses the durable-close-authorized journal in
+    ``local_signing_lifecycle_evidence``. Isolation of this legacy entry point
+    remains a production qualification blocker.
+    """
 
     root = _validate_directory(directory, create=False)
     security = _snapshot_security(security)
@@ -1060,7 +1062,11 @@ def transition_local_signing_lifecycle(
     role: ProviderRole,
     target: SigningKeyLifecycle,
 ) -> LocalSigningMetadata:
-    """Offline/admin lifecycle update with the frozen one-way transition graph."""
+    """Legacy offline/admin update without a PostgreSQL lifecycle fence.
+
+    This entry point remains outside the V2 administration authority and its
+    production isolation is an explicit qualification blocker.
+    """
 
     root = _validate_directory(directory, create=False)
     security = _snapshot_security(security)
