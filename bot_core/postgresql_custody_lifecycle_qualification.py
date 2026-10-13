@@ -8,6 +8,7 @@ The bootstrap credential is not retained in the administrative deployment.
 from __future__ import annotations
 
 import hashlib
+import json
 import secrets
 from dataclasses import asdict, dataclass, field, replace
 from typing import Any
@@ -46,7 +47,10 @@ from bot_core.postgresql_custody_lifecycle_schema import (
     MIGRATION_ID,
     SCHEMA_IDENTITY,
     SCHEMA_VERSION,
+    SQL_CONTRACT_VERSION,
     install_custody_lifecycle_authority,
+    install_custody_signer_enrollment_v3,
+    reviewed_lifecycle_enrollment_function_sources,
     reviewed_lifecycle_function_sources,
 )
 from bot_core.postgresql_entitlement_registry import PostgreSQLConnectionConfig
@@ -72,36 +76,48 @@ class PostgreSQLCustodyLifecycleTestDeployment:
     evidence_key: bytes = field(repr=False)
     catalog_sha256: str
     _origin: object = field(repr=False, compare=False, default=None)
+    sql_contract_version: int = 2
 
     def __repr__(self) -> str:
         return (
             "PostgreSQLCustodyLifecycleTestDeployment("
             f"schema={self.atomic_deployment.provisioning.schema!r}, "
+            f"sql_contract_version={self.sql_contract_version!r}, "
             "boundary='ISOLATED_TEST_ONLY', ATOMIC_ISSUER_READY='NOT_READY')"
         )
 
 
-def validate_custody_lifecycle_deployment(deployment: object) -> None:
+def validate_custody_lifecycle_deployment(
+    deployment: object, *, allow_legacy_sql_contract: bool = False
+) -> None:
     if (
         type(deployment) is not PostgreSQLCustodyLifecycleTestDeployment
         or deployment._origin is not _LIFECYCLE_ADMINISTRATIVE_ORIGIN
         or type(deployment.evidence_key) is not bytes
         or len(deployment.evidence_key) != 32
         or deployment.catalog_sha256 != deployment.atomic_deployment.catalog_sha256
+        or type(deployment.sql_contract_version) is not int
+        or deployment.sql_contract_version not in {2, SQL_CONTRACT_VERSION}
     ):
         raise CustodyLifecycleQualificationError(
             "explicit trusted V2 administrator deployment required"
         )
     validate_atomic_root_proof_deployment(deployment.atomic_deployment)
+    if deployment.sql_contract_version != SQL_CONTRACT_VERSION and not allow_legacy_sql_contract:
+        raise CustodyLifecycleQualificationError("explicit signer enrollment SQL upgrade required")
 
 
 def _verify_v2_functions(
     conn: psycopg.Connection[Any],
     config: PostgreSQLAtomicRootProofProvisioning,
+    *,
+    sql_contract_version: int = SQL_CONTRACT_VERSION,
 ) -> None:
     """Review original V1 definitions and the exact versioned V2 ACL change."""
     inventory = reviewed_function_inventory(conn, config)
     sources = reviewed_lifecycle_function_sources(config)
+    if sql_contract_version == SQL_CONTRACT_VERSION:
+        sources.update(reviewed_lifecycle_enrollment_function_sources(config))
     for signature, source in sources.items():
         inventory[(config.schema, signature)] = (config.schema_owner_role, source, "", "")
     expected_functions = _verify_original_sources(conn, config)
@@ -145,6 +161,8 @@ def _verify_v2_functions(
             callers.append(owner_row[0])
         if schema == config.schema and signature == "qualify_catalog()":
             callers.append(config.test_admin_role)
+        if schema == config.schema and signature == "qualify_lifecycle_enrollment_v3()":
+            callers.extend((config.test_admin_role, config.issuer_writer_role))
         for caller in callers:
             role = conn.execute(
                 "SELECT oid FROM pg_catalog.pg_roles WHERE rolname=%s", (caller,)
@@ -220,9 +238,12 @@ def qualify_custody_lifecycle_authority(
     deployment: PostgreSQLCustodyLifecycleTestDeployment,
     *,
     expected_role: str = "admin",
+    allow_legacy_sql_contract: bool = False,
 ) -> None:
     """Fresh authenticated login proves exact physical service, OIDs and catalog."""
-    validate_custody_lifecycle_deployment(deployment)
+    validate_custody_lifecycle_deployment(
+        deployment, allow_legacy_sql_contract=allow_legacy_sql_contract
+    )
     if expected_role not in {"admin", "issuer_writer"}:
         raise CustodyLifecycleQualificationError("explicit V2 semantic principal required")
     try:
@@ -257,6 +278,12 @@ def qualify_custody_lifecycle_authority(
             )
         ).fetchone() != (True,):
             raise CustodyLifecycleQualificationError("V2 immutable manifest refused")
+        if deployment.sql_contract_version == SQL_CONTRACT_VERSION and conn.execute(
+            sql.SQL("SELECT {}.qualify_lifecycle_enrollment_v3()").format(
+                sql.Identifier(config.schema)
+            )
+        ).fetchone() != (True,):
+            raise CustodyLifecycleQualificationError("signer enrollment SQL contract refused")
     except CustodyLifecycleQualificationError:
         raise
     except (psycopg.Error, AtomicRootProofQualificationError, ValueError, TypeError) as exc:
@@ -265,13 +292,20 @@ def qualify_custody_lifecycle_authority(
         ) from exc
 
 
-def _postqualify(deployment: PostgreSQLCustodyLifecycleTestDeployment) -> None:
+def _postqualify(
+    deployment: PostgreSQLCustodyLifecycleTestDeployment, *, allow_legacy_sql_contract: bool = False
+) -> None:
     for connection, role in (
         (deployment.admin_connection, "admin"),
         (deployment.atomic_deployment.writer_connection, "issuer_writer"),
     ):
         with psycopg.connect(connection.dsn, autocommit=True) as conn, conn.transaction():
-            qualify_custody_lifecycle_authority(conn, deployment, expected_role=role)
+            qualify_custody_lifecycle_authority(
+                conn,
+                deployment,
+                expected_role=role,
+                allow_legacy_sql_contract=allow_legacy_sql_contract,
+            )
 
 
 def migrate_custody_lifecycle_v2(
@@ -279,9 +313,16 @@ def migrate_custody_lifecycle_v2(
     atomic_deployment: PostgreSQLAtomicRootProofTestDeployment,
     admin_connection: PostgreSQLConnectionConfig,
     credential_bindings: tuple[dict[str, Any], ...],
+    *,
+    sql_contract_version: int = SQL_CONTRACT_VERSION,
 ) -> PostgreSQLCustodyLifecycleTestDeployment:
     """Explicit V1→V2 migration; preserves all application bytes and V1 sources."""
     validate_atomic_root_proof_deployment(atomic_deployment)
+    if type(sql_contract_version) is not int or sql_contract_version not in {
+        2,
+        SQL_CONTRACT_VERSION,
+    }:
+        raise ValueError("explicit reviewed signer SQL contract version required")
     config = atomic_deployment.provisioning
     if (
         type(bootstrap) is not PostgreSQLConnectionConfig
@@ -318,11 +359,24 @@ def migrate_custody_lifecycle_v2(
             _bootstrap_principal(conn, config)
             if _physical_identity(conn, config.instance_id) != atomic_deployment.identity:
                 raise CustodyLifecycleQualificationError("migration physical service differs")
+            if sql_contract_version == SQL_CONTRACT_VERSION:
+                # The issuer reads decisions before locking fences. Acquire
+                # this first, before the preserved V2 installer locks fences.
+                conn.execute(
+                    sql.SQL("LOCK TABLE {}.decisions IN ACCESS EXCLUSIVE MODE").format(
+                        sql.Identifier(config.schema)
+                    )
+                )
             before = _application_bytes_fingerprint(conn, config)
             key = secrets.token_bytes(32)
             install_custody_lifecycle_authority(conn, config, credential_bindings, key)
-            _verify_v2_functions(conn, config)
+            _verify_v2_functions(conn, config, sql_contract_version=2)
             _verify_database_manifest(conn, config)
+            if sql_contract_version == SQL_CONTRACT_VERSION:
+                predecessor = _catalog_fingerprint(conn, config, atomic_deployment.role_oids)
+                install_custody_signer_enrollment_v3(conn, config, predecessor)
+                _verify_v2_functions(conn, config)
+                _verify_database_manifest(conn, config)
             _verify_principal_boundary(conn, config)
             if _application_bytes_fingerprint(conn, config) != before:
                 raise CustodyLifecycleQualificationError(
@@ -333,9 +387,14 @@ def migrate_custody_lifecycle_v2(
             _qualify_roles(conn, atomic)
             _read_secret(conn, config)
             deployment = PostgreSQLCustodyLifecycleTestDeployment(
-                atomic, admin_connection, key, catalog, _LIFECYCLE_ADMINISTRATIVE_ORIGIN
+                atomic,
+                admin_connection,
+                key,
+                catalog,
+                _LIFECYCLE_ADMINISTRATIVE_ORIGIN,
+                sql_contract_version,
             )
-        _postqualify(deployment)
+        _postqualify(deployment, allow_legacy_sql_contract=sql_contract_version == 2)
         return deployment
     except CustodyLifecycleQualificationError:
         raise
@@ -350,6 +409,128 @@ def migrate_custody_lifecycle_v2(
         raise CustodyLifecycleQualificationError("explicit V2 migration refused") from exc
 
 
+def _lifecycle_records_fingerprint(
+    conn: psycopg.Connection[Any],
+    config: PostgreSQLAtomicRootProofProvisioning,
+) -> str:
+    """Conserve protected records and authentication key without exposing them."""
+    facts = []
+    for table in (
+        "metadata",
+        "fences",
+        "approved_commits",
+        "decisions",
+        "lifecycle_metadata",
+        "lifecycle_authority_secret",
+        "lifecycle_credentials",
+        "lifecycle_operations",
+        "lifecycle_completions",
+    ):
+        rows = conn.execute(
+            sql.SQL("SELECT pg_catalog.to_jsonb(t)::text FROM {}.{} t ORDER BY 1").format(
+                sql.Identifier(config.schema), sql.Identifier(table)
+            )
+        ).fetchall()
+        facts.append((table, rows))
+    return hashlib.sha256(json.dumps(facts, separators=(",", ":")).encode()).hexdigest()
+
+
+def upgrade_custody_lifecycle_signer_enrollment_v3(
+    bootstrap: PostgreSQLConnectionConfig,
+    deployment: PostgreSQLCustodyLifecycleTestDeployment,
+) -> PostgreSQLCustodyLifecycleTestDeployment:
+    """Explicit V2→SQL-contract-3 upgrade, preserving every old authority row.
+
+    Historical V2 reconstruction is accepted solely for this reviewed upgrade.
+    Its old immutable catalog must qualify before any DDL occurs; unknown or
+    modified catalogs are refused rather than repaired.
+    """
+    validate_custody_lifecycle_deployment(deployment, allow_legacy_sql_contract=True)
+    if type(bootstrap) is not PostgreSQLConnectionConfig:
+        raise TypeError("exact separate bootstrap credential required")
+    if deployment.sql_contract_version == SQL_CONTRACT_VERSION:
+        _postqualify(deployment)
+        return deployment
+    _postqualify(deployment, allow_legacy_sql_contract=True)
+    atomic = deployment.atomic_deployment
+    config = atomic.provisioning
+    try:
+        with psycopg.connect(bootstrap.dsn, autocommit=True) as conn, conn.transaction():
+            conn.execute("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE")
+            conn.execute("SET LOCAL search_path=pg_catalog")
+            _bootstrap_principal(conn, config)
+            if _physical_identity(conn, config.instance_id) != atomic.identity:
+                raise CustodyLifecycleQualificationError("upgrade physical authority differs")
+            # Respect issuer read(decisions)→lock(fences), including its table
+            # locks, before taking conservation snapshots or installing DDL.
+            conn.execute(
+                sql.SQL("LOCK TABLE {}.decisions IN ACCESS EXCLUSIVE MODE").format(
+                    sql.Identifier(config.schema)
+                )
+            )
+            conn.execute(
+                sql.SQL("LOCK TABLE {}.fences IN ACCESS EXCLUSIVE MODE").format(
+                    sql.Identifier(config.schema)
+                )
+            )
+            _verify_v2_functions(conn, config, sql_contract_version=2)
+            _verify_database_manifest(conn, config)
+            if _catalog_fingerprint(conn, config, atomic.role_oids) != deployment.catalog_sha256:
+                raise CustodyLifecycleQualificationError("exact predecessor V2 catalog changed")
+            records_before = _lifecycle_records_fingerprint(conn, config)
+            application_before = _application_bytes_fingerprint(conn, config)
+            predecessor = conn.execute(
+                sql.SQL("SELECT snapshot FROM {}.catalog_manifest WHERE singleton").format(
+                    sql.Identifier(config.schema)
+                )
+            ).fetchone()
+            if predecessor is None:
+                raise CustodyLifecycleQualificationError("predecessor manifest unavailable")
+            install_custody_signer_enrollment_v3(conn, config, deployment.catalog_sha256)
+            _verify_v2_functions(conn, config)
+            _verify_database_manifest(conn, config)
+            _verify_principal_boundary(conn, config)
+            archive = conn.execute(
+                sql.SQL(
+                    "SELECT predecessor_snapshot,predecessor_catalog_sha256 FROM {}.lifecycle_sql_contract WHERE singleton"
+                ).format(sql.Identifier(config.schema))
+            ).fetchall()
+            if archive != [(predecessor[0], deployment.catalog_sha256)]:
+                raise CustodyLifecycleQualificationError("original V2 manifest was not conserved")
+            if (
+                _lifecycle_records_fingerprint(conn, config) != records_before
+                or _application_bytes_fingerprint(conn, config) != application_before
+                or _read_secret(conn, config) != deployment.evidence_key
+            ):
+                raise CustodyLifecycleQualificationError(
+                    "signer enrollment upgrade changed protected records"
+                )
+            catalog = _catalog_fingerprint(conn, config, atomic.role_oids)
+            revised_atomic = replace(atomic, catalog_sha256=catalog)
+            _qualify_roles(conn, revised_atomic)
+            revised = replace(
+                deployment,
+                atomic_deployment=revised_atomic,
+                catalog_sha256=catalog,
+                sql_contract_version=SQL_CONTRACT_VERSION,
+            )
+        _postqualify(revised)
+        return revised
+    except CustodyLifecycleQualificationError:
+        raise
+    except (
+        psycopg.Error,
+        AtomicRootProofQualificationError,
+        ValueError,
+        TypeError,
+        KeyError,
+        IndexError,
+    ) as exc:
+        raise CustodyLifecycleQualificationError(
+            "explicit signer enrollment upgrade refused"
+        ) from exc
+
+
 def requalify_existing_custody_lifecycle_v2(
     bootstrap: PostgreSQLConnectionConfig,
     atomic_config: PostgreSQLAtomicRootProofProvisioning,
@@ -357,8 +538,14 @@ def requalify_existing_custody_lifecycle_v2(
     admin_connection: PostgreSQLConnectionConfig,
     *,
     expected_identity: PostgreSQLAtomicRootProofPhysicalIdentity,
+    expected_sql_contract_version: int = SQL_CONTRACT_VERSION,
 ) -> PostgreSQLCustodyLifecycleTestDeployment:
     """Read-only reconstruction of authentic V2 after administrator restart."""
+    if type(expected_sql_contract_version) is not int or expected_sql_contract_version not in {
+        2,
+        SQL_CONTRACT_VERSION,
+    }:
+        raise ValueError("explicit reviewed reconstruction SQL contract version required")
     if (
         type(atomic_config) is not PostgreSQLAtomicRootProofProvisioning
         or type(expected_identity) is not PostgreSQLAtomicRootProofPhysicalIdentity
@@ -381,7 +568,9 @@ def requalify_existing_custody_lifecycle_v2(
             _bootstrap_principal(conn, atomic_config)
             if _physical_identity(conn, atomic_config.instance_id) != expected_identity:
                 raise CustodyLifecycleQualificationError("reconstruction physical service differs")
-            _verify_v2_functions(conn, atomic_config)
+            _verify_v2_functions(
+                conn, atomic_config, sql_contract_version=expected_sql_contract_version
+            )
             _verify_database_manifest(conn, atomic_config)
             _verify_principal_boundary(conn, atomic_config)
             key = _read_secret(conn, atomic_config)
@@ -398,9 +587,14 @@ def requalify_existing_custody_lifecycle_v2(
             )
             _qualify_roles(conn, atomic)
             deployment = PostgreSQLCustodyLifecycleTestDeployment(
-                atomic, admin_connection, key, catalog, _LIFECYCLE_ADMINISTRATIVE_ORIGIN
+                atomic,
+                admin_connection,
+                key,
+                catalog,
+                _LIFECYCLE_ADMINISTRATIVE_ORIGIN,
+                expected_sql_contract_version,
             )
-        _postqualify(deployment)
+        _postqualify(deployment, allow_legacy_sql_contract=expected_sql_contract_version == 2)
         return deployment
     except CustodyLifecycleQualificationError:
         raise
@@ -424,4 +618,5 @@ __all__ = [
     "qualify_custody_lifecycle_authority",
     "migrate_custody_lifecycle_v2",
     "requalify_existing_custody_lifecycle_v2",
+    "upgrade_custody_lifecycle_signer_enrollment_v3",
 ]

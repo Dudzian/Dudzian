@@ -771,12 +771,14 @@ def test_independent_issuer_and_revoke_processes_have_one_durable_order(lifecycl
     case = SimpleNamespace(
         directory=value.directory, role=ProviderRole.ROOT_PROOF_SIGNING, key=value.fences.root_key
     )
-    request = _request(value, case)
+    request = _request(value, case, target=custody.SigningKeyLifecycle.VERIFY_ONLY)
     context = multiprocessing.get_context("fork")
     entered = context.Event()
     release = context.Event()
     pending = context.Event()
     refused = context.Event()
+    verify_only = context.Event()
+    verify_denied = context.Event()
     revoked = context.Event()
     reader, writer = context.Pipe(duplex=False)
 
@@ -799,24 +801,35 @@ def test_independent_issuer_and_revoke_processes_have_one_durable_order(lifecycl
         assert refused.wait(timeout=10)
         completion = admin.mutate_custody(authorization, request)
         admin.publish_completion(request, completion)
+        verify_only.set()
+        assert verify_denied.wait(timeout=10)
+        final_request = _request(value, case, operation_id=request.operation_id + "-revoke")
+        admin.execute(final_request)
         revoked.set()
-        writer.send(("admin", os.getpid(), request.operation_id))
+        writer.send(("admin", os.getpid(), final_request.operation_id))
 
     def closed_first_issuer():
         runtime = atomic_runtime.PostgreSQLAtomicRootProofCommit(value.atomic_deployment)
-        try:
-            runtime.commit(value.secondary.preparation)
-        except atomic_runtime.AtomicRootProofCommitConflict as error:
-            # The secondary candidate has an old history predecessor after the
-            # first winner. Prove that its actual refusal occurs at eligibility,
-            # before any history CAS, rather than crediting a different conflict.
-            cause = error.__context__
-            assert isinstance(cause, psycopg.errors.CheckViolation)
-            assert cause.diag.message_primary == "DB-authoritative lifecycle fence closed"
-            writer.send(("refused", os.getpid(), cause.diag.message_primary))
-            refused.set()
-        else:
-            os._exit(76)
+        for phase, generation, ready, finished in (
+            ("PENDING_CLOSED", 1, pending, refused),
+            ("VERIFY_ONLY", 2, verify_only, verify_denied),
+            ("REVOKED", 3, revoked, None),
+        ):
+            assert ready.wait(timeout=10)
+            assert _fence(value, case.key) == (phase, generation)
+            try:
+                runtime.commit(value.secondary.preparation)
+            except atomic_runtime.AtomicRootProofCommitConflict as error:
+                # This candidate has an old history predecessor after the first
+                # winner. Prove refusal at eligibility before any history CAS.
+                cause = error.__context__
+                assert isinstance(cause, psycopg.errors.CheckViolation)
+                assert cause.diag.message_primary == "DB-authoritative lifecycle fence closed"
+                writer.send(("refused", os.getpid(), phase, cause.diag.message_primary))
+                if finished is not None:
+                    finished.set()
+            else:
+                os._exit(76)
 
     first = context.Process(target=issuer)
     second = context.Process(target=revoker)
@@ -839,12 +852,17 @@ def test_independent_issuer_and_revoke_processes_have_one_durable_order(lifecycl
     third.start()
     _join(third)
     _join(second)
-    messages = [reader.recv(), reader.recv(), reader.recv()]
+    messages = [reader.recv() for _ in range(5)]
     assert {part[0] for part in messages} == {"issuer", "admin", "refused"}
+    assert {part[2] for part in messages if part[0] == "refused"} == {
+        "PENDING_CLOSED",
+        "VERIFY_ONLY",
+        "REVOKED",
+    }
     assert len({part[1] for part in messages}) == 3
     decision = value.commit.reconcile(value.preparation.locator)
     atomic_tests._assert_committed(value, decision)
-    assert _fence(value, case.key) == ("REVOKED", 2)
+    assert _fence(value, case.key) == ("REVOKED", 3)
     assert value.signer.credential_snapshot().lifecycle_state is custody.SigningKeyLifecycle.REVOKED
     assert value.commit.commit(value.preparation) == decision
 

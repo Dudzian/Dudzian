@@ -39,6 +39,8 @@ from bot_core.root_proof_issuer_substrate import (
 SCHEMA_IDENTITY = "cryptohunter.custody_lifecycle.postgresql"
 SCHEMA_VERSION = 2
 MIGRATION_ID = "DURABLE_CUSTODY_LIFECYCLE_FENCING_V2"
+SQL_CONTRACT_VERSION = 3
+ENROLLMENT_MIGRATION_ID = "DURABLE_CUSTODY_V2_SIGNER_ENROLLMENT_V3"
 BOUNDARY = "ISOLATED_TEST_ONLY"
 COMPLETION_MAC_DOMAIN = b"CryptoHunter/CustodyLifecycleCompletion/V2\0"
 _FENCE_DOMAIN = b"CryptoHunter/AtomicTestFence/v1\0"
@@ -87,6 +89,10 @@ FUNCTION_DECLARATIONS = {
     ),
     "guard_lifecycle_fence()": ("", "trigger"),
     "guard_lifecycle_decision_fences()": ("", "trigger"),
+}
+ENROLLMENT_FUNCTION_DECLARATIONS = {
+    "guard_lifecycle_decision_enrollment_v3()": ("", "trigger"),
+    "qualify_lifecycle_enrollment_v3()": ("", "boolean"),
 }
 
 
@@ -589,11 +595,227 @@ CREATE TABLE {s}.lifecycle_completions(operation_id text PRIMARY KEY REFERENCES 
     return inventory
 
 
+def reviewed_lifecycle_enrollment_function_sources(
+    config: PostgreSQLAtomicRootProofProvisioning,
+) -> dict[str, str]:
+    """Additive SQL revision; every previously qualified V2 source is preserved."""
+    s = _q(config.schema)
+    public_domain = b"CRYPT0HUNTER_ROOT_PROOF_CREDENTIAL_PUBLIC_KEY_V1\0"
+    return {
+        "qualify_lifecycle_enrollment_v3()": f"""
+BEGIN
+ IF session_user::text NOT IN ('{config.issuer_writer_role}','{config.test_admin_role}')
+ OR current_user::text IS DISTINCT FROM '{config.schema_owner_role}' THEN
+  RAISE EXCEPTION 'exact signer enrollment principal required' USING ERRCODE='42501'; END IF;
+ PERFORM {s}.assert_lifecycle_catalog();
+ IF NOT EXISTS(SELECT 1 FROM {s}.lifecycle_sql_contract WHERE singleton
+  AND sql_contract_version={SQL_CONTRACT_VERSION} AND migration_id='{ENROLLMENT_MIGRATION_ID}'
+  AND predecessor_sql_contract_version=2
+  AND predecessor_snapshot_sha256=pg_catalog.sha256(pg_catalog.convert_to(predecessor_snapshot::text,'UTF8')))
+ THEN RAISE EXCEPTION 'exact signer enrollment contract and predecessor archive required'
+  USING ERRCODE='42501'; END IF;
+ RETURN true;
+END
+""",
+        "guard_lifecycle_decision_enrollment_v3()": f"""
+DECLARE root_snapshot bytea; root_identity bytea; history_identity bytea;
+ root_data jsonb; history_data jsonb; root_binding jsonb; history_binding jsonb;
+ root_key text; history_key text; binding jsonb; expected_role text; material text;
+BEGIN
+ IF session_user::text IS DISTINCT FROM '{config.issuer_writer_role}'
+ OR current_user::text IS DISTINCT FROM '{config.schema_owner_role}' THEN
+  RAISE EXCEPTION 'exact atomic writer required' USING ERRCODE='42501'; END IF;
+ PERFORM {s}.assert_lifecycle_catalog();
+ IF (SELECT sql_contract_version FROM {s}.lifecycle_sql_contract WHERE singleton)
+ IS DISTINCT FROM {SQL_CONTRACT_VERSION}
+ OR (SELECT migration_id FROM {s}.lifecycle_sql_contract WHERE singleton)
+ IS DISTINCT FROM '{ENROLLMENT_MIGRATION_ID}' THEN
+  RAISE EXCEPTION 'signer enrollment SQL contract differs' USING ERRCODE='42501'; END IF;
+ root_snapshot:={_q(config.intent_schema)}.atomic_intent_member(NEW.reserved_envelope,'credential_snapshot');
+ root_identity:={_q(config.intent_schema)}.atomic_intent_member(root_snapshot,'credential_identity');
+ IF pg_catalog.substring(NEW.canonical_head,1,{len(ATTESTATION_DOMAIN)})
+ IS DISTINCT FROM pg_catalog.decode('{ATTESTATION_DOMAIN.hex()}','hex') THEN
+  RAISE EXCEPTION 'original history attestation required' USING ERRCODE='23514'; END IF;
+ history_identity:={_q(config.history_schema)}.atomic_history_member(
+  pg_catalog.substring(NEW.canonical_head,{len(ATTESTATION_DOMAIN) + 1}),'signing_credential_identity');
+ root_key:='ROOT_PROOF_SIGNING:' || pg_catalog.encode(pg_catalog.sha256(
+  pg_catalog.decode('{_FENCE_DOMAIN.hex()}','hex') || root_snapshot),'hex');
+ history_key:='HISTORY_ATTESTATION_SIGNING:' || pg_catalog.encode(pg_catalog.sha256(
+  pg_catalog.decode('{_FENCE_DOMAIN.hex()}','hex') || history_identity),'hex');
+ IF NEW.package->>'root_fence_key' IS DISTINCT FROM root_key
+ OR NEW.package->>'history_fence_key' IS DISTINCT FROM history_key THEN
+  RAISE EXCEPTION 'actual signer fence cannot be aliased' USING ERRCODE='23514'; END IF;
+ SELECT credential_binding INTO root_binding FROM {s}.lifecycle_credentials WHERE fence_key=root_key;
+ SELECT credential_binding INTO history_binding FROM {s}.lifecycle_credentials WHERE fence_key=history_key;
+ IF root_binding IS NULL OR history_binding IS NULL THEN
+  RAISE EXCEPTION 'both actual signer fences require custody enrollment' USING ERRCODE='23514'; END IF;
+ root_data:=pg_catalog.convert_from(root_snapshot,'UTF8')::jsonb;
+ history_data:=pg_catalog.convert_from(history_identity,'UTF8')::jsonb;
+ IF root_binding->>'semantic_role' IS DISTINCT FROM 'ROOT_PROOF_SIGNING'
+ OR root_binding->>'fence_key' IS DISTINCT FROM root_key
+ OR root_binding->'credential_identity' IS DISTINCT FROM pg_catalog.convert_from(root_identity,'UTF8')::jsonb
+ OR root_binding->'public_key_hex' IS DISTINCT FROM root_data->'public_key_hex'
+ OR root_binding->'key_version' IS DISTINCT FROM root_data->'key_version'
+ OR root_binding->'lifecycle_generation' IS DISTINCT FROM root_data->'lifecycle_generation'
+ OR root_data->>'lifecycle_state' IS DISTINCT FROM 'ACTIVE'
+ OR root_data->'key_material_identity' IS DISTINCT FROM root_binding->'credential_identity'->'key_material_identity'
+ OR root_data->'provider_identity' IS DISTINCT FROM pg_catalog.jsonb_build_object(
+  'role','ROOT_PROOF_SIGNING','provider_namespace',root_binding->'credential_identity'->'provider_namespace',
+  'security',pg_catalog.jsonb_build_object('profile',root_binding->'custody_scope'->'security_profile',
+   'trust_domain',root_binding->'custody_scope'->'trust_domain'))
+ OR history_binding->>'semantic_role' IS DISTINCT FROM 'HISTORY_ATTESTATION_SIGNING'
+ OR history_binding->>'fence_key' IS DISTINCT FROM history_key
+ OR history_binding->'lifecycle_generation' IS DISTINCT FROM NEW.package->'history_fence_generation'
+ OR history_binding->'credential_identity' IS DISTINCT FROM history_data THEN
+  RAISE EXCEPTION 'enrollment differs from original signer identity or material' USING ERRCODE='23514'; END IF;
+ -- The frozen history attestation signs the complete opaque credential/version
+ -- identity and its public-material fingerprint, rather than a raw-key field.
+ FOR binding,expected_role IN SELECT root_binding,'ROOT_PROOF_ISSUER_SIGNING'
+  UNION ALL SELECT history_binding,'HISTORY_ATTESTATION_SIGNING' LOOP
+  IF binding->'credential_identity'->>'semantic_role' IS DISTINCT FROM expected_role
+  OR pg_catalog.jsonb_typeof(binding->'key_version') IS DISTINCT FROM 'number'
+  OR binding->>'key_version' !~ '^[1-9][0-9]*$'
+  OR binding->>'public_key_hex' !~ '^[0-9a-f]{{64}}$' THEN
+   RAISE EXCEPTION 'exact enrolled signing role and public material required' USING ERRCODE='23514'; END IF;
+  material:='sha256:' || pg_catalog.encode(pg_catalog.sha256(
+   pg_catalog.decode('{public_domain.hex()}','hex') || pg_catalog.decode(binding->>'public_key_hex','hex')),'hex');
+  IF binding->'credential_identity'->>'key_material_identity' IS DISTINCT FROM material THEN
+   RAISE EXCEPTION 'enrolled public key differs from signed credential material' USING ERRCODE='23514'; END IF;
+ END LOOP;
+ RETURN NEW;
+END
+""",
+    }
+
+
+def install_custody_signer_enrollment_v3(
+    conn: psycopg.Connection[Any],
+    config: PostgreSQLAtomicRootProofProvisioning,
+    predecessor_catalog_sha256: str,
+) -> None:
+    """Explicit additive upgrade, archiving the original immutable V2 manifest."""
+    if type(config) is not PostgreSQLAtomicRootProofProvisioning:
+        raise TypeError("exact atomic provisioning required")
+    if conn.info.transaction_status != psycopg.pq.TransactionStatus.INTRANS:
+        raise ValueError("explicit signer enrollment migration transaction required")
+    if (
+        type(predecessor_catalog_sha256) is not str
+        or len(predecessor_catalog_sha256) != 64
+        or any(char not in "0123456789abcdef" for char in predecessor_catalog_sha256)
+    ):
+        raise ValueError("exact qualified predecessor catalog digest required")
+    s = sql.Identifier(config.schema)
+    conn.execute(sql.SQL("LOCK TABLE {}.decisions IN ACCESS EXCLUSIVE MODE").format(s))
+    conn.execute(sql.SQL("LOCK TABLE {}.fences IN ACCESS EXCLUSIVE MODE").format(s))
+    conn.execute(
+        sql.SQL("""
+CREATE TABLE {s}.lifecycle_sql_contract(
+ singleton boolean PRIMARY KEY DEFAULT true CHECK(singleton),
+ sql_contract_version integer NOT NULL CHECK(sql_contract_version=3),migration_id text NOT NULL,
+ predecessor_sql_contract_version integer NOT NULL CHECK(predecessor_sql_contract_version=2),
+ predecessor_catalog_sha256 text NOT NULL CHECK(predecessor_catalog_sha256 ~ '^[0-9a-f]{{64}}$'),
+ predecessor_snapshot jsonb NOT NULL,predecessor_snapshot_sha256 bytea NOT NULL
+ CHECK(octet_length(predecessor_snapshot_sha256)=32));
+""").format(s=s)
+    )
+    conn.execute(
+        sql.SQL("ALTER TABLE {}.lifecycle_sql_contract OWNER TO {}").format(
+            s, sql.Identifier(config.schema_owner_role)
+        )
+    )
+    conn.execute(
+        sql.SQL("REVOKE ALL ON {}.lifecycle_sql_contract FROM PUBLIC,{},{}").format(
+            s, sql.Identifier(config.issuer_writer_role), sql.Identifier(config.test_admin_role)
+        )
+    )
+    conn.execute(
+        sql.SQL(
+            "INSERT INTO {}.lifecycle_sql_contract SELECT true,%s,%s,2,%s,snapshot,pg_catalog.sha256(pg_catalog.convert_to(snapshot::text,'UTF8')) FROM {}.catalog_manifest WHERE singleton"
+        ).format(s, s),
+        (SQL_CONTRACT_VERSION, ENROLLMENT_MIGRATION_ID, predecessor_catalog_sha256),
+    )
+    for trigger, event, level in (
+        ("enrollment_contract_immutable_row", "UPDATE OR DELETE", "ROW"),
+        ("enrollment_contract_immutable_truncate", "TRUNCATE", "STATEMENT"),
+    ):
+        conn.execute(
+            sql.SQL(
+                "CREATE TRIGGER {} BEFORE {} ON {}.lifecycle_sql_contract FOR EACH {} EXECUTE FUNCTION {}.reject_mutation()"
+            ).format(sql.Identifier(trigger), sql.SQL(event), s, sql.SQL(level), s)
+        )
+        conn.execute(
+            sql.SQL("ALTER TABLE {}.lifecycle_sql_contract ENABLE ALWAYS TRIGGER {}").format(
+                s, sql.Identifier(trigger)
+            )
+        )
+    for signature, source in reviewed_lifecycle_enrollment_function_sources(config).items():
+        declaration, returns = ENROLLMENT_FUNCTION_DECLARATIONS[signature]
+        conn.execute(
+            sql.SQL(
+                "CREATE FUNCTION {}.{}({}) RETURNS {} LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS {}"
+            ).format(
+                s,
+                sql.Identifier(signature.split("(")[0]),
+                sql.SQL(declaration),
+                sql.SQL(returns),
+                sql.Literal(source),
+            )
+        )
+        conn.execute(
+            sql.SQL("ALTER FUNCTION {}.{} OWNER TO {}").format(
+                s, sql.SQL(signature), sql.Identifier(config.schema_owner_role)
+            )
+        )
+        conn.execute(
+            sql.SQL("REVOKE ALL ON FUNCTION {}.{} FROM PUBLIC").format(s, sql.SQL(signature))
+        )
+        if signature == "qualify_lifecycle_enrollment_v3()":
+            conn.execute(
+                sql.SQL("GRANT EXECUTE ON FUNCTION {}.{} TO {},{}").format(
+                    s,
+                    sql.SQL(signature),
+                    sql.Identifier(config.issuer_writer_role),
+                    sql.Identifier(config.test_admin_role),
+                )
+            )
+    conn.execute(
+        sql.SQL(
+            "CREATE TRIGGER lifecycle_decision_signer_enrollment_v3 BEFORE INSERT ON {}.decisions FOR EACH ROW EXECUTE FUNCTION {}.guard_lifecycle_decision_enrollment_v3()"
+        ).format(s, s)
+    )
+    conn.execute(
+        sql.SQL(
+            "ALTER TABLE {}.decisions ENABLE ALWAYS TRIGGER lifecycle_decision_signer_enrollment_v3"
+        ).format(s)
+    )
+    # Capture real restored trigger facts through a savepoint, preserving the
+    # exact original V2 manifest separately above before any revision is pinned.
+    conn.execute(sql.SQL("ALTER TABLE {}.catalog_manifest DISABLE TRIGGER immutable_row").format(s))
+    conn.execute("SAVEPOINT enrollment_manifest_capture")
+    conn.execute(
+        sql.SQL("ALTER TABLE {}.catalog_manifest ENABLE ALWAYS TRIGGER immutable_row").format(s)
+    )
+    snapshot = conn.execute(sql.SQL("SELECT {}.catalog_snapshot()").format(s)).fetchone()
+    if snapshot is None:
+        raise ValueError("revised catalog snapshot unavailable")
+    conn.execute("ROLLBACK TO SAVEPOINT enrollment_manifest_capture")
+    conn.execute("RELEASE SAVEPOINT enrollment_manifest_capture")
+    conn.execute(
+        sql.SQL("UPDATE {}.catalog_manifest SET snapshot=%s WHERE singleton").format(s),
+        (Jsonb(snapshot[0]),),
+    )
+    conn.execute(
+        sql.SQL("ALTER TABLE {}.catalog_manifest ENABLE ALWAYS TRIGGER immutable_row").format(s)
+    )
+
+
 __all__ = [
     "BOUNDARY",
     "SCHEMA_IDENTITY",
     "SCHEMA_VERSION",
     "MIGRATION_ID",
+    "SQL_CONTRACT_VERSION",
+    "ENROLLMENT_MIGRATION_ID",
     "COMPLETION_MAC_DOMAIN",
     "REQUEST_KEYS",
     "BINDING_KEYS",
@@ -602,4 +824,6 @@ __all__ = [
     "expected_custody_fence_key",
     "reviewed_lifecycle_function_sources",
     "install_custody_lifecycle_authority",
+    "reviewed_lifecycle_enrollment_function_sources",
+    "install_custody_signer_enrollment_v3",
 ]

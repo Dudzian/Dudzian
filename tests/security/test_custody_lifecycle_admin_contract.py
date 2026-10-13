@@ -22,11 +22,13 @@ import pytest
 from bot_core import local_signing_custody as custody
 from bot_core import postgresql_atomic_root_proof_commit as atomic_runtime
 from bot_core import postgresql_custody_lifecycle as runtime
+from bot_core import postgresql_custody_lifecycle_qualification as qualification
 from bot_core.licensing.canonical import canonical_json_bytes
 from bot_core.local_signing_lifecycle_evidence import DurableSigningLifecycleCompletion
 from bot_core.postgresql_atomic_root_proof_qualification import (
     PostgreSQLAtomicRootProofPhysicalIdentity,
 )
+from bot_core.postgresql_entitlement_registry import PostgreSQLConnectionConfig
 from bot_core.root_proof_issuer_substrate import ProviderRole, SecurityProfileIdentity
 from tests.security._local_signing_platform import requires_native_custody_locking
 from tests.security.test_local_signing_custody import _admin, native_keyring, security
@@ -107,6 +109,59 @@ def _observe_custody(value):
 
 def _forbid_mutation(*args, **kwargs):
     pytest.fail("failed authority observation reached custody mutation")
+
+
+def _unqualified_deployment(*, version=None, internal_origin=False):
+    """A negative-test DTO; it has never observed or qualified any database."""
+    arguments = dict(
+        atomic_deployment=SimpleNamespace(catalog_sha256="unit-negative-only"),
+        admin_connection=PostgreSQLConnectionConfig("dbname=unit-negative-only"),
+        evidence_key=b"a" * 32,
+        catalog_sha256="unit-negative-only",
+    )
+    if version is not None:
+        arguments["sql_contract_version"] = version
+    if internal_origin:
+        # Isolate the version gate below mocked independent atomic validation.
+        # This does not produce or assert a live-qualified deployment.
+        arguments["_origin"] = qualification._LIFECYCLE_ADMINISTRATIVE_ORIGIN
+    return qualification.PostgreSQLCustodyLifecycleTestDeployment(**arguments)
+
+
+@pytest.mark.parametrize("version", [None, 2, 3, True, 0])
+def test_caller_deployment_cannot_manufacture_coordinator_authority(monkeypatch, version):
+    deployment = _unqualified_deployment(version=version)
+    monkeypatch.setattr(runtime.psycopg, "connect", _forbid_mutation)
+    with pytest.raises(qualification.CustodyLifecycleQualificationError, match="explicit trusted"):
+        runtime.PostgreSQLCustodyLifecycleAdministrator(deployment)
+    with pytest.raises(qualification.CustodyLifecycleQualificationError, match="explicit trusted"):
+        qualification.validate_custody_lifecycle_deployment(
+            deployment, allow_legacy_sql_contract=True
+        )
+
+
+@pytest.mark.parametrize("explicit_version", [False, True])
+def test_coordinator_and_live_qualification_require_explicit_legacy_sql_upgrade(
+    monkeypatch, explicit_version
+):
+    deployment = _unqualified_deployment(
+        version=2 if explicit_version else None, internal_origin=True
+    )
+    assert deployment.sql_contract_version == 2
+    monkeypatch.setattr(qualification, "validate_atomic_root_proof_deployment", lambda value: None)
+    monkeypatch.setattr(qualification, "qualify_atomic_root_proof_authority", _forbid_mutation)
+    monkeypatch.setattr(runtime.psycopg, "connect", _forbid_mutation)
+    with pytest.raises(
+        qualification.CustodyLifecycleQualificationError,
+        match="explicit signer enrollment SQL upgrade",
+    ):
+        runtime.PostgreSQLCustodyLifecycleAdministrator(deployment)
+    with pytest.raises(
+        qualification.CustodyLifecycleQualificationError,
+        match="explicit signer enrollment SQL upgrade",
+    ):
+        qualification.qualify_custody_lifecycle_authority(object(), deployment)
+    assert deployment.sql_contract_version == 2
 
 
 def test_request_snapshots_descriptor_and_security_and_returns_deep_copies(coordinator, security):

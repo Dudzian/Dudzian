@@ -130,8 +130,10 @@ jobs:
           tests/architecture/test_stage9_atomic_root_proof_commit_boundary.py
           tests/security/test_local_signing_lifecycle_evidence.py
           tests/security/test_postgresql_custody_lifecycle.py
+          tests/security/test_postgresql_custody_signer_enrollment.py
           tests/security/test_custody_lifecycle_admin_contract.py
           tests/architecture/test_stage9_custody_lifecycle_v2.py
+          tests/architecture/test_stage9_custody_lifecycle_import_isolation.py
       - name: Mypy configured scope
         run: python -m mypy
       - name: Mypy Windows configured scope
@@ -487,8 +489,10 @@ jobs:
           tests/architecture/test_stage9_atomic_root_proof_commit_boundary.py
           tests/security/test_local_signing_lifecycle_evidence.py
           tests/security/test_postgresql_custody_lifecycle.py
+          tests/security/test_postgresql_custody_signer_enrollment.py
           tests/security/test_custody_lifecycle_admin_contract.py
           tests/architecture/test_stage9_custody_lifecycle_v2.py
+          tests/architecture/test_stage9_custody_lifecycle_import_isolation.py
           -m "not hardware and not destructive and not network"
           --cov=bot_core.postgresql_atomic_root_proof_schema
           --cov=bot_core.postgresql_atomic_root_proof_preaccount_sql

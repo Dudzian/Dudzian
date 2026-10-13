@@ -22,7 +22,7 @@ from typing import Any, Callable, cast
 import psycopg
 from psycopg import sql
 
-from bot_core import local_signing_custody as custody
+import bot_core.local_signing_custody as custody
 from bot_core.licensing.canonical import canonical_json_bytes
 from bot_core.local_signing_lifecycle_evidence import (
     DurableSigningLifecycleCompletion,

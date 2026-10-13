@@ -69,7 +69,9 @@ instaluje marker `lifecycle_metadata` z
 i `migration_id=DURABLE_CUSTODY_LIFECYCLE_FENCING_V2`. Oryginalny marker
 Atomic Commit V1 pozostaje w wersji 1. Nowe owner-owned tabele to
 `lifecycle_credentials`, `lifecycle_operations`, `lifecycle_completions` oraz
-`lifecycle_authority_secret`. Credentials, request i completion są immutable;
+`lifecycle_authority_secret`. Aktualny SQL contract 3 dodaje również
+immutable `lifecycle_sql_contract`, zachowując `lifecycle_metadata.schema_version=2`
+oraz wszystkie wcześniejsze V2 SQL definitions. Credentials, request i completion są immutable;
 secret ma osobny SHA256 pin. Migracja instaluje ACL i reviewed function inventory,
 wersjonuje pinned catalog manifest i nadaje nowy deployment hash.
 [Qualification](../../bot_core/postgresql_custody_lifecycle_qualification.py)
@@ -93,7 +95,9 @@ loginu w autentycznego administratora. Writer nie otrzymuje direct DML/DDL,
 admin EXECUTE ani owner membership. Funkcje `SECURITY DEFINER` mają
 `SET search_path=pg_catalog` oraz statyczny SQL. Exact ACL, definitions,
 relation inventory i role OIDs należą do pinned manifestu. Admin i writer
-otrzymują wyłącznie `SELECT` na `lifecycle_metadata`; nie otrzymują odczytu
+otrzymują wyłącznie `SELECT` na `lifecycle_metadata`; nowy
+`lifecycle_sql_contract` pozostaje owner-only. Admin i writer dostają jedynie
+boolean `EXECUTE` na `qualify_lifecycle_enrollment_v3()`. Nie otrzymują odczytu
 `lifecycle_authority_secret`, intent ani completion tables. Live qualifier
 porównuje exact schema identity/version, migration ID, admin/owner OIDs,
 SHA256 authentication key i `ISOLATED_TEST_ONLY` marker z trusted deployment
@@ -137,6 +141,141 @@ Exact replay istniejącej decyzji nadal zwraca jej immutable historyczny wynik,
 nie tworząc nowego BIND. Testowe cryptographic approval i wcześniejsze
 przygotowanie pozostają zaufaną, odizolowaną granicą V1; ten guard nie
 ustanawia produkcyjnego crypto/signing pipeline.
+
+## Statyczna granica importów i issuer transport
+
+Test `_assert_local_issuance_execution_ownership()` z
+[testu signed immutable attempt](../../tests/architecture/test_stage9_root_proof_signed_immutable_attempt_contract.py)
+używa `_source_imports()` do zamknięcia graph importów. `ImportFrom` dodaje
+zarówno wskazany module, jak i child symbols; AST obejmuje również
+`TYPE_CHECKING` oraz opcjonalne `try/except` imports. Dodane
+`from bot_core import local_signing_custody as custody` w coordinatorze
+wprowadziło jawną krawędź do całej fasady `bot_core`, a dalej ścieżkę:
+
+```text
+bot_core.postgresql_custody_lifecycle
+→ bot_core
+→ bot_core.auto_trader
+→ bot_core.auto_trader.app
+→ bot_core.observability
+→ bot_core.observability.server
+```
+
+`bot_core.__init__` ma `.auto_trader` import pod `TYPE_CHECKING`;
+`auto_trader` re-eksportuje app, a observability re-eksportuje metrics server.
+Ostatni moduł importuje `http`/`http.server`, więc konserwatywna closure
+zgłasza `issuer transport bypass`. Rzeczywisty source tego modułu obsługuje
+Prometheus metrics; jego serwer startuje przez osobne `start_http_server()`
+i nie transportuje retained issuance request. Jest to rozszerzenie
+statycznej analizy poprzez fasadę, nie nowy pipeline issuer transport.
+
+Minimalna poprawka to `import bot_core.local_signing_custody as custody`:
+graph wskazuje dokładny child module. Reguły testu architektury, zakazane transport
+imports i zamrożone kontrakty pozostają niezmienione; nie ma wyjątku dla
+observability server. Bezpośredni submodule import nie stanowi obietnicy,
+że Python nigdy nie inicjalizuje parent package; naprawia konkretną jawną
+krawędź w review graph. Nowe moduły nie dodają innych analogicznych
+produkcyjnych facade imports.
+
+Porównanie z niezmienionym gate na `main` (`2c1ebd47`) i pierwotnym PR
+(`882fa02c`) daje:
+
+| Źródła | Consumers | Reachable modules | Gate / observability server |
+| --- | ---: | ---: | --- |
+| main: 1174 pliki | 34 | 99 | PASS / nieosiągalny |
+| PR przed poprawką: 1178 plików | 38 | 474 | FAIL / osiągalny |
+| direct import: 1178 plików | 38 | 103 | PASS / nieosiągalny |
+
+Pierwszy zgłoszony transport module może zależeć od kolejności iteracji
+zbioru; raport macOS wskazał metrics server, odtworzenie może wskazać inny
+moduł tej samej rozszerzonej closure. Nie zmienia to źródłowej przyczyny.
+Pełny test signed immutable attempt wraz z nowymi negatywnymi regresjami
+importów dał `146 passed`.
+
+## Signer enrollment w końcowym COMMIT
+
+Pierwotny `guard_lifecycle_decision_fences()` z SQL contract 2 sprawdzał
+kanoniczną tożsamość root/history fences, lecz nie odczytywał
+`lifecycle_credentials`. `install_custody_lifecycle_authority()` wymagał
+niepustego zestawu enrollment; nie wymagał enrollment wszystkich signerów
+istniejących immutable approved candidates. V1 `commit_root_proof()`
+sprawdzał rzeczywiste ACTIVE/generation tych kanonicznych fences i całe
+retained BIND/history linkage, również bez sprawdzenia enrollment.
+W rezultacie samo istnienie właściwego, historycznie provisioned ACTIVE
+fence nie stanowiło dowodu udziału signera w administracyjnym V2. Pominięty
+credential nie miał dostępnego V2 close, ponieważ admin request validator
+wymaga własnego immutable `lifecycle_credentials` record.
+
+Nie wolno utożsamiać kanonicznego fence z enrolled custody. Finalna granica
+musi wymagać oddzielnych root/history enrollment records, ich exact roli,
+pełnej credential identity, public key material i kanonicznej tożsamości.
+Trust activation pozostaje własnym fence i nie otrzymuje fikcyjnego
+local signing custody enrollment.
+
+Jawna addytywna migracja `DURABLE_CUSTODY_V2_SIGNER_ENROLLMENT_V3` ustanawia
+`SQL_CONTRACT_VERSION=3`; nie zastępuje wcześniej kwalifikowanej funkcji
+`guard_lifecycle_decision_fences()` ani źródeł V1/V2 w miejscu. Nowa funkcja
+`guard_lifecycle_decision_enrollment_v3()` jest owner-only
+`SECURITY DEFINER SET search_path=pg_catalog`, wykonywana przez nowy pinned
+ALWAYS BEFORE INSERT trigger `lifecycle_decision_signer_enrollment_v3`.
+Wyprowadza oba fence keys z tych samych oryginalnych canonical bytes,
+wymaga obu corresponding `lifecycle_credentials` records, porównuje pełny
+Root Proof snapshot z enrollment i pełną history signer identity z jej
+enrollment. Embedded `fence_key` obu bindings musi odpowiadać właściwemu
+wierszowi; history enrollment generation musi odpowiadać generation pakietu
+sprawdzanej na bieżącym DB fence. Dla obu ról wyprowadza public-material fingerprint z enrolled
+raw 32-byte public key i wymaga równości z podpisaną credential identity.
+History head zawiera complete opaque credential/version identity oraz ten
+fingerprint; guard nie dopisuje nowego pola do zamrożonego formatu.
+Brak enrollment albo jakakolwiek niezgodność odrzuca INSERT i wycofuje cały
+atomic write set. Writer nie dostaje bezpośredniego odczytu lub DML na
+credentials, intent, completion ani secret tables.
+
+`lifecycle_sql_contract` zachowuje exact predecessor contract 2 catalog
+snapshot oraz jego digest i administracyjny catalog SHA256 pin. Nowy manifest
+przypina dodatkową relation, trigger, function definition, ACL i SQL version.
+`qualify_lifecycle_enrollment_v3()` zwraca tylko boolean po sprawdzeniu
+markeru, source/catalog pins oraz digest archived predecessor snapshot;
+chroniona tabela revision nie jest udostępniana writerowi ani adminowi.
+`upgrade_custody_lifecycle_signer_enrollment_v3()` odbywa się przez
+autentyczną bootstrap authority; retained application
+records, administrative operations/completions, keys i role OIDs zachowują
+wcześniejsze znaczenie. Wersja historyczna 2 służy wyłącznie izolowanemu
+odtworzeniu podatności i kwalifikowanemu wejściu do jawnego upgrade; nie jest
+aktualnym final-commit enrollment contract. Domyślne migration,
+reconstruction i live qualification wymagają revision 3. Historical contract 2
+wymaga osobnego jawnego parametru i nie może utworzyć nowego lifecycle
+administrator runtime przez zwykłą kwalifikację. Upgrade oraz świeża migration
+revision 3 biorą table locks w kolejności `decisions → fences`, zgodnej z
+issuer read-decisions-before-fences, przed conservation snapshot i DDL.
+Exact retry historycznej decyzji pozostaje
+odczytem immutable oryginalnych bajtów, bez nowej emisji lub BIND.
+
+## Wykonane próby PostgreSQL dla enrollment
+
+Dwa niezależnie zbudowane genuine lineages na PostgreSQL 16 odtworzyły lukę:
+jedno pomijało Root Proof signer, drugie history signer. Historyczny jawny
+SQL contract 2 zatwierdził właściwy retained signed proof mimo
+`ACTIVE(generation=1)` na canonical fence bez corresponding enrollment.
+W obu przypadkach zachowano dwie revisions subject entitlement history
+z BOUND oraz po jednym authenticated issuer history record, attestation i
+decision. To rzeczywisty durable COMMIT, nie wniosek z samej analizy źródeł.
+
+Jawny upgrade do SQL contract 3 zachował dokładny snapshot wcześniej
+zatwierdzonego write set. Exact retry odzyskał oryginalne payload, signature
+oraz envelope bytes. Następnie odrębny, prawidłowo retained candidate został
+odrzucony przez `CheckViolation` z dokładnym powodem
+`both actual signer fences require custody enrollment`; snapshot pełnego
+atomic write set oraz oddzielny snapshot fences, enrollment, operations i
+completions pozostały niezmienione.
+
+Fixture pomiędzy obserwacją starego commitu i odmową nowego candidate
+odtwarza wyłącznie fizyczne issuance tables przez izolowaną bootstrap
+admin authority. Nie zmienia fences, enrollment, administrative lifecycle
+records, retained signed bytes ani lokalnego custody. Jest to konstrukcja
+regresji, nie aplikacyjny recovery protocol. Oba scenariusze przeszły wraz z 31 existing lifecycle regressions na
+default contract 3: finalny przebieg dał `33 passed, 1 warning`.
+Szczegóły i odrębne historyczne wyniki są zapisane poniżej.
 
 ## Exact administrative operation state machine
 
@@ -346,29 +485,50 @@ W żadnej fazie tego przebiegu V2 nie publikuje nowego ACTIVE.
 `PRODUCTION_LIFECYCLE_ISOLATION=BLOCKED`.
 `ATOMIC_ISSUER_READY=NOT_READY`.
 
-## Wyniki lokalnej walidacji tej zmiany
+## Wyniki lokalnej walidacji poprawki SQL contract 3
 
-Finalny, zamrożony kod przeszedł 31 testów V2 na rzeczywistym PostgreSQL
-16.15 w 600,84 s, w tym utracone odpowiedzi native COMMIT w A/C,
-SIGKILL klienta przy żywym backendzie, cold exec restart administratora,
-restart PostgreSQL, drift ACL/schema oraz oba signer fence aliases.
-Test trzech niezależnych procesów potwierdził zachowanie wcześniejszej
-decyzji, odmowę dokładnie przez `PENDING_CLOSED` przy nadal `ACTIVE` custody
-i późniejszy revoke bez deadlocku.
+Finalne wykonanie po zamrożeniu źródeł i testów, obejmujące oba missing-enrollment
+proofs oraz 31 istniejących lifecycle regressions, zakończyło się
+`33 passed, 1 warning` w 1645,75 s na rzeczywistym PostgreSQL 16.15.
+Oba niezależne lineage potwierdziły rzeczywisty commit starego contract 2,
+zachowanie oryginalnych decyzji po upgrade oraz odmowę nowego prawidłowego
+candidate z pełnym rollbackiem na contract 3.
 
-Oryginalne regresje PostgreSQL Atomic Commit V1: 58 passed w 672,83 s.
-Custody/evidence/freshness/native locking: 215 passed, 9 platform skips.
-Administrator API i nowa architektura: 67 passed. Istniejąca zamrożona
-architektura Stage 9/M0.5: 1090 passed. Atomic V1 contracts i boundary:
-240 passed. Zakresy częściowo się pokrywają, więc wyników nie sumowano.
-Ruff, formatter, skonfigurowany mypy Linux/Win32 oraz `git diff --check`
-przeszły. Połączony changed-code coverage wyniósł 89% przy niezmienionym
-progu 70%; mierzy Python, nie coverage gałęzi funkcji SQL.
+Wzmocniony test trzech procesów sprawdził dokładny SQL error
+`DB-authoritative lifecycle fence closed` kolejno dla `PENDING_CLOSED`,
+`VERIFY_ONLY` i `REVOKED`. Pierwsza odmowa nastąpiła jeszcze przy rzeczywistym
+lokalnym custody ACTIVE. Zatwierdzona wcześniej decyzja pozostała jedyną
+decyzją, a jej exact retry zachował payload/signature/envelope byte-identical.
+
+| Zakres bieżącej poprawki | Wynik |
+| --- | --- |
+| PostgreSQL 16: missing ROOT/HISTORY enrollment i lifecycle contract 3 | 33 passed, 1 warning; 1645,75 s |
+| Ponowne PostgreSQL Atomic Commit V1 regressions | 58 passed; 386,25 s |
+| Admin API (67), frozen transport (121), import regressions (25) | 213 passed; 46,57 s |
+| Odrębny frozen transport + import regressions | 146 passed; 31,08 s |
+| Ruff i dokładny workflow formatter | PASS; formatter 66 files |
+| Skonfigurowany mypy Linux / Win32 | PASS; 302 files na platformę, finalny narrow check 2 files na platformę |
+| Diff coverage względem origin/main, niezmieniony próg 70% | PASS; 87%, 840 changed lines, 107 missing |
+| `git diff --check` | PASS |
+
+Coverage połączono wyłącznie z bieżących unit i PostgreSQL runs. Mierzy
+wykonanie Python, nie coverage gałęzi samych SQL functions. Częściowo
+pokrywających się zakresów testów nie sumowano.
+
+Historyczna iteracja `882fa02c`, przed poprawką importów i obowiązkowego
+enrollment, miała odrębne szersze wyniki: 31 PostgreSQL V2 tests w 600,84 s,
+58 PostgreSQL V1 tests w 672,83 s, custody/evidence/freshness/native locking
+215 passed z 9 platform skips, admin/new architecture 67 passed, frozen
+Stage 9/M0.5 architecture 1090 passed i Atomic V1 contracts/boundary 240 passed.
+Jej połączony diff coverage wynosił 89%. Te historyczne wyniki nie są
+zastępowane sumą z bieżącym przebiegiem i nie ustanawiały enrollment
+qualification; lukę odtworzono w rzeczywistych testach obecnej poprawki.
 
 Nie uruchomiono całej wielogodzinnej macierzy CI ani bramek sprzętowych.
-Rzeczywiste metadata/CAS/locks/fsync i PostgreSQL nie były mockowane;
-istniejący native-keyring test seam pozostaje zastąpiony w fixture.
-Te wyniki nie są kwalifikacją produkcyjnej izolacji ani power-loss.
+Nie zmieniono timeoutów, coverage scopes ani progu 70%. Rzeczywiste
+metadata/CAS/locks/fsync i PostgreSQL nie były mockowane; istniejący
+native-keyring test seam pozostaje zastąpiony w fixture. Te wyniki nie są
+kwalifikacją produkcyjnej izolacji ani power-loss.
 
 `CODE_READY_FOR_REVIEW=YES`.
 `DB_CUSTODY_LIFECYCLE_TESTED=YES`.
