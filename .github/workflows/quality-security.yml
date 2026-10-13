@@ -74,6 +74,11 @@ jobs:
           bot_core/postgresql_root_proof_retention_schema.py
           bot_core/postgresql_root_proof_signing_intent.py
           bot_core/postgresql_root_proof_signing_intent_schema.py
+          bot_core/postgresql_atomic_root_proof_schema.py
+          bot_core/postgresql_atomic_root_proof_preaccount_sql.py
+          bot_core/postgresql_atomic_root_proof_qualification.py
+          bot_core/postgresql_atomic_root_proof_migration.py
+          bot_core/postgresql_atomic_root_proof_commit.py
           bot_core/postgresql_authenticated_issuer_history.py
           bot_core/postgresql_issuer_history_schema.py
           bot_core/postgresql_issuer_history_canonical_sql.py
@@ -114,6 +119,10 @@ jobs:
           tests/security/test_root_proof_atomic_composition.py
           tests/security/test_root_proof_atomic_composition_integration.py
           tests/security/test_root_proof_atomic_attempt_consistency.py
+          tests/security/test_postgresql_atomic_root_proof_commit.py
+          tests/security/atomic_root_proof_fixture.py
+          tests/security/test_atomic_root_proof_commit_contract.py
+          tests/architecture/test_stage9_atomic_root_proof_commit_boundary.py
       - name: Mypy configured scope
         run: python -m mypy
       - name: Mypy Windows configured scope
@@ -413,6 +422,82 @@ jobs:
         with:
           name: semantic-issuer-preflight-coverage
           path: semantic-preflight-coverage.xml
+          if-no-files-found: error
+          retention-days: 7
+
+  atomic-root-proof-commit:
+    name: PostgreSQL atomic Root Proof commit
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      postgres-other:
+        image: postgres:16
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 55434:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - name: Install atomic commit test tools
+        run: python -m pip install -e ".[test]" "diff-cover>=9,<10"
+      - name: Atomic transaction, qualification, crash and retry (serial)
+        env:
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+          DUDZIAN_TEST_MODE: "1"
+          DUDZIAN_ALLOW_LONG_POLL: "0"
+          DUDZIAN_TEST_POSTGRES_DSN: "host=127.0.0.1 port=55432 dbname=postgres user=postgres"
+          CRYPTOHUNTER_TEST_POSTGRES_OTHER_DSN: "host=127.0.0.1 port=55434 dbname=postgres user=postgres"
+          DUDZIAN_TEST_POSTGRES_RESTART_COMMAND: '["docker","restart","${{ job.services.postgres.id }}"]'
+          DUDZIAN_TEST_POSTGRES_CRASH_COMMAND: '["docker","exec","--user","postgres","${{ job.services.postgres.id }}","sh","-c","kill -KILL \"$1\"","sh"]'
+        run: >-
+          python -m pytest -p asyncio -p pytest_cov.plugin
+          tests/security/test_postgresql_atomic_root_proof_commit.py
+          tests/security/test_atomic_root_proof_commit_contract.py
+          tests/architecture/test_stage9_atomic_root_proof_commit_boundary.py
+          -m "not hardware and not destructive and not network"
+          --cov=bot_core.postgresql_atomic_root_proof_schema
+          --cov=bot_core.postgresql_atomic_root_proof_preaccount_sql
+          --cov=bot_core.postgresql_atomic_root_proof_qualification
+          --cov=bot_core.postgresql_atomic_root_proof_migration
+          --cov=bot_core.postgresql_atomic_root_proof_commit
+          --cov-branch --cov-config=.coveragerc
+          --cov-report=term-missing
+          --cov-report=xml:atomic-root-proof-coverage.xml -q
+      - name: Changed-code coverage ratchet
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: >-
+          diff-cover atomic-root-proof-coverage.xml
+          --compare-branch "origin/$BASE_REF" --fail-under=70
+      - name: Upload atomic commit coverage
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: atomic-root-proof-commit-coverage
+          path: atomic-root-proof-coverage.xml
           if-no-files-found: error
           retention-days: 7
 
