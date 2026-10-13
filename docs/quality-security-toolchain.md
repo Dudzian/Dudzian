@@ -126,6 +126,18 @@ TPM hardware, Stage 9/10 qualification, reboot, destructive lifecycle, and
 self-hosted Windows tests retain their existing explicit opt-in gates. The new
 workflow never invokes them.
 
+Atomic Root Proof Commit Authority V1 ma osobny, seryjny job PostgreSQL 16
+`atomic-root-proof-commit`, z limitem 120 minut. Istniejące joby, ich timeouty
+i zakresy testów pozostają bez zmian. Nowy job używa dwóch odizolowanych
+klastrów oraz współdzielonej niezmiennej lineage INITIAL_BINDING. Sprawdza
+fizyczny write set, ACL, migrację, rollback, lifecycle locks, utratę odpowiedzi
+COMMIT i restart. Pięć nowych modułów obejmuje branch coverage oraz niezmieniony
+próg diff coverage 70%; wchodzą również do konfiguracji mypy Linux/Windows
+i jawnej bramki formatowania Ruff. Zmienne infrastruktury testowej wybierają
+klastry i kontroler restartu; nie odblokowują publicznego issuera.
+Granice kwalifikacji opisuje
+[Atomic Commit V1](architecture/stage9_atomic_root_proof_commit_authority_v1.md).
+
 ## Security invariants now encoded
 
 - Signal strength has the signed `[-1, 1]` contract (direction plus magnitude),
