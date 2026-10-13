@@ -79,6 +79,11 @@ jobs:
           bot_core/postgresql_atomic_root_proof_qualification.py
           bot_core/postgresql_atomic_root_proof_migration.py
           bot_core/postgresql_atomic_root_proof_commit.py
+          bot_core/local_signing_custody.py
+          bot_core/local_signing_lifecycle_evidence.py
+          bot_core/postgresql_custody_lifecycle.py
+          bot_core/postgresql_custody_lifecycle_schema.py
+          bot_core/postgresql_custody_lifecycle_qualification.py
           bot_core/postgresql_authenticated_issuer_history.py
           bot_core/postgresql_issuer_history_schema.py
           bot_core/postgresql_issuer_history_canonical_sql.py
@@ -123,6 +128,10 @@ jobs:
           tests/security/atomic_root_proof_fixture.py
           tests/security/test_atomic_root_proof_commit_contract.py
           tests/architecture/test_stage9_atomic_root_proof_commit_boundary.py
+          tests/security/test_local_signing_lifecycle_evidence.py
+          tests/security/test_postgresql_custody_lifecycle.py
+          tests/security/test_custody_lifecycle_admin_contract.py
+          tests/architecture/test_stage9_custody_lifecycle_v2.py
       - name: Mypy configured scope
         run: python -m mypy
       - name: Mypy Windows configured scope
@@ -462,7 +471,7 @@ jobs:
           cache: pip
       - name: Install atomic commit test tools
         run: python -m pip install -e ".[test]" "diff-cover>=9,<10"
-      - name: Atomic transaction, qualification, crash and retry (serial)
+      - name: Atomic commit and custody lifecycle qualification, crash and retry (serial)
         env:
           PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
           DUDZIAN_TEST_MODE: "1"
@@ -476,12 +485,20 @@ jobs:
           tests/security/test_postgresql_atomic_root_proof_commit.py
           tests/security/test_atomic_root_proof_commit_contract.py
           tests/architecture/test_stage9_atomic_root_proof_commit_boundary.py
+          tests/security/test_local_signing_lifecycle_evidence.py
+          tests/security/test_postgresql_custody_lifecycle.py
+          tests/security/test_custody_lifecycle_admin_contract.py
+          tests/architecture/test_stage9_custody_lifecycle_v2.py
           -m "not hardware and not destructive and not network"
           --cov=bot_core.postgresql_atomic_root_proof_schema
           --cov=bot_core.postgresql_atomic_root_proof_preaccount_sql
           --cov=bot_core.postgresql_atomic_root_proof_qualification
           --cov=bot_core.postgresql_atomic_root_proof_migration
           --cov=bot_core.postgresql_atomic_root_proof_commit
+          --cov=bot_core.local_signing_lifecycle_evidence
+          --cov=bot_core.postgresql_custody_lifecycle
+          --cov=bot_core.postgresql_custody_lifecycle_schema
+          --cov=bot_core.postgresql_custody_lifecycle_qualification
           --cov-branch --cov-config=.coveragerc
           --cov-report=term-missing
           --cov-report=xml:atomic-root-proof-coverage.xml -q

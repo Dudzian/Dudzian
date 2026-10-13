@@ -138,6 +138,21 @@ klastry i kontroler restartu; nie odblokowują publicznego issuera.
 Granice kwalifikacji opisuje
 [Atomic Commit V1](architecture/stage9_atomic_root_proof_commit_authority_v1.md).
 
+Durable Custody Lifecycle Fencing V2 rozszerza ten sam seryjny job
+`atomic-root-proof-commit` o rzeczywiste PostgreSQL 16, lokalne custody,
+administracyjne close/completion, recovery po utracie odpowiedzi COMMIT oraz
+wyścig niezależnych procesów issuer/admin. Zachowuje wszystkie testy Atomic
+Commit V1, limit 120 minut i ten sam raport `atomic-root-proof-coverage.xml`
+z progiem diff coverage 70%. Pokrycie gałęzi obejmuje
+`local_signing_lifecycle_evidence.py`, `postgresql_custody_lifecycle.py`,
+`postgresql_custody_lifecycle_schema.py` i
+`postgresql_custody_lifecycle_qualification.py`. Wszystkie cztery moduły wchodzą
+do skonfigurowanego mypy Linux/Win32. Moduły, nowe testy bezpieczeństwa i kontrakt
+architektoniczny obejmuje jawna bramka formatowania Ruff. Nie dodaje to bramki
+kwalifikacji sprzętowej ani prawa do produkcyjnej emisji Root Proof.
+Granice izolacji i trwałe punkty protokołu opisuje
+[Lifecycle V2](architecture/stage9_durable_custody_lifecycle_v2.md).
+
 ## Security invariants now encoded
 
 - Signal strength has the signed `[-1, 1]` contract (direction plus magnitude),
