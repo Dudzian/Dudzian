@@ -532,7 +532,9 @@ def test_initial_fsync_failure_leaves_custody_active_and_recovery_resyncs_intent
     # qualified journal re-sync boundary deliberately wraps it as custody
     # durability failure; the exact original OSError must remain the cause.
     if os.name == "nt":
-        with pytest.raises(LocalSigningCustodyError, match="lifecycle evidence durability failed") as failure:
+        with pytest.raises(
+            LocalSigningCustodyError, match="lifecycle evidence durability failed"
+        ) as failure:
             _transition(tmp_path, security, authority, close_authorization)
         assert type(failure.value.__cause__) is OSError
         assert str(failure.value.__cause__) == "fsync failure"
