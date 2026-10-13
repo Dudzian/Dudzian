@@ -528,8 +528,19 @@ def test_initial_fsync_failure_leaves_custody_active_and_recovery_resyncs_intent
         real_sync(descriptor)
 
     monkeypatch.setattr(custody.os, "fsync", fail_once)
-    with pytest.raises(OSError, match="fsync failure"):
-        _transition(tmp_path, security, authority, close_authorization)
+    # POSIX can surface the injected fsync error directly. On Windows the
+    # qualified journal re-sync boundary deliberately wraps it as custody
+    # durability failure; the exact original OSError must remain the cause.
+    if os.name == "nt":
+        with pytest.raises(
+            LocalSigningCustodyError, match="lifecycle evidence durability failed"
+        ) as failure:
+            _transition(tmp_path, security, authority, close_authorization)
+        assert type(failure.value.__cause__) is OSError
+        assert str(failure.value.__cause__) == "fsync failure"
+    else:
+        with pytest.raises(OSError, match="fsync failure"):
+            _transition(tmp_path, security, authority, close_authorization)
     assert (
         custody._read_record(
             tmp_path / "root-proof-signing.json", security, authority.provider_role
