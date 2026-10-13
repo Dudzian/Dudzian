@@ -194,7 +194,10 @@ def _sync_path(path: Path) -> None:
     """Re-establish durability after a prior writer's interrupted fsync/ack."""
 
     try:
-        with _open_custody_descriptor(path) as descriptor:
+        # Windows CRT _commit() rejects an O_RDONLY descriptor (EBADF).
+        # Request writable access to the same pinned, NTFS-qualified file only
+        # for durability; do not modify its bytes or relax any path/ACL checks.
+        with _open_custody_descriptor(path, write=os.name == "nt") as descriptor:
             os.fsync(descriptor)
         _fsync_directory(path.parent)
     except OSError as exc:
