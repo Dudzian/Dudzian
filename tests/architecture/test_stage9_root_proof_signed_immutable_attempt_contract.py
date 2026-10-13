@@ -12,8 +12,8 @@ import pytest
 from bot_core import (
     cha_attempt_signatures,
     cha_attempt_store,
-    cha_issuance_request,
     cha_issuance_execution,
+    cha_issuance_request,
     cha_root_proof_signing_custody,
 )
 from bot_core.licensing import cha_root_proof_signed_attempt
@@ -200,7 +200,8 @@ def test_production_issuance_effects_and_consumers_preserve_local_dispatch_owner
         "VerifiedSignedImmutableRootProofIssuanceAttempt as Attempt\n"
         "import httpx\n"
         "def send(attempt: Attempt):\n"
-        "    return httpx.post('https://issuer.invalid', content=attempt.canonical_request_bytes)\n",
+        "    return httpx.post('https://issuer.invalid', "
+        "content=attempt.canonical_request_bytes)\n",
         "from bot_core.licensing import cha_root_proof_signed_attempt as attempts\n"
         "from urllib.request import urlopen as send\n",
         "import importlib\n"
@@ -214,7 +215,8 @@ def test_production_issuance_effects_and_consumers_preserve_local_dispatch_owner
         "from http.client import HTTPSConnection\n",
         "import httpx\n"
         "def issue(attempt):\n"
-        "    return httpx.post('https://issuer.invalid', content=attempt.canonical_request_bytes)\n",
+        "    return httpx.post('https://issuer.invalid', "
+        "content=attempt.canonical_request_bytes)\n",
     ],
 )
 def test_added_execution_paths_cannot_bypass_local_only_review_gate(source):
@@ -227,7 +229,8 @@ def test_retained_request_reexports_cannot_hide_a_future_transport():
         _assert_local_issuance_execution_ownership(
             {
                 "bot_core/retained_attempt_api.py": (
-                    "from bot_core.cha_attempt_signatures import RetainedIssuanceRequest as Request\n"
+                    "from bot_core.cha_attempt_signatures import "
+                    "RetainedIssuanceRequest as Request\n"
                 ),
                 "bot_core/issuance/future_transport.py": (
                     "from ..retained_attempt_api import Request\nimport aiohttp\n"
@@ -251,6 +254,258 @@ def test_delegating_a_signed_attempt_to_a_transport_helper_fails(transport):
                 "core/future_network_helper.py": f"import {transport}\n",
             }
         )
+
+
+def test_atomic_composition_names_the_selected_registry_module_without_package_facade():
+    path = "bot_core/root_proof_atomic_composition.py"
+    imports = _source_imports(ast.parse((ROOT / path).read_text(encoding="utf-8")), path)
+    assert "bot_core.postgresql_entitlement_registry" in imports
+    assert "bot_core" not in imports
+
+
+def _passive_diagnostic_sources(transport):
+    return {
+        "bot_core/__init__.py": "from bot_core.application_http import fetch\n",
+        "bot_core/application_http.py": f"import {transport}\n",
+        "bot_core/selected_identity.py": "def identity():\n    return ('selected', 'read-only')\n",
+        "bot_core/passive_diagnostic.py": (
+            "from bot_core.cha_attempt_signatures import RetainedIssuanceRequest as Request\n"
+            "import bot_core.selected_identity as identities\n"
+            "def observe(request: Request):\n"
+            "    return identities.identity(), request.attempt_id\n"
+        ),
+    }
+
+
+@pytest.mark.parametrize("transport", sorted(_TRANSPORT_IMPORTS))
+def test_passive_identity_reads_do_not_inherit_independent_application_transport(transport):
+    _assert_local_issuance_execution_ownership(_passive_diagnostic_sources(transport))
+
+
+@pytest.mark.parametrize("transport", sorted(_TRANSPORT_IMPORTS))
+@pytest.mark.parametrize("delegated", [False, True], ids=["selected-child", "delegated-helper"])
+def test_selected_diagnostic_dependency_still_cannot_supply_issuer_transport(transport, delegated):
+    sources = _passive_diagnostic_sources(transport)
+    if delegated:
+        sources["bot_core/selected_identity.py"] = (
+            "from core.transport_helper import identity as read_identity\n"
+            "def identity():\n    return read_identity()\n"
+        )
+        sources["core/transport_helper.py"] = f"import {transport}\n"
+        target = "core.transport_helper"
+    else:
+        sources["bot_core/selected_identity.py"] += f"import {transport}\n"
+        target = "bot_core.selected_identity"
+    with pytest.raises(AssertionError, match=f"issuer transport bypass in {target}"):
+        _assert_local_issuance_execution_ownership(sources)
+
+
+@pytest.mark.parametrize(
+    "module, operation",
+    [
+        ("requests", "post"),
+        ("httpx", "post"),
+        ("http.client", "HTTPSConnection"),
+        ("grpc", "insecure_channel"),
+        ("socket", "create_connection"),
+        ("aiohttp", "ClientSession"),
+        ("urllib.request", "urlopen"),
+    ],
+)
+def test_multi_hop_relative_request_reexports_and_transport_aliases_remain_guarded(
+    module, operation
+):
+    with pytest.raises(AssertionError, match="issuer transport bypass in core.transport_helper"):
+        _assert_local_issuance_execution_ownership(
+            {
+                "bot_core/retained_attempt_api.py": (
+                    "from bot_core.cha_attempt_signatures import "
+                    "RetainedIssuanceRequest as Request\n"
+                ),
+                "bot_core/issuance/retained_alias.py": (
+                    "from ..retained_attempt_api import Request as Alias\n"
+                ),
+                "bot_core/issuance/nested/diagnostic.py": (
+                    "from ..retained_alias import Alias as Attempt\n"
+                    "from .bridge import publish as send\n"
+                    "def issue(request: Attempt):\n    return send(request.canonical_bytes)\n"
+                ),
+                "bot_core/issuance/nested/bridge.py": (
+                    "from core.transport_helper import transmit as publish\n"
+                ),
+                "core/transport_helper.py": f"from {module} import {operation} as transmit\n",
+            }
+        )
+
+
+_ATOMIC_DIAGNOSTIC_MUTATIONS = (
+    _ISSUANCE_EFFECTS
+    | _EXECUTION_PRIVATE_REFERENCES
+    | {
+        "execute_local_issuance",
+        "sign",
+        "_sign",
+        "_sign_result",
+        "sign_root_proof",
+        "sign_history_head",
+        "sign_finalization",
+        "sign_freshness_proposal",
+        "bind",
+        "compare_and_swap_bind",
+        "append_bind",
+        "append",
+        "append_record",
+        "append_exact_successor",
+        "retain_attested_head",
+        "retain_prepared",
+        "advance",
+        "retry_advance",
+        "advance_exact_successor",
+        "commit_checkpoint",
+        "reserve",
+        "finalize",
+    }
+)
+
+
+def _assert_atomic_diagnostic_read_only(source, path):
+    """Scope guard for the two new diagnostic modules, including bound aliases."""
+    tree = ast.parse(source, filename=path)
+    nodes = list(ast.walk(tree))
+    parents = {child: node for node in nodes for child in ast.iter_child_nodes(node)}
+    references = (
+        {node.attr for node in nodes if isinstance(node, ast.Attribute) and node.attr != "append"}
+        | {node.id for node in nodes if isinstance(node, ast.Name)}
+        | {alias.name for node in nodes if isinstance(node, ast.ImportFrom) for alias in node.names}
+    )
+    references.update(
+        node.args[1].value
+        for node in nodes
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id in {"getattr", "setattr"}
+        and len(node.args) > 1
+        and isinstance(node.args[1], ast.Constant)
+        and isinstance(node.args[1].value, str)
+    )
+    assert not references & _ATOMIC_DIAGNOSTIC_MUTATIONS, f"atomic diagnostic mutation in {path}"
+
+    def scope(node):
+        while node in parents:
+            node = parents[node]
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                return node
+        return tree
+
+    def builtin_list_available(node):
+        scopes = {tree}
+        while scope(node) is not tree:
+            node = scope(node)
+            scopes.add(node)
+        return not any(
+            scope(item) in scopes
+            and (
+                isinstance(item, ast.Name)
+                and item.id == "list"
+                and isinstance(item.ctx, ast.Store)
+                or isinstance(item, ast.arg)
+                and item.arg == "list"
+                or isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+                and item.name == "list"
+                or isinstance(item, (ast.Import, ast.ImportFrom))
+                and any(
+                    (alias.asname or alias.name.split(".")[0]) in {"list", "*"}
+                    for alias in item.names
+                )
+            )
+            for item in nodes
+        )
+
+    # History also has append(). Permit only locally constructed list receivers,
+    # never a method alias or a receiver identified merely by its variable name.
+    for node in nodes:
+        if not isinstance(node, ast.Attribute) or node.attr != "append":
+            continue
+        assert isinstance(node.value, ast.Name), f"atomic diagnostic mutation in {path}"
+        stores = [
+            item
+            for item in nodes
+            if isinstance(item, ast.Name)
+            and item.id == node.value.id
+            and isinstance(item.ctx, ast.Store)
+            and scope(item) is scope(node)
+        ]
+        assert stores, f"atomic diagnostic mutation in {path}"
+        for store in stores:
+            assignment = parents[store]
+            assert isinstance(assignment, (ast.Assign, ast.AnnAssign)), (
+                f"atomic diagnostic mutation in {path}"
+            )
+            value = assignment.value
+            assert isinstance(value, ast.List) or (
+                isinstance(value, ast.Call)
+                and isinstance(value.func, ast.Name)
+                and value.func.id == "list"
+                and builtin_list_available(node)
+            ), f"atomic diagnostic mutation in {path}"
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "bot_core/root_proof_atomic_composition.py",
+        "bot_core/root_proof_atomic_attempt_consistency.py",
+    ],
+)
+def test_atomic_diagnostics_cannot_sign_bind_append_history_or_finalize(path):
+    _assert_atomic_diagnostic_read_only((ROOT / path).read_text(encoding="utf-8"), path)
+
+
+@pytest.mark.parametrize(
+    "operation", ["sign_root_proof", "compare_and_swap_bind", "append", "finalize_attempt"]
+)
+@pytest.mark.parametrize(
+    "template",
+    [
+        "def mutate(authority):\n    return authority.{operation}(b'payload')\n",
+        "def mutate(authority):\n    alias = authority.{operation}\n    return alias\n",
+        "from bot_core.authority import {operation} as harmless\n",
+        "def mutate(authority):\n    return getattr(authority, '{operation}')\n",
+        "def mutate(authority):\n    return setattr(authority, '{operation}', lambda: None)\n",
+    ],
+    ids=["direct-call", "bound-alias", "import-alias", "getattr-alias", "setattr-alias"],
+)
+def test_atomic_diagnostic_mutation_references_cannot_hide_behind_aliases(operation, template):
+    with pytest.raises(AssertionError, match="atomic diagnostic mutation"):
+        _assert_atomic_diagnostic_read_only(
+            template.format(operation=operation), "bot_core/future.py"
+        )
+
+
+def test_history_append_cannot_use_a_diagnostic_list_variable_name():
+    source = (
+        "def mutate(authority):\n    failures = authority\n    return failures.append(b'payload')\n"
+    )
+    with pytest.raises(AssertionError, match="atomic diagnostic mutation"):
+        _assert_atomic_diagnostic_read_only(source, "bot_core/future.py")
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "def mutate(authority, list):\n"
+        "    failures = list(authority)\n"
+        "    return failures.append(b'payload')\n",
+        "def mutate(authority):\n"
+        "    list = lambda _: authority\n"
+        "    failures = list(authority)\n"
+        "    return failures.append(b'payload')\n",
+    ],
+    ids=["shadowed-argument", "shadowed-assignment"],
+)
+def test_history_append_cannot_hide_behind_a_shadowed_list_constructor(source):
+    with pytest.raises(AssertionError, match="atomic diagnostic mutation"):
+        _assert_atomic_diagnostic_read_only(source, "bot_core/future.py")
 
 
 def test_child_freeze_and_historical_parent_bytes():
@@ -531,7 +786,9 @@ def test_child_never_claims_permanent_pre_sign_intent_exhaustion():
 
 def test_runtime_reuses_an_exact_intent_and_rejects_unequal_identity(tmp_path):
     from dataclasses import replace
+
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
     from tests.licensing.test_cha_attempt_store_stage9 import authorization
     from tests.licensing.test_cha_root_proof_signed_attempt import signer_identity
 

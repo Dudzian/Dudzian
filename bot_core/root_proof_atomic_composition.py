@@ -16,7 +16,7 @@ from typing import Any, Literal
 import psycopg
 from psycopg import sql
 
-from bot_core import postgresql_entitlement_registry as entitlement_schema
+import bot_core.postgresql_entitlement_registry as entitlement_schema
 from bot_core.authenticated_issuer_history import HistoryStreamIdentity
 from bot_core.entitlement_registry_contract import RegistryReadOutcome, RegistrySubject
 from bot_core.local_signing_custody import (
