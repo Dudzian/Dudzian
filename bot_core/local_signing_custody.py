@@ -494,7 +494,7 @@ def _custody_lock(directory: Path, *, exclusive: bool):
     or I/O operations; retry must reload the retained exact attempt identity.
     """
 
-    if os.name not in {"posix", "nt"}:
+    if os.name not in {"posix", "nt"} or type(exclusive) is not bool:
         raise LocalSigningCustodyError("production-local custody locking is unavailable")
     directory = _exact_path_snapshot(directory, label="custody lock directory")
 

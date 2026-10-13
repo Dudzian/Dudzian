@@ -328,6 +328,26 @@ def test_custody_lock_rejects_caller_path_before_scope_or_os_lock_access(tmp_pat
     assert not (other / custody._LOCK_FILENAME).exists()
 
 
+@pytest.mark.parametrize("caller_truth", [False, True])
+def test_custody_lock_rejects_spoofed_exclusive_mode_before_caller_methods(tmp_path, caller_truth):
+    calls = []
+
+    class CallerMode:
+        def __bool__(self):
+            calls.append("bool")
+            return caller_truth
+
+        def __eq__(self, candidate):
+            calls.append("eq")
+            return True
+
+    with pytest.raises(LocalSigningCustodyError):
+        with custody._custody_lock(tmp_path, exclusive=CallerMode()):
+            pytest.fail("caller-selected mode yielded a live custody lease")
+    assert calls == []
+    assert not (tmp_path / custody._LOCK_FILENAME).exists()
+
+
 def _initial_writer(tmp_path, security, authority, lease):
     return custody._write_new_record(
         custody._record_path(tmp_path, authority.provider_role),
