@@ -79,6 +79,17 @@ wyłączone `fsync`, aby sprawdzić odmowę instalacji i runtime. Pierwszy klast
 zachowuje trwałe ustawienia. To infrastruktura negatywnego testu CI; nie zmienia
 konfiguracji wdrożenia ani bramek kwalifikacji sprzętowej.
 
+Odczytowa kwalifikacja atomowej kompozycji Stage 9 i walidacja RESERVED/STAGED
+wchodzą do istniejących bramek Ruff oraz mypy Linux/Windows. Szybkie negatywne
+testy kwalifikacji korzystają z seryjnej bramki jakości; testy rzeczywistych
+autorytetów i dokładnych bajtów korzystają z semantic issuer preflight oraz
+jego niezmienionego progu 70% diff coverage. Drugi trwały PostgreSQL 16 w tym
+zadaniu dowodzi odmowy dla różnych klastrów, a restart pierwszego potwierdza
+ponowną kwalifikację z katalogu. Niezmienna lineage INITIAL_BINDING i signed
+CHA request jest przygotowana raz dla nowego modułu integracyjnego. Timeouty,
+dotychczasowe testy i progi pokrycia pozostają bez zmian. Zakres i blokady
+opisuje [audyt granicy atomowej](architecture/stage9_qualified_atomic_root_proof_boundary.md).
+
 Trwały signing intent korzysta z dwóch istniejących seryjnych bramek PostgreSQL 16.
 Test schematu dopisuje pokrycie gałęzi `postgresql_root_proof_signing_intent_schema.py`
 do `coverage.xml` w `quality-ratchet`. Testy runtime z pełną genuine lineage
