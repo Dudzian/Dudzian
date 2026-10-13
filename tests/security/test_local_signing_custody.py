@@ -7,7 +7,6 @@ import hashlib
 import json
 from pathlib import Path
 import threading
-import time
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PrivateKey,
@@ -128,6 +127,14 @@ def _provision_pair(
     return root, history
 
 
+def _custody_file_bytes(directory: Path) -> dict[Path, bytes]:
+    return {
+        path.relative_to(directory): path.read_bytes()
+        for path in directory.rglob("*")
+        if path.is_file()
+    }
+
+
 @requires_native_custody_locking
 def test_offline_provisioning_is_distinct_and_restart_stable(
     tmp_path: Path,
@@ -185,21 +192,15 @@ def test_sign_verify_and_exclusive_role_apis(
 
 
 @requires_native_custody_locking
-@pytest.mark.parametrize(
-    ("first", "second"),
-    [
-        (SigningKeyLifecycle.ACTIVE, SigningKeyLifecycle.VERIFY_ONLY),
-        (SigningKeyLifecycle.ACTIVE, SigningKeyLifecycle.REVOKED),
-    ],
-)
-def test_active_lifecycle_transitions_block_signing(
+@pytest.mark.parametrize("target", [SigningKeyLifecycle.VERIFY_ONLY, SigningKeyLifecycle.REVOKED])
+def test_legacy_active_lifecycle_transitions_are_denied_without_mutation(
     tmp_path: Path,
     store: NativeKeyringSigningSecretAdministrator,
     security: SecurityProfileIdentity,
-    first: SigningKeyLifecycle,
-    second: SigningKeyLifecycle,
+    native_keyring,
+    target: SigningKeyLifecycle,
 ) -> None:
-    provision_local_signing_authority(
+    metadata = provision_local_signing_authority(
         tmp_path,
         _admin(tmp_path, security, ProviderRole.ROOT_PROOF_SIGNING),
         security=security,
@@ -208,51 +209,88 @@ def test_active_lifecycle_transitions_block_signing(
     provider = LocalRootProofSigningProvider(
         tmp_path, keyring_index_path=tmp_path / "keyring-index.json", security=security
     )
-    assert provider.lifecycle_state() is first
-    changed = transition_local_signing_lifecycle(
-        tmp_path, security=security, role=ProviderRole.ROOT_PROOF_SIGNING, target=second
+    before_files = _custody_file_bytes(tmp_path)
+    before_secrets = dict(native_keyring)
+    with pytest.raises(LocalSigningLifecycleError):
+        transition_local_signing_lifecycle(
+            tmp_path, security=security, role=ProviderRole.ROOT_PROOF_SIGNING, target=target
+        )
+    assert _custody_file_bytes(tmp_path) == before_files
+    assert native_keyring == before_secrets
+    assert provider.lifecycle_state() is SigningKeyLifecycle.ACTIVE
+    assert provider.lifecycle_generation() == metadata.lifecycle_generation
+    assert provider.active_credential_identity() == metadata.credential_identity()
+    Ed25519PublicKey.from_public_bytes(metadata.public_key).verify(
+        provider.sign_root_proof(b"legacy signed output"), b"legacy signed output"
     )
-    assert changed.lifecycle_generation == 2
-    assert provider.lifecycle_state() is second
-    with pytest.raises(LocalSigningLifecycleError, match="not ACTIVE"):
-        provider.sign_root_proof(b"new output")
-    with pytest.raises(LocalSigningLifecycleError, match="not ACTIVE"):
-        provider.active_credential_identity()
 
 
 @requires_native_custody_locking
-def test_verify_only_may_be_revoked_and_revoked_is_terminal(
+@pytest.mark.parametrize(
+    ("state", "generation"),
+    [(SigningKeyLifecycle.VERIFY_ONLY, 2), (SigningKeyLifecycle.REVOKED, 3)],
+)
+@pytest.mark.parametrize(
+    "role", [ProviderRole.ROOT_PROOF_SIGNING, ProviderRole.HISTORY_ATTESTATION_SIGNING]
+)
+def test_historical_v1_lifecycle_records_remain_readable_and_legacy_updates_are_denied(
     tmp_path: Path,
     store: NativeKeyringSigningSecretAdministrator,
     security: SecurityProfileIdentity,
+    native_keyring,
+    state: SigningKeyLifecycle,
+    generation: int,
+    role: ProviderRole,
 ) -> None:
-    provision_local_signing_authority(
+    metadata = provision_local_signing_authority(
         tmp_path,
-        _admin(tmp_path, security, ProviderRole.HISTORY_ATTESTATION_SIGNING),
+        _admin(tmp_path, security, role),
         security=security,
-        role=ProviderRole.HISTORY_ATTESTATION_SIGNING,
+        role=role,
     )
-    transition_local_signing_lifecycle(
-        tmp_path,
-        security=security,
-        role=ProviderRole.HISTORY_ATTESTATION_SIGNING,
-        target=SigningKeyLifecycle.VERIFY_ONLY,
+    provider_type = (
+        LocalRootProofSigningProvider
+        if role is ProviderRole.ROOT_PROOF_SIGNING
+        else LocalHistoryAttestationSigningProvider
     )
-    final = transition_local_signing_lifecycle(
-        tmp_path,
-        security=security,
-        role=ProviderRole.HISTORY_ATTESTATION_SIGNING,
-        target=SigningKeyLifecycle.REVOKED,
+    provider = provider_type(
+        tmp_path, keyring_index_path=tmp_path / "keyring-index.json", security=security
     )
-    assert final.lifecycle_generation == 3
-    for target in (SigningKeyLifecycle.ACTIVE, SigningKeyLifecycle.VERIFY_ONLY):
+    sign = (
+        provider.sign_root_proof
+        if role is ProviderRole.ROOT_PROOF_SIGNING
+        else provider.sign_history_head
+    )
+    snapshot = provider.credential_snapshot()
+    signature = sign(b"persisted legacy history")
+    # A historical V1 storage fixture models records written before isolation.
+    path = custody_module._record_path(tmp_path, role)
+    document = json.loads(path.read_text())
+    document.update(lifecycle_state=state.value, lifecycle_generation=generation)
+    path.write_text(json.dumps(document))
+    path.chmod(0o600)
+    before_files = _custody_file_bytes(tmp_path)
+    before_secrets = dict(native_keyring)
+    assert provider.lifecycle_state() is state
+    assert provider.lifecycle_generation() == generation
+    assert provider.public_key(metadata.credential_id) == metadata.public_key
+    if state is SigningKeyLifecycle.VERIFY_ONLY:
+        assert provider.verify_historical(b"persisted legacy history", signature, snapshot)
+    else:
+        with pytest.raises(LocalSigningLifecycleError, match="REVOKED"):
+            provider.verify_historical(b"persisted legacy history", signature, snapshot)
+    with pytest.raises(LocalSigningLifecycleError, match="not ACTIVE"):
+        sign(b"new history")
+    for target in SigningKeyLifecycle:
         with pytest.raises(LocalSigningLifecycleError):
             transition_local_signing_lifecycle(
                 tmp_path,
                 security=security,
-                role=ProviderRole.HISTORY_ATTESTATION_SIGNING,
+                role=role,
                 target=target,
             )
+    assert _custody_file_bytes(tmp_path) == before_files
+    assert native_keyring == before_secrets
 
 
 @requires_native_custody_locking
@@ -891,10 +929,11 @@ def test_concurrent_cross_role_random_material_remains_distinct(
 
 
 @requires_native_custody_locking
-def test_concurrent_lifecycle_transitions_are_linearizable_and_monotonic(
+def test_concurrent_legacy_lifecycle_transitions_are_all_denied(
     tmp_path: Path,
     store: NativeKeyringSigningSecretAdministrator,
     security: SecurityProfileIdentity,
+    native_keyring,
 ) -> None:
     metadata = provision_local_signing_authority(
         tmp_path,
@@ -902,6 +941,8 @@ def test_concurrent_lifecycle_transitions_are_linearizable_and_monotonic(
         security=security,
         role=ProviderRole.ROOT_PROOF_SIGNING,
     )
+    before_files = _custody_file_bytes(tmp_path)
+    before_secrets = dict(native_keyring)
     barrier = threading.Barrier(2)
 
     def transition(target: SigningKeyLifecycle):
@@ -923,8 +964,10 @@ def test_concurrent_lifecycle_transitions_are_linearizable_and_monotonic(
     provider = LocalRootProofSigningProvider(
         tmp_path, keyring_index_path=tmp_path / "keyring-index.json", security=security
     )
-    assert provider.lifecycle_state() is SigningKeyLifecycle.REVOKED
-    assert provider.lifecycle_generation() == metadata.lifecycle_generation + len(committed)
+    assert committed == []
+    assert len(errors) == 2
+    assert provider.lifecycle_state() is SigningKeyLifecycle.ACTIVE
+    assert provider.lifecycle_generation() == metadata.lifecycle_generation
     assert all(isinstance(error, LocalSigningLifecycleError) for error in errors)
     with pytest.raises(LocalSigningLifecycleError):
         transition_local_signing_lifecycle(
@@ -933,21 +976,26 @@ def test_concurrent_lifecycle_transitions_are_linearizable_and_monotonic(
             role=ProviderRole.ROOT_PROOF_SIGNING,
             target=SigningKeyLifecycle.VERIFY_ONLY,
         )
+    assert _custody_file_bytes(tmp_path) == before_files
+    assert native_keyring == before_secrets
 
 
 @requires_native_custody_locking
-def test_sign_and_revoke_have_an_explicit_linearization_order(
+def test_concurrent_signing_preserves_legacy_identity_when_revoke_is_denied(
     tmp_path: Path,
     store: NativeKeyringSigningSecretAdministrator,
     security: SecurityProfileIdentity,
     monkeypatch: pytest.MonkeyPatch,
+    native_keyring,
 ) -> None:
-    provision_local_signing_authority(
+    metadata = provision_local_signing_authority(
         tmp_path,
         _admin(tmp_path, security, ProviderRole.ROOT_PROOF_SIGNING),
         security=security,
         role=ProviderRole.ROOT_PROOF_SIGNING,
     )
+    before_files = _custody_file_bytes(tmp_path)
+    before_secrets = dict(native_keyring)
     provider = LocalRootProofSigningProvider(
         tmp_path,
         keyring_index_path=tmp_path / "keyring-index.json",
@@ -964,34 +1012,42 @@ def test_sign_and_revoke_have_an_explicit_linearization_order(
         return original(self, key)
 
     monkeypatch.setattr(NativeKeyringSigningSecretReader, "read_authority_secret", blocking_get)
-    order: list[str] = []
+    results: list[bytes] = []
+    denied: list[LocalSigningLifecycleError] = []
+    attempted = threading.Event()
 
     def sign():
-        provider.sign_root_proof(b"linearized")
-        order.append("signed")
+        results.append(provider.sign_root_proof(b"linearized"))
 
     def revoke():
-        transition_local_signing_lifecycle(
-            tmp_path,
-            security=security,
-            role=ProviderRole.ROOT_PROOF_SIGNING,
-            target=SigningKeyLifecycle.REVOKED,
-        )
-        order.append("revoked")
+        attempted.set()
+        try:
+            transition_local_signing_lifecycle(
+                tmp_path,
+                security=security,
+                role=ProviderRole.ROOT_PROOF_SIGNING,
+                target=SigningKeyLifecycle.REVOKED,
+            )
+        except LocalSigningLifecycleError as exc:
+            denied.append(exc)
 
     signing = threading.Thread(target=sign, name="signer")
     revoking = threading.Thread(target=revoke, name="revoker")
     signing.start()
     assert entered.wait(5)
     revoking.start()
-    time.sleep(0.05)
-    assert order == []
+    assert attempted.wait(5)
     release.set()
     signing.join(5)
     revoking.join(5)
-    assert order == ["signed", "revoked"]
-    with pytest.raises(LocalSigningLifecycleError):
-        provider.active_credential_identity()
+    assert not signing.is_alive()
+    assert not revoking.is_alive()
+    assert len(denied) == len(results) == 1
+    Ed25519PublicKey.from_public_bytes(metadata.public_key).verify(results[0], b"linearized")
+    assert provider.active_credential_identity() == metadata.credential_identity()
+    assert provider.lifecycle_generation() == metadata.lifecycle_generation
+    assert _custody_file_bytes(tmp_path) == before_files
+    assert native_keyring == before_secrets
 
 
 @requires_native_custody_locking
@@ -1016,7 +1072,7 @@ def test_failed_metadata_commit_cleans_only_new_protected_secret(
     monkeypatch.setattr(
         custody_module,
         "_write_new_record",
-        lambda path, payload: (_ for _ in ()).throw(OSError("injected commit failure")),
+        lambda path, payload, **kwargs: (_ for _ in ()).throw(OSError("injected commit failure")),
     )
     with pytest.raises(OSError, match="injected"):
         provision_local_signing_authority(

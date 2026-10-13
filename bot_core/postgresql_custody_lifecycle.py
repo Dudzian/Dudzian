@@ -278,12 +278,18 @@ def prepare_custody_lifecycle_request(
 
 @dataclass(frozen=True, slots=True, eq=False, weakref_slot=True)
 class DurableCloseAuthorization:
-    """Positive committed DB observation; validated by object membership."""
+    """Positive committed DB observation; membership never skips a live read."""
 
     descriptor: bytes
 
 
-_AUTHORIZATIONS: weakref.WeakKeyDictionary[DurableCloseAuthorization, bytes] = (
+@dataclass(frozen=True, slots=True)
+class _DurableCloseBinding:
+    request: CustodyLifecycleRequest
+    deployment: PostgreSQLCustodyLifecycleTestDeployment
+
+
+_AUTHORIZATIONS: weakref.WeakKeyDictionary[DurableCloseAuthorization, _DurableCloseBinding] = (
     weakref.WeakKeyDictionary()
 )
 _AUTHORIZATION_LOCK = threading.Lock()
@@ -293,12 +299,26 @@ def validate_durable_close_authorization(
     close_authorization: object, operation_descriptor: bytes
 ) -> None:
     with _AUTHORIZATION_LOCK:
+        binding = (
+            _AUTHORIZATIONS.get(close_authorization)
+            if type(close_authorization) is DurableCloseAuthorization
+            else None
+        )
         if (
             type(close_authorization) is not DurableCloseAuthorization
-            or _AUTHORIZATIONS.get(close_authorization) != operation_descriptor
+            or type(operation_descriptor) is not bytes
+            or type(binding) is not _DurableCloseBinding
+            or binding.request.descriptor != operation_descriptor
             or close_authorization.descriptor != operation_descriptor
         ):
             raise CustodyLifecycleConflict("positive committed exact close authorization required")
+    # Release the membership lock before opening PostgreSQL. The caller may
+    # hold custody's lock; the established order is custody -> database fence.
+    # Recreate the administrator from the original qualified deployment rather
+    # than trusting a caller-mutable coordinator instance or a descriptor DTO.
+    administrator = PostgreSQLCustodyLifecycleAdministrator(binding.deployment)
+    if administrator._read_committed_close(binding.request) is None:
+        raise CustodyLifecycleIndeterminate("durable close not present")
 
 
 def _persistence_cut(name: str, connection: psycopg.Connection[Any]) -> None:
@@ -366,10 +386,26 @@ class PostgreSQLCustodyLifecycleAdministrator:
         return record
 
     def _authorize(self, request: CustodyLifecycleRequest) -> DurableCloseAuthorization:
+        # This helper is callable Python, so membership can only be registered
+        # after its own qualified, committed read of the exact enrolled close.
+        # Neither a successful-looking DTO nor a helper name grants authority.
+        if self._read_committed_close(request) is None:
+            raise CustodyLifecycleIndeterminate("durable close not present")
         authorization = DurableCloseAuthorization(request.descriptor)
         with _AUTHORIZATION_LOCK:
-            _AUTHORIZATIONS[authorization] = request.descriptor
+            _AUTHORIZATIONS[authorization] = _DurableCloseBinding(request, self._deployment)
         return authorization
+
+    def _read_committed_close(self, request: CustodyLifecycleRequest) -> dict[str, Any] | None:
+        self._require_request(request)
+        return self._record(
+            request,
+            self._call(
+                "read_lifecycle_operation",
+                (psycopg.types.json.Jsonb(request.operation),),
+                write=False,
+            ),
+        )
 
     def begin_close(self, request: CustodyLifecycleRequest) -> DurableCloseAuthorization:
         self._require_request(request)
@@ -385,15 +421,7 @@ class PostgreSQLCustodyLifecycleAdministrator:
 
     def resolve_close(self, request: CustodyLifecycleRequest) -> DurableCloseAuthorization | None:
         """Lock the fence before reading, settling any still-live prior backend."""
-        self._require_request(request)
-        record = self._record(
-            request,
-            self._call(
-                "read_lifecycle_operation",
-                (psycopg.types.json.Jsonb(request.operation),),
-                write=False,
-            ),
-        )
+        record = self._read_committed_close(request)
         return None if record is None else self._authorize(request)
 
     def mutate_custody(

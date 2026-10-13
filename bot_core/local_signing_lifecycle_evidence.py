@@ -34,6 +34,11 @@ from bot_core.local_signing_custody import (
     LocalSigningLifecycleError,
     LocalSigningMetadata,
     SigningKeyLifecycle,
+    _ADMISSION_LOCK,
+    _MUTATION_ADMISSIONS,
+    _CustodyLockLease,
+    _LocalSigningMutationAdmission,
+    _MutationAdmissionBinding,
     _custody_lock,
     _decode_record,
     _encode_record,
@@ -416,7 +421,7 @@ def durable_transition_local_signing_credential_lifecycle(
         lifecycle_operation_id,
     )
     root_identity = _directory_identity(root)
-    with _custody_lock(root, exclusive=True):
+    with _custody_lock(root, exclusive=True) as lease:
         _check_directory(root, root_identity)
         journal_directory = _safe_directory(root / _DIRECTORY, create=True)
         journal_identity = _directory_identity(journal_directory)
@@ -465,9 +470,49 @@ def durable_transition_local_signing_credential_lifecycle(
             path, current = _resolve_credential_record(root, security, role, credential_identity)
             if current == record.before:
                 _require_close_authorization(close_authorization, descriptor)
-                current = _transition_exact_locked(
-                    root, security, role, credential_identity, expected_lifecycle_generation, target
-                )
+
+                def validate_admission() -> None:
+                    _check_directory(root, root_identity)
+                    _check_directory(journal_directory, journal_identity)
+                    observed, _ = _read_operation(journal, security, role)
+                    if observed != record or observed.state != "INTENT":
+                        raise LocalSigningLifecycleError("exact durable lifecycle INTENT required")
+                    _validate_before_binding(observed.before, operation)
+                    _sync_path(journal)
+                    _require_close_authorization(close_authorization, descriptor)
+
+                # There is no custody API for minting admissions from a caller
+                # DTO/validator. Only this authenticated, journal-verified owner
+                # inserts the token. Arbitrary registry mutation is a change to
+                # Python trust state and outside the OS isolation guarantee.
+                admission = object.__new__(_LocalSigningMutationAdmission)
+                with _ADMISSION_LOCK:
+                    _MUTATION_ADMISSIONS[admission] = _MutationAdmissionBinding(
+                        root,
+                        role,
+                        path,
+                        record.before,
+                        record.after,
+                        close_authorization,
+                        descriptor,
+                        cast(_CustodyLockLease, lease),
+                        validate_admission,
+                    )
+                try:
+                    current = _transition_exact_locked(
+                        root,
+                        security,
+                        role,
+                        credential_identity,
+                        expected_lifecycle_generation,
+                        target,
+                        close_authorization=close_authorization,
+                        operation_descriptor=descriptor,
+                        mutation_admission=admission,
+                    )
+                finally:
+                    with _ADMISSION_LOCK:
+                        _MUTATION_ADMISSIONS.pop(admission, None)
                 if fault_injector is not None:
                     fault_injector("lifecycle_after_custody_transition")
             if current != record.after:
