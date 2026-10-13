@@ -45,6 +45,13 @@ CryptoHunter v1 is complete when it is a stable installable Windows desktop prod
 
 No implementation, deployments, release gates, explicit Stage 10 opt-in policy, or Stage 9/10 readiness status are changed by assigning these planning numbers.
 
+## Cross-cutting trading-mode / strategy coverage — TSP-1–TSP-8
+
+**Status: PLANNED.** Before any trading mode or strategy is advertised as fully supported, audit and qualify the exact **SPOT / MARGIN / PERPETUAL / DELIVERY_FUTURES / OPTIONS × LONG / SHORT / FLAT × strategy family × exchange account × environment** combination. A strategy signal or exchange adapter alone does not establish executable capability. The current M0.6 edition authorizes strategy activation only for SPOT/SPOT_PAIR; derivative expansion requires separately versioned contract authorization, real qualification and risk/ledger/recovery gates. SPOT inventory sale must never silently become a short.
+
+The mandatory cross-cutting backlog is [Trading Modes, Strategy Parity & Autonomous AI Readiness](../../roadmap/trading_modes_strategy_parity_and_autonomous_ai.md): **TSP-1** capability matrix; **TSP-2** typed position/order intent; **TSP-3** derivatives/accounting parity; **TSP-4** multi-leg execution; **TSP-5** full family qualification; **TSP-6** Core-bound UI/telemetry; **TSP-7** Stage 12 capability-aware autonomous AI; **TSP-8** gates and E2E evidence. M1–M6 implement the approved subset; Stage 12 must consume the same capability registry, never bypass it. This adds no implicit first-beta, LIVE or Stage 9/10 authorization.
+
+
 ---
 
 # M0 — Product Architecture Contract
