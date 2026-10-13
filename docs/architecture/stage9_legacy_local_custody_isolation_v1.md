@@ -168,11 +168,13 @@ capabilities nie powstają z zapamiętanego hasha. Retry nie zmienia
 operation bytes, public material ani credential identity. Późniejszy
 legalny descendant nie jest completion poprzedniej operacji.
 
-Phase A i DB resolution nie trzymają custody lock podczas rozpoczęcia
-DB transaction; kończą się przed B. Phase C zachowuje istniejącą kolejność
-custody lock → DB fence lock. Nie dodajemy odwrotnej kolejności ani DB
-transaction podczas podpisywania prywatnym kluczem. Concurrent legacy RP/HA
-transition przegrywa admission; FA/CP korzystają z istniejących locks.
+Phase A i początkowa DB resolution koordynatora kończą się przed nabyciem
+custody lock w B. Admission w B wykonuje dodatkowy live DB read pod custody
+EX, w kolejności custody lock → DB fence lock, i kończy tę transakcję przed
+local CAS. Phase C zachowuje tę samą kolejność blokad. Nie dodajemy odwrotnej
+kolejności ani DB transaction podczas podpisywania prywatnym kluczem.
+Concurrent legacy RP/HA transition przegrywa admission; FA/CP korzystają
+z istniejących locks.
 
 Committed Root Proof bytes, history/BOUND linkage i SQL V3 enrollment
 guards pozostają bez zmian. PENDING_CLOSED blokuje nowe BIND, natomiast
