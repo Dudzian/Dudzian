@@ -107,6 +107,15 @@ def _observe_custody(value):
     )
 
 
+def _mock_call(monkeypatch, implementation):
+    """API-only SQL seam also covers fresh authorization observers."""
+    monkeypatch.setattr(
+        runtime.PostgreSQLCustodyLifecycleAdministrator,
+        "_call",
+        lambda self, *args, **kwargs: implementation(*args, **kwargs),
+    )
+
+
 def _forbid_mutation(*args, **kwargs):
     pytest.fail("failed authority observation reached custody mutation")
 
@@ -192,7 +201,7 @@ def test_enrollment_requires_canonical_complete_custody_fence_before_database(
 ):
     value = coordinator
     request = value.request
-    monkeypatch.setattr(value.administrator, "_call", _forbid_mutation)
+    _mock_call(monkeypatch, _forbid_mutation)
     arguments = dict(
         security=request.security, role=request.role, fence_key=request.operation["fence_key"]
     )
@@ -362,7 +371,7 @@ def test_request_for_another_physical_authority_never_calls_database(coordinator
         value.request.role,
         canonical_json_bytes(operation),
     )
-    monkeypatch.setattr(value.administrator, "_call", _forbid_mutation)
+    _mock_call(monkeypatch, _forbid_mutation)
     with pytest.raises(runtime.CustodyLifecycleConflict, match="another physical authority"):
         value.administrator.begin_close(foreign)
 
@@ -380,17 +389,36 @@ def test_begin_close_has_no_capability_without_exact_positive_confirmation(
     coordinator, monkeypatch, response
 ):
     value = coordinator
-    monkeypatch.setattr(value.administrator, "_call", lambda *args, **kwargs: response)
+    _mock_call(monkeypatch, lambda *args, **kwargs: response)
     with pytest.raises(runtime.CustodyLifecycleError):
         value.administrator.begin_close(value.request)
     assert _observe_custody(value) == value.before
 
 
+@pytest.mark.parametrize(
+    "response", [None, {"operation": {}, "phase": "PENDING_CLOSED"}, {"phase": "ACTIVE"}]
+)
+def test_callable_authorization_helper_requires_its_own_positive_close_read(
+    coordinator, monkeypatch, response
+):
+    value = coordinator
+    calls = []
+
+    def observe(name, args, *, write):
+        calls.append((name, write))
+        return response
+
+    _mock_call(monkeypatch, observe)
+    with pytest.raises(runtime.CustodyLifecycleError):
+        value.administrator._authorize(value.request)
+    assert calls == [("read_lifecycle_operation", False)]
+    assert _observe_custody(value) == value.before
+    assert not (value.request.directory / ".signing-lifecycle-operations").exists()
+
+
 def test_dto_or_copied_close_capability_cannot_mutate_custody(coordinator, monkeypatch):
     value = coordinator
-    monkeypatch.setattr(
-        value.administrator, "_call", lambda *args, **kwargs: _pending(value.request)
-    )
+    _mock_call(monkeypatch, lambda *args, **kwargs: _pending(value.request))
     authentic = value.administrator.begin_close(value.request)
     for forged in (
         object(),
@@ -408,9 +436,7 @@ def test_old_close_capability_rechecks_current_database_before_mutation(
     coordinator, monkeypatch, failure
 ):
     value = coordinator
-    monkeypatch.setattr(
-        value.administrator, "_call", lambda *args, **kwargs: _pending(value.request)
-    )
+    _mock_call(monkeypatch, lambda *args, **kwargs: _pending(value.request))
     authorization = value.administrator.begin_close(value.request)
 
     def observe(*args, **kwargs):
@@ -420,7 +446,7 @@ def test_old_close_capability_rechecks_current_database_before_mutation(
             raise runtime.CustodyLifecycleConflict("authority drift")
         return None
 
-    monkeypatch.setattr(value.administrator, "_call", observe)
+    _mock_call(monkeypatch, observe)
     monkeypatch.setattr(
         runtime, "durable_transition_local_signing_credential_lifecycle", _forbid_mutation
     )
@@ -439,7 +465,7 @@ def test_unknown_close_cannot_reach_mutation_without_positive_resolution(coordin
             raise runtime.CustodyLifecycleIndeterminate("lost close COMMIT response")
         return None
 
-    monkeypatch.setattr(value.administrator, "_call", call)
+    _mock_call(monkeypatch, call)
     monkeypatch.setattr(
         runtime, "durable_transition_local_signing_credential_lifecycle", _forbid_mutation
     )
@@ -469,16 +495,17 @@ def test_unknown_close_executes_only_after_exact_positive_resolution(coordinator
             return _pending(value.request) if closed else None
         return _completed(value.request)
 
-    monkeypatch.setattr(value.administrator, "_call", call)
+    _mock_call(monkeypatch, call)
     assert value.administrator.execute(value.request)["phase"] == "COMPLETED"
-    assert calls == [
+    assert calls[:4] == [
         "read_lifecycle_operation",
         "read_lifecycle_operation",
         "begin_lifecycle_close",
         "read_lifecycle_operation",
-        "read_lifecycle_operation",
-        "complete_lifecycle_close",
     ]
+    assert calls.count("begin_lifecycle_close") == 1
+    assert all(name == "read_lifecycle_operation" for name in calls[4:-1])
+    assert calls[-1] == "complete_lifecycle_close"
     assert _observe_custody(value).lifecycle_generation == 2
     assert _observe_custody(value).lifecycle_state is custody.SigningKeyLifecycle.REVOKED
 
@@ -496,7 +523,7 @@ def test_unknown_completion_reconciles_without_repeating_irreversible_mutation(
             raise runtime.CustodyLifecycleIndeterminate("lost completion COMMIT response")
         return _completed(value.request) if completed else _pending(value.request)
 
-    monkeypatch.setattr(value.administrator, "_call", call)
+    _mock_call(monkeypatch, call)
     assert value.administrator.execute(value.request)["phase"] == "COMPLETED"
     assert _observe_custody(value).lifecycle_generation == 2
     monkeypatch.setattr(
@@ -518,26 +545,33 @@ def test_committed_terminal_replay_survives_later_descendant_but_old_receipt_can
         value.request.role,
         canonical_json_bytes(operation),
     )
-    monkeypatch.setattr(value.administrator, "_call", lambda *args, **kwargs: _pending(request))
+    _mock_call(monkeypatch, lambda *args, **kwargs: _pending(request))
     authorization = value.administrator.begin_close(request)
     receipt = value.administrator.mutate_custody(authorization, request)
-    monkeypatch.setattr(value.administrator, "_call", lambda *args, **kwargs: _completed(request))
+    _mock_call(monkeypatch, lambda *args, **kwargs: _completed(request))
     assert value.administrator.publish_completion(request, receipt)["phase"] == "COMPLETED"
-    custody.transition_local_signing_credential_lifecycle(
+    second = runtime.prepare_custody_lifecycle_request(
+        value.deployment,
         request.directory,
         security=request.security,
         role=request.role,
-        credential_identity=request.credential_identity,
-        expected_lifecycle_generation=2,
+        administrative_operation_id="api-operation-2",
         target=custody.SigningKeyLifecycle.REVOKED,
+        fence_key=request.operation["fence_key"],
     )
+    _mock_call(monkeypatch, lambda *args, **kwargs: _pending(second))
+    second_authorization = value.administrator.begin_close(second)
+    second_receipt = value.administrator.mutate_custody(second_authorization, second)
+    _mock_call(monkeypatch, lambda *args, **kwargs: _completed(second))
+    assert value.administrator.publish_completion(second, second_receipt)["phase"] == "COMPLETED"
+    _mock_call(monkeypatch, lambda *args, **kwargs: _completed(request))
     monkeypatch.setattr(
         runtime, "durable_transition_local_signing_credential_lifecycle", _forbid_mutation
     )
     assert value.administrator.execute(request)["terminal_state"] == "VERIFY_ONLY"
     assert _observe_custody(value).lifecycle_generation == 3
     assert _observe_custody(value).lifecycle_state is custody.SigningKeyLifecycle.REVOKED
-    monkeypatch.setattr(value.administrator, "_call", _forbid_mutation)
+    _mock_call(monkeypatch, _forbid_mutation)
     with pytest.raises(custody.LocalSigningLifecycleError, match="custody conflicts"):
         value.administrator.publish_completion(request, receipt)
 
@@ -547,13 +581,13 @@ def test_committed_terminal_replay_survives_later_descendant_but_old_receipt_can
 )
 def test_caller_completion_dto_or_hash_never_reaches_publication(coordinator, monkeypatch, forged):
     value = coordinator
-    monkeypatch.setattr(value.administrator, "_call", _forbid_mutation)
+    _mock_call(monkeypatch, _forbid_mutation)
     with pytest.raises(custody.LocalSigningLifecycleError, match="genuine durable"):
         value.administrator.publish_completion(value.request, forged)
 
 
 def test_unregistered_exact_completion_class_never_reaches_publication(coordinator, monkeypatch):
-    monkeypatch.setattr(coordinator.administrator, "_call", _forbid_mutation)
+    _mock_call(monkeypatch, _forbid_mutation)
     counterfeit = object.__new__(DurableSigningLifecycleCompletion)
     with pytest.raises(custody.LocalSigningLifecycleError, match="genuine durable"):
         coordinator.administrator.publish_completion(coordinator.request, counterfeit)
@@ -561,9 +595,7 @@ def test_unregistered_exact_completion_class_never_reaches_publication(coordinat
 
 def test_publication_binds_real_journal_and_held_custody_to_admin_mac(coordinator, monkeypatch):
     value = coordinator
-    monkeypatch.setattr(
-        value.administrator, "_call", lambda *args, **kwargs: _pending(value.request)
-    )
+    _mock_call(monkeypatch, lambda *args, **kwargs: _pending(value.request))
     authorization = value.administrator.begin_close(value.request)
     completion = value.administrator.mutate_custody(authorization, value.request)
     observed_calls = []
@@ -592,7 +624,7 @@ def test_publication_binds_real_journal_and_held_custody_to_admin_mac(coordinato
         assert write is True
         return _completed(value.request)
 
-    monkeypatch.setattr(value.administrator, "_call", publish)
+    _mock_call(monkeypatch, publish)
     assert value.administrator.publish_completion(value.request, completion)["phase"] == "COMPLETED"
     assert observed_calls == ["complete_lifecycle_close"]
 

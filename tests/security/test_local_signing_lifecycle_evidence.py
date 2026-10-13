@@ -1,8 +1,10 @@
-"""Exact durable custody journal tests below the PostgreSQL close authority.
+"""Journal and API unit tests below a mocked PostgreSQL close validator.
 
-Tests register exact capabilities in the private close registry without a DB.
-Genuine PostgreSQL authorization, process crashes, and uncertain COMMIT are
-exercised by the separate lifecycle integration tests.
+The fixture uses a private test-only membership map at an explicit validator
+seam. It never registers capabilities in the real authority registry. These
+tests exercise journal persistence and recovery, not DB-first security proofs.
+Genuine PostgreSQL authorization, process crashes, and uncertain COMMIT remain
+the responsibility of the separate real PostgreSQL lifecycle integration tests.
 """
 
 from __future__ import annotations
@@ -25,7 +27,6 @@ from bot_core.local_signing_custody import (
     LocalSigningMetadata,
     SigningKeyLifecycle,
     provision_local_signing_authority,
-    transition_local_signing_credential_lifecycle,
 )
 from bot_core.root_proof_issuer_substrate import ProviderRole, SecurityProfileIdentity
 from tests.security._local_signing_platform import requires_native_custody_locking
@@ -46,11 +47,25 @@ def authority(tmp_path: Path, native_keyring, security: SecurityProfileIdentity)
 
 
 @pytest.fixture
-def close_authorization():
+def close_authorization(monkeypatch):
+    unit_authorizations = {}
+
+    def validate(authorization: object, descriptor: bytes) -> None:
+        if (
+            type(authorization) is not postgres_lifecycle.DurableCloseAuthorization
+            or type(descriptor) is not bytes
+            or unit_authorizations.get(authorization) != descriptor
+            or authorization.descriptor != descriptor
+        ):
+            raise postgres_lifecycle.CustodyLifecycleConflict(
+                "positive committed exact close authorization required"
+            )
+
+    monkeypatch.setattr(postgres_lifecycle, "validate_durable_close_authorization", validate)
+
     def authorize(descriptor: bytes):
         authorization = postgres_lifecycle.DurableCloseAuthorization(descriptor)
-        with postgres_lifecycle._AUTHORIZATION_LOCK:
-            postgres_lifecycle._AUTHORIZATIONS[authorization] = descriptor
+        unit_authorizations[authorization] = descriptor
         return authorization
 
     return authorize
@@ -408,12 +423,12 @@ def test_later_legal_descendant_cannot_be_completion_for_original_operation(
     tmp_path, security, authority, close_authorization
 ) -> None:
     receipt = _transition(tmp_path, security, authority, close_authorization)
-    transition_local_signing_credential_lifecycle(
+    _transition(
         tmp_path,
-        security=security,
-        role=authority.provider_role,
-        credential_identity=authority.credential_identity(),
-        expected_lifecycle_generation=2,
+        security,
+        receipt.metadata,
+        close_authorization,
+        lifecycle_operation_id="lifecycle-op-2",
         target=SigningKeyLifecycle.REVOKED,
     )
     with pytest.raises(LocalSigningLifecycleError, match="custody conflicts"):
@@ -434,12 +449,12 @@ def test_intent_with_contradictory_custody_never_mints_completion(
 
     with pytest.raises(OSError):
         _transition(tmp_path, security, authority, close_authorization, fault_injector=crash)
-    transition_local_signing_credential_lifecycle(
+    _transition(
         tmp_path,
-        security=security,
-        role=authority.provider_role,
-        credential_identity=authority.credential_identity(),
-        expected_lifecycle_generation=1,
+        security,
+        authority,
+        close_authorization,
+        lifecycle_operation_id="lifecycle-op-2",
         target=SigningKeyLifecycle.REVOKED,
     )
     with pytest.raises(LocalSigningLifecycleError, match="custody conflicts"):

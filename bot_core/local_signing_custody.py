@@ -26,7 +26,9 @@ import secrets
 import stat
 import time
 import uuid
+import threading
 from typing import Callable
+from weakref import WeakKeyDictionary
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -54,6 +56,13 @@ _LOCK_FILENAME = ".signing-custody.lock"
 _RETAINED_DIRECTORY = "retained-signing-credentials"
 _ROTATION_DIRECTORY = ".signing-rotation"
 _COMPLETED_ROTATION_DIRECTORY = "completed-signing-rotations"
+# Local mutation admission V1 is conservative for BOTH legacy metadata V1 and
+# SQL V3 enrolled custody. Missing enrollment/journal evidence never selects a
+# permissive legacy mode. It is independent of the signed metadata contract.
+LOCAL_CUSTODY_MUTATION_ADMISSION_VERSION = 1
+_DB_FIRST_ROLES = frozenset(
+    {ProviderRole.ROOT_PROOF_SIGNING, ProviderRole.HISTORY_ATTESTATION_SIGNING}
+)
 _RECORD_FILENAME = {
     ProviderRole.ROOT_PROOF_SIGNING: "root-proof-signing.json",
     ProviderRole.HISTORY_ATTESTATION_SIGNING: "history-attestation-signing.json",
@@ -94,6 +103,33 @@ class LocalSigningProvisioningConflict(LocalSigningCustodyError):
 
 class LocalSigningLifecycleError(LocalSigningCustodyError):
     """An illegal lifecycle transition or signing attempt."""
+
+
+class _CustodyLockLease:
+    """Live OS-lock membership; never an authorization or caller lock flag."""
+
+    __slots__ = ("__weakref__",)
+
+    def __new__(cls):
+        raise TypeError("custody lock leases are issued only while holding the OS lock")
+
+
+class _LocalSigningMutationAdmission:
+    """Exact admission issued by verified durable evidence, not a caller DTO."""
+
+    __slots__ = ("__weakref__",)
+
+    def __new__(cls):
+        raise TypeError("qualified DB-first custody mutation admission required")
+
+
+_LOCK_LEASES: WeakKeyDictionary[_CustodyLockLease, tuple[Path, bool, int, int]] = (
+    WeakKeyDictionary()
+)
+_MUTATION_ADMISSIONS: WeakKeyDictionary[
+    _LocalSigningMutationAdmission, _MutationAdmissionBinding
+] = WeakKeyDictionary()
+_ADMISSION_LOCK = threading.Lock()
 
 
 @dataclass(frozen=True, slots=True)
@@ -460,6 +496,7 @@ def _custody_lock(directory: Path, *, exclusive: bool):
 
     if os.name not in {"posix", "nt"}:
         raise LocalSigningCustodyError("production-local custody locking is unavailable")
+    directory = _exact_path_snapshot(directory, label="custody lock directory")
 
     path = directory / _LOCK_FILENAME
     if path.is_symlink() or (
@@ -502,7 +539,14 @@ def _custody_lock(directory: Path, *, exclusive: bool):
                     os.lseek(descriptor, 0, os.SEEK_SET)
                     os.write(descriptor, b"\0")
                     os.fsync(descriptor)
-                yield
+                lease = object.__new__(_CustodyLockLease)
+                with _ADMISSION_LOCK:
+                    _LOCK_LEASES[lease] = (directory, exclusive, os.getpid(), threading.get_ident())
+                try:
+                    yield lease
+                finally:
+                    with _ADMISSION_LOCK:
+                        _LOCK_LEASES.pop(lease, None)
             finally:
                 os.lseek(descriptor, 0, os.SEEK_SET)
                 try:
@@ -517,7 +561,14 @@ def _custody_lock(directory: Path, *, exclusive: bool):
             except OSError as exc:
                 raise LocalSigningCustodyError("custody locking failed") from exc
             try:
-                yield
+                lease = object.__new__(_CustodyLockLease)
+                with _ADMISSION_LOCK:
+                    _LOCK_LEASES[lease] = (directory, exclusive, os.getpid(), threading.get_ident())
+                try:
+                    yield lease
+                finally:
+                    with _ADMISSION_LOCK:
+                        _LOCK_LEASES.pop(lease, None)
             finally:
                 try:
                     fcntl.flock(descriptor, fcntl.LOCK_UN)
@@ -841,7 +892,138 @@ def _fsync_directory(directory: Path) -> None:
             os.close(descriptor)
 
 
-def _write_new_record(path: Path, payload: bytes) -> bool:
+def _protected_record_destination(path: Path, payload: bytes) -> tuple[Path, ProviderRole] | None:
+    """Classify reserved paths and both records, never a caller mode flag.
+
+    A malformed replacement of a reserved current/retained record must still
+    be protected. A protected record at any other destination is refused.
+    """
+
+    destination = None
+    for role in _DB_FIRST_ROLES:
+        token = role.value.lower().replace("_", "-")
+        if path.parent.name == _ROTATION_DIRECTORY and path.name.startswith(token + "."):
+            raise LocalSigningLifecycleError("rotation is limited to freshness signing roles")
+        if path.name == _RECORD_FILENAME[role]:
+            destination = (path.parent, role)
+        elif path.parent.name == _RETAINED_DIRECTORY and path.name.startswith(token + "."):
+            destination = (path.parent.parent, role)
+    records = [payload]
+    if path.exists() or path.is_symlink():
+        with _open_custody_descriptor(path) as descriptor:
+            with os.fdopen(descriptor, "rb", closefd=False) as stream:
+                records.append(stream.read())
+    for raw in records:
+        try:
+            value = json.loads(raw)
+        except (ValueError, UnicodeError):
+            continue
+        if (
+            type(value) is dict
+            and value.get("schema") == "cryptohunter.production-local-signing-rotation"
+            and value.get("role") in {role.value for role in _DB_FIRST_ROLES}
+        ):
+            raise LocalSigningLifecycleError("rotation is limited to freshness signing roles")
+        if type(value) is dict and value.get("provider_role") in {
+            role.value for role in _DB_FIRST_ROLES
+        }:
+            role = ProviderRole(value["provider_role"])
+            if destination is None or destination[1] is not role:
+                raise LocalSigningLifecycleError("invalid protected custody destination")
+    return destination
+
+
+@dataclass(frozen=True, slots=True)
+class _MutationAdmissionBinding:
+    root: Path
+    role: ProviderRole
+    path: Path
+    before: LocalSigningMetadata
+    after: LocalSigningMetadata
+    close_authorization: object
+    descriptor: bytes
+    lease: _CustodyLockLease
+    validate: Callable[[], None]
+
+
+def _require_mutation_admission(
+    root: Path,
+    role: ProviderRole,
+    path: Path,
+    payload: bytes,
+    admission: object,
+    close_authorization: object,
+    operation_descriptor: bytes | None,
+) -> None:
+    with _ADMISSION_LOCK:
+        binding = (
+            _MUTATION_ADMISSIONS.get(admission)
+            if type(admission) is _LocalSigningMutationAdmission
+            else None
+        )
+        if (
+            type(binding) is not _MutationAdmissionBinding
+            or binding.root != root
+            or binding.role is not role
+            or binding.path != path
+            or _encode_record(binding.after) != payload
+            or binding.close_authorization is not close_authorization
+            or binding.descriptor != operation_descriptor
+            or _LOCK_LEASES.get(binding.lease) != (root, True, os.getpid(), threading.get_ident())
+        ):
+            raise LocalSigningLifecycleError(
+                "qualified DB-first custody mutation admission required"
+            )
+    # Evidence verifies genuine live PostgreSQL close and its fsynced INTENT.
+    # Dependency direction stays admin/evidence -> custody; public issuer
+    # imports never acquire an administration authority.
+    binding.validate()
+    security = SecurityProfileIdentity(binding.before.security_profile, binding.before.trust_domain)
+    if _read_record(path, security, role) != binding.before:
+        raise LocalSigningLifecycleError("exact admitted custody predecessor required")
+
+
+def _write_new_record(
+    path: Path,
+    payload: bytes,
+    *,
+    provisioning_administrator: NativeKeyringSigningSecretAdministrator | None = None,
+    custody_lease: object = None,
+) -> bool:
+    path = _exact_path_snapshot(path, label="custody record path")
+    if type(payload) is not bytes:
+        raise LocalSigningCustodyError("exact custody record bytes required")
+    protected = _protected_record_destination(path, payload)
+    if protected is not None:
+        root, role = protected
+        if type(
+            provisioning_administrator
+        ) is not NativeKeyringSigningSecretAdministrator or path != _record_path(root, role):
+            raise LocalSigningLifecycleError("qualified initial custody provisioning required")
+        with _ADMISSION_LOCK:
+            if type(custody_lease) is not _CustodyLockLease or _LOCK_LEASES.get(custody_lease) != (
+                root,
+                True,
+                os.getpid(),
+                threading.get_ident(),
+            ):
+                raise LocalSigningLifecycleError("exclusive custody provisioning lock required")
+        try:
+            value = json.loads(payload)
+            security = SecurityProfileIdentity(
+                SecurityProfile(value["security_profile"]), value["trust_domain"]
+            )
+        except (KeyError, TypeError, ValueError, UnicodeError) as exc:
+            raise LocalSigningCustodyError("custody material unavailable/corrupt") from exc
+        metadata = _decode_record(payload, expected_security=security, expected_role=role)
+        if (
+            not provisioning_administrator.matches_authority(security, role)
+            or metadata.lifecycle_state is not SigningKeyLifecycle.ACTIVE
+            or metadata.lifecycle_generation != 1
+            or metadata.key_version != 1
+        ):
+            raise LocalSigningLifecycleError("qualified initial custody provisioning required")
+        _load_private_key(metadata, provisioning_administrator)
     temporary = path.parent / f".{path.name}.{uuid.uuid4().hex}.tmp"
     descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:
@@ -860,7 +1042,29 @@ def _write_new_record(path: Path, payload: bytes) -> bool:
         temporary.unlink(missing_ok=True)
 
 
-def _replace_record(path: Path, payload: bytes) -> None:
+def _replace_record(
+    path: Path,
+    payload: bytes,
+    *,
+    close_authorization: object = None,
+    operation_descriptor: bytes | None = None,
+    mutation_admission: object = None,
+) -> None:
+    path = _exact_path_snapshot(path, label="custody record path")
+    if type(payload) is not bytes:
+        raise LocalSigningCustodyError("exact custody record bytes required")
+    protected = _protected_record_destination(path, payload)
+    if protected is not None:
+        root, role = protected
+        _require_mutation_admission(
+            root,
+            role,
+            path,
+            payload,
+            mutation_admission,
+            close_authorization,
+            operation_descriptor,
+        )
     temporary = path.parent / f".{path.name}.{uuid.uuid4().hex}.tmp"
     descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:
@@ -900,7 +1104,7 @@ def provision_local_signing_authority(
         raise LocalSigningCustodyError("signing secret administrator authority mismatch")
     if private_seed is not None and (type(private_seed) is not bytes or len(private_seed) != 32):
         raise LocalSigningProvisioningConflict("invalid Ed25519 provisioning material")
-    with _custody_lock(root, exclusive=True):
+    with _custody_lock(root, exclusive=True) as lease:
         path = _record_path(root, role)
         if path.exists() or path.is_symlink():
             existing = _read_record(path, security, role)
@@ -952,7 +1156,12 @@ def provision_local_signing_authority(
             base64.b64encode(seed).decode("ascii"),
         )
         try:
-            if not _write_new_record(path, _encode_record(metadata)):
+            if not _write_new_record(
+                path,
+                _encode_record(metadata),
+                provisioning_administrator=secret_store,
+                custody_lease=lease,
+            ):
                 raise LocalSigningProvisioningConflict("concurrent provisioning conflict")
             return metadata
         except Exception:
@@ -990,6 +1199,10 @@ def _transition_exact_locked(
     identity: CredentialRoleIdentity,
     expected_lifecycle_generation: int,
     target: SigningKeyLifecycle,
+    *,
+    close_authorization: object = None,
+    operation_descriptor: bytes | None = None,
+    mutation_admission: object = None,
 ) -> LocalSigningMetadata:
     if type(expected_lifecycle_generation) is not int or expected_lifecycle_generation < 1:
         raise LocalSigningLifecycleError("invalid expected lifecycle generation")
@@ -1020,7 +1233,13 @@ def _transition_exact_locked(
         current.public_key,
         current.protected_private_material_reference,
     )
-    _replace_record(path, _encode_record(successor))
+    _replace_record(
+        path,
+        _encode_record(successor),
+        close_authorization=close_authorization,
+        operation_descriptor=operation_descriptor,
+        mutation_admission=mutation_admission,
+    )
     return successor
 
 
@@ -1035,9 +1254,9 @@ def transition_local_signing_credential_lifecycle(
 ) -> LocalSigningMetadata:
     """Legacy local CAS; it does not fence or publish PostgreSQL lifecycle state.
 
-    Production V2 administration uses the durable-close-authorized journal in
-    ``local_signing_lifecycle_evidence``. Isolation of this legacy entry point
-    remains a production qualification blocker.
+    Root/history writes require qualified V2 close and journal admission at the
+    shared writer, including retained records. This wrapper grants neither.
+    Freshness authorities retain their independent local CAS contract.
     """
 
     root = _validate_directory(directory, create=False)
@@ -1064,8 +1283,8 @@ def transition_local_signing_lifecycle(
 ) -> LocalSigningMetadata:
     """Legacy offline/admin update without a PostgreSQL lifecycle fence.
 
-    This entry point remains outside the V2 administration authority and its
-    production isolation is an explicit qualification blocker.
+    Root/history writes fail closed under local mutation admission V1, whether
+    legacy or enrolled. Freshness roles retain their separate administration.
     """
 
     root = _validate_directory(directory, create=False)
@@ -1133,6 +1352,7 @@ def _read_rotation_intent(
     *,
     completed: bool = False,
 ) -> _RotationRecord:
+    _require_freshness_rotation_role(role)
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
         expected_fields = {
@@ -1252,6 +1472,7 @@ def _retained_rotation_state(
 ) -> LocalSigningMetadata:
     """Publish a missing baseline or preserve its sole legal descendant."""
 
+    _require_freshness_rotation_role(role)
     path = _retained_path(root, role, baseline.credential_identity())
     if not path.exists():
         path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -1286,6 +1507,7 @@ def _publish_or_preserve_lifecycle_state(
 ) -> LocalSigningMetadata:
     """Publish an authoritative state or preserve only its legal descendant."""
 
+    _require_freshness_rotation_role(role)
     path = _retained_path(root, role, expected.credential_identity())
     if not path.exists():
         path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -1326,6 +1548,14 @@ def _same_or_legal_lifecycle_descendant(
     )
 
 
+def _require_freshness_rotation_role(role: ProviderRole) -> None:
+    if type(role) is not ProviderRole or role not in {
+        ProviderRole.FRESHNESS_AUTHORITY_FINALIZATION_SIGNING,
+        ProviderRole.CHA_FRESHNESS_PROPOSER_SIGNING,
+    }:
+        raise LocalSigningLifecycleError("rotation is limited to freshness signing roles")
+
+
 def _cleanup_rotation_artifacts(
     root: Path,
     role: ProviderRole,
@@ -1333,6 +1563,7 @@ def _cleanup_rotation_artifacts(
 ) -> None:
     """Idempotently remove transient files and durably record their absence."""
 
+    _require_freshness_rotation_role(role)
     intent, retained_prepared, successor_prepared = _rotation_paths(root, role)
     retained_prepared.unlink(missing_ok=True)
     if fault_injector is not None:
@@ -1359,6 +1590,7 @@ def _recover_rotation_locked(
 ) -> LocalSigningMetadata | None:
     """Deterministically roll back an unmaterialized intent or finish its vN+1."""
 
+    _require_freshness_rotation_role(role)
     intent, retained_prepared, successor_prepared = _rotation_paths(root, role)
     if not intent.exists():
         return None
@@ -1441,6 +1673,7 @@ def _completed_rotation_replay(
     private_seed: bytes | None,
     fault_injector: Callable[[str], None] | None,
 ) -> LocalSigningMetadata | None:
+    _require_freshness_rotation_role(role)
     path = _completed_rotation_path(root, security, role, operation_id)
     if not path.exists():
         return None

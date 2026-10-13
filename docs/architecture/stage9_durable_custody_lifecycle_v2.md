@@ -8,10 +8,11 @@ kwalifikowanej granicy PostgreSQL Atomic Commit. Nie stanowi kwalifikacji
 produkcyjnej emisji ani zmiany zamrożonych kontraktów M0.5.
 
 `ATOMIC_ISSUER_READY=NOT_READY` oraz
-`PRODUCTION_LIFECYCLE_ISOLATION=BLOCKED` pozostają obowiązkowe. Istniejące
-lokalne wejścia administracyjne nadal mogą wykonać lifecycle bez tego
-protokołu. Ich pełne odizolowanie, aktywacja następcy i trust activation
-wymagają osobnej, jawnej kwalifikacji.
+`PRODUCTION_LIFECYCLE_ISOLATION=BLOCKED` pozostają obowiązkowe.
+[Local Custody Isolation V1](stage9_legacy_local_custody_isolation_v1.md)
+zamyka zwykłe legacy RP/history API na wspólnej granicy mutation admission.
+Niezależne odizolowanie uprawnień OS, aktywacja następcy i trust activation
+nadal wymagają osobnej, jawnej kwalifikacji.
 
 ## Źródła i granice audytu
 
@@ -39,7 +40,11 @@ Sprawdzone źródła obejmują:
   [issuer implementation readiness](cryptohunter_product_architecture/m05_account_genesis_root_proof_issuer_implementation_readiness_contract.json)
   i [physical persistence/crash atomicity](cryptohunter_product_architecture/m05_account_genesis_physical_persistence_crash_atomicity_contract.json).
 
-## Istniejące wejścia i drogi obejścia
+## Historyczny audyt wejść przed Local Custody Isolation V1
+
+Poniższa tabela opisuje stan przed admission V1. Aktualne guardy, capabilities,
+lock leases i granice przeciwnika opisuje
+[Local Custody Isolation V1](stage9_legacy_local_custody_isolation_v1.md).
 
 | Wejście | Rzeczywiste działanie | Relacja do V2 |
 | --- | --- | --- |
@@ -47,7 +52,7 @@ Sprawdzone źródła obejmują:
 | `transition_local_signing_lifecycle()` | Odczytuje bieżący role credential pod tym samym lock i wywołuje `_transition_exact_locked()` z odczytaną generation. | Ten sam blocker; samo nazwanie API offline/admin nie ustanawia DB-authoritative autoryzacji. |
 | `_transition_exact_locked()` | Zachowuje identity, public key, key version i secret reference, zwiększa generation o jeden. | V2 używa istniejącego mechanizmu zamiast nowego systemu kluczy. Jest prywatnym helperem, nie niezależnym DB authorization portem. |
 | `provision_local_signing_authority()` | Tworzy rzeczywisty seed w native keyring i lokalne metadata `ACTIVE`, generation 1, pod lock. | Nie daje prawa do produkcyjnego BIND; aktywacja nowego credential jest poza V2. |
-| `rotate_local_freshness_signing_authority()` / `_recover_rotation_locked()` | Tylko freshness-finalization i CHA-freshness-proposer roles; journaling R0–R7, old retained oraz successor ACTIVE, publication przez current-record replace. Recovery zachowuje już wykonane one-way zmiany old key. | Inna authority i inny protokół; nie służy do Root Proof/history successor activation. |
+| `rotate_local_freshness_signing_authority()` / `_recover_rotation_locked()` | Publiczny wrapper ograniczał role do freshness-finalization i CHA-freshness-proposer; sam recovery helper nie miał tego własnego guardu. Journaling R0–R7, old retained oraz successor ACTIVE, publication przez current-record replace. Recovery zachowuje już wykonane one-way zmiany old key. | Inna authority i inny protokół. Admission V1 dodaje także guard bezpośrednich helperów; nie służy do Root Proof/history successor activation. |
 | `OfflineIssuanceCustodyAdministrator.transition_lifecycle()` w CHA custody | Oddzielny lifecycle STAGED/ACTIVE/VERIFY_ONLY/REVOKED lokalnego signer-a signed CHA attempts. | Poza zakresem dwóch issuer signing roles; nie zastępuje ich close. |
 | Pre-account `transition_lifecycle()` | Własny admin principal, credential rows, alias advisory lock i generation/revision CAS. | Własna semantic authority. Atomic issuer używa jej exact locking helperów. |
 | V1 `approve_commit()` | Raw test-admin approval może wskazać inny, wcześniej provisioned ACTIVE fence tej samej roli i generation. V1 commit sam nie wyprowadza fence key z faktycznych retained signer bytes. | V2 blokuje tę możliwość przy INSERT decyzji przez pinned `guard_lifecycle_decision_fences()`; cała transakcja przegrywającego BIND/history jest wycofana. |

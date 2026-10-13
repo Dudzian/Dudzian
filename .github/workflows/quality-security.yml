@@ -104,6 +104,7 @@ jobs:
           tests/architecture/test_stage9_root_proof_signed_immutable_attempt_contract.py
           tests/licensing/test_cha_root_proof_signed_attempt.py
           tests/security/test_native_custody_locking.py
+          tests/security/test_local_signing_custody.py
           tests/security/test_postgresql_preaccount_credential_contract.py
           tests/security/test_postgresql_preaccount_credentials_integration.py
           tests/security/test_postgresql_root_proof_issuance_authority.py
@@ -132,6 +133,8 @@ jobs:
           tests/security/test_postgresql_custody_lifecycle.py
           tests/security/test_postgresql_custody_signer_enrollment.py
           tests/security/test_custody_lifecycle_admin_contract.py
+          tests/security/test_local_custody_admission_contract.py
+          tests/security/test_legacy_local_custody_isolation.py
           tests/architecture/test_stage9_custody_lifecycle_v2.py
           tests/architecture/test_stage9_custody_lifecycle_import_isolation.py
       - name: Mypy configured scope
@@ -491,6 +494,8 @@ jobs:
           tests/security/test_postgresql_custody_lifecycle.py
           tests/security/test_postgresql_custody_signer_enrollment.py
           tests/security/test_custody_lifecycle_admin_contract.py
+          tests/security/test_local_custody_admission_contract.py
+          tests/security/test_legacy_local_custody_isolation.py
           tests/architecture/test_stage9_custody_lifecycle_v2.py
           tests/architecture/test_stage9_custody_lifecycle_import_isolation.py
           -m "not hardware and not destructive and not network"
@@ -499,6 +504,7 @@ jobs:
           --cov=bot_core.postgresql_atomic_root_proof_qualification
           --cov=bot_core.postgresql_atomic_root_proof_migration
           --cov=bot_core.postgresql_atomic_root_proof_commit
+          --cov=bot_core.local_signing_custody
           --cov=bot_core.local_signing_lifecycle_evidence
           --cov=bot_core.postgresql_custody_lifecycle
           --cov=bot_core.postgresql_custody_lifecycle_schema
