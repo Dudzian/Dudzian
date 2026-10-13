@@ -726,6 +726,12 @@ jobs:
             --durations=10 \
             --junitxml=test-results/pytest.xml
 
+      - name: Stop isolated PostgreSQL negative-control clusters
+        if: always()
+        shell: bash
+        run: |
+          docker rm --force dz-ci-pg16-unsafe dz-ci-pg16-other 2>/dev/null || true
+
       - name: Upload pytest results
         if: always()
         uses: actions/upload-artifact@v7
