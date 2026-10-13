@@ -1316,15 +1316,20 @@ def test_actual_custody_record_io_failure_is_unavailable(
     value = prepared_boundary
     original = _retain(value)
     record = custody._record_path(value.directory, ProviderRole.ROOT_PROOF_SIGNING)
-    read_bytes = Path.read_bytes
+    # The custody reader now uses an O_NOFOLLOW/native-qualified descriptor,
+    # not Path.read_bytes(). Fail the real descriptor acquisition seam so this
+    # still exercises a genuine I/O outage rather than a dead monkeypatch.
+    open_descriptor = custody._open_custody_descriptor
 
-    def unreadable(path):
+    @contextmanager
+    def unreadable(path, *, write=False, create=False):
         if path == record:
             raise OSError(failure_errno, "testowa niedostępność publicznego custody")
-        return read_bytes(path)
+        with open_descriptor(path, write=write, create=create) as descriptor:
+            yield descriptor
 
     with monkeypatch.context() as outage:
-        outage.setattr(Path, "read_bytes", unreadable)
+        outage.setattr(custody, "_open_custody_descriptor", unreadable)
         _denied(value, retention.RootProofRetentionUnavailable)
     assert _retain(value) == original
 
