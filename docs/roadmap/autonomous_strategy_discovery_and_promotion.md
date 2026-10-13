@@ -49,6 +49,15 @@ Champion / Challenger / Retired
 8. Brak wystarczającego edge'u oznacza `ABSTAIN/REJECT`, a nie wymuszone znalezienie strategii.
 9. ASD korzysta z TIH Regime v2, Microstructure/Reversal Intelligence, Execution Optimizer, Anti-Overfitting Guard, Live Edge Decay Monitor i Dynamic Capital Allocation zamiast tworzyć ich równoległe odpowiedniki.
 
+## Dependency: complete qualified trading-mode and strategy coverage (TSP)
+
+Before ASD can claim autonomous use of all trading strategies and position directions, it must consume the authoritative qualified **strategy family × market/instrument type × LONG/SHORT/FLAT × exchange account × environment** capability matrix and typed order/position intent protocol defined in [Trading Modes, Strategy Parity & Autonomous AI Readiness](trading_modes_strategy_parity_and_autonomous_ai.md) (TSP-1–TSP-8).
+
+- SPOT buying/inventory selling, MARGIN long/short, PERPETUAL long/short, dated futures, OPTIONS and multi-leg/hedged executions have distinct eligibility, funding/borrow/collateral, lifecycle, risk and accounting requirements; a single BUY/SELL signal or an adapter class is not qualification.
+- Capability discovery must be exhaustive for shipped strategies and fail closed for unsupported venues, missing market data, uncertain position/reconciliation state, stale account snapshots and unavailable borrow/margin/Greeks. No implied naked SPOT short, derivative activation or LIVE grant.
+- The autonomous strategy selector may choose, size, enter, rebalance, exit, pause or retire **already approved** strategies across every qualified combination, including abstaining. Candidate generation and promotion retain independent existing Shadow -> Paper -> Canary LIVE approval gates and the Core-owned Risk Engine/ExecutionLease/kill switch.
+- Stage 12 exit evidence must prove capability-aware AI coverage for every qualifying combination, negative/failed-leg and stale-data tests, typed intent parity with operator-driven execution and end-to-end auditability. Non-qualified combinations remain inaccessible rather than blocking safe use of the qualified subset.
+
 ## Zakres funkcjonalny
 
 ### 1. StrategySpec i bezpieczna przestrzeń poszukiwań
