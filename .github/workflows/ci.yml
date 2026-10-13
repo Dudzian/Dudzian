@@ -707,6 +707,9 @@ jobs:
           DUDZIAN_ALLOW_LONG_POLL: "0"
           DUDZIAN_TEST_POSTGRES_DSN: "host=127.0.0.1 port=55432 dbname=postgres user=postgres"
           DUDZIAN_TEST_POSTGRES_RESTART_CONTAINER_ID: ${{ job.services.postgres.id }}
+          # Same explicitly controlled service-PID-namespace SIGKILL used by the
+          # qualified atomic-commit workflow. No host PID or arbitrary shell input.
+          DUDZIAN_TEST_POSTGRES_CRASH_COMMAND: '["docker","exec","--user","postgres","${{ job.services.postgres.id }}","sh","-c","kill -KILL \"$1\"","sh"]'
           ENTITLEMENT_REGISTRY_POSTGRES_ADMIN_DSN: "host=127.0.0.1 port=55432 dbname=postgres user=postgres"
         run: |
           mkdir -p test-results
