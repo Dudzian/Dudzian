@@ -7,6 +7,7 @@ This module alone retains lifecycle administrator and bootstrap authority.
 from __future__ import annotations
 
 from dataclasses import replace
+from typing import Any
 
 import psycopg
 from psycopg import sql
@@ -43,7 +44,6 @@ from bot_core.postgresql_root_proof_preparation_readonly import (
     PostgreSQLRootProofPreparationV2Deployment,
     RootProofPreparationV2QualificationError,
     _fingerprint,
-    _function_oid,
     _principal_boundary,
     _qualify_preparation_roles,
     _sources,
