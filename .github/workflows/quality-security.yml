@@ -72,6 +72,9 @@ jobs:
           bot_core/postgresql_root_proof_issuance_authority.py
           bot_core/postgresql_root_proof_issuance_authority_v2.py
           bot_core/postgresql_root_proof_preparation_qualification.py
+          bot_core/postgresql_root_proof_preparation_readonly.py
+          bot_core/postgresql_custody_lifecycle_contract_constants.py
+          tests/security/_local_lifecycle_reader_test_seam.py
           bot_core/postgresql_root_proof_preparation_v2.py
           bot_core/postgresql_root_proof_retention.py
           bot_core/postgresql_root_proof_retention_schema.py
@@ -515,6 +518,7 @@ jobs:
           --cov=bot_core.postgresql_atomic_root_proof_commit
           --cov=bot_core.postgresql_root_proof_issuance_authority_v2
           --cov=bot_core.postgresql_root_proof_preparation_qualification
+          --cov=bot_core.postgresql_root_proof_preparation_readonly
           --cov=bot_core.postgresql_root_proof_preparation_v2
           --cov=bot_core.postgresql_authenticated_issuer_history
           --cov=bot_core.root_proof_atomic_attempt_consistency
