@@ -611,4 +611,3 @@ def lock_root_proof_preparation_signer_v2(
         raise RootProofPreparationV2QualificationError(
             "exact enrolled ACTIVE signer fence refused"
         ) from exc
-
