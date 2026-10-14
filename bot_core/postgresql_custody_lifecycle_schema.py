@@ -21,13 +21,13 @@ from bot_core.authenticated_issuer_history import (
     _credential_material,
     canonical_json_bytes as history_canonical_json_bytes,
 )
-from bot_core.postgresql_custody_lifecycle_contract_constants import (
-    ENROLLMENT_MIGRATION_ID,
-    SQL_CONTRACT_VERSION,
-)
 from bot_core.local_signing_custody import SigningCredentialSnapshot, SigningKeyLifecycle
 from bot_core.postgresql_atomic_root_proof_schema import (
     PostgreSQLAtomicRootProofProvisioning,
+)
+from bot_core.postgresql_custody_lifecycle_contract_constants import (
+    ENROLLMENT_MIGRATION_ID,
+    SQL_CONTRACT_VERSION,
 )
 from bot_core.postgresql_root_proof_retention import _canonical, _snapshot_data
 from bot_core.root_proof_issuer_substrate import (
