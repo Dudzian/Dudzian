@@ -45,6 +45,17 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+      postgres-other:
+        image: postgres:16
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 55434:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v7
         with:
@@ -72,6 +83,9 @@ jobs:
           bot_core/postgresql_root_proof_issuance_authority.py
           bot_core/postgresql_root_proof_issuance_authority_v2.py
           bot_core/postgresql_root_proof_preparation_qualification.py
+          bot_core/postgresql_root_proof_preparation_readonly.py
+          bot_core/postgresql_custody_lifecycle_contract_constants.py
+          tests/security/_local_lifecycle_reader_test_seam.py
           bot_core/postgresql_root_proof_preparation_v2.py
           bot_core/postgresql_root_proof_retention.py
           bot_core/postgresql_root_proof_retention_schema.py
@@ -349,6 +363,21 @@ jobs:
           --cov=bot_core.licensing.cha_root_proof_attempt_reservation
           --cov-append --cov-config=.coveragerc
           --cov-report=term-missing --cov-report=xml:coverage.xml -q
+      - name: V2 read-only qualification coverage on independent PostgreSQL 16
+        env:
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+          DUDZIAN_TEST_MODE: "1"
+          DUDZIAN_ALLOW_LONG_POLL: "0"
+          DUDZIAN_TEST_POSTGRES_DSN: "host=127.0.0.1 port=55432 dbname=postgres user=postgres"
+          CRYPTOHUNTER_TEST_POSTGRES_OTHER_DSN: "host=127.0.0.1 port=55434 dbname=postgres user=postgres"
+        run: >-
+          python -m pytest -p asyncio -p pytest_cov.plugin
+          tests/security/test_postgresql_root_proof_preparation_v2.py
+          -k "fresh_reserved or the_new_postmigration or preparation_rejects_wrong_direct_principal or other_physical_database_identity or actual_other_database or preparation_principals_cannot_invoke_final_atomic_bind or reviewed_preparation_pin or reconstruction_rejects_unreviewed_preparation_structure or catalog_and_acl_drift or missing_enrollment or other_enrolled_active_signer or same_entitlement_distinct_attempt or changed_request_bytes or fabricated_binding or valid_signature_without_genuine_reserved or invalid_original_signature"
+          -m "not hardware and not destructive and not network"
+          --cov=bot_core.postgresql_root_proof_preparation_readonly
+          --cov-append --cov-branch --cov-config=.coveragerc
+          --cov-report=term-missing --cov-report=xml:coverage.xml -q
       - name: Changed-code coverage ratchet
         if: github.event_name == 'pull_request'
         run: diff-cover coverage.xml --compare-branch "origin/${{ github.base_ref }}" --fail-under=70
@@ -515,6 +544,7 @@ jobs:
           --cov=bot_core.postgresql_atomic_root_proof_commit
           --cov=bot_core.postgresql_root_proof_issuance_authority_v2
           --cov=bot_core.postgresql_root_proof_preparation_qualification
+          --cov=bot_core.postgresql_root_proof_preparation_readonly
           --cov=bot_core.postgresql_root_proof_preparation_v2
           --cov=bot_core.postgresql_authenticated_issuer_history
           --cov=bot_core.root_proof_atomic_attempt_consistency

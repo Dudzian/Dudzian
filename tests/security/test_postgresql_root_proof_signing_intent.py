@@ -46,6 +46,9 @@ from bot_core.root_proof_issuer_substrate import (
     SecurityProfileIdentity,
 )
 from tests.security import test_root_proof_issuer_runtime as preflight_tests
+from tests.security._local_lifecycle_reader_test_seam import (
+    simulate_qualified_local_downgrade_for_reader_test,
+)
 from tests.security._local_signing_platform import requires_native_custody_locking
 from tests.security.test_postgresql_checkpoint_authority import BASE_DSN
 from tests.security.test_root_proof_issuance_reconciliation import _history_boundary
@@ -591,10 +594,9 @@ class TestImmutableSignedSource:
         value = intent_boundary
         _call(value)
         before = _rows(value)
-        custody.transition_local_signing_lifecycle(
+        simulate_qualified_local_downgrade_for_reader_test(
             value.directory,
             security=value.security,
-            role=ProviderRole.ROOT_PROOF_SIGNING,
             target=target,
         )
         for operation in ("reserve", "read_intent"):

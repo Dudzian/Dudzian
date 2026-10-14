@@ -57,6 +57,9 @@ from tests.security import (
     test_local_signing_custody as custody_tests,
     test_root_proof_issuer_runtime as preflight_tests,
 )
+from tests.security._local_lifecycle_reader_test_seam import (
+    simulate_qualified_local_downgrade_for_reader_test,
+)
 from tests.security.test_postgresql_checkpoint_authority import BASE_DSN
 from tests.security.test_root_proof_issuance_reconciliation import _history_boundary
 from tests.security.test_root_proof_issuer_orchestration import (
@@ -828,10 +831,9 @@ def test_verify_only_retry_preserves_original_snapshot_without_signing(
 ):
     value = prepared_boundary
     original = _retain(value)
-    custody.transition_local_signing_lifecycle(
+    simulate_qualified_local_downgrade_for_reader_test(
         value.directory,
         security=value.security,
-        role=ProviderRole.ROOT_PROOF_SIGNING,
         target=custody.SigningKeyLifecycle.VERIFY_ONLY,
     )
 
@@ -850,10 +852,9 @@ def test_verify_only_retry_preserves_original_snapshot_without_signing(
 
 def test_verify_only_does_not_stage_new_signature(prepared_boundary):
     value = prepared_boundary
-    custody.transition_local_signing_lifecycle(
+    simulate_qualified_local_downgrade_for_reader_test(
         value.directory,
         security=value.security,
-        role=ProviderRole.ROOT_PROOF_SIGNING,
         target=custody.SigningKeyLifecycle.VERIFY_ONLY,
     )
     with pytest.raises(retention.RootProofRetentionConflict):
@@ -864,10 +865,9 @@ def test_verify_only_does_not_stage_new_signature(prepared_boundary):
 def test_revoked_signer_cannot_establish_historical_trust(prepared_boundary):
     value = prepared_boundary
     _retain(value)
-    custody.transition_local_signing_lifecycle(
+    simulate_qualified_local_downgrade_for_reader_test(
         value.directory,
         security=value.security,
-        role=ProviderRole.ROOT_PROOF_SIGNING,
         target=custody.SigningKeyLifecycle.REVOKED,
     )
     with pytest.raises(retention.RootProofRetentionCorrupt):

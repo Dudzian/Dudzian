@@ -49,6 +49,8 @@ files = [
   "bot_core/postgresql_root_proof_issuance_authority.py",
   "bot_core/postgresql_root_proof_issuance_authority_v2.py",
   "bot_core/postgresql_root_proof_preparation_qualification.py",
+  "bot_core/postgresql_root_proof_preparation_readonly.py",
+  "bot_core/postgresql_custody_lifecycle_contract_constants.py",
   "bot_core/postgresql_root_proof_preparation_v2.py",
   "bot_core/postgresql_root_proof_retention.py",
   "bot_core/postgresql_root_proof_retention_schema.py",
