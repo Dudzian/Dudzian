@@ -54,6 +54,9 @@ from tests.security import (
     test_postgresql_root_proof_signing_intent as existing_intent_tests,
     test_root_proof_issuer_runtime as preflight_tests,
 )
+from tests.security._local_lifecycle_reader_test_seam import (
+    simulate_qualified_local_downgrade_for_reader_test,
+)
 from tests.security._local_signing_platform import requires_native_custody_locking
 from tests.security.test_postgresql_checkpoint_authority import BASE_DSN
 from tests.security.test_postgresql_root_proof_retention import _privileged_mutation
@@ -409,10 +412,9 @@ def test_current_root_custody_lifecycle_is_requalified_without_mutation(
     atomic_boundary, monkeypatch, lifecycle
 ):
     value = atomic_boundary
-    custody.transition_local_signing_lifecycle(
+    simulate_qualified_local_downgrade_for_reader_test(
         value.directory,
         security=value.security,
-        role=ProviderRole.ROOT_PROOF_SIGNING,
         target=lifecycle,
     )
     before = _snapshot(value)
