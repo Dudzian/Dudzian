@@ -28,7 +28,6 @@ from bot_core.postgresql_custody_lifecycle_contract_constants import (
     ENROLLMENT_MIGRATION_ID,
     SQL_CONTRACT_VERSION,
 )
-from bot_core.postgresql_entitlement_registry import PostgreSQLConnectionConfig
 from bot_core.postgresql_root_proof_retention import _canonical, _snapshot_data
 
 MIGRATION_ID = "ROOT_PROOF_RESERVED_STAGED_PREPARATION_ACL_V2"
