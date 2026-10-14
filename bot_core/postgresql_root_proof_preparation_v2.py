@@ -45,7 +45,7 @@ from bot_core.postgresql_entitlement_registry import PostgreSQLConnectionConfig
 from bot_core.postgresql_root_proof_issuance_authority_v2 import (
     PostgreSQLRootProofIssuanceAuthorityV2,
 )
-from bot_core.postgresql_root_proof_preparation_qualification import (
+from bot_core.postgresql_root_proof_preparation_readonly import (
     PostgreSQLRootProofPreparationV2Deployment,
     lock_root_proof_preparation_signer_v2,
     qualify_root_proof_preparation_v2,
