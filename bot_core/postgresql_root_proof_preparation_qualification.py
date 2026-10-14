@@ -53,6 +53,7 @@ from bot_core.postgresql_root_proof_preparation_readonly import (
     validate_root_proof_preparation_v2_deployment,
 )
 
+
 def _component_principals(
     conn: psycopg.Connection[Any], config: PostgreSQLAtomicRootProofProvisioning
 ) -> tuple[tuple[str, str], ...]:
