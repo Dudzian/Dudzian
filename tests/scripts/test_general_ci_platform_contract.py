@@ -496,8 +496,14 @@ def test_local_signing_custody_keeps_fail_closed_unsupported_platform_lock_contr
     guards = [
         node
         for node in custody_lock.body
-        if isinstance(node, ast.If) and ast.unparse(node.test) == "os.name not in {'posix', 'nt'}"
+        if isinstance(node, ast.If)
+        and isinstance(node.test, ast.BoolOp)
+        and isinstance(node.test.op, ast.Or)
+        and {ast.unparse(part) for part in node.test.values}
+        == {"os.name not in {'posix', 'nt'}", "type(exclusive) is not bool"}
     ]
+    # The lock must reject BOTH unsupported OS backends and untrusted lock-mode
+    # values before touching the filesystem. Regressing either half is unsafe.
     assert len(guards) == 1
     assert any(
         isinstance(node, ast.Raise)
