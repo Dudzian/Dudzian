@@ -147,6 +147,8 @@ def _catalog_fingerprint(
     conn: psycopg.Connection[Any],
     config: PostgreSQLAtomicRootProofProvisioning,
     role_oids: tuple[tuple[str, int], ...],
+    *,
+    additional_schemas: tuple[str, ...] = (),
 ) -> str:
     """Pin definitions, ownership, OIDs, all ACLs and auxiliary behavior.
 
@@ -155,6 +157,16 @@ def _catalog_fingerprint(
     excluded: committing a decision must not invalidate its qualification.
     """
     schemas = _schemas(config)
+    if (
+        type(additional_schemas) is not tuple
+        or any(
+            type(schema) is not str or not schema or schema in schemas
+            for schema in additional_schemas
+        )
+        or len(additional_schemas) != len(set(additional_schemas))
+    ):
+        raise AtomicRootProofQualificationError("exact additive catalog schemas required")
+    schemas.extend(additional_schemas)
     oids = [oid for _, oid in role_oids]
     queries: dict[str, tuple[str, tuple[object, ...]]] = {
         "roles": (

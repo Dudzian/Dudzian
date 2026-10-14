@@ -153,6 +153,19 @@ kwalifikacji sprzętowej ani prawa do produkcyjnej emisji Root Proof.
 Granice izolacji i trwałe punkty protokołu opisuje
 [Lifecycle V2](architecture/stage9_durable_custody_lifecycle_v2.md).
 
+Adaptery przygotowania RESERVED/STAGED dla inventory V2 rozszerzają ten sam
+seryjny job `atomic-root-proof-commit` o testy nowego przygotowania po migracji,
+kwalifikacji preparation ACL, signer enrollment, exact retry i commit właśnie
+tego nowego kandydata. Trzy moduły V2 obejmują skonfigurowany mypy Linux/Windows,
+formatowanie Ruff i branch coverage. Raport obejmuje również współdzielone
+czytniki oraz granice autoryzacji zmienione przez ten PR. Pozostają wszystkie
+wcześniejsze scenariusze, timeout 120 minut oraz próg diff coverage 70%.
+Prywatne ponowne użycie świeżo zweryfikowanego snapshotu w preflight
+`cha_root_proof_signed_attempt.py` jest również objęte tym raportem. Moduł
+był już w skonfigurowanym mypy, format gate i wcześniejszych coverage scopes.
+Nie aktywuje to produkcyjnego issuera ani kwalifikacji sprzętowej.
+Zakres opisuje [przygotowanie V2](architecture/stage9_postgresql_v2_root_proof_preparation.md).
+
 ## Security invariants now encoded
 
 - Signal strength has the signed `[-1, 1]` contract (direction plus magnitude),

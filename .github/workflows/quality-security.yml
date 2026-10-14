@@ -70,6 +70,9 @@ jobs:
           python -m ruff format --check
           bot_core/postgresql_preaccount_credentials.py
           bot_core/postgresql_root_proof_issuance_authority.py
+          bot_core/postgresql_root_proof_issuance_authority_v2.py
+          bot_core/postgresql_root_proof_preparation_qualification.py
+          bot_core/postgresql_root_proof_preparation_v2.py
           bot_core/postgresql_root_proof_retention.py
           bot_core/postgresql_root_proof_retention_schema.py
           bot_core/postgresql_root_proof_signing_intent.py
@@ -126,6 +129,9 @@ jobs:
           tests/security/test_root_proof_atomic_composition_integration.py
           tests/security/test_root_proof_atomic_attempt_consistency.py
           tests/security/test_postgresql_atomic_root_proof_commit.py
+          tests/security/test_postgresql_root_proof_preparation_v2.py
+          tests/security/test_postgresql_root_proof_issuance_authority_v2.py
+          tests/architecture/test_stage9_postgresql_v2_root_proof_preparation.py
           tests/security/atomic_root_proof_fixture.py
           tests/security/test_atomic_root_proof_commit_contract.py
           tests/architecture/test_stage9_atomic_root_proof_commit_boundary.py
@@ -488,6 +494,9 @@ jobs:
         run: >-
           python -m pytest -p asyncio -p pytest_cov.plugin
           tests/security/test_postgresql_atomic_root_proof_commit.py
+          tests/security/test_postgresql_root_proof_preparation_v2.py
+          tests/security/test_postgresql_root_proof_issuance_authority_v2.py
+          tests/architecture/test_stage9_postgresql_v2_root_proof_preparation.py
           tests/security/test_atomic_root_proof_commit_contract.py
           tests/architecture/test_stage9_atomic_root_proof_commit_boundary.py
           tests/security/test_local_signing_lifecycle_evidence.py
@@ -504,6 +513,14 @@ jobs:
           --cov=bot_core.postgresql_atomic_root_proof_qualification
           --cov=bot_core.postgresql_atomic_root_proof_migration
           --cov=bot_core.postgresql_atomic_root_proof_commit
+          --cov=bot_core.postgresql_root_proof_issuance_authority_v2
+          --cov=bot_core.postgresql_root_proof_preparation_qualification
+          --cov=bot_core.postgresql_root_proof_preparation_v2
+          --cov=bot_core.postgresql_authenticated_issuer_history
+          --cov=bot_core.root_proof_atomic_attempt_consistency
+          --cov=bot_core.root_proof_issuer_runtime
+          --cov=bot_core.licensing.cha_root_proof_attempt_reservation
+          --cov=bot_core.licensing.cha_root_proof_signed_attempt
           --cov=bot_core.local_signing_custody
           --cov=bot_core.local_signing_lifecycle_evidence
           --cov=bot_core.postgresql_custody_lifecycle

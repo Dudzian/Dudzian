@@ -33,6 +33,10 @@ from bot_core.postgresql_root_proof_issuance_authority import (
     ProductionLocalIssuanceAuthorityError,
     _configured_root_proof_issuance_authority,
 )
+from bot_core.postgresql_root_proof_issuance_authority_v2 import (
+    PostgreSQLEntitlementRegistryProviderV2,
+    PostgreSQLRootProofIssuanceAuthorityV2,
+)
 from bot_core.root_proof_issuer_substrate import (
     ClaimantIdentityRegistry,
     CredentialRoleIdentity,
@@ -59,6 +63,9 @@ _INITIAL_BINDING_REFERENCE_DOMAIN = (
 _REQUESTER_ROLE = "ACCOUNT_GENESIS_ROOT_PROOF_ISSUANCE_REQUESTER_V1"
 # Caller-supplied implementations and capability flags cannot register authority.
 _TRUSTED_PROVIDER_TYPES: tuple[type, ...] = (PostgreSQLRootProofIssuanceAuthority,)
+# An explicit administratively pinned preparation authority is read-only. It
+# neither replaces the production selector nor satisfies issuer readiness.
+_TRUSTED_PREPARATION_V2_PROVIDER_TYPES: tuple[type, ...] = (PostgreSQLRootProofIssuanceAuthorityV2,)
 
 
 class RootProofAttemptReservationError(RuntimeError):
@@ -201,14 +208,25 @@ def _qualified_port(
     port: Any, role: ProviderRole, trust_domain: str
 ) -> _ProviderQualificationSnapshot:
     identity, capabilities = port.identity, port.capabilities
+    if type(port) is PostgreSQLEntitlementRegistryProviderV2:
+        port._qualify()
+        qualification_failures = (
+            role is not ProviderRole.ENTITLEMENT_REGISTRY
+            or capabilities
+            != ProviderCapabilities(True, authoritative_reads=True, durable_state=True)
+        )
+    else:
+        qualification_failures = bool(
+            ProviderQualificationPolicy().failures_for(
+                SecurityProfile.PRODUCTION_LOCAL, identity, capabilities
+            )
+        )
     if (
         type(identity) is not ProviderIdentity
         or type(capabilities) is not ProviderCapabilities
         or identity.role is not role
         or identity.security.trust_domain != trust_domain
-        or ProviderQualificationPolicy().failures_for(
-            SecurityProfile.PRODUCTION_LOCAL, identity, capabilities
-        )
+        or qualification_failures
     ):
         raise RootProofAttemptReservationError("UNQUALIFIED_PRODUCTION_AUTHORIZATION_PROVIDER")
     credentials = port.credential_identities()
@@ -277,7 +295,7 @@ def _require_global_credential_qualification(
 def _resolve_from_provider(
     binding: object, provider: _IssuanceAuthorityProvider
 ) -> tuple[bytes, AttemptAuthorization, bytes]:
-    if type(provider) not in _TRUSTED_PROVIDER_TYPES:
+    if type(provider) not in _TRUSTED_PROVIDER_TYPES + _TRUSTED_PREPARATION_V2_PROVIDER_TYPES:
         raise RootProofAttemptReservationError("TRUSTED_PROVIDER_PROVENANCE_REQUIRED")
     if provider.requalify() is not None:
         raise RootProofAttemptReservationError("AUTHORIZATION_PROVIDER_REQUALIFICATION_FAILED")
@@ -347,8 +365,14 @@ def _resolve_from_provider(
         registry_revision=claimant.registry_revision,
         semantic_role=CredentialSemanticRole.ROOT_PROOF_CLAIMANT,
     )
-    if type(provider) is PostgreSQLRootProofIssuanceAuthority:
-        provider.validate_resolved_credentials(
+    if type(provider) in (
+        PostgreSQLRootProofIssuanceAuthority,
+        PostgreSQLRootProofIssuanceAuthorityV2,
+    ):
+        qualified_authority = cast(
+            PostgreSQLRootProofIssuanceAuthority | PostgreSQLRootProofIssuanceAuthorityV2, provider
+        )
+        qualified_authority.validate_resolved_credentials(
             requester, claimant, (requester_credential.identity,), (claimant_credential.identity,)
         )
     # Resolution comprises independent read-only authorities. Require the same
@@ -497,9 +521,15 @@ def _authorization_snapshot(value: object) -> _AuthorizationSnapshot:
     if type(value) is not VerifiedRootProofIssuanceAuthorization or value not in _AUTHORIZATIONS:
         raise RootProofAttemptReservationError("VERIFIED_ISSUANCE_AUTHORIZATION_REQUIRED")
     snapshot = _AUTHORIZATIONS[value]
-    current_provider = _issuance_authority_provider()
-    if current_provider is not snapshot.provider:
-        raise RootProofAttemptReservationError("AUTHORIZATION_PROVIDER_CHANGED")
+    current_provider: _IssuanceAuthorityProvider
+    if type(snapshot.provider) is PostgreSQLRootProofIssuanceAuthorityV2:
+        # An explicit V2 preparation capability retains its administratively
+        # pinned, read-only source. It never installs a production selector.
+        current_provider = snapshot.provider
+    else:
+        current_provider = _issuance_authority_provider()
+        if current_provider is not snapshot.provider:
+            raise RootProofAttemptReservationError("AUTHORIZATION_PROVIDER_CHANGED")
     raw, authorization, evidence = _resolve_from_provider(snapshot.binding, current_provider)
     if (raw, authorization, evidence) != (
         snapshot.state_raw,
@@ -522,6 +552,28 @@ def resolve_root_proof_issuance_authorization(
 ) -> VerifiedRootProofIssuanceAuthorization:
     _binding_context(binding)
     provider = _issuance_authority_provider()
+    return _issue_authorization_from_provider(binding, provider)
+
+
+def resolve_root_proof_issuance_authorization_v2(
+    binding: object,
+    authority: PostgreSQLRootProofIssuanceAuthorityV2,
+) -> VerifiedRootProofIssuanceAuthorization:
+    """Resolve genuine preparation through an explicit isolated V2 authority.
+
+    This capability revalidates the retained INITIAL_BINDING and pinned public
+    source on every use. It supplies no final BIND or production issuer grant.
+    """
+    if type(authority) is not PostgreSQLRootProofIssuanceAuthorityV2:
+        raise RootProofAttemptReservationError("EXACT_V2_PREPARATION_AUTHORITY_REQUIRED")
+    _binding_context(binding)
+    return _issue_authorization_from_provider(binding, authority)
+
+
+def _issue_authorization_from_provider(
+    binding: object,
+    provider: _IssuanceAuthorityProvider,
+) -> VerifiedRootProofIssuanceAuthorization:
     raw, authorization, evidence = _resolve_from_provider(binding, provider)
     result = object.__new__(VerifiedRootProofIssuanceAuthorization)
     _AUTHORIZATIONS[result] = _AuthorizationSnapshot(

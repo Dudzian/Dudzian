@@ -17,6 +17,10 @@ from bot_core.authenticated_issuer_history import ReconciliationOutcome
 from bot_core.cha_attempt_signatures import RetainedIssuanceRequest
 from bot_core.cha_attempt_store import AttemptAuthorization
 from bot_core.local_signing_custody import LocalRootProofSigningProvider, SigningKeyLifecycle
+from bot_core.postgresql_root_proof_preparation_v2 import (
+    PostgreSQLRootProofRetentionV2,
+    PostgreSQLRootProofSigningIntentV2,
+)
 from bot_core.postgresql_root_proof_retention import (
     ROOT_PROOF_SIGNING_DOMAIN,
     PostgreSQLRootProofRetention,
@@ -119,29 +123,43 @@ def _cut(name: str) -> None:
     """Test interruption point, without persistence or authorization effects."""
 
 
-def _intent_scope(signing_intent: PostgreSQLRootProofSigningIntent) -> RootProofRetentionScope:
-    scope: object = getattr(signing_intent, _INTENT_PROVIDER_PREFIX + "scope")
+def _intent_scope(
+    signing_intent: PostgreSQLRootProofSigningIntent | PostgreSQLRootProofSigningIntentV2,
+) -> RootProofRetentionScope:
+    prefix = (
+        "_"
+        if type(signing_intent) is PostgreSQLRootProofSigningIntentV2
+        else _INTENT_PROVIDER_PREFIX
+    )
+    scope: object = getattr(signing_intent, prefix + "scope")
     if type(scope) is not RootProofRetentionScope:
         raise RootProofSigningIntentConflict("EXACT_PINNED_SIGNING_INTENT_SCOPE_REQUIRED")
     return cast(RootProofRetentionScope, scope)
 
 
 def _validate_providers(
-    signing_intent: PostgreSQLRootProofSigningIntent, retention: PostgreSQLRootProofRetention
+    signing_intent: PostgreSQLRootProofSigningIntent | PostgreSQLRootProofSigningIntentV2,
+    retention: PostgreSQLRootProofRetention | PostgreSQLRootProofRetentionV2,
 ) -> None:
-    if (
-        type(signing_intent) is not PostgreSQLRootProofSigningIntent
-        or type(retention) is not PostgreSQLRootProofRetention
-    ):
+    if (type(signing_intent), type(retention)) not in {
+        (PostgreSQLRootProofSigningIntent, PostgreSQLRootProofRetention),
+        (PostgreSQLRootProofSigningIntentV2, PostgreSQLRootProofRetentionV2),
+    }:
         raise RootProofSigningIntentConflict("EXACT_PINNED_CONSISTENCY_PROVIDERS_REQUIRED")
     # These are the existing, immutable provider pins, not caller assertions of
     # origin. Equal public snapshots cannot substitute another custody authority.
-    signer: object = getattr(signing_intent, _INTENT_PROVIDER_PREFIX + "signer")
-    retained_signer: object = getattr(
-        retention, _RETENTION_PROVIDER_PREFIX + "verification_authority"
+    intent_prefix = (
+        "_"
+        if type(signing_intent) is PostgreSQLRootProofSigningIntentV2
+        else _INTENT_PROVIDER_PREFIX
     )
+    retention_prefix = (
+        "_" if type(retention) is PostgreSQLRootProofRetentionV2 else _RETENTION_PROVIDER_PREFIX
+    )
+    signer: object = getattr(signing_intent, intent_prefix + "signer")
+    retained_signer: object = getattr(retention, retention_prefix + "verification_authority")
     scope = _intent_scope(signing_intent)
-    retained_scope: object = getattr(retention, _RETENTION_PROVIDER_PREFIX + "scope")
+    retained_scope: object = getattr(retention, retention_prefix + "scope")
     if (
         type(signer) is not LocalRootProofSigningProvider
         or signer is not retained_signer
@@ -149,6 +167,15 @@ def _validate_providers(
         or scope != retained_scope
     ):
         raise RootProofSigningIntentConflict("EXACT_SHARED_SCOPE_AND_CUSTODY_REQUIRED")
+    if (
+        type(signing_intent) is PostgreSQLRootProofSigningIntentV2
+        and type(retention) is PostgreSQLRootProofRetentionV2
+        and (
+            retention._signing_intent is not signing_intent
+            or retention._deployment is not signing_intent._deployment
+        )
+    ):
+        raise RootProofSigningIntentConflict("EXACT_V2_RESERVED_AUTHORITY_REQUIRED")
     if (
         type(ROOT_PROOF_SIGNING_DOMAIN) is not bytes
         or ROOT_PROOF_SIGNING_DOMAIN != _FROZEN_SIGNING_DOMAIN
@@ -161,7 +188,7 @@ def _validate_records(
     sample_request: RetainedIssuanceRequest,
     intent: RootProofSigningIntent | None,
     prepared: PreparedRootProof | None,
-    signing_intent: PostgreSQLRootProofSigningIntent,
+    signing_intent: PostgreSQLRootProofSigningIntent | PostgreSQLRootProofSigningIntentV2,
 ) -> None:
     scope = _intent_scope(signing_intent)
     records: tuple[
@@ -237,8 +264,8 @@ def _validate_records(
 
 
 def _capture(
-    signing_intent: PostgreSQLRootProofSigningIntent,
-    retention: PostgreSQLRootProofRetention,
+    signing_intent: PostgreSQLRootProofSigningIntent | PostgreSQLRootProofSigningIntentV2,
+    retention: PostgreSQLRootProofRetention | PostgreSQLRootProofRetentionV2,
     binding: object,
     signed_attempt: object,
 ) -> _Sample:
@@ -285,8 +312,8 @@ def _error_outcome(error: Exception) -> RootProofAtomicAttemptConsistencyOutcome
 
 
 def validate_root_proof_atomic_attempt_consistency(
-    signing_intent: PostgreSQLRootProofSigningIntent,
-    retention: PostgreSQLRootProofRetention,
+    signing_intent: PostgreSQLRootProofSigningIntent | PostgreSQLRootProofSigningIntentV2,
+    retention: PostgreSQLRootProofRetention | PostgreSQLRootProofRetentionV2,
     *,
     binding: object,
     signed_attempt: object,

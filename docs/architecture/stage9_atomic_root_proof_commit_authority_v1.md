@@ -95,23 +95,35 @@ grants `append_bind`, `append_record` i `retain_head` zostają odwołane.
 przygotowania. Deferred constraints wiążą nowe BOUND i history records/heads
 z decyzją tej samej transakcji.
 
-Nie ma jeszcze Pythonowych preparation adapters dla inventory V2. Dotychczasowe
-V1 kwalifikatory odrzucają schemas po migracji z powodu nowych helpers,
-zmienionych ACL i owner attributes; jest to celowy fail-closed. Genuine
-przygotowanie przez `prepare_atomic_root_proof_commit()` wykonuje się przed
-migracją. Zachowanie SQL preparation APIs nie oznacza, że dotychczasowe
-Pythonowe porty mogą nadal przygotowywać nowe kandydaty po aktywacji V2.
-Ten wariant testowy zatwierdza wcześniej przygotowane, niezmienne kandydaty;
-nie stanowi ciągłego produkcyjnego pipeline emisji.
+Odrębne [preparation adapters V2](stage9_postgresql_v2_root_proof_preparation.md)
+umożliwiają nowe genuine RESERVED i STAGED po migracji w jawnie
+zakwalifikowanym, izolowanym wdrożeniu testowym. Dotychczasowe V1 kwalifikatory
+nadal odrzucają schemas z dodatkowymi helpers i zmienionymi ACL; jest to celowy
+fail-closed. `prepare_atomic_root_proof_commit()` zachowuje swoją ścieżkę
+przed migracją; ten sam entrypoint akceptuje także exact zgodny zestaw nowych
+portów V2 i ponownie weryfikuje ich genuine przygotowanie. Mieszany zestaw
+portów odmawia. Preparation principal zachowuje własne wąskie SQL grants,
+a jawna migration `ROOT_PROOF_RESERVED_STAGED_PREPARATION_ACL_V2` dodaje tylko
+kwalifikację odczytową physical identity i exact enrolled ACTIVE signer fence.
+Nowe preparation może być przekazane do tego samego qualified approval oraz
+`commit_root_proof(bytea)`. Nie ustanawia produkcyjnego pipeline emisji.
+Jawny `resolve_root_proof_issuance_authorization_v2(binding, authority)` tworzy
+nową genuine autoryzację z read-only public capability V2; nie zastępuje
+zablokowanego produkcyjnego selector ani nie przepisuje wcześniejszych signed
+attempt bytes. Durable preparation metadata oraz administracyjna odczytowa
+`requalify_root_proof_preparation_v2()` pozwalają odtworzyć pin po restarcie i
+odzyskać exact original RESERVED/STAGED po unknown preparation result.
 
 Odmowa nowej kwalifikacji nie oznacza, że każdy wcześniej utworzony obiekt
 odmawia wszystkich operacji. Entitlement provider kwalifikuje się w konstruktorze;
 cache'owany obiekt sprzed migracji może nadal czytać oraz wykonywać legalne admin
 `provision/revoke/supersede`. Odebrany grant `append_bind` blokuje jego standalone
-BIND. Intent, retention, history i pre-account credentials ponawiają kwalifikację
-operacji i odmawiają inventory V2. Nie dodano ogólnych runtime/admin adapters V2
-sześciu starych autorytetów; nowe porty Python obejmują wewnętrzny atomic
-coordinator, qualification i administracyjną migration/reconstruction.
+BIND. Legacy intent, retention, history i pre-account credentials ponawiają
+kwalifikację operacji i odmawiają inventory V2. Nowe odrębne porty V2 obejmują
+tylko kwalifikowane preparation i potrzebne publiczne/history reads, bez
+standalone BIND, history writes, checkpoint lub ogólnej administracji
+sześciu starych autorytetów. Wewnętrzny atomic coordinator zachowuje jedyny
+finalny write set; publiczna produkcyjna kompozycja pozostaje zablokowana.
 
 [Kwalifikacja V2](../../bot_core/postgresql_atomic_root_proof_qualification.py)
 przypina role OIDs, physical identity, schema identity/version oraz dokładny
@@ -323,9 +335,9 @@ checkpoint i pełnej kompozycji.
 - Legalne przygotowanie dwóch różnych kandydatów tego samego entitlement
   i rzeczywisty race ich finalnych commitów, po jawnej migracji obecnej
   kardynalności RESERVED/STAGED oraz kwalifikacji replacement protocol.
-- Kwalifikowane preparation adapters inventory V2 oraz jawny history
-  candidate reproposal po stale predecessor, zachowujący immutable approval
-  history i oryginalne Root Proof bytes/identities.
+- Produkcyjna kwalifikacja izolowanych preparation adapters inventory V2
+  oraz jawny history candidate reproposal po stale predecessor,
+  zachowujący immutable approval history i oryginalne Root Proof bytes/identities.
 - Późniejszy checkpoint acceptance z własnym lifecycle fence oraz
   authenticated byte-identical recovery i CHA admission.
 - Weryfikacja rollback-safe restore; ordinary durability nie dowodzi

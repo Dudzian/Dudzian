@@ -231,6 +231,61 @@ class _HistorySnapshot:
     heads: tuple[AttestedHistoryHead, ...]
 
 
+def _read_history_snapshot(
+    conn: psycopg.Connection[Any],
+    schema: str,
+    stream: HistoryStreamIdentity,
+    stream_bytes: bytes,
+    *,
+    lock: bool,
+) -> _HistorySnapshot:
+    """Decode the frozen history projection independently of its SQL qualifier."""
+    result = conn.execute(
+        sql.SQL("SELECT {}.read_stream(%s,%s)").format(sql.Identifier(schema)),
+        (stream_bytes, lock),
+    ).fetchone()
+    if result is None:
+        raise HistoryContractError("provisioned history stream is unavailable")
+    value = _object(
+        result[0],
+        {"canonical_identity", "head_sequence", "head_digest", "records", "attestations"},
+        "stream snapshot",
+    )
+    if _unhex(value["canonical_identity"]) != stream_bytes:
+        raise HistoryContractError("wrong stream/environment/trust/product/security epoch")
+    if type(value["records"]) is not list or type(value["attestations"]) is not list:
+        raise HistoryContractError("malformed retained history collection")
+    records = tuple(_record_from_row(row, stream) for row in value["records"])
+    predecessor = NO_PREDECESSOR
+    events: set[HistoryEventIdentity] = set()
+    for sequence, record in enumerate(records, GENESIS_SEQUENCE):
+        if (
+            record.sequence != sequence
+            or record.predecessor_authenticated_digest != predecessor
+            or record.event_identity in events
+        ):
+            raise HistoryContractError("gap, rewind, splice, fork, or inconsistent event index")
+        events.add(record.event_identity)
+        predecessor = record.authenticated_digest
+    if (
+        type(value["head_sequence"]) is not int
+        or value["head_sequence"] != len(records)
+        or value["head_digest"] != predecessor
+    ):
+        raise HistoryContractError("retained head/history tail mismatch")
+    heads = tuple(_head_from_row(row, stream) for row in value["attestations"])
+    head_sequences: set[int] = set()
+    for head in heads:
+        if (
+            head.sequence > len(records)
+            or head.sequence in head_sequences
+            or head.record_digest != records[head.sequence - GENESIS_SEQUENCE].authenticated_digest
+        ):
+            raise HistoryContractError("retained attestation/history relation is corrupt")
+        head_sequences.add(head.sequence)
+    return _HistorySnapshot(records, heads)
+
+
 class PostgreSQLAuthenticatedIssuerHistory:
     """Reviewed runtime history port with database CAS and complete-chain reads.
 
@@ -304,51 +359,9 @@ class PostgreSQLAuthenticatedIssuerHistory:
             ) from exc
 
     def _snapshot(self, conn: psycopg.Connection[Any], *, lock: bool) -> _HistorySnapshot:
-        result = conn.execute(
-            sql.SQL("SELECT {}.read_stream(%s,%s)").format(sql.Identifier(self._schema)),
-            (self._stream_bytes, lock),
-        ).fetchone()
-        if result is None:
-            raise HistoryContractError("provisioned history stream is unavailable")
-        value = _object(
-            result[0],
-            {"canonical_identity", "head_sequence", "head_digest", "records", "attestations"},
-            "stream snapshot",
+        return _read_history_snapshot(
+            conn, self._schema, self._stream, self._stream_bytes, lock=lock
         )
-        if _unhex(value["canonical_identity"]) != self._stream_bytes:
-            raise HistoryContractError("wrong stream/environment/trust/product/security epoch")
-        if type(value["records"]) is not list or type(value["attestations"]) is not list:
-            raise HistoryContractError("malformed retained history collection")
-        records = tuple(_record_from_row(row, self._stream) for row in value["records"])
-        predecessor = NO_PREDECESSOR
-        events: set[HistoryEventIdentity] = set()
-        for sequence, record in enumerate(records, GENESIS_SEQUENCE):
-            if (
-                record.sequence != sequence
-                or record.predecessor_authenticated_digest != predecessor
-                or record.event_identity in events
-            ):
-                raise HistoryContractError("gap, rewind, splice, fork, or inconsistent event index")
-            events.add(record.event_identity)
-            predecessor = record.authenticated_digest
-        if (
-            type(value["head_sequence"]) is not int
-            or value["head_sequence"] != len(records)
-            or value["head_digest"] != predecessor
-        ):
-            raise HistoryContractError("retained head/history tail mismatch")
-        heads = tuple(_head_from_row(row, self._stream) for row in value["attestations"])
-        head_sequences: set[int] = set()
-        for head in heads:
-            if (
-                head.sequence > len(records)
-                or head.sequence in head_sequences
-                or head.record_digest
-                != records[head.sequence - GENESIS_SEQUENCE].authenticated_digest
-            ):
-                raise HistoryContractError("retained attestation/history relation is corrupt")
-            head_sequences.add(head.sequence)
-        return _HistorySnapshot(records, heads)
 
     def _read(self, operation: Callable[[_HistorySnapshot], _T]) -> _T:
         try:

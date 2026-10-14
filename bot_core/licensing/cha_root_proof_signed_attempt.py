@@ -75,6 +75,16 @@ def _installed_custody(auth):
 
 def _qualified_pair(authorization):
     snapshot = reservation_boundary._authorization_snapshot(authorization)
+    return _qualified_pair_from_snapshot(snapshot)
+
+
+def _qualified_pair_from_snapshot(snapshot):
+    """Qualify custody against this invocation's freshly verified authorization.
+
+    The public capability reader above always runs its live source guard. The
+    preflight reader already obtained the same guard result under its genuine
+    binding boundary; reusing it here does not carry trust to another call.
+    """
     auth = snapshot.authorization
     requester, claimant = _installed_custody(auth)
     if (
@@ -212,8 +222,8 @@ def _read_issuer_preflight_source(
     upstream = reservation_boundary._exact_binding_authorization(
         snapshot.binding, snapshot.authorization
     )
-    qualified, _, identities = _qualified_pair(snapshot.authorization)
-    if qualified != upstream:
+    qualified, _, identities = _qualified_pair_from_snapshot(upstream)
+    if qualified is not upstream:
         raise SignedIssuanceAttemptError("PREFLIGHT_AUTHORIZATION_CHANGED")
     if snapshot.path != reservation_boundary._attempt_store_path():
         raise SignedIssuanceAttemptError("ATTEMPT_STORE_OWNER_CHANGED")
