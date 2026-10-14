@@ -1,7 +1,7 @@
 """Internal PostgreSQL atomic commit client for an administratively isolated test DB.
 
-Preparation verifies genuine INITIAL_BINDING/attempt authority before the explicit
-V1 migration closes standalone writers. It never signs or mints a Root Proof.
+Preparation verifies genuine INITIAL_BINDING/attempt authority through qualified
+legacy or post-migration V2 readers. It never signs or mints a Root Proof.
 Only the qualified test administrator can retain that verified preparation; the
 issuer writer then invokes one closed SQL operation in one physical SERIALIZABLE
 transaction. No public issuer composition imports this module.
@@ -59,6 +59,14 @@ from bot_core.postgresql_authenticated_issuer_history import PostgreSQLAuthentic
 from bot_core.postgresql_entitlement_registry import PostgreSQLConnectionConfig, _state_json
 from bot_core.postgresql_preaccount_credentials import CredentialGeneration
 from bot_core.postgresql_root_proof_issuance_authority import PostgreSQLRootProofIssuanceAuthority
+from bot_core.postgresql_root_proof_issuance_authority_v2 import (
+    PostgreSQLRootProofIssuanceAuthorityV2,
+)
+from bot_core.postgresql_root_proof_preparation_v2 import (
+    PostgreSQLAuthenticatedIssuerHistoryV2,
+    PostgreSQLRootProofRetentionV2,
+    PostgreSQLRootProofSigningIntentV2,
+)
 from bot_core.postgresql_root_proof_retention import (
     PostgreSQLRootProofRetention,
     PreparedRootProof,
@@ -147,7 +155,7 @@ class AtomicRootProofCommitFences:
 
 @dataclass(frozen=True, slots=True, weakref_slot=True, eq=False)
 class PreparedAtomicRootProofCommit:
-    """Detached pre-migration evidence; caller construction is never sufficient."""
+    """Detached exact preparation evidence; caller construction is never sufficient."""
 
     reserved: RootProofSigningIntent
     prepared: PreparedRootProof
@@ -270,23 +278,44 @@ def prepare_atomic_root_proof_commit(
     binding: object,
     signed_attempt: object,
     *,
-    signing_intent: PostgreSQLRootProofSigningIntent,
-    retention: PostgreSQLRootProofRetention,
-    issuer_authority: PostgreSQLRootProofIssuanceAuthority,
-    history: PostgreSQLAuthenticatedIssuerHistory,
+    signing_intent: PostgreSQLRootProofSigningIntent | PostgreSQLRootProofSigningIntentV2,
+    retention: PostgreSQLRootProofRetention | PostgreSQLRootProofRetentionV2,
+    issuer_authority: PostgreSQLRootProofIssuanceAuthority | PostgreSQLRootProofIssuanceAuthorityV2,
+    history: PostgreSQLAuthenticatedIssuerHistory | PostgreSQLAuthenticatedIssuerHistoryV2,
 ) -> PreparedAtomicRootProofCommit:
-    """Verify exact genuine RESERVED/STAGED before the administrative migration.
+    """Verify exact genuine RESERVED/STAGED through their versioned qualified ports.
 
     This read-only operation builds an unsigned history successor. No supplied
     authorization DTO, readiness flag, signing callback, or SQL names are used.
     """
-    if (
-        type(issuer_authority) is not PostgreSQLRootProofIssuanceAuthority
-        or type(history) is not PostgreSQLAuthenticatedIssuerHistory
-    ):
+    if (type(issuer_authority), type(history), type(signing_intent), type(retention)) not in {
+        (
+            PostgreSQLRootProofIssuanceAuthority,
+            PostgreSQLAuthenticatedIssuerHistory,
+            PostgreSQLRootProofSigningIntent,
+            PostgreSQLRootProofRetention,
+        ),
+        (
+            PostgreSQLRootProofIssuanceAuthorityV2,
+            PostgreSQLAuthenticatedIssuerHistoryV2,
+            PostgreSQLRootProofSigningIntentV2,
+            PostgreSQLRootProofRetentionV2,
+        ),
+    }:
         raise AtomicRootProofCommitConflict("GENUINE_PREPARATION_AUTHORITIES_REQUIRED")
     try:
         _validate_providers(signing_intent, retention)
+        if (
+            type(issuer_authority) is PostgreSQLRootProofIssuanceAuthorityV2
+            and type(history) is PostgreSQLAuthenticatedIssuerHistoryV2
+            and type(signing_intent) is PostgreSQLRootProofSigningIntentV2
+            and (
+                signing_intent._authority is not issuer_authority
+                or history._deployment is not signing_intent._deployment
+                or issuer_authority.deployment is not signing_intent._deployment
+            )
+        ):
+            raise AtomicRootProofCommitConflict("EXACT_SHARED_V2_PREPARATION_DEPLOYMENT_REQUIRED")
         source, current, request = _read_issuer_preflight_source(signed_attempt)
         if source.binding is not binding or source.provider is not issuer_authority:
             raise AtomicRootProofCommitConflict("EXACT_GENUINE_BINDING_AUTHORITY_REQUIRED")
@@ -404,8 +433,18 @@ def prepare_atomic_root_proof_commit(
             _canonical(_base_package(value)),
             (
                 _provider_pin(issuer_authority.entitlement_registry, "_"),
-                _provider_pin(signing_intent, "_PostgreSQLRootProofSigningIntent__"),
-                _provider_pin(retention, "_PostgreSQLRootProofRetention__"),
+                _provider_pin(
+                    signing_intent,
+                    "_"
+                    if type(signing_intent) is PostgreSQLRootProofSigningIntentV2
+                    else "_PostgreSQLRootProofSigningIntent__",
+                ),
+                _provider_pin(
+                    retention,
+                    "_"
+                    if type(retention) is PostgreSQLRootProofRetentionV2
+                    else "_PostgreSQLRootProofRetention__",
+                ),
                 _provider_pin(history, "_"),
                 _provider_pin(issuer_authority.requester_registry, "_"),
                 _provider_pin(issuer_authority.claimant_registry, "_"),

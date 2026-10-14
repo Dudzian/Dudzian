@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import asdict, dataclass
-from typing import Literal
+from typing import Literal, cast
 
 from bot_core.cha_attempt_signatures import RetainedIssuanceRequest, verify_final_identity
 from bot_core.cha_attempt_store import AttemptIdentity, AttemptState, CurrentAttempt
@@ -34,6 +34,9 @@ from bot_core.licensing.cha_root_proof_attempt_reservation import _Authorization
 from bot_core.licensing.cha_root_proof_signed_attempt import _read_issuer_preflight_source
 from bot_core.postgresql_preaccount_credentials import CredentialGeneration, CredentialLifecycle
 from bot_core.postgresql_root_proof_issuance_authority import PostgreSQLRootProofIssuanceAuthority
+from bot_core.postgresql_root_proof_issuance_authority_v2 import (
+    PostgreSQLRootProofIssuanceAuthorityV2,
+)
 from bot_core.root_proof_issuer_substrate import (
     CredentialSemanticRole,
     public_key_material_identity,
@@ -75,9 +78,15 @@ def _verify_request(
     source: _AuthorizationSnapshot, current: CurrentAttempt, retained: RetainedIssuanceRequest
 ) -> tuple[int, int, int]:
     """Independently authenticate immutable bytes against public authority."""
-    authority = source.provider
-    if type(authority) is not PostgreSQLRootProofIssuanceAuthority:
+    if type(source.provider) not in (
+        PostgreSQLRootProofIssuanceAuthority,
+        PostgreSQLRootProofIssuanceAuthorityV2,
+    ):
         raise RootProofIssuerRuntimeError("EXACT_PUBLIC_ISSUER_AUTHORITY_REQUIRED")
+    authority = cast(
+        PostgreSQLRootProofIssuanceAuthority | PostgreSQLRootProofIssuanceAuthorityV2,
+        source.provider,
+    )
     auth = source.authorization
     if (
         auth.environment != "PRODUCTION"
