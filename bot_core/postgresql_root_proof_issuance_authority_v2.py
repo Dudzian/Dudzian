@@ -58,7 +58,7 @@ from bot_core.root_proof_issuer_substrate import (
 
 if TYPE_CHECKING:
     from bot_core.licensing.cha_root_proof_attempt_reservation import _ProviderResolution
-    from bot_core.postgresql_root_proof_preparation_qualification import (
+    from bot_core.postgresql_root_proof_preparation_readonly import (
         PostgreSQLRootProofPreparationV2Deployment,
     )
 
@@ -68,7 +68,7 @@ _ReadResult = TypeVar("_ReadResult")
 def _validate_deployment(deployment: PostgreSQLRootProofPreparationV2Deployment) -> None:
     # The migration module also imports retained-attempt validation. Resolve
     # qualification only on use to keep that dependency cycle out of imports.
-    from bot_core.postgresql_root_proof_preparation_qualification import (
+    from bot_core.postgresql_root_proof_preparation_readonly import (
         validate_root_proof_preparation_v2_deployment,
     )
 
@@ -133,7 +133,7 @@ class _QualifiedV2PublicConnection:
             yield conn
 
     def _qualify_connection(self, conn: psycopg.Connection[Any]) -> None:
-        from bot_core.postgresql_root_proof_preparation_qualification import (
+        from bot_core.postgresql_root_proof_preparation_readonly import (
             qualify_root_proof_preparation_v2,
         )
 
