@@ -418,7 +418,9 @@ def test_initial_writer_rejects_exclusive_native_lease_for_different_custody_dir
     foreign_lock = Path("other-custody") / custody._LOCK_FILENAME
     assert foreign_lock not in before_files
     assert foreign_lock in after_files
-    assert {path: data for path, data in after_files.items() if path != foreign_lock} == before_files
+    assert (
+        {path: data for path, data in after_files.items() if path != foreign_lock} == before_files
+    )
     assert native_keyring == before_secrets
 
 
