@@ -225,7 +225,10 @@ _ACTUAL_READERS = [
 
 
 def _reader_probe(monkeypatch, implementation, *, refuse=False):
-    import bot_core.postgresql_root_proof_preparation_qualification as qualification
+    # Public V2 readers import the isolated read-only qualifier since #3119.
+    # Exercise that exact live-call seam; the administrative migration module
+    # is deliberately not reachable from a public issuer.
+    import bot_core.postgresql_root_proof_preparation_readonly as qualification
 
     connections = []
 
