@@ -407,11 +407,18 @@ def test_initial_writer_rejects_exclusive_native_lease_for_different_custody_dir
     other = tmp_path / "other-custody"
     other.mkdir(mode=0o700)
     before_secrets = dict(native_keyring)
+    before_files = _custody_file_bytes(tmp_path)
     with custody._custody_lock(other, exclusive=True) as lease:
-        before_files = _custody_file_bytes(tmp_path)
         with pytest.raises(LocalSigningLifecycleError, match="exclusive custody provisioning lock"):
             _initial_writer(tmp_path, security, authority, lease)
-        assert _custody_file_bytes(tmp_path) == before_files
+    # On Windows the OS correctly forbids reading a byte-range-locked file
+    # while the foreign lease is held. Snapshot only after its release, and
+    # account explicitly for the lock sentinel that acquiring it creates.
+    after_files = _custody_file_bytes(tmp_path)
+    foreign_lock = Path("other-custody") / custody._LOCK_FILENAME
+    assert foreign_lock not in before_files
+    assert foreign_lock in after_files
+    assert {path: data for path, data in after_files.items() if path != foreign_lock} == before_files
     assert native_keyring == before_secrets
 
 
