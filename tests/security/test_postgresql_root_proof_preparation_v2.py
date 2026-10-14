@@ -664,6 +664,7 @@ def test_live_requester_claimant_and_generation_facts_are_rechecked(v2_boundary,
         # Real administrative SQL retains its original principal and typed
         # history semantics; its legacy Python catalog qualifier is closed.
         with psycopg.connect(administrator._connection.dsn) as connection:
+            connection.execute("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE")
             connection.execute(
                 sql.SQL("SELECT {}.apply(%s)").format(sql.Identifier(administrator._schema)),
                 (Jsonb(payload),),
