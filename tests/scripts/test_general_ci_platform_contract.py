@@ -65,6 +65,9 @@ def test_ubuntu_runs_external_postgresql_against_postgresql_16_service():
     jobs = _general_ci_jobs()
     general = jobs["py-tests-ubuntu"]
     postgres_job = jobs["py-tests-ubuntu-postgresql"]
+    strategy = postgres_job["strategy"]
+    assert strategy["fail-fast"] is False
+    assert strategy["matrix"]["shard"] == ["issuer-durability", "remaining-security"]
     assert general["runs-on"] == postgres_job["runs-on"] == "ubuntu-latest"
     assert general["needs"] == postgres_job["needs"] == "prepare-wheelhouse"
 
@@ -78,6 +81,18 @@ def test_ubuntu_runs_external_postgresql_against_postgresql_16_service():
     postgres_command = _pytest_command(postgres_job)
     assert f'-m "not external_postgresql and {common_markers}"' in general_command
     assert f'-m "external_postgresql and {common_markers}"' in postgres_command
+    # Every selected test matches exactly one of the two complementary -k expressions.
+    assert 'case "${{ matrix.shard }}" in' in postgres_command
+    assert "issuer-durability)" in postgres_command
+    assert "remaining-security)" in postgres_command
+    terms = (
+        "root_proof_issuance_authority or root_proof_preparation_v2 or "
+        "root_proof_retention or root_proof_signing_intent or "
+        "root_proof_issuer_orchestration_integration"
+    )
+    assert f"SHARD_KEYWORDS='{terms}'" in postgres_command
+    assert f"SHARD_KEYWORDS='not ({terms})'" in postgres_command
+    assert '-k "$SHARD_KEYWORDS"' in postgres_command
     for command in (general_command, postgres_command):
         assert "--fast" in command
         assert "--maxfail=1" in command
@@ -125,7 +140,7 @@ def test_ubuntu_runs_external_postgresql_against_postgresql_16_service():
         next(step for step in postgres_job["steps"] if step["name"] == "Upload pytest results")[
             "with"
         ]["name"]
-        == "py-tests-ubuntu-postgresql-pytest-results"
+        == "py-tests-ubuntu-postgresql-${{ matrix.shard }}-pytest-results"
     )
 
 

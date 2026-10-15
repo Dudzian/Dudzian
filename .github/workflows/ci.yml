@@ -750,9 +750,13 @@ jobs:
   # security tests that intentionally modify ACLs or restart the DB within a shard.
   py-tests-ubuntu-postgresql:
     if: github.event_name != 'schedule'
-    name: Python tests (Ubuntu PostgreSQL qualification)
+    name: Python tests (Ubuntu PostgreSQL qualification, ${{ matrix.shard }})
     runs-on: ubuntu-latest
     needs: prepare-wheelhouse
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [issuer-durability, remaining-security]
     timeout-minutes: 150
     services:
       postgres:
@@ -877,8 +881,20 @@ jobs:
           ENTITLEMENT_REGISTRY_POSTGRES_ADMIN_DSN: "host=127.0.0.1 port=55432 dbname=postgres user=postgres"
         run: |
           mkdir -p test-results
-          python -m pytest -p asyncio \
-            --fast \
+          # Two disjoint, exhaustive pytest -k partitions of the same -m selection.
+          # Never run both suites against one PostgreSQL service/runner.
+          case "${{ matrix.shard }}" in
+            issuer-durability)
+              SHARD_KEYWORDS='root_proof_issuance_authority or root_proof_preparation_v2 or root_proof_retention or root_proof_signing_intent or root_proof_issuer_orchestration_integration'
+              ;;
+            remaining-security)
+              SHARD_KEYWORDS='not (root_proof_issuance_authority or root_proof_preparation_v2 or root_proof_retention or root_proof_signing_intent or root_proof_issuer_orchestration_integration)'
+              ;;
+            *) echo "Unknown PostgreSQL qualification shard" >&2; exit 2 ;;
+          esac
+          python -m pytest -p asyncio \\
+            --fast \\
+            -k "$SHARD_KEYWORDS" \\
             -m "external_postgresql and not integration and not e2e_demo_paper and not retraining and not soak and not performance and not qml" \
             --ignore=tests/e2e \
             --ignore=tests/integration \
@@ -903,7 +919,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: py-tests-ubuntu-postgresql-pytest-results
+          name: py-tests-ubuntu-postgresql-${{ matrix.shard }}-pytest-results
           path: test-results/pytest.xml
           retention-days: 3
 
