@@ -100,7 +100,10 @@ def test_ubuntu_runs_external_postgresql_against_postgresql_16_service():
     assert test_step["timeout-minutes"] == 120
     for variable in ("DUDZIAN_TEST_POSTGRES_DSN", "ENTITLEMENT_REGISTRY_POSTGRES_ADMIN_DSN"):
         assert "127.0.0.1 port=55432" in test_step["env"][variable]
-    for variable in ("CRYPTOHUNTER_TEST_POSTGRES_UNSAFE_DSN", "CRYPTOHUNTER_TEST_POSTGRES_OTHER_DSN"):
+    for variable in (
+        "CRYPTOHUNTER_TEST_POSTGRES_UNSAFE_DSN",
+        "CRYPTOHUNTER_TEST_POSTGRES_OTHER_DSN",
+    ):
         assert variable in test_step["env"]
     assert test_step["env"]["DUDZIAN_TEST_POSTGRES_RESTART_CONTAINER_ID"] == (
         "${{ job.services.postgres.id }}"
@@ -115,7 +118,8 @@ def test_ubuntu_runs_external_postgresql_against_postgresql_16_service():
         step["name"] for step in postgres_job["steps"]
     }
     assert jobs["integration-linux"]["needs"] == [
-        "py-tests-ubuntu", "py-tests-ubuntu-postgresql"
+        "py-tests-ubuntu",
+        "py-tests-ubuntu-postgresql",
     ]
     assert (
         next(step for step in postgres_job["steps"] if step["name"] == "Upload pytest results")[
@@ -123,6 +127,7 @@ def test_ubuntu_runs_external_postgresql_against_postgresql_16_service():
         ]["name"]
         == "py-tests-ubuntu-postgresql-pytest-results"
     )
+
 
 def test_postgresql_restart_proof_controls_exact_service_and_waits_on_test_dsn():
     path = ROOT / "tests/security/test_postgresql_freshness_authority_core.py"
