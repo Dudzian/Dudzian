@@ -227,8 +227,8 @@ BEGIN
  IF p_revision<>selected.revision+1 OR p_predecessor IS DISTINCT FROM selected.candidate_id THEN
  RAISE EXCEPTION 'current exact predecessor required' USING ERRCODE='23514'; END IF;
  IF (p_package - {immutable_fields}) IS DISTINCT FROM (base - {immutable_fields})
- OR (p_package->'history_record' - ARRAY['sequence','predecessor_authenticated_digest','authenticated_digest']::text[])
- IS DISTINCT FROM (base->'history_record' - ARRAY['sequence','predecessor_authenticated_digest','authenticated_digest']::text[])
+ OR ((p_package->'history_record') - ARRAY['sequence','predecessor_authenticated_digest','authenticated_digest']::text[])
+ IS DISTINCT FROM ((base->'history_record') - ARRAY['sequence','predecessor_authenticated_digest','authenticated_digest']::text[])
  OR p_package->'history_head'->'canonical_credential_hex' IS DISTINCT FROM base->'history_head'->'canonical_credential_hex'
  THEN RAISE EXCEPTION 'reproposal must preserve original proof and event bytes' USING ERRCODE='23514'; END IF;
  END IF;

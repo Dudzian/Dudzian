@@ -6,14 +6,21 @@ import hashlib
 from copy import deepcopy
 from dataclasses import replace
 
+import psycopg
 import pytest
+from psycopg.types.json import Jsonb
 
 from bot_core.licensing.canonical import canonical_json_bytes
 from bot_core.postgresql_atomic_root_proof_commit import AtomicRootProofCommitConflict
+from bot_core.postgresql_atomic_root_proof_schema import PostgreSQLAtomicRootProofProvisioning
 from bot_core.postgresql_history_successor_reproposal_evidence import (
     _same_original_authorization_evidence,
 )
+from bot_core.postgresql_history_successor_reproposal_schema import (
+    reviewed_reproposal_function_sources,
+)
 from tests.licensing.test_cha_attempt_store_stage9 import authorization
+from tests.security.test_postgresql_checkpoint_authority import BASE_DSN
 
 
 def _evidence(cas):
@@ -115,3 +122,75 @@ def test_read_only_historical_provider_cannot_claim_former_standalone_cas_author
         _same_original_authorization_evidence(
             _auth(original), original, _auth(fresh), fresh, historical_entitlement_cas=False
         )
+
+
+@pytest.mark.external_postgresql
+@pytest.mark.parametrize("changed", [None, "payload_hex", "event_payload", "history_credential"])
+def test_postgresql_immutable_projection_preserves_original_fields(changed):
+    """Execute the actual admission predicate; these JSON objects authorize nothing."""
+    config = PostgreSQLAtomicRootProofProvisioning(
+        "atomic",
+        "atomic_owner",
+        "atomic_writer",
+        "atomic_admin",
+        "entitlement",
+        "intent",
+        "retention",
+        "history",
+        "trust",
+        "isolated_instance",
+        "requester",
+        "claimant",
+    )
+    source = reviewed_reproposal_function_sources(config)[
+        "approve_history_proposal(jsonb,bigint,text)"
+    ]
+    predicate = (
+        "(p_package - "
+        + source.split(" IF (p_package - ", 1)[1].split(
+            "\n THEN RAISE EXCEPTION 'reproposal must preserve original proof and event bytes'", 1
+        )[0]
+    )
+    predicate = predicate.replace("p_package", "%(candidate)s::jsonb").replace(
+        "base", "%(original)s::jsonb"
+    )
+    original = {
+        "payload_hex": "original-root-proof",
+        "history_record": {
+            "sequence": 1,
+            "predecessor_authenticated_digest": "NO_PREDECESSOR",
+            "authenticated_digest": "record-one",
+            "canonical_payload_hex": "immutable-event",
+        },
+        "history_head": {"sequence": 1, "canonical_credential_hex": "original-history-signer"},
+        "expected_history_digest": "NO_PREDECESSOR",
+        "history_record_hex": "record-one",
+        "history_head_hex": "head-one",
+        "history_signature_hex": "signature-one",
+    }
+    candidate = deepcopy(original)
+    candidate["history_record"].update(
+        sequence=2,
+        predecessor_authenticated_digest="authoritative-predecessor",
+        authenticated_digest="record-two",
+    )
+    candidate.update(
+        expected_history_digest="authoritative-predecessor",
+        history_record_hex="record-two",
+        history_head_hex="head-two",
+        history_signature_hex="signature-two",
+    )
+    candidate["history_head"]["sequence"] = 2
+    if changed == "payload_hex":
+        candidate[changed] = "changed-root-proof"
+    elif changed == "event_payload":
+        candidate["history_record"]["canonical_payload_hex"] = "changed-event"
+    elif changed == "history_credential":
+        candidate["history_head"]["canonical_credential_hex"] = "another-history-signer"
+    with psycopg.connect(BASE_DSN) as observer:
+        observer.execute("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE READ ONLY")
+        row = observer.execute(
+            "SELECT " + predicate,
+            {"candidate": Jsonb(candidate), "original": Jsonb(original)},
+        ).fetchone()
+    assert row == (changed is not None,)
