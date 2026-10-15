@@ -61,9 +61,11 @@ jobs:
         shell: bash
         run: |
           python scripts/check_required_adapter_factories.py \
-            --require deribit_futures \
-            --require bitmex_futures
+            --require deribit_futures
 
+      # BitMEX shut down in September 2026 and CCXT delisted its adapter.
+      # The scheduled live report requires only active Deribit evidence. Retain
+      # historical BitMEX rows in CSV without claiming fresh runtime activity.
       # strict schedule reads runtime stream metrics collected in this run
       # (scope reflects current gateway stream semantics, not legacy fixture-only shape)
       - name: Fetch real long-poll snapshots for strict schedule run
@@ -94,8 +96,6 @@ jobs:
             --config config/core.yaml \
             --environment deribit_futures_paper \
             --environment deribit_futures_live \
-            --environment bitmex_futures_paper \
-            --environment bitmex_futures_live \
             --host 127.0.0.1 \
             --port 8765 \
             --log-level INFO &
@@ -109,12 +109,17 @@ jobs:
             sleep 1
           done
 
+          # Fail immediately if the gateway failed to start; an empty gateway
+          # response must never be interpreted as an empty exchange snapshot.
+          curl -fsS "http://127.0.0.1:8765/stream/status" >/dev/null
+
           timeout 90s python scripts/fetch_long_poll_snapshots.py \
             --config config/core.yaml \
             --base-url http://127.0.0.1:8765 \
             --output var/metrics/long_poll_snapshots.json \
             --channels ticker \
-            --timeout-seconds 20
+            --timeout-seconds 20 \
+            --active-only
 
       - name: Validate long-poll snapshots
         shell: bash
@@ -129,6 +134,7 @@ jobs:
             --output var/metrics/long_poll_snapshots.json \
             --max-age-minutes "${LONG_POLL_MAX_AGE_MINUTES}" \
             --future-grace-minutes "${LONG_POLL_FUTURE_GRACE_MINUTES}" \
+            --active-only \
             "${validator_extra_args[@]}"
 
       - name: Generate exchange report
@@ -145,6 +151,7 @@ jobs:
             --long-poll-metrics var/metrics/long_poll_snapshots.json \
             --long-poll-ttl-minutes "${LONG_POLL_MAX_AGE_MINUTES}" \
             --generate-hypercare-assets \
+            --active-only \
             "${report_extra_args[@]}"
 
       - name: Upload exchange report artifacts
