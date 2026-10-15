@@ -665,10 +665,6 @@ jobs:
         run: >-
           python -m pytest -p asyncio -p pytest_cov.plugin
           tests/security/test_postgresql_atomic_root_proof_commit.py
-          tests/security/test_postgresql_history_successor_reproposal.py
-          tests/security/test_history_successor_reproposal_evidence.py
-          tests/security/test_history_successor_reproposal_legacy.py
-          tests/architecture/test_stage9_history_successor_reproposal.py
           tests/security/test_postgresql_root_proof_preparation_v2.py
           tests/security/test_postgresql_root_proof_issuance_authority_v2.py
           tests/architecture/test_stage9_postgresql_v2_root_proof_preparation.py
@@ -688,10 +684,6 @@ jobs:
           --cov=bot_core.postgresql_atomic_root_proof_qualification
           --cov=bot_core.postgresql_atomic_root_proof_migration
           --cov=bot_core.postgresql_atomic_root_proof_commit
-          --cov=bot_core.postgresql_history_successor_reproposal
-          --cov=bot_core.postgresql_history_successor_reproposal_schema
-          --cov=bot_core.postgresql_history_successor_reproposal_qualification
-          --cov=bot_core.postgresql_history_successor_reproposal_evidence
           --cov=bot_core.postgresql_root_proof_issuance_authority_v2
           --cov=bot_core.postgresql_root_proof_preparation_qualification
           --cov=bot_core.postgresql_root_proof_preparation_readonly
@@ -709,19 +701,217 @@ jobs:
           --cov-branch --cov-config=.coveragerc
           --cov-report=term-missing
           --cov-report=xml:atomic-root-proof-coverage.xml -q
-      - name: Changed-code coverage ratchet
-        if: github.event_name == 'pull_request'
-        env:
-          BASE_REF: ${{ github.base_ref }}
-        run: >-
-          diff-cover atomic-root-proof-coverage.xml
-          --compare-branch "origin/$BASE_REF" --fail-under=70
+      - name: Preserve atomic commit branch coverage database
+        run: |
+          test -s .coverage
+          mv .coverage coverage-atomic-root-proof.data
+      - name: Upload atomic commit coverage database
+        uses: actions/upload-artifact@v7
+        with:
+          name: atomic-root-proof-commit-data
+          path: coverage-atomic-root-proof.data
+          if-no-files-found: error
+          retention-days: 3
       - name: Upload atomic commit coverage
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: atomic-root-proof-commit-coverage
           path: atomic-root-proof-coverage.xml
+          if-no-files-found: error
+          retention-days: 7
+
+  # This suite has a separate pair of physical clusters. Its genuine lineage
+  # setup and restart/crash cases must not consume the original atomic job's budget.
+  history-successor-reproposal:
+    name: History Successor Reproposal qualification
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      postgres-other:
+        image: postgres:16
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 55434:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - name: Install history reproposal test tools
+        run: python -m pip install -e ".[test]"
+      - name: Verify independent durable PostgreSQL 16 clusters
+        env:
+          PRIMARY_CONTAINER: ${{ job.services.postgres.id }}
+          OTHER_CONTAINER: ${{ job.services.postgres-other.id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for container_id in "$PRIMARY_CONTAINER" "$OTHER_CONTAINER"; do
+            actual="$(docker exec "$container_id" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -At -c \
+              "SELECT current_setting('server_version_num')::integer / 10000, current_setting('fsync'), current_setting('synchronous_commit'), current_setting('full_page_writes')")"
+            test "$actual" = '16|on|on|on'
+          done
+          primary_id="$(docker exec "$PRIMARY_CONTAINER" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -At -c 'SELECT system_identifier FROM pg_control_system()')"
+          other_id="$(docker exec "$OTHER_CONTAINER" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -At -c 'SELECT system_identifier FROM pg_control_system()')"
+          test -n "$primary_id"
+          test -n "$other_id"
+          test "$primary_id" != "$other_id"
+      - name: History reproposal security, genuine lineage and crash recovery (serial)
+        env:
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+          DUDZIAN_TEST_MODE: "1"
+          DUDZIAN_ALLOW_LONG_POLL: "0"
+          DUDZIAN_TEST_POSTGRES_DSN: "host=127.0.0.1 port=55432 dbname=postgres user=postgres"
+          CRYPTOHUNTER_TEST_POSTGRES_OTHER_DSN: "host=127.0.0.1 port=55434 dbname=postgres user=postgres"
+          DUDZIAN_TEST_POSTGRES_RESTART_COMMAND: '["docker","restart","${{ job.services.postgres.id }}"]'
+          DUDZIAN_TEST_POSTGRES_CRASH_COMMAND: '["docker","exec","--user","postgres","${{ job.services.postgres.id }}","sh","-c","kill -KILL \"$1\"","sh"]'
+        run: >-
+          python -m pytest -p asyncio -p pytest_cov.plugin
+          tests/security/test_postgresql_history_successor_reproposal.py
+          tests/security/test_history_successor_reproposal_evidence.py
+          tests/security/test_history_successor_reproposal_legacy.py
+          tests/architecture/test_stage9_history_successor_reproposal.py
+          -o xfail_strict=true
+          --junitxml=history-successor-reproposal-results.xml
+          --cov=bot_core.postgresql_history_successor_reproposal
+          --cov=bot_core.postgresql_history_successor_reproposal_schema
+          --cov=bot_core.postgresql_history_successor_reproposal_qualification
+          --cov=bot_core.postgresql_history_successor_reproposal_evidence
+          --cov=bot_core.postgresql_atomic_root_proof_schema
+          --cov=bot_core.postgresql_atomic_root_proof_preaccount_sql
+          --cov=bot_core.postgresql_atomic_root_proof_qualification
+          --cov=bot_core.postgresql_atomic_root_proof_migration
+          --cov=bot_core.postgresql_atomic_root_proof_commit
+          --cov=bot_core.postgresql_root_proof_issuance_authority_v2
+          --cov=bot_core.postgresql_root_proof_preparation_qualification
+          --cov=bot_core.postgresql_root_proof_preparation_readonly
+          --cov=bot_core.postgresql_root_proof_preparation_v2
+          --cov=bot_core.postgresql_authenticated_issuer_history
+          --cov=bot_core.root_proof_atomic_attempt_consistency
+          --cov=bot_core.root_proof_issuer_runtime
+          --cov=bot_core.licensing.cha_root_proof_attempt_reservation
+          --cov=bot_core.licensing.cha_root_proof_signed_attempt
+          --cov=bot_core.local_signing_custody
+          --cov=bot_core.local_signing_lifecycle_evidence
+          --cov=bot_core.postgresql_custody_lifecycle
+          --cov=bot_core.postgresql_custody_lifecycle_schema
+          --cov=bot_core.postgresql_custody_lifecycle_qualification
+          --cov-branch --cov-config=.coveragerc
+          --cov-report=term-missing
+          --cov-report=xml:history-successor-reproposal-coverage.xml -q
+      - name: Require complete history reproposal execution
+        run: |
+          python - <<'PY'
+          import xml.etree.ElementTree as ET
+
+          suites = list(ET.parse("history-successor-reproposal-results.xml").iter("testsuite"))
+          assert suites and sum(int(suite.attrib["tests"]) for suite in suites) > 0
+          for suite in suites:
+              for outcome in ("failures", "errors", "skipped"):
+                  assert int(suite.attrib[outcome]) == 0, (outcome, suite.attrib)
+          PY
+      - name: Preserve history reproposal branch coverage database
+        run: |
+          test -s .coverage
+          mv .coverage coverage-history-successor-reproposal.data
+      - name: Upload history reproposal coverage database
+        uses: actions/upload-artifact@v7
+        with:
+          name: history-successor-reproposal-data
+          path: coverage-history-successor-reproposal.data
+          if-no-files-found: error
+          retention-days: 3
+      - name: Upload history reproposal qualification results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: history-successor-reproposal-results
+          path: |
+            history-successor-reproposal-results.xml
+            history-successor-reproposal-coverage.xml
+          if-no-files-found: error
+          retention-days: 7
+
+  atomic-root-proof-coverage:
+    name: PostgreSQL atomic Root Proof and history coverage gate
+    runs-on: ubuntu-latest
+    needs: [atomic-root-proof-commit, history-successor-reproposal]
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install coverage and changed-code gate
+        run: python -m pip install -e ".[test]" "diff-cover>=9,<10"
+      - name: Download atomic commit coverage data
+        uses: actions/download-artifact@v8
+        with:
+          name: atomic-root-proof-commit-data
+          path: atomic-coverage-parts
+      - name: Download history reproposal coverage data
+        uses: actions/download-artifact@v8
+        with:
+          name: history-successor-reproposal-data
+          path: atomic-coverage-parts
+      - name: Merge atomic and history branch coverage without losing either qualification
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s atomic-coverage-parts/coverage-atomic-root-proof.data
+          test -s atomic-coverage-parts/coverage-history-successor-reproposal.data
+          python - <<'PY'
+          from coverage import CoverageData
+
+          for filename in (
+              "coverage-atomic-root-proof.data",
+              "coverage-history-successor-reproposal.data",
+          ):
+              data = CoverageData(basename=f"atomic-coverage-parts/{filename}")
+              data.read()
+              assert data.has_arcs() and data.measured_files(), filename
+          PY
+          mv atomic-coverage-parts/coverage-atomic-root-proof.data atomic-coverage-parts/.coverage.atomic
+          mv atomic-coverage-parts/coverage-history-successor-reproposal.data atomic-coverage-parts/.coverage.history
+          python -m coverage combine --keep atomic-coverage-parts
+          python -m coverage xml -o atomic-root-proof-combined-coverage.xml
+          test -s atomic-root-proof-combined-coverage.xml
+      - name: Changed-code coverage ratchet
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: >-
+          diff-cover atomic-root-proof-combined-coverage.xml
+          --compare-branch "origin/$BASE_REF" --fail-under=70
+      - name: Upload combined atomic and history coverage
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: atomic-root-proof-combined-coverage
+          path: atomic-root-proof-combined-coverage.xml
           if-no-files-found: error
           retention-days: 7
 

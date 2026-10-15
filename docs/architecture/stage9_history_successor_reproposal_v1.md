@@ -178,8 +178,15 @@ migracji. Checkpoint, AccountGenesis i FreshnessAuthority pozostają odrębne.
 Testy integracyjne korzystają z genuine podpisanych attempts, rzeczywistych
 PostgreSQL 16 primary i autentycznego history custody. Scenariusze i wyniki
 uruchomionych kontroli są raportowane w opisie Draft PR. Nowy kod i testy
-wchodzą do istniejących Ruff, mypy Linux/Windows i seryjnego PostgreSQL joba;
-próg diff coverage pozostaje 70%, a dotychczasowe testy i timeouty pozostają.
+wchodzą do istniejących Ruff i mypy Linux/Windows oraz osobnej seryjnej
+kwalifikacji `history-successor-reproposal` z własną parą PostgreSQL 16.
+Dotychczasowy job Atomic Root Proof zachowuje swoje testy i limit 120 minut.
+Wymagany `atomic-root-proof-coverage` łączy surowe dane branch coverage obu
+kwalifikacji przez `coverage combine`, generuje XML i utrzymuje próg 70%.
+Brak któregokolwiek wymaganego artefaktu powoduje failure. Ogólne CI kieruje
+testy PostgreSQL reproposal do oddzielnego sharda `history-reproposal`;
+pure evidence i architecture pozostają w ogólnej selekcji. Podział nie zmienia
+markerów ani kardynalności protokołu.
 
 Ten protokół jest wewnętrzną izolowaną granicą testową. Nie ustanawia
 produkcyjnego RootProofIssuer, kwalifikacji sprzętowej, produkcyjnego custody
