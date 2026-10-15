@@ -166,6 +166,15 @@ był już w skonfigurowanym mypy, format gate i wcześniejszych coverage scopes.
 Nie aktywuje to produkcyjnego issuera ani kwalifikacji sprzętowej.
 Zakres opisuje [przygotowanie V2](architecture/stage9_postgresql_v2_root_proof_preparation.md).
 
+History Successor Reproposal V1 rozszerza ten sam seryjny job o append-only
+candidate lineage, autorytatywne supersession, genuine stale-predecessor recovery
+i fault/restart tests. Cztery nowe moduły obejmują skonfigurowany mypy
+Linux/Windows, Ruff format i branch coverage w istniejącym raporcie atomic.
+Dotychczasowe testy, timeouty i próg diff coverage 70% pozostają bez zmian.
+Odrębny test import graph chroni publiczne read-only porty przed dostępem do
+administracji reproposal. Granice i immutable evidence opisuje
+[protokół V1](architecture/stage9_history_successor_reproposal_v1.md).
+
 ## Security invariants now encoded
 
 - Signal strength has the signed `[-1, 1]` contract (direction plus magnitude),
