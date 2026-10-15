@@ -121,3 +121,38 @@ def test_prepare_snapshots_skip_freshness_accepts_stale_and_future_timestamp(tmp
         future_grace_minutes=0.0,
         skip_freshness=True,
     )
+
+
+def test_active_venue_validation_preserves_genuine_freshness_checks(tmp_path) -> None:
+    now = dt.datetime.now(tz=dt.timezone.utc)
+    current = _iso_utc(now - dt.timedelta(minutes=1))
+    active = _base_payload(current)
+    active["snapshots"] = [
+        item
+        for item in active["snapshots"]
+        if item["labels"]["adapter"] == "deribit_futures"
+    ]
+    source = tmp_path / "active.json"
+    source.write_text(json.dumps(active), encoding="utf-8")
+    validated = tmp_path / "validated.json"
+    prepare_snapshots(
+        source_path=source,
+        output_path=validated,
+        max_age_minutes=720.0,
+        future_grace_minutes=5.0,
+        required_adapters=("deribit_futures",),
+    )
+    payload = json.loads(validated.read_text(encoding="utf-8"))
+    assert len(payload["snapshots"]) == 2
+
+    try:
+        prepare_snapshots(
+            source_path=source,
+            output_path=tmp_path / "legacy.json",
+            max_age_minutes=720.0,
+            future_grace_minutes=5.0,
+        )
+    except RuntimeError as exc:
+        assert "bitmex_futures" in str(exc)
+    else:
+        raise AssertionError("Legacy four-source contract unexpectedly changed")
