@@ -63,3 +63,10 @@ licensing, and deployment analysis, uncertainty requires direct source checks.
 8. Before finishing, inspect the diff for unrelated formatting or generated-file
    churn and run the relevant Tier A or Tier B commands documented in
    `docs/quality-security-toolchain.md`.
+
+## Mandatory format gate before opening/updating PRs
+
+- **Do not assume code is formatted merely because Ruff lint and mypy pass.** The `ruff-format` hook is independent from `ruff`. Before creating or marking a PR ready, run the repository's exact formatting hook: `python -m pre_commit run ruff-format --all-files`. It is fast, and `--all-files` matches the blocking CI job, which can discover pre-existing violations outside a PR's changed files, including for docs-only PRs.
+- If the hook reformats files, review and commit those changes, then **run it again** and require exit code 0 and no working-tree changes. Also run the applicable targeted Ruff/tests; this format preflight does not replace functional, mypy or security validation.
+- Never submit a new PR as validated if the formatting command was skipped, unavailable or failed. If an environment cannot run the command, report the validation gap in the PR and leave it as a **draft** until the separate fast style workflow passes.
+- Do not disable the formatter, weaken the files scope, add suppressions or skip the preflight to turn CI green. The `Style preflight` GitHub workflow is an additional early check; it does not replace the existing `Lint and Test` gate.
