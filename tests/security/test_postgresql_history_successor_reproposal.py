@@ -13,6 +13,7 @@ import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import replace
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -376,16 +377,12 @@ def _repropose(value, predecessor=_DEFAULT, **overrides):
 
 
 def _propose_candidate(value, candidate, predecessor, **overrides):
-    arguments = dict(
-        signing_intent=candidate.intent,
-        retention=candidate.retention,
-        issuer_authority=candidate.authority,
-        history=value.history,
-        history_signer=value.history_boundary.signer,
-        fences=value.fences,
-        predecessor=predecessor,
-    )
-    arguments.update(overrides)
+    with _candidate_paths(candidate):
+        return _call_candidate(value, candidate, predecessor, **overrides)
+
+
+@contextmanager
+def _candidate_paths(candidate):
     with pytest.MonkeyPatch.context() as selected:
         selected.setattr(attempt_boundary, "_attempt_store_path", lambda: candidate.path)
         for module, filename in (
@@ -396,9 +393,23 @@ def _propose_candidate(value, candidate, predecessor, **overrides):
             selected.setattr(
                 module, "_state_path", lambda filename=filename: candidate.namespace / filename
             )
-        return value.reproposal.repropose(
-            candidate.preparation, candidate.binding, candidate.signed, **arguments
-        )
+        yield
+
+
+def _call_candidate(value, candidate, predecessor, **overrides):
+    arguments = dict(
+        signing_intent=candidate.intent,
+        retention=candidate.retention,
+        issuer_authority=candidate.authority,
+        history=value.history,
+        history_signer=value.history_boundary.signer,
+        fences=value.fences,
+        predecessor=predecessor,
+    )
+    arguments.update(overrides)
+    return value.reproposal.repropose(
+        candidate.preparation, candidate.binding, candidate.signed, **arguments
+    )
 
 
 def _wait_for_competing_database_lock(value):
@@ -505,29 +516,54 @@ def test_stale_second_original_reproposes_history_and_commits_original_exact_pro
     assert _read_all(value) == complete
 
 
-def test_parallel_reproposals_have_one_durable_revision_and_exact_replay(reproposal_boundary):
+def test_parallel_reproposals_have_one_durable_revision_and_exact_replay(
+    reproposal_boundary, monkeypatch
+):
     value = reproposal_boundary
-    _winner(value)
     barrier = threading.Barrier(2)
+    preparation_lock = threading.Lock()
+    arrivals = []
+    module = _runtime_module()
+    native_reprepare = module._reprepare_original
+
+    def prepare_serially(*args, **kwargs):
+        # Installed binding readers take nonblocking exclusive file locks.
+        # Preserve their actual qualification while scheduling those local reads
+        # separately from the deliberately concurrent PostgreSQL admissions.
+        with preparation_lock:
+            return native_reprepare(*args, **kwargs)
+
+    def admit_together(name, connection):
+        if name == "before_proposal_admission":
+            arrivals.append(connection.info.backend_pid)
+            barrier.wait(timeout=180)
 
     def propose():
-        barrier.wait(timeout=30)
         try:
-            return _repropose(value)
+            return _call_candidate(value, value.secondary, value.second_proposal)
         except atomic_runtime.AtomicRootProofCommitConflict as exc:
             return exc
 
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        outcomes = list(executor.map(lambda _: propose(), range(2)))
-    refs = [item for item in outcomes if not isinstance(item, Exception)]
-    assert refs
-    assert len({item.candidate_id for item in refs}) == 1
-    current = value.reproposal.read_current_proposal(value.secondary.preparation)
-    assert current == refs[0] and current.revision == 2
-    rows = _read_all(value)[(value.setup.schema, "history_proposals")]
-    assert len(rows) == len(value.baseline[(value.setup.schema, "history_proposals")]) + 1
-    assert _repropose(value) == current
-    assert len(_read_all(value)[(value.setup.schema, "history_proposals")]) == len(rows)
+    # Namespace paths are process globals, so restore them once after both
+    # workers and their exact replay checks have finished.
+    with _candidate_paths(value.secondary):
+        _winner(value)
+        monkeypatch.setattr(module, "_reprepare_original", prepare_serially)
+        monkeypatch.setattr(module, "_persistence_cut", admit_together)
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            outcomes = list(executor.map(lambda _: propose(), range(2)))
+        monkeypatch.setattr(module, "_persistence_cut", lambda *_: None)
+        assert len(arrivals) == len(set(arrivals)) == 2
+        refs = [item for item in outcomes if not isinstance(item, Exception)]
+        assert refs
+        assert len({item.candidate_id for item in refs}) == 1
+        current = value.reproposal.read_current_proposal(value.secondary.preparation)
+        assert current == refs[0] and current.revision == 2
+        rows = _read_all(value)[(value.setup.schema, "history_proposals")]
+        assert len(rows) == len(value.baseline[(value.setup.schema, "history_proposals")]) + 1
+        assert _call_candidate(value, value.secondary, value.second_proposal) == current
+        assert len(_read_all(value)[(value.setup.schema, "history_proposals")]) == len(rows)
+        _proof_bytes_unchanged(value)
 
 
 def test_unknown_decision_never_authorizes_an_absent_replacement(reproposal_boundary):
