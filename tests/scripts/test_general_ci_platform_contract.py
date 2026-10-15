@@ -63,15 +63,46 @@ def _pytest_command(job: dict) -> str:
     return _pytest_step(job)["run"]
 
 
+def _git_bash_for_executable(git_executable: str) -> str:
+    """Find Git Bash from the PATH entry, not git.exe's resolved MSYS target."""
+    # Git for Windows exposes Git through bin/, cmd/ or ucrt64/bin/.
+    # Resolving git.exe follows a shim into ucrt64/bin and breaks root discovery.
+    for parent in Path(git_executable).parents:
+        candidate = parent / "bin" / "bash.exe"
+        if candidate.is_file():
+            return str(candidate)
+    raise AssertionError(f"Git Bash not found for Git executable: {git_executable}")
+
+
 def _contract_bash() -> str:
     """Use Git Bash on Windows, not the WSL bash.exe launcher on PATH."""
     if sys.platform != "win32":
         return "bash"
     git_executable = shutil.which("git.exe")
     assert git_executable is not None, "Git for Windows is required for CI shell contracts"
-    git_bash = Path(git_executable).resolve().parent.parent / "bin" / "bash.exe"
-    assert git_bash.is_file(), f"Git Bash not found next to Git for Windows: {git_bash}"
-    return str(git_bash)
+    return _git_bash_for_executable(git_executable)
+
+
+@pytest.mark.parametrize(
+    "executable_relative", ["bin/git.exe", "cmd/git.exe", "ucrt64/bin/git.exe"]
+)
+def test_git_bash_resolves_installation_root_for_shim_locations(tmp_path, executable_relative):
+    root = tmp_path / "Git"
+    executable = root / executable_relative
+    executable.parent.mkdir(parents=True, exist_ok=True)
+    executable.touch()
+    bash = root / "bin" / "bash.exe"
+    bash.parent.mkdir(parents=True, exist_ok=True)
+    bash.touch()
+    assert _git_bash_for_executable(str(executable)) == str(bash)
+
+
+def test_git_bash_discovery_fails_closed_when_missing(tmp_path):
+    executable = tmp_path / "Git" / "cmd" / "git.exe"
+    executable.parent.mkdir(parents=True)
+    executable.touch()
+    with pytest.raises(AssertionError, match="Git Bash not found"):
+        _git_bash_for_executable(str(executable))
 
 
 def _postgresql_shard_arguments(job: dict, shard: str, directory: Path) -> list[str]:
