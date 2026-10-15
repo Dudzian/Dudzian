@@ -36,13 +36,10 @@ def _text(path: str) -> str:
 
 def test_release_workflows_install_and_audit_canonical_lock() -> None:
     windows = _text(".github/workflows/windows-build.yml")
-    packaging = _text(".github/workflows/main.yml")
     cross_installer = _text("deploy/ci/github_actions_cross_installer.yml")
     audit = _text(".github/workflows/ci.yml")
     assert f"pip install --no-deps -r {LOCK_REPOSITORY_TEXT}" in windows
-    assert packaging.count(f"pip install --no-deps -r {LOCK_REPOSITORY_TEXT}") == 3
     assert cross_installer.count(f"pip install --no-deps -r {LOCK_REPOSITORY_TEXT}") == 2
-    assert packaging.count(f"validate_locked_resolution.py {LOCK_REPOSITORY_TEXT}") == 3
     assert cross_installer.count(f"validate_locked_resolution.py {LOCK_REPOSITORY_TEXT}") == 2
     assert f"--requirement {LOCK_REPOSITORY_TEXT}" in audit
 
@@ -78,20 +75,18 @@ def test_vendor_qtcore_typing_still_rejects_invalid_api_use(tmp_path: Path) -> N
 
 def test_release_build_environments_have_no_loose_python_resolver_mutations() -> None:
     windows = _text(".github/workflows/windows-build.yml")
-    packaging = _text(".github/workflows/main.yml")
     cross_installer = _text("deploy/ci/github_actions_cross_installer.yml")
     ci = _text(".github/workflows/ci.yml")
     wheelhouse_job = ci[ci.index("  prepare-wheelhouse:") : ci.index("  sbom:")]
 
     assert windows.count(PIP_BOOTSTRAP) == 1
-    assert packaging.count(PIP_BOOTSTRAP) == 3
     assert cross_installer.count(PIP_BOOTSTRAP) == 2
     assert wheelhouse_job.count(PIP_BOOTSTRAP) == 1
     bootstrap = wheelhouse_job.index("- name: Bootstrap canonical pip")
     validation = wheelhouse_job.index("- name: Validate exact lock resolution")
     build = wheelhouse_job.index("- name: Build wheelhouse")
     assert bootstrap < validation < build
-    for release_path in (windows, packaging, cross_installer, wheelhouse_job):
+    for release_path in (windows, cross_installer, wheelhouse_job):
         assert "pip install --upgrade pip" not in release_path
         assert "pip install -U pip" not in release_path
 
@@ -172,7 +167,6 @@ def test_canonical_pyside_stack_has_one_version_everywhere() -> None:
     builder = _text("scripts/ci/build_wheelhouse.py")
     assert "--pyside6-version" not in builder
     assert "pyside_packages" not in builder
-    assert "PYSIDE6_VERSION" not in _text(".github/workflows/main.yml")
 
 
 def test_generator_rejects_every_non_python311_runtime() -> None:

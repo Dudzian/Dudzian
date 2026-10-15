@@ -4,9 +4,9 @@ This document describes how to run and debug the UI test suites (QML and native/
 
 CI reference (current workflows):
 
-- Python setup uses `actions/setup-python@v6`.
-- Linux `UI Native Tests` (ctest) and Linux `UI Packaging` install a full desktop Qt SDK via pinned `aqtinstall` (non-Node flow), then export `QT_ROOT_DIR` and `Qt6_DIR` from that SDK path.
-- `UI / QML tests` in `main.yml` rely on Python dependencies (`pip install -e ".[test]"`) and do not call `install-qt-action` directly.
+- The active `.github/workflows/ci.yml` uses `actions/setup-python@v7`.
+- Linux `UI Native Tests` (ctest) and `UI Packaging` jobs install the Qt SDK via pinned `aqtinstall` and configure `QT_ROOT_DIR` and `Qt6_DIR`.
+- The `UI QML Tests` job runs from `ci.yml`, with its Python dependencies and no `install-qt-action` step.
 
 ## Common prerequisites
 

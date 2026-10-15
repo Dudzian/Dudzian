@@ -19,10 +19,6 @@ def _job(path: str, start: str, end: str | None = None) -> str:
 def test_all_canonical_windows_packaging_authorities_install_runtime_lock() -> None:
     authorities = {
         ".github/workflows/windows-build.yml": ("  build-windows:", None),
-        ".github/workflows/main.yml": (
-            "  ui-packaging-windows:",
-            "\n  ui-packaging-macos:",
-        ),
         "deploy/ci/github_actions_cross_installer.yml": (
             "      - name: Install packaging requirements (Windows)",
             "\n      - name: Validate marketplace presets (Windows)",
