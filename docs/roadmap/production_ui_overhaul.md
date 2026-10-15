@@ -14,7 +14,7 @@
 
 A dedicated **Settings → Exchanges & Accounts** surface must support multiple accounts and subaccounts, including separate PAPER, TESTNET and LIVE profiles for each qualified venue where available.
 
-- Venue picker derived only from the supported build-time Exchange Registry; **Zonda must never appear**.
+- Venue picker derived only from Core's current qualified and lifecycle-allowed Exchange Registry; **Zonda, BitMEX and any retired venue must never appear as connectable or tradeable**. Existing retired accounts may appear only in a clearly labelled, read-only history view.
 - Account display label, exact supported market type, environment, portfolio and route assignments, status, account identity, balance/open-order/permission/readiness views.
 - Masked credential entry (API key, secret and exchange-specific passphrase), secure write-only handoff to Core-managed OS secret store; opaque `secure-store://` metadata in read models. No plaintext persistence in QML, logs, YAML, analytics, crash dumps or exported diagnostics.
 - Connection check (public/private), account identity verification, observed scope check, credential replacement/rotation/revoke, withdrawal-permission rejection, IP allowlist guidance when supported and immediate halt on auth/reconciliation mismatch.
@@ -30,7 +30,7 @@ Every visible beta-critical control must be a real command, action or explicit d
 ## UI-4 — Interaction quality and safety
 
 - Global loading, empty, stale, disconnected, reconnecting, degraded, blocked, permission denied, invalid input, retry and fatal error states; accessible keyboard/focus support, readable layouts and Windows DPI/resolution handling.
-- Per-venue and aggregate status/health and clear separation of PAPER/TESTNET/LIVE. No simultaneous account ambiguity in any order/strategy action.
+- Per-venue and aggregate status/health and clear separation of PAPER/TESTNET/LIVE. Show disabled/deprecated/retired reasons as Core-originated read-only state, not locally editable UI authority. No simultaneous account ambiguity in any order/strategy action.
 - Model safe cancellation, confirmation for sensitive actions, asynchronous progress and completion/error receipts, and persistence of user settings across restarts.
 - **Translation-ready foundation only:** when implementing real QML/PySide6 controls, use Qt-extractable translated text/message IDs rather than embedding unextractable user-facing strings; keep raw Core error/status codes stable and map their presentation separately. Do not deliver a fake language picker, require complete foreign-language catalogs, or expand first-beta M4.2/M4.3/PB gates for the post-beta feature. See [I18N roadmap](post_beta_internationalization_localization.md).
 - Do not grant execution authority through display state or UI controls. Core remains owner of validation, credentials, portfolio capital, routes and licensing.

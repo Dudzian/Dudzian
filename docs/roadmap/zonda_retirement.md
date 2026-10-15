@@ -1,23 +1,15 @@
-# Roadmap — Complete Zonda Retirement
+# Roadmap — Zonda Retirement (superseded case-specific plan)
 
-**Decision: PERMANENT PRODUCT EXCLUSION.**
-**Implementation status: NOT YET EXECUTED — mandatory removal before beta.**
-This decision is an explicit product-scope instruction, not a claim of independently verified exchange operational history. Zonda must **not** remain selectable, instantiable, packaged, enabled, recommended or described as supported by CryptoHunter. No new Zonda adapter work, trading capability or resurrection path is authorized.
+**Status: SUPERSEDED AS A DELETION REQUIREMENT; RETIREMENT IMPLEMENTATION STILL PLANNED.**
 
-## Removal scope
+The earlier instruction to delete all Zonda adapter source code before beta is no longer the product requirement. The mandatory replacement is [Exchange Lifecycle & Retirement Management](exchange_lifecycle_retirement_management.md), tracked in canonical **M1.8**. This page is retained to preserve the Zonda-specific decision history and a stable documentation link.
 
-1. **Executable and discovery:** delete `bot_core/exchanges/zonda/` and imports/exports; remove native/CCXT registrations, built-in and dynamic factories, loader fallbacks, API-origin/mode discovery, CLI/onboarding choices, market data and execution routes, health/network/error mappings and metrics for Zonda. Unknown/retired venue IDs must fail closed. Do not leave a generic `primary` or legacy alias that silently redirects Zonda orders to another venue.
-2. **Configuration and artifacts:** remove `config/exchanges/zonda.yaml`, Zonda account/environment/adapter entries and instrument-symbol route entries from active `config/core.yaml`, active marketplace presets/packages/catalog entries and their associated signatures, executable build/packaging resources, UI exchange selections, sample live configs, backfill utilities, scripts and active support reports. Rebuild signed catalogs/manifest artifacts using **authorized signing tooling**; never edit a signed payload without rebuilding/validating its signature and never fabricate a signer.
-3. **Tests and documentation:** replace obsolete Zonda-only tests with retirement and negative-selection tests; adjust shared fixtures, multi-exchange tests, documentation and advertised exchange counts. Preserve historical documents/reports as **historical-only** with clear non-support status when deleting them would damage audit provenance.
-4. **Existing persisted identities:** preserve past records, order/fill journals and financial audit history. Perform a reviewable versioned migration/retirement for Zonda `ExchangeAccount`, `CredentialProfile`, routes, instruments and external identifiers: disable creation/activation/trading and secret use; allow only controlled read-only historical display/cleanup. Never corrupt durable IDs or reinterpret old Zonda orders as another exchange.
-5. **Frozen architecture contract:** do not rewrite historical frozen M0.5 snapshots. If canonical registries need a new current version to prevent active Zonda admission, do so through the approved contract/migration change process, keeping immutable historical fingerprints and their verification intact.
+**Current product decision:** Zonda is permanently `retired`, not supported. Its existing code may be preserved as an inert, uninstantiable historical implementation if negative evidence proves that it cannot be reached by active runtime, dynamic factories, CLI, UI, jobs, network fetching, signed active marketplace packages, routing or any PAPER/TESTNET/LIVE path. This is *not* an exception allowing dormant code to load unsafe removed dependencies or to be activated by changing local configuration.
 
-## Acceptance
+- Enforce Core-owned, release-controlled immutable retirement even if older configs or aliases request `active`; unknown exchange IDs and unqualified capabilities fail closed.
+- Block creating/connecting active Zonda accounts, handling secrets for trading, order placement/cancellation, market-data networking, retries/failover, simulated-exchange activation and automation.
+- Preserve durable ExchangeAccount/credential references, historical orders/fills/journals, audit signatures and frozen architecture snapshots through reviewed versioned migration; make historical data read-only.
+- Exclude Zonda from supported venue selection, active marketplace catalogs and shipped operational presets. Where signed artifacts change, regenerate them only using authorized signing tools; historical signatures remain untouched.
+- Replace the old deletion-only acceptance tests with startup/packaging/restore/alias/factory/routing denial tests, including negative PAPER/TESTNET/LIVE tests and proof that unrelated approved venues remain operational.
 
-- Source/build/packaged-app scan: no reachable Zonda adapter, network endpoint, market-data fetch, order/cancel command, selectable UI option, signed active marketplace product or registry entry permitting activation.
-- Explicit `RETIRED_EXCHANGE`/unsupported behavior for old Zonda IDs, including restart/replay/restore and attempted cross-exchange fallback.
-- Existing historical audit/account records remain verifiable, retained and read-only; migrated active accounts cannot place/cancel orders.
-- All affected adapter/runtime/test suites and security scans pass; beta support matrix explicitly excludes Zonda.
-- Final independent review confirms no live or test paths can instantiate Zonda in a release build.
-
-**Implementation rule:** complete this as focused reviewed deletion/migration PRs. Roadmap acceptance alone is not code removal and must never be reported as completed decommissioning.
+**Exit status:** NOT IMPLEMENTED until the generic policy and Zonda migration pass the [M1.8 acceptance suite](exchange_lifecycle_retirement_management.md). Roadmap edits alone do not block Zonda in every runtime path.
