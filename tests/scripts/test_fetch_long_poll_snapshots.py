@@ -447,9 +447,7 @@ def test_active_venue_snapshot_collection_excludes_retired_bitmex(
             "deribit_futures_live": fetcher.SnapshotEnvironmentConfig(adapter_settings={}),
         },
     )
-    monkeypatch.setattr(
-        fetcher, "_load_health_check_public_symbol", lambda *_args: "BTC-PERPETUAL"
-    )
+    monkeypatch.setattr(fetcher, "_load_health_check_public_symbol", lambda *_args: "BTC-PERPETUAL")
     monkeypatch.setattr(fetcher, "_collect_single_snapshot", collect)
     output = tmp_path / "active_long_poll_snapshots.json"
     fetcher.fetch_snapshots(
@@ -463,6 +461,4 @@ def test_active_venue_snapshot_collection_excludes_retired_bitmex(
     payload = json.loads(output.read_text(encoding="utf-8"))
     assert seen == [("deribit_futures", "paper"), ("deribit_futures", "live")]
     assert len(payload["snapshots"]) == 2
-    assert all(
-        item["labels"]["adapter"] == "deribit_futures" for item in payload["snapshots"]
-    )
+    assert all(item["labels"]["adapter"] == "deribit_futures" for item in payload["snapshots"])
