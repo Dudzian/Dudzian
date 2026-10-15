@@ -428,3 +428,41 @@ def test_main_error_path_still_runs_cleanup(
         )
 
     assert cleanup_calls == ["done"]
+
+
+def test_active_venue_snapshot_collection_excludes_retired_bitmex(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen: list[tuple[str, str]] = []
+
+    def collect(**kwargs):
+        seen.append((kwargs["adapter"], kwargs["environment"]))
+        return _fake_snapshot(kwargs["adapter"], kwargs["environment"])
+
+    monkeypatch.setattr(
+        fetcher,
+        "_load_snapshot_environment_configs",
+        lambda _path: {
+            "deribit_futures_paper": fetcher.SnapshotEnvironmentConfig(adapter_settings={}),
+            "deribit_futures_live": fetcher.SnapshotEnvironmentConfig(adapter_settings={}),
+        },
+    )
+    monkeypatch.setattr(
+        fetcher, "_load_health_check_public_symbol", lambda *_args: "BTC-PERPETUAL"
+    )
+    monkeypatch.setattr(fetcher, "_collect_single_snapshot", collect)
+    output = tmp_path / "active_long_poll_snapshots.json"
+    fetcher.fetch_snapshots(
+        base_url="http://127.0.0.1:8765",
+        config_path=tmp_path / "core.yaml",
+        output_path=output,
+        channels=("ticker",),
+        timeout_seconds=1.0,
+        required_targets=fetcher._ACTIVE_TARGETS,
+    )
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    assert seen == [("deribit_futures", "paper"), ("deribit_futures", "live")]
+    assert len(payload["snapshots"]) == 2
+    assert all(
+        item["labels"]["adapter"] == "deribit_futures" for item in payload["snapshots"]
+    )
