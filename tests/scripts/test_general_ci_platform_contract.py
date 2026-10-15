@@ -90,8 +90,8 @@ def test_ubuntu_runs_external_postgresql_against_postgresql_16_service():
         "root_proof_retention or root_proof_signing_intent or "
         "root_proof_issuer_orchestration_integration"
     )
-    assert f"SHARD_KEYWORDS='{shardTerms}'" in postgres_command
-    assert f"SHARD_KEYWORDS='not ({shardTerms})'" in postgres_command
+    assert f"SHARD_KEYWORDS='{terms}'" in postgres_command
+    assert f"SHARD_KEYWORDS='not ({terms})'" in postgres_command
     assert '-k "$SHARD_KEYWORDS"' in postgres_command
     for command in (general_command, postgres_command):
         assert "--fast" in command
