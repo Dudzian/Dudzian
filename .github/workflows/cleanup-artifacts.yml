@@ -21,6 +21,9 @@ jobs:
       - name: Enforce artifact retention policy
         uses: actions/github-script@v9
         with:
+          # Retry only temporary GitHub API failures; never classify a failed
+          # artifact inventory as an empty list and never delete partial data.
+          retries: 3
           script: |
             const config = {
               retentionDays: 7,
