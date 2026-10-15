@@ -128,9 +128,7 @@ def test_active_venue_validation_preserves_genuine_freshness_checks(tmp_path) ->
     current = _iso_utc(now - dt.timedelta(minutes=1))
     active = _base_payload(current)
     active["snapshots"] = [
-        item
-        for item in active["snapshots"]
-        if item["labels"]["adapter"] == "deribit_futures"
+        item for item in active["snapshots"] if item["labels"]["adapter"] == "deribit_futures"
     ]
     source = tmp_path / "active.json"
     source.write_text(json.dumps(active), encoding="utf-8")
