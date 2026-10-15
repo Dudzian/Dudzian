@@ -116,9 +116,9 @@ Implement:
 - TradingUniverse
 - environment-aware capability resolution
 - exact per-account identity (including multiple subaccounts of the same venue), environment binding and Core-owned capability/credential authority
-- **permanent Zonda exclusion**: no active Zonda account, credential, adapter or venue capability; preserve immutable historical financial records through an explicit versioned retirement/migration
+- **Core-owned exchange lifecycle:** support versioned `active`/`disabled`/`deprecated`/`retired` states and enforce a non-bypassable product retirement policy across accounts, credentials, venue capabilities and all execution environments. Zonda and BitMEX are initial `retired` cases; preserve immutable historical financial records, not active trading authority.
 
-The binding audit, legacy disposition and acceptance gates are specified in [multi-exchange beta readiness](../../roadmap/multi_exchange_multi_account_beta_readiness.md) and [complete Zonda retirement](../../roadmap/zonda_retirement.md).
+The binding audit, legacy disposition and acceptance gates are specified in [multi-exchange beta readiness](../../roadmap/multi_exchange_multi_account_beta_readiness.md) and [Exchange Lifecycle & Retirement Management](../../roadmap/exchange_lifecycle_retirement_management.md). The prior [Zonda-only plan](../../roadmap/zonda_retirement.md) is superseded by the generic mechanism.
 
 ## M1.4 — Strategy, market-data and execution routing
 
@@ -170,11 +170,13 @@ Classify old code and finish migration:
 - REWRITE — behavior retained but implementation replaced
 - DELETE — legacy, duplicate or preview-only runtime candidate
 
-## M1.8 — Zonda full retirement (mandatory)
+## M1.8 — Exchange Lifecycle & Retirement Management (mandatory)
 
-**Decision: permanently remove Zonda as a supported or executable venue.** This is a retirement/removal task, not a maintenance or adapter repair effort. Remove all production-reachable native/CCXT Zonda code, runtime registrations, active account/config/marketplace entries, packaged resources, UI choices and promotion paths; update impacted fixtures/tests/scripts and preserve signed artifact integrity. Historical persisted ExchangeAccounts/orders/fills remain verifiable and read-only using a reviewed migration; frozen historical contracts are not rewritten. Negative scans and restart/restore tests must prove no activation or fallback to Zonda is possible.
+**Decision: replace mandatory Zonda source-code deletion with a reusable Core-enforced exchange lifecycle and retirement gate.** Zonda and BitMEX are initial `retired` venues; subsequent delistings, closures, regulatory suspensions and unsupported integrations use the same mechanism. Preserve inactive adapter sources for historical compatibility if safe, but never permit retired venues to be discoverable as supported, initialized as executable, network-connected, selected in UI, used in PAPER/TESTNET/LIVE execution, or reached through marketplace, background jobs, fallback, dynamic registrations or restored legacy configuration. A retired venue has no trading/cancel/data-fetch authority; only locally retained historical data and offline deterministic replay remain readable.
 
-**Status: PLANNED / NOT REMOVED.** Implementation requires separate reviewed code/migration PRs, not only this roadmap amendment. Detailed inventory, controls and exit evidence: [Zonda retirement](../../roadmap/zonda_retirement.md).
+**Implementation contract:** introduce an authoritative versioned, release-controlled retirement policy; normalize venue IDs, variants and aliases; extend current `exchange_lifecycle` beyond its present LIVE-route-only guard; force `retired` even when user YAML requests `active`; fail closed on unknown/ambiguous IDs, missing qualified capability or stale signed policy. Local/operator overrides may only restrict access, not revive a permanently retired venue. Versioned migrations must retire stored accounts, routes and secret profiles without changing durable IDs, immutable historical journals or frozen M0 contracts. Remove retired venue presets from *active* signed marketplace catalogs via authorized resigning; retain archival evidence.
+
+**Status: PLANNED / NOT IMPLEMENTED.** Current `disabled/deprecated` LIVE guards and [PR #3124](https://github.com/Dudzian/Dudzian/pull/3124) exchange-report handling do not satisfy this full product gate. Implement in focused, independently reviewed code/migration/test PRs; no LIVE permission or release status changes follow from roadmap text. Detailed work and exit evidence: [Exchange Lifecycle & Retirement Management](../../roadmap/exchange_lifecycle_retirement_management.md).
 
 ### M1 exit criteria
 
@@ -183,7 +185,7 @@ Classify old code and finish migration:
 - Domain/account/routing/order/ledger/risk/security foundations execute in code, not preview models.
 - LIVE remains closed.
 - Legacy paths no longer create competing authority.
-- Zonda has no executable or selectable supported product path; historical audit records remain readable and exact.
+- Exchange lifecycle and retirement checks are enforced across all active paths; Zonda and BitMEX cannot trade, cancel, connect, register or be selected, while immutable historical audit records remain readable and exact.
 - Multi-account Core composition and risk/route identity are validated without `primary` legacy aliasing.
 
 ---
@@ -264,7 +266,7 @@ Market data → Strategy → Decision → Risk → Reservation → Order → Pap
 
 ## M3.5 — Multi-Exchange & Multi-Account Production Readiness (beta blocker)
 
-**Status: PLANNED.** Audit all available real exchange adapters and variants, record an evidence-backed per-venue/market/environment support matrix, then qualify the **approved first-beta venue set** on genuine TESTNET where supported. Prioritize evaluation of Binance, Kraken, Bybit and OKX; do not advertise unsupported spot/futures sandboxes or claim all registered adapter classes are operational. Zonda is permanently **RETIRED**, not a candidate.
+**Status: PLANNED.** Audit all available real exchange adapters and variants, record an evidence-backed per-venue/market/environment support matrix, then qualify the **approved first-beta venue set** on genuine TESTNET where supported. Prioritize evaluation of Binance, Kraken, Bybit and OKX; do not advertise unsupported spot/futures sandboxes or claim all registered adapter classes are operational. Zonda and BitMEX are permanently **RETIRED**, not candidates; a retained adapter source does not qualify as active support.
 
 Prove at least two independently authenticated venue/account integrations can trade concurrently through canonical Core; verify routing, private identity, least-privilege API keys, secrets, order lifecycle, crash/reconnect recovery, throttling, partial fills, idempotency, global portfolio risk and exact-account cancel without unintended venue crossover. Integration must reach the Windows packaged application's real UI. Review failure scenarios per venue rather than trusting mocks only.
 
@@ -277,7 +279,7 @@ Complete work contract: [Multi-Exchange & Multi-Account Production Readiness](..
 - Exchange state reconciles with local state after restart.
 - At least the production-target exchange set required for v1 is validated.
 - Two distinct qualified TESTNET venue/account paths execute and reconcile independent orders concurrently with no risk/capital leakage.
-- Venue support status is evidence-backed; Zonda is fully retired and absent from the active product.
+- Venue support status is evidence-backed; Zonda and BitMEX are blocked by the accepted Core retirement gate in PAPER/TESTNET/LIVE and absent from active account, adapter, UI and marketplace surfaces.
 - All beta-supported venues are configurable from the real UI without editing YAML or invoking CLI.
 - LIVE remains explicitly blocked.
 
@@ -325,7 +327,7 @@ Existing preview/QML surfaces may be reused only when their runtime behavior, ow
 
 **Status: PLANNED.** This is a dedicated rebuild/adaptation workstream, not an optional styling pass. Inventory all existing PySide6/QML controls and legacy UI alternatives; classify KEEP/ADAPT/REWRITE/DELETE. Replace misleading preview-only screens and dead controls with coherent, real Core-connected vertical slices before first beta. Implement an operator-ready Command Center, orders/fills, strategies, portfolio/PnL, risk/kill switch, market scanner, alerts/audit/diagnostics, updater and system/settings, with working loading/offline/reconnection/error/permission states. No static mock can count as a functional beta screen.
 
-**Dedicated Settings → Exchanges & Accounts:** create/manage multiple venue accounts and subaccounts, choose PAPER/TESTNET/LIVE only where permitted, choose spot/margin/futures when supported, securely write API key/secret/passphrase into OS-backed Core custody, verify identity/permissions/connection, rotate/revoke, configure portfolio/account routes and risk caps, and show actual balances, open orders and per-venue health. UI read models contain only masked state/opaque secret references, never material. Unsupported venues (including Zonda), unavailable sandboxes and LIVE without authority cannot be selected or activated. A SAVE/CONNECT/TEST button must perform the corresponding real Core operation or be explicitly disabled with an explanation.
+**Dedicated Settings → Exchanges & Accounts:** create/manage multiple venue accounts and subaccounts, choose PAPER/TESTNET/LIVE only where permitted, choose spot/margin/futures when supported, securely write API key/secret/passphrase into OS-backed Core custody, verify identity/permissions/connection, rotate/revoke, configure portfolio/account routes and risk caps, and show actual balances, open orders and per-venue health. UI read models contain only masked state/opaque secret references, never material. Unsupported or retired venues (including Zonda and BitMEX), unavailable sandboxes and LIVE without authority cannot be selected or activated. A SAVE/CONNECT/TEST button must perform the corresponding real Core operation or be explicitly disabled with an explanation.
 
 **Translation-ready foundation (first-beta preparation, not a multilingual launch):** While rebuilding the canonical PySide6/QML DesktopShell in M4.2, use Qt-compatible translatable UI strings/message IDs and keep Core-owned error/status codes separate from presentation text. Avoid introducing new hard-coded user-facing strings that would force a second UI rewrite. Full language catalogs, a runtime language switcher and multi-locale completeness testing are explicitly **post-first-beta**, not M4.2/M4.3/PB release blockers. The independent [post-beta I18N roadmap](../../roadmap/post_beta_internationalization_localization.md) defines their scope and tests.
 
@@ -350,7 +352,7 @@ Run the Windows packaged PySide6/QML product through actual first-launch → acc
 - A non-developer can install and operate the beta-scope PAPER/TESTNET product without CLI intervention.
 - All beta-critical UI workflows are clickable and functional end to end against real runtime contracts.
 - Settings → Exchanges & Accounts stores credentials securely, verifies accounts and supports multiple qualified TESTNET accounts without CLI/config editing.
-- The dedicated UI overhaul M4.2 and native qualification M4.3 have complete evidence; Zonda is not shown or reachable.
+- The dedicated UI overhaul M4.2 and native qualification M4.3 have complete evidence; Zonda and BitMEX are neither shown as connectable nor reachable through UI actions.
 - No beta-critical control is a silent placeholder or mock-only action.
 - Required loading/error/degraded/offline states are implemented and understandable without reading raw logs.
 - Closing the GUI behaves according to Core/Tray lifecycle contract.
@@ -371,7 +373,7 @@ This gate is mandatory between M4 and M5. It is not a cosmetic review and must n
 Before repository-wide audit begins:
 
 - production beta-scope UI from M4 is integrated
-- MEX multi-exchange/account E2E and M4.2/M4.3 production UI gates have PASS evidence; Zonda removal/migration is closed
+- MEX multi-exchange/account E2E and M4.2/M4.3 production UI gates have PASS evidence; the general M1.8 retirement policy and Zonda/BitMEX persisted-identity migrations have PASS evidence
 - no new features enter the beta branch except changes required to fix an accepted audit finding or unblock beta qualification
 - architecture and product contracts required by the beta scope are frozen
 - new opportunistic redesign is prohibited unless an identified defect proves the current design unsafe, incorrect or unmaintainable at beta risk level
@@ -513,7 +515,7 @@ The first beta may be cut only when:
 - required Windows-native and physical TPM/hardware qualification is PASS
 - no unresolved canonical architecture conflict remains in the beta scope
 - all beta-critical UI flows are functional, connected to real runtime contracts and free of silent mock/placeholder actions
-- supported venues/credential profiles are manageable without CLI, two qualified independent TESTNET accounts operate simultaneously, and Zonda has no reachable execution/configuration/UI path
+- supported venues/credential profiles are manageable without CLI, two qualified independent TESTNET accounts operate simultaneously, and Zonda/BitMEX (plus any newly retired venue) have no reachable trading/configuration/UI/marketplace path under the versioned lifecycle gate
 - cross-venue cancellation, retry, order identity and aggregate portfolio risk are proven safe by negative E2E tests
 - the independent re-audit is complete
 - Beta Baseline SHA/tag and residual-risk register are recorded
