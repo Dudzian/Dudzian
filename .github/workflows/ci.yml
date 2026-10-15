@@ -696,7 +696,7 @@ jobs:
           assert [row[1] for row in observed] == ["on", "off", "on"], observed
           PY
 
-      - name: Run fast pytest suite
+      - name: Run general fast pytest suite (excluding dedicated PostgreSQL qualification)
         timeout-minutes: 120
         env:
           CRYPTOHUNTER_TEST_POSTGRES_UNSAFE_DSN: "host=127.0.0.1 port=55433 dbname=postgres user=postgres connect_timeout=2"
@@ -716,7 +716,7 @@ jobs:
           mkdir -p test-results
           python -m pytest -p asyncio \
             --fast \
-            -m "not integration and not e2e_demo_paper and not retraining and not soak and not performance and not qml" \
+            -m "not external_postgresql and not integration and not e2e_demo_paper and not retraining and not soak and not performance and not qml" \
             --ignore=tests/e2e \
             --ignore=tests/integration \
             --ignore=tests/performance \
@@ -741,6 +741,169 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: py-tests-ubuntu-pytest-results
+          path: test-results/pytest.xml
+          retention-days: 3
+
+  # Isolated PostgreSQL shard: selected by the exact complement of the generic
+  # Ubuntu --fast marker expression. Keep both shards required before integration-linux.
+  # Both use separate disposable PostgreSQL 16 services; do not parallelize
+  # security tests that intentionally modify ACLs or restart the DB within a shard.
+  py-tests-ubuntu-postgresql:
+    if: github.event_name != 'schedule'
+    name: Python tests (Ubuntu PostgreSQL qualification)
+    runs-on: ubuntu-latest
+    needs: prepare-wheelhouse
+    timeout-minutes: 150
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Download wheelhouse
+        uses: actions/download-artifact@v8
+        with:
+          name: wheelhouse-${{ runner.os }}-py${{ env.PYTHON_VERSION }}
+          path: ${{ env.WHEELHOUSE_DIR }}
+
+      - name: Lint repository paths
+        run: python scripts/lint_paths.py
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        shell: bash
+        env:
+          INSTALL_EXTRAS: test,codegen
+        run: |
+          bash scripts/ci/install_deps_python.sh
+
+      - name: Generate trading stubs
+        run: python scripts/generate_trading_stubs.py --skip-cpp
+
+      - name: Preflight test environment
+        shell: bash
+        run: |
+          python scripts/ci/preflight_test_env.py
+
+      - name: Verify explicitly loaded pytest-asyncio plugin
+        shell: bash
+        env:
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+        run: >-
+          python -m pytest -p asyncio --trace-config --collect-only -q
+          tests/core/test_async_http.py
+
+      - name: Install native PostgreSQL peer-auth prerequisites
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes postgresql-16
+
+      # The authoritative OS peer-auth proof runs in the general Ubuntu job;
+      # this shard retains the same native PostgreSQL binaries and 3 DB clusters.
+
+      - name: Start two independent PostgreSQL 16 negative-control clusters
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The main service is on 55432. These must be separate, real clusters:
+          # fsync=off is the required negative control, NEVER the primary DB.
+          docker run --detach --rm --name dz-ci-pg16-unsafe \
+            -p 127.0.0.1:55433:5432 \
+            -e POSTGRES_HOST_AUTH_METHOD=trust postgres:16 -c fsync=off
+          docker run --detach --rm --name dz-ci-pg16-other \
+            -p 127.0.0.1:55434:5432 \
+            -e POSTGRES_HOST_AUTH_METHOD=trust postgres:16
+          python - <<'PY'
+          import time
+          import psycopg
+          dsns = [
+              "host=127.0.0.1 port=55432 dbname=postgres user=postgres connect_timeout=2",
+              "host=127.0.0.1 port=55433 dbname=postgres user=postgres connect_timeout=2",
+              "host=127.0.0.1 port=55434 dbname=postgres user=postgres connect_timeout=2",
+          ]
+          observed = []
+          for dsn in dsns:
+              for attempt in range(40):
+                  try:
+                      with psycopg.connect(dsn) as conn:
+                          facts = conn.execute(
+                              "SELECT system_identifier, current_setting('fsync') "
+                              "FROM pg_catalog.pg_control_system()"
+                          ).fetchone()
+                          assert conn.info.server_version // 10000 == 16
+                          observed.append(facts)
+                          break
+                  except (psycopg.OperationalError, AssertionError):
+                      if attempt == 39:
+                          raise
+                      time.sleep(1)
+          assert len({row[0] for row in observed}) == 3, "independent clusters required"
+          assert [row[1] for row in observed] == ["on", "off", "on"], observed
+          PY
+
+      - name: Run external PostgreSQL fast pytest qualification (serial)
+        timeout-minutes: 120
+        env:
+          CRYPTOHUNTER_TEST_POSTGRES_UNSAFE_DSN: "host=127.0.0.1 port=55433 dbname=postgres user=postgres connect_timeout=2"
+          CRYPTOHUNTER_TEST_POSTGRES_OTHER_DSN: "host=127.0.0.1 port=55434 dbname=postgres user=postgres connect_timeout=2"
+          PYTEST_FAST: "1"
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+          DUDZIAN_TEST_MODE: "1"
+          DUDZIAN_ALLOW_LONG_POLL: "0"
+          DUDZIAN_TEST_POSTGRES_DSN: "host=127.0.0.1 port=55432 dbname=postgres user=postgres"
+          DUDZIAN_TEST_POSTGRES_RESTART_CONTAINER_ID: ${{ job.services.postgres.id }}
+          CRYPTOHUNTER_TEST_POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
+          # Same explicitly controlled service-PID-namespace SIGKILL used by the
+          # qualified atomic-commit workflow. No host PID or arbitrary shell input.
+          DUDZIAN_TEST_POSTGRES_CRASH_COMMAND: '["docker","exec","--user","postgres","${{ job.services.postgres.id }}","sh","-c","kill -KILL \"$1\"","sh"]'
+          ENTITLEMENT_REGISTRY_POSTGRES_ADMIN_DSN: "host=127.0.0.1 port=55432 dbname=postgres user=postgres"
+        run: |
+          mkdir -p test-results
+          python -m pytest -p asyncio \
+            --fast \
+            -m "external_postgresql and not integration and not e2e_demo_paper and not retraining and not soak and not performance and not qml" \
+            --ignore=tests/e2e \
+            --ignore=tests/integration \
+            --ignore=tests/performance \
+            --ignore=tests/ui_pyside \
+            --ignore=tests/ui_backend \
+            --ignore-glob=tests/licensing/test_lppi_*.py \
+            --ignore-glob=tests/licensing/test_pdsa_*.py \
+            --ignore-glob=tests/licensing/test_production_*.py \
+            --ignore-glob=tests/licensing/test_cha_*.py \
+            --maxfail=1 \
+            --durations=25 \
+            --junitxml=test-results/pytest.xml
+
+      - name: Stop isolated PostgreSQL negative-control clusters
+        if: always()
+        shell: bash
+        run: |
+          docker rm --force dz-ci-pg16-unsafe dz-ci-pg16-other 2>/dev/null || true
+
+      - name: Upload pytest results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: py-tests-ubuntu-postgresql-pytest-results
           path: test-results/pytest.xml
           retention-days: 3
 
@@ -996,7 +1159,7 @@ jobs:
     if: github.event_name != 'schedule'
     name: Integration tests (Linux)
     runs-on: ubuntu-latest
-    needs: py-tests-ubuntu
+    needs: [py-tests-ubuntu, py-tests-ubuntu-postgresql]
     timeout-minutes: 60
     steps:
       - name: Check out repository
