@@ -8,7 +8,7 @@
 
 Inventory the source registry, dynamic/native factory registrations, CCXT paths, market types, instrument/symbol mapping, REST/WebSocket and private order/account APIs, API-key scopes, sandbox availability, reconciliation methods, rate limits, failure classes and test coverage. Classify every real venue plus each spot/margin/futures variant as **QUALIFIED**, **PARTIAL**, **CONTRACT_ONLY**, **UNSUPPORTED**, or **RETIRED** separately for PAPER, TESTNET and LIVE. Report explicit evidence and gaps; never market unverified support as production-ready. TESTNET must be confirmed per exact venue and product; where no genuine test environment exists, expose an unavailable/blocked state and never substitute real LIVE with test-sized orders.
 
-**Zonda is RETIRED with zero target support.** See [Zonda retirement](zonda_retirement.md). Exclude it from active venue discovery, UI options, beta support matrix, and any future activation path.
+**Zonda and BitMEX are RETIRED with zero target support.** See [Exchange Lifecycle & Retirement Management](exchange_lifecycle_retirement_management.md). The code for obsolete connectors may remain historical but cannot be registered as an active supported venue, initialized, network-connected, routed, promoted or selected from UI/marketplace. A qualified support-matrix row is independent from lifecycle status: an installed adapter or CCXT mapping alone is not a permission to trade.
 
 ## MEX-2 — Canonical account-scoped runtime
 
@@ -40,11 +40,11 @@ Expose runtime-authoritative read models and typed Core commands for add account
 
 ## Exit evidence (required before first beta)
 
-1. Support matrix approved; Zonda fully removed from active product paths.
+1. Support matrix approved; universal lifecycle policy is enforced in Core, Zonda and BitMEX are retired across all active paths (including PAPER, TESTNET, LIVE and runtime restart/restore), and retained historical records are verifiable.
 2. Multiple account bootstrap reaches real Core, not a `primary` facade or preview-only registry.
 3. Two independent TESTNET accounts/venues execute/reconcile concurrently on the canonical path; all proposed beta venues individually qualified.
 4. Negative coverage of identity collisions, cross-environment routing, key leakage, cancellation, retry after uncertain execution, partial fills and global risk contention.
 5. UI accounts page works without CLI/YAML editing and secrets never enter QML read models/logs.
-6. Risk/capability and LIVE gates remain fail-closed; PB beta audit finds zero HIGH/BLOCKER issues.
+6. Risk/capability and LIVE gates remain fail-closed; lifecycle policy cannot be bypassed by dynamic factories, fallback, stale configs or aliases; PB beta audit finds zero HIGH/BLOCKER issues.
 
 **Not a M5 LIVE activation.** Qualification can start with PAPER, but no claim of TESTNET or LIVE readiness until matching external tests exist.
