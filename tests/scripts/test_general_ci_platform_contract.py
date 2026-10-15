@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tomllib
@@ -62,13 +63,24 @@ def _pytest_command(job: dict) -> str:
     return _pytest_step(job)["run"]
 
 
+def _contract_bash() -> str:
+    """Use Git Bash on Windows, not the WSL bash.exe launcher on PATH."""
+    if sys.platform != "win32":
+        return "bash"
+    git_executable = shutil.which("git.exe")
+    assert git_executable is not None, "Git for Windows is required for CI shell contracts"
+    git_bash = Path(git_executable).resolve().parent.parent / "bin" / "bash.exe"
+    assert git_bash.is_file(), f"Git Bash not found next to Git for Windows: {git_bash}"
+    return str(git_bash)
+
+
 def _postgresql_shard_arguments(job: dict, shard: str, directory: Path) -> list[str]:
     """Execute the real shell selection without starting pytest or a database."""
     directory.mkdir(parents=True)
     command = _pytest_command(job).replace("${{ matrix.shard }}", shard)
     recorder = "python() { printf '%s\\0' \"$@\" > pytest-argv; }\n"
     result = subprocess.run(
-        ["bash", "-c", recorder + command],
+        [_contract_bash(), "-c", recorder + command],
         cwd=directory,
         capture_output=True,
         text=True,
