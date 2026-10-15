@@ -507,11 +507,6 @@ CREATE TABLE {s}.history_proposal_current(attempt_key bytea PRIMARY KEY,revision
     conn.execute(
         sql.SQL("ALTER TABLE {}.decisions ENABLE ALWAYS TRIGGER atomic_decision_link").format(s)
     )
-    conn.execute(
-        sql.SQL(
-            "INSERT INTO {s}.history_proposals SELECT attempt_key,1,{s}.history_proposal_id(package,1,NULL),NULL,package FROM {s}.approved_commits; INSERT INTO {s}.history_proposal_current SELECT attempt_key,revision,candidate_id FROM {s}.history_proposals"
-        ).format(s=s)
-    )
     for table in ("history_reproposal_contract", "history_proposals", "history_proposal_current"):
         conn.execute(
             sql.SQL("ALTER TABLE {}.{} OWNER TO {}").format(
@@ -553,6 +548,14 @@ CREATE TABLE {s}.history_proposal_current(attempt_key bytea PRIMARY KEY,revision
                     s, sql.Identifier(table), sql.Identifier(name)
                 )
             )
+    # Finish relation DDL before seeding a nonempty legacy approval journal.
+    # The selector's deferred FK must remain deferred until native COMMIT;
+    # its pending events would prevent subsequent ALTER TABLE statements.
+    conn.execute(
+        sql.SQL(
+            "INSERT INTO {s}.history_proposals SELECT attempt_key,1,{s}.history_proposal_id(package,1,NULL),NULL,package FROM {s}.approved_commits; INSERT INTO {s}.history_proposal_current SELECT attempt_key,revision,candidate_id FROM {s}.history_proposals"
+        ).format(s=s)
+    )
     conn.execute(sql.SQL("ALTER TABLE {}.catalog_manifest DISABLE TRIGGER immutable_row").format(s))
     conn.execute("SAVEPOINT history_reproposal_manifest_capture")
     conn.execute(

@@ -142,6 +142,9 @@ Jawna administracyjna migracja `DURABLE_HISTORY_SUCCESSOR_REPROPOSAL_V1` wymaga
 kwalifikowanego Durable Custody Lifecycle V2 z Signer Enrollment SQL V3.
 Archiwizuje poprzedni katalog i digest, utrwala nowe source hashes, a istniejące
 approvals zapisuje jako immutable revision 1. Nie zmienia application evidence.
+Najpierw kończy DDL właścicieli, ACL i zawsze aktywnych guards nowych tabel,
+potem kopiuje approvals i selector. Odroczony FK selectora pozostaje aktywny:
+jego pending events nie mogą poprzedzać dalszego `ALTER TABLE` tej relacji.
 Odczytowa rekonstrukcja po restarcie ponownie porównuje compiled sources,
 inventory, ACL, właścicieli, role OIDs, physical database identity i trwałość.
 
