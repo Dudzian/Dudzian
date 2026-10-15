@@ -378,6 +378,22 @@ jobs:
           --cov=bot_core.postgresql_root_proof_preparation_readonly
           --cov-append --cov-branch --cov-config=.coveragerc
           --cov-report=term-missing --cov-report=xml:coverage.xml -q
+      - name: Exchange report active and historical source regression coverage
+        env:
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+          DUDZIAN_TEST_MODE: "1"
+          DUDZIAN_ALLOW_LONG_POLL: "0"
+        run: >-
+          python -m pytest -p asyncio -p pytest_cov.plugin
+          tests/scripts/test_fetch_long_poll_snapshots.py
+          tests/scripts/test_validate_long_poll_snapshots.py
+          tests/exchanges/test_exchange_manager_config.py
+          -m "not hardware and not destructive and not network"
+          --cov=scripts.fetch_long_poll_snapshots
+          --cov=scripts.validate_long_poll_snapshots
+          --cov=scripts.list_exchange_adapters
+          --cov-append --cov-branch --cov-config=.coveragerc
+          --cov-report=xml:coverage.xml -q
       - name: Changed-code coverage ratchet
         if: github.event_name == 'pull_request'
         run: diff-cover coverage.xml --compare-branch "origin/${{ github.base_ref }}" --fail-under=70
