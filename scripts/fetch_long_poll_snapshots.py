@@ -39,7 +39,9 @@ _REQUIRED_TARGETS: tuple[SnapshotTarget, ...] = (
 # BitMEX ceased operations in September 2026. Keep the historical four-source
 # contract as the default for archived tooling; the scheduled live report
 # opts into this explicit active-venue selection.
-_ACTIVE_TARGETS = tuple(target for target in _REQUIRED_TARGETS if target.adapter != "bitmex_futures")
+_ACTIVE_TARGETS = tuple(
+    target for target in _REQUIRED_TARGETS if target.adapter != "bitmex_futures"
+)
 
 
 class SnapshotFetchError(RuntimeError):
