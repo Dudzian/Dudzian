@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -18,6 +19,8 @@ EXTERNAL_POSTGRESQL_TESTS = (
     "tests/security/test_postgresql_entitlement_registry.py",
     "tests/security/test_postgresql_security_definer_principal_semantics.py",
     "tests/security/test_postgresql_freshness_authority_core.py",
+    "tests/security/test_postgresql_history_successor_reproposal.py",
+    "tests/security/test_history_successor_reproposal_legacy.py",
 )
 
 SERIAL_LICENSING_GLOBS = (
@@ -26,6 +29,13 @@ SERIAL_LICENSING_GLOBS = (
     "tests/licensing/test_production_*.py",
     "tests/licensing/test_cha_*.py",
 )
+
+POSTGRESQL_ISSUER_KEYWORDS = (
+    "root_proof_issuance_authority or root_proof_preparation_v2 or "
+    "root_proof_retention or root_proof_signing_intent or "
+    "root_proof_issuer_orchestration_integration"
+)
+POSTGRESQL_HISTORY_KEYWORDS = "history_successor_reproposal"
 
 
 def _general_ci_jobs() -> dict:
@@ -52,6 +62,23 @@ def _pytest_command(job: dict) -> str:
     return _pytest_step(job)["run"]
 
 
+def _postgresql_shard_arguments(job: dict, shard: str, directory: Path) -> list[str]:
+    """Execute the real shell selection without starting pytest or a database."""
+    directory.mkdir(parents=True)
+    command = _pytest_command(job).replace("${{ matrix.shard }}", shard)
+    recorder = "python() { printf '%s\\0' \"$@\" > pytest-argv; }\n"
+    result = subprocess.run(
+        ["bash", "-c", recorder + command],
+        cwd=directory,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    arguments = (directory / "pytest-argv").read_bytes().split(b"\0")
+    assert arguments.pop() == b""
+    return [argument.decode() for argument in arguments]
+
+
 def test_external_postgresql_marker_is_registered_and_applied():
     config = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     markers = config["tool"]["pytest"]["ini_options"]["markers"]
@@ -61,13 +88,14 @@ def test_external_postgresql_marker_is_registered_and_applied():
         assert "pytestmark = pytest.mark.external_postgresql" in source
 
 
-def test_ubuntu_runs_external_postgresql_against_postgresql_16_service():
+def test_ubuntu_runs_external_postgresql_against_postgresql_16_service(tmp_path):
     jobs = _general_ci_jobs()
     general = jobs["py-tests-ubuntu"]
     postgres_job = jobs["py-tests-ubuntu-postgresql"]
     strategy = postgres_job["strategy"]
     assert strategy["fail-fast"] is False
-    assert strategy["matrix"]["shard"] == ["issuer-durability", "remaining-security"]
+    shards = ["issuer-durability", "history-reproposal", "remaining-security"]
+    assert strategy["matrix"]["shard"] == shards
     assert general["runs-on"] == postgres_job["runs-on"] == "ubuntu-latest"
     assert general["needs"] == postgres_job["needs"] == "prepare-wheelhouse"
 
@@ -81,18 +109,32 @@ def test_ubuntu_runs_external_postgresql_against_postgresql_16_service():
     postgres_command = _pytest_command(postgres_job)
     assert f'-m "not external_postgresql and {common_markers}"' in general_command
     assert f'-m "external_postgresql and {common_markers}"' in postgres_command
-    # Every selected test matches exactly one of the two complementary -k expressions.
+    # History has priority over issuer keywords; the third shard is their complement.
     assert 'case "${{ matrix.shard }}" in' in postgres_command
     assert "issuer-durability)" in postgres_command
+    assert "history-reproposal)" in postgres_command
     assert "remaining-security)" in postgres_command
-    terms = (
-        "root_proof_issuance_authority or root_proof_preparation_v2 or "
-        "root_proof_retention or root_proof_signing_intent or "
-        "root_proof_issuer_orchestration_integration"
-    )
-    assert f"SHARD_KEYWORDS='{terms}'" in postgres_command
-    assert f"SHARD_KEYWORDS='not ({terms})'" in postgres_command
+    assert f"ISSUER_KEYWORDS='{POSTGRESQL_ISSUER_KEYWORDS}'" in postgres_command
+    assert f"HISTORY_KEYWORDS='{POSTGRESQL_HISTORY_KEYWORDS}'" in postgres_command
     assert '-k "$SHARD_KEYWORDS"' in postgres_command
+    expected_selectors = {
+        "issuer-durability": (
+            f"({POSTGRESQL_ISSUER_KEYWORDS}) and not {POSTGRESQL_HISTORY_KEYWORDS}"
+        ),
+        "history-reproposal": POSTGRESQL_HISTORY_KEYWORDS,
+        "remaining-security": (
+            f"not ({POSTGRESQL_ISSUER_KEYWORDS} or {POSTGRESQL_HISTORY_KEYWORDS})"
+        ),
+    }
+    for shard in shards:
+        arguments = _postgresql_shard_arguments(postgres_job, shard, tmp_path / shard)
+        # A doubled shell continuation would introduce a literal path or try to
+        # execute --fast as a command; inspecting YAML text alone cannot catch it.
+        assert arguments[:5] == ["-m", "pytest", "-p", "asyncio", "--fast"]
+        assert "\\" not in arguments
+        assert arguments[arguments.index("-k") + 1] == expected_selectors[shard]
+        assert arguments[-1] == "--junitxml=test-results/pytest.xml"
+        assert "-n" not in arguments and "--numprocesses" not in arguments
     for command in (general_command, postgres_command):
         assert "--fast" in command
         assert "--maxfail=1" in command
@@ -126,9 +168,24 @@ def test_ubuntu_runs_external_postgresql_against_postgresql_16_service():
     assert test_step["env"]["CRYPTOHUNTER_TEST_POSTGRES_CONTAINER"] == (
         "${{ job.services.postgres.id }}"
     )
+    assert test_step["env"]["DUDZIAN_TEST_POSTGRES_CRASH_COMMAND"] == (
+        '["docker","exec","--user","postgres","${{ job.services.postgres.id }}",'
+        '"sh","-c","kill -KILL \\"$1\\"","sh"]'
+    )
     assert "Start two independent PostgreSQL 16 negative-control clusters" in {
         step["name"] for step in postgres_job["steps"]
     }
+    cluster_preflight = next(
+        step
+        for step in postgres_job["steps"]
+        if step["name"] == "Start two independent PostgreSQL 16 negative-control clusters"
+    )["run"]
+    for setting in ("fsync", "synchronous_commit", "full_page_writes"):
+        assert f"current_setting('{setting}')" in cluster_preflight
+    assert "len({row[0] for row in observed}) == 3" in cluster_preflight
+    assert '[row[1] for row in observed] == ["on", "off", "on"]' in cluster_preflight
+    assert 'all(row[2:] == ("on", "on") for row in observed)' in cluster_preflight
+    assert "postgres:16 -c fsync=off" in cluster_preflight
     assert "Stop isolated PostgreSQL negative-control clusters" in {
         step["name"] for step in postgres_job["steps"]
     }
@@ -142,6 +199,63 @@ def test_ubuntu_runs_external_postgresql_against_postgresql_16_service():
         ]["name"]
         == "py-tests-ubuntu-postgresql-${{ matrix.shard }}-pytest-results"
     )
+
+
+def test_postgresql_keyword_shards_are_disjoint_and_exhaustive_in_pytest(tmp_path):
+    """Exercise pytest -k itself for every issuer/history keyword combination."""
+    terms = POSTGRESQL_ISSUER_KEYWORDS.split(" or ") + [POSTGRESQL_HISTORY_KEYWORDS]
+    source = []
+    expected = {
+        name: set() for name in ("issuer-durability", "history-reproposal", "remaining-security")
+    }
+    for bits in range(1 << len(terms)):
+        active = [term for index, term in enumerate(terms) if bits & (1 << index)]
+        name = "test_case_" + str(bits) + ("_" + "_".join(active) if active else "")
+        source.append(f"def {name}():\n    pass\n")
+        shard = (
+            "history-reproposal"
+            if terms[-1] in active
+            else "issuer-durability"
+            if active
+            else "remaining-security"
+        )
+        expected[shard].add("test_partition.py::" + name)
+    (tmp_path / "test_partition.py").write_text("\n".join(source), encoding="utf-8")
+    config = tmp_path / "pytest.ini"
+    config.write_text("[pytest]\n", encoding="utf-8")
+    observed = {}
+    job = _general_ci_jobs()["py-tests-ubuntu-postgresql"]
+    for shard in expected:
+        arguments = _postgresql_shard_arguments(job, shard, tmp_path / shard)
+        selector = arguments[arguments.index("-k") + 1]
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "pytest",
+                "-c",
+                str(config),
+                "--collect-only",
+                "-q",
+                "--color=no",
+                "-k",
+                selector,
+                "test_partition.py",
+            ],
+            cwd=tmp_path,
+            env={**os.environ, "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1"},
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, result.stderr + result.stdout
+        nodeids = [
+            line for line in result.stdout.splitlines() if line.startswith("test_partition.py::")
+        ]
+        assert len(nodeids) == len(set(nodeids))
+        observed[shard] = set(nodeids)
+        assert observed[shard] == expected[shard]
+    assert set.union(*observed.values()) == set.union(*expected.values())
+    assert sum(map(len, observed.values())) == 1 << len(terms)
 
 
 def test_postgresql_restart_proof_controls_exact_service_and_waits_on_test_dsn():

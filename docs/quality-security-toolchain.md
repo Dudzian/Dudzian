@@ -166,6 +166,30 @@ był już w skonfigurowanym mypy, format gate i wcześniejszych coverage scopes.
 Nie aktywuje to produkcyjnego issuera ani kwalifikacji sprzętowej.
 Zakres opisuje [przygotowanie V2](architecture/stage9_postgresql_v2_root_proof_preparation.md).
 
+History Successor Reproposal V1 ma osobny seryjny job
+`history-successor-reproposal`, z własną parą trwałych PostgreSQL 16 i limitem
+120 minut. Obejmuje append-only candidate lineage, autorytatywne supersession,
+genuine stale-predecessor recovery i rzeczywiste fault/restart tests. Importowane
+negatywne przypadki zbiera główny moduł testów, bez osobnego uruchamiania helpera.
+Oryginalny `atomic-root-proof-commit` zachowuje wszystkie dotychczasowe testy,
+zakresy pomiaru i limit 120 minut. Job `atomic-root-proof-coverage` wymaga sukcesu
+obu kwalifikacji i ich surowych danych branch coverage. Łączy je przez
+`coverage combine`, następnie generuje XML i egzekwuje niezmieniony próg
+`diff-cover --fail-under=70`. Brak wymaganych danych powoduje failure. Pomiary
+nowej kwalifikacji obejmują cztery nowe i wszystkie współdzielone moduły atomic,
+także nowy authenticated snapshot w `postgresql_root_proof_preparation_v2`.
+Dotychczasowe joby `quality-ratchet`, `quality-ratchet-postgresql` oraz
+`quality-ratchet-coverage` pozostają niezależne i zachowują swój ratchet.
+W ogólnym CI macierz PostgreSQL ma trzy rozłączne shardy: `issuer-durability`,
+`history-reproposal` i `remaining-security`. Każdy ma własne klastry; wspólny
+zakres markerów i ignorowanych plików pozostaje zachowany. `integration-linux`
+wymaga sukcesu całej macierzy. Pure evidence i architecture tests pozostają
+w ogólnym shardzie bez `external_postgresql`. Cztery nowe moduły obejmują
+również skonfigurowany mypy Linux/Windows i pełny Ruff format preflight.
+Odrębny test import graph chroni publiczne read-only porty przed dostępem do
+administracji reproposal. Granice i immutable evidence opisuje
+[protokół V1](architecture/stage9_history_successor_reproposal_v1.md).
+
 ## Security invariants now encoded
 
 - Signal strength has the signed `[-1, 1]` contract (direction plus magnitude),

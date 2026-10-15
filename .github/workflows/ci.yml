@@ -744,9 +744,9 @@ jobs:
           path: test-results/pytest.xml
           retention-days: 3
 
-  # Isolated PostgreSQL shard: selected by the exact complement of the generic
-  # Ubuntu --fast marker expression. Keep both shards required before integration-linux.
-  # Both use separate disposable PostgreSQL 16 services; do not parallelize
+  # Isolated PostgreSQL shards: selected by the exact complement of the generic
+  # Ubuntu --fast marker expression. Keep all shards required before integration-linux.
+  # Each uses separate disposable PostgreSQL 16 services; do not parallelize
   # security tests that intentionally modify ACLs or restart the DB within a shard.
   py-tests-ubuntu-postgresql:
     if: github.event_name != 'schedule'
@@ -756,7 +756,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [issuer-durability, remaining-security]
+        shard: [issuer-durability, history-reproposal, remaining-security]
     timeout-minutes: 150
     services:
       postgres:
@@ -849,7 +849,9 @@ jobs:
                   try:
                       with psycopg.connect(dsn) as conn:
                           facts = conn.execute(
-                              "SELECT system_identifier, current_setting('fsync') "
+                              "SELECT system_identifier, current_setting('fsync'), "
+                              "current_setting('synchronous_commit'), "
+                              "current_setting('full_page_writes') "
                               "FROM pg_catalog.pg_control_system()"
                           ).fetchone()
                           assert conn.info.server_version // 10000 == 16
@@ -861,6 +863,7 @@ jobs:
                       time.sleep(1)
           assert len({row[0] for row in observed}) == 3, "independent clusters required"
           assert [row[1] for row in observed] == ["on", "off", "on"], observed
+          assert all(row[2:] == ("on", "on") for row in observed), observed
           PY
 
       - name: Run external PostgreSQL fast pytest qualification (serial)
@@ -880,21 +883,28 @@ jobs:
           DUDZIAN_TEST_POSTGRES_CRASH_COMMAND: '["docker","exec","--user","postgres","${{ job.services.postgres.id }}","sh","-c","kill -KILL \"$1\"","sh"]'
           ENTITLEMENT_REGISTRY_POSTGRES_ADMIN_DSN: "host=127.0.0.1 port=55432 dbname=postgres user=postgres"
         run: |
+          set -euo pipefail
           mkdir -p test-results
-          # Two disjoint, exhaustive pytest -k partitions of the same -m selection.
-          # Never run both suites against one PostgreSQL service/runner.
+          # Three disjoint, exhaustive pytest -k partitions of the same -m selection.
+          # A history test stays in its shard even if its name mentions an issuer term.
+          # Never run these suites against one PostgreSQL service/runner.
+          ISSUER_KEYWORDS='root_proof_issuance_authority or root_proof_preparation_v2 or root_proof_retention or root_proof_signing_intent or root_proof_issuer_orchestration_integration'
+          HISTORY_KEYWORDS='history_successor_reproposal'
           case "${{ matrix.shard }}" in
             issuer-durability)
-              SHARD_KEYWORDS='root_proof_issuance_authority or root_proof_preparation_v2 or root_proof_retention or root_proof_signing_intent or root_proof_issuer_orchestration_integration'
+              SHARD_KEYWORDS="(${ISSUER_KEYWORDS}) and not ${HISTORY_KEYWORDS}"
+              ;;
+            history-reproposal)
+              SHARD_KEYWORDS="${HISTORY_KEYWORDS}"
               ;;
             remaining-security)
-              SHARD_KEYWORDS='not (root_proof_issuance_authority or root_proof_preparation_v2 or root_proof_retention or root_proof_signing_intent or root_proof_issuer_orchestration_integration)'
+              SHARD_KEYWORDS="not (${ISSUER_KEYWORDS} or ${HISTORY_KEYWORDS})"
               ;;
             *) echo "Unknown PostgreSQL qualification shard" >&2; exit 2 ;;
           esac
-          python -m pytest -p asyncio \\
-            --fast \\
-            -k "$SHARD_KEYWORDS" \\
+          python -m pytest -p asyncio \
+            --fast \
+            -k "$SHARD_KEYWORDS" \
             -m "external_postgresql and not integration and not e2e_demo_paper and not retraining and not soak and not performance and not qml" \
             --ignore=tests/e2e \
             --ignore=tests/integration \

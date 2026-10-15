@@ -23,6 +23,7 @@ from bot_core.authenticated_issuer_history import (
     ReconciliationOutcome,
     _snapshot_stream,
     canonical_json_bytes,
+    verify_head,
 )
 from bot_core.cha_attempt_signatures import RetainedIssuanceRequest
 from bot_core.cha_attempt_store import AttemptAuthorization
@@ -33,11 +34,13 @@ from bot_core.licensing.cha_root_proof_signed_attempt import (
     _signed_attempt_lock_selector,
 )
 from bot_core.local_signing_custody import (
+    LocalHistoryAttestationSigningProvider,
     LocalRootProofSigningProvider,
     SigningCredentialSnapshot,
     SigningKeyLifecycle,
 )
 from bot_core.postgresql_authenticated_issuer_history import (
+    HistoryReadSnapshot,
     HistoryStorageUnavailable,
     _read_history_snapshot,
 )
@@ -760,3 +763,45 @@ class PostgreSQLAuthenticatedIssuerHistoryV2:
     def current_record(self) -> HistoryRecord | None:
         records = self.retained_history()
         return records[-1] if records else None
+
+    def authenticated_snapshot(
+        self, history_signer: LocalHistoryAttestationSigningProvider
+    ) -> HistoryReadSnapshot:
+        """Authenticate the actual retained tail against genuine pinned custody.
+
+        The decoded chain alone is not evidence of its signer's authority. This
+        read verifies every retained public attestation and requires a signed
+        tail, using public keys and lifecycle from the exact local provider.
+        No caller-supplied head, key, credential or signature participates.
+        """
+        if type(history_signer) is not LocalHistoryAttestationSigningProvider:
+            raise HistoryContractError("GENUINE_PINNED_HISTORY_SIGNER_REQUIRED")
+        try:
+            before = history_signer.credential_snapshot()
+            if before.lifecycle_state is not SigningKeyLifecycle.ACTIVE:
+                raise HistoryContractError("REPROPOSAL_REQUIRES_ACTIVE_HISTORY_SIGNER")
+            with self._connect() as conn, conn.transaction():
+                conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+                qualify_root_proof_preparation_v2(conn, self._deployment, component="history")
+                snapshot = _read_history_snapshot(
+                    conn,
+                    self._schema,
+                    self._stream,
+                    canonical_json_bytes(self._stream.material()),
+                    lock=False,
+                )
+                for head in snapshot.heads:
+                    verify_head(head, history_signer, expected_stream=self._stream)
+                if snapshot.records and not any(
+                    head.sequence == snapshot.records[-1].sequence
+                    and head.record_digest == snapshot.records[-1].authenticated_digest
+                    for head in snapshot.heads
+                ):
+                    raise HistoryContractError("AUTHENTICATED_RETAINED_HISTORY_TAIL_REQUIRED")
+                if history_signer.credential_snapshot() != before:
+                    raise HistoryContractError("HISTORY_SIGNER_CHANGED_DURING_RETAINED_READ")
+                return HistoryReadSnapshot(self._stream, snapshot.records, snapshot.heads)
+        except HistoryContractError:
+            raise
+        except Exception:
+            raise HistoryStorageUnavailable("V2_AUTHENTICATED_HISTORY_READ_UNAVAILABLE") from None
