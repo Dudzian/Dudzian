@@ -54,6 +54,20 @@ pakiet pod tą samą wersją jest konfliktem, także po późniejszym supersessi
 następuje tylko przez zamkniętą funkcję SQL, po porównaniu oczekiwanej wersji
 i candidate identity. Stary candidate nie może wykonać nowego BIND.
 
+```mermaid
+flowchart LR
+    P["Oryginalne RESERVED / STAGED i podpisany Root Proof"] --> R1["Immutable revision 1"]
+    P --> R2["Immutable revision 2"]
+    R1 -->|"predecessor propozycji"| R2
+    H["Autorytatywny signed history head"] -->|"history predecessor"| R2
+    R2 -->|"kwalifikowany CAS"| C["Chroniony current selector"]
+    C -->|"exact candidate identity"| T["Jeden SERIALIZABLE COMMIT: BIND + history + head + decision"]
+```
+
+Predecessor propozycji i predecessor rekordu historii to dwa osobne powiązania.
+Pierwsze zachowuje niezmienną lineage approvals tej samej próby; drugie łączy
+nowy event z aktualną autorytatywną historią wszystkich prób w danym stream.
+
 Niezmienne są wszystkie identity próby, operacji, entitlement i generation,
 account, proof, oryginalny canonical payload i podpis Root Proof, oba canonical
 envelopes, oryginalny root signer snapshot, authorization i exact signed request.
