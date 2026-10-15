@@ -863,31 +863,43 @@ def test_unresolved_live_prior_commit_blocks_supersession_until_its_positive_dec
     _winner(value)
     proposal = _repropose(value)
     before = _read_all(value)
-    entered, release = threading.Event(), threading.Event()
+    admission_entered, admission_release = threading.Event(), threading.Event()
+    commit_entered, commit_release = threading.Event(), threading.Event()
 
     def hold(name, connection):
-        if name == "before_commit":
-            entered.set()
-            assert release.wait(180)
+        if name == "before_proposal_admission":
+            admission_entered.set()
+            assert admission_release.wait(180)
+        elif name == "before_commit":
+            commit_entered.set()
+            assert commit_release.wait(180)
 
     monkeypatch.setattr(_runtime_module(), "_persistence_cut", hold)
     with ThreadPoolExecutor(max_workers=2) as executor:
-        committing = executor.submit(value.reproposal.commit, proposal)
-        assert entered.wait(180)
-        # A distinct committed snapshot sees no decision while the original
-        # backend has already written it and retains all transaction locks.
-        with pytest.raises(atomic_runtime.AtomicRootProofCommitIndeterminate):
-            value.reproposal.reconcile(proposal)
+        # Complete actual evidence requalification before the prior commit
+        # changes public entitlement state, then contend at the SQL boundary.
         superseding = executor.submit(_repropose, value, proposal)
-        _wait_for_competing_database_lock(value)
-        assert not superseding.done(), "negative read escaped the still-live final commit"
-        release.set()
-        decision = committing.result(timeout=180)
         try:
-            result = superseding.result(timeout=180)
-            assert result == decision
-        except atomic_runtime.AtomicRootProofCommitConflict:
-            pass
+            assert admission_entered.wait(180)
+            committing = executor.submit(value.reproposal.commit, proposal)
+            assert commit_entered.wait(180)
+            # A distinct committed snapshot sees no decision while the original
+            # backend has written it and retains all transaction locks.
+            with pytest.raises(atomic_runtime.AtomicRootProofCommitIndeterminate):
+                value.reproposal.reconcile(proposal)
+            admission_release.set()
+            _wait_for_competing_database_lock(value)
+            assert not superseding.done(), "negative read escaped the still-live final commit"
+            commit_release.set()
+            decision = committing.result(timeout=180)
+            try:
+                result = superseding.result(timeout=180)
+                assert result == decision
+            except atomic_runtime.AtomicRootProofCommitConflict:
+                pass
+        finally:
+            admission_release.set()
+            commit_release.set()
     assert value.reproposal.reconcile(proposal) == decision
     after = _read_all(value)
     assert (
