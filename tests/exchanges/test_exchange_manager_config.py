@@ -719,3 +719,31 @@ def test_validate_monitored_rows_allows_stale_long_poll_in_fixture_mode():
     ]
 
     lea._validate_monitored_rows(rows, allow_stale_long_poll=True)  # type: ignore[attr-defined]
+
+
+def test_active_report_requires_deribit_only_without_weakening_live_evidence() -> None:
+    from scripts import list_exchange_adapters as lea
+
+    rows = [
+        {
+            "exchange": "deribit",
+            "profile": profile,
+            "long_poll_metrics_status": "fresh",
+            "long_poll_snapshot_age_minutes": 1.0,
+            "hypercare_failover_status": "ready",
+            "hypercare_latency_status": "ready",
+            "hypercare_cost_status": "ready",
+            "signal_quality_snapshot_status": "fresh",
+            "signal_quality_snapshot_age_minutes": 1.0,
+            "signal_quality_snapshot_path": "/tmp/deribit.json",
+            "signal_quality_records": 2,
+        }
+        for profile in ("paper", "live")
+    ]
+    assert lea._validate_monitored_rows(rows, active_only=True) is None
+    with pytest.raises(RuntimeError, match="brak wiersza dla bitmex:paper"):
+        lea._validate_monitored_rows(rows)
+
+    rows[0]["long_poll_metrics_status"] = "missing"
+    with pytest.raises(RuntimeError, match="deribit:paper long_poll_metrics_status=missing"):
+        lea._validate_monitored_rows(rows, active_only=True)

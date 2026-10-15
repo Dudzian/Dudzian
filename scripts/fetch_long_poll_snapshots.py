@@ -36,6 +36,11 @@ _REQUIRED_TARGETS: tuple[SnapshotTarget, ...] = (
     SnapshotTarget("bitmex_futures_live", "bitmex_futures", "live", "public"),
 )
 
+# BitMEX ceased operations in September 2026. Keep the historical four-source
+# contract as the default for archived tooling; the scheduled live report
+# opts into this explicit active-venue selection.
+_ACTIVE_TARGETS = tuple(target for target in _REQUIRED_TARGETS if target.adapter != "bitmex_futures")
+
 
 class SnapshotFetchError(RuntimeError):
     """Błąd pobierania snapshotów long-polla."""
@@ -201,6 +206,7 @@ def fetch_snapshots(
     output_path: Path,
     channels: Sequence[str],
     timeout_seconds: float,
+    required_targets: tuple[SnapshotTarget, ...] = _REQUIRED_TARGETS,
 ) -> Path:
     if not channels:
         raise SnapshotFetchError("Wymagane jest podanie co najmniej jednego kanału long-polla")
@@ -208,7 +214,7 @@ def fetch_snapshots(
     environments_config = _load_snapshot_environment_configs(config_path)
 
     snapshots: list[dict[str, Any]] = []
-    for target in _REQUIRED_TARGETS:
+    for target in required_targets:
         environment_config = environments_config.get(target.environment_name)
         if not isinstance(environment_config, SnapshotEnvironmentConfig):
             raise SnapshotFetchError(
@@ -252,7 +258,7 @@ def fetch_snapshots(
     }
     missing = [
         f"{target.adapter}:{target.environment}"
-        for target in _REQUIRED_TARGETS
+        for target in required_targets
         if (target.adapter, target.environment) not in seen
     ]
     if missing:
@@ -313,6 +319,11 @@ def main(argv: list[str] | None = None) -> int:
         default=15.0,
         help="Limit czasu pobierania pojedynczego snapshotu.",
     )
+    parser.add_argument(
+        "--active-only",
+        action="store_true",
+        help="Strict monitoring of active Deribit profiles; excludes retired BitMEX.",
+    )
     args = parser.parse_args(argv)
 
     channels = tuple(item.strip() for item in str(args.channels).split(",") if item.strip())
@@ -324,6 +335,7 @@ def main(argv: list[str] | None = None) -> int:
             output_path=args.output,
             channels=channels,
             timeout_seconds=float(args.timeout_seconds),
+            required_targets=_ACTIVE_TARGETS if args.active_only else _REQUIRED_TARGETS,
         )
     except SnapshotFetchError as exc:
         raise SystemExit(str(exc)) from exc

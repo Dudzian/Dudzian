@@ -220,3 +220,28 @@ Eksport checklisty HyperCare w adapterach Deribit/BitMEX korzysta z istniejąceg
 * Walidacja hooka HWID i keyring: `docs/deployment/installer_build.md#walidacja-hooka-hwid-i-keyring`.
 * Opis modułu UI i mostka raportów: `ui/README.md`.
 * Dziennik audytowy raportów: `docs/audit/paper_trading_log.md`.
+
+
+## Active scheduled exchange monitoring after BitMEX shutdown (2026-09-23)
+
+BitMEX ceased operating on 2026-09-23; CCXT delisted its connector in 4.5.84.
+The strict scheduled `exchange-report` workflow therefore boots **only Deribit**
+(`deribit_futures_paper` and `deribit_futures_live`), and passes
+`--active-only` to the fetcher, timestamp validator, and CSV reporter.
+
+This is **not** a synthetic/fallback snapshot mode: both Deribit profiles must
+produce genuine gateway long-poll evidence with valid collection timestamps.
+Gateway failure, no activity, stale timestamps or missing Deribit profiles
+continue to fail the scheduled workflow. The separate manual fixture mode is
+not substituted for scheduled live monitoring.
+
+Historical BitMEX rows remain visible in daily CSV exports with explicit
+`long_poll_metrics_status=retired` and
+`signal_quality_snapshot_status=retired`; no new current BitMEX metrics,
+signal-quality/hypercare snapshot, or fresh status may be claimed.
+Preexisting offline four-profile fixtures and their validation retain the
+legacy default contract for historical replay. New scheduled active-only mode
+is explicit, and **does not re-enable trading or declare Deribit LIVE ready**.
+Runtime removal of retired BitMEX trading adapters/configurations requires a
+separate reviewed retirement migration, including account/order fail-closed
+checks and historical data preservation.

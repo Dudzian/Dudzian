@@ -210,6 +210,7 @@ def _validate_monitored_rows(
     rows: Sequence[Mapping[str, Any]],
     *,
     allow_stale_long_poll: bool = False,
+    active_only: bool = False,
 ) -> None:
     """Wymusza dostępność krytycznych metryk dla monitorowanych adapterów.
 
@@ -220,10 +221,14 @@ def _validate_monitored_rows(
     """
 
     required: Sequence[tuple[str, str]] = (
-        ("deribit", "paper"),
-        ("deribit", "live"),
-        ("bitmex", "paper"),
-        ("bitmex", "live"),
+        (("deribit", "paper"), ("deribit", "live"))
+        if active_only
+        else (
+            ("deribit", "paper"),
+            ("deribit", "live"),
+            ("bitmex", "paper"),
+            ("bitmex", "live"),
+        )
     )
 
     def _row_for(exchange: str, profile: str) -> Mapping[str, Any] | None:
@@ -287,13 +292,19 @@ def _validate_monitored_rows(
 
 
 def _export_hypercare_assets(
-    *, signal_quality_dir: Path, hypercare_dir: Path, daily_csv_dir: Path
+    *,
+    signal_quality_dir: Path,
+    hypercare_dir: Path,
+    daily_csv_dir: Path,
+    active_only: bool = False,
 ) -> dict[str, tuple[str, str | None]]:
     assets: dict[str, tuple[str, str | None]] = {}
     signal_quality_dir.mkdir(parents=True, exist_ok=True)
     hypercare_dir.mkdir(parents=True, exist_ok=True)
     daily_csv_dir.mkdir(parents=True, exist_ok=True)
     for adapter_cls in _MONITORED_FUTURES_ADAPTERS:
+        if active_only and adapter_cls.name.startswith("bitmex_"):
+            continue
         checklist_json, checklist_csv = adapter_cls.export_hypercare_assets(
             signal_quality_dir=str(signal_quality_dir),
             report_dir=str(hypercare_dir),
@@ -864,6 +875,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Eksportuje checklisty HyperCare i CSV jakości sygnałów dla monitorowanych adapterów.",
     )
+    parser.add_argument(
+        "--active-only",
+        action="store_true",
+        help="Strictly require active Deribit; preserve retired BitMEX rows as historical.",
+    )
     args = parser.parse_args(argv)
 
     config = load_core_config(Path(args.config))
@@ -875,6 +891,7 @@ def main(argv: list[str] | None = None) -> int:
             signal_quality_dir=Path(args.signal_quality_dir),
             hypercare_dir=Path(args.hypercare_dir),
             daily_csv_dir=Path(args.daily_csv_dir),
+            active_only=bool(args.active_only),
         )
     rows = build_rows(
         config,
@@ -886,7 +903,30 @@ def main(argv: list[str] | None = None) -> int:
         hypercare_assets=hypercare_assets,
         allow_stale_long_poll=bool(args.allow_stale_long_poll),
     )
-    _validate_monitored_rows(rows, allow_stale_long_poll=bool(args.allow_stale_long_poll))
+    if args.active_only:
+        # Preserve historical rows, but never advertise a retired venue as
+        # currently monitored or emit fresh-looking signal-quality evidence.
+        for row in rows:
+            if row.get("exchange") == "bitmex":
+                row.update(
+                    long_poll_scope=None,
+                    long_poll_latency_p95=None,
+                    long_poll_delivery_lag_p95=None,
+                    long_poll_http_errors=None,
+                    long_poll_reconnect_success=None,
+                    long_poll_reconnect_failure=None,
+                    long_poll_snapshot_age_minutes=None,
+                    long_poll_metrics_status="retired",
+                    signal_quality_snapshot_status="retired",
+                    signal_quality_snapshot_age_minutes=None,
+                    signal_quality_snapshot_path=None,
+                    signal_quality_records=None,
+                )
+    _validate_monitored_rows(
+        rows,
+        allow_stale_long_poll=bool(args.allow_stale_long_poll),
+        active_only=bool(args.active_only),
+    )
 
     fieldnames = [
         "exchange",

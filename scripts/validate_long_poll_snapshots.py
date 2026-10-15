@@ -20,6 +20,7 @@ DEFAULT_OUTPUT = Path("var/metrics/long_poll_snapshots.json")
 DEFAULT_MAX_AGE_MINUTES = LONG_POLL_MAX_AGE_MINUTES
 DEFAULT_FUTURE_GRACE_MINUTES = LONG_POLL_FUTURE_GRACE_MINUTES
 _REQUIRED_ADAPTERS = ("deribit_futures", "bitmex_futures")
+_ACTIVE_ADAPTERS = ("deribit_futures",)
 _REQUIRED_ENVIRONMENTS = ("paper", "live")
 
 
@@ -97,7 +98,11 @@ def _load_snapshots(path: Path) -> tuple[list[dict[str, Any]], dt.datetime | Non
     return normalized, default_collected_at
 
 
-def _validate_required_snapshots(snapshots: Sequence[Mapping[str, Any]]) -> None:
+def _validate_required_snapshots(
+    snapshots: Sequence[Mapping[str, Any]],
+    *,
+    required_adapters: tuple[str, ...] = _REQUIRED_ADAPTERS,
+) -> None:
     seen: set[tuple[str, str]] = set()
     for snapshot in snapshots:
         labels = snapshot.get("labels")
@@ -112,7 +117,7 @@ def _validate_required_snapshots(snapshots: Sequence[Mapping[str, Any]]) -> None
 
     missing = [
         f"{adapter}:{environment}"
-        for adapter in _REQUIRED_ADAPTERS
+        for adapter in required_adapters
         for environment in _REQUIRED_ENVIRONMENTS
         if (adapter, environment) not in seen
     ]
@@ -128,6 +133,7 @@ def _validate_freshness(
     max_age_minutes: float,
     future_grace_minutes: float,
     fallback_collected_at: dt.datetime | None,
+    required_adapters: tuple[str, ...] = _REQUIRED_ADAPTERS,
 ) -> None:
     now = dt.datetime.now(tz=dt.timezone.utc)
     future_limit = now + dt.timedelta(minutes=max(0.0, future_grace_minutes))
@@ -139,7 +145,7 @@ def _validate_freshness(
             continue
         adapter = str(labels.get("adapter") or "").strip()
         environment = str(labels.get("environment") or "").strip()
-        if adapter not in _REQUIRED_ADAPTERS or environment not in _REQUIRED_ENVIRONMENTS:
+        if adapter not in required_adapters or environment not in _REQUIRED_ENVIRONMENTS:
             continue
 
         collected_at = _coerce_datetime(snapshot.get("collected_at")) or fallback_collected_at
@@ -171,15 +177,17 @@ def prepare_snapshots(
     max_age_minutes: float,
     future_grace_minutes: float,
     skip_freshness: bool = False,
+    required_adapters: tuple[str, ...] = _REQUIRED_ADAPTERS,
 ) -> Path:
     snapshots, default_collected_at = _load_snapshots(source_path)
-    _validate_required_snapshots(snapshots)
+    _validate_required_snapshots(snapshots, required_adapters=required_adapters)
     if not skip_freshness:
         _validate_freshness(
             snapshots,
             max_age_minutes=max_age_minutes,
             future_grace_minutes=future_grace_minutes,
             fallback_collected_at=default_collected_at,
+            required_adapters=required_adapters,
         )
 
     output_payload = {
@@ -223,6 +231,11 @@ def main(argv: list[str] | None = None) -> int:
             "Tryb do workflow opartych o fixture'y."
         ),
     )
+    parser.add_argument(
+        "--active-only",
+        action="store_true",
+        help="Validate only currently active Deribit futures sources, not retired BitMEX.",
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -232,6 +245,7 @@ def main(argv: list[str] | None = None) -> int:
             max_age_minutes=float(args.max_age_minutes),
             future_grace_minutes=float(args.future_grace_minutes),
             skip_freshness=bool(args.skip_freshness),
+            required_adapters=_ACTIVE_ADAPTERS if args.active_only else _REQUIRED_ADAPTERS,
         )
     except SnapshotValidationError as exc:
         raise SystemExit(str(exc)) from exc
