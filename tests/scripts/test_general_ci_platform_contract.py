@@ -33,8 +33,23 @@ def _general_ci_jobs() -> dict:
     return document["jobs"]
 
 
+_PYTEST_STEP_NAMES = frozenset(
+    {
+        "Run fast pytest suite",
+        "Run general fast pytest suite (excluding dedicated PostgreSQL qualification)",
+        "Run external PostgreSQL fast pytest qualification (serial)",
+    }
+)
+
+
+def _pytest_step(job: dict) -> dict:
+    matching = [step for step in job["steps"] if step["name"] in _PYTEST_STEP_NAMES]
+    assert len(matching) == 1, "exactly one qualified fast pytest step required"
+    return matching[0]
+
+
 def _pytest_command(job: dict) -> str:
-    return next(step["run"] for step in job["steps"] if step["name"] == "Run fast pytest suite")
+    return _pytest_step(job)["run"]
 
 
 def test_external_postgresql_marker_is_registered_and_applied():
@@ -48,20 +63,66 @@ def test_external_postgresql_marker_is_registered_and_applied():
 
 def test_ubuntu_runs_external_postgresql_against_postgresql_16_service():
     jobs = _general_ci_jobs()
-    ubuntu = jobs["py-tests-ubuntu"]
-    postgres = ubuntu["services"]["postgres"]
+    general = jobs["py-tests-ubuntu"]
+    postgres_job = jobs["py-tests-ubuntu-postgresql"]
+    assert general["runs-on"] == postgres_job["runs-on"] == "ubuntu-latest"
+    assert general["needs"] == postgres_job["needs"] == "prepare-wheelhouse"
+
+    # The previous Ubuntu selection must be partitioned exhaustively, not
+    # silently dropped or redundantly run on a shared service.
+    common_markers = (
+        "not integration and not e2e_demo_paper and not retraining "
+        "and not soak and not performance and not qml"
+    )
+    general_command = _pytest_command(general)
+    postgres_command = _pytest_command(postgres_job)
+    assert f'-m "not external_postgresql and {common_markers}"' in general_command
+    assert f'-m "external_postgresql and {common_markers}"' in postgres_command
+    for command in (general_command, postgres_command):
+        assert "--fast" in command
+        assert "--maxfail=1" in command
+    assert {
+        token
+        for token in general_command.split()
+        if token.startswith(("--ignore=", "--ignore-glob="))
+    } == {
+        token
+        for token in postgres_command.split()
+        if token.startswith(("--ignore=", "--ignore-glob="))
+    }
+
+    postgres = postgres_job["services"]["postgres"]
     assert postgres["image"] == "postgres:16"
     assert postgres["env"]["POSTGRES_HOST_AUTH_METHOD"] == "trust"
     assert "55432:5432" in [str(mapping) for mapping in postgres["ports"]]
-    command = _pytest_command(ubuntu)
-    assert "not external_postgresql" not in command
-    test_step = next(step for step in ubuntu["steps"] if step["name"] == "Run fast pytest suite")
+    assert postgres_job["timeout-minutes"] == 150
+    test_step = _pytest_step(postgres_job)
+    assert test_step["timeout-minutes"] == 120
     for variable in ("DUDZIAN_TEST_POSTGRES_DSN", "ENTITLEMENT_REGISTRY_POSTGRES_ADMIN_DSN"):
         assert "127.0.0.1 port=55432" in test_step["env"][variable]
+    for variable in ("CRYPTOHUNTER_TEST_POSTGRES_UNSAFE_DSN", "CRYPTOHUNTER_TEST_POSTGRES_OTHER_DSN"):
+        assert variable in test_step["env"]
     assert test_step["env"]["DUDZIAN_TEST_POSTGRES_RESTART_CONTAINER_ID"] == (
         "${{ job.services.postgres.id }}"
     )
-
+    assert test_step["env"]["CRYPTOHUNTER_TEST_POSTGRES_CONTAINER"] == (
+        "${{ job.services.postgres.id }}"
+    )
+    assert "Start two independent PostgreSQL 16 negative-control clusters" in {
+        step["name"] for step in postgres_job["steps"]
+    }
+    assert "Stop isolated PostgreSQL negative-control clusters" in {
+        step["name"] for step in postgres_job["steps"]
+    }
+    assert jobs["integration-linux"]["needs"] == [
+        "py-tests-ubuntu", "py-tests-ubuntu-postgresql"
+    ]
+    assert (
+        next(step for step in postgres_job["steps"] if step["name"] == "Upload pytest results")[
+            "with"
+        ]["name"]
+        == "py-tests-ubuntu-postgresql-pytest-results"
+    )
 
 def test_postgresql_restart_proof_controls_exact_service_and_waits_on_test_dsn():
     path = ROOT / "tests/security/test_postgresql_freshness_authority_core.py"
@@ -93,6 +154,7 @@ def test_heavy_licensing_security_suite_is_split_without_coverage_gap():
     general_jobs = {
         "py-tests-windows": (45, 60),
         "py-tests-ubuntu": (120, 150),
+        "py-tests-ubuntu-postgresql": (120, 150),
         "py-tests-macos": (45, 60),
     }
     for job_name, (test_timeout_minutes, job_timeout_minutes) in general_jobs.items():
@@ -100,7 +162,7 @@ def test_heavy_licensing_security_suite_is_split_without_coverage_gap():
         command = _pytest_command(job)
         for pattern in SERIAL_LICENSING_GLOBS:
             assert f"--ignore-glob={pattern}" in command
-        test_step = next(step for step in job["steps"] if step["name"] == "Run fast pytest suite")
+        test_step = _pytest_step(job)
         assert test_step["timeout-minutes"] == test_timeout_minutes
         assert job["timeout-minutes"] == job_timeout_minutes
 
