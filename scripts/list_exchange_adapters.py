@@ -210,6 +210,7 @@ def _validate_monitored_rows(
     rows: Sequence[Mapping[str, Any]],
     *,
     allow_stale_long_poll: bool = False,
+    active_only: bool = False,
 ) -> None:
     """Wymusza dostępność krytycznych metryk dla monitorowanych adapterów.
 
@@ -220,10 +221,14 @@ def _validate_monitored_rows(
     """
 
     required: Sequence[tuple[str, str]] = (
-        ("deribit", "paper"),
-        ("deribit", "live"),
-        ("bitmex", "paper"),
-        ("bitmex", "live"),
+        (("deribit", "paper"), ("deribit", "live"))
+        if active_only
+        else (
+            ("deribit", "paper"),
+            ("deribit", "live"),
+            ("bitmex", "paper"),
+            ("bitmex", "live"),
+        )
     )
 
     def _row_for(exchange: str, profile: str) -> Mapping[str, Any] | None:
@@ -864,6 +869,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Eksportuje checklisty HyperCare i CSV jakości sygnałów dla monitorowanych adapterów.",
     )
+    parser.add_argument(
+        "--active-only",
+        action="store_true",
+        help="Strictly require active Deribit; preserve retired BitMEX rows as historical.",
+    )
     args = parser.parse_args(argv)
 
     config = load_core_config(Path(args.config))
@@ -886,7 +896,11 @@ def main(argv: list[str] | None = None) -> int:
         hypercare_assets=hypercare_assets,
         allow_stale_long_poll=bool(args.allow_stale_long_poll),
     )
-    _validate_monitored_rows(rows, allow_stale_long_poll=bool(args.allow_stale_long_poll))
+    _validate_monitored_rows(
+        rows,
+        allow_stale_long_poll=bool(args.allow_stale_long_poll),
+        active_only=bool(args.active_only),
+    )
 
     fieldnames = [
         "exchange",
