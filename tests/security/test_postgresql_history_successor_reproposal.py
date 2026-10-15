@@ -995,7 +995,9 @@ from tests.security._history_reproposal_negative_cases import (
 )
 
 
-def test_protected_raw_admission_replay_and_changed_packages_are_fail_closed(reproposal_boundary):
+def test_protected_raw_admission_replay_and_changed_packages_are_fail_closed(
+    reproposal_boundary, monkeypatch
+):
     from copy import deepcopy
 
     value = reproposal_boundary
@@ -1023,23 +1025,63 @@ def test_protected_raw_admission_replay_and_changed_packages_are_fail_closed(rep
             )
         assert _read_all(value) == before
 
-    # An unrelated genuine atomic winner makes the second candidate stale
-    # again; forged successor data then reaches the writable admission boundary.
+    # Retain a genuinely verified successor from its actual approval transaction,
+    # then abort it. Each raw refusal starts with a valid current successor rather
+    # than stopping at an unrelated stale-history guard.
     third = _propose_candidate(value, value.third, value.third_proposal)
     value.reproposal.commit(third)
-    retained = atomic_tests._call_sql(
-        value, "read_history_proposal", (replacement.locator.attempt, replacement.candidate_id)
-    )
     before = _read_all(value)
-    for field in (
-        "history_head_hex",
-        "history_signature_hex",
-        "expected_history_digest",
-        "history_record_hex",
+    captured = []
+
+    def retain_then_abort(name, connection):
+        if name == "before_proposal_commit":
+            row = connection.execute(
+                sql.SQL("SELECT {}.read_history_proposal(%s,NULL)").format(
+                    sql.Identifier(value.setup.schema)
+                ),
+                (replacement.locator.attempt,),
+            ).fetchone()
+            assert row is not None and type(row[0]) is dict
+            captured.append(row[0])
+            raise OSError("abort verified proposal admission before native commit")
+
+    with monkeypatch.context() as selected:
+        selected.setattr(_runtime_module(), "_persistence_cut", retain_then_abort)
+        with pytest.raises(atomic_runtime.AtomicRootProofCommitIndeterminate):
+            _repropose(value, predecessor=replacement)
+    assert len(captured) == 1
+    fresh = captured[0]
+    assert fresh["revision"] == 3
+    assert fresh["predecessor_candidate_id"] == replacement.candidate_id
+    assert fresh["candidate_id"] != replacement.candidate_id
+    assert _read_all(value) == before
+    assert value.reproposal.read_current_proposal(replacement.locator) == replacement
+    package = fresh["package"]
+    for field, changed_value, error in (
+        (
+            "history_head_hex",
+            "0" * len(package["history_head_hex"]),
+            psycopg.errors.CheckViolation,
+        ),
+        (
+            "history_signature_hex",
+            "00" * 63,
+            psycopg.errors.InvalidParameterValue,
+        ),
+        (
+            "expected_history_digest",
+            "0" * len(package["expected_history_digest"]),
+            psycopg.errors.SerializationFailure,
+        ),
+        (
+            "history_record_hex",
+            "0" * len(package["history_record_hex"]),
+            psycopg.errors.CheckViolation,
+        ),
     ):
-        changed = deepcopy(retained["package"])
-        changed[field] = "0" * len(changed[field])
-        with pytest.raises((psycopg.errors.CheckViolation, psycopg.errors.InvalidParameterValue)):
+        changed = deepcopy(package)
+        changed[field] = changed_value
+        with pytest.raises(error):
             atomic_tests._call_sql(
                 value,
                 "approve_history_proposal",
@@ -1051,7 +1093,7 @@ def test_protected_raw_admission_replay_and_changed_packages_are_fail_closed(rep
         atomic_tests._call_sql(
             value,
             "approve_history_proposal",
-            (Jsonb(retained["package"]), 3, value.first_proposal.candidate_id),
+            (Jsonb(package), 3, value.first_proposal.candidate_id),
             admin=True,
         )
     assert _read_all(value) == before
