@@ -85,7 +85,11 @@ def test_ubuntu_runs_external_postgresql_against_postgresql_16_service():
     assert 'case "${{ matrix.shard }}" in' in postgres_command
     assert "issuer-durability)" in postgres_command
     assert "remaining-security)" in postgres_command
-    terms = "root_proof_issuance_authority or root_proof_preparation_v2 or root_proof_retention or root_proof_signing_intent or root_proof_issuer_orchestration_integration"
+    terms = (
+        "root_proof_issuance_authority or root_proof_preparation_v2 or "
+        "root_proof_retention or root_proof_signing_intent or "
+        "root_proof_issuer_orchestration_integration"
+    )
     assert f"SHARD_KEYWORDS='{shardTerms}'" in postgres_command
     assert f"SHARD_KEYWORDS='not ({shardTerms})'" in postgres_command
     assert '-k "$SHARD_KEYWORDS"' in postgres_command
