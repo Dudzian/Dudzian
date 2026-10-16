@@ -113,13 +113,25 @@ const AsyncFunction = Object.getPrototypeOf(async function() {}).constructor;
 const script = __SCRIPT__;
 const scenario = process.argv[1];
 const calls = [];
-let deletes = 0;
+const deletedIds = [];
 const error = (code) => Object.assign(new Error('mock API unavailable'), {status:code});
+const timestamp = (ageDays) => new Date(Date.now() - ageDays * 86400000).toISOString();
+const young = Array.from({length:50}, (_,i) => ({
+  id:i+1, name:i<3 ? 'qualified-msi' : 'recent-'+i, updated_at:timestamp(2)
+}));
+const old = [
+  {id:999, name:'qualified-msi', updated_at:timestamp(10)},
+  {id:1000, name:'rare', updated_at:timestamp(10)},
+];
 const actions = {
-  listArtifactsForRepo: async () => {calls.push('repo'); throw error(scenario === '429' ? 429 : 500);},
+  listArtifactsForRepo: async () => {
+    calls.push('repo');
+    if (scenario === 'healthy') return {data:{artifacts:[...young,...old]}};
+    throw error(scenario === '429' ? 429 : scenario === '401' ? 401 : 500);
+  },
   listWorkflowRunsForRepo: async () => {calls.push('runs'); throw error(502);},
   listWorkflowRunArtifacts: async () => {calls.push('run-artifacts'); throw error(502);},
-  deleteArtifact: async () => {deletes++;},
+  deleteArtifact: async (args) => {deletedIds.push(args.artifact_id);},
 };
 const github = {rest:{actions}, paginate: async (fn, args, callback) => callback(await fn(args))};
 const log = [];
@@ -128,9 +140,9 @@ const context = {repo:{owner:'Dudzian',repo:'Dudzian'}};
 (async () => {
   try {
     await new AsyncFunction('github','core','context',script)(github, core, context);
-    process.stdout.write(JSON.stringify({ok:true, deletes, calls, log}));
+    process.stdout.write(JSON.stringify({ok:true, deletedIds, calls, log}));
   } catch(err) {
-    process.stdout.write(JSON.stringify({ok:false, deletes, calls, reason:String(err)}));
+    process.stdout.write(JSON.stringify({ok:false, deletedIds, calls, reason:String(err)}));
     process.exitCode = 1;
   }
 })();
@@ -149,7 +161,26 @@ const context = {repo:{owner:'Dudzian',repo:'Dudzian'}};
         assert result.returncode == 0, result.stderr + result.stdout
         data = json.loads(result.stdout)
         assert data["ok"] is True
-        assert data["deletes"] == 0
+        assert data["deletedIds"] == []
         assert data["calls"].count("repo") == expected_repo_calls
         assert data["calls"].count("runs") == expected_run_calls
         assert any("deferred" in message.lower() for message in data["log"])
+
+    good = subprocess.run(
+        [node, "-e", harness, "healthy"],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=15,
+    )
+    assert good.returncode == 0, good.stderr + good.stdout
+    assert json.loads(good.stdout)["deletedIds"] == [999]  # Old protected name survives.
+    denied = subprocess.run(
+        [node, "-e", harness, "401"],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=15,
+    )
+    assert denied.returncode != 0
+    assert json.loads(denied.stdout)["deletedIds"] == []
