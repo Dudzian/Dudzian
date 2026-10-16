@@ -47,10 +47,12 @@ jobs:
             let inventoryMode = 'complete';
             for (let attempt = 1; attempt <= 3; attempt++) {
               try {
+                // Octokit paginate already normalizes {total_count, artifacts}
+                // into an array of artifacts. Its map callback receives
+                // response.data as an array, NOT response.data.artifacts.
                 allArtifacts = await github.paginate(
                   github.rest.actions.listArtifactsForRepo,
-                  { owner, repo, per_page: 50 },
-                  (response) => response.data.artifacts || []
+                  { owner, repo, per_page: 50 }
                 );
                 break;
               } catch (error) {
@@ -66,10 +68,10 @@ jobs:
                   throw error;
                 }
                 if (attempt === 3) {
-                  core.warning('Repository artifact API repeatedly failed with 5xx; using safe run-level fallback');
+                  core.info('Repository artifact API repeatedly failed with 5xx; using safe run-level fallback');
                   break;
                 }
-                core.warning(`Artifact inventory HTTP ${status}; retrying full inventory (${attempt}/3)`);
+                core.info(`Artifact inventory HTTP ${status}; retrying full inventory (${attempt}/3)`);
                 await new Promise((resolve) => setTimeout(resolve, 1500 * attempt));
               }
             }
@@ -159,10 +161,11 @@ jobs:
                     try {
                       for (let attempt = 1; attempt <= 3; attempt++) {
                         try {
+                          // Let Octokit return its normalized, fully
+                          // paginated artifact array without a faulty mapper.
                           batches[position] = await github.paginate(
                             github.rest.actions.listWorkflowRunArtifacts,
-                            { owner, repo, run_id: runs[position].id, per_page: 100 },
-                            (response) => response.data.artifacts || []
+                            { owner, repo, run_id: runs[position].id, per_page: 100 }
                           );
                           break;
                         } catch (error) {
@@ -209,7 +212,12 @@ jobs:
                   }
                 }
                 allArtifacts = Array.from(uniqueArtifacts.values());
-                core.warning(
+                if (runs.length >= 50 && allArtifacts.length === 0) {
+                  throw new Error('Incomplete run artifact inventory: no artifacts found across large run subset');
+                }
+                // A successful fallback is informational; warn only when
+                // inventory or deletion is genuinely deferred or fails.
+                core.info(
                   'Safe fallback scanned ' + runs.length + ' runs and ' +
                   allArtifacts.length + ' distinct artifacts; all deletions ' +
                   'require independently observed newer-ID keeper proof'
