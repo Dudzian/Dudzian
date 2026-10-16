@@ -35,6 +35,32 @@ CryptoHunter v1 is complete when it is a stable installable Windows desktop prod
 
 [S9-S10-PRE-01A read-only preflight and PRE-01B handoff runbook](../../windows_stage10_readonly_preflight.md) defines the preparation reports, remaining target-installation gap and separately approved next task. It does not close Stage 9 or authorize Stage 10.
 
+### S9-S10-PRE-01B.1 preparation and PRE-01B.2 boundary
+
+[The operator handoff contract](../../windows_stage9_operator_handoff.md) defines
+qualified-artifact custody, completed-run versus active-run producer-job proof,
+strict host/run/artifact-bound approval data, independent native operator
+authentication, read-only host/runner-tree inspection and hermetic
+installation/post-install verification preparation. Preparation plans do not
+execute MSI and keep `installation_execution_authorized=false`. Fixtures do not
+establish a live target, authenticated GitHub metadata or operator approval.
+
+The current User-owned repository cannot satisfy the organization runner-group
+model. The immediate recommended design is a dedicated manual host with no
+Actions runner or CI execution credentials; an Organization-controlled,
+manual-only workflow and restricted runner group is the eventual Actions
+lifecycle design. Both require separate operator decisions and verified
+enforcement; this preparation changes no ownership, settings or registration.
+
+**PRE-01B.2:** select/implement the approved isolation design, complete protected
+artifact materialization and the separately invoked elevated executor, observe
+and approve the actual clean target, then install and verify only the exact
+qualified MSI if independently authorized. Preserve a demand-start/stopped
+backend/verifier base and independently gate legal enrollment/readiness. Exact
+scope and live evidence gaps are in the handoff contract. Stage 9 remains
+`IN_PROGRESS`, legal enrollment `NOT_PERFORMED`, `run_stage10=false`, and Stage
+10 `BLOCKED` / `NOT_RUN`; reboot and 24-hour lifecycle stay outside this work.
+
 ## Numbered capabilities after Stage 10 — Stage 11 and Stage 12
 
 **Status: PLANNED; numbering formalized, implementation not started.** These are product capability stages ordered after the Windows Stage 10 live lifecycle qualification. They do **not** renumber or extend frozen Windows Stage 0–14 acceptance items, or replace the canonical M0–M6 product milestone taxonomy. Neither stage may claim readiness solely from design documents, existing preview code or the presence of a workflow.

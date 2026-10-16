@@ -419,3 +419,38 @@ The PRE-01B implementation must:
 PRE-01B installation completion still does not constitute Stage 10 `PASS`.
 Actual same-host reboot, continuity and bounded 24-hour evidence remain a later,
 separately approved lifecycle operation after the production gates are closed.
+
+## PRE-01B.1 implementation boundary and current follow-up
+
+The PRE-01A limitations and PRE-01B requirements above describe the original
+read-only rehearsal. [S9-S10-PRE-01B.1's operator handoff contract](windows_stage9_operator_handoff.md)
+now defines the preparation implementation, the User-owned repository
+infrastructure alternatives and exact PRE-01B.2 follow-up. Its active-run
+protocol retains exact artifact/run/attempt/revision binding and requires
+completed successful producer-job evidence; it does not equate artifact
+existence with workflow success. The completed-run protocol remains strict.
+
+The full runner-tree ACL and target-host verification boundaries are covered
+by the PRE-01B.1 implementation and hermetic tests. Supplied observations stay
+rehearsal data. Native access errors, incomplete inspection, unknown/existing
+installation or enrollment, missing authenticated GitHub evidence and missing
+operator authentication block the dependent operation; earlier root-only ACL
+results cannot substitute for complete current observations.
+
+Strict approval data binds the host, operator, scope, expiry and exact
+qualified artifact. Native authentication is separate from schema validation;
+neither `approved=true` nor a fixture establishes authorization. The new plan
+preparation path cannot invoke MSI, has no installation execution switch and
+keeps `installation_execution_authorized=false`. The actual target installation
+gap therefore remains `BLOCKED` until PRE-01B.2's separately reviewed and
+authorized live controls are complete.
+
+Do not register an Actions runner on the persistent personal-repository target
+as a shortcut: the recommended immediate design uses a dedicated manual host
+with no CI execution channel. Organization ownership/group enforcement and a
+trusted manual-only workflow remain a separate eventual lifecycle design.
+No infrastructure decision, real MSI installation, enrollment, backend start,
+Automatic transition, reboot, TPM/NV/key operation or Stage 10 execution is
+performed by PRE-01B.1. `stage_9=IN_PROGRESS`, legal enrollment
+`NOT_PERFORMED`, `run_stage10=false`, and Stage 10 `BLOCKED` / `NOT_RUN` remain
+unchanged.
