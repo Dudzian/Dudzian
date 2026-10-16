@@ -613,6 +613,7 @@ def build_rows(
     signal_quality_ttl_hours: float | None = None,
     hypercare_assets: Mapping[str, tuple[str, str | None]] | None = None,
     allow_stale_long_poll: bool = False,
+    active_only: bool = False,
 ) -> list[dict[str, Any]]:  # type: ignore[no-untyped-def]
     rows: list[dict[str, Any]] = []
     metrics = dict(long_poll_metrics or {})
@@ -695,6 +696,17 @@ def build_rows(
                 directory=signal_quality_dir,
                 ttl_hours=ttl_hours,
             )
+            # Keep historical BitMEX entries without inventing active telemetry.
+            # Apply retirement before the live-data fail-closed guards below.
+            if active_only and exchange == "bitmex":
+                long_poll_summary = _empty_long_poll_summary(status="retired")
+                signal_quality_summary = {
+                    **signal_quality_summary,
+                    "signal_quality_snapshot_status": "retired",
+                    "signal_quality_snapshot_age_minutes": None,
+                    "signal_quality_snapshot_path": None,
+                    "signal_quality_records": None,
+                }
 
             simulator_fee_rate = None
             simulator_slippage_bps = None
@@ -722,7 +734,11 @@ def build_rows(
                 if asset_entry:
                     checklist_json, checklist_csv = asset_entry
 
-            if exchange in {"deribit", "bitmex"} and env_cfg.environment.value in {"live", "paper"}:
+            if (
+                exchange in {"deribit", "bitmex"}
+                and env_cfg.environment.value in {"live", "paper"}
+                and not (active_only and exchange == "bitmex")
+            ):
                 status = long_poll_summary.get("long_poll_metrics_status")
                 invalid_statuses = {"missing", "unknown"}
                 if not allow_stale_long_poll:
@@ -902,26 +918,8 @@ def main(argv: list[str] | None = None) -> int:
         signal_quality_ttl_hours=args.signal_quality_ttl_hours,
         hypercare_assets=hypercare_assets,
         allow_stale_long_poll=bool(args.allow_stale_long_poll),
+        active_only=bool(args.active_only),
     )
-    if args.active_only:
-        # Preserve historical rows, but never advertise a retired venue as
-        # currently monitored or emit fresh-looking signal-quality evidence.
-        for row in rows:
-            if row.get("exchange") == "bitmex":
-                row.update(
-                    long_poll_scope=None,
-                    long_poll_latency_p95=None,
-                    long_poll_delivery_lag_p95=None,
-                    long_poll_http_errors=None,
-                    long_poll_reconnect_success=None,
-                    long_poll_reconnect_failure=None,
-                    long_poll_snapshot_age_minutes=None,
-                    long_poll_metrics_status="retired",
-                    signal_quality_snapshot_status="retired",
-                    signal_quality_snapshot_age_minutes=None,
-                    signal_quality_snapshot_path=None,
-                    signal_quality_records=None,
-                )
     _validate_monitored_rows(
         rows,
         allow_stale_long_poll=bool(args.allow_stale_long_poll),
