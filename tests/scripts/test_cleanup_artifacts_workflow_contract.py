@@ -268,11 +268,10 @@ const testModes = [
         if(scenario==='fewer-global' && p.run_id>109 && p.run_id<206) {
           return {data:{artifacts:[]}};
         }
-        if(scenario==='fewer-same-name' && p.run_id===102) {
-          return {data:{artifacts:[artifact(1002,'not-qualified',1)]}};
-        }
-        if(scenario==='fewer-same-name' && p.run_id===103) {
-          return {data:{artifacts:[artifact(1003,'also-not-qualified',1)]}};
+        if(scenario==='fewer-same-name' && p.run_id>=101 && p.run_id<=103) {
+          return {data:{artifacts:[
+            artifact(1000+p.run_id-100,'not-qualified-'+p.run_id,1)
+          ]}};
         }
         return {data:{artifacts:artifacts.get(p.run_id)||[]}};
       },
