@@ -420,12 +420,12 @@ PRE-01B installation completion still does not constitute Stage 10 `PASS`.
 Actual same-host reboot, continuity and bounded 24-hour evidence remain a later,
 separately approved lifecycle operation after the production gates are closed.
 
-## PRE-01B.1 implementation boundary and current follow-up
+## PRE-01B.2A implementation boundary and remaining live qualification
 
 The PRE-01A limitations and PRE-01B requirements above describe the original
-read-only rehearsal. [S9-S10-PRE-01B.1's operator handoff contract](windows_stage9_operator_handoff.md)
-now defines the preparation implementation, the User-owned repository
-infrastructure alternatives and exact PRE-01B.2 follow-up. Its active-run
+read-only rehearsal. [The PRE-01B.2A operator handoff contract](windows_stage9_operator_handoff.md)
+now defines preparation, the separate secure manual executor and passive
+clean-base/enrolled-runtime phases. Its active-run
 protocol retains exact artifact/run/attempt/revision binding and requires
 completed successful producer-job evidence; it does not equate artifact
 existence with workflow success. The completed-run protocol remains strict.
@@ -441,16 +441,35 @@ Strict approval data binds the host, operator, scope, expiry and exact
 qualified artifact. Native authentication is separate from schema validation;
 neither `approved=true` nor a fixture establishes authorization. The new plan
 preparation path cannot invoke MSI, has no installation execution switch and
-keeps `installation_execution_authorized=false`. The actual target installation
-gap therefore remains `BLOCKED` until PRE-01B.2's separately reviewed and
-authorized live controls are complete.
+keeps `installation_execution_authorized=false`. The separate executor requires
+an independent protected host policy, a distinct execution authorization valid
+at most ten minutes and native-console confirmation of the exact plan digest.
+Fresh native host/token and authenticated artifact/run/attempt validation are
+repeated at execution, with protected input/MSI handles held through completion.
+Ctrl-C records interruption while retaining handles until the single existing
+installer finishes; it never kills, retries or reboots. The actual exit code,
+pin verification and immutable journal support diagnosis even when a final
+report write fails. CI adds hermetic tests and quality scope only, with no
+native executor route. Native Windows qualification, physical host/operator
+approval and actual MSI installation are not performed here. The actual target
+gap remains `BLOCKED` pending those separate controls and decisions.
+
+Clean-base qualification requires the complete installed payload/MSI identity,
+SCM, static PostgreSQL/ACL boundaries and demand-start/stopped backend/verifier;
+it does not start an unenrolled backend for readiness. Both phases additionally
+require `postgresql_effective_sql`; its approved passive service-token SQL
+authority remains unavailable, so both overall qualifications remain `BLOCKED`
+despite independently successful static base checks. Enrolled runtime first
+requires the existing legal authority, which also remains unavailable. Base
+qualification has no legal-enrollment/readiness requirement. Snapshots cannot
+establish live PASS.
 
 Do not register an Actions runner on the persistent personal-repository target
-as a shortcut: the recommended immediate design uses a dedicated manual host
+as a shortcut: this implementation uses a dedicated manual host
 with no CI execution channel. Organization ownership/group enforcement and a
 trusted manual-only workflow remain a separate eventual lifecycle design.
-No infrastructure decision, real MSI installation, enrollment, backend start,
-Automatic transition, reboot, TPM/NV/key operation or Stage 10 execution is
-performed by PRE-01B.1. `stage_9=IN_PROGRESS`, legal enrollment
+No physical host/operator approval, real MSI installation, enrollment, backend
+start, Automatic transition, reboot, TPM/NV/key operation or Stage 10 execution
+is performed by PRE-01B.2A. `stage_9=IN_PROGRESS`, legal enrollment
 `NOT_PERFORMED`, `run_stage10=false`, and Stage 10 `BLOCKED` / `NOT_RUN` remain
 unchanged.

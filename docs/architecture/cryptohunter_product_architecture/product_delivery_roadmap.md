@@ -25,17 +25,17 @@ CryptoHunter v1 is complete when it is a stable installable Windows desktop prod
 
 **Status: PLANNED.** This is a mandatory operational handoff **after Stage 9 closure and before Stage 10 live reboot / 24-hour qualification**. Preparing the infrastructure may begin earlier, but preparation must not activate Stage 10 or bypass legal production enrollment. This prerequisite does not add or close a numbered Windows Stage 0–14 acceptance item and does not change the M0–M6 product milestone taxonomy.
 
-- **Dedicated physical Windows runner:** provision and harden a persistent Windows x64 GitHub Actions self-hosted runner with exact labels `self-hosted`, `Windows`, `X64`, `cryptohunter-stage10`. Establish dedicated host ownership, minimal GitHub/OS permissions, runner startup after reboot, host continuity and isolation from general PR/untrusted workloads.
+- **Dedicated physical Windows host:** PRE-01B.2A implements the manual installation design with no Actions runner or CI execution channel, separate transfer/elevated operator identities and independently protected staging, policy, host inventory and executor checkout. Physical provisioning and approval are pending. A future Stage 10 runner/lifecycle route remains a separate design and authorization decision; labels alone do not provide isolation.
 - **Qualified MSI transfer:** define a reproducible, operator-approved procedure that retrieves `windows-stage9-qualified-msi` from the **same canonical workflow run** as the Stage 10 qualification, together with `installer-manifest.json`, `windows-clean-install-receipt.json` and `windows-clean-install-evidence.json`. Check the artifact digest, exact MSI/payload hashes, source revision, CI run ID, Production Trust identity and revision-bound evidence; reject stale, mixed-run, substituted or locally rebuilt installers.
-- **Target-host deployment:** document and implement a reviewed, explicitly authorized elevated installation/handoff on that runner. Verify that the installed `CryptoHunterBackend.exe`, installed product version, Windows SCM service, runtime readiness and PostgreSQL/ACL boundaries match the qualified manifest and current-run provenance. Never silently replace an enrolled installation or treat a GitHub-hosted clean-install as proof that the self-hosted target has the same installed MSI.
-- **Non-destructive rehearsal:** before enabling the destructive workflow, verify runner registration/labels and post-reboot startup configuration, artifact availability and hash lineage, administrative approval path, logging/evidence collection and read-only host preflight. Do not perform installation, reboot, TPM/NV mutations, enrollment or 24-hour soak as part of roadmap preparation alone.
+- **Target-host deployment:** implement a reviewed, separately authorized elevated handoff of the exact qualified MSI. Qualify the clean base payload, MSI identity/version, SCM and PostgreSQL/ACL boundaries independently of enrolled runtime provenance/readiness. Never silently replace an enrolled installation or treat a GitHub-hosted clean-install as proof that the physical target has the same installed MSI.
+- **Non-destructive rehearsal:** qualify the native host/operator, protected code/policy/staging, artifact hash lineage, approval/consent and logging boundaries before a separate installation decision. Hermetic tests cannot approve those physical controls. Do not perform installation, reboot, TPM/NV mutations, enrollment or 24-hour soak as part of roadmap preparation alone.
 - **Explicit Stage 10 gate:** actual lifecycle execution still requires completed legal production enrollment, satisfied readiness prerequisites and a separate operator-approved `workflow_dispatch` with `run_stage10=true`. The existing Stage 10 prepare job downloads clean-install evidence but does **not** install the MSI onto the self-hosted runner; that delivery gap must be resolved and reviewed before any reboot qualification.
 
-**Exit criteria:** approved runner and MSI handoff runbook; dedicated runner identity and persistence setup verified without reboot; repeatable hash/provenance verification and fail-closed mismatches demonstrated; a reviewed plan for installing the exact current-run qualified MSI on the self-hosted machine; and independent sign-off that the live restart and 24-hour soak remain disabled until their separate authorization. This gate is **PREPARED**, not Stage 10 `PASS`.
+**Exit criteria:** approved manual-host MSI handoff runbook and independently verified host/operator protection; repeatable hash/provenance verification and fail-closed mismatches demonstrated on native Windows; a separately authorized installation and passive qualification of the exact qualified MSI; and independent sign-off that live restart and 24-hour soak remain disabled until their separate authorization. Stage 10 additionally requires an approved lifecycle execution route preserving its same-run provenance. Code/test preparation alone does not close this gate or establish Stage 10 `PASS`.
 
 [S9-S10-PRE-01A read-only preflight and PRE-01B handoff runbook](../../windows_stage10_readonly_preflight.md) defines the preparation reports, remaining target-installation gap and separately approved next task. It does not close Stage 9 or authorize Stage 10.
 
-### S9-S10-PRE-01B.1 preparation and PRE-01B.2 boundary
+### S9-S10-PRE-01B.2A secure manual executor and passive qualification
 
 [The operator handoff contract](../../windows_stage9_operator_handoff.md) defines
 qualified-artifact custody, completed-run versus active-run producer-job proof,
@@ -46,18 +46,48 @@ execute MSI and keep `installation_execution_authorized=false`. Fixtures do not
 establish a live target, authenticated GitHub metadata or operator approval.
 
 The current User-owned repository cannot satisfy the organization runner-group
-model. The immediate recommended design is a dedicated manual host with no
+model. The implemented design requires a dedicated manual host with no
 Actions runner or CI execution credentials; an Organization-controlled,
 manual-only workflow and restricted runner group is the eventual Actions
-lifecycle design. Both require separate operator decisions and verified
-enforcement; this preparation changes no ownership, settings or registration.
+lifecycle design. Physical host/operator approval and verified enforcement
+remain pending; this change modifies no ownership, settings or registration.
 
-**PRE-01B.2:** select/implement the approved isolation design, complete protected
-artifact materialization and the separately invoked elevated executor, observe
-and approve the actual clean target, then install and verify only the exact
-qualified MSI if independently authorized. Preserve a demand-start/stopped
-backend/verifier base and independently gate legal enrollment/readiness. Exact
-scope and live evidence gaps are in the handoff contract. Stage 9 remains
+**Code implementation:** the separate executor reuses PRE-01A/PRE-01B.1
+handoff, native token, host-inspection and ACL authorities. It requires an
+independent protected host policy, a distinct execution authorization valid at
+most ten minutes, explicit native-console confirmation of the exact plan digest
+and fresh host/operator/artifact/run/attempt checks. Native file handles pin the
+protected inputs/materialized MSI through the direct system `msiexec.exe`
+boundary. Ctrl-C records interruption and retains handles while waiting for
+the single existing installer to finish; it never kills or retries it.
+Installer outcomes, protected full logs and immutable journal entries survive
+for diagnosis without automatic repair, uninstall or reboot. Preparation scope
+never grants execution rights. CI adds hermetic tests and quality scope only,
+with no native executor invocation or route to an installation target.
+
+**Hermetic tests:** substituted native/process boundaries establish refusals
+and outcome classification only; their exact validation results belong in the
+PR. They do not qualify Windows tokens/ACLs/handle-sharing or approve an actual
+target. No MSI is executed by this task and native Windows qualification has
+not been performed.
+
+**Separate passive phases:** clean-base qualification checks the full installed
+payload, MSI identity/version, SCM, PostgreSQL static configuration and ACLs,
+with backend/verifier demand-start/stopped. Both phases require the separate
+`postgresql_effective_sql` gate; its approved passive native service-token SQL
+adapter remains unavailable, so overall base and runtime qualification stay
+`BLOCKED` despite independently successful static base checks. Base qualification
+requires no legal enrollment or backend readiness. Enrolled-runtime qualification
+first requires accepted legal enrollment, then native runtime provenance/SCM/PID,
+SQL separation, mTLS and readiness authorities. Legal enrollment also remains
+unavailable. Neither phase starts services or changes configuration/roles/ACLs.
+
+**Future decisions:** independently approve and qualify the physical host,
+operator, protected checkout/policy/staging and native race protections; then
+make a separate decision about actual installation with fresh exact-plan
+authorization. Actual installation, legal enrollment, any future runner route,
+reboot and 24-hour lifecycle are outside this implementation. The handoff
+contract records remaining live evidence gaps. Stage 9 remains
 `IN_PROGRESS`, legal enrollment `NOT_PERFORMED`, `run_stage10=false`, and Stage
 10 `BLOCKED` / `NOT_RUN`; reboot and 24-hour lifecycle stay outside this work.
 
