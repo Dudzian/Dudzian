@@ -14,6 +14,8 @@ from coverage import CoverageData
 import pytest
 import yaml
 
+from tests.scripts.test_general_ci_platform_contract import _contract_bash
+
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / ".github/workflows/quality-security.yml"
@@ -199,7 +201,7 @@ def _run_step(command: str, tmp_path: Path) -> subprocess.CompletedProcess:
     env["PATH"] = os.pathsep.join((str(Path(sys.executable).parent), env["PATH"]))
     env["COVERAGE_FILE"] = str(tmp_path / ".coverage")
     return subprocess.run(
-        ["bash", "-c", command], cwd=tmp_path, env=env, capture_output=True, text=True
+        [_contract_bash(), "-c", command], cwd=tmp_path, env=env, capture_output=True, text=True
     )
 
 

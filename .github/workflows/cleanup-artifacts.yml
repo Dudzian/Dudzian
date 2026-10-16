@@ -21,9 +21,8 @@ jobs:
       - name: Enforce artifact retention policy
         uses: actions/github-script@v9
         with:
-          # Retry only temporary GitHub API failures; never classify a failed
-          # artifact inventory as an empty list and never delete partial data.
-          retries: 3
+          # Retry inventory atomically below. A failed/partial inventory is
+          # never treated as empty; deletion starts only after full pagination.
           script: |
             const config = {
               retentionDays: 7,
@@ -42,11 +41,31 @@ jobs:
             const retentionCutoffMs = nowMs - config.retentionDays * msInDay;
             const freshCutoffMs = nowMs - config.minAgeHoursToDelete * msInHour;
 
-            const allArtifacts = await github.paginate(
-              github.rest.actions.listArtifactsForRepo,
-              { owner, repo, per_page: 100 },
-              (response) => response.data.artifacts || []
-            );
+            // GitHub can return transient HTTP 500 on artifact inventory.
+            // Retry the *entire* paginated inventory; never delete anything
+            // based on a partial response or a failed listing.
+            let allArtifacts;
+            for (let attempt = 1; attempt <= 3; attempt++) {
+              try {
+                allArtifacts = await github.paginate(
+                  github.rest.actions.listArtifactsForRepo,
+                  { owner, repo, per_page: 50 },
+                  (response) => response.data.artifacts || []
+                );
+                break;
+              } catch (error) {
+                const status = error.status;
+                const retryable = status === 429 || (status >= 500 && status <= 599);
+                if (!retryable || attempt === 3) {
+                  throw error;
+                }
+                core.warning(`Artifact inventory HTTP ${status}; retrying full inventory (${attempt}/3)`);
+                await new Promise((resolve) => setTimeout(resolve, 1500 * attempt));
+              }
+            }
+            if (!Array.isArray(allArtifacts)) {
+              throw new Error('Artifact inventory never completed');
+            }
 
             if (allArtifacts.length === 0) {
               core.info('No artifacts found. Nothing to clean.');
