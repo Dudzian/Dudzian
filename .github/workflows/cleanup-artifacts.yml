@@ -68,10 +68,10 @@ jobs:
                   throw error;
                 }
                 if (attempt === 3) {
-                  core.warning('Repository artifact API repeatedly failed with 5xx; using safe run-level fallback');
+                  core.info('Repository artifact API repeatedly failed with 5xx; using safe run-level fallback');
                   break;
                 }
-                core.warning(`Artifact inventory HTTP ${status}; retrying full inventory (${attempt}/3)`);
+                core.info(`Artifact inventory HTTP ${status}; retrying full inventory (${attempt}/3)`);
                 await new Promise((resolve) => setTimeout(resolve, 1500 * attempt));
               }
             }
@@ -212,7 +212,12 @@ jobs:
                   }
                 }
                 allArtifacts = Array.from(uniqueArtifacts.values());
-                core.warning(
+                if (runs.length >= 50 && allArtifacts.length === 0) {
+                  throw new Error('Incomplete run artifact inventory: no artifacts found across large run subset');
+                }
+                // A successful fallback is informational; warn only when
+                // inventory or deletion is genuinely deferred or fails.
+                core.info(
                   'Safe fallback scanned ' + runs.length + ' runs and ' +
                   allArtifacts.length + ' distinct artifacts; all deletions ' +
                   'require independently observed newer-ID keeper proof'
