@@ -17,7 +17,8 @@ def test_inventory_retries_transient_server_errors_without_partial_deletes():
     assert "for (let attempt = 1; attempt <= 3; attempt++)" in script
     assert "await github.paginate(" in script
     assert "status === 429 || (status >= 500 && status <= 599)" in script
-    assert "if (!retryable || status === 429)" in script
+    assert "if (status === 429)" in script
+    assert "if (!retryable)" in script
     assert "if (attempt === 3)" in script
     assert "throw error;" in script
     assert "if (!Array.isArray(allArtifacts))" in script
@@ -73,7 +74,113 @@ def test_rate_limit_and_incomplete_run_inventory_are_not_accepted_as_success():
     document = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
     script = document["jobs"]["delete-old-artifacts"]["steps"][0]["with"]["script"]
 
-    assert "if (!retryable || status === 429)" in script
+    assert "if (status === 429)" in script
+    assert "DEFERRED_NO_DELETION" in script
     assert "throw new Error(`Incomplete workflow-run inventory for" in script
     assert "throw new Error('Run-level artifact scan exceeds safe API budget')" in script
     assert "throw new Error('Artifact inventory never completed')" in script
+
+
+def test_unavailable_fallback_defers_with_no_delete_and_keeps_hard_failures_visible():
+    document = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    script = document["jobs"]["delete-old-artifacts"]["steps"][0]["with"]["script"]
+    assert "if (status === 429)" in script
+    assert "core.warning('Artifact cleanup deferred: repository inventory rate-limited" in script
+    assert "const unavailable = status === 429 ||" in script
+    assert "const safetyBoundary = " in script
+    assert "if (!unavailable && !safetyBoundary)" in script
+    assert "throw error;" in script  # Auth/authorization/programming failures stay fatal.
+    assert "DEFERRED_NO_DELETION" in script
+    assert script.index("DEFERRED_NO_DELETION") < script.index("const deleteCandidates = []")
+
+
+def test_real_embedded_javascript_defers_before_any_deletion_on_api_outage():
+    # Execute the exact github-script JS body with a mocked transport (no network
+    # or GitHub mutation), not just a duplicated implementation of the policy.
+    import json
+    import shutil
+    import subprocess
+
+    import pytest
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js is required to execute github-script contract fixtures")
+    document = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    script = document["jobs"]["delete-old-artifacts"]["steps"][0]["with"]["script"]
+    harness = """
+const AsyncFunction = Object.getPrototypeOf(async function() {}).constructor;
+const script = __SCRIPT__;
+const scenario = process.argv[1];
+const calls = [];
+const deletedIds = [];
+const error = (code) => Object.assign(new Error('mock API unavailable'), {status:code});
+const timestamp = (ageDays) => new Date(Date.now() - ageDays * 86400000).toISOString();
+const young = Array.from({length:50}, (_,i) => ({
+  id:i+1, name:i<3 ? 'qualified-msi' : 'recent-'+i, updated_at:timestamp(2)
+}));
+const old = [
+  {id:999, name:'qualified-msi', updated_at:timestamp(10)},
+  {id:1000, name:'rare', updated_at:timestamp(10)},
+];
+const actions = {
+  listArtifactsForRepo: async () => {
+    calls.push('repo');
+    if (scenario === 'healthy') return {data:{artifacts:[...young,...old]}};
+    throw error(scenario === '429' ? 429 : scenario === '401' ? 401 : 500);
+  },
+  listWorkflowRunsForRepo: async () => {calls.push('runs'); throw error(502);},
+  listWorkflowRunArtifacts: async () => {calls.push('run-artifacts'); throw error(502);},
+  deleteArtifact: async (args) => {deletedIds.push(args.artifact_id);},
+};
+const github = {rest:{actions}, paginate: async (fn, args, callback) => callback(await fn(args))};
+const log = [];
+const core = {warning:(m) => log.push('WARNING: '+m), info:(m) => log.push('INFO: '+m)};
+const context = {repo:{owner:'Dudzian',repo:'Dudzian'}};
+(async () => {
+  try {
+    await new AsyncFunction('github','core','context',script)(github, core, context);
+    process.stdout.write(JSON.stringify({ok:true, deletedIds, calls, log}));
+  } catch(err) {
+    process.stdout.write(JSON.stringify({ok:false, deletedIds, calls, reason:String(err)}));
+    process.exitCode = 1;
+  }
+})();
+""".replace("__SCRIPT__", json.dumps(script))
+    for scenario, expected_repo_calls, expected_run_calls in [
+        ("429", 1, 0),
+        ("repo500-run502", 3, 1),
+    ]:
+        result = subprocess.run(
+            [node, "-e", harness, scenario],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=15,
+        )
+        assert result.returncode == 0, result.stderr + result.stdout
+        data = json.loads(result.stdout)
+        assert data["ok"] is True
+        assert data["deletedIds"] == []
+        assert data["calls"].count("repo") == expected_repo_calls
+        assert data["calls"].count("runs") == expected_run_calls
+        assert any("deferred" in message.lower() for message in data["log"])
+
+    good = subprocess.run(
+        [node, "-e", harness, "healthy"],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=15,
+    )
+    assert good.returncode == 0, good.stderr + good.stdout
+    assert json.loads(good.stdout)["deletedIds"] == [999]  # Old protected name survives.
+    denied = subprocess.run(
+        [node, "-e", harness, "401"],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=15,
+    )
+    assert denied.returncode != 0
+    assert json.loads(denied.stdout)["deletedIds"] == []
