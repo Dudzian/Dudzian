@@ -46,6 +46,7 @@ def test_retention_guards_remain_intact():
     ):
         assert guard in script
 
+
 def test_fallback_only_deletes_with_positive_proof_of_both_keeper_sets():
     document = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
     script = document["jobs"]["delete-old-artifacts"]["steps"][0]["with"]["script"]
