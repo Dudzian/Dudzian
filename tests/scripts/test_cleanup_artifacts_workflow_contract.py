@@ -269,10 +269,10 @@ const testModes = [
           return {data:{artifacts:[]}};
         }
         if(scenario==='fewer-same-name' && p.run_id===102) {
-          return {data:{artifacts:[artifact(1102,'not-qualified',1)]}};
+          return {data:{artifacts:[artifact(1002,'not-qualified',1)]}};
         }
         if(scenario==='fewer-same-name' && p.run_id===103) {
-          return {data:{artifacts:[artifact(1103,'also-not-qualified',1)]}};
+          return {data:{artifacts:[artifact(1003,'also-not-qualified',1)]}};
         }
         return {data:{artifacts:artifacts.get(p.run_id)||[]}};
       },
@@ -327,6 +327,7 @@ const testModes = [
         case = cases[mode]
         assert case["status"] == "PASS"
         assert case["deletedIds"] == []
+        assert not any("DEFERRED_NO_DELETION" in msg for msg in case["logs"])
 
     retried = cases["run-artifact-retry"]
     assert retried["status"] == "PASS"
