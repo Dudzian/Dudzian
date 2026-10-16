@@ -77,4 +77,3 @@ def test_rate_limit_and_incomplete_run_inventory_are_not_accepted_as_success():
     assert "throw new Error(`Incomplete workflow-run inventory for" in script
     assert "throw new Error('Run-level artifact scan exceeds safe API budget')" in script
     assert "throw new Error('Artifact inventory never completed')" in script
-
