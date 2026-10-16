@@ -47,10 +47,12 @@ jobs:
             let inventoryMode = 'complete';
             for (let attempt = 1; attempt <= 3; attempt++) {
               try {
+                // Octokit paginate already normalizes {total_count, artifacts}
+                // into an array of artifacts. Its map callback receives
+                // response.data as an array, NOT response.data.artifacts.
                 allArtifacts = await github.paginate(
                   github.rest.actions.listArtifactsForRepo,
-                  { owner, repo, per_page: 50 },
-                  (response) => response.data.artifacts || []
+                  { owner, repo, per_page: 50 }
                 );
                 break;
               } catch (error) {
@@ -159,10 +161,11 @@ jobs:
                     try {
                       for (let attempt = 1; attempt <= 3; attempt++) {
                         try {
+                          // Let Octokit return its normalized, fully
+                          // paginated artifact array without a faulty mapper.
                           batches[position] = await github.paginate(
                             github.rest.actions.listWorkflowRunArtifacts,
-                            { owner, repo, run_id: runs[position].id, per_page: 100 },
-                            (response) => response.data.artifacts || []
+                            { owner, repo, run_id: runs[position].id, per_page: 100 }
                           );
                           break;
                         } catch (error) {
