@@ -53,10 +53,17 @@ def test_fallback_only_deletes_with_positive_proof_of_both_keeper_sets():
     script = document["jobs"]["delete-old-artifacts"]["steps"][0]["with"]["script"]
 
     assert "inventoryMode = 'verified-run-subset'" in script
-    assert "const dayOffsets = [0, 1, 2, 7, 8]" in script
+    assert "const dayOffsets = [0, 1, 2, 7, 8, backlogOffset]" in script
+    assert "const backlogOffset = 9 + ((utcDay * 2) % 82)" in script
+    assert "const created = new Date(startMs).toISOString()" in script
+    assert "github.rest.actions.listWorkflowRunsForRepo" in script
+    assert "created, per_page: 100, page" in script
+    assert "expectedTotal !== null && total !== expectedTotal" in script
+    assert "createdMs < startMs || createdMs > endMs" in script
+    assert "const uniqueArtifacts = new Map()" in script
     assert "github.rest.actions.listWorkflowRunsForRepo" in script
     assert "github.rest.actions.listWorkflowRunArtifacts" in script
-    assert "dayRuns.length !== first.data.total_count" in script
+    assert "if (count === total) break;" in script
     assert "runs.length > 1200" in script
     assert "await Promise.all(Array.from({ length: 8 }, () => readRun()))" in script
     assert "if (inventoryMode === 'verified-run-subset')" in script
@@ -76,7 +83,7 @@ def test_rate_limit_and_incomplete_run_inventory_are_not_accepted_as_success():
 
     assert "if (status === 429)" in script
     assert "DEFERRED_NO_DELETION" in script
-    assert "throw new Error(`Incomplete workflow-run inventory for" in script
+    assert "throw new Error('Incomplete workflow-run inventory for '" in script
     assert "throw new Error('Run-level artifact scan exceeds safe API budget')" in script
     assert "throw new Error('Artifact inventory never completed')" in script
 
@@ -184,3 +191,144 @@ const context = {repo:{owner:'Dudzian',repo:'Dudzian'}};
     )
     assert denied.returncode != 0
     assert json.loads(denied.stdout)["deletedIds"] == []
+
+
+def test_real_embedded_fallback_paginates_frozen_days_and_deletes_proven_old_artifacts():
+    """Exercise YAML JavaScript with mocked REST, including >100 runs/day."""
+
+    import json
+    import shutil
+    import subprocess
+
+    import pytest
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js is required to execute the embedded cleanup script")
+    doc = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    script = doc["jobs"]["delete-old-artifacts"]["steps"][0]["with"]["script"]
+    harness = r"""
+const AsyncFunction = Object.getPrototypeOf(async function() {}).constructor;
+const source = __SCRIPT__;
+const execute = new AsyncFunction('github','core','context','setTimeout',source);
+const instantWait = (callback) => { callback(); return 0; };
+const dayLength = 86400000;
+const day = Math.floor(Date.now() / dayLength);
+const backOffset = 9 + ((day * 2) % 82);
+const atDay = (offset) => new Date((day-offset)*dayLength+3600000).toISOString();
+const stamp = (age) => new Date(Date.now()-age*dayLength).toISOString();
+const run = (id, offset) => ({id, created_at:atDay(offset)});
+const artifact = (id,name,age) => ({id,name,updated_at:stamp(age)});
+const recent = Array.from({length:106},(_,i)=>run(100+i,1));
+const older = [run(777,8), run(778,backOffset)];
+const runs = [...recent,...older];
+const artifacts = new Map(recent.map((r,i)=>[
+  r.id,[artifact(1000+i,i<4?'qualified':'recent-'+i,1)]
+]));
+artifacts.set(777,[artifact(999,'qualified',8),artifact(998,'rare',8)]);
+artifacts.set(778,[artifact(997,'qualified',backOffset)]);
+const testModes = [
+  'healthy-fallback','unstable-pages','duplicate-id',
+  'fewer-global','fewer-same-name','run-artifact-retry'
+];
+(async () => {
+  const results = {};
+  for (const scenario of testModes) {
+    const calls = [];
+    const deletedIds = [];
+    const logs = [];
+    let transient = 0;
+    const failed = (status) => Object.assign(new Error('mock outage'),{status});
+    const actions = {
+      listArtifactsForRepo: async () => { calls.push('repo'); throw failed(500); },
+      listWorkflowRunsForRepo: async (p) => {
+        calls.push('runs');
+        const [begin,end] = p.created.split('..').map(Date.parse);
+        const selected = runs.filter(r=>{
+          const time=Date.parse(r.created_at);
+          return time>=begin&&time<=end;
+        });
+        const total = selected.length +
+          ((scenario==='unstable-pages' && p.page===2) ? 1 : 0);
+        return {
+          data:{
+            total_count:total,
+            workflow_runs:selected.slice((p.page-1)*100,p.page*100)
+          }
+        };
+      },
+      listWorkflowRunArtifacts: async (p) => {
+        calls.push('artifacts');
+        if(scenario==='run-artifact-retry' && p.run_id===100 && transient++===0) {
+          throw failed(502);
+        }
+        if(scenario==='duplicate-id' && p.run_id===101) {
+          return {data:{artifacts:[artifact(1000,'incorrect-name',1)]}};
+        }
+        if(scenario==='fewer-global' && p.run_id>109 && p.run_id<206) {
+          return {data:{artifacts:[]}};
+        }
+        if(scenario==='fewer-same-name' && p.run_id===102) {
+          return {data:{artifacts:[artifact(1102,'not-qualified',1)]}};
+        }
+        if(scenario==='fewer-same-name' && p.run_id===103) {
+          return {data:{artifacts:[artifact(1103,'also-not-qualified',1)]}};
+        }
+        return {data:{artifacts:artifacts.get(p.run_id)||[]}};
+      },
+      deleteArtifact: async p => {deletedIds.push(p.artifact_id);},
+    };
+    const github = {
+      rest:{actions},
+      paginate:async (method,params,callback) => callback(await method(params))
+    };
+    const core = {
+      info:message=>logs.push(String(message)),
+      warning:message=>logs.push('WARNING '+message)
+    };
+    let status = 'PASS';
+    try {
+      await execute(github,core,{repo:{owner:'Dudzian',repo:'Dudzian'}},instantWait);
+    } catch (error) {status = 'FAIL '+String(error);}
+    results[scenario] = {status,deletedIds,calls,logs};
+  }
+  process.stdout.write(JSON.stringify(results));
+})().catch(error=>{console.error(error);process.exitCode=1;});
+""".replace("__SCRIPT__", json.dumps(script))
+    result = subprocess.run(
+        [node, "-e", harness],
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr + result.stdout
+    cases = json.loads(result.stdout)
+
+    healthy = cases["healthy-fallback"]
+    assert healthy["status"] == "PASS"
+    assert healthy["deletedIds"] == [999, 997]
+    assert healthy["calls"].count("repo") == 3
+    assert healthy["calls"].count("runs") >= 7
+    assert healthy["calls"].count("artifacts") == 108
+    assert any("Fallback window" in msg for msg in healthy["logs"])
+    assert any("rotating 9-90 day window" in msg for msg in healthy["logs"])
+
+    for mode in (
+        "unstable-pages",
+        "duplicate-id",
+    ):
+        case = cases[mode]
+        assert case["status"] == "PASS"  # Explicitly deferred housekeeping.
+        assert case["deletedIds"] == []
+        assert any("DEFERRED_NO_DELETION" in msg for msg in case["logs"])
+
+    for mode in ("fewer-global", "fewer-same-name"):
+        case = cases[mode]
+        assert case["status"] == "PASS"
+        assert case["deletedIds"] == []
+
+    retried = cases["run-artifact-retry"]
+    assert retried["status"] == "PASS"
+    assert retried["deletedIds"] == [999, 997]
+    assert retried["calls"].count("artifacts") == 109  # One transient 502.
