@@ -56,7 +56,13 @@ jobs:
               } catch (error) {
                 const status = error.status;
                 const retryable = status === 429 || (status >= 500 && status <= 599);
-                if (!retryable || status === 429) {
+                if (status === 429) {
+                  // GitHub may throttle this maintenance task while CI is busy.
+                  // Fail closed on data (zero deletes), but do not fail unrelated CI.
+                  core.warning('Artifact cleanup deferred: repository inventory rate-limited (HTTP 429). No artifacts deleted.');
+                  return;
+                }
+                if (!retryable) {
                   throw error;
                 }
                 if (attempt === 3) {
@@ -75,7 +81,11 @@ jobs:
               // AND >=3 *known newer* artifacts with the same name are found.
               // Unknown or unscanned artifacts are always protected.
               inventoryMode = 'verified-run-subset';
-              const dayOffsets = [0, 1, 2, 7, 8];
+              // The fallback itself can be rate-limited, or exceed its
+              // enumerated safety budget on a high-volume repository.
+              // These are deferred maintenance outcomes, not evidence for deletion.
+              try {
+                const dayOffsets = [0, 1, 2, 7, 8];
               const runIds = new Set();
               const runs = [];
               for (const offset of dayOffsets) {
@@ -124,6 +134,26 @@ jobs:
                 `Safe fallback scanned ${runs.length} runs and ${allArtifacts.length} artifacts; ` +
                 'only deletions independently proven outside both keeper sets are allowed'
               );
+              } catch (error) {
+                const status = error && error.status;
+                const message = error instanceof Error ? error.message : String(error);
+                const unavailable = status === 429 ||
+                  (status >= 500 && status <= 599);
+                const safetyBoundary = /^(Run inventory for .* exceeds safe enumeration limit|Incomplete workflow-run inventory for |Run-level artifact scan exceeds safe API budget)/.test(message);
+                if (!unavailable && !safetyBoundary) {
+                  throw error;
+                }
+                // No deletion begins before the complete fallback inventory.
+                // Preserve all artifacts when GitHub is unavailable or the
+                // run subset is too large to prove eligibility safely.
+                core.warning(
+                  `Artifact cleanup deferred (mode=verified-run-subset, HTTP ${status || 'n/a'}, ` +
+                  `cause=${safetyBoundary ? 'safety inventory limit' : 'GitHub API unavailable'}). ` +
+                  'No artifacts deleted; GitHub artifact expiration remains in effect.'
+                );
+                core.info('Cleanup outcome: DEFERRED_NO_DELETION; retention keeper rules unchanged.');
+                return;
+              }
             }
             if (!Array.isArray(allArtifacts)) {
               throw new Error('Artifact inventory never completed');
