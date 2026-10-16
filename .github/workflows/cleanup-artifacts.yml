@@ -75,83 +75,161 @@ jobs:
             }
 
             if (!Array.isArray(allArtifacts)) {
-              // A bounded, conservative fallback: inspect individual run artifacts
-              // for recent proof (0-2d) and 7-8d deletion candidates. Only
-              // delete an old artifact when >=50 *known newer* artifacts globally
-              // AND >=3 *known newer* artifacts with the same name are found.
-              // Unknown or unscanned artifacts are always protected.
+              // Repository-wide artifact listing can return persistent HTTP 500.
+              // Run-scoped retrieval is a *partial* snapshot: only remove an
+              // observed old artifact when 50 DIFFERENT, strictly newer IDs
+              // and 3 DIFFERENT strictly newer IDs of the same name prove
+              // it is outside both keeper sets. Missing data only prevents
+              // cleanup; it can never justify deletion.
               inventoryMode = 'verified-run-subset';
-              // The fallback itself can be rate-limited, or exceed its
-              // enumerated safety budget on a high-volume repository.
-              // These are deferred maintenance outcomes, not evidence for deletion.
               try {
-                const dayOffsets = [0, 1, 2, 7, 8];
-              const runIds = new Set();
-              const runs = [];
-              for (const offset of dayOffsets) {
-                const date = new Date(nowMs - offset * msInDay).toISOString().slice(0, 10);
-                const params = { owner, repo, created: date, per_page: 100 };
-                const first = await github.rest.actions.listWorkflowRunsForRepo(params);
-                if (first.data.total_count > 900) {
-                  throw new Error(`Run inventory for ${date} exceeds safe enumeration limit`);
+                // Freeze every UTC query window before enumeration. In the old
+                // code a separate first-page count and a later paginate call
+                // raced with newly-created CI runs, especially on today's date.
+                const utcDay = Math.floor(nowMs / msInDay);
+                const backlogOffset = 9 + ((utcDay * 2) % 82);
+                const dayOffsets = [0, 1, 2, 7, 8, backlogOffset];
+                const runIds = new Set();
+                const runs = [];
+
+                for (const offset of dayOffsets) {
+                  const startMs = (utcDay - offset) * msInDay;
+                  const endMs = Math.min(startMs + msInDay - 1, nowMs - 1);
+                  const date = new Date(startMs).toISOString().slice(0, 10);
+                  const created = new Date(startMs).toISOString() +
+                    '..' + new Date(endMs).toISOString();
+                  let expectedTotal = null;
+                  let count = 0;
+                  let page = 1;
+
+                  while (true) {
+                    const response = await github.rest.actions.listWorkflowRunsForRepo({
+                      owner, repo, created, per_page: 100, page,
+                    });
+                    const total = response.data && response.data.total_count;
+                    const batch = response.data && response.data.workflow_runs;
+                    if (!Number.isSafeInteger(total) || total < 0 || total > 900 ||
+                        !Array.isArray(batch) || batch.length > 100 ||
+                        (expectedTotal !== null && total !== expectedTotal)) {
+                      throw new Error('Incomplete workflow-run inventory for ' + date +
+                        ' (unstable count, malformed page or >900 runs)');
+                    }
+                    expectedTotal = total;
+                    count += batch.length;
+                    if (count > total || (batch.length === 0 && count !== total)) {
+                      throw new Error('Incomplete workflow-run inventory for ' + date +
+                        ' (invalid page boundaries)');
+                    }
+                    for (const run of batch) {
+                      const createdMs = Date.parse(run && run.created_at);
+                      if (!Number.isSafeInteger(run && run.id) || run.id <= 0 ||
+                          !Number.isFinite(createdMs) ||
+                          createdMs < startMs || createdMs > endMs ||
+                          runIds.has(run.id)) {
+                        throw new Error('Incomplete workflow-run inventory for ' + date +
+                          ' (invalid, duplicated or out-of-window run)');
+                      }
+                      runIds.add(run.id);
+                      runs.push(run);
+                    }
+                    if (count === total) break;
+                    if (batch.length !== 100 || page >= 9) {
+                      throw new Error('Incomplete workflow-run inventory for ' + date +
+                        ' (short or excessive pagination)');
+                    }
+                    page++;
+                  }
+                  core.info('Fallback window ' + date + ': ' + count +
+                    ' runs (frozen UTC query, ' + page + ' pages)');
                 }
-                const dayRuns = await github.paginate(
-                  github.rest.actions.listWorkflowRunsForRepo,
-                  params,
-                  (response) => response.data.workflow_runs || []
-                );
-                if (dayRuns.length !== first.data.total_count) {
-                  throw new Error(`Incomplete workflow-run inventory for ${date}`);
+
+                if (runs.length > 1200) {
+                  throw new Error('Run-level artifact scan exceeds safe API budget');
                 }
-                for (const run of dayRuns) {
-                  if (run.id && !runIds.has(run.id)) {
-                    runs.push(run);
-                    runIds.add(run.id);
+
+                // One run-scoped artifact listing per run, bounded concurrency.
+                // Retries cover transient 5xx; failed/partial reads must not
+                // produce a candidate set. Workers settle before returning.
+                const batches = new Array(runs.length);
+                let nextRun = 0;
+                let inventoryFailure = null;
+                const readRun = async () => {
+                  while (nextRun < runs.length && inventoryFailure === null) {
+                    const position = nextRun++;
+                    try {
+                      for (let attempt = 1; attempt <= 3; attempt++) {
+                        try {
+                          batches[position] = await github.paginate(
+                            github.rest.actions.listWorkflowRunArtifacts,
+                            { owner, repo, run_id: runs[position].id, per_page: 100 },
+                            (response) => response.data.artifacts || []
+                          );
+                          break;
+                        } catch (error) {
+                          const status = error && error.status;
+                          if (!(status >= 500 && status <= 599) || attempt === 3) {
+                            throw error;
+                          }
+                          await new Promise((resolve) =>
+                            setTimeout(resolve, 1000 * attempt));
+                        }
+                      }
+                    } catch (error) {
+                      inventoryFailure = error;
+                    }
+                  }
+                };
+                await Promise.all(Array.from({ length: 8 }, () => readRun()));
+                if (inventoryFailure !== null) throw inventoryFailure;
+
+                // Distinct artifact IDs are mandatory for positive keeper proof.
+                // A repeated ID must never count twice, even across reruns.
+                const uniqueArtifacts = new Map();
+                for (const batch of batches) {
+                  if (!Array.isArray(batch) || batch.length > 2000) {
+                    throw new Error('Incomplete run artifact inventory: missing or oversized batch');
+                  }
+                  for (const artifact of batch) {
+                    const updatedMs = Date.parse(artifact && artifact.updated_at);
+                    if (!Number.isSafeInteger(artifact && artifact.id) ||
+                        artifact.id <= 0 ||
+                        typeof artifact.name !== 'string' || !artifact.name ||
+                        !Number.isFinite(updatedMs)) {
+                      throw new Error('Incomplete run artifact inventory: malformed artifact');
+                    }
+                    if (uniqueArtifacts.has(artifact.id)) {
+                      const previous = uniqueArtifacts.get(artifact.id);
+                      if (previous.name !== artifact.name ||
+                          previous.updated_at !== artifact.updated_at) {
+                        throw new Error('Inconsistent duplicate artifact identity');
+                      }
+                      continue;
+                    }
+                    uniqueArtifacts.set(artifact.id, artifact);
                   }
                 }
-              }
-              if (runs.length > 1200) {
-                throw new Error('Run-level artifact scan exceeds safe API budget');
-              }
-
-              // Bounded concurrency; a single failed run-artifact read aborts the
-              // entire fallback before the first deletion can occur.
-              const batches = new Array(runs.length);
-              let nextRun = 0;
-              const readRun = async () => {
-                while (nextRun < runs.length) {
-                  const position = nextRun++;
-                  batches[position] = await github.paginate(
-                    github.rest.actions.listWorkflowRunArtifacts,
-                    { owner, repo, run_id: runs[position].id, per_page: 100 },
-                    (response) => response.data.artifacts || []
-                  );
-                }
-              };
-              await Promise.all(Array.from({ length: 8 }, () => readRun()));
-              allArtifacts = batches.flat();
-              core.warning(
-                `Safe fallback scanned ${runs.length} runs and ${allArtifacts.length} artifacts; ` +
-                'only deletions independently proven outside both keeper sets are allowed'
-              );
+                allArtifacts = Array.from(uniqueArtifacts.values());
+                core.warning(
+                  'Safe fallback scanned ' + runs.length + ' runs and ' +
+                  allArtifacts.length + ' distinct artifacts; all deletions ' +
+                  'require independently observed newer-ID keeper proof'
+                );
+                core.info('Fallback backlog coverage: UTC day offset ' +
+                  backlogOffset + ' (rotating 9-90 day window)');
               } catch (error) {
                 const status = error && error.status;
                 const message = error instanceof Error ? error.message : String(error);
                 const unavailable = status === 429 ||
                   (status >= 500 && status <= 599);
-                const safetyBoundary = /^(Run inventory for .* exceeds safe enumeration limit|Incomplete workflow-run inventory for |Run-level artifact scan exceeds safe API budget)/.test(message);
-                if (!unavailable && !safetyBoundary) {
-                  throw error;
-                }
-                // No deletion begins before the complete fallback inventory.
-                // Preserve all artifacts when GitHub is unavailable or the
-                // run subset is too large to prove eligibility safely.
+                const safetyBoundary = /^(Incomplete workflow-run inventory for |Run-level artifact scan exceeds safe API budget|Incomplete run artifact inventory:|Inconsistent duplicate artifact identity)/.test(message);
+                if (!unavailable && !safetyBoundary) throw error;
                 core.warning(
-                  `Artifact cleanup deferred (mode=verified-run-subset, HTTP ${status || 'n/a'}, ` +
-                  `cause=${safetyBoundary ? 'safety inventory limit' : 'GitHub API unavailable'}). ` +
-                  'No artifacts deleted; GitHub artifact expiration remains in effect.'
+                  'Artifact cleanup deferred (mode=verified-run-subset, HTTP ' +
+                  (status || 'n/a') + ', cause=' +
+                  (safetyBoundary ? message : 'GitHub API unavailable') +
+                  '). No artifacts deleted; GitHub artifact expiration remains in effect.'
                 );
-                core.info('Cleanup outcome: DEFERRED_NO_DELETION; retention keeper rules unchanged.');
+                core.info('Cleanup outcome: DEFERRED_NO_DELETION; keeper rules unchanged.');
                 return;
               }
             }
