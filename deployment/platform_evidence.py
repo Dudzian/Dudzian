@@ -175,19 +175,23 @@ def aggregate_core_markers(
     )
 
 
-def produce_windows_clean_install_evidence(
-    revision: str | None,
+def validate_windows_clean_install_receipt(
     receipt: Path,
-    output: Path,
     *,
     msi: Path,
     manifest: Path,
     production_trust_package: Path,
-) -> None:
-    """Publish Stage-9 PASS only from the exact live-MSI proof receipt."""
-    source_revision, provider, run_id = _identity(revision)
-    if provider != "https://github.com" or os.environ.get("RUNNER_OS") != "Windows":
-        raise EvidenceProductionError("clean-install PASS requires a GitHub Windows runner")
+    source_revision: str,
+    ci_provider: str,
+    ci_run_id: str,
+    runner_arch: str,
+) -> dict[str, Any]:
+    """Validate existing Stage-9 receipt bytes without creating execution evidence.
+
+    Callers supply the expected qualification identity explicitly. This function
+    does not assert that the current host performed the historical qualification.
+    """
+    provider, run_id = ci_provider, ci_run_id
     value = json.loads(receipt.read_text(encoding="utf-8"))
     manifest_value = json.loads(manifest.read_text(encoding="utf-8"))
     if production_trust_package.name != PRODUCTION_TRUST_CEREMONY_ID:
@@ -198,12 +202,15 @@ def produce_windows_clean_install_evidence(
     if not isinstance(value, dict) or set(value) != CLEAN_INSTALL_RECEIPT_KEYS:
         raise EvidenceProductionError("malformed clean-install receipt")
     if (
-        value["schema_version"] != 1
+        type(value["schema_version"]) is not int
+        or value["schema_version"] != 1
+        or type(value["install_exit_code"]) is not int
+        or type(value["uninstall_exit_code"]) is not int
         or value["source_revision"] != source_revision
         or value["ci_provider"] != provider
         or value["ci_run_id"] != run_id
         or value["runner_os"] != "Windows"
-        or value["runner_arch"] != os.environ.get("RUNNER_ARCH")
+        or value["runner_arch"] != runner_arch
         or value["probe_id"] != "cryptohunter.windows.clean-install.v1"
         or value["install_exit_code"] != 0
         or value["uninstall_exit_code"] != 0
@@ -227,6 +234,32 @@ def produce_windows_clean_install_evidence(
         or any(result != "PASS" for result in value["proofs"].values())
     ):
         raise EvidenceProductionError("clean-install receipt is incomplete or failed")
+    return value
+
+
+def produce_windows_clean_install_evidence(
+    revision: str | None,
+    receipt: Path,
+    output: Path,
+    *,
+    msi: Path,
+    manifest: Path,
+    production_trust_package: Path,
+) -> None:
+    """Publish Stage-9 PASS only from the exact live-MSI proof receipt."""
+    source_revision, provider, run_id = _identity(revision)
+    if provider != "https://github.com" or os.environ.get("RUNNER_OS") != "Windows":
+        raise EvidenceProductionError("clean-install PASS requires a GitHub Windows runner")
+    value = validate_windows_clean_install_receipt(
+        receipt,
+        msi=msi,
+        manifest=manifest,
+        production_trust_package=production_trust_package,
+        source_revision=source_revision,
+        ci_provider=provider,
+        ci_run_id=run_id,
+        runner_arch=os.environ.get("RUNNER_ARCH", ""),
+    )
     details = (
         f"MSI sha256={value['msi_sha256']}; version={value['product_version']}; "
         f"architecture={value['runner_arch']}"

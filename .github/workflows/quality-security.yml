@@ -75,10 +75,14 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e ".[test]" "ruff==0.14.11" "mypy==1.10.0" "diff-cover>=9,<10"
       - name: Ruff baseline gate
-        run: python -m ruff check bot_core core scripts tests deploy stage6_samples ui deployment/windows_production_cha_operation.py deployment/windows_production_cha_account_reservation.py
+        run: python -m ruff check bot_core core scripts tests deploy stage6_samples ui deployment/windows_production_cha_operation.py deployment/windows_production_cha_account_reservation.py deployment/windows_stage10_preflight.py deployment/windows_stage10_artifact_preflight.py deployment/windows_stage10_runner_preflight.py deployment/platform_evidence.py
       - name: Format Stage 9 signing and credential substrate
         run: >-
           python -m ruff format --check
+          deployment/windows_stage10_preflight.py
+          deployment/windows_stage10_artifact_preflight.py
+          deployment/windows_stage10_runner_preflight.py
+          deployment/platform_evidence.py
           bot_core/postgresql_preaccount_credentials.py
           bot_core/postgresql_root_proof_issuance_authority.py
           bot_core/postgresql_root_proof_issuance_authority_v2.py
@@ -198,6 +202,10 @@ jobs:
           tests/deployment/test_windows_cng_custody_bridge.py
           tests/deployment/test_windows_production_pre_enrollment.py
           tests/deployment/test_windows_stage9_production_trust_provenance.py
+          tests/deployment/test_windows_stage10_preflight.py
+          tests/deployment/test_windows_stage10_artifact_preflight.py
+          tests/deployment/test_windows_stage10_runner_preflight.py
+          tests/deployment/test_platform_evidence.py
           tests/deployment/test_production_enrollment_issuer.py
           tests/deployment/test_production_pdsa_signing.py
           tests/architecture/test_stage9_external_provisioning_architecture.py
@@ -236,6 +244,10 @@ jobs:
           --cov=deployment.windows_production_cha_account_reservation
           --cov=deployment.windows_production_pre_enrollment
           --cov=deployment.windows_stage9_production_trust
+          --cov=deployment.windows_stage10_preflight
+          --cov=deployment.windows_stage10_artifact_preflight
+          --cov=deployment.windows_stage10_runner_preflight
+          --cov=deployment.platform_evidence
           --cov=deployment.production_enrollment_issuer
           --cov=deployment.production_pdsa_signing
           --cov-config=.coveragerc
