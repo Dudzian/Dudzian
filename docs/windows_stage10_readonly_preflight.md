@@ -76,6 +76,29 @@ handoff milestone, not a Stage 10 acceptance result. Preflight reports are not
 
 ## Dedicated runner review
 
+**Current infrastructure decision — BLOCKED.** GitHub repository metadata
+reviewed on 2026-10-16 identifies the owner of `Dudzian/Dudzian` as `User`,
+not `Organization`. The implemented isolation model requires organization
+runner groups with repository and selected-workflow restrictions. A personal
+repository runner cannot satisfy that model merely by having the four labels.
+The collector first reads `GET /repos/{owner}/{repo}` and validates repository
+and owner identity/type. For `User`, missing or malformed ownership it reports
+`BLOCKED` without attempting organization runner/group endpoints; it does not
+fall back to labels or assert that an organization registration exists.
+
+Before Stage 10, the operator must approve an enforceable hosting/isolation
+design. One option is organization-controlled repository ownership and a
+dedicated runner group on a GitHub plan supporting the required restrictions.
+Any ownership/repository transfer also requires review of canonical repository,
+workflow and artifact bindings; changing a config value alone is insufficient.
+An alternative for a personal repository requires a separately reviewed and
+implemented isolation design with equivalent restrictions, negative tests and
+independent sign-off. PRE-01A implements no such alternative or migration.
+Keep this prerequisite `BLOCKED` until the approved design is implemented and
+verified. A placeholder `runner_group_id` in a planned configuration is not
+evidence of an available group. The organization-success test fixture models
+a hypothetical future deployment, not the current `Dudzian` account.
+
 Do not assume the runner already exists. The operator identifies a persistent
 physical Windows x64 machine, host owner, GitHub runner registration, service
 identity and approved installation/elevation owner. Record a stable machine
@@ -154,6 +177,34 @@ its Stage 10 jobs have conditional guards. Resolving the trusted dispatch route
 and group restriction is a PRE-01B prerequisite; do not weaken the policy or
 make the physical runner available to PR code to obtain a green report.
 
+### ACL scope: root DACL is not the runner tree
+
+`runner_directory_acl` checks only the DACL returned by
+`Get-Acl -LiteralPath $root`. Its write mask includes
+`DeleteSubdirectoriesAndFiles` (64): a principal may otherwise remove children
+without having `Delete` on the child itself. Only SYSTEM, Administrators and
+the approved service SID may receive the checked mutation rights. This is a
+conservative Allow-ACE check, not a complete effective-access evaluation.
+
+The collector does not inspect child directory/file DACLs, explicit ACEs,
+disabled inheritance, owners, parent-directory ACLs or reparse points, including
+the runner root itself. A safe root DACL cannot prove protection of `bin`,
+`_work`, `_update`, service binaries or other descendants. Supplied snapshot
+claims about those paths do not extend the collector's verification scope.
+`runner_directory_tree_acl` therefore remains `UNVERIFIED`, even when live
+root-DACL and organization-group checks pass; overall runner readiness cannot
+be `PASS` in this implementation.
+
+PRE-01B must add a reviewed read-only full-tree/effective-access verification
+before declaring host readiness: resolve approved canonical roots and parents,
+reject or explicitly review reparse points without following unapproved
+targets, enumerate all protected descendants (including executable files,
+`bin`, `_work`, `_update`), inspect explicit and inherited ACEs, disabled
+inheritance and ownership/group-based access. Inaccessible or changed paths
+must fail closed. Test an unsafe child beneath a safe root, a writable binary,
+disabled inheritance, an untrusted owner and root/child junctions or symlinks.
+No ACL repair or runner reconfiguration is authorized by this rehearsal.
+
 ## Qualified MSI custody and provenance
 
 The transfer owner first approves the repository `Dudzian/Dudzian`, canonical
@@ -165,6 +216,16 @@ for that selected revision/run. Do not select "latest", a different successful
 run, an expired artifact, a PR-produced substitute, diagnostics, or a local
 rebuild. The future Stage 10 execution must bind to this same canonical run;
 rerunning the workflow requires qualifying the newly selected run again.
+
+The REST workflow-run `path` may be the canonical
+`.github/workflows/platform-deployment.yml`, or that exact path suffixed with
+`@main` or `@refs/heads/main`. No generic suffix stripping is used: PR refs,
+tag refs, foreign branches, different paths and multiple suffixes are rejected.
+These path forms never replace the independent approved `main` revision/run
+pins, `head_branch=main`, manual event, repository and successful-run checks.
+A short `@main` string alone is not ref authentication; the transfer approval
+must establish that the selected dispatch used the approved branch, not a
+same-named tag. Ambiguous ref selection remains blocked pending that proof.
 
 1. Download the exact `windows-stage9-qualified-msi` archive and preserve its
    original bytes. Preserve authenticated artifact/run metadata and the
@@ -311,6 +372,9 @@ The PRE-01B implementation must:
    revalidates immediately before an explicitly approved elevated installation.
    Resolve the completed-run rehearsal versus active same-run execution
    metadata protocol and trusted manual-only runner workflow route explicitly.
+   Resolve the User-owned repository versus organization runner-group
+   requirement through the approved infrastructure decision above, retaining
+   enforceable isolation from untrusted jobs.
    Preserve MSI logs, exact command/outcome and before/after observations.
    Installation is a separate mutation and is not executed by PRE-01A or PR CI.
 2. Detect existing MSI registration, canonical services, Program Files,
@@ -330,6 +394,9 @@ The PRE-01B implementation must:
    contract. Verify canonical Program Files/ProgramData layout and protected
    ACLs using the existing Stage 9 qualification boundaries, without exposing
    private keys or adding permissive grants.
+   Complete the runner-tree ACL verification described above, including child
+   files/directories, explicit ACEs, disabled inheritance, ownership, parent
+   ACLs and reparse points. A root-only DACL check cannot satisfy this gate.
 5. Verify private PostgreSQL version, loopback `127.0.0.1:55432`, expected HBA and
    identity mapping, mTLS role separation and readiness. Check the backend
    readiness PID matches its live SCM process and requires `freshness_runtime`,

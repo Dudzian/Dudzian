@@ -114,21 +114,61 @@ def staged(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     }
     artifact = {
         "id": 9,
+        "node_id": "MDg6QXJ0aWZhY3Q5",
         "name": preflight.ARTIFACT_NAME,
+        "size_in_bytes": 2048,
+        "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/9",
         "digest": "",
         "expired": False,
         "archive_download_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/9/zip",
-        "workflow_run": {"id": 42, "head_sha": REVISION, "head_branch": "main"},
+        "created_at": "2026-10-16T09:00:00Z",
+        "updated_at": "2026-10-16T09:00:00Z",
+        "expires_at": "2026-10-23T09:00:00Z",
+        "workflow_run": {
+            "id": 42,
+            "repository_id": 123,
+            "head_repository_id": 123,
+            "head_sha": REVISION,
+            "head_branch": "main",
+        },
+    }
+    repository = {
+        "id": 123,
+        "name": "Dudzian",
+        "full_name": "Dudzian/Dudzian",
+        "owner": {"login": "Dudzian", "type": "User"},
+        "fork": False,
+        "url": "https://api.github.com/repos/Dudzian/Dudzian",
     }
     run = {
         "id": 42,
+        "name": "Platform deployment",
+        "node_id": "WFR_kwLOBw",
+        "run_number": 7,
+        "run_attempt": 1,
+        "workflow_id": 11,
         "head_sha": REVISION,
         "head_branch": "main",
         "event": "workflow_dispatch",
-        "path": preflight.WORKFLOW,
+        "path": f"{preflight.WORKFLOW}@main",
         "status": "completed",
         "conclusion": "success",
-        "repository": {"full_name": "Dudzian/Dudzian"},
+        "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/runs/42",
+        "html_url": "https://github.com/Dudzian/Dudzian/actions/runs/42",
+        "workflow_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/workflows/11",
+        "pull_requests": [],
+        "created_at": "2026-10-16T08:00:00Z",
+        "updated_at": "2026-10-16T09:00:00Z",
+        "actor": {"login": "Dudzian", "type": "User"},
+        "triggering_actor": {"login": "Dudzian", "type": "User"},
+        "head_commit": {
+            "id": REVISION,
+            "tree_id": "c" * 40,
+            "message": "Stage 9 canonical qualification",
+            "timestamp": "2026-10-16T07:00:00Z",
+        },
+        "repository": repository,
+        "head_repository": deepcopy(repository),
     }
     args = {
         "archive": root / "qualified.zip",
@@ -205,6 +245,73 @@ def test_exact_download_rehearsal_is_read_only_and_never_stage10_pass(staged):
     }
     assert after == before
     assert not list(staged.root.glob("stage10-artifact-rehearsal-*"))
+
+
+@pytest.mark.parametrize("suffix", ["", "@main", "@refs/heads/main"])
+def test_github_rest_canonical_main_workflow_path_forms(staged, suffix):
+    staged.run["path"] = preflight.WORKFLOW + suffix
+    rebuild(staged)
+    metadata_before = staged.args["workflow_run_metadata"].read_bytes()
+    report = preflight.artifact_preflight(**staged.args)
+    assert report["overall_status"] == "PASS", report
+    assert report["stage10_pass"] is False
+    assert staged.args["workflow_run_metadata"].read_bytes() == metadata_before
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        f"{preflight.WORKFLOW}@refs/pull/3136/merge",
+        f"{preflight.WORKFLOW}@refs/pull/3136/head",
+        f"{preflight.WORKFLOW}@refs/tags/main",
+        f"{preflight.WORKFLOW}@refs/tags/v1.0.0",
+        f"{preflight.WORKFLOW}@feature",
+        f"{preflight.WORKFLOW}@refs/heads/feature",
+        f"{preflight.WORKFLOW}@main@main",
+        f"{preflight.WORKFLOW}@refs/heads/main@main",
+        f"{preflight.WORKFLOW}@main/extra",
+        f"{preflight.WORKFLOW}@main ",
+        f"{preflight.WORKFLOW}@MAIN",
+        ".github/workflows/other.yml@main",
+        f"attacker/{preflight.WORKFLOW}@main",
+        f"{preflight.WORKFLOW}.bak@main",
+        None,
+        [f"{preflight.WORKFLOW}@main"],
+    ],
+)
+def test_github_rest_foreign_ref_or_noncanonical_workflow_path_is_rejected(staged, path):
+    # Keep every other field canonical, so a permissive suffix parser cannot
+    # rely on unrelated metadata mismatches to reject an unapproved ref.
+    staged.run["path"] = path
+    rebuild(staged)
+    metadata_before = staged.args["workflow_run_metadata"].read_bytes()
+    report = preflight.artifact_preflight(**staged.args)
+    assert report["overall_status"] == "FAIL", report
+    assert "operator-dispatched main workflow" in report["reason"]
+    assert report["stage10_pass"] is False
+    assert staged.args["workflow_run_metadata"].read_bytes() == metadata_before
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("head_branch", "feature"),
+        ("head_sha", "b" * 40),
+        ("id", 43),
+        ("event", "pull_request"),
+        ("event", "push"),
+        ("repository", {"full_name": "attacker/Dudzian"}),
+        ("conclusion", "failure"),
+        ("status", "in_progress"),
+    ],
+)
+def test_github_rest_main_ref_suffix_preserves_all_qualification_gates(staged, field, value):
+    staged.run["path"] = f"{preflight.WORKFLOW}@main"
+    staged.run[field] = value
+    rebuild(staged)
+    report = preflight.artifact_preflight(**staged.args)
+    assert report["overall_status"] == "FAIL", report
+    assert report["stage10_pass"] is False
 
 
 @pytest.mark.parametrize(

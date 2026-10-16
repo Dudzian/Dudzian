@@ -162,7 +162,9 @@ def _metadata(
         and run.get("head_sha") == revision
         and run.get("head_branch") == "main"
         and run.get("event") == "workflow_dispatch"
-        and run.get("path") == WORKFLOW
+        # REST can include the workflow ref. Compare exact main representations:
+        # removing an arbitrary suffix would also admit tags, PRs or foreign refs.
+        and run.get("path") in (WORKFLOW, f"{WORKFLOW}@main", f"{WORKFLOW}@refs/heads/main")
         and run.get("status") == "completed"
         and run.get("conclusion") == "success"
         and isinstance(run.get("repository"), dict)

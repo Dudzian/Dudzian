@@ -18,6 +18,16 @@
       "details": "No actual host observations or qualified artifact supplied. Tests and configuration examples do not establish this condition."
     },
     {
+      "name": "repository_owner_isolation_model",
+      "status": "BLOCKED",
+      "details": "GitHub repository metadata reviewed on 2026-10-16 identifies Dudzian/Dudzian owner.type=User. The implemented organization runner-group/selected-workflow isolation model is unavailable for this ownership. An operator-approved enforceable infrastructure design must be implemented and verified before Stage 10; labels or a placeholder group ID cannot replace it. This is a dated review observation, not a live host qualification."
+    },
+    {
+      "name": "runner_directory_tree_acl",
+      "status": "UNVERIFIED",
+      "details": "PRE-01A collects the runner root DACL only. Descendant files/directories (including bin, _work and _update), explicit ACEs, disabled inheritance, ownership, parent ACLs and root/child reparse points require reviewed full-tree/effective-access verification in PRE-01B. A passing root DACL cannot establish host readiness."
+    },
+    {
       "name": "stage9_closure_and_legal_enrollment",
       "status": "BLOCKED",
       "details": "Current source: stage_9=IN_PROGRESS; legal_production_enrollment=NOT_PERFORMED; stage_10_prerequisite=BLOCKED_UNTIL_LEGAL_ENROLLMENT. PRE-01A cannot close Stage 9 or authorize enrollment/lifecycle execution."

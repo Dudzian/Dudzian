@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+from copy import deepcopy
 import json
 from pathlib import Path
 import subprocess
@@ -70,6 +71,12 @@ def observation() -> dict:
             ],
         },
         "github": {
+            # Hypothetical organization deployment, not current infrastructure:
+            # Dudzian/Dudzian currently has owner.type=User and must be BLOCKED.
+            "repository": {
+                "full_name": config["repository"],
+                "owner": {"login": "Dudzian", "type": "Organization"},
+            },
             "runner": {
                 "id": config["runner_id"],
                 "name": config["runner_name"],
@@ -107,8 +114,10 @@ def _mock_live(monkeypatch: pytest.MonkeyPatch, observed: dict) -> None:
 def test_consistent_live_reads_prepare_runner_without_stage10_pass(monkeypatch) -> None:
     _mock_live(monkeypatch, observation())
     report = preflight.run_runner_preflight(approved_config(), live=True)
-    assert report["overall_status"] == "PASS"
-    assert all(item["status"] == "PASS" for item in report["checks"])
+    assert report["overall_status"] == "UNVERIFIED"
+    assert _check(report, "runner_directory_acl")["status"] == "PASS"
+    assert _check(report, "untrusted_pr_isolation")["status"] == "PASS"
+    assert _check(report, "runner_directory_tree_acl")["status"] == "UNVERIFIED"
     assert report["stage10_qualification"] == "NOT_RUN"
     assert report["stage10_execution_authorized"] is False
 
@@ -342,6 +351,7 @@ def test_windows_collector_passes_values_as_environment_not_powershell_code(monk
 def test_github_collector_only_gets_registration_policy_and_workflow_sources(monkeypatch) -> None:
     observed = observation()["github"]
     responses = [
+        observed["repository"],
         observed["runner"],
         observed["group"],
         observed["group_runners"],
@@ -356,7 +366,8 @@ def test_github_collector_only_gets_registration_policy_and_workflow_sources(mon
 
     monkeypatch.setattr(preflight, "_read_json_command", read)
     result = preflight._collect_github(approved_config())
-    assert len(calls) == 5
+    assert len(calls) == 6
+    assert calls[0][-1] == "repos/Dudzian/Dudzian"
     assert all(
         command[:6] == ["gh", "api", "--method", "GET", "--hostname", "github.com"]
         for command in calls
@@ -479,3 +490,116 @@ def test_malformed_service_sid_cannot_crash_acl_evaluation(monkeypatch, value) -
     _mock_live(monkeypatch, observed)
     report = preflight.run_runner_preflight(approved_config(), live=True)
     assert _check(report, "least_privilege_runner")["status"] == "FAIL"
+
+
+def test_untrusted_sid_with_only_delete_children_right_is_rejected(monkeypatch) -> None:
+    observed = observation()
+    observed["host"]["runner_root_acl"].append(
+        {"sid": "S-1-5-21-111-222-333-513", "rights": 64, "access_type": "Allow"}
+    )
+    _mock_live(monkeypatch, observed)
+    report = preflight.run_runner_preflight(approved_config(), live=True)
+    assert report["overall_status"] == "FAIL"
+    assert _check(report, "runner_directory_acl")["status"] == "FAIL"
+    assert "DeleteSubdirectoriesAndFiles" in _check(report, "runner_directory_acl")["details"]
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        {"full_name": "Dudzian/Dudzian", "owner": {"login": "Dudzian", "type": "User"}},
+        {"full_name": "Dudzian/Dudzian", "owner": {"login": "Dudzian"}},
+        {"full_name": "other/repo", "owner": {"login": "Dudzian", "type": "Organization"}},
+        {"full_name": "Dudzian/Dudzian", "owner": {"login": "other", "type": "Organization"}},
+        {"full_name": "Dudzian/Dudzian", "owner": {"login": "Dudzian", "type": []}},
+        {"full_name": "Dudzian/Dudzian", "owner": None},
+        [],
+        None,
+    ],
+)
+def test_non_org_or_malformed_owner_never_queries_org_endpoints(monkeypatch, metadata) -> None:
+    calls = []
+
+    def get(endpoint):
+        calls.append(endpoint)
+        assert endpoint == "repos/Dudzian/Dudzian"
+        return metadata
+
+    monkeypatch.setattr(preflight, "_github_get", get)
+    result = preflight._collect_github(approved_config())
+    assert calls == ["repos/Dudzian/Dudzian"]
+    assert result == {"repository": metadata, "workflows": {}}
+    observed = observation()
+    # Even forged, otherwise perfect labels/group data cannot bypass ownership.
+    observed["github"]["repository"] = metadata
+    metadata_owner = metadata.get("owner") if isinstance(metadata, dict) else None
+    if isinstance(metadata_owner, dict) and metadata_owner.get("type") == "User":
+        observed["host"]["runner_registration"]["github_url"] = "https://github.com/Dudzian/Dudzian"
+    original = deepcopy(observed)
+    config = approved_config()
+    original_config = deepcopy(config)
+    _mock_live(monkeypatch, observed)
+    report = preflight.run_runner_preflight(config, live=True)
+    assert report["overall_status"] == "BLOCKED"
+    assert _check(report, "github_repository_owner")["status"] == "BLOCKED"
+    assert _check(report, "untrusted_pr_isolation")["status"] == "BLOCKED"
+    assert _check(report, "github_runner_registration")["status"] == "UNVERIFIED"
+    assert config == original_config and observed == original
+
+
+def test_user_owner_has_actionable_infrastructure_diagnostic(monkeypatch) -> None:
+    observed = observation()
+    observed["github"]["repository"]["owner"]["type"] = "User"
+    observed["host"]["runner_registration"]["github_url"] = "https://github.com/Dudzian/Dudzian"
+    _mock_live(monkeypatch, observed)
+    report = preflight.run_runner_preflight(approved_config(), live=True)
+    reason = _check(report, "github_repository_owner")["details"]
+    assert "User account" in reason
+    assert "operator-approved infrastructure decision" in reason
+    assert "Labels cannot replace isolation" in reason
+    assert _check(report, "local_runner_identity")["status"] == "UNVERIFIED"
+    assert report["overall_status"] == "BLOCKED"
+    assert report["stage10_execution_authorized"] is False
+
+
+def test_root_acl_cannot_establish_descendant_acl_safety(monkeypatch) -> None:
+    observed = observation()
+    observed["host"]["descendant_acls"] = [
+        {"path": r"C:\actions-runner\bin", "untrusted_write": True, "inheritance_disabled": True}
+    ]
+    observed["host"]["tree_verified"] = True
+    _mock_live(monkeypatch, observed)
+    report = preflight.run_runner_preflight(approved_config(), live=True)
+    assert _check(report, "runner_directory_acl")["status"] == "PASS"
+    tree = _check(report, "runner_directory_tree_acl")
+    assert tree["status"] == "UNVERIFIED"
+    assert all(name in tree["details"] for name in ("bin", "_work", "_update", "PRE-01B"))
+    assert report["overall_status"] == "UNVERIFIED"
+
+
+@pytest.mark.parametrize(
+    "registration",
+    [
+        {"id": 999, "name": "stage10-physical", "github_url": "https://github.com/Dudzian/Dudzian"},
+        {"id": 123, "name": "other-runner", "github_url": "https://github.com/Dudzian/Dudzian"},
+        {
+            "id": True,
+            "name": "stage10-physical",
+            "github_url": "https://github.com/Dudzian/Dudzian",
+        },
+        {"id": 123, "name": "stage10-physical", "github_url": "https://github.com/other/repo"},
+        {},
+        None,
+    ],
+)
+def test_user_infrastructure_block_does_not_mask_bad_local_identity(
+    monkeypatch, registration
+) -> None:
+    observed = observation()
+    observed["github"]["repository"]["owner"]["type"] = "User"
+    observed["host"]["runner_registration"] = registration
+    _mock_live(monkeypatch, observed)
+    report = preflight.run_runner_preflight(approved_config(), live=True)
+    assert _check(report, "github_repository_owner")["status"] == "BLOCKED"
+    assert _check(report, "local_runner_identity")["status"] == "FAIL"
+    assert report["overall_status"] == "FAIL"

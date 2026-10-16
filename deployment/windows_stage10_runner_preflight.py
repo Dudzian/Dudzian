@@ -23,9 +23,10 @@ import yaml
 
 _FILE_ATTRIBUTE_REPARSE_POINT = 0x400
 REQUIRED_LABELS = ("self-hosted", "Windows", "X64", "cryptohunter-stage10")
-# WriteData, AppendData, WriteExtendedAttributes, WriteAttributes, Delete,
-# ChangePermissions, TakeOwnership. Read-only grants are deliberately allowed.
-_WRITE_RIGHTS = 2 | 4 | 16 | 256 | 65536 | 262144 | 524288
+# WriteData, AppendData, WriteExtendedAttributes, DeleteSubdirectoriesAndFiles,
+# WriteAttributes, Delete, ChangePermissions, TakeOwnership. Read-only grants
+# are deliberately allowed. Deleting a child need not grant Delete on the child.
+_WRITE_RIGHTS = 2 | 4 | 16 | 64 | 256 | 65536 | 262144 | 524288
 _REQUIRED_CONFIG = {
     "schema_version",
     "repository",
@@ -169,18 +170,37 @@ def _collect_host(config: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def _repository_owner_type(metadata: Any, repository: str) -> str | None:
+    """Bind API owner type to the approved repository before using org endpoints."""
+    if not isinstance(metadata, dict) or metadata.get("full_name") != repository:
+        return None
+    owner = metadata.get("owner")
+    if not isinstance(owner, dict) or owner.get("login") != repository.split("/")[0]:
+        return None
+    kind = owner.get("type")
+    return kind if isinstance(kind, str) and kind in {"User", "Organization"} else None
+
+
 def _collect_github(config: dict[str, Any]) -> dict[str, Any]:
+    metadata = _github_get(f"repos/{config['repository']}")
+    github: dict[str, Any] = {"repository": metadata, "workflows": {}}
+    if _repository_owner_type(metadata, config["repository"]) != "Organization":
+        # User-owned repositories cannot supply the organization runner-group
+        # policy required below. Do not probe org endpoints or replace the
+        # isolation boundary with repository runner labels.
+        return github
     owner = config["repository"].split("/")[0]
     group_endpoint = f"orgs/{owner}/actions/runner-groups/{config['runner_group_id']}"
-    github = {
-        "runner": _github_get(f"orgs/{owner}/actions/runners/{config['runner_id']}"),
-        "group": _github_get(group_endpoint),
-        # --paginate is deliberately not needed: total_count must equal the
-        # received complete list below; incomplete responses cannot pass.
-        "group_runners": _github_get(group_endpoint + "/runners?per_page=100"),
-        "group_repositories": _github_get(group_endpoint + "/repositories?per_page=100"),
-        "workflows": {},
-    }
+    github.update(
+        {
+            "runner": _github_get(f"orgs/{owner}/actions/runners/{config['runner_id']}"),
+            "group": _github_get(group_endpoint),
+            # --paginate is deliberately not needed: total_count must equal the
+            # received complete list below; incomplete responses cannot pass.
+            "group_runners": _github_get(group_endpoint + "/runners?per_page=100"),
+            "group_repositories": _github_get(group_endpoint + "/repositories?per_page=100"),
+        }
+    )
     for workflow in config["trusted_workflows"]:
         path = workflow.split("/.github/", 1)[1].split("@", 1)[0]
         response = _github_get(f"repos/{config['repository']}/contents/.github/{path}?ref=main")
@@ -328,16 +348,32 @@ def run_runner_preflight(
         )
         registration = host.get("runner_registration", {})
         owner = approved["repository"].split("/")[0]
-        registration_ok = isinstance(registration, dict) and (
+        registration_identity_ok = isinstance(registration, dict) and (
             type(registration.get("id")) is int
             and registration["id"] == approved["runner_id"]
             and registration.get("name") == approved["runner_name"]
+        )
+        registration_ok = (
+            registration_identity_ok
             and registration.get("github_url") == f"https://github.com/{owner}"
         )
+        registration_status = "PASS" if registration_ok else "FAIL"
+        if (
+            isinstance(github, dict)
+            and _repository_owner_type(github.get("repository"), approved["repository"]) == "User"
+        ):
+            # A legitimate personal-repository registration is a different
+            # scope, but incorrect id/name/URL must still fail the inventory.
+            registration_status = (
+                "UNVERIFIED"
+                if registration_identity_ok
+                and registration.get("github_url") == f"https://github.com/{approved['repository']}"
+                else "FAIL"
+            )
         check(
             "local_runner_identity",
-            "PASS" if registration_ok else "FAIL",
-            "Public .runner identity must match the approved organization registration; credentials are not read.",
+            registration_status,
+            "Public .runner identity must match the approved organization registration; credentials are not read. A User-owned repository registration cannot establish this organization identity and remains unverified pending the infrastructure decision.",
         )
         service = host.get("service", {})
         if not isinstance(service, dict):
@@ -405,8 +441,13 @@ def run_runner_preflight(
         check(
             "runner_directory_acl",
             "PASS" if acl_ok else "FAIL",
-            "Runner directory ACL must be readable; only SYSTEM, Administrators and the approved runner service identity may have write grants (conservative Allow-rule check).",
+            "Runner root DACL only: it must be readable; only SYSTEM, Administrators and the approved runner service identity may have write grants, including DeleteSubdirectoriesAndFiles (conservative Allow-rule check). Child ACLs and effective tree access are not established.",
         )
+    check(
+        "runner_directory_tree_acl",
+        "UNVERIFIED",
+        "PRE-01A reads only the root DACL. Descendant files/directories (including bin, _work and _update), explicit grants, disabled inheritance, owners, parent ACLs and reparse targets are not inspected. PRE-01B must verify the full protected tree before host readiness can pass.",
+    )
     if not isinstance(github, dict):
         check(
             "github_registration_and_isolation",
@@ -414,6 +455,26 @@ def run_runner_preflight(
             "Independent GitHub registration/group/workflow reads are unavailable; supplied approval booleans cannot establish labels or PR isolation.",
         )
     else:
+        owner_type = _repository_owner_type(github.get("repository"), approved["repository"])
+        if owner_type != "Organization":
+            reason = (
+                f"{approved['repository']} is owned by a User account; organization runner groups and selected-workflow isolation cannot be verified for this ownership model. An operator-approved infrastructure decision is required before Stage 10. Labels cannot replace isolation."
+                if owner_type == "User"
+                else "Repository/owner API identity is missing or malformed; organization ownership and the required runner-group isolation remain unverified. No organization endpoint or label fallback is permitted."
+            )
+            check("github_repository_owner", "BLOCKED", reason)
+            check("untrusted_pr_isolation", "BLOCKED", reason)
+            check(
+                "github_runner_registration",
+                "UNVERIFIED",
+                "Organization runner registration was not validated because the required ownership model is unavailable.",
+            )
+            return finish()
+        check(
+            "github_repository_owner",
+            "PASS",
+            "Independent repository API metadata binds the approved repository/owner to an Organization; runner-group policy must still be verified separately.",
+        )
         runner = github.get("runner", {})
         if not isinstance(runner, dict):
             runner = {}
