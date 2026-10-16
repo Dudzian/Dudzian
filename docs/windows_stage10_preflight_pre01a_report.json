@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "report_type": "windows-stage10-read-only-preflight-summary",
+  "roadmap_task": "S9-S10-PRE-01A",
+  "overall_status": "BLOCKED",
+  "verification_scope": "REHEARSAL_REPORT_ONLY",
+  "stage10_qualification": "NOT_RUN",
+  "stage10_execution_authorized": false,
+  "checks": [
+    {
+      "name": "runner",
+      "status": "UNVERIFIED",
+      "details": "No actual host observations or qualified artifact supplied. Tests and configuration examples do not establish this condition."
+    },
+    {
+      "name": "artifact",
+      "status": "UNVERIFIED",
+      "details": "No actual host observations or qualified artifact supplied. Tests and configuration examples do not establish this condition."
+    },
+    {
+      "name": "stage9_closure_and_legal_enrollment",
+      "status": "BLOCKED",
+      "details": "Current source: stage_9=IN_PROGRESS; legal_production_enrollment=NOT_PERFORMED; stage_10_prerequisite=BLOCKED_UNTIL_LEGAL_ENROLLMENT. PRE-01A cannot close Stage 9 or authorize enrollment/lifecycle execution."
+    },
+    {
+      "name": "target_host_installation",
+      "status": "BLOCKED",
+      "details": "The Stage-10 prepare job downloads clean-install evidence only. It does not deliver or install windows-stage9-qualified-msi on the target. S9-S10-PRE-01B must implement the separately operator-approved handoff, exact MSI installation and passive post-install verification."
+    },
+    {
+      "name": "stage10_execution",
+      "status": "BLOCKED",
+      "details": "No installation, reboot, TPM/NV mutation, enrollment, private-key operation or 24-hour qualification is performed or authorized. Separate operator approval and all existing live gates remain required."
+    }
+  ],
+  "next_task": "S9-S10-PRE-01B"
+}

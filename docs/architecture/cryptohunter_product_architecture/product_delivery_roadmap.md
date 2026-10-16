@@ -33,6 +33,8 @@ CryptoHunter v1 is complete when it is a stable installable Windows desktop prod
 
 **Exit criteria:** approved runner and MSI handoff runbook; dedicated runner identity and persistence setup verified without reboot; repeatable hash/provenance verification and fail-closed mismatches demonstrated; a reviewed plan for installing the exact current-run qualified MSI on the self-hosted machine; and independent sign-off that the live restart and 24-hour soak remain disabled until their separate authorization. This gate is **PREPARED**, not Stage 10 `PASS`.
 
+[S9-S10-PRE-01A read-only preflight and PRE-01B handoff runbook](../../windows_stage10_readonly_preflight.md) defines the preparation reports, remaining target-installation gap and separately approved next task. It does not close Stage 9 or authorize Stage 10.
+
 ## Numbered capabilities after Stage 10 — Stage 11 and Stage 12
 
 **Status: PLANNED; numbering formalized, implementation not started.** These are product capability stages ordered after the Windows Stage 10 live lifecycle qualification. They do **not** renumber or extend frozen Windows Stage 0–14 acceptance items, or replace the canonical M0–M6 product milestone taxonomy. Neither stage may claim readiness solely from design documents, existing preview code or the presence of a workflow.
