@@ -16,6 +16,8 @@ def test_inventory_retries_transient_server_errors_without_partial_deletes():
     script = step["with"]["script"]
     assert "for (let attempt = 1; attempt <= 3; attempt++)" in script
     assert "await github.paginate(" in script
+    assert "(response) => response.data.artifacts || []" not in script
+    assert "response.data as an array" in script
     assert "status === 429 || (status >= 500 && status <= 599)" in script
     assert "if (status === 429)" in script
     assert "if (!retryable)" in script
@@ -140,7 +142,16 @@ const actions = {
   listWorkflowRunArtifacts: async () => {calls.push('run-artifacts'); throw error(502);},
   deleteArtifact: async (args) => {deletedIds.push(args.artifact_id);},
 };
-const github = {rest:{actions}, paginate: async (fn, args, callback) => callback(await fn(args))};
+// Match Octokit: map callbacks receive normalized response.data arrays.
+const github = {rest:{actions}, paginate: async (fn, args, callback) => {
+  const response = await fn(args);
+  const normalized = {
+    ...response,
+    data: Array.isArray(response.data) ? response.data :
+      response.data.artifacts || response.data.workflow_runs || [],
+  };
+  return callback ? callback(normalized) : normalized.data;
+}};
 const log = [];
 const core = {warning:(m) => log.push('WARNING: '+m), info:(m) => log.push('INFO: '+m)};
 const context = {repo:{owner:'Dudzian',repo:'Dudzian'}};
@@ -229,7 +240,8 @@ artifacts.set(777,[artifact(999,'qualified',8),artifact(998,'rare',8)]);
 artifacts.set(778,[artifact(997,'qualified',backOffset)]);
 const testModes = [
   'healthy-fallback','unstable-pages','duplicate-id',
-  'fewer-global','fewer-same-name','run-artifact-retry'
+  'fewer-global','fewer-same-name','run-artifact-retry',
+  'multiple-artifact-pages'
 ];
 (async () => {
   const results = {};
@@ -262,24 +274,43 @@ const testModes = [
         if(scenario==='run-artifact-retry' && p.run_id===100 && transient++===0) {
           throw failed(502);
         }
+        let available = artifacts.get(p.run_id)||[];
         if(scenario==='duplicate-id' && p.run_id===101) {
-          return {data:{artifacts:[artifact(1000,'incorrect-name',1)]}};
+          available = [artifact(1000,'incorrect-name',1)];
         }
         if(scenario==='fewer-global' && p.run_id>109 && p.run_id<206) {
-          return {data:{artifacts:[]}};
+          available = [];
         }
         if(scenario==='fewer-same-name' && p.run_id>=101 && p.run_id<=103) {
-          return {data:{artifacts:[
-            artifact(1000+p.run_id-100,'not-qualified-'+p.run_id,1)
-          ]}};
+          available = [artifact(1000+p.run_id-100,'not-qualified-'+p.run_id,1)];
         }
-        return {data:{artifacts:artifacts.get(p.run_id)||[]}};
+        if(scenario==='multiple-artifact-pages' && p.run_id===100) {
+          available = Array.from({length:102},(_,i)=>
+            artifact(5000+i,'extra-'+i,1));
+          available.push(artifact(1000,'qualified',1));
+        }
+        return {data:{total_count:available.length,artifacts:
+          available.slice((p.page-1)*p.per_page,p.page*p.per_page)}};
       },
       deleteArtifact: async p => {deletedIds.push(p.artifact_id);},
     };
     const github = {
       rest:{actions},
-      paginate:async (method,params,callback) => callback(await method(params))
+      // Octokit normalizes wrapped REST response.data.artifacts to an
+      // array BEFORE passing it to the optional mapper.
+      paginate:async (method,params,callback) => {
+        const records = [];
+        for (let page=1; page<=30; page++) {
+          const response = await method({...params,page});
+          const array = Array.isArray(response.data) ? response.data :
+            response.data.artifacts || response.data.workflow_runs || [];
+          const normalized = {...response,data:array};
+          const mapped = callback ? callback(normalized) : normalized.data;
+          records.push(...mapped);
+          if (array.length < params.per_page) return records;
+        }
+        throw new Error('Mock exceeded 30 pages');
+      }
     };
     const core = {
       info:message=>logs.push(String(message)),
@@ -332,3 +363,9 @@ const testModes = [
     assert retried["status"] == "PASS"
     assert retried["deletedIds"] == [999, 997]
     assert retried["calls"].count("artifacts") == 109  # One transient 502.
+
+    paginated = cases["multiple-artifact-pages"]
+    assert paginated["status"] == "PASS"
+    assert paginated["deletedIds"] == [999, 997]
+    assert paginated["calls"].count("artifacts") == 109  # 102+1 items in one run.
+
