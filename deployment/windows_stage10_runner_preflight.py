@@ -11,15 +11,21 @@ import argparse
 import base64
 import json
 import os
-from pathlib import Path, PureWindowsPath
 import re
-import subprocess
 import stat
+import subprocess
 import sys
-from typing import Any, cast
 import uuid
+from pathlib import Path, PureWindowsPath
+from typing import Any, cast
 
 import yaml
+
+from deployment.windows_runner_acl import (
+    WINDOWS_ACL_TREE_SCRIPT,
+    native_powershell_path,
+    validate_acl_tree,
+)
 
 _FILE_ATTRIBUTE_REPARSE_POINT = 0x400
 REQUIRED_LABELS = ("self-hosted", "Windows", "X64", "cryptohunter-stage10")
@@ -103,7 +109,9 @@ def validate_runner_config(config: Any) -> dict[str, Any]:
 
 # Values enter the script through the process environment, never PowerShell code.
 # The .runner file is filtered to public registration fields before returning it.
-_HOST_SCRIPT = r"""
+_HOST_SCRIPT = (
+    WINDOWS_ACL_TREE_SCRIPT
+    + r"""
 $ErrorActionPreference = 'Stop'
 $root = $env:CRYPTOHUNTER_PREFLIGHT_ROOT
 $serviceName = $env:CRYPTOHUNTER_PREFLIGHT_SERVICE
@@ -124,7 +132,8 @@ $acl = @((Get-Acl -LiteralPath $root).Access | ForEach-Object {
 })
 @{
   os='Windows'; architecture=$os.OSArchitecture; hostname=$computer.Name;
-  native_processor_architectures=@(Get-CimInstance Win32_Processor | ForEach-Object { [int]$_.Architecture });
+  native_processor_architectures=@(Get-CimInstance Win32_Processor |
+    ForEach-Object { [int]$_.Architecture });
   is_64_bit_os=[Environment]::Is64BitOperatingSystem;
   is_64_bit_process=[Environment]::Is64BitProcess; process_architecture=$env:PROCESSOR_ARCHITECTURE;
   machine_guid=(Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Cryptography').MachineGuid;
@@ -136,9 +145,10 @@ $acl = @((Get-Acl -LiteralPath $root).Access | ForEach-Object {
     account_sid=$serviceSid; process_path=$process.ExecutablePath };
   identity=@{ sid=$identity.User.Value; groups=@($identity.Groups | ForEach-Object Value);
     elevated=$principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator) };
-  runner_root_acl=$acl
-} | ConvertTo-Json -Depth 8 -Compress
+  runner_root_acl=$acl; runner_tree_acl=(Collect-RunnerAclTree -Root $root)
+} | ConvertTo-Json -Depth 12 -Compress
 """
+)
 
 
 def _read_json_command(command: list[str], *, env: dict[str, str] | None = None) -> Any:
@@ -163,7 +173,8 @@ def _collect_host(config: dict[str, Any]) -> dict[str, Any]:
     env["CRYPTOHUNTER_PREFLIGHT_SERVICE"] = config["runner_service_name"]
     encoded = base64.b64encode(_HOST_SCRIPT.encode("utf-16-le")).decode("ascii")
     result = _read_json_command(
-        ["powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded], env=env
+        [native_powershell_path(), "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
+        env=env,
     )
     if not isinstance(result, dict):
         raise RunnerPreflightError("host collector did not return a JSON object")
@@ -339,12 +350,15 @@ def run_runner_preflight(
         check(
             "windows_x64",
             "PASS" if x64 else "FAIL",
-            "Live OS and collector must be native Windows x64: Win32_Processor Architecture=9, 64-bit OS/process, AMD64 process. ARM64/emulation/WOW64 and labels alone cannot pass.",
+            "Live OS and collector must be native Windows x64: Win32_Processor Architecture=9, "
+            "64-bit OS/process, AMD64 process. ARM64/emulation/WOW64 and labels alone cannot pass.",
         )
         check(
             "approved_physical_host",
             "PASS" if identity_ok and hardware and not virtual else "FAIL",
-            "Hostname, MachineGuid and hardware UUID must match the approved inventory; missing/virtual hardware identifiers fail. Inventory matching is not hardware attestation.",
+            "Hostname, MachineGuid and hardware UUID must match the approved inventory; "
+            "missing/virtual hardware identifiers fail. Inventory matching is not hardware "
+            "attestation.",
         )
         registration = host.get("runner_registration", {})
         owner = approved["repository"].split("/")[0]
@@ -373,7 +387,10 @@ def run_runner_preflight(
         check(
             "local_runner_identity",
             registration_status,
-            "Public .runner identity must match the approved organization registration; credentials are not read. A User-owned repository registration cannot establish this organization identity and remains unverified pending the infrastructure decision.",
+            "Public .runner identity must match the approved organization registration; "
+            "credentials are not read. A User-owned repository registration cannot establish "
+            "this organization identity and remains unverified pending the infrastructure "
+            "decision.",
         )
         service = host.get("service", {})
         if not isinstance(service, dict):
@@ -398,7 +415,8 @@ def run_runner_preflight(
         check(
             "automatic_runner_service",
             "PASS" if service_ok else "FAIL",
-            "SCM must show the approved running automatic runner service/account and exact RunnerService.exe path. Reboot persistence is configured, not reboot-tested.",
+            "SCM must show the approved running automatic runner service/account and exact "
+            "RunnerService.exe path. Reboot persistence is configured, not reboot-tested.",
         )
         identity = host.get("identity", {})
         if not isinstance(identity, dict):
@@ -415,7 +433,9 @@ def run_runner_preflight(
         check(
             "least_privilege_runner",
             "PASS" if privilege_ok else "FAIL",
-            "Collect as the approved service identity: it must be a non-administrator user with a running SCM service. Future elevated MSI installation requires a separate operator approval.",
+            "Collect as the approved service identity: it must be a non-administrator user with "
+            "a running SCM service. Future elevated MSI installation requires a separate "
+            "operator approval.",
         )
         trusted_write_sids = {"S-1-5-18", "S-1-5-32-544"}
         if isinstance(service.get("account_sid"), str):
@@ -441,39 +461,76 @@ def run_runner_preflight(
         check(
             "runner_directory_acl",
             "PASS" if acl_ok else "FAIL",
-            "Runner root DACL only: it must be readable; only SYSTEM, Administrators and the approved runner service identity may have write grants, including DeleteSubdirectoriesAndFiles (conservative Allow-rule check). Child ACLs and effective tree access are not established.",
+            "Runner root DACL only: it must be readable; only SYSTEM, Administrators and the "
+            "approved runner service identity may have write grants, including "
+            "DeleteSubdirectoriesAndFiles (conservative Allow-rule check). Child ACLs and "
+            "effective tree access are not established.",
         )
-    check(
-        "runner_directory_tree_acl",
-        "UNVERIFIED",
-        "PRE-01A reads only the root DACL. Descendant files/directories (including bin, _work and _update), explicit grants, disabled inheritance, owners, parent ACLs and reparse targets are not inspected. PRE-01B must verify the full protected tree before host readiness can pass.",
-    )
+        tree = host.get("runner_tree_acl")
+        if tree is None:
+            check(
+                "runner_directory_tree_acl",
+                "UNVERIFIED",
+                "PRE-01B full protected-tree ACL evidence is unavailable. Root-only ACLs cannot "
+                "establish safety of bin, _work, _update, binaries, configuration or parents.",
+            )
+        else:
+            tree_errors = validate_acl_tree(
+                tree,
+                runner_root=approved["runner_root"],
+                service_sid=service.get("account_sid"),
+                mandatory_paths=("bin", "_work", ".runner", r"bin\RunnerService.exe"),
+            )
+            check(
+                "runner_directory_tree_acl",
+                "FAIL" if tree_errors else "PASS",
+                " ".join(tree_errors)
+                if tree_errors
+                else "PRE-01B inspected root, every parent to the volume root, and the complete "
+                "bin/_work/_update protected tree: owners, explicit/inherited/group ACEs and "
+                "disabled inheritance are safe; pinned objects, paths and both full inventories "
+                "agree; reparse points and hard links are rejected. No ACL was changed.",
+            )
+    if not isinstance(host, dict):
+        check(
+            "runner_directory_tree_acl",
+            "UNVERIFIED",
+            "No live protected runner tree could be inspected.",
+        )
     if not isinstance(github, dict):
         check(
             "github_registration_and_isolation",
             "UNVERIFIED",
-            "Independent GitHub registration/group/workflow reads are unavailable; supplied approval booleans cannot establish labels or PR isolation.",
+            "Independent GitHub registration/group/workflow reads are unavailable; supplied "
+            "approval booleans cannot establish labels or PR isolation.",
         )
     else:
         owner_type = _repository_owner_type(github.get("repository"), approved["repository"])
         if owner_type != "Organization":
             reason = (
-                f"{approved['repository']} is owned by a User account; organization runner groups and selected-workflow isolation cannot be verified for this ownership model. An operator-approved infrastructure decision is required before Stage 10. Labels cannot replace isolation."
+                f"{approved['repository']} is owned by a User account; organization runner groups "
+                "and selected-workflow isolation cannot be verified for this ownership model. "
+                "An operator-approved infrastructure decision is required before Stage 10. "
+                "Labels cannot replace isolation."
                 if owner_type == "User"
-                else "Repository/owner API identity is missing or malformed; organization ownership and the required runner-group isolation remain unverified. No organization endpoint or label fallback is permitted."
+                else "Repository/owner API identity is missing or malformed; organization "
+                "ownership and the required runner-group isolation remain unverified. "
+                "No organization endpoint or label fallback is permitted."
             )
             check("github_repository_owner", "BLOCKED", reason)
             check("untrusted_pr_isolation", "BLOCKED", reason)
             check(
                 "github_runner_registration",
                 "UNVERIFIED",
-                "Organization runner registration was not validated because the required ownership model is unavailable.",
+                "Organization runner registration was not validated because the required "
+                "ownership model is unavailable.",
             )
             return finish()
         check(
             "github_repository_owner",
             "PASS",
-            "Independent repository API metadata binds the approved repository/owner to an Organization; runner-group policy must still be verified separately.",
+            "Independent repository API metadata binds the approved repository/owner to an "
+            "Organization; runner-group policy must still be verified separately.",
         )
         runner = github.get("runner", {})
         if not isinstance(runner, dict):
@@ -497,7 +554,8 @@ def run_runner_preflight(
         check(
             "github_runner_registration",
             "PASS" if runner_ok else "FAIL",
-            "Independent GitHub registration must be online with the approved id/name and exactly self-hosted, Windows, X64, cryptohunter-stage10 labels.",
+            "Independent GitHub registration must be online with the approved id/name and "
+            "exactly self-hosted, Windows, X64, cryptohunter-stage10 labels.",
         )
         group = github.get("group", {})
         members = _complete_list(github.get("group_runners"), "runners")
@@ -525,7 +583,10 @@ def run_runner_preflight(
         check(
             "untrusted_pr_isolation",
             "PASS" if isolation_ok else "FAIL",
-            "A dedicated GitHub runner group must restrict the sole approved runner/repository to the exact main-only workflow allowlist; each live workflow must expose only workflow_dispatch. PR-triggered workflows or incomplete API lists cannot prove isolation.",
+            "A dedicated GitHub runner group must restrict the sole approved runner/repository "
+            "to the exact main-only workflow allowlist; each live workflow must expose only "
+            "workflow_dispatch. PR-triggered workflows or incomplete API lists cannot prove "
+            "isolation.",
         )
     return finish()
 

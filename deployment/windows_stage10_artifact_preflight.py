@@ -4,13 +4,15 @@ from __future__ import annotations
 
 import argparse
 import json
-from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
 import shutil
 import stat
 import tempfile
-from typing import Any
 import zipfile
+from collections.abc import Callable
+from datetime import datetime, timezone
+from pathlib import Path, PurePosixPath, PureWindowsPath
+from typing import Any, cast
 
 from deployment.platform_evidence import validate_windows_clean_install_receipt
 from deployment.platform_readiness import _validated_results, load_contract
@@ -39,10 +41,21 @@ EXECUTABLE_PATHS = {
 }
 MAX_JSON_BYTES = 8 * 1024 * 1024
 MAX_ARCHIVE_BYTES = 4 * 1024 * 1024 * 1024
+PRODUCER_JOBS = frozenset(
+    {
+        "windows-deployment-contract",
+        "windows-deployment-integration",
+        "windows-clean-install-integration",
+    }
+)
 
 
 class ArtifactPreflightError(ValueError):
     """The selected download cannot establish an operator-reviewable MSI handoff."""
+
+
+class ArtifactProvenanceUnavailable(RuntimeError):
+    """Authenticated GitHub provenance cannot currently be observed."""
 
 
 def _require(condition: bool, reason: str) -> None:
@@ -135,6 +148,8 @@ def _metadata(
     archive_digest: str,
     revision: str,
     run_id: str,
+    run_attempt: str | None = None,
+    authenticated_active_run: bool = False,
 ) -> None:
     workflow_run = artifact.get("workflow_run")
     if not isinstance(workflow_run, dict):
@@ -165,12 +180,206 @@ def _metadata(
         # REST can include the workflow ref. Compare exact main representations:
         # removing an arbitrary suffix would also admit tags, PRs or foreign refs.
         and run.get("path") in (WORKFLOW, f"{WORKFLOW}@main", f"{WORKFLOW}@refs/heads/main")
-        and run.get("status") == "completed"
-        and run.get("conclusion") == "success"
+        and (
+            (run.get("status") == "completed" and run.get("conclusion") == "success")
+            or (
+                authenticated_active_run
+                and run.get("status") == "in_progress"
+                and run.get("conclusion") is None
+            )
+        )
+        and (
+            run_attempt is None
+            or (type(run.get("run_attempt")) is int and str(run["run_attempt"]) == run_attempt)
+        )
         and isinstance(run.get("repository"), dict)
         and run["repository"].get("full_name") == REPOSITORY,
-        "qualification must be a successful, completed operator-dispatched main workflow in Dudzian/Dudzian",
+        "qualification must be a successful, completed operator-dispatched main workflow "
+        "in Dudzian/Dudzian",
     )
+
+
+def _api_document(github_get: Callable[[str], Any], endpoint: str) -> dict[str, Any]:
+    try:
+        value = github_get(endpoint)
+    except OSError as exc:
+        raise ArtifactProvenanceUnavailable("authenticated GitHub GET is unavailable") from exc
+    _require(isinstance(value, dict), "GitHub response must be a JSON object")
+    return cast(dict[str, Any], value)
+
+
+def _authenticated_origin(artifact: dict[str, Any], run: dict[str, Any]) -> None:
+    repository, head_repository = run.get("repository"), run.get("head_repository")
+    workflow_run = artifact.get("workflow_run")
+    if not (
+        isinstance(repository, dict)
+        and isinstance(head_repository, dict)
+        and isinstance(workflow_run, dict)
+    ):
+        raise ArtifactPreflightError("authenticated repository origin is missing")
+    _require(
+        type(repository.get("id")) is int
+        and repository["id"] > 0
+        and repository.get("full_name") == REPOSITORY
+        and repository.get("fork") is False
+        and type(head_repository.get("id")) is int
+        and head_repository.get("id") == repository["id"]
+        and head_repository.get("full_name") == REPOSITORY
+        and head_repository.get("fork") is False
+        and type(workflow_run.get("repository_id")) is int
+        and workflow_run["repository_id"] == repository["id"]
+        and type(workflow_run.get("head_repository_id")) is int
+        and workflow_run["head_repository_id"] == repository["id"]
+        and run.get("pull_requests") == [],
+        "PR, fork or mixed repository provenance is forbidden",
+    )
+
+
+def _utc_timestamp(value: Any) -> datetime:
+    _require(isinstance(value, str) and value.endswith("Z"), "GitHub UTC timestamp is missing")
+    try:
+        parsed = datetime.fromisoformat(value.removesuffix("Z") + "+00:00")
+    except ValueError as exc:
+        raise ArtifactPreflightError("invalid GitHub UTC timestamp") from exc
+    _require(parsed.tzinfo == timezone.utc, "GitHub timestamp must be UTC")
+    return parsed
+
+
+def _producer_jobs(
+    github_get: Callable[[str], Any],
+    artifact: dict[str, Any],
+    *,
+    run_id: str,
+    run_attempt: str,
+    revision: str,
+) -> list[dict[str, Any]]:
+    """Read every page for the approved attempt; a named artifact alone never qualifies it."""
+    jobs: list[dict[str, Any]] = []
+    count: int | None = None
+    page = 1
+    while True:
+        data = _api_document(
+            github_get,
+            f"repos/{REPOSITORY}/actions/runs/{run_id}/attempts/{run_attempt}/jobs?per_page=100&page={page}",
+        )
+        total, batch = data.get("total_count"), data.get("jobs")
+        _require(
+            type(total) is int
+            and 0 < total <= 10000
+            and isinstance(batch, list)
+            and 0 < len(batch) <= 100
+            and all(isinstance(job, dict) for job in batch)
+            and (count is None or count == total),
+            "incomplete, inconsistent or malformed GitHub jobs pagination",
+        )
+        count = cast(int, total)
+        jobs.extend(cast(list[dict[str, Any]], batch))
+        _require(len(jobs) <= count, "GitHub jobs exceed declared total_count")
+        if len(jobs) == count:
+            break
+        page += 1
+    ids = [job.get("id") for job in jobs]
+    _require(
+        all(type(identifier) is int and identifier > 0 for identifier in ids)
+        and len(set(ids)) == len(ids),
+        "duplicate or malformed GitHub job identities",
+    )
+    for job in jobs:
+        _require(
+            type(job.get("run_id")) is int
+            and str(job["run_id"]) == run_id
+            and type(job.get("run_attempt")) is int
+            and str(job["run_attempt"]) == run_attempt
+            and job.get("head_sha") == revision
+            and job.get("head_branch") == "main"
+            and job.get("run_url")
+            == f"https://api.github.com/repos/{REPOSITORY}/actions/runs/{run_id}",
+            "job belongs to a different run, attempt, revision, branch or repository",
+        )
+    producers = [job for job in jobs if job.get("name") in PRODUCER_JOBS]
+    _require(
+        len(producers) == len(PRODUCER_JOBS)
+        and {job["name"] for job in producers} == PRODUCER_JOBS
+        and all(
+            job.get("status") == "completed" and job.get("conclusion") == "success"
+            for job in producers
+        ),
+        "every canonical Stage-9 producer job must complete successfully in the approved attempt",
+    )
+    producer = next(job for job in producers if job["name"] == "windows-clean-install-integration")
+    started, completed = (
+        _utc_timestamp(producer.get("started_at")),
+        _utc_timestamp(producer.get("completed_at")),
+    )
+    created, updated = (
+        _utc_timestamp(artifact.get("created_at")),
+        _utc_timestamp(artifact.get("updated_at")),
+    )
+    _require(
+        started <= created <= updated <= completed,
+        "artifact creation/update is outside the successful MSI producer attempt",
+    )
+    return producers
+
+
+def _authenticated_qualification(
+    github_get: Callable[[str], Any],
+    artifact: dict[str, Any],
+    run: dict[str, Any],
+    *,
+    artifact_id: str,
+    archive_digest: str,
+    revision: str,
+    run_id: str,
+    run_attempt: str,
+) -> dict[str, Any]:
+    """Independently fetch identity and producer success, never trust a staged API assertion."""
+    observed_artifact = _api_document(
+        github_get, f"repos/{REPOSITORY}/actions/artifacts/{artifact_id}"
+    )
+    observed_run = _api_document(github_get, f"repos/{REPOSITORY}/actions/runs/{run_id}")
+    _require(
+        type(run.get("run_attempt")) is int and str(run["run_attempt"]) == run_attempt,
+        "staged run attempt differs from independently approved attempt",
+    )
+    _require(
+        observed_artifact == artifact, "staged artifact metadata differs from authenticated GitHub"
+    )
+    # Run status/timestamps can advance while the same approved attempt is active.
+    for key in (
+        "id",
+        "head_sha",
+        "head_branch",
+        "event",
+        "path",
+        "repository",
+        "head_repository",
+        "pull_requests",
+        "run_attempt",
+    ):
+        _require(
+            run.get(key) == observed_run.get(key),
+            f"staged run {key} differs from authenticated GitHub",
+        )
+    _authenticated_origin(observed_artifact, observed_run)
+    _metadata(
+        observed_artifact,
+        observed_run,
+        artifact_id=artifact_id,
+        archive_digest=archive_digest,
+        revision=revision,
+        run_id=run_id,
+        run_attempt=run_attempt,
+        authenticated_active_run=True,
+    )
+    producers = _producer_jobs(
+        github_get, observed_artifact, run_id=run_id, run_attempt=run_attempt, revision=revision
+    )
+    return {
+        "source": "authenticated-github-rest",
+        "run_status": observed_run["status"],
+        "producer_job_ids": {job["name"]: job["id"] for job in producers},
+    }
 
 
 def _safe_member(name: Any) -> bool:
@@ -285,10 +494,26 @@ def validate_qualified_artifact(
     expected_run_id: str,
     expected_production_trust_run_id: str,
     expected_production_trust_manifest_sha256: str,
+    expected_run_attempt: str | int | None = None,
+    github_get: Callable[[str], Any] | None = None,
 ) -> dict[str, Any]:
     """Check immutable download and shared Stage-9 validators, with no installed-product access."""
     artifact_id = _identifier(expected_artifact_id, "artifact ID")
     run_id = _identifier(expected_run_id, "qualification CI run ID")
+    run_attempt = (
+        None
+        if expected_run_attempt is None
+        else _identifier(
+            str(expected_run_attempt)
+            if type(expected_run_attempt) is int
+            else expected_run_attempt,
+            "qualification CI run attempt",
+        )
+    )
+    _require(
+        github_get is None or run_attempt is not None,
+        "authenticated handoff requires an independently approved run attempt",
+    )
     trust_run_id = _identifier(expected_production_trust_run_id, "Production Trust CI run ID")
     archive_digest = _digest(expected_archive_sha256, "independently pinned artifact digest")
     trust_digest = _digest(
@@ -307,22 +532,37 @@ def validate_qualified_artifact(
         production_trust_package, allowed_root, directory=True
     )
     artifact, run = _document(artifact_metadata), _document(workflow_run_metadata)
-    _metadata(
-        artifact,
-        run,
-        artifact_id=artifact_id,
-        archive_digest=archive_digest,
-        revision=expected_revision,
-        run_id=run_id,
-    )
+    qualification_pins = {
+        "artifact_id": artifact_id,
+        "archive_digest": archive_digest,
+        "revision": expected_revision,
+        "run_id": run_id,
+    }
+    provenance: dict[str, Any] | None = None
+    if github_get is None:
+        _metadata(
+            artifact,
+            run,
+            run_attempt=run_attempt,
+            artifact_id=artifact_id,
+            archive_digest=archive_digest,
+            revision=expected_revision,
+            run_id=run_id,
+        )
+    else:
+        provenance = _authenticated_qualification(
+            github_get, artifact, run, run_attempt=cast(str, run_attempt), **qualification_pins
+        )
     _require(archive.stat().st_size <= MAX_ARCHIVE_BYTES, "downloaded archive exceeds size limit")
     _require(
         sha256(archive) == archive_digest,
         "downloaded artifact archive SHA-256 differs from independent pin",
     )
     validate_public_package_layout(production_trust_package)
+    trust_files: dict[str, str] = {}
     for public_file in production_trust_package.iterdir():
         authorized_path(public_file, allowed_root)
+        trust_files[public_file.name] = sha256(public_file)
     _require(
         sha256(production_trust_package / "package_manifest.json") == trust_digest,
         "Production Trust package manifest differs from independent pin",
@@ -377,7 +617,10 @@ def validate_qualified_artifact(
         )
         _require(
             results["WINDOWS_CLEAN_INSTALL"]["details"]
-            == f"MSI sha256={receipt['msi_sha256']}; version={receipt['product_version']}; architecture=X64",
+            == (
+                f"MSI sha256={receipt['msi_sha256']}; "
+                f"version={receipt['product_version']}; architecture=X64"
+            ),
             "clean-install evidence does not describe the qualified MSI",
         )
         expected_trust = {
@@ -393,18 +636,52 @@ def validate_qualified_artifact(
             "receipt/evidence Production Trust binding differs from independent pins",
         )
         details = {
+            "repository": REPOSITORY,
             "artifact_id": artifact_id,
             "artifact_name": ARTIFACT_NAME,
             "archive_sha256": archive_digest,
             "source_revision": expected_revision,
             "ci_run_id": run_id,
+            "ci_run_attempt": run.get("run_attempt"),
+            "product_version": manifest["product_version"],
             "msi_file": msi_path.name,
             "msi_sha256": sha256(msi_path),
             "manifest_sha256": sha256(manifest_path),
+            "receipt_sha256": sha256(receipt_path),
+            "evidence_sha256": sha256(staging / "windows-clean-install-evidence.json"),
             "installed_payload_sha256": manifest["installed_payload_sha256"],
+            "installed_files": manifest["installed_files"],
+            "production_executables": manifest["production_executables"],
             "production_trust": expected_trust,
             "release_payload_digest": trust.release_payload_digest,
         }
+    # Re-check custody after extraction/validation. No successful report is a
+    # reusable authorization: callers must invoke this validator before each use.
+    _require(
+        sha256(authorized_path(archive, allowed_root)) == archive_digest,
+        "archive changed during validation",
+    )
+    validate_public_package_layout(production_trust_package)
+    current_trust_files = {
+        public_file.name: sha256(authorized_path(public_file, allowed_root))
+        for public_file in production_trust_package.iterdir()
+    }
+    _require(current_trust_files == trust_files, "Production Trust files changed during validation")
+    if github_get is not None:
+        _require(
+            _document(authorized_path(artifact_metadata, allowed_root)) == artifact
+            and _document(authorized_path(workflow_run_metadata, allowed_root)) == run,
+            "staged provenance changed during validation",
+        )
+        final_provenance = _authenticated_qualification(
+            github_get, artifact, run, run_attempt=cast(str, run_attempt), **qualification_pins
+        )
+        _require(
+            provenance is not None
+            and final_provenance["producer_job_ids"] == provenance["producer_job_ids"],
+            "producer job identities changed during validation",
+        )
+        details["authenticated_provenance"] = final_provenance
     return details
 
 
@@ -435,7 +712,9 @@ def artifact_preflight(*args: Any, **kwargs: Any) -> dict[str, Any]:
     else:
         report["status"] = "PASS"
         report["reason"] = (
-            "Pinned qualified download, MSI hash, payload hash contract and shared Stage-9/Production Trust validators passed. Target installed payload remains unverified."
+            "Pinned qualified download, MSI hash, payload hash contract and shared "
+            "Stage-9/Production Trust validators passed. "
+            "Target installed payload remains unverified."
         )
     report["overall_status"] = report["status"]
     report["checks"] = [

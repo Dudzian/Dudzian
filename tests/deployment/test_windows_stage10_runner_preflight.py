@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import base64
-from copy import deepcopy
 import json
-from pathlib import Path
 import subprocess
+from copy import deepcopy
+from pathlib import Path, PureWindowsPath
 from types import SimpleNamespace
 
 import pytest
@@ -28,6 +28,54 @@ def approved_config() -> dict:
         "trusted_workflows": [
             "Dudzian/Dudzian/.github/workflows/windows-stage10-manual.yml@refs/heads/main"
         ],
+    }
+
+
+def _complete_runner_tree() -> dict:
+    root = PureWindowsPath(approved_config()["runner_root"])
+    entries = []
+    for index, path in enumerate(
+        [*reversed(root.parents), root]
+        + [
+            root / child
+            for child in ("bin", "_work", "_update", ".runner", r"bin\RunnerService.exe")
+        ]
+    ):
+        directory = path.name not in {".runner", "RunnerService.exe"}
+        entries.append(
+            {
+                "path": str(path),
+                "final_path": str(path),
+                "kind": "directory" if directory else "file",
+                "attributes": 16 if directory else 32,
+                "file_id": f"01234567:{index:016x}",
+                "link_count": 1,
+                "length": 0,
+                "last_write_ticks": 123,
+                "change_ticks": 123,
+                "owner_sid": "S-1-5-32-544",
+                "inheritance_disabled": False,
+                "dacl_present": True,
+                "dacl_canonical": True,
+                "aces": [
+                    {
+                        "sid": "S-1-5-32-544",
+                        "rights": 2032127,
+                        "access_type": "Allow",
+                        "inherited": False,
+                        "inheritance_flags": 0,
+                        "propagation_flags": 0,
+                    }
+                ],
+            }
+        )
+    return {
+        "schema_version": 1,
+        "root": str(root),
+        "complete": True,
+        "errors": [],
+        "before": entries,
+        "after": deepcopy(entries),
     }
 
 
@@ -338,14 +386,28 @@ def test_windows_collector_passes_values_as_environment_not_powershell_code(monk
         return observation()["host"]
 
     monkeypatch.setattr(preflight, "os", SimpleNamespace(name="nt", environ={}))
+    native_executable = r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
+    monkeypatch.setattr(preflight, "native_powershell_path", lambda: native_executable)
     monkeypatch.setattr(preflight, "_read_json_command", read)
     assert preflight._collect_host(config) == observation()["host"]
-    assert seen["command"][:3] == ["powershell.exe", "-NoProfile", "-NonInteractive"]
+    assert seen["command"][:3] == [native_executable, "-NoProfile", "-NonInteractive"]
     script = base64.b64decode(seen["command"][-1]).decode("utf-16-le")
     assert config["runner_root"] not in script
     assert seen["env"]["CRYPTOHUNTER_PREFLIGHT_ROOT"] == config["runner_root"]
     assert "Get-CimInstance Win32_Service" in script
     assert "Get-Acl" in script
+
+
+def test_unavailable_trusted_powershell_never_executes_ambient_host_collector(monkeypatch) -> None:
+    monkeypatch.setattr(preflight, "os", SimpleNamespace(name="nt", environ={}))
+
+    def unavailable():
+        raise OSError("Native PowerShell unavailable")
+
+    monkeypatch.setattr(preflight, "native_powershell_path", unavailable)
+    monkeypatch.setattr(preflight, "_read_json_command", lambda *_args, **_kwargs: pytest.fail())
+    with pytest.raises(OSError, match="unavailable"):
+        preflight._collect_host(approved_config())
 
 
 def test_github_collector_only_gets_registration_policy_and_workflow_sources(monkeypatch) -> None:
@@ -575,6 +637,64 @@ def test_root_acl_cannot_establish_descendant_acl_safety(monkeypatch) -> None:
     assert tree["status"] == "UNVERIFIED"
     assert all(name in tree["details"] for name in ("bin", "_work", "_update", "PRE-01B"))
     assert report["overall_status"] == "UNVERIFIED"
+
+
+def test_complete_independently_collected_live_tree_can_prepare_runner(monkeypatch) -> None:
+    observed = observation()
+    observed["host"]["runner_tree_acl"] = _complete_runner_tree()
+    _mock_live(monkeypatch, observed)
+    report = preflight.run_runner_preflight(approved_config(), live=True)
+    assert _check(report, "runner_directory_tree_acl")["status"] == "PASS"
+    assert report["overall_status"] == "PASS"
+    assert report["stage10_qualification"] == "NOT_RUN"
+    assert report["stage10_execution_authorized"] is False
+
+
+def test_full_tree_snapshot_cannot_prove_live_readiness() -> None:
+    observed = observation()
+    observed["host"]["runner_tree_acl"] = _complete_runner_tree()
+    observed.update(live=True, independently_collected=True)
+    report = preflight.run_runner_preflight(approved_config(), snapshot=observed)
+    assert _check(report, "runner_directory_tree_acl")["status"] == "UNVERIFIED"
+    assert report["overall_status"] == "UNVERIFIED"
+
+
+@pytest.mark.parametrize("target", ["bin", "_work", "_update", ".runner", r"bin\RunnerService.exe"])
+def test_complete_tree_detects_unsafe_child_despite_safe_root(monkeypatch, target) -> None:
+    observed = observation()
+    tree = _complete_runner_tree()
+    for phase in ("before", "after"):
+        entry = next(
+            item
+            for item in tree[phase]
+            if item["path"] == str(PureWindowsPath(tree["root"]) / target)
+        )
+        entry["aces"][0].update(sid="S-1-5-32-545", rights=2)
+        entry["inheritance_disabled"] = True
+    observed["host"]["runner_tree_acl"] = tree
+    _mock_live(monkeypatch, observed)
+    report = preflight.run_runner_preflight(approved_config(), live=True)
+    assert _check(report, "runner_directory_acl")["status"] == "PASS"
+    assert _check(report, "runner_directory_tree_acl")["status"] == "FAIL"
+    assert report["overall_status"] == "FAIL"
+
+
+def test_absent_optional_update_tree_is_safe_when_complete_inventory_agrees(monkeypatch) -> None:
+    observed = observation()
+    tree = _complete_runner_tree()
+    for phase in ("before", "after"):
+        tree[phase] = [
+            item for item in tree[phase] if PureWindowsPath(item["path"]).name != "_update"
+        ]
+    observed["host"]["runner_tree_acl"] = tree
+    _mock_live(monkeypatch, observed)
+    assert (
+        _check(
+            preflight.run_runner_preflight(approved_config(), live=True),
+            "runner_directory_tree_acl",
+        )["status"]
+        == "PASS"
+    )
 
 
 @pytest.mark.parametrize(
