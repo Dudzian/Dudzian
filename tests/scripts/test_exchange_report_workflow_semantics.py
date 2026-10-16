@@ -32,6 +32,7 @@ def test_exchange_report_dispatch_remains_fixture_mode() -> None:
     assert 'echo "LONG_POLL_MODE=fixture"' in workflow
     assert "--allow-stale-long-poll" in workflow
 
+
 def test_retired_bitmex_stays_historical_without_live_metrics(tmp_path, monkeypatch):
     config = load_core_config(Path("config/core.yaml"))
 
