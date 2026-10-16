@@ -371,4 +371,3 @@ const testModes = [
     assert paginated["status"] == "PASS"
     assert paginated["deletedIds"] == [999, 997]
     assert paginated["calls"].count("artifacts") == 109  # 102+1 items in one run.
-
