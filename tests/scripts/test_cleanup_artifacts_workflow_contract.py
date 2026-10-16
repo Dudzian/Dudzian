@@ -241,7 +241,7 @@ artifacts.set(778,[artifact(997,'qualified',backOffset)]);
 const testModes = [
   'healthy-fallback','unstable-pages','duplicate-id',
   'fewer-global','fewer-same-name','run-artifact-retry',
-  'multiple-artifact-pages'
+  'multiple-artifact-pages','empty-run-artifacts'
 ];
 (async () => {
   const results = {};
@@ -275,6 +275,7 @@ const testModes = [
           throw failed(502);
         }
         let available = artifacts.get(p.run_id)||[];
+        if(scenario==='empty-run-artifacts') available = [];
         if(scenario==='duplicate-id' && p.run_id===101) {
           available = [artifact(1000,'incorrect-name',1)];
         }
@@ -343,10 +344,12 @@ const testModes = [
     assert healthy["calls"].count("artifacts") == 108
     assert any("Fallback window" in msg for msg in healthy["logs"])
     assert any("rotating 9-90 day window" in msg for msg in healthy["logs"])
+    assert not any(msg.startswith("WARNING") for msg in healthy["logs"])
 
     for mode in (
         "unstable-pages",
         "duplicate-id",
+        "empty-run-artifacts",
     ):
         case = cases[mode]
         assert case["status"] == "PASS"  # Explicitly deferred housekeeping.
