@@ -18,6 +18,8 @@ from pathlib import Path
 from bot_core.local_signing_custody import LocalSigningCustodyError
 
 _READ_CONTROL = 0x00020000
+_FILE_LIST_DIRECTORY = 0x00000001
+_FILE_READ_ATTRIBUTES = 0x00000080
 _REPARSE_POINT = 0x400
 _DIRECTORY = 0x10
 _INHERIT_ONLY = 0x08
@@ -178,7 +180,10 @@ def pinned_directory(directory: Path, *, create: bool = False):
                     path.mkdir()  # inherit installer/user protection, never repair ACLs
                 handle = files.CreateFile(
                     str(path),
-                    _READ_CONTROL | 0x80,
+                    # READ_ATTRIBUTES alone does not enforce Windows delete-sharing.
+                    # LIST_DIRECTORY activates CreateFileW sharing checks on all
+                    # pinned ancestors, without granting data mutation rights.
+                    _READ_CONTROL | _FILE_READ_ATTRIBUTES | _FILE_LIST_DIRECTORY,
                     0x1 | 0x2,
                     None,
                     3,
