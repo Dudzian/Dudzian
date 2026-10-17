@@ -338,6 +338,28 @@ def test_native_windows_detects_swap_between_path_check_and_open(tmp_path, monke
             pytest.fail("substituted object locked")
 
 
+@pytest.mark.skipif(os.name != "nt", reason="real Win32 directory sharing is required")
+def test_native_windows_directory_pin_denies_rename_and_removal_until_release(tmp_path):
+    from bot_core.windows_custody_filesystem import pinned_directory
+
+    # Do not create a lock file: a child-file pin must not accidentally satisfy
+    # the assertion intended for the directory chain's own CreateFileW handles.
+    directory = tmp_path / "owned-protected-directory"
+    directory.mkdir()
+    moved = tmp_path / "renamed-after-release"
+    with pinned_directory(directory):
+        for mutate in (lambda: directory.rename(moved), directory.rmdir):
+            with pytest.raises(OSError) as caught:
+                mutate()
+            assert caught.value.winerror in {5, 32}
+        assert directory.is_dir()
+        assert not moved.exists()
+
+    # Same token, same ACL, same operation after the last pin is closed.
+    directory.rename(moved)
+    moved.rmdir()
+
+
 @pytest.mark.skipif(os.name != "nt", reason="native NTFS share-delete exclusion")
 def test_native_windows_pins_directory_and_lock_against_replacement(tmp_path):
     directory = tmp_path / "custody"
@@ -598,7 +620,12 @@ def test_ntfs_directory_handles_pin_all_ancestors_without_share_delete(tmp_path,
     opened, closed = [], []
 
     def create(name, access, share, attributes, disposition, flags, template):
-        assert access & 0x20000 and share == 3 and disposition == 3
+        assert access == (
+            filesystem._READ_CONTROL
+            | filesystem._FILE_READ_ATTRIBUTES
+            | filesystem._FILE_LIST_DIRECTORY
+        )
+        assert share == 3 and disposition == 3
         assert flags & 0x200000 and flags & 0x2000000
         opened.append(name)
         return SimpleNamespace(Close=lambda: closed.append(name))
