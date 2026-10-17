@@ -257,7 +257,6 @@ def test_both_adapters_complete_actual_producer_issuer_and_live_lppi(
     assert not exchange.lppi.successor.calls
 
 
-
 def test_windows_session_lock_uses_real_pywin32_argument_shapes(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -306,6 +305,7 @@ def test_windows_session_lock_uses_real_pywin32_argument_shapes(
     with file_io._windows_session_lock(tmp_path):
         assert calls == ["locked"]
     assert calls == ["locked", "unlocked", "close"]
+
 
 def test_cli_failure_does_not_expose_artifacts_or_exception(monkeypatch, capsys):
     def fail(*arguments, **keywords):
