@@ -21,6 +21,7 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, TypeGuard
 
 from deployment import windows_stage9_postgresql_passive as passive_sql
+from deployment import windows_stage9_service_evidence as service_sql
 from deployment.windows_installer.contract import CONTRACT
 from deployment.windows_postgresql_auth_contract import (
     final_hba_lines,
@@ -96,7 +97,8 @@ $listeners = @(Get-NetTCPConnection -State Listen -ErrorAction Stop |
   ForEach-Object {
     $p = Get-CimInstance Win32_Process -Filter "ProcessId=$($_.OwningProcess)"
     @{address=$_.LocalAddress; port=[int]$_.LocalPort; process_id=[int]$_.OwningProcess;
-      process_path=$p.ExecutablePath; parent_process_id=[int]$p.ParentProcessId}
+      process_path=$p.ExecutablePath; parent_process_id=[int]$p.ParentProcessId;
+      process_started=$p.CreationDate.ToUniversalTime().ToString('o')}
   })
 @{
   os='Windows'; native_x64=([Environment]::Is64BitProcess -and
@@ -522,7 +524,11 @@ def _msi_product_code(msi: Path) -> str:
 
 
 def _collect_post_install(
-    msi: Path, *, include_readiness: bool = True, include_configuration: bool = False
+    msi: Path,
+    *,
+    include_readiness: bool = True,
+    include_configuration: bool = False,
+    include_service_evidence: bool = False,
 ) -> dict[str, Any]:
     observation = collect_host_observation()
     observation["qualified_product_code"] = _msi_product_code(msi)
@@ -579,10 +585,14 @@ def _collect_post_install(
         security.ConvertSidToStringSid(security.LookupAccountName(None, rf"NT SERVICE\{name}")[0])
         for name in SERVICES
     ]
-    # This process may read only its own service credentials, after independent
-    # native token/SCM checks. An administrator inspecting a clean base receives
-    # an opaque BLOCKED receipt without touching either client's private key.
-    observation["postgresql"]["effective_sql"] = passive_sql.collect_passive_postgresql(observation)
+    # Clean-base never contacts or starts the application services. Only the
+    # enrolled qualification path requests their native authenticated endpoints.
+    collector = (
+        service_sql.collect_service_postgresql
+        if include_service_evidence
+        else passive_sql.collect_passive_postgresql
+    )
+    observation["postgresql"]["effective_sql"] = collector(observation)
     return observation
 
 

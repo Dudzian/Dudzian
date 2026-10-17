@@ -13,7 +13,12 @@ from bot_core.freshness_semantic_verifier import (
     PostgreSQLRetainedCredentialResolver,
 )
 from deployment.windows_installer.contract import CONTRACT
-from deployment.windows_installer.service_base import build_smoke_requested, machine_root, run_service
+from deployment.windows_installer.service_base import (
+    build_smoke_requested,
+    machine_root,
+    run_service,
+)
+from deployment.windows_postgresql_auth_contract import probe_postgresql_role_denial
 
 SERVICE_NAME = "CryptoHunterFreshnessVerifier"
 
@@ -49,22 +54,18 @@ def _run(stop: threading.Event, report: object) -> None:
     security = machine_root() / "Security"
     client = security / "verifier"
     for forbidden_role in ("freshness_runtime", "postgres"):
-        try:
-            psycopg.connect(
-                host=CONTRACT.postgresql_host,
-                port=CONTRACT.postgresql_port,
-                dbname="freshness_gate",
-                user=forbidden_role,
-                sslmode="verify-full",
-                sslrootcert=str(security / "ca.crt"),
-                sslcert=str(client / "client.crt"),
-                sslkey=str(client / "client.key"),
-                connect_timeout=5,
-            )
-        except psycopg.Error:
-            pass
-        else:
-            raise RuntimeError(f"verifier certificate entered forbidden role: {forbidden_role}")
+        probe_postgresql_role_denial(
+            psycopg.connect,
+            role=forbidden_role,
+            host=CONTRACT.postgresql_host,
+            port=CONTRACT.postgresql_port,
+            dbname="freshness_gate",
+            sslmode="verify-full",
+            sslrootcert=str(security / "ca.crt"),
+            sslcert=str(client / "client.crt"),
+            sslkey=str(client / "client.key"),
+            connect_timeout=5,
+        )
     verifier = FreshnessSemanticVerifier(
         PostgreSQLRetainedCredentialResolver(connection),
         PostgreSQLPreparationWriter(connection),
