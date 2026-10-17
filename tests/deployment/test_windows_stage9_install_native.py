@@ -26,10 +26,19 @@ class Function:
 
 
 class Win32:
-    """POSIX-backed Win32 syscall stand-in, not a native security authority."""
+    """Portable Win32 syscall stand-in, never a native security authority.
+
+    Handles are logical IDs, not host file descriptors. Keeping POSIX fds open
+    made directory pins fail on Windows and /proc/self/fd fail on macOS; it
+    also prevented the path-replacement negative tests on Windows.
+    Identity is observed via the test filesystem at each operation so that a
+    replaced original is detected, while production still uses real Win32 pins.
+    """
 
     def __init__(self):
         self.handles = {}
+        self.positions = {}
+        self.next_handle = 100000
         self.calls = []
         self.fail = set()
         self.architecture = 9
@@ -53,14 +62,22 @@ class Win32:
             args[2]._obj.value = 123
         elif name == "CreateFileW":
             path, access, share, security, creation, flags, template = args
-            mode = os.O_RDWR if access & native._WRITE else os.O_RDONLY
+            target = Path(path)
             if creation == native._CREATE_NEW:
-                mode |= os.O_CREAT | os.O_EXCL
-            descriptor = os.open(path, mode, 0o600)
-            self.handles[descriptor] = (Path(path), access, share)
-            return descriptor
+                # No descriptor is held by the fake across the test: real
+                # Windows file handles would prohibit unlink/replacement
+                # operations intentionally exercised by these negative tests.
+                with target.open("xb"):
+                    pass
+            elif not target.exists() and not target.is_symlink():
+                raise FileNotFoundError(path)
+            handle = self.next_handle
+            self.next_handle += 1
+            self.handles[handle] = (target, access, share)
+            self.positions[handle] = 0
+            return handle
         elif name in {"GetFileInformationByHandle", "GetFileInformationByHandleEx"}:
-            metadata = os.fstat(args[0])
+            metadata = self.handles[args[0]][0].stat()
             if name == "GetFileInformationByHandle":
                 info = args[1]._obj
                 info.attributes = 16 if stat.S_ISDIR(metadata.st_mode) else 0
@@ -78,26 +95,38 @@ class Win32:
                 if self.handles[args[0]][0] in self.stable_ancestors:
                     basic.write = basic.change = 0
         elif name == "GetFinalPathNameByHandleW":
-            target = os.readlink(f"/proc/self/fd/{args[0]}")
-            args[1].value = "\\\\?\\" + target
+            # Path.resolve observes symlink targets on all three host OSes,
+            # without assuming Linux's /proc/self/fd is present.
+            target = str(self.handles[args[0]][0].resolve())
+            args[1].value = "\\?\" + target
             return len(args[1].value)
         elif name == "SetFilePointerEx":
-            os.lseek(args[0], args[1], args[3])
+            assert args[3] == 0  # Only FILE_BEGIN is used by the adapter.
+            self.positions[args[0]] = args[1]
         elif name == "ReadFile":
-            data = os.read(args[0], args[2])
+            with self.handles[args[0]][0].open("rb") as source:
+                source.seek(self.positions[args[0]])
+                data = source.read(args[2])
+            self.positions[args[0]] += len(data)
             ctypes.memmove(args[1], data, len(data))
             args[3]._obj.value = len(data)
         elif name == "WriteFile":
-            args[3]._obj.value = os.write(args[0], ctypes.string_at(args[1], args[2]))
+            data = ctypes.string_at(args[1], args[2])
+            with self.handles[args[0]][0].open("r+b") as target:
+                target.seek(self.positions[args[0]])
+                written = target.write(data)
+            self.positions[args[0]] += written
+            args[3]._obj.value = written
         elif name == "SetEndOfFile":
-            os.ftruncate(args[0], os.lseek(args[0], 0, os.SEEK_CUR))
+            with self.handles[args[0]][0].open("r+b") as target:
+                target.truncate(self.positions[args[0]])
         elif name == "FlushFileBuffers":
-            os.fsync(args[0])
+            pass  # Each simulated write already closes and flushes its file.
         elif name == "CreateDirectoryW":
             Path(args[0]).mkdir(mode=0o700)
         elif name == "CloseHandle":
-            os.close(args[0])
             self.handles.pop(args[0])
+            self.positions.pop(args[0])
         elif name != "LocalFree":
             raise AssertionError(f"unexpected native call {name}")
         return 1
