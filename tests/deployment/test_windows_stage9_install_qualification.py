@@ -94,7 +94,14 @@ def test_simulated_native_base_collects_without_runtime_markers(
     clean_base(facts)
     calls = []
 
-    def collect(msi: Path, *, include_readiness: bool, include_configuration: bool) -> Any:
+    def collect(
+        msi: Path,
+        *,
+        include_readiness: bool,
+        include_configuration: bool,
+        include_service_evidence: bool,
+    ) -> Any:
+        assert include_service_evidence is False
         calls.append((msi, include_readiness, include_configuration))
         return facts
 
@@ -215,7 +222,12 @@ def test_partial_passive_sql_cannot_complete_live_qualification(
     assert summary["components"]["effective_configuration"]["status"] == "PASS"
     facts["postgresql"]["effective_sql"] = json.loads(json.dumps(summary)) if exported else receipt
     monkeypatch.setattr(host, "collect_host_observation", lambda: facts)
-    monkeypatch.setattr(host, "_collect_post_install", lambda *args, **kwargs: facts)
+
+    def collect(*args: Any, **kwargs: Any) -> Any:
+        assert kwargs["include_service_evidence"] is enrolled
+        return facts
+
+    monkeypatch.setattr(host, "_collect_post_install", collect)
     monkeypatch.setattr(host, "_powershell", lambda _: facts["final_services"])
     monkeypatch.setattr(
         qualification,
@@ -547,6 +559,11 @@ def test_native_collector_can_skip_readiness_and_collect_static_configuration(
         "invalid readiness must not be read", encoding="utf-8"
     )
     facts = {"paths": {"program_files": str(root), "program_data": str(machine)}}
+    monkeypatch.setattr(
+        host.service_sql,
+        "collect_service_postgresql",
+        lambda *_: pytest.fail("clean-base cannot contact application evidence endpoints"),
+    )
     monkeypatch.setattr(host, "collect_host_observation", lambda: facts)
     monkeypatch.setattr(host, "_msi_product_code", lambda _: "qualified-code")
     monkeypatch.setattr(host, "_powershell", lambda *args, **kwargs: {})

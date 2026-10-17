@@ -1,11 +1,14 @@
 """Side-effect-free dependency contract for production Windows executables."""
 
 REQUIRED_WIN32_MODULES = (
+    "pywintypes",
     "servicemanager",
     "win32api",
     "win32con",
     "win32event",
+    "win32file",
     "win32job",
+    "win32pipe",
     "win32process",
     "win32security",
     "win32service",

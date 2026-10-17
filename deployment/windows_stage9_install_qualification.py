@@ -157,7 +157,10 @@ def _qualify(
     try:
         facts = (
             host._collect_post_install(
-                qualified_msi, include_readiness=enrolled, include_configuration=True
+                qualified_msi,
+                include_readiness=enrolled,
+                include_configuration=True,
+                include_service_evidence=enrolled,
             )
             if live
             else observation

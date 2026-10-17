@@ -6,13 +6,17 @@ import os
 import threading
 import psycopg
 from deployment.windows_installer.service_base import (
-    build_smoke_requested, machine_root, run_service, service_logger
+    build_smoke_requested,
+    machine_root,
+    run_service,
+    service_logger,
 )
 from deployment.windows_installer.contract import CONTRACT
 from deployment.windows_installer.corehost_composition import (
     build_production_core_host,
     load_windows_external_provisioning_handoff,
 )
+from deployment.windows_postgresql_auth_contract import probe_postgresql_role_denial
 
 SERVICE_NAME = "CryptoHunterBackend"
 
@@ -38,22 +42,18 @@ def _run(stop: threading.Event, report: object) -> None:
         ):
             raise RuntimeError("backend database identity differs")
     for forbidden_role in ("freshness_crypto_verifier", "postgres"):
-        try:
-            psycopg.connect(
-                host=CONTRACT.postgresql_host,
-                port=CONTRACT.postgresql_port,
-                dbname="freshness_gate",
-                user=forbidden_role,
-                sslmode="verify-full",
-                sslrootcert=str(security / "ca.crt"),
-                sslcert=str(client / "client.crt"),
-                sslkey=str(client / "client.key"),
-                connect_timeout=5,
-            )
-        except psycopg.Error:
-            pass
-        else:
-            raise RuntimeError(f"runtime certificate entered forbidden role: {forbidden_role}")
+        probe_postgresql_role_denial(
+            psycopg.connect,
+            role=forbidden_role,
+            host=CONTRACT.postgresql_host,
+            port=CONTRACT.postgresql_port,
+            dbname="freshness_gate",
+            sslmode="verify-full",
+            sslrootcert=str(security / "ca.crt"),
+            sslcert=str(client / "client.crt"),
+            sslkey=str(client / "client.key"),
+            connect_timeout=5,
+        )
     try:
         (security / "verifier" / "client.key").read_bytes()
     except OSError:

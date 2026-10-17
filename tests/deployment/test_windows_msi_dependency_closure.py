@@ -68,11 +68,14 @@ def test_required_surface_covers_all_production_pywin32_imports() -> None:
     used = {name for name in imported if name == "servicemanager" or name.startswith("win32")}
     assert used <= set(REQUIRED_WIN32_MODULES)
     assert set(REQUIRED_WIN32_MODULES) == {
+        "pywintypes",
         "servicemanager",
         "win32api",
         "win32con",
         "win32event",
+        "win32file",
         "win32job",
+        "win32pipe",
         "win32process",
         "win32security",
         "win32service",

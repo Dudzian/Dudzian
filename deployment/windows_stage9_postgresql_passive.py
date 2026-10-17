@@ -564,7 +564,9 @@ def _query_error(exc: Exception) -> dict[str, str]:
     return _result("BLOCKED", "bounded SQL read failed; no authentication denial is inferred")
 
 
-def _collect_sql(connection: Any, binding: dict[str, Any]) -> dict[str, dict[str, str]]:
+def _collect_sql(
+    connection: Any, binding: dict[str, Any], *, witness: dict[str, Any] | None = None
+) -> dict[str, dict[str, str]]:
     components = _blocked_components("required approved SQL evidence is unavailable")
     components["active_hba"] = _result(
         "BLOCKED", "parsed pg_hba_file_rules does not prove the HBA loaded by the postmaster"
@@ -632,6 +634,10 @@ def _collect_sql(connection: Any, binding: dict[str, Any]) -> dict[str, dict[str
         "PASS",
         f"only current identity {binding['identity']} authenticated as {role}; second identity unavailable",
     )
+    if witness is not None:
+        witness["postmaster_started"] = (
+            identity[6].isoformat() if isinstance(identity[6], datetime) else identity[6]
+        )
     try:
         directory = _one(connection, _DATA_SQL, 1)[0]
         system_id = _one(connection, _CONTROL_SQL, 1)[0]
@@ -656,6 +662,9 @@ def _collect_sql(connection: Any, binding: dict[str, Any]) -> dict[str, dict[str
             "PASS",
             f"canonical data directory {directory}; stable control-system identifier {system_id}",
         )
+        if witness is not None:
+            witness["system_identifier"] = system_id
+            witness["data_directory"] = directory
     except Exception as exc:
         components["instance_identity"] = _query_error(exc)
     try:
@@ -783,6 +792,11 @@ def summarize_passive_postgresql(receipt: Any, observation: dict[str, Any]) -> d
             ] == _binding_fingerprint(observation)
         except PassivePostgreSQLError:
             valid = False
+    if valid and record is not None and callable(record.get("validator")):
+        try:
+            record["validator"]()
+        except Exception:
+            valid = False
     if not valid or record is None:
         return {
             "source": "unverified",
@@ -796,7 +810,7 @@ def summarize_passive_postgresql(receipt: Any, observation: dict[str, Any]) -> d
         }
     components = copy.deepcopy(record["components"])
     return {
-        "source": "live_passive_postgresql",
+        "source": record.get("source", "live_passive_postgresql"),
         "status": _overall(components),
         "binding_sha256": record["fingerprint"],
         "identity": record["identity"],
