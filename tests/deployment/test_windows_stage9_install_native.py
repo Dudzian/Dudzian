@@ -98,7 +98,7 @@ class Win32:
             # Path.resolve observes symlink targets on all three host OSes,
             # without assuming Linux's /proc/self/fd is present.
             target = str(self.handles[args[0]][0].resolve())
-            args[1].value = "\\?\" + target
+            args[1].value = "\\\\?\\" + target
             return len(args[1].value)
         elif name == "SetFilePointerEx":
             assert args[3] == 0  # Only FILE_BEGIN is used by the adapter.
