@@ -20,6 +20,7 @@ from datetime import datetime
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, TypeGuard
 
+from deployment import windows_stage9_postgresql_passive as passive_sql
 from deployment.windows_installer.contract import CONTRACT
 from deployment.windows_postgresql_auth_contract import (
     final_hba_lines,
@@ -531,9 +532,6 @@ def _collect_post_install(
     observation["postgresql"] = {
         "hba_lines": (data / "pg_hba.conf").read_text(encoding="utf-8").splitlines(),
         "ident_lines": (data / "pg_ident.conf").read_text(encoding="utf-8").splitlines(),
-        # Static files cannot establish effective server settings/roles. PRE-01B.2
-        # needs the existing service-token read-only SQL authority adapter.
-        "effective_sql": None,
     }
     if include_configuration:
         for name in ("postgresql.conf", "postgresql.auto.conf"):
@@ -581,6 +579,10 @@ def _collect_post_install(
         security.ConvertSidToStringSid(security.LookupAccountName(None, rf"NT SERVICE\{name}")[0])
         for name in SERVICES
     ]
+    # This process may read only its own service credentials, after independent
+    # native token/SCM checks. An administrator inspecting a clean base receives
+    # an opaque BLOCKED receipt without touching either client's private key.
+    observation["postgresql"]["effective_sql"] = passive_sql.collect_passive_postgresql(observation)
     return observation
 
 
@@ -678,10 +680,23 @@ def _postgresql_static(observation: dict[str, Any]) -> None:
         )
 
 
-def _postgresql_effective(observation: dict[str, Any]) -> None:
+def _postgresql_effective(observation: dict[str, Any], *, require_live: bool = True) -> None:
     """Require actual service-token SQL evidence in addition to static files."""
     value = observation.get("postgresql")
     effective = value.get("effective_sql") if isinstance(value, dict) else None
+    if require_live:
+        summary = passive_sql.summarize_passive_postgresql(effective, observation)
+        if any(result["status"] == "FAIL" for result in summary["components"].values()):
+            raise HostInspectionError("passive PostgreSQL evidence differs")
+        for component in passive_sql.COMPONENTS:
+            try:
+                passive_sql.require_passive_postgresql_component(effective, observation, component)
+            except passive_sql.PassivePostgreSQLError as exc:
+                suffix = " unavailable" if exc.status != "FAIL" else " differs"
+                raise HostInspectionError("passive PostgreSQL " + component + suffix) from exc
+        return
+    # Retain saved-fact schema checks solely for rehearsal consistency. Public
+    # entry points downgrade these to UNVERIFIED; live calls require a receipt.
     if not isinstance(effective, dict):
         raise HostInspectionError(
             "effective service-token PostgreSQL SQL/role evidence is unavailable"
@@ -744,9 +759,25 @@ def _postgresql_configuration(observation: dict[str, Any]) -> None:
         raise HostInspectionError("PostgreSQL static endpoint/TLS settings are incomplete")
 
 
-def _postgresql(observation: dict[str, Any]) -> None:
+def _report_postgresql_evidence(report: dict[str, Any], observation: dict[str, Any]) -> None:
+    """Export provenance and capability gaps without making JSON an authority."""
+    value = observation.get("postgresql")
+    receipt = value.get("effective_sql") if isinstance(value, dict) else None
+    summary = passive_sql.summarize_passive_postgresql(receipt, observation)
+    report["postgresql_evidence"] = summary
+    missing = []
+    for name, result in summary["components"].items():
+        if result["status"] != "PASS":
+            missing.append("passive PostgreSQL " + name)
+        if report["evidence_mode"] == "live":
+            _check(report, "postgresql_" + name, result["status"], result["detail"])
+    if missing:
+        report["missing_authorities"] = missing
+
+
+def _postgresql(observation: dict[str, Any], *, require_live: bool = True) -> None:
     _postgresql_static(observation)
-    _postgresql_effective(observation)
+    _postgresql_effective(observation, require_live=require_live)
 
 
 def _readiness(observation: dict[str, Any], root: str) -> None:
@@ -850,7 +881,8 @@ def verify_post_install(
 
     This never starts backend/verifier or changes Demand startup. A normal fresh
     MSI remains BLOCKED on runtime readiness pending the separate legal path.
-    Native effective SQL qualification remains a PRE-01B.2 integration boundary.
+    Passive SQL receipts expose partial capabilities. Both genuine service
+    identities and active-authentication authority remain required separately.
     """
     report = _report("windows-stage9-passive-post-install", live)
     if live and observation is not None:
@@ -923,7 +955,7 @@ def verify_post_install(
             ),
         ),
         ("scm_configuration", lambda: _services(facts, root)),
-        ("postgresql", lambda: _postgresql(facts)),
+        ("postgresql", lambda: _postgresql(facts, require_live=live)),
         ("product_acl", lambda: _product_acl(facts)),
         ("runtime_readiness", lambda: _readiness(facts, root)),
     )
@@ -946,6 +978,7 @@ def verify_post_install(
                 "BLOCKED" if missing else "FAIL",
                 f"Passive verification failed ({type(exc).__name__}).",
             )
+    _report_postgresql_evidence(report, facts)
     enrollment = facts.get("enrollment")
     if (
         not isinstance(enrollment, dict)

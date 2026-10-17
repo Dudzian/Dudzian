@@ -90,6 +90,51 @@ def acl_tree(root: str) -> dict[str, Any]:
     }
 
 
+def saved_sql_claim(facts: dict[str, Any], kind: str) -> dict[str, Any]:
+    if kind == "legacy":
+        return copy.deepcopy(facts["postgresql"]["effective_sql"])
+    # Reports are serializable explanations, including when callers add plausible
+    # PASS/provenance claims. Neither their shape nor their values are authority.
+    summary = json.loads(json.dumps(host.passive_sql.summarize_passive_postgresql(None, facts)))
+    if kind == "forged_summary":
+        summary["status"] = "PASS"
+        summary["source"] = "live_passive_postgresql"
+        summary["identity"] = CONTRACT.backend_service
+        summary["role"] = "freshness_runtime"
+        summary["provenance"] = {
+            "source": "native-current-service-token",
+            "evidence_mode": "live",
+            "authenticated": True,
+        }
+        for component in summary["components"].values():
+            component["status"] = "PASS"
+    return summary
+
+
+def simulated_partial_sql_receipt(facts: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> Any:
+    """Exercise receipt/report plumbing without native tokens, SQL or service starts."""
+    monkeypatch.setattr(
+        host.passive_sql,
+        "_native_binding",
+        lambda _: {"identity": CONTRACT.backend_service, "role": "freshness_runtime"},
+    )
+    monkeypatch.setattr(host.passive_sql, "_connect", lambda _: SimpleNamespace(close=lambda: None))
+    monkeypatch.setattr(
+        host.passive_sql,
+        "_collect_sql",
+        lambda *args: {
+            name: {
+                "status": "BLOCKED"
+                if name in {"active_hba", "cross_role_authentication"}
+                else "PASS",
+                "detail": "Simulated partial SQL evidence for integration testing.",
+            }
+            for name in host.passive_sql.COMPONENTS
+        },
+    )
+    return host.passive_sql.collect_passive_postgresql(facts)
+
+
 @pytest.fixture
 def installed(tmp_path: Path) -> tuple[dict[str, Any], tuple[Path, Path, Path], dict[str, Any]]:
     facts = fresh()
@@ -489,6 +534,80 @@ def test_post_install_host_access_and_snapshot_in_live_mode_fail_closed(
     assert host.verify_post_install(*paths, observation=facts, **arguments)["status"] == "BLOCKED"
 
 
+@pytest.mark.parametrize("kind", ["legacy", "exported_summary", "forged_summary"])
+def test_live_post_install_rejects_saved_sql_claims_from_collector_seam(
+    installed: Any, monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:
+    facts, paths, arguments = installed
+    facts["postgresql"]["effective_sql"] = saved_sql_claim(facts, kind)
+    initial_services = copy.deepcopy(facts["services"])
+    monkeypatch.setattr(host, "_collect_post_install", lambda _: facts)
+    monkeypatch.setattr(host, "_powershell", lambda _: facts["final_services"])
+    monkeypatch.setattr(
+        host,
+        "Path",
+        lambda value: Path(facts["payload_root"])
+        if value == facts["paths"]["program_files"]
+        else Path(value),
+    )
+    monkeypatch.setattr(
+        host.subprocess,
+        "run",
+        lambda *args, **kwargs: pytest.fail("passive qualification cannot start processes"),
+    )
+    report = host.verify_post_install(*paths, live=True, **arguments)
+    assert report["status"] == "BLOCKED", report
+    assert (
+        next(item for item in report["checks"] if item["name"] == "postgresql")["status"]
+        == "BLOCKED"
+    )
+    assert all(
+        component["status"] != "PASS"
+        for component in report["postgresql_evidence"]["components"].values()
+    )
+    assert report["missing_authorities"]
+    assert facts["services"] == initial_services
+    assert report["run_stage10"] is False
+
+
+@pytest.mark.parametrize("exported", [False, True])
+def test_partial_passive_sql_cannot_complete_live_post_install(
+    installed: Any, monkeypatch: pytest.MonkeyPatch, exported: bool
+) -> None:
+    facts, paths, arguments = installed
+    receipt = simulated_partial_sql_receipt(facts, monkeypatch)
+    summary = host.passive_sql.summarize_passive_postgresql(receipt, facts)
+    assert summary["components"]["effective_configuration"]["status"] == "PASS"
+    facts["postgresql"]["effective_sql"] = json.loads(json.dumps(summary)) if exported else receipt
+    monkeypatch.setattr(host, "_collect_post_install", lambda _: facts)
+    monkeypatch.setattr(host, "_powershell", lambda _: facts["final_services"])
+    monkeypatch.setattr(
+        host,
+        "Path",
+        lambda value: Path(facts["payload_root"])
+        if value == facts["paths"]["program_files"]
+        else Path(value),
+    )
+    monkeypatch.setattr(
+        host.subprocess,
+        "run",
+        lambda *args, **kwargs: pytest.fail("passive qualification cannot start processes"),
+    )
+    report = host.verify_post_install(*paths, live=True, **arguments)
+    assert report["status"] == "BLOCKED", report
+    components = report["postgresql_evidence"]["components"]
+    if exported:
+        assert all(item["status"] == "UNVERIFIED" for item in components.values())
+    else:
+        assert components["effective_configuration"]["status"] == "PASS"
+        assert components["active_hba"]["status"] == "BLOCKED"
+        assert components["cross_role_authentication"]["status"] == "BLOCKED"
+        assert set(report["missing_authorities"]) == {
+            "passive PostgreSQL active_hba",
+            "passive PostgreSQL cross_role_authentication",
+        }
+
+
 @pytest.mark.parametrize(
     "expected",
     [
@@ -757,7 +876,12 @@ def test_post_collector_uses_only_passive_product_qualifier(
     result = host._collect_post_install(paths[0])
     assert reads == [(root, machine)]
     assert result["product_dacl"] == "PASS"
-    assert result["postgresql"]["effective_sql"] is None
+    summary = host.passive_sql.summarize_passive_postgresql(
+        result["postgresql"]["effective_sql"], result
+    )
+    assert all(item["status"] != "PASS" for item in summary["components"].values())
+    assert result["postgresql"]["effective_sql"] is not None
+    assert not isinstance(result["postgresql"]["effective_sql"], dict)
     assert CONTRACT.backend_service in result["readiness"]
     assert CONTRACT.verifier_service not in result["readiness"]
     assert set(result["acl_trees"]) == {"program_files", "program_data"}

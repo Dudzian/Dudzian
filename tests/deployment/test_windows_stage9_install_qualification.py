@@ -111,10 +111,24 @@ def test_simulated_native_base_collects_without_runtime_markers(
     report = qualification.qualify_clean_base_installation(*paths, live=True, **arguments)
     assert report["status"] == "BLOCKED", report
     assert check(report, "postgresql_effective_sql")["status"] == "BLOCKED"
+    for name in (
+        "qualified_inputs",
+        "installed_files",
+        "msi_registration",
+        "artifact_provenance",
+        "scm_configuration",
+        "postgresql_static",
+        "postgresql_static_configuration",
+        "product_acl",
+        "base_services_stopped",
+        "enrollment_absent",
+        "qualified_input_stability",
+        "final_scm_process_identity",
+    ):
+        assert check(report, name)["status"] == "PASS", report
     assert all(
-        item["status"] == "PASS"
-        for item in report["checks"]
-        if item["name"] != "postgresql_effective_sql"
+        component["status"] != "PASS"
+        for component in report["postgresql_evidence"]["components"].values()
     )
     assert calls == [(paths[0], False, True)]
     assert report["stage10"] == "BLOCKED / NOT_RUN"
@@ -135,6 +149,100 @@ def test_live_phase_rejects_saved_facts_before_collection(
     report = qualifier(*paths, live=True, observation=facts, **arguments)
     assert report["status"] == "FAIL"
     assert check(report, "live_collection")["status"] == "FAIL"
+
+
+@pytest.mark.parametrize("enrolled", [False, True])
+@pytest.mark.parametrize("kind", ["legacy", "exported_summary", "forged_summary"])
+def test_live_phase_rejects_saved_sql_claims_from_collector_seam(
+    installed: Any, monkeypatch: pytest.MonkeyPatch, enrolled: bool, kind: str
+) -> None:
+    facts, paths, arguments = installed
+    claim = host_tests.saved_sql_claim(facts, kind)
+    if enrolled:
+        monkeypatch.setattr(qualification, "_confirmed_legal_enrollment", lambda _: None)
+        facts["services"][1]["start_type"] = 2
+        facts["final_services"] = copy.deepcopy(facts["services"])
+    else:
+        clean_base(facts)
+    facts["postgresql"]["effective_sql"] = claim
+    initial_services = copy.deepcopy(facts["services"])
+    monkeypatch.setattr(host, "collect_host_observation", lambda: facts)
+    monkeypatch.setattr(host, "_collect_post_install", lambda *args, **kwargs: facts)
+    monkeypatch.setattr(host, "_powershell", lambda _: facts["final_services"])
+    monkeypatch.setattr(
+        qualification,
+        "Path",
+        lambda value: Path(facts["payload_root"])
+        if value == facts["paths"]["program_files"]
+        else Path(value),
+    )
+    no_processes(monkeypatch)
+    qualifier = (
+        qualification.qualify_enrolled_runtime
+        if enrolled
+        else qualification.qualify_clean_base_installation
+    )
+    report = qualifier(*paths, live=True, **arguments)
+    assert report["status"] == "BLOCKED", report
+    assert check(report, "postgresql_effective_sql")["status"] == "BLOCKED"
+    assert all(
+        component["status"] != "PASS"
+        for component in report["postgresql_evidence"]["components"].values()
+    )
+    assert report["missing_authorities"]
+    assert facts["services"] == initial_services
+    assert report["run_stage10"] is False
+    if not enrolled:
+        assert check(report, "base_services_stopped")["status"] == "PASS"
+        assert all(service["start_type"] == 3 for service in facts["services"][1:])
+
+
+@pytest.mark.parametrize("enrolled", [False, True])
+@pytest.mark.parametrize("exported", [False, True])
+def test_partial_passive_sql_cannot_complete_live_qualification(
+    installed: Any, monkeypatch: pytest.MonkeyPatch, enrolled: bool, exported: bool
+) -> None:
+    facts, paths, arguments = installed
+    if enrolled:
+        monkeypatch.setattr(qualification, "_confirmed_legal_enrollment", lambda _: None)
+        facts["services"][1]["start_type"] = 2
+        facts["final_services"] = copy.deepcopy(facts["services"])
+    else:
+        clean_base(facts)
+    initial_services = copy.deepcopy(facts["services"])
+    receipt = host_tests.simulated_partial_sql_receipt(facts, monkeypatch)
+    summary = host.passive_sql.summarize_passive_postgresql(receipt, facts)
+    assert summary["components"]["effective_configuration"]["status"] == "PASS"
+    facts["postgresql"]["effective_sql"] = json.loads(json.dumps(summary)) if exported else receipt
+    monkeypatch.setattr(host, "collect_host_observation", lambda: facts)
+    monkeypatch.setattr(host, "_collect_post_install", lambda *args, **kwargs: facts)
+    monkeypatch.setattr(host, "_powershell", lambda _: facts["final_services"])
+    monkeypatch.setattr(
+        qualification,
+        "Path",
+        lambda value: Path(facts["payload_root"])
+        if value == facts["paths"]["program_files"]
+        else Path(value),
+    )
+    no_processes(monkeypatch)
+    qualifier = (
+        qualification.qualify_enrolled_runtime
+        if enrolled
+        else qualification.qualify_clean_base_installation
+    )
+    report = qualifier(*paths, live=True, **arguments)
+    assert report["status"] == "BLOCKED", report
+    assert check(report, "postgresql_effective_sql")["status"] == "BLOCKED"
+    assert check(report, "postgresql_effective_configuration")["status"] == (
+        "UNVERIFIED" if exported else "PASS"
+    )
+    assert check(report, "postgresql_active_hba")["status"] != "PASS"
+    assert check(report, "postgresql_cross_role_authentication")["status"] != "PASS"
+    assert facts["services"] == initial_services
+    assert report["stage10"] == "BLOCKED / NOT_RUN"
+    if not enrolled:
+        assert check(report, "base_services_stopped")["status"] == "PASS"
+        assert all(service["start_type"] == 3 for service in facts["services"][1:])
 
 
 @pytest.mark.parametrize("index", range(3))
@@ -459,7 +567,12 @@ def test_native_collector_can_skip_readiness_and_collect_static_configuration(
     assert result["readiness"] == {}
     assert result["postgresql"]["postgresql.conf"] == ["# static configuration"]
     assert result["postgresql"]["postgresql.auto.conf"] == ["# static configuration"]
-    assert result["postgresql"]["effective_sql"] is None
+    summary = host.passive_sql.summarize_passive_postgresql(
+        result["postgresql"]["effective_sql"], result
+    )
+    assert all(item["status"] != "PASS" for item in summary["components"].values())
+    assert result["postgresql"]["effective_sql"] is not None
+    assert not isinstance(result["postgresql"]["effective_sql"], dict)
 
 
 @pytest.mark.parametrize("value", [None, [], "PASS", {"effective_sql": None}])
