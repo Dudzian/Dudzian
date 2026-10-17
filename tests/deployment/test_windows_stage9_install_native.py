@@ -33,6 +33,8 @@ class Win32:
     also prevented the path-replacement negative tests on Windows.
     Identity is observed via the test filesystem at each operation so that a
     replaced original is detected, while production still uses real Win32 pins.
+    Access/share modes, protected DACLs and reparse-point opens are not enforced;
+    these tests prove control flow, not native Windows security semantics.
     """
 
     def __init__(self):
@@ -213,6 +215,33 @@ def test_windows_native_adapter_layout_and_x64_boundary(win32):
     win32.architecture = 12
     with pytest.raises(native.NativeInstallationUnavailable, match="AMD64"):
         native._Native()
+
+
+@pytest.mark.parametrize("failed_handle", [None, ctypes.c_void_p(-1).value])
+def test_createfile_error_is_captured_before_security_descriptor_cleanup(
+    tmp_path, monkeypatch, win32, failed_handle
+):
+    last_error = [0]
+    freed = []
+
+    def create_file(*_arguments):
+        last_error[0] = 32  # ERROR_SHARING_VIOLATION
+        return failed_handle
+
+    def local_free(descriptor):
+        freed.append(descriptor.value)
+        last_error[0] = 5  # Cleanup must not replace CreateFileW's error.
+        return None
+
+    monkeypatch.setattr(win32, "CreateFileW", Function(create_file))
+    monkeypatch.setattr(win32, "LocalFree", Function(local_free))
+    monkeypatch.setattr(ctypes, "get_last_error", lambda: last_error[0])
+    with pytest.raises(OSError) as error:
+        native._Native().open(tmp_path / "protected")
+    assert error.value.errno == 32
+    assert freed == [123]
+    assert last_error[0] == 5
+    assert win32.handles == {}
 
 
 def test_off_windows_has_no_native_or_process_fallback(monkeypatch):

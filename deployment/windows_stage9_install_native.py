@@ -263,8 +263,10 @@ class _Native:
                 _OPEN_REPARSE_POINT | _BACKUP_SEMANTICS,
                 None,
             )
-        if handle in {None, ctypes.c_void_p(-1).value}:
-            raise self._failure()
+            # Capture CreateFileW's error before descriptor cleanup can change
+            # the thread's last-error value.
+            if handle in {None, ctypes.c_void_p(-1).value}:
+                raise self._failure()
         return int(handle)
 
     def close(self, handle: int) -> None:
