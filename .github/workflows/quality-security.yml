@@ -75,7 +75,7 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e ".[test]" "ruff==0.14.11" "mypy==1.10.0" "diff-cover>=9,<10"
       - name: Ruff baseline gate
-        run: python -m ruff check bot_core core scripts tests deploy stage6_samples ui deployment/windows_production_cha_operation.py deployment/windows_production_cha_account_reservation.py deployment/windows_runner_acl.py deployment/windows_stage9_handoff.py deployment/windows_stage9_host_inspection.py deployment/windows_stage9_install_preparation.py deployment/windows_stage9_operator_approval.py deployment/windows_stage10_preflight.py deployment/windows_stage10_artifact_preflight.py deployment/windows_stage10_runner_preflight.py deployment/platform_evidence.py
+        run: python -m ruff check bot_core core scripts tests deploy stage6_samples ui deployment/windows_production_cha_operation.py deployment/windows_production_cha_account_reservation.py deployment/windows_runner_acl.py deployment/windows_stage9_handoff.py deployment/windows_stage9_host_inspection.py deployment/windows_stage9_install_preparation.py deployment/windows_stage9_install_executor.py deployment/windows_stage9_install_native.py deployment/windows_stage9_install_qualification.py deployment/windows_stage9_operator_approval.py deployment/windows_stage10_preflight.py deployment/windows_stage10_artifact_preflight.py deployment/windows_stage10_runner_preflight.py deployment/platform_evidence.py
       - name: Format Stage 9 signing and credential substrate
         run: >-
           python -m ruff format --check
@@ -83,6 +83,9 @@ jobs:
           deployment/windows_stage9_handoff.py
           deployment/windows_stage9_host_inspection.py
           deployment/windows_stage9_install_preparation.py
+          deployment/windows_stage9_install_executor.py
+          deployment/windows_stage9_install_native.py
+          deployment/windows_stage9_install_qualification.py
           deployment/windows_stage9_operator_approval.py
           deployment/windows_stage10_preflight.py
           deployment/windows_stage10_artifact_preflight.py
@@ -179,6 +182,7 @@ jobs:
         run: python -m mypy
       - name: Mypy Windows configured scope
         run: python -m mypy --platform win32
+      # PRE executor tests replace native custody, console and process boundaries.
       - name: Property and critical pure-logic tests with branch coverage
         env:
           HYPOTHESIS_PROFILE: ci
@@ -211,6 +215,9 @@ jobs:
           tests/deployment/test_windows_stage9_handoff.py
           tests/deployment/test_windows_stage9_host_inspection.py
           tests/deployment/test_windows_stage9_install_preparation.py
+          tests/deployment/test_windows_stage9_install_executor.py
+          tests/deployment/test_windows_stage9_install_native.py
+          tests/deployment/test_windows_stage9_install_qualification.py
           tests/deployment/test_windows_stage9_operator_approval.py
           tests/deployment/test_windows_stage10_preflight.py
           tests/deployment/test_windows_stage10_artifact_preflight.py
@@ -258,6 +265,9 @@ jobs:
           --cov=deployment.windows_stage9_handoff
           --cov=deployment.windows_stage9_host_inspection
           --cov=deployment.windows_stage9_install_preparation
+          --cov=deployment.windows_stage9_install_executor
+          --cov=deployment.windows_stage9_install_native
+          --cov=deployment.windows_stage9_install_qualification
           --cov=deployment.windows_stage9_operator_approval
           --cov=deployment.windows_stage10_preflight
           --cov=deployment.windows_stage10_artifact_preflight

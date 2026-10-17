@@ -520,7 +520,9 @@ def _msi_product_code(msi: Path) -> str:
     return code
 
 
-def _collect_post_install(msi: Path) -> dict[str, Any]:
+def _collect_post_install(
+    msi: Path, *, include_readiness: bool = True, include_configuration: bool = False
+) -> dict[str, Any]:
     observation = collect_host_observation()
     observation["qualified_product_code"] = _msi_product_code(msi)
     paths = observation["paths"]
@@ -533,10 +535,22 @@ def _collect_post_install(msi: Path) -> dict[str, Any]:
         # needs the existing service-token read-only SQL authority adapter.
         "effective_sql": None,
     }
+    if include_configuration:
+        for name in ("postgresql.conf", "postgresql.auto.conf"):
+            path = data / name
+            digest = _sha(path)
+            lines = path.read_text(encoding="utf-8").splitlines()
+            if _sha(path) != digest:
+                raise HostInspectionError("PostgreSQL static configuration changed during reading")
+            observation["postgresql"][name] = lines
     readiness = {}
     for service, relative in (
-        (CONTRACT.backend_service, "backend-readiness.json"),
-        (CONTRACT.verifier_service, "Verifier/verifier-readiness.json"),
+        (
+            (CONTRACT.backend_service, "backend-readiness.json"),
+            (CONTRACT.verifier_service, "Verifier/verifier-readiness.json"),
+        )
+        if include_readiness
+        else ()
     ):
         path = machine / "Runtime" / relative
         if path.exists():
@@ -570,7 +584,9 @@ def _collect_post_install(msi: Path) -> dict[str, Any]:
     return observation
 
 
-def _services(observation: dict[str, Any], root: str) -> None:
+def _services(
+    observation: dict[str, Any], root: str, *, enrolled: bool = False, clean_base: bool = False
+) -> None:
     values = observation.get("services")
     if not isinstance(values, list) or len(values) != len(SERVICES):
         raise HostInspectionError("exactly the three canonical services are required")
@@ -593,7 +609,13 @@ def _services(observation: dict[str, Any], root: str) -> None:
             )
             or value.get("account") != rf"NT SERVICE\{name}"
             or value.get("service_type") != 16
-            or value.get("start_type") != (2 if name == CONTRACT.postgresql_service else 3)
+            or value.get("start_type")
+            != (
+                2
+                if name == CONTRACT.postgresql_service
+                or (enrolled and name == CONTRACT.backend_service)
+                else 3
+            )
             or value.get("dependencies")
             != ([CONTRACT.postgresql_service] if name == CONTRACT.backend_service else [])
         ):
@@ -604,7 +626,7 @@ def _services(observation: dict[str, Any], root: str) -> None:
         actions = recovery.get("Actions")
         if recovery.get("Command") not in (None, "") or recovery.get("RebootMsg") not in (None, ""):
             raise HostInspectionError("SCM recovery contains a command or reboot policy")
-        if name == CONTRACT.backend_service:
+        if name == CONTRACT.backend_service and not clean_base:
             if (
                 recovery.get("ResetPeriod") != 86400
                 or not isinstance(actions, (list, tuple))
@@ -618,7 +640,8 @@ def _services(observation: dict[str, Any], root: str) -> None:
             raise HostInspectionError("unexpected service recovery actions")
 
 
-def _postgresql(observation: dict[str, Any]) -> None:
+def _postgresql_static(observation: dict[str, Any]) -> None:
+    """Check static auth boundaries and the native private PostgreSQL listener."""
     value = observation["postgresql"]
     if value.get("hba_lines") != list(final_hba_lines("freshness_gate")) or value.get(
         "ident_lines"
@@ -653,7 +676,12 @@ def _postgresql(observation: dict[str, Any]) -> None:
         raise HostInspectionError(
             "private PostgreSQL must have only the canonical loopback listener"
         )
-    effective = value.get("effective_sql")
+
+
+def _postgresql_effective(observation: dict[str, Any]) -> None:
+    """Require actual service-token SQL evidence in addition to static files."""
+    value = observation.get("postgresql")
+    effective = value.get("effective_sql") if isinstance(value, dict) else None
     if not isinstance(effective, dict):
         raise HostInspectionError(
             "effective service-token PostgreSQL SQL/role evidence is unavailable"
@@ -671,6 +699,54 @@ def _postgresql(observation: dict[str, Any]) -> None:
         or effective.get("cross_roles_denied") is not True
     ):
         raise HostInspectionError("effective PostgreSQL service role separation differs")
+
+
+def _postgresql_configuration(observation: dict[str, Any]) -> None:
+    """Qualify the static endpoint/TLS settings installed by _configure_database.
+
+    This deliberately cannot establish the server's effective configuration:
+    service-token SQL qualification remains a separate, required gate.
+    """
+    value = observation["postgresql"]
+    configuration = value.get("postgresql.conf")
+    automatic = value.get("postgresql.auto.conf")
+    if (
+        not isinstance(configuration, list)
+        or not isinstance(automatic, list)
+        or any(not isinstance(line, str) for line in [*configuration, *automatic])
+    ):
+        raise HostInspectionError("PostgreSQL static configuration is unavailable")
+    if any(line.strip() and not line.lstrip().startswith("#") for line in automatic):
+        raise HostInspectionError("PostgreSQL automatic configuration overrides are prohibited")
+    security = PureWindowsPath(observation["paths"]["program_data"]) / "Security"
+    expected = {
+        "listen_addresses": f"'{CONTRACT.postgresql_host}'",
+        "port": str(CONTRACT.postgresql_port),
+        "ssl": "on",
+        "ssl_ca_file": f"'{(security / 'ca.crt').as_posix()}'",
+        "ssl_cert_file": f"'{(security / 'server/server.crt').as_posix()}'",
+        "ssl_key_file": f"'{(security / 'server/server.key').as_posix()}'",
+    }
+    observed = {}
+    for line in configuration:
+        active = line.strip()
+        if not active or active.startswith("#"):
+            continue
+        if re.match(r"include(?:_dir|_if_exists)?\b", active, re.IGNORECASE):
+            raise HostInspectionError("PostgreSQL configuration includes are prohibited")
+        key, separator, setting = active.partition("=")
+        key = key.strip().lower()
+        if key in expected:
+            if not separator or key in observed or setting.strip() != expected[key]:
+                raise HostInspectionError("PostgreSQL static endpoint/TLS differs")
+            observed[key] = setting.strip()
+    if observed != expected:
+        raise HostInspectionError("PostgreSQL static endpoint/TLS settings are incomplete")
+
+
+def _postgresql(observation: dict[str, Any]) -> None:
+    _postgresql_static(observation)
+    _postgresql_effective(observation)
 
 
 def _readiness(observation: dict[str, Any], root: str) -> None:
@@ -730,6 +806,33 @@ def _stable_service_instances(initial: Any, final: Any) -> None:
                 raise HostInspectionError("SCM process instance changed during verification")
 
 
+def _qualified_install_inputs(
+    qualified_msi: Path,
+    manifest_path: Path,
+    clean_receipt_path: Path,
+    *,
+    expected_manifest_sha256: str,
+    expected_msi_sha256: str,
+    expected_receipt_sha256: str,
+) -> dict[str, Any]:
+    """Reread the same qualified inputs for both passive installation phases."""
+    for path, expected in (
+        (qualified_msi, expected_msi_sha256),
+        (manifest_path, expected_manifest_sha256),
+        (clean_receipt_path, expected_receipt_sha256),
+    ):
+        if (
+            not isinstance(expected, str)
+            or _SHA256.fullmatch(expected) is None
+            or _sha(path) != expected
+        ):
+            raise HostInspectionError("qualified MSI, manifest or receipt integrity differs")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if not isinstance(manifest, dict) or manifest["msi"]["sha256"] != expected_msi_sha256:
+        raise HostInspectionError("qualified manifest/MSI identity differs")
+    return manifest
+
+
 def verify_post_install(
     qualified_msi: Path,
     manifest_path: Path,
@@ -759,16 +862,14 @@ def verify_post_install(
         )
         return _finish(report)
     try:
-        for path, expected in (
-            (qualified_msi, expected_msi_sha256),
-            (manifest_path, expected_manifest_sha256),
-            (clean_receipt_path, expected_receipt_sha256),
-        ):
-            if _SHA256.fullmatch(expected) is None or _sha(path) != expected:
-                raise HostInspectionError("qualified MSI, manifest or receipt integrity differs")
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        if manifest["msi"]["sha256"] != expected_msi_sha256:
-            raise HostInspectionError("qualified manifest/MSI identity differs")
+        manifest = _qualified_install_inputs(
+            qualified_msi,
+            manifest_path,
+            clean_receipt_path,
+            expected_manifest_sha256=expected_manifest_sha256,
+            expected_msi_sha256=expected_msi_sha256,
+            expected_receipt_sha256=expected_receipt_sha256,
+        )
         _check(
             report,
             "qualified_inputs",
