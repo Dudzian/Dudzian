@@ -24,6 +24,10 @@ namespace_packages = true
 follow_imports = "skip"
 exclude = ["archive/.*"]
 files = [
+  "bot_core/licensing/enrollment_file_io.py",
+  "bot_core/licensing/enrollment_transport.py",
+  "deployment/production_enrollment_offline.py",
+  "deployment/windows_enrollment_offline.py",
   "bot_core/auto_trader",
   "bot_core/ai",
   "bot_core/risk",
