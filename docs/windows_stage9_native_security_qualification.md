@@ -117,6 +117,57 @@ process handoff, Installer-service behavior, durable power-loss recovery,
 post-installation qualification and physical TPM/Stage 10 remain outside the
 evidence here. No MSI is executed to close these gaps.
 
+Audit follow-up outside these deployment modules:
+`bot_core/windows_custody_filesystem.py::pinned_directory` also requests only
+metadata access for ancestor handles. That runtime custody path is unchanged
+and requires separate native qualification; this report does not establish its
+delete-sharing protection.
+
 GO requires linked successful real Windows evidence for the stated substep and
 review of every skip. A green emulator/Linux run alone is NO-GO. Even a successful
 native file-custody run is not production Stage 9/10 PASS or installation approval.
+
+## Recorded result — 2026-10-17
+
+Decision: **GO for PRE-01B.2B native file-custody qualification only**, within the
+evidence boundaries above. Production installation and full protected-host
+acceptance remain unqualified. No automatic merge is authorized.
+
+Verified implementation: `bbd6953c5041300e84539a750c599872f7aa37e0` (later report-only
+edits do not change the tested code).
+GitHub tested merge ref: `fc169c04d73699f1a6dd08f2483dc84c7778bbe8`, against the
+unchanged base revision recorded at the top of this report.
+
+| Evidence | Result |
+| --- | --- |
+| [Real Windows job 117376997895, run 39025916093, attempt 1](https://github.com/Dudzian/Dudzian/actions/runs/39025916093/job/117376997895) | **29 passed, 0 skipped**, 6.59 seconds; Windows Server 2025 build 26100, Python 3.11.9 x64 |
+| Separate emulated adapter/executor step on that Windows host | **186 passed**, 3.71 seconds; control-flow evidence only |
+| Local Linux targeted deployment/preflight regressions | **862 passed, 29 native-platform skips**, 3.19 seconds; native skips are not Windows evidence |
+| CI platform contracts | **24 passed** |
+| Ruff baseline and exact `pre_commit run ruff-format --all-files` | PASS; no unrelated formatter changes |
+| Configured mypy, Linux and `--platform win32` | PASS, 322 source files each; both new native test modules also type-check |
+| Tier A component checks and offline Betterleaks on all changed files | PASS, no detected secrets |
+| [Remote Style preflight](https://github.com/Dudzian/Dudzian/actions/runs/39025916107) | PASS |
+
+The [evidence artifact](https://github.com/Dudzian/Dudzian/actions/runs/39025916093/artifacts/12098940979)
+contains environment metadata and separate native/emulated JUnit and logs.
+Every privileged case, both symlink kinds and the junction ran successfully;
+there were no skips in this measured native run. Handle-count loops and actual
+post-release mutation controls passed. No leak or unintended host modification
+was observed in these tests. All adversarial filesystem writes used owned
+temporary objects; no MSI, service, TPM/NV or existing ACL was modified.
+
+The earlier real runs are retained as diagnosis evidence:
+[initial run: 22 passed / 5 failed](https://github.com/Dudzian/Dudzian/actions/runs/39025242750/job/117374836867),
+[log fix: 26 passed / 1 failed](https://github.com/Dudzian/Dudzian/actions/runs/39025440079/job/117375651109).
+They exposed the metadata-only sharing defect, the replacement denial-code
+assumption and the native module-loading failure. These failures were resolved
+without weakening policy or converting failed native checks into skips.
+
+Only the focused Windows job and fast checks were awaited. The full CI matrix
+is outside this recorded result. Stage 9 and Stage 10 retain their prior status.
+
+Tooling follow-up: under Linux PowerShell, `run_fast.ps1` with one changed path
+reported `Secret-scan path is outside the repository: '/'`. Ruff, mypy and the
+offline scanner were run directly with the explicit complete changed-file scope;
+all passed. The convenience wrapper was not changed in this security substep.
