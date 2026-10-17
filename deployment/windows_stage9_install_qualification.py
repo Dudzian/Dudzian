@@ -208,7 +208,10 @@ def _qualify(
         ),
         ("postgresql_static", lambda: host._postgresql_static(facts)),
         ("postgresql_static_configuration", lambda: host._postgresql_configuration(facts)),
-        ("postgresql_effective_sql", lambda: host._postgresql_effective(facts)),
+        (
+            "postgresql_effective_sql",
+            lambda: host._postgresql_effective(facts, require_live=live),
+        ),
         ("product_acl", lambda: host._product_acl(facts)),
     ]
     if enrolled:
@@ -226,18 +229,14 @@ def _qualify(
         )
     for name, operation in operations:
         _operation(report, name, operation)
-    postgresql = facts.get("postgresql")
-    if not isinstance(postgresql, dict) or not isinstance(postgresql.get("effective_sql"), dict):
-        # Stage8's probe creates/starts scratch services; provision.qualify_mtls
-        # starts the verifier. Neither is a passive native authority adapter.
-        report["missing_authorities"] = [
-            "passive native service-token PostgreSQL SQL/role qualification"
-        ]
+    host._report_postgresql_evidence(report, facts)
+    if report.get("missing_authorities"):
         for check in report["checks"]:
-            if check["name"] == "postgresql_effective_sql":
+            if check["name"] == "postgresql_effective_sql" and check["status"] == "BLOCKED":
                 check["details"] = (
-                    "Passive native service-token SQL authority is unavailable; actual server "
-                    "HBA/TLS/roles cannot be established from static files or readiness markers."
+                    "Complete service-token SQL authority is unavailable; see the separate "
+                    "passive SQL capabilities and missing authorities. Static files, saved "
+                    "reports and readiness markers cannot supply missing authentication proof."
                 )
     _operation(
         report,

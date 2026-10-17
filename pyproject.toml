@@ -87,6 +87,7 @@ files = [
   "deployment/windows_runner_acl.py",
   "deployment/windows_stage9_handoff.py",
   "deployment/windows_stage9_host_inspection.py",
+  "deployment/windows_stage9_postgresql_passive.py",
   "deployment/windows_stage9_install_preparation.py",
   "deployment/windows_stage9_install_executor.py",
   "deployment/windows_stage9_install_native.py",
