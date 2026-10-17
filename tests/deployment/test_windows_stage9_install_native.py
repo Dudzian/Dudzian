@@ -294,8 +294,10 @@ def test_success_keeps_originals_and_msi_pinned_until_context_exit(protected, wi
         assert pinned[material["archive"]][1:] == (native._READ, native._SHARE_READ)
         assert pinned[arguments["policy_path"]][1:] == (native._READ, native._SHARE_READ)
         assert pinned[installed.log_path][2] == native._SHARE_READ | native._SHARE_WRITE
-        assert pinned[installed.log_path][1] == native._READ_ATTRIBUTES
-        assert pinned[installed.log_path][1] & (native._READ | native._WRITE) == 0
+        # Data-read access is needed for real Windows delete-sharing denial;
+        # the portable fake only checks this request, not OS enforcement.
+        assert pinned[installed.log_path][1] == native._READ_DATA | native._READ_ATTRIBUTES
+        assert pinned[installed.log_path][1] & native._WRITE == 0
         assert pinned[installed.report_path][2] == native._SHARE_READ
         assert all("(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)" in item for item in win32.descriptors)
     assert win32.handles == {}

@@ -32,6 +32,7 @@ pytestmark = [
 _INVALID_HANDLE = ctypes.c_void_p(-1).value
 _SHARE_ALL = 1 | 2 | 4
 _SHARING_VIOLATION = 32
+_ACCESS_DENIED = 5
 _INVALID_HANDLE_ERROR = 6
 
 
@@ -225,7 +226,12 @@ def test_real_file_pin_denies_mutation_until_release(tmp_path, adapter, probe, a
         identity = adapter.identity(handle)
         result, error = probe.mutate(action, target, other)
         assert not result, f"{action} unexpectedly succeeded with a live protected handle"
-        assert error == _SHARING_VIOLATION
+        # MoveFileExW replacement may report access denied for a protected
+        # destination. The identical operation must succeed after release.
+        expected_errors = (
+            {_SHARING_VIOLATION, _ACCESS_DENIED} if action == "replace" else {_SHARING_VIOLATION}
+        )
+        assert error in expected_errors
         assert adapter.identity(handle) == identity
         assert b"".join(adapter.chunks(handle)) == content
         assert target.read_bytes() == content
@@ -475,7 +481,12 @@ def test_real_log_pin_allows_data_writer_but_keeps_object_identity(
         # restrictions cannot cause a false positive for the log's protection.
         result, error = probe.mutate(action, target, other)
         assert not result
-        assert error == _SHARING_VIOLATION
+        # As for immutable files, MoveFileExW may report access denied for
+        # destination replacement; success is always a qualification failure.
+        expected_errors = (
+            {_SHARING_VIOLATION, _ACCESS_DENIED} if action == "replace" else {_SHARING_VIOLATION}
+        )
+        assert error in expected_errors
         assert target.read_bytes() == b"log"
         inputs._inventory()
         inputs.verify_pins()

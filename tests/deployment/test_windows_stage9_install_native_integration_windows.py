@@ -7,6 +7,7 @@ No DLL, handle, identity, hash, ACL collector or integrity validator is mocked.
 
 from __future__ import annotations
 
+import base64
 import ctypes
 import hashlib
 import json
@@ -32,7 +33,7 @@ class SandboxInputs(native.LockedInputs):
         found: set[str] = set()
         for root in self._trees:
             found.update(self._walk(root))
-        return found | self._native_paths
+        return found
 
 
 @pytest.fixture
@@ -77,6 +78,33 @@ def source_hashes(roots):
         for path in roots[name].rglob("*")
         if path.is_file()
     }
+
+
+def acl_failure_details(root):
+    # Failure-only diagnostics run the same read-only collector with its catch
+    # message exposed to the test log. This cannot turn failed evidence into PASS.
+    script = native.WINDOWS_ACL_TREE_SCRIPT.replace(
+        "errors=@('Protected ACL tree collection failed.');",
+        "errors=@($_.Exception.Message, $_.ScriptStackTrace);",
+    )
+    assert script != native.WINDOWS_ACL_TREE_SCRIPT
+    encoded_root = base64.b64encode(str(root).encode("utf-16-le")).decode("ascii")
+    script += (
+        "\n$ErrorActionPreference='Stop'\n"
+        "$root=[Text.Encoding]::Unicode.GetString([Convert]::FromBase64String('"
+        + encoded_root
+        + "'))\nCollect-RunnerAclTree -Root $root | ConvertTo-Json -Depth 14 -Compress"
+    )
+    encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
+    return native._read_json_command(
+        [
+            native.native_powershell_path(),
+            "-NoProfile",
+            "-NonInteractive",
+            "-EncodedCommand",
+            encoded,
+        ]
+    )
 
 
 def test_native_inventory_rejects_new_entry_without_changing_sources(sandbox):
@@ -180,7 +208,8 @@ def test_native_protected_creation_has_real_restricted_dacl(tmp_path, elevated):
     # Collect the actual DACL without changing any existing ACL. Ancestor
     # acceptance is deliberately left to the independent host qualification.
     observation = native._collect_acl_tree(directory)
-    assert observation["complete"] is True, observation["errors"]
+    if observation["complete"] is not True:
+        pytest.fail(f"actual ACL collection failed: {acl_failure_details(directory)}")
     for target in (directory, path):
         entry = next(
             item
