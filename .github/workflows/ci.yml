@@ -30,6 +30,95 @@ env:
   WHEELHOUSE_ENABLED: "true"
 
 jobs:
+  windows-native-security-qualification:
+    name: Native Windows x64 security (no MSI)
+    runs-on: windows-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      PYTHONUTF8: "1"
+      PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Set up native Python x64
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          architecture: x64
+
+      - name: Install focused qualification dependencies
+        id: dependencies
+        shell: pwsh
+        run: >-
+          python -m pip install
+          pytest==9.0.2 PyYAML==6.0.3 cryptography==50.0.1 jsonschema==4.26.0
+
+      - name: Require native Windows x64 and record environment
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force test-results/windows-native-security | Out-Null
+          @'
+          import json, os, platform, struct, sys
+          from pathlib import Path
+          assert sys.platform == "win32", "real Windows is required"
+          assert struct.calcsize("P") == 8, "native x64 Python is required"
+          assert platform.machine().upper() in {"AMD64", "X86_64"}, "x64 Windows is required"
+          assert not os.environ.get("PROCESSOR_ARCHITEW6432"), "WOW64 is not qualified"
+          report = {
+              "source_revision": os.environ["GITHUB_SHA"],
+              "run_id": os.environ["GITHUB_RUN_ID"],
+              "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+              "runner_os": os.environ["RUNNER_OS"],
+              "runner_arch": os.environ["RUNNER_ARCH"],
+              "windows_version": platform.platform(),
+              "python": sys.version,
+              "pointer_bits": struct.calcsize("P") * 8,
+              "installer_executed": False,
+          }
+          Path("test-results/windows-native-security/environment.json").write_text(
+              json.dumps(report, indent=2), encoding="utf-8"
+          )
+          '@ | python -
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Qualify real Win32 boundaries in runner temporary directories
+        shell: pwsh
+        run: |
+          python -m pytest --confcutdir=tests/deployment -vv -rA `
+            tests/deployment/test_windows_stage9_install_native_windows.py `
+            tests/deployment/test_windows_stage9_install_native_integration_windows.py `
+            --basetemp (Join-Path $env:RUNNER_TEMP "stage9-native-security") `
+            --junitxml=test-results/windows-native-security/native.xml `
+            2>&1 | Tee-Object test-results/windows-native-security/native.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Run separately labelled emulated adapter and executor regressions
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force test-results/windows-native-security | Out-Null
+          python -m pytest --confcutdir=tests/deployment -vv -rA `
+            tests/deployment/test_windows_stage9_install_native.py `
+            tests/deployment/test_windows_stage9_install_executor.py `
+            --basetemp (Join-Path $env:RUNNER_TEMP "stage9-emulated-security") `
+            --junitxml=test-results/windows-native-security/emulated.xml `
+            2>&1 | Tee-Object test-results/windows-native-security/emulated.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Preserve native evidence and explicit skip reasons
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-native-security-${{ github.run_id }}-${{ github.run_attempt }}
+          path: test-results/windows-native-security
+          if-no-files-found: warn
+          retention-days: 7
+
   prepare-wheelhouse:
     name: Prepare wheelhouse
     runs-on: ${{ matrix.os }}

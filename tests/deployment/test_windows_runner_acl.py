@@ -263,8 +263,10 @@ def test_product_specific_approved_service_sid_can_be_reused_without_broad_group
 
 
 def test_live_collector_is_read_only_bounded_pins_objects_and_rejects_unknown_aces() -> None:
-    assert "Get-Acl -LiteralPath" in WINDOWS_ACL_TREE_SCRIPT
-    assert "CreateFile(path, 0x20080, 3" in WINDOWS_ACL_TREE_SCRIPT
+    assert "Microsoft.PowerShell.Security\\Get-Acl -LiteralPath" in WINDOWS_ACL_TREE_SCRIPT
+    assert "Import-Module -Name ([IO.Path]::Combine($PSHOME,'Modules'" in WINDOWS_ACL_TREE_SCRIPT
+    assert "'Microsoft.PowerShell.Security.psd1')) -ErrorAction Stop" in WINDOWS_ACL_TREE_SCRIPT
+    assert "CreateFile(path, 0x20081, 3" in WINDOWS_ACL_TREE_SCRIPT
     assert "0x02200000" in WINDOWS_ACL_TREE_SCRIPT
     assert "GetFinalPathNameByHandle" in WINDOWS_ACL_TREE_SCRIPT
     assert "GetFileInformationByHandleEx" in WINDOWS_ACL_TREE_SCRIPT

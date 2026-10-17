@@ -35,6 +35,7 @@ from deployment.windows_stage10_runner_preflight import _read_json_command
 
 _READ = 0x80000000
 _WRITE = 0x40000000
+_READ_DATA = 0x1
 _READ_ATTRIBUTES = 0x80
 _SHARE_READ = 1
 _SHARE_WRITE = 2
@@ -254,17 +255,23 @@ class _Native:
         self, path: Path, *, create: bool = False, writable: bool = False, log: bool = False
     ) -> int:
         with self._protected_security() as security:
+            # Metadata-only access does not engage Win32 sharing checks. The
+            # mutable log needs data-read access to deny deletion/replacement;
+            # its writer must share read access while this pin remains open.
+            access = (_READ_DATA | _READ_ATTRIBUTES) if log else _READ | (_WRITE if writable else 0)
             handle = self.kernel.CreateFileW(
                 str(path),
-                _READ_ATTRIBUTES if log else _READ | (_WRITE if writable else 0),
+                access,
                 _SHARE_READ | (_SHARE_WRITE if log else 0),
                 ctypes.byref(security) if create else None,
                 _CREATE_NEW if create else _OPEN_EXISTING,
                 _OPEN_REPARSE_POINT | _BACKUP_SEMANTICS,
                 None,
             )
-        if handle in {None, ctypes.c_void_p(-1).value}:
-            raise self._failure()
+            # Capture CreateFileW's error before descriptor cleanup can change
+            # the thread's last-error value.
+            if handle in {None, ctypes.c_void_p(-1).value}:
+                raise self._failure()
         return int(handle)
 
     def close(self, handle: int) -> None:
