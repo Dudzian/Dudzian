@@ -542,8 +542,10 @@ def _rows(connection: Any, sql: str, limit: int) -> list[tuple[Any, ...]]:
 
 def _one(connection: Any, sql: str, width: int) -> tuple[Any, ...]:
     rows = _rows(connection, sql, 1)
-    if len(rows) != 1 or len(rows[0]) != width:
+    if not rows:
         raise PassivePostgreSQLError("required SQL row is unavailable", status="BLOCKED")
+    if len(rows[0]) != width:
+        raise PassivePostgreSQLError("required SQL row has an unexpected shape", status="FAIL")
     return rows[0]
 
 
@@ -551,7 +553,13 @@ def _query_error(exc: Exception) -> dict[str, str]:
     if isinstance(exc, PassivePostgreSQLError):
         return _result(exc.status, str(exc))
     # Error text, DSN and diagnostic fields can include credentials. Never export them.
-    if getattr(exc, "sqlstate", None) == "42501":
+    sqlstate = getattr(exc, "sqlstate", None)
+    # The fixed allowlist requires these catalog objects, functions, settings and
+    # types on PostgreSQL 17.11. Their absence/incompatibility contradicts that
+    # contract. Do not generalize to class 42: it also contains permission errors.
+    if sqlstate in {"42703", "42P01", "42883", "3F000", "42704", "42804", "42846"}:
+        return _result("FAIL", "SQL catalog schema/types differ from the frozen query contract")
+    if sqlstate == "42501":
         return _result("BLOCKED", "approved service role lacks permission for this catalog read")
     return _result("BLOCKED", "bounded SQL read failed; no authentication denial is inferred")
 
@@ -600,7 +608,10 @@ def _collect_sql(connection: Any, binding: dict[str, Any]) -> dict[str, dict[str
             "effective PostgreSQL endpoint/version/read-only settings differ", status="FAIL"
         )
     ssl = _one(connection, _SSL_SQL, 5)
-    expected_dn = f"CN={binding['certificate_identity']}"
+    # PostgreSQL REL_17_11 X509_NAME_to_cstring(), used by pg_stat_ssl,
+    # emits slash-delimited attributes. The installer subject is exactly one
+    # ASCII CN; RFC2253 text, extra attributes and partial CNs are not equivalent.
+    expected_dn = f"/CN={binding['certificate_identity']}"
     if (
         ssl[0] is not True
         or ssl[1] not in ("TLSv1.2", "TLSv1.3")

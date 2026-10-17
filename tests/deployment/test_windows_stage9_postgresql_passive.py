@@ -138,7 +138,7 @@ class ScriptedConnection:
                 )
             ],
             passive._SSL_SQL: [
-                (True, "TLSv1.3", "TLS_AES_256_GCM_SHA384", 256, "CN=CryptoHunterBackend")
+                (True, "TLSv1.3", "TLS_AES_256_GCM_SHA384", 256, "/CN=CryptoHunterBackend")
             ],
             passive._DATA_SQL: [(r"C:\ProgramData\CryptoHunter\PostgreSQL\Data",)],
             passive._CONTROL_SQL: [("7448802115599552300",)],
@@ -490,7 +490,7 @@ def test_untrusted_sql_session_tls_and_incomplete_sessions_fail_closed(
     elif change == "weak-cipher":
         tls[3] = 64
     elif change == "other-client-certificate":
-        tls[4] = "CN=CryptoHunterFreshnessVerifier"
+        tls[4] = "/CN=CryptoHunterFreshnessVerifier"
     connection.responses[passive._IDENTITY_SQL] = (
         [] if change == "missing-session" else [tuple(identity)]
     )
@@ -502,6 +502,101 @@ def test_untrusted_sql_session_tls_and_incomplete_sessions_fail_closed(
     assert passive.summarize_passive_postgresql(receipt, facts)["status"] in ("FAIL", "BLOCKED")
     with pytest.raises(passive.PassivePostgreSQLError):
         passive.require_passive_postgresql_component(receipt, facts, "effective_configuration")
+
+
+@pytest.mark.parametrize(
+    "identity,role,dn",
+    (
+        ("CryptoHunterBackend", "freshness_runtime", "/CN=CryptoHunterBackend"),
+        (
+            "CryptoHunterFreshnessVerifier",
+            "freshness_crypto_verifier",
+            "/CN=CryptoHunterFreshnessVerifier",
+        ),
+    ),
+)
+def test_pg17_ssl_subject_matches_exact_single_cn_installer_certificate(
+    sql: tuple[dict[str, Any], dict[str, Any], ScriptedConnection],
+    identity: str,
+    role: str,
+    dn: str,
+) -> None:
+    from cryptography import x509
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import NameOID
+
+    from deployment.windows_installer.provision import _certificate
+
+    # Exercise the pure certificate builder, not provisioning or an MSI entry
+    # point. The CA and client keys are ephemeral and never leave memory.
+    issuer = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "DN contract test CA")])
+    issuer_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    _key, certificate = _certificate(identity, issuer, issuer_key)
+    assert x509.load_pem_x509_certificate(certificate).subject == x509.Name(
+        [x509.NameAttribute(NameOID.COMMON_NAME, identity)]
+    )
+    # REL_17_11 be-secure-openssl.c:X509_NAME_to_cstring prefixes each
+    # attribute with '/'. RFC4514/RFC2253 CN=... is a different representation.
+    _facts, binding, connection = sql
+    binding = {**binding, "identity": identity, "role": role, "certificate_identity": identity}
+    session = list(connection.responses[passive._IDENTITY_SQL][0])
+    session[1:3] = (role, role)
+    tls = list(connection.responses[passive._SSL_SQL][0])
+    tls[4] = dn
+    connection.responses[passive._IDENTITY_SQL] = [tuple(session)]
+    connection.responses[passive._SSL_SQL] = [tuple(tls)]
+
+    components = passive._collect_sql(connection, binding)
+    assert components["service_authentication"]["status"] == "PASS"
+    assert components["effective_configuration"]["status"] == "PASS"
+    assert components["active_hba"]["status"] == "BLOCKED"
+    assert components["cross_role_authentication"]["status"] == "BLOCKED"
+
+
+@pytest.mark.parametrize(
+    "dn",
+    (
+        "CN=CryptoHunterBackend",
+        "/CN=CryptoHunterFreshnessVerifier",
+        "/O=untrusted/CN=CryptoHunterBackend",
+        "/CN=CryptoHunterBackend/O=untrusted",
+        "/CN=untrusted/CN=CryptoHunterBackend",
+        "/CN=CryptoHunterBackend/CN=untrusted",
+        "/CN=untrusted+CN=CryptoHunterBackend",
+        "/CN=CryptoHunterBackend+OU=untrusted",
+        "/CN=prefixCryptoHunterBackend",
+        "/CN=CryptoHunterBackendSuffix",
+        "/CN=CryptoHunterBackend ",
+        " /CN=CryptoHunterBackend",
+        "/CN=cryptohunterbackend",
+        "/cn=CryptoHunterBackend",
+        "/CN=CryptoHunterBackend\n",
+        "/CN=CryptoHunterBackend\x00/CN=untrusted",
+        "/CN=CryptoHunter\\Backend",
+        "CN=CryptoHunterBackend,O=untrusted",
+        None,
+        b"/CN=CryptoHunterBackend",
+    ),
+)
+def test_ssl_subject_requires_the_complete_exact_postgresql_dn(
+    sql: tuple[dict[str, Any], dict[str, Any], ScriptedConnection],
+    monkeypatch: pytest.MonkeyPatch,
+    dn: object,
+) -> None:
+    facts, _binding, connection = sql
+    tls = list(connection.responses[passive._SSL_SQL][0])
+    tls[4] = dn
+    connection.responses[passive._SSL_SQL] = [tuple(tls)]
+    monkeypatch.setattr(passive, "_connect", lambda _binding: connection)
+
+    receipt = passive.collect_passive_postgresql(facts)
+    summary = passive.summarize_passive_postgresql(receipt, facts)
+    assert summary["status"] == "FAIL"
+    assert summary["components"]["service_authentication"]["status"] == "FAIL"
+    assert connection.closed
+    with pytest.raises(passive.PassivePostgreSQLError) as caught:
+        passive.require_passive_postgresql_component(receipt, facts, "effective_configuration")
+    assert caught.value.status == "FAIL"
 
 
 @pytest.mark.parametrize(
@@ -1190,3 +1285,154 @@ def test_known_catalog_failure_is_not_downgraded_by_later_unavailability(
     summary = passive.summarize_passive_postgresql(receipt, facts)
     assert summary["status"] == "FAIL"
     assert "sensitive" not in json.dumps(summary)
+
+
+def _sensitive_server_error(sqlstate: str | None) -> Exception:
+    import psycopg
+    from psycopg import errors, pq
+
+    message = "host=private.invalid password=private-test-value sslkey=private-test-client.key"
+    diagnostic = {pq.DiagnosticField.MESSAGE_DETAIL: b"private-server-diagnostic"}
+    if sqlstate is None:
+        return psycopg.OperationalError(message, info=diagnostic)
+    return errors.lookup(sqlstate)(message, info=diagnostic)
+
+
+@pytest.mark.parametrize(
+    "sqlstate,expected_status",
+    (
+        ("42703", "FAIL"),
+        ("42P01", "FAIL"),
+        ("42883", "FAIL"),
+        ("3F000", "FAIL"),
+        ("42704", "FAIL"),
+        ("42804", "FAIL"),
+        ("42846", "FAIL"),
+        ("42501", "BLOCKED"),
+        ("28000", "BLOCKED"),
+        ("28P01", "BLOCKED"),
+        ("08000", "BLOCKED"),
+        ("08001", "BLOCKED"),
+        ("08003", "BLOCKED"),
+        ("08004", "BLOCKED"),
+        ("08006", "BLOCKED"),
+        ("08P01", "BLOCKED"),
+        ("57014", "BLOCKED"),
+        ("53300", "BLOCKED"),
+        ("40001", "BLOCKED"),
+        ("42000", "BLOCKED"),
+        ("XX000", "BLOCKED"),
+        (None, "BLOCKED"),
+    ),
+)
+def test_only_explicit_contract_sqlstates_fail_and_server_diagnostics_are_private(
+    sqlstate: str | None, expected_status: str
+) -> None:
+    import psycopg
+
+    error = _sensitive_server_error(sqlstate)
+    assert isinstance(error, psycopg.Error)
+    assert error.diag.message_detail == "private-server-diagnostic"
+    result = passive._query_error(error)
+    assert result["status"] == expected_status
+    assert "private" not in json.dumps(result)
+    assert "password" not in json.dumps(result)
+    assert "sslkey" not in json.dumps(result)
+
+
+@pytest.mark.parametrize(
+    "query,component",
+    (
+        (passive._IDENTITY_SQL, "effective_configuration"),
+        (passive._SSL_SQL, "effective_configuration"),
+        (passive._DATA_SQL, "instance_identity"),
+        (passive._CONTROL_SQL, "instance_identity"),
+        (passive._HBA_SQL, "parsed_hba"),
+        (passive._ROLES_SQL, "role_catalog"),
+        (passive._MEMBERSHIP_SQL, "role_catalog"),
+    ),
+)
+@pytest.mark.parametrize(
+    "sqlstate,expected_status",
+    (
+        ("42703", "FAIL"),
+        ("42501", "BLOCKED"),
+        ("28P01", "BLOCKED"),
+        ("08006", "BLOCKED"),
+        ("57014", "BLOCKED"),
+    ),
+)
+def test_driver_sqlstate_controls_identity_and_catalog_receipt_outcomes(
+    sql: tuple[dict[str, Any], dict[str, Any], ScriptedConnection],
+    monkeypatch: pytest.MonkeyPatch,
+    query: str,
+    component: str,
+    sqlstate: str,
+    expected_status: str,
+) -> None:
+    facts, _binding, connection = sql
+    connection.responses[query] = _sensitive_server_error(sqlstate)
+    monkeypatch.setattr(passive, "_connect", lambda _binding: connection)
+    receipt = passive.collect_passive_postgresql(facts)
+    summary = passive.summarize_passive_postgresql(receipt, facts)
+    assert connection.closed
+    assert summary["status"] == expected_status
+    assert summary["components"][component]["status"] == expected_status
+    assert "private" not in json.dumps(summary)
+    assert "password" not in json.dumps(summary)
+    assert "sslkey" not in json.dumps(summary)
+
+
+@pytest.mark.parametrize(
+    "query,component",
+    (
+        (passive._IDENTITY_SQL, "effective_configuration"),
+        (passive._SSL_SQL, "effective_configuration"),
+        (passive._DATA_SQL, "instance_identity"),
+        (passive._CONTROL_SQL, "instance_identity"),
+        (passive._MEMBERSHIP_SQL, "role_catalog"),
+    ),
+)
+@pytest.mark.parametrize("shape", ("missing", "short", "long"))
+def test_required_row_absence_blocks_but_present_incompatible_width_fails(
+    sql: tuple[dict[str, Any], dict[str, Any], ScriptedConnection],
+    monkeypatch: pytest.MonkeyPatch,
+    query: str,
+    component: str,
+    shape: str,
+) -> None:
+    facts, _binding, connection = sql
+    row = connection.responses[query][0]
+    connection.responses[query] = (
+        [] if shape == "missing" else [row[:-1] if shape == "short" else (*row, "extra")]
+    )
+    monkeypatch.setattr(passive, "_connect", lambda _binding: connection)
+    receipt = passive.collect_passive_postgresql(facts)
+    summary = passive.summarize_passive_postgresql(receipt, facts)
+    expected_status = "BLOCKED" if shape == "missing" else "FAIL"
+    assert summary["status"] == expected_status
+    assert summary["components"][component]["status"] == expected_status
+
+
+def test_server_catalog_contradiction_survives_later_driver_connection_failure(
+    sql: tuple[dict[str, Any], dict[str, Any], ScriptedConnection],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    facts, _binding, connection = sql
+    connection.responses[passive._ROLES_SQL] = _sensitive_server_error("42703")
+    identity = connection.responses[passive._IDENTITY_SQL]
+    reads = 0
+
+    def identity_reread() -> Any:
+        nonlocal reads
+        reads += 1
+        if reads > 1:
+            raise _sensitive_server_error("08006")
+        return identity
+
+    connection.responses[passive._IDENTITY_SQL] = identity_reread
+    monkeypatch.setattr(passive, "_connect", lambda _binding: connection)
+    receipt = passive.collect_passive_postgresql(facts)
+    summary = passive.summarize_passive_postgresql(receipt, facts)
+    assert summary["status"] == "FAIL"
+    assert "private" not in json.dumps(summary)
