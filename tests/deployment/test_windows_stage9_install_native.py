@@ -133,7 +133,9 @@ class Win32:
 
 
 @pytest.mark.parametrize("directory", [True, False])
-def test_portable_fake_pins_directories_and_files_without_host_fds(tmp_path, monkeypatch, directory):
+def test_portable_fake_pins_directories_and_files_without_host_fds(
+    tmp_path, monkeypatch, directory
+):
     # The mocked kernel must be equally usable on Windows, Linux and macOS.
     # In particular, do not rely on os.open(directory) or /proc/self/fd.
     api = Win32()
