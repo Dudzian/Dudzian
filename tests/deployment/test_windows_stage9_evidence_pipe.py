@@ -268,6 +268,22 @@ def test_connect_rejects_pipe_squatter_pid(
         b"",
         b"x" * (pipe.MAX_FRAME + 1),
     ],
+    # Pytest embeds parameter IDs in PYTEST_CURRENT_TEST. On Windows the
+    # 256-KiB oversized frame exceeds the 32,767-character env-var limit
+    # before setup can run; keep the complete payload but use short case IDs.
+    ids=[
+        "duplicate-key",
+        "nested-duplicate-key",
+        "nan",
+        "infinity",
+        "nonfinite-exponent",
+        "array-instead-of-object",
+        "null-instead-of-object",
+        "invalid-utf8",
+        "truncated-json",
+        "empty-frame",
+        "oversized-frame",
+    ],
 )
 def test_rejects_ambiguous_nonfinite_and_oversized_json(frame: bytes) -> None:
     with pytest.raises(pipe.EvidencePipeError):
