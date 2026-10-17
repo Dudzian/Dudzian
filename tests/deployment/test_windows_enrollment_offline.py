@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
-from contextlib import nullcontext
+import sys
+from contextlib import contextmanager, nullcontext
 from datetime import timedelta
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
+from bot_core.licensing import enrollment_file_io as file_io
 from bot_core.licensing.canonical import canonical_json_bytes
 from bot_core.licensing.enrollment_file_io import read_artifact_file, write_artifact_file
 from bot_core.licensing.enrollment_transport import ArtifactEnvelope
@@ -253,6 +256,56 @@ def test_both_adapters_complete_actual_producer_issuer_and_live_lppi(
     assert accepted.canonical_bytes == signed.canonical_bytes
     assert not exchange.lppi.successor.calls
 
+
+
+def test_windows_session_lock_uses_real_pywin32_argument_shapes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The pywin32 wrappers omit dwReserved from the Win32 API signatures."""
+    from bot_core import windows_custody_filesystem as filesystem
+
+    calls: list[object] = []
+
+    class Handle:
+        def Close(self) -> None:
+            calls.append("close")
+
+    handle = Handle()
+
+    def lock_file_ex(
+        opened: Handle, flags: int, size_low: int, size_high: int, overlapped: object
+    ) -> None:
+        assert opened is handle
+        assert (flags, size_low, size_high) == (0x2, 1, 0)
+        calls.append("locked")
+
+    def unlock_file_ex(
+        opened: Handle, size_low: int, size_high: int, overlapped: object
+    ) -> None:
+        assert opened is handle
+        assert (size_low, size_high) == (1, 0)
+        calls.append("unlocked")
+
+    files = SimpleNamespace(
+        CreateFile=lambda *args: handle,
+        LockFileEx=lock_file_ex,
+        UnlockFileEx=unlock_file_ex,
+    )
+
+    @contextmanager
+    def pinned_directory(path: Path):
+        assert path == tmp_path
+        yield (files, None, None), frozenset()
+
+    monkeypatch.setattr(filesystem, "pinned_directory", pinned_directory)
+    monkeypatch.setattr(
+        filesystem, "_qualify", lambda *args, **kwargs: (0, None, None, None, None, 0, 0)
+    )
+    monkeypatch.setitem(sys.modules, "pywintypes", SimpleNamespace(OVERLAPPED=object))
+
+    with file_io._windows_session_lock(tmp_path):
+        assert calls == ["locked"]
+    assert calls == ["locked", "unlocked", "close"]
 
 def test_cli_failure_does_not_expose_artifacts_or_exception(monkeypatch, capsys):
     def fail(*arguments, **keywords):

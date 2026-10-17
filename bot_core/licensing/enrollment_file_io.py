@@ -379,11 +379,14 @@ def _windows_session_lock(path: Path):
             if info[5] or info[6]:
                 raise EnrollmentFileError("artifact session lock contains unexpected data")
             overlapped = importlib.import_module("pywintypes").OVERLAPPED()
-            files.LockFileEx(handle, 0x2, 0, 1, 0, overlapped)
+            # pywin32 omits the native dwReserved argument: its API takes
+            # (handle, flags, size_low, size_high, overlapped).
+            files.LockFileEx(handle, 0x2, 1, 0, overlapped)
             try:
                 yield
             finally:
-                files.UnlockFileEx(handle, 0, 1, 0, overlapped)
+                # pywin32 UnlockFileEx also omits native dwReserved.
+                files.UnlockFileEx(handle, 1, 0, overlapped)
         finally:
             handle.Close()
 
