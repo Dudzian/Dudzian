@@ -75,8 +75,10 @@ not been performed.
 payload, MSI identity/version, SCM, PostgreSQL static configuration and ACLs,
 with backend/verifier demand-start/stopped. Both phases require the separate
 `postgresql_effective_sql` gate; its approved passive native service-token SQL
-adapter remains unavailable, so overall base and runtime qualification stay
-`BLOCKED` despite independently successful static base checks. Base qualification
+collection adapters are implemented (PRE-01B.2C/2D), but genuine service-local
+committed-enrollment admission, qualified native IPC and active-HBA evidence
+remain unavailable. Overall base and runtime qualification stay `BLOCKED`
+despite independently successful static base checks. Base qualification
 requires no legal enrollment or backend readiness. Enrolled-runtime qualification
 first requires accepted legal enrollment, then native runtime provenance/SCM/PID,
 SQL separation, mTLS and readiness authorities. Legal enrollment also remains
@@ -90,6 +92,48 @@ reboot and 24-hour lifecycle are outside this implementation. The handoff
 contract records remaining live evidence gaps. Stage 9 remains
 `IN_PROGRESS`, legal enrollment `NOT_PERFORMED`, `run_stage10=false`, and Stage
 10 `BLOCKED` / `NOT_RUN`; reboot and 24-hour lifecycle stay outside this work.
+
+## Stage 9 PDSA activation transport — PDSA-TR-01 (offline first; online ready)
+
+**Status: DECISION ACCEPTED; IMPLEMENTATION / DEPLOYMENT NOT COMPLETE.** Initial
+legal production enrollment must support an **offline file exchange without an
+always-on enrollment server**. The eventual **online activation API** is a
+second delivery adapter around the same frozen PDSA challenge, TPM evidence,
+production authorization-package bytes, trust roots, quorum-signing authority,
+expiry, replay protections and retained issuer state. Neither transport mints
+subjects, selects signing keys, rewrites signed packages or establishes authority.
+
+- **OFFLINE_FILE (initial requirement):** the Windows LPPI exports a bounded,
+  canonical request/evidence bundle without private-key material. An independently
+  protected PDSA operator workstation verifies it, obtains the approved 2-of-3
+  quorum response and durably retains exact issuance/retry identity. A signed,
+  canonical return package is transferred back out-of-band and verified by the
+  Windows installed LPPI. Offline means *no Internet requirement*, not that a
+  user-controlled installation may sign its own authorization. A separately
+  protected signing authority and qualified production materials remain mandatory.
+- **ONLINE_API (later, after server deployment):** an authenticated bounded
+  network transport submits the same canonical request to that same independent
+  PDSA authority and returns the identical class of signed package. TLS/API
+  authentication is a transport control, never a substitute for PDSA signatures
+  or hardware-bound acceptance. No live endpoint or online availability is
+  asserted by this planning decision.
+- **License/entitlement distinction:** legal device enrollment establishes
+  cryptographic identity; separate signed Basic/Medium/Premium entitlements,
+  renewal, revocation and any controlled grace period define feature access.
+  Temporary licensing-server unavailability must not by itself trigger unsafe
+  liquidation or unbounded live trading. Trading-exchange connectivity and
+  order-risk recovery remain independent fail-safe boundaries. Precise grace,
+  expiration and open-position policies require their own contract and tests.
+- **Acceptance:** native Windows request/export/import path, offline operator
+  workflow, strict canonical envelope/size/schema validation, PDSA quorum and
+  exact-binding verification, replay/lost-response/restart/cross-device negatives,
+  and explicit separation of TEST_ONLY and genuine installed production authority.
+  The later online adapter must reuse the same verified domain workflow.
+
+This choice does **not** authorize creation of substitute production PDSA keys,
+local signing on an enrolling device, automatic production enrollment, enabling
+Stage 10, or claiming physical TPM/PDSA qualification. Current Stage 9 readiness
+and its canonical status file remain unchanged.
 
 ## Numbered capabilities after Stage 10 — Stage 11 and Stage 12
 
