@@ -132,6 +132,33 @@ class Win32:
         return 1
 
 
+@pytest.mark.parametrize("directory", [True, False])
+def test_portable_fake_pins_directories_and_files_without_host_fds(tmp_path, monkeypatch, directory):
+    # The mocked kernel must be equally usable on Windows, Linux and macOS.
+    # In particular, do not rely on os.open(directory) or /proc/self/fd.
+    api = Win32()
+    monkeypatch.setattr(native, "os", types.SimpleNamespace(name="nt", scandir=os.scandir))
+    monkeypatch.setattr(ctypes, "WinDLL", lambda *args, **kwargs: api, raising=False)
+    target = tmp_path / "protected"
+    if directory:
+        target.mkdir()
+    else:
+        target.write_bytes(b"immutable-test-input")
+    adapter = native._Native()
+    handle = adapter.open(target)
+    try:
+        identity = adapter.identity(handle)
+        assert identity.final_path == str(target.resolve())
+        assert bool(identity.attributes & 0x10) is directory
+        assert api.handles[handle][0] == target
+        if not directory:
+            assert b"".join(adapter.chunks(handle)) == b"immutable-test-input"
+    finally:
+        adapter.close(handle)
+    assert api.handles == {}
+    assert api.positions == {}
+
+
 @pytest.fixture
 def win32(monkeypatch):
     api = Win32()
