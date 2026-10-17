@@ -7,6 +7,7 @@ public protected-tree ACL acceptance is a separate boundary.
 
 from __future__ import annotations
 
+import base64
 import ctypes
 import hashlib
 import io
@@ -503,3 +504,60 @@ def test_real_log_pin_allows_data_writer_but_keeps_object_identity(
     probe.assert_closed(pin.handle)
     result, error = probe.mutate(action, target, other)
     assert result, f"post-release log control failed: Win32 {error}"
+
+
+@pytest.mark.parametrize("directory", [False, True])
+def test_real_acl_collector_open_denies_deletion_or_rename_until_dispose(
+    tmp_path, monkeypatch, adapter, directory
+):
+    target, destination = tmp_path / "owned original", tmp_path / "owned renamed"
+    if directory:
+        target.mkdir()
+    else:
+        target.write_bytes(b"inert owned collector input")
+    compiler = tmp_path / "compiler"
+    compiler.mkdir()
+    monkeypatch.setenv("TEMP", str(compiler))
+    monkeypatch.setenv("TMP", str(compiler))
+    # The real production Add-Type helper owns the handle. Paths enter only as
+    # encoded data; its actual Open method must enforce the sharing exclusion.
+    script = native.WINDOWS_ACL_TREE_SCRIPT + "\n$ErrorActionPreference='Stop'\n"
+    for name, path in (("target", target), ("destination", destination)):
+        encoded = base64.b64encode(str(path).encode("utf-16-le")).decode("ascii")
+        script += (
+            "$"
+            + name
+            + "=[Text.Encoding]::Unicode.GetString([Convert]::FromBase64String('"
+            + encoded
+            + "'))\n"
+        )
+    operation = (
+        "[IO.Directory]::Move($target,$destination)" if directory else "[IO.File]::Delete($target)"
+    )
+    script += (
+        "$handle=[CryptoHunterReadOnlyAcl]::Open($target)\n"
+        "$blocked=$false; $denial=$null; $released=$false\n"
+        "try {\n"
+        "  try { " + operation + " } catch {\n"
+        "    $failure=$_.Exception\n"
+        "    while ($null -ne $failure.InnerException) { $failure=$failure.InnerException }\n"
+        "    if ($failure -isnot [IO.IOException]) { throw }\n"
+        "    $denial=$failure.HResult -band 0xffff; $blocked=$true\n"
+        "  }\n"
+        "} finally { $handle.Dispose() }\n"
+        "if ($blocked) { " + operation + "; $released=$true }\n"
+        "@{blocked=$blocked; denial=$denial; released=$released} | ConvertTo-Json -Compress\n"
+    )
+    encoded_script = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
+    record = native._read_json_command(
+        [
+            native.native_powershell_path(),
+            "-NoProfile",
+            "-NonInteractive",
+            "-EncodedCommand",
+            encoded_script,
+        ]
+    )
+    assert record == {"blocked": True, "denial": _SHARING_VIOLATION, "released": True}
+    assert not target.exists()
+    assert destination.is_dir() is directory

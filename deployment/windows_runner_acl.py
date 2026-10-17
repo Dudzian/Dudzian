@@ -239,6 +239,8 @@ def validate_acl_tree(
 
 # Used only as a function prelude to a live, bounded PowerShell process. Every
 # component is opened without FILE_SHARE_DELETE and with OPEN_REPARSE_POINT.
+# FILE_READ_DATA/LIST_DIRECTORY engages sharing checks; metadata-only access
+# does not prevent deletion or renaming.
 # Handles stay open across both complete inventories; final paths and file IDs
 # bind path-based Get-Acl reads to pinned objects. No file contents are read.
 WINDOWS_ACL_TREE_SCRIPT = r"""
@@ -271,7 +273,7 @@ public static class CryptoHunterReadOnlyAcl {
   static extern uint GetFinalPathNameByHandle(SafeFileHandle handle, StringBuilder path,
     uint length, uint flags);
   public static SafeFileHandle Open(string path) {
-    var handle=CreateFile(path, 0x20080, 3, IntPtr.Zero, 3, 0x02200000, IntPtr.Zero);
+    var handle=CreateFile(path, 0x20081, 3, IntPtr.Zero, 3, 0x02200000, IntPtr.Zero);
     if(handle.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
     return handle;
   }
@@ -301,6 +303,9 @@ function Collect-RunnerAclTree {
   $handles = [Collections.Generic.Dictionary[string,IDisposable]]::new(
     [StringComparer]::OrdinalIgnoreCase)
   try {
+    # The native executable does not make ambient PSModulePath trustworthy.
+    Import-Module -Name ([IO.Path]::Combine($PSHOME,'Modules','Microsoft.PowerShell.Security',
+      'Microsoft.PowerShell.Security.psd1')) -ErrorAction Stop
     $canonical = [IO.Path]::GetFullPath($Root).TrimEnd('\')
     if ($canonical -notmatch '^[A-Za-z]:\\' -or $canonical.Length -lt 4) {
       throw 'protected local root required'
@@ -318,7 +323,7 @@ function Collect-RunnerAclTree {
           -not [StringComparer]::OrdinalIgnoreCase.Equals($Path,$final)) {
         throw 'reparse point or path mismatch'
       }
-      $acl = Get-Acl -LiteralPath $Path -ErrorAction Stop
+      $acl = Microsoft.PowerShell.Security\Get-Acl -LiteralPath $Path -ErrorAction Stop
       $raw = [Security.AccessControl.RawSecurityDescriptor]::new(
         $acl.GetSecurityDescriptorBinaryForm(),0)
       if ($null -eq $raw.DiscretionaryAcl) { throw 'null DACL' }

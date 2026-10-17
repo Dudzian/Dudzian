@@ -195,7 +195,27 @@ def test_native_materialization_rejects_bad_input_and_releases_every_pin(
             renamed.unlink()
 
 
-def test_native_protected_creation_has_real_restricted_dacl(tmp_path, elevated):
+def test_native_protected_creation_has_real_restricted_dacl(tmp_path, elevated, monkeypatch):
+    compiler_temp = tmp_path / "powershell-temp"
+    compiler_temp.mkdir()
+    monkeypatch.setenv("TEMP", str(compiler_temp))
+    monkeypatch.setenv("TMP", str(compiler_temp))
+    # A caller-controlled module path must neither select an incompatible PS7
+    # module nor replace the native ACL authority with a same-named module.
+    module_root = tmp_path / "untrusted-modules"
+    module = module_root / "Microsoft.PowerShell.Security"
+    module.mkdir(parents=True)
+    (module / "Microsoft.PowerShell.Security.psd1").write_text(
+        "@{ModuleVersion='99.0.0';RootModule='Microsoft.PowerShell.Security.psm1';"
+        "FunctionsToExport=@('Get-Acl')}"
+    )
+    (module / "Microsoft.PowerShell.Security.psm1").write_text(
+        "throw 'untrusted ambient ACL module must never be loaded'\n"
+        "function Get-Acl { throw 'untrusted ACL authority' }\n"
+    )
+    monkeypatch.setenv(
+        "PSModulePath", str(module_root) + os.pathsep + os.environ.get("PSModulePath", "")
+    )
     api = native._Native()
     directory = tmp_path / "owned-protected"
     api.mkdir(directory)

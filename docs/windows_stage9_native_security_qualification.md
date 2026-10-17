@@ -19,6 +19,7 @@ Before this change, the following boundaries in
 | Handle-backed seek/read/hash/ZIP and write/truncate/flush | Actual handle bytes and archive member reads, real read/write operations | Inert test bytes only |
 | Directory pins and inventory | OS denies directory removal/rename; added children and metadata changes fail revalidation | Inventory composition harness scans only its four temporary trust domains |
 | Protected SDDL conversion, allocation/free, `CREATE_NEW`, directory creation | Real protected directory/file creation and read-only collection of their actual DACLs | Elevated token required; no existing ACL is changed |
+| Shared ACL collector handle lifetime | Actual production C# `Open`, deletion/rename denial, identical mutations after `Dispose` | Read-data/list-directory permission now required; no contents are read |
 | Materialization and source integrity | Bad ZIP/digest rejected, sanitized failure report, unchanged source hashes, extraction handle released | Failure precedes OS installer binding; complete successful materialization is not asserted |
 | Handle lifetime | Repeated success/exception cycles, process handle counts, invalid-handle checks, successful mutations after release | No process/installer handle lifetime qualification |
 
@@ -27,8 +28,34 @@ It now captures failure before descriptor cleanup, preserving the actual denial
 code. A portable regression simulates cleanup changing error 32 to error 5.
 The fail-closed decision and security policy are unchanged.
 
-The log handle intentionally admits data writers while denying deletion. Native
-tests exercise this separately from immutable source pins.
+The first real Windows run exposed a security defect hidden by the emulator:
+`FILE_READ_ATTRIBUTES` alone did not engage sharing denial, so an open log could
+be deleted or renamed. The log now requests the minimal additional
+`FILE_READ_DATA` right (`0x81` combined), while retaining read/write sharing and
+omitting delete sharing. It still admits writers that share reads. Compatibility
+with the actual Windows Installer logger remains unqualified without MSI.
+
+`MoveFileExW` replacement of an immutable pinned destination was genuinely denied
+with `ERROR_ACCESS_DENIED` (5), while direct writes/deletes/renames report
+`ERROR_SHARING_VIOLATION` (32). Replacement tests accept those two documented
+denial results only; operation success still fails, and the identical operation
+must succeed after release. Native tests exercise log custody separately from
+immutable source pins.
+
+The shared ACL collector had the same metadata-only sharing assumption. Its
+access mask now includes `FILE_READ_DATA` / `FILE_LIST_DIRECTORY` (`0x20081`),
+with unchanged read/write sharing and no delete sharing. Native tests execute
+the actual C# helper, rather than an equivalent mock. Missing additional read
+permission remains a fail-closed collection failure; no ACL is granted or repaired.
+
+The next Windows run confirmed the log fix (26 native passes) and diagnosed the
+remaining collection failure: native Windows PowerShell could not load the
+ambient `Microsoft.PowerShell.Security` module when launched from `pwsh` CI.
+The collector now imports the module by its absolute native `$PSHOME` manifest
+and invokes its qualified `Get-Acl`. The native DACL case prepends an owned,
+same-named hostile module that throws on load; the real collector must use the
+system module and still produce the expected owned DACL records. PowerShell
+compiler `TEMP`/`TMP` paths are confined to each test's sandbox.
 
 ## Emulator interpretation
 
