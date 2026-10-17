@@ -6,6 +6,10 @@ is `IN_PROGRESS`, production provisioning is false, and Windows production is
 `NOT_READY`. This implementation does not perform legal enrollment or implement
 Stage 10.
 
+The executable offline transport, its distinct PDSA/TPM challenge rounds, operator
+commands and remaining production prerequisites are described in
+[PDSA-TR-01A: offline enrollment file exchange](pdsa_offline_file_exchange.md).
+
 ## Audit performed before implementation
 
 The normative frozen architecture is

@@ -28,6 +28,7 @@ from bot_core.licensing.activation_request import ActivationRequestV1
 from bot_core.licensing.canonical import canonical_json_bytes, parse_canonical
 from bot_core.licensing.device_enrollment import TPMPublicProjectionV1
 from bot_core.licensing.pre_enrollment import (
+    MAX_EXACT_INTEGER,
     P256_ORDER,
     PDSA_TRUST_DOMAIN,
     PreEnrollmentRequestV1,
@@ -71,6 +72,7 @@ PROJECTION_PROFILE = "WindowsTPM2-PCP-Stage9-PRODUCTION-v1"
 PROJECTION_SOURCE_PROFILE = "Stage9-PCP-persistent-production-v1"
 K_PSA_PROFILE = "Stage9.K_PSA.ECC_P256_SHA256.PRODUCTION"
 _HEX = re.compile(r"[0-9a-f]+\Z")
+_KEY_ID = re.compile(r"[A-Za-z0-9._-]{1,128}\Z")
 _ENDORSEMENT_ID = re.compile(
     r"ptpm_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\Z"
 )
@@ -157,7 +159,7 @@ def _parse(raw: bytes, *, maximum: int = 131072) -> dict[str, Any]:
         raise ProductionTPMCustodyError("INVALID_PRODUCTION_TPM_ARTIFACT")
     try:
         result = parse_canonical(raw)
-    except (ValueError, TypeError) as exc:
+    except (ValueError, TypeError, RecursionError) as exc:
         raise ProductionTPMCustodyError("NONCANONICAL_PRODUCTION_TPM_ARTIFACT") from exc
     if type(result) is not dict:
         raise ProductionTPMCustodyError("INVALID_PRODUCTION_TPM_ARTIFACT")
@@ -433,10 +435,13 @@ def _require_context(
     return snapshot
 
 
-def verify_production_tpm_endorsement(
-    raw: bytes, *, context: object
-) -> VerifiedProductionTPMEndorsement:
-    trusted = require_verified_production_trust_context(context)
+def parse_production_tpm_endorsement(raw: bytes) -> dict[str, Any]:
+    """Strict public endorsement syntax, without signatures or current authority.
+
+    This parser is shared by delivery preview and the production verifier. It
+    validates canonical structure and its self-declared bindings, never whether
+    the claimed hardware approval, signers, release or freshness are trusted.
+    """
     envelope = _parse(raw)
     _exact(envelope, {"payload", "payload_digest_sha256", "signatures"})
     payload = envelope["payload"]
@@ -450,7 +455,6 @@ def verify_production_tpm_endorsement(
         "endorsement_profile": ENDORSEMENT_PROFILE,
         "hardware_origin_verification": "MANUFACTURER_CHAIN_AND_EK_CERTIFICATE_BINDING_VERIFIED",
         "signature_algorithm_profile": "PDSA-2-OF-3-ED25519",
-        "release_policy_digest_sha256": trusted.release_payload_digest,
     }
     if any(
         type(payload[field]) is not str or payload[field] != expected
@@ -459,7 +463,7 @@ def verify_production_tpm_endorsement(
         raise ProductionTPMCustodyError("PRODUCTION_TPM_ENDORSEMENT_PROFILE_REJECTED")
     if (
         type(payload["release_policy_generation"]) is not int
-        or payload["release_policy_generation"] != trusted.release_version
+        or not 1 <= payload["release_policy_generation"] <= MAX_EXACT_INTEGER
     ):
         raise ProductionTPMCustodyError("PRODUCTION_TPM_ENDORSEMENT_RELEASE_MISMATCH")
     if type(payload["endorsement_id"]) is not str or not _ENDORSEMENT_ID.fullmatch(
@@ -478,12 +482,11 @@ def verify_production_tpm_endorsement(
         payload["ek_public_digest"], size=32
     ):
         raise ProductionTPMCustodyError("PRODUCTION_TPM_ENDORSEMENT_EK_NAME_MISMATCH")
-    issued, expires, now = (
+    issued, expires = (
         _time(payload["issued_at_utc"]),
         _time(payload["expires_at_utc"]),
-        _utc_now(),
     )
-    if not issued <= now < expires or not 0 < (expires - issued).total_seconds() <= 604800:
+    if not 0 < (expires - issued).total_seconds() <= 604800:
         raise ProductionTPMCustodyError("PRODUCTION_TPM_ENDORSEMENT_EXPIRED_OR_INVALID_WINDOW")
     payload_digest = hashlib.sha256(canonical_json_bytes(payload)).digest()
     if _hex(envelope["payload_digest_sha256"], size=32) != payload_digest:
@@ -493,7 +496,7 @@ def verify_production_tpm_endorsement(
         type(signatures) is not list
         or not 2 <= len(signatures) <= 3
         or type(signer_ids) is not list
-        or any(type(item) is not str for item in signer_ids)
+        or any(type(item) is not str or _KEY_ID.fullmatch(item) is None for item in signer_ids)
         or signer_ids != sorted(set(signer_ids))
         or len(signer_ids) != len(signatures)
     ):
@@ -501,11 +504,32 @@ def verify_production_tpm_endorsement(
     for key_id, signature in zip(signer_ids, signatures, strict=True):
         _exact(signature, {"algorithm", "key_id", "authority_key_set_digest", "signature_hex"})
         if (
-            signature["algorithm"] != "Ed25519"
+            any(type(value) is not str for value in signature.values())
+            or signature["algorithm"] != "Ed25519"
             or signature["key_id"] != key_id
             or signature["authority_key_set_digest"] != PDSA_KEY_SET_DIGEST
-            or key_id not in trusted.pdsa_keys
         ):
+            raise ProductionTPMCustodyError("UNAUTHORIZED_PRODUCTION_TPM_ENDORSEMENT_SIGNER")
+        _hex(signature["signature_hex"], size=64)
+    return envelope
+
+
+def verify_production_tpm_endorsement(
+    raw: bytes, *, context: object
+) -> VerifiedProductionTPMEndorsement:
+    trusted = require_verified_production_trust_context(context)
+    envelope = parse_production_tpm_endorsement(raw)
+    payload = envelope["payload"]
+    if payload["release_policy_digest_sha256"] != trusted.release_payload_digest:
+        raise ProductionTPMCustodyError("PRODUCTION_TPM_ENDORSEMENT_PROFILE_REJECTED")
+    if payload["release_policy_generation"] != trusted.release_version:
+        raise ProductionTPMCustodyError("PRODUCTION_TPM_ENDORSEMENT_RELEASE_MISMATCH")
+    if not _time(payload["issued_at_utc"]) <= _utc_now() < _time(payload["expires_at_utc"]):
+        raise ProductionTPMCustodyError("PRODUCTION_TPM_ENDORSEMENT_EXPIRED_OR_INVALID_WINDOW")
+    payload_digest = bytes.fromhex(envelope["payload_digest_sha256"])
+    for signature in envelope["signatures"]:
+        key_id = signature["key_id"]
+        if key_id not in trusted.pdsa_keys:
             raise ProductionTPMCustodyError("UNAUTHORIZED_PRODUCTION_TPM_ENDORSEMENT_SIGNER")
         try:
             trusted.pdsa_keys[key_id].verify(
