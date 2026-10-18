@@ -1,5 +1,7 @@
 # S9-RPI-04 — propozycja addendum do granic transakcyjnych Root Proof
 
+> **Aktualizacja 2026-10-18:** propozycja **A + C** została zaakceptowana kierunkowo przez właściciela projektu. [Dokument decyzji v1](../decisions/stage9_root_proof_transaction_authority_owner_approval_v1.md) definiuje jej zakres i warunki; poniższy tekst pozostaje historyczną wersją propozycji. Nadal wymagana jest formalna integracja wersjonowanego kontraktu i osobna kwalifikacja produkcyjna. `NO-GO` bez zmian.
+
 Status: **CONTRACT_RECONCILIATION_PENDING_APPROVAL**. Data: 2026-10-18.
 Podstawa audytu: `main` po #3154,
 `7ed0e90321c9e24d6770f968e5bd7026bfa73cb7`.
