@@ -1,7 +1,8 @@
 """Real PostgreSQL public signer observations, without physical custody claims.
 
-The reused fixture installs closed public rows and injects ACTIVE only as an
-isolated test superuser. Observation never activates a credential, signs a
+The reused fixtures install closed public rows and inject ACTIVE or historical
+closed states only as an isolated test superuser. Such fixture setup supplies no
+custody completion proof. Observation never activates a credential, signs a
 request, qualifies an OS service or authorizes a production BIND.
 """
 
@@ -163,14 +164,16 @@ def test_pending_verify_only_and_revoked_observation_tracks_exact_current_genera
     assert _observe(value, role) == _expected(
         binding, "PENDING_CLOSED", pending=close["operation_id"]
     )
-    races._complete(value, close, pending)
+    races._assert_completion_blocked(value, close, pending)
+    races._inject_test_only_closed_fixture(value, close)
     assert _observe(value, role) == _expected(binding, "VERIFY_ONLY", generation=2)
     revoke = races._request(value, role=role, generation=2, predecessor="VERIFY_ONLY")
     pending = races._begin(value, revoke)
     assert _observe(value, role) == _expected(
         binding, "PENDING_CLOSED", pending=revoke["operation_id"], generation=2
     )
-    races._complete(value, revoke, pending)
+    races._assert_completion_blocked(value, revoke, pending)
+    races._inject_test_only_closed_fixture(value, revoke)
     assert _observe(value, role) == _expected(binding, "REVOKED", generation=3)
     with races._transaction(value) as issuer:
         assert (
@@ -202,7 +205,8 @@ def test_rotation_observes_retired_identity_separately_from_current_closed_succe
 ):
     value = active_authority
     close = races._request(value, target="VERIFY_ONLY")
-    races._complete(value, close, races._begin(value, close))
+    races._begin(value, close)
+    races._inject_test_only_closed_fixture(value, close)
     enrollment = _successor_enrollment(value)
     with races._transaction(value, administrator=True) as administrator:
         races._call(administrator, value, "enroll_closed_successor", (Jsonb(enrollment),))
@@ -223,7 +227,7 @@ def _mutate(value, port, arguments, backends):
 
 
 @pytest.mark.parametrize("mutation", ["begin", "complete", "rotation"])
-def test_observation_holds_slot_then_fence_until_close_or_rotation_can_commit(
+def test_observation_locks_serialize_mutations_and_cannot_authorize_completion(
     active_authority, mutation
 ):
     value = active_authority
@@ -242,7 +246,7 @@ def test_observation_holds_slot_then_fence_until_close_or_rotation_can_commit(
             ),
         )
         if mutation == "rotation":
-            races._complete(value, close, pending)
+            races._inject_test_only_closed_fixture(value, close)
             before = _expected(value.binding(), "VERIFY_ONLY", generation=2)
             port, arguments = "enroll_closed_successor", (Jsonb(_successor_enrollment(value)),)
     backends = Queue()
@@ -254,26 +258,33 @@ def test_observation_holds_slot_then_fence_until_close_or_rotation_can_commit(
             assert observed == before
             future = executor.submit(_mutate, value, port, arguments, backends)
             pid = backends.get(timeout=5)
-            deadline = time.monotonic() + 5
-            while True:
-                with psycopg.connect(value.base_dsn) as observer:
-                    blocked = observer.execute(
-                        "SELECT cardinality(pg_catalog.pg_blocking_pids(%s))>0", (pid,)
-                    ).fetchone()[0]
-                if blocked:
-                    break
-                assert time.monotonic() < deadline, (
-                    "administrator did not wait for observation locks"
-                )
-                time.sleep(0.01)
-            assert not future.done()
+            if mutation == "complete":
+                # The denied port never reaches a custody/fence mutation, even
+                # while another transaction holds the public observation locks.
+                with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                    future.result(timeout=10)
+            else:
+                deadline = time.monotonic() + 5
+                while True:
+                    with psycopg.connect(value.base_dsn) as observer:
+                        blocked = observer.execute(
+                            "SELECT cardinality(pg_catalog.pg_blocking_pids(%s))>0", (pid,)
+                        ).fetchone()[0]
+                    if blocked:
+                        break
+                    assert time.monotonic() < deadline, (
+                        "administrator did not wait for observation locks"
+                    )
+                    time.sleep(0.01)
+                assert not future.done()
             assert (
                 races._call(
                     issuer, value, "observe_signer_custody", (ROOT, value.binding()["identity"])
                 )
                 == before
             )
-        assert future.result(timeout=10)["phase"] in {"PENDING_CLOSED", "COMPLETED"}
+        if mutation != "complete":
+            assert future.result(timeout=10)["phase"] == "PENDING_CLOSED"
     observed = _observe(value)
     assert observed["new_operations_authorized"] is False
     if mutation == "begin":
@@ -281,6 +292,8 @@ def test_observation_holds_slot_then_fence_until_close_or_rotation_can_commit(
             value.binding(), "PENDING_CLOSED", pending=close["operation_id"]
         )
     elif mutation == "complete":
-        assert observed == _expected(value.binding(), "VERIFY_ONLY", generation=2)
+        assert observed == _expected(
+            value.binding(), "PENDING_CLOSED", pending=close["operation_id"]
+        )
     else:
         assert observed == _expected(value.binding(), "VERIFY_ONLY", generation=2, current=False)

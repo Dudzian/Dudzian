@@ -2,7 +2,8 @@
 
 This is an independent production authority, not a promoted test deployment.
 Only public credential facts enter PostgreSQL. The separately authenticated
-administrator validates custody completion; SQL preserves its exact receipt.
+administrator can close fences; completion remains blocked without an
+independently authenticated custody authority.
 No function activates a credential or performs Root Proof issuance.
 """
 
@@ -17,7 +18,7 @@ from psycopg import sql
 from psycopg.types.json import Jsonb
 
 SCHEMA_IDENTITY = "cryptohunter.production_root_lifecycle.postgresql"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 BOUNDARY = "PRODUCTION_LIFECYCLE_CLOSED"
 PRODUCTION_LIFECYCLE_ISOLATION = "BLOCKED"
 SEMANTIC_ROLES = frozenset(
@@ -104,7 +105,6 @@ ADMINISTRATOR_FUNCTIONS = frozenset(
         "assert_catalog()",
         "begin_close(jsonb)",
         "read_operation(text,text,text)",
-        "complete_close(text,text,bytea)",
         "enroll_closed_successor(jsonb)",
         "read_historical_fence(text,text,bigint)",
     }
@@ -275,7 +275,7 @@ BEGIN
    RAISE EXCEPTION 'lifecycle operation identity conflict' USING ERRCODE='23505'; END IF;
   RETURN pg_catalog.jsonb_build_object('operation_id',prior.operation_id,'request_sha256',prior.request_sha256,
    'phase',CASE WHEN EXISTS(SELECT 1 FROM {s}.completions WHERE operation_id=prior.operation_id)
-    THEN 'COMPLETED' ELSE 'PENDING_CLOSED' END);
+    THEN 'LEGACY_UNVERIFIED_COMPLETION' ELSE 'PENDING_CLOSED' END);
  END IF;
  IF f.state IS DISTINCT FROM p_request->>'predecessor_state'
  OR f.generation IS DISTINCT FROM (p_request->>'generation')::bigint
@@ -310,48 +310,13 @@ BEGIN
   RAISE EXCEPTION 'exact administrative operation differs' USING ERRCODE='23514'; END IF;
  SELECT receipt_sha256 INTO completed FROM {s}.completions WHERE operation_id=p_operation;
  RETURN pg_catalog.jsonb_build_object('operation_id',op.operation_id,'request',op.request,
-  'request_sha256',op.request_sha256,'phase',CASE WHEN completed IS NULL THEN 'PENDING_CLOSED' ELSE 'COMPLETED' END,
+  'request_sha256',op.request_sha256,'phase',CASE WHEN completed IS NULL THEN 'PENDING_CLOSED' ELSE 'LEGACY_UNVERIFIED_COMPLETION' END,
   'receipt_sha256',pg_catalog.encode(completed,'hex'));
 END
 """,
-        "complete_close(text,text,bytea)": f"""
-DECLARE op {s}.operations%ROWTYPE; f {s}.fences%ROWTYPE; receipt jsonb; existing bytea;
+        "complete_close(text,text,bytea)": """
 BEGIN
- {admin}
- SELECT * INTO STRICT op FROM {s}.operations WHERE operation_id=p_operation;
- IF op.close_xid=pg_catalog.pg_current_xact_id() THEN
-  RAISE EXCEPTION 'lifecycle close must commit before completion' USING ERRCODE='25001'; END IF;
- PERFORM 1 FROM {s}.slots WHERE semantic_role=op.semantic_role FOR UPDATE;
- SELECT * INTO STRICT f FROM {s}.fences WHERE semantic_role=op.semantic_role AND identity=op.identity FOR UPDATE;
- IF op.request_sha256 IS DISTINCT FROM p_request_sha256 OR p_receipt IS NULL
- OR pg_catalog.octet_length(p_receipt)>262144 THEN
-  RAISE EXCEPTION 'exact close and completion receipt required' USING ERRCODE='23514'; END IF;
- receipt:=pg_catalog.convert_from(p_receipt,'UTF8')::jsonb;
- IF pg_catalog.jsonb_typeof(receipt)<>'object'
- OR (SELECT pg_catalog.array_agg(k ORDER BY k) FROM pg_catalog.jsonb_object_keys(receipt) k)
- IS DISTINCT FROM ARRAY['custody_receipt_sha256','generation','identity','key_version','operation_id','public_material_identity','request_sha256','semantic_role','state']::text[]
- OR pg_catalog.jsonb_typeof(receipt->'custody_receipt_sha256') IS DISTINCT FROM 'string'
- OR receipt->>'custody_receipt_sha256' !~ '^[0-9a-f]{{64}}$'
- OR receipt-'custody_receipt_sha256' IS DISTINCT FROM pg_catalog.jsonb_build_object(
-  'operation_id',op.operation_id,'request_sha256',op.request_sha256,'semantic_role',f.semantic_role,
-  'identity',f.identity,'public_material_identity',f.public_material_identity,'key_version',f.key_version,
-  'generation',(op.request->>'generation')::bigint+1,'state',op.request->>'target_state')
- THEN RAISE EXCEPTION 'completion differs from exact public custody facts' USING ERRCODE='23514'; END IF;
- SELECT receipt_bytes INTO existing FROM {s}.completions WHERE operation_id=p_operation;
- IF FOUND THEN
-  IF existing IS DISTINCT FROM p_receipt THEN
-   RAISE EXCEPTION 'immutable completion receipt conflict' USING ERRCODE='23505'; END IF;
- ELSE
-  IF f.state<>'PENDING_CLOSED' OR f.pending_operation_id IS DISTINCT FROM p_operation
-  OR f.generation IS DISTINCT FROM (op.request->>'generation')::bigint THEN
-   RAISE EXCEPTION 'exact pending close required' USING ERRCODE='23514'; END IF;
-  INSERT INTO {s}.completions VALUES(p_operation,p_receipt,pg_catalog.sha256(p_receipt));
-  UPDATE {s}.fences SET state=op.request->>'target_state',generation=generation+1,pending_operation_id=NULL
-  WHERE semantic_role=f.semantic_role AND identity=f.identity;
-  INSERT INTO {s}.observations VALUES(f.semantic_role,f.identity,f.generation+1,op.request->>'target_state');
- END IF;
- RETURN pg_catalog.jsonb_build_object('operation_id',p_operation,'request_sha256',p_request_sha256,
-  'phase','COMPLETED','state',op.request->>'target_state','receipt_sha256',pg_catalog.encode(pg_catalog.sha256(p_receipt),'hex'));
+ RAISE EXCEPTION 'INDEPENDENT_CUSTODY_COMPLETION_AUTHORITY_REQUIRED' USING ERRCODE='42501';
 END
 """,
         "enroll_closed_successor(jsonb)": f"""
@@ -483,6 +448,72 @@ BEGIN
 END
 """,
     }
+
+
+def _reviewed_v1_completion_source(
+    config: PostgreSQLProductionRootLifecycleProvisioning,
+) -> str:
+    """Historical source for exact migration validation; never installed by V2."""
+    s = _q(config.schema)
+    admin = _principal_guard(config, "administrator")
+    return f"""
+DECLARE op {s}.operations%ROWTYPE; f {s}.fences%ROWTYPE; receipt jsonb; existing bytea;
+BEGIN
+ {admin}
+ SELECT * INTO STRICT op FROM {s}.operations WHERE operation_id=p_operation;
+ IF op.close_xid=pg_catalog.pg_current_xact_id() THEN
+  RAISE EXCEPTION 'lifecycle close must commit before completion' USING ERRCODE='25001'; END IF;
+ PERFORM 1 FROM {s}.slots WHERE semantic_role=op.semantic_role FOR UPDATE;
+ SELECT * INTO STRICT f FROM {s}.fences WHERE semantic_role=op.semantic_role AND identity=op.identity FOR UPDATE;
+ IF op.request_sha256 IS DISTINCT FROM p_request_sha256 OR p_receipt IS NULL
+ OR pg_catalog.octet_length(p_receipt)>262144 THEN
+  RAISE EXCEPTION 'exact close and completion receipt required' USING ERRCODE='23514'; END IF;
+ receipt:=pg_catalog.convert_from(p_receipt,'UTF8')::jsonb;
+ IF pg_catalog.jsonb_typeof(receipt)<>'object'
+ OR (SELECT pg_catalog.array_agg(k ORDER BY k) FROM pg_catalog.jsonb_object_keys(receipt) k)
+ IS DISTINCT FROM ARRAY['custody_receipt_sha256','generation','identity','key_version','operation_id','public_material_identity','request_sha256','semantic_role','state']::text[]
+ OR pg_catalog.jsonb_typeof(receipt->'custody_receipt_sha256') IS DISTINCT FROM 'string'
+ OR receipt->>'custody_receipt_sha256' !~ '^[0-9a-f]{{64}}$'
+ OR receipt-'custody_receipt_sha256' IS DISTINCT FROM pg_catalog.jsonb_build_object(
+  'operation_id',op.operation_id,'request_sha256',op.request_sha256,'semantic_role',f.semantic_role,
+  'identity',f.identity,'public_material_identity',f.public_material_identity,'key_version',f.key_version,
+  'generation',(op.request->>'generation')::bigint+1,'state',op.request->>'target_state')
+ THEN RAISE EXCEPTION 'completion differs from exact public custody facts' USING ERRCODE='23514'; END IF;
+ SELECT receipt_bytes INTO existing FROM {s}.completions WHERE operation_id=p_operation;
+ IF FOUND THEN
+  IF existing IS DISTINCT FROM p_receipt THEN
+   RAISE EXCEPTION 'immutable completion receipt conflict' USING ERRCODE='23505'; END IF;
+ ELSE
+  IF f.state<>'PENDING_CLOSED' OR f.pending_operation_id IS DISTINCT FROM p_operation
+  OR f.generation IS DISTINCT FROM (op.request->>'generation')::bigint THEN
+   RAISE EXCEPTION 'exact pending close required' USING ERRCODE='23514'; END IF;
+  INSERT INTO {s}.completions VALUES(p_operation,p_receipt,pg_catalog.sha256(p_receipt));
+  UPDATE {s}.fences SET state=op.request->>'target_state',generation=generation+1,pending_operation_id=NULL
+  WHERE semantic_role=f.semantic_role AND identity=f.identity;
+  INSERT INTO {s}.observations VALUES(f.semantic_role,f.identity,f.generation+1,op.request->>'target_state');
+ END IF;
+ RETURN pg_catalog.jsonb_build_object('operation_id',p_operation,'request_sha256',p_request_sha256,
+  'phase','COMPLETED','state',op.request->>'target_state','receipt_sha256',pg_catalog.encode(pg_catalog.sha256(p_receipt),'hex'));
+END
+"""
+
+
+def _reviewed_v1_function_sources(
+    config: PostgreSQLProductionRootLifecycleProvisioning,
+) -> dict[str, str]:
+    """Frozen V1 behavior for checking an externally pinned migration source.
+
+    This inventory is never passed to the installer. V1 accepted public facts
+    as completion evidence; retaining its source here does not authorize it.
+    """
+    sources = reviewed_production_lifecycle_function_sources(config)
+    sources["assert_catalog()"] = sources["assert_catalog()"].replace(
+        f"m.schema_version<>{SCHEMA_VERSION}", "m.schema_version<>1"
+    )
+    for signature in ("begin_close(jsonb)", "read_operation(text,text,text)"):
+        sources[signature] = sources[signature].replace("LEGACY_UNVERIFIED_COMPLETION", "COMPLETED")
+    sources["complete_close(text,text,bytea)"] = _reviewed_v1_completion_source(config)
+    return sources
 
 
 def _validate_binding(binding: object) -> None:

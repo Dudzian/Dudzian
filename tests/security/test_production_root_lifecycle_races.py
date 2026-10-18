@@ -1,9 +1,10 @@
 """Real PostgreSQL lifecycle gate proofs without enrollment or Root Proof writes.
 
-The fixture injects ACTIVE public rows as an isolated test superuser because the
-production authority deliberately exposes no activation API. These tests prove
-only lifecycle slots, fences and receipts. They do not qualify an immutable
-attempt, compete for an entitlement or authorize a production BIND.
+The fixtures inject ACTIVE and historical closed public rows as an isolated test
+superuser because production exposes neither activation nor qualified completion.
+These tests prove lifecycle slots, fences, denied receipt publication and public
+historical reads. Fixture injection supplies no custody completion evidence and
+does not authorize a production BIND or qualify an immutable attempt.
 """
 
 from __future__ import annotations
@@ -216,16 +217,76 @@ def _receipt(value, request, pending):
     return receipt
 
 
-def _complete(value, request, pending):
-    receipt = _receipt(value, request, pending)
+def _assert_completion_blocked(value, request, pending, receipt=None):
+    if receipt is None:
+        receipt = _receipt(value, request, pending)
     with _transaction(value, administrator=True) as administrator:
-        result = _call(
-            administrator,
-            value,
-            "complete_close",
-            (request["operation_id"], pending["request_sha256"], receipt),
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            _call(
+                administrator,
+                value,
+                "complete_close",
+                (request["operation_id"], pending["request_sha256"], receipt),
+            )
+    assert _fence(value, request["semantic_role"]) == (
+        "PENDING_CLOSED",
+        request["generation"],
+        request["operation_id"],
+    )
+    assert _resolve(value, request, pending)["phase"] == "PENDING_CLOSED"
+    with psycopg.connect(value.base_dsn) as observer:
+        assert observer.execute(
+            sql.SQL("SELECT count(*) FROM {}.completions WHERE operation_id=%s").format(
+                sql.Identifier(value.config.schema)
+            ),
+            (request["operation_id"],),
+        ).fetchone() == (0,)
+
+
+def _inject_test_only_closed_fixture(value, request):
+    """Set historical fixture rows; this is never a completion authority/proof.
+
+    Keep public observation/rotation regressions independent of the disabled
+    completion port. Only an isolated database superuser changes these rows, and
+    the reviewed trigger catalog is restored in the same transaction. No receipt
+    or completion record is fabricated by this setup.
+    """
+    with psycopg.connect(value.base_dsn) as bootstrap:
+        assert bootstrap.info.dbname.startswith("isolated_lifecycle_")
+        assert bootstrap.execute(
+            "SELECT rolsuper FROM pg_catalog.pg_roles WHERE rolname=session_user"
+        ).fetchone() == (True,)
+        schema = sql.Identifier(value.config.schema)
+        bootstrap.execute(
+            sql.SQL("ALTER TABLE {}.fences DISABLE TRIGGER lifecycle_update").format(schema)
         )
-    return result, receipt
+        updated = bootstrap.execute(
+            sql.SQL(
+                "UPDATE {}.fences SET state=%s,generation=generation+1,pending_operation_id=NULL "
+                "WHERE semantic_role=%s AND identity=%s AND state='PENDING_CLOSED' "
+                "AND generation=%s AND pending_operation_id=%s"
+            ).format(schema),
+            (
+                request["target_state"],
+                request["semantic_role"],
+                request["identity"],
+                request["generation"],
+                request["operation_id"],
+            ),
+        )
+        assert updated.rowcount == 1
+        bootstrap.execute(
+            sql.SQL("ALTER TABLE {}.fences ENABLE ALWAYS TRIGGER lifecycle_update").format(schema)
+        )
+        bootstrap.execute(
+            sql.SQL("INSERT INTO {}.observations VALUES(%s,%s,%s,%s)").format(schema),
+            (
+                request["semantic_role"],
+                request["identity"],
+                request["generation"] + 1,
+                request["target_state"],
+            ),
+        )
 
 
 def _fence(value, role=ROOT):
@@ -306,7 +367,8 @@ def test_rotation_after_preparation_rejects_old_identity_and_generation(active_a
     value = active_authority
     prepared = tuple(dict(binding) for binding in value.bindings)
     request = _request(value, target="VERIFY_ONLY")
-    _complete(value, request, _begin(value, request))
+    _begin(value, request)
+    _inject_test_only_closed_fixture(value, request)
     successor = value.binding()
     successor.update(
         identity=successor["identity"] + "-successor",
@@ -334,8 +396,9 @@ def test_rotation_after_preparation_rejects_old_identity_and_generation(active_a
 def test_verify_only_preserves_historical_read_without_new_operation_authority(active_authority):
     value = active_authority
     request = _request(value, target="VERIFY_ONLY")
-    result, receipt = _complete(value, request, _begin(value, request))
-    assert result["phase"] == "COMPLETED"
+    pending = _begin(value, request)
+    _assert_completion_blocked(value, request, pending)
+    _inject_test_only_closed_fixture(value, request)
     assert _fence(value) == ("VERIFY_ONLY", 2, None)
     with _transaction(value) as issuer:
         historical = _call(issuer, value, "read_historical_fence", (ROOT, request["identity"], 1))
@@ -343,16 +406,22 @@ def test_verify_only_preserves_historical_read_without_new_operation_authority(a
     assert historical["new_operations_authorized"] is False
     with pytest.raises(psycopg.errors.CheckViolation):
         _assert_gate(value)
+    # Even a previously closed public fixture cannot authorize receipt replay.
     with _transaction(value, administrator=True) as administrator:
-        replay = _call(
-            administrator,
-            value,
-            "complete_close",
-            (request["operation_id"], result["request_sha256"], receipt),
-        )
-    assert replay == result
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            _call(
+                administrator,
+                value,
+                "complete_close",
+                (
+                    request["operation_id"],
+                    pending["request_sha256"],
+                    _receipt(value, request, pending),
+                ),
+            )
     revoked = _request(value, generation=2, predecessor="VERIFY_ONLY")
-    _complete(value, revoked, _begin(value, revoked))
+    _begin(value, revoked)
+    _inject_test_only_closed_fixture(value, revoked)
     with _transaction(value) as issuer:
         assert _call(issuer, value, "read_historical_fence", (ROOT, request["identity"], 1)) is None
 
@@ -467,8 +536,7 @@ def test_crash_before_and_after_commit_preserves_exact_durable_close(
     if phase == "after_commit":
         replay = _begin(value, request)
         assert replay["phase"] == "PENDING_CLOSED"
-        _complete(value, request, replay)
-        assert _fence(value) == ("REVOKED", 2, None)
+        _assert_completion_blocked(value, request, replay)
 
 
 def test_lost_native_commit_response_requires_exact_positive_durable_resolution(active_authority):
@@ -495,11 +563,10 @@ def test_lost_native_commit_response_requires_exact_positive_durable_resolution(
     altered = dict(request, target_state="VERIFY_ONLY")
     with pytest.raises(psycopg.errors.UniqueViolation):
         _begin(value, altered)
-    _complete(value, request, pending)
-    assert _fence(value) == ("REVOKED", 2, None)
+    _assert_completion_blocked(value, request, pending)
 
 
-def test_restart_pending_close_never_reopens_and_replays_exact_receipt(active_authority):
+def test_restart_pending_close_never_reopens_or_accepts_exact_receipt_replay(active_authority):
     if not (
         os.environ.get("DUDZIAN_TEST_POSTGRES_RESTART_COMMAND")
         or os.environ.get("DUDZIAN_TEST_POSTGRES_RESTART_CONTAINER_ID")
@@ -515,18 +582,10 @@ def test_restart_pending_close_never_reopens_and_replays_exact_receipt(active_au
     assert resolved["request"] == request
     with pytest.raises(psycopg.errors.CheckViolation):
         _assert_gate(value)
-    result, receipt = _complete(value, request, pending)
-    with _transaction(value, administrator=True) as administrator:
-        assert (
-            _call(
-                administrator,
-                value,
-                "complete_close",
-                (request["operation_id"], pending["request_sha256"], receipt),
-            )
-            == result
-        )
-    assert _fence(value) == ("REVOKED", 2, None)
+    receipt = _receipt(value, request, pending)
+    _assert_completion_blocked(value, request, pending, receipt)
+    _restart_controlled_postgresql()
+    _assert_completion_blocked(value, request, pending, receipt)
 
 
 def test_resolution_is_exact_and_absence_does_not_change_a_closed_fence(active_authority):
@@ -571,36 +630,25 @@ def test_fresh_process_resolves_pending_close_without_reopening_or_repeating_wri
     assert resolved["phase"] == "PENDING_CLOSED"
     assert resolved["request"] == request
     assert _fence(value) == ("PENDING_CLOSED", 1, request["operation_id"])
-    _complete(value, request, pending)
-    assert _fence(value) == ("REVOKED", 2, None)
+    _assert_completion_blocked(value, request, pending)
 
 
-def test_caller_completion_cannot_replace_exact_retained_public_facts(active_authority):
+@pytest.mark.parametrize("change", ["malformed", "generation", "forged", "hash_only"])
+def test_caller_completion_cannot_replace_exact_retained_public_facts(active_authority, change):
     value = active_authority
     request = _request(value)
     pending = _begin(value, request)
-    with _transaction(value, administrator=True) as administrator:
-        with pytest.raises(psycopg.errors.CheckViolation):
-            _call(
-                administrator,
-                value,
-                "complete_close",
-                (request["operation_id"], pending["request_sha256"], b"{}"),
-            )
-    assert _fence(value) == ("PENDING_CLOSED", 1, request["operation_id"])
-    result, receipt = _complete(value, request, pending)
-    changed = json.loads(receipt)
-    changed["generation"] = 9
-    with _transaction(value, administrator=True) as administrator:
-        with pytest.raises(psycopg.errors.CheckViolation):
-            _call(
-                administrator,
-                value,
-                "complete_close",
-                (request["operation_id"], pending["request_sha256"], json.dumps(changed).encode()),
-            )
-    assert result["state"] == "REVOKED"
-    assert _fence(value) == ("REVOKED", 2, None)
+    receipt = _receipt(value, request, pending)
+    if change == "malformed":
+        receipt = b"{}"
+    elif change == "generation":
+        changed = json.loads(receipt)
+        changed["generation"] = 9
+        receipt = json.dumps(changed).encode()
+    elif change == "hash_only":
+        receipt = hashlib.sha256(receipt).hexdigest().encode()
+    _assert_completion_blocked(value, request, pending, receipt)
+    _assert_completion_blocked(value, request, pending, receipt)
 
 
 @pytest.mark.parametrize("port", ["completion", "resolution"])
@@ -612,9 +660,12 @@ def test_uncommitted_close_cannot_authorize_completion_or_positive_resolution(
     with psycopg.connect(value.dsn(True)) as administrator:
         pending = _call(administrator, value, "begin_close", (Jsonb(request),))
         assert _fence(value) == ("ACTIVE", 1, None)
-        with pytest.raises(
-            psycopg.errors.ActiveSqlTransaction, match="close.*(commit|observation)"
-        ):
+        error, message = (
+            (psycopg.errors.InsufficientPrivilege, "permission denied")
+            if port == "completion"
+            else (psycopg.errors.ActiveSqlTransaction, "close.*(commit|observation)")
+        )
+        with pytest.raises(error, match=message):
             if port == "completion":
                 _call(
                     administrator,
@@ -658,7 +709,7 @@ def simulated_installed_administrator(active_authority, monkeypatch):
     return value, boundary
 
 
-def test_coordinator_acknowledges_durable_close_then_publishes_exact_receipt(
+def test_coordinator_acknowledges_durable_close_but_blocks_administrator_receipt(
     simulated_installed_administrator,
 ):
     value, boundary = simulated_installed_administrator
@@ -667,19 +718,23 @@ def test_coordinator_acknowledges_durable_close_then_publishes_exact_receipt(
         pending = boundary.begin_close(administrator, request)
         assert administrator.info.transaction_status is psycopg.pq.TransactionStatus.IDLE
         assert _fence(value) == ("PENDING_CLOSED", 1, request["operation_id"])
-        result = boundary.publish_administrator_completion(
-            administrator,
-            request["operation_id"],
-            pending["request_sha256"],
-            _receipt(value, request, pending),
-        )
-        assert result["phase"] == "COMPLETED"
+        with pytest.raises(
+            coordinator.ProductionRootLifecycleError,
+            match="INDEPENDENT_CUSTODY_COMPLETION_AUTHORITY_REQUIRED",
+        ):
+            boundary.publish_administrator_completion(
+                administrator,
+                request["operation_id"],
+                pending["request_sha256"],
+                _receipt(value, request, pending),
+            )
+        assert administrator.info.transaction_status is psycopg.pq.TransactionStatus.IDLE
         resolved = boundary.resolve_close(
             administrator, ROOT, request["operation_id"], pending["request_sha256"]
         )
-    assert resolved["phase"] == "COMPLETED"
+    assert resolved["phase"] == "PENDING_CLOSED"
     assert resolved["request"] == request
-    assert _fence(value) == ("REVOKED", 2, None)
+    assert _fence(value) == ("PENDING_CLOSED", 1, request["operation_id"])
 
 
 def test_coordinator_absent_resolution_stays_indeterminate_without_retry(

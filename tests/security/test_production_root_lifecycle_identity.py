@@ -199,6 +199,26 @@ def test_production_bind_has_no_test_credential_bypass(installed):
         authority.commit(profile="TEST_ONLY", attempt="caller-selected")
 
 
+@pytest.mark.parametrize("role", ["issuer", "administrator"])
+@pytest.mark.parametrize("receipt", [b"{}", b"a" * 64, b"", None])
+def test_completion_has_no_python_receipt_or_role_bypass(installed, monkeypatch, role, receipt):
+    authority = boundary.ProductionRootLifecycleBoundary(boundary._installed_boundary(), role)
+    calls = []
+    monkeypatch.setattr(
+        boundary.ProductionRootLifecycleBoundary,
+        "_administrative_operation",
+        lambda *args: calls.append(args),
+    )
+    with pytest.raises(
+        boundary.ProductionRootLifecycleError,
+        match="INDEPENDENT_CUSTODY_COMPLETION_AUTHORITY_REQUIRED",
+    ):
+        authority.publish_administrator_completion(None, "close-1", "a" * 64, receipt)
+    assert calls == []
+    assert boundary.PRODUCTION_CUSTODY_COMPLETION == "BLOCKED"
+    assert boundary.PRODUCTION_EMISSION == "BLOCKED"
+
+
 def test_factory_accepts_no_installation_override():
     with pytest.raises(TypeError):
         boundary.open_installed_production_root_lifecycle(path="/tmp/caller.json")

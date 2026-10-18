@@ -35,6 +35,7 @@ from bot_core.local_signing_custody import (
     LocalSigningMetadata,
     SigningKeyLifecycle,
     _ADMISSION_LOCK,
+    _LOCK_FILENAME,
     _MUTATION_ADMISSIONS,
     _CustodyLockLease,
     _LocalSigningMutationAdmission,
@@ -44,8 +45,10 @@ from bot_core.local_signing_custody import (
     _encode_record,
     _fsync_directory,
     _open_custody_descriptor,
+    _record_path,
     _replace_record,
     _resolve_credential_record,
+    _retained_path,
     _snapshot_security,
     _transition_exact_locked,
     _validate_directory,
@@ -236,6 +239,13 @@ def _read_operation(
     path: Path, security: SecurityProfileIdentity, role: ProviderRole
 ) -> tuple[_OperationRecord, bytes]:
     raw = _read_bytes(path)
+    return _decode_operation(raw, security, role), raw
+
+
+def _decode_operation(
+    raw: bytes, security: SecurityProfileIdentity, role: ProviderRole
+) -> _OperationRecord:
+    """Decode the existing V2 journal without reading, syncing or changing custody."""
     try:
         value = json.loads(raw)
         if (
@@ -258,9 +268,10 @@ def _read_operation(
         ):
             raise ValueError
         _operation_token(value["operation_id"])
-        descriptor = _descriptor_snapshot(
-            base64.b64decode(value["operation_descriptor_b64"], validate=True)
-        )
+        encoded = value["operation_descriptor_b64"]
+        descriptor = _descriptor_snapshot(base64.b64decode(encoded, validate=True))
+        if base64.b64encode(descriptor).decode("ascii") != encoded:
+            raise ValueError
         before = _decode_record(
             _canonical(value["before_metadata"]), expected_security=security, expected_role=role
         )
@@ -276,9 +287,11 @@ def _read_operation(
         record = _OperationRecord(
             value["operation_id"], descriptor, before, after, value["completion_state"]
         )
+        if _document(record) != raw:
+            raise ValueError
     except (KeyError, TypeError, ValueError, UnicodeError) as exc:
         raise LocalSigningCustodyError("lifecycle journal unavailable/corrupt") from exc
-    return record, raw
+    return record
 
 
 @dataclass(frozen=True, slots=True)
@@ -562,8 +575,235 @@ def verified_durable_signing_lifecycle_completion(
         yield metadata
 
 
+@dataclass(frozen=True, slots=True)
+class SigningLifecycleCompletionObservation:
+    """Public journal facts, never a close authorization or completion capability.
+
+    This observation supports the existing V2 journal only. It does not adapt
+    the isolated PostgreSQL coordinator to production or attest who wrote the
+    journal, private-key control, an independent authority, or prior fsync.
+    """
+
+    evidence_bytes: bytes
+    metadata: LocalSigningMetadata
+
+    @property
+    def completion_fingerprint_sha256(self) -> str:
+        return hashlib.sha256(self.evidence_bytes).hexdigest()
+
+
+def _read_only_file_identity(info: os.stat_result) -> tuple[int, ...]:
+    return (
+        info.st_dev,
+        info.st_ino,
+        info.st_mode,
+        info.st_uid,
+        info.st_gid,
+        info.st_nlink,
+        info.st_size,
+        info.st_mtime_ns,
+        info.st_ctime_ns,
+    )
+
+
+class _ReadOnlyCustodyFiles:
+    """Pin every path component and existing file without creating any object."""
+
+    def __init__(self, root: Path) -> None:
+        if len(root.parts) > 128:
+            raise LocalSigningCustodyError("read-only custody ancestry exceeds limit")
+        self.root = root
+        self.directories: dict[Path, tuple[int, tuple[int, ...]]] = {}
+        self.files: dict[Path, tuple[int, tuple[int, ...], bytes]] = {}
+        self.descriptors: list[int] = []
+
+    @staticmethod
+    def _directory_identity(info: os.stat_result) -> tuple[int, ...]:
+        return info.st_dev, info.st_ino, info.st_mode, info.st_uid, info.st_gid
+
+    @staticmethod
+    def _no_acl(descriptor: int) -> None:
+        if sys.platform != "linux":
+            raise LocalSigningCustodyError("read-only custody ACL observation requires Linux")
+        if any(name.startswith("system.posix_acl_") for name in os.listxattr(descriptor)):
+            raise LocalSigningCustodyError("read-only custody ACL is unsafe")
+
+    def directory(self, path: Path) -> int:
+        if sys.platform != "linux":
+            raise LocalSigningCustodyError("read-only custody directory observation requires Linux")
+        if path in self.directories:
+            return self.directories[path][0]
+        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+        if path == Path(path.anchor):
+            descriptor = os.open(path.anchor, flags)
+        else:
+            descriptor = os.open(path.name, flags, dir_fd=self.directory(path.parent))
+        self.descriptors.append(descriptor)
+        info = os.fstat(descriptor)
+        if path == self.root or self.root in path.parents:
+            if info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o700:
+                raise LocalSigningCustodyError("read-only custody directory is unsafe")
+            self._no_acl(descriptor)
+        self.directories[path] = descriptor, self._directory_identity(info)
+        return descriptor
+
+    def read(self, path: Path, *, limit: int = 1048576) -> bytes:
+        if sys.platform != "linux":
+            raise LocalSigningCustodyError("read-only custody file observation requires Linux")
+        if path in self.files:
+            descriptor, expected, original = self.files[path]
+        else:
+            descriptor = os.open(
+                path.name,
+                os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                dir_fd=self.directory(path.parent),
+            )
+            self.descriptors.append(descriptor)
+            info = os.fstat(descriptor)
+            if (
+                not stat.S_ISREG(info.st_mode)
+                or info.st_uid != os.geteuid()
+                or stat.S_IMODE(info.st_mode) != 0o600
+                or info.st_nlink != 1
+                or info.st_size > limit
+            ):
+                raise LocalSigningCustodyError("read-only custody file is unsafe")
+            self._no_acl(descriptor)
+            expected, original = _read_only_file_identity(info), b""
+        os.lseek(descriptor, 0, os.SEEK_SET)
+        raw = bytearray()
+        while len(raw) <= limit:
+            part = os.read(descriptor, min(8192, limit + 1 - len(raw)))
+            if not part:
+                break
+            raw.extend(part)
+        if (
+            len(raw) > limit
+            or len(raw) != expected[6]
+            or _read_only_file_identity(os.fstat(descriptor)) != expected
+            or (path in self.files and bytes(raw) != original)
+        ):
+            raise LocalSigningCustodyError("read-only custody file changed")
+        self.files[path] = descriptor, expected, bytes(raw)
+        return bytes(raw)
+
+    def recheck(self) -> None:
+        for path, (descriptor, expected) in self.directories.items():
+            observed = (
+                os.stat(path.anchor, follow_symlinks=False)
+                if path == Path(path.anchor)
+                else os.stat(
+                    path.name, dir_fd=self.directories[path.parent][0], follow_symlinks=False
+                )
+            )
+            if (
+                self._directory_identity(observed) != expected
+                or self._directory_identity(os.fstat(descriptor)) != expected
+            ):
+                raise LocalSigningCustodyError("read-only custody directory changed")
+            if path == self.root or self.root in path.parents:
+                self._no_acl(descriptor)
+        for path, (descriptor, expected, _) in self.files.items():
+            observed = os.stat(
+                path.name, dir_fd=self.directories[path.parent][0], follow_symlinks=False
+            )
+            if _read_only_file_identity(observed) != expected:
+                raise LocalSigningCustodyError("read-only custody path changed")
+            self._no_acl(descriptor)
+            self.read(path)
+
+    def close(self) -> None:
+        for descriptor in reversed(self.descriptors):
+            os.close(descriptor)
+
+
+@contextmanager
+def observe_durable_signing_lifecycle_completion(
+    directory: Path,
+    *,
+    security: SecurityProfileIdentity,
+    role: ProviderRole,
+    operation_descriptor: bytes,
+) -> Iterator[SigningLifecycleCompletionObservation]:
+    """Read exact existing V2 COMPLETE evidence under an existing Linux lock.
+
+    No close, recovery, fsync, secret read, capability issuance, or file creation
+    occurs. The shared custody lock remains held through the caller's context;
+    all pinned paths and bytes are checked again before releasing it. Missing
+    evidence and INTENT stay unavailable. Independent production authentication
+    and SQL publication are deliberately outside this diagnostic port.
+    """
+    if sys.platform != "linux":
+        raise LocalSigningCustodyError("read-only custody observation requires Linux")
+    from bot_core.postgresql_custody_lifecycle import (
+        CustodyLifecycleConflict,
+        CustodyLifecycleRequest,
+    )
+
+    import fcntl
+
+    root = _safe_directory(directory, create=False)
+    security = _snapshot_security(security)
+    descriptor = _descriptor_snapshot(operation_descriptor)
+    if (
+        type(role) is not ProviderRole
+        or role not in _ROLES
+        or security.profile is not SecurityProfile.PRODUCTION_LOCAL
+    ):
+        raise LocalSigningLifecycleError("exact root/history custody observation required")
+    try:
+        request = CustodyLifecycleRequest(root, security, role, descriptor)
+    except (CustodyLifecycleConflict, TypeError, ValueError) as exc:
+        raise LocalSigningLifecycleError("exact custody observation descriptor required") from exc
+    files = _ReadOnlyCustodyFiles(root)
+    locked: int | None = None
+    try:
+        lock_path = root / _LOCK_FILENAME
+        files.read(lock_path, limit=1)
+        locked = files.files[lock_path][0]
+        fcntl.flock(locked, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        files.recheck()
+        journal = root / _DIRECTORY / f"{_operation_token(request.operation_id)}.json"
+        evidence = files.read(journal)
+        record = _decode_operation(evidence, security, role)
+        if (
+            record.state != "COMPLETE"
+            or record.operation_id != request.operation_id
+            or record.descriptor != descriptor
+            or record.before.credential_identity() != request.credential_identity
+            or record.before.lifecycle_generation != request.operation["lifecycle_generation"]
+            or record.after.lifecycle_state.value != request.operation["target_state"]
+        ):
+            raise LocalSigningLifecycleError("exact existing COMPLETE evidence required")
+        _validate_before_binding(record.before, request.operation)
+        current_raw = files.read(_record_path(root, role), limit=65536)
+        current = _decode_record(current_raw, expected_security=security, expected_role=role)
+        if current.credential_identity() != request.credential_identity:
+            current_raw = files.read(
+                _retained_path(root, role, request.credential_identity), limit=65536
+            )
+            current = _decode_record(current_raw, expected_security=security, expected_role=role)
+        if _encode_record(current) != current_raw or current != record.after:
+            raise LocalSigningLifecycleError("custody differs from exact COMPLETE evidence")
+        files.recheck()
+        try:
+            yield SigningLifecycleCompletionObservation(evidence, current)
+        finally:
+            files.recheck()
+    except OSError as exc:
+        raise LocalSigningCustodyError("read-only custody evidence unavailable") from exc
+    finally:
+        try:
+            if locked is not None:
+                fcntl.flock(locked, fcntl.LOCK_UN)
+        finally:
+            files.close()
+
+
 __all__ = [
     "DurableSigningLifecycleCompletion",
+    "SigningLifecycleCompletionObservation",
     "durable_transition_local_signing_credential_lifecycle",
+    "observe_durable_signing_lifecycle_completion",
     "verified_durable_signing_lifecycle_completion",
 ]

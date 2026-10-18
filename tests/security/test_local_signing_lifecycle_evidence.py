@@ -14,6 +14,8 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import subprocess
+import sys
 
 import pytest
 
@@ -587,3 +589,310 @@ def test_verification_fsync_failure_cannot_authorize_publication(
             receipt, operation_descriptor=receipt.operation_descriptor
         ):
             pytest.fail("unsynced evidence accepted")
+
+
+@pytest.fixture
+def observation_complete(tmp_path, security, authority, close_authorization):
+    """Real filesystem journal, with the existing explicit test authorization seam.
+
+    Native secret storage and DB close authorization remain mocked as documented
+    above. This fixture proves read-only V2 observation, never independent
+    authentication, prior fsync, or production completion authority.
+    """
+    receipt = _transition(tmp_path, security, authority, close_authorization)
+    return receipt.operation_descriptor, receipt.evidence_bytes, receipt.metadata
+
+
+def _observe(path, security, descriptor, role=ProviderRole.ROOT_PROOF_SIGNING):
+    return lifecycle.observe_durable_signing_lifecycle_completion(
+        path, security=security, role=role, operation_descriptor=descriptor
+    )
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="read-only diagnostic requires Linux")
+class TestReadOnlyLifecycleObservation:
+    @pytest.mark.parametrize(
+        "role", [ProviderRole.ROOT_PROOF_SIGNING, ProviderRole.HISTORY_ATTESTATION_SIGNING]
+    )
+    @pytest.mark.parametrize("transition", ["verify", "revoke", "verify-then-revoke"])
+    def test_exact_real_filesystem_journal_for_each_legal_transition(
+        self, tmp_path, security, authority, close_authorization, role, transition
+    ):
+        if role is ProviderRole.HISTORY_ATTESTATION_SIGNING:
+            authority = provision_local_signing_authority(
+                tmp_path, _admin(tmp_path, security, role), security=security, role=role
+            )
+        if transition == "verify-then-revoke":
+            authority = _transition(tmp_path, security, authority, close_authorization).metadata
+        target = (
+            SigningKeyLifecycle.VERIFY_ONLY
+            if transition == "verify"
+            else SigningKeyLifecycle.REVOKED
+        )
+        receipt = _transition(
+            tmp_path,
+            security,
+            authority,
+            close_authorization,
+            target=target,
+            lifecycle_operation_id="observe-final",
+        )
+        with _observe(tmp_path, security, receipt.operation_descriptor, role) as observed:
+            assert observed.evidence_bytes == _journal(tmp_path, "observe-final").read_bytes()
+            assert observed.metadata == receipt.metadata
+            assert (
+                observed.completion_fingerprint_sha256
+                == hashlib.sha256(observed.evidence_bytes).hexdigest()
+            )
+            assert type(observed) is lifecycle.SigningLifecycleCompletionObservation
+            with pytest.raises(LocalSigningLifecycleError, match="genuine durable"):
+                with lifecycle.verified_durable_signing_lifecycle_completion(
+                    observed, operation_descriptor=receipt.operation_descriptor
+                ):
+                    pytest.fail("diagnostic DTO became a completion capability")
+
+    def test_only_existing_read_only_descriptors_no_secret_sync_mutation_or_capability(
+        self, tmp_path, security, observation_complete, native_keyring, monkeypatch
+    ):
+        import keyring
+
+        descriptor, evidence, metadata = observation_complete
+        before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+        real_open = os.open
+        flags_seen = []
+
+        def read_only_open(path, flags, *args, **kwargs):
+            assert flags & os.O_ACCMODE == os.O_RDONLY
+            assert not flags & (os.O_CREAT | os.O_TRUNC | os.O_APPEND)
+            flags_seen.append((str(path), flags))
+            return real_open(path, flags, *args, **kwargs)
+
+        def forbidden(*args, **kwargs):
+            pytest.fail("read-only observation attempted mutation, sync or secret access")
+
+        monkeypatch.setattr(os, "open", read_only_open)
+        monkeypatch.setattr(os, "fsync", forbidden)
+        for name in (
+            "_sync_path",
+            "_replace_record",
+            "_write_new_record",
+            "_custody_lock",
+            "_transition_exact_locked",
+            "_resolve_credential_record",
+        ):
+            monkeypatch.setattr(lifecycle, name, forbidden)
+        monkeypatch.setattr(custody, "_load_private_key", forbidden)
+        monkeypatch.setattr(keyring, "get_password", forbidden)
+        monkeypatch.setattr(keyring, "set_password", forbidden)
+        monkeypatch.setattr(keyring, "delete_password", forbidden)
+        with _observe(tmp_path, security, descriptor) as observed:
+            assert observed.evidence_bytes == evidence
+            assert observed.metadata == metadata
+            for secret in native_keyring.values():
+                assert secret.encode() not in observed.evidence_bytes
+        assert flags_seen
+        assert {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()} == before
+
+    def test_fresh_process_observes_without_process_receipt_membership(
+        self, tmp_path, security, observation_complete
+    ):
+        descriptor, evidence, _ = observation_complete
+        script = """
+from pathlib import Path
+import sys
+from bot_core.local_signing_lifecycle_evidence import observe_durable_signing_lifecycle_completion
+from bot_core.root_proof_issuer_substrate import ProviderRole, SecurityProfile, SecurityProfileIdentity
+with observe_durable_signing_lifecycle_completion(
+    Path(sys.argv[1]),
+    security=SecurityProfileIdentity(SecurityProfile.PRODUCTION_LOCAL, sys.argv[2]),
+    role=ProviderRole.ROOT_PROOF_SIGNING,
+    operation_descriptor=bytes.fromhex(sys.argv[3]),
+) as observed:
+    print(observed.completion_fingerprint_sha256)
+"""
+        result = subprocess.run(
+            [sys.executable, "-c", script, str(tmp_path), security.trust_domain, descriptor.hex()],
+            capture_output=True,
+            check=True,
+            text=True,
+            timeout=15,
+        )
+        assert result.stdout.strip() == hashlib.sha256(evidence).hexdigest()
+
+    @pytest.mark.parametrize("missing", ["lock", "journal", "metadata"])
+    def test_missing_evidence_never_creates_repairs_or_retries(
+        self, tmp_path, security, observation_complete, missing
+    ):
+        descriptor, _, _ = observation_complete
+        path = {
+            "lock": tmp_path / custody._LOCK_FILENAME,
+            "journal": _journal(tmp_path),
+            "metadata": custody._record_path(tmp_path, ProviderRole.ROOT_PROOF_SIGNING),
+        }[missing]
+        path.unlink()
+        with pytest.raises(LocalSigningCustodyError):
+            with _observe(tmp_path, security, descriptor):
+                pytest.fail("missing evidence accepted")
+        assert not path.exists()
+
+    @pytest.mark.parametrize("mutation_done", [False, True])
+    def test_intent_is_never_complete_even_after_actual_metadata_change(
+        self, tmp_path, security, authority, close_authorization, mutation_done
+    ):
+        def crash(name):
+            if name == (
+                "lifecycle_after_custody_transition" if mutation_done else "lifecycle_after_intent"
+            ):
+                raise OSError("simulated writer crash")
+
+        with pytest.raises(OSError, match="writer crash"):
+            _transition(tmp_path, security, authority, close_authorization, fault_injector=crash)
+        original = _journal(tmp_path).read_bytes()
+        with pytest.raises(LocalSigningLifecycleError, match="COMPLETE"):
+            with _observe(tmp_path, security, _descriptor(tmp_path, security, authority)):
+                pytest.fail("INTENT accepted")
+        assert _journal(tmp_path).read_bytes() == original
+
+    @pytest.mark.parametrize(
+        "field,value",
+        [
+            ("operation_id", "reused-operation"),
+            ("lifecycle_generation", 2),
+            ("key_version", 2),
+            ("semantic_role", ProviderRole.HISTORY_ATTESTATION_SIGNING.value),
+            ("public_key_hex", "00" * 32),
+            ("target_state", "REVOKED"),
+            ("predecessor_state", "VERIFY_ONLY"),
+        ],
+    )
+    def test_descriptor_requires_exact_generation_role_key_and_transition(
+        self, tmp_path, security, observation_complete, field, value
+    ):
+        descriptor, _, _ = observation_complete
+        operation = json.loads(descriptor)
+        operation[field] = value
+        with pytest.raises(LocalSigningCustodyError):
+            with _observe(tmp_path, security, canonical_json_bytes(operation)):
+                pytest.fail("mismatched descriptor accepted")
+
+    @pytest.mark.parametrize("malformation", ["truncated", "spacing", "duplicate", "nested-b64"])
+    def test_strict_canonical_journal_validation(
+        self, tmp_path, security, observation_complete, malformation
+    ):
+        descriptor, evidence, _ = observation_complete
+        if malformation == "truncated":
+            raw = evidence[: len(evidence) // 2]
+        elif malformation == "spacing":
+            raw = b" " + evidence
+        elif malformation == "duplicate":
+            raw = evidence[:-1] + b',"completion_state":"COMPLETE"}'
+        else:
+            value = json.loads(evidence)
+            encoded = value["after_metadata"]["public_key_b64"]
+            alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+            # 32 bytes leave two zero pad bits. Change only those bits: the
+            # decoder returns identical public bytes, canonical encoding differs.
+            value["after_metadata"]["public_key_b64"] = (
+                encoded[:-2] + alphabet[alphabet.index(encoded[-2]) | 1] + "="
+            )
+            raw = canonical_json_bytes(value)
+        _journal(tmp_path).write_bytes(raw)
+        with pytest.raises(LocalSigningCustodyError):
+            with _observe(tmp_path, security, descriptor):
+                pytest.fail("noncanonical or corrupt journal accepted")
+
+    @pytest.mark.parametrize(
+        "field,value", [("lifecycle_generation", 3), ("lifecycle_state", "REVOKED")]
+    )
+    def test_current_metadata_must_be_the_exact_after_record(
+        self, tmp_path, security, observation_complete, field, value
+    ):
+        descriptor, _, _ = observation_complete
+        path = custody._record_path(tmp_path, ProviderRole.ROOT_PROOF_SIGNING)
+        metadata = json.loads(path.read_bytes())
+        metadata[field] = value
+        path.write_bytes(canonical_json_bytes(metadata))
+        with pytest.raises(LocalSigningCustodyError):
+            with _observe(tmp_path, security, descriptor):
+                pytest.fail("different current metadata accepted")
+
+    @pytest.mark.parametrize("which", ["root", "journal-directory", "journal", "metadata", "lock"])
+    @pytest.mark.parametrize("during_context", [False, True])
+    def test_symlink_or_path_swap_is_rejected_before_use_and_on_context_exit(
+        self, tmp_path, security, observation_complete, which, during_context
+    ):
+        descriptor, _, _ = observation_complete
+        path = {
+            "root": tmp_path,
+            "journal-directory": _journal(tmp_path).parent,
+            "journal": _journal(tmp_path),
+            "metadata": custody._record_path(tmp_path, ProviderRole.ROOT_PROOF_SIGNING),
+            "lock": tmp_path / custody._LOCK_FILENAME,
+        }[which]
+
+        def substitute():
+            moved = path.with_name(path.name + ".moved")
+            path.rename(moved)
+            path.symlink_to(moved, target_is_directory=which in {"root", "journal-directory"})
+
+        if not during_context:
+            substitute()
+        with pytest.raises(LocalSigningCustodyError):
+            with _observe(tmp_path, security, descriptor):
+                if during_context:
+                    substitute()
+                else:
+                    pytest.fail("symlink accepted")
+
+    def test_existing_shared_lock_blocks_writer_until_context_exit(
+        self, tmp_path, security, observation_complete
+    ):
+        import fcntl
+
+        descriptor, _, _ = observation_complete
+        with _observe(tmp_path, security, descriptor):
+            with (tmp_path / custody._LOCK_FILENAME).open("rb") as contender:
+                with pytest.raises(BlockingIOError):
+                    fcntl.flock(contender, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        with (tmp_path / custody._LOCK_FILENAME).open("rb") as contender:
+            fcntl.flock(contender, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            with pytest.raises(LocalSigningCustodyError):
+                with _observe(tmp_path, security, descriptor):
+                    pytest.fail("busy custody observed without shared lock")
+            fcntl.flock(contender, fcntl.LOCK_UN)
+
+    @pytest.mark.parametrize("unsafe", ["permission", "hardlink", "oversize", "fifo", "acl"])
+    def test_unsafe_journal_is_rejected(
+        self, tmp_path, security, observation_complete, monkeypatch, unsafe
+    ):
+        descriptor, _, _ = observation_complete
+        path = _journal(tmp_path)
+        if unsafe == "permission":
+            path.chmod(0o644)
+        elif unsafe == "hardlink":
+            os.link(path, path.with_suffix(".link"))
+        elif unsafe == "oversize":
+            with path.open("ab") as stream:
+                stream.truncate(1048577)
+        elif unsafe == "fifo":
+            path.unlink()
+            os.mkfifo(path, 0o600)
+        else:
+            monkeypatch.setattr(os, "listxattr", lambda fd: ["system.posix_acl_access"])
+        with pytest.raises(LocalSigningCustodyError):
+            with _observe(tmp_path, security, descriptor):
+                pytest.fail("unsafe journal accepted")
+
+    def test_in_place_write_during_context_fails_closed(
+        self, tmp_path, security, observation_complete
+    ):
+        descriptor, evidence, _ = observation_complete
+        with pytest.raises(LocalSigningCustodyError):
+            with _observe(tmp_path, security, descriptor):
+                # Preserve size and inode; the final byte/content/stat checks
+                # must still reject an out-of-protocol writer.
+                _journal(tmp_path).write_bytes(evidence[:-1] + b" ")
+
+    def test_descriptor_ancestry_is_bounded(self):
+        with pytest.raises(LocalSigningCustodyError, match="ancestry exceeds"):
+            lifecycle._ReadOnlyCustodyFiles(Path("/").joinpath(*(["a"] * 128)))
