@@ -256,6 +256,15 @@ def test_delegating_a_signed_attempt_to_a_transport_helper_fails(transport):
         )
 
 
+def test_offline_file_delivery_imports_native_custody_without_package_facade():
+    path = "bot_core/licensing/enrollment_file_io.py"
+    imports = _source_imports(ast.parse((ROOT / path).read_text(encoding="utf-8")), path)
+    # Importing the package facade pulls trading/alerts/network modules into
+    # the issuer's static dependency graph, though delivery needs only custody.
+    assert "bot_core.windows_custody_filesystem" in imports
+    assert "bot_core" not in imports
+
+
 def test_atomic_composition_names_the_selected_registry_module_without_package_facade():
     path = "bot_core/root_proof_atomic_composition.py"
     imports = _source_imports(ast.parse((ROOT / path).read_text(encoding="utf-8")), path)
