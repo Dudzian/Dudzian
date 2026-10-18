@@ -25,7 +25,10 @@ from bot_core.postgresql_production_root_lifecycle_schema import (
     ADMINISTRATOR_FUNCTIONS,
     ISSUER_FUNCTIONS,
     PRODUCTION_LIFECYCLE_FUNCTION_DECLARATIONS,
+    RELATIONS,
+    SCHEMA_VERSION,
     PostgreSQLProductionRootLifecycleProvisioning,
+    _reviewed_v1_function_sources,
     reviewed_production_lifecycle_function_sources,
 )
 
@@ -232,6 +235,8 @@ def _check_reviewed_schema(
     conn: psycopg.Connection[Any],
     config: PostgreSQLProductionRootLifecycleProvisioning,
     role_oids: tuple[tuple[str, int], ...],
+    *,
+    legacy_v1: bool = False,
 ) -> None:
     oids = dict(role_oids)
     owner = oids[config.schema_owner_role]
@@ -254,7 +259,11 @@ def _check_reviewed_schema(
     }
     if set(grants) != expected_schema or len(grants) != len(expected_schema):
         raise ProductionRootLifecycleQualificationError("production schema ACL differs")
-    sources = reviewed_production_lifecycle_function_sources(config)
+    sources = (
+        _reviewed_v1_function_sources(config)
+        if legacy_v1
+        else reviewed_production_lifecycle_function_sources(config)
+    )
     rows = conn.execute(
         "SELECT p.oid,p.proname||'('||pg_catalog.oidvectortypes(p.proargtypes)||')',"
         "p.proowner,p.prosecdef,l.lanname,p.proconfig,p.prosrc,"
@@ -306,7 +315,9 @@ def _check_reviewed_schema(
         expected = {(owner, owner, "EXECUTE", False)}
         if signature in ISSUER_FUNCTIONS:
             expected.add((owner, oids[config.issuer_role], "EXECUTE", False))
-        if signature in ADMINISTRATOR_FUNCTIONS:
+        if signature in ADMINISTRATOR_FUNCTIONS or (
+            legacy_v1 and signature == "complete_close(text,text,bytea)"
+        ):
             expected.add((owner, oids[config.administrator_role], "EXECUTE", False))
         acl = conn.execute(
             "SELECT a.grantor,a.grantee,a.privilege_type,a.is_grantable "
@@ -377,6 +388,8 @@ def _catalog_fingerprint(
     conn: psycopg.Connection[Any],
     config: PostgreSQLProductionRootLifecycleProvisioning,
     role_oids: tuple[tuple[str, int], ...],
+    *,
+    migration_offline: bool = False,
 ) -> str:
     """Pin immutable catalog behavior and global privilege paths, never records."""
     oids = [oid for _, oid in role_oids]
@@ -544,6 +557,17 @@ def _catalog_fingerprint(
     facts = {
         name: conn.execute(query, params).fetchall() for name, (query, params) in queries.items()
     }
+    if migration_offline:
+        # The controlled migration requires a separately committed connection
+        # gate. Only this reviewed delta from the retained online V1 catalog is
+        # normalized; runtime and installation pinning always hash actual facts.
+        database_oid = conn.execute(
+            "SELECT oid FROM pg_catalog.pg_database WHERE datname=pg_catalog.current_database()"
+        ).fetchone()[0]
+        facts["databases"] = [
+            (*row[:3], True, *row[4:]) if row[0] == database_oid and row[3] is False else row
+            for row in facts["databases"]
+        ]
     # Include PUBLIC ACLs as well as direct grants: changing a public view or
     # helper grant must invalidate an otherwise unchanged protected schema.
     for name, catalog, acl, owner in (
@@ -637,6 +661,150 @@ def pin_production_root_lifecycle_catalog(
         ) from exc
 
 
+def migrate_production_root_lifecycle_completion_block_v2(
+    conn: psycopg.Connection[Any], legacy_pin: PostgreSQLProductionRootLifecyclePin
+) -> None:
+    """Explicit bootstrap-only replacement of the unsafe V1 completion port.
+
+    The caller owns and commits one SERIALIZABLE transaction. Its externally
+    retained V1 pin must match the reviewed old catalog and physical instance;
+    this function never derives a replacement pin. After COMMIT, a separate
+    installation ceremony must pin V2 and replace the protected installation.
+    Existing evidence remains unchanged and legacy completions are reported as
+    unverified. Migration cannot authenticate custody or authorize emission.
+
+    Before opening this transaction, external maintenance control must commit
+    ALLOW_CONNECTIONS=false and drain every other database connection. This
+    bootstrap connection must already exist. The function neither disconnects
+    sessions nor changes the connection gate. After migration COMMIT, external
+    control restores connections before explicitly pinning the V2 catalog;
+    runtime services retain their failing old pin until separately provisioned.
+    """
+    if type(legacy_pin) is not PostgreSQLProductionRootLifecyclePin:
+        raise ProductionRootLifecycleQualificationError("trusted legacy installation pin required")
+    _check_transaction(conn)
+    config = legacy_pin.provisioning
+    principal = conn.execute(
+        "SELECT session_user::text,current_user::text,"
+        "(SELECT rolsuper FROM pg_catalog.pg_roles WHERE rolname=session_user::text)"
+    ).fetchone()
+    if (
+        principal is None
+        or principal[0] != principal[1]
+        or principal[2] is not True
+        or principal[0] in _role_names(config)
+    ):
+        raise ProductionRootLifecycleQualificationError(
+            "separate direct bootstrap administrator required for migration"
+        )
+    gate = conn.execute(
+        "SELECT oid,datallowconn,xmin::text,pg_catalog.pg_current_xact_id()::text "
+        "FROM pg_catalog.pg_database WHERE datname=pg_catalog.current_database()"
+    ).fetchone()
+    if gate is None or gate[1] is not False:
+        raise ProductionRootLifecycleQualificationError(
+            "separately committed closed database connection gate required for migration"
+        )
+    # Expand the catalog tuple's 32-bit xid against the current xid8 epoch.
+    # Current/future xid values (including caller-owned subtransactions) fail
+    # closed. An ambiguous gate spanning xid wrap requires a fresh ceremony.
+    current_xid = int(gate[3])
+    gate_xid = (current_xid & ~0xFFFFFFFF) | int(gate[2])
+    if int(gate[2]) >= 3 and (
+        not 0 < current_xid - gate_xid < 2**31
+        or conn.execute("SELECT pg_catalog.pg_xact_status(%s::xid8)", (str(gate_xid),)).fetchone()
+        != ("committed",)
+    ):
+        raise ProductionRootLifecycleQualificationError(
+            "database connection gate must commit before migration transaction"
+        )
+    conn.execute("SELECT pg_catalog.pg_stat_clear_snapshot()")
+    if (
+        conn.execute(
+            "SELECT 1 FROM pg_catalog.pg_stat_activity "
+            "WHERE datid=%s AND pid<>pg_catalog.pg_backend_pid() LIMIT 1",
+            (gate[0],),
+        ).fetchone()
+        is not None
+    ):
+        raise ProductionRootLifecycleQualificationError(
+            "every other database connection must be drained before migration"
+        )
+    # No old function body may remain suspended before its first catalog read.
+    # Table locks alone cannot guarantee that, hence the offline checks above.
+    schema = sql.Identifier(config.schema)
+    conn.execute(
+        sql.SQL("LOCK TABLE {} IN ACCESS EXCLUSIVE MODE").format(
+            sql.SQL(",").join(
+                sql.SQL("{}.{}").format(schema, sql.Identifier(table))
+                for table in sorted(RELATIONS)
+            )
+        )
+    )
+    _check_physical(conn, config, legacy_pin.identity)
+    _check_roles(conn, config, legacy_pin.role_oids)
+    for name in (config.issuer_role, config.administrator_role):
+        _check_closed_login(conn, name, config.schema)
+    _check_reviewed_schema(conn, config, legacy_pin.role_oids, legacy_v1=True)
+    if (
+        _catalog_fingerprint(conn, config, legacy_pin.role_oids, migration_offline=True)
+        != legacy_pin.catalog_sha256
+    ):
+        raise ProductionRootLifecycleQualificationError("externally pinned legacy catalog differs")
+
+    sources = reviewed_production_lifecycle_function_sources(config)
+    for signature in (
+        "assert_catalog()",
+        "begin_close(jsonb)",
+        "read_operation(text,text,text)",
+        "complete_close(text,text,bytea)",
+    ):
+        declaration, returns = PRODUCTION_LIFECYCLE_FUNCTION_DECLARATIONS[signature]
+        conn.execute(
+            sql.SQL(
+                "CREATE OR REPLACE FUNCTION {}.{}({}) RETURNS {} LANGUAGE plpgsql "
+                "SECURITY DEFINER SET search_path=pg_catalog AS {}"
+            ).format(
+                schema,
+                sql.Identifier(signature.split("(")[0]),
+                sql.SQL(declaration),
+                sql.SQL(returns),
+                sql.Literal(sources[signature]),
+            )
+        )
+    conn.execute(
+        sql.SQL(
+            "REVOKE ALL ON FUNCTION {}.complete_close(text,text,bytea) FROM PUBLIC,{},{}"
+        ).format(
+            schema, sql.Identifier(config.issuer_role), sql.Identifier(config.administrator_role)
+        )
+    )
+    conn.execute(sql.SQL("ALTER TABLE {}.metadata DISABLE TRIGGER immutable_row").format(schema))
+    conn.execute(
+        sql.SQL("UPDATE {}.metadata SET schema_version=%s").format(schema), (SCHEMA_VERSION,)
+    )
+    conn.execute(
+        sql.SQL("ALTER TABLE {}.metadata ENABLE ALWAYS TRIGGER immutable_row").format(schema)
+    )
+    # Restore every trigger before taking the replacement catalog snapshot.
+    # INSERT remains permitted to the trusted owner, unlike UPDATE/DELETE.
+    conn.execute(
+        sql.SQL("ALTER TABLE {}.catalog_manifest DISABLE TRIGGER immutable_row").format(schema)
+    )
+    conn.execute(sql.SQL("DELETE FROM {}.catalog_manifest").format(schema))
+    conn.execute(
+        sql.SQL("ALTER TABLE {}.catalog_manifest ENABLE ALWAYS TRIGGER immutable_row").format(
+            schema
+        )
+    )
+    conn.execute(
+        sql.SQL("INSERT INTO {}.catalog_manifest SELECT true,{}.catalog_snapshot()").format(
+            schema, schema
+        )
+    )
+    _check_reviewed_schema(conn, config, legacy_pin.role_oids)
+
+
 def qualify_production_root_lifecycle_authority(
     conn: psycopg.Connection[Any],
     pin: PostgreSQLProductionRootLifecyclePin,
@@ -705,6 +873,7 @@ __all__ = [
     "PostgreSQLProductionRootLifecyclePin",
     "ProductionRootLifecycleQualificationError",
     "pin_production_root_lifecycle_catalog",
+    "migrate_production_root_lifecycle_completion_block_v2",
     "qualify_production_root_lifecycle_authority",
     "qualify_production_root_lifecycle_resolution",
 ]

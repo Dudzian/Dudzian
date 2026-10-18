@@ -36,6 +36,7 @@ _PRINCIPALS = frozenset(
 )
 _SIGNERS = frozenset({"root_signer", "history_signer"})
 PRODUCTION_EMISSION = "BLOCKED"
+PRODUCTION_CUSTODY_COMPLETION = "BLOCKED"
 
 
 class ProductionRootLifecycleError(RuntimeError):
@@ -355,10 +356,14 @@ class ProductionRootLifecycleBoundary:
     def publish_administrator_completion(
         self, conn: psycopg.Connection[Any], operation_id: str, request_sha256: str, receipt: bytes
     ) -> dict[str, Any]:
-        """Publish an admin-verified receipt; this method does not verify custody."""
-        return self._administrative_operation(
-            conn, "complete_close", (operation_id, request_sha256, receipt)
-        )
+        """Refuse receipts without independently provisioned completion authority.
+
+        Public facts, journal hashes and a PostgreSQL administrator's assertion
+        cannot authenticate custody completion. The SQL port is also disabled;
+        no Python-only check grants a way around that boundary. A committed close
+        remains PENDING_CLOSED until a separately reviewed authority exists.
+        """
+        raise ProductionRootLifecycleError("INDEPENDENT_CUSTODY_COMPLETION_AUTHORITY_REQUIRED")
 
     def resolve_close(
         self,

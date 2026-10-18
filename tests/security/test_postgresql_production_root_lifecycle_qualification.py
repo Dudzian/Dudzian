@@ -7,8 +7,10 @@ fixtures. No production key, enrollment, Root Proof or activation is created.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import uuid
+from contextlib import contextmanager
 from dataclasses import replace
 from types import SimpleNamespace
 
@@ -16,6 +18,10 @@ import psycopg
 import pytest
 from psycopg import sql
 from psycopg.conninfo import make_conninfo
+from psycopg.types.json import Jsonb
+
+from bot_core import postgresql_production_root_lifecycle_qualification as qualification
+from bot_core import postgresql_production_root_lifecycle_schema as lifecycle
 
 from bot_core.postgresql_atomic_root_proof_qualification import (
     read_atomic_root_proof_physical_identity,
@@ -300,3 +306,442 @@ def test_serializable_transaction_and_exact_pin_types_are_required(
         PostgreSQLProductionRootLifecyclePin(
             object(), value.pin.identity, "0" * 64, value.pin.role_oids
         )
+
+
+# Completion publication stays blocked in this production catalog. The V1
+# simulation below belongs exclusively to this disposable test database.
+ROOT = "ROOT_PROOF_SIGNING"
+IDENTITY = "isolated-credential-" + ROOT
+REQUEST = {
+    "operation_id": "isolated-close-1",
+    "semantic_role": ROOT,
+    "identity": IDENTITY,
+    "generation": 1,
+    "predecessor_state": "ACTIVE",
+    "target_state": "VERIFY_ONLY",
+}
+
+
+@pytest.fixture
+def boundary(production_qualification_boundary):
+    return production_qualification_boundary
+
+
+def _call(conn, value, function, arguments):
+    return conn.execute(
+        sql.SQL("SELECT {}.{}({})").format(
+            sql.Identifier(value.config.schema),
+            sql.Identifier(function),
+            sql.SQL(",").join(sql.Placeholder() for _ in arguments),
+        ),
+        arguments,
+    ).fetchone()[0]
+
+
+def _refresh_manifest(conn, value):
+    schema = sql.Identifier(value.config.schema)
+    conn.execute(
+        sql.SQL("ALTER TABLE {}.catalog_manifest DISABLE TRIGGER immutable_row").format(schema)
+    )
+    conn.execute(sql.SQL("DELETE FROM {}.catalog_manifest").format(schema))
+    conn.execute(
+        sql.SQL("ALTER TABLE {}.catalog_manifest ENABLE ALWAYS TRIGGER immutable_row").format(
+            schema
+        )
+    )
+    conn.execute(
+        sql.SQL("INSERT INTO {}.catalog_manifest SELECT true,{}.catalog_snapshot()").format(
+            schema, schema
+        )
+    )
+
+
+def _seed_active_test_row(value):
+    # Production has no activation port. Inject only disposable public test facts.
+    schema = sql.Identifier(value.config.schema)
+    with psycopg.connect(value.dsn) as conn:
+        conn.execute(
+            sql.SQL("ALTER TABLE {}.fences DISABLE TRIGGER lifecycle_update").format(schema)
+        )
+        conn.execute(
+            sql.SQL(
+                "UPDATE {}.fences SET state='ACTIVE',pending_operation_id=NULL WHERE semantic_role=%s"
+            ).format(schema),
+            (ROOT,),
+        )
+        conn.execute(
+            sql.SQL("ALTER TABLE {}.fences ENABLE ALWAYS TRIGGER lifecycle_update").format(schema)
+        )
+
+
+def _begin(value):
+    with psycopg.connect(make_conninfo(value.dsn, user=value.config.administrator_role)) as conn:
+        conn.execute("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE")
+        return _call(conn, value, "begin_close", (Jsonb(REQUEST),))
+
+
+def _receipt(pending):
+    return json.dumps(
+        {
+            "operation_id": REQUEST["operation_id"],
+            "request_sha256": pending["request_sha256"],
+            "semantic_role": ROOT,
+            "identity": IDENTITY,
+            "public_material_identity": "sha256:" + hashlib.sha256(ROOT.encode()).hexdigest(),
+            "key_version": 1,
+            "generation": 2,
+            "state": "VERIFY_ONLY",
+            "custody_receipt_sha256": hashlib.sha256(b"missing-original-evidence").hexdigest(),
+        },
+        indent=2,
+    ).encode()
+
+
+def _qualify_completion_pin(value, pin):
+    with psycopg.connect(make_conninfo(value.dsn, user=value.config.administrator_role)) as conn:
+        conn.execute("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE")
+        qualification.qualify_production_root_lifecycle_authority(
+            conn, pin, expected_role="administrator"
+        )
+
+
+@pytest.mark.parametrize("principal", ["administrator", "issuer", "bootstrap"])
+@pytest.mark.parametrize("payload", ["forged_receipt", "evidence_hash_only"])
+def test_direct_sql_cannot_publish_receipt_or_hash(boundary, principal, payload):
+    _seed_active_test_row(boundary)
+    pending = _begin(boundary)
+    receipt = _receipt(pending)
+    evidence = receipt if payload == "forged_receipt" else hashlib.sha256(receipt).digest()
+    login = {
+        "administrator": boundary.config.administrator_role,
+        "issuer": boundary.config.issuer_role,
+        "bootstrap": None,
+    }[principal]
+    dsn = make_conninfo(boundary.dsn, user=login) if login else boundary.dsn
+    with psycopg.connect(dsn) as conn:
+        with pytest.raises(psycopg.errors.InsufficientPrivilege) as rejected:
+            _call(
+                conn,
+                boundary,
+                "complete_close",
+                (REQUEST["operation_id"], pending["request_sha256"], evidence),
+            )
+        if principal == "bootstrap":
+            assert "INDEPENDENT_CUSTODY_COMPLETION_AUTHORITY_REQUIRED" in str(rejected.value)
+    with psycopg.connect(boundary.dsn) as conn:
+        assert conn.execute(
+            sql.SQL("SELECT count(*) FROM {}.completions").format(
+                sql.Identifier(boundary.config.schema)
+            )
+        ).fetchone() == (0,)
+        assert conn.execute(
+            sql.SQL(
+                "SELECT state,generation,pending_operation_id FROM {}.fences WHERE semantic_role=%s"
+            ).format(sql.Identifier(boundary.config.schema)),
+            (ROOT,),
+        ).fetchone() == ("PENDING_CLOSED", 1, REQUEST["operation_id"])
+
+
+def test_forced_execute_grant_still_reaches_only_denial_tombstone(boundary):
+    with psycopg.connect(boundary.dsn) as conn:
+        conn.execute(
+            sql.SQL(
+                "GRANT EXECUTE ON FUNCTION {}.complete_close(text,text,bytea) TO PUBLIC,{}"
+            ).format(
+                sql.Identifier(boundary.config.schema),
+                sql.Identifier(boundary.config.administrator_role),
+            )
+        )
+        # Even a refreshed internal manifest must not turn an ACL drift into qualification.
+        _refresh_manifest(conn, boundary)
+    with pytest.raises(qualification.ProductionRootLifecycleQualificationError, match="ACL"):
+        _qualify_completion_pin(boundary, boundary.pin)
+    with psycopg.connect(
+        make_conninfo(boundary.dsn, user=boundary.config.administrator_role)
+    ) as conn:
+        with pytest.raises(
+            psycopg.errors.InsufficientPrivilege,
+            match="INDEPENDENT_CUSTODY_COMPLETION_AUTHORITY_REQUIRED",
+        ):
+            _call(conn, boundary, "complete_close", ("nonexistent-operation", "0" * 64, b"{}"))
+
+
+@pytest.mark.parametrize("drift", ["SECURITY INVOKER", "SET search_path=public"])
+def test_completion_catalog_drift_blocks_runtime_and_direct_administration(boundary, drift):
+    with psycopg.connect(boundary.dsn) as conn:
+        conn.execute(
+            sql.SQL("ALTER FUNCTION {}.complete_close(text,text,bytea) " + drift).format(
+                sql.Identifier(boundary.config.schema)
+            )
+        )
+    with pytest.raises(qualification.ProductionRootLifecycleQualificationError, match="source"):
+        _qualify_completion_pin(boundary, boundary.pin)
+    with psycopg.connect(
+        make_conninfo(boundary.dsn, user=boundary.config.administrator_role)
+    ) as conn:
+        conn.execute("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE")
+        with pytest.raises(psycopg.errors.InsufficientPrivilege, match="catalog drift"):
+            _call(conn, boundary, "begin_close", (Jsonb(REQUEST),))
+
+
+def _legacy_installation(value):
+    """Build the reviewed V1 catalog only in the disposable test installation."""
+    schema = sql.Identifier(value.config.schema)
+    sources = lifecycle._reviewed_v1_function_sources(value.config)
+    with psycopg.connect(value.dsn) as conn:
+        conn.execute("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE")
+        for signature in (
+            "assert_catalog()",
+            "begin_close(jsonb)",
+            "read_operation(text,text,text)",
+            "complete_close(text,text,bytea)",
+        ):
+            declaration, returns = lifecycle.PRODUCTION_LIFECYCLE_FUNCTION_DECLARATIONS[signature]
+            conn.execute(
+                sql.SQL(
+                    "CREATE OR REPLACE FUNCTION {}.{}({}) RETURNS {} LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS {}"
+                ).format(
+                    schema,
+                    sql.Identifier(signature.split("(")[0]),
+                    sql.SQL(declaration),
+                    sql.SQL(returns),
+                    sql.Literal(sources[signature]),
+                )
+            )
+        conn.execute(
+            sql.SQL("GRANT EXECUTE ON FUNCTION {}.complete_close(text,text,bytea) TO {}").format(
+                schema, sql.Identifier(value.config.administrator_role)
+            )
+        )
+        conn.execute(
+            sql.SQL("ALTER TABLE {}.metadata DISABLE TRIGGER immutable_row").format(schema)
+        )
+        conn.execute(sql.SQL("UPDATE {}.metadata SET schema_version=1").format(schema))
+        conn.execute(
+            sql.SQL("ALTER TABLE {}.metadata ENABLE ALWAYS TRIGGER immutable_row").format(schema)
+        )
+        _refresh_manifest(conn, value)
+        qualification._check_reviewed_schema(
+            conn, value.config, value.pin.role_oids, legacy_v1=True
+        )
+        # This emulates an externally retained V1 installation pin established
+        # by the distinct bootstrap principal, never by a runtime connection.
+        return replace(
+            value.pin,
+            catalog_sha256=qualification._catalog_fingerprint(
+                conn, value.config, value.pin.role_oids
+            ),
+        )
+
+
+@contextmanager
+def _offline_migration_connection(value, *, login=None):
+    """External maintenance ceremony for this disposable test database only."""
+    dsn = make_conninfo(value.dsn, user=login) if login else value.dsn
+    with psycopg.connect(dsn, autocommit=True) as conn:
+        with psycopg.connect(_BASE_DSN, autocommit=True) as control:
+            control.execute(
+                sql.SQL("ALTER DATABASE {} ALLOW_CONNECTIONS=false").format(
+                    sql.Identifier(value.database)
+                )
+            )
+        try:
+            yield conn
+        finally:
+            with psycopg.connect(_BASE_DSN, autocommit=True) as control:
+                control.execute(
+                    sql.SQL("ALTER DATABASE {} ALLOW_CONNECTIONS=true").format(
+                        sql.Identifier(value.database)
+                    )
+                )
+
+
+def test_controlled_migration_keeps_exact_legacy_evidence_and_requires_new_pin(boundary):
+    legacy_pin = _legacy_installation(boundary)
+    _seed_active_test_row(boundary)
+    pending = _begin(boundary)
+    receipt = _receipt(pending)
+    with psycopg.connect(
+        make_conninfo(boundary.dsn, user=boundary.config.administrator_role)
+    ) as conn:
+        conn.execute("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE")
+        assert (
+            _call(
+                conn,
+                boundary,
+                "complete_close",
+                (REQUEST["operation_id"], pending["request_sha256"], receipt),
+            )["phase"]
+            == "COMPLETED"
+        )
+    with _offline_migration_connection(boundary) as conn:
+        with conn.transaction():
+            conn.execute("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE")
+            assert (
+                qualification.migrate_production_root_lifecycle_completion_block_v2(
+                    conn, legacy_pin
+                )
+                is None
+            )
+    with pytest.raises(qualification.ProductionRootLifecycleQualificationError, match="catalog"):
+        _qualify_completion_pin(boundary, legacy_pin)
+    with psycopg.connect(boundary.dsn) as conn:
+        conn.execute("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE")
+        current_pin = qualification.pin_production_root_lifecycle_catalog(
+            conn, boundary.config, expected_identity=legacy_pin.identity
+        )
+        assert current_pin.catalog_sha256 != legacy_pin.catalog_sha256
+        assert conn.execute(
+            sql.SQL(
+                "SELECT receipt_bytes,receipt_sha256 FROM {}.completions WHERE operation_id=%s"
+            ).format(sql.Identifier(boundary.config.schema)),
+            (REQUEST["operation_id"],),
+        ).fetchone() == (receipt, hashlib.sha256(receipt).digest())
+        with pytest.raises(psycopg.errors.InsufficientPrivilege, match="immutable"):
+            conn.execute(
+                sql.SQL("UPDATE {}.completions SET receipt_bytes=%s").format(
+                    sql.Identifier(boundary.config.schema)
+                ),
+                (b"replacement",),
+            )
+    _qualify_completion_pin(boundary, current_pin)
+    with psycopg.connect(
+        make_conninfo(boundary.dsn, user=boundary.config.administrator_role)
+    ) as conn:
+        assert (
+            _call(
+                conn,
+                boundary,
+                "read_operation",
+                (ROOT, REQUEST["operation_id"], pending["request_sha256"]),
+            )["phase"]
+            == "LEGACY_UNVERIFIED_COMPLETION"
+        )
+    assert _begin(boundary)["phase"] == "LEGACY_UNVERIFIED_COMPLETION"
+    with psycopg.connect(
+        make_conninfo(boundary.dsn, user=boundary.config.administrator_role)
+    ) as conn:
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            _call(
+                conn,
+                boundary,
+                "complete_close",
+                (REQUEST["operation_id"], pending["request_sha256"], receipt),
+            )
+
+
+@pytest.mark.parametrize(
+    "invalid",
+    ["untrusted_digest", "wrong_physical_instance", "direct_runtime_login", "catalog_drift"],
+)
+def test_migration_requires_retained_pin_exact_catalog_and_bootstrap(boundary, invalid):
+    legacy_pin = _legacy_installation(boundary)
+    if invalid == "untrusted_digest":
+        legacy_pin = replace(legacy_pin, catalog_sha256="0" * 64)
+    elif invalid == "wrong_physical_instance":
+        legacy_pin = replace(legacy_pin, identity=replace(legacy_pin.identity, system_identifier=1))
+    elif invalid == "catalog_drift":
+        with psycopg.connect(boundary.dsn) as conn:
+            conn.execute(
+                sql.SQL(
+                    "ALTER FUNCTION {}.complete_close(text,text,bytea) SECURITY INVOKER"
+                ).format(sql.Identifier(boundary.config.schema))
+            )
+    login = boundary.config.administrator_role if invalid == "direct_runtime_login" else None
+    with _offline_migration_connection(boundary, login=login) as conn:
+        with conn.transaction():
+            conn.execute("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE")
+            with pytest.raises(qualification.ProductionRootLifecycleQualificationError):
+                qualification.migrate_production_root_lifecycle_completion_block_v2(
+                    conn, legacy_pin
+                )
+    with psycopg.connect(boundary.dsn) as conn:
+        assert conn.execute(
+            sql.SQL("SELECT schema_version FROM {}.metadata").format(
+                sql.Identifier(boundary.config.schema)
+            )
+        ).fetchone() == (1,)
+
+
+def test_uncommitted_migration_rolls_back_catalog_and_legacy_grants(boundary):
+    legacy_pin = _legacy_installation(boundary)
+    with _offline_migration_connection(boundary) as conn:
+        with pytest.raises(RuntimeError, match="simulated crash before COMMIT"):
+            with conn.transaction():
+                conn.execute("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE")
+                qualification.migrate_production_root_lifecycle_completion_block_v2(
+                    conn, legacy_pin
+                )
+                raise RuntimeError("simulated crash before COMMIT")
+        with conn.transaction():
+            conn.execute("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE")
+            qualification._check_reviewed_schema(
+                conn, boundary.config, legacy_pin.role_oids, legacy_v1=True
+            )
+            assert (
+                qualification._catalog_fingerprint(
+                    conn, boundary.config, legacy_pin.role_oids, migration_offline=True
+                )
+                == legacy_pin.catalog_sha256
+            )
+
+
+def test_migration_requires_closed_connection_gate(boundary):
+    legacy_pin = _legacy_installation(boundary)
+    with psycopg.connect(boundary.dsn) as conn:
+        conn.execute("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE")
+        with pytest.raises(
+            qualification.ProductionRootLifecycleQualificationError,
+            match="closed database connection gate",
+        ):
+            qualification.migrate_production_root_lifecycle_completion_block_v2(conn, legacy_pin)
+
+
+@pytest.mark.parametrize("subtransaction", [False, True])
+def test_migration_rejects_gate_closed_without_separate_commit(boundary, subtransaction):
+    legacy_pin = _legacy_installation(boundary)
+    with psycopg.connect(boundary.dsn, autocommit=True) as conn:
+        with conn.transaction():
+            conn.execute("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE")
+            # ALTER DATABASE correctly refuses to close its own database. A
+            # privileged direct catalog edit must not bypass the commit gate.
+            if subtransaction:
+                with conn.transaction():
+                    conn.execute(
+                        "UPDATE pg_catalog.pg_database SET datallowconn=false "
+                        "WHERE datname=pg_catalog.current_database()"
+                    )
+            else:
+                conn.execute(
+                    "UPDATE pg_catalog.pg_database SET datallowconn=false "
+                    "WHERE datname=pg_catalog.current_database()"
+                )
+            with pytest.raises(
+                qualification.ProductionRootLifecycleQualificationError,
+                match="must commit before migration",
+            ):
+                qualification.migrate_production_root_lifecycle_completion_block_v2(
+                    conn, legacy_pin
+                )
+            conn.execute(
+                "UPDATE pg_catalog.pg_database SET datallowconn=true "
+                "WHERE datname=pg_catalog.current_database()"
+            )
+
+
+def test_migration_rejects_remaining_old_runtime_connection(boundary):
+    legacy_pin = _legacy_installation(boundary)
+    with psycopg.connect(
+        make_conninfo(boundary.dsn, user=boundary.config.administrator_role), autocommit=True
+    ) as runtime:
+        runtime.execute("SELECT 1")
+        with _offline_migration_connection(boundary) as conn:
+            with conn.transaction():
+                conn.execute("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE")
+                with pytest.raises(
+                    qualification.ProductionRootLifecycleQualificationError,
+                    match="must be drained",
+                ):
+                    qualification.migrate_production_root_lifecycle_completion_block_v2(
+                        conn, legacy_pin
+                    )
