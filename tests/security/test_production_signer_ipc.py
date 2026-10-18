@@ -155,20 +155,29 @@ def test_sending_nonfinite_and_oversized_facts_rejected():
                 ipc._send_frame(left, value, time.monotonic() + 1)
 
 
-def _child_exchange(path, ready, finish, mode):
+def _child_exchange(path, ready, finish, mode, expect_identity_denial):
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
         listener.bind(path)
         listener.listen(1)
         ready.set()
         peer, _ = listener.accept()
         with peer:
-            value = ipc._receive_frame(peer, time.monotonic() + 2)
-            ipc._expect_eof(peer, time.monotonic() + 2)
-            result = response(value)
-            if mode == "wrong_role":
-                result["role"] = "history_signer"
-            if mode != "disconnect":
-                ipc._send_frame(peer, result, time.monotonic() + 2)
+            try:
+                value = ipc._receive_frame(peer, time.monotonic() + 2)
+                ipc._expect_eof(peer, time.monotonic() + 2)
+            except ipc.ProductionSignerIPCError as exc:
+                # A hosted runner may have supplementary groups. The strict
+                # production peer guard disconnects before sending a request.
+                if not expect_identity_denial or "DISCONNECTED" not in str(exc):
+                    raise
+            else:
+                if expect_identity_denial:
+                    raise AssertionError("peer with extra groups received a diagnostic request")
+                result = response(value)
+                if mode == "wrong_role":
+                    result["role"] = "history_signer"
+                if mode != "disconnect":
+                    ipc._send_frame(peer, result, time.monotonic() + 2)
         finish.wait(5)
 
 
@@ -178,7 +187,12 @@ def test_real_linux_process_exchange_without_claiming_account_isolation(policy, 
     # pidfd liveness and process-start pinning are real evidence in this test.
     context = multiprocessing.get_context("fork")
     ready, finish = context.Event(), context.Event()
-    child = context.Process(target=_child_exchange, args=(policy.path, ready, finish, mode))
+    # The hosted runner's supplementary groups cannot pass the production
+    # peer guard; assert fail-closed instead of weakening the check for CI.
+    extra_groups = not set(os.getgroups()).issubset({os.getgid()})
+    child = context.Process(
+        target=_child_exchange, args=(policy.path, ready, finish, mode, extra_groups)
+    )
     child.start()
     try:
         assert ready.wait(3)
@@ -189,7 +203,12 @@ def test_real_linux_process_exchange_without_claiming_account_isolation(policy, 
 
         monkeypatch.setattr(ipc, "_PinnedSocketPath", simulated_installation)
         monkeypatch.setattr(ipc, "_require_self", lambda uid, gid: None)
-        if mode == "valid":
+        if extra_groups:
+            with pytest.raises(
+                ipc.ProductionSignerIPCError, match="EXACT_PEER_PROCESS_IDENTITY_REQUIRED"
+            ):
+                ipc.qualify_signer_ipc(policy)
+        elif mode == "valid":
             result = ipc.qualify_signer_ipc(policy)
             assert (result.peer_pid, result.peer_uid, result.peer_gid) == (
                 child.pid,
@@ -366,12 +385,19 @@ def test_real_peer_exit_invalidates_socket_bound_pin(tmp_path):
         assert ready.wait(3)
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as peer:
             peer.connect(address)
-            with ipc._PinnedPeer(peer, os.getuid(), os.getgid()) as identity:
-                release.set()
-                child.join(3)
-                assert child.exitcode == 0
-                with pytest.raises(ipc.ProductionSignerIPCError, match="CHANGED_OR_EXITED"):
-                    identity.recheck()
+            if not set(os.getgroups()).issubset({os.getgid()}):
+                # An otherwise valid socket/PID cannot override extra peer groups.
+                with pytest.raises(
+                    ipc.ProductionSignerIPCError, match="EXACT_PEER_PROCESS_IDENTITY_REQUIRED"
+                ):
+                    ipc._PinnedPeer(peer, os.getuid(), os.getgid())
+            else:
+                with ipc._PinnedPeer(peer, os.getuid(), os.getgid()) as identity:
+                    release.set()
+                    child.join(3)
+                    assert child.exitcode == 0
+                    with pytest.raises(ipc.ProductionSignerIPCError, match="CHANGED_OR_EXITED"):
+                        identity.recheck()
     finally:
         release.set()
         child.join(3)
