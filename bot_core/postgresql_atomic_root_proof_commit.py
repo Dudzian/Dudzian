@@ -55,6 +55,10 @@ from bot_core.postgresql_atomic_root_proof_qualification import (
     read_atomic_root_proof_physical_identity,
     validate_atomic_root_proof_deployment,
 )
+from bot_core.postgresql_atomic_root_proof_transaction import (
+    capture_atomic_root_proof_transaction_owner,
+    validate_atomic_root_proof_transaction_owner,
+)
 from bot_core.postgresql_authenticated_issuer_history import PostgreSQLAuthenticatedIssuerHistory
 from bot_core.postgresql_entitlement_registry import PostgreSQLConnectionConfig, _state_json
 from bot_core.postgresql_preaccount_credentials import CredentialGeneration
@@ -726,6 +730,9 @@ class PostgreSQLAtomicRootProofCommit:
             conn.execute("BEGIN ISOLATION LEVEL SERIALIZABLE")
             conn.execute("SET LOCAL search_path=pg_catalog")
             qualify_atomic_root_proof_authority(conn, self.__deployment)
+            transaction_owner = capture_atomic_root_proof_transaction_owner(
+                conn, expected_login=self.__deployment.provisioning.issuer_writer_role
+            )
             approval = conn.execute(
                 sql.SQL("SELECT {}.read_approved_identity(%s)").format(
                     sql.Identifier(self.__deployment.provisioning.schema)
@@ -751,6 +758,7 @@ class PostgreSQLAtomicRootProofCommit:
                 or decision.envelope != preparation.prepared.canonical_envelope
             ):
                 raise AtomicRootProofCommitCorrupt("ORIGINAL_STAGED_BYTES_CHANGED")
+            validate_atomic_root_proof_transaction_owner(conn, transaction_owner)
             _persistence_cut("before_commit", conn)
             commit_sent = True
             conn.commit()

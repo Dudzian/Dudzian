@@ -153,6 +153,19 @@ kwalifikacji sprzętowej ani prawa do produkcyjnej emisji Root Proof.
 Granice izolacji i trwałe punkty protokołu opisuje
 [Lifecycle V2](architecture/stage9_durable_custody_lifecycle_v2.md).
 
+S9-RPI-01 rozszerza ten sam job o niezależny, zamknięty production lifecycle
+inventory, jego katalog SQL, procesową granicę instalacji i wspólny guard
+właściciela transakcji. Nowe testy używają odrębnych baz PostgreSQL 16,
+rzeczywistych procesów, restartu i utraty odpowiedzi COMMIT; nie tworzą
+produkcyjnych kluczy ani BIND. Lokalna kwalifikacja SQL z testowym `trust`
+nie dowodzi produkcyjnego peer authentication: zainstalowana granica osobno
+wymaga dokładnego PostgreSQL `system_user=peer:<unix_user>`.
+Nowe moduły obejmuje istniejący scope mypy Linux/Windows, format gate,
+raport branch coverage i niezmieniony próg changed-code 70%.
+Limity jobów, wcześniejsze testy i bramki sprzętowe pozostają bez zmian.
+Zakres i blokady opisuje
+[S9-RPI-01](architecture/stage9_production_root_proof_lifecycle_isolation.md).
+
 Adaptery przygotowania RESERVED/STAGED dla inventory V2 rozszerzają ten sam
 seryjny job `atomic-root-proof-commit` o testy nowego przygotowania po migracji,
 kwalifikacji preparation ACL, signer enrollment, exact retry i commit właśnie

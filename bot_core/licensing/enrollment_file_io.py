@@ -14,6 +14,7 @@ import importlib
 import os
 import secrets
 import stat
+import sys
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from threading import local
@@ -110,6 +111,8 @@ def _posix_directory(
     remain mandatory for untrusted producers. Linux publication uses native
     renameat2(RENAME_NOREPLACE), including crash-safe single-link identity.
     """
+    if sys.platform == "win32":
+        raise EnrollmentFileError("POSIX artifact directory is unavailable on Windows")
     fcntl = importlib.import_module("fcntl")
     descriptors = []
     try:
@@ -151,6 +154,8 @@ def _posix_directory(
 
 
 def _posix_read(directory: int, name: str, maximum: int, *, output: bool = False) -> bytes:
+    if sys.platform == "win32":
+        raise EnrollmentFileError("POSIX artifact read is unavailable on Windows")
     before = os.stat(name, dir_fd=directory, follow_symlinks=False)
     _qualify_file(before, maximum)
     if output and (before.st_uid != os.geteuid() or stat.S_IMODE(before.st_mode) != 0o600):
@@ -202,6 +207,8 @@ def _rename_noreplace(directory: int, source: str, destination: str) -> None:
 
 
 def _posix_write(path: Path, raw: bytes, maximum: int) -> None:
+    if sys.platform == "win32":
+        raise EnrollmentFileError("POSIX artifact write is unavailable on Windows")
     with _posix_directory(path.parent, protect=True) as directory:
         try:
             existing = _posix_read(directory, path.name, maximum, output=True)
@@ -393,6 +400,8 @@ def _windows_session_lock(path: Path):
 
 @contextmanager
 def _posix_session_lock(path: Path):
+    if sys.platform == "win32":
+        raise EnrollmentFileError("POSIX artifact lock is unavailable on Windows")
     fcntl = importlib.import_module("fcntl")
     with _posix_directory(path, protect=True, lock=False) as directory:
         previous = getattr(_posix_sessions, "entries", ())

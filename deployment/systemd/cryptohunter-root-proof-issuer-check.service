@@ -1,0 +1,20 @@
+[Unit]
+Description=CryptoHunter isolated RootProofIssuer lifecycle qualification
+After=postgresql.service
+
+[Service]
+Type=oneshot
+User=cryptohunter-root-proof-issuer
+Group=cryptohunter-root-proof-issuer
+WorkingDirectory=/opt/cryptohunter
+ExecStart=/opt/cryptohunter/venv/bin/python -m deployment.production_root_proof_issuer --check
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+RestrictAddressFamilies=AF_UNIX
+CapabilityBoundingSet=
+AmbientCapabilities=
+LockPersonality=yes
+RestrictSUIDSGID=yes
+UMask=0077
