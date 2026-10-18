@@ -98,7 +98,14 @@ def test_strict_schema_and_encoding(integration, change):
         ArtifactEnvelope.from_canonical_bytes(canonical_json_bytes(value))
 
 
-@pytest.mark.parametrize("raw", [b"{}", b"[]", b"null", b"\xff", b"x" * (MAX_ENVELOPE_BYTES + 1)])
+@pytest.mark.parametrize(
+    "raw",
+    [b"{}", b"[]", b"null", b"\xff", b"x" * (MAX_ENVELOPE_BYTES + 1)],
+    # On Windows pytest exports the case ID in PYTEST_CURRENT_TEST (max 32,767
+    # characters). Preserve the full >2 MiB payload, but never include it in
+    # an automatically generated test ID (which breaks setup and teardown).
+    ids=["object", "array", "null", "invalid-utf8", "oversized-envelope"],
+)
 def test_corrupt_oversize_and_wrong_document_type(raw):
     with pytest.raises(EnrollmentTransportError):
         ArtifactEnvelope.from_canonical_bytes(raw)

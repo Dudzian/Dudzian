@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import ctypes
+import errno
 import multiprocessing
 import os
 import stat
@@ -16,6 +18,58 @@ import pytest
 from bot_core.licensing import enrollment_file_io as delivery
 
 pytestmark = pytest.mark.skipif(os.name == "nt", reason="POSIX filesystem qualifications")
+
+
+@pytest.mark.parametrize(
+    ("platform", "symbol", "exclusive_flag"),
+    [("linux", "renameat2", 0x1), ("darwin", "renameatx_np", 0x4)],
+)
+def test_native_exclusive_publish_uses_pinned_dirfd_and_no_replace(
+    monkeypatch, platform: str, symbol: str, exclusive_flag: int
+):
+    """Both kernels publish through a native no-clobber operation."""
+
+    class Rename:
+        argtypes = None
+        restype = None
+
+        def __init__(self):
+            self.arguments = None
+            self.result = 0
+
+        def __call__(self, *args):
+            self.arguments = args
+            return self.result
+
+    native = Rename()
+    monkeypatch.setattr(delivery.sys, "platform", platform)
+    monkeypatch.setattr(
+        delivery.ctypes, "CDLL", lambda *args, **kwargs: SimpleNamespace(**{symbol: native})
+    )
+    delivery._rename_noreplace(17, "new.tmp", "final.json")
+    assert native.arguments == (17, b"new.tmp", 17, b"final.json", exclusive_flag)
+    assert native.argtypes == (
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_uint,
+    )
+    assert native.restype is ctypes.c_int
+    ctypes.set_errno(errno.EEXIST)
+    native.result = -1
+    with pytest.raises(FileExistsError):
+        delivery._rename_noreplace(17, "new.tmp", "final.json")
+    ctypes.set_errno(errno.EPERM)
+    with pytest.raises(PermissionError):
+        delivery._rename_noreplace(17, "new.tmp", "final.json")
+
+
+def test_native_exclusive_publish_fails_closed_without_kernel_support(monkeypatch):
+    monkeypatch.setattr(delivery.sys, "platform", "darwin")
+    monkeypatch.setattr(delivery.ctypes, "CDLL", lambda *args, **kwargs: SimpleNamespace())
+    with pytest.raises(delivery.EnrollmentFileError, match="native exclusive rename"):
+        delivery._rename_noreplace(17, "new.tmp", "final.json")
 
 
 def test_immutable_atomic_retry_and_permissions(tmp_path: Path):

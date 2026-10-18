@@ -14,6 +14,7 @@ import importlib
 import os
 import secrets
 import stat
+import sys
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from threading import local
@@ -123,8 +124,9 @@ def _posix_directory(
     """Anchor every component without following a replaceable symlink.
 
     A cooperative directory lock serializes helper operations; object checks
-    remain mandatory for untrusted producers. Linux publication uses native
-    renameat2(RENAME_NOREPLACE), including crash-safe single-link identity.
+    remain mandatory for untrusted producers. Linux and macOS publication use
+    native exclusive rename with a pinned directory descriptor, preserving
+    crash-safe single-link identity.
     """
     fcntl = importlib.import_module("fcntl")
     descriptors = []
@@ -202,15 +204,34 @@ def _write_descriptor(descriptor: int, raw: bytes) -> None:
     os.fsync(descriptor)
 
 
+def _exclusive_rename_spec(platform: str) -> tuple[str, int]:
+    """Select the native no-replace ABI with an explicit fail-closed default.
+
+    A parameter, rather than a sys.platform branch in the caller, also keeps
+    both native ABI choices type-checkable with mypy --platform win32.
+    """
+    if platform == "linux":
+        return "renameat2", 0x1  # RENAME_NOREPLACE
+    if platform == "darwin":
+        return "renameatx_np", 0x4  # RENAME_EXCL (sys/stdio.h)
+    raise EnrollmentFileError("atomic immutable publication is unsupported on this POSIX OS")
+
+
 def _rename_noreplace(directory: int, source: str, destination: str) -> None:
-    """Linux native immutable rename; never emulate it with a crash-fragile link."""
+    """OS-native atomic publication without replacing an existing pathname.
+
+    Linux renameat2(RENAME_NOREPLACE) and macOS renameatx_np(RENAME_EXCL)
+    both resolve names against the same pinned directory descriptor. Never
+    downgrade to ordinary rename or link-based publication.
+    """
+    name, flags = _exclusive_rename_spec(sys.platform)
     native = ctypes.CDLL(None, use_errno=True)
-    rename = getattr(native, "renameat2", None)
+    rename = getattr(native, name, None)
     if rename is None:
-        raise EnrollmentFileError("atomic immutable publication requires Linux renameat2")
+        raise EnrollmentFileError("atomic immutable publication requires native exclusive rename")
     rename.argtypes = (ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint)
     rename.restype = ctypes.c_int
-    if rename(directory, os.fsencode(source), directory, os.fsencode(destination), 0x1):
+    if rename(directory, os.fsencode(source), directory, os.fsencode(destination), flags):
         error = ctypes.get_errno()
         if error == errno.EEXIST:
             raise FileExistsError(error, os.strerror(error), destination)
