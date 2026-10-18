@@ -238,6 +238,15 @@ Odrębny test import graph chroni publiczne read-only porty przed dostępem do
 administracji reproposal. Granice i immutable evidence opisuje
 [protokół V1](architecture/stage9_history_successor_reproposal_v1.md).
 
+S9-RPI-05 dodaje `independent_custody_completion_qualification.py` do
+skonfigurowanego mypy Linux/Windows i obu surowych zakresów branch coverage
+łączonych przez istniejący atomic gate. Nowy test qualification-only działa
+w tym samym seryjnym jobie; moduł i test obejmuje jawny Ruff format gate.
+Pozostają dotychczasowe testy, timeouty, próg 70% i osobne bramki sprzętowe.
+Format claims i realny odczyt journalu nie kwalifikują źródła mutation,
+CCA ani produkcyjnego completion; granice i fizyczną procedurę opisuje
+[S9-RPI-05](architecture/stage9_independent_custody_completion_authority.md).
+
 ## Security invariants now encoded
 
 - Signal strength has the signed `[-1, 1]` contract (direction plus magnitude),
