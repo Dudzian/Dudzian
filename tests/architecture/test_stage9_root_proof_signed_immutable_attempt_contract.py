@@ -55,6 +55,7 @@ _TRANSPORT_IMPORTS = {"requests", "httpx", "http", "grpc", "socket", "aiohttp", 
 _INFRASTRUCTURE_SOCKET_MODULES = {
     "bot_core.security.fingerprint",  # Hostname collection, not issuer transport.
     "deployment.production_pdsa_signing",  # Existing protected local AF_UNIX signing IPC.
+    "bot_core.production_signer_ipc",  # Reviewed diagnostic-only AF_UNIX; no issuer request transport.
     "deployment.windows_stage8_postgresql_probe",  # Existing PostgreSQL connectivity probe.
 }
 _RETAINED_REQUEST_REFERENCES = {
@@ -168,6 +169,19 @@ def _assert_local_issuance_execution_ownership(sources):
         if module in _INFRASTRUCTURE_SOCKET_MODULES and module not in consumers:
             forbidden.discard("socket")
         assert not forbidden & _TRANSPORT_IMPORTS, f"issuer transport bypass in {module}"
+
+
+def test_reviewed_signer_diagnostic_ipc_socket_exception_is_narrow():
+    """A local diagnostic endpoint is not an issuer request transport."""
+    path = "bot_core/production_signer_ipc.py"
+    tree = ast.parse((ROOT / path).read_text(encoding="utf-8-sig"))
+    imports = _source_imports(tree, path)
+    assert {item.split(".")[0] for item in imports} & _TRANSPORT_IMPORTS == {"socket"}
+    attrs = {node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)}
+    assert {"AF_UNIX", "SO_PEERCRED"} <= attrs
+    assert not {"AF_INET", "AF_INET6", "create_connection", "getaddrinfo"} & attrs
+    references = attrs | {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
+    assert not references & (_RETAINED_REQUEST_REFERENCES | _ISSUANCE_EFFECTS)
 
 
 def test_production_issuance_effects_and_consumers_preserve_local_dispatch_ownership():
