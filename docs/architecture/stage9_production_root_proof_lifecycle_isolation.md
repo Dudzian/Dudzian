@@ -24,7 +24,8 @@ stanowią zgody na zmianę powyższych statusów. Stage 10 pozostaje nietknięty
 ## Podstawa audytu
 
 Punktem wyjścia jest `origin/main` po PR #3148,
-`f50b0186`. Sprawdzono bezpośrednio dziesięć wymaganych źródeł:
+`f50b0186`; gałąź uwzględnia także późniejsze poprawki main z #3149
+(`b0f04ee6`). Sprawdzono bezpośrednio dziesięć wymaganych źródeł:
 
 - `bot_core/postgresql_atomic_root_proof_commit.py`;
 - `bot_core/postgresql_atomic_root_proof_schema.py`;
@@ -310,8 +311,8 @@ Python 3.12.14. Zestaw pięciu nowych modułów testowych: **117 passed**,
 bez pominięć, 20,32 s. Łączne pokrycie gałęzi pięciu nowych modułów kodu:
 **78%**. Celowane regresje credentials, kontraktów atomic commit,
 administracji custody i import isolation: **602 passed**, 73,93 s.
-Regresje transportu/pliku i Windows offline: **33 passed, 1 skipped**,
-3,05 s; test zmiany właściciela wymaga `chown` niedostępnego dla tego konta.
+Regresje transportu/pliku, Windows offline oraz importów z #3149:
+**34 passed, 1 skipped**, 3,15 s; test zmiany właściciela wymaga `chown` niedostępnego dla tego konta.
 
 | Wymagany scenariusz | Wykonany dowód i granica |
 | --- | --- |
@@ -340,9 +341,9 @@ dla Linux i Windows (**335 plików**), offline staged Betterleaks 1.9.0
 oraz pięć reguł Semgrep 1.179.0 przeszły; Semgrep: zero findings, testy reguł
 5/5. `git diff --check` przeszedł. Mypy używał `--no-incremental
 --cache-dir=/dev/null`, omijając błąd serializacji cache narzędzia bez
-wyłączenia kontroli typów. Wymagany format hook poprawił pojedynczą sygnaturę
-w teście z #3148; jawne platform guards w istniejącym helperze POSIX zamykają
-cztery wcześniejsze błędy Windows mypy, bez suppressions i zmian Windows I/O.
+wyłączenia kontroli typów. Poprawki formatowania i Windows POSIX adapters
+z #3149 są zachowane z main; końcowy diff S9-RPI-01 nie zmienia istniejącego
+transportu enrollment ani jego testu Windows.
 
 Izolowany harness może wstrzyknąć `ACTIVE` uprzywilejowanym połączeniem
 wyłącznie w celu wykonania race/retirement tests mechanizmu blokad. Nie jest
