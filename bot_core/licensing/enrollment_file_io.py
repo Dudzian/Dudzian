@@ -204,6 +204,19 @@ def _write_descriptor(descriptor: int, raw: bytes) -> None:
     os.fsync(descriptor)
 
 
+def _exclusive_rename_spec(platform: str) -> tuple[str, int]:
+    """Select the native no-replace ABI with an explicit fail-closed default.
+
+    A parameter, rather than a sys.platform branch in the caller, also keeps
+    both native ABI choices type-checkable with mypy --platform win32.
+    """
+    if platform == "linux":
+        return "renameat2", 0x1  # RENAME_NOREPLACE
+    if platform == "darwin":
+        return "renameatx_np", 0x4  # RENAME_EXCL (sys/stdio.h)
+    raise EnrollmentFileError("atomic immutable publication is unsupported on this POSIX OS")
+
+
 def _rename_noreplace(directory: int, source: str, destination: str) -> None:
     """OS-native atomic publication without replacing an existing pathname.
 
@@ -211,12 +224,7 @@ def _rename_noreplace(directory: int, source: str, destination: str) -> None:
     both resolve names against the same pinned directory descriptor. Never
     downgrade to ordinary rename or link-based publication.
     """
-    if sys.platform == "linux":
-        name, flags = "renameat2", 0x1  # RENAME_NOREPLACE
-    elif sys.platform == "darwin":
-        name, flags = "renameatx_np", 0x4  # RENAME_EXCL (sys/stdio.h)
-    else:
-        raise EnrollmentFileError("atomic immutable publication is unsupported on this POSIX OS")
+    name, flags = _exclusive_rename_spec(sys.platform)
     native = ctypes.CDLL(None, use_errno=True)
     rename = getattr(native, name, None)
     if rename is None:
