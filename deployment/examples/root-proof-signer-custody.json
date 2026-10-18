@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "profile": "PRODUCTION_LOCAL",
+  "trust_domain": "REPLACE_WITH_REVIEWED_INSTALLATION_TRUST_DOMAIN",
+  "service_role": "root_signer",
+  "custody_directory": "/var/lib/cryptohunter/root-proof-signer",
+  "keyring_index_path": "/var/lib/cryptohunter/root-proof-signer/keyring-index.json"
+}

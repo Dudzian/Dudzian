@@ -10,9 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import socket
 import stat
-import struct
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -430,44 +428,95 @@ class ProductionRootLifecycleBoundary:
             with conn.transaction():
                 conn.execute("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE")
                 self.qualify(conn)
-        for role in sorted(_SIGNERS):
-            self.qualify_signer_peer(role)
+            with conn.transaction():
+                conn.execute("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE")
+                observations = [
+                    self.qualify_signer_custody(conn, role) for role in sorted(_SIGNERS)
+                ]
+                _compare_signer_namespaces(observations)
+
+    def _signer_policy(self, role: str) -> Any:
+        boundary = self._current()
+        if self._role != "issuer":
+            raise ProductionRootLifecycleError("ISSUER_SERVICE_QUALIFICATION_REQUIRED")
+        return _signer_socket_policy(boundary, role)
 
     def qualify_signer_peer(self, role: str) -> tuple[int, int, int]:
-        """Observe a separate installed Unix process, never accept a caller socket."""
-        if sys.platform != "linux":
-            raise ProductionRootLifecycleError("LINUX_SERVICE_INSTALLATION_REQUIRED")
-        boundary = self._current()
-        if role not in _SIGNERS:
-            raise ProductionRootLifecycleError("EXACT_SIGNER_ROLE_REQUIRED")
-        _, uid, gid, _ = boundary.principal(role)
-        path = Path(dict(boundary.signer_sockets)[role])
+        """Complete one diagnostic exchange with a pinned independent process."""
+        from bot_core.production_signer_ipc import ProductionSignerIPCError, qualify_signer_ipc
+
         try:
-            for ancestor in path.parents:
-                info = ancestor.lstat()
-                if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
-                    raise ProductionRootLifecycleError("PROTECTED_SIGNER_SOCKET_REQUIRED")
-            info = path.lstat()
-            if (
-                not stat.S_ISSOCK(info.st_mode)
-                or info.st_uid != uid
-                or info.st_gid != boundary.principal("issuer")[2]
-                or stat.S_IMODE(info.st_mode) != 0o660
-            ):
-                raise ProductionRootLifecycleError("PROTECTED_SIGNER_SOCKET_REQUIRED")
-            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as peer:
-                peer.settimeout(3)
-                peer.connect(str(path))
-                pid, peer_uid, peer_gid = struct.unpack(
-                    "3i",
-                    peer.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i")),
-                )
-            if (peer_uid, peer_gid) != (uid, gid) or pid <= 0 or pid == os.getpid():
-                raise ProductionRootLifecycleError("EXACT_SEPARATE_SIGNER_PROCESS_REQUIRED")
+            observation = qualify_signer_ipc(self._signer_policy(role))
             self._current()
-            return pid, peer_uid, peer_gid
-        except OSError:
-            raise ProductionRootLifecycleError("INSTALLED_SIGNER_UNAVAILABLE") from None
+            return observation.peer_pid, observation.peer_uid, observation.peer_gid
+        except ProductionSignerIPCError:
+            raise ProductionRootLifecycleError("INSTALLED_SIGNER_UNAVAILABLE_OR_CHANGED") from None
+
+    def qualify_signer_custody(self, conn: psycopg.Connection[Any], role: str) -> dict[str, Any]:
+        """Compare diagnostic facts to independent, locked SQL lifecycle evidence.
+
+        This is a point-in-time observation, never an issuance capability. Even
+        matching SQL and locally derived public material cannot independently
+        attest private custody or physical namespace isolation.
+        """
+        from bot_core.production_signer_custody import (
+            ProductionSignerCustodyError,
+            validate_signer_custody_facts,
+        )
+        from bot_core.production_signer_ipc import ProductionSignerIPCError, qualify_signer_ipc
+
+        boundary = self._current()
+        policy = self._signer_policy(role)
+        try:
+            self.qualify(conn)
+            observation = qualify_signer_ipc(policy, "QUALIFY")
+            facts = validate_signer_custody_facts(role, observation.response["facts"])
+            if (
+                facts["trust_domain"] != boundary.pin.provisioning.trust_domain
+                or facts["installation_sha256"] != boundary.source_sha256
+            ):
+                raise ProductionRootLifecycleError("SIGNER_INSTALLATION_BINDING_MISMATCH")
+            row = conn.execute(
+                sql.SQL("SELECT {}.observe_signer_custody(%s,%s)").format(
+                    sql.Identifier(boundary.pin.provisioning.schema)
+                ),
+                (facts["semantic_role"], facts["identity"]),
+            ).fetchone()
+            current = _compare_signer_lifecycle_facts(facts, row)
+            blockers = set(observation.response["blockers"])
+            blockers.add("INDEPENDENT_PRIVATE_KEY_CONTROL_UNPROVEN")
+            blockers.add("PRODUCTION_ROOT_PROOF_EMISSION_BLOCKED")
+            blockers.add("CROSS_SIGNER_NAMESPACE_ISOLATION_UNPROVEN")
+            namespaces = dict(observation.peer_namespaces)
+            if set(namespaces) != {"mnt", "ipc", "net"}:
+                blockers.add("INDEPENDENT_SIGNER_NAMESPACE_EVIDENCE_UNAVAILABLE")
+            else:
+                for name, inode in namespaces.items():
+                    if os.stat(f"/proc/self/ns/{name}").st_ino == inode:
+                        raise ProductionRootLifecycleError("SIGNER_NAMESPACE_NOT_SEPARATED")
+            if current["state"] != "ACTIVE":
+                blockers.add("LIFECYCLE_" + current["state"])
+            if not current["is_current"]:
+                blockers.add("CREDENTIAL_IS_NOT_CURRENT_SIGNER_SLOT")
+            self._current()
+            return {
+                "role": role,
+                "status": "BLOCKED",
+                "public_binding_matches": True,
+                "lifecycle_state": current["state"],
+                "peer_namespaces": namespaces,
+                "private_control_status": "BLOCKED",
+                "production_emission": "BLOCKED",
+                "blockers": sorted(blockers),
+            }
+        except ProductionRootLifecycleError:
+            raise
+        except (ProductionSignerIPCError, ProductionSignerCustodyError):
+            raise ProductionRootLifecycleError("SIGNER_CUSTODY_UNAVAILABLE_OR_CHANGED") from None
+        except Exception:
+            raise ProductionRootLifecycleError(
+                "INDEPENDENT_SIGNER_QUALIFICATION_UNAVAILABLE"
+            ) from None
 
     def assert_active_fences(
         self, conn: psycopg.Connection[Any], fences: list[dict[str, Any]]
@@ -516,3 +565,87 @@ def open_installed_production_root_lifecycle() -> ProductionRootLifecycleBoundar
             _require_process(boundary, role)
             return ProductionRootLifecycleBoundary(boundary, role)
     raise ProductionRootLifecycleError("EXACT_INSTALLED_PROCESS_IDENTITY_REQUIRED")
+
+
+def _signer_socket_policy(boundary: _InstalledBoundary, role: str) -> Any:
+    from bot_core.production_signer_ipc import SignerSocketPolicy
+
+    if type(role) is not str or role not in _SIGNERS:
+        raise ProductionRootLifecycleError("EXACT_SIGNER_ROLE_REQUIRED")
+    _, uid, gid, _ = boundary.principal(role)
+    _, issuer_uid, issuer_gid, _ = boundary.principal("issuer")
+    return SignerSocketPolicy(
+        role,
+        dict(boundary.signer_sockets)[role],
+        uid,
+        gid,
+        issuer_uid,
+        issuer_gid,
+        boundary.source_sha256,
+    )
+
+
+def open_installed_production_signer_policy(role: str) -> Any:
+    """Fixed installation only; no caller credential, endpoint or profile override."""
+    from bot_core.production_signer_ipc import _require_self
+
+    boundary = _installed_boundary()
+    policy = _signer_socket_policy(boundary, role)
+    _require_self(policy.signer_uid, policy.signer_gid)
+    return policy
+
+
+def _compare_signer_lifecycle_facts(facts: dict[str, Any], row: Any) -> dict[str, Any]:
+    """Strict comparison of independently qualified SQL public facts only."""
+    fields = {
+        "semantic_role",
+        "authority_identity",
+        "identity",
+        "public_material_identity",
+        "key_version",
+        "lifecycle_generation",
+        "state",
+        "pending_operation_id",
+        "is_current",
+        "new_operations_authorized",
+    }
+    if type(row) is not tuple or len(row) != 1 or type(row[0]) is not dict or set(row[0]) != fields:
+        raise ProductionRootLifecycleError("EXACT_INDEPENDENT_CUSTODY_OBSERVATION_REQUIRED")
+    current = row[0]
+    for name in (
+        "semantic_role",
+        "authority_identity",
+        "identity",
+        "public_material_identity",
+        "key_version",
+        "lifecycle_generation",
+    ):
+        if type(current[name]) is not type(facts[name]) or current[name] != facts[name]:
+            raise ProductionRootLifecycleError("SIGNER_CREDENTIAL_LIFECYCLE_MISMATCH")
+    if (
+        type(current["state"]) is not str
+        or current["state"] not in {"ACTIVE", "VERIFY_ONLY", "REVOKED", "PENDING_CLOSED"}
+        or type(current["is_current"]) is not bool
+        or current["new_operations_authorized"] is not False
+        or (
+            current["state"] == "PENDING_CLOSED"
+            and (
+                type(current["pending_operation_id"]) is not str
+                or not current["pending_operation_id"]
+            )
+        )
+        or (current["state"] != "PENDING_CLOSED" and current["pending_operation_id"] is not None)
+        or (current["state"] != "PENDING_CLOSED" and current["state"] != facts["state"])
+    ):
+        raise ProductionRootLifecycleError("SIGNER_CREDENTIAL_LIFECYCLE_MISMATCH")
+    return current
+
+
+def _compare_signer_namespaces(observations: list[dict[str, Any]]) -> None:
+    """Reject observed sharing; unavailable kernel evidence stays BLOCKED."""
+    root, history = (value["peer_namespaces"] for value in observations)
+    if set(root) == set(history) == {"mnt", "ipc", "net"}:
+        if any(root[name] == history[name] for name in root):
+            raise ProductionRootLifecycleError("SIGNER_NAMESPACES_NOT_INDEPENDENT")
+        for value in observations:
+            value["blockers"].remove("CROSS_SIGNER_NAMESPACE_ISOLATION_UNPROVEN")
