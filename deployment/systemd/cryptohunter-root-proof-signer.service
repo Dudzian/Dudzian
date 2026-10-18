@@ -1,0 +1,36 @@
+[Unit]
+Description=CryptoHunter RootProofSigner diagnostics (production signing blocked)
+ConditionPathExists=/etc/cryptohunter/root-proof-issuer/installation.json
+ConditionPathExists=/etc/cryptohunter/root-proof-signer/custody.json
+
+[Service]
+Type=simple
+User=cryptohunter-root-proof-signer
+Group=cryptohunter-root-proof-signer
+WorkingDirectory=/opt/cryptohunter
+ExecStart=/opt/cryptohunter/venv/bin/python -m deployment.production_signer_service root_signer --serve
+Restart=no
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateMounts=yes
+PrivateIPC=yes
+PrivateNetwork=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadOnlyPaths=/var/lib/cryptohunter/root-proof-signer
+ReadWritePaths=/run/cryptohunter/root-proof-signer
+InaccessiblePaths=/var/lib/cryptohunter/history-attestation-signer /etc/cryptohunter/history-attestation-signer
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+LockPersonality=yes
+RestrictSUIDSGID=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+RemoveIPC=yes
+UMask=0117
+TimeoutStopSec=5s
+KillMode=control-group

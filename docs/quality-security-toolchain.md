@@ -166,6 +166,41 @@ Limity jobów, wcześniejsze testy i bramki sprzętowe pozostają bez zmian.
 Zakres i blokady opisuje
 [S9-RPI-01](architecture/stage9_production_root_proof_lifecycle_isolation.md).
 
+S9-RPI-02 adds the independent signer IPC, process-owned custody and signer
+service modules to the same Linux/Windows mypy scope and explicit Ruff format
+gate. The five signer test modules join the existing serial
+`atomic-root-proof-commit` job; all three implementation modules enter both raw
+coverage reports combined by `atomic-root-proof-coverage`. Existing tests,
+timeouts, hardware gates and the 70% changed-code threshold remain in place.
+The isolated test environment exercises real local processes and PostgreSQL 16;
+it does not qualify a production installation or enable Root Proof issuance.
+
+For a targeted local run, configure the two isolated durable PostgreSQL 16 DSNs
+and restart/crash controllers described by the existing atomic job, then run:
+
+```bash
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 DUDZIAN_TEST_MODE=1 DUDZIAN_ALLOW_LONG_POLL=0 \
+python -m pytest -p asyncio -p pytest_cov.plugin \
+  tests/security/test_production_signer_ipc.py \
+  tests/security/test_production_signer_custody.py \
+  tests/security/test_production_signer_deployment.py \
+  tests/security/test_production_signer_lifecycle.py \
+  tests/security/test_production_signer_boundary.py \
+  -m "not hardware and not destructive and not network" \
+  --cov=bot_core.production_signer_ipc \
+  --cov=bot_core.production_signer_custody \
+  --cov=deployment.production_signer_service \
+  --cov-branch --cov-config=.coveragerc --cov-report=term-missing -q
+```
+
+This targeted loop supplements the unchanged existing atomic qualification and
+combined coverage gate. Before a PR, run the mandatory
+`python -m pre_commit run ruff-format --all-files`, explicitly check formatting
+of `deployment/production_signer_service.py`, and run configured `python -m mypy`
+and `python -m mypy --platform win32` without filename arguments. Existing
+blocking custom Semgrep rules and the baselined offline Betterleaks scan cover
+the new modules through their current directory scopes.
+
 Adaptery przygotowania RESERVED/STAGED dla inventory V2 rozszerzają ten sam
 seryjny job `atomic-root-proof-commit` o testy nowego przygotowania po migracji,
 kwalifikacji preparation ACL, signer enrollment, exact retry i commit właśnie
@@ -244,3 +279,9 @@ administracji reproposal. Granice i immutable evidence opisuje
 Never lower a gate or extend the Betterleaks baseline merely to make CI green.
 Review the finding, add a negative-path regression test where practical, and use
 the narrowest documented exception only for a demonstrated false positive.
+
+The `test_production_signer_linux_processes.py` harness requires root inside a
+disposable Linux container (default capabilities; no privileged container). It
+forks two signer identities and an issuer, tests actual Unix DAC and peer
+credentials, and uses only synthetic fixture files. Ordinary non-root CI skips
+it; this is separate from installed systemd/native-keyring qualification.

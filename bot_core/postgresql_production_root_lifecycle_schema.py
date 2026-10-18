@@ -89,9 +89,15 @@ PRODUCTION_LIFECYCLE_FUNCTION_DECLARATIONS = {
         "p_role text,p_identity text,p_generation bigint",
         "jsonb",
     ),
+    "observe_signer_custody(text,text)": ("p_role text,p_identity text", "jsonb"),
 }
 ISSUER_FUNCTIONS = frozenset(
-    {"assert_catalog()", "assert_active_fences(jsonb)", "read_historical_fence(text,text,bigint)"}
+    {
+        "assert_catalog()",
+        "assert_active_fences(jsonb)",
+        "read_historical_fence(text,text,bigint)",
+        "observe_signer_custody(text,text)",
+    }
 )
 ADMINISTRATOR_FUNCTIONS = frozenset(
     {
@@ -451,6 +457,29 @@ BEGIN
   'public_material_identity',f.public_material_identity,'key_version',f.key_version,
   'historical_generation',p_generation,'historical_state',retained,'current_generation',f.generation,
   'current_state',f.state,'new_operations_authorized',false);
+END
+""",
+        "observe_signer_custody(text,text)": f"""
+DECLARE f {s}.fences%ROWTYPE; current_identity text;
+BEGIN
+ {issuer}
+ IF pg_catalog.current_setting('transaction_isolation')<>'serializable'
+ OR pg_catalog.current_setting('transaction_read_only')<>'off' THEN
+  RAISE EXCEPTION 'signer observation requires writable SERIALIZABLE transaction' USING ERRCODE='25001'; END IF;
+ IF p_role IS NULL OR p_role NOT IN ('ROOT_PROOF_SIGNING','HISTORY_ATTESTATION_SIGNING')
+ OR p_identity IS NULL OR p_identity='' THEN
+  RAISE EXCEPTION 'exact signing role and public identity required' USING ERRCODE='22023'; END IF;
+ -- Public diagnostic facts only. Match the administrator's slot-before-fence
+ -- lock order, including when the requested fence is a retired predecessor.
+ SELECT identity INTO current_identity FROM {s}.slots WHERE semantic_role=p_role FOR SHARE;
+ IF NOT FOUND THEN RETURN NULL; END IF;
+ SELECT * INTO f FROM {s}.fences WHERE semantic_role=p_role AND identity=p_identity FOR SHARE;
+ IF NOT FOUND THEN RETURN NULL; END IF;
+ RETURN pg_catalog.jsonb_build_object('semantic_role',f.semantic_role,
+  'authority_identity',f.authority_identity,'identity',f.identity,
+  'public_material_identity',f.public_material_identity,'key_version',f.key_version,
+  'lifecycle_generation',f.generation,'state',f.state,'pending_operation_id',f.pending_operation_id,
+  'is_current',current_identity=f.identity,'new_operations_authorized',false);
 END
 """,
     }

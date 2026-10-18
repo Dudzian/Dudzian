@@ -235,6 +235,9 @@ class NativeKeyringSigningSecretReader:
     """Sealed read-only runtime facade over the reviewed native-keyring store."""
 
     __slots__ = ("__storage", "__scope", "__sealed")
+    __storage: KeyringSecretStorage
+    __scope: _AuthoritySecretScope
+    __sealed: bool
 
     def __init__(
         self,
@@ -271,6 +274,18 @@ class NativeKeyringSigningSecretReader:
         ):
             raise LocalSigningCustodyError("runtime signing secret reader is invalid")
         return storage.get_secret(expected_reference)
+
+    def read_existing_authority_secret(self, expected_reference: str) -> str | None:
+        """Read existing native custody without the legacy master-create path."""
+        if (
+            type(expected_reference) is not str
+            or not expected_reference.startswith(self.__scope.reference_prefix)
+            or len(expected_reference) != len(self.__scope.reference_prefix) + 32
+            or type(self.__storage) is not KeyringSecretStorage
+            or self.__storage._service_name != self.__scope.service_name
+        ):
+            raise LocalSigningCustodyError("secret reference is outside authority scope")
+        return self.__storage.get_existing_native_secret(expected_reference)
 
 
 class NativeKeyringSigningSecretAdministrator:

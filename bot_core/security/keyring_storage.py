@@ -64,6 +64,38 @@ class KeyringSecretStorage(SecretStorage):
         except Exception as exc:  # pragma: no cover - silne logowanie
             raise SecretStorageError(f"Nie udało się odszyfrować sekretu '{key}'.") from exc
 
+    def get_existing_native_secret(self, key: str) -> Optional[str]:
+        """Read an existing secret and master from one exact native backend.
+
+        Unlike the legacy ``get_secret`` provisioning-compatible path, a missing
+        master fails closed. This diagnostic port never creates a master,
+        updates the index, or selects a chained/fallback credential backend.
+        """
+        module_name, class_name = {
+            "windows": ("keyring.backends.Windows", "WinVaultKeyring"),
+            "macos": ("keyring.backends.macOS", "Keyring"),
+            "linux": ("keyring.backends.SecretService", "SecretServiceKeyring"),
+        }[self._platform_identifier()]
+        native_class = getattr(importlib.import_module(module_name), class_name)
+        if type(self._backend) is not native_class or type(key) is not str or not key:
+            raise SecretStorageError("Exact native read-only credential backend required.")
+        try:
+            encrypted = self._backend.get_password(self._service_name, key)
+            if encrypted is None:
+                return None
+            record = self._backend.get_password(self._service_name, self.MASTER_KEY_SLOT)
+            if type(record) is not str:
+                raise SecretStorageError("Existing native master key required.")
+            hwid_digest = self._read_hwid_digest()
+            master = self._decode_master_key_record(record, hwid_digest)
+            return self._decrypt_value(
+                encrypted, storage_key=key, master=master, hwid_digest=hwid_digest
+            )
+        except SecretStorageError:
+            raise
+        except Exception as exc:
+            raise SecretStorageError("Existing native credential unavailable.") from exc
+
     def set_secret(self, key: str, value: str) -> None:
         master, hwid_digest = self._load_master_key()
         encrypted = self._encrypt_value(
@@ -139,6 +171,9 @@ class KeyringSecretStorage(SecretStorage):
             self._store_master_key(master, hwid_digest)
             return master, hwid_digest
 
+        return self._decode_master_key_record(record, hwid_digest), hwid_digest
+
+    def _decode_master_key_record(self, record: str, hwid_digest: str) -> bytes:
         try:
             document = json.loads(record)
         except json.JSONDecodeError as exc:
@@ -160,7 +195,7 @@ class KeyringSecretStorage(SecretStorage):
         if len(master) != self.MASTER_KEY_BYTES:
             raise SecretStorageError("Klucz główny magazynu sekretów ma niepoprawną długość.")
 
-        return master, hwid_digest
+        return master
 
     def _store_master_key(self, master: bytes, hwid_digest: str) -> None:
         payload = {
