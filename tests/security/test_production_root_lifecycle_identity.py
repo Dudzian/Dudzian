@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import stat
+import sys
 from dataclasses import asdict
 from types import SimpleNamespace
 
@@ -21,6 +22,8 @@ from bot_core.postgresql_production_root_lifecycle_schema import (
 
 @pytest.fixture
 def installed(monkeypatch):
+    if sys.platform != "linux":
+        pytest.skip("Linux-only installed service identity requires pwd and POSIX peer credentials")
     roles = sorted(boundary._PRINCIPALS)
     config = PostgreSQLProductionRootLifecycleProvisioning(
         "prod_lifecycle",
@@ -83,6 +86,9 @@ def installed(monkeypatch):
     return value
 
 
+@pytest.mark.skipif(
+    sys.platform != "linux", reason="Protected installation file traversal is POSIX-only"
+)
 def test_protected_installation_rejects_actual_untrusted_owner(tmp_path):
     path = tmp_path / "installation.json"
     path.write_text("{}")
@@ -92,6 +98,9 @@ def test_protected_installation_rejects_actual_untrusted_owner(tmp_path):
         boundary._protected_bytes(path)
 
 
+@pytest.mark.skipif(
+    sys.platform != "linux", reason="Protected descriptor and dir_fd checks are POSIX-only"
+)
 @pytest.mark.parametrize("changed_field", ["st_atime_ns", "st_mtime_ns"])
 def test_protected_read_distinguishes_its_own_access_time_from_file_changes(
     tmp_path, monkeypatch, changed_field
@@ -217,6 +226,18 @@ def test_completion_has_no_python_receipt_or_role_bypass(installed, monkeypatch,
     assert calls == []
     assert boundary.PRODUCTION_CUSTODY_COMPLETION == "BLOCKED"
     assert boundary.PRODUCTION_EMISSION == "BLOCKED"
+
+
+@pytest.mark.skipif(sys.platform == "linux", reason="Linux is the supported service platform")
+def test_non_linux_installation_and_service_entrypoints_fail_closed():
+    with pytest.raises(
+        boundary.ProductionRootLifecycleError, match="LINUX_SERVICE_INSTALLATION_REQUIRED"
+    ):
+        boundary._installed_boundary()
+    with pytest.raises(
+        boundary.ProductionRootLifecycleError, match="LINUX_SERVICE_INSTALLATION_REQUIRED"
+    ):
+        boundary.open_installed_production_root_lifecycle()
 
 
 def test_factory_accepts_no_installation_override():

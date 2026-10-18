@@ -7,6 +7,7 @@ import os
 import socket
 import stat
 import struct
+import sys
 import time
 from contextlib import contextmanager
 from types import SimpleNamespace
@@ -16,15 +17,24 @@ import pytest
 from bot_core import production_signer_ipc as ipc
 
 
+_LINUX_PROCESS_ONLY = pytest.mark.skipif(
+    sys.platform != "linux", reason="Linux-only PIDFD, peer credentials and protected POSIX paths"
+)
+
+
 @pytest.fixture
 def policy(tmp_path):
+    # Pure protocol validation also runs on Windows; no real POSIX credentials
+    # are asserted by this synthetic signer policy.
+    uid = getattr(os, "getuid", lambda: 1001)()
+    gid = getattr(os, "getgid", lambda: 2001)()
     return ipc.SignerSocketPolicy(
         "root_signer",
         str(tmp_path / "signer.sock"),
-        os.getuid(),
-        os.getgid(),
-        os.getuid() + 10000,
-        os.getgid() + 10000,
+        uid,
+        gid,
+        uid + 10000,
+        gid + 10000,
         "a" * 64,
     )
 
@@ -182,6 +192,7 @@ def _child_exchange(path, ready, finish, mode, expect_identity_denial):
 
 
 @pytest.mark.parametrize("mode", ["valid", "wrong_role", "disconnect"])
+@_LINUX_PROCESS_ONLY
 def test_real_linux_process_exchange_without_claiming_account_isolation(policy, monkeypatch, mode):
     # Both processes deliberately use the test account. Only protocol, peer PID,
     # pidfd liveness and process-start pinning are real evidence in this test.
@@ -229,6 +240,7 @@ def test_real_linux_process_exchange_without_claiming_account_isolation(policy, 
         assert child.exitcode == 0
 
 
+@_LINUX_PROCESS_ONLY
 def test_same_process_socket_never_qualifies():
     left, right = socket.socketpair()
     with left, right:
@@ -236,6 +248,7 @@ def test_same_process_socket_never_qualifies():
             ipc._PinnedPeer(left, os.getuid(), os.getgid())
 
 
+@_LINUX_PROCESS_ONLY
 def test_wrong_peer_uid_fails_before_proc_access():
     left, right = socket.socketpair()
     with left, right:
@@ -243,12 +256,14 @@ def test_wrong_peer_uid_fails_before_proc_access():
             ipc._PinnedPeer(left, os.getuid() + 1, os.getgid())
 
 
+@_LINUX_PROCESS_ONLY
 def test_supplementary_group_rejected(monkeypatch):
     monkeypatch.setattr(os, "getgroups", lambda: [os.getgid(), os.getgid() + 1])
     with pytest.raises(ipc.ProductionSignerIPCError, match="ISOLATED_PROCESS"):
         ipc._require_self(os.getuid(), os.getgid())
 
 
+@_LINUX_PROCESS_ONLY
 def test_saved_privileged_identity_rejected(monkeypatch):
     monkeypatch.setattr(os, "getresuid", lambda: (os.getuid(), os.getuid(), 0))
     with pytest.raises(ipc.ProductionSignerIPCError, match="ISOLATED_PROCESS"):
@@ -269,6 +284,7 @@ def test_non_linux_entry_points_fail_before_os_access(policy, monkeypatch, entry
             ipc.run_diagnostic_server(policy, lambda operation: {})
 
 
+@_LINUX_PROCESS_ONLY
 def test_actual_unprotected_path_cannot_qualify(policy):
     with pytest.raises(ipc.ProductionSignerIPCError, match="PROTECTED_SIGNER_ANCESTRY"):
         ipc._PinnedSocketPath(policy, require_socket=False)
@@ -299,6 +315,7 @@ def simulated_metadata(policy, monkeypatch):
     return adjusted
 
 
+@_LINUX_PROCESS_ONLY
 def test_socket_substitution_detected_with_real_inodes(policy, simulated_metadata):
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as first:
         first.bind(policy.path)
@@ -311,6 +328,7 @@ def test_socket_substitution_detected_with_real_inodes(policy, simulated_metadat
                     pinned.recheck()
 
 
+@_LINUX_PROCESS_ONLY
 def test_symlink_socket_rejected_even_with_simulated_installation(
     policy, simulated_metadata, tmp_path
 ):
@@ -322,6 +340,7 @@ def test_symlink_socket_rejected_even_with_simulated_installation(
             ipc._PinnedSocketPath(policy)
 
 
+@_LINUX_PROCESS_ONLY
 def test_acl_on_pinned_object_rejected(policy, simulated_metadata, monkeypatch):
     monkeypatch.setattr(os, "listxattr", lambda path: ["system.posix_acl_access"])
     with pytest.raises(ipc.ProductionSignerIPCError, match="ACL_FORBIDDEN"):
@@ -365,6 +384,7 @@ def test_server_rejects_sign_before_diagnostic_callback(policy, monkeypatch):
             )
 
 
+@_LINUX_PROCESS_ONLY
 def test_real_peer_exit_invalidates_socket_bound_pin(tmp_path):
     context = multiprocessing.get_context("fork")
     release, ready = context.Event(), context.Event()
