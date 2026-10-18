@@ -1,5 +1,7 @@
 # ADR — S9-RPI-04: Root Proof Transaction Authority Reconciliation
 
+> **Aktualizacja 2026-10-18:** właściciel projektu zatwierdził kierunek **A + C** (D1–D5, z warunkami D3). Zob. [decyzja właściciela v1](decisions/stage9_root_proof_transaction_authority_owner_approval_v1.md). Poniższy status `CONTRACT_RECONCILIATION_PENDING_APPROVAL` dokumentuje stan z chwili opracowania ADR; decyzja architektoniczna została podjęta, lecz versioned contract integration, produkcyjna kwalifikacja i wszystkie blokady `NO-GO` pozostają otwarte.
+
 ## Decyzja i status
 
 **CONTRACT_RECONCILIATION_PENDING_APPROVAL; NO-GO.** Rekomendujemy wariant
