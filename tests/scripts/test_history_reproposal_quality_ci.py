@@ -68,6 +68,32 @@ ORIGINAL_ATOMIC_MODULES = {
     "bot_core.postgresql_custody_lifecycle_schema",
     "bot_core.postgresql_custody_lifecycle_qualification",
 }
+# Stage 9 production lifecycle and signer qualification extended the atomic job
+# after the history split. Keep the original inventory intact and require the
+# additional tests/coverage explicitly, so neither group can silently disappear.
+STAGE9_PRODUCTION_ATOMIC_TESTS = {
+    "tests/security/test_postgresql_atomic_root_proof_transaction.py",
+    "tests/security/test_production_root_lifecycle_schema.py",
+    "tests/security/test_postgresql_production_root_lifecycle_qualification.py",
+    "tests/security/test_production_root_lifecycle_identity.py",
+    "tests/security/test_production_root_lifecycle_races.py",
+    "tests/security/test_production_signer_ipc.py",
+    "tests/security/test_production_signer_custody.py",
+    "tests/security/test_production_signer_deployment.py",
+    "tests/security/test_production_signer_lifecycle.py",
+    "tests/security/test_production_signer_linux_processes.py",
+    "tests/security/test_production_signer_boundary.py",
+}
+STAGE9_PRODUCTION_ATOMIC_MODULES = {
+    "bot_core.postgresql_atomic_root_proof_transaction",
+    "bot_core.postgresql_production_root_lifecycle_schema",
+    "bot_core.postgresql_production_root_lifecycle_qualification",
+    "bot_core.production_root_lifecycle",
+    "deployment.production_root_proof_issuer",
+    "bot_core.production_signer_ipc",
+    "bot_core.production_signer_custody",
+    "deployment.production_signer_service",
+}
 RAW_FILES = (
     "coverage-atomic-root-proof.data",
     "coverage-history-successor-reproposal.data",
@@ -96,8 +122,16 @@ def test_history_qualification_partitions_tests_and_preserves_original_atomic_sc
     history = jobs["history-successor-reproposal"]
     assert original["timeout-minutes"] == 120
     for job, expected_tests, expected_modules in (
-        (original, ORIGINAL_ATOMIC_TESTS, ORIGINAL_ATOMIC_MODULES),
-        (history, HISTORY_TESTS, HISTORY_MODULES | ORIGINAL_ATOMIC_MODULES),
+        (
+            original,
+            ORIGINAL_ATOMIC_TESTS | STAGE9_PRODUCTION_ATOMIC_TESTS,
+            ORIGINAL_ATOMIC_MODULES | STAGE9_PRODUCTION_ATOMIC_MODULES,
+        ),
+        (
+            history,
+            HISTORY_TESTS,
+            HISTORY_MODULES | ORIGINAL_ATOMIC_MODULES | STAGE9_PRODUCTION_ATOMIC_MODULES,
+        ),
     ):
         command = _pytest_command(job)
         tokens = shlex.split(command)
