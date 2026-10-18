@@ -44,6 +44,22 @@ def _checked_maximum(maximum: int) -> int:
     return maximum
 
 
+def _posix_euid() -> int:
+    """Resolve the Unix-only owner API without assuming a Windows stub exists."""
+    get_euid = getattr(os, "geteuid", None)
+    if get_euid is None:
+        raise EnrollmentFileError("POSIX effective UID is unavailable")
+    return int(get_euid())
+
+
+def _posix_fchmod(descriptor: int) -> None:
+    """Retain explicit POSIX mode hardening; never weaken it for mypy win32."""
+    chmod_fd = getattr(os, "fchmod", None)
+    if chmod_fd is None:
+        raise EnrollmentFileError("POSIX descriptor chmod is unavailable")
+    chmod_fd(descriptor, 0o600)
+
+
 def _identity(info: os.stat_result) -> tuple[int, ...]:
     return (
         info.st_dev,
@@ -140,7 +156,7 @@ def _posix_directory(
             _verify_session_directory(walked, descriptor)
         if protect:
             info = os.fstat(descriptor)
-            if info.st_uid not in (0, os.geteuid()) or info.st_mode & 0o022:
+            if info.st_uid not in (0, _posix_euid()) or info.st_mode & 0o022:
                 raise EnrollmentFileError("artifact directory permits untrusted modification")
         if lock:
             fcntl.flock(descriptor, fcntl.LOCK_EX)
@@ -153,7 +169,7 @@ def _posix_directory(
 def _posix_read(directory: int, name: str, maximum: int, *, output: bool = False) -> bytes:
     before = os.stat(name, dir_fd=directory, follow_symlinks=False)
     _qualify_file(before, maximum)
-    if output and (before.st_uid != os.geteuid() or stat.S_IMODE(before.st_mode) != 0o600):
+    if output and (before.st_uid != _posix_euid() or stat.S_IMODE(before.st_mode) != 0o600):
         raise EnrollmentFileError("existing artifact output owner or permissions are unsafe")
     try:
         descriptor = os.open(
@@ -220,7 +236,7 @@ def _posix_write(path: Path, raw: bytes, maximum: int) -> None:
             dir_fd=directory,
         )
         try:
-            os.fchmod(descriptor, 0o600)
+            _posix_fchmod(descriptor)
             _write_descriptor(descriptor, raw)
             try:
                 _rename_noreplace(directory, temporary, path.name)
@@ -239,7 +255,7 @@ def _posix_write(path: Path, raw: bytes, maximum: int) -> None:
 
 
 def _windows_read(path: Path, maximum: int) -> bytes:
-    from bot_core import windows_custody_filesystem as windows_fs
+    import bot_core.windows_custody_filesystem as windows_fs
 
     # Use the native information rather than CRT fstat: older supported Windows
     # Python versions do not expose native link/file identity in CRT stat fields.
@@ -279,7 +295,7 @@ def _windows_read(path: Path, maximum: int) -> bytes:
 
 
 def _windows_write(path: Path, raw: bytes, maximum: int) -> None:
-    from bot_core import windows_custody_filesystem as windows_fs
+    import bot_core.windows_custody_filesystem as windows_fs
 
     with windows_fs.pinned_directory(path.parent) as (native, trusted):
         try:
@@ -358,7 +374,7 @@ def ensure_artifact_directory(path: Path) -> None:
 
 @contextmanager
 def _windows_session_lock(path: Path):
-    from bot_core import windows_custody_filesystem as windows_fs
+    import bot_core.windows_custody_filesystem as windows_fs
 
     with windows_fs.pinned_directory(path) as (native, trusted):
         files, _, _ = native
@@ -411,7 +427,7 @@ def _posix_session_lock(path: Path):
             info = os.fstat(descriptor)
             _qualify_file(info, 1)
             if (
-                info.st_uid not in (0, os.geteuid())
+                info.st_uid not in (0, _posix_euid())
                 or stat.S_IMODE(info.st_mode) != 0o600
                 or info.st_size
             ):

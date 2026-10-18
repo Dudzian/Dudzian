@@ -278,9 +278,7 @@ def test_windows_session_lock_uses_real_pywin32_argument_shapes(
         assert (flags, size_low, size_high) == (0x2, 1, 0)
         calls.append("locked")
 
-    def unlock_file_ex(
-        opened: Handle, size_low: int, size_high: int, overlapped: object
-    ) -> None:
+    def unlock_file_ex(opened: Handle, size_low: int, size_high: int, overlapped: object) -> None:
         assert opened is handle
         assert (size_low, size_high) == (1, 0)
         calls.append("unlocked")
