@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import stat
+import sys
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -37,6 +38,8 @@ from bot_core.security.keyring_storage import KeyringSecretStorage
 
 @pytest.fixture
 def diagnostic(monkeypatch):
+    if sys.platform != "linux":
+        pytest.skip("Installed native signer custody observations require Linux principals")
     security = SecurityProfileIdentity(SecurityProfile.PRODUCTION_LOCAL, "production.example")
     role = ProviderRole.ROOT_PROOF_SIGNING
     canonical = _canonical_signing_identity(security, role, "a" * 32)
@@ -243,6 +246,9 @@ def test_wire_validation_cannot_change_role(diagnostic):
         custody.validate_signer_custody_facts("history_signer", facts)
 
 
+@pytest.mark.skipif(
+    sys.platform != "linux", reason="Protected custody descriptor traversal is POSIX-only"
+)
 def test_actual_unprotected_filesystem_is_rejected_without_creating_files(tmp_path):
     path = tmp_path / "root-proof-signing.json"
     path.write_bytes(b"public metadata")
@@ -254,6 +260,9 @@ def test_actual_unprotected_filesystem_is_rejected_without_creating_files(tmp_pa
     assert tuple(tmp_path.iterdir()) == before
 
 
+@pytest.mark.skipif(
+    sys.platform != "linux", reason="Protected custody file descriptor checks are POSIX-only"
+)
 @pytest.mark.parametrize(
     "change",
     ["file_symlink", "directory_symlink", "hardlink", "oversized", "acl", "mode", "race"],
