@@ -54,21 +54,19 @@ def test_shared_uid_primary_or_supplementary_group_blocks_separation(right):
 
 @pytest.mark.skipif(sys.platform != "linux", reason="Linux lstat semantics")
 def test_missing_or_symlink_directory_fails_without_following_link(tmp_path):
-    location = "/etc/cryptohunter/root-custody-source"
+    location = "/candidate"
     status, explanation = preflight._inspect_directory(
-        tmp_path, location, uid=os.geteuid(), gid=os.getegid(), mode=0o750
+        tmp_path, location, uid=os.geteuid(), gid=os.getegid(), mode=0o700
     )
     assert status == "NOT_QUALIFIED"
-    assert explanation
-    (tmp_path / "etc").mkdir(mode=0o755)
-    (tmp_path / "etc" / "cryptohunter").mkdir(mode=0o755)
-    candidate = tmp_path / "etc" / "cryptohunter" / "root-custody-source"
+    assert explanation == "path missing or inaccessible"
+    candidate = tmp_path / "candidate"
     candidate.symlink_to(tmp_path)
     status, explanation = preflight._inspect_directory(
-        tmp_path, location, uid=os.geteuid(), gid=os.getegid(), mode=0o750
+        tmp_path, location, uid=os.geteuid(), gid=os.getegid(), mode=0o700
     )
     assert status == "NOT_QUALIFIED"
-    assert explanation
+    assert explanation == "non-directory or symlink in path"
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="Linux root/config filesystem rules")
