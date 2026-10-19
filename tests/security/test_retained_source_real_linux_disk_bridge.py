@@ -7,6 +7,7 @@ rollback resistance, lifecycle lease or independent source attestation exists.
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import os
 from pathlib import Path
@@ -96,9 +97,7 @@ class _LinuxFixtureOriginalReader:
 
     def _read(self, name):
         _require(name in {"original", "public-policy"}, "closed TEST file selection required")
-        root_fd = os.open(
-            self.root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
-        )
+        root_fd = os.open(self.root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
         try:
             self._verify(root_fd, ".", directory=True)
             events_fd = os.open(
@@ -113,9 +112,7 @@ class _LinuxFixtureOriginalReader:
                     before = os.fstat(descriptor)
                     self._verify(descriptor, "events/" + name)
                     limit = (
-                        source.MAX_ENVELOPE_BYTES
-                        if name == "original"
-                        else source.MAX_POLICY_BYTES
+                        source.MAX_ENVELOPE_BYTES if name == "original" else source.MAX_POLICY_BYTES
                     )
                     _require(0 < before.st_size <= limit, "bounded retained TEST bytes required")
                     result = bytearray()
@@ -206,6 +203,18 @@ def _inspect(reader, original):
     )
 
 
+def _record_inode_checks(monkeypatch, reader):
+    checks = []
+    verify = reader._verify
+
+    def record(fd, name, *, directory=False):
+        checks.append((name, os.fstat(fd).st_ino))
+        return verify(fd, name, directory=directory)
+
+    monkeypatch.setattr(reader, "_verify", record)
+    return checks
+
+
 def test_real_linux_worker_original_is_retrieved_thrice_but_not_qualified(source_on_disk):
     config, result = source_on_disk
     original = result["event"]
@@ -244,10 +253,14 @@ def test_disk_original_replacement_or_permissions_deny_before_yield(source_on_di
     if attack == "chmod":
         file.chmod(0o644)
     elif attack == "same-bytes-replace":
+        before = file.stat()
         replacement = file.with_name("replacement")
         replacement.write_bytes(original)
         replacement.chmod(0o600)
         replacement.replace(file)
+        assert file.stat().st_ino != before.st_ino
+        assert file.read_bytes() == original
+        assert stat.S_IMODE(file.stat().st_mode) == 0o600
     elif attack == "symlink":
         file.rename(file.with_name("saved"))
         file.symlink_to("saved")
@@ -262,6 +275,56 @@ def test_disk_original_replacement_or_permissions_deny_before_yield(source_on_di
             pytest.fail("changed source file must not return original evidence")
 
 
+def test_disk_original_inode_replacement_denies_after_directory_check(source_on_disk, monkeypatch):
+    config, result = source_on_disk
+    original = result["event"]
+    reader = _LinuxFixtureOriginalReader(config, original)
+    checks = _record_inode_checks(monkeypatch, reader)
+    file = Path(config["root"]) / "events" / "original"
+    before = file.stat()
+    replacement = file.with_name("replacement")
+    replacement.write_bytes(original)
+    replacement.chmod(0o600)
+    os.utime(replacement, ns=(before.st_atime_ns, before.st_mtime_ns))
+    replacement.replace(file)
+    after = file.stat()
+    assert after.st_ino != before.st_ino
+    assert after.st_mtime_ns == before.st_mtime_ns
+    assert stat.S_IMODE(after.st_mode) == 0o600
+    assert file.read_bytes() == original
+    # Only this isolated test accepts the parent mutation; retain the file pin.
+    reader.identity["events"] = _stat_identity(file.parent.lstat())
+    with pytest.raises(TestOnlyRetainedSourceError, match="lookup denied") as denied:
+        with _inspect(reader, original):
+            pytest.fail("a different source inode must not return original evidence")
+    assert type(denied.value.__cause__) is ValueError
+    assert str(denied.value.__cause__) == "retained TEST inode or metadata changed"
+    assert checks[-1] == ("events/original", after.st_ino)
+    assert reader.lookups == 1
+
+
+def test_disk_original_symlink_denies_with_nofollow_after_directory_check(source_on_disk):
+    config, result = source_on_disk
+    original = result["event"]
+    reader = _LinuxFixtureOriginalReader(config, original)
+    file = Path(config["root"]) / "events" / "original"
+    saved = file.with_name("saved")
+    file.rename(saved)
+    file.symlink_to(saved.name)
+    assert file.is_symlink()
+    assert saved.read_bytes() == original
+    assert stat.S_IMODE(saved.stat().st_mode) == 0o600
+    # Reach the real O_NOFOLLOW open instead of failing on the parent timestamps.
+    reader.identity["events"] = _stat_identity(file.parent.lstat())
+    with pytest.raises(TestOnlyRetainedSourceError, match="lookup denied") as denied:
+        with _inspect(reader, original):
+            pytest.fail("a symlink must not return original evidence")
+    assert isinstance(denied.value.__cause__, OSError)
+    assert denied.value.__cause__.errno == errno.ELOOP
+    assert denied.value.__cause__.filename == "original"
+    assert reader.lookups == 1
+
+
 def test_disk_original_changed_during_consumer_denies_successful_exit(source_on_disk):
     config, result = source_on_disk
     original = result["event"]
@@ -273,17 +336,39 @@ def test_disk_original_changed_during_consumer_denies_successful_exit(source_on_
     assert reader.lookups == 3
 
 
-def test_disk_source_policy_inode_replaced_during_consumer_denies(source_on_disk):
+@pytest.mark.parametrize(
+    "isolate_policy_inode", [False, True], ids=["directory-pin", "policy-inode"]
+)
+def test_disk_source_policy_inode_replaced_during_consumer_denies(
+    source_on_disk, monkeypatch, isolate_policy_inode
+):
     config, result = source_on_disk
     original = result["event"]
     reader = _LinuxFixtureOriginalReader(config, original)
+    checks = _record_inode_checks(monkeypatch, reader)
     policy = Path(config["root"]) / "events" / "public-policy"
-    with pytest.raises(TestOnlyRetainedSourceError, match="changed during consumer"):
+    before = policy.stat()
+    policy_bytes = policy.read_bytes()
+    with pytest.raises(TestOnlyRetainedSourceError, match="changed during consumer") as denied:
         with _inspect(reader, original):
             replacement = policy.with_name("other-policy")
             shutil.copyfile(policy, replacement)
+            replacement.chmod(0o600)
+            os.utime(replacement, ns=(before.st_atime_ns, before.st_mtime_ns))
             replacement.replace(policy)
-
+            after = policy.stat()
+            assert after.st_ino != before.st_ino
+            assert after.st_mtime_ns == before.st_mtime_ns
+            assert stat.S_IMODE(after.st_mode) == 0o600
+            assert policy.read_bytes() == policy_bytes
+            if isolate_policy_inode:
+                # Let the final original read pass, then check the unchanged policy pin.
+                reader.identity["events"] = _stat_identity(policy.parent.lstat())
+    if isolate_policy_inode:
+        assert reader.lookups == 3
+        assert type(denied.value.__cause__) is ValueError
+        assert str(denied.value.__cause__) == "retained TEST inode or metadata changed"
+        assert checks[-1] == ("events/public-policy", after.st_ino)
 
 
 def test_disk_policy_metadata_drift_without_directory_change_denies(source_on_disk):

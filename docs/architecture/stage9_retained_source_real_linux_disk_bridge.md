@@ -7,16 +7,14 @@ Continuation of S9-RPI-14 (PR #3169) and its policy snapshot repair
 ## Zakres
 
 S9-RPI-14 porównywał source original ze wstrzykniętym obiektem mock.
-Tym razem istniejący [isolated Linux source worker]
-(../../tests/security/_custody_source_demo.py) tworzy w jednorazowym
+Tym razem istniejący [isolated Linux source worker](../../tests/security/_custody_source_demo.py) tworzy w jednorazowym
 katalogu realny plik `events/original`, osobny `public-policy`
 oraz `journal/operation` i `metadata`. Worker sam wyprowadza
 payload, wykonuje testową zmianę metadata, deklarowane fsync
 plików i katalogów oraz zapisuje testowy event bez przekazywania
 klucza podpisującego do procesu nadrzędnego.
 
-[Test weryfikacji fizycznego pliku]
-(../../tests/security/test_retained_source_real_linux_disk_bridge.py)
+[Test weryfikacji fizycznego pliku](../../tests/security/test_retained_source_real_linux_disk_bridge.py)
 dodaje wyłącznie **nieprodukcyjny test-adapter** do istniejącego
 `RetainedSourceEventReader`: odczytuje oryginał przez `dirfd`,
 `O_NOFOLLOW`, `fstat`, exact ownership/modes, oczekiwane
