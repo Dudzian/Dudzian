@@ -181,6 +181,26 @@ def test_reader_catalog_inspection_rejects_unreviewed_definer_search_path(
             )
 
 
+def test_reader_catalog_inspection_rejects_untrusted_schema_create(isolated_cca_read):
+    value = isolated_cca_read
+    pin = _synthetic_test_pin(value)
+    with psycopg.connect(value.dsn, autocommit=True) as bootstrap:
+        try:
+            bootstrap.execute(
+                sql.SQL("GRANT CREATE ON SCHEMA {} TO {}").format(
+                    sql.Identifier(value.schema), sql.Identifier(value.source)
+                )
+            )
+            with pytest.raises(IndependentCCAReaderCatalogError, match="untrusted role"):
+                _inspect(value, pin)
+        finally:
+            bootstrap.execute(
+                sql.SQL("REVOKE CREATE ON SCHEMA {} FROM {}").format(
+                    sql.Identifier(value.schema), sql.Identifier(value.source)
+                )
+            )
+
+
 def test_reader_catalog_inspection_rejects_new_role_membership(isolated_cca_read):
     value = isolated_cca_read
     pin = _synthetic_test_pin(value)
