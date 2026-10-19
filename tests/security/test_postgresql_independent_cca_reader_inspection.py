@@ -86,7 +86,10 @@ def test_source_or_stranger_cannot_substitute_for_direct_cca_login(isolated_cca_
 def test_reader_catalog_inspection_rejects_stale_physical_identity(isolated_cca_read):
     pin = _synthetic_test_pin(isolated_cca_read)
     stale = replace(
-        pin, physical_identity=replace(pin.physical_identity, database_oid=pin.physical_identity.database_oid + 1)
+        pin,
+        physical_identity=replace(
+            pin.physical_identity, database_oid=pin.physical_identity.database_oid + 1
+        ),
     )
     with pytest.raises(IndependentCCAReaderCatalogError, match="physical"):
         _inspect(isolated_cca_read, stale)
@@ -166,9 +169,9 @@ def test_reader_catalog_inspection_rejects_unreviewed_definer_search_path(
     with psycopg.connect(value.dsn, autocommit=True) as bootstrap:
         try:
             bootstrap.execute(
-                sql.SQL("ALTER FUNCTION {}.read_exact_close(text) SET search_path = public").format(
-                    sql.Identifier(value.schema)
-                )
+                sql.SQL(
+                    "ALTER FUNCTION {}.read_exact_close(text) SET search_path = public"
+                ).format(sql.Identifier(value.schema))
             )
             with pytest.raises(IndependentCCAReaderCatalogError, match="search_path"):
                 _inspect(value, pin)
