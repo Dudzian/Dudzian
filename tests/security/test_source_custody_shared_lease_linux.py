@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-import fcntl
 import multiprocessing
 import os
 from pathlib import Path
@@ -112,6 +111,8 @@ def hold_synthetic_source_read_lease(config):
     """
     if sys.platform != "linux":
         raise TestOnlySourceLeaseError("Linux test-only source lease required")
+    import fcntl
+
     root_fd = lock_fd = None
     locked = False
     try:
@@ -175,6 +176,47 @@ def _spawn_worker_without_inheriting_read_lock(config):
     process.start()
     child.close()
     return process, parent
+
+
+def _competing_lock_probe(sender, root):
+    """Independent exec-like child with no inherited lease descriptor."""
+    import fcntl
+
+    fd = os.open(
+        Path(root) / "lock", os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC
+    )
+    try:
+        sender.send("attempting-exclusive")
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        sender.send("acquired-exclusive")
+    finally:
+        os.close(fd)
+        sender.close()
+
+
+def test_kernel_shared_lease_serializes_ready_exclusive_peer(witnessed_source):
+    config, _original, _pin = witnessed_source
+    ctx = multiprocessing.get_context("spawn")
+    receiver, sender = ctx.Pipe(duplex=False)
+    probe = ctx.Process(target=_competing_lock_probe, args=(sender, config["root"]))
+    try:
+        with hold_synthetic_source_read_lease(config):
+            probe.start()
+            sender.close()
+            assert receiver.poll(15), "exclusive contender did not reach lock attempt"
+            assert receiver.recv() == "attempting-exclusive"
+            assert not receiver.poll(0.3), "exclusive contender crossed held read lease"
+            assert probe.is_alive()
+        assert receiver.poll(15), "exclusive contender never acquired released lock"
+        assert receiver.recv() == "acquired-exclusive"
+        probe.join(10)
+        assert probe.exitcode == 0
+    finally:
+        receiver.close()
+        sender.close()
+        if probe.is_alive():
+            probe.kill()
+            probe.join(5)
 
 
 def test_cooperating_source_writer_waits_for_reader_then_recovers_exact_original(
