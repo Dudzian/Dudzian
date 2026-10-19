@@ -161,7 +161,11 @@ def _before(role):
     )
 
 
-def _initialize(root, role):
+def _initialize(root, role, completion_public_key=None):
+    if completion_public_key is not None and (
+        type(completion_public_key) is not bytes or len(completion_public_key) != 32
+    ):
+        raise ValueError("exact public-only TEST completion key required")
     _checked(root, 0o700, directory=True)
     for name in ("credential", "journal", "events"):
         (root / name).mkdir(mode=0o700)
@@ -188,10 +192,20 @@ def _initialize(root, role):
         "lock_inode": _identity(root / "lock"),
         "metadata_inode": _identity(root / "metadata"),
         "public_key": key.public_key().public_bytes_raw(),
+        **(
+            {"completion_public_key": completion_public_key}
+            if completion_public_key is not None
+            else {}
+        ),
     }
 
 
 def _recheck(config):
+    completion_public = config.get("completion_public_key")
+    if completion_public is not None and (
+        type(completion_public) is not bytes or len(completion_public) != 32
+    ):
+        raise ValueError("invalid TEST completion public-only key")
     for path, pin in config["directories"].items():
         _checked(Path(path), 0o700, directory=True, pin=pin)
     root = Path(config["root"])
@@ -322,6 +336,12 @@ def _execute(config, request, crash_at, pause_at, control):
             ):
                 raise ValueError("retained event differs from controlled operation/source")
             verify_custody_mutation_execution(event, policy_loader=lambda: policy)
+            completion_public = config.get("completion_public_key")
+            if completion_public is not None and (
+                policy.document["completion_authority"]["public_key_b64"]
+                != base64.b64encode(completion_public).decode("ascii")
+            ):
+                raise ValueError("retained TEST CCA public key differs from initial binding")
             _recheck(config)
             return {"event": retained, "recovered": True}
         if _read(journal) == intent:
@@ -345,7 +365,12 @@ def _execute(config, request, crash_at, pause_at, control):
         _sync(journal)
         # This fixture builder is called only on bytes the controlled process
         # derived and wrote. A request never carries payload, digest or key.
-        case = build_source_case(record.descriptor, complete, signing_key=key)
+        case = build_source_case(
+            record.descriptor,
+            complete,
+            signing_key=key,
+            completion_public_key=config.get("completion_public_key"),
+        )
         _recheck(config)
         policy_bytes = canonical_json_bytes(case.policy_document)
         _write(root / "events" / "public-policy", policy_bytes)
@@ -364,12 +389,12 @@ def _execute(config, request, crash_at, pause_at, control):
         os.close(lock)
 
 
-def _worker(control, root, role, config, request, crash_at, pause_at):
+def _worker(control, root, role, config, request, crash_at, pause_at, completion_public_key=None):
     try:
         if sys.platform != "linux":
             raise ValueError("the closed TEST process requires Linux")
         if config is None:
-            result = _initialize(Path(root), role)
+            result = _initialize(Path(root), role, completion_public_key)
         else:
             result = _execute(config, request, crash_at, pause_at, control)
             result.update(
@@ -384,12 +409,28 @@ def _worker(control, root, role, config, request, crash_at, pause_at):
         control.close()
 
 
-def start_process(*, root=None, role=None, config=None, request=None, crash_at=None, pause_at=None):
+def start_process(
+    *,
+    root=None,
+    role=None,
+    config=None,
+    request=None,
+    crash_at=None,
+    pause_at=None,
+    completion_public_key=None,
+):
     """Test orchestration only; no helper is installed as a service or runtime."""
-    context = multiprocessing.get_context("fork")
+    # Opt-in CCA binding must not inherit the orchestrator's private CCA key,
+    # including execution/recovery calls that carry the binding only in config.
+    # Older fixtures retain fork so their process-local fault injection works.
+    has_completion_binding = completion_public_key is not None or (
+        config is not None and "completion_public_key" in config
+    )
+    context = multiprocessing.get_context("spawn" if has_completion_binding else "fork")
     parent, child = context.Pipe()
     process = context.Process(
-        target=_worker, args=(child, root, role, config, request, crash_at, pause_at)
+        target=_worker,
+        args=(child, root, role, config, request, crash_at, pause_at, completion_public_key),
     )
     process.start()
     child.close()
