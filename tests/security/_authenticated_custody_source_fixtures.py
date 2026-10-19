@@ -30,8 +30,16 @@ def _set_original(document, name, raw):
     document[name + "_sha256"] = hashlib.sha256(raw).hexdigest()
 
 
-def build_source_case(descriptor, journal, *, signing_key=None):
-    """Make isolated fixture bytes; synthetic close remains NOT_QUALIFIED."""
+def build_source_case(descriptor, journal, *, signing_key=None, completion_public_key=None):
+    """Make synthetic source bytes; optional TEST CCA public key is never signing material.
+
+    Only the new isolated integration fixture supplies a separately generated
+    public key. Source private key remains exclusively inside the source worker.
+    """
+    if completion_public_key is not None and (
+        type(completion_public_key) is not bytes or len(completion_public_key) != 32
+    ):
+        raise ValueError("exact public-only TEST completion key required")
     operation, record = json.loads(descriptor), json.loads(journal)
     before, after = record["before_metadata"], record["after_metadata"]
     private = signing_key or Ed25519PrivateKey.generate()
@@ -61,7 +69,9 @@ def build_source_case(descriptor, journal, *, signing_key=None):
         "trust_epoch": 1,
     }
     completion_public = (
-        Ed25519PrivateKey.generate()
+        completion_public_key
+        if completion_public_key is not None
+        else Ed25519PrivateKey.generate()
         .public_key()
         .public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
     )
