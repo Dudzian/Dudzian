@@ -9,6 +9,7 @@ from dataclasses import replace
 
 import pytest
 
+from bot_core import authenticated_custody_mutation_source as source
 from bot_core.licensing.canonical import canonical_json_bytes
 from bot_core.test_only_retained_source_original import (
     SyntheticRetainedSourcePin,
@@ -18,6 +19,7 @@ from bot_core.test_only_retained_source_original import (
 from tests.architecture.test_stage9_atomic_root_proof_commit_boundary import (
     _repository_dependencies,
 )
+from tests.security._authenticated_custody_source_fixtures import build_source_case
 from tests.security.test_authenticated_custody_mutation_source import (
     source_case,
 )
@@ -69,22 +71,37 @@ def _inspect(case, reader, pin=None, *, claimed=None, policy_loader=None):
 def test_exact_original_retrieval_rechecked_before_and_after_consumer(source_case):
     case = source_case
     reader = _SyntheticReader(case.envelope)
-    with _inspect(case, reader) as evidence:
+    policy_reads = []
+    consumer_finished = False
+
+    def load():
+        policy_reads.append(consumer_finished)
+        return case.policy
+
+    with _inspect(case, reader, policy_loader=load) as evidence:
         assert evidence.status == "NOT_QUALIFIED"
         assert evidence.production_authorization == "BLOCKED"
         assert evidence.provenance_qualified is False
         assert evidence.durability_attested is False
         assert evidence.original_envelope == case.envelope
         assert evidence.original_sha256 == hashlib.sha256(case.envelope).hexdigest()
+        assert evidence.policy_sha256 == hashlib.sha256(case.policy.canonical_bytes).hexdigest()
         assert reader.lookups == 2
+        assert policy_reads == [False, False]
+        consumer_finished = True
     assert reader.lookups == 3
-    assert reader.history == [
-        (
-            case.payload["installation"]["installation_id"],
-            case.payload["close"]["operation_id"],
-            case.payload["execution_id"],
-        )
-    ] * 3
+    assert policy_reads == [False, False, True]
+    assert (
+        reader.history
+        == [
+            (
+                case.payload["installation"]["installation_id"],
+                case.payload["close"]["operation_id"],
+                case.payload["execution_id"],
+            )
+        ]
+        * 3
+    )
 
 
 @pytest.mark.parametrize(
@@ -131,9 +148,7 @@ def test_malformed_synthetic_source_log_pin_is_rejected(source_case, changes):
 
 def test_caller_supplied_envelope_cannot_replace_retained_original(source_case):
     with pytest.raises(TestOnlyRetainedSourceError, match="lookup denied"):
-        with _inspect(
-            source_case, _SyntheticReader(source_case.envelope), claimed=b"{}"
-        ):
+        with _inspect(source_case, _SyntheticReader(source_case.envelope), claimed=b"{}"):
             pytest.fail("caller original differs from retained bytes")
 
 
@@ -145,10 +160,70 @@ def test_source_signature_is_verified_against_independent_policy(source_case):
         _test_pin(source_case), retained_envelope_sha256=hashlib.sha256(altered).hexdigest()
     )
     with pytest.raises(TestOnlyRetainedSourceError, match="lookup denied"):
-        with _inspect(
-            source_case, _SyntheticReader(altered), pin, claimed=altered
-        ):
+        with _inspect(source_case, _SyntheticReader(altered), pin, claimed=altered):
             pytest.fail("matching retention hash is not signature verification")
+
+
+def test_source_signature_cannot_use_transient_alternate_policy(source_case, completion):
+    case_a = source_case
+    case_b = build_source_case(completion.descriptor, completion.journal)
+    policy_a, policy_b = case_a.policy, case_b.policy
+    assert (
+        policy_a.document["executor"]["public_key_b64"]
+        != policy_b.document["executor"]["public_key_b64"]
+    )
+    verified_b = source.verify_custody_mutation_execution(
+        case_b.event, policy_loader=lambda: policy_b
+    )
+    assert verified_b.signature == "MATCHED_EXPLICIT_POLICY"
+    with pytest.raises(source.SourceMutationVerificationError):
+        source.verify_custody_mutation_execution(case_b.event, policy_loader=lambda: policy_a)
+
+    snapshots = iter((policy_a, policy_b, policy_b, policy_a))
+    policy_reads = []
+
+    def load():
+        policy = next(snapshots, policy_a)
+        policy_reads.append(policy)
+        return policy
+
+    reader = _SyntheticReader(case_b.envelope)
+    with pytest.raises(TestOnlyRetainedSourceError, match="lookup denied"):
+        with _inspect(case_b, reader, policy_loader=load):
+            pytest.fail("signature B cannot use a transient policy after policy A was pinned")
+    assert policy_reads == [policy_a]
+    assert reader.lookups == 1
+
+
+def test_independent_policy_change_after_verification_is_denied(source_case, completion):
+    replacement = build_source_case(completion.descriptor, completion.journal).policy
+    policy_reads = []
+
+    def load():
+        policy = source_case.policy if not policy_reads else replacement
+        policy_reads.append(policy)
+        return policy
+
+    with pytest.raises(TestOnlyRetainedSourceError, match="lookup denied"):
+        with _inspect(source_case, _SyntheticReader(source_case.envelope), policy_loader=load):
+            pytest.fail("independent policy must be rechecked before the consumer")
+    assert policy_reads == [source_case.policy, replacement]
+
+
+def test_independent_policy_change_during_consumer_is_denied(source_case, completion):
+    replacement = build_source_case(completion.descriptor, completion.journal).policy
+    current = source_case.policy
+    policy_reads = []
+
+    def load():
+        policy_reads.append(current)
+        return current
+
+    with pytest.raises(TestOnlyRetainedSourceError, match="changed during consumer"):
+        with _inspect(source_case, _SyntheticReader(source_case.envelope), policy_loader=load):
+            assert policy_reads == [source_case.policy, source_case.policy]
+            current = replacement
+    assert policy_reads == [source_case.policy, source_case.policy, replacement]
 
 
 def test_source_original_drift_before_yield_is_denied(source_case):

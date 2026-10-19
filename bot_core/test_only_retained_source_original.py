@@ -155,9 +155,8 @@ def inspect_synthetic_retained_source_original(
         original = _read_original(reader, pin, claimed_original)
         event = source.parse_custody_mutation_execution(original)
         _check_binding(event, before, pin)
-        verification = source.verify_custody_mutation_execution(
-            event, policy_loader=policy_loader
-        )
+        # Verify against the checked snapshot; re-read the external policy below.
+        verification = source.verify_custody_mutation_execution(event, policy_loader=lambda: before)
         _require(
             verification.status == "NOT_QUALIFIED"
             and verification.production_emission == "BLOCKED",
