@@ -1,0 +1,125 @@
+{
+  "artifact": "S9_ROOT_PROOF_TRANSACTION_SCOPE_ADDENDUM_V1",
+  "schema_version": 1,
+  "stage": "S9-RPI-08",
+  "decision_provenance": "docs/architecture/decisions/stage9_root_proof_transaction_authority_owner_approval_v1.md",
+  "decision_approved": "A+C",
+  "review_state": "SEPARATE_CONTRACT_REVIEW_PENDING",
+  "precedence": {
+    "rule": "NARROW_SCOPE_CLARIFICATION_ONLY",
+    "explains": "The frozen substrate separation of transaction ownership applies across independent semantic authorities, not to each subordinate persistence helper in one issuer decision.",
+    "remains_normative": "Frozen historical issuer, substrate, readiness and physical-persistence contracts retain precedence on all other fields and semantics.",
+    "unilateral_frozen_rewrite_allowed": false,
+    "new_implementation_permission": false
+  },
+  "transaction": {
+    "owner": "IndependentAccountGenesisRootProofIssuer",
+    "coordinator": "ISSUER_OWNED_ONE_PHYSICAL_POSTGRESQL16_SERIALIZABLE_TRANSACTION",
+    "commits": 1,
+    "required_atomic_write_set": [
+      "ENTITLEMENT_CAS_BIND_AND_REGISTRY_HISTORY",
+      "EXACT_ORIGINAL_SIGNED_PAYLOAD_SIGNATURE_ENVELOPE_RETENTION_OR_IMMUTABLE_IN_DB_LINKAGE",
+      "AUTHENTICATED_ISSUER_HISTORY_RECORD_AND_SIGNED_HEAD_WITH_EXACT_PREDECESSOR_CAS",
+      "IMMUTABLE_DECISION_MARKER_WITH_EXACT_WINNER_ATTEMPT_OPERATION_AND_BYTE_IDENTICAL_LINKAGE"
+    ],
+    "require_same_postgresql_backend_transaction": true,
+    "require_active_credential_and_trust_fences_through_commit": true,
+    "fenced_identities": [
+      "REQUESTER",
+      "CLAIMANT",
+      "ROOT_SIGNER",
+      "HISTORY_SIGNER",
+      "TRUST_ACTIVATION"
+    ],
+    "owner_owned_helpers_may_participate_without_semantic_ownership_transfer": true,
+    "issuer_arbitrary_dml_ddl_or_admin_privileges": false,
+    "issuer_direct_helper_execute_grants": false,
+    "distributed_two_phase_commit": false,
+    "partial_commit_or_compensation_permitted": false,
+    "proof_can_be_reconstructed_from_digest_only": false,
+    "signing_inside_final_transaction": false,
+    "lost_response": "INDETERMINATE_UNTIL_AUTHORITATIVE_EXACT_MARKER_AND_HISTORY_RECOVERY",
+    "retry_resign_or_remint_permitted": false
+  },
+  "separate_authorities": {
+    "not_in_issuer_final_commit": [
+      "CHA_ATTEMPT_STORE",
+      "FRESHNESS_AUTHORITY",
+      "CHECKPOINT_AUTHORITY",
+      "ACCOUNT_GENESIS_ACCOUNT_COMMIT",
+      "CREDENTIAL_LIFECYCLE_ADMIN",
+      "CUSTODY_MUTATION"
+    ],
+    "shared_semantic_owner_or_credentials_permitted": false,
+    "cha_direct_issuer_registry_mutation": false,
+    "issuer_direct_account_commit": false,
+    "issuer_direct_attempt_store_write": false,
+    "issuer_cannot_unilaterally_advance_freshness": true
+  },
+  "required_future_evidence": [
+    "PROTECTED_ORIGINAL_STAGED_BYTES_AND_ATOMIC_MARKER_LINKAGE",
+    "INDEPENDENT_REVIEWED_SQL_FUNCTION_OWNER_ROLE_AND_GRANTS",
+    "TRANSACTION_LONG_LIVED_CREDENTIAL_AND_TRUST_FENCES",
+    "EXACT_COMMIT_RESPONSE_LOSS_AND_SAME_ATTEMPT_BYTE_IDENTICAL_RETRY",
+    "CONCURRENT_LEGAL_ATTEMPT_SERIALIZATION_AND_WINNER",
+    "INDEPENDENT_CCA_SOURCE_AND_CLOSE_QUALIFICATION",
+    "REAL_INSTALLATION_AND_CROSS_ROLE_ACCESS_EVIDENCE",
+    "DISTINCT_CHA_FRESHNESS_CHECKPOINT_AND_ACCOUNT_GENESIS_GATES"
+  ],
+  "production": {
+    "issuer_ingress_enabled": false,
+    "issuer_writer_enabled": false,
+    "sign_or_bind_authorized": false,
+    "complete_close_sql_unblocked": false,
+    "enrollment_enabled": false,
+    "stage10_unblocked": false,
+    "production_go": false,
+    "status_authority": "deployment/stage9_current_status.json"
+  },
+  "frozen_sources": {
+    "issuer": {
+      "path": "docs/architecture/cryptohunter_product_architecture/m05_account_genesis_independent_root_proof_issuer_contract.json",
+      "git_blob_sha1": "6fe01e7476648a3979537bddd1d33fa69567cc83",
+      "assertions": {
+        "/bind_authorization_order/7": "8_ATOMICALLY_BIND_AND_PERSIST_IDENTICAL_SIGNED_PROOF_AND_HISTORY",
+        "/authority_model/semantic_authority_owner": "IndependentAccountGenesisRootProofIssuer",
+        "/cross_authority_atomicity/model": "NO_DISTRIBUTED_TRANSACTION; immutable exact-operation proof plus recoverable local phase machine and independent freshness CAS",
+        "/lost_response/same_attempt_id_success": "return byte-identical root_proof_id, signed payload, signature and retained history for that exact attempt",
+        "/replay_and_consumption/consumption_owner": "NONE; CHA does not call issuer after issuance to consume"
+      }
+    },
+    "substrate": {
+      "path": "docs/architecture/cryptohunter_product_architecture/m05_account_genesis_root_proof_issuer_production_substrate_selection_contract.json",
+      "git_blob_sha1": "88888b836bf0bbe496028c3a55d4132963c7666b",
+      "assertions": {
+        "/authority_separation/rule": "PHYSICAL COLOCATION != AUTHORITY REUSE",
+        "/authority_separation/separate_semantic_owners_schemas_roles_credentials_namespaces_transactions_and_lifecycles": true,
+        "/authority_separation/required_separation/4": "transaction ownership",
+        "/authority_separation/CHA_direct_registry_write": false,
+        "/authority_separation/issuer_direct_account_commit": false
+      }
+    },
+    "readiness": {
+      "path": "docs/architecture/cryptohunter_product_architecture/m05_account_genesis_root_proof_issuer_implementation_readiness_contract.json",
+      "git_blob_sha1": "873a5384de5c9592c141c55c38da96e35cc4bca8",
+      "assertions": {
+        "/frozen_semantics_change_rule": "DO_NOT_REOPEN_WITHOUT_CONCRETE_EXPLOIT_OR_CONTRADICTION",
+        "/status/semantic_contract_frozen": true,
+        "/status/implementation_readiness_frozen": true,
+        "/implementation_gate/readiness_freeze_does_not_allow_implementation": true,
+        "/implementation_gate/non_production_implementation_mode": "NONE_FROZEN",
+        "/status/implementation_allowed": false
+      }
+    },
+    "physical": {
+      "path": "docs/architecture/cryptohunter_product_architecture/m05_account_genesis_physical_persistence_crash_atomicity_contract.json",
+      "git_blob_sha1": "36f4c845034570ddba27fb778f3ca6a310c1a485",
+      "assertions": {
+        "/authority_vs_storage_roles/transaction_coordinator": "CryptoHunterAccountAuthority",
+        "/selected_or_blocked_protocol/logical_authority_atomicity_equals_single_physical_transaction": false,
+        "/result/selected_protocol": "INITIAL_BINDING -> PREPARED -> EXTERNAL_FRESHNESS_CAS -> LOCAL_FINAL_COMMIT",
+        "/freshness_ownership_boundary/coordinator_may_unilaterally_advance_authoritative_generation": false
+      }
+    }
+  }
+}
