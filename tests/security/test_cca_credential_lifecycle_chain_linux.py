@@ -10,7 +10,6 @@ from __future__ import annotations
 from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import dataclass, field
-import fcntl
 import os
 from pathlib import Path
 import stat
@@ -104,7 +103,7 @@ def _check_state(dir_fd, lease_fd, state_fd, pin_lease, pin_state):
 
 
 @contextmanager
-def hold_synthetic_cca_credential_read_lease(directory):
+def hold_synthetic_cca_credential_read_lease(directory, fixture_pin):
     """A bounded, actual SH flock; exact active generation checked before/after.
 
     The nested ordering is source LOCK_SH -> credential LOCK_SH -> CCA log EX.
@@ -112,6 +111,8 @@ def hold_synthetic_cca_credential_read_lease(directory):
     """
     if sys.platform != "linux":
         raise TestOnlyCredentialLeaseError("Linux-only credential fixture")
+    import fcntl
+
     root = lease_fd = state_fd = None
     acquired = False
     try:
@@ -234,11 +235,11 @@ def _decide_and_verify(case, base_policy, pin, immutable, *, fault=None):
 
 
 def test_credential_lease_covers_source_verified_cca_retention(credential_case):
-    config, original, floor_pin, case, policy, directory, pin, immutable = credential_case
+    config, original, floor_pin, case, policy, directory, pin, immutable, fixture_pin = credential_case
     reader = _LinuxFixtureOriginalReader(config, original)
     guarded = _FloorGuardedReader(reader, floor_pin)
     with hold_synthetic_source_read_lease(config):
-        with hold_synthetic_cca_credential_read_lease(directory) as lease:
+        with hold_synthetic_cca_credential_read_lease(directory, fixture_pin) as lease:
             assert lease.status == "NOT_QUALIFIED"
             assert lease.historical_eligibility_qualified is False
             with _inspect(guarded, original) as evidence:
@@ -259,13 +260,13 @@ def test_credential_lease_covers_source_verified_cca_retention(credential_case):
 def test_credential_rotation_waits_for_durable_cca_ack_and_denies_new_lease(
     credential_case, state
 ):
-    config, original, floor_pin, case, policy, directory, pin, immutable = credential_case
+    config, original, floor_pin, case, policy, directory, pin, immutable, fixture_pin = credential_case
     reader = _LinuxFixtureOriginalReader(config, original)
     guarded = _FloorGuardedReader(reader, floor_pin)
     rotation = connection = None
     try:
         with hold_synthetic_source_read_lease(config):
-            with hold_synthetic_cca_credential_read_lease(directory):
+            with hold_synthetic_cca_credential_read_lease(directory, fixture_pin):
                 with _inspect(guarded, original):
                     def fault(phase):
                         nonlocal rotation, connection
@@ -292,7 +293,7 @@ def test_credential_rotation_waits_for_durable_cca_ack_and_denies_new_lease(
         rotation.join(10)
         assert rotation.exitcode == 0
         with pytest.raises(TestOnlyCredentialLeaseError, match="rotated or revoked"):
-            with hold_synthetic_cca_credential_read_lease(directory):
+            with hold_synthetic_cca_credential_read_lease(directory, fixture_pin):
                 pytest.fail("rotated credential cannot grant a new synthetic decision")
         assert (
             log_module.TestOnlyCCADecisionLog(pin).exact_lookup(
@@ -311,13 +312,13 @@ def test_credential_rotation_waits_for_durable_cca_ack_and_denies_new_lease(
 
 
 def test_previously_revoked_credential_refuses_before_cca_intent(credential_case):
-    config, original, floor_pin, case, policy, directory, pin, immutable = credential_case
+    config, original, floor_pin, case, policy, directory, pin, immutable, fixture_pin = credential_case
     (directory / "credential-state").write_bytes(b"REVOKED:2:1")
     reader = _LinuxFixtureOriginalReader(config, original)
     guarded = _FloorGuardedReader(reader, floor_pin)
     with hold_synthetic_source_read_lease(config):
         with pytest.raises(TestOnlyCredentialLeaseError, match="rotated or revoked"):
-            with hold_synthetic_cca_credential_read_lease(directory):
+            with hold_synthetic_cca_credential_read_lease(directory, fixture_pin):
                 with _inspect(guarded, original):
                     _decide_and_verify(case, policy, pin, immutable)
     assert not list(Path(pin.log_directory).glob("*.intent"))
@@ -325,12 +326,12 @@ def test_previously_revoked_credential_refuses_before_cca_intent(credential_case
 
 
 def test_uncooperative_state_mutation_under_lease_refuses_exit(credential_case):
-    config, original, floor_pin, case, policy, directory, pin, immutable = credential_case
+    config, original, floor_pin, case, policy, directory, pin, immutable, fixture_pin = credential_case
     reader = _LinuxFixtureOriginalReader(config, original)
     guarded = _FloorGuardedReader(reader, floor_pin)
     with hold_synthetic_source_read_lease(config):
         with pytest.raises(TestOnlyCredentialLeaseError, match="inode or metadata changed"):
-            with hold_synthetic_cca_credential_read_lease(directory):
+            with hold_synthetic_cca_credential_read_lease(directory, fixture_pin):
                 with _inspect(guarded, original):
                     _decide_and_verify(case, policy, pin, immutable)
                 (directory / "credential-state").write_bytes(b"REVOKED:2:1")
@@ -341,7 +342,7 @@ def test_uncooperative_state_mutation_under_lease_refuses_exit(credential_case):
 
 @pytest.mark.parametrize("attack", ["missing", "symlink", "permissions", "inode"])
 def test_unsafe_credential_lease_inode_refuses_before_cca_intent(credential_case, attack):
-    config, _original, _floor, _case, _policy, directory, pin, _binding = credential_case
+    config, _original, _floor, _case, _policy, directory, pin, _binding, fixture_pin = credential_case
     path = directory / "credential-lease"
     if attack == "missing":
         path.unlink()
@@ -356,7 +357,7 @@ def test_unsafe_credential_lease_inode_refuses_before_cca_intent(credential_case
         path.chmod(0o600)
     with hold_synthetic_source_read_lease(config):
         with pytest.raises(TestOnlyCredentialLeaseError):
-            with hold_synthetic_cca_credential_read_lease(directory):
+            with hold_synthetic_cca_credential_read_lease(directory, fixture_pin):
                 pytest.fail("unsafe fixture lock cannot become a credential lease")
     assert not list(Path(pin.log_directory).glob("*.intent"))
     assert not list(Path(pin.log_directory).glob("*.decision"))
