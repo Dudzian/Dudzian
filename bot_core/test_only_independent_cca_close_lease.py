@@ -22,6 +22,10 @@ from bot_core.postgresql_independent_cca_reader_inspection import (
     IndependentCCAReaderCatalogPin,
     inspect_independent_cca_reader_catalog,
 )
+from bot_core.test_only_cca_catalog_ddl_gate import (
+    TestOnlyCCACatalogGateError,
+    acquire_synthetic_reader_catalog_gate,
+)
 
 _ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}\Z")
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
@@ -181,6 +185,8 @@ def hold_synthetic_committed_close(
     ):
         raise TestOnlyCloseLeaseError("exact synthetic test inputs required")
     try:
+        # Advisory locks are cooperative: this serializes only reviewed test DDL.
+        acquire_synthetic_reader_catalog_gate(conn, catalog_pin)
         inspect_independent_cca_reader_catalog(conn, catalog_pin)
         rows = conn.execute(
             sql.SQL("SELECT {}.read_exact_close(%s)").format(sql.Identifier(catalog_pin.schema)),
@@ -188,9 +194,16 @@ def hold_synthetic_committed_close(
         ).fetchall()
         _require(len(rows) == 1, "exactly one committed close result required")
         observation_xid = _compare_original(rows[0][0], expected)
+        # Detect a non-cooperating DDL writer that drifted after the first
+        # inspection. This does NOT prevent a fast change-and-restore (ABA).
+        inspect_independent_cca_reader_catalog(conn, catalog_pin)
         live_xid = conn.execute("SELECT pg_catalog.pg_current_xact_id()::text").fetchone()[0]
         _require(live_xid == observation_xid, "read escaped the held CCA transaction")
-    except (psycopg.Error, IndependentCCAReaderCatalogError) as exc:
+    except (
+        psycopg.Error,
+        IndependentCCAReaderCatalogError,
+        TestOnlyCCACatalogGateError,
+    ) as exc:
         raise TestOnlyCloseLeaseError("CCA test-only close read denied") from exc
 
     yield SyntheticHeldCloseEvidence(
@@ -209,5 +222,8 @@ def hold_synthetic_committed_close(
             live_xid == observation_xid,
             "CCA caller transaction changed during synthetic evidence hold",
         )
-    except psycopg.Error as exc:
-        raise TestOnlyCloseLeaseError("CCA close transaction released unexpectedly") from exc
+        # Detect committed drift during the consumer callback before allowing
+        # a successful exit. The result itself is still strictly TEST_ONLY.
+        inspect_independent_cca_reader_catalog(conn, catalog_pin)
+    except (psycopg.Error, IndependentCCAReaderCatalogError) as exc:
+        raise TestOnlyCloseLeaseError("CCA close transaction or catalog drifted") from exc
