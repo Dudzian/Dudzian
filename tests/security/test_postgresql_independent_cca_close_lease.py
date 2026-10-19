@@ -54,14 +54,6 @@ def _expected_fixture(value) -> SyntheticCloseExpectation:
     )
 
 
-def _reader(value, pin, expected):
-    with psycopg.connect(value.login("reader"), autocommit=True) as conn:
-        with conn.transaction():
-            conn.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
-            with hold_synthetic_committed_close(conn, catalog_pin=pin, expected=expected) as result:
-                yield conn, result
-
-
 def test_inspection_and_original_comparison_share_held_reader_transaction(isolated_cca_read):
     value = isolated_cca_read
     pin = _synthetic_test_pin(value)
@@ -117,8 +109,6 @@ def test_inspection_and_original_comparison_share_held_reader_transaction(isolat
         ("close_xid", "99999999999999999999"),
         ("identity", "other-credential"),
         ("generation", 2),
-        ("predecessor_state", "VERIFY_ONLY"),
-        ("target_state", "REVOKED"),
     ],
 )
 def test_source_mismatch_fails_before_yield(isolated_cca_read, field, replacement):
@@ -132,6 +122,21 @@ def test_source_mismatch_fails_before_yield(isolated_cca_read, field, replacemen
                     conn, catalog_pin=pin, expected=expected
                 ):
                     pytest.fail("mismatched synthetic original must never be yielded")
+
+
+@pytest.mark.parametrize(
+    "field,replacement",
+    [
+        ("predecessor_state", "VERIFY_ONLY"),
+        ("target_state", "REVOKED"),
+        ("semantic_role", "HISTORY_ATTESTATION_SIGNING"),
+    ],
+)
+def test_invalid_synthetic_expectations_rejected_at_construction(
+    isolated_cca_read, field, replacement
+):
+    with pytest.raises(ValueError):
+        replace(_expected_fixture(isolated_cca_read), **{field: replacement})
 
 
 def test_source_observation_cannot_alias_cca_reader_xid(isolated_cca_read):
