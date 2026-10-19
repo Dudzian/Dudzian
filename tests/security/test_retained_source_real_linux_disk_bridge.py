@@ -283,3 +283,19 @@ def test_disk_source_policy_inode_replaced_during_consumer_denies(source_on_disk
             replacement = policy.with_name("other-policy")
             shutil.copyfile(policy, replacement)
             replacement.replace(policy)
+
+
+
+def test_disk_policy_metadata_drift_without_directory_change_denies(source_on_disk):
+    config, result = source_on_disk
+    original = result["event"]
+    reader = _LinuxFixtureOriginalReader(config, original)
+    policy = Path(config["root"]) / "events" / "public-policy"
+    with pytest.raises(TestOnlyRetainedSourceError, match="changed during consumer"):
+        with _inspect(reader, original):
+            before = policy.stat()
+            os.utime(
+                policy,
+                ns=(before.st_atime_ns, before.st_mtime_ns + 1_000_000_000),
+            )
+    assert reader.lookups == 3
