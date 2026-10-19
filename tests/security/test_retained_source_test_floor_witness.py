@@ -13,6 +13,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import stat
 import sys
 
 import pytest
@@ -129,9 +130,7 @@ def _read_fixture_floor(pin: _SourceFloorPin) -> dict[str, object]:
             folder.close()
 
 
-def _check_fixture_floor(
-    pin: _SourceFloorPin, original: bytes, policy_bytes: bytes
-) -> None:
+def _check_fixture_floor(pin: _SourceFloorPin, original: bytes, policy_bytes: bytes) -> None:
     record = _read_fixture_floor(pin)
     _require(
         record.get("schema") == _SCHEMA
@@ -212,15 +211,14 @@ def test_source_worker_restart_preserves_external_test_floor(witnessed_source):
         assert evidence.status == "NOT_QUALIFIED"
 
 
-@pytest.mark.parametrize("attack", ["missing", "corrupt", "inode", "symlink", "interrupted"])
+@pytest.mark.parametrize("attack", ["missing", "permissions", "inode", "symlink", "interrupted"])
 def test_witness_loss_or_substitution_fails_closed(witnessed_source, attack):
     config, original, pin = witnessed_source
     path = Path(pin.directory) / _FILE
     if attack == "missing":
         path.unlink()
-    elif attack == "corrupt":
+    elif attack == "permissions":
         path.chmod(0o600)
-        path.write_bytes(b"{}")
     elif attack == "inode":
         alternate = path.with_name("alternate")
         alternate.write_bytes(path.read_bytes())
@@ -236,6 +234,76 @@ def test_witness_loss_or_substitution_fails_closed(witnessed_source, attack):
         with _inspect(_FloorGuardedReader(reader, pin), original):
             pytest.fail("missing, replaced or interrupted witness must fail")
     assert isinstance(denied.value.__cause__, TestOnlySourceFloorError)
+
+
+@pytest.mark.parametrize("repin_source", [False, True], ids=["existing-reader", "repinned-source"])
+def test_witness_content_corruption_reaches_sha256_check(witnessed_source, repin_source):
+    config, original, pin = witnessed_source
+    reader = _LinuxFixtureOriginalReader(config, original)
+    path = Path(pin.directory) / _FILE
+    before = path.stat()
+    raw = path.read_bytes()
+    expected_sha256 = pin.document_sha256
+    assert (before.st_dev, before.st_ino) == pin.file_identity
+    assert before.st_size == len(raw)
+    assert stat.S_IMODE(before.st_mode) == 0o400
+    assert _sha(raw) == expected_sha256
+    record = _read_fixture_floor(pin)
+    assert canonical_json_bytes(record) == raw
+
+    digest = record["original_sha256"]
+    record["original_sha256"] = ("0" if digest[0] != "0" else "1") + digest[1:]
+    corrupted = canonical_json_bytes(record)
+    assert len(corrupted) == len(raw)
+    offsets = [index for index, (old, new) in enumerate(zip(raw, corrupted)) if old != new]
+    assert len(offsets) == 1
+    offset = offsets[0]
+    # Controlled same-UID TEST tampering: no truncate, rename or new floor pin.
+    path.chmod(0o600)
+    try:
+        with path.open("r+b") as checkpoint:
+            checkpoint.seek(offset)
+            assert checkpoint.write(corrupted[offset : offset + 1]) == 1
+            checkpoint.flush()
+            os.fsync(checkpoint.fileno())
+    finally:
+        path.chmod(0o400)
+
+    after = path.stat()
+    assert (after.st_dev, after.st_ino) == pin.file_identity
+    assert after.st_size == before.st_size
+    assert stat.S_IMODE(after.st_mode) == stat.S_IMODE(before.st_mode) == 0o400
+    assert path.read_bytes() == corrupted
+    assert canonical_json_bytes(json.loads(corrupted)) == corrupted
+    assert _sha(corrupted) != expected_sha256
+
+    if repin_source:
+        source_path = Path(config["root"]) / "events" / "original"
+        source_before = source_path.stat()
+        replacement = source_path.with_name("replacement-original")
+        replacement.write_bytes(original)
+        replacement.chmod(stat.S_IMODE(source_before.st_mode))
+        replacement.replace(source_path)
+        source_after = source_path.stat()
+        assert (source_after.st_dev, source_after.st_ino) != (
+            source_before.st_dev,
+            source_before.st_ino,
+        )
+        # Re-pin the unchanged source bytes, retaining the original floor expectation.
+        reader = _LinuxFixtureOriginalReader(config, original)
+    assert reader._read("original") == original
+    guarded = _FloorGuardedReader(reader, pin)
+    assert guarded.pin is pin
+    assert pin.document_sha256 == expected_sha256
+    with pytest.raises(TestOnlyRetainedSourceError, match="lookup denied") as denied:
+        with _inspect(guarded, original):
+            pytest.fail("changed checkpoint digest must fail even after source re-pin")
+    floor_error = denied.value.__cause__
+    assert type(floor_error) is TestOnlySourceFloorError
+    assert str(floor_error) == "source floor unavailable or changed"
+    digest_error = floor_error.__cause__
+    assert type(digest_error) is TestOnlySourceFloorError
+    assert str(digest_error) == "source floor bytes differ from pin"
 
 
 def test_source_bytes_change_with_new_reader_pin_cannot_replace_floor(witnessed_source):
