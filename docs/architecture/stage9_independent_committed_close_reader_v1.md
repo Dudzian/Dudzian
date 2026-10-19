@@ -25,7 +25,9 @@ odczyta exact operation. Zwraca także historyczne
 
 Przyszły reader CCA musi być odrębnym, minimalnym direct-login principal
 z własnym OID, peer authentication, fizycznym pinem PostgreSQL, approved
-catalog pin, wąską funkcją SQL i bez alternatywnych write paths. Nie
+catalog pin i **wyłącznie EXECUTE** na osobno zatwierdzonej funkcji SQL.
+Konto CCA nie otrzymuje bezpośredniego SELECT/UPDATE/DML na tabelach,
+uprawnień schema ownera ani alternatywnych write paths. Nie
 wystarczy przepisać administratorowego `resolve_close()`, nazwać to
 `independent` lub zaakceptować caller-provided credentials/role name.
 Source reader, CCA reader, administrator, issuer writer, obaj signerzy i
@@ -39,6 +41,12 @@ właściciel schematu nie mogą się utożsamiać.
 - Blokada exact slot/operation i weryfikacja role/identity/predecessor
   muszą obejmować niezależny odczyt oraz porównanie retained evidence;
   żywy lease/fence ma odrębną kontrolę i lock order.
+- **Blokad wierszy nie można wykonywać w transakcji `READ ONLY`.**
+  Przyszły backend transakcyjny wymaga `READ WRITE` wyłącznie ze względu
+  na `SELECT ... FOR UPDATE/SHARE`; reviewed owner-owned `SECURITY DEFINER`
+  wykonuje lock z własnym minimalnym prawem, a konto CCA ma jedynie
+  ograniczony `EXECUTE`, bez uprawnienia do bezpośredniego DML. Bez
+  faktycznego testu GRANT/REVOKE i rzeczywistego locka nie ma kwalifikacji.
 - Przechowujemy oryginalne bytes **`request::text` zakodowane jako UTF-8
   przez PostgreSQL 16**. To nie są oryginalne bajty JSON z requestu klienta;
   re-serializacja po stronie Pythona nie zastąpi retention.
@@ -55,7 +63,9 @@ właściciel schematu nie mogą się utożsamiać.
 ## Wymagany osobny etap instalacyjny
 
 Przyszła implementacja musi przejść niezależny review i migrację katalogu:
-minimalne role/OID, `SECURITY DEFINER` z reviewed source, direct peer login,
+minimalne role/OID, `SECURITY DEFINER` z reviewed source, kontrola
+`READ WRITE` wyłącznie dla row locks i odmowa każdej bezpośredniej mutacji
+przez CCA readera, direct peer login,
 ochronę katalogu i zewnętrznych pinów, odmowę alternatywnych portów
 DML/DDL, testy `READ COMMITTED` pod kontencją, COMMIT-response-loss,
 crash/restart, exact `jsonb::text`, zamianę close/operation, role aliases
