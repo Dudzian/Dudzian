@@ -16,6 +16,7 @@ import psycopg
 from psycopg.pq import TransactionStatus
 
 from bot_core.postgresql_atomic_root_proof_qualification import (
+    AtomicRootProofQualificationError,
     PostgreSQLAtomicRootProofPhysicalIdentity,
     read_atomic_root_proof_physical_identity,
 )
@@ -255,5 +256,5 @@ def inspect_independent_cca_reader_catalog(
             function_oid=pin.function_oid,
             catalog_sha256=pin.function_definition_sha256,
         )
-    except psycopg.Error as exc:
+    except (psycopg.Error, AtomicRootProofQualificationError) as exc:
         raise IndependentCCAReaderCatalogError("CCA catalog inspection unavailable") from exc
