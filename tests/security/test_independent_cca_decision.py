@@ -690,3 +690,129 @@ def test_json_depth_limit_precedes_recursive_decoder(kind, monkeypatch):
     with pytest.raises(cca.IndependentCCAVerificationError):
         parser(raw)
     assert decoded == []
+
+
+def test_full_immutable_binding_roundtrips_and_owns_fresh_snapshot(cca_case):
+    expected = json.loads(cca_case.immutable_binding)
+    binding = cca.validate_cca_immutable_binding(cca_case.immutable_binding)
+    assert binding == expected
+    assert canonical_json_bytes(binding) == cca_case.immutable_binding
+    assert cca_case.decision.immutable_binding_bytes == cca_case.immutable_binding
+    assert "decision_id" not in binding
+    assert "decision_log_position" not in binding
+    binding["installation"]["environment_id"] = "mutated"
+    assert cca.validate_cca_immutable_binding(cca_case.immutable_binding) == expected
+    assert cca_case.decision.immutable_binding_bytes == cca_case.immutable_binding
+    assert _verify(cca_case.decision, cca_case.policy).production_emission == "BLOCKED"
+
+
+def test_immutable_extraction_excludes_only_decision_identity_and_position(cca_case):
+    payload = deepcopy(cca_case.payload)
+    payload["decision_id"] = "another-decision-id"
+    payload["decision_log_position"].update(
+        sequence=2, previous_entry_sha256="a" * 64, entry_id=payload["decision_id"]
+    )
+    decision = _parse(cca_case, payload)
+    assert decision.immutable_binding_bytes == cca_case.immutable_binding
+    assert decision.payload["decision_id"] == "another-decision-id"
+    assert decision.payload["decision_log_position"]["sequence"] == 2
+
+
+def test_binding_requires_every_full_payload_field_before_retention(cca_case):
+    expected = json.loads(cca_case.immutable_binding)
+    for missing in expected:
+        binding = deepcopy(expected)
+        del binding[missing]
+        with pytest.raises(
+            cca.IndependentCCAVerificationError, match="INVALID_IMMUTABLE_CCA_BINDING"
+        ):
+            cca.validate_cca_immutable_binding(canonical_json_bytes(binding))
+
+
+@pytest.mark.parametrize("field", ["decision_id", "decision_log_position", "approved", "status"])
+@pytest.mark.parametrize("value", [None, True, "caller-value", {}])
+def test_immutable_binding_rejects_decision_fields_and_unknown_fields(cca_case, field, value):
+    binding = json.loads(cca_case.immutable_binding)
+    binding[field] = value
+    with pytest.raises(cca.IndependentCCAVerificationError, match="INVALID_IMMUTABLE_CCA_BINDING"):
+        cca.validate_cca_immutable_binding(canonical_json_bytes(binding))
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("installation", None),
+        ("completion_authority", []),
+        ("database", True),
+        ("custody", "caller-claim"),
+        ("close", False),
+        ("close_observation", "caller-claim"),
+        ("originals", []),
+        ("source_event_envelope_b64", True),
+        ("source_event_envelope_sha256", False),
+        ("version", True),
+    ],
+)
+def test_immutable_binding_reuses_full_payload_type_checks(cca_case, field, value):
+    binding = json.loads(cca_case.immutable_binding)
+    binding[field] = value
+    with pytest.raises(cca.IndependentCCAVerificationError, match="INVALID_IMMUTABLE_CCA_BINDING"):
+        cca.validate_cca_immutable_binding(canonical_json_bytes(binding))
+
+
+@pytest.mark.parametrize(
+    "section,field,value",
+    [
+        ("installation", "environment_id", "another-environment"),
+        ("completion_authority", "semantic_role", source.ROOT_SOURCE_ROLE),
+        ("completion_authority", "key_version", True),
+        ("database", "database_oid", 999),
+        ("custody", "successor_generation", 999),
+        ("close", "request_b64", b64(b"{}")),
+        ("close_observation", "qualified_catalog_sha256", "d" * 64),
+        ("originals", "operation_descriptor_b64", b64(b"{}")),
+    ],
+)
+def test_immutable_binding_reuses_all_source_and_close_crossbindings(
+    cca_case, section, field, value
+):
+    binding = json.loads(cca_case.immutable_binding)
+    binding[section][field] = value
+    with pytest.raises(cca.IndependentCCAVerificationError, match="INVALID_IMMUTABLE_CCA_BINDING"):
+        cca.validate_cca_immutable_binding(canonical_json_bytes(binding))
+
+
+@pytest.mark.parametrize("change", ["newline", "duplicate", "bytearray", "partial", "wrong_digest"])
+def test_immutable_binding_preserves_canonical_original_and_closed_shape(cca_case, change):
+    raw = cca_case.immutable_binding
+    if change == "newline":
+        raw += b"\n"
+    elif change == "duplicate":
+        raw = raw[:-1] + b',"version":1}'
+    elif change == "bytearray":
+        raw = bytearray(raw)
+    elif change == "partial":
+        raw = canonical_json_bytes(
+            {
+                name: json.loads(raw)[name]
+                for name in ("installation", "completion_authority", "close")
+            }
+        )
+    else:
+        binding = json.loads(raw)
+        binding["source_event_envelope_sha256"] = "f" * 64
+        raw = canonical_json_bytes(binding)
+    with pytest.raises(cca.IndependentCCAVerificationError, match="INVALID_IMMUTABLE_CCA_BINDING"):
+        cca.validate_cca_immutable_binding(raw)
+
+
+def test_immutable_binding_validation_does_not_authenticate_or_sign(cca_case, monkeypatch):
+    class ForbiddenVerifier:
+        @staticmethod
+        def from_public_bytes(public):
+            pytest.fail("binding validation must not authenticate a source or CCA key")
+
+    monkeypatch.setattr(cca, "Ed25519PublicKey", ForbiddenVerifier)
+    monkeypatch.setattr(source, "Ed25519PublicKey", ForbiddenVerifier)
+    result = cca.validate_cca_immutable_binding(cca_case.immutable_binding)
+    assert canonical_json_bytes(result) == cca_case.immutable_binding

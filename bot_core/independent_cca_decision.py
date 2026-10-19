@@ -25,6 +25,7 @@ from bot_core.independent_custody_completion_qualification import (
     _json,
     _text,
 )
+from bot_core.licensing.canonical import canonical_json_bytes
 from bot_core.root_proof_issuer_substrate import ProviderRole
 
 CCA_DOMAIN = b"CryptoHunter/IndependentCustodyCompletion/V1\0"
@@ -34,6 +35,29 @@ CCA_POLICY_SCHEMA = "cryptohunter.explicit-independent-cca-verification-policy"
 MAX_CCA_ENVELOPE_BYTES = 14 * 1024 * 1024
 MAX_CCA_PAYLOAD_BYTES = 10 * 1024 * 1024
 MAX_CCA_POLICY_BYTES = 2 * 1024 * 1024
+_PAYLOAD_FIELDS = frozenset(
+    {
+        "schema",
+        "version",
+        "domain",
+        "installation",
+        "completion_authority",
+        "database",
+        "custody",
+        "close",
+        "close_observation",
+        "originals",
+        "source_event_envelope_b64",
+        "source_event_envelope_sha256",
+        "decision_id",
+        "decision_log_position",
+        "source_authentication_result",
+        "execution_result",
+        "durability_result",
+        "completion_result",
+    }
+)
+_DECISION_FIELDS = frozenset({"decision_id", "decision_log_position"})
 _PRINCIPAL_ROLES = frozenset(
     {
         source.ROOT_SOURCE_ROLE,
@@ -133,26 +157,7 @@ def _own_observation(
 def _payload(raw: bytes) -> dict[str, Any]:
     result: dict[str, Any] = _fields(
         _json(raw, limit=MAX_CCA_PAYLOAD_BYTES),
-        {
-            "schema",
-            "version",
-            "domain",
-            "installation",
-            "completion_authority",
-            "database",
-            "custody",
-            "close",
-            "close_observation",
-            "originals",
-            "source_event_envelope_b64",
-            "source_event_envelope_sha256",
-            "decision_id",
-            "decision_log_position",
-            "source_authentication_result",
-            "execution_result",
-            "durability_result",
-            "completion_result",
-        },
+        set(_PAYLOAD_FIELDS),
     )
     source._version(result["version"])
     if (
@@ -186,6 +191,49 @@ def _payload(raw: bytes) -> dict[str, Any]:
     _own_observation(result["close_observation"], event, result["database"], result["close"])
     source._log_position(result["decision_log_position"], completion, result["decision_id"])
     return result
+
+
+def validate_cca_immutable_binding(raw: bytes) -> dict[str, Any]:
+    """Validate the full unsigned binding before a TEST log can retain intent.
+
+    The binding is exact canonical payload bytes with only decision ID/position
+    absent. Internally supplied validation-only first-position fields exercise
+    the same closed payload validator; they are never signed, retained or
+    returned. No signature match, policy provenance or production qualification
+    is established. The returned document is a fresh mutable snapshot.
+    """
+    try:
+        result: dict[str, Any] = _fields(
+            _json(raw, limit=MAX_CCA_PAYLOAD_BYTES), set(_PAYLOAD_FIELDS - _DECISION_FIELDS)
+        )
+        validation_id = "qualification-binding-validation"
+        _payload(
+            canonical_json_bytes(
+                {
+                    **result,
+                    "decision_id": validation_id,
+                    "decision_log_position": {
+                        "namespace": result["completion_authority"]["provider_namespace"],
+                        "sequence": 1,
+                        "previous_entry_sha256": "0" * 64,
+                        "entry_id": validation_id,
+                    },
+                }
+            )
+        )
+        return result
+    except Exception as exc:
+        raise IndependentCCAVerificationError("INVALID_IMMUTABLE_CCA_BINDING") from exc
+
+
+def _immutable_binding_from_payload(payload: dict[str, Any]) -> bytes:
+    """Extract from a just-validated payload; this grants no trust or capability."""
+    return cast(
+        bytes,
+        canonical_json_bytes(
+            {name: value for name, value in payload.items() if name not in _DECISION_FIELDS}
+        ),
+    )
 
 
 def _validated_decision(raw: bytes) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -343,6 +391,11 @@ class IndependentCCADecisionV1:
         return cast(bytes, _bytes(self.document["payload_b64"], limit=MAX_CCA_PAYLOAD_BYTES))
 
     @property
+    def immutable_binding_bytes(self) -> bytes:
+        """Extract exact canonical payload binding under the shared closed schema."""
+        return _immutable_binding_from_payload(self.payload)
+
+    @property
     def fingerprint_sha256(self) -> str:
         return hashlib.sha256(self.canonical_bytes).hexdigest()
 
@@ -468,5 +521,6 @@ __all__ = [
     "IndependentCCAVerificationError",
     "parse_cca_verification_policy",
     "parse_independent_cca_decision",
+    "validate_cca_immutable_binding",
     "verify_independent_cca_decision",
 ]

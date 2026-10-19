@@ -229,10 +229,14 @@ def test_separate_process_competitors_serialize_same_and_conflicting_bindings(
         competitor_leases = tmp_path / "competitor-leases"
         shutil.copytree(leases, competitor_leases)
         second, second_pipe = start_log_process(
-            pin, _fixture(competitor, competitor_leases), announce_entry=True
+            pin, _fixture(competitor, competitor_leases), observe_contention=True
         )
-        assert second_pipe.poll(20) and second_pipe.recv() == ("ready", "before_log")
-        assert not second_pipe.poll(0.2)
+        lock_info = (Path(pin.log_directory) / "lock").stat()
+        assert second_pipe.poll(20) and second_pipe.recv() == (
+            "contended",
+            "decision_log",
+            (lock_info.st_dev, lock_info.st_ino),
+        )
         first_pipe.send("resume")
         original = _receive(first, first_pipe)
         result = _receive(second, second_pipe)
@@ -258,11 +262,12 @@ def test_real_lifecycle_lease_serializes_rotation_until_decision_retained(retain
     assert connection.poll(20) and connection.recv() == ("barrier", "after_floor_reservation")
     rotation, rotation_pipe = start_rotation(str(leases), state)
     try:
+        lock_info = (leases / "credential-lease").stat()
         assert rotation_pipe.poll(20) and rotation_pipe.recv() == (
-            "ready",
-            "before_credential_lock",
+            "contended",
+            "credential_lifecycle",
+            (lock_info.st_dev, lock_info.st_ino),
         )
-        assert not rotation_pipe.poll(0.2)
         assert (leases / "credential-state").read_bytes() == b"ACTIVE:1:1"
         connection.send("resume")
         assert _receive(process, connection)[0] == "ok"
@@ -655,3 +660,148 @@ def test_malformed_bindings_never_publish_intent(retained, kind):
             "test-operation", raw, create_decision=_forbidden
         )
     assert not list(Path(pin.log_directory).glob("*.intent"))
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        "missing_source_digest",
+        "unknown_field",
+        "partial_binding",
+        "installation_type",
+        "authority_key_version",
+        "database_oid",
+        "custody_generation",
+        "close_operation",
+        "reader_oid",
+        "journal_bytes",
+        "source_digest_type",
+    ],
+)
+def test_full_binding_validation_precedes_all_durable_writes_and_preserves_next_request(
+    retained, change
+):
+    pin, case, _ = retained
+    value = json.loads(case.immutable_binding)
+    if change == "missing_source_digest":
+        del value["source_event_envelope_sha256"]
+    elif change == "unknown_field":
+        value["unknown_binding_field"] = True
+    elif change == "partial_binding":
+        value = {
+            "installation": {"installation_id": pin.installation_id},
+            "close": {"operation_id": "test-operation"},
+            "completion_authority": {"provider_namespace": pin.namespace},
+        }
+    elif change == "source_digest_type":
+        value["source_event_envelope_sha256"] = None
+    else:
+        section, name, replacement = {
+            "installation_type": ("installation", "trust_pin_version", True),
+            "authority_key_version": ("completion_authority", "key_version", "1"),
+            "database_oid": ("database", "database_oid", False),
+            "custody_generation": ("custody", "predecessor_generation", "1"),
+            "close_operation": ("close", "operation_id", 1),
+            "reader_oid": ("close_observation", "reader_role_oid", "101"),
+            "journal_bytes": ("originals", "complete_journal_b64", []),
+        }[change]
+        value[section][name] = replacement
+    raw = canonical_json_bytes(value)
+    directories = [Path(pin.log_directory), Path(pin.floor_directory)]
+
+    def snapshot():
+        return {
+            (str(directory), path.name): (
+                path.read_bytes(),
+                path.stat().st_ino,
+                path.stat().st_mtime_ns,
+                path.stat().st_ctime_ns,
+            )
+            for directory in directories
+            for path in directory.iterdir()
+        }
+
+    before = snapshot()
+    phases = []
+    with pytest.raises(log_module.TestOnlyCCALogError, match="IMMUTABLE_BINDING_INVALID"):
+        log_module.TestOnlyCCADecisionLog(pin).decide(
+            "test-operation", raw, create_decision=_forbidden, fault_injector=phases.append
+        )
+    assert phases == []
+    assert snapshot() == before
+    assert {path.name for path in directories[0].iterdir()} == {"manifest", "lock"}
+    floor = json.loads((directories[1] / "floor").read_bytes())
+    assert floor["sequence"] == 0 and floor["pending_intent_sha256"] is None
+
+    # Reuse the exact rejected operation ID: malformed input must not reserve it.
+    original = _append(pin, case)
+    assert _lookup(pin, case) == original
+    floor = json.loads((directories[1] / "floor").read_bytes())
+    assert floor["sequence"] == 1 and floor["pending_intent_sha256"] is None
+
+
+@pytest.mark.parametrize("recovering", [False, True])
+def test_scan_barrier_rejects_earlier_inode_swap_before_ack_or_floor_advance(
+    retained, tmp_path, monkeypatch, recovering
+):
+    pin, case, _ = retained
+    _append(pin, case)
+    second = _case(tmp_path, "second-operation")
+
+    def cut(phase):
+        if phase == "after_decision_publication":
+            raise OSError("interrupted before final floor")
+
+    if recovering:
+        with pytest.raises(log_module.TestOnlyCCALogIndeterminate):
+            _append(pin, second, fault_injector=cut)
+    else:
+        _append(pin, second)
+    floor = Path(pin.floor_directory) / "floor"
+    before_floor = floor.read_bytes()
+    root = Path(pin.log_directory)
+    first = root / "00000000000000000001.decision"
+    original_read = log_module._Directory.read
+    swapped = []
+
+    def swap_after_later_intent(directory, name, **kwargs):
+        raw = original_read(directory, name, **kwargs)
+        if directory.path == root and name == "00000000000000000002.intent" and not swapped:
+            replacement = tmp_path / "same-original-new-inode"
+            replacement.write_bytes(first.read_bytes())
+            replacement.chmod(0o400)
+            old_inode = first.stat().st_ino
+            os.replace(replacement, first)
+            assert first.stat().st_ino != old_inode
+            swapped.append(True)
+        return raw
+
+    monkeypatch.setattr(log_module._Directory, "read", swap_after_later_intent)
+    with pytest.raises(log_module.TestOnlyCCALogError, match="RETAINED_INODE_CHANGED"):
+        _lookup(pin, second)
+    assert swapped == [True]
+    assert floor.read_bytes() == before_floor
+
+
+@pytest.mark.parametrize("phase", ["after_intent_publication", "after_decision_publication"])
+def test_normal_append_rechecks_earlier_inodes_before_changing_floor(retained, tmp_path, phase):
+    pin, case, _ = retained
+    _append(pin, case)
+    second = _case(tmp_path, "second-operation")
+    root = Path(pin.log_directory)
+    first = root / "00000000000000000001.decision"
+    floor = Path(pin.floor_directory) / "floor"
+    before_change = []
+
+    def swap_at_cut(observed_phase):
+        if observed_phase == phase:
+            before_change.append(floor.read_bytes())
+            replacement = tmp_path / "same-original-new-inode"
+            replacement.write_bytes(first.read_bytes())
+            replacement.chmod(0o400)
+            os.replace(replacement, first)
+
+    with pytest.raises(log_module.TestOnlyCCALogError, match="RETAINED_INODE_CHANGED"):
+        _append(pin, second, fault_injector=swap_at_cut)
+    assert len(before_change) == 1
+    assert floor.read_bytes() == before_change[0]

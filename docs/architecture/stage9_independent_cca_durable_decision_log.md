@@ -260,6 +260,24 @@ callbacka i bez ponownego podpisania. Inny binding zapisuje immutable
 `conflict.<sha256>` i odmawia; poprzednia decyzja pozostaje niezmieniona.
 Konflikt przetrwa restart, a późniejszy exact retry nadal odzyskuje oryginał.
 
+Pełna walidacja `immutable_binding` poprzedza wejście do log locka, wszystkie
+zapisy (także staging), intent, floor reservation i callback. Wspólny
+`validate_cca_immutable_binding()` korzysta z zamkniętego schematu payloadu
+CCA, odejmując wyłącznie `decision_id` i `decision_log_position`. Wewnętrzne
+validation-only ID i first position pozwalają uruchomić ten sam pełny
+validator payloadu; nie są podpisywane, zapisywane ani zwracane jako decyzja.
+Log nie utrzymuje drugiej, niepełnej listy pól. Odrzucane są unknown/missing
+fields, błędne typy zagnieżdżone, niekanoniczne bytes i niespójne oryginały,
+w tym brak lub zmiana `source_event_envelope_sha256`. Walidacja struktury
+nie kwalifikuje źródła, polityki ani podpisu.
+
+Odrzucone wejście nie tworzy intent ani rezerwacji floor i nie zajmuje
+operation ID: następne poprawne żądanie z tym samym ID nadal może rozpocząć
+operację. Retained intent przy recovery przechodzi ten sam pełny validator.
+Nie oznacza to naprawiania wcześniej utrwalonego, niepełnego intent lub
+nieznanego wyniku callbacka: takie stany nadal odmawiają, bez usuwania śladu
+i bez ponownego podpisania.
+
 `exact_lookup` wymaga tego samego pełnego bindingu i nigdy nie wywołuje
 callbacka. `NOT_FOUND` oznacza `OUTCOME_UNKNOWN`, bez uprawnienia do podpisania
 zamiennika. Syntetyczne signing keys należą do testowych fixtures; sam log
@@ -288,6 +306,12 @@ zwolnienie w odwrotnej kolejności. Proces rotacji bierze tylko credential
 lease; nie istnieje odwrotna krawędź do source lub logu. Osobne testy
 współbieżności logu używają niezależnych fixture leases, aby wykazać
 kontencję samego CCA `flock`.
+Dowodem kontencji jest rzeczywisty `flock(LOCK_EX | LOCK_NB)` zakończony
+kernelowym `EAGAIN`/`EWOULDBLOCK` dla deskryptora o oczekiwanym dev/inode.
+Dopiero potem TEST child sygnalizuje kontencję i wykonuje zwykły blocking
+`flock`. Analogiczny probe dotyczy credential lease podczas rotacji.
+Sygnał wysłany przed wywołaniem logu ani samo opóźnienie procesu nie stanowią
+dowodu. Wrapper i bariera istnieją wyłącznie w testowym helperze.
 
 Kandydat przyszłej kompozycji zachowuje source exact-state lease oraz source/CCA
 credential eligibility leases przed CCA log lockiem, następnie wykonuje własny
@@ -363,6 +387,40 @@ spójnego starego snapshotu może przejść lokalne sprawdzenia. Nie ma tu
 produkcyjnego trusted floor, niezależnego rollback domain, ochrony przed
 złośliwym same-UID writerem ani kwalifikacji fizycznej power-loss durability.
 Nie wolno awansować tego demonstratora do production anti-rollback service.
+
+### Koszt skanowania i zachowane kontrole
+
+Każdy odczyt nadal porównuje własny fd i pathname, dev/inode, owner/mode,
+link count, size, mtime/ctime oraz ACL przed i po odczycie, a także przypięte
+katalogi i ACL ancestry. Pełna kontrola wszystkich wcześniej obserwowanych
+inode odbywa się na końcu skanu, przy staging/publication i synchronizacji,
+bezpośrednio przed zmianami floor oraz przed zwrotem wyniku spod locka.
+Nie powtarza się całego rosnącego zbioru po każdym pojedynczym odczycie;
+wcześniejsza podmiana nadal blokuje ACK i zmianę floor. Pojedyncze sprawdzenie
+`_decision()` dekoduje envelope raz zamiast czterokrotnie, a immutable binding
+wyprowadza z tego samego zweryfikowanego snapshotu przez wspólną funkcję
+schematu, bez cache zaufania lub zastępowania bytes hashem.
+
+Pomiar realnego exact lookup dla wpisu 48 124 B, N=32, mediana trzech prób
+na tym samym hoście, z licznikami syscalli/walidacji:
+
+| Metryka | Przed zmianą | Po zmianie |
+| --- | --- | --- |
+| `os.stat` | 2867 | 742 |
+| Ponowne kontrole wcześniej obserwowanych inode | 2283 | 137 |
+| Pełne walidacje envelope CCA | 128 | 32 |
+| Wszystkie walidacje payloadu, również pełnego bindingu | 128 | 65 |
+| Czas exact lookup | 1.381 s | 0.789 s |
+
+Czas jest obserwacją tego instrumentowanego uruchomienia, nie progiem CI
+ani deklaracją produkcyjnego SLA. Dla N=1,2,4,8,16,32 liczniki potwierdziły
+usunięcie kwadratowych ponownych kontroli inode. Pojedynczy scan nadal
+odczytuje i waliduje całą historię oraz zachowuje wynikową listę: koszt jest
+liniowy w liczbie i łącznym rozmiarze wpisów. Seria appendów nadal ma łączny
+koszt kwadratowy, ponieważ każdy append skanuje historię. To ograniczony
+TEST log, bez kwalifikowanego indeksu ani produkcyjnego backendu.
+Nie benchmarkowano 10 000 wpisów ani maksymalnych dopuszczalnych rozmiarów;
+wyniki dla 32 małych wpisów nie kwalifikują tych granic.
 
 ## Lifecycle, retry i brak production acceptance
 
@@ -468,3 +526,32 @@ ani skipem. Linux CI musi zachować rzeczywiste wsparcie POSIX ACL dla tego
 integration testu. Nie wykonano fizycznego power-loss, installed CCA/source
 systemd/native-keyring qualification, produkcyjnego independent close read
 ani testu niezależnego rollback domain. Wyniki nie znoszą żadnego blockera.
+
+## Walidacja pełnego bindingu i kontencji po przeglądzie
+
+Poprawki P1/P2 w tym samym PR zweryfikowano na rzeczywistym Linux, z native
+POSIX ACL w workspace i tymi samymi testowymi procesami/flock/restartami.
+Nie zmieniono workflow, mypy scope, progów, timeoutów, frozen contracts ani
+produkcyjnych odmów. Wszystkie nowe przypadki mieszczą się w istniejących
+modułach testowych i dotychczasowym routingu Linux integration.
+
+| Kontrola poprawek | Wynik |
+| --- | --- |
+| Zbiorczy S9-RPI-05–07 + production refusals + CI/platform contracts | **696 PASS** w 207.24 s, bez skip/xfail |
+| W tym CCA protocol / durable log / production boundary / CI | **245 / 68 / 27 / 41 PASS** |
+| Pozostałe qualification / source protocol / source processes | **102 / 175 / 38 PASS** |
+| Pełny binding przed zapisem | 11 wariantów błędnego wejścia: identyczny snapshot plików/metadanych i floor, zero faz/callbacka, potem poprawny ten sam operation ID działa |
+| Pełne bariery integralności | 4 realne podmiany wcześniejszego inode podczas skanu/recovery/publication: brak ACK i brak zmiany floor |
+| Changed-code coverage całego PR / samych poprawek | **618/647 = 95.52%** / **37/38 = 97.37%**; oba `diff-cover --fail-under=70`: PASS |
+| Ruff / pełny `python -m pre_commit run ruff-format --all-files` | PASS, bez zmian formattera |
+| Skonfigurowany mypy Linux / Win32 | PASS, po **342 source files**, bez filename overrides |
+| Semgrep blocking custom scope | **0 findings**, 1051 Python targets/5 rules |
+| Betterleaks 1.9.0 offline working-tree snapshot | **0 nowych leaks**, 3758 unikalnych tracked/new nonignored ścieżek; niezmieniona baseline i wyłączenie wyłącznie scratch `work/` |
+
+Retained intent po faktycznym durable zapisie nadal blokuje ponowne
+podpisanie: pełny zestaw obejmuje wszystkie siedem procesowych crash cuts
+i exact recovery/odmowę bez ponownego callbacka. Nowa odmowa strukturalnie
+błędnego wejścia nie jest zgodą na automatyczne usunięcie starego intent.
+Pomiary wydajności powyżej obejmują również nową walidację bindingów.
+Pełne wielogodzinne CI pozostaje `FULL_CI_PENDING`; production pozostaje
+`NOT_QUALIFIED / BLOCKED` z dotychczasowymi brakującymi dowodami.

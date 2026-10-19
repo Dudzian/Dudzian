@@ -118,7 +118,7 @@ class _Directory:
             self.close()
             raise
 
-    def recheck(self) -> None:
+    def _recheck_directories(self) -> None:
         for descriptor, parent, name, expected in self.components:
             if (
                 _identity(os.fstat(descriptor)) != expected
@@ -126,6 +126,10 @@ class _Directory:
             ):
                 raise TestOnlyCCALogError("TEST_LOG_DIRECTORY_CHANGED")
             _no_acl(descriptor)
+
+    def recheck(self) -> None:
+        """Check every pinned inode at scan, mutation and acknowledgement barriers."""
+        self._recheck_directories()
         for name, expected_file in self.observed.items():
             if (
                 _file_identity(os.stat(name, dir_fd=self.fd, follow_symlinks=False))
@@ -171,7 +175,11 @@ class _Directory:
                 raise TestOnlyCCALogError("TEST_LOG_FILE_CHANGED")
             _no_acl(descriptor)
             self.observed[name] = _file_identity(before)
-            self.recheck()
+            # This read has checked its own fd/path/ACL before and after reading.
+            # Rechecking all earlier files here makes a scan quadratic. They
+            # remain pinned and receive a full check at the next scan/mutation
+            # barrier and before the enclosing lock can acknowledge a result.
+            self._recheck_directories()
             return bytes(raw)
         finally:
             os.close(descriptor)
@@ -203,6 +211,7 @@ class _Directory:
             os.close(descriptor)
 
     def sync(self, name: str, *, mutable: bool = False) -> None:
+        self.recheck()
         original = self.read(name, mutable=mutable)
         descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=self.fd)
         try:
@@ -214,6 +223,7 @@ class _Directory:
         if self.read(name, mutable=mutable) != original:
             raise TestOnlyCCALogError("TEST_LOG_SYNC_CHANGED")
         os.fsync(self.fd)
+        self.recheck()
 
     def publish(self, stage: str, target: str) -> None:
         """Linux atomic RENAME_NOREPLACE: never silently replace an original."""
@@ -340,14 +350,7 @@ def test_only_cca_immutable_binding(envelope: bytes) -> bytes:
     """Extract a TEST fixture's original binding; no trust or signature grant."""
     from bot_core.independent_cca_decision import parse_independent_cca_decision
 
-    payload = parse_independent_cca_decision(envelope).payload
-    return _canonical(
-        {
-            key: value
-            for key, value in payload.items()
-            if key not in {"decision_id", "decision_log_position"}
-        }
-    )
+    return parse_independent_cca_decision(envelope).immutable_binding_bytes
 
 
 class TestOnlyCCADecisionLog:
@@ -465,30 +468,30 @@ class TestOnlyCCADecisionLog:
         position = _fields(
             value["position"], {"namespace", "sequence", "previous_entry_sha256", "entry_id"}
         )
-        binding = _json(
-            _bytes(value["immutable_binding_b64"], limit=_MAX_BINDING), limit=_MAX_BINDING
+        self._binding(
+            value["operation_id"], _bytes(value["immutable_binding_b64"], limit=_MAX_BINDING)
         )
         if (
             value["schema"] != "cryptohunter.TEST-ONLY-cca-intent-v1"
             or value["installation_id"] != self.pin.installation_id
             or position["namespace"] != self.pin.namespace
-            or binding["installation"]["installation_id"] != self.pin.installation_id
-            or binding["close"]["operation_id"] != value["operation_id"]
-            or binding["completion_authority"]["provider_namespace"] != self.pin.namespace
-            or "decision_id" in binding
-            or "decision_log_position" in binding
         ):
             raise TestOnlyCCALogError("TEST_LOG_INTENT_BINDING_INVALID")
         return value
 
     def _decision(self, raw: bytes, intent: dict[str, Any]) -> None:
-        from bot_core.independent_cca_decision import parse_independent_cca_decision
+        from bot_core.independent_cca_decision import (
+            _immutable_binding_from_payload,
+            _validated_decision,
+        )
 
-        payload = parse_independent_cca_decision(raw).payload
+        # One full validation supplies both the exact position and the shared
+        # schema's immutable binding. Do not parse the same envelope four times.
+        _, payload = _validated_decision(raw)
         if (
             payload["decision_log_position"] != intent["position"]
             or payload["decision_id"] != intent["position"]["entry_id"]
-            or test_only_cca_immutable_binding(raw)
+            or _immutable_binding_from_payload(payload)
             != _bytes(intent["immutable_binding_b64"], limit=_MAX_BINDING)
         ):
             raise TestOnlyCCALogError("TEST_LOG_DECISION_BINDING_CHANGED")
@@ -593,6 +596,7 @@ class TestOnlyCCADecisionLog:
                 self._decision(raw, intent)
                 log.sync(decision_name)
                 next_floor = _floor_document(self.pin, sequence, _sha(raw), None)
+                log.recheck()
                 self._advance_floor(floor, trusted, next_floor)
                 trusted = next_floor
             if decision_name not in names:
@@ -617,18 +621,27 @@ class TestOnlyCCADecisionLog:
             raise TestOnlyCCALogError("TEST_LOG_CONFLICT_ACCEPTED_BINDING_CHANGED")
         # A prior process may have died after replacing the floor but before
         # its directory fsync. A visible committed pointer alone is not an ack.
+        log.recheck()
         floor.sync(_FLOOR, mutable=True)
         return result, trusted
 
     def _binding(self, operation_id: str, immutable_binding: bytes) -> None:
-        _text(operation_id, limit=128)
-        value = _json(immutable_binding, limit=_MAX_BINDING)
+        from bot_core.independent_cca_decision import validate_cca_immutable_binding
+
+        try:
+            _text(operation_id, limit=128)
+            if (
+                type(immutable_binding) is not bytes
+                or not 0 < len(immutable_binding) <= _MAX_BINDING
+            ):
+                raise ValueError("bounded original TEST binding bytes required")
+            value = validate_cca_immutable_binding(immutable_binding)
+        except (ValueError, TypeError, KeyError) as exc:
+            raise TestOnlyCCALogError("TEST_LOG_IMMUTABLE_BINDING_INVALID") from exc
         if (
             value["installation"]["installation_id"] != self.pin.installation_id
             or value["close"]["operation_id"] != operation_id
             or value["completion_authority"]["provider_namespace"] != self.pin.namespace
-            or "decision_id" in value
-            or "decision_log_position" in value
         ):
             raise TestOnlyCCALogError("TEST_LOG_EXACT_OPERATION_BINDING_REQUIRED")
 
@@ -724,6 +737,7 @@ class TestOnlyCCADecisionLog:
             reserved = _floor_document(
                 self.pin, trusted["sequence"], trusted["entry_sha256"], _sha(intent_raw)
             )
+            log.recheck()
             self._advance_floor(floor, trusted, reserved)
             cut("after_floor_reservation")
             original = create_decision(position)
@@ -734,6 +748,7 @@ class TestOnlyCCADecisionLog:
             cut("after_decision_write")
             log.publish(stem + ".decision.stage", stem + ".decision")
             cut("after_decision_publication")
+            log.recheck()
             self._advance_floor(
                 floor, reserved, _floor_document(self.pin, position.sequence, _sha(original), None)
             )
