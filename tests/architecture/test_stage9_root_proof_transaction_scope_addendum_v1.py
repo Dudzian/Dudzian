@@ -209,11 +209,14 @@ def test_frozen_canonical_sources_remain_unchanged_and_exact_pointer_parity() ->
         assert source["path"] == expected_path.relative_to(ROOT).as_posix()
         assert source["git_blob_sha1"] == expected_sha
         assert re.fullmatch(r"[0-9a-f]{40}", expected_sha)
-        # Git object identity is a historical repository drift check, not
-        # a production cryptographic trust root or a new authority.
+        # Committed Git blob identity checks frozen-tree drift on all OSes.
+        # It is not a production trust root or a replacement for live evidence.
         actual_sha = subprocess.run(
-            ["git", "hash-object", "--", str(expected_path)],
-            check=True, capture_output=True, text=True, cwd=ROOT,
+            ["git", "rev-parse", f"HEAD:{source['path']}"],
+            check=True,
+            capture_output=True,
+            text=True,
+            cwd=ROOT,
         ).stdout.strip()
         assert actual_sha == expected_sha, f"historical frozen source changed: {name}"
         parsed = json.loads(expected_path.read_text(encoding="utf-8"))
