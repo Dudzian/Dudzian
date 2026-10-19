@@ -76,6 +76,11 @@ def _stat_identity(info):
     )
 
 
+def _require(condition, message):
+    if not condition:
+        raise ValueError(message)
+
+
 class _LinuxFixtureOriginalReader:
     """NOFOLLOW/dirfd test adapter: not an installed reader or permission boundary."""
 
@@ -90,7 +95,10 @@ class _LinuxFixtureOriginalReader:
         self.identity["."] = _stat_identity(self.root.lstat())
 
     def _read(self, name):
-        root_fd = os.open(self.root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        _require(name in {"original", "public-policy"}, "closed TEST file selection required")
+        root_fd = os.open(
+            self.root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+        )
         try:
             self._verify(root_fd, ".", directory=True)
             events_fd = os.open(
@@ -105,18 +113,20 @@ class _LinuxFixtureOriginalReader:
                     before = os.fstat(descriptor)
                     self._verify(descriptor, "events/" + name)
                     limit = source.MAX_ENVELOPE_BYTES if name == "original" else source.MAX_POLICY_BYTES
-                    assert 0 < before.st_size <= limit, "bounded retained TEST bytes required"
+                    _require(0 < before.st_size <= limit, "bounded retained TEST bytes required")
                     result = bytearray()
                     while len(result) <= limit:
                         part = os.read(descriptor, min(65536, limit + 1 - len(result)))
                         if not part:
                             break
                         result.extend(part)
-                    assert len(result) == before.st_size
+                    _require(len(result) == before.st_size, "retained source file size changed")
                     self._verify(descriptor, "events/" + name)
-                    assert _stat_identity(
-                        os.stat(name, dir_fd=events_fd, follow_symlinks=False)
-                    ) == self.identity["events/" + name]
+                    _require(
+                        _stat_identity(os.stat(name, dir_fd=events_fd, follow_symlinks=False))
+                        == self.identity["events/" + name],
+                        "retained TEST file path substituted",
+                    )
                     self._verify(events_fd, "events", directory=True)
                     self._verify(root_fd, ".", directory=True)
                     return bytes(result)
@@ -129,20 +139,39 @@ class _LinuxFixtureOriginalReader:
 
     def _verify(self, fd, name, *, directory=False):
         current = os.fstat(fd)
-        assert _stat_identity(current) == self.identity[name], "retained TEST inode changed"
-        assert current.st_uid == os.geteuid() and current.st_gid == os.getegid()
-        assert stat.S_ISDIR(current.st_mode) if directory else stat.S_ISREG(current.st_mode)
-        assert stat.S_IMODE(current.st_mode) == (0o700 if directory else 0o600)
-        assert current.st_nlink == 1 if not directory else current.st_nlink >= 2
-        assert _stat_identity((self.root / name).lstat()) == self.identity[name]
+        _require(
+            _stat_identity(current) == self.identity[name],
+            "retained TEST inode or metadata changed",
+        )
+        _require(
+            current.st_uid == os.geteuid() and current.st_gid == os.getegid(),
+            "retained TEST ownership changed",
+        )
+        _require(
+            stat.S_ISDIR(current.st_mode) if directory else stat.S_ISREG(current.st_mode),
+            "retained TEST file type changed",
+        )
+        _require(
+            stat.S_IMODE(current.st_mode) == (0o700 if directory else 0o600),
+            "retained TEST permissions changed",
+        )
+        _require(
+            current.st_nlink >= 2 if directory else current.st_nlink == 1,
+            "retained TEST link count unsafe",
+        )
+        _require(
+            _stat_identity((self.root / name).lstat()) == self.identity[name],
+            "retained TEST path replaced",
+        )
 
     def lookup_original_event(self, *, installation_id, operation_id, execution_id):
         expected = self.expected_payload
-        assert (
+        _require(
             installation_id == expected["installation"]["installation_id"]
             and operation_id == expected["close"]["operation_id"]
-            and execution_id == expected["execution_id"]
-        ), "test disk reader queried wrong original identity"
+            and execution_id == expected["execution_id"],
+            "test disk reader queried wrong original identity",
+        )
         self.lookups += 1
         return self._read("original")
 
