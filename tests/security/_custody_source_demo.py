@@ -192,7 +192,11 @@ def _initialize(root, role, completion_public_key=None):
         "lock_inode": _identity(root / "lock"),
         "metadata_inode": _identity(root / "metadata"),
         "public_key": key.public_key().public_bytes_raw(),
-        **({"completion_public_key": completion_public_key} if completion_public_key is not None else {}),
+        **(
+            {"completion_public_key": completion_public_key}
+            if completion_public_key is not None
+            else {}
+        ),
     }
 
 
