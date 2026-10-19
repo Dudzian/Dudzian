@@ -111,6 +111,23 @@ def _check_state(dir_fd, lease_fd, state_fd, pin_lease, pin_state):
     _check_entry(dir_fd, "credential-state", state_fd, pin_state, 0o600, state=True)
 
 
+def _check_credential_dir(root_fd, directory, expected):
+    observed = os.fstat(root_fd)
+    current = Path(directory).lstat()
+    _require(
+        stat.S_ISDIR(observed.st_mode)
+        and stat.S_ISDIR(current.st_mode)
+        and stat.S_IMODE(observed.st_mode) == 0o700
+        and stat.S_IMODE(current.st_mode) == 0o700
+        and observed.st_uid == current.st_uid == os.geteuid()
+        and observed.st_gid == current.st_gid == os.getegid()
+        and (observed.st_dev, observed.st_ino)
+        == (current.st_dev, current.st_ino)
+        == expected,
+        "TEST CCA credential lease directory invalid or replaced",
+    )
+
+
 @contextmanager
 def hold_synthetic_cca_credential_read_lease(directory, fixture_pin):
     """A bounded, actual SH flock; exact active generation checked before/after.
@@ -128,18 +145,7 @@ def hold_synthetic_cca_credential_read_lease(directory, fixture_pin):
         root = os.open(
             directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
         )
-        root_info = os.fstat(root)
-        root_path = Path(directory).lstat()
-        _require(
-            stat.S_ISDIR(root_info.st_mode)
-            and stat.S_IMODE(root_info.st_mode) == 0o700
-            and root_info.st_uid == os.geteuid()
-            and root_info.st_gid == os.getegid()
-            and (root_info.st_dev, root_info.st_ino)
-            == (root_path.st_dev, root_path.st_ino)
-            == fixture_pin["directory"],
-            "TEST CCA credential lease directory invalid",
-        )
+        _check_credential_dir(root, directory, fixture_pin["directory"])
         lease_fd = os.open(
             "credential-lease",
             os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
@@ -165,11 +171,13 @@ def hold_synthetic_cca_credential_read_lease(directory, fixture_pin):
                 acquired = True
                 break
         _require(acquired, "TEST CCA credential shared lease acquisition timed out")
+        _check_credential_dir(root, directory, fixture_pin["directory"])
         _check_state(root, lease_fd, state_fd, pin_lease, pin_state)
         try:
             yield SyntheticCredentialReadLease()
         finally:
             _check_state(root, lease_fd, state_fd, pin_lease, pin_state)
+            _check_credential_dir(root, directory, fixture_pin["directory"])
     except OSError as exc:
         raise TestOnlyCredentialLeaseError(
             "TEST CCA credential lease OS boundary unavailable"
