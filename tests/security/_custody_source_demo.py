@@ -410,11 +410,23 @@ def _worker(control, root, role, config, request, crash_at, pause_at, completion
 
 
 def start_process(
-    *, root=None, role=None, config=None, request=None, crash_at=None,
-    pause_at=None, completion_public_key=None
+    *,
+    root=None,
+    role=None,
+    config=None,
+    request=None,
+    crash_at=None,
+    pause_at=None,
+    completion_public_key=None,
 ):
     """Test orchestration only; no helper is installed as a service or runtime."""
-    context = multiprocessing.get_context("fork")
+    # Opt-in CCA binding must not inherit the orchestrator's private CCA key,
+    # including execution/recovery calls that carry the binding only in config.
+    # Older fixtures retain fork so their process-local fault injection works.
+    has_completion_binding = completion_public_key is not None or (
+        config is not None and "completion_public_key" in config
+    )
+    context = multiprocessing.get_context("spawn" if has_completion_binding else "fork")
     parent, child = context.Pipe()
     process = context.Process(
         target=_worker,

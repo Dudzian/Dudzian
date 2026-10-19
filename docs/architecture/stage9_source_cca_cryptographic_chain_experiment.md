@@ -20,9 +20,16 @@ tylko przy jawnej inicjalizacji przyjmują **32-bajtowy publiczny
 klucz CCA**, generowany w osobnym procesie testowym.
 Nigdy nie przekazują workerowi prywatnego klucza CCA;
 prywatny klucz source nadal powstaje i pozostaje u workera.
+Każdy start tej ścieżki, także wykonanie i odtworzenie oryginału
+z konfiguracji, korzysta z `multiprocessing` w trybie `spawn`.
+Worker nie dziedziczy więc pamięci orkiestratora zawierającej
+prywatny klucz CCA. Argumenty zawierają wyłącznie publiczne
+32 bajty CCA, bez obiektu klucza prywatnego, seeda ani
+serializowanego materiału podpisującego CCA.
 
 Domyślna ścieżka bez podania publicznego CCA zachowuje
-istniejący proces tworzenia syntetycznej polityki.
+istniejący proces tworzenia syntetycznej polityki oraz `fork`,
+potrzebny starszym testom wstrzykującym błędy w pamięci procesu.
 
 ## Co test dowodzi
 
@@ -58,10 +65,13 @@ istniejący proces tworzenia syntetycznej polityki.
   akceptowany mimo poprawnego source original i policy.
 - Poprawnie ustrukturyzowana policy CCA zmieniona pomiędzy
   początkowym i końcowym odczytem powoduje odmowę.
-- Zmiana realnego pliku `events/public-policy` odmawia przez
-  istniejące inode/metadata checks pod trzymanym source lease,
-  niezależnie od tego, że wcześniej pobrany i jawnie przypięty
-  snapshot historycznie da się zweryfikować offline.
+- Reader utworzony po zmianie realnego pliku `events/public-policy`
+  przypina nowe metadane, lecz niezmieniony TEST floor odmawia
+  z dokładną przyczyną `source original/policy differs from retained TEST floor`.
+- Reader utworzony przed zmianą tego pliku odmawia przez istniejące
+  inode/metadata checks: `retained TEST inode or metadata changed`.
+  Oba przypadki działają pod trzymanym source lease, niezależnie
+  od tego, że wcześniejszy snapshot daje się zweryfikować offline.
 
 ## Ścisłe ograniczenia
 

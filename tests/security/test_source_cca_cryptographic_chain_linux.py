@@ -31,6 +31,7 @@ from tests.security.test_retained_source_real_linux_disk_bridge import (
     _receive,
 )
 from tests.security.test_retained_source_test_floor_witness import (
+    TestOnlySourceFloorError as SourceFloorError,
     _FloorGuardedReader,
     _once_provision_fixture_floor,
 )
@@ -50,19 +51,34 @@ def verified_chain(tmp_path):
     # worker config, process arguments, filesystem namespace or source policy.
     cca_key = Ed25519PrivateKey.generate()
     cca_public = cca_key.public_key().public_bytes_raw()
+    assert type(cca_public) is bytes and len(cca_public) == 32
     root = tmp_path / "physical-test-source"
     root.mkdir(mode=0o700)
-    status, config = _receive(
-        *start_process(
-            root=str(root),
-            role=ProviderRole.ROOT_PROOF_SIGNING.value,
-            completion_public_key=cca_public,
-        )
+    process, connection = start_process(
+        root=str(root),
+        role=ProviderRole.ROOT_PROOF_SIGNING.value,
+        completion_public_key=cca_public,
     )
+    assert process._start_method == "spawn"
+    status, config = _receive(process, connection)
     assert status == "ok"
+    assert set(config) == {
+        "root",
+        "role",
+        "uid",
+        "gid",
+        "directories",
+        "key_inode",
+        "lock_inode",
+        "metadata_inode",
+        "public_key",
+        "completion_public_key",
+    }
     assert config["completion_public_key"] == cca_public
     assert "private_key" not in config and "signing_key" not in config
-    status, execution = _receive(*start_process(config=config, request=_REQUEST))
+    process, connection = start_process(config=config, request=_REQUEST)
+    assert process._start_method == "spawn"
+    status, execution = _receive(process, connection)
     assert status == "ok"
     assert execution["status"] == "NOT_QUALIFIED"
     assert execution["production_emission"] == "BLOCKED"
@@ -98,9 +114,10 @@ def _prepare_decision(original, raw_policy, signing_key):
     policy_document["principal_inventory"][0]["public_material_identity"] = source_policy[
         "executor"
     ]["public_material_identity"]
-    assert policy_document["principal_inventory"][0]["semantic_role"] == source_policy[
-        "executor"
-    ]["semantic_role"]
+    assert (
+        policy_document["principal_inventory"][0]["semantic_role"]
+        == source_policy["executor"]["semantic_role"]
+    )
     return case, policy_document
 
 
@@ -125,9 +142,11 @@ def _record_and_verify(config, original, raw_policy, floor_pin, key, tmp_path):
     )
     binding = cca.validate_cca_immutable_binding(
         canonical_json_bytes(
-            {key: value for key, value in case.payload.items() if key not in {
-                "decision_id", "decision_log_position"
-            }}
+            {
+                key: value
+                for key, value in case.payload.items()
+                if key not in {"decision_id", "decision_log_position"}
+            }
         )
     )
     # The TEST log accepts exact immutable bytes, not the decoded object.
@@ -180,12 +199,16 @@ def test_real_source_and_cca_ed25519_chain_under_held_lease(verified_chain, tmp_
         )
         == retained
     )
-    status, restart = _receive(*start_process(config=config, request=_REQUEST))
+    process, connection = start_process(config=config, request=_REQUEST)
+    assert process._start_method == "spawn"
+    status, restart = _receive(process, connection)
     assert status == "ok" and restart["recovered"] is True
     assert restart["event"] == original
+
     # A retry never calls a new CCA signer.
     def forbidden(_position):
         pytest.fail("retained CCA decision may not be signed twice")
+
     with hold_synthetic_source_read_lease(config):
         assert (
             log_module.TestOnlyCCADecisionLog(pin).decide(
@@ -195,10 +218,13 @@ def test_real_source_and_cca_ed25519_chain_under_held_lease(verified_chain, tmp_
             )
             == retained
         )
-    assert cca.verify_independent_cca_decision(
-        cca.parse_independent_cca_decision(retained),
-        policy_loader=lambda: policy,
-    ).production_emission == "BLOCKED"
+    assert (
+        cca.verify_independent_cca_decision(
+            cca.parse_independent_cca_decision(retained),
+            policy_loader=lambda: policy,
+        ).production_emission
+        == "BLOCKED"
+    )
 
 
 def test_forged_cca_signature_denied_against_retained_source_policy(verified_chain, tmp_path):
@@ -247,10 +273,39 @@ def test_source_policy_tamper_denied_even_with_valid_retained_cca_signature(
     reader = _LinuxFixtureOriginalReader(config, original)
     guarded = _FloorGuardedReader(reader, floor_pin)
     with hold_synthetic_source_read_lease(config):
-        with pytest.raises(ValueError, match="retained TEST inode or metadata changed"):
+        with pytest.raises(SourceFloorError) as denied:
             guarded.load_policy()
+    assert type(denied.value) is SourceFloorError
+    assert str(denied.value) == "source original/policy differs from retained TEST floor"
     # The static CCA signature still verifies against the earlier snapshot;
     # a live policy source recheck is separately mandatory for acceptance.
-    assert cca.verify_independent_cca_decision(
-        cca.parse_independent_cca_decision(retained), policy_loader=lambda: policy
-    ).production_emission == "BLOCKED"
+    assert (
+        cca.verify_independent_cca_decision(
+            cca.parse_independent_cca_decision(retained), policy_loader=lambda: policy
+        ).production_emission
+        == "BLOCKED"
+    )
+
+
+def test_source_policy_tamper_denied_by_reader_pinned_before_change(verified_chain, tmp_path):
+    config, original, raw_policy, floor_pin, key = verified_chain
+    _pin, _binding, _case, retained, policy = _record_and_verify(
+        config, original, raw_policy, floor_pin, key, tmp_path
+    )
+    reader = _LinuxFixtureOriginalReader(config, original)
+    guarded = _FloorGuardedReader(reader, floor_pin)
+    path = Path(config["root"]) / "events" / "public-policy"
+    path.write_bytes(b"{}")
+    with hold_synthetic_source_read_lease(config):
+        with pytest.raises(ValueError) as denied:
+            guarded.load_policy()
+    assert type(denied.value) is ValueError
+    assert str(denied.value) == "retained TEST inode or metadata changed"
+    # The earlier policy still verifies offline; the live reader must reject
+    # the changed source metadata before that snapshot could be accepted.
+    assert (
+        cca.verify_independent_cca_decision(
+            cca.parse_independent_cca_decision(retained), policy_loader=lambda: policy
+        ).production_emission
+        == "BLOCKED"
+    )
