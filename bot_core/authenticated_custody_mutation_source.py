@@ -505,6 +505,7 @@ def _validated_policy(raw: bytes) -> dict[str, Any]:
             "authority_id",
             "service_id",
             "os_uid",
+            "os_gid",
             "endpoint",
             "provider_namespace",
             "credential_identity",

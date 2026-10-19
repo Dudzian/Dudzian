@@ -370,6 +370,17 @@ def test_completion_policy_identity_is_independent(source_case, other, alias):
         _policy(policy)
 
 
+def test_completion_policy_rejects_shared_gid_with_distinct_uid(source_case):
+    policy = deepcopy(source_case.policy_document)
+    completion, executor = policy["completion_authority"], policy["executor"]
+    assert completion["os_uid"] != executor["os_uid"]
+    completion["os_gid"] = executor["os_gid"]
+    with pytest.raises(
+        source.SourceMutationVerificationError, match="INVALID_EXPLICIT_CUSTODY_SOURCE_POLICY"
+    ):
+        _policy(policy)
+
+
 @pytest.mark.parametrize(
     "field,value",
     [
