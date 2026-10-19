@@ -85,6 +85,7 @@ def _validate(contract: dict) -> None:
         "direct_table_select_or_dml_granted",
         "schema_role_membership_allowed",
         "no_credential_sharing_with_source_or_signer",
+        "reader_only_executes_reviewed_locking_function",
     }
     assert boundary["consumer"] == "IndependentCustodyCompletionAuthority"
     assert boundary["semantic_owner"] == "IndependentProductionLifecycleAuthority"
@@ -110,6 +111,7 @@ def _validate(contract: dict) -> None:
         "fixed_approved_catalog_and_physical_installation_pins_required",
         "independent_protected_policy_loader_required",
         "no_credential_sharing_with_source_or_signer",
+        "reader_only_executes_reviewed_locking_function",
     ):
         assert boundary[key] is True
     for key in (
@@ -124,6 +126,9 @@ def _validate(contract: dict) -> None:
         "future_sql_entrypoint",
         "isolation",
         "transaction_read_only",
+        "row_lock_requires_read_write_transaction",
+        "locking_execution_context",
+        "row_locking_sql_owner_must_be_separate_from_cca_direct_login",
         "independent_transaction_after_closed_commit",
         "acquire_exact_slot_lock_before_state_read",
         "lock_held_through_exact_source_comparison",
@@ -147,6 +152,13 @@ def _validate(contract: dict) -> None:
     }
     assert read["future_sql_entrypoint"] == "REVIEW_REQUIRED_NO_ENTRYPOINT_INSTALLED"
     assert read["isolation"] == "READ COMMITTED"
+    assert read["transaction_read_only"] is False
+    assert read["row_lock_requires_read_write_transaction"] is True
+    assert (
+        read["locking_execution_context"]
+        == "REVIEWED_SECURITY_DEFINER_WITH_MINIMAL_EXECUTE_ONLY_READER"
+    )
+    assert read["row_locking_sql_owner_must_be_separate_from_cca_direct_login"] is True
     assert read["request_format"] == "PostgreSQL16/jsonb-text/UTF8"
     assert read["returned_request_bytes"] == (
         "request::text encoded UTF8 in PostgreSQL 16; never caller-wire JSON"
@@ -188,6 +200,8 @@ def _validate(contract: dict) -> None:
         "allowed_close_phase",
         "request_digest",
         "comparison_includes",
+        "transaction_read_only",
+        "locking_execution_context",
     }:
         assert read[key] is True
 
@@ -244,6 +258,7 @@ def _validate(contract: dict) -> None:
         "PROTECTED_EXACT_PHYSICAL_DB_AND_CATALOG_PIN",
         "DEDICATED_ROLE_OID_AND_DIRECT_PEER_LOGIN",
         "NO_CROSS_ROLE_MEMBERSHIP_OR_ALTERNATE_WRITE_PORT",
+        "READ_WRITE_TRANSACTION_FOR_ROW_LOCKING_WITH_ZERO_READER_DIRECT_DML",
         "READ_COMMITTED_SLOT_SYNCHRONIZATION_UNDER_REAL_CONTENTION",
         "POSTGRESQL_COMMIT_RESPONSE_LOSS_AND_RECOVERY",
         "EXACT_JSONB_TEXT_BYTES_AND_REQUEST_DIGEST",
@@ -330,7 +345,9 @@ def test_stage9_status_not_advanced_by_design_contract() -> None:
         ("boundary", "source_and_cca_reader_role_oid_must_differ", False),
         ("boundary", "peer_authentication_and_direct_login_required", False),
         ("read_contract", "isolation", "SERIALIZABLE"),
-        ("read_contract", "transaction_read_only", False),
+        ("read_contract", "transaction_read_only", True),
+        ("read_contract", "locking_execution_context", "DIRECT_CCA_TABLE_UPDATE"),
+        ("boundary", "reader_only_executes_reviewed_locking_function", False),
         ("read_contract", "request_format", "caller_wire_json"),
         ("read_contract", "observation_xid_differs_from_close_xid", False),
         ("read_contract", "unknown_or_uncommitted_close_is_error", False),
