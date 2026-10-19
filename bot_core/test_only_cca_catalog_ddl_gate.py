@@ -69,7 +69,9 @@ def acquire_synthetic_reviewed_ddl_gate(
             _keys(pin),
         )
     except psycopg.Error as exc:
-        raise TestOnlyCCACatalogGateError("exclusive reviewed synthetic DDL gate unavailable") from exc
+        raise TestOnlyCCACatalogGateError(
+            "exclusive reviewed synthetic DDL gate unavailable"
+        ) from exc
 
 
 __all__ = [
