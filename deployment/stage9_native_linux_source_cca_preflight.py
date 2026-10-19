@@ -48,6 +48,7 @@ def _inspect_directory(root: Path, location: str, *, uid: int, gid: int, mode: i
     while current != root:
         checked.append(current)
         current = current.parent
+    checked.append(root)
     checked.reverse()
     try:
         for index, node in enumerate(checked):
@@ -57,8 +58,12 @@ def _inspect_directory(root: Path, location: str, *, uid: int, gid: int, mode: i
             if _mode(info) & 0o022:
                 return "NOT_QUALIFIED", "writable ancestor or target"
             if index < len(checked) - 1:
-                if info.st_uid != 0:
-                    return "NOT_QUALIFIED", "ancestor not owned by root"
+                # A hermetic TEST root can belong to the test runner. The live
+                # filesystem root and all mapped ancestors still require root.
+                test_root = node == root and root != Path(root.anchor)
+                ancestor_uid = os.geteuid() if test_root else 0
+                if info.st_uid != ancestor_uid:
+                    return "NOT_QUALIFIED", "ancestor owner mismatch"
             else:
                 if (info.st_uid, info.st_gid, _mode(info)) != (uid, gid, mode):
                     return "NOT_QUALIFIED", "target identity, group or mode mismatch"
@@ -96,6 +101,12 @@ def _inspect_accounts(accounts):
             issues.append(f"{role}: malformed or privileged identity")
             continue
         identities[role] = {"name": name, "uid": uid, "gid": gid, "groups": groups}
+        # S9-RPI-06 requires the exclusive primary service group. There is no
+        # approved supplementary membership exception, including GID 0 or a
+        # foreign signer group that is not shared by these three roles.
+        supplementary_gids = sorted(set(groups) - {gid})
+        if supplementary_gids:
+            issues.append(f"{role}: unapproved supplementary GIDs {supplementary_gids}")
     roles = list(identities)
     for index, left in enumerate(roles):
         for right in roles[index + 1 :]:

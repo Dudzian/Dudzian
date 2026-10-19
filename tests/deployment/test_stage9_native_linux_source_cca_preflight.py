@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
+import stat
 import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -32,9 +35,7 @@ def test_unique_proposed_accounts_still_lack_live_installation_qualification(tmp
     assert result["topology"] == "PROPOSED_NOT_APPROVED"
     assert result["status"] == result["production_emission"] == "BLOCKED"
     assert len(result["paths"]) == 6
-    assert all(
-        row["observation"] == "NOT_QUALIFIED" for row in result["paths"].values()
-    )
+    assert all(row["observation"] == "NOT_QUALIFIED" for row in result["paths"].values())
     assert result["principal_observations"]["cca"]["uid"] == 62003
     assert "RUNTIME_SERVICE_IDENTITY_AND_SYSTEMD_NOT_OBSERVED" in result["blockers"]
 
@@ -50,6 +51,64 @@ def test_shared_uid_primary_or_supplementary_group_blocks_separation(right):
     }
     _identities, problems = preflight._inspect_accounts(accounts)
     assert any("root_source/history_source: shared" in item for item in problems)
+
+
+@pytest.mark.parametrize(
+    ("role", "name"),
+    [
+        ("root_source", "ch_root_custody_source"),
+        ("history_source", "ch_history_custody_source"),
+        ("cca", "ch_custody_completion"),
+    ],
+)
+@pytest.mark.parametrize("extra_gid", [0, 62011, 62999], ids=["root", "signer", "single"])
+def test_any_unapproved_supplementary_group_blocks_isolation(role, name, extra_gid):
+    accounts = {
+        "ch_root_custody_source": (62001, 62001, (62001,)),
+        "ch_history_custody_source": (62002, 62002, (62002,)),
+        "ch_custody_completion": (62003, 62003, (62003,)),
+        "cryptohunter-root-proof-signer": (62011, 62011, (62011,)),
+    }
+    uid, gid, _groups = accounts[name]
+    accounts[name] = (uid, gid, (gid, extra_gid))
+    identities, problems = preflight._inspect_accounts(accounts)
+    assert identities[role]["groups"] == (gid, extra_gid)
+    assert problems == [f"{role}: unapproved supplementary GIDs [{extra_gid}]"]
+
+
+@pytest.mark.parametrize(
+    ("left", "right"),
+    [
+        ("root_source", "history_source"),
+        ("root_source", "cca"),
+        ("history_source", "cca"),
+    ],
+)
+def test_shared_foreign_supplementary_group_blocks_each_role_pair(left, right):
+    accounts = {
+        "ch_root_custody_source": (62001, 62001, (62001,)),
+        "ch_history_custody_source": (62002, 62002, (62002,)),
+        "ch_custody_completion": (62003, 62003, (62003,)),
+    }
+    for role, name, _subdir in preflight._PROPOSED:
+        if role in (left, right):
+            uid, gid, _groups = accounts[name]
+            accounts[name] = (uid, gid, (gid, 62999))
+    _identities, problems = preflight._inspect_accounts(accounts)
+    assert f"{left}: unapproved supplementary GIDs [62999]" in problems
+    assert f"{right}: unapproved supplementary GIDs [62999]" in problems
+    assert f"{left}/{right}: shared effective group" in problems
+
+
+def test_exclusive_distinct_primary_groups_have_no_account_failures():
+    accounts = {
+        "ch_root_custody_source": (62001, 62001, (62001,)),
+        "ch_history_custody_source": (62002, 62002, (62002,)),
+        "ch_custody_completion": (62003, 62003, (62003,)),
+    }
+    identities, problems = preflight._inspect_accounts(accounts)
+    assert set(identities) == {"root_source", "history_source", "cca"}
+    assert problems == []
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="Linux lstat semantics")
@@ -84,6 +143,139 @@ def test_unsafe_world_writable_configuration_ancestor_blocks(tmp_path):
     )
     assert status == "NOT_QUALIFIED"
     assert why == "writable ancestor or target"
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux root filesystem metadata")
+@pytest.mark.parametrize("root_path", ["/", "//"])
+@pytest.mark.parametrize(
+    ("owner", "file_mode", "attributes", "reason"),
+    [
+        (63000, stat.S_IFDIR | 0o755, [], "ancestor owner mismatch"),
+        (0, stat.S_IFDIR | 0o775, [], "writable ancestor or target"),
+        (0, stat.S_IFDIR | 0o757, [], "writable ancestor or target"),
+        (0, stat.S_IFLNK | 0o777, [], "non-directory or symlink in path"),
+        (0, stat.S_IFREG | 0o644, [], "non-directory or symlink in path"),
+        (0, stat.S_IFDIR | 0o755, ["system.posix_acl_access"], "extended POSIX ACL present"),
+        (0, stat.S_IFDIR | 0o755, ["system.posix_acl_default"], "extended POSIX ACL present"),
+    ],
+)
+def test_native_base_root_metadata_must_be_safe(
+    monkeypatch, root_path, owner, file_mode, attributes, reason
+):
+    root = Path(root_path)
+    metadata = {root: SimpleNamespace(st_mode=file_mode, st_uid=owner, st_gid=0)}
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "geteuid", lambda: 63000)
+        patch.setattr(Path, "lstat", lambda node: metadata[node])
+        patch.setattr(os, "listxattr", lambda node, **kwargs: attributes)
+        status, why = preflight._inspect_directory(
+            root, "/candidate", uid=62001, gid=62001, mode=0o700
+        )
+    assert status == "NOT_QUALIFIED"
+    assert why == reason
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux POSIX ACL inventory")
+def test_unobservable_base_root_acl_fails_closed(monkeypatch):
+    def unavailable(node, **kwargs):
+        raise OSError("ACL inventory unavailable")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            Path, "lstat", lambda node: SimpleNamespace(st_mode=stat.S_IFDIR | 0o755, st_uid=0)
+        )
+        patch.setattr(os, "listxattr", unavailable)
+        status, why = preflight._inspect_directory(
+            Path("/"), "/candidate", uid=1, gid=1, mode=0o700
+        )
+    assert status == "NOT_QUALIFIED"
+    assert why == "POSIX ACL inventory unavailable"
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux lstat semantics")
+def test_symlink_base_root_is_rejected_without_following_link(tmp_path):
+    root = tmp_path / "linked-root"
+    root.symlink_to(tmp_path, target_is_directory=True)
+    status, why = preflight._inspect_directory(root, "/candidate", uid=1, gid=1, mode=0o700)
+    assert status == "NOT_QUALIFIED"
+    assert why == "non-directory or symlink in path"
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux filesystem permissions")
+@pytest.mark.parametrize("mode", [0o775, 0o757])
+def test_writable_temporary_base_root_is_rejected(tmp_path, mode):
+    root = tmp_path / "test-root"
+    root.mkdir()
+    root.chmod(mode)
+    status, why = preflight._inspect_directory(root, "/candidate", uid=1, gid=1, mode=0o700)
+    assert status == "NOT_QUALIFIED"
+    assert why == "writable ancestor or target"
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux proposed filesystem metadata")
+@pytest.mark.parametrize("native_root", [False, True], ids=["hermetic", "native"])
+def test_all_proposed_metadata_matches_still_cannot_qualify_host(
+    tmp_path, monkeypatch, capsys, native_root
+):
+    root = Path("/") if native_root else tmp_path
+    accounts = {
+        "ch_root_custody_source": (62001, 62001, (62001,)),
+        "ch_history_custody_source": (62002, 62002, (62002,)),
+        "ch_custody_completion": (62003, 62003, (62003,)),
+    }
+
+    def directory(uid, gid, mode):
+        return SimpleNamespace(st_mode=stat.S_IFDIR | mode, st_uid=uid, st_gid=gid)
+
+    metadata = {root: directory(0 if native_root else 63000, 0, 0o755)}
+    for ancestor in ("etc", "etc/cryptohunter", "var", "var/lib", "var/lib/cryptohunter"):
+        metadata[root / ancestor] = directory(0, 0, 0o755)
+    for _role, name, subdir in preflight._PROPOSED:
+        uid, gid, _groups = accounts[name]
+        metadata[root / "etc/cryptohunter" / subdir] = directory(0, gid, 0o750)
+        metadata[root / "var/lib/cryptohunter" / subdir] = directory(uid, gid, 0o700)
+    acl_observations = []
+
+    def listxattr(node, *, follow_symlinks):
+        assert follow_symlinks is False
+        acl_observations.append(node)
+        return []
+
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "geteuid", lambda: 63000)
+        patch.setattr(Path, "lstat", lambda node: metadata[node])
+        patch.setattr(os, "listxattr", listxattr)
+        result = preflight.inspect_host(root=root, accounts=accounts)
+    assert set(acl_observations) == set(metadata)
+    assert acl_observations.count(root) == 6
+    assert result["observed_failures"] == []
+    assert len(result["paths"]) == 6
+    assert all(
+        row["observation"] == "MATCHED_PROPOSED_METADATA_ONLY" for row in result["paths"].values()
+    )
+    assert result["status"] == result["production_emission"] == "BLOCKED"
+    assert result["qualification"] == "NOT_QUALIFIED"
+    assert result["topology"] == "PROPOSED_NOT_APPROVED"
+    assert result["blockers"] == list(preflight._BLOCKERS)
+    monkeypatch.setattr(preflight, "inspect_host", lambda: result)
+    assert preflight.main() == 2
+    assert json.loads(capsys.readouterr().out) == result
+
+
+@pytest.mark.parametrize("platform", ["win32", "darwin"])
+def test_non_linux_inventory_stops_before_native_account_lookup(monkeypatch, platform):
+    def unexpected_native_lookup():
+        pytest.fail("non-Linux inventory must not query native accounts")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(sys, "platform", platform)
+        patch.setattr(preflight, "_native_accounts", unexpected_native_lookup)
+        result = preflight.inspect_host()
+    assert result["status"] == result["production_emission"] == "BLOCKED"
+    assert result["qualification"] == "NOT_QUALIFIED"
+    assert result["topology"] == "PROPOSED_NOT_APPROVED"
+    assert result["observed_failures"] == ["NATIVE_LINUX_REQUIRED"]
+    assert result["paths"] == result["principal_observations"] == {}
 
 
 def test_cli_has_no_success_exit_and_no_installer_or_mutation_flag(monkeypatch, capsys):

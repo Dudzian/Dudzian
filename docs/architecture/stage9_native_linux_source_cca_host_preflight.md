@@ -30,12 +30,19 @@ resolves via host NSS the proposed accounts:
 
 It records only account numeric UID/GID, supplementary group IDs and
 `lstat` metadata of proposed directories and their ancestors.
-Observed missing accounts/paths, shared UIDs/groups, wrong type, symlinks,
+Observed missing accounts/paths, shared UIDs/groups, any supplementary GID
+(including GID `0` or a foreign signer group), wrong type, symlinks,
 writable or non-root-owned ancestors, wrong expected directory ownership,
 permissions and visible POSIX extended ACL are reported as failures.
+S9-RPI-06 requires an exclusive primary service group with no supplementary
+memberships; no exception has been approved by a separate contract.
 The proposed mode is `0750 root:role_gid` for configuration and
 `0700 role_uid:role_gid` for private state; ancestors must not have
-group/world write permission. The tool does not open private data,
+group/world write permission. Checks include the base root itself: the live
+`/` must be a root-owned directory without group/world write permissions or
+extended POSIX ACL. A temporary TEST root may belong to the test runner,
+with the same type, write-permission and ACL checks; it cannot qualify a
+production installation. The tool does not open private data,
 socket connections, keyring entries, PostgreSQL connections or installer
 artifacts. It neither provisions nor repairs.
 
