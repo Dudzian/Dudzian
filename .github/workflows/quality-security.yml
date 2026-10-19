@@ -194,6 +194,7 @@ jobs:
           tests/security/test_production_root_lifecycle_schema.py
           tests/security/test_postgresql_production_root_lifecycle_qualification.py
           tests/security/test_postgresql_independent_cca_reader_smoke.py
+          tests/security/test_postgresql_independent_cca_reader_inspection.py
           tests/security/test_production_root_lifecycle_identity.py
           tests/security/test_production_root_lifecycle_races.py
           tests/security/test_production_signer_ipc.py
@@ -773,6 +774,7 @@ jobs:
           tests/security/test_production_root_lifecycle_schema.py
           tests/security/test_postgresql_production_root_lifecycle_qualification.py
           tests/security/test_postgresql_independent_cca_reader_smoke.py
+          tests/security/test_postgresql_independent_cca_reader_inspection.py
           tests/security/test_production_root_lifecycle_identity.py
           tests/security/test_production_root_lifecycle_races.py
           tests/security/test_production_signer_ipc.py
@@ -811,6 +813,7 @@ jobs:
           --cov=bot_core.postgresql_atomic_root_proof_transaction
           --cov=bot_core.postgresql_production_root_lifecycle_schema
           --cov=bot_core.postgresql_production_root_lifecycle_qualification
+          --cov=bot_core.postgresql_independent_cca_reader_inspection
           --cov=bot_core.production_root_lifecycle
           --cov=deployment.production_root_proof_issuer
           --cov=bot_core.production_signer_ipc
@@ -942,6 +945,7 @@ jobs:
           --cov=bot_core.postgresql_atomic_root_proof_transaction
           --cov=bot_core.postgresql_production_root_lifecycle_schema
           --cov=bot_core.postgresql_production_root_lifecycle_qualification
+          --cov=bot_core.postgresql_independent_cca_reader_inspection
           --cov=bot_core.production_root_lifecycle
           --cov=deployment.production_root_proof_issuer
           --cov=bot_core.production_signer_ipc
