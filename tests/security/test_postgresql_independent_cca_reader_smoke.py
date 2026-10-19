@@ -340,7 +340,7 @@ def test_postgresql_row_locks_are_forbidden_in_read_only_transactions(isolated_c
     with psycopg.connect(value.dsn, autocommit=True) as bootstrap:
         with pytest.raises(psycopg.errors.ReadOnlySqlTransaction):
             with bootstrap.transaction():
-                bootstrap.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED READ ONLY")
+                bootstrap.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED, READ ONLY")
                 bootstrap.execute(
                     sql.SQL(
                         "SELECT * FROM {}.slots WHERE semantic_role='ROOT_PROOF_SIGNING' "
@@ -358,9 +358,9 @@ def test_lock_is_held_until_caller_transaction_completes(isolated_cca_read):
         with reader.transaction():
             reader.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
             reader.execute(_function_call(value), ("rpi10-close-1",))
-            with concurrent_administrator.transaction():
-                concurrent_administrator.execute("SET LOCAL lock_timeout = '250ms'")
-                with pytest.raises(LockNotAvailable):
+            with pytest.raises(LockNotAvailable):
+                with concurrent_administrator.transaction():
+                    concurrent_administrator.execute("SET LOCAL lock_timeout = '250ms'")
                     concurrent_administrator.execute(
                         sql.SQL(
                             "UPDATE {}.slots SET installed_marker='concurrent' "
