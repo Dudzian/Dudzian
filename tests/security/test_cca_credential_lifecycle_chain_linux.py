@@ -10,6 +10,8 @@ from __future__ import annotations
 from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import dataclass, field
+import errno
+import multiprocessing
 import os
 from pathlib import Path
 import stat
@@ -75,8 +77,12 @@ def _ident(info):
 def _state_ident(info):
     # Ignore timestamps/size so a revoked state is diagnosed by its bytes.
     return (
-        info.st_dev, info.st_ino, info.st_mode,
-        info.st_uid, info.st_gid, info.st_nlink,
+        info.st_dev,
+        info.st_ino,
+        info.st_mode,
+        info.st_uid,
+        info.st_gid,
+        info.st_nlink,
     )
 
 
@@ -121,9 +127,7 @@ def _check_credential_dir(root_fd, directory, expected):
         and stat.S_IMODE(current.st_mode) == 0o700
         and observed.st_uid == current.st_uid == os.geteuid()
         and observed.st_gid == current.st_gid == os.getegid()
-        and (observed.st_dev, observed.st_ino)
-        == (current.st_dev, current.st_ino)
-        == expected,
+        and (observed.st_dev, observed.st_ino) == (current.st_dev, current.st_ino) == expected,
         "TEST CCA credential lease directory invalid or replaced",
     )
 
@@ -142,9 +146,7 @@ def hold_synthetic_cca_credential_read_lease(directory, fixture_pin):
     root = lease_fd = state_fd = None
     acquired = False
     try:
-        root = os.open(
-            directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
-        )
+        root = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
         _check_credential_dir(root, directory, fixture_pin["directory"])
         lease_fd = os.open(
             "credential-lease",
@@ -246,9 +248,7 @@ def _decide_and_verify(case, base_policy, pin, immutable, *, fault=None):
     )
     decision = cca.parse_independent_cca_decision(raw)
     policy = _cca_policy_for_retained_decision(base_policy, decision)
-    verdict = cca.verify_independent_cca_decision(
-        decision, policy_loader=lambda: policy
-    )
+    verdict = cca.verify_independent_cca_decision(decision, policy_loader=lambda: policy)
     assert verdict.status == "NOT_QUALIFIED"
     assert verdict.production_emission == "BLOCKED"
     assert verdict.signature == "MATCHED_EXPLICIT_POLICY"
@@ -282,9 +282,7 @@ def test_credential_lease_covers_source_verified_cca_retention(credential_case):
 
 
 @pytest.mark.parametrize("state", [b"VERIFY_ONLY:2:1", b"REVOKED:2:1"])
-def test_credential_rotation_waits_for_durable_cca_ack_and_denies_new_lease(
-    credential_case, state
-):
+def test_credential_rotation_waits_for_durable_cca_ack_and_denies_new_lease(credential_case, state):
     (config, original, floor_pin, case, policy, directory, pin, immutable, fixture_pin) = (
         credential_case
     )
@@ -295,6 +293,7 @@ def test_credential_rotation_waits_for_durable_cca_ack_and_denies_new_lease(
         with hold_synthetic_source_read_lease(config):
             with hold_synthetic_cca_credential_read_lease(directory, fixture_pin):
                 with _inspect(guarded, original):
+
                     def fault(phase):
                         nonlocal rotation, connection
                         if phase == "after_floor_reservation":
@@ -311,6 +310,7 @@ def test_credential_rotation_waits_for_durable_cca_ack_and_denies_new_lease(
                         if phase == "after_durable_decision":
                             assert rotation is not None
                             assert not connection.poll(0.1)
+
                     raw = _decide_and_verify(case, policy, pin, immutable, fault=fault)
                     assert not connection.poll(0.1)
                 assert reader.lookups == 3
@@ -354,6 +354,97 @@ def test_previously_revoked_credential_refuses_before_cca_intent(credential_case
     assert not list(Path(pin.log_directory).glob("*.decision"))
 
 
+def _hold_exclusive_credential_lease(connection, directory):
+    """Open the existing inode independently and retain EX until explicit release."""
+    import fcntl
+
+    try:
+        descriptor = os.open(
+            Path(directory) / "credential-lease", os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC
+        )
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            info = os.fstat(descriptor)
+            connection.send(("acquired-exclusive", info.st_dev, info.st_ino))
+            if not connection.poll(15) or connection.recv() != "release-exclusive":
+                raise RuntimeError("TEST credential exclusive holder release signal missing")
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+        finally:
+            os.close(descriptor)
+        connection.send("released-exclusive")
+    finally:
+        connection.close()
+
+
+def test_exclusive_credential_holder_bounds_shared_wait_and_allows_retry(
+    credential_case, monkeypatch
+):
+    config, _original, _floor, _case, _policy, directory, pin, _binding, fixture_pin = (
+        credential_case
+    )
+    context = multiprocessing.get_context("spawn")
+    parent, child = context.Pipe()
+    holder = context.Process(target=_hold_exclusive_credential_lease, args=(child, directory))
+    opened = []
+    real_open = os.open
+
+    def record_open(path, *args, **kwargs):
+        descriptor = real_open(path, *args, **kwargs)
+        opened.append((path, descriptor))
+        return descriptor
+
+    try:
+        holder.start()
+        child.close()
+        assert parent.poll(15), "exclusive credential holder never acquired lock"
+        assert parent.recv() == ("acquired-exclusive", *fixture_pin["lock"][:2])
+        with hold_synthetic_source_read_lease(config):
+            lease = None
+            started = time.monotonic()
+            with monkeypatch.context() as patch:
+                patch.setattr(os, "open", record_open)
+                with pytest.raises(TestOnlyCredentialLeaseError) as refused:
+                    with hold_synthetic_cca_credential_read_lease(directory, fixture_pin) as lease:
+                        pytest.fail("exclusive credential holder must prevent a shared lease")
+            elapsed = time.monotonic() - started
+            assert str(refused.value) == "TEST CCA credential shared lease acquisition timed out"
+            assert refused.value.__cause__ is None
+            assert _CREDENTIAL_WAIT <= elapsed < 5
+            assert lease is None
+            assert [path for path, _fd in opened] == [
+                directory,
+                "credential-lease",
+                "credential-state",
+            ]
+            for _path, descriptor in opened:
+                with pytest.raises(OSError) as closed:
+                    os.fstat(descriptor)
+                assert closed.value.errno == errno.EBADF
+            assert not list(Path(pin.log_directory).glob("*.intent"))
+            assert not list(Path(pin.log_directory).glob("*.decision"))
+            assert holder.is_alive(), "exclusive credential holder exited before release"
+            parent.send("release-exclusive")
+            assert parent.poll(15), "exclusive credential holder did not acknowledge release"
+            assert parent.recv() == "released-exclusive"
+            holder.join(10)
+            assert holder.exitcode == 0
+            with hold_synthetic_cca_credential_read_lease(directory, fixture_pin) as lease:
+                assert isinstance(lease, SyntheticCredentialReadLease)
+                assert lease.status == "NOT_QUALIFIED"
+                assert lease.production_authorization == "BLOCKED"
+                assert lease.historical_eligibility_qualified is False
+        assert not list(Path(pin.log_directory).glob("*.intent"))
+        assert not list(Path(pin.log_directory).glob("*.decision"))
+    finally:
+        parent.close()
+        child.close()
+        if holder.pid is not None:
+            if holder.is_alive():
+                holder.kill()
+            holder.join(5)
+        holder.close()
+
+
 def test_uncooperative_state_mutation_under_lease_refuses_exit(credential_case):
     (config, original, floor_pin, case, policy, directory, pin, immutable, fixture_pin) = (
         credential_case
@@ -371,8 +462,29 @@ def test_uncooperative_state_mutation_under_lease_refuses_exit(credential_case):
     assert len(list(Path(pin.log_directory).glob("*.decision"))) == 1
 
 
-@pytest.mark.parametrize("attack", ["missing", "symlink", "permissions", "inode"])
-def test_unsafe_credential_lease_inode_refuses_before_cca_intent(credential_case, attack):
+@pytest.mark.parametrize(
+    ("attack", "message", "cause_type", "cause_errno"),
+    [
+        (
+            "missing",
+            "TEST CCA credential lease OS boundary unavailable",
+            FileNotFoundError,
+            errno.ENOENT,
+        ),
+        (
+            "symlink",
+            "TEST CCA credential lease OS boundary unavailable",
+            OSError,
+            errno.ELOOP,
+        ),
+        ("permissions", "TEST CCA credential lease inode or metadata changed", None, None),
+        ("inode", "TEST CCA credential lease inode or metadata changed", None, None),
+    ],
+    ids=["missing", "symlink", "permissions", "inode"],
+)
+def test_unsafe_credential_lease_inode_refuses_before_cca_intent(
+    credential_case, attack, message, cause_type, cause_errno
+):
     (config, _original, _floor, _case, _policy, directory, pin, _binding, fixture_pin) = (
         credential_case
     )
@@ -389,11 +501,18 @@ def test_unsafe_credential_lease_inode_refuses_before_cca_intent(credential_case
         path.write_bytes(b"")
         path.chmod(0o600)
     with hold_synthetic_source_read_lease(config):
-        with pytest.raises(TestOnlyCredentialLeaseError):
+        with pytest.raises(TestOnlyCredentialLeaseError) as refused:
             with hold_synthetic_cca_credential_read_lease(directory, fixture_pin):
                 pytest.fail("unsafe fixture lock cannot become a credential lease")
+    assert str(refused.value) == message
+    if cause_type is None:
+        assert refused.value.__cause__ is None
+    else:
+        assert type(refused.value.__cause__) is cause_type
+        assert refused.value.__cause__.errno == cause_errno
     assert not list(Path(pin.log_directory).glob("*.intent"))
     assert not list(Path(pin.log_directory).glob("*.decision"))
+
 
 def test_credential_directory_replaced_during_held_lease_refuses(credential_case):
     config, _original, _floor, _case, _policy, directory, pin, _binding, fixture_pin = (
