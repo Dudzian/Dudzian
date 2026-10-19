@@ -190,7 +190,9 @@ def isolated_cca_read():
                     ).format(sql.Identifier(schema))
                 )
 
-            value = _IsolatedReader(dsn, database, schema, owner, reader, source, stranger, close_xid)
+            value = _IsolatedReader(
+                dsn, database, schema, owner, reader, source, stranger, close_xid
+            )
             # A single install transaction prevents an observable PUBLIC EXECUTE window.
             with bootstrap.transaction():
                 bootstrap.execute(_fixture_function(value))
@@ -311,14 +313,40 @@ def test_public_execute_closed_and_only_pinned_reader_granted(isolated_cca_read)
 def test_read_committed_required_and_missing_operation_fails_closed(isolated_cca_read):
     value = isolated_cca_read
     with psycopg.connect(value.login("reader"), autocommit=True) as conn:
-        with conn.transaction():
-            conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
-            with pytest.raises(InsufficientPrivilege):
+        with pytest.raises(InsufficientPrivilege):
+            with conn.transaction():
+                conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
                 conn.execute(_function_call(value), ("rpi10-close-1",))
-        with conn.transaction():
-            conn.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
-            with pytest.raises(psycopg.Error, match="unknown, changed"):
+        with pytest.raises(psycopg.Error, match="unknown, changed"):
+            with conn.transaction():
+                conn.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
                 conn.execute(_function_call(value), ("not-installed",))
+
+
+def test_role_switch_cannot_impersonate_a_direct_reader(isolated_cca_read):
+    value = isolated_cca_read
+    with psycopg.connect(value.dsn, autocommit=True) as bootstrap:
+        with pytest.raises(InsufficientPrivilege):
+            with bootstrap.transaction():
+                bootstrap.execute(
+                    sql.SQL("SET ROLE {}").format(sql.Identifier(value.reader))
+                )
+                bootstrap.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
+                bootstrap.execute(_function_call(value), ("rpi10-close-1",))
+
+
+def test_postgresql_row_locks_are_forbidden_in_read_only_transactions(isolated_cca_read):
+    value = isolated_cca_read
+    with psycopg.connect(value.dsn, autocommit=True) as bootstrap:
+        with pytest.raises(psycopg.errors.ReadOnlySqlTransaction):
+            with bootstrap.transaction():
+                bootstrap.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED READ ONLY")
+                bootstrap.execute(
+                    sql.SQL(
+                        "SELECT * FROM {}.slots WHERE semantic_role='ROOT_PROOF_SIGNING' "
+                        "FOR UPDATE"
+                    ).format(sql.Identifier(value.schema))
+                )
 
 
 def test_lock_is_held_until_caller_transaction_completes(isolated_cca_read):
