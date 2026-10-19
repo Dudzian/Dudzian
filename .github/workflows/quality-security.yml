@@ -228,6 +228,7 @@ jobs:
           tests/security/test_authenticated_custody_source_processes.py
           tests/security/test_retained_source_real_linux_disk_bridge.py
           tests/security/test_retained_source_test_floor_witness.py
+          tests/security/test_source_custody_shared_lease_linux.py
           tests/security/test_independent_cca_decision.py
           tests/security/test_cca_durable_decision_log.py
           tests/architecture/test_stage9_independent_cca_boundary.py
@@ -807,6 +808,7 @@ jobs:
           tests/security/test_authenticated_custody_source_processes.py
           tests/security/test_retained_source_real_linux_disk_bridge.py
           tests/security/test_retained_source_test_floor_witness.py
+          tests/security/test_source_custody_shared_lease_linux.py
           tests/security/test_independent_cca_decision.py
           tests/security/test_cca_durable_decision_log.py
           tests/architecture/test_stage9_independent_cca_boundary.py
