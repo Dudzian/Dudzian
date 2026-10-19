@@ -11,6 +11,7 @@ import pytest
 from bot_core.postgresql_production_root_lifecycle_schema import (
     ADMINISTRATOR_FUNCTIONS,
     ISSUER_FUNCTIONS,
+    PRODUCTION_LIFECYCLE_FUNCTION_DECLARATIONS,
     PostgreSQLProductionRootLifecycleProvisioning,
     reviewed_production_lifecycle_function_sources,
 )
@@ -297,12 +298,7 @@ def test_existing_production_sql_is_still_denying_and_admin_only() -> None:
     assert "read_operation(text,text,text)" not in ISSUER_FUNCTIONS
     assert "complete_close(text,text,bytea)" not in ADMINISTRATOR_FUNCTIONS
     assert "complete_close(text,text,bytea)" not in ISSUER_FUNCTIONS
-    assert set(sources) == set(
-        __import__(
-            "bot_core.postgresql_production_root_lifecycle_schema",
-            fromlist=["PRODUCTION_LIFECYCLE_FUNCTION_DECLARATIONS"],
-        ).PRODUCTION_LIFECYCLE_FUNCTION_DECLARATIONS
-    )
+    assert set(sources) == set(PRODUCTION_LIFECYCLE_FUNCTION_DECLARATIONS)
     assert "FOR UPDATE" in sources["read_operation(text,text,text)"]
     assert "'read committed'" in sources["read_operation(text,text,text)"]
     assert "op.close_xid=pg_catalog.pg_current_xact_id()" in sources[
