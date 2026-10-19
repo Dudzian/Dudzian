@@ -94,8 +94,6 @@ def test_exact_original_retrieval_rechecked_before_and_after_consumer(source_cas
         ("execution_id", "other-execution"),
         ("installation_id", "other-installation"),
         ("namespace", "other-source-log"),
-        ("sequence", 2),
-        ("previous_entry_sha256", "f" * 64),
         ("retained_envelope_sha256", "f" * 64),
     ],
 )
@@ -104,6 +102,31 @@ def test_pin_substitution_is_denied(source_case, field, value):
     with pytest.raises(TestOnlyRetainedSourceError, match="lookup denied"):
         with _inspect(source_case, _SyntheticReader(source_case.envelope), pin):
             pytest.fail("modified pin cannot authorize original")
+
+
+def test_valid_but_mismatched_source_log_position_is_denied(source_case):
+    pin = replace(
+        _test_pin(source_case),
+        sequence=2,
+        previous_entry_sha256="f" * 64,
+    )
+    with pytest.raises(TestOnlyRetainedSourceError, match="lookup denied"):
+        with _inspect(source_case, _SyntheticReader(source_case.envelope), pin):
+            pytest.fail("different valid position must not match the original")
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"sequence": 2},
+        {"previous_entry_sha256": "f" * 64},
+        {"sequence": 0},
+        {"sequence": True},
+    ],
+)
+def test_malformed_synthetic_source_log_pin_is_rejected(source_case, changes):
+    with pytest.raises(ValueError):
+        replace(_test_pin(source_case), **changes)
 
 
 def test_caller_supplied_envelope_cannot_replace_retained_original(source_case):
