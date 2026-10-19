@@ -247,7 +247,7 @@ def test_source_policy_tamper_denied_even_with_valid_retained_cca_signature(
     reader = _LinuxFixtureOriginalReader(config, original)
     guarded = _FloorGuardedReader(reader, floor_pin)
     with hold_synthetic_source_read_lease(config):
-        with pytest.raises(Exception):
+        with pytest.raises(ValueError, match="retained TEST inode or metadata changed"):
             guarded.load_policy()
     # The static CCA signature still verifies against the earlier snapshot;
     # a live policy source recheck is separately mandatory for acceptance.
