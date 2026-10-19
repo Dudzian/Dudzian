@@ -116,9 +116,11 @@ def test_valid_synthetic_cca_evidence_cannot_open_enrollment(cca_artifact):
 
 
 @pytest.mark.parametrize("role", ["root_signer", "history_signer"])
-def test_cca_report_does_not_add_sign_to_closed_production_signer_protocol(cca_artifact, role):
+def test_cca_report_does_not_add_sign_to_closed_production_signer_protocol(
+    cca_artifact, role, tmp_path
+):
     policy = signer_ipc.SignerSocketPolicy(
-        role, "/run/test-cca-boundary/signer.sock", 1001, 2001, 1002, 2002, "a" * 64
+        role, str(tmp_path / "signer.sock"), 1001, 2001, 1002, 2002, "a" * 64
     )
     with pytest.raises(
         signer_ipc.ProductionSignerIPCError,
