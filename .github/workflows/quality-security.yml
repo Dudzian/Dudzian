@@ -213,6 +213,7 @@ jobs:
           tests/security/test_atomic_root_proof_commit_contract.py
           tests/architecture/test_stage9_atomic_root_proof_commit_boundary.py
           tests/architecture/test_stage9_root_proof_transaction_scope_addendum_v1.py
+          tests/architecture/test_stage9_independent_committed_close_reader_contract.py
           tests/security/test_local_signing_lifecycle_evidence.py
           tests/security/test_independent_custody_completion_qualification.py
           tests/security/test_authenticated_custody_mutation_source.py
@@ -784,6 +785,7 @@ jobs:
           tests/security/test_atomic_root_proof_commit_contract.py
           tests/architecture/test_stage9_atomic_root_proof_commit_boundary.py
           tests/architecture/test_stage9_root_proof_transaction_scope_addendum_v1.py
+          tests/architecture/test_stage9_independent_committed_close_reader_contract.py
           tests/security/test_local_signing_lifecycle_evidence.py
           tests/security/test_independent_custody_completion_qualification.py
           tests/security/test_authenticated_custody_mutation_source.py
