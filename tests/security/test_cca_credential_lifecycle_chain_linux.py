@@ -250,7 +250,9 @@ def _decide_and_verify(case, base_policy, pin, immutable, *, fault=None):
 
 
 def test_credential_lease_covers_source_verified_cca_retention(credential_case):
-    config, original, floor_pin, case, policy, directory, pin, immutable, fixture_pin = credential_case
+    (config, original, floor_pin, case, policy, directory, pin, immutable, fixture_pin) = (
+        credential_case
+    )
     reader = _LinuxFixtureOriginalReader(config, original)
     guarded = _FloorGuardedReader(reader, floor_pin)
     with hold_synthetic_source_read_lease(config):
@@ -275,7 +277,9 @@ def test_credential_lease_covers_source_verified_cca_retention(credential_case):
 def test_credential_rotation_waits_for_durable_cca_ack_and_denies_new_lease(
     credential_case, state
 ):
-    config, original, floor_pin, case, policy, directory, pin, immutable, fixture_pin = credential_case
+    (config, original, floor_pin, case, policy, directory, pin, immutable, fixture_pin) = (
+        credential_case
+    )
     reader = _LinuxFixtureOriginalReader(config, original)
     guarded = _FloorGuardedReader(reader, floor_pin)
     rotation = connection = None
@@ -327,7 +331,9 @@ def test_credential_rotation_waits_for_durable_cca_ack_and_denies_new_lease(
 
 
 def test_previously_revoked_credential_refuses_before_cca_intent(credential_case):
-    config, original, floor_pin, case, policy, directory, pin, immutable, fixture_pin = credential_case
+    (config, original, floor_pin, case, policy, directory, pin, immutable, fixture_pin) = (
+        credential_case
+    )
     (directory / "credential-state").write_bytes(b"REVOKED:2:1")
     reader = _LinuxFixtureOriginalReader(config, original)
     guarded = _FloorGuardedReader(reader, floor_pin)
@@ -341,7 +347,9 @@ def test_previously_revoked_credential_refuses_before_cca_intent(credential_case
 
 
 def test_uncooperative_state_mutation_under_lease_refuses_exit(credential_case):
-    config, original, floor_pin, case, policy, directory, pin, immutable, fixture_pin = credential_case
+    (config, original, floor_pin, case, policy, directory, pin, immutable, fixture_pin) = (
+        credential_case
+    )
     reader = _LinuxFixtureOriginalReader(config, original)
     guarded = _FloorGuardedReader(reader, floor_pin)
     with hold_synthetic_source_read_lease(config):
@@ -357,7 +365,9 @@ def test_uncooperative_state_mutation_under_lease_refuses_exit(credential_case):
 
 @pytest.mark.parametrize("attack", ["missing", "symlink", "permissions", "inode"])
 def test_unsafe_credential_lease_inode_refuses_before_cca_intent(credential_case, attack):
-    config, _original, _floor, _case, _policy, directory, pin, _binding, fixture_pin = credential_case
+    (config, _original, _floor, _case, _policy, directory, pin, _binding, fixture_pin) = (
+        credential_case
+    )
     path = directory / "credential-lease"
     if attack == "missing":
         path.unlink()
