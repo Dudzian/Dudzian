@@ -87,6 +87,7 @@ STAGE9_PRODUCTION_ATOMIC_TESTS = {
     "tests/security/test_source_lease_cca_retained_decision_order.py",
     "tests/security/test_source_cca_cryptographic_chain_linux.py",
     "tests/security/test_cca_credential_lifecycle_chain_linux.py",
+    "tests/deployment/test_stage9_native_linux_source_cca_preflight.py",
     "tests/security/test_independent_cca_decision.py",
     "tests/security/test_cca_durable_decision_log.py",
     "tests/architecture/test_stage9_independent_cca_boundary.py",
@@ -237,6 +238,19 @@ def test_independent_close_reader_contract_has_explicit_format_scope():
     )
     assert format_tokens[:5] == ["python", "-m", "ruff", "format", "--check"]
     assert format_tokens.count(relative_path) == 1
+
+
+def test_native_linux_source_cca_preflight_has_explicit_format_scope():
+    quality = _jobs()["quality-ratchet"]
+    format_tokens = shlex.split(
+        _step(quality, "Format Stage 9 signing and credential substrate")["run"]
+    )
+    assert format_tokens[:5] == ["python", "-m", "ruff", "format", "--check"]
+    for path in (
+        "deployment/stage9_native_linux_source_cca_preflight.py",
+        "tests/deployment/test_stage9_native_linux_source_cca_preflight.py",
+    ):
+        assert format_tokens.count(path) == 1
 
 
 def test_cca_credential_lifecycle_chain_has_explicit_format_scope():
