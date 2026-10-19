@@ -20,6 +20,7 @@ import pytest
 from bot_core import authenticated_custody_mutation_source as source
 from bot_core import independent_cca_decision as cca
 from bot_core import test_only_cca_decision_log as log_module
+from bot_core.test_only_retained_source_original import TestOnlyRetainedSourceError
 from tests.security._cca_decision_fixtures import build_cca_case, sign_cca_payload
 from tests.security.test_retained_source_real_linux_disk_bridge import (
     _LinuxFixtureOriginalReader,
@@ -217,7 +218,7 @@ def test_unqualified_source_refuses_before_cca_intent_or_decision(source_with_cc
     # was retained before this mutation and must still refuse the original.
     _disk, guarded = _readers(config, original, floor_pin)
     with hold_synthetic_source_read_lease(config):
-        with pytest.raises(Exception):
+        with pytest.raises(TestOnlyRetainedSourceError, match="lookup denied"):
             with _inspect(guarded, original):
                 pytest.fail("tampered original must not be accepted before CCA writes")
     assert not list(Path(cca_pin.log_directory).glob("*.intent"))
