@@ -143,6 +143,7 @@ jobs:
           bot_core/test_only_cca_decision_log.py
           bot_core/test_only_independent_cca_close_lease.py
           bot_core/test_only_cca_catalog_ddl_gate.py
+          bot_core/test_only_retained_source_original.py
           tests/security/_authenticated_custody_source_fixtures.py
           tests/security/_cca_decision_fixtures.py
           tests/security/_cca_log_process.py
@@ -223,6 +224,7 @@ jobs:
           tests/security/test_local_signing_lifecycle_evidence.py
           tests/security/test_independent_custody_completion_qualification.py
           tests/security/test_authenticated_custody_mutation_source.py
+          tests/security/test_retained_source_original_lookup.py
           tests/security/test_authenticated_custody_source_processes.py
           tests/security/test_independent_cca_decision.py
           tests/security/test_cca_durable_decision_log.py
@@ -799,6 +801,7 @@ jobs:
           tests/security/test_local_signing_lifecycle_evidence.py
           tests/security/test_independent_custody_completion_qualification.py
           tests/security/test_authenticated_custody_mutation_source.py
+          tests/security/test_retained_source_original_lookup.py
           tests/security/test_authenticated_custody_source_processes.py
           tests/security/test_independent_cca_decision.py
           tests/security/test_cca_durable_decision_log.py
@@ -822,6 +825,7 @@ jobs:
           --cov=bot_core.postgresql_independent_cca_reader_inspection
           --cov=bot_core.test_only_independent_cca_close_lease
           --cov=bot_core.test_only_cca_catalog_ddl_gate
+          --cov=bot_core.test_only_retained_source_original
           --cov=bot_core.production_root_lifecycle
           --cov=deployment.production_root_proof_issuer
           --cov=bot_core.production_signer_ipc
@@ -956,6 +960,7 @@ jobs:
           --cov=bot_core.postgresql_independent_cca_reader_inspection
           --cov=bot_core.test_only_independent_cca_close_lease
           --cov=bot_core.test_only_cca_catalog_ddl_gate
+          --cov=bot_core.test_only_retained_source_original
           --cov=bot_core.production_root_lifecycle
           --cov=deployment.production_root_proof_issuer
           --cov=bot_core.production_signer_ipc
