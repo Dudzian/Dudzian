@@ -307,3 +307,18 @@ Ed25519 signature does not qualify execution, durability or an installed trust
 anchor. Real PostgreSQL 16 and the existing root Linux DAC/peer harness remain
 separate regression evidence. See
 [the S9-RPI-06 protocol and qualification limits](architecture/stage9_authenticated_custody_mutation_source.md).
+
+S9-RPI-07 dodaje `independent_cca_decision.py` oraz jednoznacznie testowy
+`test_only_cca_decision_log.py` do skonfigurowanego mypy Linux/Win32, jawnego
+Ruff format gate i obu surowych zakresów branch coverage łączonych przez
+`atomic-root-proof-coverage`. Testy `test_independent_cca_decision.py`,
+`test_cca_durable_decision_log.py` oraz
+`test_stage9_independent_cca_boundary.py` rozszerzają istniejący seryjny job
+`atomic-root-proof-commit`. Exact inventory sprawdza pełne dotychczasowe
+zbiory testów i modułów obu jobów, brak duplikatów, configured mypy i nowe
+ścieżki formatowania. Zachowane są timeouty 120/120/25 minut, próg changed-code
+70%, marker exclusions oraz osobne bramki sprzętowe. Testowy filesystem log
+na Linux i poprawny podpis syntetycznej decyzji nie kwalifikują produkcyjnej
+CCA, jej instalacji, committed-close readera ani niezależnego rollback domain.
+Granice i fazy recovery opisuje
+[S9-RPI-07](architecture/stage9_independent_cca_durable_decision_log.md).

@@ -139,7 +139,11 @@ jobs:
           bot_core/local_signing_lifecycle_evidence.py
           bot_core/independent_custody_completion_qualification.py
           bot_core/authenticated_custody_mutation_source.py
+          bot_core/independent_cca_decision.py
+          bot_core/test_only_cca_decision_log.py
           tests/security/_authenticated_custody_source_fixtures.py
+          tests/security/_cca_decision_fixtures.py
+          tests/security/_cca_log_process.py
           tests/security/_custody_source_demo.py
           bot_core/postgresql_custody_lifecycle.py
           bot_core/postgresql_custody_lifecycle_schema.py
@@ -212,6 +216,9 @@ jobs:
           tests/security/test_independent_custody_completion_qualification.py
           tests/security/test_authenticated_custody_mutation_source.py
           tests/security/test_authenticated_custody_source_processes.py
+          tests/security/test_independent_cca_decision.py
+          tests/security/test_cca_durable_decision_log.py
+          tests/architecture/test_stage9_independent_cca_boundary.py
           tests/security/test_postgresql_custody_lifecycle.py
           tests/security/test_postgresql_custody_signer_enrollment.py
           tests/security/test_custody_lifecycle_admin_contract.py
@@ -779,6 +786,9 @@ jobs:
           tests/security/test_independent_custody_completion_qualification.py
           tests/security/test_authenticated_custody_mutation_source.py
           tests/security/test_authenticated_custody_source_processes.py
+          tests/security/test_independent_cca_decision.py
+          tests/security/test_cca_durable_decision_log.py
+          tests/architecture/test_stage9_independent_cca_boundary.py
           tests/security/test_postgresql_custody_lifecycle.py
           tests/security/test_postgresql_custody_signer_enrollment.py
           tests/security/test_custody_lifecycle_admin_contract.py
@@ -813,6 +823,8 @@ jobs:
           --cov=bot_core.local_signing_lifecycle_evidence
           --cov=bot_core.independent_custody_completion_qualification
           --cov=bot_core.authenticated_custody_mutation_source
+          --cov=bot_core.independent_cca_decision
+          --cov=bot_core.test_only_cca_decision_log
           --cov=bot_core.postgresql_custody_lifecycle
           --cov=bot_core.postgresql_custody_lifecycle_schema
           --cov=bot_core.postgresql_custody_lifecycle_qualification
@@ -942,6 +954,8 @@ jobs:
           --cov=bot_core.local_signing_lifecycle_evidence
           --cov=bot_core.independent_custody_completion_qualification
           --cov=bot_core.authenticated_custody_mutation_source
+          --cov=bot_core.independent_cca_decision
+          --cov=bot_core.test_only_cca_decision_log
           --cov=bot_core.postgresql_custody_lifecycle
           --cov=bot_core.postgresql_custody_lifecycle_schema
           --cov=bot_core.postgresql_custody_lifecycle_qualification

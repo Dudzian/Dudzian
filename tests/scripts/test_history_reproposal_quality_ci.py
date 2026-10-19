@@ -2,19 +2,24 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 from pathlib import Path
 import shlex
 import subprocess
 import sys
+import tomllib
 import xml.etree.ElementTree as ET
 
 from coverage import CoverageData
 import pytest
 import yaml
 
-from tests.scripts.test_general_ci_platform_contract import _contract_bash
+from tests.scripts.test_general_ci_platform_contract import (
+    _contract_bash,
+    _pytest_command as _general_pytest_command,
+)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -75,6 +80,9 @@ STAGE9_PRODUCTION_ATOMIC_TESTS = {
     "tests/security/test_independent_custody_completion_qualification.py",
     "tests/security/test_authenticated_custody_mutation_source.py",
     "tests/security/test_authenticated_custody_source_processes.py",
+    "tests/security/test_independent_cca_decision.py",
+    "tests/security/test_cca_durable_decision_log.py",
+    "tests/architecture/test_stage9_independent_cca_boundary.py",
     "tests/security/test_postgresql_atomic_root_proof_transaction.py",
     "tests/security/test_production_root_lifecycle_schema.py",
     "tests/security/test_postgresql_production_root_lifecycle_qualification.py",
@@ -90,6 +98,8 @@ STAGE9_PRODUCTION_ATOMIC_TESTS = {
 STAGE9_PRODUCTION_ATOMIC_MODULES = {
     "bot_core.independent_custody_completion_qualification",
     "bot_core.authenticated_custody_mutation_source",
+    "bot_core.independent_cca_decision",
+    "bot_core.test_only_cca_decision_log",
     "bot_core.postgresql_atomic_root_proof_transaction",
     "bot_core.postgresql_production_root_lifecycle_schema",
     "bot_core.postgresql_production_root_lifecycle_qualification",
@@ -126,6 +136,7 @@ def test_history_qualification_partitions_tests_and_preserves_original_atomic_sc
     original = jobs["atomic-root-proof-commit"]
     history = jobs["history-successor-reproposal"]
     assert original["timeout-minutes"] == 120
+    assert history["timeout-minutes"] == 120
     for job, expected_tests, expected_modules in (
         (
             original,
@@ -143,9 +154,11 @@ def test_history_qualification_partitions_tests_and_preserves_original_atomic_sc
         selected = [token for token in tokens if token.startswith("tests/")]
         assert set(selected) == expected_tests
         assert len(selected) == len(expected_tests)
-        assert {token.removeprefix("--cov=") for token in tokens if token.startswith("--cov=")} == (
-            expected_modules
-        )
+        coverage_modules = [
+            token.removeprefix("--cov=") for token in tokens if token.startswith("--cov=")
+        ]
+        assert set(coverage_modules) == expected_modules
+        assert len(coverage_modules) == len(expected_modules)
         assert "--cov-branch" in tokens
         assert "--cov-config=.coveragerc" in tokens
         assert "-n" not in tokens and "--numprocesses" not in command
@@ -158,6 +171,75 @@ def test_history_qualification_partitions_tests_and_preserves_original_atomic_sc
     assert "_history_reproposal_negative_cases.py" not in history_command
     assert "history-successor-reproposal" not in original.get("needs", [])
     assert "Changed-code coverage ratchet" not in {step.get("name") for step in original["steps"]}
+
+
+def test_independent_cca_qualification_has_configured_types_and_explicit_format_scope():
+    quality = _jobs()["quality-ratchet"]
+    assert _step(quality, "Mypy configured scope")["run"] == "python -m mypy"
+    assert (
+        _step(quality, "Mypy Windows configured scope")["run"] == "python -m mypy --platform win32"
+    )
+    config = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    typed_files = config["tool"]["mypy"]["files"]
+    modules = {
+        "bot_core/independent_cca_decision.py",
+        "bot_core/test_only_cca_decision_log.py",
+    }
+    for path in modules:
+        assert typed_files.count(path) == 1
+    format_tokens = shlex.split(
+        _step(quality, "Format Stage 9 signing and credential substrate")["run"]
+    )
+    assert format_tokens[:5] == ["python", "-m", "ruff", "format", "--check"]
+    expected = modules | {
+        "tests/security/_cca_decision_fixtures.py",
+        "tests/security/_cca_log_process.py",
+        "tests/security/test_independent_cca_decision.py",
+        "tests/security/test_cca_durable_decision_log.py",
+        "tests/architecture/test_stage9_independent_cca_boundary.py",
+    }
+    for path in expected:
+        assert format_tokens.count(path) == 1
+
+
+def test_linux_cca_log_routes_to_integration_and_atomic_without_non_linux_fast_execution():
+    relative_path = "tests/security/test_cca_durable_decision_log.py"
+    tree = ast.parse((ROOT / relative_path).read_text(encoding="utf-8"))
+    marks = [
+        node.value
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "pytestmark" for target in node.targets
+        )
+    ]
+    assert len(marks) == 1
+    assert ast.unparse(marks[0]) == "pytest.mark.integration"
+    assert not any(
+        isinstance(node, ast.Attribute) and node.attr in {"skip", "skipif", "xfail"}
+        for node in ast.walk(tree)
+    )
+    general = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"))[
+        "jobs"
+    ]
+    integration = general["integration-linux"]
+    assert integration["runs-on"] == "ubuntu-latest"
+    assert integration["timeout-minutes"] == 60
+    integration_tokens = shlex.split(_step(integration, "Pytest integration")["run"])
+    assert integration_tokens[integration_tokens.index("-m") + 1] == "integration"
+    assert not any(
+        token.startswith(("--ignore", "--deselect")) or token in {"-k", "--fast"}
+        for token in integration_tokens
+    )
+    for job_name in ("py-tests-windows", "py-tests-macos"):
+        command = _general_pytest_command(general[job_name])
+        assert (
+            '-m "not integration and not external_postgresql and not e2e_demo_paper '
+            'and not retraining and not soak and not performance and not qml"'
+        ) in command
+    atomic = _pytest_command(_jobs()["atomic-root-proof-commit"])
+    assert shlex.split(atomic).count(relative_path) == 1
+    assert '-m "not hardware and not destructive and not network"' in atomic
 
 
 def test_history_qualification_has_independent_durable_pg16_and_real_restart_controls():
@@ -202,6 +284,7 @@ def test_history_qualification_has_independent_durable_pg16_and_real_restart_con
 def test_combined_gate_requires_both_successful_jobs_and_mandatory_raw_artifacts():
     jobs = _jobs()
     combined = jobs["atomic-root-proof-coverage"]
+    assert combined["timeout-minutes"] == 25
     assert combined["needs"] == ["atomic-root-proof-commit", "history-successor-reproposal"]
     assert "if" not in combined and "continue-on-error" not in combined
     downloads = [step for step in combined["steps"] if "download-artifact@" in step.get("uses", "")]
