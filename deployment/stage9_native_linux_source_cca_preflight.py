@@ -129,8 +129,11 @@ def inspect_host(*, root: Path = Path("/"), accounts=None):
             "schema": "CryptoHunter.Stage9NativeLinuxSourceCCAPreflightV1",
             "status": "BLOCKED",
             "qualification": "NOT_QUALIFIED",
+            "production_emission": "BLOCKED",
+            "topology": "PROPOSED_NOT_APPROVED",
             "blockers": ["NATIVE_LINUX_REQUIRED", *_BLOCKERS],
-            "accounts": {},
+            "principal_observations": {},
+            "observed_failures": ["NATIVE_LINUX_REQUIRED"],
             "paths": {},
         }
     if accounts is None:
