@@ -193,6 +193,7 @@ jobs:
           tests/security/test_postgresql_atomic_root_proof_transaction.py
           tests/security/test_production_root_lifecycle_schema.py
           tests/security/test_postgresql_production_root_lifecycle_qualification.py
+          tests/security/test_postgresql_independent_cca_reader_smoke.py
           tests/security/test_production_root_lifecycle_identity.py
           tests/security/test_production_root_lifecycle_races.py
           tests/security/test_production_signer_ipc.py
@@ -771,6 +772,7 @@ jobs:
           tests/security/test_postgresql_atomic_root_proof_transaction.py
           tests/security/test_production_root_lifecycle_schema.py
           tests/security/test_postgresql_production_root_lifecycle_qualification.py
+          tests/security/test_postgresql_independent_cca_reader_smoke.py
           tests/security/test_production_root_lifecycle_identity.py
           tests/security/test_production_root_lifecycle_races.py
           tests/security/test_production_signer_ipc.py
