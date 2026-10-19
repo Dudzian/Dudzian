@@ -394,3 +394,15 @@ def test_unsafe_credential_lease_inode_refuses_before_cca_intent(credential_case
                 pytest.fail("unsafe fixture lock cannot become a credential lease")
     assert not list(Path(pin.log_directory).glob("*.intent"))
     assert not list(Path(pin.log_directory).glob("*.decision"))
+
+def test_credential_directory_replaced_during_held_lease_refuses(credential_case):
+    config, _original, _floor, _case, _policy, directory, pin, _binding, fixture_pin = (
+        credential_case
+    )
+    with hold_synthetic_source_read_lease(config):
+        with pytest.raises(TestOnlyCredentialLeaseError, match="directory invalid or replaced"):
+            with hold_synthetic_cca_credential_read_lease(directory, fixture_pin):
+                directory.rename(directory.with_name("retained-credential-directory"))
+                directory.mkdir(mode=0o700)
+    assert not list(Path(pin.log_directory).glob("*.intent"))
+    assert not list(Path(pin.log_directory).glob("*.decision"))
