@@ -72,16 +72,25 @@ def _ident(info):
     )
 
 
+def _state_ident(info):
+    # Ignore timestamps/size so a revoked state is diagnosed by its bytes.
+    return (
+        info.st_dev, info.st_ino, info.st_mode,
+        info.st_uid, info.st_gid, info.st_nlink,
+    )
+
+
 def _require(ok, message):
     if not ok:
         raise TestOnlyCredentialLeaseError(message)
 
 
-def _check_entry(dir_fd, name, fd, pinned, mode):
+def _check_entry(dir_fd, name, fd, pinned, mode, *, state=False):
     actual = os.fstat(fd)
     path = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+    identity = _state_ident if state else _ident
     _require(
-        _ident(actual) == pinned and _ident(path) == pinned,
+        identity(actual) == pinned and identity(path) == pinned,
         "TEST CCA credential lease inode or metadata changed",
     )
     _require(
@@ -96,10 +105,10 @@ def _check_entry(dir_fd, name, fd, pinned, mode):
 
 def _check_state(dir_fd, lease_fd, state_fd, pin_lease, pin_state):
     _check_entry(dir_fd, "credential-lease", lease_fd, pin_lease, 0o600)
-    _check_entry(dir_fd, "credential-state", state_fd, pin_state, 0o600)
+    _check_entry(dir_fd, "credential-state", state_fd, pin_state, 0o600, state=True)
     os.lseek(state_fd, 0, os.SEEK_SET)
     _require(os.read(state_fd, 64) == _ACTIVE, "TEST CCA credential rotated or revoked")
-    _check_entry(dir_fd, "credential-state", state_fd, pin_state, 0o600)
+    _check_entry(dir_fd, "credential-state", state_fd, pin_state, 0o600, state=True)
 
 
 @contextmanager
@@ -127,7 +136,8 @@ def hold_synthetic_cca_credential_read_lease(directory, fixture_pin):
             and root_info.st_uid == os.geteuid()
             and root_info.st_gid == os.getegid()
             and (root_info.st_dev, root_info.st_ino)
-            == (root_path.st_dev, root_path.st_ino),
+            == (root_path.st_dev, root_path.st_ino)
+            == fixture_pin["directory"],
             "TEST CCA credential lease directory invalid",
         )
         lease_fd = os.open(
@@ -140,9 +150,9 @@ def hold_synthetic_cca_credential_read_lease(directory, fixture_pin):
             os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
             dir_fd=root,
         )
-        pin_lease, pin_state = _ident(os.fstat(lease_fd)), _ident(os.fstat(state_fd))
+        pin_lease, pin_state = fixture_pin["lock"], fixture_pin["state"]
         _check_entry(root, "credential-lease", lease_fd, pin_lease, 0o600)
-        _check_entry(root, "credential-state", state_fd, pin_state, 0o600)
+        _check_entry(root, "credential-state", state_fd, pin_state, 0o600, state=True)
         deadline = time.monotonic() + _CREDENTIAL_WAIT
         while time.monotonic() < deadline:
             try:
@@ -204,7 +214,12 @@ def credential_case(verified_chain, tmp_path):
         }
     )
     cca.validate_cca_immutable_binding(immutable)
-    return config, original, floor_pin, case, base_policy, directory, pin, immutable
+    fixture_pin = {
+        "directory": (directory.stat().st_dev, directory.stat().st_ino),
+        "lock": _ident((directory / "credential-lease").lstat()),
+        "state": _state_ident((directory / "credential-state").lstat()),
+    }
+    return config, original, floor_pin, case, base_policy, directory, pin, immutable, fixture_pin
 
 
 def _decide_and_verify(case, base_policy, pin, immutable, *, fault=None):
@@ -330,7 +345,7 @@ def test_uncooperative_state_mutation_under_lease_refuses_exit(credential_case):
     reader = _LinuxFixtureOriginalReader(config, original)
     guarded = _FloorGuardedReader(reader, floor_pin)
     with hold_synthetic_source_read_lease(config):
-        with pytest.raises(TestOnlyCredentialLeaseError, match="inode or metadata changed"):
+        with pytest.raises(TestOnlyCredentialLeaseError, match="rotated or revoked"):
             with hold_synthetic_cca_credential_read_lease(directory, fixture_pin):
                 with _inspect(guarded, original):
                     _decide_and_verify(case, policy, pin, immutable)
