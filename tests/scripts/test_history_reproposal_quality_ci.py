@@ -73,6 +73,8 @@ ORIGINAL_ATOMIC_MODULES = {
 # additional tests/coverage explicitly, so neither group can silently disappear.
 STAGE9_PRODUCTION_ATOMIC_TESTS = {
     "tests/security/test_independent_custody_completion_qualification.py",
+    "tests/security/test_authenticated_custody_mutation_source.py",
+    "tests/security/test_authenticated_custody_source_processes.py",
     "tests/security/test_postgresql_atomic_root_proof_transaction.py",
     "tests/security/test_production_root_lifecycle_schema.py",
     "tests/security/test_postgresql_production_root_lifecycle_qualification.py",
@@ -87,6 +89,7 @@ STAGE9_PRODUCTION_ATOMIC_TESTS = {
 }
 STAGE9_PRODUCTION_ATOMIC_MODULES = {
     "bot_core.independent_custody_completion_qualification",
+    "bot_core.authenticated_custody_mutation_source",
     "bot_core.postgresql_atomic_root_proof_transaction",
     "bot_core.postgresql_production_root_lifecycle_schema",
     "bot_core.postgresql_production_root_lifecycle_qualification",

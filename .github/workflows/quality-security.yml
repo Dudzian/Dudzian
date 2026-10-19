@@ -138,6 +138,9 @@ jobs:
           bot_core/local_signing_custody.py
           bot_core/local_signing_lifecycle_evidence.py
           bot_core/independent_custody_completion_qualification.py
+          bot_core/authenticated_custody_mutation_source.py
+          tests/security/_authenticated_custody_source_fixtures.py
+          tests/security/_custody_source_demo.py
           bot_core/postgresql_custody_lifecycle.py
           bot_core/postgresql_custody_lifecycle_schema.py
           bot_core/postgresql_custody_lifecycle_qualification.py
@@ -207,6 +210,8 @@ jobs:
           tests/architecture/test_stage9_atomic_root_proof_commit_boundary.py
           tests/security/test_local_signing_lifecycle_evidence.py
           tests/security/test_independent_custody_completion_qualification.py
+          tests/security/test_authenticated_custody_mutation_source.py
+          tests/security/test_authenticated_custody_source_processes.py
           tests/security/test_postgresql_custody_lifecycle.py
           tests/security/test_postgresql_custody_signer_enrollment.py
           tests/security/test_custody_lifecycle_admin_contract.py
@@ -772,6 +777,8 @@ jobs:
           tests/architecture/test_stage9_atomic_root_proof_commit_boundary.py
           tests/security/test_local_signing_lifecycle_evidence.py
           tests/security/test_independent_custody_completion_qualification.py
+          tests/security/test_authenticated_custody_mutation_source.py
+          tests/security/test_authenticated_custody_source_processes.py
           tests/security/test_postgresql_custody_lifecycle.py
           tests/security/test_postgresql_custody_signer_enrollment.py
           tests/security/test_custody_lifecycle_admin_contract.py
@@ -805,6 +812,7 @@ jobs:
           --cov=bot_core.local_signing_custody
           --cov=bot_core.local_signing_lifecycle_evidence
           --cov=bot_core.independent_custody_completion_qualification
+          --cov=bot_core.authenticated_custody_mutation_source
           --cov=bot_core.postgresql_custody_lifecycle
           --cov=bot_core.postgresql_custody_lifecycle_schema
           --cov=bot_core.postgresql_custody_lifecycle_qualification
@@ -933,6 +941,7 @@ jobs:
           --cov=bot_core.local_signing_custody
           --cov=bot_core.local_signing_lifecycle_evidence
           --cov=bot_core.independent_custody_completion_qualification
+          --cov=bot_core.authenticated_custody_mutation_source
           --cov=bot_core.postgresql_custody_lifecycle
           --cov=bot_core.postgresql_custody_lifecycle_schema
           --cov=bot_core.postgresql_custody_lifecycle_qualification
