@@ -38,7 +38,9 @@ def _expected_fixture(value) -> SyntheticCloseExpectation:
         ).fetchone()
     with psycopg.connect(value.login("source"), autocommit=True) as source:
         with source.transaction():
-            source_xid = source.execute("SELECT pg_catalog.pg_current_xact_id()::text").fetchone()[0]
+            source_xid = source.execute(
+                "SELECT pg_catalog.pg_current_xact_id()::text"
+            ).fetchone()[0]
     assert source_xid != close_xid
     return SyntheticCloseExpectation(
         operation_id="rpi10-close-1",
@@ -147,7 +149,9 @@ def test_source_observation_cannot_alias_cca_reader_xid(isolated_cca_read):
         with pytest.raises(TestOnlyCloseLeaseError, match="independent transaction"):
             with conn.transaction():
                 conn.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
-                own_xid = conn.execute("SELECT pg_catalog.pg_current_xact_id()::text").fetchone()[0]
+                own_xid = conn.execute(
+                    "SELECT pg_catalog.pg_current_xact_id()::text"
+                ).fetchone()[0]
                 assert own_xid not in {expected.close_xid, expected.source_observation_xid}
                 with hold_synthetic_committed_close(
                     conn,
