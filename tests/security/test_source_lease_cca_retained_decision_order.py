@@ -25,6 +25,7 @@ from tests.security._cca_decision_fixtures import build_cca_case, sign_cca_paylo
 from tests.security.test_retained_source_real_linux_disk_bridge import (
     _LinuxFixtureOriginalReader,
     _inspect,
+    source_on_disk as source_on_disk,
 )
 from tests.security.test_retained_source_test_floor_witness import (
     _FloorGuardedReader,
