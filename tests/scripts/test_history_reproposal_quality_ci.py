@@ -91,6 +91,7 @@ STAGE9_PRODUCTION_ATOMIC_TESTS = {
     "tests/security/test_postgresql_independent_cca_reader_smoke.py",
     "tests/security/test_postgresql_independent_cca_reader_inspection.py",
     "tests/security/test_postgresql_independent_cca_close_lease.py",
+    "tests/security/test_postgresql_cca_catalog_ddl_gate.py",
     "tests/security/test_production_root_lifecycle_identity.py",
     "tests/security/test_production_root_lifecycle_races.py",
     "tests/security/test_production_signer_ipc.py",
@@ -110,6 +111,7 @@ STAGE9_PRODUCTION_ATOMIC_MODULES = {
     "bot_core.postgresql_production_root_lifecycle_qualification",
     "bot_core.postgresql_independent_cca_reader_inspection",
     "bot_core.test_only_independent_cca_close_lease",
+    "bot_core.test_only_cca_catalog_ddl_gate",
     "bot_core.production_root_lifecycle",
     "deployment.production_root_proof_issuer",
     "bot_core.production_signer_ipc",
@@ -221,6 +223,16 @@ def test_root_proof_transaction_scope_addendum_has_explicit_format_scope():
 
 def test_independent_close_reader_contract_has_explicit_format_scope():
     relative_path = "tests/architecture/test_stage9_independent_committed_close_reader_contract.py"
+    quality = _jobs()["quality-ratchet"]
+    format_tokens = shlex.split(
+        _step(quality, "Format Stage 9 signing and credential substrate")["run"]
+    )
+    assert format_tokens[:5] == ["python", "-m", "ruff", "format", "--check"]
+    assert format_tokens.count(relative_path) == 1
+
+
+def test_cca_catalog_ddl_gate_has_explicit_format_scope():
+    relative_path = "tests/security/test_postgresql_cca_catalog_ddl_gate.py"
     quality = _jobs()["quality-ratchet"]
     format_tokens = shlex.split(
         _step(quality, "Format Stage 9 signing and credential substrate")["run"]
