@@ -10,11 +10,13 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+import errno
 import multiprocessing
 import os
 from pathlib import Path
 import stat
 import sys
+import time
 
 import pytest
 
@@ -25,6 +27,7 @@ from tests.security.test_retained_source_real_linux_disk_bridge import (
     _REQUEST,
     _inspect,
     _receive,
+    source_on_disk as source_on_disk,
 )
 from tests.security.test_retained_source_test_floor_witness import (
     _FloorGuardedReader,
@@ -35,6 +38,9 @@ pytestmark = [
     pytest.mark.integration,
     pytest.mark.skipif(sys.platform != "linux", reason="requires Linux flock/dirfd"),
 ]
+
+_LOCK_WAIT_SECONDS = 1.0
+_LOCK_RETRY_SECONDS = 0.01
 
 
 class TestOnlySourceLeaseError(RuntimeError):
@@ -106,8 +112,9 @@ def hold_synthetic_source_read_lease(config):
     """Hold the worker's shared flock throughout original+floor+policy use.
 
     No new lock inode or fallback is created. Both check barriers occur while
-    the lock is held. This blocks *cooperating* exclusive worker transitions
-    only, not filesystem mutation by other processes sharing the same UID.
+    the lock is held. Acquisition uses bounded nonblocking retries. The held
+    lease blocks *cooperating* exclusive worker transitions only, not filesystem
+    mutation by other processes sharing the same UID.
     """
     if sys.platform != "linux":
         raise TestOnlySourceLeaseError("Linux test-only source lease required")
@@ -126,8 +133,18 @@ def hold_synthetic_source_read_lease(config):
         )
         expected = _file_identity(os.fstat(lock_fd))
         _check_lock(root_fd, lock_fd, config, expected)
-        fcntl.flock(lock_fd, fcntl.LOCK_SH)
-        locked = True
+        deadline = time.monotonic() + _LOCK_WAIT_SECONDS
+        while time.monotonic() < deadline:
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+            except BlockingIOError:
+                remaining = deadline - time.monotonic()
+                if remaining > 0:
+                    time.sleep(min(_LOCK_RETRY_SECONDS, remaining))
+            else:
+                locked = True
+                break
+        _require(locked, "test source shared lease acquisition timed out")
         _check_lock(root_fd, lock_fd, config, expected)
         try:
             yield SyntheticSourceReadLease()
@@ -182,9 +199,7 @@ def _competing_lock_probe(sender, root):
     """Independent exec-like child with no inherited lease descriptor."""
     import fcntl
 
-    fd = os.open(
-        Path(root) / "lock", os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC
-    )
+    fd = os.open(Path(root) / "lock", os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
     try:
         sender.send("attempting-exclusive")
         fcntl.flock(fd, fcntl.LOCK_EX)
@@ -192,6 +207,77 @@ def _competing_lock_probe(sender, root):
     finally:
         os.close(fd)
         sender.close()
+
+
+def _holding_exclusive_lock(connection, root):
+    """Keep an independently opened exclusive lock until the parent releases it."""
+    import fcntl
+
+    try:
+        fd = os.open(Path(root) / "lock", os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            connection.send("acquired-exclusive")
+            if not connection.poll(15):
+                raise RuntimeError("exclusive test holder release signal timed out")
+            if connection.recv() != "release-exclusive":
+                raise RuntimeError("exclusive test holder received unexpected signal")
+        finally:
+            os.close(fd)
+    finally:
+        connection.close()
+
+
+def test_exclusive_holder_bounds_shared_lease_wait_and_allows_retry(witnessed_source, monkeypatch):
+    config, _original, _pin = witnessed_source
+    ctx = multiprocessing.get_context("spawn")
+    parent, child = ctx.Pipe()
+    holder = ctx.Process(target=_holding_exclusive_lock, args=(child, config["root"]))
+    opened_fds = []
+    real_open = os.open
+
+    def record_open(*args, **kwargs):
+        fd = real_open(*args, **kwargs)
+        opened_fds.append(fd)
+        return fd
+
+    try:
+        holder.start()
+        child.close()
+        assert parent.poll(15), "exclusive holder never acquired lock"
+        assert parent.recv() == "acquired-exclusive"
+        lease = None
+        started = time.monotonic()
+        with monkeypatch.context() as patch:
+            patch.setattr(os, "open", record_open)
+            with pytest.raises(TestOnlySourceLeaseError, match="acquisition timed out"):
+                with hold_synthetic_source_read_lease(config) as lease:
+                    pytest.fail("an exclusive holder must prevent a shared lease")
+        elapsed = time.monotonic() - started
+        assert _LOCK_WAIT_SECONDS <= elapsed < 5
+        assert lease is None
+        assert len(opened_fds) == 2
+        for fd in opened_fds:
+            with pytest.raises(OSError) as closed:
+                os.fstat(fd)
+            assert closed.value.errno == errno.EBADF
+        assert holder.is_alive(), "exclusive holder exited before explicit release"
+        parent.send("release-exclusive")
+        holder.join(10)
+        assert holder.exitcode == 0
+        with hold_synthetic_source_read_lease(config) as lease:
+            assert isinstance(lease, SyntheticSourceReadLease)
+            assert lease.status == "NOT_QUALIFIED"
+            assert lease.production_authorization == "BLOCKED"
+            assert lease.source_authority_qualified is False
+    finally:
+        parent.close()
+        child.close()
+        if holder.pid is not None:
+            if holder.is_alive():
+                holder.kill()
+            holder.join(5)
+        holder.close()
 
 
 def test_kernel_shared_lease_serializes_ready_exclusive_peer(witnessed_source):
