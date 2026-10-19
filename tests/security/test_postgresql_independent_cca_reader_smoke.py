@@ -16,7 +16,7 @@ import psycopg
 import pytest
 from psycopg import sql
 from psycopg.conninfo import make_conninfo
-from psycopg.errors import InsufficientPrivilege, LockNotAvailable
+from psycopg.errors import CheckViolation, InsufficientPrivilege, LockNotAvailable
 from psycopg.types.json import Jsonb
 
 pytestmark = pytest.mark.external_postgresql
@@ -80,6 +80,8 @@ def _fixture_function(value: _IsolatedReader) -> sql.Composed:
           IF NOT FOUND OR op.phase IS DISTINCT FROM 'PENDING_CLOSED'
           OR op.semantic_role IS DISTINCT FROM 'ROOT_PROOF_SIGNING'
           OR op.close_xid::text IS NOT DISTINCT FROM pg_catalog.pg_current_xact_id()::text
+          OR op.request_sha256 IS DISTINCT FROM pg_catalog.encode(pg_catalog.sha256(
+               pg_catalog.convert_to(op.request_text,'UTF8')),'hex')
           THEN
             RAISE EXCEPTION 'unknown, changed or same-transaction close'
               USING ERRCODE='23514';
@@ -223,9 +225,7 @@ def isolated_cca_read():
     finally:
         with psycopg.connect(_BASE_DSN, autocommit=True) as bootstrap:
             bootstrap.execute(
-                sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(
-                    sql.Identifier(database)
-                )
+                sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(sql.Identifier(database))
             )
             for role in (stranger, source, reader, owner):
                 bootstrap.execute(sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(role)))
@@ -248,12 +248,69 @@ def test_exact_committed_jsonb_text_and_independent_xid(isolated_cca_read):
             # not client JSON or Python canonical_json_bytes serialization.
             with psycopg.connect(value.dsn, autocommit=True) as bootstrap:
                 retained_in_database = bootstrap.execute(
-                    sql.SQL(
-                        "SELECT request::text FROM {}.operations WHERE operation_id=%s"
-                    ).format(sql.Identifier(value.schema)),
+                    sql.SQL("SELECT request::text FROM {}.operations WHERE operation_id=%s").format(
+                        sql.Identifier(value.schema)
+                    ),
                     ("rpi10-close-1",),
                 ).fetchone()[0]
             assert retained_in_database == result["request_text"]
+
+
+@pytest.mark.parametrize(
+    ("column", "tampered"),
+    [
+        ("request_sha256", "0" * 64),
+        ("phase", "COMPLETE"),
+        ("semantic_role", "UNTRUSTED_ROLE"),
+    ],
+)
+def test_tampered_close_fails_closed(isolated_cca_read, column, tampered):
+    value = isolated_cca_read
+    with psycopg.connect(value.dsn, autocommit=True) as bootstrap:
+        with bootstrap.transaction():
+            bootstrap.execute(
+                sql.SQL("SELECT * FROM {}.slots FOR UPDATE").format(sql.Identifier(value.schema))
+            )
+            bootstrap.execute(
+                sql.SQL("UPDATE {}.operations SET {}=%s WHERE operation_id=%s").format(
+                    sql.Identifier(value.schema), sql.Identifier(column)
+                ),
+                (tampered, "rpi10-close-1"),
+            )
+    with psycopg.connect(value.login("reader"), autocommit=True) as conn:
+        with pytest.raises(CheckViolation, match="unknown, changed"):
+            with conn.transaction():
+                conn.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
+                conn.execute(_function_call(value), ("rpi10-close-1",)).fetchone()
+        assert conn.info.transaction_status == psycopg.pq.TransactionStatus.IDLE
+
+
+def test_observation_xid_cannot_be_used_as_close_xid(isolated_cca_read):
+    value = isolated_cca_read
+    with psycopg.connect(value.login("reader"), autocommit=True) as conn:
+        with pytest.raises(CheckViolation, match="same-transaction close"):
+            with conn.transaction():
+                conn.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
+                observation_xid = conn.execute(
+                    "SELECT pg_catalog.pg_current_xact_id()::text"
+                ).fetchone()[0]
+                assert observation_xid != value.close_xid
+                # Commit the corrupt fixture independently before the reader takes its lock.
+                with psycopg.connect(value.dsn, autocommit=True) as bootstrap:
+                    with bootstrap.transaction():
+                        bootstrap.execute(
+                            sql.SQL("SELECT * FROM {}.slots FOR UPDATE").format(
+                                sql.Identifier(value.schema)
+                            )
+                        )
+                        bootstrap.execute(
+                            sql.SQL(
+                                "UPDATE {}.operations SET close_xid=%s WHERE operation_id=%s"
+                            ).format(sql.Identifier(value.schema)),
+                            (observation_xid, "rpi10-close-1"),
+                        )
+                conn.execute(_function_call(value), ("rpi10-close-1",)).fetchone()
+        assert conn.info.transaction_status == psycopg.pq.TransactionStatus.IDLE
 
 
 @pytest.mark.parametrize("role", ["source", "stranger"])
@@ -303,7 +360,23 @@ def test_public_execute_closed_and_only_pinned_reader_granted(isolated_cca_read)
             (value.schema,),
         ).fetchone()
         assert attributes[0] is True
-        assert attributes[1] == [f"search_path=pg_catalog, {value.schema}, pg_temp"]
+        options = conn.execute(
+            "SELECT option_name,option_value FROM pg_catalog.pg_options_to_table(%s::text[])",
+            (attributes[1],),
+        ).fetchall()
+        assert len(options) == 1
+        assert options[0][0] == "search_path"
+        # PostgreSQL may quote identifiers in proconfig; compare their parsed meaning.
+        paths = conn.execute(
+            "SELECT pg_catalog.parse_ident(segment,true) "
+            "FROM pg_catalog.unnest(pg_catalog.string_to_array(%s, ',')) AS paths(segment)",
+            (options[0][1],),
+        ).fetchall()
+        assert [identifiers for (identifiers,) in paths] == [
+            ["pg_catalog"],
+            [value.schema],
+            ["pg_temp"],
+        ]
         owner_oid = conn.execute(
             "SELECT oid FROM pg_catalog.pg_roles WHERE rolname=%s", (value.owner,)
         ).fetchone()[0]
@@ -329,9 +402,7 @@ def test_role_switch_cannot_impersonate_a_direct_reader(isolated_cca_read):
         with pytest.raises(InsufficientPrivilege):
             with bootstrap.transaction():
                 bootstrap.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
-                bootstrap.execute(
-                    sql.SQL("SET ROLE {}").format(sql.Identifier(value.reader))
-                )
+                bootstrap.execute(sql.SQL("SET ROLE {}").format(sql.Identifier(value.reader)))
                 bootstrap.execute(_function_call(value), ("rpi10-close-1",))
 
 
@@ -343,8 +414,7 @@ def test_postgresql_row_locks_are_forbidden_in_read_only_transactions(isolated_c
                 bootstrap.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED, READ ONLY")
                 bootstrap.execute(
                     sql.SQL(
-                        "SELECT * FROM {}.slots WHERE semantic_role='ROOT_PROOF_SIGNING' "
-                        "FOR UPDATE"
+                        "SELECT * FROM {}.slots WHERE semantic_role='ROOT_PROOF_SIGNING' FOR UPDATE"
                     ).format(sql.Identifier(value.schema))
                 )
 
