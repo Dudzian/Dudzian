@@ -328,10 +328,10 @@ def test_role_switch_cannot_impersonate_a_direct_reader(isolated_cca_read):
     with psycopg.connect(value.dsn, autocommit=True) as bootstrap:
         with pytest.raises(InsufficientPrivilege):
             with bootstrap.transaction():
+                bootstrap.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
                 bootstrap.execute(
                     sql.SQL("SET ROLE {}").format(sql.Identifier(value.reader))
                 )
-                bootstrap.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
                 bootstrap.execute(_function_call(value), ("rpi10-close-1",))
 
 
