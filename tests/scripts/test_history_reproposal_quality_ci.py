@@ -84,6 +84,7 @@ STAGE9_PRODUCTION_ATOMIC_TESTS = {
     "tests/security/test_cca_durable_decision_log.py",
     "tests/architecture/test_stage9_independent_cca_boundary.py",
     "tests/security/test_postgresql_atomic_root_proof_transaction.py",
+    "tests/architecture/test_stage9_root_proof_transaction_scope_addendum_v1.py",
     "tests/security/test_production_root_lifecycle_schema.py",
     "tests/security/test_postgresql_production_root_lifecycle_qualification.py",
     "tests/security/test_production_root_lifecycle_identity.py",
@@ -200,6 +201,16 @@ def test_independent_cca_qualification_has_configured_types_and_explicit_format_
     }
     for path in expected:
         assert format_tokens.count(path) == 1
+
+
+def test_root_proof_transaction_scope_addendum_has_explicit_format_scope():
+    relative_path = "tests/architecture/test_stage9_root_proof_transaction_scope_addendum_v1.py"
+    quality = _jobs()["quality-ratchet"]
+    format_tokens = shlex.split(
+        _step(quality, "Format Stage 9 signing and credential substrate")["run"]
+    )
+    assert format_tokens[:5] == ["python", "-m", "ruff", "format", "--check"]
+    assert format_tokens.count(relative_path) == 1
 
 
 def test_linux_cca_log_routes_to_integration_and_atomic_without_non_linux_fast_execution():

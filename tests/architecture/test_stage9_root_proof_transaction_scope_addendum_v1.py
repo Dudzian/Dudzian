@@ -84,8 +84,19 @@ POINTERS = {
 }
 
 
+def _reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    document: dict[str, object] = {}
+    for key, value in pairs:
+        if key in document:
+            raise ValueError(f"duplicate JSON key: {key}")
+        document[key] = value
+    return document
+
+
 def _document() -> dict:
-    return json.loads(CONTRACT_PATH.read_text(encoding="utf-8"))
+    return json.loads(
+        CONTRACT_PATH.read_text(encoding="utf-8"), object_pairs_hook=_reject_duplicate_keys
+    )
 
 
 def _pointer(value: object, pointer: str) -> object:
@@ -100,9 +111,18 @@ def _pointer(value: object, pointer: str) -> object:
 
 def _assert_closed_safe_contract(document: dict) -> None:
     assert set(document) == {
-        "artifact", "schema_version", "stage", "decision_provenance", "decision_approved",
-        "review_state", "precedence", "transaction", "separate_authorities",
-        "required_future_evidence", "production", "frozen_sources",
+        "artifact",
+        "schema_version",
+        "stage",
+        "decision_provenance",
+        "decision_approved",
+        "review_state",
+        "precedence",
+        "transaction",
+        "separate_authorities",
+        "required_future_evidence",
+        "production",
+        "frozen_sources",
     }
     assert document["artifact"] == "S9_ROOT_PROOF_TRANSACTION_SCOPE_ADDENDUM_V1"
     assert type(document["schema_version"]) is int and document["schema_version"] == 1
@@ -110,13 +130,15 @@ def _assert_closed_safe_contract(document: dict) -> None:
     assert document["decision_approved"] == "A+C"
     assert document["review_state"] == "SEPARATE_CONTRACT_REVIEW_PENDING"
     assert document["decision_provenance"] == (
-        "docs/architecture/decisions/"
-        "stage9_root_proof_transaction_authority_owner_approval_v1.md"
+        "docs/architecture/decisions/stage9_root_proof_transaction_authority_owner_approval_v1.md"
     )
     precedence = document["precedence"]
     assert set(precedence) == {
-        "rule", "explains", "remains_normative",
-        "unilateral_frozen_rewrite_allowed", "new_implementation_permission",
+        "rule",
+        "explains",
+        "remains_normative",
+        "unilateral_frozen_rewrite_allowed",
+        "new_implementation_permission",
     }
     assert precedence["rule"] == "NARROW_SCOPE_CLARIFICATION_ONLY"
     assert "independent semantic authorities" in precedence["explains"]
@@ -126,17 +148,28 @@ def _assert_closed_safe_contract(document: dict) -> None:
 
     transaction = document["transaction"]
     assert set(transaction) == {
-        "owner", "coordinator", "commits", "required_atomic_write_set",
+        "owner",
+        "coordinator",
+        "commits",
+        "required_atomic_write_set",
         "require_same_postgresql_backend_transaction",
         "require_active_credential_and_trust_fences_through_commit",
-        "fenced_identities", "owner_owned_helpers_may_participate_without_semantic_ownership_transfer",
-        "issuer_arbitrary_dml_ddl_or_admin_privileges", "issuer_direct_helper_execute_grants",
-        "distributed_two_phase_commit", "partial_commit_or_compensation_permitted",
-        "proof_can_be_reconstructed_from_digest_only", "signing_inside_final_transaction",
-        "lost_response", "retry_resign_or_remint_permitted",
+        "fenced_identities",
+        "owner_owned_helpers_may_participate_without_semantic_ownership_transfer",
+        "issuer_arbitrary_dml_ddl_or_admin_privileges",
+        "issuer_direct_helper_execute_grants",
+        "distributed_two_phase_commit",
+        "partial_commit_or_compensation_permitted",
+        "proof_can_be_reconstructed_from_digest_only",
+        "signing_inside_final_transaction",
+        "lost_response",
+        "retry_resign_or_remint_permitted",
     }
     assert transaction["owner"] == "IndependentAccountGenesisRootProofIssuer"
-    assert transaction["coordinator"] == "ISSUER_OWNED_ONE_PHYSICAL_POSTGRESQL16_SERIALIZABLE_TRANSACTION"
+    assert (
+        transaction["coordinator"]
+        == "ISSUER_OWNED_ONE_PHYSICAL_POSTGRESQL16_SERIALIZABLE_TRANSACTION"
+    )
     assert type(transaction["commits"]) is int and transaction["commits"] == 1
     assert transaction["required_atomic_write_set"] == EXPECTED_WRITE_SET
     assert transaction["fenced_identities"] == FENCES
@@ -161,14 +194,18 @@ def _assert_closed_safe_contract(document: dict) -> None:
     )
     separation = document["separate_authorities"]
     assert set(separation) == {
-        "not_in_issuer_final_commit", "shared_semantic_owner_or_credentials_permitted",
-        "cha_direct_issuer_registry_mutation", "issuer_direct_account_commit",
-        "issuer_direct_attempt_store_write", "issuer_cannot_unilaterally_advance_freshness",
+        "not_in_issuer_final_commit",
+        "shared_semantic_owner_or_credentials_permitted",
+        "cha_direct_issuer_registry_mutation",
+        "issuer_direct_account_commit",
+        "issuer_direct_attempt_store_write",
+        "issuer_cannot_unilaterally_advance_freshness",
     }
     assert separation["not_in_issuer_final_commit"] == EXCLUDED
     for name in (
         "shared_semantic_owner_or_credentials_permitted",
-        "cha_direct_issuer_registry_mutation", "issuer_direct_account_commit",
+        "cha_direct_issuer_registry_mutation",
+        "issuer_direct_account_commit",
         "issuer_direct_attempt_store_write",
     ):
         assert separation[name] is False
@@ -186,9 +223,14 @@ def _assert_closed_safe_contract(document: dict) -> None:
     ]
     production = document["production"]
     assert set(production) == {
-        "issuer_ingress_enabled", "issuer_writer_enabled", "sign_or_bind_authorized",
-        "complete_close_sql_unblocked", "enrollment_enabled", "stage10_unblocked",
-        "production_go", "status_authority",
+        "issuer_ingress_enabled",
+        "issuer_writer_enabled",
+        "sign_or_bind_authorized",
+        "complete_close_sql_unblocked",
+        "enrollment_enabled",
+        "stage10_unblocked",
+        "production_go",
+        "status_authority",
     }
     assert production["status_authority"] == "deployment/stage9_current_status.json"
     assert all(value is False for key, value in production.items() if key != "status_authority")
@@ -196,6 +238,22 @@ def _assert_closed_safe_contract(document: dict) -> None:
 
 def test_addendum_has_closed_non_authorizing_scope() -> None:
     _assert_closed_safe_contract(_document())
+
+
+@pytest.mark.parametrize("first,second", [("true", "false"), ("false", "true")])
+def test_addendum_rejects_duplicate_production_go(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, first: str, second: str
+) -> None:
+    raw = CONTRACT_PATH.read_text(encoding="utf-8")
+    field = '"production_go": false'
+    assert raw.count(field) == 1
+    malformed = raw.replace(field, f'"production_go": {first}, "production_go": {second}', 1)
+    path = tmp_path / "duplicate_production_go.json"
+    path.write_text(malformed, encoding="utf-8")
+    monkeypatch.setitem(globals(), "CONTRACT_PATH", path)
+
+    with pytest.raises(ValueError, match="duplicate JSON key: production_go"):
+        _document()
 
 
 def test_frozen_canonical_sources_remain_unchanged_and_exact_pointer_parity() -> None:
