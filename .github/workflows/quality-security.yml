@@ -141,6 +141,7 @@ jobs:
           bot_core/authenticated_custody_mutation_source.py
           bot_core/independent_cca_decision.py
           bot_core/test_only_cca_decision_log.py
+          bot_core/test_only_independent_cca_close_lease.py
           tests/security/_authenticated_custody_source_fixtures.py
           tests/security/_cca_decision_fixtures.py
           tests/security/_cca_log_process.py
