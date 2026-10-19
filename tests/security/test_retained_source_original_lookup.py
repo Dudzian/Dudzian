@@ -21,6 +21,9 @@ from tests.architecture.test_stage9_atomic_root_proof_commit_boundary import (
 from tests.security.test_authenticated_custody_mutation_source import (
     source_case,
 )
+from tests.security.test_independent_custody_completion_qualification import (
+    completion as completion,
+)
 
 
 class _SyntheticReader:
