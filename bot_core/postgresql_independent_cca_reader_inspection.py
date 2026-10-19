@@ -116,6 +116,16 @@ def _check_catalog(conn: psycopg.Connection[Any], pin: IndependentCCAReaderCatal
         (pin.schema,),
     ).fetchone()
     _require(schema is not None and schema[1] == pin.owner_oid, "trusted schema owner differs")
+    creators = conn.execute(
+        "SELECT a.grantee FROM pg_catalog.pg_namespace n "
+        "CROSS JOIN LATERAL pg_catalog.aclexplode(n.nspacl) a "
+        "WHERE n.oid=%s AND a.privilege_type='CREATE'",
+        (schema[0],),
+    ).fetchall()
+    _require(
+        all(grantee == pin.owner_oid for (grantee,) in creators),
+        "untrusted role has CREATE in SECURITY DEFINER search path",
+    )
 
     functions = conn.execute(
         "SELECT p.oid,p.proname,p.proowner,p.prosecdef,p.proconfig,"
@@ -150,9 +160,11 @@ def _check_catalog(conn: psycopg.Connection[Any], pin: IndependentCCAReaderCatal
     # PostgreSQL default PUBLIC EXECUTE cannot be trusted; inspect ACL facts.
     _require(fn[6] is not None, "explicit function ACL required")
     grants = conn.execute(
-        "SELECT grantee,privilege_type,is_grantable "
-        "FROM pg_catalog.aclexplode(%s::aclitem[])",
-        (fn[6],),
+        "SELECT a.grantee,a.privilege_type,a.is_grantable "
+        "FROM pg_catalog.pg_proc p "
+        "CROSS JOIN LATERAL pg_catalog.aclexplode(p.proacl) a "
+        "WHERE p.oid=%s",
+        (pin.function_oid,),
     ).fetchall()
     _require(
         bool(grants)
@@ -222,6 +234,15 @@ def inspect_independent_cca_reader_catalog(
         _require(
             transaction == ("read committed", "off", pin.reader_role, pin.reader_role),
             "independent direct-login READ COMMITTED / READ WRITE required",
+        )
+        _require(
+            conn.execute(
+                "SELECT pg_catalog.current_setting('fsync'),"
+                "pg_catalog.current_setting('synchronous_commit'),"
+                "pg_catalog.current_setting('full_page_writes'),pg_catalog.pg_is_in_recovery()"
+            ).fetchone()
+            == ("on", "on", "on", False),
+            "durable PostgreSQL primary required",
         )
         _require(
             read_atomic_root_proof_physical_identity(conn, pin.physical_identity.instance_id)
