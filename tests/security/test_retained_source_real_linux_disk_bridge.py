@@ -112,7 +112,11 @@ class _LinuxFixtureOriginalReader:
                 try:
                     before = os.fstat(descriptor)
                     self._verify(descriptor, "events/" + name)
-                    limit = source.MAX_ENVELOPE_BYTES if name == "original" else source.MAX_POLICY_BYTES
+                    limit = (
+                        source.MAX_ENVELOPE_BYTES
+                        if name == "original"
+                        else source.MAX_POLICY_BYTES
+                    )
                     _require(0 < before.st_size <= limit, "bounded retained TEST bytes required")
                     result = bytearray()
                     while len(result) <= limit:
