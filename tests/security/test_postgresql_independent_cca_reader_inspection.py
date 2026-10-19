@@ -161,6 +161,91 @@ def test_reader_catalog_inspection_rejects_direct_cca_table_select(isolated_cca_
             )
 
 
+@pytest.mark.parametrize("privilege", ["SELECT", "INSERT", "UPDATE", "REFERENCES"])
+@pytest.mark.parametrize("grantee", ["reader", "PUBLIC"])
+def test_reader_catalog_inspection_rejects_column_only_privileges(
+    isolated_cca_read, privilege, grantee
+):
+    value = isolated_cca_read
+    pin = _synthetic_test_pin(value)
+    recipient = sql.SQL("PUBLIC") if grantee == "PUBLIC" else sql.Identifier(value.reader)
+    relation = value.schema + ".operations"
+    with psycopg.connect(value.dsn, autocommit=True) as bootstrap:
+        try:
+            bootstrap.execute(
+                sql.SQL("GRANT {} (operation_id) ON {}.operations TO {}").format(
+                    sql.SQL(privilege), sql.Identifier(value.schema), recipient
+                )
+            )
+            assert bootstrap.execute(
+                "SELECT pg_catalog.has_table_privilege("
+                "%s,%s,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER'),"
+                "pg_catalog.has_any_column_privilege(%s,%s,%s)",
+                (value.reader, relation, value.reader, relation, privilege),
+            ).fetchone() == (False, True)
+            with pytest.raises(IndependentCCAReaderCatalogError, match="direct column privileges"):
+                _inspect(value, pin)
+        finally:
+            bootstrap.execute(
+                sql.SQL("REVOKE {} (operation_id) ON {}.operations FROM {}").format(
+                    sql.SQL(privilege), sql.Identifier(value.schema), recipient
+                )
+            )
+
+
+@pytest.mark.parametrize("privilege", ["SELECT", "UPDATE", "USAGE"])
+@pytest.mark.parametrize("grantee", ["reader", "PUBLIC"])
+def test_reader_catalog_inspection_rejects_sequence_privileges(
+    isolated_cca_read, privilege, grantee
+):
+    value = isolated_cca_read
+    pin = _synthetic_test_pin(value)
+    recipient = sql.SQL("PUBLIC") if grantee == "PUBLIC" else sql.Identifier(value.reader)
+    sequence = value.schema + ".inspection_sequence"
+    with psycopg.connect(value.dsn, autocommit=True) as bootstrap:
+        bootstrap.execute(
+            sql.SQL("CREATE SEQUENCE {}.inspection_sequence").format(sql.Identifier(value.schema))
+        )
+        bootstrap.execute(
+            sql.SQL("ALTER SEQUENCE {}.inspection_sequence OWNER TO {}").format(
+                sql.Identifier(value.schema), sql.Identifier(value.owner)
+            )
+        )
+        assert _inspect(value, pin).status == "NOT_QUALIFIED"
+        try:
+            bootstrap.execute(
+                sql.SQL("GRANT {} ON SEQUENCE {}.inspection_sequence TO {}").format(
+                    sql.SQL(privilege), sql.Identifier(value.schema), recipient
+                )
+            )
+            assert bootstrap.execute(
+                "SELECT pg_catalog.has_table_privilege("
+                "%s,%s,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER'),"
+                "pg_catalog.has_sequence_privilege(%s,%s,%s)",
+                (value.reader, sequence, value.reader, sequence, privilege),
+            ).fetchone() == (privilege != "USAGE", True)
+            assert (
+                bootstrap.execute(
+                    "SELECT 1 FROM pg_catalog.pg_class c "
+                    "JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace "
+                    "WHERE n.nspname=%s AND c.relkind IN ('r','p','v','m','f') "
+                    "AND pg_catalog.has_table_privilege("
+                    "%s,c.oid,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')",
+                    (value.schema, value.reader),
+                ).fetchone()
+                is None
+            )
+            expected = "direct sequence privileges" if privilege == "USAGE" else "direct relation"
+            with pytest.raises(IndependentCCAReaderCatalogError, match=expected):
+                _inspect(value, pin)
+        finally:
+            bootstrap.execute(
+                sql.SQL("REVOKE {} ON SEQUENCE {}.inspection_sequence FROM {}").format(
+                    sql.SQL(privilege), sql.Identifier(value.schema), recipient
+                )
+            )
+
+
 def test_reader_catalog_inspection_rejects_unreviewed_definer_search_path(
     isolated_cca_read,
 ):
@@ -169,9 +254,9 @@ def test_reader_catalog_inspection_rejects_unreviewed_definer_search_path(
     with psycopg.connect(value.dsn, autocommit=True) as bootstrap:
         try:
             bootstrap.execute(
-                sql.SQL(
-                    "ALTER FUNCTION {}.read_exact_close(text) SET search_path = public"
-                ).format(sql.Identifier(value.schema))
+                sql.SQL("ALTER FUNCTION {}.read_exact_close(text) SET search_path = public").format(
+                    sql.Identifier(value.schema)
+                )
             )
             with pytest.raises(IndependentCCAReaderCatalogError, match="search_path"):
                 _inspect(value, pin)

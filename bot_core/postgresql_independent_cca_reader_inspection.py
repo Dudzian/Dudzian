@@ -209,6 +209,29 @@ def _check_catalog(conn: psycopg.Connection[Any], pin: IndependentCCAReaderCatal
         is None,
         "CCA reader has direct relation privileges",
     )
+    _require(
+        conn.execute(
+            "SELECT 1 FROM pg_catalog.pg_class c "
+            "WHERE c.relnamespace=%s AND c.relkind IN ('r','p','v','m','f') "
+            "AND pg_catalog.has_any_column_privilege("
+            "%s,c.oid,'SELECT,INSERT,UPDATE,REFERENCES') LIMIT 1",
+            (schema[0], pin.reader_role),
+        ).fetchone()
+        is None,
+        "CCA reader has direct column privileges",
+    )
+    _require(
+        conn.execute(
+            "SELECT 1 FROM pg_catalog.pg_class c "
+            # CASE guards the sequence-only function against predicate reordering.
+            "WHERE c.relnamespace=%s AND CASE WHEN c.relkind='S' "
+            "THEN pg_catalog.has_sequence_privilege("
+            "%s,c.oid,'USAGE,SELECT,UPDATE') ELSE false END LIMIT 1",
+            (schema[0], pin.reader_role),
+        ).fetchone()
+        is None,
+        "CCA reader has direct sequence privileges",
+    )
 
 
 def inspect_independent_cca_reader_catalog(
