@@ -145,6 +145,8 @@ def _compare_original(response: Any, expected: SyntheticCloseExpectation) -> str
     _require(
         type(document) is dict
         and set(document) == _REQUEST_KEYS
+        and type(document["generation"]) is int
+        and document["generation"] > 0
         and document
         == {
             "operation_id": expected.operation_id,
