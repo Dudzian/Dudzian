@@ -294,3 +294,16 @@ disposable Linux container (default capabilities; no privileged container). It
 forks two signer identities and an issuer, tests actual Unix DAC and peer
 credentials, and uses only synthetic fixture files. Ordinary non-root CI skips
 it; this is separate from installed systemd/native-keyring qualification.
+
+S9-RPI-06 adds the read-only `authenticated_custody_mutation_source.py`
+protocol verifier to configured mypy Linux/Win32, explicit Ruff formatting and
+both raw coverage inventories of the existing atomic/history qualification.
+Its security tests and the separate controlled TEST source process harness run
+in the serial `atomic-root-proof-commit` job. The exact CI inventory contract
+requires these additions while retaining all earlier tests, the existing job
+timeouts and the 70% changed-code coverage threshold. The TEST harness has no
+production admission, provisioning or completion capability; matching a fixture
+Ed25519 signature does not qualify execution, durability or an installed trust
+anchor. Real PostgreSQL 16 and the existing root Linux DAC/peer harness remain
+separate regression evidence. See
+[the S9-RPI-06 protocol and qualification limits](architecture/stage9_authenticated_custody_mutation_source.md).
