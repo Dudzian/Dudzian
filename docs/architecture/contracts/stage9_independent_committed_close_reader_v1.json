@@ -34,12 +34,13 @@
     "caller_selected_role_catalog_or_trust_anchor_accepted": false,
     "direct_table_select_or_dml_granted": false,
     "schema_role_membership_allowed": false,
-    "no_credential_sharing_with_source_or_signer": true
+    "no_credential_sharing_with_source_or_signer": true,
+    "reader_only_executes_reviewed_locking_function": true
   },
   "read_contract": {
     "future_sql_entrypoint": "REVIEW_REQUIRED_NO_ENTRYPOINT_INSTALLED",
     "isolation": "READ COMMITTED",
-    "transaction_read_only": true,
+    "transaction_read_only": false,
     "independent_transaction_after_closed_commit": true,
     "acquire_exact_slot_lock_before_state_read": true,
     "lock_held_through_exact_source_comparison": true,
@@ -83,7 +84,10 @@
     "read_result_must_be_exactly_one": true,
     "unknown_or_uncommitted_close_is_error": true,
     "snapshot_only_or_double_policy_read_is_not_lifecycle_fence": true,
-    "no_signing_mutation_or_completion_publication": true
+    "no_signing_mutation_or_completion_publication": true,
+    "row_lock_requires_read_write_transaction": true,
+    "locking_execution_context": "REVIEWED_SECURITY_DEFINER_WITH_MINIMAL_EXECUTE_ONLY_READER",
+    "row_locking_sql_owner_must_be_separate_from_cca_direct_login": true
   },
   "failure_policy": {
     "not_found": "OUTCOME_UNKNOWN_NO_RETRY_AUTHORIZATION",
@@ -111,6 +115,7 @@
     "PROTECTED_EXACT_PHYSICAL_DB_AND_CATALOG_PIN",
     "DEDICATED_ROLE_OID_AND_DIRECT_PEER_LOGIN",
     "NO_CROSS_ROLE_MEMBERSHIP_OR_ALTERNATE_WRITE_PORT",
+    "READ_WRITE_TRANSACTION_FOR_ROW_LOCKING_WITH_ZERO_READER_DIRECT_DML",
     "READ_COMMITTED_SLOT_SYNCHRONIZATION_UNDER_REAL_CONTENTION",
     "POSTGRESQL_COMMIT_RESPONSE_LOSS_AND_RECOVERY",
     "EXACT_JSONB_TEXT_BYTES_AND_REQUEST_DIGEST",
