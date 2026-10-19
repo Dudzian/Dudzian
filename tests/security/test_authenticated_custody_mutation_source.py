@@ -159,6 +159,20 @@ def test_event_and_policy_own_immutable_exact_originals(source_case):
         b'{"x":' + b"[" * 32 + b"0" + b"]" * 32 + b"}",
         b" " * (8 * 1024 * 1024 + 1),
     ],
+    ids=[
+        "empty",
+        "empty-object",
+        "null",
+        "empty-array",
+        "invalid-utf8",
+        "nan",
+        "infinity",
+        "huge-exponent",
+        "float",
+        "unmatched-braces",
+        "excessive-nesting",
+        "oversized-eight-megabytes",
+    ],
 )
 @pytest.mark.parametrize("kind", ["event", "policy"])
 def test_malformed_nonfinite_deep_or_unbounded_input_fails_closed(raw, kind):
