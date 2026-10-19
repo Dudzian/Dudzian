@@ -244,12 +244,14 @@ def test_exact_committed_jsonb_text_and_independent_xid(isolated_cca_read):
             assert result["operation_id"] == "rpi10-close-1"
             # Original bytes mean the retained PostgreSQL jsonb::text rendering,
             # not client JSON or Python canonical_json_bytes serialization.
-            assert conn.execute(
-                sql.SQL("SELECT request::text FROM {}.operations WHERE operation_id=%s").format(
-                    sql.Identifier(value.schema)
-                ),
-                ("rpi10-close-1",),
-            ).fetchone()[0] == result["request_text"]
+            with psycopg.connect(value.dsn, autocommit=True) as bootstrap:
+                retained_in_database = bootstrap.execute(
+                    sql.SQL(
+                        "SELECT request::text FROM {}.operations WHERE operation_id=%s"
+                    ).format(sql.Identifier(value.schema)),
+                    ("rpi10-close-1",),
+                ).fetchone()[0]
+            assert retained_in_database == result["request_text"]
 
 
 @pytest.mark.parametrize("role", ["source", "stranger"])
@@ -278,11 +280,6 @@ def test_cca_has_no_direct_table_access_or_mutation(isolated_cca_read):
 def test_public_execute_closed_and_only_pinned_reader_granted(isolated_cca_read):
     value = isolated_cca_read
     with psycopg.connect(value.dsn, autocommit=True) as conn:
-        function_id = conn.execute(
-            sql.SQL("SELECT {}.read_exact_close(text) FROM pg_catalog.pg_class LIMIT 0")
-            .format(sql.Identifier(value.schema))
-        ) if False else None
-        del function_id  # No fixture row or function call is required for ACL inspection.
         rows = conn.execute(
             "SELECT r.rolname,a.grantee,a.privilege_type FROM pg_catalog.pg_proc p "
             "JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace "
@@ -291,9 +288,24 @@ def test_public_execute_closed_and_only_pinned_reader_granted(isolated_cca_read)
             "WHERE n.nspname=%s AND p.proname='read_exact_close'",
             (value.schema,),
         ).fetchall()
-        assert rows == [(value.reader, conn.execute(
-            "SELECT oid FROM pg_catalog.pg_roles WHERE rolname=%s", (value.reader,)
-        ).fetchone()[0], "EXECUTE")]
+        explicit_execute = {name for name, oid, privilege in rows if privilege == "EXECUTE"}
+        assert value.reader in explicit_execute
+        assert explicit_execute <= {value.reader, value.owner}
+        assert all(oid != 0 for _, oid, _ in rows)
+        assert value.source not in explicit_execute
+        assert value.stranger not in explicit_execute
+        attributes = conn.execute(
+            "SELECT p.prosecdef,p.proconfig,p.proowner FROM pg_catalog.pg_proc p "
+            "JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace "
+            "WHERE n.nspname=%s AND p.proname='read_exact_close'",
+            (value.schema,),
+        ).fetchone()
+        assert attributes[0] is True
+        assert attributes[1] == [f"search_path=pg_catalog, {value.schema}, pg_temp"]
+        owner_oid = conn.execute(
+            "SELECT oid FROM pg_catalog.pg_roles WHERE rolname=%s", (value.owner,)
+        ).fetchone()[0]
+        assert attributes[2] == owner_oid
 
 
 def test_read_committed_required_and_missing_operation_fails_closed(isolated_cca_read):
