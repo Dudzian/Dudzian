@@ -82,6 +82,7 @@ STAGE9_PRODUCTION_ATOMIC_TESTS = {
     "tests/security/test_retained_source_original_lookup.py",
     "tests/security/test_authenticated_custody_source_processes.py",
     "tests/security/test_retained_source_real_linux_disk_bridge.py",
+    "tests/security/test_retained_source_test_floor_witness.py",
     "tests/security/test_independent_cca_decision.py",
     "tests/security/test_cca_durable_decision_log.py",
     "tests/architecture/test_stage9_independent_cca_boundary.py",
@@ -226,6 +227,16 @@ def test_root_proof_transaction_scope_addendum_has_explicit_format_scope():
 
 def test_independent_close_reader_contract_has_explicit_format_scope():
     relative_path = "tests/architecture/test_stage9_independent_committed_close_reader_contract.py"
+    quality = _jobs()["quality-ratchet"]
+    format_tokens = shlex.split(
+        _step(quality, "Format Stage 9 signing and credential substrate")["run"]
+    )
+    assert format_tokens[:5] == ["python", "-m", "ruff", "format", "--check"]
+    assert format_tokens.count(relative_path) == 1
+
+
+def test_real_linux_source_floor_witness_has_explicit_format_scope():
+    relative_path = "tests/security/test_retained_source_test_floor_witness.py"
     quality = _jobs()["quality-ratchet"]
     format_tokens = shlex.split(
         _step(quality, "Format Stage 9 signing and credential substrate")["run"]
