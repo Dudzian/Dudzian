@@ -73,6 +73,37 @@ oraz próbę odczytu przez obcy principal. Trzeba też zintegrować
 credential eligibility, source lease i trwały CCA log. Testy kontraktowe
 nie zastępują tych dowodów.
 
+Kontrakt wymaga następujących zabezpieczeń przyszłej funkcji
+`SECURITY DEFINER`:
+
+- Stały, zweryfikowany w review `search_path` musi być zadeklarowany na
+  samej funkcji: najpierw `pg_catalog`, następnie wyłącznie zatwierdzone,
+  chronione schematy przypiętego katalogu, a jawne `pg_temp` na końcu.
+  Nie wolno korzystać z `$user`, `public`, niezaufanych schematów ani
+  ścieżki wywołującego lub sesji. Pominięcie `pg_temp` jest niedopuszczalne,
+  ponieważ PostgreSQL może wtedy przeszukiwać schemat tymczasowy przed
+  pozostałymi schematami dla relacji i typów. Segment kontraktu
+  `REVIEWED_INSTALLATION_PINNED_TRUSTED_SCHEMAS` oznacza zatwierdzone
+  schematy, w których nieuprawnieni nie mają `CREATE`; nie jest nazwą SQL.
+- `EXECUTE` musi zostać odebrane `PUBLIC` i wszystkim nieuprawnionym
+  principalom, a następnie nadane wyłącznie właściwemu, instalacyjnie
+  przypiętemu direct-login principalowi CCA, zweryfikowanemu przez OID
+  oraz istniejące piny peer authentication, fizycznej bazy i katalogu.
+  Szeroki grant ani dostęp odziedziczony przez nieuprawnione role nie
+  spełniają kontraktu; dotyczy to także obejścia przez `SET ROLE` i starych
+  grantów zachowanych przez `CREATE OR REPLACE`. Wyłączność dotyczy grantów
+  `EXECUTE`, przy zachowaniu odrębnego, zaufanego właściciela funkcji.
+- `CREATE`, `REVOKE` i `GRANT` muszą należeć do jednej atomowej transakcji
+  instalacyjnej, z kompletem ograniczeń przed `COMMIT` i bez okna
+  nieautoryzowanego `EXECUTE`. Błąd dowolnego kroku wymaga rollbacku
+  całej instalacji.
+
+Kwalifikacja musi odrzucać zmianę kolejności lub poluzowanie `search_path`,
+pominięcie `pg_temp`, zachowanie nieuprawnionego `EXECUTE`, grant dla
+nieprzypiętego lub niewłaściwego principala oraz publikację funkcji przed
+zakończeniem ograniczania dostępu. Są to wymagania projektowe przyszłej
+instalacji; ten kontrakt nie tworzy funkcji SQL, konta PostgreSQL ani migracji.
+
 Testy w
 [`test_stage9_independent_committed_close_reader_contract.py`](../../tests/architecture/test_stage9_independent_committed_close_reader_contract.py)
 sprawdzają zamkniętą specyfikację, niebezpieczne mutacje, status Stage 9,

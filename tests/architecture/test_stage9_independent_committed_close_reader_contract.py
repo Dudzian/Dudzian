@@ -17,9 +17,7 @@ from bot_core.postgresql_production_root_lifecycle_schema import (
 )
 
 ROOT = Path(__file__).resolve().parents[2]
-CONTRACT = (
-    ROOT / "docs/architecture/contracts/stage9_independent_committed_close_reader_v1.json"
-)
+CONTRACT = ROOT / "docs/architecture/contracts/stage9_independent_committed_close_reader_v1.json"
 
 
 def _unique_pairs(pairs: list[tuple[str, object]]) -> dict[str, object]:
@@ -92,9 +90,7 @@ def _validate(contract: dict) -> None:
     assert boundary["reader_principal"] == (
         "NEW_INDEPENDENT_CCA_READ_ONLY_DIRECT_LOGIN_NOT_INSTALLED"
     )
-    assert boundary["source_reader_principal"] == (
-        "DISTINCT_INSTALLED_SOURCE_READER_NOT_INSTALLED"
-    )
+    assert boundary["source_reader_principal"] == ("DISTINCT_INSTALLED_SOURCE_READER_NOT_INSTALLED")
     assert boundary["observed_reader_must_differ_from"] == [
         "LIFECYCLE_ADMINISTRATOR",
         "ISSUER_WRITER",
@@ -129,6 +125,7 @@ def _validate(contract: dict) -> None:
         "row_lock_requires_read_write_transaction",
         "locking_execution_context",
         "row_locking_sql_owner_must_be_separate_from_cca_direct_login",
+        "security_definer_requirements",
         "independent_transaction_after_closed_commit",
         "acquire_exact_slot_lock_before_state_read",
         "lock_held_through_exact_source_comparison",
@@ -159,6 +156,45 @@ def _validate(contract: dict) -> None:
         == "REVIEWED_SECURITY_DEFINER_WITH_MINIMAL_EXECUTE_ONLY_READER"
     )
     assert read["row_locking_sql_owner_must_be_separate_from_cca_direct_login"] is True
+    security_definer = read["security_definer_requirements"]
+    assert set(security_definer) == {
+        "function_local_fixed_reviewed_search_path_required",
+        "search_path_order",
+        "unauthorized_create_in_trusted_schemas_forbidden",
+        "caller_or_session_search_path_allowed",
+        "revoke_execute_from_public_required",
+        "revoke_execute_from_all_unauthorized_principals_required",
+        "execute_grant_target",
+        "execute_grants_to_other_principals_allowed",
+        "unauthorized_inherited_or_set_role_execute_allowed",
+        "create_revoke_grant_in_one_transaction_required",
+        "unauthorized_execute_window_allowed",
+        "installation_failure_requires_full_rollback",
+    }
+    assert security_definer["search_path_order"] == [
+        "pg_catalog",
+        "REVIEWED_INSTALLATION_PINNED_TRUSTED_SCHEMAS",
+        "pg_temp",
+    ]
+    assert security_definer["execute_grant_target"] == (
+        "INSTALLATION_PINNED_CCA_READER_PRINCIPAL_AND_ROLE_OID"
+    )
+    for key in (
+        "function_local_fixed_reviewed_search_path_required",
+        "unauthorized_create_in_trusted_schemas_forbidden",
+        "revoke_execute_from_public_required",
+        "revoke_execute_from_all_unauthorized_principals_required",
+        "create_revoke_grant_in_one_transaction_required",
+        "installation_failure_requires_full_rollback",
+    ):
+        assert security_definer[key] is True
+    for key in (
+        "caller_or_session_search_path_allowed",
+        "execute_grants_to_other_principals_allowed",
+        "unauthorized_inherited_or_set_role_execute_allowed",
+        "unauthorized_execute_window_allowed",
+    ):
+        assert security_definer[key] is False
     assert read["request_format"] == "PostgreSQL16/jsonb-text/UTF8"
     assert read["returned_request_bytes"] == (
         "request::text encoded UTF8 in PostgreSQL 16; never caller-wire JSON"
@@ -202,6 +238,7 @@ def _validate(contract: dict) -> None:
         "comparison_includes",
         "transaction_read_only",
         "locking_execution_context",
+        "security_definer_requirements",
     }:
         assert read[key] is True
 
@@ -316,9 +353,9 @@ def test_existing_production_sql_is_still_denying_and_admin_only() -> None:
     assert set(sources) == set(PRODUCTION_LIFECYCLE_FUNCTION_DECLARATIONS)
     assert "FOR UPDATE" in sources["read_operation(text,text,text)"]
     assert "'read committed'" in sources["read_operation(text,text,text)"]
-    assert "op.close_xid=pg_catalog.pg_current_xact_id()" in sources[
-        "read_operation(text,text,text)"
-    ]
+    assert (
+        "op.close_xid=pg_catalog.pg_current_xact_id()" in sources["read_operation(text,text,text)"]
+    )
     tombstone = sources["complete_close(text,text,bytea)"]
     assert "INDEPENDENT_CUSTODY_COMPLETION_AUTHORITY_REQUIRED" in tombstone
     assert "42501" in tombstone
@@ -363,6 +400,74 @@ def test_scope_drift_fails_closed(section: str, key: str, value: object) -> None
     modified[section][key] = value
     with pytest.raises(AssertionError):
         _validate(modified)
+
+
+@pytest.mark.parametrize(
+    "key,value",
+    [
+        ("function_local_fixed_reviewed_search_path_required", False),
+        ("unauthorized_create_in_trusted_schemas_forbidden", False),
+        ("caller_or_session_search_path_allowed", True),
+        ("revoke_execute_from_public_required", False),
+        ("revoke_execute_from_all_unauthorized_principals_required", False),
+        ("execute_grant_target", "PUBLIC"),
+        ("execute_grant_target", "CALLER_SELECTED_CCA_ROLE"),
+        ("execute_grant_target", "CCA_ROLE_NAME_WITHOUT_INSTALLATION_OR_OID_PIN"),
+        ("execute_grants_to_other_principals_allowed", True),
+        ("unauthorized_inherited_or_set_role_execute_allowed", True),
+        ("create_revoke_grant_in_one_transaction_required", False),
+        ("unauthorized_execute_window_allowed", True),
+        ("installation_failure_requires_full_rollback", False),
+        ("future_optional_bypass", True),
+    ],
+)
+def test_security_definer_requirements_cannot_be_weakened(key: str, value: object) -> None:
+    modified = deepcopy(_read())
+    modified["read_contract"]["security_definer_requirements"][key] = value
+    with pytest.raises(AssertionError):
+        _validate(modified)
+
+
+@pytest.mark.parametrize(
+    "search_path",
+    [
+        [],
+        ["pg_catalog", "REVIEWED_INSTALLATION_PINNED_TRUSTED_SCHEMAS"],
+        ["pg_temp", "pg_catalog", "REVIEWED_INSTALLATION_PINNED_TRUSTED_SCHEMAS"],
+        ["pg_catalog", "pg_temp", "REVIEWED_INSTALLATION_PINNED_TRUSTED_SCHEMAS"],
+        ["REVIEWED_INSTALLATION_PINNED_TRUSTED_SCHEMAS", "pg_temp"],
+        ["REVIEWED_INSTALLATION_PINNED_TRUSTED_SCHEMAS", "pg_catalog", "pg_temp"],
+        ["pg_catalog", "public", "pg_temp"],
+        ["pg_catalog", "$user", "pg_temp"],
+        ["pg_catalog", "UNTRUSTED_SCHEMA", "pg_temp"],
+        ["pg_catalog", "CALLER_SELECTED_SCHEMA", "pg_temp"],
+        ["pg_catalog", "SESSION_SEARCH_PATH", "pg_temp"],
+    ],
+)
+def test_security_definer_unsafe_search_path_is_rejected(search_path: list[str]) -> None:
+    modified = deepcopy(_read())
+    modified["read_contract"]["security_definer_requirements"]["search_path_order"] = search_path
+    with pytest.raises(AssertionError):
+        _validate(modified)
+
+
+def test_security_definer_requirements_are_mandatory_and_strictly_typed() -> None:
+    original = _read()
+    missing_block = deepcopy(original)
+    del missing_block["read_contract"]["security_definer_requirements"]
+    with pytest.raises(AssertionError):
+        _validate(missing_block)
+    for key, value in original["read_contract"]["security_definer_requirements"].items():
+        missing_field = deepcopy(original)
+        del missing_field["read_contract"]["security_definer_requirements"][key]
+        with pytest.raises(AssertionError):
+            _validate(missing_field)
+        if type(value) is bool:
+            for invalid in (int(value), None, str(value).lower()):
+                wrong_type = deepcopy(original)
+                wrong_type["read_contract"]["security_definer_requirements"][key] = invalid
+                with pytest.raises(AssertionError):
+                    _validate(wrong_type)
 
 
 def test_duplicate_contract_fields_are_rejected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):

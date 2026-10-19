@@ -87,7 +87,25 @@
     "no_signing_mutation_or_completion_publication": true,
     "row_lock_requires_read_write_transaction": true,
     "locking_execution_context": "REVIEWED_SECURITY_DEFINER_WITH_MINIMAL_EXECUTE_ONLY_READER",
-    "row_locking_sql_owner_must_be_separate_from_cca_direct_login": true
+    "row_locking_sql_owner_must_be_separate_from_cca_direct_login": true,
+    "security_definer_requirements": {
+      "function_local_fixed_reviewed_search_path_required": true,
+      "search_path_order": [
+        "pg_catalog",
+        "REVIEWED_INSTALLATION_PINNED_TRUSTED_SCHEMAS",
+        "pg_temp"
+      ],
+      "unauthorized_create_in_trusted_schemas_forbidden": true,
+      "caller_or_session_search_path_allowed": false,
+      "revoke_execute_from_public_required": true,
+      "revoke_execute_from_all_unauthorized_principals_required": true,
+      "execute_grant_target": "INSTALLATION_PINNED_CCA_READER_PRINCIPAL_AND_ROLE_OID",
+      "execute_grants_to_other_principals_allowed": false,
+      "unauthorized_inherited_or_set_role_execute_allowed": false,
+      "create_revoke_grant_in_one_transaction_required": true,
+      "unauthorized_execute_window_allowed": false,
+      "installation_failure_requires_full_rollback": true
+    }
   },
   "failure_policy": {
     "not_found": "OUTCOME_UNKNOWN_NO_RETRY_AUTHORIZATION",
