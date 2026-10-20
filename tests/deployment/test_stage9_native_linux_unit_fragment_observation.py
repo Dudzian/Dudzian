@@ -310,3 +310,58 @@ def test_fragment_safe_metadata_rejects_foreign_or_writable():
     assert not probe._safe_file_metadata(fake)
     fake.st_mode = stat.S_IFLNK | 0o777
     assert not probe._safe_file_metadata(fake)
+def _fake_stat(*, mode=stat.S_IFDIR | 0o755, inode=11, size=10):
+    return SimpleNamespace(
+        st_mode=mode,
+        st_uid=0,
+        st_gid=0,
+        st_dev=1,
+        st_ino=inode,
+        st_nlink=1,
+        st_size=size,
+        st_ctime_ns=100,
+        st_mtime_ns=100,
+    )
+
+
+def test_fragment_refuses_symlinked_ancestor_before_open(monkeypatch):
+    _, unit, _account = probe._PROPOSED_SYSTEMD_UNITS[0]
+    path = f"/etc/systemd/system/{unit}"
+
+    def fake_lstat(candidate):
+        if candidate == "/etc/systemd":
+            return _fake_stat(mode=stat.S_IFLNK | 0o777)
+        return _fake_stat()
+
+    def forbidden(_path):
+        pytest.fail("Unexpected unit read after ancestor refusal")
+
+    monkeypatch.setattr(probe, "os", SimpleNamespace(**(vars(os) | {"lstat": fake_lstat})))
+    monkeypatch.setattr(probe, "_hash_regular_fragment", forbidden)
+    with pytest.raises(ValueError, match="FRAGMENT_PATH_METADATA_NOT_OBSERVABLE"):
+        probe._read_fragment(path)
+
+
+def test_fragment_refuses_changed_path_metadata_after_hash(monkeypatch):
+    _, unit, _account = probe._PROPOSED_SYSTEMD_UNITS[0]
+    path = f"/etc/systemd/system/{unit}"
+    observations = []
+
+    def fake_lstat(candidate):
+        if candidate == path:
+            observations.append(candidate)
+            return _fake_stat(
+                mode=stat.S_IFREG | 0o644,
+                inode=123 if len(observations) == 1 else 124,
+            )
+        return _fake_stat()
+
+    monkeypatch.setattr(probe, "os", SimpleNamespace(**(vars(os) | {"lstat": fake_lstat})))
+    monkeypatch.setattr(
+        probe,
+        "_hash_regular_fragment",
+        lambda _path: {"sha256": "a" * 64, "size": 10},
+    )
+    with pytest.raises(ValueError, match="FRAGMENT_CHANGED_DURING_OBSERVATION"):
+        probe._read_fragment(path)
+    assert len(observations) == 2
