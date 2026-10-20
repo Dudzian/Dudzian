@@ -25,6 +25,34 @@ _KNOWN_REFERENCE_AUTHORITIES = (
     ("history_signer", "cryptohunter-history-attestation-signer"),
     ("issuer", "cryptohunter-root-proof-issuer"),
 )
+# Candidate names only; no unit is created, enabled, or considered approved.
+_PROPOSED_SYSTEMD_UNITS = (
+    ("root_source", "cryptohunter-root-custody-source.service", "ch_root_custody_source"),
+    ("history_source", "cryptohunter-history-custody-source.service", "ch_history_custody_source"),
+    ("cca", "cryptohunter-custody-completion.service", "ch_custody_completion"),
+)
+_SYSTEMD_PROPERTIES = (
+    "Id",
+    "LoadState",
+    "ActiveState",
+    "User",
+    "Group",
+    "DynamicUser",
+    "MainPID",
+    "FragmentPath",
+    "DropInPaths",
+    "SupplementaryGroups",
+    "NoNewPrivileges",
+    "PrivateNetwork",
+    "PrivateIPC",
+    "PrivateMounts",
+    "PrivateTmp",
+    "ProtectSystem",
+    "ProtectHome",
+    "RestrictAddressFamilies",
+    "CapabilityBoundingSet",
+    "AmbientCapabilities",
+)
 _BLOCKERS = (
     "INDEPENDENTLY_APPROVED_INSTALLATION_PIN_MISSING",
     "RUNTIME_SERVICE_IDENTITY_AND_SYSTEMD_NOT_OBSERVED",
@@ -189,6 +217,106 @@ def _native_accounts():
     return accounts
 
 
+def _evaluate_systemd_show(raw: str, *, unit: str, account: str):
+    """Interpret only fixed public systemd properties, never installed authority."""
+    if type(raw) is not str or len(raw) > 32768 or "\x00" in raw:
+        return {"observation": "NOT_QUALIFIED", "issues": ["MALFORMED_SYSTEMD_RESPONSE"]}
+    properties = {}
+    for line in raw.splitlines():
+        if "=" not in line:
+            return {"observation": "NOT_QUALIFIED", "issues": ["MALFORMED_SYSTEMD_RESPONSE"]}
+        name, value = line.split("=", 1)
+        if name not in _SYSTEMD_PROPERTIES or name in properties:
+            return {"observation": "NOT_QUALIFIED", "issues": ["UNEXPECTED_OR_DUPLICATE_PROPERTY"]}
+        properties[name] = value
+    if set(properties) != set(_SYSTEMD_PROPERTIES):
+        return {"observation": "NOT_QUALIFIED", "issues": ["INCOMPLETE_SYSTEMD_RESPONSE"]}
+    issues = []
+    for field, expected in (
+        ("Id", unit),
+        ("LoadState", "loaded"),
+        ("ActiveState", "active"),
+        ("User", account),
+        ("Group", account),
+        ("DynamicUser", "no"),
+        ("NoNewPrivileges", "yes"),
+        ("PrivateNetwork", "yes"),
+        ("PrivateIPC", "yes"),
+        ("PrivateMounts", "yes"),
+        ("PrivateTmp", "yes"),
+        ("ProtectSystem", "strict"),
+        ("ProtectHome", "yes"),
+        ("RestrictAddressFamilies", "AF_UNIX"),
+        ("SupplementaryGroups", ""),
+        ("CapabilityBoundingSet", ""),
+        ("AmbientCapabilities", ""),
+        ("DropInPaths", ""),
+    ):
+        if properties[field] != expected:
+            issues.append(f"{field}_NOT_MATCHED")
+    pid = properties["MainPID"]
+    if not pid.isascii() or not pid.isdecimal() or len(pid) > 10 or int(pid) <= 1:
+        issues.append("MAIN_PID_NOT_OBSERVED")
+    fragment = properties["FragmentPath"]
+    if not fragment.startswith("/") or ".." in Path(fragment).parts:
+        issues.append("UNIT_FRAGMENT_NOT_ABSOLUTE")
+    # Declared values are not kernel effective identity, trusted unit bytes,
+    # override provenance, executable fingerprint or a protected host pin.
+    return {
+        "observation": (
+            "PROPOSED_DECLARATIONS_MATCHED_ONLY" if not issues else "NOT_QUALIFIED"
+        ),
+        "issues": issues,
+    }
+
+
+def _observe_proposed_systemd_units(*, root: Path, runner=None):
+    """Read-only observation. Never invokes systemctl for a synthetic test root."""
+    roles = {role: unit for role, unit, _name in _PROPOSED_SYSTEMD_UNITS}
+    if sys.platform != "linux":
+        return {
+            role: {"unit": unit, "observation": "NOT_OBSERVED_NON_LINUX"}
+            for role, unit in roles.items()
+        }
+    if root != Path("/"):
+        return {
+            role: {"unit": unit, "observation": "NOT_OBSERVED_TEST_ROOT"}
+            for role, unit in roles.items()
+        }
+    if runner is None:
+        import subprocess
+
+        runner = subprocess.run
+    observations = {}
+    for role, unit, account in _PROPOSED_SYSTEMD_UNITS:
+        command = (
+            "/usr/bin/systemctl",
+            "--system",
+            "show",
+            "--all",
+            "--no-pager",
+            f"--property={','.join(_SYSTEMD_PROPERTIES)}",
+            unit,
+        )
+        try:
+            result = runner(
+                command,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=3,
+                env={"LC_ALL": "C", "PATH": "/usr/bin:/bin"},
+            )
+            if result.returncode != 0:
+                entry = {"observation": "NOT_QUALIFIED", "issues": ["SYSTEMD_UNAVAILABLE"]}
+            else:
+                entry = _evaluate_systemd_show(result.stdout, unit=unit, account=account)
+        except (OSError, TimeoutError):
+            entry = {"observation": "NOT_QUALIFIED", "issues": ["SYSTEMD_UNAVAILABLE"]}
+        observations[role] = {"unit": unit, **entry}
+    return observations
+
+
 def inspect_host(*, root: Path = Path("/"), accounts=None):
     """Read-only snapshot. Even all matching proposals remain PRODUCTION_NO_GO."""
     if sys.platform != "linux":
@@ -205,6 +333,7 @@ def inspect_host(*, root: Path = Path("/"), accounts=None):
                 role for role, _name in _KNOWN_REFERENCE_AUTHORITIES
             ],
             "observed_failures": ["NATIVE_LINUX_REQUIRED"],
+            "systemd_observations": _observe_proposed_systemd_units(root=root),
             "paths": {},
         }
     if accounts is None:
@@ -257,6 +386,7 @@ def inspect_host(*, root: Path = Path("/"), accounts=None):
             for role, identity in references.items()
         },
         "unobserved_reference_principals": missing,
+        "systemd_observations": _observe_proposed_systemd_units(root=root),
         "paths": paths,
         "observed_failures": issues,
         "blockers": list(_BLOCKERS),
