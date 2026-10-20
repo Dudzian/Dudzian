@@ -19,13 +19,31 @@ The only permissible fragment paths are the exact proposed unit filenames under
 Unexpected drop-ins, unrecognized fragments, inactive/wrong-user unit properties
 or malformed replies cause refusal.
 
-The observer checks each path ancestor with `lstat`, refusing symlinks,
-non-root ownership and group/other writability. The fragment is opened
-`O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK`; it must be a
-root-owned, regular, non-group-writable, single-linked file.
-Reads are bounded to 131072 bytes. The opened file's before/after metadata,
-actual byte count and path metadata are compared to detect some concurrent
-changes. A SHA-256 digest and byte length are included in the output.
+The observer opens `/` and each path ancestor with
+`O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK`, keeping every
+descriptor until the observation ends. Each child is inspected with `lstat`
+and opened relative to its retained parent descriptor. Symlinks, non-root
+ownership and group/other writability cause refusal. The fragment is opened
+relative to the final parent with `O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK`;
+it must be a root-owned, regular, non-group/other-writable, single-linked file.
+
+For every opened object, pre-open `lstat` metadata must match `fstat` metadata:
+device, inode, full mode (including file type), owner, group, link count, size,
+`ctime_ns` and `mtime_ns`. The fragment descriptor is checked before the first
+read, so an A → B → A path substitution cannot substitute B's digest for A's.
+Only that descriptor is read; it is never reopened or reread for comparison.
+Reads remain bounded to 131072 content bytes, with at most one extra byte to
+detect growth past the limit. After hashing, the observer checks byte count,
+fragment metadata, all retained directory descriptors and their parent/name
+bindings again. `atime` is excluded because the read itself can change it.
+
+Detected replacement, metadata mismatch, symlink or filesystem I/O failure
+(including failure to close) yields the fixed refusal code
+`FRAGMENT_CHANGED_DURING_OBSERVATION`, without a digest. Initial unsafe
+directory/file permissions and invalid sizes retain their separate fixed policy
+codes. All opened descriptors are registered for cleanup immediately; cleanup
+attempts every close even if one fails. Successful observations include only a
+SHA-256 digest and byte length.
 **File bytes, directives, environment variables, command arguments and raw
 paths are never published.** No private keys or runtime process memory are read.
 
@@ -42,9 +60,12 @@ never `QUALIFIED`.
 - SHA-256 alone does **not** authenticate installation provenance.
   The expected digest is neither independently approved nor stored in
   an operator-controlled trust anchor.
-- `systemctl FragmentPath` is untrusted host metadata. Root/filesystem
-  compromise, mount aliases, concurrent file replacement and ABA changes
-  are not excluded. The sequential inspections are not atomic.
+- `systemctl FragmentPath` is untrusted host metadata. Descriptor binding
+  refuses observed file/directory substitution and metadata churn, including
+  the tested A → B → A open race. It does not exclude root/filesystem compromise,
+  mount aliases or changes outside the observation window. The sequential
+  checks are not an atomic filesystem snapshot and cannot prove the absence
+  of every possible ABA change on an untrusted host/filesystem.
 - Refusal of symlinked `/lib` or otherwise noncanonical host layouts
   is a conservative diagnostic decision; no host topology is auto-approved.
 - This module does **not** attest the runtime `/proc/<pid>/exe`, command-line,

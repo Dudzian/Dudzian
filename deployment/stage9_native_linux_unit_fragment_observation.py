@@ -11,6 +11,7 @@ import json
 import os
 import stat
 import sys
+from contextlib import ExitStack
 
 from deployment.stage9_native_linux_cgroup_membership_observation import _run_systemctl
 from deployment.stage9_native_linux_process_identity_observation import (
@@ -118,60 +119,91 @@ def _safe_file_metadata(item) -> bool:
     )
 
 
-def _hash_regular_fragment(path: str) -> dict:
-    """Read only bounded regular-file bytes; never include content in reports."""
-    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK
-    fd = os.open(path, flags)
-    try:
-        before = os.fstat(fd)
-        if not _safe_file_metadata(before):
-            raise _Refusal("FRAGMENT_NOT_REGULAR_OR_SAFE")
-        if not 0 < before.st_size <= _MAX_FRAGMENT_BYTES:
+def _hash_regular_fragment(fd: int, expected) -> dict:
+    """Hash the caller-owned fd only after binding it to pre-open metadata."""
+    before = os.fstat(fd)
+    if _metadata(expected) != _metadata(before):
+        raise _Refusal("FRAGMENT_CHANGED_DURING_OBSERVATION")
+    if not _safe_file_metadata(before):
+        raise _Refusal("FRAGMENT_NOT_REGULAR_OR_SAFE")
+    if not 0 < before.st_size <= _MAX_FRAGMENT_BYTES:
+        raise _Refusal("FRAGMENT_TOO_LARGE_OR_EMPTY")
+    digest = hashlib.sha256()
+    size = 0
+    while size <= _MAX_FRAGMENT_BYTES:
+        chunk = os.read(fd, min(8192, _MAX_FRAGMENT_BYTES + 1 - size))
+        if not chunk:
+            break
+        size += len(chunk)
+        if size > _MAX_FRAGMENT_BYTES:
             raise _Refusal("FRAGMENT_TOO_LARGE_OR_EMPTY")
-        digest = hashlib.sha256()
-        size = 0
-        while size <= _MAX_FRAGMENT_BYTES:
-            chunk = os.read(fd, min(8192, _MAX_FRAGMENT_BYTES + 1 - size))
-            if not chunk:
-                break
-            size += len(chunk)
-            if size > _MAX_FRAGMENT_BYTES:
-                raise _Refusal("FRAGMENT_TOO_LARGE_OR_EMPTY")
-            digest.update(chunk)
-        after = os.fstat(fd)
-        if size != before.st_size or _metadata(before) != _metadata(after):
-            raise _Refusal("FRAGMENT_CHANGED_DURING_OBSERVATION")
-        return {"sha256": digest.hexdigest(), "size": size}
-    finally:
-        os.close(fd)
+        digest.update(chunk)
+    after = os.fstat(fd)
+    if size != before.st_size or _metadata(before) != _metadata(after):
+        raise _Refusal("FRAGMENT_CHANGED_DURING_OBSERVATION")
+    return {"sha256": digest.hexdigest(), "size": size}
 
 
 def _read_fragment(path: str) -> dict:
-    """Reject symlink/unsafe ancestors, with no claim of race-free path pinning."""
+    """Pin every path component and bind the single read to checked metadata."""
     if not any(
         path == f"{directory}/{unit}"
         for directory in _APPROVED_OBSERVATION_DIRS
         for _role, unit, _account in _PROPOSED_SYSTEMD_UNITS
     ):
         raise _Refusal("FRAGMENT_PATH_NOT_ALLOWED")
-    current = "/"
-    for part in path.split("/")[1:-1]:
-        current = os.path.join(current, part)
-        item = os.lstat(current)
-        if (
-            not stat.S_ISDIR(item.st_mode)
-            or item.st_uid != 0
-            or bool(stat.S_IMODE(item.st_mode) & 0o022)
-        ):
-            raise _Refusal("FRAGMENT_PATH_METADATA_NOT_OBSERVABLE")
-    before = os.lstat(path)
-    if not _safe_file_metadata(before):
-        raise _Refusal("FRAGMENT_NOT_REGULAR_OR_SAFE")
-    observed = _hash_regular_fragment(path)
-    after = os.lstat(path)
-    if _metadata(before) != _metadata(after):
-        raise _Refusal("FRAGMENT_CHANGED_DURING_OBSERVATION")
-    return observed
+    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK
+    parts = path.split("/")
+    try:
+        with ExitStack() as descriptors:
+            directories = []
+            parent_fd = None
+            for name in ("/", *parts[1:-1]):
+                relative = {} if parent_fd is None else {"dir_fd": parent_fd}
+                before = os.lstat(name, **relative)
+                if stat.S_ISLNK(before.st_mode):
+                    raise _Refusal("FRAGMENT_CHANGED_DURING_OBSERVATION")
+                if (
+                    not stat.S_ISDIR(before.st_mode)
+                    or before.st_uid != 0
+                    or bool(stat.S_IMODE(before.st_mode) & 0o022)
+                ):
+                    raise _Refusal("FRAGMENT_PATH_METADATA_NOT_OBSERVABLE")
+                directory_fd = os.open(name, flags | os.O_DIRECTORY, **relative)
+                descriptors.callback(os.close, directory_fd)
+                if _metadata(before) != _metadata(os.fstat(directory_fd)):
+                    raise _Refusal("FRAGMENT_CHANGED_DURING_OBSERVATION")
+                directories.append((parent_fd, name, directory_fd, before))
+                parent_fd = directory_fd
+
+            name = parts[-1]
+            before = os.lstat(name, dir_fd=parent_fd)
+            if stat.S_ISLNK(before.st_mode):
+                raise _Refusal("FRAGMENT_CHANGED_DURING_OBSERVATION")
+            if not _safe_file_metadata(before):
+                raise _Refusal("FRAGMENT_NOT_REGULAR_OR_SAFE")
+            fd = os.open(name, flags, dir_fd=parent_fd)
+            descriptors.callback(os.close, fd)
+            observed = _hash_regular_fragment(fd, before)
+
+            # Validate retained objects and their parent/name bindings, without
+            # reopening or rereading the fragment. atime is omitted deliberately:
+            # our own read can change it. ctime/mtime still detect observed churn.
+            for ancestor_fd, name, directory_fd, expected in directories:
+                relative = {} if ancestor_fd is None else {"dir_fd": ancestor_fd}
+                if _metadata(expected) != _metadata(os.fstat(directory_fd)) or _metadata(
+                    expected
+                ) != _metadata(os.lstat(name, **relative)):
+                    raise _Refusal("FRAGMENT_CHANGED_DURING_OBSERVATION")
+            if _metadata(before) != _metadata(os.fstat(fd)) or _metadata(before) != _metadata(
+                os.lstat(parts[-1], dir_fd=parent_fd)
+            ):
+                raise _Refusal("FRAGMENT_CHANGED_DURING_OBSERVATION")
+        return observed
+    except OSError as exc:
+        # Include failures to open/stat/read/close: identity was not confirmed.
+        # Only the fixed code crosses the diagnostic boundary, never OS details.
+        raise _Refusal("FRAGMENT_CHANGED_DURING_OBSERVATION") from exc
 
 
 def _sanitize_fragment(observation) -> dict:
