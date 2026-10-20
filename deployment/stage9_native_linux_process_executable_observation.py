@@ -34,6 +34,7 @@ _CODES = frozenset(
         "EXECUTABLE_OBJECT_CHANGED",
         "PROCESS_CHANGED_DURING_OBSERVATION",
         "INVALID_PROCESS_EXECUTABLE_OBSERVATION",
+        "SHARED_SYSTEMD_MAINPID_HINT",
         "PROCESS_OR_SYSTEMD_UNAVAILABLE",
         "BACKEND_OBSERVATION_FAILED",
     }
@@ -190,6 +191,7 @@ def inspect_host(*, runner=None, executable_reader=None) -> dict:
         runner = _run_systemctl
     if executable_reader is None:
         executable_reader = _read_executable
+    pid_hints = {}
     for role, unit, account in _PROPOSED_SYSTEMD_UNITS:
         try:
             command = (
@@ -216,6 +218,8 @@ def inspect_host(*, runner=None, executable_reader=None) -> dict:
                 pid = _parse_unit_hint(response.stdout, unit=unit, account=account)
             except ValueError as exc:
                 raise _Refusal("MALFORMED_SYSTEMD_RESPONSE") from exc
+            # Retain the untrusted metadata even if executable observation fails.
+            pid_hints[role] = pid
             item = _sanitize(executable_reader(pid), pid=pid)
             observed = {
                 "observation": "UNPINNED_PROC_EXECUTABLE_DIGEST_ONLY",
@@ -243,6 +247,11 @@ def inspect_host(*, runner=None, executable_reader=None) -> dict:
             result["observed_failures"].extend(
                 f"{role}.executable: {reason}" for reason in observed["issues"]
             )
+    # Sequential MainPID hints do not establish a shared process identity.
+    for index, left in enumerate(pid_hints):
+        for right in list(pid_hints)[index + 1 :]:
+            if pid_hints[left] == pid_hints[right]:
+                result["observed_failures"].append(f"{left}/{right}: SHARED_SYSTEMD_MAINPID_HINT")
     return result
 
 
