@@ -263,9 +263,7 @@ def _evaluate_systemd_show(raw: str, *, unit: str, account: str):
     # Declared values are not kernel effective identity, trusted unit bytes,
     # override provenance, executable fingerprint or a protected host pin.
     return {
-        "observation": (
-            "PROPOSED_DECLARATIONS_MATCHED_ONLY" if not issues else "NOT_QUALIFIED"
-        ),
+        "observation": ("PROPOSED_DECLARATIONS_MATCHED_ONLY" if not issues else "NOT_QUALIFIED"),
         "issues": issues,
     }
 
@@ -311,6 +309,8 @@ def _observe_proposed_systemd_units(*, root: Path, runner=None, use_host=False):
                 entry = {"observation": "NOT_QUALIFIED", "issues": ["SYSTEMD_UNAVAILABLE"]}
             else:
                 entry = _evaluate_systemd_show(result.stdout, unit=unit, account=account)
+        except UnicodeDecodeError:
+            entry = {"observation": "NOT_QUALIFIED", "issues": ["MALFORMED_SYSTEMD_RESPONSE"]}
         except (OSError, TimeoutError, subprocess.TimeoutExpired):
             entry = {"observation": "NOT_QUALIFIED", "issues": ["SYSTEMD_UNAVAILABLE"]}
         observations[role] = {"unit": unit, **entry}
@@ -362,6 +362,11 @@ def inspect_host(*, root: Path = Path("/"), accounts=None):
             }
             if observed != "MATCHED_PROPOSED_METADATA_ONLY":
                 issues.append(f"{role}.{kind}: {explanation}")
+    systemd_observations = _observe_proposed_systemd_units(root=root, use_host=use_host_systemd)
+    if use_host_systemd and root == Path("/"):
+        for role, observation in systemd_observations.items():
+            if observation["observation"] == "NOT_QUALIFIED":
+                issues.extend(f"{role}.systemd: {reason}" for reason in observation["issues"])
     return {
         "schema": "CryptoHunter.Stage9NativeLinuxSourceCCAPreflightV1",
         "status": "BLOCKED",
@@ -387,9 +392,7 @@ def inspect_host(*, root: Path = Path("/"), accounts=None):
             for role, identity in references.items()
         },
         "unobserved_reference_principals": missing,
-        "systemd_observations": _observe_proposed_systemd_units(
-            root=root, use_host=use_host_systemd
-        ),
+        "systemd_observations": systemd_observations,
         "paths": paths,
         "observed_failures": issues,
         "blockers": list(_BLOCKERS),

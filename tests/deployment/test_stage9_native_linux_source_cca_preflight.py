@@ -267,15 +267,24 @@ def test_non_linux_inventory_stops_before_native_account_lookup(monkeypatch, pla
     def unexpected_native_lookup():
         pytest.fail("non-Linux inventory must not query native accounts")
 
+    def unexpected_systemctl(*args, **kwargs):
+        pytest.fail("non-Linux inventory must not query systemctl")
+
+    import subprocess
+
     with monkeypatch.context() as patch:
         patch.setattr(sys, "platform", platform)
         patch.setattr(preflight, "_native_accounts", unexpected_native_lookup)
+        patch.setattr(subprocess, "run", unexpected_systemctl)
         result = preflight.inspect_host()
     assert result["status"] == result["production_emission"] == "BLOCKED"
     assert result["qualification"] == "NOT_QUALIFIED"
     assert result["topology"] == "PROPOSED_NOT_APPROVED"
     assert result["observed_failures"] == ["NATIVE_LINUX_REQUIRED"]
     assert result["paths"] == result["principal_observations"] == {}
+    assert {value["observation"] for value in result["systemd_observations"].values()} == {
+        "NOT_OBSERVED_NON_LINUX"
+    }
 
 
 _PROPOSED_ACCOUNTS = {
@@ -379,6 +388,7 @@ def test_cli_has_no_success_exit_and_no_installer_or_mutation_flag(monkeypatch, 
     assert json.loads(capsys.readouterr().out) == blocked
     assert not hasattr(preflight, "install") and not hasattr(preflight, "provision")
 
+
 def _systemd_show_fixture(
     unit="cryptohunter-root-custody-source.service",
     account="ch_root_custody_source",
@@ -411,9 +421,7 @@ def test_rpi23_declared_systemd_settings_are_not_kernel_proof():
     unit = "cryptohunter-root-custody-source.service"
     record = _systemd_show_fixture(unit)
     output = "".join(f"{field}={record[field]}\n" for field in preflight._SYSTEMD_PROPERTIES)
-    result = preflight._evaluate_systemd_show(
-        output, unit=unit, account="ch_root_custody_source"
-    )
+    result = preflight._evaluate_systemd_show(output, unit=unit, account="ch_root_custody_source")
     assert result == {"observation": "PROPOSED_DECLARATIONS_MATCHED_ONLY", "issues": []}
     assert "PASS" not in str(result)
 
@@ -443,9 +451,7 @@ def test_rpi23_refuses_mismatched_systemd_observations(key, value, reason):
     record = _systemd_show_fixture(unit)
     record[key] = value
     raw = "".join(f"{field}={record[field]}\n" for field in preflight._SYSTEMD_PROPERTIES)
-    observation = preflight._evaluate_systemd_show(
-        raw, unit=unit, account="ch_root_custody_source"
-    )
+    observation = preflight._evaluate_systemd_show(raw, unit=unit, account="ch_root_custody_source")
     assert observation["observation"] == "NOT_QUALIFIED"
     assert reason in observation["issues"]
 
@@ -468,9 +474,7 @@ def test_rpi23_rejects_malformed_systemd_show(mutation, expected):
         raw = raw.replace("User=ch_root_custody_source\n", "")
     else:
         raw += mutation
-    result = preflight._evaluate_systemd_show(
-        raw, unit=unit, account="ch_root_custody_source"
-    )
+    result = preflight._evaluate_systemd_show(raw, unit=unit, account="ch_root_custody_source")
     assert result["observation"] == "NOT_QUALIFIED"
     assert expected in result["issues"]
 
@@ -485,7 +489,8 @@ def test_rpi23_uses_only_fixed_readonly_systemctl_queries():
     def fixed_runner(command, **kwargs):
         unit = command[6]
         account = next(
-            name for _role, known_unit, name in preflight._PROPOSED_SYSTEMD_UNITS
+            name
+            for _role, known_unit, name in preflight._PROPOSED_SYSTEMD_UNITS
             if known_unit == unit
         )
         calls.append((command, kwargs))
@@ -498,9 +503,7 @@ def test_rpi23_uses_only_fixed_readonly_systemctl_queries():
             stdout="".join(f"{field}={data[field]}\n" for field in preflight._SYSTEMD_PROPERTIES),
         )
 
-    observations = preflight._observe_proposed_systemd_units(
-        root=Path("/"), runner=fixed_runner
-    )
+    observations = preflight._observe_proposed_systemd_units(root=Path("/"), runner=fixed_runner)
     assert len(calls) == 3
     assert set(observations) == {"root_source", "history_source", "cca"}
     assert all(
@@ -518,9 +521,7 @@ def test_rpi23_test_fixtures_do_not_call_host_systemctl(tmp_path):
         result = preflight._observe_proposed_systemd_units(
             root=root, runner=forbidden if root != Path("/") else None
         )
-        assert {value["observation"] for value in result.values()} == {
-            "NOT_OBSERVED_TEST_FIXTURE"
-        }
+        assert {value["observation"] for value in result.values()} == {"NOT_OBSERVED_TEST_FIXTURE"}
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="Linux systemctl absence")
@@ -530,10 +531,150 @@ def test_rpi23_systemctl_failure_is_not_approved():
     def timeout(*args, **kwargs):
         raise subprocess.TimeoutExpired(cmd="systemctl", timeout=3)
 
-    observed = preflight._observe_proposed_systemd_units(
-        root=Path("/"), runner=timeout
-    )
+    observed = preflight._observe_proposed_systemd_units(root=Path("/"), runner=timeout)
     assert all(v["observation"] == "NOT_QUALIFIED" for v in observed.values())
     assert all(v["issues"] == ["SYSTEMD_UNAVAILABLE"] for v in observed.values())
 
 
+@pytest.fixture
+def rpi23_host_metadata(monkeypatch):
+    accounts = {**_PROPOSED_ACCOUNTS, **_REFERENCE_ACCOUNTS}
+    monkeypatch.setattr(preflight, "_native_accounts", lambda: accounts)
+    monkeypatch.setattr(
+        preflight,
+        "_inspect_directory",
+        lambda *args, **kwargs: ("MATCHED_PROPOSED_METADATA_ONLY", "no private contents inspected"),
+    )
+    return accounts
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux host systemd observation")
+@pytest.mark.parametrize("role,unit,account", preflight._PROPOSED_SYSTEMD_UNITS)
+@pytest.mark.parametrize(
+    ("failure", "reason"),
+    [
+        ("wrong-user", "User_NOT_MATCHED"),
+        ("public-network", "PrivateNetwork_NOT_MATCHED"),
+        ("missing-private-network", "INCOMPLETE_SYSTEMD_RESPONSE"),
+        ("unavailable", "SYSTEMD_UNAVAILABLE"),
+    ],
+)
+def test_rpi23_host_systemd_failures_reach_main_report(
+    monkeypatch, rpi23_host_metadata, role, unit, account, failure, reason
+):
+    import subprocess
+
+    calls = []
+
+    def observe(command, **kwargs):
+        observed_unit = command[6]
+        calls.append(observed_unit)
+        observed_account = next(
+            name
+            for _role, known_unit, name in preflight._PROPOSED_SYSTEMD_UNITS
+            if known_unit == observed_unit
+        )
+        record = _systemd_show_fixture(observed_unit, observed_account)
+        returncode = 0
+        if observed_unit == unit:
+            assert observed_account == account
+            if failure == "wrong-user":
+                record["User"] = "cryptohunter-root-proof-signer"
+            elif failure == "public-network":
+                record["PrivateNetwork"] = "no"
+            elif failure == "missing-private-network":
+                del record["PrivateNetwork"]
+            else:
+                returncode = 1
+        return SimpleNamespace(
+            returncode=returncode,
+            stdout="".join(f"{field}={value}\n" for field, value in record.items()),
+        )
+
+    monkeypatch.setattr(subprocess, "run", observe)
+    result = preflight.inspect_host()
+    assert calls == [
+        known_unit for _role, known_unit, _account in preflight._PROPOSED_SYSTEMD_UNITS
+    ]
+    assert result["observed_failures"] == [f"{role}.systemd: {reason}"]
+    assert result["systemd_observations"][role] == {
+        "unit": unit,
+        "observation": "NOT_QUALIFIED",
+        "issues": [reason],
+    }
+    assert all(
+        observation["observation"] == "PROPOSED_DECLARATIONS_MATCHED_ONLY"
+        for observed_role, observation in result["systemd_observations"].items()
+        if observed_role != role
+    )
+    assert result["status"] == result["production_emission"] == "BLOCKED"
+    assert result["qualification"] == "NOT_QUALIFIED"
+    assert result["topology"] == "PROPOSED_NOT_APPROVED"
+    assert result["blockers"] == list(preflight._BLOCKERS)
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux fixture systemd isolation")
+@pytest.mark.parametrize(
+    ("native_root", "fixture_accounts"),
+    [(False, True), (True, True), (False, False)],
+    ids=[
+        "fixture-root-and-accounts",
+        "native-root-fixture-accounts",
+        "fixture-root-native-accounts",
+    ],
+)
+def test_rpi23_inspect_host_fixtures_do_not_observe_or_report_host_systemd(
+    tmp_path, monkeypatch, rpi23_host_metadata, native_root, fixture_accounts
+):
+    import subprocess
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("fixture unexpectedly called host systemctl")
+
+    monkeypatch.setattr(subprocess, "run", forbidden)
+    result = preflight.inspect_host(
+        root=Path("/") if native_root else tmp_path,
+        accounts=rpi23_host_metadata if fixture_accounts else None,
+    )
+    assert result["observed_failures"] == []
+    assert {value["observation"] for value in result["systemd_observations"].values()} == {
+        "NOT_OBSERVED_TEST_FIXTURE"
+    }
+    assert result["status"] == result["production_emission"] == "BLOCKED"
+    assert result["qualification"] == "NOT_QUALIFIED"
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux systemctl decoding failure")
+def test_rpi23_malformed_systemctl_encoding_fails_closed_without_traceback(
+    monkeypatch, rpi23_host_metadata, capsys
+):
+    import subprocess
+
+    calls = []
+
+    def invalid_encoding(command, **kwargs):
+        calls.append(command[6])
+        raise UnicodeDecodeError("utf-8", b"private-response-\xff", 17, 18, "invalid host response")
+
+    monkeypatch.setattr(subprocess, "run", invalid_encoding)
+    assert preflight.main() == 2
+    captured = capsys.readouterr()
+    result = json.loads(captured.out)
+    assert captured.err == ""
+    assert "private-response" not in captured.out
+    assert "invalid host response" not in captured.out
+    assert "UnicodeDecodeError" not in captured.out
+    assert calls == [unit for _role, unit, _account in preflight._PROPOSED_SYSTEMD_UNITS]
+    assert result["observed_failures"] == [
+        f"{role}.systemd: MALFORMED_SYSTEMD_RESPONSE"
+        for role, _unit, _account in preflight._PROPOSED_SYSTEMD_UNITS
+    ]
+    assert all(
+        value["observation"] == "NOT_QUALIFIED"
+        and value["issues"] == ["MALFORMED_SYSTEMD_RESPONSE"]
+        for value in result["systemd_observations"].values()
+    )
+    assert result["status"] == result["production_emission"] == "BLOCKED"
+    assert result["qualification"] == "NOT_QUALIFIED"
+    assert result["topology"] == "PROPOSED_NOT_APPROVED"
+    assert result["blockers"] == list(preflight._BLOCKERS)
