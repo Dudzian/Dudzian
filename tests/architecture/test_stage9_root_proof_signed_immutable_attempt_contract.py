@@ -165,7 +165,10 @@ def _assert_local_issuance_execution_ownership(sources):
         },
     }
     while True:
-        before = (set(consumers), {key: frozenset(value) for key, value in retained_exports.items()})
+        before = (
+            set(consumers),
+            {key: frozenset(value) for key, value in retained_exports.items()},
+        )
         for module, (path, tree) in parsed_sources.items():
             for node in ast.walk(tree):
                 if not isinstance(node, ast.ImportFrom):
@@ -183,7 +186,10 @@ def _assert_local_issuance_execution_ownership(sources):
             # independently of spelling its opaque class name.
             if "bot_core.licensing.cha_root_proof_signed_attempt" in dependencies[module]:
                 consumers.add(module)
-        after = (set(consumers), {key: frozenset(value) for key, value in retained_exports.items()})
+        after = (
+            set(consumers),
+            {key: frozenset(value) for key, value in retained_exports.items()},
+        )
         if before == after:
             break
 
@@ -333,6 +339,23 @@ def _passive_diagnostic_sources(transport):
             "    return identities.identity(), request.attempt_id\n"
         ),
     }
+
+
+def test_unrelated_application_transport_does_not_inherit_issuer_request_taint():
+    """Importing ordinary issuer storage DTOs must not taint exchange networking."""
+    _assert_local_issuance_execution_ownership(
+        {
+            "bot_core/retained_attempt_api.py": (
+                "from bot_core.cha_attempt_signatures import "
+                "RetainedIssuanceRequest as Request\n"
+            ),
+            "bot_core/market_data_gateway.py": "import grpc\n",
+            "bot_core/application_runtime.py": (
+                "from bot_core.cha_attempt_store import AttemptState\n"
+                "from bot_core.market_data_gateway import get_prices\n"
+            ),
+        }
+    )
 
 
 @pytest.mark.parametrize("transport", sorted(_TRANSPORT_IMPORTS))
