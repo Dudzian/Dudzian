@@ -310,3 +310,212 @@ def test_malformed_backend_refusal_code_fails_closed_without_crash():
         row["issues"] == ["BACKEND_OBSERVATION_FAILED"]
         for row in report["pidfd_observations"].values()
     )
+
+
+@pytest.fixture
+def simulated_pidfd_lifetime(monkeypatch, tmp_path):
+    """Exercise real descriptor cleanup while injecting predictable kernel events."""
+    if sys.platform != "linux":
+        pytest.skip("Synthetic Linux pidfd lifetime")
+    native_open, native_close = os.open, os.close
+    opened, closed, events = [], [], []
+    settings = {"pidfd_open_error": False, "proc_open_error": False, "close_error": False}
+
+    def fake_pidfd_open(pid, flags):
+        assert (pid, flags) == (4321, 0)
+        if settings["pidfd_open_error"]:
+            raise PermissionError("PRIVATE_EXECUTABLE_SECRET")
+        fd = native_open("/dev/null", os.O_RDONLY)
+        opened.append(fd)
+        return fd
+
+    def fake_open(path, flags, *, dir_fd=None):
+        assert path == "/proc/4321"
+        if settings["proc_open_error"]:
+            raise PermissionError("PRIVATE_EXECUTABLE_SECRET")
+        fd = native_open(tmp_path, flags, dir_fd=dir_fd)
+        opened.append(fd)
+        return fd
+
+    def fake_close(fd):
+        native_close(fd)
+        closed.append(fd)
+        if settings["close_error"]:
+            settings["close_error"] = False
+            raise OSError("PRIVATE_EXECUTABLE_SECRET")
+
+    mock_os = SimpleNamespace(
+        **(vars(os) | {
+            "pidfd_open": fake_pidfd_open,
+            "open": fake_open,
+            "close": fake_close,
+        })
+    )
+    monkeypatch.setattr(probe, "os", mock_os)
+    monkeypatch.setattr(probe, "_read_proc_file", lambda fd, name: b"synthetic stat")
+    monkeypatch.setattr(probe, "_parse_stat", lambda raw, pid: 76543)
+    monkeypatch.setattr(
+        probe, "_poll_liveness", lambda _fd: events.append("poll")
+    )
+    monkeypatch.setattr(
+        probe, "_read_pidfd_fdinfo", lambda _fd, *, pid: events.append("fdinfo")
+    )
+    fixture = SimpleNamespace(
+        settings=settings, opened=opened, closed=closed, events=events
+    )
+    yield fixture
+    assert sorted(opened) == sorted(closed)
+    for fd in closed:
+        with pytest.raises(OSError):
+            os.fstat(fd)
+
+
+def test_pidfd_lifetime_happy_path_checks_both_ends(simulated_pidfd_lifetime):
+    fs = simulated_pidfd_lifetime
+    observed = probe._read_pidfd_lifetime(4321)
+    assert observed == {
+        "pid": 4321, "start_time_ticks": 76543, "pidfd_poll_alive": True
+    }
+    assert fs.events == ["poll", "fdinfo", "fdinfo", "poll"]
+
+
+def test_process_exit_between_first_and_second_poll_refuses(simulated_pidfd_lifetime, monkeypatch):
+    fs = simulated_pidfd_lifetime
+
+    def poll(_pidfd):
+        fs.events.append("poll")
+        if fs.events.count("poll") == 2:
+            raise probe._Refusal("PIDFD_NOT_LIVE")
+
+    monkeypatch.setattr(probe, "_poll_liveness", poll)
+    with pytest.raises(probe._Refusal, match="^PIDFD_NOT_LIVE$"):
+        probe._read_pidfd_lifetime(4321)
+    assert fs.events == ["poll", "fdinfo", "fdinfo", "poll"]
+
+
+def test_second_fdinfo_pid_change_is_rejected(simulated_pidfd_lifetime, monkeypatch):
+    fs = simulated_pidfd_lifetime
+
+    def fdinfo(_pidfd, *, pid):
+        fs.events.append("fdinfo")
+        value = 4321 if fs.events.count("fdinfo") == 1 else 9876
+        probe._parse_pidfd_fdinfo(f"Pid:\t{value}\n".encode(), pid=pid)
+
+    monkeypatch.setattr(probe, "_read_pidfd_fdinfo", fdinfo)
+    with pytest.raises(probe._Refusal, match="^PIDFD_PID_NOT_MATCHED$"):
+        probe._read_pidfd_lifetime(4321)
+    assert fs.events == ["poll", "fdinfo", "fdinfo"]
+
+
+def test_procfs_starttime_change_is_refused(simulated_pidfd_lifetime, monkeypatch):
+    reads = []
+
+    def stat(_raw, _pid):
+        reads.append(len(reads))
+        return 76543 + reads[-1]
+
+    monkeypatch.setattr(probe, "_parse_stat", stat)
+    with pytest.raises(probe._Refusal, match="^PROCESS_CHANGED_DURING_OBSERVATION$"):
+        probe._read_pidfd_lifetime(4321)
+    assert len(reads) == 2
+
+
+@pytest.mark.parametrize(
+    "operation,expected",
+    [
+        ("pidfd_open_error", "PIDFD_OPEN_UNAVAILABLE"),
+        ("proc_open_error", "PIDFD_PROCFS_UNAVAILABLE"),
+        ("close_error", "PIDFD_CLOSE_FAILED"),
+    ],
+)
+def test_native_error_codes_are_specific_to_failure_stage(
+    simulated_pidfd_lifetime, operation, expected
+):
+    fs = simulated_pidfd_lifetime
+    fs.settings[operation] = True
+    with pytest.raises(probe._Refusal, match=f"^{expected}$"):
+        probe._read_pidfd_lifetime(4321)
+    if operation == "pidfd_open_error":
+        assert not fs.opened
+    elif operation == "proc_open_error":
+        assert len(fs.opened) == 1
+    else:
+        assert len(fs.opened) == 2
+
+
+def test_proc_stat_read_error_is_not_pidfd_open_error(
+    simulated_pidfd_lifetime, monkeypatch
+):
+    def unavailable(_fd, _name):
+        raise OSError("PRIVATE_EXECUTABLE_SECRET")
+
+    monkeypatch.setattr(probe, "_read_proc_file", unavailable)
+    with pytest.raises(probe._Refusal, match="^PIDFD_PROCFS_UNAVAILABLE$"):
+        probe._read_pidfd_lifetime(4321)
+
+
+@pytest.mark.parametrize("stage", ["open", "read", "close"])
+def test_fdinfo_io_errors_are_separate_from_pidfd_open(
+    monkeypatch, tmp_path, stage
+):
+    original_open, original_read, original_close = os.open, os.read, os.close
+    opened, closed = [], []
+    fixture = tmp_path / "fdinfo"
+    fixture.write_bytes(b"Pid:\t4321\n")
+
+    def fdinfo_open(path, flags):
+        assert path == "/proc/self/fdinfo/99"
+        if stage == "open":
+            raise PermissionError("PRIVATE_EXECUTABLE_SECRET")
+        fd = original_open(fixture, flags)
+        opened.append(fd)
+        return fd
+
+    def fdinfo_read(fd, length):
+        if stage == "read":
+            raise OSError("PRIVATE_EXECUTABLE_SECRET")
+        return original_read(fd, length)
+
+    def fdinfo_close(fd):
+        original_close(fd)
+        closed.append(fd)
+        if stage == "close":
+            raise OSError("PRIVATE_EXECUTABLE_SECRET")
+
+    monkeypatch.setattr(
+        probe,
+        "os",
+        SimpleNamespace(
+            **(vars(os) | {
+                "open": fdinfo_open,
+                "read": fdinfo_read,
+                "close": fdinfo_close,
+            })
+        ),
+    )
+    expected = "PIDFD_CLOSE_FAILED" if stage == "close" else "PIDFD_FDINFO_UNAVAILABLE"
+    with pytest.raises(probe._Refusal, match=f"^{expected}$"):
+        probe._read_pidfd_fdinfo(99, pid=4321)
+    assert opened == closed
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Synthetic Linux host inventory")
+def test_error_classification_is_exported_as_fixed_refusal_codes():
+    failures = {
+        4321: "PIDFD_OPEN_UNAVAILABLE",
+        4322: "PIDFD_FDINFO_UNAVAILABLE",
+        4323: "PIDFD_PROCFS_UNAVAILABLE",
+    }
+
+    def failed_reader(pid):
+        raise probe._Refusal(failures[pid])
+
+    report = probe.inspect_host(
+        runner=_runner_for([4321, 4322, 4323]), lifetime_reader=failed_reader
+    )
+    _blocked(report)
+    assert [
+        item["issues"]
+        for item in report["pidfd_observations"].values()
+    ] == [[failure] for failure in failures.values()]
+    assert len(report["observed_failures"]) == 3
