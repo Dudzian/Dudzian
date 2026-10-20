@@ -88,6 +88,7 @@ STAGE9_PRODUCTION_ATOMIC_TESTS = {
     "tests/security/test_source_cca_cryptographic_chain_linux.py",
     "tests/security/test_cca_credential_lifecycle_chain_linux.py",
     "tests/deployment/test_stage9_native_linux_source_cca_preflight.py",
+    "tests/deployment/test_stage9_native_linux_process_identity_observation.py",
     "tests/security/test_independent_cca_decision.py",
     "tests/security/test_cca_durable_decision_log.py",
     "tests/architecture/test_stage9_independent_cca_boundary.py",
@@ -248,7 +249,9 @@ def test_native_linux_source_cca_preflight_has_explicit_format_scope():
     assert format_tokens[:5] == ["python", "-m", "ruff", "format", "--check"]
     for path in (
         "deployment/stage9_native_linux_source_cca_preflight.py",
+        "deployment/stage9_native_linux_process_identity_observation.py",
         "tests/deployment/test_stage9_native_linux_source_cca_preflight.py",
+        "tests/deployment/test_stage9_native_linux_process_identity_observation.py",
     ):
         assert format_tokens.count(path) == 1
 
