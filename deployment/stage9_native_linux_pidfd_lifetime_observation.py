@@ -10,6 +10,7 @@ from contextlib import ExitStack
 import json
 import os
 import select
+import subprocess
 import sys
 
 from deployment.stage9_native_linux_cgroup_membership_observation import _run_systemctl
@@ -249,7 +250,7 @@ def inspect_host(*, runner=None, lifetime_reader=None) -> dict:
                     timeout=3,
                     env={"LC_ALL": "C", "PATH": "/usr/bin:/bin"},
                 )
-            except (OSError, TimeoutError) as exc:
+            except (OSError, TimeoutError, subprocess.TimeoutExpired) as exc:
                 raise _Refusal("SYSTEMD_UNAVAILABLE") from exc
             if type(response.returncode) is not int:
                 raise _Refusal("MALFORMED_SYSTEMD_RESPONSE")
