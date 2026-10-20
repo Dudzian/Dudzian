@@ -39,6 +39,7 @@ _CODES = frozenset(
         "PROCESS_CHANGED_DURING_OBSERVATION",
         "CGROUP_MEMBERSHIP_NOT_MATCHED",
         "CROSS_ROLE_CGROUP_OVERLAP",
+        "SHARED_PROCESS_PID",
         "PROCESS_OR_SYSTEMD_UNAVAILABLE",
         "BACKEND_OBSERVATION_FAILED",
     }
@@ -210,12 +211,14 @@ def inspect_host(*, runner=None, process_reader=None) -> dict:
     if process_reader is None:
         process_reader = _read_process_cgroup
     groups = {}
+    pids = {}
     for role, unit, account in _PROPOSED_SYSTEMD_UNITS:
         try:
             observed, group = _inspect_one(
                 runner=runner, process_reader=process_reader, unit=unit, account=account
             )
             groups[role] = group
+            pids[role] = observed["pid"]
         except UnicodeDecodeError:
             observed = {
                 "observation": "NOT_QUALIFIED",
@@ -250,6 +253,8 @@ def inspect_host(*, runner=None, process_reader=None) -> dict:
     for index, left in enumerate(groups):
         for right in list(groups)[index + 1 :]:
             a, b = groups[left], groups[right]
+            if pids[left] == pids[right]:
+                result["observed_failures"].append(f"{left}/{right}: SHARED_PROCESS_PID")
             if _is_member(a, b) or _is_member(b, a):
                 result["observed_failures"].append(
                     f"{left}/{right}: CROSS_ROLE_CGROUP_OVERLAP"
