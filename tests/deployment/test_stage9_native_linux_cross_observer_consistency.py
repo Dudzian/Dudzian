@@ -264,3 +264,37 @@ def test_cli_always_returns_exit_two(monkeypatch, capsys):
     observed = json.loads(capsys.readouterr().out)
     _blocked(observed)
     assert observed["snapshot"] == "SYNTHETIC_TEST_INPUT"
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Synthetic Linux observation")
+def test_cross_role_shared_pid_is_detected_without_subreport_warning():
+    reports = {
+        source: _make_report(source, pids=(7777, 7777, 4323))
+        for source in probe._SOURCES
+    }
+    assert all(not report["observed_failures"] for report in reports.values())
+    correlated = probe.inspect_host(observers=_observers(reports))
+    _blocked(correlated)
+    roles = [item[0] for item in probe._ROLES]
+    for role in roles[:2]:
+        assert "CROSS_ROLE_SHARED_PID_HINT" in correlated["correlation"][role]["issues"]
+        assert correlated["correlation"][role]["observation"] == "NOT_QUALIFIED"
+    assert correlated["correlation"][roles[2]]["observation"] == (
+        "NO_CROSS_SOURCE_CONTRADICTION_OBSERVED"
+    )
+    assert not any(
+        "SHARED_PID" in issue
+        for issue in correlated["correlation"][roles[2]]["issues"]
+    )
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Synthetic Linux observation")
+def test_cross_role_shared_pid_is_diagnosed_once_per_role():
+    reports = {source: _make_report(source, pids=(7777, 7777, 7777))
+               for source in probe._SOURCES}
+    correlated = probe.inspect_host(observers=_observers(reports))
+    _blocked(correlated)
+    assert len([
+        item for item in correlated["observed_failures"]
+        if item.endswith(": CROSS_ROLE_SHARED_PID_HINT")
+    ]) == 3
