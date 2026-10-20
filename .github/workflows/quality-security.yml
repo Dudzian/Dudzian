@@ -234,8 +234,10 @@ jobs:
           tests/security/test_cca_credential_lifecycle_chain_linux.py
           deployment/stage9_native_linux_source_cca_preflight.py
           deployment/stage9_native_linux_process_identity_observation.py
+          deployment/stage9_native_linux_cgroup_membership_observation.py
           tests/deployment/test_stage9_native_linux_source_cca_preflight.py
           tests/deployment/test_stage9_native_linux_process_identity_observation.py
+          tests/deployment/test_stage9_native_linux_cgroup_membership_observation.py
           tests/security/test_independent_cca_decision.py
           tests/security/test_cca_durable_decision_log.py
           tests/architecture/test_stage9_independent_cca_boundary.py
@@ -821,8 +823,10 @@ jobs:
           tests/security/test_cca_credential_lifecycle_chain_linux.py
           deployment/stage9_native_linux_source_cca_preflight.py
           deployment/stage9_native_linux_process_identity_observation.py
+          deployment/stage9_native_linux_cgroup_membership_observation.py
           tests/deployment/test_stage9_native_linux_source_cca_preflight.py
           tests/deployment/test_stage9_native_linux_process_identity_observation.py
+          tests/deployment/test_stage9_native_linux_cgroup_membership_observation.py
           tests/security/test_independent_cca_decision.py
           tests/security/test_cca_durable_decision_log.py
           tests/architecture/test_stage9_independent_cca_boundary.py
