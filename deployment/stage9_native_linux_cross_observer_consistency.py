@@ -221,6 +221,7 @@ def inspect_host(*, observers=None) -> dict:
             observations[source] = None
             report["observed_failures"].append(f"{source}: OBSERVER_FAILED_OR_INVALID")
 
+    role_pid_sets = {}
     for role, _unit in _ROLES:
         signatures = {
             source: observations[source][0][role]
@@ -234,6 +235,7 @@ def inspect_host(*, observers=None) -> dict:
             elif observations[source][1]:
                 issues.append(f"{source}: SUBREPORT_ANOMALY")
         pids = {item[0] for item in signatures.values()}
+        role_pid_sets[role] = pids
         ticks = {item[1] for item in signatures.values() if item[1] is not None}
         if len(pids) > 1:
             issues.append("CROSS_OBSERVER_MAINPID_MISMATCH")
@@ -247,6 +249,19 @@ def inspect_host(*, observers=None) -> dict:
             "sources_observed": len(signatures),
         }
         report["observed_failures"].extend(f"{role}: {code}" for code in issues)
+    # Reject a shared numeric PID across roles even if a subordinate observer
+    # fails to report the duplicate. This remains an untrusted metadata hint.
+    for index, (left, _unit) in enumerate(_ROLES):
+        for right, _other_unit in _ROLES[index + 1 :]:
+            if role_pid_sets[left] & role_pid_sets[right]:
+                for role in (left, right):
+                    row = report["correlation"][role]
+                    if "CROSS_ROLE_SHARED_PID_HINT" not in row["issues"]:
+                        row["issues"].append("CROSS_ROLE_SHARED_PID_HINT")
+                        row["observation"] = "NOT_QUALIFIED"
+                        report["observed_failures"].append(
+                            f"{role}: CROSS_ROLE_SHARED_PID_HINT"
+                        )
     return report
 
 
