@@ -537,3 +537,35 @@ def test_error_classification_is_exported_as_fixed_refusal_codes():
         for item in report["pidfd_observations"].values()
     ] == [[failure] for failure in failures.values()]
     assert len(report["observed_failures"]) == 3
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Synthetic Linux host inventory")
+@pytest.mark.parametrize("failure", [PermissionError, TimeoutError])
+def test_systemctl_io_failure_is_not_labeled_as_pidfd_open(failure):
+    def unavailable(*_args, **_kwargs):
+        raise failure("PRIVATE_EXECUTABLE_SECRET")
+
+    def forbidden(_pid):
+        pytest.fail("systemctl failure must not invoke pidfd reader")
+
+    result = probe.inspect_host(runner=unavailable, lifetime_reader=forbidden)
+    _blocked(result)
+    assert all(
+        row["issues"] == ["SYSTEMD_UNAVAILABLE"]
+        for row in result["pidfd_observations"].values()
+    )
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Synthetic Linux host inventory")
+def test_injected_unclassified_backend_oserror_is_fail_closed():
+    def unavailable(_pid):
+        raise OSError("PRIVATE_EXECUTABLE_SECRET")
+
+    result = probe.inspect_host(
+        runner=_runner_for([4321, 4322, 4323]), lifetime_reader=unavailable
+    )
+    _blocked(result)
+    assert all(
+        row["issues"] == ["BACKEND_OBSERVATION_FAILED"]
+        for row in result["pidfd_observations"].values()
+    )
