@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import select
+import subprocess
 import sys
 from types import SimpleNamespace
 
@@ -541,9 +542,11 @@ def test_error_classification_is_exported_as_fixed_refusal_codes():
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="Synthetic Linux host inventory")
-@pytest.mark.parametrize("failure", [PermissionError, TimeoutError])
+@pytest.mark.parametrize("failure", [PermissionError, TimeoutError, subprocess.TimeoutExpired])
 def test_systemctl_io_failure_is_not_labeled_as_pidfd_open(failure):
     def unavailable(*_args, **_kwargs):
+        if failure is subprocess.TimeoutExpired:
+            raise failure("/usr/bin/systemctl", 3)
         raise failure("PRIVATE_EXECUTABLE_SECRET")
 
     def forbidden(_pid):
