@@ -325,7 +325,7 @@ def test_cross_authority_uid_and_group_reuse_is_observed(
     tmp_path, role, name, _directory, reference_role, reference_name, collision
 ):
     accounts = {**_PROPOSED_ACCOUNTS, **_REFERENCE_ACCOUNTS}
-    uid, gid, groups = accounts[name]
+    uid, gid, _groups = accounts[name]
     if collision == "uid":
         accounts[reference_name] = (uid, 63000, (63000,))
     else:
@@ -349,7 +349,7 @@ def test_signer_to_signer_shared_gid_is_observed(tmp_path):
 @pytest.mark.skipif(sys.platform != "linux", reason="Linux host NSS inventory")
 @pytest.mark.parametrize(
     "invalid",
-    [(0, 62011, (62011,)), (62011, 0, (0,)), (62011, 62011, ("not-a-gid",))],
+    [(0, 62011, (62011,)), (62011, 0, (0,)), (62011, 62011, ("not-a-gid",)), (62011, 62011, (62011, 0))],
 )
 def test_reference_principal_invalid_identity_never_passes(tmp_path, invalid):
     accounts = {**_PROPOSED_ACCOUNTS, **_REFERENCE_ACCOUNTS}
