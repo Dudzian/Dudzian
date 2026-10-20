@@ -198,9 +198,9 @@ class _Poll:
     "events,error",
     [
         ([], None),
-        ([(51, select.POLLIN)], "PIDFD_NOT_LIVE"),
-        ([(51, select.POLLHUP)], "PIDFD_NOT_LIVE"),
-        ([(51, select.POLLERR)], "PIDFD_NOT_LIVE"),
+        ([(51, getattr(select, "POLLIN", 1))], "PIDFD_NOT_LIVE"),
+        ([(51, getattr(select, "POLLHUP", 16))], "PIDFD_NOT_LIVE"),
+        ([(51, getattr(select, "POLLERR", 8))], "PIDFD_NOT_LIVE"),
         ([("51", 1)], "PIDFD_POLL_FAILED"),
         ([(52, 1)], "PIDFD_POLL_FAILED"),
         (None, "PIDFD_POLL_FAILED"),
@@ -209,8 +209,8 @@ class _Poll:
 def test_pidfd_poll_result_strictly_checked(monkeypatch, events, error):
     poller = _Poll(events)
     monkeypatch.setattr(probe, "select", SimpleNamespace(
-        poll=lambda: poller, POLLIN=select.POLLIN,
-        POLLERR=select.POLLERR, POLLHUP=select.POLLHUP
+        poll=lambda: poller, POLLIN=getattr(select, "POLLIN", 1),
+        POLLERR=getattr(select, "POLLERR", 8), POLLHUP=getattr(select, "POLLHUP", 16)
     ))
     if error is not None:
         with pytest.raises(ValueError, match=error):
@@ -292,3 +292,21 @@ def test_cli_remains_blocked_even_when_lifetime_observation_succeeds(monkeypatch
     ))
     assert probe.main() == 2
     _blocked(json.loads(capsys.readouterr().out))
+
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Synthetic malicious refusal code")
+def test_malformed_backend_refusal_code_fails_closed_without_crash():
+    def bad_reader(_pid):
+        refusal = probe._Refusal("PIDFD_NOT_LIVE")
+        refusal.code = ["PRIVATE_EXECUTABLE_SECRET"]
+        raise refusal
+
+    report = probe.inspect_host(
+        runner=_runner_for([4321, 4322, 4323]), lifetime_reader=bad_reader
+    )
+    _blocked(report)
+    assert all(
+        row["issues"] == ["BACKEND_OBSERVATION_FAILED"]
+        for row in report["pidfd_observations"].values()
+    )
