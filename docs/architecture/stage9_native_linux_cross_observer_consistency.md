@@ -31,7 +31,9 @@ For each role, the comparison detects:
 `CROSS_OBSERVER_MAINPID_MISMATCH` when numeric PID hints differ, and
 `CROSS_OBSERVER_STARTTIME_MISMATCH` when available tick values differ.
 The unit-fragment observation has no starttime, so it participates in PID
-comparisons only. Missing/refused/unparseable observers and underlying
+comparisons only. `CROSS_ROLE_SHARED_PID_HINT` additionally identifies
+a numeric PID reused across proposed roles, even if none of the constituent
+observers flags the collision. Missing/refused/unparseable observers and underlying
 diagnostic anomalies are reported using **fixed reason codes** rather than
 raw subreport error messages or stack traces.
 
