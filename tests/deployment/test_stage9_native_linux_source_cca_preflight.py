@@ -407,7 +407,7 @@ def _systemd_show_fixture(unit="cryptohunter-root-custody-source.service", accou
 def test_rpi23_declared_systemd_settings_are_not_kernel_proof():
     unit = "cryptohunter-root-custody-source.service"
     record = _systemd_show_fixture(unit)
-    output = "".join(f"{field}={record[field]}\\n" for field in preflight._SYSTEMD_PROPERTIES)
+    output = "".join(f"{field}={record[field]}\n" for field in preflight._SYSTEMD_PROPERTIES)
     result = preflight._evaluate_systemd_show(
         output, unit=unit, account="ch_root_custody_source"
     )
@@ -439,7 +439,7 @@ def test_rpi23_refuses_mismatched_systemd_observations(key, value, reason):
     unit = "cryptohunter-root-custody-source.service"
     record = _systemd_show_fixture(unit)
     record[key] = value
-    raw = "".join(f"{field}={record[field]}\\n" for field in preflight._SYSTEMD_PROPERTIES)
+    raw = "".join(f"{field}={record[field]}\n" for field in preflight._SYSTEMD_PROPERTIES)
     observation = preflight._evaluate_systemd_show(
         raw, unit=unit, account="ch_root_custody_source"
     )
@@ -451,18 +451,18 @@ def test_rpi23_refuses_mismatched_systemd_observations(key, value, reason):
     ("mutation", "expected"),
     [
         ("", "INCOMPLETE_SYSTEMD_RESPONSE"),
-        ("Bogus=1\\n", "UNEXPECTED_OR_DUPLICATE_PROPERTY"),
-        ("Id=other\\n", "UNEXPECTED_OR_DUPLICATE_PROPERTY"),
-        ("NoNewPrivileges\\n", "MALFORMED_SYSTEMD_RESPONSE"),
-        ("\\x00", "MALFORMED_SYSTEMD_RESPONSE"),
+        ("Bogus=1\n", "UNEXPECTED_OR_DUPLICATE_PROPERTY"),
+        ("Id=other\n", "UNEXPECTED_OR_DUPLICATE_PROPERTY"),
+        ("NoNewPrivileges\n", "MALFORMED_SYSTEMD_RESPONSE"),
+        ("\x00", "MALFORMED_SYSTEMD_RESPONSE"),
     ],
 )
 def test_rpi23_rejects_malformed_systemd_show(mutation, expected):
     unit = "cryptohunter-root-custody-source.service"
     original = _systemd_show_fixture(unit)
-    raw = "".join(f"{field}={original[field]}\\n" for field in preflight._SYSTEMD_PROPERTIES)
+    raw = "".join(f"{field}={original[field]}\n" for field in preflight._SYSTEMD_PROPERTIES)
     if not mutation:
-        raw = raw.replace("User=ch_root_custody_source\\n", "")
+        raw = raw.replace("User=ch_root_custody_source\n", "")
     else:
         raw += mutation
     result = preflight._evaluate_systemd_show(
@@ -473,7 +473,7 @@ def test_rpi23_rejects_malformed_systemd_show(mutation, expected):
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="Fixed Linux systemctl probe")
-def test_rpi23_uses_only_fixed_readonly_systemctl_queries(monkeypatch):
+def test_rpi23_uses_only_fixed_readonly_systemctl_queries():
     import subprocess
 
     calls = []
@@ -492,7 +492,7 @@ def test_rpi23_uses_only_fixed_readonly_systemctl_queries(monkeypatch):
         data = _systemd_show_fixture(unit, account)
         return SimpleNamespace(
             returncode=0,
-            stdout="".join(f"{field}={data[field]}\\n" for field in preflight._SYSTEMD_PROPERTIES),
+            stdout="".join(f"{field}={data[field]}\n" for field in preflight._SYSTEMD_PROPERTIES),
         )
 
     observations = preflight._observe_proposed_systemd_units(
