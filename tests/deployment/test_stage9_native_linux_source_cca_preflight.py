@@ -379,7 +379,10 @@ def test_cli_has_no_success_exit_and_no_installer_or_mutation_flag(monkeypatch, 
     assert json.loads(capsys.readouterr().out) == blocked
     assert not hasattr(preflight, "install") and not hasattr(preflight, "provision")
 
-def _systemd_show_fixture(unit="cryptohunter-root-custody-source.service", account="ch_root_custody_source"):
+def _systemd_show_fixture(
+    unit="cryptohunter-root-custody-source.service",
+    account="ch_root_custody_source",
+):
     properties = {field: "" for field in preflight._SYSTEMD_PROPERTIES}
     properties.update(
         {
