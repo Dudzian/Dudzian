@@ -186,6 +186,7 @@ def test_lock_generation_authority_is_self_consistent() -> None:
     assert "scripts/ci/require_python311.py" in generator
     assert "--no-header" in generator
     for package, version in {
+        "aiohttp": "3.14.4",
         "click": "8.3.3",
         "GitPython": "3.1.60",
         "Pygments": "2.20.0",
