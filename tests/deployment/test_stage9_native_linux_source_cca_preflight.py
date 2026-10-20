@@ -378,3 +378,159 @@ def test_cli_has_no_success_exit_and_no_installer_or_mutation_flag(monkeypatch, 
     assert preflight.main() == 2
     assert json.loads(capsys.readouterr().out) == blocked
     assert not hasattr(preflight, "install") and not hasattr(preflight, "provision")
+
+def _systemd_show_fixture(unit="cryptohunter-root-custody-source.service", account="ch_root_custody_source"):
+    properties = {field: "" for field in preflight._SYSTEMD_PROPERTIES}
+    properties.update(
+        {
+            "Id": unit,
+            "LoadState": "loaded",
+            "ActiveState": "active",
+            "User": account,
+            "Group": account,
+            "DynamicUser": "no",
+            "MainPID": "1234",
+            "FragmentPath": f"/etc/systemd/system/{unit}",
+            "NoNewPrivileges": "yes",
+            "PrivateNetwork": "yes",
+            "PrivateIPC": "yes",
+            "PrivateMounts": "yes",
+            "PrivateTmp": "yes",
+            "ProtectSystem": "strict",
+            "ProtectHome": "yes",
+            "RestrictAddressFamilies": "AF_UNIX",
+        }
+    )
+    return properties
+
+
+def test_rpi23_declared_systemd_settings_are_not_kernel_proof():
+    unit = "cryptohunter-root-custody-source.service"
+    record = _systemd_show_fixture(unit)
+    output = "".join(f"{field}={record[field]}\\n" for field in preflight._SYSTEMD_PROPERTIES)
+    result = preflight._evaluate_systemd_show(
+        output, unit=unit, account="ch_root_custody_source"
+    )
+    assert result == {"observation": "PROPOSED_DECLARATIONS_MATCHED_ONLY", "issues": []}
+    assert "PASS" not in str(result)
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "reason"),
+    [
+        ("User", "cryptohunter-root-proof-signer", "User_NOT_MATCHED"),
+        ("Group", "cryptohunter-history-attestation-signer", "Group_NOT_MATCHED"),
+        ("ActiveState", "inactive", "ActiveState_NOT_MATCHED"),
+        ("LoadState", "not-found", "LoadState_NOT_MATCHED"),
+        ("DynamicUser", "yes", "DynamicUser_NOT_MATCHED"),
+        ("MainPID", "0", "MAIN_PID_NOT_OBSERVED"),
+        ("MainPID", "unknown", "MAIN_PID_NOT_OBSERVED"),
+        ("PrivateNetwork", "no", "PrivateNetwork_NOT_MATCHED"),
+        ("PrivateIPC", "no", "PrivateIPC_NOT_MATCHED"),
+        ("PrivateMounts", "no", "PrivateMounts_NOT_MATCHED"),
+        ("NoNewPrivileges", "no", "NoNewPrivileges_NOT_MATCHED"),
+        ("RestrictAddressFamilies", "AF_INET AF_UNIX", "RestrictAddressFamilies_NOT_MATCHED"),
+        ("DropInPaths", "/etc/systemd/system/unit.d/override.conf", "DropInPaths_NOT_MATCHED"),
+        ("SupplementaryGroups", "wheel", "SupplementaryGroups_NOT_MATCHED"),
+        ("FragmentPath", "relative/unit.service", "UNIT_FRAGMENT_NOT_ABSOLUTE"),
+    ],
+)
+def test_rpi23_refuses_mismatched_systemd_observations(key, value, reason):
+    unit = "cryptohunter-root-custody-source.service"
+    record = _systemd_show_fixture(unit)
+    record[key] = value
+    raw = "".join(f"{field}={record[field]}\\n" for field in preflight._SYSTEMD_PROPERTIES)
+    observation = preflight._evaluate_systemd_show(
+        raw, unit=unit, account="ch_root_custody_source"
+    )
+    assert observation["observation"] == "NOT_QUALIFIED"
+    assert reason in observation["issues"]
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected"),
+    [
+        ("", "INCOMPLETE_SYSTEMD_RESPONSE"),
+        ("Bogus=1\\n", "UNEXPECTED_OR_DUPLICATE_PROPERTY"),
+        ("Id=other\\n", "UNEXPECTED_OR_DUPLICATE_PROPERTY"),
+        ("NoNewPrivileges\\n", "MALFORMED_SYSTEMD_RESPONSE"),
+        ("\\x00", "MALFORMED_SYSTEMD_RESPONSE"),
+    ],
+)
+def test_rpi23_rejects_malformed_systemd_show(mutation, expected):
+    unit = "cryptohunter-root-custody-source.service"
+    original = _systemd_show_fixture(unit)
+    raw = "".join(f"{field}={original[field]}\\n" for field in preflight._SYSTEMD_PROPERTIES)
+    if not mutation:
+        raw = raw.replace("User=ch_root_custody_source\\n", "")
+    else:
+        raw += mutation
+    result = preflight._evaluate_systemd_show(
+        raw, unit=unit, account="ch_root_custody_source"
+    )
+    assert result["observation"] == "NOT_QUALIFIED"
+    assert expected in result["issues"]
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Fixed Linux systemctl probe")
+def test_rpi23_uses_only_fixed_readonly_systemctl_queries(monkeypatch):
+    import subprocess
+
+    calls = []
+
+    # One invocation covers all three roles.
+    def fixed_runner(command, **kwargs):
+        unit = command[6]
+        account = next(
+            name for _role, known_unit, name in preflight._PROPOSED_SYSTEMD_UNITS
+            if known_unit == unit
+        )
+        calls.append((command, kwargs))
+        assert command[0] == "/usr/bin/systemctl"
+        assert command[1:5] == ("--system", "show", "--all", "--no-pager")
+        assert kwargs["timeout"] == 3
+        data = _systemd_show_fixture(unit, account)
+        return SimpleNamespace(
+            returncode=0,
+            stdout="".join(f"{field}={data[field]}\\n" for field in preflight._SYSTEMD_PROPERTIES),
+        )
+
+    observations = preflight._observe_proposed_systemd_units(
+        root=Path("/"), runner=fixed_runner
+    )
+    assert len(calls) == 3
+    assert set(observations) == {"root_source", "history_source", "cca"}
+    assert all(
+        value["observation"] == "PROPOSED_DECLARATIONS_MATCHED_ONLY"
+        for value in observations.values()
+    )
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Fixed Linux systemctl probe")
+def test_rpi23_test_fixtures_do_not_call_host_systemctl(tmp_path):
+    def forbidden(*args, **kwargs):
+        pytest.fail("fixture unexpectedly called systemctl")
+
+    for root in (tmp_path, Path("/")):
+        result = preflight._observe_proposed_systemd_units(
+            root=root, runner=forbidden if root != Path("/") else None
+        )
+        assert {value["observation"] for value in result.values()} == {
+            "NOT_OBSERVED_TEST_FIXTURE"
+        }
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux systemctl absence")
+def test_rpi23_systemctl_failure_is_not_approved():
+    import subprocess
+
+    def timeout(*args, **kwargs):
+        raise subprocess.TimeoutExpired(cmd="systemctl", timeout=3)
+
+    observed = preflight._observe_proposed_systemd_units(
+        root=Path("/"), runner=timeout
+    )
+    assert all(v["observation"] == "NOT_QUALIFIED" for v in observed.values())
+    assert all(v["issues"] == ["SYSTEMD_UNAVAILABLE"] for v in observed.values())
+
+
