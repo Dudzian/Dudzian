@@ -92,6 +92,7 @@ STAGE9_PRODUCTION_ATOMIC_TESTS = {
     "tests/deployment/test_stage9_native_linux_cgroup_membership_observation.py",
     "tests/deployment/test_stage9_native_linux_unit_fragment_observation.py",
     "tests/deployment/test_stage9_native_linux_process_executable_observation.py",
+    "tests/deployment/test_stage9_native_linux_pidfd_lifetime_observation.py",
     "tests/security/test_independent_cca_decision.py",
     "tests/security/test_cca_durable_decision_log.py",
     "tests/architecture/test_stage9_independent_cca_boundary.py",
@@ -135,6 +136,7 @@ STAGE9_PRODUCTION_ATOMIC_MODULES = {
     "deployment.stage9_native_linux_cgroup_membership_observation",
     "deployment.stage9_native_linux_unit_fragment_observation",
     "deployment.stage9_native_linux_process_executable_observation",
+    "deployment.stage9_native_linux_pidfd_lifetime_observation",
 }
 RAW_FILES = (
     "coverage-atomic-root-proof.data",
@@ -262,11 +264,13 @@ def test_native_linux_source_cca_observations_have_explicit_lint_and_format_scop
         "deployment/stage9_native_linux_cgroup_membership_observation.py",
         "deployment/stage9_native_linux_unit_fragment_observation.py",
         "deployment/stage9_native_linux_process_executable_observation.py",
+        "deployment/stage9_native_linux_pidfd_lifetime_observation.py",
         "tests/deployment/test_stage9_native_linux_source_cca_preflight.py",
         "tests/deployment/test_stage9_native_linux_process_identity_observation.py",
         "tests/deployment/test_stage9_native_linux_cgroup_membership_observation.py",
         "tests/deployment/test_stage9_native_linux_unit_fragment_observation.py",
         "tests/deployment/test_stage9_native_linux_process_executable_observation.py",
+        "tests/deployment/test_stage9_native_linux_pidfd_lifetime_observation.py",
     ):
         assert format_tokens.count(path) == 1
     lint_tokens = shlex.split(_step(quality, "Ruff baseline gate")["run"])
@@ -277,6 +281,7 @@ def test_native_linux_source_cca_observations_have_explicit_lint_and_format_scop
         "cgroup_membership_observation",
         "unit_fragment_observation",
         "process_executable_observation",
+        "pidfd_lifetime_observation",
     ):
         assert lint_tokens.count(f"deployment/stage9_native_linux_{module}.py") == 1
 
