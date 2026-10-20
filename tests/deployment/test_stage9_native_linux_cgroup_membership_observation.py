@@ -240,3 +240,63 @@ def test_non_linux_and_cli_remain_blocked(monkeypatch, capsys):
     assert output["status"] == "BLOCKED"
     assert output["qualification"] == "NOT_QUALIFIED"
     assert output["production_emission"] == "BLOCKED"
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Synthetic cross-role identity")
+def test_same_mainpid_in_two_roles_reports_cross_role_collision():
+    units = [unit for _, unit, _ in probe._PROPOSED_SYSTEMD_UNITS]
+    accounts = {unit: account for _, unit, account in probe._PROPOSED_SYSTEMD_UNITS}
+    reads = 0
+
+    def runner(command, **_kwargs):
+        unit = command[-1]
+        index = units.index(unit)
+        pid = 4321 if index < 2 else 4323
+        return SimpleNamespace(
+            returncode=0,
+            stdout=_systemd(unit, accounts[unit], pid=pid),
+        )
+
+    def reader(pid):
+        nonlocal reads
+        if pid == 4321:
+            unit = units[reads]
+            reads += 1
+        else:
+            unit = units[2]
+        return pid, 12345, f"/system.slice/{unit}"
+
+    report = probe.inspect_host(runner=runner, process_reader=reader)
+    assert "root_source/history_source: SHARED_PROCESS_PID" in report["observed_failures"]
+    assert report["status"] == report["production_emission"] == "BLOCKED"
+    assert report["qualification"] == "NOT_QUALIFIED"
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Synthetic cross-role cgroup")
+def test_nested_systemd_cgroups_report_cross_role_overlap():
+    entries = list(probe._PROPOSED_SYSTEMD_UNITS)
+    groups = {
+        entries[0][1]: f"/system.slice/{entries[0][1]}",
+        entries[1][1]: (
+            f"/system.slice/{entries[0][1]}/workers/{entries[1][1]}"
+        ),
+        entries[2][1]: f"/system.slice/{entries[2][1]}",
+    }
+    accounts = {unit: account for _, unit, account in entries}
+
+    def runner(command, **_kwargs):
+        unit = command[-1]
+        pid = 4321 + list(groups).index(unit)
+        return SimpleNamespace(
+            returncode=0,
+            stdout=_systemd(unit, accounts[unit], pid=pid, group=groups[unit]),
+        )
+
+    def reader(pid):
+        unit = list(groups)[pid - 4321]
+        return pid, 12345, groups[unit]
+
+    report = probe.inspect_host(runner=runner, process_reader=reader)
+    assert "root_source/history_source: CROSS_ROLE_CGROUP_OVERLAP" in report[
+        "observed_failures"
+    ]
+    assert report["status"] == report["production_emission"] == "BLOCKED"
