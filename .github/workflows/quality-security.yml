@@ -75,7 +75,7 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e ".[test]" "ruff==0.14.11" "mypy==1.10.0" "diff-cover>=9,<10"
       - name: Ruff baseline gate
-        run: python -m ruff check bot_core core scripts tests deploy stage6_samples ui deployment/production_signer_service.py deployment/windows_production_cha_operation.py deployment/windows_production_cha_account_reservation.py deployment/windows_runner_acl.py deployment/windows_stage9_handoff.py deployment/windows_stage9_host_inspection.py deployment/windows_stage9_postgresql_passive.py deployment/windows_stage9_evidence_pipe.py deployment/windows_stage9_service_sql.py deployment/windows_stage9_service_evidence.py deployment/windows_installer/service_base.py deployment/windows_installer/backend_service.py deployment/windows_installer/verifier_service.py deployment/windows_postgresql_auth_contract.py deployment/windows_stage9_install_preparation.py deployment/windows_stage9_install_executor.py deployment/windows_stage9_install_native.py deployment/windows_stage9_install_qualification.py deployment/windows_stage9_operator_approval.py deployment/windows_stage10_preflight.py deployment/windows_stage10_artifact_preflight.py deployment/windows_stage10_runner_preflight.py deployment/platform_evidence.py deployment/stage9_native_linux_source_cca_preflight.py deployment/stage9_native_linux_process_identity_observation.py deployment/stage9_native_linux_cgroup_membership_observation.py
+        run: python -m ruff check bot_core core scripts tests deploy stage6_samples ui deployment/production_signer_service.py deployment/windows_production_cha_operation.py deployment/windows_production_cha_account_reservation.py deployment/windows_runner_acl.py deployment/windows_stage9_handoff.py deployment/windows_stage9_host_inspection.py deployment/windows_stage9_postgresql_passive.py deployment/windows_stage9_evidence_pipe.py deployment/windows_stage9_service_sql.py deployment/windows_stage9_service_evidence.py deployment/windows_installer/service_base.py deployment/windows_installer/backend_service.py deployment/windows_installer/verifier_service.py deployment/windows_postgresql_auth_contract.py deployment/windows_stage9_install_preparation.py deployment/windows_stage9_install_executor.py deployment/windows_stage9_install_native.py deployment/windows_stage9_install_qualification.py deployment/windows_stage9_operator_approval.py deployment/windows_stage10_preflight.py deployment/windows_stage10_artifact_preflight.py deployment/windows_stage10_runner_preflight.py deployment/platform_evidence.py deployment/stage9_native_linux_source_cca_preflight.py deployment/stage9_native_linux_process_identity_observation.py deployment/stage9_native_linux_cgroup_membership_observation.py deployment/stage9_native_linux_unit_fragment_observation.py
       - name: Format Stage 9 signing and credential substrate
         run: >-
           python -m ruff format --check
@@ -235,9 +235,11 @@ jobs:
           deployment/stage9_native_linux_source_cca_preflight.py
           deployment/stage9_native_linux_process_identity_observation.py
           deployment/stage9_native_linux_cgroup_membership_observation.py
+          deployment/stage9_native_linux_unit_fragment_observation.py
           tests/deployment/test_stage9_native_linux_source_cca_preflight.py
           tests/deployment/test_stage9_native_linux_process_identity_observation.py
           tests/deployment/test_stage9_native_linux_cgroup_membership_observation.py
+          tests/deployment/test_stage9_native_linux_unit_fragment_observation.py
           tests/security/test_independent_cca_decision.py
           tests/security/test_cca_durable_decision_log.py
           tests/architecture/test_stage9_independent_cca_boundary.py
@@ -824,6 +826,7 @@ jobs:
           tests/deployment/test_stage9_native_linux_source_cca_preflight.py
           tests/deployment/test_stage9_native_linux_process_identity_observation.py
           tests/deployment/test_stage9_native_linux_cgroup_membership_observation.py
+          tests/deployment/test_stage9_native_linux_unit_fragment_observation.py
           tests/security/test_independent_cca_decision.py
           tests/security/test_cca_durable_decision_log.py
           tests/architecture/test_stage9_independent_cca_boundary.py
@@ -855,6 +858,7 @@ jobs:
           --cov=deployment.stage9_native_linux_source_cca_preflight
           --cov=deployment.stage9_native_linux_process_identity_observation
           --cov=deployment.stage9_native_linux_cgroup_membership_observation
+          --cov=deployment.stage9_native_linux_unit_fragment_observation
           --cov=bot_core.postgresql_root_proof_issuance_authority_v2
           --cov=bot_core.postgresql_root_proof_preparation_qualification
           --cov=bot_core.postgresql_root_proof_preparation_readonly
@@ -993,6 +997,7 @@ jobs:
           --cov=deployment.stage9_native_linux_source_cca_preflight
           --cov=deployment.stage9_native_linux_process_identity_observation
           --cov=deployment.stage9_native_linux_cgroup_membership_observation
+          --cov=deployment.stage9_native_linux_unit_fragment_observation
           --cov=bot_core.postgresql_root_proof_issuance_authority_v2
           --cov=bot_core.postgresql_root_proof_preparation_qualification
           --cov=bot_core.postgresql_root_proof_preparation_readonly
