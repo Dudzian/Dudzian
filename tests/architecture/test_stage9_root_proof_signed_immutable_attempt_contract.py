@@ -346,8 +346,7 @@ def test_unrelated_application_transport_does_not_inherit_issuer_request_taint()
     _assert_local_issuance_execution_ownership(
         {
             "bot_core/retained_attempt_api.py": (
-                "from bot_core.cha_attempt_signatures import "
-                "RetainedIssuanceRequest as Request\n"
+                "from bot_core.cha_attempt_signatures import RetainedIssuanceRequest as Request\n"
             ),
             "bot_core/market_data_gateway.py": "import grpc\n",
             "bot_core/application_runtime.py": (
