@@ -270,22 +270,22 @@ def _evaluate_systemd_show(raw: str, *, unit: str, account: str):
     }
 
 
-def _observe_proposed_systemd_units(*, root: Path, runner=None):
-    """Read-only observation. Never invokes systemctl for a synthetic test root."""
+def _observe_proposed_systemd_units(*, root: Path, runner=None, use_host=False):
+    """Read-only observation. Never invokes systemctl for synthetic fixtures."""
     roles = {role: unit for role, unit, _name in _PROPOSED_SYSTEMD_UNITS}
     if sys.platform != "linux":
         return {
             role: {"unit": unit, "observation": "NOT_OBSERVED_NON_LINUX"}
             for role, unit in roles.items()
         }
-    if root != Path("/"):
+    if root != Path("/") or (not use_host and runner is None):
         return {
-            role: {"unit": unit, "observation": "NOT_OBSERVED_TEST_ROOT"}
+            role: {"unit": unit, "observation": "NOT_OBSERVED_TEST_FIXTURE"}
             for role, unit in roles.items()
         }
-    if runner is None:
-        import subprocess
+    import subprocess
 
+    if runner is None:
         runner = subprocess.run
     observations = {}
     for role, unit, account in _PROPOSED_SYSTEMD_UNITS:
@@ -311,7 +311,7 @@ def _observe_proposed_systemd_units(*, root: Path, runner=None):
                 entry = {"observation": "NOT_QUALIFIED", "issues": ["SYSTEMD_UNAVAILABLE"]}
             else:
                 entry = _evaluate_systemd_show(result.stdout, unit=unit, account=account)
-        except (OSError, TimeoutError):
+        except (OSError, TimeoutError, subprocess.TimeoutExpired):
             entry = {"observation": "NOT_QUALIFIED", "issues": ["SYSTEMD_UNAVAILABLE"]}
         observations[role] = {"unit": unit, **entry}
     return observations
@@ -336,6 +336,7 @@ def inspect_host(*, root: Path = Path("/"), accounts=None):
             "systemd_observations": _observe_proposed_systemd_units(root=root),
             "paths": {},
         }
+    use_host_systemd = accounts is None
     if accounts is None:
         accounts = _native_accounts()
     identities, issues = _inspect_accounts(accounts)
@@ -386,7 +387,9 @@ def inspect_host(*, root: Path = Path("/"), accounts=None):
             for role, identity in references.items()
         },
         "unobserved_reference_principals": missing,
-        "systemd_observations": _observe_proposed_systemd_units(root=root),
+        "systemd_observations": _observe_proposed_systemd_units(
+            root=root, use_host=use_host_systemd
+        ),
         "paths": paths,
         "observed_failures": issues,
         "blockers": list(_BLOCKERS),
