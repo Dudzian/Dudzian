@@ -349,7 +349,12 @@ def test_signer_to_signer_shared_gid_is_observed(tmp_path):
 @pytest.mark.skipif(sys.platform != "linux", reason="Linux host NSS inventory")
 @pytest.mark.parametrize(
     "invalid",
-    [(0, 62011, (62011,)), (62011, 0, (0,)), (62011, 62011, ("not-a-gid",)), (62011, 62011, (62011, 0))],
+    [
+        (0, 62011, (62011,)),
+        (62011, 0, (0,)),
+        (62011, 62011, ("not-a-gid",)),
+        (62011, 62011, (62011, 0)),
+    ],
 )
 def test_reference_principal_invalid_identity_never_passes(tmp_path, invalid):
     accounts = {**_PROPOSED_ACCOUNTS, **_REFERENCE_ACCOUNTS}
