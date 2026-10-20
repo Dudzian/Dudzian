@@ -33,7 +33,9 @@ def _runner(command, **kwargs):
     assert kwargs["env"] == {"LC_ALL": "C", "PATH": "/usr/bin:/bin"}
     unit = command[-1]
     account = next(
-        name for _, candidate, name in probe._PROPOSED_SYSTEMD_UNITS if candidate == unit
+        name
+        for _, candidate, name in probe._PROPOSED_SYSTEMD_UNITS
+        if candidate == unit
     )
     return SimpleNamespace(returncode=0, stdout=_systemd(unit, account))
 
@@ -152,7 +154,11 @@ def test_three_roles_report_metadata_only_without_raw_paths():
 @pytest.mark.skipif(sys.platform != "linux", reason="Synthetic Linux refusal")
 def test_prefix_spoof_and_wrong_unit_are_not_normalized_to_match():
     report = _report(
-        lambda pid: (pid, 12345, "/system.slice/cryptohunter-root-custody-source.service-spoof")
+        lambda pid: (
+            pid,
+            12345,
+            "/system.slice/cryptohunter-root-custody-source.service-spoof",
+        )
     )
     assert len(report["observed_failures"]) == 3
     assert all(
