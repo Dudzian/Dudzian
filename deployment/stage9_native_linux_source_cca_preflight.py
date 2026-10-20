@@ -20,6 +20,11 @@ _PROPOSED = (
     ("history_source", "ch_history_custody_source", "history-custody-source"),
     ("cca", "ch_custody_completion", "custody-completion"),
 )
+_KNOWN_REFERENCE_AUTHORITIES = (
+    ("root_signer", "cryptohunter-root-proof-signer"),
+    ("history_signer", "cryptohunter-history-attestation-signer"),
+    ("issuer", "cryptohunter-root-proof-issuer"),
+)
 _BLOCKERS = (
     "INDEPENDENTLY_APPROVED_INSTALLATION_PIN_MISSING",
     "RUNTIME_SERVICE_IDENTITY_AND_SYSTEMD_NOT_OBSERVED",
@@ -118,12 +123,63 @@ def _inspect_accounts(accounts):
     return identities, issues
 
 
+def _inspect_reference_authorities(accounts, identities):
+    """Observe fixed signer/issuer NSS identities without granting authority.
+
+    Missing service accounts and aliases are never inferred or auto-created.
+    Comparisons use effective NSS group memberships, not mere principal names.
+    """
+    references = {}
+    missing = []
+    problems = []
+    for role, name in _KNOWN_REFERENCE_AUTHORITIES:
+        item = accounts.get(name)
+        if item is None:
+            missing.append(role)
+            continue
+        try:
+            uid, gid, groups = item
+        except (TypeError, ValueError):
+            problems.append(f"{role}: malformed reference principal")
+            continue
+        if (
+            type(uid) is not int
+            or type(gid) is not int
+            or type(groups) is not tuple
+            or not groups
+            or any(type(value) is not int or value < 0 for value in groups)
+            or uid <= 0
+            or gid <= 0
+            or gid not in groups
+            or 0 in groups
+        ):
+            problems.append(f"{role}: malformed or privileged reference principal")
+            continue
+        references[role] = {"name": name, "uid": uid, "gid": gid, "groups": groups}
+    principals = {**identities, **references}
+    roles = list(principals)
+    for index, left in enumerate(roles):
+        for right in roles[index + 1 :]:
+            # Pairwise checks between the three proposed authorities are
+            # already handled by _inspect_accounts; do not double-report.
+            if left in identities and right in identities:
+                continue
+            a, b = principals[left], principals[right]
+            if a["uid"] == b["uid"]:
+                problems.append(f"{left}/{right}: shared UID")
+            if set(a["groups"]) & set(b["groups"]):
+                problems.append(f"{left}/{right}: shared effective group")
+    return references, missing, problems
+
+
 def _native_accounts():
     # Resolve NSS via a read-only lookup; never create users or alter groups.
     import pwd
 
     accounts = {}
-    for _role, name, _subdir in _PROPOSED:
+    fixed_names = [name for _role, name, _subdir in _PROPOSED]
+    fixed_names.extend(name for _role, name in _KNOWN_REFERENCE_AUTHORITIES)
+    for name in fixed_names:
         try:
             entry = pwd.getpwnam(name)
             groups = os.getgrouplist(name, entry.pw_gid)
@@ -144,12 +200,18 @@ def inspect_host(*, root: Path = Path("/"), accounts=None):
             "topology": "PROPOSED_NOT_APPROVED",
             "blockers": ["NATIVE_LINUX_REQUIRED", *_BLOCKERS],
             "principal_observations": {},
+            "reference_principal_observations": {},
+            "unobserved_reference_principals": [
+                role for role, _name in _KNOWN_REFERENCE_AUTHORITIES
+            ],
             "observed_failures": ["NATIVE_LINUX_REQUIRED"],
             "paths": {},
         }
     if accounts is None:
         accounts = _native_accounts()
     identities, issues = _inspect_accounts(accounts)
+    references, missing, reference_issues = _inspect_reference_authorities(accounts, identities)
+    issues.extend(reference_issues)
     paths = {}
     for role, _name, subdir in _PROPOSED:
         identity = identities.get(role)
@@ -185,6 +247,16 @@ def inspect_host(*, root: Path = Path("/"), accounts=None):
             }
             for role, identity in identities.items()
         },
+        "reference_principal_observations": {
+            role: {
+                "name": identity["name"],
+                "uid": identity["uid"],
+                "gid": identity["gid"],
+                "supplementary_gids": sorted(set(identity["groups"]) - {identity["gid"]}),
+            }
+            for role, identity in references.items()
+        },
+        "unobserved_reference_principals": missing,
         "paths": paths,
         "observed_failures": issues,
         "blockers": list(_BLOCKERS),

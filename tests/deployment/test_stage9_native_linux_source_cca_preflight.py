@@ -278,6 +278,95 @@ def test_non_linux_inventory_stops_before_native_account_lookup(monkeypatch, pla
     assert result["paths"] == result["principal_observations"] == {}
 
 
+_PROPOSED_ACCOUNTS = {
+    "ch_root_custody_source": (62001, 62001, (62001,)),
+    "ch_history_custody_source": (62002, 62002, (62002,)),
+    "ch_custody_completion": (62003, 62003, (62003,)),
+}
+_REFERENCE_ACCOUNTS = {
+    "cryptohunter-root-proof-signer": (62011, 62011, (62011,)),
+    "cryptohunter-history-attestation-signer": (62012, 62012, (62012,)),
+    "cryptohunter-root-proof-issuer": (62013, 62013, (62013,)),
+}
+
+
+def test_missing_references_are_explicitly_unobserved_not_trusted(tmp_path):
+    result = preflight.inspect_host(root=tmp_path, accounts=_PROPOSED_ACCOUNTS)
+    if sys.platform != "linux":
+        assert result["status"] == "BLOCKED"
+        return
+    assert result["unobserved_reference_principals"] == ["root_signer", "history_signer", "issuer"]
+    assert result["reference_principal_observations"] == {}
+    assert result["status"] == "BLOCKED"
+    assert result["qualification"] == "NOT_QUALIFIED"
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux host NSS inventory")
+def test_distinct_observed_references_do_not_grant_qualification(tmp_path):
+    accounts = {**_PROPOSED_ACCOUNTS, **_REFERENCE_ACCOUNTS}
+    result = preflight.inspect_host(root=tmp_path, accounts=accounts)
+    assert result["unobserved_reference_principals"] == []
+    assert set(result["reference_principal_observations"]) == {
+        "root_signer",
+        "history_signer",
+        "issuer",
+    }
+    assert result["reference_principal_observations"]["root_signer"]["uid"] == 62011
+    assert result["status"] == result["production_emission"] == "BLOCKED"
+    assert result["qualification"] == "NOT_QUALIFIED"
+    assert "INDEPENDENTLY_APPROVED_INSTALLATION_PIN_MISSING" in result["blockers"]
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux host NSS inventory")
+@pytest.mark.parametrize("role,name,_directory", preflight._PROPOSED)
+@pytest.mark.parametrize("reference_role,reference_name", preflight._KNOWN_REFERENCE_AUTHORITIES)
+@pytest.mark.parametrize("collision", ["uid", "gid"], ids=["same-uid", "same-group"])
+def test_cross_authority_uid_and_group_reuse_is_observed(
+    tmp_path, role, name, _directory, reference_role, reference_name, collision
+):
+    accounts = {**_PROPOSED_ACCOUNTS, **_REFERENCE_ACCOUNTS}
+    uid, gid, _groups = accounts[name]
+    if collision == "uid":
+        accounts[reference_name] = (uid, 63000, (63000,))
+    else:
+        accounts[reference_name] = (63000, gid, (gid,))
+    result = preflight.inspect_host(root=tmp_path, accounts=accounts)
+    reason = "shared UID" if collision == "uid" else "shared effective group"
+    assert f"{role}/{reference_role}: {reason}" in result["observed_failures"]
+    assert result["status"] == "BLOCKED"
+    assert result["qualification"] == "NOT_QUALIFIED"
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux host NSS inventory")
+def test_signer_to_signer_shared_gid_is_observed(tmp_path):
+    accounts = {**_PROPOSED_ACCOUNTS, **_REFERENCE_ACCOUNTS}
+    accounts["cryptohunter-history-attestation-signer"] = (62012, 62011, (62011,))
+    result = preflight.inspect_host(root=tmp_path, accounts=accounts)
+    assert "root_signer/history_signer: shared effective group" in result["observed_failures"]
+    assert result["status"] == "BLOCKED"
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux host NSS inventory")
+@pytest.mark.parametrize(
+    "invalid",
+    [
+        (0, 62011, (62011,)),
+        (62011, 0, (0,)),
+        (62011, 62011, ("not-a-gid",)),
+        (62011, 62011, (62011, 0)),
+    ],
+)
+def test_reference_principal_invalid_identity_never_passes(tmp_path, invalid):
+    accounts = {**_PROPOSED_ACCOUNTS, **_REFERENCE_ACCOUNTS}
+    accounts["cryptohunter-root-proof-signer"] = invalid
+    result = preflight.inspect_host(root=tmp_path, accounts=accounts)
+    assert any(
+        "root_signer: malformed or privileged reference principal" == issue
+        for issue in result["observed_failures"]
+    )
+    assert result["status"] == "BLOCKED"
+
+
 def test_cli_has_no_success_exit_and_no_installer_or_mutation_flag(monkeypatch, capsys):
     blocked = {
         "schema": "CryptoHunter.Stage9NativeLinuxSourceCCAPreflightV1",
