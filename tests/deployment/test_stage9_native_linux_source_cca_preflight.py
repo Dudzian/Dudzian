@@ -295,9 +295,7 @@ def test_missing_references_are_explicitly_unobserved_not_trusted(tmp_path):
     if sys.platform != "linux":
         assert result["status"] == "BLOCKED"
         return
-    assert result["unobserved_reference_principals"] == [
-        "root_signer", "history_signer", "issuer"
-    ]
+    assert result["unobserved_reference_principals"] == ["root_signer", "history_signer", "issuer"]
     assert result["reference_principal_observations"] == {}
     assert result["status"] == "BLOCKED"
     assert result["qualification"] == "NOT_QUALIFIED"
@@ -309,7 +307,9 @@ def test_distinct_observed_references_do_not_grant_qualification(tmp_path):
     result = preflight.inspect_host(root=tmp_path, accounts=accounts)
     assert result["unobserved_reference_principals"] == []
     assert set(result["reference_principal_observations"]) == {
-        "root_signer", "history_signer", "issuer"
+        "root_signer",
+        "history_signer",
+        "issuer",
     }
     assert result["reference_principal_observations"]["root_signer"]["uid"] == 62011
     assert result["status"] == result["production_emission"] == "BLOCKED"

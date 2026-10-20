@@ -210,9 +210,7 @@ def inspect_host(*, root: Path = Path("/"), accounts=None):
     if accounts is None:
         accounts = _native_accounts()
     identities, issues = _inspect_accounts(accounts)
-    references, missing, reference_issues = _inspect_reference_authorities(
-        accounts, identities
-    )
+    references, missing, reference_issues = _inspect_reference_authorities(accounts, identities)
     issues.extend(reference_issues)
     paths = {}
     for role, _name, subdir in _PROPOSED:
