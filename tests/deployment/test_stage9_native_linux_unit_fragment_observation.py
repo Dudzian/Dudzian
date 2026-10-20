@@ -264,8 +264,30 @@ def test_fragment_digest_is_bounded_and_descriptor_is_closed(tmp_path, monkeypat
 def test_fragment_refuses_oversize_and_closes_descriptor(tmp_path, monkeypatch):
     path = tmp_path / "oversize.service"
     path.write_bytes(b"x" * (probe._MAX_FRAGMENT_BYTES + 1))
-    with pytest.raises(ValueError, match="FRAGMENT_"):
+    real_fstat = os.fstat
+    opened = []
+    real_open = os.open
+
+    def captured_open(name, flags):
+        fd = real_open(name, flags)
+        opened.append(fd)
+        return fd
+
+    monkeypatch.setattr(
+        probe,
+        "os",
+        SimpleNamespace(
+            **(vars(os) | {
+                "fstat": lambda fd: _root_stat_from(real_fstat(fd)),
+                "open": captured_open,
+            })
+        ),
+    )
+    with pytest.raises(ValueError, match="FRAGMENT_TOO_LARGE_OR_EMPTY"):
         probe._hash_regular_fragment(str(path))
+    assert len(opened) == 1
+    with pytest.raises(OSError):
+        real_fstat(opened[0])
 
 
 def test_fragment_path_policy_rejects_unrelated_paths_before_stat(monkeypatch):
