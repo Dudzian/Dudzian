@@ -47,7 +47,9 @@ _CODES = frozenset(
 
 class _Refusal(ValueError):
     def __init__(self, code: str):
-        self.code = code if type(code) is str and code in _CODES else "BACKEND_OBSERVATION_FAILED"
+        self.code = (
+            code if type(code) is str and code in _CODES else "BACKEND_OBSERVATION_FAILED"
+        )
         super().__init__(self.code)
 
 
@@ -90,7 +92,12 @@ def _parse_unit_cgroup(raw: str, *, unit: str, account: str) -> tuple[int, str]:
 def _parse_proc_cgroup_v2(raw: bytes) -> str:
     if type(raw) is not bytes or not raw or len(raw) > 8192:
         raise _Refusal("MALFORMED_PROC_CGROUP_V2")
-    if raw.count(b"\n") != 1 or not raw.endswith(b"\n") or b"\r" in raw or b"\x00" in raw:
+    if (
+        raw.count(b"\n") != 1
+        or not raw.endswith(b"\n")
+        or b"\r" in raw
+        or b"\x00" in raw
+    ):
         raise _Refusal("MALFORMED_PROC_CGROUP_V2")
     fields = raw[:-1].split(b":", 2)
     if len(fields) != 3 or fields[0] != b"0" or fields[1] != b"":
@@ -142,7 +149,9 @@ def _is_member(path: str, group: str) -> bool:
     return path == group or path.startswith(group + "/")
 
 
-def _inspect_one(*, runner, process_reader, unit: str, account: str) -> tuple[dict, str]:
+def _inspect_one(
+    *, runner, process_reader, unit: str, account: str
+) -> tuple[dict, str]:
     command = (
         "/usr/bin/systemctl",
         "--system",
@@ -186,7 +195,9 @@ def inspect_host(*, runner=None, process_reader=None) -> dict:
         "qualification": "NOT_QUALIFIED",
         "production_emission": "BLOCKED",
         "topology": "PROPOSED_NOT_APPROVED",
-        "snapshot": "SYNTHETIC_TEST_INPUT" if synthetic else "UNTRUSTED_LIVE_OBSERVATION",
+        "snapshot": (
+            "SYNTHETIC_TEST_INPUT" if synthetic else "UNTRUSTED_LIVE_OBSERVATION"
+        ),
         "blockers": list(_BLOCKERS),
         "process_observations": {},
         "observed_failures": [],
@@ -213,7 +224,11 @@ def inspect_host(*, runner=None, process_reader=None) -> dict:
         except _Refusal as exc:
             code = (
                 exc.code
-                if type(exc) is _Refusal and type(exc.code) is str and exc.code in _CODES
+                if (
+                    type(exc) is _Refusal
+                    and type(exc.code) is str
+                    and exc.code in _CODES
+                )
                 else "BACKEND_OBSERVATION_FAILED"
             )
             observed = {"observation": "NOT_QUALIFIED", "issues": [code]}
@@ -223,7 +238,10 @@ def inspect_host(*, runner=None, process_reader=None) -> dict:
                 "issues": ["PROCESS_OR_SYSTEMD_UNAVAILABLE"],
             }
         except Exception:
-            observed = {"observation": "NOT_QUALIFIED", "issues": ["BACKEND_OBSERVATION_FAILED"]}
+            observed = {
+                "observation": "NOT_QUALIFIED",
+                "issues": ["BACKEND_OBSERVATION_FAILED"],
+            }
         result["process_observations"][role] = {"unit": unit, **observed}
         if observed["observation"] == "NOT_QUALIFIED":
             result["observed_failures"].extend(
@@ -233,7 +251,9 @@ def inspect_host(*, runner=None, process_reader=None) -> dict:
         for right in list(groups)[index + 1 :]:
             a, b = groups[left], groups[right]
             if _is_member(a, b) or _is_member(b, a):
-                result["observed_failures"].append(f"{left}/{right}: CROSS_ROLE_CGROUP_OVERLAP")
+                result["observed_failures"].append(
+                    f"{left}/{right}: CROSS_ROLE_CGROUP_OVERLAP"
+                )
     return result
 
 
