@@ -18,13 +18,24 @@ a bounded (4096-byte) `/proc/self/fdinfo/<pidfd>` record twice, requiring one
 exact numeric `Pid:` field matching the hint. A directory descriptor for
 `/proc/<pid>` is opened with `O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC`, and
 the bounded `stat` file is inspected twice for unchanged starttime.
-All file descriptors are closed on success or failure.
+Descriptor cleanup is attempted on both success and failure; unsuccessful
+cleanup is explicitly reported as a refusal.
 
 No fallback to PID-only observation is allowed if pidfd opening or polling
 is unsupported or denied. Both the process starttime and the pidfd
-identity check can fail closed. The report retains fixed malformed/missing
-codes and diagnoses duplicate `MainPID` hints across roles even when a later
-pidfd read fails.
+identity check can fail closed. Refusal codes distinguish
+`PIDFD_OPEN_UNAVAILABLE` (opening the pidfd),
+`PIDFD_FDINFO_UNAVAILABLE` (reading pidfd fdinfo),
+`PIDFD_PROCFS_UNAVAILABLE` (opening or reading process procfs), and
+`PIDFD_CLOSE_FAILED` (descriptor cleanup). They never include operating
+system exception details. A failed close is a refusal, and cleanup still
+attempts the other registered descriptors. The report retains fixed
+malformed/missing codes and diagnoses duplicate `MainPID` hints across roles
+even when a later pidfd read fails.
+
+Synthetic regressions cover an exit event between the first and second
+zero-timeout polls, a different `Pid` during the second fdinfo read,
+starttime churn, and distinct I/O/close failures.
 
 Only fixed role/unit names, bounded PID/starttime, a boolean indicating that
 the pidfd was not signaled during both checks, and fixed failure codes appear
