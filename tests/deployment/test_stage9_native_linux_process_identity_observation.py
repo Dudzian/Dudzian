@@ -137,12 +137,20 @@ def test_separate_three_role_observations_keep_production_blocked():
         return SimpleNamespace(returncode=0, stdout=_unit(unit, account, 4321 + len(calls)))
 
     observed = probe.inspect_host(
-        runner=runner, accounts=accounts, process_reader=lambda pid, uid, gid: _identity(pid, uid, gid)
+        runner=runner,
+        accounts=accounts,
+        process_reader=lambda pid, uid, gid: _identity(pid, uid, gid),
     )
     assert len(calls) == 3
-    assert all(command[:3] == ("/usr/bin/systemctl", "--system", "show") for _, command, _ in calls)
+    assert all(
+        command[:3] == ("/usr/bin/systemctl", "--system", "show")
+        for _, command, _ in calls
+    )
     assert all(kwargs["timeout"] == 3 for _, _command, kwargs in calls)
-    assert all(row["observation"] == "PROCESS_METADATA_ONLY" for row in observed["process_observations"].values())
+    assert all(
+        row["observation"] == "PROCESS_METADATA_ONLY"
+        for row in observed["process_observations"].values()
+    )
     assert observed["observed_failures"] == []
     assert observed["snapshot"] == "SYNTHETIC_TEST_INPUT"
     assert observed["status"] == observed["production_emission"] == "BLOCKED"
@@ -217,3 +225,43 @@ def test_cli_can_never_report_success(monkeypatch, capsys):
     monkeypatch.setattr(probe, "inspect_host", lambda: {"status": "BLOCKED"})
     assert probe.main() == 2
     assert json.loads(capsys.readouterr().out) == {"status": "BLOCKED"}
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Read-only procfs self-fixture")
+@pytest.mark.parametrize("drift", ["starttime", "credentials"])
+def test_proc_identity_detects_non_atomic_snapshot_drift(monkeypatch, drift):
+    import os
+
+    pid = os.getpid()
+    uid, gid = os.getuid(), os.getgid()
+    counts = {"stat": 0, "status": 0}
+
+    def read(_directory, name):
+        counts[name] += 1
+        if name == "stat":
+            changed = drift == "starttime" and counts[name] == 2
+            return _stat(pid, 12346 if changed else 12345)
+        if drift == "credentials" and counts[name] == 2:
+            return _status(pid, uid, gid, groups=str(gid))
+        return _status(pid, uid, gid)
+
+    monkeypatch.setattr(probe, "_read_proc_file", read)
+    with pytest.raises(ValueError, match="PROCESS_CHANGED_DURING_OBSERVATION"):
+        probe._read_proc_identity(pid, uid, gid)
+    assert counts == {"stat": 2, "status": 2}
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Read-only procfs self-fixture")
+def test_missing_namespace_observation_is_not_qualified(monkeypatch):
+    import os
+
+    pid = os.getpid()
+    uid, gid = os.getuid(), os.getgid()
+
+    monkeypatch.setattr(
+        probe, "_read_proc_file",
+        lambda _directory, name: _stat(pid) if name == "stat" else _status(pid, uid, gid),
+    )
+    monkeypatch.setattr(probe, "_NS_TYPES", ("not-a-real-namespace",))
+    with pytest.raises(OSError):
+        probe._read_proc_identity(pid, uid, gid)
