@@ -29,6 +29,9 @@ _CODES = frozenset(
         "SYSTEMD_UNAVAILABLE",
         "PIDFD_NOT_SUPPORTED",
         "PIDFD_OPEN_UNAVAILABLE",
+        "PIDFD_FDINFO_UNAVAILABLE",
+        "PIDFD_PROCFS_UNAVAILABLE",
+        "PIDFD_CLOSE_FAILED",
         "PIDFD_NOT_LIVE",
         "PIDFD_POLL_FAILED",
         "PIDFD_FDINFO_MALFORMED",
@@ -88,22 +91,36 @@ def _parse_pidfd_fdinfo(raw: bytes, *, pid: int) -> None:
         raise _Refusal("PIDFD_PID_NOT_MATCHED")
 
 
+def _close_observation_fd(fd: int) -> None:
+    """Attempt every registered close, but surface errors as fixed refusals."""
+    try:
+        os.close(fd)
+    except OSError as exc:
+        raise _Refusal("PIDFD_CLOSE_FAILED") from exc
+
+
 def _read_pidfd_fdinfo(pidfd: int, *, pid: int) -> None:
     """Read only bounded kernel metadata for an already opened pidfd."""
     flags = os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_NONBLOCK
-    fd = os.open(f"/proc/self/fdinfo/{pidfd}", flags)
     try:
-        data = bytearray()
-        while len(data) <= _MAX_FDINFO_BYTES:
-            chunk = os.read(fd, min(1024, _MAX_FDINFO_BYTES + 1 - len(data)))
-            if not chunk:
-                break
-            data.extend(chunk)
-            if len(data) > _MAX_FDINFO_BYTES:
-                raise _Refusal("PIDFD_FDINFO_MALFORMED")
-        _parse_pidfd_fdinfo(bytes(data), pid=pid)
+        fd = os.open(f"/proc/self/fdinfo/{pidfd}", flags)
+    except OSError as exc:
+        raise _Refusal("PIDFD_FDINFO_UNAVAILABLE") from exc
+    try:
+        try:
+            data = bytearray()
+            while len(data) <= _MAX_FDINFO_BYTES:
+                chunk = os.read(fd, min(1024, _MAX_FDINFO_BYTES + 1 - len(data)))
+                if not chunk:
+                    break
+                data.extend(chunk)
+                if len(data) > _MAX_FDINFO_BYTES:
+                    raise _Refusal("PIDFD_FDINFO_MALFORMED")
+            _parse_pidfd_fdinfo(bytes(data), pid=pid)
+        except OSError as exc:
+            raise _Refusal("PIDFD_FDINFO_UNAVAILABLE") from exc
     finally:
-        os.close(fd)
+        _close_observation_fd(fd)
 
 
 def _poll_liveness(pidfd: int) -> None:
@@ -141,26 +158,33 @@ def _read_pidfd_lifetime(pid: int) -> dict:
         getattr(select, "poll", None)
     ):
         raise _Refusal("PIDFD_NOT_SUPPORTED")
-    try:
-        with ExitStack() as descriptors:
+    with ExitStack() as descriptors:
+        # Only failure of this syscall receives PIDFD_OPEN_UNAVAILABLE.
+        try:
             pidfd = os.pidfd_open(pid, 0)
-            descriptors.callback(os.close, pidfd)
-            _poll_liveness(pidfd)
-            _read_pidfd_fdinfo(pidfd, pid=pid)
+        except OSError as exc:
+            raise _Refusal("PIDFD_OPEN_UNAVAILABLE") from exc
+        descriptors.callback(_close_observation_fd, pidfd)
+        _poll_liveness(pidfd)
+        _read_pidfd_fdinfo(pidfd, pid=pid)
+        try:
             directory = os.open(
                 f"/proc/{pid}",
                 os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
             )
-            descriptors.callback(os.close, directory)
+        except OSError as exc:
+            raise _Refusal("PIDFD_PROCFS_UNAVAILABLE") from exc
+        descriptors.callback(_close_observation_fd, directory)
+        try:
             first = _parse_stat(_read_proc_file(directory, "stat"), pid)
             second = _parse_stat(_read_proc_file(directory, "stat"), pid)
-            if first != second:
-                raise _Refusal("PROCESS_CHANGED_DURING_OBSERVATION")
-            _read_pidfd_fdinfo(pidfd, pid=pid)
-            _poll_liveness(pidfd)
-            return {"pid": pid, "start_time_ticks": first, "pidfd_poll_alive": True}
-    except (OSError, PermissionError) as exc:
-        raise _Refusal("PIDFD_OPEN_UNAVAILABLE") from exc
+        except OSError as exc:
+            raise _Refusal("PIDFD_PROCFS_UNAVAILABLE") from exc
+        if first != second:
+            raise _Refusal("PROCESS_CHANGED_DURING_OBSERVATION")
+        _read_pidfd_fdinfo(pidfd, pid=pid)
+        _poll_liveness(pidfd)
+        return {"pid": pid, "start_time_ticks": first, "pidfd_poll_alive": True}
 
 
 def _sanitize(observation, *, pid: int) -> dict:
@@ -246,7 +270,7 @@ def inspect_host(*, runner=None, lifetime_reader=None) -> dict:
                 code = "BACKEND_OBSERVATION_FAILED"
             observed = {"observation": "NOT_QUALIFIED", "issues": [code]}
         except (OSError, TimeoutError):
-            observed = {"observation": "NOT_QUALIFIED", "issues": ["PIDFD_OPEN_UNAVAILABLE"]}
+            observed = {"observation": "NOT_QUALIFIED", "issues": ["BACKEND_OBSERVATION_FAILED"]}
         except Exception:
             observed = {"observation": "NOT_QUALIFIED", "issues": ["BACKEND_OBSERVATION_FAILED"]}
         result["pidfd_observations"][role] = {"unit": unit, **observed}
