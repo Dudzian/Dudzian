@@ -240,14 +240,17 @@ def inspect_host(*, runner=None, lifetime_reader=None) -> dict:
                 f"--property={','.join(_SYSTEMD_PROPERTIES)}",
                 unit,
             )
-            response = runner(
-                command,
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=3,
-                env={"LC_ALL": "C", "PATH": "/usr/bin:/bin"},
-            )
+            try:
+                response = runner(
+                    command,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=3,
+                    env={"LC_ALL": "C", "PATH": "/usr/bin:/bin"},
+                )
+            except (OSError, TimeoutError) as exc:
+                raise _Refusal("SYSTEMD_UNAVAILABLE") from exc
             if type(response.returncode) is not int:
                 raise _Refusal("MALFORMED_SYSTEMD_RESPONSE")
             if response.returncode:
