@@ -20,7 +20,7 @@ form `0::/absolute/path`. It rejects cgroup v1/hybrid, relative or malformed
 paths and ambiguous prefix matches. A matching observation requires
 equality with systemd's reported ControlGroup or child-directory
 membership across a complete path component boundary. Cross-role
-cgroup overlap is reported as a failure.
+cgroup overlap or reuse of the same MainPID is reported as a failure.
 
 Only fixed refusal codes, unit candidate names and bounded numeric
 process metadata are reported; **raw cgroup paths and backend exception
