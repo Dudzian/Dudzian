@@ -151,6 +151,7 @@ def _inspect_reference_authorities(accounts, identities):
             or uid <= 0
             or gid <= 0
             or gid not in groups
+            or 0 in groups
         ):
             problems.append(f"{role}: malformed or privileged reference principal")
             continue
