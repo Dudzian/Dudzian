@@ -472,6 +472,7 @@ def test_proc_stat_read_error_is_not_pidfd_open_error(
         probe._read_pidfd_lifetime(4321)
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux fdinfo syscall fixture")
 @pytest.mark.parametrize("stage", ["open", "read", "close"])
 def test_fdinfo_io_errors_are_separate_from_pidfd_open(
     monkeypatch, tmp_path, stage
