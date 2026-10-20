@@ -381,15 +381,33 @@ def test_pidfd_lifetime_happy_path_checks_both_ends(simulated_pidfd_lifetime):
 
 def test_process_exit_between_first_and_second_poll_refuses(simulated_pidfd_lifetime, monkeypatch):
     fs = simulated_pidfd_lifetime
+    polls = []
 
-    def poll(_pidfd):
+    class SequentialPoll:
+        def register(self, fd, _mask):
+            self.fd = fd
+
+        def poll(self, timeout):
+            assert timeout == 0
+            polls.append(self.fd)
+            if len(polls) == 1:
+                return []
+            return [(self.fd, select.POLLIN)]
+
+    monkeypatch.setattr(probe, "select", SimpleNamespace(
+        poll=SequentialPoll, POLLIN=select.POLLIN,
+        POLLERR=select.POLLERR, POLLHUP=select.POLLHUP
+    ))
+    native_poll = probe._poll_liveness
+
+    def observed_poll(pidfd):
         fs.events.append("poll")
-        if fs.events.count("poll") == 2:
-            raise probe._Refusal("PIDFD_NOT_LIVE")
+        native_poll(pidfd)
 
-    monkeypatch.setattr(probe, "_poll_liveness", poll)
+    monkeypatch.setattr(probe, "_poll_liveness", observed_poll)
     with pytest.raises(probe._Refusal, match="^PIDFD_NOT_LIVE$"):
         probe._read_pidfd_lifetime(4321)
+    assert len(polls) == 2
     assert fs.events == ["poll", "fdinfo", "fdinfo", "poll"]
 
 
