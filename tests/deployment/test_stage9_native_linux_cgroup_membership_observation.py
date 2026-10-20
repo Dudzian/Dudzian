@@ -33,9 +33,7 @@ def _runner(command, **kwargs):
     assert kwargs["env"] == {"LC_ALL": "C", "PATH": "/usr/bin:/bin"}
     unit = command[-1]
     account = next(
-        name
-        for _, candidate, name in probe._PROPOSED_SYSTEMD_UNITS
-        if candidate == unit
+        name for _, candidate, name in probe._PROPOSED_SYSTEMD_UNITS if candidate == unit
     )
     return SimpleNamespace(returncode=0, stdout=_systemd(unit, account))
 
@@ -51,9 +49,10 @@ def _stat_bytes(pid, start):
 
 def test_full_systemd_metadata_and_fixed_unit_are_required():
     _, unit, account = probe._PROPOSED_SYSTEMD_UNITS[0]
-    assert probe._parse_unit_cgroup(
-        _systemd(unit, account), unit=unit, account=account
-    ) == (4321, f"/system.slice/{unit}")
+    assert probe._parse_unit_cgroup(_systemd(unit, account), unit=unit, account=account) == (
+        4321,
+        f"/system.slice/{unit}",
+    )
 
 
 @pytest.mark.parametrize(
