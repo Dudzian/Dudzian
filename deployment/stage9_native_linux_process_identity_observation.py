@@ -170,13 +170,14 @@ def _read_proc_identity(pid: int, uid: int, gid: int) -> dict:
         namespaces = {}
         for name in _NS_TYPES:
             info = os.stat(f"ns/{name}", dir_fd=directory)
-            if not stat.S_ISREG(info.st_mode) and not info.st_ino:
-                raise ValueError("NAMESPACE_NOT_OBSERVABLE")
-            if info.st_ino <= 0:
+            if not stat.S_ISREG(info.st_mode) or info.st_ino <= 0:
                 raise ValueError("NAMESPACE_NOT_OBSERVABLE")
             namespaces[name] = info.st_ino
+        after_status = _parse_status(
+            _read_proc_file(directory, "status"), pid=pid, uid=uid, gid=gid
+        )
         after = _parse_stat(_read_proc_file(directory, "stat"), pid)
-        if before != after:
+        if before != after or status != after_status:
             raise ValueError("PROCESS_CHANGED_DURING_OBSERVATION")
     finally:
         os.close(directory)
@@ -260,6 +261,8 @@ def inspect_host(*, runner=None, process_reader=None, accounts=None) -> dict:
     for left_index, left in enumerate(identities):
         for right in list(identities)[left_index + 1 :]:
             a, b = identities[left], identities[right]
+            if a["pid"] == b["pid"]:
+                result["observed_failures"].append(f"{left}/{right}: SHARED_PROCESS_PID")
             if a["uid"] == b["uid"] or a["gid"] == b["gid"]:
                 result["observed_failures"].append(f"{left}/{right}: SHARED_UID_OR_GID")
             if any(a["namespaces"][name] == b["namespaces"][name] for name in _NS_TYPES):
