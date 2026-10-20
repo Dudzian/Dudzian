@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import json
 import os
+import selectors
 import subprocess
 import sys
+import time
 
 from deployment.stage9_native_linux_process_identity_observation import (
     _PROPOSED_SYSTEMD_UNITS,
@@ -20,6 +22,7 @@ from deployment.stage9_native_linux_process_identity_observation import (
 )
 
 _PROPERTIES = (*_SYSTEMD_PROPERTIES, "ControlGroup")
+_MAX_SYSTEMD_BYTES = 8192
 _BLOCKERS = (
     "MAINPID_AND_CONTROLGROUP_ARE_NOT_TRUSTED_SERVICE_PROVENANCE",
     "PIDFD_AND_AUTHENTICATED_PEER_NOT_QUALIFIED",
@@ -34,6 +37,7 @@ _CODES = frozenset(
         "MALFORMED_SYSTEMD_CGROUP_METADATA",
         "INVALID_SYSTEMD_CGROUP_PATH",
         "SYSTEMD_UNAVAILABLE",
+        "OVERSIZED_SYSTEMD_RESPONSE",
         "MALFORMED_PROC_CGROUP_V2",
         "INVALID_PROC_CGROUP_IDENTITY",
         "PROCESS_CHANGED_DURING_OBSERVATION",
@@ -48,9 +52,7 @@ _CODES = frozenset(
 
 class _Refusal(ValueError):
     def __init__(self, code: str):
-        self.code = (
-            code if type(code) is str and code in _CODES else "BACKEND_OBSERVATION_FAILED"
-        )
+        self.code = code if type(code) is str and code in _CODES else "BACKEND_OBSERVATION_FAILED"
         super().__init__(self.code)
 
 
@@ -67,7 +69,12 @@ def _valid_path(value) -> bool:
 
 
 def _parse_unit_cgroup(raw: str, *, unit: str, account: str) -> tuple[int, str]:
-    if type(raw) is not str or len(raw) > 8192 or "\x00" in raw:
+    if (
+        type(raw) is not str
+        or len(raw) > _MAX_SYSTEMD_BYTES
+        or not raw.isascii()
+        or any(ord(char) < 32 and char != "\n" for char in raw)
+    ):
         raise _Refusal("MALFORMED_SYSTEMD_CGROUP_METADATA")
     fields = {}
     for line in raw.splitlines():
@@ -93,12 +100,7 @@ def _parse_unit_cgroup(raw: str, *, unit: str, account: str) -> tuple[int, str]:
 def _parse_proc_cgroup_v2(raw: bytes) -> str:
     if type(raw) is not bytes or not raw or len(raw) > 8192:
         raise _Refusal("MALFORMED_PROC_CGROUP_V2")
-    if (
-        raw.count(b"\n") != 1
-        or not raw.endswith(b"\n")
-        or b"\r" in raw
-        or b"\x00" in raw
-    ):
+    if raw.count(b"\n") != 1 or not raw.endswith(b"\n") or b"\r" in raw or b"\x00" in raw:
         raise _Refusal("MALFORMED_PROC_CGROUP_V2")
     fields = raw[:-1].split(b":", 2)
     if len(fields) != 3 or fields[0] != b"0" or fields[1] != b"":
@@ -150,9 +152,45 @@ def _is_member(path: str, group: str) -> bool:
     return path == group or path.startswith(group + "/")
 
 
-def _inspect_one(
-    *, runner, process_reader, unit: str, account: str
-) -> tuple[dict, str]:
+def _run_systemctl(command, *, timeout=3, env=None, **_kwargs):
+    """Bound stdout while reading; discard stderr without retaining private data."""
+    deadline = time.monotonic() + timeout
+    with subprocess.Popen(
+        command,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        env=env,
+        bufsize=0,
+        close_fds=True,
+    ) as process:
+        try:
+            parts = []
+            size = 0
+            with selectors.DefaultSelector() as selector:
+                selector.register(process.stdout, selectors.EVENT_READ)
+                while True:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0 or not selector.select(remaining):
+                        raise subprocess.TimeoutExpired(command, timeout)
+                    part = os.read(process.stdout.fileno(), _MAX_SYSTEMD_BYTES + 1 - size)
+                    if not part:
+                        break
+                    size += len(part)
+                    if size > _MAX_SYSTEMD_BYTES:
+                        raise _Refusal("OVERSIZED_SYSTEMD_RESPONSE")
+                    parts.append(part)
+            returncode = process.wait(timeout=max(0, deadline - time.monotonic()))
+            return subprocess.CompletedProcess(
+                command, returncode, stdout=b"".join(parts).decode("utf-8"), stderr=None
+            )
+        finally:
+            if process.poll() is None:
+                process.kill()
+            process.wait()
+
+
+def _read_unit_cgroup(*, runner, unit: str, account: str) -> tuple[int, str]:
     command = (
         "/usr/bin/systemctl",
         "--system",
@@ -173,18 +211,7 @@ def _inspect_one(
         raise _Refusal("MALFORMED_SYSTEMD_CGROUP_METADATA")
     if response.returncode:
         raise _Refusal("SYSTEMD_UNAVAILABLE")
-    pid, group = _parse_unit_cgroup(response.stdout, unit=unit, account=account)
-    start_ticks, observed_group = _sanitize(process_reader(pid), pid=pid)
-    if not _is_member(observed_group, group):
-        raise _Refusal("CGROUP_MEMBERSHIP_NOT_MATCHED")
-    return (
-        {
-            "observation": "CGROUP_MEMBERSHIP_METADATA_ONLY",
-            "pid": pid,
-            "start_time_ticks": start_ticks,
-        },
-        group,
-    )
+    return _parse_unit_cgroup(response.stdout, unit=unit, account=account)
 
 
 def inspect_host(*, runner=None, process_reader=None) -> dict:
@@ -196,9 +223,7 @@ def inspect_host(*, runner=None, process_reader=None) -> dict:
         "qualification": "NOT_QUALIFIED",
         "production_emission": "BLOCKED",
         "topology": "PROPOSED_NOT_APPROVED",
-        "snapshot": (
-            "SYNTHETIC_TEST_INPUT" if synthetic else "UNTRUSTED_LIVE_OBSERVATION"
-        ),
+        "snapshot": ("SYNTHETIC_TEST_INPUT" if synthetic else "UNTRUSTED_LIVE_OBSERVATION"),
         "blockers": list(_BLOCKERS),
         "process_observations": {},
         "observed_failures": [],
@@ -207,31 +232,35 @@ def inspect_host(*, runner=None, process_reader=None) -> dict:
         result["observed_failures"].append("NATIVE_LINUX_REQUIRED")
         return result
     if runner is None:
-        runner = subprocess.run
+        runner = _run_systemctl
     if process_reader is None:
         process_reader = _read_process_cgroup
     groups = {}
     pids = {}
     for role, unit, account in _PROPOSED_SYSTEMD_UNITS:
         try:
-            observed, group = _inspect_one(
-                runner=runner, process_reader=process_reader, unit=unit, account=account
-            )
+            pid, group = _read_unit_cgroup(runner=runner, unit=unit, account=account)
+            # Retain validated hints even if procfs later fails or does not match.
             groups[role] = group
-            pids[role] = observed["pid"]
+            pids[role] = pid
+            start_ticks, observed_group = _sanitize(process_reader(pid), pid=pid)
+            if not _is_member(observed_group, group):
+                raise _Refusal("CGROUP_MEMBERSHIP_NOT_MATCHED")
+            observed = {
+                "observation": "CGROUP_MEMBERSHIP_METADATA_ONLY",
+                "pid": pid,
+                "start_time_ticks": start_ticks,
+            }
         except UnicodeDecodeError:
             observed = {
                 "observation": "NOT_QUALIFIED",
                 "issues": ["MALFORMED_SYSTEMD_CGROUP_METADATA"],
             }
         except _Refusal as exc:
+            candidate = getattr(exc, "code", None) if type(exc) is _Refusal else None
             code = (
-                exc.code
-                if (
-                    type(exc) is _Refusal
-                    and type(exc.code) is str
-                    and exc.code in _CODES
-                )
+                candidate
+                if type(candidate) is str and candidate in _CODES
                 else "BACKEND_OBSERVATION_FAILED"
             )
             observed = {"observation": "NOT_QUALIFIED", "issues": [code]}
@@ -256,9 +285,7 @@ def inspect_host(*, runner=None, process_reader=None) -> dict:
             if pids[left] == pids[right]:
                 result["observed_failures"].append(f"{left}/{right}: SHARED_PROCESS_PID")
             if _is_member(a, b) or _is_member(b, a):
-                result["observed_failures"].append(
-                    f"{left}/{right}: CROSS_ROLE_CGROUP_OVERLAP"
-                )
+                result["observed_failures"].append(f"{left}/{right}: CROSS_ROLE_CGROUP_OVERLAP")
     return result
 
 

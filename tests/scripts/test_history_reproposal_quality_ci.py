@@ -128,6 +128,9 @@ STAGE9_PRODUCTION_ATOMIC_MODULES = {
     "bot_core.production_signer_ipc",
     "bot_core.production_signer_custody",
     "deployment.production_signer_service",
+    "deployment.stage9_native_linux_source_cca_preflight",
+    "deployment.stage9_native_linux_process_identity_observation",
+    "deployment.stage9_native_linux_cgroup_membership_observation",
 }
 RAW_FILES = (
     "coverage-atomic-root-proof.data",
@@ -174,6 +177,7 @@ def test_history_qualification_partitions_tests_and_preserves_original_atomic_sc
         selected = [token for token in tokens if token.startswith("tests/")]
         assert set(selected) == expected_tests
         assert len(selected) == len(expected_tests)
+        assert not any(token.startswith("deployment/") for token in tokens)
         coverage_modules = [
             token.removeprefix("--cov=") for token in tokens if token.startswith("--cov=")
         ]
@@ -242,7 +246,7 @@ def test_independent_close_reader_contract_has_explicit_format_scope():
     assert format_tokens.count(relative_path) == 1
 
 
-def test_native_linux_source_cca_preflight_has_explicit_format_scope():
+def test_native_linux_source_cca_observations_have_explicit_lint_and_format_scope():
     quality = _jobs()["quality-ratchet"]
     format_tokens = shlex.split(
         _step(quality, "Format Stage 9 signing and credential substrate")["run"]
@@ -257,6 +261,14 @@ def test_native_linux_source_cca_preflight_has_explicit_format_scope():
         "tests/deployment/test_stage9_native_linux_cgroup_membership_observation.py",
     ):
         assert format_tokens.count(path) == 1
+    lint_tokens = shlex.split(_step(quality, "Ruff baseline gate")["run"])
+    assert lint_tokens[:4] == ["python", "-m", "ruff", "check"]
+    for module in (
+        "source_cca_preflight",
+        "process_identity_observation",
+        "cgroup_membership_observation",
+    ):
+        assert lint_tokens.count(f"deployment/stage9_native_linux_{module}.py") == 1
 
 
 def test_cca_credential_lifecycle_chain_has_explicit_format_scope():
