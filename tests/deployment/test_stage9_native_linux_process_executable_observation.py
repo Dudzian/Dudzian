@@ -330,3 +330,60 @@ def test_readonly_executable_observations_never_promote_cli(monkeypatch, capsys)
     )
     assert probe.main() == 2
     _assert_blocked(json.loads(capsys.readouterr().out))
+
+
+def test_executable_link_retarget_after_open_is_rejected(procfs):
+    replacement = procfs.proc / "replacement-binary"
+    replacement.write_bytes(procfs.content)
+    replacement.chmod(0o644)
+    changed = False
+
+    def retarget(_fd):
+        nonlocal changed
+        if not changed:
+            changed = True
+            link = procfs.proc / "exe"
+            link.unlink()
+            link.symlink_to(replacement.name)
+
+    procfs.hooks["read"] = retarget
+    with pytest.raises(ValueError, match="EXECUTABLE_OBJECT_CHANGED"):
+        probe._read_executable(procfs.pid)
+    assert procfs.reads
+
+
+def test_executable_metadata_change_after_read_refuses_digest(procfs):
+    reads_complete = False
+
+    def observed_read(_fd):
+        nonlocal reads_complete
+        reads_complete = True
+
+    def changed_stat(name, info):
+        if name == "exe" and reads_complete:
+            info.st_ino += 1
+
+    procfs.hooks["read"] = observed_read
+    procfs.hooks["stat"] = changed_stat
+    with pytest.raises(ValueError, match="EXECUTABLE_OBJECT_CHANGED"):
+        probe._read_executable(procfs.pid)
+    assert procfs.reads
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Synthetic malformed systemd")
+def test_invalid_systemd_response_never_reaches_procfs():
+    def fake_runner(command, **_kwargs):
+        return SimpleNamespace(
+            returncode=0,
+            stdout="PRIVATE_EXECUTABLE_SECRET\nMainPID=999\n",
+        )
+
+    def forbidden(_pid):
+        pytest.fail("Malformed systemd response reached procfs")
+
+    report = probe.inspect_host(runner=fake_runner, executable_reader=forbidden)
+    _assert_blocked(report)
+    assert all(
+        row["issues"] == ["MALFORMED_SYSTEMD_RESPONSE"]
+        for row in report["executable_observations"].values()
+    )
