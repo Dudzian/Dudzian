@@ -242,7 +242,7 @@ def inspect_host(*, runner=None, lifetime_reader=None) -> dict:
             }
         except _Refusal as exc:
             code = getattr(exc, "code", None) if type(exc) is _Refusal else None
-            if code not in _CODES:
+            if type(code) is not str or code not in _CODES:
                 code = "BACKEND_OBSERVATION_FAILED"
             observed = {"observation": "NOT_QUALIFIED", "issues": [code]}
         except (OSError, TimeoutError):
