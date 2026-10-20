@@ -108,10 +108,12 @@ def _assert_local_issuance_execution_ownership(sources):
     This protects accidental architectural changes, not hostile dynamic Python.
     """
     dependencies = {}
+    parsed_sources = {}
     consumers = set(_LOCAL_ISSUANCE_MODULES)
     for path, source in sources.items():
         module = ".".join(Path(path).with_suffix("").parts).removesuffix(".__init__")
         tree = ast.parse(source, filename=path)
+        parsed_sources[module] = (path, tree)
         imports = _source_imports(tree, path)
         dependencies[module] = imports
         references = (
@@ -145,13 +147,46 @@ def _assert_local_issuance_execution_ownership(sources):
                 f"unreviewed issuance dispatcher consumer in {path}"
             )
 
+    # A generic application import of a persistence/issuer module is not by
+    # itself proof that the importer transports the retained issuance request.
+    # Broad reverse-import closure tainted the entire application graph,
+    # including exchange adapters, gRPC stubs and runtime bootstrap modules.
+    #
+    # Track actual re-exported request types through their imported aliases:
+    # RetainedIssuanceRequest -> Request -> Alias -> Attempt, including
+    # relative imports. A consumer importing the complete signed-attempt
+    # module is also in scope. Every selected module's *forward* helper
+    # dependency closure remains guarded below; no transport exception is
+    # granted to a selected sender or any of its delegated helpers.
+    retained_exports = {
+        "bot_core.cha_attempt_signatures": {"RetainedIssuanceRequest"},
+        "bot_core.licensing.cha_root_proof_signed_attempt": {
+            "VerifiedSignedImmutableRootProofIssuanceAttempt"
+        },
+    }
     while True:
-        expanded = consumers | {
-            module for module, imports in dependencies.items() if imports & consumers
-        }
-        if expanded == consumers:
+        before = (set(consumers), {key: frozenset(value) for key, value in retained_exports.items()})
+        for module, (path, tree) in parsed_sources.items():
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.ImportFrom):
+                    continue
+                package = Path(path).parent.parts
+                prefix = package[: len(package) - node.level + 1] if node.level else ()
+                imported_from = (
+                    ".".join((*prefix, node.module)) if node.module else ".".join(prefix)
+                )
+                for alias in node.names:
+                    if alias.name in retained_exports.get(imported_from, ()):
+                        consumers.add(module)
+                        retained_exports.setdefault(module, set()).add(alias.asname or alias.name)
+            # Imports of the signed-attempt module itself are eligible
+            # independently of spelling its opaque class name.
+            if "bot_core.licensing.cha_root_proof_signed_attempt" in dependencies[module]:
+                consumers.add(module)
+        after = (set(consumers), {key: frozenset(value) for key, value in retained_exports.items()})
+        if before == after:
             break
-        consumers = expanded
+
     # A new boundary consumer must not delegate transport to a generic helper.
     reachable = set(consumers)
     while True:
