@@ -173,6 +173,17 @@ def _assert_local_issuance_execution_ownership(sources):
             for node in ast.walk(tree):
                 if not isinstance(node, ast.ImportFrom):
                     continue
+                # An explicit import through the package *facade* executes
+                # bot_core/__init__.py, unlike the reviewed direct-module
+                # dependency. Only make the caller request-bearing when the
+                # imported facade member is itself a selected local issuer
+                # consumer. Its forward closure then reviews facade imports.
+                if (
+                    not node.level
+                    and node.module == "bot_core"
+                    and any(f"bot_core.{alias.name}" in consumers for alias in node.names)
+                ):
+                    consumers.add(module)
                 package = Path(path).parent.parts
                 prefix = package[: len(package) - node.level + 1] if node.level else ()
                 imported_from = (
