@@ -233,7 +233,7 @@ def test_regular_kernel_executable_fd_hashes_once(procfs):
         "size": len(procfs.content),
     }
     assert [data for _, data in procfs.reads] == [procfs.content, b""]
-    assert procfs.opened.values().__contains__("exe")
+    assert "exe" in procfs.opened.values()
 
 
 def test_procfs_executable_retarget_during_open_refuses_before_read(procfs):
@@ -320,13 +320,13 @@ def test_executable_io_error_releases_all_descriptors(procfs, phase):
         probe._read_executable(procfs.pid)
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="Synthetic Linux CLI observation")
 def test_readonly_executable_observations_never_promote_cli(monkeypatch, capsys):
+    original = probe.inspect_host
     monkeypatch.setattr(
-        probe, "inspect_host",
-        lambda: probe._test_observe() if False else {
-            "status": "BLOCKED", "qualification": "NOT_QUALIFIED",
-            "production_emission": "BLOCKED", "topology": "PROPOSED_NOT_APPROVED",
-        },
+        probe,
+        "inspect_host",
+        lambda: original(runner=_runner, executable_reader=_synthetic),
     )
     assert probe.main() == 2
     _assert_blocked(json.loads(capsys.readouterr().out))
