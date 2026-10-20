@@ -32,7 +32,8 @@ and network namespace inode numbers. It requires:
 - `NoNewPrivs=1` and zero inherited, permitted, effective, bounding
   and ambient capabilities;
 - observable namespace inode numbers, with no cross-role UID/GID or
-  mount/IPC/network namespace reuse.
+  mount/IPC/network namespace reuse; a second read of all three inode
+  numbers must match the first observation.
 
 Missing NSS identity, missing/inactive unit, inaccessible procfs data,
 permission denials, read failures, malformed procfs records, process
@@ -40,6 +41,13 @@ exit/restart or cross-role collisions produce explicit refusal reasons.
 Only bounded numeric observations and fixed refusal codes are published;
 no raw `/proc` content, executable/environment dump, private key or
 backend error is emitted.
+
+Injected process readers pass the same output boundary: exact builtin
+dictionary/list/integer types, exact fields, matching PID and NSS UID/GID,
+bounded numeric ranges, at most one expected supplementary GID and exactly
+the three namespace inode numbers. The report contains a fresh sanitized
+copy, never the backend object. Unexpected backend exceptions become a
+fixed refusal code without inspecting or publishing their messages.
 
 ## Evidence boundaries (critical)
 
@@ -51,9 +59,11 @@ an authenticated socket peer. It is intentionally weaker than
 `SO_PEERPIDFD`-bound signer IPC, and must never replace that protocol.
 The procfs mount, systemd daemon, NSS contents and host root are not
 independently pinned by this tool. A process may also change credentials
-after this snapshot. The tool does not attest all processes in a unit's
-cgroup, other executable paths, namespace mappings, effective DAC/ACL,
-socket peer identity or private keyring denial.
+or namespaces after a read, or change and restore them between reads.
+The repeated sequential observations detect some changes; they provide
+neither full atomicity nor proof of process identity. The tool does not
+attest all processes in a unit's cgroup, other executable paths, namespace
+mappings, effective DAC/ACL, socket peer identity or private keyring denial.
 
 Report status is **always** `BLOCKED`, `NOT_QUALIFIED` and
 `production_emission=BLOCKED`, CLI exit code **2**. An observed
