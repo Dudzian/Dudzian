@@ -155,9 +155,7 @@ def _read_pidfd_lifetime(pid: int) -> dict:
         raise _Refusal("NATIVE_LINUX_REQUIRED")
     if type(pid) is not int or not 1 < pid < 2**31:
         raise _Refusal("INVALID_PIDFD_LIFETIME_OBSERVATION")
-    if not callable(getattr(os, "pidfd_open", None)) or not callable(
-        getattr(select, "poll", None)
-    ):
+    if not callable(getattr(os, "pidfd_open", None)) or not callable(getattr(select, "poll", None)):
         raise _Refusal("PIDFD_NOT_SUPPORTED")
     with ExitStack() as descriptors:
         # Only failure of this syscall receives PIDFD_OPEN_UNAVAILABLE.

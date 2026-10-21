@@ -37,6 +37,13 @@ observers flags the collision. Missing/refused/unparseable observers and underly
 diagnostic anomalies are reported using **fixed reason codes** rather than
 raw subreport error messages or stack traces.
 
+Role-specific refusals and diagnostic anomalies affect only the named role.
+Cross-role anomalies affect the named pair; global or unrecognized failure
+labels affect all roles for that source. Numeric PID collision detection
+remains independent of these labels. Validation follows the observers' bounds:
+PID hints are integers from 2 to `2**31 - 1`, while starttime ticks and namespace
+inodes are integers from 1 to `2**64 - 1`; booleans are rejected.
+
 Output includes only fixed role names, a diagnostic comparison label,
 bounded counts of observed sources, and fixed issue codes. **No file
 digests, paths, environment, private metadata, observer error strings,

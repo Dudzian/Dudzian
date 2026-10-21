@@ -38,19 +38,28 @@ _FIELDS = {
     "executable": ("executable_observations", "UNPINNED_PROC_EXECUTABLE_DIGEST_ONLY"),
     "pidfd": ("pidfd_observations", "UNTRUSTED_PIDFD_LIFETIME_METADATA_ONLY"),
 }
+_FAILURE_COMPONENTS = {
+    "identity": "process",
+    "cgroup": "cgroup",
+    "fragment": "fragment",
+    "executable": "executable",
+    "pidfd": "pidfd",
+}
 _SUCCESS_KEYS = {
     "identity": frozenset({"unit", "observation", "identity"}),
     "cgroup": frozenset({"unit", "observation", "pid", "start_time_ticks"}),
-    "fragment": frozenset({
-        "unit", "observation", "pid_hint", "fragment_sha256", "fragment_size"
-    }),
-    "executable": frozenset({
-        "unit", "observation", "pid_hint", "start_time_ticks",
-        "executable_sha256", "executable_size",
-    }),
-    "pidfd": frozenset({
-        "unit", "observation", "pid_hint", "start_time_ticks", "pidfd_poll_alive"
-    }),
+    "fragment": frozenset({"unit", "observation", "pid_hint", "fragment_sha256", "fragment_size"}),
+    "executable": frozenset(
+        {
+            "unit",
+            "observation",
+            "pid_hint",
+            "start_time_ticks",
+            "executable_sha256",
+            "executable_size",
+        }
+    ),
+    "pidfd": frozenset({"unit", "observation", "pid_hint", "start_time_ticks", "pidfd_poll_alive"}),
 }
 _BLOCKERS = (
     "ALL_INPUTS_UNTRUSTED_SEQUENTIAL_DIAGNOSTICS",
@@ -60,14 +69,22 @@ _BLOCKERS = (
     "POSTGRESQL_COMMITTED_CLOSE_AND_DURABILITY_NOT_QUALIFIED",
     "SIGN_BIND_ENROLLMENT_PRODUCTION_BLOCKED",
 )
-_TOP_KEYS = frozenset({
-    "schema", "status", "qualification", "production_emission", "topology",
-    "snapshot", "blockers", "observed_failures",
-})
+_TOP_KEYS = frozenset(
+    {
+        "schema",
+        "status",
+        "qualification",
+        "production_emission",
+        "topology",
+        "snapshot",
+        "blockers",
+        "observed_failures",
+    }
+)
 
 
-def _bounded_number(value: object, upper: int = 2**64 - 1) -> bool:
-    return type(value) is int and 1 < value <= upper
+def _bounded_number(value: object, *, minimum: int = 1, maximum: int = 2**64 - 1) -> bool:
+    return type(value) is int and minimum <= value <= maximum
 
 
 def _digest(value: object) -> bool:
@@ -87,21 +104,20 @@ def _row_signature(source: str, row: object, *, unit: str) -> tuple[int, int | N
     if source == "identity":
         item = row["identity"]
         if type(item) is not dict or set(item) != {
-            "pid", "start_time_ticks", "uid", "gid", "groups", "namespaces"
+            "pid",
+            "start_time_ticks",
+            "uid",
+            "gid",
+            "groups",
+            "namespaces",
         }:
             raise ValueError("INVALID_SUBREPORT")
         if (
-            not all(_bounded_number(item[k]) for k in ("pid", "start_time_ticks"))
-            or not all(
-                type(item[k]) is int and 0 <= item[k] <= 2**32 - 2
-                for k in ("uid", "gid")
-            )
+            not _bounded_number(item["start_time_ticks"])
+            or not all(type(item[k]) is int and 0 <= item[k] <= 2**32 - 2 for k in ("uid", "gid"))
             or type(item["groups"]) is not list
             or len(item["groups"]) > 1
-            or any(
-                type(g) is not int or g < 0 or g > 2**32 - 2
-                for g in item["groups"]
-            )
+            or any(type(g) is not int or g < 0 or g > 2**32 - 2 for g in item["groups"])
             or type(item["namespaces"]) is not dict
             or set(item["namespaces"]) != set(identity._NS_TYPES)
             or any(not _bounded_number(v) for v in item["namespaces"].values())
@@ -111,7 +127,9 @@ def _row_signature(source: str, row: object, *, unit: str) -> tuple[int, int | N
     else:
         pid = row["pid"] if source == "cgroup" else row["pid_hint"]
         ticks = None if source == "fragment" else row["start_time_ticks"]
-    if not _bounded_number(pid, 2**31 - 1) or (ticks is not None and not _bounded_number(ticks)):
+    if not _bounded_number(pid, minimum=2, maximum=2**31 - 1) or (
+        source != "fragment" and not _bounded_number(ticks)
+    ):
         raise ValueError("INVALID_SUBREPORT")
     if source == "fragment" and (
         not _digest(row["fragment_sha256"])
@@ -130,9 +148,23 @@ def _row_signature(source: str, row: object, *, unit: str) -> tuple[int, int | N
     return pid, ticks
 
 
-def _observe_source(source: str, record: object) -> tuple[dict, bool]:
+def _failure_roles(source: str, failure: str) -> set[str]:
+    """Scope known role labels; treat unrecognized failures as source-wide."""
+    prefix, separator, _detail = failure.partition(": ")
+    roles = {role for role, _unit in _ROLES}
+    if separator:
+        for role in roles:
+            if prefix in (role, f"{role}.{_FAILURE_COMPONENTS[source]}"):
+                return {role}
+        pair = prefix.split("/")
+        if len(pair) == 2 and pair[0] != pair[1] and set(pair) <= roles:
+            return set(pair)
+    return roles
+
+
+def _observe_source(source: str, record: object) -> tuple[dict, set[str]]:
     """Never forward arbitrary sub-observer data or failure details."""
-    field, success = _FIELDS[source]
+    field = _FIELDS[source][0]
     if type(record) is not dict or set(record) != _TOP_KEYS | {field}:
         raise ValueError("INVALID_SUBREPORT")
     if any(
@@ -160,7 +192,9 @@ def _observe_source(source: str, record: object) -> tuple[dict, bool]:
     if type(rows) is not dict or set(rows) != {r for r, _unit in _ROLES}:
         raise ValueError("INVALID_SUBREPORT")
     signatures = {}
-    failed = bool(record["observed_failures"])
+    failed_roles = set()
+    for failure in record["observed_failures"]:
+        failed_roles.update(_failure_roles(source, failure))
     for role, unit in _ROLES:
         row = rows[role]
         if type(row) is not dict or row.get("unit") != unit:
@@ -179,10 +213,10 @@ def _observe_source(source: str, record: object) -> tuple[dict, bool]:
             ):
                 raise ValueError("INVALID_SUBREPORT")
             signatures[role] = None
-            failed = True
+            failed_roles.add(role)
         else:
             signatures[role] = _row_signature(source, row, unit=unit)
-    return signatures, failed
+    return signatures, failed_roles
 
 
 def inspect_host(*, observers=None) -> dict:
@@ -232,7 +266,7 @@ def inspect_host(*, observers=None) -> dict:
         for source in _SOURCES:
             if observations[source] is None or observations[source][0][role] is None:
                 issues.append(f"{source}: NOT_OBSERVED")
-            elif observations[source][1]:
+            elif role in observations[source][1]:
                 issues.append(f"{source}: SUBREPORT_ANOMALY")
         pids = {item[0] for item in signatures.values()}
         role_pid_sets[role] = pids
@@ -259,9 +293,7 @@ def inspect_host(*, observers=None) -> dict:
                     if "CROSS_ROLE_SHARED_PID_HINT" not in row["issues"]:
                         row["issues"].append("CROSS_ROLE_SHARED_PID_HINT")
                         row["observation"] = "NOT_QUALIFIED"
-                        report["observed_failures"].append(
-                            f"{role}: CROSS_ROLE_SHARED_PID_HINT"
-                        )
+                        report["observed_failures"].append(f"{role}: CROSS_ROLE_SHARED_PID_HINT")
     return report
 
 

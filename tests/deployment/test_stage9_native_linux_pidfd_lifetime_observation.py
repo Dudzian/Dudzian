@@ -52,9 +52,7 @@ def _blocked(result):
 
 @pytest.mark.skipif(sys.platform != "linux", reason="Synthetic Linux host inventory")
 def test_three_roles_observe_pidfd_without_promoting_production():
-    result = probe.inspect_host(
-        runner=_runner_for([4321, 4322, 4323]), lifetime_reader=_reader
-    )
+    result = probe.inspect_host(runner=_runner_for([4321, 4322, 4323]), lifetime_reader=_reader)
     _blocked(result)
     assert result["snapshot"] == "SYNTHETIC_TEST_INPUT"
     assert not result["observed_failures"]
@@ -103,9 +101,7 @@ def test_mainpid_collision_is_retained_even_if_pidfd_open_fails():
             raise probe._Refusal("PIDFD_OPEN_UNAVAILABLE")
         return _reader(pid)
 
-    result = probe.inspect_host(
-        runner=_runner_for([7777, 4322, 7777]), lifetime_reader=reader
-    )
+    result = probe.inspect_host(runner=_runner_for([7777, 4322, 7777]), lifetime_reader=reader)
     _blocked(result)
     roles = [entry[0] for entry in probe._PROPOSED_SYSTEMD_UNITS]
     assert result["observed_failures"] == [
@@ -125,7 +121,7 @@ def test_mainpid_collision_is_retained_even_if_pidfd_open_fails():
         {"pid": 4321, "start_time_ticks": 1},
         {"pid": 4321, "start_time_ticks": 1, "pidfd_poll_alive": True, "secret": "X"},
         {"pid": True, "start_time_ticks": 1, "pidfd_poll_alive": True},
-        {"pid": 4322, "start_time_ticks": 1, "pidfd_poll_alive": True},
+        {"pid": 9876, "start_time_ticks": 1, "pidfd_poll_alive": True},
         {"pid": 4321, "start_time_ticks": True, "pidfd_poll_alive": True},
         {"pid": 4321, "start_time_ticks": 0, "pidfd_poll_alive": True},
         {"pid": 4321, "start_time_ticks": 1, "pidfd_poll_alive": 1},
@@ -142,6 +138,34 @@ def test_untrusted_backend_output_is_strictly_sanitized(value):
         row["issues"] == ["INVALID_PIDFD_LIFETIME_OBSERVATION"]
         for row in result["pidfd_observations"].values()
     )
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Synthetic mixed native backend results")
+def test_backend_pid_is_accepted_only_for_the_matching_role():
+    value = {"pid": 4322, "start_time_ticks": 1, "pidfd_poll_alive": True}
+    result = probe.inspect_host(
+        runner=_runner_for([4321, 4322, 4323]), lifetime_reader=lambda _pid: value
+    )
+    _blocked(result)
+    roles = probe._PROPOSED_SYSTEMD_UNITS
+    for index, (role, unit, _account) in enumerate(roles):
+        if index == 1:
+            assert result["pidfd_observations"][role] == {
+                "unit": unit,
+                "observation": "UNTRUSTED_PIDFD_LIFETIME_METADATA_ONLY",
+                "pid_hint": 4322,
+                "start_time_ticks": 1,
+                "pidfd_poll_alive": True,
+            }
+        else:
+            assert result["pidfd_observations"][role] == {
+                "unit": unit,
+                "observation": "NOT_QUALIFIED",
+                "issues": ["INVALID_PIDFD_LIFETIME_OBSERVATION"],
+            }
+    assert result["observed_failures"] == [
+        f"{roles[index][0]}.pidfd: INVALID_PIDFD_LIFETIME_OBSERVATION" for index in (0, 2)
+    ]
 
 
 @pytest.mark.parametrize(
@@ -209,10 +233,16 @@ class _Poll:
 )
 def test_pidfd_poll_result_strictly_checked(monkeypatch, events, error):
     poller = _Poll(events)
-    monkeypatch.setattr(probe, "select", SimpleNamespace(
-        poll=lambda: poller, POLLIN=getattr(select, "POLLIN", 1),
-        POLLERR=getattr(select, "POLLERR", 8), POLLHUP=getattr(select, "POLLHUP", 16)
-    ))
+    monkeypatch.setattr(
+        probe,
+        "select",
+        SimpleNamespace(
+            poll=lambda: poller,
+            POLLIN=getattr(select, "POLLIN", 1),
+            POLLERR=getattr(select, "POLLERR", 8),
+            POLLHUP=getattr(select, "POLLHUP", 16),
+        ),
+    )
     if error is not None:
         with pytest.raises(ValueError, match=error):
             probe._poll_liveness(51)
@@ -267,11 +297,16 @@ def test_pidfd_and_proc_descriptors_are_closed_on_stat_failure(monkeypatch, tmp_
         real_close(fd)
         closed.append(fd)
 
-    mocked_os = SimpleNamespace(**(vars(os) | {
-        "open": tracked_open,
-        "close": tracked_close,
-        "pidfd_open": pidfd_open,
-    }))
+    mocked_os = SimpleNamespace(
+        **(
+            vars(os)
+            | {
+                "open": tracked_open,
+                "close": tracked_close,
+                "pidfd_open": pidfd_open,
+            }
+        )
+    )
     monkeypatch.setattr(probe, "os", mocked_os)
     monkeypatch.setattr(probe, "_poll_liveness", lambda _fd: None)
     monkeypatch.setattr(probe, "_read_pidfd_fdinfo", lambda _fd, *, pid: None)
@@ -288,12 +323,13 @@ def test_pidfd_and_proc_descriptors_are_closed_on_stat_failure(monkeypatch, tmp_
 @pytest.mark.skipif(sys.platform != "linux", reason="Synthetic Linux CLI")
 def test_cli_remains_blocked_even_when_lifetime_observation_succeeds(monkeypatch, capsys):
     original = probe.inspect_host
-    monkeypatch.setattr(probe, "inspect_host", lambda: original(
-        runner=_runner_for([4321, 4322, 4323]), lifetime_reader=_reader
-    ))
+    monkeypatch.setattr(
+        probe,
+        "inspect_host",
+        lambda: original(runner=_runner_for([4321, 4322, 4323]), lifetime_reader=_reader),
+    )
     assert probe.main() == 2
     _blocked(json.loads(capsys.readouterr().out))
-
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="Synthetic malicious refusal code")
@@ -303,9 +339,7 @@ def test_malformed_backend_refusal_code_fails_closed_without_crash():
         refusal.code = ["PRIVATE_EXECUTABLE_SECRET"]
         raise refusal
 
-    report = probe.inspect_host(
-        runner=_runner_for([4321, 4322, 4323]), lifetime_reader=bad_reader
-    )
+    report = probe.inspect_host(runner=_runner_for([4321, 4322, 4323]), lifetime_reader=bad_reader)
     _blocked(report)
     assert all(
         row["issues"] == ["BACKEND_OBSERVATION_FAILED"]
@@ -319,6 +353,7 @@ def simulated_pidfd_lifetime(monkeypatch, tmp_path):
     if sys.platform != "linux":
         pytest.skip("Synthetic Linux pidfd lifetime")
     native_open, native_close = os.open, os.close
+    native_poll = probe._poll_liveness
     opened, closed, events = [], [], []
     settings = {"pidfd_open_error": False, "proc_open_error": False, "close_error": False}
 
@@ -346,23 +381,26 @@ def simulated_pidfd_lifetime(monkeypatch, tmp_path):
             raise OSError("PRIVATE_EXECUTABLE_SECRET")
 
     mock_os = SimpleNamespace(
-        **(vars(os) | {
-            "pidfd_open": fake_pidfd_open,
-            "open": fake_open,
-            "close": fake_close,
-        })
+        **(
+            vars(os)
+            | {
+                "pidfd_open": fake_pidfd_open,
+                "open": fake_open,
+                "close": fake_close,
+            }
+        )
     )
     monkeypatch.setattr(probe, "os", mock_os)
     monkeypatch.setattr(probe, "_read_proc_file", lambda fd, name: b"synthetic stat")
     monkeypatch.setattr(probe, "_parse_stat", lambda raw, pid: 76543)
-    monkeypatch.setattr(
-        probe, "_poll_liveness", lambda _fd: events.append("poll")
-    )
-    monkeypatch.setattr(
-        probe, "_read_pidfd_fdinfo", lambda _fd, *, pid: events.append("fdinfo")
-    )
+    monkeypatch.setattr(probe, "_poll_liveness", lambda _fd: events.append("poll"))
+    monkeypatch.setattr(probe, "_read_pidfd_fdinfo", lambda _fd, *, pid: events.append("fdinfo"))
     fixture = SimpleNamespace(
-        settings=settings, opened=opened, closed=closed, events=events
+        settings=settings,
+        opened=opened,
+        closed=closed,
+        events=events,
+        native_poll=native_poll,
     )
     yield fixture
     assert sorted(opened) == sorted(closed)
@@ -374,9 +412,7 @@ def simulated_pidfd_lifetime(monkeypatch, tmp_path):
 def test_pidfd_lifetime_happy_path_checks_both_ends(simulated_pidfd_lifetime):
     fs = simulated_pidfd_lifetime
     observed = probe._read_pidfd_lifetime(4321)
-    assert observed == {
-        "pid": 4321, "start_time_ticks": 76543, "pidfd_poll_alive": True
-    }
+    assert observed == {"pid": 4321, "start_time_ticks": 76543, "pidfd_poll_alive": True}
     assert fs.events == ["poll", "fdinfo", "fdinfo", "poll"]
 
 
@@ -395,15 +431,20 @@ def test_process_exit_between_first_and_second_poll_refuses(simulated_pidfd_life
                 return []
             return [(self.fd, select.POLLIN)]
 
-    monkeypatch.setattr(probe, "select", SimpleNamespace(
-        poll=SequentialPoll, POLLIN=select.POLLIN,
-        POLLERR=select.POLLERR, POLLHUP=select.POLLHUP
-    ))
-    native_poll = probe._poll_liveness
+    monkeypatch.setattr(
+        probe,
+        "select",
+        SimpleNamespace(
+            poll=SequentialPoll,
+            POLLIN=select.POLLIN,
+            POLLERR=select.POLLERR,
+            POLLHUP=select.POLLHUP,
+        ),
+    )
 
     def observed_poll(pidfd):
         fs.events.append("poll")
-        native_poll(pidfd)
+        fs.native_poll(pidfd)
 
     monkeypatch.setattr(probe, "_poll_liveness", observed_poll)
     with pytest.raises(probe._Refusal, match="^PIDFD_NOT_LIVE$"):
@@ -462,9 +503,7 @@ def test_native_error_codes_are_specific_to_failure_stage(
         assert len(fs.opened) == 2
 
 
-def test_proc_stat_read_error_is_not_pidfd_open_error(
-    simulated_pidfd_lifetime, monkeypatch
-):
+def test_proc_stat_read_error_is_not_pidfd_open_error(simulated_pidfd_lifetime, monkeypatch):
     def unavailable(_fd, _name):
         raise OSError("PRIVATE_EXECUTABLE_SECRET")
 
@@ -475,9 +514,7 @@ def test_proc_stat_read_error_is_not_pidfd_open_error(
 
 @pytest.mark.skipif(sys.platform != "linux", reason="Linux fdinfo syscall fixture")
 @pytest.mark.parametrize("stage", ["open", "read", "close"])
-def test_fdinfo_io_errors_are_separate_from_pidfd_open(
-    monkeypatch, tmp_path, stage
-):
+def test_fdinfo_io_errors_are_separate_from_pidfd_open(monkeypatch, tmp_path, stage):
     original_open, original_read, original_close = os.open, os.read, os.close
     opened, closed = [], []
     fixture = tmp_path / "fdinfo"
@@ -506,11 +543,14 @@ def test_fdinfo_io_errors_are_separate_from_pidfd_open(
         probe,
         "os",
         SimpleNamespace(
-            **(vars(os) | {
-                "open": fdinfo_open,
-                "read": fdinfo_read,
-                "close": fdinfo_close,
-            })
+            **(
+                vars(os)
+                | {
+                    "open": fdinfo_open,
+                    "read": fdinfo_read,
+                    "close": fdinfo_close,
+                }
+            )
         ),
     )
     expected = "PIDFD_CLOSE_FAILED" if stage == "close" else "PIDFD_FDINFO_UNAVAILABLE"
@@ -534,10 +574,9 @@ def test_error_classification_is_exported_as_fixed_refusal_codes():
         runner=_runner_for([4321, 4322, 4323]), lifetime_reader=failed_reader
     )
     _blocked(report)
-    assert [
-        item["issues"]
-        for item in report["pidfd_observations"].values()
-    ] == [[failure] for failure in failures.values()]
+    assert [item["issues"] for item in report["pidfd_observations"].values()] == [
+        [failure] for failure in failures.values()
+    ]
     assert len(report["observed_failures"]) == 3
 
 
@@ -555,8 +594,7 @@ def test_systemctl_io_failure_is_not_labeled_as_pidfd_open(failure):
     result = probe.inspect_host(runner=unavailable, lifetime_reader=forbidden)
     _blocked(result)
     assert all(
-        row["issues"] == ["SYSTEMD_UNAVAILABLE"]
-        for row in result["pidfd_observations"].values()
+        row["issues"] == ["SYSTEMD_UNAVAILABLE"] for row in result["pidfd_observations"].values()
     )
 
 
@@ -565,9 +603,7 @@ def test_injected_unclassified_backend_oserror_is_fail_closed():
     def unavailable(_pid):
         raise OSError("PRIVATE_EXECUTABLE_SECRET")
 
-    result = probe.inspect_host(
-        runner=_runner_for([4321, 4322, 4323]), lifetime_reader=unavailable
-    )
+    result = probe.inspect_host(runner=_runner_for([4321, 4322, 4323]), lifetime_reader=unavailable)
     _blocked(result)
     assert all(
         row["issues"] == ["BACKEND_OBSERVATION_FAILED"]
