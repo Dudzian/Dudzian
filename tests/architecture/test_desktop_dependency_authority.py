@@ -185,8 +185,10 @@ def test_lock_generation_authority_is_self_consistent() -> None:
     ]
     assert "scripts/ci/require_python311.py" in generator
     assert "--no-header" in generator
+    locked = locked_versions(LOCK)
     for package, version in {
         "aiohttp": "3.14.4",
+        "certifi": "2026.10.19",
         "click": "8.3.3",
         "GitPython": "3.1.60",
         "Pygments": "2.20.0",
@@ -195,6 +197,7 @@ def test_lock_generation_authority_is_self_consistent() -> None:
         "urllib3": "2.8.0",
     }.items():
         assert f"--upgrade-package {package}=={version}" in generator
+        assert locked[canonicalize_name(package)] == version
 
 
 def test_cross_platform_jobs_validate_native_plan_before_wheelhouse() -> None:
