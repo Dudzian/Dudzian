@@ -472,6 +472,68 @@ def test_starttime_boundaries_follow_each_observer_contract(source, ticks, accep
             probe._row_signature(source, row, unit=unit)
 
 
+@pytest.mark.parametrize("field", ("uid", "gid"))
+@pytest.mark.parametrize(
+    "value, accepted",
+    [
+        (1, True),
+        (2**32 - 2, True),
+        (0, False),
+        (-1, False),
+        (2**32 - 1, False),
+        (True, False),
+        (False, False),
+        (1.0, False),
+        ("1", False),
+        (None, False),
+    ],
+)
+def test_identity_uid_gid_boundaries_follow_numeric_contract(field, value, accepted):
+    role, _unit = probe._ROLES[0]
+    report = _make_report("identity")
+    item = report["process_observations"][role]["identity"]
+    item[field] = value
+    if field == "gid":
+        item["groups"] = []
+    if accepted:
+        signatures, anomalies = probe._observe_source("identity", report)
+        assert signatures[role] == (4321, 1001)
+        assert anomalies == set()
+    else:
+        with pytest.raises(ValueError, match="INVALID_SUBREPORT"):
+            probe._observe_source("identity", report)
+
+
+@pytest.mark.parametrize("gid", (1, 2**32 - 2))
+@pytest.mark.parametrize(
+    "groups_kind",
+    ("empty", "primary", "foreign", "zero", "bool", "float", "string", "tuple", "duplicate"),
+)
+def test_identity_groups_follow_restricted_primary_gid_contract(gid, groups_kind):
+    role, _unit = probe._ROLES[0]
+    report = _make_report("identity")
+    item = report["process_observations"][role]["identity"]
+    item["gid"] = gid
+    item["groups"] = {
+        "empty": [],
+        "primary": [gid],
+        "foreign": [2201],
+        "zero": [0],
+        "bool": [True],
+        "float": [float(gid)],
+        "string": [str(gid)],
+        "tuple": (gid,),
+        "duplicate": [gid, gid],
+    }[groups_kind]
+    if groups_kind in ("empty", "primary"):
+        signatures, anomalies = probe._observe_source("identity", report)
+        assert signatures[role] == (4321, 1001)
+        assert anomalies == set()
+    else:
+        with pytest.raises(ValueError, match="INVALID_SUBREPORT"):
+            probe._observe_source("identity", report)
+
+
 @pytest.mark.parametrize("namespace", probe.identity._NS_TYPES)
 @pytest.mark.parametrize(
     "inode, accepted",

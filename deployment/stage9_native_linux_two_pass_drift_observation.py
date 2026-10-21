@@ -48,8 +48,7 @@ def _sample(observers: dict) -> dict:
                             tuple(identity["groups"]),
                         )
                         namespaces = tuple(
-                            identity["namespaces"][name]
-                            for name in consistency.identity._NS_TYPES
+                            identity["namespaces"][name] for name in consistency.identity._NS_TYPES
                         )
                         fingerprints[role] = (credentials, namespaces)
             elif source in _FINGERPRINT_FIELDS:
@@ -170,12 +169,7 @@ def inspect_host(*, observers=None) -> dict:
         both_observed = 0
         for source in _SOURCES:
             old, new = first[source], second[source]
-            if (
-                old is None
-                or new is None
-                or old[0][role] is None
-                or new[0][role] is None
-            ):
+            if old is None or new is None or old[0][role] is None or new[0][role] is None:
                 issues.append(f"{source}: INCOMPLETE_TWO_PASS_OBSERVATION")
                 continue
             both_observed += 1

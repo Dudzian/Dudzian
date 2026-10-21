@@ -16,6 +16,14 @@ For each fixed role, compare the following between the two observations:
 - zero or one supplementary GID (same restricted shape as S9-RPI-29);
 - mount, IPC and network namespace inode hints.
 
+The shared report validator also rejects successful identity rows unless UID
+and GID are builtin integers from 1 through `2**32 - 2` and groups are either
+`[]` or `[gid]`, with the same integer restriction. Zero, booleans, foreign
+groups and malformed types invalidate the identity source for that sweep;
+they cannot become matching observations, even if repeated in both sweeps.
+These checks validate only the numeric contract. They do not independently
+confirm the report's UID/GID against NSS or promote the observations to trust.
+
 For each pair of roles **within either sweep**, independently flag:
 - a shared numeric UID, primary GID or supplementary group;
 - a shared inode for the *same* namespace type (mnt, ipc or net).
