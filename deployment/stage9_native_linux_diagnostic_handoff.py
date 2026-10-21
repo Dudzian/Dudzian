@@ -383,6 +383,8 @@ def inspect_host(*, preflight_observer=None, drift_observer=None) -> dict:
                     result["snapshot"] = "SYNTHETIC_TEST_INPUT"
             result[key] = summarizer(report)
         except Exception:
+            if result["snapshot"] != "SYNTHETIC_TEST_INPUT":
+                result["snapshot"] = "NOT_QUALIFIED"
             result[key] = {
                 "observation": "NOT_QUALIFIED",
                 "reason": "OBSERVER_EXCEPTION",

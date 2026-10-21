@@ -668,3 +668,90 @@ def test_reference_supplementary_group_collision_is_not_hidden_by_distinct_prima
     for role in _REFERENCES[:2]:
         source["reference_principal_observations"][role]["supplementary_gids"] = [6100]
     _assert_preflight_rejected(source)
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux synthetic handoff")
+@pytest.mark.parametrize(
+    "preflight_mode,drift_mode,expected_snapshot,expected_failures",
+    [
+        pytest.param(
+            "exception",
+            "live",
+            "NOT_QUALIFIED",
+            ["PREFLIGHT_NOT_QUALIFIED"],
+            id="preflight-exception-before-live-drift",
+        ),
+        pytest.param(
+            "complete",
+            "exception",
+            "NOT_QUALIFIED",
+            ["TWO_PASS_NOT_QUALIFIED"],
+            id="drift-exception-after-complete-preflight",
+        ),
+        pytest.param(
+            "exception",
+            "exception",
+            "NOT_QUALIFIED",
+            ["PREFLIGHT_NOT_QUALIFIED", "TWO_PASS_NOT_QUALIFIED"],
+            id="both-observers-raise-independently",
+        ),
+        pytest.param(
+            "synthetic",
+            "exception",
+            "SYNTHETIC_TEST_INPUT",
+            ["PREFLIGHT_NOT_QUALIFIED", "TWO_PASS_NOT_QUALIFIED"],
+            id="synthetic-preflight-survives-drift-exception",
+        ),
+        pytest.param(
+            "exception",
+            "synthetic",
+            "SYNTHETIC_TEST_INPUT",
+            ["PREFLIGHT_NOT_QUALIFIED"],
+            id="synthetic-drift-takes-precedence-after-preflight-exception",
+        ),
+    ],
+)
+def test_default_runner_exceptions_never_classify_unknown_input_as_live(
+    monkeypatch, preflight_mode, drift_mode, expected_snapshot, expected_failures
+):
+    calls = []
+
+    def observe_preflight():
+        calls.append("preflight")
+        if preflight_mode == "exception":
+            raise RuntimeError("PRIVATE_SOURCE_SECRET: preflight")
+        source = _preflight()
+        if preflight_mode == "synthetic":
+            source["systemd_observations"] = {
+                role: {"unit": unit, "observation": "NOT_OBSERVED_TEST_FIXTURE"}
+                for role, unit, _account in preflight._PROPOSED_SYSTEMD_UNITS
+            }
+        return source
+
+    def observe_drift():
+        calls.append("drift")
+        if drift_mode == "exception":
+            raise RuntimeError("PRIVATE_SOURCE_SECRET: drift")
+        child = _drift()
+        if drift_mode == "live":
+            child["snapshot"] = "UNTRUSTED_LIVE_OBSERVATION"
+        return child
+
+    monkeypatch.setattr(handoff.preflight, "inspect_host", observe_preflight)
+    monkeypatch.setattr(handoff.drift, "inspect_host", observe_drift)
+    report = handoff.inspect_host()
+
+    _blocked(report)
+    assert calls == ["preflight", "drift"]
+    assert report["snapshot"] == expected_snapshot
+    assert report["observed_failures"] == expected_failures
+    for key, mode in (("preflight", preflight_mode), ("two_pass", drift_mode)):
+        if mode == "exception":
+            assert report[key] == {"observation": "NOT_QUALIFIED", "reason": "OBSERVER_EXCEPTION"}
+    if preflight_mode == "complete":
+        assert report["preflight"]["observation"] == "UNTRUSTED_DECLARATIONS_ONLY"
+    elif preflight_mode == "synthetic":
+        assert report["preflight"]["observation"] == "NOT_QUALIFIED"
+    if drift_mode != "exception":
+        assert report["two_pass"]["observation"] == "UNTRUSTED_TWO_PASS_METADATA_ONLY"
+    assert "PRIVATE_SOURCE_SECRET" not in json.dumps(report, allow_nan=False)
