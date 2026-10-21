@@ -36,7 +36,11 @@ def _report(
         elif source == "cgroup":
             row.update(pid=pid, start_time_ticks=tick)
         elif source == "fragment":
-            row.update(pid_hint=pid, fragment_sha256=fingerprint * 32, fragment_size=200)
+            row.update(
+                pid_hint=pid,
+                fragment_sha256=fingerprint * 32,
+                fragment_size=200,
+            )
         elif source == "executable":
             row.update(
                 pid_hint=pid,
@@ -95,7 +99,9 @@ def _assert_blocked(report):
     assert "PRIVATE_SOURCE_SECRET" not in json.dumps(report, allow_nan=False)
 
 
-@pytest.mark.skipif(sys.platform != "linux", reason="Synthetic Linux two-pass experiment")
+@pytest.mark.skipif(
+    sys.platform != "linux", reason="Synthetic Linux two-pass experiment"
+)
 def test_clean_two_pass_observation_is_explicitly_not_production_qualified():
     calls = []
     reports = _sweep()
@@ -144,7 +150,9 @@ def test_all_sources_can_agree_within_round_but_change_pid_and_ticks_between_rou
         assert report["drift_observations"][role]["issues"] == []
 
 
-@pytest.mark.skipif(sys.platform != "linux", reason="Synthetic two-pass starttime drift")
+@pytest.mark.skipif(
+    sys.platform != "linux", reason="Synthetic two-pass starttime drift"
+)
 @pytest.mark.parametrize("source", ("identity", "cgroup", "executable", "pidfd"))
 def test_starttime_change_with_same_pid_detected(source):
     first, second = _sweep(), _sweep()
@@ -232,7 +240,9 @@ def test_role_refusal_scoped_to_one_role_in_first_sweep():
     )
 
 
-@pytest.mark.skipif(sys.platform != "linux", reason="Synthetic global diagnostic failure")
+@pytest.mark.skipif(
+    sys.platform != "linux", reason="Synthetic global diagnostic failure"
+)
 def test_global_untrusted_subobserver_failure_affects_all_roles_without_leaking():
     first, second = _sweep(), _sweep()
     first["cgroup"]["observed_failures"] = ["GLOBAL_PRIVATE_SOURCE_SECRET"]
@@ -244,7 +254,9 @@ def test_global_untrusted_subobserver_failure_affects_all_roles_without_leaking(
     )
 
 
-@pytest.mark.skipif(sys.platform != "linux", reason="Synthetic cross-source contradictions")
+@pytest.mark.skipif(
+    sys.platform != "linux", reason="Synthetic cross-source contradictions"
+)
 def test_first_sweep_cross_source_disagreement_survives_clean_second():
     first, second = _sweep(), _sweep()
     first["fragment"] = _report("fragment", pids=(9999, 4322, 4323))
@@ -265,7 +277,9 @@ def test_collision_only_in_second_sweep_is_caught_for_both_roles():
     report = probe.inspect_host(observers=_observers(first, second))
     _assert_blocked(report)
     for role, _unit in _ROLES[:2]:
-        assert "CROSS_ROLE_SHARED_PID_HINT" in report["drift_observations"][role]["issues"]
+        assert "CROSS_ROLE_SHARED_PID_HINT" in (
+            report["drift_observations"][role]["issues"]
+        )
     assert report["drift_observations"][_ROLES[2][0]]["issues"] == []
 
 
