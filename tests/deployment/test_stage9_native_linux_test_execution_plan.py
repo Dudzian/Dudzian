@@ -162,7 +162,6 @@ def test_reordered_steps_or_cross_first_are_invalid(first, second):
         ("operation", "execute"),
         ("expected", "TRUSTED_PASS"),
         ("owner_control", "OWN-999"),
-        ("owner_control", "SELF"),
         ("expected", True),
         ("actor", None),
     ],
@@ -170,6 +169,12 @@ def test_reordered_steps_or_cross_first_are_invalid(first, second):
 def test_any_tampered_step_is_rejected_without_partial_credit(index, field, value):
     record = _valid()
     record["steps"][index][field] = value
+    _invalid(record)
+
+
+def test_cross_role_cannot_claim_self_approval():
+    record = _valid()
+    record["steps"][18]["owner_control"] = "SELF"
     _invalid(record)
 
 
