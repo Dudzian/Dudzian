@@ -13,6 +13,7 @@ python -m piptools compile pyproject.toml deploy/packaging/requirements-desktop.
   --output-file "$lock" --no-header --allow-unsafe \
   --resolver backtracking --strip-extras \
   --upgrade-package aiohttp==3.14.4 \
+  --upgrade-package certifi==2026.10.19 \
   --upgrade-package click==8.3.3 \
   --upgrade-package GitPython==3.1.60 \
   --upgrade-package Pygments==2.20.0 \
