@@ -146,7 +146,9 @@ def test_session_reference_mismatch_refuses_even_matching_complete_reports():
 
 
 @pytest.mark.parametrize("field", ["fixture_session_ref", "outcomes_session_ref"])
-@pytest.mark.parametrize("bad", [None, True, 42, "", "0" * 32, "PRIVATE_SECRET", "A" * 32])
+@pytest.mark.parametrize(
+    "bad", [None, True, 42, "", "0" * 32, "PRIVATE_SECRET", "A" * 32]
+)
 def test_invalid_or_unbounded_session_labels_are_refused(field, bad):
     record = _record()
     record[field] = bad
