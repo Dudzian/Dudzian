@@ -139,7 +139,9 @@ def test_malformed_or_promoted_subreport_is_rejected(kind):
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="Linux synthetic handoff")
-@pytest.mark.parametrize("field", ["principal_observations", "systemd_observations", "paths"])
+@pytest.mark.parametrize(
+    "field", ["principal_observations", "systemd_observations", "paths"]
+)
 def test_missing_preflight_evidence_prevents_clean_summary(field):
     first = _preflight()
     first[field].pop(next(iter(first[field])))
@@ -213,7 +215,8 @@ def test_one_drift_anomaly_stays_in_its_role_and_remains_unqualified():
         "issue_count": 1,
     }
     assert all(
-        output["two_pass"]["roles"][other]["observation"] == "UNTRUSTED_NO_CONTRADICTION"
+        output["two_pass"]["roles"][other]["observation"]
+        == "UNTRUSTED_NO_CONTRADICTION"
         for other in _ROLES[1:]
     )
     assert "PRIVATE_SOURCE_SECRET" not in json.dumps(output)
