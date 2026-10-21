@@ -89,6 +89,7 @@ def inspect_declared_outcomes(record: object = None) -> dict:
         type(record) is not dict
         or set(record) != _REQUIRED
         or any(type(key) is not str for key in record)
+        or type(record["schema"]) is not str
         or record["schema"] != _SCHEMA
     ):
         return reject()
