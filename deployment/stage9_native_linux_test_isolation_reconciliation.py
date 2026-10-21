@@ -7,12 +7,16 @@ attestation, trusted evidence, or production authorization.
 from __future__ import annotations
 
 import json
+import re
 
 from deployment import stage9_native_linux_test_fixture_readiness as fixture
 from deployment import stage9_native_linux_test_syscall_outcome_classifier as outcomes
 
 _SCHEMA = "CryptoHunter.Stage9TestOnlyIsolationReconciliationV1"
-_KEYS = frozenset({"schema", "fixture", "outcomes"})
+_KEYS = frozenset(
+    {"schema", "fixture", "outcomes", "fixture_session_ref", "outcomes_session_ref"}
+)
+_SESSION_PATTERN = re.compile(r"[0-9a-f]{32}\Z")
 _BLOCKERS = (
     "DECLARED_TEST_FIXTURE_AND_SYSCALL_OUTCOMES_ARE_UNTRUSTED",
     "NO_INDEPENDENT_TEST_PROCESS_OR_RESOURCE_IDENTITY",
@@ -65,8 +69,18 @@ def inspect_declared_handoff(record: object = None) -> dict:
         or record["schema"] != _SCHEMA
         or type(record["fixture"]) is not dict
         or type(record["outcomes"]) is not dict
+        or type(record["fixture_session_ref"]) is not str
+        or type(record["outcomes_session_ref"]) is not str
+        or _SESSION_PATTERN.fullmatch(record["fixture_session_ref"]) is None
+        or _SESSION_PATTERN.fullmatch(record["outcomes_session_ref"]) is None
+        or record["fixture_session_ref"] == "0" * 32
+        or record["outcomes_session_ref"] == "0" * 32
     ):
         result["reconciliation"]["reason"] = "INVALID_TEST_HANDOFF"
+        return result
+
+    if record["fixture_session_ref"] != record["outcomes_session_ref"]:
+        result["reconciliation"]["reason"] = "SESSION_DECLARATIONS_DISAGREE"
         return result
 
     f = fixture.inspect_declared_fixture(record["fixture"])
