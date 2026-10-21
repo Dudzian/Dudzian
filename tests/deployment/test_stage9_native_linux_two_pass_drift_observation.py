@@ -278,7 +278,12 @@ def test_invalid_observer_map_refuses_without_calls():
         called.append(1)
         return None
 
-    for invalid in ({}, {"identity": forbidden}, {**{s: forbidden for s in _SOURCES}, "extra": forbidden}):
+    invalid_maps = (
+        {},
+        {"identity": forbidden},
+        {**{source: forbidden for source in _SOURCES}, "extra": forbidden},
+    )
+    for invalid in invalid_maps:
         result = probe.inspect_host(observers=invalid)
         _assert_blocked(result)
         assert result["observed_failures"] == ["INVALID_OBSERVER_CONFIGURATION"]
