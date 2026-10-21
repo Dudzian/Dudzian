@@ -68,7 +68,10 @@ def _closed_header(report: object, schema: str, keys: frozenset[str]) -> bool:
         and all(report[key] == expected for key, expected in _COMMON.items())
         and type(report["blockers"]) is list
         and 1 <= len(report["blockers"]) <= 32
-        and all(type(item) is str and 1 <= len(item) <= 128 for item in report["blockers"])
+        and all(
+            type(item) is str and 1 <= len(item) <= 128
+            for item in report["blockers"]
+        )
         and type(report["observed_failures"]) is list
         and len(report["observed_failures"]) <= 256
         and all(
@@ -93,8 +96,11 @@ def _preflight_summary(record: object) -> dict:
     paths = record["paths"]
     if (
         any(type(value) is not dict for value in (principals, references, units, paths))
-        or any(type(key) is not str for value in (principals, references, units, paths)
-               for key in value)
+        or any(
+            type(key) is not str
+            for value in (principals, references, units, paths)
+            for key in value
+        )
         or not set(principals) <= set(_ROLES)
         or not set(references) <= set(_REFERENCES)
         or set(units) != set(_ROLES)
@@ -166,8 +172,10 @@ def _drift_summary(record: object) -> dict:
             or not 0 <= row["sources_observed_both"] <= len(drift._SOURCES)
             or type(row["issues"]) is not list
             or len(row["issues"]) > 64
-            or any(type(issue) is not str or not 1 <= len(issue) <= 128
-                   for issue in row["issues"])
+            or any(
+                type(issue) is not str or not 1 <= len(issue) <= 128
+                for issue in row["issues"]
+            )
         ):
             return invalid
         clean = (
@@ -184,11 +192,15 @@ def _drift_summary(record: object) -> dict:
         record["sweeps_attempted"] == 2
         and set(sanitized_roles) == set(_ROLES)
         and not record["observed_failures"]
-        and all(row["observation"] == "UNTRUSTED_NO_CONTRADICTION"
-                for row in sanitized_roles.values())
+        and all(
+            row["observation"] == "UNTRUSTED_NO_CONTRADICTION"
+            for row in sanitized_roles.values()
+        )
     )
     return {
-        "observation": "UNTRUSTED_TWO_PASS_METADATA_ONLY" if complete else "NOT_QUALIFIED",
+        "observation": (
+            "UNTRUSTED_TWO_PASS_METADATA_ONLY" if complete else "NOT_QUALIFIED"
+        ),
         "reason": "NO_ATTESTATION" if complete else "DRIFT_INCOMPLETE_OR_ANOMALOUS",
         "sweeps_attempted": record["sweeps_attempted"],
         "roles": sanitized_roles,
@@ -201,7 +213,9 @@ def inspect_host(*, preflight_observer=None, drift_observer=None) -> dict:
     result = {
         "schema": "CryptoHunter.Stage9NativeLinuxDiagnosticHandoffV1",
         **_COMMON,
-        "snapshot": "SYNTHETIC_TEST_INPUT" if synthetic else "UNTRUSTED_LIVE_OBSERVATION",
+        "snapshot": (
+            "SYNTHETIC_TEST_INPUT" if synthetic else "UNTRUSTED_LIVE_OBSERVATION"
+        ),
         "blockers": list(_BLOCKERS),
         "preflight": {"observation": "NOT_QUALIFIED", "reason": "NOT_OBSERVED"},
         "two_pass": {"observation": "NOT_QUALIFIED", "reason": "NOT_OBSERVED"},
@@ -212,19 +226,29 @@ def inspect_host(*, preflight_observer=None, drift_observer=None) -> dict:
         return result
 
     for key, observer, summarizer in (
-        ("preflight", preflight.inspect_host if preflight_observer is None
-         else preflight_observer, _preflight_summary),
-        ("two_pass", drift.inspect_host if drift_observer is None
-         else drift_observer, _drift_summary),
+        (
+            "preflight",
+            preflight.inspect_host if preflight_observer is None else preflight_observer,
+            _preflight_summary,
+        ),
+        (
+            "two_pass",
+            drift.inspect_host if drift_observer is None else drift_observer,
+            _drift_summary,
+        ),
     ):
         try:
             report = observer()
             result[key] = summarizer(report)
         except Exception:
-            result[key] = {"observation": "NOT_QUALIFIED", "reason": "OBSERVER_EXCEPTION"}
+            result[key] = {
+                "observation": "NOT_QUALIFIED",
+                "reason": "OBSERVER_EXCEPTION",
+            }
         if result[key]["observation"] == "NOT_QUALIFIED":
             result["observed_failures"].append(
-                "PREFLIGHT_NOT_QUALIFIED" if key == "preflight"
+                "PREFLIGHT_NOT_QUALIFIED"
+                if key == "preflight"
                 else "TWO_PASS_NOT_QUALIFIED"
             )
     return result
