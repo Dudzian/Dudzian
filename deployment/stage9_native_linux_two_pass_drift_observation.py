@@ -29,12 +29,22 @@ _BLOCKERS = (
 )
 
 
-def _sample(observers: dict) -> dict:
+def _sample(observers: dict) -> tuple[dict, str]:
     """Collect exactly five closed-shape observations, without retries."""
     readings = {}
+    snapshot = "UNTRUSTED_LIVE_OBSERVATION"
     for source in _SOURCES:
         try:
             record = observers[source]()
+            # Propagate declared provenance even if the record is later refused.
+            # This does not independently authenticate any live declaration.
+            declared = record.get("snapshot") if type(record) is dict else None
+            if type(declared) is str and declared == "SYNTHETIC_TEST_INPUT":
+                snapshot = "SYNTHETIC_TEST_INPUT"
+            elif snapshot != "SYNTHETIC_TEST_INPUT" and (
+                type(declared) is not str or declared != "UNTRUSTED_LIVE_OBSERVATION"
+            ):
+                snapshot = "NOT_QUALIFIED"
             signatures, anomalies = consistency._observe_source(source, record)
             fingerprints = {}
             if source == "identity":
@@ -62,7 +72,9 @@ def _sample(observers: dict) -> dict:
         except Exception:
             # Invalid records and backend exceptions never flow into the report.
             readings[source] = None
-    return readings
+            if snapshot != "SYNTHETIC_TEST_INPUT":
+                snapshot = "NOT_QUALIFIED"
+    return readings, snapshot
 
 
 def _cross_source_issues(sample: dict, role: str) -> list[str]:
@@ -155,10 +167,15 @@ def inspect_host(*, observers=None) -> dict:
         result["observed_failures"].append("INVALID_OBSERVER_CONFIGURATION")
         return result
 
-    first = _sample(observers)
+    first, first_snapshot = _sample(observers)
     result["sweeps_attempted"] += 1
-    second = _sample(observers)
+    second, second_snapshot = _sample(observers)
     result["sweeps_attempted"] += 1
+    snapshots = (result["snapshot"], first_snapshot, second_snapshot)
+    if "SYNTHETIC_TEST_INPUT" in snapshots:
+        result["snapshot"] = "SYNTHETIC_TEST_INPUT"
+    elif any(snapshot != "UNTRUSTED_LIVE_OBSERVATION" for snapshot in snapshots):
+        result["snapshot"] = "NOT_QUALIFIED"
     collisions = _cross_role_issues(first) | _cross_role_issues(second)
     identity_collisions = _cross_role_identity_issues(first)
     later_identity_collisions = _cross_role_identity_issues(second)
