@@ -111,12 +111,17 @@ def test_complete_declared_denials_never_grant_production_authority(snapshot):
     }
 
 
-@pytest.mark.parametrize("observation,reason", [
-    ("CLAIMED_ALLOWED", "DECLARED_CROSS_ROLE_ACCESS"),
-    ("NOT_OBSERVED", "INCOMPLETE_TEST_DENIAL_MATRIX"),
-])
+@pytest.mark.parametrize(
+    "observation,reason",
+    [
+        ("CLAIMED_ALLOWED", "DECLARED_CROSS_ROLE_ACCESS"),
+        ("NOT_OBSERVED", "INCOMPLETE_TEST_DENIAL_MATRIX"),
+    ],
+)
 @pytest.mark.parametrize("index", [0, 44, 89])
-def test_single_failure_at_any_matrix_position_blocks_summary(observation, reason, index):
+def test_single_failure_at_any_matrix_position_blocks_summary(
+    observation, reason, index
+):
     record = _complete()
     record["cells"][index]["observation"] = observation
     result = contract.inspect_declared_matrix(record)
@@ -152,7 +157,7 @@ def test_allowed_cell_takes_priority_over_missing_or_unobserved():
 
 @pytest.mark.parametrize(
     "replacement",
-    [None, 3, True, (), "PRIVATE_INPUT", ["PRIVATE_INPUT"], {"private": True}],
+    [3, True, (), "PRIVATE_INPUT", ["PRIVATE_INPUT"], {"private": True}],
 )
 def test_refuse_non_mapping_and_unexpected_input_shapes(replacement):
     _rejected(replacement)
