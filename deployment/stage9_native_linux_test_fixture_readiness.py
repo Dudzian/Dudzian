@@ -152,8 +152,7 @@ def inspect_declared_fixture(record: object = None) -> dict:
 
     identities = list(observed.values())
     collisions = sum(
-        a["uid"] == b["uid"]
-        or bool(set(a["effective_gids"]) & set(b["effective_gids"]))
+        a["uid"] == b["uid"] or bool(set(a["effective_gids"]) & set(b["effective_gids"]))
         for i, a in enumerate(identities)
         for b in identities[i + 1 :]
     )
