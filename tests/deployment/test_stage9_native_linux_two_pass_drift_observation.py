@@ -13,8 +13,9 @@ _ROLES = probe._ROLES
 _SOURCES = probe._SOURCES
 
 
-def _report(source, *, pids=(4321, 4322, 4323), ticks=(1001, 1002, 1003),
-            fingerprint="ab"):
+def _report(
+    source, *, pids=(4321, 4322, 4323), ticks=(1001, 1002, 1003), fingerprint="ab"
+):
     field, marker = probe.consistency._FIELDS[source]
     rows = {}
     for i, (role, unit) in enumerate(_ROLES):
@@ -125,10 +126,20 @@ def test_all_sources_can_agree_within_round_but_change_pid_and_ticks_between_rou
     _assert_blocked(report)
     left, middle, right = [role for role, _unit in _ROLES]
     assert report["drift_observations"][left]["observation"] == "NOT_QUALIFIED"
-    assert sum("PID_CHANGED_BETWEEN_SWEEPS" in s
-               for s in report["drift_observations"][left]["issues"]) == 5
-    assert sum("STARTTIME_CHANGED_BETWEEN_SWEEPS" in s
-               for s in report["drift_observations"][left]["issues"]) == 4
+    assert (
+        sum(
+            "PID_CHANGED_BETWEEN_SWEEPS" in issue
+            for issue in report["drift_observations"][left]["issues"]
+        )
+        == 5
+    )
+    assert (
+        sum(
+            "STARTTIME_CHANGED_BETWEEN_SWEEPS" in issue
+            for issue in report["drift_observations"][left]["issues"]
+        )
+        == 4
+    )
     for role in (middle, right):
         assert report["drift_observations"][role]["issues"] == []
 
