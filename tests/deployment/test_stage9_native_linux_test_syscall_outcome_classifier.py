@@ -78,7 +78,9 @@ def test_no_input_has_closed_default_without_host_observation():
     }
 
 
-@pytest.mark.parametrize("snapshot", ["SYNTHETIC_TEST_INPUT", "UNTRUSTED_LIVE_OBSERVATION"])
+@pytest.mark.parametrize(
+    "snapshot", ["SYNTHETIC_TEST_INPUT", "UNTRUSTED_LIVE_OBSERVATION"]
+)
 def test_complete_declared_denials_and_positive_controls_remain_untrusted(snapshot):
     report = adapter.inspect_declared_outcomes(_full(snapshot))
     _blocked(report)
