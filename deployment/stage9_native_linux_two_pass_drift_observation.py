@@ -70,12 +70,12 @@ def _cross_role_issues(sample: dict) -> set[str]:
     """Report numeric hint collisions between fixed roles in each sweep."""
     role_pids = {}
     for role, _unit in _ROLES:
-        role_pids[role] = {
-            signatures[role][0]
-            for source in _SOURCES
-            if (item := sample[source]) is not None
-            if (signatures := item[0])[role] is not None
-        }
+        pids = set()
+        for source in _SOURCES:
+            item = sample[source]
+            if item is not None and item[0][role] is not None:
+                pids.add(item[0][role][0])
+        role_pids[role] = pids
     collisions = set()
     for index, (left, _unit) in enumerate(_ROLES):
         for right, _other_unit in _ROLES[index + 1 :]:
@@ -136,9 +136,7 @@ def inspect_host(*, observers=None) -> dict:
                 issues.append(f"{source}: PID_CHANGED_BETWEEN_SWEEPS")
             if previous[1] != current[1]:
                 issues.append(f"{source}: STARTTIME_CHANGED_BETWEEN_SWEEPS")
-            if source in _FINGERPRINT_FIELDS and (
-                old[2][role] != new[2][role]
-            ):
+            if source in _FINGERPRINT_FIELDS and old[2][role] != new[2][role]:
                 issues.append(f"{source}: UNPINNED_OBJECT_CHANGED_BETWEEN_SWEEPS")
         # Both sweeps are checked independently: a consistent *second*
         # sweep cannot erase inconsistencies present in the first sweep.
