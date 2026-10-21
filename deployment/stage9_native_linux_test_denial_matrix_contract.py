@@ -95,11 +95,7 @@ def inspect_declared_matrix(record: object = None) -> dict:
             result["matrix"]["reason"] = "INVALID_TEST_REPORT"
             return result
         key = (cell["actor"], cell["owner"], cell["operation"])
-        if (
-            key not in expected
-            or key in observations
-            or cell["observation"] not in _OBSERVATIONS
-        ):
+        if key not in expected or key in observations or cell["observation"] not in _OBSERVATIONS:
             result["matrix"]["reason"] = "INVALID_TEST_REPORT"
             return result
         observations[key] = cell["observation"]
