@@ -591,10 +591,13 @@ def test_offline_fixture_drains_stale_test_sessions_without_touching_owner(bound
             own_pid = bootstrap.info.backend_pid
             assert own_pid != stale_pid
             with psycopg.connect(_BASE_DSN, autocommit=True) as control:
-                assert control.execute(
-                    "SELECT 1 FROM pg_catalog.pg_stat_activity WHERE pid=%s",
-                    (stale_pid,),
-                ).fetchone() is None
+                assert (
+                    control.execute(
+                        "SELECT 1 FROM pg_catalog.pg_stat_activity WHERE pid=%s",
+                        (stale_pid,),
+                    ).fetchone()
+                    is None
+                )
                 assert control.execute(
                     "SELECT 1 FROM pg_catalog.pg_stat_activity WHERE pid=%s",
                     (own_pid,),
