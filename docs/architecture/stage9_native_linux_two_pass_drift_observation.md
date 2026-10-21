@@ -34,6 +34,15 @@ untrusted hints:
 - cross-role reused PID hints within **either** sweep;
 - per-role and source-wide anomalies already reported by subordinate probes.
 
+[S9-RPI-31](stage9_native_linux_identity_namespace_drift.md) extends these
+comparisons with already-sanitized UID/GID/group and mount/IPC/network namespace
+hints. It detects changes between sweeps and shared role identities within
+either sweep. No raw credentials or namespace values are published.
+
+The report distinguishes `sweeps=2` (planned) from `sweeps_attempted`
+(0 before an early refusal or 2 after both attempts). A sampled source
+failure still counts as an attempted sweep, never as qualification.
+
 A matching pair of sweeps yields only the literal diagnostic
 `NO_TWO_PASS_CONTRADICTION_OBSERVED`. The output contains no PID values,
 tick values, filesystem paths, hashes, raw error messages, procfs contents,

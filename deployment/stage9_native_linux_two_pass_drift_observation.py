@@ -37,7 +37,21 @@ def _sample(observers: dict) -> dict:
             record = observers[source]()
             signatures, anomalies = consistency._observe_source(source, record)
             fingerprints = {}
-            if source in _FINGERPRINT_FIELDS:
+            if source == "identity":
+                rows = record[consistency._FIELDS[source][0]]
+                for role, _unit in _ROLES:
+                    if signatures[role] is not None:
+                        identity = rows[role]["identity"]
+                        credentials = (
+                            identity["uid"],
+                            identity["gid"],
+                            tuple(identity["groups"]),
+                        )
+                        namespaces = tuple(
+                            identity["namespaces"][name] for name in consistency.identity._NS_TYPES
+                        )
+                        fingerprints[role] = (credentials, namespaces)
+            elif source in _FINGERPRINT_FIELDS:
                 digest_key, size_key = _FINGERPRINT_FIELDS[source]
                 rows = record[consistency._FIELDS[source][0]]
                 for role, _unit in _ROLES:
@@ -84,6 +98,34 @@ def _cross_role_issues(sample: dict) -> set[str]:
     return collisions
 
 
+def _cross_role_identity_issues(sample: dict) -> dict[str, set[str]]:
+    """Compare sanitized namespace and credential hints without exposing values."""
+    issues = {role: set() for role, _unit in _ROLES}
+    observed = sample["identity"]
+    if observed is None:
+        return issues
+    fingerprints = observed[2]
+    for index, (left, _unit) in enumerate(_ROLES):
+        if left not in fingerprints:
+            continue
+        for right, _other_unit in _ROLES[index + 1 :]:
+            if right not in fingerprints:
+                continue
+            left_creds, left_ns = fingerprints[left]
+            right_creds, right_ns = fingerprints[right]
+            if (
+                left_creds[0] == right_creds[0]
+                or left_creds[1] == right_creds[1]
+                or set(left_creds[2]) & set(right_creds[2])
+            ):
+                for role in (left, right):
+                    issues[role].add("CROSS_ROLE_SHARED_CREDENTIAL_HINT")
+            if any(a == b for a, b in zip(left_ns, right_ns, strict=True)):
+                for role in (left, right):
+                    issues[role].add("CROSS_ROLE_SHARED_NAMESPACE_HINT")
+    return issues
+
+
 def inspect_host(*, observers=None) -> dict:
     """Two strictly sequential sweeps, with no mutation and no trust promotion."""
     synthetic = observers is not None
@@ -96,6 +138,7 @@ def inspect_host(*, observers=None) -> dict:
         "snapshot": "SYNTHETIC_TEST_INPUT" if synthetic else "UNTRUSTED_LIVE_OBSERVATION",
         "blockers": list(_BLOCKERS),
         "sweeps": 2,
+        "sweeps_attempted": 0,
         "drift_observations": {},
         "observed_failures": [],
     }
@@ -113,19 +156,20 @@ def inspect_host(*, observers=None) -> dict:
         return result
 
     first = _sample(observers)
+    result["sweeps_attempted"] += 1
     second = _sample(observers)
+    result["sweeps_attempted"] += 1
     collisions = _cross_role_issues(first) | _cross_role_issues(second)
+    identity_collisions = _cross_role_identity_issues(first)
+    later_identity_collisions = _cross_role_identity_issues(second)
+    for role, _unit in _ROLES:
+        identity_collisions[role].update(later_identity_collisions[role])
     for role, _unit in _ROLES:
         issues = []
         both_observed = 0
         for source in _SOURCES:
             old, new = first[source], second[source]
-            if (
-                old is None
-                or new is None
-                or old[0][role] is None
-                or new[0][role] is None
-            ):
+            if old is None or new is None or old[0][role] is None or new[0][role] is None:
                 issues.append(f"{source}: INCOMPLETE_TWO_PASS_OBSERVATION")
                 continue
             both_observed += 1
@@ -136,6 +180,11 @@ def inspect_host(*, observers=None) -> dict:
                 issues.append(f"{source}: PID_CHANGED_BETWEEN_SWEEPS")
             if previous[1] != current[1]:
                 issues.append(f"{source}: STARTTIME_CHANGED_BETWEEN_SWEEPS")
+            if source == "identity":
+                if old[2][role][0] != new[2][role][0]:
+                    issues.append("identity: CREDENTIAL_HINT_CHANGED_BETWEEN_SWEEPS")
+                if old[2][role][1] != new[2][role][1]:
+                    issues.append("identity: NAMESPACE_HINT_CHANGED_BETWEEN_SWEEPS")
             if source in _FINGERPRINT_FIELDS and old[2][role] != new[2][role]:
                 issues.append(f"{source}: UNPINNED_OBJECT_CHANGED_BETWEEN_SWEEPS")
         # Both sweeps are checked independently: a consistent *second*
@@ -146,6 +195,7 @@ def inspect_host(*, observers=None) -> dict:
                     issues.append(code)
         if role in collisions:
             issues.append("CROSS_ROLE_SHARED_PID_HINT")
+        issues.extend(sorted(identity_collisions[role]))
         result["drift_observations"][role] = {
             "observation": (
                 "NO_TWO_PASS_CONTRADICTION_OBSERVED" if not issues else "NOT_QUALIFIED"

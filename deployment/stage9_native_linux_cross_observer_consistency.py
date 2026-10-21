@@ -114,10 +114,14 @@ def _row_signature(source: str, row: object, *, unit: str) -> tuple[int, int | N
             raise ValueError("INVALID_SUBREPORT")
         if (
             not _bounded_number(item["start_time_ticks"])
-            or not all(type(item[k]) is int and 0 <= item[k] <= 2**32 - 2 for k in ("uid", "gid"))
+            # Validate the numeric contract, without claiming an independent NSS match.
+            or not all(_bounded_number(item[k], maximum=2**32 - 2) for k in ("uid", "gid"))
             or type(item["groups"]) is not list
             or len(item["groups"]) > 1
-            or any(type(g) is not int or g < 0 or g > 2**32 - 2 for g in item["groups"])
+            or any(
+                not _bounded_number(g, maximum=2**32 - 2) or g != item["gid"]
+                for g in item["groups"]
+            )
             or type(item["namespaces"]) is not dict
             or set(item["namespaces"]) != set(identity._NS_TYPES)
             or any(not _bounded_number(v) for v in item["namespaces"].values())
