@@ -93,7 +93,9 @@ def test_missing_report_is_blocked_and_does_not_inspect_host():
     }
 
 
-@pytest.mark.parametrize("snapshot", ["SYNTHETIC_TEST_INPUT", "UNTRUSTED_LIVE_OBSERVATION"])
+@pytest.mark.parametrize(
+    "snapshot", ["SYNTHETIC_TEST_INPUT", "UNTRUSTED_LIVE_OBSERVATION"]
+)
 def test_complete_declared_denials_never_grant_production_authority(snapshot):
     report = contract.inspect_declared_matrix(_complete(snapshot))
     _blocked(report)
