@@ -423,7 +423,7 @@ def test_invalid_identity_success_is_rejected_before_drift_comparison(
         item[field] = replacement
         with pytest.raises(ValueError, match="^INVALID_SUBREPORT$"):
             probe.consistency._observe_source("identity", sweep["identity"])
-        assert probe._sample(_observers(sweep, sweep))["identity"] is None
+        assert probe._sample(_observers(sweep, sweep))[0]["identity"] is None
 
     report = probe.inspect_host(observers=_observers(first, second))
     _assert_blocked(report)
@@ -499,3 +499,89 @@ def test_attempt_count_zero_before_invalid_configuration():
     result = probe.inspect_host(observers={})
     _assert_blocked(result)
     assert result["sweeps_attempted"] == 0
+
+
+def _declared_live_sweeps():
+    sweeps = (_sweep(), _sweep())
+    for sweep in sweeps:
+        for record in sweep.values():
+            record["snapshot"] = "UNTRUSTED_LIVE_OBSERVATION"
+    return sweeps
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Synthetic declared snapshot propagation")
+@pytest.mark.parametrize("round_index", [0, 1])
+@pytest.mark.parametrize("source", _SOURCES)
+@pytest.mark.parametrize("malformed", [False, True])
+def test_default_observers_propagate_synthetic_child_even_if_refused(
+    monkeypatch, round_index, source, malformed
+):
+    first, second = _declared_live_sweeps()
+    target = (first, second)[round_index][source]
+    target["snapshot"] = "SYNTHETIC_TEST_INPUT"
+    if malformed:
+        target["qualification"] = "GO"
+        target["private"] = "PRIVATE_SOURCE_SECRET"
+    calls = []
+    monkeypatch.setattr(probe, "_OBSERVERS", _observers(first, second, calls=calls))
+    result = probe.inspect_host()
+    _assert_blocked(result)
+    assert result["snapshot"] == "SYNTHETIC_TEST_INPUT"
+    assert calls == list(_SOURCES) * 2
+    assert bool(result["observed_failures"]) == malformed
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Synthetic declared snapshot refusal")
+@pytest.mark.parametrize("round_index", [0, 1])
+@pytest.mark.parametrize("declared", [None, "PRIVATE_SOURCE_SECRET", True, {}])
+def test_unknown_child_snapshot_prevents_live_classification(monkeypatch, round_index, declared):
+    first, second = _declared_live_sweeps()
+    target = (first, second)[round_index]["pidfd"]
+    if declared is None:
+        target.pop("snapshot")
+    else:
+        target["snapshot"] = declared
+    monkeypatch.setattr(probe, "_OBSERVERS", _observers(first, second))
+    result = probe.inspect_host()
+    _assert_blocked(result)
+    assert result["snapshot"] == "NOT_QUALIFIED"
+    assert result["observed_failures"]
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Synthetic declared snapshot ordering")
+@pytest.mark.parametrize("synthetic_round", [0, 1])
+def test_synthetic_child_takes_precedence_over_unknown_declaration(monkeypatch, synthetic_round):
+    first, second = _declared_live_sweeps()
+    (first, second)[synthetic_round]["pidfd"]["snapshot"] = "SYNTHETIC_TEST_INPUT"
+    (first, second)[1 - synthetic_round]["identity"].pop("snapshot")
+    monkeypatch.setattr(probe, "_OBSERVERS", _observers(first, second))
+    result = probe.inspect_host()
+    _assert_blocked(result)
+    assert result["snapshot"] == "SYNTHETIC_TEST_INPUT"
+    assert result["observed_failures"]
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Synthetic declared live propagation")
+def test_default_observers_preserve_untrusted_live_declarations_without_attestation(monkeypatch):
+    first, second = _declared_live_sweeps()
+    monkeypatch.setattr(probe, "_OBSERVERS", _observers(first, second))
+    result = probe.inspect_host()
+    _assert_blocked(result)
+    assert result["snapshot"] == "UNTRUSTED_LIVE_OBSERVATION"
+    assert result["observed_failures"] == []
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Synthetic exception snapshot refusal")
+def test_default_observer_exception_prevents_live_classification(monkeypatch):
+    first, second = _declared_live_sweeps()
+    observers = _observers(first, second)
+
+    def failed():
+        raise RuntimeError("PRIVATE_SOURCE_SECRET")
+
+    observers["identity"] = failed
+    monkeypatch.setattr(probe, "_OBSERVERS", observers)
+    result = probe.inspect_host()
+    _assert_blocked(result)
+    assert result["snapshot"] == "NOT_QUALIFIED"
+    assert result["observed_failures"]

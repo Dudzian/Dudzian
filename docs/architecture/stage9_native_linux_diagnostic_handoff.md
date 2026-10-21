@@ -36,11 +36,22 @@ or exception contents. An invalid/exception-producing backend is replaced by
 
 A preflight label `UNTRUSTED_DECLARATIONS_ONLY` requires no reported issues,
 all expected proposed roles, reference roles, systemd declaration hints and
-proposed paths. A drift label `UNTRUSTED_TWO_PASS_METADATA_ONLY` requires
+proposed paths. Each nested record must have the exact preflight fields, fixed
+account/unit/candidate path, bounded non-boolean UID/GIDs and canonical group
+memberships. The preflight's separation checks are reapplied, including reference
+groups; matching labels cannot override issues, path reasons or platform refusal.
+A drift label `UNTRUSTED_TWO_PASS_METADATA_ONLY` requires
 two attempted sweeps and complete, contradiction-free numeric hints across
 three proposed roles. **These labels are not PASS, READY or trustworthy proof.**
 Subordinate reports remain untrusted and may be affected by spoofed host
 metadata, incomplete snapshots, races and coordinated attacks.
+
+Declared `SYNTHETIC_TEST_INPUT` propagates from subordinate process reports through
+both sweeps and the handoff, including reports rejected as malformed. A preflight
+`NOT_OBSERVED_TEST_FIXTURE` declaration also marks the handoff synthetic. Missing
+or unknown process snapshot declarations refuse live classification with the fixed
+snapshot `NOT_QUALIFIED`. These checks propagate declarations only; they do not
+independently attest data provenance.
 
 The output is **always**:
 - `status=BLOCKED`;
