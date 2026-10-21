@@ -324,3 +324,132 @@ def test_cli_always_exits_two_on_clean_synthetic_observation(monkeypatch, capsys
     )
     assert probe.main() == 2
     _assert_blocked(json.loads(capsys.readouterr().out))
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Synthetic credential drift")
+@pytest.mark.parametrize(
+    "field, replacement",
+    [
+        ("uid", 8111),
+        ("gid", 8222),
+        ("groups", [8333]),
+    ],
+)
+def test_identity_credentials_can_change_with_same_pid_and_starttime(field, replacement):
+    first, second = _sweep(), _sweep()
+    role = _ROLES[0][0]
+    second["identity"]["process_observations"][role]["identity"][field] = replacement
+    observed = probe.inspect_host(observers=_observers(first, second))
+    _assert_blocked(observed)
+    assert observed["sweeps_attempted"] == 2
+    assert observed["drift_observations"][role]["issues"] == [
+        "identity: CREDENTIAL_HINT_CHANGED_BETWEEN_SWEEPS"
+    ]
+    assert all(
+        observed["drift_observations"][other]["issues"] == []
+        for other, _unit in _ROLES[1:]
+    )
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Synthetic namespace drift")
+@pytest.mark.parametrize("namespace", probe.consistency.identity._NS_TYPES)
+def test_identity_namespace_changes_with_same_pid_and_credentials(namespace):
+    first, second = _sweep(), _sweep()
+    role = _ROLES[0][0]
+    second["identity"]["process_observations"][role]["identity"]["namespaces"][
+        namespace
+    ] = 991234
+    report = probe.inspect_host(observers=_observers(first, second))
+    _assert_blocked(report)
+    assert report["drift_observations"][role]["issues"] == [
+        "identity: NAMESPACE_HINT_CHANGED_BETWEEN_SWEEPS"
+    ]
+    assert all(
+        report["drift_observations"][other]["issues"] == []
+        for other, _unit in _ROLES[1:]
+    )
+    assert "991234" not in json.dumps(report)
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Synthetic shared credentials")
+@pytest.mark.parametrize("field", ("uid", "gid", "groups"))
+def test_cross_role_credentials_collision_is_detected_even_without_backend_failure(field):
+    first, second = _sweep(), _sweep()
+    left, right, other = [role for role, _unit in _ROLES]
+    rows = second["identity"]["process_observations"]
+    rows[left]["identity"][field] = rows[right]["identity"][field]
+    report = probe.inspect_host(observers=_observers(first, second))
+    _assert_blocked(report)
+    for role in (left, right):
+        assert "CROSS_ROLE_SHARED_CREDENTIAL_HINT" in (
+            report["drift_observations"][role]["issues"]
+        )
+        assert report["drift_observations"][role]["observation"] == "NOT_QUALIFIED"
+    assert report["drift_observations"][other]["issues"] == []
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Synthetic shared namespaces")
+@pytest.mark.parametrize("namespace", probe.consistency.identity._NS_TYPES)
+def test_first_sweep_cross_role_namespace_collision_survives_clean_second(namespace):
+    first, second = _sweep(), _sweep()
+    left, right, other = [role for role, _unit in _ROLES]
+    rows = first["identity"]["process_observations"]
+    rows[left]["identity"]["namespaces"][namespace] = rows[right]["identity"][
+        "namespaces"
+    ][namespace]
+    report = probe.inspect_host(observers=_observers(first, second))
+    _assert_blocked(report)
+    for role in (left, right):
+        assert "CROSS_ROLE_SHARED_NAMESPACE_HINT" in (
+            report["drift_observations"][role]["issues"]
+        )
+    assert report["drift_observations"][other]["issues"] == []
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Synthetic rejected identity")
+def test_refused_identity_does_not_appear_as_trusted_cross_role_observation():
+    first, second = _sweep(), _sweep()
+    role, unit = _ROLES[0]
+    first["identity"]["process_observations"][role] = {
+        "unit": unit,
+        "observation": "NOT_QUALIFIED",
+        "issues": ["PROCESS_IDENTITY_NOT_AVAILABLE"],
+    }
+    first["identity"]["observed_failures"] = [
+        f"{role}.process: PROCESS_IDENTITY_NOT_AVAILABLE"
+    ]
+    report = probe.inspect_host(observers=_observers(first, second))
+    _assert_blocked(report)
+    assert report["drift_observations"][role]["issues"] == [
+        "identity: INCOMPLETE_TWO_PASS_OBSERVATION"
+    ]
+    for other, _unit in _ROLES[1:]:
+        assert report["drift_observations"][other]["issues"] == []
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Synthetic object size drift")
+@pytest.mark.parametrize(
+    "source, size_field",
+    [("fragment", "fragment_size"), ("executable", "executable_size")],
+)
+def test_same_digest_but_different_object_size_is_still_diagnosed(source, size_field):
+    first, second = _sweep(), _sweep()
+    role = _ROLES[0][0]
+    field = probe.consistency._FIELDS[source][0]
+    second[source][field][role][size_field] += 1
+    report = probe.inspect_host(observers=_observers(first, second))
+    _assert_blocked(report)
+    assert f"{source}: UNPINNED_OBJECT_CHANGED_BETWEEN_SWEEPS" in (
+        report["drift_observations"][role]["issues"]
+    )
+    assert all(
+        report["drift_observations"][other]["issues"] == []
+        for other, _unit in _ROLES[1:]
+    )
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Synthetic no-observer checks")
+def test_attempt_count_zero_before_invalid_configuration():
+    result = probe.inspect_host(observers={})
+    _assert_blocked(result)
+    assert result["sweeps_attempted"] == 0
