@@ -7,6 +7,8 @@ Never launches a process, touches filesystem targets, or attempts Linux access.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
+from types import MappingProxyType
 
 from deployment import stage9_native_linux_test_syscall_outcome_classifier as outcomes
 
@@ -37,17 +39,13 @@ _BLOCKERS = (
 )
 
 
-def _canonical_steps() -> tuple[dict[str, str], ...]:
+def _canonical_steps() -> tuple[Mapping[str, str], ...]:
     """Positive owner checks precede foreign denials, with fixed dependencies."""
     cases = outcomes.expected_cases()
     roles = tuple(dict.fromkeys(actor for actor, _, _ in cases))
-    owner_keys = tuple(
-        (role, role, operation) for role in roles for operation in _OPERATIONS
-    )
+    owner_keys = tuple((role, role, operation) for role in roles for operation in _OPERATIONS)
     cross_keys = tuple(
-        (actor, owner, operation)
-        for actor, owner, operation in cases
-        if actor != owner
+        (actor, owner, operation) for actor, owner, operation in cases if actor != owner
     )
     controls = {
         (role, operation): f"OWN-{index:03d}"
@@ -77,14 +75,14 @@ def _canonical_steps() -> tuple[dict[str, str], ...]:
         }
         for index, (actor, owner, operation) in enumerate(cross_keys, start=1)
     )
-    return positives + negatives
+    steps = positives + negatives
+    # Reject a broken local catalog even when Python runs with optimization.
+    if len(steps) != 108 or len(positives) != 18 or len(negatives) != 90:
+        raise RuntimeError("Invalid canonical TEST execution plan catalog")
+    return tuple(MappingProxyType(row) for row in steps)
 
 
 _STEPS = _canonical_steps()
-# All input still remains untrusted. These are local structural invariants.
-assert len(_STEPS) == 108
-assert sum(row["phase"] == "OWNER_CONTROL_FIRST" for row in _STEPS) == 18
-assert sum(row["phase"] == "CROSS_ROLE_AFTER_OWNER" for row in _STEPS) == 90
 
 
 def build_execution_plan() -> dict:
@@ -92,7 +90,7 @@ def build_execution_plan() -> dict:
     return {
         "schema": _SCHEMA,
         "snapshot": _SNAPSHOT,
-        "steps": [row.copy() for row in _STEPS],
+        "steps": [dict(row) for row in _STEPS],
     }
 
 

@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import copy
 import json
+from pathlib import Path
 
 import pytest
 
-from deployment import stage9_native_linux_test_execution_plan as planner
-from deployment import stage9_native_linux_test_syscall_outcome_classifier as outcomes
+from deployment import (
+    stage9_native_linux_test_execution_plan as planner,
+    stage9_native_linux_test_syscall_outcome_classifier as outcomes,
+)
 
 
 def _valid():
@@ -59,12 +62,8 @@ def test_canonical_plan_has_exactly_eighteen_controls_then_ninety_denials():
     assert plan["snapshot"] == "SYNTHETIC_TEST_PLAN"
     steps = plan["steps"]
     assert len(steps) == 108
-    assert [row["id"] for row in steps[:18]] == [
-        f"OWN-{i:03d}" for i in range(1, 19)
-    ]
-    assert [row["id"] for row in steps[18:]] == [
-        f"CROSS-{i:03d}" for i in range(1, 91)
-    ]
+    assert [row["id"] for row in steps[:18]] == [f"OWN-{i:03d}" for i in range(1, 19)]
+    assert [row["id"] for row in steps[18:]] == [f"CROSS-{i:03d}" for i in range(1, 91)]
     assert all(row["phase"] == "OWNER_CONTROL_FIRST" for row in steps[:18])
     assert all(row["phase"] == "CROSS_ROLE_AFTER_OWNER" for row in steps[18:])
     assert len({row["id"] for row in steps}) == 108
@@ -81,9 +80,7 @@ def test_each_negative_case_requires_matching_owner_positive_control():
     for row in steps[18:]:
         assert row["actor"] != row["owner"]
         assert row["expected"] == "EACCES_OR_EPERM"
-        assert row["owner_control"] == positives[
-            (row["owner"], row["operation"])
-        ]["id"]
+        assert row["owner_control"] == positives[(row["owner"], row["operation"])]["id"]
     for row in steps[:18]:
         assert row["actor"] == row["owner"]
         assert row["expected"] == "SUCCESS"
@@ -92,10 +89,7 @@ def test_each_negative_case_requires_matching_owner_positive_control():
 
 def test_plan_matches_previously_approved_closed_108_case_inventory():
     steps = _valid()["steps"]
-    cases = {
-        (row["actor"], row["owner"], row["operation"])
-        for row in steps
-    }
+    cases = {(row["actor"], row["owner"], row["operation"]) for row in steps}
     assert cases == set(outcomes.expected_cases())
     assert len(cases) == 108
     assert set(row["operation"] for row in steps) == {
@@ -240,6 +234,48 @@ def test_repeated_getter_returns_independent_mutable_plans():
     first["steps"].pop()
     assert second == expected
     assert _valid() == expected
+
+
+def test_canonical_descriptors_cannot_be_mutated_through_plan_or_directly():
+    canonical = [dict(row) for row in planner._STEPS]
+    plan = _valid()
+    plan["steps"][0]["expected"] = "PRIVATE_SECRET"
+    plan["steps"].clear()
+    assert [dict(row) for row in planner._STEPS] == canonical
+    assert _valid()["steps"] == canonical
+    with pytest.raises(TypeError):
+        planner._STEPS[0]["expected"] = "PRIVATE_SECRET"
+    with pytest.raises(TypeError):
+        planner._STEPS[0] = {}
+    assert [dict(row) for row in planner._STEPS] == canonical
+
+
+@pytest.mark.parametrize("optimize", [0, 1, 2])
+@pytest.mark.parametrize("damage", ["missing_cross_case", "wrong_split"])
+def test_invalid_catalog_prevents_module_initialization_even_with_optimization(
+    monkeypatch, optimize, damage
+):
+    cases = outcomes.expected_cases()
+    if damage == "missing_cross_case":
+        # Retain all six roles, but remove one of the 90 cross-role cases.
+        broken = cases[1:]
+    else:
+        # Keep 108 generated steps, with an invalid 15/93 split. This
+        # catches guards that only check the total number of steps.
+        roles = tuple(dict.fromkeys(actor for actor, _, _ in cases))[:5]
+        cross = tuple(
+            case for case in cases if case[0] in roles and case[1] in roles and case[0] != case[1]
+        )
+        broken = cross + cross[:33]
+        assert len(broken) == 93
+    monkeypatch.setattr(outcomes, "expected_cases", lambda: broken)
+    source = Path(planner.__file__).read_text(encoding="utf-8")
+    code = compile(source, planner.__file__, "exec", optimize=optimize)
+    namespace = {"__name__": planner.__name__}
+    with pytest.raises(RuntimeError, match="Invalid canonical TEST execution plan catalog"):
+        exec(code, namespace)
+    assert "build_execution_plan" not in namespace
+    assert "inspect_execution_plan" not in namespace
 
 
 def test_cli_emits_sanitized_summary_and_returns_two(capsys):
