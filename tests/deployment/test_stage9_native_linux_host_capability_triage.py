@@ -106,7 +106,10 @@ def test_backend_exceptions_are_independently_sanitized():
     _assert_blocked(report)
     assert order == ["procfs", "systemd_manager"]
     assert len(report["observed_failures"]) == 3
-    assert report["capabilities"]["systemd_manager"]["observation"] == "OBSERVED_UNTRUSTED"
+    assert (
+        report["capabilities"]["systemd_manager"]["observation"]
+        == "OBSERVED_UNTRUSTED"
+    )
     assert "PRIVATE_HOST_ENVIRONMENT" not in json.dumps(report)
 
 
@@ -117,7 +120,6 @@ def test_backend_exceptions_are_independently_sanitized():
         {},
         {"procfs": lambda: True},
         23,
-        None,
         {"procfs": lambda: True, "namespaces": True,
          "pidfd_self": lambda: True, "systemd_manager": lambda: True},
     ],
