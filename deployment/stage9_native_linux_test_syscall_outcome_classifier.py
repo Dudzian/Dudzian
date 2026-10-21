@@ -15,9 +15,7 @@ _SCHEMA = "CryptoHunter.Stage9TestOnlySyscallOutcomeClassifierV1"
 _ROLES = tuple(dict.fromkeys(actor for actor, _, _ in denial.expected_cases()))
 _OPERATIONS = ("read", "write", "traverse")
 _CROSS_CASES = denial.expected_cases()
-_OWNER_CONTROLS = tuple(
-    (role, role, operation) for role in _ROLES for operation in _OPERATIONS
-)
+_OWNER_CONTROLS = tuple((role, role, operation) for role in _ROLES for operation in _OPERATIONS)
 _EXPECTED = frozenset(_CROSS_CASES + _OWNER_CONTROLS)
 _FIELDS = frozenset({"actor", "owner", "operation", "outcome"})
 _REQUIRED = frozenset({"schema", "snapshot", "cases"})
