@@ -93,9 +93,7 @@ def test_missing_report_is_blocked_and_does_not_inspect_host():
     }
 
 
-@pytest.mark.parametrize(
-    "snapshot", ["SYNTHETIC_TEST_INPUT", "UNTRUSTED_LIVE_OBSERVATION"]
-)
+@pytest.mark.parametrize("snapshot", ["SYNTHETIC_TEST_INPUT", "UNTRUSTED_LIVE_OBSERVATION"])
 def test_complete_declared_denials_never_grant_production_authority(snapshot):
     report = contract.inspect_declared_matrix(_complete(snapshot))
     _blocked(report)
@@ -121,9 +119,7 @@ def test_complete_declared_denials_never_grant_production_authority(snapshot):
     ],
 )
 @pytest.mark.parametrize("index", [0, 44, 89])
-def test_single_failure_at_any_matrix_position_blocks_summary(
-    observation, reason, index
-):
+def test_single_failure_at_any_matrix_position_blocks_summary(observation, reason, index):
     record = _complete()
     record["cells"][index]["observation"] = observation
     result = contract.inspect_declared_matrix(record)

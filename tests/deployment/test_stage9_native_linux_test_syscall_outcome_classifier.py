@@ -78,9 +78,7 @@ def test_no_input_has_closed_default_without_host_observation():
     }
 
 
-@pytest.mark.parametrize(
-    "snapshot", ["SYNTHETIC_TEST_INPUT", "UNTRUSTED_LIVE_OBSERVATION"]
-)
+@pytest.mark.parametrize("snapshot", ["SYNTHETIC_TEST_INPUT", "UNTRUSTED_LIVE_OBSERVATION"])
 def test_complete_declared_denials_and_positive_controls_remain_untrusted(snapshot):
     report = adapter.inspect_declared_outcomes(_full(snapshot))
     _blocked(report)
@@ -119,9 +117,7 @@ def test_denial_labels_are_only_untrusted_claims(errno_result):
     ],
 )
 @pytest.mark.parametrize("index", [0, 45, 89])
-def test_cross_role_success_and_non_permission_errors_do_not_count_as_denial(
-    outcome, index
-):
+def test_cross_role_success_and_non_permission_errors_do_not_count_as_denial(outcome, index):
     record = _full()
     record["cases"][index]["outcome"] = outcome
     result = adapter.inspect_declared_outcomes(record)
@@ -132,10 +128,7 @@ def test_cross_role_success_and_non_permission_errors_do_not_count_as_denial(
         assert result["counts"]["cross_allowed"] == 1
         assert result["denial_matrix"]["reason"] == "DECLARED_CROSS_ROLE_ACCESS"
     else:
-        assert (
-            result["classification"]["reason"]
-            == "CROSS_ROLE_DENIAL_INCOMPLETE_OR_INCONCLUSIVE"
-        )
+        assert result["classification"]["reason"] == "CROSS_ROLE_DENIAL_INCOMPLETE_OR_INCONCLUSIVE"
         assert result["counts"]["cross_inconclusive"] == 1
         assert result["denial_matrix"]["reason"] == "INCOMPLETE_TEST_DENIAL_MATRIX"
 
@@ -168,7 +161,8 @@ def test_missing_any_negative_or_owner_control_never_produces_complete_label(pos
     _blocked(report)
     assert report["classification"]["observation"] == "NOT_QUALIFIED"
     assert report["classification"]["reason"] == (
-        "OWNER_CONTROL_INCOMPLETE" if position >= 90
+        "OWNER_CONTROL_INCOMPLETE"
+        if position >= 90
         else "CROSS_ROLE_DENIAL_INCOMPLETE_OR_INCONCLUSIVE"
     )
 

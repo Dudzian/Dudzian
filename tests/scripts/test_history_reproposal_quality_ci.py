@@ -100,6 +100,7 @@ STAGE9_PRODUCTION_ATOMIC_TESTS = {
     "tests/deployment/test_stage9_native_linux_test_denial_matrix_contract.py",
     "tests/deployment/test_stage9_native_linux_test_syscall_outcome_classifier.py",
     "tests/deployment/test_stage9_native_linux_test_fixture_readiness.py",
+    "tests/deployment/test_stage9_native_linux_test_isolation_reconciliation.py",
     "tests/security/test_independent_cca_decision.py",
     "tests/security/test_cca_durable_decision_log.py",
     "tests/architecture/test_stage9_independent_cca_boundary.py",
@@ -151,6 +152,7 @@ STAGE9_PRODUCTION_ATOMIC_MODULES = {
     "deployment.stage9_native_linux_test_denial_matrix_contract",
     "deployment.stage9_native_linux_test_syscall_outcome_classifier",
     "deployment.stage9_native_linux_test_fixture_readiness",
+    "deployment.stage9_native_linux_test_isolation_reconciliation",
 }
 RAW_FILES = (
     "coverage-atomic-root-proof.data",
@@ -286,6 +288,7 @@ def test_native_linux_source_cca_observations_have_explicit_lint_and_format_scop
         "deployment/stage9_native_linux_test_denial_matrix_contract.py",
         "deployment/stage9_native_linux_test_syscall_outcome_classifier.py",
         "deployment/stage9_native_linux_test_fixture_readiness.py",
+        "deployment/stage9_native_linux_test_isolation_reconciliation.py",
         "tests/deployment/test_stage9_native_linux_source_cca_preflight.py",
         "tests/deployment/test_stage9_native_linux_process_identity_observation.py",
         "tests/deployment/test_stage9_native_linux_cgroup_membership_observation.py",
@@ -299,6 +302,7 @@ def test_native_linux_source_cca_observations_have_explicit_lint_and_format_scop
         "tests/deployment/test_stage9_native_linux_test_denial_matrix_contract.py",
         "tests/deployment/test_stage9_native_linux_test_syscall_outcome_classifier.py",
         "tests/deployment/test_stage9_native_linux_test_fixture_readiness.py",
+        "tests/deployment/test_stage9_native_linux_test_isolation_reconciliation.py",
     ):
         assert format_tokens.count(path) == 1
     lint_tokens = shlex.split(_step(quality, "Ruff baseline gate")["run"])
@@ -317,6 +321,7 @@ def test_native_linux_source_cca_observations_have_explicit_lint_and_format_scop
         "test_denial_matrix_contract",
         "test_syscall_outcome_classifier",
         "test_fixture_readiness",
+        "test_isolation_reconciliation",
     ):
         assert lint_tokens.count(f"deployment/stage9_native_linux_{module}.py") == 1
 
