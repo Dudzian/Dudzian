@@ -109,12 +109,15 @@ def test_denial_labels_are_only_untrusted_claims(errno_result):
     assert result["counts"]["cross_denied"] == 90
 
 
-@pytest.mark.parametrize("outcome", [
-    "SUCCESS",
-    "ENOENT",
-    "OTHER_FAILURE",
-    "NOT_ATTEMPTED",
-])
+@pytest.mark.parametrize(
+    "outcome",
+    [
+        "SUCCESS",
+        "ENOENT",
+        "OTHER_FAILURE",
+        "NOT_ATTEMPTED",
+    ],
+)
 @pytest.mark.parametrize("index", [0, 45, 89])
 def test_cross_role_success_and_non_permission_errors_do_not_count_as_denial(
     outcome, index
@@ -137,13 +140,16 @@ def test_cross_role_success_and_non_permission_errors_do_not_count_as_denial(
         assert result["denial_matrix"]["reason"] == "INCOMPLETE_TEST_DENIAL_MATRIX"
 
 
-@pytest.mark.parametrize("outcome", [
-    "DENIED_EACCES",
-    "DENIED_EPERM",
-    "ENOENT",
-    "OTHER_FAILURE",
-    "NOT_ATTEMPTED",
-])
+@pytest.mark.parametrize(
+    "outcome",
+    [
+        "DENIED_EACCES",
+        "DENIED_EPERM",
+        "ENOENT",
+        "OTHER_FAILURE",
+        "NOT_ATTEMPTED",
+    ],
+)
 def test_owner_positive_control_failure_blocks_complete_denial(outcome):
     record = _full()
     record["cases"][90]["outcome"] = outcome
