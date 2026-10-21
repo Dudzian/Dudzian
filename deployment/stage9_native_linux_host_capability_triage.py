@@ -148,7 +148,9 @@ def inspect_host(*, probes=None) -> dict:
         "qualification": "NOT_QUALIFIED",
         "production_emission": "BLOCKED",
         "topology": "PROPOSED_NOT_APPROVED",
-        "snapshot": "SYNTHETIC_TEST_INPUT" if synthetic else "UNTRUSTED_LIVE_OBSERVATION",
+        "snapshot": (
+            "SYNTHETIC_TEST_INPUT" if synthetic else "UNTRUSTED_LIVE_OBSERVATION"
+        ),
         "blockers": list(_BLOCKERS),
         "capabilities": {},
         "observed_failures": [],
