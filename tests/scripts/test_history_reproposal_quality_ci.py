@@ -96,6 +96,7 @@ STAGE9_PRODUCTION_ATOMIC_TESTS = {
     "tests/deployment/test_stage9_native_linux_cross_observer_consistency.py",
     "tests/deployment/test_stage9_native_linux_two_pass_drift_observation.py",
     "tests/deployment/test_stage9_native_linux_diagnostic_handoff.py",
+    "tests/deployment/test_stage9_native_linux_host_capability_triage.py",
     "tests/security/test_independent_cca_decision.py",
     "tests/security/test_cca_durable_decision_log.py",
     "tests/architecture/test_stage9_independent_cca_boundary.py",
@@ -143,6 +144,7 @@ STAGE9_PRODUCTION_ATOMIC_MODULES = {
     "deployment.stage9_native_linux_cross_observer_consistency",
     "deployment.stage9_native_linux_two_pass_drift_observation",
     "deployment.stage9_native_linux_diagnostic_handoff",
+    "deployment.stage9_native_linux_host_capability_triage",
 }
 RAW_FILES = (
     "coverage-atomic-root-proof.data",
@@ -274,6 +276,7 @@ def test_native_linux_source_cca_observations_have_explicit_lint_and_format_scop
         "deployment/stage9_native_linux_cross_observer_consistency.py",
         "deployment/stage9_native_linux_two_pass_drift_observation.py",
         "deployment/stage9_native_linux_diagnostic_handoff.py",
+        "deployment/stage9_native_linux_host_capability_triage.py",
         "tests/deployment/test_stage9_native_linux_source_cca_preflight.py",
         "tests/deployment/test_stage9_native_linux_process_identity_observation.py",
         "tests/deployment/test_stage9_native_linux_cgroup_membership_observation.py",
@@ -283,6 +286,7 @@ def test_native_linux_source_cca_observations_have_explicit_lint_and_format_scop
         "tests/deployment/test_stage9_native_linux_cross_observer_consistency.py",
         "tests/deployment/test_stage9_native_linux_two_pass_drift_observation.py",
         "tests/deployment/test_stage9_native_linux_diagnostic_handoff.py",
+        "tests/deployment/test_stage9_native_linux_host_capability_triage.py",
     ):
         assert format_tokens.count(path) == 1
     lint_tokens = shlex.split(_step(quality, "Ruff baseline gate")["run"])
@@ -297,6 +301,7 @@ def test_native_linux_source_cca_observations_have_explicit_lint_and_format_scop
         "cross_observer_consistency",
         "two_pass_drift_observation",
         "diagnostic_handoff",
+        "host_capability_triage",
     ):
         assert lint_tokens.count(f"deployment/stage9_native_linux_{module}.py") == 1
 
