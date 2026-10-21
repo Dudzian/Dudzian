@@ -107,9 +107,7 @@ def test_without_input_remains_blocked_with_no_host_access():
     assert report["counts"]["owner_expected"] == 18
 
 
-@pytest.mark.parametrize(
-    "snapshot", ["SYNTHETIC_TEST_INPUT", "UNTRUSTED_LIVE_OBSERVATION"]
-)
+@pytest.mark.parametrize("snapshot", ["SYNTHETIC_TEST_INPUT", "UNTRUSTED_LIVE_OBSERVATION"])
 def test_matching_complete_declarations_remain_untrusted(snapshot):
     report = reconcile.inspect_declared_handoff(_record(snapshot))
     _blocked(report)
@@ -146,9 +144,7 @@ def test_session_reference_mismatch_refuses_even_matching_complete_reports():
 
 
 @pytest.mark.parametrize("field", ["fixture_session_ref", "outcomes_session_ref"])
-@pytest.mark.parametrize(
-    "bad", [None, True, 42, "", "0" * 32, "PRIVATE_SECRET", "A" * 32]
-)
+@pytest.mark.parametrize("bad", [None, True, 42, "", "0" * 32, "PRIVATE_SECRET", "A" * 32])
 def test_invalid_or_unbounded_session_labels_are_refused(field, bad):
     record = _record()
     record[field] = bad
@@ -256,24 +252,39 @@ def test_wrong_outer_envelope_is_rejected(mutate):
 
 
 @pytest.mark.parametrize(
+    "outcomes_session_ref",
+    ["a" * 32, "b" * 32],
+    ids=["matching-sessions", "mismatched-sessions"],
+)
+@pytest.mark.parametrize(
     "mutate",
     [
         lambda r: r["fixture"].update(schema="WRONG"),
         lambda r: r["fixture"]["roles"][1].update(role="FAKE_ROLE"),
         lambda r: r["fixture"]["roles"][0].update(host_path="/PRIVATE_SECRET"),
+        lambda r: r["fixture"]["roles"][-1].update(host_path="/PRIVATE_SECRET"),
         lambda r: r["outcomes"].update(schema="WRONG"),
         lambda r: r["outcomes"]["cases"][12].update(outcome="PRIVATE_SECRET"),
         lambda r: r["outcomes"]["cases"][12].update(extra="PRIVATE_SECRET"),
+        lambda r: r["outcomes"]["cases"][-1].update(outcome="PRIVATE_SECRET"),
         lambda r: r["outcomes"]["cases"].append(dict(r["outcomes"]["cases"][0])),
     ],
 )
-def test_invalid_nested_envelopes_are_rejected_without_partial_reports(mutate):
+def test_invalid_nested_envelopes_are_rejected_without_partial_reports(
+    mutate, outcomes_session_ref
+):
     record = _record()
+    record["outcomes_session_ref"] = outcomes_session_ref
     mutate(record)
     report = _invalid(record)
+    baseline = reconcile.inspect_declared_handoff()
+    assert report["counts"] == baseline["counts"]
+    assert report["blockers"] == baseline["blockers"]
     text = json.dumps(report)
     assert "PRIVATE_SECRET" not in text
     assert "/PRIVATE_SECRET" not in text
+    assert record["fixture_session_ref"] not in text
+    assert record["outcomes_session_ref"] not in text
 
 
 def test_no_host_private_data_or_raw_names_are_emitted():

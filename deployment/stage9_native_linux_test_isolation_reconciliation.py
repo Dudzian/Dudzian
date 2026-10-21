@@ -13,9 +13,7 @@ from deployment import stage9_native_linux_test_fixture_readiness as fixture
 from deployment import stage9_native_linux_test_syscall_outcome_classifier as outcomes
 
 _SCHEMA = "CryptoHunter.Stage9TestOnlyIsolationReconciliationV1"
-_KEYS = frozenset(
-    {"schema", "fixture", "outcomes", "fixture_session_ref", "outcomes_session_ref"}
-)
+_KEYS = frozenset({"schema", "fixture", "outcomes", "fixture_session_ref", "outcomes_session_ref"})
 _SESSION_PATTERN = re.compile(r"[0-9a-f]{32}\Z")
 _BLOCKERS = (
     "DECLARED_TEST_FIXTURE_AND_SYSCALL_OUTCOMES_ARE_UNTRUSTED",
@@ -79,10 +77,6 @@ def inspect_declared_handoff(record: object = None) -> dict:
         result["reconciliation"]["reason"] = "INVALID_TEST_HANDOFF"
         return result
 
-    if record["fixture_session_ref"] != record["outcomes_session_ref"]:
-        result["reconciliation"]["reason"] = "SESSION_DECLARATIONS_DISAGREE"
-        return result
-
     f = fixture.inspect_declared_fixture(record["fixture"])
     o = outcomes.inspect_declared_outcomes(record["outcomes"])
     if (
@@ -90,6 +84,10 @@ def inspect_declared_handoff(record: object = None) -> dict:
         or o["classification"]["reason"] == "INVALID_TEST_REPORT"
     ):
         result["reconciliation"]["reason"] = "INVALID_TEST_HANDOFF"
+        return result
+
+    if record["fixture_session_ref"] != record["outcomes_session_ref"]:
+        result["reconciliation"]["reason"] = "SESSION_DECLARATIONS_DISAGREE"
         return result
 
     if f["snapshot"] != o["snapshot"]:
@@ -118,10 +116,7 @@ def inspect_declared_handoff(record: object = None) -> dict:
         reason = "DECLARED_CROSS_ROLE_ACCESS"
     elif f["fixture"]["observation"] != "UNTRUSTED_TEST_LAYOUT_DECLARATIONS_ONLY":
         reason = "TEST_FIXTURE_NOT_COMPLETE"
-    elif (
-        o["classification"]["observation"]
-        != "UNTRUSTED_DECLARED_DENIAL_WITH_OWNER_CONTROLS_ONLY"
-    ):
+    elif o["classification"]["observation"] != "UNTRUSTED_DECLARED_DENIAL_WITH_OWNER_CONTROLS_ONLY":
         reason = "SYSCALL_OUTCOMES_NOT_COMPLETE"
     elif o["denial_matrix"]["observation"] != "UNTRUSTED_DECLARED_DENIALS_ONLY":
         reason = "CROSS_ROLE_MATRIX_NOT_COMPLETE"

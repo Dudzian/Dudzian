@@ -95,9 +95,7 @@ def test_no_input_returns_fixed_blocked_plan_and_no_host_access():
     assert result["counts"]["missing_roles"] == 6
 
 
-@pytest.mark.parametrize(
-    "snapshot", ["SYNTHETIC_TEST_INPUT", "UNTRUSTED_LIVE_OBSERVATION"]
-)
+@pytest.mark.parametrize("snapshot", ["SYNTHETIC_TEST_INPUT", "UNTRUSTED_LIVE_OBSERVATION"])
 def test_complete_six_role_layout_is_only_untrusted_not_production_ready(snapshot):
     result = fixture.inspect_declared_fixture(_complete(snapshot))
     _assert_blocked(result)
