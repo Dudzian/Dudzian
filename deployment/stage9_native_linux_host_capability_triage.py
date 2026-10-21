@@ -6,6 +6,7 @@ No probe outcome qualifies a Source/CCA service or production installation.
 
 from __future__ import annotations
 
+from contextlib import ExitStack
 import json
 import os
 import stat
@@ -28,35 +29,31 @@ _BLOCKERS = (
 
 def _procfs() -> bool:
     """Check bounded public self-stat access without following a path alias."""
-    root = -1
-    fd = -1
     try:
-        root = os.open(
-            f"/proc/{os.getpid()}",
-            os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW,
-        )
-        if not stat.S_ISDIR(os.fstat(root).st_mode):
-            return False
-        fd = os.open(
-            "stat",
-            os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW,
-            dir_fd=root,
-        )
-        raw = os.read(fd, 4097)
-        return (
-            type(raw) is bytes
-            and 0 < len(raw) <= 4096
-            and raw.startswith(f"{os.getpid()} (".encode("ascii"))
-            and b") " in raw
-            and b"\x00" not in raw
-        )
+        with ExitStack() as descriptors:
+            root = os.open(
+                f"/proc/{os.getpid()}",
+                os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW,
+            )
+            descriptors.callback(os.close, root)
+            if not stat.S_ISDIR(os.fstat(root).st_mode):
+                return False
+            fd = os.open(
+                "stat",
+                os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW,
+                dir_fd=root,
+            )
+            descriptors.callback(os.close, fd)
+            raw = os.read(fd, 4097)
+            return (
+                type(raw) is bytes
+                and 0 < len(raw) <= 4096
+                and raw.startswith(f"{os.getpid()} (".encode("ascii"))
+                and b") " in raw
+                and b"\x00" not in raw
+            )
     except (OSError, ValueError, OverflowError):
         return False
-    finally:
-        if fd >= 0:
-            os.close(fd)
-        if root >= 0:
-            os.close(root)
 
 
 def _namespaces() -> bool:
@@ -67,6 +64,7 @@ def _namespaces() -> bool:
             if (
                 type(node.st_ino) is not int
                 or node.st_ino <= 0
+                or type(node.st_mode) is not int
                 or not stat.S_ISREG(node.st_mode)
             ):
                 return False
@@ -93,7 +91,11 @@ def _pidfd_self() -> bool:
 
 
 def _systemd_manager() -> bool:
-    """Query a fixed, non-sensitive systemd manager property without elevation."""
+    """Query public metadata; limit accepted text, not stdout acquisition size.
+
+    The fixed command has a timeout; run() still buffers stdout until completion.
+    Discard unused stderr rather than buffering diagnostics that may be private.
+    """
     try:
         response = subprocess.run(
             (
@@ -103,7 +105,8 @@ def _systemd_manager() -> bool:
                 "--no-pager",
                 "--property=Version",
             ),
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
             text=True,
             check=False,
             timeout=3,
@@ -148,9 +151,7 @@ def inspect_host(*, probes=None) -> dict:
         "qualification": "NOT_QUALIFIED",
         "production_emission": "BLOCKED",
         "topology": "PROPOSED_NOT_APPROVED",
-        "snapshot": (
-            "SYNTHETIC_TEST_INPUT" if synthetic else "UNTRUSTED_LIVE_OBSERVATION"
-        ),
+        "snapshot": ("SYNTHETIC_TEST_INPUT" if synthetic else "UNTRUSTED_LIVE_OBSERVATION"),
         "blockers": list(_BLOCKERS),
         "capabilities": {},
         "observed_failures": [],
