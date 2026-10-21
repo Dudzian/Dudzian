@@ -57,6 +57,8 @@ def _outcomes(snapshot="SYNTHETIC_TEST_INPUT"):
 def _record(snapshot="SYNTHETIC_TEST_INPUT"):
     return {
         "schema": reconcile._SCHEMA,
+        "fixture_session_ref": "a" * 32,
+        "outcomes_session_ref": "a" * 32,
         "fixture": _fixture(snapshot),
         "outcomes": _outcomes(snapshot),
     }
@@ -131,6 +133,25 @@ def test_declared_snapshot_mismatch_refuses_without_leaking_partial_counts():
     assert report["snapshot"] == "NOT_QUALIFIED"
     assert report["counts"]["cross_denied"] == 0
     assert report["counts"]["roles_declared"] == 0
+
+
+def test_session_reference_mismatch_refuses_even_matching_complete_reports():
+    record = _record()
+    record["outcomes_session_ref"] = "b" * 32
+    result = reconcile.inspect_declared_handoff(record)
+    _blocked(result)
+    assert result["reconciliation"]["reason"] == "SESSION_DECLARATIONS_DISAGREE"
+    assert result["counts"]["roles_declared"] == 0
+    assert result["counts"]["cross_denied"] == 0
+
+
+@pytest.mark.parametrize("field", ["fixture_session_ref", "outcomes_session_ref"])
+@pytest.mark.parametrize("bad", [None, True, 42, "", "0" * 32, "PRIVATE_SECRET", "A" * 32])
+def test_invalid_or_unbounded_session_labels_are_refused(field, bad):
+    record = _record()
+    record[field] = bad
+    result = _invalid(record)
+    assert "PRIVATE_SECRET" not in json.dumps(result)
 
 
 @pytest.mark.parametrize(
@@ -219,6 +240,8 @@ def test_invalid_outer_container_refuses_without_echo(invalid_value):
         lambda r: r.update(private="PRIVATE_SECRET"),
         lambda r: r.pop("fixture"),
         lambda r: r.pop("outcomes"),
+        lambda r: r.pop("fixture_session_ref"),
+        lambda r: r.pop("outcomes_session_ref"),
         lambda r: r.update(fixture=None),
         lambda r: r.update(outcomes=[]),
         lambda r: r.update(outcomes="PRIVATE_SECRET"),
