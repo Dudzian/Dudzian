@@ -225,17 +225,13 @@ def inspect_host(*, preflight_observer=None, drift_observer=None) -> dict:
         result["observed_failures"].append("NATIVE_LINUX_REQUIRED")
         return result
 
+    preflight_runner = (
+        preflight.inspect_host if preflight_observer is None else preflight_observer
+    )
+    drift_runner = drift.inspect_host if drift_observer is None else drift_observer
     for key, observer, summarizer in (
-        (
-            "preflight",
-            preflight.inspect_host if preflight_observer is None else preflight_observer,
-            _preflight_summary,
-        ),
-        (
-            "two_pass",
-            drift.inspect_host if drift_observer is None else drift_observer,
-            _drift_summary,
-        ),
+        ("preflight", preflight_runner, _preflight_summary),
+        ("two_pass", drift_runner, _drift_summary),
     ):
         try:
             report = observer()
