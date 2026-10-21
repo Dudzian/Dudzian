@@ -77,7 +77,12 @@ def _canonical_steps() -> tuple[Mapping[str, str], ...]:
     )
     steps = positives + negatives
     # Reject a broken local catalog even when Python runs with optimization.
-    if len(steps) != 108 or len(positives) != 18 or len(negatives) != 90:
+    if (
+        len(steps) != 108
+        or len(positives) != 18
+        or len(negatives) != 90
+        or len(set(cases)) != len(cases)
+    ):
         raise RuntimeError("Invalid canonical TEST execution plan catalog")
     return tuple(MappingProxyType(row) for row in steps)
 

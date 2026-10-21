@@ -251,7 +251,7 @@ def test_canonical_descriptors_cannot_be_mutated_through_plan_or_directly():
 
 
 @pytest.mark.parametrize("optimize", [0, 1, 2])
-@pytest.mark.parametrize("damage", ["missing_cross_case", "wrong_split"])
+@pytest.mark.parametrize("damage", ["missing_cross_case", "wrong_split", "duplicate_cross_case"])
 def test_invalid_catalog_prevents_module_initialization_even_with_optimization(
     monkeypatch, optimize, damage
 ):
@@ -259,6 +259,13 @@ def test_invalid_catalog_prevents_module_initialization_even_with_optimization(
     if damage == "missing_cross_case":
         # Retain all six roles, but remove one of the 90 cross-role cases.
         broken = cases[1:]
+    elif damage == "duplicate_cross_case":
+        # Replace one negative case with a duplicate while preserving 18/90.
+        broken = cases[:1] + cases[:1] + cases[2:]
+        assert len(broken) == 108
+        assert sum(actor != owner for actor, owner, _ in broken) == 90
+        assert sum(actor == owner for actor, owner, _ in broken) == 18
+        assert len(set(broken)) == 107
     else:
         # Keep 108 generated steps, with an invalid 15/93 split. This
         # catches guards that only check the total number of steps.
