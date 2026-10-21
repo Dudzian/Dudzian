@@ -535,10 +535,16 @@ def _legacy_installation(value):
 
 
 @contextmanager
-def _offline_migration_connection(value, *, login=None):
-    """External maintenance ceremony for this disposable test database only."""
+def _offline_migration_connection(value, *, login=None, drain_existing=True):
+    """Commit the closed gate and drain only this disposable TEST database.
+
+    Production migration still independently verifies its empty-session
+    precondition. The explicitly negative test opts out of draining so it
+    can prove that an existing runtime session is rejected.
+    """
     dsn = make_conninfo(value.dsn, user=login) if login else value.dsn
     with psycopg.connect(dsn, autocommit=True) as conn:
+        own_pid = conn.info.backend_pid
         with psycopg.connect(_BASE_DSN, autocommit=True) as control:
             control.execute(
                 sql.SQL("ALTER DATABASE {} ALLOW_CONNECTIONS=false").format(
@@ -546,6 +552,22 @@ def _offline_migration_connection(value, *, login=None):
                 )
             )
         try:
+            if drain_existing:
+                with psycopg.connect(_BASE_DSN, autocommit=True) as control:
+                    terminated = control.execute(
+                        "SELECT pg_catalog.pg_terminate_backend(pid, 5000) "
+                        "FROM pg_catalog.pg_stat_activity "
+                        "WHERE datname=%s AND pid<>%s",
+                        (value.database, own_pid),
+                    ).fetchall()
+                    if any(row != (True,) for row in terminated):
+                        raise RuntimeError("disposable TEST database sessions could not be drained")
+                    if control.execute(
+                        "SELECT 1 FROM pg_catalog.pg_stat_activity "
+                        "WHERE datname=%s AND pid<>%s LIMIT 1",
+                        (value.database, own_pid),
+                    ).fetchone() is not None:
+                        raise RuntimeError("disposable TEST database still has active sessions")
             yield conn
         finally:
             with psycopg.connect(_BASE_DSN, autocommit=True) as control:
@@ -735,7 +757,7 @@ def test_migration_rejects_remaining_old_runtime_connection(boundary):
         make_conninfo(boundary.dsn, user=boundary.config.administrator_role), autocommit=True
     ) as runtime:
         runtime.execute("SELECT 1")
-        with _offline_migration_connection(boundary) as conn:
+        with _offline_migration_connection(boundary, drain_existing=False) as conn:
             with conn.transaction():
                 conn.execute("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE")
                 with pytest.raises(
