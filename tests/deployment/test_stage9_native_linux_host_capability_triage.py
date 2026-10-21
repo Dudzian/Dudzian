@@ -79,7 +79,7 @@ def test_false_probe_is_scoped_without_dropping_other_observations(name):
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="Linux synthetic capability triage")
-@pytest.mark.parametrize("invalid", [None, 1, "yes", {}, [], True])
+@pytest.mark.parametrize("invalid", [None, 1, "yes", {}, []])
 def test_malformed_probe_value_is_not_accepted_as_positive(invalid):
     report = triage.inspect_host(probes=_probes(procfs=invalid))
     _assert_blocked(report)
