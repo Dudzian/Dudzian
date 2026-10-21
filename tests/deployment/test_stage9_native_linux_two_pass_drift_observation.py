@@ -335,7 +335,7 @@ def test_cli_always_exits_two_on_clean_synthetic_observation(monkeypatch, capsys
         ("groups", [8333]),
     ],
 )
-def test_identity_credentials_can_change_with_same_pid_and_starttime(field, replacement):
+def test_credentials_change_with_stable_pid_and_starttime(field, replacement):
     first, second = _sweep(), _sweep()
     role = _ROLES[0][0]
     second["identity"]["process_observations"][role]["identity"][field] = replacement
@@ -373,7 +373,7 @@ def test_identity_namespace_changes_with_same_pid_and_credentials(namespace):
 
 @pytest.mark.skipif(sys.platform != "linux", reason="Synthetic shared credentials")
 @pytest.mark.parametrize("field", ("uid", "gid", "groups"))
-def test_cross_role_credentials_collision_is_detected_even_without_backend_failure(field):
+def test_shared_credentials_without_backend_failure(field):
     first, second = _sweep(), _sweep()
     left, right, other = [role for role, _unit in _ROLES]
     rows = second["identity"]["process_observations"]
@@ -390,10 +390,11 @@ def test_cross_role_credentials_collision_is_detected_even_without_backend_failu
 
 @pytest.mark.skipif(sys.platform != "linux", reason="Synthetic shared namespaces")
 @pytest.mark.parametrize("namespace", probe.consistency.identity._NS_TYPES)
-def test_first_sweep_cross_role_namespace_collision_survives_clean_second(namespace):
+@pytest.mark.parametrize("round_index", [0, 1])
+def test_shared_namespace_is_caught_in_either_sweep(namespace, round_index):
     first, second = _sweep(), _sweep()
     left, right, other = [role for role, _unit in _ROLES]
-    rows = first["identity"]["process_observations"]
+    rows = (first, second)[round_index]["identity"]["process_observations"]
     rows[left]["identity"]["namespaces"][namespace] = rows[right]["identity"][
         "namespaces"
     ][namespace]
