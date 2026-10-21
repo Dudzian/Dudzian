@@ -141,7 +141,8 @@ def inspect_declared_fixture(record: object = None) -> dict:
             or not 0 < gid < 2**32 - 1
             or any(not 0 < row[field] < 2**32 - 1 for field in _ID_FIELDS)
             or row["effective_gids"] != [gid]
-            or (row["directory_owner_uid"], row["directory_owner_gid"]) != (uid, gid)
+            or row["directory_owner_uid"] != uid
+            or row["directory_owner_gid"] != gid
             or (row["file_owner_uid"], row["file_owner_gid"]) != (uid, gid)
             or row["directory_mode"] != 0o700
             or row["file_mode"] != 0o600
