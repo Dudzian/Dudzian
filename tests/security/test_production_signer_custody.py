@@ -333,7 +333,7 @@ def existing_native_storage(monkeypatch):
     monkeypatch.setattr(
         keyring_storage.importlib,
         "import_module",
-        lambda name: SimpleNamespace(SecretServiceKeyring=NativeBackend),
+        lambda name: SimpleNamespace(Keyring=NativeBackend),
     )
     monkeypatch.setattr(storage, "_platform_identifier", lambda: "linux")
     monkeypatch.setattr(

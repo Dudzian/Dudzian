@@ -89,7 +89,7 @@ def test_linux_backend_promotes_secret_service(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr(sys, "platform", "linux", raising=False)
     keyring_module = _install_keyring_stub(monkeypatch)
     native_cls = _install_backend_module(
-        monkeypatch, "keyring.backends.SecretService", "SecretServiceKeyring"
+        monkeypatch, "keyring.backends.SecretService", "Keyring"
     )
 
     storage = KeyringSecretStorage(hwid_provider=DummyHwId())
@@ -124,3 +124,16 @@ def test_missing_native_backend_raises(monkeypatch: pytest.MonkeyPatch) -> None:
 
     with pytest.raises(SecretStorageError):
         KeyringSecretStorage(hwid_provider=DummyHwId())
+
+
+def test_installed_linux_secret_service_class_matches_without_secret_io() -> None:
+    """Check the real upstream API, never opening the user's keyring."""
+    backend_module = pytest.importorskip("keyring.backends.SecretService")
+    native_type = getattr(backend_module, "Keyring", None)
+    assert isinstance(native_type, type)
+
+    storage = object.__new__(KeyringSecretStorage)
+    # Allocate without __init__: no DBus session or credential access.
+    backend = object.__new__(native_type)
+    assert storage._is_native_backend(backend, "linux")
+    assert not storage._is_native_backend(DummyBackend(), "linux")

@@ -73,7 +73,7 @@ def fake_keyring() -> types.ModuleType:
     module = types.ModuleType("keyring")
     backend = _InMemoryKeyring()
 
-    class SecretServiceKeyring:
+    class Keyring:
         __slots__ = ("_backend",)
         __module__ = "keyring.backends.SecretService"
 
@@ -89,7 +89,7 @@ def fake_keyring() -> types.ModuleType:
         def delete_password(self, service: str, username: str) -> None:
             self._backend.delete_password(service, username)
 
-    native_backend = SecretServiceKeyring(backend)
+    native_backend = Keyring(backend)
 
     module.get_password = backend.get_password
     module.set_password = backend.set_password
