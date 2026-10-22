@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 import types
+from pathlib import Path
 
 import pytest
 
@@ -85,14 +86,18 @@ def _install_backend_module(
     return NativeBackend
 
 
-def test_linux_backend_promotes_secret_service(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_linux_backend_promotes_secret_service(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     monkeypatch.setattr(sys, "platform", "linux", raising=False)
     keyring_module = _install_keyring_stub(monkeypatch)
     native_cls = _install_backend_module(
         monkeypatch, "keyring.backends.SecretService", "Keyring"
     )
 
-    storage = KeyringSecretStorage(hwid_provider=DummyHwId())
+    storage = KeyringSecretStorage(
+        hwid_provider=DummyHwId(), index_path=tmp_path / "secrets-index.json"
+    )
 
     assert isinstance(storage._backend, native_cls)  # type: ignore[attr-defined]
     storage.set_secret("api", "value")
