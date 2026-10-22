@@ -91,9 +91,7 @@ def test_linux_backend_promotes_secret_service(
 ) -> None:
     monkeypatch.setattr(sys, "platform", "linux", raising=False)
     keyring_module = _install_keyring_stub(monkeypatch)
-    native_cls = _install_backend_module(
-        monkeypatch, "keyring.backends.SecretService", "Keyring"
-    )
+    native_cls = _install_backend_module(monkeypatch, "keyring.backends.SecretService", "Keyring")
 
     storage = KeyringSecretStorage(
         hwid_provider=DummyHwId(), index_path=tmp_path / "secrets-index.json"
