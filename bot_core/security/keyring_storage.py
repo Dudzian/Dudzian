@@ -74,7 +74,7 @@ class KeyringSecretStorage(SecretStorage):
         module_name, class_name = {
             "windows": ("keyring.backends.Windows", "WinVaultKeyring"),
             "macos": ("keyring.backends.macOS", "Keyring"),
-            "linux": ("keyring.backends.SecretService", "SecretServiceKeyring"),
+            "linux": ("keyring.backends.SecretService", "Keyring"),
         }[self._platform_identifier()]
         native_class = getattr(importlib.import_module(module_name), class_name)
         if type(self._backend) is not native_class or type(key) is not str or not key:
@@ -289,7 +289,7 @@ class KeyringSecretStorage(SecretStorage):
         module_name, class_name = {
             "windows": ("keyring.backends.Windows", "WinVaultKeyring"),
             "macos": ("keyring.backends.macOS", "Keyring"),
-            "linux": ("keyring.backends.SecretService", "SecretServiceKeyring"),
+            "linux": ("keyring.backends.SecretService", "Keyring"),
         }[platform_id]
         try:
             module = importlib.import_module(module_name)
@@ -306,7 +306,7 @@ class KeyringSecretStorage(SecretStorage):
         module_name, class_name = {
             "windows": ("keyring.backends.Windows", "WinVaultKeyring"),
             "macos": ("keyring.backends.macOS", "Keyring"),
-            "linux": ("keyring.backends.SecretService", "SecretServiceKeyring"),
+            "linux": ("keyring.backends.SecretService", "Keyring"),
         }[platform_id]
 
         # Prosty przypadek: backend ma oczekiwany moduł i klasę
