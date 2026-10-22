@@ -58,6 +58,7 @@ UNIT_FIELDS = (
     "ActiveState",
     "SubState",
     "FragmentPath",
+    "DropInPaths",
     "Transient",
     "InvocationID",
     "MainPID",
@@ -143,6 +144,7 @@ def unit_is_unused(snapshot: dict[str, str]) -> bool:
         "LoadState": "not-found",
         "ActiveState": "inactive",
         "FragmentPath": "",
+        "DropInPaths": "",
         "Transient": "no",
         "InvocationID": "",
         "MainPID": "0",
@@ -172,6 +174,8 @@ def owns_unit(snapshot: dict[str, str], pin: dict[str, str]) -> bool:
         return False
     return (
         snapshot.get("Transient") == "yes"
+        and snapshot.get("DropInPaths") == ""
+        and pin.get("DropInPaths") == ""
         and snapshot.get("FragmentPath") == f"/run/systemd/transient/{unit}"
         and snapshot.get("LoadState") == "loaded"
         and all(snapshot.get(key) == pin[key] for key in keys)

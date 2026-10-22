@@ -50,6 +50,7 @@ def _unused_unit():
         "LoadState": "not-found",
         "ActiveState": "inactive",
         "FragmentPath": "",
+        "DropInPaths": "",
         "Transient": "no",
         "InvocationID": "",
         "MainPID": "0",
@@ -64,6 +65,7 @@ def _owned_unit():
         "LoadState": "loaded",
         "ActiveState": "active",
         "FragmentPath": "/run/systemd/transient/" + unit_id,
+        "DropInPaths": "",
         "Transient": "yes",
         "Description": "Stage41B TEST ONLY " + "a" * 32 + " root_signer",
         "InvocationID": "b" * 32,
@@ -173,6 +175,7 @@ def test_only_exact_uninstalled_inactive_unit_is_unused():
     [
         ("LoadState", "loaded"),
         ("LoadState", "masked"),
+        ("DropInPaths", "/etc/systemd/system/production.service.d/override.conf"),
         ("LoadState", "error"),
         ("ActiveState", "active"),
         ("ActiveState", "activating"),
@@ -207,6 +210,7 @@ def test_cleanup_unit_ownership_requires_original_pinned_invocation():
     [
         ("Id", "cryptohunter-history-attestation-signer.service"),
         ("Transient", "no"),
+        ("DropInPaths", "/etc/systemd/system/production.service.d/override.conf"),
         ("FragmentPath", "/etc/systemd/system/replacement.service"),
         ("Description", "production"),
         ("InvocationID", "c" * 32),
