@@ -130,6 +130,8 @@ jobs:
           deployment/production_root_proof_issuer.py
           bot_core/production_signer_ipc.py
           bot_core/production_signer_custody.py
+          bot_core/security/custody_hwid.py
+          bot_core/security/keyring_storage.py
           deployment/production_signer_service.py
           bot_core/postgresql_history_successor_reproposal.py
           bot_core/postgresql_history_successor_reproposal_schema.py
@@ -204,6 +206,10 @@ jobs:
           tests/security/test_production_root_lifecycle_races.py
           tests/security/test_production_signer_ipc.py
           tests/security/test_production_signer_custody.py
+          tests/security/test_custody_hwid.py
+          tests/security/test_custody_keyring_hwid.py
+          tests/security/test_custody_hwid_processes.py
+          tests/security/_custody_hwid_process.py
           tests/security/test_production_signer_deployment.py
           tests/security/test_production_signer_lifecycle.py
           tests/security/test_production_signer_linux_processes.py

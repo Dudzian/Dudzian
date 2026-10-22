@@ -7,6 +7,7 @@ ConditionPathExists=/etc/cryptohunter/history-attestation-signer/custody.json
 Type=simple
 User=cryptohunter-history-attestation-signer
 Group=cryptohunter-history-attestation-signer
+LoadCredential=custody-product-uuid:/sys/devices/virtual/dmi/id/product_uuid
 WorkingDirectory=/opt/cryptohunter
 ExecStart=/opt/cryptohunter/venv/bin/python -m deployment.production_signer_service history_signer --serve
 Restart=no

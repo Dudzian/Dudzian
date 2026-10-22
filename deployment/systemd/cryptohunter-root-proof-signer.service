@@ -7,6 +7,7 @@ ConditionPathExists=/etc/cryptohunter/root-proof-signer/custody.json
 Type=simple
 User=cryptohunter-root-proof-signer
 Group=cryptohunter-root-proof-signer
+LoadCredential=custody-product-uuid:/sys/devices/virtual/dmi/id/product_uuid
 WorkingDirectory=/opt/cryptohunter
 ExecStart=/opt/cryptohunter/venv/bin/python -m deployment.production_signer_service root_signer --serve
 Restart=no

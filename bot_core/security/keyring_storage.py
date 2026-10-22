@@ -6,6 +6,7 @@ import hmac
 import importlib
 import json
 import os
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -14,6 +15,11 @@ from typing import Any, Mapping, MutableMapping, Optional
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from bot_core.security.base import SecretStorage, SecretStorageError
+from bot_core.security.custody_hwid import (
+    CUSTODY_HWID_PREFIX,
+    CUSTODY_HWID_SCHEME,
+    CustodyHwIdProvider,
+)
 from bot_core.security.hwid import HwIdProvider, HwIdProviderError
 
 
@@ -32,7 +38,21 @@ class KeyringSecretStorage(SecretStorage):
         service_name: str = "dudzian.trading",
         hwid_provider: HwIdProvider | None = None,
         index_path: str | Path | None = None,
+        custody_hwid: bool = False,
+        custody_systemd_unit: str | None = None,
     ) -> None:
+        if type(custody_hwid) is not bool or (custody_hwid and hwid_provider is not None):
+            raise SecretStorageError("Custody HWID must use the internal device identity provider.")
+        if custody_systemd_unit is not None and (
+            not custody_hwid
+            or type(custody_systemd_unit) is not str
+            or custody_systemd_unit
+            not in {
+                "cryptohunter-root-proof-signer.service",
+                "cryptohunter-history-attestation-signer.service",
+            }
+        ):
+            raise SecretStorageError("Exact installed custody signer unit required.")
         try:
             import keyring  # type: ignore[import-not-found]
         except ImportError as exc:  # pragma: no cover - zależne od środowiska CI
@@ -44,7 +64,12 @@ class KeyringSecretStorage(SecretStorage):
         self._keyring = keyring
         self._backend = self._ensure_native_backend(keyring)
         self._service_name = service_name
-        self._hwid_provider = hwid_provider or HwIdProvider()
+        self._custody_hwid = custody_hwid
+        self._hwid_provider = (
+            CustodyHwIdProvider(systemd_unit=custody_systemd_unit)
+            if custody_hwid
+            else hwid_provider or HwIdProvider()
+        )
         self._index_path = Path(index_path).expanduser() if index_path else self.DEFAULT_INDEX_PATH
 
     # ------------------------------------------------------------------
@@ -54,7 +79,10 @@ class KeyringSecretStorage(SecretStorage):
         encrypted = self._keyring.get_password(self._service_name, key)
         if encrypted is None:
             return None
-        master, hwid_digest = self._load_master_key()
+        if getattr(self, "_custody_hwid", False):
+            master, hwid_digest = self._load_master_key(allow_create=False)
+        else:
+            master, hwid_digest = self._load_master_key()
         try:
             return self._decrypt_value(
                 encrypted, storage_key=key, master=master, hwid_digest=hwid_digest
@@ -97,7 +125,18 @@ class KeyringSecretStorage(SecretStorage):
             raise SecretStorageError("Existing native credential unavailable.") from exc
 
     def set_secret(self, key: str, value: str) -> None:
-        master, hwid_digest = self._load_master_key()
+        if getattr(self, "_custody_hwid", False):
+            # A missing target says nothing about other native credentials.
+            # Initializing custody requires a separate authorized ceremony.
+            master, hwid_digest = self._load_master_key(allow_create=False)
+            existing = self._keyring.get_password(self._service_name, key)
+            if existing is not None:
+                # An update cannot repair, migrate or replace incompatible custody.
+                self._decrypt_value(
+                    existing, storage_key=key, master=master, hwid_digest=hwid_digest
+                )
+        else:
+            master, hwid_digest = self._load_master_key()
         encrypted = self._encrypt_value(
             value, storage_key=key, master=master, hwid_digest=hwid_digest
         )
@@ -126,6 +165,10 @@ class KeyringSecretStorage(SecretStorage):
     # Rotacja klucza głównego
     # ------------------------------------------------------------------
     def rotate_master_key(self) -> None:
+        if getattr(self, "_custody_hwid", False):
+            raise SecretStorageError(
+                "Custody master rotation requires a reviewed controlled ceremony."
+            )
         index = self._load_index()
         stored_keys = list(index.get("keys", {}).keys())
         old_master, hwid_digest = self._load_master_key()
@@ -158,15 +201,64 @@ class KeyringSecretStorage(SecretStorage):
             fingerprint = self._hwid_provider.read()
         except HwIdProviderError as exc:
             raise SecretStorageError("Nie udało się pobrać fingerprintu urządzenia.") from exc
+        if getattr(self, "_custody_hwid", False):
+            if (
+                type(fingerprint) is not str
+                or re.fullmatch(re.escape(CUSTODY_HWID_PREFIX) + r"[0-9a-f]{96}", fingerprint)
+                is None
+            ):
+                raise SecretStorageError("Invalid versioned custody HWID.")
+            return hashlib.sha256(fingerprint.encode("utf-8")).hexdigest()
         normalized = fingerprint.strip()
         if not normalized:
             raise SecretStorageError("Fingerprint urządzenia jest pusty.")
         return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
-    def _load_master_key(self) -> tuple[bytes, str]:
+    def _validate_custody_hwid_binding(self, document: Any, hwid_digest: str) -> None:
+        """Refuse legacy/unknown custody bindings; never reinterpret or rewrite them."""
+        if not getattr(self, "_custody_hwid", False):
+            return
+        if type(document) is not dict:
+            raise SecretStorageError("Invalid custody credential record.")
+        if document.get("hwid_scheme") != CUSTODY_HWID_SCHEME:
+            raise SecretStorageError("Custody HWID controlled migration required.")
+        if type(document.get("version")) is not int or document["version"] != self.SECRET_VERSION:
+            raise SecretStorageError("Unsupported custody credential version.")
+        stored_digest = document.get("hwid_digest")
+        if (
+            type(stored_digest) is not str
+            or re.fullmatch(r"[0-9a-f]{64}", stored_digest) is None
+            or not hmac.compare_digest(stored_digest, hwid_digest)
+        ):
+            raise SecretStorageError("Custody device fingerprint mismatch or invalid HWID digest.")
+
+    def _parse_credential_document(self, record: str) -> Any:
+        if not getattr(self, "_custody_hwid", False):
+            return json.loads(record)
+        if type(record) is not str:
+            raise ValueError("Exact custody JSON text required.")
+
+        def reject_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+            document: dict[str, Any] = {}
+            for name, value in pairs:
+                if name in document:
+                    raise ValueError("Duplicate custody credential field.")
+                document[name] = value
+            return document
+
+        def reject_nonfinite(value: str) -> None:
+            raise ValueError("Nonfinite custody credential value.")
+
+        return json.loads(
+            record, object_pairs_hook=reject_duplicates, parse_constant=reject_nonfinite
+        )
+
+    def _load_master_key(self, *, allow_create: bool = True) -> tuple[bytes, str]:
         record = self._keyring.get_password(self._service_name, self.MASTER_KEY_SLOT)
         hwid_digest = self._read_hwid_digest()
         if record is None:
+            if getattr(self, "_custody_hwid", False) or not allow_create:
+                raise SecretStorageError("Existing custody master key required; recovery required.")
             master = os.urandom(self.MASTER_KEY_BYTES)
             self._store_master_key(master, hwid_digest)
             return master, hwid_digest
@@ -175,10 +267,11 @@ class KeyringSecretStorage(SecretStorage):
 
     def _decode_master_key_record(self, record: str, hwid_digest: str) -> bytes:
         try:
-            document = json.loads(record)
-        except json.JSONDecodeError as exc:
+            document = self._parse_credential_document(record)
+        except ValueError as exc:
             raise SecretStorageError("Uszkodzony rekord klucza głównego w keychainie.") from exc
 
+        self._validate_custody_hwid_binding(document, hwid_digest)
         stored_digest = document.get("hwid_digest")
         if stored_digest and stored_digest != hwid_digest:
             raise SecretStorageError(
@@ -204,6 +297,8 @@ class KeyringSecretStorage(SecretStorage):
             "hwid_digest": hwid_digest,
             "rotated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         }
+        if getattr(self, "_custody_hwid", False):
+            payload["hwid_scheme"] = CUSTODY_HWID_SCHEME
         result = self._keyring.set_password(
             self._service_name, self.MASTER_KEY_SLOT, json.dumps(payload)
         )
@@ -340,16 +435,19 @@ class KeyringSecretStorage(SecretStorage):
             "ciphertext": base64.b64encode(ciphertext).decode("ascii"),
             "hwid_digest": hwid_digest,
         }
+        if getattr(self, "_custody_hwid", False):
+            payload["hwid_scheme"] = CUSTODY_HWID_SCHEME
         return json.dumps(payload)
 
     def _decrypt_value(
         self, document: str, *, storage_key: str, master: bytes, hwid_digest: str
     ) -> str:
         try:
-            payload = json.loads(document)
-        except json.JSONDecodeError as exc:
+            payload = self._parse_credential_document(document)
+        except ValueError as exc:
             raise SecretStorageError(f"Sekret '{storage_key}' ma niepoprawny format.") from exc
 
+        self._validate_custody_hwid_binding(payload, hwid_digest)
         stored_digest = payload.get("hwid_digest")
         if stored_digest and stored_digest != hwid_digest:
             raise SecretStorageError(
@@ -370,7 +468,7 @@ class KeyringSecretStorage(SecretStorage):
         aes_key = self._derive_data_key(master, hwid_digest)
         cipher = AESGCM(aes_key)
         try:
-            plaintext = cipher.decrypt(nonce, ciphertext, storage_key.encode("utf-8"))
+            plaintext: bytes = cipher.decrypt(nonce, ciphertext, storage_key.encode("utf-8"))
         except Exception as exc:
             raise SecretStorageError(f"Nie udało się odszyfrować sekretu '{storage_key}'.") from exc
         return plaintext.decode("utf-8")

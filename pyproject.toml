@@ -76,6 +76,8 @@ files = [
   "deployment/production_root_proof_issuer.py",
   "bot_core/production_signer_ipc.py",
   "bot_core/production_signer_custody.py",
+  "bot_core/security/custody_hwid.py",
+  "bot_core/security/keyring_storage.py",
   "deployment/production_signer_service.py",
   "bot_core/postgresql_history_successor_reproposal.py",
   "bot_core/postgresql_history_successor_reproposal_schema.py",
