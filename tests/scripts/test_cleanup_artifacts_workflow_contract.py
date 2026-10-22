@@ -155,9 +155,13 @@ const github = {rest:{actions}, paginate: async (fn, args, callback) => {
 const log = [];
 const core = {warning:(m) => log.push('WARNING: '+m), info:(m) => log.push('INFO: '+m)};
 const context = {repo:{owner:'Dudzian',repo:'Dudzian'}};
+// API responses are mocked: preserve retries without wall-clock backoff.
+const instantWait = (callback) => { callback(); return 0; };
 (async () => {
   try {
-    await new AsyncFunction('github','core','context',script)(github, core, context);
+    await new AsyncFunction('github','core','context','setTimeout',script)(
+      github, core, context, instantWait
+    );
     process.stdout.write(JSON.stringify({ok:true, deletedIds, calls, log}));
   } catch(err) {
     process.stdout.write(JSON.stringify({ok:false, deletedIds, calls, reason:String(err)}));
