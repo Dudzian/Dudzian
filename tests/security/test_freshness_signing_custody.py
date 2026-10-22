@@ -30,6 +30,7 @@ from bot_core.root_proof_issuer_substrate import (
 )
 from bot_core.security.keyring_storage import KeyringSecretStorage
 from tests.security._local_signing_platform import requires_native_custody_locking
+from tests.security.test_local_signing_custody import _install_synthetic_custody_masters
 
 
 @pytest.fixture
@@ -59,6 +60,7 @@ def native_keyring(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(
         KeyringSecretStorage, "_ensure_native_backend", lambda self, module: object()
     )
+    _install_synthetic_custody_masters(monkeypatch, values, lock)
     return values
 
 

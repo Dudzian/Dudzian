@@ -126,18 +126,17 @@ class KeyringSecretStorage(SecretStorage):
 
     def set_secret(self, key: str, value: str) -> None:
         if getattr(self, "_custody_hwid", False):
+            # A missing target says nothing about other native credentials.
+            # Initializing custody requires a separate authorized ceremony.
+            master, hwid_digest = self._load_master_key(allow_create=False)
             existing = self._keyring.get_password(self._service_name, key)
             if existing is not None:
-                record = self._keyring.get_password(self._service_name, self.MASTER_KEY_SLOT)
-                if type(record) is not str:
-                    raise SecretStorageError(
-                        "Existing custody master key required; recovery required."
-                    )
-                digest = self._read_hwid_digest()
-                master = self._decode_master_key_record(record, digest)
                 # An update cannot repair, migrate or replace incompatible custody.
-                self._decrypt_value(existing, storage_key=key, master=master, hwid_digest=digest)
-        master, hwid_digest = self._load_master_key()
+                self._decrypt_value(
+                    existing, storage_key=key, master=master, hwid_digest=hwid_digest
+                )
+        else:
+            master, hwid_digest = self._load_master_key()
         encrypted = self._encrypt_value(
             value, storage_key=key, master=master, hwid_digest=hwid_digest
         )
@@ -258,7 +257,7 @@ class KeyringSecretStorage(SecretStorage):
         record = self._keyring.get_password(self._service_name, self.MASTER_KEY_SLOT)
         hwid_digest = self._read_hwid_digest()
         if record is None:
-            if not allow_create:
+            if getattr(self, "_custody_hwid", False) or not allow_create:
                 raise SecretStorageError("Existing custody master key required; recovery required.")
             master = os.urandom(self.MASTER_KEY_BYTES)
             self._store_master_key(master, hwid_digest)

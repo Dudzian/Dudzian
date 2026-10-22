@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ctypes
+import base64
 import errno
 import hashlib
 import json
@@ -74,7 +75,7 @@ def _restrict_address_families() -> None:
             raise AssertionError("non-AF_UNIX socket unexpectedly accepted")
 
 
-def _install_fixture_keyring(path: Path, *, writable: bool) -> None:
+def _install_fixture_keyring(path: Path, *, writable: bool) -> dict[str, str]:
     # An exact class match is tested against this synthetic module. No real
     # keyring module is imported and no native credentials can be accessed.
     records = json.loads(path.read_text()) if path.exists() else {}
@@ -103,6 +104,7 @@ def _install_fixture_keyring(path: Path, *, writable: bool) -> None:
     sys.modules.update(
         {"keyring": module, "keyring.backends": backends, "keyring.backends.SecretService": native}
     )
+    return records
 
 
 def _model_installed_root_ownership() -> None:
@@ -145,7 +147,7 @@ def main() -> None:
 
     action, fixture_path = sys.argv[1:]
     path = Path(fixture_path)
-    _install_fixture_keyring(path, writable=action == "encrypt")
+    records = _install_fixture_keyring(path, writable=action == "encrypt")
     _model_installed_root_ownership()
 
     # Hardware is a synthetic protected-source fixture, never real DMI data.
@@ -193,6 +195,25 @@ def main() -> None:
     )
     identity = custody_hwid.CustodyHwIdProvider(systemd_unit=unit).read()
     if action == "encrypt":
+        # An explicitly prepared synthetic master is a fixture prerequisite.
+        # Ordinary custody writes must never initialize or regenerate it.
+        assert storage.MASTER_KEY_SLOT not in records
+        records[storage.MASTER_KEY_SLOT] = json.dumps(
+            {
+                "version": storage.SECRET_VERSION,
+                "key_b64": base64.b64encode(b"m" * storage.MASTER_KEY_BYTES).decode(),
+                "hwid_digest": hashlib.sha256(identity.encode()).hexdigest(),
+                "hwid_scheme": custody_hwid.CUSTODY_HWID_SCHEME,
+            }
+        )
+        path.write_text(json.dumps(records, sort_keys=True))
+        actual_urandom = os.urandom
+
+        def nonce_only_random(size):
+            assert size == 12, "Ordinary custody write attempted master generation"
+            return actual_urandom(size)
+
+        os.urandom = nonce_only_random
         storage.set_secret("fixture", "synthetic process restart secret")
     elif action in ("changed-installation", "changed-hardware"):
         try:

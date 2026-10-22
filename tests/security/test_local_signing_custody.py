@@ -6,6 +6,7 @@ from dataclasses import dataclass, replace
 import hashlib
 import json
 from pathlib import Path
+import sys
 import threading
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import (
@@ -62,6 +63,43 @@ class PlaintextMemoryStore:
             self.values.pop(key, None)
 
 
+def _install_synthetic_custody_masters(monkeypatch, values, lock) -> None:
+    """Model separately initialized native stores before administrator use.
+
+    Only this test fixture seeds fixed synthetic master records. Neither reads
+    nor production custody initialization receive an automatic-create bypass.
+    """
+    from bot_core.security.custody_hwid import CUSTODY_HWID_PREFIX, CUSTODY_HWID_SCHEME
+
+    administrator_init = NativeKeyringSigningSecretAdministrator.__init__
+    master_record = json.dumps(
+        {
+            "version": KeyringSecretStorage.SECRET_VERSION,
+            "key_b64": base64.b64encode(b"m" * KeyringSecretStorage.MASTER_KEY_BYTES).decode(),
+            "hwid_digest": hashlib.sha256((CUSTODY_HWID_PREFIX + "a" * 96).encode()).hexdigest(),
+            "hwid_scheme": CUSTODY_HWID_SCHEME,
+        }
+    )
+
+    def administrator_with_existing_fixture_master(self, *, index_path, security, role):
+        administrator_init(self, index_path=index_path, security=security, role=role)
+        if sys.platform == "linux" and role in (
+            ProviderRole.ROOT_PROOF_SIGNING,
+            ProviderRole.HISTORY_ATTESTATION_SIGNING,
+        ):
+            scope = custody_module._authority_secret_scope(security, role)
+            with lock:
+                values.setdefault(
+                    (scope.service_name, KeyringSecretStorage.MASTER_KEY_SLOT), master_record
+                )
+
+    monkeypatch.setattr(
+        NativeKeyringSigningSecretAdministrator,
+        "__init__",
+        administrator_with_existing_fixture_master,
+    )
+
+
 @pytest.fixture
 def security() -> SecurityProfileIdentity:
     return SecurityProfileIdentity(SecurityProfile.PRODUCTION_LOCAL, "custody-test")
@@ -98,6 +136,7 @@ def native_keyring(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(
         KeyringSecretStorage, "_ensure_native_backend", lambda self, module: object()
     )
+    _install_synthetic_custody_masters(monkeypatch, values, lock)
     return values
 
 

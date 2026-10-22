@@ -89,6 +89,45 @@ sekretu i nie uruchamiają migracji. Odrębne UID/GID i namespaces, chronione
 obowiązują. Jedyna zmiana jednostek to załadowanie obowiązkowego sprzętowego
 składnika; ustawienia izolacji pozostają bez zmian.
 
+## Zapis wymaga istniejącego mastera
+
+W trybie `custody_hwid=True` zwykły `set_secret()` nie inicjalizuje magazynu.
+Każdy zapis, także pod nową nazwą, wymaga istniejącego mastera z poprawnym
+`hwid_scheme=linux-host-v1`, wersją oraz digestem bieżącego HWID. Przy
+aktualizacji istniejącego sekretu trzeba dodatkowo poprawnie odszyfrować
+jego poprzednią kopertę. Brak mastera powoduje odmowę przed generowaniem
+klucza lub nonce, szyfrowaniem, zapisem ciphertextu i utworzeniem indeksu.
+Wewnętrzny loader również zabrania tworzenia mastera custody niezależnie od
+wartości parametru `allow_create`; nie można ominąć reguły innym wywołaniem
+loadera. Domyślny tryb legacy zachowuje dotychczasowe zachowanie.
+
+Nieobecność żądanego sekretu nie dowodzi, że native keyring jest pusty.
+Może zawierać `old-seed`, którego master utracono, nawet jeśli zapisywany
+`new-seed` jeszcze nie istnieje. Nowy master osierociłby stare ciphertexty
+i nadał niespójne znaczenie tej samej kolekcji. Brakujący, pusty lub
+nieaktualny plik indeksu nie jest dowodem pustej kolekcji i nie przyznaje
+prawa do inicjalizacji, naprawy ani resetu. Odmowa zachowuje dotychczasowe
+rekordy i indeks bez zmian; brakujący indeks pozostaje nieutworzony.
+
+Pierwsza inicjalizacja wymaga odrębnej, jawnie autoryzowanej ceremonii
+administracyjnej. Ten PR nie implementuje takiej ścieżki ani nie nadaje
+uprawnień do niej. Dotychczasowy administrator lokalnego custody może
+zapisywać sekrety tylko przy już istniejącym, zweryfikowanym masterze;
+pierwszy provisioning bez niego pozostaje zablokowany. Przyszła procedura
+wymaga osobnego przeglądu autoryzacji, dokładnego natywnego backendu,
+weryfikacji właściwego urządzenia, roli i trust domain oraz wiarygodnego
+ustalenia stanu kolekcji niezależnie od indeksu. Musi zapobiegać nadpisaniu
+istniejącego mastera i wyścigom z innymi operacjami, zachować spójność
+rekordów, chronione kopie, audyt bez ujawniania kluczy oraz obowiązujące
+fences i izolację. Nie może być zwykłym przełącznikiem CLI, zmienną
+środowiskową ani automatycznym skutkiem błędu odczytu.
+
+Utrata mastera wymaga odrębnej procedury odzyskania oryginalnego klucza
+z zaufanej, chronionej kopii przy zachowaniu powiązania z urządzeniem
+i poświadczeniami. Nie wolno zastępować go losowo wygenerowanym masterem,
+usuwać osieroconych danych ani oznaczać ich nowym schematem jako naprawy.
+Brak bezpiecznej ścieżki odzyskania pozostawia custody zablokowane.
+
 ## Zgodność istniejących sekretów
 
 Dotychczasowe rekordy ogólnego magazynu, licencje, role freshness/CHA
