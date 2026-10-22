@@ -139,13 +139,10 @@ def inspect_declared_fixture(record: object = None) -> dict:
         if (
             not 0 < uid < 2**32 - 1
             or not 0 < gid < 2**32 - 1
-            or any(
-                not 0 < row[field] < 2**32 - 1
-                for field in _ID_FIELDS
-            )
+            or any(not 0 < row[field] < 2**32 - 1 for field in _ID_FIELDS)
             or row["effective_gids"] != [gid]
-            or (row["directory_owner_uid"], row["directory_owner_gid"])
-            != (uid, gid)
+            or row["directory_owner_uid"] != uid
+            or row["directory_owner_gid"] != gid
             or (row["file_owner_uid"], row["file_owner_gid"]) != (uid, gid)
             or row["directory_mode"] != 0o700
             or row["file_mode"] != 0o600
@@ -155,8 +152,7 @@ def inspect_declared_fixture(record: object = None) -> dict:
 
     identities = list(observed.values())
     collisions = sum(
-        a["uid"] == b["uid"]
-        or bool(set(a["effective_gids"]) & set(b["effective_gids"]))
+        a["uid"] == b["uid"] or bool(set(a["effective_gids"]) & set(b["effective_gids"]))
         for i, a in enumerate(identities)
         for b in identities[i + 1 :]
     )
