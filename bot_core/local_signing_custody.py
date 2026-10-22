@@ -24,6 +24,7 @@ from pathlib import Path
 import re
 import secrets
 import stat
+import sys
 import time
 import uuid
 import threading
@@ -63,6 +64,10 @@ LOCAL_CUSTODY_MUTATION_ADMISSION_VERSION = 1
 _DB_FIRST_ROLES = frozenset(
     {ProviderRole.ROOT_PROOF_SIGNING, ProviderRole.HISTORY_ATTESTATION_SIGNING}
 )
+_CUSTODY_SYSTEMD_UNIT = {
+    ProviderRole.ROOT_PROOF_SIGNING: "cryptohunter-root-proof-signer.service",
+    ProviderRole.HISTORY_ATTESTATION_SIGNING: "cryptohunter-history-attestation-signer.service",
+}
 _RECORD_FILENAME = {
     ProviderRole.ROOT_PROOF_SIGNING: "root-proof-signing.json",
     ProviderRole.HISTORY_ATTESTATION_SIGNING: "history-attestation-signing.json",
@@ -248,7 +253,16 @@ class NativeKeyringSigningSecretReader:
     ) -> None:
         path = _exact_path_snapshot(index_path, label="keyring index path")
         scope = _authority_secret_scope(security, role)
-        storage = KeyringSecretStorage(service_name=scope.service_name, index_path=path)
+        storage = KeyringSecretStorage(
+            service_name=scope.service_name,
+            index_path=path,
+            custody_hwid=sys.platform == "linux" and role in _DB_FIRST_ROLES,
+            custody_systemd_unit=(
+                _CUSTODY_SYSTEMD_UNIT[role]
+                if sys.platform == "linux" and role in _DB_FIRST_ROLES
+                else None
+            ),
+        )
         object.__setattr__(self, "_NativeKeyringSigningSecretReader__storage", storage)
         object.__setattr__(self, "_NativeKeyringSigningSecretReader__scope", scope)
         object.__setattr__(self, "_NativeKeyringSigningSecretReader__sealed", True)
@@ -302,7 +316,11 @@ class NativeKeyringSigningSecretAdministrator:
     ) -> None:
         path = _exact_path_snapshot(index_path, label="keyring index path")
         scope = _authority_secret_scope(security, role)
-        storage = KeyringSecretStorage(service_name=scope.service_name, index_path=path)
+        storage = KeyringSecretStorage(
+            service_name=scope.service_name,
+            index_path=path,
+            custody_hwid=sys.platform == "linux" and role in _DB_FIRST_ROLES,
+        )
         object.__setattr__(self, "_NativeKeyringSigningSecretAdministrator__storage", storage)
         object.__setattr__(self, "_NativeKeyringSigningSecretAdministrator__scope", scope)
         object.__setattr__(self, "_NativeKeyringSigningSecretAdministrator__sealed", True)

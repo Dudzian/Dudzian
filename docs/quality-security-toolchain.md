@@ -201,6 +201,18 @@ and `python -m mypy --platform win32` without filename arguments. Existing
 blocking custom Semgrep rules and the baselined offline Betterleaks scan cover
 the new modules through their current directory scopes.
 
+The isolated signer HWID change adds `security/custody_hwid.py` and
+`security/keyring_storage.py` to configured Linux/Windows mypy and the explicit
+Stage 9 Ruff format list, together with the new custody HWID tests and process
+helper. Ordinary `py-tests-ubuntu` collection includes the provider and
+keyring unit tests; the existing `integration-linux` job selects the process
+tests through their `integration` marker and executes the helper in disposable
+children. No new production/hardware job is introduced. The existing atomic
+and history test inventories, coverage scopes, ratchets, timeouts and manual
+Stage 10 gates remain unchanged. Focused branch coverage and exact executed
+commands belong in the PR; synthetic hardware and native-backend fixtures do
+not qualify an installed systemd credential mount or production custody.
+
 Adaptery przygotowania RESERVED/STAGED dla inventory V2 rozszerzają ten sam
 seryjny job `atomic-root-proof-commit` o testy nowego przygotowania po migracji,
 kwalifikacji preparation ACL, signer enrollment, exact retry i commit właśnie

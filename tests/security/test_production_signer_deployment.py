@@ -58,6 +58,27 @@ def test_units_enforce_distinct_diagnostic_principals_and_namespaces(role):
     assert not (_ROOT / "deployment/systemd" / f"cryptohunter-{service}.socket").exists()
 
 
+@pytest.mark.parametrize("service", _SERVICES.values())
+def test_units_load_mandatory_hardware_identity_from_fixed_kernel_source(service):
+    path = _ROOT / "deployment/systemd" / f"cryptohunter-{service}.service"
+    credential_settings = [
+        line.strip()
+        for line in path.read_text().splitlines()
+        if line.lstrip().startswith(
+            (
+                "LoadCredential=",
+                "LoadCredentialEncrypted=",
+                "SetCredential=",
+                "SetCredentialEncrypted=",
+                "ImportCredential=",
+            )
+        )
+    ]
+    assert credential_settings == [
+        "LoadCredential=custody-product-uuid:/sys/devices/virtual/dmi/id/product_uuid"
+    ]
+
+
 def test_runtime_directories_inherit_socket_group_without_shared_process_group():
     records = {}
     path = _ROOT / "deployment/tmpfiles.d/cryptohunter-production-signers.conf"

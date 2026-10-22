@@ -177,11 +177,22 @@ The IPC identity pin requires Linux 6.5 or newer and working `SO_PEERPIDFD`
 (option 77); a header constant alone is insufficient. A missing or denied
 socket-associated pidfd fails closed without a `pidfd_open(pid)` fallback.
 
-Native SecretService access, its bus/session and the repository HWID envelope
-must be qualified inside each installed private network namespace. HWID
-collection includes namespace-visible interfaces and `uuid.getnode()`; an
-existing host-provisioned envelope may be unavailable or unstable across
-service restarts. These assets do not establish that physical qualification.
+Native SecretService access, its bus/session and the custody HWID envelope
+must be qualified inside each installed private network namespace. Linux
+root-proof/history signing custody uses the explicit `linux-host-v1` scheme
+from the protected local `/etc/machine-id` and a mandatory DMI product UUID,
+independent of interfaces and random `uuid.getnode()` fallbacks. Both units
+use `LoadCredential` to provide the root-sourced kernel DMI UUID through a
+protected read-only credential mount; the service accepts only fixed local
+paths, without a requester or environment override. Missing hardware
+identity refuses use rather than reducing the identity factors. Legacy
+custody envelopes without that scheme
+refuse use until a separately reviewed, controlled migration; runtime never
+rewrites them. General fingerprints and license HWID retain their existing
+format, as do the local freshness/CHA roles. The
+[custody HWID contract](stage9_custody_hwid_v1.md) records source
+trust, compatibility, migration requirements and remaining threats. These
+assets do not establish physical qualification or exclusive key control.
 The issuer rejects observed sharing with its own or the other signer's
 mount, IPC or network namespace. Unreadable cross-UID namespace evidence stays
 `BLOCKED`, including the cross-signer comparison.

@@ -123,7 +123,12 @@ def test_macos_backend_promotes_keychain(monkeypatch: pytest.MonkeyPatch) -> Non
 def test_missing_native_backend_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(sys, "platform", "linux", raising=False)
     _install_keyring_stub(monkeypatch)
-    # brak modułu SecretService – import zakończy się błędem
+
+    def missing_native_backend(self, platform_id):
+        raise ImportError("Synthetic unavailable native backend")
+
+    # Model absence explicitly, even when real Secret Service is installed.
+    monkeypatch.setattr(KeyringSecretStorage, "_load_native_backend", missing_native_backend)
 
     with pytest.raises(SecretStorageError):
         KeyringSecretStorage(hwid_provider=DummyHwId())

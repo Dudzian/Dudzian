@@ -41,6 +41,10 @@ def security() -> SecurityProfileIdentity:
 def native_keyring(monkeypatch: pytest.MonkeyPatch):
     import keyring
 
+    from bot_core.security.custody_hwid import CUSTODY_HWID_PREFIX, CustodyHwIdProvider
+
+    monkeypatch.setattr(CustodyHwIdProvider, "read", lambda self: CUSTODY_HWID_PREFIX + "a" * 96)
+
     values: dict[tuple[str, str], str] = {}
     lock = threading.Lock()
     monkeypatch.setattr(keyring, "get_password", lambda service, key: values.get((service, key)))
