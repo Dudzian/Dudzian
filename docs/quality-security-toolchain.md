@@ -334,3 +334,14 @@ na Linux i poprawny podpis syntetycznej decyzji nie kwalifikują produkcyjnej
 CCA, jej instalacji, committed-close readera ani niezależnego rollback domain.
 Granice i fazy recovery opisuje
 [S9-RPI-07](architecture/stage9_independent_cca_durable_decision_log.md).
+
+Stage 41B adds a separate synthetic physical signer qualification entrypoint,
+`scripts/qualify_stage41b_signer_isolation.py`, and test-only role worker
+`deployment/stage41b_role_worker.py`. Both enter the configured Linux/Windows
+mypy scope; the worker enters explicit Ruff lint/format gates. Unprivileged
+`tests/security/test_stage41b_signer_isolation.py` regressions enter the existing
+serial Stage 9 gate and append branch coverage for both new modules without
+changing its 70% diff-coverage threshold. Those regressions validate harness
+logic and refusal paths only. Physical `--execute` is never ordinary pytest or
+PR CI; `--check` cannot award `STAGE41B_TEST_ONLY_PASS`. See the
+[physical runbook and evidence limits](architecture/stage9_stage41b_physical_signer_isolation.md).
