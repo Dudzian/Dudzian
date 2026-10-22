@@ -190,7 +190,7 @@ def test_lock_generation_authority_is_self_consistent() -> None:
         "aiohttp": "3.14.4",
         "certifi": "2026.10.19",
         "click": "8.3.3",
-        "GitPython": "3.1.60",
+        "GitPython": "3.2.1",
         "Pygments": "2.20.0",
         "idna": "3.15",
         "requests": "2.33.0",

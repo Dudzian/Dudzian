@@ -81,6 +81,7 @@ files = [
   "deployment/production_signer_service.py",
   "deployment/stage41b_role_worker.py",
   "scripts/qualify_stage41b_signer_isolation.py",
+  "scripts/prepare_stage41b_environment.py",
   "bot_core/postgresql_history_successor_reproposal.py",
   "bot_core/postgresql_history_successor_reproposal_schema.py",
   "bot_core/postgresql_history_successor_reproposal_qualification.py",

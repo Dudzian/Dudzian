@@ -67,6 +67,38 @@ _ROLE = {
 _OPERATIONS = frozenset({"TEST_STATUS", "TEST_SIGN", "TEST_PROBE", "TEST_SCAN"})
 
 
+def _program(name: str) -> str:
+    """Use only protected OS executables, never a caller-controlled PATH."""
+    if name not in {"dbus-daemon", "dbus-send", "gnome-keyring-daemon"}:
+        raise ValueError("fixed native program required")
+    selected = Path("/usr/bin") / name
+    for candidate in (selected, *selected.parents):
+        info = candidate.lstat()
+        kind = stat.S_ISREG if candidate == selected else stat.S_ISDIR
+        if (
+            not kind(info.st_mode)
+            or info.st_uid != 0
+            or info.st_mode & 0o022
+            or (candidate == selected and not info.st_mode & 0o111)
+        ):
+            raise RuntimeError("protected native executable required")
+    return str(selected)
+
+
+def _native_environment() -> dict[str, str]:
+    """The private native session receives no inherited loader or bus overrides."""
+    environment = {"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8"}
+    for name in (
+        "DBUS_SESSION_BUS_ADDRESS",
+        "XDG_DATA_HOME",
+        "XDG_CONFIG_HOME",
+        "XDG_RUNTIME_DIR",
+    ):
+        if name in os.environ:
+            environment[name] = os.environ[name]
+    return environment
+
+
 def safe_json_loads(raw: bytes) -> object:
     """Reject duplicate fields and nonfinite values before request validation."""
 
@@ -237,9 +269,15 @@ class RoleWorker:
             }
         )
         daemon = subprocess.Popen(
-            ["dbus-daemon", "--session", "--nofork", f"--address=unix:path={self.bus_path}"],
+            [
+                _program("dbus-daemon"),
+                "--session",
+                "--nofork",
+                f"--address=unix:path={self.bus_path}",
+            ],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            env=_native_environment(),
         )
         self.processes.append(daemon)
         deadline = time.monotonic() + 15
@@ -250,7 +288,7 @@ class RoleWorker:
         password = secrets.token_urlsafe(48).encode("ascii")
         native = subprocess.Popen(
             [
-                "gnome-keyring-daemon",
+                _program("gnome-keyring-daemon"),
                 "--foreground",
                 "--unlock",
                 "--components=secrets",
@@ -259,6 +297,7 @@ class RoleWorker:
             stdin=subprocess.PIPE,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            env=_native_environment(),
         )
         self.processes.append(native)
         if native.stdin is None:
@@ -334,7 +373,7 @@ class RoleWorker:
             raise RuntimeError("physical Linux worker required")
         result = subprocess.run(
             [
-                "dbus-send",
+                _program("dbus-send"),
                 "--session",
                 "--print-reply",
                 "--dest=org.freedesktop.DBus",
@@ -343,6 +382,7 @@ class RoleWorker:
                 "string:org.freedesktop.secrets",
             ],
             capture_output=True,
+            env=_native_environment(),
             timeout=5,
             check=False,
         )
@@ -352,7 +392,7 @@ class RoleWorker:
         owner = match.group(1).decode("ascii")
         pid_result = subprocess.run(
             [
-                "dbus-send",
+                _program("dbus-send"),
                 "--session",
                 "--print-reply",
                 "--dest=org.freedesktop.DBus",
@@ -361,6 +401,7 @@ class RoleWorker:
                 f"string:{owner}",
             ],
             capture_output=True,
+            env=_native_environment(),
             timeout=5,
             check=False,
         )
@@ -372,7 +413,7 @@ class RoleWorker:
             return None
         uid_result = subprocess.run(
             [
-                "dbus-send",
+                _program("dbus-send"),
                 "--session",
                 "--print-reply",
                 "--dest=org.freedesktop.DBus",
@@ -381,6 +422,7 @@ class RoleWorker:
                 f"string:{owner}",
             ],
             capture_output=True,
+            env=_native_environment(),
             timeout=5,
             check=False,
         )

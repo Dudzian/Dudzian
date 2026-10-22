@@ -9,21 +9,24 @@ from __future__ import annotations
 
 import argparse
 import base64
+from contextlib import contextmanager
 import errno
 import json
 import os
 from pathlib import Path
 import re
 import secrets
+import select
 import shutil
 import signal
 import site
 import socket
 import stat
+import struct
 import subprocess
 import sys
 import time
-from typing import Any
+from typing import Any, Iterator
 
 REQUIRED_BOUNDARIES = (
     "host_preflight",
@@ -73,6 +76,52 @@ UNIT_FIELDS = (
 )
 MAX_ARTIFACT = 1024 * 1024
 MAX_FRAME = 4 * MAX_ARTIFACT
+HOST_PROGRAMS = {
+    name: Path("/usr/bin") / name
+    for name in (
+        "systemctl",
+        "systemd-run",
+        "systemd-detect-virt",
+        "journalctl",
+        "dbus-daemon",
+        "dbus-send",
+        "gnome-keyring-daemon",
+    )
+}
+HOST_ENV = {"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8"}
+
+
+@contextmanager
+def _defer_interrupts() -> Iterator[None]:
+    """Publish ownership before a pending operator interrupt can run cleanup."""
+    if sys.platform == "linux":
+        previous = signal.pthread_sigmask(
+            signal.SIG_BLOCK, {signal.SIGINT, signal.SIGTERM, signal.SIGHUP}
+        )
+        try:
+            yield
+        finally:
+            signal.pthread_sigmask(signal.SIG_SETMASK, previous)
+    else:
+        raise QualificationBlocked("UBUNTU_24_04_REQUIRED")
+
+
+def _host_argv(argv: list[str]) -> list[str]:
+    """Only fixed, protected OS programs may receive privileged requests."""
+    if not argv:
+        raise QualificationBlocked("HOST_PROGRAM_NOT_ALLOWLISTED")
+    name = Path(argv[0]).name
+    program = HOST_PROGRAMS.get(name)
+    if program is None or argv[0] not in {name, str(program)}:
+        raise QualificationBlocked("HOST_PROGRAM_NOT_ALLOWLISTED")
+    _check_protected(program.resolve(), directory=False)
+    for directory in (program.parent, *program.parent.parents):
+        _check_protected(directory, directory=True)
+    for directory in (program.resolve().parent, *program.resolve().parent.parents):
+        _check_protected(directory, directory=True)
+    if program.is_symlink() and program.lstat().st_uid != 0:
+        raise QualificationBlocked("UNTRUSTED_HOST_PROGRAM")
+    return [str(program), *argv[1:]]
 
 
 class QualificationBlocked(RuntimeError):
@@ -205,12 +254,13 @@ def owns_invocation(snapshot: dict[str, str], pin: dict[str, str]) -> bool:
 
 def _command(argv: list[str], *, timeout: float = 20) -> bytes:
     completed = subprocess.run(
-        argv,
+        _host_argv(argv),
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         timeout=timeout,
         check=False,
+        env=HOST_ENV,
     )
     if len(completed.stdout) > MAX_ARTIFACT or len(completed.stderr) > MAX_ARTIFACT:
         raise QualificationBlocked("HOST_OUTPUT_LIMIT")
@@ -259,6 +309,17 @@ def _state(run_id: str, role: str) -> Path:
     return Path(f"/run/ch-stage41b-{run_id}-{suffix}")
 
 
+def _path_absent(path: Path) -> bool:
+    """A failed metadata observation never establishes absence."""
+    try:
+        path.lstat()
+    except FileNotFoundError:
+        return True
+    except OSError:
+        raise QualificationBlocked("PATH_METADATA_UNAVAILABLE") from None
+    return False
+
+
 def _check_protected(path: Path, *, directory: bool) -> None:
     """Reject symlinked/writable runtime ancestry and executable source paths."""
     metadata = path.lstat()
@@ -279,9 +340,36 @@ def _trusted_code(code_root: Path, interpreter: Path) -> None:
         interpreter.resolve(),
     ):
         _check_protected(file, directory=False)
+    # Check import ancestry before importing even the prepared verifier. An
+    # otherwise protected installation must not resolve a user-writable scripts
+    # package or helper from the caller's current directory.
+    for import_location in sys.path:
+        candidate = Path(import_location or os.getcwd())
+        if candidate.exists():
+            for directory in (candidate, *candidate.parents):
+                _check_protected(directory, directory=directory.is_dir())
+    prepared = code_root.parent.parent == Path("/opt/cryptohunter-stage41b")
+    if prepared:
+        _check_protected(code_root / "scripts", directory=True)
+        _check_protected(code_root / "scripts/prepare_stage41b_environment.py", directory=False)
+        # The prepared inventory checks every directory and regular file in a
+        # single no-follow walk and hashes pinned contents. It also replays the
+        # Git object proof and authenticated wheel contents, so mutable mtime or
+        # a root-owned filename alone cannot stand in for content integrity.
+        from scripts.prepare_stage41b_environment import (
+            PreparationBlocked,
+            verify_installation,
+        )
+
+        try:
+            verified = verify_installation(code_root.parent, code_root.parent.name)
+        except (PreparationBlocked, OSError, ValueError, KeyError, TypeError):
+            raise QualificationBlocked("PREPARED_ENVIRONMENT_INTEGRITY_FAILURE") from None
+        if str(code_root) != verified["source"] or str(interpreter) != verified["interpreter"]:
+            raise QualificationBlocked("PREPARED_EXECUTION_PATH_MISMATCH")
     # Every Python source loaded by the worker must be from this reviewed root
     # checkout, rather than a role-writable module or a user site directory.
-    for package in (code_root / "deployment", code_root / "bot_core"):
+    for package in () if prepared else (code_root / "deployment", code_root / "bot_core"):
         for entry in package.rglob("*"):
             if entry.is_dir():
                 _check_protected(entry, directory=True)
@@ -294,14 +382,9 @@ def _trusted_code(code_root: Path, interpreter: Path) -> None:
     if interpreter.is_symlink() and interpreter.lstat().st_uid != 0:
         raise QualificationBlocked("ROOT_OWNED_INTERPRETER_REQUIRED")
     _check_protected(code_root / "scripts/qualify_stage41b_signer_isolation.py", directory=False)
-    for import_location in sys.path:
-        candidate = Path(import_location or os.getcwd())
-        if candidate.exists():
-            for directory in (candidate, *candidate.parents):
-                _check_protected(directory, directory=directory.is_dir())
     # Python reads existing bytecode and executable .pth files even with -B.
     # Require a small protected qualification venv, not an editable user env.
-    for location in site.getsitepackages():
+    for location in () if prepared else site.getsitepackages():
         package = Path(location)
         if not package.exists():
             continue
@@ -309,6 +392,18 @@ def _trusted_code(code_root: Path, interpreter: Path) -> None:
             _check_protected(directory, directory=True)
         for entry in package.rglob("*"):
             _check_protected(entry, directory=entry.is_dir())
+
+
+def _prepared_location(code_root: Path, interpreter: Path) -> dict[str, str]:
+    installation = code_root.parent
+    if (
+        code_root.name != "source"
+        or installation.parent != Path("/opt/cryptohunter-stage41b")
+        or re.fullmatch(r"[0-9a-f]{40}", installation.name) is None
+        or interpreter != installation / "venv/bin/python"
+    ):
+        raise QualificationBlocked("PREPARED_QUALIFICATION_ENVIRONMENT_REQUIRED")
+    return {"commit": installation.name, "installation": str(installation)}
 
 
 def host_preflight(code_root: Path, interpreter: Path) -> dict[str, str]:
@@ -325,35 +420,30 @@ def host_preflight(code_root: Path, interpreter: Path) -> dict[str, str]:
         raise QualificationBlocked("SYSTEMD_PID1_REQUIRED")
     if os.geteuid() != 0:
         raise QualificationBlocked("CONTROLLED_ROOT_HARNESS_REQUIRED")
-    for program in (
-        "systemctl",
-        "systemd-run",
-        "systemd-detect-virt",
-        "journalctl",
-        "dbus-daemon",
-        "dbus-send",
-        "gnome-keyring-daemon",
-    ):
-        if shutil.which(program) is None:
-            raise QualificationBlocked("PHYSICAL_DEPENDENCY_MISSING")
+    if not hasattr(os, "pidfd_open") or not hasattr(signal, "pidfd_send_signal"):
+        raise QualificationBlocked("PIDFD_PROCESS_CONTROL_REQUIRED")
+    for program in HOST_PROGRAMS:
+        _host_argv([program])
     virtual = subprocess.run(
-        ["systemd-detect-virt", "--quiet"],
+        _host_argv(["systemd-detect-virt", "--quiet"]),
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         timeout=5,
         check=False,
+        env=HOST_ENV,
     )
     if virtual.returncode != 1:
         raise QualificationBlocked("DEDICATED_PHYSICAL_HOST_REQUIRED")
     _check_protected(Path("/run"), directory=True)
+    _prepared_location(code_root, interpreter)
     _trusted_code(code_root, interpreter)
     for module in ("cryptography", "keyring", "secretstorage", "jeepney"):
         __import__(module)
     for name in PRODUCTION_UNITS:
         if not unit_is_unused(inspect_unit(name)):
             raise QualificationBlocked("PRODUCTION_UNIT_COLLISION")
-        if os.path.lexists(Path("/run/credentials") / name):
+        if not _path_absent(Path("/run/credentials") / name):
             raise QualificationBlocked("PRODUCTION_CREDENTIAL_PATH_COLLISION")
     # Read only the non-secret machine/DMI identity sources used by custody;
     # the original implementation validates them again inside each role.
@@ -432,6 +522,7 @@ def unit_properties(run_id: str, role: str, code_root: Path, python: Path) -> li
         # channel. Public results travel over the allowlisted test socket only.
         "StandardOutput": "null",
         "StandardError": "null",
+        "UnsetEnvironment": "LD_PRELOAD LD_LIBRARY_PATH PYTHONHOME",
     }
     if any(
         "%" in value or "\n" in value or "\0" in value for value in map(str, (code_root, python))
@@ -446,6 +537,7 @@ def unit_properties(run_id: str, role: str, code_root: Path, python: Path) -> li
     ]
     argv += [f"--property={key}={value}" for key, value in properties.items()]
     argv += [
+        "--setenv=PATH=/usr/bin:/bin",
         f"--setenv=PYTHONPATH={code_root}",
         "--setenv=PYTHONNOUSERSITE=1",
         "--setenv=PYTHONDONTWRITEBYTECODE=1",
@@ -470,7 +562,11 @@ def unit_properties(run_id: str, role: str, code_root: Path, python: Path) -> li
 
 
 def _request(
-    path: Path, operation: str, arguments: dict[str, Any] | None = None
+    path: Path,
+    operation: str,
+    arguments: dict[str, Any] | None = None,
+    *,
+    expected_peer: tuple[int, int, int] | None = None,
 ) -> tuple[dict[str, Any], bytes]:
     if sys.platform != "linux":
         raise QualificationBlocked("UBUNTU_24_04_REQUIRED")
@@ -481,6 +577,12 @@ def _request(
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as peer:
         peer.settimeout(15)
         peer.connect(str(path))
+        if expected_peer is not None:
+            actual = struct.unpack(
+                "3i", peer.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i"))
+            )
+            if actual != expected_peer:
+                raise QualificationBlocked("TEST_SOCKET_PEER_CHANGED")
         peer.sendall(raw)
         peer.shutdown(socket.SHUT_WR)
         reply = bytearray()
@@ -656,6 +758,49 @@ def _verify_signatures(
         raise QualificationFailed("private_material_separation", "CROSS_ROLE_SIGNATURE_COLLISION")
 
 
+def _process_identity(pid: int) -> dict[str, Any]:
+    """Read identity while a pidfd pins this process against PID reuse."""
+    if type(pid) is not int or pid <= 1:
+        raise QualificationBlocked("PROCESS_IDENTITY_UNPROVEN")
+    proc = Path(f"/proc/{pid}")
+    fields: dict[str, str] = {}
+    for line in (proc / "status").read_text(encoding="ascii").splitlines():
+        key, separator, value = line.partition(":")
+        if separator:
+            fields[key] = value.strip()
+    uids, gids = fields.get("Uid", "").split(), fields.get("Gid", "").split()
+    if (
+        len(uids) != 4
+        or len(gids) != 4
+        or any(re.fullmatch(r"[0-9]+", value) is None for value in (*uids, *gids))
+        or len(set(uids)) != 1
+        or len(set(gids)) != 1
+        or int(uids[0]) == 0
+        or int(gids[0]) == 0
+    ):
+        raise QualificationBlocked("PROCESS_IDENTITY_UNPROVEN")
+    # comm may contain spaces or closing parentheses. Fields after its last
+    # ')' begin at field 3; starttime is field 22 (index 19 in this suffix).
+    raw_stat = (proc / "stat").read_text(encoding="ascii")
+    tail = raw_stat.rsplit(")", 1)[-1].split()
+    if len(tail) < 20 or re.fullmatch(r"[0-9]+", tail[19]) is None:
+        raise QualificationBlocked("PROCESS_STARTTIME_UNPROVEN")
+    cgroup = (proc / "cgroup").read_text(encoding="ascii").strip()
+    if not cgroup.startswith("0::/") or "\n" in cgroup:
+        raise QualificationBlocked("PROCESS_CGROUP_UNPROVEN")
+    return {
+        "pid": pid,
+        "start_time": int(tail[19]),
+        "uid": int(uids[0]),
+        "gid": int(gids[0]),
+        "control_group": cgroup.removeprefix("0::"),
+    }
+
+
+def _process_finished(handle: int, timeout: float = 0) -> bool:
+    return bool(select.select([handle], [], [], timeout)[0])
+
+
 class PhysicalRun:
     """An owned scope, never a generic root cleanup facility."""
 
@@ -670,6 +815,100 @@ class PhysicalRun:
         self.owned_paths: list[tuple[Path, int, int, bool]] = []
         self.transcripts: list[bytes] = []
         self.journals: dict[str, bytes] = {}
+        self.process_handles: dict[str, int] = {}
+        self.process_identities: dict[str, dict[str, Any]] = {}
+        self.cleanup_issues: list[dict[str, Any]] = []
+        self.unresolved_startups: set[str] = set()
+
+    def _issue(self, role: str | None, reason: str) -> None:
+        issue: dict[str, Any] = {"reason": reason}
+        if role is not None:
+            issue.update(
+                role=role,
+                unit=_unit_name(self.run_id, role),
+                runtime=str(_state(self.run_id, role)),
+                credential_directory=str(Path("/run/credentials") / _unit_name(self.run_id, role)),
+                expected_description=f"Stage41B TEST ONLY {self.run_id} {role}",
+                expected_invocation_id=self.pins.get(role, {}).get("InvocationID", ""),
+            )
+        if issue not in self.cleanup_issues:
+            self.cleanup_issues.append(issue)
+
+    def _matches_role(self, snapshot: dict[str, str], role: str) -> bool:
+        return (
+            snapshot.get("Id") == _unit_name(self.run_id, role)
+            and snapshot.get("Description") == f"Stage41B TEST ONLY {self.run_id} {role}"
+            and owns_invocation(snapshot, snapshot)
+        )
+
+    def _capture_process(self, role: str, snapshot: dict[str, str]) -> None:
+        if sys.platform != "linux":
+            raise QualificationBlocked("PIDFD_PROCESS_CONTROL_REQUIRED")
+        pid = int(snapshot["MainPID"])
+        if pid <= 1:
+            return
+        if role in self.process_handles:
+            if self.process_identities[role]["pid"] != pid:
+                raise QualificationBlocked("TEST_PROCESS_PID_CHANGED")
+            return
+        handle = -1
+        retained = False
+        try:
+            with _defer_interrupts():
+                handle = os.pidfd_open(pid, 0)
+            before = _process_identity(pid)
+            if before["control_group"] != snapshot["ControlGroup"]:
+                raise QualificationBlocked("TEST_PROCESS_CGROUP_CHANGED")
+            observed = inspect_unit(_unit_name(self.run_id, role))
+            if (
+                not self._matches_role(observed, role)
+                or not owns_unit(observed, snapshot)
+                or _process_identity(pid) != before
+                or _process_finished(handle)
+            ):
+                raise QualificationBlocked("TEST_PROCESS_CHANGED_DURING_PIN")
+            with _defer_interrupts():
+                self.process_handles[role] = handle
+                self.process_identities[role] = before
+                retained = True
+        finally:
+            if not retained and handle >= 0:
+                os.close(handle)
+
+    def _terminate_process(self, role: str) -> bool:
+        """Signal only the pinned process, never a unit looked up by name."""
+        if sys.platform != "linux":
+            return False
+        handle = self.process_handles.get(role)
+        if handle is None:
+            self._issue(role, "NO_PROVEN_PROCESS_HANDLE")
+            return False
+        if _process_finished(handle):
+            return True
+        pin = self.pins[role]
+        observed = inspect_unit(_unit_name(self.run_id, role))
+        if (
+            not self._matches_role(observed, role)
+            or not owns_invocation(observed, pin)
+            or observed.get("MainPID") != str(self.process_identities[role]["pid"])
+            or _process_identity(self.process_identities[role]["pid"])
+            != self.process_identities[role]
+        ):
+            self._issue(role, "PROCESS_OR_INVOCATION_CHANGED_NO_SIGNAL_SENT")
+            return False
+        try:
+            signal.pidfd_send_signal(handle, signal.SIGTERM, None, 0)
+            if _process_finished(handle, 6):
+                return True
+            # The same descriptor continues to target the old process even if
+            # a PID or unit name is reused while termination is pending.
+            signal.pidfd_send_signal(handle, signal.SIGKILL, None, 0)
+            if _process_finished(handle, 2):
+                return True
+        except ProcessLookupError:
+            return _process_finished(handle)
+        self._issue(role, "PINNED_PROCESS_DID_NOT_EXIT")
+        return False
 
     def _remember(self, path: Path, directory: bool) -> None:
         info = path.lstat()
@@ -681,18 +920,19 @@ class PhysicalRun:
         for role in ROLES:
             if not unit_is_unused(inspect_unit(_unit_name(self.run_id, role))):
                 raise QualificationBlocked("TEST_UNIT_COLLISION")
-            if os.path.lexists(_state(self.run_id, role)):
+            if not _path_absent(_state(self.run_id, role)):
                 raise QualificationBlocked("TEST_RUNTIME_COLLISION")
-            if os.path.lexists(Path("/run/credentials") / _unit_name(self.run_id, role)):
+            if not _path_absent(Path("/run/credentials") / _unit_name(self.run_id, role)):
                 raise QualificationBlocked("PRODUCTION_CREDENTIAL_PATH_COLLISION")
             _check_unused_account(
                 "chs41b" + self.run_id[:16] + ("r" if role == "root_signer" else "h")
             )
         for path, mode in ((self.base, 0o700), (self.hidden, 0o755)):
-            path.mkdir(mode=mode)
-            self._remember(path, True)
+            with _defer_interrupts():
+                path.mkdir(mode=mode)
+                self._remember(path, True)
         manifest = self.base / "owner.json"
-        with manifest.open("x", encoding="utf-8") as stream:
+        with _defer_interrupts(), manifest.open("x", encoding="utf-8") as stream:
             self._remember(manifest, False)
             json.dump(
                 {
@@ -705,13 +945,54 @@ class PhysicalRun:
             )
         for role in ROLES:
             directory = self.hidden / role
-            directory.mkdir(mode=0o755)
-            self._remember(directory, True)
+            with _defer_interrupts():
+                directory.mkdir(mode=0o755)
+                self._remember(directory, True)
             witness = directory / "witness"
-            with witness.open("xb") as stream:
+            with _defer_interrupts(), witness.open("xb") as stream:
                 self._remember(witness, False)
                 stream.write(b"Stage41B public mount-namespace witness\n")
-            witness.chmod(0o444)
+                witness.chmod(0o444)
+
+    def _observe_started(self, role: str, *, wait_for_socket: bool, timeout: float = 20) -> bool:
+        """Recover ownership even if systemd-run failed after creating a unit."""
+        name = _unit_name(self.run_id, role)
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            snapshot = inspect_unit(name)
+            if unit_is_unused(snapshot):
+                if wait_for_socket:
+                    raise QualificationBlocked("TEST_SERVICE_EXITED_BEFORE_PIN")
+            elif self._matches_role(snapshot, role):
+                old_pin = self.pins.get(role)
+                if old_pin is not None and not owns_invocation(snapshot, old_pin):
+                    raise QualificationBlocked("TEST_UNIT_OR_PROCESS_REPLACED")
+                if old_pin is None or int(old_pin["MainPID"]) <= 1:
+                    self.pins[role] = snapshot
+                try:
+                    self._capture_process(role, snapshot)
+                except (ProcessLookupError, FileNotFoundError):
+                    if wait_for_socket:
+                        raise QualificationBlocked(
+                            "TEST_SERVICE_EXITED_BEFORE_PROCESS_PIN"
+                        ) from None
+                if not wait_for_socket:
+                    return True
+                if snapshot.get("ActiveState") in {"failed", "inactive"}:
+                    raise QualificationBlocked("TEST_SERVICE_START_FAILED")
+                if (
+                    int(snapshot["MainPID"]) > 1
+                    and role in self.process_handles
+                    and not _process_finished(self.process_handles[role])
+                    and (_state(self.run_id, role) / "control.sock").exists()
+                ):
+                    return True
+            else:
+                raise QualificationBlocked("TEST_UNIT_ORIGIN_MISMATCH")
+            time.sleep(0.1)
+        if wait_for_socket:
+            raise QualificationBlocked("TEST_SERVICE_START_TIMEOUT")
+        return False
 
     def start(self) -> None:
         for role in ROLES:
@@ -719,40 +1000,30 @@ class PhysicalRun:
             if not unit_is_unused(inspect_unit(name)):
                 raise QualificationBlocked("TEST_UNIT_COLLISION")
             self.attempted.append(role)
-            _command(unit_properties(self.run_id, role, self.code_root, self.python))
-            deadline = time.monotonic() + 20
-            while time.monotonic() < deadline:
-                snapshot = inspect_unit(name)
-                # Pin the manager-created invocation before a MainPID exists,
-                # so failure during process creation is still owned cleanup.
-                if owns_invocation(snapshot, snapshot):
-                    if (
-                        snapshot.get("Id") != name
-                        or snapshot.get("Description") != f"Stage41B TEST ONLY {self.run_id} {role}"
-                    ):
-                        raise QualificationBlocked("TEST_UNIT_ORIGIN_MISMATCH")
-                    old_pin = self.pins.get(role)
-                    if old_pin is not None and not owns_invocation(snapshot, old_pin):
-                        raise QualificationBlocked("TEST_UNIT_ORIGIN_MISMATCH")
-                    self.pins[role] = snapshot
-                    if (
-                        int(snapshot["MainPID"]) > 1
-                        and (_state(self.run_id, role) / "control.sock").exists()
-                    ):
-                        break
-                elif snapshot.get("LoadState") != "not-found":
-                    raise QualificationBlocked("TEST_UNIT_ORIGIN_MISMATCH")
-                if snapshot.get("ActiveState") in {"failed", "inactive"}:
-                    raise QualificationBlocked("TEST_SERVICE_START_FAILED")
-                time.sleep(0.1)
-            else:
-                raise QualificationBlocked("TEST_SERVICE_START_TIMEOUT")
+            try:
+                _command(unit_properties(self.run_id, role, self.code_root, self.python))
+            except BaseException:
+                # Client failure does not roll back StartTransientUnit. Observe
+                # the manager before propagating the original error/interrupt.
+                self.unresolved_startups.add(role)
+                try:
+                    if self._observe_started(role, wait_for_socket=False, timeout=2):
+                        self.unresolved_startups.discard(role)
+                except Exception:
+                    pass
+                raise
+            self._observe_started(role, wait_for_socket=True)
 
     def request(
         self, role: str, operation: str, arguments: dict[str, Any] | None = None
     ) -> dict[str, Any]:
+        identity = self.process_identities.get(role)
+        expected = None if identity is None else (identity["pid"], identity["uid"], identity["gid"])
         value, transcript = _request(
-            _state(self.run_id, role) / "control.sock", operation, arguments
+            _state(self.run_id, role) / "control.sock",
+            operation,
+            arguments,
+            expected_peer=expected,
         )
         self.transcripts.append(transcript)
         if value.get("status") == "FAIL" and value.get("reason") == "PRIVATE_MATERIAL_EXPOSED":
@@ -769,6 +1040,17 @@ class PhysicalRun:
                 raise QualificationBlocked("TEST_SERVICE_NOT_LIVE")
             statuses[role] = self.request(role, "TEST_STATUS")
         validate_status_pair(statuses, self.pins, self.run_id)
+        for role in ROLES:
+            observed = inspect_unit(_unit_name(self.run_id, role))
+            if (
+                not owns_unit(observed, self.pins[role])
+                or observed.get("ActiveState") != "active"
+                or role not in self.process_handles
+                or _process_finished(self.process_handles[role])
+                or _process_identity(self.process_identities[role]["pid"])
+                != self.process_identities[role]
+            ):
+                raise QualificationBlocked("TEST_PROCESS_CHANGED_DURING_OBSERVATION")
         return statuses
 
     def scan(self) -> bool:
@@ -804,63 +1086,126 @@ class PhysicalRun:
                     return False
         return True
 
+    def _wait_collected(self, role: str) -> bool:
+        deadline = time.monotonic() + 5
+        name = _unit_name(self.run_id, role)
+        while time.monotonic() < deadline:
+            observed = inspect_unit(name)
+            if unit_is_unused(observed):
+                if not _path_absent(_state(self.run_id, role)) or not _path_absent(
+                    Path("/run/credentials") / name
+                ):
+                    self._issue(role, "UNPROVEN_RUNTIME_OR_CREDENTIAL_REMAINS")
+                    return False
+                return True
+            if not self._matches_role(observed, role) or not owns_invocation(
+                observed, self.pins[role]
+            ):
+                self._issue(role, "UNIT_REPLACED_DURING_CLEANUP_NO_ACTION_TAKEN")
+                return False
+            time.sleep(0.1)
+        self._issue(role, "MANAGER_COLLECTION_NOT_CONFIRMED")
+        return False
+
     def cleanup(self) -> bool:
+        # The caller ignores handled signals too, but this method is safe when
+        # invoked directly after an exception or from another reviewed caller.
+        clean = False
+        with _defer_interrupts():
+            try:
+                clean = self._cleanup_owned()
+            finally:
+                for handle in self.process_handles.values():
+                    try:
+                        os.close(handle)
+                    except OSError:
+                        clean = False
+                        self._issue(None, "PROCESS_HANDLE_CLOSE_UNCONFIRMED")
+                self.process_handles.clear()
+        return clean
+
+    def _cleanup_owned(self) -> bool:
         clean = True
         for role in reversed(self.attempted):
             name = _unit_name(self.run_id, role)
             try:
                 observed = inspect_unit(name)
                 if unit_is_unused(observed):
-                    if os.path.lexists(_state(self.run_id, role)) or os.path.lexists(
+                    if role in self.unresolved_startups:
+                        # A queued manager request may outlive a timed-out
+                        # client. One absent snapshot cannot prove rollback.
+                        clean = False
+                        self._issue(role, "STARTUP_OUTCOME_UNPROVEN")
+                    if not _path_absent(_state(self.run_id, role)) or not _path_absent(
                         Path("/run/credentials") / name
                     ):
                         clean = False
+                        self._issue(role, "UNPROVEN_RUNTIME_OR_CREDENTIAL_REMAINS")
                     continue
                 pin = self.pins.get(role)
-                # Without a pinned invocation retain the unknown resource.
-                if (
-                    pin is None
-                    or pin.get("Id") != name
-                    or pin.get("Description") != f"Stage41B TEST ONLY {self.run_id} {role}"
-                    or not owns_invocation(observed, pin)
+                # Recovery is permitted only for this exact unpredictable
+                # description and transient origin after our recorded attempt.
+                if not self._matches_role(observed, role) or (
+                    pin is not None and not owns_invocation(observed, pin)
                 ):
+                    clean = False
+                    self._issue(role, "FOREIGN_OR_REPLACED_UNIT_RETAINED")
+                    continue
+                if pin is None:
+                    self.pins[role] = observed
+                self.unresolved_startups.discard(role)
+                if int(observed["MainPID"]) > 1:
+                    try:
+                        self._capture_process(role, observed)
+                    except (ProcessLookupError, FileNotFoundError):
+                        pass
+                    if not self._terminate_process(role):
+                        clean = False
+                        continue
+                elif observed.get("ActiveState") not in {"inactive", "failed", "deactivating"}:
+                    self._issue(role, "NO_PROVEN_PROCESS_TARGET_WAIT_FOR_UNIT_TIMERS")
                     clean = False
                     continue
-                _command(["systemctl", "stop", name], timeout=12)
-                deadline = time.monotonic() + 5
-                while time.monotonic() < deadline:
-                    after = inspect_unit(name)
-                    if unit_is_unused(after):
-                        break
-                    time.sleep(0.1)
-                else:
+                if not self._wait_collected(role):
                     clean = False
-                if os.path.lexists(_state(self.run_id, role)) or os.path.lexists(
-                    Path("/run/credentials") / name
-                ):
-                    clean = False
-            except (OSError, ValueError, subprocess.SubprocessError, QualificationBlocked):
+            except Exception:
                 clean = False
+                self._issue(role, "UNIT_CLEANUP_OBSERVATION_OR_SIGNAL_UNAVAILABLE")
         # Filesystem cleanup is deliberately non-recursive. Every unlink/rmdir
         # requires its recorded device/inode, root ownership and expected type.
         for path, device, inode, directory in reversed(self.owned_paths):
             try:
                 info = path.lstat()
                 kind = stat.S_ISDIR if directory else stat.S_ISREG
+                ancestry_intact = True
+                for parent, parent_device, parent_inode, parent_is_directory in self.owned_paths:
+                    if parent_is_directory and parent in path.parents:
+                        metadata = parent.lstat()
+                        if (
+                            metadata.st_uid != 0
+                            or not stat.S_ISDIR(metadata.st_mode)
+                            or metadata.st_dev != parent_device
+                            or metadata.st_ino != parent_inode
+                        ):
+                            ancestry_intact = False
+                            break
                 if (
                     info.st_uid != 0
                     or info.st_dev != device
                     or info.st_ino != inode
                     or not kind(info.st_mode)
+                    or not ancestry_intact
                 ):
                     clean = False
+                    self._issue(None, "OWNED_PATH_IDENTITY_CHANGED_RETAINED")
                     continue
                 if directory:
                     path.rmdir()
                 else:
                     path.unlink()
-            except OSError:
+            except Exception:
                 clean = False
+                self._issue(None, "OWNED_PATH_REMOVAL_UNCONFIRMED")
         return clean
 
 
@@ -926,6 +1271,101 @@ def _execute(run: PhysicalRun, boundaries: dict[str, dict[str, str]]) -> None:
     run.live_statuses()
 
 
+def inspect_cleanup(run_id: str) -> dict[str, Any]:
+    """Inspect only known metadata. This mode never stops or removes anything."""
+    _unit_name(run_id, ROLES[0])  # validate the nonce before constructing paths
+    report: dict[str, Any] = {
+        "stage": "41B_TEST_ONLY",
+        "mode": "inspect-cleanup",
+        "run_id": run_id,
+        "status": "BLOCKED",
+        "read_only": True,
+        "units": {},
+        "paths": [],
+        "physical_qualification": "NOT_EXECUTED",
+        "production_private_control": "BLOCKED",
+        "stage9": "IN_PROGRESS / NO-GO",
+        "authorizes_sign_bind_enrollment": False,
+        "manual_review": (
+            "Compare the exact test description and invocation ID with the execution receipt. "
+            "Do not stop a replacement unit or remove an unproven path. "
+            "This inspection does not authorize cleanup or production operations."
+        ),
+    }
+    if sys.platform != "linux":
+        report["reason"] = "UBUNTU_24_04_REQUIRED"
+        return report
+    all_absent = True
+    paths = [
+        Path(f"/run/cryptohunter-stage41b-{run_id}"),
+        Path(f"/run/cryptohunter-stage41b-hidden-{run_id}"),
+    ]
+    for role in ROLES:
+        name = _unit_name(run_id, role)
+        entry: dict[str, Any] = {
+            "unit": name,
+            "expected_description": f"Stage41B TEST ONLY {run_id} {role}",
+            "status": "BLOCKED",
+            "reason": "UNIT_OBSERVATION_UNAVAILABLE",
+            "inspect_command": [
+                str(HOST_PROGRAMS["systemctl"]),
+                "show",
+                name,
+                "--no-pager",
+                "--property=Id,LoadState,ActiveState,Transient,FragmentPath,DropInPaths,Description,InvocationID,MainPID,ControlGroup",
+            ],
+        }
+        try:
+            observed = inspect_unit(name)
+            if unit_is_unused(observed):
+                entry.update(status="PASS", reason="UNIT_ABSENT")
+            elif (
+                observed.get("Id") == name
+                and observed.get("Description") == entry["expected_description"]
+                and owns_invocation(observed, observed)
+            ):
+                entry["reason"] = "MATCHING_TEST_UNIT_REMAINS_NO_ACTION_TAKEN"
+                entry["observed_invocation_id"] = observed["InvocationID"]
+                entry["observed_main_pid"] = observed["MainPID"]
+            else:
+                entry["reason"] = "FOREIGN_OR_UNPROVEN_UNIT_NO_ACTION_TAKEN"
+        except (OSError, ValueError, QualificationBlocked, subprocess.SubprocessError):
+            pass
+        if entry["status"] != "PASS":
+            all_absent = False
+        report["units"][role] = entry
+        paths.extend((_state(run_id, role), Path("/run/credentials") / name))
+    for path in paths:
+        entry = {"path": str(path), "status": "BLOCKED", "reason": "PATH_METADATA_UNAVAILABLE"}
+        try:
+            metadata = path.lstat()
+        except FileNotFoundError:
+            entry.update(status="PASS", reason="PATH_ABSENT")
+        except OSError:
+            all_absent = False
+        else:
+            all_absent = False
+            entry.update(reason="PATH_REMAINS_NO_ACTION_TAKEN")
+            entry["metadata"] = {
+                "uid": metadata.st_uid,
+                "gid": metadata.st_gid,
+                "mode": stat.S_IMODE(metadata.st_mode),
+                "device": metadata.st_dev,
+                "inode": metadata.st_ino,
+                "type": "directory"
+                if stat.S_ISDIR(metadata.st_mode)
+                else "symlink"
+                if stat.S_ISLNK(metadata.st_mode)
+                else "other",
+            }
+        report["paths"].append(entry)
+    if all_absent:
+        report.update(status="PASS", reason="ALL_EXPECTED_RESOURCES_ABSENT")
+    else:
+        report["reason"] = "RESIDUAL_OR_UNPROVEN_RESOURCES_RETAINED"
+    return report
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     modes = parser.add_mutually_exclusive_group(required=True)
@@ -937,7 +1377,23 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="controlled root-only physical synthetic-key qualification",
     )
+    modes.add_argument(
+        "--inspect-cleanup",
+        action="store_true",
+        help="read-only metadata inspection for a previous run; never stops or removes resources",
+    )
+    parser.add_argument(
+        "--run-id", help="exact 32-character lowercase hexadecimal nonce for inspection"
+    )
     args = parser.parse_args(argv)
+    if args.inspect_cleanup:
+        if args.run_id is None or re.fullmatch(r"[0-9a-f]{32}", args.run_id) is None:
+            parser.error("--inspect-cleanup requires an exact --run-id")
+        inspection = inspect_cleanup(args.run_id)
+        print(json.dumps(inspection, sort_keys=True, indent=2))
+        return 0 if inspection["status"] == "PASS" else 2
+    if args.run_id is not None:
+        parser.error("--run-id is permitted only with --inspect-cleanup")
     boundaries = {
         key: result("BLOCKED", "PHYSICAL_CONTROL_NOT_EXECUTED") for key in REQUIRED_BOUNDARIES
     }
@@ -946,9 +1402,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     cleanup_ok = True
     physical_executed = False
+    verified_context: dict[str, str] | None = None
     previous = {}
     try:
         boundaries["host_preflight"] = host_preflight(run.code_root, run.python)
+        verified_context = _prepared_location(run.code_root, run.python)
         if args.execute:
 
             def interrupted(_number: int, _frame: Any) -> None:
@@ -984,6 +1442,7 @@ def main(argv: list[str] | None = None) -> int:
                 cleanup_ok = run.cleanup()
             except Exception:
                 cleanup_ok = False
+                run.cleanup_issues.append({"reason": "CLEANUP_UNEXPECTED_FAILURE"})
             boundaries["cleanup"] = result(
                 "PASS" if cleanup_ok else "BLOCKED",
                 "OWNED_SCOPE_REMOVED" if cleanup_ok else "UNVERIFIED_RESOURCE_RETAINED",
@@ -998,7 +1457,30 @@ def main(argv: list[str] | None = None) -> int:
                 "status": status,
                 "run_id": run.run_id,
                 "mode": "execute" if args.execute else "check",
+                "qualification_commit": None
+                if verified_context is None
+                else verified_context["commit"],
+                "installation": None
+                if verified_context is None
+                else verified_context["installation"],
                 "test_invocations": {role: pin["InvocationID"] for role, pin in run.pins.items()},
+                "test_process_identities": run.process_identities,
+                "cleanup_issues": run.cleanup_issues,
+                "cleanup_inspection": [
+                    str(run.python),
+                    "-I",
+                    "-B",
+                    "-c",
+                    'import runpy, sys; sys.path.insert(0, sys.argv.pop(1)); runpy.run_module("scripts.qualify_stage41b_signer_isolation", run_name="__main__")',
+                    str(run.code_root),
+                    "--inspect-cleanup",
+                    "--run-id",
+                    run.run_id,
+                ],
+                "cleanup_review": (
+                    "Run the read-only cleanup inspection and compare its description/invocation "
+                    "with this receipt. Never stop a replacement unit or delete an unproven path."
+                ),
                 "boundaries": boundaries,
                 "production_private_control": "BLOCKED",
                 "stage9": "IN_PROGRESS / NO-GO",

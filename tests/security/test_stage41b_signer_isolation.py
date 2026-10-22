@@ -225,6 +225,50 @@ def test_cleanup_refuses_replaced_or_production_unit(field, value):
     assert harness.owns_unit(unit, pin) is False
 
 
+def test_invocation_receipt_before_a_pid_cannot_establish_live_signer_identity():
+    receipt = _owned_unit()
+    receipt.update(MainPID="0", ActiveState="activating")
+    assert harness.owns_invocation(deepcopy(receipt), receipt) is True
+    assert harness.owns_unit(deepcopy(receipt), receipt) is False
+    running = deepcopy(receipt)
+    running.update(MainPID="1234", ActiveState="active")
+    assert harness.owns_invocation(running, receipt) is True
+
+
+def test_completed_original_invocation_remains_owned_without_accepting_replacement_pid():
+    pin = _owned_unit()
+    ended = deepcopy(pin)
+    ended.update(MainPID="0", ActiveState="failed")
+    assert harness.owns_invocation(ended, pin) is True
+    changed_pid = deepcopy(pin)
+    changed_pid["MainPID"] = "5678"
+    assert harness.owns_invocation(changed_pid, pin) is False
+    reused_pid = deepcopy(pin)
+    reused_pid["InvocationID"] = "c" * 32
+    assert harness.owns_invocation(reused_pid, pin) is False
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("MainPID", None),
+        ("MainPID", 0),
+        ("MainPID", "-1"),
+        ("InvocationID", ""),
+        ("InvocationID", "b" * 31),
+        ("Description", "Stage41B TEST ONLY " + "c" * 32 + " root_signer"),
+        ("DropInPaths", "/etc/systemd/system/production.service.d/override.conf"),
+        ("FragmentPath", "/etc/systemd/system/production.service"),
+    ],
+)
+def test_partial_invocation_receipt_cannot_adopt_ambiguous_or_replaced_unit(field, value):
+    pin = _owned_unit()
+    pin["MainPID"] = "0"
+    observed = deepcopy(pin)
+    observed[field] = value
+    assert harness.owns_invocation(observed, pin) is False
+
+
 @pytest.mark.parametrize(
     "uid,gid", [(0, 0), (1, 0), (0, 1), (1000, 1000), (True, 0), (0, False), (0.0, 0)]
 )
@@ -446,6 +490,7 @@ def unit_role_factory(monkeypatch, tmp_path):
         ) or original_import(name)
 
     monkeypatch.setattr(worker.importlib, "import_module", fake_import)
+    monkeypatch.setattr(worker, "_program", lambda name: "/usr/bin/" + name, raising=False)
     monkeypatch.setattr(worker.subprocess, "Popen", FakeProcess)
     monkeypatch.setattr(worker, "KeyringSecretStorage", FakeStorage)
     monkeypatch.setattr(worker, "NativeKeyringSigningSecretReader", FakeReader)
@@ -594,6 +639,18 @@ def test_harness_and_worker_agree_on_the_exact_test_request_protocol(monkeypatch
         assert b'"params":{}' in transcript
 
 
+def test_harness_socket_requires_pinned_server_pid_uid_and_gid(monkeypatch):
+    own_peer = (os.getpid(), os.geteuid(), os.getegid())
+    with _unit_socket_server(monkeypatch) as (path, calls, _material):
+        response, _transcript = harness._request(path, "TEST_STATUS", expected_peer=own_peer)
+        assert response["status"] == "PASS"
+        assert calls == [("TEST_STATUS", {})]
+    with _unit_socket_server(monkeypatch) as (path, calls, _material):
+        with pytest.raises(harness.QualificationBlocked, match="TEST_SOCKET_PEER_CHANGED"):
+            harness._request(path, "TEST_SIGN", expected_peer=(own_peer[0] + 1, *own_peer[1:]))
+        assert calls == []
+
+
 def test_unprivileged_socket_request_is_rejected_before_dispatch(monkeypatch):
     with _unit_socket_server(monkeypatch, authorize=False) as (path, calls, _material):
         raw = _socket_raw(path, b'{"operation":"TEST_SIGN","params":{}}\n')
@@ -680,6 +737,33 @@ def test_signature_proofs_are_bound_to_role_run_and_own_public_key():
         harness._verify_signatures(statuses, foreign, run_id)
     with pytest.raises(harness.QualificationBlocked):
         harness._verify_signatures(statuses, proofs, "b" * 32)
+    altered = deepcopy(proofs)
+    signature = bytearray(base64.b64decode(altered["root_signer"]["signature_b64"], validate=True))
+    signature[0] ^= 1
+    altered["root_signer"]["signature_b64"] = base64.b64encode(signature).decode()
+    with pytest.raises(harness.QualificationFailed, match="OWN_KEY_SIGNATURE_INVALID") as failure:
+        harness._verify_signatures(statuses, altered, run_id)
+    assert failure.value.boundary == "own_signature"
+
+
+def test_same_private_key_cannot_satisfy_cross_role_separation():
+    shared_key = Ed25519PrivateKey.generate()
+    public_key_b64 = base64.b64encode(shared_key.public_key().public_bytes_raw()).decode()
+    run_id = "a" * 32
+    statuses = {role: {"public_key_b64": public_key_b64} for role in harness.ROLES}
+    proofs = {}
+    for role in harness.ROLES:
+        payload = worker.payload_for(run_id, role)
+        proofs[role] = {
+            "public_key_b64": public_key_b64,
+            "payload_b64": base64.b64encode(payload).decode(),
+            "signature_b64": base64.b64encode(shared_key.sign(payload)).decode(),
+        }
+    with pytest.raises(
+        harness.QualificationFailed, match="CROSS_ROLE_SIGNATURE_COLLISION"
+    ) as failure:
+        harness._verify_signatures(statuses, proofs, run_id)
+    assert failure.value.boundary == "private_material_separation"
 
 
 def _foreign_public(instance):
@@ -841,6 +925,7 @@ def test_role_constructor_requires_exact_owned_private_runtime(monkeypatch):
 def test_bus_liveness_requires_native_owner_process_pid_and_uid(monkeypatch):
     instance = object.__new__(worker.RoleWorker)
     instance.processes = [SimpleNamespace(pid=123), SimpleNamespace(pid=456)]
+    monkeypatch.setattr(worker, "_program", lambda name: "/usr/bin/" + name, raising=False)
     replies = [
         SimpleNamespace(returncode=0, stdout=b'string ":1.42"'),
         SimpleNamespace(returncode=0, stdout=b"uint32 456"),
@@ -865,3 +950,69 @@ def test_bus_liveness_requires_native_owner_process_pid_and_uid(monkeypatch):
         ]
     )
     assert instance._bus_owner() is None
+
+
+def test_native_program_selection_checks_executable_and_every_ancestor(monkeypatch):
+    seen = []
+
+    def metadata(path):
+        seen.append(str(path))
+        kind = stat.S_IFREG if str(path) == "/usr/bin/dbus-send" else stat.S_IFDIR
+        return SimpleNamespace(st_mode=kind | 0o755, st_uid=0)
+
+    monkeypatch.setattr(Path, "lstat", metadata)
+    assert worker._program("dbus-send") == "/usr/bin/dbus-send"
+    assert seen == ["/usr/bin/dbus-send", "/usr/bin", "/usr", "/"]
+    for name in ("sh", "/tmp/dbus-send", "../dbus-send"):
+        with pytest.raises(ValueError, match="fixed native"):
+            worker._program(name)
+
+
+@pytest.mark.parametrize(
+    "invalid", ["owner", "writable-file", "writable-parent", "symlink", "not-executable"]
+)
+def test_native_program_refuses_untrusted_file_or_ancestry(monkeypatch, invalid):
+    def metadata(path):
+        selected = str(path) == "/usr/bin/dbus-send"
+        mode, owner = (stat.S_IFREG if selected else stat.S_IFDIR) | 0o755, 0
+        if invalid == "owner" and selected:
+            owner = 1000
+        elif invalid == "writable-file" and selected:
+            mode |= 0o002
+        elif invalid == "writable-parent" and str(path) == "/usr/bin":
+            mode |= 0o020
+        elif invalid == "symlink" and selected:
+            mode = stat.S_IFLNK | 0o777
+        elif invalid == "not-executable" and selected:
+            mode = stat.S_IFREG | 0o644
+        return SimpleNamespace(st_mode=mode, st_uid=owner)
+
+    monkeypatch.setattr(Path, "lstat", metadata)
+    with pytest.raises(RuntimeError, match="protected native executable"):
+        worker._program("dbus-send")
+
+
+def test_native_daemon_environment_has_only_fixed_os_and_own_session_settings(monkeypatch):
+    own = {
+        "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/unit-own/bus",
+        "XDG_DATA_HOME": "/run/unit-own/data",
+        "XDG_CONFIG_HOME": "/run/unit-own/config",
+        "XDG_RUNTIME_DIR": "/run/unit-own",
+    }
+    for key, value in own.items():
+        monkeypatch.setenv(key, value)
+    for key in (
+        "LD_PRELOAD",
+        "LD_LIBRARY_PATH",
+        "PYTHONPATH",
+        "DBUS_SYSTEM_BUS_ADDRESS",
+        "GNOME_KEYRING_CONTROL",
+    ):
+        monkeypatch.setenv(key, "/unit-untrusted/override")
+    monkeypatch.setenv("PATH", "/unit-untrusted/bin")
+    assert worker._native_environment() == {
+        "PATH": "/usr/bin:/bin",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        **own,
+    }

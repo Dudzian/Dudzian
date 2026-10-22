@@ -156,6 +156,18 @@ STAGE9_PRODUCTION_ATOMIC_MODULES = {
     "deployment.stage9_native_linux_test_isolation_reconciliation",
     "deployment.stage9_native_linux_test_execution_plan",
 }
+# Stage 41B adds unprivileged regressions to this serial job. Keep the entire
+# pre-existing atomic inventory and the independent history scope unchanged.
+STAGE41B_ATOMIC_TESTS = {
+    "tests/security/test_stage41b_signer_isolation.py",
+    "tests/security/test_stage41b_harness_lifecycle.py",
+    "tests/security/test_stage41b_environment_preparation.py",
+}
+STAGE41B_ATOMIC_MODULES = {
+    "deployment.stage41b_role_worker",
+    "scripts.qualify_stage41b_signer_isolation",
+    "scripts.prepare_stage41b_environment",
+}
 RAW_FILES = (
     "coverage-atomic-root-proof.data",
     "coverage-history-successor-reproposal.data",
@@ -187,8 +199,8 @@ def test_history_qualification_partitions_tests_and_preserves_original_atomic_sc
     for job, expected_tests, expected_modules in (
         (
             original,
-            ORIGINAL_ATOMIC_TESTS | STAGE9_PRODUCTION_ATOMIC_TESTS,
-            ORIGINAL_ATOMIC_MODULES | STAGE9_PRODUCTION_ATOMIC_MODULES,
+            ORIGINAL_ATOMIC_TESTS | STAGE9_PRODUCTION_ATOMIC_TESTS | STAGE41B_ATOMIC_TESTS,
+            ORIGINAL_ATOMIC_MODULES | STAGE9_PRODUCTION_ATOMIC_MODULES | STAGE41B_ATOMIC_MODULES,
         ),
         (
             history,

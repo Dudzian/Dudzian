@@ -44,11 +44,35 @@ Entrypoint to `scripts/qualify_stage41b_signer_isolation.py`; worker to
 klasyfikacji, walidację i ścieżki błędów, bez startowania uprzywilejowanych
 usług. Nie należy uruchamiać root-only pytest bezpośrednio na głównym Ubuntu.
 
-```bash
-cd /opt/cryptohunter-stage41b
-sudo /absolute/path/to/python -B -m scripts.qualify_stage41b_signer_isolation --check
-sudo /absolute/path/to/python -B -m scripts.qualify_stage41b_signer_isolation --execute
-```
+Dokładne polecenia przygotowania, bootstrapu, weryfikacji instalacji, preflight,
+świadomego `--execute` oraz odczytowej kontroli pozostałości są w
+[procedurze operatora](stage9_stage41b_operator_runbook.md).
+
+Instalacja testowa ma wersjonowaną ścieżkę
+`/opt/cryptohunter-stage41b/<full-commit-sha>/{source,venv}`. Builder działa
+bez roota i nie modyfikuje oryginalnego `/home/dudzian/CryptoHunter`.
+Zestaw wejściowy obejmuje dokładne Git blob/tree/commit proof źródeł oraz
+wersjonowany lock oficjalnych wheels PyPI z SHA256, przeznaczonych wyłącznie
+dla Ubuntu 24.04 x86_64 i CPython 3.12. Nie przenosi `.venv`, plików `.pyc`,
+editable packages ani innych przypadkowych artefaktów z katalogu domowego.
+
+Osobny instalator offline uruchamia się wyłącznie z chronionej kopii
+bootstrapu, której SHA256 operator porównał z niezależnie przejrzaną wersją
+PR. Przed użyciem wejścia weryfikuje jego pochodzenie, commit i zamknięty
+zestaw artefaktów. Nie uruchamia roota przez skrypt z home ani root pip;
+nie wykonuje source distributions, build hooków ani automatycznej kwalifikacji.
+Jawne `--verify-installed` ponownie sprawdza instalację przed preflight.
+
+Dla wersjonowanej instalacji `_trusted_code()` wykorzystuje pełny inventory
+środowiska: pojedynczy spacer bez podążania za symlinkami sprawdza każdy
+katalog i plik, własność, uprawnienia oraz SHA256 zawartości. Następnie
+porównuje źródła z Git proof, a rozpakowane zależności z uwierzytelnionymi
+wheels i ich RECORD. Zastępuje to wielokrotne skanowanie nakładających się
+drzew kodu i site-packages tą samą pełną kontrolą wersjonowanej, małej
+instalacji. Nie jest cache opartym wyłącznie o mtime ani uproszczoną kontrolą
+właściciela katalogu. Chroniona ancestry interpretera i aktywnych import
+paths nadal podlega weryfikacji. Systemowy Python i biblioteka standardowa
+pozostają częścią zaufanej instalacji Ubuntu.
 
 Użyj uprzednio przygotowanego, kontrolowanego fizycznego hosta kwalifikacyjnego
 z Ubuntu 24.04, działającym systemd i lokalnym GNOME Secret Service. Preflight
@@ -142,7 +166,15 @@ lub niesprzątnięty zweryfikowany zasób wyklucza `STAGE41B_TEST_ONLY_PASS`.
 
 Harness tworzy wyłącznie zasoby oznaczone identyfikatorem tego wykonania.
 Przed zatrzymaniem jednostki ponownie sprawdza jej tożsamość i pochodzenie;
-nazwa nie jest wystarczającym dowodem własności. Sprzątanie odbywa się po
+nazwa nie jest wystarczającym dowodem własności. Błąd lub timeout
+`systemd-run` nie oznacza, że nic nie wystartowało: harness ponownie obserwuje
+stan i przypina własną invocation, jeżeli można bezpiecznie wykazać jej
+pochodzenie. Kontrola obejmuje transient fragment, brak obcych drop-inów,
+Description z run-id, InvocationID, cgroup i proces. Kontrola PID oraz pidfd
+chroni przed wysłaniem sygnału do innego procesu po ponownym użyciu numeru.
+Nie ma ogólnego zatrzymywania usług po samej nazwie.
+
+Sprzątanie odbywa się po
 sukcesie, błędzie i obsługiwanym sygnale. Obejmuje procesy w testowym cgroup,
 tymczasowe jednostki, sockety, testowe keyringi i katalogi bieżącego wykonania.
 Nie usuwa istniejących obiektów ani plików o niepotwierdzonym pochodzeniu.
@@ -154,6 +186,15 @@ resetowania produkcyjnych keyringów. Nagłe odcięcie zasilania, kernel panic
 i `SIGKILL` nie uruchamiają kodu `finally`; katalogi `/run` są nietrwałe,
 ale ewentualne pozostałości przed rebootem wymagają osobnego przeglądu
 pochodzenia. Ponowne wykonanie nie przejmuje takich zasobów.
+
+`--inspect-cleanup --run-id <exact-run-id>` wykonuje wyłącznie odczytową
+inspekcję jednostek, katalogów, socketów i credential paths tego przebiegu.
+Raportuje stan, pochodzenie i pozostałości, bez zatrzymywania procesów,
+usuwania plików lub rozwiązywania niejednoznaczności automatycznie.
+Precyzyjny raport pozostałości i instrukcja ich niezależnego sprawdzenia
+zastępują niebezpieczne automatyczne usuwanie. Niesprzątnięty lub
+nieprzypięty zasób pozostawia BLOCKED, nawet jeżeli wcześniejsze próby
+izolacji zakończyły się PASS.
 
 ## Różnica między dowodem syntetycznym i produkcyjnym
 

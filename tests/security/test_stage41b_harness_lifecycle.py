@@ -64,6 +64,21 @@ def local_run(monkeypatch, tmp_path):
 
     monkeypatch.setattr(Path, "lstat", root_fixture_lstat)
     monkeypatch.setattr(harness, "inspect_unit", lambda name: unused_unit())
+
+    # The orchestration fixture never opens or signals a host process. Tests
+    # below exercise the actual pidfd helpers through their class methods.
+    def capture(role, snapshot):
+        if int(snapshot["MainPID"]) > 1:
+            run.process_handles[role] = 701 + harness.ROLES.index(role)
+            run.process_identities[role] = _process_receipt(snapshot)
+
+    original_close = harness.os.close
+    monkeypatch.setattr(run, "_capture_process", capture)
+    monkeypatch.setattr(run, "_terminate_process", lambda role: True)
+    monkeypatch.setattr(harness, "_process_finished", lambda handle, timeout=0: False)
+    monkeypatch.setattr(
+        harness.os, "close", lambda handle: None if handle in {701, 702} else original_close(handle)
+    )
     return run
 
 
@@ -142,7 +157,7 @@ def test_cleanup_does_not_stop_replaced_or_unpinned_unit(local_run, monkeypatch)
     assert commands == []
 
 
-def test_cleanup_stops_pinned_invocation_then_requires_unit_and_runtime_gone(
+def test_cleanup_terminates_pinned_process_then_requires_unit_and_runtime_gone(
     local_run, monkeypatch
 ):
     local_run.create()
@@ -151,11 +166,14 @@ def test_cleanup_stops_pinned_invocation_then_requires_unit_and_runtime_gone(
     snapshots = iter((owned_unit(), unused_unit()))
     monkeypatch.setattr(harness, "inspect_unit", lambda name: next(snapshots))
     commands = []
+    terminated = []
+    monkeypatch.setattr(
+        local_run, "_terminate_process", lambda role: terminated.append(role) or True
+    )
     monkeypatch.setattr(harness, "_command", lambda argv, **kwargs: commands.append((argv, kwargs)))
     assert local_run.cleanup() is True
-    assert commands == [
-        (["systemctl", "stop", harness._unit_name(RUN_ID, "root_signer")], {"timeout": 12})
-    ]
+    assert commands == []
+    assert terminated == ["root_signer"]
 
 
 def test_cleanup_failure_in_one_unit_still_cleans_recorded_files(local_run, monkeypatch):
@@ -220,7 +238,7 @@ def test_start_failure_retains_pin_for_later_cleanup(local_run, monkeypatch):
 
 def test_request_records_public_transcript_and_has_bounded_history(local_run, monkeypatch):
     monkeypatch.setattr(
-        harness, "_request", lambda *args: ({"status": "PASS"}, b"unit public transcript")
+        harness, "_request", lambda *args, **kwargs: ({"status": "PASS"}, b"unit public transcript")
     )
     assert local_run.request("root_signer", "TEST_STATUS") == {"status": "PASS"}
     assert local_run.transcripts == [b"unit public transcript"]
@@ -230,12 +248,31 @@ def test_request_records_public_transcript_and_has_bounded_history(local_run, mo
 
 
 def test_live_statuses_requires_original_active_invocations(local_run, monkeypatch):
-    local_run.pins = {role: owned_unit(role) for role in harness.ROLES}
+    local_run.pins = {
+        role: owned_unit(role, str(1234 + index)) for index, role in enumerate(harness.ROLES)
+    }
+    for role in harness.ROLES:
+        local_run._capture_process(role, local_run.pins[role])
+    monkeypatch.setattr(
+        harness,
+        "_process_identity",
+        lambda pid: deepcopy(
+            next(
+                identity
+                for identity in local_run.process_identities.values()
+                if identity["pid"] == pid
+            )
+        ),
+    )
     monkeypatch.setattr(
         harness,
         "inspect_unit",
-        lambda name: owned_unit(
-            "root_signer" if name == harness._unit_name(RUN_ID, "root_signer") else "history_signer"
+        lambda name: deepcopy(
+            local_run.pins[
+                "root_signer"
+                if name == harness._unit_name(RUN_ID, "root_signer")
+                else "history_signer"
+            ]
         ),
     )
     monkeypatch.setattr(local_run, "request", lambda role, operation: {"role": role})
@@ -299,6 +336,8 @@ def test_inspect_unit_requires_complete_unique_known_properties(monkeypatch):
 
 
 def test_host_command_failures_and_unbounded_output_block(monkeypatch):
+    monkeypatch.setattr(harness, "_check_protected", lambda *args, **kwargs: None)
+
     def completed(code=0, stdout=b"", stderr=b""):
         monkeypatch.setattr(
             harness.subprocess,
@@ -307,13 +346,13 @@ def test_host_command_failures_and_unbounded_output_block(monkeypatch):
         )
 
     completed(stdout=b"public")
-    assert harness._command(["fixture"]) == b"public"
+    assert harness._command(["systemctl"]) == b"public"
     completed(code=1, stderr=b"private native diagnostic")
     with pytest.raises(harness.QualificationBlocked, match="HOST_COMMAND_UNAVAILABLE"):
-        harness._command(["fixture"])
+        harness._command(["systemctl"])
     completed(stderr=b"x" * (harness.MAX_ARTIFACT + 1))
     with pytest.raises(harness.QualificationBlocked, match="HOST_OUTPUT_LIMIT"):
-        harness._command(["fixture"])
+        harness._command(["systemctl"])
 
 
 @pytest.fixture
@@ -342,6 +381,7 @@ def ready_host(monkeypatch):
         harness.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(returncode=1)
     )
     monkeypatch.setattr(harness, "_check_protected", lambda *args, **kwargs: None)
+    monkeypatch.setattr(harness, "_prepared_location", lambda *args: {"commit": "a" * 40})
     monkeypatch.setattr(harness, "_trusted_code", lambda *args: None)
     inspected = []
     monkeypatch.setattr(
@@ -505,13 +545,18 @@ def test_missing_blocked_and_breached_probe_receipts_stay_distinct(fake_executio
 
 @pytest.fixture
 def main_run(monkeypatch):
+    installation = Path("/opt/cryptohunter-stage41b") / ("a" * 40)
     run = SimpleNamespace(
         run_id=RUN_ID,
-        code_root=Path("/opt/reviewed"),
-        python=Path("/opt/venv/bin/python"),
+        code_root=installation / "source",
+        python=installation / "venv/bin/python",
         owned_paths=[],
         attempted=[],
         pins={},
+        cleanup_issues=[],
+        process_identities={},
+        base=Path("/run/cryptohunter-stage41b-" + RUN_ID),
+        hidden=Path("/run/cryptohunter-stage41b-hidden-" + RUN_ID),
     )
     run.cleaned = False
 
@@ -769,3 +814,564 @@ def test_missing_native_child_identity_cannot_establish_bus_liveness(host_status
     statuses["history_signer"]["bus_pid"] = True
     with pytest.raises(harness.QualificationBlocked, match="NATIVE_CHILD_IDENTITY_MISSING"):
         harness.validate_status_pair(statuses, pins, RUN_ID)
+
+
+@pytest.mark.parametrize("collision", ["masked", "drop-in"])
+def test_masked_or_dropin_test_name_prevents_any_creation(local_run, monkeypatch, collision):
+    snapshot = unused_unit()
+    if collision == "masked":
+        snapshot["LoadState"] = "masked"
+    else:
+        snapshot["DropInPaths"] = "/etc/systemd/system/signer.service.d/override.conf"
+    monkeypatch.setattr(harness, "inspect_unit", lambda _name: snapshot)
+    with pytest.raises(harness.QualificationBlocked, match="TEST_UNIT_COLLISION"):
+        local_run.create()
+    assert local_run.owned_paths == []
+    assert not local_run.base.exists()
+
+
+def test_immediate_worker_exit_pins_zero_pid_invocation_for_cleanup(local_run, monkeypatch):
+    manager = {}
+    observations = {}
+
+    def command(argv, **kwargs):
+        if argv[0] == "systemd-run":
+            name = next(item.removeprefix("--unit=") for item in argv if item.startswith("--unit="))
+            manager[name] = owned_unit(pid="0")
+            manager[name]["ActiveState"] = "failed"
+        else:
+            pytest.fail("an exited test worker must never be stopped by unit name")
+        return b""
+
+    def inspect(name):
+        if name not in manager:
+            return unused_unit()
+        observations[name] = observations.get(name, 0) + 1
+        return unused_unit() if observations[name] >= 3 else deepcopy(manager[name])
+
+    monkeypatch.setattr(harness, "_command", command)
+    monkeypatch.setattr(harness, "inspect_unit", inspect)
+    with pytest.raises(harness.QualificationBlocked, match="TEST_SERVICE_START_FAILED"):
+        local_run.start()
+    assert local_run.pins["root_signer"]["MainPID"] == "0"
+    assert local_run.cleanup() is True
+    assert local_run.process_handles == {}
+
+
+@pytest.mark.parametrize("failure", ["systemd-run-error", "systemd-run-timeout"])
+def test_command_failure_after_manager_creation_recovers_owned_cleanup_receipt(
+    local_run, monkeypatch, failure
+):
+    manager = {}
+    observations = {}
+
+    def command(argv, **kwargs):
+        if argv[0] == "systemd-run":
+            name = next(item.removeprefix("--unit=") for item in argv if item.startswith("--unit="))
+            manager[name] = owned_unit(pid="0")
+            manager[name]["ActiveState"] = "failed"
+            if failure == "systemd-run-timeout":
+                raise subprocess.TimeoutExpired(argv, 20)
+            raise harness.QualificationBlocked("HOST_COMMAND_UNAVAILABLE")
+        pytest.fail("failed StartTransientUnit must not be undone by unit name")
+
+    def inspect(name):
+        if name not in manager:
+            return unused_unit()
+        observations[name] = observations.get(name, 0) + 1
+        return unused_unit() if observations[name] >= 3 else deepcopy(manager[name])
+
+    monkeypatch.setattr(harness, "_command", command)
+    monkeypatch.setattr(harness, "inspect_unit", inspect)
+    with pytest.raises((harness.QualificationBlocked, subprocess.TimeoutExpired)):
+        local_run.start()
+    assert local_run.pins["root_signer"]["InvocationID"] == "b" * 32
+    assert local_run.cleanup() is True
+    assert local_run.process_handles == {}
+
+
+def test_command_error_without_receipt_preserves_unproven_outcome(local_run, monkeypatch):
+    commands = []
+
+    def command(argv, **kwargs):
+        commands.append(argv)
+        raise harness.QualificationBlocked("HOST_COMMAND_UNAVAILABLE")
+
+    monkeypatch.setattr(harness, "_command", command)
+    ticks = iter(range(20))
+    monkeypatch.setattr(harness.time, "monotonic", lambda: next(ticks))
+    monkeypatch.setattr(harness.time, "sleep", lambda _duration: None)
+    with pytest.raises(harness.QualificationBlocked, match="HOST_COMMAND_UNAVAILABLE"):
+        local_run.start()
+    assert local_run.pins == {}
+    assert local_run.cleanup() is False
+    assert any(issue["reason"] == "STARTUP_OUTCOME_UNPROVEN" for issue in local_run.cleanup_issues)
+    assert len(commands) == 1 and commands[0][0] == "systemd-run"
+
+
+def test_exit_before_invocation_is_observed_retains_unknown_unit(local_run, monkeypatch):
+    before_start = True
+    unknown = owned_unit(pid="0")
+    unknown.update(InvocationID="", ActiveState="failed")
+    stopped = []
+
+    def inspect(_name):
+        return unused_unit() if before_start else unknown
+
+    def command(argv, **kwargs):
+        nonlocal before_start
+        before_start = False
+        if argv[:2] == ["systemctl", "stop"]:
+            stopped.append(argv[2])
+        return b""
+
+    monkeypatch.setattr(harness, "inspect_unit", inspect)
+    monkeypatch.setattr(harness, "_command", command)
+    with pytest.raises(harness.QualificationBlocked):
+        local_run.start()
+    assert local_run.pins == {}
+    assert local_run.cleanup() is False
+    assert stopped == []
+
+
+@pytest.mark.parametrize("change", ["MainPID", "InvocationID"])
+def test_start_rejects_pid_or_invocation_replacement_after_first_pin(
+    local_run, monkeypatch, change
+):
+    launched, observations = False, 0
+
+    def inspect(_name):
+        nonlocal observations
+        if not launched:
+            return unused_unit()
+        observations += 1
+        value = owned_unit()
+        if observations > 1:
+            value[change] = "1235" if change == "MainPID" else "c" * 32
+        return value
+
+    def command(argv, **kwargs):
+        nonlocal launched
+        launched = True
+        return b""
+
+    monkeypatch.setattr(harness, "inspect_unit", inspect)
+    monkeypatch.setattr(harness, "_command", command)
+    monkeypatch.setattr(Path, "exists", lambda _path: False)
+    with pytest.raises(harness.QualificationBlocked, match="TEST_UNIT_OR_PROCESS_REPLACED"):
+        local_run.start()
+    assert local_run.pins["root_signer"][change] == ("1234" if change == "MainPID" else "b" * 32)
+    assert local_run.cleanup() is False
+
+
+def test_one_live_signer_and_one_failed_signer_are_both_cleaned_by_receipt(local_run, monkeypatch):
+    manager = {}
+    signalled = []
+    failed_observations = 0
+
+    def command(argv, **kwargs):
+        if argv[0] == "systemd-run":
+            name = next(item.removeprefix("--unit=") for item in argv if item.startswith("--unit="))
+            role = (
+                "root_signer"
+                if name == harness._unit_name(RUN_ID, "root_signer")
+                else "history_signer"
+            )
+            manager[name] = owned_unit(role, "1234" if role == "root_signer" else "0")
+            if role == "history_signer":
+                manager[name]["ActiveState"] = "failed"
+        else:
+            pytest.fail("cleanup must not stop either signer by unit name")
+        return b""
+
+    def inspect(name):
+        nonlocal failed_observations
+        value = manager.get(name, unused_unit())
+        if value.get("ActiveState") == "failed":
+            failed_observations += 1
+            if failed_observations >= 3:
+                return unused_unit()
+        return deepcopy(value)
+
+    def terminate(role):
+        signalled.append(role)
+        manager[harness._unit_name(RUN_ID, role)] = unused_unit()
+        return True
+
+    monkeypatch.setattr(harness, "inspect_unit", inspect)
+    monkeypatch.setattr(local_run, "_terminate_process", terminate)
+    monkeypatch.setattr(harness, "_command", command)
+    monkeypatch.setattr(
+        Path,
+        "exists",
+        lambda path: "state-root_signer" in path.parts and path.name == "control.sock",
+    )
+    with pytest.raises(harness.QualificationBlocked, match="TEST_SERVICE_START_FAILED"):
+        local_run.start()
+    assert tuple(local_run.pins) == harness.ROLES
+    assert local_run.cleanup() is True
+    assert signalled == ["root_signer"]
+
+
+def test_startup_timeout_keeps_original_receipt_and_cleans_it(local_run, monkeypatch):
+    launched = False
+    ticks = iter((0, 1, 25))
+    signalled = []
+
+    def inspect(_name):
+        return owned_unit() if launched else unused_unit()
+
+    def command(argv, **kwargs):
+        nonlocal launched
+        if argv[0] == "systemd-run":
+            launched = True
+        else:
+            pytest.fail("startup timeout must not cause a name-based stop")
+        return b""
+
+    def terminate(role):
+        nonlocal launched
+        signalled.append(role)
+        launched = False
+        return True
+
+    monkeypatch.setattr(harness, "inspect_unit", inspect)
+    monkeypatch.setattr(harness, "_command", command)
+    monkeypatch.setattr(local_run, "_terminate_process", terminate)
+    monkeypatch.setattr(harness.time, "monotonic", lambda: next(ticks))
+    monkeypatch.setattr(harness.time, "sleep", lambda _duration: None)
+    monkeypatch.setattr(Path, "exists", lambda _path: False)
+    with pytest.raises(harness.QualificationBlocked, match="TEST_SERVICE_START_TIMEOUT"):
+        local_run.start()
+    assert local_run.pins["root_signer"]["MainPID"] == "1234"
+    monkeypatch.setattr(harness.time, "monotonic", lambda: 0)
+    assert local_run.cleanup() is True
+    assert signalled == ["root_signer"]
+
+
+def test_exited_invocation_with_zero_pid_is_cleaned_without_requiring_live_worker(
+    local_run, monkeypatch
+):
+    local_run.attempted = ["root_signer"]
+    local_run.pins["root_signer"] = owned_unit()
+    ended = owned_unit(pid="0")
+    ended["ActiveState"] = "inactive"
+    observations = iter((ended, unused_unit()))
+    monkeypatch.setattr(harness, "inspect_unit", lambda _name: next(observations))
+    commands = []
+    monkeypatch.setattr(harness, "_command", lambda argv, **kwargs: commands.append(argv) or b"")
+    assert local_run.cleanup() is True
+    assert commands == []
+
+
+def test_collected_unit_with_unknown_runtime_socket_is_retained_and_blocked(local_run):
+    local_run.attempted = ["root_signer"]
+    local_run.pins["root_signer"] = owned_unit()
+    runtime = harness._state(RUN_ID, "root_signer")
+    runtime.mkdir()
+    unknown = runtime / "control.sock"
+    unknown.write_bytes(b"not-a-owned-test-socket")
+    assert local_run.cleanup() is False
+    assert unknown.read_bytes() == b"not-a-owned-test-socket"
+
+
+def test_cleanup_suppresses_repeated_interrupt_and_restores_all_original_handlers(
+    main_run, monkeypatch, capsys
+):
+    run, handlers = main_run
+    checks = []
+
+    def execute(_run, _boundaries):
+        run.attempted.append("root_signer")
+        handlers[signal.SIGTERM](signal.SIGTERM, None)
+
+    def cleanup():
+        checks.append(
+            all(
+                handlers[number] == signal.SIG_IGN
+                for number in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
+            )
+        )
+        run.cleaned = True
+        return True
+
+    run.cleanup = cleanup
+    monkeypatch.setattr(harness, "_execute", execute)
+    assert harness.main(["--execute"]) == 2
+    report = json.loads(capsys.readouterr().out)
+    assert checks == [True]
+    assert run.cleaned is True
+    assert all(handler == signal.SIG_DFL for handler in handlers.values())
+    assert report["boundaries"]["cleanup"]["status"] == "PASS"
+
+
+def test_incomplete_cleanup_reports_exact_test_resources_and_never_passes(
+    main_run, monkeypatch, capsys
+):
+    run, _handlers = main_run
+    run.cleanup = lambda: False
+
+    def execute(_run, _boundaries):
+        run.attempted.append("root_signer")
+        run.pins["root_signer"] = owned_unit()
+        raise harness.QualificationBlocked("TEST_SERVICE_START_FAILED")
+
+    monkeypatch.setattr(harness, "_execute", execute)
+    assert harness.main(["--execute"]) == 2
+    report = json.loads(capsys.readouterr().out)
+    assert report["status"] == "BLOCKED"
+    assert report["boundaries"]["cleanup"]["status"] == "BLOCKED"
+    assert report["scope_paths_requiring_review"] == [str(run.base), str(run.hidden)]
+    assert report["resources_requiring_review"][0]["unit"] == harness._unit_name(
+        RUN_ID, "root_signer"
+    )
+
+
+def _process_receipt(snapshot):
+    return {
+        "pid": int(snapshot["MainPID"]),
+        "start_time": 987654,
+        "uid": 61011,
+        "gid": 62011,
+        "control_group": snapshot["ControlGroup"],
+    }
+
+
+def test_pidfd_capture_pins_process_starttime_and_exact_invocation(local_run, monkeypatch):
+    snapshot = owned_unit()
+    identity = _process_receipt(snapshot)
+    opened, closed = [], []
+    monkeypatch.setattr(
+        harness.os, "pidfd_open", lambda pid, flags: opened.append((pid, flags)) or 701
+    )
+    monkeypatch.setattr(harness.os, "close", closed.append)
+    monkeypatch.setattr(harness, "_process_identity", lambda pid: deepcopy(identity))
+    monkeypatch.setattr(harness, "inspect_unit", lambda name: deepcopy(snapshot))
+    harness.PhysicalRun._capture_process(local_run, "root_signer", snapshot)
+    assert opened == [(1234, 0)]
+    assert local_run.process_handles == {"root_signer": 701}
+    assert local_run.process_identities == {"root_signer": identity}
+    assert closed == []
+
+
+@pytest.mark.parametrize("race", ["invocation", "starttime", "cgroup"])
+def test_process_capture_closes_unproven_pidfd_on_identity_race(local_run, monkeypatch, race):
+    snapshot = owned_unit()
+    identity = _process_receipt(snapshot)
+    changed = deepcopy(snapshot)
+    observations = 0
+    if race == "invocation":
+        changed["InvocationID"] = "c" * 32
+    if race == "cgroup":
+        identity["control_group"] = "/system.slice/unknown.service"
+
+    def read_identity(pid):
+        nonlocal observations
+        observations += 1
+        result = deepcopy(identity)
+        if race == "starttime" and observations > 1:
+            result["start_time"] += 1
+        return result
+
+    closed = []
+    monkeypatch.setattr(harness.os, "pidfd_open", lambda pid, flags: 701)
+    monkeypatch.setattr(harness.os, "close", closed.append)
+    monkeypatch.setattr(harness, "_process_identity", read_identity)
+    monkeypatch.setattr(harness, "inspect_unit", lambda name: deepcopy(changed))
+    with pytest.raises(harness.QualificationBlocked):
+        harness.PhysicalRun._capture_process(local_run, "root_signer", snapshot)
+    assert local_run.process_handles == {}
+    assert local_run.process_identities == {}
+    assert closed == [701]
+
+
+def test_termination_targets_only_pinned_descriptor_and_never_unit_name(local_run, monkeypatch):
+    snapshot = owned_unit()
+    identity = _process_receipt(snapshot)
+    local_run.pins["root_signer"] = snapshot
+    local_run.process_handles["root_signer"] = 701
+    local_run.process_identities["root_signer"] = identity
+    readiness = iter((False, True))
+    signals = []
+    monkeypatch.setattr(harness, "_process_finished", lambda handle, timeout=0: next(readiness))
+    monkeypatch.setattr(harness, "inspect_unit", lambda name: deepcopy(snapshot))
+    monkeypatch.setattr(harness, "_process_identity", lambda pid: deepcopy(identity))
+    monkeypatch.setattr(harness.signal, "pidfd_send_signal", lambda *args: signals.append(args))
+    monkeypatch.setattr(
+        harness,
+        "_command",
+        lambda *args, **kwargs: pytest.fail("cleanup must not signal by systemd unit name"),
+    )
+    assert harness.PhysicalRun._terminate_process(local_run, "root_signer") is True
+    assert signals == [(701, signal.SIGTERM, None, 0)]
+
+
+@pytest.mark.parametrize("race", ["invocation", "pid", "starttime"])
+def test_cleanup_sends_no_signal_after_unit_or_pid_replacement(local_run, monkeypatch, race):
+    snapshot = owned_unit()
+    identity = _process_receipt(snapshot)
+    local_run.pins["root_signer"] = deepcopy(snapshot)
+    local_run.process_handles["root_signer"] = 701
+    local_run.process_identities["root_signer"] = deepcopy(identity)
+    if race == "invocation":
+        snapshot["InvocationID"] = "c" * 32
+    elif race == "pid":
+        snapshot["MainPID"] = "5678"
+    else:
+        identity["start_time"] += 1
+    monkeypatch.setattr(harness, "_process_finished", lambda handle, timeout=0: False)
+    monkeypatch.setattr(harness, "inspect_unit", lambda name: deepcopy(snapshot))
+    monkeypatch.setattr(harness, "_process_identity", lambda pid: deepcopy(identity))
+    monkeypatch.setattr(
+        harness.signal,
+        "pidfd_send_signal",
+        lambda *args: pytest.fail("ambiguous process must not be signalled"),
+    )
+    assert harness.PhysicalRun._terminate_process(local_run, "root_signer") is False
+    assert local_run.cleanup_issues[-1]["reason"] == "PROCESS_OR_INVOCATION_CHANGED_NO_SIGNAL_SENT"
+
+
+def test_pinned_process_timeout_is_reported_after_descriptor_only_escalation(
+    local_run, monkeypatch
+):
+    snapshot = owned_unit()
+    identity = _process_receipt(snapshot)
+    local_run.pins["root_signer"] = snapshot
+    local_run.process_handles["root_signer"] = 701
+    local_run.process_identities["root_signer"] = identity
+    signals = []
+    monkeypatch.setattr(harness, "_process_finished", lambda handle, timeout=0: False)
+    monkeypatch.setattr(harness, "inspect_unit", lambda name: deepcopy(snapshot))
+    monkeypatch.setattr(harness, "_process_identity", lambda pid: deepcopy(identity))
+    monkeypatch.setattr(harness.signal, "pidfd_send_signal", lambda *args: signals.append(args))
+    assert harness.PhysicalRun._terminate_process(local_run, "root_signer") is False
+    assert [item[1] for item in signals] == [signal.SIGTERM, signal.SIGKILL]
+    assert all(item[0] == 701 for item in signals)
+    assert local_run.cleanup_issues[-1]["reason"] == "PINNED_PROCESS_DID_NOT_EXIT"
+
+
+def test_host_execution_uses_fixed_program_and_sanitized_environment(monkeypatch):
+    seen = []
+    monkeypatch.setattr(harness, "_check_protected", lambda *args, **kwargs: None)
+    monkeypatch.setenv("LD_PRELOAD", "/unit-untrusted/loader.so")
+    monkeypatch.setenv("SYSTEMD_HOST", "unit-untrusted-host")
+    monkeypatch.setenv("PATH", "/unit-untrusted/bin")
+    monkeypatch.setattr(
+        harness.subprocess,
+        "run",
+        lambda argv, **kwargs: seen.append((argv, kwargs))
+        or SimpleNamespace(returncode=0, stdout=b"public", stderr=b""),
+    )
+    assert harness._command(["systemctl", "show", "fixture.service"]) == b"public"
+    argv, options = seen[0]
+    assert argv[0] == "/usr/bin/systemctl"
+    assert options["env"] == {
+        "PATH": "/usr/sbin:/usr/bin:/sbin:/bin",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+    }
+    assert "LD_PRELOAD" not in options["env"] and "SYSTEMD_HOST" not in options["env"]
+    for argv in (["/unit-untrusted/systemctl"], ["sh"], []):
+        with pytest.raises(harness.QualificationBlocked, match="HOST_PROGRAM_NOT_ALLOWLISTED"):
+            harness._host_argv(argv)
+
+
+def test_process_identity_records_starttime_despite_parentheses_in_comm(monkeypatch):
+    suffix = ["S", *(["0"] * 18), "987654"]
+    files = {
+        "/proc/1234/status": "Uid:\t61011 61011 61011 61011\nGid:\t62011 62011 62011 62011\n",
+        "/proc/1234/stat": "1234 (unit process with ) parentheses) " + " ".join(suffix),
+        "/proc/1234/cgroup": "0::/system.slice/cryptohunter-root-proof-signer.service\n",
+    }
+    monkeypatch.setattr(Path, "read_text", lambda path, **kwargs: files[str(path)])
+    assert harness._process_identity(1234) == {
+        "pid": 1234,
+        "start_time": 987654,
+        "uid": 61011,
+        "gid": 62011,
+        "control_group": "/system.slice/cryptohunter-root-proof-signer.service",
+    }
+    files["/proc/1234/status"] = "Uid:\t0 0 0 0\nGid:\t62011 62011 62011 62011\n"
+    with pytest.raises(harness.QualificationBlocked, match="PROCESS_IDENTITY_UNPROVEN"):
+        harness._process_identity(1234)
+    files["/proc/1234/status"] = "Uid:\t61011 61012 61011 61011\nGid:\t62011 62011 62011 62011\n"
+    with pytest.raises(harness.QualificationBlocked, match="PROCESS_IDENTITY_UNPROVEN"):
+        harness._process_identity(1234)
+    files["/proc/1234/status"] = "Uid:\t61011 61011 61011 61011\nGid:\t62011 62011 62011 62011\n"
+    files["/proc/1234/stat"] = "1234 (unit) S truncated"
+    with pytest.raises(harness.QualificationBlocked, match="PROCESS_STARTTIME_UNPROVEN"):
+        harness._process_identity(1234)
+
+
+def test_prepared_checkout_and_interpreter_share_exact_committed_installation():
+    installation = Path("/opt/cryptohunter-stage41b") / ("a" * 40)
+    assert harness._prepared_location(
+        installation / "source", installation / "venv/bin/python"
+    ) == {"commit": "a" * 40, "installation": str(installation)}
+    for source, interpreter in (
+        (Path("/home/dudzian/CryptoHunter"), installation / "venv/bin/python"),
+        (installation / "source", Path("/usr/bin/python3")),
+        (Path("/opt/unreviewed") / ("a" * 40) / "source", installation / "venv/bin/python"),
+        (
+            Path("/opt/cryptohunter-stage41b/unpinned/source"),
+            Path("/opt/cryptohunter-stage41b/unpinned/venv/bin/python"),
+        ),
+    ):
+        with pytest.raises(
+            harness.QualificationBlocked, match="PREPARED_QUALIFICATION_ENVIRONMENT_REQUIRED"
+        ):
+            harness._prepared_location(source, interpreter)
+
+
+def test_readonly_cleanup_inspection_requires_all_resources_absent(monkeypatch):
+    monkeypatch.setattr(harness, "inspect_unit", lambda name: unused_unit())
+    monkeypatch.setattr(Path, "lstat", lambda path: (_ for _ in ()).throw(FileNotFoundError()))
+    monkeypatch.setattr(
+        harness,
+        "_command",
+        lambda *args, **kwargs: pytest.fail("read-only inspection must not execute mutations"),
+    )
+    report = harness.inspect_cleanup(RUN_ID)
+    assert report["status"] == "PASS"
+    assert report["read_only"] is True
+    assert report["physical_qualification"] == "NOT_EXECUTED"
+    assert report["production_private_control"] == "BLOCKED"
+    assert report["authorizes_sign_bind_enrollment"] is False
+    assert all(entry["reason"] == "UNIT_ABSENT" for entry in report["units"].values())
+    assert all(entry["reason"] == "PATH_ABSENT" for entry in report["paths"])
+
+
+def test_cleanup_inspection_retains_replacement_and_denied_metadata(monkeypatch):
+    foreign = owned_unit()
+    foreign["Description"] = "production signer"
+    monkeypatch.setattr(harness, "inspect_unit", lambda name: foreign)
+    monkeypatch.setattr(
+        Path, "lstat", lambda path: (_ for _ in ()).throw(PermissionError("unit metadata denied"))
+    )
+    report = harness.inspect_cleanup(RUN_ID)
+    assert report["status"] == "BLOCKED"
+    assert all(
+        entry["reason"] == "FOREIGN_OR_UNPROVEN_UNIT_NO_ACTION_TAKEN"
+        for entry in report["units"].values()
+    )
+    assert all(entry["reason"] == "PATH_METADATA_UNAVAILABLE" for entry in report["paths"])
+
+
+def test_cleanup_inspection_cli_never_constructs_or_executes_physical_run(monkeypatch, capsys):
+    inspection = {"status": "PASS", "read_only": True, "physical_qualification": "NOT_EXECUTED"}
+    monkeypatch.setattr(harness, "inspect_cleanup", lambda run_id: inspection)
+    monkeypatch.setattr(
+        harness,
+        "PhysicalRun",
+        lambda *args: pytest.fail("inspection must not create a physical run"),
+    )
+    assert harness.main(["--inspect-cleanup", "--run-id", RUN_ID]) == 0
+    assert json.loads(capsys.readouterr().out) == inspection
+    for arguments in (
+        ["--inspect-cleanup"],
+        ["--inspect-cleanup", "--run-id", "../untrusted"],
+        ["--execute", "--run-id", RUN_ID],
+    ):
+        with pytest.raises(SystemExit) as rejected:
+            harness.main(arguments)
+        assert rejected.value.code == 2

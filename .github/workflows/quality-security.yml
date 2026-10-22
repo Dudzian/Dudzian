@@ -135,6 +135,7 @@ jobs:
           deployment/production_signer_service.py
           deployment/stage41b_role_worker.py
           scripts/qualify_stage41b_signer_isolation.py
+          scripts/prepare_stage41b_environment.py
           bot_core/postgresql_history_successor_reproposal.py
           bot_core/postgresql_history_successor_reproposal_schema.py
           bot_core/postgresql_history_successor_reproposal_qualification.py
@@ -208,6 +209,7 @@ jobs:
           tests/security/test_production_root_lifecycle_races.py
           tests/security/test_stage41b_signer_isolation.py
           tests/security/test_stage41b_harness_lifecycle.py
+          tests/security/test_stage41b_environment_preparation.py
           tests/security/test_production_signer_ipc.py
           tests/security/test_production_signer_custody.py
           tests/security/test_custody_hwid.py
@@ -833,6 +835,7 @@ jobs:
           tests/security/test_production_root_lifecycle_races.py
           tests/security/test_stage41b_signer_isolation.py
           tests/security/test_stage41b_harness_lifecycle.py
+          tests/security/test_stage41b_environment_preparation.py
           tests/security/test_production_signer_ipc.py
           tests/security/test_production_signer_custody.py
           tests/security/test_production_signer_deployment.py
@@ -902,6 +905,7 @@ jobs:
           --cov=deployment.production_signer_service
           --cov=deployment.stage41b_role_worker
           --cov=scripts.qualify_stage41b_signer_isolation
+          --cov=scripts.prepare_stage41b_environment
           --cov=deployment.stage9_native_linux_source_cca_preflight
           --cov=deployment.stage9_native_linux_process_identity_observation
           --cov=deployment.stage9_native_linux_cgroup_membership_observation
