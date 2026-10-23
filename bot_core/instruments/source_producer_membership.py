@@ -8,6 +8,7 @@ execution inside the Core process is outside this declaration boundary/threat mo
 
 from __future__ import annotations
 
+from contextlib import closing
 from dataclasses import asdict, dataclass, fields
 from datetime import datetime, timezone
 import hashlib
@@ -226,13 +227,17 @@ class _SQLiteMembershipCarrierBase:
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path, timeout=30, isolation_level=None)
-        connection.execute("PRAGMA foreign_keys = ON")
-        connection.execute("PRAGMA journal_mode = WAL")
-        connection.execute("PRAGMA synchronous = FULL")
+        try:
+            connection.execute("PRAGMA foreign_keys = ON")
+            connection.execute("PRAGMA journal_mode = WAL")
+            connection.execute("PRAGMA synchronous = FULL")
+        except BaseException:
+            connection.close()
+            raise
         return connection
 
     def _initialize(self) -> None:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             try:
                 connection.execute("BEGIN IMMEDIATE")
                 tables = {
@@ -364,12 +369,12 @@ class _SQLiteMembershipCarrierBase:
         return tuple(records)
 
     def read(self) -> tuple[dict[str, Any], ...]:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             return self._validated_rows(connection)
 
     def _transact_append(self, record_factory: Any, semantic_validator: Any) -> Any:
         """Serialize semantic admission and durable append in one writer transaction."""
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             try:
                 connection.execute("BEGIN IMMEDIATE")
                 records = self._validated_rows(connection)
@@ -434,7 +439,7 @@ class SQLiteMembershipCarrier(_SQLiteMembershipCarrierBase):
             raise ValueError("MEMBERSHIP_AUTHORITY_STORAGE_MISSING")
         carrier = cls.__new__(cls)
         carrier.path = durable_path
-        with carrier._connect() as connection:
+        with closing(carrier._connect()) as connection, connection:
             carrier._validate_domain(connection)
             carrier._validated_rows(connection)
         return carrier

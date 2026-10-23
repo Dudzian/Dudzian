@@ -334,3 +334,26 @@ na Linux i poprawny podpis syntetycznej decyzji nie kwalifikują produkcyjnej
 CCA, jej instalacji, committed-close readera ani niezależnego rollback domain.
 Granice i fazy recovery opisuje
 [S9-RPI-07](architecture/stage9_independent_cca_durable_decision_log.md).
+
+Stage 41B adds a separate synthetic physical signer qualification entrypoint,
+`scripts/qualify_stage41b_signer_isolation.py`, and test-only role worker
+`deployment/stage41b_role_worker.py`. Both enter the configured Linux/Windows
+mypy scope; the worker enters explicit Ruff lint/format gates. Unprivileged
+`tests/security/test_stage41b_signer_isolation.py` regressions enter the existing
+serial Stage 9 gate and append branch coverage for both new modules without
+changing its 70% diff-coverage threshold. Those regressions validate harness
+logic and refusal paths only. Physical `--execute` is never ordinary pytest or
+PR CI; `--check` cannot award `STAGE41B_TEST_ONLY_PASS`. See the
+[physical runbook and evidence limits](architecture/stage9_stage41b_physical_signer_isolation.md).
+
+Stage 41B preparation now has a separate standard-library installer and immutable
+PyPI wheel lock for CPython 3.12 on Ubuntu 24.04 x86_64. The unprivileged builder
+exports Git object proofs; the independently verified privileged bootstrap checks
+those proofs and wheel hashes before offline installation. Prepared-runtime
+content and ownership checks are mandatory for physical qualification. Preparation
+never starts the physical test. The added preparation module enters the same
+configured mypy and coverage scopes, with unprivileged regressions. The explicit
+atomic CI inventory contract includes the three Stage 41B test/module entries
+while preserving all original atomic and history inventories and the existing
+70% coverage threshold. See the
+[operator procedure](architecture/stage9_stage41b_operator_runbook.md).

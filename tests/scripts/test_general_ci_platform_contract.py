@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import os
 from pathlib import Path
+import shlex
 import shutil
 import subprocess
 import sys
@@ -139,8 +140,19 @@ def test_ubuntu_runs_external_postgresql_against_postgresql_16_service(tmp_path)
     assert strategy["fail-fast"] is False
     shards = ["issuer-durability", "history-reproposal", "remaining-security"]
     assert strategy["matrix"]["shard"] == shards
-    assert general["runs-on"] == postgres_job["runs-on"] == "ubuntu-latest"
+    assert general["runs-on"] == postgres_job["runs-on"] == "ubuntu-24.04"
     assert general["needs"] == postgres_job["needs"] == "prepare-wheelhouse"
+    producer = jobs[general["needs"]]
+    # Resolve Linux wheels on the consumers' glibc baseline, while keeping the
+    # other platforms and their existing artifact matrix labels available.
+    assert producer["runs-on"] == (
+        "${{ matrix.os == 'ubuntu-latest' && '" + general["runs-on"] + "' || matrix.os }}"
+    )
+    assert producer["strategy"]["matrix"]["os"] == [
+        "ubuntu-latest",
+        "windows-latest",
+        "macos-latest",
+    ]
 
     # The previous Ubuntu selection must be partitioned exhaustively, not
     # silently dropped or redundantly run on a shared service.
@@ -414,6 +426,69 @@ def test_heavy_licensing_security_suite_is_split_without_coverage_gap():
         step for step in heavy["steps"] if step["name"] == "Upload licensing security diagnostics"
     )
     assert "${{ matrix.shard }}" in upload["with"]["name"]
+
+
+@pytest.mark.parametrize("job_name", ["py-tests-ubuntu", "py-tests-ubuntu-postgresql"])
+def test_native_pg16_prerequisite_uses_supported_pinned_ubuntu_before_its_consumer(job_name):
+    job = _general_ci_jobs()[job_name]
+    # These jobs install host PG16 binaries from Ubuntu's package repository;
+    # a moving runner image can drop that package before any DB proof executes.
+    assert job["runs-on"] == "ubuntu-24.04"
+    prerequisites = [
+        step
+        for step in job["steps"]
+        if step.get("name") == "Install native PostgreSQL peer-auth prerequisites"
+    ]
+    assert len(prerequisites) == 1
+    prerequisite = prerequisites[0]
+    commands = [shlex.split(line) for line in prerequisite["run"].splitlines() if line.strip()]
+    assert ["sudo", "apt-get", "update"] in commands
+    installs = [tokens for tokens in commands if tokens[:3] == ["sudo", "apt-get", "install"]]
+    assert len(installs) == 1
+    assert "--yes" in installs[0] and "postgresql-16" in installs[0]
+    assert "postgresql" not in installs[0]  # The unversioned package follows the OS default.
+    assert not prerequisite.get("continue-on-error", False)
+    consumer = (
+        next(
+            step
+            for step in job["steps"]
+            if step.get("name") == "Run authoritative native Linux peer-auth proof"
+        )
+        if job_name == "py-tests-ubuntu"
+        else _pytest_step(job)
+    )
+    assert job["steps"].index(prerequisite) < job["steps"].index(consumer)
+
+
+def test_native_qt_sdk_builds_keep_version_and_supported_compiler_baseline():
+    document = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    assert document["env"]["PYSIDE6_VERSION"] == "6.7.2"
+    jobs = document["jobs"]
+    sdk_jobs = {
+        name: job
+        for name, job in jobs.items()
+        if any(
+            "aqt install-qt linux desktop" in step.get("run", "") for step in job.get("steps", [])
+        )
+    }
+    assert set(sdk_jobs) == {"ui-ctest", "ui-packaging"}
+    for job in sdk_jobs.values():
+        assert job["runs-on"] == jobs["py-tests-ubuntu"]["runs-on"] == "ubuntu-24.04"
+        sdk_installs = [
+            step["run"]
+            for step in job["steps"]
+            if "aqt install-qt linux desktop" in step.get("run", "")
+        ]
+        assert len(sdk_installs) == 1
+        assert 'install-qt linux desktop "${PYSIDE6_VERSION}"' in sdk_installs[0]
+    native_commands = "\n".join(step.get("run", "") for step in sdk_jobs["ui-ctest"]["steps"])
+    assert "cmake -S ui" in native_commands and "cmake --build ui/build-tests" in native_commands
+    assert "ctest --test-dir ui/build-tests" in native_commands
+    packaging_commands = "\n".join(
+        step.get("run", "") for step in sdk_jobs["ui-packaging"]["steps"]
+    )
+    assert "python scripts/packaging/qt_bundle.py" in packaging_commands
+    assert "--platform linux" in packaging_commands
 
 
 def test_ubuntu_has_authoritative_elevated_native_peer_auth_execution():
