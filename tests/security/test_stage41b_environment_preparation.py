@@ -190,13 +190,21 @@ def test_proof_refuses_incomplete_extra_or_malformed_evidence(bundle_fixture, ch
         preparation.verify_proof(proof, fixture.commit)
 
 
-@pytest.mark.parametrize("commit", ["main", "a" * 39, "A" * 40, "a" * 41, None, True])
+@pytest.mark.parametrize(
+    "commit",
+    ["main", "a" * 39, "A" * 40, "a" * 41, None, True],
+    ids=["mutable-ref", "short-sha", "uppercase-sha", "long-sha", "missing-sha", "boolean-sha"],
+)
 def test_only_complete_exact_reviewed_sha_is_accepted(commit):
     with pytest.raises(preparation.PreparationBlocked):
         preparation.require_commit(commit)
 
 
-@pytest.mark.parametrize("name", [b"../escape", b"x/y", b".", b"..", b"bad\\name"])
+@pytest.mark.parametrize(
+    "name",
+    [b"../escape", b"x/y", b".", b"..", b"bad\\name"],
+    ids=["parent-traversal", "nested-path", "dot", "dot-dot", "backslash"],
+)
 def test_unsafe_git_tree_paths_are_rejected(name):
     with pytest.raises(preparation.PreparationBlocked):
         preparation._tree_entries(b"100644 " + name + b"\0" + b"a" * 20)
@@ -287,6 +295,7 @@ def test_checked_in_runtime_lock_matches_requirements_and_is_complete():
         ("sha256", "A" * 64),
         ("filename", "../escape.whl"),
     ],
+    ids=["insecure-http", "foreign-host", "query-string", "uppercase-digest", "parent-traversal"],
 )
 def test_uncontrolled_wheel_sources_and_artifacts_are_rejected(bundle_fixture, field, value):
     document = json.loads(bundle_fixture.files[preparation.LOCK])
@@ -324,6 +333,14 @@ def test_wheel_record_authenticates_all_extracted_member_bytes():
         "startup.pth",
         "pkg/cached.pyc",
         "package.data/scripts/execute",
+    ],
+    ids=[
+        "parent-traversal",
+        "absolute-path",
+        "backslash",
+        "startup-hook",
+        "bytecode",
+        "installed-script",
     ],
 )
 def test_wheel_rejects_startup_hooks_and_path_traversal(path):
@@ -376,6 +393,16 @@ def test_write_new_never_overwrites_existing_file_or_symlink(tmp_path):
     assert target.read_bytes() == b"first"
 
 
+def test_write_new_defaults_to_owner_only_even_with_permissive_umask(tmp_path):
+    previous = os.umask(0)
+    try:
+        target = tmp_path / "private-manifest.json"
+        preparation._write_new(target, b'{"synthetic": true}')
+    finally:
+        os.umask(previous)
+    assert stat.S_IMODE(target.stat().st_mode) == 0o600
+
+
 @pytest.fixture
 def unprivileged_install_logic(monkeypatch, tmp_path):
     """Model root metadata only within this private test tree; no real /opt writes."""
@@ -426,6 +453,53 @@ def test_offline_install_verifies_proof_and_wheels_without_starting_services(
     assert preparation.install_bundle(fixture.bundle, fixture.commit) == result
     assert not (root / "source/deployment/systemd").exists()
     assert not (root / "source/deployment/examples").exists()
+
+
+def test_installation_keeps_metadata_private_and_verified_runtime_readable(
+    bundle_fixture, unprivileged_install_logic
+):
+    fixture = bundle_fixture
+    previous = os.umask(0o077)
+    try:
+        preparation.install_bundle(fixture.bundle, fixture.commit)
+    finally:
+        os.umask(previous)
+    root = unprivileged_install_logic / fixture.commit
+    private = [
+        root / "preparation-origin.json",
+        root / "bundle.json",
+        root / "installation.json",
+        root / "artifacts/wheels" / fixture.record["filename"],
+    ]
+    for path in private:
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600, path.name
+    for relative, expected in fixture.files.items():
+        path = root / "source" / relative
+        assert path.read_bytes() == expected
+        assert stat.S_IMODE(path.stat().st_mode) == 0o644, relative
+    members = preparation.wheel_members(fixture.wheel, fixture.record)
+    for relative, expected in members.items():
+        path = root / "venv/lib/python3.12/site-packages" / relative
+        assert path.read_bytes() == expected
+        assert stat.S_IMODE(path.stat().st_mode) == 0o644, relative
+
+
+@pytest.mark.parametrize("artifact", ["origin", "bundle", "receipt", "archive"])
+def test_verification_refuses_disclosure_of_private_installation_metadata(
+    bundle_fixture, unprivileged_install_logic, artifact
+):
+    fixture = bundle_fixture
+    preparation.install_bundle(fixture.bundle, fixture.commit)
+    root = unprivileged_install_logic / fixture.commit
+    target = {
+        "origin": root / "preparation-origin.json",
+        "bundle": root / "bundle.json",
+        "receipt": root / "installation.json",
+        "archive": root / "artifacts/wheels" / fixture.record["filename"],
+    }[artifact]
+    target.chmod(0o644)
+    with pytest.raises(preparation.PreparationBlocked, match="PRIVATE_ARTIFACT_MODE_REQUIRED"):
+        preparation.verify_installation(root, fixture.commit)
 
 
 @pytest.mark.parametrize("change", ["source", "wheel", "extra", "pyc", "symlink", "receipt"])
@@ -530,7 +604,9 @@ def test_build_rejects_root_source_inside_destination_and_changed_wheel(
 
 
 @pytest.mark.parametrize(
-    "raw", [b'{"schema":1,"schema":1}', b'{"x":NaN}', b'{"x":Infinity}', b'{"x":1e999}']
+    "raw",
+    [b'{"schema":1,"schema":1}', b'{"x":NaN}', b'{"x":Infinity}', b'{"x":1e999}'],
+    ids=["duplicate-field", "nan", "infinity", "float-overflow"],
 )
 def test_json_refuses_duplicate_or_nonfinite_metadata(raw):
     with pytest.raises(preparation.PreparationBlocked):
@@ -650,6 +726,7 @@ def test_real_host_guard_refuses_unprivileged_process_before_root_paths(monkeypa
         ("version", "3.13.0", "ISOLATED_VENV_CONFIGURATION_REQUIRED"),
         ("executable", "/tmp/untrusted-python", "VENV_SYSTEM_INTERPRETER_MISMATCH"),
     ],
+    ids=["system-site-packages", "wrong-python-version", "foreign-interpreter"],
 )
 def test_even_self_consistent_receipt_requires_isolated_pinned_system_python(
     bundle_fixture, unprivileged_install_logic, field, value, reason

@@ -186,6 +186,20 @@ def test_only_exact_uninstalled_inactive_unit_is_unused():
         ("MainPID", 0),
         ("ControlGroup", "/system.slice/production.service"),
     ],
+    ids=[
+        "installed",
+        "masked",
+        "drop-in",
+        "load-error",
+        "active",
+        "activating",
+        "fragment-path",
+        "transient",
+        "invocation",
+        "running-pid",
+        "nontext-pid",
+        "cgroup",
+    ],
 )
 def test_installed_masked_running_or_ambiguous_units_block_execution(field, value):
     unit = _unused_unit()
@@ -216,6 +230,16 @@ def test_cleanup_unit_ownership_requires_original_pinned_invocation():
         ("InvocationID", "c" * 32),
         ("MainPID", "1235"),
         ("ControlGroup", "/system.slice/replacement.service"),
+    ],
+    ids=[
+        "foreign-role",
+        "persistent",
+        "drop-in",
+        "foreign-fragment",
+        "description",
+        "invocation",
+        "pid",
+        "cgroup",
     ],
 )
 def test_cleanup_refuses_replaced_or_production_unit(field, value):
@@ -259,6 +283,16 @@ def test_completed_original_invocation_remains_owned_without_accepting_replaceme
         ("Description", "Stage41B TEST ONLY " + "c" * 32 + " root_signer"),
         ("DropInPaths", "/etc/systemd/system/production.service.d/override.conf"),
         ("FragmentPath", "/etc/systemd/system/production.service"),
+    ],
+    ids=[
+        "missing-pid",
+        "nontext-pid",
+        "negative-pid",
+        "missing-invocation",
+        "short-invocation",
+        "foreign-run",
+        "drop-in",
+        "foreign-fragment",
     ],
 )
 def test_partial_invocation_receipt_cannot_adopt_ambiguous_or_replaced_unit(field, value):
@@ -355,6 +389,17 @@ def test_fixed_test_payload_separates_both_roles_and_run_ids():
         b"{",
         b"{} trailing",
     ],
+    ids=[
+        "duplicate-field",
+        "nested-duplicate",
+        "nan",
+        "positive-infinity",
+        "negative-infinity",
+        "float-overflow",
+        "invalid-utf8",
+        "truncated-json",
+        "trailing-data",
+    ],
 )
 def test_json_decoder_rejects_ambiguous_or_nonfinite_requests(raw):
     with pytest.raises((ValueError, UnicodeError)):
@@ -362,7 +407,9 @@ def test_json_decoder_rejects_ambiguous_or_nonfinite_requests(raw):
 
 
 @pytest.mark.parametrize(
-    "raw", [None, "{}", bytearray(b"{}"), b" " * (worker.MAX_REQUEST_BYTES + 1)]
+    "raw",
+    [None, "{}", bytearray(b"{}"), b" " * (worker.MAX_REQUEST_BYTES + 1)],
+    ids=["none", "text", "bytearray", "one-byte-over-limit"],
 )
 def test_json_decoder_accepts_only_bounded_exact_bytes(raw):
     with pytest.raises(ValueError):
@@ -666,6 +713,7 @@ def test_unprivileged_socket_request_is_rejected_before_dispatch(monkeypatch):
         b'{"operation":"TEST_STATUS","operation":"TEST_SIGN","params":{}}\n',
         b'{"operation":"TEST_STATUS","params":{}}',
     ],
+    ids=["production-sign", "caller-payload", "duplicate-operation", "missing-newline"],
 )
 def test_socket_rejects_unauthorized_operations_or_malformed_requests(monkeypatch, raw):
     with _unit_socket_server(monkeypatch) as (path, calls, _material):
@@ -881,6 +929,14 @@ def test_unit_probe_stops_when_own_native_service_is_dead(unit_role_factory, mon
         ("secret_reference", "caller:reference"),
         ("service_namespace", "production"),
         ("run_id", "b" * 32),
+    ],
+    ids=[
+        "dead-service",
+        "foreign-state",
+        "invalid-credential",
+        "foreign-reference",
+        "foreign-namespace",
+        "foreign-run",
     ],
 )
 def test_foreign_fact_validation_rejects_caller_selected_paths_roles_and_identity(

@@ -130,6 +130,18 @@ bundle jako niezaufane dane, uwierzytelnia Git proof i wheels, a następnie
 przenosi zweryfikowane snapshoty bytes do root-owned instalacji. Rozpakowuje
 te same zweryfikowane bajty; nie ponownie odczytany, zmienialny plik z home.
 
+Installer tworzy pliki domyślnie z uprawnieniami `0600`. Dotyczy to manifestu
+bundle, informacji o pochodzeniu, receipt instalacji i zachowanych archiwów
+wheels. Te pliki odczytuje uprzywilejowany weryfikator; role signerów ich nie
+potrzebują. Manifesty mogą zawierać metadane przebiegu i nie są publicznym API.
+Jawne `0644` dotyczy wyłącznie źródeł i locków uwierzytelnionych przez Git proof
+oraz plików pakietów uwierzytelnionych przez hash wheel i jego RECORD. Jest to
+publiczny kod, który oba odrębne UID muszą móc odczytać i zaimportować. Nie są
+tam zapisywane klucze, hasła, wygenerowane dane testowe ani konfiguracja
+operatora. Root-owned pliki pozostają niezapisywalne przez te role. Regresje
+sprawdzają tryby plików także przy restrykcyjnym i liberalnym umask; rzeczywiste
+uruchomienie pod odrębnymi UID nadal wymaga fizycznego `--execute`.
+
 ```bash
 sudo /usr/bin/python3 -I -S -B "$STAGE41B_ROOT_STAGE/bootstrap.py" \
   --install --bundle "$STAGE41B_BUNDLE" --commit "$STAGE41B_COMMIT"

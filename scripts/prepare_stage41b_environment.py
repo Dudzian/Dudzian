@@ -369,7 +369,14 @@ def _read_at(directory: int, name: str, limit: int = MAX_FILE) -> bytes:
     )
 
 
-def _write_new(path: Path, raw: bytes, mode: int = 0o644) -> None:
+def _write_new(path: Path, raw: bytes, mode: int = 0o600) -> None:
+    """Create private artifacts unless verified public runtime code needs 0644.
+
+    Manifests, receipts and archived wheels are owner-only. The two explicit
+    0644 callers publish authenticated repository source and installed wheel
+    members so the separate unprivileged signer UIDs can import that public
+    code. Neither caller accepts generated test secrets or operator data.
+    """
     if sys.platform != "linux":
         raise PreparationBlocked("LINUX_ARTIFACT_WRITER_REQUIRED")
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o755)
@@ -395,7 +402,6 @@ def build_bundle(source: Path, commit: str, bundle: Path) -> dict[str, Any]:
     _write_new(
         bundle / "bundle.json",
         json.dumps(proof, sort_keys=True, separators=(",", ":")).encode("utf-8"),
-        0o600,
     )
     opener = build_opener(_NoRedirect())
     for record in lock:
@@ -404,7 +410,7 @@ def build_bundle(source: Path, commit: str, bundle: Path) -> dict[str, Any]:
         if len(raw) > MAX_FILE or _sha256(raw) != record["sha256"]:
             raise PreparationBlocked("DOWNLOADED_WHEEL_INTEGRITY_FAILURE")
         wheel_members(raw, record)
-        _write_new(bundle / "wheels" / record["filename"], raw, 0o600)
+        _write_new(bundle / "wheels" / record["filename"], raw)
     return {
         "status": "BUNDLE_READY",
         "commit": commit,
@@ -532,7 +538,12 @@ def _inventory(root: Path) -> dict[str, Any]:
             relative = path.relative_to(root).as_posix()
             if relative == "installation.json":
                 continue
-            _protected(path, directory=False)
+            info = _protected(path, directory=False)
+            private = relative in {"bundle.json", "preparation-origin.json"} or relative.startswith(
+                "artifacts/wheels/"
+            )
+            if private and stat.S_IMODE(info.st_mode) != 0o600:
+                raise PreparationBlocked("PRIVATE_ARTIFACT_MODE_REQUIRED")
             if path.suffix in {".pth", ".pyc"}:
                 raise PreparationBlocked("UNEXPECTED_PYTHON_STARTUP_ARTIFACT")
             files[relative] = _sha256(_read(path, MAX_BUNDLE))
@@ -582,7 +593,9 @@ def install_bundle(bundle: Path, commit: str) -> dict[str, Any]:
     )
     _write_new(root / "bundle.json", raw_proof)
     for path, content in source.items():
-        _write_new(root / "source" / path, content)
+        # verify_proof selected and authenticated only the reviewed public
+        # source/locks; signer UIDs need read access to import this code.
+        _write_new(root / "source" / path, content, 0o644)
     for filename, content in wheels.items():
         _write_new(root / "artifacts/wheels" / filename, content)
     venv.EnvBuilder(with_pip=False, symlinks=False).create(root / "venv")
@@ -602,7 +615,9 @@ def install_bundle(bundle: Path, commit: str) -> dict[str, Any]:
     site.mkdir(parents=True, exist_ok=True)
     for members in decoded.values():
         for path, content in members.items():
-            _write_new(site / path, content)
+            # wheel_members authenticated the pinned public distribution and
+            # every RECORD entry before the private installation was created.
+            _write_new(site / path, content, 0o644)
     # Normalize only directories in this newly created, still-private scope.
     # A restrictive operator umask must not leave test roles unable to read the
     # verified runtime. Existing installation/prefix permissions are untouched.
@@ -640,7 +655,9 @@ def verify_installation(root: Path, expected_commit: str) -> dict[str, Any]:
         raise PreparationBlocked("EXACT_VERSIONED_INSTALLATION_REQUIRED")
     for path in (root, *root.parents):
         _protected(path, directory=True)
-    _protected(root / "installation.json", directory=False)
+    receipt_info = _protected(root / "installation.json", directory=False)
+    if stat.S_IMODE(receipt_info.st_mode) != 0o600:
+        raise PreparationBlocked("PRIVATE_ARTIFACT_MODE_REQUIRED")
     receipt = _json(_read(root / "installation.json", MAX_BUNDLE))
     if type(receipt) is not dict or set(receipt) != {
         "schema",
