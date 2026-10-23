@@ -1265,6 +1265,7 @@ def test_activating_exec_process_with_ready_socket_is_not_qualified(pinned_start
         "PROCESS_GID_FIELDS_MISMATCH",
         "PROCESS_STATUS_UNAVAILABLE",
     ],
+    ids=["uid-zero", "gid-zero", "uid-fields", "gid-fields", "status-unavailable"],
 )
 def test_persistent_startup_identity_failure_times_out_with_pinned_lifetime(
     pinned_startup, monkeypatch, reason
@@ -1444,7 +1445,11 @@ def test_live_unpinnable_invocation_cleanup_timeout_remains_blocked(pinned_start
     assert sent == []
 
 
-@pytest.mark.parametrize("unavailable", ["/sys/fs/cgroup", "/sys/fs/cgroup/cgroup.controllers"])
+@pytest.mark.parametrize(
+    "unavailable",
+    ["/sys/fs/cgroup", "/sys/fs/cgroup/cgroup.controllers"],
+    ids=["cgroup-root", "cgroup-controllers"],
+)
 def test_unavailable_cgroupfs_cannot_be_interpreted_as_collected_unit(
     pinned_startup, monkeypatch, unavailable
 ):
@@ -1798,6 +1803,16 @@ def proc_identity_files(monkeypatch):
         ("Gid: 62011 62011 62011 62011\n", "PROCESS_UID_FIELDS_MISMATCH"),
         ("Uid: 61011 61011 61011 61011\n", "PROCESS_GID_FIELDS_MISMATCH"),
     ],
+    ids=[
+        "uid-zero",
+        "gid-zero",
+        "uid-mismatch",
+        "gid-mismatch",
+        "uid-short",
+        "gid-nonnumeric",
+        "uid-missing",
+        "gid-missing",
+    ],
 )
 def test_process_uid_gid_fields_fail_closed_with_fixed_reason(proc_identity_files, status, reason):
     proc_identity_files["/proc/1234/status"] = status
@@ -1815,6 +1830,7 @@ def test_process_uid_gid_fields_fail_closed_with_fixed_reason(proc_identity_file
         ),
         (UnicodeError("native credentials must not appear"), "PROCESS_STATUS_UNAVAILABLE"),
     ],
+    ids=["permission-denied", "process-exited", "invalid-encoding"],
 )
 def test_process_status_read_errors_have_fixed_redacted_diagnostic(
     proc_identity_files, failure, reason
@@ -1835,6 +1851,15 @@ def test_process_status_read_errors_have_fixed_redacted_diagnostic(
         "1234 (unit) " + " ".join(["S", *(["0"] * 18), "0", *(["0"] * 30)]),
         "1234 (unit) " + " ".join(["invalid", *(["0"] * 18), "987654", *(["0"] * 30)]),
     ],
+    ids=[
+        "truncated",
+        "missing-tail",
+        "missing-comm-parens",
+        "wrong-pid",
+        "nonnumeric-starttime",
+        "zero-starttime",
+        "invalid-state",
+    ],
 )
 def test_malformed_stat_never_proves_process_starttime(proc_identity_files, raw_stat):
     proc_identity_files["/proc/1234/stat"] = raw_stat
@@ -1842,7 +1867,9 @@ def test_malformed_stat_never_proves_process_starttime(proc_identity_files, raw_
         harness._process_lifetime(1234)
 
 
-@pytest.mark.parametrize("state", ["Z", "X", "x"])
+@pytest.mark.parametrize(
+    "state", ["Z", "X", "x"], ids=["zombie", "dead-uppercase", "dead-lowercase"]
+)
 def test_dead_process_stat_is_never_qualified(proc_identity_files, state):
     proc_identity_files["/proc/1234/stat"] = "1234 (unit) " + " ".join(
         [state, *(["0"] * 18), "987654", *(["0"] * 30)]
@@ -1851,7 +1878,11 @@ def test_dead_process_stat_is_never_qualified(proc_identity_files, state):
         harness._process_lifetime(1234)
 
 
-@pytest.mark.parametrize("cgroup", ["", "1:systemd:/legacy", "0::/a\n0::/b", "0::/a\0b"])
+@pytest.mark.parametrize(
+    "cgroup",
+    ["", "1:systemd:/legacy", "0::/a\n0::/b", "0::/a\0b"],
+    ids=["empty", "legacy-hierarchy", "multiple-records", "nul-byte"],
+)
 def test_malformed_cgroup_never_proves_lifetime(proc_identity_files, cgroup):
     proc_identity_files["/proc/1234/cgroup"] = cgroup
     with pytest.raises(harness.QualificationBlocked, match="PROCESS_CGROUP_MISMATCH"):
