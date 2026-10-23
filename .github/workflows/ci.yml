@@ -121,7 +121,9 @@ jobs:
 
   prepare-wheelhouse:
     name: Prepare wheelhouse
-    runs-on: ${{ matrix.os }}
+    # Match the native PG16 consumers' glibc baseline. Keep the three artifact
+    # labels stable while preventing ubuntu-latest from selecting a newer ABI.
+    runs-on: ${{ matrix.os == 'ubuntu-latest' && 'ubuntu-24.04' || matrix.os }}
     strategy:
       fail-fast: false
       matrix:
@@ -641,7 +643,8 @@ jobs:
   py-tests-ubuntu:
     if: github.event_name != 'schedule'
     name: Python tests (Ubuntu)
-    runs-on: ubuntu-latest
+    # Ubuntu 24.04 supplies native PostgreSQL 16; 26.04 ubuntu-latest does not.
+    runs-on: ubuntu-24.04
     needs: prepare-wheelhouse
     timeout-minutes: 150
     services:
@@ -840,7 +843,8 @@ jobs:
   py-tests-ubuntu-postgresql:
     if: github.event_name != 'schedule'
     name: Python tests (Ubuntu PostgreSQL qualification, ${{ matrix.shard }})
-    runs-on: ubuntu-latest
+    # Keep all shards on the same native PG16 and wheel ABI baseline.
+    runs-on: ubuntu-24.04
     needs: prepare-wheelhouse
     strategy:
       fail-fast: false
@@ -1742,7 +1746,8 @@ jobs:
   ui-ctest:
     if: github.event_name != 'schedule'
     name: UI Native Tests
-    runs-on: ubuntu-latest
+    # Qt 6.7.2 headers require the supported GCC baseline, not 26.04's GCC 15.
+    runs-on: ubuntu-24.04
     needs: prepare-wheelhouse
     env:
       QT_QPA_PLATFORM: offscreen
@@ -2643,7 +2648,8 @@ jobs:
     if: github.event_name != 'schedule'
     name: UI Packaging
     needs: prepare-wheelhouse
-    runs-on: ubuntu-latest
+    # Build the same Qt 6.7.2 SDK on the compiler baseline used by ui-ctest.
+    runs-on: ubuntu-24.04
     steps:
       - name: Check out repository
         uses: actions/checkout@v7

@@ -403,6 +403,41 @@ def test_write_new_defaults_to_owner_only_even_with_permissive_umask(tmp_path):
     assert stat.S_IMODE(target.stat().st_mode) == 0o600
 
 
+def test_public_runtime_is_private_until_complete_bytes_are_synced(tmp_path, monkeypatch):
+    target = tmp_path / "verified-public-code.py"
+    content = b"# synthetic authenticated public code\n"
+    observed_modes = []
+    fsync = os.fsync
+
+    def observe(descriptor):
+        observed_modes.append(stat.S_IMODE(os.fstat(descriptor).st_mode))
+        assert target.read_bytes() == content
+        fsync(descriptor)
+
+    monkeypatch.setattr(preparation.os, "fsync", observe)
+    preparation._write_new(target, content, 0o644)
+    assert observed_modes == [0o600, 0o644]
+
+
+def test_failed_content_sync_keeps_public_artifact_private(tmp_path, monkeypatch):
+    target = tmp_path / "incomplete-public-code.py"
+
+    def fail_content_sync(_descriptor):
+        raise OSError("synthetic content sync failure")
+
+    monkeypatch.setattr(preparation.os, "fsync", fail_content_sync)
+    with pytest.raises(OSError, match="synthetic content sync failure"):
+        preparation._write_new(target, b"# synthetic public code\n", 0o644)
+    assert stat.S_IMODE(target.stat().st_mode) == 0o600
+
+
+def test_writer_refuses_unreviewed_permission_modes_before_creating_files(tmp_path):
+    target = tmp_path / "uncreated/artifact"
+    with pytest.raises(preparation.PreparationBlocked, match="SUPPORTED_ARTIFACT_MODE_REQUIRED"):
+        preparation._write_new(target, b"synthetic", 0o666)
+    assert not target.parent.exists()
+
+
 @pytest.fixture
 def unprivileged_install_logic(monkeypatch, tmp_path):
     """Model root metadata only within this private test tree; no real /opt writes."""

@@ -370,7 +370,7 @@ def _read_at(directory: int, name: str, limit: int = MAX_FILE) -> bytes:
 
 
 def _write_new(path: Path, raw: bytes, mode: int = 0o600) -> None:
-    """Create private artifacts unless verified public runtime code needs 0644.
+    """Create privately, then publish only verified public runtime code as 0644.
 
     Manifests, receipts and archived wheels are owner-only. The two explicit
     0644 callers publish authenticated repository source and installed wheel
@@ -379,14 +379,23 @@ def _write_new(path: Path, raw: bytes, mode: int = 0o600) -> None:
     """
     if sys.platform != "linux":
         raise PreparationBlocked("LINUX_ARTIFACT_WRITER_REQUIRED")
+    if mode not in {0o600, 0o644}:
+        raise PreparationBlocked("SUPPORTED_ARTIFACT_MODE_REQUIRED")
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o755)
     with os.fdopen(
-        os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, mode), "wb"
+        os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600), "wb"
     ) as stream:
-        os.fchmod(stream.fileno(), mode)
+        os.fchmod(stream.fileno(), 0o600)
         stream.write(raw)
         stream.flush()
         os.fsync(stream.fileno())
+        if mode == 0o644:
+            # Publish authenticated public code only after all its bytes have
+            # been written and synced. Use the exclusive open descriptor, never
+            # reopen or chmod a replaceable path. Metadata fsync failure leaves
+            # complete public code within the still-private installation scope.
+            os.fchmod(stream.fileno(), mode)
+            os.fsync(stream.fileno())
 
 
 def build_bundle(source: Path, commit: str, bundle: Path) -> dict[str, Any]:
