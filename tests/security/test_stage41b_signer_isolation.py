@@ -700,7 +700,16 @@ def test_harness_socket_requires_pinned_server_pid_uid_and_gid(monkeypatch):
 
 def test_unprivileged_socket_request_is_rejected_before_dispatch(monkeypatch):
     with _unit_socket_server(monkeypatch, authorize=False) as (path, calls, _material):
-        raw = _socket_raw(path, b'{"operation":"TEST_SIGN","params":{}}\n')
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as peer:
+            peer.settimeout(3)
+            peer.connect(str(path))
+            try:
+                peer.sendall(b'{"operation":"TEST_SIGN","params":{}}\n')
+            except BrokenPipeError:
+                # The worker rejects SO_PEERCRED before reading request bytes.
+                # Its fixed denial may therefore precede this send attempt.
+                pass
+            raw = peer.recv(65536)
         assert json.loads(raw) == {"status": "FAIL", "reason": "UNAUTHORIZED_PEER"}
         assert calls == []
 
