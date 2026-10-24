@@ -225,7 +225,7 @@ Item {
                     Layout.topMargin: 4
                     spacing: 12
                     Components.IconButton {
-                        designSystem: designSystem
+                        designSystem: root.designSystem
                         text: qsTr("Otwórz kreator")
                         iconName: "mode_wizard"
                         backgroundColor: designSystem ? designSystem.color("accent") : "#00aaff"
@@ -238,7 +238,7 @@ Item {
                         }
                     }
                     Components.IconButton {
-                        designSystem: designSystem
+                        designSystem: root.designSystem
                         text: qsTr("Zastosuj rekomendację")
                         iconName: recommendationSummary && recommendationSummary.icon ? recommendationSummary.icon : "package"
                         subtle: true
@@ -369,7 +369,7 @@ Item {
                                 onTextChanged: root.marketplacePortfolioId = text
                             }
                             Components.IconButton {
-                                designSystem: designSystem
+                                designSystem: root.designSystem
                                 text: qsTr("Zastosuj preset")
                                 iconName: "strategy_manager"
                                 enabled: strategyManagementController !== null && root.presetCandidate !== null && wizardPortfolioInput.text.length > 0
@@ -379,7 +379,7 @@ Item {
                                 }
                             }
                             Components.IconButton {
-                                designSystem: designSystem
+                                designSystem: root.designSystem
                                 text: qsTr("Otwórz manager")
                                 iconName: "package"
                                 subtle: true
@@ -452,7 +452,7 @@ Item {
                                     Layout.fillWidth: true
                                 }
                                 Components.IconButton {
-                                    designSystem: designSystem
+                                    designSystem: root.designSystem
                                     text: modelData.id === selectedModeId ? qsTr("Aktywny") : qsTr("Wybierz")
                                     iconName: modelData.id === selectedModeId ? "shield" : "mode_wizard"
                                     subtle: modelData.id !== selectedModeId
@@ -526,7 +526,7 @@ Item {
                                 Repeater {
                                     model: inputSpec.options
                                     delegate: Components.IconButton {
-                                        designSystem: designSystem
+                                        designSystem: root.designSystem
                                         property string optionId: modelData.id
                                         property bool selected: answerValue(root.selectedModeId, inputSpec.id) === optionId
                                         text: modelData.label
@@ -545,7 +545,7 @@ Item {
                         Layout.alignment: Qt.AlignRight
                         spacing: 8
                         Components.IconButton {
-                            designSystem: designSystem
+                            designSystem: root.designSystem
                             text: qsTr("Wstecz")
                             iconName: "refresh"
                             subtle: true
@@ -553,7 +553,7 @@ Item {
                             onClicked: stepIndex = Math.max(0, stepIndex - 1)
                         }
                         Components.IconButton {
-                            designSystem: designSystem
+                            designSystem: root.designSystem
                             text: qsTr("Dalej")
                             iconName: "refresh"
                             subtle: true
@@ -561,7 +561,7 @@ Item {
                             onClicked: stepIndex = Math.min(wizardPanel.currentMode.steps.length - 1, stepIndex + 1)
                         }
                         Components.IconButton {
-                            designSystem: designSystem
+                            designSystem: root.designSystem
                             text: qsTr("Zapisz tryb")
                             iconName: "mode_wizard"
                             backgroundColor: dsColor("accent", "#00aaff")
@@ -586,7 +586,7 @@ Item {
                 wrapMode: Text.WordWrap
             }
             Components.IconButton {
-                designSystem: designSystem
+                designSystem: root.designSystem
                 text: qsTr("Konfiguruj tryby pracy")
                 iconName: "mode_wizard"
                 backgroundColor: dsColor("accent", "#00aaff")

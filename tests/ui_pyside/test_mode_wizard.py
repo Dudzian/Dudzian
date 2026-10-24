@@ -15,6 +15,7 @@ except ImportError as exc:  # pragma: no cover - środowisko bez GL/Qt
 
 from ui.pyside_app.config import UiAppConfig
 from ui.pyside_app.controllers.wizards import ModeWizardController
+from tests._qt_utils import teardown_qml_engine
 from tests.ui_pyside.qml_test_helpers import assert_engine_loaded, collect_engine_warnings
 
 
@@ -93,15 +94,15 @@ def test_mode_wizard_controller_recommendations(tmp_path: Path) -> None:
     assert controller2.savedAnswers("futures")["leverage"] == "3x"
 
 
-def test_mode_wizard_qml_loads_without_reference_and_connections_warnings() -> None:
-    _ensure_app()
+def test_mode_wizard_qml_loads_without_reference_and_connections_warnings(
+    request: pytest.FixtureRequest,
+) -> None:
+    app = _ensure_app()
     engine = QQmlApplicationEngine()
+    request.addfinalizer(lambda: teardown_qml_engine(engine, process_events=app.processEvents))
     warnings = collect_engine_warnings(engine)
     qml_path = Path("ui/pyside_app/qml/views/ModeWizard.qml").resolve()
     engine.load(QUrl.fromLocalFile(qml_path.as_posix()))
     assert_engine_loaded(engine, warnings, "ModeWizard view failed to load")
 
-    warning_blob = " | ".join(warnings)
-    assert "ReferenceError: presetCandidate is not defined" not in warning_blob
-    assert 'Detected function "onRecommendationChanged" in Connections element' not in warning_blob
-    assert "Unable to assign [undefined] to QObject*" not in warning_blob
+    assert not warnings, " | ".join(warnings)

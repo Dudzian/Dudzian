@@ -415,6 +415,66 @@ def test_real_atomic_commit_and_exact_retry_retain_original_bytes(atomic_commit_
     assert _snapshot(value) == committed
 
 
+def test_approval_qualifies_inside_its_serializable_transaction(
+    atomic_commit_boundary, monkeypatch
+):
+    value = atomic_commit_boundary
+    observed = []
+    notices = []
+    original = commit_runtime.qualify_atomic_root_proof_authority
+
+    def qualify(conn, deployment, *, expected_role="issuer_writer"):
+        conn.add_notice_handler(lambda notice: notices.append(notice.message_primary))
+        observed.append(
+            (
+                expected_role,
+                conn.info.transaction_status,
+                conn.execute("SHOW transaction_isolation").fetchone(),
+            )
+        )
+        original(conn, deployment, expected_role=expected_role)
+        assert conn.execute("SHOW search_path").fetchone() == ("pg_catalog",)
+
+    monkeypatch.setattr(commit_runtime, "qualify_atomic_root_proof_authority", qualify)
+    before = _fixture_data(value)
+    value.commit.approve_prepared(
+        value.preparation, value.head, value.history_boundary.signer, fences=value.fences
+    )
+    assert observed == [("test_admin", psycopg.pq.TransactionStatus.INTRANS, ("serializable",))]
+    assert notices == []
+    assert _fixture_data(value) == before
+
+
+def test_failed_admin_requalification_cannot_approve(atomic_commit_boundary, monkeypatch):
+    value = atomic_commit_boundary
+    before = _fixture_data(value)
+    calls = []
+    approvals = []
+    original_execute = psycopg.Connection.execute
+
+    def execute(conn, query, params=None, **kwargs):
+        text = query.as_string(conn) if isinstance(query, sql.Composable) else query
+        if ".approve_commit(" in text:
+            approvals.append(text)
+        return original_execute(conn, query, params, **kwargs)
+
+    def refuse(conn, deployment, *, expected_role="issuer_writer"):
+        calls.append((expected_role, conn.info.transaction_status))
+        raise qualification.AtomicRootProofQualificationError("isolated catalog drift")
+
+    monkeypatch.setattr(commit_runtime, "qualify_atomic_root_proof_authority", refuse)
+    monkeypatch.setattr(psycopg.Connection, "execute", execute)
+    with pytest.raises(
+        commit_runtime.AtomicRootProofCommitUnavailable, match="APPROVAL_UNAVAILABLE"
+    ):
+        value.commit.approve_prepared(
+            value.preparation, value.head, value.history_boundary.signer, fences=value.fences
+        )
+    assert calls == [("test_admin", psycopg.pq.TransactionStatus.INTRANS)]
+    assert approvals == []
+    assert _fixture_data(value) == before
+
+
 def test_two_parallel_deliveries_have_one_durable_winner(atomic_commit_boundary):
     value = atomic_commit_boundary
     barrier = threading.Barrier(2)
@@ -1237,7 +1297,10 @@ def test_abrupt_backend_sigkill_before_commit_recovers_no_partial_write_set(
     deadline = time.monotonic() + 30
     while True:
         try:
-            with psycopg.connect(BASE_DSN, connect_timeout=2):
+            with psycopg.connect(BASE_DSN, connect_timeout=2) as recovered:
+                assert recovered.execute("SELECT pg_catalog.pg_is_in_recovery()").fetchone() == (
+                    False,
+                )
                 break
         except psycopg.Error:
             if time.monotonic() >= deadline:
@@ -1246,6 +1309,10 @@ def test_abrupt_backend_sigkill_before_commit_recovers_no_partial_write_set(
     assert _snapshot(value) == before
     with pytest.raises(commit_runtime.AtomicRootProofCommitIndeterminate):
         value.commit.reconcile(value.preparation.locator)
+    # Recovery must leave the durable store usable for the original exact
+    # attempt, with all write-set members committed together on a fresh backend.
+    monkeypatch.setattr(commit_runtime, "_persistence_cut", lambda _name, _connection: None)
+    _assert_committed(value, value.commit.commit(value.preparation))
 
 
 def test_valid_advanced_history_refuses_genuinely_prepared_stale_predecessor(

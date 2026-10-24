@@ -106,6 +106,8 @@ class _ClientCacheEntry:
 _CLIENT_CACHE: MutableMapping[tuple[str, float], _ClientCacheEntry] = {}
 _CLIENT_TTLS: MutableMapping[str, float] = {}
 _CLIENT_LOCK = threading.Lock()
+_CLIENT_SHUTDOWN_LOCK = threading.Lock()
+_CLIENT_SHUTDOWN_REGISTERED = False
 
 
 def _normalize_base_url(base_url: str) -> str:
@@ -151,12 +153,19 @@ def _require_httpx():
 
 
 def _require_core_network():
+    global _CLIENT_SHUTDOWN_REGISTERED
     try:
         from core.network import RateLimitedAsyncClient, get_rate_limited_client, run_sync
     except (ModuleNotFoundError, ImportError) as exc:
         dep = getattr(exc, "name", None) or "dependency"
         message = f"Brak opcjonalnej zależności '{dep}' wymaganej dla core.network."
         raise RuntimeError(message) from exc
+    # atexit runs in reverse order. Importing core.network first ensures cached
+    # clients close on the live portal before that portal's own shutdown.
+    with _CLIENT_SHUTDOWN_LOCK:
+        if not _CLIENT_SHUTDOWN_REGISTERED:
+            atexit.register(_shutdown_client_cache)
+            _CLIENT_SHUTDOWN_REGISTERED = True
     return RateLimitedAsyncClient, get_rate_limited_client, run_sync
 
 
@@ -203,9 +212,6 @@ def _shutdown_client_cache() -> None:
         _CLIENT_CACHE.clear()
     for entry in entries:
         _close_client(entry.client)
-
-
-atexit.register(_shutdown_client_cache)
 
 
 def _resolve_client(base_url: str, timeout: float) -> RateLimitedAsyncClient:

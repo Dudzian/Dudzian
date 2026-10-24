@@ -19,6 +19,7 @@ python -m piptools compile pyproject.toml deploy/packaging/requirements-desktop.
   --upgrade-package Pygments==2.20.0 \
   --upgrade-package idna==3.15 \
   --upgrade-package requests==2.33.0 \
+  --upgrade-package setuptools==84.1.0 \
   --upgrade-package urllib3==2.8.0
 {
   printf '%s\n' \

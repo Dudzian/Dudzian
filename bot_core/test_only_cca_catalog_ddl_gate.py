@@ -24,6 +24,8 @@ _DOMAIN = b"CryptoHunter/TestOnlyCCAReaderDDL/v1\0"
 class TestOnlyCCACatalogGateError(RuntimeError):
     """A synthetic CCA catalog DDL gate could not be held in this transaction."""
 
+    __test__ = False  # Exception contract, not a pytest test class.
+
 
 def _keys(pin: IndependentCCAReaderCatalogPin) -> tuple[int, int]:
     if type(pin) is not IndependentCCAReaderCatalogPin:

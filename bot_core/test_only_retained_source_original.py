@@ -22,6 +22,8 @@ _ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}\Z")
 class TestOnlyRetainedSourceError(RuntimeError):
     """Retained original, its exact binding or independent policy was unavailable."""
 
+    __test__ = False  # Exception contract, not a pytest test class.
+
 
 @dataclass(frozen=True, slots=True)
 class SyntheticRetainedSourcePin:

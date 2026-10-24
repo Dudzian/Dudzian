@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import importlib
 import subprocess
 import sys
@@ -30,14 +31,21 @@ def _import_module(name: str):
         raise RuntimeError(name) from exc
 
 
-def _required_modules(platform: str) -> dict[str, str]:
+def _required_modules(platform: str, *, require_fastapi: bool = False) -> dict[str, str]:
     required_modules = dict(REQUIRED_MODULES)
+    if require_fastapi:
+        required_modules["fastapi"] = "fastapi"
     if platform == "win32":
         required_modules.update(WINDOWS_REQUIRED_MODULES)
     return required_modules
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Validate CI test dependencies")
+    parser.add_argument(
+        "--require-fastapi", action="store_true", help="Require the endpoint test stack"
+    )
+    args = parser.parse_args(argv)
     missing: list[str] = []
     versions: dict[str, str] = {}
     pandas_available = False
@@ -57,7 +65,9 @@ def main() -> int:
     if pip_version.returncode != 0:
         print(f"pip returncode: {pip_version.returncode}")
 
-    for module_name, display_name in _required_modules(sys.platform).items():
+    for module_name, display_name in _required_modules(
+        sys.platform, require_fastapi=args.require_fastapi
+    ).items():
         try:
             module = _import_module(module_name)
         except RuntimeError as exc:

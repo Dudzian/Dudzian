@@ -56,6 +56,8 @@ _RESULT_KEYS = frozenset(
 class TestOnlyCloseLeaseError(RuntimeError):
     """An isolated read/compare/transaction invariant did not hold."""
 
+    __test__ = False  # Exception contract, not a pytest test class.
+
 
 @dataclass(frozen=True, slots=True)
 class SyntheticCloseExpectation:

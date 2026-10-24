@@ -2164,7 +2164,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     payload["decision_log_exit_code"] = verify_exit
 
     try:
-        import builtins  # noqa: WPS433 (świadomie odwołujemy się do builtins)
+        import builtins
 
         setattr(builtins, "payload", payload)
     except Exception:  # pragma: no cover - best effort dla środowisk ograniczonych

@@ -342,6 +342,9 @@ ApplicationWindow {
         })
     })
     readonly property var rootDesignSystem: designSystem
+    readonly property var contextLayoutController: (typeof layoutController !== "undefined" ? layoutController : null)
+    readonly property var contextModeWizardController: (typeof modeWizardController !== "undefined" ? modeWizardController : null)
+    readonly property var contextStrategyManagementController: (typeof strategyManagementController !== "undefined" ? strategyManagementController : null)
 
     // UI-PREVIEW-7.5 local-only product preview state. Safe dry-run/paper preview only: live trading disabled, exchange route disabled, order submission disabled, API keys not required.
     property var selectedExchanges: ["Paper Preview Catalog"]
@@ -2598,9 +2601,10 @@ ApplicationWindow {
 
     LayoutComponents.DockManager {
         id: dockManager
+        objectName: "previewDockManager"
         anchors.fill: centralContentRoot
-        layoutController: layoutController
-        panelRegistry: panelRegistry
+        layoutController: root.contextLayoutController
+        panelRegistry: root.panelRegistry
         designSystem: rootDesignSystem
         visible: false
     }
@@ -3334,12 +3338,12 @@ ApplicationWindow {
 
     Component {
         id: modeWizardPanelComponent
-        Views.ModeWizard { width: parent ? parent.width : 900; height: parent ? parent.height : 620; designSystem: rootDesignSystem; modeWizardController: modeWizardController; compact: true; onLaunchWizardRequested: modeWizardDialog.open(); layoutController: layoutController; strategyManagementController: strategyManagementController }
+        Views.ModeWizard { width: parent ? parent.width : 900; height: parent ? parent.height : 620; designSystem: rootDesignSystem; modeWizardController: root.contextModeWizardController; compact: true; onLaunchWizardRequested: modeWizardDialog.open(); layoutController: root.contextLayoutController; strategyManagementController: root.contextStrategyManagementController }
     }
 
     Component {
         id: strategyManagerPanelComponent
-        Views.StrategyManager { width: parent ? parent.width : 900; height: parent ? parent.height : 620; designSystem: rootDesignSystem; strategyManagementController: strategyManagementController; layoutController: layoutController }
+        Views.StrategyManager { width: parent ? parent.width : 900; height: parent ? parent.height : 620; designSystem: rootDesignSystem; strategyManagementController: root.contextStrategyManagementController; layoutController: root.contextLayoutController }
     }
 
     Component {
@@ -3437,7 +3441,7 @@ ApplicationWindow {
             anchors.fill: parent
             anchors.margins: 16
             designSystem: rootDesignSystem
-            modeWizardController: modeWizardController
+            modeWizardController: root.contextModeWizardController
             compact: false
             onLaunchWizardRequested: modeWizardDialog.close()
         }

@@ -138,10 +138,13 @@ class StubAppController(QObject):
 
 
 @pytest.mark.timeout(30)
-def test_setup_wizard_configures_instrument_and_preferences(tmp_path: Path) -> None:
+def test_setup_wizard_configures_instrument_and_preferences(
+    tmp_path: Path, request: pytest.FixtureRequest
+) -> None:
     app = QApplication.instance() or QApplication([])
 
     engine = QQmlApplicationEngine()
+    request.addfinalizer(lambda: teardown_qml_engine(engine, process_events=app.processEvents))
     stub_app = StubAppController()
     license_stub = StubLicenseController(active=True)
 
@@ -157,14 +160,8 @@ def test_setup_wizard_configures_instrument_and_preferences(tmp_path: Path) -> N
 
     engine.warnings.connect(_collect)  # type: ignore[attr-defined]
     engine.load(QUrl.fromLocalFile(str(view_path)))
-    if qml_warnings or not engine.rootObjects():
-        warnings_text = (
-            "; ".join(warning.toString() for warning in qml_warnings) or "brak obiektów root"
-        )
-        pytest.skip(
-            f"Nie udało się załadować kreatora konfiguracji: {warnings_text}",
-            allow_module_level=False,
-        )
+    assert not qml_warnings, "; ".join(warning.toString() for warning in qml_warnings)
+    assert engine.rootObjects(), "Nie udało się załadować kreatora konfiguracji"
 
     root = engine.rootObjects()[0]
     assert isinstance(root, QObject)
@@ -215,6 +212,3 @@ def test_setup_wizard_configures_instrument_and_preferences(tmp_path: Path) -> N
     QMetaObject.invokeMethod(root, "wizardCompleted", Qt.DirectConnection)
     app.processEvents()
     assert spy.count() >= 1
-
-    teardown_qml_engine(engine, process_events=app.processEvents)
-    app.processEvents()

@@ -466,14 +466,24 @@ class DayTradingStrategy(StrategyPlugin):
         momentum_window = max(1, int(params.day_trading_momentum_window))
         momentum_score = fast_returns.rolling(window=momentum_window, min_periods=1).mean()
 
-        volatility = (indicators.atr / (indicators.ema_fast.abs() + 1e-12)).clip(lower=0.0)
+        valid_volatility = (
+            np.isfinite(indicators.atr)
+            & (indicators.atr > 0.0)
+            & np.isfinite(indicators.ema_fast)
+            & (indicators.ema_fast > 0.0)
+        )
+        volatility = (indicators.atr / (indicators.ema_fast.abs() + 1e-12)).where(valid_volatility)
         volatility_window = max(1, int(params.day_trading_volatility_window))
         volatility_score = (
             volatility.rolling(window=volatility_window, min_periods=1).mean().replace(0.0, np.nan)
         )
-        median_vol = float(volatility_score.median(skipna=True))
-        if not np.isfinite(median_vol) or median_vol <= 0:
-            median_vol = 1.0
+        observed_volatility = volatility_score[
+            np.isfinite(volatility_score) & (volatility_score > 0)
+        ]
+        if observed_volatility.empty:
+            # Warmup or invalid ATR is no trading evidence, not unit volatility.
+            return pd.Series(0.0, index=indicators.ema_fast.index)
+        median_vol = float(observed_volatility.median())
         baseline = volatility_score.fillna(median_vol)
 
         raw_signal = momentum_score / baseline
@@ -483,7 +493,8 @@ class DayTradingStrategy(StrategyPlugin):
         intraday_bias = (indicators.ema_fast - band_mid) / (band_mid.abs() + 1e-12)
         bias_adjustment = intraday_bias.clip(-1.0, 1.0) * 0.2
 
-        return (scaled + bias_adjustment).clip(-1.0, 1.0)
+        signal = scaled + bias_adjustment
+        return signal.where(valid_volatility & np.isfinite(signal), 0.0).clip(-1.0, 1.0)
 
 
 class MeanReversionStrategy(StrategyPlugin):

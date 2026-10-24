@@ -4325,7 +4325,7 @@ def _instantiate_adapter(
         return build_exchange_adapter(config)
     except RuntimeError as exc:
         if offline_mode and "ccxt" in str(exc).lower():
-            from bot_core.exchanges.ccxt_adapter import (  # noqa: WPS433 - import lokalny
+            from bot_core.exchanges.ccxt_adapter import (
                 CCXTExchange,
             )
 

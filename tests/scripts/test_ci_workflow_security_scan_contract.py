@@ -25,18 +25,7 @@ def test_dependency_vulnerability_scan_pip_audit_contract() -> None:
     assert "--format json" in block
     assert "--output pip-audit-report.json" in block
 
-    assert "--ignore-vuln PYSEC-2024-277" in block
-    assert "--ignore-vuln CVE-2024-34997" not in block
-    assert block.count("--ignore-vuln") == 1
-
-    lower = block.lower()
-    assert "joblib" in lower
-    assert ("no fixed" in lower) or ("fix_versions" in lower)
-
-    lines = block.splitlines()
-    for index, line in enumerate(lines):
-        if "PYSEC-2024-277" in line and line.lstrip().startswith("#"):
-            assert index == 0 or not lines[index - 1].rstrip().endswith("\\"), (
-                "Komentarz security exception nie może występować bezpośrednio po linii "
-                "zakończonej backslashem"
-            )
+    assert "--ignore-vuln" not in block
+    assert "continue-on-error" not in block
+    assert "--fix" not in block
+    assert "if: always()" in block

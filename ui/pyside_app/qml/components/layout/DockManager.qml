@@ -4,7 +4,7 @@ import QtQuick.Layouts
 import "./" as LayoutParts
 
 Item {
-    id: dockManager
+    id: dockRoot
     property var layoutController
     property var panelRegistry: ({})
     property var designSystem
@@ -79,11 +79,11 @@ Item {
 
     RowLayout {
         anchors.fill: parent
-        spacing: dockManager.columnSpacing
+        spacing: dockRoot.columnSpacing
 
         Repeater {
             id: columnRepeater
-            model: dockManager.columnCount
+            model: dockRoot.columnCount
             delegate: Item {
                 id: columnHost
                 Layout.fillWidth: true
@@ -93,27 +93,28 @@ Item {
                 ListView {
                     id: columnView
                     anchors.fill: parent
-                    spacing: dockManager.panelSpacing
+                    spacing: dockRoot.panelSpacing
                     interactive: false
-                    model: dockManager.columnPanels(columnHost.columnIndex)
+                    model: dockRoot.columnPanels(columnHost.columnIndex)
                     delegate: LayoutParts.PanelPlaceholder {
+                        required property var modelData
                         width: ListView.view ? ListView.view.width : parent.width
                         height: implicitHeight
-                        dockManager: dockManager
-                        designSystem: dockManager.designSystem
+                        dockManager: dockRoot
+                        designSystem: dockRoot.designSystem
                         panelId: modelData.panelId
                         panelOrder: modelData.order
                         columnIndex: modelData.column
-                        title: dockManager.panelTitle(modelData.panelId)
-                        iconName: dockManager.panelIcon(modelData.panelId)
-                        contentComponent: dockManager.panelComponent(modelData.panelId)
+                        title: dockRoot.panelTitle(modelData.panelId)
+                        iconName: dockRoot.panelIcon(modelData.panelId)
+                        contentComponent: dockRoot.panelComponent(modelData.panelId)
                     }
                 }
 
                 DropArea {
                     anchors.fill: parent
                     onDropped: function(event) {
-                        dockManager.handleDrop(columnHost.columnIndex, columnView, event, columnHost)
+                        dockRoot.handleDrop(columnHost.columnIndex, columnView, event, columnHost)
                     }
                 }
             }
