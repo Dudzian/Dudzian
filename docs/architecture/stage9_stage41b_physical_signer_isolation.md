@@ -37,6 +37,31 @@ i `QUALIFY`. Osobny worker Stage 41B podpisuje wyłącznie jednoznacznie
 oznaczone dane testowe z bieżącego wykonania. Jego protokół nie jest portem
 produkcyjnego signera ani źródłem produkcyjnego attestation.
 
+## Fizyczny przebieg zablokowany po PR #3202
+
+Operator zgłosił rzeczywisty przebieg na Dell Latitude 5490 / Ubuntu 24.04
+dla commita `26e17e7c23ea6cc1b265d57bfda1a1e6589d9e3f` i run-id
+`7ec0d2fc66c1676716deda86a60c7639`. Bundle, digest root-staged instalatora,
+instalacja, weryfikacja kodu, host preflight i collision guard miały PASS.
+Start pierwszej jednostki `cryptohunter-root-proof-signer.service`
+(InvocationID `675b2d09353545339545349faf786346`) zatrzymał się na
+`PROCESS_IDENTITY_UNPROVEN`, a cleanup zgłosił
+`UNIT_CLEANUP_OBSERVATION_OR_SIGNAL_UNAVAILABLE`. Żadna granica separacji
+kluczy nie uzyskała PASS. Osobna późniejsza inspekcja potwierdziła
+`PASS / ALL_EXPECTED_RESOURCES_ABSENT`; nie zalicza retroaktywnie cleanup
+ani kwalifikacji pierwotnego wykonania.
+
+W tamtej wersji `_capture_process()` odrzucał MainPID <= 1 przed wywołaniem
+`_process_identity()`. Raportowany kod wskazuje zatem na warunek walidacji
+Uid/Gid w `/proc/PID/status`: brak czterech poprawnych pól, rozbieżne
+real/effective/saved/filesystem ID albo UID/GID 0. Błędy starttime i cgroup
+miały osobne kody; nie można ich wywnioskować z tego wyniku. Hipotezą do
+fizycznej weryfikacji jest obserwacja procesu jeszcze jako root lub podczas
+zmiany jego ID: `Type=simple` z `DynamicUser=yes` pozwala opublikować MainPID
+przed zakończeniem przygotowania procesu i `execve`. Stary raport nie
+rozróżniał tych przypadków, więc dokładny stan UID/GID pozostaje nieznany.
+Samą zmianę typu usługi trzeba zweryfikować nowym fizycznym przebiegiem.
+
 ## Kontrolowany tryb fizyczny
 
 Entrypoint to `scripts/qualify_stage41b_signer_isolation.py`; worker to
@@ -97,6 +122,19 @@ zawierają losowy identyfikator wykonania. Dwie jednostki transient używają
 dokładnych nazw `cryptohunter-root-proof-signer.service` oraz
 `cryptohunter-history-attestation-signer.service`, ponieważ oryginalny reader
 custody akceptuje wyłącznie ich stałe ścieżki credential.
+
+Tymczasowe units kwalifikacyjne używają `Type=exec`. Harness wymaga
+potwierdzonego zakończenia startu (`Type=exec`, `active/running`) oraz osobnej
+obserwacji tożsamości procesu; samo powodzenie `systemd-run` nie daje PASS.
+Wczesny pidfd przypina żywy proces wraz ze starttime, cgroup i InvocationID
+przed oceną UID/GID. Ponowna obserwacja w ograniczonym oknie startu pozwala
+zakończyć konfigurację atrybutów bez traktowania stanu przejściowego jako
+kwalifikacji. Wszystkie cztery pola UID oraz GID muszą być zgodne i niezerowe;
+obie role nadal wymagają odrębnych UID/GID, namespaces i `NoNewPrivileges`.
+Zmiana PID, starttime, cgroup lub invocation i martwy proces blokują test.
+Stały timeout również blokuje test, z zachowaniem ostatniej stałej przyczyny
+odrzucenia tożsamości. Krótkie oczekiwanie między próbami nie jest dowodem;
+dowodem są ponownie odczytane i porównane właściwości systemd i `/proc`.
 
 Przed wykonaniem nazwy te muszą być niezainstalowane, niezamaskowane,
 niezaładowane i nieaktywne. Guard obejmuje także issuer-check oraz istniejące
@@ -174,6 +212,20 @@ Description z run-id, InvocationID, cgroup i proces. Kontrola PID oraz pidfd
 chroni przed wysłaniem sygnału do innego procesu po ponownym użyciu numeru.
 Nie ma ogólnego zatrzymywania usług po samej nazwie.
 
+Przypięcie pochodzenia i czasu życia procesu jest oddzielne od potwierdzenia
+jego bezpiecznej nieuprzywilejowanej tożsamości. Dzięki temu odrzucony
+przejściowy UID/GID nie usuwa dowodu potrzebnego do cleanup. Sygnał nadal
+wymaga przypiętego procesu i ponownego potwierdzenia jego invocation,
+starttime i cgroup; pidfd nie jest uprawnieniem do działania na obcej
+jednostce. Brak dostępnego dowodu pozostaje BLOCKED.
+
+Jeżeli systemd sam zakończy i usunie jednostkę przed pełną kwalifikacją
+procesu, cleanup wymaga wcześniejszego potwierdzenia własnej invocation
+oraz braku jej cgroup, runtime i credential directory. Uzyskany pidfd musi
+potwierdzać zakończenie procesu. Nieobecność samej nazwy bez takiego
+pochodzenia nie daje PASS. Zastąpiona jednostka jest zachowywana, a żywy
+proces, timeout i niedostępna obserwacja pozostawiają BLOCKED.
+
 Sprzątanie odbywa się po
 sukcesie, błędzie i obsługiwanym sygnale. Obejmuje procesy w testowym cgroup,
 tymczasowe jednostki, sockety, testowe keyringi i katalogi bieżącego wykonania.
@@ -249,6 +301,14 @@ się `BLOCKED` z powodem `UBUNTU_24_04_REQUIRED`; nie wykonano `--execute`
 i nie przyznano `STAGE41B_TEST_ONLY_PASS`.
 
 Testy regresyjne Stage 41B są testami logiki i odmów, nie fizycznym dowodem.
+Diagnostyka używa stałych kodów przyczyn bez publikacji surowych plików
+`/proc`, środowiska, zawartości keyringu lub credential. Bezpieczne metadane
+obejmują zweryfikowane PID, UID/GID, starttime i ścieżkę cgroup. Rozróżnia m.in.
+`PROCESS_UID_ZERO_DURING_STARTUP`, `PROCESS_GID_ZERO_DURING_STARTUP`,
+`PROCESS_UID_FIELDS_MISMATCH`, `PROCESS_GID_FIELDS_MISMATCH`,
+`PROCESS_STATUS_UNAVAILABLE`, `PROCESS_STARTTIME_UNAVAILABLE`,
+`PROCESS_CGROUP_MISMATCH`, `PROCESS_EXITED_DURING_OBSERVATION` oraz
+`PROCESS_STARTUP_IDENTITY_TIMEOUT`. Ograniczony raport zachowuje ścisły schemat.
 Dokładne polecenia, wyniki, pominięcia i stan fizycznego wykonania należą do
 opisu PR. Zachowane są dotychczasowe bramki, baseline skanerów, konfiguracje
 bezpieczeństwa i progi jakości. Przed PR wymagane są Ruff, właściwe regresje,

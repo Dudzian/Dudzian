@@ -60,6 +60,7 @@ UNIT_FIELDS = (
     "LoadState",
     "ActiveState",
     "SubState",
+    "Type",
     "FragmentPath",
     "DropInPaths",
     "Transient",
@@ -483,7 +484,7 @@ def unit_properties(run_id: str, role: str, code_root: Path, python: Path) -> li
     other = ROLES[1 - ROLES.index(role)]
     properties = {
         "Description": f"Stage41B TEST ONLY {run_id} {role}",
-        "Type": "simple",
+        "Type": "exec",
         "DynamicUser": "yes",
         "User": "chs41b" + run_id[:16] + ("r" if role == "root_signer" else "h"),
         "Group": "chs41b" + run_id[:16] + ("r" if role == "root_signer" else "h"),
@@ -758,43 +759,84 @@ def _verify_signatures(
         raise QualificationFailed("private_material_separation", "CROSS_ROLE_SIGNATURE_COLLISION")
 
 
-def _process_identity(pid: int) -> dict[str, Any]:
-    """Read identity while a pidfd pins this process against PID reuse."""
+STARTUP_RETRY_REASONS = frozenset(
+    {
+        "PROCESS_UID_ZERO_DURING_STARTUP",
+        "PROCESS_GID_ZERO_DURING_STARTUP",
+        "PROCESS_UID_FIELDS_MISMATCH",
+        "PROCESS_GID_FIELDS_MISMATCH",
+        "PROCESS_STATUS_UNAVAILABLE",
+        "PROCESS_EXEC_INITIALIZATION_PENDING",
+    }
+)
+
+
+def _process_lifetime(pid: int) -> dict[str, Any]:
+    """Read lifetime facts; callers must bracket reads with the same live pidfd."""
     if type(pid) is not int or pid <= 1:
-        raise QualificationBlocked("PROCESS_IDENTITY_UNPROVEN")
+        raise QualificationBlocked("PROCESS_PID_UNAVAILABLE")
     proc = Path(f"/proc/{pid}")
-    fields: dict[str, str] = {}
-    for line in (proc / "status").read_text(encoding="ascii").splitlines():
-        key, separator, value = line.partition(":")
-        if separator:
-            fields[key] = value.strip()
-    uids, gids = fields.get("Uid", "").split(), fields.get("Gid", "").split()
-    if (
-        len(uids) != 4
-        or len(gids) != 4
-        or any(re.fullmatch(r"[0-9]+", value) is None for value in (*uids, *gids))
-        or len(set(uids)) != 1
-        or len(set(gids)) != 1
-        or int(uids[0]) == 0
-        or int(gids[0]) == 0
-    ):
-        raise QualificationBlocked("PROCESS_IDENTITY_UNPROVEN")
+    try:
+        raw_stat = (proc / "stat").read_text(encoding="ascii")
+    except (OSError, UnicodeError):
+        raise QualificationBlocked("PROCESS_STARTTIME_UNAVAILABLE") from None
     # comm may contain spaces or closing parentheses. Fields after its last
     # ')' begin at field 3; starttime is field 22 (index 19 in this suffix).
-    raw_stat = (proc / "stat").read_text(encoding="ascii")
-    tail = raw_stat.rsplit(")", 1)[-1].split()
-    if len(tail) < 20 or re.fullmatch(r"[0-9]+", tail[19]) is None:
-        raise QualificationBlocked("PROCESS_STARTTIME_UNPROVEN")
-    cgroup = (proc / "cgroup").read_text(encoding="ascii").strip()
-    if not cgroup.startswith("0::/") or "\n" in cgroup:
-        raise QualificationBlocked("PROCESS_CGROUP_UNPROVEN")
+    header, separator, suffix = raw_stat.rpartition(")")
+    tail = suffix.split()
+    if (
+        not separator
+        or not header.startswith(f"{pid} (")
+        or len(tail) < 50
+        or tail[0] not in {"R", "S", "D", "Z", "T", "t", "X", "x", "K", "W", "P", "I"}
+        or re.fullmatch(r"[0-9]+", tail[19]) is None
+        or int(tail[19]) <= 0
+    ):
+        raise QualificationBlocked("PROCESS_STARTTIME_UNAVAILABLE")
+    if tail[0] in {"Z", "X", "x"}:
+        raise QualificationBlocked("PROCESS_EXITED_DURING_OBSERVATION")
+    try:
+        cgroup = (proc / "cgroup").read_text(encoding="ascii").strip()
+    except (OSError, UnicodeError):
+        raise QualificationBlocked("PROCESS_CGROUP_UNAVAILABLE") from None
+    if not cgroup.startswith("0::/") or "\n" in cgroup or "\0" in cgroup:
+        raise QualificationBlocked("PROCESS_CGROUP_MISMATCH")
     return {
         "pid": pid,
         "start_time": int(tail[19]),
-        "uid": int(uids[0]),
-        "gid": int(gids[0]),
         "control_group": cgroup.removeprefix("0::"),
     }
+
+
+def _process_identity(pid: int) -> dict[str, Any]:
+    """Credentials qualify only after all four UID and GID fields agree."""
+    if type(pid) is not int or pid <= 1:
+        raise QualificationBlocked("PROCESS_PID_UNAVAILABLE")
+    try:
+        status = Path(f"/proc/{pid}/status").read_text(encoding="ascii")
+    except FileNotFoundError:
+        raise QualificationBlocked("PROCESS_EXITED_DURING_OBSERVATION") from None
+    except (OSError, UnicodeError):
+        raise QualificationBlocked("PROCESS_STATUS_UNAVAILABLE") from None
+    fields: dict[str, str] = {}
+    for line in status.splitlines():
+        key, separator, value = line.partition(":")
+        if separator:
+            fields[key] = value.strip()
+    credentials = {}
+    for name in ("Uid", "Gid"):
+        values = fields.get(name, "").split()
+        label = name.upper()
+        if (
+            len(values) != 4
+            or any(re.fullmatch(r"[0-9]+", value) is None for value in values)
+            or len(set(values)) != 1
+        ):
+            raise QualificationBlocked(f"PROCESS_{label}_FIELDS_MISMATCH")
+        if int(values[0]) == 0:
+            raise QualificationBlocked(f"PROCESS_{label}_ZERO_DURING_STARTUP")
+        credentials[name.lower()] = int(values[0])
+    return {**_process_lifetime(pid), **credentials}
 
 
 def _process_finished(handle: int, timeout: float = 0) -> bool:
@@ -817,6 +859,9 @@ class PhysicalRun:
         self.journals: dict[str, bytes] = {}
         self.process_handles: dict[str, int] = {}
         self.process_identities: dict[str, dict[str, Any]] = {}
+        self.process_lifetimes: dict[str, dict[str, Any]] = {}
+        self.startup_diagnostics: dict[str, str] = {}
+        self.process_origin_mismatches: set[str] = set()
         self.cleanup_issues: list[dict[str, Any]] = []
         self.unresolved_startups: set[str] = set()
 
@@ -842,66 +887,142 @@ class PhysicalRun:
         )
 
     def _capture_process(self, role: str, snapshot: dict[str, str]) -> None:
+        """Pin lifetime first; never qualify a pre-exec or privileged process."""
         if sys.platform != "linux":
             raise QualificationBlocked("PIDFD_PROCESS_CONTROL_REQUIRED")
         pid = int(snapshot["MainPID"])
         if pid <= 1:
             return
-        if role in self.process_handles:
-            if self.process_identities[role]["pid"] != pid:
-                raise QualificationBlocked("TEST_PROCESS_PID_CHANGED")
-            return
-        handle = -1
-        retained = False
-        try:
-            with _defer_interrupts():
-                handle = os.pidfd_open(pid, 0)
-            before = _process_identity(pid)
-            if before["control_group"] != snapshot["ControlGroup"]:
-                raise QualificationBlocked("TEST_PROCESS_CGROUP_CHANGED")
-            observed = inspect_unit(_unit_name(self.run_id, role))
-            if (
-                not self._matches_role(observed, role)
-                or not owns_unit(observed, snapshot)
-                or _process_identity(pid) != before
-                or _process_finished(handle)
-            ):
-                raise QualificationBlocked("TEST_PROCESS_CHANGED_DURING_PIN")
-            with _defer_interrupts():
-                self.process_handles[role] = handle
-                self.process_identities[role] = before
-                retained = True
-        finally:
-            if not retained and handle >= 0:
-                os.close(handle)
+        handle = self.process_handles.get(role)
+        if handle is None:
+            opened = -1
+            retained = False
+            try:
+                with _defer_interrupts():
+                    opened = os.pidfd_open(pid, 0)
+                if _process_finished(opened):
+                    raise QualificationBlocked("PROCESS_EXITED_DURING_OBSERVATION")
+                before = _process_lifetime(pid)
+                if _process_finished(opened):
+                    raise QualificationBlocked("PROCESS_EXITED_DURING_OBSERVATION")
+                if before["control_group"] != snapshot["ControlGroup"]:
+                    self.process_origin_mismatches.add(role)
+                    raise QualificationBlocked("PROCESS_CGROUP_MISMATCH")
+                observed = inspect_unit(_unit_name(self.run_id, role))
+                if _process_finished(opened):
+                    raise QualificationBlocked("PROCESS_EXITED_DURING_OBSERVATION")
+                if not self._matches_role(observed, role) or not owns_unit(observed, snapshot):
+                    self.process_origin_mismatches.add(role)
+                    raise QualificationBlocked("TEST_PROCESS_CHANGED_DURING_PIN")
+                if _process_finished(opened):
+                    raise QualificationBlocked("PROCESS_EXITED_DURING_OBSERVATION")
+                after = _process_lifetime(pid)
+                if _process_finished(opened):
+                    raise QualificationBlocked("PROCESS_EXITED_DURING_OBSERVATION")
+                if after != before:
+                    self.process_origin_mismatches.add(role)
+                    raise QualificationBlocked("TEST_PROCESS_CHANGED_DURING_PIN")
+                # Ownership survives a credential transition or an interrupt.
+                # This receipt authorizes pidfd cleanup, never qualification.
+                with _defer_interrupts():
+                    self.process_handles[role] = opened
+                    self.process_lifetimes[role] = before
+                    retained = True
+                handle = opened
+            except ProcessLookupError:
+                raise QualificationBlocked("PROCESS_EXITED_DURING_OBSERVATION") from None
+            except QualificationBlocked:
+                if opened >= 0 and _process_finished(opened):
+                    raise QualificationBlocked("PROCESS_EXITED_DURING_OBSERVATION") from None
+                raise
+            finally:
+                if not retained and opened >= 0:
+                    os.close(opened)
+        lifetime = self.process_lifetimes[role]
+        if lifetime["pid"] != pid:
+            self.process_origin_mismatches.add(role)
+            raise QualificationBlocked("TEST_PROCESS_PID_CHANGED")
+        if _process_finished(handle):
+            raise QualificationBlocked("PROCESS_EXITED_DURING_OBSERVATION")
+        current_lifetime = _process_lifetime(pid)
+        if _process_finished(handle):
+            raise QualificationBlocked("PROCESS_EXITED_DURING_OBSERVATION")
+        if current_lifetime != lifetime or lifetime["control_group"] != snapshot["ControlGroup"]:
+            self.process_origin_mismatches.add(role)
+            raise QualificationBlocked("TEST_PROCESS_LIFETIME_CHANGED")
+        if snapshot.get("Type") != "exec":
+            raise QualificationBlocked("TEST_SERVICE_EXEC_TYPE_REQUIRED")
+        if snapshot.get("ActiveState") != "active" or snapshot.get("SubState") != "running":
+            raise QualificationBlocked("PROCESS_EXEC_INITIALIZATION_PENDING")
+        identity = _process_identity(pid)
+        observed = inspect_unit(_unit_name(self.run_id, role))
+        if _process_finished(handle):
+            raise QualificationBlocked("PROCESS_EXITED_DURING_OBSERVATION")
+        after_identity = _process_identity(pid)
+        if _process_finished(handle):
+            raise QualificationBlocked("PROCESS_EXITED_DURING_OBSERVATION")
+        if (
+            not self._matches_role(observed, role)
+            or not owns_unit(observed, snapshot)
+            or {key: identity[key] for key in lifetime} != lifetime
+            or {key: after_identity[key] for key in lifetime} != lifetime
+        ):
+            self.process_origin_mismatches.add(role)
+            raise QualificationBlocked("TEST_PROCESS_CHANGED_DURING_OBSERVATION")
+        if (
+            observed.get("Type") != "exec"
+            or observed.get("ActiveState") != "active"
+            or observed.get("SubState") != "running"
+            or after_identity != identity
+        ):
+            raise QualificationBlocked("TEST_PROCESS_CHANGED_DURING_OBSERVATION")
+        previous = self.process_identities.get(role)
+        if previous is not None and identity != previous:
+            raise QualificationBlocked("TEST_PROCESS_IDENTITY_CHANGED")
+        self.process_identities[role] = identity
 
     def _terminate_process(self, role: str) -> bool:
-        """Signal only the pinned process, never a unit looked up by name."""
+        """Signal only the owned pinned lifetime, including an unqualified startup."""
         if sys.platform != "linux":
             return False
         handle = self.process_handles.get(role)
-        if handle is None:
+        lifetime = self.process_lifetimes.get(role)
+        if handle is None or lifetime is None:
             self._issue(role, "NO_PROVEN_PROCESS_HANDLE")
             return False
         if _process_finished(handle):
             return True
         pin = self.pins[role]
-        observed = inspect_unit(_unit_name(self.run_id, role))
-        if (
-            not self._matches_role(observed, role)
-            or not owns_invocation(observed, pin)
-            or observed.get("MainPID") != str(self.process_identities[role]["pid"])
-            or _process_identity(self.process_identities[role]["pid"])
-            != self.process_identities[role]
-        ):
+        identity = self.process_identities.get(role)
+        try:
+            observed = inspect_unit(_unit_name(self.run_id, role))
+            if not unit_is_unused(observed) and (
+                not self._matches_role(observed, role) or not owns_invocation(observed, pin)
+            ):
+                self.process_origin_mismatches.add(role)
+            observed_lifetime = _process_lifetime(lifetime["pid"])
+            if observed_lifetime != lifetime and not _process_finished(handle):
+                self.process_origin_mismatches.add(role)
+            unchanged = (
+                self._matches_role(observed, role)
+                and owns_invocation(observed, pin)
+                and observed.get("MainPID") == str(lifetime["pid"])
+                and observed_lifetime == lifetime
+                and (identity is None or _process_identity(lifetime["pid"]) == identity)
+            )
+        except (OSError, QualificationBlocked):
+            unchanged = False
+        if _process_finished(handle):
+            return True
+        if not unchanged:
             self._issue(role, "PROCESS_OR_INVOCATION_CHANGED_NO_SIGNAL_SENT")
             return False
         try:
             signal.pidfd_send_signal(handle, signal.SIGTERM, None, 0)
             if _process_finished(handle, 6):
                 return True
-            # The same descriptor continues to target the old process even if
-            # a PID or unit name is reused while termination is pending.
+            # The same descriptor targets the old process even if the PID or
+            # unit name is reused while termination is pending.
             signal.pidfd_send_signal(handle, signal.SIGKILL, None, 0)
             if _process_finished(handle, 2):
                 return True
@@ -955,7 +1076,7 @@ class PhysicalRun:
                 witness.chmod(0o444)
 
     def _observe_started(self, role: str, *, wait_for_socket: bool, timeout: float = 20) -> bool:
-        """Recover ownership even if systemd-run failed after creating a unit."""
+        """Observe bounded startup transitions without treating them as proof."""
         name = _unit_name(self.run_id, role)
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
@@ -966,32 +1087,52 @@ class PhysicalRun:
             elif self._matches_role(snapshot, role):
                 old_pin = self.pins.get(role)
                 if old_pin is not None and not owns_invocation(snapshot, old_pin):
+                    self.process_origin_mismatches.add(role)
                     raise QualificationBlocked("TEST_UNIT_OR_PROCESS_REPLACED")
-                if old_pin is None or int(old_pin["MainPID"]) <= 1:
-                    self.pins[role] = snapshot
+                # Publish invocation ownership before credential observation or
+                # a pending interrupt. No process qualification is implied.
+                with _defer_interrupts():
+                    if old_pin is None or int(old_pin["MainPID"]) <= 1:
+                        self.pins[role] = snapshot
+                    self.unresolved_startups.discard(role)
+                if snapshot.get("ActiveState") in {"failed", "inactive"}:
+                    if wait_for_socket:
+                        raise QualificationBlocked("TEST_SERVICE_START_FAILED")
+                    return True
+                qualified = False
                 try:
                     self._capture_process(role, snapshot)
-                except (ProcessLookupError, FileNotFoundError):
-                    if wait_for_socket:
-                        raise QualificationBlocked(
-                            "TEST_SERVICE_EXITED_BEFORE_PROCESS_PIN"
-                        ) from None
+                    qualified = role in self.process_identities
+                except QualificationBlocked as error:
+                    self.startup_diagnostics[role] = str(error)
+                    handle = self.process_handles.get(role)
+                    if handle is not None and _process_finished(handle):
+                        raise QualificationBlocked("PROCESS_EXITED_DURING_OBSERVATION") from None
+                    if str(error) not in STARTUP_RETRY_REASONS:
+                        raise
+                    if role in self.process_identities:
+                        raise QualificationBlocked("TEST_PROCESS_IDENTITY_CHANGED") from None
                 if not wait_for_socket:
                     return True
-                if snapshot.get("ActiveState") in {"failed", "inactive"}:
-                    raise QualificationBlocked("TEST_SERVICE_START_FAILED")
                 if (
-                    int(snapshot["MainPID"]) > 1
+                    qualified
+                    and int(snapshot["MainPID"]) > 1
                     and role in self.process_handles
                     and not _process_finished(self.process_handles[role])
                     and (_state(self.run_id, role) / "control.sock").exists()
                 ):
                     return True
             else:
+                self.process_origin_mismatches.add(role)
                 raise QualificationBlocked("TEST_UNIT_ORIGIN_MISMATCH")
             time.sleep(0.1)
         if wait_for_socket:
-            raise QualificationBlocked("TEST_SERVICE_START_TIMEOUT")
+            reason = (
+                "PROCESS_STARTUP_IDENTITY_TIMEOUT"
+                if role in self.startup_diagnostics and role not in self.process_identities
+                else "TEST_SERVICE_START_TIMEOUT"
+            )
+            raise QualificationBlocked(reason)
         return False
 
     def start(self) -> None:
@@ -999,16 +1140,16 @@ class PhysicalRun:
             name = _unit_name(self.run_id, role)
             if not unit_is_unused(inspect_unit(name)):
                 raise QualificationBlocked("TEST_UNIT_COLLISION")
-            self.attempted.append(role)
+            with _defer_interrupts():
+                self.attempted.append(role)
+                self.unresolved_startups.add(role)
             try:
                 _command(unit_properties(self.run_id, role, self.code_root, self.python))
             except BaseException:
                 # Client failure does not roll back StartTransientUnit. Observe
                 # the manager before propagating the original error/interrupt.
-                self.unresolved_startups.add(role)
                 try:
-                    if self._observe_started(role, wait_for_socket=False, timeout=2):
-                        self.unresolved_startups.discard(role)
+                    self._observe_started(role, wait_for_socket=False, timeout=2)
                 except Exception:
                     pass
                 raise
@@ -1018,7 +1159,10 @@ class PhysicalRun:
         self, role: str, operation: str, arguments: dict[str, Any] | None = None
     ) -> dict[str, Any]:
         identity = self.process_identities.get(role)
-        expected = None if identity is None else (identity["pid"], identity["uid"], identity["gid"])
+        handle = self.process_handles.get(role)
+        if identity is None or handle is None or _process_finished(handle):
+            raise QualificationBlocked("TEST_PROCESS_IDENTITY_NOT_QUALIFIED")
+        expected = (identity["pid"], identity["uid"], identity["gid"])
         value, transcript = _request(
             _state(self.run_id, role) / "control.sock",
             operation,
@@ -1036,7 +1180,13 @@ class PhysicalRun:
         statuses = {}
         for role in ROLES:
             snapshot = inspect_unit(_unit_name(self.run_id, role))
-            if not owns_unit(snapshot, self.pins[role]) or snapshot.get("ActiveState") != "active":
+            if (
+                role not in self.process_identities
+                or role not in self.process_handles
+                or _process_finished(self.process_handles[role])
+                or not owns_unit(snapshot, self.pins[role])
+                or snapshot.get("ActiveState") != "active"
+            ):
                 raise QualificationBlocked("TEST_SERVICE_NOT_LIVE")
             statuses[role] = self.request(role, "TEST_STATUS")
         validate_status_pair(statuses, self.pins, self.run_id)
@@ -1049,6 +1199,7 @@ class PhysicalRun:
                 or _process_finished(self.process_handles[role])
                 or _process_identity(self.process_identities[role]["pid"])
                 != self.process_identities[role]
+                or _process_finished(self.process_handles[role])
             ):
                 raise QualificationBlocked("TEST_PROCESS_CHANGED_DURING_OBSERVATION")
         return statuses
@@ -1086,21 +1237,58 @@ class PhysicalRun:
                     return False
         return True
 
+    def _collected_absence(self, role: str) -> bool:
+        """Absence is cleanup proof only after an exact owned invocation was seen."""
+        pin = self.pins.get(role)
+        if role in self.process_origin_mismatches:
+            self._issue(role, "PROCESS_ORIGIN_CONTRADICTION_RETAINED")
+            return False
+        if role in self.unresolved_startups or pin is None or not self._matches_role(pin, role):
+            self._issue(role, "STARTUP_OUTCOME_UNPROVEN")
+            return False
+        handle = self.process_handles.get(role)
+        if handle is not None and not _process_finished(handle):
+            self._issue(role, "PINNED_PROCESS_STILL_LIVE_AFTER_UNIT_COLLECTION")
+            return False
+        name = _unit_name(self.run_id, role)
+        # The test sets no Slice property: systemd creates exactly this cgroup.
+        # An empty, escaped or unrelated path cannot authorize a filesystem check.
+        expected_cgroup = "/system.slice/" + name
+        if pin.get("ControlGroup") != expected_cgroup:
+            self._issue(role, "COLLECTED_UNIT_CGROUP_ORIGIN_UNPROVEN")
+            return False
+        cgroup_root = Path("/sys/fs/cgroup")
+        try:
+            _check_protected(cgroup_root, directory=True)
+            _check_protected(cgroup_root / "cgroup.controllers", directory=False)
+        except (OSError, QualificationBlocked):
+            self._issue(role, "CLEANUP_CGROUP_OBSERVATION_UNAVAILABLE")
+            return False
+        if not _path_absent(cgroup_root / expected_cgroup.removeprefix("/")):
+            self._issue(role, "COLLECTED_UNIT_CGROUP_REMAINS")
+            return False
+        if not _path_absent(_state(self.run_id, role)) or not _path_absent(
+            Path("/run/credentials") / name
+        ):
+            self._issue(role, "UNPROVEN_RUNTIME_OR_CREDENTIAL_REMAINS")
+            return False
+        if not unit_is_unused(inspect_unit(name)):
+            self.process_origin_mismatches.add(role)
+            self._issue(role, "UNIT_REPLACED_DURING_CLEANUP_NO_ACTION_TAKEN")
+            return False
+        return True
+
     def _wait_collected(self, role: str) -> bool:
         deadline = time.monotonic() + 5
         name = _unit_name(self.run_id, role)
         while time.monotonic() < deadline:
             observed = inspect_unit(name)
             if unit_is_unused(observed):
-                if not _path_absent(_state(self.run_id, role)) or not _path_absent(
-                    Path("/run/credentials") / name
-                ):
-                    self._issue(role, "UNPROVEN_RUNTIME_OR_CREDENTIAL_REMAINS")
-                    return False
-                return True
+                return self._collected_absence(role)
             if not self._matches_role(observed, role) or not owns_invocation(
                 observed, self.pins[role]
             ):
+                self.process_origin_mismatches.add(role)
                 self._issue(role, "UNIT_REPLACED_DURING_CLEANUP_NO_ACTION_TAKEN")
                 return False
             time.sleep(0.1)
@@ -1131,16 +1319,8 @@ class PhysicalRun:
             try:
                 observed = inspect_unit(name)
                 if unit_is_unused(observed):
-                    if role in self.unresolved_startups:
-                        # A queued manager request may outlive a timed-out
-                        # client. One absent snapshot cannot prove rollback.
+                    if not self._collected_absence(role):
                         clean = False
-                        self._issue(role, "STARTUP_OUTCOME_UNPROVEN")
-                    if not _path_absent(_state(self.run_id, role)) or not _path_absent(
-                        Path("/run/credentials") / name
-                    ):
-                        clean = False
-                        self._issue(role, "UNPROVEN_RUNTIME_OR_CREDENTIAL_REMAINS")
                     continue
                 pin = self.pins.get(role)
                 # Recovery is permitted only for this exact unpredictable
@@ -1149,6 +1329,7 @@ class PhysicalRun:
                     pin is not None and not owns_invocation(observed, pin)
                 ):
                     clean = False
+                    self.process_origin_mismatches.add(role)
                     self._issue(role, "FOREIGN_OR_REPLACED_UNIT_RETAINED")
                     continue
                 if pin is None:
@@ -1157,8 +1338,16 @@ class PhysicalRun:
                 if int(observed["MainPID"]) > 1:
                     try:
                         self._capture_process(role, observed)
-                    except (ProcessLookupError, FileNotFoundError):
+                    except (ProcessLookupError, FileNotFoundError, QualificationBlocked):
+                        # An unqualified UID never prevents lifetime-bound
+                        # cleanup. If no descriptor could be pinned, wait only
+                        # for proven manager/cgroup collection; never signal by
+                        # PID or name as a fallback.
                         pass
+                    if role not in self.process_handles:
+                        if not self._wait_collected(role):
+                            clean = False
+                        continue
                     if not self._terminate_process(role):
                         clean = False
                         continue
@@ -1465,6 +1654,7 @@ def main(argv: list[str] | None = None) -> int:
                 else verified_context["installation"],
                 "test_invocations": {role: pin["InvocationID"] for role, pin in run.pins.items()},
                 "test_process_identities": run.process_identities,
+                "startup_diagnostics": run.startup_diagnostics,
                 "cleanup_issues": run.cleanup_issues,
                 "cleanup_inspection": [
                     str(run.python),

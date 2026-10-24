@@ -1,20 +1,36 @@
 # Stage 41B — procedura operatora na fizycznym Dellu
 
-Ta procedura dotyczy wyłącznie syntetycznej kwalifikacji PR
+Ta procedura dotyczy wyłącznie syntetycznej kwalifikacji poprawki po scalonym PR
 [#3202](https://github.com/Dudzian/Dudzian/pull/3202) na Dell Latitude 5490
 z Ubuntu 24.04 x86_64 i CPython 3.12. Przygotowanie środowiska, weryfikacja
 instalacji, preflight i wykonanie testu są odrębnymi operacjami. Żaden krok
 przygotowania nie uruchamia signerów ani `--execute`. Nie wykonuje się rebootu.
 
+Poprzedni fizyczny przebieg commita
+`26e17e7c23ea6cc1b265d57bfda1a1e6589d9e3f`, run-id
+`7ec0d2fc66c1676716deda86a60c7639`, zakończył się `BLOCKED` na pierwszej
+jednostce z `PROCESS_IDENTITY_UNPROVEN`; cleanup tego przebiegu również był
+`BLOCKED`. Późniejsze odczytowe `PASS / ALL_EXPECTED_RESOURCES_ABSENT` nie
+zmienia tych wyników. Żadna granica separacji kluczy nie została zaliczona.
+Zachowaj instalację
+`/opt/cryptohunter-stage41b/26e17e7c23ea6cc1b265d57bfda1a1e6589d9e3f`
+bez zmian. Poprawkę instaluj pod nowym pełnym SHA, z nowego bundle;
+nie podmieniaj w starej instalacji harnessu, interpretera ani manifestów.
+
 ## 1. Przypnij zatwierdzony commit i przygotuj bundle bez roota
 
 Z ostatniego przejrzanego commita PR odczytaj pełny Git SHA oraz niezależnie
 opublikowany SHA256 pliku `scripts/prepare_stage41b_environment.py`.
-Poniższe wartości są znacznikami do zastąpienia, nie gotowymi hashami:
+Pełny SHA poprawki przypnij z raportu nowego PR po sprawdzeniu jego CI.
+Digest instalatora poniżej został ponownie obliczony dla poprawki. Instalator
+nie wymaga zmiany kodu, więc jego SHA256 pozostaje taki sam; nowy Git proof
+i bundle wiążą zmieniony harness z nowym commitem. Przy każdej późniejszej
+zmianie instalatora odczytaj nowy niezależnie przejrzany digest.
+Znacznik commita trzeba zastąpić przed wykonaniem poleceń:
 
 ```bash
-STAGE41B_COMMIT='REPLACE_WITH_REVIEWED_PR3202_FULL_COMMIT_SHA'
-STAGE41B_BOOTSTRAP_SHA256='REPLACE_WITH_INDEPENDENTLY_REVIEWED_INSTALLER_SHA256'
+STAGE41B_COMMIT='REPLACE_WITH_REVIEWED_FIX_FULL_COMMIT_SHA'
+STAGE41B_BOOTSTRAP_SHA256='25795ca00233e4375a95f11b6e26f62fb59961ff1a2fa10cc6c901b26a0858a4'
 STAGE41B_SOURCE="/home/dudzian/stage41b-source-$STAGE41B_COMMIT"
 STAGE41B_BUNDLE="/home/dudzian/stage41b-bundle-$STAGE41B_COMMIT"
 STAGE41B_INSTALL="/opt/cryptohunter-stage41b/$STAGE41B_COMMIT"
@@ -232,6 +248,18 @@ GNOME Secret Service. Podpisuje wyłącznie z góry ustalone syntetyczne komunik
 z bieżącym run-id i rolą. Nie wykonuje produkcyjnego SIGN, BIND, provisioning,
 enrollmentu ani rebootu. Nie uruchamiaj root-only pytest na głównym Ubuntu.
 
+Tymczasowe units używają `Type=exec`: zakończenie startu wymaga wykonania
+programu przez systemd. Harness osobno przypina pochodzenie procesu przez
+pidfd, starttime, cgroup i InvocationID, a dopiero potem potwierdza jego
+nieuprzywilejowaną tożsamość. Przejściowy UID/GID 0 lub rozbieżne pola
+real/effective/saved/filesystem nigdy nie dają PASS; obserwacja jest ponawiana
+w ograniczonym oknie startu. `active/running`, pełne zgodne niezerowe UID/GID
+i żywy niezmieniony proces są wymagane przed kontaktem z testowym socketem.
+Timeout lub utrata dowodu pozostawiają `BLOCKED`. Stałe przyczyny w raporcie
+pozwalają rozróżnić odrzucenie UID/GID, niedostępność `/proc`, zakończenie
+procesu oraz zmianę starttime, cgroup lub invocation; nie dołączaj do raportu
+surowych zrzutów `/proc`, środowiska ani keyringu.
+
 Przekierowanie stdout wykonuje zwykła powłoka operatora; root nie zapisuje
 raportów w jego home. Zachowaj publiczny JSON i jego `run_id`. Raport musi zawierać osobny wynik
 każdej z 19 wymaganych granic oraz wynik sprzątania. Tylko kompletne fizyczne
@@ -272,6 +300,15 @@ uprawnieniem do zabicia nowego procesu. Niejednoznaczne zasoby są zachowywane
 z BLOCKED i instrukcją inspekcji. Nie wykonuj zbiorczego `systemctl stop`,
 `reset-failed`, `rm -rf`, resetu keyringu lub rebootu w celu uzyskania PASS.
 Nie powtarzaj testu, zanim pochodzenie pozostałości nie zostanie rozstrzygnięte.
+
+Nieudana kwalifikacja UID/GID nie unieważnia odrębnie potwierdzonego dowodu
+pochodzenia procesu potrzebnego do bezpiecznego cleanup. Automatycznie
+usuniętą przez systemd jednostkę można uznać za sprzątniętą wyłącznie, gdy
+wcześniej potwierdzono własną invocation, a jej cgroup, runtime i credential
+directory zniknęły oraz przypięty proces zakończył się, jeżeli uzyskano pidfd.
+Sam brak jednostki bez wcześniejszego dowodu pochodzenia pozostawia cleanup
+`BLOCKED`. Żywy proces, podmieniona jednostka, niedostępna obserwacja lub
+przekroczony czas oczekiwania również wymagają `BLOCKED` i inspekcji.
 
 Pozytywny wynik syntetyczny nadal nie dowodzi niezależnej kontroli
 produkcyjnych kluczy. Stage 9 pozostaje `IN_PROGRESS / NO-GO`; istniejące
