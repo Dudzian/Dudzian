@@ -73,6 +73,7 @@ Item {
 
     ScrollView {
         id: mainScroll
+        objectName: "workbenchScroll"
         anchors.fill: parent
         enabled: viewModel.catalogReady && !viewModel.workbenchBusy
         opacity: (viewModel.catalogReady && !viewModel.workbenchBusy) ? 1 : 0.4
@@ -202,10 +203,11 @@ Item {
                                 }
 
                                 Rectangle {
+                                    objectName: "strategyEntrySeparator"
                                     width: parent.width
                                     height: 1
                                     color: palette.mid
-                                    opacity: index === ListView.view.count - 1 ? 0 : 0.4
+                                    opacity: strategyListView && index === strategyListView.count - 1 ? 0 : 0.4
                                 }
                             }
                         }

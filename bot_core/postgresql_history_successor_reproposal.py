@@ -249,7 +249,7 @@ class PostgreSQLHistorySuccessorReproposalV1:
             self, "_PostgreSQLHistorySuccessorReproposalV1__admin_connection", admin_connection
         )
         try:
-            with self._connect() as conn:
+            with self._connect() as conn, conn.transaction():
                 qualify_history_successor_reproposal_v1(conn, deployment)
         except Exception:
             raise AtomicRootProofCommitUnavailable(

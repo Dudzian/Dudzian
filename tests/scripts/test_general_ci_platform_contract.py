@@ -38,6 +38,14 @@ POSTGRESQL_ISSUER_KEYWORDS = (
     "root_proof_issuer_orchestration_integration"
 )
 POSTGRESQL_HISTORY_KEYWORDS = "history_successor_reproposal"
+GENERAL_MARKERS = (
+    "not external_postgresql and not integration and not e2e_demo_paper "
+    "and not retraining and not soak and not performance and not qml"
+)
+POSTGRESQL_MARKERS = (
+    "external_postgresql and not integration and not e2e_demo_paper "
+    "and not retraining and not soak and not performance and not qml"
+)
 
 
 def _general_ci_jobs() -> dict:
@@ -110,17 +118,153 @@ def _postgresql_shard_arguments(job: dict, shard: str, directory: Path) -> list[
     """Execute the real shell selection without starting pytest or a database."""
     directory.mkdir(parents=True)
     command = _pytest_command(job).replace("${{ matrix.shard }}", shard)
-    recorder = "python() { printf '%s\\0' \"$@\" > pytest-argv; }\n"
+    recorder = 'python() { printf \'%s\\0\' "$#" "$@" >> pytest-argv; }\n'
     result = subprocess.run(
         [_contract_bash(), "-c", recorder + command],
         cwd=directory,
         capture_output=True,
         text=True,
+        timeout=10,
     )
     assert result.returncode == 0, result.stderr
     arguments = (directory / "pytest-argv").read_bytes().split(b"\0")
     assert arguments.pop() == b""
+    count = int(arguments.pop(0))
+    assert count == len(arguments), "exactly one pytest invocation required"
     return [argument.decode() for argument in arguments]
+
+
+def _without_pytest_reporting(arguments: list[str]) -> list[str]:
+    """Permit only one approved summary option at the pytest option boundary."""
+    assert arguments[:2] == ["-m", "pytest"]
+    if arguments[2:3] == ["-ra"]:
+        return arguments[:2] + arguments[3:]
+    return arguments
+
+
+def _assert_fast_pytest_arguments(arguments: list[str], *, selector: str | None = None) -> None:
+    expected = ["-m", "pytest", "-p", "asyncio", "--fast"]
+    if selector is not None:
+        expected.extend(["-k", selector])
+    expected.extend(
+        [
+            "-m",
+            POSTGRESQL_MARKERS if selector is not None else GENERAL_MARKERS,
+            "--ignore=tests/e2e",
+            "--ignore=tests/integration",
+            "--ignore=tests/performance",
+            "--ignore=tests/ui_pyside",
+            "--ignore=tests/ui_backend",
+            *(f"--ignore-glob={pattern}" for pattern in SERIAL_LICENSING_GLOBS),
+            "--maxfail=1",
+            "--durations=25" if selector is not None else "--durations=10",
+            "--junitxml=test-results/pytest.xml",
+        ]
+    )
+    assert _without_pytest_reporting(arguments) == expected
+
+
+def _logical_pytest_arguments(command: str, executable: str = "python") -> list[str]:
+    """Parse one continued invocation in steps with setup commands or heredocs."""
+    prefix = f"{executable} -m pytest"
+    lines = command.splitlines()
+    starts = [index for index, line in enumerate(lines) if prefix in line]
+    assert len(starts) == 1, "exactly one pytest invocation required"
+    index = starts[0]
+    invocation = lines[index].split(prefix, 1)[1]
+    while invocation.rstrip().endswith("\\"):
+        index += 1
+        invocation = invocation.rstrip()[:-1] + " " + lines[index].strip()
+    return ["-m", "pytest", *shlex.split(invocation)]
+
+
+@pytest.mark.parametrize("reporting", ["", "-ra "])
+@pytest.mark.parametrize(
+    ("shard", "selector"),
+    [
+        (
+            "issuer-durability",
+            f"({POSTGRESQL_ISSUER_KEYWORDS}) and not {POSTGRESQL_HISTORY_KEYWORDS}",
+        ),
+        ("history-reproposal", POSTGRESQL_HISTORY_KEYWORDS),
+        (
+            "remaining-security",
+            f"not ({POSTGRESQL_ISSUER_KEYWORDS} or {POSTGRESQL_HISTORY_KEYWORDS})",
+        ),
+    ],
+)
+def test_postgresql_shell_contract_accepts_only_approved_reporting(
+    tmp_path, reporting, shard, selector
+):
+    job = _general_ci_jobs()["py-tests-ubuntu-postgresql"]
+    step = _pytest_step(job)
+    step["run"] = step["run"].replace("python -m pytest -ra ", f"python -m pytest {reporting}")
+    arguments = _postgresql_shard_arguments(job, shard, tmp_path / "recorded")
+    _assert_fast_pytest_arguments(arguments, selector=selector)
+
+
+@pytest.mark.parametrize(
+    ("before", "after"),
+    [
+        pytest.param("-ra", "-rA", id="unapproved-summary"),
+        pytest.param("-ra", "-ra -ra", id="duplicate-summary"),
+        pytest.param("-ra", "--collect-only", id="collection-without-execution"),
+        pytest.param("-ra", "--disable-warnings", id="hidden-warnings"),
+        pytest.param("-p asyncio", "-p no:asyncio", id="disabled-asyncio"),
+        pytest.param("--fast", "", id="missing-fast"),
+        pytest.param('-k "$SHARD_KEYWORDS"', "-k $SHARD_KEYWORDS", id="split-selector"),
+        pytest.param(
+            '-k "$SHARD_KEYWORDS"',
+            '-k "history_successor_reproposal"',
+            id="wrong-shard-selector",
+        ),
+        pytest.param(
+            '-m "external_postgresql and',
+            '-m "not external_postgresql and',
+            id="wrong-database-marker",
+        ),
+        pytest.param("--durations=25", "--durations=25 -n 2", id="parallel-database-tests"),
+        pytest.param(
+            "--durations=25",
+            "--durations=25 tests/security/test_one.py",
+            id="restricted-test-path",
+        ),
+        pytest.param(
+            "--durations=25",
+            "--durations=25 --ignore=tests/security",
+            id="missing-security-coverage",
+        ),
+        pytest.param(
+            "--ignore-glob=tests/licensing/test_cha_*.py",
+            "--ignore-glob=tests/licensing/test_cha_root_proof*.py",
+            id="changed-licensing-partition",
+        ),
+        pytest.param("--maxfail=1", "--maxfail=2", id="changed-failure-policy"),
+        pytest.param("--fast \\\n", "--fast\n", id="broken-shell-continuation"),
+        pytest.param(
+            "--junitxml=test-results/pytest.xml",
+            "--junitxml=test-results/pytest.xml\npython -m pytest --collect-only",
+            id="second-pytest-invocation",
+        ),
+    ],
+)
+def test_postgresql_shell_contract_rejects_selection_and_execution_drift(tmp_path, before, after):
+    job = _general_ci_jobs()["py-tests-ubuntu-postgresql"]
+    step = _pytest_step(job)
+    assert step["run"].count(before) == 1
+    step["run"] = step["run"].replace(before, after)
+    with pytest.raises(AssertionError):
+        arguments = _postgresql_shard_arguments(job, "issuer-durability", tmp_path / "recorded")
+        _assert_fast_pytest_arguments(
+            arguments,
+            selector=f"({POSTGRESQL_ISSUER_KEYWORDS}) and not {POSTGRESQL_HISTORY_KEYWORDS}",
+        )
+
+
+def test_postgresql_shell_contract_rejects_unknown_shard(tmp_path):
+    job = _general_ci_jobs()["py-tests-ubuntu-postgresql"]
+    with pytest.raises(AssertionError, match="Unknown PostgreSQL qualification shard"):
+        _postgresql_shard_arguments(job, "unknown", tmp_path / "recorded")
 
 
 def test_external_postgresql_marker_is_registered_and_applied():
@@ -185,11 +329,10 @@ def test_ubuntu_runs_external_postgresql_against_postgresql_16_service(tmp_path)
         arguments = _postgresql_shard_arguments(postgres_job, shard, tmp_path / shard)
         # A doubled shell continuation would introduce a literal path or try to
         # execute --fast as a command; inspecting YAML text alone cannot catch it.
-        assert arguments[:5] == ["-m", "pytest", "-p", "asyncio", "--fast"]
-        assert "\\" not in arguments
-        assert arguments[arguments.index("-k") + 1] == expected_selectors[shard]
-        assert arguments[-1] == "--junitxml=test-results/pytest.xml"
-        assert "-n" not in arguments and "--numprocesses" not in arguments
+        _assert_fast_pytest_arguments(arguments, selector=expected_selectors[shard])
+    _assert_fast_pytest_arguments(
+        _postgresql_shard_arguments(general, "unused", tmp_path / "general")
+    )
     for command in (general_command, postgres_command):
         assert "--fast" in command
         assert "--maxfail=1" in command
@@ -206,7 +349,7 @@ def test_ubuntu_runs_external_postgresql_against_postgresql_16_service(tmp_path)
     postgres = postgres_job["services"]["postgres"]
     assert postgres["image"] == "postgres:16"
     assert postgres["env"]["POSTGRES_HOST_AUTH_METHOD"] == "trust"
-    assert "55432:5432" in [str(mapping) for mapping in postgres["ports"]]
+    assert [str(mapping) for mapping in postgres["ports"]] == ["127.0.0.1:55432:5432"]
     assert postgres_job["timeout-minutes"] == 150
     test_step = _pytest_step(postgres_job)
     assert test_step["timeout-minutes"] == 120
@@ -256,7 +399,8 @@ def test_ubuntu_runs_external_postgresql_against_postgresql_16_service(tmp_path)
     )
 
 
-def test_postgresql_keyword_shards_are_disjoint_and_exhaustive_in_pytest(tmp_path):
+@pytest.mark.parametrize("reporting", [(), ("-ra",)])
+def test_postgresql_keyword_shards_are_disjoint_and_exhaustive_in_pytest(tmp_path, reporting):
     """Exercise pytest -k itself for every issuer/history keyword combination."""
     terms = POSTGRESQL_ISSUER_KEYWORDS.split(" or ") + [POSTGRESQL_HISTORY_KEYWORDS]
     source = []
@@ -288,6 +432,7 @@ def test_postgresql_keyword_shards_are_disjoint_and_exhaustive_in_pytest(tmp_pat
                 sys.executable,
                 "-m",
                 "pytest",
+                *reporting,
                 "-c",
                 str(config),
                 "--collect-only",
@@ -416,7 +561,8 @@ def test_heavy_licensing_security_suite_is_split_without_coverage_gap():
     assert "--ignore-glob=tests/licensing/test_cha_root_proof*.py" not in command
     assert "shopt -s nullglob" in command
     assert '"${licensing_tests[@]}"' in command
-    assert "pytest -p asyncio" in command
+    arguments = _without_pytest_reporting(_logical_pytest_arguments(command))
+    assert arguments[:5] == ["-m", "pytest", "-p", "asyncio", "--fast"]
     assert "--fast" in command
     assert "-n " not in command
     assert "--numprocesses" not in command
@@ -506,7 +652,12 @@ def test_ubuntu_has_authoritative_elevated_native_peer_auth_execution():
 
     command = matching_steps[0]["run"]
     assert "sudo " in command
-    assert '"${PYTHON_BIN}" -m pytest -q' in command
+    assert _without_pytest_reporting(_logical_pytest_arguments(command, '"${PYTHON_BIN}"')) == [
+        "-m",
+        "pytest",
+        "-q",
+        "tests/security/test_freshness_semantic_verifier_postgresql.py",
+    ]
     assert "tests/security/test_freshness_semantic_verifier_postgresql.py" in command
     assert "--collect-only" not in command
     assert '-m "' not in command
@@ -526,7 +677,7 @@ def test_ubuntu_has_authoritative_elevated_native_peer_auth_execution():
     )
     assert preflight in command
     assert "\n            python -c " not in command
-    assert command.index(preflight) < command.index('"${PYTHON_BIN}" -m pytest -q')
+    assert command.index(preflight) < command.index('"${PYTHON_BIN}" -m pytest')
     for tool in ("runuser", "useradd", "pg_config", "initdb", "pg_ctl"):
         assert f'"{tool}"' in command
 

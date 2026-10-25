@@ -528,13 +528,13 @@ jobs:
         run: mypy
 
       - name: Pytest demo→paper scenario
-        run: python -m pytest -m e2e_demo_paper --maxfail=1
+        run: python -m pytest -ra -m e2e_demo_paper --maxfail=1
 
       - name: Pytest paper execution smoke
-        run: python -m pytest tests/test_paper_execution.py
+        run: python -m pytest -ra tests/test_paper_execution.py
 
       - name: Pytest execution router integrations
-        run: python -m pytest tests/integration/test_execution_router_failover.py
+        run: python -m pytest -ra tests/integration/test_execution_router_failover.py
 
   py-tests-windows:
     if: github.event_name != 'schedule'

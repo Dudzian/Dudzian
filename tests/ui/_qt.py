@@ -5,10 +5,11 @@ from __future__ import annotations
 import ctypes
 import ctypes.util
 import os
+import re
 import sys
 from importlib import import_module
 from types import ModuleType
-from typing import Any
+from typing import Any, NoReturn
 
 _REQUIRE_ENV = {"1", "true", "yes", "on"}
 
@@ -17,20 +18,47 @@ def _qml_required() -> bool:
     return os.getenv("PYTEST_REQUIRE_QML", "").lower() in _REQUIRE_ENV
 
 
-def require_pyside6() -> ModuleType:
-    """Zwróć moduł PySide6 lub przerwij test z komunikatem o brakującej zależności."""
+def _missing_qt_dependency(exc: ImportError) -> bool:
+    if isinstance(exc, ModuleNotFoundError):
+        return bool(
+            exc.name
+            and (
+                exc.name == "PySide6"
+                or exc.name.startswith("PySide6.")
+                or exc.name == "shiboken6"
+                or exc.name.startswith("shiboken6.")
+            )
+        )
+    # Missing ELF dependencies are optional only outside the required QML job.
+    # ABI/symbol errors and unrelated import failures must remain visible.
+    return bool(
+        sys.platform.startswith("linux")
+        and re.fullmatch(
+            r"lib[^:/\n]+\.so(?:\.[\w.-]+)*: cannot open shared object file: No such file or directory",
+            str(exc),
+        )
+    )
+
+
+def _qt_unavailable(message: str, exc: BaseException) -> NoReturn:
+    if _qml_required():
+        raise AssertionError(message) from exc
+    import pytest
+
+    pytest.skip(message, allow_module_level=True)
+
+
+def require_pyside6(*, modules: tuple[str, ...] = ()) -> ModuleType:
+    """Sprawdź PySide6 i żądane moduły; wymagany job QML nie może ich pominąć."""
     try:
         module = import_module("PySide6")
-    except ModuleNotFoundError as exc:  # pragma: no cover - zależne od środowiska
-        if _qml_required():
-            raise AssertionError(
-                "PySide6 musi być zainstalowany w środowisku testowym UI (job ui-tests)."
-            ) from exc
-        import pytest
-
-        pytest.skip(
-            "Pomijam testy QML: moduł PySide6 nie jest dostępny w bieżącym środowisku.",
-            allow_module_level=True,
+        for name in modules:
+            import_module(f"PySide6.{name}")
+    except ImportError as exc:
+        if not _missing_qt_dependency(exc):
+            raise
+        _qt_unavailable(
+            f"Brak wymaganej zależności PySide6/Qt w środowisku testowym UI: {exc}", exc
         )
     return module
 
@@ -39,10 +67,9 @@ def require_libgl() -> None:
     """Wymuś obecność biblioteki OpenGL w środowisku testowym.
 
     Sprawdzamy tylko platformy linuksowe, bo na Windows i macOS Qt zapewnia
-    własne biblioteki lub używa innych nazw. Jeśli OpenGL nie jest obecny na
-    Linuksie, spróbujemy go przygotować przy użyciu istniejącego helpera z
-    ``tests.utils.libgl``. Dopiero jeśli to się nie uda, testy zostaną
-    pominięte na poziomie modułu.
+    własne biblioteki lub używa innych nazw. Wymagany job QML musi dostarczyć
+    bibliotekę; jej brak jest błędem. Poza nim próbujemy istniejącego helpera
+    ``tests.utils.libgl`` i pomijamy opcjonalny moduł, jeżeli nadal jej brakuje.
     """
 
     if not sys.platform.startswith("linux"):
@@ -51,8 +78,9 @@ def require_libgl() -> None:
     try:
         ctypes.CDLL("libGL.so.1")
         return
-    except OSError:
-        pass
+    except OSError as exc:
+        if _qml_required():
+            raise AssertionError("Brak biblioteki libGL.so.1 wymaganej przez job QML") from exc
 
     try:
         from tests.utils.libgl import ensure_libgl_available

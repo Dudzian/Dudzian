@@ -9,6 +9,11 @@ import pytest
 
 from bot_core import postgresql_atomic_root_proof_commit as runtime
 from bot_core import postgresql_atomic_root_proof_qualification as qualification
+from bot_core import postgresql_custody_lifecycle_qualification as custody_qualification
+from bot_core import postgresql_history_successor_reproposal as reproposal
+from bot_core import (
+    postgresql_history_successor_reproposal_qualification as reproposal_qualification,
+)
 from bot_core.postgresql_entitlement_registry import PostgreSQLConnectionConfig
 from tests.security.test_atomic_root_proof_commit_contract import _deployment
 from tests.security.test_postgresql_checkpoint_authority import BASE_DSN
@@ -118,4 +123,72 @@ def test_constructor_qualifies_inside_an_explicit_transaction(live_connection, m
     with pytest.raises(qualification.AtomicRootProofQualificationError, match="direct-login"):
         runtime.PostgreSQLAtomicRootProofCommit(deployment)
     assert observations == [psycopg.pq.TransactionStatus.INTRANS]
+    assert notices == []
+
+
+def _uninstalled_successor_deployment():
+    """Negative-test DTO; it never qualifies a database or grants authority."""
+    atomic = replace(
+        _deployment(administrative=True), writer_connection=PostgreSQLConnectionConfig(BASE_DSN)
+    )
+    lifecycle = custody_qualification.PostgreSQLCustodyLifecycleTestDeployment(
+        atomic,
+        PostgreSQLConnectionConfig(BASE_DSN),
+        b"a" * 32,
+        atomic.catalog_sha256,
+        custody_qualification._LIFECYCLE_ADMINISTRATIVE_ORIGIN,
+        3,
+    )
+    return reproposal_qualification.PostgreSQLHistorySuccessorReproposalV1Deployment(
+        lifecycle, None, "ab" * 32, reproposal_qualification._ORIGIN
+    )
+
+
+def test_successor_constructor_enters_transaction_before_transitive_atomic_guard(
+    live_connection, monkeypatch
+):
+    observations = []
+    errors = []
+    notices = []
+    live_connection.add_notice_handler(lambda notice: notices.append(notice.message_primary))
+    original = custody_qualification.qualify_atomic_root_proof_authority
+
+    def qualify(conn, deployment, *, expected_role="issuer_writer"):
+        observations.append(conn.info.transaction_status)
+        try:
+            return original(conn, deployment, expected_role=expected_role)
+        except qualification.AtomicRootProofQualificationError as exc:
+            errors.append(str(exc))
+            raise
+
+    monkeypatch.setattr(custody_qualification, "qualify_atomic_root_proof_authority", qualify)
+    monkeypatch.setattr(
+        reproposal.PostgreSQLHistorySuccessorReproposalV1,
+        "_connect",
+        lambda self: live_connection,
+    )
+    with pytest.raises(runtime.AtomicRootProofCommitUnavailable, match="COMPOSITION_UNAVAILABLE"):
+        reproposal.PostgreSQLHistorySuccessorReproposalV1(_uninstalled_successor_deployment())
+    # The complete HSR -> custody -> atomic chain must reach principal refusal
+    # in a live transaction, rather than failing its transaction precondition.
+    assert observations == [psycopg.pq.TransactionStatus.INTRANS]
+    assert errors == ["exact direct-login authority principal required"]
+    assert live_connection.closed
+    assert notices == []
+
+
+def test_successor_qualifier_still_refuses_idle_autocommit(live_connection):
+    notices = []
+    live_connection.add_notice_handler(lambda notice: notices.append(notice.message_primary))
+    with pytest.raises(
+        reproposal_qualification.HistorySuccessorReproposalQualificationError
+    ) as denied:
+        reproposal_qualification.qualify_history_successor_reproposal_v1(
+            live_connection, _uninstalled_successor_deployment()
+        )
+    custody_error = denied.value.__cause__
+    assert isinstance(custody_error, custody_qualification.CustodyLifecycleQualificationError)
+    assert type(custody_error.__cause__) is qualification.AtomicRootProofQualificationError
+    assert str(custody_error.__cause__) == "explicit qualification transaction required"
+    assert live_connection.info.transaction_status is psycopg.pq.TransactionStatus.IDLE
     assert notices == []

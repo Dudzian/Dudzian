@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 import ast
+import os
 from pathlib import Path
+import subprocess
+import sys
+
+import pytest
 
 from tests import _qt_utils
 from tests.ui import _qt_utils as _ui_qt_utils
@@ -54,9 +59,9 @@ def test_teardown_qml_engine_can_skip_root_deletion(monkeypatch) -> None:
 
     monkeypatch.setattr(
         _qt_utils,
-        "force_qt_cleanup",
-        lambda *, process_events=None, process_rounds=10: (
-            cleanup_calls.append(f"cleanup:{process_rounds}")
+        "_flush_deferred_qt_objects",
+        lambda receivers, *, process_events=None: (
+            cleanup_calls.append("owned_cleanup")
             or (process_events() if process_events is not None else None)
         ),
     )
@@ -73,8 +78,22 @@ def test_teardown_qml_engine_can_skip_root_deletion(monkeypatch) -> None:
     assert engine.clear_component_cache_calls == 1
     assert engine.collect_garbage_calls == 1
     assert engine.delete_later_calls == 1
-    assert cleanup_calls == ["cleanup:10"]
+    assert cleanup_calls == ["owned_cleanup"]
     assert process_events_calls == ["process"]
+
+
+def test_scoped_deferred_cleanup_rejects_global_none_receiver(monkeypatch) -> None:
+    calls = []
+
+    class Application:
+        @staticmethod
+        def sendPostedEvents(receiver, event):
+            calls.append((receiver, event))
+
+    monkeypatch.setattr(_qt_utils, "QCoreApplication", Application)
+    with pytest.raises(ValueError, match="explicit QObject receivers"):
+        _qt_utils._flush_deferred_qt_objects((None,))
+    assert calls == []
 
 
 def test_teardown_hosted_qml_engine_core_is_non_aggressive(monkeypatch) -> None:
@@ -131,12 +150,12 @@ def test_teardown_qml_engine_flushes_roots_before_cache_clear(monkeypatch) -> No
     engine = _FakeEngine()
     call_order: list[str] = []
 
-    def fake_cleanup(*, process_events=None, process_rounds=10) -> None:
-        call_order.append(f"cleanup:{process_rounds}")
+    def fake_cleanup(receivers, *, process_events=None) -> None:
+        call_order.append("roots" if list(receivers) == engine.roots else "engine")
         if process_events is not None:
             process_events()
 
-    monkeypatch.setattr(_qt_utils, "force_qt_cleanup", fake_cleanup)
+    monkeypatch.setattr(_qt_utils, "_flush_deferred_qt_objects", fake_cleanup)
 
     original_clear = engine.clearComponentCache
 
@@ -154,12 +173,53 @@ def test_teardown_qml_engine_flushes_roots_before_cache_clear(monkeypatch) -> No
 
     assert [root.delete_later_calls for root in engine.roots] == [1, 1]
     assert call_order == [
-        "cleanup:10",
+        "roots",
         "process_events",
         "clear_component_cache",
-        "cleanup:10",
+        "engine",
         "process_events",
     ]
+
+
+@pytest.mark.qml
+def test_native_engine_cleanup_preserves_another_owners_pending_qobject() -> None:
+    environment = os.environ.copy()
+    environment.update(QT_QPA_PLATFORM="offscreen", PYTEST_REQUIRE_QML="1")
+    code = """
+from tests.ui._qt import require_pyside6
+require_pyside6(modules=('QtCore', 'QtQml', 'QtWidgets'))
+from PySide6.QtCore import QCoreApplication, QEvent, QObject
+from PySide6.QtQml import QQmlApplicationEngine
+from tests._qt_utils import teardown_qml_engine
+import shiboken6
+app = QCoreApplication([])
+unrelated = QObject()
+unrelated_destroyed = []
+unrelated.destroyed.connect(lambda: unrelated_destroyed.append(True))
+unrelated.deleteLater()
+engine = QQmlApplicationEngine()
+engine.loadData(b'import QtQml\\nQtObject { objectName: "owned-root" }')
+assert engine.rootObjects()
+root = engine.rootObjects()[0]
+teardown_qml_engine(engine, process_events=app.processEvents)
+assert not shiboken6.isValid(root), 'owned root was not destroyed'
+assert not shiboken6.isValid(engine), 'owned engine was not destroyed'
+assert shiboken6.isValid(unrelated), "another owner's pending object was destroyed"
+assert unrelated_destroyed == []
+QCoreApplication.sendPostedEvents(unrelated, QEvent.DeferredDelete)
+assert not shiboken6.isValid(unrelated)
+assert unrelated_destroyed == [True]
+"""
+    result = subprocess.run(
+        [sys.executable, "-X", "faulthandler", "-c", code],
+        cwd=Path(__file__).resolve().parents[1],
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_ui_qt_utils_shim_is_module_alias() -> None:

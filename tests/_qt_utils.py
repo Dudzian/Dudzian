@@ -130,6 +130,23 @@ def settle_qt_application(
     force_qt_cleanup(process_events=process_events, process_rounds=process_rounds)
 
 
+def _flush_deferred_qt_objects(
+    receivers: Iterable[object],
+    *,
+    process_events: Callable[[], None] | None = None,
+) -> None:
+    """Flush explicit DeferredDelete receivers; event pumping remains global."""
+
+    receivers = tuple(receivers)
+    if any(receiver is None for receiver in receivers):
+        raise ValueError("DeferredDelete cleanup requires explicit QObject receivers")
+    if QCoreApplication is not None and QEvent is not None:
+        for receiver in receivers:
+            QCoreApplication.sendPostedEvents(receiver, QEvent.DeferredDelete)
+    if process_events is not None:
+        process_events()
+
+
 def teardown_qml_engine(
     engine: object,
     *,
@@ -154,10 +171,12 @@ def teardown_qml_engine(
         pass
 
     if delete_root_objects:
+        roots_to_delete = []
         try:
             root_objects = getattr(engine, "rootObjects", None)
             if callable(root_objects):
-                for root in list(root_objects() or []):
+                roots_to_delete = list(root_objects() or [])
+                for root in roots_to_delete:
                     delete_later = getattr(root, "deleteLater", None)
                     if callable(delete_later):
                         delete_later()
@@ -165,7 +184,10 @@ def teardown_qml_engine(
             pass
         # Najpierw domknij DeferredDelete rootów, żeby nie czyścić cache/GC,
         # kiedy obiekty QML nadal są "żywe, ale zaplanowane do usunięcia".
-        force_qt_cleanup(process_events=process_events)
+        # A global DeferredDelete flush also destroys scenes queued by the
+        # intentionally non-aggressive hosted teardown below. Only this engine's
+        # roots must be gone before clearing its cache and collecting its QML GC.
+        _flush_deferred_qt_objects(roots_to_delete, process_events=process_events)
 
     clear_component_cache = getattr(engine, "clearComponentCache", None)
     if callable(clear_component_cache):
@@ -179,7 +201,7 @@ def teardown_qml_engine(
     if callable(delete_later):
         delete_later()
 
-    force_qt_cleanup(process_events=process_events)
+    _flush_deferred_qt_objects((engine,), process_events=process_events)
 
 
 def teardown_hosted_qml_engine_core(

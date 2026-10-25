@@ -1,5 +1,9 @@
 # CryptoHunter — remediacja CI, 24 października 2026
 
+> Raport pierwszego etapu na SHA `8581f5fc`. Wyniki późniejszego pełnego CI
+> ujawniły dodatkowe regresje; ich przyczyny, poprawki i aktualne ograniczenia
+> opisuje [kontynuacja PR #3205](ci-remediation-pr3205-followup.md).
+
 ## A. Root causes
 
 Analiza obejmuje wszystkie **80 jobów** dwóch wskazanych przebiegów:

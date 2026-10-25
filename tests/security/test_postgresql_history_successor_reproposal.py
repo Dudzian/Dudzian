@@ -516,6 +516,100 @@ def test_stale_second_original_reproposes_history_and_commits_original_exact_pro
     assert _read_all(value) == complete
 
 
+def test_constructor_qualifies_with_direct_login_and_transaction_local_path(
+    reproposal_boundary, monkeypatch
+):
+    value = reproposal_boundary
+    module = _runtime_module()
+    original = module.qualify_history_successor_reproposal_v1
+    observed = []
+    notices = []
+
+    def qualify(conn, deployment, *, expected_role="issuer_writer"):
+        before = conn.info.transaction_status
+        conn.add_notice_handler(lambda notice: notices.append(notice.message_primary))
+        original(conn, deployment, expected_role=expected_role)
+        observed.append(
+            (
+                before,
+                conn.info.transaction_status,
+                conn.execute("SELECT session_user::text,current_user::text").fetchone(),
+                conn.execute("SHOW search_path").fetchone(),
+            )
+        )
+
+    monkeypatch.setattr(module, "qualify_history_successor_reproposal_v1", qualify)
+    before = _read_all(value)
+    reconstructed = module.PostgreSQLHistorySuccessorReproposalV1(
+        value.reproposal_deployment,
+        admin_connection=atomic_tests._connection(value.setup.test_admin_role),
+    )
+    assert observed == [
+        (
+            psycopg.pq.TransactionStatus.INTRANS,
+            psycopg.pq.TransactionStatus.INTRANS,
+            (value.setup.issuer_writer_role, value.setup.issuer_writer_role),
+            ("pg_catalog",),
+        )
+    ]
+    assert reconstructed.read_current_proposal(value.secondary.preparation) == value.second_proposal
+    assert notices == []
+    assert _read_all(value) == before
+
+
+def test_admin_qualification_refusal_never_submits_reproposal_admission(
+    reproposal_boundary, monkeypatch
+):
+    value = reproposal_boundary
+    _winner(value)
+    before = _read_all(value)
+    module = _runtime_module()
+    original_qualify = module.qualify_history_successor_reproposal_v1
+    original_execute = psycopg.Connection.execute
+    observed = []
+    approvals = []
+
+    def execute(conn, query, params=None, **kwargs):
+        text = query.as_string(conn) if isinstance(query, sql.Composable) else query
+        if ".approve_history_proposal(" in text:
+            approvals.append(text)
+        return original_execute(conn, query, params, **kwargs)
+
+    def qualify(conn, deployment, *, expected_role="issuer_writer"):
+        if expected_role == "admin":
+            observed.append(
+                (
+                    conn.info.transaction_status,
+                    conn.execute("SELECT session_user::text,current_user::text").fetchone(),
+                    conn.execute("SHOW transaction_isolation").fetchone(),
+                    conn.execute("SHOW search_path").fetchone(),
+                )
+            )
+            from bot_core.postgresql_history_successor_reproposal_qualification import (
+                HistorySuccessorReproposalQualificationError,
+            )
+
+            raise HistorySuccessorReproposalQualificationError("isolated live catalog drift")
+        return original_qualify(conn, deployment, expected_role=expected_role)
+
+    monkeypatch.setattr(module, "qualify_history_successor_reproposal_v1", qualify)
+    monkeypatch.setattr(psycopg.Connection, "execute", execute)
+    with pytest.raises(
+        atomic_runtime.AtomicRootProofCommitUnavailable, match="QUALIFIED_REPROPOSAL"
+    ):
+        _repropose(value)
+    assert observed == [
+        (
+            psycopg.pq.TransactionStatus.INTRANS,
+            (value.setup.test_admin_role, value.setup.test_admin_role),
+            ("serializable",),
+            ("pg_catalog",),
+        )
+    ]
+    assert approvals == []
+    assert _read_all(value) == before
+
+
 def test_parallel_reproposals_have_one_durable_revision_and_exact_replay(
     reproposal_boundary, monkeypatch
 ):
