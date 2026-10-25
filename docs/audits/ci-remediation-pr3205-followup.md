@@ -1,5 +1,9 @@
 # PR #3205 — kontynuacja remediacji regresji CI
 
+> Kolejny przegląd pełnych zielonych logów SHA `8c836bdc` ujawnił wyciek HTTP TTL
+> i odroczone bindingi runtimeService. Ich naprawy, klasyfikację 17 advisories
+> oraz ocenę merge/production opisuje [końcowy audyt](ci-remediation-pr3205-final-review.md).
+
 ## 1. Stan i zakres
 
 Kontynuacja tej samej gałęzi `codex/ci-remediation-warning-audit` i tego samego

@@ -3145,7 +3145,7 @@ ApplicationWindow {
             previewState: root
             Layout.fillWidth: true
             Layout.fillHeight: true
-            runtimeService: runtimeService
+            runtimeService: root.runtimeService
             designSystem: rootDesignSystem
         }
     }
@@ -3328,12 +3328,12 @@ ApplicationWindow {
 
     Component {
         id: strategiesPanelComponent
-        Views.Strategies { previewState: root; Layout.fillWidth: true; Layout.fillHeight: true; runtimeService: runtimeService; designSystem: rootDesignSystem }
+        Views.Strategies { previewState: root; Layout.fillWidth: true; Layout.fillHeight: true; runtimeService: root.runtimeService; designSystem: rootDesignSystem }
     }
 
     Component {
         id: riskControlsPanelComponent
-        Views.RiskControls { previewState: root; Layout.fillWidth: true; Layout.fillHeight: true; runtimeService: runtimeService; designSystem: rootDesignSystem }
+        Views.RiskControls { previewState: root; Layout.fillWidth: true; Layout.fillHeight: true; runtimeService: root.runtimeService; designSystem: rootDesignSystem }
     }
 
     Component {

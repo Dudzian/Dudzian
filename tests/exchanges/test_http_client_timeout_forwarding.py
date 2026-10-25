@@ -36,7 +36,8 @@ def _fake_httpx_module() -> object:
 def test_urlopen_forwards_per_request_timeout(monkeypatch):
     client = _TimeoutCapturingClient()
 
-    monkeypatch.setattr(http_client, "_resolve_client", lambda base_url, timeout: client)
+    monkeypatch.setattr(http_client, "_CLIENT_CACHE", {})
+    monkeypatch.setattr(http_client, "get_rate_limited_client", lambda **kwargs: client)
     monkeypatch.setattr(http_client, "run_sync", _run_sync)
     monkeypatch.setattr(http_client, "_require_httpx", _fake_httpx_module)
 
@@ -49,7 +50,8 @@ def test_urlopen_forwards_per_request_timeout(monkeypatch):
 def test_urlopen_forwards_zero_timeout_without_defaulting(monkeypatch):
     client = _TimeoutCapturingClient()
 
-    monkeypatch.setattr(http_client, "_resolve_client", lambda base_url, timeout: client)
+    monkeypatch.setattr(http_client, "_CLIENT_CACHE", {})
+    monkeypatch.setattr(http_client, "get_rate_limited_client", lambda **kwargs: client)
     monkeypatch.setattr(http_client, "run_sync", _run_sync)
     monkeypatch.setattr(http_client, "_require_httpx", _fake_httpx_module)
 

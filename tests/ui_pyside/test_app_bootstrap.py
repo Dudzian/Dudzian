@@ -12,6 +12,7 @@ import pytest
 try:
     from PySide6.QtCore import QObject
     from PySide6.QtGui import QGuiApplication
+    from PySide6.QtQml import QQmlEngine, QQmlExpression
     from PySide6.QtQuick import QQuickItem
 except ImportError as exc:  # pragma: no cover - środowiska bez wsparcia GL
     pytest.skip(f"PySide6 unavailable: {exc}", allow_module_level=True)
@@ -73,6 +74,37 @@ def test_pyside_app_bootstrap_loads_qml(tmp_path: Path, request: pytest.FixtureR
     mode_controller = ctx.contextProperty("modeWizardController")
     assert mode_controller is not None
     root = engine.rootObjects()[0]
+    runtime_panels = []
+    for component_name in (
+        "strategiesPanelComponent",
+        "riskControlsPanelComponent",
+        "aiDecisionsPanelComponent",
+    ):
+        expression = QQmlExpression(
+            QQmlEngine.contextForObject(root),
+            root,
+            component_name + ".createObject(root.contentItem, {width: 1200, height: 800})",
+        )
+        value, undefined = expression.evaluate()
+        assert not expression.hasError(), expression.error().toString()
+        assert not undefined
+        panel = value if isinstance(value, QObject) else value.toQObject()
+        assert panel is not None
+        runtime_panels.append(panel)
+        assert panel.property("runtimeService") is runtime_service
+    # These are live parent bindings, not copies captured at creation time.
+    try:
+        clear_service = QQmlExpression(
+            QQmlEngine.contextForObject(root), root, "root.runtimeService = null"
+        )
+        clear_service.evaluate()
+        assert not clear_service.hasError(), clear_service.error().toString()
+        qt_app.processEvents()
+        assert all(panel.property("runtimeService") is None for panel in runtime_panels)
+    finally:
+        root.setProperty("runtimeService", runtime_service)
+        qt_app.processEvents()
+    assert all(panel.property("runtimeService") is runtime_service for panel in runtime_panels)
     mode_wizard = root.findChild(QObject, "modeWizardPreviewPanel")
     assert mode_wizard is not None
     assert mode_wizard.property("modeWizardController") is mode_controller
