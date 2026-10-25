@@ -8,10 +8,43 @@ import os
 import re
 import sys
 from importlib import import_module
+from pathlib import Path
 from types import ModuleType
 from typing import Any, NoReturn
 
 _REQUIRE_ENV = {"1", "true", "yes", "on"}
+
+
+def prepare_windows_offscreen_fonts() -> Path | None:
+    """Provide the Windows offscreen FreeType backend with an existing font directory."""
+
+    if (
+        sys.platform != "win32"
+        or os.environ.get("QT_QPA_PLATFORM", "").split(":", 1)[0] != "offscreen"
+    ):
+        return None
+    configured = os.environ.get("QT_QPA_FONTDIR")
+    if configured is None:
+        windows_root = os.environ.get("WINDIR") or os.environ.get("SystemRoot")
+        if not windows_root:
+            raise AssertionError("Windows offscreen Qt requires WINDIR or SystemRoot for fonts")
+        fonts = Path(windows_root) / "Fonts"
+    else:
+        if not configured.strip():
+            raise AssertionError("Windows offscreen Qt has an empty explicit QT_QPA_FONTDIR")
+        fonts = Path(configured)
+    # Qt 6.7.2 QFreeTypeFontDatabase scans precisely these filename extensions.
+    # Actual font parsing remains Qt's responsibility after QApplication starts.
+    if not fonts.is_dir() or not any(
+        item.is_file() and item.suffix.lower() in {".ttf", ".pfa", ".pfb", ".otf"}
+        for item in fonts.iterdir()
+    ):
+        raise AssertionError(
+            f"Windows offscreen Qt requires an existing directory with supported font files: {fonts}"
+        )
+    if configured is None:
+        os.environ["QT_QPA_FONTDIR"] = str(fonts)
+    return fonts
 
 
 def _qml_required() -> bool:

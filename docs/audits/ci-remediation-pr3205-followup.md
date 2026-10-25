@@ -95,6 +95,31 @@ katalogu, ochronę odłączonego widoku, bool dla opcjonalnych błędów licencj
 aktualizację preferencji slidera wyłącznie po interakcji `onMoved`. Nie powstaje
 fikcyjny status licencji ani nowe prawo do operacji tradingowych.
 
+### Windows offscreen: rzeczywiste fonty zamiast pustego katalogu PySide6
+
+Na `2302baaf` główne testy wszystkich trzech systemów przeszły. Odblokowane
+Windows QML po raz pierwszy wykonało natywną regresję i zatrzymało się na
+`QFontDatabase: Cannot find font directory .../PySide6/lib/fonts`. Kontrola
+diagnostyki prawidłowo odrzuciła brak prerekwizytu. Qt 6.7.2 offscreen na Windows
+używa FreeType; domyślny katalog LibrariesPath/fonts nie zawiera fontów w kole
+PySide6. Nie jest to ponowny SIGSEGV ani błąd asercji aktualnego API.
+
+Testowy helper dla Windows offscreen wskazuje istniejący systemowy katalog
+WINDIR/Fonts (SystemRoot jako alternatywa) przez `QT_QPA_FONTDIR`, przed
+utworzeniem QApplication. Jawna konfiguracja jest zachowana; pusta, brakująca
+lub pozbawiona obsługiwanych plików konfiguracja kończy się błędem. Sprawdzenie
+obecności pliku o obsługiwanym rozszerzeniu nie jest walidacją jego bajtów;
+rzeczywiste ładowanie i diagnostyka nadal należą do Qt. Proces Windows po
+utworzeniu QApplication wymaga też niepustego `QFontDatabase.families()`.
+Pozostałe platformy i natywny backend `windows` pozostają bez zmian.
+Nie filtrowano warningu.
+
+Źródła Qt 6.7.2 potwierdzają [backend offscreen](https://github.com/qt/qtbase/blob/v6.7.2/src/plugins/platforms/offscreen/qoffscreenintegration.cpp),
+[wybór katalogu](https://github.com/qt/qtbase/blob/v6.7.2/src/gui/text/qplatformfontdatabase.cpp)
+i [skanowanie FreeType](https://github.com/qt/qtbase/blob/v6.7.2/src/gui/text/freetype/qfreetypefontdatabase.cpp).
+Obsługiwane w tym skanowaniu rozszerzenia to ttf/pfa/pfb/otf; sam ttc nie
+wystarcza. Wynik natywny Windows wymaga nowego przebiegu CI.
+
 ## 4. Zmienione pliki i powody
 
 - `bot_core/postgresql_history_successor_reproposal.py`: transakcja konstruktora.
@@ -134,6 +159,7 @@ fikcyjny status licencji ani nowe prawo do operacji tradingowych.
 | Pełne `tests/ui` QML i dwa nowe natywne przypadki helpera/procesu | 56 PASS, 1 SKIP Chromium, 102 deselected, 37.09 s, rzeczywisty exit 0 po podsumowaniu |
 | Końcowy Workbench / kontrakt procesu / zależności Qt / helper, po obu poprawkach przeglądu | 47 PASS, 1 SKIP Chromium, 15.43 s, rzeczywisty exit 0 |
 | Bootstrap aplikacji i kreator trybu po zmianie helpera | 4 PASS, 5.44 s, rzeczywisty exit 0, stderr 0 B |
+| Końcowy font setup / Workbench / proces / zależności Qt | 50 PASS, 1 SKIP Chromium, 11.80 s, exit 0; w tym 12 nowych przypadków konfiguracji i rzeczywisty Linux Qt 6.7.2 |
 | Zachowane AnyIO/network/cache/trading/catalog i zależności Qt | 111 PASS, 25.31 s; RuntimeWarning traktowany jako błąd |
 | Mypy skonfigurowany Linux / --platform win32 | Oba PASS, po 347 plików |
 | Ruff pełnego zakresu / dokładny hook ruff-format --all-files | PASS; końcowe wyniki przed pushem są odnotowane w opisie PR |

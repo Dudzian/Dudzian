@@ -91,10 +91,12 @@ def _qt_diagnostics() -> Iterator[None]:
 def _workbench_demo() -> Iterator[tuple[Any, Any]]:
     # Import native dependencies only in the fresh process. Ordinary Python and
     # PostgreSQL shards can collect/deselect this module without loading EGL.
-    from tests.ui._qt import require_pyside6
+    from tests.ui._qt import prepare_windows_offscreen_fonts, require_pyside6
 
+    font_directory = prepare_windows_offscreen_fonts()
     require_pyside6(modules=("QtCore", "QtQml", "QtWidgets"))
     from PySide6.QtCore import QObject, QUrl
+    from PySide6.QtGui import QFontDatabase
     from PySide6.QtQml import QQmlApplicationEngine
     from PySide6.QtWidgets import QApplication
 
@@ -104,6 +106,10 @@ def _workbench_demo() -> Iterator[tuple[Any, Any]]:
     assert isinstance(app, QApplication), (
         "Workbench requires a GUI application, not QCoreApplication"
     )
+    if font_directory is not None:
+        assert QFontDatabase.families(), (
+            f"Windows offscreen Qt found no usable font families in {font_directory}"
+        )
     # Retain the application and make engine ownership explicit for its complete
     # lifetime. This process has no deferred deletes from preceding QML tests.
     engine = QQmlApplicationEngine(app)
