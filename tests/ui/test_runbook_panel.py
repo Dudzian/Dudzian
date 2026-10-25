@@ -1,3 +1,4 @@
+import asyncio
 import os
 import sys
 from datetime import datetime, timezone
@@ -175,7 +176,7 @@ def test_runbook_controller_mapping(tmp_path: Path) -> None:
 
 def test_guardrail_report_endpoint_fastapi(tmp_path: Path) -> None:
     fastapi = pytest.importorskip("fastapi", reason="Wymagany fastapi do testu endpointu")
-    testclient = pytest.importorskip("fastapi.testclient", reason="Wymagany fastapi.testclient")
+    httpx = pytest.importorskip("httpx", reason="Wymagany httpx do testu endpointu")
 
     registry = MetricsRegistry()
     metrics = AsyncIOMetricSet(registry=registry)
@@ -199,9 +200,14 @@ def test_guardrail_report_endpoint_fastapi(tmp_path: Path) -> None:
 
     app = fastapi.FastAPI()
     app.include_router(endpoint.as_fastapi_router())
-    client = testclient.TestClient(app)
 
-    response = client.get("/guardrails/report")
+    async def request_report():
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+        ) as client:
+            return await client.get("/guardrails/report")
+
+    response = asyncio.run(request_report())
     assert response.status_code == 200
     payload = response.json()
     assert "summaries" in payload

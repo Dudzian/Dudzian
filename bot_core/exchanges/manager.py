@@ -576,7 +576,7 @@ def _load_dynamic_native_adapters(
         return
 
     try:
-        from bot_core.config.loader import load_core_config  # noqa: WPS433
+        from bot_core.config.loader import load_core_config
     except Exception as exc:  # pragma: no cover - opcjonalny loader
         log.debug("Pominięto dynamiczne adaptery – loader niedostępny: %s", exc)
         _DYNAMIC_ADAPTERS_INITIALIZED = True

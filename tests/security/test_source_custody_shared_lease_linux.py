@@ -46,6 +46,8 @@ _LOCK_RETRY_SECONDS = 0.01
 class TestOnlySourceLeaseError(RuntimeError):
     """An exact cooperative source lease could not be held and rechecked."""
 
+    __test__ = False  # Exception contract, not a pytest test class.
+
 
 @dataclass(frozen=True, slots=True)
 class SyntheticSourceReadLease:

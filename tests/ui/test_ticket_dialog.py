@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from tests.ui._qt import require_libgl, require_pyside6
+from tests.ui._qt_utils import teardown_qml_engine
 
 pytestmark = pytest.mark.qml
 
@@ -40,7 +41,15 @@ def project_with_data(tmp_path: Path) -> Path:
 
 
 @pytest.mark.timeout(30)
-def test_ticket_dialog_generates_package(tmp_path: Path, project_with_data: Path) -> None:
+@pytest.mark.parametrize(
+    "controller_property", ["diagnosticsController", "diagnosticsControllerContext"]
+)
+def test_ticket_dialog_generates_package(
+    tmp_path: Path,
+    project_with_data: Path,
+    controller_property: str,
+    request: pytest.FixtureRequest,
+) -> None:
     try:  # pragma: no cover - zależne od środowiska
         from PySide6.QtCore import Qt  # type: ignore[attr-defined]
         from PySide6.QtQuick import QQuickWindow, QSGRendererInterface  # type: ignore[attr-defined]
@@ -60,7 +69,8 @@ def test_ticket_dialog_generates_package(tmp_path: Path, project_with_data: Path
 
     app = QApplication.instance() or QApplication([])
     engine = QQmlApplicationEngine()
-    engine.rootContext().setContextProperty("diagnosticsController", controller)
+    request.addfinalizer(lambda: teardown_qml_engine(engine, process_events=app.processEvents))
+    engine.setInitialProperties({controller_property: controller})
 
     qml_path = Path(__file__).resolve().parents[2] / "ui" / "qml" / "support" / "TicketDialog.qml"
     qml_warnings: list = []
@@ -70,22 +80,14 @@ def test_ticket_dialog_generates_package(tmp_path: Path, project_with_data: Path
 
     engine.warnings.connect(_collect)  # type: ignore[attr-defined]
     engine.load(QUrl.fromLocalFile(str(qml_path)))
-    if qml_warnings or not engine.rootObjects():
-        warnings_text = (
-            "; ".join(warning.toString() for warning in qml_warnings) or "brak obiektów root"
-        )
-        pytest.skip(
-            f"Nie udało się załadować TicketDialog.qml: {warnings_text}",
-            allow_module_level=False,
-        )
+    assert not qml_warnings, "; ".join(warning.toString() for warning in qml_warnings)
+    assert engine.rootObjects(), "Nie udało się załadować TicketDialog.qml"
 
     dialog = engine.rootObjects()[0]
+    assert dialog.property("diagnosticsController") is controller
     dialog.open()
     controller.description = "Przykładowy opis"
 
     assert controller.generateDiagnostics() is True
     assert controller.lastArchivePath.endswith(".zip")
     assert Path(controller.lastArchivePath).exists()
-
-    engine.deleteLater()
-    app.quit()

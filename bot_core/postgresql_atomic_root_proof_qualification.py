@@ -443,12 +443,22 @@ def qualify_atomic_root_proof_authority(
     *,
     expected_role: str = "issuer_writer",
 ) -> None:
-    """Fail closed on drift; no function enables the public issuance runtime."""
+    """Qualify in the caller's transaction; never enable public issuance.
+
+    A default psycopg connection may begin its implicit transaction on the first
+    statement. An autocommit connection must already own an explicit transaction
+    so SET LOCAL remains effective for the complete qualification and operation.
+    """
     validate_atomic_root_proof_deployment(deployment)
     if expected_role not in {"issuer_writer", "test_admin"}:
         raise AtomicRootProofQualificationError("explicit administrative test deployment required")
     try:
         config = deployment.provisioning
+        if (
+            conn.autocommit
+            and conn.info.transaction_status is not psycopg.pq.TransactionStatus.INTRANS
+        ):
+            raise AtomicRootProofQualificationError("explicit qualification transaction required")
         conn.execute("SET LOCAL search_path=pg_catalog")
         principal = (
             config.issuer_writer_role

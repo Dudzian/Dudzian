@@ -8,6 +8,10 @@ QtObject {
     property var appController: null
     property var strategyController: null
     property var workbenchController: null
+    // These statuses belong to the catalog controller, not the trading scheduler.
+    readonly property bool workbenchBusy: workbenchController ? !!workbenchController.busy : false
+    readonly property string workbenchError: workbenchController && workbenchController.lastError
+                                           ? String(workbenchController.lastError) : ""
     property var riskModel: null
     property var riskHistoryModel: null
     property var licenseController: null
@@ -33,6 +37,11 @@ QtObject {
             console.warn("StrategyWorkbenchViewModel: cloneValue fallback", error)
             return value
         }
+    }
+
+    function clearWorkbenchError() {
+        if (workbenchController && typeof workbenchController.clearLastError === "function")
+            workbenchController.clearLastError()
     }
 
     function deriveRegimeMapFromPreset(preset) {
@@ -603,7 +612,7 @@ QtObject {
         refreshFromLive()
     }
     onWorkbenchControllerChanged: {
-        workbenchConnections.target = workbenchController
+        workbenchConnections.target = workbenchController || null
         syncCatalog()
         syncValidation()
         syncPresetHistory()
@@ -650,7 +659,7 @@ QtObject {
 
     property Connections workbenchConnections: Connections {
         id: workbenchConnections
-        target: root.workbenchController
+        target: root.workbenchController || null
         function onCatalogChanged() { root.syncCatalog() }
         function onLastValidationChanged() { root.syncValidation() }
         function onPresetHistoryChanged() { root.syncPresetHistory() }

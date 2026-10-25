@@ -493,13 +493,76 @@ def test_linux_cca_log_routes_to_integration_and_atomic_without_non_linux_fast_e
     assert '-m "not hardware and not destructive and not network"' in atomic
 
 
+def _assert_local_pg16_service(service: dict, host_port: int) -> None:
+    assert service["image"] == "postgres:16"
+    assert service["ports"] == [f"127.0.0.1:{host_port}:5432"]
+
+
+@pytest.mark.parametrize(
+    ("filename", "expected_services"),
+    [
+        (
+            "ci.yml",
+            {
+                "py-tests-ubuntu": {"postgres"},
+                "py-tests-ubuntu-postgresql": {"postgres"},
+            },
+        ),
+        (
+            "quality-security.yml",
+            {
+                "quality-ratchet": {"postgres", "postgres-unsafe", "postgres-other"},
+                "quality-ratchet-postgresql": {"postgres", "postgres-unsafe", "postgres-other"},
+                "semantic-issuer-preflight": {"postgres", "postgres-other"},
+                "atomic-root-proof-commit": {"postgres", "postgres-other"},
+                "history-successor-reproposal": {"postgres", "postgres-other"},
+            },
+        ),
+    ],
+)
+def test_all_ci_postgresql_services_publish_only_their_expected_loopback_port(
+    filename, expected_services
+):
+    jobs = yaml.safe_load((ROOT / ".github/workflows" / filename).read_text(encoding="utf-8"))[
+        "jobs"
+    ]
+    services = {
+        job_name: {
+            name: service
+            for name, service in job.get("services", {}).items()
+            if service.get("image") == "postgres:16"
+        }
+        for job_name, job in jobs.items()
+        if job.get("services")
+    }
+    assert {job: set(items) for job, items in services.items()} == expected_services
+    ports = {"postgres": 55432, "postgres-unsafe": 55433, "postgres-other": 55434}
+    for items in services.values():
+        for name, service in items.items():
+            _assert_local_pg16_service(service, ports[name])
+
+
+@pytest.mark.parametrize(
+    "ports",
+    [
+        ["55432:5432"],
+        ["0.0.0.0:55432:5432"],
+        ["[::]:55432:5432"],
+        ["127.0.0.1:55432:5432", "55432:5432"],
+        ["127.0.0.1:55434:5432"],
+    ],
+)
+def test_postgresql_service_contract_rejects_wildcard_extra_or_wrong_ports(ports):
+    with pytest.raises(AssertionError):
+        _assert_local_pg16_service({"image": "postgres:16", "ports": ports}, 55432)
+
+
 def test_history_qualification_has_independent_durable_pg16_and_real_restart_controls():
     history = _jobs()["history-successor-reproposal"]
     assert history["runs-on"] == "ubuntu-latest"
     assert set(history["services"]) == {"postgres", "postgres-other"}
-    for service, port in (("postgres", "55432:5432"), ("postgres-other", "55434:5432")):
-        assert history["services"][service]["image"] == "postgres:16"
-        assert port in [str(mapping) for mapping in history["services"][service]["ports"]]
+    for service, port in (("postgres", 55432), ("postgres-other", 55434)):
+        _assert_local_pg16_service(history["services"][service], port)
     verification = _step(history, "Verify independent durable PostgreSQL 16 clusters")["run"]
     for setting in ("server_version_num", "fsync", "synchronous_commit", "full_page_writes"):
         assert f"current_setting('{setting}')" in verification

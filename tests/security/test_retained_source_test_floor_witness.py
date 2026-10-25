@@ -42,6 +42,8 @@ _SCHEMA = "cryptohunter.TEST-ONLY-source-original-floor-v1"
 class TestOnlySourceFloorError(RuntimeError):
     """No durable, exact test witness; no evidence is returned."""
 
+    __test__ = False  # Exception contract, not a pytest test class.
+
 
 @dataclass(frozen=True, slots=True)
 class _SourceFloorPin:

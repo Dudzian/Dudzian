@@ -274,6 +274,7 @@ class _CatalogRead:
     def __init__(
         self, *, principal=None, version=160006, durable=None, physical=None, metadata=None
     ):
+        self.autocommit = False
         identity = _identity()
         self.info = SimpleNamespace(
             server_version=version, host=identity.connection_host, port=identity.connection_port

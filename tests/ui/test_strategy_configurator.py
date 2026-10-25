@@ -27,10 +27,11 @@ except ImportError as exc:  # brak bibliotek systemowych (np. libGL)
 
 
 @pytest.mark.timeout(20)
-def test_strategy_configurator_lists_new_strategies() -> None:
+def test_strategy_configurator_lists_new_strategies(request: pytest.FixtureRequest) -> None:
     app = QApplication.instance() or QApplication([])
 
     engine = QQmlApplicationEngine()
+    request.addfinalizer(lambda: teardown_qml_engine(engine, process_events=app.processEvents))
     view_path = (
         Path(__file__).resolve().parents[2] / "ui" / "qml" / "views" / "StrategyConfigurator.qml"
     )
@@ -41,14 +42,8 @@ def test_strategy_configurator_lists_new_strategies() -> None:
 
     engine.warnings.connect(_collect)  # type: ignore[attr-defined]
     engine.load(QUrl.fromLocalFile(str(view_path)))
-    if qml_warnings or not engine.rootObjects():
-        warnings_text = (
-            "; ".join(warning.toString() for warning in qml_warnings) or "brak obiektów root"
-        )
-        pytest.skip(
-            f"Nie udało się załadować StrategyConfigurator: {warnings_text}",
-            allow_module_level=False,
-        )
+    assert not qml_warnings, "; ".join(warning.toString() for warning in qml_warnings)
+    assert engine.rootObjects(), "Nie udało się załadować StrategyConfigurator"
 
     root = engine.rootObjects()[0]
     assert isinstance(root, QObject)
@@ -109,6 +104,3 @@ def test_strategy_configurator_lists_new_strategies() -> None:
     assert parameter_view is not None
     text = parameter_view.property("text")
     assert "entry_z" in text
-
-    teardown_qml_engine(engine, process_events=app.processEvents)
-    app.processEvents()

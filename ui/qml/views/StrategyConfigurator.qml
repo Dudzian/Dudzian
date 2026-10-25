@@ -24,11 +24,11 @@ Item {
     Workbench.StrategyWorkbenchViewModel {
         id: viewModel
         objectName: "strategyConfiguratorViewModel"
-        appController: root.appController ? root.appController : (typeof appController !== "undefined" ? appController : null)
-        strategyController: root.strategyController ? root.strategyController : (typeof strategyController !== "undefined" ? strategyController : null)
-        workbenchController: root.workbenchController ? root.workbenchController : (typeof workbenchController !== "undefined" ? workbenchController : null)
-        riskModel: root.riskModel ? root.riskModel : (typeof riskModel !== "undefined" ? riskModel : null)
-        licenseController: root.licenseController ? root.licenseController : (typeof licenseController !== "undefined" ? licenseController : null)
+        appController: root.appController
+        strategyController: root.strategyController
+        workbenchController: root.workbenchController
+        riskModel: root.riskModel
+        licenseController: root.licenseController
     }
 
     function rebuildFiltered() {

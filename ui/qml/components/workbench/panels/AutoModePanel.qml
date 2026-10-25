@@ -1153,7 +1153,8 @@ Frame {
                     color: activePreset && activePreset.used_fallback ? "#f39c12" : palette.mid
                 }
                 Label {
-                    visible: activePreset && activePreset.license_issues && activePreset.license_issues.length > 0
+                    objectName: "autoModeLicenseIssues"
+                    visible: !!(activePreset && activePreset.license_issues && activePreset.license_issues.length > 0)
                     text: activePreset && activePreset.license_issues
                           ? qsTr("Licencja: %1").arg(activePreset.license_issues.join(", "))
                           : ""
@@ -1799,12 +1800,13 @@ Frame {
                 Label { text: qsTr("Limit strat dziennych") }
                 Slider {
                     id: drawdownSlider
+                    objectName: "autoModeDrawdownSlider"
                     Layout.fillWidth: true
                     from: 0.01
                     to: 0.2
                     stepSize: 0.005
                     value: alertDraft.maxDrawdown || 0.07
-                    onValueChanged: updateAlertPreference("maxDrawdown", value)
+                    onMoved: updateAlertPreference("maxDrawdown", value)
                 }
                 Label {
                     text: Number(drawdownSlider.value * 100).toLocaleString(Qt.locale(), "f", 1) + "%"

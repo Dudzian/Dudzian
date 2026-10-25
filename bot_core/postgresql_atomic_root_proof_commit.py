@@ -525,7 +525,7 @@ class PostgreSQLAtomicRootProofCommit:
         object.__setattr__(
             self, "_PostgreSQLAtomicRootProofCommit__admin_connection", admin_connection
         )
-        with self._connect() as conn:
+        with self._connect() as conn, conn.transaction():
             qualify_atomic_root_proof_authority(conn, deployment)
 
     def __init_subclass__(cls) -> None:
@@ -634,12 +634,12 @@ class PostgreSQLAtomicRootProofCommit:
                     if identity != self.__deployment.identity:
                         raise AtomicRootProofCommitConflict("ONE_PHYSICAL_DATABASE_REQUIRED")
             with psycopg.connect(self.__admin_connection.dsn, autocommit=True) as conn:
-                qualify_atomic_root_proof_authority(
-                    conn, self.__deployment, expected_role="test_admin"
-                )
                 with conn.transaction():
                     conn.execute("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE")
                     conn.execute("SET LOCAL search_path=pg_catalog")
+                    qualify_atomic_root_proof_authority(
+                        conn, self.__deployment, expected_role="test_admin"
+                    )
                     conn.execute(
                         sql.SQL("SELECT {}.approve_commit(%s)").format(
                             sql.Identifier(provisioning.schema)

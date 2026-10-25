@@ -23,9 +23,9 @@ if ($LASTEXITCODE -eq 0) {
 }
 
 $pytestArgs = @(
+  "-ra",
   "-m", "qml",
   "--maxfail=1",
-  "--disable-warnings",
   "--junitxml=$ResultsDir/pytest.xml",
   "--durations=15",
   "--log-file=$ResultsDir/pytest.log",

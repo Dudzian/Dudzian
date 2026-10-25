@@ -218,10 +218,9 @@ jobs:
 
       - name: Run pip-audit (canonical desktop release lock)
         run: |
-          # PYSEC-2024-277 / CVE-2024-34997 affects joblib 1.4.2; pip-audit reports no fixed versions (fix_versions: []) and marks it disputed. Keep this narrow and revisit when a fixed version exists.
+          # PYSEC-2024-277 was withdrawn on 2026-06-09; audit the full lock without exceptions.
           python -m pip_audit \
             --requirement deploy/packaging/requirements-desktop.lock \
-            --ignore-vuln PYSEC-2024-277 \
             --format json \
             --output pip-audit-report.json
 
@@ -317,7 +316,7 @@ jobs:
         # Intentional narrow blocking-gate subset for autonomy/governance contracts.
         # Do not replace with full-file inclusion; broader autonomy regression stays in py-tests-* --fast.
         run: |
-          python -m pytest \
+          python -m pytest -ra \
             --cov=bot_core.runtime.multi_strategy_scheduler \
             --cov=bot_core.runtime.journal \
             --cov=bot_core.strategies.base \
@@ -424,7 +423,6 @@ jobs:
           New-Item -ItemType Directory -Force (Split-Path -Parent $env:LICENSING_HWID_LOG) | Out-Null
           python -m pytest tests/licensing/test_hwid_drift.py `
             --maxfail=1 `
-            --disable-warnings `
             --junitxml $env:LICENSING_HWID_JUNIT `
             --color=yes `
             -q 2>&1 | Tee-Object -FilePath $env:LICENSING_HWID_LOG
@@ -530,13 +528,13 @@ jobs:
         run: mypy
 
       - name: Pytest demo→paper scenario
-        run: python -m pytest -m e2e_demo_paper --maxfail=1 --disable-warnings
+        run: python -m pytest -ra -m e2e_demo_paper --maxfail=1
 
       - name: Pytest paper execution smoke
-        run: python -m pytest tests/test_paper_execution.py
+        run: python -m pytest -ra tests/test_paper_execution.py
 
       - name: Pytest execution router integrations
-        run: python -m pytest tests/integration/test_execution_router_failover.py
+        run: python -m pytest -ra tests/integration/test_execution_router_failover.py
 
   py-tests-windows:
     if: github.event_name != 'schedule'
@@ -598,7 +596,7 @@ jobs:
           DUDZIAN_ALLOW_LONG_POLL: "0"
         run: |
           mkdir -p test-results
-          python -m pytest -p asyncio \
+          python -m pytest -ra -p asyncio \
             --fast \
             -m "not integration and not external_postgresql and not e2e_demo_paper and not retraining and not soak and not performance and not qml" \
             --ignore=tests/e2e \
@@ -651,9 +649,11 @@ jobs:
       postgres:
         image: postgres:16
         env:
+          # Disposable SQL-ACL fixtures use passwordless LOGIN roles; never production auth.
+          # Runner-local ports limit exposure; see docs/security/ci-postgresql-isolation.md.
           POSTGRES_HOST_AUTH_METHOD: trust
         ports:
-          - 55432:5432
+          - 127.0.0.1:55432:5432
         options: >-
           --health-cmd "pg_isready -U postgres -d postgres"
           --health-interval 10s
@@ -745,7 +745,7 @@ jobs:
               assert shutil.which(tool), f"required native peer-auth tool unavailable: {tool}"
           PY
           cd "${SOURCE_STAGE}/checkout"
-          sudo env PATH="${PATH}" PYTHONPATH="${SOURCE_STAGE}/checkout" "${PYTHON_BIN}" -m pytest -q \
+          sudo env PATH="${PATH}" PYTHONPATH="${SOURCE_STAGE}/checkout" "${PYTHON_BIN}" -m pytest -ra -q \
             tests/security/test_freshness_semantic_verifier_postgresql.py
 
       - name: Start two independent PostgreSQL 16 negative-control clusters
@@ -806,7 +806,7 @@ jobs:
           ENTITLEMENT_REGISTRY_POSTGRES_ADMIN_DSN: "host=127.0.0.1 port=55432 dbname=postgres user=postgres"
         run: |
           mkdir -p test-results
-          python -m pytest -p asyncio \
+          python -m pytest -ra -p asyncio \
             --fast \
             -m "not external_postgresql and not integration and not e2e_demo_paper and not retraining and not soak and not performance and not qml" \
             --ignore=tests/e2e \
@@ -857,7 +857,7 @@ jobs:
         env:
           POSTGRES_HOST_AUTH_METHOD: trust
         ports:
-          - 55432:5432
+          - 127.0.0.1:55432:5432
         options: >-
           --health-cmd "pg_isready -U postgres -d postgres"
           --health-interval 10s
@@ -995,7 +995,7 @@ jobs:
               ;;
             *) echo "Unknown PostgreSQL qualification shard" >&2; exit 2 ;;
           esac
-          python -m pytest -p asyncio \
+          python -m pytest -ra -p asyncio \
             --fast \
             -k "$SHARD_KEYWORDS" \
             -m "external_postgresql and not integration and not e2e_demo_paper and not retraining and not soak and not performance and not qml" \
@@ -1085,7 +1085,7 @@ jobs:
           DUDZIAN_ALLOW_LONG_POLL: "0"
         run: |
           mkdir -p test-results
-          python -m pytest -p asyncio \
+          python -m pytest -ra -p asyncio \
             --fast \
             -m "not integration and not external_postgresql and not e2e_demo_paper and not retraining and not soak and not performance and not qml" \
             --ignore=tests/e2e \
@@ -1257,7 +1257,7 @@ jobs:
             exit 1
           fi
           mkdir -p test-results/licensing-security
-          python -m pytest -p asyncio \
+          python -m pytest -ra -p asyncio \
             --fast \
             -m "not integration and not external_postgresql and not e2e_demo_paper and not retraining and not soak and not performance and not qml" \
             "${licensing_tests[@]}" \
@@ -1359,7 +1359,7 @@ jobs:
 
       - name: Preflight
         shell: pwsh
-        run: python scripts/ci/preflight_test_env.py
+        run: python scripts/ci/preflight_test_env.py --require-fastapi
 
       - name: Run QML tests (windows script)
         shell: pwsh
@@ -1410,13 +1410,13 @@ jobs:
 
       - name: Preflight
         shell: bash
-        run: python scripts/ci/preflight_test_env.py
+        run: python scripts/ci/preflight_test_env.py --require-fastapi
 
       - name: Run QML tests (marker)
         shell: bash
         run: |
           mkdir -p test-results/qml
-          python -m pytest -m qml --maxfail=1 --disable-warnings \
+          python -m pytest -ra -m qml --maxfail=1 \
             --junitxml=test-results/qml/pytest.xml \
             --log-file=test-results/qml/pytest.log \
             --log-file-level=INFO | tee test-results/qml/pytest-console.log
@@ -1919,7 +1919,7 @@ jobs:
       - name: Preflight test environment
         shell: bash
         run: |
-          python scripts/ci/preflight_test_env.py
+          python scripts/ci/preflight_test_env.py --require-fastapi
 
       - name: Collect/import QML risk panel test module (smoke)
         run: |
@@ -1941,7 +1941,7 @@ jobs:
           mkdir -p test-results/qml
           set +e
           xvfb-run -a --server-args="-screen 0 1920x1080x24" \
-            python -m pytest -m qml --maxfail=1 --disable-warnings \
+            python -m pytest -m qml --maxfail=1 \
               -vv -rA --capture=tee-sys --durations=25 \
               -o log_cli=true -o log_cli_level=INFO -o faulthandler_timeout=60 \
               --junitxml=test-results/qml/pytest.xml \
@@ -2226,7 +2226,7 @@ jobs:
       - name: Run gRPC decision feed tests
         run: |
           mkdir -p test-results/grpc
-          python -m pytest tests/integration/test_grpc_transport.py --maxfail=1 --disable-warnings \
+          python -m pytest tests/integration/test_grpc_transport.py --maxfail=1 \
             --junitxml=test-results/grpc/pytest.xml
 
       - name: Upload pytest results
@@ -2311,7 +2311,7 @@ jobs:
       - name: Run gRPC soak tests
         run: |
           mkdir -p test-results/grpc-soak
-          python -m pytest -m "soak" tests/integration/test_grpc_transport.py --maxfail=1 --disable-warnings \
+          python -m pytest -m "soak" tests/integration/test_grpc_transport.py --maxfail=1 \
             --junitxml=test-results/grpc-soak/pytest.xml
 
       - name: Upload soak pytest results
@@ -2404,7 +2404,6 @@ jobs:
           python -m pytest
           tests/performance/test_backtest_throughput.py
           -m performance
-          --disable-warnings
 
       - name: Upload backtest performance reports
         if: always()
@@ -2429,7 +2428,6 @@ jobs:
           python -m pytest
           tests/performance/test_ui_render.py
           -m performance
-          --disable-warnings
 
       - name: Upload UI render performance reports
         if: always()
@@ -2513,7 +2511,7 @@ jobs:
           python -m pytest \
             tests/test_marketplace_catalog.py \
             tests/test_build_marketplace_catalog_backfill.py \
-            --maxfail=1 --disable-warnings \
+            --maxfail=1 \
             --junitxml=test-results/marketplace/pytest.xml
 
       - name: Upload pytest results
@@ -2584,7 +2582,7 @@ jobs:
           python -m pytest \
             tests/test_marketplace_catalog.py \
             tests/test_build_marketplace_catalog_backfill.py \
-            --maxfail=1 --disable-warnings
+            --maxfail=1
 
       - name: Diagnose marketplace markdown/signature diff before release bundle validation
         shell: bash

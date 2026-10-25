@@ -52,6 +52,8 @@ _ACTIVE = b"ACTIVE:1:1"
 class TestOnlyCredentialLeaseError(RuntimeError):
     """Credential fixture cannot support a new decision."""
 
+    __test__ = False  # Exception contract, not a pytest test class.
+
 
 @dataclass(frozen=True, slots=True)
 class SyntheticCredentialReadLease:

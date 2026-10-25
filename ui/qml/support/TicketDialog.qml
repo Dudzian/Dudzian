@@ -13,7 +13,7 @@ Dialog {
     implicitHeight: 420
     closePolicy: Popup.NoAutoClose
 
-    property var diagnosticsControllerContext: (typeof diagnosticsController !== "undefined" ? diagnosticsController : null)
+    property var diagnosticsControllerContext: null
     property var diagnosticsController: diagnosticsControllerContext
 
     signal diagnosticsRequested()
