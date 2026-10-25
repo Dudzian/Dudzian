@@ -11,6 +11,7 @@ qualifications remain genuine.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import subprocess
 import time
@@ -706,6 +707,47 @@ def test_unknown_or_unavailable_physical_identity_fails_closed(
     assert _snapshot(value) == before
 
 
+def _restart_controlled_postgresql():
+    """Run one explicit controller; the caller must prove the physical restart."""
+    container = os.environ.get("CRYPTOHUNTER_TEST_POSTGRES_CONTAINER")
+    native_command = os.environ.get("DUDZIAN_TEST_POSTGRES_RESTART_COMMAND")
+    if (container is None) == (native_command is None):
+        pytest.fail("configure exactly one PostgreSQL restart controller")
+    restart_environment = None
+    if container is not None:
+        if not container.strip():
+            pytest.fail("PostgreSQL restart requires a non-empty Docker container")
+        command = ["docker", "--host=unix:///var/run/docker.sock", "restart", container]
+        restart_environment = os.environ.copy()
+        for name in (
+            "DOCKER_HOST",
+            "DOCKER_CONTEXT",
+            "DOCKER_TLS",
+            "DOCKER_TLS_VERIFY",
+            "DOCKER_CERT_PATH",
+        ):
+            restart_environment.pop(name, None)
+    else:
+        try:
+            command = json.loads(native_command)
+        except json.JSONDecodeError:
+            pytest.fail("native PostgreSQL restart command must be a JSON argv array")
+        if (
+            not isinstance(command, list)
+            or not command
+            or not all(isinstance(argument, str) and argument.strip() for argument in command)
+        ):
+            pytest.fail("native PostgreSQL restart command must be a non-empty JSON argv array")
+    subprocess.run(
+        command,
+        check=True,
+        capture_output=True,
+        timeout=30,
+        env=restart_environment,
+        shell=False,
+    )
+
+
 def test_restart_uses_new_providers_and_requalifies_current_authorities(
     atomic_boundary, monkeypatch
 ):
@@ -713,29 +755,9 @@ def test_restart_uses_new_providers_and_requalifies_current_authorities(
     first = _qualify(value)
     before = _snapshot(value)
     calls = _deny_mutations(value, monkeypatch)
-    container = os.environ.get("CRYPTOHUNTER_TEST_POSTGRES_CONTAINER")
-    if not container:
-        pytest.fail(
-            "CRYPTOHUNTER_TEST_POSTGRES_CONTAINER is required for the real PostgreSQL restart"
-        )
     with psycopg.connect(BASE_DSN) as conn:
         started = conn.execute("SELECT pg_catalog.pg_postmaster_start_time()").fetchone()[0]
-    docker_environment = os.environ.copy()
-    for name in (
-        "DOCKER_HOST",
-        "DOCKER_CONTEXT",
-        "DOCKER_TLS",
-        "DOCKER_TLS_VERIFY",
-        "DOCKER_CERT_PATH",
-    ):
-        docker_environment.pop(name, None)
-    subprocess.run(
-        ["docker", "--host=unix:///var/run/docker.sock", "restart", container],
-        check=True,
-        capture_output=True,
-        timeout=30,
-        env=docker_environment,
-    )
+    _restart_controlled_postgresql()
     deadline = time.monotonic() + 30
     while True:
         try:
@@ -748,7 +770,7 @@ def test_restart_uses_new_providers_and_requalifies_current_authorities(
         except psycopg.OperationalError:
             if time.monotonic() >= deadline:
                 pytest.fail(
-                    "PostgreSQL did not become available after the actual container restart"
+                    "PostgreSQL did not become available after the actual controlled restart"
                 )
             time.sleep(0.25)
     value.intent = intent_storage.PostgreSQLRootProofSigningIntent(
