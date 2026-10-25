@@ -102,6 +102,9 @@ fikcyjny status licencji ani nowe prawo do operacji tradingowych.
   pg_catalog, zachowana odmowa IDLE i brak SQL admission po odmowie admina.
 - `tests/scripts/test_general_ci_platform_contract.py`: pełny kontrakt argv,
   przypadki pozytywne/negatywne i zachowanie podziału testów.
+- `tests/scripts/test_history_reproposal_quality_ci.py`: dokładne mapowania
+  wszystkich 14 usług PostgreSQL i odmowa wildcardów, dodatkowych oraz błędnych
+  mapowań; zachowane kontrole trwałości i rzeczywistego restartu.
 - `tests/ui/_qt.py` i `tests/test_qt_dependency_requirements.py`: opcjonalność
   zależności tylko poza wymaganą kwalifikacją QML; rzeczywista kolekcja procesu.
 - `tests/ui/test_strategy_workbench_demo.py` i nowy kontrakt procesu:
@@ -123,6 +126,7 @@ fikcyjny status licencji ani nowe prawo do operacji tradingowych.
 | Kwalifikacja Atomic/owner/guard po poprawce | 247 PASS, bez skipów i warningów |
 | Pełny genuine HSR fresh/legacy/evidence/architecture | 106 PASS, 0 ERROR/FAIL/SKIP, 9819.72 s |
 | Pełny kontrakt General CI | 51 PASS, 22.87 s |
+| Końcowe siedem modułów kontraktów workflow po poprawce portów HSR | 106 PASS, 29.53 s, bez skipów i warningów; audyt 18 plików testów odwołujących się do workflow |
 | Kontrakt: shell pozytywne/negatywne | 6 pozytywnych, 17 negatywnych; 64 identyczne syntetyczne node IDs w rozłącznych shardach z/bez -ra |
 | Zależności Qt: kolekcja i required-QML | 23 PASS; brak EGL nie importuje Qt w zwykłej kolekcji, wymagany scenariusz daje JUnit failure, bez SKIP |
 | Workbench w poprzednio crashującym kontekście | 5 PASS, 1 SKIP Chromium; wcześniej native exit 139 |
@@ -142,8 +146,9 @@ wyników Windows/macOS ani runnera CI. Zatrzymane podczas kolekcji próby pełne
 repozytoryjnego `-m qml` z brakującymi zależnościami lokalnego venv nie są
 zaliczone. Lokalne uzupełnianie deklarowanych zależności ograniczono do
 izolowanego venv; nie zmieniono z tego powodu manifestów ani markerów. Wynik
-ostatniej szerokiej próby jest raportowany w opisie PR, bez blokowania pushu
-i bez zastępowania pełnego wymaganego QML CI.
+ostatniej szerokiej próby: świadome przerwanie po 118.57 s, 29 PASS,
+2 collection SKIP z powodu braku grpc_tools, rzeczywisty exit 2. Nie jest to
+PASS pełnego zestawu ani dowód nowego hang. Obowiązuje wynik pełnego QML CI.
 
 ## 6. Pełne wyniki CI dla bazowego 8581
 
@@ -163,6 +168,38 @@ nie zmieniają się w tej kontynuacji. Siedem skipów dotyczy negatywnego przypa
 innej platformy i sześciu testów wymagających osobnego root harness Linux.
 Nie wymuszano tych granic ani nie przedstawiano ich jako zakwalifikowanych.
 
+### Wyniki po pushu `9e83ab49` i kolejna poprawka kontraktu
+
+Na SHA `9e83ab492843136505aab70cb18b0c0b0ead9072` zakończyły się SUCCESS:
+CodeQL obu języków, Style, Marketplace, oba dependency audits, Linux legacy QML,
+HSR, Atomic oraz wspólna bramka Atomic/HSR coverage. Dokładne liczby testów
+i odnośniki do jobów są aktualizowane w opisie PR; wyników tego SHA nie
+przypisuje się automatycznie późniejszemu commitowi.
+
+Pełne logi potwierdzają HSR 106 PASS, Atomic 4040 PASS / 7 SKIP oraz
+combined coverage SUCCESS. Oba kroki `Run QML pytest suite` mają 16374 PASS,
+7 SKIP i 25731 deselected. Jest to zestaw wybrany markerem `qml`, obejmujący
+liczne testy źródeł/kontraktów, a nie 16374 natywne scenariusze Qt. W obu
+logach potwierdzono PASSED dla obowiązkowego Workbench roundtrip, procesu
+z QCore-parent/brakiem Playwright oraz rzeczywistego cleanupu własnych/obcych
+QObject. Browser mirror pominięto z powodu braku Playwright; pozostałe sześć
+skipów to puste macierze przypadków missing-item/reorder.
+
+Główne testy trzech systemów doszły dalej i ujawniły kolejną pominiętą asercję:
+`test_history_reproposal_quality_ci.py` oczekiwał `55432:5432` zamiast
+`127.0.0.1:55432:5432` (także odpowiednika 55434). Poprawka tego kontraktu
+zachowuje ograniczenie localhost i wymaga dokładnego mapowania portów. Pełny
+kontrakt General CI 51 PASS nie obejmował tego odrębnego pliku; nie był dowodem
+poprawności wszystkich kontraktów workflow. Po ujawnieniu tej luki ponownie
+sprawdzono repozytoryjne asercje portów i powiązane moduły kontraktów CI.
+
+Job Semgrep/secrets na tym SHA nie wykonał Betterleaks: pobieranie zweryfikowanego
+narzędzia zakończył timeout połączenia do GitHub, a upload raportu osobny
+ETIMEDOUT. Custom blocking Semgrep miał zero findings i 5/5 testów reguł PASS;
+community advisory nadal raportował 17 findings. To nie jest PASS bramki sekretów.
+Nie zmieniono pinów, SHA256, weryfikacji checksum ani warunków skanowania.
+Kolejny push uruchamia pełną bramkę na świeżym runnerze.
+
 ## 7. Warning audit i pominięcia
 
 W 84 logach bazowego SHA nie ma payloadów PytestCollectionWarning, tradingowego
@@ -176,6 +213,13 @@ z niewykonanych jobów, a nie naprawy. Wszystkie 60 par digestów artefaktów pa
 hooks-contrib 2025.10 próbuje zebrać nieobowiązkowy sklearn; DLL discovery
 importuje eksperymentalne NumPy array_api. To odrębne od błędu tradingowego.
 Nie zmieniono pinów pakowania ani bramki wymaganych importów i build-smoke.
+
+Na zielonym HSR `9e83ab49` pozostają też CoverageWarning `module-not-imported`
+dla modułów ze wspólnego scope Atomic/HSR niewykonywanych w tym pojedynczym
+shardzie. Wspólna bramka Atomic/HSR coverage ma SUCCESS. Nie ograniczano scope
+ani nie dodawano filtrów ostrzeżeń. Zero diagnostyk dotyczy potwierdzonych
+AnyIO/NumPy-empty/collection/SET LOCAL i natywnego Workbench, nie wszystkich
+komunikatów narzędzi we wszystkich jobach.
 
 Opcjonalna nieobecność przeglądarki nie może ukryć warningu Qt zebranego w tym
 samym scenariuszu: diagnostyka ma pierwszeństwo przed SKIP. Osobna regresja
