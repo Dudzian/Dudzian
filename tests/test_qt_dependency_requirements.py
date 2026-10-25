@@ -156,7 +156,10 @@ def test_missing_qt_python_dependency_is_optional_only_outside_qml_job(
 
 
 @pytest.mark.parametrize("required", [False, True])
-@pytest.mark.parametrize("library", ["libEGL.so.1", "libGL.so.1"])
+@pytest.mark.parametrize(
+    "library",
+    ["libEGL.so.1", "libGL.so.1", "libQt6Widgets.so.6", "libGL.so", "libQt6Core.so.6.7.2"],
+)
 def test_missing_qt_native_dependency_is_optional_only_outside_qml_job(
     monkeypatch: pytest.MonkeyPatch, required: bool, library: str
 ) -> None:
@@ -176,13 +179,100 @@ def test_missing_qt_native_dependency_is_optional_only_outside_qml_job(
         _qt.require_pyside6(modules=("QtCore", "QtQml", "QtWidgets"))
 
 
+@pytest.mark.parametrize(
+    "library",
+    ["libX.so.1.so.", "libX.so.so.", "libX.so.something", "libX.so..", "libX.so.1-2_3"],
+)
+def test_missing_elf_library_version_delimiters(
+    monkeypatch: pytest.MonkeyPatch, library: str
+) -> None:
+    monkeypatch.setattr(_qt, "sys", SimpleNamespace(platform="linux"))
+    failure = ImportError(f"{library}: cannot open shared object file: No such file or directory")
+
+    assert _qt._missing_qt_dependency(failure)
+
+
+@pytest.mark.parametrize(
+    "library",
+    [
+        "",
+        "lib.so",
+        "lib.so.1",
+        "libEGL.so.",
+        "EGL.so.1",
+        "/usr/lib/libEGL.so.1",
+        "lib:broken.so.1",
+        "libEGL\n.so.1",
+        "libEGL.so.1!",
+        "libEGL.so.1/extra",
+        "libEGL.so.1:extra",
+        "libEGL.so.1\n",
+    ],
+)
+def test_malformed_missing_elf_library_messages_are_not_optional(
+    monkeypatch: pytest.MonkeyPatch, library: str
+) -> None:
+    monkeypatch.setattr(_qt, "sys", SimpleNamespace(platform="linux"))
+    failure = ImportError(f"{library}: cannot open shared object file: No such file or directory")
+
+    assert not _qt._missing_qt_dependency(failure)
+
+
+@pytest.mark.parametrize("platform", ["win32", "darwin"])
+def test_missing_elf_message_is_linux_specific(
+    monkeypatch: pytest.MonkeyPatch, platform: str
+) -> None:
+    monkeypatch.setattr(_qt, "sys", SimpleNamespace(platform=platform))
+    failure = ImportError("libEGL.so.1: cannot open shared object file: No such file or directory")
+
+    assert not _qt._missing_qt_dependency(failure)
+
+
+def test_adversarial_elf_messages_finish_in_an_isolated_process() -> None:
+    code = """
+from types import SimpleNamespace
+from tests.ui import _qt
+_qt.sys = SimpleNamespace(platform='linux')
+detail = ': cannot open shared object file: No such file or directory'
+print('dependency parser ready', flush=True)
+for repetitions in (1_000, 10_000, 100_000):
+    library = 'lib..so.' + '-.' * repetitions
+    assert not _qt._missing_qt_dependency(ImportError(library))
+    assert not _qt._missing_qt_dependency(ImportError(library + '!' + detail))
+    assert not _qt._missing_qt_dependency(ImportError(library + detail + ' (ABI mismatch)'))
+    assert _qt._missing_qt_dependency(ImportError(library + detail))
+print('all adversarial classifications passed', flush=True)
+"""
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", code],
+            cwd=_REPO_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        pytest.fail(f"Qt dependency parser stalled on adversarial input; output={exc.stdout!r}")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "all adversarial classifications passed" in result.stdout
+
+
 @pytest.mark.parametrize("required", [False, True])
 @pytest.mark.parametrize(
     "failure",
     [
         ImportError("libQt6Widgets.so.6: undefined symbol: broken_abi"),
+        ImportError("libQt6Core.so.6: version `Qt_6.7' not found"),
+        ImportError("libQt6Widgets.so.6: wrong ELF class: ELFCLASS32"),
+        ImportError("libEGL.so.1: cannot open shared object file: Permission denied"),
+        ImportError("libEGL.so.1: cannot open shared object file: No such file or directory\n"),
         ImportError("cannot import name 'QApplication' from 'PySide6.QtWidgets'"),
         ModuleNotFoundError("No module named 'application_bug'", name="application_bug"),
+        ModuleNotFoundError("No module named 'PySide6_broken'", name="PySide6_broken"),
+        ModuleNotFoundError("No module named 'shiboken6_broken'", name="shiboken6_broken"),
+        ModuleNotFoundError("unrelated missing package"),
         RuntimeError("Qt initialization failed"),
     ],
 )

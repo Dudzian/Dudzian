@@ -5,7 +5,6 @@ from __future__ import annotations
 import ctypes
 import ctypes.util
 import os
-import re
 import sys
 from importlib import import_module
 from pathlib import Path
@@ -64,12 +63,20 @@ def _missing_qt_dependency(exc: ImportError) -> bool:
         )
     # Missing ELF dependencies are optional only outside the required QML job.
     # ABI/symbol errors and unrelated import failures must remain visible.
-    return bool(
-        sys.platform.startswith("linux")
-        and re.fullmatch(
-            r"lib[^:/\n]+\.so(?:\.[\w.-]+)*: cannot open shared object file: No such file or directory",
-            str(exc),
-        )
+    if not sys.platform.startswith("linux"):
+        return False
+    library, separator, detail = str(exc).partition(": ")
+    if not separator or detail != "cannot open shared object file: No such file or directory":
+        return False
+    if not library.startswith("lib") or any(character in library for character in ":/\n"):
+        return False
+    if library.endswith(".so"):
+        return len(library) > len("lib.so")
+    # Leave a version character after the rightmost separator; scan it once.
+    version_separator = library.rfind(".so.", 0, len(library) - 1)
+    return version_separator > len("lib") and all(
+        character.isalnum() or character in "_.-"
+        for character in library[version_separator + len(".so.") :]
     )
 
 
