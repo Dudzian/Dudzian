@@ -742,7 +742,7 @@ def _restart_controlled_postgresql():
         command,
         check=True,
         capture_output=True,
-        timeout=30,
+        timeout=90 if native_command is not None else 30,
         env=restart_environment,
         shell=False,
     )

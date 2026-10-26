@@ -33,7 +33,7 @@ def test_native_controller_preserves_argv_without_shell(monkeypatch, restart_cal
     integration._restart_controlled_postgresql()
 
     assert restart_calls == [
-        (argv, dict(check=True, capture_output=True, timeout=30, env=None, shell=False))
+        (argv, dict(check=True, capture_output=True, timeout=90, env=None, shell=False))
     ]
 
 
@@ -129,6 +129,7 @@ def test_restart_errors_propagate_without_fallback(monkeypatch, controller, erro
     def fail(argv, **kwargs):
         calls.append((argv, kwargs))
         assert kwargs["check"] is True
+        assert kwargs["timeout"] == (90 if controller == "native" else 30)
         raise error
 
     monkeypatch.setattr(integration.subprocess, "run", fail)
