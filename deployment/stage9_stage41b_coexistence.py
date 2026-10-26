@@ -150,6 +150,47 @@ def _listing(path: Path) -> list[Path]:
     return sorted(result)
 
 
+def _installation_metadata(root: Path) -> dict[str, Any]:
+    """Protected lstat identities for correlation only; never read file contents.
+
+    Private 0600 files need only directory search permission for lstat. Partial
+    metadata is retained for positive matches; it cannot authenticate any bytes.
+    Unsafe directories are not traversed and every gap remains explicit.
+    """
+    identities: list[tuple[str, tuple[int, ...]]] = []
+    complete = True
+    try:
+        for parent in reversed(root.parents):
+            host._protected(parent, directory=True)
+        pending = [root]
+        while pending:
+            directory = pending.pop()
+            try:
+                info = host._protected(directory, directory=True)
+                identities.append((str(directory), _stamp(info)))
+                children = _listing(directory)
+            except Exception:
+                complete = False
+                continue
+            for child in children:
+                if len(identities) + len(pending) >= 65536:
+                    return {"identities": sorted(identities), "complete": False}
+                try:
+                    info = child.lstat()
+                    if stat.S_ISDIR(info.st_mode):
+                        # Recheck protection before subsequent enumeration.
+                        host._protected(child, directory=True)
+                        pending.append(child)
+                    else:
+                        info = host._protected(child, directory=False)
+                        identities.append((str(child), _stamp(info)))
+                except Exception:
+                    complete = False
+    except Exception:
+        complete = False
+    return {"identities": sorted(identities), "complete": complete}
+
+
 def _proc_bytes(path: Path) -> bytes:
     with path.open("rb") as stream:
         raw = stream.read(LIMIT + 1)
@@ -163,6 +204,9 @@ def _references(snapshot: tuple[Any, ...], inodes: set[tuple[int, int]]) -> bool
     # whose pathname differs from the installation pathname.
     if sys.platform != "linux":
         raise ValueError("NATIVE_LINUX_REQUIRED")
+    # Preserve a positive pathname even if another field cannot be parsed.
+    if str(preparation.PREFIX).encode() in repr(snapshot).encode():
+        return True
     for _tid, _start, _status, cgroup, maps, links in snapshot:
         if any((device, inode) in inodes for _target, device, inode in links):
             return True
@@ -175,7 +219,7 @@ def _references(snapshot: tuple[Any, ...], inodes: set[tuple[int, int]]) -> bool
             major, minor = fields[3].split(b":")
             if (os.makedev(int(major, 16), int(minor, 16)), int(fields[4])) in inodes:
                 return True
-    return str(preparation.PREFIX).encode() in repr(snapshot).encode()
+    return False
 
 
 def _pid_snapshot(item: Path) -> tuple[Any, ...]:
@@ -213,59 +257,130 @@ def processes() -> dict[str, Any]:
         "full_confirmation": False,
         "stable_visible_snapshot": False,
         "matched_pids": [],
+        "checked_pid_count": 0,
+        "unavailable_pid_count": 0,
+        "unstable_pid_count": 0,
+        "matched_pid_count": 0,
+        "observed_pid_count": 0,
+        "observed_thread_count": 0,
         "limitations": [
             "NO_ATOMIC_HOST_SNAPSHOT",
             "NO_PROOF_FOR_COPIED_OR_CLOSED_FILES",
             "HOST_NAMESPACE_NOT_EXTERNALLY_ATTESTED",
         ],
     }
+    checked: set[int] = set()
+    unavailable: set[int] = set()
+    unstable: set[int] = set()
+    matched: set[int] = set()
+    reasons: set[str] = set()
+    threads: set[tuple[int, str]] = set()
+    inodes: set[tuple[int, int]] = set()
+
+    def metadata() -> list[dict[str, Any]]:
+        observations = []
+        for commit in COMMITS:
+            try:
+                observation = _installation_metadata(preparation.PREFIX / commit)
+                inodes.update((info[2], info[1]) for _path, info in observation["identities"])
+                if observation["complete"] is not True:
+                    reasons.add("INSTALLATION_METADATA_INCOMPLETE")
+                observations.append(observation)
+            except Exception:
+                reasons.add("INSTALLATION_METADATA_INCOMPLETE")
+                observations.append({"identities": [], "complete": False})
+        return observations
+
+    def pids() -> dict[int, Path]:
+        try:
+            items = {
+                int(path.name): path
+                for path in _listing(Path("/proc"))
+                if path.name.isascii() and path.name.isdigit()
+            }
+            if 1 not in items or os.getpid() not in items:
+                reasons.add("PROCFS_INCOMPLETE")
+            return items
+        except Exception:
+            reasons.add("PROCESS_ENUMERATION_UNAVAILABLE")
+            return {}
+
+    def sweep(items: dict[int, Path]) -> dict[int, str]:
+        # Keep bounded fingerprints, not all procfs payloads between sweeps.
+        observations = {}
+        observed_size = 0
+        for pid, item in items.items():
+            if observed_size > LIMIT:
+                unavailable.add(pid)
+                reasons.add("PROCESS_SWEEP_LIMIT")
+                continue
+            try:
+                snapshot = _pid_snapshot(item)
+                if not snapshot:
+                    raise ValueError("NO_THREADS")
+                checked.add(pid)
+                threads.update((pid, row[0]) for row in snapshot)
+                # Both passes classify references; positive findings are sticky.
+                if _references(snapshot, inodes):
+                    matched.add(pid)
+                raw = repr(snapshot).encode()
+                observed_size += len(raw)
+                if observed_size > LIMIT:
+                    raise ValueError("PROCESS_SWEEP_LIMIT")
+                observations[pid] = hashlib.sha256(raw).hexdigest()
+            except FileNotFoundError:
+                unstable.add(pid)
+                reasons.add("PROCESS_DISAPPEARED_DURING_OBSERVATION")
+            except Exception:
+                unavailable.add(pid)
+                reasons.add("PROCESS_OBSERVATION_UNAVAILABLE")
+        return observations
+
     try:
         if not host._procfs_visibility():
-            raise ValueError("PROCFS_VISIBILITY")
-        items = [
-            path for path in _listing(Path("/proc")) if path.name.isascii() and path.name.isdigit()
-        ]
-        if Path("/proc/1") not in items or Path("/proc") / str(os.getpid()) not in items:
-            raise ValueError("PROCFS_INCOMPLETE")
-        first = {}
-        observed_size = 0
-        inventories = [_inventory(preparation.PREFIX / commit) for commit in COMMITS]
-        inodes = {
-            (info[2], info[1])
-            for inventory in inventories
-            for _path, info in inventory["identities"]
-        }
-        for item in items:
-            snapshot = _pid_snapshot(item)
-            observed_size += len(repr(snapshot))
-            if observed_size > LIMIT:
-                raise ValueError("PROCESS_SWEEP_LIMIT")
-            first[item.name] = snapshot
-            if _references(snapshot, inodes):
-                result["matched_pids"].append(int(item.name))
-        second = {}
-        observed_size = 0
-        for item in items:
-            snapshot = _pid_snapshot(item)
-            observed_size += len(repr(snapshot))
-            if observed_size > LIMIT:
-                raise ValueError("PROCESS_SWEEP_LIMIT")
-            second[item.name] = snapshot
-        current = [
-            path for path in _listing(Path("/proc")) if path.name.isascii() and path.name.isdigit()
-        ]
-        if (
-            first != second
-            or current != items
-            or inventories != [_inventory(preparation.PREFIX / commit) for commit in COMMITS]
-        ):
-            raise ValueError("PROCESS_OBSERVATION_CHANGED")
-        result["observed_pid_count"] = len(first)
-        result["observed_thread_count"] = sum(len(snapshot) for snapshot in first.values())
-        result["stable_visible_snapshot"] = True
-        # Stability does not establish complete host visibility or future absence.
-        result["state"] = "BLOCKED" if result["matched_pids"] else "UNCERTAIN"
+            reasons.add("PROCFS_VISIBILITY_UNCERTAIN")
     except Exception:
+        reasons.add("PROCFS_VISIBILITY_UNCERTAIN")
+    before = metadata()
+    initial = pids()
+    first = sweep(initial)
+    current = pids()
+    unstable.update(initial.keys() ^ current.keys())
+    # Retry initially unavailable PIDs and observe newly visible ones as well.
+    second = sweep(initial | current)
+    final = pids()
+    after = metadata()
+    metadata_stable = before == after and all(item["complete"] is True for item in before + after)
+    if not metadata_stable:
+        reasons.add("INSTALLATION_METADATA_INCOMPLETE_OR_CHANGED")
+    unstable.update(current.keys() ^ final.keys())
+    unstable.update(pid for pid in first.keys() & second.keys() if first[pid] != second[pid])
+    if unstable:
+        reasons.add("PROCESS_OBSERVATION_CHANGED")
+    result.update(
+        {
+            "state": "BLOCKED" if matched else "UNCERTAIN",
+            "matched_pids": sorted(matched),
+            "checked_pid_count": len(checked),
+            "unavailable_pid_count": len(unavailable),
+            "unstable_pid_count": len(unstable),
+            "matched_pid_count": len(matched),
+            "unavailable_pids": sorted(unavailable),
+            "unstable_pids": sorted(unstable),
+            "observed_pid_count": len(checked),
+            "observed_thread_count": len(threads),
+            "stable_visible_snapshot": not reasons,
+            "uncertainty": sorted(reasons),
+            "installation_metadata": {
+                "scope": "PROTECTED_PATH_METADATA_ONLY",
+                "stable": metadata_stable,
+                "observed_entry_count": sum(len(item["identities"]) for item in after),
+                "integrity_verified": False,
+                "provenance_verified": False,
+            },
+        }
+    )
+    if reasons:
         result["reason"] = "PROCESS_OBSERVATION_INCOMPLETE_OR_CHANGED"
     return result
 

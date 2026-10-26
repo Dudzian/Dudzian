@@ -107,11 +107,36 @@ filtering by service name or UID. It records stat/status/cgroup, executable,
 `cwd`, `root`, open descriptor targets and device/inode identities, plus mappings.
 It matches both installation paths and device/inode identities, including aliases,
 renamed files and deleted mapped/open files; Stage 41B cgroups also match.
-It repeats snapshots, PID enumeration and installation inventories. Reads and
-enumerations have limits; any missing, empty, denied, malformed, oversized or
-changed required observation gives `UNCERTAIN`, never an absence certificate.
+Process correlation uses a separate protected `lstat` walk, not `_inventory`,
+file hashing or receipt parsing. Directories need search/list permission; private
+root:root 0600 artifacts need no content-read permission for their device/inode
+to be observed. The walk retains accessible metadata when another entry/subtree
+is unavailable and does not follow unsafe directories. Installation metadata is
+sampled before and after PID observation. Changed or incomplete metadata prevents
+a stable observation; available identities and pathnames can still identify a
+positive process reference. Metadata is never evidence of file integrity or
+provenance: both `integrity_verified` and `provenance_verified` in the
+`installation_metadata` section remain false. Full content verification is a
+separate boundary and remains `UNCERTAIN` when private content is unreadable.
+
+Both PID sweeps continue after individual permission errors, missing processes
+and invalid snapshots. The second sweep also examines newly visible PIDs. PID-set
+changes and different snapshots (including starttime or device/inode changes)
+remain explicit uncertainty. A reference found in **either** sweep remains
+`BLOCKED`, even if that PID's next observation, another PID or installation
+metadata becomes unavailable. Incomplete observations never prove absence.
 Kernel threads or zombies with missing executable/mappings are not silently
-excluded. A detected old-file reference yields a blocking finding.
+excluded. Reads and enumerations retain their existing limits.
+
+The process report always includes `checked_pid_count`, `unavailable_pid_count`,
+`unstable_pid_count` and `matched_pid_count`. Counts describe unique PIDs:
+checked means at least one nonempty snapshot was acquired; unavailable means an
+observation failed (permission, parsing or limit); unstable means disappearance,
+PID-set change or different snapshots; matched means a positive reference in any
+sweep. Categories can overlap, e.g. a matched PID whose second read is denied is
+both checked/matched and unavailable. `observed_pid_count` aliases the checked
+count; `observed_thread_count` counts unique observed PID/TID pairs. Sorted
+unavailable/unstable/matched PID lists and fixed uncertainty reasons explain gaps.
 
 `stable_visible_snapshot=true` is only an observation of two equal visible
 snapshots. `full_confirmation` is always false. `/proc` visibility checks do not

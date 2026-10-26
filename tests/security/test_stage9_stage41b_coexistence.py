@@ -103,7 +103,11 @@ def proc(monkeypatch):
     items = [Path("/proc/1"), Path("/proc") / str(os.getpid())]
     monkeypatch.setattr(q, "_listing", lambda path: items)
     monkeypatch.setattr(q.host, "_procfs_visibility", lambda: True)
-    monkeypatch.setattr(q, "_inventory", lambda path: {"identities": [("file", (0, 456, 123))]})
+    monkeypatch.setattr(
+        q,
+        "_installation_metadata",
+        lambda path: {"identities": [("file", (0, 456, 123))], "complete": True},
+    )
     snapshot = (
         (
             "1",
