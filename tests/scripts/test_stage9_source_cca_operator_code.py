@@ -21,6 +21,7 @@ _CONTROLS = "deployment.stage9_source_cca_test_controls"
 _REFUSAL = "^PROTECTED_REVIEWED_OPERATOR_REQUIRED$"
 _RUN_ID = "012345abcdef"
 _COMMIT = "a" * 40
+_PATH_LSTAT = Path.lstat
 
 pytestmark = pytest.mark.skipif(
     sys.platform == "win32", reason="POSIX filesystem ownership/mode code-protection boundary"
@@ -63,16 +64,28 @@ def code_tree(monkeypatch, tmp_path):
         info = original_lstat(path)
         values = list(info)
         values[4] = 1000 if path in foreign else 0
+        values[5] = 0
         # pytest's /tmp or macOS cache ancestry is not the code under test.
         if path in scaffolding:
             values[0] &= ~0o022
         return os.stat_result(values)
 
+    class MetadataPath:
+        """Scope synthetic ownership to the real protection checker only."""
+
+        def __init__(self, path):
+            self.path = path
+
+        def lstat(self):
+            return lstat(self.path)
+
+        def __getattr__(self, name):
+            return getattr(self.path, name)
+
     def check(path, *, directory):
         checked.append((path, directory))
-        original_check(path, directory=directory)
+        original_check(MetadataPath(path), directory=directory)
 
-    monkeypatch.setattr(Path, "lstat", lstat)
     monkeypatch.setattr(stage41b, "_check_protected", check)
     monkeypatch.setattr(operator, "__file__", str(script))
     monkeypatch.setattr(operator, "_operator_code_locations", lambda: (required, search))
@@ -85,9 +98,43 @@ def code_tree(monkeypatch, tmp_path):
         search=search,
         foreign=foreign,
         checked=checked,
+        metadata=MetadataPath,
         tmp=tmp_path,
         locations=original_locations,
     )
+
+
+def test_code_tree_metadata_does_not_patch_global_path_or_os_stat(code_tree):
+    assert Path.lstat is _PATH_LSTAT
+    assert type(code_tree.controls).lstat is _PATH_LSTAT
+    real = code_tree.controls.lstat()
+    assert real == os.lstat(code_tree.controls)
+    simulated = code_tree.metadata(code_tree.controls).lstat()
+    assert simulated.st_uid == simulated.st_gid == 0
+    assert simulated.st_mode == real.st_mode
+
+    # A fixture-only ownership change cannot affect pytest's filesystem reads.
+    code_tree.foreign.add(code_tree.controls)
+    assert code_tree.metadata(code_tree.controls).lstat().st_uid == 1000
+    assert code_tree.controls.lstat() == real
+    assert os.lstat(code_tree.controls) == real
+    assert Path.lstat is _PATH_LSTAT
+    with pytest.raises(stage41b.QualificationBlocked, match="ROOT_OWNED_PROTECTED_PATH_REQUIRED"):
+        stage41b._check_protected(code_tree.controls, directory=False)
+
+
+def test_code_tree_metadata_does_not_affect_unrelated_paths(code_tree, tmp_path_factory):
+    unrelated = tmp_path_factory.mktemp("unrelated-metadata") / "ordinary.py"
+    unrelated.write_bytes(b"# real filesystem metadata\n")
+    unrelated.chmod(0o666)
+    real = os.lstat(unrelated)
+    # Keep real metadata available to other tests and pytest's temp/cache code.
+    assert unrelated.lstat() == real
+    assert unrelated.stat() == real
+    operator._trusted_operator()
+    assert unrelated.lstat() == real
+    assert (unrelated, False) not in code_tree.checked
+    assert Path.lstat is _PATH_LSTAT
 
 
 def test_declared_inventory_includes_controls_not_present_in_loaded_modules(code_tree, monkeypatch):
