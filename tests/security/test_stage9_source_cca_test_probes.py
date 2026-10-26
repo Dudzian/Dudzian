@@ -706,3 +706,181 @@ def test_start_exited_previous_lifetime_clears_only_verified_pin(start, monkeypa
     assert name not in start.run.lifetimes
     assert name not in start.run.pins
     assert not start.run.pending
+
+
+@pytest.mark.parametrize("description", ["Łukasz Żółć", "用户", "مستخدم", "Zoë,東京,+48 123"])
+def test_nss_utf8_description_survives_strict_command_decode(command, description):
+    answer, _ = command
+    answer.stdout = f"owned:x:62000:62000:{description}:/home/owned:/bin/sh\n".encode("utf-8")
+    assert runtime._nss("passwd", "owned")[0][4] == description
+    assert runtime._nss("passwd", "62000")[0][0] == "owned"
+
+
+@pytest.mark.parametrize("bad", [b"\xff", b"\xc3", b"\xc0\xaf", b"\xed\xa0\x80"])
+def test_nss_invalid_utf8_is_never_discarded_or_replaced(command, bad):
+    answer, _ = command
+    answer.stdout = b"owned:x:62000:62000:" + bad + b":/home/owned:/bin/sh\n"
+    with pytest.raises(HarnessRefusal, match="HOST_OBSERVATION_INVALID"):
+        runtime._nss("passwd")
+
+
+def test_non_nss_commands_remain_ascii_strict(command):
+    answer, _ = command
+    answer.stdout = "Łukasz".encode()
+    with pytest.raises(HarnessRefusal, match="HOST_OBSERVATION_INVALID"):
+        runtime._command("systemctl", "list-units")
+
+
+@pytest.mark.parametrize(
+    "database,raw",
+    [
+        ("passwd", "öwned:x:62000:62000:Opis:/home/owned:/bin/sh\n"),
+        ("passwd", "owned:x:６２０００:62000:Opis:/home/owned:/bin/sh\n"),
+        ("passwd", "owned:x:62000:٦٢٠٠٠:Opis:/home/owned:/bin/sh\n"),
+        ("passwd", "owned:x:62000:-1:Opis:/home/owned:/bin/sh\n"),
+        ("passwd", "owned:x:4294967295:62000:Opis:/home/owned:/bin/sh\n"),
+        ("passwd", "owned:x:062000:62000:Opis:/home/owned:/bin/sh\n"),
+        ("passwd", "owned:x:62000:62000:Opis:extra:/home/owned:/bin/sh\n"),
+        ("passwd", "owned:x:62000:62000:Opis\x00:/home/owned:/bin/sh\n"),
+        ("passwd", "owned:x:62000:62000:Opis\r:/home/owned:/bin/sh\n"),
+        ("passwd", "owned:x:62000:62000:Opis\u2028hidden:/home/owned:/bin/sh\n"),
+        ("passwd", "owned:x:62000:62000:Opis\u0085hidden:/home/owned:/bin/sh\n"),
+        ("passwd", "owned:x:62000:62000:Opis:/home/żółć:/bin/sh\n"),
+        ("passwd", "owned:x:62000:62000:Opis:relative:/bin/sh\n"),
+        ("passwd", "owned:x:62000:62000:Opis:/home/owned:\n"),
+        ("group", "owned:x:62000:öther\n"),
+        ("group", "owned:x:62000:other,,third\n"),
+        ("group", "owned:x:62000:\n\n"),
+        ("group", "owned:x:62000:\nowned:x:62001:\n"),
+    ],
+)
+def test_nss_international_description_does_not_relax_record_policy(command, database, raw):
+    answer, _ = command
+    answer.stdout = raw.encode("utf-8")
+    with pytest.raises(HarnessRefusal, match="NSS_OBSERVATION_INVALID"):
+        runtime._nss(database)
+
+
+def test_nss_unknown_database_is_rejected_before_command(command):
+    _, calls = command
+    with pytest.raises(HarnessRefusal, match="NSS_OBSERVATION_INVALID"):
+        runtime._nss("shadow")
+    assert calls == []
+
+
+def test_nss_wrong_key_result_is_not_trusted(command):
+    answer, _ = command
+    answer.stdout = b"other:x:62000:\n"
+    with pytest.raises(HarnessRefusal, match="NSS_OBSERVATION_INVALID"):
+        runtime._nss("group", "owned")
+
+
+def test_unicode_account_description_still_blocks_name_and_numeric_collisions(command, monkeypatch):
+    answer, _ = command
+    resources = plan("012345abcdef")
+    role = resources["roles"][0]
+
+    def execute(arguments, **kwargs):
+        database, key = arguments[1:]
+        if key in {role["principal"], str(role["uid"]), str(role["gid"])}:
+            answer.returncode = 0
+            line = (
+                f"{role['principal']}:x:{role['uid']}:{role['gid']}:Łukasz:/nonexistent:/bin/sh\n"
+                if database == "passwd"
+                else f"{role['principal']}:x:{role['gid']}:\n"
+            )
+            answer.stdout = line.encode()
+        else:
+            answer.returncode, answer.stdout = 2, b""
+        return answer
+
+    monkeypatch.setattr(runtime.subprocess, "run", execute)
+    monkeypatch.setattr(runtime, "_protected", lambda *args, **kwargs: True)
+    monkeypatch.setattr(runtime, "_subordinate_absent", lambda _: True)
+    monkeypatch.setattr(runtime, "_absent", lambda _: True)
+    monkeypatch.setattr(runtime, "inspect_unit", lambda _: {})
+    monkeypatch.setattr(runtime, "unit_is_unused", lambda _: True)
+    checks = runtime._collisions(resources)
+    for database, key in (
+        ("passwd", role["principal"]),
+        ("passwd", role["uid"]),
+        ("group", role["principal"]),
+        ("group", role["gid"]),
+    ):
+        assert checks[f"nss:{database}:{key}"] is False
+
+
+def test_duplicate_uid_alias_is_observed_rather_than_hidden(command):
+    answer, _ = command
+    answer.stdout = (
+        "first:x:62000:62000:Łukasz:/home/first:/bin/sh\n"
+        "alias:x:62000:62000:用户:/home/alias:/bin/sh\n"
+    ).encode()
+    assert [row[0] for row in runtime._nss("passwd")] == ["first", "alias"]
+    with pytest.raises(HarnessRefusal, match="NSS_OBSERVATION_INVALID"):
+        runtime._nss("passwd", "62000")
+
+
+def test_stage41b_diagnostics_reads_metadata_without_opening_or_executing_installation(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        Path, "lstat", lambda _: SimpleNamespace(st_mode=stat.S_IFDIR | 0o755, st_uid=0, st_gid=0)
+    )
+    monkeypatch.setattr(Path, "glob", lambda *args: iter([Path("/run/ch-stage41b-old")]))
+    monkeypatch.setattr(runtime, "_nss", lambda _: [["chs41bold"], ["ordinary"]])
+
+    def command(name, listing, *arguments):
+        calls.append((name, listing, arguments))
+        return 0, "cryptohunter-root-proof-signer.service loaded inactive dead\n"
+
+    monkeypatch.setattr(runtime, "_command", command)
+    monkeypatch.setattr(Path, "open", lambda *args, **kwargs: pytest.fail("file contents opened"))
+    report = runtime._stage41b_diagnostics()
+    assert report["paths"]["/opt/cryptohunter-stage41b"]["mode"] == "0o755"
+    assert report["accounts"]["passwd"]["names"] == ["chs41bold"]
+    assert report["units"]["list-units"]["names"] == ["cryptohunter-root-proof-signer.service"]
+    assert report["runtime_paths"]["ch-stage41b-*"]["count_up_to_limit"] == 1
+    assert report["coexistence"] == "BLOCKED"
+    assert report["read_only"] is True
+    assert {call[1] for call in calls} == {"list-unit-files", "list-units"}
+    assert all(call[0] == "systemctl" and "--all" in call[2] for call in calls)
+
+
+def test_stage41b_diagnostics_denied_observations_are_redacted_and_blocked(monkeypatch):
+    def denied(*args, **kwargs):
+        raise PermissionError("PRIVATE")
+
+    monkeypatch.setattr(Path, "lstat", denied)
+    monkeypatch.setattr(Path, "glob", denied)
+    monkeypatch.setattr(runtime, "_nss", denied)
+    monkeypatch.setattr(runtime, "_command", denied)
+    report = runtime._stage41b_diagnostics()
+    assert report["coexistence"] == "BLOCKED"
+    assert report["paths"]["/opt/cryptohunter-stage41b"]["state"] == "UNAVAILABLE"
+    assert report["units"]["list-units"]["state"] == "UNAVAILABLE"
+    assert "PRIVATE" not in str(report)
+
+
+def test_stage41b_diagnostics_bounds_residual_inventory(monkeypatch):
+    monkeypatch.setattr(
+        Path, "glob", lambda *args: (Path(f"/run/ch-stage41b-{i}") for i in range(1000))
+    )
+    monkeypatch.setattr(runtime, "_nss", lambda _: [[f"chs41b{i}"] for i in range(1000)])
+    monkeypatch.setattr(runtime, "_command", lambda *args: (0, "cryptohunter.service\n" * 1000))
+    report = runtime._stage41b_diagnostics()
+    assert report["runtime_paths"]["ch-stage41b-*"] == {"count_up_to_limit": 129, "truncated": True}
+    assert len(report["accounts"]["passwd"]["names"]) == 128
+    assert report["accounts"]["passwd"]["truncated"] is True
+    assert len(report["units"]["list-units"]["names"]) == 128
+    assert report["units"]["list-units"]["truncated"] is True
+
+
+def test_stage41b_directory_with_no_units_never_passes_preflight(physical_preflight, monkeypatch):
+    monkeypatch.setattr(runtime, "_absent", lambda path: str(path) != "/opt/cryptohunter-stage41b")
+    report = runtime.preflight(plan("012345abcdef"))
+    assert report["checks"]["no_cryptohunter_units"] is True
+    assert report["checks"]["no_other_installations"] is False
+    assert report["ready"] is False
+    assert "no_other_installations" in report["blockers"]
+    assert report["physical_test_status"] == "PHYSICAL_TEST_PENDING"
+    assert report["stage41b_diagnostics"]["coexistence"] == "BLOCKED"

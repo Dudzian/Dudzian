@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 import hashlib
+from itertools import islice
 import json
 import os
 from pathlib import Path
@@ -108,24 +109,57 @@ def _command(name: str, *arguments: str, missing: bool = False) -> tuple[int, st
     if completed.returncode and not (missing and name == "getent" and completed.returncode == 2):
         _refuse("HOST_COMMAND_FAILED")
     try:
-        return completed.returncode, completed.stdout.decode("ascii", errors="strict")
+        # NSS descriptions are UTF-8 even under LC_ALL=C on Ubuntu. Keep every
+        # other host command ASCII-only; field policy belongs to _nss below.
+        encoding = "utf-8" if name == "getent" else "ascii"
+        return completed.returncode, completed.stdout.decode(encoding, errors="strict")
     except UnicodeError:
         _refuse("HOST_OBSERVATION_INVALID")
     raise AssertionError("unreachable")
 
 
 def _nss(database: str, key: str | None = None) -> list[list[str]]:
+    if database not in {"passwd", "group"}:
+        _refuse("NSS_OBSERVATION_INVALID")
     args = (database,) if key is None else (database, key)
     code, raw = _command("getent", *args, missing=key is not None)
     if code == 2:
         if raw:
             _refuse("NSS_OBSERVATION_INVALID")
         return []
-    fields = [line.split(":") for line in raw.splitlines()]
+    # Only LF delimits records. splitlines() also accepts Unicode separators,
+    # which must never manufacture accounts from a descriptive field.
+    lines = raw.removesuffix("\n").split("\n") if raw else []
+    fields = [line.split(":") for line in lines]
     width = 7 if database == "passwd" else 4
-    if any(len(value) != width or not value[0] or not value[2].isdigit() for value in fields):
-        _refuse("NSS_OBSERVATION_INVALID")
-    if key is not None and len(fields) != 1:
+    names: set[str] = set()
+
+    def account(value: str) -> bool:
+        return re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.-]*\$?", value) is not None
+
+    def identifier(value: str) -> bool:
+        return re.fullmatch(r"(?:0|[1-9][0-9]{0,9})", value) is not None and int(value) < 2**32 - 1
+
+    for row in fields:
+        if len(row) != width or any(not field.isprintable() for field in row if field):
+            _refuse("NSS_OBSERVATION_INVALID")
+        if not account(row[0]) or row[0] in names or not identifier(row[2]):
+            _refuse("NSS_OBSERVATION_INVALID")
+        names.add(row[0])
+        # Only passwd's GECOS field may contain international text. Identity,
+        # password placeholders, paths and membership syntax remain ASCII.
+        if any(
+            not field.isascii()
+            for index, field in enumerate(row)
+            if not (width == 7 and index == 4)
+        ):
+            _refuse("NSS_OBSERVATION_INVALID")
+        if width == 7:
+            if not identifier(row[3]) or any(not row[index].startswith("/") for index in (5, 6)):
+                _refuse("NSS_OBSERVATION_INVALID")
+        elif row[3] and any(not account(member) for member in row[3].split(",")):
+            _refuse("NSS_OBSERVATION_INVALID")
+    if key is not None and (len(fields) != 1 or (fields[0][0] != key and fields[0][2] != key)):
         _refuse("NSS_OBSERVATION_INVALID")
     return fields
 
@@ -460,6 +494,71 @@ def _collisions(plan: dict[str, Any]) -> dict[str, bool]:
     return checks
 
 
+def _stage41b_diagnostics() -> dict[str, Any]:
+    """Bounded metadata only. Never interprets remnants as coexistence authority.
+
+    No file contents, symlink targets, installed code or process command lines
+    are read. Unavailable observations stay explicit and cannot clear a gate.
+    """
+    result: dict[str, Any] = {
+        "read_only": True,
+        "coexistence": "BLOCKED",
+        "reason": "STAGE41B_ISOLATION_NOT_ESTABLISHED",
+        "process_coverage": "NOT_ASSESSED_FOR_STAGE41B",
+        "paths": {},
+        "accounts": {},
+        "units": {},
+    }
+    for name in ("/opt", "/opt/cryptohunter-stage41b"):
+        try:
+            info = Path(name).lstat()
+            result["paths"][name] = {
+                "state": "PRESENT",
+                "uid": info.st_uid,
+                "gid": info.st_gid,
+                "mode": oct(stat.S_IMODE(info.st_mode)),
+                "directory": stat.S_ISDIR(info.st_mode),
+                "symlink": stat.S_ISLNK(info.st_mode),
+            }
+        except FileNotFoundError:
+            result["paths"][name] = {"state": "ABSENT"}
+        except OSError:
+            result["paths"][name] = {"state": "UNAVAILABLE"}
+    for database in ("passwd", "group"):
+        try:
+            rows = _nss(database)
+            matches = [row[0] for row in rows if row[0].startswith("chs41b")]
+            result["accounts"][database] = {"names": matches[:128], "truncated": len(matches) > 128}
+        except Exception:
+            result["accounts"][database] = {"state": "UNAVAILABLE"}
+    for listing in ("list-unit-files", "list-units"):
+        try:
+            _, raw = _command("systemctl", listing, "--all", "--plain", "--no-pager", "--no-legend")
+            matches = []
+            for line in raw.splitlines():
+                columns = line.split()
+                if columns and (
+                    "cryptohunter" in columns[0].lower() or "stage41b" in columns[0].lower()
+                ):
+                    if re.fullmatch(r"[A-Za-z0-9_.@:\\-]+", columns[0]) is None:
+                        _refuse("UNIT_OBSERVATION_INVALID")
+                    matches.append(columns[0])
+            result["units"][listing] = {"names": matches[:128], "truncated": len(matches) > 128}
+        except Exception:
+            result["units"][listing] = {"state": "UNAVAILABLE"}
+    result["runtime_paths"] = {}
+    for pattern in ("ch-stage41b-*", "cryptohunter-stage41b-*"):
+        try:
+            paths = list(islice(Path("/run").glob(pattern), 129))
+            result["runtime_paths"][pattern] = {
+                "count_up_to_limit": len(paths),
+                "truncated": len(paths) > 128,
+            }
+        except OSError:
+            result["runtime_paths"][pattern] = {"state": "UNAVAILABLE"}
+    return result
+
+
 def preflight(plan: dict[str, Any], *, administrative: bool = False) -> dict[str, Any]:
     """Read-only host observations; an unavailable fact is a blocker."""
     checks: dict[str, Any] = {}
@@ -577,6 +676,7 @@ def preflight(plan: dict[str, Any], *, administrative: bool = False) -> dict[str
         "kernel": platform.release(),
         "read_only": True,
         "process_observation": processes,
+        "stage41b_diagnostics": _stage41b_diagnostics(),
         "administrative_preflight_required": not administrative,
         "physical_test_status": "PHYSICAL_TEST_PENDING",
         "installation_discovery_scope": "CONVENTIONAL_PATHS_AND_KNOWN_ACCOUNTS_UNITS",
