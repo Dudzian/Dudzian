@@ -325,3 +325,55 @@ inventory zachowuje wcześniejsze testy, próg changed-code 70%, timeouty oraz
 wyłączenia hardware/destructive/network. Żaden workflow nie wywołuje
 fizycznego `--execute`. Testy z podstawionymi backendami nie zastępują próby
 na Dellu.
+
+## NSS i pozostałości Stage 41B po fizycznym preflight
+
+Odczyt `getent passwd` używa ścisłego UTF-8, także przy ustalonym `LC_ALL=C`.
+Międzynarodowy tekst jest dozwolony wyłącznie w polu opisowym GECOS. Pozostałe
+pola zachowują ASCII; nazwy kont i członków grup mają jawną składnię, UID/GID
+są kanonicznymi dziesiętnymi liczbami ASCII w zakresie 0–4294967294. Parser
+sprawdza liczbę pól, bezwzględne ścieżki home/shell, duplikaty nazw i zgodność
+wyniku z kluczem zapytania. Wyłącznie LF rozdziela rekordy. Błędne UTF-8,
+znaki sterujące i separatory rekordów w opisie powodują odmowę; bajty nie są
+pomijane ani zastępowane. Konta o różnych nazwach i wspólnym UID pozostają
+widoczne, a niejednoznaczny wynik zapytania o UID blokuje kontrolę.
+
+Samo `/opt/cryptohunter-stage41b` należące do root z trybem 755 oraz brak
+aktywnych jednostek **nie ustanawiają bezpiecznej współobecności**. W audycie
+źródeł sprawdzono następujące granice:
+
+- `scripts/prepare_stage41b_environment.py` umieszcza instalacje pod pełnym
+  commitem w tym prefiksie. Dowodem ukończenia jest `installation.json`
+  z trybem 600; ochrona samego prefiksu nie dowodzi ochrony ani integralności
+  całego drzewa i nie potwierdza zakończonej instalacji.
+- `scripts/qualify_stage41b_signer_isolation.py` używa kont `chs41b*`, ścieżek
+  `/run/ch-stage41b-*`, `/run/cryptohunter-stage41b-*` i jednostek o nazwach
+  produkcyjnych: `cryptohunter-root-proof-signer.service`,
+  `cryptohunter-history-attestation-signer.service` oraz
+  `cryptohunter-root-proof-issuer-check.service`. Brak aktywnej jednostki nie
+  wyklucza jednostki nieaktywnej, instalacji plikowej ani procesu poza systemd.
+- `process_observation(plan)` w Source/CCA bada tożsamości i korzeń wskazanego
+  planu Source/CCA. Nie dowodzi nieobecności procesów Stage 41B pod dowolnym
+  UID, ani braku otwartych zasobów starego środowiska. Wynik tej obserwacji
+  nie może zostać użyty do zatwierdzenia współobecności.
+
+Dlatego `no_other_installations` zachowuje blokadę przy obecnym prefiksie.
+Nie dodano wyjątku opartego na nazwie katalogu, właścicielu, trybie 755 ani
+braku pasujących aktywnych usług. Ewentualny przyszły wyjątek wymaga osobno
+zaprojektowanej pozytywnej weryfikacji izolacji całego starego środowiska;
+ten raport jej nie zastępuje.
+
+Zwykły, nieuprzywilejowany `--check` dodaje `preflight.stage41b_diagnostics`:
+metadane `lstat` dla `/opt` i prefiksu (w tym typ, symlink, UID/GID i tryb),
+nazwy kont i grup `chs41b*`, nazwy jednostek z `list-unit-files` oraz
+`list-units --all` i liczby pasujących ścieżek runtime. Spisy są ograniczone
+do 128 pozycji; `truncated=true` oznacza niepełny spis. Brak dostępu ma stan
+`UNAVAILABLE`, a nie wynik pusty. Raport nie czyta zawartości instalacji,
+receiptów ani linii poleceń procesów i nie uruchamia interpretera Stage 41B.
+`process_coverage=NOT_ASSESSED_FOR_STAGE41B` jawnie zaznacza brak dowodu
+procesowego; `coexistence=BLOCKED` nie jest bramką pozwalającą na wykonanie.
+
+Operator może zebrać raport bez sudo i bez `--execute`, używając dotychczasowego
+`--check --run-id <12-hex> --report <nowy-plik.json>`. Nie usuwać katalogów,
+kont ani usług na podstawie tej diagnostyki. `PHYSICAL_TEST_PENDING` oraz
+`IN_PROGRESS / PRODUCTION_NO_GO` pozostają bez zmian.
