@@ -182,3 +182,24 @@ coverage enter the existing quality job without changing hardware gates,
 timeouts or coverage thresholds. Existing Ruff and security CI remains enabled.
 Physical qualification, independent external artifacts, complete administrative
 observations and operator admission authorization remain outstanding.
+
+## CI contract regression versus platform qualification
+
+Review of PR #3210 HEAD `c5db034bffbd187ae395ae3d2856aba9ca277d97`
+confirmed the same Python CI failure on Ubuntu, Windows and macOS: the history
+partition contract omitted the two coexistence test files and two coverage
+modules already present in the workflow. The contract now lists those entries
+explicitly. Full set equality, uniqueness checks and all earlier entries remain.
+No workflow assignment changes: atomic runs 75 unique test files with 63 unique
+coverage modules; history retains its four test files and 64 unique coverage
+modules. Both jobs cover the diagnostic module and CLI independently.
+
+The separate [platform run](https://github.com/Dudzian/Dudzian/actions/runs/40367928000)
+failed with `MISSING_CURRENT_EVIDENCE`: Linux lacks systemd, clean-install and
+restart evidence; macOS lacks launchd, permissions/authentication/IPC and
+lifecycle evidence; Windows lacks reboot recovery, long-running lifecycle,
+update/restart and failed-update safety evidence. These are unsatisfied production
+qualification conditions, not regressions introduced by the coexistence code.
+All three platform readiness results remain `NOT_READY`; their fail-closed gates
+and evidence requirements are unchanged. A passing Python contract does not
+satisfy those production gates or qualify the physical Dell.
