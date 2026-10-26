@@ -102,6 +102,10 @@ STAGE9_PRODUCTION_ATOMIC_TESTS = {
     "tests/deployment/test_stage9_native_linux_test_fixture_readiness.py",
     "tests/deployment/test_stage9_native_linux_test_isolation_reconciliation.py",
     "tests/deployment/test_stage9_native_linux_test_execution_plan.py",
+    "tests/deployment/test_stage9_trusted_installation_contract.py",
+    "tests/deployment/test_stage9_trusted_installation_files.py",
+    "tests/deployment/test_stage9_trusted_installation_runtime.py",
+    "tests/deployment/test_stage9_trusted_installation_identity_gate.py",
     "tests/security/test_independent_cca_decision.py",
     "tests/security/test_cca_durable_decision_log.py",
     "tests/architecture/test_stage9_independent_cca_boundary.py",
@@ -155,6 +159,10 @@ STAGE9_PRODUCTION_ATOMIC_MODULES = {
     "deployment.stage9_native_linux_test_fixture_readiness",
     "deployment.stage9_native_linux_test_isolation_reconciliation",
     "deployment.stage9_native_linux_test_execution_plan",
+    "deployment.stage9_trusted_installation_contract",
+    "deployment.stage9_trusted_installation_files",
+    "deployment.stage9_trusted_installation_runtime",
+    "deployment.stage9_trusted_installation_identity_gate",
 }
 # Stage 41B adds unprivileged regressions to this serial job. Keep the entire
 # pre-existing atomic inventory and the independent history scope unchanged.
