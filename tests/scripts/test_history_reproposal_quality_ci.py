@@ -182,6 +182,7 @@ SOURCE_CCA_TEST_INSTALLATION_TESTS = {
     "tests/deployment/test_stage9_source_cca_test_package.py",
     "tests/security/test_stage9_source_cca_test_lifecycle.py",
     "tests/security/test_stage9_source_cca_test_probes.py",
+    "tests/security/test_stage9_source_cca_test_rootless.py",
     "tests/deployment/test_stage9_source_cca_test_controls.py",
     "tests/scripts/test_stage9_source_cca_installation_operator.py",
 }

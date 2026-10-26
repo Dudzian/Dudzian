@@ -22,6 +22,8 @@ from typing import Any, Iterator, NoReturn, cast
 
 from deployment.stage9_source_cca_test_package import HarnessRefusal
 from deployment.stage9_trusted_installation_contract import parse_manifest
+from deployment.stage9_native_linux_cgroup_membership_observation import _parse_proc_cgroup_v2
+from deployment.stage9_native_linux_process_identity_observation import _read_proc_file
 from deployment.stage9_native_linux_source_cca_preflight import (
     _PROPOSED,
     _KNOWN_REFERENCE_AUTHORITIES,
@@ -160,7 +162,11 @@ def _role_paths(plan: dict[str, Any]) -> list[Path]:
 
 
 def _processes(plan: dict[str, Any]) -> list[int]:
-    """A complete proc scan; unreadable metadata blocks proof of absence."""
+    """Strict executable sweep, used only by the administrative observer.
+
+    Keep this independent sweep in addition to scoped metadata classification:
+    an executable-only alias outside reserved credentials/cgroups must be seen.
+    """
     uids = {role["uid"] for role in plan["roles"]}
     root = plan["root"]
     found = []
@@ -194,6 +200,221 @@ def _processes(plan: dict[str, Any]) -> list[int]:
     if not self_seen:
         _refuse("PROCESS_OBSERVATION_UNAVAILABLE")
     return found
+
+
+def _procfs_visibility() -> bool:
+    """A hidden PID set cannot support even a scoped absence observation."""
+    with Path("/proc/self/mountinfo").open("rb") as stream:
+        raw = stream.read(1024 * 1024 + 1)
+    if not raw or len(raw) > 1024 * 1024:
+        return False
+    mounts = []
+    for line in raw.splitlines():
+        before, separator, after = line.partition(b" - ")
+        fields, filesystem = before.split(), after.split()
+        if len(fields) >= 6 and fields[4] == b"/proc":
+            if (
+                not separator
+                or fields[3] != b"/"
+                or len(filesystem) != 3
+                or filesystem[0] != b"proc"
+            ):
+                return False
+            mounts.append(fields[5].split(b",") + filesystem[2].split(b","))
+    return len(mounts) == 1 and all(
+        option == b"hidepid=0" or not option.startswith(b"hidepid") for option in mounts[0]
+    )
+
+
+def _scan_stat(raw: bytes, pid: int) -> int:
+    """Classify host processes, including PID 1 and unrelated zombies.
+
+    Service qualification's parser rejects zombies. This narrower scanner must
+    retain test zombies as residue while allowing stable unrelated ones.
+    """
+    header, separator, suffix = raw.rpartition(b") ")
+    fields = suffix.split()
+    if (
+        not separator
+        or not header.startswith(str(pid).encode("ascii") + b" (")
+        or len(fields) < 20
+        or fields[0] not in (b"R", b"S", b"D", b"Z", b"T", b"t", b"W", b"X", b"x", b"K", b"P", b"I")
+        or not fields[19].isdigit()
+        or not 0 <= int(fields[19]) < 2**64
+    ):
+        _refuse("PROCESS_PID_OR_IDENTITY_CHANGED")
+    return int(fields[19])
+
+
+def _scan_identity(raw: bytes, pid: int) -> tuple[tuple[int, ...], ...]:
+    required = {b"Pid", b"Tgid", b"Uid", b"Gid", b"Groups"}
+    fields = {}
+    for line in raw.splitlines():
+        key, separator, value = line.partition(b":")
+        if key in required:
+            if not separator or key in fields:
+                _refuse("PROCESS_IDENTITY_METADATA_INVALID")
+            fields[key] = value.split()
+    if set(fields) != required or any(
+        not value.isdigit() or len(value) > 10 for values in fields.values() for value in values
+    ):
+        _refuse("PROCESS_IDENTITY_METADATA_INVALID")
+    numbers = {key: tuple(int(value) for value in values) for key, values in fields.items()}
+    if (
+        numbers[b"Pid"] != (pid,)
+        or numbers[b"Tgid"] != (pid,)
+        or len(numbers[b"Uid"]) != 4
+        or len(numbers[b"Gid"]) != 4
+        or any(value >= 2**32 - 1 for values in numbers.values() for value in values)
+    ):
+        _refuse("PROCESS_IDENTITY_METADATA_INVALID")
+    return numbers[b"Uid"], numbers[b"Gid"], numbers[b"Groups"]
+
+
+def _scan_cgroup(raw: bytes) -> str:
+    # The service parser intentionally excludes the host's root cgroup. A host
+    # scan accepts its canonical exact membership, without claiming exe absence.
+    if raw == b"0::/\n":
+        return "/"
+    try:
+        return cast(str, _parse_proc_cgroup_v2(raw))
+    except ValueError:
+        _refuse("PROCESS_CGROUP_AMBIGUOUS")
+
+
+def rootless_process_observation(plan: dict[str, Any]) -> dict[str, Any]:
+    """Observe visible UID/GID/cgroup scope; never claim a full executable scan.
+
+    No executable read is needed to find a reserved identity or test cgroup.
+    Exclusion requires stable, complete metadata. An unreadable or changed
+    process is uncertainty, not evidence that a test process is absent.
+    """
+    found: set[int] = set()
+    uncertain: set[int] = set()
+    reasons: set[str] = set()
+    excluded = 0
+    self_seen = False
+    uids = {role["uid"] for role in plan["roles"]}
+    gids = {role["gid"] for role in plan["roles"]}
+    cgroups = tuple(role["control_group"] for role in plan["roles"])
+    try:
+        if not _procfs_visibility():
+            reasons.add("PROCFS_VISIBILITY_UNCERTAIN")
+        for item in Path("/proc").iterdir():
+            if not item.name.isascii() or not item.name.isdigit():
+                continue
+            pid = int(item.name)
+            if not 0 < pid < 2**31 or str(pid) != item.name:
+                reasons.add("PROCESS_PID_OR_IDENTITY_CHANGED")
+                continue
+            self_seen |= pid == os.getpid()
+            descriptor = -1
+            try:
+                descriptor = os.open(
+                    item, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+                )
+                retained = os.fstat(descriptor)
+                before = _scan_stat(_read_proc_file(descriptor, "stat"), pid)
+                identity = _scan_identity(_read_proc_file(descriptor, "status"), pid)
+                relevant = bool(
+                    uids.intersection(identity[0])
+                    or gids.intersection((*identity[1], *identity[2]))
+                )
+                if relevant:
+                    found.add(pid)
+                cgroup = _scan_cgroup(_read_proc_file(descriptor, "cgroup"))
+                relevant |= any(
+                    cgroup == group or cgroup.startswith(group + "/") for group in cgroups
+                )
+                if relevant:
+                    found.add(pid)
+                after_identity = _scan_identity(_read_proc_file(descriptor, "status"), pid)
+                after_cgroup = _scan_cgroup(_read_proc_file(descriptor, "cgroup"))
+                after = _scan_stat(_read_proc_file(descriptor, "stat"), pid)
+                current = item.stat(follow_symlinks=False)
+                if (
+                    before != after
+                    or identity != after_identity
+                    or cgroup != after_cgroup
+                    or (retained.st_dev, retained.st_ino) != (current.st_dev, current.st_ino)
+                ):
+                    _refuse("PROCESS_PID_OR_IDENTITY_CHANGED")
+                if not relevant:
+                    excluded += 1
+            except FileNotFoundError:
+                # A missing status/exe is not by itself a vanished process.
+                # Only a vanished directory can be ignored; known test residue
+                # remains recorded even if it exited during this observation.
+                if not _absent(item):
+                    uncertain.add(pid)
+                    reasons.add("PROCESS_METADATA_UNAVAILABLE")
+            except HarnessRefusal as exc:
+                uncertain.add(pid)
+                reasons.add(exc.code)
+            except (OSError, ValueError, UnicodeError):
+                uncertain.add(pid)
+                reasons.add("PROCESS_METADATA_UNAVAILABLE")
+            finally:
+                if descriptor >= 0:
+                    os.close(descriptor)
+    except (OSError, ValueError, UnicodeError):
+        reasons.add("PROCESS_ENUMERATION_UNAVAILABLE")
+    if not self_seen:
+        reasons.add("PROCFS_VISIBILITY_UNCERTAIN")
+    return {
+        "scope": "VISIBLE_UID_GID_CGROUP",
+        "state": "UNCERTAIN"
+        if reasons
+        else "RESIDUAL_PROCESS_FOUND"
+        if found
+        else "SCOPED_ABSENCE_OBSERVED",
+        "matched_pids": sorted(found),
+        "uncertain_pids": sorted(uncertain),
+        "uncertainty": sorted(reasons),
+        "complete": not reasons,
+        "full_confirmation": False,
+        "executable_scan_complete": False,
+        "excluded_processes": excluded,
+    }
+
+
+def process_observation(plan: dict[str, Any], *, administrative: bool = False) -> dict[str, Any]:
+    """Select an explicit observation scope; privilege never upgrades it."""
+    if not administrative:
+        return rootless_process_observation(plan)
+    result: dict[str, Any] = {
+        "scope": "ADMINISTRATIVE_FULL_PROCFS",
+        "state": "UNCERTAIN",
+        "matched_pids": [],
+        "uncertain_pids": [],
+        "uncertainty": ["ADMINISTRATIVE_PROCESS_OBSERVATION_REQUIRED"],
+        "complete": False,
+        "full_confirmation": False,
+        "executable_scan_complete": False,
+        "excluded_processes": 0,
+    }
+    if sys.platform != "linux" or os.geteuid() != 0:
+        return result
+    scoped = rootless_process_observation(plan)
+    result.update(scoped)
+    result["scope"] = "ADMINISTRATIVE_FULL_PROCFS"
+    try:
+        result["matched_pids"] = sorted(set(scoped["matched_pids"]) | set(_processes(plan)))
+        result["executable_scan_complete"] = True
+    except (OSError, ValueError, UnicodeError):
+        result["uncertainty"] = sorted(
+            set(scoped["uncertainty"]) | {"PROCESS_EXECUTABLE_SCAN_UNCERTAIN"}
+        )
+        result["complete"] = False
+    result["full_confirmation"] = result["complete"] and not result["matched_pids"]
+    result["state"] = (
+        "UNCERTAIN"
+        if not result["complete"]
+        else "RESIDUAL_PROCESS_FOUND"
+        if result["matched_pids"]
+        else "FULL_ABSENCE_CONFIRMED"
+    )
+    return result
 
 
 def _subordinate_absent(plan: dict[str, Any]) -> bool:
@@ -239,7 +460,7 @@ def _collisions(plan: dict[str, Any]) -> dict[str, bool]:
     return checks
 
 
-def preflight(plan: dict[str, Any]) -> dict[str, Any]:
+def preflight(plan: dict[str, Any], *, administrative: bool = False) -> dict[str, Any]:
     """Read-only host observations; an unavailable fact is a blocker."""
     checks: dict[str, Any] = {}
     blockers: list[str] = []
@@ -343,31 +564,59 @@ def preflight(plan: dict[str, Any]) -> dict[str, Any]:
             ].splitlines()
         ),
     )
-    check("no_test_processes", lambda: not _processes(plan))
+    processes = process_observation(plan, administrative=administrative)
+    check(
+        "no_test_processes", lambda: processes["complete"] is True and not processes["matched_pids"]
+    )
+    if administrative:
+        check("full_process_confirmation", lambda: processes["full_confirmation"] is True)
     return {
         "ready": not blockers,
         "checks": checks,
         "blockers": blockers,
         "kernel": platform.release(),
         "read_only": True,
+        "process_observation": processes,
+        "administrative_preflight_required": not administrative,
+        "physical_test_status": "PHYSICAL_TEST_PENDING",
         "installation_discovery_scope": "CONVENTIONAL_PATHS_AND_KNOWN_ACCOUNTS_UNITS",
     }
 
 
-def inspect_cleanup(plan: dict[str, Any]) -> dict[str, Any]:
+def inspect_cleanup(plan: dict[str, Any], *, administrative: bool = False) -> dict[str, Any]:
     """Independent absence checks. Never consumes cleanup's success claim."""
     checks: dict[str, Any] = {}
     blockers: list[str] = []
+    resource_uncertain = False
     try:
         checks.update(_collisions(plan))
     except Exception:
         checks["resource_observation"] = False
-    try:
-        checks["processes_absent"] = not _processes(plan)
-    except Exception:
-        checks["processes_absent"] = False
+        resource_uncertain = True
+    processes = process_observation(plan, administrative=administrative)
+    checks["processes_absent"] = processes["complete"] is True and not processes["matched_pids"]
     blockers.extend(name for name, value in checks.items() if value is not True)
-    return {"clean": not blockers, "checks": checks, "blockers": blockers, "read_only": True}
+    scope_clear = not blockers
+    full = administrative and processes["full_confirmation"] is True
+    if not administrative:
+        blockers.append("ADMINISTRATIVE_INSPECTION_REQUIRED")
+    return {
+        "clean": scope_clear and full,
+        "scope_clear": scope_clear,
+        "full_confirmation": scope_clear and full,
+        "state": "FULL_ABSENCE_CONFIRMED"
+        if scope_clear and full
+        else "SCOPED_ABSENCE_OBSERVED"
+        if scope_clear
+        else "UNCERTAIN"
+        if not processes["complete"] or resource_uncertain
+        else "RESIDUALS_FOUND",
+        "checks": checks,
+        "blockers": blockers,
+        "process_observation": processes,
+        "read_only": True,
+        "physical_test_status": "PHYSICAL_TEST_PENDING",
+    }
 
 
 class PhysicalRun:
@@ -583,7 +832,7 @@ class PhysicalRun:
             _refuse("NATIVE_LINUX_REQUIRED")
         if os.geteuid() != 0:
             _refuse("ROOT_EXECUTION_REQUIRED")
-        observed = preflight(self.plan)
+        observed = preflight(self.plan, administrative=True)
         if observed["ready"] is not True:
             _refuse("PREFLIGHT_BLOCKED")
         self._entered = True
@@ -929,8 +1178,8 @@ class PhysicalRun:
             return self.cleanup_result
         blockers: list[str] = []
         if not (self.receipts or self.accounts or self.groups or self.handles):
-            inspection = inspect_cleanup(self.plan)
-            if inspection["clean"] is not True:
+            inspection = inspect_cleanup(self.plan, administrative=True)
+            if inspection["clean"] is not True or inspection.get("full_confirmation") is not True:
                 blockers.append("INDEPENDENT_INSPECTION_BLOCKED")
             if self.pending:
                 blockers.append("UNRESOLVED_CREATION_OR_MUTATION")
@@ -1047,8 +1296,8 @@ class PhysicalRun:
                 except OSError:
                     blockers.append("PIDFD_CLOSE_UNPROVEN")
             self.handles.clear()
-        inspection = inspect_cleanup(self.plan)
-        if inspection["clean"] is not True:
+        inspection = inspect_cleanup(self.plan, administrative=True)
+        if inspection["clean"] is not True or inspection.get("full_confirmation") is not True:
             blockers.append("INDEPENDENT_INSPECTION_BLOCKED")
         self.cleanup_result = {
             "clean": not blockers,

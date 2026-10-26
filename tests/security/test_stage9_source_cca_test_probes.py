@@ -19,6 +19,20 @@ pytestmark = pytest.mark.skipif(
 )
 
 
+def scoped_observation(*, pids=()):
+    return {
+        "scope": "VISIBLE_UID_GID_CGROUP",
+        "state": "RESIDUAL_PROCESS_FOUND" if pids else "SCOPED_ABSENCE_OBSERVED",
+        "matched_pids": list(pids),
+        "uncertain_pids": [],
+        "uncertainty": [],
+        "complete": True,
+        "full_confirmation": False,
+        "executable_scan_complete": False,
+        "excluded_processes": 1,
+    }
+
+
 @pytest.mark.parametrize(
     "mode,uid,gid,links,directory,code",
     [
@@ -380,14 +394,14 @@ def physical_preflight(monkeypatch):
     monkeypatch.setattr(runtime, "_nss", lambda *_args: [])
     monkeypatch.setattr(runtime, "_absent", lambda _: True)
     monkeypatch.setattr(runtime, "_command", lambda *_args: (0, ""))
-    monkeypatch.setattr(runtime, "_processes", lambda _: [])
+    monkeypatch.setattr(runtime, "rootless_process_observation", lambda _: scoped_observation())
     monkeypatch.setattr(
         runtime.subprocess, "run", lambda *_args, **_kwargs: SimpleNamespace(returncode=1)
     )
     return reads
 
 
-def test_physical_preflight_matches_only_fully_observed_read_only_host(physical_preflight):
+def test_rootless_preflight_accepts_complete_scoped_process_observation(physical_preflight):
     report = runtime.preflight(plan("012345abcdef"))
     assert report["ready"] is True
     assert report["read_only"] is True
@@ -456,7 +470,9 @@ def test_preflight_failure_does_not_skip_remaining_probes(
             runtime, "_command", lambda *_args: (0, "cryptohunter.service enabled\n")
         )
     elif probe == "old_process":
-        monkeypatch.setattr(runtime, "_processes", lambda _: [123])
+        monkeypatch.setattr(
+            runtime, "rootless_process_observation", lambda _: scoped_observation(pids=[123])
+        )
     elif probe == "program_unavailable":
         original = runtime._program
 

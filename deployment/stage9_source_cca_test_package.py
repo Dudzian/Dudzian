@@ -51,7 +51,9 @@ The manifest and separate test pin are synthetic, not independent approval.
 Run --check, review this package and record inventory.json SHA-256 separately.
 Only an explicit --execute with the reviewed digest may install these fixtures.
 Execution always performs owned-resource cleanup; afterwards run --inspect-cleanup
-for the exact run ID and compare its independently observed absence report.
+for the exact run ID and compare its independently observed, scoped report.
+Rootless observation never proves full CLEAN. Full absence requires the explicit,
+read-only --inspect-cleanup-admin mode invoked separately as root.
 Unknown or replaced resources must be retained for operator review, not deleted.
 Never run physical --execute in CI or Codex. See the repository operator runbook.
 Stage 9 remains IN_PROGRESS / PRODUCTION_NO_GO even when checks MATCHED.

@@ -99,6 +99,7 @@ def _report(mode: str, run_id: str) -> dict[str, Any]:
         "production_emission": "BLOCKED",
         "mode": mode,
         "physical_result": "NOT_EXECUTED",
+        "physical_test_status": "PHYSICAL_TEST_PENDING",
         "preflight": None,
         "checks": [],
         "gate": None,
@@ -266,6 +267,14 @@ def _interrupted(_number: int, _frame: Any) -> None:
     raise HarnessRefusal("OPERATOR_INTERRUPTED")
 
 
+def _require_administrative_inspection() -> None:
+    """Explicit read-only inspection never escalates the invoking account."""
+    if sys.platform != "linux":
+        raise HarnessRefusal("NATIVE_LINUX_REQUIRED")
+    if os.geteuid() != 0:
+        raise HarnessRefusal("ADMINISTRATIVE_INSPECTION_REQUIRES_ROOT")
+
+
 def _execute(args: argparse.Namespace, report: dict[str, Any]) -> None:
     if sys.platform != "linux":
         raise HarnessRefusal("PHYSICAL_ROOT_EXECUTION_REQUIRED")
@@ -276,7 +285,7 @@ def _execute(args: argparse.Namespace, report: dict[str, Any]) -> None:
     if package["commit"] != report["commit"]:
         raise HarnessRefusal("PACKAGE_COMMIT_MISMATCH")
     report["package_sha256"] = package["package_sha256"]
-    report["preflight"] = preflight(package["plan"])
+    report["preflight"] = preflight(package["plan"], administrative=True)
     if not report["preflight"]["ready"]:
         raise HarnessRefusal("PREFLIGHT_BLOCKED")
     previous = {
@@ -311,13 +320,15 @@ def _execute(args: argparse.Namespace, report: dict[str, Any]) -> None:
             except (Exception, KeyboardInterrupt):
                 cleanup = {"clean": False, "blockers": ["CLEANUP_OPERATION_FAILED"]}
             try:
-                independent = inspect_cleanup(package["plan"])
+                independent = inspect_cleanup(package["plan"], administrative=True)
             except (Exception, KeyboardInterrupt):
                 independent = {"clean": False, "blockers": ["CLEANUP_INSPECTION_FAILED"]}
             report["cleanup"] = {
                 "execution": cleanup,
                 "independent": independent,
-                "clean": cleanup.get("clean") is True and independent.get("clean") is True,
+                "clean": cleanup.get("clean") is True
+                and independent.get("clean") is True
+                and independent.get("full_confirmation") is True,
             }
             for number, handler in previous.items():
                 signal.signal(number, handler)
@@ -329,7 +340,7 @@ def _execute(args: argparse.Namespace, report: dict[str, Any]) -> None:
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     modes = parser.add_mutually_exclusive_group(required=True)
-    for name in ("check", "prepare", "execute", "inspect-cleanup"):
+    for name in ("check", "prepare", "execute", "inspect-cleanup", "inspect-cleanup-admin"):
         modes.add_argument("--" + name, action="store_true")
     parser.add_argument(
         "--run-id", required=True, help="exactly 12 lowercase hexadecimal characters"
@@ -346,7 +357,9 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     mode = next(
-        name for name in ("check", "prepare", "execute", "inspect_cleanup") if getattr(args, name)
+        name
+        for name in ("check", "prepare", "execute", "inspect_cleanup", "inspect_cleanup_admin")
+        if getattr(args, name)
     )
     report = _report(mode, args.run_id)
     exit_code = 2
@@ -358,6 +371,8 @@ def main(argv: list[str] | None = None) -> int:
             if args.package is None or args.report is None:
                 raise HarnessRefusal("PACKAGE_AND_REPORT_REQUIRED")
             _authorize(args)
+        if args.inspect_cleanup_admin:
+            _require_administrative_inspection()
         if args.report is not None:
             destination = _ReportDestination(args.report)
         if args.execute:
@@ -375,11 +390,22 @@ def main(argv: list[str] | None = None) -> int:
             }
             exit_code = 0
         elif args.check:
-            report["preflight"] = preflight(resources)
+            report["preflight"] = preflight(resources, administrative=False)
             exit_code = 0 if report["preflight"]["ready"] else 2
         else:
-            report["cleanup"] = inspect_cleanup(resources)
-            exit_code = 0 if report["cleanup"]["clean"] else 2
+            report["cleanup"] = inspect_cleanup(
+                resources, administrative=args.inspect_cleanup_admin
+            )
+            if args.inspect_cleanup_admin:
+                complete = (
+                    report["cleanup"].get("clean") is True
+                    and report["cleanup"].get("full_confirmation") is True
+                )
+            else:
+                # A successful rootless inspection is scoped evidence, never
+                # a substitute for the administrative absence confirmation.
+                complete = report["cleanup"].get("scope_clear") is True
+            exit_code = 0 if complete else 2
     except HarnessRefusal as exc:
         report["refusals"].append(exc.code)
     except (Exception, KeyboardInterrupt):

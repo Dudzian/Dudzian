@@ -367,3 +367,13 @@ testy, timeouty, markery i próg 70%. CI wykonuje wyłącznie testy bez uprawnie
 administracyjnych; nie wywołuje fizycznego `--execute`. Pełne `MATCHED` bramki
 nadal zwraca kod CLI 2 i nie kwalifikuje produkcji. Zobacz
 [procedurę Source/CCA TEST ONLY](architecture/stage9_source_cca_physical_test_operator.md).
+
+Naprawa rootless procfs rozdziela obserwację widocznych UID/GID/grup i cgroup
+od pełnego skanowania executable jako root. Regresje
+`tests/security/test_stage9_source_cca_test_rootless.py` wchodzą do istniejącego
+seryjnego inventory i jawnego format gate. Kontrole nieczytelnych lub zmiennych
+metadanych pozostają fail-closed; zwykła inspekcja nie przyznaje pełnego CLEAN.
+Osobny `--inspect-cleanup-admin` jest jawny i wyłącznie odczytowy. Fizyczny
+`--execute` pozostaje poza CI, a status `PHYSICAL_TEST_PENDING` i produkcyjne
+blokady pozostają bez zmian. Progi coverage i dotychczasowe testy Stage 41B
+nie są osłabiane.

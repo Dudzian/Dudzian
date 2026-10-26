@@ -4,8 +4,9 @@ Stan pozostaje `Stage 9 = IN_PROGRESS / PRODUCTION_NO_GO`. Operator
 `scripts/qualify_stage9_source_cca_installation.py` przygotowuje jednorazowy,
 syntetyczny odpowiednik `root_source`, `history_source` i `cca` do przyszłej
 próby na fizycznym Dell Latitude 5490 z Ubuntu 24.04. Testy repozytorium nie są
-wynikiem fizycznym. Nie należy deklarować fizycznego PASS przed uruchomieniem
-przez operatora na Dellu i niezależnym sprawdzeniem cleanup.
+wynikiem fizycznym. Status gotowości fizycznej pozostaje
+`PHYSICAL_TEST_PENDING`. Nie należy deklarować fizycznego PASS przed
+uruchomieniem przez operatora na Dellu i niezależnym sprawdzeniem cleanup.
 
 Pakiet nie zawiera kluczy, custody, dostępu do PostgreSQL ani poświadczeń.
 Programy testowe wyłącznie utrzymują proces i obsługują jego zakończenie.
@@ -33,11 +34,17 @@ zweryfikowano bezpośrednio w źródłach i odpowiadających testach. Dodatkowy
 wszystkich jej blokad. CLI bramki zwraca udokumentowany kod **2**, także przy
 pełnym `installation_checks=MATCHED` i `checks=MATCHED` dla trzech ról.
 
-## Cztery tryby i granica autoryzacji
+## Tryby operatora i granica autoryzacji
 
 `--check` tylko odczytuje stan: system i jądro, PID 1, możliwości izolacji,
 wymagane programy, konta, jednostki, inne instalacje CryptoHunter oraz
 pozostałości wybranego wykonania. Nie naprawia hosta ani nie rezerwuje zasobów.
+Obserwacja procesów jest domyślnie ograniczona do dowodów dostępnych bez root:
+PID/starttime, wszystkich pól UID/GID, dodatkowych grup i kanonicznego cgroup.
+Jednoznacznie niepowiązany proces systemowy nie wymaga odczytu chronionego
+`/proc/PID/exe`. Brak dostępu do istotnych metadanych albo ich zmiana daje
+`UNCERTAIN`, a nie pozytywny wynik. Gotowość tej kontroli dotyczy wyłącznie
+jej jawnego zakresu i nie zastępuje pełnego preflight przed wykonaniem.
 
 `--prepare` tworzy lokalny pakiet bez root. Pakiet zawiera minimalne programy,
 jednostki, zamknięty manifest, osobny syntetyczny pin, SHA-256 inventory,
@@ -53,16 +60,35 @@ zamkniętej zawartości, w tym `manifest.json`, `TEST_ONLY-pin.json`, jednostek,
 programów i instrukcji.
 
 `--execute` wymaga root, dokładnego identyfikatora autoryzacji TEST ONLY,
-wskazania fizycznego hosta i oczekiwanego SHA-256 pakietu. Ponawia preflight
-i sprawdza pakiet przed zmianami. Ten tryb jest przeznaczony wyłącznie do
+wskazania fizycznego hosta i oczekiwanego SHA-256 pakietu. Ponawia pełny,
+administracyjny preflight i sprawdza pakiet przed zmianami. Kontrola procesów
+zachowuje pełny odczyt executable, również dla procesów wykluczonych z zakresu
+UID/GID/cgroup zwykłego konta. Ten tryb jest przeznaczony wyłącznie do
 świadomego uruchomienia przez operatora na Dellu; nie uruchamiać go w Codexie,
 kontenerze ani GitHub Actions. Nie wykonuje automatycznych napraw, nie przejmuje
 kont i jednostek oraz nie może przyznać produkcyjnego GO.
 
 `--inspect-cleanup` tylko sprawdza pozostałości konkretnego identyfikatora
-wykonania. Należy go uruchomić osobno po próbie, także gdy poprzedni raport
-deklaruje zakończenie cleanup. Sam sukces polecenia usuwającego nie dowodzi
-braku zasobów.
+wykonania w zakresie dostępnym bez root. Należy go uruchomić osobno po próbie,
+także gdy poprzedni raport deklaruje zakończenie cleanup. `scope_clear=true`
+oznacza brak wykrytych pozostałości w tym zakresie; `clean=false` i
+`full_confirmation=false` nadal wymagają osobnej kontroli administracyjnej.
+Kod `0` oznacza powodzenie obserwacji ograniczonej, a nie pełny CLEAN.
+
+`--inspect-cleanup-admin` jest osobnym, jawnym i wyłącznie odczytowym trybem
+wymagającym root. Dopiero pełna inspekcja, obejmująca executable oraz wszystkie
+dotychczasowe kolizje kont, jednostek, cgroup i ścieżek, może potwierdzić
+`clean=true`. Żaden tryb nie przechodzi samoczynnie do sudo ani nie zmienia
+zakresu kontroli na podstawie samego UID wywołującego. Sam sukces polecenia
+usuwającego nie dowodzi braku zasobów.
+
+Na typowym Ubuntu 24.04 zwykłe konto może odczytać status, stat i cgroup
+niepowiązanych procesów, mimo odmowy przy executable roota. Taka odmowa nie
+blokuje zakresowego preflight. Ukrywanie procesów przez `hidepid`, nieczytelne
+metadane potencjalnego procesu testowego, niekanoniczny cgroup lub niespójny
+PID/starttime pozostają przyczyną `UNCERTAIN` i odmowy. Ograniczona obserwacja
+nie dowodzi nieobecności dowolnego executable testowego uruchomionego pod inną
+tożsamością; tę granicę sprawdza wyłącznie kontrola administracyjna.
 
 ## Procedura przyszłego uruchomienia na Dellu
 
@@ -90,9 +116,10 @@ operator_work="$(realpath ../work)"
      --check --run-id 123456abcdef --uid-base 62000
    ```
 
-   W razie blokady zatrzymać procedurę. Wybrać inny wolny zakres UID/GID lub
-   zbadać przyczynę; nie usuwać istniejących kont ani usług dla wymuszenia
-   pozytywnego preflight.
+   W razie blokady lub `UNCERTAIN` zatrzymać procedurę. Wybrać inny wolny
+   zakres UID/GID lub zbadać przyczynę; nie usuwać istniejących kont ani usług
+   dla wymuszenia pozytywnego preflight. Brak dostępu do executable
+   jednoznacznie niepowiązanego procesu roota sam w sobie nie jest blokadą.
 
 2. Przygotowanie pakietu zwykłym kontem:
 
@@ -146,13 +173,30 @@ operator_work="$(realpath ../work)"
 
    ```sh
    python3 -B -m scripts.qualify_stage9_source_cca_installation \
-     --inspect-cleanup --run-id 123456abcdef \
+     --inspect-cleanup --run-id 123456abcdef --uid-base 62000 \
      --report "$operator_work/source-cca-cleanup-inspection.json"
    ```
 
-   Jeśli zwykłe konto nie może odczytać wymaganych metadanych, wynik pozostaje
-   `BLOCKED`; brak uprawnień nie jest dowodem braku zasobu. Inspekcja niczego
-   nie usuwa. Zachować oba raporty i ich SHA-256 razem z commitem i pakietem.
+   Sprawdzić `scope_clear`, zakres obserwacji i niepewności. Ta komenda nie
+   raportuje pełnego CLEAN: nawet przy `scope_clear=true` zachowuje
+   `clean=false`, `full_confirmation=false` oraz wymóg inspekcji
+   administracyjnej. Jeśli zwykłe konto nie może odczytać wymaganych metadanych
+   istotnego procesu, wynik pozostaje `UNCERTAIN` i `BLOCKED`; brak uprawnień
+   nie jest dowodem braku zasobu.
+
+5. Administrator może osobno wybrać pełną, nadal wyłącznie odczytową inspekcję:
+
+   ```sh
+   cd /opt/ch-s9-operator
+   sudo /usr/bin/python3 -B -m scripts.qualify_stage9_source_cca_installation \
+     --inspect-cleanup-admin --run-id 123456abcdef --uid-base 62000 \
+     --report "$operator_work/source-cca-cleanup-admin.json"
+   ```
+
+   Operator nie wykonuje tej komendy automatycznie. Nie tworzy ona zasobów,
+   nie usuwa pozostałości i nie uruchamia kwalifikacji. Dopiero kompletny
+   raport tego trybu może potwierdzić pełny cleanup. Zachować raport wykonania,
+   obie inspekcje i ich SHA-256 razem z commitem i pakietem.
 
 Ewentualny kod `0` bezpiecznego przygotowania, preflight lub inspekcji dotyczy
 wyłącznie powodzenia danej operacji. Nie oznacza kwalifikacji hosta, produkcji
@@ -171,6 +215,7 @@ status=BLOCKED
 qualification=NOT_QUALIFIED
 production_emission=BLOCKED
 Stage 9 = IN_PROGRESS / PRODUCTION_NO_GO
+PHYSICAL_TEST_PENDING
 ```
 
 Syntetyczne `installation_id` i `approval_id` oznaczają testowy manifest oraz
@@ -209,7 +254,8 @@ i porównać wykazane obiekty z rejestrem i inventory tego wykonania. Nie
 uruchamiać ponownie `--execute` dla przejęcia pozostałości. Administrator musi
 osobno potwierdzić pochodzenie każdego obiektu przed ręczną interwencją;
 nieznane obiekty pozostawić do wyjaśnienia. Po ręcznym cleanup ponownie wykonać
-odczytową inspekcję. Operator nie jest ogólnym narzędziem do kasowania zasobów.
+odczytową inspekcję zakresową i osobno pełną inspekcję administracyjną.
+Operator nie jest ogólnym narzędziem do kasowania zasobów.
 
 Raport JSON zawiera wersję schematu, dokładny commit, run ID, oznaczenie
 syntetyczne, preflight, kontrole dodatnie i odmowy, wynik rzeczywistej bramki,
@@ -225,6 +271,10 @@ Testy pakietu, lifecycle, odczytowych sond hosta, odmów i CLI bez uprawnień
 administracyjnych wchodzą do istniejącego seryjnego `atomic-root-proof-commit`.
 Sondy w `tests/security/test_stage9_source_cca_test_probes.py` sprawdzają m.in.
 kolizje NSS, obserwacje procfs, programy hosta oraz odmowy bez zmian systemu.
+Regresje w `tests/security/test_stage9_source_cca_test_rootless.py` sprawdzają
+odmowę dostępu do executable niepowiązanego procesu roota, wykrywanie testowych
+UID/GID i cgroup bez tego odczytu oraz niepewność przy niepełnej lub zmienionej
+obserwacji. Nie zastępują one fizycznego wykonania na Dellu.
 Nowe moduły są objęte mypy Linux/Win32,
 Ruff lint/format i połączonym branch coverage atomic/history. Kontrakt
 inventory zachowuje wcześniejsze testy, próg changed-code 70%, timeouty oraz

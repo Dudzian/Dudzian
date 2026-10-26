@@ -58,12 +58,15 @@ def test_check_is_read_only_and_preserves_no_go(safe_operator, monkeypatch, caps
     resources = operator.plan(RUN_ID)
     observed = []
     monkeypatch.setattr(
-        operator, "preflight", lambda value: observed.append(value) or {"ready": True}
+        operator,
+        "preflight",
+        lambda value, **kwargs: observed.append((value, kwargs)) or {"ready": True},
     )
     assert safe_operator.main(["--check", "--run-id", RUN_ID]) == 0
     report = json.loads(capsys.readouterr().out)
-    assert observed == [resources]
+    assert observed == [(resources, {"administrative": False})]
     assert report["physical_result"] == "NOT_EXECUTED"
+    assert report["physical_test_status"] == "PHYSICAL_TEST_PENDING"
     assert report["qualification"] == "NOT_QUALIFIED"
     assert report["production_emission"] == report["status"] == "BLOCKED"
     assert report["commit"] == COMMIT and report["test_only"] == "TEST_ONLY"
@@ -71,7 +74,9 @@ def test_check_is_read_only_and_preserves_no_go(safe_operator, monkeypatch, caps
 
 def test_preflight_refusal_has_no_physical_side_effect(safe_operator, monkeypatch, capsys):
     monkeypatch.setattr(
-        operator, "preflight", lambda value: {"ready": False, "blockers": ["SYSTEMD"]}
+        operator,
+        "preflight",
+        lambda value, **kwargs: {"ready": False, "blockers": ["SYSTEMD"]},
     )
     assert safe_operator.main(["--check", "--run-id", RUN_ID]) == 2
     assert json.loads(capsys.readouterr().out)["physical_result"] == "NOT_EXECUTED"
@@ -80,11 +85,100 @@ def test_preflight_refusal_has_no_physical_side_effect(safe_operator, monkeypatc
 def test_inspector_reads_exact_plan_and_never_installs(safe_operator, monkeypatch, capsys):
     observed = []
     monkeypatch.setattr(
-        operator, "inspect_cleanup", lambda value: observed.append(value) or {"clean": True}
+        operator,
+        "inspect_cleanup",
+        lambda value, **kwargs: observed.append((value, kwargs))
+        or {"scope_clear": True, "clean": False, "full_confirmation": False},
     )
     assert safe_operator.main(["--inspect-cleanup", "--run-id", RUN_ID, "--uid-base", "61000"]) == 0
-    assert observed == [operator.plan(RUN_ID, 61000)]
-    assert json.loads(capsys.readouterr().out)["cleanup"]["clean"] is True
+    assert observed == [(operator.plan(RUN_ID, 61000), {"administrative": False})]
+    report = json.loads(capsys.readouterr().out)
+    assert report["cleanup"]["scope_clear"] is True
+    assert report["cleanup"]["clean"] is report["cleanup"]["full_confirmation"] is False
+
+
+def test_rootless_inspection_does_not_upgrade_when_invoker_is_root(
+    safe_operator, monkeypatch, capsys
+):
+    monkeypatch.setattr(operator, "os", SimpleNamespace(geteuid=lambda: 0))
+    calls = []
+
+    def inspect(value, *, administrative):
+        calls.append(administrative)
+        return {"scope_clear": True, "clean": False, "full_confirmation": False}
+
+    monkeypatch.setattr(operator, "inspect_cleanup", inspect)
+    assert safe_operator.main(["--inspect-cleanup", "--run-id", RUN_ID]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert calls == [False]
+    assert report["cleanup"]["clean"] is False
+    assert report["physical_test_status"] == "PHYSICAL_TEST_PENDING"
+
+
+def test_administrative_inspection_needs_explicit_root_without_escalation(
+    safe_operator, monkeypatch, capsys
+):
+    monkeypatch.setattr(operator, "sys", SimpleNamespace(platform="linux"))
+    monkeypatch.setattr(operator, "os", SimpleNamespace(geteuid=lambda: 1000))
+    monkeypatch.setattr(
+        operator,
+        "inspect_cleanup",
+        lambda *args, **kwargs: pytest.fail("non-root administrative scan must not run"),
+    )
+    assert safe_operator.main(["--inspect-cleanup-admin", "--run-id", RUN_ID]) == 2
+    report = json.loads(capsys.readouterr().out)
+    assert report["refusals"] == ["ADMINISTRATIVE_INSPECTION_REQUIRES_ROOT"]
+    assert report["cleanup"]["clean"] is False
+    assert report["status"] == report["production_emission"] == "BLOCKED"
+
+
+@pytest.mark.parametrize(
+    "complete,clean,expected",
+    [(True, True, 0), (False, True, 2), (True, False, 2), (False, False, 2)],
+)
+def test_explicit_administrative_inspection_requires_full_evidence_and_stays_read_only(
+    safe_operator, monkeypatch, capsys, complete, clean, expected
+):
+    monkeypatch.setattr(operator, "sys", SimpleNamespace(platform="linux"))
+    monkeypatch.setattr(operator, "os", SimpleNamespace(geteuid=lambda: 0))
+    monkeypatch.setattr(
+        operator,
+        "_authorize",
+        lambda *args: pytest.fail("read-only inspection must not authorize execution"),
+    )
+    observed = []
+
+    def inspect(resources, *, administrative):
+        observed.append((resources, administrative))
+        return {"scope_clear": clean, "clean": clean, "full_confirmation": complete}
+
+    monkeypatch.setattr(operator, "inspect_cleanup", inspect)
+    assert safe_operator.main(["--inspect-cleanup-admin", "--run-id", RUN_ID]) == expected
+    report = json.loads(capsys.readouterr().out)
+    assert observed == [(operator.plan(RUN_ID), True)]
+    assert report["mode"] == "inspect_cleanup_admin"
+    assert report["physical_result"] == "NOT_EXECUTED"
+    assert report["physical_test_status"] == "PHYSICAL_TEST_PENDING"
+    assert report["status"] == report["production_emission"] == "BLOCKED"
+    assert report["qualification"] == "NOT_QUALIFIED"
+
+
+@pytest.mark.parametrize("scope_clear", [False, None])
+def test_rootless_uncertain_inspection_never_returns_success(
+    safe_operator, monkeypatch, capsys, scope_clear
+):
+    monkeypatch.setattr(
+        operator,
+        "inspect_cleanup",
+        lambda *args, **kwargs: {
+            "scope_clear": scope_clear,
+            "clean": False,
+            "full_confirmation": False,
+            "state": "UNCERTAIN",
+        },
+    )
+    assert safe_operator.main(["--inspect-cleanup", "--run-id", RUN_ID]) == 2
+    assert json.loads(capsys.readouterr().out)["cleanup"]["clean"] is False
 
 
 def test_prepare_prints_only_digest_inventory(safe_operator, monkeypatch, capsys, tmp_path):
@@ -110,14 +204,14 @@ def test_package_required(mode, safe_operator, capsys):
 
 def test_invalid_namespace_fails_before_preflight(safe_operator, monkeypatch, capsys):
     monkeypatch.setattr(
-        operator, "preflight", lambda value: pytest.fail("invalid plan reached host")
+        operator, "preflight", lambda value, **kwargs: pytest.fail("invalid plan reached host")
     )
     assert safe_operator.main(["--check", "--run-id", "../../other"]) == 2
     assert json.loads(capsys.readouterr().out)["refusals"] == ["RUN_ID_INVALID"]
 
 
 def test_native_exception_is_redacted(safe_operator, monkeypatch, capsys):
-    def fail(value):
+    def fail(value, **kwargs):
         raise OSError("private host environment must never leave boundary")
 
     monkeypatch.setattr(operator, "preflight", fail)
@@ -131,7 +225,9 @@ def test_report_and_section_hashes_match(
     safe_operator, monkeypatch, capsys, tmp_path, posix_report_filesystem
 ):
     monkeypatch.setattr(
-        operator, "inspect_cleanup", lambda value: {"clean": False, "blockers": ["REMAINS"]}
+        operator,
+        "inspect_cleanup",
+        lambda value, **kwargs: {"clean": False, "blockers": ["REMAINS"]},
     )
     destination = tmp_path / "report.json"
     assert (
@@ -245,7 +341,7 @@ def test_execute_rejects_different_package_commit_before_host_mutation(monkeypat
         lambda *args: {"plan": operator.plan(RUN_ID), "commit": "c" * 40},
     )
     monkeypatch.setattr(
-        operator, "preflight", lambda value: pytest.fail("wrong commit reached host")
+        operator, "preflight", lambda value, **kwargs: pytest.fail("wrong commit reached host")
     )
     with pytest.raises(operator.HarnessRefusal, match="PACKAGE_COMMIT_MISMATCH"):
         operator._execute(_args(), {"commit": COMMIT})
@@ -260,9 +356,16 @@ def test_execute_failure_always_cleans_and_independently_inspects(monkeypatch, m
         "validate_package",
         lambda *args: {"plan": resources, "commit": COMMIT, "package_sha256": "b" * 64},
     )
-    monkeypatch.setattr(operator, "preflight", lambda value: {"ready": True})
     monkeypatch.setattr(
-        operator, "inspect_cleanup", lambda value: calls.append("inspect") or {"clean": True}
+        operator,
+        "preflight",
+        lambda value, **kwargs: calls.append(("preflight", kwargs)) or {"ready": True},
+    )
+    monkeypatch.setattr(
+        operator,
+        "inspect_cleanup",
+        lambda value, **kwargs: calls.append(("inspect", kwargs))
+        or {"clean": True, "full_confirmation": True},
     )
 
     class Run:
@@ -287,11 +390,17 @@ def test_execute_failure_always_cleans_and_independently_inspects(monkeypatch, m
     report = {"commit": COMMIT}
     with pytest.raises(operator.HarnessRefusal, match="SIMULATED_START_FAILURE"):
         operator._execute(_args(), report)
-    assert calls == ["enter", "exit", "cleanup", "inspect"]
+    assert calls == [
+        ("preflight", {"administrative": True}),
+        "enter",
+        "exit",
+        "cleanup",
+        ("inspect", {"administrative": True}),
+    ]
     assert report["cleanup"]["clean"] is True
 
 
-@pytest.mark.parametrize("cleanup_failure", [None, "refused", "raised"])
+@pytest.mark.parametrize("cleanup_failure", [None, "refused", "raised", "limited"])
 def test_full_execute_keeps_exit_two_and_reserves_report_before_host_changes(
     monkeypatch, mock_host_signals, capsys, tmp_path, cleanup_failure, posix_report_filesystem
 ):
@@ -319,7 +428,11 @@ def test_full_execute_keeps_exit_two_and_reserves_report_before_host_changes(
         "validate_package",
         lambda *args: {"plan": resources, "commit": COMMIT, "package_sha256": "b" * 64},
     )
-    monkeypatch.setattr(operator, "preflight", lambda value: {"ready": True})
+    monkeypatch.setattr(
+        operator,
+        "preflight",
+        lambda value, **kwargs: calls.append(("preflight", kwargs)) or {"ready": True},
+    )
 
     def inspect_gate(manifest, *, approval_pin_path):
         assert manifest == "/synthetic/manifest.json"
@@ -331,7 +444,8 @@ def test_full_execute_keeps_exit_two_and_reserves_report_before_host_changes(
     monkeypatch.setattr(
         operator,
         "inspect_cleanup",
-        lambda value: calls.append("independent-inspection") or {"clean": True},
+        lambda value, **kwargs: calls.append(("independent-inspection", kwargs))
+        or {"clean": True, "full_confirmation": cleanup_failure != "limited"},
     )
     results = [{"name": "synthetic-denial", "result": "REFUSED"}]
     monkeypatch.setattr(controls, "run_controls", lambda run: calls.append("controls") or results)
@@ -358,7 +472,7 @@ def test_full_execute_keeps_exit_two_and_reserves_report_before_host_changes(
             calls.append("cleanup")
             if cleanup_failure == "raised":
                 raise operator.HarnessRefusal("SIMULATED_CLEANUP_FAILURE")
-            return {"clean": cleanup_failure is None}
+            return {"clean": cleanup_failure in {None, "limited"}}
 
     monkeypatch.setattr(operator, "PhysicalRun", Run)
     assert (
@@ -390,6 +504,7 @@ def test_full_execute_keeps_exit_two_and_reserves_report_before_host_changes(
     assert report["test_only"] == "TEST_ONLY"
     assert report["gate"] == matched and report["checks"] == results
     assert calls == [
+        ("preflight", {"administrative": True}),
         "reserved-before-resource-creation",
         "enter",
         "start",
@@ -397,7 +512,7 @@ def test_full_execute_keeps_exit_two_and_reserves_report_before_host_changes(
         "controls",
         "exit",
         "cleanup",
-        "independent-inspection",
+        ("independent-inspection", {"administrative": True}),
     ]
     assert report["cleanup"]["independent"]["clean"] is True
     assert report["cleanup"]["clean"] is (cleanup_failure is None)

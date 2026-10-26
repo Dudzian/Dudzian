@@ -32,6 +32,24 @@ def unused():
     }
 
 
+def scoped_observation(*, pids=(), uncertain=False):
+    return {
+        "scope": "VISIBLE_UID_GID_CGROUP",
+        "state": "UNCERTAIN"
+        if uncertain
+        else "RESIDUAL_PROCESS_FOUND"
+        if pids
+        else "SCOPED_ABSENCE_OBSERVED",
+        "matched_pids": list(pids),
+        "uncertain_pids": [1] if uncertain else [],
+        "uncertainty": ["PROCESS_OBSERVATION_UNAVAILABLE"] if uncertain else [],
+        "complete": not uncertain,
+        "full_confirmation": False,
+        "executable_scan_complete": False,
+        "excluded_processes": 1,
+    }
+
+
 @pytest.fixture
 def local(monkeypatch, tmp_path):
     resources = plan("012345abcdef")
@@ -95,17 +113,23 @@ def local(monkeypatch, tmp_path):
     monkeypatch.setattr(runtime, "_command", command)
     monkeypatch.setattr(runtime, "_protected", protected)
     monkeypatch.setattr(runtime, "_defer_interrupts", nullcontext)
-    monkeypatch.setattr(runtime, "preflight", lambda _: {"ready": True})
+
+    def administrative_preflight(_resources, *, administrative):
+        assert administrative is True
+        return {"ready": True}
+
+    def administrative_inspection(_resources, *, administrative):
+        assert administrative is True
+        clean = not users and not groups and not Path(resources["root"]).exists()
+        return {"clean": clean, "full_confirmation": clean, "checks": {}, "blockers": []}
+
+    monkeypatch.setattr(runtime, "preflight", administrative_preflight)
     monkeypatch.setattr(runtime, "inspect_unit", lambda _: unused())
     monkeypatch.setattr(runtime, "_processes", lambda _: [])
     monkeypatch.setattr(
         runtime,
         "inspect_cleanup",
-        lambda _: {
-            "clean": not users and not groups and not Path(resources["root"]).exists(),
-            "checks": {},
-            "blockers": [],
-        },
+        administrative_inspection,
     )
     monkeypatch.setattr(runtime.os, "geteuid", lambda: 0)
     return SimpleNamespace(
@@ -138,7 +162,7 @@ def test_installs_only_planned_resources_and_cleans_every_receipt(local):
 
 
 def test_preflight_collision_prevents_any_mutation(local, monkeypatch):
-    monkeypatch.setattr(runtime, "preflight", lambda _: {"ready": False})
+    monkeypatch.setattr(runtime, "preflight", lambda _, *, administrative: {"ready": False})
     with pytest.raises(HarnessRefusal, match="PREFLIGHT_BLOCKED"):
         local.run.__enter__()
     assert not local.commands and not local.run.root.exists()
@@ -380,14 +404,22 @@ def test_inspector_requires_nss_units_paths_and_process_absence(monkeypatch):
     monkeypatch.setattr(
         runtime, "_collisions", lambda _: {"users_absent": True, "units_absent": True}
     )
+    monkeypatch.setattr(runtime.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(runtime, "rootless_process_observation", lambda _: scoped_observation())
     monkeypatch.setattr(runtime, "_processes", lambda _: [])
-    assert runtime.inspect_cleanup(resources)["clean"] is True
+    administrative = runtime.inspect_cleanup(resources, administrative=True)
+    assert administrative["clean"] is True
+    assert administrative["full_confirmation"] is True
+    rootless = runtime.inspect_cleanup(resources)
+    assert rootless["clean"] is False
+    assert rootless["scope_clear"] is True
+    assert rootless["full_confirmation"] is False
     monkeypatch.setattr(runtime, "_processes", lambda _: [1234])
-    assert runtime.inspect_cleanup(resources)["clean"] is False
+    assert runtime.inspect_cleanup(resources, administrative=True)["clean"] is False
     monkeypatch.setattr(
         runtime, "_processes", lambda _: (_ for _ in ()).throw(PermissionError("native"))
     )
-    result = runtime.inspect_cleanup(resources)
+    result = runtime.inspect_cleanup(resources, administrative=True)
     assert result["clean"] is False
     assert "native" not in str(result)
 
@@ -423,7 +455,7 @@ def test_cgroup_observation_unavailable_never_establishes_absence(monkeypatch):
     monkeypatch.setattr(
         runtime, "_protected", lambda *args, **kwargs: (_ for _ in ()).throw(PermissionError())
     )
-    monkeypatch.setattr(runtime, "_processes", lambda _: [])
+    monkeypatch.setattr(runtime, "rootless_process_observation", lambda _: scoped_observation())
     result = runtime.inspect_cleanup(plan("012345abcdef"))
     assert result["clean"] is False
     assert "resource_observation" in result["blockers"]
@@ -481,7 +513,7 @@ def test_capture_pins_live_descriptor_lifetime_and_exact_unit_invocation(local, 
 
 
 def test_cleanup_after_failed_preflight_performs_only_independent_inspection(local, monkeypatch):
-    monkeypatch.setattr(runtime, "preflight", lambda _: {"ready": False})
+    monkeypatch.setattr(runtime, "preflight", lambda _, *, administrative: {"ready": False})
     with pytest.raises(HarnessRefusal, match="PREFLIGHT_BLOCKED"):
         local.run.__enter__()
     result = local.run.cleanup()
@@ -552,7 +584,12 @@ def test_rootless_preflight_only_observes_host_and_reports_missing_facts(monkeyp
         lambda argv, **kwargs: commands.append(tuple(argv)) or SimpleNamespace(returncode=1),
     )
     monkeypatch.setattr(
-        runtime, "_processes", lambda _: (_ for _ in ()).throw(PermissionError("unreadable exe"))
+        runtime, "rootless_process_observation", lambda _: scoped_observation(uncertain=True)
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_processes",
+        lambda _: pytest.fail("rootless mode must not run the full exe sweep"),
     )
     result = runtime.preflight(resources)
     assert result["ready"] is False and result["read_only"] is True
