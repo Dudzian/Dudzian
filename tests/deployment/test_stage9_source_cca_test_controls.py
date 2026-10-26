@@ -6,14 +6,15 @@ from contextlib import contextmanager
 import copy
 import hashlib
 import json
-from pathlib import Path
+from pathlib import PurePosixPath, PureWindowsPath
 
 import pytest
 
 from deployment import stage9_source_cca_test_controls as controls
 from deployment import stage9_trusted_installation_identity_gate as gate
 from deployment.stage9_source_cca_test_package import HarnessRefusal
-from deployment.stage9_trusted_installation_files import FileRefusal
+from deployment.stage9_trusted_installation_contract import InstallationRefusal, parse_manifest
+from deployment.stage9_trusted_installation_files import FileRefusal, PinnedFile
 from deployment.stage9_trusted_installation_runtime import RuntimeRefusal
 
 _ROLES = ("root_source", "history_source", "cca")
@@ -222,10 +223,33 @@ def test_thirteen_controls_use_real_gate_and_restore_every_simulated_resource(ob
 
 
 def test_runtime_path_objects_are_converted_at_gate_boundary(observation):
-    observation.manifest_path = Path(observation.manifest_path)
-    observation.pin_path = Path(observation.pin_path)
+    # This fixture describes a Linux installation even on a Windows test host.
+    # Native WindowsPath would stringify with backslashes and violate that
+    # contract; conversion at the boundary must not normalize unsafe paths.
+    observation.manifest_path = PurePosixPath(observation.manifest_path)
+    observation.pin_path = PurePosixPath(observation.pin_path)
     reports = controls.run_controls(observation)
     assert len(reports) == 13
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        PureWindowsPath("/run/test/root_source"),
+        PureWindowsPath("C:/run/test/root_source"),
+        PureWindowsPath("//host/share/root_source"),
+    ],
+    ids=["windows-rooted", "windows-drive", "windows-unc"],
+)
+def test_windows_path_spellings_remain_invalid_linux_installation_paths(observation, path):
+    document = json.loads(observation.files[observation.manifest_path])
+    document["roles"][0]["executable"]["path"] = str(path)
+    with pytest.raises(InstallationRefusal, match="^MANIFEST_PATH_INVALID$"):
+        parse_manifest(_json(document))
+    # Exercise the real file argument validator, before any host filesystem
+    # access. The synthetic file backend must not weaken this boundary.
+    with pytest.raises(FileRefusal, match="^FILE_PATH_UNSAFE$"):
+        PinnedFile(str(path))
 
 
 @pytest.mark.parametrize(

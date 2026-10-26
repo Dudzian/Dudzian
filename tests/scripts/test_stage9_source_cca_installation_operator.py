@@ -333,7 +333,9 @@ def test_execute_forbidden_in_automated_environments(monkeypatch, name):
         operator._authorize(_args())
 
 
-def test_execute_rejects_different_package_commit_before_host_mutation(monkeypatch):
+def test_execute_rejects_different_package_commit_before_host_mutation(
+    monkeypatch, mock_host_signals
+):
     monkeypatch.setattr(operator, "_authorize", lambda args: None)
     monkeypatch.setattr(
         operator,
@@ -345,6 +347,24 @@ def test_execute_rejects_different_package_commit_before_host_mutation(monkeypat
     )
     with pytest.raises(operator.HarnessRefusal, match="PACKAGE_COMMIT_MISMATCH"):
         operator._execute(_args(), {"commit": COMMIT})
+
+
+@pytest.mark.parametrize("platform", ["darwin", "win32"])
+def test_execute_native_platform_guard_precedes_authorization_and_package_validation(
+    monkeypatch, platform
+):
+    monkeypatch.setattr(operator, "sys", SimpleNamespace(platform=platform))
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("non-Linux execution reached a privileged dependency")
+
+    monkeypatch.setattr(operator, "_authorize", forbidden)
+    monkeypatch.setattr(operator, "validate_package", forbidden)
+    monkeypatch.setattr(operator, "PhysicalRun", forbidden)
+    report = {"commit": COMMIT}
+    with pytest.raises(operator.HarnessRefusal, match="^PHYSICAL_ROOT_EXECUTION_REQUIRED$"):
+        operator._execute(_args(), report)
+    assert report == {"commit": COMMIT}
 
 
 def test_execute_failure_always_cleans_and_independently_inspects(monkeypatch, mock_host_signals):
