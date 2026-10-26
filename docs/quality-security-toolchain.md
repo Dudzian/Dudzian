@@ -357,3 +357,35 @@ atomic CI inventory contract includes the three Stage 41B test/module entries
 while preserving all original atomic and history inventories and the existing
 70% coverage threshold. See the
 [operator procedure](architecture/stage9_stage41b_operator_runbook.md).
+
+Kontrolowany operator fizycznej instalacji Source/CCA rozszerza ten sam seryjny
+job o testy pakietu TEST ONLY, pochodzenia zasobów, odczytowych sond hosta, odmów, awarii, cleanup
+i CLI. Trzy nowe moduły deployment oraz interfejs operatorski wchodzą do
+skonfigurowanego mypy Linux/Win32, Ruff lint/format i obu surowych zakresów
+branch coverage atomic/history. Kontrakt inventory zachowuje wcześniejsze
+testy, timeouty, markery i próg 70%. CI wykonuje wyłącznie testy bez uprawnień
+administracyjnych; nie wywołuje fizycznego `--execute`. Pełne `MATCHED` bramki
+nadal zwraca kod CLI 2 i nie kwalifikuje produkcji. Zobacz
+[procedurę Source/CCA TEST ONLY](architecture/stage9_source_cca_physical_test_operator.md).
+
+Naprawa rootless procfs rozdziela obserwację widocznych UID/GID/grup i cgroup
+od pełnego skanowania executable jako root. Regresje
+`tests/security/test_stage9_source_cca_test_rootless.py` wchodzą do istniejącego
+seryjnego inventory i jawnego format gate. Kontrole nieczytelnych lub zmiennych
+metadanych pozostają fail-closed; zwykła inspekcja nie przyznaje pełnego CLEAN.
+Osobny `--inspect-cleanup-admin` jest jawny i wyłącznie odczytowy. Fizyczny
+`--execute` pozostaje poza CI, a status `PHYSICAL_TEST_PENDING` i produkcyjne
+blokady pozostają bez zmian. Progi coverage i dotychczasowe testy Stage 41B
+nie są osłabiane.
+
+Kontrola pochodzenia kodu operatora Source/CCA wymaga niezależnie przygotowanego
+i zewnętrznie zweryfikowanego checkoutu oraz chronionego interpretera i środowiska
+importów przed uruchomieniem Pythona jako root. Import wykonuje kod wcześniej
+niż kontrola po imporcie; lokalne hashe i obserwacja już załadowanych modułów
+nie ustanawiają zaufania do własnego procesu. Dotyczy to także istniejącego
+bytecode, plików `.pth` i mechanizmów importu; samo `-B` nie wyłącza ich odczytu.
+Regresje weryfikacji kodu obejmują niechronione pliki, zmianę uprawnień bez
+zmiany treści, moduły wykorzystywane później oraz odmowę przed zmianami hosta.
+Nie uruchamiają fizycznego `--execute` ani sudo w CI. Granice tej lokalnej
+kontroli opisuje [procedura operatora](architecture/stage9_source_cca_physical_test_operator.md);
+`PHYSICAL_TEST_PENDING` i `PRODUCTION_NO_GO` pozostają bez zmian.

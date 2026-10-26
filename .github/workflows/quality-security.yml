@@ -77,7 +77,7 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e ".[test]" "ruff==0.14.11" "mypy==1.10.0" "diff-cover>=9,<10"
       - name: Ruff baseline gate
-        run: python -m ruff check bot_core core scripts tests deploy stage6_samples ui deployment/production_signer_service.py deployment/stage41b_role_worker.py deployment/windows_production_cha_operation.py deployment/windows_production_cha_account_reservation.py deployment/windows_runner_acl.py deployment/windows_stage9_handoff.py deployment/windows_stage9_host_inspection.py deployment/windows_stage9_postgresql_passive.py deployment/windows_stage9_evidence_pipe.py deployment/windows_stage9_service_sql.py deployment/windows_stage9_service_evidence.py deployment/windows_installer/service_base.py deployment/windows_installer/backend_service.py deployment/windows_installer/verifier_service.py deployment/windows_postgresql_auth_contract.py deployment/windows_stage9_install_preparation.py deployment/windows_stage9_install_executor.py deployment/windows_stage9_install_native.py deployment/windows_stage9_install_qualification.py deployment/windows_stage9_operator_approval.py deployment/windows_stage10_preflight.py deployment/windows_stage10_artifact_preflight.py deployment/windows_stage10_runner_preflight.py deployment/platform_evidence.py deployment/stage9_native_linux_source_cca_preflight.py deployment/stage9_native_linux_process_identity_observation.py deployment/stage9_native_linux_cgroup_membership_observation.py deployment/stage9_native_linux_unit_fragment_observation.py deployment/stage9_native_linux_process_executable_observation.py deployment/stage9_native_linux_pidfd_lifetime_observation.py deployment/stage9_native_linux_cross_observer_consistency.py deployment/stage9_native_linux_two_pass_drift_observation.py deployment/stage9_native_linux_diagnostic_handoff.py deployment/stage9_native_linux_host_capability_triage.py deployment/stage9_native_linux_test_denial_matrix_contract.py deployment/stage9_native_linux_test_syscall_outcome_classifier.py deployment/stage9_native_linux_test_fixture_readiness.py deployment/stage9_native_linux_test_isolation_reconciliation.py deployment/stage9_native_linux_test_execution_plan.py deployment/stage9_trusted_installation_contract.py deployment/stage9_trusted_installation_files.py deployment/stage9_trusted_installation_runtime.py deployment/stage9_trusted_installation_identity_gate.py
+        run: python -m ruff check bot_core core scripts tests deploy stage6_samples ui deployment/production_signer_service.py deployment/stage41b_role_worker.py deployment/windows_production_cha_operation.py deployment/windows_production_cha_account_reservation.py deployment/windows_runner_acl.py deployment/windows_stage9_handoff.py deployment/windows_stage9_host_inspection.py deployment/windows_stage9_postgresql_passive.py deployment/windows_stage9_evidence_pipe.py deployment/windows_stage9_service_sql.py deployment/windows_stage9_service_evidence.py deployment/windows_installer/service_base.py deployment/windows_installer/backend_service.py deployment/windows_installer/verifier_service.py deployment/windows_postgresql_auth_contract.py deployment/windows_stage9_install_preparation.py deployment/windows_stage9_install_executor.py deployment/windows_stage9_install_native.py deployment/windows_stage9_install_qualification.py deployment/windows_stage9_operator_approval.py deployment/windows_stage10_preflight.py deployment/windows_stage10_artifact_preflight.py deployment/windows_stage10_runner_preflight.py deployment/platform_evidence.py deployment/stage9_native_linux_source_cca_preflight.py deployment/stage9_native_linux_process_identity_observation.py deployment/stage9_native_linux_cgroup_membership_observation.py deployment/stage9_native_linux_unit_fragment_observation.py deployment/stage9_native_linux_process_executable_observation.py deployment/stage9_native_linux_pidfd_lifetime_observation.py deployment/stage9_native_linux_cross_observer_consistency.py deployment/stage9_native_linux_two_pass_drift_observation.py deployment/stage9_native_linux_diagnostic_handoff.py deployment/stage9_native_linux_host_capability_triage.py deployment/stage9_native_linux_test_denial_matrix_contract.py deployment/stage9_native_linux_test_syscall_outcome_classifier.py deployment/stage9_native_linux_test_fixture_readiness.py deployment/stage9_native_linux_test_isolation_reconciliation.py deployment/stage9_native_linux_test_execution_plan.py deployment/stage9_trusted_installation_contract.py deployment/stage9_trusted_installation_files.py deployment/stage9_trusted_installation_runtime.py deployment/stage9_trusted_installation_identity_gate.py deployment/stage9_source_cca_test_package.py deployment/stage9_source_cca_test_runtime.py deployment/stage9_source_cca_test_controls.py
       - name: Format Stage 9 signing and credential substrate
         run: >-
           python -m ruff format --check
@@ -265,6 +265,10 @@ jobs:
           deployment/stage9_trusted_installation_files.py
           deployment/stage9_trusted_installation_runtime.py
           deployment/stage9_trusted_installation_identity_gate.py
+          deployment/stage9_source_cca_test_package.py
+          deployment/stage9_source_cca_test_runtime.py
+          deployment/stage9_source_cca_test_controls.py
+          scripts/qualify_stage9_source_cca_installation.py
           tests/deployment/test_stage9_native_linux_source_cca_preflight.py
           tests/deployment/test_stage9_native_linux_process_identity_observation.py
           tests/deployment/test_stage9_native_linux_cgroup_membership_observation.py
@@ -284,6 +288,13 @@ jobs:
           tests/deployment/test_stage9_trusted_installation_files.py
           tests/deployment/test_stage9_trusted_installation_runtime.py
           tests/deployment/test_stage9_trusted_installation_identity_gate.py
+          tests/deployment/test_stage9_source_cca_test_package.py
+          tests/security/test_stage9_source_cca_test_lifecycle.py
+          tests/security/test_stage9_source_cca_test_probes.py
+          tests/security/test_stage9_source_cca_test_rootless.py
+          tests/scripts/test_stage9_source_cca_operator_code.py
+          tests/deployment/test_stage9_source_cca_test_controls.py
+          tests/scripts/test_stage9_source_cca_installation_operator.py
           tests/security/test_independent_cca_decision.py
           tests/security/test_cca_durable_decision_log.py
           tests/architecture/test_stage9_independent_cca_boundary.py
@@ -889,6 +900,13 @@ jobs:
           tests/deployment/test_stage9_trusted_installation_files.py
           tests/deployment/test_stage9_trusted_installation_runtime.py
           tests/deployment/test_stage9_trusted_installation_identity_gate.py
+          tests/deployment/test_stage9_source_cca_test_package.py
+          tests/security/test_stage9_source_cca_test_lifecycle.py
+          tests/security/test_stage9_source_cca_test_probes.py
+          tests/security/test_stage9_source_cca_test_rootless.py
+          tests/scripts/test_stage9_source_cca_operator_code.py
+          tests/deployment/test_stage9_source_cca_test_controls.py
+          tests/scripts/test_stage9_source_cca_installation_operator.py
           tests/security/test_independent_cca_decision.py
           tests/security/test_cca_durable_decision_log.py
           tests/architecture/test_stage9_independent_cca_boundary.py
@@ -939,6 +957,10 @@ jobs:
           --cov=deployment.stage9_trusted_installation_files
           --cov=deployment.stage9_trusted_installation_runtime
           --cov=deployment.stage9_trusted_installation_identity_gate
+          --cov=deployment.stage9_source_cca_test_package
+          --cov=deployment.stage9_source_cca_test_runtime
+          --cov=deployment.stage9_source_cca_test_controls
+          --cov=scripts.qualify_stage9_source_cca_installation
           --cov=bot_core.postgresql_root_proof_issuance_authority_v2
           --cov=bot_core.postgresql_root_proof_preparation_qualification
           --cov=bot_core.postgresql_root_proof_preparation_readonly
@@ -1093,6 +1115,10 @@ jobs:
           --cov=deployment.stage9_trusted_installation_files
           --cov=deployment.stage9_trusted_installation_runtime
           --cov=deployment.stage9_trusted_installation_identity_gate
+          --cov=deployment.stage9_source_cca_test_package
+          --cov=deployment.stage9_source_cca_test_runtime
+          --cov=deployment.stage9_source_cca_test_controls
+          --cov=scripts.qualify_stage9_source_cca_installation
           --cov=bot_core.postgresql_root_proof_issuance_authority_v2
           --cov=bot_core.postgresql_root_proof_preparation_qualification
           --cov=bot_core.postgresql_root_proof_preparation_readonly

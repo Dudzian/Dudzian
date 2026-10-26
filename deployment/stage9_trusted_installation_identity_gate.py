@@ -317,7 +317,7 @@ def main(argv: list[str] | None = None) -> int:
         result["observed_failures"].append("CLI_ARGUMENT_INVALID")
     print(json.dumps(result, sort_keys=True))
     # Matching checks have no production approval meaning and remain a refusal.
-    return 1
+    return 2
 
 
 if __name__ == "__main__":

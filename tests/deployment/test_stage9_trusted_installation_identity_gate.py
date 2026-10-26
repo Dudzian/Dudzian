@@ -398,18 +398,41 @@ def test_distinct_paths_cannot_alias_one_installed_file_object():
     ],
 )
 def test_cli_invalid_arguments_emit_only_sanitized_refusal(arguments, capsys):
-    assert gate.main(arguments) == 1
+    assert gate.main(arguments) == 2
     report = json.loads(capsys.readouterr().out)
     _blocked(report)
     assert report["observed_failures"] == ["CLI_ARGUMENT_INVALID"]
 
 
-def test_cli_matching_comparisons_keep_nonzero_unqualified_exit(monkeypatch, capsys):
-    monkeypatch.setattr(gate, "inspect_installation", lambda *args, **kwargs: _inspect())
-    assert gate.main(["--manifest", _PRIVATE, "--approval-pin", "/independent/pin.json"]) == 1
+def test_cli_matching_comparisons_keep_documented_unqualified_exit(monkeypatch, capsys):
+    raw = _raw(_manifest())
+    pin_raw = _raw(_pin(raw))
+
+    class ProtectedSyntheticFile(_SyntheticFile):
+        def __init__(self, path, **kwargs):
+            super().__init__(path, **kwargs)
+            self.data = raw if path == "/independent/manifest.json" else pin_raw
+
+    monkeypatch.setattr(gate, "PinnedFile", ProtectedSyntheticFile)
+    monkeypatch.setattr(gate, "observe_service", _service)
+    assert (
+        gate.main(
+            [
+                "--manifest",
+                "/independent/manifest.json",
+                "--approval-pin",
+                "/independent/pin.json",
+            ]
+        )
+        == 2
+    )
     report = json.loads(capsys.readouterr().out)
     _blocked(report)
+    assert report["snapshot"] == "UNTRUSTED_LIVE_OBSERVATION"
     assert report["installation_checks"] == "MATCHED"
+    assert set(report["role_checks"]) == set(_ROLES)
+    assert all(item["checks"] == "MATCHED" for item in report["role_checks"].values())
+    assert not report["observed_failures"]
 
 
 def test_public_loader_retains_independent_input_descriptors_and_never_qualifies(monkeypatch):
