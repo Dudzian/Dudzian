@@ -184,6 +184,90 @@ def test_rejects_unreadable_acl_inventory(
             pass
 
 
+def test_acl_backend_reads_real_linux_descriptor(readable_file, monkeypatch):
+    backend = getattr(files.os, "listxattr")
+    calls = []
+
+    def observed(descriptor):
+        calls.append(descriptor)
+        return backend(descriptor)
+
+    monkeypatch.setattr(files.os, "listxattr", observed)
+    with readable_file.open("rb") as source:
+        descriptor = source.fileno()
+        files._no_acl(descriptor)
+    assert calls == [descriptor]
+
+
+@pytest.mark.parametrize("attributes", [[], ["user.synthetic"], ["security.selinux"]])
+def test_acl_backend_accepts_only_valid_inventory_without_acl(monkeypatch, attributes):
+    calls = []
+
+    def backend(descriptor):
+        calls.append(descriptor)
+        return attributes
+
+    monkeypatch.setattr(files.os, "listxattr", backend, raising=False)
+    files._no_acl(17)
+    assert calls == [17]
+
+
+def test_missing_acl_backend_refuses(monkeypatch):
+    monkeypatch.delattr(files.os, "listxattr", raising=False)
+    with pytest.raises(files.FileRefusal, match="^FILE_UNAVAILABLE$"):
+        files._no_acl(17)
+
+
+@pytest.mark.parametrize("backend", [None, False, 7, [], "not-callable"])
+def test_noncallable_acl_backend_refuses(monkeypatch, backend):
+    monkeypatch.setattr(files.os, "listxattr", backend, raising=False)
+    with pytest.raises(files.FileRefusal, match="^FILE_UNAVAILABLE$"):
+        files._no_acl(17)
+
+
+@pytest.mark.parametrize("error", [PermissionError, OSError, ValueError, RuntimeError])
+def test_acl_backend_exceptions_refuse_without_private_details(monkeypatch, error):
+    def unavailable(descriptor):
+        raise error("/private/custody/DO_NOT_REPORT")
+
+    monkeypatch.setattr(files.os, "listxattr", unavailable, raising=False)
+    with pytest.raises(files.FileRefusal, match="^FILE_UNAVAILABLE$"):
+        files._no_acl(17)
+
+
+@pytest.mark.parametrize(
+    "attributes",
+    [
+        None,
+        False,
+        7,
+        "",
+        "system.posix_acl_access",
+        {},
+        set(),
+        (),
+        [None],
+        [7],
+        [b"acl"],
+        [""],
+        ["bad\x00name"],
+    ],
+)
+def test_malformed_acl_backend_inventory_refuses(monkeypatch, attributes):
+    monkeypatch.setattr(files.os, "listxattr", lambda descriptor: attributes, raising=False)
+    with pytest.raises(files.FileRefusal, match="^FILE_UNAVAILABLE$"):
+        files._no_acl(17)
+
+
+@pytest.mark.parametrize("attribute", ["system.posix_acl_access", "system.posix_acl_default"])
+def test_acl_backend_detects_forbidden_acl(monkeypatch, attribute):
+    monkeypatch.setattr(
+        files.os, "listxattr", lambda descriptor: ["user.synthetic", attribute], raising=False
+    )
+    with pytest.raises(files.FileRefusal, match="^FILE_ACL_FORBIDDEN$"):
+        files._no_acl(17)
+
+
 def test_rejects_replacement_during_read(
     readable_file: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

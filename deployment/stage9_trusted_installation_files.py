@@ -54,7 +54,20 @@ def _check_directory(info: os.stat_result) -> None:
 
 
 def _no_acl(fd: int) -> None:
-    if _ACL_NAMES.intersection(os.listxattr(fd)):
+    # xattr APIs are absent from Windows' os module and its typing surface.
+    # Resolve the Linux capability at runtime; absence is never an empty ACL.
+    backend = getattr(os, "listxattr", None)
+    if not callable(backend):
+        raise FileRefusal("FILE_UNAVAILABLE")
+    try:
+        attributes = backend(fd)
+    except Exception as exc:
+        raise FileRefusal("FILE_UNAVAILABLE") from exc
+    if type(attributes) is not list or any(
+        type(name) is not str or not name or "\x00" in name for name in attributes
+    ):
+        raise FileRefusal("FILE_UNAVAILABLE")
+    if _ACL_NAMES.intersection(attributes):
         raise FileRefusal("FILE_ACL_FORBIDDEN")
 
 
