@@ -377,3 +377,7 @@ Operator może zebrać raport bez sudo i bez `--execute`, używając dotychczaso
 `--check --run-id <12-hex> --report <nowy-plik.json>`. Nie usuwać katalogów,
 kont ani usług na podstawie tej diagnostyki. `PHYSICAL_TEST_PENDING` oraz
 `IN_PROGRESS / PRODUCTION_NO_GO` pozostają bez zmian.
+
+Nowa, osobna [diagnostyka współistnienia Stage 41B](stage9_stage41b_coexistence_diagnostic.md)
+porównuje niezależnie przypięte inwentarze i rozszerza zakres obserwacji procesów.
+Pozostaje wyłącznie diagnostyczna; nie znosi `no_other_installations`.

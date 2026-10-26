@@ -812,3 +812,29 @@ def test_invalid_commit_never_produces_a_manual_preserved_installation_path(caps
     assert report["reason"] == "FULL_REVIEWED_COMMIT_REQUIRED"
     assert report["preserved_installation"] is None
     assert report["physical_executed"] is False
+
+
+def test_coexistence_diagnostic_rechecks_genuine_proof_wheels_and_external_inventory(
+    bundle_fixture, unprivileged_install_logic, monkeypatch
+):
+    from deployment import stage9_stage41b_coexistence as coexistence
+
+    fixture = bundle_fixture
+    preparation.install_bundle(fixture.bundle, fixture.commit)
+    root = preparation.PREFIX / fixture.commit
+    monkeypatch.setattr(coexistence, "COMMITS", (fixture.commit,))
+    monkeypatch.setattr(coexistence.host, "_protected", preparation._protected)
+    before = coexistence._inventory(root)
+    external_inventory = {key: before[key] for key in ("files", "directories")}
+    report = coexistence.installation(fixture.commit, external_inventory)
+    assert report["integrity"] == report["provenance"] == "PASS"
+    # A forged local receipt does not authenticate replacement source bytes.
+    target = root / "source/bot_core/__init__.py"
+    target.write_bytes(b"# forged local source\n")
+    receipt_path = root / "installation.json"
+    receipt = json.loads(receipt_path.read_bytes())
+    receipt.update(preparation._inventory(root))
+    receipt_path.write_bytes(_json(receipt))
+    report = coexistence.installation(fixture.commit, external_inventory)
+    assert report["integrity"] == "UNCERTAIN"
+    assert report["provenance"] != "PASS"

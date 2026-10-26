@@ -86,6 +86,8 @@ files = [
   "deployment/stage9_trusted_installation_identity_gate.py",
   "deployment/stage9_source_cca_test_package.py",
   "deployment/stage9_source_cca_test_runtime.py",
+  "deployment/stage9_stage41b_coexistence.py",
+  "scripts/diagnose_stage9_stage41b_coexistence.py",
   "deployment/stage9_source_cca_test_controls.py",
   "scripts/qualify_stage9_source_cca_installation.py",
   "scripts/qualify_stage41b_signer_isolation.py",
