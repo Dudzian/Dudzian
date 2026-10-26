@@ -195,3 +195,10 @@ status integracji A+C i branch protections pozostają bez zmian.
 Rozszerzenia CI są wyłącznie addytywne: istniejące Ruff/format,
 konfigurowany mypy, testy Stage 9 i połączona branch coverage obejmują nowe
 moduły i testy bez zmiany progów, timeoutów lub gate semantics.
+
+Osobny [operator fizycznego testu Source/CCA](stage9_source_cca_physical_test_operator.md)
+przygotowuje syntetyczny pakiet i umożliwia świadome uruchomienie trzech
+tymczasowych usług wyłącznie przez operatora na fizycznym Dellu. Ponownie
+wykorzystuje tę odczytową bramkę; nie dodaje do niej instalacji ani
+produkcyjnego źródła zaufania. `MATCHED` nadal zachowuje kod CLI 2,
+`NOT_QUALIFIED` i `production_emission=BLOCKED`.

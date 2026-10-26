@@ -176,6 +176,21 @@ STAGE41B_ATOMIC_MODULES = {
     "scripts.qualify_stage41b_signer_isolation",
     "scripts.prepare_stage41b_environment",
 }
+# Source/CCA physical execution stays manual; only unprivileged package,
+# lifecycle and injected observation regressions belong in this serial job.
+SOURCE_CCA_TEST_INSTALLATION_TESTS = {
+    "tests/deployment/test_stage9_source_cca_test_package.py",
+    "tests/security/test_stage9_source_cca_test_lifecycle.py",
+    "tests/security/test_stage9_source_cca_test_probes.py",
+    "tests/deployment/test_stage9_source_cca_test_controls.py",
+    "tests/scripts/test_stage9_source_cca_installation_operator.py",
+}
+SOURCE_CCA_TEST_INSTALLATION_MODULES = {
+    "deployment.stage9_source_cca_test_package",
+    "deployment.stage9_source_cca_test_runtime",
+    "deployment.stage9_source_cca_test_controls",
+    "scripts.qualify_stage9_source_cca_installation",
+}
 RAW_FILES = (
     "coverage-atomic-root-proof.data",
     "coverage-history-successor-reproposal.data",
@@ -207,13 +222,22 @@ def test_history_qualification_partitions_tests_and_preserves_original_atomic_sc
     for job, expected_tests, expected_modules in (
         (
             original,
-            ORIGINAL_ATOMIC_TESTS | STAGE9_PRODUCTION_ATOMIC_TESTS | STAGE41B_ATOMIC_TESTS,
-            ORIGINAL_ATOMIC_MODULES | STAGE9_PRODUCTION_ATOMIC_MODULES | STAGE41B_ATOMIC_MODULES,
+            ORIGINAL_ATOMIC_TESTS
+            | STAGE9_PRODUCTION_ATOMIC_TESTS
+            | STAGE41B_ATOMIC_TESTS
+            | SOURCE_CCA_TEST_INSTALLATION_TESTS,
+            ORIGINAL_ATOMIC_MODULES
+            | STAGE9_PRODUCTION_ATOMIC_MODULES
+            | STAGE41B_ATOMIC_MODULES
+            | SOURCE_CCA_TEST_INSTALLATION_MODULES,
         ),
         (
             history,
             HISTORY_TESTS,
-            HISTORY_MODULES | ORIGINAL_ATOMIC_MODULES | STAGE9_PRODUCTION_ATOMIC_MODULES,
+            HISTORY_MODULES
+            | ORIGINAL_ATOMIC_MODULES
+            | STAGE9_PRODUCTION_ATOMIC_MODULES
+            | SOURCE_CCA_TEST_INSTALLATION_MODULES,
         ),
     ):
         command = _pytest_command(job)
@@ -268,6 +292,33 @@ def test_independent_cca_qualification_has_configured_types_and_explicit_format_
     }
     for path in expected:
         assert format_tokens.count(path) == 1
+
+
+def test_source_cca_test_installation_has_types_and_manual_physical_execution_boundary():
+    quality = _jobs()["quality-ratchet"]
+    config = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    typed_files = config["tool"]["mypy"]["files"]
+    modules = {name.replace(".", "/") + ".py" for name in SOURCE_CCA_TEST_INSTALLATION_MODULES}
+    for path in modules:
+        assert typed_files.count(path) == 1
+    format_tokens = shlex.split(
+        _step(quality, "Format Stage 9 signing and credential substrate")["run"]
+    )
+    for path in modules | SOURCE_CCA_TEST_INSTALLATION_TESTS:
+        assert format_tokens.count(path) == 1
+    lint_tokens = shlex.split(_step(quality, "Ruff baseline gate")["run"])
+    for path in modules:
+        if path.startswith("deployment/"):
+            assert lint_tokens.count(path) == 1
+    # CI may test the execute refusal with injected backends, but may never
+    # invoke the physical operator itself as a workflow shell command.
+    for workflow in (ROOT / ".github/workflows").glob("*.yml"):
+        for job in yaml.safe_load(workflow.read_text(encoding="utf-8"))["jobs"].values():
+            for step in job.get("steps", []):
+                command = step.get("run", "")
+                assert not (
+                    "qualify_stage9_source_cca_installation" in command and "--execute" in command
+                )
 
 
 def test_root_proof_transaction_scope_addendum_has_explicit_format_scope():
