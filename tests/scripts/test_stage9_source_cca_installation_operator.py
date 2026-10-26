@@ -29,6 +29,9 @@ def posix_report_filesystem():
 def mock_host_signals(monkeypatch):
     """Orchestration tests must not depend on native signal APIs or privileges."""
     monkeypatch.setattr(operator, "sys", SimpleNamespace(platform="linux"))
+    # Code provenance has separate filesystem regressions. These synthetic
+    # lifecycle tests must never depend on the checkout's native ownership.
+    monkeypatch.setattr(operator, "_trusted_operator", lambda: None)
     monkeypatch.setattr(
         operator,
         "signal",
@@ -564,6 +567,12 @@ def test_privileged_operator_checks_loaded_sources_and_interpreter(monkeypatch):
     from scripts import qualify_stage41b_signer_isolation as stage41b
 
     observed = []
+    required = {
+        Path(operator.__file__),
+        Path(operator.sys.executable).resolve(),
+        Path(operator.__file__).resolve().parents[1] / ".git",
+    }
+    monkeypatch.setattr(operator, "_operator_code_locations", lambda: (required, set()))
     monkeypatch.setattr(
         stage41b, "_check_protected", lambda path, *, directory: observed.append((path, directory))
     )

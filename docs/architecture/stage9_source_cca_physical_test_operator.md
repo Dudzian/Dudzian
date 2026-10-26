@@ -90,6 +90,47 @@ PID/starttime pozostają przyczyną `UNCERTAIN` i odmowy. Ograniczona obserwacja
 nie dowodzi nieobecności dowolnego executable testowego uruchomionego pod inną
 tożsamością; tę granicę sprawdza wyłącznie kontrola administracyjna.
 
+## Zaufanie do kodu przed uruchomieniem jako root
+
+Przed uruchomieniem interpretera z UID 0 administrator musi niezależnie
+przygotować i zewnętrznie zweryfikować chroniony checkout dokładnego,
+uprzednio przejrzanego commitu. Weryfikacja musi obejmować zawartość i ochronę
+plików kodu, ich katalogów oraz środowiska importów, w tym modułów ładowanych
+dopiero podczas wykonania. Zgodny digest zawartości nie zastępuje kontroli
+właściciela, uprawnień i powiązań ścieżek; zmiana trybu pliku bez zmiany jego
+bajtów także może unieważnić ochronę. Ten etap jest osobną czynnością
+administratora z użyciem uprzednio zaufanych narzędzi, przed wywołaniem
+operatora jako root. Pakiet TEST ONLY ani jego syntetyczny pin nie wykonują
+tej weryfikacji.
+
+Import Pythona wykonuje kod przed ewentualnym sprawdzeniem go przez ten sam
+proces. Dotyczy to także inicjalizacji pakietów, istniejącego bytecode,
+plików `.pth`, modułów `sitecustomize`/`usercustomize` i mechanizmów importu.
+Flaga `-B` wyłącza zapisywanie bytecode, lecz nie zakazuje odczytu istniejących
+plików `.pyc`. Dlatego interpreter, biblioteki, ścieżki wyszukiwania i kod
+startowy muszą już pochodzić z niezależnie przygotowanego, chronionego
+środowiska. Nie uruchamiać root z kopii należącej do zwykłego użytkownika
+w celu samodzielnego potwierdzenia jej zaufania.
+
+Operator kontroluje całe drzewa checkoutu i plikowych lokalizacji wyszukiwania
+importów, także ścieżki pakietów, zamiast ograniczać spis do `sys.modules`.
+Obejmuje to moduły jeszcze niezaimportowane, inicjalizatory, bytecode i `.pth`.
+Wymagany plik `controls` musi istnieć i być chroniony przed jego importem;
+brakująca lokalizacja wyszukiwania wymaga ochrony istniejących przodków.
+Znany import `controls` odbywa się przed utworzeniem zasobów, po czym kod
+ponownie sprawdza ochronę i oczekiwaną lokalizację modułu. Kontrole wracają
+przed utworzeniem usług oraz użyciem kontroli odmów. Każde sprawdzenie ponownie
+odczytuje właściciela i uprawnienia; zgodne bajty nie pomijają kontroli trybu.
+
+Kontrole wykonywane wewnątrz operatora sprawdzają lokalną zgodność po
+zaufanym starcie. Kontrola po imporcie nie cofa wykonania nieufnego modułu
+ani nie dowodzi, że aktualnie wykonywane obiekty Pythona odpowiadają bajtom
+pliku. Sam proces nie może ustanowić wiarygodności własnego interpretera,
+skompromitowanego root/hosta ani zapewnić atomowej ochrony przed zmianami
+poza oknem obserwacji. Niezależna weryfikacja przed uruchomieniem pozostaje
+obowiązkowa; żaden wynik tych kontroli nie jest niezależną atestacją hosta
+lub zgodą produkcyjną.
+
 ## Procedura przyszłego uruchomienia na Dellu
 
 Najpierw przejrzeć i pobrać zatwierdzony commit PR zwykłym kontem. Wszystkie
@@ -145,9 +186,12 @@ operator_work="$(realpath ../work)"
    bez zapisu dla grupy lub innych użytkowników i bez niebezpiecznych linków.
    Używać chronionego systemowego `/usr/bin/python3`; nie uruchamiać root
    z interpretera ani modułów należących do zwykłego użytkownika. Przejrzeć
-   stan tej kopii i potwierdzić identyczny commit przed wykonaniem. Przygotowanie
-   chronionej kopii jest osobną czynnością administratora; `--prepare` jej
-   nie instaluje i nie podnosi uprawnień.
+   stan tej kopii i potwierdzić identyczny commit oraz ochronę całego środowiska
+   zgodnie z opisaną wyżej granicą zaufania, zanim interpreter zostanie
+   uruchomiony jako root. Nie polegać na kontroli operatora wykonywanej dopiero
+   po jego zaimportowaniu. Przygotowanie i zewnętrzna weryfikacja chronionej
+   kopii są osobnymi czynnościami administratora; `--prepare` jej nie instaluje
+   i nie podnosi uprawnień.
 
    Wyłącznie po świadomej decyzji operatora, na fizycznym Dellu, przejść
    do chronionego checkoutu i uruchomić:

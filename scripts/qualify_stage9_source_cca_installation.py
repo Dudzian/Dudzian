@@ -16,7 +16,7 @@ import signal
 import stat
 import subprocess
 import sys
-from typing import Any
+from typing import Any, Callable
 
 from deployment.stage9_source_cca_test_package import (
     HarnessRefusal,
@@ -209,34 +209,101 @@ def _matched(result: dict[str, Any]) -> bool:
     )
 
 
-def _trusted_operator() -> None:
-    """Reuse Stage41B's protected-code boundary before privileged mutation.
-
-    Review and protection of Python's startup environment remain operator
-    prerequisites; this is local consistency, never host attestation.
-    """
-    from scripts.qualify_stage41b_signer_isolation import _check_protected
-
+def _operator_code_locations() -> tuple[set[Path], set[Path]]:
+    """Inventory unloaded code too; sys.modules is not an import closure."""
     repository = Path(__file__).resolve().parents[1]
-    locations = {
+    required = {
         repository,
         repository / ".git",
         Path(__file__),
         Path(sys.executable).resolve(strict=True),
+        repository / "deployment/__init__.py",
+        repository / "scripts/__init__.py",
+        repository / "deployment/stage9_source_cca_test_controls.py",
     }
-    for entry in sys.path:
-        candidate = Path(entry or os.getcwd())
-        if candidate.exists():
-            locations.add(candidate)
+    searches = {Path(entry or os.getcwd()) for entry in sys.path}
     for module in tuple(sys.modules.values()):
         source = getattr(module, "__file__", None)
         if isinstance(source, str) and not source.startswith("<"):
-            locations.add(Path(source))
+            required.add(Path(source))
+        # Namespace/package imports can search locations outside sys.path.
+        for location in getattr(module, "__path__", ()):
+            searches.add(Path(location))
+    return required, searches
+
+
+def _trusted_operator() -> None:
+    """Fresh protection checks over present and future import locations.
+
+    This process and its startup imports must already be independently trusted.
+    Metadata checks cannot authenticate Python code that has already executed,
+    existing bytecode, import hooks, or the checking process itself. The external
+    pre-interpreter verification prerequisite is never discharged here.
+    """
+    from scripts.qualify_stage41b_signer_isolation import _check_protected
+
     try:
-        for location in locations:
-            _check_protected(location, directory=location.is_dir())
-            for directory in location.parents:
+        required, searches = _operator_code_locations()
+        if any(".." in path.parts for path in required | searches):
+            raise HarnessRefusal("PROTECTED_REVIEWED_OPERATOR_REQUIRED")
+        required = {path.absolute() for path in required}
+        searches = {path.absolute() for path in searches}
+        visited: set[Path] = set()
+
+        def check_ancestors(location: Path) -> None:
+            for directory in reversed(location.parents):
                 _check_protected(directory, directory=True)
+
+        for location in required | searches:
+            try:
+                location.lstat()
+            except FileNotFoundError:
+                if location in required:
+                    raise
+                # A stock Python search path may include an absent stdlib zip.
+                # Protect every existing ancestor; an absent user-writable
+                # import root must not be populated after this check.
+                for directory in reversed(location.parents):
+                    try:
+                        directory.lstat()
+                    except FileNotFoundError:
+                        continue
+                    _check_protected(directory, directory=True)
+                continue
+            check_ancestors(location)
+            pending = [location]
+            while pending:
+                current = pending.pop()
+                if current in visited:
+                    continue
+                # lstat + _check_protected reject links before any descent.
+                # Check every file, including unloaded .py, .pyc and .pth.
+                is_directory = stat.S_ISDIR(current.lstat().st_mode)
+                _check_protected(current, directory=is_directory)
+                visited.add(current)
+                if is_directory:
+                    pending.extend(current.iterdir())
+    except Exception:
+        raise HarnessRefusal("PROTECTED_REVIEWED_OPERATOR_REQUIRED") from None
+
+
+def _prepare_privileged_controls() -> Callable[..., Any]:
+    """Load known late code before resource creation, after tree protection.
+
+    The second check is consistency after a trusted import, not authentication
+    of import-time code. Trusted Python startup remains an external condition.
+    """
+    try:
+        _trusted_operator()
+        from deployment import stage9_source_cca_test_controls as controls
+
+        expected = (
+            Path(__file__).resolve().parents[1] / "deployment/stage9_source_cca_test_controls.py"
+        )
+        if Path(controls.__file__) != expected:
+            raise HarnessRefusal("PROTECTED_REVIEWED_OPERATOR_REQUIRED")
+        _trusted_operator()
+        return controls.run_controls
     except Exception:
         raise HarnessRefusal("PROTECTED_REVIEWED_OPERATOR_REQUIRED") from None
 
@@ -279,6 +346,7 @@ def _execute(args: argparse.Namespace, report: dict[str, Any]) -> None:
     if sys.platform != "linux":
         raise HarnessRefusal("PHYSICAL_ROOT_EXECUTION_REQUIRED")
     _authorize(args)
+    run_controls = _prepare_privileged_controls()
     package = validate_package(args.package, args.package_sha256)
     if package["plan"] != plan(args.run_id, args.uid_base):
         raise HarnessRefusal("PACKAGE_RESOURCE_PLAN_MISMATCH")
@@ -288,6 +356,9 @@ def _execute(args: argparse.Namespace, report: dict[str, Any]) -> None:
     report["preflight"] = preflight(package["plan"], administrative=True)
     if not report["preflight"]["ready"]:
         raise HarnessRefusal("PREFLIGHT_BLOCKED")
+    # Recheck metadata even when contents/commit are unchanged. No resource may
+    # be created if code protection changed during package/preflight reads.
+    _trusted_operator()
     previous = {
         number: signal.getsignal(number)
         for number in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
@@ -306,8 +377,7 @@ def _execute(args: argparse.Namespace, report: dict[str, Any]) -> None:
             )
             if not _matched(report["gate"]):
                 raise HarnessRefusal("PHYSICAL_INSTALLATION_COMPARISON_REFUSED")
-            from deployment.stage9_source_cca_test_controls import run_controls
-
+            _trusted_operator()
             report["checks"] = run_controls(run)
             report["physical_result"] = "TEST_INSTALLATION_MATCHED"
     finally:

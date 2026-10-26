@@ -377,3 +377,15 @@ Osobny `--inspect-cleanup-admin` jest jawny i wyłącznie odczytowy. Fizyczny
 `--execute` pozostaje poza CI, a status `PHYSICAL_TEST_PENDING` i produkcyjne
 blokady pozostają bez zmian. Progi coverage i dotychczasowe testy Stage 41B
 nie są osłabiane.
+
+Kontrola pochodzenia kodu operatora Source/CCA wymaga niezależnie przygotowanego
+i zewnętrznie zweryfikowanego checkoutu oraz chronionego interpretera i środowiska
+importów przed uruchomieniem Pythona jako root. Import wykonuje kod wcześniej
+niż kontrola po imporcie; lokalne hashe i obserwacja już załadowanych modułów
+nie ustanawiają zaufania do własnego procesu. Dotyczy to także istniejącego
+bytecode, plików `.pth` i mechanizmów importu; samo `-B` nie wyłącza ich odczytu.
+Regresje weryfikacji kodu obejmują niechronione pliki, zmianę uprawnień bez
+zmiany treści, moduły wykorzystywane później oraz odmowę przed zmianami hosta.
+Nie uruchamiają fizycznego `--execute` ani sudo w CI. Granice tej lokalnej
+kontroli opisuje [procedura operatora](architecture/stage9_source_cca_physical_test_operator.md);
+`PHYSICAL_TEST_PENDING` i `PRODUCTION_NO_GO` pozostają bez zmian.
