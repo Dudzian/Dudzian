@@ -11,7 +11,7 @@ import json
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Literal, NoReturn, cast
+from typing import Any, Callable, Literal, NoReturn, cast
 
 from deployment.canonical_json import canonical_json_bytes
 
@@ -354,3 +354,452 @@ def acceptance_signed_message(raw: bytes) -> bytes:
     value = _decode(raw)
     _validate_acceptance(value)
     return ACCEPTANCE_DOMAIN + bytes.fromhex(value["payload_digest"])
+
+
+def _parse_contract(
+    raw: bytes,
+    schema: str,
+    validator: Callable[[Any], None],
+    *,
+    maximum: int = MAX_DOCUMENT_BYTES,
+    canonical_required: bool = False,
+) -> ParsedContract:
+    value = _decode(raw, maximum)
+    validator(value)
+    canonical = canonical_json_bytes(value)
+    _require(not canonical_required or raw == canonical)
+    return ParsedContract(schema, raw, canonical, hashlib.sha256(raw).hexdigest())
+
+
+def parse_acceptance(raw: bytes) -> ParsedContract:
+    """Parse signature syntax and signing digest; signatures remain unverified."""
+    return _parse_contract(raw, "CryptoHunter.Stage9ObserverAcceptanceV1", _validate_acceptance)
+
+
+def parse_launch_policy(raw: bytes) -> ParsedContract:
+    """Parse canonical launch declarations, without manifest closure/enforcement."""
+    return _parse_contract(
+        raw,
+        "CryptoHunter.Stage9ObserverLaunchPolicyV1",
+        _validate_launch_policy,
+        canonical_required=True,
+    )
+
+
+def _reviewer_keys(value: Any) -> list[dict[str, Any]]:
+    result = []
+    signers: list[str] = []
+    reviewers: set[str] = set()
+    public_keys: set[str] = set()
+    for key in _list(value, minimum=2):
+        key = _record(key, {"signer_id", "reviewer_id", "public_key_hex"})
+        signer = _identifier(key["signer_id"])
+        reviewer = _identifier(key["reviewer_id"])
+        public_key = _hex(key["public_key_hex"], 64)
+        _require(reviewer not in reviewers and public_key not in public_keys, "ACCEPTANCE_REJECTED")
+        signers.append(signer)
+        reviewers.add(reviewer)
+        public_keys.add(public_key)
+        result.append(key)
+    _require(signers == sorted(set(signers)), "ACCEPTANCE_REJECTED")
+    return result
+
+
+def parse_acceptance_policy(raw: bytes) -> NoReturn:
+    """Refuse unfinished V1 schemas; see the schema-gap review document.
+
+    Validate only normative fields before refusing. The missing target,
+    allowed_sources and limits wire schemas must never be accepted as opaque
+    dictionaries or replaced by locally invented authorization semantics.
+    """
+    value = _record(
+        _decode(raw),
+        {
+            "schema",
+            "version",
+            "purpose",
+            "root_set_id",
+            "reviewer_keys",
+            "threshold",
+            "allowed_sources",
+            "minimum_sequence",
+            "revocation_checkpoint",
+            "valid_until",
+            "target",
+            "limits",
+            "launch_policy_sha256",
+        },
+    )
+    _schema(value, "CryptoHunter.Stage9ObserverAcceptancePolicyV1", purpose=True)
+    _identifier(value["root_set_id"])
+    _reviewer_keys(value["reviewer_keys"])
+    _equal(value["threshold"], 2)
+    _integer(value["minimum_sequence"])
+    _checkpoint(value["revocation_checkpoint"])
+    _timestamp(value["valid_until"])
+    _digest(value["launch_policy_sha256"])
+    _deny()
+
+
+def parse_manifest(raw: bytes) -> NoReturn:
+    """Refuse until exact manifest nested schemas have been reviewed.
+
+    No manifest, inventory, provenance or dependency graph is accepted by this
+    interim implementation. Checking its header does not validate its closure.
+    """
+    value = _record(
+        _decode(raw, MAX_MANIFEST_BYTES),
+        {
+            "schema",
+            "version",
+            "purpose",
+            "manifest_id",
+            "sequence",
+            "source_revision",
+            "target",
+            "sources",
+            "files",
+            "transforms",
+            "runtime",
+            "imports",
+            "launch_policy_sha256",
+        },
+    )
+    _schema(value, "CryptoHunter.Stage9ObserverManifestV1", purpose=True)
+    _identifier(value["manifest_id"])
+    _integer(value["sequence"])
+    _hex(value["source_revision"], 40)
+    _list(value["sources"], maximum=MAX_SOURCES)
+    _list(value["files"], maximum=MAX_FILES)
+    _digest(value["launch_policy_sha256"])
+    _deny()
+
+
+def _launch_ids(value: Any, *, minimum: int = 0) -> list[str]:
+    values = _list(value, minimum=minimum)
+    result = [_identifier(item) for item in values]
+    _require(len(set(result)) == len(result), "LAUNCH_POLICY_MISMATCH")
+    return result
+
+
+def _launch_exact_text(value: Any) -> str:
+    text = _string(value, maximum=128)
+    _require(
+        bool(text)
+        and text.isascii()
+        and all(33 <= ord(char) <= 126 for char in text)
+        and not any(char in text for char in "*?[]"),
+        "FORMAT_REJECTED",
+    )
+    return text
+
+
+def _launch_profile(value: Any) -> None:
+    profile = _record(value, {"profile_file_id", "profile_sha256", "enforcement"})
+    _identifier(profile["profile_file_id"])
+    _digest(profile["profile_sha256"])
+    _equal(profile["enforcement"], "REQUIRED")
+
+
+def _validate_launch_policy(value: Any) -> None:
+    """Validate V1 launch declarations, without authenticating or enforcing them."""
+    launch = _record(
+        value,
+        {
+            "schema",
+            "version",
+            "purpose",
+            "target",
+            "interpreter",
+            "elf",
+            "imports",
+            "environment",
+            "cwd",
+            "allowed_fds",
+            "namespace_scope",
+            "sandbox",
+            "file_policy",
+            "runtime_dependencies",
+            "resources",
+            "reporting",
+            "run_context",
+        },
+    )
+    _schema(launch, "CryptoHunter.Stage9ObserverLaunchPolicyV1", purpose=True)
+    target = _record(
+        launch["target"], {"os", "distribution", "distribution_version", "architecture"}
+    )
+    for key, target_value in (
+        ("os", "Linux"),
+        ("distribution", "Ubuntu"),
+        ("distribution_version", "24.04"),
+        ("architecture", "x86_64"),
+    ):
+        _equal(target[key], target_value)
+
+    interpreter = _record(
+        launch["interpreter"],
+        {
+            "file_id",
+            "version",
+            "package_version",
+            "abi",
+            "build_id",
+            "libpython_file_ids",
+            "entrypoint_file_id",
+            "argv",
+            "frozen_modules",
+        },
+    )
+    interpreter_id = _identifier(interpreter["file_id"])
+    entrypoint_id = _identifier(interpreter["entrypoint_file_id"])
+    _require(interpreter_id != entrypoint_id, "LAUNCH_POLICY_MISMATCH")
+    python_version = _launch_exact_text(interpreter["version"])
+    components = python_version.split(".")
+    _require(
+        len(components) == 3
+        and components[:2] == ["3", "12"]
+        and components[2].isascii()
+        and components[2].isdecimal()
+        and (components[2] == "0" or not components[2].startswith("0")),
+        "LAUNCH_POLICY_MISMATCH",
+    )
+    for field in ("package_version", "abi", "build_id"):
+        _launch_exact_text(interpreter[field])
+    libpython_ids = _launch_ids(interpreter["libpython_file_ids"])
+    _require(interpreter_id not in libpython_ids, "LAUNCH_POLICY_MISMATCH")
+    argv = _list(interpreter["argv"], maximum=5, minimum=5)
+    _path(argv[0])
+    _path(argv[4])
+    _require(argv[0] != argv[4], "LAUNCH_POLICY_MISMATCH")
+    for index, argument in enumerate(("-I", "-S", "-B"), start=1):
+        _equal(argv[index], argument)
+    _equal(interpreter["frozen_modules"], "BUILD_FIXED")
+
+    elf = _record(
+        launch["elf"],
+        {
+            "loader_file_id",
+            "library_file_ids",
+            "dependency_edges",
+            "loader_config_file_ids",
+            "absent_paths",
+            "hwcaps_file_ids",
+            "dlopen_file_ids",
+            "resolution_root_ids",
+            "rpath_runpath_policy",
+        },
+    )
+    _identifier(elf["loader_file_id"])
+    for field in (
+        "library_file_ids",
+        "loader_config_file_ids",
+        "hwcaps_file_ids",
+        "dlopen_file_ids",
+    ):
+        _launch_ids(elf[field])
+    _launch_ids(elf["resolution_root_ids"], minimum=1)
+    absent_paths = [_path(item) for item in _list(elf["absent_paths"])]
+    _require(len(set(absent_paths)) == len(absent_paths), "LAUNCH_POLICY_MISMATCH")
+    edges_seen: set[tuple[str, str]] = set()
+    for item in _list(elf["dependency_edges"]):
+        edge = _record(item, {"requester_file_id", "needed", "resolved_file_id"})
+        requester = _identifier(edge["requester_file_id"])
+        needed = _string(edge["needed"], maximum=4096)
+        _require(bool(needed))
+        resolved = _identifier(edge["resolved_file_id"])
+        _require(requester != resolved, "LAUNCH_POLICY_MISMATCH")
+        pair = (requester, needed)
+        _require(pair not in edges_seen, "LAUNCH_POLICY_MISMATCH")
+        edges_seen.add(pair)
+    _equal(elf["rpath_runpath_policy"], "IN_IMAGE_ONLY")
+
+    imports = _record(
+        launch["imports"],
+        {"roots", "modules_sha256", "embedded_modules_policy", "external_imports"},
+    )
+    _launch_ids(imports["roots"], minimum=1)
+    _digest(imports["modules_sha256"])
+    _equal(imports["embedded_modules_policy"], "EXACT_BUILD_INVENTORY")
+    _equal(imports["external_imports"], "FORBIDDEN")
+    environment = _record(launch["environment"], {"inherit", "values"})
+    _equal(environment["inherit"], False)
+    environment_values = _record(environment["values"], {"LC_ALL"})
+    _equal(environment_values["LC_ALL"], "C")
+    cwd = _record(launch["cwd"], {"directory_file_id"})
+    _identifier(cwd["directory_file_id"])
+
+    fds = _list(launch["allowed_fds"], maximum=2, minimum=2)
+    for item, fd_values in zip(
+        fds,
+        (
+            {
+                "fd": 3,
+                "role": "REPORT_WRITE",
+                "kind": "PIPE",
+                "access": "WRITE",
+                "binding": "TRUSTED_RUN_REPORT_PIPE",
+            },
+            {
+                "fd": 4,
+                "role": "RUN_CONTEXT_READ",
+                "kind": "SEALED_MEMFD",
+                "access": "READ",
+                "binding": "TRUSTED_LAUNCHER_CONTEXT",
+            },
+        ),
+    ):
+        fd = _record(item, set(fd_values))
+        for field, expected_value in fd_values.items():
+            _equal(fd[field], expected_value)
+
+    scope = _record(
+        launch["namespace_scope"],
+        {"pid", "user", "mount", "procfs", "binding_schema", "binding_source", "visibility"},
+    )
+    for field, expected_value in (
+        ("pid", "HOST_INITIAL"),
+        ("user", "HOST_INITIAL"),
+        ("procfs", "AUTHENTICATED_HOST_PROCFS"),
+        ("binding_schema", "HostScopeBindingV1"),
+        ("binding_source", "TRUSTED_RUN_CONTEXT"),
+        ("visibility", "COMPLETE"),
+    ):
+        _equal(scope[field], expected_value)
+    _enum(scope["mount"], {"HOST", "PRIVATE_FAITHFUL_HOST_VIEW"})
+
+    sandbox = _record(
+        launch["sandbox"],
+        {
+            "uid",
+            "gid",
+            "supplementary_groups",
+            "capabilities",
+            "no_new_privileges",
+            "seccomp",
+            "lsm",
+            "network",
+            "devices",
+            "deny_operations",
+        },
+    )
+    _integer(sandbox["uid"], minimum=1)
+    _integer(sandbox["gid"], minimum=1)
+    _equal(sandbox["supplementary_groups"], [])
+    capabilities = _record(
+        sandbox["capabilities"], {"bounding", "permitted", "effective", "inheritable", "ambient"}
+    )
+    for capability_set in capabilities.values():
+        _equal(capability_set, [])
+    _equal(sandbox["no_new_privileges"], True)
+    _equal(sandbox["network"], "DENY")
+    _equal(sandbox["devices"], "DENY")
+    _launch_profile(sandbox["seccomp"])
+    _launch_profile(sandbox["lsm"])
+    denied = {
+        "NEW_EXEC",
+        "NEW_PROCESS",
+        "MOUNT",
+        "SETNS",
+        "UNSHARE",
+        "PTRACE",
+        "PROCESS_VM",
+        "PIDFD_GETFD",
+        "SIGNAL",
+        "NETWORK",
+        "DEVICE",
+        "WRITE_OUTSIDE_REPORT",
+    }
+    operations = [
+        _enum(item, denied) for item in _list(sandbox["deny_operations"], maximum=12, minimum=12)
+    ]
+    _require(set(operations) == denied, "LAUNCH_POLICY_MISMATCH")
+
+    file_policy = _record(
+        launch["file_policy"],
+        {
+            "files_sha256",
+            "ancestry",
+            "acl",
+            "capability_xattrs",
+            "other_xattrs",
+            "regular_nlink",
+            "links",
+            "extra_entries",
+            "mutable_runtime",
+            "integrity_profile_file_id",
+            "integrity_profile_sha256",
+        },
+    )
+    _digest(file_policy["files_sha256"])
+    _identifier(file_policy["integrity_profile_file_id"])
+    _digest(file_policy["integrity_profile_sha256"])
+    for field, expected_value in (
+        ("ancestry", "PROTECTED"),
+        ("acl", "FORBIDDEN"),
+        ("capability_xattrs", "FORBIDDEN"),
+        ("other_xattrs", "PROFILE_ONLY"),
+        ("regular_nlink", 1),
+        ("links", "FORBIDDEN"),
+        ("extra_entries", "FORBIDDEN"),
+        ("mutable_runtime", "FORBIDDEN"),
+    ):
+        _equal(file_policy[field], expected_value)
+    dependencies = _record(
+        launch["runtime_dependencies"],
+        {"files_sha256", "runtime_sha256", "imports_sha256", "unlisted_dependencies"},
+    )
+    for field in ("files_sha256", "runtime_sha256", "imports_sha256"):
+        _digest(dependencies[field])
+    _equal(dependencies["unlisted_dependencies"], "FORBIDDEN")
+    _require(
+        dependencies["files_sha256"] == file_policy["files_sha256"]
+        and dependencies["imports_sha256"] == imports["modules_sha256"],
+        "LAUNCH_POLICY_MISMATCH",
+    )
+
+    resources = _record(
+        launch["resources"],
+        {
+            "run_timeout_s",
+            "receive_timeout_s",
+            "memory_max_bytes",
+            "fd_limit",
+            "process_limit",
+            "core_dump_bytes",
+        },
+    )
+    for field, expected_value in (
+        ("run_timeout_s", 300),
+        ("receive_timeout_s", 30),
+        ("memory_max_bytes", 268435456),
+        ("process_limit", 1),
+        ("core_dump_bytes", 0),
+    ):
+        _equal(resources[field], expected_value)
+    _integer(resources["fd_limit"], minimum=8, maximum=64)
+    reporting = _record(
+        launch["reporting"], {"schema", "fd", "framing", "max_payload_bytes", "nonce_source", "eof"}
+    )
+    for field, expected_value in (
+        ("schema", "ObserverResultV1"),
+        ("fd", 3),
+        ("framing", "U32BE_UTF8_JSON"),
+        ("max_payload_bytes", 65536),
+        ("nonce_source", "TRUSTED_RUN_CONTEXT"),
+        ("eof", "REQUIRED"),
+    ):
+        _equal(reporting[field], expected_value)
+    context = _record(
+        launch["run_context"], {"schema", "fd", "max_bytes", "storage", "seals", "access", "source"}
+    )
+    for field, expected_value in (
+        ("schema", "ObserverRunContextV1"),
+        ("fd", 4),
+        ("max_bytes", 16384),
+        ("storage", "MEMFD"),
+        ("seals", ["WRITE", "GROW", "SHRINK", "SEAL"]),
+        ("access", "READ_ONLY"),
+        ("source", "TRUSTED_LAUNCHER"),
+    ):
+        _equal(context[field], expected_value)
