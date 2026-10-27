@@ -17,6 +17,37 @@ preflight passed except `no_other_installations`. These are supplied observation
 not an independently reproduced measurement in this PR. A locally consistent
 receipt is insufficient to authenticate an installation.
 
+The subsequent physical process observations supplied for this hardening are:
+
+| First scanner result | Value |
+| --- | ---: |
+| `checked_pid_count` | 85 |
+| `unavailable_pid_count` | 180 |
+| `unstable_pid_count` | 30 |
+| `matched_pid_count` | 0 |
+| `stable_visible_snapshot` | false |
+| `full_confirmation` | false |
+
+The installation metadata report contained 2354 observed entries and
+`stable=true`, with `integrity_verified=false` and `provenance_verified=false`.
+These are metadata observations, not verification of installation contents.
+
+A second, independent `/proc` classification reported:
+
+| Mapping observation | Process classification | UID scope | Count |
+| --- | --- | --- | ---: |
+| Empty | Kernel thread | Foreign UID | 142 |
+| Nonempty | Other process | Own UID | 86 |
+| Permission denied | Other process | Foreign UID | 36 |
+| Permission denied | Other process | Own UID | 3 |
+| **Total** | | | **267** |
+
+Thus 142 empty mapping observations belonged to kernel threads, while 39 ordinary
+processes had actual access denials. The observations came from separate runs;
+their PID populations need not agree, and scanner categories can overlap. Zero
+matches establishes no absence claim. This PR has not rerun the physical Dell
+diagnostic; synthetic regression results are not physical isolation evidence.
+
 ## Decision and scope
 
 A complete independent proof of host isolation is unavailable. This change
@@ -119,27 +150,85 @@ provenance: both `integrity_verified` and `provenance_verified` in the
 `installation_metadata` section remain false. Full content verification is a
 separate boundary and remains `UNCERTAIN` when private content is unreadable.
 
-Both PID sweeps continue after individual permission errors, missing processes
-and invalid snapshots. The second sweep also examines newly visible PIDs. PID-set
-changes and different snapshots (including starttime or device/inode changes)
-remain explicit uncertainty. A reference found in **either** sweep remains
-`BLOCKED`, even if that PID's next observation, another PID or installation
-metadata becomes unavailable. Incomplete observations never prove absence.
-Kernel threads or zombies with missing executable/mappings are not silently
-excluded. Reads and enumerations retain their existing limits.
+Each source is observed independently. A denied `maps` read does not prevent
+inspection of `cgroup`, `exe`, `cwd`, `root` or available descriptors. A failed
+descriptor does not erase earlier descriptor targets or their inode identities;
+an unavailable thread does not erase observations of another thread. Malformed
+mapping entries do not stop matching valid entries or independent sources. Both
+PID sweeps examine available positive evidence, including partial observations,
+and the second sweep also examines newly visible PIDs. A reference found at any
+point remains `BLOCKED`, even if a later source, thread, sweep or installation
+metadata observation fails. An observation gap never becomes a negative result.
 
-The process report always includes `checked_pid_count`, `unavailable_pid_count`,
-`unstable_pid_count` and `matched_pid_count`. Counts describe unique PIDs:
-checked means at least one nonempty snapshot was acquired; unavailable means an
-observation failed (permission, parsing or limit); unstable means disappearance,
-PID-set change or different snapshots; matched means a positive reference in any
-sweep. Categories can overlap, e.g. a matched PID whose second read is denied is
-both checked/matched and unavailable. `observed_pid_count` aliases the checked
-count; `observed_thread_count` counts unique observed PID/TID pairs. Sorted
-unavailable/unstable/matched PID lists and fixed uncertainty reasons explain gaps.
+Kernel threads are identified only through the Linux `PF_KTHREAD=0x00200000`
+flag in a validated `/proc/PID/stat` record. Parsing respects process names
+containing spaces and parentheses, checks the numeric PID against its procfs
+path, validates flags and `starttime`, and compares identity around observation.
+Inconsistent, malformed or incomplete records cannot establish kernel-thread
+classification. A recognized kernel thread with empty `maps` has its own
+category; neither an empty mapping file nor a process name can establish that
+category. This classification does not waive missing sources or prove isolation.
+Status validation separately requires `Pid`, `Tgid`, all four UID/GID values and
+the `Groups` field, with the expected thread and process IDs and unsigned 32-bit
+credential values. A well-formed record naming another PID reports an identity
+change separately from malformed structure. Missing or malformed
+status fields remain an observation gap even when stat identity is readable.
 
-`stable_visible_snapshot=true` is only an observation of two equal visible
-snapshots. `full_confirmation` is always false. `/proc` visibility checks do not
+Each sweep retains at most 65536 observed device/inode pairs for correlation
+with installation metadata discovered at the end of observation. This preserves
+earlier inode-only matches when installation metadata was initially unavailable.
+Exhausting that cache reports `PROCESS_INODE_LIMIT`; matching against already
+known installation identities continues even after the cache limit is reached.
+
+Stability is assessed separately for process identity and installation
+references. PID/`starttime` changes, thread membership changes, credentials,
+device/inode identities, permissions and reference-bearing data remain relevant.
+Ordinary CPU/activity counters are excluded only where their field meaning can
+be identified reliably. Unparsed or incomplete data remains uncertain. Changed
+identity and changed observation content are reported separately from access
+denials, vanished sources, empty data, malformed data and limit exhaustion.
+
+Process counters describe unique PIDs observed across both sweeps:
+
+| Field | Meaning |
+| --- | --- |
+| `checked_pid_count` | At least one source was retained; the observation may be partial. |
+| `unavailable_pid_count` | At least one source was denied, missing, empty, malformed or limited, apart from separately classified empty kernel maps. |
+| `unstable_pid_count` | A PID/source disappeared, the PID set changed, or identity/reference-bearing content changed. |
+| `matched_pid_count` | Any retained observation positively referenced an installation or Stage 41B cgroup. |
+| `kernel_thread_pid_count` | The same coherent leader PID/`starttime`/`PF_KTHREAD` identity was observed across both sweeps. |
+| `empty_kernel_maps_pid_count` | A leader meeting that two-sweep kernel identity check had empty mappings during at least one sweep. |
+| `identity_unstable_pid_count` | A parsed PID/`starttime`/kernel-thread identity changed. |
+| `bindings_unstable_pid_count` | The normalized reference/security observation changed. |
+| `operationally_changed_pid_count` | Only identified operational fields changed between sweeps, while normalized observations agreed. |
+
+Categories overlap: a PID with a positive partial observation and a later denial
+remains both matched and unavailable. Kernel counters require coherent leader
+identity across both sweeps; changed or missing identities do not qualify for
+those counters. Other source gaps can still coexist with a kernel classification.
+`observed_pid_count` aliases the checked count; `observed_thread_count` counts
+unique observed PID/TID pairs. `stable_process_identities` and
+`stable_installation_bindings` are conservative indicators: incomplete or unstable
+process observations, partial/failed enumeration or uncertain procfs visibility
+keep both false, and changed/incomplete installation metadata also prevents
+stable bindings.
+
+Sorted unavailable/unstable/matched PID lists and `reason_counts` explain gaps.
+Reasons use fixed source codes such as `MAPS_PERMISSION_DENIED`, `FD_NOT_FOUND`,
+`MAPS_EMPTY`, `STAT_MALFORMED`, `THREAD_LIMIT`, `STAT_IDENTITY_CHANGED` and
+`PROCESS_CONTENT_CHANGED`; generic I/O errors have a separate `IO_ERROR` suffix.
+The counts describe events across both sweeps rather than unique PIDs, and each
+reason count saturates at 65536. Internal reason collection also aggregates fixed
+codes with saturated counts instead of retaining an unbounded error list. An
+empty `maps` read bracketed by a coherent kernel identity is classified separately
+rather than reported as `MAPS_EMPTY`; its aggregate PID counter additionally
+requires matching leader identity across both sweeps. Other missing or denied
+sources remain explicit. The public report contains no raw `/proc` data, process
+environments, pathnames, exception messages or potential secrets.
+
+`stable_visible_snapshot=true` describes stable, complete visible observations
+under the scanner's checks. It grants no qualification. `full_confirmation` is
+always false. `/proc` visibility checks do not
 externally attest the host PID/mount namespace. Sequential observations are not
 an atomic host snapshot; copied data, already-closed scripts and short-lived
 processes can escape the observed references. These limitations keep the final
@@ -177,7 +266,13 @@ Synthetic tests cover exact independent pins, malformed/duplicate manifests,
 file and receipt replacement, current Git/wheel verification, changes during
 reads, inode aliases, deleted mappings, cgroups, unrelated identities, numeric
 UID collisions, inactive units, denied/missing/hidden procfs, process churn and
-root CLI refusal. New modules enter configured Linux/Windows mypy; tests and
+root CLI refusal. Process regressions additionally cover validated kernel threads
+with empty mappings, ordinary empty mappings, independent matching after maps or
+executable denials, disappearing descriptors, inaccessible sibling threads,
+PID/`starttime` changes, operational-counter changes, malformed flags and mapping
+records, sticky first-pass positives and fully unavailable observations. Stable
+synthetic observations still assert blocked qualification and false full
+confirmation. New modules enter configured Linux/Windows mypy; tests and
 coverage enter the existing quality job without changing hardware gates,
 timeouts or coverage thresholds. Existing Ruff and security CI remains enabled.
 Physical qualification, independent external artifacts, complete administrative

@@ -32,8 +32,13 @@ def _is_pathlib_type_target_name(name: str | None, pathlib_type_aliases: set[str
     return bool(name) and name in pathlib_type_aliases
 
 
-def _is_forbidden_string_target(target: str) -> bool:
+def _is_forbidden_string_target(target: str, forbidden_os_attrs: frozenset[str]) -> bool:
     if target in FORBIDDEN_STRING_TARGETS:
+        return True
+    if any(
+        target == f"os.{attribute}" or target.endswith(f".os.{attribute}")
+        for attribute in forbidden_os_attrs - {"name"}
+    ):
         return True
     return any(
         target.startswith(prefix)
@@ -74,7 +79,9 @@ def _resolve_target_and_attr(
     return target_name, attr_name
 
 
-def _find_forbidden_monkeypatches(test_file: Path) -> list[str]:
+def _find_forbidden_monkeypatches(
+    test_file: Path, *, forbidden_os_attrs: frozenset[str] = frozenset({"name"})
+) -> list[str]:
     module = ast.parse(test_file.read_text(encoding="utf-8"), filename=str(test_file))
     os_aliases = {"os"}
     pathlib_aliases = {"pathlib"}
@@ -110,12 +117,14 @@ def _find_forbidden_monkeypatches(test_file: Path) -> list[str]:
             }
             target_node = node.args[0] if node.args else keyword_map.get("target")
             if isinstance(target_node, ast.Constant) and isinstance(target_node.value, str):
-                if _is_forbidden_string_target(target_node.value):
+                if _is_forbidden_string_target(target_node.value, forbidden_os_attrs):
                     offenders.append(
                         f"L{node.lineno}: monkeypatch.setattr('{target_node.value}', ...)"
                     )
-            if attr_name == "name" and _is_os_target_name(target_name, os_aliases):
-                offenders.append(f"L{node.lineno}: monkeypatch.setattr({target_name}, 'name', ...)")
+            if attr_name in forbidden_os_attrs and _is_os_target_name(target_name, os_aliases):
+                offenders.append(
+                    f"L{node.lineno}: monkeypatch.setattr({target_name}, '{attr_name}', ...)"
+                )
             if attr_name in FORBIDDEN_PATHLIB_ATTRS and target_name in pathlib_aliases:
                 offenders.append(
                     f"L{node.lineno}: monkeypatch.setattr({target_name}, '{attr_name}', ...)"
@@ -135,14 +144,16 @@ def _find_forbidden_monkeypatches(test_file: Path) -> list[str]:
             }
             patch_target = node.args[0] if node.args else keyword_map.get("target")
             if isinstance(patch_target, ast.Constant) and isinstance(patch_target.value, str):
-                if _is_forbidden_string_target(patch_target.value):
+                if _is_forbidden_string_target(patch_target.value, forbidden_os_attrs):
                     offenders.append(f"L{node.lineno}: {func_name}('{patch_target.value}', ...)")
             if is_patch_object_call:
                 target_name, attr_name = _resolve_target_and_attr(
                     node, attr_keywords=("attribute", "name")
                 )
-                if attr_name == "name" and _is_os_target_name(target_name, os_aliases):
-                    offenders.append(f"L{node.lineno}: {func_name}({target_name}, 'name', ...)")
+                if attr_name in forbidden_os_attrs and _is_os_target_name(target_name, os_aliases):
+                    offenders.append(
+                        f"L{node.lineno}: {func_name}({target_name}, '{attr_name}', ...)"
+                    )
                 if attr_name in FORBIDDEN_PATHLIB_ATTRS and target_name in pathlib_aliases:
                     offenders.append(
                         f"L{node.lineno}: {func_name}({target_name}, '{attr_name}', ...)"
@@ -162,4 +173,18 @@ def test_scripts_tests_do_not_patch_global_path_or_os_runtime() -> None:
             continue
         for offender in _find_forbidden_monkeypatches(test_file):
             offenders.append(f"{test_file.name}:{offender}")
+    assert not offenders, "Niedozwolone globalne monkeypatche:\n" + "\n".join(offenders)
+
+
+def test_process_observation_tests_do_not_patch_global_path_or_os_io() -> None:
+    # Other security modules have legacy patches: extend only this reviewed
+    # process-observation boundary rather than widening the repository contract.
+    test_file = (
+        Path(__file__).resolve().parents[1]
+        / "security"
+        / "test_stage9_stage41b_process_observation.py"
+    )
+    offenders = _find_forbidden_monkeypatches(
+        test_file, forbidden_os_attrs=frozenset({"name", "stat", "readlink"})
+    )
     assert not offenders, "Niedozwolone globalne monkeypatche:\n" + "\n".join(offenders)
