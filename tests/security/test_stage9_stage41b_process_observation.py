@@ -27,6 +27,7 @@ class LocalPaths:
         self.denied_stat = set()
         self.denied_open = set()
         self.partial_directories = {}
+        self.ordered_directories = {}
         self.content_reads = []
 
     def path(self, path):
@@ -83,6 +84,10 @@ class LocalPath:
             return stream.read()
 
     def iterdir(self):
+        if self._path in self._access.ordered_directories:
+            for child in self._access.ordered_directories[self._path]:
+                yield self._access.path(child)
+            return
         if self._path in self._access.partial_directories:
             for child in self._access.partial_directories[self._path]:
                 yield self._access.path(child)
@@ -975,12 +980,10 @@ def test_descriptor_enumeration_limit_retains_first_positive(physical_proc, monk
     link = physical_proc.task / "fd/5"
     link.unlink()
     link.symlink_to(str(q.preparation.PREFIX) + "/limited-runtime")
-    original = q._partial_listing
-
-    def limited(path, limit):
-        return original(path, 1 if path == physical_proc.task / "fd" else limit)
-
-    monkeypatch.setattr(q, "_partial_listing", limited)
+    monkeypatch.setattr(q, "FD_LIMIT", 1)
+    physical_proc.access.ordered_directories[physical_proc.task / "fd"] = sorted(
+        (physical_proc.task / "fd").iterdir()
+    )
     report = q.processes()
     assert physical_proc.own in report["matched_pids"]
     assert report["reason_counts"]["FD_LIMIT"] > 0
@@ -1159,3 +1162,224 @@ def test_limited_inode_cache_keeps_known_positive_after_limit():
     assert matched
     assert len(retained) == 1
     assert issues["PROCESS_INODE_LIMIT"] > 0
+
+
+def test_large_pid_budget_does_not_hide_later_pid(physical_proc, monkeypatch):
+    monkeypatch.setattr(q, "PROCESS_LIMIT", 8192)
+    (physical_proc.first / "maps").write_bytes(b"0-10 r--p 0 00:00 0\n" * 4096)
+    (physical_proc.task / "cgroup").write_bytes(b"0::/ch-stage41b-later\n")
+    report = q.processes()
+    assert report["checked_pid_count"] == report["observed_pid_count"] == 2
+    assert report["per_pid_limit_count"] == 1
+    assert report["sweep_budget_limit_count"] == report["skipped_pid_count"] == 0
+    assert report["matched_pids"] == [physical_proc.own]
+    assert report["state"] == "BLOCKED"
+    assert report["reason_counts"]["PROCESS_PID_LIMIT"] > 0
+    assert "PROCESS_SWEEP_LIMIT" not in report["reason_counts"]
+    assert_incomplete(report)
+
+
+@pytest.mark.parametrize("reference_pass", [1, 2])
+def test_per_pid_limit_retains_positive_from_either_sweep(
+    physical_proc, monkeypatch, reference_pass
+):
+    monkeypatch.setattr(q, "PROCESS_LIMIT", 8192)
+    (physical_proc.task / "maps").write_bytes(b"0-10 r--p 0 00:00 0\n" * 4096)
+    original = q._proc_bytes
+    reads = 0
+
+    def cgroup(path, **kwargs):
+        nonlocal reads
+        if path == physical_proc.task / "cgroup":
+            reads += 1
+            if reads == reference_pass:
+                return b"0::/ch-stage41b-retained\n"
+        return original(path, **kwargs)
+
+    monkeypatch.setattr(q, "_proc_bytes", cgroup)
+    report = q.processes()
+    assert report["matched_pids"] == [physical_proc.own]
+    assert report["per_pid_limit_count"] == 1
+    assert report["state"] == "BLOCKED"
+    assert_incomplete(report)
+
+
+def test_sweep_budget_reports_every_skipped_pid(physical_proc, monkeypatch):
+    monkeypatch.setattr(q, "SWEEP_LIMIT", 1)
+    (physical_proc.task / "cgroup").write_bytes(b"0::/ch-stage41b-unobserved\n")
+    report = q.processes()
+    assert report["sweep_budget_limit_count"] == report["skipped_pid_count"] == 2
+    assert report["per_pid_limit_count"] == 0
+    assert report["observed_pid_count"] == report["checked_pid_count"] == 0
+    assert set(report["unavailable_pids"]) == {1, physical_proc.own}
+    assert report["reason_counts"]["PROCESS_SWEEP_LIMIT"] == 4
+    assert report["state"] == "UNCERTAIN"
+    assert report["stable_process_identities"] is False
+    assert report["stable_installation_bindings"] is False
+    assert_incomplete(report)
+
+
+@pytest.mark.parametrize("reference_pass", [1, 2])
+def test_sweep_crossing_keeps_positive_before_discarding_fingerprint(
+    physical_proc, monkeypatch, reference_pass
+):
+    monkeypatch.setattr(q, "SWEEP_LIMIT", q._PROCESS_RESERVATION)
+    physical_proc.access.ordered_directories[physical_proc.root] = sorted(
+        physical_proc.root.iterdir()
+    )
+    original = q._proc_bytes
+    reads = 0
+
+    def cgroup(path, **kwargs):
+        nonlocal reads
+        if path == physical_proc.first / "cgroup":
+            reads += 1
+            if reads == reference_pass:
+                return b"0::/ch-stage41b-retained\n"
+        return original(path, **kwargs)
+
+    monkeypatch.setattr(q, "_proc_bytes", cgroup)
+    report = q.processes()
+    assert report["matched_pids"] == [1]
+    assert report["checked_pid_count"] == 1
+    assert report["skipped_pid_count"] == 1
+    assert report["sweep_budget_limit_count"] == 2
+    assert report["per_pid_limit_count"] == 0
+    assert report["state"] == "BLOCKED"
+    assert report["reason_counts"]["PROCESS_SWEEP_LIMIT"] == 4
+    assert_incomplete(report)
+
+
+def test_limit_before_reference_remains_explicit_uncertainty(physical_proc, monkeypatch):
+    monkeypatch.setattr(q, "PROCESS_LIMIT", 1)
+    (physical_proc.task / "cgroup").write_bytes(b"0::/ch-stage41b-unobserved\n")
+    report = q.processes()
+    assert report["matched_pid_count"] == 0
+    assert report["state"] == "UNCERTAIN"
+    assert report["per_pid_limit_count"] == 2
+    assert report["stable_process_identities"] is False
+    assert report["stable_installation_bindings"] is False
+    assert_incomplete(report)
+
+
+def test_many_descriptors_are_bounded_and_keep_prior_positive(physical_proc, monkeypatch):
+    monkeypatch.setattr(q, "FD_LIMIT", 16)
+    directory = physical_proc.task / "fd"
+    for child in directory.iterdir():
+        child.unlink()
+    for number in range(256):
+        (directory / f"{number:04}").symlink_to(
+            str(q.preparation.PREFIX) + "/PRIVATE_FD_SECRET"
+            if number == 0
+            else physical_proc.payload
+        )
+    physical_proc.access.ordered_directories[directory] = sorted(directory.iterdir())
+    reads = []
+    original = q._proc_readlink
+
+    def readlink(path):
+        if directory in path.parents:
+            reads.append(path.name)
+        return original(path)
+
+    monkeypatch.setattr(q, "_proc_readlink", readlink)
+    assert_global_filesystem_methods_unchanged()
+    report = q.processes()
+    assert len(reads) == 32
+    assert len(set(reads)) == 16
+    assert report["per_pid_limit_count"] == 1
+    assert report["reason_counts"]["FD_LIMIT"] > 0
+    assert report["state"] == "BLOCKED"
+    assert report["matched_pids"] == [physical_proc.own]
+    assert "PRIVATE_FD_SECRET" not in json.dumps(report)
+    assert_incomplete(report)
+    assert_global_filesystem_methods_unchanged()
+
+
+def test_large_pid_population_does_not_spend_raw_traffic_as_retained_memory(
+    visible_proc, monkeypatch, record_property
+):
+    import tracemalloc
+
+    visible_proc.items[:] = [Path("/proc/1"), Path("/proc") / str(visible_proc.own)] + [
+        Path("/proc") / str(pid) for pid in range(100000, 100766) if pid != visible_proc.own
+    ]
+    population = len(visible_proc.items)
+    raw_size = 96 * 1024
+    assert population * raw_size > q.LIMIT
+    reads = {}
+
+    def observe(item):
+        pid = int(item.name)
+        reads[pid] = reads.get(pid, 0) + 1
+        row = list(snapshot(pid)[0])
+        row[3] = b"0::/" + b"x" * raw_size + b"\n"
+        return (tuple(row),)
+
+    monkeypatch.setattr(q, "_pid_snapshot", observe)
+    tracemalloc.start()
+    try:
+        report = q.processes()
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    record_property("peak_traced_bytes", peak)
+    record_property("synthetic_raw_bytes_per_sweep", population * raw_size)
+    record_property("synthetic_pid_count", population)
+    assert len(reads) == population
+    assert set(reads.values()) == {2}
+    assert report["checked_pid_count"] == population
+    assert report["skipped_pid_count"] == report["sweep_budget_limit_count"] == 0
+    assert report["stable_visible_snapshot"] is True
+    assert report["state"] == "UNCERTAIN"
+    assert report["full_confirmation"] is False
+    # Inputs cumulatively exceed 64 MiB per pass, but only compact results live
+    # between PIDs. This generous bound detects retaining raw snapshots.
+    assert peak < 16 * 1024 * 1024
+
+
+def test_process_payload_is_never_represented_for_matching_or_fingerprints(
+    visible_proc, monkeypatch
+):
+    class RawBytes(bytes):
+        def __repr__(self):
+            pytest.fail("raw observation repr invoked")
+
+    def observe(item):
+        row = list(snapshot(int(item.name))[0])
+        row[3] = RawBytes(b"0::/ch-stage41b-PRIVATE_CGROUP\n")
+        row[4] = RawBytes(b"0-10 r--p 0 00:00 0 /PRIVATE_MAP\n")
+        return (tuple(row),)
+
+    monkeypatch.setattr(q, "_pid_snapshot", observe)
+    report = q.processes()
+    assert report["matched_pid_count"] == 2
+    assert report["state"] == "BLOCKED"
+    assert "PRIVATE_" not in json.dumps(report)
+    assert_global_filesystem_methods_unchanged()
+
+
+def test_link_only_partial_observation_counts_survive_later_hash_failure(
+    physical_proc, monkeypatch
+):
+    deny_proc_source(
+        monkeypatch,
+        {physical_proc.task / source for source in ("stat", "status", "cgroup", "maps")},
+    )
+    executable = physical_proc.task / "exe"
+    executable.unlink()
+    executable.symlink_to(str(q.preparation.PREFIX) + "/PRIVATE_LINK_ONLY")
+
+    def failed_digest(value):
+        raise RuntimeError("PRIVATE_DIGEST_ERROR")
+
+    monkeypatch.setattr(q, "_digest", failed_digest)
+    report = q.processes()
+    assert report["matched_pids"] == [physical_proc.own]
+    assert report["state"] == "BLOCKED"
+    assert report["checked_pid_count"] == report["observed_pid_count"] == 2
+    assert report["observed_thread_count"] == 2
+    assert report["reason_counts"]["PROCESS_IO_ERROR"] > 0
+    assert "PRIVATE_" not in json.dumps(report)
+    assert_incomplete(report)
+    assert_global_filesystem_methods_unchanged()

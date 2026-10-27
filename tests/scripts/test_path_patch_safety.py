@@ -179,12 +179,15 @@ def test_scripts_tests_do_not_patch_global_path_or_os_runtime() -> None:
 def test_process_observation_tests_do_not_patch_global_path_or_os_io() -> None:
     # Other security modules have legacy patches: extend only this reviewed
     # process-observation boundary rather than widening the repository contract.
-    test_file = (
-        Path(__file__).resolve().parents[1]
-        / "security"
-        / "test_stage9_stage41b_process_observation.py"
-    )
-    offenders = _find_forbidden_monkeypatches(
-        test_file, forbidden_os_attrs=frozenset({"name", "stat", "readlink"})
-    )
+    security_tests = Path(__file__).resolve().parents[1] / "security"
+    offenders = [
+        f"{test_file.name}:{offender}"
+        for test_file in (
+            security_tests / "test_stage9_stage41b_process_observation.py",
+            security_tests / "test_stage9_stage41b_process_streaming.py",
+        )
+        for offender in _find_forbidden_monkeypatches(
+            test_file, forbidden_os_attrs=frozenset({"name", "stat", "readlink"})
+        )
+    ]
     assert not offenders, "Niedozwolone globalne monkeypatche:\n" + "\n".join(offenders)
