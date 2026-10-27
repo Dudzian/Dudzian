@@ -9,7 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field as dataclass_field
 from datetime import datetime, timezone
 from typing import Any, Callable, Literal, NoReturn, cast
 
@@ -138,7 +138,11 @@ def _equal(value: Any, expected: Any) -> None:
 
 def _path(value: Any, absolute: bool = True) -> str:
     value = _string(value, MAX_PATH_BYTES)
-    _require(bool(value) and "\\" not in value and all(ord(c) >= 32 for c in value))
+    _require(
+        bool(value)
+        and "\\" not in value
+        and all(ord(c) >= 32 and not 127 <= ord(c) <= 159 for c in value)
+    )
     _require(value.startswith("/") is absolute)
     if absolute and value == "/":
         return cast(str, value)
@@ -153,7 +157,15 @@ def _timestamp(value: Any) -> datetime:
         re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z", value) is not None
     )
     try:
-        return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+        return datetime(
+            int(value[:4]),
+            int(value[5:7]),
+            int(value[8:10]),
+            int(value[11:13]),
+            int(value[14:16]),
+            int(value[17:19]),
+            tzinfo=timezone.utc,
+        )
     except ValueError:
         raise ContractRefusal() from None
 
@@ -292,7 +304,7 @@ class ParsedContract:
     raw: bytes
     canonical: bytes
     sha256: str
-    authorization: Literal["UNVERIFIED"] = field(default="UNVERIFIED", init=False)
+    authorization: Literal["UNVERIFIED"] = dataclass_field(default="UNVERIFIED", init=False)
 
     def as_dict(self) -> dict[str, Any]:
         return cast(dict[str, Any], json.loads(self.canonical))
@@ -683,8 +695,8 @@ def _validate_launch_policy(value: Any) -> None:
             "deny_operations",
         },
     )
-    _integer(sandbox["uid"], minimum=1)
-    _integer(sandbox["gid"], minimum=1)
+    _integer(sandbox["uid"], minimum=1, maximum=2**32 - 2)
+    _integer(sandbox["gid"], minimum=1, maximum=2**32 - 2)
     _equal(sandbox["supplementary_groups"], [])
     capabilities = _record(
         sandbox["capabilities"], {"bounding", "permitted", "effective", "inheritable", "ambient"}
@@ -966,7 +978,7 @@ def _decode_report_frame(
     _require(1 <= payload_size <= 65536 and len(raw) == payload_size + 4, "CHANNEL_REJECTED")
     value = _decode(raw[4:], maximum=65536)
     _require(type(value) is dict, "REPORT_REJECTED")
-    return value
+    return cast(dict[str, Any], value)
 
 
 def parse_scope_binding(raw: bytes) -> ParsedContract:
