@@ -1654,8 +1654,12 @@
     "query_url": "https://api.github.com/repos/Dudzian/Dudzian/releases?per_page=100&page=1",
     "items": []
   },
+  "cryptographic_attestation": false,
+  "cryptographic_attestation_meaning": "This research inventory is not a cryptographic attestation and contains no verified attestation. False does not establish the absence of external attestations.",
   "attestations": {
     "state": "UNKNOWN",
+    "verified_in_this_inventory": false,
+    "absence_established": false,
     "reason": "GitHub connector github_fetch rejects attestations endpoint as unsupported (400 INVALID_ARGUMENT); not a GitHub absence response.",
     "attempted_subject": "sha256:d25c7d12cdda343f23e6644662fa2b0e0105fa6c8a9e6d2f07c46f131907c55c"
   },

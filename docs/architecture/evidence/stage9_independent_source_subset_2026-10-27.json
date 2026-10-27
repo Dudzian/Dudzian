@@ -11178,6 +11178,13 @@
     "wheel_lock_identical": true
   },
   "cryptographic_attestation": false,
+  "cryptographic_attestation_meaning": "This research inventory is not a cryptographic attestation and contains no verified attestation. False does not establish the absence of external attestations.",
+  "attestations": {
+    "state": "UNKNOWN",
+    "verified_in_this_inventory": false,
+    "absence_established": false,
+    "reason": "This inventory verifies Git object content only. Existence and validity of external attestations were not established; absence of a verified attestation is not evidence of nonexistence."
+  },
   "evidence_pin_verified": false,
   "limitations": [
     "Partial source research only; deliberately not the schema/shape accepted by the coexistence external-inventory interface.",

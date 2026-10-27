@@ -79,9 +79,21 @@ również przez GitHub API:
 | `26e17e7c23ea6cc1b265d57bfda1a1e6589d9e3f` | `7c960047467b9f08b93bba8504e0dffa8be121d4` |
 
 GitHub zwraca dla obu `verification.verified=false`, `reason=unsigned`.
-Tożsamość treści Git nie jest podpisem wydawcy. Akceptacja tych konkretnych SHA
-przez niezależnie uwierzytelnionego maintainer/reviewera nadal wymaga zapisu
-zaufania. GitHub i kontrola konta/repozytorium pozostają założeniami źródła.
+Historyczne commity są niepodpisane; nie określa się ich metadanych jako
+podpisanych. Rozdzielić następujące właściwości:
+
+- **Poprawność Git OID:** przeliczenie identyfikatora z typu, długości i surowych
+  bajtów obiektu potwierdza zgodność z zadanym OID.
+- **Integralność obiektów:** sprawdzenie commit/tree/blob i powiązań ścieżek
+  wiąże treść z zadanym commitem w modelu hashy Git. Nie uwierzytelnia wydawcy.
+- **Autentyczność źródła:** wymaga osobnego zaufania do kanału i tożsamości
+  dostawcy. GitHub i kontrola konta/repozytorium pozostają założeniami źródła.
+- **Niezależna akceptacja commita:** wymaga zapisu akceptacji konkretnego SHA
+  przez niezależnie uwierzytelnionego maintainera/reviewera; ta analiza jej
+  nie poświadcza.
+- **Kryptograficzna atestacja:** wymaga zweryfikowanego oświadczenia, jego
+  subject digest, tożsamości wystawcy i polityki zaufania. Poprawny OID,
+  integralność obiektów i ludzka akceptacja same nie tworzą takiej atestacji.
 
 W obu commitach identyczne są:
 
@@ -175,6 +187,11 @@ Zapytanie releases zwróciło `[]`.
 
 Stan atestacji to **UNKNOWN**: connector odrzucił endpoint attestations jako
 nieobsługiwany (400), co nie jest odpowiedzią GitHub o braku atestacji.
+W obu inwentarzach `cryptographic_attestation=false` opisuje wyłącznie te
+pliki badawcze: nie są atestacją i nie zawierają zweryfikowanej atestacji.
+`attestations.state=UNKNOWN` opisuje nierozstrzygnięte istnienie i ważność
+atestacji zewnętrznych. Brak zweryfikowanej atestacji nie dowodzi jej
+nieistnienia; żadna z tych wartości nie ustanawia zaufanego pinu.
 Późniejsze pozyskanie atestacji wymaga sprawdzenia subject digest, issuer,
 repo/workflow/ref, builder identity i materiałów, a także przyjętej polityki
 zaufania. Podpis na nieodpowiednim artefakcie nie zamknie luki Stage 41B.
@@ -393,9 +410,12 @@ brak toola i executable. Użyto `rg`, bezpośrednich odczytów i obiektów Git;
 nie deklaruje się kompletności indeksu ani nie opiera decyzji na grafie.
 Shell działał jako UID 1000. Brak połączenia do session proxy uniemożliwił git
 fetch; dostęp do GitHub uzyskano przez connector. Lokalny dokładny snapshot
-punktu odniesienia odtworzono z pobranych blobów i podpisanych metadanych
-commita, uzyskując tree `5e59e58c603411b36e083497398e90f549b813bf` i dokładny
-commit SHA. To przygotowanie kopii analitycznej, nie dowód pochodzenia Della.
+punktu odniesienia odtworzono z pobranych blobów i metadanych API commita
+`2502b7fd014509a4d7d3b113b2ed6fd351e75e79`, uzyskując tree
+`5e59e58c603411b36e083497398e90f549b813bf` i dokładny commit SHA. Zgodność OID
+tej kopii analitycznej nie poświadcza autentyczności źródła, niezależnej
+akceptacji ani kryptograficznej atestacji historycznych instalacji na Dellu.
+Nie zmienia też statusu `unsigned` dwóch historycznych commitów wskazanego wyżej.
 
 Nie wykonano instalatora, verifiera historycznej instalacji, testów fizycznych
 ani kodu obserwatora. Własny skrypt stdlib poza repo, korzystający z
