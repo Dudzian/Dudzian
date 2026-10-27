@@ -6,6 +6,13 @@ Zakres: inwentaryzacja dowodów i projekt; bez implementacji lub uruchomienia
 uprzywilejowanego obserwatora. Zakończone prace nad budżetami skanera nie są
 ponawiane.
 
+Kontynuacja względem `f0908b71a13ef67173e9a65741bfbb02cf45043c`:
+[kontrakty obserwatora, aktualizacja zgłoszeń Della i plan etapu 3](stage9_trusted_observer_contracts_and_implementation_plan.md).
+Zawiera późniejsze wyniki zgłoszone przez operatora (CI, wheels, `.pyc`, APT
+i startup TCB). Poniższa analiza zachowuje historyczny zakres wykonanej
+weryfikacji; nowe zgłoszenia nie stanowią niezależnej atestacji hosta i nie
+zmieniają blokad kwalifikacji lub produkcji.
+
 ## Decyzja
 
 **Nie ma obecnie zweryfikowanego, kompletnego, niezależnego inventory obu
