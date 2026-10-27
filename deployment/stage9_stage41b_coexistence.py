@@ -441,6 +441,11 @@ def _directory_identity(path: Path) -> tuple[int, ...]:
     return (info.st_mode, info.st_dev, info.st_ino, info.st_uid, info.st_gid)
 
 
+def _proc_readlink(path: Path) -> str:
+    """Keep raw targets while allowing module-local observation fault injection."""
+    return os.readlink(path)
+
+
 def _pid_snapshot(item: Path) -> tuple[Any, ...]:
     """Keep every independently available source, even after an identity failure.
 
@@ -520,7 +525,7 @@ def _pid_snapshot(item: Path) -> tuple[Any, ...]:
             target = None
             stamp = None
             try:
-                target = os.readlink(path)
+                target = _proc_readlink(path)
                 observed += 1
             except Exception as error:
                 issues.append(source + "_" + _failure(error))

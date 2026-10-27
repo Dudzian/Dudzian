@@ -16,6 +16,87 @@ from scripts import diagnose_stage9_stage41b_coexistence as cli
 
 pytestmark = pytest.mark.skipif(sys.platform != "linux", reason="native Linux observation")
 
+_PATH_METHODS = {name: getattr(Path, name) for name in ("stat", "iterdir", "open")}
+_OS_METHODS = {name: getattr(os, name) for name in ("stat", "readlink")}
+
+
+class LocalPaths:
+    """Faults apply only to delegated paths from this one synthetic filesystem."""
+
+    def __init__(self):
+        self.denied_stat = set()
+        self.denied_open = set()
+        self.partial_directories = {}
+        self.content_reads = []
+
+    def path(self, path):
+        return LocalPath(path, self)
+
+
+class LocalPath:
+    def __init__(self, path, access):
+        self._path = path
+        self._access = access
+
+    def __fspath__(self):
+        return str(self._path)
+
+    def __str__(self):
+        return str(self._path)
+
+    def __hash__(self):
+        return hash(self._path)
+
+    def __eq__(self, other):
+        return self._path == (other._path if isinstance(other, LocalPath) else other)
+
+    def __lt__(self, other):
+        return self._path < (other._path if isinstance(other, LocalPath) else other)
+
+    def __truediv__(self, child):
+        return self._access.path(self._path / child)
+
+    def __getattr__(self, name):
+        return getattr(self._path, name)
+
+    @property
+    def parents(self):
+        return tuple(self._access.path(parent) for parent in self._path.parents)
+
+    def stat(self, *args, **kwargs):
+        if self._path in self._access.denied_stat:
+            raise PermissionError("PRIVATE_SOURCE_VALUE")
+        return self._path.stat(*args, **kwargs)
+
+    def open(self, *args, **kwargs):
+        if self._path in self._access.denied_open:
+            self._access.content_reads.append(self._path)
+            raise PermissionError("PRIVATE_CONTENT_DENIED")
+        return self._path.open(*args, **kwargs)
+
+    def read_bytes(self):
+        with self.open("rb") as stream:
+            return stream.read()
+
+    def read_text(self, encoding=None, errors=None):
+        with self.open("r", encoding=encoding, errors=errors) as stream:
+            return stream.read()
+
+    def iterdir(self):
+        if self._path in self._access.partial_directories:
+            for child in self._access.partial_directories[self._path]:
+                yield self._access.path(child)
+            raise PermissionError("PRIVATE_DIRECTORY_CONTENT")
+        for child in self._path.iterdir():
+            yield self._access.path(child)
+
+
+def assert_global_filesystem_methods_unchanged():
+    for name, implementation in _PATH_METHODS.items():
+        assert getattr(Path, name) is implementation
+    for name, implementation in _OS_METHODS.items():
+        assert getattr(os, name) is implementation
+
 
 def proc_stat(pid, *, start=123, flags=0, comm="worker", cpu=0):
     # /proc/PID/stat has 52 documented fields, with comm allowed to contain ')'.
@@ -225,7 +306,10 @@ def dell_installations(tmp_path, monkeypatch):
         public = root / "public-runtime"
         public.write_bytes(b"public bytes; do not execute")
         public.chmod(0o644)
-    monkeypatch.setattr(q.preparation, "PREFIX", prefix)
+    access = LocalPaths()
+    access.denied_open.update(private)
+    scoped_prefix = access.path(prefix)
+    monkeypatch.setattr(q.preparation, "PREFIX", scoped_prefix)
 
     def protected(path, *, directory):
         info = path.lstat()
@@ -250,7 +334,7 @@ def dell_installations(tmp_path, monkeypatch):
 
     monkeypatch.setattr(q.host, "_protected", protected)
     original_read = q._read
-    content_reads = []
+    content_reads = access.content_reads
 
     def read(path):
         if path in private:
@@ -259,16 +343,9 @@ def dell_installations(tmp_path, monkeypatch):
         return original_read(path)
 
     monkeypatch.setattr(q, "_read", read)
-    original_open = Path.open
-
-    def guarded_open(path, *args, **kwargs):
-        if path in private:
-            content_reads.append(path)
-            raise PermissionError("PRIVATE_CONTENT_DENIED")
-        return original_open(path, *args, **kwargs)
-
-    monkeypatch.setattr(Path, "open", guarded_open)
-    return SimpleNamespace(prefix=prefix, private=private, content_reads=content_reads)
+    return SimpleNamespace(
+        prefix=scoped_prefix, private=private, content_reads=content_reads, access=access
+    )
 
 
 def test_metadata_collects_private_file_inodes_without_content_reads(dell_installations):
@@ -284,6 +361,31 @@ def test_metadata_collects_private_file_inodes_without_content_reads(dell_instal
                 assert stat.S_IMODE(records[str(path)][0]) == 0o600
         assert stat.S_IMODE(records[str(root)][0]) == 0o755
     assert not dell_installations.content_reads
+
+
+def test_private_fixture_open_denial_does_not_patch_global_filesystem_methods(
+    dell_installations, tmp_path
+):
+    private = next(iter(dell_installations.private))
+    scoped_private = dell_installations.access.path(private)
+    assert_global_filesystem_methods_unchanged()
+    for read in (
+        lambda: scoped_private.open("rb"),
+        scoped_private.read_bytes,
+        scoped_private.read_text,
+    ):
+        with pytest.raises(PermissionError, match="PRIVATE_CONTENT_DENIED"):
+            read()
+    assert dell_installations.content_reads == [private] * 3
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    public = outside / "public"
+    public.write_bytes(b"outside fixture scope")
+    assert public.stat().st_size == len(b"outside fixture scope")
+    assert list(outside.iterdir()) == [public]
+    with public.open("rb") as stream:
+        assert stream.read() == b"outside fixture scope"
+    assert_global_filesystem_methods_unchanged()
 
 
 def test_unprivileged_cli_uses_metadata_despite_private_denial_and_pid_one_failure(
@@ -430,6 +532,7 @@ def physical_proc(tmp_path, monkeypatch):
     payload = tmp_path / "unrelated-payload"
     payload.write_bytes(b"never executed")
     metadata = {"identities": [], "complete": True}
+    access = LocalPaths()
 
     def task(pid, tid=None, *, flags=0, maps=b"0-10 r--p 0 00:00 0\n", comm="worker"):
         tid = pid if tid is None else tid
@@ -462,7 +565,9 @@ def physical_proc(tmp_path, monkeypatch):
     monkeypatch.setattr(
         q,
         "_listing",
-        lambda path: list(proc_root.iterdir()) if path == Path("/proc") else original_listing(path),
+        lambda path: list(access.path(proc_root).iterdir())
+        if path == Path("/proc")
+        else original_listing(path),
     )
     monkeypatch.setattr(q.host, "_procfs_visibility", lambda: True)
     monkeypatch.setattr(q, "_installation_metadata", lambda path: deepcopy(metadata))
@@ -474,6 +579,7 @@ def physical_proc(tmp_path, monkeypatch):
         payload=payload,
         add_task=task,
         metadata=metadata,
+        access=access,
     )
 
 
@@ -517,32 +623,34 @@ def test_denied_executable_name_keeps_independent_inode_match(physical_proc, mon
     (physical_proc.task / "exe").symlink_to(executable)
     info = executable.stat()
     physical_proc.metadata["identities"] = [("/alias", (0, info.st_ino, info.st_dev))]
-    original = q.os.readlink
+    original = q._proc_readlink
 
     def readlink(path):
         if path == physical_proc.task / "exe":
             raise PermissionError("PRIVATE_SOURCE_VALUE")
         return original(path)
 
-    monkeypatch.setattr(q.os, "readlink", readlink)
+    monkeypatch.setattr(q, "_proc_readlink", readlink)
+    assert_global_filesystem_methods_unchanged()
     report = q.processes()
     assert report["matched_pids"] == [physical_proc.own]
     assert report["state"] == "BLOCKED"
     assert_incomplete(report)
+    assert_global_filesystem_methods_unchanged()
 
 
 def test_disappearing_descriptor_keeps_prior_positive(physical_proc, monkeypatch):
     first_fd = physical_proc.task / "fd/5"
     first_fd.unlink()
     first_fd.symlink_to(str(q.preparation.PREFIX) + "/removed (deleted)")
-    original = q.os.readlink
+    original = q._proc_readlink
 
     def readlink(path):
         if path == physical_proc.task / "fd/6":
             raise FileNotFoundError("PRIVATE_SOURCE_VALUE")
         return original(path)
 
-    monkeypatch.setattr(q.os, "readlink", readlink)
+    monkeypatch.setattr(q, "_proc_readlink", readlink)
     report = q.processes()
     assert physical_proc.own in report["matched_pids"]
     assert report["state"] == "BLOCKED"
@@ -586,14 +694,14 @@ def test_malformed_thread_stat_does_not_hide_other_sources(physical_proc):
 
 def test_denied_every_source_never_claims_absence(physical_proc, monkeypatch):
     deny_proc_source(monkeypatch, set(physical_proc.task.glob("*")))
-    original = q.os.readlink
+    original = q._proc_readlink
 
     def denied(path):
         if physical_proc.task in path.parents:
             raise PermissionError("PRIVATE_SOURCE_VALUE")
         return original(path)
 
-    monkeypatch.setattr(q.os, "readlink", denied)
+    monkeypatch.setattr(q, "_proc_readlink", denied)
     report = q.processes()
     assert report["state"] == "UNCERTAIN"
     assert report["matched_pid_count"] == 0
@@ -763,18 +871,12 @@ def test_denied_link_inode_keeps_positive_pathname(physical_proc, monkeypatch):
     link = physical_proc.task / "fd/5"
     link.unlink()
     link.symlink_to(str(q.preparation.PREFIX) + "/private-library (deleted)")
-    original = Path.stat
-
-    def denied(path, *args, **kwargs):
-        if path == link:
-            raise PermissionError("PRIVATE_SOURCE_VALUE")
-        return original(path, *args, **kwargs)
-
-    monkeypatch.setattr(Path, "stat", denied)
+    physical_proc.access.denied_stat.add(link)
     report = q.processes()
     assert physical_proc.own in report["matched_pids"]
     assert report["state"] == "BLOCKED"
     assert_incomplete(report)
+    assert report["reason_counts"]["FD_PERMISSION_DENIED"] > 0
 
 
 def test_malformed_first_thread_maps_keeps_later_thread_descriptor(physical_proc):
@@ -816,20 +918,57 @@ def test_partial_directory_iteration_retains_available_reference(
         retained = [observed_directory / str(physical_proc.own), later]
     link.unlink()
     link.symlink_to(str(q.preparation.PREFIX) + "/retained-runtime")
-    original = Path.iterdir
-
-    def partial(path):
-        if path == observed_directory:
-            yield from retained
-            raise PermissionError("PRIVATE_DIRECTORY_CONTENT")
-        yield from original(path)
-
-    monkeypatch.setattr(Path, "iterdir", partial)
+    physical_proc.access.partial_directories[observed_directory] = retained
     report = q.processes()
     assert physical_proc.own in report["matched_pids"]
     assert report["state"] == "BLOCKED"
     assert "PRIVATE_DIRECTORY_CONTENT" not in str(report)
     assert_incomplete(report)
+
+
+@pytest.mark.parametrize("operation", ["stat", "fd", "task"])
+def test_active_proc_faults_do_not_patch_global_filesystem_methods(
+    physical_proc, tmp_path, operation
+):
+    link = physical_proc.task / "fd/5"
+    if operation == "stat":
+        physical_proc.access.denied_stat.add(link)
+    elif operation == "fd":
+        physical_proc.access.partial_directories[physical_proc.task / "fd"] = [link]
+    else:
+        later = physical_proc.add_task(physical_proc.own, physical_proc.own + 1)
+        physical_proc.access.partial_directories[physical_proc.task / "task"] = [
+            physical_proc.task / "task" / str(physical_proc.own),
+            later,
+        ]
+        link = later / "fd/5"
+    link.unlink()
+    link.symlink_to(str(q.preparation.PREFIX) + "/retained-runtime")
+    outside = tmp_path / "outside-proc"
+    outside.mkdir()
+    public = outside / "public"
+    public.write_bytes(b"outside proc scope")
+    assert_global_filesystem_methods_unchanged()
+    report = q.processes()
+    assert physical_proc.own in report["matched_pids"]
+    assert report["state"] == "BLOCKED"
+    assert_incomplete(report)
+    source = "THREAD" if operation == "task" else "FD"
+    assert report["reason_counts"][source + "_PERMISSION_DENIED"] > 0
+    assert public.stat().st_size == len(b"outside proc scope")
+    assert list(outside.iterdir()) == [public]
+    with public.open("rb") as stream:
+        assert stream.read() == b"outside proc scope"
+    assert_global_filesystem_methods_unchanged()
+
+
+def test_proc_readlink_preserves_raw_symlink_target(tmp_path):
+    raw_target = "../directory//child/./runtime/"
+    link = tmp_path / "symlink"
+    link.symlink_to(raw_target)
+    assert q._proc_readlink(link) == raw_target
+    assert q._proc_readlink(LocalPaths().path(link)) == raw_target
+    assert_global_filesystem_methods_unchanged()
 
 
 def test_descriptor_enumeration_limit_retains_first_positive(physical_proc, monkeypatch):
