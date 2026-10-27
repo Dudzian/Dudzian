@@ -220,25 +220,48 @@ These conservative accounting units replace raw-traffic accounting. A PID that
 cannot be started within the reservation budget is explicitly unavailable and
 skipped. If its completed compact observation exceeds the remaining reservation,
 the already detected match and counters survive, but the excess comparison
-fingerprint is discarded and `PROCESS_SWEEP_LIMIT` is reported. The first pass
+fingerprint is discarded and `PROCESS_SWEEP_LIMIT` is reported. A separate
+per-PID inode correlation record survives when its reservation fits, even if no
+full comparison fingerprint can be retained. The first pass
 remains available while the second runs, so these are two independent bounded
 stores, not a claim of a 64 MiB total RSS ceiling. PID inventories, installation
 metadata, aggregate sets and one bounded in-flight observation use additional
 memory. The global limit has not been increased.
 
+The PID base reservation covers the correlation holder and fingerprint header;
+each retained inode pair is charged exactly once to the same sweep budget.
+These reservations are committed immediately after reference collection, before
+fingerprinting or further validation can fail. Thread/fingerprint reservations
+are charged separately only when they fit. Discarding the full fingerprint does
+not release or erase its funded inode record. Final installation metadata is
+correlated against these independent records from both sweeps; identity and
+binding comparisons use only retained full fingerprints. The per-sweep 65536
+inode cap still applies, with no additional global inode cache.
+
+As before, a full fingerprint crossing exhausts that pass and later PIDs are
+explicitly skipped. An exhaustion flag replaces accounting beyond the budget;
+discarded fingerprint storage is not charged as retained memory. This also
+preserves the bound on aggregate thread-count tracking: beyond admitted thread
+reservations, at most one crossing PID per pass contributes its bounded thread
+set (at most 1024 entries). The existing observed-thread counter remains a count
+of unique observed PID/TID pairs. Correlation records and retained fingerprints
+together stay within the unchanged per-pass reservation limit.
+
 The inode cache is also bounded independently. Known installation inode matches
 are checked immediately even after the cache is full; unretained identities
 cannot be correlated with metadata discovered later and `PROCESS_INODE_LIMIT`
-makes that gap explicit. No raw process payload or exception text enters JSON.
+makes that late-correlation gap explicit, including when the sweep has room for
+a PID holder but not even one inode pair. No raw process payload or exception
+text enters JSON.
 
 Synthetic regression measurements on Python 3.12 in the validation container
 used `tracemalloc` around observation, after fixture construction:
 
 | Workload | Input processed | Peak traced allocation |
 | --- | --- | --- |
-| 768 PID population, two sweeps | 75,497,472 bytes per sweep | 2,523,225 bytes |
-| 49 threads streaming shared maps | 13,848,576 bytes | 320,083 bytes |
-| 8192 distinct descriptor targets | 33,151,914 bytes | 3,924,148 bytes |
+| 768 PID population, two sweeps | 75,497,472 bytes per sweep | 2,583,012 bytes |
+| 49 threads streaming shared maps | 13,848,576 bytes | 319,997 bytes |
+| 8192 distinct descriptor targets | 33,151,914 bytes | 3,924,157 bytes |
 
 The population case supplies synthetic legacy snapshots; the thread and
 descriptor cases exercise the real compact observer through local path adapters.

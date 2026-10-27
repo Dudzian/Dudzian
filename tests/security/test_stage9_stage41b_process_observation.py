@@ -1383,3 +1383,189 @@ def test_link_only_partial_observation_counts_survive_later_hash_failure(
     assert "PRIVATE_" not in json.dumps(report)
     assert_incomplete(report)
     assert_global_filesystem_methods_unchanged()
+
+
+def late_inode_metadata(monkeypatch, identities):
+    calls = []
+
+    def metadata(path):
+        calls.append(path)
+        if len(calls) <= len(q.COMMITS):
+            return {"identities": [], "complete": False}
+        return {
+            "identities": [
+                ("/PRIVATE_LATE_ALIAS", (0, inode, device)) for device, inode in identities
+            ],
+            "complete": True,
+        }
+
+    monkeypatch.setattr(q, "_installation_metadata", metadata)
+    return calls
+
+
+@pytest.mark.parametrize("reference_source", ["maps", "link"])
+@pytest.mark.parametrize("reference_pass", [1, 2])
+def test_late_inode_correlation_survives_full_fingerprint_budget(
+    physical_proc, monkeypatch, reference_source, reference_pass
+):
+    physical_proc.access.ordered_directories[physical_proc.root] = sorted(
+        physical_proc.root.iterdir()
+    )
+    target_file = physical_proc.payload.with_name("PRIVATE_LATE_INODE")
+    target_file.write_bytes(b"never execute")
+    info = target_file.stat()
+    target = info.st_dev, info.st_ino
+    metadata_calls = late_inode_metadata(monkeypatch, [target])
+    # The one inode and PID holder fit exactly; the full thread fingerprint does not.
+    minimal = q._PROCESS_RESERVATION + q._INODE_RESERVATION
+    monkeypatch.setattr(q, "SWEEP_LIMIT", minimal)
+    assert minimal + q._THREAD_RESERVATION > q.SWEEP_LIMIT
+    original_snapshot = q._pid_snapshot
+    reads = 0
+
+    def observe(item):
+        nonlocal reads
+        if item.name == "1":
+            reads += 1
+            if reference_source == "maps":
+                maps = (
+                    (
+                        f"0-10 r--p 0 {os.major(target[0]):x}:{os.minor(target[0]):x} "
+                        f"{target[1]} /PRIVATE_RENAMED_ALIAS\n"
+                    ).encode()
+                    if reads == reference_pass
+                    else b"0-10 r--p 0 00:00 0\n"
+                )
+                (physical_proc.first / "maps").write_bytes(maps)
+            else:
+                # exe is the first inode-bearing source when maps has inode zero.
+                executable = physical_proc.first / "exe"
+                executable.unlink()
+                executable.symlink_to(
+                    target_file if reads == reference_pass else physical_proc.payload
+                )
+        return original_snapshot(item)
+
+    monkeypatch.setattr(q, "_pid_snapshot", observe)
+    original_reference = q._reference_observation
+    captured = []
+
+    def reference(snapshot, inodes, observed=None, maximum=q.INODE_LIMIT):
+        answer = original_reference(snapshot, inodes, observed, maximum)
+        if snapshot.item.name == "1":
+            captured.append(set(observed or ()))
+        return answer
+
+    monkeypatch.setattr(q, "_reference_observation", reference)
+    monkeypatch.setattr(q, "resources", lambda plan: {"state": "UNCERTAIN"})
+    diagnosis = q.diagnose({}, b"{}", "0" * 64)
+    report = diagnosis["process_observation"]
+    assert target in captured[reference_pass - 1]
+    assert len(metadata_calls) == 2 * len(q.COMMITS)
+    assert report["state"] == "BLOCKED"
+    assert report["matched_pids"] == [1]
+    assert report["matched_pid_count"] == 1
+    assert report["reason_counts"]["PROCESS_SWEEP_LIMIT"] > 0
+    assert report["sweep_budget_limit_count"] == 2
+    assert report["per_pid_limit_count"] == 0
+    assert report["full_confirmation"] is False
+    assert diagnosis["qualification"] == "BLOCKED"
+    assert diagnosis["coexistence_authorized"] is False
+    assert diagnosis["preflight_exception"] is False
+    assert "PRIVATE_" not in json.dumps(diagnosis)
+    assert_incomplete(report)
+    assert_global_filesystem_methods_unchanged()
+
+
+def test_late_inode_correlation_without_minimal_budget_is_explicitly_incomplete(
+    physical_proc, monkeypatch
+):
+    physical_proc.access.ordered_directories[physical_proc.root] = sorted(
+        physical_proc.root.iterdir()
+    )
+    target = 123, 777
+    metadata_calls = late_inode_metadata(monkeypatch, [target])
+    (physical_proc.first / "maps").write_bytes(
+        f"0-10 r--p 0 {os.major(target[0]):x}:{os.minor(target[0]):x} {target[1]} /PRIVATE_ALIAS\n".encode()
+    )
+    # One byte below a PID holder plus one inode must not create free cache space.
+    monkeypatch.setattr(q, "SWEEP_LIMIT", q._PROCESS_RESERVATION + q._INODE_RESERVATION - 1)
+    monkeypatch.setattr(q, "resources", lambda plan: {"state": "UNCERTAIN"})
+    diagnosis = q.diagnose({}, b"{}", "0" * 64)
+    report = diagnosis["process_observation"]
+    assert len(metadata_calls) == 2 * len(q.COMMITS)
+    assert report["state"] == "UNCERTAIN"
+    assert report["matched_pid_count"] == 0
+    assert report["checked_pid_count"] >= 1
+    assert report["reason_counts"]["PROCESS_INODE_LIMIT"] > 0
+    assert report["reason_counts"]["PROCESS_SWEEP_LIMIT"] > 0
+    assert report["full_confirmation"] is False
+    assert report["stable_installation_bindings"] is False
+    assert diagnosis["qualification"] == "BLOCKED"
+    assert "PRIVATE_" not in json.dumps(diagnosis)
+    assert_incomplete(report)
+    assert_global_filesystem_methods_unchanged()
+
+
+@pytest.mark.parametrize("missing_bytes", [0, 1])
+def test_minimal_late_inode_records_share_the_sweep_budget(
+    physical_proc, monkeypatch, missing_bytes
+):
+    physical_proc.access.ordered_directories[physical_proc.root] = sorted(
+        physical_proc.root.iterdir()
+    )
+    # The first full fingerprint fits. Its reservation must still be deducted
+    # before admitting the second PID's minimal correlation record.
+    first_info = physical_proc.payload.stat()
+    target_file = physical_proc.payload.with_name("PRIVATE_SECOND_PID_INODE")
+    target_file.write_bytes(b"never execute")
+    second_info = target_file.stat()
+    for name in ("exe", "cwd", "root", "fd/5", "fd/6"):
+        path = physical_proc.task / name
+        path.unlink()
+        path.symlink_to(target_file)
+    targets = [(first_info.st_dev, first_info.st_ino), (second_info.st_dev, second_info.st_ino)]
+    late_inode_metadata(monkeypatch, targets)
+    minimal = q._PROCESS_RESERVATION + q._INODE_RESERVATION
+    monkeypatch.setattr(q, "SWEEP_LIMIT", 2 * minimal + q._THREAD_RESERVATION - missing_bytes)
+    assert minimal + q._THREAD_RESERVATION < q.SWEEP_LIMIT
+    assert 2 * (minimal + q._THREAD_RESERVATION) > q.SWEEP_LIMIT
+    report = q.processes()
+    assert report["checked_pid_count"] == 2
+    assert report["observed_thread_count"] == 2
+    assert report["sweep_budget_limit_count"] == 1
+    assert report["skipped_pid_count"] == 0
+    assert report["per_pid_limit_count"] == 0
+    assert report["matched_pids"] == ([1] if missing_bytes else sorted([1, physical_proc.own]))
+    assert report["state"] == "BLOCKED"
+    if missing_bytes:
+        assert report["reason_counts"]["PROCESS_INODE_LIMIT"] > 0
+    assert_incomplete(report)
+    assert_global_filesystem_methods_unchanged()
+
+
+def test_late_inode_record_survives_failed_fingerprinting_and_stays_budgeted(
+    physical_proc, monkeypatch
+):
+    physical_proc.access.ordered_directories[physical_proc.root] = sorted(
+        physical_proc.root.iterdir()
+    )
+    info = physical_proc.payload.stat()
+    late_inode_metadata(monkeypatch, [(info.st_dev, info.st_ino)])
+    # Only the first correlation holder and its inode fit. A later exception
+    # must neither erase that holder nor let the next PID reuse its reservation.
+    monkeypatch.setattr(q, "SWEEP_LIMIT", q._PROCESS_RESERVATION + q._INODE_RESERVATION)
+
+    def failed(snapshot, pid):
+        raise RuntimeError("PRIVATE_FINGERPRINT_FAILURE")
+
+    monkeypatch.setattr(q, "_fingerprints", failed)
+    report = q.processes()
+    assert report["state"] == "BLOCKED"
+    assert report["matched_pids"] == [1]
+    assert report["skipped_pid_count"] == 1
+    assert report["reason_counts"]["PROCESS_IO_ERROR"] == 2
+    assert report["full_confirmation"] is False
+    assert "PRIVATE_" not in json.dumps(report)
+    assert_incomplete(report)
+    assert_global_filesystem_methods_unchanged()

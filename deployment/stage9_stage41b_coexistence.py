@@ -986,13 +986,17 @@ def processes() -> dict[str, Any]:
             reason("PROCFS_INCOMPLETE")
         return items
 
-    def sweep(items: dict[int, Path]) -> dict[int, dict[str, Any]]:
-        observations = {}
+    def sweep(
+        items: dict[int, Path],
+    ) -> tuple[dict[int, dict[str, Any]], dict[int, set[tuple[int, int]]]]:
+        observations: dict[int, dict[str, Any]] = {}
+        correlations: dict[int, set[tuple[int, int]]] = {}
         observed_size = 0
         observed_inodes = 0
+        exhausted = False
         for pid, item in items.items():
             sweep_bound = min(LIMIT, SWEEP_LIMIT)
-            if observed_size + _PROCESS_RESERVATION > sweep_bound:
+            if exhausted or observed_size + _PROCESS_RESERVATION > sweep_bound:
                 unavailable.add(pid)
                 sweep_limited.add(pid)
                 skipped.add(pid)
@@ -1017,8 +1021,24 @@ def processes() -> dict[str, Any]:
                 observed_inodes += len(references)
                 if positive:
                     matched.add(pid)
+                # Reserve the small correlation record independently, before
+                # fingerprinting can fail or exceed the remaining pass budget.
+                # The collection cap above already includes this PID's base.
+                observed_size += _PROCESS_RESERVATION + _INODE_RESERVATION * len(references)
+                if references:
+                    correlations[pid] = references
+                reservation = _THREAD_RESERVATION * len(snapshot)
+                if observed_size + reservation > sweep_bound:
+                    exhausted = True
+                    unavailable.add(pid)
+                    sweep_limited.add(pid)
+                    reason("PROCESS_SWEEP_LIMIT")
+                    # Preserve the funded inode record for late metadata, but
+                    # retain no unfunded comparison fingerprint. Stop this pass
+                    # as before, also bounding aggregate crossing-thread tracking.
+                else:
+                    observed_size += reservation
                 fingerprint, validation = _fingerprints(snapshot, pid)
-                fingerprint["inodes"] = references
                 if issues is not validation:
                     issues.extend(validation)
                 if "PROCESS_PID_LIMIT" in issues:
@@ -1038,19 +1058,7 @@ def processes() -> dict[str, Any]:
                         unavailable.add(pid)
                         if code.endswith("NOT_FOUND"):
                             unstable.add(pid)
-                reservation = (
-                    _PROCESS_RESERVATION
-                    + _THREAD_RESERVATION * len(snapshot)
-                    + _INODE_RESERVATION * len(references)
-                )
-                observed_size += reservation
-                if observed_size > sweep_bound:
-                    unavailable.add(pid)
-                    sweep_limited.add(pid)
-                    reason("PROCESS_SWEEP_LIMIT")
-                    # The match/partial-observation counters above remain sticky.
-                    # Do not retain this extra fingerprint beyond the pass budget.
-                else:
+                if not exhausted:
                     observations[pid] = fingerprint
             except Exception as error:
                 code = _failure(error)
@@ -1059,7 +1067,7 @@ def processes() -> dict[str, Any]:
                     unstable.add(pid)
                 else:
                     unavailable.add(pid)
-        return observations
+        return observations, correlations
 
     try:
         if not host._procfs_visibility():
@@ -1068,18 +1076,18 @@ def processes() -> dict[str, Any]:
         reason("PROCFS_VISIBILITY_UNCERTAIN")
     before = metadata()
     initial = pids()
-    first = sweep(initial)
+    first, first_correlations = sweep(initial)
     current = pids()
     unstable.update(initial.keys() ^ current.keys())
-    second = sweep(initial | current)
+    second, second_correlations = sweep(initial | current)
     final = pids()
     after = metadata()
     # Late readable installation metadata can identify an alias seen earlier.
     matched.update(
         pid
-        for observations in (first, second)
-        for pid, observation in observations.items()
-        if observation["inodes"] & inodes
+        for correlations in (first_correlations, second_correlations)
+        for pid, references in correlations.items()
+        if references & inodes
     )
     metadata_stable = before == after and all(item["complete"] is True for item in before + after)
     if not metadata_stable:
