@@ -897,13 +897,23 @@ def test_malformed_first_thread_maps_keeps_later_thread_descriptor(physical_proc
     assert_incomplete(report)
 
 
-def test_oversized_maps_keeps_other_source_positive(physical_proc, monkeypatch):
-    monkeypatch.setattr(q, "LIMIT", 4096)
+@pytest.mark.parametrize("pid_order", ["first", "last"])
+def test_oversized_maps_keeps_other_source_positive(physical_proc, monkeypatch, pid_order):
+    physical_proc.access.ordered_directories[physical_proc.root] = (
+        [physical_proc.task, physical_proc.first]
+        if pid_order == "first"
+        else [physical_proc.first, physical_proc.task]
+    )
+    # Exercise the PID read budget independently of the retained sweep budget.
+    monkeypatch.setattr(q, "PROCESS_LIMIT", 4096)
     (physical_proc.task / "maps").write_bytes(b"PRIVATE_OVERSIZED_MAPS" * 4096)
     (physical_proc.task / "cgroup").write_bytes(b"0::/ch-stage41b-fixture\n")
     report = q.processes()
     assert physical_proc.own in report["matched_pids"]
     assert report["state"] == "BLOCKED"
+    assert report["checked_pid_count"] == 2
+    assert report["per_pid_limit_count"] == 1
+    assert report["sweep_budget_limit_count"] == report["skipped_pid_count"] == 0
     assert "PRIVATE_OVERSIZED_MAPS" not in str(report)
     assert_incomplete(report)
 
@@ -994,9 +1004,15 @@ def test_descriptor_enumeration_limit_retains_first_positive(physical_proc, monk
 @pytest.mark.parametrize(
     "failure", ["PERMISSION_DENIED", "NOT_FOUND", "EMPTY", "MALFORMED", "LIMIT"]
 )
+@pytest.mark.parametrize("pid_order", ["first", "last"])
 def test_source_failure_categories_have_bounded_redacted_counts(
-    physical_proc, monkeypatch, failure
+    physical_proc, monkeypatch, failure, pid_order
 ):
+    physical_proc.access.ordered_directories[physical_proc.root] = (
+        [physical_proc.task, physical_proc.first]
+        if pid_order == "first"
+        else [physical_proc.first, physical_proc.task]
+    )
     monkeypatch.setattr(q, "_REASON_LIMIT", 1)
     path = physical_proc.task / "maps"
     if failure in {"PERMISSION_DENIED", "NOT_FOUND"}:
@@ -1006,7 +1022,7 @@ def test_source_failure_categories_have_bounded_redacted_counts(
             PermissionError if failure == "PERMISSION_DENIED" else FileNotFoundError,
         )
     elif failure == "LIMIT":
-        monkeypatch.setattr(q, "LIMIT", 4096)
+        monkeypatch.setattr(q, "PROCESS_LIMIT", 4096)
         path.write_bytes(b"PRIVATE_LIMITED_MAPS" * 4096)
     else:
         path.write_bytes(b"" if failure == "EMPTY" else b"PRIVATE_MALFORMED_MAPS")
