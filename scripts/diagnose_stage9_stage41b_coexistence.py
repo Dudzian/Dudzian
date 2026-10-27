@@ -8,6 +8,18 @@ import os
 from pathlib import Path
 
 
+def _redact_sensitive(value: object) -> object:
+    sensitive_keys = {"legacy_identity_aliases", "passwd", "group"}
+    if isinstance(value, dict):
+        return {
+            key: ("<redacted>" if key in sensitive_keys else _redact_sensitive(item))
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_redact_sensitive(item) for item in value]
+    return value
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run-id", required=True)
@@ -46,7 +58,7 @@ def main(argv: list[str] | None = None) -> int:
             "status": "IN_PROGRESS",
             "production_status": "PRODUCTION_NO_GO",
         }
-    print(json.dumps(report, sort_keys=True, indent=2))
+    print(json.dumps(_redact_sensitive(report), sort_keys=True, indent=2))
     return 2
 
 
