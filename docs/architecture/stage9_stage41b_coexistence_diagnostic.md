@@ -259,15 +259,19 @@ used `tracemalloc` around observation, after fixture construction:
 
 | Workload | Input processed | Peak traced allocation |
 | --- | --- | --- |
-| 768 PID population, two sweeps | 75,497,472 bytes per sweep | 2,583,012 bytes |
+| 768 PID population, two sweeps | 75,497,472 bytes per sweep | 2,588,444 bytes |
 | 49 threads streaming shared maps | 13,848,576 bytes | 319,997 bytes |
-| 8192 distinct descriptor targets | 33,151,914 bytes | 3,924,157 bytes |
+| 8192 distinct descriptor targets | 33,151,914 bytes | 81,130 bytes |
 
 The population case supplies synthetic legacy snapshots; the thread and
 descriptor cases exercise the real compact observer through local path adapters.
-Interpreter allocation, including `pathlib` name interning, is included in the
-peaks. These are regression measurements, not RSS ceilings or physical Dell
-results. They do not qualify procfs visibility, permissions or host isolation.
+The descriptor fixture constructs its paths and materializes their lazy parts
+before tracing, excluding process-global `pathlib` name-interning table resizes
+caused by fixture setup. Target strings are still generated during observation;
+the peak and retained-memory assertions are unchanged. Other interpreter
+allocation during observation is included. These are regression measurements,
+not RSS ceilings or physical Dell results. They do not qualify procfs visibility,
+permissions or host isolation.
 
 Stability is assessed separately for process identity and installation
 references. PID/`starttime` changes, thread membership changes, credentials,

@@ -321,12 +321,19 @@ def test_many_descriptor_targets_are_hashed_without_retaining_raw_strings(
     raw_target_bytes = count * len(target_prefix) + sum(len(str(number)) for number in range(count))
     access = physical_proc.access
     original_readlink = q._proc_readlink
+    # Construct synthetic paths with the fixture, before tracing the observer.
+    # CPython interns pathlib names; resizing that process-global table during
+    # a large CI suite must not be attributed to retained process observations.
+    descriptor_paths = tuple(fd_directory / str(number) for number in range(count))
+    for path in descriptor_paths:
+        # pathlib parses parts lazily, so construction alone does not intern them.
+        _ = path.parts
 
     class GeneratedDescriptors(LocalPath):
         def iterdir(self):
             if self._path == fd_directory:
-                for number in range(count):
-                    yield access.path(fd_directory / str(number))
+                for path in descriptor_paths:
+                    yield access.path(path)
                 return
             yield from super().iterdir()
 
