@@ -108,17 +108,36 @@ def proc(monkeypatch):
         "_installation_metadata",
         lambda path: {"identities": [("file", (0, 456, 123))], "complete": True},
     )
+
+    def proc_stat(pid):
+        fields = ["S", *("0" for _ in range(49))]
+        fields[19] = "123"
+        return f"{pid} (worker) ".encode() + " ".join(fields).encode() + b"\n"
+
     snapshot = (
         (
             "1",
-            b"stat",
-            b"Uid: 123 123 123 123",
+            proc_stat(1),
+            b"Name: worker\nPid: 1\nTgid: 1\nUid: 123 123 123 123\n"
+            b"Gid: 123 123 123 123\nGroups: 123\n",
             b"0::/unrelated",
             b"000-100 r--p 0 00:00 0\n",
             (("/other", 0, 1),),
         ),
     )
-    monkeypatch.setattr(q, "_pid_snapshot", lambda path: snapshot)
+
+    def observe(path):
+        row = list(snapshot[0])
+        row[0] = path.name
+        row[1] = proc_stat(path.name)
+        row[2] = (
+            row[2]
+            .replace(b"Pid: 1\n", f"Pid: {path.name}\n".encode())
+            .replace(b"Tgid: 1\n", f"Tgid: {path.name}\n".encode())
+        )
+        return (tuple(row),)
+
+    monkeypatch.setattr(q, "_pid_snapshot", observe)
     return items, snapshot
 
 
@@ -239,12 +258,14 @@ def test_root_cli_refuses_before_any_observation(monkeypatch, capsys):
 
 
 def test_real_snapshot_reads_all_thread_resources_without_executing(tmp_path):
-    task = tmp_path / "task/123"
+    root = tmp_path / "123"
+    task = root / "task/123"
     task.mkdir(parents=True)
     (task / "fd").mkdir()
     for name, raw in {
-        "stat": b"123 (other) S",
-        "status": b"Uid: 999 999 999 999",
+        "stat": b"123 (other) S " + b"0 " * 18 + b"123 " + b"0 " * 29 + b"0\n",
+        "status": b"Name: other\nPid: 123\nTgid: 123\nUid: 999 999 999 999\n"
+        b"Gid: 999 999 999 999\nGroups: 999\n",
         "cgroup": b"0::/other",
         "maps": b"0-10 r--p 0 00:00 0\n",
     }.items():
@@ -253,7 +274,9 @@ def test_real_snapshot_reads_all_thread_resources_without_executing(tmp_path):
     payload.write_bytes(b"never execute")
     for name in ("exe", "cwd", "root", "fd/5"):
         (task / name).symlink_to(payload)
-    snapshot = q._pid_snapshot(tmp_path)
+    for name in ("stat", "status", "cgroup", "maps", "exe", "cwd", "root", "fd"):
+        (root / name).symlink_to(task / name)
+    snapshot = q._pid_snapshot(root)
     assert len(snapshot[0][5]) == 4
     assert q._references(snapshot, {(payload.stat().st_dev, payload.stat().st_ino)})
 
