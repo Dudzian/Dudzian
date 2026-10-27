@@ -107,7 +107,30 @@ Użyć istniejącego `deployment.canonical_json.canonical_json_bytes` po ścisł
 ograniczonym dekodowaniu. Decoder odrzuca nadmierną głębokość przed rekursją.
 Nie normalizować wejściowych bajtów przed sprawdzeniem ich przypiętego digestu.
 
-Limity V1: manifest 4 MiB, polityka/akceptacja po 64 KiB, wynik 64 KiB,
+Każdy digest SHA-256 w JSON jest **łańcuchem 64 znaków lowercase hex**,
+sprawdzanym przez pełne dopasowanie `[0-9a-f]{64}`: bez prefiksu `sha256:`,
+whitespace, uppercase, tablic liczb, base64 lub wartości `bytes`. Dotyczy to
+wszystkich pól `*_sha256`, pól `sha256` plików/artefaktów/transformacji oraz
+`payload_digest`. Nie stosować tego profilu do Git OID (40 lowercase hex),
+Ed25519 `signature_hex` (128 lowercase hex), `public_key_hex` (64 lowercase
+hex reprezentujące klucz, nie jego digest), identyfikatorów lub nonce.
+
+| Pole digestu | Dokładne wejście SHA-256 i zapis w JSON |
+| --- | --- |
+| `manifest_sha256`, `observer_manifest_sha256` | `SHA256(raw_manifest).hexdigest()`; dokładne bajty pliku manifestu przed jakąkolwiek normalizacją. |
+| `policy_sha256` | `SHA256(raw_acceptance_policy).hexdigest()`; dokładne bajty niezależnie zaakceptowanej polityki z sekcji 3.3. |
+| `launch_policy_sha256` | `SHA256(canonical_json_bytes(launch_policy)).hexdigest()` według sekcji 3.4; przechowywany dokument musi mieć już tę kanoniczną reprezentację. |
+| `payload_digest` | `SHA256(canonical_json_bytes(envelope["payload"])).hexdigest()`; nie hash całego envelope ani tekstu innego digestu. |
+| `scope_binding_sha256` | SHA-256 kanonicznych bajtów `HostScopeBindingV1`; przechowywany binding wymaga równości raw bytes z kanoniczną reprezentacją. |
+| `files_sha256`, `runtime_sha256`, `imports_sha256` | SHA-256 kanonicznej projekcji odpowiednio całego `manifest.files`, `manifest.runtime`, `manifest.imports`; kolejność tablic pozostaje znacząca. |
+| `authentication_evidence_sha256`, `state_sha256`, digests plików, artefaktów, profili i wejść/wyjść transformacji | SHA-256 dokładnych bajtów wskazanego artefaktu. Hash nie uwierzytelnia jego wystawcy ani nie zastępuje walidacji pochodzenia. |
+
+Pola digestów są wymagane tam, gdzie wymaga ich dany wariant kontraktu;
+brak danych nie ma reprezentacji zastępczej `null`, pustego stringa lub samych
+zer. Takie wartości nie mogą maskować luki. Decoder nie konwertuje typów.
+
+Limity V1: manifest 4 MiB, acceptance policy/launch policy/akceptacja po 64 KiB,
+wynik 64 KiB, `ObserverRunContextV1` 16 KiB,
 głębokość 16, 32768 wpisów plików, 128 źródeł, 64 reason codes,
 identyfikator 128 znaków ASCII, ścieżka 4096 bajtów. Archiwum do 512 MiB,
 rozpakowane dane do 2 GiB i 65536 członków; limit kompresji 100:1,
@@ -138,8 +161,34 @@ Top-level dokładnie: `schema`, `version=1`, `purpose=STAGE9_OBSERVER_TEST_ONLY`
 | `sources[]` | Unikalne `source_id`, `kind`, dokładny artifact digest/size i odwołanie do zaakceptowanego proof record. Dozwolone warianty: Git object proof, pinned wheel, Ubuntu APT snapshot, zatwierdzona transformacja. URL jest wskazówką pozyskania, nie kotwicą. Brak sieci w verifierze. |
 | `files[]` | Unikalny `file_id`, bezwzględna ścieżka w docelowym obrazie, typ regular/directory, uid/gid/mode, rozmiar, SHA-256 dla regular, source/member lub transform ID. Dla directory digest nie występuje. Oczekiwany zamknięty zbiór obejmuje też katalogi, konfiguracje i pliki nie-Python. Symlink/hardlink/specjalne pliki niedozwolone w obrazie V1. |
 | `transforms[]` | Dokładne wejścia/digests, narzędzie/build/runtime, parametry, wynik i dowód rekonstrukcji. Dla `.pyc`: source bytes, CPython magic/build, optimization, invalidation mode, ścieżka `co_filename` i wymagane timestamp/size. Nie akceptować lokalnego wyjścia jako własnego oczekiwanego wzorca. |
-| `runtime` | Jawne file IDs interpretera, ewentualnego libpython, stdlib, frozen/builtin inventory, ELF PT_INTERP, rekurencyjnego DT_NEEDED i dopuszczonego dlopen; konfiguracja loadera, CPU/hwcaps warianty i zależności danych. Każda pozycja musi istnieć w `files`. |
-| `imports` | Dokładne moduł → rodzaj (builtin/frozen/source/native), file IDs/digests, dopuszczone korzenie i wyczerpujące ścieżki błędów. W V1 bez zipimport, namespace packages, pluginów, `.pth`, custom import hooks i sourceless `.pyc`. Ewentualne rozszerzenie wymaga nowej polityki/review. |
+| `runtime` | Jawne file IDs interpretera, ewentualnego libpython, stdlib, ELF PT_INTERP, rekurencyjnego DT_NEEDED i dopuszczonego dlopen; konfiguracja loadera, CPU/hwcaps warianty i zależności danych. Każde odwołanie do pliku musi istnieć w `files`. Osobny `embedded_modules` jest inventory builtin/frozen związanym z kontenerami kodu i buildem według poniższych wariantów; moduł wbudowany nie jest osobnym plikiem. |
+| `imports` | Dokładna, unikalna nazwa modułu → zamknięty wariant builtin/frozen/source/native, dopuszczone korzenie i wyczerpujące ścieżki błędów. File IDs/digests dotyczą tylko rzeczywistych plików; builtin/frozen wiąże się z `runtime.embedded_modules`. W V1 bez zipimport, namespace packages, pluginów, `.pth`, custom import hooks i sourceless `.pyc`. Ewentualne rozszerzenie wymaga nowej polityki/review. |
+
+Wpis `imports` ma rozłączne warianty o dokładnych polach:
+
+- source/native: `{name, kind, file_id, sha256}`; wskazuje rzeczywisty regular
+  file i jego zgodny digest w `files`. Zależności native należą do runtime/ELF
+  closure, nie do wykonywalnego fallbacku poza manifestem.
+- builtin/frozen: `{name, kind, embedded_module_id}`; bez `file_id`, ścieżki
+  lub osobnego digestu modułu. Wskazuje dokładnie jeden wpis
+  `runtime.embedded_modules` o polach `{embedded_module_id, name, kind,
+  build_id, container_file_ids}`. `container_file_ids` to niepusta unikalna
+  lista rzeczywistych binariów interpreter/libpython zawierających ten kod;
+  ich SHA-256 pochodzi z `files`. `build_id` wskazuje ten sam niezależnie
+  zaakceptowany build CPython co `target` i `interpreter` launch policy.
+
+Inventory embedded modules obejmuje dokładny pełny zestaw dostępnych builtin
+i frozen modułów danego builda, także bootstrap i importy używane w obsłudze
+błędów; jego nazwy/kinds/containers muszą być zgodne z zamkniętym `imports`.
+Oczekiwany zestaw wynika z zaakceptowanych materiałów i transformacji builda,
+nie z samopomiaru uruchomionego interpretera. `sys.builtin_module_names`,
+`__spec__.origin` built-in/frozen i `_imp.is_frozen()` są tylko obserwacjami do
+porównania. Frozen `__file__` może być syntetyczne i nie dowodzi wykonania
+odpowiedniego `.py`. Build flags i ustawienie frozen modules należą do
+zatwierdzonego builda i launch policy. Nie wymagać fikcyjnych plików źródłowych.
+Zmiana binarium/builda, dostępnego zestawu modułów lub ich container binding
+wymaga zmiany manifestu, powiązanej launch policy i nowej podpisanej akceptacji;
+nie ma rozszerzenia importów wyłącznie przez runtime discovery.
 
 W V1 obserwator preferuje stdlib-only i źródła `.py`; obecność `.pyc`
 w historycznych instalacjach nie dopuszcza ich do runtime obserwatora.
@@ -150,18 +199,48 @@ wszystkie odwołania i ich brakujące/extra pozycje są walidowane.
 
 `CryptoHunter.Stage9ObserverAcceptanceV1` to envelope o dokładnych polach
 `payload`, `payload_digest`, `threshold`, `signatures`. Payload zawiera
-`schema`, `version=1`, `purpose`, `manifest_sha256` (surowe bajty),
+`schema`, `version=1`, `purpose=STAGE9_OBSERVER_TEST_ONLY`, `manifest_sha256`
+(64 lowercase hex SHA-256 dokładnych bajtów manifestu),
 `policy_sha256`, `root_set_id`, `sequence`, `revocation_checkpoint`,
-`issued_at`, `expires_at`. Podpis: istniejący profil Ed25519 nad
-`b"CryptoHunter.Stage9ObserverAcceptanceV1\0" + SHA256(canonical(payload))`.
-Podpisy: unikalne i posortowane `signer_id`, 64-bajtowe `signature_hex`.
-Kanonizacja i Ed25519 nie dostają drugiej implementacji.
+`issued_at`, `expires_at`. `schema` jest równe
+`CryptoHunter.Stage9ObserverAcceptanceV1`. Podpisy mają dokładne pola
+`signer_id`, `signature_hex`: ID unikalne i posortowane; `signature_hex` to
+128 lowercase hex reprezentujące 64 bajty podpisu Ed25519.
+
+Profil zgodny z istniejącym `_verify_envelope` jest następujący:
+
+```text
+canonical_payload = deployment.canonical_json.canonical_json_bytes(payload)
+digest_bytes = hashlib.sha256(canonical_payload).digest()  # dokładnie 32 bajty
+envelope["payload_digest"] = digest_bytes.hex()             # JSON string, 64 hex
+domain = b"CryptoHunter.Stage9ObserverAcceptanceV1\x00"     # końcowy jeden NUL
+signed_message = domain + digest_bytes                     # bytes, nie ASCII hex
+```
+
+`bytes` występują w obliczeniu i interfejsie biblioteki podpisu, nigdy jako
+wartości JSON. Nie podpisywać `domain + payload_digest.encode()` i nie
+hashować ponownie tekstu digestu. Istniejący
+`deployment.windows_stage9_policy_material.canonical_digest` zwraca te
+32 bajty; `_verify_envelope` porównuje `payload_digest == digest.hex()`
+i wywołuje Ed25519 `verify(signature, domain + digest)`. Sukces tego prywatnego
+API zwraca `None`, odmowa zgłasza `PolicyVectorError`; publiczne API obserwatora
+jest dopiero planowane. Nowy adapter musi najpierw sprawdzić closed schema,
+typy, hex, purpose i zewnętrzny trust context, których helper sam nie sprawdza
+w całości. Kanonizacja i Ed25519 nie dostają drugiej implementacji.
 
 Oddzielnie dostarczona, niezależnie zaakceptowana polityka zawiera dokładnie
 `schema`, `version`, `purpose`, `root_set_id`, `reviewer_keys`, `threshold`,
 `allowed_sources`, `minimum_sequence`, `revocation_checkpoint`,
 `valid_until`, `target`, `limits`, `launch_policy_sha256`.
-`reviewer_keys` wiąże ID z 32-bajtowym kluczem i niezależną tożsamością reviewera;
+Jej `schema=CryptoHunter.Stage9ObserverAcceptancePolicyV1`, `version=1`,
+`purpose=STAGE9_OBSERVER_TEST_ONLY`. W obu dokumentach `revocation_checkpoint`
+ma dokładne pola `{sequence, state_sha256}`: nieujemny integer i digest
+zaakceptowanego artefaktu odwołań. Daty to stringi UTC `YYYY-MM-DDTHH:MM:SSZ`.
+`reviewer_keys` to lista rekordów o dokładnych polach
+`{signer_id, reviewer_id, public_key_hex}`, posortowana po `signer_id`;
+wiąże ID z 32-bajtowym kluczem zapisanym jako 64 lowercase hex i niezależną
+tożsamością reviewera. Adapter tworzy z niej `keys: Mapping[str, str]`
+oczekiwane przez istniejący verifier dopiero po sprawdzeniu unikalności.
 V1 wymaga 2 różnych reviewerów (threshold 2), zaakceptowanych poza Dellem.
 Odrzuca powtórzony raw public key lub tę samą tożsamość reviewera pod różnymi
 signer IDs; samo liczenie różnych ID przez istniejący verifier nie wystarcza.
@@ -206,15 +285,121 @@ Polityka źródeł:
   sprawdzić subject digest, issuer, repo/workflow/ref, builder i materiały według
   osobnej jawnej polityki. Nieznana lub nieobsługiwana atestacja pozostaje luką.
 
-### 3.4 Wynik offline, namespace i wynik obserwatora
+### 3.4 Launch policy `CryptoHunter.Stage9ObserverLaunchPolicyV1`
+
+Osobny dokument L ma dokładnie pola: `schema`, `version`, `purpose`, `target`,
+`interpreter`, `elf`, `imports`, `environment`, `cwd`, `allowed_fds`,
+`namespace_scope`, `sandbox`, `file_policy`, `runtime_dependencies`,
+`resources`, `reporting`, `run_context`. `schema=CryptoHunter.Stage9ObserverLaunchPolicyV1`,
+`version=1`, `purpose=STAGE9_OBSERVER_TEST_ONLY`. Brak pola, dodatkowe pole,
+nieobsługiwany wariant lub niezgodny typ oznacza odmowę, bez wartości domyślnych.
+To kontrakt projektowy, nie implementacja lub instalacja launchera.
+
+Tabela wylicza **dokładne zestawy pól także we wszystkich nested records**.
+File IDs są identyfikatorami z manifestu; directory IDs wskazują directory,
+pozostałe regular files o zaakceptowanych digestach. Listy ID są unikalne;
+kolejność import roots, argv i pozostałych tablic jest znacząca. Nie dopuszczać
+dowolnych ścieżek, flag, wartości środowiska, FD lub kodu od operatora.
+
+| Pole | Zamknięty rekord / wymagana semantyka |
+| --- | --- |
+| `target` | `{os, distribution, distribution_version, architecture}`; wszystkie cztery wartości są stringami, dokładnie `"Linux"`, `"Ubuntu"`, `"24.04"`, `"x86_64"`, zgodnymi z projekcją `manifest.target`. |
+| `interpreter` | `{file_id, version, package_version, abi, build_id, libpython_file_ids, entrypoint_file_id, argv, frozen_modules}`. Pełna wersja CPython 3.12 z patchlevel, dokładna wersja pakietu, ABI i build ID jako stringi zgodne z manifestem/build proof. Lista libpython jest pusta tylko przy braku osobnej biblioteki w zaakceptowanym buildzie. `argv` to dokładnie absolutna ścieżka tego interpretera, `-I`, `-S`, `-B` i absolutna ścieżka wskazanego entrypointu, bez dodatkowych argumentów. `frozen_modules=BUILD_FIXED`; brak flag zmieniających zestaw embedded modules. |
+| `elf` | `{loader_file_id, library_file_ids, dependency_edges, loader_config_file_ids, absent_paths, hwcaps_file_ids, dlopen_file_ids, resolution_root_ids, rpath_runpath_policy}`. V1 obsługuje dynamiczny ELF z obowiązkowym loader file ID; inne profile są nieobsługiwane. Każda krawędź ma `{requester_file_id, needed, resolved_file_id}` i wiąże dokładny PT_INTERP/DT_NEEDED/dlopen z konkretnym plikiem. `needed` jest stringiem z zaakceptowanej analizy ELF. Config/cache/preload jest jawnie przypięte albo jego konkretna absolutna ścieżka występuje w `absent_paths`; te listy nie mogą sobie przeczyć. `rpath_runpath_policy=IN_IMAGE_ONLY`, korzenie wskazują katalogi obrazu; zakaz fallback poza obraz i nieznanych hwcaps/dlopen. |
+| `imports` | `{roots, modules_sha256, embedded_modules_policy, external_imports}`. `roots` to dokładna uporządkowana lista directory IDs odpowiadająca dopuszczonemu sys.path; `modules_sha256` jest SHA-256 kanonicznego `manifest.imports` (ta sama wartość co `imports_sha256`). `embedded_modules_policy=EXACT_BUILD_INVENTORY`, `external_imports=FORBIDDEN`; obowiązują wszystkie warianty i zakazy z sekcji 3.2. |
+| `environment` | `{inherit, values}`; `inherit=false`, `values` ma dokładnie `{"LC_ALL":"C"}`. Żadnych odziedziczonych PYTHON*, LD_*, HOME, PATH lub innych zmiennych. Dodanie zmiennej wymaga nowej zaakceptowanej launch policy, bez operator overrides. |
+| `cwd` | `{directory_file_id}`; absolutny katalog o chronionej ancestry i metadanych z manifestu, bez odziedziczenia CWD. |
+| `allowed_fds` | Dokładnie dwie pozycje, w kolejności FD: `{fd:3, role:REPORT_WRITE, kind:PIPE, access:WRITE, binding:TRUSTED_RUN_REPORT_PIPE}` i `{fd:4, role:RUN_CONTEXT_READ, kind:SEALED_MEMFD, access:READ, binding:TRUSTED_LAUNCHER_CONTEXT}`. Są to nazwy enum/stringi JSON, nie kod. FD 0/1/2 i pozostałe odziedziczone FD są zamknięte przed entrypointem; runtime/code FDs launchera nie przechodzą do obserwatora. Późniejsze odczytowe open podlegają file/sandbox policy. Tożsamość pipe i dostarczenie kontekstu wymagają uwierzytelnionego launchera, nigdy ścieżki lub FD operatora. |
+| `namespace_scope` | `{pid, user, mount, procfs, binding_schema, binding_source, visibility}`. `pid=HOST_INITIAL`, `user=HOST_INITIAL`, `mount` to wybrany dokładnie HOST albo PRIVATE_FAITHFUL_HOST_VIEW; `procfs=AUTHENTICATED_HOST_PROCFS`, `binding_schema=HostScopeBindingV1`, `binding_source=TRUSTED_RUN_CONTEXT`, `visibility=COMPLETE`. Wariant prywatny wymaga dowodu wiernego host view; nie dopuszcza nowego PID/user namespace lub maskowania źródeł. |
+| `sandbox` | `{uid, gid, supplementary_groups, capabilities, no_new_privileges, seccomp, lsm, network, devices, deny_operations}`. UID/GID to ustalone niezerowe integer z zaakceptowanego profilu, groups to `[]`. `capabilities` ma dokładnie `{bounding, permitted, effective, inheritable, ambient}`, wszystkie `[]` w V1; `no_new_privileges=true`, `network=DENY`, `devices=DENY`. `seccomp` i `lsm` mają każde `{profile_file_id, profile_sha256, enforcement}` z `enforcement=REQUIRED` i zgodnym file digestem. `deny_operations` to dokładny zestaw NEW_EXEC, NEW_PROCESS, MOUNT, SETNS, UNSHARE, PTRACE, PROCESS_VM, PIDFD_GETFD, SIGNAL, NETWORK, DEVICE, WRITE_OUTSIDE_REPORT. Bez dowodu egzekucji przez odpowiednią kompozycję mechanizmów nie ma potwierdzonego startu. |
+| `file_policy` | `{files_sha256, ancestry, acl, capability_xattrs, other_xattrs, regular_nlink, links, extra_entries, mutable_runtime, integrity_profile_file_id, integrity_profile_sha256}`. Wiąże całe `manifest.files`, w tym dokładne uid/gid/mode/type/size/digests; `ancestry=PROTECTED`, `acl=FORBIDDEN`, `capability_xattrs=FORBIDDEN`, `other_xattrs=PROFILE_ONLY`, `regular_nlink=1`, `links=FORBIDDEN`, `extra_entries=FORBIDDEN`, `mutable_runtime=FORBIDDEN`. Przypięty integrity profile określa egzekucję ochrony i jawnie dozwolone xattrs; nie zastępuje jej samym root ownership. |
+| `runtime_dependencies` | `{files_sha256, runtime_sha256, imports_sha256, unlisted_dependencies}`. Są to dokładne digests projekcji z sekcji 3.1, zgodne z `file_policy.files_sha256` i `imports.modules_sha256`; `unlisted_dependencies=FORBIDDEN`. Cały loader/libpython/config/data/embedded closure musi odpowiadać manifestowi i powyższym listom, bez pominiętych lub dodatkowych elementów. |
+| `resources` | `{run_timeout_s, receive_timeout_s, memory_max_bytes, fd_limit, process_limit, core_dump_bytes}`. W V1 odpowiednio 300, 30, 268435456, ustalony integer 8..64, 1, 0. Deadline odbioru liczy się od pierwszego bajtu i kończy przed końcem run; brak możliwości tworzenia kolejnych procesów po starcie. |
+| `reporting` | `{schema, fd, framing, max_payload_bytes, nonce_source, eof}`. Dokładnie ObserverResultV1, 3, U32BE_UTF8_JSON, 65536, TRUSTED_RUN_CONTEXT, REQUIRED; znaczenie kanału i odmów według sekcji 5. |
+| `run_context` | `{schema, fd, max_bytes, storage, seals, access, source}`. Dokładnie ObserverRunContextV1, 4, 16384, MEMFD, lista WRITE/GROW/SHRINK/SEAL (w tej kolejności), READ_ONLY, TRUSTED_LAUNCHER. Są to wymagania dla deskryptora: read-only access i kernel seals odpowiadające F_SEAL_WRITE/F_SEAL_GROW/F_SEAL_SHRINK/F_SEAL_SEAL. Niezgodność, brak dostępnej kontroli seals lub niezaufane źródło blokują. |
+
+`imports.modules_sha256` jest również digestem SHA-256 o reprezentacji i wejściu
+określonym powyżej. Wszystkie `*_sha256`, w tym profile sandbox/integrity,
+podlegają sekcji 3.1; build ID i nazwa profilu nie zastępują digestu bajtów.
+Dozwolone FD i reguły sandboxu nie są twierdzeniem, że obecny Dell zapewnia
+kompletne odczyty z takim profilem. Brak dostępu pozostawia BLOCKED/INCOMPLETE;
+V1 nie nadaje capabilities ani nie obniża zabezpieczeń.
+
+Kanonizacja L: ograniczony strict decode i pełna walidacja schematu →
+`canonical_L = deployment.canonical_json.canonical_json_bytes(L)` → wymaganie
+`raw_L == canonical_L` → `hashlib.sha256(canonical_L).hexdigest()`.
+Niekanoniczny plik jest odrzucany, nie przepisywany po otrzymaniu pinu.
+Manifest oraz niezależna acceptance policy muszą zawierać ten sam
+`launch_policy_sha256`. Podpisana akceptacja wiąże dokładne bajty obu tych
+dokumentów. L wiąże konkretne projekcje files/runtime/imports i build,
+**nie zawiera** digestu całego manifestu ani acceptance policy: nie ma cyklu
+`H(manifest) ↔ H(launch_policy)` ani samopodpisującej się polityki.
+Manifest, acceptance policy, L, envelope, trust context i run context są
+zewnętrznymi metadanymi weryfikatora/launchera; nie należą do `manifest.files`
+obrazu ani projekcji runtime/imports. Payload/config/profile w obrazie nie
+może pośrednio wprowadzać back-reference digestu tych metadanych. Weryfikator
+sprawdza acykliczność grafu źródeł/projekcji i odrzuca taką referencję, także
+próbę umieszczenia L w `files` pod innym ID. `file_policy` dotyczy tego obrazu;
+nie zamienia `/proc` i badanych instalacji w pliki wykonywalnego runtime.
+
+`ObserverRunContextV1` ma dokładnie pola `schema`, `version=1`,
+`purpose=STAGE9_OBSERVER_TEST_ONLY`, `run_id`, `run_nonce`,
+`observer_manifest_sha256`, `policy_sha256`, `launch_policy_sha256`,
+`scope_binding`, `scope_binding_sha256`, `authentication_evidence_sha256`.
+`schema=ObserverRunContextV1`; `run_id` to ograniczony identyfikator,
+`run_nonce` to 64 lowercase hex reprezentujące 256 losowych bitów, nie digest.
+`scope_binding` jest rekordem `HostScopeBindingV1` z sekcji 3.5 o tym samym
+nonce/boot i sprawdzanym `scope_binding_sha256`. Pozostałe digests muszą
+odpowiadać zaakceptowanym dokumentom i uwierzytelnionemu dowodowi launchera.
+Kontekst ma kanoniczną reprezentację z sekcji 3.1, limit 16 KiB i depth 16;
+launcher finalizuje i seals cały memfd przed entrypointem. Odbiorca odczytuje
+go bounded od offsetu 0, sprawdza rozmiar, seals, access i cały kontrakt.
+Nie dodaje to komunikacji zwrotnej, operator input, poleceń, ścieżek lub
+dowolnej interpolacji argv/env. Sealed memfd zapewnia niezmienność danych,
+**nie uwierzytelnia źródła**: wymaga wcześniej zaufanego bootstrapu i bindingu
+FD do konkretnego launchera/run. Brak takiego dowodu zachowuje
+`RUNTIME_LAUNCH_UNVERIFIED` oraz `HOST_SCOPE_UNVERIFIED`.
+
+Przyszły launcher ma przed wykonaniem porównać zaakceptowane L z projekcją
+**rzeczywiście egzekwowanej konfiguracji**, pole po polu i przez równość
+kanonicznych bajtów tej projekcji. Nie wystarczy zgodność nazwy profilu,
+hash pliku konfiguracyjnego lub deklarowane/echo `launch_policy_sha256`.
+Wymagane są uwierzytelnione dowody efektywnych: interpreter/build/argv,
+loadera i rozwiązywanych bibliotek/importów, env, CWD, odziedziczonych FD,
+credentials/capability sets, namespace/procfs, seccomp/LSM, file integrity
+i limitów, powiązane z konkretnym run nonce, boot i `HostScopeBindingV1`.
+Te dynamiczne tożsamości pochodzą z osobnego zaufanego run context; nie są
+wildcardami ani dowolną interpolacją w statycznej L. Potwierdzenie ochrony
+runtime/resolution musi obejmować cały lifetime zgodnie z sekcją 4.
+
+Niezgodność daje `LAUNCH_POLICY_MISMATCH`; brak/niepełny/nieobsługiwany dowód
+egzekwowania, także przy zgodnych digestach, pozostawia
+`RUNTIME_LAUNCH_UNVERIFIED`. W etapie 3 można sprawdzić schemat, powiązania,
+projekcje i negatywne fixtures, ale nie ustanowić faktycznego enforcement,
+bindingu hosta ani niezależnej atestacji. Nie implementować launchera.
+
+### 3.5 Wynik offline, namespace i wynik obserwatora
+
+W tej sekcji `schema` jest dokładnie podaną nazwą kontraktu, a `version=1`.
+Pełny wynik jest konstruowany dopiero po otrzymaniu wszystkich wymaganych
+dokumentów/bindingów, których digests ma zawierać. Jeśli wejścia brak, verifier
+odmawia stałym reason code i niezerowym exit, bez konstruowania takiego wyniku;
+przyszły obserwator odmawia przed skanem, bez frame. Odbiorca klasyfikuje brak
+wyniku jako INCOMPLETE/BLOCKED z zachowaniem wszystkich blokad. Nie tworzyć
+fikcyjnego digestu przez SHA-256 pustych bytes, null lub zera. Nie ma odmowy
+udającej kompletny raport. Późniejszy drift bindingu zachowuje digest pierwotnego
+otrzymanego bindingu i jawne reason codes/INCOMPLETE; nie usuwa wcześniejszego
+pozytywnego trafienia.
 
 Verifier offline zwraca zamknięty `OfflineVerificationResultV1`: `schema`,
-`version`, `synthetic`, `manifest_sha256`, `policy_sha256`,
+`version`, `synthetic`, `manifest_sha256`, `policy_sha256`, `launch_policy_sha256`,
 `artifact_consistency` (MATCH/MISMATCH/INCOMPLETE),
 `acceptance` (VERIFIED/UNVERIFIED/REJECTED), `reason_codes` i powyższe stałe
 blokady. VERIFIED dotyczy podpisanej akceptacji pod przekazanym trust context,
 nie hosta. Osobne pola `runtime_attestation=MISSING` i
 `host_pid_namespace=UNVERIFIED` są obowiązkowe dla etapu 3.
+`reason_codes` zawsze zachowuje `RUNTIME_LAUNCH_UNVERIFIED` w etapie 3;
+poprawne podpisy, schemat L lub zgodna syntetyczna projekcja nie usuwają go.
 Nie tworzy pliku dla istniejącego `--evidence` ani pinu zatwierdzającego Dell.
 
 Przyszły `HostScopeBindingV1`: `schema`, `version`, `host_anchor_id`,
@@ -223,7 +408,17 @@ Przyszły `HostScopeBindingV1`: `schema`, `version`, `host_anchor_id`,
 `authentication_evidence_sha256`. Namespace identity jest parą device/inode
 w konkretnym uwierzytelnionym boot, nie uniwersalnym numerem hosta.
 `source` wskazuje wcześniej uwierzytelniony host collector/launcher.
-Procfs identity obejmuje mount ID, fs type/root, widok PID i opcje widoczności.
+Każdy z trzech namespace records ma dokładne pola `{device, inode}` z integer
+0..2^53−1 (inode > 0). `procfs_identity` ma dokładnie `{mount_id, fs_type, root,
+mount_namespace, options, pid_view}`: dodatni integer mount ID, string `proc`,
+string `/`, namespace record zgodny z `mount_namespace` obserwatora, posortowaną
+unikalną listę stringów opcji i `pid_view=HOST_INITIAL_COMPLETE`. Dopuszczalne
+opcje V1 to ro albo rw (dokładnie jedna), nosuid, nodev, noexec, relatime,
+hidepid=0; każda inna opcja lub inny root/view wymaga odmowy. `boot_id` jest
+kanonicznym lowercase UUID, `run_nonce` to 64 lowercase hex, starttime to
+dodatni integer; `host_anchor_id` i `source` są ograniczonymi identyfikatorami.
+Wszystkie wartości wymagają uwierzytelnionego kontekstu; same deklaracje
+`pid_view` i opcji nie są dowodem pełnego widoku.
 Same liczby, boot_id, NSpid, cgroup, nazwa maszyny, self==PID1 lub dostęp do
 systemd nie uwierzytelniają początkowego namespace. Podpis arbitralnego JSON
 przez lokalny proces też tego nie dowodzi.
@@ -236,7 +431,7 @@ issuer kończą się `HOST_SCOPE_UNVERIFIED`. Na obecnym Dellu odmowa odczytu
 Samo uzyskanie tego odczytu w przyszłości nadal nie wystarczy.
 
 Przyszły `ObserverResultV1` ma dokładnie: `schema`, `version`, `synthetic`,
-`run_id`, `run_nonce`, `observer_manifest_sha256`, `policy_sha256`,
+`run_id`, `run_nonce`, `observer_manifest_sha256`, `policy_sha256`, `launch_policy_sha256`,
 `installation_commits`, `scope_binding_sha256`, `boot_id`, `started_at`,
 `finished_at`, `counters`, `observations`, `reason_codes`, `completeness`,
 `runtime_attestation` oraz wszystkie stałe blokady. `installation_commits`
@@ -401,7 +596,7 @@ Proponowane **dwa nowe moduły**, bez nowego demona, launchera i systemd unit:
 
 | Moduł planowany | Odpowiedzialność i zależności |
 | --- | --- |
-| `deployment/stage9_observer_contract.py` | Ścisłe wersjonowane typy/decoder i walidacja manifestu, acceptance/policy, trust context, namespace binding, offline/result, framing i stałych blokad. Stdlib + istniejąca canonical JSON. Bez host I/O, subprocess i kryptograficznej autoryzacji z samych danych. |
+| `deployment/stage9_observer_contract.py` | Ścisłe wersjonowane typy/decoder i walidacja manifestu, acceptance/policy, launch policy i jej projekcji, ObserverRunContextV1, trust context, namespace binding, offline/result, framing i stałych blokad. Stdlib + istniejąca canonical JSON. Bez host I/O, subprocess i kryptograficznej autoryzacji z samych danych. |
 | `deployment/stage9_observer_offline.py` | Weryfikacja akceptacji pod zewnętrznym context, plików/proof/locków/archiwów/transform records i zamkniętego inventory na wydzielonych danych. Adaptery istniejących verifierów oraz analiza import graph/origins i ELF dependencies na danych; porównanie syntetycznego trace z manifestem, bez importowania badanego kodu. Odrzucenie nieobsługiwanej dynamicznej resolution. Testy origins wykonują wyłącznie zaakceptowane fixtures w nieuprzywilejowanym subprocess. Żadnego host scan, instalowania lub wykonywania payloadu. Offline crypto/gpgv toolchain jest jawnie osobny od przyszłego obserwatora. |
 
 Namespace i walidacja wyników należą do kontraktu, więc nie potrzebują
@@ -432,6 +627,12 @@ i zachowane wszystkie blokady. Nie używać naprawiającego fallbacku.
 | --- | --- |
 | Circular trust; klucz/pin w tym samym pakiecie; local receipt udaje acceptance | Zewnętrzny trust context; TRUST_CONTEXT_MISSING/ACCEPTANCE_REJECTED. Nigdy TOFU. |
 | Dobry podpis pod obcym purpose/domain/target/digest; jeden reviewer/klucz pod dwoma ID; TEST/unknown/revoked key; podmieniona policy | Reuse envelope verification + nowy strict kontrakt; odrzucić całość. Nie liczyć duplicate signer, klucza ani tożsamości do quorum. |
+| SHA-256 jako bytes/list/base64, uppercase, nie-64 hex lub z prefiksem; pomylenie raw-document i canonical-payload digest; podpis nad ASCII hex zamiast 32 bajtami | FORMAT_REJECTED/ACCEPTANCE_REJECTED. Sprawdzać każde pole digest, zachować domenę z jednym końcowym NUL i istniejące Ed25519 API. |
+| Launch policy missing/extra nested field, zła wersja, inny interpreter/loader/import roots/env/CWD/FD/namespace/privileges/profile/limits; brak L lub różne przypięte digests | Zamknięty schemat i cross-check projekcji oraz obu `launch_policy_sha256`; FORMAT_REJECTED/LAUNCH_POLICY_MISMATCH. Bez fallback lub dowolnej interpolacji operatora. |
+| L/M/policy/envelope/context jako plik runtime lub cykliczna referencja profilu; brak wejścia potrzebnego do wymaganego digestu wyniku | Odrzucić cykl lub odmówić przed wynikiem zgodnie z sekcją 3.5; bez fikcyjnych digestów, zawsze INCOMPLETE/BLOCKED. |
+| Podmieniony/unsealed/writable/oversized context FD, inny nonce/scope/digest, brak uwierzytelnionego pochodzenia memfd | Stały kod odmowy i RUNTIME_LAUNCH_UNVERIFIED/HOST_SCOPE_UNVERIFIED. Same seals nie uwierzytelniają nadawcy; nie skanować przy brakującym kontekście. |
+| Zgodny hash/nazwa launch policy bez dowodu faktycznych ustawień i lifetime enforcement; fałszywa projekcja z innego run | RUNTIME_LAUNCH_UNVERIFIED, nawet gdy acceptance=VERIFIED; syntetyczny fixture nie potwierdza egzekucji. |
+| Builtin/frozen z fikcyjnym source file, niezgodnym kind/name/container/build, dodatkowy moduł lub zmiana frozen profile | IMPORT_POLICY_REJECTED/CLOSURE_INCOMPLETE; exact embedded inventory i zaakceptowane binary containers. Nie zastępować ich plikiem wskazanym przez frozen `__file__`. |
 | Rollback manifest+policy+revocation+zegara, brak czasu, wygasły checkpoint | Minimalna wersja i niezależny świeży head/czas; TRUST_CONTEXT_MISSING lub ROLLBACK_REJECTED. |
 | JSON duplicate keys, nieznane pola/wersje, bool-as-int, None, NaN/infinity, float, nieprawidłowy UTF-8, duża głębokość/długość | Bounded strict decoder, canonical profile i limity; FORMAT_REJECTED/LIMIT_EXCEEDED, bez tekstu wyjątku. |
 | Podmieniony Git object/tree/path/commit, lock, wheel digest/RECORD, archive member; sdist lub hook | Istniejące verify_proof/wheel_*; ARTIFACT_MISMATCH/UNSUPPORTED_SOURCE, zero wykonania. |
@@ -479,7 +680,8 @@ Obecne zgłoszenia nie dostarczają:
    zaakceptowanego minimalnego profilu praw i uwierzytelnionego wyniku.
 
 **Dokładny następny zakres: etap 3, osobny PR implementacyjny bez uprawnień.**
-Najpierw zakodować kontrakty V1 i stałe blokady, potem adapter istniejącego
+Najpierw zakodować kontrakty V1 (także launch policy, digest representation
+i embedded module bindings) i stałe blokady, potem adapter istniejącego
 envelope verifiera z oddzielnymi TEST roots, offline Git/wheel/APT verification,
 inventory/transform checks, import/ELF closure validation oraz namespace/result
 validation na fixtures. Historyczny `verify_proof` pozostaje ograniczony do
