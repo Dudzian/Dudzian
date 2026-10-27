@@ -178,11 +178,15 @@ STAGE41B_ATOMIC_MODULES = {
 }
 # Source/CCA physical execution stays manual; only unprivileged package,
 # lifecycle and injected observation regressions belong in this serial job.
+# Coexistence diagnostics share that atomic test scope and the existing shared
+# atomic/history coverage scope; they do not add physical execution to either job.
 SOURCE_CCA_TEST_INSTALLATION_TESTS = {
     "tests/deployment/test_stage9_source_cca_test_package.py",
     "tests/security/test_stage9_source_cca_test_lifecycle.py",
     "tests/security/test_stage9_source_cca_test_probes.py",
     "tests/security/test_stage9_source_cca_test_rootless.py",
+    "tests/security/test_stage9_stage41b_coexistence.py",
+    "tests/security/test_stage9_stage41b_process_observation.py",
     "tests/scripts/test_stage9_source_cca_operator_code.py",
     "tests/deployment/test_stage9_source_cca_test_controls.py",
     "tests/scripts/test_stage9_source_cca_installation_operator.py",
@@ -190,6 +194,8 @@ SOURCE_CCA_TEST_INSTALLATION_TESTS = {
 SOURCE_CCA_TEST_INSTALLATION_MODULES = {
     "deployment.stage9_source_cca_test_package",
     "deployment.stage9_source_cca_test_runtime",
+    "deployment.stage9_stage41b_coexistence",
+    "scripts.diagnose_stage9_stage41b_coexistence",
     "deployment.stage9_source_cca_test_controls",
     "scripts.qualify_stage9_source_cca_installation",
 }
