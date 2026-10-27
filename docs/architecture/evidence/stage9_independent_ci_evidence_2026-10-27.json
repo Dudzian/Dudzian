@@ -1,0 +1,1703 @@
+{
+  "observed_date_utc": "2026-10-27",
+  "repository": "Dudzian/Dudzian",
+  "scope": "Read-only GitHub API all-event workflow runs filtered by head_sha; 100 items/page; total_count 7 for each ref, every returned run's artifact list fetched with per_page=100; no selected list reaches page size. Current accessible retained evidence only.",
+  "commits": [
+    {
+      "sha": "782816540373d7b31f426dab645ad115320d1234",
+      "run_query_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/runs?head_sha=782816540373d7b31f426dab645ad115320d1234&per_page=100&page=1",
+      "total_count": 7,
+      "runs": [
+        {
+          "id": 40013932698,
+          "name": "Quality and Security",
+          "event": "pull_request",
+          "conclusion": "success",
+          "path": ".github/workflows/quality-security.yml",
+          "run_attempt": 1,
+          "created_at": "2026-10-23T19:45:35Z",
+          "html_url": "https://github.com/Dudzian/Dudzian/actions/runs/40013932698",
+          "head_sha": "782816540373d7b31f426dab645ad115320d1234",
+          "artifact_query_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/runs/40013932698/artifacts?per_page=100&page=1",
+          "artifacts": [
+            {
+              "id": 12532894503,
+              "node_id": "MDg6QXJ0aWZhY3QxMjUzMjg5NDUwMw==",
+              "name": "semantic-issuer-preflight-coverage",
+              "size_in_bytes": 5306,
+              "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12532894503",
+              "archive_download_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12532894503/zip",
+              "expired": false,
+              "digest": "sha256:d081369a6cb241de17c8f269525c8231fee4cee21e1b676516bf87f6f9513b59",
+              "created_at": "2026-10-23T21:39:57Z",
+              "updated_at": "2026-10-23T21:39:57Z",
+              "expires_at": "2026-10-30T21:39:55Z",
+              "workflow_run": {
+                "id": 40013932698,
+                "repository_id": 1062027034,
+                "head_repository_id": 1062027034,
+                "head_branch": "codex/stage41b-linux-startup-identity",
+                "head_sha": "782816540373d7b31f426dab645ad115320d1234"
+              }
+            },
+            {
+              "id": 12532711528,
+              "node_id": "MDg6QXJ0aWZhY3QxMjUzMjcxMTUyOA==",
+              "name": "history-successor-reproposal-results",
+              "size_in_bytes": 23730,
+              "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12532711528",
+              "archive_download_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12532711528/zip",
+              "expired": false,
+              "digest": "sha256:582180f7d5371909900e4b105c2ce328a9d46ba344ef9a5e9ff985c3e5ca908d",
+              "created_at": "2026-10-23T21:16:21Z",
+              "updated_at": "2026-10-23T21:16:21Z",
+              "expires_at": "2026-10-30T21:16:20Z",
+              "workflow_run": {
+                "id": 40013932698,
+                "repository_id": 1062027034,
+                "head_repository_id": 1062027034,
+                "head_branch": "codex/stage41b-linux-startup-identity",
+                "head_sha": "782816540373d7b31f426dab645ad115320d1234"
+              }
+            },
+            {
+              "id": 12532314759,
+              "node_id": "MDg6QXJ0aWZhY3QxMjUzMjMxNDc1OQ==",
+              "name": "quality-ratchet-coverage",
+              "size_in_bytes": 67724,
+              "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12532314759",
+              "archive_download_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12532314759/zip",
+              "expired": false,
+              "digest": "sha256:398ba156e088b280df2c113b8c83beeef5c6fa587c8dda33a57d064dbe7f17b8",
+              "created_at": "2026-10-23T21:29:39Z",
+              "updated_at": "2026-10-23T21:29:39Z",
+              "expires_at": "2026-10-30T21:29:39Z",
+              "workflow_run": {
+                "id": 40013932698,
+                "repository_id": 1062027034,
+                "head_repository_id": 1062027034,
+                "head_branch": "codex/stage41b-linux-startup-identity",
+                "head_sha": "782816540373d7b31f426dab645ad115320d1234"
+              }
+            },
+            {
+              "id": 12531354520,
+              "node_id": "MDg6QXJ0aWZhY3QxMjUzMTM1NDUyMA==",
+              "name": "atomic-root-proof-combined-coverage",
+              "size_in_bytes": 39417,
+              "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12531354520",
+              "archive_download_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12531354520/zip",
+              "expired": false,
+              "digest": "sha256:0d0aaed5420ad0e23b27a3042a793d4f0897cffaf2be77aa33ca298acee7d90a",
+              "created_at": "2026-10-23T21:17:20Z",
+              "updated_at": "2026-10-23T21:17:20Z",
+              "expires_at": "2026-10-30T21:17:19Z",
+              "workflow_run": {
+                "id": 40013932698,
+                "repository_id": 1062027034,
+                "head_repository_id": 1062027034,
+                "head_branch": "codex/stage41b-linux-startup-identity",
+                "head_sha": "782816540373d7b31f426dab645ad115320d1234"
+              }
+            },
+            {
+              "id": 12531350649,
+              "node_id": "MDg6QXJ0aWZhY3QxMjUzMTM1MDY0OQ==",
+              "name": "atomic-root-proof-commit-coverage",
+              "size_in_bytes": 36711,
+              "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12531350649",
+              "archive_download_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12531350649/zip",
+              "expired": false,
+              "digest": "sha256:85cbdeabfd51baa27ca28ce8a56ea8fec6a90cfcbd0d1b8a97cb97c81cbd3cb9",
+              "created_at": "2026-10-23T20:48:27Z",
+              "updated_at": "2026-10-23T20:48:27Z",
+              "expires_at": "2026-10-30T20:48:26Z",
+              "workflow_run": {
+                "id": 40013932698,
+                "repository_id": 1062027034,
+                "head_repository_id": 1062027034,
+                "head_branch": "codex/stage41b-linux-startup-identity",
+                "head_sha": "782816540373d7b31f426dab645ad115320d1234"
+              }
+            },
+            {
+              "id": 12527518256,
+              "node_id": "MDg6QXJ0aWZhY3QxMjUyNzUxODI1Ng==",
+              "name": "quality-security-reports",
+              "size_in_bytes": 14188,
+              "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12527518256",
+              "archive_download_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12527518256/zip",
+              "expired": false,
+              "digest": "sha256:f8774eae00e92ba635c5d5dca56a1b2be5ae223ea2b29c1ac90b2b06a98ab8e4",
+              "created_at": "2026-10-23T19:50:40Z",
+              "updated_at": "2026-10-23T19:50:40Z",
+              "expires_at": "2026-10-30T19:50:40Z",
+              "workflow_run": {
+                "id": 40013932698,
+                "repository_id": 1062027034,
+                "head_repository_id": 1062027034,
+                "head_branch": "codex/stage41b-linux-startup-identity",
+                "head_sha": "782816540373d7b31f426dab645ad115320d1234"
+              }
+            }
+          ]
+        },
+        {
+          "id": 40013932678,
+          "name": "Style preflight",
+          "event": "pull_request",
+          "conclusion": "success",
+          "path": ".github/workflows/style-preflight.yml",
+          "run_attempt": 1,
+          "created_at": "2026-10-23T19:45:35Z",
+          "html_url": "https://github.com/Dudzian/Dudzian/actions/runs/40013932678",
+          "head_sha": "782816540373d7b31f426dab645ad115320d1234",
+          "artifact_query_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/runs/40013932678/artifacts?per_page=100&page=1",
+          "artifacts": []
+        },
+        {
+          "id": 40013932768,
+          "name": "Marketplace Catalog",
+          "event": "pull_request",
+          "conclusion": "success",
+          "path": ".github/workflows/marketplace-catalog.yml",
+          "run_attempt": 1,
+          "created_at": "2026-10-23T19:45:35Z",
+          "html_url": "https://github.com/Dudzian/Dudzian/actions/runs/40013932768",
+          "head_sha": "782816540373d7b31f426dab645ad115320d1234",
+          "artifact_query_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/runs/40013932768/artifacts?per_page=100&page=1",
+          "artifacts": [
+            {
+              "id": 12528290505,
+              "node_id": "MDg6QXJ0aWZhY3QxMjUyODI5MDUwNQ==",
+              "name": "marketplace-catalog-latest",
+              "size_in_bytes": 12852,
+              "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12528290505",
+              "archive_download_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12528290505/zip",
+              "expired": false,
+              "digest": "sha256:cd373d21e1111600db3cd5a95c65ce6ead3b7ec8bc59db6554f078aa7f8c106d",
+              "created_at": "2026-10-23T19:47:37Z",
+              "updated_at": "2026-10-23T19:47:37Z",
+              "expires_at": "2027-01-21T19:45:35Z",
+              "workflow_run": {
+                "id": 40013932768,
+                "repository_id": 1062027034,
+                "head_repository_id": 1062027034,
+                "head_branch": "codex/stage41b-linux-startup-identity",
+                "head_sha": "782816540373d7b31f426dab645ad115320d1234"
+              }
+            }
+          ]
+        },
+        {
+          "id": 40013932640,
+          "name": "CodeQL",
+          "event": "pull_request",
+          "conclusion": "success",
+          "path": ".github/workflows/codeql.yml",
+          "run_attempt": 1,
+          "created_at": "2026-10-23T19:45:35Z",
+          "html_url": "https://github.com/Dudzian/Dudzian/actions/runs/40013932640",
+          "head_sha": "782816540373d7b31f426dab645ad115320d1234",
+          "artifact_query_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/runs/40013932640/artifacts?per_page=100&page=1",
+          "artifacts": []
+        },
+        {
+          "id": 40013932643,
+          "name": "Platform deployment tracks",
+          "event": "pull_request",
+          "conclusion": "failure",
+          "path": ".github/workflows/platform-deployment.yml",
+          "run_attempt": 1,
+          "created_at": "2026-10-23T19:45:35Z",
+          "html_url": "https://github.com/Dudzian/Dudzian/actions/runs/40013932643",
+          "head_sha": "782816540373d7b31f426dab645ad115320d1234",
+          "artifact_query_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/runs/40013932643/artifacts?per_page=100&page=1",
+          "artifacts": [
+            {
+              "id": 12530168632,
+              "node_id": "MDg6QXJ0aWZhY3QxMjUzMDE2ODYzMg==",
+              "name": "windows-clean-install-diagnostics",
+              "size_in_bytes": 8507103,
+              "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12530168632",
+              "archive_download_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12530168632/zip",
+              "expired": false,
+              "digest": "sha256:8c0faba5fd1201495930622a14a20c26233e975a8096b8a5990eae18bfff922f",
+              "created_at": "2026-10-23T20:39:12Z",
+              "updated_at": "2026-10-23T20:39:12Z",
+              "expires_at": "2027-01-21T19:45:35Z",
+              "workflow_run": {
+                "id": 40013932643,
+                "repository_id": 1062027034,
+                "head_repository_id": 1062027034,
+                "head_branch": "codex/stage41b-linux-startup-identity",
+                "head_sha": "782816540373d7b31f426dab645ad115320d1234"
+              }
+            },
+            {
+              "id": 12530148144,
+              "node_id": "MDg6QXJ0aWZhY3QxMjUzMDE0ODE0NA==",
+              "name": "windows-stage9-qualified-msi",
+              "size_in_bytes": 820200857,
+              "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12530148144",
+              "archive_download_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12530148144/zip",
+              "expired": false,
+              "digest": "sha256:1346ace30967a53a1daf7a9aa77fdb6fc93e3e2994f161f07dfdd55f53575711",
+              "created_at": "2026-10-23T20:39:40Z",
+              "updated_at": "2026-10-23T20:39:40Z",
+              "expires_at": "2027-01-21T19:45:35Z",
+              "workflow_run": {
+                "id": 40013932643,
+                "repository_id": 1062027034,
+                "head_repository_id": 1062027034,
+                "head_branch": "codex/stage41b-linux-startup-identity",
+                "head_sha": "782816540373d7b31f426dab645ad115320d1234"
+              }
+            },
+            {
+              "id": 12529564178,
+              "node_id": "MDg6QXJ0aWZhY3QxMjUyOTU2NDE3OA==",
+              "name": "windows-clean-install-evidence",
+              "size_in_bytes": 8507103,
+              "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12529564178",
+              "archive_download_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12529564178/zip",
+              "expired": false,
+              "digest": "sha256:4cb6cbdf207857537aaec991a83a72fdbdc9b9e2e71ed43f0a84f36302f89e26",
+              "created_at": "2026-10-23T20:39:14Z",
+              "updated_at": "2026-10-23T20:39:14Z",
+              "expires_at": "2027-01-21T19:45:35Z",
+              "workflow_run": {
+                "id": 40013932643,
+                "repository_id": 1062027034,
+                "head_repository_id": 1062027034,
+                "head_branch": "codex/stage41b-linux-startup-identity",
+                "head_sha": "782816540373d7b31f426dab645ad115320d1234"
+              }
+            },
+            {
+              "id": 12527791515,
+              "node_id": "MDg6QXJ0aWZhY3QxMjUyNzc5MTUxNQ==",
+              "name": "core-evidence-macOS",
+              "size_in_bytes": 372,
+              "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12527791515",
+              "archive_download_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12527791515/zip",
+              "expired": false,
+              "digest": "sha256:cb3a83c0cfca1051ce0cc46e71bba23392c306c84a0b91121ae91747de09ba7f",
+              "created_at": "2026-10-23T19:47:56Z",
+              "updated_at": "2026-10-23T19:47:56Z",
+              "expires_at": "2027-01-21T19:45:35Z",
+              "workflow_run": {
+                "id": 40013932643,
+                "repository_id": 1062027034,
+                "head_repository_id": 1062027034,
+                "head_branch": "codex/stage41b-linux-startup-identity",
+                "head_sha": "782816540373d7b31f426dab645ad115320d1234"
+              }
+            },
+            {
+              "id": 12527636990,
+              "node_id": "MDg6QXJ0aWZhY3QxMjUyNzYzNjk5MA==",
+              "name": "core-evidence-Linux",
+              "size_in_bytes": 376,
+              "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12527636990",
+              "archive_download_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12527636990/zip",
+              "expired": false,
+              "digest": "sha256:d17ca77c4d44cc0376c001064ddb5b7b1fe7f8abd83ed1c0c3c983c08501e690",
+              "created_at": "2026-10-23T19:48:18Z",
+              "updated_at": "2026-10-23T19:48:18Z",
+              "expires_at": "2027-01-21T19:45:35Z",
+              "workflow_run": {
+                "id": 40013932643,
+                "repository_id": 1062027034,
+                "head_repository_id": 1062027034,
+                "head_branch": "codex/stage41b-linux-startup-identity",
+                "head_sha": "782816540373d7b31f426dab645ad115320d1234"
+              }
+            },
+            {
+              "id": 12527603000,
+              "node_id": "MDg6QXJ0aWZhY3QxMjUyNzYwMzAwMA==",
+              "name": "windows-scm-evidence",
+              "size_in_bytes": 1076,
+              "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12527603000",
+              "archive_download_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12527603000/zip",
+              "expired": false,
+              "digest": "sha256:46ca5afa9050b9adb3d713992ceb92abcce021fcba274fad23153536cee9ac40",
+              "created_at": "2026-10-23T19:51:45Z",
+              "updated_at": "2026-10-23T19:51:45Z",
+              "expires_at": "2027-01-21T19:45:35Z",
+              "workflow_run": {
+                "id": 40013932643,
+                "repository_id": 1062027034,
+                "head_repository_id": 1062027034,
+                "head_branch": "codex/stage41b-linux-startup-identity",
+                "head_sha": "782816540373d7b31f426dab645ad115320d1234"
+              }
+            },
+            {
+              "id": 12527372739,
+              "node_id": "MDg6QXJ0aWZhY3QxMjUyNzM3MjczOQ==",
+              "name": "core-evidence-Windows",
+              "size_in_bytes": 383,
+              "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12527372739",
+              "archive_download_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12527372739/zip",
+              "expired": false,
+              "digest": "sha256:a2ded76455eb24cd479229c58b3aa89b0d72bd0a6b6b1da5d676a38f3a12488b",
+              "created_at": "2026-10-23T19:49:22Z",
+              "updated_at": "2026-10-23T19:49:22Z",
+              "expires_at": "2027-01-21T19:45:35Z",
+              "workflow_run": {
+                "id": 40013932643,
+                "repository_id": 1062027034,
+                "head_repository_id": 1062027034,
+                "head_branch": "codex/stage41b-linux-startup-identity",
+                "head_sha": "782816540373d7b31f426dab645ad115320d1234"
+              }
+            }
+          ]
+        },
+        {
+          "id": 40013932681,
+          "name": "CI (pull_request: 3203/merge)",
+          "event": "pull_request",
+          "conclusion": "success",
+          "path": ".github/workflows/ci.yml",
+          "run_attempt": 1,
+          "created_at": "2026-10-23T19:45:35Z",
+          "html_url": "https://github.com/Dudzian/Dudzian/actions/runs/40013932681",
+          "head_sha": "782816540373d7b31f426dab645ad115320d1234",
+          "artifact_query_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/runs/40013932681/artifacts?per_page=100&page=1",
+          "artifacts": [
+            {
+              "id": 12531730829,
+              "node_id": "MDg6QXJ0aWZhY3QxMjUzMTczMDgyOQ==",
+              "name": "loopback-e2e-logs",
+              "size_in_bytes": 11768,
+              "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12531730829",
+              "archive_download_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12531730829/zip",
+              "expired": false,
+              "digest": "sha256:5b3e6e867ab0146d8b8a7e17ea6f46306e714191774d6f2f2fef52eb2ceec6cf",
+              "created_at": "2026-10-23T20:55:34Z",
+              "updated_at": "2026-10-23T20:55:34Z",
+              "expires_at": "2026-10-28T20:55:33Z",
+              "workflow_run": {
+                "id": 40013932681,
+                "repository_id": 1062027034,
+                "head_repository_id": 1062027034,
+                "head_branch": "codex/stage41b-linux-startup-identity",
+                "head_sha": "782816540373d7b31f426dab645ad115320d1234"
+              }
+            },
+            {
+              "id": 12530773944,
+              "node_id": "MDg6QXJ0aWZhY3QxMjUzMDc3Mzk0NA==",
+              "name": "marketing-parity-report",
+              "size_in_bytes": 717,
+              "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12530773944",
+              "archive_download_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12530773944/zip",
+              "expired": false,
+              "digest": "sha256:2337f379726e3e202c0bb29f95b967171f59113c53bef3d1172ca0d7f8adff5d",
+              "created_at": "2026-10-23T20:58:28Z",
+              "updated_at": "2026-10-23T20:58:28Z",
+              "expires_at": "2027-01-21T19:45:35Z",
+              "workflow_run": {
+                "id": 40013932681,
+                "repository_id": 1062027034,
+                "head_repository_id": 1062027034,
+                "head_branch": "codex/stage41b-linux-startup-identity",
+                "head_sha": "782816540373d7b31f426dab645ad115320d1234"
+              }
+            },
+            {
+              "id": 12530194625,
+              "node_id": "MDg6QXJ0aWZhY3QxMjUzMDE5NDYyNQ==",
+              "name": "ui-native-test-artifacts",
+              "size_in_bytes": 13826,
+              "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12530194625",
+              "archive_download_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12530194625/zip",
+              "expired": false,
+              "digest": "sha256:9e063bd01dff19a48a7c4260a13c6b0522e800b9b98f15b76a5ea5ef63c70d52",
+              "created_at": "2026-10-23T20:50:20Z",
+              "updated_at": "2026-10-23T20:50:20Z",
+              "expires_at": "2026-10-28T20:50:19Z",
+              "workflow_run": {
+                "id": 40013932681,
+                "repository_id": 1062027034,
+                "head_repository_id": 1062027034,
+                "head_branch": "codex/stage41b-linux-startup-identity",
+                "head_sha": "782816540373d7b31f426dab645ad115320d1234"
+              }
+            },
+            {
+              "id": 12529471748,
+              "node_id": "MDg6QXJ0aWZhY3QxMjUyOTQ3MTc0OA==",
+              "name": "licensing-hwid-tolerance",
+              "size_in_bytes": 617,
+              "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12529471748",
+              "archive_download_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12529471748/zip",
+              "expired": false,
+              "digest": "sha256:3a99ee73e4b513bbaf7c07d175eacdf2bb2bae9fdcb35f8139eea7aa9b05cbb4",
+              "created_at": "2026-10-23T20:20:40Z",
+              "updated_at": "2026-10-23T20:20:40Z",
+              "expires_at": "2027-01-21T19:45:35Z",
+              "workflow_run": {
+                "id": 40013932681,
+                "repository_id": 1062027034,
+                "head_repository_id": 1062027034,
+                "head_branch": "codex/stage41b-linux-startup-identity",
+                "head_sha": "782816540373d7b31f426dab645ad115320d1234"
+              }
+            },
+            {
+              "id": 12528630089,
+              "node_id": "MDg6QXJ0aWZhY3QxMjUyODYzMDA4OQ==",
+              "name": "wheelhouse-Windows-py3.11",
+              "size_in_bytes": 372097407,
+              "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12528630089",
+              "archive_download_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12528630089/zip",
+              "expired": false,
+              "digest": "sha256:c3f3751e1d72b1f79b1edf32e514b45eaff0a51f397d1e236b28f91f556821b0",
+              "created_at": "2026-10-23T19:49:47Z",
+              "updated_at": "2026-10-23T19:49:47Z",
+              "expires_at": "2026-10-30T19:49:39Z",
+              "workflow_run": {
+                "id": 40013932681,
+                "repository_id": 1062027034,
+                "head_repository_id": 1062027034,
+                "head_branch": "codex/stage41b-linux-startup-identity",
+                "head_sha": "782816540373d7b31f426dab645ad115320d1234"
+              }
+            },
+            {
+              "id": 12528415815,
+              "node_id": "MDg6QXJ0aWZhY3QxMjUyODQxNTgxNQ==",
+              "name": "sbom-cyclonedx",
+              "size_in_bytes": 14100,
+              "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12528415815",
+              "archive_download_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12528415815/zip",
+              "expired": false,
+              "digest": "sha256:a08a4a3a23dd85b9bba4879b78529d9c43773e8efeb157aa7c4c2fc5585ed525",
+              "created_at": "2026-10-23T19:50:41Z",
+              "updated_at": "2026-10-23T19:50:41Z",
+              "expires_at": "2027-01-21T19:45:35Z",
+              "workflow_run": {
+                "id": 40013932681,
+                "repository_id": 1062027034,
+                "head_repository_id": 1062027034,
+                "head_branch": "codex/stage41b-linux-startup-identity",
+                "head_sha": "782816540373d7b31f426dab645ad115320d1234"
+              }
+            },
+            {
+              "id": 12528320802,
+              "node_id": "MDg6QXJ0aWZhY3QxMjUyODMyMDgwMg==",
+              "name": "marketplace-catalog-pytest-results",
+              "size_in_bytes": 573,
+              "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12528320802",
+              "archive_download_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12528320802/zip",
+              "expired": false,
+              "digest": "sha256:3936f16c9bbcd8a705c110eeef55edc1b0b8212ad6f8a86d112fdf5f5950e921",
+              "created_at": "2026-10-23T19:50:58Z",
+              "updated_at": "2026-10-23T19:50:58Z",
+              "expires_at": "2027-01-21T19:45:35Z",
+              "workflow_run": {
+                "id": 40013932681,
+                "repository_id": 1062027034,
+                "head_repository_id": 1062027034,
+                "head_branch": "codex/stage41b-linux-startup-identity",
+                "head_sha": "782816540373d7b31f426dab645ad115320d1234"
+              }
+            },
+            {
+              "id": 12527233020,
+              "node_id": "MDg6QXJ0aWZhY3QxMjUyNzIzMzAyMA==",
+              "name": "windows-native-security-40013932681-1",
+              "size_in_bytes": 10740,
+              "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12527233020",
+              "archive_download_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12527233020/zip",
+              "expired": false,
+              "digest": "sha256:18437a3b320cf83684e2a5c36ade11caa6f44debd37836e35b9d1a4c2d415b99",
+              "created_at": "2026-10-23T19:48:15Z",
+              "updated_at": "2026-10-23T19:48:15Z",
+              "expires_at": "2026-10-30T19:48:15Z",
+              "workflow_run": {
+                "id": 40013932681,
+                "repository_id": 1062027034,
+                "head_repository_id": 1062027034,
+                "head_branch": "codex/stage41b-linux-startup-identity",
+                "head_sha": "782816540373d7b31f426dab645ad115320d1234"
+              }
+            },
+            {
+              "id": 12527158910,
+              "node_id": "MDg6QXJ0aWZhY3QxMjUyNzE1ODkxMA==",
+              "name": "wheelhouse-macOS-py3.11",
+              "size_in_bytes": 575034810,
+              "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12527158910",
+              "archive_download_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12527158910/zip",
+              "expired": false,
+              "digest": "sha256:741d68a6bc6f2a4bacb2e5a670b85ab1842be49f0dac8bf81cb50bf7fa438781",
+              "created_at": "2026-10-23T19:50:24Z",
+              "updated_at": "2026-10-23T19:50:24Z",
+              "expires_at": "2026-10-30T19:50:00Z",
+              "workflow_run": {
+                "id": 40013932681,
+                "repository_id": 1062027034,
+                "head_repository_id": 1062027034,
+                "head_branch": "codex/stage41b-linux-startup-identity",
+                "head_sha": "782816540373d7b31f426dab645ad115320d1234"
+              }
+            },
+            {
+              "id": 12526929653,
+              "node_id": "MDg6QXJ0aWZhY3QxMjUyNjkyOTY1Mw==",
+              "name": "wheelhouse-Linux-py3.11",
+              "size_in_bytes": 427764074,
+              "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12526929653",
+              "archive_download_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12526929653/zip",
+              "expired": false,
+              "digest": "sha256:83667b628eda03048b303dd1f33c908fc9f837a1a14fc0e137516afb671a2caa",
+              "created_at": "2026-10-23T19:51:22Z",
+              "updated_at": "2026-10-23T19:51:22Z",
+              "expires_at": "2026-10-30T19:51:08Z",
+              "workflow_run": {
+                "id": 40013932681,
+                "repository_id": 1062027034,
+                "head_repository_id": 1062027034,
+                "head_branch": "codex/stage41b-linux-startup-identity",
+                "head_sha": "782816540373d7b31f426dab645ad115320d1234"
+              }
+            },
+            {
+              "id": 12526854205,
+              "node_id": "MDg6QXJ0aWZhY3QxMjUyNjg1NDIwNQ==",
+              "name": "pip-audit-report",
+              "size_in_bytes": 1307,
+              "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12526854205",
+              "archive_download_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12526854205/zip",
+              "expired": false,
+              "digest": "sha256:1c6f1402f3a42aaa90b8e5dffe8d55bbaad0c45939789d49415c348a46eee1a6",
+              "created_at": "2026-10-23T19:48:25Z",
+              "updated_at": "2026-10-23T19:48:25Z",
+              "expires_at": "2026-10-30T19:48:24Z",
+              "workflow_run": {
+                "id": 40013932681,
+                "repository_id": 1062027034,
+                "head_repository_id": 1062027034,
+                "head_branch": "codex/stage41b-linux-startup-identity",
+                "head_sha": "782816540373d7b31f426dab645ad115320d1234"
+              }
+            }
+          ]
+        },
+        {
+          "id": 40013926497,
+          "name": "CI (push: codex/stage41b-linux-startup-identity)",
+          "event": "push",
+          "conclusion": "success",
+          "path": ".github/workflows/ci.yml",
+          "run_attempt": 1,
+          "created_at": "2026-10-23T19:45:32Z",
+          "html_url": "https://github.com/Dudzian/Dudzian/actions/runs/40013926497",
+          "head_sha": "782816540373d7b31f426dab645ad115320d1234",
+          "artifact_query_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/runs/40013926497/artifacts?per_page=100&page=1",
+          "artifacts": [
+            {
+              "id": 12531345094,
+              "node_id": "MDg6QXJ0aWZhY3QxMjUzMTM0NTA5NA==",
+              "name": "ui-native-test-artifacts",
+              "size_in_bytes": 13828,
+              "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12531345094",
+              "archive_download_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12531345094/zip",
+              "expired": false,
+              "digest": "sha256:e0f458c18ef40478996244c223e1e755ae9998bc2062bc231796c5307667e469",
+              "created_at": "2026-10-23T20:44:39Z",
+              "updated_at": "2026-10-23T20:44:39Z",
+              "expires_at": "2026-10-28T20:44:38Z",
+              "workflow_run": {
+                "id": 40013926497,
+                "repository_id": 1062027034,
+                "head_repository_id": 1062027034,
+                "head_branch": "codex/stage41b-linux-startup-identity",
+                "head_sha": "782816540373d7b31f426dab645ad115320d1234"
+              }
+            },
+            {
+              "id": 12531097730,
+              "node_id": "MDg6QXJ0aWZhY3QxMjUzMTA5NzczMA==",
+              "name": "marketing-parity-report",
+              "size_in_bytes": 717,
+              "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12531097730",
+              "archive_download_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12531097730/zip",
+              "expired": false,
+              "digest": "sha256:c7fcd76603702026d272c9f0e43b56816532de84d5ad53492a7afc311d76e8ab",
+              "created_at": "2026-10-23T20:59:22Z",
+              "updated_at": "2026-10-23T20:59:22Z",
+              "expires_at": "2027-01-21T19:45:32Z",
+              "workflow_run": {
+                "id": 40013926497,
+                "repository_id": 1062027034,
+                "head_repository_id": 1062027034,
+                "head_branch": "codex/stage41b-linux-startup-identity",
+                "head_sha": "782816540373d7b31f426dab645ad115320d1234"
+              }
+            },
+            {
+              "id": 12530434720,
+              "node_id": "MDg6QXJ0aWZhY3QxMjUzMDQzNDcyMA==",
+              "name": "loopback-e2e-logs",
+              "size_in_bytes": 11751,
+              "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12530434720",
+              "archive_download_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12530434720/zip",
+              "expired": false,
+              "digest": "sha256:6d330f264b8fcdf329cf00d069285f6e3ba6def2522dd28c282e5afe807e46b6",
+              "created_at": "2026-10-23T20:55:08Z",
+              "updated_at": "2026-10-23T20:55:08Z",
+              "expires_at": "2026-10-28T20:55:07Z",
+              "workflow_run": {
+                "id": 40013926497,
+                "repository_id": 1062027034,
+                "head_repository_id": 1062027034,
+                "head_branch": "codex/stage41b-linux-startup-identity",
+                "head_sha": "782816540373d7b31f426dab645ad115320d1234"
+              }
+            },
+            {
+              "id": 12528495233,
+              "node_id": "MDg6QXJ0aWZhY3QxMjUyODQ5NTIzMw==",
+              "name": "wheelhouse-macOS-py3.11",
+              "size_in_bytes": 575034810,
+              "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12528495233",
+              "archive_download_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12528495233/zip",
+              "expired": false,
+              "digest": "sha256:18fefcfdccdb577106cf25da45a9b64b1cd57ef166d50e0141ec450c1775f774",
+              "created_at": "2026-10-23T19:50:28Z",
+              "updated_at": "2026-10-23T19:50:28Z",
+              "expires_at": "2026-10-30T19:50:01Z",
+              "workflow_run": {
+                "id": 40013926497,
+                "repository_id": 1062027034,
+                "head_repository_id": 1062027034,
+                "head_branch": "codex/stage41b-linux-startup-identity",
+                "head_sha": "782816540373d7b31f426dab645ad115320d1234"
+              }
+            },
+            {
+              "id": 12528066877,
+              "node_id": "MDg6QXJ0aWZhY3QxMjUyODA2Njg3Nw==",
+              "name": "licensing-hwid-tolerance",
+              "size_in_bytes": 616,
+              "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12528066877",
+              "archive_download_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12528066877/zip",
+              "expired": false,
+              "digest": "sha256:60e3afa4919f9d002a6378a3f1112db4c0ae76876c6821f72d47a586cd84236a",
+              "created_at": "2026-10-23T19:55:59Z",
+              "updated_at": "2026-10-23T19:55:59Z",
+              "expires_at": "2027-01-21T19:45:32Z",
+              "workflow_run": {
+                "id": 40013926497,
+                "repository_id": 1062027034,
+                "head_repository_id": 1062027034,
+                "head_branch": "codex/stage41b-linux-startup-identity",
+                "head_sha": "782816540373d7b31f426dab645ad115320d1234"
+              }
+            },
+            {
+              "id": 12527781826,
+              "node_id": "MDg6QXJ0aWZhY3QxMjUyNzc4MTgyNg==",
+              "name": "wheelhouse-Linux-py3.11",
+              "size_in_bytes": 427764074,
+              "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12527781826",
+              "archive_download_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12527781826/zip",
+              "expired": false,
+              "digest": "sha256:d25c7d12cdda343f23e6644662fa2b0e0105fa6c8a9e6d2f07c46f131907c55c",
+              "created_at": "2026-10-23T19:51:03Z",
+              "updated_at": "2026-10-23T19:51:03Z",
+              "expires_at": "2026-10-30T19:50:48Z",
+              "workflow_run": {
+                "id": 40013926497,
+                "repository_id": 1062027034,
+                "head_repository_id": 1062027034,
+                "head_branch": "codex/stage41b-linux-startup-identity",
+                "head_sha": "782816540373d7b31f426dab645ad115320d1234"
+              }
+            },
+            {
+              "id": 12527527527,
+              "node_id": "MDg6QXJ0aWZhY3QxMjUyNzUyNzUyNw==",
+              "name": "wheelhouse-Windows-py3.11",
+              "size_in_bytes": 372097407,
+              "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12527527527",
+              "archive_download_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12527527527/zip",
+              "expired": false,
+              "digest": "sha256:a2b00dfd1966bc580974b7a50155f07304a0a99e240402462413da8f23711a26",
+              "created_at": "2026-10-23T19:51:31Z",
+              "updated_at": "2026-10-23T19:51:31Z",
+              "expires_at": "2026-10-30T19:51:19Z",
+              "workflow_run": {
+                "id": 40013926497,
+                "repository_id": 1062027034,
+                "head_repository_id": 1062027034,
+                "head_branch": "codex/stage41b-linux-startup-identity",
+                "head_sha": "782816540373d7b31f426dab645ad115320d1234"
+              }
+            },
+            {
+              "id": 12527462242,
+              "node_id": "MDg6QXJ0aWZhY3QxMjUyNzQ2MjI0Mg==",
+              "name": "marketplace-catalog-pytest-results",
+              "size_in_bytes": 577,
+              "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12527462242",
+              "archive_download_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12527462242/zip",
+              "expired": false,
+              "digest": "sha256:6e59767ce88b8f1a461a1e853a67d2ca676d41d26e47a592c0c2cb5ac209cfc1",
+              "created_at": "2026-10-23T19:47:54Z",
+              "updated_at": "2026-10-23T19:47:54Z",
+              "expires_at": "2027-01-21T19:45:32Z",
+              "workflow_run": {
+                "id": 40013926497,
+                "repository_id": 1062027034,
+                "head_repository_id": 1062027034,
+                "head_branch": "codex/stage41b-linux-startup-identity",
+                "head_sha": "782816540373d7b31f426dab645ad115320d1234"
+              }
+            },
+            {
+              "id": 12527333738,
+              "node_id": "MDg6QXJ0aWZhY3QxMjUyNzMzMzczOA==",
+              "name": "sbom-cyclonedx",
+              "size_in_bytes": 14100,
+              "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12527333738",
+              "archive_download_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12527333738/zip",
+              "expired": false,
+              "digest": "sha256:ca36bc0f540641665893670ffe4b5d3cbcade73aa4b8a6e79f43eada339f70a6",
+              "created_at": "2026-10-23T19:49:08Z",
+              "updated_at": "2026-10-23T19:49:08Z",
+              "expires_at": "2027-01-21T19:45:32Z",
+              "workflow_run": {
+                "id": 40013926497,
+                "repository_id": 1062027034,
+                "head_repository_id": 1062027034,
+                "head_branch": "codex/stage41b-linux-startup-identity",
+                "head_sha": "782816540373d7b31f426dab645ad115320d1234"
+              }
+            },
+            {
+              "id": 12527128555,
+              "node_id": "MDg6QXJ0aWZhY3QxMjUyNzEyODU1NQ==",
+              "name": "pip-audit-report",
+              "size_in_bytes": 1307,
+              "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12527128555",
+              "archive_download_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12527128555/zip",
+              "expired": false,
+              "digest": "sha256:d05f7bafb0c80455cf58a1021d4e3550e7af2bfa7b49ef8e1eb6be900926d487",
+              "created_at": "2026-10-23T19:48:55Z",
+              "updated_at": "2026-10-23T19:48:55Z",
+              "expires_at": "2026-10-30T19:48:54Z",
+              "workflow_run": {
+                "id": 40013926497,
+                "repository_id": 1062027034,
+                "head_repository_id": 1062027034,
+                "head_branch": "codex/stage41b-linux-startup-identity",
+                "head_sha": "782816540373d7b31f426dab645ad115320d1234"
+              }
+            },
+            {
+              "id": 12526924275,
+              "node_id": "MDg6QXJ0aWZhY3QxMjUyNjkyNDI3NQ==",
+              "name": "windows-native-security-40013926497-1",
+              "size_in_bytes": 10811,
+              "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12526924275",
+              "archive_download_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12526924275/zip",
+              "expired": false,
+              "digest": "sha256:4f3a2d5a33e8b90233dd5c78712f75bb0ff8dbf21b28b46f044da78062ca2798",
+              "created_at": "2026-10-23T19:49:35Z",
+              "updated_at": "2026-10-23T19:49:35Z",
+              "expires_at": "2026-10-30T19:49:34Z",
+              "workflow_run": {
+                "id": 40013926497,
+                "repository_id": 1062027034,
+                "head_repository_id": 1062027034,
+                "head_branch": "codex/stage41b-linux-startup-identity",
+                "head_sha": "782816540373d7b31f426dab645ad115320d1234"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "sha": "26e17e7c23ea6cc1b265d57bfda1a1e6589d9e3f",
+      "run_query_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/runs?head_sha=26e17e7c23ea6cc1b265d57bfda1a1e6589d9e3f&per_page=100&page=1",
+      "total_count": 7,
+      "runs": [
+        {
+          "id": 39931277958,
+          "name": "Quality and Security",
+          "event": "pull_request",
+          "conclusion": "success",
+          "path": ".github/workflows/quality-security.yml",
+          "run_attempt": 1,
+          "created_at": "2026-10-23T09:21:33Z",
+          "html_url": "https://github.com/Dudzian/Dudzian/actions/runs/39931277958",
+          "head_sha": "26e17e7c23ea6cc1b265d57bfda1a1e6589d9e3f",
+          "artifact_query_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/runs/39931277958/artifacts?per_page=100&page=1",
+          "artifacts": [
+            {
+              "id": 12497761501,
+              "node_id": "MDg6QXJ0aWZhY3QxMjQ5Nzc2MTUwMQ==",
+              "name": "semantic-issuer-preflight-coverage",
+              "size_in_bytes": 5305,
+              "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12497761501",
+              "archive_download_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12497761501/zip",
+              "expired": false,
+              "digest": "sha256:d9645957f8f0f24b5e69db5e8f6f1d4080593f6087d5a1c99b36509f7956c6a4",
+              "created_at": "2026-10-23T11:13:42Z",
+              "updated_at": "2026-10-23T11:13:42Z",
+              "expires_at": "2026-10-30T11:13:41Z",
+              "workflow_run": {
+                "id": 39931277958,
+                "repository_id": 1062027034,
+                "head_repository_id": 1062027034,
+                "head_branch": "codex/stage41b-physical-signer-isolation",
+                "head_sha": "26e17e7c23ea6cc1b265d57bfda1a1e6589d9e3f"
+              }
+            },
+            {
+              "id": 12496960605,
+              "node_id": "MDg6QXJ0aWZhY3QxMjQ5Njk2MDYwNQ==",
+              "name": "atomic-root-proof-combined-coverage",
+              "size_in_bytes": 38921,
+              "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12496960605",
+              "archive_download_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12496960605/zip",
+              "expired": false,
+              "digest": "sha256:7563da39a4173beced7207cb0759d5c95c927d50d7ec45ae3e2770ea4ca19434",
+              "created_at": "2026-10-23T10:55:15Z",
+              "updated_at": "2026-10-23T10:55:15Z",
+              "expires_at": "2026-10-30T10:55:14Z",
+              "workflow_run": {
+                "id": 39931277958,
+                "repository_id": 1062027034,
+                "head_repository_id": 1062027034,
+                "head_branch": "codex/stage41b-physical-signer-isolation",
+                "head_sha": "26e17e7c23ea6cc1b265d57bfda1a1e6589d9e3f"
+              }
+            },
+            {
+              "id": 12495968387,
+              "node_id": "MDg6QXJ0aWZhY3QxMjQ5NTk2ODM4Nw==",
+              "name": "history-successor-reproposal-results",
+              "size_in_bytes": 23728,
+              "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12495968387",
+              "archive_download_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12495968387/zip",
+              "expired": false,
+              "digest": "sha256:df4685d3a21e48867b647fec5700b2f885a9a681dc2edfb59c26675a5023c677",
+              "created_at": "2026-10-23T10:54:18Z",
+              "updated_at": "2026-10-23T10:54:18Z",
+              "expires_at": "2026-10-30T10:54:17Z",
+              "workflow_run": {
+                "id": 39931277958,
+                "repository_id": 1062027034,
+                "head_repository_id": 1062027034,
+                "head_branch": "codex/stage41b-physical-signer-isolation",
+                "head_sha": "26e17e7c23ea6cc1b265d57bfda1a1e6589d9e3f"
+              }
+            },
+            {
+              "id": 12495414216,
+              "node_id": "MDg6QXJ0aWZhY3QxMjQ5NTQxNDIxNg==",
+              "name": "atomic-root-proof-commit-coverage",
+              "size_in_bytes": 36221,
+              "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12495414216",
+              "archive_download_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12495414216/zip",
+              "expired": false,
+              "digest": "sha256:25b55b104572727752062577166843ed0a510a5e882d0ce1e951ac647865720b",
+              "created_at": "2026-10-23T10:43:31Z",
+              "updated_at": "2026-10-23T10:43:31Z",
+              "expires_at": "2026-10-30T10:43:30Z",
+              "workflow_run": {
+                "id": 39931277958,
+                "repository_id": 1062027034,
+                "head_repository_id": 1062027034,
+                "head_branch": "codex/stage41b-physical-signer-isolation",
+                "head_sha": "26e17e7c23ea6cc1b265d57bfda1a1e6589d9e3f"
+              }
+            },
+            {
+              "id": 12495107358,
+              "node_id": "MDg6QXJ0aWZhY3QxMjQ5NTEwNzM1OA==",
+              "name": "quality-ratchet-coverage",
+              "size_in_bytes": 67734,
+              "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12495107358",
+              "archive_download_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12495107358/zip",
+              "expired": false,
+              "digest": "sha256:aa0cc10faa7fbbfd0da880ea502dce83fc36ba238c6f27ad49029807b5d5c487",
+              "created_at": "2026-10-23T10:26:31Z",
+              "updated_at": "2026-10-23T10:26:31Z",
+              "expires_at": "2026-10-30T10:26:31Z",
+              "workflow_run": {
+                "id": 39931277958,
+                "repository_id": 1062027034,
+                "head_repository_id": 1062027034,
+                "head_branch": "codex/stage41b-physical-signer-isolation",
+                "head_sha": "26e17e7c23ea6cc1b265d57bfda1a1e6589d9e3f"
+              }
+            },
+            {
+              "id": 12491198547,
+              "node_id": "MDg6QXJ0aWZhY3QxMjQ5MTE5ODU0Nw==",
+              "name": "quality-security-reports",
+              "size_in_bytes": 14410,
+              "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12491198547",
+              "archive_download_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12491198547/zip",
+              "expired": false,
+              "digest": "sha256:82df4e36582821a068e73c403a4f08f28420078037dc6c58fd2a62081b016522",
+              "created_at": "2026-10-23T09:26:44Z",
+              "updated_at": "2026-10-23T09:26:44Z",
+              "expires_at": "2026-10-30T09:26:43Z",
+              "workflow_run": {
+                "id": 39931277958,
+                "repository_id": 1062027034,
+                "head_repository_id": 1062027034,
+                "head_branch": "codex/stage41b-physical-signer-isolation",
+                "head_sha": "26e17e7c23ea6cc1b265d57bfda1a1e6589d9e3f"
+              }
+            }
+          ]
+        },
+        {
+          "id": 39931277760,
+          "name": "Marketplace Catalog",
+          "event": "pull_request",
+          "conclusion": "success",
+          "path": ".github/workflows/marketplace-catalog.yml",
+          "run_attempt": 1,
+          "created_at": "2026-10-23T09:21:33Z",
+          "html_url": "https://github.com/Dudzian/Dudzian/actions/runs/39931277760",
+          "head_sha": "26e17e7c23ea6cc1b265d57bfda1a1e6589d9e3f",
+          "artifact_query_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/runs/39931277760/artifacts?per_page=100&page=1",
+          "artifacts": [
+            {
+              "id": 12491129652,
+              "node_id": "MDg6QXJ0aWZhY3QxMjQ5MTEyOTY1Mg==",
+              "name": "marketplace-catalog-latest",
+              "size_in_bytes": 12852,
+              "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12491129652",
+              "archive_download_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12491129652/zip",
+              "expired": false,
+              "digest": "sha256:d70590d4284dc641326cf9ef2a41fb9e45570ce1245b4570750222bc4ce6a2f1",
+              "created_at": "2026-10-23T09:22:34Z",
+              "updated_at": "2026-10-23T09:22:34Z",
+              "expires_at": "2027-01-21T09:21:33Z",
+              "workflow_run": {
+                "id": 39931277760,
+                "repository_id": 1062027034,
+                "head_repository_id": 1062027034,
+                "head_branch": "codex/stage41b-physical-signer-isolation",
+                "head_sha": "26e17e7c23ea6cc1b265d57bfda1a1e6589d9e3f"
+              }
+            }
+          ]
+        },
+        {
+          "id": 39931277729,
+          "name": "Style preflight",
+          "event": "pull_request",
+          "conclusion": "success",
+          "path": ".github/workflows/style-preflight.yml",
+          "run_attempt": 1,
+          "created_at": "2026-10-23T09:21:33Z",
+          "html_url": "https://github.com/Dudzian/Dudzian/actions/runs/39931277729",
+          "head_sha": "26e17e7c23ea6cc1b265d57bfda1a1e6589d9e3f",
+          "artifact_query_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/runs/39931277729/artifacts?per_page=100&page=1",
+          "artifacts": []
+        },
+        {
+          "id": 39931277865,
+          "name": "CodeQL",
+          "event": "pull_request",
+          "conclusion": "success",
+          "path": ".github/workflows/codeql.yml",
+          "run_attempt": 1,
+          "created_at": "2026-10-23T09:21:33Z",
+          "html_url": "https://github.com/Dudzian/Dudzian/actions/runs/39931277865",
+          "head_sha": "26e17e7c23ea6cc1b265d57bfda1a1e6589d9e3f",
+          "artifact_query_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/runs/39931277865/artifacts?per_page=100&page=1",
+          "artifacts": []
+        },
+        {
+          "id": 39931277836,
+          "name": "CI (pull_request: 3202/merge)",
+          "event": "pull_request",
+          "conclusion": "success",
+          "path": ".github/workflows/ci.yml",
+          "run_attempt": 1,
+          "created_at": "2026-10-23T09:21:33Z",
+          "html_url": "https://github.com/Dudzian/Dudzian/actions/runs/39931277836",
+          "head_sha": "26e17e7c23ea6cc1b265d57bfda1a1e6589d9e3f",
+          "artifact_query_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/runs/39931277836/artifacts?per_page=100&page=1",
+          "artifacts": [
+            {
+              "id": 12494908174,
+              "node_id": "MDg6QXJ0aWZhY3QxMjQ5NDkwODE3NA==",
+              "name": "loopback-e2e-logs",
+              "size_in_bytes": 11735,
+              "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12494908174",
+              "archive_download_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12494908174/zip",
+              "expired": false,
+              "digest": "sha256:927816e5f5e776487d27d1037e53f17ac2ad19351d4607bed4db57d4540e3bde",
+              "created_at": "2026-10-23T10:28:00Z",
+              "updated_at": "2026-10-23T10:28:00Z",
+              "expires_at": "2026-10-28T10:28:00Z",
+              "workflow_run": {
+                "id": 39931277836,
+                "repository_id": 1062027034,
+                "head_repository_id": 1062027034,
+                "head_branch": "codex/stage41b-physical-signer-isolation",
+                "head_sha": "26e17e7c23ea6cc1b265d57bfda1a1e6589d9e3f"
+              }
+            },
+            {
+              "id": 12494838040,
+              "node_id": "MDg6QXJ0aWZhY3QxMjQ5NDgzODA0MA==",
+              "name": "ui-native-test-artifacts",
+              "size_in_bytes": 13826,
+              "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12494838040",
+              "archive_download_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12494838040/zip",
+              "expired": false,
+              "digest": "sha256:3f9db25453c639c5bb3a662e8eb0cf5d0cd737c56ed14f21f7e88527db69bc10",
+              "created_at": "2026-10-23T10:33:56Z",
+              "updated_at": "2026-10-23T10:33:56Z",
+              "expires_at": "2026-10-28T10:33:55Z",
+              "workflow_run": {
+                "id": 39931277836,
+                "repository_id": 1062027034,
+                "head_repository_id": 1062027034,
+                "head_branch": "codex/stage41b-physical-signer-isolation",
+                "head_sha": "26e17e7c23ea6cc1b265d57bfda1a1e6589d9e3f"
+              }
+            },
+            {
+              "id": 12494793818,
+              "node_id": "MDg6QXJ0aWZhY3QxMjQ5NDc5MzgxOA==",
+              "name": "marketing-parity-report",
+              "size_in_bytes": 717,
+              "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12494793818",
+              "archive_download_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12494793818/zip",
+              "expired": false,
+              "digest": "sha256:dd5c72055f3bb358256409d4960d3ac573b98b4ee68fcf11c096b022d128c928",
+              "created_at": "2026-10-23T10:30:05Z",
+              "updated_at": "2026-10-23T10:30:05Z",
+              "expires_at": "2027-01-21T09:21:33Z",
+              "workflow_run": {
+                "id": 39931277836,
+                "repository_id": 1062027034,
+                "head_repository_id": 1062027034,
+                "head_branch": "codex/stage41b-physical-signer-isolation",
+                "head_sha": "26e17e7c23ea6cc1b265d57bfda1a1e6589d9e3f"
+              }
+            },
+            {
+              "id": 12492510220,
+              "node_id": "MDg6QXJ0aWZhY3QxMjQ5MjUxMDIyMA==",
+              "name": "wheelhouse-macOS-py3.11",
+              "size_in_bytes": 575034810,
+              "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12492510220",
+              "archive_download_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12492510220/zip",
+              "expired": false,
+              "digest": "sha256:260d2d2e6bf947a370cb836100b8585c0ec75995a785bf51fca612191bdf3bbc",
+              "created_at": "2026-10-23T09:26:16Z",
+              "updated_at": "2026-10-23T09:26:16Z",
+              "expires_at": "2026-10-30T09:25:57Z",
+              "workflow_run": {
+                "id": 39931277836,
+                "repository_id": 1062027034,
+                "head_repository_id": 1062027034,
+                "head_branch": "codex/stage41b-physical-signer-isolation",
+                "head_sha": "26e17e7c23ea6cc1b265d57bfda1a1e6589d9e3f"
+              }
+            },
+            {
+              "id": 12492431394,
+              "node_id": "MDg6QXJ0aWZhY3QxMjQ5MjQzMTM5NA==",
+              "name": "licensing-hwid-tolerance",
+              "size_in_bytes": 616,
+              "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12492431394",
+              "archive_download_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12492431394/zip",
+              "expired": false,
+              "digest": "sha256:b379407b55e54b2aaf3e2ddfafe22daadd17d121bb2569f19c4a9469d5046506",
+              "created_at": "2026-10-23T09:31:05Z",
+              "updated_at": "2026-10-23T09:31:05Z",
+              "expires_at": "2027-01-21T09:21:33Z",
+              "workflow_run": {
+                "id": 39931277836,
+                "repository_id": 1062027034,
+                "head_repository_id": 1062027034,
+                "head_branch": "codex/stage41b-physical-signer-isolation",
+                "head_sha": "26e17e7c23ea6cc1b265d57bfda1a1e6589d9e3f"
+              }
+            },
+            {
+              "id": 12492200974,
+              "node_id": "MDg6QXJ0aWZhY3QxMjQ5MjIwMDk3NA==",
+              "name": "pip-audit-report",
+              "size_in_bytes": 1307,
+              "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12492200974",
+              "archive_download_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12492200974/zip",
+              "expired": false,
+              "digest": "sha256:75ffe69afaa4603dc9799789aea20e3fd2146004eeb6038f4bff2f975c2a8bdb",
+              "created_at": "2026-10-23T09:24:35Z",
+              "updated_at": "2026-10-23T09:24:35Z",
+              "expires_at": "2026-10-30T09:24:34Z",
+              "workflow_run": {
+                "id": 39931277836,
+                "repository_id": 1062027034,
+                "head_repository_id": 1062027034,
+                "head_branch": "codex/stage41b-physical-signer-isolation",
+                "head_sha": "26e17e7c23ea6cc1b265d57bfda1a1e6589d9e3f"
+              }
+            },
+            {
+              "id": 12492111644,
+              "node_id": "MDg6QXJ0aWZhY3QxMjQ5MjExMTY0NA==",
+              "name": "wheelhouse-Windows-py3.11",
+              "size_in_bytes": 372097407,
+              "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12492111644",
+              "archive_download_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12492111644/zip",
+              "expired": false,
+              "digest": "sha256:19c0fc122e3eaa719a65ceae60e74a81d4adac63f02b50c24839500ef4a4c825",
+              "created_at": "2026-10-23T09:26:30Z",
+              "updated_at": "2026-10-23T09:26:30Z",
+              "expires_at": "2026-10-30T09:26:18Z",
+              "workflow_run": {
+                "id": 39931277836,
+                "repository_id": 1062027034,
+                "head_repository_id": 1062027034,
+                "head_branch": "codex/stage41b-physical-signer-isolation",
+                "head_sha": "26e17e7c23ea6cc1b265d57bfda1a1e6589d9e3f"
+              }
+            },
+            {
+              "id": 12491826309,
+              "node_id": "MDg6QXJ0aWZhY3QxMjQ5MTgyNjMwOQ==",
+              "name": "windows-native-security-39931277836-1",
+              "size_in_bytes": 10793,
+              "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12491826309",
+              "archive_download_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12491826309/zip",
+              "expired": false,
+              "digest": "sha256:2fc5d3c481f0f2dd81c3435550701d501d7c02ad79099076aa9b10b002591e01",
+              "created_at": "2026-10-23T09:24:00Z",
+              "updated_at": "2026-10-23T09:24:00Z",
+              "expires_at": "2026-10-30T09:23:59Z",
+              "workflow_run": {
+                "id": 39931277836,
+                "repository_id": 1062027034,
+                "head_repository_id": 1062027034,
+                "head_branch": "codex/stage41b-physical-signer-isolation",
+                "head_sha": "26e17e7c23ea6cc1b265d57bfda1a1e6589d9e3f"
+              }
+            },
+            {
+              "id": 12491787257,
+              "node_id": "MDg6QXJ0aWZhY3QxMjQ5MTc4NzI1Nw==",
+              "name": "sbom-cyclonedx",
+              "size_in_bytes": 14100,
+              "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12491787257",
+              "archive_download_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12491787257/zip",
+              "expired": false,
+              "digest": "sha256:d6103428b581785eb94ac5c64acdd14bb3b2bcd6d7ca3fea018479c80346afcb",
+              "created_at": "2026-10-23T09:23:13Z",
+              "updated_at": "2026-10-23T09:23:13Z",
+              "expires_at": "2027-01-21T09:21:33Z",
+              "workflow_run": {
+                "id": 39931277836,
+                "repository_id": 1062027034,
+                "head_repository_id": 1062027034,
+                "head_branch": "codex/stage41b-physical-signer-isolation",
+                "head_sha": "26e17e7c23ea6cc1b265d57bfda1a1e6589d9e3f"
+              }
+            },
+            {
+              "id": 12491552549,
+              "node_id": "MDg6QXJ0aWZhY3QxMjQ5MTU1MjU0OQ==",
+              "name": "marketplace-catalog-pytest-results",
+              "size_in_bytes": 575,
+              "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12491552549",
+              "archive_download_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12491552549/zip",
+              "expired": false,
+              "digest": "sha256:21069f260a86db42937945325119db552624e93e0d8c59593ea21d6f7b59f7ee",
+              "created_at": "2026-10-23T09:25:41Z",
+              "updated_at": "2026-10-23T09:25:41Z",
+              "expires_at": "2027-01-21T09:21:33Z",
+              "workflow_run": {
+                "id": 39931277836,
+                "repository_id": 1062027034,
+                "head_repository_id": 1062027034,
+                "head_branch": "codex/stage41b-physical-signer-isolation",
+                "head_sha": "26e17e7c23ea6cc1b265d57bfda1a1e6589d9e3f"
+              }
+            },
+            {
+              "id": 12491049951,
+              "node_id": "MDg6QXJ0aWZhY3QxMjQ5MTA0OTk1MQ==",
+              "name": "wheelhouse-Linux-py3.11",
+              "size_in_bytes": 427764074,
+              "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12491049951",
+              "archive_download_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12491049951/zip",
+              "expired": false,
+              "digest": "sha256:2844b58ab6340518412298ef2daa3a6845a6d9e19167f0f33a9e306af0d382d8",
+              "created_at": "2026-10-23T09:24:31Z",
+              "updated_at": "2026-10-23T09:24:31Z",
+              "expires_at": "2026-10-30T09:24:18Z",
+              "workflow_run": {
+                "id": 39931277836,
+                "repository_id": 1062027034,
+                "head_repository_id": 1062027034,
+                "head_branch": "codex/stage41b-physical-signer-isolation",
+                "head_sha": "26e17e7c23ea6cc1b265d57bfda1a1e6589d9e3f"
+              }
+            }
+          ]
+        },
+        {
+          "id": 39931277876,
+          "name": "Platform deployment tracks",
+          "event": "pull_request",
+          "conclusion": "failure",
+          "path": ".github/workflows/platform-deployment.yml",
+          "run_attempt": 1,
+          "created_at": "2026-10-23T09:21:33Z",
+          "html_url": "https://github.com/Dudzian/Dudzian/actions/runs/39931277876",
+          "head_sha": "26e17e7c23ea6cc1b265d57bfda1a1e6589d9e3f",
+          "artifact_query_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/runs/39931277876/artifacts?per_page=100&page=1",
+          "artifacts": [
+            {
+              "id": 12494495755,
+              "node_id": "MDg6QXJ0aWZhY3QxMjQ5NDQ5NTc1NQ==",
+              "name": "windows-stage9-qualified-msi",
+              "size_in_bytes": 820199104,
+              "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12494495755",
+              "archive_download_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12494495755/zip",
+              "expired": false,
+              "digest": "sha256:bc65b6f873640533a074f745efd1be1c217698d5bff90c171824ca73c0443f4a",
+              "created_at": "2026-10-23T10:07:10Z",
+              "updated_at": "2026-10-23T10:07:10Z",
+              "expires_at": "2027-01-21T09:21:33Z",
+              "workflow_run": {
+                "id": 39931277876,
+                "repository_id": 1062027034,
+                "head_repository_id": 1062027034,
+                "head_branch": "codex/stage41b-physical-signer-isolation",
+                "head_sha": "26e17e7c23ea6cc1b265d57bfda1a1e6589d9e3f"
+              }
+            },
+            {
+              "id": 12493941892,
+              "node_id": "MDg6QXJ0aWZhY3QxMjQ5Mzk0MTg5Mg==",
+              "name": "windows-clean-install-diagnostics",
+              "size_in_bytes": 8373499,
+              "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12493941892",
+              "archive_download_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12493941892/zip",
+              "expired": false,
+              "digest": "sha256:1521a4d4cd0b70cff5e3bd1c4648e3582a32a030834cd248a689822a7dea5c25",
+              "created_at": "2026-10-23T10:06:51Z",
+              "updated_at": "2026-10-23T10:06:51Z",
+              "expires_at": "2027-01-21T09:21:33Z",
+              "workflow_run": {
+                "id": 39931277876,
+                "repository_id": 1062027034,
+                "head_repository_id": 1062027034,
+                "head_branch": "codex/stage41b-physical-signer-isolation",
+                "head_sha": "26e17e7c23ea6cc1b265d57bfda1a1e6589d9e3f"
+              }
+            },
+            {
+              "id": 12493164023,
+              "node_id": "MDg6QXJ0aWZhY3QxMjQ5MzE2NDAyMw==",
+              "name": "windows-clean-install-evidence",
+              "size_in_bytes": 8373499,
+              "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12493164023",
+              "archive_download_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12493164023/zip",
+              "expired": false,
+              "digest": "sha256:1521a4d4cd0b70cff5e3bd1c4648e3582a32a030834cd248a689822a7dea5c25",
+              "created_at": "2026-10-23T10:06:53Z",
+              "updated_at": "2026-10-23T10:06:53Z",
+              "expires_at": "2027-01-21T09:21:33Z",
+              "workflow_run": {
+                "id": 39931277876,
+                "repository_id": 1062027034,
+                "head_repository_id": 1062027034,
+                "head_branch": "codex/stage41b-physical-signer-isolation",
+                "head_sha": "26e17e7c23ea6cc1b265d57bfda1a1e6589d9e3f"
+              }
+            },
+            {
+              "id": 12492091240,
+              "node_id": "MDg6QXJ0aWZhY3QxMjQ5MjA5MTI0MA==",
+              "name": "core-evidence-Linux",
+              "size_in_bytes": 375,
+              "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12492091240",
+              "archive_download_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12492091240/zip",
+              "expired": false,
+              "digest": "sha256:7edba984603420b5c191b015e4ef733c62d3585599b803d1821d6c9aa7b75d6e",
+              "created_at": "2026-10-23T09:23:51Z",
+              "updated_at": "2026-10-23T09:23:51Z",
+              "expires_at": "2027-01-21T09:21:33Z",
+              "workflow_run": {
+                "id": 39931277876,
+                "repository_id": 1062027034,
+                "head_repository_id": 1062027034,
+                "head_branch": "codex/stage41b-physical-signer-isolation",
+                "head_sha": "26e17e7c23ea6cc1b265d57bfda1a1e6589d9e3f"
+              }
+            },
+            {
+              "id": 12491663160,
+              "node_id": "MDg6QXJ0aWZhY3QxMjQ5MTY2MzE2MA==",
+              "name": "windows-scm-evidence",
+              "size_in_bytes": 1078,
+              "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12491663160",
+              "archive_download_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12491663160/zip",
+              "expired": false,
+              "digest": "sha256:4bdd17c6113ee97f72e05207ecb466b8081797d7faaf91c483a40e108409ba83",
+              "created_at": "2026-10-23T09:26:47Z",
+              "updated_at": "2026-10-23T09:26:47Z",
+              "expires_at": "2027-01-21T09:21:33Z",
+              "workflow_run": {
+                "id": 39931277876,
+                "repository_id": 1062027034,
+                "head_repository_id": 1062027034,
+                "head_branch": "codex/stage41b-physical-signer-isolation",
+                "head_sha": "26e17e7c23ea6cc1b265d57bfda1a1e6589d9e3f"
+              }
+            },
+            {
+              "id": 12491463558,
+              "node_id": "MDg6QXJ0aWZhY3QxMjQ5MTQ2MzU1OA==",
+              "name": "core-evidence-Windows",
+              "size_in_bytes": 384,
+              "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12491463558",
+              "archive_download_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12491463558/zip",
+              "expired": false,
+              "digest": "sha256:2502867951d1d8154b81f9de6262f918bf2b4f15e9d079bbb6a54767d44963d1",
+              "created_at": "2026-10-23T09:25:34Z",
+              "updated_at": "2026-10-23T09:25:34Z",
+              "expires_at": "2027-01-21T09:21:33Z",
+              "workflow_run": {
+                "id": 39931277876,
+                "repository_id": 1062027034,
+                "head_repository_id": 1062027034,
+                "head_branch": "codex/stage41b-physical-signer-isolation",
+                "head_sha": "26e17e7c23ea6cc1b265d57bfda1a1e6589d9e3f"
+              }
+            },
+            {
+              "id": 12491263145,
+              "node_id": "MDg6QXJ0aWZhY3QxMjQ5MTI2MzE0NQ==",
+              "name": "core-evidence-macOS",
+              "size_in_bytes": 373,
+              "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12491263145",
+              "archive_download_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12491263145/zip",
+              "expired": false,
+              "digest": "sha256:258473f82b14bdb3aa26ddccb79f3a8bdd5dac807121f735ece99646e74dc88c",
+              "created_at": "2026-10-23T09:25:29Z",
+              "updated_at": "2026-10-23T09:25:29Z",
+              "expires_at": "2027-01-21T09:21:33Z",
+              "workflow_run": {
+                "id": 39931277876,
+                "repository_id": 1062027034,
+                "head_repository_id": 1062027034,
+                "head_branch": "codex/stage41b-physical-signer-isolation",
+                "head_sha": "26e17e7c23ea6cc1b265d57bfda1a1e6589d9e3f"
+              }
+            }
+          ]
+        },
+        {
+          "id": 39931271992,
+          "name": "CI (push: codex/stage41b-physical-signer-isolation)",
+          "event": "push",
+          "conclusion": "success",
+          "path": ".github/workflows/ci.yml",
+          "run_attempt": 1,
+          "created_at": "2026-10-23T09:21:30Z",
+          "html_url": "https://github.com/Dudzian/Dudzian/actions/runs/39931271992",
+          "head_sha": "26e17e7c23ea6cc1b265d57bfda1a1e6589d9e3f",
+          "artifact_query_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/runs/39931271992/artifacts?per_page=100&page=1",
+          "artifacts": [
+            {
+              "id": 12497227594,
+              "node_id": "MDg6QXJ0aWZhY3QxMjQ5NzIyNzU5NA==",
+              "name": "loopback-e2e-logs",
+              "size_in_bytes": 11725,
+              "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12497227594",
+              "archive_download_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12497227594/zip",
+              "expired": false,
+              "digest": "sha256:aa66dee9a0f02fc234fa08193bba540241faf176c6512f9e1867b281c3fa9b62",
+              "created_at": "2026-10-23T11:09:14Z",
+              "updated_at": "2026-10-23T11:09:14Z",
+              "expires_at": "2026-10-28T11:09:13Z",
+              "workflow_run": {
+                "id": 39931271992,
+                "repository_id": 1062027034,
+                "head_repository_id": 1062027034,
+                "head_branch": "codex/stage41b-physical-signer-isolation",
+                "head_sha": "26e17e7c23ea6cc1b265d57bfda1a1e6589d9e3f"
+              }
+            },
+            {
+              "id": 12496380504,
+              "node_id": "MDg6QXJ0aWZhY3QxMjQ5NjM4MDUwNA==",
+              "name": "marketing-parity-report",
+              "size_in_bytes": 717,
+              "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12496380504",
+              "archive_download_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12496380504/zip",
+              "expired": false,
+              "digest": "sha256:557b9382680c51ee3dc3033f1a39a8a04ae0b4779014028af41c68d8077cac3f",
+              "created_at": "2026-10-23T10:39:53Z",
+              "updated_at": "2026-10-23T10:39:53Z",
+              "expires_at": "2027-01-21T09:21:30Z",
+              "workflow_run": {
+                "id": 39931271992,
+                "repository_id": 1062027034,
+                "head_repository_id": 1062027034,
+                "head_branch": "codex/stage41b-physical-signer-isolation",
+                "head_sha": "26e17e7c23ea6cc1b265d57bfda1a1e6589d9e3f"
+              }
+            },
+            {
+              "id": 12494845158,
+              "node_id": "MDg6QXJ0aWZhY3QxMjQ5NDg0NTE1OA==",
+              "name": "ui-native-test-artifacts",
+              "size_in_bytes": 13836,
+              "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12494845158",
+              "archive_download_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12494845158/zip",
+              "expired": false,
+              "digest": "sha256:6215c5ce8cec71454fbc4f2242d2ed20e60beaa12ec473a8707932427a9fd855",
+              "created_at": "2026-10-23T10:11:12Z",
+              "updated_at": "2026-10-23T10:11:12Z",
+              "expires_at": "2026-10-28T10:11:11Z",
+              "workflow_run": {
+                "id": 39931271992,
+                "repository_id": 1062027034,
+                "head_repository_id": 1062027034,
+                "head_branch": "codex/stage41b-physical-signer-isolation",
+                "head_sha": "26e17e7c23ea6cc1b265d57bfda1a1e6589d9e3f"
+              }
+            },
+            {
+              "id": 12493887377,
+              "node_id": "MDg6QXJ0aWZhY3QxMjQ5Mzg4NzM3Nw==",
+              "name": "licensing-hwid-tolerance",
+              "size_in_bytes": 613,
+              "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12493887377",
+              "archive_download_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12493887377/zip",
+              "expired": false,
+              "digest": "sha256:e44ef92b8789a95810dd484587505850fd6431c6de9760200235e1e2c767a0b8",
+              "created_at": "2026-10-23T10:09:23Z",
+              "updated_at": "2026-10-23T10:09:23Z",
+              "expires_at": "2027-01-21T09:21:30Z",
+              "workflow_run": {
+                "id": 39931271992,
+                "repository_id": 1062027034,
+                "head_repository_id": 1062027034,
+                "head_branch": "codex/stage41b-physical-signer-isolation",
+                "head_sha": "26e17e7c23ea6cc1b265d57bfda1a1e6589d9e3f"
+              }
+            },
+            {
+              "id": 12492625109,
+              "node_id": "MDg6QXJ0aWZhY3QxMjQ5MjYyNTEwOQ==",
+              "name": "wheelhouse-macOS-py3.11",
+              "size_in_bytes": 575034810,
+              "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12492625109",
+              "archive_download_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12492625109/zip",
+              "expired": false,
+              "digest": "sha256:bc288885344f74b72f0ac06073125b2a760a25e4ebc0dc958729d63ac563202e",
+              "created_at": "2026-10-23T09:25:51Z",
+              "updated_at": "2026-10-23T09:25:51Z",
+              "expires_at": "2026-10-30T09:25:28Z",
+              "workflow_run": {
+                "id": 39931271992,
+                "repository_id": 1062027034,
+                "head_repository_id": 1062027034,
+                "head_branch": "codex/stage41b-physical-signer-isolation",
+                "head_sha": "26e17e7c23ea6cc1b265d57bfda1a1e6589d9e3f"
+              }
+            },
+            {
+              "id": 12492156400,
+              "node_id": "MDg6QXJ0aWZhY3QxMjQ5MjE1NjQwMA==",
+              "name": "sbom-cyclonedx",
+              "size_in_bytes": 14100,
+              "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12492156400",
+              "archive_download_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12492156400/zip",
+              "expired": false,
+              "digest": "sha256:09bcee29c4f757b782b0cfc5be29c40ae4e6ac6368facae92a8ba5a33a241a27",
+              "created_at": "2026-10-23T09:26:30Z",
+              "updated_at": "2026-10-23T09:26:30Z",
+              "expires_at": "2027-01-21T09:21:30Z",
+              "workflow_run": {
+                "id": 39931271992,
+                "repository_id": 1062027034,
+                "head_repository_id": 1062027034,
+                "head_branch": "codex/stage41b-physical-signer-isolation",
+                "head_sha": "26e17e7c23ea6cc1b265d57bfda1a1e6589d9e3f"
+              }
+            },
+            {
+              "id": 12491791973,
+              "node_id": "MDg6QXJ0aWZhY3QxMjQ5MTc5MTk3Mw==",
+              "name": "wheelhouse-Linux-py3.11",
+              "size_in_bytes": 427764074,
+              "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12491791973",
+              "archive_download_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12491791973/zip",
+              "expired": false,
+              "digest": "sha256:a23c43bb7904805b8aaa60642366995e0b231193be4c25eafd9b03a13452b217",
+              "created_at": "2026-10-23T09:27:25Z",
+              "updated_at": "2026-10-23T09:27:25Z",
+              "expires_at": "2026-10-30T09:27:11Z",
+              "workflow_run": {
+                "id": 39931271992,
+                "repository_id": 1062027034,
+                "head_repository_id": 1062027034,
+                "head_branch": "codex/stage41b-physical-signer-isolation",
+                "head_sha": "26e17e7c23ea6cc1b265d57bfda1a1e6589d9e3f"
+              }
+            },
+            {
+              "id": 12491772958,
+              "node_id": "MDg6QXJ0aWZhY3QxMjQ5MTc3Mjk1OA==",
+              "name": "pip-audit-report",
+              "size_in_bytes": 1307,
+              "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12491772958",
+              "archive_download_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12491772958/zip",
+              "expired": false,
+              "digest": "sha256:7e7e26b42bfe72e21064bf3a95cc988926cc612c83f025ff7e6b3abd7c63b387",
+              "created_at": "2026-10-23T09:26:25Z",
+              "updated_at": "2026-10-23T09:26:25Z",
+              "expires_at": "2026-10-30T09:26:24Z",
+              "workflow_run": {
+                "id": 39931271992,
+                "repository_id": 1062027034,
+                "head_repository_id": 1062027034,
+                "head_branch": "codex/stage41b-physical-signer-isolation",
+                "head_sha": "26e17e7c23ea6cc1b265d57bfda1a1e6589d9e3f"
+              }
+            },
+            {
+              "id": 12491762313,
+              "node_id": "MDg6QXJ0aWZhY3QxMjQ5MTc2MjMxMw==",
+              "name": "windows-native-security-39931271992-1",
+              "size_in_bytes": 10796,
+              "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12491762313",
+              "archive_download_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12491762313/zip",
+              "expired": false,
+              "digest": "sha256:f80e87d6997cf5d52a3999db482849098efe90a077f8397cbdd136336d3aefeb",
+              "created_at": "2026-10-23T09:23:58Z",
+              "updated_at": "2026-10-23T09:23:58Z",
+              "expires_at": "2026-10-30T09:23:57Z",
+              "workflow_run": {
+                "id": 39931271992,
+                "repository_id": 1062027034,
+                "head_repository_id": 1062027034,
+                "head_branch": "codex/stage41b-physical-signer-isolation",
+                "head_sha": "26e17e7c23ea6cc1b265d57bfda1a1e6589d9e3f"
+              }
+            },
+            {
+              "id": 12491668605,
+              "node_id": "MDg6QXJ0aWZhY3QxMjQ5MTY2ODYwNQ==",
+              "name": "wheelhouse-Windows-py3.11",
+              "size_in_bytes": 372097407,
+              "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12491668605",
+              "archive_download_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12491668605/zip",
+              "expired": false,
+              "digest": "sha256:fe9e8216a68adb45d88a3a61175c7cb75ff6139dc91580b607122a49fe234c7f",
+              "created_at": "2026-10-23T09:27:26Z",
+              "updated_at": "2026-10-23T09:27:26Z",
+              "expires_at": "2026-10-30T09:27:17Z",
+              "workflow_run": {
+                "id": 39931271992,
+                "repository_id": 1062027034,
+                "head_repository_id": 1062027034,
+                "head_branch": "codex/stage41b-physical-signer-isolation",
+                "head_sha": "26e17e7c23ea6cc1b265d57bfda1a1e6589d9e3f"
+              }
+            },
+            {
+              "id": 12491548835,
+              "node_id": "MDg6QXJ0aWZhY3QxMjQ5MTU0ODgzNQ==",
+              "name": "marketplace-catalog-pytest-results",
+              "size_in_bytes": 572,
+              "url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12491548835",
+              "archive_download_url": "https://api.github.com/repos/Dudzian/Dudzian/actions/artifacts/12491548835/zip",
+              "expired": false,
+              "digest": "sha256:41fa5e336950714fb8ab6fba321d882065a729a10d55f9ffb8720e60c127175e",
+              "created_at": "2026-10-23T09:26:43Z",
+              "updated_at": "2026-10-23T09:26:43Z",
+              "expires_at": "2027-01-21T09:21:30Z",
+              "workflow_run": {
+                "id": 39931271992,
+                "repository_id": 1062027034,
+                "head_repository_id": 1062027034,
+                "head_branch": "codex/stage41b-physical-signer-isolation",
+                "head_sha": "26e17e7c23ea6cc1b265d57bfda1a1e6589d9e3f"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "releases": {
+    "query_url": "https://api.github.com/repos/Dudzian/Dudzian/releases?per_page=100&page=1",
+    "items": []
+  },
+  "cryptographic_attestation": false,
+  "cryptographic_attestation_meaning": "This research inventory is not a cryptographic attestation and contains no verified attestation. False does not establish the absence of external attestations.",
+  "attestations": {
+    "state": "UNKNOWN",
+    "verified_in_this_inventory": false,
+    "absence_established": false,
+    "reason": "GitHub connector github_fetch rejects attestations endpoint as unsupported (400 INVALID_ARGUMENT); not a GitHub absence response.",
+    "attempted_subject": "sha256:d25c7d12cdda343f23e6644662fa2b0e0105fa6c8a9e6d2f07c46f131907c55c"
+  },
+  "payload_inspection": {
+    "artifact_id": 12527781826,
+    "size_in_bytes": 427764074,
+    "download_connector_succeeded": true,
+    "local_zip_materialized": false,
+    "archive_sha256_verified": false,
+    "manifest_bytes_inspected": false,
+    "reason": "Connector returns File Service file reference; available download_file supports only Sediment IDs and <=32MiB. No supported local downloader for this File Service reference was available. Do not interpret metadata/log digest as independently hashing archive bytes."
+  },
+  "logs": {
+    "run_id": 40013926497,
+    "job_id": 120621593796,
+    "job_url": "https://github.com/Dudzian/Dudzian/actions/runs/40013926497/job/120621593796",
+    "evidence_lines": [
+      "2026-10-23T19:50:47.9531265Z Successfully downloaded aiodns pycares aiohappyeyeballs aiohttp multidict yarl aiosignal aiosqlite altgraph annotated-types anyio arrow attrs backports-tarfile binaryornot briefcase cookiecutter click gitpython gitdb httpx httpcore jinja2 platformdirs psutil rich pygments smmap tomli-w build ccxt certifi cffi chardet charset-normalizer coincurve colorama cryptography dmgbuild ds-store frozenlist greenlet grpcio typing-extensions h11 idna importlib-metadata jaraco-classes jaraco-context jaraco-functools jeepney joblib jsonschema jsonschema-specifications keyring lightgbm mac-alias macholib markdown-it-py mdurl markupsafe more-itertools narwhals numpy packaging pandas pefile propcache protobuf psycopg psycopg-binary pyarrow pycparser pydantic pydantic-core pyinstaller pyinstaller-hooks-contrib pynacl pyproject-hooks pyside6 pyside6-addons pyside6-essentials python-dateutil python-slugify pytz pywin32-ctypes pyyaml referencing requests urllib3 responses respx rpds-py scipy secretstorage shiboken6 six sqlalchemy text-unidecode truststore tzdata wheel zipp pip setuptools",
+      "2026-10-23T19:50:48.6678173Z [wheelhouse] wrote manifest with 129 entries -> /home/runner/work/Dudzian/Dudzian/wheelhouse/manifest.txt",
+      "2026-10-23T19:51:02.7963490Z SHA256 digest of uploaded artifact is d25c7d12cdda343f23e6644662fa2b0e0105fa6c8a9e6d2f07c46f131907c55c",
+      "2026-10-23T19:51:03.4281141Z Artifact wheelhouse-Linux-py3.11 has been successfully uploaded! Final size is 427764074 bytes. Artifact ID is 12527781826"
+    ]
+  },
+  "workflow_source": {
+    "url": "https://github.com/Dudzian/Dudzian/blob/782816540373d7b31f426dab645ad115320d1234/.github/workflows/ci.yml#L122",
+    "content_summary": "prepare-wheelhouse uses CPython3.11, desktop requirements lock, static project dependency extraction via build_wheelhouse.py and pip download. Does not build Stage41B project wheel."
+  },
+  "stage41b_lock": {
+    "blob_sha": "55741ceb65ff8001bb273d99011b5513b6a1a05b",
+    "identical_in_both_commits": true,
+    "python": "3.12",
+    "platform": "linux-x86_64"
+  },
+  "conclusions": [
+    "CI run success is not installed-byte provenance.",
+    "CI wheelhouse is Python3.11 desktop dependencies; Stage41B lock is Python3.12 qualification dependencies.",
+    "No artifact name in the 72 accessible retained artifact records identifies Stage41B project wheel or full Stage41B venv; this is scoped to the enumerated exact-head runs, not a global historical absence claim.",
+    "Whole-archive GitHub SHA256 identifies CI artifact zip only; does not attest local installed transformations or establish trusted builder policy.",
+    "Observer implementation and qualification remain blocked."
+  ]
+}
