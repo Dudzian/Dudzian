@@ -803,3 +803,297 @@ def _validate_launch_policy(value: Any) -> None:
         ("source", "TRUSTED_LAUNCHER"),
     ):
         _equal(context[field], expected_value)
+
+
+def _namespace_identity(value: Any) -> dict[str, Any]:
+    record = _record(value, {"device", "inode"})
+    _integer(record["device"])
+    _integer(record["inode"], minimum=1)
+    return record
+
+
+def _boot_id(value: Any) -> str:
+    result = _string(value, maximum=36)
+    _require(
+        re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", result)
+        is not None
+    )
+    return result
+
+
+def _validate_scope_binding(value: Any) -> None:
+    """Validate declared HostScopeBindingV1 data; never authenticate a host."""
+    record = _record(
+        value,
+        {
+            "schema",
+            "version",
+            "host_anchor_id",
+            "boot_id",
+            "run_nonce",
+            "observer_start_time_ticks",
+            "pid_namespace",
+            "user_namespace",
+            "mount_namespace",
+            "procfs_identity",
+            "source",
+            "authentication_evidence_sha256",
+        },
+    )
+    _schema(record, "HostScopeBindingV1")
+    _identifier(record["host_anchor_id"])
+    _boot_id(record["boot_id"])
+    _hex(record["run_nonce"], 64)
+    _integer(record["observer_start_time_ticks"], minimum=1)
+    for name in ("pid_namespace", "user_namespace", "mount_namespace"):
+        _namespace_identity(record[name])
+    procfs = _record(
+        record["procfs_identity"],
+        {"mount_id", "fs_type", "root", "mount_namespace", "options", "pid_view"},
+    )
+    _integer(procfs["mount_id"], minimum=1)
+    _equal(procfs["fs_type"], "proc")
+    _equal(procfs["root"], "/")
+    _namespace_identity(procfs["mount_namespace"])
+    _require(procfs["mount_namespace"] == record["mount_namespace"], "HOST_SCOPE_UNVERIFIED")
+    options = _list(procfs["options"], maximum=7, minimum=1)
+    for option in options:
+        _enum(option, {"ro", "rw", "nosuid", "nodev", "noexec", "relatime", "hidepid=0"})
+    _require(options == sorted(set(options)))
+    _require(("ro" in options) != ("rw" in options), "HOST_SCOPE_UNVERIFIED")
+    _equal(procfs["pid_view"], "HOST_INITIAL_COMPLETE")
+    _identifier(record["source"])
+    _digest(record["authentication_evidence_sha256"])
+
+
+def _validate_run_context(value: Any) -> None:
+    """Validate one declared run and its scope digest without trusting its issuer."""
+    record = _record(
+        value,
+        {
+            "schema",
+            "version",
+            "purpose",
+            "run_id",
+            "run_nonce",
+            "observer_manifest_sha256",
+            "policy_sha256",
+            "launch_policy_sha256",
+            "scope_binding",
+            "scope_binding_sha256",
+            "authentication_evidence_sha256",
+        },
+    )
+    _schema(record, "ObserverRunContextV1", purpose=True)
+    _identifier(record["run_id"])
+    _hex(record["run_nonce"], 64)
+    for name in (
+        "observer_manifest_sha256",
+        "policy_sha256",
+        "launch_policy_sha256",
+        "scope_binding_sha256",
+        "authentication_evidence_sha256",
+    ):
+        _digest(record[name])
+    _validate_scope_binding(record["scope_binding"])
+    _require(record["run_nonce"] == record["scope_binding"]["run_nonce"], "HOST_SCOPE_UNVERIFIED")
+    _require(
+        record["scope_binding_sha256"]
+        == hashlib.sha256(canonical_json_bytes(record["scope_binding"])).hexdigest(),
+        "HOST_SCOPE_UNVERIFIED",
+    )
+
+
+def _validate_offline_result(value: Any) -> None:
+    """Validate a Stage 3A synthetic result retaining every qualification block."""
+    blocks = _blocked_fields()
+    record = _record(
+        value,
+        {
+            "schema",
+            "version",
+            "synthetic",
+            "manifest_sha256",
+            "policy_sha256",
+            "launch_policy_sha256",
+            "artifact_consistency",
+            "acceptance",
+            "reason_codes",
+        }
+        | set(blocks),
+    )
+    _schema(record, "OfflineVerificationResultV1")
+    _equal(record["synthetic"], True)
+    for name in ("manifest_sha256", "policy_sha256", "launch_policy_sha256"):
+        _digest(record[name])
+    _enum(record["artifact_consistency"], {"MATCH", "MISMATCH", "INCOMPLETE"})
+    # Stage 3A has neither an independent trust context nor a signature verifier.
+    _equal(record["acceptance"], "UNVERIFIED")
+    for name, expected in blocks.items():
+        _equal(record[name], expected)
+    reasons = _reason_codes(record["reason_codes"])
+    _require("RUNTIME_LAUNCH_UNVERIFIED" in reasons, "REPORT_REJECTED")
+
+
+def _decode_report_frame(
+    raw: bytes,
+    *,
+    eof: bool,
+    process_exit_code: int,
+    run_elapsed_ms: int,
+    receive_elapsed_ms: int,
+) -> dict[str, Any]:
+    """Check a synthetic completed frame; these inputs do not authenticate a pipe.
+
+    The caller must still validate ObserverResultV1 and compare the expected run.
+    A future real receiver must derive EOF, exit and timing from its trusted
+    channel; accepting these values from JSON cannot establish those facts.
+    """
+    _require(type(raw) is bytes, "CHANNEL_REJECTED")
+    _require(5 <= len(raw) <= 65540, "CHANNEL_REJECTED")
+    _require(type(eof) is bool and eof, "CHANNEL_REJECTED")
+    _require(type(process_exit_code) is int and process_exit_code == 0, "CHANNEL_REJECTED")
+    _require(
+        type(run_elapsed_ms) is int and 0 <= run_elapsed_ms < 300000,
+        "CHANNEL_REJECTED",
+    )
+    _require(
+        type(receive_elapsed_ms) is int and 0 <= receive_elapsed_ms <= 30000,
+        "CHANNEL_REJECTED",
+    )
+    _require(receive_elapsed_ms <= run_elapsed_ms, "CHANNEL_REJECTED")
+    payload_size = int.from_bytes(raw[:4], "big")
+    _require(1 <= payload_size <= 65536 and len(raw) == payload_size + 4, "CHANNEL_REJECTED")
+    value = _decode(raw[4:], maximum=65536)
+    _require(type(value) is dict, "REPORT_REJECTED")
+    return value
+
+
+def parse_scope_binding(raw: bytes) -> ParsedContract:
+    """Parse a canonical synthetic binding; no host identity is established."""
+    return _parse_contract(
+        raw, "HostScopeBindingV1", _validate_scope_binding, canonical_required=True
+    )
+
+
+def parse_run_context(raw: bytes) -> ParsedContract:
+    """Parse canonical context and embedded scope digest; no issuer is trusted."""
+    return _parse_contract(
+        raw,
+        "ObserverRunContextV1",
+        _validate_run_context,
+        maximum=MAX_CONTEXT_BYTES,
+        canonical_required=True,
+    )
+
+
+def parse_offline_result(raw: bytes) -> ParsedContract:
+    """Parse a synthetic UNVERIFIED result retaining the mandatory blocks."""
+    return _parse_contract(raw, "OfflineVerificationResultV1", _validate_offline_result)
+
+
+def compare_synthetic_run_context(observed_raw: bytes, expected_raw: bytes) -> ParsedContract:
+    """Compare declared runs; caller-supplied JSON never becomes a trust anchor."""
+    observed = parse_run_context(observed_raw)
+    expected = parse_run_context(expected_raw)
+    _require(observed.canonical == expected.canonical, "HOST_SCOPE_UNVERIFIED")
+    return observed
+
+
+def parse_observer_result(raw: bytes) -> NoReturn:
+    """Refuse the result until counters/observations have exact reviewed schemas."""
+    blocks = _blocked_fields()
+    value = _record(
+        _decode(raw),
+        {
+            "schema",
+            "version",
+            "synthetic",
+            "run_id",
+            "run_nonce",
+            "observer_manifest_sha256",
+            "policy_sha256",
+            "launch_policy_sha256",
+            "installation_commits",
+            "scope_binding_sha256",
+            "boot_id",
+            "started_at",
+            "finished_at",
+            "counters",
+            "observations",
+            "reason_codes",
+            "completeness",
+        }
+        | set(blocks),
+    )
+    _schema(value, "ObserverResultV1")
+    _equal(value["synthetic"], True)
+    _identifier(value["run_id"])
+    _hex(value["run_nonce"], 64)
+    _boot_id(value["boot_id"])
+    for key in (
+        "observer_manifest_sha256",
+        "policy_sha256",
+        "launch_policy_sha256",
+        "scope_binding_sha256",
+    ):
+        _digest(value[key])
+    _equal(
+        value["installation_commits"],
+        [
+            "782816540373d7b31f426dab645ad115320d1234",
+            "26e17e7c23ea6cc1b265d57bfda1a1e6589d9e3f",
+        ],
+    )
+    _require(_timestamp(value["finished_at"]) >= _timestamp(value["started_at"]), "REPORT_REJECTED")
+    _equal(value["completeness"], "INCOMPLETE")
+    for key, expected in blocks.items():
+        _equal(value[key], expected)
+    reasons = _reason_codes(value["reason_codes"])
+    _require("RUNTIME_LAUNCH_UNVERIFIED" in reasons, "REPORT_REJECTED")
+    # No opaque counters/observations acceptance. See the schema-gap document.
+    _deny()
+
+
+def decode_synthetic_frame(
+    raw: bytes,
+    *,
+    eof: bool,
+    process_exit_code: int,
+    run_elapsed_ms: int,
+    receive_elapsed_ms: int,
+) -> bytes:
+    """Check synthetic framing and JSON syntax, returning untrusted payload bytes.
+
+    This is a transport model, not an accepting ObserverResultV1 parser. Its
+    timing/EOF/exit arguments do not authenticate a channel or sender. The real
+    receiver, replay state, authenticated receipt and process observation are
+    deliberately outside Stage 3A.
+    """
+    _decode_report_frame(
+        raw,
+        eof=eof,
+        process_exit_code=process_exit_code,
+        run_elapsed_ms=run_elapsed_ms,
+        receive_elapsed_ms=receive_elapsed_ms,
+    )
+    return raw[4:]
+
+
+def parse_report_frame(
+    raw: bytes,
+    *,
+    eof: bool,
+    process_exit_code: int,
+    run_elapsed_ms: int,
+    receive_elapsed_ms: int,
+) -> NoReturn:
+    """Require a complete result schema after framing; unfinished V1 refuses."""
+    payload = decode_synthetic_frame(
+        raw,
+        eof=eof,
+        process_exit_code=process_exit_code,
+        run_elapsed_ms=run_elapsed_ms,
+        receive_elapsed_ms=receive_elapsed_ms,
+    )
+    parse_observer_result(payload)
