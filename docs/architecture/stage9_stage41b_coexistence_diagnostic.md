@@ -180,6 +180,99 @@ earlier inode-only matches when installation metadata was initially unavailable.
 Exhausting that cache reports `PROCESS_INODE_LIMIT`; matching against already
 known installation identities continues even after the cache limit is reached.
 
+### Process sweep budgets
+
+Review of merge `d20a1a411f3fe543c84c364bfcdc332fb9961e88` confirmed that
+`PROCESS_SWEEP_LIMIT` came from adding `len(repr(snapshot))` for successive PIDs
+and comparing the cumulative character count with 64 MiB. This was not a measure
+of retained fingerprints or RSS. The crossing PID and every later skipped PID
+each added an event; the counter reset for the second independent sweep. Thus
+258 events cannot be interpreted as 258 distinct PIDs. A synthetic 130-PID run
+crossing at its second PID in both passes reproduces exactly 258 events with
+only four snapshot calls and 129 unique unavailable PIDs. The Dell aggregates
+do not identify its crossing PID, actual peak memory, or the relative shares of
+maps, threads and descriptors. Measurements from different runs remain separate.
+
+The former observer retained raw maps and link records for every thread within
+one PID. Matching, fingerprinting and budget accounting repeatedly constructed
+full `repr` strings; escaping could further amplify payload size. Even though
+raw reads had a limit, counting their cumulative representations stopped later
+PIDs after raw snapshots had already been released.
+
+The observer now consumes maps in chunks of at most 64 KiB, hashes bindings and
+operational data incrementally, and retains only compact thread identities,
+digests, bounded inode sets and fixed issue codes. Metadata reads and pending map
+lines are independently capped at 64 KiB. Descriptor enumeration is streamed;
+its order-independent digest includes descriptor identity, target and stat
+metadata with multiplicity. It does not retain a list of raw link targets.
+Task enumeration remains bounded at 1024 entries and descriptors at 65536 per
+thread. Reaching any such observation limit remains explicit uncertainty.
+
+`PROCESS_LIMIT` bounds per-PID input/work to 64 MiB, including byte reads and
+charged descriptor operations. Exhausting it reports `PROCESS_PID_LIMIT` and
+source-specific reasons, retains previous matches and partial observations, and
+allows the next PID to be observed. Source, thread and descriptor caps also
+report `PROCESS_PID_LIMIT`. It is not an exact allocator measurement.
+
+`SWEEP_LIMIT` independently bounds compact-state reservations to 64 MiB per
+pass: 2048 bytes per PID, 1024 per observed thread and 192 per retained inode pair.
+These conservative accounting units replace raw-traffic accounting. A PID that
+cannot be started within the reservation budget is explicitly unavailable and
+skipped. If its completed compact observation exceeds the remaining reservation,
+the already detected match and counters survive, but the excess comparison
+fingerprint is discarded and `PROCESS_SWEEP_LIMIT` is reported. A separate
+per-PID inode correlation record survives when its reservation fits, even if no
+full comparison fingerprint can be retained. The first pass
+remains available while the second runs, so these are two independent bounded
+stores, not a claim of a 64 MiB total RSS ceiling. PID inventories, installation
+metadata, aggregate sets and one bounded in-flight observation use additional
+memory. The global limit has not been increased.
+
+The PID base reservation covers the correlation holder and fingerprint header;
+each retained inode pair is charged exactly once to the same sweep budget.
+These reservations are committed immediately after reference collection, before
+fingerprinting or further validation can fail. Thread/fingerprint reservations
+are charged separately only when they fit. Discarding the full fingerprint does
+not release or erase its funded inode record. Final installation metadata is
+correlated against these independent records from both sweeps; identity and
+binding comparisons use only retained full fingerprints. The per-sweep 65536
+inode cap still applies, with no additional global inode cache.
+
+As before, a full fingerprint crossing exhausts that pass and later PIDs are
+explicitly skipped. An exhaustion flag replaces accounting beyond the budget;
+discarded fingerprint storage is not charged as retained memory. This also
+preserves the bound on aggregate thread-count tracking: beyond admitted thread
+reservations, at most one crossing PID per pass contributes its bounded thread
+set (at most 1024 entries). The existing observed-thread counter remains a count
+of unique observed PID/TID pairs. Correlation records and retained fingerprints
+together stay within the unchanged per-pass reservation limit.
+
+The inode cache is also bounded independently. Known installation inode matches
+are checked immediately even after the cache is full; unretained identities
+cannot be correlated with metadata discovered later and `PROCESS_INODE_LIMIT`
+makes that late-correlation gap explicit, including when the sweep has room for
+a PID holder but not even one inode pair. No raw process payload or exception
+text enters JSON.
+
+Synthetic regression measurements on Python 3.12 in the validation container
+used `tracemalloc` around observation, after fixture construction:
+
+| Workload | Input processed | Peak traced allocation |
+| --- | --- | --- |
+| 768 PID population, two sweeps | 75,497,472 bytes per sweep | 2,588,444 bytes |
+| 49 threads streaming shared maps | 13,848,576 bytes | 319,997 bytes |
+| 8192 distinct descriptor targets | 33,151,914 bytes | 81,130 bytes |
+
+The population case supplies synthetic legacy snapshots; the thread and
+descriptor cases exercise the real compact observer through local path adapters.
+The descriptor fixture constructs its paths and materializes their lazy parts
+before tracing, excluding process-global `pathlib` name-interning table resizes
+caused by fixture setup. Target strings are still generated during observation;
+the peak and retained-memory assertions are unchanged. Other interpreter
+allocation during observation is included. These are regression measurements,
+not RSS ceilings or physical Dell results. They do not qualify procfs visibility,
+permissions or host isolation.
+
 Stability is assessed separately for process identity and installation
 references. PID/`starttime` changes, thread membership changes, credentials,
 device/inode identities, permissions and reference-bearing data remain relevant.
@@ -193,6 +286,9 @@ Process counters describe unique PIDs observed across both sweeps:
 | Field | Meaning |
 | --- | --- |
 | `checked_pid_count` | At least one source was retained; the observation may be partial. |
+| `per_pid_limit_count` | Unique PIDs reaching a per-PID, source, thread or descriptor observation limit in either sweep. |
+| `sweep_budget_limit_count` | Unique PIDs affected by a compact-state sweep budget limit in either sweep, including a crossing observation whose fingerprint cannot be retained. |
+| `skipped_pid_count` | Unique PIDs skipped before observation in at least one sweep because that sweep lacked a PID reservation; a PID may still have been observed in the other sweep. |
 | `unavailable_pid_count` | At least one source was denied, missing, empty, malformed or limited, apart from separately classified empty kernel maps. |
 | `unstable_pid_count` | A PID/source disappeared, the PID set changed, or identity/reference-bearing content changed. |
 | `matched_pid_count` | Any retained observation positively referenced an installation or Stage 41B cgroup. |

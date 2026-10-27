@@ -12,6 +12,7 @@ from pathlib import Path
 import re
 import stat
 import sys
+from collections.abc import Callable, Iterator
 from typing import Any
 
 from deployment import stage9_source_cca_test_runtime as host
@@ -22,6 +23,19 @@ COMMITS = (
     "26e17e7c23ea6cc1b265d57bfda1a1e6589d9e3f",
 )
 LIMIT = 64 * 1024 * 1024
+# Independent bounds: traffic/work for one PID and retained compact state per pass.
+# LIMIT remains the installation reader bound and a ceiling on both process bounds.
+PROCESS_LIMIT = LIMIT
+SWEEP_LIMIT = LIMIT
+PROC_READ_LIMIT = 65536
+THREAD_LIMIT = 1024
+FD_LIMIT = 65536
+INODE_LIMIT = 65536
+# Conservative accounting units include Python container/object overhead. They
+# are reservations, not serialized lengths or a claim about exact allocator RSS.
+_PROCESS_RESERVATION = 2048
+_THREAD_RESERVATION = 1024
+_INODE_RESERVATION = 192
 
 
 def _stamp(info: os.stat_result) -> tuple[int, ...]:
@@ -251,15 +265,70 @@ class _ProcReadError(ValueError):
         self.partial = partial
 
 
-def _proc_bytes(path: Path, *, maximum: int | None = None) -> bytes:
+def _proc_bytes(
+    path: Path,
+    *,
+    maximum: int | None = None,
+    consume: Callable[[bytes], None] | None = None,
+) -> bytes:
+    """Bound every read; large maps are consumed without retaining their payload."""
     bound = LIMIT if maximum is None else min(LIMIT, max(0, maximum))
-    with path.open("rb") as stream:
-        raw = stream.read(bound + 1)
-    if len(raw) > bound:
-        raise _ProcReadError("LIMIT", raw[:bound])
-    if not raw:
+    if consume is None:
+        bound = min(bound, PROC_READ_LIMIT)
+    chunks = []
+    size = 0
+    try:
+        with path.open("rb") as stream:
+            while block := stream.read(min(PROC_READ_LIMIT, bound + 1 - size)):
+                available = block[: max(0, bound - size)]
+                if consume is None:
+                    chunks.append(available)
+                elif available:
+                    consume(available)
+                size += len(block)
+                if size > bound:
+                    raise _ProcReadError("LIMIT", b"".join(chunks))
+    except Exception as error:
+        if chunks:
+            raise _ProcReadError(_failure(error), b"".join(chunks)) from None
+        raise
+    if not size:
         raise _ProcReadError("EMPTY")
-    return raw
+    return b"".join(chunks)
+
+
+def _hash_update(digest: Any, value: Any) -> None:
+    """Incremental, typed framing; no temporary repr of an observation graph."""
+    if isinstance(value, bytes):
+        digest.update(b"b" + str(len(value)).encode() + b":")
+        for offset in range(0, len(value), PROC_READ_LIMIT):
+            digest.update(memoryview(value)[offset : offset + PROC_READ_LIMIT])
+    elif isinstance(value, str):
+        digest.update(b"s" + str(len(value)).encode() + b":")
+        for offset in range(0, len(value), 4096):
+            digest.update(value[offset : offset + 4096].encode("utf-8", "surrogatepass"))
+    elif value is None:
+        digest.update(b"n")
+    elif isinstance(value, (bool, int)):
+        digest.update(b"i" + str(value).encode() + b";")
+    elif isinstance(value, (tuple, list)):
+        digest.update(b"[" + str(len(value)).encode() + b":")
+        for child in value:
+            _hash_update(digest, child)
+        digest.update(b"]")
+    else:
+        raise ValueError("FINGERPRINT_TYPE")
+
+
+def _digest(value: Any) -> bytes:
+    digest = hashlib.sha256()
+    _hash_update(digest, value)
+    return digest.digest()
+
+
+def _pathname_match(value: bytes | str) -> bool:
+    prefix = str(preparation.PREFIX)
+    return prefix.encode() in value if isinstance(value, bytes) else prefix in value
 
 
 def _failure(error: Exception) -> str:
@@ -364,15 +433,23 @@ def _map_identity(line: bytes) -> tuple[int, int]:
 
 
 def _reference_observation(
-    snapshot: tuple[Any, ...],
+    snapshot: Any,
     inodes: set[tuple[int, int]],
     observed: set[tuple[int, int]] | None = None,
-    maximum: int = 65536,
+    maximum: int = INODE_LIMIT,
 ) -> tuple[bool, _Issues]:
     if sys.platform != "linux":
         raise ValueError("NATIVE_LINUX_REQUIRED")
-    # A positive name remains useful even when parsing or inode lookup fails.
-    matched = str(preparation.PREFIX) in repr(snapshot)
+    if isinstance(snapshot, _ProcessObservation):
+        snapshot.collect(inodes, maximum)
+        if observed is not None:
+            for identity in snapshot.inodes:
+                if len(observed) < maximum or identity in observed:
+                    observed.add(identity)
+                else:
+                    snapshot.issues.append("PROCESS_INODE_LIMIT")
+        return snapshot.matched or bool(snapshot.inodes & inodes), snapshot.issues
+    matched = False
     issues = _Issues()
 
     def remember(identity: tuple[int, int]) -> None:
@@ -390,7 +467,9 @@ def _reference_observation(
             cgroup = row[3]
             if not isinstance(cgroup, bytes):
                 raise ValueError("CGROUP_TYPE")
-            if any(marker in cgroup for marker in (b"ch-stage41b-", b"cryptohunter-stage41b-")):
+            if _pathname_match(cgroup) or any(
+                marker in cgroup for marker in (b"ch-stage41b-", b"cryptohunter-stage41b-")
+            ):
                 matched = True
         except (TypeError, ValueError, IndexError):
             issues.append("CGROUP_MALFORMED")
@@ -398,6 +477,8 @@ def _reference_observation(
             links = row[5]
             for link in links:
                 try:
+                    if isinstance(link[0], (bytes, str)) and _pathname_match(link[0]):
+                        matched = True
                     if type(link[1]) is int and type(link[2]) is int:
                         remember((link[1], link[2]))
                 except (TypeError, ValueError, IndexError):
@@ -408,6 +489,8 @@ def _reference_observation(
             maps = row[4]
             if not isinstance(maps, bytes):
                 raise ValueError("MAPS_TYPE")
+            if _pathname_match(maps):
+                matched = True
             for line in maps.splitlines():
                 try:
                     remember(_map_identity(line))
@@ -446,63 +529,164 @@ def _proc_readlink(path: Path) -> str:
     return os.readlink(path)
 
 
-def _pid_snapshot(item: Path) -> tuple[Any, ...]:
-    """Keep every independently available source, even after an identity failure.
+class _LinkDigest:
+    """A commutative descriptor multiset digest; no target/path list is kept."""
 
-    The first six row positions retain the raw thread observations for matching;
-    row seven holds only structured validation/security metadata. Nothing here is
-    serialized into the public report. A partial observation never proves absence.
+    __slots__ = ("count", "total")
+
+    def __init__(self) -> None:
+        self.count = 0
+        self.total = 0
+
+    def add(self, entry: tuple[Any, ...]) -> None:
+        self.count += 1
+        self.total = (self.total + int.from_bytes(_digest(entry), "big")) % (1 << 256)
+
+    def __len__(self) -> int:
+        return self.count
+
+    def fingerprint(self) -> tuple[int, bytes]:
+        return self.count, self.total.to_bytes(32, "big")
+
+
+class _ProcessObservation:
+    """Lazy so the consumer supplies known inodes before any source is read.
+
+    Only compact thread rows, digests, bounded inode identities and issue codes
+    survive collection. Tuple-like access keeps the internal observation seam
+    useful to existing synthetic observers; it never exposes raw procfs data.
     """
-    records: list[Any] = []
-    remaining = LIMIT
+
+    __slots__ = ("item", "rows", "inodes", "issues", "matched", "fingerprint", "collected")
+
+    def __init__(self, item: Path) -> None:
+        self.item = item
+        self.rows: list[tuple[Any, ...]] = []
+        self.inodes: set[tuple[int, int]] = set()
+        self.issues = _Issues()
+        self.matched = False
+        self.fingerprint: dict[str, Any] = {
+            "identities": {},
+            "bindings": hashlib.sha256().hexdigest(),
+            "operational": hashlib.sha256().hexdigest(),
+            "observed": False,
+            "kernel": False,
+            "empty_kernel": False,
+        }
+        self.collected = False
+
+    def collect(self, inodes: set[tuple[int, int]], maximum: int = INODE_LIMIT) -> None:
+        if not self.collected:
+            self.collected = True
+            try:
+                _collect_pid(self, inodes, max(0, maximum))
+            except Exception as error:
+                # A later source/parser failure must not erase prior evidence.
+                self.issues.append("PROCESS_" + _failure(error))
+
+    def __bool__(self) -> bool:
+        return True
+
+    def __iter__(self) -> Iterator[tuple[Any, ...]]:
+        self.collect(set())
+        return iter(self.rows)
+
+    def __getitem__(self, index: int) -> tuple[Any, ...]:
+        self.collect(set())
+        return self.rows[index]
+
+    def __len__(self) -> int:
+        self.collect(set())
+        return len(self.rows)
+
+
+def _pid_snapshot(item: Path) -> _ProcessObservation:
+    return _ProcessObservation(item)
+
+
+def _collect_pid(
+    observation: _ProcessObservation, inodes: set[tuple[int, int]], maximum: int
+) -> None:
+    item = observation.item
+    issues = observation.issues
+    remaining = min(LIMIT, PROCESS_LIMIT)
     leader = int(item.name) if item.name.isascii() and item.name.isdigit() else -1
+    identities: dict[int, tuple[int, int, bool]] = {}
+    observation.fingerprint["identities"] = identities
+    stable = hashlib.sha256()
+    operational = hashlib.sha256()
+    observed = False
+    kernel = False
+    empty_kernel = False
 
-    def observe(task: Path, tid: int) -> tuple[Any, ...]:
-        nonlocal remaining
-        issues = _Issues()
-        observed = 0
+    def limited(source: str) -> None:
+        issues.append(source + "_LIMIT")
+        issues.append("PROCESS_PID_LIMIT")
 
-        def capture(path: Path, source: str) -> bytes:
-            nonlocal remaining, observed
-            if remaining <= 0:
-                issues.append(source + "_LIMIT")
-                return b""
-            try:
-                raw = _proc_bytes(path, maximum=remaining)
-                observed += 1
-            except Exception as error:
-                issues.append(source + "_" + _failure(error))
-                raw = error.partial if isinstance(error, _ProcReadError) else b""
-                observed += bool(raw)
-            remaining -= len(raw)
-            return raw
+    def remember(identity: tuple[int, int]) -> None:
+        if identity in inodes:
+            observation.matched = True
+        if identity[1]:
+            if (
+                len(observation.inodes) < min(INODE_LIMIT, maximum)
+                or identity in observation.inodes
+            ):
+                observation.inodes.add(identity)
+            else:
+                issues.append("PROCESS_INODE_LIMIT")
 
-        def identity(raw: bytes) -> tuple[int, int, bool] | None:
-            try:
-                return _stat_fields(raw, tid)[0]
-            except ValueError as error:
-                if raw:
-                    issues.append(
-                        "STAT_IDENTITY_CHANGED"
-                        if isinstance(error, _IdentityChanged)
-                        else "STAT_MALFORMED"
-                    )
-                return None
+    def capture(path: Path, source: str) -> bytes:
+        nonlocal remaining, observed
+        if remaining <= 0:
+            limited(source)
+            return b""
+        try:
+            raw = _proc_bytes(path, maximum=remaining)
+            observed = True
+            observation.fingerprint["observed"] = True
+        except Exception as error:
+            code = _failure(error)
+            if code == "LIMIT":
+                limited(source)
+            else:
+                issues.append(source + "_" + code)
+            raw = error.partial if isinstance(error, _ProcReadError) else b""
+            observed |= bool(raw)
+            observation.fingerprint["observed"] |= bool(raw)
+        remaining -= len(raw)
+        return raw
 
-        def directory() -> tuple[int, ...] | None:
-            try:
-                return _directory_identity(task)
-            except Exception as error:
-                issues.append("THREAD_" + _failure(error))
-                return None
+    def identity(raw: bytes, tid: int) -> tuple[int, int, bool] | None:
+        try:
+            return _stat_fields(raw, tid)[0]
+        except ValueError as error:
+            if raw:
+                issues.append(
+                    "STAT_IDENTITY_CHANGED"
+                    if isinstance(error, _IdentityChanged)
+                    else "STAT_MALFORMED"
+                )
+            return None
 
-        security_before = directory()
+    def directory(task: Path) -> tuple[int, ...] | None:
+        try:
+            return _directory_identity(task)
+        except Exception as error:
+            issues.append("THREAD_" + _failure(error))
+            return None
+
+    def observe(task: Path, tid: int) -> None:
+        nonlocal remaining, observed, kernel, empty_kernel
+        links = _LinkDigest()
+        observation.rows.append((str(tid), b"", b"", b"", b"", links, {}))
+        security_before = directory(task)
         start = capture(task / "stat", "STAT")
-        before = identity(start)
+        before = identity(start, tid)
         status = capture(task / "status", "STATUS")
+        stable_status: tuple[tuple[bytes, bytes], ...] = ()
         try:
             if status:
-                _status_fields(status, tid, leader)
+                stable_status = _status_fields(status, tid, leader)
         except ValueError as error:
             issues.append(
                 "STATUS_IDENTITY_CHANGED"
@@ -510,106 +694,193 @@ def _pid_snapshot(item: Path) -> tuple[Any, ...]:
                 else "STATUS_MALFORMED"
             )
         cgroup = capture(task / "cgroup", "CGROUP")
+        if _pathname_match(cgroup) or any(
+            marker in cgroup for marker in (b"ch-stage41b-", b"cryptohunter-stage41b-")
+        ):
+            observation.matched = True
         if cgroup and any(
             not re.fullmatch(rb"[0-9]+:[^:\n]*:/[^\n]*", line) for line in cgroup.splitlines()
         ):
             issues.append("CGROUP_MALFORMED")
-        maps = capture(task / "maps", "MAPS")
-        links = []
+        maps_digest = hashlib.sha256()
+        pending = b""
+        scan_tail = b""
+        maps_bytes = 0
+        maps_empty = False
+        maps_complete = False
+        dropping_line = False
+        prefix = str(preparation.PREFIX).encode()
+
+        def maps_block(block: bytes) -> None:
+            nonlocal remaining, observed, pending, scan_tail, maps_bytes, dropping_line
+            remaining -= len(block)
+            maps_bytes += len(block)
+            observed = True
+            observation.fingerprint["observed"] = True
+            maps_digest.update(block)
+            scan = scan_tail + block
+            if prefix in scan:
+                observation.matched = True
+            scan_tail = scan[-max(1, len(prefix)) :]
+            for piece in block.splitlines(keepends=True):
+                complete = piece.endswith(b"\n")
+                if not dropping_line:
+                    if len(pending) + len(piece) > PROC_READ_LIMIT:
+                        limited("MAPS_LINE")
+                        pending = b""
+                        dropping_line = True
+                    else:
+                        pending += piece
+                        if complete:
+                            try:
+                                remember(_map_identity(pending))
+                            except (ValueError, OverflowError):
+                                issues.append("MAPS_MALFORMED")
+                            pending = b""
+                if complete:
+                    dropping_line = False
+
+        if remaining <= 0:
+            limited("MAPS")
+        else:
+            try:
+                _proc_bytes(task / "maps", maximum=remaining, consume=maps_block)
+                maps_complete = True
+            except Exception as error:
+                code = _failure(error)
+                maps_empty = code == "EMPTY"
+                if code == "LIMIT":
+                    limited("MAPS")
+                elif not maps_empty:
+                    issues.append("MAPS_" + code)
+        if pending and maps_complete and not dropping_line:
+            try:
+                remember(_map_identity(pending))
+            except (ValueError, OverflowError):
+                issues.append("MAPS_MALFORMED")
 
         def link(path: Path, source: str) -> None:
             nonlocal remaining, observed
             if remaining <= 0:
-                issues.append(source + "_LIMIT")
+                limited(source)
                 return
             target = None
             stamp = None
             try:
                 target = _proc_readlink(path)
-                observed += 1
+                observed = True
+                observation.fingerprint["observed"] = True
+                if _pathname_match(target):
+                    observation.matched = True
             except Exception as error:
                 issues.append(source + "_" + _failure(error))
-            # Inode matching is independent from the symlink target read.
+            # Inode matching remains independent from target read and retention.
             try:
-                info = path.stat()
-                stamp = _stamp(info)
-                observed += 1
+                stamp = _stamp(path.stat())
+                observed = True
+                observation.fingerprint["observed"] = True
+                remember((stamp[2], stamp[1]))
             except Exception as error:
                 issues.append(source + "_" + _failure(error))
-            entry = (target, stamp[2] if stamp else None, stamp[1] if stamp else None, stamp)
+            remaining -= 256 + (len(os.fsencode(target)) if target is not None else 0)
             if target is not None or stamp is not None:
-                links.append(entry)
-                remaining -= len(repr(entry))
+                links.add((source, path.name, target, stamp))
+            if remaining < 0:
+                limited(source)
 
         for name in ("exe", "cwd", "root"):
             link(task / name, name.upper())
-        descriptors, errors = _partial_listing(task / "fd", 65536)
-        issues.extend("FD_" + error for error in errors)
-        for path in descriptors:
-            link(path, "FD")
-            if remaining <= 0:
-                issues.append("FD_LIMIT")
-                break
+        if remaining > 0:
+            try:
+                count = 0
+                for path in (task / "fd").iterdir():
+                    if count >= FD_LIMIT or remaining <= 0:
+                        limited("FD")
+                        break
+                    count += 1
+                    link(path, "FD")
+            except Exception as error:
+                issues.append("FD_" + _failure(error))
+        else:
+            limited("FD")
         end = capture(task / "stat", "STAT")
-        after = identity(end)
-        security_after = directory()
+        after = identity(end, tid)
+        security_after = directory(task)
         if before is not None and after is not None and before != after:
             issues.append("STAT_IDENTITY_CHANGED")
         if security_before != security_after:
             issues.append("THREAD_CONTENT_CHANGED")
         coherent = before is not None and before == after
-        # Empty maps has meaning only after the same TID/starttime/flag was read
-        # on both sides. KTHREAD never exempts other inaccessible resources.
-        is_kernel = before is not None and before == after and before[2]
-        empty_kernel_maps = is_kernel and "MAPS_EMPTY" in issues
-        if empty_kernel_maps:
-            issues.remove("MAPS_EMPTY")
-        meta = {
-            "issues": issues,
-            "identity": before if coherent else None,
-            "kernel_thread": is_kernel,
-            "empty_kernel_maps": bool(empty_kernel_maps),
-            "observed": observed,
-            "security": (security_before, security_after),
-            "end_stat": end,
-        }
-        return (str(tid), start, status, cgroup, maps, tuple(links), meta)
+        if coherent and before is not None:
+            identities[tid] = before
+        is_kernel = coherent and before is not None and before[2]
+        valid_empty = is_kernel and maps_empty
+        if maps_empty and not valid_empty:
+            issues.append("MAPS_EMPTY")
+        if tid == leader:
+            kernel, empty_kernel = is_kernel, valid_empty
+        try:
+            stable_stat = _stat_fields(start, tid)[1]
+            end_stable = _stat_fields(end, tid)[1]
+            if stable_stat != end_stable:
+                issues.append("PROCESS_CONTENT_CHANGED")
+        except ValueError:
+            stable_stat = (start, end)
+        _hash_update(
+            stable,
+            (
+                str(tid),
+                stable_stat,
+                stable_status,
+                cgroup,
+                maps_digest.digest(),
+                links.fingerprint(),
+                (security_before, security_after),
+            ),
+        )
+        _hash_update(operational, (start, end, status))
 
-    records.append(observe(item, leader))
-    tasks, errors = _partial_listing(item / "task", 1024)
-    records[0][6]["issues"].extend("THREAD_" + error for error in errors)
+    observe(item, leader)
+    tasks, errors = _partial_listing(item / "task", THREAD_LIMIT)
+    for error in errors:
+        if error == "LIMIT":
+            limited("THREAD")
+        else:
+            issues.append("THREAD_" + error)
     if not tasks:
-        records[0][6]["issues"].append("THREAD_EMPTY")
+        issues.append("THREAD_EMPTY")
     for task in tasks:
         if not task.name.isascii() or not task.name.isdigit():
-            records[0][6]["issues"].append("THREAD_MALFORMED")
-            continue
-        if int(task.name) != leader:
+            issues.append("THREAD_MALFORMED")
+        elif int(task.name) != leader:
             if remaining <= 0:
-                records[0][6]["issues"].append("PROCESS_LIMIT")
+                limited("THREAD")
                 break
-            records.append(observe(task, int(task.name)))
-    # Bracket the entire thread enumeration with the leader identity too.
-    try:
-        closing = _proc_bytes(item / "stat", maximum=max(0, remaining))
-        final_identity = _stat_fields(closing, leader)[0]
-        if records[0][6]["identity"] != final_identity:
-            records[0][6]["issues"].append("STAT_IDENTITY_CHANGED")
-            records[0][6]["identity"] = None
-            records[0][6]["kernel_thread"] = False
-            records[0][6]["empty_kernel_maps"] = False
-    except Exception as error:
-        records[0][6]["issues"].append("STAT_" + _failure(error))
-        records[0][6]["identity"] = None
-        records[0][6]["kernel_thread"] = False
-        records[0][6]["empty_kernel_maps"] = False
-    return tuple(records)
+            observe(task, int(task.name))
+    closing = capture(item / "stat", "STAT")
+    final_identity = identity(closing, leader)
+    if final_identity is None or identities.get(leader) != final_identity:
+        if final_identity is not None:
+            issues.append("STAT_IDENTITY_CHANGED")
+        identities.pop(leader, None)
+        kernel = empty_kernel = False
+    observation.fingerprint = {
+        "identities": identities,
+        "bindings": stable.hexdigest(),
+        "operational": operational.hexdigest(),
+        "observed": observed,
+        "kernel": kernel,
+        "empty_kernel": empty_kernel,
+    }
 
 
-def _fingerprints(snapshot: tuple[Any, ...], pid: int) -> tuple[dict[str, Any], _Issues]:
+def _fingerprints(snapshot: Any, pid: int) -> tuple[dict[str, Any], _Issues]:
+    if isinstance(snapshot, _ProcessObservation):
+        snapshot.collect(set())
+        return snapshot.fingerprint, snapshot.issues
     identities: dict[int, tuple[int, int, bool]] = {}
-    stable = []
-    operational = []
+    stable = hashlib.sha256()
+    operational = hashlib.sha256()
     issues = _Issues()
     observed = False
     kernel = False
@@ -633,18 +904,18 @@ def _fingerprints(snapshot: tuple[Any, ...], pid: int) -> tuple[dict[str, Any], 
             _, end_stable = _stat_fields(end_stat, int(tid))
             if stable_stat != end_stable:
                 issues.append("PROCESS_CONTENT_CHANGED")
-            stable.append(
-                (tid, stable_stat, stable_status, cgroup, maps, links, meta.get("security"))
+            _hash_update(
+                stable, (tid, stable_stat, stable_status, cgroup, maps, links, meta.get("security"))
             )
-            operational.append((raw_stat, end_stat, status))
+            _hash_update(operational, (raw_stat, end_stat, status))
         except (TypeError, ValueError, IndexError):
             issues.append("PROCESS_MALFORMED")
             # Still compare unparseable data conservatively; matching is separate.
-            stable.append(row[:6])
+            _hash_update(stable, row[:6])
     return {
         "identities": identities,
-        "bindings": hashlib.sha256(repr(stable).encode()).hexdigest(),
-        "operational": hashlib.sha256(repr(operational).encode()).hexdigest(),
+        "bindings": stable.hexdigest(),
+        "operational": operational.hexdigest(),
         "observed": observed,
         "kernel": kernel,
         "empty_kernel": empty_kernel,
@@ -676,6 +947,9 @@ def processes() -> dict[str, Any]:
     counts: dict[str, int] = {}
     threads: set[tuple[int, str]] = set()
     inodes: set[tuple[int, int]] = set()
+    per_pid_limited: set[int] = set()
+    sweep_limited: set[int] = set()
+    skipped: set[int] = set()
 
     def reason(code: str, count: int = 1) -> None:
         reasons.add(code)
@@ -712,13 +986,20 @@ def processes() -> dict[str, Any]:
             reason("PROCFS_INCOMPLETE")
         return items
 
-    def sweep(items: dict[int, Path]) -> dict[int, dict[str, Any]]:
-        observations = {}
+    def sweep(
+        items: dict[int, Path],
+    ) -> tuple[dict[int, dict[str, Any]], dict[int, set[tuple[int, int]]]]:
+        observations: dict[int, dict[str, Any]] = {}
+        correlations: dict[int, set[tuple[int, int]]] = {}
         observed_size = 0
         observed_inodes = 0
+        exhausted = False
         for pid, item in items.items():
-            if observed_size > LIMIT:
+            sweep_bound = min(LIMIT, SWEEP_LIMIT)
+            if exhausted or observed_size + _PROCESS_RESERVATION > sweep_bound:
                 unavailable.add(pid)
+                sweep_limited.add(pid)
+                skipped.add(pid)
                 reason("PROCESS_SWEEP_LIMIT")
                 continue
             try:
@@ -728,14 +1009,40 @@ def processes() -> dict[str, Any]:
                 # Classify before validation, fingerprinting or size accounting.
                 references: set[tuple[int, int]] = set()
                 positive, issues = _reference_observation(
-                    snapshot, inodes, references, 65536 - observed_inodes
+                    snapshot,
+                    inodes,
+                    references,
+                    min(
+                        INODE_LIMIT - observed_inodes,
+                        max(0, sweep_bound - observed_size - _PROCESS_RESERVATION)
+                        // _INODE_RESERVATION,
+                    ),
                 )
                 observed_inodes += len(references)
                 if positive:
                     matched.add(pid)
+                # Reserve the small correlation record independently, before
+                # fingerprinting can fail or exceed the remaining pass budget.
+                # The collection cap above already includes this PID's base.
+                observed_size += _PROCESS_RESERVATION + _INODE_RESERVATION * len(references)
+                if references:
+                    correlations[pid] = references
+                reservation = _THREAD_RESERVATION * len(snapshot)
+                if observed_size + reservation > sweep_bound:
+                    exhausted = True
+                    unavailable.add(pid)
+                    sweep_limited.add(pid)
+                    reason("PROCESS_SWEEP_LIMIT")
+                    # Preserve the funded inode record for late metadata, but
+                    # retain no unfunded comparison fingerprint. Stop this pass
+                    # as before, also bounding aggregate crossing-thread tracking.
+                else:
+                    observed_size += reservation
                 fingerprint, validation = _fingerprints(snapshot, pid)
-                fingerprint["inodes"] = references
-                issues.extend(validation)
+                if issues is not validation:
+                    issues.extend(validation)
+                if "PROCESS_PID_LIMIT" in issues:
+                    per_pid_limited.add(pid)
                 if fingerprint["observed"]:
                     checked.add(pid)
                 threads.update((pid, row[0]) for row in snapshot)
@@ -751,11 +1058,8 @@ def processes() -> dict[str, Any]:
                         unavailable.add(pid)
                         if code.endswith("NOT_FOUND"):
                             unstable.add(pid)
-                observed_size += len(repr(snapshot))
-                if observed_size > LIMIT:
-                    unavailable.add(pid)
-                    reason("PROCESS_SWEEP_LIMIT")
-                observations[pid] = fingerprint
+                if not exhausted:
+                    observations[pid] = fingerprint
             except Exception as error:
                 code = _failure(error)
                 reason("PROCESS_" + code)
@@ -763,7 +1067,7 @@ def processes() -> dict[str, Any]:
                     unstable.add(pid)
                 else:
                     unavailable.add(pid)
-        return observations
+        return observations, correlations
 
     try:
         if not host._procfs_visibility():
@@ -772,18 +1076,18 @@ def processes() -> dict[str, Any]:
         reason("PROCFS_VISIBILITY_UNCERTAIN")
     before = metadata()
     initial = pids()
-    first = sweep(initial)
+    first, first_correlations = sweep(initial)
     current = pids()
     unstable.update(initial.keys() ^ current.keys())
-    second = sweep(initial | current)
+    second, second_correlations = sweep(initial | current)
     final = pids()
     after = metadata()
     # Late readable installation metadata can identify an alias seen earlier.
     matched.update(
         pid
-        for observations in (first, second)
-        for pid, observation in observations.items()
-        if observation["inodes"] & inodes
+        for correlations in (first_correlations, second_correlations)
+        for pid, references in correlations.items()
+        if references & inodes
     )
     metadata_stable = before == after and all(item["complete"] is True for item in before + after)
     if not metadata_stable:
@@ -836,6 +1140,9 @@ def processes() -> dict[str, Any]:
             "unavailable_pids": sorted(unavailable),
             "unstable_pids": sorted(unstable),
             "observed_pid_count": len(checked),
+            "per_pid_limit_count": len(per_pid_limited),
+            "sweep_budget_limit_count": len(sweep_limited),
+            "skipped_pid_count": len(skipped),
             "observed_thread_count": len(threads),
             "stable_visible_snapshot": not reasons,
             "stable_process_identities": visibility_complete
