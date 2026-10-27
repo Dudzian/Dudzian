@@ -6,7 +6,7 @@ This document defines the delivery path from the current Product Architecture Co
 
 ## North-star outcome
 
-CryptoHunter v1 is complete when it is a stable installable Windows desktop product with a durable background Core, PAPER and TESTNET end-to-end trading, guarded LIVE execution, multi-exchange/account routing, deterministic risk and accounting, secure identity/secrets, recovery, observability, updater/rollback and release-grade operational safety.
+CryptoHunter v1 is complete when its approved release scope has a stable installable Windows desktop product (primary platform) and a separately qualified Linux release (supported platform), with a durable background Core, PAPER and TESTNET end-to-end trading, guarded LIVE execution, multi-exchange/account routing, deterministic risk and accounting, secure identity/secrets, recovery, observability, updater/rollback and release-grade operational safety. Platform readiness is proven separately; a Windows-only initial release must be labelled Windows-only until Linux qualification passes. macOS is not in the v1 release scope.
 
 ## Governing rules
 
@@ -20,6 +20,24 @@ CryptoHunter v1 is complete when it is a stable installable Windows desktop prod
 8. **Preview is not runtime evidence.** `preview_*`, fixtures and static read models can inform contracts/tests but cannot satisfy runtime acceptance criteria.
 9. **Milestone exits require evidence.** A milestone closes only when its acceptance tests and audit are complete; feature presence alone is insufficient.
 10. **Every substantial PR declares its roadmap target.** PR descriptions should state the milestone/sub-step and whether they change contract, runtime, migration, tests or release surfaces.
+
+## Platform release scope — PLAT-01 (decision: 2026-10-27)
+
+**Product scope decision:** CryptoHunter v1 targets **Windows as PRIMARY** and **Linux as SUPPORTED**, subject to separate native release qualification. **macOS is DEFERRED**: it is not a promised beta/v1 production platform, no physical Mac purchase or physical macOS qualification is planned, and no macOS production-ready claim may be made from hosted CI.
+
+| Platform | v1 delivery intent | Required release evidence |
+| --- | --- | --- |
+| Windows | PRIMARY; existing Windows development machine and native Windows qualification | Windows-specific Stage 9, legal enrollment, Stage 10 where applicable, platform release gates, MSI/service/TPM/security/lifecycle and v1 product acceptance. |
+| Linux | SUPPORTED; native Dell Latitude 5490 Ubuntu test host | Independent Linux Stage 9 evidence and observer qualification where required, systemd/permissions/PostgreSQL/installer/lifecycle tests, Linux-specific gates and actual packaged product acceptance. Windows PASS does not qualify Linux. |
+| macOS | DEFERRED; explicitly outside beta/v1 supported release scope | No physical Mac requirement for the Windows/Linux release **after** the machine-readable release-scope policy is formally aligned. Future macOS support needs its own approved platform project and native qualification. |
+
+**Current contract mismatch and required follow-up:** `deployment/platform_readiness.json` still declares `MACOS=SUPPORTED` and contains `MACOS_PRODUCTION_READY` acceptance gates. This roadmap decision **does not modify, silently waive, mark NOT_APPLICABLE, or remove** those gates, CI jobs, or any recorded status. Before applying this v1 scope to release decisions, submit a separate reviewed PR aligning the machine-readable platform scope, validators, platform-specific acceptance and release workflows with Windows/Linux v1 and macOS deferred. Preserve the existing safeguards until that change is validated. Any conflict between this planning decision and the currently executable gate remains an **open release-scope blocker**, not implicit permission to ignore a failure.
+
+**CI and evidence policy:** Keep macOS hosted build/unit/compatibility checks where useful and feasible, with their results explicitly classified as compatibility evidence, **not physical qualification**. Never suppress a real cross-platform regression affecting shared code, security or Windows/Linux runtime. A future reviewed policy may classify macOS-only native launchd/packaging acceptance as deferred for the Windows/Linux release; it must not weaken required Windows/Linux checks, change existing quality/security thresholds, mask mandatory workflow failures or declare unsupported macOS features implemented. Windows and Linux must each pass their actual target-platform gates before being advertised as supported; a staged Windows-first release cannot claim Linux READY until Linux has its own accepted evidence.
+
+**Hardware and trust boundary:** The operator already has a primary Windows computer and a dedicated Dell Linux test laptop. Do not make purchasing a Mac a Stage 9, first-beta or v1 prerequisite. This does not eliminate the independent trust roots, reviewer/custody separation, protected physical Windows execution environment or separately authorized physical testing that Stage 9/10 require. Two available computers alone do not prove independence or attestation.
+
+**No implicit promotion:** This decision does not change `Stage 9=IN_PROGRESS`, legal enrollment, Root Proof issuance, Windows 0–14 readiness, Stage 10 `NOT_STARTED`, LIVE permissions or any platform `PRODUCTION_READY` result. All applicable gates remain fail-closed.
 
 ## Windows Stage 9 → Stage 10 preflight — S9-S10-PRE-01
 
@@ -441,17 +459,19 @@ Run the Windows packaged PySide6/QML product through actual first-launch → acc
 
 ## Packaging
 
-- canonical Windows entrypoint
-- deterministic PyInstaller build
+- canonical Windows entrypoint and MSI/release qualification for the primary platform
+- separately qualified Linux entrypoint, package, native systemd/permission/lifecycle integration and release evidence before any Linux-supported build is advertised
+- deterministic PyInstaller build where applicable to the selected platform
 - QML/assets/dependency inventory
 - artifact verification
 - smoke tests
 - version metadata
 - installer/release packaging as selected by final architecture
+- no required macOS package, launchd or physical Mac qualification for v1 **once** PLAT-01 machine-readable scope migration has been reviewed and merged; no macOS production support claim
 
 ### M4 exit criteria
 
-- A non-developer can install and operate the beta-scope PAPER/TESTNET product without CLI intervention.
+- A non-developer can install and operate the beta-scope PAPER/TESTNET product without CLI intervention on every platform advertised as supported in that specific beta; Windows is primary, and Linux requires a separate native E2E and packaging sign-off before it is included.
 - All beta-critical UI workflows are clickable and functional end to end against real runtime contracts.
 - Settings → Exchanges & Accounts stores credentials securely, verifies accounts and supports multiple qualified TESTNET accounts without CLI/config editing.
 - The dedicated UI overhaul M4.2 and native qualification M4.3 have complete evidence; Zonda and BitMEX are neither shown as connectable nor reachable through UI actions.
@@ -598,8 +618,10 @@ A third full audit is justified only if the independent re-audit discovers a new
 
 Before cutting the first beta:
 
-- run all required native Windows qualification
-- run required TPM/hardware qualification that cannot be established in cloud
+- run all required native Windows qualification for the primary beta target
+- run Linux-native installation/service/UI qualification before the beta is advertised as supporting Linux; hosted Linux unit tests alone are insufficient
+- run required TPM/hardware and independent-trust qualification that cannot be established in cloud
+- enforce the reviewed PLAT-01 machine-readable release-scope migration before deferring any macOS-specific acceptance gate; hosted macOS compatibility tests never qualify physical macOS
 - complete beta-scope E2E, installer/update/rollback and recovery qualification
 - record all explicitly accepted MEDIUM and LOW residual risks
 - create the immutable **Beta Baseline SHA/tag**
@@ -614,7 +636,7 @@ The first beta may be cut only when:
 - **HIGH = 0**
 - every remaining MEDIUM has an explicit written acceptance and follow-up disposition
 - CI, quality and security gates are green for the Beta Candidate
-- required Windows-native and physical TPM/hardware qualification is PASS
+- required Windows-native and physical TPM/hardware qualification is PASS; Linux-native qualification is also PASS before Linux is included in the supported beta scope
 - no unresolved canonical architecture conflict remains in the beta scope
 - all beta-critical UI flows are functional, connected to real runtime contracts and free of silent mock/placeholder actions
 - supported venues/credential profiles are manageable without CLI, two qualified independent TESTNET accounts operate simultaneously, and Zonda/BitMEX (plus any newly retired venue) have no reachable trading/configuration/UI/marketplace path under the versioned lifecycle gate
@@ -707,7 +729,7 @@ CryptoHunter v1 is considered complete only when:
 - Multi-exchange/account scope required for v1 is production-validated.
 - Persistence, recovery and reconciliation are demonstrated under failure.
 - Security/risk gates cannot be bypassed by UI or caller input.
-- Desktop packaging, update and rollback are release-grade.
+- Desktop packaging, update and rollback are release-grade on each platform explicitly supported by the release (Windows primary; Linux independently qualified when included). macOS remains deferred with no production support claim.
 - Soak/hardening acceptance criteria pass.
 - Final production audit records remaining limitations explicitly.
 
