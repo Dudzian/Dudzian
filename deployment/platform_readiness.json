@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "reference_platform": "WINDOWS",
   "platforms": [
     "WINDOWS",
@@ -9,7 +9,7 @@
   "release_priority": {
     "WINDOWS": "PRIMARY",
     "LINUX": "SUPPORTED",
-    "MACOS": "SUPPORTED"
+    "MACOS": "DEFERRED"
   },
   "allowed_statuses": [
     "PASS",
@@ -348,5 +348,23 @@
     "ROOT_PROOF_ISSUER_IMPLEMENTED": false,
     "production_substrate_implemented": false,
     "PRODUCTION_LOCAL_RUNTIME_AVAILABLE": false
+  },
+  "compatibility_platforms": [
+    "WINDOWS",
+    "LINUX",
+    "MACOS"
+  ],
+  "release_profiles": {
+    "WINDOWS_BETA": [
+      "WINDOWS"
+    ],
+    "WINDOWS_LINUX_BETA": [
+      "WINDOWS",
+      "LINUX"
+    ],
+    "CRYPTOHUNTER_V1": [
+      "WINDOWS",
+      "LINUX"
+    ]
   }
 }

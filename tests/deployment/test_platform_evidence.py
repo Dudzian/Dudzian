@@ -8,14 +8,24 @@ from typing import Any, Callable
 import pytest
 
 from deployment import platform_evidence
+from deployment.core_test_plan import load_manifest, marker_document
 from deployment.platform_evidence import (
     EvidenceProductionError,
     aggregate_core_markers,
     produce_windows_clean_install_evidence,
     produce_windows_stage10_evidence,
 )
-from deployment.platform_readiness import blocking_items, load_contract, production_ready
-from deployment.windows_stage9_evidence_contract import PRODUCTION_TRUST_CEREMONY_ID
+from deployment.platform_readiness import (
+    _validated_results,
+    blocking_items,
+    load_contract,
+    production_ready,
+)
+from deployment.windows_stage9_evidence_contract import (
+    CLEAN_INSTALL_PRECEREMONY_PROOFS,
+    POST_ENROLLMENT_QUALIFICATION_STATE,
+    PRODUCTION_TRUST_CEREMONY_ID,
+)
 
 CEREMONY_ID = PRODUCTION_TRUST_CEREMONY_ID
 PUBLIC_PACKAGE_FILENAMES = {"package_manifest.json"}
@@ -81,8 +91,12 @@ def test_stage10_current_native_receipt_is_consumable(tmp_path, monkeypatch) -> 
         r["status"] == "PASS" and r["evidence_class"] == "LIVE_WINDOWS_INTEGRATION" for r in results
     )
     contract = load_contract()
-    contract["release_gates"]["WINDOWS_PRODUCTION_READY"] = list(_stage10_receipt()["results"])
-    assert production_ready(
+    # A lifecycle slice is consumable evidence, not full platform qualification.
+    accepted = _validated_results(
+        contract, [json.loads(output.read_text())], "revision", "https://github.com", "42"
+    )
+    assert set(accepted) == set(_stage10_receipt()["results"])
+    assert not production_ready(
         "WINDOWS",
         contract,
         [json.loads(output.read_text())],
@@ -225,13 +239,6 @@ def test_stage10_rejects_invalid_shared_contract_probe_id(
         )
 
 
-from deployment.core_test_plan import load_manifest, marker_document
-from deployment.windows_stage9_evidence_contract import (
-    CLEAN_INSTALL_PRECEREMONY_PROOFS,
-    POST_ENROLLMENT_QUALIFICATION_STATE,
-)
-
-
 def test_core_aggregation_requires_same_revision_and_all_operating_systems(
     tmp_path: Path,
 ) -> None:
@@ -371,14 +378,10 @@ def test_current_producer_receipt_is_accepted_by_evidence_consumer(
     assert evidence["results"][0]["status"] == "PASS"
     assert evidence["results"][0]["evidence_class"] == "LIVE_WINDOWS_INTEGRATION"
     contract = load_contract()
-    contract["release_gates"]["WINDOWS_PRODUCTION_READY"] = ["WINDOWS_CLEAN_INSTALL"]
-    assert production_ready(
-        "WINDOWS",
-        contract,
-        [evidence],
-        "revision",
-        "https://github.com",
-        "42",
+    accepted = _validated_results(contract, [evidence], "revision", "https://github.com", "42")
+    assert accepted["WINDOWS_CLEAN_INSTALL"]["status"] == "PASS"
+    assert not production_ready(
+        "WINDOWS", contract, [evidence], "revision", "https://github.com", "42"
     )
 
 

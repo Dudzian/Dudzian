@@ -6,7 +6,7 @@ This document defines the delivery path from the current Product Architecture Co
 
 ## North-star outcome
 
-CryptoHunter v1 is complete when its approved release scope has a stable installable Windows desktop product (primary platform) and a separately qualified Linux release (supported platform), with a durable background Core, PAPER and TESTNET end-to-end trading, guarded LIVE execution, multi-exchange/account routing, deterministic risk and accounting, secure identity/secrets, recovery, observability, updater/rollback and release-grade operational safety. Platform readiness is proven separately; a Windows-only initial release must be labelled Windows-only until Linux qualification passes. macOS is not in the v1 release scope.
+CryptoHunter v1 is complete when its approved release scope has a stable installable Windows desktop product (primary platform) and a separately qualified Linux release (supported platform), with a durable background Core, PAPER and TESTNET end-to-end trading, guarded LIVE execution, multi-exchange/account routing, deterministic risk and accounting, secure identity/secrets, recovery, observability, updater/rollback and release-grade operational safety. The first beta may ship for Windows only and must be labelled Windows-only. Linux may join a subsequent or expanded beta only after its own native qualification. Completing the approved full v1 scope requires both Windows and Linux qualification; a Windows-only beta does not complete v1. macOS is not in the beta/v1 release scope.
 
 ## Governing rules
 
@@ -29,11 +29,11 @@ CryptoHunter v1 is complete when its approved release scope has a stable install
 | --- | --- | --- |
 | Windows | PRIMARY; existing Windows development machine and native Windows qualification | Windows-specific Stage 9, legal enrollment, Stage 10 where applicable, platform release gates, MSI/service/TPM/security/lifecycle and v1 product acceptance. |
 | Linux | SUPPORTED; native Dell Latitude 5490 Ubuntu test host | Independent Linux Stage 9 evidence and observer qualification where required, systemd/permissions/PostgreSQL/installer/lifecycle tests, Linux-specific gates and actual packaged product acceptance. Windows PASS does not qualify Linux. |
-| macOS | DEFERRED; explicitly outside beta/v1 supported release scope | No physical Mac requirement for the Windows/Linux release **after** the machine-readable release-scope policy is formally aligned. Future macOS support needs its own approved platform project and native qualification. |
+| macOS | DEFERRED; explicitly outside beta/v1 supported release scope | Outside current release profiles. No physical Mac is required for Windows/Linux release qualification. Future macOS support requires its own approved project, implementation, tests and native qualification. |
 
-**Current contract mismatch and required follow-up:** `deployment/platform_readiness.json` still declares `MACOS=SUPPORTED` and contains `MACOS_PRODUCTION_READY` acceptance gates. This roadmap decision **does not modify, silently waive, mark NOT_APPLICABLE, or remove** those gates, CI jobs, or any recorded status. Before applying this v1 scope to release decisions, submit a separate reviewed PR aligning the machine-readable platform scope, validators, platform-specific acceptance and release workflows with Windows/Linux v1 and macOS deferred. Preserve the existing safeguards until that change is validated. Any conflict between this planning decision and the currently executable gate remains an **open release-scope blocker**, not implicit permission to ignore a failure.
+**Machine-readable alignment — PLAT-01B:** [Platform release policy V2](../platform_release_policy_v2.md) defines `WINDOWS=PRIMARY`, `LINUX=SUPPORTED`, and `MACOS=DEFERRED` in `deployment/platform_readiness.json`. Its closed release profiles distinguish `WINDOWS_BETA` (Windows only), `WINDOWS_LINUX_BETA` (both qualified platforms), and `CRYPTOHUNTER_V1` (both Windows and Linux required). The separate compatibility-platform set still includes macOS. Native macOS acceptance records and `MACOS_PRODUCTION_READY` requirements remain recorded for a future approved project, while a deferred platform cannot be qualified by the current evaluator. Selecting a smaller release profile does not turn a missing native result into PASS, change historical evidence, or waive shared Core/security/quality requirements. Apply these semantics only with the reviewed V2 policy and matching evaluator; a V1 policy is not silently reinterpreted.
 
-**CI and evidence policy:** Keep macOS hosted build/unit/compatibility checks where useful and feasible, with their results explicitly classified as compatibility evidence, **not physical qualification**. Never suppress a real cross-platform regression affecting shared code, security or Windows/Linux runtime. A future reviewed policy may classify macOS-only native launchd/packaging acceptance as deferred for the Windows/Linux release; it must not weaken required Windows/Linux checks, change existing quality/security thresholds, mask mandatory workflow failures or declare unsupported macOS features implemented. Windows and Linux must each pass their actual target-platform gates before being advertised as supported; a staged Windows-first release cannot claim Linux READY until Linux has its own accepted evidence.
+**CI and evidence policy:** Keep macOS hosted build/unit/compatibility checks where useful and feasible, with their results explicitly classified as compatibility evidence, **not physical qualification**. Never suppress a real cross-platform regression affecting shared code, security or Windows/Linux runtime. PLAT-01B classifies macOS-only native launchd/packaging acceptance as deferred for Windows/Linux release profiles and retains its requirements for future reactivation. Hosted macOS Core and deployment-compatibility checks remain blocking: a shared-code regression cannot be hidden by deferral. Windows/Linux checks and quality/security thresholds remain required, and no unimplemented macOS feature is declared ready. Windows and Linux must each pass their actual target-platform gates before being advertised as supported; a staged Windows-first release cannot claim Linux READY until Linux has its own accepted evidence.
 
 **Hardware and trust boundary:** The operator already has a primary Windows computer and a dedicated Dell Linux test laptop. Do not make purchasing a Mac a Stage 9, first-beta or v1 prerequisite. This does not eliminate the independent trust roots, reviewer/custody separation, protected physical Windows execution environment or separately authorized physical testing that Stage 9/10 require. Two available computers alone do not prove independence or attestation.
 
@@ -621,7 +621,7 @@ Before cutting the first beta:
 - run all required native Windows qualification for the primary beta target
 - run Linux-native installation/service/UI qualification before the beta is advertised as supporting Linux; hosted Linux unit tests alone are insufficient
 - run required TPM/hardware and independent-trust qualification that cannot be established in cloud
-- enforce the reviewed PLAT-01 machine-readable release-scope migration before deferring any macOS-specific acceptance gate; hosted macOS compatibility tests never qualify physical macOS
+- enforce the reviewed PLAT-01B V2 policy/evaluator pair: a Windows-only first beta requires Windows qualification, Linux enters the beta only after separate Linux qualification, and hosted macOS compatibility tests never qualify physical macOS
 - complete beta-scope E2E, installer/update/rollback and recovery qualification
 - record all explicitly accepted MEDIUM and LOW residual risks
 - create the immutable **Beta Baseline SHA/tag**
@@ -636,7 +636,7 @@ The first beta may be cut only when:
 - **HIGH = 0**
 - every remaining MEDIUM has an explicit written acceptance and follow-up disposition
 - CI, quality and security gates are green for the Beta Candidate
-- required Windows-native and physical TPM/hardware qualification is PASS; Linux-native qualification is also PASS before Linux is included in the supported beta scope
+- required Windows-native and physical TPM/hardware qualification is PASS for `WINDOWS_BETA`; a Windows-only first beta is allowed without claiming Linux PASS, and Linux-native qualification is also PASS before selecting `WINDOWS_LINUX_BETA`
 - no unresolved canonical architecture conflict remains in the beta scope
 - all beta-critical UI flows are functional, connected to real runtime contracts and free of silent mock/placeholder actions
 - supported venues/credential profiles are manageable without CLI, two qualified independent TESTNET accounts operate simultaneously, and Zonda/BitMEX (plus any newly retired venue) have no reachable trading/configuration/UI/marketplace path under the versioned lifecycle gate
@@ -729,7 +729,7 @@ CryptoHunter v1 is considered complete only when:
 - Multi-exchange/account scope required for v1 is production-validated.
 - Persistence, recovery and reconciliation are demonstrated under failure.
 - Security/risk gates cannot be bypassed by UI or caller input.
-- Desktop packaging, update and rollback are release-grade on each platform explicitly supported by the release (Windows primary; Linux independently qualified when included). macOS remains deferred with no production support claim.
+- The approved full v1 scope includes both Windows and Linux: native qualification, desktop packaging, update and rollback are release-grade on both. A Windows-only beta is not completion of this v1 exit criterion. macOS remains deferred with no production support claim and no physical Mac prerequisite.
 - Soak/hardening acceptance criteria pass.
 - Final production audit records remaining limitations explicitly.
 
