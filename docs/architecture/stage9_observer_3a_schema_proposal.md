@@ -287,15 +287,22 @@ the parser requires
 `(len(manifest.files) + len(manifest.imports)) * len(runtime.import_root_ids) <= 65536`.
 Exceeding this bound gives LIMIT_EXCEEDED. This additional domain bound limits
 the proposed static resolver's comparison work before the nested loops; each
-import/root pair has only the five fixed suffix forms below. It is not an
+import/root pair has at most ten distinct fixed suffix forms below. It is not an
 extra acceptance-policy limit field, and the exact 22-field limits record is
 unchanged. A large otherwise well-formed inventory may therefore require fewer
 import roots or a separately reviewed resolver profile; there is no fallback.
 A source maps exactly to <root>/a/b/c.py or <root>/a/b/c/__init__.py; a native
 maps exactly to <root>/a/b/c.so or <root>/a/b/c.<target ABI>.so. No arbitrary
 alias, name rewriting or custom hook is accepted. Across all ordered import
-roots, all four allowed source/native suffix forms and the forbidden
-<root>/<stem>.pyc shadow form, exactly one candidate path exists in the regular-file inventory and it is the declared imported file.
+roots, all four allowed source/native suffix forms and the forbidden shadow
+forms `<stem>.pyc`, `<stem>.abi3.so`, `<stem>/__init__.so`,
+`<stem>/__init__.<target ABI>.so`, `<stem>/__init__.abi3.so`, and
+`<stem>/__init__.pyc`, exactly one candidate path exists in the regular-file
+inventory and it is the declared imported file. These additional forms are
+detected as competing standard-finder candidates, not accepted native/package
+variants. Equal suffix spellings are counted once. A directory with such a
+suffix is not a regular-file candidate; an actual package initialization file
+inside a directory remains a candidate.
 A competing candidate is refused even if labelled data instead of an import;
 root order must not conceal ambiguous shadowing. Each dotted source/native
 import's parent names are explicit source imports at the same selected root,

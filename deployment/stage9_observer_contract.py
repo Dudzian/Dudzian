@@ -1624,11 +1624,26 @@ def _validate_proposed_runtime(
                 relative + "." + manifest["target"]["interpreter"]["abi"] + ".so",
             )
             allowed_suffixes = source_suffixes if kind == "source" else native_suffixes
+            # Unsupported native/package forms can still shadow an allowed
+            # module under CPython's standard finder. Declaring them as data
+            # does not make them inert inside an import root.
+            forbidden_suffixes = (
+                relative + ".pyc",
+                relative + ".abi3.so",
+                relative + "/__init__.so",
+                relative + "/__init__." + manifest["target"]["interpreter"]["abi"] + ".so",
+                relative + "/__init__.abi3.so",
+                relative + "/__init__.pyc",
+            )
+            candidate_suffixes = dict.fromkeys(
+                source_suffixes + native_suffixes + forbidden_suffixes
+            )
             candidates = [
                 (root_file_id, files[root_file_id]["path"] + "/" + suffix)
                 for root_file_id in role_lists["import_root_ids"]
-                for suffix in source_suffixes + native_suffixes + (relative + ".pyc",)
+                for suffix in candidate_suffixes
                 if files[root_file_id]["path"] + "/" + suffix in paths
+                and files[paths[files[root_file_id]["path"] + "/" + suffix]]["type"] == "regular"
             ]
             _require(
                 len(candidates) == 1 and candidates[0][1] == file["path"],

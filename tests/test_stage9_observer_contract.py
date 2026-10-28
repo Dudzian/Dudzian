@@ -2756,3 +2756,83 @@ def test_proposed_bundle_does_not_accept_expiry_as_current_time(proposed_bundle_
     wire["synthetic_now"] = proposed_bundle_documents["acceptance"]["payload"]["expires_at"]
     with pytest.raises(ContractRefusal):
         observer.parse_proposed_bundle(**wire)
+
+
+@pytest.mark.parametrize(
+    "relative_path",
+    [
+        "helper.abi3.so",
+        "helper/__init__.so",
+        "helper/__init__.cpython-312-x86_64-linux-gnu.so",
+        "helper/__init__.abi3.so",
+    ],
+)
+def test_unsupported_native_data_cannot_shadow_source_import(proposed_pair, relative_path):
+    manifest = proposed_pair["manifest"]
+    helper = _proposed_manifest_item(manifest, "files", "helper")
+    root = helper["path"].rsplit("/", 1)[0]
+    if "/" in relative_path:
+        directory = copy.deepcopy(_proposed_manifest_item(manifest, "files", "stdlib-root"))
+        directory.update(file_id="native-package-directory", path=root + "/helper")
+        manifest["files"].append(directory)
+    shadow = copy.deepcopy(helper)
+    shadow.update(file_id="unsupported-native-shadow", path=root + "/" + relative_path)
+    manifest["files"].append(shadow)
+    manifest["runtime"]["data_file_ids"].append(shadow["file_id"])
+    with pytest.raises(ContractRefusal) as refused:
+        observer.parse_proposed_manifest(canonical_json_bytes(manifest))
+    assert refused.value.code == "IMPORT_POLICY_REJECTED"
+
+
+def test_directory_suffix_is_not_a_regular_module_candidate(proposed_pair):
+    manifest = proposed_pair["manifest"]
+    helper = _proposed_manifest_item(manifest, "files", "helper")
+    root = helper["path"].rsplit("/", 1)[0]
+    directory = copy.deepcopy(_proposed_manifest_item(manifest, "files", "stdlib-root"))
+    directory.update(file_id="non-module-directory", path=root + "/helper.so")
+    data = copy.deepcopy(helper)
+    data.update(file_id="non-module-data", path=directory["path"] + "/data.txt")
+    manifest["files"].extend([directory, data])
+    manifest["runtime"]["data_file_ids"].append(data["file_id"])
+    parsed = observer.parse_proposed_manifest(canonical_json_bytes(manifest))
+    assert parsed.authorization == "UNVERIFIED"
+
+
+@pytest.mark.parametrize("binary_role", ["dlopen_file_ids", "hwcaps_file_ids", "library_file_ids"])
+def test_declared_optional_binary_roles_cannot_hide_elf_cycles(proposed_pair, binary_role):
+    manifest = proposed_pair["manifest"]
+    runtime = manifest["runtime"]
+    file_id = "materialized-copy"
+    runtime["data_file_ids"].remove(file_id)
+    runtime[binary_role].append(file_id)
+    runtime["dependency_edges"].extend(
+        [
+            {
+                "requester_file_id": "python",
+                "needed": "synthetic-optional",
+                "resolved_file_id": file_id,
+            },
+            {
+                "requester_file_id": file_id,
+                "needed": "synthetic-back-reference",
+                "resolved_file_id": "python",
+            },
+        ]
+    )
+    with pytest.raises(ContractRefusal) as refused:
+        observer.parse_proposed_manifest(canonical_json_bytes(manifest))
+    assert refused.value.code == "CLOSURE_INCOMPLETE"
+
+
+def test_loader_config_cannot_be_used_as_an_elf_binary_node(proposed_pair):
+    manifest = proposed_pair["manifest"]
+    runtime = manifest["runtime"]
+    file_id = "materialized-copy"
+    runtime["data_file_ids"].remove(file_id)
+    runtime["loader_config_file_ids"].append(file_id)
+    runtime["dependency_edges"].append(
+        {"requester_file_id": "python", "needed": "synthetic-config", "resolved_file_id": file_id}
+    )
+    with pytest.raises(ContractRefusal) as refused:
+        observer.parse_proposed_manifest(canonical_json_bytes(manifest))
+    assert refused.value.code == "CLOSURE_INCOMPLETE"
