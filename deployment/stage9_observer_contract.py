@@ -100,7 +100,7 @@ def _list(value: Any, maximum: int = MAX_FILES, minimum: int = 0) -> list[Any]:
 
 def _identifier(value: Any) -> str:
     value = _string(value, 128)
-    _require(bool(value) and value.isascii())
+    _require(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}", value) is not None)
     return cast(str, value)
 
 
@@ -363,8 +363,7 @@ def _validate_acceptance(value: Any) -> None:
 
 def acceptance_signed_message(raw: bytes) -> bytes:
     """Return the specified signing preimage, without verifying any signature."""
-    value = _decode(raw)
-    _validate_acceptance(value)
+    value = parse_acceptance(raw).as_dict()
     return ACCEPTANCE_DOMAIN + bytes.fromhex(value["payload_digest"])
 
 
@@ -384,8 +383,13 @@ def _parse_contract(
 
 
 def parse_acceptance(raw: bytes) -> ParsedContract:
-    """Parse signature syntax and signing digest; signatures remain unverified."""
-    return _parse_contract(raw, "CryptoHunter.Stage9ObserverAcceptanceV1", _validate_acceptance)
+    """Parse a canonical envelope; the payload signing preimage is unchanged."""
+    return _parse_contract(
+        raw,
+        "CryptoHunter.Stage9ObserverAcceptanceV1",
+        _validate_acceptance,
+        canonical_required=True,
+    )
 
 
 def parse_launch_policy(raw: bytes) -> ParsedContract:

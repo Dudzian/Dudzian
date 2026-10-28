@@ -632,13 +632,20 @@ def test_acceptance_payload_digest_is_not_entire_envelope_digest(acceptance):
         observer.parse_acceptance(_wire(acceptance))
 
 
-def test_acceptance_payload_digest_is_canonical_even_for_noncanonical_envelope(acceptance):
+def test_acceptance_requires_canonical_envelope_without_changing_payload_digest(acceptance):
     raw = json.dumps(acceptance, indent=2).encode()
-    parsed = observer.parse_acceptance(raw)
-    assert parsed.raw == raw
-    assert parsed.canonical == canonical_json_bytes(acceptance)
-    assert parsed.sha256 == hashlib.sha256(raw).hexdigest()
-    assert parsed.sha256 != hashlib.sha256(parsed.canonical).hexdigest()
+    digest = hashlib.sha256(canonical_json_bytes(acceptance["payload"])).hexdigest()
+    assert digest == acceptance["payload_digest"]
+    with pytest.raises(ContractRefusal):
+        observer.parse_acceptance(raw)
+    with pytest.raises(ContractRefusal):
+        observer.acceptance_signed_message(raw)
+    canonical = canonical_json_bytes(acceptance)
+    parsed = observer.parse_acceptance(canonical)
+    assert parsed.raw == parsed.canonical == canonical
+    assert observer.acceptance_signed_message(
+        canonical
+    ) == observer.ACCEPTANCE_DOMAIN + bytes.fromhex(digest)
 
 
 @pytest.mark.parametrize(
@@ -919,3 +926,31 @@ def test_launch_paths_reject_ascii_and_c1_controls(launch_policy, control):
     launch_policy["interpreter"]["argv"][0] = "/observer/" + control
     with pytest.raises(ContractRefusal):
         observer.parse_launch_policy(_wire(launch_policy))
+
+
+@pytest.mark.parametrize("codepoint", list(range(32)) + [127])
+def test_identifiers_refuse_every_ascii_control(scope_fixture, codepoint):
+    scope_fixture["host_anchor_id"] = "host" + chr(codepoint) + "anchor"
+    with pytest.raises(ContractRefusal):
+        observer.parse_scope_binding(canonical_json_bytes(scope_fixture))
+
+
+@pytest.mark.parametrize(
+    "identifier",
+    ["", " ", " padded", "padded ", ".hidden", "-prefix", "path/name", "wild*card", "unicode-é"],
+)
+def test_identifier_token_grammar_rejects_ambiguous_forms(scope_fixture, identifier):
+    scope_fixture["host_anchor_id"] = identifier
+    with pytest.raises(ContractRefusal):
+        observer.parse_scope_binding(canonical_json_bytes(scope_fixture))
+
+
+@pytest.mark.parametrize(
+    "identifier", ["Host-1", "host.namespace", "host_anchor", "host:anchor", "0" + "a" * 127]
+)
+def test_identifier_token_grammar_preserves_explicit_valid_forms(scope_fixture, identifier):
+    scope_fixture["host_anchor_id"] = identifier
+    assert (
+        observer.parse_scope_binding(canonical_json_bytes(scope_fixture)).authorization
+        == "UNVERIFIED"
+    )
