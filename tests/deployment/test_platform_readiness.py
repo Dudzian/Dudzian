@@ -12,13 +12,13 @@ import pytest
 import yaml
 
 from deployment.platform_readiness import blocking_items, load_contract, production_ready
-from deployment.windows_stage9_evidence_contract import PRODUCTION_TRUST_CEREMONY_ID
 from deployment.platforms.windows import (
     SERVICE_IDENTITY,
     WindowsDeploymentNotQualified,
     qualify_acl,
     static_path_layout,
 )
+from deployment.windows_stage9_evidence_contract import PRODUCTION_TRUST_CEREMONY_ID
 
 
 def test_canonical_platforms_and_reference() -> None:
@@ -363,7 +363,7 @@ def test_workflow_release_gate_is_real_and_platform_independent() -> None:
     assert "macos-deployment-integration" not in release["needs"]
     release_commands = [step.get("run", "") for step in release["steps"]]
     assert any(
-        "python -m deployment.platform_readiness --platform WINDOWS" in command
+        "python -m deployment.platform_readiness --release-profile WINDOWS_BETA" in command
         and "--evidence evidence/core-matrix.json" in command
         and "--evidence evidence/windows-scm-evidence.json" in command
         and "--evidence evidence/windows-clean-install-evidence.json" in command
@@ -500,3 +500,267 @@ def test_stage10_workflow_uses_real_reboot_soak_and_evidence_producer() -> None:
         "--evidence evidence/windows-stage10-evidence.json" in command
         for command in release_commands
     )
+
+
+def test_v2_policy_separates_scope_compatibility_and_qualification() -> None:
+    from deployment.platform_readiness import RELEASE_PROFILES, release_ready
+
+    data = load_contract()
+    assert data["schema_version"] == 2
+    assert data["release_priority"] == {
+        "WINDOWS": "PRIMARY",
+        "LINUX": "SUPPORTED",
+        "MACOS": "DEFERRED",
+    }
+    assert data["compatibility_platforms"] == ["WINDOWS", "LINUX", "MACOS"]
+    assert data["release_profiles"] == RELEASE_PROFILES
+    assert all(not production_ready(platform, data) for platform in data["platforms"])
+    assert all(not release_ready(profile, data) for profile in RELEASE_PROFILES)
+
+
+def _complete_linux_evidence(data: dict[str, object], revision: str) -> dict[str, object]:
+    live = [
+        _result(item, "LIVE_LINUX_INTEGRATION")
+        for item in data["release_gates"]["LINUX_PRODUCTION_READY"]
+        if data["acceptance"][item]["evidence_class"] == "LIVE_LINUX_INTEGRATION"
+    ]
+    return _document("LINUX", "Linux", revision, live)
+
+
+def test_windows_only_beta_requires_windows_but_no_fabricated_linux_pass() -> None:
+    from deployment.platform_readiness import release_blocking_items, release_ready
+
+    data = load_contract()
+    windows, core = _complete_windows_evidence(data, "current")
+    evidence = [windows, core]
+    assert production_ready("LINUX", data, evidence, "current") is False
+    assert release_ready("WINDOWS_BETA", data, evidence, "current") is True
+    for profile in ("WINDOWS_LINUX_BETA", "CRYPTOHUNTER_V1"):
+        assert release_ready(profile, data, evidence, "current") is False
+        assert all(
+            item.startswith("LINUX:")
+            for item in release_blocking_items(profile, data, evidence, "current")
+        )
+    # Scope is eligibility only: no acceptance status or legacy authority is rewritten.
+    assert data == load_contract()
+
+
+@pytest.mark.parametrize("profile", ["WINDOWS_BETA", "WINDOWS_LINUX_BETA", "CRYPTOHUNTER_V1"])
+@pytest.mark.parametrize(
+    "status", ["FAIL", "NOT_TESTED", "NOT_IMPLEMENTED", "NOT_APPLICABLE", "NOT_READY"]
+)
+def test_windows_not_ready_blocks_every_profile(profile: str, status: str) -> None:
+    from deployment.platform_readiness import release_ready
+
+    data = load_contract()
+    windows, core = _complete_windows_evidence(data, "current")
+    windows["results"][0]["status"] = status
+    linux = _complete_linux_evidence(data, "current")
+    assert release_ready(profile, data, [windows, core, linux], "current") is False
+
+
+@pytest.mark.parametrize("profile", ["WINDOWS_LINUX_BETA", "CRYPTOHUNTER_V1"])
+def test_linux_release_claim_requires_its_own_current_native_qualification(profile: str) -> None:
+    from deployment.platform_readiness import release_ready
+
+    data = load_contract()
+    windows, core = _complete_windows_evidence(data, "current")
+    linux = _complete_linux_evidence(data, "current")
+    assert release_ready(profile, data, [windows, core, linux], "current") is True
+    for mutation in (
+        lambda document: document["results"].pop(),
+        lambda document: document["results"][0].update(status="FAIL"),
+        lambda document: document["results"][0].update(status="NOT_READY"),
+        lambda document: document.update(source_revision="stale"),
+        lambda document: document.update(runner_os="Windows"),
+    ):
+        altered = copy.deepcopy(linux)
+        mutation(altered)
+        assert release_ready(profile, data, [windows, core, altered], "current") is False
+
+
+def test_macos_deferred_never_becomes_production_ready_even_with_synthetic_pass() -> None:
+    data = load_contract()
+    macos = _document(
+        "MACOS",
+        "macOS",
+        "current",
+        [
+            _result(item, "LIVE_MACOS_INTEGRATION")
+            for item in data["release_gates"]["MACOS_PRODUCTION_READY"]
+            if item != "CORE_REQUIRED_SUITES"
+        ],
+    )
+    _, core = _complete_windows_evidence(data, "current")
+    assert production_ready("MACOS", data, [macos, core], "current") is False
+    assert blocking_items("MACOS", data, [macos, core], "current") == ["PLATFORM_DEFERRED"]
+
+
+def test_macos_compatibility_regression_keeps_shared_core_release_gate_closed() -> None:
+    from deployment.platform_readiness import release_ready
+
+    data = load_contract()
+    windows, core = _complete_windows_evidence(data, "current")
+    # CORE_REQUIRED_SUITES still aggregates all three OSes, including deferred macOS.
+    core["results"][0]["status"] = "FAIL"
+    assert not release_ready("WINDOWS_BETA", data, [windows, core], "current")
+    root = Path(__file__).resolve().parents[2]
+    plan = json.loads((root / "deployment/core_required_suites_v1.json").read_text())
+    assert plan["required_platforms"] == ["Linux", "Windows", "macOS"]
+    assert all(
+        plan["acceptance_policy"][name] == 0
+        for name in ("failures", "errors", "skips", "xfails", "unexpected_passes")
+    )
+    jobs = yaml.safe_load((root / ".github/workflows/platform-deployment.yml").read_text())["jobs"]
+    assert jobs["core-macos"]["steps"] == jobs["core-linux"]["steps"]
+    assert "core-macos" in jobs["windows-release-gate"]["needs"]
+    compatibility = jobs["macos-deployment-integration"]
+    assert compatibility["name"] == "macOS deployment compatibility (production deferred)"
+    assert any("test_core_test_plan.py" in step.get("run", "") for step in compatibility["steps"])
+    assert not any("continue-on-error" in step for step in compatibility["steps"])
+    assert "continue-on-error" not in compatibility
+
+
+@pytest.mark.parametrize("platform_name", ["UNKNOWN", "Darwin", "", None, [], True])
+def test_unknown_platform_is_rejected_without_default_admission(platform_name: object) -> None:
+    assert production_ready(platform_name, load_contract()) is False
+    assert blocking_items(platform_name, load_contract()) == ["UNKNOWN_PLATFORM"]
+
+
+@pytest.mark.parametrize("profile", ["UNKNOWN", "MACOS_BETA", "", None, [], True])
+def test_unknown_release_profile_is_rejected(profile: object) -> None:
+    from deployment.platform_readiness import release_blocking_items, release_ready
+
+    assert release_ready(profile, load_contract()) is False
+    assert release_blocking_items(profile, load_contract()) == ["UNKNOWN_RELEASE_PROFILE"]
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda data: data.pop("release_profiles"),
+        lambda data: data.pop("compatibility_platforms"),
+        lambda data: data.update(schema_version=1),
+        lambda data: data.update(schema_version=True),
+        lambda data: data.update(unreviewed=True),
+        lambda data: data["release_priority"].update(MACOS="SUPPORTED"),
+        lambda data: data["release_priority"].update(LINUX="UNKNOWN"),
+        lambda data: data["release_priority"].pop("WINDOWS"),
+        lambda data: data["release_profiles"].update(WINDOWS_BETA=[]),
+        lambda data: data["release_profiles"].update(CRYPTOHUNTER_V1=["WINDOWS"]),
+        lambda data: data["release_profiles"].update(MACOS_BETA=["MACOS"]),
+        lambda data: data["compatibility_platforms"].remove("MACOS"),
+        lambda data: data["semantic_invariants"].clear(),
+        lambda data: data["matrix"]["core_tests"].update(MACOS="OPTIONAL"),
+        lambda data: data["allowed_statuses"].append("GO"),
+        lambda data: data["allowed_statuses"].append([]),
+        lambda data: data["release_gates"]["WINDOWS_PRODUCTION_READY"].clear(),
+        lambda data: data["release_gates"]["LINUX_PRODUCTION_READY"].pop(),
+        lambda data: data["release_gates"]["MACOS_PRODUCTION_READY"].pop(),
+        lambda data: data["acceptance"].pop("WINDOWS_ACL_QUALIFICATION"),
+        lambda data: data["acceptance"]["CORE_REQUIRED_SUITES"].update(status="GO"),
+        lambda data: data["acceptance"]["CORE_REQUIRED_SUITES"].update(
+            evidence_class="STATIC_EXECUTABLE_CONTRACT", status="PASS"
+        ),
+        lambda data: data["acceptance"]["WINDOWS_ACL_QUALIFICATION"].update(
+            evidence_class="STATIC_EXECUTABLE_CONTRACT", status="PASS"
+        ),
+        lambda data: data["mechanisms"].pop("MACOS"),
+        lambda data: data["mechanisms"]["LINUX"].update(unknown="field"),
+        lambda data: data["legacy_flags"].update(ROOT_PROOF_ISSUER_IMPLEMENTED=True),
+    ],
+)
+def test_incomplete_unknown_or_weakened_policy_fails_closed(
+    mutation: Callable[[dict[str, object]], object],
+) -> None:
+    from deployment.platform_readiness import (
+        PolicyValidationError,
+        release_ready,
+        validate_contract,
+    )
+
+    data = load_contract()
+    mutation(data)
+    with pytest.raises(PolicyValidationError):
+        validate_contract(data)
+    assert blocking_items("WINDOWS", data) == ["INVALID_POLICY"]
+    assert not production_ready("WINDOWS", data)
+    assert not release_ready("WINDOWS_BETA", data)
+
+
+def test_historical_v1_has_no_implicit_v2_scope_or_qualification(tmp_path: Path) -> None:
+    from deployment.platform_readiness import PolicyValidationError
+
+    historical = load_contract()
+    historical["schema_version"] = 1
+    historical["release_priority"]["MACOS"] = "SUPPORTED"
+    historical.pop("compatibility_platforms")
+    historical.pop("release_profiles")
+    retained = copy.deepcopy(historical["acceptance"])
+    path = tmp_path / "historical-v1.json"
+    path.write_text(json.dumps(historical), encoding="utf-8")
+    with pytest.raises(PolicyValidationError, match="UNSUPPORTED_POLICY_VERSION"):
+        load_contract(path)
+    assert json.loads(path.read_text())["acceptance"] == retained
+    assert retained["MACOS_LAUNCHD_INTEGRATION"]["status"] == "NOT_IMPLEMENTED"
+    assert not production_ready("MACOS", historical)
+
+
+def test_release_profile_cli_and_incomplete_policy_are_fail_closed(tmp_path: Path) -> None:
+    from deployment.platform_readiness import main
+
+    data = load_contract()
+    windows, core = _complete_windows_evidence(data, "current")
+    paths = []
+    for name, document in (("windows", windows), ("core", core)):
+        path = tmp_path / f"{name}.json"
+        path.write_text(json.dumps(document), encoding="utf-8")
+        paths.extend(["--evidence", str(path)])
+    common = [
+        "--current-revision",
+        "current",
+        "--expected-ci-provider",
+        "test",
+        "--expected-ci-run-id",
+        "1",
+        *paths,
+    ]
+    assert main(["--release-profile", "WINDOWS_BETA", *common]) == 0
+    assert main(["--release-profile", "CRYPTOHUNTER_V1", *common]) == 1
+    assert main(["--platform", "MACOS", *common]) == 1
+    bad_policy = tmp_path / "bad-policy.json"
+    bad_policy.write_text("{}", encoding="utf-8")
+    assert main(["--release-profile", "WINDOWS_BETA", "--contract", str(bad_policy), *common]) == 1
+
+
+def test_duplicate_policy_version_is_not_reinterpreted_as_v2(tmp_path: Path) -> None:
+    from deployment.platform_readiness import PolicyValidationError
+
+    policy = tmp_path / "ambiguous-policy.json"
+    raw = json.dumps(load_contract())
+    policy.write_text(
+        raw.replace('"schema_version": 2', '"schema_version": 1, "schema_version": 2')
+    )
+    with pytest.raises(PolicyValidationError, match="DUPLICATE_POLICY_FIELD"):
+        load_contract(policy)
+
+
+def test_historical_v1_macos_evidence_retains_its_class_without_qualifying_release() -> None:
+    from deployment.platform_readiness import _validated_results
+
+    data = load_contract()
+    result = _result("MACOS_LAUNCHD_INTEGRATION", "LIVE_MACOS_INTEGRATION")
+    document = _document("MACOS", "macOS", "historical-revision", [result])
+    retained = copy.deepcopy(document)
+    accepted = _validated_results(data, [document], "historical-revision", "test", "1")
+    assert accepted["MACOS_LAUNCHD_INTEGRATION"] == result
+    assert document == retained
+    assert document["schema_version"] == 1
+    assert not production_ready("MACOS", data, [document], "historical-revision")
+
+
+def test_boolean_evidence_version_is_not_legacy_v1() -> None:
+    data = load_contract()
+    windows, core = _complete_windows_evidence(data, "current")
+    windows["schema_version"] = True
+    assert not production_ready("WINDOWS", data, [windows, core], "current")
