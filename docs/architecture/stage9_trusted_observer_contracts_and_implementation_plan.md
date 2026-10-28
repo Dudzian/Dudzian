@@ -92,6 +92,15 @@ gwarancjach; nie obiecywać pełnej odporności na kompromitację hosta.
 
 ## 3. Kontrakty ustalane przed implementacją
 
+**Uzupełnienie robocze po review PR #3215:** kompletne, zamknięte definicje
+rekordów oraz decyzje o identyfikatorach, kanonicznym envelope i grafach są w
+[proponowanym normatywnym profilu V1](stage9_observer_3a_schema_proposal.md).
+Profil jest normatywny wyłącznie wewnątrz tej propozycji do review; nie został
+niezależnie zatwierdzony i nie zastępuje kotwicy zaufania. Oddzielnie oznaczona
+implementacja robocza może go testować syntetycznie, zachowując odmowę
+standardowych parserów niezatwierdzonych kontraktów i wszystkie blokady Stage 9.
+Nowa semantyka nie zamyka 3A ani nie autoryzuje integracji 3B przed review.
+
 Poniższe nazwy i wersje są propozycją kontraktu V1 do review, nie istniejącymi
 formatami akceptowanymi przez CLI. Nie zmieniać semantyki istniejącego
 `--evidence`. Zgodność parsera nie nadaje uprawnień. W następnym PR kontrakty

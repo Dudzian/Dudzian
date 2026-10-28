@@ -444,7 +444,7 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
 
 
 @pytest.fixture(autouse=True, scope="session")
-def shutdown_background_components() -> None:
+def shutdown_background_components(shutdown_db_background_loop_at_session_end: None) -> None:
     yield
     try:
         from bot_core.exchanges.streaming import LocalLongPollStream
@@ -465,8 +465,9 @@ def shutdown_background_components() -> None:
 @pytest.fixture(scope="session", autouse=True)
 def shutdown_db_background_loop_at_session_end() -> Generator[None, None, None]:
     yield
-    if sys.platform != "win32":
-        return
+    # POSIX uses a non-daemon database loop. Its atexit callback runs too late:
+    # Python first waits for non-daemon threads after pytest prints its summary.
+    # Dependent background-component fixtures finish before this finalizer.
     logger.debug(
         "teardown/db_manager_shutdown_begin: "
         "DatabaseManager session shutdown begin. (platform=%s pid=%s)",
@@ -487,9 +488,14 @@ def shutdown_db_background_loop_at_session_end() -> Generator[None, None, None]:
         return
 
     try:
-        DatabaseManager.close_all_active(blocking=True, timeout=5.0)
-        DatabaseManager.wait_for_aiosqlite_threads(timeout=5.0, poll_interval=0.05)
-        DatabaseManager.shutdown_background_loop(timeout=5.0)
+        try:
+            DatabaseManager.close_all_active(blocking=True, timeout=5.0)
+            if not DatabaseManager.wait_for_aiosqlite_threads(timeout=5.0, poll_interval=0.05):
+                raise RuntimeError(
+                    "DatabaseManager aiosqlite threads did not stop within 5 seconds"
+                )
+        finally:
+            DatabaseManager.shutdown_background_loop(timeout=5.0)
         logger.debug(
             "teardown/db_manager_shutdown_done: "
             "DatabaseManager session shutdown done. (platform=%s pid=%s)",
@@ -504,3 +510,4 @@ def shutdown_db_background_loop_at_session_end() -> Generator[None, None, None]:
             os.getpid(),
             exc_info=True,
         )
+        raise

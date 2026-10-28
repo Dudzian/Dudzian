@@ -192,8 +192,9 @@ def test_daily_trend_controller_scales_quantity_after_risk_adjustment() -> None:
     results = controller._handle_signals(snapshot, (signal,))
 
     assert len(results) == 1
-    expected_qty = pytest.approx((0.03 * account_snapshot.total_equity) / 20_120.0, rel=1e-6)
-    assert results[0].filled_quantity == expected_qty
+    expected_qty = (0.03 * account_snapshot.total_equity) / 20_120.0
+    assert 0 < expected_qty < signal.metadata["quantity"]
+    assert results[0].filled_quantity == pytest.approx(expected_qty, rel=1e-6)
     ledger_entries = list(execution_service.ledger())
     assert ledger_entries[-1]["quantity"] == pytest.approx(expected_qty, rel=1e-6)
 

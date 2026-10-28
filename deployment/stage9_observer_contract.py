@@ -1,0 +1,2207 @@
+"""Bounded Stage 9 observer data contracts; parsing never establishes trust.
+
+This module performs no I/O and never executes inspected code. Parsed contract
+records hold immutable bytes. Structural acceptance is always UNVERIFIED.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import re
+from dataclasses import dataclass, field as dataclass_field
+from datetime import datetime, timezone
+from typing import Any, Callable, Literal, NoReturn, cast
+
+from deployment.canonical_json import canonical_json_bytes
+
+PURPOSE = "STAGE9_OBSERVER_TEST_ONLY"
+ACCEPTANCE_DOMAIN = b"CryptoHunter.Stage9ObserverAcceptanceV1\x00"
+MAX_INTEGER = 2**53 - 1
+MAX_MANIFEST_BYTES = 4 * 1024 * 1024
+MAX_DOCUMENT_BYTES = 65536
+MAX_CONTEXT_BYTES = 16384
+MAX_DEPTH = 16
+MAX_FILES = 32768
+MAX_SOURCES = 128
+MAX_REASON_CODES = 64
+MAX_PATH_BYTES = 4096
+REASON_CODES = frozenset(
+    {
+        "FORMAT_REJECTED",
+        "LIMIT_EXCEEDED",
+        "TRUST_CONTEXT_MISSING",
+        "ACCEPTANCE_REJECTED",
+        "LAUNCH_POLICY_MISMATCH",
+        "RUNTIME_LAUNCH_UNVERIFIED",
+        "HOST_SCOPE_UNVERIFIED",
+        "IMPORT_POLICY_REJECTED",
+        "CLOSURE_INCOMPLETE",
+        "ROLLBACK_REJECTED",
+        "ARTIFACT_MISMATCH",
+        "UNSUPPORTED_SOURCE",
+        "PROVENANCE_INCOMPLETE",
+        "FILE_POLICY_REJECTED",
+        "FILE_CHANGED",
+        "REPORT_REJECTED",
+        "CHANNEL_REJECTED",
+    }
+)
+
+
+class ContractRefusal(ValueError):
+    """An input-independent diagnostic; no input or exception text is exposed."""
+
+    def __init__(self, code: str = "FORMAT_REJECTED") -> None:
+        self.code = code if type(code) is str and code in REASON_CODES else "FORMAT_REJECTED"
+        super().__init__(self.code)
+
+
+def _deny(code: str = "FORMAT_REJECTED") -> NoReturn:
+    raise ContractRefusal(code)
+
+
+def _require(condition: bool, code: str = "FORMAT_REJECTED") -> None:
+    if not condition:
+        _deny(code)
+
+
+def _string(value: Any, maximum: int = MAX_MANIFEST_BYTES) -> str:
+    if type(value) is not str:
+        _deny()
+    if any(ord(c) == 0 or 0xD800 <= ord(c) <= 0xDFFF for c in value):
+        _deny()
+    if len(value.encode("utf-8")) > maximum:
+        _deny("LIMIT_EXCEEDED")
+    return cast(str, value)
+
+
+def _integer(value: Any, minimum: int = 0, maximum: int = MAX_INTEGER) -> int:
+    if type(value) is not int or not minimum <= value <= maximum:
+        _deny()
+    return cast(int, value)
+
+
+def _record(value: Any, fields: set[str]) -> dict[str, Any]:
+    if type(value) is not dict or set(value) != fields:
+        _deny()
+    return cast(dict[str, Any], value)
+
+
+def _list(value: Any, maximum: int = MAX_FILES, minimum: int = 0) -> list[Any]:
+    if type(value) is not list:
+        _deny()
+    if len(value) > maximum:
+        _deny("LIMIT_EXCEEDED")
+    if len(value) < minimum:
+        _deny()
+    return cast(list[Any], value)
+
+
+def _identifier(value: Any) -> str:
+    value = _string(value, 128)
+    _require(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}", value) is not None)
+    return cast(str, value)
+
+
+def _hex(value: Any, length: int) -> str:
+    value = _string(value)
+    _require(re.fullmatch(r"[0-9a-f]{%d}" % length, value) is not None)
+    return cast(str, value)
+
+
+def _digest(value: Any) -> str:
+    value = _hex(value, 64)
+    _require(value != "0" * 64)
+    return cast(str, value)
+
+
+def _enum(value: Any, allowed: set[str] | frozenset[str]) -> str:
+    value = _string(value)
+    _require(value in allowed)
+    return cast(str, value)
+
+
+def _equal(value: Any, expected: Any) -> None:
+    _require(type(value) is type(expected))
+    if type(expected) is dict:
+        _require(set(value) == set(expected))
+        for key in expected:
+            _equal(value[key], expected[key])
+    elif type(expected) is list:
+        _require(len(value) == len(expected))
+        for actual, wanted in zip(value, expected):
+            _equal(actual, wanted)
+    else:
+        _require(value == expected)
+
+
+def _path(value: Any, absolute: bool = True) -> str:
+    value = _string(value, MAX_PATH_BYTES)
+    _require(
+        bool(value)
+        and "\\" not in value
+        and all(ord(c) >= 32 and not 127 <= ord(c) <= 159 for c in value)
+    )
+    _require(value.startswith("/") is absolute)
+    if absolute and value == "/":
+        return cast(str, value)
+    components = value[1:].split("/") if absolute else value.split("/")
+    _require(all(c not in {"", ".", ".."} for c in components))
+    return cast(str, value)
+
+
+def _timestamp(value: Any) -> datetime:
+    value = _string(value, 20)
+    _require(
+        re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z", value) is not None
+    )
+    try:
+        return datetime(
+            int(value[:4]),
+            int(value[5:7]),
+            int(value[8:10]),
+            int(value[11:13]),
+            int(value[14:16]),
+            int(value[17:19]),
+            tzinfo=timezone.utc,
+        )
+    except ValueError:
+        raise ContractRefusal() from None
+
+
+def _schema(value: dict[str, Any], name: str, purpose: bool = False) -> None:
+    _equal(value["schema"], name)
+    _equal(value["version"], 1)
+    if purpose:
+        _equal(value["purpose"], PURPOSE)
+
+
+def _reason_codes(value: Any) -> list[str]:
+    result = [_enum(x, REASON_CODES) for x in _list(value, MAX_REASON_CODES)]
+    _require(len(set(result)) == len(result))
+    return result
+
+
+def _blocked_fields() -> dict[str, Any]:
+    return {
+        "qualification": "BLOCKED",
+        "full_confirmation": False,
+        "coexistence_authorized": False,
+        "preflight_exception": False,
+        "physical_test_status": "PHYSICAL_TEST_PENDING",
+        "status": "IN_PROGRESS",
+        "production_status": "PRODUCTION_NO_GO",
+        "runtime_attestation": "MISSING",
+        "host_pid_namespace": "UNVERIFIED",
+    }
+
+
+def _preflight(raw: bytes) -> None:
+    """Bound depth, integer tokens and container cardinality before the JSON decoder.
+
+    This lexical pass has a stack of at most 16 integers, never recurses and
+    allocates no input-sized token lists. JSON syntax is checked by json.loads.
+    """
+    stack: list[int] = []
+    index = 0
+    while index < len(raw):
+        char = raw[index]
+        if char in b" \t\r\n:":
+            index += 1
+            continue
+        if char == 44:
+            if stack:
+                stack[-1] += 1
+                _require(stack[-1] <= MAX_FILES, "LIMIT_EXCEEDED")
+            index += 1
+            continue
+        if char in (93, 125):
+            _require(bool(stack))
+            stack.pop()
+            index += 1
+            continue
+        if char in (91, 123):
+            _require(len(stack) < MAX_DEPTH, "LIMIT_EXCEEDED")
+            stack.append(1)
+            index += 1
+        elif char == 34:
+            start = index
+            index += 1
+            while index < len(raw) and raw[index] != 34:
+                index += 2 if raw[index] == 92 else 1
+            _require(index < len(raw))
+            index += 1
+        else:
+            start = index
+            while index < len(raw) and raw[index] not in b" \t\r\n,]}:":
+                index += 1
+                _require(index - start <= 16, "LIMIT_EXCEEDED")
+            token = raw[start:index]
+            _require(
+                token in (b"true", b"false") or re.fullmatch(rb"0|[1-9][0-9]*", token) is not None
+            )
+    _require(not stack)
+
+
+def _pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        _string(key)
+        _require(key not in result)
+        result[key] = value
+    return result
+
+
+def _reject_number(value: str) -> NoReturn:
+    _deny()
+
+
+def _parse_integer(value: str) -> int:
+    _require(len(value) <= 16, "LIMIT_EXCEEDED")
+    return _integer(int(value))
+
+
+def _decode(raw: bytes, maximum: int = MAX_DOCUMENT_BYTES) -> Any:
+    _require(type(raw) is bytes)
+    _require(bool(raw))
+    _require(len(raw) <= maximum, "LIMIT_EXCEEDED")
+    _require(not raw.startswith(b"\xef\xbb\xbf"))
+    _preflight(raw)
+    try:
+        value = json.loads(
+            raw.decode("utf-8", errors="strict"),
+            object_pairs_hook=_pairs,
+            parse_int=_parse_integer,
+            parse_float=_reject_number,
+            parse_constant=_reject_number,
+        )
+    except (ValueError, UnicodeError, RecursionError) as exc:
+        if isinstance(exc, ContractRefusal):
+            raise ContractRefusal(exc.code) from None
+        raise ContractRefusal() from None
+    pending = [value]
+    while pending:
+        item = pending.pop()
+        if type(item) is str:
+            _string(item)
+        elif type(item) is dict:
+            pending.extend(item.values())
+        elif type(item) is list:
+            pending.extend(item)
+        elif type(item) is int:
+            _integer(item)
+        elif type(item) is not bool:
+            _deny()
+    return value
+
+
+@dataclass(frozen=True, slots=True)
+class ParsedContract:
+    """Immutable structural data, explicitly carrying no authorization."""
+
+    schema: str
+    raw: bytes
+    canonical: bytes
+    sha256: str
+    authorization: Literal["UNVERIFIED"] = dataclass_field(default="UNVERIFIED", init=False)
+
+    def as_dict(self) -> dict[str, Any]:
+        return cast(dict[str, Any], json.loads(self.canonical))
+
+
+def decode_json(raw: bytes) -> Any:
+    """Strict bounded JSON data only; does not validate a contract or trust."""
+    return _decode(raw, MAX_MANIFEST_BYTES)
+
+
+def _checkpoint(value: Any) -> None:
+    value = _record(value, {"sequence", "state_sha256"})
+    _integer(value["sequence"])
+    _digest(value["state_sha256"])
+
+
+def _validate_acceptance(value: Any) -> None:
+    value = _record(value, {"payload", "payload_digest", "threshold", "signatures"})
+    payload = _record(
+        value["payload"],
+        {
+            "schema",
+            "version",
+            "purpose",
+            "manifest_sha256",
+            "policy_sha256",
+            "root_set_id",
+            "sequence",
+            "revocation_checkpoint",
+            "issued_at",
+            "expires_at",
+        },
+    )
+    _schema(payload, "CryptoHunter.Stage9ObserverAcceptanceV1", purpose=True)
+    _digest(payload["manifest_sha256"])
+    _digest(payload["policy_sha256"])
+    _identifier(payload["root_set_id"])
+    _integer(payload["sequence"])
+    _checkpoint(payload["revocation_checkpoint"])
+    _require(
+        _timestamp(payload["issued_at"]) < _timestamp(payload["expires_at"]), "ACCEPTANCE_REJECTED"
+    )
+    _equal(value["threshold"], 2)
+    _digest(value["payload_digest"])
+    _require(
+        value["payload_digest"] == hashlib.sha256(canonical_json_bytes(payload)).hexdigest(),
+        "ACCEPTANCE_REJECTED",
+    )
+    signers: list[str] = []
+    for signature in _list(value["signatures"], maximum=MAX_FILES, minimum=2):
+        signature = _record(signature, {"signer_id", "signature_hex"})
+        signers.append(_identifier(signature["signer_id"]))
+        _hex(signature["signature_hex"], 128)
+    _require(signers == sorted(set(signers)), "ACCEPTANCE_REJECTED")
+
+
+def acceptance_signed_message(raw: bytes) -> bytes:
+    """Return the specified signing preimage, without verifying any signature."""
+    value = parse_acceptance(raw).as_dict()
+    return ACCEPTANCE_DOMAIN + bytes.fromhex(value["payload_digest"])
+
+
+def _parse_contract(
+    raw: bytes,
+    schema: str,
+    validator: Callable[[Any], None],
+    *,
+    maximum: int = MAX_DOCUMENT_BYTES,
+    canonical_required: bool = False,
+) -> ParsedContract:
+    value = _decode(raw, maximum)
+    validator(value)
+    canonical = canonical_json_bytes(value)
+    _require(not canonical_required or raw == canonical)
+    return ParsedContract(schema, raw, canonical, hashlib.sha256(raw).hexdigest())
+
+
+def parse_acceptance(raw: bytes) -> ParsedContract:
+    """Parse a canonical envelope; the payload signing preimage is unchanged."""
+    return _parse_contract(
+        raw,
+        "CryptoHunter.Stage9ObserverAcceptanceV1",
+        _validate_acceptance,
+        canonical_required=True,
+    )
+
+
+def parse_launch_policy(raw: bytes) -> ParsedContract:
+    """Parse canonical launch declarations, without manifest closure/enforcement."""
+    return _parse_contract(
+        raw,
+        "CryptoHunter.Stage9ObserverLaunchPolicyV1",
+        _validate_launch_policy,
+        canonical_required=True,
+    )
+
+
+def _reviewer_keys(value: Any) -> list[dict[str, Any]]:
+    result = []
+    signers: list[str] = []
+    reviewers: set[str] = set()
+    public_keys: set[str] = set()
+    for key in _list(value, minimum=2):
+        key = _record(key, {"signer_id", "reviewer_id", "public_key_hex"})
+        signer = _identifier(key["signer_id"])
+        reviewer = _identifier(key["reviewer_id"])
+        public_key = _hex(key["public_key_hex"], 64)
+        _require(reviewer not in reviewers and public_key not in public_keys, "ACCEPTANCE_REJECTED")
+        signers.append(signer)
+        reviewers.add(reviewer)
+        public_keys.add(public_key)
+        result.append(key)
+    _require(signers == sorted(set(signers)), "ACCEPTANCE_REJECTED")
+    return result
+
+
+def parse_acceptance_policy(raw: bytes) -> NoReturn:
+    """Refuse the unapproved V1 profile; see the contract-review document.
+
+    Validate only normative fields before refusing. The proposed target,
+    allowed_sources and limits wire schemas require independent review before
+    this standard entrypoint can accept them. Review APIs never authorize them.
+    """
+    value = _record(
+        _decode(raw),
+        {
+            "schema",
+            "version",
+            "purpose",
+            "root_set_id",
+            "reviewer_keys",
+            "threshold",
+            "allowed_sources",
+            "minimum_sequence",
+            "revocation_checkpoint",
+            "valid_until",
+            "target",
+            "limits",
+            "launch_policy_sha256",
+        },
+    )
+    _schema(value, "CryptoHunter.Stage9ObserverAcceptancePolicyV1", purpose=True)
+    _identifier(value["root_set_id"])
+    _reviewer_keys(value["reviewer_keys"])
+    _equal(value["threshold"], 2)
+    _integer(value["minimum_sequence"])
+    _checkpoint(value["revocation_checkpoint"])
+    _timestamp(value["valid_until"])
+    _digest(value["launch_policy_sha256"])
+    _deny()
+
+
+def parse_manifest(raw: bytes) -> NoReturn:
+    """Refuse until the proposed manifest schema is independently approved.
+
+    No manifest, inventory, provenance or dependency graph is accepted by this
+    interim implementation. Checking its header does not validate its closure.
+    """
+    value = _record(
+        _decode(raw, MAX_MANIFEST_BYTES),
+        {
+            "schema",
+            "version",
+            "purpose",
+            "manifest_id",
+            "sequence",
+            "source_revision",
+            "target",
+            "sources",
+            "files",
+            "transforms",
+            "runtime",
+            "imports",
+            "launch_policy_sha256",
+        },
+    )
+    _schema(value, "CryptoHunter.Stage9ObserverManifestV1", purpose=True)
+    _identifier(value["manifest_id"])
+    _integer(value["sequence"])
+    _hex(value["source_revision"], 40)
+    _list(value["sources"], maximum=MAX_SOURCES)
+    _list(value["files"], maximum=MAX_FILES)
+    _digest(value["launch_policy_sha256"])
+    _deny()
+
+
+def _launch_ids(value: Any, *, minimum: int = 0) -> list[str]:
+    values = _list(value, minimum=minimum)
+    result = [_identifier(item) for item in values]
+    _require(len(set(result)) == len(result), "LAUNCH_POLICY_MISMATCH")
+    return result
+
+
+def _launch_exact_text(value: Any) -> str:
+    text = _string(value, maximum=128)
+    _require(
+        bool(text)
+        and text.isascii()
+        and all(33 <= ord(char) <= 126 for char in text)
+        and not any(char in text for char in "*?[]"),
+        "FORMAT_REJECTED",
+    )
+    return text
+
+
+def _launch_profile(value: Any) -> None:
+    profile = _record(value, {"profile_file_id", "profile_sha256", "enforcement"})
+    _identifier(profile["profile_file_id"])
+    _digest(profile["profile_sha256"])
+    _equal(profile["enforcement"], "REQUIRED")
+
+
+def _validate_launch_policy(value: Any) -> None:
+    """Validate V1 launch declarations, without authenticating or enforcing them."""
+    launch = _record(
+        value,
+        {
+            "schema",
+            "version",
+            "purpose",
+            "target",
+            "interpreter",
+            "elf",
+            "imports",
+            "environment",
+            "cwd",
+            "allowed_fds",
+            "namespace_scope",
+            "sandbox",
+            "file_policy",
+            "runtime_dependencies",
+            "resources",
+            "reporting",
+            "run_context",
+        },
+    )
+    _schema(launch, "CryptoHunter.Stage9ObserverLaunchPolicyV1", purpose=True)
+    target = _record(
+        launch["target"], {"os", "distribution", "distribution_version", "architecture"}
+    )
+    for key, target_value in (
+        ("os", "Linux"),
+        ("distribution", "Ubuntu"),
+        ("distribution_version", "24.04"),
+        ("architecture", "x86_64"),
+    ):
+        _equal(target[key], target_value)
+
+    interpreter = _record(
+        launch["interpreter"],
+        {
+            "file_id",
+            "version",
+            "package_version",
+            "abi",
+            "build_id",
+            "libpython_file_ids",
+            "entrypoint_file_id",
+            "argv",
+            "frozen_modules",
+        },
+    )
+    interpreter_id = _identifier(interpreter["file_id"])
+    entrypoint_id = _identifier(interpreter["entrypoint_file_id"])
+    _require(interpreter_id != entrypoint_id, "LAUNCH_POLICY_MISMATCH")
+    python_version = _launch_exact_text(interpreter["version"])
+    components = python_version.split(".")
+    _require(
+        len(components) == 3
+        and components[:2] == ["3", "12"]
+        and components[2].isascii()
+        and components[2].isdecimal()
+        and (components[2] == "0" or not components[2].startswith("0")),
+        "LAUNCH_POLICY_MISMATCH",
+    )
+    for field in ("package_version", "abi", "build_id"):
+        _launch_exact_text(interpreter[field])
+    libpython_ids = _launch_ids(interpreter["libpython_file_ids"])
+    _require(interpreter_id not in libpython_ids, "LAUNCH_POLICY_MISMATCH")
+    argv = _list(interpreter["argv"], maximum=5, minimum=5)
+    _path(argv[0])
+    _path(argv[4])
+    _require(argv[0] != argv[4], "LAUNCH_POLICY_MISMATCH")
+    for index, argument in enumerate(("-I", "-S", "-B"), start=1):
+        _equal(argv[index], argument)
+    _equal(interpreter["frozen_modules"], "BUILD_FIXED")
+
+    elf = _record(
+        launch["elf"],
+        {
+            "loader_file_id",
+            "library_file_ids",
+            "dependency_edges",
+            "loader_config_file_ids",
+            "absent_paths",
+            "hwcaps_file_ids",
+            "dlopen_file_ids",
+            "resolution_root_ids",
+            "rpath_runpath_policy",
+        },
+    )
+    _identifier(elf["loader_file_id"])
+    for field in (
+        "library_file_ids",
+        "loader_config_file_ids",
+        "hwcaps_file_ids",
+        "dlopen_file_ids",
+    ):
+        _launch_ids(elf[field])
+    _launch_ids(elf["resolution_root_ids"], minimum=1)
+    absent_paths = [_path(item) for item in _list(elf["absent_paths"])]
+    _require(len(set(absent_paths)) == len(absent_paths), "LAUNCH_POLICY_MISMATCH")
+    edges_seen: set[tuple[str, str]] = set()
+    for item in _list(elf["dependency_edges"]):
+        edge = _record(item, {"requester_file_id", "needed", "resolved_file_id"})
+        requester = _identifier(edge["requester_file_id"])
+        needed = _string(edge["needed"], maximum=4096)
+        _require(bool(needed))
+        resolved = _identifier(edge["resolved_file_id"])
+        _require(requester != resolved, "LAUNCH_POLICY_MISMATCH")
+        pair = (requester, needed)
+        _require(pair not in edges_seen, "LAUNCH_POLICY_MISMATCH")
+        edges_seen.add(pair)
+    _equal(elf["rpath_runpath_policy"], "IN_IMAGE_ONLY")
+
+    imports = _record(
+        launch["imports"],
+        {"roots", "modules_sha256", "embedded_modules_policy", "external_imports"},
+    )
+    _launch_ids(imports["roots"], minimum=1)
+    _digest(imports["modules_sha256"])
+    _equal(imports["embedded_modules_policy"], "EXACT_BUILD_INVENTORY")
+    _equal(imports["external_imports"], "FORBIDDEN")
+    environment = _record(launch["environment"], {"inherit", "values"})
+    _equal(environment["inherit"], False)
+    environment_values = _record(environment["values"], {"LC_ALL"})
+    _equal(environment_values["LC_ALL"], "C")
+    cwd = _record(launch["cwd"], {"directory_file_id"})
+    _identifier(cwd["directory_file_id"])
+
+    fds = _list(launch["allowed_fds"], maximum=2, minimum=2)
+    for item, fd_values in zip(
+        fds,
+        (
+            {
+                "fd": 3,
+                "role": "REPORT_WRITE",
+                "kind": "PIPE",
+                "access": "WRITE",
+                "binding": "TRUSTED_RUN_REPORT_PIPE",
+            },
+            {
+                "fd": 4,
+                "role": "RUN_CONTEXT_READ",
+                "kind": "SEALED_MEMFD",
+                "access": "READ",
+                "binding": "TRUSTED_LAUNCHER_CONTEXT",
+            },
+        ),
+    ):
+        fd = _record(item, set(fd_values))
+        for field, expected_value in fd_values.items():
+            _equal(fd[field], expected_value)
+
+    scope = _record(
+        launch["namespace_scope"],
+        {"pid", "user", "mount", "procfs", "binding_schema", "binding_source", "visibility"},
+    )
+    for field, expected_value in (
+        ("pid", "HOST_INITIAL"),
+        ("user", "HOST_INITIAL"),
+        ("procfs", "AUTHENTICATED_HOST_PROCFS"),
+        ("binding_schema", "HostScopeBindingV1"),
+        ("binding_source", "TRUSTED_RUN_CONTEXT"),
+        ("visibility", "COMPLETE"),
+    ):
+        _equal(scope[field], expected_value)
+    _enum(scope["mount"], {"HOST", "PRIVATE_FAITHFUL_HOST_VIEW"})
+
+    sandbox = _record(
+        launch["sandbox"],
+        {
+            "uid",
+            "gid",
+            "supplementary_groups",
+            "capabilities",
+            "no_new_privileges",
+            "seccomp",
+            "lsm",
+            "network",
+            "devices",
+            "deny_operations",
+        },
+    )
+    _integer(sandbox["uid"], minimum=1, maximum=2**32 - 2)
+    _integer(sandbox["gid"], minimum=1, maximum=2**32 - 2)
+    _equal(sandbox["supplementary_groups"], [])
+    capabilities = _record(
+        sandbox["capabilities"], {"bounding", "permitted", "effective", "inheritable", "ambient"}
+    )
+    for capability_set in capabilities.values():
+        _equal(capability_set, [])
+    _equal(sandbox["no_new_privileges"], True)
+    _equal(sandbox["network"], "DENY")
+    _equal(sandbox["devices"], "DENY")
+    _launch_profile(sandbox["seccomp"])
+    _launch_profile(sandbox["lsm"])
+    denied = {
+        "NEW_EXEC",
+        "NEW_PROCESS",
+        "MOUNT",
+        "SETNS",
+        "UNSHARE",
+        "PTRACE",
+        "PROCESS_VM",
+        "PIDFD_GETFD",
+        "SIGNAL",
+        "NETWORK",
+        "DEVICE",
+        "WRITE_OUTSIDE_REPORT",
+    }
+    operations = [
+        _enum(item, denied) for item in _list(sandbox["deny_operations"], maximum=12, minimum=12)
+    ]
+    _require(set(operations) == denied, "LAUNCH_POLICY_MISMATCH")
+
+    file_policy = _record(
+        launch["file_policy"],
+        {
+            "files_sha256",
+            "ancestry",
+            "acl",
+            "capability_xattrs",
+            "other_xattrs",
+            "regular_nlink",
+            "links",
+            "extra_entries",
+            "mutable_runtime",
+            "integrity_profile_file_id",
+            "integrity_profile_sha256",
+        },
+    )
+    _digest(file_policy["files_sha256"])
+    _identifier(file_policy["integrity_profile_file_id"])
+    _digest(file_policy["integrity_profile_sha256"])
+    for field, expected_value in (
+        ("ancestry", "PROTECTED"),
+        ("acl", "FORBIDDEN"),
+        ("capability_xattrs", "FORBIDDEN"),
+        ("other_xattrs", "PROFILE_ONLY"),
+        ("regular_nlink", 1),
+        ("links", "FORBIDDEN"),
+        ("extra_entries", "FORBIDDEN"),
+        ("mutable_runtime", "FORBIDDEN"),
+    ):
+        _equal(file_policy[field], expected_value)
+    dependencies = _record(
+        launch["runtime_dependencies"],
+        {"files_sha256", "runtime_sha256", "imports_sha256", "unlisted_dependencies"},
+    )
+    for field in ("files_sha256", "runtime_sha256", "imports_sha256"):
+        _digest(dependencies[field])
+    _equal(dependencies["unlisted_dependencies"], "FORBIDDEN")
+    _require(
+        dependencies["files_sha256"] == file_policy["files_sha256"]
+        and dependencies["imports_sha256"] == imports["modules_sha256"],
+        "LAUNCH_POLICY_MISMATCH",
+    )
+
+    resources = _record(
+        launch["resources"],
+        {
+            "run_timeout_s",
+            "receive_timeout_s",
+            "memory_max_bytes",
+            "fd_limit",
+            "process_limit",
+            "core_dump_bytes",
+        },
+    )
+    for field, expected_value in (
+        ("run_timeout_s", 300),
+        ("receive_timeout_s", 30),
+        ("memory_max_bytes", 268435456),
+        ("process_limit", 1),
+        ("core_dump_bytes", 0),
+    ):
+        _equal(resources[field], expected_value)
+    _integer(resources["fd_limit"], minimum=8, maximum=64)
+    reporting = _record(
+        launch["reporting"], {"schema", "fd", "framing", "max_payload_bytes", "nonce_source", "eof"}
+    )
+    for field, expected_value in (
+        ("schema", "ObserverResultV1"),
+        ("fd", 3),
+        ("framing", "U32BE_UTF8_JSON"),
+        ("max_payload_bytes", 65536),
+        ("nonce_source", "TRUSTED_RUN_CONTEXT"),
+        ("eof", "REQUIRED"),
+    ):
+        _equal(reporting[field], expected_value)
+    context = _record(
+        launch["run_context"], {"schema", "fd", "max_bytes", "storage", "seals", "access", "source"}
+    )
+    for field, expected_value in (
+        ("schema", "ObserverRunContextV1"),
+        ("fd", 4),
+        ("max_bytes", 16384),
+        ("storage", "MEMFD"),
+        ("seals", ["WRITE", "GROW", "SHRINK", "SEAL"]),
+        ("access", "READ_ONLY"),
+        ("source", "TRUSTED_LAUNCHER"),
+    ):
+        _equal(context[field], expected_value)
+
+
+def _namespace_identity(value: Any) -> dict[str, Any]:
+    record = _record(value, {"device", "inode"})
+    _integer(record["device"])
+    _integer(record["inode"], minimum=1)
+    return record
+
+
+def _boot_id(value: Any) -> str:
+    result = _string(value, maximum=36)
+    _require(
+        re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", result)
+        is not None
+    )
+    return result
+
+
+def _validate_scope_binding(value: Any) -> None:
+    """Validate declared HostScopeBindingV1 data; never authenticate a host."""
+    record = _record(
+        value,
+        {
+            "schema",
+            "version",
+            "host_anchor_id",
+            "boot_id",
+            "run_nonce",
+            "observer_start_time_ticks",
+            "pid_namespace",
+            "user_namespace",
+            "mount_namespace",
+            "procfs_identity",
+            "source",
+            "authentication_evidence_sha256",
+        },
+    )
+    _schema(record, "HostScopeBindingV1")
+    _identifier(record["host_anchor_id"])
+    _boot_id(record["boot_id"])
+    _hex(record["run_nonce"], 64)
+    _integer(record["observer_start_time_ticks"], minimum=1)
+    for name in ("pid_namespace", "user_namespace", "mount_namespace"):
+        _namespace_identity(record[name])
+    procfs = _record(
+        record["procfs_identity"],
+        {"mount_id", "fs_type", "root", "mount_namespace", "options", "pid_view"},
+    )
+    _integer(procfs["mount_id"], minimum=1)
+    _equal(procfs["fs_type"], "proc")
+    _equal(procfs["root"], "/")
+    _namespace_identity(procfs["mount_namespace"])
+    _require(procfs["mount_namespace"] == record["mount_namespace"], "HOST_SCOPE_UNVERIFIED")
+    options = _list(procfs["options"], maximum=7, minimum=1)
+    for option in options:
+        _enum(option, {"ro", "rw", "nosuid", "nodev", "noexec", "relatime", "hidepid=0"})
+    _require(options == sorted(set(options)))
+    _require(("ro" in options) != ("rw" in options), "HOST_SCOPE_UNVERIFIED")
+    _equal(procfs["pid_view"], "HOST_INITIAL_COMPLETE")
+    _identifier(record["source"])
+    _digest(record["authentication_evidence_sha256"])
+
+
+def _validate_run_context(value: Any) -> None:
+    """Validate one declared run and its scope digest without trusting its issuer."""
+    record = _record(
+        value,
+        {
+            "schema",
+            "version",
+            "purpose",
+            "run_id",
+            "run_nonce",
+            "observer_manifest_sha256",
+            "policy_sha256",
+            "launch_policy_sha256",
+            "scope_binding",
+            "scope_binding_sha256",
+            "authentication_evidence_sha256",
+        },
+    )
+    _schema(record, "ObserverRunContextV1", purpose=True)
+    _identifier(record["run_id"])
+    _hex(record["run_nonce"], 64)
+    for name in (
+        "observer_manifest_sha256",
+        "policy_sha256",
+        "launch_policy_sha256",
+        "scope_binding_sha256",
+        "authentication_evidence_sha256",
+    ):
+        _digest(record[name])
+    _validate_scope_binding(record["scope_binding"])
+    _require(record["run_nonce"] == record["scope_binding"]["run_nonce"], "HOST_SCOPE_UNVERIFIED")
+    _require(
+        record["scope_binding_sha256"]
+        == hashlib.sha256(canonical_json_bytes(record["scope_binding"])).hexdigest(),
+        "HOST_SCOPE_UNVERIFIED",
+    )
+
+
+def _validate_offline_result(value: Any) -> None:
+    """Validate a Stage 3A synthetic result retaining every qualification block."""
+    blocks = _blocked_fields()
+    record = _record(
+        value,
+        {
+            "schema",
+            "version",
+            "synthetic",
+            "manifest_sha256",
+            "policy_sha256",
+            "launch_policy_sha256",
+            "artifact_consistency",
+            "acceptance",
+            "reason_codes",
+        }
+        | set(blocks),
+    )
+    _schema(record, "OfflineVerificationResultV1")
+    _equal(record["synthetic"], True)
+    for name in ("manifest_sha256", "policy_sha256", "launch_policy_sha256"):
+        _digest(record[name])
+    _enum(record["artifact_consistency"], {"MATCH", "MISMATCH", "INCOMPLETE"})
+    # Stage 3A has neither an independent trust context nor a signature verifier.
+    _equal(record["acceptance"], "UNVERIFIED")
+    for name, expected in blocks.items():
+        _equal(record[name], expected)
+    reasons = _reason_codes(record["reason_codes"])
+    _require("RUNTIME_LAUNCH_UNVERIFIED" in reasons, "REPORT_REJECTED")
+
+
+def _decode_report_frame(
+    raw: bytes,
+    *,
+    eof: bool,
+    process_exit_code: int,
+    run_elapsed_ms: int,
+    receive_elapsed_ms: int,
+) -> dict[str, Any]:
+    """Check a synthetic completed frame; these inputs do not authenticate a pipe.
+
+    The caller must still validate ObserverResultV1 and compare the expected run.
+    A future real receiver must derive EOF, exit and timing from its trusted
+    channel; accepting these values from JSON cannot establish those facts.
+    """
+    _require(type(raw) is bytes, "CHANNEL_REJECTED")
+    _require(5 <= len(raw) <= 65540, "CHANNEL_REJECTED")
+    _require(type(eof) is bool and eof, "CHANNEL_REJECTED")
+    _require(type(process_exit_code) is int and process_exit_code == 0, "CHANNEL_REJECTED")
+    _require(
+        type(run_elapsed_ms) is int and 0 <= run_elapsed_ms < 300000,
+        "CHANNEL_REJECTED",
+    )
+    _require(
+        type(receive_elapsed_ms) is int and 0 <= receive_elapsed_ms <= 30000,
+        "CHANNEL_REJECTED",
+    )
+    _require(receive_elapsed_ms <= run_elapsed_ms, "CHANNEL_REJECTED")
+    payload_size = int.from_bytes(raw[:4], "big")
+    _require(1 <= payload_size <= 65536 and len(raw) == payload_size + 4, "CHANNEL_REJECTED")
+    value = _decode(raw[4:], maximum=65536)
+    _require(type(value) is dict, "REPORT_REJECTED")
+    return cast(dict[str, Any], value)
+
+
+def parse_scope_binding(raw: bytes) -> ParsedContract:
+    """Parse a canonical synthetic binding; no host identity is established."""
+    return _parse_contract(
+        raw, "HostScopeBindingV1", _validate_scope_binding, canonical_required=True
+    )
+
+
+def parse_run_context(raw: bytes) -> ParsedContract:
+    """Parse canonical context and embedded scope digest; no issuer is trusted."""
+    return _parse_contract(
+        raw,
+        "ObserverRunContextV1",
+        _validate_run_context,
+        maximum=MAX_CONTEXT_BYTES,
+        canonical_required=True,
+    )
+
+
+def parse_offline_result(raw: bytes) -> ParsedContract:
+    """Parse a synthetic UNVERIFIED result retaining the mandatory blocks."""
+    return _parse_contract(raw, "OfflineVerificationResultV1", _validate_offline_result)
+
+
+def compare_synthetic_run_context(observed_raw: bytes, expected_raw: bytes) -> ParsedContract:
+    """Compare declared runs; caller-supplied JSON never becomes a trust anchor."""
+    observed = parse_run_context(observed_raw)
+    expected = parse_run_context(expected_raw)
+    _require(observed.canonical == expected.canonical, "HOST_SCOPE_UNVERIFIED")
+    return observed
+
+
+def parse_observer_result(raw: bytes) -> NoReturn:
+    """Refuse the proposed result until its complete schema is independently approved."""
+    blocks = _blocked_fields()
+    value = _record(
+        _decode(raw),
+        {
+            "schema",
+            "version",
+            "synthetic",
+            "run_id",
+            "run_nonce",
+            "observer_manifest_sha256",
+            "policy_sha256",
+            "launch_policy_sha256",
+            "installation_commits",
+            "scope_binding_sha256",
+            "boot_id",
+            "started_at",
+            "finished_at",
+            "counters",
+            "observations",
+            "reason_codes",
+            "completeness",
+        }
+        | set(blocks),
+    )
+    _schema(value, "ObserverResultV1")
+    _equal(value["synthetic"], True)
+    _identifier(value["run_id"])
+    _hex(value["run_nonce"], 64)
+    _boot_id(value["boot_id"])
+    for key in (
+        "observer_manifest_sha256",
+        "policy_sha256",
+        "launch_policy_sha256",
+        "scope_binding_sha256",
+    ):
+        _digest(value[key])
+    _equal(
+        value["installation_commits"],
+        [
+            "782816540373d7b31f426dab645ad115320d1234",
+            "26e17e7c23ea6cc1b265d57bfda1a1e6589d9e3f",
+        ],
+    )
+    _require(_timestamp(value["finished_at"]) >= _timestamp(value["started_at"]), "REPORT_REJECTED")
+    _equal(value["completeness"], "INCOMPLETE")
+    for key, expected in blocks.items():
+        _equal(value[key], expected)
+    reasons = _reason_codes(value["reason_codes"])
+    _require("RUNTIME_LAUNCH_UNVERIFIED" in reasons, "REPORT_REJECTED")
+    # No production activation of proposed counters/observations before review.
+    _deny()
+
+
+def decode_synthetic_frame(
+    raw: bytes,
+    *,
+    eof: bool,
+    process_exit_code: int,
+    run_elapsed_ms: int,
+    receive_elapsed_ms: int,
+) -> bytes:
+    """Check synthetic framing and JSON syntax, returning untrusted payload bytes.
+
+    This is a transport model, not an accepting ObserverResultV1 parser. Its
+    timing/EOF/exit arguments do not authenticate a channel or sender. The real
+    receiver, replay state, authenticated receipt and process observation are
+    deliberately outside Stage 3A.
+    """
+    _decode_report_frame(
+        raw,
+        eof=eof,
+        process_exit_code=process_exit_code,
+        run_elapsed_ms=run_elapsed_ms,
+        receive_elapsed_ms=receive_elapsed_ms,
+    )
+    return raw[4:]
+
+
+def parse_report_frame(
+    raw: bytes,
+    *,
+    eof: bool,
+    process_exit_code: int,
+    run_elapsed_ms: int,
+    receive_elapsed_ms: int,
+) -> NoReturn:
+    """Require an approved result schema after framing; the proposed profile refuses."""
+    payload = decode_synthetic_frame(
+        raw,
+        eof=eof,
+        process_exit_code=process_exit_code,
+        run_elapsed_ms=run_elapsed_ms,
+        receive_elapsed_ms=receive_elapsed_ms,
+    )
+    parse_observer_result(payload)
+
+
+# Explicitly proposed review profile; no production activation.
+
+# Proposed V1 profile for review only. No artifact content is read or executed.
+
+
+def _proposed_ids(value: Any, maximum: int = MAX_FILES, minimum: int = 0) -> list[str]:
+    values = [_identifier(item) for item in _list(value, maximum=maximum, minimum=minimum)]
+    _require(len(values) == len(set(values)), "CLOSURE_INCOMPLETE")
+    return values
+
+
+def _proposed_target(value: Any) -> None:
+    target = _record(
+        value,
+        {"os", "distribution", "distribution_version", "architecture", "interpreter"},
+    )
+    for key, expected in (
+        ("os", "Linux"),
+        ("distribution", "Ubuntu"),
+        ("distribution_version", "24.04"),
+        ("architecture", "x86_64"),
+    ):
+        _equal(target[key], expected)
+    interpreter = _record(
+        target["interpreter"],
+        {"version", "package_version", "abi", "build_id", "profile"},
+    )
+    version = _launch_exact_text(interpreter["version"])
+    _require(re.fullmatch(r"3\.12\.(?:0|[1-9][0-9]*)", version) is not None)
+    _launch_exact_text(interpreter["package_version"])
+    _identifier(interpreter["abi"])
+    _identifier(interpreter["build_id"])
+    _identifier(interpreter["profile"])
+
+
+def _proposed_sources(value: Any) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    source_ids: set[str] = set()
+    for item in _list(value, maximum=MAX_SOURCES, minimum=1):
+        _require(type(item) is dict)
+        kind = _enum(
+            item.get("kind"),
+            {
+                "git_object_proof",
+                "pinned_wheel",
+                "ubuntu_apt_snapshot",
+                "approved_transform",
+            },
+        )
+        fields = {
+            "source_id",
+            "kind",
+            "artifact_sha256",
+            "artifact_size",
+            "proof_record_sha256",
+        }
+        if kind == "approved_transform":
+            fields.add("transform_id")
+        source = _record(item, fields)
+        source_id = _identifier(source["source_id"])
+        _require(source_id not in source_ids, "CLOSURE_INCOMPLETE")
+        source_ids.add(source_id)
+        _digest(source["artifact_sha256"])
+        _integer(
+            source["artifact_size"],
+            minimum=1,
+            maximum=16777216 if kind == "pinned_wheel" else 536870912,
+        )
+        _digest(source["proof_record_sha256"])
+        if kind == "approved_transform":
+            _identifier(source["transform_id"])
+        result.append(source)
+    return result
+
+
+def _proposed_module_name(value: Any) -> str:
+    name = _string(value, 128)
+    _require(
+        re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*", name) is not None,
+        "IMPORT_POLICY_REJECTED",
+    )
+    return name
+
+
+def _proposed_acyclic(graph: dict[tuple[str, str], set[tuple[str, str]]]) -> None:
+    """Check the complete declared graph iteratively; opaque artifacts stay unverified."""
+    indegrees = {node: 0 for node in graph}
+    for dependencies in graph.values():
+        for dependency in dependencies:
+            _require(dependency in graph, "CLOSURE_INCOMPLETE")
+            indegrees[dependency] += 1
+    pending = [node for node, degree in indegrees.items() if degree == 0]
+    seen = 0
+    while pending:
+        node = pending.pop()
+        seen += 1
+        for dependency in graph[node]:
+            indegrees[dependency] -= 1
+            if indegrees[dependency] == 0:
+                pending.append(dependency)
+    _require(seen == len(graph), "CLOSURE_INCOMPLETE")
+
+
+def _proposed_resolution_budget(file_count: int, import_count: int, root_count: int) -> None:
+    """Bound declared file/import-to-root comparisons before resolution loops."""
+    _integer(file_count, minimum=1, maximum=MAX_FILES)
+    _integer(import_count, minimum=1, maximum=MAX_FILES)
+    _integer(root_count, minimum=1, maximum=MAX_FILES)
+    _require((file_count + import_count) * root_count <= 65536, "LIMIT_EXCEEDED")
+
+
+def _proposed_regular(files: dict[str, dict[str, Any]], file_id: str) -> dict[str, Any]:
+    _require(file_id in files and files[file_id]["type"] == "regular", "CLOSURE_INCOMPLETE")
+    return files[file_id]
+
+
+def _proposed_directory(files: dict[str, dict[str, Any]], file_id: str) -> dict[str, Any]:
+    _require(file_id in files and files[file_id]["type"] == "directory", "CLOSURE_INCOMPLETE")
+    return files[file_id]
+
+
+def _validate_proposed_manifest(value: Any) -> None:
+    """Validate the explicitly proposed closed V1 profile, never approval or artifacts."""
+    manifest = _record(
+        value,
+        {
+            "schema",
+            "version",
+            "purpose",
+            "manifest_id",
+            "sequence",
+            "source_revision",
+            "target",
+            "sources",
+            "files",
+            "transforms",
+            "runtime",
+            "imports",
+            "launch_policy_sha256",
+        },
+    )
+    _schema(manifest, "CryptoHunter.Stage9ObserverManifestV1", purpose=True)
+    _identifier(manifest["manifest_id"])
+    _integer(manifest["sequence"])
+    _hex(manifest["source_revision"], 40)
+    _require(
+        manifest["source_revision"]
+        not in {
+            "782816540373d7b31f426dab645ad115320d1234",
+            "26e17e7c23ea6cc1b265d57bfda1a1e6589d9e3f",
+        }
+    )
+    _digest(manifest["launch_policy_sha256"])
+    _proposed_target(manifest["target"])
+    sources = {source["source_id"]: source for source in _proposed_sources(manifest["sources"])}
+    files: dict[str, dict[str, Any]] = {}
+    paths: dict[str, str] = {}
+    used_sources: set[str] = set()
+    graph: dict[tuple[str, str], set[tuple[str, str]]] = {
+        ("source", source_id): set() for source_id in sources
+    }
+    total_size = 0
+    for item in _list(manifest["files"], minimum=1):
+        _require(type(item) is dict)
+        kind = _enum(item.get("type"), {"regular", "directory"})
+        fields = {"file_id", "path", "type", "uid", "gid", "mode", "size", "provenance"}
+        if kind == "regular":
+            fields.add("sha256")
+        file = _record(item, fields)
+        file_id = _identifier(file["file_id"])
+        path = _path(file["path"])
+        _require(file_id not in files and path not in paths, "CLOSURE_INCOMPLETE")
+        _integer(file["uid"], maximum=2**32 - 2)
+        _integer(file["gid"], maximum=2**32 - 2)
+        _integer(file["mode"], maximum=0o777)
+        _require(file["mode"] & 0o022 == 0, "FILE_POLICY_REJECTED")
+        _integer(file["size"], maximum=2147483648)
+        if kind == "regular":
+            _digest(file["sha256"])
+            total_size += file["size"]
+            _require(total_size <= 2147483648, "LIMIT_EXCEEDED")
+        else:
+            _equal(file["size"], 0)
+        provenance = file["provenance"]
+        _require(type(provenance) is dict)
+        provenance_kind = _enum(provenance.get("kind"), {"source_member", "transform_output"})
+        dependencies: set[tuple[str, str]] = set()
+        if provenance_kind == "source_member":
+            _record(provenance, {"kind", "source_id", "member"})
+            source_id = _identifier(provenance["source_id"])
+            _require(source_id in sources, "CLOSURE_INCOMPLETE")
+            _path(provenance["member"], absolute=False)
+            used_sources.add(source_id)
+            dependencies.add(("source", source_id))
+        else:
+            _record(provenance, {"kind", "transform_id"})
+            _require(kind == "regular", "CLOSURE_INCOMPLETE")
+            dependencies.add(("transform", _identifier(provenance["transform_id"])))
+        graph[("file", file_id)] = dependencies
+        files[file_id] = file
+        paths[path] = file_id
+
+    transforms: dict[str, dict[str, Any]] = {}
+    output_ids: set[str] = set()
+    for item in _list(manifest["transforms"]):
+        transform = _record(
+            item,
+            {
+                "transform_id",
+                "kind",
+                "inputs",
+                "tool",
+                "parameters",
+                "output",
+                "reconstruction_proof_sha256",
+            },
+        )
+        transform_id = _identifier(transform["transform_id"])
+        _require(transform_id not in transforms, "CLOSURE_INCOMPLETE")
+        kind = _enum(transform["kind"], {"materialize_member", "pyc"})
+        _digest(transform["reconstruction_proof_sha256"])
+        inputs = _list(transform["inputs"], minimum=1, maximum=1)
+        input_record = inputs[0]
+        _require(type(input_record) is dict)
+        input_kind = _enum(input_record.get("kind"), {"file", "source_member"})
+        input_fields = {"kind", "sha256", "size"}
+        input_fields |= {"file_id"} if input_kind == "file" else {"source_id", "member"}
+        _record(input_record, input_fields)
+        _digest(input_record["sha256"])
+        _integer(input_record["size"], maximum=2147483648)
+        dependencies = set()
+        if input_kind == "file":
+            input_id = _identifier(input_record["file_id"])
+            input_file = _proposed_regular(files, input_id)
+            _require(
+                input_record["sha256"] == input_file["sha256"]
+                and input_record["size"] == input_file["size"],
+                "ARTIFACT_MISMATCH",
+            )
+            dependencies.add(("file", input_id))
+        else:
+            source_id = _identifier(input_record["source_id"])
+            _require(source_id in sources, "CLOSURE_INCOMPLETE")
+            _path(input_record["member"], absolute=False)
+            used_sources.add(source_id)
+            dependencies.add(("source", source_id))
+        tool = _record(
+            transform["tool"],
+            {"source_id", "member", "sha256", "build_id", "runtime_source_ids"},
+        )
+        tool_source = _identifier(tool["source_id"])
+        _require(tool_source in sources, "CLOSURE_INCOMPLETE")
+        _path(tool["member"], absolute=False)
+        _digest(tool["sha256"])
+        _identifier(tool["build_id"])
+        used_sources.add(tool_source)
+        dependencies.add(("source", tool_source))
+        for source_id in _proposed_ids(tool["runtime_source_ids"], maximum=MAX_SOURCES):
+            _require(source_id in sources, "CLOSURE_INCOMPLETE")
+            used_sources.add(source_id)
+            dependencies.add(("source", source_id))
+        output = _record(transform["output"], {"file_id", "sha256", "size"})
+        output_id = _identifier(output["file_id"])
+        _require(output_id not in output_ids, "CLOSURE_INCOMPLETE")
+        output_ids.add(output_id)
+        output_file = _proposed_regular(files, output_id)
+        _digest(output["sha256"])
+        _integer(output["size"], maximum=2147483648)
+        _require(
+            output["sha256"] == output_file["sha256"] and output["size"] == output_file["size"],
+            "ARTIFACT_MISMATCH",
+        )
+        _equal(
+            output_file["provenance"],
+            {"kind": "transform_output", "transform_id": transform_id},
+        )
+        parameters = transform["parameters"]
+        if kind == "materialize_member":
+            _record(parameters, {"input_index"})
+            _equal(parameters["input_index"], 0)
+            _equal(input_record["kind"], "source_member")
+            _require(
+                output["sha256"] == input_record["sha256"]
+                and output["size"] == input_record["size"],
+                "ARTIFACT_MISMATCH",
+            )
+        else:
+            _require(type(parameters) is dict)
+            invalidation = _enum(
+                parameters.get("invalidation_mode"),
+                {"checked_hash", "unchecked_hash", "timestamp"},
+            )
+            parameter_fields = {
+                "source_input_index",
+                "cpython_magic_hex",
+                "build_id",
+                "optimization",
+                "invalidation_mode",
+                "co_filename",
+            }
+            if invalidation == "timestamp":
+                parameter_fields |= {"source_timestamp", "source_size"}
+            _record(parameters, parameter_fields)
+            _equal(parameters["source_input_index"], 0)
+            _hex(parameters["cpython_magic_hex"], 8)
+            _identifier(parameters["build_id"])
+            _require(
+                parameters["build_id"] == manifest["target"]["interpreter"]["build_id"]
+                and tool["build_id"] == parameters["build_id"],
+                "ARTIFACT_MISMATCH",
+            )
+            _integer(parameters["optimization"], maximum=2)
+            _path(parameters["co_filename"])
+            if invalidation == "timestamp":
+                _integer(parameters["source_timestamp"], maximum=2**32 - 1)
+                _integer(parameters["source_size"], maximum=2**32 - 1)
+                _require(
+                    parameters["source_size"] == input_record["size"],
+                    "ARTIFACT_MISMATCH",
+                )
+            _require(output_file["path"].endswith(".pyc"), "ARTIFACT_MISMATCH")
+        graph[("transform", transform_id)] = dependencies
+        transforms[transform_id] = transform
+
+    for source_id, source in sources.items():
+        if source["kind"] == "approved_transform":
+            transform_id = source["transform_id"]
+            _require(transform_id in transforms, "CLOSURE_INCOMPLETE")
+            output = transforms[transform_id]["output"]
+            _require(
+                source["artifact_sha256"] == output["sha256"]
+                and source["artifact_size"] == output["size"],
+                "ARTIFACT_MISMATCH",
+            )
+            graph[("source", source_id)].add(("transform", transform_id))
+    _require(used_sources == set(sources), "CLOSURE_INCOMPLETE")
+    for file_id, file in files.items():
+        provenance = file["provenance"]
+        if provenance["kind"] == "transform_output":
+            _require(
+                provenance["transform_id"] in transforms
+                and transforms[provenance["transform_id"]]["output"]["file_id"] == file_id,
+                "CLOSURE_INCOMPLETE",
+            )
+    _proposed_acyclic(graph)
+    _validate_proposed_runtime(manifest, files, paths)
+
+
+def _validate_proposed_runtime(
+    manifest: dict[str, Any], files: dict[str, dict[str, Any]], paths: dict[str, str]
+) -> None:
+    runtime = _record(
+        manifest["runtime"],
+        {
+            "image_root_file_id",
+            "interpreter_file_id",
+            "entrypoint_file_id",
+            "libpython_file_ids",
+            "stdlib_file_ids",
+            "loader_file_id",
+            "library_file_ids",
+            "dependency_edges",
+            "loader_config_file_ids",
+            "absent_paths",
+            "hwcaps_file_ids",
+            "dlopen_file_ids",
+            "resolution_root_ids",
+            "rpath_runpath_policy",
+            "import_root_ids",
+            "data_file_ids",
+            "embedded_modules",
+        },
+    )
+    root_id = _identifier(runtime["image_root_file_id"])
+    root = _proposed_directory(files, root_id)
+    _require(root["path"] != "/", "CLOSURE_INCOMPLETE")
+    regular_ids: set[str] = set()
+    for field in ("interpreter_file_id", "entrypoint_file_id", "loader_file_id"):
+        file_id = _identifier(runtime[field])
+        _proposed_regular(files, file_id)
+        regular_ids.add(file_id)
+    _require(len(regular_ids) == 3, "CLOSURE_INCOMPLETE")
+    role_lists: dict[str, list[str]] = {}
+    for field in (
+        "libpython_file_ids",
+        "stdlib_file_ids",
+        "library_file_ids",
+        "loader_config_file_ids",
+        "hwcaps_file_ids",
+        "dlopen_file_ids",
+        "data_file_ids",
+    ):
+        role_lists[field] = _proposed_ids(runtime[field])
+        for file_id in role_lists[field]:
+            _proposed_regular(files, file_id)
+            regular_ids.add(file_id)
+    _require(
+        runtime["interpreter_file_id"] not in role_lists["libpython_file_ids"],
+        "CLOSURE_INCOMPLETE",
+    )
+    _require(
+        files[runtime["entrypoint_file_id"]]["path"].endswith(".py"),
+        "IMPORT_POLICY_REJECTED",
+    )
+    directory_ids: set[str] = {root_id}
+    for field in ("resolution_root_ids", "import_root_ids"):
+        role_lists[field] = _proposed_ids(runtime[field], minimum=1)
+        for file_id in role_lists[field]:
+            _proposed_directory(files, file_id)
+            directory_ids.add(file_id)
+    absent_paths = [_path(path) for path in _list(runtime["absent_paths"])]
+    _require(len(absent_paths) == len(set(absent_paths)), "CLOSURE_INCOMPLETE")
+    _require(all(path not in paths for path in absent_paths), "CLOSURE_INCOMPLETE")
+    _equal(runtime["rpath_runpath_policy"], "IN_IMAGE_ONLY")
+    _proposed_resolution_budget(
+        len(files), len(_list(manifest["imports"], minimum=1)), len(role_lists["import_root_ids"])
+    )
+    executable_role_ids = {
+        runtime["interpreter_file_id"],
+        runtime["entrypoint_file_id"],
+        runtime["loader_file_id"],
+        *(
+            file_id
+            for field, ids in role_lists.items()
+            if field not in {"data_file_ids", "import_root_ids", "resolution_root_ids"}
+            for file_id in ids
+        ),
+    }
+    for file_id, file in files.items():
+        if file["type"] == "regular" and file["path"].endswith(".pyc"):
+            _require(
+                file_id in role_lists["data_file_ids"]
+                and file_id not in executable_role_ids
+                and not any(
+                    file["path"].startswith(files[root_file_id]["path"] + "/")
+                    for root_file_id in role_lists["import_root_ids"]
+                ),
+                "IMPORT_POLICY_REJECTED",
+            )
+
+    embedded: dict[str, dict[str, Any]] = {}
+    embedded_names: set[str] = set()
+    containers = {runtime["interpreter_file_id"], *role_lists["libpython_file_ids"]}
+    for item in _list(runtime["embedded_modules"], minimum=1):
+        module = _record(
+            item,
+            {"embedded_module_id", "name", "kind", "build_id", "container_file_ids"},
+        )
+        module_id = _identifier(module["embedded_module_id"])
+        module_name = _proposed_module_name(module["name"])
+        _enum(module["kind"], {"builtin", "frozen"})
+        _identifier(module["build_id"])
+        _require(
+            module["build_id"] == manifest["target"]["interpreter"]["build_id"],
+            "IMPORT_POLICY_REJECTED",
+        )
+        _require(
+            module_id not in embedded and module_name not in embedded_names,
+            "IMPORT_POLICY_REJECTED",
+        )
+        module_containers = _proposed_ids(module["container_file_ids"], minimum=1)
+        _require(set(module_containers) <= containers, "IMPORT_POLICY_REJECTED")
+        embedded[module_id] = module
+        embedded_names.add(module_name)
+
+    import_names: set[str] = set()
+    imported_embedded: set[str] = set()
+    native_ids: set[str] = set()
+    imports_by_name: dict[str, dict[str, Any]] = {}
+    import_selected_roots: dict[str, str] = {}
+    for item in _list(manifest["imports"], minimum=1):
+        _require(type(item) is dict)
+        kind = _enum(item.get("kind"), {"builtin", "frozen", "source", "native"})
+        fields = {"name", "kind"} | (
+            {"embedded_module_id"} if kind in {"builtin", "frozen"} else {"file_id", "sha256"}
+        )
+        item = _record(item, fields)
+        name = _proposed_module_name(item["name"])
+        _require(name not in import_names, "IMPORT_POLICY_REJECTED")
+        import_names.add(name)
+        imports_by_name[name] = item
+        if kind in {"builtin", "frozen"}:
+            module_id = _identifier(item["embedded_module_id"])
+            _require(
+                module_id in embedded and module_id not in imported_embedded,
+                "IMPORT_POLICY_REJECTED",
+            )
+            module = embedded[module_id]
+            _require(
+                module["name"] == name and module["kind"] == kind,
+                "IMPORT_POLICY_REJECTED",
+            )
+            imported_embedded.add(module_id)
+        else:
+            file_id = _identifier(item["file_id"])
+            file = _proposed_regular(files, file_id)
+            _digest(item["sha256"])
+            _require(item["sha256"] == file["sha256"], "IMPORT_POLICY_REJECTED")
+            _require(
+                file["path"].endswith(".py" if kind == "source" else ".so"),
+                "IMPORT_POLICY_REJECTED",
+            )
+            relative = name.replace(".", "/")
+            source_suffixes = (relative + ".py", relative + "/__init__.py")
+            native_suffixes = (
+                relative + ".so",
+                relative + "." + manifest["target"]["interpreter"]["abi"] + ".so",
+            )
+            allowed_suffixes = source_suffixes if kind == "source" else native_suffixes
+            # Unsupported native/package forms can still shadow an allowed
+            # module under CPython's standard finder. Declaring them as data
+            # does not make them inert inside an import root.
+            forbidden_suffixes = (
+                relative + ".pyc",
+                relative + ".abi3.so",
+                relative + "/__init__.so",
+                relative + "/__init__." + manifest["target"]["interpreter"]["abi"] + ".so",
+                relative + "/__init__.abi3.so",
+                relative + "/__init__.pyc",
+            )
+            candidate_suffixes = dict.fromkeys(
+                source_suffixes + native_suffixes + forbidden_suffixes
+            )
+            candidates = [
+                (root_file_id, files[root_file_id]["path"] + "/" + suffix)
+                for root_file_id in role_lists["import_root_ids"]
+                for suffix in candidate_suffixes
+                if files[root_file_id]["path"] + "/" + suffix in paths
+                and files[paths[files[root_file_id]["path"] + "/" + suffix]]["type"] == "regular"
+            ]
+            _require(
+                len(candidates) == 1 and candidates[0][1] == file["path"],
+                "IMPORT_POLICY_REJECTED",
+            )
+            selected_root = candidates[0][0]
+            _require(
+                file["path"]
+                in {files[selected_root]["path"] + "/" + suffix for suffix in allowed_suffixes},
+                "IMPORT_POLICY_REJECTED",
+            )
+            import_selected_roots[name] = selected_root
+            regular_ids.add(file_id)
+            if kind == "native":
+                native_ids.add(file_id)
+    for name, root_file_id in import_selected_roots.items():
+        components = name.split(".")
+        for length in range(1, len(components)):
+            parent_name = ".".join(components[:length])
+            _require(parent_name in imports_by_name, "IMPORT_POLICY_REJECTED")
+            parent_import = imports_by_name[parent_name]
+            _require(parent_import["kind"] == "source", "IMPORT_POLICY_REJECTED")
+            parent_file = files[parent_import["file_id"]]
+            _require(
+                parent_file["path"]
+                == files[root_file_id]["path"]
+                + "/"
+                + "/".join(components[:length])
+                + "/__init__.py",
+                "IMPORT_POLICY_REJECTED",
+            )
+    _require(imported_embedded == set(embedded), "IMPORT_POLICY_REJECTED")
+
+    binary_ids = {
+        runtime["interpreter_file_id"],
+        runtime["loader_file_id"],
+        *role_lists["libpython_file_ids"],
+        *role_lists["library_file_ids"],
+        *role_lists["hwcaps_file_ids"],
+        *role_lists["dlopen_file_ids"],
+        *native_ids,
+    }
+    elf_graph: dict[tuple[str, str], set[tuple[str, str]]] = {
+        ("elf", file_id): set() for file_id in binary_ids
+    }
+    edges_seen: set[tuple[str, str]] = set()
+    loader_edge_seen = False
+    for item in _list(runtime["dependency_edges"], minimum=1):
+        edge = _record(item, {"requester_file_id", "needed", "resolved_file_id"})
+        requester = _identifier(edge["requester_file_id"])
+        resolved = _identifier(edge["resolved_file_id"])
+        needed = _string(edge["needed"], 4096)
+        _require(
+            bool(needed) and all(ord(char) >= 32 and not 127 <= ord(char) <= 159 for char in needed)
+        )
+        _require(requester in binary_ids and resolved in binary_ids, "CLOSURE_INCOMPLETE")
+        _require((requester, needed) not in edges_seen, "CLOSURE_INCOMPLETE")
+        edges_seen.add((requester, needed))
+        elf_graph[("elf", requester)].add(("elf", resolved))
+        if requester == runtime["interpreter_file_id"] and resolved == runtime["loader_file_id"]:
+            loader_edge_seen = True
+    _require(loader_edge_seen, "CLOSURE_INCOMPLETE")
+    _proposed_acyclic(elf_graph)
+    _require(
+        regular_ids == {file_id for file_id, file in files.items() if file["type"] == "regular"},
+        "CLOSURE_INCOMPLETE",
+    )
+
+    required_directories = set(directory_ids)
+    for file_id, file in files.items():
+        if file_id == root_id:
+            continue
+        _require(file["path"].startswith(root["path"] + "/"), "CLOSURE_INCOMPLETE")
+        parent = file["path"].rsplit("/", 1)[0]
+        while parent != root["path"]:
+            _require(
+                parent in paths and files[paths[parent]]["type"] == "directory",
+                "CLOSURE_INCOMPLETE",
+            )
+            required_directories.add(paths[parent])
+            parent = parent.rsplit("/", 1)[0]
+    actual_directories = {file_id for file_id, file in files.items() if file["type"] == "directory"}
+    _require(required_directories == actual_directories, "CLOSURE_INCOMPLETE")
+
+
+def _validate_manifest_launch(manifest: dict[str, Any], launch: dict[str, Any]) -> None:
+    """Cross-check two proposed declarations; actual launch/content stays unverified."""
+    _validate_proposed_manifest(manifest)
+    _validate_launch_policy(launch)
+    runtime = manifest["runtime"]
+    files = {file["file_id"]: file for file in manifest["files"]}
+    target = {
+        key: manifest["target"][key]
+        for key in ("os", "distribution", "distribution_version", "architecture")
+    }
+    _require(launch["target"] == target, "LAUNCH_POLICY_MISMATCH")
+    interpreter = launch["interpreter"]
+    for field in ("version", "package_version", "abi", "build_id"):
+        _require(
+            interpreter[field] == manifest["target"]["interpreter"][field],
+            "LAUNCH_POLICY_MISMATCH",
+        )
+    for launch_key, runtime_key in (
+        ("file_id", "interpreter_file_id"),
+        ("entrypoint_file_id", "entrypoint_file_id"),
+        ("libpython_file_ids", "libpython_file_ids"),
+    ):
+        _require(interpreter[launch_key] == runtime[runtime_key], "LAUNCH_POLICY_MISMATCH")
+    _equal(
+        interpreter["argv"],
+        [
+            files[runtime["interpreter_file_id"]]["path"],
+            "-I",
+            "-S",
+            "-B",
+            files[runtime["entrypoint_file_id"]]["path"],
+        ],
+    )
+    for field in (
+        "loader_file_id",
+        "library_file_ids",
+        "dependency_edges",
+        "loader_config_file_ids",
+        "absent_paths",
+        "hwcaps_file_ids",
+        "dlopen_file_ids",
+        "resolution_root_ids",
+        "rpath_runpath_policy",
+    ):
+        _require(launch["elf"][field] == runtime[field], "LAUNCH_POLICY_MISMATCH")
+    _require(
+        launch["imports"]["roots"] == runtime["import_root_ids"],
+        "LAUNCH_POLICY_MISMATCH",
+    )
+    for field, expected in (
+        (
+            "files_sha256",
+            hashlib.sha256(canonical_json_bytes(manifest["files"])).hexdigest(),
+        ),
+        ("runtime_sha256", hashlib.sha256(canonical_json_bytes(runtime)).hexdigest()),
+        (
+            "imports_sha256",
+            hashlib.sha256(canonical_json_bytes(manifest["imports"])).hexdigest(),
+        ),
+    ):
+        _require(launch["runtime_dependencies"][field] == expected, "LAUNCH_POLICY_MISMATCH")
+    _proposed_directory(files, launch["cwd"]["directory_file_id"])
+    for profile in (launch["sandbox"]["seccomp"], launch["sandbox"]["lsm"]):
+        file_id = _identifier(profile["profile_file_id"])
+        file = _proposed_regular(files, file_id)
+        _require(
+            file_id in runtime["data_file_ids"]
+            and not file["path"].endswith(".pyc")
+            and profile["profile_sha256"] == file["sha256"],
+            "LAUNCH_POLICY_MISMATCH",
+        )
+    integrity = launch["file_policy"]
+    file_id = _identifier(integrity["integrity_profile_file_id"])
+    file = _proposed_regular(files, file_id)
+    _require(
+        file_id in runtime["data_file_ids"]
+        and not file["path"].endswith(".pyc")
+        and integrity["integrity_profile_sha256"] == file["sha256"],
+        "LAUNCH_POLICY_MISMATCH",
+    )
+    launch_digest = hashlib.sha256(canonical_json_bytes(launch)).hexdigest()
+    _require(manifest["launch_policy_sha256"] == launch_digest, "LAUNCH_POLICY_MISMATCH")
+    _require(
+        all(
+            file["sha256"] != launch_digest for file in files.values() if file["type"] == "regular"
+        ),
+        "CLOSURE_INCOMPLETE",
+    )
+
+
+_PROPOSED_V1_LIMITS = (
+    ("manifest_bytes", 4194304),
+    ("acceptance_policy_bytes", 65536),
+    ("launch_policy_bytes", 65536),
+    ("acceptance_bytes", 65536),
+    ("result_bytes", 65536),
+    ("run_context_bytes", 16384),
+    ("depth", 16),
+    ("files", 32768),
+    ("sources", 128),
+    ("reason_codes", 64),
+    ("identifier_ascii_chars", 128),
+    ("path_bytes", 4096),
+    ("archive_bytes", 536870912),
+    ("unpacked_bytes", 2147483648),
+    ("archive_members", 65536),
+    ("compression_ratio", 100),
+    ("artifact_timeout_s", 60),
+    ("bundle_timeout_s", 300),
+    ("working_memory_bytes", 268435456),
+    ("wheel_archive_bytes", 16777216),
+    ("wheel_unpacked_bytes", 33554432),
+    ("buffered_descriptor_bytes", 16777216),
+)
+
+_PROPOSED_COUNTER_FIELDS = (
+    "pids_seen",
+    "tids_seen",
+    "identities_checked",
+    "references_checked",
+    "matching_observations",
+    "permission_denied",
+    "identity_changes",
+    "binding_changes",
+    "incomplete_reads",
+    "limits_hit",
+)
+
+
+def _validate_proposed_acceptance_policy(value: Any) -> None:
+    """Validate the explicitly proposed schema; this cannot authorize its roots."""
+    policy = _record(
+        value,
+        {
+            "schema",
+            "version",
+            "purpose",
+            "root_set_id",
+            "reviewer_keys",
+            "threshold",
+            "allowed_sources",
+            "minimum_sequence",
+            "revocation_checkpoint",
+            "valid_until",
+            "target",
+            "limits",
+            "launch_policy_sha256",
+        },
+    )
+    _schema(policy, "CryptoHunter.Stage9ObserverAcceptancePolicyV1", purpose=True)
+    _identifier(policy["root_set_id"])
+    _reviewer_keys(policy["reviewer_keys"])
+    _equal(policy["threshold"], 2)
+    _proposed_sources(policy["allowed_sources"])
+    _integer(policy["minimum_sequence"])
+    _checkpoint(policy["revocation_checkpoint"])
+    _timestamp(policy["valid_until"])
+    _proposed_target(policy["target"])
+    _equal(policy["limits"], dict(_PROPOSED_V1_LIMITS))
+    _digest(policy["launch_policy_sha256"])
+
+
+def _validate_proposed_observer_result(value: Any) -> None:
+    """Validate synthetic proposed result data, never physical observations."""
+    blocks = _blocked_fields()
+    result = _record(
+        value,
+        {
+            "schema",
+            "version",
+            "synthetic",
+            "run_id",
+            "run_nonce",
+            "observer_manifest_sha256",
+            "policy_sha256",
+            "launch_policy_sha256",
+            "installation_commits",
+            "scope_binding_sha256",
+            "boot_id",
+            "started_at",
+            "finished_at",
+            "counters",
+            "observations",
+            "reason_codes",
+            "completeness",
+        }
+        | set(blocks),
+    )
+    _schema(result, "ObserverResultV1")
+    _equal(result["synthetic"], True)
+    _identifier(result["run_id"])
+    _hex(result["run_nonce"], 64)
+    for name in (
+        "observer_manifest_sha256",
+        "policy_sha256",
+        "launch_policy_sha256",
+        "scope_binding_sha256",
+    ):
+        _digest(result[name])
+    _equal(
+        result["installation_commits"],
+        [
+            "782816540373d7b31f426dab645ad115320d1234",
+            "26e17e7c23ea6cc1b265d57bfda1a1e6589d9e3f",
+        ],
+    )
+    _boot_id(result["boot_id"])
+    started = _timestamp(result["started_at"])
+    finished = _timestamp(result["finished_at"])
+    _require(finished >= started, "REPORT_REJECTED")
+    _require((finished - started).total_seconds() < 300, "REPORT_REJECTED")
+    counters = _record(result["counters"], set(_PROPOSED_COUNTER_FIELDS))
+    for name in _PROPOSED_COUNTER_FIELDS:
+        _integer(counters[name])
+    _require(counters["identities_checked"] <= counters["pids_seen"], "REPORT_REJECTED")
+    _require(counters["matching_observations"] <= counters["references_checked"], "REPORT_REJECTED")
+    _require(
+        counters["pids_seen"] > 0
+        or (counters["tids_seen"] == 0 and counters["references_checked"] == 0),
+        "REPORT_REJECTED",
+    )
+    observations = _record(
+        result["observations"], {"match_seen", "identity_stable", "bindings_stable"}
+    )
+    for name in ("match_seen", "identity_stable", "bindings_stable"):
+        _require(type(observations[name]) is bool)
+    _require(
+        observations["match_seen"] == (counters["matching_observations"] > 0),
+        "REPORT_REJECTED",
+    )
+    _require(
+        counters["identity_changes"] == 0 or observations["identity_stable"] is False,
+        "REPORT_REJECTED",
+    )
+    _require(
+        counters["binding_changes"] == 0 or observations["bindings_stable"] is False,
+        "REPORT_REJECTED",
+    )
+    reasons = _reason_codes(result["reason_codes"])
+    _require("RUNTIME_LAUNCH_UNVERIFIED" in reasons, "REPORT_REJECTED")
+    _require("HOST_SCOPE_UNVERIFIED" in reasons, "REPORT_REJECTED")
+    _require(counters["limits_hit"] == 0 or "LIMIT_EXCEEDED" in reasons, "REPORT_REJECTED")
+    for name, expected in blocks.items():
+        _equal(result[name], expected)
+    # There is no Stage 3A runtime attestation or authenticated host PID scope.
+    _equal(result["completeness"], "INCOMPLETE")
+
+
+def _validate_proposed_observer_sequence(previous: dict[str, Any], current: dict[str, Any]) -> None:
+    """Compare cumulative synthetic snapshots; never accept two frames for a run.
+
+    This fixture-only state comparison models retention before one final report.
+    A real run still permits exactly one frame. Both inputs remain untrusted.
+    """
+    _validate_proposed_observer_result(previous)
+    _validate_proposed_observer_result(current)
+    for name in (
+        "run_id",
+        "run_nonce",
+        "observer_manifest_sha256",
+        "policy_sha256",
+        "launch_policy_sha256",
+        "installation_commits",
+        "scope_binding_sha256",
+        "boot_id",
+        "started_at",
+    ):
+        _require(previous[name] == current[name], "REPORT_REJECTED")
+    _require(
+        _timestamp(current["finished_at"]) >= _timestamp(previous["finished_at"]),
+        "REPORT_REJECTED",
+    )
+    for name in _PROPOSED_COUNTER_FIELDS:
+        _require(current["counters"][name] >= previous["counters"][name], "REPORT_REJECTED")
+    _require(
+        not previous["observations"]["match_seen"] or current["observations"]["match_seen"],
+        "REPORT_REJECTED",
+    )
+    for name in ("identity_stable", "bindings_stable"):
+        _require(
+            previous["observations"][name] or not current["observations"][name],
+            "REPORT_REJECTED",
+        )
+    _require(set(previous["reason_codes"]) <= set(current["reason_codes"]), "REPORT_REJECTED")
+
+
+@dataclass(frozen=True, slots=True)
+class ProposedContract(ParsedContract):
+    """Review-only structural data; this type can never establish approval."""
+
+    review_status: Literal["PROPOSED_UNAPPROVED"] = dataclass_field(
+        default="PROPOSED_UNAPPROVED", init=False
+    )
+    synthetic: Literal[True] = dataclass_field(default=True, init=False)
+
+
+def _parse_proposed_contract(
+    raw: bytes, schema: str, validator: Callable[[Any], None], *, maximum: int = MAX_DOCUMENT_BYTES
+) -> ProposedContract:
+    parsed = _parse_contract(raw, schema, validator, maximum=maximum, canonical_required=True)
+    return ProposedContract(parsed.schema, parsed.raw, parsed.canonical, parsed.sha256)
+
+
+def parse_proposed_manifest(raw: bytes) -> ProposedContract:
+    """Review the proposed manifest schema; standard parse_manifest stays closed."""
+    return _parse_proposed_contract(
+        raw,
+        "CryptoHunter.Stage9ObserverManifestV1",
+        _validate_proposed_manifest,
+        maximum=MAX_MANIFEST_BYTES,
+    )
+
+
+def parse_proposed_acceptance_policy(raw: bytes) -> ProposedContract:
+    """Review a proposed policy, without trusting its keys or root_set_id."""
+    return _parse_proposed_contract(
+        raw, "CryptoHunter.Stage9ObserverAcceptancePolicyV1", _validate_proposed_acceptance_policy
+    )
+
+
+def parse_proposed_observer_result(raw: bytes) -> ProposedContract:
+    """Review a synthetic INCOMPLETE result; no observed absence is proven."""
+    return _parse_proposed_contract(raw, "ObserverResultV1", _validate_proposed_observer_result)
+
+
+def parse_proposed_observer_sequence(previous_raw: bytes, current_raw: bytes) -> ProposedContract:
+    """Model cumulative snapshots before one final frame, without authenticating them."""
+    previous = parse_proposed_observer_result(previous_raw)
+    current = parse_proposed_observer_result(current_raw)
+    _validate_proposed_observer_sequence(previous.as_dict(), current.as_dict())
+    return current
+
+
+def parse_proposed_report_frame(
+    raw: bytes, *, eof: bool, process_exit_code: int, run_elapsed_ms: int, receive_elapsed_ms: int
+) -> ProposedContract:
+    """Review a synthetic frame; the production report parser remains closed."""
+    payload = decode_synthetic_frame(
+        raw,
+        eof=eof,
+        process_exit_code=process_exit_code,
+        run_elapsed_ms=run_elapsed_ms,
+        receive_elapsed_ms=receive_elapsed_ms,
+    )
+    return parse_proposed_observer_result(payload)
+
+
+@dataclass(frozen=True, slots=True)
+class ProposedBundle:
+    """An immutable collection of mutually consistent synthetic declarations."""
+
+    manifest: ProposedContract
+    policy: ProposedContract
+    launch_policy: ParsedContract
+    acceptance: ParsedContract
+    scope_binding: ParsedContract
+    run_context: ParsedContract
+    result: ProposedContract
+    authorization: Literal["UNVERIFIED"] = dataclass_field(default="UNVERIFIED", init=False)
+    review_status: Literal["PROPOSED_UNAPPROVED"] = dataclass_field(
+        default="PROPOSED_UNAPPROVED", init=False
+    )
+    synthetic: Literal[True] = dataclass_field(default=True, init=False)
+
+
+def _proposed_metadata_exclusion(manifest: dict[str, Any], metadata_digests: set[str]) -> None:
+    # Only explicitly declared digests are examined. A hash cannot reveal hidden
+    # references in arbitrary profile/source/ELF bytes; those remain Stage 3B work.
+    pending: list[Any] = [
+        manifest[key] for key in ("sources", "files", "transforms", "runtime", "imports")
+    ]
+    while pending:
+        value = pending.pop()
+        if type(value) is list:
+            pending.extend(value)
+        elif type(value) is dict:
+            for key, item in value.items():
+                if key == "sha256" or key.endswith("_sha256"):
+                    _require(item not in metadata_digests, "CLOSURE_INCOMPLETE")
+                elif type(item) in (dict, list):
+                    pending.append(item)
+
+
+def parse_proposed_bundle(
+    *,
+    manifest_raw: bytes,
+    policy_raw: bytes,
+    launch_policy_raw: bytes,
+    acceptance_raw: bytes,
+    scope_binding_raw: bytes,
+    run_context_raw: bytes,
+    result_raw: bytes,
+    synthetic_now: str,
+) -> ProposedBundle:
+    """Cross-check the review profile on synthetic data; never authorize a run.
+
+    synthetic_now is a caller-supplied fixture timestamp, not an independent
+    trusted clock/checkpoint. No signature, proof, artifact, launcher or host is
+    authenticated. Only the explicitly named proposed APIs accept this profile;
+    the standard manifest/policy/result/report parsers continue to refuse.
+    """
+    manifest_record = parse_proposed_manifest(manifest_raw)
+    policy_record = parse_proposed_acceptance_policy(policy_raw)
+    launch_record = parse_launch_policy(launch_policy_raw)
+    acceptance_record = parse_acceptance(acceptance_raw)
+    scope_record = parse_scope_binding(scope_binding_raw)
+    run_record = parse_run_context(run_context_raw)
+    result_record = parse_proposed_observer_result(result_raw)
+    manifest = manifest_record.as_dict()
+    policy = policy_record.as_dict()
+    launch = launch_record.as_dict()
+    acceptance = acceptance_record.as_dict()
+    payload = acceptance["payload"]
+    scope = scope_record.as_dict()
+    run = run_record.as_dict()
+    result = result_record.as_dict()
+
+    _validate_manifest_launch(manifest, launch)
+    _require(policy["target"] == manifest["target"], "ACCEPTANCE_REJECTED")
+    _require(policy["allowed_sources"] == manifest["sources"], "ACCEPTANCE_REJECTED")
+    _require(policy["launch_policy_sha256"] == launch_record.sha256, "LAUNCH_POLICY_MISMATCH")
+    _require(payload["manifest_sha256"] == manifest_record.sha256, "ACCEPTANCE_REJECTED")
+    _require(payload["policy_sha256"] == policy_record.sha256, "ACCEPTANCE_REJECTED")
+    _require(payload["root_set_id"] == policy["root_set_id"], "ACCEPTANCE_REJECTED")
+    _require(
+        payload["revocation_checkpoint"] == policy["revocation_checkpoint"], "ROLLBACK_REJECTED"
+    )
+    _require(payload["sequence"] == manifest["sequence"], "ROLLBACK_REJECTED")
+    _require(payload["sequence"] >= policy["minimum_sequence"], "ROLLBACK_REJECTED")
+    _require(acceptance["threshold"] == policy["threshold"], "ACCEPTANCE_REJECTED")
+    reviewer_ids = {key["signer_id"] for key in policy["reviewer_keys"]}
+    signers = [signature["signer_id"] for signature in acceptance["signatures"]]
+    _require(
+        set(signers) <= reviewer_ids and len(signers) >= policy["threshold"], "ACCEPTANCE_REJECTED"
+    )
+    issued, expires = _timestamp(payload["issued_at"]), _timestamp(payload["expires_at"])
+    now = _timestamp(synthetic_now)
+    _require(issued <= now < expires <= _timestamp(policy["valid_until"]), "ACCEPTANCE_REJECTED")
+
+    for key, expected in (
+        ("observer_manifest_sha256", manifest_record.sha256),
+        ("policy_sha256", policy_record.sha256),
+        ("launch_policy_sha256", launch_record.sha256),
+        ("scope_binding_sha256", scope_record.sha256),
+    ):
+        _require(run[key] == expected and result[key] == expected, "REPORT_REJECTED")
+    _require(run["scope_binding"] == scope, "HOST_SCOPE_UNVERIFIED")
+    for key in ("run_id", "run_nonce"):
+        _require(result[key] == run[key], "REPORT_REJECTED")
+    _require(result["boot_id"] == scope["boot_id"], "HOST_SCOPE_UNVERIFIED")
+    _require(
+        issued <= _timestamp(result["started_at"]) <= _timestamp(result["finished_at"]) <= now,
+        "REPORT_REJECTED",
+    )
+    metadata_digests = {
+        record.sha256
+        for record in (
+            manifest_record,
+            policy_record,
+            launch_record,
+            acceptance_record,
+            scope_record,
+            run_record,
+            result_record,
+        )
+    }
+    _proposed_metadata_exclusion(manifest, metadata_digests)
+    return ProposedBundle(
+        manifest_record,
+        policy_record,
+        launch_record,
+        acceptance_record,
+        scope_record,
+        run_record,
+        result_record,
+    )
