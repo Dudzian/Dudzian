@@ -1,0 +1,328 @@
+# CRYPTOHUNTER — STAGE 9 / 3A
+## Ubuntu package provenance, signed archive evidence and ELF byte qualification
+
+Kontynuujemy kwalifikację Stage 9 / 3A.
+
+Repozytorium: `Dudzian/Dudzian`
+
+Aktualny punkt odniesienia `main`:
+
+`d8a1df2e818c15e151e1e792a684411b5b4dda93`
+
+PR #3219 i #3220 zostały scalone.
+
+Zadanie polega na przeanalizowaniu nowych wyników diagnostyki fizycznego laptopa Dell Latitude 5490 i przygotowaniu osobnego, dokumentacyjnego PR zawierającego pakiet dowodowy.
+
+Nie uruchamiaj Stage 3B.
+
+Nie zmieniaj kodu produkcyjnego.
+
+Nie wykonuj automatycznego merge.
+
+---
+
+## 1. Cel zadania
+
+Operator przeprowadził kolejne kontrole:
+
+1. Identyfikację zainstalowanych pakietów Ubuntu.
+2. Weryfikację ich dokładnych wersji.
+3. Odczyt SHA-256 paczek `.deb` z lokalnych indeksów APT.
+4. Weryfikację podpisów GPG plików `InRelease`.
+5. Porównanie SHA-256 indeksów `Packages` z podpisanymi metadanymi.
+6. Weryfikację siedmiu rekordów pakietów.
+7. Pobranie siedmiu paczek `.deb`.
+8. Weryfikację bajtów pobranych paczek.
+9. Porównanie 12 obiektów ELF z rzeczywistą zawartością paczek Ubuntu.
+
+Wszystkie wykonane kontrole zakończyły się pozytywnie.
+
+Twoim zadaniem jest stworzenie rygorystycznego raportu, zachowującego rozdzielenie:
+
+- `OBSERVED_LOCAL`
+- `CRYPTOGRAPHICALLY_VERIFIED_LOCALLY`
+- `EXTERNALLY_CORROBORATED`
+- `INFERRED_CONDITIONAL`
+- `UNVERIFIED`
+- `INDEPENDENT_ACCEPTANCE_PENDING`
+
+Nie wolno deklarować kompletności środowiska ani niezależnego uwierzytelnienia samego laptopa.
+
+---
+
+## 2. Środowisko
+
+Urządzenie: Dell Latitude 5490.
+
+System: Ubuntu 24.04.5 LTS.
+
+Architektura: amd64.
+
+Interpreter: `/usr/bin/python3.12`.
+
+Zainstalowana wersja pakietów Python:
+
+`3.12.3-1ubuntu0.17`
+
+Wszystkie siedem pakietów miało stan `ii`.
+
+SHA-256 lokalnej bazy dpkg:
+
+`e3e783901bd414ff51acc4114d467b6d5817612ccc64639bcb9a4194f75fcbe4`
+
+Hash pozostał identyczny przed kontrolą i po kontroli.
+
+---
+
+## 3. Weryfikacja podpisów Ubuntu
+
+Zbadano dwa pliki:
+
+`noble-security/InRelease`
+
+`noble-updates/InRelease`
+
+Oba poprawnie zweryfikowano przy użyciu `gpgv`.
+
+Sygnatariusz:
+
+`F6ECB3762474EDA9D21B7022871920D1991BC93C`
+
+Ubuntu Archive Automatic Signing Key (2018).
+
+SHA-256 lokalnego keyringu:
+
+`80a36b0a6de2f69f49d2df75ef473ccde121e9e190b9ea01d20a4f63778d5c31`
+
+SHA-256 `noble-security/InRelease`:
+
+`03b4a340344bee27fe5de728cf9060b9a30a102a85ca30f25c209980c0d4f184`
+
+SHA-256 `noble-updates/InRelease`:
+
+`fccd5d3f5d46cfcd9d2c05ffd0720de11fa77c9b8e3b4e47d1874da83c0360b1`
+
+Daty:
+
+- `noble-security`: 2026-10-27.
+- `noble-updates`: 2026-09-14.
+
+Zbadaj niezależnie autentyczność opublikowanego odcisku klucza poprzez oficjalne materiały Canonical/Ubuntu.
+
+Rozróżnij publiczne potwierdzenie odcisku od formalnego zaakceptowania tego klucza jako niezależnego korzenia zaufania projektu.
+
+Starsza data `noble-updates` wymaga osobnej oceny aktualności. Nie klasyfikuj jej automatycznie jako błędu bezpieczeństwa, ale nie ogłaszaj również metadanych aktualnymi bez dowodu.
+
+---
+
+## 4. Integralność indeksów Packages
+
+Oba indeksy zostały powiązane z podpisanymi dokumentami `InRelease`.
+
+`noble-security/main/binary-amd64/Packages`
+
+SHA-256:
+
+`6aca30ff476fab7b627369a756b02b1ac59cf59b01776f8c9b0b144dec301ce7`
+
+Rozmiar: 6241173 bajty.
+
+`noble-updates/main/binary-amd64/Packages`
+
+SHA-256:
+
+`3658d119bd64ea79e24a0462c8d66110b53c4dc3da2e5bd0217ca68cd9e7e5be`
+
+Rozmiar: 6812353 bajty.
+
+W obu przypadkach:
+
+- GPG PASS.
+- SHA-256 PASS.
+- Rozmiar PASS.
+- Kontrola stabilności PASS.
+
+Wynik:
+
+`TWO_SIGNED_INDEX_HASHES_MATCH`
+
+---
+
+## 5. Zweryfikowane paczki Ubuntu
+
+Wynik:
+
+`SEVEN_SIGNED_PACKAGE_RECORDS_MATCH`
+
+Siedem pakietów:
+
+| Pakiet | Wersja | SHA-256 paczki DEB |
+|---|---|---|
+| python3.12-minimal | 3.12.3-1ubuntu0.17 | d452689b9660845345a4c3e05e4ad82c082d5474e04031b7aa47f1a6d5610a6e |
+| libpython3.12-minimal | 3.12.3-1ubuntu0.17 | d646ad7112b5adec21ba0e1af015f04ae8ca7f5efdc619622547dd6673c4c14b |
+| libpython3.12-stdlib | 3.12.3-1ubuntu0.17 | 45d3f530ba1f9d6e879ad46b92046fabab13fe50a82450e4f65557a3bbad1489 |
+| libc6 | 2.39-0ubuntu8.9 | ff5557d99b51f761c4b7c92368b9cc45565eda17df9bf9eb4b134d09825008be |
+| zlib1g | 1:1.3.dfsg-3.1ubuntu2.3 | 376249c8de139568221dbb242318cc8cb8f02299e3a62b7432948e1754fbddf9 |
+| libexpat1 | 2.6.1-2ubuntu0.6 | 494b8e672f722130c6bca6a7bc4cc31a43ca891a31d60d868bfdd699a3c20b13 |
+| libssl3t64 | 3.0.13-0ubuntu3.16 | 219f43b1cd836a4da550938db5fda93160d269d39a4edcf1f1ce698a470db797 |
+
+Wszystkie siedem paczek zostało pobranych z oficjalnego archiwum Ubuntu i przeszło kontrole deklarowanych rozmiarów oraz SHA-256.
+
+Pakiety nie były instalowane.
+
+Zawartość archiwów była analizowana bez wykonywania znajdującego się w nich kodu.
+
+---
+
+## 6. Weryfikacja bajtowa ELF
+
+Potwierdzono zgodność 12 obiektów ELF z plikami pochodzącymi z odpowiednich paczek `.deb`.
+
+| Obiekt | SHA-256 |
+|---|---|
+| python3.12 | e50d468e8b0adfb05733f5b87b3cff34829c4a8c1aea50c865aa8bdfe4bb150f |
+| _hashlib | 8dc6cda6dd9495b95a2bfb5b26e8cf06b72f36dc0213d958b9277a958287f0fe |
+| _ssl | 80c755c80688b92e0f32af9168a605f1283256077f35d30f6cf518252f2a6660 |
+| _json | ca8e35c58f7bc8e27258c4af43651c941413bc6318903621253485b0395758a3 |
+| ld-linux-x86-64.so.2 | c20a2dc8917c755f02b94049356320fe1f62ac7d9f8994731f807d9df39302da |
+| libc.so.6 | 3a15d66867d83762c7f2f1e37359cb8f6c5743edb369c65285cb0b1c4f7498bf |
+| libm.so.6 | fce00b6f25f459cf4ae0b7fae4257909a1a8a86f9149e7c029a5d617baf1ccd0 |
+| libz.so.1.3 | f61677c7bdb7c2aa2a243ea781bfd16afcb361cede7b4ef76127a9d8eb9a5242 |
+| libexpat.so.1.9.1 | 286682ecbc5e59a638963b1a4e6351e65eb32fcf4bdcb9cb7569b6a61fe06a8d |
+| libcrypto.so.3 | 6866ed711dab8927e1bf82bf1cd30e828bdfc34f3cc1e83b1c9eb01ce6c37d9a |
+| libssl.so.3 | a40e7b67489bbd257e432c700ff8f6a1ad796425b5eccecdc2930127fdd86624 |
+| legacy.so | e639c7121825222dc720bd38aa1fca3ddcedd7d1213dc72ce006b8ccf541b547 |
+
+Zestawienie:
+
+- 7/7 paczek `.deb`: PASS.
+- 12/12 obiektów ELF: PASS.
+- Kontrola stabilności: PASS.
+
+Plik `/etc/ssl/openssl.cnf` był wcześniej zmierzony oddzielnie, ale nie został objęty powyższą weryfikacją zawartości `.deb`.
+
+Nie przedstawiaj go jako trzynastego zweryfikowanego obiektu ELF.
+
+---
+
+## 7. Lokalne katalogi dowodowe
+
+Operator zachował pobrane paczki:
+
+`/home/dudzian/CryptoHunter-evidence/stage9-zlib-M6mdZN`
+
+`/home/dudzian/CryptoHunter-evidence/stage9-ubuntu-six-4GUhdk`
+
+Codex nie ma automatycznie dostępu do tych katalogów.
+
+Nie twierdź, że samodzielnie przeanalizowałeś zapisane tam pliki.
+
+Potraktuj dostarczone wyniki jako materiał przekazany przez operatora, dopóki ich bajty lub niezależne dowody nie zostaną rzeczywiście udostępnione i sprawdzone.
+
+Nie dodawaj binarnych paczek `.deb` do repozytorium bez osobnej decyzji.
+
+---
+
+## 8. Ocena wpływu na Stage 3A
+
+Porównaj nowe wyniki z:
+
+- `stage9_observer_3a_dell_local_elf_report_v1.md`
+- `stage9_observer_3a_review_package.md`
+- `stage9_observer_3a_contract_audit.md`
+- `stage9_observer_3a_elf_qualification.md`
+- istniejącymi ośmioma kontraktami Observer V1.
+
+Przeprowadź ponowną ocenę ustaleń:
+
+- CA-P1-01
+- CA-P1-02
+- CA-P1-03
+- DELL-P1-01
+- DELL-P1-02
+- DELL-P2-01
+
+Wyraźnie odróżnij kwestie częściowo udokumentowane od nadal blokujących.
+
+**Nowe wyniki dowodzą zgodności bajtów wybranych obiektów z paczkami opisanymi w podpisanych metadanych. Nie dowodzą kompletności runtime.**
+
+Nie wolno uznać Stage 3A za zakończony tylko dlatego, że 12 obiektów ELF ma poprawne sumy SHA-256.
+
+---
+
+## 9. Nierozwiązane kwestie
+
+Zidentyfikuj i uporządkuj dalsze wymagania, w szczególności:
+
+1. Niezależna akceptacja korzenia zaufania Ubuntu.
+2. Aktualność i polityka ważności metadanych repozytorium.
+3. Autentyczność dokładnego docelowego obrazu Observer.
+4. Kompletność plików i modułów CPython.
+5. Pełne zależności ELF.
+6. Zachowanie dynamicznego loadera.
+7. `dlopen`, natywne importy i dostawcy OpenSSL.
+8. Rejestracja `_datetime` jako builtin.
+9. Dokładny kontekst uruchomienia i integralność plików przez cały czas działania.
+10. Niezależny proces zatwierdzania kontraktów.
+
+Zachowaj ograniczenie DAG. Nie implementuj SCC bez nowego, potwierdzonego dowodu, że docelowy runtime wymaga rzeczywistego cyklu.
+
+---
+
+## 10. Zakres zmian w repozytorium
+
+Utwórz nowy dokumentacyjny PR.
+
+Wymagania:
+
+- Zachowaj historyczne dokumenty i manifesty bez zmian.
+- Dodaj osobny, wersjonowany raport dla nowego etapu dowodowego.
+- Dodaj nowy manifest SHA-256 dla nowych materiałów.
+- Powiąż go z wcześniejszymi dokumentami i dowodami.
+- Nie nadpisuj wyników PR #3219.
+- Nie modyfikuj kodu produkcyjnego.
+- Nie uruchamiaj Observera.
+- Nie uruchamiaj fizycznych testów na Dellu.
+- Nie zmieniaj statusów kwalifikacji.
+- Nie wykonuj merge.
+
+Sprawdź formatowanie, integralność manifestów, odnośniki, wymagane testy i stan CI.
+
+Nie zastępuj niezależnego pomiaru testem syntetycznym.
+
+---
+
+## 11. Oczekiwany raport końcowy
+
+Przedstaw:
+
+1. Numer PR.
+2. HEAD SHA.
+3. Raw diff.
+4. Zestawienie wszystkich zweryfikowanych komponentów.
+5. Klasyfikację P0/P1/P2/P3.
+6. Listę częściowo ograniczonych i nadal otwartych blokad.
+7. Wyniki walidacji dokumentacji.
+8. Status GitHub Actions.
+9. Następne wymagane dowody.
+10. Rekomendację dotyczącą warunkowego merge.
+
+Zachowaj statusy:
+
+`stage_9=IN_PROGRESS`
+
+`qualification=BLOCKED`
+
+`CONTRACT_APPROVED=NO`
+
+`STAGE_3A_COMPLETE=NO`
+
+`PRODUCTION_QUALIFIED=NO`
+
+`production_status=PRODUCTION_NO_GO`
+
+`runtime_attestation=MISSING`
+
+`host_pid_namespace=UNVERIFIED`
+
+**Cel: udokumentować osiągniętą zgodność 7 paczek i 12 ELF, nie przypisując tym dowodom uprawnień, których nie zapewniają.**
