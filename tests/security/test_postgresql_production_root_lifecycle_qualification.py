@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import time
 import uuid
 from contextlib import contextmanager
 from dataclasses import replace
@@ -545,29 +546,74 @@ def _offline_migration_connection(value, *, login=None, drain_existing=True):
     dsn = make_conninfo(value.dsn, user=login) if login else value.dsn
     with psycopg.connect(dsn, autocommit=True) as conn:
         own_pid = conn.info.backend_pid
-        with psycopg.connect(_BASE_DSN, autocommit=True) as control:
-            control.execute(
-                sql.SQL("ALTER DATABASE {} ALLOW_CONNECTIONS=false").format(
-                    sql.Identifier(value.database)
-                )
-            )
         try:
+            with psycopg.connect(_BASE_DSN, autocommit=True) as control:
+                control.execute(
+                    sql.SQL("ALTER DATABASE {} ALLOW_CONNECTIONS=false").format(
+                        sql.Identifier(value.database)
+                    )
+                )
             if drain_existing:
                 with psycopg.connect(_BASE_DSN, autocommit=True) as control:
-                    terminated = control.execute(
-                        "SELECT pg_catalog.pg_terminate_backend(pid, 5000) "
-                        "FROM pg_catalog.pg_stat_activity "
-                        "WHERE datname=%s AND pid<>%s",
-                        (value.database, own_pid),
-                    ).fetchall()
-                    if any(row != (True,) for row in terminated):
-                        raise RuntimeError("disposable TEST database sessions could not be drained")
-                    still_connected = control.execute(
-                        "SELECT 1 FROM pg_catalog.pg_stat_activity "
-                        "WHERE datname=%s AND pid<>%s LIMIT 1",
-                        (value.database, own_pid),
-                    ).fetchone()
-                    if still_connected is not None:
+                    # ALLOW_CONNECTIONS closes client admission, but PostgreSQL's
+                    # autovacuum workers can still enter this TEST database.
+                    # A worker arriving after one drain must not be mistaken for
+                    # stale statistics or ignored. Retry only within both bounds;
+                    # the production migration retains its independent refusal.
+                    deadline = time.monotonic() + 5.0
+                    for _ in range(3):
+                        remaining_ms = int((deadline - time.monotonic()) * 1000)
+                        if remaining_ms <= 0:
+                            raise RuntimeError(
+                                "disposable TEST database session drain exceeded its deadline"
+                            )
+                        control.execute(
+                            "SELECT pg_catalog.set_config('statement_timeout', %s, false)",
+                            (f"{remaining_ms}ms",),
+                        )
+                        control.execute("SELECT pg_catalog.pg_stat_clear_snapshot()")
+                        terminated = control.execute(
+                            "SELECT pid, pg_catalog.pg_terminate_backend(pid, %s) "
+                            "FROM pg_catalog.pg_stat_activity "
+                            "WHERE datname=%s AND pid<>%s",
+                            (remaining_ms, value.database, own_pid),
+                        ).fetchall()
+                        if any(type(row[1]) is not bool for row in terminated):
+                            raise RuntimeError(
+                                "disposable TEST database sessions could not be drained"
+                            )
+                        remaining_ms = int((deadline - time.monotonic()) * 1000)
+                        if remaining_ms <= 0:
+                            raise RuntimeError(
+                                "disposable TEST database session drain exceeded its deadline"
+                            )
+                        control.execute(
+                            "SELECT pg_catalog.set_config('statement_timeout', %s, false)",
+                            (f"{remaining_ms}ms",),
+                        )
+                        control.execute("SELECT pg_catalog.pg_stat_clear_snapshot()")
+                        still_connected = control.execute(
+                            "SELECT pid FROM pg_catalog.pg_stat_activity "
+                            "WHERE datname=%s AND pid<>%s",
+                            (value.database, own_pid),
+                        ).fetchall()
+                        remaining_pids = {row[0] for row in still_connected}
+                        # A sampled worker may finish before termination is
+                        # attempted. False is safe only if that exact PID is
+                        # absent from the fresh view; a real survivor refuses.
+                        if any(
+                            not stopped and pid in remaining_pids for pid, stopped in terminated
+                        ):
+                            raise RuntimeError(
+                                "disposable TEST database sessions could not be drained"
+                            )
+                        if not still_connected:
+                            if time.monotonic() >= deadline:
+                                raise RuntimeError(
+                                    "disposable TEST database session drain exceeded its deadline"
+                                )
+                            break
+                    else:
                         raise RuntimeError("disposable TEST database still has active sessions")
             yield conn
         finally:
@@ -581,15 +627,20 @@ def _offline_migration_connection(value, *, login=None, drain_existing=True):
 
 def test_offline_fixture_drains_stale_test_sessions_without_touching_owner(boundary):
     """Explicit TEST maintenance drains old clients, never its own connection."""
-    with psycopg.connect(
-        make_conninfo(boundary.dsn, user=boundary.config.administrator_role),
-        autocommit=True,
-    ) as stale:
+    with (
+        psycopg.connect(_BASE_DSN, autocommit=True) as unrelated,
+        psycopg.connect(
+            make_conninfo(boundary.dsn, user=boundary.config.administrator_role),
+            autocommit=True,
+        ) as stale,
+    ):
         stale.execute("SELECT 1")
         stale_pid = stale.info.backend_pid
         with _offline_migration_connection(boundary) as bootstrap:
             own_pid = bootstrap.info.backend_pid
             assert own_pid != stale_pid
+            assert bootstrap.execute("SELECT 1").fetchone() == (1,)
+            assert unrelated.execute("SELECT 1").fetchone() == (1,)
             with psycopg.connect(_BASE_DSN, autocommit=True) as control:
                 assert (
                     control.execute(
@@ -606,6 +657,7 @@ def test_offline_fixture_drains_stale_test_sessions_without_touching_owner(bound
                     "SELECT datallowconn FROM pg_catalog.pg_database WHERE datname=%s",
                     (boundary.database,),
                 ).fetchone() == (False,)
+        assert unrelated.execute("SELECT 1").fetchone() == (1,)
     with psycopg.connect(_BASE_DSN, autocommit=True) as control:
         assert control.execute(
             "SELECT datallowconn FROM pg_catalog.pg_database WHERE datname=%s",

@@ -1,0 +1,348 @@
+{
+  "schema": "PostgreSQLOfflineFixtureLocalReproductionV1",
+  "classification": "LOCAL_DEVELOPMENT_TEST_EVIDENCE",
+  "repository_baseline": "5f8f5688f41330236f84650949e4571f9173e9a1",
+  "ci": {
+    "run_id": 40716440677,
+    "job_id": 122970984826,
+    "effective_sha": "8771b8ef5705461e6f2daaa378f1334d29818169",
+    "failed": 1,
+    "passed": 756,
+    "skipped": 17,
+    "deselected": 25469,
+    "seconds": 1312.57,
+    "original_remaining_pid": "NOT_RECORDED",
+    "original_remaining_backend_type": "NOT_RECORDED"
+  },
+  "runtime": {
+    "postgresql": "16.15 (Debian 16.15-1.pgdg12+2)",
+    "python": "3.11.16",
+    "psycopg": "3.3.6",
+    "docker_image": "postgres:16-bookworm",
+    "docker_digest": "sha256:e8a07d2c7579b038938cdba6c539e580e5001caf9ea203d397b5cc83e76bd938",
+    "fsync": "on",
+    "synchronous_commit": "on",
+    "full_page_writes": "on",
+    "accelerated_autovacuum_naptime": "1s",
+    "scope": "DISPOSABLE_LOCAL_LOOPBACK_TEST_CLUSTER_ONLY"
+  },
+  "baseline_exact_test": {
+    "passed": 1
+  },
+  "baseline_unforced_fresh_fixtures": {
+    "passed": 100,
+    "seconds": 41.44,
+    "limit": "Did not reproduce unforced failure; not completeness proof"
+  },
+  "controlled_original": [
+    {
+      "phase": "after_original_drain",
+      "terminated": [
+        [
+          true
+        ]
+      ],
+      "owner": 1471,
+      "new_backends": [
+        [
+          1475,
+          "autovacuum worker",
+          "active",
+          "autovacuum: VACUUM ANALYZE public.probe"
+        ]
+      ]
+    },
+    {
+      "phase": "original_post_drain_check",
+      "actual_backends": [
+        [
+          1475,
+          "autovacuum worker",
+          "active",
+          "autovacuum: VACUUM ANALYZE public.probe"
+        ]
+      ]
+    },
+    {
+      "reproduced_exception": "disposable TEST database still has active sessions"
+    },
+    {
+      "gate_restored": [
+        true
+      ]
+    }
+  ],
+  "controlled_final": [
+    {
+      "phase": "after_original_drain",
+      "terminated": [
+        [
+          4195,
+          true
+        ]
+      ],
+      "owner": 4197,
+      "new_backends": [
+        [
+          4201,
+          "autovacuum worker",
+          "active",
+          "autovacuum: VACUUM ANALYZE public.probe"
+        ]
+      ]
+    },
+    {
+      "phase": "subsequent_drain",
+      "terminated": [
+        [
+          4201,
+          true
+        ]
+      ]
+    },
+    {
+      "yielded_after_drain": true,
+      "owner_alive": 4197,
+      "other_database_alive": 4196,
+      "stale_removed": 4195
+    },
+    {
+      "gate_restored": [
+        true
+      ]
+    }
+  ],
+  "statistics_control": [
+    {
+      "autocommit": false,
+      "pid": 1516,
+      "before": [
+        1516
+      ],
+      "terminate": [
+        true
+      ],
+      "after": [
+        1516
+      ],
+      "after_clear_snapshot": null
+    },
+    {
+      "autocommit": true,
+      "pid": 1519,
+      "before": [
+        1519
+      ],
+      "terminate": [
+        true
+      ],
+      "after": null,
+      "after_clear_snapshot": null
+    }
+  ],
+  "intermediate_bounded_drain": {
+    "passed": 98,
+    "failed": 2,
+    "seconds": 46.61,
+    "failure": "all-false refusal rejected already-departed workers; NOT ACCEPTED AS PASS"
+  },
+  "already_departed_backend_probe": {
+    "passed_before_failure": 82,
+    "warning": "PID 4095 is not a PostgreSQL backend process",
+    "termination_results": [
+      [
+        true
+      ],
+      [
+        false
+      ]
+    ],
+    "fresh_residual_after_clear_snapshot": []
+  },
+  "real_session_fault_injection": [
+    {
+      "mode": "persistent-real-session",
+      "refused": "disposable TEST database still has active sessions",
+      "termination_calls": 3,
+      "elapsed_seconds": 0.055,
+      "actual_session_preserved": 2852,
+      "other_database_alive": 2853,
+      "gate_restored": [
+        true
+      ]
+    },
+    {
+      "mode": "termination-false",
+      "refused": "disposable TEST database sessions could not be drained",
+      "termination_calls": 1,
+      "elapsed_seconds": 0.026,
+      "actual_session_preserved": 2864,
+      "other_database_alive": 2865,
+      "gate_restored": [
+        true
+      ]
+    },
+    {
+      "mode": "termination-error",
+      "refused": "injected connection failure",
+      "termination_calls": 1,
+      "elapsed_seconds": 0.029,
+      "actual_session_preserved": 2883,
+      "other_database_alive": 2885,
+      "gate_restored": [
+        true
+      ]
+    }
+  ],
+  "final_fault_units": {
+    "passed": 16
+  },
+  "log_integrity": [
+    {
+      "name": "before-controlled-late-worker-with-stale.log",
+      "sha256": "62313206029e2e325521d9e274ff6446388ce47aa43235441df9163310bb860b"
+    },
+    {
+      "name": "after-final-controlled-late-worker.log",
+      "sha256": "521df0dcc6623a4663d8086ba72ec95f7ba20f0528989c049e85972fda436b23"
+    },
+    {
+      "name": "statistics-visibility.log",
+      "sha256": "b61db1fc52fdd3ce5a98f99cf68cc1942454fc7ea5451e5d81ae6a688655c1b5"
+    },
+    {
+      "name": "before-100-fresh-databases.log",
+      "sha256": "d024e807031478cceebdbe0e4d4e8fe0863406bc59c9ffb8b278c9ee379a545b"
+    },
+    {
+      "name": "after-100-fresh-databases.log",
+      "sha256": "8392edc291ad7c0e2bf077fc3e58e0383548225f27b430365e92954af0dbee7c"
+    },
+    {
+      "name": "false-termination-stress-probe.log",
+      "sha256": "e67cfdfa2bc44e2f29c241dcab21ce9aa54750c2d65dfb16247cf79e1361951c"
+    },
+    {
+      "name": "after-real-session-fault-refusals.log",
+      "sha256": "e781bfdbacbf6f1d23970fe91cbaa5337e591fcff5db9d4d2fe7aedfe4984f4e"
+    },
+    {
+      "name": "after-final-100-fresh-databases.log",
+      "sha256": "1a0b6fb9c83d6d12ebeb8b24e7f1311b57b147f9f4e025f675f5cb093d57d1c5"
+    },
+    {
+      "name": "after-final-real-already-exited-backend.log",
+      "sha256": "e35a11b745af65fe167c0a5b3b6434bc00bba2031ae21afc0d2cc5ee243ba80d"
+    },
+    {
+      "name": "after-final-real-session-fault-refusals.log",
+      "sha256": "ef2e97b412f6f5a75a4dcc0a0672802f6edb48b2ee25fbded60e300304273575"
+    },
+    {
+      "name": "final-postgresql16-regression.log",
+      "sha256": "a3fcac897eb6a3113ce9415f6d60bb8c4233dc519feb4a5ce21b42f777657dea"
+    }
+  ],
+  "limits": [
+    "Local controlled reproduction is not independent or production qualification.",
+    "CI did not retain PID/backend type; its exact remaining process cannot be attributed.",
+    "An autocommit transaction-cache failure was not reproduced.",
+    "A five-second retry/SQL budget is not a hard wall-clock bound for connection establishment or cleanup."
+  ],
+  "final_accelerated_fresh_fixtures": {
+    "passed": 100,
+    "failed": 0,
+    "seconds": 52.76,
+    "autovacuum_naptime": "1s",
+    "fixture": "fresh disposable database per parameterized copy of exact test/helper",
+    "qualification": "DEVELOPMENT_REGRESSION_ONLY"
+  },
+  "final_real_already_exited_backend": [
+    {
+      "captured_test_pid": 5256,
+      "actual_exit_confirmed": true
+    },
+    {
+      "postgres_notice": "PID 5256 is not a PostgreSQL backend process"
+    },
+    {
+      "false_for_already_gone_pid_safely_reconciled": true,
+      "fresh_remaining_sessions": [],
+      "owner_alive": 5258,
+      "other_database_alive": 5257
+    },
+    {
+      "gate_restored": [
+        true
+      ]
+    }
+  ],
+  "final_real_session_fault_injection": [
+    {
+      "mode": "persistent-real-session",
+      "refused": "disposable TEST database still has active sessions",
+      "termination_calls": 3,
+      "elapsed_seconds": 0.045,
+      "actual_session_preserved": 4752,
+      "other_database_alive": 4753,
+      "gate_restored": [
+        true
+      ]
+    },
+    {
+      "mode": "termination-false",
+      "refused": "disposable TEST database sessions could not be drained",
+      "termination_calls": 1,
+      "elapsed_seconds": 0.021,
+      "actual_session_preserved": 4772,
+      "other_database_alive": 4773,
+      "gate_restored": [
+        true
+      ]
+    },
+    {
+      "mode": "termination-error",
+      "refused": "injected connection failure",
+      "termination_calls": 1,
+      "elapsed_seconds": 0.02,
+      "actual_session_preserved": 4792,
+      "other_database_alive": 4793,
+      "gate_restored": [
+        true
+      ]
+    }
+  ],
+  "final_exact_test_and_fault_units": {
+    "passed": 17,
+    "seconds": 0.89
+  },
+  "final_postgresql16_regression": {
+    "passed": 153,
+    "skipped": 1,
+    "seconds": 37.46,
+    "modules": [
+      "tests/security/test_postgresql_production_root_lifecycle_qualification.py",
+      "tests/security/test_postgresql_offline_migration_fixture.py",
+      "tests/security/test_production_root_lifecycle_schema.py",
+      "tests/security/test_production_root_lifecycle_identity.py",
+      "tests/security/test_production_root_lifecycle_races.py"
+    ],
+    "skip": "test_non_linux_installation_and_service_entrypoints_fail_closed intentionally inapplicable on Linux",
+    "restart_controller": "Dedicated task test container only",
+    "retained_negatives": [
+      "production refuses active sessions",
+      "separately committed closed gate",
+      "retained physical/catalog pin",
+      "durable restart and receipt replay refusal"
+    ]
+  },
+  "quality_checks": {
+    "exact_pre_commit_ruff_format_all_files": "PASS",
+    "tier_a_ruff": "PASS",
+    "changed_python_format": "PASS",
+    "offline_betterleaks_changed_four_files": "PASS_ZERO_FINDINGS",
+    "local_audit_links": "PASS",
+    "evidence_json": "PASS",
+    "diff_whitespace": "PASS"
+  }
+}
