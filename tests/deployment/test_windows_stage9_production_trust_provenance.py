@@ -227,13 +227,30 @@ def test_subclass_cannot_transfer_verified_provenance(issued_context):
 
 
 def test_context_provenance_does_not_retain_unused_contexts(verified_context_loader):
+    active = verified_context_loader()
+    unrelated_cycle = [verified_context_loader()]
+    weak_unrelated = ref(unrelated_cycle[0])
+    unrelated_cycle.append(unrelated_cycle)
+    del unrelated_cycle
+
     disposable = verified_context_loader()
     weak_context = ref(disposable)
-    before = len(trust._ISSUED_CONTEXTS)
+    registration = next(
+        entry for entry in trust._ISSUED_CONTEXTS.keyrefs() if entry() is disposable
+    )
+    # Even retaining the verified projection must not retain its context key.
+    snapshot = trust._ISSUED_CONTEXTS[disposable]
+    assert trust.require_verified_production_trust_context(disposable) is disposable
     del disposable
     gc.collect()
     assert weak_context() is None
-    assert len(trust._ISSUED_CONTEXTS) == before - 1
+    assert registration() is None
+    assert all(entry is not registration for entry in trust._ISSUED_CONTEXTS.keyrefs())
+    assert weak_unrelated() is None
+    assert snapshot.release_payload_digest == trust.RELEASE_PAYLOAD_DIGEST
+    assert trust.require_verified_production_trust_context(active) is active
+    with pytest.raises(trust.ProductionTrustUnavailable, match="VERIFIED_PRODUCTION"):
+        trust.require_verified_production_trust_context(_forged_projection(active))
 
 
 def test_missing_production_package_never_issues_context(tmp_path: Path):
