@@ -12,6 +12,13 @@ only within the proposal. Its status remains `PROPOSED_UNAPPROVED`.
 The [earlier finding disposition](stage9_observer_3a_schema_gaps.md) continues
 to distinguish implementation completeness from approval.
 
+Post-merge follow-up: the [R1 independent review package](stage9_observer_3a_review_package.md)
+pins the candidate and adds live CI evidence, an eight-contract audit, ELF
+qualification analysis and a separate read-only Dell procedure. It explicitly
+records the offline-result canonical exception and seven-input bundle scope.
+These findings do not amend or independently approve the proposed wire profile;
+exact-target compatibility remains blocked.
+
 ## Contract assessment
 
 | Contract | Source assessment | Remaining authority boundary |
