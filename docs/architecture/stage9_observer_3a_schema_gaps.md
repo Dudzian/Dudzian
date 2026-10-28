@@ -48,6 +48,10 @@ Those checks never prove artifact contents, actual build inventory, Python/ELF
 resolution, runtime enforcement, signatures, reviewer independence, a trusted
 clock/revocation head, authenticated producer/channel or a physical host scope.
 A SHA-256 equality proves neither provenance nor examination of hidden content.
+The proposed static resolver additionally checks its file/import-to-root work
+bound before nested comparisons: `(files + imports) * import_roots <= 65536`.
+This defensive domain ceiling gives LIMIT_EXCEEDED rather than unbounded
+comparison work; it introduces no new field in the 22-field policy limits.
 
 Contract work performs no host scan, network/subprocess/host I/O, inspected-code
 execution, privileged helper/launcher action, sudo/root/capability operation,

@@ -282,6 +282,15 @@ materials and content verification in Stage 3B.
 
 Source/native entries reference a regular file with equal digest under an
 explicit import root. Dotted MODULE a.b.c has lexical relative stem a/b/c.
+Before any file-to-import-root `.pyc` check or import-to-root candidate loop,
+the parser requires
+`(len(manifest.files) + len(manifest.imports)) * len(runtime.import_root_ids) <= 65536`.
+Exceeding this bound gives LIMIT_EXCEEDED. This additional domain bound limits
+the proposed static resolver's comparison work before the nested loops; each
+import/root pair has only the five fixed suffix forms below. It is not an
+extra acceptance-policy limit field, and the exact 22-field limits record is
+unchanged. A large otherwise well-formed inventory may therefore require fewer
+import roots or a separately reviewed resolver profile; there is no fallback.
 A source maps exactly to <root>/a/b/c.py or <root>/a/b/c/__init__.py; a native
 maps exactly to <root>/a/b/c.so or <root>/a/b/c.<target ABI>.so. No arbitrary
 alias, name rewriting or custom hook is accepted. Across all ordered import
