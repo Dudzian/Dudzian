@@ -1,0 +1,320 @@
+# CRYPTOHUNTER — STAGE 9 / 3A
+## Dell Ubuntu 24.04 — Local ELF Observation Report
+
+Repozytorium: Dudzian/Dudzian
+
+Punkt wyjścia:
+`main` — `5f8f5688f41330236f84650949e4571f9173e9a1`
+
+Utwórz nową gałąź i osobny PR dokumentacyjny.
+
+Nie wykonuj merge.
+
+### 1. Cel
+
+Zebraliśmy na fizycznym laptopie Dell Latitude 5490 wyniki statycznej diagnostyki interpretera CPython 3.12, bibliotek ELF, rozszerzeń natywnych oraz konfiguracji OpenSSL.
+
+Twoim zadaniem jest:
+
+1. Przeanalizować dostarczone obserwacje.
+2. Porównać je z istniejącym projektem kontraktów Observer V1.
+3. Utworzyć raport zawierający rzeczywisty, częściowy graf zależności ELF.
+4. Ocenić zgodność obserwowanego grafu z ograniczeniem DAG.
+5. Zidentyfikować wszystkie brakujące dowody.
+6. Przygotować dalszy plan niezależnej kwalifikacji.
+7. Zachować wszystkie blokady Stage 9.
+
+**Istotne:** wszystkie poniższe dane pochodzą z wyników terminala przekazanych przez operatora. Nie są niezależnie uwierzytelnioną atestacją, podpisanym pomiarem ani dowodem kompletności środowiska.
+
+Nie wolno zmieniać ich statusu na `TRUSTED`, `AUTHENTICATED` lub `QUALIFIED`.
+
+### 2. Środowisko
+
+System:
+
+- Dell Latitude 5490.
+- Ubuntu 24.04.5 LTS.
+- Architektura x86_64 / amd64.
+- CPython: pakiet Ubuntu `3.12.3-1ubuntu0.17`.
+- Interpreter: `/usr/bin/python3.12`.
+- SHA-256 interpretera:
+
+`e50d468e8b0adfb05733f5b87b3cff34829c4a8c1aea50c865aa8bdfe4bb150f`
+
+Build ID:
+
+`337d65cf00021797985cc9f77c0cc334a9fbeb38`
+
+Interpreter jest plikiem ELF64 typu EXEC.
+
+`PT_INTERP`:
+
+`/lib64/ld-linux-x86-64.so.2`
+
+Bezpośrednie `DT_NEEDED`:
+
+- `libm.so.6`
+- `libz.so.1`
+- `libexpat.so.1`
+- `libc.so.6`
+
+Nie wykryto bezpośredniego `DT_NEEDED` na `libpython3.12.so`.
+
+Nie wykryto `RPATH` ani `RUNPATH` interpretera.
+
+### 3. Zbadane biblioteki systemowe
+
+Przekazane SHA-256:
+
+| Obiekt | SHA-256 |
+|---|---|
+| ld-linux-x86-64.so.2 | c20a2dc8917c755f02b94049356320fe1f62ac7d9f8994731f807d9df39302da |
+| libm.so.6 | fce00b6f25f459cf4ae0b7fae4257909a1a8a86f9149e7c029a5d617baf1ccd0 |
+| libz.so.1.3 | f61677c7bdb7c2aa2a243ea781bfd16afcb361cede7b4ef76127a9d8eb9a5242 |
+| libexpat.so.1.9.1 | 286682ecbc5e59a638963b1a4e6351e65eb32fcf4bdcb9cb7569b6a61fe06a8d |
+| libc.so.6 | 3a15d66867d83762c7f2f1e37359cb8f6c5743edb369c65285cb0b1c4f7498bf |
+
+Zależności `DT_NEEDED`:
+
+- `ld-linux`: brak.
+- `libm`: libc, ld-linux.
+- `libz`: libc.
+- `libexpat`: libc.
+- `libc`: ld-linux.
+
+Nazwy SONAME i ścieżki kanoniczne muszą pozostać rozróżnione.
+
+W szczególności:
+
+- `libz.so.1` → `libz.so.1.3`
+- `libexpat.so.1` → `libexpat.so.1.9.1`
+
+Nie uznawaj automatycznie symlinków z systemu hosta za dozwolone elementy projektowanego obrazu obserwatora.
+
+### 4. Rozszerzenia natywne CPython
+
+`_hashlib`:
+
+- `DT_NEEDED`: libcrypto.so.3, libc.so.6.
+- SHA-256: `8dc6cda6dd9495b95a2bfb5b26e8cf06b72f36dc0213d958b9277a958287f0fe`
+
+`_ssl`:
+
+- `DT_NEEDED`: libssl.so.3, libcrypto.so.3, libc.so.6.
+- SHA-256: `80c755c80688b92e0f32af9168a605f1283256077f35d30f6cf518252f2a6660`
+
+`_json`:
+
+- Brak bezpośrednich `DT_NEEDED`.
+- SHA-256: `ca8e35c58f7bc8e27258c4af43651c941413bc6318903621253485b0395758a3`
+
+`_datetime`:
+
+- Nie znaleziono osobnego `_datetime.so`.
+- W tablicy symboli `/usr/bin/python3.12` znaleziono globalny symbol `PyInit__datetime`.
+- To wskazuje na wbudowaną implementację natywną.
+- Pełna rejestracja modułu jako builtin i jego konfiguracja builda nadal wymagają niezależnego potwierdzenia.
+
+Nie zakładaj, że te cztery moduły stanowią pełne inventory CPython.
+
+### 5. OpenSSL
+
+Pakiet Ubuntu:
+
+`libssl3t64:amd64 3.0.13-0ubuntu3.16`
+
+`libcrypto.so.3`:
+
+- `DT_NEEDED`: libc.so.6.
+- SHA-256: `6866ed711dab8927e1bf82bf1cd30e828bdfc34f3cc1e83b1c9eb01ce6c37d9a`
+
+`libssl.so.3`:
+
+- `DT_NEEDED`: libcrypto.so.3, libc.so.6.
+- SHA-256: `a40e7b67489bbd257e432c700ff8f6a1ad796425b5eccecdc2930127fdd86624`
+
+Dostawca `legacy.so`:
+
+- Ścieżka: `/usr/lib/x86_64-linux-gnu/ossl-modules/legacy.so`
+- `DT_NEEDED`: libcrypto.so.3, libc.so.6.
+- SHA-256: `e639c7121825222dc720bd38aa1fca3ddcedd7d1213dc72ce006b8ccf541b547`
+
+Potencjalny cykl dynamiczny:
+
+`libcrypto → dlopen(legacy) → libcrypto`
+
+Nie zaobserwowano rzeczywistego wywołania `dlopen`.
+
+Nie udowodniono, że docelowy Observer wymaga tego dostawcy.
+
+Nie zaliczaj tej hipotetycznej krawędzi do potwierdzonego grafu `DT_NEEDED`.
+
+### 6. Konfiguracja OpenSSL
+
+Plik:
+
+`/etc/ssl/openssl.cnf`
+
+Ścieżka `/usr/lib/ssl/openssl.cnf` wskazuje na ten sam plik.
+
+SHA-256:
+
+`529815b0dd4bd6608bafeeb3d410b0683374e61aef792b3e3f38b3767d26f747`
+
+W sprawdzonym pliku:
+
+- `openssl_conf = openssl_init`
+- `[openssl_init]` wskazuje `providers = provider_sect`.
+- `[provider_sect]` zawiera `default = default_sect`.
+- Nie ma deklaracji `legacy = ...`.
+- `# activate = 1` pozostaje zakomentowane.
+- Nie znaleziono aktywnych dyrektyw `.include`.
+
+Nie interpretuj zakomentowanego `activate` jako dowodu wyłączenia domyślnego dostawcy.
+
+Nie uznawaj braku deklaracji `legacy` za dowód, że aplikacja nie może go załadować przez API lub alternatywną konfigurację.
+
+### 7. Klasyfikacja wyników
+
+Utwórz jednoznaczne rozróżnienie:
+
+**A. OBSERVED_LOCAL**
+
+Statyczne metadane ELF, ścieżki, zależności, SHA-256, wersje pakietów i fragmenty konfiguracji przekazane przez operatora.
+
+**B. INFERRED_CONDITIONAL**
+
+Wnioski warunkowe, w tym możliwość cyklu wynikającego z `dlopen(legacy.so)`.
+
+**C. UNVERIFIED**
+
+- Pełna zgodność z rzeczywistym obrazem Observer.
+- Kompletność wszystkich modułów CPython.
+- Pełny zbiór możliwych `dlopen`.
+- Kontekst rzeczywistego uruchomienia.
+- Loader search/cache/hwcaps.
+- Pochodzenie artefaktów z uwierzytelnionego snapshotu Ubuntu.
+- Dokładne inventory builda.
+- Ciągła integralność plików.
+- Zewnętrzne źródła zaufania.
+- Niezależne zatwierdzenie kontraktów.
+
+Nie podnoś żadnego wyniku `OBSERVED_LOCAL` do poziomu atestacji.
+
+### 8. Wymagane decyzje architektoniczne
+
+Przeanalizuj zgodność z:
+
+- `ObserverManifestV1`
+- `AcceptancePolicyV1`
+- `ObserverResultV1`
+- `LaunchPolicyV1`
+- `ObserverRunContextV1`
+- `HostScopeBindingV1`
+- `OfflineVerificationResultV1`
+- `AcceptanceV1`
+
+Zachowaj obecny DAG.
+
+Nie implementuj SCC, jeśli rzeczywista konieczność nie została udowodniona.
+
+Wskaż, jakie konkretne dowody byłyby wymagane do zaakceptowania DAG dla wybranego obrazu Observer.
+
+Oddziel lokalną instalację Ubuntu od docelowego, niezależnie budowanego obrazu.
+
+Przeanalizuj, czy dotychczasowe obserwacje ujawniają sprzeczności w dokumentacji kontraktów.
+
+Jeżeli nie ma potwierdzonej sprzeczności, nie wprowadzaj spekulacyjnych zmian parsera.
+
+### 9. Dokumentacja i walidacja
+
+Utwórz osobny dokument zawierający:
+
+- dokładną identyfikację dostarczonych obserwacji;
+- częściowy graf ELF;
+- tabelę SHA-256;
+- rozdzielenie `PT_INTERP`, `DT_NEEDED` i hipotetycznego `dlopen`;
+- analizę dostawcy `legacy`;
+- ustalenia dotyczące `_datetime`;
+- listę luk dowodowych;
+- macierz ryzyka P0/P1/P2/P3;
+- zalecany następny etap kwalifikacji.
+
+Powiąż go z dotychczasowym pakietem Stage 3A.
+
+Zachowaj historyczny pakiet R1 i jego sumy kontrolne. Dla nowego raportu utwórz osobne, jednoznacznie wersjonowane powiązanie integralności, jeżeli jest potrzebne.
+
+Sprawdź aktualne GitHub Actions dla PR #3218 i main. Nie nazywaj oczekujących lub anulowanych przez concurrency przebiegów zaliczonymi.
+
+Wykonaj odpowiednie testy dokumentacyjne, kontrolę odnośników, formatowania i sekretów.
+
+Nie wykonuj fizycznej diagnostyki hosta z poziomu Codexa.
+
+### 10. Zasady dalszych poleceń terminalowych
+
+Jeżeli przygotujesz następny skrypt dla fizycznego Della po zmianach w repozytorium, jego pierwszym etapem musi być bezpieczna synchronizacja przez:
+
+`cryptohunter-sync.service`
+
+Przed synchronizacją zweryfikuj:
+
+- gałąź `main`;
+- brak niezatwierdzonych zmian;
+- brak ryzyka aktualizacji plików pod aktywnymi lokalnymi testami.
+
+Nie wymuszaj `git pull`, jeśli usługa odracza synchronizację.
+
+Po synchronizacji wymagaj zgodności lokalnego HEAD z właściwym zdalnym commitem.
+
+Nie mieszaj statusu lokalnej synchronizacji z nadal wykonywanymi GitHub Actions.
+
+### 11. Zakazy
+
+Nie zmieniaj:
+
+- uprawnień produkcyjnych;
+- Root Proof;
+- Stage 41B;
+- Stage 10;
+- kodu launchera;
+- polityki LIVE;
+- zaufanych kluczy;
+- istniejących limitów bezpieczeństwa;
+- statusów kwalifikacji.
+
+Nie uruchamiaj Observer ani historycznych payloadów.
+
+Nie aktywuj Stage 3B.
+
+Nie wykonuj merge.
+
+Zachowaj:
+
+```text
+stage_9 = IN_PROGRESS
+qualification = BLOCKED
+full_confirmation = false
+coexistence_authorized = false
+preflight_exception = false
+physical_test_status = PHYSICAL_TEST_PENDING
+production_status = PRODUCTION_NO_GO
+runtime_attestation = MISSING
+host_pid_namespace = UNVERIFIED
+```
+
+### 12. Raport końcowy
+
+Zwróć:
+
+1. Numer PR i aktualny HEAD SHA.
+2. Raw diff.
+3. Wyniki walidacji.
+4. Aktualny stan CI.
+5. Klasyfikację P0/P1/P2/P3.
+6. Potwierdzony częściowy graf ELF.
+7. Listę brakujących dowodów.
+8. Ocenę utrzymania DAG.
+9. Plan kolejnego etapu.
+10. Statusy `CODE_READY`, `CONTRACT_REVIEW_READY`, `CONTRACT_APPROVED`, `STAGE_3A_COMPLETE`, `PRODUCTION_QUALIFIED`.
+
+Nie przedstawiaj lokalnych obserwacji jako niezależnego zatwierdzenia.

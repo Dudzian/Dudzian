@@ -1,0 +1,243 @@
+{
+  "schema": "stage9_3a_ci_observation_r1",
+  "repository": "Dudzian/Dudzian",
+  "observed_at": "2026-10-28 19:09:28 UTC",
+  "classification": "GitHub Actions observations; no target qualification or independent approval",
+  "supersedes": "18:07–18:08 UTC snapshot; historical file retained",
+  "main_sha": "5f8f5688f41330236f84650949e4571f9173e9a1",
+  "pr_number": 3218,
+  "pr_head_sha": "8771b8ef5705461e6f2daaa378f1334d29818169",
+  "endpoints": {
+    "main_branch": "https://api.github.com/repos/Dudzian/Dudzian/branches/main",
+    "main_runs": "https://api.github.com/repos/Dudzian/Dudzian/actions/runs?head_sha=5f8f5688f41330236f84650949e4571f9173e9a1&per_page=100",
+    "pr_runs": "https://api.github.com/repos/Dudzian/Dudzian/actions/runs?head_sha=8771b8ef5705461e6f2daaa378f1334d29818169&per_page=100"
+  },
+  "main_runs": {
+    "total_count": 7,
+    "runs": [
+      {
+        "id": 40717821087,
+        "name": "Stress Lab Report",
+        "event": "push",
+        "head_sha": "5f8f5688f41330236f84650949e4571f9173e9a1",
+        "status": "completed",
+        "conclusion": "success",
+        "updated_at": "2026-10-28T16:01:57Z",
+        "run_attempt": 1
+      },
+      {
+        "id": 40717821451,
+        "name": "CodeQL",
+        "event": "push",
+        "head_sha": "5f8f5688f41330236f84650949e4571f9173e9a1",
+        "status": "completed",
+        "conclusion": "success",
+        "updated_at": "2026-10-28T16:12:32Z",
+        "run_attempt": 1
+      },
+      {
+        "id": 40717821111,
+        "name": "CI (push: main)",
+        "event": "push",
+        "head_sha": "5f8f5688f41330236f84650949e4571f9173e9a1",
+        "status": "in_progress",
+        "conclusion": null,
+        "updated_at": "2026-10-28T18:48:45Z",
+        "run_attempt": 1
+      },
+      {
+        "id": 40717819983,
+        "name": "Style preflight",
+        "event": "push",
+        "head_sha": "5f8f5688f41330236f84650949e4571f9173e9a1",
+        "status": "completed",
+        "conclusion": "success",
+        "updated_at": "2026-10-28T15:56:08Z",
+        "run_attempt": 1
+      },
+      {
+        "id": 40717820981,
+        "name": "Windows Build",
+        "event": "push",
+        "head_sha": "5f8f5688f41330236f84650949e4571f9173e9a1",
+        "status": "completed",
+        "conclusion": "success",
+        "updated_at": "2026-10-28T16:27:49Z",
+        "run_attempt": 1
+      },
+      {
+        "id": 40717820055,
+        "name": "Marketplace Catalog",
+        "event": "push",
+        "head_sha": "5f8f5688f41330236f84650949e4571f9173e9a1",
+        "status": "completed",
+        "conclusion": "success",
+        "updated_at": "2026-10-28T16:14:31Z",
+        "run_attempt": 1
+      },
+      {
+        "id": 40717820016,
+        "name": "Quality and Security",
+        "event": "push",
+        "head_sha": "5f8f5688f41330236f84650949e4571f9173e9a1",
+        "status": "completed",
+        "conclusion": "success",
+        "updated_at": "2026-10-28T19:03:49Z",
+        "run_attempt": 1
+      }
+    ]
+  },
+  "pr_runs": {
+    "total_count": 7,
+    "runs": [
+      {
+        "id": 40716454424,
+        "name": "Marketplace Catalog",
+        "event": "pull_request",
+        "head_sha": "8771b8ef5705461e6f2daaa378f1334d29818169",
+        "status": "completed",
+        "conclusion": "success",
+        "updated_at": "2026-10-28T15:51:23Z",
+        "run_attempt": 1
+      },
+      {
+        "id": 40716454449,
+        "name": "Style preflight",
+        "event": "pull_request",
+        "head_sha": "8771b8ef5705461e6f2daaa378f1334d29818169",
+        "status": "completed",
+        "conclusion": "success",
+        "updated_at": "2026-10-28T16:19:44Z",
+        "run_attempt": 1
+      },
+      {
+        "id": 40716454472,
+        "name": "CodeQL",
+        "event": "pull_request",
+        "head_sha": "8771b8ef5705461e6f2daaa378f1334d29818169",
+        "status": "completed",
+        "conclusion": "success",
+        "updated_at": "2026-10-28T16:17:38Z",
+        "run_attempt": 1
+      },
+      {
+        "id": 40716454420,
+        "name": "Quality and Security",
+        "event": "pull_request",
+        "head_sha": "8771b8ef5705461e6f2daaa378f1334d29818169",
+        "status": "completed",
+        "conclusion": "success",
+        "updated_at": "2026-10-28T18:00:10Z",
+        "run_attempt": 1
+      },
+      {
+        "id": 40716454800,
+        "name": "Platform deployment tracks",
+        "event": "pull_request",
+        "head_sha": "8771b8ef5705461e6f2daaa378f1334d29818169",
+        "status": "completed",
+        "conclusion": "failure",
+        "updated_at": "2026-10-28T18:23:45Z",
+        "run_attempt": 1
+      },
+      {
+        "id": 40716454733,
+        "name": "CI (pull_request: 3218/merge)",
+        "event": "pull_request",
+        "head_sha": "8771b8ef5705461e6f2daaa378f1334d29818169",
+        "status": "completed",
+        "conclusion": "success",
+        "updated_at": "2026-10-28T18:51:45Z",
+        "run_attempt": 1
+      },
+      {
+        "id": 40716440677,
+        "name": "CI (push: codex/stage9-3a-elf-contract-review)",
+        "event": "push",
+        "head_sha": "8771b8ef5705461e6f2daaa378f1334d29818169",
+        "status": "in_progress",
+        "conclusion": null,
+        "updated_at": "2026-10-28T18:46:08Z",
+        "run_attempt": 1
+      }
+    ]
+  },
+  "postgres_failure": {
+    "run_id": 40716440677,
+    "event": "push",
+    "job_id": 122970984826,
+    "name": "Python tests (Ubuntu PostgreSQL qualification, remaining-security)",
+    "conclusion": "failure",
+    "started_at": "2026-10-28T18:30:31Z",
+    "completed_at": "2026-10-28T18:54:39Z",
+    "effective_checkout_sha": "8771b8ef5705461e6f2daaa378f1334d29818169",
+    "runner_os": "Ubuntu 24.04.5",
+    "runner_image": "ubuntu-24.04 / 20261025.353.1",
+    "python": "3.11.17",
+    "pytest": "9.2.0",
+    "psycopg": "3.3.6",
+    "postgresql": "16.15 (Debian 16.15-1.pgdg13+2)",
+    "step": "Run external PostgreSQL fast pytest qualification (serial)",
+    "step_started_at": "2026-10-28T18:32:36Z",
+    "step_completed_at": "2026-10-28T18:54:34Z",
+    "test": "tests/security/test_postgresql_production_root_lifecycle_qualification.py::test_offline_fixture_drains_stale_test_sessions_without_touching_owner",
+    "stack": "test line 590 -> contextlib.__enter__ -> _offline_migration_connection line 571",
+    "error": "RuntimeError: disposable TEST database still has active sessions",
+    "result": {
+      "failed": 1,
+      "passed": 756,
+      "skipped": 17,
+      "deselected": 25469,
+      "duration_seconds": 1312.57
+    },
+    "classification": "Confirmed test-fixture failure after pg_terminate_backend(pid,5000) results passed all-True check; subsequent pg_stat_activity verification returned a row. Exact cause needs reproduction. Not concurrency, timeout or intended production refusal.",
+    "job_url": "https://github.com/Dudzian/Dudzian/actions/runs/40716440677/job/122970984826"
+  },
+  "platform": {
+    "run_id": 40716454800,
+    "conclusion": "failure",
+    "linux": {
+      "job_id": 122915369758,
+      "conclusion": "failure",
+      "step": "Enforce recorded Linux integration evidence",
+      "missing": [
+        "CORE_REQUIRED_SUITES",
+        "LINUX_SYSTEMD_INTEGRATION",
+        "LINUX_CLEAN_INSTALL",
+        "LINUX_REBOOT_LIFECYCLE_UPDATE"
+      ],
+      "output": "MISSING_CURRENT_EVIDENCE; LINUX_PRODUCTION_READY=NOT_READY",
+      "classification": "Retained production refusal for missing current qualification evidence; preserve gate.",
+      "effective_checkout_sha": "16472edaa9f4f9f55a038efa04c5b695ef7e64d5",
+      "runner": "Ubuntu 26.04.1 / CPython 3.11.17"
+    },
+    "core_macos": {
+      "job_id": 122915370214,
+      "conclusion": "cancelled",
+      "cause": "UNVERIFIED; job logs returned 404 BlobNotFound"
+    },
+    "windows_release_gate": {
+      "job_id": 123012816475,
+      "conclusion": "failure",
+      "step": "Aggregate revision-bound cross-OS core evidence",
+      "classification": "Missing cross-OS core evidence: aggregate-core exits 1 because evidence/core-macOS.json does not exist; preceding core-macos was cancelled. Cancellation cause remains unverified. No new code regression established by this missing artifact.",
+      "log_excerpt": "[Errno 2] No such file or directory: 'evidence\\\\core-macOS.json'"
+    }
+  },
+  "main_ci_additional": {
+    "run_id": 40717821111,
+    "job_id": 122957865829,
+    "name": "Python tests (Ubuntu PostgreSQL qualification, issuer-durability)",
+    "jobs_api_status": "completed",
+    "jobs_api_conclusion": "failure",
+    "completed_at": "2026-10-28T18:29:40Z",
+    "steps_wrapper_observation": "test step remains in_progress; cleanup/upload pending",
+    "log_available": false,
+    "classification": "Unresolved failure; do not call main green. API job status/step observations inconsistent; no code/infrastructure/timeout cause established."
+  },
+  "limits": [
+    "Both exact-SHA lists total_count=7 < per_page=100; attempt1 for enumerated runs.",
+    "PR-event CI passed while push CI has failed job and unfinished aggregate; never conflate these runs.",
+    "No reruns or manual/hardware workflows dispatched."
+  ]
+}
