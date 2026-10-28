@@ -282,3 +282,38 @@ ELF compatibility is an explicit P1 contract-approval blocker. The concrete
 DailyTrend/provenance/shutdown/import findings are corrected within their stated
 scope. No additional verified P2/P3 code finding was established. Missing
 physical evidence and unfinished CI must not be relabelled as successful tests.
+
+## Follow-up code review: P2 teardown result handling
+
+Review of `8bf85681d22af71b16f78ce64652d3327c2bd2b2` identified that the session
+finalizer ignored a false `wait_for_aiosqlite_threads` result. A new unit
+regression reproduced the false success before the correction. The finalizer
+now raises an explicit `RuntimeError` on that result and always attempts
+`shutdown_background_loop` in `finally`, including after close/wait exceptions.
+Shutdown exceptions propagate; a preceding wait failure remains in the exception
+context when shutdown also fails. The success log is reached only after all
+operations succeed. Existing 5-second arguments and 0.05-second polling remain
+unchanged. Production DatabaseManager and CI configuration are untouched.
+
+The teardown module now has **10 passing cases**: successful cleanup, false
+wait, close/wait/shutdown exceptions, both forms of wait failure combined with
+shutdown failure, and three real pytest children. Those children must terminate
+with exact exit 0 for success, exit 1 for an intentional test failure, and exit 1
+with an explicit teardown error for a passing test whose wait returns false.
+They start the actual owned background loop and use the existing bounded
+30-second subprocess timeout; `subprocess.run` waits for and reaps each child.
+Mocks avoid long sleeps; no host process scan is involved.
+
+After that small selection passed, the requested combined Observer, Production
+Trust, native DatabaseManager, DailyTrend and teardown selection passed
+**930 tests, 0 failed, 1 existing native-Windows skip** under four xdist workers
+in 49.12 seconds; the complete pytest process returned exit 0. These are fresh
+results for the P2 correction, distinct from the earlier 1507-test selection.
+Configured mypy Linux passed all 359 source files. Ruff, explicit formatting,
+the exact all-files `ruff-format` hook and `git diff --check` passed.
+
+The reported P2 is addressed. Independent contract approval and exact-target
+ELF compatibility remain open P1 approval gates. Observer standard parsers and
+all qualification/production blocks remain unchanged. Current old/new HEAD
+Actions snapshots and the final published SHA are recorded in the PR description;
+running hosted suites are not reported as completed.

@@ -488,9 +488,14 @@ def shutdown_db_background_loop_at_session_end() -> Generator[None, None, None]:
         return
 
     try:
-        DatabaseManager.close_all_active(blocking=True, timeout=5.0)
-        DatabaseManager.wait_for_aiosqlite_threads(timeout=5.0, poll_interval=0.05)
-        DatabaseManager.shutdown_background_loop(timeout=5.0)
+        try:
+            DatabaseManager.close_all_active(blocking=True, timeout=5.0)
+            if not DatabaseManager.wait_for_aiosqlite_threads(timeout=5.0, poll_interval=0.05):
+                raise RuntimeError(
+                    "DatabaseManager aiosqlite threads did not stop within 5 seconds"
+                )
+        finally:
+            DatabaseManager.shutdown_background_loop(timeout=5.0)
         logger.debug(
             "teardown/db_manager_shutdown_done: "
             "DatabaseManager session shutdown done. (platform=%s pid=%s)",
