@@ -25,14 +25,55 @@ integrity needs separately authorized evidence collection from a trusted system.
 Do not substitute tools from a repository, virtual environment, working
 directory or historical installation.
 
-Use a trusted interactive Bash session with startup-file effects already
-understood. The following are shell-local settings, not host configuration:
+Use a trusted interactive Bash session with startup-file effects, aliases,
+functions, traps and shell options already understood and trusted. Environment
+cleaning cannot undo code already loaded or executed in that shell. Do not
+start an untrusted shell or try to repair a suspect session with this procedure.
+
+Before any external command, define this wrapper in that same trusted Bash
+session. These are shell-local settings and a function definition, not host
+configuration or a separate shell launch:
 
 ```bash
 PATH=/usr/bin:/bin
 LC_ALL=C
-export PATH LC_ALL
+
+diagnostic_command() (
+  builtin exec -c /usr/bin/env -i PATH=/usr/bin:/bin LC_ALL=C "$@"
+)
 ```
+
+The Bash **builtin `exec -c`** clears the environment passed to `/usr/bin/env`
+before that executable's dynamic loader starts. A bare `/usr/bin/env -i ...`
+would clean only the environment of its later child: inherited `LD_PRELOAD`,
+`LD_AUDIT` or other loader settings could already affect `env` itself. An
+absolute executable path alone does not prevent that. The subshell function
+keeps the operator's existing shell alive and returns the tool's failure status.
+
+The only environment entries deliberately passed onward are the literal
+`PATH=/usr/bin:/bin` and `LC_ALL=C`. This removes inherited loader controls
+(`LD_*`, including tracing/search/preload/audit controls, `GLIBC_TUNABLES`,
+`GCONV_PATH`, `LOCPATH`), Python settings (`PYTHON*`, including `PYTHONPATH`,
+`PYTHONHOME`, `PYTHONSTARTUP` and `PYTHONINSPECT`), shell-startup/exported-function
+entries (`BASH_ENV`, `ENV`, exported functions), locale and tool-specific
+settings (for example `LANG`, other `LC_*` and `DPKG_*`). This is an environment
+allowlist, not a claim that a finite variable denylist covers every loader or
+tool. No inherited export needs to be unset or printed, including readonly
+variables in the current shell.
+
+Use `diagnostic_command` for **every external invocation below**, including
+inside `$(...)`. Commands launched by the fixed system `timeout` inherit that
+same environment. Shell builtins, tests, assignments, globbing and function
+calls run in the already trusted Bash; they do not start diagnostic executables.
+Do not run later blocks in another session without this definition, replace the
+wrapper with bare `env -i`, or add inherited environment entries. Only use the
+fixed trusted system tools shown here; the optional Python command retains its
+separate trust and operator-decision prerequisites.
+
+This does not authenticate Bash, `env`, the tools, their libraries or the kernel.
+It does not neutralize system-level `/etc/ld.so.preload`, loader cache/config
+changes, a previously compromised shell or file substitution. All initial trust
+requirements above remain mandatory; no diagnostic result creates trust.
 
 Verify the named tools exist without installing missing ones:
 
@@ -56,10 +97,10 @@ executable to infer closure.
 ## 1. Host and installed package identity
 
 ```bash
-/usr/bin/env -i PATH=/usr/bin:/bin LC_ALL=C /usr/bin/uname -m
-/usr/bin/env -i PATH=/usr/bin:/bin LC_ALL=C /usr/bin/dpkg --print-architecture
-/usr/bin/env -i PATH=/usr/bin:/bin LC_ALL=C /usr/bin/cat /etc/os-release
-/usr/bin/env -i PATH=/usr/bin:/bin LC_ALL=C /usr/bin/dpkg-query \
+diagnostic_command /usr/bin/uname -m
+diagnostic_command /usr/bin/dpkg --print-architecture
+diagnostic_command /usr/bin/cat /etc/os-release
+diagnostic_command /usr/bin/dpkg-query \
   -W -f='${binary:Package}\t${Version}\t${Architecture}\t${db:Status-Abbrev}\n' \
   'python3.12*' 'libpython3.12*' 'libc6*' 'binutils*'
 ```
@@ -74,11 +115,11 @@ and Ubuntu suffix, separately from upstream CPython `3.12.x`.
 Identify the fixed system interpreter without PATH-based Python selection:
 
 ```bash
-/usr/bin/env -i PATH=/usr/bin:/bin LC_ALL=C /usr/bin/stat \
+diagnostic_command /usr/bin/stat \
   -c 'LINK %n type=%F uid=%u gid=%g mode=%a size=%s mtime=%y ctime=%z' \
   /usr/bin/python3.12
-/usr/bin/env -i PATH=/usr/bin:/bin LC_ALL=C /usr/bin/readlink -e /usr/bin/python3.12
-/usr/bin/env -i PATH=/usr/bin:/bin LC_ALL=C /usr/bin/dpkg-query -S /usr/bin/python3.12
+diagnostic_command /usr/bin/readlink -e /usr/bin/python3.12
+diagnostic_command /usr/bin/dpkg-query -S /usr/bin/python3.12
 ```
 
 Stop if this is missing, resolves to a historical installation, a user-writable
@@ -105,7 +146,7 @@ inspect_system_elf() {
     /usr/bin/python3.12|/usr/lib/*|/lib/*|/lib64/*) ;;
     *) printf 'REFUSED scope %s\n' "$target_path"; return 2 ;;
   esac
-  canonical_path=$(/usr/bin/readlink -e -- "$target_path") || return 2
+  canonical_path=$(diagnostic_command /usr/bin/readlink -e -- "$target_path") || return 2
   case "$canonical_path" in
     /usr/bin/python3.12|/usr/lib/*) ;;
     *) printf 'REFUSED canonical scope %s\n' "$canonical_path"; return 2 ;;
@@ -113,22 +154,22 @@ inspect_system_elf() {
   if [ ! -f "$canonical_path" ] || [ ! -r "$canonical_path" ]; then
     printf 'INCOMPLETE unreadable/nonregular %s\n' "$canonical_path"; return 2
   fi
-  file_size=$(/usr/bin/stat -Lc '%s' -- "$canonical_path") || return 2
+  file_size=$(diagnostic_command /usr/bin/stat -Lc '%s' -- "$canonical_path") || return 2
   case "$file_size" in ''|*[!0-9]*) return 2 ;; esac
   if [ "$file_size" -gt 67108864 ]; then
     printf 'INCOMPLETE size limit %s\n' "$canonical_path"; return 2
   fi
   printf '\nOBSERVED target=%s canonical=%s\n' "$target_path" "$canonical_path"
-  /usr/bin/dpkg-query -S "$canonical_path" || return 2
-  /usr/bin/stat -Lc 'BEFORE dev=%d ino=%i size=%s uid=%u gid=%g mode=%a mtime=%y ctime=%z' \
+  diagnostic_command /usr/bin/dpkg-query -S "$canonical_path" || return 2
+  diagnostic_command /usr/bin/stat -Lc 'BEFORE dev=%d ino=%i size=%s uid=%u gid=%g mode=%a mtime=%y ctime=%z' \
     -- "$canonical_path" || return 2
-  /usr/bin/env -i PATH=/usr/bin:/bin LC_ALL=C /usr/bin/timeout 10s \
+  diagnostic_command /usr/bin/timeout 10s \
     /usr/bin/sha256sum -- "$canonical_path" || return 2
-  /usr/bin/env -i PATH=/usr/bin:/bin LC_ALL=C /usr/bin/timeout 10s \
+  diagnostic_command /usr/bin/timeout 10s \
     /usr/bin/readelf -W -h -l -d -n -V -- "$canonical_path" || return 2
-  /usr/bin/env -i PATH=/usr/bin:/bin LC_ALL=C /usr/bin/timeout 10s \
+  diagnostic_command /usr/bin/timeout 10s \
     /usr/bin/sha256sum -- "$canonical_path" || return 2
-  /usr/bin/stat -Lc 'AFTER dev=%d ino=%i size=%s uid=%u gid=%g mode=%a mtime=%y ctime=%z' \
+  diagnostic_command /usr/bin/stat -Lc 'AFTER dev=%d ino=%i size=%s uid=%u gid=%g mode=%a mtime=%y ctime=%z' \
     -- "$canonical_path" || return 2
 }
 
@@ -191,12 +232,12 @@ inspect_loader_text() {
   if [ -L "$config_path" ] || [ ! -f "$config_path" ] || [ ! -r "$config_path" ]; then
     printf 'INCOMPLETE config type/readability %s\n' "$config_path"; return 2
   fi
-  config_size=$(/usr/bin/stat -c '%s' -- "$config_path") || return 2
+  config_size=$(diagnostic_command /usr/bin/stat -c '%s' -- "$config_path") || return 2
   if [ "$config_size" -gt 1048576 ]; then printf 'INCOMPLETE config size\n'; return 2; fi
-  /usr/bin/sha256sum -- "$config_path" || return 2
-  /usr/bin/env -i PATH=/usr/bin:/bin LC_ALL=C /usr/bin/timeout 5s \
+  diagnostic_command /usr/bin/sha256sum -- "$config_path" || return 2
+  diagnostic_command /usr/bin/timeout 5s \
     /usr/bin/sed -n '1,200l' -- "$config_path" || return 2
-  if [ "$(/usr/bin/sed -n '201=' -- "$config_path")" = 201 ]; then
+  if [ "$(diagnostic_command /usr/bin/sed -n '201=' -- "$config_path")" = 201 ]; then
     printf 'INCOMPLETE text output truncated %s\n' "$config_path"
   fi
 }
@@ -211,8 +252,8 @@ for config_path in /etc/ld.so.conf.d/*.conf; do
   inspect_loader_text "$config_path"
 done
 if [ -f /etc/ld.so.cache ] && [ -r /etc/ld.so.cache ]; then
-  /usr/bin/sha256sum /etc/ld.so.cache
-  /usr/bin/stat -Lc '%n type=%F size=%s uid=%u gid=%g mode=%a mtime=%y' /etc/ld.so.cache
+  diagnostic_command /usr/bin/sha256sum /etc/ld.so.cache
+  diagnostic_command /usr/bin/stat -Lc '%n type=%F size=%s uid=%u gid=%g mode=%a mtime=%y' /etc/ld.so.cache
 else printf 'ABSENT_OR_UNREADABLE /etc/ld.so.cache\n'; fi
 ```
 
@@ -230,7 +271,7 @@ without executing them. The fixed common multiarch location is only a probe:
 
 ```bash
 if [ -d /usr/lib/x86_64-linux-gnu/glibc-hwcaps ]; then
-  /usr/bin/env -i PATH=/usr/bin:/bin LC_ALL=C /usr/bin/timeout 10s \
+  diagnostic_command /usr/bin/timeout 10s \
     /usr/bin/find /usr/lib/x86_64-linux-gnu/glibc-hwcaps -maxdepth 2 -type f \
     -name '*.so*' -print
 else printf 'ABSENT /usr/lib/x86_64-linux-gnu/glibc-hwcaps\n'; fi
@@ -248,10 +289,10 @@ the exact admitted variants and selection inputs. No host fallback is allowed.
 List package-owned candidate native modules without importing them:
 
 ```bash
-/usr/bin/env -i PATH=/usr/bin:/bin LC_ALL=C /usr/bin/timeout 10s \
+diagnostic_command /usr/bin/timeout 10s \
   /usr/bin/dpkg-query -L libpython3.12-stdlib:amd64
 if [ -d /usr/lib/python3.12/lib-dynload ]; then
-  /usr/bin/env -i PATH=/usr/bin:/bin LC_ALL=C /usr/bin/timeout 10s \
+  diagnostic_command /usr/bin/timeout 10s \
     /usr/bin/find /usr/lib/python3.12/lib-dynload -maxdepth 1 -type f -name '*.so' -print
 else printf 'ABSENT /usr/lib/python3.12/lib-dynload\n'; fi
 ```
@@ -270,11 +311,11 @@ import a `_sysconfigdata` Python file or source a Makefile):
 
 ```bash
 if [ -f /usr/include/python3.12/patchlevel.h ]; then
-  /usr/bin/dpkg-query -S /usr/include/python3.12/patchlevel.h
-  /usr/bin/sha256sum /usr/include/python3.12/patchlevel.h
-  /usr/bin/sed -n '1,100l' /usr/include/python3.12/patchlevel.h
+  diagnostic_command /usr/bin/dpkg-query -S /usr/include/python3.12/patchlevel.h
+  diagnostic_command /usr/bin/sha256sum /usr/include/python3.12/patchlevel.h
+  diagnostic_command /usr/bin/sed -n '1,100l' /usr/include/python3.12/patchlevel.h
 else printf 'ABSENT /usr/include/python3.12/patchlevel.h\n'; fi
-/usr/bin/env -i PATH=/usr/bin:/bin LC_ALL=C /usr/bin/dpkg-query \
+diagnostic_command /usr/bin/dpkg-query \
   -W -f='${binary:Package}\t${Version}\t${source:Package}\t${source:Version}\n' \
   python3.12-minimal:amd64 libpython3.12-minimal:amd64 libpython3.12-stdlib:amd64
 ```
@@ -290,7 +331,7 @@ the system interpreter **and its loader/runtime closure**, may obtain the
 interpreter's own version/build string with the following fixed command:
 
 ```bash
-/usr/bin/env -i PATH=/usr/bin:/bin LC_ALL=C /usr/bin/timeout 5s \
+diagnostic_command /usr/bin/timeout 5s \
   /usr/bin/python3.12 -I -S -B -VV
 ```
 
