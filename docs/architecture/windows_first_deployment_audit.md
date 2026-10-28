@@ -62,9 +62,11 @@ systemd emulation or unexecuted PASS is allowed.
 Each platform gate includes core evidence plus only its own acceptance items.
 `NOT_IMPLEMENTED`, `NOT_TESTED`, `UNVERIFIED_ENVIRONMENT_LIMITATION` and
 `FAIL` all keep a gate false. `NOT_APPLICABLE` is descriptive and is not used
-to satisfy a required item. Linux/macOS results can never influence the
-Windows gate. Legacy global booleans remain conservative and are explicitly
-not inputs to these platform gates.
+to satisfy a required item. Linux/macOS native-integration results never
+substitute for Windows native qualification. Required shared Core compatibility
+results from all three OSes remain inputs to the Windows gate. Legacy global
+booleans remain conservative and are explicitly not inputs to these platform
+gates.
 
 Live Windows SCM, DACL, reboot, file-locking, installer and long-running items
 may pass only on Windows. Live systemd may pass only with systemd as PID 1.
@@ -77,11 +79,16 @@ uses `PureWindowsPath` only to verify the frozen layout, while
 Likewise, `LINUX_INSTALLER_STATIC_CONTRACT` proves reviewed installer structure,
 whereas `LINUX_CLEAN_INSTALL` requires a privileged live Linux installation.
 
-CI contract jobs may be green after static checks. Deployment integration and
-release jobs invoke `python -m deployment.platform_readiness --platform <OS>`;
-they exit non-zero unless every item required by that platform gate has PASS
-evidence. The Windows release job depends on all three core jobs and Windows
-deployment evidence only, never Linux systemd or macOS launchd integration.
+CI contract jobs may be green after static checks. [PLAT-01B policy V2](platform_release_policy_v2.md)
+separates release scope, compatibility and native qualification. The Windows
+release job selects `--release-profile WINDOWS_BETA`; Linux native integration
+retains `--platform LINUX`. Each included platform exits non-zero unless its
+complete required gate has PASS evidence. macOS is DEFERRED, so a direct native
+qualification request refuses; its retained job runs blocking deployment
+compatibility contracts. The Windows release job still depends on all three
+Core jobs and Windows deployment evidence, never Linux systemd or macOS launchd
+native integration. Full v1 selects `CRYPTOHUNTER_V1` and requires both Windows
+and Linux native qualification.
 
 ## Revision-bound execution evidence
 

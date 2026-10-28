@@ -108,6 +108,7 @@ jobs:
           deployment/windows_stage10_artifact_preflight.py
           deployment/windows_stage10_runner_preflight.py
           deployment/platform_evidence.py
+          deployment/platform_readiness.py
           bot_core/postgresql_preaccount_credentials.py
           bot_core/postgresql_root_proof_issuance_authority.py
           bot_core/postgresql_root_proof_issuance_authority_v2.py
@@ -316,6 +317,8 @@ jobs:
         run: python -m mypy
       - name: Mypy Windows configured scope
         run: python -m mypy --platform win32
+      - name: Ruff platform release policy evaluator
+        run: python -m ruff check deployment/platform_readiness.py
       # PRE executor tests replace native custody, console and process boundaries.
       - name: Property and critical pure-logic tests with branch coverage
         env:
@@ -366,6 +369,7 @@ jobs:
           tests/deployment/test_windows_stage10_artifact_preflight.py
           tests/deployment/test_windows_stage10_runner_preflight.py
           tests/deployment/test_platform_evidence.py
+          tests/deployment/test_platform_readiness.py
           tests/deployment/test_production_enrollment_issuer.py
           tests/deployment/test_production_pdsa_signing.py
           tests/architecture/test_stage9_external_provisioning_architecture.py
@@ -425,6 +429,7 @@ jobs:
           --cov=deployment.windows_stage10_artifact_preflight
           --cov=deployment.windows_stage10_runner_preflight
           --cov=deployment.platform_evidence
+          --cov=deployment.platform_readiness
           --cov=deployment.production_enrollment_issuer
           --cov=deployment.production_pdsa_signing
           --cov-config=.coveragerc
