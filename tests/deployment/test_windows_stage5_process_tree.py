@@ -612,6 +612,209 @@ def test_grandchild_is_not_spawned_before_gate(monkeypatch, tmp_path):
     assert popen_calls == []
 
 
+@pytest.mark.parametrize("winerror", [5, 32])
+def test_pid_publication_recovers_from_transient_windows_reader_lock(
+    monkeypatch, tmp_path, winerror
+):
+    gate = tmp_path / "process-tree.gate"
+    temporary = gate.with_suffix(".tmp")
+    gate.write_text("assigned", encoding="ascii")
+    attempts = []
+    clock = [0.0]
+    real_replace = os.replace
+
+    class Grandchild:
+        pid = 444
+
+        def wait(self):
+            return 0
+
+    def replace(source, destination):
+        attempts.append(clock[0])
+        if len(attempts) == 1:
+            error = PermissionError("TEST_ONLY destination is temporarily open")
+            error.winerror = winerror
+            raise error
+        real_replace(source, destination)
+
+    monkeypatch.setattr(child_module, "os", SimpleNamespace(name="nt", replace=replace))
+    monkeypatch.setattr(child_module.subprocess, "Popen", lambda *_args, **_kwargs: Grandchild())
+    monkeypatch.setattr(child_module.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(
+        child_module.time, "sleep", lambda seconds: clock.__setitem__(0, clock[0] + seconds)
+    )
+
+    assert child_module.main(["child", str(gate)]) == 0
+
+    assert len(attempts) == 2
+    assert gate.read_text(encoding="ascii") == "444"
+    assert not temporary.exists()
+    assert clock[0] < 20.0
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires actual Windows file sharing semantics")
+def test_pid_publication_retries_actual_windows_destination_reader(monkeypatch, tmp_path):
+    gate = tmp_path / "process-tree.gate"
+    gate.write_text("assigned", encoding="ascii")
+    reader = gate.open("r", encoding="ascii")
+    denied = []
+    real_replace = os.replace
+
+    class Grandchild:
+        pid = 444
+
+        def wait(self):
+            return 0
+
+    def replace(source, destination):
+        try:
+            real_replace(source, destination)
+        except PermissionError as exc:
+            denied.append(exc.winerror)
+            reader.close()
+            raise
+
+    monkeypatch.setattr(child_module, "os", SimpleNamespace(name="nt", replace=replace))
+    monkeypatch.setattr(child_module.subprocess, "Popen", lambda *_args, **_kwargs: Grandchild())
+    try:
+        assert child_module.main(["child", str(gate)]) == 0
+    finally:
+        reader.close()
+
+    assert len(denied) == 1 and denied[0] in {5, 32}
+    assert gate.read_text(encoding="ascii") == "444"
+
+
+@pytest.mark.parametrize("platform,winerror", [("nt", 1314), ("posix", 32), ("nt", None)])
+def test_pid_publication_does_not_retry_other_permission_failures(
+    monkeypatch, tmp_path, platform, winerror
+):
+    attempts = []
+    error = PermissionError("TEST_ONLY not a retryable Windows sharing failure")
+    if winerror is not None:
+        error.winerror = winerror
+
+    def replace(_source, _destination):
+        attempts.append(1)
+        raise error
+
+    def unexpected_sleep(_seconds):
+        raise AssertionError("unrelated permission failure must propagate immediately")
+
+    monkeypatch.setattr(child_module, "os", SimpleNamespace(name=platform, replace=replace))
+    monkeypatch.setattr(child_module.time, "sleep", unexpected_sleep)
+
+    with pytest.raises(PermissionError) as failure:
+        child_module._publish_pid(tmp_path / "pid.tmp", tmp_path / "gate", deadline=20.0)
+
+    assert failure.value is error
+    assert attempts == [1]
+
+
+def test_pid_publication_keeps_original_gate_deadline_and_fails_closed(monkeypatch, tmp_path):
+    gate = tmp_path / "process-tree.gate"
+    gate.write_text("assigned", encoding="ascii")
+    attempts = []
+    sleeps = []
+    # Most of the existing twenty-second handshake budget has elapsed before
+    # publication. No fresh retry budget may be started after spawning the PID.
+    ticks = iter((100.0, 119.99, 119.995, 120.0))
+    error = PermissionError("TEST_ONLY persistent Windows reader lock")
+    error.winerror = 32
+
+    def replace(_source, _destination):
+        attempts.append(1)
+        raise error
+
+    class Grandchild:
+        pid = 444
+
+        def wait(self):
+            raise AssertionError("unpublished PID must not be reported as successful")
+
+    monkeypatch.setattr(child_module, "os", SimpleNamespace(name="nt", replace=replace))
+    monkeypatch.setattr(child_module.subprocess, "Popen", lambda *_args, **_kwargs: Grandchild())
+    monkeypatch.setattr(child_module.time, "monotonic", lambda: next(ticks))
+    monkeypatch.setattr(child_module.time, "sleep", sleeps.append)
+
+    with pytest.raises(PermissionError) as failure:
+        child_module.main(["child", str(gate)])
+
+    assert failure.value is error
+    assert child_module.TIMEOUT == 20.0
+    assert attempts == [1]
+    assert sleeps == pytest.approx([0.005])
+    assert gate.read_text(encoding="ascii") == "assigned"
+    assert gate.with_suffix(".tmp").read_text(encoding="ascii") == "444"
+
+
+def test_persistent_windows_reader_lock_exhausts_existing_deadline(monkeypatch, tmp_path):
+    attempts = []
+    clock = [19.96]
+    error = PermissionError("TEST_ONLY persistent sharing violation")
+    error.winerror = 32
+
+    def replace(_source, _destination):
+        attempts.append(clock[0])
+        raise error
+
+    monkeypatch.setattr(child_module, "os", SimpleNamespace(name="nt", replace=replace))
+    monkeypatch.setattr(child_module.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(
+        child_module.time, "sleep", lambda seconds: clock.__setitem__(0, clock[0] + seconds)
+    )
+
+    with pytest.raises(PermissionError) as failure:
+        child_module._publish_pid(tmp_path / "pid.tmp", tmp_path / "gate", deadline=20.0)
+
+    assert failure.value is error
+    assert len(attempts) > 1
+    assert all(instant < 20.0 for instant in attempts)
+    assert clock[0] == pytest.approx(20.0)
+
+
+def test_exited_child_before_pid_publication_fails_and_rolls_back(monkeypatch, tmp_path):
+    child_job, jobs, events, _commands = prepare_start(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        child_job,
+        "_wait_for_grandchild",
+        lambda gate: ChildJob._wait_for_grandchild(child_job, gate),
+    )
+    monkeypatch.setattr(tree_module.subprocess.Popen, "poll", lambda _self: 3, raising=False)
+
+    def unexpected_sleep(_seconds):
+        raise AssertionError("a child that already exited cannot publish a later PID")
+
+    monkeypatch.setattr(tree_module.time, "sleep", unexpected_sleep)
+
+    with pytest.raises(ProcessTreeError, match="child exited.*exit_code=3"):
+        child_job.start()
+
+    assert "gate_release" in events
+    assert jobs.handle.closed
+    assert events.index("close") < events.index(("wait_child", CHILD_EXIT_TIMEOUT))
+    assert "terminate_child" not in events and "kill_child" not in events
+    assert child_job.child is not None and not child_job.child.alive
+    assert not any((tmp_path / name).exists() for name in tree_module.TRANSIENT_NAMES)
+
+
+def test_live_child_can_publish_after_initial_gate_poll(monkeypatch, tmp_path):
+    gate = tmp_path / "process-tree.gate"
+    gate.write_text("assigned", encoding="ascii")
+    child_job = ChildJob.__new__(ChildJob)
+    child_job.child = SimpleNamespace(poll=lambda: None)
+    sleeps = []
+
+    def publish_after_poll(seconds):
+        sleeps.append(seconds)
+        gate.write_text("444", encoding="ascii")
+
+    monkeypatch.setattr(tree_module.time, "sleep", publish_after_poll)
+
+    assert child_job._wait_for_grandchild(gate) == 444
+    assert sleeps == [tree_module.POLL_INTERVAL]
+
+
 @pytest.mark.parametrize("failure_point", ["reviewed_python_executable", "ChildJob.start"])
 def test_service_logs_process_tree_start_failure_and_propagates(
     monkeypatch, tmp_path, failure_point
