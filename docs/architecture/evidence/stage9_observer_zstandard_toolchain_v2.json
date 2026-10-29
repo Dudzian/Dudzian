@@ -1,0 +1,134 @@
+{
+  "schema": "stage9_observer_zstandard_toolchain_evidence_v2",
+  "date_utc": "2026-10-29",
+  "classification": "OBSERVED_PYPI_COMPARISON_ONLY_NOT_INDEPENDENT_ACCEPTANCE",
+  "tool": "python-zstandard",
+  "package_version": "0.25.0",
+  "required_backend": "cext",
+  "required_libzstd_version": [
+    1,
+    5,
+    7
+  ],
+  "platform_scope": "CPython 3.11 / Linux x86_64 / manylinux2014 (glibc >= 2.17)",
+  "pypi_metadata_url": "https://pypi.org/pypi/zstandard/0.25.0/json",
+  "artifacts": [
+    {
+      "filename": "zstandard-0.25.0-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+      "size": 5559635,
+      "url": "https://files.pythonhosted.org/packages/bb/1f/e9cfd801a3f9190bf3e759c422bbfd2247db9d7f3d54a56ecde70137791a/zstandard-0.25.0-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+      "packagetype": "bdist_wheel",
+      "requires_python": ">=3.9",
+      "upload_time_iso_8601": "2025-09-14T22:16:37.141990Z",
+      "sha256": "9300d02ea7c6506f00e627e287e0492a5eb0371ec1670ae852fefffa6164b072",
+      "pypi_has_sig": false,
+      "measurement": "DOWNLOADED_SIZE_AND_SHA256_MATCH"
+    },
+    {
+      "filename": "zstandard-0.25.0.tar.gz",
+      "size": 711513,
+      "url": "https://files.pythonhosted.org/packages/fd/aa/3e0508d5a5dd96529cdc5a97011299056e14c6505b678fd58938792794b1/zstandard-0.25.0.tar.gz",
+      "packagetype": "sdist",
+      "requires_python": ">=3.9",
+      "upload_time_iso_8601": "2025-09-14T22:15:54.002551Z",
+      "sha256": "7713e1179d162cf5c7906da876ec2ccb9c3a9dcbdffef0cc7f70c3667a205f0b",
+      "pypi_has_sig": false,
+      "measurement": "DOWNLOADED_SIZE_AND_SHA256_MATCH"
+    }
+  ],
+  "native_files": [
+    {
+      "relative_path": "zstandard/backend_c.cpython-311-x86_64-linux-gnu.so",
+      "size": 11614400,
+      "sha256": "532a86d3bc0f420a4f7038bf6039c93b55e6f149d7a314b17dbb27750788964d",
+      "elf_dt_needed": [
+        "libpthread.so.0",
+        "libc.so.6"
+      ],
+      "installed_matches_downloaded_wheel": true,
+      "wheel_record_digest_matches": true,
+      "used_backend": true
+    },
+    {
+      "relative_path": "zstandard/_cffi.cpython-311-x86_64-linux-gnu.so",
+      "size": 12135008,
+      "sha256": "0cd90a4eeedf490a3207a8ca0eca69b73b887b464509407ebc058007d9f94e55",
+      "elf_dt_needed": [
+        "libpthread.so.0",
+        "libc.so.6"
+      ],
+      "installed_matches_downloaded_wheel": true,
+      "wheel_record_digest_matches": true,
+      "used_backend": false
+    }
+  ],
+  "installed_wheel_payload_files_matched": 10,
+  "installed_wheel_payload_files_total": 10,
+  "wheel_generator": "setuptools (80.9.0)",
+  "base_requires_dist": [],
+  "unselected_extra_dependency": "cffi only for the cffi extra; not selected or imported by this verifier",
+  "analysis_host": {
+    "python_version": "3.11.16 (main, Sep 24 2026, 17:56:40) [Clang 22.1.3 ]",
+    "libc": [
+      "glibc",
+      "2.41"
+    ],
+    "local_files": [
+      {
+        "role": "analysis_python",
+        "path": "/workspace/.onboarding/python/cpython-3.11.16-linux-x86_64-gnu/bin/python3.11",
+        "size": 21740504,
+        "sha256": "ec579de7512e84d960bc642a840de69c785c52d6adf89e3a15f51717b29be40f",
+        "classification": "LOCAL_MEASUREMENT_NOT_INDEPENDENTLY_APPROVED"
+      },
+      {
+        "role": "libc",
+        "path": "/usr/lib/x86_64-linux-gnu/libc.so.6",
+        "size": 1995216,
+        "sha256": "fa430b8f298f817a266046af84a77533185ad6fc4406c7d3787b5a0a0c207826",
+        "classification": "LOCAL_MEASUREMENT_NOT_INDEPENDENTLY_APPROVED"
+      },
+      {
+        "role": "libpthread",
+        "path": "/usr/lib/x86_64-linux-gnu/libpthread.so.0",
+        "size": 14408,
+        "sha256": "85e21f7dba0394411d00959176fd18b470e575b0b05f1f4f41e5636802ce0500",
+        "classification": "LOCAL_MEASUREMENT_NOT_INDEPENDENTLY_APPROVED"
+      }
+    ],
+    "full_environment_provenance": "UNVERIFIED"
+  },
+  "source_members": [
+    {
+      "sdist_member": "zstandard-0.25.0/c-ext/decompressor.c",
+      "size": 56204,
+      "sha256": "eafb771ea5f532eb2d23d3e4d97d242200b0ecc09b446274a3bd2468281977e7"
+    },
+    {
+      "sdist_member": "zstandard-0.25.0/c-ext/decompressionreader.c",
+      "size": 20886,
+      "sha256": "32dc5cbff20dbd13216d80ace2e6a658e7de51d2f77861df26f6d564388367ba"
+    },
+    {
+      "sdist_member": "zstandard-0.25.0/zstd/zstd.c",
+      "size": 2233611,
+      "sha256": "68181bcc33ce17fdd4acc8b954abfb32e1d40bfc332235cdff8c6c95c341dab1"
+    }
+  ],
+  "security_boundary": {
+    "source_authenticity": "UNVERIFIED",
+    "tool_independent_acceptance": "UNVERIFIED",
+    "compiler_build_recipe_reproducibility": "NOT_YET_PROVEN",
+    "observer_minimal_runtime_dependency": false,
+    "target_package_installed": false,
+    "target_package_executed": false
+  },
+  "bounded_decoder_accounting": {
+    "native_allowance_formula": "window_size + estimate_decompression_context_size() + 524288",
+    "observed_context_estimate_bytes": 95968,
+    "separate_decoder_buffer_allowance_formula": "8 * chunk_bytes",
+    "retained_record_allowance_formula": "2048 * (max_archive_members + declared_member_count)",
+    "max_window_size_units": "bytes in pinned cext backend",
+    "os_enforced_rss_limit": false
+  }
+}
