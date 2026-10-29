@@ -1,0 +1,150 @@
+{
+  "acquisition_date_utc": "2026-10-29T11:21:52.993074+00:00",
+  "pocket": "noble-updates",
+  "origin": "https://archive.ubuntu.com/ubuntu/",
+  "signer": "F6ECB3762474EDA9D21B7022871920D1991BC93C",
+  "verifier": "gpg 2.4.7 --verify (gpgv unavailable)",
+  "root_status": "fingerprint corroborated in prior official-source review; project acceptance pending",
+  "inrelease_sha256": "89ad2f985a8959b207f598f833feb5f852d145be5bd4efcb97c4934ecb45723e",
+  "inrelease_fields": {
+    "Date": "Thu, 29 Oct 2026  7:15:18 UTC",
+    "Valid-Until": null,
+    "Suite": "noble-updates",
+    "Codename": "noble",
+    "Origin": "Ubuntu"
+  },
+  "index_checks": [
+    {
+      "file": "noble-updates-main-amd64.Packages.xz",
+      "index_path": "main/binary-amd64/Packages.xz",
+      "sha256": "8965447433642cb1c1b73a90d7bdd0cb353153583572bd9bed641fb716827c49",
+      "size": 1406036,
+      "result": "PASS"
+    },
+    {
+      "file": "noble-updates-main-amd64.Packages",
+      "index_path": "main/binary-amd64/Packages",
+      "sha256": "6178eea98a941888639f49ccc9a88f6088d5efbed70b605bc3701fa894d611d3",
+      "size": 7607567,
+      "result": "PASS"
+    },
+    {
+      "file": "noble-updates-main.Sources.xz",
+      "index_path": "main/source/Sources.xz",
+      "sha256": "89c14c026e564f4b2a116bc168df1fd1c854b01a27603789408f660598dcd50e",
+      "size": 579736,
+      "result": "PASS"
+    },
+    {
+      "file": "noble-updates-main.Sources",
+      "index_path": "main/source/Sources",
+      "sha256": "937214ffc2c76d64feb26478bbe6ee6ee334328a2dce007064b4a954d3161783",
+      "size": 2936200,
+      "result": "PASS"
+    }
+  ],
+  "package_checks": [
+    {
+      "package": "libpython3.12-dev",
+      "version": "3.12.3-1ubuntu0.17",
+      "architecture": "amd64",
+      "filename": "pool/main/p/python3.12/libpython3.12-dev_3.12.3-1ubuntu0.17_amd64.deb",
+      "sha256": "c123ddab7763e45199e21b4ac8545e705f20a0315b9ada4c236b52fb088c4e16",
+      "size": 5683746,
+      "result": "PASS"
+    },
+    {
+      "package": "libpython3.12-minimal",
+      "version": "3.12.3-1ubuntu0.17",
+      "architecture": "amd64",
+      "filename": "pool/main/p/python3.12/libpython3.12-minimal_3.12.3-1ubuntu0.17_amd64.deb",
+      "sha256": "d646ad7112b5adec21ba0e1af015f04ae8ca7f5efdc619622547dd6673c4c14b",
+      "size": 838536,
+      "result": "PASS"
+    },
+    {
+      "package": "libpython3.12-stdlib",
+      "version": "3.12.3-1ubuntu0.17",
+      "architecture": "amd64",
+      "filename": "pool/main/p/python3.12/libpython3.12-stdlib_3.12.3-1ubuntu0.17_amd64.deb",
+      "sha256": "45d3f530ba1f9d6e879ad46b92046fabab13fe50a82450e4f65557a3bbad1489",
+      "size": 2070530,
+      "result": "PASS"
+    },
+    {
+      "package": "python3.12-minimal",
+      "version": "3.12.3-1ubuntu0.17",
+      "architecture": "amd64",
+      "filename": "pool/main/p/python3.12/python3.12-minimal_3.12.3-1ubuntu0.17_amd64.deb",
+      "sha256": "d452689b9660845345a4c3e05e4ad82c082d5474e04031b7aa47f1a6d5610a6e",
+      "size": 2334634,
+      "result": "PASS"
+    }
+  ],
+  "source_checks": [
+    {
+      "file": "python3.12_3.12.3.orig.tar.xz",
+      "filename": "pool/main/p/python3.12/python3.12_3.12.3.orig.tar.xz",
+      "sha256": "56bfef1fdfc1221ce6720e43a661e3eb41785dd914ce99698d8c7896af4bdaa1",
+      "size": 20625068,
+      "result": "PASS"
+    },
+    {
+      "file": "python3.12_3.12.3-1ubuntu0.17.debian.tar.xz",
+      "filename": "pool/main/p/python3.12/python3.12_3.12.3-1ubuntu0.17.debian.tar.xz",
+      "sha256": "17b15629cb10825924cf7b85055255080ec773133ae0f8b8ce5ea2eec90dd200",
+      "size": 302472,
+      "result": "PASS"
+    },
+    {
+      "file": "python3.12_3.12.3-1ubuntu0.17.dsc",
+      "filename": "pool/main/p/python3.12/python3.12_3.12.3-1ubuntu0.17.dsc",
+      "sha256": "941700b999737d869b80c3b5a0adc0996a0fd760b982e18551bd2104da779384",
+      "size": 3916,
+      "result": "PASS"
+    }
+  ],
+  "keyring": {
+    "source_url": "https://archive.ubuntu.com/ubuntu/pool/main/u/ubuntu-keyring/ubuntu-keyring_2023.11.28.1_all.deb",
+    "member": "usr/share/keyrings/ubuntu-archive-keyring.gpg",
+    "sha256": "80a36b0a6de2f69f49d2df75ef473ccde121e9e190b9ea01d20a4f63778d5c31",
+    "fingerprint_source": "https://documentation.ubuntu.com/security/software-integrity/image-verification/#step-2-verify-public-key-authenticity",
+    "trust_limit": "Published fingerprint corroboration; no formal project root acceptance; keyring DEB itself was not authenticated through an earlier accepted root."
+  },
+  "signature_status": [
+    "[GNUPG:] NEWSIG",
+    "[GNUPG:] KEY_CONSIDERED F6ECB3762474EDA9D21B7022871920D1991BC93C 0",
+    "[GNUPG:] SIG_ID dwd8kLhPQq/O/7odYF5t5HJ7sTE 2026-10-29 1793258168",
+    "[GNUPG:] GOODSIG 871920D1991BC93C Ubuntu Archive Automatic Signing Key (2018) <ftpmaster@ubuntu.com>",
+    "[GNUPG:] VALIDSIG F6ECB3762474EDA9D21B7022871920D1991BC93C 2026-10-29 1793258168 0 4 0 1 10 01 F6ECB3762474EDA9D21B7022871920D1991BC93C",
+    "[GNUPG:] TRUST_UNDEFINED 0 pgp"
+  ],
+  "retained_stanzas": {
+    "libpython3.12-dev.Package.stanza": {
+      "sha256": "fb7633376eee127edbd52c1d3815399c7d68024086cc6c0c9d7fb132dcd4d36b",
+      "size": 1020,
+      "content": "Package: libpython3.12-dev\nSource: python3.12\nPriority: optional\nSection: libdevel\nInstalled-Size: 29034\nMaintainer: Ubuntu Developers <ubuntu-devel-discuss@lists.ubuntu.com>\nArchitecture: amd64\nVersion: 3.12.3-1ubuntu0.17\nRecommends: libc6-dev | libc-dev\nDepends: libpython3.12-stdlib (= 3.12.3-1ubuntu0.17), libpython3.12t64 (= 3.12.3-1ubuntu0.17), libexpat1-dev, zlib1g-dev\nFilename: pool/main/p/python3.12/libpython3.12-dev_3.12.3-1ubuntu0.17_amd64.deb\nSize: 5683746\nMD5sum: 9b5bdb03c8c9807c43497acef01d1e49\nSHA1: 17181f7ba47ccc7544e26633729e902aa81fab1a\nSHA256: c123ddab7763e45199e21b4ac8545e705f20a0315b9ada4c236b52fb088c4e16\nSHA512: 5fcbb491a2eff0fe23d62cde199a47df6e9868379774b1917b294e8bc0ea10f578fde8835a2b184a9a7e2b88106efc910b5acd9084cc02d702415cb809c7931f\nDescription: Header files and a static library for Python (v3.12)\nDescription-md5: 83564bef79c906c3a214f9bb01f93034\nMulti-Arch: same\nOriginal-Maintainer: Matthias Klose <doko@debian.org>\nOrigin: Ubuntu\nBugs: https://bugs.launchpad.net/ubuntu/+filebug\n"
+    },
+    "libpython3.12-minimal.Package.stanza": {
+      "sha256": "daba449ecdf27a2e37f1c3ad882f13127c498be299dac7a46bb404e6d121010a",
+      "size": 1034,
+      "content": "Package: libpython3.12-minimal\nSource: python3.12\nPriority: important\nSection: python\nInstalled-Size: 5180\nMaintainer: Ubuntu Developers <ubuntu-devel-discuss@lists.ubuntu.com>\nArchitecture: amd64\nVersion: 3.12.3-1ubuntu0.17\nRecommends: libpython3.12-stdlib\nDepends: libc6 (>= 2.14), libssl3t64 (>= 3.0.0)\nConflicts: binfmt-support (<< 1.1.2)\nFilename: pool/main/p/python3.12/libpython3.12-minimal_3.12.3-1ubuntu0.17_amd64.deb\nSize: 838536\nMD5sum: 3c10fde9438466b6aa7d660e6a179cc7\nSHA1: da5dd8bd5edea1238b6f4dd0e366112a8a73d3fb\nSHA256: d646ad7112b5adec21ba0e1af015f04ae8ca7f5efdc619622547dd6673c4c14b\nSHA512: d12a45592d7fb4025bb173463d98fd06dfd51b7485f7ef1ec893c11663dbfee49ee23055cc0c94803b9a3cc9fd7741eaa594a240bcf77a0a77d8129a89cea372\nDescription: Minimal subset of the Python language (version 3.12)\nDescription-md5: 2614ac5854b4fd0c793c2aa4cba675f2\nMulti-Arch: same\nOriginal-Maintainer: Matthias Klose <doko@debian.org>\nOrigin: Ubuntu\nBugs: https://bugs.launchpad.net/ubuntu/+filebug\nTask: cloud-minimal, minimal, server-minimal\n"
+    },
+    "libpython3.12-stdlib.Package.stanza": {
+      "sha256": "7b5e18c67a282d83a19b7ec8005004554ff664bcae3a3913ca894b13db17187c",
+      "size": 1411,
+      "content": "Package: libpython3.12-stdlib\nSource: python3.12\nPriority: important\nSection: python\nInstalled-Size: 9034\nMaintainer: Ubuntu Developers <ubuntu-devel-discuss@lists.ubuntu.com>\nArchitecture: amd64\nVersion: 3.12.3-1ubuntu0.17\nReplaces: libpython3.12-testsuite (<< 3.12.0-3~), python3-gdbm (<< 3.9.9-1~)\nDepends: libpython3.12-minimal (= 3.12.3-1ubuntu0.17), media-types | mime-support, netbase, tzdata, libbz2-1.0, libc6 (>= 2.38), libcrypt1 (>= 1:4.1.0), libdb5.3t64, libffi8 (>= 3.4), liblzma5 (>= 5.1.1alpha+20120614), libncursesw6 (>= 6.1), libreadline8t64 (>= 7.0~beta), libsqlite3-0 (>= 3.36.0), libtinfo6 (>= 6)\nBreaks: libpython3.12-testsuite (<< 3.12.0-3~), python3-gdbm (<< 3.9.9-1~)\nFilename: pool/main/p/python3.12/libpython3.12-stdlib_3.12.3-1ubuntu0.17_amd64.deb\nSize: 2070530\nMD5sum: ade20e0372324a602862f36c9f4a4218\nSHA1: cb30ae6a930d89529d1d4ccb405674b28fb7a26e\nSHA256: 45d3f530ba1f9d6e879ad46b92046fabab13fe50a82450e4f65557a3bbad1489\nSHA512: 0a454d7e040c31798caeec806cf6a0ac2c8a0bdedbd2b18b53f3ae421b763e0c27b974522039fa2b471d9e7d88825a3955a0be43ae85841bf3c348c93397142a\nDescription: Interactive high-level object-oriented language (standard library, version 3.12)\nDescription-md5: 5287339189e70a6c3b4b29ecc0cd6fdd\nMulti-Arch: same\nOriginal-Maintainer: Matthias Klose <doko@debian.org>\nOrigin: Ubuntu\nBugs: https://bugs.launchpad.net/ubuntu/+filebug\nTask: cloud-minimal, minimal, server-minimal\n"
+    },
+    "python3.12-minimal.Package.stanza": {
+      "sha256": "5e941cb34b983d7a45b33fb475aff569f9c4f09a9b7f1d221956777ae98154bc",
+      "size": 1157,
+      "content": "Package: python3.12-minimal\nSource: python3.12\nPriority: important\nSection: python\nInstalled-Size: 7928\nMaintainer: Ubuntu Developers <ubuntu-devel-discuss@lists.ubuntu.com>\nArchitecture: amd64\nVersion: 3.12.3-1ubuntu0.17\nRecommends: python3.12\nSuggests: binfmt-support\nDepends: libpython3.12-minimal (= 3.12.3-1ubuntu0.17), libexpat1 (>= 2.6.0), zlib1g (>= 1:1.2.0)\nConflicts: binfmt-support (<< 1.1.2)\nPre-Depends: libc6 (>= 2.38)\nFilename: pool/main/p/python3.12/python3.12-minimal_3.12.3-1ubuntu0.17_amd64.deb\nSize: 2334634\nMD5sum: 2ac3784fb339d0b374952f17a4b5000f\nSHA1: c98f0206bf8e36c2481f070d981f0044647ebe5f\nSHA256: d452689b9660845345a4c3e05e4ad82c082d5474e04031b7aa47f1a6d5610a6e\nSHA512: b57d992d3ccb82955fde9c0d3a7668107d43fbab7aba9ff9692373d4874c76524ce5376d61e1c0d988c17112b983de4e10ce3044a83c710b67c0d47bd6312eea\nDescription: Minimal subset of the Python language (version 3.12)\nDescription-md5: 409352196e00a839966f4424a82663b1\nMulti-Arch: allowed\nCnf-Visible-Pkgname: python3.12\nOriginal-Maintainer: Matthias Klose <doko@debian.org>\nOrigin: Ubuntu\nBugs: https://bugs.launchpad.net/ubuntu/+filebug\nTask: cloud-minimal, minimal, server-minimal\n"
+    },
+    "python3.12.Source.stanza": {
+      "sha256": "39b2df2b5761744c63896a49e18c8f43137c0d96355d046d5cb97bde882ff775",
+      "size": 3860,
+      "content": "Package: python3.12\nBinary: python3.12, python3.12-venv, libpython3.12-stdlib, python3.12-minimal, python3.12-nopie, libpython3.12-minimal, libpython3.12t64, python3.12-examples, python3.12-dev, libpython3.12-dev, libpython3.12-testsuite, idle-python3.12, python3.12-doc, python3.12-dbg, libpython3.12t64-dbg, python3.12-full\nVersion: 3.12.3-1ubuntu0.17\nPriority: important\nSection: misc\nMaintainer: Ubuntu Core Developers <ubuntu-devel-discuss@lists.ubuntu.com>\nBuild-Depends: debhelper (>= 11), dpkg-dev (>= 1.17.11), quilt, autoconf, lsb-release, sharutils, libreadline-dev | libeditreadline-dev, libncurses-dev, zlib1g-dev, libbz2-dev, liblzma-dev, libgdbm-dev, libdb-dev, libssl-dev, libexpat1-dev, libbluetooth-dev [linux-any] <!pkg.python3.12.nobluetooth>, locales-all, libnsl-dev, libsqlite3-dev, libffi-dev (>= 3.0.5) [!or1k], libgpm2 [linux-any], media-types | mime-support, netbase, bzip2, time, python3:any, python3.12:any <cross>, net-tools, systemtap-sdt-dev [!hurd-amd64 !hurd-i386], valgrind-if-available\nBuild-Depends-Indep: python3-sphinx, python3-docs-theme, texinfo\nArchitecture: any all\nStandards-Version: 4.6.2\nFormat: 3.0 (quilt)\nDirectory: pool/main/p/python3.12\nFiles:\n 8defb33f0c37aa4bdd3a38ba52abde4e 20625068 python3.12_3.12.3.orig.tar.xz\n 0c581b10ce6695007736f0c27eb98732 302472 python3.12_3.12.3-1ubuntu0.17.debian.tar.xz\n 231752fb6a8b5d825f6e44797ba75e0d 3916 python3.12_3.12.3-1ubuntu0.17.dsc\nChecksums-Sha1:\n 3df73004a9b224d021fd397724e8bd4f9b6cc824 20625068 python3.12_3.12.3.orig.tar.xz\n 13edb00b66d1217711ab02bb2a8043e125275736 302472 python3.12_3.12.3-1ubuntu0.17.debian.tar.xz\n 1a27b5edca4968218580a7a41667601e0de24819 3916 python3.12_3.12.3-1ubuntu0.17.dsc\nChecksums-Sha256:\n 56bfef1fdfc1221ce6720e43a661e3eb41785dd914ce99698d8c7896af4bdaa1 20625068 python3.12_3.12.3.orig.tar.xz\n 17b15629cb10825924cf7b85055255080ec773133ae0f8b8ce5ea2eec90dd200 302472 python3.12_3.12.3-1ubuntu0.17.debian.tar.xz\n 941700b999737d869b80c3b5a0adc0996a0fd760b982e18551bd2104da779384 3916 python3.12_3.12.3-1ubuntu0.17.dsc\nChecksums-Sha512:\n 4a2213b108e7f1f1525baa8348e68b2a2336d925e60d0a59f0225fc470768a2c8031edafc0b8243f94dbae18afda335ee5adf2785328c2218fd64cbb439f13a4 20625068 python3.12_3.12.3.orig.tar.xz\n d2c4e670aaf9f306fc7c39de1e272638ff0d35741f5f81f05d9a0b7c467a63326dd1891d8141cf2f17c2fc6867365834d5f04d14d29bbc26022823ea358bef35 302472 python3.12_3.12.3-1ubuntu0.17.debian.tar.xz\n 02047f3712702b984c0566f3403a4229edc76771b149f812f2b2423f99c6539bad8702e40b5ebc5a814c5b1a55c43f3122b0e287cbd0d51f1ed40457f3433306 3916 python3.12_3.12.3-1ubuntu0.17.dsc\nUploaders: Stefano Rivera <stefanor@debian.org>\nVcs-Browser: https://salsa.debian.org/cpython-team/python3\nVcs-Git: https://salsa.debian.org/cpython-team/python3.git\nTestsuite: autopkgtest\nTestsuite-Triggers: build-essential, ca-certificates, gdb, locales-all, python3-distutils, python3-gdbm, python3-gdbm-dbg, python3-pip, python3-setuptools, python3-setuptools-whl, python3-tk, python3-tk-dbg, python3-wheel-whl, shunit2, systemtap-sdt-dev, virtualenv\nPackage-List: idle-python3.12 deb python optional arch=all\n libpython3.12-dev deb libdevel optional arch=any\n libpython3.12-minimal deb python optional arch=any\n libpython3.12-stdlib deb python optional arch=any\n libpython3.12-testsuite deb libdevel optional arch=all\n libpython3.12t64 deb libs optional arch=any\n libpython3.12t64-dbg deb debug optional arch=any\n python3.12 deb python optional arch=any\n python3.12-dbg deb debug optional arch=any\n python3.12-dev deb python optional arch=any\n python3.12-doc deb doc optional arch=all\n python3.12-examples deb python optional arch=all\n python3.12-full deb python optional arch=any\n python3.12-minimal deb python optional arch=any\n python3.12-nopie deb python optional arch=any\n python3.12-venv deb python optional arch=any\nOriginal-Maintainer: Matthias Klose <doko@debian.org>\n"
+    }
+  },
+  "scope": "Independent cloud mathematical signature, digest and size verification of current noble-updates snapshot; not Dell acquisition, historical archive replay, freshness-policy acceptance, source-to-binary reproducibility, or runtime qualification."
+}

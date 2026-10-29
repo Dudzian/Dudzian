@@ -1,0 +1,1488 @@
+{
+  "builtin_table": [
+    {
+      "initializer": "0x6bd7a0",
+      "matching_symbols": [
+        "PyInit__bisect"
+      ],
+      "name": "_bisect"
+    },
+    {
+      "initializer": "0x4c294d",
+      "matching_symbols": [
+        "PyInit__csv"
+      ],
+      "name": "_csv"
+    },
+    {
+      "initializer": "0x6bf090",
+      "matching_symbols": [
+        "PyInit__datetime"
+      ],
+      "name": "_datetime"
+    },
+    {
+      "initializer": "0x6c45e0",
+      "matching_symbols": [
+        "PyInit__heapq"
+      ],
+      "name": "_heapq"
+    },
+    {
+      "initializer": "0x6c4c60",
+      "matching_symbols": [
+        "PyInit__opcode"
+      ],
+      "name": "_opcode"
+    },
+    {
+      "initializer": "0x6c4e20",
+      "matching_symbols": [
+        "PyInit__pickle"
+      ],
+      "name": "_pickle"
+    },
+    {
+      "initializer": "0x6c75d0",
+      "matching_symbols": [
+        "PyInit__random"
+      ],
+      "name": "_random"
+    },
+    {
+      "initializer": "0x6c7b70",
+      "matching_symbols": [
+        "PyInit__socket"
+      ],
+      "name": "_socket"
+    },
+    {
+      "initializer": "0x4d20af",
+      "matching_symbols": [
+        "PyInit__statistics"
+      ],
+      "name": "_statistics"
+    },
+    {
+      "initializer": "0x6cc930",
+      "matching_symbols": [
+        "PyInit__struct"
+      ],
+      "name": "_struct"
+    },
+    {
+      "initializer": "0x6cd7c0",
+      "matching_symbols": [
+        "PyInit_array"
+      ],
+      "name": "array"
+    },
+    {
+      "initializer": "0x6cf570",
+      "matching_symbols": [
+        "PyInit_binascii"
+      ],
+      "name": "binascii"
+    },
+    {
+      "initializer": "0x4d59a6",
+      "matching_symbols": [
+        "PyInit_cmath"
+      ],
+      "name": "cmath"
+    },
+    {
+      "initializer": "0x6d2300",
+      "matching_symbols": [
+        "PyInit_math"
+      ],
+      "name": "math"
+    },
+    {
+      "initializer": "0x6d3e30",
+      "matching_symbols": [
+        "PyInit_select"
+      ],
+      "name": "select"
+    },
+    {
+      "initializer": "0x4db780",
+      "matching_symbols": [
+        "PyInit__elementtree"
+      ],
+      "name": "_elementtree"
+    },
+    {
+      "initializer": "0x4e08d1",
+      "matching_symbols": [
+        "PyInit_pyexpat"
+      ],
+      "name": "pyexpat"
+    },
+    {
+      "initializer": "0x4e3232",
+      "matching_symbols": [
+        "PyInit__blake2"
+      ],
+      "name": "_blake2"
+    },
+    {
+      "initializer": "0x4e5218",
+      "matching_symbols": [
+        "PyInit__md5"
+      ],
+      "name": "_md5"
+    },
+    {
+      "initializer": "0x4e5d5f",
+      "matching_symbols": [
+        "PyInit__sha1"
+      ],
+      "name": "_sha1"
+    },
+    {
+      "initializer": "0x6dd020",
+      "matching_symbols": [
+        "PyInit__sha2"
+      ],
+      "name": "_sha2"
+    },
+    {
+      "initializer": "0x4e7710",
+      "matching_symbols": [
+        "PyInit__sha3"
+      ],
+      "name": "_sha3"
+    },
+    {
+      "initializer": "0x4e8b2d",
+      "matching_symbols": [
+        "PyInit_unicodedata"
+      ],
+      "name": "unicodedata"
+    },
+    {
+      "initializer": "0x6dea00",
+      "matching_symbols": [
+        "PyInit__posixsubprocess"
+      ],
+      "name": "_posixsubprocess"
+    },
+    {
+      "initializer": "0x6df800",
+      "matching_symbols": [
+        "PyInit_fcntl"
+      ],
+      "name": "fcntl"
+    },
+    {
+      "initializer": "0x4eac78",
+      "matching_symbols": [
+        "PyInit_grp"
+      ],
+      "name": "grp"
+    },
+    {
+      "initializer": "0x4eb17d",
+      "matching_symbols": [
+        "PyInit_spwd"
+      ],
+      "name": "spwd"
+    },
+    {
+      "initializer": "0x4eb52c",
+      "matching_symbols": [
+        "PyInit_syslog"
+      ],
+      "name": "syslog"
+    },
+    {
+      "initializer": "0x6e0210",
+      "matching_symbols": [
+        "PyInit_zlib"
+      ],
+      "name": "zlib"
+    },
+    {
+      "initializer": "0x6e2360",
+      "matching_symbols": [
+        "PyInit_atexit"
+      ],
+      "name": "atexit"
+    },
+    {
+      "initializer": "0x6e26c0",
+      "matching_symbols": [
+        "PyInit_faulthandler"
+      ],
+      "name": "faulthandler"
+    },
+    {
+      "initializer": "0x6e3000",
+      "matching_symbols": [
+        "PyInit_posix"
+      ],
+      "name": "posix"
+    },
+    {
+      "initializer": "0x6e7190",
+      "matching_symbols": [
+        "PyInit__signal"
+      ],
+      "name": "_signal"
+    },
+    {
+      "initializer": "0x4f959c",
+      "matching_symbols": [
+        "PyInit__tracemalloc"
+      ],
+      "name": "_tracemalloc"
+    },
+    {
+      "initializer": "0x6e7c20",
+      "matching_symbols": [
+        "PyInit__codecs"
+      ],
+      "name": "_codecs"
+    },
+    {
+      "initializer": "0x6e9610",
+      "matching_symbols": [
+        "PyInit__collections"
+      ],
+      "name": "_collections"
+    },
+    {
+      "initializer": "0x6ea960",
+      "matching_symbols": [
+        "PyInit_errno"
+      ],
+      "name": "errno"
+    },
+    {
+      "initializer": "0x6eb940",
+      "matching_symbols": [
+        "PyInit__io"
+      ],
+      "name": "_io"
+    },
+    {
+      "initializer": "0x6f1240",
+      "matching_symbols": [
+        "PyInit_itertools"
+      ],
+      "name": "itertools"
+    },
+    {
+      "initializer": "0x6f4b70",
+      "matching_symbols": [
+        "PyInit__sre"
+      ],
+      "name": "_sre"
+    },
+    {
+      "initializer": "0x6f8420",
+      "matching_symbols": [
+        "PyInit__thread"
+      ],
+      "name": "_thread"
+    },
+    {
+      "initializer": "0x6f9170",
+      "matching_symbols": [
+        "PyInit_time"
+      ],
+      "name": "time"
+    },
+    {
+      "initializer": "0x6f9f00",
+      "matching_symbols": [
+        "PyInit__typing"
+      ],
+      "name": "_typing"
+    },
+    {
+      "initializer": "0x6f9ff0",
+      "matching_symbols": [
+        "PyInit__weakref"
+      ],
+      "name": "_weakref"
+    },
+    {
+      "initializer": "0x6fa100",
+      "matching_symbols": [
+        "PyInit__abc"
+      ],
+      "name": "_abc"
+    },
+    {
+      "initializer": "0x6fa230",
+      "matching_symbols": [
+        "PyInit__functools"
+      ],
+      "name": "_functools"
+    },
+    {
+      "initializer": "0x6fad20",
+      "matching_symbols": [
+        "PyInit__locale"
+      ],
+      "name": "_locale"
+    },
+    {
+      "initializer": "0x6fb490",
+      "matching_symbols": [
+        "PyInit__operator"
+      ],
+      "name": "_operator"
+    },
+    {
+      "initializer": "0x6fbe60",
+      "matching_symbols": [
+        "PyInit__stat"
+      ],
+      "name": "_stat"
+    },
+    {
+      "initializer": "0x51690b",
+      "matching_symbols": [
+        "PyInit__symtable"
+      ],
+      "name": "_symtable"
+    },
+    {
+      "initializer": "0x516d5a",
+      "matching_symbols": [
+        "PyInit_pwd"
+      ],
+      "name": "pwd"
+    },
+    {
+      "initializer": "0x6ae600",
+      "matching_symbols": [
+        "PyMarshal_Init"
+      ],
+      "name": "marshal"
+    },
+    {
+      "initializer": "0x6a8730",
+      "matching_symbols": [
+        "PyInit__imp"
+      ],
+      "name": "_imp"
+    },
+    {
+      "initializer": "0x691bb0",
+      "matching_symbols": [
+        "PyInit__ast"
+      ],
+      "name": "_ast"
+    },
+    {
+      "initializer": "0x699dc0",
+      "matching_symbols": [
+        "PyInit__tokenize"
+      ],
+      "name": "_tokenize"
+    },
+    {
+      "initializer": "0x0",
+      "matching_symbols": [],
+      "name": "builtins"
+    },
+    {
+      "initializer": "0x0",
+      "matching_symbols": [],
+      "name": "sys"
+    },
+    {
+      "initializer": "0x6bd2a0",
+      "matching_symbols": [
+        "PyInit_gc"
+      ],
+      "name": "gc"
+    },
+    {
+      "initializer": "0x68a1e0",
+      "matching_symbols": [
+        "_PyWarnings_Init"
+      ],
+      "name": "_warnings"
+    },
+    {
+      "initializer": "0x681b50",
+      "matching_symbols": [
+        "PyInit__string"
+      ],
+      "name": "_string"
+    }
+  ],
+  "builtin_table_pointer": "0xa4db20",
+  "config_c_ordered_names_and_initializers_match": true,
+  "custom_frozen_pointer": "0x0",
+  "elf_records": [
+    {
+      "build_id": "337d65cf00021797985cc9f77c0cc334a9fbeb38",
+      "dynamic_bind_now": false,
+      "elf_type": "EXEC",
+      "gnu_relro": true,
+      "gnu_stack_executable": false,
+      "needed": [
+        "libm.so.6",
+        "libz.so.1",
+        "libexpat.so.1",
+        "libc.so.6"
+      ],
+      "path": "/usr/bin/python3.12",
+      "pt_interp": "/lib64/ld-linux-x86-64.so.2",
+      "rpath_runpath": [],
+      "sha256": "e50d468e8b0adfb05733f5b87b3cff34829c4a8c1aea50c865aa8bdfe4bb150f",
+      "size": 8020928
+    },
+    {
+      "build_id": "f7f11f81d9085f4be269639ac50b5d0dbe5588de",
+      "dynamic_bind_now": false,
+      "elf_type": "DYN",
+      "gnu_relro": true,
+      "gnu_stack_executable": false,
+      "needed": [],
+      "path": "/usr/lib/python3.12/lib-dynload/_asyncio.cpython-312-x86_64-linux-gnu.so",
+      "pt_interp": null,
+      "rpath_runpath": [],
+      "sha256": "bf62de8aaab17955c9164e582ae7ea0aae3a704e2d8068ff6da12dbf29f784e5",
+      "size": 82184
+    },
+    {
+      "build_id": "43cd1468819dd06046c7400f7bfd5ff05a581220",
+      "dynamic_bind_now": false,
+      "elf_type": "DYN",
+      "gnu_relro": true,
+      "gnu_stack_executable": false,
+      "needed": [
+        "libbz2.so.1.0",
+        "libc.so.6"
+      ],
+      "path": "/usr/lib/python3.12/lib-dynload/_bz2.cpython-312-x86_64-linux-gnu.so",
+      "pt_interp": null,
+      "rpath_runpath": [],
+      "sha256": "eff8df23cdc54d38ce9ca600d07c21ccfd7f22bd52a0720e599e6828d3e2eb76",
+      "size": 32112
+    },
+    {
+      "build_id": "299d8b46248a4767631de75bec932841b44ae4b5",
+      "dynamic_bind_now": false,
+      "elf_type": "DYN",
+      "gnu_relro": true,
+      "gnu_stack_executable": false,
+      "needed": [
+        "libc.so.6"
+      ],
+      "path": "/usr/lib/python3.12/lib-dynload/_codecs_cn.cpython-312-x86_64-linux-gnu.so",
+      "pt_interp": null,
+      "rpath_runpath": [],
+      "sha256": "0880c743db9191196306f48494598d900a87df9bf0d566f46762def13195cad3",
+      "size": 154184
+    },
+    {
+      "build_id": "528a3bd09197321ba53b3e891375e05715fbd4fd",
+      "dynamic_bind_now": false,
+      "elf_type": "DYN",
+      "gnu_relro": true,
+      "gnu_stack_executable": false,
+      "needed": [
+        "libc.so.6"
+      ],
+      "path": "/usr/lib/python3.12/lib-dynload/_codecs_hk.cpython-312-x86_64-linux-gnu.so",
+      "pt_interp": null,
+      "rpath_runpath": [],
+      "sha256": "61b28f65b6833f8f7a7853ecbf51372ce97d82340c10c96955f1130ccf44c97a",
+      "size": 162408
+    },
+    {
+      "build_id": "cec6db5ba545f869d70fa907b4f89c87a63ef6bf",
+      "dynamic_bind_now": false,
+      "elf_type": "DYN",
+      "gnu_relro": true,
+      "gnu_stack_executable": false,
+      "needed": [
+        "libc.so.6"
+      ],
+      "path": "/usr/lib/python3.12/lib-dynload/_codecs_iso2022.cpython-312-x86_64-linux-gnu.so",
+      "pt_interp": null,
+      "rpath_runpath": [],
+      "sha256": "469273f41255ecd52b9ea04cd4557cdedbf6831d02e02a97b934d9e170be224c",
+      "size": 39528
+    },
+    {
+      "build_id": "9e8cfd531bc499d0de5cca5e097b975f852d59e0",
+      "dynamic_bind_now": false,
+      "elf_type": "DYN",
+      "gnu_relro": true,
+      "gnu_stack_executable": false,
+      "needed": [
+        "libc.so.6"
+      ],
+      "path": "/usr/lib/python3.12/lib-dynload/_codecs_jp.cpython-312-x86_64-linux-gnu.so",
+      "pt_interp": null,
+      "rpath_runpath": [],
+      "sha256": "6791fcb3fb05bf62140670da6578e08581b252271bad441046cfba3913e1cac5",
+      "size": 277064
+    },
+    {
+      "build_id": "7a163cc4e220f5adc69d2bdbd4051e84b6ecc953",
+      "dynamic_bind_now": false,
+      "elf_type": "DYN",
+      "gnu_relro": true,
+      "gnu_stack_executable": false,
+      "needed": [
+        "libc.so.6"
+      ],
+      "path": "/usr/lib/python3.12/lib-dynload/_codecs_kr.cpython-312-x86_64-linux-gnu.so",
+      "pt_interp": null,
+      "rpath_runpath": [],
+      "sha256": "e22ece67cb97d685f8a3a32a8f97b4d52775760b1bb16f86a8c137c4d6a7d29e",
+      "size": 141896
+    },
+    {
+      "build_id": "5948e37263de2aeca85e78db429dbb0fb52e341d",
+      "dynamic_bind_now": false,
+      "elf_type": "DYN",
+      "gnu_relro": true,
+      "gnu_stack_executable": false,
+      "needed": [
+        "libc.so.6"
+      ],
+      "path": "/usr/lib/python3.12/lib-dynload/_codecs_tw.cpython-312-x86_64-linux-gnu.so",
+      "pt_interp": null,
+      "rpath_runpath": [],
+      "sha256": "22f2a1c8301f4527f803aba3769dd712b1285303e03719ee09351d828c46824b",
+      "size": 117320
+    },
+    {
+      "build_id": "ee210884dcd92f2f390cc99e608e78db15b7bbd7",
+      "dynamic_bind_now": false,
+      "elf_type": "DYN",
+      "gnu_relro": true,
+      "gnu_stack_executable": false,
+      "needed": [],
+      "path": "/usr/lib/python3.12/lib-dynload/_contextvars.cpython-312-x86_64-linux-gnu.so",
+      "pt_interp": null,
+      "rpath_runpath": [],
+      "sha256": "da24b21e136402103121806aa5b031bc50e1576a44cd4a0e1f60bc16fd936706",
+      "size": 14560
+    },
+    {
+      "build_id": "7240c44c7c97d2d3f761c7fe54d2d6fa2156cccb",
+      "dynamic_bind_now": false,
+      "elf_type": "DYN",
+      "gnu_relro": true,
+      "gnu_stack_executable": false,
+      "needed": [
+        "libcrypt.so.1",
+        "libc.so.6"
+      ],
+      "path": "/usr/lib/python3.12/lib-dynload/_crypt.cpython-312-x86_64-linux-gnu.so",
+      "pt_interp": null,
+      "rpath_runpath": [],
+      "sha256": "81e70b2d8ed4a0526f638d5b81bf12da1806d181b27d4b06b6d31f6d9a4b9b85",
+      "size": 14744
+    },
+    {
+      "build_id": "00cc9e9372a4f7c6b7bf9f8217807d59ca8020ee",
+      "dynamic_bind_now": false,
+      "elf_type": "DYN",
+      "gnu_relro": true,
+      "gnu_stack_executable": false,
+      "needed": [
+        "libffi.so.8",
+        "libc.so.6"
+      ],
+      "path": "/usr/lib/python3.12/lib-dynload/_ctypes.cpython-312-x86_64-linux-gnu.so",
+      "pt_interp": null,
+      "rpath_runpath": [],
+      "sha256": "aad3e24f186e6c0a1c7efa8f16004f951f527db86f6451d30118657384a456c1",
+      "size": 137968
+    },
+    {
+      "build_id": "eedd179b25b80c94bb851940e935e066be0296fe",
+      "dynamic_bind_now": false,
+      "elf_type": "DYN",
+      "gnu_relro": true,
+      "gnu_stack_executable": false,
+      "needed": [
+        "libm.so.6",
+        "libc.so.6"
+      ],
+      "path": "/usr/lib/python3.12/lib-dynload/_ctypes_test.cpython-312-x86_64-linux-gnu.so",
+      "pt_interp": null,
+      "rpath_runpath": [],
+      "sha256": "7dbace272fc2bd27d00db187985f5f09f18825096d2093f1c8abb4b9bb056d08",
+      "size": 31352
+    },
+    {
+      "build_id": "cfc73f0cb1c857e3c3b0ad8094234cb1009fd1de",
+      "dynamic_bind_now": false,
+      "elf_type": "DYN",
+      "gnu_relro": true,
+      "gnu_stack_executable": false,
+      "needed": [
+        "libncursesw.so.6",
+        "libtinfo.so.6",
+        "libc.so.6"
+      ],
+      "path": "/usr/lib/python3.12/lib-dynload/_curses.cpython-312-x86_64-linux-gnu.so",
+      "pt_interp": null,
+      "rpath_runpath": [],
+      "sha256": "133b4dcb8547fa5b158c076142ea36a8656c2f5cedab91462a381d28757750c1",
+      "size": 128584
+    },
+    {
+      "build_id": "28272a5acf16e7578e5aff9ea55e46f2a4365443",
+      "dynamic_bind_now": false,
+      "elf_type": "DYN",
+      "gnu_relro": true,
+      "gnu_stack_executable": false,
+      "needed": [
+        "libpanelw.so.6"
+      ],
+      "path": "/usr/lib/python3.12/lib-dynload/_curses_panel.cpython-312-x86_64-linux-gnu.so",
+      "pt_interp": null,
+      "rpath_runpath": [],
+      "sha256": "df64e64b63180ee13f8ff720835424797287d623c0ce6efe55436b6642a9e940",
+      "size": 24168
+    },
+    {
+      "build_id": "ff3249a49924cfb31955c38a07ed5cd41d19146a",
+      "dynamic_bind_now": false,
+      "elf_type": "DYN",
+      "gnu_relro": true,
+      "gnu_stack_executable": false,
+      "needed": [
+        "libdb-5.3.so",
+        "libc.so.6"
+      ],
+      "path": "/usr/lib/python3.12/lib-dynload/_dbm.cpython-312-x86_64-linux-gnu.so",
+      "pt_interp": null,
+      "rpath_runpath": [],
+      "sha256": "52cfcf3bc153163b0c7aadc2cd2d8383fb7705033be02018193c2cbd339bb0fa",
+      "size": 23880
+    },
+    {
+      "build_id": "49374d73916b75291f7f3f052758d2df2793e4d1",
+      "dynamic_bind_now": false,
+      "elf_type": "DYN",
+      "gnu_relro": true,
+      "gnu_stack_executable": false,
+      "needed": [
+        "libc.so.6"
+      ],
+      "path": "/usr/lib/python3.12/lib-dynload/_decimal.cpython-312-x86_64-linux-gnu.so",
+      "pt_interp": null,
+      "rpath_runpath": [],
+      "sha256": "20326fc4d39abff46814b64bf5304f8898d180ae58a66b5d60c0177ae317887d",
+      "size": 372904
+    },
+    {
+      "build_id": "33c38727eb4140c55f853fd9e534856569024762",
+      "dynamic_bind_now": false,
+      "elf_type": "DYN",
+      "gnu_relro": true,
+      "gnu_stack_executable": false,
+      "needed": [
+        "libcrypto.so.3",
+        "libc.so.6"
+      ],
+      "path": "/usr/lib/python3.12/lib-dynload/_hashlib.cpython-312-x86_64-linux-gnu.so",
+      "pt_interp": null,
+      "rpath_runpath": [],
+      "sha256": "8dc6cda6dd9495b95a2bfb5b26e8cf06b72f36dc0213d958b9277a958287f0fe",
+      "size": 64368
+    },
+    {
+      "build_id": "f24fcec743f7d42ed6c90ccc0ef455c4d4ab99a9",
+      "dynamic_bind_now": false,
+      "elf_type": "DYN",
+      "gnu_relro": true,
+      "gnu_stack_executable": false,
+      "needed": [],
+      "path": "/usr/lib/python3.12/lib-dynload/_json.cpython-312-x86_64-linux-gnu.so",
+      "pt_interp": null,
+      "rpath_runpath": [],
+      "sha256": "ca8e35c58f7bc8e27258c4af43651c941413bc6318903621253485b0395758a3",
+      "size": 48952
+    },
+    {
+      "build_id": "d678e6649211b6c3a5df2e82803d69d29f7de58a",
+      "dynamic_bind_now": false,
+      "elf_type": "DYN",
+      "gnu_relro": true,
+      "gnu_stack_executable": false,
+      "needed": [],
+      "path": "/usr/lib/python3.12/lib-dynload/_lsprof.cpython-312-x86_64-linux-gnu.so",
+      "pt_interp": null,
+      "rpath_runpath": [],
+      "sha256": "16d114c88e524f93e487325e164be12dc6a24470603c808a2ca04314a3755a26",
+      "size": 32032
+    },
+    {
+      "build_id": "20856c83dc5ef831c02ce8bdacf4fec28018e959",
+      "dynamic_bind_now": false,
+      "elf_type": "DYN",
+      "gnu_relro": true,
+      "gnu_stack_executable": false,
+      "needed": [
+        "liblzma.so.5",
+        "libc.so.6"
+      ],
+      "path": "/usr/lib/python3.12/lib-dynload/_lzma.cpython-312-x86_64-linux-gnu.so",
+      "pt_interp": null,
+      "rpath_runpath": [],
+      "sha256": "cb298120e40f064dc047e638d911f8b3b0abf625bf1d6bd07902b46efd820fd7",
+      "size": 49256
+    },
+    {
+      "build_id": "dee38263e2fe359537bc2a9b8edb30410281df17",
+      "dynamic_bind_now": false,
+      "elf_type": "DYN",
+      "gnu_relro": true,
+      "gnu_stack_executable": false,
+      "needed": [
+        "libc.so.6"
+      ],
+      "path": "/usr/lib/python3.12/lib-dynload/_multibytecodec.cpython-312-x86_64-linux-gnu.so",
+      "pt_interp": null,
+      "rpath_runpath": [],
+      "sha256": "564968ab04f879409bbf8864dd0b7f3e9ebc4a2901072766486731e341f52a4f",
+      "size": 54664
+    },
+    {
+      "build_id": "693be8e8f481bb8dcd54237b56559c3f507fddd7",
+      "dynamic_bind_now": false,
+      "elf_type": "DYN",
+      "gnu_relro": true,
+      "gnu_stack_executable": false,
+      "needed": [
+        "libc.so.6"
+      ],
+      "path": "/usr/lib/python3.12/lib-dynload/_multiprocessing.cpython-312-x86_64-linux-gnu.so",
+      "pt_interp": null,
+      "rpath_runpath": [],
+      "sha256": "d9194cd202544d7dc11b2d5c821c82d7f2b836059ebac0958f95881255c368d6",
+      "size": 24280
+    },
+    {
+      "build_id": "9a25d0d086c6ad92fc491c66a80d09b94f07b6ee",
+      "dynamic_bind_now": false,
+      "elf_type": "DYN",
+      "gnu_relro": true,
+      "gnu_stack_executable": false,
+      "needed": [
+        "libc.so.6"
+      ],
+      "path": "/usr/lib/python3.12/lib-dynload/_posixshmem.cpython-312-x86_64-linux-gnu.so",
+      "pt_interp": null,
+      "rpath_runpath": [],
+      "sha256": "bc7d2bf7f72457b50540feae0154d3a2ebf672017ff3642531023268622be2e5",
+      "size": 15080
+    },
+    {
+      "build_id": "f7b10902492d1e1c17234f657a5546fc27f8e61b",
+      "dynamic_bind_now": false,
+      "elf_type": "DYN",
+      "gnu_relro": true,
+      "gnu_stack_executable": false,
+      "needed": [],
+      "path": "/usr/lib/python3.12/lib-dynload/_queue.cpython-312-x86_64-linux-gnu.so",
+      "pt_interp": null,
+      "rpath_runpath": [],
+      "sha256": "6e253343c58e3d83d5aca52e85dcad640d6e332d48dc4ff9bd55fcfd8be55d2b",
+      "size": 23816
+    },
+    {
+      "build_id": "a87785e8a83e0ebe70f973e87aeec3fd48c76628",
+      "dynamic_bind_now": false,
+      "elf_type": "DYN",
+      "gnu_relro": true,
+      "gnu_stack_executable": false,
+      "needed": [
+        "libsqlite3.so.0",
+        "libc.so.6"
+      ],
+      "path": "/usr/lib/python3.12/lib-dynload/_sqlite3.cpython-312-x86_64-linux-gnu.so",
+      "pt_interp": null,
+      "rpath_runpath": [],
+      "sha256": "ecf54958b24c533f5c8dc67ca82cdce236aeb322864140bfe93eb8a69b729f4d",
+      "size": 144792
+    },
+    {
+      "build_id": "274fe0d95b42409f31097a8466826cae12c489d9",
+      "dynamic_bind_now": false,
+      "elf_type": "DYN",
+      "gnu_relro": true,
+      "gnu_stack_executable": false,
+      "needed": [
+        "libssl.so.3",
+        "libcrypto.so.3",
+        "libc.so.6"
+      ],
+      "path": "/usr/lib/python3.12/lib-dynload/_ssl.cpython-312-x86_64-linux-gnu.so",
+      "pt_interp": null,
+      "rpath_runpath": [],
+      "sha256": "80c755c80688b92e0f32af9168a605f1283256077f35d30f6cf518252f2a6660",
+      "size": 221360
+    },
+    {
+      "build_id": "cfdb0b45e363b2c6c4e18e15775efe1938f311dc",
+      "dynamic_bind_now": false,
+      "elf_type": "DYN",
+      "gnu_relro": true,
+      "gnu_stack_executable": false,
+      "needed": [
+        "libc.so.6"
+      ],
+      "path": "/usr/lib/python3.12/lib-dynload/_testbuffer.cpython-312-x86_64-linux-gnu.so",
+      "pt_interp": null,
+      "rpath_runpath": [],
+      "sha256": "4f856283c8a02cf5f1c85ce3c73a393a24520ade73ab0aa7b4614ee481ac17e9",
+      "size": 54216
+    },
+    {
+      "build_id": "321583d432363c629c3f92eb2368b7c232b0b226",
+      "dynamic_bind_now": false,
+      "elf_type": "DYN",
+      "gnu_relro": true,
+      "gnu_stack_executable": false,
+      "needed": [
+        "libc.so.6"
+      ],
+      "path": "/usr/lib/python3.12/lib-dynload/_testcapi.cpython-312-x86_64-linux-gnu.so",
+      "pt_interp": null,
+      "rpath_runpath": [],
+      "sha256": "8f350b9c68ab4ee97d92bc096d1c7aa9dc82aa56e1be82dfebd79021ee0f719a",
+      "size": 356136
+    },
+    {
+      "build_id": "5b463c8b3465240763f20ff2bd72a56581be5423",
+      "dynamic_bind_now": false,
+      "elf_type": "DYN",
+      "gnu_relro": true,
+      "gnu_stack_executable": false,
+      "needed": [
+        "libc.so.6"
+      ],
+      "path": "/usr/lib/python3.12/lib-dynload/_testclinic.cpython-312-x86_64-linux-gnu.so",
+      "pt_interp": null,
+      "rpath_runpath": [],
+      "sha256": "d146943f3604abcb3ef1bfc54ee1148a02b7c8d0b4b0da225d9ce42ff2bd3493",
+      "size": 68936
+    },
+    {
+      "build_id": "c864cf4cbb48cd2a4312ec34504497f01c67692a",
+      "dynamic_bind_now": false,
+      "elf_type": "DYN",
+      "gnu_relro": true,
+      "gnu_stack_executable": false,
+      "needed": [],
+      "path": "/usr/lib/python3.12/lib-dynload/_testimportmultiple.cpython-312-x86_64-linux-gnu.so",
+      "pt_interp": null,
+      "rpath_runpath": [],
+      "sha256": "7770caadffa6cb3457bb9252b7f3382b617fe3aedbeb5de4523a1f498e74bfd0",
+      "size": 14664
+    },
+    {
+      "build_id": "faa4f3bc0bf2d679df68bd53370f48e771126500",
+      "dynamic_bind_now": false,
+      "elf_type": "DYN",
+      "gnu_relro": true,
+      "gnu_stack_executable": false,
+      "needed": [
+        "libc.so.6"
+      ],
+      "path": "/usr/lib/python3.12/lib-dynload/_testinternalcapi.cpython-312-x86_64-linux-gnu.so",
+      "pt_interp": null,
+      "rpath_runpath": [],
+      "sha256": "09bfb334ee960d54586faa3af693a3df2cea814c7d5fc2c84f3a1311315d0c55",
+      "size": 37128
+    },
+    {
+      "build_id": "95eb25bb6471d0c8addec3727b81e377f8e0a91c",
+      "dynamic_bind_now": false,
+      "elf_type": "DYN",
+      "gnu_relro": true,
+      "gnu_stack_executable": false,
+      "needed": [],
+      "path": "/usr/lib/python3.12/lib-dynload/_testmultiphase.cpython-312-x86_64-linux-gnu.so",
+      "pt_interp": null,
+      "rpath_runpath": [],
+      "sha256": "b985ab811a8350fa7ea057ff2e51bdcb3615baae109d8450f057fad9c72592dd",
+      "size": 35752
+    },
+    {
+      "build_id": "81c7cdce2644ff4b5ff9c9fadbaded5e1ed27e31",
+      "dynamic_bind_now": false,
+      "elf_type": "DYN",
+      "gnu_relro": true,
+      "gnu_stack_executable": false,
+      "needed": [],
+      "path": "/usr/lib/python3.12/lib-dynload/_testsinglephase.cpython-312-x86_64-linux-gnu.so",
+      "pt_interp": null,
+      "rpath_runpath": [],
+      "sha256": "55c8aefde60a43acabd8f31797f8b5ed77a432cc3cf955844bbc5ced15360b04",
+      "size": 15456
+    },
+    {
+      "build_id": "366ff0935bc6b3c3a228bee33aa8224b75eb77bd",
+      "dynamic_bind_now": false,
+      "elf_type": "DYN",
+      "gnu_relro": true,
+      "gnu_stack_executable": false,
+      "needed": [],
+      "path": "/usr/lib/python3.12/lib-dynload/_xxinterpchannels.cpython-312-x86_64-linux-gnu.so",
+      "pt_interp": null,
+      "rpath_runpath": [],
+      "sha256": "e7c3583be589eeb8c7698598c267d7cf2a2e371a96132e2eb9f757e6767d5deb",
+      "size": 36360
+    },
+    {
+      "build_id": "c39d2778cf735aefdd98262f48fb2f2fb4db63c1",
+      "dynamic_bind_now": false,
+      "elf_type": "DYN",
+      "gnu_relro": true,
+      "gnu_stack_executable": false,
+      "needed": [
+        "libc.so.6"
+      ],
+      "path": "/usr/lib/python3.12/lib-dynload/_xxsubinterpreters.cpython-312-x86_64-linux-gnu.so",
+      "pt_interp": null,
+      "rpath_runpath": [],
+      "sha256": "791a5702069b6b79db9048eea2e6910ca2bf4639f6b65aabe1c06f9dd9169cd8",
+      "size": 23672
+    },
+    {
+      "build_id": "8197b6a2839956d9ca9f865bf81677ba5b5f7968",
+      "dynamic_bind_now": false,
+      "elf_type": "DYN",
+      "gnu_relro": true,
+      "gnu_stack_executable": false,
+      "needed": [
+        "libc.so.6"
+      ],
+      "path": "/usr/lib/python3.12/lib-dynload/_xxtestfuzz.cpython-312-x86_64-linux-gnu.so",
+      "pt_interp": null,
+      "rpath_runpath": [],
+      "sha256": "be689ebf1d25c11e170de6703060acea13ae0744d1349b5960d4e7d73d4bc69e",
+      "size": 23144
+    },
+    {
+      "build_id": "5015bc693d6606cacb43e6265aba664e71b26495",
+      "dynamic_bind_now": false,
+      "elf_type": "DYN",
+      "gnu_relro": true,
+      "gnu_stack_executable": false,
+      "needed": [
+        "libc.so.6"
+      ],
+      "path": "/usr/lib/python3.12/lib-dynload/_zoneinfo.cpython-312-x86_64-linux-gnu.so",
+      "pt_interp": null,
+      "rpath_runpath": [],
+      "sha256": "0ea6146bb1b4d0a9f521d72dbe0e7a7726d0f2caf7479e2bb32af673d7a7b254",
+      "size": 53352
+    },
+    {
+      "build_id": "c8672bd3f87ebab276ae51483519147b86185eed",
+      "dynamic_bind_now": false,
+      "elf_type": "DYN",
+      "gnu_relro": true,
+      "gnu_stack_executable": false,
+      "needed": [
+        "libm.so.6",
+        "libc.so.6"
+      ],
+      "path": "/usr/lib/python3.12/lib-dynload/audioop.cpython-312-x86_64-linux-gnu.so",
+      "pt_interp": null,
+      "rpath_runpath": [],
+      "sha256": "c156c588d8e600ba73c9c3186efee2d7adb13b8c8bb5acf030a8b97ce6900c66",
+      "size": 64896
+    },
+    {
+      "build_id": "82ce79e54080f7938fd47be5d5c115e07e06ef34",
+      "dynamic_bind_now": false,
+      "elf_type": "DYN",
+      "gnu_relro": true,
+      "gnu_stack_executable": false,
+      "needed": [
+        "libc.so.6"
+      ],
+      "path": "/usr/lib/python3.12/lib-dynload/mmap.cpython-312-x86_64-linux-gnu.so",
+      "pt_interp": null,
+      "rpath_runpath": [],
+      "sha256": "533b42ea7b719c129a0a02fda105c74a263d11a91945457a2c03bd6cd01065bc",
+      "size": 32600
+    },
+    {
+      "build_id": "938fb9720b9e99ed74aa89f4bfb116b7eabf380b",
+      "dynamic_bind_now": false,
+      "elf_type": "DYN",
+      "gnu_relro": true,
+      "gnu_stack_executable": false,
+      "needed": [
+        "libc.so.6"
+      ],
+      "path": "/usr/lib/python3.12/lib-dynload/ossaudiodev.cpython-312-x86_64-linux-gnu.so",
+      "pt_interp": null,
+      "rpath_runpath": [],
+      "sha256": "48bbab657dd35065a8584ebaa5aa2c82ec5f35d97b7dce7e9c1d2ae83caaa510",
+      "size": 33576
+    },
+    {
+      "build_id": "a7196d756c5cc8e9ca4597bb7b9508a943e09407",
+      "dynamic_bind_now": false,
+      "elf_type": "DYN",
+      "gnu_relro": true,
+      "gnu_stack_executable": false,
+      "needed": [
+        "libreadline.so.8",
+        "libc.so.6"
+      ],
+      "path": "/usr/lib/python3.12/lib-dynload/readline.cpython-312-x86_64-linux-gnu.so",
+      "pt_interp": null,
+      "rpath_runpath": [],
+      "sha256": "e5c64520b2582d221bec1bb39f584eb20fc5f095f8a0b0a55a53f6781585830d",
+      "size": 40640
+    },
+    {
+      "build_id": "02c97a0968dc277b3e094c0634c2eee79a49248e",
+      "dynamic_bind_now": false,
+      "elf_type": "DYN",
+      "gnu_relro": true,
+      "gnu_stack_executable": false,
+      "needed": [
+        "libc.so.6"
+      ],
+      "path": "/usr/lib/python3.12/lib-dynload/resource.cpython-312-x86_64-linux-gnu.so",
+      "pt_interp": null,
+      "rpath_runpath": [],
+      "sha256": "c8cc35580b497bf128cf8bb0e25efc36573a4f21a1c6877a91737fcd52e24907",
+      "size": 19432
+    },
+    {
+      "build_id": "09b258e395bbe6998c30bee9d1b5be0b771150cf",
+      "dynamic_bind_now": false,
+      "elf_type": "DYN",
+      "gnu_relro": true,
+      "gnu_stack_executable": false,
+      "needed": [
+        "libc.so.6"
+      ],
+      "path": "/usr/lib/python3.12/lib-dynload/termios.cpython-312-x86_64-linux-gnu.so",
+      "pt_interp": null,
+      "rpath_runpath": [],
+      "sha256": "53fb6241c3b0a5177b5723a79eb0550fe2cd1867189cf9b1db0d12d272df3310",
+      "size": 35520
+    },
+    {
+      "build_id": "a96acc93b7017222a253b98feba6c01aa9d59d38",
+      "dynamic_bind_now": false,
+      "elf_type": "DYN",
+      "gnu_relro": true,
+      "gnu_stack_executable": false,
+      "needed": [],
+      "path": "/usr/lib/python3.12/lib-dynload/xxlimited.cpython-312-x86_64-linux-gnu.so",
+      "pt_interp": null,
+      "rpath_runpath": [],
+      "sha256": "891a5386090229674cefc9128eabe1a566665f8bab100219f08c753c8fa75174",
+      "size": 15200
+    },
+    {
+      "build_id": "4403de88478ce37caa1a15321ac2e8dc53806dc5",
+      "dynamic_bind_now": false,
+      "elf_type": "DYN",
+      "gnu_relro": true,
+      "gnu_stack_executable": false,
+      "needed": [],
+      "path": "/usr/lib/python3.12/lib-dynload/xxlimited_35.cpython-312-x86_64-linux-gnu.so",
+      "pt_interp": null,
+      "rpath_runpath": [],
+      "sha256": "75c19d1fc97c50fd8e319bffafd908b5b24735a5409cc6986e3856d21bc3ccb9",
+      "size": 15104
+    },
+    {
+      "build_id": "17736e4c6246484648777f50fa9f20dd540d1083",
+      "dynamic_bind_now": false,
+      "elf_type": "DYN",
+      "gnu_relro": true,
+      "gnu_stack_executable": false,
+      "needed": [
+        "libc.so.6"
+      ],
+      "path": "/usr/lib/python3.12/lib-dynload/xxsubtype.cpython-312-x86_64-linux-gnu.so",
+      "pt_interp": null,
+      "rpath_runpath": [],
+      "sha256": "3603261640fad1b26b5bd412eaca8c3f3f757f34456498fac19f9c38e2237b94",
+      "size": 16056
+    },
+    {
+      "build_id": "0d77dbd4379bf0b5af3e05be7fb6af1e4cea7c96",
+      "dynamic_bind_now": true,
+      "elf_type": "DYN",
+      "gnu_relro": true,
+      "gnu_stack_executable": false,
+      "needed": [],
+      "path": "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2",
+      "pt_interp": null,
+      "rpath_runpath": [],
+      "sha256": "c20a2dc8917c755f02b94049356320fe1f62ac7d9f8994731f807d9df39302da",
+      "size": 236616
+    },
+    {
+      "build_id": "a4a7992a8e66555c8141ab2a08a8465ff6e0ea65",
+      "dynamic_bind_now": true,
+      "elf_type": "DYN",
+      "gnu_relro": true,
+      "gnu_stack_executable": false,
+      "needed": [
+        "ld-linux-x86-64.so.2"
+      ],
+      "path": "/usr/lib/x86_64-linux-gnu/libc.so.6",
+      "pt_interp": "/lib64/ld-linux-x86-64.so.2",
+      "rpath_runpath": [],
+      "sha256": "3a15d66867d83762c7f2f1e37359cb8f6c5743edb369c65285cb0b1c4f7498bf",
+      "size": 2129424
+    },
+    {
+      "build_id": "d53fcbff9f855463606b25cfbe2a2e10856ea3a7",
+      "dynamic_bind_now": true,
+      "elf_type": "DYN",
+      "gnu_relro": true,
+      "gnu_stack_executable": false,
+      "needed": [
+        "libc.so.6",
+        "ld-linux-x86-64.so.2"
+      ],
+      "path": "/usr/lib/x86_64-linux-gnu/libm.so.6",
+      "pt_interp": null,
+      "rpath_runpath": [],
+      "sha256": "fce00b6f25f459cf4ae0b7fae4257909a1a8a86f9149e7c029a5d617baf1ccd0",
+      "size": 952616
+    },
+    {
+      "build_id": "2f47d490170763b8b8e0064675d234bfede6c1db",
+      "dynamic_bind_now": false,
+      "elf_type": "DYN",
+      "gnu_relro": true,
+      "gnu_stack_executable": false,
+      "needed": [
+        "libc.so.6"
+      ],
+      "path": "/usr/lib/x86_64-linux-gnu/libz.so.1.3",
+      "pt_interp": null,
+      "rpath_runpath": [],
+      "sha256": "f61677c7bdb7c2aa2a243ea781bfd16afcb361cede7b4ef76127a9d8eb9a5242",
+      "size": 113000
+    },
+    {
+      "build_id": "8ae4253012c773ce4f3ceb73efbd6dbd47fd9510",
+      "dynamic_bind_now": false,
+      "elf_type": "DYN",
+      "gnu_relro": true,
+      "gnu_stack_executable": false,
+      "needed": [
+        "libc.so.6"
+      ],
+      "path": "/usr/lib/x86_64-linux-gnu/libexpat.so.1.9.1",
+      "pt_interp": null,
+      "rpath_runpath": [],
+      "sha256": "286682ecbc5e59a638963b1a4e6351e65eb32fcf4bdcb9cb7569b6a61fe06a8d",
+      "size": 186624
+    },
+    {
+      "build_id": "2eb7babe130d27bd183d57702b02626012169094",
+      "dynamic_bind_now": true,
+      "elf_type": "DYN",
+      "gnu_relro": true,
+      "gnu_stack_executable": false,
+      "needed": [
+        "libc.so.6"
+      ],
+      "path": "/usr/lib/x86_64-linux-gnu/libcrypto.so.3",
+      "pt_interp": null,
+      "rpath_runpath": [],
+      "sha256": "6866ed711dab8927e1bf82bf1cd30e828bdfc34f3cc1e83b1c9eb01ce6c37d9a",
+      "size": 5309400
+    },
+    {
+      "build_id": "e33015d57b8e510a25d82399804f4bdd8d18453e",
+      "dynamic_bind_now": true,
+      "elf_type": "DYN",
+      "gnu_relro": true,
+      "gnu_stack_executable": false,
+      "needed": [
+        "libcrypto.so.3",
+        "libc.so.6"
+      ],
+      "path": "/usr/lib/x86_64-linux-gnu/libssl.so.3",
+      "pt_interp": null,
+      "rpath_runpath": [],
+      "sha256": "a40e7b67489bbd257e432c700ff8f6a1ad796425b5eccecdc2930127fdd86624",
+      "size": 696512
+    },
+    {
+      "build_id": "16c63d868f8fee77e85334c98a073dd344a0f67d",
+      "dynamic_bind_now": true,
+      "elf_type": "DYN",
+      "gnu_relro": true,
+      "gnu_stack_executable": false,
+      "needed": [
+        "libcrypto.so.3",
+        "libc.so.6"
+      ],
+      "path": "/usr/lib/x86_64-linux-gnu/ossl-modules/legacy.so",
+      "pt_interp": null,
+      "rpath_runpath": [],
+      "sha256": "e639c7121825222dc720bd38aa1fca3ddcedd7d1213dc72ce006b8ccf541b547",
+      "size": 129256
+    }
+  ],
+  "frozen_tables": {
+    "_PyImport_FrozenBootstrap": [
+      {
+        "code_address": "0x9a34e0",
+        "get_code_address": "0x6ffeb0",
+        "is_package": 0,
+        "name": "_frozen_importlib",
+        "payload_sha256": "98a091898bf9424ee2f0b1b78b572efd169846992c24fc6320774b2220cef55a",
+        "size": 55811
+      },
+      {
+        "code_address": "0x994440",
+        "get_code_address": "0x6ffed0",
+        "is_package": 0,
+        "name": "_frozen_importlib_external",
+        "payload_sha256": "daf942dd9661cb25b78eebb317ed18435e2087696831844d4881da247f94c201",
+        "size": 61580
+      },
+      {
+        "code_address": "0x98e4c0",
+        "get_code_address": "0x6ffef0",
+        "is_package": 0,
+        "name": "zipimport",
+        "payload_sha256": "ee3e27f6cc5bd049fd2adeb9f40482195b02b136dcebea12d91d211117d5977f",
+        "size": 24445
+      }
+    ],
+    "_PyImport_FrozenStdlib": [
+      {
+        "code_address": "0x98c560",
+        "get_code_address": "0x6fff50",
+        "is_package": 0,
+        "name": "abc",
+        "payload_sha256": "f69be6116ea5ac20bad4c0ae96bba086e24e1744330cf64d918467b7199f8e3e",
+        "size": 8025
+      },
+      {
+        "code_address": "0x982040",
+        "get_code_address": "0x6fff10",
+        "is_package": 0,
+        "name": "codecs",
+        "payload_sha256": "0708a73398097df9e04fbf2911ee35e48566d810ac0b863eec19561e281584dd",
+        "size": 42244
+      },
+      {
+        "code_address": "0x981020",
+        "get_code_address": "0x6fff30",
+        "is_package": 0,
+        "name": "io",
+        "payload_sha256": "243ca9cc7238caab06b225831745f5631432e002cb6a5fea83992c9871816d94",
+        "size": 4109
+      },
+      {
+        "code_address": "0x975ce0",
+        "get_code_address": "0x6fffd0",
+        "is_package": 0,
+        "name": "_collections_abc",
+        "payload_sha256": "a77c4728256ab4490fb7a2da25dc6d4c93306bcdb6e89274586209701e1c765c",
+        "size": 45882
+      },
+      {
+        "code_address": "0x974a60",
+        "get_code_address": "0x700090",
+        "is_package": 0,
+        "name": "_sitebuiltins",
+        "payload_sha256": "812ef3609daef91dcedbfad8577fdd09e55f308ec4ab503b0e0693b733bf879a",
+        "size": 4730
+      },
+      {
+        "code_address": "0x972fc0",
+        "get_code_address": "0x700070",
+        "is_package": 0,
+        "name": "genericpath",
+        "payload_sha256": "7af21d63d5aeb1f3340904459e7fe0d27e5cb47266de7db34d5f6c5a9b1ae0cf",
+        "size": 6792
+      },
+      {
+        "code_address": "0x96ca20",
+        "get_code_address": "0x701f00",
+        "is_package": 0,
+        "name": "ntpath",
+        "payload_sha256": "7d21c0750a16683eac38783ae936e77df63ce42442dbd25c960f9d8de6b68bc0",
+        "size": 26003
+      },
+      {
+        "code_address": "0x968300",
+        "get_code_address": "0x700050",
+        "is_package": 0,
+        "name": "posixpath",
+        "payload_sha256": "243e643d6832fc51ef391ae39e9161b52bd64c4e7f39713f8c769e3e50ce7fdb",
+        "size": 18206
+      },
+      {
+        "code_address": "0x968300",
+        "get_code_address": "0x700050",
+        "is_package": 0,
+        "name": "os.path",
+        "payload_sha256": "243e643d6832fc51ef391ae39e9161b52bd64c4e7f39713f8c769e3e50ce7fdb",
+        "size": 18206
+      },
+      {
+        "code_address": "0x95d940",
+        "get_code_address": "0x6fff90",
+        "is_package": 0,
+        "name": "os",
+        "payload_sha256": "f6463d53fb78e6be3fdc95751093fbf41482097cf9dedb4a4edfbf6cf168b7e1",
+        "size": 43444
+      },
+      {
+        "code_address": "0x9567c0",
+        "get_code_address": "0x6fff70",
+        "is_package": 0,
+        "name": "site",
+        "payload_sha256": "dc49514fc04860f563675e4328a0ff4cc777ce06766662837444164421051d3d",
+        "size": 29033
+      },
+      {
+        "code_address": "0x955360",
+        "get_code_address": "0x6fffb0",
+        "is_package": 0,
+        "name": "stat",
+        "payload_sha256": "338b42db46c8c2f6dc6569dd61e3d7fc9b726bd34f77bc303e58eddbcc41afde",
+        "size": 5201
+      },
+      {
+        "code_address": "0x952580",
+        "get_code_address": "0x700030",
+        "is_package": 0,
+        "name": "importlib.util",
+        "payload_sha256": "9a955343cccf3339d6849d19d5aeaa31c43e1c3b715369c36bb9f32f64dea39d",
+        "size": 11742
+      },
+      {
+        "code_address": "0x952160",
+        "get_code_address": "0x700010",
+        "is_package": 0,
+        "name": "importlib.machinery",
+        "payload_sha256": "566ee0ee192570091297319876e441aa98075222d5fb383aa1324e228314d8d3",
+        "size": 1025
+      },
+      {
+        "code_address": "0x94e940",
+        "get_code_address": "0x6ffff0",
+        "is_package": 0,
+        "name": "runpy",
+        "payload_sha256": "e670959c85b218752854468f81270f4beb43843de4b711f00f2ab0597bf3df37",
+        "size": 14355
+      }
+    ],
+    "_PyImport_FrozenTest": [
+      {
+        "code_address": "0x94e5e0",
+        "get_code_address": "0x517288",
+        "is_package": 0,
+        "name": "__hello__",
+        "payload_sha256": "9214df653c00524dbe7afddd520bff9be4a819d781e1664fc22ea9ffc2e37470",
+        "size": 840
+      },
+      {
+        "code_address": "0x94e5e0",
+        "get_code_address": "0x517288",
+        "is_package": 0,
+        "name": "__hello_alias__",
+        "payload_sha256": "9214df653c00524dbe7afddd520bff9be4a819d781e1664fc22ea9ffc2e37470",
+        "size": 840
+      },
+      {
+        "code_address": "0x94e5e0",
+        "get_code_address": "0x517288",
+        "is_package": 1,
+        "name": "__phello_alias__",
+        "payload_sha256": "9214df653c00524dbe7afddd520bff9be4a819d781e1664fc22ea9ffc2e37470",
+        "size": 840
+      },
+      {
+        "code_address": "0x94e5e0",
+        "get_code_address": "0x517288",
+        "is_package": 0,
+        "name": "__phello_alias__.spam",
+        "payload_sha256": "9214df653c00524dbe7afddd520bff9be4a819d781e1664fc22ea9ffc2e37470",
+        "size": 840
+      },
+      {
+        "code_address": "0x94e480",
+        "get_code_address": "0x5172bc",
+        "is_package": 1,
+        "name": "__phello__",
+        "payload_sha256": "d65ad9ae5c8026233b30f4a49859f7eda2bdbd150dfd7193ffe109fd2f2d2b0e",
+        "size": 330
+      },
+      {
+        "code_address": "0x94e480",
+        "get_code_address": "0x5172bc",
+        "is_package": 0,
+        "name": "__phello__.__init__",
+        "payload_sha256": "d65ad9ae5c8026233b30f4a49859f7eda2bdbd150dfd7193ffe109fd2f2d2b0e",
+        "size": 330
+      },
+      {
+        "code_address": "0x94e400",
+        "get_code_address": "0x5172d6",
+        "is_package": 1,
+        "name": "__phello__.ham",
+        "payload_sha256": "7b1540d8674deb924956ee201e2bf53345b140099aee816bedc996ea01ddd2db",
+        "size": 104
+      },
+      {
+        "code_address": "0x94e400",
+        "get_code_address": "0x5172d6",
+        "is_package": 0,
+        "name": "__phello__.ham.__init__",
+        "payload_sha256": "7b1540d8674deb924956ee201e2bf53345b140099aee816bedc996ea01ddd2db",
+        "size": 104
+      },
+      {
+        "code_address": "0x94e380",
+        "get_code_address": "0x5172f0",
+        "is_package": 0,
+        "name": "__phello__.ham.eggs",
+        "payload_sha256": "d7c77105f031b1f447840314260b7e47b0ef0814bfb46e1d1294210f427fe872",
+        "size": 109
+      },
+      {
+        "code_address": "0x94e220",
+        "get_code_address": "0x5172a2",
+        "is_package": 0,
+        "name": "__phello__.spam",
+        "payload_sha256": "d76614d4551f59b7aee642630222b4919a3cfd464b0a9f6e709eb3e9da942e06",
+        "size": 335
+      },
+      {
+        "code_address": "0x94e160",
+        "get_code_address": "0x51730a",
+        "is_package": 0,
+        "name": "__hello_only__",
+        "payload_sha256": "810ae51ff357da2255c5ceef9f9b58a0fec23755fff3588a3de2e05b18186fed",
+        "size": 166
+      }
+    ]
+  },
+  "interpreter_sha256": "e50d468e8b0adfb05733f5b87b3cff34829c4a8c1aea50c865aa8bdfe4bb150f",
+  "scope": "Static extracted exact Ubuntu package bytes; no target execution; package provenance and acceptance assessed separately."
+}

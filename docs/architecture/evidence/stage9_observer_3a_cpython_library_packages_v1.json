@@ -1,0 +1,45 @@
+{
+  "evidence_status": "VERIFIED_FROM_EXACT_BUILD",
+  "root_acceptance": "PENDING; see archive_sources_v1.md",
+  "index_sha256": "6178eea98a941888639f49ccc9a88f6088d5efbed70b605bc3701fa894d611d3",
+  "package_checks": [
+    {
+      "package": "libc6",
+      "version": "2.39-0ubuntu8.9",
+      "filename": "pool/main/g/glibc/libc6_2.39-0ubuntu8.9_amd64.deb",
+      "sha256": "ff5557d99b51f761c4b7c92368b9cc45565eda17df9bf9eb4b134d09825008be",
+      "size": 3264314,
+      "result": "PASS"
+    },
+    {
+      "package": "libexpat1",
+      "version": "2.6.1-2ubuntu0.6",
+      "filename": "pool/main/e/expat/libexpat1_2.6.1-2ubuntu0.6_amd64.deb",
+      "sha256": "494b8e672f722130c6bca6a7bc4cc31a43ca891a31d60d868bfdd699a3c20b13",
+      "size": 98940,
+      "result": "PASS"
+    },
+    {
+      "package": "libssl3t64",
+      "version": "3.0.13-0ubuntu3.16",
+      "filename": "pool/main/o/openssl/libssl3t64_3.0.13-0ubuntu3.16_amd64.deb",
+      "sha256": "219f43b1cd836a4da550938db5fda93160d269d39a4edcf1f1ce698a470db797",
+      "size": 1945300,
+      "result": "PASS"
+    },
+    {
+      "package": "zlib1g",
+      "version": "1:1.3.dfsg-3.1ubuntu2.3",
+      "filename": "pool/main/z/zlib/zlib1g_1.3.dfsg-3.1ubuntu2.3_amd64.deb",
+      "sha256": "376249c8de139568221dbb242318cc8cb8f02299e3a62b7432948e1754fbddf9",
+      "size": 63158,
+      "result": "PASS"
+    }
+  ],
+  "stanzas": {
+    "libc6": "Package: libc6\nSource: glibc\nPriority: required\nSection: libs\nInstalled-Size: 13432\nMaintainer: Ubuntu Developers <ubuntu-devel-discuss@lists.ubuntu.com>\nArchitecture: amd64\nVersion: 2.39-0ubuntu8.9\nRecommends: libidn2-0 (>= 2.0.5~)\nReplaces: libc6-amd64\nSuggests: glibc-doc, debconf | debconf-2.0, locales, libnss-nis, libnss-nisplus\nDepends: libgcc-s1\nBreaks: chrony (<< 4.2-3~), cyrus-imapd (<< 3.6.1-2ubuntu1), fakechroot (<< 2.19-3.5), firefox (<< 91~), firefox-esr (<< 91~), gnumach-image-1.8-486 (<< 2:1.8+git20210923~), gnumach-image-1.8-486-dbg (<< 2:1.8+git20210923~), gnumach-image-1.8-xen-486 (<< 2:1.8+git20210923~), gnumach-image-1.8-xen-486-dbg (<< 2:1.8+git20210923~), hurd (<< 1:0.9.git20220301-2), locales (<< 2.39), locales-all (<< 2.39), nscd (<< 2.39), python3-iptables (<< 1.0.0-2), scipy (<< 1.10.1-10build1), tinydns (<< 1:1.05-14), valgrind (<< 1:3.19.0-1~)\nFilename: pool/main/g/glibc/libc6_2.39-0ubuntu8.9_amd64.deb\nSize: 3264314\nMD5sum: fd972176e462d8c0f224bf4c9ad9465b\nSHA1: 877a83674a30235e2ec407400a51988bd47f3f80\nSHA256: ff5557d99b51f761c4b7c92368b9cc45565eda17df9bf9eb4b134d09825008be\nSHA512: 7857a854b52e10356ef2cf5462a39233b47830a18d51970119c81f96b34915db2d9b0b25f859fae85e57b3f0211212cd64e160480f8027ce2ef49650e7c93ba8\nHomepage: https://www.gnu.org/software/libc/libc.html\nDescription: GNU C Library: Shared libraries\nDescription-md5: fc3001b0b90a1c8e6690b283a619d57f\nMulti-Arch: same\nOriginal-Maintainer: GNU Libc Maintainers <debian-glibc@lists.debian.org>\nOriginal-Vcs-Browser: https://salsa.debian.org/glibc-team/glibc\nOriginal-Vcs-Git: https://salsa.debian.org/glibc-team/glibc.git\nOrigin: Ubuntu\nBugs: https://bugs.launchpad.net/ubuntu/+filebug\nTask: cloud-minimal, minimal, server-minimal\n",
+    "libexpat1": "Package: libexpat1\nSource: expat\nPriority: important\nSection: libs\nInstalled-Size: 416\nMaintainer: Ubuntu Developers <ubuntu-devel-discuss@lists.ubuntu.com>\nArchitecture: amd64\nVersion: 2.6.1-2ubuntu0.6\nDepends: libc6 (>= 2.38)\nFilename: pool/main/e/expat/libexpat1_2.6.1-2ubuntu0.6_amd64.deb\nSize: 98940\nMD5sum: c1f55f353e53a75e56029c8abe1c0268\nSHA1: e419233fe772dc5da94ee5e05f7c66c5cdbbbdda\nSHA256: 494b8e672f722130c6bca6a7bc4cc31a43ca891a31d60d868bfdd699a3c20b13\nSHA512: f5fcec523bc33c1b76f8e0e7289ace665ca71dd759a2ad1eac1f2c072259f632679fa47f067f1d065bf19039ff0829133754813066a28062d64cbf7f312a5b99\nHomepage: https://libexpat.github.io/\nDescription: XML parsing C library - runtime library\nDescription-md5: 969a775adb36dbfb73b9d7ef67f13bd6\nMulti-Arch: same\nOriginal-Maintainer: Laszlo Boszormenyi (GCS) <gcs@debian.org>\nOrigin: Ubuntu\nBugs: https://bugs.launchpad.net/ubuntu/+filebug\nTask: cloud-minimal, minimal, server-minimal\n",
+    "libssl3t64": "Package: libssl3t64\nSource: openssl\nPriority: required\nSection: libs\nInstalled-Size: 6615\nMaintainer: Ubuntu Developers <ubuntu-devel-discuss@lists.ubuntu.com>\nArchitecture: amd64\nVersion: 3.0.13-0ubuntu3.16\nReplaces: libssl3\nProvides: libssl3 (= 3.0.13-0ubuntu3.16)\nDepends: libc6 (>= 2.38)\nBreaks: libssl3 (<< 3.0.13-0ubuntu3.16)\nFilename: pool/main/o/openssl/libssl3t64_3.0.13-0ubuntu3.16_amd64.deb\nSize: 1945300\nMD5sum: 43898326b39b0d71f75f279caa1e0f25\nSHA1: 49f5f9d3a8f614d37b6911209cebbc0080c39f59\nSHA256: 219f43b1cd836a4da550938db5fda93160d269d39a4edcf1f1ce698a470db797\nSHA512: 9ef32861a0860b3bbcf317a296deccac840a69bbed31ba562c45de5217c29181a512989612df7ba85f95d031ab768009b1cff7e97cc70fb496023797b4dee76b\nHomepage: https://www.openssl.org/\nDescription: Secure Sockets Layer toolkit - shared libraries\nDescription-md5: 88547c6206c7fbc4fcc7d09ce100d210\nMulti-Arch: same\nOriginal-Maintainer: Debian OpenSSL Team <pkg-openssl-devel@alioth-lists.debian.net>\nOrigin: Ubuntu\nBugs: https://bugs.launchpad.net/ubuntu/+filebug\nTask: cloud-minimal, minimal, server-minimal\n",
+    "zlib1g": "Package: zlib1g\nSource: zlib\nPriority: required\nSection: libs\nInstalled-Size: 163\nMaintainer: Ubuntu Developers <ubuntu-devel-discuss@lists.ubuntu.com>\nArchitecture: amd64\nVersion: 1:1.3.dfsg-3.1ubuntu2.3\nProvides: libz1\nDepends: libc6 (>= 2.14)\nConflicts: zlib1 (<= 1:1.0.4-7)\nBreaks: libxml2 (<< 2.7.6.dfsg-2), texlive-binaries (<< 2023.20230311.66589-8)\nFilename: pool/main/z/zlib/zlib1g_1.3.dfsg-3.1ubuntu2.3_amd64.deb\nSize: 63158\nMD5sum: 288c8fb88ded03e1aac06c28954a1617\nSHA1: a363b4e4a0b2b799d17dc76014d96e2832d17639\nSHA256: 376249c8de139568221dbb242318cc8cb8f02299e3a62b7432948e1754fbddf9\nSHA512: 037f96fdcf88c587d9e8ee1441ae667208b13d73e977393084b1297b81da2b7340f76fe653c5c8f12af4a56e87b95be6999c95d24e302cc8bc8d54af8a0068c7\nHomepage: http://zlib.net/\nDescription: compression library - runtime\nDescription-md5: 567f396aeeb2b2b63295099aed237057\nMulti-Arch: same\nOriginal-Maintainer: Mark Brown <broonie@debian.org>\nOrigin: Ubuntu\nBugs: https://bugs.launchpad.net/ubuntu/+filebug\nTask: cloud-minimal, minimal, server-minimal\n"
+  }
+}
