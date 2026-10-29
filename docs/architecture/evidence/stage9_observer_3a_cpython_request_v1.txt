@@ -1,0 +1,176 @@
+# CRYPTOHUNTER — STAGE 9 / 3A
+## EXACT CPYTHON BUILD AND RUNTIME CLOSURE RECONCILIATION
+
+Pracuj na aktualnym `main` repozytorium `Dudzian/Dudzian`.
+
+Nie uruchamiaj produkcyjnego Observera ani interpretera CPython na fizycznym Dellu.
+
+### 1. Cel
+
+Przeprowadź statyczną analizę dokładnej konfiguracji CPython dostarczanej przez Ubuntu 24.04:
+
+`python3.12 3.12.3-1ubuntu0.17`
+
+Ustal, które moduły są:
+
+- wbudowane w interpreter;
+- frozen;
+- ładowane z plików `.so`;
+- implementowane w plikach Python standardowej biblioteki;
+- potencjalnie wymagane przez rzeczywisty zakres kontraktu Observera;
+- zależne od niezakończonych decyzji architektonicznych.
+
+Nie traktuj samego występowania symbolu `PyInit_*` jako dowodu rejestracji modułu.
+
+### 2. Nowy materiał dowodowy z fizycznego Della
+
+Operator wykonał statyczny pomiar 29.10.2026.
+
+Archiwum:
+
+`stage9-elf-triage-rNlpy9.tar.gz`
+
+SHA-256:
+
+`0a26027f9bf94149fe2b36d3fbba1fdb6e5393e2016c9bd9956463b154005b0f`
+
+Pomiary:
+
+**Interpreter:**
+- SHA-256: `e50d468e8b0adfb05733f5b87b3cff34829c4a8c1aea50c865aa8bdfe4bb150f`
+- Build ID: `337d65cf00021797985cc9f77c0cc334a9fbeb38`
+- ELF: `ET_EXEC`
+- `PT_INTERP`: `/lib64/ld-linux-x86-64.so.2`
+- `DT_NEEDED`: `libm.so.6`, `libz.so.1`, `libexpat.so.1`, `libc.so.6`
+
+**_hashlib:**
+- SHA-256: `8dc6cda6dd9495b95a2bfb5b26e8cf06b72f36dc0213d958b9277a958287f0fe`
+- Build ID: `33c38727eb4140c55f853fd9e534856569024762`
+- `DT_NEEDED`: `libcrypto.so.3`, `libc.so.6`
+
+**_json:**
+- SHA-256: `ca8e35c58f7bc8e27258c4af43651c941413bc6318903621253485b0395758a3`
+- Build ID: `f24fcec743f7d42ed6c90ccc0ef455c4d4ab99a9`
+- Brak `DT_NEEDED`.
+- Wymaga rozwiązywania symboli API CPython.
+
+W interpreterze widoczne są 56 unikalne symbole `PyInit_*`, między innymi:
+
+`_blake2`, `_sha2`, `_sha3`, `_md5`, `_sha1`, `_typing`, `_opcode`, `_datetime`, `math`, `zlib`, `pyexpat`.
+
+Obecne są również symbole:
+
+- `_PyImport_FrozenBootstrap`
+- `_PyImport_FrozenStdlib`
+- `_PyImport_FrozenTest`
+
+Widoczne są `GNU_RELRO` oraz niewykonywalny stos. Brak `RPATH`, `RUNPATH` i dynamicznego `BIND_NOW`.
+
+Archiwum ma wewnętrznie zgodny manifest 13/13. Wszystkie trzy hashe obiektów odpowiadają wcześniejszemu raportowi Ubuntu provenance.
+
+Jeżeli oryginalne archiwum nie jest dostępne w środowisku Codexa, oznacz je jako `OPERATOR_REPORTED_AND_CHAT_REVIEWED`, zamiast twierdzić, że zostało niezależnie odczytane przez Codexa.
+
+### 3. Dokładne materiały builda
+
+Zidentyfikuj źródła i konfigurację właściwe dla Ubuntu `3.12.3-1ubuntu0.17`.
+
+Sprawdź w szczególności:
+
+- `Modules/config.c`;
+- `Modules/Setup*`;
+- konfigurację modułów builtin;
+- tablice frozen i wygenerowane dane importera;
+- `pyconfig.h`;
+- SOABI i suffixy rozszerzeń;
+- patche Ubuntu;
+- konfigurację kompilatora i linkera;
+- dostępne dane pozwalające powiązać materiały kompilacji z obserwowanymi Build ID.
+
+Nie utożsamiaj automatycznie upstream CPython 3.12.3 z dokładnym buildem Ubuntu.
+
+Nie uznawaj pobranego materiału za niezależnie zatwierdzony bez weryfikacji jego pochodzenia.
+
+### 4. Odtworzenie zależności
+
+Na podstawie rzeczywistych źródeł:
+
+`deployment/stage9_observer_contract.py`
+
+`deployment/canonical_json.py`
+
+oraz istniejącego planu Trusted Observer:
+
+zbuduj uzasadnioną mapę zależności:
+
+`ENTRYPOINT → PYTHON IMPORT → BUILTIN/FROZEN/NATIVE → ELF → LOADER/CONFIG/DATA`
+
+Uwzględnij ścieżki błędów, inicjalizacji i możliwe alternatywne backendy kryptograficzne.
+
+Nie dodawaj wszystkich 47 bibliotek do wymaganego runtime tylko dlatego, że istnieją na dysku.
+
+Nie usuwaj zależności bez dowodu, że nie są potrzebne.
+
+### 5. Kontrole bezpieczeństwa
+
+Uwzględnij:
+
+- konsekwencje `ET_EXEC` i braku PIE;
+- `GNU_RELRO` bez `BIND_NOW`;
+- rozwiązywanie symboli rozszerzeń;
+- ładowanie OpenSSL i konfiguracji providerów;
+- politykę wyszukiwania bibliotek;
+- integralność danych wymaganych podczas importu;
+- rozdzielenie statycznego grafu zależności od rzeczywistego rozwiązania ścieżek przez loader.
+
+Zachowaj istniejący model DAG. Nie implementuj SCC bez osobnej decyzji architektonicznej.
+
+### 6. Wymagane rezultaty
+
+Przygotuj:
+
+1. Raport dokładnej konfiguracji CPython.
+2. Listę potwierdzonych modułów builtin.
+3. Listę potwierdzonych modułów frozen.
+4. Mapę wymaganych i warunkowych rozszerzeń `.so`.
+5. Wstępny graf zależności ELF.
+6. Listę brakujących danych i dowodów.
+7. Rejestr findings P0/P1/P2/P3.
+8. Minimalny plan dalszych statycznych pomiarów na Dellu, tylko jeśli są niezbędne.
+
+Każde ustalenie oznacz jako:
+
+- `VERIFIED_FROM_EXACT_BUILD`
+- `VERIFIED_FROM_STATIC_ELF`
+- `SUPPORTED_BY_UPSTREAM_SOURCE`
+- `BUILD_SPECIFIC_UNVERIFIED`
+- `OBSERVER_DESIGN_UNDECIDED`
+- `NOT_YET_PROVEN`
+
+### 7. Ograniczenia
+
+Nie wykonuj:
+
+- instalacji lub zmian systemowych na Dellu;
+- uruchamiania docelowego CPython;
+- fizycznej kwalifikacji Observera;
+- Stage 3B;
+- modyfikacji polityki bezpieczeństwa;
+- zmiany kontraktów produkcyjnych;
+- automatycznego merge.
+
+Pracuj w osobnym PR dokumentacyjnym.
+
+Podaj raw diff, wyniki kontroli integralności, status testów i ocenę gotowości do warunkowego merge.
+
+Zachowaj:
+
+```text
+stage_9=IN_PROGRESS
+qualification=BLOCKED
+CONTRACT_APPROVED=NO
+STAGE_3A_COMPLETE=NO
+PRODUCTION_QUALIFIED=NO
+production_status=PRODUCTION_NO_GO
+runtime_attestation=MISSING
+host_pid_namespace=UNVERIFIED
+```

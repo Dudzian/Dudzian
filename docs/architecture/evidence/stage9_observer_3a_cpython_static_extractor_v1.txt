@@ -1,0 +1,94 @@
+import hashlib
+import json
+import re
+import struct
+import subprocess
+from pathlib import Path
+
+root = Path('/workspace/work/cpython-materials/root')
+exe = root / 'usr/bin/python3.12'
+b = exe.read_bytes()
+assert b[:6] == b'\x7fELF\x02\x01'
+hdr = struct.unpack_from('<16sHHIQQQIHHHHHH', b)
+ph = [struct.unpack_from('<IIQQQQQQ', b, hdr[5]+i*hdr[9]) for i in range(hdr[10])]
+
+def offset(addr, size=1):
+    matches = [p[2]+addr-p[3] for p in ph if p[0] == 1 and p[3] <= addr and addr+size <= p[3]+p[5]]
+    assert len(matches) == 1, (hex(addr), size, matches)
+    return matches[0]
+
+def string(addr):
+    off = offset(addr)
+    end = b.index(0, off, off+512)
+    return b[off:end].decode('ascii')
+
+symbols = {}
+readelf = subprocess.check_output(['readelf', '-Ws', str(exe)], text=True)
+for line in readelf.splitlines():
+    m = re.match(r'\s*\d+:\s+([0-9a-f]+)\s+\d+\s+\S+\s+\S+\s+\S+\s+(\S+)\s+(\S+)', line)
+    if m and m[2] != 'UND':
+        symbols[m[3]] = int(m[1], 16)
+
+def pointer(name):
+    addr = symbols[name]
+    if any(p[0] == 1 and p[3]+p[5] <= addr and addr+8 <= p[3]+p[6] for p in ph):
+        return 0  # ELF PT_LOAD zero-fill initialization, not live runtime state
+    return struct.unpack_from('<Q', b, offset(symbols[name], 8))[0]
+
+builtins = []
+tab = pointer('PyImport_Inittab')
+for n in range(256):
+    name, init = struct.unpack_from('<QQ', b, offset(tab+16*n,16))
+    if not name:
+        assert init == 0
+        break
+    builtins.append({'name': string(name), 'initializer': hex(init), 'matching_symbols': sorted(k for k,v in symbols.items() if v == init) if init else []})
+else:
+    raise AssertionError('missing builtin sentinel')
+
+frozen = {}
+for sym in ['_PyImport_FrozenBootstrap','_PyImport_FrozenStdlib','_PyImport_FrozenTest']:
+    rows=[]
+    tab = pointer(sym)
+    for n in range(256):
+        name, code, size, package, getter = struct.unpack_from('<QQiiQ', b, offset(tab+32*n,32))
+        if not name:
+            assert code == size == package == getter == 0
+            break
+        payload = b[offset(code,abs(size)):offset(code,abs(size))+abs(size)] if code else None
+        rows.append({'name':string(name),'is_package':package,'size':size,'code_address':hex(code),'get_code_address':hex(getter),'payload_sha256':hashlib.sha256(payload).hexdigest() if payload is not None else None})
+    else:
+        raise AssertionError('missing frozen sentinel')
+    frozen[sym] = rows
+
+def elf_record(path):
+    raw=path.read_bytes()
+    header=subprocess.check_output(['readelf','-Wh',str(path)],text=True)
+    prog=subprocess.check_output(['readelf','-Wl',str(path)],text=True)
+    dyn=subprocess.check_output(['readelf','-Wd',str(path)],text=True)
+    notes=subprocess.check_output(['readelf','-Wn',str(path)],text=True)
+    return {'path':'/'+str(path.relative_to(root)),'size':len(raw),'sha256':hashlib.sha256(raw).hexdigest(),
+        'elf_type':re.search(r'Type:\s+(\S+)',header)[1],
+        'build_id':re.search(r'Build ID: (\w+)',notes)[1],
+        'pt_interp':(re.search(r'Requesting program interpreter: (.*?)\]',prog)[1] if 'Requesting program interpreter:' in prog else None),
+        'needed':re.findall(r'\(NEEDED\).*?\[(.*?)\]',dyn),
+        'rpath_runpath':re.findall(r'\((?:RPATH|RUNPATH)\).*?\[(.*?)\]',dyn),
+        'gnu_relro':'GNU_RELRO' in prog,'gnu_stack_executable':bool(re.search(r'GNU_STACK.*RWE',prog)),
+        'dynamic_bind_now':bool(re.search(r'BIND_NOW|FLAGS.*\bNOW\b',dyn))}
+
+paths=[exe]+sorted((root/'usr/lib/python3.12/lib-dynload').glob('*.so'))
+for pattern in ['ld-linux-x86-64.so.2','libc.so.6','libm.so.6','libz.so.1.3','libexpat.so.1.9.1','libcrypto.so.3','libssl.so.3','ossl-modules/legacy.so']:
+    paths.extend((root/'usr/lib/x86_64-linux-gnu').glob(pattern))
+assert len(paths)==55, len(paths)
+config=(root/'usr/lib/python3.12/config-3.12-x86_64-linux-gnu/config.c').read_text()
+registrations=re.findall(r'\{"([^"]+)",\s*(\w+)\}',config)
+assert [r['name'] for r in builtins]==[name for name,_ in registrations]
+assert all((r['initializer']=='0x0' and callback=='NULL') or callback in r['matching_symbols'] for r,(_,callback) in zip(builtins,registrations))
+result={'scope':'Static extracted exact Ubuntu package bytes; no target execution; package provenance and acceptance assessed separately.',
+    'interpreter_sha256':hashlib.sha256(b).hexdigest(),'builtin_table_pointer':hex(pointer('PyImport_Inittab')),
+    'config_c_ordered_names_and_initializers_match':True,
+    'builtin_table':builtins,'frozen_tables':frozen,'custom_frozen_pointer':hex(pointer('PyImport_FrozenModules')),
+    'elf_records':[elf_record(p) for p in paths]}
+out=Path('/workspace/work/stage9-cpython/docs/architecture/evidence/stage9_observer_3a_cpython_static_tables_v1.json')
+out.write_text(json.dumps(result,indent=2,sort_keys=True)+'\n')
+print(json.dumps({'builtin_count':len(builtins),'builtin_names':[r['name'] for r in builtins], 'frozen':{k:[r['name'] for r in v] for k,v in frozen.items()},'elf_record_count':len(paths)},indent=2))

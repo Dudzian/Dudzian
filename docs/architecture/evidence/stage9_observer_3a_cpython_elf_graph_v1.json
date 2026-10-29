@@ -1,0 +1,359 @@
+{
+  "acyclic_for_selected_needed_and_executable_interp_edges": true,
+  "edges": [
+    {
+      "candidate_package_member": "libm.so.6",
+      "kind": "DT_NEEDED",
+      "needed": "libm.so.6",
+      "ordinal": 0,
+      "requester": "python3.12",
+      "resolution_status": "NOT_YET_PROVEN"
+    },
+    {
+      "candidate_package_member": "libz.so.1.3",
+      "kind": "DT_NEEDED",
+      "needed": "libz.so.1",
+      "ordinal": 1,
+      "requester": "python3.12",
+      "resolution_status": "NOT_YET_PROVEN"
+    },
+    {
+      "candidate_package_member": "libexpat.so.1.9.1",
+      "kind": "DT_NEEDED",
+      "needed": "libexpat.so.1",
+      "ordinal": 2,
+      "requester": "python3.12",
+      "resolution_status": "NOT_YET_PROVEN"
+    },
+    {
+      "candidate_package_member": "libc.so.6",
+      "kind": "DT_NEEDED",
+      "needed": "libc.so.6",
+      "ordinal": 3,
+      "requester": "python3.12",
+      "resolution_status": "NOT_YET_PROVEN"
+    },
+    {
+      "candidate_package_member": "libcrypto.so.3",
+      "kind": "DT_NEEDED",
+      "needed": "libcrypto.so.3",
+      "ordinal": 0,
+      "requester": "_hashlib.cpython-312-x86_64-linux-gnu.so",
+      "resolution_status": "NOT_YET_PROVEN"
+    },
+    {
+      "candidate_package_member": "libc.so.6",
+      "kind": "DT_NEEDED",
+      "needed": "libc.so.6",
+      "ordinal": 1,
+      "requester": "_hashlib.cpython-312-x86_64-linux-gnu.so",
+      "resolution_status": "NOT_YET_PROVEN"
+    },
+    {
+      "candidate_package_member": "libssl.so.3",
+      "kind": "DT_NEEDED",
+      "needed": "libssl.so.3",
+      "ordinal": 0,
+      "requester": "_ssl.cpython-312-x86_64-linux-gnu.so",
+      "resolution_status": "NOT_YET_PROVEN"
+    },
+    {
+      "candidate_package_member": "libcrypto.so.3",
+      "kind": "DT_NEEDED",
+      "needed": "libcrypto.so.3",
+      "ordinal": 1,
+      "requester": "_ssl.cpython-312-x86_64-linux-gnu.so",
+      "resolution_status": "NOT_YET_PROVEN"
+    },
+    {
+      "candidate_package_member": "libc.so.6",
+      "kind": "DT_NEEDED",
+      "needed": "libc.so.6",
+      "ordinal": 2,
+      "requester": "_ssl.cpython-312-x86_64-linux-gnu.so",
+      "resolution_status": "NOT_YET_PROVEN"
+    },
+    {
+      "candidate_package_member": "ld-linux-x86-64.so.2",
+      "kind": "DT_NEEDED",
+      "needed": "ld-linux-x86-64.so.2",
+      "ordinal": 0,
+      "requester": "libc.so.6",
+      "resolution_status": "NOT_YET_PROVEN"
+    },
+    {
+      "candidate_package_member": "libc.so.6",
+      "kind": "DT_NEEDED",
+      "needed": "libc.so.6",
+      "ordinal": 0,
+      "requester": "libm.so.6",
+      "resolution_status": "NOT_YET_PROVEN"
+    },
+    {
+      "candidate_package_member": "ld-linux-x86-64.so.2",
+      "kind": "DT_NEEDED",
+      "needed": "ld-linux-x86-64.so.2",
+      "ordinal": 1,
+      "requester": "libm.so.6",
+      "resolution_status": "NOT_YET_PROVEN"
+    },
+    {
+      "candidate_package_member": "libc.so.6",
+      "kind": "DT_NEEDED",
+      "needed": "libc.so.6",
+      "ordinal": 0,
+      "requester": "libz.so.1.3",
+      "resolution_status": "NOT_YET_PROVEN"
+    },
+    {
+      "candidate_package_member": "libc.so.6",
+      "kind": "DT_NEEDED",
+      "needed": "libc.so.6",
+      "ordinal": 0,
+      "requester": "libexpat.so.1.9.1",
+      "resolution_status": "NOT_YET_PROVEN"
+    },
+    {
+      "candidate_package_member": "libc.so.6",
+      "kind": "DT_NEEDED",
+      "needed": "libc.so.6",
+      "ordinal": 0,
+      "requester": "libcrypto.so.3",
+      "resolution_status": "NOT_YET_PROVEN"
+    },
+    {
+      "candidate_package_member": "libcrypto.so.3",
+      "kind": "DT_NEEDED",
+      "needed": "libcrypto.so.3",
+      "ordinal": 0,
+      "requester": "libssl.so.3",
+      "resolution_status": "NOT_YET_PROVEN"
+    },
+    {
+      "candidate_package_member": "libc.so.6",
+      "kind": "DT_NEEDED",
+      "needed": "libc.so.6",
+      "ordinal": 1,
+      "requester": "libssl.so.3",
+      "resolution_status": "NOT_YET_PROVEN"
+    },
+    {
+      "candidate_package_member": "libcrypto.so.3",
+      "kind": "DT_NEEDED",
+      "needed": "libcrypto.so.3",
+      "ordinal": 0,
+      "requester": "legacy.so",
+      "resolution_status": "NOT_YET_PROVEN"
+    },
+    {
+      "candidate_package_member": "libc.so.6",
+      "kind": "DT_NEEDED",
+      "needed": "libc.so.6",
+      "ordinal": 1,
+      "requester": "legacy.so",
+      "resolution_status": "NOT_YET_PROVEN"
+    },
+    {
+      "candidate_package_member": "ld-linux-x86-64.so.2",
+      "kind": "PT_INTERP",
+      "pathname": "/lib64/ld-linux-x86-64.so.2",
+      "requester": "python3.12",
+      "resolution_status": "NOT_YET_PROVEN"
+    }
+  ],
+  "evidence_status": "VERIFIED_FROM_STATIC_ELF",
+  "excluded_relations": [
+    "CPython API symbol lookup is not DT_NEEDED",
+    "Native imports are dynamic dlopen events with caller/flags/path contexts pending",
+    "Provider loads remain conditional design choices",
+    "libc PT_INTERP header is not a second startup event when loaded as a DSO"
+  ],
+  "nodes": [
+    {
+      "build_id": "337d65cf00021797985cc9f77c0cc334a9fbeb38",
+      "dynamic_bind_now": false,
+      "elf_type": "EXEC",
+      "gnu_relro": true,
+      "gnu_stack_executable": false,
+      "needed": [
+        "libm.so.6",
+        "libz.so.1",
+        "libexpat.so.1",
+        "libc.so.6"
+      ],
+      "path": "/usr/bin/python3.12",
+      "pt_interp": "/lib64/ld-linux-x86-64.so.2",
+      "rpath_runpath": [],
+      "sha256": "e50d468e8b0adfb05733f5b87b3cff34829c4a8c1aea50c865aa8bdfe4bb150f",
+      "size": 8020928
+    },
+    {
+      "build_id": "33c38727eb4140c55f853fd9e534856569024762",
+      "dynamic_bind_now": false,
+      "elf_type": "DYN",
+      "gnu_relro": true,
+      "gnu_stack_executable": false,
+      "needed": [
+        "libcrypto.so.3",
+        "libc.so.6"
+      ],
+      "path": "/usr/lib/python3.12/lib-dynload/_hashlib.cpython-312-x86_64-linux-gnu.so",
+      "pt_interp": null,
+      "rpath_runpath": [],
+      "sha256": "8dc6cda6dd9495b95a2bfb5b26e8cf06b72f36dc0213d958b9277a958287f0fe",
+      "size": 64368
+    },
+    {
+      "build_id": "f24fcec743f7d42ed6c90ccc0ef455c4d4ab99a9",
+      "dynamic_bind_now": false,
+      "elf_type": "DYN",
+      "gnu_relro": true,
+      "gnu_stack_executable": false,
+      "needed": [],
+      "path": "/usr/lib/python3.12/lib-dynload/_json.cpython-312-x86_64-linux-gnu.so",
+      "pt_interp": null,
+      "rpath_runpath": [],
+      "sha256": "ca8e35c58f7bc8e27258c4af43651c941413bc6318903621253485b0395758a3",
+      "size": 48952
+    },
+    {
+      "build_id": "274fe0d95b42409f31097a8466826cae12c489d9",
+      "dynamic_bind_now": false,
+      "elf_type": "DYN",
+      "gnu_relro": true,
+      "gnu_stack_executable": false,
+      "needed": [
+        "libssl.so.3",
+        "libcrypto.so.3",
+        "libc.so.6"
+      ],
+      "path": "/usr/lib/python3.12/lib-dynload/_ssl.cpython-312-x86_64-linux-gnu.so",
+      "pt_interp": null,
+      "rpath_runpath": [],
+      "sha256": "80c755c80688b92e0f32af9168a605f1283256077f35d30f6cf518252f2a6660",
+      "size": 221360
+    },
+    {
+      "build_id": "0d77dbd4379bf0b5af3e05be7fb6af1e4cea7c96",
+      "dynamic_bind_now": true,
+      "elf_type": "DYN",
+      "gnu_relro": true,
+      "gnu_stack_executable": false,
+      "needed": [],
+      "path": "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2",
+      "pt_interp": null,
+      "rpath_runpath": [],
+      "sha256": "c20a2dc8917c755f02b94049356320fe1f62ac7d9f8994731f807d9df39302da",
+      "size": 236616
+    },
+    {
+      "build_id": "a4a7992a8e66555c8141ab2a08a8465ff6e0ea65",
+      "dynamic_bind_now": true,
+      "elf_type": "DYN",
+      "gnu_relro": true,
+      "gnu_stack_executable": false,
+      "needed": [
+        "ld-linux-x86-64.so.2"
+      ],
+      "path": "/usr/lib/x86_64-linux-gnu/libc.so.6",
+      "pt_interp": "/lib64/ld-linux-x86-64.so.2",
+      "rpath_runpath": [],
+      "sha256": "3a15d66867d83762c7f2f1e37359cb8f6c5743edb369c65285cb0b1c4f7498bf",
+      "size": 2129424
+    },
+    {
+      "build_id": "d53fcbff9f855463606b25cfbe2a2e10856ea3a7",
+      "dynamic_bind_now": true,
+      "elf_type": "DYN",
+      "gnu_relro": true,
+      "gnu_stack_executable": false,
+      "needed": [
+        "libc.so.6",
+        "ld-linux-x86-64.so.2"
+      ],
+      "path": "/usr/lib/x86_64-linux-gnu/libm.so.6",
+      "pt_interp": null,
+      "rpath_runpath": [],
+      "sha256": "fce00b6f25f459cf4ae0b7fae4257909a1a8a86f9149e7c029a5d617baf1ccd0",
+      "size": 952616
+    },
+    {
+      "build_id": "2f47d490170763b8b8e0064675d234bfede6c1db",
+      "dynamic_bind_now": false,
+      "elf_type": "DYN",
+      "gnu_relro": true,
+      "gnu_stack_executable": false,
+      "needed": [
+        "libc.so.6"
+      ],
+      "path": "/usr/lib/x86_64-linux-gnu/libz.so.1.3",
+      "pt_interp": null,
+      "rpath_runpath": [],
+      "sha256": "f61677c7bdb7c2aa2a243ea781bfd16afcb361cede7b4ef76127a9d8eb9a5242",
+      "size": 113000
+    },
+    {
+      "build_id": "8ae4253012c773ce4f3ceb73efbd6dbd47fd9510",
+      "dynamic_bind_now": false,
+      "elf_type": "DYN",
+      "gnu_relro": true,
+      "gnu_stack_executable": false,
+      "needed": [
+        "libc.so.6"
+      ],
+      "path": "/usr/lib/x86_64-linux-gnu/libexpat.so.1.9.1",
+      "pt_interp": null,
+      "rpath_runpath": [],
+      "sha256": "286682ecbc5e59a638963b1a4e6351e65eb32fcf4bdcb9cb7569b6a61fe06a8d",
+      "size": 186624
+    },
+    {
+      "build_id": "2eb7babe130d27bd183d57702b02626012169094",
+      "dynamic_bind_now": true,
+      "elf_type": "DYN",
+      "gnu_relro": true,
+      "gnu_stack_executable": false,
+      "needed": [
+        "libc.so.6"
+      ],
+      "path": "/usr/lib/x86_64-linux-gnu/libcrypto.so.3",
+      "pt_interp": null,
+      "rpath_runpath": [],
+      "sha256": "6866ed711dab8927e1bf82bf1cd30e828bdfc34f3cc1e83b1c9eb01ce6c37d9a",
+      "size": 5309400
+    },
+    {
+      "build_id": "e33015d57b8e510a25d82399804f4bdd8d18453e",
+      "dynamic_bind_now": true,
+      "elf_type": "DYN",
+      "gnu_relro": true,
+      "gnu_stack_executable": false,
+      "needed": [
+        "libcrypto.so.3",
+        "libc.so.6"
+      ],
+      "path": "/usr/lib/x86_64-linux-gnu/libssl.so.3",
+      "pt_interp": null,
+      "rpath_runpath": [],
+      "sha256": "a40e7b67489bbd257e432c700ff8f6a1ad796425b5eccecdc2930127fdd86624",
+      "size": 696512
+    },
+    {
+      "build_id": "16c63d868f8fee77e85334c98a073dd344a0f67d",
+      "dynamic_bind_now": true,
+      "elf_type": "DYN",
+      "gnu_relro": true,
+      "gnu_stack_executable": false,
+      "needed": [
+        "libcrypto.so.3",
+        "libc.so.6"
+      ],
+      "path": "/usr/lib/x86_64-linux-gnu/ossl-modules/legacy.so",
+      "pt_interp": null,
+      "rpath_runpath": [],
+      "sha256": "e639c7121825222dc720bd38aa1fca3ddcedd7d1213dc72ce006b8ccf541b547",
+      "size": 129256
+    }
+  ],
+  "scope": "Preliminary selected exact package ELF graph; no physical host or effective loader resolution claim. Other 43 inventoried ELF objects are not declared selected runtime."
+}

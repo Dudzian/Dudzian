@@ -1,0 +1,1253 @@
+{
+  "scope": "Exact Ubuntu python3.12 3.12.3-1ubuntu0.17 amd64 archive payload and quilt-applied source. Host tooling reads only; no target execution.",
+  "evidence_status": "VERIFIED_FROM_EXACT_BUILD",
+  "archive_chain": "stage9_observer_3a_cpython_archive_verification_v1.json",
+  "package_members": [
+    {
+      "path": "usr/lib/python3.12/config-3.12-x86_64-linux-gnu/config.c",
+      "size_bytes": 5474,
+      "sha256": "af12a9a892f0bfed75bb53877dbe6353150dc276c5b20a97d01e4bdf665058be"
+    },
+    {
+      "path": "usr/lib/python3.12/config-3.12-x86_64-linux-gnu/config.c.in",
+      "size_bytes": 1752,
+      "sha256": "5c76ef60a799f420b09b047dc1087728e5ed08ba82f6c7664c4d4f1d1d715b21"
+    },
+    {
+      "path": "usr/lib/python3.12/config-3.12-x86_64-linux-gnu/Setup",
+      "size_bytes": 11197,
+      "sha256": "095fca1a74ee6eff3601b8d9c92ca9f9bf32869228e2b852400de6c425197328"
+    },
+    {
+      "path": "usr/lib/python3.12/config-3.12-x86_64-linux-gnu/Setup.local",
+      "size_bytes": 1068,
+      "sha256": "b5a40b9aeb32765319b6579da8dddd9dff628a26f736c97f5cc041140e006379"
+    },
+    {
+      "path": "usr/lib/python3.12/config-3.12-x86_64-linux-gnu/Setup.bootstrap",
+      "size_bytes": 902,
+      "sha256": "2917936af36bd7d641c737f72f68599fd13c26a28faebba7c07799879b1b9b31"
+    },
+    {
+      "path": "usr/lib/python3.12/config-3.12-x86_64-linux-gnu/Setup.stdlib",
+      "size_bytes": 6268,
+      "sha256": "38c68f6adb163c8123483b4ba0b738858fa392c69e352d2a2bfdbd0516f15d57"
+    },
+    {
+      "path": "usr/lib/python3.12/config-3.12-x86_64-linux-gnu/Makefile",
+      "size_bytes": 178567,
+      "sha256": "8aa2fc9e04721bd6ff24f8aa39013618cb16fb77b0572a5dfcb5e78da73a4de7"
+    },
+    {
+      "path": "usr/lib/python3.12/config-3.12-x86_64-linux-gnu/makesetup",
+      "size_bytes": 9312,
+      "sha256": "0615264cbe9f3a4fce27de0054839ea814f2fe6f6091a0e17b18b5b15c665cfa"
+    },
+    {
+      "path": "usr/include/x86_64-linux-gnu/python3.12/pyconfig.h",
+      "size_bytes": 55858,
+      "sha256": "23931f53bc7ee512c6bd3162828747494eaa5e21f23dd63b31170ec1adfbe65e"
+    },
+    {
+      "path": "usr/lib/python3.12/_sysconfigdata__x86_64-linux-gnu.py",
+      "size_bytes": 49505,
+      "sha256": "ee5bb5493fa4575f7788e1b0e8a067b9c463f9705dcb36f5eb571d1c0812ea82"
+    },
+    {
+      "path": "usr/lib/python3.12/hashlib.py",
+      "size_bytes": 9349,
+      "sha256": "6dbdebf270868b391080e21dc9687eddfaf321c965ad979f68d3f5c423c613ab"
+    },
+    {
+      "path": "usr/lib/python3.12/datetime.py",
+      "size_bytes": 268,
+      "sha256": "ef20dc6b3554cd585dddffdc573f1f9a7a54c522f2a3fb4576c44edbb1e14238"
+    },
+    {
+      "path": "usr/lib/python3.12/dataclasses.py",
+      "size_bytes": 61753,
+      "sha256": "0e449d55d6206b0022f541ba32be88fafc934ff71d9aa65f31f101ca6147f2ae"
+    },
+    {
+      "path": "usr/lib/python3.12/typing.py",
+      "size_bytes": 117428,
+      "sha256": "c45d935c17234b1d6ae42d2d5499d3e03b4e2548fae0c4fce15477e23502214d"
+    },
+    {
+      "path": "usr/lib/python3.12/inspect.py",
+      "size_bytes": 125420,
+      "sha256": "13945f061d93cf7b8f812d2afc279ff0b3aea799c7146b1c0c58c6e644bbc3e1"
+    },
+    {
+      "path": "usr/lib/python3.12/tokenize.py",
+      "size_bytes": 21214,
+      "sha256": "a39cd5ee895abc085117448fba78ccc18bea3faf073ac18c5365b26e0dd1fe7c"
+    },
+    {
+      "path": "usr/lib/python3.12/logging/__init__.py",
+      "size_bytes": 83437,
+      "sha256": "43f86bbc08fdd5c7b6e697abffe1381f534a92bb32e1f1aee8360d6a142592a1"
+    },
+    {
+      "path": "usr/lib/python3.12/json/__init__.py",
+      "size_bytes": 14020,
+      "sha256": "d5d41e2c29049515d295d81a6d40b4890fbec8d8482cfb401630f8ef2f77e4d5"
+    },
+    {
+      "path": "usr/lib/python3.12/json/decoder.py",
+      "size_bytes": 12473,
+      "sha256": "9f02654649816145bc76f8c210a5fe3ba1de142d4d97a1c93105732e747c285b"
+    },
+    {
+      "path": "usr/lib/python3.12/json/encoder.py",
+      "size_bytes": 16070,
+      "sha256": "af7bd40a0d0d0a3e726a9b4b3a2a543019f6ab97a340d0162a9c29ca9da97869"
+    },
+    {
+      "path": "usr/lib/python3.12/json/scanner.py",
+      "size_bytes": 2425,
+      "sha256": "8604d9d03786d0d509abb49e9f069337278ea988c244069ae8ca2c89acc2cb08"
+    },
+    {
+      "path": "usr/lib/python3.12/encodings/__init__.py",
+      "size_bytes": 5884,
+      "sha256": "78c4744d407690f321565488710b5aaf6486b5afa8d185637aa1e7633ab59cd8"
+    },
+    {
+      "path": "usr/lib/python3.12/encodings/aliases.py",
+      "size_bytes": 15677,
+      "sha256": "6fdcc49ba23a0203ae6cf28e608f8e6297d7c4d77d52e651db3cb49b9564c6d2"
+    },
+    {
+      "path": "usr/lib/python3.12/encodings/utf_8.py",
+      "size_bytes": 1005,
+      "sha256": "ba0cac060269583523ca9506473a755203037c57d466a11aa89a30a5f6756f3d"
+    },
+    {
+      "path": "usr/lib/python3.12/encodings/utf_16_be.py",
+      "size_bytes": 1037,
+      "sha256": "3357196f3fa52433326a6626880e34964e00c5570aee50e9a0a0a7c6d86f6e4f"
+    },
+    {
+      "path": "usr/lib/python3.12/re/_constants.py",
+      "size_bytes": 5930,
+      "sha256": "fa4fdb200f238f9e7817b63892b0d69833d8165134801e775e10cc113348a375"
+    },
+    {
+      "path": "usr/lib/python3.12/re/__init__.py",
+      "size_bytes": 16315,
+      "sha256": "8ff3c37c63b917fcf8dc8d50993a502292a3dc159e41de4f4018c72a53d1c07b"
+    },
+    {
+      "path": "usr/lib/python3.12/re/_compiler.py",
+      "size_bytes": 26089,
+      "sha256": "c05067f8bfa4c13cbbf1eedc4d5cafc9b621bcb6ebc5771ba0518a18095af15a"
+    },
+    {
+      "path": "usr/lib/python3.12/re/_parser.py",
+      "size_bytes": 41201,
+      "sha256": "a51a85b37cf3f44ba7ff25754da5f31306e4ccfa6eb3c017f9d37bdf4e770840"
+    },
+    {
+      "path": "usr/lib/python3.12/re/_casefix.py",
+      "size_bytes": 5446,
+      "sha256": "41572ac50cf96b04496e676d8a6708898bb8e752e06dad34ed4c50c5d8f1fe40"
+    }
+  ],
+  "source_members": [
+    {
+      "path": "debian/rules",
+      "size_bytes": 55715,
+      "sha256": "0146c8e8c01756f41387213f5c289df20310e75ebd880d94977f5373e2dcc33c"
+    },
+    {
+      "path": "debian/changelog",
+      "size_bytes": 208322,
+      "sha256": "0919a82649eb8d3d1110d5498ac1f159929190b2e6ec75605d47f1b8f17ade94"
+    },
+    {
+      "path": "debian/patches/series",
+      "size_bytes": 1927,
+      "sha256": "f66a47608220d87ea2284fd17056c54316e867569cb4bf490391b54b9218ad12"
+    },
+    {
+      "path": "debian/PVER-minimal.README.Debian.in",
+      "size_bytes": 4135,
+      "sha256": "da87bcab0bfa03c15fdeb5a25bd4bbc1ef6b71ed6a456d6f4410c049893c3efa"
+    },
+    {
+      "path": "Modules/config.c.in",
+      "size_bytes": 1752,
+      "sha256": "5c76ef60a799f420b09b047dc1087728e5ed08ba82f6c7664c4d4f1d1d715b21"
+    },
+    {
+      "path": "Modules/Setup",
+      "size_bytes": 11197,
+      "sha256": "095fca1a74ee6eff3601b8d9c92ca9f9bf32869228e2b852400de6c425197328"
+    },
+    {
+      "path": "Modules/Setup.bootstrap.in",
+      "size_bytes": 919,
+      "sha256": "d7a4c34c97f414585c7e8480c106a0f85075fb166d4c82a91c5b0b00df455271"
+    },
+    {
+      "path": "Modules/Setup.stdlib.in",
+      "size_bytes": 8108,
+      "sha256": "9e305741899860a69787fb68356cc86fa7b71d8ab12ba0187e006f85fe8ab177"
+    },
+    {
+      "path": "Modules/_datetimemodule.c",
+      "size_bytes": 232296,
+      "sha256": "d9b3997d87ca3636edcedeba055b98c4e1cc7a725014882d03fa72b2dea77fba"
+    },
+    {
+      "path": "Modules/_hashopenssl.c",
+      "size_bytes": 61647,
+      "sha256": "a392adc850d215516a5570aa3c634da8cb5086c75be06d58a4651ffce7526d4a"
+    },
+    {
+      "path": "Python/frozen.c",
+      "size_bytes": 8283,
+      "sha256": "ff2d5e301f1725c013788f30882fd48127a9ecfe891bfaa592cc08c284d4f79f"
+    },
+    {
+      "path": "Python/import.c",
+      "size_bytes": 111633,
+      "sha256": "8b0473e3972d22ed745e44fb3c61d34328e4cd9813e22dd8f4f4d818fc4410c7"
+    },
+    {
+      "path": "Python/dynload_shlib.c",
+      "size_bytes": 2923,
+      "sha256": "6b78ca8ca5ebe73deba0576ea17b4df48434741d16b8ef34952498638c4cc220"
+    },
+    {
+      "path": "Python/initconfig.c",
+      "size_bytes": 92087,
+      "sha256": "03ae4c6dabff37d78e63131e414bc0148a6d54ca9f72d317f63e0894a1ecba81"
+    },
+    {
+      "path": "Tools/build/freeze_modules.py",
+      "size_bytes": 24739,
+      "sha256": "e41c913ae5b0cbec0b3051a175978d9bb52905a796beff2dec447fc666fd2641"
+    },
+    {
+      "path": "Tools/build/deepfreeze.py",
+      "size_bytes": 19405,
+      "sha256": "a1b03b36b66baef41d700c3ceee68ede7588c843b935c786df298ad6b489b8d0"
+    },
+    {
+      "path": "Include/internal/pycore_import.h",
+      "size_bytes": 6358,
+      "sha256": "e5b179692f05707e7fb182b908ed46f9a75f4a751b20501a74de2a440c387e1d"
+    },
+    {
+      "path": "Include/internal/pycore_interp.h",
+      "size_bytes": 9086,
+      "sha256": "23f5d7884f9e0b212fe79879bbcdc5a2c23c22283db38cadbac6f108bf0f1b75"
+    }
+  ],
+  "active_patches_count": 82,
+  "active_patches": [
+    {
+      "path": "debian/patches/deb-locations.diff",
+      "size_bytes": 876,
+      "sha256": "20a21979c06e57149d61c69344f050cadab14763683d013df96aedc1d9ac74cc",
+      "affected_paths": [
+        "Lib/pydoc.py",
+        "Misc/python.man"
+      ]
+    },
+    {
+      "path": "debian/patches/distutils-install-layout.diff",
+      "size_bytes": 10724,
+      "sha256": "d889bb2a48c9607ce2b4e52bc577272c61dc521e90b6b325f8672b711d318a3a",
+      "affected_paths": [
+        "Lib/site.py",
+        "Lib/test/test_site.py",
+        "Lib/pydoc.py",
+        "Lib/_distutils_system_mod.py"
+      ]
+    },
+    {
+      "path": "debian/patches/locale-module.diff",
+      "size_bytes": 766,
+      "sha256": "0aa6fa78224469ac401c8f4424f390c9be0f1c9928546a68d625540f0a1f0d21",
+      "affected_paths": [
+        "Lib/locale.py"
+      ]
+    },
+    {
+      "path": "debian/patches/sysconfig-debian-schemes.diff",
+      "size_bytes": 3642,
+      "sha256": "7bce498464c8b600efd7b233e0eca8baf9cf48e43f601c37b3d7d936e54036d0",
+      "affected_paths": [
+        "Lib/sysconfig.py",
+        "Lib/test/test_sysconfig.py"
+      ]
+    },
+    {
+      "path": "debian/patches/tkinter-import.diff",
+      "size_bytes": 572,
+      "sha256": "166ad6583e4415d29805c220c4d428aa92938ffa1cb9c396cf8ece11bf9355b8",
+      "affected_paths": [
+        "Lib/tkinter/__init__.py"
+      ]
+    },
+    {
+      "path": "debian/patches/gdbm-import.diff",
+      "size_bytes": 738,
+      "sha256": "f19ed394875c7352f94f7cfb503161ba95533d739cbe90defb63c1c387b2c58c",
+      "affected_paths": [
+        "Lib/dbm/gnu.py",
+        "Lib/dbm/ndbm.py"
+      ]
+    },
+    {
+      "path": "debian/patches/link-opt.diff",
+      "size_bytes": 1001,
+      "sha256": "80accfa18476f6ff246f04f20d48fb7d3c627c6a2a3bb39d753eb1601d68f673",
+      "affected_paths": [
+        "configure.ac"
+      ]
+    },
+    {
+      "path": "debian/patches/setup-modules.diff",
+      "size_bytes": 1518,
+      "sha256": "4a8e9c0f32bde88e08e1a907e611f8f7441291a54e4174e13c01b77d9f8510a3",
+      "affected_paths": [
+        "Modules/Setup"
+      ]
+    },
+    {
+      "path": "debian/patches/profiled-build.diff",
+      "size_bytes": 836,
+      "sha256": "5570b606bc415e37a852f816f93b6013a80d1643840bbaadd435da206eaea471",
+      "affected_paths": [
+        "Makefile.pre.in"
+      ]
+    },
+    {
+      "path": "debian/patches/langpack-gettext.diff",
+      "size_bytes": 1178,
+      "sha256": "937d448103d94436f20122a4a6e6d4c7b005e6bf0c7e1f0e0b2890cdd060b9ec",
+      "affected_paths": [
+        "Lib/gettext.py"
+      ]
+    },
+    {
+      "path": "debian/patches/disable-sem-check.diff",
+      "size_bytes": 839,
+      "sha256": "32858c17674c5b4994f32b77dc9cac974610ea92fd90699f32ae7a28b1d6e967",
+      "affected_paths": [
+        "configure.ac"
+      ]
+    },
+    {
+      "path": "debian/patches/lib-argparse.diff",
+      "size_bytes": 606,
+      "sha256": "9001de3dde193a180635c40e75cf25fbe87e93c34d453944846f45f2e7693dac",
+      "affected_paths": [
+        "Lib/argparse.py"
+      ]
+    },
+    {
+      "path": "debian/patches/ctypes-arm.diff",
+      "size_bytes": 1668,
+      "sha256": "3fc1ddd48c3cd179cef8b78c142b0e5d389889db0b3097e6a5d1edf4ad24047f",
+      "affected_paths": [
+        "Lib/ctypes/util.py"
+      ]
+    },
+    {
+      "path": "debian/patches/multiarch.diff",
+      "size_bytes": 1026,
+      "sha256": "5d2dc2fba3c5494917c2a11e858b73e35c5001547a10ffb4981cf0f664e0e9f3",
+      "affected_paths": [
+        "Lib/sysconfig.py",
+        "Makefile.pre.in"
+      ]
+    },
+    {
+      "path": "debian/patches/test-no-random-order.diff",
+      "size_bytes": 531,
+      "sha256": "dc249e43d7c4bcc0984b750abd86d592d0eb70457b0d917919b93d2ad3d16409",
+      "affected_paths": [
+        "Tools/scripts/run_tests.py"
+      ]
+    },
+    {
+      "path": "debian/patches/tempfile-minimal.diff",
+      "size_bytes": 6030,
+      "sha256": "2ba401a633be73f1b7e48f183ba03d165c53079390fe61652ad4d62c64708ca7",
+      "affected_paths": [
+        "Lib/tempfile.py"
+      ]
+    },
+    {
+      "path": "debian/patches/ensurepip-disabled.diff",
+      "size_bytes": 3201,
+      "sha256": "6b2da34ca7f69d6999813671b29c7fe88ce209dc56ece38fab1d29800ee06414",
+      "affected_paths": [
+        "Lib/ensurepip/__init__.py",
+        "Lib/venv/__init__.py"
+      ]
+    },
+    {
+      "path": "debian/patches/reproducible-buildinfo.diff",
+      "size_bytes": 747,
+      "sha256": "8cfea045f2fad473b93a0698a16f4d4e035b30a3a43fa6256c584e93fc6b8b5b",
+      "affected_paths": [
+        "Makefile.pre.in"
+      ]
+    },
+    {
+      "path": "debian/patches/pydoc-use-pager.diff",
+      "size_bytes": 678,
+      "sha256": "4537a72c1850db98c1d4869f2bf28ae00e9ff9aae6cfc217b0579a3c1bcfc848",
+      "affected_paths": [
+        "Lib/pydoc.py"
+      ]
+    },
+    {
+      "path": "debian/patches/local-doc-references.diff",
+      "size_bytes": 1107,
+      "sha256": "51f72dd95f3b290d50ffe6e48768c81295c82a277cfe8f3a673c492032bde7df",
+      "affected_paths": [
+        "Doc/tools/templates/layout.html",
+        "Lib/idlelib/help.html"
+      ]
+    },
+    {
+      "path": "debian/patches/argparse-no-shutil.diff",
+      "size_bytes": 727,
+      "sha256": "049e9c9752d193dcd961144a3db901fab5ee6d9f1a994bab58768dd996bf3813",
+      "affected_paths": [
+        "Lib/argparse.py"
+      ]
+    },
+    {
+      "path": "debian/patches/sysconfigdata-name.diff",
+      "size_bytes": 2235,
+      "sha256": "af26532f6facb1c862433142eaa6d3980f3e7fc3f594945cdcdad1db6db052a9",
+      "affected_paths": [
+        "Lib/sysconfig.py",
+        "Makefile.pre.in",
+        "configure.ac"
+      ]
+    },
+    {
+      "path": "debian/patches/sphinx3.diff",
+      "size_bytes": 813,
+      "sha256": "410da40dbf1530b7393b6551caa661110fdc11daf806429c99580a247e04ee85",
+      "affected_paths": [
+        "Doc/conf.py",
+        "Doc/Makefile"
+      ]
+    },
+    {
+      "path": "debian/patches/destshared-location.diff",
+      "size_bytes": 486,
+      "sha256": "18617a9ece088478c5efc51343f7a5fb2b8edd4aea446ffbe1d11b30861d5ff5",
+      "affected_paths": [
+        "Makefile.pre.in"
+      ]
+    },
+    {
+      "path": "debian/patches/fix-py_compile.diff",
+      "size_bytes": 459,
+      "sha256": "4c097b26e5abecc8b35ee690397181271f49ad1dcb191fd55360f35d8b62c43b",
+      "affected_paths": [
+        "Lib/py_compile.py"
+      ]
+    },
+    {
+      "path": "debian/patches/ntpath-import.diff",
+      "size_bytes": 1056,
+      "sha256": "9eb5dfdd0036c60a0099552d0df46550d98131ff189b19886ad4dc2e20b755a0",
+      "affected_paths": [
+        "Lib/pathlib.py"
+      ]
+    },
+    {
+      "path": "debian/patches/python3.12-updates.diff",
+      "size_bytes": 814,
+      "sha256": "fa629bb60ce204dae208f4c2507c657af43134747ff812d98443beaebff485ab",
+      "affected_paths": [
+        "Lib/compileall.py"
+      ]
+    },
+    {
+      "path": "debian/patches/issue108447.diff",
+      "size_bytes": 369,
+      "sha256": "81146a24871be6aab51f3864a734f8ef8691750853fc5a54d8a3ce8c1ce8a451",
+      "affected_paths": [
+        "configure.ac"
+      ]
+    },
+    {
+      "path": "debian/patches/makefile-bootstrap.diff",
+      "size_bytes": 617,
+      "sha256": "33330276dc1892494178455fdfcadb77684c9a0515f4567b60c069b525e1a12e",
+      "affected_paths": [
+        "Makefile.pre.in"
+      ]
+    },
+    {
+      "path": "debian/patches/CVE-2024-4032.patch",
+      "size_bytes": 16916,
+      "sha256": "a5b46ef24bca4e9a0d2dcb2f0bdd4839122ac5cbbecdd88b689ffb65da9691a7",
+      "affected_paths": [
+        "Doc/library/ipaddress.rst",
+        "Lib/ipaddress.py",
+        "Lib/test/test_ipaddress.py"
+      ]
+    },
+    {
+      "path": "debian/patches/CVE-2024-6232.patch",
+      "size_bytes": 10830,
+      "sha256": "f35e8620a6755ce0df9065f1d48843ba2845451e546e78cfa9c5e67f4b5a65be",
+      "affected_paths": [
+        "Lib/tarfile.py",
+        "Lib/test/test_tarfile.py"
+      ]
+    },
+    {
+      "path": "debian/patches/CVE-2024-6923.patch",
+      "size_bytes": 13290,
+      "sha256": "c53b9847f0764a4ffef0634684721409a3742588a0ba9f1602ea43d04ca26848",
+      "affected_paths": [
+        "Doc/library/email.errors.rst",
+        "Doc/library/email.policy.rst",
+        "Lib/email/_header_value_parser.py",
+        "Lib/email/_policybase.py",
+        "Lib/email/errors.py",
+        "Lib/email/generator.py",
+        "Lib/test/test_email/test_generator.py",
+        "Lib/test/test_email/test_policy.py"
+      ]
+    },
+    {
+      "path": "debian/patches/CVE-2024-7592.patch",
+      "size_bytes": 4981,
+      "sha256": "219872d68f55eafac7e118271fe5b0714fd0902111573c979ea40b0e96bbe802",
+      "affected_paths": [
+        "Lib/http/cookies.py",
+        "Lib/test/test_http_cookies.py"
+      ]
+    },
+    {
+      "path": "debian/patches/CVE-2024-8088-1.patch",
+      "size_bytes": 4422,
+      "sha256": "db7f438d1a3c4d02b0d51e6a1f8251821da88bc24098a84ee29550d05d4259e7",
+      "affected_paths": [
+        "Lib/test/test_zipfile/_path/test_path.py",
+        "Lib/zipfile/_path/__init__.py"
+      ]
+    },
+    {
+      "path": "debian/patches/CVE-2024-8088-2.patch",
+      "size_bytes": 7843,
+      "sha256": "d8ee5dc5d61a271f0bf99d3d0f2f6993d0388a43b1b0bf51d2d2f5df0f03e13b",
+      "affected_paths": [
+        "Lib/test/test_zipfile/_path/test_path.py",
+        "Lib/zipfile/_path/__init__.py"
+      ]
+    },
+    {
+      "path": "debian/patches/CVE-2023-27043.patch",
+      "size_bytes": 20090,
+      "sha256": "2224fded776d898c95093e571acfa3eae585e0c348f0dbd88c1f50f7762510d9",
+      "affected_paths": [
+        "Doc/library/email.utils.rst",
+        "Lib/email/utils.py",
+        "Lib/test/test_email/test_email.py"
+      ]
+    },
+    {
+      "path": "debian/patches/CVE-2024-9287.patch",
+      "size_bytes": 11987,
+      "sha256": "d512f2b7f9a45a3957dde9200412c1615e1aab5512eb428c45721b84b5ff9e17",
+      "affected_paths": [
+        "Lib/test/test_venv.py",
+        "Lib/venv/__init__.py",
+        "Lib/venv/scripts/common/activate",
+        "Lib/venv/scripts/nt/activate.bat",
+        "Lib/venv/scripts/posix/activate.csh",
+        "Lib/venv/scripts/posix/activate.fish"
+      ]
+    },
+    {
+      "path": "debian/patches/CVE-2024-12254.patch",
+      "size_bytes": 2559,
+      "sha256": "284c3b1a9ce3f05d03852347d1d4706d1792489ec681113b6dbeb6087974b6cb",
+      "affected_paths": [
+        "Lib/asyncio/selector_events.py",
+        "Lib/test/test_asyncio/test_selector_events.py"
+      ]
+    },
+    {
+      "path": "debian/patches/CVE-2025-0938.patch",
+      "size_bytes": 7774,
+      "sha256": "a5b614c2390dae409f54c8b6fa2c71c81d82840f0962b4ff41944f544c3dac17",
+      "affected_paths": [
+        "Lib/test/test_urlparse.py",
+        "Lib/urllib/parse.py"
+      ]
+    },
+    {
+      "path": "debian/patches/CVE-2025-1795-2.patch",
+      "size_bytes": 4217,
+      "sha256": "b090835b9850f4d08658d3e85ebe842c0acc2c24536b474f50313ac0105dd2ff",
+      "affected_paths": [
+        "Lib/email/_header_value_parser.py",
+        "Lib/test/test_email/test__header_value_parser.py"
+      ]
+    },
+    {
+      "path": "debian/patches/CVE-2025-4516.patch",
+      "size_bytes": 23112,
+      "sha256": "cad2b69970779070b46433566ee16e67b3187cd8fd13a7a265559c403ffe1cc9",
+      "affected_paths": [
+        "Include/cpython/bytesobject.h",
+        "Include/cpython/unicodeobject.h",
+        "Lib/test/test_codeccallbacks.py",
+        "Lib/test/test_codecs.py",
+        "Objects/bytesobject.c",
+        "Objects/unicodeobject.c",
+        "Parser/string_parser.c"
+      ]
+    },
+    {
+      "path": "debian/patches/CVE-202x-12718-4138-4x3x-4517.patch",
+      "size_bytes": 90876,
+      "sha256": "3874184c399867022a4812c0f89e44dedd22d3911ad5a783800ee9aa80dc55e2",
+      "affected_paths": [
+        "python3.12-3.12.3/Doc/library/os.path.rst",
+        "python3.12-3.12.3/Doc/library/tarfile.rst",
+        "python3.12-3.12.3/Doc/whatsnew/3.12.rst",
+        "python3.12-3.12.3/Lib/genericpath.py",
+        "python3.12-3.12.3/Lib/ntpath.py",
+        "python3.12-3.12.3/Lib/posixpath.py",
+        "python3.12-3.12.3/Lib/tarfile.py",
+        "python3.12-3.12.3/Lib/test/test_ntpath.py",
+        "python3.12-3.12.3/Lib/test/test_posixpath.py",
+        "python3.12-3.12.3/Lib/test/test_tarfile.py",
+        "python3.12-3.12.3/Misc/NEWS.d/next/Security/2025-06-02-11-32-23.gh-issue-135034.RLGjbp.rst"
+      ]
+    },
+    {
+      "path": "debian/patches/CVE-2025-6069.patch",
+      "size_bytes": 10461,
+      "sha256": "b78eeb493ffed2556471ef4170ab3593655a3a7fab8bee412a7c3411825dbadc",
+      "affected_paths": [
+        "python3.12-3.12.3/Lib/html/parser.py",
+        "python3.12-3.12.3/Lib/test/test_htmlparser.py",
+        "python3.12-3.12.3/Misc/NEWS.d/next/Security/2025-06-13-15-55-22.gh-issue-135462.KBeJpc.rst"
+      ]
+    },
+    {
+      "path": "debian/patches/CVE-2025-8194.patch",
+      "size_bytes": 8208,
+      "sha256": "ff76424542aeb7f89c2394f50ce48615a0f9250bb054d12e9a4939610058d95c",
+      "affected_paths": [
+        "python3.12-3.12.3/Lib/tarfile.py",
+        "python3.12-3.12.3/Lib/test/test_tarfile.py",
+        "python3.12-3.12.3/Misc/NEWS.d/next/Library/2025-07-23-00-35-29.gh-issue-130577.c7EITy.rst"
+      ]
+    },
+    {
+      "path": "debian/patches/CVE-2025-6075-12.patch",
+      "size_bytes": 12470,
+      "sha256": "ab2294edfa5b5e6e797703f8fd6986913a0d7b60cfbd8e73b4f932ca5c7854e9",
+      "affected_paths": [
+        "python3.12-3.12.3/Lib/ntpath.py",
+        "python3.12-3.12.3/Lib/posixpath.py",
+        "python3.12-3.12.3/Lib/test/test_genericpath.py",
+        "python3.12-3.12.3/Lib/test/test_ntpath.py",
+        "python3.12-3.12.3/Misc/NEWS.d/next/Security/2025-05-30-22-33-27.gh-issue-136065.bu337o.rst"
+      ]
+    },
+    {
+      "path": "debian/patches/CVE-2025-8291.patch",
+      "size_bytes": 13947,
+      "sha256": "098be610fa8a6ef5a2cedb11669f8d376abe76de9aa3a353e427a9fedcb14454",
+      "affected_paths": [
+        "python3.12-3.12.3/Lib/test/test_zipfile/test_core.py",
+        "python3.12-3.12.3/Lib/zipfile/__init__.py"
+      ]
+    },
+    {
+      "path": "debian/patches/CVE-2025-13836.patch",
+      "size_bytes": 5277,
+      "sha256": "42bacfd39f7fcd8a33052fe951332fb2b4c09d4a9a0af34f8bd51af2b274ab1a",
+      "affected_paths": [
+        "python3.12-3.12.3/Lib/http/client.py",
+        "python3.12-3.12.3/Lib/test/test_httplib.py"
+      ]
+    },
+    {
+      "path": "debian/patches/CVE-2025-11468.patch",
+      "size_bytes": 4473,
+      "sha256": "71a84704ab59328b2436ce8a9ee81bcd3906c4578ae45911b836083c6408a0f1",
+      "affected_paths": [
+        "python3.12-3.12.3/Lib/email/_header_value_parser.py",
+        "python3.12-3.12.3/Lib/test/test_email/test__header_value_parser.py"
+      ]
+    },
+    {
+      "path": "debian/patches/CVE-2025-12084-1.patch",
+      "size_bytes": 2966,
+      "sha256": "279af9f949259f717ecabab1e57c93061d1c294a4894f158d8a1d3794f34a93e",
+      "affected_paths": [
+        "python3.12-3.12.3/Lib/test/test_minidom.py",
+        "python3.12-3.12.3/Lib/xml/dom/minidom.py"
+      ]
+    },
+    {
+      "path": "debian/patches/CVE-2025-12084-2.patch",
+      "size_bytes": 2696,
+      "sha256": "4ecf5f570eb7c2e124daafe073b068d1d291effad86fa6483f104ff767c8bb7e",
+      "affected_paths": [
+        "python3.12-3.12.3/Lib/test/test_minidom.py",
+        "python3.12-3.12.3/Lib/xml/dom/minidom.py"
+      ]
+    },
+    {
+      "path": "debian/patches/CVE-2025-12084-3.patch",
+      "size_bytes": 1847,
+      "sha256": "a90011e935a640d4a41507fd7e10fceb3c7ec025b9f8a15d11e333fd4a95e8d3",
+      "affected_paths": [
+        "python3.12-3.12.3/Lib/test/test_minidom.py"
+      ]
+    },
+    {
+      "path": "debian/patches/CVE-2025-13837.patch",
+      "size_bytes": 5938,
+      "sha256": "9fe8eab3d788b258018d0e9fd0037820c0ab86caa3f34c8566cdc287fae511d8",
+      "affected_paths": [
+        "python3.12-3.12.3/Lib/plistlib.py",
+        "python3.12-3.12.3/Lib/test/test_plistlib.py"
+      ]
+    },
+    {
+      "path": "debian/patches/CVE-2025-15282.patch",
+      "size_bytes": 2228,
+      "sha256": "cf872ebe59abe9abc9cd4c29fccc5c3245ec74aaa44c2ef4554d78c9f946f3cb",
+      "affected_paths": [
+        "python3.12-3.12.3/Lib/test/test_urllib.py",
+        "python3.12-3.12.3/Lib/urllib/request.py"
+      ]
+    },
+    {
+      "path": "debian/patches/CVE-2026-0672.patch",
+      "size_bytes": 7400,
+      "sha256": "65cab98bdba4c829bdeb4ad7698f14bf74e5535d662ee30697b620082b20db66",
+      "affected_paths": [
+        "python3.12-3.12.3/Doc/library/http.cookies.rst",
+        "python3.12-3.12.3/Lib/http/cookies.py",
+        "python3.12-3.12.3/Lib/test/test_http_cookies.py"
+      ]
+    },
+    {
+      "path": "debian/patches/CVE-2026-0865.patch",
+      "size_bytes": 3542,
+      "sha256": "fac33eb7d7578b60de4a797640293bc061030a8753b91f460cb50a27957afd62",
+      "affected_paths": [
+        "python3.12-3.12.3/Lib/test/support/__init__.py",
+        "python3.12-3.12.3/Lib/test/test_wsgiref.py",
+        "python3.12-3.12.3/Lib/wsgiref/headers.py"
+      ]
+    },
+    {
+      "path": "debian/patches/CVE-2026-0865-2.patch",
+      "size_bytes": 6813,
+      "sha256": "1644d5d0b223e4846be8e6bb97efe432183f538e4d78f6d58098c4313d618f02",
+      "affected_paths": [
+        "python3.12-3.12.3/Lib/test/test_wsgiref.py",
+        "python3.12-3.12.3/Lib/wsgiref/headers.py"
+      ]
+    },
+    {
+      "path": "debian/patches/lp2144593-fix-TextIOWrapper-write-during-flush.patch",
+      "size_bytes": 4385,
+      "sha256": "8ebfb28b56257202818035e3ecd4bc30211ad0aca0b92fde45b8453da40f56e3",
+      "affected_paths": [
+        "python3.12-3.12.3/Lib/test/test_io.py",
+        "python3.12-3.12.3/Misc/NEWS.d/next/Library/2024-05-24-14-32-24.gh-issue-119506.-nMNqq.rst",
+        "python3.12-3.12.3/Modules/_io/textio.c"
+      ]
+    },
+    {
+      "path": "debian/patches/CVE-2025-13462.patch",
+      "size_bytes": 5294,
+      "sha256": "2756a90530428c4b66dbedd6df6045685b79761e1b6a0a161891e538f720b0d8",
+      "affected_paths": [
+        "Lib/tarfile.py",
+        "Lib/test/test_tarfile.py"
+      ]
+    },
+    {
+      "path": "debian/patches/CVE-2025-69534-1.patch",
+      "size_bytes": 25797,
+      "sha256": "78ce88a0b6f7d8261ac6ea762eca7ebbcacbed39d3ccddb0bb9f663a8210d774",
+      "affected_paths": [
+        "Lib/html/parser.py",
+        "Lib/test/support/__init__.py",
+        "Lib/test/test_htmlparser.py"
+      ]
+    },
+    {
+      "path": "debian/patches/CVE-2025-69534-2.patch",
+      "size_bytes": 5232,
+      "sha256": "21c874f27c6a408a897995b8bddff764ee99151502e093d87cafcc4204ac28cb",
+      "affected_paths": [
+        "Lib/html/parser.py",
+        "Lib/test/test_htmlparser.py"
+      ]
+    },
+    {
+      "path": "debian/patches/CVE-2025-69534-3.patch",
+      "size_bytes": 6211,
+      "sha256": "af00cfdb35d0e9d13f265f7f5111ccb3b2c065c4489b53513521140bddb35225",
+      "affected_paths": [
+        "Lib/html/parser.py",
+        "Lib/test/test_htmlparser.py"
+      ]
+    },
+    {
+      "path": "debian/patches/CVE-2025-69534-4.patch",
+      "size_bytes": 9758,
+      "sha256": "853c02142aaf9d6ce27c69735d816a7c7d106329ba848c4dd65f46d276ac1a66",
+      "affected_paths": [
+        "Lib/html/parser.py",
+        "Lib/test/test_htmlparser.py"
+      ]
+    },
+    {
+      "path": "debian/patches/CVE-2025-69534-5.patch",
+      "size_bytes": 9635,
+      "sha256": "2954f601b3fd705dcbf8208c6df9aa749c5edf8c011f75426a4bc89dc08243af",
+      "affected_paths": [
+        "Lib/html/parser.py",
+        "Lib/test/test_htmlparser.py"
+      ]
+    },
+    {
+      "path": "debian/patches/CVE-2025-69534-6.patch",
+      "size_bytes": 18998,
+      "sha256": "3befc7d163cd52ce03c138abd8f9033ee2254276a1fbadeaee96c37ba008ebae",
+      "affected_paths": [
+        "Doc/library/html.parser.rst",
+        "Lib/html/parser.py",
+        "Lib/test/test_htmlparser.py"
+      ]
+    },
+    {
+      "path": "debian/patches/CVE-2026-1299.patch",
+      "size_bytes": 4846,
+      "sha256": "2633cf9774fac15dd57cafcf330250857837097fea89c895972cf4559e2e72b0",
+      "affected_paths": [
+        "Lib/email/generator.py",
+        "Lib/test/test_email/test_generator.py",
+        "Lib/test/test_email/test_policy.py"
+      ]
+    },
+    {
+      "path": "debian/patches/CVE-2026-1502.patch",
+      "size_bytes": 4827,
+      "sha256": "6920fd5a371957a65de04442d1777db386ffa9bded4429dc98d07a6fad7f00ce",
+      "affected_paths": [
+        "Lib/http/client.py",
+        "Lib/test/test_httplib.py"
+      ]
+    },
+    {
+      "path": "debian/patches/CVE-2026-2297.patch",
+      "size_bytes": 1656,
+      "sha256": "fea2295d0da76ffede44a5722b266453381e0260a09d1e2f434aeda095d05bad",
+      "affected_paths": [
+        "Lib/importlib/_bootstrap_external.py"
+      ]
+    },
+    {
+      "path": "debian/patches/CVE-2026-3276.patch",
+      "size_bytes": 10447,
+      "sha256": "ba1057105cbb470bc9044c4357744045dc3ebaddf300bc0eb12cec3589479184",
+      "affected_paths": [
+        "Lib/test/test_unicodedata.py",
+        "Modules/unicodedata.c"
+      ]
+    },
+    {
+      "path": "debian/patches/CVE-2026-3644.patch",
+      "size_bytes": 6248,
+      "sha256": "48c14bc49b6884b475b69121b41433a34c5ae7550116c1f66c5296fbb3089def",
+      "affected_paths": [
+        "Lib/http/cookies.py",
+        "Lib/test/test_http_cookies.py"
+      ]
+    },
+    {
+      "path": "debian/patches/CVE-2026-4224.patch",
+      "size_bytes": 3768,
+      "sha256": "4ae3ada0d6d9e6bfe211f0f1fc1bd885a5bb2f9c3a9c4e60a35ff5776fb9ab91",
+      "affected_paths": [
+        "Lib/test/test_pyexpat.py",
+        "Modules/pyexpat.c"
+      ]
+    },
+    {
+      "path": "debian/patches/CVE-2026-4519-1.patch",
+      "size_bytes": 4232,
+      "sha256": "e04a561f569eef6d46111f817568b41f295d96538be96898b6c64219408aa330",
+      "affected_paths": [
+        "Lib/test/test_webbrowser.py",
+        "Lib/webbrowser.py"
+      ]
+    },
+    {
+      "path": "debian/patches/CVE-2026-4519-2.patch",
+      "size_bytes": 5688,
+      "sha256": "373bba40b7f232f5e00c1661c924abc236081ee14b49233de202b1c5d98869e1",
+      "affected_paths": [
+        "Lib/test/test_webbrowser.py",
+        "Lib/webbrowser.py"
+      ]
+    },
+    {
+      "path": "debian/patches/CVE-2026-4786.patch",
+      "size_bytes": 2673,
+      "sha256": "9e49e682ba423ae40b77031c12484824ba2c14620b9f7807e010c727d6062192",
+      "affected_paths": [
+        "Lib/test/test_webbrowser.py",
+        "Lib/webbrowser.py"
+      ]
+    },
+    {
+      "path": "debian/patches/CVE-2026-6019-1.patch",
+      "size_bytes": 5479,
+      "sha256": "d99a9fc83bc5d38ff60ce8b9c07de32b093970820b08a151db1fd50a8b96ffe8",
+      "affected_paths": [
+        "Lib/http/cookies.py",
+        "Lib/test/test_http_cookies.py"
+      ]
+    },
+    {
+      "path": "debian/patches/CVE-2026-6019-2.patch",
+      "size_bytes": 5116,
+      "sha256": "9332fa2278330e6819601abfc14ac208f47c133b3a31daeae99a2a56e16526d4",
+      "affected_paths": [
+        "Lib/http/cookies.py",
+        "Lib/test/test_http_cookies.py"
+      ]
+    },
+    {
+      "path": "debian/patches/CVE-2026-6100.patch",
+      "size_bytes": 2327,
+      "sha256": "3e2efb82cc0d29f6237763abd27b533c2cef9125e9d5c66f1173c1261080d96e",
+      "affected_paths": [
+        "Modules/_bz2module.c",
+        "Modules/_lzmamodule.c",
+        "Modules/zlibmodule.c"
+      ]
+    },
+    {
+      "path": "debian/patches/CVE-2026-7774.patch",
+      "size_bytes": 12293,
+      "sha256": "2c2bdc6b4d9ef1fac804d0d949b35cfe932da3637db3978123ded172d6330435",
+      "affected_paths": [
+        "Lib/tarfile.py",
+        "Lib/test/test_tarfile.py"
+      ]
+    },
+    {
+      "path": "debian/patches/CVE-2026-8328.patch",
+      "size_bytes": 5280,
+      "sha256": "ee90ef8cc7819be0ec241cbeda1e2f0063443711b125a537d1c708c1464ec2e7",
+      "affected_paths": [
+        "Lib/ftplib.py",
+        "Lib/test/test_ftplib.py"
+      ]
+    },
+    {
+      "path": "debian/patches/CVE-2026-9669.patch",
+      "size_bytes": 3926,
+      "sha256": "ac9ac8086bc7b5770be0ea7c4fe6eabef69953163d6fe39b6b9d529647e37c49",
+      "affected_paths": [
+        "Lib/test/test_bz2.py",
+        "Modules/_bz2module.c"
+      ]
+    },
+    {
+      "path": "debian/patches/lp-2157534-ssl-memory-leak.patch",
+      "size_bytes": 4118,
+      "sha256": "98d42c3966372b4720f78eaec1d650ac93ed4f43b1846fe081315fb55e2c10c1",
+      "affected_paths": [
+        "Modules/_ssl.c"
+      ]
+    },
+    {
+      "path": "debian/patches/CVE-2026-4360.patch",
+      "size_bytes": 6734,
+      "sha256": "04607d9cb58be42834315a69e1fa818c88072caae8d8639c7a44a0b562b1ffd2",
+      "affected_paths": [
+        "Lib/tarfile.py",
+        "Lib/test/test_tarfile.py",
+        "Misc/NEWS.d/next/Security/2026-06-23-14-19-30.gh-issue-151987.8mNIMf.rst"
+      ]
+    },
+    {
+      "path": "debian/patches/CVE-2026-15308.patch",
+      "size_bytes": 4901,
+      "sha256": "7d580d52d3dceec32cf3fe59c3194a446353c0754ad2ead6c2359c0d5935047b",
+      "affected_paths": [
+        "Lib/html/parser.py",
+        "Lib/test/test_htmlparser.py",
+        "Misc/NEWS.d/next/Security/2026-07-04-17-00-00.gh-issue-153030.RovkP6.rst"
+      ]
+    }
+  ],
+  "config_c_inittab": [
+    {
+      "name": "_bisect",
+      "initializer": "PyInit__bisect"
+    },
+    {
+      "name": "_csv",
+      "initializer": "PyInit__csv"
+    },
+    {
+      "name": "_datetime",
+      "initializer": "PyInit__datetime"
+    },
+    {
+      "name": "_heapq",
+      "initializer": "PyInit__heapq"
+    },
+    {
+      "name": "_opcode",
+      "initializer": "PyInit__opcode"
+    },
+    {
+      "name": "_pickle",
+      "initializer": "PyInit__pickle"
+    },
+    {
+      "name": "_random",
+      "initializer": "PyInit__random"
+    },
+    {
+      "name": "_socket",
+      "initializer": "PyInit__socket"
+    },
+    {
+      "name": "_statistics",
+      "initializer": "PyInit__statistics"
+    },
+    {
+      "name": "_struct",
+      "initializer": "PyInit__struct"
+    },
+    {
+      "name": "array",
+      "initializer": "PyInit_array"
+    },
+    {
+      "name": "binascii",
+      "initializer": "PyInit_binascii"
+    },
+    {
+      "name": "cmath",
+      "initializer": "PyInit_cmath"
+    },
+    {
+      "name": "math",
+      "initializer": "PyInit_math"
+    },
+    {
+      "name": "select",
+      "initializer": "PyInit_select"
+    },
+    {
+      "name": "_elementtree",
+      "initializer": "PyInit__elementtree"
+    },
+    {
+      "name": "pyexpat",
+      "initializer": "PyInit_pyexpat"
+    },
+    {
+      "name": "_blake2",
+      "initializer": "PyInit__blake2"
+    },
+    {
+      "name": "_md5",
+      "initializer": "PyInit__md5"
+    },
+    {
+      "name": "_sha1",
+      "initializer": "PyInit__sha1"
+    },
+    {
+      "name": "_sha2",
+      "initializer": "PyInit__sha2"
+    },
+    {
+      "name": "_sha3",
+      "initializer": "PyInit__sha3"
+    },
+    {
+      "name": "unicodedata",
+      "initializer": "PyInit_unicodedata"
+    },
+    {
+      "name": "_posixsubprocess",
+      "initializer": "PyInit__posixsubprocess"
+    },
+    {
+      "name": "fcntl",
+      "initializer": "PyInit_fcntl"
+    },
+    {
+      "name": "grp",
+      "initializer": "PyInit_grp"
+    },
+    {
+      "name": "spwd",
+      "initializer": "PyInit_spwd"
+    },
+    {
+      "name": "syslog",
+      "initializer": "PyInit_syslog"
+    },
+    {
+      "name": "zlib",
+      "initializer": "PyInit_zlib"
+    },
+    {
+      "name": "atexit",
+      "initializer": "PyInit_atexit"
+    },
+    {
+      "name": "faulthandler",
+      "initializer": "PyInit_faulthandler"
+    },
+    {
+      "name": "posix",
+      "initializer": "PyInit_posix"
+    },
+    {
+      "name": "_signal",
+      "initializer": "PyInit__signal"
+    },
+    {
+      "name": "_tracemalloc",
+      "initializer": "PyInit__tracemalloc"
+    },
+    {
+      "name": "_codecs",
+      "initializer": "PyInit__codecs"
+    },
+    {
+      "name": "_collections",
+      "initializer": "PyInit__collections"
+    },
+    {
+      "name": "errno",
+      "initializer": "PyInit_errno"
+    },
+    {
+      "name": "_io",
+      "initializer": "PyInit__io"
+    },
+    {
+      "name": "itertools",
+      "initializer": "PyInit_itertools"
+    },
+    {
+      "name": "_sre",
+      "initializer": "PyInit__sre"
+    },
+    {
+      "name": "_thread",
+      "initializer": "PyInit__thread"
+    },
+    {
+      "name": "time",
+      "initializer": "PyInit_time"
+    },
+    {
+      "name": "_typing",
+      "initializer": "PyInit__typing"
+    },
+    {
+      "name": "_weakref",
+      "initializer": "PyInit__weakref"
+    },
+    {
+      "name": "_abc",
+      "initializer": "PyInit__abc"
+    },
+    {
+      "name": "_functools",
+      "initializer": "PyInit__functools"
+    },
+    {
+      "name": "_locale",
+      "initializer": "PyInit__locale"
+    },
+    {
+      "name": "_operator",
+      "initializer": "PyInit__operator"
+    },
+    {
+      "name": "_stat",
+      "initializer": "PyInit__stat"
+    },
+    {
+      "name": "_symtable",
+      "initializer": "PyInit__symtable"
+    },
+    {
+      "name": "pwd",
+      "initializer": "PyInit_pwd"
+    },
+    {
+      "name": "marshal",
+      "initializer": "PyMarshal_Init"
+    },
+    {
+      "name": "_imp",
+      "initializer": "PyInit__imp"
+    },
+    {
+      "name": "_ast",
+      "initializer": "PyInit__ast"
+    },
+    {
+      "name": "_tokenize",
+      "initializer": "PyInit__tokenize"
+    },
+    {
+      "name": "builtins",
+      "initializer": "NULL"
+    },
+    {
+      "name": "sys",
+      "initializer": "NULL"
+    },
+    {
+      "name": "gc",
+      "initializer": "PyInit_gc"
+    },
+    {
+      "name": "_warnings",
+      "initializer": "_PyWarnings_Init"
+    },
+    {
+      "name": "_string",
+      "initializer": "PyInit__string"
+    }
+  ],
+  "config_c_named_entries": 60
+}
