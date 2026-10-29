@@ -16,9 +16,19 @@ operator reports a static Dell measurement on **2026-10-29**, archive
 The original archive was not present among the session's supplied attachments,
 shared files or library files when checked. Codex read the uploaded request
 and compared its claims with repository evidence; it did not unpack this
-archive or independently verify its reported **13/13** internal manifest.
+archive or independently verify its internal manifest in this environment.
 An independently inspected downloaded package is a separate evidence item,
 not a replay of this Dell archive.
+
+**Review correction, 2026-10-29 — `OPERATOR_REPORTED_AND_CHAT_REVIEWED` /
+`BUILD_SPECIFIC_UNVERIFIED`:** the original request's **13/13** statement was
+imprecise. The independent archive review in the operator conversation reports
+**15 regular files total: 14 checked files and the manifest file**; the manifest
+has **14 entries, 14/14 verified, 0 mismatches**. Its reported SHA-256 is
+`f52859c04f703bfe6ba36190229e7b18ac1543df5c443d589a549835177c3fdb`;
+the local Dell readelf version is **2.42**. The archive SHA-256 above is
+unchanged. These are supplied correction results; Codex has not obtained the
+archive or replayed them. The exact historical request file is unchanged.
 
 | Operator-reported object | SHA-256 | Reported Build ID | Classification of the Dell account |
 | --- | --- | --- | --- |
@@ -109,7 +119,7 @@ promotes a reported observation into trusted evidence.
 | CPY-P1-01 / P1 | `NOT_YET_PROVEN` | Exact package membership, generated config and linked module tables now narrow the build gap. Independent acceptance, complete expected runtime and reproducible source/patch/config/toolchain-to-output linkage remain missing; inspected artifacts do not supply external acceptance. Keep CA-P1-01 / DELL-P1-01 blocking image compatibility and final 3A approval until the exact inventory, provenance and contextual closure are reconciled. |
 | CPY-P1-02 / P1 | `NOT_YET_PROVEN` | Static import/ELF adjacency does not prove effective protected launch, complete scope or lifetime integrity. CA-P1-03 / DELL-P1-02 remain blocking for runtime qualification; host PID namespace and attestation remain unverified/missing. |
 | CPY-P1-03 / P1 | `OBSERVER_DESIGN_UNDECIDED` | Entrypoint/worker, cryptographic acceptance verifier/backend, provider/configuration policy and exact selected image require independent design decisions. Parser-only imports cannot close the future Observer's dependencies. CA-P1-02's external reviewers, roots, signatures, time/checkpoint and rollback requirements remain separate blockers. |
-| CPY-P2-01 / P2 | `BUILD_SPECIFIC_UNVERIFIED` | New Dell triage archive and raw 13/13 manifest have not been independently read. Preserve the operator-reported status and obtain retained bytes before claiming replay. Exact package table records independently resolve the earlier symbol-only membership question; they do not authenticate the Dell capture. Any remaining required-module selection/completeness gap belongs to CPY-P1-01. |
+| CPY-P2-01 / P2 | `BUILD_SPECIFIC_UNVERIFIED` | The Dell triage archive and its 14-entry manifest have not been independently read by Codex. The supplied review correction reports 14/14 verified and 15 regular files total, superseding the original imprecise 13/13 claim. Preserve the operator-reported status and obtain retained bytes before claiming Codex replay. Exact package table records independently resolve the earlier symbol-only membership question; they do not authenticate the Dell capture. Any remaining required-module selection/completeness gap belongs to CPY-P1-01. |
 | CPY-P2-02 / P2 | `VERIFIED_FROM_STATIC_ELF` | Independently confirmed non-PIE and GNU_RELRO without BIND_NOW require an explicit hardening disposition for the selected profile. No exploit, existing policy violation or severity P0 is proved by these tags alone. Do not silently alter link flags or security policy in this documentation change. |
 | CPY-P2-03 / P2 | `OBSERVER_DESIGN_UNDECIDED` | Effective OpenSSL configuration/provider selection and loader/import search remain unresolved. Required dynamic loads or alternate crypto backends must be reconciled before DAG acceptance. Presence of 47 libraries is neither proof of necessity nor permission to omit them. |
 | CPY-P2-04 / P2 | `NOT_YET_PROVEN` | Earlier CA-P2-01–04 remain open: advisory offline canonical/bundle scope, document precedence, actual resource enforcement and replay/receipt/crash protocols. This static build review supplies none of those mechanisms. Validate this PR's actual HEAD separately from historical CI results. |
@@ -123,7 +133,7 @@ Codex first, without executing their contents.
 
 | Label | Needed evidence | Preferred source / why it matters |
 | --- | --- | --- |
-| `BUILD_SPECIFIC_UNVERIFIED` | Original triage archive bytes, manifest paths/sizes, exact commands, tool versions, stdout/stderr/exit codes and collection time/context | Retained operator archive first; lets an independent reader check its claimed 13/13 and distinguish table content from symbol sightings. |
+| `BUILD_SPECIFIC_UNVERIFIED` | Original triage archive bytes, manifest paths/sizes, exact commands, tool versions, stdout/stderr/exit codes and collection time/context | Retained operator archive first; lets Codex replay the supplied corrected 14/14 check, reconcile 15 regular files including the manifest, and distinguish table content from symbol sightings. Manifest SHA-256 and readelf 2.42 are supplied review results, not a Codex archive read. |
 | `BUILD_SPECIFIC_UNVERIFIED` | Formal archive trust/time acceptance, historical build logs/.buildinfo and reproducible source/patch/toolchain-to-output linkage | Current signed indexes, exact package/source hash checks and generated configuration are available in this review. They do not replace accepted roots or reconstruct the historical linker invocation. |
 | `NOT_YET_PROVEN` | Bidirectional reconciliation of confirmed builtin/frozen records and exact source aliases/configuration with the selected Observer's startup/import policy | Linked tables and exact config/ABI materials now exist; remaining work is the complete intended closure and accepted selection, not another symbol count or target execution. |
 | `OBSERVER_DESIGN_UNDECIDED` | Entrypoint/startup/error-path scope, crypto verification backend, permitted algorithms/providers/configuration and unsupported behavior | Independent Trusted Observer design decision; no Dell scan can settle intended functionality. |

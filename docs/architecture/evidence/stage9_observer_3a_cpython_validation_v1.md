@@ -46,8 +46,18 @@ the repository DAG model or implementing SCC. All twelve object SHA-256 values
 match the historical report's strings. Physical Dell bytes were not reread.
 
 `OPERATOR_REPORTED_AND_CHAT_REVIEWED` / `BUILD_SPECIFIC_UNVERIFIED`: the missing
-Dell archive's SHA-256 and 13/13 claim are retained as operator claims. The exact
-new uploaded text is **5366 bytes**, SHA-256
+Dell archive's SHA-256 remains an operator claim. **Review correction,
+2026-10-29:** the original request's **13/13** statement was imprecise; the
+independent original-archive review in the operator conversation reports
+**14 manifest entries, 14/14 verified, 0 mismatches, 15 regular files total
+(14 checked files plus the manifest file)**. The reported manifest-file SHA-256
+is `f52859c04f703bfe6ba36190229e7b18ac1543df5c443d589a549835177c3fdb`;
+local Dell readelf is **2.42**, distinct from the cloud readelf **2.44** above.
+Archive SHA-256 remains
+`0a26027f9bf94149fe2b36d3fbba1fdb6e5393e2016c9bd9956463b154005b0f`.
+Codex still lacks that archive and has not replayed these corrected checks.
+The exact historical uploaded text, including its original erroneous count,
+is unchanged: **5366 bytes**, SHA-256
 `5f0ef91f0078ea530558b8fdc873008bf3f73d1375b7d40359904c02db9939d8`.
 Retaining it authenticates neither its author nor the physical measurements.
 
@@ -115,13 +125,40 @@ manifest excludes itself and binds all new text/JSON files, exact repository
 source/plan inputs and these unchanged historical manifests. Its successful
 verification, UTF-8/JSON decoding, relative-link/fence/whitespace/status checks,
 unchanged source comparison and staged-path secret scan are required before
-opening the documentation PR. Final packet checks: **26/26** manifest entries,
+opening the original documentation PR. Packet checks at original HEAD
+`1932f5af941ca5a436888d8691c6d71af75d9f49`: **26/26** manifest entries,
 **41** relative file links, **5** JSON documents, exact uploaded-text equality,
 balanced Markdown fences and unchanged bytes for **12** source/plan/historical
 manifest inputs. Markdown/JSON trailing whitespace checks pass; exact uploaded
 text is preserved including its missing final newline. Readelf transcript
 trailing blanks alone are normalized, explicitly marked in its header.
 The final staged-path Betterleaks hook and `git diff --cached --check` pass.
+
+## PR review correction checks
+
+The correction to the original count and the full Windows SCM investigation
+are recorded in the [review audit](../../audits/pr3224_archive_correction_windows_scm_2026-10-29.md)
+and [SCM evidence JSON](stage9_observer_3a_windows_scm_review_v1.json).
+The corrected PR contains **17 documentation/evidence files**, including
+**6 JSON documents**. Its regenerated manifest has **36 entries**: the
+16 non-manifest packet files, 16 unchanged reviewed repository source/plan
+inputs and four unchanged historical manifests. It excludes itself.
+The original request's exact bytes/hash and all historical manifests remain
+unchanged. The SCM implementation repair is on separate
+[PR #3225](https://github.com/Dudzian/Dudzian/pull/3225), HEAD
+`4b873a0d80640e3408c153103044c6c462abff25`.
+
+The mandatory all-files ruff-format hook, Tier A Ruff, **869 existing contract
+tests (3.96 s)**, full-tree and final changed-path Betterleaks scans, SHA-256 checks for
+all 36 packet entries and the four historical manifests, relative-link,
+UTF-8/JSON/fence/whitespace checks are repeated for the correction. They must
+all pass before the update is pushed; the correction's local results are PASS.
+The full-tree scan examined approximately **126.95 MB** with no leaks; the
+final scoped scan covers subsequent document-only additions/updates.
+Hosted Actions for the new HEAD are
+checked separately; the old Windows SCM failure is retained as a failure and
+is not waived by a local PASS or by a later run. The final review response
+reports the actual updated HEAD, checks and merge disposition.
 
 ## Merge and qualification limits
 

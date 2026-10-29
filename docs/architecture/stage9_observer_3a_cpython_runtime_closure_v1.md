@@ -32,10 +32,25 @@ merge records narrower verified facts; Stage 3A and production remain blocked.
 | `NOT_YET_PROVEN` | Completeness, independently accepted expectations, effective path/symbol selection, lifetime protection, host/run identity or qualification not demonstrated. |
 
 The Dell triage account additionally retains the required evidence-origin tag
-**`OPERATOR_REPORTED_AND_CHAT_REVIEWED`**. The archive itself is unavailable;
-its alleged 13/13 internal manifest was not independently replayed here.
+**`OPERATOR_REPORTED_AND_CHAT_REVIEWED`**. The archive itself remains unavailable
+to Codex; its manifest was not independently replayed in this environment.
 The [exact uploaded request](evidence/stage9_observer_3a_cpython_request_v1.txt)
 is preserved byte for byte. It is text evidence, not the missing archive.
+
+**Review correction, 2026-10-29 — `OPERATOR_REPORTED_AND_CHAT_REVIEWED` /
+`BUILD_SPECIFIC_UNVERIFIED`:** the original request's **13/13** statement was
+imprecise. The independent review of the original archive in the operator
+conversation reports **15 regular files in total**, comprising **14 checked
+files plus the manifest file**; **14 manifest entries, 14/14 verified,
+0 mismatches**. Archive identity remains
+`stage9-elf-triage-rNlpy9.tar.gz`, SHA-256
+`0a26027f9bf94149fe2b36d3fbba1fdb6e5393e2016c9bd9956463b154005b0f`.
+The reported manifest-file SHA-256 is
+`f52859c04f703bfe6ba36190229e7b18ac1543df5c443d589a549835177c3fdb`;
+local Dell readelf is **2.42**. These corrected results are supplied by the
+review request, not independently observed by Codex. The historical uploaded
+text retains its original erroneous count and original digest. This correction
+neither authenticates the absent archive nor changes qualification status.
 
 1. [Build materials, patches, pyconfig, SOABI, flags and confirmed lists](stage9_observer_3a_cpython_build_materials_v1.md).
 2. [Actual entrypoint/import/error/backend/data map](stage9_observer_3a_cpython_import_closure_v1.md).
@@ -43,6 +58,7 @@ is preserved byte for byte. It is text evidence, not the missing archive.
 4. [Archive signature/index/package/source verification](evidence/stage9_observer_3a_cpython_archive_sources_v1.md), [verification JSON](evidence/stage9_observer_3a_cpython_archive_verification_v1.json), [additional runtime-library checks](evidence/stage9_observer_3a_cpython_library_packages_v1.json).
 5. [Decoded ELF registration/frozen/metadata records](evidence/stage9_observer_3a_cpython_static_tables_v1.json), [preliminary typed graph](evidence/stage9_observer_3a_cpython_elf_graph_v1.json), [raw selected ELF output](evidence/stage9_observer_3a_cpython_readelf_v1.txt).
 6. [Integrity, development checks and merge conditions](evidence/stage9_observer_3a_cpython_validation_v1.md), [packet manifest](evidence/stage9_observer_3a_cpython_reconciliation_v1.sha256).
+7. [PR #3224 correction and Windows SCM investigation](../audits/pr3224_archive_correction_windows_scm_2026-10-29.md).
 
 ## What independently matches the Dell account
 

@@ -1,0 +1,569 @@
+{
+  "provenance": "Connected GitHub logs/API read. No rerun requested or inferred. Exact connector-decoded logs preserved UTF-8 BOM/CRLF; this is decoded text, not original HTTP archive byte representation.",
+  "failed_run": {
+    "run_id": 40866365166,
+    "run_attempt": 1,
+    "job_id": 123422984959,
+    "pr": 3224,
+    "head_sha": "1932f5af941ca5a436888d8691c6d71af75d9f49",
+    "actual_checkout": "87f19583b0828417904aecba9b04a3415a21ce91",
+    "region": "westus",
+    "worker_id": "1dcd6da4-3989-4125-b80c-9d4a1b371421",
+    "runner_id": 1000131744,
+    "timeline": [
+      {
+        "time_utc": "2026-10-29T11:38:40.9432440Z",
+        "event": "START CORE"
+      },
+      {
+        "time_utc": "2026-10-29T11:40:21.4861030Z",
+        "event": "790 passed in 96.69s"
+      },
+      {
+        "time_utc": "2026-10-29T11:40:21.8441856Z",
+        "event": "PASS CORE elapsed 100.891s"
+      },
+      {
+        "time_utc": "2026-10-29T11:40:21.8442771Z",
+        "event": "START SCM_STAGE0_5_AND_STAGE7_SHUTDOWN"
+      },
+      {
+        "time_utc": "2026-10-29T11:41:08Z",
+        "event": "backend.log pid 2784 PROCESS_TREE_START_FAILURE ProcessTreeError grandchild creation deadline expired"
+      },
+      {
+        "time_utc": "2026-10-29T11:41:12.0326823Z",
+        "event": "FAIL SCM_STAGE0_5_AND_STAGE7_SHUTDOWN elapsed 50.188s"
+      },
+      {
+        "time_utc": "2026-10-29T11:41:12.1500530Z",
+        "event": "process exit 1"
+      }
+    ],
+    "reported_state": {
+      "service_pid": 2784,
+      "scm_state": "Stopped",
+      "scm_pid": 0,
+      "health_marker": false,
+      "health_pid": 0,
+      "process_tree_json": false,
+      "process_tree_gate": false
+    },
+    "cleanup": "Source finally cleanup is not an observed successful complete cleanup. Logs report SCM Stopped/pid0 at diagnostic capture, post-checkout succeeds and generic Cleaning up orphan processes. No explicit child/grandchild exit inventory or SCM cleanup proof. Artifact upload skipped; no windows-scm-evidence artifact in queried run artifact list.",
+    "run_url": "https://github.com/Dudzian/Dudzian/actions/runs/40866365166",
+    "job_url": "https://github.com/Dudzian/Dudzian/actions/runs/40866365166/job/123422984959",
+    "log_spans": {
+      "runner_and_image": "1-20",
+      "checkout_sha": "107-176",
+      "python_setup": "178-189",
+      "installed_packages": "503",
+      "acl_precondition": "554-570",
+      "core_and_failure": "581-609",
+      "post_checkout_and_orphan_cleanup": "610-642"
+    },
+    "cleanup_source_vs_observed": {
+      "source": {
+        "baseline": "cad53867231a1a6e49ea770c07043b417af84449; identical source at both compared synthetic checkouts",
+        "ChildJob_start_exception": "deployment/windows_process_tree.py:175-177 invokes _rollback_start:200-223, closes kill-on-close job first:202, child.wait5 at212-217 with kill fallback, removes TRANSIENT_NAMES at218-220",
+        "service_finally": "deployment/windows_test_service.py:115-123 closes job, removes marker/gate and health marker, closes logger",
+        "probe_finally": "deployment/windows_scm_probe.ps1:709 starts finally; Stop-OwnedServiceForCleanup:719, Remove-OwnedProcessTreeArtifacts:724; helper210-233 validates sentinel/reparse and removes transients",
+        "limitation": "Intended source cleanup paths do not prove every operation executed or succeeded in failed job."
+      },
+      "observed": [
+        "SCM Stopped and scm_pid0 in diagnostic capture",
+        "health marker absent, process_tree JSON/gate absent",
+        "post-checkout step success",
+        "generic Cleaning up orphan processes at final line642"
+      ],
+      "not_observed": [
+        "helper stdout/stderr traceback",
+        "explicit final service deletion outcome",
+        "complete descendant exit/inventory",
+        "service account/path/log cleanup success"
+      ],
+      "artifact_list_file": "failed-run40866365166-artifacts.json",
+      "windows_scm_artifact_present": false
+    }
+  },
+  "success_run": {
+    "run_id": 40838999279,
+    "run_attempt": 1,
+    "job_id": 123330819643,
+    "pr": 3223,
+    "head_sha": "097e43db60f91b86fddc7a0cbc7db1844d3ffd05",
+    "actual_checkout": "ab71a924a2139f3218d4264473d27f50221b7378",
+    "region": "centralus",
+    "worker_id": "98202bc5-1341-481d-a532-396a47180e09",
+    "runner_id": 1000131574,
+    "timeline": [
+      {
+        "time_utc": "2026-10-29T08:02:04.1452085Z",
+        "event": "START CORE"
+      },
+      {
+        "time_utc": "2026-10-29T08:03:21.9183033Z",
+        "event": "790 passed in 74.74s"
+      },
+      {
+        "time_utc": "2026-10-29T08:03:22.4707140Z",
+        "event": "PASS CORE elapsed 78.312s"
+      },
+      {
+        "time_utc": "2026-10-29T08:03:22.4707473Z",
+        "event": "START SCM_STAGE0_5_AND_STAGE7_SHUTDOWN"
+      },
+      {
+        "time_utc": "2026-10-29T08:03:56.9069161Z",
+        "event": "PASS SCM_STAGE0_5_AND_STAGE7_SHUTDOWN elapsed 34.438s"
+      }
+    ],
+    "scope": "Same windows-deployment-integration job succeeded; whole Platform workflow still failure from other jobs. WINDOWS_PROCESS_TREE=PASS and WINDOWS_NO_ORPHAN_CHILDREN=PASS reported for this historical job; WINDOWS_PRODUCTION_READY remains NOT_READY.",
+    "run_url": "https://github.com/Dudzian/Dudzian/actions/runs/40838999279",
+    "job_url": "https://github.com/Dudzian/Dudzian/actions/runs/40838999279/job/123330819643",
+    "log_spans": {
+      "runner_and_image": "1-20",
+      "checkout_sha": "107-137",
+      "python_setup": "139-150",
+      "installed_packages": "464",
+      "acl_precondition": "515-531",
+      "core_and_scm_success": "542-557",
+      "later_phase_results": "558-639",
+      "post_job_cleanup": "668-701"
+    }
+  },
+  "common_environment": {
+    "runner_version": "2.338.0",
+    "provisioner_version": "20261021.618",
+    "provisioner_commit": "21505ad2541d5be6135ed84fc33697146cf75b8e",
+    "provisioner_build_date": "2026-10-21T00:45:21Z",
+    "os": "Microsoft Windows Server2025 Datacenter10.0.26100",
+    "image": "windows-2025-vs2026",
+    "image_version": "20261021.278.1",
+    "python_explicitly_logged": "3.11.9 x64",
+    "git_version": "2.56.0.windows.2",
+    "powershell_observed": "parent Core pwsh.EXE path, child Desktop native WindowsPowerShell path; no numeric runtime PSVersion printed",
+    "powershell_image_declaration": "7.6.7 in linked image README; does not prove actual invoked numeric version",
+    "acl_precondition": "native Get-Acl command/GAC Microsoft.PowerShell.Security assembly3.0.0.0 authority qualified, before=false after_grant=true after_remove=false in both logs",
+    "action_commit_shas": {
+      "actions/checkout@v7": "3d3c42e5aac5ba805825da76410c181273ba90b1",
+      "actions/setup-python@v7": "6d4fd22b20465ccc0f7354476588e8df7c9ca0e0",
+      "actions/upload-artifact@v7": "cf430e030ddbb5b0abf93d22962f4752f3646cd9"
+    },
+    "limits": "These logged fields and installed package tokens are equal; region, worker ID, runner ID, timestamps and timings differ. This is not an exhaustive proof that every host/hardware/runtime state input was equal."
+  },
+  "installed_packages": {
+    "count": 89,
+    "same_name_version_tokens": true,
+    "difference": [],
+    "limits": "pip install success tokens match, not full pip freeze or wheel digest/build provenance equivalence; base image preinstalled packages not exhaustively measured",
+    "failure_name_version_tokens": [
+      "PyNaCl-1.6.2",
+      "PySide6-6.10.3",
+      "PySide6_Addons-6.10.3",
+      "PySide6_Essentials-6.10.3",
+      "PyYAML-6.0.3",
+      "aiohappyeyeballs-2.7.1",
+      "aiohttp-3.14.5",
+      "aiohttp-fast-zlib-0.3.0",
+      "aiosignal-1.4.0",
+      "aiosqlite-0.22.1",
+      "annotated-doc-0.0.5",
+      "annotated-types-0.8.0",
+      "anyio-4.15.1",
+      "attrs-26.1.0",
+      "backports.tarfile-1.2.0",
+      "ccxt-4.5.90",
+      "certifi-2026.10.23",
+      "cffi-2.0.0",
+      "charset_normalizer-3.4.7",
+      "cloudpickle-3.1.2",
+      "coincurve-21.0.0",
+      "colorama-0.4.6",
+      "coverage-7.17.0",
+      "cryptography-50.0.2",
+      "dudzian-bot-0.1.0",
+      "execnet-2.1.2",
+      "fastapi-0.135.1",
+      "frozenlist-1.8.0",
+      "greenlet-3.5.6",
+      "grpcio-1.85.0",
+      "h11-0.16.0",
+      "httpcore-1.0.9",
+      "httpx-0.28.1",
+      "hypothesis-6.170.13",
+      "idna-3.18",
+      "importlib_metadata-10.1.0",
+      "iniconfig-2.3.1",
+      "jaraco.classes-3.4.0",
+      "jaraco.context-6.1.2",
+      "jaraco.functools-4.6.0",
+      "joblib-1.6.0",
+      "jsonschema-4.26.0",
+      "jsonschema-specifications-2025.9.1",
+      "keyring-25.7.0",
+      "lightgbm-4.7.0",
+      "more-itertools-11.2.1",
+      "multidict-6.9.1",
+      "narwhals-2.28.0",
+      "numpy-2.4.6",
+      "orjson-3.13.0",
+      "packaging-26.3",
+      "pandas-3.1.0",
+      "pluggy-1.7.0",
+      "propcache-0.5.2",
+      "protobuf-5.29.6",
+      "psycopg-3.3.6",
+      "psycopg-binary-3.3.6",
+      "pyarrow-26.0.0",
+      "pycparser-3.0",
+      "pydantic-2.14.1",
+      "pydantic-core-2.50.1",
+      "pygments-2.21.0",
+      "pytest-9.2.0",
+      "pytest-asyncio-1.4.1",
+      "pytest-cov-7.1.0",
+      "pytest-timeout-2.4.0",
+      "pytest-xdist-3.8.0",
+      "python-dateutil-3.0.0",
+      "pywin32-312",
+      "pywin32-ctypes-0.2.3",
+      "referencing-0.37.0",
+      "requests-2.34.2",
+      "responses-0.26.3",
+      "respx-0.23.1",
+      "rpds-py-2026.9.1",
+      "scipy-1.17.1",
+      "shiboken6-6.10.3",
+      "six-1.17.0",
+      "sortedcontainers-2.4.0",
+      "sqlalchemy-2.1.6",
+      "starlette-1.10.0",
+      "typing-inspection-0.4.4",
+      "typing_extensions-4.16.0",
+      "tzdata-2026.6",
+      "urllib3-2.8.0",
+      "winloop-0.6.3",
+      "yarl-1.25.1",
+      "zipp-4.1.2",
+      "zlib-ng-1.0.0"
+    ],
+    "success_name_version_tokens": [
+      "PyNaCl-1.6.2",
+      "PySide6-6.10.3",
+      "PySide6_Addons-6.10.3",
+      "PySide6_Essentials-6.10.3",
+      "PyYAML-6.0.3",
+      "aiohappyeyeballs-2.7.1",
+      "aiohttp-3.14.5",
+      "aiohttp-fast-zlib-0.3.0",
+      "aiosignal-1.4.0",
+      "aiosqlite-0.22.1",
+      "annotated-doc-0.0.5",
+      "annotated-types-0.8.0",
+      "anyio-4.15.1",
+      "attrs-26.1.0",
+      "backports.tarfile-1.2.0",
+      "ccxt-4.5.90",
+      "certifi-2026.10.23",
+      "cffi-2.0.0",
+      "charset_normalizer-3.4.7",
+      "cloudpickle-3.1.2",
+      "coincurve-21.0.0",
+      "colorama-0.4.6",
+      "coverage-7.17.0",
+      "cryptography-50.0.2",
+      "dudzian-bot-0.1.0",
+      "execnet-2.1.2",
+      "fastapi-0.135.1",
+      "frozenlist-1.8.0",
+      "greenlet-3.5.6",
+      "grpcio-1.85.0",
+      "h11-0.16.0",
+      "httpcore-1.0.9",
+      "httpx-0.28.1",
+      "hypothesis-6.170.13",
+      "idna-3.18",
+      "importlib_metadata-10.1.0",
+      "iniconfig-2.3.1",
+      "jaraco.classes-3.4.0",
+      "jaraco.context-6.1.2",
+      "jaraco.functools-4.6.0",
+      "joblib-1.6.0",
+      "jsonschema-4.26.0",
+      "jsonschema-specifications-2025.9.1",
+      "keyring-25.7.0",
+      "lightgbm-4.7.0",
+      "more-itertools-11.2.1",
+      "multidict-6.9.1",
+      "narwhals-2.28.0",
+      "numpy-2.4.6",
+      "orjson-3.13.0",
+      "packaging-26.3",
+      "pandas-3.1.0",
+      "pluggy-1.7.0",
+      "propcache-0.5.2",
+      "protobuf-5.29.6",
+      "psycopg-3.3.6",
+      "psycopg-binary-3.3.6",
+      "pyarrow-26.0.0",
+      "pycparser-3.0",
+      "pydantic-2.14.1",
+      "pydantic-core-2.50.1",
+      "pygments-2.21.0",
+      "pytest-9.2.0",
+      "pytest-asyncio-1.4.1",
+      "pytest-cov-7.1.0",
+      "pytest-timeout-2.4.0",
+      "pytest-xdist-3.8.0",
+      "python-dateutil-3.0.0",
+      "pywin32-312",
+      "pywin32-ctypes-0.2.3",
+      "referencing-0.37.0",
+      "requests-2.34.2",
+      "responses-0.26.3",
+      "respx-0.23.1",
+      "rpds-py-2026.9.1",
+      "scipy-1.17.1",
+      "shiboken6-6.10.3",
+      "six-1.17.0",
+      "sortedcontainers-2.4.0",
+      "sqlalchemy-2.1.6",
+      "starlette-1.10.0",
+      "typing-inspection-0.4.4",
+      "typing_extensions-4.16.0",
+      "tzdata-2026.6",
+      "urllib3-2.8.0",
+      "winloop-0.6.3",
+      "yarl-1.25.1",
+      "zipp-4.1.2",
+      "zlib-ng-1.0.0"
+    ],
+    "failure_count": 89,
+    "success_count": 89,
+    "failure_only": [],
+    "success_only": []
+  },
+  "source_comparison": {
+    "direct_git_diff": "20 docs/evidence additions only between both actual synthetic merge checkout trees",
+    "all_critical_paths_identical": true,
+    "critical_blobs": [
+      {
+        "path": ".github/workflows/platform-deployment.yml",
+        "success": {
+          "git_blob_sha1": "ad8857b1db656b7245e53b67857d0ea308dcf1ff",
+          "sha256": "1f90f3a323c29769a2dbde27f458ccce6c9f2cb9d8bb13727b89f319a78dbe51",
+          "size_bytes": 16951
+        },
+        "failure": {
+          "git_blob_sha1": "ad8857b1db656b7245e53b67857d0ea308dcf1ff",
+          "sha256": "1f90f3a323c29769a2dbde27f458ccce6c9f2cb9d8bb13727b89f319a78dbe51",
+          "size_bytes": 16951
+        },
+        "identical": true
+      },
+      {
+        "path": "deployment/windows_acceptance.py",
+        "success": {
+          "git_blob_sha1": "5af95279b4b74bdc2c47db117b53e34fd5d853e8",
+          "sha256": "c935ccecec24a8fb66b9d4157f57369b5b5f63514b2b9e9b7a7fb695308bef43",
+          "size_bytes": 27712
+        },
+        "failure": {
+          "git_blob_sha1": "5af95279b4b74bdc2c47db117b53e34fd5d853e8",
+          "sha256": "c935ccecec24a8fb66b9d4157f57369b5b5f63514b2b9e9b7a7fb695308bef43",
+          "size_bytes": 27712
+        },
+        "identical": true
+      },
+      {
+        "path": "deployment/windows_process_tree.py",
+        "success": {
+          "git_blob_sha1": "591d88956910b09bebbcb207cc57d01ec9ebf91c",
+          "sha256": "44f05fa250c4af854fc172b533178703df67d7d08bf55c54a67cc85bb36eadf9",
+          "size_bytes": 9641
+        },
+        "failure": {
+          "git_blob_sha1": "591d88956910b09bebbcb207cc57d01ec9ebf91c",
+          "sha256": "44f05fa250c4af854fc172b533178703df67d7d08bf55c54a67cc85bb36eadf9",
+          "size_bytes": 9641
+        },
+        "identical": true
+      },
+      {
+        "path": "deployment/windows_process_tree_child.py",
+        "success": {
+          "git_blob_sha1": "cb75a9164877910b948311083e77818b04d91304",
+          "sha256": "b4484bbea48be7297c1f1af13a7afb504fb106e7c15031329f477b2a1b1ccf24",
+          "size_bytes": 1002
+        },
+        "failure": {
+          "git_blob_sha1": "cb75a9164877910b948311083e77818b04d91304",
+          "sha256": "b4484bbea48be7297c1f1af13a7afb504fb106e7c15031329f477b2a1b1ccf24",
+          "size_bytes": 1002
+        },
+        "identical": true
+      },
+      {
+        "path": "deployment/windows_test_service.py",
+        "success": {
+          "git_blob_sha1": "d78ade4b53614f576d5f3a582dec7b81ac054e29",
+          "sha256": "66edf8ad6bfd30df2cc27b3e4ae4002b7dc878c9c4406bc4d5d9b7a915a82d86",
+          "size_bytes": 5933
+        },
+        "failure": {
+          "git_blob_sha1": "d78ade4b53614f576d5f3a582dec7b81ac054e29",
+          "sha256": "66edf8ad6bfd30df2cc27b3e4ae4002b7dc878c9c4406bc4d5d9b7a915a82d86",
+          "size_bytes": 5933
+        },
+        "identical": true
+      },
+      {
+        "path": "deployment/windows_scm_probe.ps1",
+        "success": {
+          "git_blob_sha1": "527ddb25e68ded08bde8572b2dcba5ddbb0dca32",
+          "sha256": "60f5d05eecb46121bfaeb7f2b484a6ba6b6cc020a423fdd8f2351772fb8496d8",
+          "size_bytes": 35284
+        },
+        "failure": {
+          "git_blob_sha1": "527ddb25e68ded08bde8572b2dcba5ddbb0dca32",
+          "sha256": "60f5d05eecb46121bfaeb7f2b484a6ba6b6cc020a423fdd8f2351772fb8496d8",
+          "size_bytes": 35284
+        },
+        "identical": true
+      },
+      {
+        "path": "deployment/windows_process_tree_qualification.py",
+        "success": {
+          "git_blob_sha1": "21865c9eb5c377858b62ab5aa7389ddca8552801",
+          "sha256": "e1830a4fc52b87834a4a0907662accb4628ef741e508157082b843190a20e5a3",
+          "size_bytes": 3786
+        },
+        "failure": {
+          "git_blob_sha1": "21865c9eb5c377858b62ab5aa7389ddca8552801",
+          "sha256": "e1830a4fc52b87834a4a0907662accb4628ef741e508157082b843190a20e5a3",
+          "size_bytes": 3786
+        },
+        "identical": true
+      },
+      {
+        "path": "deployment/windows_persistent_logging.py",
+        "success": {
+          "git_blob_sha1": "1cf8c1b7e30259b846f1e75d57c550a6eec6701d",
+          "sha256": "c5692894726ce162c93989ac487a08d4a0a88288d18fbe731829721b83ff9fbf",
+          "size_bytes": 1553
+        },
+        "failure": {
+          "git_blob_sha1": "1cf8c1b7e30259b846f1e75d57c550a6eec6701d",
+          "sha256": "c5692894726ce162c93989ac487a08d4a0a88288d18fbe731829721b83ff9fbf",
+          "size_bytes": 1553
+        },
+        "identical": true
+      },
+      {
+        "path": "deployment/windows_dacl_provision.py",
+        "success": {
+          "git_blob_sha1": "07433298057df6cd8b9329a6e5ac17452f6e20dc",
+          "sha256": "df86f39ac2c2748d9f10499221deae0eadd6a59e8f8a58b926a31b565734f319",
+          "size_bytes": 10474
+        },
+        "failure": {
+          "git_blob_sha1": "07433298057df6cd8b9329a6e5ac17452f6e20dc",
+          "sha256": "df86f39ac2c2748d9f10499221deae0eadd6a59e8f8a58b926a31b565734f319",
+          "size_bytes": 10474
+        },
+        "identical": true
+      },
+      {
+        "path": "deployment/windows_logging_provision.py",
+        "success": {
+          "git_blob_sha1": "6f9ce2e58080c0416bc83d882706dbf617d20f65",
+          "sha256": "c01c57419d11a60e7738155d14e37b47d3393edddd943d0d8614c80119114fb7",
+          "size_bytes": 7597
+        },
+        "failure": {
+          "git_blob_sha1": "6f9ce2e58080c0416bc83d882706dbf617d20f65",
+          "sha256": "c01c57419d11a60e7738155d14e37b47d3393edddd943d0d8614c80119114fb7",
+          "size_bytes": 7597
+        },
+        "identical": true
+      },
+      {
+        "path": "pyproject.toml",
+        "success": {
+          "git_blob_sha1": "a2dcdcaa52e601afb6b941decb919b79136489bf",
+          "sha256": "e8c9d3f4ee733768e8232a4545b24e99347b4166bfeae33bfe60be6fffe48edb",
+          "size_bytes": 13455
+        },
+        "failure": {
+          "git_blob_sha1": "a2dcdcaa52e601afb6b941decb919b79136489bf",
+          "sha256": "e8c9d3f4ee733768e8232a4545b24e99347b4166bfeae33bfe60be6fffe48edb",
+          "size_bytes": 13455
+        },
+        "identical": true
+      }
+    ],
+    "direct_diff_entries": [
+      "A\tdocs/architecture/evidence/stage9_observer_3a_cpython_archive_sources_v1.md",
+      "A\tdocs/architecture/evidence/stage9_observer_3a_cpython_archive_verification_v1.json",
+      "A\tdocs/architecture/evidence/stage9_observer_3a_cpython_build_members_v1.json",
+      "A\tdocs/architecture/evidence/stage9_observer_3a_cpython_elf_graph_v1.json",
+      "A\tdocs/architecture/evidence/stage9_observer_3a_cpython_library_packages_v1.json",
+      "A\tdocs/architecture/evidence/stage9_observer_3a_cpython_readelf_v1.txt",
+      "A\tdocs/architecture/evidence/stage9_observer_3a_cpython_reconciliation_v1.sha256",
+      "A\tdocs/architecture/evidence/stage9_observer_3a_cpython_request_v1.txt",
+      "A\tdocs/architecture/evidence/stage9_observer_3a_cpython_semantic_sources_v1.md",
+      "A\tdocs/architecture/evidence/stage9_observer_3a_cpython_static_extractor_v1.txt",
+      "A\tdocs/architecture/evidence/stage9_observer_3a_cpython_static_tables_v1.json",
+      "A\tdocs/architecture/evidence/stage9_observer_3a_cpython_validation_v1.md",
+      "A\tdocs/architecture/evidence/stage9_observer_3a_minimal_cpython_source_v1.txt",
+      "A\tdocs/architecture/evidence/stage9_observer_3a_minimal_cpython_v1.sha256",
+      "A\tdocs/architecture/evidence/stage9_observer_3a_minimal_cpython_validation_v1.md",
+      "A\tdocs/architecture/stage9_observer_3a_cpython_build_materials_v1.md",
+      "A\tdocs/architecture/stage9_observer_3a_cpython_findings_v1.md",
+      "A\tdocs/architecture/stage9_observer_3a_cpython_import_closure_v1.md",
+      "A\tdocs/architecture/stage9_observer_3a_cpython_runtime_closure_v1.md",
+      "A\tdocs/architecture/stage9_observer_3a_minimal_cpython_runtime_scope_v1.md"
+    ]
+  },
+  "classification": {
+    "induced_source_regression_in_pr3224": "No changed executable/workflow/dependency source; direct actual-checkout comparison proves docs-only delta. Does not prove all external/host inputs equivalent.",
+    "synchronization_defect": "A transient Windows sharing-denial injection reproduces one-shot child publication failure and subsequent parent timeout in unchanged source; this establishes a defect but not attribution of the hosted failure, whose child traceback was not captured.",
+    "host_failure_or_load": "Not proven. Region/worker differ and wall times differ; no CPU/disk/load/system event capture establishes cause.",
+    "test_precondition_failure": "Parser/path/ACL prechecks and790 Core tests passed. Actual process-tree creation failed to reach required handshake; missing helper error prevents determining lower-level precondition.",
+    "observed_root_cause": "UNKNOWN; proximate error=grandchild creation deadline expired, then outer tree creation deadline expired. No automatic rerun PASS claim."
+  },
+  "log_integrity": [
+    {
+      "file": "failed-job123422984959-raw.log",
+      "size_bytes": 61184,
+      "sha256": "ec0e5cfedee1c97c7676e18432444eaa81ec54bec47cf8093aa0995bf5848d84",
+      "line_count": 642,
+      "newline_representation": "GitHub connector-decoded UTF-8 text with BOM and CRLF retained",
+      "scope": "Hash identifies decoded text bytes, not original GitHub redirect HTTP payload/archive representation."
+    },
+    {
+      "file": "success-job123330819643-raw.log",
+      "size_bytes": 65859,
+      "sha256": "95ce9a2210621d1b9fb84b1371b7977700a053fb12d136b224967d09608ab0e6",
+      "line_count": 701,
+      "newline_representation": "GitHub connector-decoded UTF-8 text with BOM and CRLF retained",
+      "scope": "Hash identifies decoded text bytes, not original GitHub redirect HTTP payload/archive representation."
+    }
+  ],
+  "comparison_notes": [
+    "Neither run was rerun by this investigation. Both run_attempt=1.",
+    "Both wrapper logs report windows production NOT_READY. Historical same SCM job success is not whole-workflow or production success.",
+    "No numeric invoked PowerShell version was logged; linked image README declares7.6.7 but parent/child edition and executable path are the observed runtime facts."
+  ],
+  "separate_repair": {
+    "pull_request": "https://github.com/Dudzian/Dudzian/pull/3225",
+    "head_sha": "4b873a0d80640e3408c153103044c6c462abff25",
+    "scope": "Windows acceptance harness implementation and regressions only; no production change in PR3224",
+    "local_tests": {
+      "passed": 175,
+      "skipped_windows_related": 3
+    },
+    "observed_failed_job_attribution": "UNDETERMINED; repaired reproducible defect does not prove specific hosted failure cause",
+    "native_windows_ci": "PENDING at publication"
+  }
+}
