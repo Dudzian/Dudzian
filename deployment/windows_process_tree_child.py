@@ -9,8 +9,28 @@ import sys
 import time
 
 TIMEOUT = 20.0
+PID_PUBLISH_RETRY_INTERVAL = 0.01
 # Win32 DETACHED_PROCESS, defined locally so static imports remain portable.
 _DETACHED_PROCESS = 0x00000008
+
+
+def _publish_pid(temporary: Path, gate: Path, *, deadline: float) -> None:
+    """Publish through transient Windows reader locks within the existing budget."""
+    while True:
+        try:
+            os.replace(temporary, gate)
+            return
+        except PermissionError as exc:
+            # The parent polls this destination. Its Windows read handle can
+            # briefly prevent replacement; a different failure is not retryable.
+            if os.name != "nt" or getattr(exc, "winerror", None) not in {5, 32}:
+                raise
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise
+            time.sleep(min(PID_PUBLISH_RETRY_INTERVAL, remaining))
+            if time.monotonic() >= deadline:
+                raise
 
 
 def main(argv: list[str]) -> int:
@@ -29,7 +49,7 @@ def main(argv: list[str]) -> int:
     )
     temporary = gate.with_suffix(".tmp")
     temporary.write_text(str(child.pid), encoding="ascii")
-    os.replace(temporary, gate)
+    _publish_pid(temporary, gate, deadline=deadline)
     return child.wait()
 
 

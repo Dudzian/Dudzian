@@ -189,6 +189,12 @@ class ChildJob:
                     return value
             except (OSError, ValueError):
                 pass
+            if self.child is not None:
+                exit_code = self.child.poll()
+                if exit_code is not None:
+                    raise ProcessTreeError(
+                        "qualification child exited before publishing grandchild PID "
+                        f"exit_code={exit_code}")
             time.sleep(POLL_INTERVAL)
         raise ProcessTreeError("grandchild creation deadline expired")
 
