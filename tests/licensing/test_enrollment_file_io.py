@@ -10,7 +10,7 @@ import stat
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
-from threading import Event
+from threading import Barrier, Event
 from types import SimpleNamespace
 
 import pytest
@@ -350,6 +350,116 @@ def test_session_lock_serializes_threads_and_survives_reopen(tmp_path: Path):
     assert second.is_set()
     with delivery.artifact_directory_lock(tmp_path):
         pass
+
+
+def test_concurrent_first_session_lock_creation_has_one_immutable_inode(tmp_path, monkeypatch):
+    contenders = Barrier(2)
+    native_open = os.open
+    attempts = []
+    identities = []
+
+    def synchronized_open(path, flags, mode=0o777, *, dir_fd=None):
+        if path == ".pdsa-session.lock":
+            attempts.append(flags)
+            assert flags & os.O_NOFOLLOW
+            if flags & os.O_CREAT:
+                assert flags & os.O_EXCL
+                contenders.wait(timeout=5)
+        descriptor = native_open(path, flags, mode, dir_fd=dir_fd)
+        if path == ".pdsa-session.lock":
+            info = os.fstat(descriptor)
+            identities.append((info.st_dev, info.st_ino))
+        return descriptor
+
+    monkeypatch.setattr(os, "open", synchronized_open)
+
+    def enter_session():
+        with delivery.artifact_directory_lock(tmp_path):
+            delivery.write_artifact_file(tmp_path / "artifact", b"exact retry")
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(enter_session) for _ in range(2)]
+        for future in futures:
+            future.result(timeout=5)
+    assert len(identities) == 2 and identities[0] == identities[1]
+    assert sum(bool(flags & os.O_CREAT) for flags in attempts) == 2
+    assert len(attempts) == 3  # two exclusive attempts, one existing-only open
+    assert (tmp_path / "artifact").read_bytes() == b"exact retry"
+
+
+@pytest.mark.parametrize("during_creation", [True, False])
+def test_session_lock_enoent_is_not_retried_or_recreated(tmp_path, monkeypatch, during_creation):
+    lock_path = tmp_path / ".pdsa-session.lock"
+    if not during_creation:
+        lock_path.write_bytes(b"")
+        lock_path.chmod(0o600)
+    native_open = os.open
+    attempts = []
+
+    def disappeared(path, flags, mode=0o777, *, dir_fd=None):
+        if path == ".pdsa-session.lock":
+            attempts.append(flags)
+            if during_creation or not flags & os.O_CREAT:
+                if lock_path.exists():
+                    lock_path.unlink()
+                raise FileNotFoundError(errno.ENOENT, "missing lock", path)
+        return native_open(path, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(os, "open", disappeared)
+    with pytest.raises(delivery.EnrollmentFileError, match="cannot be locked safely"):
+        with delivery.artifact_directory_lock(tmp_path):
+            pytest.fail("missing lock cannot establish a session")
+    assert len(attempts) == (1 if during_creation else 2)
+    assert not lock_path.exists()
+
+
+def test_removed_pinned_directory_refuses_lock_creation(tmp_path, monkeypatch):
+    session = tmp_path / "session"
+    delivery.ensure_artifact_directory(session)
+    native_open = os.open
+    pinned_identity = None
+
+    def remove_before_create(path, flags, mode=0o777, *, dir_fd=None):
+        nonlocal pinned_identity
+        if path == ".pdsa-session.lock":
+            info = os.fstat(dir_fd)
+            pinned_identity = (info.st_dev, info.st_ino)
+            session.rmdir()
+            # An open descriptor pins the object, not its directory entry;
+            # creating children in an unlinked directory must still fail.
+            assert os.fstat(dir_fd).st_ino == pinned_identity[1]
+        return native_open(path, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(os, "open", remove_before_create)
+    with pytest.raises(delivery.EnrollmentFileError, match="cannot be locked safely") as caught:
+        with delivery.artifact_directory_lock(session):
+            pytest.fail("a removed directory cannot establish a session")
+    assert isinstance(caught.value.__cause__, FileNotFoundError)
+    assert pinned_identity is not None
+    assert not session.exists()
+
+
+@pytest.mark.parametrize("change", ["replace", "permissions", "contents"])
+def test_session_lock_changes_during_acquisition_are_rejected(tmp_path, monkeypatch, change):
+    fcntl = delivery.importlib.import_module("fcntl")
+    native_flock = fcntl.flock
+
+    def replace_after_lock(descriptor, operation):
+        native_flock(descriptor, operation)
+        lock = tmp_path / ".pdsa-session.lock"
+        if change == "replace":
+            lock.rename(tmp_path / "original-lock")
+            lock.write_bytes(b"")
+            lock.chmod(0o600)
+        elif change == "permissions":
+            lock.chmod(0o644)
+        else:
+            lock.write_bytes(b"untrusted")
+
+    monkeypatch.setattr(fcntl, "flock", replace_after_lock)
+    with pytest.raises(delivery.EnrollmentFileError, match="lock changed during acquisition"):
+        with delivery.artifact_directory_lock(tmp_path):
+            pytest.fail("a substituted lock cannot establish a session")
 
 
 def test_unprotected_directory_and_linked_lock_rejected(tmp_path: Path):

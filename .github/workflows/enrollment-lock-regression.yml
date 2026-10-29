@@ -1,0 +1,84 @@
+name: Enrollment lock regression
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/enrollment-lock-regression.yml"
+      - "bot_core/licensing/enrollment_file_io.py"
+      - "deployment/production_enrollment_*.py"
+      - "scripts/diagnose_enrollment_lock_open.py"
+      - "tests/deployment/test_production_enrollment_offline.py"
+      - "tests/licensing/test_enrollment_file_io.py"
+  workflow_dispatch:
+  push:
+    branches:
+      - "codex/enrollment-directory-lock-remediation"
+
+permissions:
+  contents: read
+
+jobs:
+  macos-enrollment-lock:
+    name: Native macOS lock probe and 20 regression runs
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out exact workflow revision
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+      - name: Record tested source and native environment
+        shell: bash
+        run: |
+          git rev-parse HEAD
+          git show --no-patch --format='%H %P' HEAD
+          sw_vers
+          python --version
+          python -c 'import sys; assert sys.platform == "darwin", sys.platform'
+      - name: Probe native concurrent create-or-open and exclusive-create control
+        shell: bash
+        run: |
+          mkdir -p test-results
+          python scripts/diagnose_enrollment_lock_open.py --trials 1000 --workers 16 > test-results/enrollment-open-probe.json
+          cat test-results/enrollment-open-probe.json
+      - name: Install focused regression dependencies
+        run: >-
+          python -m pip install
+          pytest pytest-asyncio pytest-cov
+          "cryptography>=50.0.1,<51"
+          PyYAML numpy pandas pydantic msgpack grpcio protobuf requests
+      - name: Run targeted original macOS regression
+        env:
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+          DUDZIAN_TEST_MODE: "1"
+          DUDZIAN_ALLOW_LONG_POLL: "0"
+        run: >-
+          python -m pytest -p asyncio
+          tests/deployment/test_production_enrollment_offline.py::test_parallel_request_retries_share_exact_challenge
+          --junitxml=test-results/original-regression.xml -q
+      - name: Repeat complete enrollment transport regression suite 20 times
+        shell: bash
+        env:
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+          DUDZIAN_TEST_MODE: "1"
+          DUDZIAN_ALLOW_LONG_POLL: "0"
+        run: |
+          for iteration in {1..20}; do
+            echo "Enrollment lock regression iteration ${iteration}/20"
+            python -m pytest -p asyncio \
+              tests/licensing/test_enrollment_file_io.py \
+              tests/deployment/test_production_enrollment_offline.py \
+              --junitxml="test-results/regression-${iteration}.xml" -q || exit "$?"
+          done
+      - name: Upload native probe and every regression result
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-enrollment-lock-results-${{ github.sha }}
+          path: test-results/
+          retention-days: 7
