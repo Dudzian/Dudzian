@@ -5,6 +5,10 @@ repository. This orchestration never downloads, extracts or executes artifacts.
 It uses the existing Ubuntu adapter and its decoder, not another DEB parser.
 Exit 2 means at least one full package inventory remains unsupported/incomplete.
 The separate frame result cannot authorize a package or claim V2 completion.
+Run unprivileged from a trusted checkout and Python environment. Decoder version
+checks select the supported implementation; they cannot authenticate an imported
+module, its native extension or its dependencies. This script provides neither
+an import sandbox nor hard time/memory isolation.
 """
 
 from __future__ import annotations
@@ -15,13 +19,12 @@ import json
 import os
 import stat
 import sys
-import time
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 from deployment.stage9_observer_contract import ContractRefusal
-from deployment.stage9_observer_offline import Limits
+from deployment.stage9_observer_offline import Limits, _absolute_directory, _Budget, _snapshot
 from deployment.stage9_observer_ubuntu import (
     UbuntuMember,
     UbuntuPackage,
@@ -53,29 +56,28 @@ def _blocked_status() -> dict[str, str]:
     }
 
 
-def _identity(value: os.stat_result) -> tuple[int, int, int, int, int]:
-    return value.st_dev, value.st_ino, value.st_size, value.st_mtime_ns, value.st_ctime_ns
-
-
 def measure(directory: Path, selected: str | None = None) -> dict[str, Any]:
     """Run read-only measurements; frozen expectations are never rewritten."""
     if sys.platform != "linux":
         raise ContractRefusal("UNSUPPORTED_SOURCE")
+    if os.geteuid() == 0:
+        raise ContractRefusal("FILE_POLICY_REJECTED")
     inventory_raw = _INVENTORY.read_bytes()
     if hashlib.sha256(inventory_raw).hexdigest() != _INVENTORY_SHA256:
         raise ValueError("frozen inventory digest mismatch")
     inventory = json.loads(inventory_raw)
     limits = Limits()
-    deadline = time.monotonic() + limits.timeout_s
+    budget = _Budget(limits)
+    check = budget.check
     consumed = 0
 
-    def check() -> None:
-        if time.monotonic() >= deadline:
-            raise ContractRefusal("LIMIT_EXCEEDED")
-
     results: list[dict[str, Any]] = []
-    directory_fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    # absolute() retains symlinks and '..' for the shared descriptor walk to
+    # reject, instead of resolving a possibly hostile ancestor in advance.
+    directory = directory.absolute()
+    directory_fd = _absolute_directory(directory, budget)
     try:
+        directory_before = _snapshot(os.fstat(directory_fd))
         for declaration in inventory["packages"]:
             if selected is not None and declaration["package"] != selected:
                 continue
@@ -88,6 +90,8 @@ def measure(directory: Path, selected: str | None = None) -> dict[str, Any]:
             )
             try:
                 before = os.fstat(fd)
+                if before.st_nlink != 1 or before.st_dev != directory_before[0]:
+                    raise ContractRefusal("FILE_POLICY_REJECTED")
                 if not stat.S_ISREG(before.st_mode) or before.st_size != declaration["size"]:
                     raise ValueError("archive type/size mismatch")
                 digest = hashlib.sha256()
@@ -130,8 +134,18 @@ def measure(directory: Path, selected: str | None = None) -> dict[str, Any]:
                             if consumed > limits.max_unpacked_bytes or total > record["size"] * 100:
                                 raise ContractRefusal("LIMIT_EXCEEDED")
                             frame_digest.update(block)
-                    finally:
+                    except BaseException:
+                        # Cleanup must release the native window without
+                        # replacing the first measurement failure.
+                        try:
+                            stream.close()
+                        except ContractRefusal:
+                            pass
+                        raise
+                    else:
                         stream.close()
+                    if not stream.finished:
+                        raise ContractRefusal("PROVENANCE_INCOMPLETE")
                     if (
                         total != record["unpacked_bytes"]
                         or frame_digest.hexdigest() != record["unpacked_sha256"]
@@ -182,7 +196,7 @@ def measure(directory: Path, selected: str | None = None) -> dict[str, Any]:
                     refusal = str(error)
                 after = os.fstat(fd)
                 binding = os.stat(filename, dir_fd=directory_fd, follow_symlinks=False)
-                if _identity(before) != _identity(after) or _identity(after) != _identity(binding):
+                if _snapshot(before) != _snapshot(after) or _snapshot(after) != _snapshot(binding):
                     raise ValueError("archive identity changed during measurement")
                 results.append(
                     {
@@ -203,6 +217,15 @@ def measure(directory: Path, selected: str | None = None) -> dict[str, Any]:
                 )
             finally:
                 os.close(fd)
+        check()
+        if _snapshot(os.fstat(directory_fd)) != directory_before:
+            raise ContractRefusal("FILE_CHANGED")
+        rebound = _absolute_directory(directory, budget)
+        try:
+            if _snapshot(os.fstat(rebound)) != directory_before:
+                raise ContractRefusal("FILE_CHANGED")
+        finally:
+            os.close(rebound)
     finally:
         os.close(directory_fd)
     if not results:
@@ -240,7 +263,9 @@ def main() -> int:
                     "REAL_DEB_BYTE_CONSISTENCY": "INCOMPLETE",
                     "SOURCE_AUTHENTICITY": "UNVERIFIED",
                     **_blocked_status(),
-                    "error": str(error),
+                    "error": error.code
+                    if isinstance(error, ContractRefusal)
+                    else "PROVENANCE_INCOMPLETE",
                 },
                 indent=2,
             )

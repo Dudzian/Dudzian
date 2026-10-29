@@ -380,7 +380,7 @@ def test_missing_decoder_library_refuses_without_fallback(
     _refused(case.verify(), "UNSUPPORTED_SOURCE")
 
 
-@pytest.mark.parametrize("failure", [zstandard.ZstdError, MemoryError])
+@pytest.mark.parametrize("failure", [zstandard.ZstdError, OSError, MemoryError])
 def test_decoder_creation_errors_refuse(
     case: _Case, monkeypatch: pytest.MonkeyPatch, failure: type[Exception]
 ) -> None:
@@ -390,10 +390,10 @@ def test_decoder_creation_errors_refuse(
         raise failure("synthetic native decoder failure")
 
     monkeypatch.setattr(zstandard, "ZstdDecompressor", fail_decoder)
-    _refused(case.verify(), "LIMIT_EXCEEDED" if failure is MemoryError else "FORMAT_REJECTED")
+    _refused(case.verify(), _native_reason(failure))
 
 
-@pytest.mark.parametrize("failure", [zstandard.ZstdError, MemoryError])
+@pytest.mark.parametrize("failure", [zstandard.ZstdError, OSError, MemoryError])
 def test_decoder_read_errors_refuse(
     case: _Case, monkeypatch: pytest.MonkeyPatch, failure: type[Exception]
 ) -> None:
@@ -417,7 +417,198 @@ def test_decoder_read_errors_refuse(
             return FailingReader()
 
     monkeypatch.setattr(zstandard, "ZstdDecompressor", FailingDecoder)
-    _refused(case.verify(), "LIMIT_EXCEEDED" if failure is MemoryError else "FORMAT_REJECTED")
+    _refused(case.verify(), _native_reason(failure))
+
+
+def _native_reason(failure: type[Exception]) -> str:
+    if failure is MemoryError:
+        return "LIMIT_EXCEEDED"
+    if failure is OSError:
+        return "PROVENANCE_INCOMPLETE"
+    if failure is ubuntu.ContractRefusal:
+        return "ARTIFACT_MISMATCH"
+    return "FORMAT_REJECTED"
+
+
+def _tracking_decoder_failures(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    read_failure: type[Exception] | None = None,
+    close_failure: type[Exception] | None = None,
+    fail_close_at: int | None = None,
+) -> tuple[list[weakref.ReferenceType[Any]], list[int]]:
+    original = zstandard.ZstdDecompressor
+    references: list[weakref.ReferenceType[Any]] = []
+    closed: list[int] = []
+
+    class Reader:
+        def __init__(self, owner: Any, native: Any) -> None:
+            self.owner, self.native = owner, native
+            references.append(weakref.ref(self))
+
+        def read(self, size: int) -> bytes:
+            if read_failure is not None:
+                message = (
+                    "ARTIFACT_MISMATCH"
+                    if read_failure is ubuntu.ContractRefusal
+                    else "untrusted native read diagnostic"
+                )
+                raise read_failure(message)
+            return self.native.read(size)
+
+        def close(self) -> None:
+            closed.append(1)
+            if close_failure is not None and (
+                fail_close_at is None or len(closed) == fail_close_at
+            ):
+                raise close_failure("untrusted native cleanup diagnostic")
+            self.native.close()
+
+    class Decoder:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            self.native = original(*args, **kwargs)
+            references.append(weakref.ref(self))
+
+        def memory_size(self) -> int:
+            return self.native.memory_size()
+
+        def stream_reader(self, *args: Any, **kwargs: Any) -> Reader:
+            return Reader(self, self.native.stream_reader(*args, **kwargs))
+
+    monkeypatch.setattr(zstandard, "ZstdDecompressor", Decoder)
+    return references, closed
+
+
+@pytest.mark.parametrize("failure", [zstandard.ZstdError, OSError, MemoryError])
+def test_native_cleanup_failure_refuses_and_releases_resources(
+    case: _Case, monkeypatch: pytest.MonkeyPatch, failure: type[Exception]
+) -> None:
+    _archive(case)
+    references, closed = _tracking_decoder_failures(monkeypatch, close_failure=failure)
+    result = case.verify()
+    _refused(result, _native_reason(failure))
+    assert "untrusted native" not in repr(result)
+    assert closed == [1]
+    assert all(reference() is None for reference in references)
+
+
+@pytest.mark.parametrize(
+    "read_failure", [zstandard.ZstdError, OSError, MemoryError, ubuntu.ContractRefusal]
+)
+@pytest.mark.parametrize("close_failure", [zstandard.ZstdError, OSError, MemoryError])
+def test_read_and_cleanup_failure_keep_primary_reason(
+    case: _Case,
+    monkeypatch: pytest.MonkeyPatch,
+    read_failure: type[Exception],
+    close_failure: type[Exception],
+) -> None:
+    _archive(case)
+    references, closed = _tracking_decoder_failures(
+        monkeypatch, read_failure=read_failure, close_failure=close_failure
+    )
+    result = case.verify()
+    _refused(result, _native_reason(read_failure))
+    if read_failure is ubuntu.ContractRefusal:
+        assert result.artifact_consistency == "MISMATCH"
+    assert set(result.reason_codes) == {
+        "TRUST_CONTEXT_MISSING",
+        "RUNTIME_LAUNCH_UNVERIFIED",
+        "HOST_SCOPE_UNVERIFIED",
+        _native_reason(read_failure),
+    }
+    assert "untrusted native" not in repr(result)
+    assert closed == [1]
+    assert all(reference() is None for reference in references)
+
+
+@pytest.mark.parametrize("failure", [zstandard.ZstdError, OSError, MemoryError])
+def test_member_integrity_failure_survives_native_cleanup_failure(
+    case: _Case, monkeypatch: pytest.MonkeyPatch, failure: type[Exception]
+) -> None:
+    entries = case.data_entries()
+    index = next(index for index, (_, raw) in enumerate(entries) if raw)
+    name, raw = entries[index]
+    entries[index] = (name, bytes([raw[0] ^ 1]) + raw[1:])
+    _archive(case, data=_compress(_tar(entries)))
+    references, closed = _tracking_decoder_failures(
+        monkeypatch, close_failure=failure, fail_close_at=2
+    )
+    result = case.verify()
+    _refused(result, "ARTIFACT_MISMATCH")
+    assert result.artifact_consistency == "MISMATCH"
+    assert _native_reason(failure) not in result.reason_codes
+    assert closed == [1, 1]
+    assert all(reference() is None for reference in references)
+
+
+@pytest.mark.parametrize("failure", [None, zstandard.ZstdError, OSError, MemoryError])
+def test_native_reader_close_is_idempotent_even_after_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: type[Exception] | None
+) -> None:
+    raw = _compress(b"inert bounded decoder fixture")
+    monkeypatch.setattr(ubuntu, "_pread", lambda fd, size, offset: raw[offset : offset + size])
+    target = tmp_path / "frame.zst"
+    target.write_bytes(raw)
+    references, closed = _tracking_decoder_failures(monkeypatch, close_failure=failure)
+    limits = offline.Limits()
+    with target.open("rb") as source:
+        reader = ubuntu._ZstdReader(
+            ubuntu._Region(source.fileno(), 0, len(raw), limits.chunk_bytes, lambda: None),
+            limits,
+            lambda: None,
+            memory_bytes=4 * 1024 * 1024,
+        )
+        if failure is None:
+            reader.close()
+        else:
+            with pytest.raises(ubuntu.ContractRefusal, match="^" + _native_reason(failure) + "$"):
+                reader.close()
+        reader.close()
+        assert reader.closed
+        assert reader.stream is reader.context is None
+    assert closed == [1]
+    assert all(reference() is None for reference in references)
+
+
+@pytest.mark.parametrize("failure", [zstandard.ZstdError, OSError, MemoryError])
+def test_constructor_post_creation_failure_releases_stream_and_preserves_cause(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: type[Exception]
+) -> None:
+    raw = _compress(b"inert bounded decoder fixture")
+    monkeypatch.setattr(ubuntu, "_pread", lambda fd, size, offset: raw[offset : offset + size])
+    target = tmp_path / "frame.zst"
+    target.write_bytes(raw)
+    references, closed = _tracking_decoder_failures(monkeypatch, close_failure=failure)
+    limits = offline.Limits()
+
+    def refuse_after_creation() -> None:
+        if len(references) == 2:
+            raise ubuntu.ContractRefusal("LIMIT_EXCEEDED")
+
+    with target.open("rb") as source:
+        with pytest.raises(ubuntu.ContractRefusal, match="^LIMIT_EXCEEDED$"):
+            ubuntu._ZstdReader(
+                ubuntu._Region(source.fileno(), 0, len(raw), limits.chunk_bytes, lambda: None),
+                limits,
+                refuse_after_creation,
+                memory_bytes=4 * 1024 * 1024,
+            )
+    assert closed == [1]
+    assert all(reference() is None for reference in references)
+
+
+def test_archive_verifier_requires_decoder_eof_even_when_compressed_range_was_consumed(
+    case: _Case, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _archive(case)
+
+    def incomplete_tar(stream: Any, **kwargs: Any) -> tuple[None, int, int]:
+        assert stream.read(512)
+        assert stream.region.remaining == 0
+        return None, 512, 0
+
+    monkeypatch.setattr(ubuntu, "_tar", incomplete_tar)
+    _refused(case.verify(), "PROVENANCE_INCOMPLETE")
 
 
 def test_zstandard_reader_never_requests_unbounded_compressed_or_output_reads(

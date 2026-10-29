@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -209,3 +210,198 @@ def test_inconsistent_frozen_comparison_refuses_a_hash_pinned_archive(
     )
     with pytest.raises(ValueError, match=message):
         experiment.measure(synthetic_declared_archive)
+
+
+def test_root_measurement_refuses_before_inventory_or_archive_io(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(os, "geteuid", lambda: 0)
+    monkeypatch.setattr(experiment, "_INVENTORY", tmp_path / "missing-inventory")
+    _forbid_decoder(monkeypatch)
+    with pytest.raises(experiment.ContractRefusal, match="FILE_POLICY_REJECTED"):
+        experiment.measure(tmp_path)
+
+
+def test_symlinked_ancestor_refuses_before_archive_decode(
+    synthetic_declared_archive: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    alias = tmp_path / "alias"
+    alias.symlink_to(tmp_path, target_is_directory=True)
+    _forbid_decoder(monkeypatch)
+    with pytest.raises(OSError):
+        experiment.measure(alias / synthetic_declared_archive.name)
+
+
+def test_hardlinked_archive_refuses_before_hash_or_decode(
+    synthetic_declared_archive: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    os.link(synthetic_declared_archive / "observed.deb", tmp_path / "second-name.deb")
+    _forbid_decoder(monkeypatch)
+    with pytest.raises(experiment.ContractRefusal, match="FILE_POLICY_REJECTED"):
+        experiment.measure(synthetic_declared_archive)
+
+
+@pytest.mark.parametrize("mutation", ["mode", "link", "replacement", "directory"])
+def test_archive_metadata_or_directory_binding_change_never_matches(
+    synthetic_declared_archive: Path, monkeypatch: pytest.MonkeyPatch, mutation: str
+) -> None:
+    original = experiment._pread
+    mutated = False
+    descriptors: list[int] = []
+
+    def mutate_on_read(fd: int, size: int, offset: int) -> bytes:
+        nonlocal mutated
+        data = original(fd, size, offset)
+        if not mutated:
+            mutated = True
+            descriptors.append(fd)
+            archive = synthetic_declared_archive / "observed.deb"
+            if mutation == "mode":
+                archive.chmod(0o600 if archive.stat().st_mode & 0o077 else 0o644)
+            elif mutation == "link":
+                os.link(archive, synthetic_declared_archive.parent / "second-name.deb")
+            elif mutation == "replacement":
+                replacement = synthetic_declared_archive.parent / "replacement.deb"
+                replacement.write_bytes(archive.read_bytes())
+                replacement.replace(archive)
+            else:
+                synthetic_declared_archive.rename(synthetic_declared_archive.with_name("moved"))
+                synthetic_declared_archive.mkdir()
+        return data
+
+    monkeypatch.setattr(experiment, "_pread", mutate_on_read)
+    with pytest.raises(ValueError, match="archive identity changed|FILE_CHANGED"):
+        experiment.measure(synthetic_declared_archive)
+    assert mutated
+    for fd in descriptors:
+        with pytest.raises(OSError):
+            os.fstat(fd)
+
+
+@pytest.mark.parametrize("failure", ["native-read", "native-close", "double-failure"])
+@pytest.mark.parametrize("kind", ["zstd", "os"])
+def test_native_decoder_failure_is_controlled_and_sanitized(
+    synthetic_declared_archive: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    failure: str,
+    kind: str,
+) -> None:
+    import zstandard
+
+    original = zstandard.ZstdDecompressor
+    error_type = zstandard.ZstdError if kind == "zstd" else OSError
+    closed: list[bool] = []
+
+    class FailingStream:
+        def __init__(self, stream: Any) -> None:
+            self.stream = stream
+
+        def read(self, size: int) -> bytes:
+            if failure in {"native-read", "double-failure"}:
+                raise error_type("untrusted archive message")
+            return self.stream.read(size)
+
+        def close(self) -> None:
+            self.stream.close()
+            closed.append(True)
+            if failure == "native-close":
+                raise error_type("untrusted cleanup message")
+            if failure == "double-failure":
+                # Deliberately use a different refusal for the second failure.
+                raise MemoryError("untrusted cleanup message")
+
+    class FailingDecoder:
+        def __init__(self, **kwargs: Any) -> None:
+            self.context = original(**kwargs)
+
+        def memory_size(self) -> int:
+            return self.context.memory_size()
+
+        def stream_reader(self, *args: Any, **kwargs: Any) -> FailingStream:
+            return FailingStream(self.context.stream_reader(*args, **kwargs))
+
+    monkeypatch.setattr(zstandard, "ZstdDecompressor", FailingDecoder)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["verify_stage9_real_deb_v2", "--directory", str(synthetic_declared_archive)],
+    )
+    assert experiment.main() == 2
+    output = capsys.readouterr().out
+    result = json.loads(output)
+    expected = "FORMAT_REJECTED" if kind == "zstd" else "PROVENANCE_INCOMPLETE"
+    assert result["error"] == expected
+    assert result["REAL_DEB_BYTE_CONSISTENCY"] == "INCOMPLETE"
+    assert result["V2_COMPLETE"] == "NO"
+    assert closed == [True]
+    assert "untrusted" not in output
+
+
+def test_os_error_diagnostic_never_exposes_untrusted_paths(
+    synthetic_declared_archive: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fail_read(*args: Any) -> bytes:
+        raise OSError("untrusted input path and native diagnostic")
+
+    monkeypatch.setattr(experiment, "_pread", fail_read)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["verify_stage9_real_deb_v2", "--directory", str(synthetic_declared_archive)],
+    )
+    assert experiment.main() == 2
+    output = capsys.readouterr().out
+    assert json.loads(output)["error"] == "PROVENANCE_INCOMPLETE"
+    assert "untrusted" not in output
+
+
+def test_unfinished_decoder_cannot_be_reported_as_complete(
+    synthetic_declared_archive: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    closed: list[bool] = []
+
+    class UnfinishedReader:
+        finished = False
+
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+        def read(self, size: int) -> bytes:
+            return b""
+
+        def close(self) -> None:
+            closed.append(True)
+
+    monkeypatch.setattr(experiment, "_ZstdReader", UnfinishedReader)
+    with pytest.raises(experiment.ContractRefusal, match="PROVENANCE_INCOMPLETE"):
+        experiment.measure(synthetic_declared_archive)
+    assert closed == [True]
+
+
+def test_directory_substitution_during_final_path_rebinding_refuses(
+    synthetic_declared_archive: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original = experiment._absolute_directory
+    opens = 0
+    descriptors: list[int] = []
+
+    def substitute_on_rebind(*args: Any) -> int:
+        nonlocal opens
+        opens += 1
+        if opens == 2:
+            synthetic_declared_archive.rename(synthetic_declared_archive.with_name("moved"))
+            synthetic_declared_archive.mkdir()
+        fd = original(*args)
+        descriptors.append(fd)
+        return fd
+
+    monkeypatch.setattr(experiment, "_absolute_directory", substitute_on_rebind)
+    with pytest.raises(experiment.ContractRefusal, match="FILE_CHANGED"):
+        experiment.measure(synthetic_declared_archive)
+    assert opens == 2
+    for fd in descriptors:
+        with pytest.raises(OSError):
+            os.fstat(fd)

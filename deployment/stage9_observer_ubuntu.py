@@ -192,6 +192,8 @@ class _ZstdReader:
         self.region, self.limits, self.check = region, limits, check
         self.compressed_size, self.total = region.remaining, 0
         self.closed, self.finished = False, False
+        self.context: Any = None
+        self.stream: Any = None
         try:
             self.params = _zstd_frame(region, self.decoder, limits)
             # libzstd 1.5.7 estimateDStreamSize is DCtx + window + at most
@@ -216,10 +218,20 @@ class _ZstdReader:
                 closefd=False,
             )
             check()
-        except self.decoder.ZstdError:
-            raise ContractRefusal("FORMAT_REJECTED") from None
-        except MemoryError:
-            raise ContractRefusal("LIMIT_EXCEEDED") from None
+        except BaseException as exc:
+            # A final deadline check can fail after the stream was created.
+            # Release partial initialization without replacing its first cause.
+            try:
+                self.close()
+            except ContractRefusal:
+                pass
+            if isinstance(exc, self.decoder.ZstdError):
+                raise ContractRefusal("FORMAT_REJECTED") from None
+            if isinstance(exc, MemoryError):
+                raise ContractRefusal("LIMIT_EXCEEDED") from None
+            if isinstance(exc, OSError):
+                raise ContractRefusal("PROVENANCE_INCOMPLETE") from None
+            raise
 
     def read(self, size: int) -> bytes:
         self.check()
@@ -235,6 +247,8 @@ class _ZstdReader:
             raise ContractRefusal("FORMAT_REJECTED") from None
         except MemoryError:
             raise ContractRefusal("LIMIT_EXCEEDED") from None
+        except OSError:
+            raise ContractRefusal("PROVENANCE_INCOMPLETE") from None
         self.total += len(data)
         _require(
             self.total <= self.limits.max_unpacked_bytes
@@ -253,12 +267,19 @@ class _ZstdReader:
         if not self.closed:
             self.closed = True
             try:
-                self.stream.close()
+                if self.stream is not None:
+                    self.stream.close()
+            except self.decoder.ZstdError:
+                raise ContractRefusal("FORMAT_REJECTED") from None
+            except MemoryError:
+                raise ContractRefusal("LIMIT_EXCEEDED") from None
+            except OSError:
+                raise ContractRefusal("PROVENANCE_INCOMPLETE") from None
             finally:
                 # Release the native window before constructing a decoder for
                 # the next control/data range or the next package.
-                del self.stream
-                del self.context
+                self.stream = None
+                self.context = None
 
 
 class _TarReader:
@@ -574,7 +595,17 @@ def verify_ubuntu_archive(
                         required_directories=required_directories if index == 2 else None,
                     )
                     _require(region.remaining == 0, "PROVENANCE_INCOMPLETE")
-                finally:
+                    if isinstance(stream, _ZstdReader):
+                        _require(stream.finished, "PROVENANCE_INCOMPLETE")
+                except BaseException:
+                    # A cleanup failure cannot replace an already established
+                    # format, integrity or resource-limit refusal.
+                    try:
+                        stream.close()
+                    except (ContractRefusal, OSError, EOFError, zlib.error, MemoryError):
+                        pass
+                    raise
+                else:
                     stream.close()
                 unpacked += total
                 members += count
