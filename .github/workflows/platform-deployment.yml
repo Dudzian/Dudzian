@@ -40,7 +40,14 @@ jobs:
       - uses: actions/setup-python@v7
         with: {python-version: "3.11"}
       - run: python -m pip install pytest pyyaml
-      - run: python -m pytest -q tests/deployment/test_platform_readiness.py tests/deployment/test_platform_evidence.py
+      - run: >-
+          python -m pytest -q tests/deployment/test_platform_readiness.py
+          tests/deployment/test_platform_evidence.py
+          tests/deployment/test_windows_stage10_evidence_identity.py
+          tests/scripts/test_platform_core_evidence_workflow.py
+      - name: Prove Stage-10 soak identity refusal without running qualification
+        shell: powershell
+        run: ./deployment/windows_stage10_soak_identity_regression.ps1
       - name: Prove Windows PowerShell captured native transport
         shell: powershell
         run: >-
@@ -265,14 +272,53 @@ jobs:
             stage10/windows-stage10-transcript.log
 
   linux-deployment-integration:
-    if: github.event_name == 'pull_request' || inputs.run_stage10 == true
+    if: always() && (github.event_name == 'pull_request' || inputs.run_stage10 == true)
     runs-on: ubuntu-latest
+    needs: [core-linux, core-windows, core-macos]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with: {python-version: "3.11"}
+      - &require_current_core_success
+        name: Require successful current Core jobs
+        shell: python
+        env:
+          CORE_LINUX_RESULT: ${{ needs.core-linux.result }}
+          CORE_WINDOWS_RESULT: ${{ needs.core-windows.result }}
+          CORE_MACOS_RESULT: ${{ needs.core-macos.result }}
+        run: |
+          import os
+          required = ("CORE_LINUX_RESULT", "CORE_WINDOWS_RESULT", "CORE_MACOS_RESULT")
+          if any(os.environ.get(name) != "success" for name in required):
+              raise SystemExit("all current Core jobs must succeed before accepting artifacts")
+      # Default artifact scope is this workflow run; never select a previous run.
+      - uses: actions/download-artifact@v8
+        with:
+          name: core-evidence-Linux
+          path: evidence/core-Linux
+      - uses: actions/download-artifact@v8
+        with:
+          name: core-evidence-Windows
+          path: evidence/core-Windows
+      - uses: actions/download-artifact@v8
+        with:
+          name: core-evidence-macOS
+          path: evidence/core-macOS
+      - name: Aggregate revision-bound cross-OS core evidence for Linux
+        run: >-
+          python -m deployment.platform_evidence aggregate-core
+          --source-revision "${{ github.sha }}"
+          --marker evidence/core-Linux/core-Linux.json
+          --marker evidence/core-Windows/core-Windows.json
+          --marker evidence/core-macOS/core-macOS.json
+          --output evidence/core-matrix.json
       - name: Enforce recorded Linux integration evidence
-        run: python -m deployment.platform_readiness --platform LINUX
+        run: >-
+          python -m deployment.platform_readiness --platform LINUX
+          --current-revision "${{ github.sha }}"
+          --expected-ci-provider "${{ github.server_url }}"
+          --expected-ci-run-id "${{ github.run_id }}"
+          --evidence evidence/core-matrix.json
 
   macos-deployment-integration:
     name: macOS deployment compatibility (production deferred)
@@ -308,6 +354,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with: {python-version: "3.11"}
+      - *require_current_core_success
       - uses: actions/download-artifact@v8
         with:
           pattern: core-evidence-*

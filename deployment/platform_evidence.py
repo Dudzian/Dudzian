@@ -14,6 +14,7 @@ import sys
 from typing import Any
 
 from deployment.core_test_plan import MANIFEST, canonical_plan_digest, load_manifest
+from deployment.host_identity import canonical_host_os
 from deployment.windows_installer.contract import is_reviewed_wix_version
 from deployment.windows_stage9_evidence_contract import (
     CLEAN_INSTALL_PRECEREMONY_PROOFS,
@@ -136,7 +137,12 @@ def aggregate_core_markers(
         if not isinstance(value, dict) or set(value) != required:
             raise EvidenceProductionError(f"malformed core marker: {marker}")
         if (
-            value["schema_version"] != 1
+            type(value["schema_version"]) is not int
+            or value["schema_version"] != 1
+            or any(
+                not isinstance(value[name], str) or not value[name].strip()
+                for name in required - {"schema_version"}
+            )
             or value["source_revision"] != source_revision
             or value["test_plan_id"] != expected_plan_id
             or value["test_plan_digest"] != expected_digest
@@ -164,7 +170,7 @@ def aggregate_core_markers(
                 source_revision=source_revision,
                 ci_provider=provider,
                 ci_run_id=run_id,
-                runner_os="Windows",
+                runner_os=canonical_host_os(),
                 runner_arch=platform.machine(),
                 results=[result],
             ),
@@ -314,6 +320,10 @@ def produce_windows_stage10_evidence(
     source_revision, provider, run_id = _identity(revision)
     if provider != "https://github.com" or os.environ.get("RUNNER_OS") != "Windows":
         raise EvidenceProductionError("Stage-10 PASS requires a GitHub Windows runner")
+    runner_arch = os.environ.get("RUNNER_ARCH", "")
+    runner_name = os.environ.get("RUNNER_NAME", "")
+    if not runner_arch.strip() or not runner_name.strip():
+        raise EvidenceProductionError("Stage-10 requires nonempty current runner identity")
     value = json.loads(receipt.read_text(encoding="utf-8"))
     required = {
         "schema_version",
@@ -334,6 +344,7 @@ def produce_windows_stage10_evidence(
     if (
         not isinstance(contract, dict)
         or set(contract) != {"schema_version", "probe_id", "results"}
+        or type(contract["schema_version"]) is not int
         or contract["schema_version"] != 1
         or contract["probe_id"] != WINDOWS_STAGE10_PROBE_ID
         or not isinstance(contract["results"], dict)
@@ -376,13 +387,14 @@ def produce_windows_stage10_evidence(
         )
     )
     identity_ok = (
-        value.get("schema_version") == 1
+        type(value.get("schema_version")) is int
+        and value["schema_version"] == 1
         and value.get("source_revision") == source_revision
         and value.get("ci_provider") == provider
         and value.get("ci_run_id") == run_id
         and value.get("runner_os") == "Windows"
-        and value.get("runner_arch") == os.environ.get("RUNNER_ARCH")
-        and value.get("runner_name") == os.environ.get("RUNNER_NAME")
+        and value.get("runner_arch") == runner_arch
+        and value.get("runner_name") == runner_name
         and value.get("probe_id") == contract["probe_id"]
         and value.get("machine_guid") == current_machine_guid
         and provenance_ok
