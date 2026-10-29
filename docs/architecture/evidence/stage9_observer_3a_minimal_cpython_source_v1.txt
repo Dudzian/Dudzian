@@ -1,0 +1,232 @@
+# CRYPTOHUNTER — STAGE 9 / 3A
+## Minimal CPython Runtime and Native Import Scope
+
+Repozytorium: `Dudzian/Dudzian`
+
+Punkt odniesienia `main`:
+
+`3946695a8c7a37b09e9c494bb07caf68ccbbf81f`
+
+PR #3221 został scalony.
+
+### CEL
+
+Ustalić minimalny, uzasadniony wymaganiami zestaw modułów Python i bibliotek natywnych dla projektowanego Stage 9 Trusted Observer.
+
+Zadanie ma charakter analityczny i dokumentacyjny.
+
+Nie uruchamiaj Stage 3B, Observera ani fizycznych testów.
+
+Nie zmieniaj kodu produkcyjnego.
+
+Nie wykonuj merge.
+
+### NOWE WYNIKI Z DELLA
+
+Operator przeprowadził statyczne porównanie katalogu:
+
+`/usr/lib/python3.12/lib-dynload`
+
+Wynik pierwszego testu:
+
+- 46 modułów zadeklarowanych przez dwa pakiety.
+- 47 modułów na dysku.
+- Jeden moduł poza zakresem: `_gdbm`.
+
+Następnie ustalono:
+
+```text
+MODULE: _gdbm.cpython-312-x86_64-linux-gnu.so
+OWNER: python3-gdbm:amd64
+VERSION: 3.12.3-0ubuntu1
+SOURCE: python3-stdlib-extensions
+STATUS: ii
+```
+
+SHA-256:
+
+`fd4cfafba8307a1dabd0543400d94c875e08e7d2a4b795620ae86c6f041c7d28`
+
+Po uwzględnieniu pakietu `python3-gdbm`:
+
+```text
+EXPECTED_MODULES: 47
+ACTUAL_MODULES:   47
+ANOMALIES:        0
+STABILITY:        PASS
+
+RESULT: EXTENDED_NATIVE_MODULE_INVENTORY_MATCH
+```
+
+To lokalna zgodność ścieżek i własności pakietowej.
+
+Nie jest to weryfikacja bajtowa wszystkich 47 modułów.
+
+Nie jest to również dowód kompletności docelowego runtime Observera.
+
+### 1. ANALIZA ARCHITEKTURY
+
+Przejrzyj aktualne:
+
+- `stage9_trusted_observer_contracts_and_implementation_plan.md`
+- `stage9_observer_3a_schema_proposal.md`
+- `stage9_observer_3a_contract_audit.md`
+- `stage9_observer_3a_elf_qualification.md`
+- `stage9_observer_3a_dell_local_elf_report_v1.md`
+- `stage9_observer_3a_ubuntu_provenance_report_v1.md`
+- `deployment/stage9_observer_contract.py`
+- `deployment/canonical_json.py`
+
+Ustal, jaki kod Observera rzeczywiście istnieje.
+
+Oddziel:
+
+1. Istniejący parser kontraktów.
+2. Projektowany Trusted Observer.
+3. Przyszły verifier offline.
+4. Przyszły launcher i mechanizmy uruchomieniowe.
+
+Nie zakładaj, że zależności parsera są kompletnymi zależnościami przyszłego Observera.
+
+### 2. ANALIZA IMPORTÓW
+
+Na podstawie istniejących źródeł przygotuj wstępną mapę wymaganych modułów.
+
+Dla każdego zidentyfikowanego importu podaj:
+
+- nazwę modułu;
+- plik i linię źródłową;
+- komponent projektu;
+- klasyfikację: builtin, frozen, source, native albo unresolved;
+- sposób użycia;
+- czy import jest bezpośredni, pośredni, warunkowy lub występuje na ścieżce błędu;
+- czy jego obecność jest potwierdzona dla dokładnego, zaakceptowanego builda CPython.
+
+Rozdziel kategorie:
+
+`STATICALLY_REQUIRED`
+
+`TRANSITIVE_CANDIDATE`
+
+`BUILD_SPECIFIC_UNVERIFIED`
+
+`OBSERVER_DESIGN_UNDECIDED`
+
+`NOT_JUSTIFIED_FOR_TARGET`
+
+Nie przypisuj `STATICALLY_REQUIRED` na podstawie samej obecności modułu w systemie.
+
+### 3. NATIVE MODULES
+
+Uwzględnij informację o 47 rozszerzeniach systemowego CPython.
+
+Zaproponuj minimalny zakres do dalszej kwalifikacji.
+
+Dla każdego natywnego modułu wyjaśnij, czy:
+
+- ma uzasadnienie w istniejącym kodzie;
+- może być zależnością pośrednią;
+- wymaga decyzji architektonicznej;
+- obecnie nie ma podstaw do włączenia go do obrazu.
+
+Nie usuwaj modułów z systemu.
+
+Nie deklaruj, że wykluczenie modułu jest bezpieczne bez analizy wszystkich wymaganych ścieżek wykonania.
+
+Moduł `_gdbm` ma poprawnego lokalnego właściciela pakietowego, ale jego przydatność dla Observera pozostaje nieustalona.
+
+### 4. CPYTHON BOOTSTRAP
+
+Osobno przeanalizuj:
+
+- builtin modules;
+- frozen modules;
+- bootstrap importlib;
+- import roots;
+- ABI i extension suffixes;
+- moduł `_datetime`;
+- inicjalizację natywnych rozszerzeń;
+- mechanizmy dynamicznego ładowania;
+- zależności na ścieżkach błędów;
+- pliki konfiguracyjne i dane potrzebne podczas uruchamiania.
+
+Nie wykonuj systemowego interpretera jako sposobu uwierzytelnienia jego własnego inventory.
+
+Wymagany zbiór builtin/frozen musi ostatecznie wynikać z niezależnie zaakceptowanych materiałów builda.
+
+### 5. ELF I LOADER
+
+Dla uzasadnionych kandydatów natywnych przygotuj plan sprawdzenia:
+
+- `PT_INTERP`;
+- `DT_NEEDED`;
+- `SONAME`;
+- `RPATH` i `RUNPATH`;
+- wersji symboli;
+- ścieżek rozwiązywania zależności;
+- dopuszczonych `dlopen`;
+- dostawców OpenSSL;
+- wariantów hwcaps;
+- mechanizmów fallback.
+
+Zachowaj aktualne ograniczenie DAG.
+
+Nie implementuj SCC.
+
+Nie usuwaj potencjalnych zależności tylko po to, aby graf był acykliczny.
+
+### 6. WYMAGANE DECYZJE ARCHITEKTONICZNE
+
+Przedstaw decyzje, których nadal brakuje do wyznaczenia minimalnego runtime.
+
+Dla każdej decyzji podaj:
+
+- dostępne warianty;
+- ryzyko;
+- wymagane dowody;
+- zależności od pozostałych decyzji;
+- rekomendację, jeśli wynika z istniejących źródeł.
+
+Nie przedstawiaj rekomendacji jako zatwierdzonej decyzji projektowej.
+
+### 7. RAPORT I DALSZE PRACE
+
+Przygotuj raport zawierający:
+
+1. Aktualny stan implementacji Observera.
+2. Mapę bezpośrednich importów.
+3. Wstępne zależności pośrednie.
+4. Kandydatów na natywne moduły.
+5. Moduły bez uzasadnienia w aktualnym zakresie.
+6. Nierozstrzygnięte zależności CPython.
+7. Listę bibliotek wymagających dalszej analizy ELF.
+8. Minimalny zestaw kolejnych pomiarów na Dellu.
+9. Rejestr P0/P1/P2/P3.
+10. Wpływ na istniejące blokady Stage 3A.
+
+Jeżeli analiza wnosi istotne nowe ustalenia, utwórz osobny dokumentacyjny PR z manifestem SHA-256.
+
+Nie modyfikuj historycznych manifestów.
+
+Uruchom wymagane kontrole dokumentacji, formatowania i odpowiednie testy. Niedostępne kontrole zgłoś jawnie.
+
+Nie wykonuj automatycznego merge.
+
+### STATUSY BEZ ZMIAN
+
+```text
+stage_9=IN_PROGRESS
+qualification=BLOCKED
+CONTRACT_APPROVED=NO
+STAGE_3A_COMPLETE=NO
+PRODUCTION_QUALIFIED=NO
+production_status=PRODUCTION_NO_GO
+runtime_attestation=MISSING
+host_pid_namespace=UNVERIFIED
+```
+
+### KRYTERIUM SUKCESU
+
+Otrzymujemy uzasadniony źródłowo zakres dalszej kwalifikacji CPython, wraz z jawnymi brakami.
+
+Nie otrzymujemy fikcyjnego kompletnego manifestu, nie deklarujemy gotowości produkcyjnej ani nie zatwierdzamy obecnego projektu Observera.
