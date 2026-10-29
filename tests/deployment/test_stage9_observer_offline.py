@@ -441,6 +441,29 @@ def test_unexpected_actual_archive_member_refuses(case: _Case) -> None:
     _refused(case.verify(), "CLOSURE_INCOMPLETE")
 
 
+def test_unexpected_empty_archive_directory_refuses(case: _Case) -> None:
+    case.archive(data_entries=case.data_entries() + [("unexpected-empty-dir/", b"")])
+    _refused(case.verify(), "CLOSURE_INCOMPLETE")
+
+
+def test_declared_unprojected_member_allows_its_archive_ancestor_directory(case: _Case) -> None:
+    body = b"synthetic package documentation\n"
+    entries = case.data_entries() + [
+        ("package-docs/", b""),
+        ("package-docs/extra.txt", body),
+    ]
+    case.package = replace(
+        case.package,
+        members=case.package.members
+        + (UbuntuMember("package-docs/extra.txt", "", _sha(body), len(body)),),
+    )
+    case.archive(data_entries=entries)
+    result = case.verify()
+    assert result.artifact_consistency == "MATCH"
+    _blocked(result)
+    assert not (case.root / "package-docs").exists()
+
+
 @pytest.mark.parametrize("variant", [".xz", ".zst", ".bad"])
 def test_unsupported_archive_codec_refuses_in_full(case: _Case, variant: str) -> None:
     case.archive(suffix=variant)
@@ -488,6 +511,21 @@ def test_unreadable_input_refuses_instead_of_counting_a_partial_measurement(
 
     monkeypatch.setattr(os, "read", denied_read)
     _refused(case.verify(), "PROVENANCE_INCOMPLETE")
+
+
+def test_cleanup_close_failure_returns_structured_incomplete_refusal(
+    case: _Case, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original = offline._InputReader.close
+
+    def failing_close(reader: offline._InputReader) -> None:
+        original(reader)
+        raise OSError("synthetic close failure after descriptor cleanup")
+
+    monkeypatch.setattr(offline._InputReader, "close", failing_close)
+    result = case.verify()
+    _refused(result, "PROVENANCE_INCOMPLETE")
+    assert result.artifact_consistency == "INCOMPLETE"
 
 
 def test_duplicate_manifest_file_identifier_refuses(case: _Case) -> None:
@@ -817,3 +855,17 @@ def test_verifier_source_has_no_execution_or_target_import_adapter() -> None:
                         "load_module",
                         "exec_module",
                     }
+
+
+@pytest.mark.parametrize(
+    ("member", "reason"),
+    [("x" * 257, "UNSUPPORTED_SOURCE"), ("a/" * 32 + "x", "LIMIT_EXCEEDED")],
+)
+def test_unrepresentable_member_ancestry_refuses_before_retaining_paths(
+    case: _Case, member: str, reason: str
+) -> None:
+    case.package = replace(
+        case.package,
+        members=(replace(case.package.members[0], member=member),) + case.package.members[1:],
+    )
+    _refused(case.verify(), reason)

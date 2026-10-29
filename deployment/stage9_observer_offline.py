@@ -541,7 +541,11 @@ def verify_offline(
         reasons.add("PROVENANCE_INCOMPLETE")
     finally:
         if reader is not None:
-            reader.close()
+            try:
+                reader.close()
+            except OSError:
+                reasons.add("PROVENANCE_INCOMPLETE")
+                consistency = "INCOMPLETE"
     reason_codes = tuple(sorted(reasons))
     report = (
         _report(manifest_record, policy_record, launch_record, consistency, reason_codes)

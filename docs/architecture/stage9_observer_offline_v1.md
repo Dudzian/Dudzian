@@ -91,6 +91,8 @@ empty file IDs cover package members outside the staged image. Every regular
 member must be declared, every projected file must bind once, and source-linked
 manifest directory members must exist as TAR directories. The interpreter's
 manifest version is bound to its package source.
+Other data directories must be necessary ancestors of declared regular members;
+unreferenced empty directories refuse as unexpected additions.
 
 V1 permits only the enumerated CPython package family for
 `3.12.3-1ubuntu0.17`, `amd64`. DEB must contain exactly `debian-binary` (`2.0`),

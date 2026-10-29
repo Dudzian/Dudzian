@@ -163,6 +163,19 @@ def _tar(
     seen: set[str] = set()
     regular: set[str] = set()
     directories: set[str] = set()
+    _require(len(required_directories or ()) <= limits.max_archive_members, "LIMIT_EXCEEDED")
+    allowed_directories = {"."} | (required_directories or set())
+    if expected is not None:
+        for member in expected:
+            parent = member.rpartition("/")[0]
+            while parent:
+                check()
+                if parent not in allowed_directories:
+                    _require(
+                        len(allowed_directories) < limits.max_archive_members, "LIMIT_EXCEEDED"
+                    )
+                allowed_directories.add(parent)
+                parent = parent.rpartition("/")[0]
     control: bytes | None = None
     while True:
         header = reader.exact(512)
@@ -183,12 +196,15 @@ def _tar(
         if prefix:
             name = prefix + "/" + name
         name = _member_name(name, directory=kind == b"5")
+        _require(len(name.split("/")) <= limits.max_path_depth, "LIMIT_EXCEEDED")
         _require(name not in seen, "CLOSURE_INCOMPLETE")
         seen.add(name)
         size = _octal(header[124:136])
         _require(size <= limits.max_file_bytes, "LIMIT_EXCEEDED")
         if kind == b"5":
             _require(size == 0)
+            if expected is not None:
+                _require(name in allowed_directories, "CLOSURE_INCOMPLETE")
             directories.add(name)
             continue
         regular.add(name)
@@ -303,6 +319,10 @@ def verify_ubuntu_archive(
         check()
         _require(type(member) is UbuntuMember)
         _require(_member_name(member.member) == member.member)
+        # USTAR's prefix/name fields cannot represent a longer UTF-8 path.
+        # Refuse before deriving retained ancestor names from declarations.
+        _require(len(member.member.encode("utf-8")) <= 256, "UNSUPPORTED_SOURCE")
+        _require(len(member.member.split("/")) <= limits.max_path_depth, "LIMIT_EXCEEDED")
         _require(member.member not in expected, "CLOSURE_INCOMPLETE")
         _require(type(member.size) is int and 0 <= member.size <= limits.max_file_bytes)
         _require(
