@@ -22,6 +22,12 @@ inspection, not a substitute for reading or testing the implementation.
   blocking, tested CryptoHunter rules.
 - pip-audit checks the canonical desktop lock file. Dependency updates are
   reviewed and tested; `--fix` is not used automatically.
+- The inactive Stage 9 offline verifier additionally pins `zstandard==0.25.0`
+  in a separate `offline-verifier` extra and the test extra. Its negative-path
+  tests join the existing quality-ratchet coverage report without changing the
+  70% threshold or timeout. The C backend/libzstd and artifact provenance limits
+  are recorded in the [V2 scope](architecture/stage9_observer_offline_v2.md);
+  no dependency is added to a minimal Observer runtime.
 - Betterleaks 1.9.0 is the only secret scanner. Validation against providers is
   disabled. The redacted baseline contains 20 reviewed public-digest,
   fixture, or example findings, individually justified in

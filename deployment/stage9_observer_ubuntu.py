@@ -1,8 +1,9 @@
 """Restricted inert DEB reader; byte agreement never authenticates Ubuntu.
 
-Only DEB 2.0 with USTAR control/data archives (raw or gzip) is supported.
+Only DEB 2.0 with USTAR control/data archives (raw, gzip or bounded Zstandard)
+is supported. Zstandard requires the separately installed, exact offline extra.
 No extraction, maintainer script, target interpreter or external tool runs.
-XZ/Zstandard, links, sparse/PAX/GNU records and other variants refuse in full.
+XZ, links, sparse/PAX/GNU records and other variants refuse in full.
 Package/member expectations are caller declarations, never independent approval.
 """
 
@@ -10,6 +11,7 @@ from __future__ import annotations
 
 import gzip
 import hashlib
+import importlib
 import io
 import os
 import re
@@ -103,6 +105,160 @@ class _Region(io.RawIOBase):
         self.remaining -= amount
         self.check()
         return data
+
+
+def _zstandard() -> Any:
+    """Load only the reviewed decoder combination, never install or fall back.
+
+    These version checks identify an implementation, not an accepted binary or
+    trust root. Its wheel, native extension and host dependencies still require
+    independent provenance acceptance outside this advisory verifier.
+    """
+    try:
+        decoder = importlib.import_module("zstandard")
+    except (ImportError, OSError):
+        raise ContractRefusal("UNSUPPORTED_SOURCE") from None
+    _require(
+        getattr(decoder, "__version__", None) == "0.25.0"
+        and getattr(decoder, "backend", None) == "cext"
+        and getattr(decoder, "ZSTD_VERSION", None) == (1, 5, 7),
+        "UNSUPPORTED_SOURCE",
+    )
+    return decoder
+
+
+def _zstd_frame(region: _Region, decoder: Any, limits: Any) -> Any:
+    """Preflight one complete ordinary frame without retaining its payload.
+
+    stream_reader alone does not prove EOF on truncated input. This independent
+    envelope walk proves the exact last-block/checksum boundary before native
+    decoding; the native decoder must then validate every block and checksum.
+    No skippable, dictionary, magicless or concatenated variant is admitted.
+    """
+    region.check()
+    size = region.remaining
+    header = _pread(region.fd, min(18, size), region.start)
+    _require(len(header) == min(18, size), "PROVENANCE_INCOMPLETE")
+    _require(len(header) >= 6, "PROVENANCE_INCOMPLETE")
+    magic = int.from_bytes(header[:4], "little")
+    _require(not 0x184D2A50 <= magic <= 0x184D2A5F, "UNSUPPORTED_SOURCE")
+    _require(magic == 0xFD2FB528, "UNSUPPORTED_SOURCE")
+    # Reserved/unused bits and even a zero-valued dictionary-ID field are
+    # outside the deliberately narrow no-dictionary variant.
+    _require(header[4] & 0x1B == 0, "UNSUPPORTED_SOURCE")
+    params = decoder.get_frame_parameters(header)
+    _require(params.dict_id == 0, "UNSUPPORTED_SOURCE")
+    if params.content_size != decoder.CONTENTSIZE_UNKNOWN:
+        _require(
+            params.content_size <= limits.max_unpacked_bytes and params.content_size <= size * 100,
+            "LIMIT_EXCEEDED",
+        )
+    offset = decoder.frame_header_size(header)
+    while True:
+        region.check()
+        _require(offset + 3 <= size, "PROVENANCE_INCOMPLETE")
+        block_raw = _pread(region.fd, 3, region.start + offset)
+        _require(len(block_raw) == 3, "PROVENANCE_INCOMPLETE")
+        block = int.from_bytes(block_raw, "little")
+        kind, block_size = (block >> 1) & 3, block >> 3
+        _require(kind != 3 and block_size <= 131072)
+        offset += 3 + (1 if kind == 1 else block_size)
+        _require(offset <= size, "PROVENANCE_INCOMPLETE")
+        if block & 1:
+            break
+    offset += 4 if params.has_checksum else 0
+    _require(offset <= size, "PROVENANCE_INCOMPLETE")
+    _require(offset == size)
+    region.check()
+    return params
+
+
+class _ZstdReader:
+    """Bounded output and native window for exactly one preflighted frame.
+
+    This is accounting for the pinned implementation, not an OS RSS sandbox.
+    Callers must drain to EOF; close alone does not validate the frame payload.
+    """
+
+    def __init__(
+        self,
+        region: _Region,
+        limits: Any,
+        check: Callable[[], None],
+        *,
+        memory_bytes: int,
+    ) -> None:
+        self.decoder = _zstandard()
+        self.region, self.limits, self.check = region, limits, check
+        self.compressed_size, self.total = region.remaining, 0
+        self.closed, self.finished = False, False
+        try:
+            self.params = _zstd_frame(region, self.decoder, limits)
+            # libzstd 1.5.7 estimateDStreamSize is DCtx + window + at most
+            # three 128-KiB blocks + 64 bytes. Round that workspace upward.
+            # Python input/output buffers are reserved separately by caller.
+            self.native_limit = (
+                self.params.window_size
+                + self.decoder.estimate_decompression_context_size()
+                + 524288
+            )
+            _require(self.native_limit <= memory_bytes, "LIMIT_EXCEEDED")
+            # Despite the Python docstring's KiB wording, the pinned C backend
+            # forwards this value to ZSTD_DCtx_setMaxWindowSize in BYTES.
+            self.context = self.decoder.ZstdDecompressor(
+                max_window_size=max(1024, self.params.window_size)
+            )
+            _require(self.context.memory_size() <= self.native_limit, "LIMIT_EXCEEDED")
+            self.stream = self.context.stream_reader(
+                region,
+                read_size=limits.chunk_bytes,
+                read_across_frames=False,
+                closefd=False,
+            )
+            check()
+        except self.decoder.ZstdError:
+            raise ContractRefusal("FORMAT_REJECTED") from None
+        except MemoryError:
+            raise ContractRefusal("LIMIT_EXCEEDED") from None
+
+    def read(self, size: int) -> bytes:
+        self.check()
+        _require(not self.closed)
+        _require(type(size) is int and 0 <= size <= self.limits.chunk_bytes, "LIMIT_EXCEEDED")
+        if not size or self.finished:
+            return b""
+        try:
+            data = self.stream.read(size)
+            _require(type(data) is bytes and len(data) <= size, "PROVENANCE_INCOMPLETE")
+            _require(self.context.memory_size() <= self.native_limit, "LIMIT_EXCEEDED")
+        except self.decoder.ZstdError:
+            raise ContractRefusal("FORMAT_REJECTED") from None
+        except MemoryError:
+            raise ContractRefusal("LIMIT_EXCEEDED") from None
+        self.total += len(data)
+        _require(
+            self.total <= self.limits.max_unpacked_bytes
+            and self.total <= self.compressed_size * 100,
+            "LIMIT_EXCEEDED",
+        )
+        if not data:
+            _require(self.region.remaining == 0, "PROVENANCE_INCOMPLETE")
+            if self.params.content_size != self.decoder.CONTENTSIZE_UNKNOWN:
+                _require(self.total == self.params.content_size, "PROVENANCE_INCOMPLETE")
+            self.finished = True
+        self.check()
+        return cast(bytes, data)
+
+    def close(self) -> None:
+        if not self.closed:
+            self.closed = True
+            try:
+                self.stream.close()
+            finally:
+                # Release the native window before constructing a decoder for
+                # the next control/data range or the next package.
+                del self.stream
+                del self.context
 
 
 class _TarReader:
@@ -306,13 +462,10 @@ def verify_ubuntu_archive(
     _require(source["source_id"] == package.source_id and source["kind"] == "ubuntu_apt_snapshot")
     _require(0 < len(package.members) <= limits.max_archive_members, "LIMIT_EXCEEDED")
     # Conservative retained-name/record allowance plus decoder/window buffers.
-    _require(
-        (limits.max_archive_members + len(package.members)) * 2048
-        + limits.chunk_bytes * 8
-        + 1048576
-        <= limits.working_memory_bytes,
-        "LIMIT_EXCEEDED",
-    )
+    retained_memory = (limits.max_archive_members + len(package.members)) * 2048
+    buffer_memory = limits.chunk_bytes * 8
+    decoder_memory = limits.working_memory_bytes - retained_memory - buffer_memory
+    _require(decoder_memory >= 1048576, "LIMIT_EXCEEDED")
     expected: dict[str, UbuntuMember] = {}
     bound_ids: set[str] = set()
     for member in package.members:
@@ -384,22 +537,34 @@ def verify_ubuntu_archive(
                 _require(_pread(fd, 4, start) == b"2.0\n", "UNSUPPORTED_SOURCE")
             else:
                 base = b"control.tar" if index == 1 else b"data.tar"
-                _require(name in (base, base + b".gz"), "UNSUPPORTED_SOURCE")
-                region = _Region(fd, start, size, limits.chunk_bytes, check)
-                stream: Any = (
-                    gzip.GzipFile(fileobj=region, mode="rb") if name.endswith(b".gz") else region
+                _require(name in (base, base + b".gz", base + b".zst"), "UNSUPPORTED_SOURCE")
+                remaining_limits = replace(
+                    limits,
+                    max_unpacked_bytes=limits.max_unpacked_bytes - unpacked,
+                    max_archive_members=limits.max_archive_members - members,
                 )
+                _require(
+                    remaining_limits.max_unpacked_bytes > 0
+                    and remaining_limits.max_archive_members > 0,
+                    "LIMIT_EXCEEDED",
+                )
+                region = _Region(fd, start, size, limits.chunk_bytes, check)
+                stream: Any
+                if name.endswith(b".zst"):
+                    stream = _ZstdReader(
+                        region,
+                        remaining_limits,
+                        check,
+                        # Preserve the original fixed allowance for control
+                        # bytes, Python reader objects and temporary records,
+                        # even when the caller tightens chunk_bytes to 512.
+                        memory_bytes=decoder_memory - 1048576,
+                    )
+                elif name.endswith(b".gz"):
+                    stream = gzip.GzipFile(fileobj=region, mode="rb")
+                else:
+                    stream = region
                 try:
-                    remaining_limits = replace(
-                        limits,
-                        max_unpacked_bytes=limits.max_unpacked_bytes - unpacked,
-                        max_archive_members=limits.max_archive_members - members,
-                    )
-                    _require(
-                        remaining_limits.max_unpacked_bytes > 0
-                        and remaining_limits.max_archive_members > 0,
-                        "LIMIT_EXCEEDED",
-                    )
                     control, total, count = _tar(
                         stream,
                         limits=remaining_limits,
@@ -408,6 +573,7 @@ def verify_ubuntu_archive(
                         expected=None if index == 1 else expected,
                         required_directories=required_directories if index == 2 else None,
                     )
+                    _require(region.remaining == 0, "PROVENANCE_INCOMPLETE")
                 finally:
                     stream.close()
                 unpacked += total

@@ -266,6 +266,7 @@ jobs:
           deployment/stage9_observer_contract.py
           deployment/stage9_observer_offline.py
           deployment/stage9_observer_ubuntu.py
+          scripts/verify_stage9_real_deb_v2.py
           deployment/stage9_trusted_installation_files.py
           deployment/stage9_trusted_installation_runtime.py
           deployment/stage9_trusted_installation_identity_gate.py
@@ -293,6 +294,8 @@ jobs:
           tests/deployment/test_stage9_trusted_installation_contract.py
           tests/test_stage9_observer_contract.py
           tests/deployment/test_stage9_observer_offline.py
+          tests/deployment/test_stage9_observer_zstd.py
+          tests/deployment/test_stage9_real_deb_v2.py
           tests/deployment/test_stage9_trusted_installation_files.py
           tests/deployment/test_stage9_trusted_installation_runtime.py
           tests/deployment/test_stage9_trusted_installation_identity_gate.py
@@ -334,6 +337,8 @@ jobs:
           tests/property
           tests/test_stage9_observer_contract.py
           tests/deployment/test_stage9_observer_offline.py
+          tests/deployment/test_stage9_observer_zstd.py
+          tests/deployment/test_stage9_real_deb_v2.py
           tests/test_risk_portfolio_management.py
           tests/deployment/test_windows_tpm_substrate_probe.py
           tests/licensing/test_pre_enrollment.py
@@ -394,6 +399,7 @@ jobs:
           --cov=deployment.stage9_observer_contract
           --cov=deployment.stage9_observer_offline
           --cov=deployment.stage9_observer_ubuntu
+          --cov=scripts.verify_stage9_real_deb_v2
           --cov=bot_core.licensing.pre_enrollment
           --cov=bot_core.licensing.pdsa_enrollment_challenge
           --cov=bot_core.licensing.production_tpm_custody

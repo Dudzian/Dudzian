@@ -85,6 +85,7 @@ files = [
   "deployment/stage9_observer_contract.py",
   "deployment/stage9_observer_offline.py",
   "deployment/stage9_observer_ubuntu.py",
+  "scripts/verify_stage9_real_deb_v2.py",
   "deployment/stage9_trusted_installation_files.py",
   "deployment/stage9_trusted_installation_runtime.py",
   "deployment/stage9_trusted_installation_identity_gate.py",
@@ -341,6 +342,8 @@ test = [
   "pytest-asyncio>=0.23",
   "pytest-cov>=4.1",
   "pytest-xdist>=3.5",
+  # Test tool only; keep the inactive offline decoder's reviewed version explicit.
+  "zstandard==0.25.0",
   "PyYAML>=6.0",
   "pyarrow>=12.0",
   "httpx>=0.26",
@@ -403,6 +406,10 @@ compression = [
   "brotli>=1.1; platform_python_implementation != 'PyPy'",
   "brotlicffi>=1.1.0; platform_python_implementation == 'PyPy'",
   "zstandard>=0.22",
+]
+offline-verifier = [
+  # Separate verification-tool dependency; never part of the minimal Observer.
+  "zstandard==0.25.0",
 ]
 
 [build-system]
