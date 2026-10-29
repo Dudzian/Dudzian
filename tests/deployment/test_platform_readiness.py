@@ -425,10 +425,12 @@ def test_stage10_workflow_uses_real_reboot_soak_and_evidence_producer() -> None:
     assert jobs["windows-release-gate"]["if"] == (
         "always() && (github.event_name == 'pull_request' || inputs.run_stage10 == true)"
     )
-    for job_name in ("linux-deployment-integration", "macos-deployment-integration"):
-        assert jobs[job_name]["if"] == (
-            "github.event_name == 'pull_request' || inputs.run_stage10 == true"
-        )
+    assert jobs["linux-deployment-integration"]["if"] == (
+        "always() && (github.event_name == 'pull_request' || inputs.run_stage10 == true)"
+    )
+    assert jobs["macos-deployment-integration"]["if"] == (
+        "github.event_name == 'pull_request' || inputs.run_stage10 == true"
+    )
     assert jobs["windows-stage10-prepare-and-schedule-reboot"]["runs-on"] == [
         "self-hosted",
         "Windows",

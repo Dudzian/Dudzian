@@ -370,6 +370,8 @@ jobs:
           tests/deployment/test_windows_stage10_runner_preflight.py
           tests/deployment/test_platform_evidence.py
           tests/deployment/test_platform_readiness.py
+          tests/deployment/test_windows_stage10_evidence_identity.py
+          tests/scripts/test_platform_core_evidence_workflow.py
           tests/deployment/test_production_enrollment_issuer.py
           tests/deployment/test_production_pdsa_signing.py
           tests/architecture/test_stage9_external_provisioning_architecture.py

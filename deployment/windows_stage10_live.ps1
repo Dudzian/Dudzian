@@ -7,6 +7,7 @@ param(
   [string]$Output
 )
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "windows_stage10_soak_identity.ps1")
 $serviceName = "CryptoHunterBackend"
 $contractPath = Join-Path $PSScriptRoot "windows_stage10_lifecycle_contract.json"
 $contract = Get-Content -Raw -LiteralPath $contractPath | ConvertFrom-Json
@@ -96,12 +97,11 @@ $soakStartedUtc = [datetime]::UtcNow.ToString("o")
 do {
   Start-Sleep -Seconds 60
   $sample = Service-Snapshot $runtimeProvenance.installed_backend_sha256 $runtimeProvenance.product_version
-  if ($sample.pid -ne $soakIdentity.pid -or $sample.started -cne $soakIdentity.started) {
-    throw "service instance changed during the 24-hour lifecycle qualification"
-  }
+  Assert-Stage10SoakIdentity -Expected $soakIdentity -Observed $sample
 } while ($stopwatch.Elapsed.TotalHours -lt $SoakHours)
 $stopwatch.Stop()
 $final = Service-Snapshot $runtimeProvenance.installed_backend_sha256 $runtimeProvenance.product_version
+Assert-Stage10SoakIdentity -Expected $soakIdentity -Observed $final
 $proofValues = @{}
 foreach ($property in $contract.results.PSObject.Properties) {
   $proofs = @{}

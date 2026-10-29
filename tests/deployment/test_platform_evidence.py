@@ -3,12 +3,13 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+import subprocess
 from typing import Any, Callable
 
 import pytest
 
 from deployment import platform_evidence
-from deployment.core_test_plan import load_manifest, marker_document
+from deployment.core_test_plan import CorePlanError, execute_plan, load_manifest, marker_document
 from deployment.platform_evidence import (
     EvidenceProductionError,
     aggregate_core_markers,
@@ -265,6 +266,20 @@ def test_core_aggregation_requires_same_revision_and_all_operating_systems(
     assert evidence["platform"] == "CROSS_PLATFORM_CORE"
     assert evidence["source_revision"] == "current"
     assert evidence["results"][0]["item"] == "CORE_REQUIRED_SUITES"
+    assert evidence["ci_run_id"] == "run-1"
+    assert evidence["ci_provider"] == "https://github.com"
+    assert blocking_items(
+        "LINUX",
+        load_contract(),
+        [evidence],
+        "current",
+        "https://github.com",
+        "run-1",
+    ) == [
+        "LINUX_SYSTEMD_INTEGRATION",
+        "LINUX_CLEAN_INSTALL",
+        "LINUX_REBOOT_LIFECYCLE_UPDATE",
+    ]
 
     stale = tmp_path / "Linux.json"
     stale.write_text(
@@ -279,6 +294,179 @@ def test_core_aggregation_requires_same_revision_and_all_operating_systems(
             ci_run_id="run-1",
             ci_provider="https://github.com",
         )
+
+
+def _current_core_markers(tmp_path: Path) -> list[Path]:
+    manifest = load_manifest()
+    markers = []
+    for runner_os in ("Linux", "Windows", "macOS"):
+        path = tmp_path / f"core-{runner_os}.json"
+        path.write_text(
+            json.dumps(
+                marker_document(manifest, "current", runner_os, "run-1", "https://github.com")
+            ),
+            encoding="utf-8",
+        )
+        markers.append(path)
+    return markers
+
+
+@pytest.mark.parametrize(
+    ("native_os", "expected_os"), [("Linux", "Linux"), ("Windows", "Windows"), ("Darwin", "macOS")]
+)
+def test_core_matrix_records_actual_aggregator_host(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, native_os: str, expected_os: str
+) -> None:
+    monkeypatch.setattr("deployment.host_identity.platform.system", lambda: native_os)
+    output = tmp_path / "matrix.json"
+    aggregate_core_markers(
+        "current",
+        _current_core_markers(tmp_path),
+        output,
+        ci_run_id="run-1",
+        ci_provider="https://github.com",
+    )
+    assert json.loads(output.read_text())["runner_os"] == expected_os
+
+
+def test_core_matrix_refuses_unsupported_aggregator_host(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("deployment.host_identity.platform.system", lambda: "unknown")
+    output = tmp_path / "matrix.json"
+    with pytest.raises(OSError, match="unsupported host OS"):
+        aggregate_core_markers(
+            "current",
+            _current_core_markers(tmp_path),
+            output,
+            ci_run_id="run-1",
+            ci_provider="https://github.com",
+        )
+    assert not output.exists()
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "missing-artifact",
+        "missing-operating-system",
+        "wrong-revision",
+        "wrong-run",
+        "wrong-provider",
+        "duplicate-operating-system",
+        "unknown-operating-system",
+        "malformed-json",
+        "injected-failure-status",
+        "boolean-schema-version",
+        "empty-run-identity",
+        "unhashable-operating-system",
+        "empty-revision",
+    ],
+)
+def test_core_aggregation_cli_refuses_missing_or_substituted_artifacts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str
+) -> None:
+    """Transport failures cannot publish a replacement CROSS_OS_CI_MATRIX PASS."""
+    monkeypatch.setenv("GITHUB_SHA", "current")
+    monkeypatch.setenv("GITHUB_RUN_ID", "run-1")
+    monkeypatch.setenv("GITHUB_SERVER_URL", "https://github.com")
+    markers = _current_core_markers(tmp_path)
+    if fault == "missing-artifact":
+        markers[0].unlink()
+    elif fault == "missing-operating-system":
+        markers.pop()
+    elif fault == "malformed-json":
+        markers[0].write_text("{", encoding="utf-8")
+    else:
+        value = json.loads(markers[0].read_text(encoding="utf-8"))
+        field, replacement = {
+            "wrong-revision": ("source_revision", "previous"),
+            "wrong-run": ("ci_run_id", "previous-run"),
+            "wrong-provider": ("ci_provider", "https://untrusted.invalid"),
+            "duplicate-operating-system": ("runner_os", "Windows"),
+            "unknown-operating-system": ("runner_os", "Other"),
+            "injected-failure-status": ("status", "FAIL"),
+            "boolean-schema-version": ("schema_version", True),
+            "empty-run-identity": ("ci_run_id", ""),
+            "unhashable-operating-system": ("runner_os", ["Linux"]),
+            "empty-revision": ("source_revision", ""),
+        }[fault]
+        value[field] = replacement
+        markers[0].write_text(json.dumps(value), encoding="utf-8")
+    output = tmp_path / "core-matrix.json"
+    arguments = ["aggregate-core", "--output", str(output)]
+    for marker in markers:
+        arguments.extend(("--marker", str(marker)))
+    assert platform_evidence.main(arguments) == 1
+    assert not output.exists()
+
+
+def test_current_core_matrix_cli_clears_only_core_linux_blocker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A real matrix artifact is passed to readiness; live qualification stays required."""
+    from deployment import platform_readiness
+
+    monkeypatch.setenv("GITHUB_SHA", "current")
+    monkeypatch.setenv("GITHUB_RUN_ID", "run-1")
+    monkeypatch.setenv("GITHUB_SERVER_URL", "https://github.com")
+    markers = _current_core_markers(tmp_path)
+    output = tmp_path / "core-matrix.json"
+    arguments = ["aggregate-core", "--output", str(output)]
+    for marker in markers:
+        arguments.extend(("--marker", str(marker)))
+    assert platform_evidence.main(arguments) == 0
+    assert platform_readiness.main(["--platform", "LINUX", "--evidence", str(output)]) == 1
+    lines = capsys.readouterr().out.splitlines()
+    assert lines == [
+        "LINUX_SYSTEMD_INTEGRATION=MISSING_CURRENT_EVIDENCE [LIVE_LINUX_INTEGRATION]",
+        "LINUX_CLEAN_INSTALL=MISSING_CURRENT_EVIDENCE [LIVE_LINUX_INTEGRATION]",
+        "LINUX_REBOOT_LIFECYCLE_UPDATE=MISSING_CURRENT_EVIDENCE [LIVE_LINUX_INTEGRATION]",
+        "LINUX_PRODUCTION_READY=NOT_READY",
+    ]
+
+    assert platform_readiness.main(["--platform", "LINUX"]) == 1
+    assert "CORE_REQUIRED_SUITES=MISSING_CURRENT_EVIDENCE" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("exit_code", [0, 1])
+def test_failed_required_core_test_cannot_publish_marker_or_matrix(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, exit_code: int
+) -> None:
+    """Neither a pytest failure nor a failing XML result can supply a valid marker."""
+    monkeypatch.setattr("deployment.host_identity.platform.system", lambda: "Linux")
+
+    def failed_plan(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        report_arg = next(argument for argument in command if argument.startswith("--junitxml="))
+        Path(report_arg.split("=", 1)[1]).write_text(
+            '<testsuites><testsuite tests="1" failures="1" errors="0" skipped="0"/></testsuites>',
+            encoding="utf-8",
+        )
+        return subprocess.CompletedProcess(command, exit_code)
+
+    markers = _current_core_markers(tmp_path)
+    markers[0].unlink()
+    with pytest.raises(CorePlanError):
+        execute_plan(
+            manifest_path=Path("deployment/core_required_suites_v1.json"),
+            runner_os="Linux",
+            source_revision="current",
+            ci_run_id="run-1",
+            ci_provider="https://github.com",
+            output=markers[0],
+            runner=failed_plan,
+        )
+    assert not markers[0].exists()
+    output = tmp_path / "matrix.json"
+    with pytest.raises(OSError):
+        aggregate_core_markers(
+            "current",
+            markers,
+            output,
+            ci_run_id="run-1",
+            ci_provider="https://github.com",
+        )
+    assert not output.exists()
 
 
 def _current_clean_install_receipt(msi_hash: str, manifest_hash: str) -> dict[str, object]:
