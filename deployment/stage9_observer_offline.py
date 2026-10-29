@@ -333,32 +333,45 @@ class _InputReader:
 def _expected_tree(
     manifest: dict[str, Any], packages: tuple[UbuntuPackage, ...], limits: Limits, budget: _Budget
 ) -> tuple[dict[str, str], dict[str, dict[str, Any]]]:
-    expected: dict[str, str] = {}
+    image: dict[str, str] = {}
+    transport: dict[str, str] = {}
     files: dict[str, dict[str, Any]] = {}
 
-    def put(relative: str, kind: str) -> None:
-        existing = expected.get(relative)
+    def put(tree: dict[str, str], relative: str, kind: str) -> None:
+        existing = tree.get(relative)
         _require(existing is None or existing == kind)
         if existing is None:
-            _require(len(expected) < limits.max_files, "LIMIT_EXCEEDED")
+            _require(len(image) + len(transport) < limits.max_files, "LIMIT_EXCEEDED")
             budget.reserve(512 + len(relative.encode("utf-8")) * 8)
-            expected[relative] = kind
-
-    def add(relative: str, kind: str, *, explicit: bool) -> None:
-        _relative_path(relative, limits)
-        if explicit:
-            _require(relative not in expected or expected[relative] == "directory" == kind)
-        put(relative, kind)
-        parent = relative.rpartition("/")[0]
-        while parent:
-            put(parent, "directory")
-            parent = parent.rpartition("/")[0]
+            tree[relative] = kind
 
     for item in manifest["files"]:
         budget.check()
         relative = _relative_path(item["path"][1:], limits)
-        add(relative, item["type"], explicit=True)
+        _require(relative not in image, "CLOSURE_INCOMPLETE")
+        put(image, relative, item["type"])
         files[item["file_id"]] = item
+    # Only manifest records define the image. Never fill a missing directory
+    # from the filesystem or from auxiliary artifact paths. This V1 reader also
+    # refuses undeclared staging ancestors above a nested image root: the
+    # proposed contract does not represent them as image records.
+    for relative in image:
+        parent = relative.rpartition("/")[0]
+        while parent:
+            budget.check()
+            _require(image.get(parent) == "directory", "CLOSURE_INCOMPLETE")
+            parent = parent.rpartition("/")[0]
+    image_root = files[manifest["runtime"]["image_root_file_id"]]["path"][1:]
+
+    def put_transport(relative: str, kind: str) -> None:
+        _require(
+            relative not in image
+            and relative != image_root
+            and not relative.startswith(image_root + "/"),
+            "FILE_POLICY_REJECTED",
+        )
+        put(transport, relative, kind)
+
     _require(type(packages) is tuple and len(packages) <= contract.MAX_SOURCES)
     source_ids: set[str] = set()
     for package in packages:
@@ -370,8 +383,18 @@ def _expected_tree(
         )
         source_ids.add(package.source_id)
         for relative in (package.archive_path, package.proof_path):
-            add(_relative_path(relative, limits), "regular", explicit=True)
-    return expected, files
+            relative = _relative_path(relative, limits)
+            _require(relative not in transport, "FILE_POLICY_REJECTED")
+            put_transport(relative, "regular")
+            parent = relative.rpartition("/")[0]
+            while parent:
+                budget.check()
+                put_transport(parent, "directory")
+                parent = parent.rpartition("/")[0]
+    # The merged map is only an I/O inventory. Transport entries never acquire
+    # manifest metadata, provenance or a runtime role through this merge.
+    budget.reserve(128 * (len(image) + len(transport)))
+    return image | transport, files
 
 
 def _metadata_matches(info: tuple[int, ...], record: dict[str, Any]) -> None:
@@ -422,7 +445,8 @@ def verify_offline(
 
     Absolute manifest image paths are interpreted beneath input_directory after
     removing exactly their leading slash. Package/proof paths are relative to
-    that same tree. Implicit directories are permitted only as required parents.
+    that same tree. Image directories must have explicit manifest records;
+    implicit parents are limited to auxiliary paths outside the image namespace.
     Unsupported sources/transforms prevent an overall MATCH. No acceptance or
     signature-shaped data is ever promoted to an independently trusted context.
     """

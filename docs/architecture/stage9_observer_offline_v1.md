@@ -12,10 +12,13 @@ manifest_raw, policy_raw=None, launch_policy_raw=None, acceptance_raw=None,
 trust_context=None, ubuntu_packages=(), limits=Limits())` reads an explicitly
 selected absolute directory. A manifest image path `/observer/file.py` maps to
 `input_directory/observer/file.py`; package/proof paths are explicitly relative
-to the same directory. The caller supplies document bytes separately. The
-directory must contain exactly the declared files, package/proof artifacts and
-necessary ancestor directories. It must not contain a second copy of metadata
-unless explicitly declared as ordinary data under the existing contract rules.
+to the same directory. The caller supplies document bytes separately. Image
+files and directories must occur explicitly in the manifest; image ancestors
+are never inferred. Package/proof artifacts and their necessary transport
+directories occupy a separate namespace outside the image. The complete input
+tree must equal those two inventories. It must not contain a second copy of
+metadata unless explicitly declared as ordinary data under the existing
+contract rules.
 
 The module reuses `parse_proposed_manifest`, `parse_proposed_acceptance_policy`,
 `parse_launch_policy`, their existing cross-binding validator, the shared
@@ -45,6 +48,61 @@ bindings checked is an `OfflineVerificationResultV1` produced. Its three digest
 pins derive from those exact supplied bytes. It retains `synthetic=true` because
 the existing advisory wire requires that field; this does not imply that file
 I/O was simulated. Missing documents yield `report=None`, never placeholder pins.
+
+## Closed directory inventory correction
+
+The audit of PR #3226 HEAD
+`65c844fb785034e04883aed038bb4349bc3c2f37` identified a P1 inventory gap:
+the offline adapter automatically added staging ancestors to its expected tree
+without requiring image directory records. A nested image path such as
+`/image-parent/observer` could therefore admit an unrecorded `image-parent`
+directory, including changed permissions. Package/proof paths placed inside
+`observer/not-in-manifest/` could also introduce undeclared image entries.
+Byte equality did not establish directory closure in those layouts.
+
+The existing contract already supplies the relevant boundary:
+
+- [Schema proposal, section 3.3](stage9_observer_3a_schema_proposal.md#33-files-provenance-and-image-ancestry)
+  requires a non-`/` image root, explicit in-image directory ancestry and no
+  unused image directories. It explicitly excludes host ancestry above the
+  image root from invented image records.
+- [`_validate_proposed_runtime`](../../deployment/stage9_observer_contract.py#L1715)
+  requires every other manifest entry to lie strictly below the declared image
+  root, every intermediate parent to be a declared directory, and the actual
+  declared directory set to equal the required set. Thus an ordinary missing
+  parent inside the image was already refused by structural parsing.
+- [The base plan's metadata requirements, section 4](stage9_trusted_observer_contracts_and_implementation_plan.md#4-docelowy-start-closure-i-ochrona-przed-podmian%C4%85)
+  distinguish metadata, provenance and closed inventory checks; they do not
+  turn a locally generated parent into an expected image record.
+
+The offline verifier now constructs image and transport inventories separately.
+Every image parent up to the input-directory boundary must be an explicit
+manifest directory; transport scaffolding cannot satisfy this condition.
+Consequently this V1 staging layout supports an image root immediately below
+the input directory. A nested image root with an undeclared staging ancestor
+refuses with `CLOSURE_INCOMPLETE`; the verifier does not extend the unchanged
+parser to accept extra records above the image root.
+
+Only explicitly named archive/proof files may introduce transport ancestors.
+Those files and directories must remain outside the image namespace and cannot
+collide with image entries. Scans still require the complete input tree to
+match the combined inventories. Every admitted image directory is checked
+against its own manifest type, UID, GID and mode; identity and binding checks
+continue to cover the input tree. The selected input directory and its host
+ancestors are read boundaries, not newly authenticated image objects.
+
+This correction does not add archive-to-installation metadata semantics.
+USTAR type/name/size/checksum and source-member bytes are checked; its UID, GID
+and mode fields are not currently interpreted or bound to target metadata.
+Target UID/GID/mode are checked independently against manifest declarations.
+The [existing transform catalogue](stage9_observer_3a_schema_proposal.md#34-transforms)
+preserves bytes for `materialize_member` but has no metadata-mapping fields;
+directories require `source_member` provenance and cannot be transform outputs.
+Neither this absence nor byte equality authorizes an ownership or permission
+change. All transforms remain unsupported in this offline implementation.
+An accepted archive-to-target metadata mapping therefore remains a P2 evidence
+gap requiring separate definition and review. `MATCH` does not establish that
+such a transformation was permitted, performed or independently accepted.
 
 ## Reads, identity and resource limits
 
@@ -132,7 +190,7 @@ No physical Dell tests, target imports, execution, installation or privileges ru
 | --- | --- |
 | P0 | None established in the changed source review and local negative tests; this is not a repository-wide proof. |
 | P1 | Independently accepted expectations/roots, APT authentication, complete runtime image and execution/host attestation remain absent. They block activation and production qualification. |
-| P2 | Only raw/gzip USTAR is supported; actual Ubuntu Zstandard packages refuse. Cooperative time/allocation accounting does not supply hard worker isolation; metadata rechecks are not full TOCTOU protection. |
+| P2 | Only raw/gzip USTAR is supported; actual Ubuntu Zstandard packages refuse. Archive-to-target UID/GID/mode mapping is not defined or verified. Cooperative time/allocation accounting does not supply hard worker isolation; metadata rechecks are not full TOCTOU protection. |
 | P3 | The current offline wire requires the historical `synthetic` label even for actual byte reads; consumers must retain the documented advisory meaning. |
 
 Conditional merge is appropriate only for this limited, inactive library after

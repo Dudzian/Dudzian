@@ -262,6 +262,26 @@ def _refused(result: offline.OfflineResult, reason: str | None = None) -> None:
         assert reason in result.reason_codes
 
 
+def _regular_image_bytes_still_match(case: _Case) -> None:
+    for record in case.manifest["files"]:
+        if record["type"] == "regular":
+            raw = case.path(record["file_id"]).read_bytes()
+            assert len(raw) == record["size"]
+            assert _sha(raw) == record["sha256"]
+
+
+def _nest_image_below_undeclared_parent(case: _Case) -> Path:
+    parent = case.root / "image-parent"
+    parent.mkdir(mode=0o755)
+    parent.chmod(0o755)
+    (case.root / "observer").rename(parent / "observer")
+    for record in case.manifest["files"]:
+        record["path"] = "/image-parent" + record["path"]
+    # Package member provenance remains unchanged: relocation affects only the
+    # staged image paths, never the expected package bytes or source inventory.
+    return parent
+
+
 def test_matching_synthetic_manifest_measures_real_files_and_whole_deb(case: _Case) -> None:
     result = case.verify()
     _blocked(result)
@@ -270,6 +290,142 @@ def test_matching_synthetic_manifest_measures_real_files_and_whole_deb(case: _Ca
     assert result.measured_files == len(case.payloads) + 2
     assert result.measured_bytes > sum(map(len, case.payloads.values()))
     assert result.report is None  # Missing documents never acquire fabricated digests.
+
+
+@pytest.mark.parametrize("variant", ["owned", "world-writable", "metadata-mutated"])
+def test_undeclared_ancestor_above_image_root_refuses_even_when_hashes_match(
+    case: _Case, variant: str
+) -> None:
+    parent = _nest_image_below_undeclared_parent(case)
+    if variant == "world-writable":
+        parent.chmod(0o777)
+    elif variant == "metadata-mutated":
+        before = parent.stat()
+        parent.chmod(0o700)
+        os.utime(parent, ns=(before.st_atime_ns, before.st_mtime_ns + 1_000_000_000))
+    assert parent.stat().st_uid == os.geteuid()
+    assert all(record["path"] != "/image-parent" for record in case.manifest["files"])
+    _regular_image_bytes_still_match(case)
+    # The proposed contract checks ancestry below the image root. The offline
+    # reader must refuse its additional, unrepresented ancestor to the input FD.
+    contract.parse_proposed_manifest(canonical_json_bytes(case.manifest))
+    _refused(case.verify(), "CLOSURE_INCOMPLETE")
+
+
+def test_transport_ancestor_cannot_supply_missing_image_directory_record(case: _Case) -> None:
+    parent = _nest_image_below_undeclared_parent(case)
+    archive = parent / "python.deb"
+    proof = parent / "proof.bin"
+    (case.root / case.package.archive_path).rename(archive)
+    (case.root / case.package.proof_path).rename(proof)
+    (case.root / "sources").rmdir()
+    case.package = replace(
+        case.package, archive_path="image-parent/python.deb", proof_path="image-parent/proof.bin"
+    )
+    _regular_image_bytes_still_match(case)
+    contract.parse_proposed_manifest(canonical_json_bytes(case.manifest))
+    _refused(case.verify(), "CLOSURE_INCOMPLETE")
+
+
+@pytest.mark.parametrize("variant", ["owned", "world-writable", "metadata-mutated"])
+def test_missing_in_image_directory_record_refuses_with_every_regular_hash_correct(
+    case: _Case, variant: str
+) -> None:
+    directory = copy.deepcopy(case.file("bin-root"))
+    parent = case.path("bin-root")
+    before = parent.stat()
+    assert before.st_uid == directory["uid"]
+    assert before.st_gid == directory["gid"]
+    assert before.st_mode & 0o777 == directory["mode"]
+    case.manifest["files"] = [
+        record for record in case.manifest["files"] if record["file_id"] != "bin-root"
+    ]
+    if variant == "world-writable":
+        parent.chmod(0o777)
+    elif variant == "metadata-mutated":
+        parent.chmod(0o700)
+        os.utime(parent, ns=(before.st_atime_ns, before.st_mtime_ns + 1_000_000_000))
+    assert parent.is_dir()
+    _regular_image_bytes_still_match(case)
+    _refused(case.verify(), "CLOSURE_INCOMPLETE")
+
+
+def test_missing_image_inventory_refuses_before_scanning_or_measuring(
+    case: _Case, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _nest_image_below_undeclared_parent(case)
+    _regular_image_bytes_still_match(case)
+    contract.parse_proposed_manifest(canonical_json_bytes(case.manifest))
+
+    def unexpected_measurement(*args: Any, **kwargs: Any) -> None:
+        pytest.fail("incomplete image inventory reached file measurement")
+
+    monkeypatch.setattr(offline._InputReader, "scan", unexpected_measurement)
+    monkeypatch.setattr(offline._InputReader, "measure", unexpected_measurement)
+    _refused(case.verify(), "CLOSURE_INCOMPLETE")
+
+
+@pytest.mark.parametrize("field", ["uid", "gid", "mode"])
+def test_declared_image_directory_metadata_mismatch_refuses(case: _Case, field: str) -> None:
+    directory = case.file("bin-root")
+    if field == "mode":
+        case.path("bin-root").chmod(0o777)
+    else:
+        directory[field] += 1
+    _regular_image_bytes_still_match(case)
+    _refused(case.verify(), "ARTIFACT_MISMATCH")
+
+
+def test_image_directory_replacement_between_scan_and_measure_refuses(
+    case: _Case, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original = offline._InputReader.scan
+    replaced = False
+
+    def replacing_scan(reader: offline._InputReader, expected: dict[str, str]):
+        nonlocal replaced
+        result = original(reader, expected)
+        if not replaced:
+            replaced = True
+            directory = case.path("bin-root")
+            directory.rename(tmp_path / "retained-original-directory")
+            directory.mkdir(mode=0o755)
+            directory.chmod(0o755)
+            case.path("python").write_bytes(case.payloads["python"])
+            case.path("python").chmod(case.file("python")["mode"])
+            _regular_image_bytes_still_match(case)
+        return result
+
+    monkeypatch.setattr(offline._InputReader, "scan", replacing_scan)
+    _refused(case.verify(), "FILE_CHANGED")
+    assert replaced
+
+
+@pytest.mark.parametrize("role", ["archive_path", "proof_path"])
+def test_transport_cannot_extend_closed_image_namespace(case: _Case, role: str) -> None:
+    destination = case.root / "observer/unlisted-transport" / Path(getattr(case.package, role)).name
+    destination.parent.mkdir()
+    (case.root / getattr(case.package, role)).rename(destination)
+    case.package = replace(case.package, **{role: destination.relative_to(case.root).as_posix()})
+    _regular_image_bytes_still_match(case)
+    _refused(case.verify(), "FILE_POLICY_REJECTED")
+
+
+def test_nested_transport_directories_outside_image_remain_supported(case: _Case) -> None:
+    archive_path = "sources/archives/python/package.deb"
+    proof_path = "sources/proofs/python/proof.bin"
+    for old, new in (
+        (case.package.archive_path, archive_path),
+        (case.package.proof_path, proof_path),
+    ):
+        destination = case.root / new
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        (case.root / old).rename(destination)
+    case.package = replace(case.package, archive_path=archive_path, proof_path=proof_path)
+    _regular_image_bytes_still_match(case)
+    result = case.verify()
+    _blocked(result)
+    assert result.artifact_consistency == "MATCH"
 
 
 def test_advisory_report_uses_existing_contract_and_real_document_pins(case: _Case) -> None:
