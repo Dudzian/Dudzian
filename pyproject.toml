@@ -83,6 +83,8 @@ files = [
   "deployment/stage41b_role_worker.py",
   "deployment/stage9_trusted_installation_contract.py",
   "deployment/stage9_observer_contract.py",
+  "deployment/stage9_observer_offline.py",
+  "deployment/stage9_observer_ubuntu.py",
   "deployment/stage9_trusted_installation_files.py",
   "deployment/stage9_trusted_installation_runtime.py",
   "deployment/stage9_trusted_installation_identity_gate.py",

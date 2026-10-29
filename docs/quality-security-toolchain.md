@@ -57,6 +57,13 @@ as advisory output, custom Semgrep rules as blocking checks, and the baselined
 offline Betterleaks working-tree scan. Existing CI continues to own the larger
 pytest, pip-audit, and SBOM jobs.
 
+The bounded Stage 9 offline artifact verifier enters these existing Ruff,
+Linux/Windows mypy, pytest and branch-coverage gates. Its tests perform real
+unprivileged file reads and inspect synthetic DEB fixtures as data. These checks
+do not qualify a physical installation, runtime execution or host PID scope;
+independent acceptance and production qualification remain blocked. Existing
+coverage thresholds, job timeouts and hardware opt-in gates remain unchanged.
+
 The production-local issuer-history component uses the existing PostgreSQL 16
 service in the serial quality-ratchet job. Its durability and security tests
 append branch coverage for the existing history oracle and all three new
