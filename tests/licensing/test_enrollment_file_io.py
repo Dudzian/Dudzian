@@ -358,7 +358,7 @@ def test_concurrent_first_session_lock_creation_has_one_immutable_inode(tmp_path
     attempts = []
     identities = []
 
-    def synchronized_open(path, flags, mode=0o777, *, dir_fd=None):
+    def synchronized_open(path, flags, mode=0o600, *, dir_fd=None):
         if path == ".pdsa-session.lock":
             attempts.append(flags)
             assert flags & os.O_NOFOLLOW
@@ -396,7 +396,7 @@ def test_session_lock_enoent_is_not_retried_or_recreated(tmp_path, monkeypatch, 
     native_open = os.open
     attempts = []
 
-    def disappeared(path, flags, mode=0o777, *, dir_fd=None):
+    def disappeared(path, flags, mode=0o600, *, dir_fd=None):
         if path == ".pdsa-session.lock":
             attempts.append(flags)
             if during_creation or not flags & os.O_CREAT:
@@ -419,7 +419,7 @@ def test_removed_pinned_directory_refuses_lock_creation(tmp_path, monkeypatch):
     native_open = os.open
     pinned_identity = None
 
-    def remove_before_create(path, flags, mode=0o777, *, dir_fd=None):
+    def remove_before_create(path, flags, mode=0o600, *, dir_fd=None):
         nonlocal pinned_identity
         if path == ".pdsa-session.lock":
             info = os.fstat(dir_fd)
