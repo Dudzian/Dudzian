@@ -46,9 +46,9 @@ def test_metadata_control_records_fd_path_and_reversible_entry_transition(tmp_pa
         snapshot = native_object(info)
         if stat.S_ISDIR(info.st_mode):
             # Deterministically exercise a filesystem that counts this entry.
-            snapshot["links"] += (
-                tmp_path / "directory-metadata-control" / ".pdsa-session.lock"
-            ).exists()
+            snapshot["links"] = (
+                2 + (tmp_path / "directory-metadata-control" / ".pdsa-session.lock").exists()
+            )
         return snapshot
 
     monkeypatch.setattr(probe, "_object", simulated_directory_entry_count)
@@ -272,7 +272,9 @@ def test_legacy_errno_reproducer_never_exempts_security_failures(
 
     def legacy_observation(mode, *args):
         nonlocal injected
-        observation = native_contend(mode, *args)
+        # Isolate the injected legacy result from native legacy ENOENT races.
+        native_mode = "exclusive_then_existing" if mode == "legacy" else mode
+        observation = native_contend(native_mode, *args)
         with injection_guard:
             if mode != "legacy" or injected:
                 return observation

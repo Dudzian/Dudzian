@@ -1004,8 +1004,42 @@ def test_native_windows_creation_conflict_rejects_unsafe_competitor(tmp_path, mo
     target.mkdir()
     mkdir = Path.mkdir
     security = importlib.import_module("win32security")
+    files = importlib.import_module("win32file")
+    api = importlib.import_module("win32api")
     original_acl = []
     conflicts = []
+
+    def set_directory_acl(path, dacl=None):
+        # Use a native handle with the same sharing restrictions as the pinned
+        # ancestors. Fixture setup must not depend on path-based security API
+        # handle defaults or on rebuilding arbitrary inherited ACE variants.
+        handle = files.CreateFile(str(path), 0x00060000, 3, None, 3, 0x02200000, None)
+        try:
+            if dacl is None:
+                original = security.GetSecurityInfo(
+                    handle, security.SE_FILE_OBJECT, security.DACL_SECURITY_INFORMATION
+                )
+                original_acl.append(original.GetSecurityDescriptorDacl())
+                token = security.OpenProcessToken(api.GetCurrentProcess(), security.TOKEN_QUERY)
+                try:
+                    user = security.GetTokenInformation(token, security.TokenUser)
+                    sid = user[0] if isinstance(user, tuple) else user
+                finally:
+                    token.Close()
+                dacl = security.ACL()
+                dacl.AddAccessAllowedAce(2, 0x1F01FF, sid)
+                dacl.AddAccessAllowedAce(2, 0x1F01FF, security.ConvertStringSidToSid("S-1-1-0"))
+            security.SetSecurityInfo(
+                handle,
+                security.SE_FILE_OBJECT,
+                security.DACL_SECURITY_INFORMATION,
+                None,
+                None,
+                dacl,
+                None,
+            )
+        finally:
+            handle.Close()
 
     def competing_creator(path, *args, **kwargs):
         if path != directory:
@@ -1021,22 +1055,7 @@ def test_native_windows_creation_conflict_rejects_unsafe_competitor(tmp_path, mo
             )
         else:
             mkdir(path, *args, **kwargs)
-            original = security.GetNamedSecurityInfo(str(path), security.SE_FILE_OBJECT, 0x4)
-            retained = original.GetSecurityDescriptorDacl()
-            original_acl.append(retained)
-            dacl = security.ACL()
-            for index in range(retained.GetAceCount()):
-                dacl.AddAce(security.ACL_REVISION, index, retained.GetAce(index))
-            dacl.AddAccessAllowedAce(2, 0x1F01FF, security.ConvertStringSidToSid("S-1-1-0"))
-            security.SetNamedSecurityInfo(
-                str(path),
-                security.SE_FILE_OBJECT,
-                security.DACL_SECURITY_INFORMATION,
-                None,
-                None,
-                dacl,
-                None,
-            )
+            set_directory_acl(path)
         try:
             return mkdir(path, *args, **kwargs)
         except FileExistsError:
@@ -1045,21 +1064,18 @@ def test_native_windows_creation_conflict_rejects_unsafe_competitor(tmp_path, mo
 
     monkeypatch.setattr(Path, "mkdir", competing_creator)
     try:
-        with pytest.raises(custody.LocalSigningCustodyError):
+        with pytest.raises(custody.LocalSigningCustodyError) as refused:
             with filesystem.pinned_directory(directory, create=True):
                 pytest.fail("unsafe competitor acquired a session")
-        assert conflicts == [directory]
+        assert conflicts == [directory], (
+            f"fixture failed before creation conflict: {refused.value!r}; "
+            f"native cause: {refused.value.__cause__!r}"
+        )
+        if defect == "unsafe-acl":
+            assert str(refused.value) == "custody NTFS DACL permits untrusted modification"
         assert not (directory / ".pdsa-session.lock").exists()
     finally:
         if original_acl:
-            security.SetNamedSecurityInfo(
-                str(directory),
-                security.SE_FILE_OBJECT,
-                security.DACL_SECURITY_INFORMATION,
-                None,
-                None,
-                original_acl[0],
-                None,
-            )
+            set_directory_acl(directory, original_acl[0])
         if defect == "junction":
             directory.rmdir()

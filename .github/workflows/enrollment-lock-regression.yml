@@ -116,7 +116,7 @@ jobs:
           pytest pytest-asyncio pytest-cov
           "cryptography>=50.0.1,<51"
           "pywin32>=312; platform_system == 'Windows'"
-          PyYAML numpy pandas pydantic msgpack grpcio protobuf requests
+          PyYAML numpy pandas pydantic msgpack grpcio protobuf requests jsonschema
       - name: Run both original enrollment concurrency regressions
         run: >-
           python -m pytest -p asyncio
