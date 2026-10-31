@@ -70,6 +70,16 @@ do not qualify a physical installation, runtime execution or host PID scope;
 independent acceptance and production qualification remain blocked. Existing
 coverage thresholds, job timeouts and hardware opt-in gates remain unchanged.
 
+The separate [V3 package-only verifier](architecture/stage9_observer_offline_v3.md)
+adds exact control/data GNU TAR inventories and literal symlink records without
+extending the V1 image contract. Its TAR and package modules and read-only V3
+reproduction script join the configured Linux/Windows mypy scope, explicit Ruff
+checks, and the same branch-coverage report and 70% changed-code gate. Synthetic
+negative-path tests run in ordinary CI; CI does not acquire or install Ubuntu
+packages. Real-package comparison remains separately retained observation and
+does not establish independent acceptance, APT authenticity, image mapping or
+production qualification. Existing V1/V2 tests and hardware gates remain enabled.
+
 The production-local issuer-history component uses the existing PostgreSQL 16
 service in the serial quality-ratchet job. Its durability and security tests
 append branch coverage for the existing history oracle and all three new
