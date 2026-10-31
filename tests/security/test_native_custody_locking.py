@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import errno
 from contextlib import contextmanager
+from concurrent.futures import ThreadPoolExecutor
 import importlib
 import multiprocessing
 import os
@@ -11,6 +12,7 @@ from pathlib import Path, PureWindowsPath
 import stat
 import subprocess
 import sys
+import threading
 import time
 from types import SimpleNamespace
 
@@ -799,3 +801,265 @@ def test_windows_directory_adapter_creates_under_pinned_qualified_parent(
     with filesystem.pinned_directory(directory, create=True):
         assert directory.is_dir()
     assert all(handle.closed for handle in handles)
+
+
+def _concurrent_directory_first_creation(filesystem, directory, monkeypatch):
+    """Force both initializers to observe absence before either can create."""
+    observed_absence = threading.Barrier(2)
+    exists, mkdir, qualify = Path.exists, Path.mkdir, filesystem._qualify
+    conflicts, qualified = [], []
+
+    def simultaneous_absence(path):
+        result = exists(path)
+        if path == directory:
+            assert not result
+            observed_absence.wait(timeout=10)
+        return result
+
+    def counted_creation(path, *args, **kwargs):
+        try:
+            return mkdir(path, *args, **kwargs)
+        except FileExistsError:
+            if path == directory:
+                conflicts.append(path)
+            raise
+
+    def checked(handle, path, native, trusted, **kwargs):
+        info = qualify(handle, path, native, trusted, **kwargs)
+        if path == directory:
+            assert kwargs == {"directory": True, "custody": True}
+            qualified.append((info[4], info[8], info[9]))
+        return info
+
+    monkeypatch.setattr(Path, "exists", simultaneous_absence)
+    monkeypatch.setattr(Path, "mkdir", counted_creation)
+    monkeypatch.setattr(filesystem, "_qualify", checked)
+
+    def initialize():
+        with filesystem.pinned_directory(directory, create=True):
+            return "qualified"
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(initialize) for _ in range(2)]
+        assert [future.result(timeout=20) for future in futures] == ["qualified", "qualified"]
+    assert conflicts == [directory]
+    assert len(qualified) == 2 and qualified[0] == qualified[1]
+
+
+def test_windows_directory_adapter_concurrent_first_creation(
+    tmp_path, modeled_windows_handles, monkeypatch
+):
+    filesystem, _, handles = modeled_windows_handles
+    _concurrent_directory_first_creation(filesystem, tmp_path / "new-session", monkeypatch)
+    assert handles and all(handle.closed for handle in handles)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="real concurrent NTFS creation and qualification")
+def test_native_windows_concurrent_directory_first_creation(tmp_path, monkeypatch):
+    from bot_core import windows_custody_filesystem as filesystem
+
+    _concurrent_directory_first_creation(filesystem, tmp_path / "new-session", monkeypatch)
+
+
+def _creation_conflict_qualifies_competitor(filesystem, directory, monkeypatch):
+    mkdir, qualify = Path.mkdir, filesystem._qualify
+    competed, qualified = [], []
+
+    def competing_creator(path, *args, **kwargs):
+        if path == directory:
+            mkdir(path, *args, **kwargs)
+            competed.append(path)
+        return mkdir(path, *args, **kwargs)
+
+    def checked(handle, path, native, trusted, **kwargs):
+        info = qualify(handle, path, native, trusted, **kwargs)
+        qualified.append(path)
+        return info
+
+    monkeypatch.setattr(Path, "mkdir", competing_creator)
+    monkeypatch.setattr(filesystem, "_qualify", checked)
+    with filesystem.pinned_directory(directory, create=True):
+        assert competed == [directory]
+        assert qualified == [*reversed(directory.parents), directory]
+
+
+def test_windows_directory_adapter_creation_conflict_qualifies_competitor(
+    tmp_path, modeled_windows_handles, monkeypatch
+):
+    filesystem, _, handles = modeled_windows_handles
+    _creation_conflict_qualifies_competitor(filesystem, tmp_path / "competitor", monkeypatch)
+    assert handles and all(handle.closed for handle in handles)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="real competing NTFS directory qualification")
+def test_native_windows_creation_conflict_qualifies_competitor(tmp_path, monkeypatch):
+    from bot_core import windows_custody_filesystem as filesystem
+
+    _creation_conflict_qualifies_competitor(filesystem, tmp_path / "competitor", monkeypatch)
+
+
+@pytest.mark.parametrize(
+    "defect",
+    [
+        "regular-file",
+        "reparse",
+        "unsafe-acl",
+        "wrong-volume",
+        "ancestor-replacement",
+        "deleted",
+        "replacement-after-conflict",
+        "permission-denied",
+        "handle-acquisition",
+        "native-identity",
+    ],
+)
+def test_windows_directory_creation_race_never_recovers_unsafe_objects(
+    tmp_path, modeled_windows_handles, monkeypatch, defect
+):
+    filesystem, files, handles = modeled_windows_handles
+    directory = tmp_path / "unqualified-session"
+    mkdir, create = Path.mkdir, files.CreateFile
+    information = files.GetFileInformationByHandle
+    final_path = files.GetFinalPathNameByHandle
+    security = filesystem._native()[1]
+    security_info = security.GetSecurityInfo
+    conflicts = []
+
+    def competing_creator(path, *args, **kwargs):
+        if path != directory:
+            return mkdir(path, *args, **kwargs)
+        if defect == "permission-denied":
+            raise PermissionError(errno.EACCES, "unrelated creation denial")
+        if defect == "regular-file":
+            path.write_bytes(b"unqualified")
+        else:
+            mkdir(path, *args, **kwargs)
+        try:
+            return mkdir(path, *args, **kwargs)
+        except FileExistsError:
+            conflicts.append(path)
+            if defect == "replacement-after-conflict":
+                path.rmdir()
+                path.write_bytes(b"replacement after creation conflict")
+            raise
+
+    def opened(name, *args):
+        if name == str(directory):
+            if defect == "handle-acquisition":
+                raise OSError(errno.EIO, "native handle acquisition failed")
+            if defect == "deleted":
+                directory.rmdir()
+        return create(name, *args)
+
+    def object_information(handle):
+        if handle.path == str(directory):
+            if defect == "native-identity":
+                raise OSError(errno.EIO, "native identity query failed")
+            info = information(handle)
+            return (info[0] | 0x400, *info[1:]) if defect == "reparse" else info
+        return information(handle)
+
+    def bound_path(handle, flags):
+        if defect == "ancestor-replacement" and handle.path == str(tmp_path) and flags == 0:
+            return str(tmp_path.with_name("substituted-ancestor"))
+        return final_path(handle, flags)
+
+    def acl(handle, *args):
+        if defect == "unsafe-acl" and handle.path == str(directory):
+            return _acl_model(aces=(((0, 0), 0x1F01FF, "untrusted"),)).GetSecurityInfo()
+        return security_info(handle, *args)
+
+    volume_information = filesystem._volume_information
+
+    def volume(handle):
+        serial, flags, name = volume_information(handle)
+        if defect == "wrong-volume" and handle.path == str(directory):
+            return serial, flags, "FAT32"
+        return serial, flags, name
+
+    monkeypatch.setattr(Path, "mkdir", competing_creator)
+    monkeypatch.setattr(files, "CreateFile", opened)
+    monkeypatch.setattr(files, "GetFileInformationByHandle", object_information)
+    monkeypatch.setattr(files, "GetFinalPathNameByHandle", bound_path)
+    monkeypatch.setattr(security, "GetSecurityInfo", acl)
+    monkeypatch.setattr(filesystem, "_volume_information", volume)
+    with pytest.raises(custody.LocalSigningCustodyError) as refused:
+        with filesystem.pinned_directory(directory, create=True):
+            pytest.fail("unqualified session acquired; challenge issuance would be reachable")
+    assert handles and all(handle.closed for handle in handles)
+    assert not (directory / ".pdsa-session.lock").exists()
+    if defect == "permission-denied":
+        assert isinstance(refused.value.__cause__, PermissionError)
+        assert not conflicts
+    elif defect != "ancestor-replacement":
+        assert conflicts == [directory]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="real NTFS competitor type, reparse and DACL checks")
+@pytest.mark.parametrize("defect", ["regular-file", "junction", "unsafe-acl"])
+def test_native_windows_creation_conflict_rejects_unsafe_competitor(tmp_path, monkeypatch, defect):
+    from bot_core import windows_custody_filesystem as filesystem
+
+    directory, target = tmp_path / "competitor", tmp_path / "junction-target"
+    target.mkdir()
+    mkdir = Path.mkdir
+    security = importlib.import_module("win32security")
+    original_acl = []
+    conflicts = []
+
+    def competing_creator(path, *args, **kwargs):
+        if path != directory:
+            return mkdir(path, *args, **kwargs)
+        if defect == "regular-file":
+            path.write_bytes(b"not a directory")
+        elif defect == "junction":
+            subprocess.run(
+                ["cmd", "/c", "mklink", "/J", str(path), str(target)],
+                capture_output=True,
+                timeout=10,
+                check=True,
+            )
+        else:
+            mkdir(path, *args, **kwargs)
+            original = security.GetNamedSecurityInfo(str(path), security.SE_FILE_OBJECT, 0x4)
+            retained = original.GetSecurityDescriptorDacl()
+            original_acl.append(retained)
+            dacl = security.ACL()
+            for index in range(retained.GetAceCount()):
+                dacl.AddAce(security.ACL_REVISION, index, retained.GetAce(index))
+            dacl.AddAccessAllowedAce(2, 0x1F01FF, security.ConvertStringSidToSid("S-1-1-0"))
+            security.SetNamedSecurityInfo(
+                str(path),
+                security.SE_FILE_OBJECT,
+                security.DACL_SECURITY_INFORMATION,
+                None,
+                None,
+                dacl,
+                None,
+            )
+        try:
+            return mkdir(path, *args, **kwargs)
+        except FileExistsError:
+            conflicts.append(path)
+            raise
+
+    monkeypatch.setattr(Path, "mkdir", competing_creator)
+    try:
+        with pytest.raises(custody.LocalSigningCustodyError):
+            with filesystem.pinned_directory(directory, create=True):
+                pytest.fail("unsafe competitor acquired a session")
+        assert conflicts == [directory]
+        assert not (directory / ".pdsa-session.lock").exists()
+    finally:
+        if original_acl:
+            security.SetNamedSecurityInfo(
+                str(directory),
+                security.SE_FILE_OBJECT,
+                security.DACL_SECURITY_INFORMATION,
+                None,
+                None,
+                original_acl[0],
+                None,
+            )
+        if defect == "junction":
+            directory.rmdir()

@@ -177,7 +177,13 @@ def pinned_directory(directory: Path, *, create: bool = False):
             trusted = _trusted_sids(security, api)
             for path in (*reversed(directory.parents), directory):
                 if create and not path.exists():
-                    path.mkdir()  # inherit installer/user protection, never repair ACLs
+                    try:
+                        path.mkdir()  # inherit installer/user protection, never repair ACLs
+                    except FileExistsError:
+                        # Another initializer may have won creation. Existence
+                        # grants no trust: open and qualify this object below,
+                        # with the already-qualified ancestors still pinned.
+                        pass
                 handle = files.CreateFile(
                     str(path),
                     # READ_ATTRIBUTES alone does not enforce Windows delete-sharing.

@@ -439,7 +439,7 @@ def test_removed_pinned_directory_refuses_lock_creation(tmp_path, monkeypatch):
     assert not session.exists()
 
 
-@pytest.mark.parametrize("change", ["replace", "permissions", "contents"])
+@pytest.mark.parametrize("change", ["replace", "symlink", "hardlink", "permissions", "contents"])
 def test_session_lock_changes_during_acquisition_are_rejected(tmp_path, monkeypatch, change):
     fcntl = delivery.importlib.import_module("fcntl")
     native_flock = fcntl.flock
@@ -451,6 +451,12 @@ def test_session_lock_changes_during_acquisition_are_rejected(tmp_path, monkeypa
             lock.rename(tmp_path / "original-lock")
             lock.write_bytes(b"")
             lock.chmod(0o600)
+        elif change == "symlink":
+            original = tmp_path / "original-lock"
+            lock.rename(original)
+            lock.symlink_to(original)
+        elif change == "hardlink":
+            os.link(lock, tmp_path / "alias-lock")
         elif change == "permissions":
             lock.chmod(0o644)
         else:
@@ -460,6 +466,132 @@ def test_session_lock_changes_during_acquisition_are_rejected(tmp_path, monkeypa
     with pytest.raises(delivery.EnrollmentFileError, match="lock changed during acquisition"):
         with delivery.artifact_directory_lock(tmp_path):
             pytest.fail("a substituted lock cannot establish a session")
+
+
+@pytest.mark.parametrize("kind", ["symlink", "directory", "fifo", "permissions", "contents"])
+def test_existing_session_lock_must_be_independently_qualified(tmp_path, kind):
+    lock = tmp_path / ".pdsa-session.lock"
+    if kind == "symlink":
+        target = tmp_path / "unrelated"
+        target.write_bytes(b"")
+        target.chmod(0o600)
+        lock.symlink_to(target)
+    elif kind == "directory":
+        lock.mkdir(mode=0o700)
+    elif kind == "fifo":
+        os.mkfifo(lock, mode=0o600)
+    else:
+        lock.write_bytes(b"x" if kind == "contents" else b"")
+        lock.chmod(0o644 if kind == "permissions" else 0o600)
+
+    with pytest.raises(delivery.EnrollmentFileError):
+        with delivery.artifact_directory_lock(tmp_path):
+            pytest.fail("an existing lock conflict must not qualify an unsafe object")
+    assert not (tmp_path / "artifact").exists()
+    if kind == "symlink":
+        assert target.read_bytes() == b""
+    elif kind == "contents":
+        assert lock.read_bytes() == b"x"
+    elif kind == "permissions":
+        assert stat.S_IMODE(lock.stat().st_mode) == 0o644
+
+
+@pytest.mark.parametrize("object_kind", ["directory", "lock"])
+def test_session_requires_trusted_directory_and_lock_owners(tmp_path, monkeypatch, object_kind):
+    lock = tmp_path / ".pdsa-session.lock"
+    lock.write_bytes(b"")
+    lock.chmod(0o600)
+    target = (tmp_path if object_kind == "directory" else lock).stat()
+    native_fstat = os.fstat
+    untrusted_uid = max(delivery._posix_euid(), 0) + 1
+
+    def untrusted_owner(descriptor):
+        info = native_fstat(descriptor)
+        if (info.st_dev, info.st_ino) == (target.st_dev, target.st_ino):
+            return SimpleNamespace(
+                **{
+                    name: untrusted_uid if name == "st_uid" else getattr(info, name)
+                    for name in dir(info)
+                    if name.startswith("st_")
+                }
+            )
+        return info
+
+    monkeypatch.setattr(os, "fstat", untrusted_owner)
+    with pytest.raises(delivery.EnrollmentFileError):
+        with delivery.artifact_directory_lock(tmp_path):
+            pytest.fail("untrusted ownership cannot establish a session")
+
+
+@pytest.mark.parametrize("change", ["missing", "replacement", "symlink", "permissions"])
+def test_session_directory_is_requalified_after_flock(tmp_path, monkeypatch, change):
+    session = tmp_path / "session"
+    delivery.ensure_artifact_directory(session)
+    fcntl = delivery.importlib.import_module("fcntl")
+    native_flock = fcntl.flock
+
+    def change_after_lock(descriptor, operation):
+        native_flock(descriptor, operation)
+        if change == "permissions":
+            session.chmod(0o777)
+        else:
+            original = tmp_path / "pinned-original"
+            session.rename(original)
+            if change == "replacement":
+                session.mkdir(mode=0o700)
+            elif change == "symlink":
+                session.symlink_to(original, target_is_directory=True)
+
+    monkeypatch.setattr(fcntl, "flock", change_after_lock)
+    with pytest.raises(delivery.EnrollmentFileError):
+        with delivery.artifact_directory_lock(session):
+            pytest.fail("a changed directory cannot establish a session after flock")
+    assert not getattr(delivery._posix_sessions, "entries", ())
+
+
+def test_session_directory_entry_metadata_change_preserves_qualified_identity(
+    tmp_path, monkeypatch
+):
+    """Creating an entry can change directory metadata without replacing it."""
+    before = tmp_path.stat()
+    fcntl = delivery.importlib.import_module("fcntl")
+    native_flock = fcntl.flock
+    added = False
+
+    def add_entry_after_lock(descriptor, operation):
+        nonlocal added
+        native_flock(descriptor, operation)
+        if not added:
+            added = True
+            (tmp_path / "concurrent-entry").mkdir(mode=0o700)
+
+    monkeypatch.setattr(fcntl, "flock", add_entry_after_lock)
+    with delivery.artifact_directory_lock(tmp_path):
+        after = tmp_path.stat()
+        assert (before.st_dev, before.st_ino) == (after.st_dev, after.st_ino)
+        delivery.write_artifact_file(tmp_path / "artifact", b"exact retry")
+    assert (tmp_path / "artifact").read_bytes() == b"exact retry"
+    assert (tmp_path / ".pdsa-session.lock").stat().st_nlink == 1
+
+
+def test_failed_session_releases_lock_and_preserves_exact_immutable_artifact(tmp_path):
+    with pytest.raises(OSError, match="delivery failed"):
+        with delivery.artifact_directory_lock(tmp_path):
+            delivery.write_artifact_file(tmp_path / "artifact", b"exact challenge")
+            raise OSError("delivery failed")
+    assert not getattr(delivery._posix_sessions, "entries", ())
+
+    def retry_from_another_thread():
+        with delivery.artifact_directory_lock(tmp_path):
+            delivery.write_artifact_file(tmp_path / "artifact", b"exact challenge")
+            return delivery.read_artifact_file(tmp_path / "artifact")
+
+    before = (tmp_path / "artifact").stat()
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        assert executor.submit(retry_from_another_thread).result(timeout=5) == b"exact challenge"
+    after = (tmp_path / "artifact").stat()
+    assert (before.st_dev, before.st_ino) == (after.st_dev, after.st_ino)
+    assert after.st_nlink == 1
 
 
 def test_unprotected_directory_and_linked_lock_rejected(tmp_path: Path):
