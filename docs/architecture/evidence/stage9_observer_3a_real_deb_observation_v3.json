@@ -1,0 +1,177 @@
+{
+  "classification": "SAME_ORIGIN_OBSERVED_COMPARISON_ONLY",
+  "source_authenticity": "UNVERIFIED",
+  "v2_inventory_sha256": "30f1e21955bca2a54768a0da2f897b1fba0423996d8cfb274408e8a83b0136a3",
+  "v3_inventory_sha256": "aafaae5853b06b70f704a39bc6471cced92207b9ff64055b97a870f60dc10137",
+  "v3_inventory_bytes": 922604,
+  "total_records": 1002,
+  "total_unpacked_bytes": 52684800,
+  "gnu_tail_variants": {
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000": 1002
+  },
+  "packages": [
+    {
+      "package": "libpython3.12-dev",
+      "url": "https://archive.ubuntu.com/ubuntu/pool/main/p/python3.12/libpython3.12-dev_3.12.3-1ubuntu0.17_amd64.deb",
+      "filename": "libpython3.12-dev_3.12.3-1ubuntu0.17_amd64.deb",
+      "size": 5683746,
+      "sha256": "c123ddab7763e45199e21b4ac8545e705f20a0315b9ada4c236b52fb088c4e16",
+      "streams": [
+        {
+          "name": "control.tar.zst",
+          "unpacked_bytes": 30720,
+          "unpacked_sha256": "2bb14722a536b8950808a71048f0f073f5e90d3e140cf3f40242de979192c96d",
+          "records": 3,
+          "type_counts": {
+            "5": 1,
+            "0": 2
+          },
+          "all_legacy_record_values_matched": true
+        },
+        {
+          "name": "data.tar.zst",
+          "unpacked_bytes": 29788160,
+          "unpacked_sha256": "838dbb69ed8c6a892fd44f9e165572fd4e373029fda051e01b1a5dfb6c6b329e",
+          "records": 262,
+          "type_counts": {
+            "5": 24,
+            "0": 235,
+            "2": 3
+          },
+          "all_legacy_record_values_matched": true
+        }
+      ]
+    },
+    {
+      "package": "libpython3.12-minimal",
+      "url": "https://archive.ubuntu.com/ubuntu/pool/main/p/python3.12/libpython3.12-minimal_3.12.3-1ubuntu0.17_amd64.deb",
+      "filename": "libpython3.12-minimal_3.12.3-1ubuntu0.17_amd64.deb",
+      "size": 838536,
+      "sha256": "d646ad7112b5adec21ba0e1af015f04ae8ca7f5efdc619622547dd6673c4c14b",
+      "streams": [
+        {
+          "name": "control.tar.zst",
+          "unpacked_bytes": 30720,
+          "unpacked_sha256": "fc38bdcc3476b3bee6edf749783b548122240d0cf6b97500281b84e448b7729b",
+          "records": 7,
+          "type_counts": {
+            "5": 1,
+            "0": 6
+          },
+          "all_legacy_record_values_matched": true
+        },
+        {
+          "name": "data.tar.zst",
+          "unpacked_bytes": 5355520,
+          "unpacked_sha256": "97220a5541f2b7428203324057986a0e77a9dae5126784e7020f2a15d7af9f78",
+          "records": 308,
+          "type_counts": {
+            "5": 24,
+            "0": 283,
+            "2": 1
+          },
+          "all_legacy_record_values_matched": true
+        }
+      ]
+    },
+    {
+      "package": "libpython3.12-stdlib",
+      "url": "https://archive.ubuntu.com/ubuntu/pool/main/p/python3.12/libpython3.12-stdlib_3.12.3-1ubuntu0.17_amd64.deb",
+      "filename": "libpython3.12-stdlib_3.12.3-1ubuntu0.17_amd64.deb",
+      "size": 2070530,
+      "sha256": "45d3f530ba1f9d6e879ad46b92046fabab13fe50a82450e4f65557a3bbad1489",
+      "streams": [
+        {
+          "name": "control.tar.zst",
+          "unpacked_bytes": 40960,
+          "unpacked_sha256": "8267f9f30c375ae8c90afa8b521eb43021a3285885e4e3a21bca74670632e588",
+          "records": 4,
+          "type_counts": {
+            "5": 1,
+            "0": 3
+          },
+          "all_legacy_record_values_matched": true
+        },
+        {
+          "name": "data.tar.zst",
+          "unpacked_bytes": 9318400,
+          "unpacked_sha256": "7db50b44a1db4f9751066953e8202ca99a81c87f4981df466a32041fc0214cd6",
+          "records": 390,
+          "type_counts": {
+            "5": 42,
+            "0": 346,
+            "2": 2
+          },
+          "all_legacy_record_values_matched": true
+        }
+      ]
+    },
+    {
+      "package": "python3.12-minimal",
+      "url": "https://archive.ubuntu.com/ubuntu/pool/main/p/python3.12/python3.12-minimal_3.12.3-1ubuntu0.17_amd64.deb",
+      "filename": "python3.12-minimal_3.12.3-1ubuntu0.17_amd64.deb",
+      "size": 2334634,
+      "sha256": "d452689b9660845345a4c3e05e4ad82c082d5474e04031b7aa47f1a6d5610a6e",
+      "streams": [
+        {
+          "name": "control.tar.zst",
+          "unpacked_bytes": 20480,
+          "unpacked_sha256": "222a3f3cca6b1f1d5e2fceb3e14fbce8810fc9a0f9c402098377a04d2c54057f",
+          "records": 7,
+          "type_counts": {
+            "5": 1,
+            "0": 6
+          },
+          "all_legacy_record_values_matched": true
+        },
+        {
+          "name": "data.tar.zst",
+          "unpacked_bytes": 8099840,
+          "unpacked_sha256": "607f19434957f7d095c00725b23e40170be8199e4d25910536a7bb971d1119b0",
+          "records": 21,
+          "type_counts": {
+            "5": 13,
+            "0": 7,
+            "2": 1
+          },
+          "all_legacy_record_values_matched": true
+        }
+      ]
+    }
+  ],
+  "format": "stage9-real-deb-raw-observation-v3",
+  "observed_at_utc": "2026-10-31T14:43:01.086495+00:00",
+  "inventory_persisted_at_utc": "2026-10-31T14:40:51.812977+00:00",
+  "inspection_tool": {
+    "python": "3.11.17",
+    "zstandard": "0.25.0",
+    "backend": "cext",
+    "libzstd": "1.5.7",
+    "inspector_sha256": "d26d34740e4def98d34422ee47d6651c8bb4fbbfa938bf2b0a6ea2e923c51ea4",
+    "production_verifier_imported": false
+  },
+  "gnu_layout_reference": {
+    "url": "https://github.com/gnu-mirror-unofficial/tar/blob/5c713540e34f51323b9f63b7459254bc845603ed/src/tar.h#L131",
+    "bytes": 13465,
+    "sha256": "999952fcd93c4fd1fd96276f1f619e27f08ea7b052ab14db551182e29db13e97",
+    "source_authenticity": "UNVERIFIED",
+    "mirror": "unofficial GitHub mirror"
+  },
+  "all_whole_archives_matched_v2": true,
+  "all_raw_ar_headers_matched_v2": true,
+  "all_legacy_tar_record_values_matched": true,
+  "all_decoded_tar_hashes_and_sizes_matched_v2": true,
+  "all_1002_gnu_tails_are_167_nul_bytes": true,
+  "acceptance": "NOT_INDEPENDENT_ACCEPTANCE",
+  "production_comparison": "NOT_PERFORMED_BY_THIS_INSPECTOR",
+  "ARCHIVE_TO_TARGET_METADATA_MAPPING": "NOT_YET_PROVEN",
+  "stage_9": "IN_PROGRESS",
+  "qualification": "BLOCKED",
+  "CONTRACT_APPROVED": "NO",
+  "STAGE_3A_COMPLETE": "NO",
+  "PRODUCTION_QUALIFIED": "NO",
+  "production_status": "PRODUCTION_NO_GO",
+  "runtime_attestation": "MISSING",
+  "host_pid_namespace": "UNVERIFIED",
+  "V2_COMPLETE": "NO"
+}
