@@ -1,0 +1,6 @@
+# Offline analysis tool only: CPython 3.11, Linux x86_64, glibc >= 2.17.
+# Exact manylinux2014/manylinux_2_17 wheel; no sdist/build or runtime download.
+# Hash equality identifies bytes; it does not independently approve provenance.
+# See docs/architecture/evidence/stage9_observer_zstandard_toolchain_v2.md.
+zstandard==0.25.0 \
+    --hash=sha256:9300d02ea7c6506f00e627e287e0492a5eb0371ec1670ae852fefffa6164b072

@@ -22,6 +22,12 @@ inspection, not a substitute for reading or testing the implementation.
   blocking, tested CryptoHunter rules.
 - pip-audit checks the canonical desktop lock file. Dependency updates are
   reviewed and tested; `--fix` is not used automatically.
+- The inactive Stage 9 offline verifier additionally pins `zstandard==0.25.0`
+  in a separate `offline-verifier` extra and the test extra. Its negative-path
+  tests join the existing quality-ratchet coverage report without changing the
+  70% threshold or timeout. The C backend/libzstd and artifact provenance limits
+  are recorded in the [V2 scope](architecture/stage9_observer_offline_v2.md);
+  no dependency is added to a minimal Observer runtime.
 - Betterleaks 1.9.0 is the only secret scanner. Validation against providers is
   disabled. The redacted baseline contains 20 reviewed public-digest,
   fixture, or example findings, individually justified in
@@ -63,6 +69,16 @@ unprivileged file reads and inspect synthetic DEB fixtures as data. These checks
 do not qualify a physical installation, runtime execution or host PID scope;
 independent acceptance and production qualification remain blocked. Existing
 coverage thresholds, job timeouts and hardware opt-in gates remain unchanged.
+
+The separate [V3 package-only verifier](architecture/stage9_observer_offline_v3.md)
+adds exact control/data GNU TAR inventories and literal symlink records without
+extending the V1 image contract. Its TAR and package modules and read-only V3
+reproduction script join the configured Linux/Windows mypy scope, explicit Ruff
+checks, and the same branch-coverage report and 70% changed-code gate. Synthetic
+negative-path tests run in ordinary CI; CI does not acquire or install Ubuntu
+packages. Real-package comparison remains separately retained observation and
+does not establish independent acceptance, APT authenticity, image mapping or
+production qualification. Existing V1/V2 tests and hardware gates remain enabled.
 
 The production-local issuer-history component uses the existing PostgreSQL 16
 service in the serial quality-ratchet job. Its durability and security tests

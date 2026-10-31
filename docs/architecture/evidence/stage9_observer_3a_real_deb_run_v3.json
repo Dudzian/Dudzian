@@ -1,0 +1,14 @@
+{
+  "measured_at_utc": "2026-10-31T14:50:37.904932+00:00",
+  "base_commit": "4e5044ac1bff8f078cb27659348f0b2e41b3a4ac",
+  "command": "python -m scripts.verify_stage9_real_deb_v3 --directory <separately-provisioned-exact-debs>",
+  "exit_code": 0,
+  "inventory_sha256": "aafaae5853b06b70f704a39bc6471cced92207b9ff64055b97a870f60dc10137",
+  "classification": "SAME_ORIGIN_OBSERVED_COMPARISON_ONLY; NOT_INDEPENDENT_ACCEPTANCE",
+  "implementation_sha256": {
+    "deployment/stage9_observer_tar_v3.py": "9da7dd425a615bde6131fe1fd707b516ab9a8f31d21e81adf8fe862d04322960",
+    "deployment/stage9_observer_package_v3.py": "05b089ed65bfa963fdd7e54ff60836615d0c780a377a52b20454e6d2268c19fd",
+    "scripts/verify_stage9_real_deb_v3.py": "6e30fc1db62a7496859ae1210b04322fc09b1c514de3e80c543f0413a622896f"
+  },
+  "results_sha256": "1d7c6ac3612f557a3e9fcf72eb1d11df0050c832d5a41349d9d2f8dc8dfb975c"
+}

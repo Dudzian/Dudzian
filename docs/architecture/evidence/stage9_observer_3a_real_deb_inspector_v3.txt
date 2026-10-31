@@ -1,0 +1,141 @@
+"""One-off same-origin observation; does not import the production verifier."""
+
+import collections
+import hashlib
+import io
+import json
+from pathlib import Path
+
+import zstandard
+
+
+def sha(raw):
+    return hashlib.sha256(raw).hexdigest()
+
+
+def text(raw):
+    value, _, rest = raw.partition(b"\0")
+    assert not rest.strip(b"\0")
+    return value.decode("utf-8", "strict")
+
+
+def octal(raw):
+    value = raw.rstrip(b"\0 ").lstrip(b" ")
+    assert value and all(c in b"01234567" for c in value)
+    return int(value, 8)
+
+
+repo = Path("/workspace/Dudzian")
+base = repo / "docs/architecture/evidence"
+prior_raw = (base / "stage9_observer_3a_real_deb_inventory_v2.json").read_bytes()
+assert sha(prior_raw) == "30f1e21955bca2a54768a0da2f897b1fba0423996d8cfb274408e8a83b0136a3"
+prior = json.loads(prior_raw)
+output = {
+    "format": "stage9-ubuntu-package-inventory-v3",
+    "classification": "SAME_ORIGIN_OBSERVED_COMPARISON_ONLY",
+    "source_authenticity": "UNVERIFIED",
+    "packages": [],
+}
+summary = []
+tails = collections.Counter()
+total_records = 0
+total_unpacked = 0
+for package in prior["packages"]:
+    filename = Path(package["filename"]).name
+    raw = (Path("/workspace/work/stage9-v3/debs") / filename).read_bytes()
+    assert len(raw) == package["size"] and sha(raw) == package["sha256"]
+    assert raw[:8] == b"!<arch>\n"
+    result = {key: package[key] for key in ("package", "version", "architecture", "sha256", "size")}
+    result["filename"] = filename
+    offset = 8
+    package_summary = {"package": package["package"], "url": package["url"], "filename": filename,
+                       "size": len(raw), "sha256": sha(raw), "streams": []}
+    for ar in package["ar"]:
+        header = raw[offset:offset + 60]
+        assert header == ar["header_ascii"].encode("ascii")
+        assert header[58:] == b"`\n"
+        size = int(header[48:58].strip())
+        start = offset + 60
+        assert start == ar["offset"] and size == ar["size"]
+        payload = raw[start:start + size]
+        assert len(payload) == size
+        if ar["name"] == "debian-binary":
+            assert payload == b"2.0\n"
+        else:
+            assert sha(payload) == ar["compressed_sha256"]
+            decoder = zstandard.ZstdDecompressor()
+            with decoder.stream_reader(io.BytesIO(payload), read_across_frames=False) as stream:
+                decoded = stream.read(64 * 1024 * 1024 + 1)
+                assert len(decoded) <= 64 * 1024 * 1024
+                assert stream.read(1) == b""
+            assert len(decoded) == ar["unpacked_bytes"]
+            assert sha(decoded) == ar["unpacked_sha256"]
+            total_unpacked += len(decoded)
+            records = []
+            position = 0
+            while True:
+                h = decoded[position:position + 512]
+                assert len(h) == 512
+                if h == bytes(512):
+                    assert decoded[position + 512:position + 1024] == bytes(512)
+                    assert len(decoded) % 512 == 0
+                    assert not decoded[position:].strip(b"\0")
+                    break
+                assert octal(h[148:156]) == sum(h[:148]) + 8 * 32 + sum(h[156:])
+                assert h[257:265] == b"ustar  \0"
+                kind = h[156:157].decode("ascii")
+                assert kind in ("0", "5", "2")
+                member_size = octal(h[124:136])
+                if kind != "0":
+                    assert member_size == 0
+                body_start = position + 512
+                body = decoded[body_start:body_start + member_size]
+                assert len(body) == member_size
+                padding_end = body_start + member_size + (-member_size) % 512
+                assert not decoded[body_start + member_size:padding_end].strip(b"\0")
+                record = {
+                    "name": text(h[:100]), "typeflag": kind, "size": member_size,
+                    "mode": octal(h[100:108]), "uid": octal(h[108:116]),
+                    "gid": octal(h[116:124]), "mtime": octal(h[136:148]),
+                    "linkname": text(h[157:257]), "magic_version_hex": h[257:265].hex(),
+                    "uname": text(h[265:297]), "gname": text(h[297:329]),
+                    "devmajor": h[329:337].hex(), "devminor": h[337:345].hex(),
+                    "sha256": sha(body) if kind == "0" else None,
+                }
+                assert record == ar["records"][len(records)]
+                record["tail_hex"] = h[345:512].hex()
+                tails[record["tail_hex"]] += 1
+                records.append(record)
+                position = padding_end
+            assert len(records) == len(ar["records"])
+            total_records += len(records)
+            stream_name = "control" if ar["name"].startswith("control.") else "data"
+            result[stream_name] = {
+                "profile": "gnu-inert-v3", "unpacked_bytes": len(decoded),
+                "unpacked_sha256": sha(decoded), "records": records,
+            }
+            package_summary["streams"].append({
+                "name": ar["name"], "unpacked_bytes": len(decoded), "unpacked_sha256": sha(decoded),
+                "records": len(records), "type_counts": dict(collections.Counter(r["typeflag"] for r in records)),
+                "all_legacy_record_values_matched": True,
+            })
+        offset = start + size + size % 2
+        if size % 2:
+            assert raw[offset - 1:offset] == b"\n"
+    assert offset == len(raw)
+    output["packages"].append(result)
+    summary.append(package_summary)
+assert total_records == 1002 and total_unpacked == 52684800
+new_raw = (json.dumps(output, indent=2, ensure_ascii=False) + "\n").encode()
+target = base / "stage9_observer_3a_real_deb_inventory_v3.json"
+with target.open("xb") as stream:
+    stream.write(new_raw)
+inspection = {
+    "classification": "SAME_ORIGIN_OBSERVED_COMPARISON_ONLY",
+    "source_authenticity": "UNVERIFIED", "v2_inventory_sha256": sha(prior_raw),
+    "v3_inventory_sha256": sha(new_raw), "v3_inventory_bytes": len(new_raw),
+    "total_records": total_records, "total_unpacked_bytes": total_unpacked,
+    "gnu_tail_variants": dict(tails), "packages": summary,
+}
+Path("/workspace/work/stage9-v3/independent_inspection.json").write_text(json.dumps(inspection, indent=2) + "\n")
+print(json.dumps(inspection, indent=2))

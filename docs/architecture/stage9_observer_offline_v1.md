@@ -1,5 +1,9 @@
 # Stage 9 / 3A: bounded offline artifact verifier V1
 
+Historical V1 scope is recorded below. The
+[V2 Zstandard extension and real-package limitations](stage9_observer_offline_v2.md)
+supersede its compression-support statements; GNU headers and links still refuse.
+
 Implementation baseline: `d88d601cb200ad5da08fd0de9ddf7064cbfbe76b`
 (main including PRs #3224 and #3225). This is an advisory, unprivileged library,
 not a Trusted Observer, launcher, Stage 3B collector or production trust backend.
