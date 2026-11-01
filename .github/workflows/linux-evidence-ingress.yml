@@ -1,0 +1,50 @@
+name: Stage 9 Linux evidence ingress
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_run_id:
+        description: "Identyfikator oczekującego przebiegu kwalifikacji"
+        type: string
+        required: true
+      target_run_attempt:
+        description: "Numer bieżącej próby oczekującego przebiegu"
+        type: string
+        required: true
+      bundle:
+        description: "Transport gzb64 z polecenia pack; najwyżej 48 KiB, po rozpakowaniu 256 KiB JSON"
+        type: string
+        required: true
+
+jobs:
+  save:
+    if: github.ref == 'refs/heads/main' && github.repository == 'Dudzian/Dudzian'
+    runs-on: ubuntu-24.04
+    permissions: {contents: read}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with: {ref: "${{ github.sha }}", persist-credentials: false}
+      - uses: actions/setup-python@v7
+        with: {python-version: "3.11"}
+      - name: Sprawdź wyłącznie identyfikatory transportu
+        shell: python
+        env:
+          TARGET_RUN_ID: ${{ inputs.target_run_id }}
+          TARGET_ATTEMPT: ${{ inputs.target_run_attempt }}
+        run: |
+          import os
+          import re
+          if any(not re.fullmatch(r"[1-9][0-9]*", os.environ[name])
+                 for name in ("TARGET_RUN_ID", "TARGET_ATTEMPT")):
+              raise SystemExit("Nieprawidłowy identyfikator transportu")
+      - name: Zapisz niezaufane bajty bez wykonywania treści
+        env: {LINUX_EVIDENCE_BUNDLE: "${{ inputs.bundle }}"}
+        run: python -m deployment.linux_evidence_handoff ingress --output bundle.json
+      - uses: actions/upload-artifact@v7
+        with:
+          name: stage9-linux-bundle-${{ inputs.target_run_id }}-${{ inputs.target_run_attempt }}
+          path: bundle.json
+          if-no-files-found: error
+          overwrite: false
+          retention-days: 1

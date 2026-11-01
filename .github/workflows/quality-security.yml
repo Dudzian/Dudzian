@@ -109,6 +109,15 @@ jobs:
           deployment/windows_stage10_runner_preflight.py
           deployment/platform_evidence.py
           deployment/platform_readiness.py
+          deployment/linux_physical_evidence.py
+          deployment/linux_physical_observations.py
+          deployment/linux_physical_native.py
+          deployment/linux_physical_collector.py
+          deployment/linux_evidence_handoff.py
+          tests/deployment/test_linux_physical_evidence.py
+          tests/deployment/test_linux_physical_collector.py
+          tests/deployment/test_linux_physical_native.py
+          tests/scripts/test_linux_physical_evidence_workflow.py
           bot_core/postgresql_preaccount_credentials.py
           bot_core/postgresql_root_proof_issuance_authority.py
           bot_core/postgresql_root_proof_issuance_authority_v2.py
@@ -330,7 +339,11 @@ jobs:
       - name: Mypy Windows configured scope
         run: python -m mypy --platform win32
       - name: Ruff platform release policy evaluator
-        run: python -m ruff check deployment/platform_readiness.py
+        run: >-
+          python -m ruff check deployment/platform_readiness.py
+          deployment/linux_physical_evidence.py deployment/linux_physical_observations.py
+          deployment/linux_physical_native.py deployment/linux_physical_collector.py
+          deployment/linux_evidence_handoff.py
       # PRE executor tests replace native custody, console and process boundaries.
       - name: Property and critical pure-logic tests with branch coverage
         env:
@@ -341,6 +354,10 @@ jobs:
         run: >-
           python -m pytest -ra -p asyncio -p pytest_cov -p xdist.plugin -n 4
           tests/property
+          tests/deployment/test_linux_physical_evidence.py
+          tests/deployment/test_linux_physical_collector.py
+          tests/deployment/test_linux_physical_native.py
+          tests/scripts/test_linux_physical_evidence_workflow.py
           tests/test_stage9_observer_contract.py
           tests/deployment/test_stage9_observer_offline.py
           tests/deployment/test_stage9_observer_zstd.py
@@ -456,6 +473,11 @@ jobs:
           --cov=deployment.windows_stage10_runner_preflight
           --cov=deployment.platform_evidence
           --cov=deployment.platform_readiness
+          --cov=deployment.linux_physical_evidence
+          --cov=deployment.linux_physical_observations
+          --cov=deployment.linux_physical_native
+          --cov=deployment.linux_physical_collector
+          --cov=deployment.linux_evidence_handoff
           --cov=deployment.production_enrollment_issuer
           --cov=deployment.production_pdsa_signing
           --cov-config=.coveragerc

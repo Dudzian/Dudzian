@@ -568,7 +568,8 @@ def test_linux_release_claim_requires_its_own_current_native_qualification(profi
     data = load_contract()
     windows, core = _complete_windows_evidence(data, "current")
     linux = _complete_linux_evidence(data, "current")
-    assert release_ready(profile, data, [windows, core, linux], "current") is True
+    # Same deklaracje LIVE w JSON nie uwierzytelniają fizycznego wykonania.
+    assert release_ready(profile, data, [windows, core, linux], "current") is False
     for mutation in (
         lambda document: document["results"].pop(),
         lambda document: document["results"][0].update(status="FAIL"),

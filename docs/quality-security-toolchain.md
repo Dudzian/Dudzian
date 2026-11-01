@@ -43,6 +43,20 @@ flow and exporter boundary can be designed without coupling trading to a backend
 
 ## Gate tiers
 
+Ścieżka fizycznych dowodów Linux (`linux_physical_evidence`,
+`linux_physical_observations`, `linux_physical_native`,
+`linux_physical_collector` i `linux_evidence_handoff`) wchodzi do
+skonfigurowanego mypy na Linux i Windows, jawnego lint/format oraz istniejącego
+raportu branch coverage `quality-ratchet`. Cztery nowe moduły testów
+sprawdzają podpisy, semantykę, odmowy natywnych granic i transport; używają
+plików tymczasowych oraz zastąpionych granic systemu, bez instalacji,
+restartów i kwalifikacji sprzętu. Osobny job `linux-evidence-contract`
+powtarza tę hermetyczną walidację w workflow platformowym. Próg 70%
+w połączonej bramce `quality-ratchet-coverage`, wcześniejsze zakresy i limity
+czasu pozostają bez zmian. Wykonanie fizyczne wymaga oddzielnego manualnego
+przebiegu i chronionych environments opisanych w
+[procedurze Dell](runbooks/STAGE9_LINUX_PHYSICAL_QUALIFICATION.md).
+
 ### Tier A: fast local
 
 From PowerShell:

@@ -2,6 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://cryptohunter.invalid/schemas/platform-evidence-v1.json",
   "title": "CryptoHunter platform execution evidence",
+  "description": "Składnia nie uwierzytelnia dowodów. Linux wymaga surowego podpisanego łańcucha i niezależnej polityki.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -17,6 +18,8 @@
     "runner_os": {"enum": ["Windows", "Linux", "macOS"]},
     "runner_arch": {"type": "string", "minLength": 1},
     "generated_at_utc": {"type": "string", "format": "date-time"},
+    "linux_physical": {"type": "object", "additionalProperties": false, "required": ["challenge_id", "bundle_sha256", "policy_sha256", "host_id", "ci_run_attempt"], "properties": {"challenge_id": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "bundle_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "policy_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "host_id": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "ci_run_attempt": {"type": "string", "pattern": "^[1-9][0-9]*$"}}},
+    "production_trust": {"type": "object", "additionalProperties": false, "required": ["ceremony_id", "package_manifest_sha256", "artifact_run_id", "frozen_production_trust"], "properties": {"ceremony_id": {"const": "390299aaa1ea928a6c2bfdd81a4c50cfde82a7744cd054e8628d5937b90f1699"}, "package_manifest_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "artifact_run_id": {"type": "string", "pattern": "^[1-9][0-9]*$"}, "frozen_production_trust": {"const": "PASS"}}},
     "results": {
       "type": "array",
       "items": {
@@ -32,5 +35,6 @@
         }
       }
     }
-  }
+  },
+  "allOf": [{"if": {"properties": {"results": {"contains": {"properties": {"evidence_class": {"const": "LIVE_LINUX_INTEGRATION"}}, "required": ["evidence_class"]}}}}, "then": {"required": ["linux_physical"], "properties": {"platform": {"const": "LINUX"}, "runner_os": {"const": "Linux"}}}, "else": {"not": {"required": ["linux_physical"]}}}, {"if": {"properties": {"results": {"contains": {"properties": {"item": {"const": "WINDOWS_CLEAN_INSTALL"}}, "required": ["item"]}}}}, "then": {"required": ["production_trust"]}, "else": {"not": {"required": ["production_trust"]}}}]
 }

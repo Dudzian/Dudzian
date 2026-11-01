@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "purpose": "LIVE_PHYSICAL_LINUX",
+  "max_age_seconds": 86400,
+  "hosts": []
+}
