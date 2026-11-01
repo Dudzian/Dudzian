@@ -47,8 +47,11 @@ EXPECTED_IDENT = [
     ("freshness_admin_map", "root", "postgres"),
 ]
 REVIEWED_CODE_DIGESTS = {
-    "freshness_verifier_service.py": "88da8c2a19ac64527939a9aadd914de518bb0e6f2c84d0f85ddd1d85d0216c92",
-    "freshness_semantic_verifier.py": "5cee08b44d446e9388d7c0e7834a54c008d7867f6289a943770602f807798d48",
+    "linux_service_ipc.py": "099e6a3a08717b48e7a01606b9908f56f0eec40aced260d554d7dfc4562b451e",
+    "linux_service_postgresql.py": "d09d359535e18408d8cee282cb757c4eca8a4e8c422bfce8fa804860ad59f0d1",
+    "production_signer_ipc.py": "be755e67cb1ea4466c074e4c2c0dbe8e6528552f4a70fd7769a5e876c878f552",
+    "freshness_verifier_service.py": "df23a3c2fcd1e04877192fe2fe376909a29aa5183a516485fbfdad5a72f9f057",
+    "freshness_semantic_verifier.py": "64dd105d54a2eabd9be9164846fe642ca0a274b30ca5d0a83735a4436d9f39e1",
     "account_genesis_freshness_authority.py": "cd508809f4b4f0663610f592b77695784d74eb4c7e2fba50c42d7a4dbf252f7b",
 }
 

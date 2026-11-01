@@ -26,7 +26,7 @@ from datetime import datetime, timedelta, timezone
 import ipaddress
 
 from deployment.host_identity import canonical_host_os
-from deployment.platform_evidence import WINDOWS_STAGE8_ITEMS
+from deployment.windows_stage8_evidence_contract import WINDOWS_STAGE8_ITEMS
 
 SUBSTRATE, PRINCIPAL_AUTH = WINDOWS_STAGE8_ITEMS
 MINIMUM_MAJOR = 16
@@ -1557,6 +1557,7 @@ def run_probe(scratch_parent: Path, *, status_file: Path | None = None) -> dict[
             psycopg, port, data, binaries.executable("pg_ctl.exe"), root
         )
         with _phase("FINAL_CLUSTER_RESTART"):
+
             def publish_stopped() -> None:
                 nonlocal cluster_started
                 cluster_started = False
