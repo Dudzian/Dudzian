@@ -126,6 +126,8 @@ jobs:
           tests/deployment/test_linux_physical_ipc.py
           tests/deployment/test_linux_physical_postgresql.py
           tests/security/test_linux_service_ipc.py
+          tests/security/test_reviewed_source_checkout.py
+          tests/security/test_freshness_reviewed_source_pins.py
           tests/security/test_linux_service_postgresql.py
           tests/security/test_freshness_semantic_verifier.py
           tests/security/test_freshness_production_local_deployment.py
@@ -385,6 +387,8 @@ jobs:
           tests/deployment/test_linux_physical_ipc.py
           tests/deployment/test_linux_physical_postgresql.py
           tests/security/test_linux_service_ipc.py
+          tests/security/test_reviewed_source_checkout.py
+          tests/security/test_freshness_reviewed_source_pins.py
           tests/security/test_linux_service_postgresql.py
           tests/security/test_freshness_semantic_verifier.py
           tests/security/test_freshness_production_local_deployment.py
