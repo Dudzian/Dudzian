@@ -11,6 +11,7 @@ import json
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 from pathlib import Path
+from threading import Barrier
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric import utils
@@ -140,14 +141,56 @@ def test_terminal_retry_rejects_changed_proof_for_same_signed_request(exchange):
     assert not (item.output_root / "substituted-package.json").exists()
 
 
-def test_parallel_request_retries_share_exact_challenge(exchange):
+def test_parallel_request_retries_share_exact_challenge(exchange, monkeypatch):
     item = exchange
+    contenders = Barrier(2)
+    ensure = offline.ensure_artifact_directory
+
+    def simultaneous_initialization(path):
+        contenders.wait(timeout=5)
+        ensure(path)
+
+    monkeypatch.setattr(offline, "ensure_artifact_directory", simultaneous_initialization)
     with ThreadPoolExecutor(max_workers=2) as pool:
         futures = [
             pool.submit(_issue, item, output=f"challenge-{index}.json") for index in range(2)
         ]
         replies = [future.result().canonical_bytes for future in futures]
     assert replies[0] == replies[1]
+
+
+def test_failed_parallel_delivery_releases_session_and_preserves_exact_challenge(
+    exchange, monkeypatch
+):
+    item = exchange
+    contenders = Barrier(2)
+    ensure = offline.ensure_artifact_directory
+    write = offline.write_artifact_file
+
+    def simultaneous_initialization(path):
+        contenders.wait(timeout=5)
+        ensure(path)
+
+    def lose_one_response(path, raw):
+        if path == item.output_root / "failed-challenge.json":
+            raise OSError("TEST_ONLY response delivery failed")
+        write(path, raw)
+
+    monkeypatch.setattr(offline, "ensure_artifact_directory", simultaneous_initialization)
+    monkeypatch.setattr(offline, "write_artifact_file", lose_one_response)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        failed = pool.submit(_issue, item, output="failed-challenge.json")
+        successful = pool.submit(_issue, item, output="successful-challenge.json")
+        with pytest.raises(OSError, match="TEST_ONLY response delivery failed"):
+            failed.result(timeout=5)
+        response = successful.result(timeout=5)
+    monkeypatch.setattr(offline, "ensure_artifact_directory", ensure)
+    retry = _issue(item, output="retry-challenge.json")
+    assert retry.canonical_bytes == response.canonical_bytes
+    assert response.artifacts["tpm_challenge"] == item.tpm_challenge.canonical_bytes
+    journal = item.authority.store.path.parent / "offline"
+    assert (journal / f"{item.device.request_id}.tpm.json").read_bytes() == response.canonical_bytes
+    assert not (item.output_root / "failed-challenge.json").exists()
 
 
 def test_two_parallel_distinct_device_requests_remain_distinct(exchange):

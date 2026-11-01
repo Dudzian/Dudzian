@@ -438,12 +438,19 @@ def _posix_session_lock(path: Path):
             # open-file-description flock would deadlock instead of nesting.
             yield
             return
-        descriptor = os.open(
-            ".pdsa-session.lock",
-            os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
-            0o600,
-            dir_fd=directory,
-        )
+        flags = os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
+        try:
+            # Darwin can return ENOENT when concurrent first creators use
+            # nonexclusive O_CREAT. Give creation a single atomic winner, then
+            # open an existing lock without recreating a removed pathname.
+            descriptor = os.open(
+                ".pdsa-session.lock",
+                flags | os.O_CREAT | os.O_EXCL,
+                0o600,
+                dir_fd=directory,
+            )
+        except FileExistsError:
+            descriptor = os.open(".pdsa-session.lock", flags, dir_fd=directory)
         try:
             info = os.fstat(descriptor)
             _qualify_file(info, 1)
@@ -454,6 +461,10 @@ def _posix_session_lock(path: Path):
             ):
                 raise EnrollmentFileError("artifact session lock permissions or data are unsafe")
             fcntl.flock(descriptor, fcntl.LOCK_EX)
+            if _identity(os.fstat(descriptor)) != _identity(info) or _identity(
+                os.stat(".pdsa-session.lock", dir_fd=directory, follow_symlinks=False)
+            ) != _identity(info):
+                raise EnrollmentFileError("artifact session lock changed during acquisition")
             directory_info = os.fstat(directory)
             _posix_sessions.entries = previous + (
                 (path, (directory_info.st_dev, directory_info.st_ino)),

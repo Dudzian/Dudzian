@@ -1,0 +1,251 @@
+name: Enrollment lock regression
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/enrollment-lock-regression.yml"
+      - "bot_core/licensing/enrollment_file_io.py"
+      - "bot_core/windows_custody_filesystem.py"
+      - "deployment/production_enrollment_*.py"
+      - "scripts/diagnose_enrollment_lock_open.py"
+      - "tests/deployment/test_production_enrollment_offline.py"
+      - "tests/licensing/test_enrollment_file_io.py"
+      - "tests/scripts/test_diagnose_enrollment_lock_open.py"
+      - "tests/security/test_native_custody_locking.py"
+  workflow_dispatch:
+  push:
+    branches:
+      - "codex/enrollment-directory-lock-remediation"
+
+permissions:
+  contents: read
+
+jobs:
+  macos-lock-probe:
+    name: Native macOS lock probe
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out exact workflow revision
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+      - name: Record tested source and native environment
+        shell: bash
+        run: |
+          mkdir -p test-results
+          git show --no-patch --format='%H %P' HEAD | tee test-results/source.txt
+          sw_vers | tee test-results/native-environment.txt
+          python --version | tee -a test-results/native-environment.txt
+          python -c 'import platform, sys; assert sys.platform == "darwin", sys.platform; print(platform.platform(), platform.machine())' | tee -a test-results/native-environment.txt
+      - name: Probe native concurrent create-or-open and exclusive-create control
+        shell: bash
+        run: |
+          python scripts/diagnose_enrollment_lock_open.py --trials 1000 --workers 16 \
+            2> test-results/enrollment-open-probe.stderr.log | tee test-results/enrollment-open-probe.json
+      - name: Upload native probe even when it refuses
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-enrollment-lock-probe-${{ github.event.pull_request.head.sha || github.sha }}
+          path: test-results/
+          retention-days: 7
+
+  native-enrollment-regressions:
+    name: Native ${{ matrix.platform }} enrollment regressions (20 runs)
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            platform: macOS
+            python-platform: darwin
+          - os: windows-latest
+            platform: Windows
+            python-platform: win32
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    env:
+      PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+      DUDZIAN_TEST_MODE: "1"
+      DUDZIAN_ALLOW_LONG_POLL: "0"
+    steps:
+      - name: Check out exact PR head or pushed revision
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+      - name: Record tested source and native environment
+        env:
+          EXPECTED_PLATFORM: ${{ matrix.python-platform }}
+        run: |
+          mkdir -p test-results
+          git show --no-patch --format='%H %P' HEAD | tee test-results/source.txt
+          python - <<'PY' | tee test-results/native-environment.json
+          import json
+          import os
+          import platform
+          import subprocess
+          import sys
+
+          assert sys.platform == os.environ["EXPECTED_PLATFORM"], sys.platform
+          print(json.dumps({
+              "tested_head": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
+              "platform": sys.platform,
+              "native_version": platform.platform(),
+              "machine": platform.machine(),
+              "python": sys.version,
+          }, indent=2))
+          PY
+      - name: Install focused regression dependencies
+        id: dependencies
+        run: >-
+          python -m pip install
+          pytest pytest-asyncio pytest-cov
+          "cryptography>=50.0.1,<51"
+          "pywin32>=312; platform_system == 'Windows'"
+          PyYAML numpy pandas pydantic msgpack grpcio protobuf requests jsonschema
+      - name: Run both original enrollment concurrency regressions
+        run: >-
+          python -m pytest -p asyncio
+          tests/deployment/test_production_enrollment_offline.py::test_parallel_request_retries_share_exact_challenge
+          tests/deployment/test_production_enrollment_offline.py::test_failed_parallel_delivery_releases_session_and_preserves_exact_challenge
+          --junitxml=test-results/original-regression.xml -q
+          > test-results/original-regression.log 2>&1
+      - name: Print original regression evidence
+        if: always()
+        run: if test -f test-results/original-regression.log; then cat test-results/original-regression.log; fi
+      - name: Run native custody security regression file
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
+        run: >-
+          python -m pytest -p asyncio
+          tests/security/test_native_custody_locking.py
+          --junitxml=test-results/native-custody.xml -q
+          > test-results/native-custody.log 2>&1
+      - name: Print native custody evidence
+        if: always()
+        run: if test -f test-results/native-custody.log; then cat test-results/native-custody.log; fi
+      - name: Run native diagnostic classification regressions
+        if: ${{ !cancelled() && matrix.python-platform == 'darwin' && steps.dependencies.outcome == 'success' }}
+        run: >-
+          python -m pytest -p asyncio
+          tests/scripts/test_diagnose_enrollment_lock_open.py
+          --junitxml=test-results/diagnostic-classification.xml -q
+          > test-results/diagnostic-classification.log 2>&1
+      - name: Print diagnostic classification evidence
+        if: always()
+        run: if test -f test-results/diagnostic-classification.log; then cat test-results/diagnostic-classification.log; fi
+      - name: Repeat complete enrollment transport regression suite 20 times
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
+        env:
+          NATIVE_PLATFORM: ${{ matrix.python-platform }}
+        run: |
+          native_cases=()
+          if [[ "$NATIVE_PLATFORM" == win32 ]]; then
+            native_cases=(
+              tests/security/test_native_custody_locking.py::test_native_windows_concurrent_directory_first_creation
+              tests/security/test_native_custody_locking.py::test_native_windows_creation_conflict_qualifies_competitor
+              tests/security/test_native_custody_locking.py::test_native_windows_creation_conflict_rejects_unsafe_competitor
+            )
+          fi
+          failed=0
+          for iteration in {1..20}; do
+            echo "Enrollment lock regression iteration ${iteration}/20"
+            if python -m pytest -p asyncio \
+              tests/licensing/test_enrollment_file_io.py \
+              tests/deployment/test_production_enrollment_offline.py \
+              "${native_cases[@]}" \
+              --junitxml="test-results/regression-${iteration}.xml" -q \
+              > "test-results/regression-${iteration}.log" 2>&1; then
+              result=0
+            else
+              result=$?
+              failed=1
+            fi
+            printf '%s\t%s\n' "$iteration" "$result" >> test-results/iteration-exit-codes.tsv
+            cat "test-results/regression-${iteration}.log"
+          done
+          exit "$failed"
+      - name: Summarize every executed iteration
+        if: always()
+        run: |
+          python - <<'PY' | tee test-results/regression-summary.json
+          import json
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+
+          root = Path("test-results")
+          environment = root / "native-environment.json"
+          report = json.loads(environment.read_text()) if environment.exists() else {}
+          iterations = []
+          for iteration in range(1, 21):
+              xml = root / f"regression-{iteration}.xml"
+              result = {"iteration": iteration, "report_present": xml.exists()}
+              if xml.exists():
+                  suites = list(ET.parse(xml).getroot().iter("testsuite"))
+                  result.update({
+                      key: sum(int(suite.get(key, "0")) for suite in suites)
+                      for key in ("tests", "failures", "errors", "skipped")
+                  })
+                  result["passed"] = result["tests"] - result["failures"] - result["errors"] - result["skipped"]
+                  log = (root / f"regression-{iteration}.log").read_text(errors="replace")
+                  result["unhandled_enoent_error_mentions"] = log.count("FileNotFoundError") + log.count("[Errno 2]")
+              iterations.append(result)
+          report["required_iterations"] = 20
+          report["reported_iterations"] = sum(item["report_present"] for item in iterations)
+          report["iterations"] = iterations
+          report["totals"] = {
+              key: sum(item.get(key, 0) for item in iterations)
+              for key in ("tests", "passed", "failures", "errors", "skipped", "unhandled_enoent_error_mentions")
+          }
+          exits = root / "iteration-exit-codes.tsv"
+          report["iteration_exit_codes"] = [
+              {"iteration": int(line.split()[0]), "exit_code": int(line.split()[1])}
+              for line in exits.read_text().splitlines()
+          ] if exits.exists() else []
+          report["all_required_iterations_passed"] = (
+              report["reported_iterations"] == 20
+              and len(report["iteration_exit_codes"]) == 20
+              and all(item["exit_code"] == 0 for item in report["iteration_exit_codes"])
+              and all(item.get("tests", 0) > 0 for item in iterations)
+              and report["totals"]["failures"] == report["totals"]["errors"] == 0
+          )
+          print(json.dumps(report, indent=2))
+          raise SystemExit(0 if report["all_required_iterations_passed"] else 1)
+          PY
+      - name: Upload every native regression log and result
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.python-platform }}-enrollment-lock-results-${{ github.event.pull_request.head.sha || github.sha }}
+          path: test-results/
+          retention-days: 7
+
+  enrollment-lock-gate:
+    name: Enrollment lock required gate
+    if: always()
+    needs:
+      - macos-lock-probe
+      - native-enrollment-regressions
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require native diagnostic and both native regression suites
+        env:
+          PROBE_RESULT: ${{ needs.macos-lock-probe.result }}
+          REGRESSION_RESULT: ${{ needs.native-enrollment-regressions.result }}
+        run: |
+          printf 'Native macOS diagnostic: %s\nNative macOS and Windows regressions: %s\n' "$PROBE_RESULT" "$REGRESSION_RESULT"
+          test "$PROBE_RESULT" = success
+          test "$REGRESSION_RESULT" = success
