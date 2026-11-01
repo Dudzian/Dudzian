@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+import sys
 from typing import Any
 from types import SimpleNamespace
 
@@ -14,6 +15,8 @@ from deployment import linux_physical_collector as collector
 from deployment import linux_physical_native as native
 from deployment.linux_physical_evidence import PHASES, digest
 from deployment.linux_physical_observations import ObservationError, validate_observations
+from deployment.linux_physical_ipc import blocked_ipc_qualification
+from deployment.linux_physical_postgresql import blocked_service_qualification
 
 OLD_BOOT = "00000000-0000-4000-8000-000000000001"
 NEW_BOOT = "00000000-0000-4000-8000-000000000002"
@@ -21,14 +24,19 @@ NEW_BOOT = "00000000-0000-4000-8000-000000000002"
 
 def installation_fixture(tmp_path: Path) -> dict[str, Any]:
     """Zamknięty kontrakt syntetyczny do testów producenta i weryfikatora."""
+    # Metadane instalacji Linux pozostają POSIX także w testach Windows.
+    # Testy rzeczywistych odczytów plików mają osobną bramkę platformową.
+    source_root = tmp_path.as_posix()
+    if not source_root.startswith("/"):
+        source_root = "/tmp/" + tmp_path.name
     return {
         "schema_version": 1,
         "purpose": "STAGE9_DISPOSABLE_PHYSICAL_HOST",
-        "source_root": str(tmp_path),
+        "source_root": source_root,
         "package_name": "cryptohunter-qualification",
         "packages": {
             kind: {
-                "path": str(tmp_path / (kind + ".deb")),
+                "path": source_root + "/" + kind + ".deb",
                 "sha256": str(index + 1) * 64,
                 "version": str(index + 1) + ".0",
             }
@@ -170,19 +178,23 @@ def _snapshot(
         "units": units,
         "configuration": [{**item, "kind": "regular"} for item in installation["configuration"]],
         "ipc": [{**item, "kind": "socket"} for item in installation["ipc"]],
+        "ipc_qualification": blocked_ipc_qualification(),
         "postgres": {
-            "listen_addresses": "",
-            "fsync": "on",
-            "synchronous_commit": "on",
-            "system_user": pg["expected_system_user"],
-            "current_user": pg["user"],
-            "session_user": pg["user"],
-            "client_addr": None,
-            "server_addr": None,
-            "ssl": False,
-            "hba_sha256": pg["expected_hba_sha256"],
-            "ident_sha256": pg["expected_ident_sha256"],
-            "system_identifier": "123456789",
+            "administrative_observation": {
+                "listen_addresses": "",
+                "fsync": "on",
+                "synchronous_commit": "on",
+                "system_user": pg["expected_system_user"],
+                "current_user": pg["user"],
+                "session_user": pg["user"],
+                "client_addr": None,
+                "server_addr": None,
+                "ssl": False,
+                "hba_sha256": pg["expected_hba_sha256"],
+                "ident_sha256": pg["expected_ident_sha256"],
+                "system_identifier": "123456789",
+            },
+            "service_qualification": blocked_service_qualification(),
         },
         "state": _file(
             state_root + "/.stage9-evidence-" + "a" * 64, "b" * 64, uid=61001, gid=61001, mode=0o600
@@ -295,7 +307,9 @@ def test_semantic_failure_is_closed(tmp_path: Path, mutation: str) -> None:
     elif mutation == "ipc":
         payloads[1]["observations"]["snapshot"]["ipc"][0]["mode"] = 0o666
     elif mutation == "postgres":
-        payloads[1]["observations"]["snapshot"]["postgres"]["listen_addresses"] = "*"
+        payloads[1]["observations"]["snapshot"]["postgres"]["administrative_observation"][
+            "listen_addresses"
+        ] = "*"
     elif mutation == "orphan":
         payloads[2]["observations"]["stopped"][0]["cgroup_pids"] = [100]
     elif mutation == "crash":
@@ -375,6 +389,7 @@ def test_native_commands_use_no_shell_and_bounded_timeout(monkeypatch: pytest.Mo
         native.command(["/bin/sh", "-c", "true"])
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="Rzeczywiste O_NOFOLLOW natywnego Linux")
 def test_symlink_input_is_rejected(tmp_path: Path) -> None:
     target = tmp_path / "raw"
     target.write_bytes(b"safe")
@@ -384,6 +399,9 @@ def test_symlink_input_is_rejected(tmp_path: Path) -> None:
         native.read_regular(link)
 
 
+@pytest.mark.skipif(
+    sys.platform != "linux", reason="Atomowy zapis i fsync katalogu natywnego Linux"
+)
 def test_bundle_write_is_atomic_and_contains_no_key(tmp_path: Path) -> None:
     destination = tmp_path / "bundle.json"
     value = {"schema_version": 1, "challenge_id": "a" * 64, "records": []}
@@ -537,6 +555,9 @@ def test_cli_missing_inputs_refuses_without_leaking_error(
     assert "ODMOWA" in capsys.readouterr().out
 
 
+@pytest.mark.skipif(
+    sys.platform != "linux", reason="Rzeczywisty atomowy zapis paczki natywnego Linux"
+)
 def test_cli_phase_writes_actual_signed_bundle(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -591,6 +612,7 @@ def test_cli_phase_writes_actual_signed_bundle(
     assert len(json.loads(destination.read_text())["records"]) == 1
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="Rzeczywiste odczyty przypiętych plików Linux")
 def test_collect_materials_hashes_actual_files_and_checkout(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

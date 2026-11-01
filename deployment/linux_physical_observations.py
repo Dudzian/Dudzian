@@ -54,7 +54,11 @@ def _integer(value: Any, minimum: int = 0, maximum: int = 2**31 - 1) -> bool:
 
 
 def validate_installation(value: Any) -> dict[str, Any]:
-    """Sprawdź pełny, osobno zatwierdzany kontrakt instalacji; nie autoryzuj go."""
+    """Sprawdź strukturę instalacji; sama integralność nie identyfikuje produktu.
+
+    Brak release_identity dopuszcza tylko diagnostykę. Pełny weryfikator
+    osobno wymaga niezależnego podpisu wydania i rzeczywistych testów usług.
+    """
     data = _fields(
         value,
         {
@@ -70,7 +74,12 @@ def validate_installation(value: Any) -> dict[str, Any]:
             "state_directory",
             "clean_paths",
             "postgres",
-        },
+        }
+        | (
+            {"release_identity"}
+            if isinstance(value, dict) and "release_identity" in value
+            else set()
+        ),
     )
     require(
         type(data["schema_version"]) is int and data["schema_version"] == 1,
@@ -230,6 +239,10 @@ def validate_installation(value: Any) -> dict[str, Any]:
         and _hash(pg["expected_ident_sha256"]),
         "Nieprawidłowa izolacja PostgreSQL",
     )
+    if "release_identity" in data:
+        from deployment.linux_release_identity import validate_release_statement
+
+        validate_release_statement(data["release_identity"], data)
     return data
 
 
@@ -275,8 +288,21 @@ def _file(observed: Any, path: str, digest: str, *, executable: bool = False) ->
 def _snapshot(snapshot: Any, installation: dict[str, Any], *, updated: bool) -> None:
     _fields(
         snapshot,
-        {"package", "units", "configuration", "ipc", "postgres", "state", "persistent_journal"},
+        {
+            "package",
+            "units",
+            "configuration",
+            "ipc",
+            "ipc_qualification",
+            "postgres",
+            "state",
+            "persistent_journal",
+        },
     )
+    from deployment.linux_physical_ipc import validate_blocked_ipc_qualification
+    from deployment.linux_physical_postgresql import validate_blocked_service_qualification
+
+    validate_blocked_ipc_qualification(snapshot["ipc_qualification"])
     package = _fields(snapshot["package"], {"name", "version", "status"})
     expected = installation["packages"]["update" if updated else "baseline"]
     require(
@@ -395,8 +421,12 @@ def _snapshot(snapshot: Any, installation: dict[str, Any], *, updated: bool) -> 
     )
     for actual, expected_socket in zip(snapshot["ipc"], installation["ipc"], strict=True):
         require(actual == {**expected_socket, "kind": "socket"}, "Niezgodne IPC")
+    pg_evidence = _fields(
+        snapshot["postgres"], {"administrative_observation", "service_qualification"}
+    )
+    validate_blocked_service_qualification(pg_evidence["service_qualification"])
     pg = _fields(
-        snapshot["postgres"],
+        pg_evidence["administrative_observation"],
         {
             "listen_addresses",
             "fsync",
@@ -534,10 +564,11 @@ def validate_observations(records: list[dict[str, Any]], installation: dict[str,
         == installation["state_directory"] + "/.stage9-evidence-" + records[0]["challenge_id"],
         "Stan trwałości pochodzi z innego wyzwania",
     )
-    cluster = clean["snapshot"]["postgres"]["system_identifier"]
+    cluster = clean["snapshot"]["postgres"]["administrative_observation"]["system_identifier"]
     for snapshot, _ in snapshots:
         require(
-            snapshot["state"] == state and snapshot["postgres"]["system_identifier"] == cluster,
+            snapshot["state"] == state
+            and snapshot["postgres"]["administrative_observation"]["system_identifier"] == cluster,
             "Utracona ciągłość stanu lub klastra",
         )
     for record in records[1:]:
@@ -744,8 +775,10 @@ def validate_observation_prefix(
                 "Utracona ciągłość stanu",
             )
             require(
-                snapshot["postgres"]["system_identifier"]
-                == records[1]["observations"]["snapshot"]["postgres"]["system_identifier"],
+                snapshot["postgres"]["administrative_observation"]["system_identifier"]
+                == records[1]["observations"]["snapshot"]["postgres"]["administrative_observation"][
+                    "system_identifier"
+                ],
                 "Utracona ciągłość klastra PostgreSQL",
             )
             require(

@@ -77,6 +77,15 @@ as advisory output, custom Semgrep rules as blocking checks, and the baselined
 offline Betterleaks working-tree scan. Existing CI continues to own the larger
 pytest, pip-audit, and SBOM jobs.
 
+Remediacja PR #3233 włącza `linux_release_identity.py`,
+`linux_physical_ipc.py` i `linux_physical_postgresql.py` do skonfigurowanego
+mypy Linux/Win32, jawnego Ruff oraz istniejących testów i branch coverage.
+Nowe testy potwierdzają jądrową tożsamość AF_UNIX i odmowy podmiany, odczytową
+diagnostykę peer PostgreSQL oraz niezależny podpis tożsamości wydania.
+Nie implementują brakujących funkcjonalnych adapterów usług; produkcyjna
+kwalifikacja pozostaje BLOCKED. Syntetyczny certyfikat lub wynik testu nie
+otwiera bramki. Progi pokrycia, timeouty i opt-in sprzętowy pozostają bez zmian.
+
 The bounded Stage 9 offline artifact verifier enters these existing Ruff,
 Linux/Windows mypy, pytest and branch-coverage gates. Its tests perform real
 unprivileged file reads and inspect synthetic DEB fixtures as data. These checks

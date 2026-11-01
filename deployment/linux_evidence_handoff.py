@@ -25,6 +25,17 @@ MAX_ARCHIVE_BYTES = MAX_BUNDLE_BYTES + 64 * 1024
 MAX_API_BYTES = 2 * 1024 * 1024
 MAX_ARTIFACT_PAGES = 10
 INGRESS_WORKFLOW = ".github/workflows/linux-evidence-ingress.yml"
+POLICY_BRANCH = "stage9-linux-evidence-policy"
+# Tożsamość aplikacji GitHub Actions na używanym tu api.github.com.
+# Sam dodatni identyfikator innej aplikacji nie uwierzytelnia wymaganych kontroli.
+GITHUB_ACTIONS_APP_ID = 15368
+REQUIRED_PROTECTION_CHECKS = frozenset(
+    {
+        "Ruff format (all tracked files)",
+        "Quality ratchet (combined coverage gate)",
+        "linux-evidence-contract",
+    }
+)
 
 
 class HandoffError(ValueError):
@@ -164,9 +175,138 @@ def pack_bundle(bundle: Path, output: Path) -> None:
         stream.write(encoded)
 
 
-def require_environment(client: GitHubClient, name: str) -> None:
+def _enabled(value: object, expected: bool) -> bool:
+    return isinstance(value, dict) and value.get("enabled") is expected
+
+
+def _code_owners(client: GitHubClient, revision: str) -> set[str]:
+    """Obsługiwany profil CODEOWNERS: jedna globalna reguła i jawne konta ludzi.
+
+    Celowo nie interpretujemy przybliżeniem wzorców gitignore, wyjątków lub
+    członkostwa zespołów. Nieobsługiwany profil pozostaje BLOCKED.
+    """
+    document = client.json(f"/contents/.github/CODEOWNERS?ref={revision}")
+    encoded = document.get("content")
+    if (
+        document.get("type") != "file"
+        or document.get("encoding") != "base64"
+        or not isinstance(encoded, str)
+        or len(encoded) > 96 * 1024
+    ):
+        raise HandoffError("Brak niezależnie sprawdzalnego pliku CODEOWNERS")
+    try:
+        raw = base64.b64decode("".join(encoded.splitlines()), validate=True)
+        if len(raw) > 64 * 1024:
+            raise ValueError
+        rules = [line.split("#", 1)[0].strip() for line in raw.decode("utf-8").splitlines()]
+    except (ValueError, UnicodeError, binascii.Error) as exc:
+        raise HandoffError("Nieprawidłowy plik CODEOWNERS") from exc
+    rules = [line for line in rules if line]
+    fields = rules[0].split() if len(rules) == 1 else []
+    if (
+        not 3 <= len(fields) <= 7
+        or fields[0] != "*"
+        or any(
+            re.fullmatch(r"@[A-Za-z0-9][A-Za-z0-9-]{0,38}", owner) is None for owner in fields[1:]
+        )
+    ):
+        raise HandoffError(
+            "CODEOWNERS wymaga jednej globalnej reguły z co najmniej dwoma właścicielami"
+        )
+    owners = {owner[1:].lower() for owner in fields[1:]}
+    if len(owners) < 2:
+        raise HandoffError("Wymagani odrębni właściciele procesu aktualizacji polityki")
+    identities: set[int] = set()
+    for owner in sorted(owners):
+        permission = client.json(f"/collaborators/{owner}/permission")
+        user = permission.get("user")
+        if (
+            permission.get("permission") not in {"write", "maintain", "admin"}
+            or not isinstance(user, dict)
+            or user.get("type") != "User"
+            or not isinstance(user.get("login"), str)
+            or user["login"].lower() != owner
+            or type(user.get("id")) is not int
+            or user["id"] <= 0
+            or user["id"] in identities
+        ):
+            raise HandoffError("Właściciel CODEOWNERS nie ma potwierdzonego dostępu do zapisu")
+        identities.add(user["id"])
+    return owners
+
+
+def _require_branch(
+    client: GitHubClient, branch: str, expected_revision: str | None = None
+) -> None:
+    value = client.json(f"/branches/{branch}")
+    commit = value.get("commit")
+    if (
+        value.get("name") != branch
+        or value.get("protected") is not True
+        or not isinstance(commit, dict)
+        or not isinstance(commit.get("sha"), str)
+        or re.fullmatch(r"[0-9a-f]{40}", commit["sha"]) is None
+        or (expected_revision is not None and commit["sha"] != expected_revision)
+    ):
+        raise HandoffError("Gałąź nie jest chroniona albo przypięta polityka utraciła aktualność")
+    protection = client.json(f"/branches/{branch}/protection")
+    reviews = protection.get("required_pull_request_reviews")
+    checks = protection.get("required_status_checks")
+    if (
+        not _enabled(protection.get("enforce_admins"), True)
+        or not _enabled(protection.get("allow_force_pushes"), False)
+        or not _enabled(protection.get("allow_deletions"), False)
+        or not _enabled(protection.get("required_conversation_resolution"), True)
+        or not isinstance(reviews, dict)
+        or reviews.get("dismiss_stale_reviews") is not True
+        or reviews.get("require_code_owner_reviews") is not True
+        or reviews.get("require_last_push_approval") is not True
+        or type(reviews.get("required_approving_review_count")) is not int
+        or not 2 <= reviews["required_approving_review_count"] <= 6
+        or not isinstance(checks, dict)
+        or checks.get("strict") is not True
+        or not isinstance(checks.get("checks"), list)
+    ):
+        raise HandoffError(
+            "Brak wymaganych przeglądów, kontroli CI lub egzekwowania ochrony administratorów"
+        )
+    bypass = reviews.get("bypass_pull_request_allowances")
+    if bypass is not None and (
+        not isinstance(bypass, dict)
+        or any(bypass.get(kind) != [] for kind in ("users", "teams", "apps"))
+    ):
+        raise HandoffError("Obejście wymaganych przeglądów nie jest dozwolone")
+    trusted_checks: set[str] = set()
+    for check in checks["checks"]:
+        if (
+            not isinstance(check, dict)
+            or not isinstance(check.get("context"), str)
+            or type(check.get("app_id")) is not int
+            or check["app_id"] <= 0
+        ):
+            raise HandoffError(
+                "Wymagana kontrola CI nie jest związana z konkretną aplikacją GitHub"
+            )
+        if (
+            check["context"] in REQUIRED_PROTECTION_CHECKS
+            and check["app_id"] != GITHUB_ACTIONS_APP_ID
+        ):
+            raise HandoffError("Wymagana kontrola nie pochodzi z aplikacji GitHub Actions")
+        trusted_checks.add(check["context"])
+    if not REQUIRED_PROTECTION_CHECKS <= trusted_checks:
+        raise HandoffError("Brak wymaganych kontroli formatowania, testów dowodowych lub pokrycia")
+    _code_owners(client, commit["sha"])
+
+
+def require_environment(client: GitHubClient, name: str, policy_commit: str | None = None) -> None:
     if name not in {"stage9-linux-challenge", "stage9-linux-evidence"}:
         raise HandoffError("Nieznane środowisko kwalifikacji")
+    if not isinstance(policy_commit, str) or re.fullmatch(r"[0-9a-f]{40}", policy_commit) is None:
+        raise HandoffError("Brak przypiętej rewizji niezależnej gałęzi polityki")
+    # protected_branches=true samo w sobie nie ustanawia ochrony: GitHub
+    # dopuszcza wszystkie gałęzie, gdy żadne reguły ochrony nie istnieją.
+    _require_branch(client, "main")
+    _require_branch(client, POLICY_BRANCH, policy_commit)
     value = client.json(f"/environments/{name}")
     rules = value.get("protection_rules")
     reviewer_rules = (
@@ -181,14 +321,30 @@ def require_environment(client: GitHubClient, name: str) -> None:
     branches = value.get("deployment_branch_policy")
     if (
         value.get("name") != name
+        or value.get("can_admins_bypass") is not False
         or len(reviewer_rules) != 1
         or reviewer_rules[0].get("prevent_self_review") is not True
         or not isinstance(reviewer_rules[0].get("reviewers"), list)
         or not reviewer_rules[0]["reviewers"]
+        or len(reviewer_rules[0]["reviewers"]) > 6
         or not isinstance(branches, dict)
         or branches.get("protected_branches") is not True
+        or branches.get("custom_branch_policies") is not False
     ):
         raise HandoffError("Środowisko wymaga niezależnych reviewerów i chronionych gałęzi")
+    for reviewer in reviewer_rules[0]["reviewers"]:
+        account = reviewer.get("reviewer") if isinstance(reviewer, dict) else None
+        if (
+            not isinstance(reviewer, dict)
+            or reviewer.get("type") != "User"
+            or not isinstance(account, dict)
+            or account.get("type") != "User"
+            or type(account.get("id")) is not int
+            or account["id"] <= 0
+            or not isinstance(account.get("login"), str)
+            or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}", account["login"]) is None
+        ):
+            raise HandoffError("Reviewer środowiska nie ma jednoznacznej tożsamości")
 
 
 def _identity(value: str) -> str:
@@ -290,6 +446,7 @@ def main(argv: list[str] | None = None) -> int:
     environment = commands.add_parser("require-environment")
     environment.add_argument("--repository", required=True)
     environment.add_argument("--name", required=True)
+    environment.add_argument("--policy-commit", required=True)
     args = parser.parse_args(argv)
     try:
         if args.command == "ingress":
@@ -310,7 +467,7 @@ def main(argv: list[str] | None = None) -> int:
                     args.output,
                 )
             else:
-                require_environment(client, args.name)
+                require_environment(client, args.name, args.policy_commit)
     except (HandoffError, OSError, UnicodeError) as exc:
         print(f"ODMOWA_TRANSPORTU: {exc}")
         return 1

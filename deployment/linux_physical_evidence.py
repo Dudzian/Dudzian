@@ -198,7 +198,11 @@ def load_policy(path: Path, expected_sha256: str) -> dict[str, Any]:
 def validate_policy(policy: dict[str, Any]) -> dict[str, Any]:
     """Sprawdza strukturę; zaufanie do tego dokumentu nadaje oddzielny pin CI."""
     if (
-        set(policy) != {"schema_version", "purpose", "max_age_seconds", "hosts"}
+        set(policy)
+        not in (
+            {"schema_version", "purpose", "max_age_seconds", "hosts"},
+            {"schema_version", "purpose", "max_age_seconds", "hosts", "release_authorities"},
+        )
         or type(policy["schema_version"]) is not int
         or policy["schema_version"] != 1
         or policy["purpose"] != "LIVE_PHYSICAL_LINUX"
@@ -255,6 +259,12 @@ def validate_policy(policy: dict[str, Any]) -> dict[str, Any]:
             raise LinuxEvidenceError("Niespójne przypięcie konfiguracji")
         seen.add(host["host_id"])
         seen_keys.add(host["public_key"])
+    from deployment.linux_release_identity import validate_release_authorities
+
+    try:
+        validate_release_authorities(policy.get("release_authorities", []), producer_keys=seen_keys)
+    except ValueError as exc:
+        raise LinuxEvidenceError("Nieprawidłowy niezależny rejestr autorytetów wydania") from exc
     return policy
 
 
@@ -458,6 +468,24 @@ def verify_bundle(
 
     try:
         validate_observations(payloads, host["installation"])
+        from deployment.linux_release_identity import verify_release_identity
+        from deployment.linux_physical_ipc import require_ipc_qualification
+        from deployment.linux_physical_postgresql import require_service_qualification
+
+        # Podpis hosta nie nadaje dowolnemu pakietowi tożsamości CryptoHunter.
+        verify_release_identity(
+            host["installation"],
+            policy,
+            source_revision=source_revision,
+            materials=challenge["materials"],
+        )
+        for payload in payloads[1:]:
+            for name in ("snapshot", "before", "after", "started", "restarted", "crashed"):
+                snapshot = payload["observations"].get(name)
+                if snapshot is None:
+                    continue
+                require_ipc_qualification(snapshot["ipc_qualification"])
+                require_service_qualification(snapshot["postgres"]["service_qualification"])
     except (ValueError, KeyError, TypeError, IndexError, OSError) as exc:
         raise LinuxEvidenceError("Surowe obserwacje nie potwierdzają wymaganych testów") from exc
     return {

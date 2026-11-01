@@ -37,6 +37,7 @@ import deployment.linux_evidence_handoff as handoff
 ROOT = Path(__file__).resolve().parents[2]
 REPOSITORY = "Dudzian/Dudzian"
 NAME = "stage9-linux-bundle-123-2"
+POLICY_COMMIT = "b" * 40
 
 
 def _zip(names: list[str] | None = None, raw: bytes = b'{"untrusted":"bytes"}') -> bytes:
@@ -68,15 +69,50 @@ class Transport:
         }
         self.environment: dict[str, Any] = {
             "name": "stage9-linux-evidence",
+            "can_admins_bypass": False,
             "protection_rules": [
                 {
                     "type": "required_reviewers",
                     "prevent_self_review": True,
-                    "reviewers": [{"type": "User", "reviewer": {"id": 1}}],
+                    "reviewers": [
+                        {
+                            "type": "User",
+                            "reviewer": {"id": 1, "login": "independent-reviewer", "type": "User"},
+                        }
+                    ],
                 }
             ],
-            "deployment_branch_policy": {"protected_branches": True},
+            "deployment_branch_policy": {
+                "protected_branches": True,
+                "custom_branch_policies": False,
+            },
         }
+        self.branches = {
+            name: {"name": name, "protected": True, "commit": {"sha": revision}}
+            for name, revision in (("main", "a" * 40), (handoff.POLICY_BRANCH, POLICY_COMMIT))
+        }
+        self.protection = {
+            "enforce_admins": {"enabled": True},
+            "allow_force_pushes": {"enabled": False},
+            "allow_deletions": {"enabled": False},
+            "required_conversation_resolution": {"enabled": True},
+            "required_pull_request_reviews": {
+                "dismiss_stale_reviews": True,
+                "require_code_owner_reviews": True,
+                "require_last_push_approval": True,
+                "required_approving_review_count": 2,
+                "bypass_pull_request_allowances": {"users": [], "teams": [], "apps": []},
+            },
+            "required_status_checks": {
+                "strict": True,
+                "checks": [
+                    {"context": context, "app_id": 15368}
+                    for context in sorted(handoff.REQUIRED_PROTECTION_CHECKS)
+                ],
+            },
+        }
+        self.owners = b"# Zatwierdzony profil testowy\n* @reviewer-one @reviewer-two\n"
+        self.permission: dict[str, Any] = {"permission": "write"}
         self.matches = [self.artifact]
         self.payload = _zip()
         self.paths: list[str] = []
@@ -87,6 +123,21 @@ class Transport:
             return {"total_count": len(self.matches), "artifacts": self.matches}
         if path.startswith("/environments/"):
             return self.environment
+        if path.startswith("/branches/"):
+            branch = path.split("/")[2]
+            return self.protection if path.endswith("/protection") else self.branches[branch]
+        if path.startswith("/contents/.github/CODEOWNERS?"):
+            return {
+                "type": "file",
+                "encoding": "base64",
+                "content": base64.b64encode(self.owners).decode(),
+            }
+        if path.startswith("/collaborators/"):
+            login = path.split("/")[2]
+            return {
+                **self.permission,
+                "user": {"login": login, "id": sum(ord(char) for char in login), "type": "User"},
+            }
         assert path == "/actions/runs/67"
         return self.run
 
@@ -256,7 +307,7 @@ def test_transport_refuses_noncanonical_or_oversized_encoding(encoded) -> None:
 
 
 def test_environment_must_have_independent_approval_and_protected_branches() -> None:
-    require_environment(Transport(), "stage9-linux-evidence")
+    require_environment(Transport(), "stage9-linux-evidence", POLICY_COMMIT)
 
 
 @pytest.mark.parametrize(
@@ -273,7 +324,128 @@ def test_missing_environment_protection_fails_closed(mutation) -> None:
     transport = Transport()
     mutation(transport.environment)
     with pytest.raises(HandoffError):
-        require_environment(transport, "stage9-linux-evidence")
+        require_environment(transport, "stage9-linux-evidence", POLICY_COMMIT)
+
+
+@pytest.mark.parametrize("branch", ["main", handoff.POLICY_BRANCH])
+def test_environment_flag_cannot_replace_actual_branch_protection(branch) -> None:
+    transport = Transport()
+    transport.branches[branch]["protected"] = False
+    with pytest.raises(HandoffError, match="Gałąź nie jest chroniona"):
+        require_environment(transport, "stage9-linux-evidence", POLICY_COMMIT)
+    assert not any(path.startswith("/environments/") for path in transport.paths)
+
+
+@pytest.mark.parametrize("revision", [None, "main", "", "A" * 40, "a" * 39])
+def test_policy_requires_an_immutable_commit_before_any_remote_read(revision) -> None:
+    transport = Transport()
+    with pytest.raises(HandoffError):
+        require_environment(transport, "stage9-linux-evidence", revision)
+    assert transport.paths == []
+
+
+def test_policy_rotation_revokes_the_previously_pinned_commit() -> None:
+    transport = Transport()
+    transport.branches[handoff.POLICY_BRANCH]["commit"]["sha"] = "c" * 40
+    with pytest.raises(HandoffError, match="utraciła aktualność"):
+        require_environment(transport, "stage9-linux-evidence", POLICY_COMMIT)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda p: p.update(enforce_admins={"enabled": False}),
+        lambda p: p.update(allow_force_pushes={"enabled": True}),
+        lambda p: p.update(allow_deletions={"enabled": True}),
+        lambda p: p.update(required_conversation_resolution={"enabled": False}),
+        lambda p: p.update(required_pull_request_reviews=None),
+        lambda p: p["required_pull_request_reviews"].update(required_approving_review_count=1),
+        lambda p: p["required_pull_request_reviews"].update(required_approving_review_count=True),
+        lambda p: p["required_pull_request_reviews"].update(dismiss_stale_reviews=False),
+        lambda p: p["required_pull_request_reviews"].update(require_last_push_approval=False),
+        lambda p: p["required_pull_request_reviews"].update(require_code_owner_reviews=False),
+        lambda p: p["required_pull_request_reviews"].update(
+            bypass_pull_request_allowances={"users": ["owner"], "teams": [], "apps": []}
+        ),
+        lambda p: p["required_status_checks"].update(strict=False),
+        lambda p: p["required_status_checks"].update(checks=[]),
+        lambda p: p["required_status_checks"]["checks"][0].update(app_id=-1),
+        lambda p: p["required_status_checks"]["checks"][0].update(app_id=True),
+        lambda p: p["required_status_checks"]["checks"][0].update(app_id=999999),
+    ],
+)
+def test_weakened_branch_policy_or_unattributed_ci_check_refuses(mutation) -> None:
+    transport = Transport()
+    mutation(transport.protection)
+    with pytest.raises(HandoffError):
+        require_environment(transport, "stage9-linux-evidence", POLICY_COMMIT)
+
+
+@pytest.mark.parametrize(
+    "owners",
+    [
+        b"",
+        b"* @only-one\n",
+        b"* @same @same\n",
+        b"* @one @two\n/deployment/\n",
+        b"/deployment/ @one @two\n",
+        b"* @org/team @person\n",
+        b"* user@example.invalid @person\n",
+    ],
+)
+def test_policy_code_ownership_must_cover_the_complete_reviewed_tree(owners) -> None:
+    transport = Transport()
+    transport.owners = owners
+    with pytest.raises(HandoffError, match="CODEOWNERS|właściciele"):
+        require_environment(transport, "stage9-linux-evidence", POLICY_COMMIT)
+
+
+def test_code_owner_without_actual_write_permission_cannot_protect_policy() -> None:
+    transport = Transport()
+    transport.permission["permission"] = "read"
+    with pytest.raises(HandoffError, match="dostępu do zapisu"):
+        require_environment(transport, "stage9-linux-evidence", POLICY_COMMIT)
+
+
+def test_two_owner_names_cannot_represent_the_same_github_account() -> None:
+    class AliasedOwners(Transport):
+        def json(self, path):
+            value = super().json(path)
+            if path.startswith("/collaborators/"):
+                value["user"]["id"] = 7
+            return value
+
+    with pytest.raises(HandoffError, match="dostępu do zapisu"):
+        require_environment(AliasedOwners(), "stage9-linux-evidence", POLICY_COMMIT)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda e: e.update(can_admins_bypass=True),
+        lambda e: e.pop("can_admins_bypass"),
+        lambda e: e["deployment_branch_policy"].update(custom_branch_policies=True),
+        lambda e: e["protection_rules"][0]["reviewers"][0].update(type="Team"),
+        lambda e: e["protection_rules"][0]["reviewers"][0]["reviewer"].update(id=True),
+        lambda e: e["protection_rules"][0]["reviewers"][0]["reviewer"].update(login=""),
+    ],
+)
+def test_admin_bypass_unknown_configuration_or_ambiguous_reviewer_refuses(mutation) -> None:
+    transport = Transport()
+    mutation(transport.environment)
+    with pytest.raises(HandoffError):
+        require_environment(transport, "stage9-linux-evidence", POLICY_COMMIT)
+
+
+def test_unreadable_github_controls_are_not_treated_as_safe_defaults() -> None:
+    class InaccessibleProtection(Transport):
+        def json(self, path):
+            if path.endswith("/protection"):
+                raise HandoffError("GitHub API 403")
+            return super().json(path)
+
+    with pytest.raises(HandoffError, match="403"):
+        require_environment(InaccessibleProtection(), "stage9-linux-evidence", POLICY_COMMIT)
 
 
 def test_archive_storage_redirect_never_receives_github_credential(monkeypatch) -> None:
@@ -404,7 +576,15 @@ def test_transport_cli_pack_fetch_and_environment_keep_authority_separate(
     monkeypatch.setattr(handoff, "GitHubClient", lambda *_args: Transport())
     assert (
         handoff.main(
-            ["require-environment", "--repository", REPOSITORY, "--name", "stage9-linux-evidence"]
+            [
+                "require-environment",
+                "--repository",
+                REPOSITORY,
+                "--name",
+                "stage9-linux-evidence",
+                "--policy-commit",
+                POLICY_COMMIT,
+            ]
         )
         == 0
     )
@@ -435,7 +615,15 @@ def test_transport_cli_missing_bytes_or_api_identity_refuses(tmp_path, monkeypat
     monkeypatch.delenv("GH_TOKEN", raising=False)
     assert (
         handoff.main(
-            ["require-environment", "--repository", REPOSITORY, "--name", "stage9-linux-evidence"]
+            [
+                "require-environment",
+                "--repository",
+                REPOSITORY,
+                "--name",
+                "stage9-linux-evidence",
+                "--policy-commit",
+                POLICY_COMMIT,
+            ]
         )
         == 1
     )
@@ -491,6 +679,32 @@ def test_independent_verification_and_gate_receive_raw_bundle_and_trusted_contex
     assert all(
         not step.get("continue-on-error", False) for step in (*validation["steps"], *gate["steps"])
     )
+
+
+def test_policy_bytes_come_from_a_separately_reviewed_immutable_commit() -> None:
+    jobs = yaml.safe_load((ROOT / ".github/workflows/platform-deployment.yml").read_text())["jobs"]
+    for name in ("linux-physical-challenge", "linux-physical-validation", "linux-production-gate"):
+        job = jobs[name]
+        source = "\n".join(step.get("run", "") for step in job["steps"])
+        assert "STAGE9_LINUX_EVIDENCE_POLICY_JSON" not in source
+        assert "STAGE9_LINUX_EVIDENCE_POLICY_JSON" not in job["env"]
+        assert (
+            job["env"]["LINUX_POLICY_COMMIT"] == "${{ vars.STAGE9_LINUX_EVIDENCE_POLICY_COMMIT }}"
+        )
+        controls = next(
+            step for step in job["steps"] if "require-environment" in step.get("run", "")
+        )
+        assert controls["env"]["GH_TOKEN"] == "${{ secrets.STAGE9_GITHUB_CONTROLS_READ_TOKEN }}"
+        assert '--policy-commit "$LINUX_POLICY_COMMIT"' in controls["run"]
+        policy = next(
+            step
+            for step in job["steps"]
+            if step.get("with", {}).get("path") == "stage9-approved-policy"
+        )
+        assert policy["with"]["ref"] == "${{ vars.STAGE9_LINUX_EVIDENCE_POLICY_COMMIT }}"
+        assert policy["with"]["persist-credentials"] is False
+        assert job["steps"].index(controls) < job["steps"].index(policy)
+        assert "stage9-approved-policy/policy.json" in source
 
 
 def test_ingress_workflow_never_interpolates_untrusted_json_into_shell() -> None:

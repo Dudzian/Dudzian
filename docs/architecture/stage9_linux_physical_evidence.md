@@ -7,6 +7,52 @@ fizyczną kwalifikacją. `Stage 9 = IN_PROGRESS / PRODUCTION_NO_GO` pozostaje
 bez zmian; nie powstaje uprawnienie do SIGN/BIND, enrollment, publikacji CCA
 ani wykonania Stage 10.
 
+## Stan po remediacji PR #3233
+
+Podpisane metadane dowolnego pakietu i dwóch usług nie identyfikują produktu.
+Pełna kwalifikacja wymaga teraz `installation.release_identity`: certyfikatu
+wydania podpisanego przez niezależny klucz z `policy.release_authorities`.
+Klucz autorytetu wydania musi różnić się od wszystkich kluczy producentów
+hosta. Publiczne identyfikatory produktu, profilu oraz wymaganych kontraktów
+określa `linux_release_identity.py`; nazwy pakietów, jednostek i programów
+pochodzą z zatwierdzonego wydania. Certyfikat wiąże rewizję, trzy artefakty,
+wersje, programy komponentów i digest profilu instalacji bez samego certyfikatu.
+Jest potwierdzeniem tożsamości wydania, a nie wykonania testów funkcjonalnych.
+
+Brakuje bezpiecznych adapterów rzeczywistych usług potwierdzających pełne
+uwierzytelnianie IPC i uprawnienia PostgreSQL. Dlatego `verify_bundle()`
+nie może obecnie zwrócić produkcyjnych wyników PASS, także przy poprawnym
+certyfikacie i kompletnym podpisanym łańcuchu. Nie ma przełącznika ani flagi
+JSON pozwalającej usunąć tę blokadę. Natywna ścieżka kolektora odmawia faz
+zmieniających host przed wywołaniem instalatora lub sterowania usługami.
+Instalator `install-production-local.sh` pozostaje odrębnym zakresem naprawy.
+
+`linux_physical_ipc.py` odczytuje rzeczywiste `SO_PEERCRED` już zestawionego
+połączenia i przypina partnera przez socket-bound `SO_PEERPIDFD`, PID,
+UID/GID, czas startu i program. Same te fakty nie dowodzą decyzji serwera
+aplikacji ani odmowy wobec obcej tożsamości. Istniejący signer ma wyłącznie
+diagnostyczny protokół zwracający BLOCKED; nie wysyłamy do usług dowolnych
+ramek i nie zastępujemy produktu serwerem echo. Brak możliwości pidfd
+oznacza odmowę bez fallbacku do samego PID.
+
+Obserwacja PostgreSQL administratora jest jawnie oddzielona jako
+`postgres.administrative_observation`. `postgres.service_qualification`
+pozostaje BLOCKED. Odczytowa sonda `linux_physical_postgresql.py` sprawdza
+tożsamość własnego nieadministracyjnego procesu, peer, role sesji, backend PID
+i faktyczną odmowę odczytu chronionego katalogu. Osobna sonda uruchomiona
+z UID usługi nadal nie jest dowodem połączenia tej konkretnej usługi;
+pełna macierz operacji produktu i związanie połączeń runtime/verifier
+wymagają odrębnego zatwierdzonego adaptera.
+
+Polityka jest wersjonowana na osobnej chronionej gałęzi
+`stage9-linux-evidence-policy`, w pliku `policy.json`. To usuwa cykliczne
+wymaganie zapisania SHA commitu kodu we własnej zawartości. Workflow pobiera
+dokładny, zatwierdzony commit polityki i sprawdza jego digest oraz aktualność.
+Kontrola GitHub potwierdza rzeczywistą ochronę obu gałęzi, CODEOWNERS,
+wymagane review i CI oraz niezależne zatwierdzanie environments.
+Właściciel wdraża ustawienia według [osobnej procedury](../runbooks/STAGE9_GITHUB_EVIDENCE_CONTROLS.md).
+Ta remediacja nie zmienia ustawień repozytorium.
+
 ## Audyt kontraktu sprzed tej zmiany
 
 Wnioski poniżej pochodzą z bezpośredniego odczytu źródeł. Codebase Memory MCP
@@ -113,8 +159,10 @@ Tożsamość hosta i interpretera zachowuje ciągłość przez restart. Sama ety
 `LIVE`, podpis lub syntaktycznie poprawny boot ID nie wystarczają bez pełnego
 sprawdzenia obserwacji.
 
-Weryfikacja zwraca envelope platformy dopiero po odtworzeniu wymaganych
-wyników. Envelope jest prezentacją wyniku, bez samodzielnego prawa kwalifikacji.
+Docelowy envelope jest prezentacją wyniku, bez samodzielnego prawa kwalifikacji.
+Obecny weryfikator odmawia jego emisji z powodu opisanych blokad produktu,
+IPC i PostgreSQL. Sam poprawny podpis transportu może zostać zweryfikowany
+oddzielnie, ale nie nadaje kwalifikacji.
 `platform_readiness` ponownie weryfikuje surowy bundle, wyzwanie i przypiętą
 politykę; ręcznie wgrany wynik walidatora nie otwiera bramki.
 `consume_challenge()` atomowo rezerwuje challenge w SQLite z unikalnym kluczem.
@@ -128,7 +176,8 @@ Fizyczne wykonanie odbywa się poza runnerem. Manualny przebieg
 `platform-deployment.yml` wystawia wyzwanie po zatwierdzeniu chronionego
 environment `stage9-linux-challenge`. Osobny manualny
 `linux-evidence-ingress.yml` zapisuje literalne, nieufne bajty bundle
-i publikuje artefakt transportowy. Limit bundle wynosi 48 KiB; transport
+i publikuje artefakt transportowy. Limit transportu gzip+Base64 wynosi
+48 KiB, a rozpakowanego bundle 256 KiB; transport
 odrzuca duplikaty pól i niedozwolone stałe JSON. Nie używa `eval`, powłoki
 ani kodu z otrzymanego raportu.
 
@@ -141,8 +190,10 @@ Podpisane adresy magazynu są tylko transportem i nie otrzymują tokena GitHub.
 Artefakt GitHub nie jest trust anchor — po pobraniu walidacja kryptograficzna
 i semantyczna pozostaje obowiązkowa.
 
-Chronione environments wymagają niezależnych reviewerów, zakazu self-review
-i polityki chronionych gałęzi. Brak wymaganej konfiguracji nie może skutkować
+Chronione environments wymagają niezależnych reviewerów, zakazu self-review,
+wyłączonego administrator bypass i rzeczywistej ochrony gałęzi.
+Sama flaga protected_branches nie wystarcza, gdy main jest niechroniony.
+Brak wymaganej konfiguracji nie może skutkować
 przejściem na słabszą ścieżkę. Konfiguracja polityki, hosta i sekretów
 środowiska jest zadaniem administratora repozytorium, poza tym PR.
 Produkcję rozstrzyga osobny job bramki z aktualną macierzą core i ponowną

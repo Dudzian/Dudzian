@@ -296,7 +296,9 @@ class NativeDriver:
         }
 
     def postgres(self) -> dict[str, Any]:
+        """Obserwacja administratora; nie dowodzi uprawnień runtime/verifier."""
         import psycopg
+        from deployment.linux_physical_postgresql import blocked_service_qualification
 
         pg = self.installation["postgres"]
         with psycopg.connect(
@@ -332,7 +334,7 @@ class NativeDriver:
                 "SELECT system_identifier::text FROM pg_control_system()"
             ).fetchone()
             require(cluster is not None, "Brak tożsamości klastra")
-        return {
+        administrative_observation = {
             **settings,
             **dict(
                 zip(
@@ -352,8 +354,14 @@ class NativeDriver:
             "ident_sha256": sha256(canonical(ident)),
             "system_identifier": cluster[0],
         }
+        return {
+            "administrative_observation": administrative_observation,
+            "service_qualification": blocked_service_qualification(),
+        }
 
     def snapshot(self) -> dict[str, Any]:
+        from deployment.linux_physical_ipc import blocked_ipc_qualification
+
         units = []
         for spec in self.installation["units"]:
             props = self.properties(spec["name"])
@@ -398,6 +406,7 @@ class NativeDriver:
                 file_observation(Path(item["path"])) for item in self.installation["configuration"]
             ],
             "ipc": sockets,
+            "ipc_qualification": blocked_ipc_qualification(),
             "postgres": self.postgres(),
             "state": file_observation(self.state_path),
             "persistent_journal": {
@@ -586,8 +595,8 @@ class NativeDriver:
         require(
             prior_snapshot is not None
             and before["state"] == prior_snapshot["state"]
-            and before["postgres"]["system_identifier"]
-            == prior_snapshot["postgres"]["system_identifier"],
+            and before["postgres"]["administrative_observation"]["system_identifier"]
+            == prior_snapshot["postgres"]["administrative_observation"]["system_identifier"],
             "Stan lub klaster zmienił się przed aktualizacją",
         )
         code = self.install(phase)

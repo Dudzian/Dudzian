@@ -612,14 +612,12 @@ def test_issue_cli_refuses_missing_policy_and_does_not_write_pass(tmp_path: Path
     assert not output.exists()
 
 
-def test_full_verifier_derives_three_results_from_signed_raw_observations(
+def test_valid_signed_transport_cannot_replace_missing_product_qualification(
     transport: dict[str, Any],
 ) -> None:
-    result = _verify(transport)
-    assert [item["item"] for item in result["results"]] == list(evidence.LINUX_ITEMS)
-    assert {item["status"] for item in result["results"]} == {"PASS"}
-    assert result["linux_physical"]["bundle_sha256"] == evidence.digest(transport["bundle"])
-    assert result["source_revision"] == transport["challenge"]["source_revision"]
+    assert len(_validate(transport)) == len(evidence.PHASES)
+    with pytest.raises(evidence.LinuxEvidenceError):
+        _verify(transport)
 
 
 @pytest.mark.parametrize(
@@ -641,7 +639,9 @@ def test_valid_signature_does_not_replace_required_physical_observations(
     elif mutation == "failure":
         payloads[6]["observations"]["install_exit_code"] = 0
     elif mutation == "postgres":
-        payloads[1]["observations"]["snapshot"]["postgres"]["system_user"] = "peer:caller-claim"
+        payloads[1]["observations"]["snapshot"]["postgres"]["administrative_observation"][
+            "system_user"
+        ] = "peer:caller-claim"
     else:
         payloads[2]["observations"]["stopped"][0]["old_processes_alive"] = [9000]
     transport["bundle"] = _signed_bundle(transport, payloads)
@@ -703,8 +703,36 @@ def _current_files(tmp_path: Path) -> tuple[dict[str, Any], dict[str, Path], Any
         "2",
     )
     revision = context["challenge"]["source_revision"]
-    verified = gate_context.verify(revision, "https://github.com", "12345")
-    return context, paths, gate_context, verified
+    # Celowo ręczna, niezaufana deklaracja historycznego envelope. Żaden helper
+    # testowy nie zastępuje brakującej kwalifikacji produktu wynikiem verifiera.
+    legacy_claim = {
+        "schema_version": 1,
+        "platform": "LINUX",
+        "source_revision": revision,
+        "ci_provider": "https://github.com",
+        "ci_run_id": "12345",
+        "runner_os": "Linux",
+        "runner_arch": "x86_64",
+        "generated_at_utc": context["bundle"]["records"][-1]["payload"]["observed_at_utc"],
+        "linux_physical": {
+            "challenge_id": context["challenge"]["challenge_id"],
+            "bundle_sha256": evidence.digest(context["bundle"]),
+            "policy_sha256": evidence.digest(context["policy"]),
+            "host_id": context["host"]["host_id"],
+            "ci_run_attempt": "2",
+        },
+        "results": [
+            {
+                "item": item,
+                "status": "PASS",
+                "evidence_class": "LIVE_LINUX_INTEGRATION",
+                "test_or_probe": "stage9-linux-physical-v1",
+                "details": "Ręczna deklaracja TEST_ONLY; brak kwalifikacji produktu",
+            }
+            for item in evidence.LINUX_ITEMS
+        ],
+    }
+    return context, paths, gate_context, legacy_claim
 
 
 def _core_document(verified: dict[str, Any]) -> dict[str, Any]:
@@ -759,7 +787,7 @@ def test_gate_revalidates_raw_bundle_and_rejects_standalone_verified_json(tmp_pa
     context, paths, gate_context, verified = _current_files(tmp_path)
     revision = context["challenge"]["source_revision"]
     documents = [_core_document(verified), verified]
-    assert production_ready(
+    assert not production_ready(
         "LINUX", load_contract(), documents, revision, "https://github.com", "12345", gate_context
     )
     assert not production_ready(
@@ -783,7 +811,7 @@ def test_gate_revalidates_raw_bundle_and_rejects_standalone_verified_json(tmp_pa
     assert blockers and blockers[0].startswith("INVALID_EVIDENCE:")
 
 
-def test_gate_cli_consumes_challenge_once_and_blocks_second_qualification(
+def test_gate_cli_never_consumes_challenge_for_blocked_legacy_qualification(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -793,12 +821,10 @@ def test_gate_cli_consumes_challenge_once_and_blocks_second_qualification(
     core_path = _write(tmp_path / "core.json", _core_document(verified))
     ledger = tmp_path / "consumed.sqlite"
     command = _gate_cli(context, paths, core_path, ledger)
-    assert main(command) == 0
-    assert "LINUX_PRODUCTION_READY=PASS" in capsys.readouterr().out
-    assert main(command) == 1
-    output = capsys.readouterr().out
-    assert "LINUX_PRODUCTION_READY=NOT_READY" in output
-    assert "wykorzystany" in output
+    for _ in range(2):
+        assert main(command) == 1
+        assert "LINUX_PRODUCTION_READY=PASS" not in capsys.readouterr().out
+        assert not ledger.exists()
 
 
 def test_incomplete_gate_does_not_consume_challenge(tmp_path: Path) -> None:
@@ -813,7 +839,8 @@ def test_incomplete_gate_does_not_consume_challenge(tmp_path: Path) -> None:
     assert main(command) == 1
     assert not ledger.exists()
     _write(core_path, _core_document(verified))
-    assert main(command) == 0
+    assert main(command) == 1
+    assert not ledger.exists()
 
 
 @pytest.mark.parametrize(
@@ -882,16 +909,15 @@ def _export_cli(context: dict[str, Any], paths: dict[str, Path], output: Path) -
     ]
 
 
-def test_platform_evidence_exports_only_independently_verified_physical_bundle(
+def test_platform_evidence_refuses_export_of_signed_but_unqualified_bundle(
     tmp_path: Path,
 ) -> None:
     from deployment.platform_evidence import main
 
-    context, paths, _, verified = _current_files(tmp_path)
+    context, paths, _, _ = _current_files(tmp_path)
     output = tmp_path / "linux-evidence.json"
-    assert main(_export_cli(context, paths, output)) == 0
-    assert evidence.read_json(output) == verified
-    assert main(_export_cli(context, paths, output)) == 1  # istniejący raport nie jest nadpisywany
+    assert main(_export_cli(context, paths, output)) == 1
+    assert not output.exists()
 
 
 @pytest.mark.parametrize("mutation", ["missing", "signature", "revision", "attempt", "policy"])
@@ -922,14 +948,13 @@ def test_platform_export_failure_never_creates_pass(
     assert not output.exists()
 
 
-def test_independent_verifier_cli_uses_same_raw_contract(tmp_path: Path) -> None:
-    context, paths, _, verified = _current_files(tmp_path)
+def test_independent_verifier_cli_refuses_incomplete_product_contract(tmp_path: Path) -> None:
+    context, paths, _, _ = _current_files(tmp_path)
     output = tmp_path / "independently-verified.json"
     command = _export_cli(context, paths, output)
     command[0] = "verify"
-    assert evidence.main(command) == 0
-    assert evidence.read_json(output) == verified
     assert evidence.main(command) == 1
+    assert not output.exists()
 
 
 def test_issue_challenge_cli_does_not_claim_test_execution(tmp_path: Path) -> None:

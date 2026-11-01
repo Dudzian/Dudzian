@@ -31,9 +31,16 @@ jobs:
         run: >-
           python -m ruff check deployment/linux_physical_evidence.py
           deployment/linux_physical_observations.py deployment/linux_physical_native.py
+          deployment/linux_release_identity.py
+          deployment/linux_physical_ipc.py
+          deployment/linux_physical_postgresql.py
           deployment/linux_physical_collector.py deployment/linux_evidence_handoff.py
           deployment/platform_readiness.py deployment/platform_evidence.py
           tests/deployment/test_linux_physical_evidence.py
+          tests/deployment/test_linux_physical_remediation.py
+          tests/deployment/test_linux_physical_ipc.py
+          tests/deployment/test_linux_physical_postgresql.py
+          tests/deployment/test_linux_release_identity.py
           tests/deployment/test_linux_physical_collector.py
           tests/deployment/test_linux_physical_native.py
           tests/scripts/test_linux_physical_evidence_workflow.py
@@ -41,9 +48,16 @@ jobs:
         run: >-
           python -m ruff format --check deployment/linux_physical_evidence.py
           deployment/linux_physical_observations.py deployment/linux_physical_native.py
+          deployment/linux_release_identity.py
+          deployment/linux_physical_ipc.py
+          deployment/linux_physical_postgresql.py
           deployment/linux_physical_collector.py deployment/linux_evidence_handoff.py
           deployment/platform_readiness.py deployment/platform_evidence.py
           tests/deployment/test_linux_physical_evidence.py
+          tests/deployment/test_linux_physical_remediation.py
+          tests/deployment/test_linux_physical_ipc.py
+          tests/deployment/test_linux_physical_postgresql.py
+          tests/deployment/test_linux_release_identity.py
           tests/deployment/test_linux_physical_collector.py
           tests/deployment/test_linux_physical_native.py
           tests/scripts/test_linux_physical_evidence_workflow.py
@@ -51,11 +65,18 @@ jobs:
         run: >-
           python -m mypy deployment/linux_physical_evidence.py
           deployment/linux_physical_observations.py deployment/linux_physical_native.py
+          deployment/linux_release_identity.py
+          deployment/linux_physical_ipc.py
+          deployment/linux_physical_postgresql.py
           deployment/linux_physical_collector.py deployment/linux_evidence_handoff.py
           deployment/platform_readiness.py deployment/platform_evidence.py
       - name: Sprawdź hermetyczne kontrakty i odmowy bez kwalifikacji fizycznej
         run: >-
           python -m pytest -q tests/deployment/test_linux_physical_evidence.py
+          tests/deployment/test_linux_physical_remediation.py
+          tests/deployment/test_linux_physical_ipc.py
+          tests/deployment/test_linux_physical_postgresql.py
+          tests/deployment/test_linux_release_identity.py
           tests/deployment/test_linux_physical_collector.py
           tests/deployment/test_linux_physical_native.py
           tests/scripts/test_linux_physical_evidence_workflow.py
@@ -72,7 +93,7 @@ jobs:
     permissions: {contents: read, actions: read}
     timeout-minutes: 10
     env:
-      STAGE9_LINUX_EVIDENCE_POLICY_JSON: ${{ vars.STAGE9_LINUX_EVIDENCE_POLICY_JSON }}
+      LINUX_POLICY_COMMIT: ${{ vars.STAGE9_LINUX_EVIDENCE_POLICY_COMMIT }}
       LINUX_POLICY_SHA256: ${{ vars.STAGE9_LINUX_EVIDENCE_POLICY_SHA256 }}
       LINUX_HOST_ID: ${{ vars.STAGE9_LINUX_EVIDENCE_HOST_ID }}
     steps:
@@ -82,25 +103,23 @@ jobs:
         with: {python-version: "3.11"}
       - run: python -m pip install cryptography
       - name: Wymagaj rzeczywistej ochrony środowiska wydającego challenge
-        env: {GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}"}
+        env: {GH_TOKEN: "${{ secrets.STAGE9_GITHUB_CONTROLS_READ_TOKEN }}"}
         run: >-
           python -m deployment.linux_evidence_handoff require-environment
           --repository "$GITHUB_REPOSITORY" --name stage9-linux-challenge
-      - name: Zapisz publiczną politykę z chronionej konfiguracji
-        shell: python
-        run: |
-          import os
-          from pathlib import Path
-          raw = os.environ["STAGE9_LINUX_EVIDENCE_POLICY_JSON"]
-          if not raw or len(raw.encode("utf-8")) > 65536:
-              raise SystemExit("Brak polityki lub przekroczony limit")
-          Path("policy.json").write_text(raw, encoding="utf-8")
+          --policy-commit "$LINUX_POLICY_COMMIT"
+      - name: Pobierz dane polityki z dokładnej zatwierdzonej rewizji
+        uses: actions/checkout@v7
+        with:
+          ref: "${{ vars.STAGE9_LINUX_EVIDENCE_POLICY_COMMIT }}"
+          path: stage9-approved-policy
+          persist-credentials: false
       - name: Wydaj jednorazowe challenge bieżącej rewizji i próby CI
         run: >-
           python -m deployment.linux_physical_evidence issue-challenge
           --source-revision "$GITHUB_SHA" --ci-run-id "$GITHUB_RUN_ID"
           --ci-run-attempt "$GITHUB_RUN_ATTEMPT" --host-id "$LINUX_HOST_ID"
-          --policy policy.json --expected-policy-sha256 "$LINUX_POLICY_SHA256"
+          --policy stage9-approved-policy/policy.json --expected-policy-sha256 "$LINUX_POLICY_SHA256"
           --output linux-challenge.json
       - uses: actions/upload-artifact@v7
         with:
@@ -121,7 +140,7 @@ jobs:
     permissions: {contents: read, actions: read}
     timeout-minutes: 15
     env:
-      STAGE9_LINUX_EVIDENCE_POLICY_JSON: ${{ vars.STAGE9_LINUX_EVIDENCE_POLICY_JSON }}
+      LINUX_POLICY_COMMIT: ${{ vars.STAGE9_LINUX_EVIDENCE_POLICY_COMMIT }}
       LINUX_POLICY_SHA256: ${{ vars.STAGE9_LINUX_EVIDENCE_POLICY_SHA256 }}
     steps:
       - uses: actions/checkout@v7
@@ -130,10 +149,17 @@ jobs:
         with: {python-version: "3.11"}
       - run: python -m pip install cryptography
       - name: Wymagaj niezależnej aprobaty i ochrony środowiska
-        env: {GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}"}
+        env: {GH_TOKEN: "${{ secrets.STAGE9_GITHUB_CONTROLS_READ_TOKEN }}"}
         run: >-
           python -m deployment.linux_evidence_handoff require-environment
           --repository "$GITHUB_REPOSITORY" --name stage9-linux-evidence
+          --policy-commit "$LINUX_POLICY_COMMIT"
+      - name: Pobierz dane polityki z dokładnej zatwierdzonej rewizji
+        uses: actions/checkout@v7
+        with:
+          ref: "${{ vars.STAGE9_LINUX_EVIDENCE_POLICY_COMMIT }}"
+          path: stage9-approved-policy
+          persist-credentials: false
       - uses: actions/download-artifact@v8
         with:
           name: stage9-linux-challenge-${{ github.run_id }}-${{ github.run_attempt }}
@@ -144,20 +170,11 @@ jobs:
           python -m deployment.linux_evidence_handoff fetch
           --repository "$GITHUB_REPOSITORY" --target-run-id "$GITHUB_RUN_ID"
           --target-run-attempt "$GITHUB_RUN_ATTEMPT" --output evidence/bundle.json
-      - name: Zapisz niezależną publiczną politykę
-        shell: python
-        run: |
-          import os
-          from pathlib import Path
-          raw = os.environ["STAGE9_LINUX_EVIDENCE_POLICY_JSON"]
-          if not raw or len(raw.encode("utf-8")) > 65536:
-              raise SystemExit("Brak polityki lub przekroczony limit")
-          Path("policy.json").write_text(raw, encoding="utf-8")
       - name: Zweryfikuj podpisy, pochodzenie i semantykę surowych obserwacji
         run: >-
           python -m deployment.linux_physical_evidence verify
           --bundle evidence/bundle.json --challenge evidence/linux-challenge.json
-          --policy policy.json --expected-policy-sha256 "$LINUX_POLICY_SHA256"
+          --policy stage9-approved-policy/policy.json --expected-policy-sha256 "$LINUX_POLICY_SHA256"
           --source-revision "$GITHUB_SHA" --ci-run-id "$GITHUB_RUN_ID"
           --ci-run-attempt "$GITHUB_RUN_ATTEMPT" --output evidence/linux-evidence.json
       - uses: actions/upload-artifact@v7
@@ -181,7 +198,7 @@ jobs:
     permissions: {contents: read, actions: read}
     timeout-minutes: 15
     env:
-      STAGE9_LINUX_EVIDENCE_POLICY_JSON: ${{ vars.STAGE9_LINUX_EVIDENCE_POLICY_JSON }}
+      LINUX_POLICY_COMMIT: ${{ vars.STAGE9_LINUX_EVIDENCE_POLICY_COMMIT }}
       LINUX_POLICY_SHA256: ${{ vars.STAGE9_LINUX_EVIDENCE_POLICY_SHA256 }}
     steps:
       - uses: actions/checkout@v7
@@ -190,10 +207,17 @@ jobs:
         with: {python-version: "3.11"}
       - run: python -m pip install cryptography
       - name: Wymagaj ochrony środowiska końcowej decyzji
-        env: {GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}"}
+        env: {GH_TOKEN: "${{ secrets.STAGE9_GITHUB_CONTROLS_READ_TOKEN }}"}
         run: >-
           python -m deployment.linux_evidence_handoff require-environment
           --repository "$GITHUB_REPOSITORY" --name stage9-linux-evidence
+          --policy-commit "$LINUX_POLICY_COMMIT"
+      - name: Pobierz dane polityki z dokładnej zatwierdzonej rewizji
+        uses: actions/checkout@v7
+        with:
+          ref: "${{ vars.STAGE9_LINUX_EVIDENCE_POLICY_COMMIT }}"
+          path: stage9-approved-policy
+          persist-credentials: false
       - name: Wymagaj sukcesu wszystkich bieżących zadań Core
         shell: python
         env:
@@ -223,15 +247,6 @@ jobs:
           --marker evidence/core-Windows/core-Windows.json
           --marker evidence/core-macOS/core-macOS.json
           --output evidence/core-matrix.json
-      - name: Zapisz ponownie politykę zaufania bramki
-        shell: python
-        run: |
-          import os
-          from pathlib import Path
-          raw = os.environ["STAGE9_LINUX_EVIDENCE_POLICY_JSON"]
-          if not raw or len(raw.encode("utf-8")) > 65536:
-              raise SystemExit("Brak polityki lub przekroczony limit")
-          Path("policy.json").write_text(raw, encoding="utf-8")
       - name: Podejmij decyzję po ponownej weryfikacji surowych dowodów
         run: >-
           python -m deployment.platform_readiness --platform LINUX
@@ -239,7 +254,7 @@ jobs:
           --expected-ci-run-id "$GITHUB_RUN_ID" --expected-ci-run-attempt "$GITHUB_RUN_ATTEMPT"
           --evidence evidence/core-matrix.json --evidence evidence/linux-evidence.json
           --linux-bundle evidence/bundle.json --linux-challenge evidence/linux-challenge.json
-          --linux-policy policy.json --linux-policy-sha256 "$LINUX_POLICY_SHA256"
+          --linux-policy stage9-approved-policy/policy.json --linux-policy-sha256 "$LINUX_POLICY_SHA256"
           --linux-replay-ledger "$RUNNER_TEMP/linux-evidence-consumed.sqlite"
 
   core-linux:

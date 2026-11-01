@@ -6,7 +6,7 @@ import copy
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import stat
 import subprocess
 import sys
@@ -16,6 +16,7 @@ import pytest
 
 from deployment import linux_physical_native as native
 from deployment.linux_physical_observations import ObservationError, UNIT_PROPERTIES
+from deployment.linux_physical_postgresql import blocked_service_qualification
 from tests.deployment.test_linux_physical_collector import (
     NEW_BOOT,
     OLD_BOOT,
@@ -43,6 +44,7 @@ def test_state_creation_refuses_other_platform_before_mutation(driver, monkeypat
         driver.create_state()
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="Rzeczywisty odczyt plików natywnego Linux")
 def test_real_regular_file_is_bounded_and_observed(tmp_path, monkeypatch):
     path = tmp_path / "material"
     path.write_bytes(b"rzeczywiste bajty")
@@ -57,6 +59,7 @@ def test_real_regular_file_is_bounded_and_observed(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("kind", ["symlink", "directory", "fifo"])
+@pytest.mark.skipif(sys.platform != "linux", reason="Rzeczywiste O_NOFOLLOW i FIFO natywnego Linux")
 def test_nonregular_input_refuses_without_blocking(tmp_path, kind):
     path = tmp_path / "material"
     if kind == "symlink":
@@ -71,6 +74,9 @@ def test_nonregular_input_refuses_without_blocking(tmp_path, kind):
         native.read_regular(path)
 
 
+@pytest.mark.skipif(
+    sys.platform != "linux", reason="Rzeczywiste deskryptory plików natywnego Linux"
+)
 def test_read_refuses_file_changed_while_descriptor_is_held(tmp_path, monkeypatch):
     path = tmp_path / "material"
     path.write_bytes(b"known")
@@ -100,9 +106,10 @@ def test_read_refuses_file_changed_while_descriptor_is_held(tmp_path, monkeypatc
     "mode,uid", [(stat.S_IFDIR | 0o777, 0), (stat.S_IFDIR | 0o755, 12), (stat.S_IFLNK | 0o755, 0)]
 )
 def test_untrusted_parent_refuses(mode, uid, monkeypatch):
-    monkeypatch.setattr(Path, "lstat", lambda _path: SimpleNamespace(st_mode=mode, st_uid=uid))
+    parent = SimpleNamespace(lstat=lambda: SimpleNamespace(st_mode=mode, st_uid=uid))
+    observed_path = SimpleNamespace(is_absolute=lambda: True, parents=(parent,))
     with pytest.raises(ObservationError, match="katalog"):
-        native._safe_parents(Path("/approved/material"))
+        native._safe_parents(observed_path)
 
 
 def test_relative_parent_refuses():
@@ -136,6 +143,15 @@ def host_files():
     "fault", [None, "not_root", "pid1", "os", "duplicate_os", "machine", "vm", "architecture"]
 )
 def test_host_identity_requires_native_physical_ubuntu(monkeypatch, fault):
+    class ObservedLinuxPath(PurePosixPath):
+        def is_dir(self):
+            return str(self) == "/run/systemd/system"
+
+        def resolve(self, *, strict=False):
+            return self
+
+    monkeypatch.setattr(native, "Path", ObservedLinuxPath)
+    monkeypatch.setattr(native.sys, "platform", "linux")
     files = host_files()
     if fault == "pid1":
         files["/proc/1/comm"] = b"init"
@@ -145,12 +161,8 @@ def test_host_identity_requires_native_physical_ubuntu(monkeypatch, fault):
         files["/usr/lib/os-release"] += b"ID=ubuntu\n"
     elif fault == "machine":
         files["/etc/machine-id"] = b"unknown"
-    monkeypatch.setattr(native.os, "geteuid", lambda: 1 if fault == "not_root" else 0)
-    actual_is_dir = Path.is_dir
     monkeypatch.setattr(
-        Path,
-        "is_dir",
-        lambda path: True if str(path) == "/run/systemd/system" else actual_is_dir(path),
+        native.os, "geteuid", lambda: 1 if fault == "not_root" else 0, raising=False
     )
     monkeypatch.setattr(
         native, "read_regular", lambda path, **_kwargs: files.get(str(path), b"trusted-python")
@@ -195,6 +207,9 @@ def test_malformed_or_dead_process_identity_refuses(raw):
 
 
 @pytest.mark.parametrize("fault", [None, "reused_pid", "different_uids", "duplicate_status"])
+@pytest.mark.skipif(
+    sys.platform != "linux", reason="Rzeczywisty deskryptor programu i model /proc Linux"
+)
 def test_process_observation_binds_kernel_identity_and_executable(tmp_path, monkeypatch, fault):
     executable = tmp_path / "service"
     executable.write_bytes(b"trusted executable bytes")
@@ -365,9 +380,11 @@ def test_postgresql_uses_only_scoped_readonly_peer_connection(driver, monkeypatc
             driver.postgres()
     else:
         observed = driver.postgres()
-        assert observed["system_user"] == "peer:root"
-        assert observed["system_identifier"] == "123456789"
-        assert len(observed["hba_sha256"]) == 64
+        administrative = observed["administrative_observation"]
+        assert administrative["system_user"] == "peer:root"
+        assert administrative["system_identifier"] == "123456789"
+        assert len(administrative["hba_sha256"]) == 64
+        assert observed["service_qualification"] == blocked_service_qualification()
     connection = connect_args[0]
     assert connection["host"] == driver.installation["postgres"]["socket"]
     assert connection["password"] is None and connection["passfile"] == "/dev/null"
@@ -378,6 +395,9 @@ def test_postgresql_uses_only_scoped_readonly_peer_connection(driver, monkeypatc
 
 
 @pytest.mark.parametrize("fault", [None, "cgroup_substitution", "changed_systemd"])
+@pytest.mark.skipif(
+    sys.platform != "linux", reason="Ścieżki proc/cgroup/socket właściwe natywnemu Linux"
+)
 def test_snapshot_binds_processes_files_and_cgroup(driver, monkeypatch, fault):
     expected = _snapshot(driver.installation, step=0)
     properties = {unit["name"]: unit["properties"] for unit in expected["units"]}
@@ -547,6 +567,7 @@ def test_post_reboot_collection_reads_logs_of_exact_previous_boot(driver, monkey
 
 
 @pytest.mark.parametrize("code", [0, 1])
+@pytest.mark.skipif(sys.platform != "linux", reason="Ekskluzywne pliki instalatora natywnego Linux")
 def test_installer_uses_exclusive_verified_copy_and_removes_only_its_material(
     driver, tmp_path, monkeypatch, code
 ):
@@ -585,6 +606,7 @@ def test_installer_uses_exclusive_verified_copy_and_removes_only_its_material(
     assert list(staging.iterdir()) == []
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="Rzeczywisty odczyt artefaktu natywnego Linux")
 def test_installer_rejects_changed_artifact_before_command(driver, tmp_path, monkeypatch):
     path = Path(driver.installation["packages"]["baseline"]["path"])
     path.write_bytes(b"substituted")
@@ -600,6 +622,7 @@ def test_installer_rejects_changed_artifact_before_command(driver, tmp_path, mon
         driver.install("baseline")
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="Ekskluzywny sentinel i fchown natywnego Linux")
 def test_state_is_exclusive_random_material_in_dedicated_location(driver, tmp_path, monkeypatch):
     driver.state_path = tmp_path / "sentinel"
     monkeypatch.setattr(native, "_safe_parents", lambda _path, **_kwargs: None)

@@ -5,6 +5,14 @@ fizycznie w ramach tego PR. Status pozostaje
 `Stage 9 = IN_PROGRESS / PRODUCTION_NO_GO`; testy oprogramowania, odczytowa
 diagnostyka i wyniki TEST ONLY nie przyznają produkcyjnego PASS.
 
+**Stan po remediacji: fazy C–G są wstrzymanym planem przyszłego wykonania.**
+Brakuje zatwierdzonych adapterów uwierzytelniania IPC i połączeń PostgreSQL
+rzeczywistych usług. Natywna ścieżka kolektora odmawia faz zmieniających host
+przed instalacją lub sterowaniem usługami. Nawet kompletny podpisany raport
+z poprawnym certyfikatem wydania nie daje obecnie kwalifikacji. Nie wykonywać
+poniższych poleceń instalacji, awarii, aktualizacji lub restartu w ramach
+tej remediacji; sama zgoda operatora nie zastępuje brakującej implementacji.
+
 Wykonawcą jest operator fizycznego Dell Latitude 5490 z Ubuntu 24.04 x86_64.
 Nie trzeba instalować GitHub Actions runnera na laptopie. CI przyjmuje
 ograniczony pakiet obserwacji, weryfikuje go niezależnie i osobno podejmuje
@@ -114,19 +122,26 @@ prywatnego klucza. Odczyt wymaga root ze względu na systemowe dane DMI.
 Nie wykonywać go jako root z checkoutu należącego do zwykłego konta.
 Wyjście jest materiałem do niezależnego zatwierdzenia hosta, bez prawa LIVE.
 
-Administrator repozytorium przed pierwszą próbą konfiguruje chronione
-environments `stage9-linux-challenge` i `stage9-linux-evidence`. Każde wymaga
-niepustego `required_reviewers`, `prevent_self_review=true` oraz
-`deployment_branch_policy.protected_branches=true`. W obu ustawia identyczne
-zmienne `STAGE9_LINUX_EVIDENCE_POLICY_JSON` i
-`STAGE9_LINUX_EVIDENCE_POLICY_SHA256`, a w pierwszym dodatkowo
-`STAGE9_LINUX_EVIDENCE_HOST_ID`. SHA polityki dotyczy kanonicznego JSON.
+Właściciel przed pierwszą próbą osobno zatwierdza i wdraża
+[ochronę GitHub oraz proces aktualizacji polityki](STAGE9_GITHUB_EVIDENCE_CONTROLS.md).
+Sama flaga `protected_branches=true` nie dowodzi ochrony `main`.
+Wymagane są rzeczywiste reguły dla `main` i osobnej gałęzi
+`stage9-linux-evidence-policy`, CODEOWNERS, niezależne review, kontrole CI,
+zakaz obejścia reguł i dwa chronione environments. W obu environments
+ustawia się `STAGE9_LINUX_EVIDENCE_POLICY_COMMIT`,
+`STAGE9_LINUX_EVIDENCE_POLICY_SHA256` oraz sekret odczytowy
+`STAGE9_GITHUB_CONTROLS_READ_TOKEN`, a w pierwszym także
+`STAGE9_LINUX_EVIDENCE_HOST_ID`. Polityka pochodzi z `policy.json` w dokładnym
+commicie osobnej chronionej gałęzi, bez wykonywania jej kodu.
+SHA polityki dotyczy kanonicznego JSON. Dawna zmienna POLICY_JSON nie jest
+źródłem zaufania. W tej sesji nie zmieniano ustawień GitHub.
 Pusta domyślna lista `hosts` w repozytorium zawsze odmawia kwalifikacji.
 Zatwierdzenie wpisu hosta i artefaktów nie następuje przez skopiowanie wartości
 z otrzymanego bundle.
 
-Po niezależnym zatwierdzeniu gotowego manifestu instalacji oraz trzech
-rzeczywistych pakietów `.deb` operator uruchamia wyłącznie ścieżkę Linux:
+Po usunięciu blokad adapterów, niezależnym zatwierdzeniu certyfikatu tożsamości
+wydania, manifestu instalacji i trzech rzeczywistych pakietów `.deb`
+operator będzie mógł uruchomić wyłącznie ścieżkę Linux:
 
 ```sh
 gh workflow run platform-deployment.yml --repo Dudzian/Dudzian --ref main \
@@ -356,7 +371,9 @@ python3 -B -m deployment.linux_physical_evidence verify \
   --output linux-evidence-preview.json
 ```
 
-To sprawdzenie nie zużywa challenge i nie jest decyzją bramki. Plik preview
+Obecnie to polecenie ma odmówić kwalifikacji; nie oczekiwać pliku preview
+ani nie edytować raportu dla wymuszenia PASS. Po wdrożeniu zatwierdzonych
+adapterów sprawdzenie nadal nie zużywa challenge i nie jest decyzją bramki. Plik preview
 nie jest dopuszczalnym zamiennikiem raw bundle. Na CI przesłać wyłącznie
 zweryfikowany `bundle.json`, bez klucza, pełnych logów i sekretów. Przygotować
 ograniczony transport gzip+Base64; podpisy nadal dotyczą surowych obserwacji:
@@ -412,7 +429,10 @@ PR ani zmiany Stage 9 na COMPLETE.
 **Fizyczna kwalifikacja produkcyjna: NO-GO**, dopóki administratorzy nie
 zatwierdzą hosta i klucza dowodowego, chronionych environments, pełnego
 manifestu instalacji oraz trzech rzeczywistych artefaktów z bezpiecznym
-planem aktualizacji. Obecna domyślna polityka nie zawiera zatwierdzonego hosta.
+planem aktualizacji. Niezbędne są również niezależny certyfikat wydania
+i bezpieczne adaptery faktycznych usług IPC/PostgreSQL. Obecny kod
+nie implementuje tych adapterów i nie nadaje produkcyjnego PASS.
+Domyślna polityka nie zawiera zatwierdzonego hosta.
 Diagnostyczne signery, custody, Source/CCA oraz istniejące fixture TEST ONLY
 nie spełniają tych warunków. Można rozpocząć fazę A i przygotowanie
 infrastruktury; polecenia uprzywilejowane w dalszych fazach są instrukcją

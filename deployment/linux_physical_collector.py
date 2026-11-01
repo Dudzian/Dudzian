@@ -50,6 +50,10 @@ CLOSURE = (
     "deployment/linux_physical_native.py",
     "deployment/linux_physical_observations.py",
     "deployment/linux_physical_evidence.py",
+    "deployment/linux_physical_ipc.py",
+    "deployment/linux_physical_postgresql.py",
+    "deployment/linux_release_identity.py",
+    "bot_core/production_signer_ipc.py",
 )
 
 
@@ -163,6 +167,15 @@ def collect_phase(
     require(materials == challenge["materials"], "Materiały nie należą do zatwierdzonego challenge")
     # Wstrzyknięty driver występuje wyłącznie w hermetycznych testach jednostkowych;
     # CLI zawsze tworzy natywny backend i nie obsługuje importów ani komend od użytkownika.
+    if driver is None and phase in MUTATING_PHASES:
+        # Sam podpisany manifest i konto root nie uprawniają do uruchomienia
+        # kwalifikacji pozorującej brakujące testy rzeczywistych usług.
+        from deployment.linux_physical_ipc import (
+            blocked_ipc_qualification,
+            require_ipc_qualification,
+        )
+
+        require_ipc_qualification(blocked_ipc_qualification())
     native = driver if driver is not None else NativeDriver(installation, challenge["challenge_id"])
     observations = native.collect(phase, bundle["records"])
     validate_challenge(challenge)
