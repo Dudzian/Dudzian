@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 import re
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, cast
@@ -165,6 +166,41 @@ class PolicyValidationError(ValueError):
     """The policy is incomplete, unsupported, or weakens frozen requirements."""
 
 
+@dataclass(frozen=True)
+class LinuxEvidenceContext:
+    """Niezależne wejścia z chronionej bramki, nigdy z raportu producenta."""
+
+    bundle: Path
+    challenge: Path
+    policy: Path
+    policy_sha256: str
+    ci_run_attempt: str
+
+    def verify(self, revision: str, provider: str, run_id: str) -> dict[str, Any]:
+        # Import leniwy zachowuje niezależność istniejących testów Windows.
+        from deployment.linux_physical_evidence import (
+            LinuxEvidenceError,
+            load_challenge,
+            load_policy,
+            read_json,
+            verify_bundle,
+        )
+
+        if provider != "https://github.com":
+            raise EvidenceValidationError("niezatwierdzony autorytet wyzwania Linux")
+        try:
+            return verify_bundle(
+                read_json(self.bundle),
+                load_challenge(self.challenge),
+                load_policy(self.policy, self.policy_sha256),
+                source_revision=revision,
+                ci_run_id=run_id,
+                ci_run_attempt=self.ci_run_attempt,
+            )
+        except (LinuxEvidenceError, OSError, TypeError, KeyError) as exc:
+            raise EvidenceValidationError(f"odmowa dowodów Linux: {exc}") from exc
+
+
 def validate_contract(data: object) -> None:
     """Validate policy V2; historical V1 is never silently reinterpreted.
 
@@ -278,6 +314,7 @@ def _validated_results(
     current_revision: str,
     expected_ci_provider: str,
     expected_ci_run_id: str,
+    linux_context: LinuxEvidenceContext | None = None,
 ) -> dict[str, dict[str, Any]]:
     results: dict[str, dict[str, Any]] = {}
     expected_os = {
@@ -288,7 +325,7 @@ def _validated_results(
     }
     for document in evidence:
         if not isinstance(document, dict) or not set(document).issubset(
-            BASE_EVIDENCE_FIELDS | {"production_trust"}
+            BASE_EVIDENCE_FIELDS | {"production_trust", "linux_physical"}
         ):
             raise EvidenceValidationError("malformed evidence document")
         if not isinstance(document.get("results"), list):
@@ -297,9 +334,27 @@ def _validated_results(
             isinstance(result, dict) and result.get("item") == "WINDOWS_CLEAN_INSTALL"
             for result in document["results"]
         )
-        required = BASE_EVIDENCE_FIELDS | (
-            {"production_trust"} if contains_clean_install else set()
+        contains_linux = any(
+            isinstance(result, dict) and result.get("evidence_class") == "LIVE_LINUX_INTEGRATION"
+            for result in document["results"]
         )
+        required = (
+            BASE_EVIDENCE_FIELDS
+            | ({"production_trust"} if contains_clean_install else set())
+            | ({"linux_physical"} if contains_linux else set())
+        )
+        if contains_linux:
+            if linux_context is None:
+                raise EvidenceValidationError(
+                    "Linux wymaga niezależnej walidacji surowego podpisanego łańcucha"
+                )
+            verified = linux_context.verify(
+                current_revision, expected_ci_provider, expected_ci_run_id
+            )
+            if document != verified:
+                raise EvidenceValidationError(
+                    "deklaracja JSON różni się od zweryfikowanych obserwacji Linux"
+                )
         if set(document) != required:
             raise EvidenceValidationError("malformed evidence document")
         if contains_clean_install:
@@ -372,9 +427,16 @@ def production_ready(
     current_revision: str | None = None,
     expected_ci_provider: str = "test",
     expected_ci_run_id: str = "1",
+    linux_context: LinuxEvidenceContext | None = None,
 ) -> bool:
     return not blocking_items(
-        platform, contract, evidence, current_revision, expected_ci_provider, expected_ci_run_id
+        platform,
+        contract,
+        evidence,
+        current_revision,
+        expected_ci_provider,
+        expected_ci_run_id,
+        linux_context,
     )
 
 
@@ -385,6 +447,7 @@ def blocking_items(
     current_revision: str | None = None,
     expected_ci_provider: str = "test",
     expected_ci_run_id: str = "1",
+    linux_context: LinuxEvidenceContext | None = None,
 ) -> list[str]:
     """Return required items without PASS evidence for the selected platform."""
     try:
@@ -406,6 +469,7 @@ def blocking_items(
             current_revision or "",
             expected_ci_provider,
             expected_ci_run_id,
+            linux_context,
         )
     except EvidenceValidationError as exc:
         return [f"INVALID_EVIDENCE:{exc}"]
@@ -427,6 +491,7 @@ def release_blocking_items(
     current_revision: str | None = None,
     expected_ci_provider: str = "test",
     expected_ci_run_id: str = "1",
+    linux_context: LinuxEvidenceContext | None = None,
 ) -> list[str]:
     """Evaluate exactly the platforms claimed by a closed release profile."""
     try:
@@ -440,7 +505,13 @@ def release_blocking_items(
         f"{platform}:{item}"
         for platform in data["release_profiles"][profile]
         for item in blocking_items(
-            platform, data, evidence, current_revision, expected_ci_provider, expected_ci_run_id
+            platform,
+            data,
+            evidence,
+            current_revision,
+            expected_ci_provider,
+            expected_ci_run_id,
+            linux_context,
         )
     ]
 
@@ -452,10 +523,17 @@ def release_ready(
     current_revision: str | None = None,
     expected_ci_provider: str = "test",
     expected_ci_run_id: str = "1",
+    linux_context: LinuxEvidenceContext | None = None,
 ) -> bool:
     """Platform qualification only; never grants enrollment, Stage 10 or LIVE."""
     return not release_blocking_items(
-        profile, contract, evidence, current_revision, expected_ci_provider, expected_ci_run_id
+        profile,
+        contract,
+        evidence,
+        current_revision,
+        expected_ci_provider,
+        expected_ci_run_id,
+        linux_context,
     )
 
 
@@ -469,6 +547,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--current-revision", default=os.environ.get("GITHUB_SHA"))
     parser.add_argument("--expected-ci-provider", default=os.environ.get("GITHUB_SERVER_URL"))
     parser.add_argument("--expected-ci-run-id", default=os.environ.get("GITHUB_RUN_ID"))
+    parser.add_argument("--expected-ci-run-attempt", default=os.environ.get("GITHUB_RUN_ATTEMPT"))
+    parser.add_argument("--linux-bundle", type=Path)
+    parser.add_argument("--linux-challenge", type=Path)
+    parser.add_argument("--linux-policy", type=Path)
+    parser.add_argument("--linux-policy-sha256")
+    parser.add_argument("--linux-replay-ledger", type=Path)
     args = parser.parse_args(argv)
     try:
         data = load_contract(args.contract)
@@ -478,10 +562,44 @@ def main(argv: list[str] | None = None) -> int:
     if not args.current_revision or not args.expected_ci_provider or not args.expected_ci_run_id:
         parser.error("current revision, CI provider and CI run id are required")
     try:
-        evidence = [json.loads(path.read_text(encoding="utf-8")) for path in args.evidence]
-    except (OSError, json.JSONDecodeError) as exc:
+        evidence = [
+            json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=_policy_object)
+            for path in args.evidence
+        ]
+    except (OSError, UnicodeError, json.JSONDecodeError, PolicyValidationError) as exc:
         print(f"invalid evidence file: {exc}")
         return 1
+    linux_context = None
+    linux_options = (
+        args.linux_bundle,
+        args.linux_challenge,
+        args.linux_policy,
+        args.linux_policy_sha256,
+        args.linux_replay_ledger,
+    )
+    if any(value is not None for value in linux_options):
+        if (
+            not all(value is not None for value in linux_options)
+            or not args.expected_ci_run_attempt
+        ):
+            print("INVALID_EVIDENCE:niepełne niezależne wejścia Linux lub brak rejestru zużycia")
+            return 1
+        linux_context = LinuxEvidenceContext(
+            args.linux_bundle,
+            args.linux_challenge,
+            args.linux_policy,
+            args.linux_policy_sha256,
+            args.expected_ci_run_attempt,
+        )
+        try:
+            verified = linux_context.verify(
+                args.current_revision, args.expected_ci_provider, args.expected_ci_run_id
+            )
+        except EvidenceValidationError as exc:
+            print(f"INVALID_EVIDENCE:{exc}")
+            return 1
+        if not any(isinstance(doc, dict) and doc.get("platform") == "LINUX" for doc in evidence):
+            evidence.append(verified)
     evaluate = release_blocking_items if args.release_profile else blocking_items
     blockers = evaluate(
         args.release_profile or args.platform,
@@ -490,6 +608,7 @@ def main(argv: list[str] | None = None) -> int:
         args.current_revision,
         args.expected_ci_provider,
         args.expected_ci_run_id,
+        linux_context,
     )
     label = (
         f"{args.release_profile}_RELEASE_READY"
@@ -510,6 +629,21 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{name}={status} [{item['evidence_class']}]")
         print(f"{label}=NOT_READY")
         return 1
+    if linux_context is not None and (
+        args.platform == "LINUX"
+        or args.release_profile in ("WINDOWS_LINUX_BETA", "CRYPTOHUNTER_V1")
+    ):
+        from deployment.linux_physical_evidence import LinuxEvidenceError, consume_challenge
+
+        try:
+            provenance = verified["linux_physical"]
+            consume_challenge(
+                args.linux_replay_ledger, provenance["challenge_id"], provenance["bundle_sha256"]
+            )
+        except LinuxEvidenceError as exc:
+            print(f"INVALID_EVIDENCE:{exc}")
+            print(f"{label}=NOT_READY")
+            return 1
     print(f"{label}=PASS")
     return 0
 

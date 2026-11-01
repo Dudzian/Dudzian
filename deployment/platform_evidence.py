@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from datetime import datetime, timezone
 import hashlib
+import importlib
 import json
 import os
 from pathlib import Path
@@ -297,7 +298,7 @@ def produce_windows_clean_install_evidence(
 
 
 def _current_windows_machine_guid() -> str:
-    import winreg
+    winreg = importlib.import_module("winreg")
 
     try:
         with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Cryptography") as key:
@@ -444,6 +445,41 @@ def produce_windows_stage10_evidence(
     )
 
 
+def produce_linux_physical_evidence(
+    *,
+    bundle: Path,
+    challenge: Path,
+    policy: Path,
+    expected_policy_sha256: str,
+    source_revision: str,
+    ci_run_id: str,
+    ci_run_attempt: str,
+    output: Path,
+) -> None:
+    """Publikuje trzy wyniki Linux wyłącznie po niezależnej walidacji łańcucha."""
+    from deployment.linux_physical_evidence import (
+        LinuxEvidenceError,
+        load_challenge,
+        load_policy,
+        read_json,
+        verify_bundle,
+    )
+
+    try:
+        document = verify_bundle(
+            read_json(bundle),
+            load_challenge(challenge),
+            load_policy(policy, expected_policy_sha256),
+            source_revision=source_revision,
+            ci_run_id=ci_run_id,
+            ci_run_attempt=ci_run_attempt,
+        )
+        with output.open("x", encoding="utf-8") as stream:
+            stream.write(json.dumps(document, indent=2) + "\n")
+    except (LinuxEvidenceError, OSError, KeyError, TypeError) as exc:
+        raise EvidenceProductionError(f"Odmowa publikacji dowodów Linux: {exc}") from exc
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Executable deployment evidence producer")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -463,6 +499,11 @@ def main(argv: list[str] | None = None) -> int:
     stage10.add_argument("--source-revision")
     stage10.add_argument("--receipt", type=Path, required=True)
     stage10.add_argument("--output", type=Path, required=True)
+    linux = sub.add_parser("linux-physical")
+    for flag in ("bundle", "challenge", "policy", "output"):
+        linux.add_argument(f"--{flag}", type=Path, required=True)
+    for flag in ("source-revision", "ci-run-id", "ci-run-attempt", "expected-policy-sha256"):
+        linux.add_argument(f"--{flag}", required=True)
     args = parser.parse_args(argv)
     try:
         if args.command == "aggregate-core":
@@ -481,8 +522,19 @@ def main(argv: list[str] | None = None) -> int:
                 manifest=args.manifest,
                 production_trust_package=args.production_trust_package,
             )
-        else:
+        elif args.command == "windows-stage10":
             produce_windows_stage10_evidence(args.source_revision, args.receipt, args.output)
+        else:
+            produce_linux_physical_evidence(
+                bundle=args.bundle,
+                challenge=args.challenge,
+                policy=args.policy,
+                expected_policy_sha256=args.expected_policy_sha256,
+                source_revision=args.source_revision,
+                ci_run_id=args.ci_run_id,
+                ci_run_attempt=args.ci_run_attempt,
+                output=args.output,
+            )
     except (EvidenceProductionError, OSError, json.JSONDecodeError) as exc:
         print(str(exc), file=sys.stderr)
         return 1

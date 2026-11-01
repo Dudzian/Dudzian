@@ -43,6 +43,20 @@ flow and exporter boundary can be designed without coupling trading to a backend
 
 ## Gate tiers
 
+Ścieżka fizycznych dowodów Linux (`linux_physical_evidence`,
+`linux_physical_observations`, `linux_physical_native`,
+`linux_physical_collector` i `linux_evidence_handoff`) wchodzi do
+skonfigurowanego mypy na Linux i Windows, jawnego lint/format oraz istniejącego
+raportu branch coverage `quality-ratchet`. Cztery nowe moduły testów
+sprawdzają podpisy, semantykę, odmowy natywnych granic i transport; używają
+plików tymczasowych oraz zastąpionych granic systemu, bez instalacji,
+restartów i kwalifikacji sprzętu. Osobny job `linux-evidence-contract`
+powtarza tę hermetyczną walidację w workflow platformowym. Próg 70%
+w połączonej bramce `quality-ratchet-coverage`, wcześniejsze zakresy i limity
+czasu pozostają bez zmian. Wykonanie fizyczne wymaga oddzielnego manualnego
+przebiegu i chronionych environments opisanych w
+[procedurze Dell](runbooks/STAGE9_LINUX_PHYSICAL_QUALIFICATION.md).
+
 ### Tier A: fast local
 
 From PowerShell:
@@ -62,6 +76,15 @@ set with branch coverage, a 70% diff-coverage ratchet, maintained Semgrep rules
 as advisory output, custom Semgrep rules as blocking checks, and the baselined
 offline Betterleaks working-tree scan. Existing CI continues to own the larger
 pytest, pip-audit, and SBOM jobs.
+
+Remediacja PR #3233 włącza `linux_release_identity.py`,
+`linux_physical_ipc.py` i `linux_physical_postgresql.py` do skonfigurowanego
+mypy Linux/Win32, jawnego Ruff oraz istniejących testów i branch coverage.
+Nowe testy potwierdzają jądrową tożsamość AF_UNIX i odmowy podmiany, odczytową
+diagnostykę peer PostgreSQL oraz niezależny podpis tożsamości wydania.
+Nie implementują brakujących funkcjonalnych adapterów usług; produkcyjna
+kwalifikacja pozostaje BLOCKED. Syntetyczny certyfikat lub wynik testu nie
+otwiera bramki. Progi pokrycia, timeouty i opt-in sprzętowy pozostają bez zmian.
 
 The bounded Stage 9 offline artifact verifier enters these existing Ruff,
 Linux/Windows mypy, pytest and branch-coverage gates. Its tests perform real

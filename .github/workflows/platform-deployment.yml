@@ -9,8 +9,254 @@ on:
         required: true
         type: boolean
         default: false
+      run_linux_physical:
+        description: "Zweryfikuj podpisane dowody z zatwierdzonego fizycznego hosta Linux"
+        required: true
+        type: boolean
+        default: false
 
 jobs:
+  linux-evidence-contract:
+    runs-on: ubuntu-24.04
+    permissions: {contents: read}
+    steps:
+      - uses: actions/checkout@v7
+        with: {persist-credentials: false}
+      - uses: actions/setup-python@v7
+        with: {python-version: "3.11"}
+      - run: >-
+          python -m pip install pytest pyyaml "cryptography>=50.0.1,<51" jsonschema
+          "psycopg[binary]>=3.2,<4" "ruff==0.14.11" "mypy==1.10.0" types-PyYAML types-requests
+      - name: Sprawdź lint wszystkich modułów ścieżki dowodowej
+        run: >-
+          python -m ruff check deployment/linux_physical_evidence.py
+          deployment/linux_physical_observations.py deployment/linux_physical_native.py
+          deployment/linux_release_identity.py
+          deployment/linux_physical_ipc.py
+          deployment/linux_physical_postgresql.py
+          deployment/linux_physical_collector.py deployment/linux_evidence_handoff.py
+          deployment/platform_readiness.py deployment/platform_evidence.py
+          tests/deployment/test_linux_physical_evidence.py
+          tests/deployment/test_linux_physical_remediation.py
+          tests/deployment/test_linux_physical_ipc.py
+          tests/deployment/test_linux_physical_postgresql.py
+          tests/deployment/test_linux_release_identity.py
+          tests/deployment/test_linux_physical_collector.py
+          tests/deployment/test_linux_physical_native.py
+          tests/scripts/test_linux_physical_evidence_workflow.py
+      - name: Sprawdź format wszystkich modułów ścieżki dowodowej
+        run: >-
+          python -m ruff format --check deployment/linux_physical_evidence.py
+          deployment/linux_physical_observations.py deployment/linux_physical_native.py
+          deployment/linux_release_identity.py
+          deployment/linux_physical_ipc.py
+          deployment/linux_physical_postgresql.py
+          deployment/linux_physical_collector.py deployment/linux_evidence_handoff.py
+          deployment/platform_readiness.py deployment/platform_evidence.py
+          tests/deployment/test_linux_physical_evidence.py
+          tests/deployment/test_linux_physical_remediation.py
+          tests/deployment/test_linux_physical_ipc.py
+          tests/deployment/test_linux_physical_postgresql.py
+          tests/deployment/test_linux_release_identity.py
+          tests/deployment/test_linux_physical_collector.py
+          tests/deployment/test_linux_physical_native.py
+          tests/scripts/test_linux_physical_evidence_workflow.py
+      - name: Sprawdź typy modułów ścieżki dowodowej
+        run: >-
+          python -m mypy deployment/linux_physical_evidence.py
+          deployment/linux_physical_observations.py deployment/linux_physical_native.py
+          deployment/linux_release_identity.py
+          deployment/linux_physical_ipc.py
+          deployment/linux_physical_postgresql.py
+          deployment/linux_physical_collector.py deployment/linux_evidence_handoff.py
+          deployment/platform_readiness.py deployment/platform_evidence.py
+      - name: Sprawdź hermetyczne kontrakty i odmowy bez kwalifikacji fizycznej
+        run: >-
+          python -m pytest -q tests/deployment/test_linux_physical_evidence.py
+          tests/deployment/test_linux_physical_remediation.py
+          tests/deployment/test_linux_physical_ipc.py
+          tests/deployment/test_linux_physical_postgresql.py
+          tests/deployment/test_linux_release_identity.py
+          tests/deployment/test_linux_physical_collector.py
+          tests/deployment/test_linux_physical_native.py
+          tests/scripts/test_linux_physical_evidence_workflow.py
+          tests/deployment/test_platform_readiness.py
+          tests/deployment/test_platform_evidence.py
+          tests/scripts/test_platform_core_evidence_workflow.py
+
+  linux-physical-challenge:
+    if: >-
+      github.event_name == 'workflow_dispatch' && inputs.run_linux_physical == true
+      && github.ref == 'refs/heads/main' && github.repository == 'Dudzian/Dudzian'
+    runs-on: ubuntu-24.04
+    environment: stage9-linux-challenge
+    permissions: {contents: read, actions: read}
+    timeout-minutes: 10
+    env:
+      LINUX_POLICY_COMMIT: ${{ vars.STAGE9_LINUX_EVIDENCE_POLICY_COMMIT }}
+      LINUX_POLICY_SHA256: ${{ vars.STAGE9_LINUX_EVIDENCE_POLICY_SHA256 }}
+      LINUX_HOST_ID: ${{ vars.STAGE9_LINUX_EVIDENCE_HOST_ID }}
+    steps:
+      - uses: actions/checkout@v7
+        with: {ref: "${{ github.sha }}", persist-credentials: false}
+      - uses: actions/setup-python@v7
+        with: {python-version: "3.11"}
+      - run: python -m pip install cryptography
+      - name: Wymagaj rzeczywistej ochrony środowiska wydającego challenge
+        env: {GH_TOKEN: "${{ secrets.STAGE9_GITHUB_CONTROLS_READ_TOKEN }}"}
+        run: >-
+          python -m deployment.linux_evidence_handoff require-environment
+          --repository "$GITHUB_REPOSITORY" --name stage9-linux-challenge
+          --policy-commit "$LINUX_POLICY_COMMIT"
+      - name: Pobierz dane polityki z dokładnej zatwierdzonej rewizji
+        uses: actions/checkout@v7
+        with:
+          ref: "${{ vars.STAGE9_LINUX_EVIDENCE_POLICY_COMMIT }}"
+          path: stage9-approved-policy
+          persist-credentials: false
+      - name: Wydaj jednorazowe challenge bieżącej rewizji i próby CI
+        run: >-
+          python -m deployment.linux_physical_evidence issue-challenge
+          --source-revision "$GITHUB_SHA" --ci-run-id "$GITHUB_RUN_ID"
+          --ci-run-attempt "$GITHUB_RUN_ATTEMPT" --host-id "$LINUX_HOST_ID"
+          --policy stage9-approved-policy/policy.json --expected-policy-sha256 "$LINUX_POLICY_SHA256"
+          --output linux-challenge.json
+      - uses: actions/upload-artifact@v7
+        with:
+          name: stage9-linux-challenge-${{ github.run_id }}-${{ github.run_attempt }}
+          path: linux-challenge.json
+          if-no-files-found: error
+          overwrite: false
+          retention-days: 1
+
+  linux-physical-validation:
+    if: >-
+      github.event_name == 'workflow_dispatch' && inputs.run_linux_physical == true
+      && github.ref == 'refs/heads/main' && github.repository == 'Dudzian/Dudzian'
+    needs: [linux-physical-challenge]
+    runs-on: ubuntu-24.04
+    # Operator zatwierdza ten job dopiero po zakończeniu transportu z Della.
+    environment: stage9-linux-evidence
+    permissions: {contents: read, actions: read}
+    timeout-minutes: 15
+    env:
+      LINUX_POLICY_COMMIT: ${{ vars.STAGE9_LINUX_EVIDENCE_POLICY_COMMIT }}
+      LINUX_POLICY_SHA256: ${{ vars.STAGE9_LINUX_EVIDENCE_POLICY_SHA256 }}
+    steps:
+      - uses: actions/checkout@v7
+        with: {ref: "${{ github.sha }}", persist-credentials: false}
+      - uses: actions/setup-python@v7
+        with: {python-version: "3.11"}
+      - run: python -m pip install cryptography
+      - name: Wymagaj niezależnej aprobaty i ochrony środowiska
+        env: {GH_TOKEN: "${{ secrets.STAGE9_GITHUB_CONTROLS_READ_TOKEN }}"}
+        run: >-
+          python -m deployment.linux_evidence_handoff require-environment
+          --repository "$GITHUB_REPOSITORY" --name stage9-linux-evidence
+          --policy-commit "$LINUX_POLICY_COMMIT"
+      - name: Pobierz dane polityki z dokładnej zatwierdzonej rewizji
+        uses: actions/checkout@v7
+        with:
+          ref: "${{ vars.STAGE9_LINUX_EVIDENCE_POLICY_COMMIT }}"
+          path: stage9-approved-policy
+          persist-credentials: false
+      - uses: actions/download-artifact@v8
+        with:
+          name: stage9-linux-challenge-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence
+      - name: Pobierz jeden ograniczony pakiet z zatwierdzonego transportu
+        env: {GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}"}
+        run: >-
+          python -m deployment.linux_evidence_handoff fetch
+          --repository "$GITHUB_REPOSITORY" --target-run-id "$GITHUB_RUN_ID"
+          --target-run-attempt "$GITHUB_RUN_ATTEMPT" --output evidence/bundle.json
+      - name: Zweryfikuj podpisy, pochodzenie i semantykę surowych obserwacji
+        run: >-
+          python -m deployment.linux_physical_evidence verify
+          --bundle evidence/bundle.json --challenge evidence/linux-challenge.json
+          --policy stage9-approved-policy/policy.json --expected-policy-sha256 "$LINUX_POLICY_SHA256"
+          --source-revision "$GITHUB_SHA" --ci-run-id "$GITHUB_RUN_ID"
+          --ci-run-attempt "$GITHUB_RUN_ATTEMPT" --output evidence/linux-evidence.json
+      - uses: actions/upload-artifact@v7
+        with:
+          name: stage9-linux-validated-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            evidence/bundle.json
+            evidence/linux-challenge.json
+            evidence/linux-evidence.json
+          if-no-files-found: error
+          overwrite: false
+          retention-days: 1
+
+  linux-production-gate:
+    if: >-
+      github.event_name == 'workflow_dispatch' && inputs.run_linux_physical == true
+      && github.ref == 'refs/heads/main' && github.repository == 'Dudzian/Dudzian'
+    needs: [linux-physical-validation, core-linux, core-windows, core-macos]
+    runs-on: ubuntu-24.04
+    environment: stage9-linux-evidence
+    permissions: {contents: read, actions: read}
+    timeout-minutes: 15
+    env:
+      LINUX_POLICY_COMMIT: ${{ vars.STAGE9_LINUX_EVIDENCE_POLICY_COMMIT }}
+      LINUX_POLICY_SHA256: ${{ vars.STAGE9_LINUX_EVIDENCE_POLICY_SHA256 }}
+    steps:
+      - uses: actions/checkout@v7
+        with: {ref: "${{ github.sha }}", persist-credentials: false}
+      - uses: actions/setup-python@v7
+        with: {python-version: "3.11"}
+      - run: python -m pip install cryptography
+      - name: Wymagaj ochrony środowiska końcowej decyzji
+        env: {GH_TOKEN: "${{ secrets.STAGE9_GITHUB_CONTROLS_READ_TOKEN }}"}
+        run: >-
+          python -m deployment.linux_evidence_handoff require-environment
+          --repository "$GITHUB_REPOSITORY" --name stage9-linux-evidence
+          --policy-commit "$LINUX_POLICY_COMMIT"
+      - name: Pobierz dane polityki z dokładnej zatwierdzonej rewizji
+        uses: actions/checkout@v7
+        with:
+          ref: "${{ vars.STAGE9_LINUX_EVIDENCE_POLICY_COMMIT }}"
+          path: stage9-approved-policy
+          persist-credentials: false
+      - name: Wymagaj sukcesu wszystkich bieżących zadań Core
+        shell: python
+        env:
+          CORE_LINUX_RESULT: ${{ needs.core-linux.result }}
+          CORE_WINDOWS_RESULT: ${{ needs.core-windows.result }}
+          CORE_MACOS_RESULT: ${{ needs.core-macos.result }}
+        run: |
+          import os
+          names = ("CORE_LINUX_RESULT", "CORE_WINDOWS_RESULT", "CORE_MACOS_RESULT")
+          if any(os.environ.get(name) != "success" for name in names):
+              raise SystemExit("Wszystkie bieżące zadania Core muszą zakończyć się sukcesem")
+      - uses: actions/download-artifact@v8
+        with:
+          name: stage9-linux-validated-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence
+      - uses: actions/download-artifact@v8
+        with: {name: core-evidence-Linux, path: evidence/core-Linux}
+      - uses: actions/download-artifact@v8
+        with: {name: core-evidence-Windows, path: evidence/core-Windows}
+      - uses: actions/download-artifact@v8
+        with: {name: core-evidence-macOS, path: evidence/core-macOS}
+      - name: Połącz pełną macierz Core bieżącego przebiegu
+        run: >-
+          python -m deployment.platform_evidence aggregate-core
+          --source-revision "$GITHUB_SHA"
+          --marker evidence/core-Linux/core-Linux.json
+          --marker evidence/core-Windows/core-Windows.json
+          --marker evidence/core-macOS/core-macOS.json
+          --output evidence/core-matrix.json
+      - name: Podejmij decyzję po ponownej weryfikacji surowych dowodów
+        run: >-
+          python -m deployment.platform_readiness --platform LINUX
+          --current-revision "$GITHUB_SHA" --expected-ci-provider "$GITHUB_SERVER_URL"
+          --expected-ci-run-id "$GITHUB_RUN_ID" --expected-ci-run-attempt "$GITHUB_RUN_ATTEMPT"
+          --evidence evidence/core-matrix.json --evidence evidence/linux-evidence.json
+          --linux-bundle evidence/bundle.json --linux-challenge evidence/linux-challenge.json
+          --linux-policy stage9-approved-policy/policy.json --linux-policy-sha256 "$LINUX_POLICY_SHA256"
+          --linux-replay-ledger "$RUNNER_TEMP/linux-evidence-consumed.sqlite"
+
   core-linux:
     runs-on: ubuntu-latest
     steps: &core_steps
