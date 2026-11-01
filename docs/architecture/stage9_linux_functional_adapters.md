@@ -163,3 +163,50 @@ podpisywania, progów ani analizy AST. Nowe testy sprawdzają czysty kontrakt,
 zamknięty zakres zależności sondy i wspólne identyfikatory.
 
 Zidentyfikowano również wcześniejszy drift pinu `account_genesis_freshness_authority.py`: pin w main to `cd508809…`, a bajty pliku w tym samym main mają SHA256 `81cd0df375fe1a48ba943c7645376b4d97350288c0ebe6523207ff90ed22572b`. Tego niezwiązanego pinu ani modułu nie zmieniono w tym PR; pełna istniejąca kwalifikacja deploymentu nadal odmówi i wymaga osobnego przeglądu tych bajtów.
+
+## Remediacja checkoutu Windows i bezpiecznego wyjścia diagnostyki
+
+Na HEAD `ebf09dfaddddd0016583527befda0af44ff00dbe` plik
+`linux_service_ipc.py` nadal miał przejrzane bajty LF i hash
+`099e6a3a08717b48e7a01606b9908f56f0eec40aced260d554d7dfc4562b451e`.
+Konwersja tych samych bajtów na CRLF daje dokładnie zgłoszony przez Windows
+`51aa24224d5a61e9224afd3a6d384e6da79f45a59fe9fdf56cdb4e65988601ee`.
+Pierwotne `* text=auto` nie przypinało końców linii pięciu przejrzanych źródeł.
+Między `f660d236` i `ebf09dfa` te implementacje nie zmieniły się; pozostałe
+cztery źródła również zgadzały się z rejestrem dla bajtów LF.
+
+Naprawa dodaje `text eol=lf` wyłącznie dla pięciu ścieżek sprawdzanych w teście
+PR #3234. Nie zmienia żadnego hasha `REVIEWED_CODE_DIGESTS` ani kwalifikatora
+instalacji. Test rzeczywistego `git checkout-index` odtwarza stary błędny SHA
+przy `core.autocrlf=true`, a z aktualnymi atrybutami sprawdza wszystkie pięć
+pinów dla `core.autocrlf=true` i `false`. Osobne testy wykonują rzeczywistą
+pętlę kwalifikatora na plikach tymczasowych: zmiana jednego bajtu, CRLF,
+symlink i niewłaściwe metadane muszą zostać odrzucone przed systemctl i bazą.
+Zainstalowany plik nadal jest sprawdzany jako dokładne bajty, bez normalizacji
+i bez automatycznego akceptowania nowego kodu. Wcześniejszy drift szóstego pinu
+pozostaje oddzielną, niezmienioną blokadą.
+
+Zgłoszenie CodeQL #54 dotyczyło niekontrolowanego wypisywania raportu
+`diagnose_stage9_stage41b_coexistence.py`. Zweryfikowane ścieżki źródłowe to
+`stage9_source_cca_test_runtime._nss()` → `resources()` → `diagnose()` → stdout
+oraz procfs → `processes()` → `diagnose()` → stdout. Raport zawierał dane
+systemowe i identyfikatory, a rekurencyjna czarna lista trzech nazw nie
+stanowiła zamkniętego kontraktu bezpieczeństwa dla innych i przyszłych pól.
+
+CLI publikuje teraz jawną projekcję: literalne statusy i powody odmowy,
+dwa niezmienne blokery oraz wartości logiczne. Ciągi zwracane są wyłącznie
+z przejrzanych stałych. Nieznane pola nie są przechodzone ani serializowane;
+NSS, aliasy, PID/UID/GID, ścieżki i surowe komunikaty błędów nie trafiają do
+stdout/stderr. Błędy parsera argumentów mają stały kod bez odbijania wartości
+argumentów. Obsługa błędów obejmuje również import i projekcję raportu.
+Wewnętrzne `processes()` zachowuje detekcję i liczniki; istniejący test nadal
+sprawdza ich wartości przed weryfikacją bezpiecznego wyjścia CLI.
+
+Testy negatywne obejmują sekrety zagnieżdżone w znanych i nieznanych polach,
+komunikaty wyjątków, argumenty CLI i obiekty z prywatną reprezentacją.
+Nie zmieniono reguły CodeQL ani nie dodano tłumienia. Dostęp do samego alertu
+i jego SARIF nie był dostępny przez użyte API; źródła są podstawą opisu
+przepływu. Weryfikacja nowego SHA musi sprawdzić osobną kontrolę wyników
+`CodeQL`, która na poprzednim HEAD zgłaszała jeden nowy alert wysokiej
+istotności, oprócz statusu joba analizy. Sam udany job analizy nie oznacza
+braku zgłoszeń. Nie wykonujemy merge ani ręcznego zamknięcia alertu.
