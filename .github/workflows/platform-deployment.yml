@@ -32,6 +32,9 @@ jobs:
           python -m ruff check deployment/linux_physical_evidence.py
           deployment/linux_physical_observations.py deployment/linux_physical_native.py
           deployment/linux_release_identity.py
+          deployment/production_local_installer.py
+          deployment/production_local_installer_host.py
+          deployment/freshness_verifier_entrypoint.py
           deployment/linux_physical_ipc.py
           deployment/linux_physical_postgresql.py
           bot_core/linux_service_ipc.py
@@ -52,6 +55,7 @@ jobs:
           tests/deployment/test_linux_verifier_observation.py
           tests/security/test_linux_service_postgresql_integration.py
           tests/deployment/test_linux_release_identity.py
+          tests/deployment/test_production_local_installer.py
           tests/deployment/test_linux_physical_collector.py
           tests/deployment/test_linux_physical_native.py
           tests/scripts/test_linux_physical_evidence_workflow.py
@@ -60,6 +64,9 @@ jobs:
           python -m ruff format --check deployment/linux_physical_evidence.py
           deployment/linux_physical_observations.py deployment/linux_physical_native.py
           deployment/linux_release_identity.py
+          deployment/production_local_installer.py
+          deployment/production_local_installer_host.py
+          deployment/freshness_verifier_entrypoint.py
           deployment/linux_physical_ipc.py
           deployment/linux_physical_postgresql.py
           bot_core/linux_service_ipc.py
@@ -80,6 +87,7 @@ jobs:
           tests/deployment/test_linux_verifier_observation.py
           tests/security/test_linux_service_postgresql_integration.py
           tests/deployment/test_linux_release_identity.py
+          tests/deployment/test_production_local_installer.py
           tests/deployment/test_linux_physical_collector.py
           tests/deployment/test_linux_physical_native.py
           tests/scripts/test_linux_physical_evidence_workflow.py
@@ -88,6 +96,9 @@ jobs:
           python -m mypy deployment/linux_physical_evidence.py
           deployment/linux_physical_observations.py deployment/linux_physical_native.py
           deployment/linux_release_identity.py
+          deployment/production_local_installer.py
+          deployment/production_local_installer_host.py
+          deployment/freshness_verifier_entrypoint.py
           deployment/linux_physical_ipc.py
           deployment/linux_physical_postgresql.py
           bot_core/linux_service_ipc.py
@@ -109,6 +120,7 @@ jobs:
           tests/deployment/test_linux_functional_pipeline.py
           tests/deployment/test_linux_verifier_observation.py
           tests/deployment/test_linux_release_identity.py
+          tests/deployment/test_production_local_installer.py
           tests/deployment/test_linux_physical_collector.py
           tests/deployment/test_linux_physical_native.py
           tests/scripts/test_linux_physical_evidence_workflow.py

@@ -156,7 +156,11 @@ def qualify_production_local_deployment() -> None:
     _fail(shown.get("User") == VERIFIER_USER, "wrong effective service User")
     _fail(shown.get("Group") == IPC_GROUP, "wrong effective service Group")
     _fail(shown.get("ActiveState") == "active", "verifier service is not active")
-    _fail("freshness_verifier_service" in shown.get("ExecStart", ""), "wrong executable")
+    _fail(
+        "/usr/lib/cryptohunter/deployment/freshness_verifier_entrypoint.py"
+        in shown.get("ExecStart", ""),
+        "wrong executable",
+    )
     _fail(shown.get("Environment") == "PYTHONNOUSERSITE=1", "unexpected environment")
 
     directory = Path(VERIFIER_SOCKET_PATH).parent

@@ -8,11 +8,15 @@ This profile has one online topology:
 `/run/postgresql, freshness_crypto_verifier` → durable preparation; then the
 runtime connects independently as `freshness_runtime` for the SERIALIZABLE CAS.
 
-The offline administrator runs `deployment/install-production-local.sh`,
-installs the three PostgreSQL templates exactly, completes the existing schema
-and retained-key provisioning ceremony, starts PostgreSQL, and starts the
-enabled verifier unit.  Runtime code uses the same frozen socket and database
-coordinates; there is no second runtime daemon or duplicated authority state.
+The safe installer now requires an explicit read-only preflight, a separately
+approved signed inventory, an existing PostgreSQL 16/main cluster and prepared
+OS identities. It publishes only a fresh or identical managed substrate and
+does not enable, reload or start services, provision keys, or migrate an existing
+deployment. Follow the [operator procedure](../docs/runbooks/STAGE9_LINUX_SAFE_INSTALLER.md)
+for prerequisites, refusal states and recovery. Schema, retained-key provisioning
+and applying configuration remain separately reviewed offline ceremonies.
+Runtime code uses the same frozen socket and database coordinates; there is no
+second runtime daemon or duplicated authority state.
 
 The runtime directory is recreated by systemd as verifier-owned,
 `freshness_verifier_ipc` group-owned mode `0750`.  The socket is mode `0660`
@@ -22,14 +26,24 @@ database session before binding.  Only an exact, verifier-owned stale socket is
 removed; symlinks, regular files, foreign sockets, and substituted parents fail
 closed.
 
-Run the live binary qualifier as offline root after startup:
+The isolated systemd command uses the fixed, protected
+`deployment/freshness_verifier_entrypoint.py` launcher. It imports the actual
+verifier from the fixed installation path without executing the broad package
+initializer; `WorkingDirectory` alone does not provide imports under `-I`.
+
+Live qualification remains a separate operator action after independently
+approved startup. The qualifier module must be available through a separately
+trusted interpreter/package installation; invoking `-I -m` from the copied
+working directory alone is insufficient:
 
 ```console
 cd /usr/lib/cryptohunter
 /usr/bin/python3 -I -s -m bot_core.freshness_deployment_qualification
 ```
 
-It emits only `PASS` or `FAIL CLOSED`.  It checks distinct principals and IPC
+It emits only `PASS` or `FAIL CLOSED`. The known reviewed AccountGenesis source
+pin drift still blocks full qualification; the installer does not change that
+pin. It checks distinct principals and IPC
 group membership, exact unit bytes and effective unit properties, live runtime
 directory/socket metadata, code-side provenance, active service state,
 PostgreSQL >=16 durability and local-only transport settings, exact effective

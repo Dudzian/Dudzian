@@ -450,3 +450,13 @@ zmiany treści, moduły wykorzystywane później oraz odmowę przed zmianami hos
 Nie uruchamiają fizycznego `--execute` ani sudo w CI. Granice tej lokalnej
 kontroli opisuje [procedura operatora](architecture/stage9_source_cca_physical_test_operator.md);
 `PHYSICAL_TEST_PENDING` i `PRODUCTION_NO_GO` pozostają bez zmian.
+
+Bezpieczny instalator substratu Freshness na Linux oraz jego odczytowy preflight
+wchodzą do skonfigurowanego mypy Linux/Win32, jawnego Ruff lint/format i pomiaru
+gałęzi istniejącego `quality-ratchet`. Hermetyczne testy
+`tests/deployment/test_production_local_installer.py` zastępują granice hosta
+i używają katalogów tymczasowych; nie tworzą kont, klastra ani usług systemu.
+Job `linux-evidence-contract` powtarza te testy bez wywoływania fizycznej instalacji.
+Dotychczasowe inventory atomic/history, progi diff coverage 70%, timeouty
+i manualne bramki sprzętowe pozostają bez zmian. Testy instalatora nie
+kwalifikują pełnego runtime ani fizycznej instalacji CryptoHunter.
