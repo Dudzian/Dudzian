@@ -21,6 +21,7 @@ from deployment.linux_physical_observations import (
     canonical,
     require,
     sha256,
+    validate_functional_observations,
     validate_installation,
     validate_observation_prefix,
     _snapshot,
@@ -234,6 +235,72 @@ class NativeDriver:
             ".stage9-evidence-" + challenge_id
         )
 
+    def functional_observations(self) -> dict[str, Any]:
+        """Odczytaj właściwy verifier; root nie staje się przez to runtime."""
+        from deployment.linux_physical_ipc import ExpectedPeerProcess, collect_verifier_observation
+
+        qualification = self.installation.get("functional_qualification")
+        if qualification is None:
+            raise ObservationError("Nie zatwierdzono odczytowego adaptera verifiera")
+        require(
+            sys.platform == "linux" and os.geteuid() == 0 and os.getegid() == 0,
+            "Obserwator verifiera wymaga natywnego Linux i administratora",
+        )
+        policy_path = Path("/etc/cryptohunter/linux-qualification.json")
+        raw_policy = read_regular(policy_path, protected=True, maximum=4096)
+        pinned_policy = next(
+            item for item in self.installation["configuration"] if item["path"] == str(policy_path)
+        )
+        require(sha256(raw_policy) == pinned_policy["sha256"], "Podmieniona polityka diagnostyki")
+        policy = json.loads(raw_policy)
+        require(
+            type(policy) is dict
+            and type(policy.get("schema_version")) is int
+            and policy
+            == {"schema_version": 1, "installation_id": qualification["installation_id"]},
+            "Zainstalowana polityka dotyczy innej instalacji",
+        )
+        selected = [unit for unit in self.installation["units"] if unit["role"] == "verifier"]
+        require(len(selected) == 1, "Niejednoznaczna jednostka verifiera")
+        spec = selected[0]
+        props = self.properties(spec["name"])
+        require(
+            props["ActiveState"] == "active"
+            and props["ControlGroup"] == "/system.slice/" + spec["name"],
+            "Verifier nie działa w zatwierdzonej cgroup",
+        )
+        pid = int(props["MainPID"])
+        process = process_observation(pid)
+        identity = self.installation["identities"]["verifier"]
+        require(
+            process["uid"] == identity["uid"]
+            and process["gid"] == identity["gid"]
+            and process["exe_sha256"]
+            in {spec["executable_sha256"], spec["update_executable_sha256"]},
+            "Proces verifiera różni się od zatwierdzonej instalacji",
+        )
+        expected = ExpectedPeerProcess(
+            pid=pid,
+            uid=identity["uid"],
+            gid=identity["gid"],
+            start_time_ticks=process["start_time_ticks"],
+            executable_sha256=process["exe_sha256"],
+        )
+        raw = collect_verifier_observation(
+            "/run/cryptohunter/freshness/verifier.sock",
+            expected=expected,
+            expected_cgroup=props["ControlGroup"],
+            challenge_id=self.challenge_id,
+            installation_id=qualification["installation_id"],
+        )
+        require(
+            props == self.properties(spec["name"]) and process == process_observation(pid),
+            "Usługa zmieniła się podczas obserwacji funkcjonalnej",
+        )
+        result = {"schema_version": 1, "status": "PARTIAL_BLOCKED", "verifier": raw}
+        validate_functional_observations(result, self.installation, challenge_id=self.challenge_id)
+        return result
+
     def package(self) -> dict[str, Any] | None:
         result = command(
             [
@@ -354,6 +421,13 @@ class NativeDriver:
             "ident_sha256": sha256(canonical(ident)),
             "system_identifier": cluster[0],
         }
+        if "functional_qualification" in self.installation:
+            require(
+                len(hba) <= 256 and len(ident) <= 256 and len(canonical([hba, ident])) <= 65536,
+                "Przekroczony limit surowych reguł PostgreSQL",
+            )
+            administrative_observation["hba_rules"] = [list(row) for row in hba]
+            administrative_observation["ident_mappings"] = [list(row) for row in ident]
         return {
             "administrative_observation": administrative_observation,
             "service_qualification": blocked_service_qualification(),
@@ -399,7 +473,7 @@ class NativeDriver:
         journal = Path("/var/log/journal")
         _safe_parents(journal)
         info = journal.lstat()
-        return {
+        result = {
             "package": self.package(),
             "units": units,
             "configuration": [
@@ -414,6 +488,9 @@ class NativeDriver:
                 "uid": info.st_uid,
             },
         }
+        if "functional_qualification" in self.installation:
+            result["functional_observations"] = self.functional_observations()
+        return result
 
     def baseline(self) -> dict[str, Any]:
         paths = []
@@ -505,7 +582,7 @@ class NativeDriver:
 
     def lifecycle(self) -> dict[str, Any]:
         before = self.snapshot()
-        _snapshot(before, self.installation, updated=False)
+        _snapshot(before, self.installation, updated=False, challenge_id=self.challenge_id)
         commands = []
         snapshots: dict[str, Any] = {}
         for action in ("stop", "start", "restart", "crash"):
@@ -589,7 +666,12 @@ class NativeDriver:
             }
         require(phase in {"update", "failed_update"}, "Nieznana faza")
         before = self.snapshot()
-        _snapshot(before, self.installation, updated=phase == "failed_update")
+        _snapshot(
+            before,
+            self.installation,
+            updated=phase == "failed_update",
+            challenge_id=self.challenge_id,
+        )
         prior_observations = previous_records[-1]["payload"]["observations"]
         prior_snapshot = prior_observations.get("snapshot", prior_observations.get("after"))
         require(

@@ -328,3 +328,216 @@ def test_unavailable_evidence_does_not_print_private_errors(monkeypatch, capsys,
     report = capsys.readouterr().out
     assert "PRIVATE" not in report
     assert "BLOCKED" in report
+
+
+def test_cli_projects_closed_schema_without_nested_nss_or_unknown_fields(monkeypatch, capsys):
+    secret = "PRIVATE_ACCOUNT_DATA_NEVER_PRINT"
+    raw_report = {
+        "qualification": "PASS",
+        "coexistence_authorized": True,
+        "preflight_exception": True,
+        "production_status": "PRODUCTION_GO",
+        "evidence_pin_verified": True,
+        "blockers": [secret, {"unknown": secret}],
+        "unknown": {"nested": [{"passwd": secret}, {"future_secret": secret}]},
+        "resources": {
+            "state": "BLOCKED",
+            "reason": "RESOURCE_OBSERVATION_INCOMPLETE_OR_CHANGED",
+            "legacy_identity_aliases": {"passwd": [secret], "group": [secret]},
+            "source_cca_checks": {secret: False},
+            "legacy": {"units": {"names": [secret]}, "future": [secret]},
+            "reason_counts": {secret: 999999},
+        },
+        "process_observation": {
+            "state": "UNCERTAIN",
+            "reason": "PROCESS_OBSERVATION_INCOMPLETE_OR_CHANGED",
+            "stable_visible_snapshot": False,
+            "full_confirmation": True,
+            "uncertainty": ["PROCFS_VISIBILITY_UNCERTAIN", secret, {"nested": secret}],
+            "matched_pids": [secret],
+            "checked_pid_count": secret,
+            "installation_metadata": {"private": secret},
+        },
+        "installations": [
+            {
+                "commit": commit,
+                "integrity": "PASS",
+                "provenance": "BLOCKED",
+                "reason": "INDEPENDENT_INVENTORY_MISMATCH",
+                "files": {secret: secret},
+                "directory_count": secret,
+            }
+            for commit in q.COMMITS
+        ],
+    }
+    monkeypatch.setattr(cli.os, "geteuid", lambda: 1000)
+    monkeypatch.setattr(q, "diagnose", lambda *args: raw_report)
+    assert cli.main(["--run-id", "012345abcdef"]) == 2
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    assert secret not in captured.out
+    report = json.loads(captured.out)
+    assert report["qualification"] == "BLOCKED"
+    assert report["production_status"] == "PRODUCTION_NO_GO"
+    assert report["coexistence_authorized"] is False
+    assert report["preflight_exception"] is False
+    assert report["evidence_pin_verified"] is True
+    assert report["blockers"] == [
+        "NO_COMPLETE_INDEPENDENT_HOST_ISOLATION_PROOF",
+        "NO_OTHER_INSTALLATIONS_GATE_RETAINED",
+    ]
+    assert "unknown" not in report
+    assert report["resources"]["state"] == "BLOCKED"
+    assert report["resources"]["reason"] == "RESOURCE_OBSERVATION_INCOMPLETE_OR_CHANGED"
+    assert "legacy_identity_aliases" not in report["resources"]
+    assert "legacy" not in report["resources"]
+    assert report["process_observation"]["full_confirmation"] is False
+    assert report["process_observation"]["uncertainty"] == ["PROCFS_VISIBILITY_UNCERTAIN"]
+    assert report["installations"][0]["provenance"] == "BLOCKED"
+    assert report["installations"][0]["reason"] == "INDEPENDENT_INVENTORY_MISMATCH"
+
+
+@pytest.mark.parametrize("section", [None, [], "PRIVATE_SECRET", 123, False])
+def test_unknown_report_shape_is_closed(section):
+    projected = cli._safe_projection(section)
+    assert projected["qualification"] == "BLOCKED"
+    assert projected["reason"] == "DIAGNOSTIC_REPORT_SCHEMA_UNAVAILABLE"
+    assert "PRIVATE_SECRET" not in json.dumps(projected)
+
+
+@pytest.mark.parametrize(
+    "payload", ["PRIVATE_SECRET", {"private": "PRIVATE_SECRET"}, ["PRIVATE_SECRET"]]
+)
+def test_sensitive_data_in_known_status_and_reason_fields_cannot_reach_output(payload):
+    report = {
+        "reason": payload,
+        "evidence_pin_verified": payload,
+        "resources": {"state": payload, "reason": payload},
+        "process_observation": {
+            "state": payload,
+            "reason": payload,
+            "stable_visible_snapshot": payload,
+            "stable_process_identities": payload,
+            "stable_installation_bindings": payload,
+            "uncertainty": [payload],
+        },
+        "installations": [
+            {"commit": commit, "integrity": payload, "provenance": payload, "reason": payload}
+            for commit in q.COMMITS
+        ],
+    }
+    projected = cli._safe_projection(report)
+    assert "PRIVATE_SECRET" not in json.dumps(projected)
+    assert projected["evidence_pin_verified"] is False
+    assert projected["resources"]["state"] == "UNCERTAIN"
+    assert projected["process_observation"]["uncertainty"] == []
+    assert projected["process_observation"]["stable_visible_snapshot"] is False
+    assert all(item["integrity"] == "UNCERTAIN" for item in projected["installations"])
+
+
+def test_cli_does_not_print_observer_exception_data(monkeypatch, capsys):
+    monkeypatch.setattr(cli.os, "geteuid", lambda: 1000)
+
+    def fail(*args):
+        raise RuntimeError("PRIVATE_EXCEPTION_DATA")
+
+    monkeypatch.setattr(q, "diagnose", fail)
+    assert cli.main(["--run-id", "012345abcdef"]) == 2
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    assert "PRIVATE_EXCEPTION_DATA" not in captured.out
+    assert json.loads(captured.out)["reason"] == "DIAGNOSTIC_INPUT_OR_OBSERVATION_UNAVAILABLE"
+
+
+def test_cli_does_not_print_import_exception_data(monkeypatch, capsys):
+    import builtins
+
+    original_import = builtins.__import__
+
+    def import_module(name, *args, **kwargs):
+        if name == "deployment.stage9_source_cca_test_package":
+            raise ImportError("PRIVATE_IMPORT_ERROR")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(cli.os, "geteuid", lambda: 1000)
+    monkeypatch.setattr(builtins, "__import__", import_module)
+    assert cli.main(["--run-id", "012345abcdef"]) == 2
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    assert "PRIVATE_IMPORT_ERROR" not in captured.out
+    assert json.loads(captured.out)["reason"] == "DIAGNOSTIC_INPUT_OR_OBSERVATION_UNAVAILABLE"
+
+
+def test_cli_never_serializes_or_compares_unknown_objects(monkeypatch, capsys):
+    class PrivateObject:
+        def __str__(self):
+            raise RuntimeError("PRIVATE_SERIALIZATION_DATA")
+
+        def __repr__(self):
+            raise RuntimeError("PRIVATE_REPRESENTATION_DATA")
+
+        def __eq__(self, other):
+            raise RuntimeError("PRIVATE_EQUALITY_DATA")
+
+    private = PrivateObject()
+    report = {
+        "reason": private,
+        "unknown": private,
+        "resources": {"state": private, "reason": private, "legacy": private},
+        "process_observation": {
+            "state": private,
+            "reason": private,
+            "uncertainty": [private, {"nested": private}, "PROCESS_PERMISSION_DENIED"],
+            "stable_visible_snapshot": private,
+        },
+        "installations": [
+            {"commit": private, "integrity": private},
+            {"commit": q.COMMITS[1], "integrity": private, "reason": private},
+        ],
+    }
+    monkeypatch.setattr(cli.os, "geteuid", lambda: 1000)
+    monkeypatch.setattr(q, "diagnose", lambda *args: report)
+    assert cli.main(["--run-id", "012345abcdef"]) == 2
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    assert "PRIVATE_" not in captured.out
+    projected = json.loads(captured.out)
+    assert projected["qualification"] == "BLOCKED"
+    assert projected["process_observation"]["uncertainty"] == ["PROCESS_PERMISSION_DENIED"]
+
+
+def test_cli_projection_failure_does_not_print_exception_payload(monkeypatch, capsys):
+    class PrivateKey:
+        def __hash__(self):
+            return hash("reason")
+
+        def __eq__(self, other):
+            raise RuntimeError("PRIVATE_KEY_COMPARISON_DATA")
+
+    monkeypatch.setattr(cli.os, "geteuid", lambda: 1000)
+    monkeypatch.setattr(q, "diagnose", lambda *args: {PrivateKey(): "private"})
+    assert cli.main(["--run-id", "012345abcdef"]) == 2
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    assert "PRIVATE_" not in captured.out
+    projected = json.loads(captured.out)
+    assert projected["reason"] == "DIAGNOSTIC_INPUT_OR_OBSERVATION_UNAVAILABLE"
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["--uid-base", "PRIVATE_ARGUMENT_VALUE"],
+        ["--unknown-option", "PRIVATE_ARGUMENT_VALUE"],
+        ["--run-id", "PRIVATE_ARGUMENT_VALUE", "--uid-base", "invalid"],
+    ],
+)
+def test_cli_parse_errors_do_not_echo_argument_values(arguments, capsys):
+    with pytest.raises(SystemExit) as caught:
+        cli.main(arguments)
+    assert caught.value.code == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "PRIVATE_ARGUMENT_VALUE" not in captured.err
+    assert "invalid" not in captured.err
+    assert json.loads(captured.err)["reason"] == "DIAGNOSTIC_ARGUMENTS_INVALID"

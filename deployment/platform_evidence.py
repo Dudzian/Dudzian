@@ -17,6 +17,7 @@ from typing import Any
 from deployment.core_test_plan import MANIFEST, canonical_plan_digest, load_manifest
 from deployment.host_identity import canonical_host_os
 from deployment.windows_installer.contract import is_reviewed_wix_version
+from deployment.windows_stage8_evidence_contract import WINDOWS_STAGE8_ITEMS as WINDOWS_STAGE8_ITEMS
 from deployment.windows_stage9_evidence_contract import (
     CLEAN_INSTALL_PRECEREMONY_PROOFS,
     CLEAN_INSTALL_RECEIPT_KEYS,
@@ -47,10 +48,6 @@ WINDOWS_STAGE6_ITEMS = (
 WINDOWS_STAGE7_ITEMS = (
     "WINDOWS_NETWORK_RECOVERY",
     "WINDOWS_SAFE_OS_SHUTDOWN",
-)
-WINDOWS_STAGE8_ITEMS = (
-    "WINDOWS_POSTGRESQL_SUBSTRATE",
-    "WINDOWS_LOCAL_PRINCIPAL_AUTHENTICATION",
 )
 WINDOWS_STAGE9_ITEMS = ("WINDOWS_CLEAN_INSTALL",)
 WINDOWS_STAGE10_ITEMS = (

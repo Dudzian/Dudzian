@@ -44,7 +44,7 @@ def test_metadata_or_pass_cannot_replace_application_authentication(value):
 def test_even_exact_blocked_diagnostic_is_not_qualification():
     result = ipc.blocked_ipc_qualification()
     assert result["status"] == "BLOCKED"
-    assert "SERVER_OBSERVED_CLIENT_IDENTITY_UNPROVEN" in result["blockers"]
+    assert "ACTUAL_RUNTIME_CLIENT_EXCHANGE_UNPROVEN" in result["blockers"]
     with pytest.raises(ipc.LinuxIPCQualificationBlocked, match="funkcjonalnego"):
         ipc.require_ipc_qualification(result)
     result["blockers"].clear()

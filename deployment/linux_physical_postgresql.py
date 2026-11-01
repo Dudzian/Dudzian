@@ -1,26 +1,25 @@
 """Odczytowa diagnostyka peer PostgreSQL bez prawa do kwalifikacji produktu.
 
 Oddzielny proces sondy, nawet uruchomiony z UID usługi, nie jest tą usługą.
-Repozytorium nie udostępnia obecnie zatwierdzonego adaptera wiążącego połączenie
-rzeczywistego runtime/verifier z jego backendem PostgreSQL i funkcjonalną
-macierzą odmów. Ta granica pozostaje BLOCKED niezależnie od wyniku sondy.
+Adapter wewnątrz verifiera udostępnia częściowe, surowe obserwacje jego własnej
+sesji. Pełne powiązanie obu usług runtime/verifier i semantyczna macierz
+uprawnień pozostają BLOCKED niezależnie od wyniku osobnej sondy.
 """
 
 from __future__ import annotations
 
 import os
-from pathlib import PurePosixPath
 import re
 import sys
+from pathlib import PurePosixPath
 from typing import Any, cast
-
 
 ADAPTER_ID = "cryptohunter.linux.postgresql.service-connection.v1"
 BLOCKERS = (
-    "POSTGRESQL_SERVICE_CONNECTION_ADAPTER_UNAVAILABLE",
-    "POSTGRESQL_ACTUAL_SERVICE_PROCESS_BINDING_MISSING",
+    "POSTGRESQL_RUNTIME_SERVICE_CONNECTION_ADAPTER_UNAVAILABLE",
+    "POSTGRESQL_RUNTIME_PROCESS_BINDING_MISSING",
     "POSTGRESQL_RUNTIME_VERIFIER_PEER_PROOF_MISSING",
-    "POSTGRESQL_PRODUCT_EFFECTIVE_DENIAL_MATRIX_MISSING",
+    "POSTGRESQL_PRODUCT_SEMANTIC_PERMISSION_MATRIX_UNPROVEN",
 )
 IDENTITY_SQL = (
     "SELECT system_user::text,session_user::text,current_user::text,pg_backend_pid(),"
@@ -67,6 +66,119 @@ def require_service_qualification(value: object) -> None:
     """
     raise PostgreSQLQualificationBlocked(
         "BLOCKED: brak zatwierdzonego, związanego z procesem adaptera PostgreSQL właściwych usług"
+    )
+
+
+def validate_service_connection_observation(
+    value: object,
+    *,
+    challenge_id: str,
+    installation_id: str,
+    role: str,
+    expected_process: dict[str, Any],
+    expected_os_principal: str,
+    expected_database_role: str,
+) -> None:
+    """Odtwórz decyzję częściowego adaptera z surowych wierszy i faktów procesu.
+
+    Wywołujący przypina expected_process z niezależnej obserwacji procesu usługi,
+    nie z dokumentu odpowiedzi. Udany replay nie kwalifikuje brakującego runtime,
+    nie ustanawia zaufania do nadawcy JSON ani nie zastępuje kontroli HBA/ident.
+    """
+    from bot_core.linux_service_postgresql import (
+        ADAPTER_ID as SERVICE_ADAPTER_ID,
+        ALLOWED_SQL,
+        BACKEND_SQL,
+        DENIAL_SQL as SERVICE_DENIAL_SQL,
+        IDENTITY_SQL as SERVICE_IDENTITY_SQL,
+        OPPOSITE_ROLE_SQL,
+    )
+
+    _require(
+        type(value) is dict
+        and set(value)
+        == {
+            "schema_version",
+            "adapter_id",
+            "scope",
+            "challenge_id",
+            "installation_id",
+            "role",
+            "process",
+            "identity_sql",
+            "identity_row",
+            "backend_sql",
+            "backend_row",
+            "allowed",
+            "denials",
+            "transaction",
+        }
+        and type(value["schema_version"]) is int
+        and value["schema_version"] == 1
+        and value["adapter_id"] == SERVICE_ADAPTER_ID
+        and value["scope"] == "SERVICE_OWNED_CONNECTION_OBSERVATION"
+        and value["challenge_id"] == challenge_id
+        and value["installation_id"] == installation_id
+        and value["role"] == role
+        and role in OPPOSITE_ROLE_SQL
+        and all(
+            type(v) is str and re.fullmatch(r"[0-9a-f]{64}", v)
+            for v in (challenge_id, installation_id)
+        )
+        and _identifier(expected_os_principal)
+        and _identifier(expected_database_role),
+        "Nieprawidłowy kontekst obserwacji połączenia usługi",
+    )
+    report = cast(dict[str, Any], value)
+    process = report["process"]
+    _require(
+        type(process) is dict
+        and set(process)
+        == {"pid", "uid", "gid", "groups", "start_time_ticks", "exe_sha256", "cgroup"}
+        and process == expected_process
+        and all(
+            type(process[key]) is int and process[key] > 0
+            for key in ("pid", "uid", "gid", "start_time_ticks")
+        )
+        and type(process["groups"]) is list
+        and all(type(group) is int and group > 0 for group in process["groups"])
+        and process["groups"] == sorted(set(process["groups"]))
+        and type(process["exe_sha256"]) is str
+        and re.fullmatch(r"[0-9a-f]{64}", process["exe_sha256"]) is not None
+        and type(process["cgroup"]) is str
+        and process["cgroup"].startswith("/")
+        and "\n" not in process["cgroup"],
+        "Proces odpowiedzi PostgreSQL różni się od niezależnie przypiętej usługi",
+    )
+    identity, backend = report["identity_row"], report["backend_row"]
+    _require(
+        type(identity) is list
+        and len(identity) == 9
+        and identity[:3]
+        == ["peer:" + expected_os_principal, expected_database_role, expected_database_role]
+        and type(identity[3]) is int
+        and identity[3] > 0
+        and identity[4:] == ["freshness_gate", None, None, "on", False]
+        and type(identity[8]) is bool
+        and type(backend) is list
+        and len(backend) == 6
+        and type(backend[0]) is int
+        and backend
+        == [identity[3], expected_database_role, "freshness_gate", None, -1, "client backend"]
+        and type(backend[4]) is int
+        and report["identity_sql"] == SERVICE_IDENTITY_SQL
+        and report["backend_sql"] == BACKEND_SQL
+        and report["allowed"] == {"sql": ALLOWED_SQL, "row": [1]}
+        and type(report["allowed"]) is dict
+        and type(report["allowed"]["row"]) is list
+        and type(report["allowed"]["row"][0]) is int
+        and report["denials"]
+        == [
+            {"sql": sql, "sqlstate": "42501"}
+            for sql in (*SERVICE_DENIAL_SQL, OPPOSITE_ROLE_SQL[role])
+        ]
+        and report["transaction"] == "READ_ONLY_ROLLED_BACK",
+        "Surowe obserwacje nie potwierdzają peer, mapowania, roli lub rzeczywistych odmów",
     )
 
 

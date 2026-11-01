@@ -517,6 +517,100 @@ def verify_bundle(
     }
 
 
+def verify_functional_diagnostic(
+    record: dict[str, Any],
+    challenge: dict[str, Any],
+    policy: dict[str, Any],
+    *,
+    source_revision: str,
+    ci_run_id: str,
+    ci_run_attempt: str,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Zweryfikuj częściową diagnostykę w osobnej domenie, bez wyniku PASS."""
+    validate_policy(policy)
+    validate_challenge(challenge, now=now)
+    if (
+        challenge["source_revision"] != source_revision
+        or challenge["ci_run_id"] != ci_run_id
+        or challenge["ci_run_attempt"] != ci_run_attempt
+        or challenge["policy_sha256"] != digest(policy)
+        or _time(challenge["expires_at_utc"]) - _time(challenge["created_at_utc"])
+        > timedelta(seconds=policy["max_age_seconds"])
+    ):
+        raise LinuxEvidenceError("Diagnostyka pochodzi z innego wyzwania lub polityki")
+    host = _approved_host(policy, challenge["host_id"])
+    if (
+        challenge["materials"] != host["materials"]
+        or type(record) is not dict
+        or set(record) != {"payload", "signature"}
+    ):
+        raise LinuxEvidenceError("Nieprawidłowa koperta częściowej diagnostyki")
+    payload = record["payload"]
+    if type(payload) is not dict or set(payload) != {
+        "schema_version",
+        "kind",
+        "challenge_id",
+        "observed_at_utc",
+        "host",
+        "materials",
+        "observations",
+    }:
+        raise LinuxEvidenceError("Nieprawidłowe pola częściowej diagnostyki")
+    try:
+        key = Ed25519PublicKey.from_public_bytes(_decode(host["public_key"], 32))
+        key.verify(_decode(record["signature"], 64), canonical_bytes(payload))
+    except InvalidSignature as exc:
+        raise LinuxEvidenceError("Podmieniona częściowa diagnostyka") from exc
+    identity = payload["host"]
+    current = now or datetime.now(timezone.utc)
+    if (
+        type(payload["schema_version"]) is not int
+        or payload["schema_version"] != 1
+        or payload["kind"] != "STAGE9_PARTIAL_VERIFIER_DIAGNOSTIC"
+        or payload["challenge_id"] != challenge["challenge_id"]
+        or payload["materials"] != challenge["materials"]
+        or not _time(challenge["created_at_utc"])
+        <= _time(payload["observed_at_utc"])
+        <= min(current, _time(challenge["expires_at_utc"]))
+        or type(identity) is not dict
+        or set(identity) != HOST_FIELDS
+        or any(type(value) is not str or not value for value in identity.values())
+        or any(
+            identity[name] != host[name]
+            for name in (
+                "host_id",
+                "machine_id_sha256",
+                "dmi_product_uuid_sha256",
+                "python_executable_sha256",
+            )
+        )
+        or identity["os_id"] != "ubuntu"
+        or identity["os_version"] != "24.04"
+        or identity["architecture"] != "x86_64"
+        or identity["virtualization"] != "none"
+        or re.fullmatch(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", identity["boot_id"]) is None
+    ):
+        raise LinuxEvidenceError("Diagnostyka nie jest związana z zatwierdzonym hostem i wyzwaniem")
+    from deployment.linux_physical_observations import validate_functional_observations
+
+    try:
+        validate_functional_observations(
+            payload["observations"], host["installation"], challenge_id=challenge["challenge_id"]
+        )
+    except (ValueError, KeyError, TypeError, IndexError, OSError) as exc:
+        raise LinuxEvidenceError(
+            "Surowe obserwacje nie potwierdzają częściowej diagnostyki"
+        ) from exc
+    return {
+        "schema_version": 1,
+        "status": "PARTIAL_BLOCKED",
+        "challenge_id": challenge["challenge_id"],
+        "record_sha256": digest(record),
+        "production_qualification": "BLOCKED",
+    }
+
+
 def consume_challenge(path: Path, challenge_id: str, bundle_sha256: str) -> None:
     """Atomowe zużycie; ledger musi leżeć w chronionej przestrzeni bramki."""
     if not _hex(challenge_id) or not _hex(bundle_sha256):
@@ -534,7 +628,7 @@ def consume_challenge(path: Path, challenge_id: str, bundle_sha256: str) -> None
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Niezależna walidacja fizycznych dowodów Linux")
     sub = parser.add_subparsers(dest="command", required=True)
-    for name in ("issue-challenge", "verify"):
+    for name in ("issue-challenge", "verify", "verify-diagnostic"):
         command = sub.add_parser(name)
         command.add_argument("--policy", type=Path, default=DEFAULT_POLICY)
         command.add_argument("--expected-policy-sha256", required=True)
@@ -558,7 +652,12 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "issue-challenge":
             result = issue_challenge(policy, host_id=args.host_id, **identity)
         else:
-            result = verify_bundle(
+            verifier = (
+                verify_functional_diagnostic
+                if args.command == "verify-diagnostic"
+                else verify_bundle
+            )
+            result = verifier(
                 read_json(args.bundle), load_challenge(args.challenge), policy, **identity
             )
         with args.output.open("x", encoding="utf-8") as stream:

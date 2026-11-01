@@ -34,12 +34,23 @@ jobs:
           deployment/linux_release_identity.py
           deployment/linux_physical_ipc.py
           deployment/linux_physical_postgresql.py
+          bot_core/linux_service_ipc.py
+          bot_core/linux_service_postgresql.py
+          bot_core/freshness_semantic_verifier.py
+          bot_core/freshness_verifier_service.py
           deployment/linux_physical_collector.py deployment/linux_evidence_handoff.py
           deployment/platform_readiness.py deployment/platform_evidence.py
           tests/deployment/test_linux_physical_evidence.py
           tests/deployment/test_linux_physical_remediation.py
           tests/deployment/test_linux_physical_ipc.py
           tests/deployment/test_linux_physical_postgresql.py
+          tests/security/test_linux_service_ipc.py
+          tests/security/test_linux_service_postgresql.py
+          tests/security/test_freshness_semantic_verifier.py
+          tests/security/test_freshness_production_local_deployment.py
+          tests/deployment/test_linux_functional_pipeline.py
+          tests/deployment/test_linux_verifier_observation.py
+          tests/security/test_linux_service_postgresql_integration.py
           tests/deployment/test_linux_release_identity.py
           tests/deployment/test_linux_physical_collector.py
           tests/deployment/test_linux_physical_native.py
@@ -51,12 +62,23 @@ jobs:
           deployment/linux_release_identity.py
           deployment/linux_physical_ipc.py
           deployment/linux_physical_postgresql.py
+          bot_core/linux_service_ipc.py
+          bot_core/linux_service_postgresql.py
+          bot_core/freshness_semantic_verifier.py
+          bot_core/freshness_verifier_service.py
           deployment/linux_physical_collector.py deployment/linux_evidence_handoff.py
           deployment/platform_readiness.py deployment/platform_evidence.py
           tests/deployment/test_linux_physical_evidence.py
           tests/deployment/test_linux_physical_remediation.py
           tests/deployment/test_linux_physical_ipc.py
           tests/deployment/test_linux_physical_postgresql.py
+          tests/security/test_linux_service_ipc.py
+          tests/security/test_linux_service_postgresql.py
+          tests/security/test_freshness_semantic_verifier.py
+          tests/security/test_freshness_production_local_deployment.py
+          tests/deployment/test_linux_functional_pipeline.py
+          tests/deployment/test_linux_verifier_observation.py
+          tests/security/test_linux_service_postgresql_integration.py
           tests/deployment/test_linux_release_identity.py
           tests/deployment/test_linux_physical_collector.py
           tests/deployment/test_linux_physical_native.py
@@ -68,6 +90,10 @@ jobs:
           deployment/linux_release_identity.py
           deployment/linux_physical_ipc.py
           deployment/linux_physical_postgresql.py
+          bot_core/linux_service_ipc.py
+          bot_core/linux_service_postgresql.py
+          bot_core/freshness_semantic_verifier.py
+          bot_core/freshness_verifier_service.py
           deployment/linux_physical_collector.py deployment/linux_evidence_handoff.py
           deployment/platform_readiness.py deployment/platform_evidence.py
       - name: Sprawdź hermetyczne kontrakty i odmowy bez kwalifikacji fizycznej
@@ -76,6 +102,12 @@ jobs:
           tests/deployment/test_linux_physical_remediation.py
           tests/deployment/test_linux_physical_ipc.py
           tests/deployment/test_linux_physical_postgresql.py
+          tests/security/test_linux_service_ipc.py
+          tests/security/test_linux_service_postgresql.py
+          tests/security/test_freshness_semantic_verifier.py
+          tests/security/test_freshness_production_local_deployment.py
+          tests/deployment/test_linux_functional_pipeline.py
+          tests/deployment/test_linux_verifier_observation.py
           tests/deployment/test_linux_release_identity.py
           tests/deployment/test_linux_physical_collector.py
           tests/deployment/test_linux_physical_native.py

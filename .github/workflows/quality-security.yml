@@ -113,6 +113,10 @@ jobs:
           deployment/linux_release_identity.py
           deployment/linux_physical_ipc.py
           deployment/linux_physical_postgresql.py
+          bot_core/linux_service_ipc.py
+          bot_core/linux_service_postgresql.py
+          bot_core/freshness_semantic_verifier.py
+          bot_core/freshness_verifier_service.py
           deployment/linux_physical_observations.py
           deployment/linux_physical_native.py
           deployment/linux_physical_collector.py
@@ -121,6 +125,15 @@ jobs:
           tests/deployment/test_linux_physical_remediation.py
           tests/deployment/test_linux_physical_ipc.py
           tests/deployment/test_linux_physical_postgresql.py
+          tests/security/test_linux_service_ipc.py
+          tests/security/test_reviewed_source_checkout.py
+          tests/security/test_freshness_reviewed_source_pins.py
+          tests/security/test_linux_service_postgresql.py
+          tests/security/test_freshness_semantic_verifier.py
+          tests/security/test_freshness_production_local_deployment.py
+          tests/deployment/test_linux_functional_pipeline.py
+          tests/deployment/test_linux_verifier_observation.py
+          tests/security/test_linux_service_postgresql_integration.py
           tests/deployment/test_linux_release_identity.py
           tests/deployment/test_linux_physical_collector.py
           tests/deployment/test_linux_physical_native.py
@@ -193,6 +206,7 @@ jobs:
           bot_core/licensing/cha_root_proof_signed_attempt.py
           tests/architecture/test_stage9_root_proof_preaccount_credentials_contract.py
           tests/architecture/test_stage9_root_proof_signed_immutable_attempt_contract.py
+          tests/architecture/test_stage9_issuance_diagnostic_separation.py
           tests/licensing/test_cha_root_proof_signed_attempt.py
           tests/security/test_native_custody_locking.py
           tests/security/test_local_signing_custody.py
@@ -352,6 +366,10 @@ jobs:
           deployment/linux_release_identity.py
           deployment/linux_physical_ipc.py
           deployment/linux_physical_postgresql.py
+          bot_core/linux_service_ipc.py
+          bot_core/linux_service_postgresql.py
+          bot_core/freshness_semantic_verifier.py
+          bot_core/freshness_verifier_service.py
           deployment/linux_physical_native.py deployment/linux_physical_collector.py
           deployment/linux_evidence_handoff.py
       # PRE executor tests replace native custody, console and process boundaries.
@@ -368,6 +386,14 @@ jobs:
           tests/deployment/test_linux_physical_remediation.py
           tests/deployment/test_linux_physical_ipc.py
           tests/deployment/test_linux_physical_postgresql.py
+          tests/security/test_linux_service_ipc.py
+          tests/security/test_reviewed_source_checkout.py
+          tests/security/test_freshness_reviewed_source_pins.py
+          tests/security/test_linux_service_postgresql.py
+          tests/security/test_freshness_semantic_verifier.py
+          tests/security/test_freshness_production_local_deployment.py
+          tests/deployment/test_linux_functional_pipeline.py
+          tests/deployment/test_linux_verifier_observation.py
           tests/deployment/test_linux_release_identity.py
           tests/deployment/test_linux_physical_collector.py
           tests/deployment/test_linux_physical_native.py
@@ -491,6 +517,10 @@ jobs:
           --cov=deployment.linux_release_identity
           --cov=deployment.linux_physical_ipc
           --cov=deployment.linux_physical_postgresql
+          --cov=bot_core.linux_service_ipc
+          --cov=bot_core.linux_service_postgresql
+          --cov=bot_core.freshness_semantic_verifier
+          --cov=bot_core.freshness_verifier_service
           --cov=deployment.linux_physical_observations
           --cov=deployment.linux_physical_native
           --cov=deployment.linux_physical_collector
@@ -591,6 +621,7 @@ jobs:
           tests/licensing/test_cha_root_proof_signed_attempt.py
           tests/security/test_native_custody_locking.py
           tests/architecture/test_stage9_root_proof_signed_immutable_attempt_contract.py
+          tests/architecture/test_stage9_issuance_diagnostic_separation.py
           -m "not hardware and not destructive and not network"
           --cov=bot_core.local_signing_custody
           --cov=bot_core.windows_custody_filesystem

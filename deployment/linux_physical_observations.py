@@ -79,6 +79,11 @@ def validate_installation(value: Any) -> dict[str, Any]:
             {"release_identity"}
             if isinstance(value, dict) and "release_identity" in value
             else set()
+        )
+        | (
+            {"functional_qualification"}
+            if isinstance(value, dict) and "functional_qualification" in value
+            else set()
         ),
     )
     require(
@@ -239,6 +244,23 @@ def validate_installation(value: Any) -> dict[str, Any]:
         and _hash(pg["expected_ident_sha256"]),
         "Nieprawidłowa izolacja PostgreSQL",
     )
+    if "functional_qualification" in data:
+        qualification = _fields(data["functional_qualification"], {"installation_id"})
+        require(_hash(qualification["installation_id"]), "Nieprawidłowa tożsamość instalacji")
+        policies = [
+            item
+            for item in data["configuration"]
+            if item["path"] == "/etc/cryptohunter/linux-qualification.json"
+        ]
+        require(
+            len(policies) == 1
+            and policies[0]["mode"] == 0o644
+            and len([unit for unit in units if unit["role"] == "verifier"]) == 1
+            and any(
+                item["path"] == "/run/cryptohunter/freshness/verifier.sock" for item in data["ipc"]
+            ),
+            "Brak przypiętej polityki odczytowej rzeczywistego verifiera",
+        )
     if "release_identity" in data:
         from deployment.linux_release_identity import validate_release_statement
 
@@ -285,7 +307,13 @@ def _file(observed: Any, path: str, digest: str, *, executable: bool = False) ->
     )
 
 
-def _snapshot(snapshot: Any, installation: dict[str, Any], *, updated: bool) -> None:
+def _snapshot(
+    snapshot: Any,
+    installation: dict[str, Any],
+    *,
+    updated: bool,
+    challenge_id: str | None = None,
+) -> None:
     _fields(
         snapshot,
         {
@@ -297,7 +325,8 @@ def _snapshot(snapshot: Any, installation: dict[str, Any], *, updated: bool) -> 
             "postgres",
             "state",
             "persistent_journal",
-        },
+        }
+        | ({"functional_observations"} if "functional_qualification" in installation else set()),
     )
     from deployment.linux_physical_ipc import validate_blocked_ipc_qualification
     from deployment.linux_physical_postgresql import validate_blocked_service_qualification
@@ -440,7 +469,10 @@ def _snapshot(snapshot: Any, installation: dict[str, Any], *, updated: bool) -> 
             "hba_sha256",
             "ident_sha256",
             "system_identifier",
-        },
+        }
+        | (
+            {"hba_rules", "ident_mappings"} if "functional_qualification" in installation else set()
+        ),
     )
     expected_pg = installation["postgres"]
     require(
@@ -459,6 +491,20 @@ def _snapshot(snapshot: Any, installation: dict[str, Any], *, updated: bool) -> 
         and re.fullmatch(r"[1-9][0-9]{0,24}", pg["system_identifier"]) is not None,
         "Niepotwierdzona izolacja PostgreSQL",
     )
+    if "functional_qualification" in installation:
+        for name, width, digest_name in (
+            ("hba_rules", 8, "hba_sha256"),
+            ("ident_mappings", 4, "ident_sha256"),
+        ):
+            rows = pg[name]
+            require(
+                type(rows) is list
+                and len(rows) <= 256
+                and all(type(row) is list and len(row) == width and row[-1] is None for row in rows)
+                and len(canonical(rows)) <= 65536
+                and sha256(canonical(rows)) == pg[digest_name],
+                "Surowe reguły PostgreSQL nie odpowiadają przypiętej konfiguracji",
+            )
     state = _fields(snapshot["state"], {"path", "kind", "sha256", "uid", "gid", "mode"})
     runtime = installation["identities"]["runtime"]
     require(
@@ -474,6 +520,66 @@ def _snapshot(snapshot: Any, installation: dict[str, Any], *, updated: bool) -> 
         snapshot["persistent_journal"] == {"kind": "directory", "uid": 0}
         and type(snapshot["persistent_journal"]["uid"]) is int,
         "Brak trwałego dziennika systemowego",
+    )
+    if "functional_qualification" in installation:
+        validate_functional_observations(
+            snapshot["functional_observations"], installation, challenge_id=challenge_id
+        )
+        selected = next(unit for unit in installation["units"] if unit["role"] == "verifier")
+        observed_unit = next(unit for unit in snapshot["units"] if unit["name"] == selected["name"])
+        peer = snapshot["functional_observations"]["verifier"]["server_process"]
+        require(
+            str(peer["pid"]) == observed_unit["properties"]["MainPID"]
+            and any(
+                process["pid"] == peer["pid"]
+                and process["start_time_ticks"] == peer["start_time_ticks"]
+                and process["exe_sha256"] == peer["exe_sha256"]
+                for process in observed_unit["processes"]
+            ),
+            "Obserwacja funkcjonalna dotyczy innego procesu usługi",
+        )
+
+
+def validate_functional_observations(
+    value: Any, installation: dict[str, Any], *, challenge_id: str | None
+) -> None:
+    """Odtwórz częściową obserwację; nie przyznawaj uprawnień produkcyjnych."""
+    from deployment.linux_physical_ipc import ExpectedPeerProcess, validate_verifier_observation
+
+    _fields(value, {"schema_version", "status", "verifier"})
+    require(
+        type(value["schema_version"]) is int
+        and value["schema_version"] == 1
+        and value["status"] == "PARTIAL_BLOCKED"
+        and "functional_qualification" in installation
+        and _hash(challenge_id),
+        "Brak niezależnego powiązania częściowych obserwacji z wyzwaniem",
+    )
+    require(type(value["verifier"]) is dict, "Brak surowej obserwacji verifiera")
+    verifier = value["verifier"]
+    process = verifier.get("server_process")
+    require(type(process) is dict, "Brak surowej tożsamości serwera")
+    specs = [unit for unit in installation["units"] if unit["role"] == "verifier"]
+    require(len(specs) == 1, "Niejednoznaczna rzeczywista usługa verifiera")
+    identity = installation["identities"]["verifier"]
+    spec = specs[0]
+    require(
+        process.get("exe_sha256") in {spec["executable_sha256"], spec["update_executable_sha256"]},
+        "Program serwera nie pochodzi z przypiętego wydania",
+    )
+    expected = ExpectedPeerProcess(
+        pid=process["pid"],
+        uid=identity["uid"],
+        gid=identity["gid"],
+        start_time_ticks=process["start_time_ticks"],
+        executable_sha256=process["exe_sha256"],
+    )
+    validate_verifier_observation(
+        verifier,
+        expected=expected,
+        expected_cgroup="/system.slice/" + spec["name"],
+        challenge_id=cast(str, challenge_id),
+        installation_id=installation["functional_qualification"]["installation_id"],
     )
 
 
@@ -557,7 +663,9 @@ def validate_observations(records: list[dict[str, Any]], installation: dict[str,
         (failure["after"], True),
     ]
     for snapshot, updated in snapshots:
-        _snapshot(snapshot, installation, updated=updated)
+        _snapshot(
+            snapshot, installation, updated=updated, challenge_id=records[0].get("challenge_id")
+        )
     state = clean["snapshot"]["state"]
     require(
         state["path"]
@@ -675,7 +783,12 @@ def validate_observation_prefix(
                     and observations["install_exit_code"] == 0,
                     "Nieudana instalacja",
                 )
-            _snapshot(observations["snapshot"], installation, updated=False)
+            _snapshot(
+                observations["snapshot"],
+                installation,
+                updated=False,
+                challenge_id=record.get("challenge_id"),
+            )
             if index == 4:
                 previous_boot = records[3]["host"]["boot_id"].replace("-", "")
                 rows = observations["previous_boot_journal"]
@@ -696,7 +809,12 @@ def validate_observation_prefix(
                 observations, {"before", "stopped", "started", "restarted", "crashed", "commands"}
             )
             for key in ("before", "started", "restarted", "crashed"):
-                _snapshot(observations[key], installation, updated=False)
+                _snapshot(
+                    observations[key],
+                    installation,
+                    updated=False,
+                    challenge_id=record.get("challenge_id"),
+                )
             require(
                 observations["commands"]
                 == [
@@ -755,8 +873,18 @@ def validate_observation_prefix(
                 type(code) is int and (code == 0 if index == 5 else 1 <= code <= 255),
                 "Nieprawidłowy wynik aktualizacji",
             )
-            _snapshot(observations["before"], installation, updated=index == 6)
-            _snapshot(observations["after"], installation, updated=True)
+            _snapshot(
+                observations["before"],
+                installation,
+                updated=index == 6,
+                challenge_id=record.get("challenge_id"),
+            )
+            _snapshot(
+                observations["after"],
+                installation,
+                updated=True,
+                challenge_id=record.get("challenge_id"),
+            )
             if index == 5:
                 require(
                     not (_tokens(observations["before"]) & _tokens(observations["after"])),

@@ -423,6 +423,13 @@ def test_unprivileged_cli_uses_metadata_despite_private_denial_and_pid_one_failu
     ).encode()
     evidence = tmp_path / "external-fixture.json"
     evidence.write_bytes(raw)
+    # The internal diagnostic retains correlation details; the CLI publishes
+    # only its reviewed status/reason schema, never host identifiers or counts.
+    observed = q.processes()
+    assert observed["matched_pids"] == [own]
+    assert observed["checked_pid_count"] == 1
+    assert observed["unavailable_pid_count"] == 1
+    assert observed["matched_pid_count"] == 1
     assert (
         cli.main(
             [
@@ -442,10 +449,11 @@ def test_unprivileged_cli_uses_metadata_despite_private_denial_and_pid_one_failu
         for item in report["installations"]
     )
     processes = report["process_observation"]
-    assert processes["matched_pids"] == [own]
-    assert processes["checked_pid_count"] == 1
-    assert processes["unavailable_pid_count"] == 1
-    assert processes["matched_pid_count"] == 1
+    assert "matched_pids" not in processes
+    assert "checked_pid_count" not in processes
+    assert "unavailable_pid_count" not in processes
+    assert "matched_pid_count" not in processes
+    assert "PROCESS_PERMISSION_DENIED" in processes["uncertainty"]
     assert processes["state"] == "BLOCKED"
     assert not processes["full_confirmation"]
     assert report["qualification"] == "BLOCKED"

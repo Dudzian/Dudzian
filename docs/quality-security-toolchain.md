@@ -86,6 +86,21 @@ Nie implementują brakujących funkcjonalnych adapterów usług; produkcyjna
 kwalifikacja pozostaje BLOCKED. Syntetyczny certyfikat lub wynik testu nie
 otwiera bramki. Progi pokrycia, timeouty i opt-in sprzętowy pozostają bez zmian.
 
+Adaptery `bot_core/linux_service_ipc.py` i
+`bot_core/linux_service_postgresql.py` oraz rzeczywiste moduły
+`freshness_semantic_verifier.py` i `freshness_verifier_service.py` rozszerzają
+skonfigurowany zakres mypy Linux/Win32, jawny lint/format i istniejący raport
+branch coverage. Regularne kroki `quality-ratchet` i `linux-evidence-contract`
+uruchamiają nowe testy adapterów i `test_linux_functional_pipeline.py`.
+Odrębny `test_linux_service_postgresql_integration.py` wymaga jawnego opt-in
+`CRYPTOHUNTER_RUN_LINUX_PG_ADAPTER_INTEGRATION=1` i wskazania binariów przez
+`CRYPTOHUNTER_TEST_PG_BINDIR`; uruchamia się ręcznie na izolowanej VM, poza
+regularnym zakresem pytest tych kroków. Harness tworzy własny tymczasowy
+klaster, bez modyfikowania kont systemowych. Jest objęty lint i format.
+Testy i kontrola typów nie kwalifikują fizycznej instalacji, a brak pełnego
+runtime zachowuje blokadę produkcyjnego kontraktu. Dotychczasowe zakresy,
+próg 70%, timeouty i bramki wykonania fizycznego pozostają bez zmian.
+
 The bounded Stage 9 offline artifact verifier enters these existing Ruff,
 Linux/Windows mypy, pytest and branch-coverage gates. Its tests perform real
 unprivileged file reads and inspect synthetic DEB fixtures as data. These checks

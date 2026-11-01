@@ -17,11 +17,14 @@ import re
 import socket
 import struct
 import stat
+import sys
 from typing import Protocol
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 import psycopg
+
+from bot_core.linux_service_ipc import ReadOnlyVerifierQualifier
 
 from bot_core.postgresql_freshness_authority import (
     DOCUMENT_FIELDS,
@@ -655,14 +658,18 @@ def serve_local_unix_socket(
     stop_after: int | None = None,
     socket_gid: int | None = None,
     parent_mode: int | None = None,
+    readonly_qualifier: ReadOnlyVerifierQualifier | None = None,
 ) -> None:
     """Serve the single verifier operation over a length-framed Unix socket.
 
     Deployment must start this executable component as
     ``os_freshness_crypto_verifier`` and own the containing directory.  There
-    is intentionally no TCP listener, method selector, signing operation, key
-    selector, provider selector, or database-role input.
+    is intentionally no TCP listener, signing operation, key selector,
+    provider selector, or database-role input. An independently enabled root
+    branch observes this process without invoking candidate preparation.
     """
+    if sys.platform == "win32":
+        raise FreshnessVerifierUnavailable("verifier AF_UNIX service requires POSIX credentials")
     if type(allowed_peer_uid) is not int or allowed_peer_uid < 0:
         raise ValueError("allowed_peer_uid must be an exact uid")
     path = os.fspath(socket_path)
@@ -706,6 +713,15 @@ def serve_local_unix_socket(
                         socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i")
                     ),
                 )
+                if peer_uid == 0 and readonly_qualifier is not None:
+                    try:
+                        readonly_qualifier.serve_connection(connection)
+                    except (RuntimeError, OSError, ValueError, KeyError, IndexError):
+                        # A malformed, replayed or ambiguous diagnostic never
+                        # falls through to the preparation operation.
+                        pass
+                    handled += 1
+                    continue
                 if peer_uid != allowed_peer_uid:
                     continue
                 try:

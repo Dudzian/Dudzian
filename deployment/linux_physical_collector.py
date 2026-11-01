@@ -39,6 +39,7 @@ from deployment.linux_physical_observations import (
     ObservationError,
     require,
     sha256,
+    validate_functional_observations,
     validate_installation,
     validate_observations,
     validate_observation_prefix,
@@ -54,6 +55,10 @@ CLOSURE = (
     "deployment/linux_physical_postgresql.py",
     "deployment/linux_release_identity.py",
     "bot_core/production_signer_ipc.py",
+    "bot_core/linux_service_ipc.py",
+    "bot_core/linux_service_postgresql.py",
+    "bot_core/freshness_semantic_verifier.py",
+    "bot_core/freshness_verifier_service.py",
 )
 
 
@@ -201,9 +206,57 @@ def collect_phase(
     return result
 
 
+def collect_functional_diagnostic(
+    *,
+    challenge: dict[str, Any],
+    installation: dict[str, Any],
+    key_bytes: bytes,
+    driver: NativeDriver | None = None,
+) -> dict[str, Any]:
+    """Podpisz odczyt verifiera bez uruchamiania faz instalacji lub lifecycle.
+
+    Oddzielna domena dokumentu zapobiega użyciu tej diagnostyki jako siedmiu
+    faz fizycznego bundle. Brakujący runtime i pełna macierz nadal blokują PASS.
+    """
+    validate_challenge(challenge)
+    validate_installation(installation)
+    require(type(key_bytes) is bytes and len(key_bytes) == 32, "Nieprawidłowy klucz producenta")
+    identity = host_identity()
+    require(identity["host_id"] == challenge["host_id"], "Challenge dotyczy innego hosta")
+    materials = collect_materials(installation)
+    require(materials == challenge["materials"], "Materiały nie należą do wyzwania")
+    native = driver if driver is not None else NativeDriver(installation, challenge["challenge_id"])
+    observations = native.functional_observations()
+    validate_functional_observations(
+        observations, installation, challenge_id=challenge["challenge_id"]
+    )
+    validate_challenge(challenge)
+    require(host_identity() == identity, "Host zmienił się podczas diagnostyki")
+    require(
+        collect_materials(installation) == materials, "Materiały zmieniły się podczas diagnostyki"
+    )
+    return sign_record(
+        {
+            "schema_version": 1,
+            "kind": "STAGE9_PARTIAL_VERIFIER_DIAGNOSTIC",
+            "challenge_id": challenge["challenge_id"],
+            "observed_at_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "host": identity,
+            "materials": materials,
+            "observations": observations,
+        },
+        key_bytes,
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Podpisany producent fizycznych obserwacji Linux")
     parser.add_argument("--diagnose", action="store_true", help="Tylko odczyt tożsamości hosta")
+    parser.add_argument(
+        "--observe-verifier",
+        action="store_true",
+        help="Tylko odczyt właściwej usługi; pełne BLOCKED",
+    )
     parser.add_argument("--challenge", type=Path)
     parser.add_argument("--manifest", type=Path)
     parser.add_argument("--bundle", type=Path)
@@ -212,7 +265,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--approve", help="Osobna zgoda: <challenge_id>:<phase>")
     args = parser.parse_args(argv)
     try:
-        if args.diagnose or args.phase is None:
+        require(
+            not (args.observe_verifier and args.phase), "Nie łącz diagnostyki z fazą instalacji"
+        )
+        if args.diagnose or (args.phase is None and not args.observe_verifier):
             print(json.dumps({"tryb": "TYLKO_ODCZYT", "host": host_identity()}, sort_keys=True))
             return 0
         require(
@@ -231,14 +287,20 @@ def main(argv: list[str] | None = None) -> int:
             "Dedykowany klucz producenta wymaga wyłącznej ochrony administratora",
         )
         key = read_regular(args.private_key, protected=True, maximum=32)
-        result = collect_phase(
-            challenge=challenge,
-            installation=installation,
-            bundle=bundle,
-            key_bytes=key,
-            phase=args.phase,
-            approval=args.approve,
-        )
+        if args.observe_verifier:
+            require(not args.bundle.exists(), "Diagnostyka wymaga osobnego, nowego pliku wyniku")
+            result = collect_functional_diagnostic(
+                challenge=challenge, installation=installation, key_bytes=key
+            )
+        else:
+            result = collect_phase(
+                challenge=challenge,
+                installation=installation,
+                bundle=bundle,
+                key_bytes=key,
+                phase=args.phase,
+                approval=args.approve,
+            )
         _atomic_bundle(args.bundle, result)
     except (LinuxEvidenceError, ObservationError, OSError, ValueError, KeyError, TypeError) as exc:
         # Nie ujawniamy stderr narzędzi, DSN, treści plików ani danych klucza.

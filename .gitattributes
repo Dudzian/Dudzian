@@ -5,3 +5,11 @@
 *.yml text eol=lf
 *.md text eol=lf
 *.sig text eol=lf
+
+# Przejrzane piny chronią dokładne bajty kodu, również w checkoutach Windows.
+# Nie normalizujemy treści podczas kwalifikacji zainstalowanych plików.
+bot_core/linux_service_ipc.py text eol=lf
+bot_core/linux_service_postgresql.py text eol=lf
+bot_core/production_signer_ipc.py text eol=lf
+bot_core/freshness_semantic_verifier.py text eol=lf
+bot_core/freshness_verifier_service.py text eol=lf
