@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 from datetime import datetime, timedelta, timezone
+from pathlib import PurePosixPath
 from types import SimpleNamespace
 
 import pytest
@@ -109,8 +110,10 @@ def test_native_adapter_binds_exchange_to_observed_systemd_process(tmp_path, mon
         return {**properties, "MainPID": "999"} if changed and reads > 1 else properties
 
     monkeypatch.setattr(native.sys, "platform", "linux")
-    monkeypatch.setattr(native.os, "geteuid", lambda: 0)
-    monkeypatch.setattr(native.os, "getegid", lambda: 0)
+    # Model ścieżek kolektora Linux pozostaje POSIX także na Windows.
+    monkeypatch.setattr(native, "Path", PurePosixPath)
+    monkeypatch.setattr(native.os, "geteuid", lambda: 0, raising=False)
+    monkeypatch.setattr(native.os, "getegid", lambda: 0, raising=False)
     monkeypatch.setattr(
         native,
         "read_regular",
