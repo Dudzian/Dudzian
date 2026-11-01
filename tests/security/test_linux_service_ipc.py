@@ -416,7 +416,7 @@ def _serve_actual_application(address, channel):
             allowed_peer_uid=61001,
             stop_after=2,
             socket_gid=0,
-            parent_mode=0o750,
+            parent_mode=0o700,
             readonly_qualifier=qualifier,
         )
     finally:
@@ -437,7 +437,7 @@ def test_disposable_root_collector_exchanges_with_actual_application_dispatch_an
     context = multiprocessing.get_context("fork")
     generations = []
     with tempfile.TemporaryDirectory(prefix="ch-ipc-", dir="/run") as directory:
-        os.chmod(directory, 0o750)
+        assert Path(directory).stat().st_mode & 0o777 == 0o700
         address = directory + "/verifier.sock"
         for _ in range(2):
             parent, child = context.Pipe()
