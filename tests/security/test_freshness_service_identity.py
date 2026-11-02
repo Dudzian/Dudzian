@@ -474,6 +474,8 @@ def test_live_qualifier_propagates_identity_refusal_before_database(monkeypatch)
         sys.modules, "grp", SimpleNamespace(getgrnam=lambda name: group, getgrall=lambda: [group])
     )
     monkeypatch.setattr(qualification, "os", SimpleNamespace(name="posix"))
+    native_platform = sys.platform
+    monkeypatch.setattr(qualification, "sys", SimpleNamespace(platform="linux"))
     monkeypatch.setattr(qualification, "_immutable_file", Mock())
     monkeypatch.setattr(
         qualification, "_mode", lambda *_args, **_kw: SimpleNamespace(st_mode=stat.S_IFREG | 0o755)
@@ -490,6 +492,7 @@ def test_live_qualifier_propagates_identity_refusal_before_database(monkeypatch)
     qualify_identity.assert_called_once_with(uid=UID, gid=GID)
     connect.assert_not_called()
     assert error.value.__cause__ is refusal
+    assert sys.platform == native_platform
 
 
 @pytest.fixture
