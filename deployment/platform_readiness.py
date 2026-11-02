@@ -12,6 +12,11 @@ from pathlib import Path
 from typing import Any, cast
 
 from deployment.windows_stage9_evidence_contract import PRODUCTION_TRUST_CEREMONY_ID
+from deployment.windows_stage10_proof_validation import (
+    PROOF_REQUIREMENTS,
+    Stage10ProofUnavailable,
+    require_native_proof_authority,
+)
 
 CONTRACT = Path(__file__).with_name("platform_readiness.json")
 PASS = "PASS"
@@ -416,6 +421,12 @@ def _validated_results(
                 raise EvidenceValidationError(f"runner OS mismatch: {item}")
             if result["status"] not in data["allowed_statuses"]:
                 raise EvidenceValidationError(f"invalid evidence status: {item}")
+            if item in PROOF_REQUIREMENTS and result["status"] == PASS:
+                # Bezpośredni LIVE JSON nie może ominąć odmowy producenta Stage 10.
+                try:
+                    require_native_proof_authority()
+                except Stage10ProofUnavailable as exc:
+                    raise EvidenceValidationError(str(exc)) from exc
             results[item] = result
     return results
 

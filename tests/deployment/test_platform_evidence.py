@@ -73,7 +73,9 @@ def _stage10_receipt() -> dict[str, object]:
     }
 
 
-def test_stage10_current_native_receipt_is_consumable(tmp_path, monkeypatch) -> None:
+def test_stage10_current_identity_does_not_authorize_synthetic_proofs(
+    tmp_path, monkeypatch
+) -> None:
     for key, value in {
         "GITHUB_SERVER_URL": "https://github.com",
         "GITHUB_RUN_ID": "42",
@@ -85,29 +87,14 @@ def test_stage10_current_native_receipt_is_consumable(tmp_path, monkeypatch) -> 
     monkeypatch.setattr(platform_evidence, "_current_windows_machine_guid", lambda: "machine-a")
     receipt, output = tmp_path / "receipt.json", tmp_path / "evidence.json"
     receipt.write_text(json.dumps(_stage10_receipt()), encoding="utf-8")
-    produce_windows_stage10_evidence("revision", receipt, output)
-    results = json.loads(output.read_text())["results"]
-    assert {r["item"] for r in results} == set(_stage10_receipt()["results"])
-    assert all(
-        r["status"] == "PASS" and r["evidence_class"] == "LIVE_WINDOWS_INTEGRATION" for r in results
-    )
-    contract = load_contract()
-    # A lifecycle slice is consumable evidence, not full platform qualification.
-    accepted = _validated_results(
-        contract, [json.loads(output.read_text())], "revision", "https://github.com", "42"
-    )
-    assert set(accepted) == set(_stage10_receipt()["results"])
-    assert not production_ready(
-        "WINDOWS",
-        contract,
-        [json.loads(output.read_text())],
-        "revision",
-        "https://github.com",
-        "42",
-    )
+    with pytest.raises(
+        EvidenceProductionError, match="WINDOWS_STAGE10_NATIVE_PROOF_AUTHORITY_UNAVAILABLE"
+    ):
+        produce_windows_stage10_evidence("revision", receipt, output)
+    assert not output.exists()
 
 
-def test_canonical_contract_accepts_lifecycle_but_keeps_update_gates_blocking(
+def test_canonical_contract_keeps_lifecycle_and_update_gates_blocking(
     tmp_path,
     monkeypatch,
 ) -> None:
@@ -122,15 +109,18 @@ def test_canonical_contract_accepts_lifecycle_but_keeps_update_gates_blocking(
     monkeypatch.setattr(platform_evidence, "_current_windows_machine_guid", lambda: "machine-a")
     receipt, output = tmp_path / "receipt.json", tmp_path / "evidence.json"
     receipt.write_text(json.dumps(_stage10_receipt()))
-    produce_windows_stage10_evidence("revision", receipt, output)
-    evidence = json.loads(output.read_text())
+    with pytest.raises(
+        EvidenceProductionError, match="WINDOWS_STAGE10_NATIVE_PROOF_AUTHORITY_UNAVAILABLE"
+    ):
+        produce_windows_stage10_evidence("revision", receipt, output)
+    assert not output.exists()
     data = load_contract()
-    blockers = blocking_items("WINDOWS", data, [evidence], "revision", "https://github.com", "42")
-    assert "WINDOWS_REBOOT_RECOVERY" not in blockers
-    assert "WINDOWS_LONG_RUNNING_LIFECYCLE" not in blockers
+    blockers = blocking_items("WINDOWS", data, [], "revision", "https://github.com", "42")
+    assert "WINDOWS_REBOOT_RECOVERY" in blockers
+    assert "WINDOWS_LONG_RUNNING_LIFECYCLE" in blockers
     assert "WINDOWS_UPDATE_RESTART" in blockers
     assert "WINDOWS_FAILED_UPDATE_SAFE_BEHAVIOR" in blockers
-    assert not production_ready("WINDOWS", data, [evidence], "revision", "https://github.com", "42")
+    assert not production_ready("WINDOWS", data, [], "revision", "https://github.com", "42")
 
 
 @pytest.mark.parametrize(

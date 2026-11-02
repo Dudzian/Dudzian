@@ -1,0 +1,70 @@
+name: Windows Stage 10 proof validation
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  proof-validation:
+    name: Odmowy Stage 10 (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with: {persist-credentials: false}
+      - uses: actions/setup-python@v7
+        with: {python-version: "3.11"}
+      - name: Przygotuj narzędzia testów bez kwalifikacji fizycznej
+        run: >-
+          python -m pip install pytest pyyaml jsonschema packaging
+          "cryptography>=50.0.1,<51" "ruff==0.14.11" "mypy==1.10.0"
+      - name: Przygotuj natywny adapter systemu plików Windows
+        if: runner.os == 'Windows'
+        run: python -m pip install pywin32==312
+      - name: Sprawdź lint i format modułów Windows Stage 10
+        run: >-
+          python -m ruff check deployment/windows_stage10_proof_validation.py
+          deployment/windows_stage10_diagnostic_output.py
+          deployment/windows_stage10_diagnostic_windows.py
+          deployment/windows_stage10_runtime_provenance.py deployment/platform_evidence.py
+          deployment/platform_readiness.py tests/deployment/test_windows_stage10_proof_validation.py
+          tests/deployment/test_windows_stage10_diagnostic_output.py
+          tests/deployment/test_windows_stage10_diagnostic_windows.py
+          tests/deployment/test_windows_stage10_runtime_provenance.py
+          tests/deployment/test_windows_stage10_evidence_identity.py
+      - name: Sprawdź format modułów poza zakresem hooka
+        run: >-
+          python -m ruff format --check deployment/windows_stage10_proof_validation.py
+          deployment/windows_stage10_diagnostic_output.py
+          deployment/windows_stage10_diagnostic_windows.py
+          deployment/windows_stage10_runtime_provenance.py deployment/platform_evidence.py
+          deployment/platform_readiness.py
+      - name: Sprawdź typy zmienionych modułów
+        # Wspólny odbiorca importuje typowany weryfikator Linux. Jawny cel
+        # zachowuje jego sygnaturę przy follow_imports=skip, bez zmian źródeł Linux.
+        run: >-
+          python -m mypy deployment/windows_stage10_proof_validation.py
+          deployment/windows_stage10_diagnostic_output.py
+          deployment/windows_stage10_diagnostic_windows.py
+          deployment/windows_stage10_runtime_provenance.py deployment/platform_evidence.py
+          deployment/platform_readiness.py deployment/linux_physical_evidence.py
+      - name: Sprawdź każdą deklarację i przerwania zapisu
+        run: >-
+          python -m pytest -q tests/deployment/test_windows_stage10_proof_validation.py
+          tests/deployment/test_windows_stage10_diagnostic_output.py
+          tests/deployment/test_windows_stage10_diagnostic_windows.py
+          tests/deployment/test_windows_stage10_runtime_provenance.py
+          tests/deployment/test_windows_stage10_evidence_identity.py
+          tests/deployment/test_platform_evidence.py tests/deployment/test_platform_readiness.py
+          tests/scripts/test_platform_core_evidence_workflow.py
+      - name: Sprawdź punktową tożsamość i parser Windows PowerShell
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: ./deployment/windows_stage10_soak_identity_regression.ps1

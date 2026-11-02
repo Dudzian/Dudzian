@@ -1,4 +1,10 @@
-"""Fail-closed binding of an installed backend to the current-run Stage-9 artifact."""
+"""Spójność plików backendu i deklarowanych metadanych Stage 9.
+
+To pomoc diagnostyczna: manifest i receipt pochodzą od wywołującego. Funkcja
+nie uwierzytelnia zatwierdzonego wydania ani procesu SCM i nie uprawnia do PASS
+current_revision_runtime_bound. Właściwe autorytety pozostają w istniejących
+artifact preflight oraz qualify_enrolled_runtime(live=True).
+"""
 
 from __future__ import annotations
 
@@ -38,11 +44,25 @@ def qualify_runtime_provenance(
         raise RuntimeProvenanceError("runtime provenance inputs must be JSON objects")
     manifest_sha256 = _sha256(manifest_path)
     backend_sha256 = _sha256(installed_backend)
-    msi_sha256 = manifest.get("msi", {}).get("sha256")
-    expected_backend_sha256 = manifest.get("production_executables", {}).get(
-        "CryptoHunterBackend.exe"
-    )
+    msi = manifest.get("msi")
+    executables = manifest.get("production_executables")
     product_version = manifest.get("product_version")
+    if (
+        not isinstance(msi, dict)
+        or not isinstance(executables, dict)
+        or not isinstance(product_version, str)
+        or not product_version.strip()
+    ):
+        raise RuntimeProvenanceError("runtime provenance metadata is malformed")
+    msi_sha256 = msi.get("sha256")
+    expected_backend_sha256 = executables.get("CryptoHunterBackend.exe")
+    if (
+        not isinstance(msi_sha256, str)
+        or re.fullmatch(r"[0-9a-f]{64}", msi_sha256) is None
+        or not isinstance(expected_backend_sha256, str)
+        or re.fullmatch(r"[0-9a-f]{64}", expected_backend_sha256) is None
+    ):
+        raise RuntimeProvenanceError("runtime provenance digests are malformed")
     identity_matches = (
         receipt.get("source_revision") == source_revision
         and receipt.get("ci_run_id") == ci_run_id
@@ -52,10 +72,6 @@ def qualify_runtime_provenance(
         and receipt.get("manifest_sha256") == manifest_sha256
         and receipt.get("msi_sha256") == msi_sha256
         and manifest.get("architecture") == "x64"
-        and isinstance(msi_sha256, str)
-        and re.fullmatch(r"[0-9a-f]{64}", msi_sha256) is not None
-        and isinstance(expected_backend_sha256, str)
-        and re.fullmatch(r"[0-9a-f]{64}", expected_backend_sha256) is not None
         and backend_sha256 == expected_backend_sha256
     )
     if not identity_matches:

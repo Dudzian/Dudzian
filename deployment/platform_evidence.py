@@ -24,6 +24,11 @@ from deployment.windows_stage9_evidence_contract import (
     POST_ENROLLMENT_QUALIFICATION_STATE,
     PRODUCTION_TRUST_CEREMONY_ID,
 )
+from deployment.windows_stage10_proof_validation import (
+    PROOF_REQUIREMENTS,
+    Stage10ProofUnavailable,
+    require_native_proof_authority,
+)
 
 SCHEMA_VERSION = 1
 SCM_ITEMS = (
@@ -314,7 +319,19 @@ def produce_windows_stage10_evidence(
     *,
     contract_path: Path = WINDOWS_STAGE10_CONTRACT,
 ) -> None:
-    """Publish lifecycle evidence from the native, reboot-capable Stage-10 host."""
+    """Odrzuć zapisane deklaracje, dopóki brak natywnego autorytetu Stage 10."""
+    if output.resolve() in {receipt.resolve(), contract_path.resolve()}:
+        raise EvidenceProductionError("Stage-10 output aliases an input")
+    # Ten producent obecnie zawsze odmawia. Żadna odmowa nie upoważnia do
+    # usunięcia ani zastąpienia pliku wskazanego przez wywołującego.
+    try:
+        output.lstat()
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        raise EvidenceProductionError("Stage-10 output cannot be inspected safely") from exc
+    else:
+        raise EvidenceProductionError("Stage-10 output already exists; refusing to modify it")
     source_revision, provider, run_id = _identity(revision)
     if provider != "https://github.com" or os.environ.get("RUNNER_OS") != "Windows":
         raise EvidenceProductionError("Stage-10 PASS requires a GitHub Windows runner")
@@ -347,6 +364,8 @@ def produce_windows_stage10_evidence(
         or contract["probe_id"] != WINDOWS_STAGE10_PROBE_ID
         or not isinstance(contract["results"], dict)
         or set(contract["results"]) != set(WINDOWS_STAGE10_ITEMS)
+        or contract["results"]
+        != {item: list(proofs) for item, proofs in PROOF_REQUIREMENTS.items()}
         or any(
             not isinstance(proofs, list)
             or not proofs
@@ -414,32 +433,12 @@ def produce_windows_stage10_evidence(
             or any(proof != "PASS" for proof in result["proofs"].values())
         ):
             raise EvidenceProductionError(f"Stage-10 receipt failed: {item}")
-    results = [
-        {
-            "item": item,
-            "status": "PASS",
-            "evidence_class": "LIVE_WINDOWS_INTEGRATION",
-            "test_or_probe": "native Stage-10 reboot and lifecycle qualification",
-            "details": value["results"][item]["details"],
-        }
-        for item in WINDOWS_STAGE10_ITEMS
-    ]
-    output.write_text(
-        json.dumps(
-            evidence_document(
-                platform_name="WINDOWS",
-                source_revision=source_revision,
-                ci_provider=provider,
-                ci_run_id=run_id,
-                runner_os="Windows",
-                runner_arch=value["runner_arch"],
-                results=results,
-            ),
-            indent=2,
-        )
-        + "\n",
-        encoding="utf-8",
-    )
+    # Poprawny schemat i bieżące identyfikatory to tylko spójność deklaracji.
+    # Zapisany JSON nie ma władzy potwierdzania reboot, autostartu ani ciągłości.
+    try:
+        require_native_proof_authority()
+    except Stage10ProofUnavailable as exc:
+        raise EvidenceProductionError(str(exc)) from exc
 
 
 def produce_linux_physical_evidence(
