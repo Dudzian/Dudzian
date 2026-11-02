@@ -129,6 +129,7 @@ def boundaries(monkeypatch, tmp_path):
         lock_active=False,
         write_hook=None,
         close_error=None,
+        report_close_error=None,
     )
 
     def qualified(**kwargs):
@@ -166,6 +167,7 @@ def boundaries(monkeypatch, tmp_path):
             self.journal_path = self.root / "installation-intent.json"
             self.msiexec_path = Path("C:/Windows/System32/msiexec.exe")
             self.digest = digest
+            self.report_handle_open = True
             self.argv = [str(self.msiexec_path), *executor.INSTALL_ARGUMENTS]
             self.argv[2] = str(self.msi_path)
             self.argv[-1] = str(self.log_path)
@@ -180,10 +182,26 @@ def boundaries(monkeypatch, tmp_path):
             assert state.lock_active, "durable reports must be written before releasing custody"
             if not self.journal_path.exists():
                 self.journal_path.write_text(json.dumps(report), encoding="utf-8")
+            self._write_report(report)
+
+        def _write_report(self, report):
+            assert self.report_handle_open, "the retained report handle must still be owned"
             self.report_path.write_text(json.dumps(report), encoding="utf-8")
             state.reports.append(deepcopy(report))
             if state.write_hook is not None:
                 state.write_hook(report)
+
+        @contextmanager
+        def retained_report_writer(self):
+            assert state.lock_active
+            state.events.append("retain-report")
+            try:
+                yield self._write_report
+            finally:
+                self.report_handle_open = False
+                state.events.append("close-report")
+                if state.report_close_error is not None:
+                    raise state.report_close_error
 
     class LockedInputs:
         def __init__(self):
@@ -782,8 +800,59 @@ def test_custody_handle_release_error_remains_a_readable_failure(boundaries, aft
     assert "TEST_ONLY_SENSITIVE" not in str(report)
     if after_launch:
         boundaries.run.assert_called_once()
+        installation = boundaries.materialized[-1]
+        assert report["durable_report_matches_returned"] is True
+        assert json.loads(installation.report_path.read_text(encoding="utf-8")) == report
+        assert boundaries.events.index("retain-report") < boundaries.events.index("close-pins")
+        assert boundaries.events.index("close-pins") < boundaries.events.index("close-report")
     else:
         assert_no_install(boundaries, report)
+
+
+def test_cleanup_failure_before_launch_is_saved_using_retained_report_handle(boundaries):
+    authorization = authorize(boundaries)
+    boundaries.confirm.return_value = False
+    boundaries.confirm.side_effect = None
+    boundaries.close_error = OSError("TEST_ONLY_SENSITIVE")
+    report = execute(boundaries, authorization)
+    assert_no_install(boundaries, report)
+    assert report["status"] == "HANDLE_RELEASE_FAILED"
+    assert report["durable_report_matches_returned"] is True
+    installation = boundaries.materialized[-1]
+    assert json.loads(installation.report_path.read_text(encoding="utf-8")) == report
+
+
+def test_last_report_handle_close_failure_explicitly_marks_stale_snapshot(boundaries):
+    authorization = authorize(boundaries)
+    boundaries.report_close_error = OSError("TEST_ONLY_SENSITIVE")
+    report = execute(boundaries, authorization)
+    assert_safe_report(report)
+    assert report["status"] == "HANDLE_RELEASE_FAILED"
+    assert report["durable_report_matches_returned"] is False
+    assert report["checks"][-1] == {"name": "report_handle_release", "status": "FAIL"}
+    installation = boundaries.materialized[-1]
+    saved = json.loads(installation.report_path.read_text(encoding="utf-8"))
+    assert saved["status"] == "INSTALLED"
+    assert saved["durable_report_matches_returned"] is True
+    assert saved != report
+    assert "TEST_ONLY_SENSITIVE" not in str(report)
+
+
+def test_final_report_write_failure_is_explicit_and_closes_retained_handle(boundaries):
+    authorization = authorize(boundaries)
+
+    def write_hook(_report):
+        if not boundaries.lock_active:
+            raise OSError("TEST_ONLY_SENSITIVE")
+
+    boundaries.write_hook = write_hook
+    report = execute(boundaries, authorization)
+    assert_safe_report(report)
+    assert report["status"] == "REPORT_WRITE_FAILED_OUTCOME_UNKNOWN"
+    assert report["durable_report_matches_returned"] is False
+    assert report["checks"][-1] == {"name": "durable_final_report", "status": "FAIL"}
+    assert boundaries.materialized[-1].report_handle_open is False
+    assert "TEST_ONLY_SENSITIVE" not in str(report)
 
 
 @pytest.fixture

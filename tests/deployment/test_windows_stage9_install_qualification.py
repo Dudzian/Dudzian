@@ -453,6 +453,58 @@ def test_static_postgresql_configuration_is_fail_closed(installed: Any, change: 
 
 
 @pytest.mark.parametrize(
+    "parameter,value",
+    [
+        ("listen_addresses", "'*'"),
+        ("port", "55433"),
+        ("ssl", "off"),
+        ("ssl_ca_file", "'untrusted-ca.crt'"),
+        ("ssl_cert_file", "'untrusted-server.crt'"),
+        ("ssl_key_file", "'untrusted-server.key'"),
+    ],
+)
+@pytest.mark.parametrize("spelling", ["plain", "upper_tabs", "mixed_whitespace"])
+def test_postgresql_overrides_without_equals_fail_closed(
+    installed: Any, parameter: str, value: str, spelling: str
+) -> None:
+    facts, paths, arguments = installed
+    clean_base(facts)
+    line = f"{parameter} {value}"
+    if spelling == "upper_tabs":
+        line = f"\t{parameter.upper()}\t{value}  "
+    elif spelling == "mixed_whitespace":
+        line = f"  {parameter.title()} \t {value}\t"
+    facts["postgresql"]["postgresql.conf"].append(line)
+    report = qualification.qualify_clean_base_installation(*paths, observation=facts, **arguments)
+    assert check(report, "postgresql_static_configuration")["status"] == "FAIL"
+
+
+def test_installer_postgresql_configuration_remains_accepted(installed: Any) -> None:
+    facts, _, _ = installed
+    host._postgresql_configuration(facts)
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "SSL off",
+        "\tLiStEn_AdDrEsSeS\t'*' ",
+        "  PORT 55433",
+    ],
+)
+def test_noncanonical_postgresql_assignment_is_rejected_even_without_duplicate(
+    installed: Any, line: str
+) -> None:
+    facts, _, _ = installed
+    parameter = line.split()[0].lower()
+    lines = facts["postgresql"]["postgresql.conf"]
+    lines[:] = [entry for entry in lines if not entry.startswith(parameter + "=")]
+    lines.append(line)
+    with pytest.raises(host.HostInspectionError, match="static endpoint/TLS differs"):
+        host._postgresql_configuration(facts)
+
+
+@pytest.mark.parametrize(
     "change", [None, "phase", "claim", "account", "device", "schema", "malformed"]
 )
 def test_legal_enrollment_uses_canonical_accepted_identity_and_committed_record(

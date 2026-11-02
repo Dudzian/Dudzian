@@ -107,7 +107,7 @@ def _serve_service_evidence(name: str, stop: threading.Event) -> None:
 
 
 def run_service(name: str, worker: Worker) -> None:
-    """Host a worker which alone decides when SCM may observe RUNNING."""
+    """Let the worker decide RUNNING; the native pywin32 host owns STOPPED."""
     import servicemanager  # type: ignore[import-not-found]
     import win32event  # type: ignore[import-not-found]
     import win32service  # type: ignore[import-not-found]
@@ -119,6 +119,10 @@ def run_service(name: str, worker: Worker) -> None:
 
         def __init__(self, args: list[str]) -> None:
             super().__init__(args)
+            self._status_lock = threading.RLock()
+            self._reported_status: tuple[int, int, int, int, int, int, int] | None = None
+            self._stop_requested = False
+            self._reporting_closed = False
             self.stop_event = threading.Event()
             self.evidence_stop = threading.Event()
             self.evidence_thread: threading.Thread | None = None
@@ -126,48 +130,122 @@ def run_service(name: str, worker: Worker) -> None:
             self.stopped = win32event.CreateEvent(None, 1, 0, None)
 
         def report(self, status: int, *, wait_hint: int = 0) -> None:
-            self.ReportServiceStatus(status, waitHint=wait_hint)
-            if (
-                status == win32service.SERVICE_RUNNING
-                and name in (CONTRACT.backend_service, CONTRACT.verifier_service)
-                and not self.evidence_started
-                and not self.stop_event.is_set()
-            ):
-                self.evidence_started = True
-                thread = threading.Thread(
-                    target=_serve_service_evidence,
-                    args=(name, self.evidence_stop),
-                    name=f"{name}-stage9-evidence",
-                    daemon=False,
+            with self._status_lock:
+                if self._reporting_closed:
+                    return
+                if status == win32service.SERVICE_STOP_PENDING:
+                    # Latch intent even if the SCM submission fails. A late
+                    # readiness report must not resurrect a stopping service.
+                    self._stop_requested = True
+                elif self._stop_requested:
+                    return
+                self.ReportServiceStatus(status, waitHint=wait_hint)
+                # Snapshot the complete status emitted by pinned pywin32 312.
+                # Its high-level reporter increments checkPoint for pending
+                # states; interrogation must replay that value, not advance it.
+                self._reported_status = (
+                    win32service.SERVICE_WIN32_OWN_PROCESS,
+                    status,
+                    0
+                    if status == win32service.SERVICE_START_PENDING
+                    else self.GetAcceptedControls(),
+                    0,
+                    0,
+                    0
+                    if status in (win32service.SERVICE_RUNNING, win32service.SERVICE_STOPPED)
+                    else self.checkPoint,
+                    wait_hint,
                 )
-                try:
-                    thread.start()
-                except Exception:
-                    logging.getLogger(name).warning("Stage 9 service evidence endpoint BLOCKED")
-                else:
-                    self.evidence_thread = thread
+                if (
+                    status == win32service.SERVICE_RUNNING
+                    and name in (CONTRACT.backend_service, CONTRACT.verifier_service)
+                    and not self.evidence_started
+                    and not self.stop_event.is_set()
+                ):
+                    self.evidence_started = True
+                    thread = threading.Thread(
+                        target=_serve_service_evidence,
+                        args=(name, self.evidence_stop),
+                        name=f"{name}-stage9-evidence",
+                        daemon=False,
+                    )
+                    try:
+                        thread.start()
+                    except Exception:
+                        logging.getLogger(name).warning("Stage 9 service evidence endpoint BLOCKED")
+                    else:
+                        self.evidence_thread = thread
+
+        def SvcInterrogate(self) -> None:
+            with self._status_lock:
+                if self._reporting_closed:
+                    return
+                if self._stop_requested and (
+                    self._reported_status is None
+                    or self._reported_status[1] != win32service.SERVICE_STOP_PENDING
+                ):
+                    # Retry an actual state change after a failed stop report;
+                    # never replay the old RUNNING snapshot during stopping.
+                    self.report(win32service.SERVICE_STOP_PENDING, wait_hint=30_000)
+                elif self._reported_status is not None:
+                    win32service.SetServiceStatus(self.ssh, self._reported_status)
 
         def SvcRun(self) -> None:
             # ServiceFramework's default reports RUNNING before SvcDoRun.  The
             # production boundary deliberately keeps START_PENDING instead.
-            self.report(win32service.SERVICE_START_PENDING, wait_hint=60_000)
+            failure: BaseException | None = None
             try:
+                self.report(win32service.SERVICE_START_PENDING, wait_hint=60_000)
                 worker(self.stop_event, self.report)
+            except BaseException as exc:
+                failure = exc
+                raise
             finally:
-                self.evidence_stop.set()
-                if self.evidence_thread is not None:
-                    # The native pipe is cancellable; SQL has a five-second
-                    # connect/query bound and checks cancellation between calls.
-                    self.evidence_thread.join(timeout=7.0)
-                    if self.evidence_thread.is_alive():
-                        raise RuntimeError("Stage 9 service evidence endpoint cleanup unavailable")
-                self.report(win32service.SERVICE_STOPPED)
+                with self._status_lock:
+                    # No Python status may race the native host's terminal
+                    # submission after SvcRun returns or propagates an error.
+                    self._reporting_closed = True
+                try:
+                    self.evidence_stop.set()
+                    if self.evidence_thread is not None:
+                        # The native pipe is cancellable; SQL has a five-second
+                        # connect/query bound and checks cancellation between calls.
+                        self.evidence_thread.join(timeout=7.0)
+                        if self.evidence_thread.is_alive():
+                            raise RuntimeError(
+                                "Stage 9 service evidence endpoint cleanup unavailable"
+                            )
+                except BaseException as cleanup:
+                    if failure is None:
+                        raise
+                    failure.add_note(
+                        f"Stage 9 service evidence endpoint cleanup failed: {type(cleanup).__name__}"
+                    )
+            # Do not report STOPPED here: pywin32's native service host sends
+            # the sole terminal status after SvcRun returns or propagates an
+            # exception, preserving its error status and the SCM RPC lifetime.
 
         def SvcStop(self) -> None:
-            self.report(win32service.SERVICE_STOP_PENDING, wait_hint=30_000)
-            self.stop_event.set()
-            self.evidence_stop.set()
-            win32event.SetEvent(self.stopped)
+            failure: BaseException | None = None
+            operations: tuple[tuple[str, Callable[[], None]], ...] = (
+                (
+                    "STOP_PENDING",
+                    lambda: self.report(win32service.SERVICE_STOP_PENDING, wait_hint=30_000),
+                ),
+                ("worker cancellation", lambda: self.stop_event.set()),
+                ("evidence cancellation", lambda: self.evidence_stop.set()),
+                ("native cancellation", lambda: win32event.SetEvent(self.stopped)),
+            )
+            for operation, attempt in operations:
+                try:
+                    attempt()
+                except BaseException as exc:
+                    if failure is None:
+                        failure = exc
+                    else:
+                        failure.add_note(f"SCM stop {operation} failed: {type(exc).__name__}")
+            if failure is not None:
+                raise failure
 
         def SvcShutdown(self) -> None:
             self.SvcStop()

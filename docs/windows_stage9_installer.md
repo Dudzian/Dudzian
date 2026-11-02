@@ -94,6 +94,14 @@ then starts the final services.  A paired rollback action may delete only
 resources carrying the current install's ownership marker.  Pre-existing
 services, ProgramData, PGDATA, or PKI are conflicts, never adopted.
 
+The product decision of 2026-11-02 extends backend recovery to
+`SERVICE_STOPPED` with a nonzero Win32 exit code. Provisioning writes and
+verifies `SERVICE_CONFIG_FAILURE_ACTIONS_FLAG=True`; host inspection reads and
+requires it. A normal stop with code 0 queues no new recovery action. The
+[recovery contract](windows_service_recovery_contract.md) documents the decision,
+tests and activation at the next system start; readback alone does not prove
+active recovery in the current boot.
+
 Mutable transaction authority is never written under Program Files.  A
 protected transaction journal beside the ProgramData product root moves from
 `PROVISIONING` to `PROVISIONED`; an MSI commit custom action publishes the

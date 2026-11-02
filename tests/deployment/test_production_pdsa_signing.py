@@ -45,7 +45,12 @@ def installed(monkeypatch, tmp_path, request):
         recovery_public_digest=trust.RECOVERY_PUBLIC_DIGEST,
         purpose="PRODUCTION",
         pdsa_threshold=2,
-        pdsa_keys=keys,
+        pdsa_keys={
+            key_id: key.public_key()
+            .public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+            .hex()
+            for key_id, key in keys.items()
+        },
     )
     monkeypatch.setattr(
         trust,

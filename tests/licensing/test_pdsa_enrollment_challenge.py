@@ -50,7 +50,12 @@ def harness(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
         recovery_public_digest=trust.RECOVERY_PUBLIC_DIGEST,
         purpose="PRODUCTION",
         pdsa_threshold=2,
-        pdsa_keys=keys,
+        pdsa_keys={
+            key_id: key.public_key()
+            .public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+            .hex()
+            for key_id, key in keys.items()
+        },
     )
     ceremony = SimpleNamespace(ceremony_id=trust.CEREMONY_ID, verified_release=release)
     monkeypatch.setattr(trust, "verify_final_package", lambda *args, **kwargs: ceremony)

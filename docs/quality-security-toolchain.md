@@ -61,6 +61,19 @@ flow and exporter boundary can be designed without coupling trading to a backend
 
 ## Gate tiers
 
+Regresje remediacji Windows Stage 9 obejmują chroniony bootstrap SCRAM,
+monitorowanie uchwytu PostgreSQL po readiness, cleanup nieprzypisanego potomka,
+niekanoniczne nadpisania GUC, pochodzenie wartości kluczy PDSA oraz końcowy raport
+zwalniania zasobów. Testy instalatora i bootstrapu oraz oba moduły provisioningu
+rozszerzają istniejący zakres Ruff/format i branch coverage w `quality-ratchet`.
+Zwykłe CI wykonuje modele Win32 i testy odmów. Oddzielny test bootstrapu wymaga
+`CRYPTOHUNTER_RUN_WINDOWS_BOOTSTRAP_PG_INTEGRATION=1` oraz
+`CRYPTOHUNTER_TEST_PG_BINDIR`; tworzy jednorazowy klaster PostgreSQL na Linux.
+Sprawdza rzeczywiste SCRAM/TLS, schemat, końcowe HBA i cleanup, ale zastępuje ACL
+Windows uprawnieniami POSIX. Nie kwalifikuje SCM, Job Objects ani ACL Windows.
+Progi pokrycia, timeouty i bramki instalacji, enrollment oraz Stage 9/10 pozostają
+bez zmian.
+
 Ścieżka fizycznych dowodów Linux (`linux_physical_evidence`,
 `linux_physical_observations`, `linux_physical_native`,
 `linux_physical_collector` i `linux_evidence_handoff`) wchodzi do

@@ -26,9 +26,7 @@ CONTEXT_FIELDS = (
 )
 
 
-@pytest.fixture
-def verified_context_loader(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
-    keys = {f"TEST_ONLY_PROVENANCE_{index}": bytes([index]) * 32 for index in range(1, 4)}
+def _test_only_ceremony(keys: dict[str, str]):
     release = SimpleNamespace(
         payload_digest=trust.RELEASE_PAYLOAD_DIGEST,
         release_version=1,
@@ -42,7 +40,13 @@ def verified_context_loader(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
         pdsa_threshold=2,
         pdsa_keys=keys,
     )
-    ceremony = SimpleNamespace(ceremony_id=trust.CEREMONY_ID, verified_release=release)
+    return SimpleNamespace(ceremony_id=trust.CEREMONY_ID, verified_release=release)
+
+
+@pytest.fixture
+def verified_context_loader(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    keys = {f"TEST_ONLY_PROVENANCE_{index}": (bytes([index]) * 32).hex() for index in range(1, 4)}
+    ceremony = _test_only_ceremony(keys)
     verified = []
 
     def verify_package(path: Path, *, verification_time: datetime):
@@ -54,8 +58,7 @@ def verified_context_loader(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
             return {
                 "threshold": 2,
                 "keys": [
-                    {"key_id": key_id, "public_key_hex": public.hex()}
-                    for key_id, public in keys.items()
+                    {"key_id": key_id, "public_key_hex": public} for key_id, public in keys.items()
                 ],
             }
         assert path.name == "freeze_manifest.json"
@@ -278,3 +281,75 @@ def test_failed_package_verification_never_issues_context(
     with pytest.raises(trust.ProductionTrustUnavailable, match="PRODUCTION_TRUST_UNAVAILABLE"):
         trust.verify_production_trust_for_audit(tmp_path, verification_time=NOW)
     assert len(trust._ISSUED_CONTEXTS) == before
+
+
+@pytest.mark.parametrize("entrypoint", ["audit", "runtime", "current"])
+def test_post_verification_public_key_substitution_is_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, entrypoint: str
+):
+    from deployment.windows_stage9_production_ceremony import build_pdsa_public_bundle
+
+    signed_keys = {
+        f"TEST_ONLY_PROVENANCE_{index}": (bytes([index]) * 32).hex() for index in range(1, 4)
+    }
+    substituted_keys = {
+        key_id: (bytes([index]) * 32).hex() for index, key_id in enumerate(signed_keys, start=4)
+    }
+
+    def bundle(keys):
+        return build_pdsa_public_bundle(
+            [
+                {
+                    "key_id": key_id,
+                    "algorithm": "Ed25519",
+                    "encoding": "RFC8032_RAW_32_BYTES_LOWER_HEX",
+                    "public_key_hex": public_hex,
+                }
+                for key_id, public_hex in keys.items()
+            ],
+            threshold=2,
+            purpose="PRODUCTION",
+        )
+
+    bundle_path = tmp_path / "pdsa_public_bundle.json"
+    signed_bundle = bundle(signed_keys)
+    substituted_bundle = bundle(substituted_keys)
+    bundle_path.write_bytes(trust.canonical_json_bytes(signed_bundle) + b"\n")
+    (tmp_path / "freeze_manifest.json").write_bytes(
+        trust.canonical_json_bytes({"status": "PRODUCTION_ROOT_OF_TRUST_FROZEN"}) + b"\n"
+    )
+    ceremony = _test_only_ceremony(signed_keys)
+    substitute_after_verification = entrypoint != "current"
+    calls = []
+
+    def verified_package(path: Path, *, verification_time: datetime):
+        # The signature verifier boundary returns the original signed authority;
+        # the attacker replaces only its public bundle after that boundary.
+        calls.append((path, verification_time))
+        assert trust._canonical_document(bundle_path) == signed_bundle
+        if substitute_after_verification:
+            bundle_path.write_bytes(trust.canonical_json_bytes(substituted_bundle) + b"\n")
+        return ceremony
+
+    monkeypatch.setattr(trust, "verify_final_package", verified_package)
+    before = len(trust._ISSUED_CONTEXTS)
+    context = None
+    if entrypoint == "current":
+        context = trust.load_production_trust(tmp_path)
+        assert dict(trust._pdsa_public_snapshot(context.pdsa_keys)) == {
+            key_id: bytes.fromhex(public_hex) for key_id, public_hex in signed_keys.items()
+        }
+        substitute_after_verification = True
+        before += 1
+    with pytest.raises(trust.ProductionTrustUnavailable, match="projection differs"):
+        if entrypoint == "audit":
+            trust.verify_production_trust_for_audit(tmp_path, verification_time=NOW)
+        elif entrypoint == "runtime":
+            trust.load_production_trust(tmp_path)
+        else:
+            trust.require_current_production_trust_context(context)
+    assert trust._canonical_document(bundle_path) == substituted_bundle
+    assert [item["key_id"] for item in substituted_bundle["keys"]] == list(signed_keys)
+    assert substituted_bundle["threshold"] == signed_bundle["threshold"] == 2
+    assert len(trust._ISSUED_CONTEXTS) == before
+    assert len(calls) == (2 if entrypoint == "current" else 1)
