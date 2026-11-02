@@ -10,6 +10,7 @@ import sys
 from dataclasses import dataclass, replace
 from importlib import _bootstrap_external as bytecode
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Callable
 
 import pytest
@@ -72,7 +73,7 @@ class Context:
 
 
 @pytest.fixture
-def context(tmp_path: Path) -> Context:
+def context(tmp_path: Path, monkeypatch) -> Context:
     root = tmp_path / "host"
     for relative in (
         "usr/lib",
@@ -85,6 +86,28 @@ def context(tmp_path: Path) -> Context:
         directory.chmod(0o755)
     bundle = tmp_path / "bundle"
     bundle.mkdir()
+    runtime = SimpleNamespace(
+        environment_id="test-runtime",
+        manifest_sha256="b" * 64,
+        revision=REVISION,
+        executable=Path("/opt/cryptohunter/freshness-runtime/releases/test-runtime/bin/python3.12"),
+        base_executable=Path("/usr/bin/python3.12"),
+        base_executable_sha256="c" * 64,
+        packages={"cryptography": "50.0.2", "psycopg": "3.3.6"},
+    )
+    # Te testy modelują tylko granicę already-verified runtime. Rzeczywiste
+    # podpisy/inwentarz/publikację i importy sprawdzają osobne testy runtime.
+    from deployment import freshness_runtime_bootstrap
+
+    # Obraz executora ma systemowy OpenSSL należący do nobody. Modelujemy
+    # tylko tę granicę własności; podpis Ed25519 nadal jest rzeczywiście weryfikowany.
+    monkeypatch.setattr(freshness_runtime_bootstrap, "_openssl", lambda: "/usr/bin/openssl")
+    original_helpers = installer._runtime_helpers
+
+    def helpers():
+        return {**original_helpers(), "verify_installed_runtime": lambda **_options: runtime}
+
+    monkeypatch.setattr(installer, "_runtime_helpers", helpers)
     paths = set(installer.REQUIRED_FILES)
     paths.add("bot_core/installer_probe.sh")
     files = []
@@ -93,6 +116,13 @@ def context(tmp_path: Path) -> Context:
         path.parent.mkdir(parents=True, exist_ok=True)
         original = REPOSITORY / relative
         content = original.read_bytes() if original.is_file() else b"# synthetic fixture\n"
+        if relative == "deployment/systemd/cryptohunter-freshness-verifier.service":
+            content = content.replace(
+                b"@FRESHNESS_RUNTIME_PYTHON@", str(runtime.executable).encode()
+            )
+            content = content.replace(
+                b"ExecStart=/usr/bin/python3 ", f"ExecStart={runtime.executable} ".encode()
+            )
         if relative.endswith("installer_probe.sh"):
             content = b"#!/bin/sh\nexit 0\n"
         mode = 0o755 if relative.endswith("installer_probe.sh") else 0o644
@@ -139,8 +169,16 @@ def context(tmp_path: Path) -> Context:
         host,
         key,
         {
-            "schema_version": 1,
-            "scope": "cryptohunter.freshness.substrate.v1",
+            "schema_version": 2,
+            "scope": "cryptohunter.freshness.substrate.v2",
+            "runtime": {
+                "environment_id": runtime.environment_id,
+                "manifest_sha256": runtime.manifest_sha256,
+                "source_revision": runtime.revision,
+                "executable": str(runtime.executable),
+                "base_executable": str(runtime.base_executable),
+                "base_executable_sha256": runtime.base_executable_sha256,
+            },
             "source_revision": REVISION,
             "files": files,
         },
@@ -584,7 +622,7 @@ def host_probe(monkeypatch):
             return responses["cluster"]
         if arguments[0].endswith("pg_conftool"):
             return responses["include"]
-        if arguments[0].endswith("python3"):
+        if arguments[0].endswith(("python3", "python3.12")):
             return responses["python"]
         if "is-active" in arguments:
             return responses["active"]
@@ -602,7 +640,11 @@ def host_probe(monkeypatch):
 
 def test_native_host_probe_queries_only_readonly_commands(host_probe):
     probe, _responses, queries = host_probe
-    state = probe.inspect_host()
+    state = probe.inspect_host(
+        SimpleNamespace(
+            executable=Path("/approved/bin/python3.12"), packages={"cryptography": "50.0.2"}
+        )
+    )
     assert state.systemd and state.cluster_online and state.python_ready
     assert state.packages == PACKAGES
     assert tuple(user.name for user in state.users) == probe.USERS
@@ -804,11 +846,11 @@ def test_cli_reports_scoped_success_without_qualifying_product(
     context, monkeypatch, capsys, action, result
 ):
     monkeypatch.setattr(installer, "Config", lambda *_args: context.config)
-    monkeypatch.setattr(installer, "inspect_host", lambda: context.host)
+    monkeypatch.setattr(installer, "inspect_host", lambda *_args: context.host)
     assert installer.main(_arguments(context, action)) == 0
     report = json.loads(capsys.readouterr().out)
     assert report["result"] == result
-    assert report["scope"] == "cryptohunter.freshness.substrate.v1"
+    assert report["scope"] == "cryptohunter.freshness.substrate.v2"
     assert report["production_qualification"] == "WITHHELD"
     assert "LINUX_PRODUCTION_READY" not in report
 
@@ -816,7 +858,7 @@ def test_cli_reports_scoped_success_without_qualifying_product(
 def test_cli_exposes_safe_failure_code_without_host_stderr_or_secret(context, monkeypatch, capsys):
     monkeypatch.setattr(installer, "Config", lambda *_args: context.config)
     monkeypatch.setattr(
-        installer, "inspect_host", lambda: replace(context.host, cluster_online=False)
+        installer, "inspect_host", lambda *_args: replace(context.host, cluster_online=False)
     )
     before = _snapshot(context.config.root)
     assert installer.main(_arguments(context, "--preflight")) == 21
@@ -846,7 +888,7 @@ def test_cli_does_not_expose_rootless_test_overrides(context, extra):
 
 def test_duplicate_manifest_fields_are_rejected_after_valid_signature(context):
     raw = context.config.manifest.read_bytes().replace(
-        b'"schema_version":1', b'"schema_version":1,"schema_version":1', 1
+        b'"schema_version":2', b'"schema_version":2,"schema_version":2', 1
     )
     context.config.manifest.write_bytes(raw)
     context.config.signature.write_bytes(context.key.sign(raw))
@@ -1107,3 +1149,81 @@ def test_extra_recovery_state_file_prevents_idempotent_adoption(context):
     with pytest.raises(installer.InstallerError):
         context.install()
     assert _snapshot(context.config.root) == before
+
+
+def test_host_probe_without_verified_runtime_never_uses_another_python(host_probe):
+    probe, _responses, queries = host_probe
+    assert not probe.inspect_host().python_ready
+    assert not any("python" in arguments[0] for arguments in queries)
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "environment_id",
+        "manifest_sha256",
+        "executable",
+        "base_executable",
+        "base_executable_sha256",
+    ],
+)
+def test_runtime_binding_drift_refuses_before_mutation(context, field):
+    context.document["runtime"][field] += "-changed"
+    context.sign()
+    _refuses(context, 25)
+
+
+def test_legacy_manifest_does_not_authorize_new_runtime(context):
+    context.document.pop("runtime")
+    context.document.update(schema_version=1, scope="cryptohunter.freshness.substrate.v1")
+    context.sign()
+    _refuses(context, 10)
+
+
+def test_untrusted_runtime_refuses_before_host_probe(context, monkeypatch):
+    original = installer._runtime_helpers
+
+    def fail(**_options):
+        raise RuntimeError("synthetic invalid independent signature")
+
+    def helpers():
+        return {**original(), "verify_installed_runtime": fail}
+
+    monkeypatch.setattr(installer, "_runtime_helpers", helpers)
+    monkeypatch.setattr(
+        installer, "inspect_host", lambda *_args: pytest.fail("untrusted Python probe")
+    )
+    before = _snapshot(context.config.root)
+    with pytest.raises(installer.InstallerError) as error:
+        installer.preflight(context.config)
+    assert error.value.code == 25
+    assert _snapshot(context.config.root) == before
+
+
+def test_signed_unit_cannot_choose_another_interpreter(context):
+    path = "deployment/systemd/cryptohunter-freshness-verifier.service"
+    file = context.config.bundle / path
+    content = file.read_bytes().replace(
+        context.document["runtime"]["executable"].encode(), b"/usr/bin/python3"
+    )
+    file.write_bytes(content)
+    record = next(item for item in context.document["files"] if item["path"] == path)
+    record.update(size=len(content), sha256=hashlib.sha256(content).hexdigest())
+    context.sign()
+    _refuses(context, 25)
+
+
+def test_signed_unit_requires_independent_bootstrap_before_runtime(context):
+    path = "deployment/systemd/cryptohunter-freshness-verifier.service"
+    file = context.config.bundle / path
+    content = (
+        b"\n".join(
+            line for line in file.read_bytes().splitlines() if not line.startswith(b"ExecStartPre=")
+        )
+        + b"\n"
+    )
+    file.write_bytes(content)
+    record = next(item for item in context.document["files"] if item["path"] == path)
+    record.update(size=len(content), sha256=hashlib.sha256(content).hexdigest())
+    context.sign()
+    _refuses(context, 25)

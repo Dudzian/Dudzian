@@ -71,7 +71,7 @@ else:
     )
     inspect_host = _helper["inspect_host"]
 
-SCOPE = "cryptohunter.freshness.substrate.v1"
+SCOPE = "cryptohunter.freshness.substrate.v2"
 REQUIRED_FILES = frozenset(
     {
         "bot_core/__init__.py",
@@ -83,6 +83,8 @@ REQUIRED_FILES = frozenset(
         "bot_core/linux_service_postgresql.py",
         "bot_core/production_signer_ipc.py",
         "deployment/freshness_verifier_entrypoint.py",
+        "deployment/freshness_runtime.py",
+        "deployment/freshness_runtime_bootstrap.py",
         "deployment/systemd/cryptohunter-freshness-verifier.service",
         "deployment/postgresql/pg_hba.conf",
         "deployment/postgresql/pg_ident.conf",
@@ -153,6 +155,7 @@ class Plan:
     source_revision: str
     artifacts: tuple[Artifact, ...]
     postgres_gid: int
+    runtime: dict[str, str]
 
 
 def _fail(condition: bool, code: int, reason: str) -> None:
@@ -429,7 +432,7 @@ def _inventory(path: Path, *, owner_uid: int | None = None) -> dict[str, tuple[b
         os.close(root_fd)
 
 
-def _manifest(config: Config, tree: _Tree) -> tuple[str, tuple[Artifact, ...]]:
+def _manifest(config: Config, tree: _Tree) -> tuple[str, tuple[Artifact, ...], dict[str, str]]:
     _fail(
         re.fullmatch(r"[0-9a-f]{40}", config.expected_revision) is not None,
         10,
@@ -450,12 +453,9 @@ def _manifest(config: Config, tree: _Tree) -> tuple[str, tuple[Artifact, ...]]:
             11,
             "Niepoprawny format klucza lub podpisu",
         )
-        from cryptography.exceptions import InvalidSignature
-        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
-
         try:
-            Ed25519PublicKey.from_public_bytes(key_bytes).verify(signature, raw)
-        except (InvalidSignature, ValueError) as exc:
+            _runtime_helpers()["verify_ed25519"](raw, signature, key_bytes)
+        except (RuntimeError, ValueError) as exc:
             raise InstallerError(11, "Nieprawidłowy podpis zatwierdzenia instalacji") from exc
 
         def unique(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -473,17 +473,35 @@ def _manifest(config: Config, tree: _Tree) -> tuple[str, tuple[Artifact, ...]]:
             10, "Nie można zweryfikować manifestu i niezależnego autorytetu"
         ) from exc
     _fail(
-        type(data) is dict and set(data) == {"schema_version", "scope", "source_revision", "files"},
+        type(data) is dict
+        and set(data) == {"schema_version", "scope", "source_revision", "files", "runtime"},
         10,
         "Nieprawidłowy kontrakt manifestu",
     )
     _fail(
         type(data["schema_version"]) is int
-        and data["schema_version"] == 1
+        and data["schema_version"] == 2
         and data["scope"] == SCOPE
         and data["source_revision"] == config.expected_revision,
         10,
         "Manifest nie zatwierdza tego zakresu i rewizji",
+    )
+    runtime = data["runtime"]
+    _fail(
+        type(runtime) is dict
+        and set(runtime)
+        == {
+            "environment_id",
+            "manifest_sha256",
+            "source_revision",
+            "executable",
+            "base_executable",
+            "base_executable_sha256",
+        }
+        and all(type(value) is str and value for value in runtime.values())
+        and runtime.get("source_revision") == config.expected_revision,
+        10,
+        "Nieprawidłowy kontrakt powiązania runtime",
     )
     files = data["files"]
     _fail(type(files) is list and 0 < len(files) <= 16384, 10, "Nieprawidłowy inwentarz manifestu")
@@ -530,7 +548,79 @@ def _manifest(config: Config, tree: _Tree) -> tuple[str, tuple[Artifact, ...]]:
         12,
         "Niepełny lub dodatkowy niezatwierdzony kod w bundle",
     )
-    return hashlib.sha256(raw).hexdigest(), tuple(artifacts)
+    return hashlib.sha256(raw).hexdigest(), tuple(artifacts), runtime
+
+
+def _runtime_helpers() -> dict[str, Any]:
+    """Wyłącznie uprzednio zaufana kopia bootstrapu, bez importów runtime."""
+    if __package__:
+        from deployment.freshness_runtime import verify_installed_runtime
+        from deployment.freshness_runtime_bootstrap import verify_ed25519
+
+        return {
+            "verify_installed_runtime": verify_installed_runtime,
+            "verify_ed25519": verify_ed25519,
+        }
+    result = {}
+    for filename, symbol in (
+        ("freshness_runtime_bootstrap.py", "verify_ed25519"),
+        ("freshness_runtime.py", "verify_installed_runtime"),
+    ):
+        helper = Path(__file__).absolute().with_name(filename)
+        if sys.platform != "win32" and os.geteuid() == 0:
+            for path in (*reversed(helper.parents), helper):
+                value = path.lstat()
+                _fail(
+                    not stat.S_ISLNK(value.st_mode)
+                    and value.st_uid == 0
+                    and not value.st_mode & 0o022
+                    and (path != helper or (stat.S_ISREG(value.st_mode) and value.st_nlink == 1)),
+                    11,
+                    "Niezaufana kopia bootstrapu runtime",
+                )
+        result[symbol] = runpy.run_path(str(helper))[symbol]
+    return result
+
+
+def _verified_runtime(
+    config: Config, binding: dict[str, str], artifacts: tuple[Artifact, ...]
+) -> Any:
+    try:
+        runtime = _runtime_helpers()["verify_installed_runtime"](
+            root=config.root, owner_uid=config.owner_uid
+        )
+    except (OSError, ValueError, RuntimeError) as exc:
+        raise InstallerError(25, "Brak lub niezgodność niezależnie zatwierdzonego runtime") from exc
+    actual = {
+        "environment_id": runtime.environment_id,
+        "manifest_sha256": runtime.manifest_sha256,
+        "source_revision": runtime.revision,
+        "executable": str(runtime.executable),
+        "base_executable": str(runtime.base_executable),
+        "base_executable_sha256": runtime.base_executable_sha256,
+    }
+    _fail(actual == binding, 25, "Runtime nie odpowiada zatwierdzeniu tego wydania")
+    unit = next(
+        item.content
+        for item in artifacts
+        if item.path == "deployment/systemd/cryptohunter-freshness-verifier.service"
+    )
+    expected = (
+        f"ExecStart={runtime.executable} -I -s -B "
+        "/usr/lib/cryptohunter/deployment/freshness_verifier_entrypoint.py"
+    ).encode("ascii")
+    expected_pre = (
+        b"ExecStartPre=/usr/bin/python3 -I -s -B "
+        b"/usr/lib/cryptohunter/deployment/freshness_runtime_bootstrap.py verify-installed"
+    )
+    _fail(
+        [line for line in unit.splitlines() if line.startswith(b"ExecStart=")] == [expected]
+        and [line for line in unit.splitlines() if line.startswith(b"ExecStartPre=")]
+        == [expected_pre],
+        25,
+        "Jednostka nie uruchamia dokładnego zatwierdzonego interpretera runtime",
+    )
+    return runtime
 
 
 def _accounts(host: HostState) -> int:
@@ -607,6 +697,7 @@ def _receipt(plan: Plan, status: str) -> bytes:
             "source_revision": plan.source_revision,
             "manifest_sha256": plan.manifest_sha256,
             "status": status,
+            "runtime": plan.runtime,
         },
         sort_keys=True,
         separators=(",", ":"),
@@ -640,6 +731,7 @@ def _installed(tree: _Tree, config: Config, plan: Plan) -> None:
 
 
 def _verify_files(tree: _Tree, config: Config, plan: Plan) -> None:
+    _verified_runtime(config, plan.runtime, plan.artifacts)
     actual = _inventory(config.root / CODE, owner_uid=config.owner_uid)
     expected = {item.path: (item.content, item.mode) for item in plan.artifacts}
     _fail(actual == expected, 24, "Drift inwentarza zainstalowanego kodu")
@@ -659,10 +751,13 @@ def _verify_files(tree: _Tree, config: Config, plan: Plan) -> None:
         )
 
 
-def _preflight(config: Config, host: HostState) -> Plan:
+def _preflight(config: Config, host: HostState | None) -> Plan:
     tree = _Tree(config.root, config.owner_uid)
     try:
-        digest, artifacts = _manifest(config, tree)
+        digest, artifacts, binding = _manifest(config, tree)
+        runtime = _verified_runtime(config, binding, artifacts)
+        if host is None:
+            host = inspect_host(runtime)
         _fail(
             host.systemd and REQUIRED_PACKAGES <= host.packages and host.python_ready,
             20,
@@ -737,7 +832,7 @@ def _preflight(config: Config, host: HostState) -> Plan:
                 23,
                 "Niezgodny katalog konfiguracji PostgreSQL",
             )
-        plan = Plan("fresh", digest, config.expected_revision, artifacts, postgres_gid)
+        plan = Plan("fresh", digest, config.expected_revision, artifacts, postgres_gid, binding)
         status = tree.status(STATE)
         if status is not None:
             _fail(
@@ -748,7 +843,9 @@ def _preflight(config: Config, host: HostState) -> Plan:
                 "Obcy fragment jednostki systemd",
             )
             _installed(tree, config, plan)
-            return Plan("installed", digest, config.expected_revision, artifacts, postgres_gid)
+            return Plan(
+                "installed", digest, config.expected_revision, artifacts, postgres_gid, binding
+            )
         _fail(
             not host.verifier_active and host.unit_state == "not-found" and not host.unit_fragment,
             24,
@@ -780,7 +877,7 @@ def _preflight(config: Config, host: HostState) -> Plan:
 def preflight(config: Config, host: HostState | None = None) -> Plan:
     """Tylko odczyt; jawne kody odmowy, bez importowania kodu bundle."""
     try:
-        return _preflight(config, inspect_host() if host is None else host)
+        return _preflight(config, host)
     except InstallerError:
         raise
     except (OSError, ValueError) as exc:
@@ -904,6 +1001,7 @@ def install(
             plan.source_revision,
             plan.artifacts,
             plan.postgres_gid,
+            plan.runtime,
         )
     except (Exception, KeyboardInterrupt) as exc:
         if isinstance(exc, InstallerError):
@@ -946,6 +1044,7 @@ def main(argv: list[str] | None = None) -> int:
                     "scope": SCOPE,
                     "state": plan.state,
                     "manifest_sha256": plan.manifest_sha256,
+                    "runtime": plan.runtime,
                     "production_qualification": "WITHHELD",
                 },
                 sort_keys=True,

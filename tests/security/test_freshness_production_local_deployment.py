@@ -84,8 +84,17 @@ def test_systemd_unit_is_valid_with_native_systemd_analyze(tmp_path: Path):
     assert systemd_analyze is not None, "Linux CI musi zapewniać natywny systemd-analyze"
     postgres = tmp_path / "postgresql.service"
     postgres.write_text("[Service]\nType=oneshot\nExecStart=/bin/true\n")
+    # Składnia szablonu po materializacji; exact ścieżkę podpisanego runtime
+    # sprawdzają osobno testy render_runtime_unit oraz D-Bus/proc identity.
+    # W tym porcie CI zatwierdzonego release pod /opt jeszcze nie instalowano.
+    materialized = tmp_path / UNIT.name
+    materialized.write_bytes(
+        UNIT.read_bytes().replace(b"@FRESHNESS_RUNTIME_PYTHON@", b"/usr/bin/python3")
+    )
     result = subprocess.run(
-        [systemd_analyze, "verify", str(UNIT), str(postgres)], text=True, capture_output=True
+        [systemd_analyze, "verify", str(materialized), str(postgres)],
+        text=True,
+        capture_output=True,
     )
     assert result.returncode == 0, result.stderr
 

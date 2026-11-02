@@ -15,7 +15,10 @@ import subprocess
 import sys
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    from deployment.freshness_runtime import VerifiedRuntime
 
 from bot_core.linux_service_ipc import capture_process_identity
 from bot_core.production_signer_ipc import ProductionSignerIPCError, _read_proc
@@ -29,6 +32,15 @@ EXPECTED_ARGV = (
     "-B",
     "/usr/lib/cryptohunter/deployment/freshness_verifier_entrypoint.py",
 )
+BOOTSTRAP_ARGV = (
+    "/usr/bin/python3",
+    "-I",
+    "-s",
+    "-B",
+    "/usr/lib/cryptohunter/deployment/freshness_runtime_bootstrap.py",
+    "verify-installed",
+)
+RUNTIME_PYTHON_TOKEN = b"@FRESHNESS_RUNTIME_PYTHON@"
 CGROUP = "/system.slice/" + UNIT_NAME
 _OBJECT_PATH = "/org/freedesktop/systemd1/unit/cryptohunter_2dfreshness_2dverifier_2eservice"
 _STATIC_PROPERTIES = {
@@ -82,6 +94,47 @@ _MAX_EXECUTABLE = 512 * 1024 * 1024
 
 class ServiceIdentityError(RuntimeError):
     """Stały kod odmowy; dane hosta i stderr nie stanowią treści raportu."""
+
+
+def _load_runtime() -> VerifiedRuntime:
+    # Ładujemy wyłącznie bootstrap instalacji, nigdy pakiet weryfikowanego venv.
+    from deployment.freshness_runtime_bootstrap import RuntimeTrustError
+    from deployment.freshness_runtime import verify_installed_runtime
+
+    try:
+        return verify_installed_runtime()
+    except RuntimeTrustError as exc:
+        raise ServiceIdentityError("SIGNED_RUNTIME_NOT_QUALIFIED") from exc
+
+
+def expected_runtime_argv(runtime: VerifiedRuntime) -> tuple[str, ...]:
+    """Dokładny program pochodzi z wcześniej zweryfikowanego manifestu."""
+    executable = str(runtime.executable)
+    expected = (
+        "/opt/cryptohunter/freshness-runtime/releases/" + runtime.environment_id + "/bin/python3.12"
+    )
+    _require(executable == expected, "RUNTIME_EXECUTABLE_BINDING_CHANGED")
+    return (executable, *EXPECTED_ARGV[1:])
+
+
+def validate_runtime_unit(content: bytes, runtime: VerifiedRuntime) -> bytes:
+    """Przyjmij tylko opublikowany unit z dokładnym programem i bootstrapem."""
+    lines = content.splitlines()
+    expected = b"ExecStart=" + " ".join(expected_runtime_argv(runtime)).encode("ascii")
+    bootstrap = b"ExecStartPre=" + " ".join(BOOTSTRAP_ARGV).encode("ascii")
+    commands = [line for line in lines if line.partition(b"=")[0].strip() == b"ExecStart"]
+    predecessors = [line for line in lines if line.partition(b"=")[0].strip() == b"ExecStartPre"]
+    _require(commands == [expected] and predecessors == [bootstrap], "RUNTIME_UNIT_BINDING_CHANGED")
+    return content
+
+
+def render_runtime_unit(template: bytes, runtime: VerifiedRuntime) -> bytes:
+    """Materializuj jeden zamrożony token przed podpisaniem inwentarza aplikacji."""
+    _require(
+        type(template) is bytes and template.count(RUNTIME_PYTHON_TOKEN) == 1,
+        "RUNTIME_UNIT_TEMPLATE_INVALID",
+    )
+    return template.replace(RUNTIME_PYTHON_TOKEN, expected_runtime_argv(runtime)[0].encode("ascii"))
 
 
 def _require(condition: bool, code: str) -> None:
@@ -149,7 +202,7 @@ def _properties(raw: str) -> dict[str, str]:
     return result
 
 
-def _exec_start(raw: str, pid: int) -> tuple[Any, ...]:
+def _command_record(raw: str) -> list[Any]:
     _require(type(raw) is str and len(raw) <= _MAX_REPLY, "EXECSTART_REPLY_MALFORMED")
 
     def unique(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -173,10 +226,17 @@ def _exec_start(raw: str, pid: int) -> tuple[Any, ...]:
     )
     command = value["data"][0]
     _require(type(command) is list and len(command) == 10, "EXACT_EXECSTART_REQUIRED")
+    return cast(list[Any], command)
+
+
+def _exec_start(
+    raw: str, pid: int, *, expected_argv: tuple[str, ...] = EXPECTED_ARGV
+) -> tuple[Any, ...]:
+    command = _command_record(raw)
     _require(
-        command[0] == EXECUTABLE
+        command[0] == expected_argv[0]
         and type(command[1]) is list
-        and tuple(command[1]) == EXPECTED_ARGV
+        and tuple(command[1]) == expected_argv
         and command[2] is False,
         "EXECSTART_PROGRAM_OR_ARGUMENTS_CHANGED",
     )
@@ -192,7 +252,46 @@ def _exec_start(raw: str, pid: int) -> tuple[Any, ...]:
     return (command[0], tuple(command[1]), *command[2:])
 
 
-def _read_exec_start(pid: int) -> tuple[Any, ...]:
+def _bootstrap_start(raw: str) -> tuple[Any, ...]:
+    command = _command_record(raw)
+    _require(
+        command[0] == BOOTSTRAP_ARGV[0]
+        and type(command[1]) is list
+        and tuple(command[1]) == BOOTSTRAP_ARGV
+        and command[2] is False,
+        "BOOTSTRAP_PROGRAM_OR_ARGUMENTS_CHANGED",
+    )
+    _require(
+        all(type(item) is int and 0 <= item < 2**64 for item in command[3:])
+        and command[3] > 0
+        and command[4] > 0
+        and command[5] >= command[3]
+        and command[6] >= command[4]
+        and 1 < command[7] < 2**31
+        and command[8:] == [1, 0],
+        "BOOTSTRAP_NOT_SUCCESSFUL",
+    )
+    return (command[0], tuple(command[1]), *command[2:])
+
+
+def _read_bootstrap_start() -> tuple[Any, ...]:
+    return _bootstrap_start(
+        _query(
+            [
+                "/usr/bin/busctl",
+                "--system",
+                "--json=short",
+                "get-property",
+                "org.freedesktop.systemd1",
+                _OBJECT_PATH,
+                "org.freedesktop.systemd1.Service",
+                "ExecStartPre",
+            ]
+        )
+    )
+
+
+def _read_exec_start(pid: int, runtime: VerifiedRuntime | None = None) -> tuple[Any, ...]:
     return _exec_start(
         _query(
             [
@@ -207,6 +306,7 @@ def _read_exec_start(pid: int) -> tuple[Any, ...]:
             ]
         ),
         pid,
+        expected_argv=EXPECTED_ARGV if runtime is None else expected_runtime_argv(runtime),
     )
 
 
@@ -223,7 +323,7 @@ def _metadata(value: os.stat_result) -> tuple[int, ...]:
     )
 
 
-def _program_observation(pid: int) -> dict[str, Any]:
+def _program_observation(pid: int, runtime: VerifiedRuntime | None = None) -> dict[str, Any]:
     """Czytaj obraz przez jądrowe /proc/PID/exe, nie przez argv lub comm."""
     if sys.platform == "win32":
         raise ServiceIdentityError("NATIVE_LINUX_PROCESS_REQUIRED")
@@ -232,12 +332,17 @@ def _program_observation(pid: int) -> dict[str, Any]:
         raw = _read_proc(directory, "cmdline")
         _require(raw.endswith(b"\x00"), "PROCESS_ARGUMENTS_MALFORMED")
         argv = tuple(os.fsdecode(item) for item in raw[:-1].split(b"\x00"))
-        expected_path = str(Path(EXECUTABLE).resolve(strict=True))
+        launch_path = EXECUTABLE if runtime is None else expected_runtime_argv(runtime)[0]
+        expected_path = str(Path(launch_path).resolve(strict=True))
+        if runtime is not None:
+            _require(
+                expected_path == str(runtime.base_executable), "RUNTIME_BASE_EXECUTABLE_CHANGED"
+            )
         _require(os.readlink("exe", dir_fd=directory) == expected_path, "PROCESS_PROGRAM_CHANGED")
         executable = os.open("exe", os.O_RDONLY | os.O_CLOEXEC, dir_fd=directory)
         expected: int | None = None
         try:
-            expected = os.open(EXECUTABLE, os.O_RDONLY | os.O_CLOEXEC)
+            expected = os.open(launch_path, os.O_RDONLY | os.O_CLOEXEC)
             before = os.fstat(expected)
             _require(
                 stat.S_ISREG(before.st_mode)
@@ -263,9 +368,14 @@ def _program_observation(pid: int) -> dict[str, Any]:
                 == _metadata(os.fstat(expected))
                 == _metadata(os.fstat(executable))
                 == _metadata(os.stat("exe", dir_fd=directory))
-                == _metadata(os.stat(EXECUTABLE)),
+                == _metadata(os.stat(launch_path)),
                 "PROCESS_PROGRAM_CHANGED_DURING_OBSERVATION",
             )
+            if runtime is not None:
+                _require(
+                    digest.hexdigest() == runtime.base_executable_sha256,
+                    "PROCESS_PROGRAM_NOT_APPROVED_BY_RUNTIME",
+                )
             return {
                 "argv": argv,
                 "exe_sha256": digest.hexdigest(),
@@ -298,7 +408,11 @@ def _check_pidfd(pidfd: int, pid: int) -> None:
 
 
 def qualify_freshness_service_identity(
-    *, uid: int, gid: int, systemctl: Callable[..., str] = _systemctl
+    *,
+    uid: int,
+    gid: int,
+    systemctl: Callable[..., str] = _systemctl,
+    runtime_verifier: Callable[[], VerifiedRuntime] = _load_runtime,
 ) -> None:
     """Odmów przy zmianie konfiguracji, argumentów, obrazu lub życia MainPID."""
     if sys.platform == "win32":
@@ -310,13 +424,21 @@ def qualify_freshness_service_identity(
     )
     pidfd: int | None = None
     try:
+        runtime = runtime_verifier()
+        expected_argv = expected_runtime_argv(runtime)
         before = _properties(
             systemctl("show", UNIT_NAME, "--no-pager", "--property=" + ",".join(SYSTEMD_PROPERTIES))
         )
         pid = int(before["MainPID"])
         pidfd = os.pidfd_open(pid, 0)
         _check_pidfd(pidfd, pid)
-        command = _read_exec_start(pid)
+        command = _read_exec_start(pid, runtime)
+        bootstrap = _read_bootstrap_start()
+        _require(
+            command[4] == int(before["ExecMainStartTimestampMonotonic"])
+            and bootstrap[6] <= command[4],
+            "BOOTSTRAP_MAIN_PROCESS_ORDER_CHANGED",
+        )
         first = capture_process_identity(pid)
         _require(
             first["pid"] == pid
@@ -326,13 +448,14 @@ def qualify_freshness_service_identity(
             and first["cgroup"] == before["ControlGroup"] == CGROUP,
             "SERVICE_PROCESS_CREDENTIALS_OR_CGROUP_CHANGED",
         )
-        program = _program_observation(pid)
-        _require(program["argv"] == EXPECTED_ARGV, "PROCESS_ARGUMENTS_CHANGED")
+        program = _program_observation(pid, runtime)
+        _require(program["argv"] == expected_argv, "PROCESS_ARGUMENTS_CHANGED")
         _require(first["exe_sha256"] == program["exe_sha256"], "PROCESS_PROGRAM_DIGEST_CHANGED")
         _check_pidfd(pidfd, pid)
         _require(capture_process_identity(pid) == first, "SERVICE_PROCESS_IDENTITY_CHANGED")
-        _require(_program_observation(pid) == program, "SERVICE_PROCESS_PROGRAM_CHANGED")
-        _require(_read_exec_start(pid) == command, "EFFECTIVE_EXECSTART_CHANGED")
+        _require(_program_observation(pid, runtime) == program, "SERVICE_PROCESS_PROGRAM_CHANGED")
+        _require(_read_exec_start(pid, runtime) == command, "EFFECTIVE_EXECSTART_CHANGED")
+        _require(_read_bootstrap_start() == bootstrap, "EFFECTIVE_BOOTSTRAP_CHANGED")
         _require(
             _properties(
                 systemctl(
@@ -342,6 +465,7 @@ def qualify_freshness_service_identity(
             == before,
             "EFFECTIVE_SERVICE_CHANGED",
         )
+        _require(runtime_verifier() == runtime, "SIGNED_RUNTIME_CHANGED_DURING_OBSERVATION")
         _check_pidfd(pidfd, pid)
     except ServiceIdentityError:
         raise

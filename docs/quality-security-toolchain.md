@@ -1,5 +1,14 @@
 # Quality, security, and code-intelligence toolchain
 
+Podpisany runtime Freshness obejmuje `freshness_runtime.py`, minimalny
+`freshness_runtime_bootstrap.py` oraz `build_freshness_runtime.py` w configured
+mypy Linux/Windows, jawnym Ruff/format i istniejącym branch coverage ratchet.
+Nowe testy bezpieczeństwa i buildera zachowują próg 70%. Osobny workflow
+`freshness-runtime.yml` wykonuje rzeczywisty offline build na Ubuntu 24.04
+z systemowym CPython 3.12; nie tworzy kont ani klastra i nie zastępuje VM.
+[Kontrakt runtime](architecture/stage9_linux_signed_python_runtime.md)
+opisuje oddzielne podpisy i granicę bootstrapu.
+
 Remediacja review PR #3235 obejmuje dokładną tożsamość usługi Freshness:
 `freshness_service_identity.py`, delegującą kwalifikację deploymentu oraz
 `test_freshness_service_identity.py`. Moduły są w configured mypy Linux/Win32,

@@ -13,6 +13,9 @@ import psycopg
 
 from bot_core.freshness_service_identity import (
     ServiceIdentityError,
+    _load_runtime,
+    render_runtime_unit,
+    validate_runtime_unit,
     qualify_freshness_service_identity,
 )
 
@@ -129,7 +132,6 @@ def qualify_production_local_deployment() -> None:
     }
     online_gids.update({verifier.pw_gid, runtime.pw_gid})
 
-    _immutable_file(UNIT_PATH, REVIEWED_UNIT.read_bytes(), online_uids, online_gids)
     for filename, installed in (
         ("pg_hba.conf", Path("/etc/cryptohunter/postgresql/pg_hba.conf")),
         ("pg_ident.conf", Path("/etc/cryptohunter/postgresql/pg_ident.conf")),
@@ -141,9 +143,6 @@ def qualify_production_local_deployment() -> None:
         _immutable_file(
             installed, (REVIEWED_DEPLOYMENT / filename).read_bytes(), online_uids, online_gids
         )
-    executable = Path("/usr/bin/python3")
-    executable_status = _mode(executable, follow=True)
-    _fail(stat.S_ISREG(executable_status.st_mode), "reviewed Python executable missing")
     code_directory = Path("/usr/lib/cryptohunter/bot_core")
     for filename, digest in REVIEWED_CODE_DIGESTS.items():
         source = code_directory / filename
@@ -158,6 +157,16 @@ def qualify_production_local_deployment() -> None:
             f"reviewed source digest mismatch: {source}",
         )
     try:
+        approved_runtime = _load_runtime()
+        reviewed_unit = REVIEWED_UNIT.read_bytes()
+        if b"@FRESHNESS_RUNTIME_PYTHON@" in reviewed_unit:
+            reviewed_unit = render_runtime_unit(reviewed_unit, approved_runtime)
+        _immutable_file(
+            UNIT_PATH,
+            validate_runtime_unit(reviewed_unit, approved_runtime),
+            online_uids,
+            online_gids,
+        )
         qualify_freshness_service_identity(uid=verifier.pw_uid, gid=ipc.gr_gid)
     except ServiceIdentityError as exc:
         raise DeploymentQualificationError("live verifier identity not qualified") from exc
@@ -189,7 +198,7 @@ def qualify_production_local_deployment() -> None:
         f"dbname={POSTGRES_DATABASE} user=postgres sslmode=disable"
     )
     with psycopg.connect(dsn) as connection:
-        settings = dict(
+        settings: dict[str, str] = dict(
             connection.execute(
                 "SELECT name,setting FROM pg_settings WHERE name=ANY(%s)",
                 (["server_version_num", "listen_addresses", "fsync", "synchronous_commit"],),

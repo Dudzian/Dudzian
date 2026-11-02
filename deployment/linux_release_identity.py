@@ -17,6 +17,15 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 PRODUCT_ID = "urn:cryptohunter:product"
 RELEASE_CONTRACT = "cryptohunter.linux.release.v1"
+RELEASE_CONTRACT_V2 = "cryptohunter.linux.release.v2"
+RUNTIME_BINDING_FIELDS = {
+    "environment_id",
+    "manifest_sha256",
+    "source_revision",
+    "executable",
+    "base_executable",
+    "base_executable_sha256",
+}
 SECURITY_PROFILE = "cryptohunter.linux.stage9.v1"
 REQUIRED_COMPONENT_CONTRACTS = {
     "runtime": (
@@ -84,18 +93,46 @@ def validate_release_authorities(value: Any, *, producer_keys: set[str]) -> None
         seen.add(identifier)
 
 
+def validate_runtime_binding(value: Any, *, source_revision: str) -> dict[str, Any]:
+    """Wersjonowany certyfikat wiąże runtime, nie zatwierdza nim całego produktu."""
+    binding = _object(value, RUNTIME_BINDING_FIELDS)
+    identifier = binding["environment_id"]
+    if (
+        type(identifier) is not str
+        or re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,95}", identifier) is None
+        or identifier in {".", ".."}
+        or not _hash(binding["manifest_sha256"])
+        or not _hash(binding["source_revision"], 40)
+        or binding["source_revision"] != source_revision
+        or binding["executable"]
+        != ("/opt/cryptohunter/freshness-runtime/releases/" + identifier + "/bin/python3.12")
+        or binding["base_executable"] != "/usr/bin/python3.12"
+        or not _hash(binding["base_executable_sha256"])
+    ):
+        raise ReleaseIdentityError("Niezgodne powiązanie zatwierdzonego runtime z wydaniem")
+    return binding
+
+
 def validate_release_statement(envelope: Any, installation: dict[str, Any]) -> dict[str, Any]:
     """Sprawdź wymagany profil; nazwy plików i jednostek pochodzą z wydania."""
     from deployment.linux_physical_evidence import digest
 
     certificate = _object(envelope, {"key_id", "payload", "signature"})
-    statement = _object(certificate["payload"], STATEMENT_FIELDS)
+    payload = certificate["payload"]
+    version_two = (
+        type(payload) is dict
+        and type(payload.get("schema_version")) is int
+        and payload["schema_version"] == 2
+    )
+    statement = _object(
+        payload, STATEMENT_FIELDS | {"freshness_runtime"} if version_two else STATEMENT_FIELDS
+    )
     if (
         not _hash(certificate["key_id"])
         or type(statement["schema_version"]) is not int
-        or statement["schema_version"] != 1
+        or statement["schema_version"] != (2 if version_two else 1)
         or statement["product_id"] != PRODUCT_ID
-        or statement["contract"] != RELEASE_CONTRACT
+        or statement["contract"] != (RELEASE_CONTRACT_V2 if version_two else RELEASE_CONTRACT)
         or statement["security_profile"] != SECURITY_PROFILE
         or statement["repository"] != "Dudzian/Dudzian"
         or not _hash(statement["source_revision"], 40)
@@ -108,6 +145,14 @@ def validate_release_statement(envelope: Any, installation: dict[str, Any]) -> d
         raise ReleaseIdentityError(
             "Wydanie nie odpowiada wymaganemu produktowi, rewizji lub profilowi"
         )
+    if version_two:
+        binding = validate_runtime_binding(
+            statement["freshness_runtime"], source_revision=statement["source_revision"]
+        )
+        if installation.get("freshness_runtime") != binding:
+            raise ReleaseIdentityError("Manifest instalacji nie wiąże tego samego runtime")
+    elif "freshness_runtime" in installation:
+        raise ReleaseIdentityError("Powiązanie runtime wymaga kontraktu wydania v2")
     _decode(certificate["signature"], 64)
     artifacts = _object(statement["artifacts"], {"baseline", "update", "failed_update"})
     for phase, artifact in artifacts.items():

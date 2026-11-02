@@ -111,6 +111,9 @@ jobs:
           deployment/platform_readiness.py
           deployment/linux_physical_evidence.py
           deployment/linux_release_identity.py
+          deployment/freshness_runtime.py
+          deployment/freshness_runtime_bootstrap.py
+          deployment/build_freshness_runtime.py
           deployment/production_local_installer.py
           deployment/production_local_installer_host.py
           deployment/freshness_verifier_entrypoint.py
@@ -141,6 +144,8 @@ jobs:
           tests/deployment/test_linux_verifier_observation.py
           tests/security/test_linux_service_postgresql_integration.py
           tests/deployment/test_linux_release_identity.py
+          tests/deployment/test_freshness_runtime.py
+          tests/deployment/test_build_freshness_runtime.py
           tests/deployment/test_production_local_installer.py
           tests/deployment/test_linux_physical_collector.py
           tests/deployment/test_linux_physical_native.py
@@ -371,6 +376,9 @@ jobs:
           python -m ruff check deployment/platform_readiness.py
           deployment/linux_physical_evidence.py deployment/linux_physical_observations.py
           deployment/linux_release_identity.py
+          deployment/freshness_runtime.py
+          deployment/freshness_runtime_bootstrap.py
+          deployment/build_freshness_runtime.py
           deployment/production_local_installer.py
           deployment/production_local_installer_host.py
           deployment/freshness_verifier_entrypoint.py
@@ -408,6 +416,8 @@ jobs:
           tests/deployment/test_linux_functional_pipeline.py
           tests/deployment/test_linux_verifier_observation.py
           tests/deployment/test_linux_release_identity.py
+          tests/deployment/test_freshness_runtime.py
+          tests/deployment/test_build_freshness_runtime.py
           tests/deployment/test_production_local_installer.py
           tests/deployment/test_linux_physical_collector.py
           tests/deployment/test_linux_physical_native.py
@@ -529,6 +539,9 @@ jobs:
           --cov=deployment.platform_readiness
           --cov=deployment.linux_physical_evidence
           --cov=deployment.linux_release_identity
+          --cov=deployment.freshness_runtime
+          --cov=deployment.freshness_runtime_bootstrap
+          --cov=deployment.build_freshness_runtime
           --cov=deployment.production_local_installer
           --cov=deployment.production_local_installer_host
           --cov=deployment.freshness_verifier_entrypoint
