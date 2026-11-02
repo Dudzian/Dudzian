@@ -25,6 +25,21 @@ obserwatorów są warunkiem przed autoryzacją późniejszej próby.
 Stage 10 pozostaje `BLOCKED`. Ten PR nie zmienia statusu Stage 9, legal production
 enrollment ani bramek produkcyjnych. Nie tworzy nowego systemu Production Trust.
 
+## Tymczasowa rola `require_native_proof_authority()`
+
+Ta funkcja jest świadomą, nieprzechodnią blokadą tymczasową: zawsze zgłasza
+`WINDOWS_STAGE10_NATIVE_PROOF_AUTHORITY_UNAVAILABLE`. Nie zbiera obserwacji,
+nie weryfikuje fizycznej próby i nie stanowi ukończonego kwalifikatora.
+Zachowanie blokady testuje się niezależnie w producencie i konsumencie evidence,
+żeby ręcznie przygotowany pozytywny JSON nie omijał odmowy.
+
+Przyszłe zastąpienie blokady wymaga odrębnego natywnego autorytetu, który połączy
+chronioną historię bootu, pochodzenie startu usługi, ciągle utrzymywany uchwyt
+procesu, nieprzerwany pomiar monotoniczny oraz bieżącą kwalifikację zatwierdzonego
+produktu i SQL przez istniejące autorytety Production Trust. Zapis diagnostyki
+nie dostarcza żadnej z tych władz. Bieżąca remediacja nie implementuje tego
+autorytetu i nie zmienia warunków jego późniejszego przeglądu ani autoryzacji.
+
 ## Mapa deklaracji dowodowych
 
 Tabela obejmuje osiem deklaracji w dwóch proof IDs; powtórzenie
@@ -101,11 +116,75 @@ przez JSON, deklarację operatora, test fixture ani zmniejszenie wymagań.
 | Brak obserwacji, nieznany status, błędny typ lub niepełny raport | Nigdy nie domyślać `PASS`; odmowa dotyczy każdej zależnej deklaracji. |
 | Błąd zapisu końcowego lub częściowy plik | Kod zakończenia oznacza błąd; brak publikacji evidence. Stary wynik nie może zostać uznany za wynik bieżącej próby. |
 
-Docelowy zapis powinien być wyłączny dla nowego identyfikatora próby i ścieżki,
-sprawdzany po zakończeniu wszystkich obserwacji, z atomowym zatwierdzeniem
-kompletnego dokumentu i odmową przy kolizji lub błędzie. Niedokończony plik ani
-sam sukces wcześniejszego etapu nie mogą zamykać bramki. Obecna implementacja
-odmowy nie publikuje pozytywnego receipt i nie otwiera tych ścieżek zapisu.
+Niedokończony plik ani sam sukces wcześniejszego etapu nie mogą zamykać bramki.
+Raport odmowy pozostaje diagnostyką nawet po poprawnej publikacji. Producent
+nie wystawia pozytywnego receipt, a konsument nadal odrzuca obie deklaracje
+lifecycle z `PASS`, niezależnie od pochodzenia i daty dostarczonego JSON.
+
+## Remediacja zapisów diagnostyki po przeglądzie PR #3236
+
+W rewizji `727106629d84f0f91203af44fe19d65276720cba` funkcja zapisująca raport
+oraz producent evidence używały `output.unlink(missing_ok=True)` przed dalszą
+walidacją. Parametr wyjściowy nie upoważniał do usuwania istniejących danych.
+Takie usunięcie mogło naruszyć inny raport lub chroniony artefakt, także gdy
+bieżąca próba kończyła się oczekiwaną odmową. Nie było właściwym sposobem
+ochrony przed ponownym wykorzystaniem historycznego `PASS`.
+
+Po remediacji domyślnym wyjściem modułu
+`deployment.windows_stage10_proof_validation` jest JSON `BLOCKED` na stdout.
+Ta ścieżka nie otwiera plików wynikowych. `windows_stage10_live.ps1` zachowuje
+parametry legacy `-State` i `-Output` dla zgodności wywołań, lecz nie używa ich
+do zapisu diagnostyki. Przy osobnym żądaniu zapisu przekazuje je wyłącznie jako
+chronione wejścia, podobnie jak `-QualifiedManifest` i `-CleanInstallReceipt`.
+Nie pobiera z nich upoważnienia do zastępowania danych.
+
+Zapis do pliku jest oddzielnym żądaniem:
+
+- Python wymaga `--approved-output-directory` wskazującego bezwzględny,
+  istniejący i osobno zatwierdzony katalog. Opcjonalne `--output` musi oznaczać
+  nowy plik `.json` bezpośrednio w tym katalogu. Bez `--output` powstaje nowa
+  nazwa `stage10-blocked-<attempt_id>.json`. Powtarzalne `--protected-input`
+  wskazuje dodatkowe chronione ścieżki, które nie mogą stać się wyjściem,
+  także jeżeli taki plik wejściowy jeszcze nie istnieje.
+- PowerShell wymaga `-ApprovedDiagnosticDirectory`; opcjonalny
+  `-DiagnosticOutput` odpowiada wyłącznie nowemu plikowi w tym katalogu.
+  Sam `-DiagnosticOutput` bez zatwierdzonego katalogu powoduje odmowę.
+- Writer nie tworzy katalogu, nie naprawia właściciela ani uprawnień, nie
+  nadpisuje plików i nie usuwa istniejących nazw. Kolizja z wejściem,
+  manifestem, kontraktem, chronionym artefaktem lub starszym raportem powoduje
+  odmowę. Nie ma opcji zastąpienia ani zgody wywiedzionej ze starego `PASS`.
+
+Obserwacje i operacje plikowe są związane z natywnymi uchwytami:
+
+| Granica | Egzekwowane warunki |
+| --- | --- |
+| Wspólna walidacja celu | Bezwzględna ścieżka katalogu, brak przejść `..`, ograniczona nazwa nowego JSON bez przekierowań i nazw urządzeń; bezpośredni potomek zatwierdzonego katalogu i odmowa jawnych aliasów chronionych wejść. |
+| Systemy POSIX | Katalog końcowy należy do bieżącego UID i nie pozwala grupie ani innym użytkownikom na zapis. Łańcuch katalogów otwierany jest przez `O_NOFOLLOW`; sprawdzane są właściciel, uprawnienia i tożsamość inode. Kontrolowane katalogi sticky, takie jak `/tmp`, są dopuszczone jako przodkowie chronionego katalogu operatora. Utrzymane deskryptory katalogów wiążą tworzenie i publikację przez `dir_fd`; podmiana ścieżki nie przekierowuje zapisu. |
+| Windows | Wymagany jest lokalny NTFS oraz istniejące kwalifikatory ochrony filesystem. Łańcuch natywnych uchwytów odrzuca symlinki, junctions i inne reparse points. Uprawnienia końcowego katalogu i pliku są ograniczone do bieżącego SID, SYSTEM i Administratorów; przodkowie uwzględniają także TrustedInstaller. Tworzenie pliku odbywa się względem zachowanego uchwytu katalogu przez natywne API, a publikacja przez uchwyt pliku, bez ponownego rozwiązywania ścieżki. |
+| Publikacja | Nowy plik roboczy `.partial` powstaje wyłącznie przez tworzenie z odmową kolizji. Po pełnym zapisie, synchronizacji i kontroli tożsamości otrzymuje nazwę końcową atomową operacją bez zastępowania: natywny no-replace na POSIX albo handle-relative rename na Windows. Wygrana konkurencyjnej publikacji nie upoważnia do jej nadpisania. |
+
+Model uprawnień ufa właścicielowi zatwierdzonego katalogu i administratorowi
+systemu. POSIX wiąże katalog przez deskryptor, ale źródło natywnego rename
+pozostaje nazwą własnego pliku roboczego w prywatnym katalogu. Kontrola inode
+nie stanowi atomowej ochrony przed wrogim procesem z tym samym UID, który ma
+prawo zmieniać ten katalog. Taki proces lub administrator może również zmienić
+same uprawnienia. Nie wywodzimy z ochrony filesystem autorytetu fizycznego.
+
+Przy błędzie lub przerwaniu proces zwraca odmowę. Własny `.partial` może pozostać
+w zatwierdzonym katalogu do osobnego przeglądu; nie jest usuwany przez ponownie
+rozwiązywaną nazwę i nie jest raportem ani dowodem. Błąd wykryty po publikacji
+może pozostawić kompletną diagnostykę `BLOCKED`; także jej nie wycofuje się
+usuwaniem. Częściowy JSON, kompletny raport odmowy i historyczny plik `PASS`
+nie uzyskują władzy evidence przez obecność na dysku.
+
+Każda nowa diagnostyka ma własny `attempt_id`. To znacznik rozróżniający raporty,
+nie źródło zaufania ani autoryzacja fizycznej próby. Ochrona przed starym `PASS`
+wynika z odmowy producenta i konsumenta, a nie z kasowania starego pliku.
+Testy regresyjne korzystają wyłącznie z izolowanych katalogów tymczasowych;
+sprawdzają kolizje, ochronę wejść, uprawnienia, przekierowania, podmiany ścieżek,
+błędy zapisu i przerwania. Nowy workflow powtarza je na hostowanych Windows,
+Ubuntu i macOS; na Windows dołącza pywin32 jako adapter natywnego filesystem,
+bez instalacji produktu ani wykonywania lifecycle.
 
 ## Późniejsza kwalifikacja na autoryzowanym hoście
 

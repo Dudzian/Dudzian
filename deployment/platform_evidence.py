@@ -322,8 +322,16 @@ def produce_windows_stage10_evidence(
     """Odrzuć zapisane deklaracje, dopóki brak natywnego autorytetu Stage 10."""
     if output.resolve() in {receipt.resolve(), contract_path.resolve()}:
         raise EvidenceProductionError("Stage-10 output aliases an input")
-    # Odmowa lub przerwanie nie może zachować starego artefaktu PASS.
-    output.unlink(missing_ok=True)
+    # Ten producent obecnie zawsze odmawia. Żadna odmowa nie upoważnia do
+    # usunięcia ani zastąpienia pliku wskazanego przez wywołującego.
+    try:
+        output.lstat()
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        raise EvidenceProductionError("Stage-10 output cannot be inspected safely") from exc
+    else:
+        raise EvidenceProductionError("Stage-10 output already exists; refusing to modify it")
     source_revision, provider, run_id = _identity(revision)
     if provider != "https://github.com" or os.environ.get("RUNNER_OS") != "Windows":
         raise EvidenceProductionError("Stage-10 PASS requires a GitHub Windows runner")

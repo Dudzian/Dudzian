@@ -102,6 +102,14 @@ def test_stage10_refuses_before_physical_actions_and_keeps_safe_powershell_regre
     source = (root / "deployment/windows_stage10_live.ps1").read_text(encoding="utf-8")
     assert "windows_stage10_proof_validation" in source
     assert 'throw "WINDOWS_STAGE10_NATIVE_PROOF_AUTHORITY_UNAVAILABLE"' in source
+    assert "--output $State" not in source
+    assert "--output $Output" not in source
+    assert "$reportPath" not in source
+    assert '@("--approved-output-directory", $ApprovedDiagnosticDirectory)' in source
+    assert '@("--protected-input", $protectedInput)' in source
+    assert "@($State, $Output, $QualifiedManifest, $CleanInstallReceipt)" in source
+    assert '@("--output", $DiagnosticOutput)' in source
+    assert "DiagnosticOutput wymaga ApprovedDiagnosticDirectory" in source
     for physical_action in (
         "Start-Service",
         "Restart-Service",

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +33,7 @@ PROOF_CASES = [(item, proof) for item, proofs in EXPECTED_PROOFS.items() for pro
 def assert_complete_refusal(report: dict[str, Any]) -> None:
     assert set(report) == {
         "schema_version",
+        "attempt_id",
         "report_kind",
         "status",
         "reason_code",
@@ -39,6 +41,7 @@ def assert_complete_refusal(report: dict[str, Any]) -> None:
         "native_qualification_performed",
         "results",
     }
+    assert re.fullmatch(r"[0-9a-f]{32}", report["attempt_id"]) is not None
     assert type(report["schema_version"]) is int
     assert report["schema_version"] == 1
     assert report["report_kind"] == "windows-stage10-proof-blockers"
@@ -108,104 +111,125 @@ def test_ci_and_operator_environment_cannot_authorize_any_proof(
         validation.require_native_proof_authority()
 
 
-def test_main_writes_complete_blocked_diagnostics_and_returns_refusal(
+def test_main_defaults_to_stdout_without_selecting_an_output_path(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def unexpected_write(*_args: Any, **_kwargs: Any) -> None:
+        raise AssertionError("Domyślna diagnostyka nie może uruchomić zapisu")
+
+    monkeypatch.setattr(validation, "write_blocked_report", unexpected_write)
+    assert validation.main([]) == 1
+    captured = capsys.readouterr()
+    assert_complete_refusal(json.loads(captured.out))
+    assert validation.UNAVAILABLE in captured.err
+
+
+def test_output_argument_is_not_independent_directory_authorization(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     output = tmp_path / "diagnostics.json"
     assert validation.main(["--output", str(output)]) == 1
-    assert_complete_refusal(json.loads(output.read_text(encoding="utf-8")))
-    assert validation.UNAVAILABLE in capsys.readouterr().err
-    assert tuple(tmp_path.iterdir()) == (output,)
-
-
-def test_write_removes_stale_pass_and_publishes_only_the_complete_report(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    output = tmp_path / "diagnostics.json"
-    output.write_text('{"status":"PASS"}', encoding="utf-8")
-    replace = validation.os.replace
-    calls: list[Path] = []
-
-    def inspect_then_replace(source: Path, destination: Path) -> None:
-        assert destination == output
-        assert not output.exists()
-        assert source.parent == output.parent
-        assert_complete_refusal(json.loads(source.read_text(encoding="utf-8")))
-        calls.append(source)
-        replace(source, destination)
-
-    monkeypatch.setattr(validation.os, "replace", inspect_then_replace)
-    validation.write_blocked_report(output)
-    assert len(calls) == 1
-    assert not calls[0].exists()
-    assert_complete_refusal(json.loads(output.read_text(encoding="utf-8")))
-    assert tuple(tmp_path.iterdir()) == (output,)
-
-
-@pytest.mark.parametrize("failure_at", ["open", "serialize", "fsync", "replace"])
-def test_write_failure_removes_stale_pass_and_leaves_no_partial_or_temporary_report(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure_at: str
-) -> None:
-    output = tmp_path / "diagnostics.json"
-    output.write_text('{"status":"PASS"}', encoding="utf-8")
-
-    def fail(*_args: Any, **_kwargs: Any) -> None:
-        assert not output.exists()
-        raise OSError("syntetyczna odmowa zapisu")
-
-    target, name = {
-        "open": (validation.tempfile, "NamedTemporaryFile"),
-        "serialize": (validation.json, "dump"),
-        "fsync": (validation.os, "fsync"),
-        "replace": (validation.os, "replace"),
-    }[failure_at]
-    monkeypatch.setattr(target, name, fail)
-    assert validation.main(["--output", str(output)]) == 1
     assert not output.exists()
+    assert not tuple(tmp_path.iterdir())
+    assert validation.UNAVAILABLE in capsys.readouterr().err
+
+
+def test_existing_output_is_unchanged_when_directory_authorization_is_absent(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "diagnostics.json"
+    previous = b'{"status":"PASS","attempt_id":"historical"}'
+    output.write_bytes(previous)
+    assert validation.main(["--output", str(output)]) == 1
+    assert output.read_bytes() == previous
+    assert tuple(tmp_path.iterdir()) == (output,)
+
+
+def test_report_requires_separate_explicit_directory_before_any_mutation(tmp_path: Path) -> None:
+    output = tmp_path / "diagnostics.json"
+    old = b"niepowiazane dane"
+    output.write_bytes(old)
+    with pytest.raises(ValueError):
+        validation.write_blocked_report(output)
+    assert output.read_bytes() == old
+    assert tuple(tmp_path.iterdir()) == (output,)
+
+
+@pytest.mark.parametrize("artifact", ["receipt.json", "contract.json", "installer-manifest.json"])
+def test_protected_input_alias_refuses_without_changing_input(
+    tmp_path: Path, artifact: str
+) -> None:
+    output = tmp_path / artifact
+    original = b"chroniony artefakt wejscia"
+    output.write_bytes(original)
+    with pytest.raises((ValueError, FileExistsError)):
+        validation.write_blocked_report(
+            output, approved_directory=tmp_path, protected_inputs=(output,)
+        )
+    assert output.read_bytes() == original
+    assert tuple(tmp_path.iterdir()) == (output,)
+
+
+def test_each_attempt_has_a_new_identity_without_reusing_a_previous_report() -> None:
+    first = validation.blocked_report()
+    second = validation.blocked_report()
+    assert first["attempt_id"] != second["attempt_id"]
+    assert_complete_refusal(first)
+    assert_complete_refusal(second)
+
+
+@pytest.mark.parametrize("artifact", ["receipt.json", "contract.json", "manifest.json"])
+def test_cli_protected_input_cannot_be_created_as_a_diagnostic(
+    tmp_path: Path, artifact: str
+) -> None:
+    protected = tmp_path / artifact
+    assert (
+        validation.main(
+            [
+                "--approved-output-directory",
+                str(tmp_path),
+                "--output",
+                str(protected),
+                "--protected-input",
+                str(protected),
+            ]
+        )
+        == 1
+    )
     assert not tuple(tmp_path.iterdir())
 
 
 @pytest.mark.parametrize("invalid_value", [float("nan"), float("inf"), float("-inf")])
-def test_nonfinite_serialization_never_publishes_a_report(
+def test_nonfinite_serialization_is_refused_before_creating_a_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, invalid_value: float
 ) -> None:
-    output = tmp_path / "diagnostics.json"
-    output.write_text('{"status":"PASS"}', encoding="utf-8")
     report = validation.blocked_report()
     report["invalid_synthetic_observation"] = invalid_value
     monkeypatch.setattr(validation, "blocked_report", lambda: report)
-    assert validation.main(["--output", str(output)]) == 1
-    assert not output.exists()
+    assert (
+        validation.main(
+            ["--approved-output-directory", str(tmp_path), "--output", str(tmp_path / "new.json")]
+        )
+        == 1
+    )
     assert not tuple(tmp_path.iterdir())
 
 
-@pytest.mark.parametrize("failure_at", ["serialize", "fsync", "replace"])
-def test_interrupted_qualifier_does_not_keep_stale_pass_or_publish_partial_report(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure_at: str
+def test_report_serialization_interruption_preserves_unrelated_existing_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    output = tmp_path / "diagnostics.json"
-    output.write_text('{"status":"PASS"}', encoding="utf-8")
+    old = tmp_path / "previous.json"
+    original = b'{"status":"PASS","attempt_id":"old"}'
+    old.write_bytes(original)
 
-    def interrupt(*_args: Any, **_kwargs: Any) -> None:
-        assert not output.exists()
-        raise KeyboardInterrupt("syntetyczne przerwanie kwalifikatora")
+    def interrupt(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        raise KeyboardInterrupt("syntetyczne przerwanie przed publikacja")
 
-    target, name = {
-        "serialize": (validation.json, "dump"),
-        "fsync": (validation.os, "fsync"),
-        "replace": (validation.os, "replace"),
-    }[failure_at]
-    monkeypatch.setattr(target, name, interrupt)
+    monkeypatch.setattr(validation, "blocked_report", interrupt)
     with pytest.raises(KeyboardInterrupt):
-        validation.write_blocked_report(output)
-    assert not output.exists()
-    assert not tuple(tmp_path.iterdir())
-
-
-def test_absent_output_directory_is_a_refusal(tmp_path: Path) -> None:
-    output = tmp_path / "missing-directory" / "diagnostics.json"
-    assert validation.main(["--output", str(output)]) == 1
-    assert not output.exists()
+        validation.write_blocked_report(tmp_path / "new.json", approved_directory=tmp_path)
+    assert old.read_bytes() == original
+    assert tuple(tmp_path.iterdir()) == (old,)
 
 
 def test_mutating_one_diagnostic_report_cannot_change_the_next_report() -> None:
@@ -213,3 +237,40 @@ def test_mutating_one_diagnostic_report_cannot_change_the_next_report() -> None:
     first["results"]["WINDOWS_REBOOT_RECOVERY"]["proofs"]["boot_changed"]["status"] = "PASS"
     first["results"]["WINDOWS_LONG_RUNNING_LIFECYCLE"]["proofs"].clear()
     assert_complete_refusal(validation.blocked_report())
+
+
+def test_preserved_historical_pass_is_not_adopted_as_current_evidence(tmp_path: Path) -> None:
+    from deployment.platform_evidence import evidence_document
+    from deployment.platform_readiness import (
+        EvidenceValidationError,
+        _validated_results,
+        load_contract,
+    )
+
+    previous = evidence_document(
+        platform_name="WINDOWS",
+        source_revision="current-revision",
+        ci_provider="https://github.com",
+        ci_run_id="42",
+        runner_os="Windows",
+        runner_arch="X64",
+        results=[
+            {
+                "item": item,
+                "status": "PASS",
+                "evidence_class": "LIVE_WINDOWS_INTEGRATION",
+                "test_or_probe": "historyczny plik",
+                "details": "Sama deklaracja nie ma autorytetu natywnego",
+            }
+            for item in EXPECTED_PROOFS
+        ],
+    )
+    output = tmp_path / "old.json"
+    original = json.dumps(previous).encode("utf-8")
+    output.write_bytes(original)
+    assert validation.main(["--output", str(output)]) == 1
+    assert output.read_bytes() == original
+    with pytest.raises(EvidenceValidationError, match=validation.UNAVAILABLE):
+        _validated_results(
+            load_contract(), [previous], "current-revision", "https://github.com", "42"
+        )

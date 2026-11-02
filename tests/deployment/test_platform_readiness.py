@@ -543,6 +543,13 @@ def test_stage10_workflow_keeps_opt_in_and_fail_closed_preflight() -> None:
     assert "shutdown.exe /r /t 75" in prepare
     probe = (root / "deployment/windows_stage10_live.ps1").read_text(encoding="utf-8")
     assert "deployment.windows_stage10_proof_validation" in probe
+    executable_probe = probe.split('$ErrorActionPreference = "Stop"', 1)[1]
+    assert "$reportPath" not in executable_probe
+    for legacy_output in ("$State", "$Output"):
+        assert f'"--output", {legacy_output}' not in executable_probe
+        assert f"'--output', {legacy_output}" not in executable_probe
+    assert '"--approved-output-directory", $ApprovedDiagnosticDirectory' in executable_probe
+    assert '"--output", $DiagnosticOutput' in executable_probe
     for unsupported_operation in (
         "Start-Sleep",
         "System.Diagnostics.Stopwatch",
@@ -602,6 +609,7 @@ def test_stage10_proof_validation_ci_uses_only_hosted_hermetic_checks() -> None:
     assert checkout["with"] == {"persist-credentials": False}
     native = []
     python_modules = set()
+    windows_adapters = []
     for step in job["steps"]:
         assert not step.get("continue-on-error", False)
         if "run" not in step:
@@ -617,6 +625,10 @@ def test_stage10_proof_validation_ci_uses_only_hosted_hermetic_checks() -> None:
             assert arguments[:2] == ["python", "-m"]
             assert arguments[2] in {"pip", "ruff", "mypy", "pytest"}
             python_modules.add(arguments[2])
+            if arguments[2] == "pip" and any("pywin32" in item for item in arguments):
+                windows_adapters.append(step)
+                assert arguments == ["python", "-m", "pip", "install", "pywin32==312"]
+                assert step["if"] == "runner.os == 'Windows'"
         for forbidden in (
             "run_stage10",
             "windows_stage10_live.ps1",
@@ -629,7 +641,23 @@ def test_stage10_proof_validation_ci_uses_only_hosted_hermetic_checks() -> None:
         ):
             assert forbidden not in command
     assert len(native) == 1
+    assert len(windows_adapters) == 1
     assert python_modules == {"pip", "ruff", "mypy", "pytest"}
+    commands = [step["run"] for step in job["steps"] if "run" in step]
+    for module in (
+        "deployment/windows_stage10_diagnostic_output.py",
+        "deployment/windows_stage10_diagnostic_windows.py",
+    ):
+        assert any("python -m ruff check" in command and module in command for command in commands)
+        assert any(
+            "python -m ruff format --check" in command and module in command for command in commands
+        )
+        assert any("python -m mypy" in command and module in command for command in commands)
+    for test_module in (
+        "tests/deployment/test_windows_stage10_diagnostic_output.py",
+        "tests/deployment/test_windows_stage10_diagnostic_windows.py",
+    ):
+        assert any("python -m pytest" in command and test_module in command for command in commands)
 
 
 def test_v2_policy_separates_scope_compatibility_and_qualification() -> None:

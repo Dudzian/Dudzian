@@ -10,11 +10,12 @@ from __future__ import annotations
 import argparse
 from datetime import datetime, timezone
 import json
-import os
 from pathlib import Path
 import sys
-import tempfile
 from typing import Any, NoReturn
+import uuid
+
+from deployment.windows_stage10_diagnostic_output import DiagnosticOutputError, publish_diagnostic
 
 UNAVAILABLE = "WINDOWS_STAGE10_NATIVE_PROOF_AUTHORITY_UNAVAILABLE"
 PROOF_REQUIREMENTS = {
@@ -53,7 +54,13 @@ class Stage10ProofUnavailable(RuntimeError):
 
 
 def require_native_proof_authority() -> NoReturn:
-    """Brak implementacji autorytetu; celowo nie przyjmuj deklaracji wywołującego."""
+    """Tymczasowa nieprzechodnia blokada, nie ukończony kwalifikator fizyczny.
+
+    Jej zastąpienie wymaga odrębnego natywnego obserwatora bootu, pochodzenia
+    startu, ciągłego uchwytu procesu i czasu monotonicznego oraz bieżącego
+    kwalifikatora produktu/SQL z istniejącego Production Trust. Nie implementuje
+    tego ani zapis diagnostyki, ani dostarczony przez wywołującego raport.
+    """
     raise Stage10ProofUnavailable(UNAVAILABLE)
 
 
@@ -64,6 +71,7 @@ def blocked_report() -> dict[str, Any]:
         "report_kind": "windows-stage10-proof-blockers",
         "status": "BLOCKED",
         "reason_code": UNAVAILABLE,
+        "attempt_id": uuid.uuid4().hex,
         "generated_at_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "native_qualification_performed": False,
         "results": {
@@ -79,35 +87,51 @@ def blocked_report() -> dict[str, Any]:
     }
 
 
-def write_blocked_report(output: Path) -> None:
-    """Usuń stary wynik przed próbą zapisu, publikuj wyłącznie pełną diagnostykę.
+def write_blocked_report(
+    output: Path | None = None,
+    *,
+    approved_directory: Path | None = None,
+    protected_inputs: tuple[Path, ...] = (),
+) -> Path:
+    """Publikuj nową diagnostykę wyłącznie w osobno zatwierdzonym katalogu.
 
-    Przerwanie lub błąd zapisu nie może pozostawić poprzedniego PASS pod ścieżką
-    wyjściową. Plik tymczasowy jest tworzony w tym samym katalogu co wynik.
+    Historyczne pliki pozostają nietknięte. Próba ma nowy identyfikator i domyślnie
+    nową nazwę; każda kolizja odmawia, nawet dla identycznego starego raportu.
+    To diagnostyka BLOCKED, której konsument nie uznaje za evidence.
     """
-    output.unlink(missing_ok=True)
-    temporary: Path | None = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            mode="w", encoding="utf-8", dir=output.parent, delete=False
-        ) as stream:
-            temporary = Path(stream.name)
-            json.dump(blocked_report(), stream, ensure_ascii=False, allow_nan=False, indent=2)
-            stream.write("\n")
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(temporary, output)
-    finally:
-        if temporary is not None:
-            temporary.unlink(missing_ok=True)
+    if approved_directory is None:
+        raise DiagnosticOutputError("zapis wymaga osobno zatwierdzonego katalogu wynikowego")
+    report = blocked_report()
+    raw = (json.dumps(report, ensure_ascii=False, allow_nan=False, indent=2) + "\n").encode("utf-8")
+    destination = output or approved_directory / f"stage10-blocked-{report['attempt_id']}.json"
+    publish_diagnostic(
+        destination,
+        raw,
+        approved_directory=approved_directory,
+        protected_inputs=(
+            *protected_inputs,
+            Path(__file__).with_name("windows_stage10_lifecycle_contract.json"),
+        ),
+    )
+    return destination
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Odczytowa odmowa kwalifikacji Windows Stage 10")
-    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--output", type=Path)
+    parser.add_argument("--approved-output-directory", type=Path)
+    parser.add_argument("--protected-input", type=Path, action="append", default=[])
     args = parser.parse_args(argv)
     try:
-        write_blocked_report(args.output)
+        if args.output is None and args.approved_output_directory is None:
+            print(json.dumps(blocked_report(), ensure_ascii=False, allow_nan=False, indent=2))
+        else:
+            path = write_blocked_report(
+                args.output,
+                approved_directory=args.approved_output_directory,
+                protected_inputs=tuple(args.protected_input),
+            )
+            print(f"Diagnostyka BLOCKED: {path}", file=sys.stderr)
     except (OSError, ValueError) as exc:
         print(
             f"{UNAVAILABLE}: zapis diagnostyki nie powiódł się ({type(exc).__name__})",

@@ -145,8 +145,16 @@ def test_missing_installed_backend_and_unexpected_product_version_are_rejected(
 
 def test_live_entrypoint_refuses_before_runtime_sampling_or_soak() -> None:
     probe = Path("deployment/windows_stage10_live.ps1").read_text(encoding="utf-8")
-    assert "python -m deployment.windows_stage10_proof_validation --output $reportPath" in probe
-    assert 'if ($Mode -ceq "prepare-reboot") { $State } else { $Output }' in probe
+    assert '$diagnosticArguments = @("-m", "deployment.windows_stage10_proof_validation")' in probe
+    assert "python @diagnosticArguments" in probe
+    assert '@("--approved-output-directory", $ApprovedDiagnosticDirectory)' in probe
+    assert '@("--protected-input", $protectedInput)' in probe
+    assert "@($State, $Output, $QualifiedManifest, $CleanInstallReceipt)" in probe
+    assert '@("--output", $DiagnosticOutput)' in probe
+    assert 'throw "DiagnosticOutput wymaga ApprovedDiagnosticDirectory"' in probe
+    assert "$reportPath" not in probe
+    assert "--output $State" not in probe
+    assert "--output $Output" not in probe
     assert "$LASTEXITCODE -ne 0" in probe
     assert probe.rstrip().endswith('throw "WINDOWS_STAGE10_NATIVE_PROOF_AUTHORITY_UNAVAILABLE"')
     for unsupported_execution in (
@@ -158,6 +166,31 @@ def test_live_entrypoint_refuses_before_runtime_sampling_or_soak() -> None:
         "windows_stage10_runtime_provenance",
     ):
         assert unsupported_execution not in probe
+
+
+def test_live_entrypoint_requires_separate_output_directory_authorization() -> None:
+    probe = Path("deployment/windows_stage10_live.ps1").read_text(encoding="utf-8")
+    missing_authorization = probe.index(
+        'throw "DiagnosticOutput wymaga ApprovedDiagnosticDirectory"'
+    )
+    default_arguments = probe.index(
+        '$diagnosticArguments = @("-m", "deployment.windows_stage10_proof_validation")'
+    )
+    append_directory = probe.index(
+        '$diagnosticArguments += @("--approved-output-directory", $ApprovedDiagnosticDirectory)'
+    )
+    append_protected_input = probe.index(
+        '$diagnosticArguments += @("--protected-input", $protectedInput)'
+    )
+    append_output = probe.index('$diagnosticArguments += @("--output", $DiagnosticOutput)')
+    helper_execution = probe.index("python @diagnosticArguments")
+    assert missing_authorization < default_arguments < append_directory
+    assert append_directory < append_protected_input < append_output
+    assert append_output < helper_execution
+    for legacy_parameter in ("State", "Output"):
+        assert f"${legacy_parameter}\n" not in probe
+        assert f"--output ${legacy_parameter}" not in probe
+    assert "@($State, $Output, $QualifiedManifest, $CleanInstallReceipt)" in probe
 
 
 def test_point_identity_requires_exact_creation_time_and_program_identity() -> None:
