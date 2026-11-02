@@ -15,8 +15,6 @@ import sys
 from typing import Any, NoReturn
 import uuid
 
-from deployment.windows_stage10_diagnostic_output import DiagnosticOutputError, publish_diagnostic
-
 UNAVAILABLE = "WINDOWS_STAGE10_NATIVE_PROOF_AUTHORITY_UNAVAILABLE"
 PROOF_REQUIREMENTS = {
     "WINDOWS_REBOOT_RECOVERY": {
@@ -100,7 +98,10 @@ def write_blocked_report(
     To diagnostyka BLOCKED, której konsument nie uznaje za evidence.
     """
     if approved_directory is None:
-        raise DiagnosticOutputError("zapis wymaga osobno zatwierdzonego katalogu wynikowego")
+        raise ValueError("zapis wymaga osobno zatwierdzonego katalogu wynikowego")
+    # Wspólne CLI, guard i stdout nie potrzebują adapterów zapisu ani licensing.
+    from deployment.windows_stage10_diagnostic_output import publish_diagnostic
+
     report = blocked_report()
     raw = (json.dumps(report, ensure_ascii=False, allow_nan=False, indent=2) + "\n").encode("utf-8")
     destination = output or approved_directory / f"stage10-blocked-{report['attempt_id']}.json"

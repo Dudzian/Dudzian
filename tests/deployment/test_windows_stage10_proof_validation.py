@@ -4,8 +4,11 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import json
+import os
 import re
 from pathlib import Path
+import subprocess
+import sys
 from typing import Any
 
 import pytest
@@ -28,6 +31,92 @@ EXPECTED_PROOFS = {
     ),
 }
 PROOF_CASES = [(item, proof) for item, proofs in EXPECTED_PROOFS.items() for proof in proofs]
+
+
+def _without_site_packages(*arguments: str) -> subprocess.CompletedProcess[str]:
+    # Nowy interpreter nie używa site-packages ani odziedziczonej ścieżki
+    # pakietów. Mechanizm importów oraz rzeczywiste pakiety pozostają bez atrap.
+    environment = dict(os.environ)
+    environment.pop("PYTHONPATH", None)
+    environment.pop("PYTHONHOME", None)
+    environment["PYTHONIOENCODING"] = "utf-8"
+    return subprocess.run(
+        [sys.executable, "-S", *arguments],
+        cwd=Path(__file__).resolve().parents[2],
+        env=environment,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=30,
+        check=False,
+    )
+
+
+@pytest.mark.parametrize(
+    "module,expected_option",
+    [
+        ("deployment.platform_readiness", "--platform"),
+        ("deployment.platform_evidence", "windows-stage10"),
+    ],
+)
+def test_shared_cli_help_without_site_packages_or_cryptography(
+    module: str, expected_option: str
+) -> None:
+    result = _without_site_packages("-m", module, "--help")
+    assert result.returncode == 0, result.stderr
+    assert "usage:" in result.stdout
+    assert "--help" in result.stdout
+    assert expected_option in result.stdout
+    assert not result.stderr
+
+
+@pytest.mark.parametrize(
+    "module",
+    [
+        "deployment.platform_readiness",
+        "deployment.platform_evidence",
+        "deployment.windows_stage10_proof_validation",
+    ],
+)
+def test_real_shared_import_does_not_load_diagnostic_or_licensing_modules(module: str) -> None:
+    probe = (
+        "import importlib, importlib.util, json, sys\n"
+        "assert sys.flags.no_site == 1\n"
+        "assert importlib.util.find_spec('cryptography') is None\n"
+        "importlib.import_module(sys.argv[1])\n"
+        "prefixes = ('cryptography', 'bot_core.licensing', "
+        "'deployment.windows_stage10_diagnostic_output', "
+        "'deployment.windows_stage10_diagnostic_windows')\n"
+        "print(json.dumps([name for name in sys.modules "
+        "if any(name == prefix or name.startswith(prefix + '.') for prefix in prefixes)]))\n"
+    )
+    result = _without_site_packages("-c", probe, module)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == []
+    assert not result.stderr
+
+
+def test_stdout_diagnostic_without_site_packages_is_blocked_instead_of_import_failure() -> None:
+    result = _without_site_packages("-m", "deployment.windows_stage10_proof_validation")
+    assert result.returncode == 1
+    assert_complete_refusal(json.loads(result.stdout))
+    assert result.stderr.strip() == validation.UNAVAILABLE
+    assert "Traceback" not in result.stderr
+
+
+def test_unapproved_output_without_site_packages_is_refused_before_loading_the_writer(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "new.json"
+    result = _without_site_packages(
+        "-m", "deployment.windows_stage10_proof_validation", "--output", str(output)
+    )
+    assert result.returncode == 1
+    assert not result.stdout
+    assert validation.UNAVAILABLE in result.stderr
+    assert "Traceback" not in result.stderr
+    assert not output.exists()
+    assert not tuple(tmp_path.iterdir())
 
 
 def assert_complete_refusal(report: dict[str, Any]) -> None:
