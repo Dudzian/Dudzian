@@ -107,7 +107,7 @@ def _serve_service_evidence(name: str, stop: threading.Event) -> None:
 
 
 def run_service(name: str, worker: Worker) -> None:
-    """Host a worker which alone decides when SCM may observe RUNNING."""
+    """Let the worker decide RUNNING; the native pywin32 host owns STOPPED."""
     import servicemanager  # type: ignore[import-not-found]
     import win32event  # type: ignore[import-not-found]
     import win32service  # type: ignore[import-not-found]
@@ -151,17 +151,32 @@ def run_service(name: str, worker: Worker) -> None:
             # ServiceFramework's default reports RUNNING before SvcDoRun.  The
             # production boundary deliberately keeps START_PENDING instead.
             self.report(win32service.SERVICE_START_PENDING, wait_hint=60_000)
+            failure: BaseException | None = None
             try:
                 worker(self.stop_event, self.report)
+            except BaseException as exc:
+                failure = exc
+                raise
             finally:
-                self.evidence_stop.set()
-                if self.evidence_thread is not None:
-                    # The native pipe is cancellable; SQL has a five-second
-                    # connect/query bound and checks cancellation between calls.
-                    self.evidence_thread.join(timeout=7.0)
-                    if self.evidence_thread.is_alive():
-                        raise RuntimeError("Stage 9 service evidence endpoint cleanup unavailable")
-                self.report(win32service.SERVICE_STOPPED)
+                try:
+                    self.evidence_stop.set()
+                    if self.evidence_thread is not None:
+                        # The native pipe is cancellable; SQL has a five-second
+                        # connect/query bound and checks cancellation between calls.
+                        self.evidence_thread.join(timeout=7.0)
+                        if self.evidence_thread.is_alive():
+                            raise RuntimeError(
+                                "Stage 9 service evidence endpoint cleanup unavailable"
+                            )
+                except BaseException as cleanup:
+                    if failure is None:
+                        raise
+                    failure.add_note(
+                        f"Stage 9 service evidence endpoint cleanup failed: {type(cleanup).__name__}"
+                    )
+            # Do not report STOPPED here: pywin32's native service host sends
+            # the sole terminal status after SvcRun returns or propagates an
+            # exception, preserving its error status and the SCM RPC lifetime.
 
         def SvcStop(self) -> None:
             self.report(win32service.SERVICE_STOP_PENDING, wait_hint=30_000)
