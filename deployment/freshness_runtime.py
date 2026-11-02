@@ -46,6 +46,52 @@ MANIFEST = "runtime-manifest.json"
 SIGNATURE = "runtime-manifest.sig"
 SCOPE = "cryptohunter.freshness.python-runtime.v1"
 MAX_MANIFEST = 32 * 1024 * 1024
+# Niezależnie przejrzany kontrakt: nigdy nie pochodzi z podpisywanego bundle.
+UNIT_TEMPLATE = (
+    b"[Unit]\n"
+    b"Description=CryptoHunter isolated AccountGenesis freshness semantic "
+    b"verifier\n"
+    b"Requires=postgresql.service\n"
+    b"After=postgresql.service\n"
+    b"StartLimitIntervalSec=60s\n"
+    b"StartLimitBurst=5\n"
+    b"\n"
+    b"[Service]\n"
+    b"Type=simple\n"
+    b"User=os_freshness_crypto_verifier\n"
+    b"Group=freshness_verifier_ipc\n"
+    b"ExecStartPre=/usr/bin/python3 -I -s -B "
+    b"/usr/lib/cryptohunter/deployment/freshness_runtime_bootstrap.py verify-installed\n"
+    b"ExecStart=@FRESHNESS_RUNTIME_PYTHON@ -I -s -B "
+    b"/usr/lib/cryptohunter/deployment/freshness_verifier_entrypoint.py\n"
+    b"Environment=PYTHONNOUSERSITE=1\n"
+    b"WorkingDirectory=/usr/lib/cryptohunter\n"
+    b"RuntimeDirectory=cryptohunter/freshness\n"
+    b"RuntimeDirectoryMode=0750\n"
+    b"UMask=0027\n"
+    b"Restart=on-failure\n"
+    b"RestartSec=5s\n"
+    b"NoNewPrivileges=yes\n"
+    b"PrivateTmp=yes\n"
+    b"ProtectSystem=strict\n"
+    b"ProtectHome=yes\n"
+    b"ProtectKernelTunables=yes\n"
+    b"ProtectKernelModules=yes\n"
+    b"ProtectKernelLogs=yes\n"
+    b"ProtectControlGroups=yes\n"
+    b"RestrictSUIDSGID=yes\n"
+    b"LockPersonality=yes\n"
+    b"RestrictNamespaces=yes\n"
+    b"RestrictRealtime=yes\n"
+    b"MemoryDenyWriteExecute=yes\n"
+    b"CapabilityBoundingSet=\n"
+    b"AmbientCapabilities=\n"
+    b"RestrictAddressFamilies=AF_UNIX\n"
+    b"SystemCallArchitectures=native\n"
+    b"\n"
+    b"[Install]\n"
+    b"WantedBy=multi-user.target\n"
+)
 _SHA = re.compile(r"[0-9a-f]{64}")
 _REV = re.compile(r"[0-9a-f]{40}")
 _ENV = re.compile(r"[a-z0-9][a-z0-9._-]{0,95}")
@@ -85,6 +131,31 @@ class VerifiedRuntime:
 def _require(condition: bool, reason: str) -> None:
     if not condition:
         raise RuntimeError(reason)
+
+
+def render_runtime_unit(executable: str) -> bytes:
+    """Materializuj wyłącznie kanoniczną ścieżkę zatwierdzonego wydania."""
+    _require(
+        type(executable) is str
+        and re.fullmatch(
+            r"/opt/cryptohunter/freshness-runtime/releases/"
+            r"[a-z0-9][a-z0-9._-]{0,95}/bin/python3\.12",
+            executable,
+        )
+        is not None,
+        "Niekanoniczna ścieżka interpretera jednostki runtime",
+    )
+    return UNIT_TEMPLATE.replace(b"@FRESHNESS_RUNTIME_PYTHON@", executable.encode("ascii"))
+
+
+def validate_runtime_unit(content: bytes, executable: str) -> bytes:
+    """Sprawdź wszystkie bajty kontraktu, bez uproszczonego parsera systemd."""
+    expected = render_runtime_unit(executable)
+    _require(
+        type(content) is bytes and content == expected,
+        "Jednostka nie odpowiada pełnemu zatwierdzonemu kontraktowi runtime",
+    )
+    return expected
 
 
 def _json(raw: bytes) -> dict[str, Any]:

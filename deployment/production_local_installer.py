@@ -554,17 +554,18 @@ def _manifest(config: Config, tree: _Tree) -> tuple[str, tuple[Artifact, ...], d
 def _runtime_helpers() -> dict[str, Any]:
     """Wyłącznie uprzednio zaufana kopia bootstrapu, bez importów runtime."""
     if __package__:
-        from deployment.freshness_runtime import verify_installed_runtime
+        from deployment.freshness_runtime import validate_runtime_unit, verify_installed_runtime
         from deployment.freshness_runtime_bootstrap import verify_ed25519
 
         return {
             "verify_installed_runtime": verify_installed_runtime,
+            "validate_runtime_unit": validate_runtime_unit,
             "verify_ed25519": verify_ed25519,
         }
-    result = {}
-    for filename, symbol in (
-        ("freshness_runtime_bootstrap.py", "verify_ed25519"),
-        ("freshness_runtime.py", "verify_installed_runtime"),
+    result: dict[str, Any] = {}
+    for filename, symbols in (
+        ("freshness_runtime_bootstrap.py", ("verify_ed25519",)),
+        ("freshness_runtime.py", ("verify_installed_runtime", "validate_runtime_unit")),
     ):
         helper = Path(__file__).absolute().with_name(filename)
         if sys.platform != "win32" and os.geteuid() == 0:
@@ -578,7 +579,8 @@ def _runtime_helpers() -> dict[str, Any]:
                     11,
                     "Niezaufana kopia bootstrapu runtime",
                 )
-        result[symbol] = runpy.run_path(str(helper))[symbol]
+        namespace = runpy.run_path(str(helper))
+        result.update((symbol, namespace[symbol]) for symbol in symbols)
     return result
 
 
@@ -586,9 +588,8 @@ def _verified_runtime(
     config: Config, binding: dict[str, str], artifacts: tuple[Artifact, ...]
 ) -> Any:
     try:
-        runtime = _runtime_helpers()["verify_installed_runtime"](
-            root=config.root, owner_uid=config.owner_uid
-        )
+        helpers = _runtime_helpers()
+        runtime = helpers["verify_installed_runtime"](root=config.root, owner_uid=config.owner_uid)
     except (OSError, ValueError, RuntimeError) as exc:
         raise InstallerError(25, "Brak lub niezgodność niezależnie zatwierdzonego runtime") from exc
     actual = {
@@ -605,21 +606,12 @@ def _verified_runtime(
         for item in artifacts
         if item.path == "deployment/systemd/cryptohunter-freshness-verifier.service"
     )
-    expected = (
-        f"ExecStart={runtime.executable} -I -s -B "
-        "/usr/lib/cryptohunter/deployment/freshness_verifier_entrypoint.py"
-    ).encode("ascii")
-    expected_pre = (
-        b"ExecStartPre=/usr/bin/python3 -I -s -B "
-        b"/usr/lib/cryptohunter/deployment/freshness_runtime_bootstrap.py verify-installed"
-    )
-    _fail(
-        [line for line in unit.splitlines() if line.startswith(b"ExecStart=")] == [expected]
-        and [line for line in unit.splitlines() if line.startswith(b"ExecStartPre=")]
-        == [expected_pre],
-        25,
-        "Jednostka nie uruchamia dokładnego zatwierdzonego interpretera runtime",
-    )
+    try:
+        helpers["validate_runtime_unit"](unit, str(runtime.executable))
+    except (ValueError, RuntimeError) as exc:
+        raise InstallerError(
+            25, "Jednostka nie odpowiada zatwierdzonemu kontraktowi runtime"
+        ) from exc
     return runtime
 
 

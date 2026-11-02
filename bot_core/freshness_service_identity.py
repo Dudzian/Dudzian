@@ -98,8 +98,8 @@ class ServiceIdentityError(RuntimeError):
 
 def _load_runtime() -> VerifiedRuntime:
     # Ładujemy wyłącznie bootstrap instalacji, nigdy pakiet weryfikowanego venv.
-    from deployment.freshness_runtime_bootstrap import RuntimeTrustError
     from deployment.freshness_runtime import verify_installed_runtime
+    from deployment.freshness_runtime_bootstrap import RuntimeTrustError
 
     try:
         return verify_installed_runtime()
@@ -119,22 +119,30 @@ def expected_runtime_argv(runtime: VerifiedRuntime) -> tuple[str, ...]:
 
 def validate_runtime_unit(content: bytes, runtime: VerifiedRuntime) -> bytes:
     """Przyjmij tylko opublikowany unit z dokładnym programem i bootstrapem."""
-    lines = content.splitlines()
-    expected = b"ExecStart=" + " ".join(expected_runtime_argv(runtime)).encode("ascii")
-    bootstrap = b"ExecStartPre=" + " ".join(BOOTSTRAP_ARGV).encode("ascii")
-    commands = [line for line in lines if line.partition(b"=")[0].strip() == b"ExecStart"]
-    predecessors = [line for line in lines if line.partition(b"=")[0].strip() == b"ExecStartPre"]
-    _require(commands == [expected] and predecessors == [bootstrap], "RUNTIME_UNIT_BINDING_CHANGED")
-    return content
+    from deployment.freshness_runtime import (
+        RuntimeError as RuntimeUnitError,
+        validate_runtime_unit as validate_approved_unit,
+    )
+
+    try:
+        return validate_approved_unit(content, expected_runtime_argv(runtime)[0])
+    except RuntimeUnitError as exc:
+        raise ServiceIdentityError("RUNTIME_UNIT_BINDING_CHANGED") from exc
 
 
 def render_runtime_unit(template: bytes, runtime: VerifiedRuntime) -> bytes:
     """Materializuj jeden zamrożony token przed podpisaniem inwentarza aplikacji."""
-    _require(
-        type(template) is bytes and template.count(RUNTIME_PYTHON_TOKEN) == 1,
-        "RUNTIME_UNIT_TEMPLATE_INVALID",
+    from deployment.freshness_runtime import (
+        UNIT_TEMPLATE,
+        RuntimeError as RuntimeUnitError,
+        render_runtime_unit as render_approved_unit,
     )
-    return template.replace(RUNTIME_PYTHON_TOKEN, expected_runtime_argv(runtime)[0].encode("ascii"))
+
+    _require(type(template) is bytes and template == UNIT_TEMPLATE, "RUNTIME_UNIT_TEMPLATE_INVALID")
+    try:
+        return render_approved_unit(expected_runtime_argv(runtime)[0])
+    except RuntimeUnitError as exc:
+        raise ServiceIdentityError("RUNTIME_UNIT_TEMPLATE_INVALID") from exc
 
 
 def _require(condition: bool, code: str) -> None:
@@ -435,8 +443,7 @@ def qualify_freshness_service_identity(
         command = _read_exec_start(pid, runtime)
         bootstrap = _read_bootstrap_start()
         _require(
-            command[4] == int(before["ExecMainStartTimestampMonotonic"])
-            and bootstrap[6] <= command[4],
+            bootstrap[6] <= command[4] <= int(before["ExecMainStartTimestampMonotonic"]),
             "BOOTSTRAP_MAIN_PROCESS_ORDER_CHANGED",
         )
         first = capture_process_identity(pid)

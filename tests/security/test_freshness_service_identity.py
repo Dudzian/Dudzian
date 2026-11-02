@@ -756,8 +756,8 @@ def test_rendered_unit_binds_one_exact_signed_environment():
     rendered = identity.render_runtime_unit(template, verified_runtime())
     assert b"@FRESHNESS_RUNTIME_PYTHON@" not in rendered
     assert (
-        b"ExecStart=/opt/cryptohunter/freshness-runtime/releases/fixture-env/bin/python3.12 -I -s -B "
-        in rendered
+        b"ExecStart=/opt/cryptohunter/freshness-runtime/releases/fixture-env/"
+        b"bin/python3.12 -I -s -B " in rendered
     )
     assert b"NoNewPrivileges=yes" in rendered
     assert b"ProtectSystem=strict" in rendered
@@ -834,11 +834,13 @@ def test_bootstrap_cannot_finish_after_main_process_start(flow):
     assert flow.closed == [93]
 
 
-def test_effective_main_start_must_match_exact_execstart_record(flow):
-    flow.properties[0]["ExecMainStartTimestampMonotonic"] = "301"
-    with pytest.raises(identity.ServiceIdentityError, match="BOOTSTRAP_MAIN_PROCESS_ORDER_CHANGED"):
-        flow.run()
-    assert len(flow.processes) == 2
+def test_effective_main_start_can_follow_execstart_record(flow):
+    # systemd stempluje oba odczyty osobno: przygotowanie procesu poprzedza
+    # obserwację jego uruchomienia, bez wymagania identycznego mikrosekundowego czasu.
+    for observation in flow.properties:
+        observation["ExecMainStartTimestampMonotonic"] = "301"
+    assert flow.run() is None
+    assert flow.closed == [93]
 
 
 def test_published_unit_inventory_must_bind_same_environment_and_bootstrap():
@@ -850,3 +852,98 @@ def test_published_unit_inventory_must_bind_same_environment_and_bootstrap():
         identity.validate_runtime_unit(foreign, runtime)
     with pytest.raises(identity.ServiceIdentityError, match="RUNTIME_UNIT_BINDING_CHANGED"):
         identity.validate_runtime_unit(published + b"ExecStartPre=/bin/true\n", runtime)
+
+
+def ordered_service_timestamps(flow, bootstrap_end, exec_start, main_start):
+    command = exec_command()
+    command[4] = exec_start
+    bootstrap = bootstrap_command()
+    bootstrap[6] = bootstrap_end
+    flow.commands[:] = [exec_reply(command), exec_reply(command)]
+    flow.bootstraps[:] = [bootstrap_reply(bootstrap), bootstrap_reply(bootstrap)]
+    for observation in flow.properties:
+        observation["ExecMainStartTimestampMonotonic"] = str(main_start)
+
+
+@pytest.mark.parametrize(
+    "bootstrap_end,exec_start,main_start",
+    [
+        (180, 300, 301),
+        (180, 300, 300),
+        (300, 300, 301),
+        (300, 300, 300),
+        (180, 301, 450),
+        (180, 300, 2**32),
+    ],
+)
+def test_ordered_separate_systemd_timestamps_accept(flow, bootstrap_end, exec_start, main_start):
+    ordered_service_timestamps(flow, bootstrap_end, exec_start, main_start)
+    assert flow.run() is None
+    assert flow.checks == [(93, PID)] * 3
+    assert flow.closed == [93]
+
+
+@pytest.mark.parametrize(
+    "bootstrap_end,exec_start,main_start",
+    [(301, 300, 301), (180, 301, 300), (302, 301, 300), (301, 301, 300)],
+)
+def test_reversed_systemd_timestamps_refuse(flow, bootstrap_end, exec_start, main_start):
+    ordered_service_timestamps(flow, bootstrap_end, exec_start, main_start)
+    with pytest.raises(identity.ServiceIdentityError, match="BOOTSTRAP_MAIN_PROCESS_ORDER_CHANGED"):
+        flow.run()
+    assert len(flow.processes) == 2
+    assert flow.closed == [93]
+
+
+def test_delayed_main_timestamp_does_not_allow_pid_replacement(flow):
+    ordered_service_timestamps(flow, 180, 300, 301)
+    flow.properties[1].update(MainPID=str(PID + 1), ExecMainPID=str(PID + 1))
+    with pytest.raises(identity.ServiceIdentityError, match="EFFECTIVE_SERVICE_CHANGED"):
+        flow.run()
+    assert flow.closed == [93]
+
+
+def test_delayed_main_timestamp_must_stay_identical_between_snapshots(flow):
+    ordered_service_timestamps(flow, 180, 300, 301)
+    flow.properties[1]["ExecMainStartTimestampMonotonic"] = "302"
+    with pytest.raises(identity.ServiceIdentityError, match="EFFECTIVE_SERVICE_CHANGED"):
+        flow.run()
+    assert flow.closed == [93]
+
+
+UNIT_MUTATIONS = {
+    "exec-continuation-reset": lambda raw: raw
+    + b"\n[Service]\nExecStart\\\n=\nExecStart\\\n=/bin/true\n",
+    "bootstrap-continuation-reset": lambda raw: raw + b"\n[Service]\nExecStartPre\\\n=\n",
+    "indented-continuation-and-equals-whitespace": lambda raw: raw
+    + b"\n[Service]\n  ExecStart\\\n  =\n  ExecStart\\\n  = /bin/true\n",
+    "wrong-section": lambda raw: raw.replace(b"[Service]\n", b"[Unit]\n")
+    + b"\n[Service]\nExecStart\\\n=/bin/true\n",
+    "sandbox-duplicate": lambda raw: raw + b"\n[Service]\nNoNewPrivileges=no\n",
+    "sandbox-reset": lambda raw: raw.replace(b"ProtectSystem=strict\n", b"ProtectSystem=\n"),
+    "indented-directive": lambda raw: raw.replace(
+        b"NoNewPrivileges=yes\n", b"  NoNewPrivileges=yes\n"
+    ),
+    "equals-whitespace": lambda raw: raw.replace(
+        b"ProtectSystem=strict\n", b"ProtectSystem = strict\n"
+    ),
+}
+
+
+@pytest.mark.parametrize("mutation", UNIT_MUTATIONS, ids=UNIT_MUTATIONS)
+def test_unit_validation_rejects_any_unapproved_systemd_bytes(mutation):
+    runtime = verified_runtime()
+    published = identity.render_runtime_unit(qualification.REVIEWED_UNIT.read_bytes(), runtime)
+    changed = UNIT_MUTATIONS[mutation](published)
+    assert changed != published
+    with pytest.raises(identity.ServiceIdentityError, match="RUNTIME_UNIT_BINDING_CHANGED"):
+        identity.validate_runtime_unit(changed, runtime)
+
+
+@pytest.mark.parametrize("mutation", UNIT_MUTATIONS, ids=UNIT_MUTATIONS)
+def test_unit_rendering_rejects_mutated_template_before_materialization(mutation):
+    template = qualification.REVIEWED_UNIT.read_bytes()
+    changed = UNIT_MUTATIONS[mutation](template)
+    assert changed != template
+    with pytest.raises(identity.ServiceIdentityError, match="RUNTIME_UNIT_TEMPLATE_INVALID"):
+        identity.render_runtime_unit(changed, verified_runtime())

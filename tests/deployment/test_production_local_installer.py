@@ -1227,3 +1227,127 @@ def test_signed_unit_requires_independent_bootstrap_before_runtime(context):
     record.update(size=len(content), sha256=hashlib.sha256(content).hexdigest())
     context.sign()
     _refuses(context, 25)
+
+
+@pytest.mark.parametrize(
+    "attack",
+    [
+        "bootstrap-continuation",
+        "start-continuation",
+        "bootstrap-continuation-reset",
+        "start-continuation-reset",
+        "wrong-section",
+        "indented-reset",
+        "space-before-equals",
+        "foreign-user",
+        "weak-sandbox",
+        "crlf",
+        "duplicate-service-section",
+    ],
+)
+def test_signed_unit_must_match_complete_reviewed_contract_before_mutation(
+    context, monkeypatch, attack
+):
+    path = "deployment/systemd/cryptohunter-freshness-verifier.service"
+    file = context.config.bundle / path
+    content = file.read_bytes()
+    if attack == "bootstrap-continuation":
+        content = content.replace(b"ExecStartPre=", b"Environment=UNTRUSTED=1 \\\nExecStartPre=")
+    elif attack == "start-continuation":
+        content = content.replace(b"ExecStart=", b"Environment=UNTRUSTED=1 \\\nExecStart=")
+    elif attack == "bootstrap-continuation-reset":
+        content = content.replace(b"[Install]\n", b"ExecStartPre\\\n=\n\n[Install]\n")
+    elif attack == "start-continuation-reset":
+        content = content.replace(
+            b"[Install]\n", b"ExecStart\\\n=\nExecStart\\\n=/bin/false\n\n[Install]\n"
+        )
+    elif attack == "wrong-section":
+        content = content.replace(b"[Service]\n", b"[Unit]\n")
+    elif attack == "indented-reset":
+        content = content.replace(
+            b"[Install]\n", b" ExecStart=\n ExecStart=/bin/false\n\n[Install]\n"
+        )
+    elif attack == "space-before-equals":
+        content = content.replace(
+            b"[Install]\n", b"ExecStart =\nExecStart =/bin/false\n\n[Install]\n"
+        )
+    elif attack == "foreign-user":
+        content = content.replace(b"User=os_freshness_crypto_verifier\n", b"User=root\n")
+    elif attack == "weak-sandbox":
+        content = content.replace(b"NoNewPrivileges=yes\n", b"NoNewPrivileges=no\n")
+    elif attack == "crlf":
+        content = content.replace(b"\n", b"\r\n")
+    elif attack == "duplicate-service-section":
+        content = content.replace(
+            b"[Install]\n", b"[Service]\n Environment=FOREIGN=1\n\n[Install]\n"
+        )
+    file.write_bytes(content)
+    record = next(item for item in context.document["files"] if item["path"] == path)
+    record.update(size=len(content), sha256=hashlib.sha256(content).hexdigest())
+    # Podpis i hashe są poprawne: sprawdzamy niezależny kontrakt jednostki,
+    # a nie odrzucenie uszkodzonego pakietu przed odczytem treści systemd.
+    context.sign()
+    before = _snapshot(context.config.root)
+
+    def mutation_forbidden(*_args, **_kwargs):
+        pytest.fail("Mutacja przed sprawdzeniem pełnego kontraktu jednostki")
+
+    monkeypatch.setattr(installer._Tree, "write_new", mutation_forbidden)
+    monkeypatch.setattr(installer, "_publish", mutation_forbidden)
+    for operation in (context.preflight, context.install):
+        with pytest.raises(installer.InstallerError) as error:
+            operation()
+        assert error.value.code == 25
+        assert _snapshot(context.config.root) == before
+
+
+def test_trusted_unit_template_matches_reviewed_repository_bytes():
+    from deployment.freshness_runtime import UNIT_TEMPLATE
+
+    assert (
+        UNIT_TEMPLATE
+        == (REPOSITORY / "deployment/systemd/cryptohunter-freshness-verifier.service").read_bytes()
+    )
+
+
+@pytest.mark.parametrize(
+    "executable",
+    [
+        "/usr/bin/python3",
+        "/opt/cryptohunter/freshness-runtime/releases/test-runtime/bin/python3",
+        "/opt/cryptohunter/freshness-runtime/releases/test-runtime//bin/python3.12",
+        "/opt/cryptohunter/freshness-runtime/releases/../bin/python3.12",
+        "/opt/cryptohunter/freshness-runtime/releases/test-runtime/bin/python3.12 ",
+        "/opt/cryptohunter/freshness-runtime/releases/test-runtime/bin/python3.12\nUser=root",
+        "/opt/cryptohunter/freshness-runtime/releases/TEST/bin/python3.12",
+    ],
+)
+def test_trusted_unit_template_rejects_noncanonical_runtime_path(executable):
+    from deployment.freshness_runtime import render_runtime_unit
+
+    with pytest.raises(RuntimeError, match="Niekanoniczna"):
+        render_runtime_unit(executable)
+
+
+def test_direct_script_helper_exposes_same_complete_unit_validator():
+    import subprocess
+
+    program = (
+        "import runpy; "
+        f"m=runpy.run_path({str(REPOSITORY / 'deployment/production_local_installer.py')!r}); "
+        "h=m['_runtime_helpers'](); "
+        f"unit={str(REPOSITORY / 'deployment/systemd/cryptohunter-freshness-verifier.service')!r}; "
+        "exe='/opt/cryptohunter/freshness-runtime/releases/test-runtime/bin/python3.12'; "
+        "content=open(unit,'rb').read().replace(b'@FRESHNESS_RUNTIME_PYTHON@',exe.encode()); "
+        "assert h['validate_runtime_unit'](content,exe)==content; "
+        "print('COMPLETE_UNIT_CONTRACT=PASS')"
+    )
+    result = subprocess.run(
+        [sys.executable, "-I", "-s", "-B", "-c", program],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "COMPLETE_UNIT_CONTRACT=PASS"
