@@ -119,6 +119,35 @@ Wykorzystać istniejące i nowe dane mikrostrukturalne do oceny krótkoterminowe
 - divergence między price / flow / OI / funding;
 - microstructure feature quality i stale-data detection.
 
+### TIH-2.C — Candlestick / Price Action Feature Research (PLANNED)
+
+**Cel:** zbadać, czy geometria świec i formacje jedno-/wieloświecowe poprawiają jakość decyzji AI ponad istniejące cechy OHLCV, reżimy rynku i koszty egzekucji. To **hipoteza badawcza**, a nie gotowy sygnał kupna/sprzedaży ani obietnica dodatniego edge'u.
+
+- **Reuse-first / audyt:** zinwentaryzować istniejące cechy z `bot_core/ai/feature_engineering.py` (`candle_body_ratio`, `candle_upper_shadow_ratio`, `candle_lower_shadow_ratio`, `close_location_value`, relacje do ATR, Heikin-Ashi); nie liczyć ich drugi raz. Oddzielnie ustalić, które z nich faktycznie docierają do `TradingOpportunityAI` w `bot_core/ai/trading_engine.py`, zamiast zakładać automatyczną integrację.
+- **Kandydaci do badań:** Hammer / Hanging Man, Shooting Star, Doji, bullish/bearish Engulfing, Inside Bar, Hikkake, breakout / retest oraz relacje między świecami (kontekst trendu, knotów, wolumenu, wsparć/oporów i reżimu). Traktować nazwy formacji jako jawne, wersjonowane definicje algorytmiczne, nie subiektywną interpretację wykresu.
+- **Cechy i dane:** najpierw wykorzystać ciągłe, znormalizowane cechy geometrii OHLCV oraz cechy kontekstowe; binarne etykiety formacji traktować jako kandydatów, nie wymuszoną przewagę. Analizować wiele interwałów tylko przy point-in-time alignment. Do decyzji używać wyłącznie świec zamkniętych i danych dostępnych przed decyzją; brak future-bar confirmation, leakage i repaintingu.
+- **Kontrakt:** utrzymać identyczną definicję i kolejność cech w treningu oraz inference; wersjonować `feature_spec`, walidować dostępność/jakość danych, provenance i freshness, a zmiany istniejącego modelu opportunity wdrażać jako nową wersję modelu/kontraktu bez cichego rozszerzania `opportunity_features_v1`.
+- **Eksperyment ablation:** porównać bazowy model bez nowych formacji z modelem z formacjami, przy tych samych danych, horyzoncie, universe, reżimach, kosztach i seedach. Ocenić OOS / walk-forward, prawdopodobieństwa i kalibrację, oczekiwany wynik netto po fees/spread/slippage, drawdown, stabilność między parami/interwałami i degradację po perturbacji danych. Uwzględnić multiple testing i zależność prób według TIH-4.
+- **Wdrażanie wyłącznie po dowodach:** najpierw research → shadow → paper; bez domyślnych zleceń LIVE, zmian sizingu ani omijania `Risk Engine`, `ExecutionLease`, AI Governor i `DecisionOrchestrator`. Brak spełnienia kryteriów w kompletnym badaniu oznacza **REJECT / no added features**; niepełne dowody oznaczają **INCOMPLETE**, nie domniemanie braku przewagi.
+
+#### Protokół badania i rozstrzygnięcie (TIH-2.C / TIH-4)
+
+Przed eksperymentem i ujawnieniem wyników OOS **zapisać, uzasadnić i zamrozić wersjonowany protokół** określający:
+
+- model bazowy i rozszerzenie oraz porównywalne dane, horyzont, universe, koszty i budżet strojenia;
+- główną metrykę korzyści **netto po kosztach** i minimalną praktycznie istotną poprawę wobec baseline;
+- sposób oszacowania niepewności (zależność obserwacji, nakładające się horyzonty) i z góry ustaloną regułę wystarczających dowodów;
+- maksymalne dopuszczalne pogorszenie drawdownu i kalibracji oraz metody ich pomiaru;
+- minimalną **efektywnie wystarczającą** próbę OOS i pokrycie reżimów rynku, z uwzględnieniem zależnych obserwacji.
+
+Przed badaniem określić rodzinę hipotez i warianty uczestniczące w selekcji (definicje formacji, parametry, interwały, universe), sposób ewidencji wszystkich prób w **trial-budget registry przewidzianym w TIH-4** oraz uzasadnioną metodę kontroli multiple testing i zależności prób. Rejestrować również wyniki nieudane i odrzucone. **Nie wolno dobierać progów ACCEPT do obejrzanych wyników OOS**; każda późniejsza zmiana kryteriów wymaga nowej wersji protokołu i świeżej, odseparowanej oceny OOS. Roadmapa nie narzuca uniwersalnych wartości progów: trzeba je uzasadnić i ustalić dla konkretnego eksperymentu przed oceną.
+
+- **ACCEPT:** kompletne, poprawne badanie spełnia wszystkie uprzednio ustalone kryteria korzyści, niepewności, stabilności i ryzyka; dopuszcza wyłącznie dalszą kwalifikację integracyjną, nie LIVE.
+- **REJECT:** kompletne, poprawne badanie nie spełnia kryteriów; zamyka research bez dodawania nowych cech.
+- **INCOMPLETE:** brak danych, wystarczającej próby, pokrycia reżimów lub wiarygodnych dowodów; nie pozwala zaakceptować cechy ani stwierdzić, że wykazano brak przewagi.
+
+**Kryteria akceptacji TIH-2.C:** deterministyczne testy formacji (w tym brakujące dane), brak look-ahead/repaintingu, zgodność train/inference oraz odtwarzalny raport ablation z wersją protokołu i kryteriami ustalonymi przed badaniem. Raport dokumentuje porównanie z baseline, niepewność, ograniczenia ryzyka, ewidencję prób, kontrolę multiple testing i uzasadnienie **ACCEPT / REJECT / INCOMPLETE** na podstawie walk-forward/OOS. Udokumentowany REJECT zamyka badania bez nowych cech; INCOMPLETE nie przechodzi bramki. ACCEPT wymaga dalszej kwalifikacji integracyjnej przed wpływem na decyzje tradingowe; Stage 9/10 i LIVE pozostają bez zmian.
+
 Warstwa powinna produkować m.in.:
 
 ```text
@@ -194,6 +223,7 @@ Uniemożliwić promocję strategii, której przewaga wynika z błędów badawczy
 - walk-forward;
 - purging / embargo tam, gdzie charakter targetu i overlap tego wymagają;
 - point-in-time feature validation;
+- dla TIH-2.C: ablation vs baseline według uprzednio zamrożonego protokołu, z trial-budget registry, kontrolą leakage / multiple testing i separacją OOS;
 - leakage detection;
 - survivorship-bias controls dla universe;
 - parameter stability tests;
@@ -392,6 +422,8 @@ Trading Intelligence Hardening jest zamknięty dopiero, gdy:
 8. strategie mikrostrukturalne mają wymagany replay/fidelity evidence;
 9. wszystkie warstwy zachowują nadrzędność Risk Engine i ExecutionLease;
 10. istnieje komplet testów jednostkowych, integracyjnych, adversarial i E2E dla nowych gate'ów.
+
+W TIH-2.C poprawnie udokumentowany **REJECT** zamyka zadanie badawcze bez wdrażania cech, natomiast **INCOMPLETE** nie spełnia kryteriów zamknięcia; **ACCEPT** nie upoważnia do LIVE.
 
 # Pozycja w roadmapie
 
