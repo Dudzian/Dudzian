@@ -97,17 +97,21 @@ def test_current_core_status_guard_refuses_reusing_artifacts_after_failed_attemp
     assert (result.returncode == 0) is (current_result == "success")
 
 
-def test_stage10_rechecks_final_service_identity_before_emitting_proofs() -> None:
+def test_stage10_refuses_before_physical_actions_and_keeps_safe_powershell_regression() -> None:
     root = Path(__file__).resolve().parents[2]
     source = (root / "deployment/windows_stage10_live.ps1").read_text(encoding="utf-8")
-    final_sample = source.index("$final = Service-Snapshot")
-    final_guard = source.index(
-        "Assert-Stage10SoakIdentity -Expected $soakIdentity -Observed $final"
-    )
-    proof_emission = source.index("$proofValues = @{}")
-    assert final_sample < final_guard < proof_emission
-    assert "windows_stage10_soak_identity.ps1" in source
-    assert "Assert-Stage10SoakIdentity -Expected $soakIdentity -Observed $sample" in source
+    assert "windows_stage10_proof_validation" in source
+    assert 'throw "WINDOWS_STAGE10_NATIVE_PROOF_AUTHORITY_UNAVAILABLE"' in source
+    for physical_action in (
+        "Start-Service",
+        "Restart-Service",
+        "Restart-Computer",
+        "shutdown.exe",
+        "msiexec",
+        "Start-Sleep",
+        "$proofValues",
+    ):
+        assert physical_action not in source
 
     workflow = yaml.safe_load(
         (root / ".github/workflows/platform-deployment.yml").read_text(encoding="utf-8")

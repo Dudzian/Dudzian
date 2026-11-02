@@ -13,6 +13,18 @@ from deployment.platform_evidence import EvidenceProductionError, produce_window
 from deployment.platform_readiness import blocking_items, load_contract
 
 
+LIFECYCLE_PROOFS = (
+    ("WINDOWS_REBOOT_RECOVERY", "boot_changed"),
+    ("WINDOWS_REBOOT_RECOVERY", "current_revision_runtime_bound"),
+    ("WINDOWS_REBOOT_RECOVERY", "service_autostarted"),
+    ("WINDOWS_REBOOT_RECOVERY", "readiness_contract_after_reboot"),
+    ("WINDOWS_LONG_RUNNING_LIFECYCLE", "duration_at_least_24h"),
+    ("WINDOWS_LONG_RUNNING_LIFECYCLE", "current_revision_runtime_bound"),
+    ("WINDOWS_LONG_RUNNING_LIFECYCLE", "same_service_instance"),
+    ("WINDOWS_LONG_RUNNING_LIFECYCLE", "readiness_contract_before_after"),
+)
+
+
 @pytest.fixture
 def native_receipt_identity(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     for name, value in {
@@ -136,19 +148,129 @@ def test_missing_stage10_receipt_refuses_without_output(
     assert not output.exists()
 
 
-def test_lifecycle_receipt_cannot_supply_unimplemented_update_qualification(
+def test_lifecycle_receipt_cannot_supply_lifecycle_or_update_qualification(
     tmp_path: Path, native_receipt_identity: dict[str, Any]
 ) -> None:
     output = tmp_path / "evidence.json"
-    produce_windows_stage10_evidence(
-        "test-revision", _receipt_file(tmp_path, native_receipt_identity), output
-    )
-    evidence = json.loads(output.read_text())
+    with pytest.raises(
+        EvidenceProductionError, match="WINDOWS_STAGE10_NATIVE_PROOF_AUTHORITY_UNAVAILABLE"
+    ):
+        produce_windows_stage10_evidence(
+            "test-revision", _receipt_file(tmp_path, native_receipt_identity), output
+        )
+    assert not output.exists()
     blockers = blocking_items(
-        "WINDOWS", load_contract(), [evidence], "test-revision", "https://github.com", "42"
+        "WINDOWS", load_contract(), [], "test-revision", "https://github.com", "42"
     )
-    assert "WINDOWS_REBOOT_RECOVERY" not in blockers
-    assert "WINDOWS_LONG_RUNNING_LIFECYCLE" not in blockers
+    assert "WINDOWS_REBOOT_RECOVERY" in blockers
+    assert "WINDOWS_LONG_RUNNING_LIFECYCLE" in blockers
     assert "WINDOWS_UPDATE_RESTART" in blockers
     assert "WINDOWS_FAILED_UPDATE_SAFE_BEHAVIOR" in blockers
     assert "CORE_REQUIRED_SUITES" in blockers
+
+
+def test_lifecycle_proof_regressions_cover_the_complete_contract() -> None:
+    contract = json.loads(platform_evidence.WINDOWS_STAGE10_CONTRACT.read_text())
+    assert set(LIFECYCLE_PROOFS) == {
+        (item, proof) for item, proofs in contract["results"].items() for proof in proofs
+    }
+
+
+@pytest.mark.parametrize(("item", "proof"), LIFECYCLE_PROOFS)
+@pytest.mark.parametrize("status", ["MISSING", "UNKNOWN", None, True, "PASS"])
+def test_each_lifecycle_declaration_refuses_without_native_authority(
+    tmp_path: Path,
+    native_receipt_identity: dict[str, Any],
+    item: str,
+    proof: str,
+    status: object,
+) -> None:
+    proofs = native_receipt_identity["results"][item]["proofs"]
+    if status == "MISSING":
+        proofs.pop(proof)
+    else:
+        proofs[proof] = status
+    output = tmp_path / "evidence.json"
+    expected = (
+        "WINDOWS_STAGE10_NATIVE_PROOF_AUTHORITY_UNAVAILABLE"
+        if status == "PASS"
+        else f"Stage-10 receipt failed: {item}"
+    )
+    with pytest.raises(EvidenceProductionError, match=expected):
+        produce_windows_stage10_evidence(
+            "test-revision", _receipt_file(tmp_path, native_receipt_identity), output
+        )
+    assert not output.exists()
+
+
+def test_cli_cannot_publish_synthetic_lifecycle_pass(
+    tmp_path: Path,
+    native_receipt_identity: dict[str, Any],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    output = tmp_path / "evidence.json"
+    receipt = _receipt_file(tmp_path, native_receipt_identity)
+    assert (
+        platform_evidence.main(
+            [
+                "windows-stage10",
+                "--source-revision",
+                "test-revision",
+                "--receipt",
+                str(receipt),
+                "--output",
+                str(output),
+            ]
+        )
+        == 1
+    )
+    assert "WINDOWS_STAGE10_NATIVE_PROOF_AUTHORITY_UNAVAILABLE" in capsys.readouterr().err
+    assert not output.exists()
+
+
+def test_refused_receipt_invalidates_stale_output(
+    tmp_path: Path, native_receipt_identity: dict[str, Any]
+) -> None:
+    output = tmp_path / "evidence.json"
+    output.write_text('{"results": [{"status": "PASS"}]}', encoding="utf-8")
+    with pytest.raises(
+        EvidenceProductionError, match="WINDOWS_STAGE10_NATIVE_PROOF_AUTHORITY_UNAVAILABLE"
+    ):
+        produce_windows_stage10_evidence(
+            "test-revision", _receipt_file(tmp_path, native_receipt_identity), output
+        )
+    assert not output.exists()
+
+
+@pytest.mark.parametrize("alias", ["receipt", "contract"])
+def test_output_alias_refuses_without_deleting_input(
+    tmp_path: Path, native_receipt_identity: dict[str, Any], alias: str
+) -> None:
+    receipt = _receipt_file(tmp_path, native_receipt_identity)
+    contract = tmp_path / "lifecycle-contract.json"
+    contract.write_bytes(platform_evidence.WINDOWS_STAGE10_CONTRACT.read_bytes())
+    output = receipt if alias == "receipt" else contract
+    original = output.read_bytes()
+    with pytest.raises(EvidenceProductionError):
+        produce_windows_stage10_evidence("test-revision", receipt, output, contract_path=contract)
+    assert output.read_bytes() == original
+
+
+@pytest.mark.parametrize(("item", "proof"), LIFECYCLE_PROOFS)
+def test_weakened_contract_cannot_omit_a_required_observation(
+    tmp_path: Path, native_receipt_identity: dict[str, Any], item: str, proof: str
+) -> None:
+    contract = json.loads(platform_evidence.WINDOWS_STAGE10_CONTRACT.read_text())
+    contract["results"][item].remove(proof)
+    native_receipt_identity["results"][item]["proofs"].pop(proof)
+    path = tmp_path / "weakened-contract.json"
+    path.write_text(json.dumps(contract), encoding="utf-8")
+    output = tmp_path / "evidence.json"
+    with pytest.raises(EvidenceProductionError, match="lifecycle contract"):
+        produce_windows_stage10_evidence(
+            "test-revision",
+            _receipt_file(tmp_path, native_receipt_identity),
+            output,
+            contract_path=path,
+        )
+    assert not output.exists()

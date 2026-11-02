@@ -72,6 +72,32 @@ def test_current_run_manifest_is_bound_to_installed_backend(tmp_path: Path) -> N
 
 
 @pytest.mark.parametrize(
+    "field,value",
+    [
+        ("msi", None),
+        ("msi", []),
+        ("production_executables", "deklaracja operatora"),
+        ("production_executables", False),
+        ("product_version", None),
+        ("product_version", True),
+        ("product_version", " \t"),
+        ("msi", {"sha256": True}),
+        ("msi", {"sha256": "a" * 64 + "\n"}),
+        ("production_executables", {"CryptoHunterBackend.exe": None}),
+    ],
+)
+def test_malformed_metadata_has_an_explicit_refusal(
+    tmp_path: Path, field: str, value: object
+) -> None:
+    manifest, receipt, backend = provenance_files(tmp_path)
+    document = json.loads(manifest.read_text())
+    document[field] = value
+    manifest.write_text(json.dumps(document))
+    with pytest.raises(RuntimeProvenanceError, match="malformed"):
+        qualify((manifest, receipt, backend))
+
+
+@pytest.mark.parametrize(
     "mutation",
     [
         lambda _m, receipt, _b: receipt.update(source_revision="stale"),
@@ -117,19 +143,35 @@ def test_missing_installed_backend_and_unexpected_product_version_are_rejected(
         )
 
 
-def test_post_reboot_and_soak_samples_rehash_the_qualified_executable() -> None:
+def test_live_entrypoint_refuses_before_runtime_sampling_or_soak() -> None:
     probe = Path("deployment/windows_stage10_live.ps1").read_text(encoding="utf-8")
-    expected = (
-        "Service-Snapshot $runtimeProvenance.installed_backend_sha256 "
-        "$runtimeProvenance.product_version"
+    assert "python -m deployment.windows_stage10_proof_validation --output $reportPath" in probe
+    assert 'if ($Mode -ceq "prepare-reboot") { $State } else { $Output }' in probe
+    assert "$LASTEXITCODE -ne 0" in probe
+    assert probe.rstrip().endswith('throw "WINDOWS_STAGE10_NATIVE_PROOF_AUTHORITY_UNAVAILABLE"')
+    for unsupported_execution in (
+        "Service-Snapshot",
+        "Get-CimInstance",
+        "backend-readiness.json",
+        "Start-Sleep",
+        "Stopwatch",
+        "windows_stage10_runtime_provenance",
+    ):
+        assert unsupported_execution not in probe
+
+
+def test_point_identity_requires_exact_creation_time_and_program_identity() -> None:
+    helper = Path("deployment/windows_stage10_soak_identity.ps1").read_text(encoding="utf-8")
+    for field in ("pid", "started", "backend_path", "backend_sha256"):
+        assert f"$snapshot.{field}" in helper
+        assert f"$Observed.{field}" in helper
+        assert f"$Expected.{field}" in helper
+    assert "TryParseExact" in helper
+    assert "InvariantCulture" in helper
+    assert "$snapshot.pid -isnot [int]" in helper
+    regression = Path("deployment/windows_stage10_soak_identity_regression.ps1").read_text(
+        encoding="utf-8"
     )
-    assert probe.count(expected) >= 3
-    assert "$afterReboot =" + " " + expected in probe
-    assert "$sample =" + " " + expected in probe
-    assert "$final =" + " " + expected in probe
-
-
-def test_missing_runtime_provenance_is_rejected_before_post_reboot_soak() -> None:
-    probe = Path("deployment/windows_stage10_live.ps1").read_text(encoding="utf-8")
-    assert "$null -eq $runtimeProvenance" in probe
-    assert 'throw "missing or stale runtime provenance"' in probe
+    assert "Parser]::ParseFile" in regression
+    assert '"windows_stage10_live.ps1"' in regression
+    assert "Assert-Refused -Baseline $observed -Sample $observed" in regression

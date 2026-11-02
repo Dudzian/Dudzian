@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 import copy
 import json
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -11,7 +12,13 @@ from typing import Callable
 import pytest
 import yaml
 
-from deployment.platform_readiness import blocking_items, load_contract, production_ready
+from deployment.platform_readiness import (
+    EvidenceValidationError,
+    _validated_results,
+    blocking_items,
+    load_contract,
+    production_ready,
+)
 from deployment.platforms.windows import (
     SERVICE_IDENTITY,
     WindowsDeploymentNotQualified,
@@ -19,6 +26,10 @@ from deployment.platforms.windows import (
     static_path_layout,
 )
 from deployment.windows_stage9_evidence_contract import PRODUCTION_TRUST_CEREMONY_ID
+
+
+LIFECYCLE_ITEMS = {"WINDOWS_REBOOT_RECOVERY", "WINDOWS_LONG_RUNNING_LIFECYCLE"}
+NATIVE_AUTHORITY_UNAVAILABLE = "WINDOWS_STAGE10_NATIVE_PROOF_AUTHORITY_UNAVAILABLE"
 
 
 def test_canonical_platforms_and_reference() -> None:
@@ -78,7 +89,7 @@ def test_windows_static_path_layout_does_not_claim_native_integration() -> None:
         qualify_acl()
 
 
-def test_release_gate_cli_is_negative_now_and_positive_only_for_complete_evidence(
+def test_release_gate_cli_refuses_without_native_lifecycle_authority(
     tmp_path: Path,
 ) -> None:
     revision = "revision-1"
@@ -102,12 +113,12 @@ def test_release_gate_cli_is_negative_now_and_positive_only_for_complete_evidenc
     data = load_contract()
     contract_path = tmp_path / "contract.json"
     contract_path.write_text(json.dumps(data), encoding="utf-8")
-    windows_evidence, core_evidence = _complete_windows_evidence(data, revision)
+    windows_evidence, core_evidence = _windows_evidence_without_lifecycle(data, revision)
     windows_path = tmp_path / "windows.json"
     core_path = tmp_path / "core.json"
     windows_path.write_text(json.dumps(windows_evidence), encoding="utf-8")
     core_path.write_text(json.dumps(core_evidence), encoding="utf-8")
-    ready = subprocess.run(
+    blocked = subprocess.run(
         [
             *command,
             "--contract",
@@ -121,8 +132,9 @@ def test_release_gate_cli_is_negative_now_and_positive_only_for_complete_evidenc
         text=True,
         check=False,
     )
-    assert ready.returncode == 0
-    assert "WINDOWS_PRODUCTION_READY=PASS" in ready.stdout
+    assert blocked.returncode != 0
+    assert "WINDOWS_PRODUCTION_READY=NOT_READY" in blocked.stdout
+    assert all(item in blocked.stdout for item in LIFECYCLE_ITEMS)
 
 
 def _document(
@@ -151,7 +163,7 @@ def _result(item: str, evidence_class: str, status: str = "PASS") -> dict[str, s
     }
 
 
-def _complete_windows_evidence(
+def _windows_evidence_without_lifecycle(
     data: dict[str, object], revision: str
 ) -> tuple[dict[str, object], dict[str, object]]:
     acceptance = data["acceptance"]
@@ -160,6 +172,7 @@ def _complete_windows_evidence(
         _result(item, "LIVE_WINDOWS_INTEGRATION")
         for item in required
         if acceptance[item]["evidence_class"] == "LIVE_WINDOWS_INTEGRATION"
+        and item not in LIFECYCLE_ITEMS
     ]
     core = [_result("CORE_REQUIRED_SUITES", "CROSS_OS_CI_MATRIX")]
     windows = _document("WINDOWS", "Windows", revision, live)
@@ -176,12 +189,62 @@ def _production_trust() -> dict[str, str]:
     }
 
 
-def test_current_windows_evidence_is_accepted_only_when_complete() -> None:
+def test_other_windows_evidence_preserves_both_lifecycle_blockers() -> None:
     data = load_contract()
-    windows, core = _complete_windows_evidence(data, "current")
-    assert production_ready("WINDOWS", data, [windows, core], "current") is True
-    windows["results"].pop()
+    windows, core = _windows_evidence_without_lifecycle(data, "current")
+    assert set(blocking_items("WINDOWS", data, [windows, core], "current")) == LIFECYCLE_ITEMS
     assert production_ready("WINDOWS", data, [windows, core], "current") is False
+    windows["results"].pop()
+    assert len(blocking_items("WINDOWS", data, [windows, core], "current")) == 3
+    assert production_ready("WINDOWS", data, [windows, core], "current") is False
+
+
+@pytest.mark.parametrize("item", sorted(LIFECYCLE_ITEMS))
+def test_direct_live_lifecycle_json_cannot_bypass_native_authority(item: str) -> None:
+    data = load_contract()
+    document = _document(
+        "WINDOWS", "Windows", "current", [_result(item, "LIVE_WINDOWS_INTEGRATION")]
+    )
+    with pytest.raises(EvidenceValidationError, match=NATIVE_AUTHORITY_UNAVAILABLE):
+        _validated_results(data, [document], "current", "test", "1")
+    blockers = blocking_items("WINDOWS", data, [document], "current")
+    assert len(blockers) == 1
+    assert blockers[0].startswith(f"INVALID_EVIDENCE:{NATIVE_AUTHORITY_UNAVAILABLE}")
+    assert not production_ready("WINDOWS", data, [document], "current")
+
+
+@pytest.mark.parametrize("item", sorted(LIFECYCLE_ITEMS))
+@pytest.mark.parametrize(
+    "status",
+    [
+        "FAIL",
+        "NOT_TESTED",
+        "NOT_IMPLEMENTED",
+        "UNVERIFIED_ENVIRONMENT_LIMITATION",
+        "NOT_APPLICABLE",
+    ],
+)
+def test_lifecycle_refusal_statuses_remain_valid_diagnostics(item: str, status: str) -> None:
+    data = load_contract()
+    result = _result(item, "LIVE_WINDOWS_INTEGRATION", status)
+    document = _document("WINDOWS", "Windows", "current", [result])
+    assert _validated_results(data, [document], "current", "test", "1") == {item: result}
+    assert item in blocking_items("WINDOWS", data, [document], "current")
+
+
+@pytest.mark.parametrize("item", sorted(LIFECYCLE_ITEMS))
+@pytest.mark.parametrize("status", ["UNKNOWN", "BLOCKED", "", None, True])
+def test_unknown_or_missing_lifecycle_status_never_clears_a_gate(item: str, status: object) -> None:
+    data = load_contract()
+    result = _result(item, "LIVE_WINDOWS_INTEGRATION")
+    if status is None:
+        result.pop("status")
+    else:
+        result["status"] = status
+    document = _document("WINDOWS", "Windows", "current", [result])
+    with pytest.raises(EvidenceValidationError):
+        _validated_results(data, [document], "current", "test", "1")
+    assert not production_ready("WINDOWS", data, [document], "current")
 
 
 @pytest.mark.parametrize(
@@ -211,8 +274,10 @@ def test_clean_install_production_trust_fails_closed(
     mutation: Callable[[dict[str, object]], object],
 ) -> None:
     data = load_contract()
-    windows, core = _complete_windows_evidence(data, "current")
+    windows, core = _windows_evidence_without_lifecycle(data, "current")
     mutation(windows)
+    with pytest.raises(EvidenceValidationError, match="malformed.*evidence"):
+        _validated_results(data, [windows, core], "current", "test", "1")
     assert production_ready("WINDOWS", data, [windows, core], "current") is False
 
 
@@ -257,7 +322,7 @@ def test_current_scm_slice_evidence_satisfies_only_its_exact_items() -> None:
 
 def test_stale_wrong_os_duplicate_unknown_and_unsupported_evidence_fail_closed() -> None:
     data = load_contract()
-    windows, core = _complete_windows_evidence(data, "current")
+    windows, core = _windows_evidence_without_lifecycle(data, "current")
     stale = copy.deepcopy(windows)
     stale["source_revision"] = "previous"
     assert production_ready("WINDOWS", data, [stale, core], "current") is False
@@ -280,6 +345,9 @@ def test_stale_wrong_os_duplicate_unknown_and_unsupported_evidence_fail_closed()
     wrong_provider = copy.deepcopy(windows)
     wrong_provider["ci_provider"] = "anything"
     assert production_ready("WINDOWS", data, [wrong_provider, core], "current") is False
+    for altered in (stale, wrong_os, duplicate, unknown, unsupported, wrong_run, wrong_provider):
+        with pytest.raises(EvidenceValidationError):
+            _validated_results(data, [altered, core], "current", "test", "1")
 
 
 @pytest.mark.parametrize("malformed", [{}, {"schema_version": 1}, {"results": "not-a-list"}])
@@ -402,7 +470,7 @@ def test_workflow_release_gate_is_real_and_platform_independent() -> None:
     )
 
 
-def test_stage10_workflow_uses_real_reboot_soak_and_evidence_producer() -> None:
+def test_stage10_workflow_keeps_opt_in_and_fail_closed_preflight() -> None:
     root = Path(__file__).resolve().parents[2]
     workflow = yaml.safe_load(
         (root / ".github/workflows/platform-deployment.yml").read_text(encoding="utf-8")
@@ -474,14 +542,19 @@ def test_stage10_workflow_uses_real_reboot_soak_and_evidence_producer() -> None:
     assert "sleep 240" in barrier
     assert "shutdown.exe /r /t 75" in prepare
     probe = (root / "deployment/windows_stage10_live.ps1").read_text(encoding="utf-8")
-    assert "Start-Sleep" in probe and "$SoakHours -lt 24" in probe
-    assert "System.Diagnostics.Stopwatch" in probe
-    assert "backend-readiness.json" in probe
-    assert "runtime_provenance = $provenance" in probe
-    assert probe.count("Service-Snapshot $runtimeProvenance.installed_backend_sha256") >= 3
-    assert "missing or stale runtime provenance" in probe
-    assert "installed backend executable changed" in probe
-    assert "Get-AuthenticodeSignature" not in probe and "msiexec.exe" not in probe
+    assert "deployment.windows_stage10_proof_validation" in probe
+    for unsupported_operation in (
+        "Start-Sleep",
+        "System.Diagnostics.Stopwatch",
+        "Service-Snapshot",
+        "Start-Service",
+        "Stop-Service",
+        "Restart-Service",
+        "Set-Service",
+        "shutdown.exe",
+        "msiexec.exe",
+    ):
+        assert unsupported_operation not in probe
     workflow_text = (root / ".github/workflows/platform-deployment.yml").read_text()
     assert "signtool" not in workflow_text
     diagnostic = next(
@@ -502,6 +575,61 @@ def test_stage10_workflow_uses_real_reboot_soak_and_evidence_producer() -> None:
         "--evidence evidence/windows-stage10-evidence.json" in command
         for command in release_commands
     )
+
+
+def test_stage10_proof_validation_ci_uses_only_hosted_hermetic_checks() -> None:
+    root = Path(__file__).resolve().parents[2]
+    workflow = yaml.safe_load(
+        (root / ".github/workflows/windows-stage10-proof-validation.yml").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert set(workflow[True]) == {"pull_request", "workflow_dispatch"}
+    assert workflow[True]["workflow_dispatch"] is None
+    assert workflow["permissions"] == {"contents": "read"}
+    assert set(workflow["jobs"]) == {"proof-validation"}
+    job = workflow["jobs"]["proof-validation"]
+    assert job["runs-on"] == "${{ matrix.os }}"
+    assert set(job["strategy"]["matrix"]["os"]) == {
+        "ubuntu-latest",
+        "windows-latest",
+        "macos-latest",
+    }
+    assert not job.get("continue-on-error", False)
+    checkout = next(
+        step for step in job["steps"] if step.get("uses", "").startswith("actions/checkout@")
+    )
+    assert checkout["with"] == {"persist-credentials": False}
+    native = []
+    python_modules = set()
+    for step in job["steps"]:
+        assert not step.get("continue-on-error", False)
+        if "run" not in step:
+            continue
+        command = step["run"]
+        assert "${{ inputs." not in command
+        if step.get("shell") == "powershell":
+            native.append(step)
+            assert step["if"] == "runner.os == 'Windows'"
+            assert command == "./deployment/windows_stage10_soak_identity_regression.ps1"
+        else:
+            arguments = shlex.split(command)
+            assert arguments[:2] == ["python", "-m"]
+            assert arguments[2] in {"pip", "ruff", "mypy", "pytest"}
+            python_modules.add(arguments[2])
+        for forbidden in (
+            "run_stage10",
+            "windows_stage10_live.ps1",
+            "shutdown.exe",
+            "msiexec",
+            "Start-Service",
+            "Stop-Service",
+            "Restart-Service",
+            "Set-Service",
+        ):
+            assert forbidden not in command
+    assert len(native) == 1
+    assert python_modules == {"pip", "ruff", "mypy", "pytest"}
 
 
 def test_v2_policy_separates_scope_compatibility_and_qualification() -> None:
@@ -529,20 +657,24 @@ def _complete_linux_evidence(data: dict[str, object], revision: str) -> dict[str
     return _document("LINUX", "Linux", revision, live)
 
 
-def test_windows_only_beta_requires_windows_but_no_fabricated_linux_pass() -> None:
+def test_windows_beta_stays_blocked_without_importing_linux_requirements() -> None:
     from deployment.platform_readiness import release_blocking_items, release_ready
 
     data = load_contract()
-    windows, core = _complete_windows_evidence(data, "current")
+    windows, core = _windows_evidence_without_lifecycle(data, "current")
     evidence = [windows, core]
     assert production_ready("LINUX", data, evidence, "current") is False
-    assert release_ready("WINDOWS_BETA", data, evidence, "current") is True
+    assert release_ready("WINDOWS_BETA", data, evidence, "current") is False
+    windows_blockers = {f"WINDOWS:{item}" for item in LIFECYCLE_ITEMS}
+    assert (
+        set(release_blocking_items("WINDOWS_BETA", data, evidence, "current")) == windows_blockers
+    )
     for profile in ("WINDOWS_LINUX_BETA", "CRYPTOHUNTER_V1"):
         assert release_ready(profile, data, evidence, "current") is False
-        assert all(
-            item.startswith("LINUX:")
-            for item in release_blocking_items(profile, data, evidence, "current")
-        )
+        blockers = set(release_blocking_items(profile, data, evidence, "current"))
+        assert windows_blockers.issubset(blockers)
+        assert blockers - windows_blockers
+        assert all(item.startswith("LINUX:") for item in blockers - windows_blockers)
     # Scope is eligibility only: no acceptance status or legacy authority is rewritten.
     assert data == load_contract()
 
@@ -555,10 +687,14 @@ def test_windows_not_ready_blocks_every_profile(profile: str, status: str) -> No
     from deployment.platform_readiness import release_ready
 
     data = load_contract()
-    windows, core = _complete_windows_evidence(data, "current")
+    windows, core = _windows_evidence_without_lifecycle(data, "current")
     windows["results"][0]["status"] = status
-    linux = _complete_linux_evidence(data, "current")
-    assert release_ready(profile, data, [windows, core, linux], "current") is False
+    blockers = blocking_items("WINDOWS", data, [windows, core], "current")
+    if status == "NOT_READY":
+        assert any("invalid evidence status" in item for item in blockers)
+    else:
+        assert windows["results"][0]["item"] in blockers
+    assert release_ready(profile, data, [windows, core], "current") is False
 
 
 @pytest.mark.parametrize("profile", ["WINDOWS_LINUX_BETA", "CRYPTOHUNTER_V1"])
@@ -566,7 +702,7 @@ def test_linux_release_claim_requires_its_own_current_native_qualification(profi
     from deployment.platform_readiness import release_ready
 
     data = load_contract()
-    windows, core = _complete_windows_evidence(data, "current")
+    windows, core = _windows_evidence_without_lifecycle(data, "current")
     linux = _complete_linux_evidence(data, "current")
     # Same deklaracje LIVE w JSON nie uwierzytelniają fizycznego wykonania.
     assert release_ready(profile, data, [windows, core, linux], "current") is False
@@ -594,7 +730,7 @@ def test_macos_deferred_never_becomes_production_ready_even_with_synthetic_pass(
             if item != "CORE_REQUIRED_SUITES"
         ],
     )
-    _, core = _complete_windows_evidence(data, "current")
+    _, core = _windows_evidence_without_lifecycle(data, "current")
     assert production_ready("MACOS", data, [macos, core], "current") is False
     assert blocking_items("MACOS", data, [macos, core], "current") == ["PLATFORM_DEFERRED"]
 
@@ -603,9 +739,10 @@ def test_macos_compatibility_regression_keeps_shared_core_release_gate_closed() 
     from deployment.platform_readiness import release_ready
 
     data = load_contract()
-    windows, core = _complete_windows_evidence(data, "current")
+    windows, core = _windows_evidence_without_lifecycle(data, "current")
     # CORE_REQUIRED_SUITES still aggregates all three OSes, including deferred macOS.
     core["results"][0]["status"] = "FAIL"
+    assert "CORE_REQUIRED_SUITES" in blocking_items("WINDOWS", data, [windows, core], "current")
     assert not release_ready("WINDOWS_BETA", data, [windows, core], "current")
     root = Path(__file__).resolve().parents[2]
     plan = json.loads((root / "deployment/core_required_suites_v1.json").read_text())
@@ -713,7 +850,7 @@ def test_release_profile_cli_and_incomplete_policy_are_fail_closed(tmp_path: Pat
     from deployment.platform_readiness import main
 
     data = load_contract()
-    windows, core = _complete_windows_evidence(data, "current")
+    windows, core = _windows_evidence_without_lifecycle(data, "current")
     paths = []
     for name, document in (("windows", windows), ("core", core)):
         path = tmp_path / f"{name}.json"
@@ -728,7 +865,7 @@ def test_release_profile_cli_and_incomplete_policy_are_fail_closed(tmp_path: Pat
         "1",
         *paths,
     ]
-    assert main(["--release-profile", "WINDOWS_BETA", *common]) == 0
+    assert main(["--release-profile", "WINDOWS_BETA", *common]) == 1
     assert main(["--release-profile", "CRYPTOHUNTER_V1", *common]) == 1
     assert main(["--platform", "MACOS", *common]) == 1
     bad_policy = tmp_path / "bad-policy.json"
@@ -764,6 +901,8 @@ def test_historical_v1_macos_evidence_retains_its_class_without_qualifying_relea
 
 def test_boolean_evidence_version_is_not_legacy_v1() -> None:
     data = load_contract()
-    windows, core = _complete_windows_evidence(data, "current")
+    windows, core = _windows_evidence_without_lifecycle(data, "current")
     windows["schema_version"] = True
+    with pytest.raises(EvidenceValidationError, match="unsupported schema"):
+        _validated_results(data, [windows, core], "current", "test", "1")
     assert not production_ready("WINDOWS", data, [windows, core], "current")
