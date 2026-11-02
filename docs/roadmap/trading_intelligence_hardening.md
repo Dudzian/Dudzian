@@ -119,6 +119,19 @@ Wykorzystać istniejące i nowe dane mikrostrukturalne do oceny krótkoterminowe
 - divergence między price / flow / OI / funding;
 - microstructure feature quality i stale-data detection.
 
+### TIH-2.C — Candlestick / Price Action Feature Research (PLANNED)
+
+**Cel:** zbadać, czy geometria świec i formacje jedno-/wieloświecowe poprawiają jakość decyzji AI ponad istniejące cechy OHLCV, reżimy rynku i koszty egzekucji. To **hipoteza badawcza**, a nie gotowy sygnał kupna/sprzedaży ani obietnica dodatniego edge'u.
+
+- **Reuse-first / audyt:** zinwentaryzować istniejące cechy z `bot_core/ai/feature_engineering.py` (`candle_body_ratio`, `candle_upper_shadow_ratio`, `candle_lower_shadow_ratio`, `close_location_value`, relacje do ATR, Heikin-Ashi); nie liczyć ich drugi raz. Oddzielnie ustalić, które z nich faktycznie docierają do `TradingOpportunityAI` w `bot_core/ai/trading_engine.py`, zamiast zakładać automatyczną integrację.
+- **Kandydaci do badań:** Hammer / Hanging Man, Shooting Star, Doji, bullish/bearish Engulfing, Inside Bar, Hikkake, breakout / retest oraz relacje między świecami (kontekst trendu, knotów, wolumenu, wsparć/oporów i reżimu). Traktować nazwy formacji jako jawne, wersjonowane definicje algorytmiczne, nie subiektywną interpretację wykresu.
+- **Cechy i dane:** najpierw wykorzystać ciągłe, znormalizowane cechy geometrii OHLCV oraz cechy kontekstowe; binarne etykiety formacji traktować jako kandydatów, nie wymuszoną przewagę. Analizować wiele interwałów tylko przy point-in-time alignment. Do decyzji używać wyłącznie świec zamkniętych i danych dostępnych przed decyzją; brak future-bar confirmation, leakage i repaintingu.
+- **Kontrakt:** utrzymać identyczną definicję i kolejność cech w treningu oraz inference; wersjonować `feature_spec`, walidować dostępność/jakość danych, provenance i freshness, a zmiany istniejącego modelu opportunity wdrażać jako nową wersję modelu/kontraktu bez cichego rozszerzania `opportunity_features_v1`.
+- **Eksperyment ablation:** porównać bazowy model bez nowych formacji z modelem z formacjami, przy tych samych danych, horyzoncie, universe, reżimach, kosztach i seedach. Ocenić OOS / walk-forward, prawdopodobieństwa i kalibrację, oczekiwany wynik netto po fees/spread/slippage, drawdown, stabilność między parami/interwałami i degradację po perturbacji danych. Uwzględnić multiple testing i zależność prób według TIH-4.
+- **Wdrażanie wyłącznie po dowodach:** najpierw research → shadow → paper; bez domyślnych zleceń LIVE, zmian sizingu ani omijania `Risk Engine`, `ExecutionLease`, AI Governor i `DecisionOrchestrator`. Jeżeli brak stabilnej poprawy OOS po kosztach, wynik brzmi **REJECT / no added features**, nie „wdrożyć, bo formacja ładnie wygląda”.
+
+**Kryteria akceptacji TIH-2.C:** deterministyczne testy jednostkowe formacji (także edge cases i brakujących danych), test braku look-ahead/repaintingu, zgodność train/inference, odtwarzalny raport ablation i decyzja ACCEPT/REJECT z dowodami walk-forward/OOS. Każda akceptowana cecha wymaga osobnej kwalifikacji integracyjnej przed wpływem na decyzje tradingowe; obecny Stage 9/10 i LIVE pozostają bez zmian.
+
 Warstwa powinna produkować m.in.:
 
 ```text
@@ -194,6 +207,7 @@ Uniemożliwić promocję strategii, której przewaga wynika z błędów badawczy
 - walk-forward;
 - purging / embargo tam, gdzie charakter targetu i overlap tego wymagają;
 - point-in-time feature validation;
+- candlestick / price-action ablation vs bazowy model, z kontrolą leakage, multiple testing i kosztów transakcyjnych (TIH-2.C);
 - leakage detection;
 - survivorship-bias controls dla universe;
 - parameter stability tests;
