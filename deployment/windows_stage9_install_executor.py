@@ -422,18 +422,57 @@ def _operation(
             }
         )
     finally:
-        if installation is not None:
-            try:
-                installation.write_report(report)
-            except (OSError, RuntimeError, ValueError):
-                report.update(status="REPORT_WRITE_FAILED_OUTCOME_UNKNOWN", overall_status="FAIL")
-                report["checks"].append({"name": "durable_report", "status": "FAIL"})
+        report_stack = ExitStack()
+        final_writer = None
         try:
-            stack.close()
-        except (OSError, RuntimeError, ValueError):
-            report.update(status="HANDLE_RELEASE_FAILED", overall_status="FAIL")
-            report["checks"].append({"name": "native_handle_release", "status": "FAIL"})
-        sys.dont_write_bytecode = original_bytecode_setting
+            if installation is not None:
+                try:
+                    # Establish the intent journal while all input pins are held.
+                    installation.write_report(report)
+                except (OSError, RuntimeError, ValueError):
+                    report.update(
+                        status="REPORT_WRITE_FAILED_OUTCOME_UNKNOWN", overall_status="FAIL"
+                    )
+                    report["checks"].append({"name": "durable_report", "status": "FAIL"})
+                try:
+                    final_writer = report_stack.enter_context(installation.retained_report_writer())
+                except (OSError, RuntimeError, ValueError):
+                    # Never reopen the report path after releasing custody.
+                    report.update(
+                        status="REPORT_WRITE_FAILED_OUTCOME_UNKNOWN", overall_status="FAIL"
+                    )
+                    report["checks"].append({"name": "durable_report_retention", "status": "FAIL"})
+                    report["durable_report_matches_returned"] = False
+        finally:
+            try:
+                try:
+                    stack.close()
+                except (OSError, RuntimeError, ValueError):
+                    report.update(status="HANDLE_RELEASE_FAILED", overall_status="FAIL")
+                    report["checks"].append({"name": "native_handle_release", "status": "FAIL"})
+                    if installation is not None:
+                        report["durable_report_matches_returned"] = False
+                if final_writer is not None:
+                    try:
+                        report["durable_report_matches_returned"] = True
+                        final_writer(report)
+                    except (OSError, RuntimeError, ValueError):
+                        report.update(
+                            status="REPORT_WRITE_FAILED_OUTCOME_UNKNOWN", overall_status="FAIL"
+                        )
+                        report["checks"].append({"name": "durable_final_report", "status": "FAIL"})
+                        report["durable_report_matches_returned"] = False
+            finally:
+                try:
+                    report_stack.close()
+                except (OSError, RuntimeError, ValueError):
+                    # The last handle closes after the final durable write;
+                    # its failure can only be reported to the caller.
+                    report.update(status="HANDLE_RELEASE_FAILED", overall_status="FAIL")
+                    report["checks"].append({"name": "report_handle_release", "status": "FAIL"})
+                    report["durable_report_matches_returned"] = False
+                finally:
+                    sys.dont_write_bytecode = original_bytecode_setting
     return report
 
 

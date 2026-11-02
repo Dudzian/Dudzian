@@ -200,13 +200,13 @@ def verify_production_trust_for_audit(
         )
         if bindings != expected or pdsa.get("threshold") != 2:
             raise PolicyVectorError("final package does not match frozen production authority")
+        # Only the verified signed release may supply the issued key values.
         keys = {
-            item["key_id"]: Ed25519PublicKey.from_public_bytes(
-                bytes.fromhex(item["public_key_hex"])
-            )
-            for item in pdsa["keys"]
+            key_id: Ed25519PublicKey.from_public_bytes(bytes.fromhex(public_hex))
+            for key_id, public_hex in release.pdsa_keys.items()
         }
-        if tuple(keys) != tuple(release.pdsa_keys) or len(keys) != 3:
+        public_projection = tuple((item["key_id"], item["public_key_hex"]) for item in pdsa["keys"])
+        if public_projection != tuple(release.pdsa_keys.items()) or len(keys) != 3:
             raise PolicyVectorError("PDSA projection differs from signed release")
         context = ProductionTrustContext(
             _CONTEXT_TOKEN,

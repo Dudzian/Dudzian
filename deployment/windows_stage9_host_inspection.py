@@ -759,12 +759,22 @@ def _postgresql_configuration(observation: dict[str, Any]) -> None:
             continue
         if re.match(r"include(?:_dir|_if_exists)?\b", active, re.IGNORECASE):
             raise HostInspectionError("PostgreSQL configuration includes are prohibited")
-        key, separator, setting = active.partition("=")
-        key = key.strip().lower()
+        # PostgreSQL accepts whitespace in place of '='. Recognize the name
+        # first, then require the installer's canonical assignment form, so an
+        # active alternate-spelling override cannot disappear from inspection.
+        parameter = re.match(r"[a-z_][a-z0-9_]*", active, re.IGNORECASE)
+        if parameter is None:
+            continue
+        key = parameter.group().lower()
         if key in expected:
-            if not separator or key in observed or setting.strip() != expected[key]:
+            assignment = active[parameter.end() :].lstrip()
+            if (
+                not assignment.startswith("=")
+                or key in observed
+                or assignment[1:].strip() != expected[key]
+            ):
                 raise HostInspectionError("PostgreSQL static endpoint/TLS differs")
-            observed[key] = setting.strip()
+            observed[key] = assignment[1:].strip()
     if observed != expected:
         raise HostInspectionError("PostgreSQL static endpoint/TLS settings are incomplete")
 

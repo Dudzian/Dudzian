@@ -20,7 +20,7 @@ import zipfile
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
-from typing import IO, Any, Iterator, cast
+from typing import IO, Any, Callable, Iterator, cast
 from uuid import uuid4
 
 from deployment.windows_runner_acl import (
@@ -735,6 +735,25 @@ class LockedInstallation:
             self._inputs._refresh_owned_directory_metadata()
             self._journal_recorded = True
         self._inputs._write_pinned_report(self._report, report)
+
+    @contextmanager
+    def retained_report_writer(self) -> Iterator[Callable[[dict[str, Any]], None]]:
+        """Keep the original write handle through input cleanup, without reopening paths.
+
+        This is a terminal operation: the caller must not use input capabilities
+        after transferring the report pin. The separate owner closes it after
+        writing the cleanup outcome, including failures releasing other pins.
+        """
+        inputs = self._inputs
+        key = str(self.report_path).casefold()
+        if inputs._closed or inputs._pins.get(key) is not self._report:
+            raise InstallationIntegrityError("protected report handle is unavailable")
+        inputs._pins.pop(key)
+        inputs._file_ids.remove(self._report.identity.file_id)
+        try:
+            yield lambda report: inputs._write_pinned_report(self._report, report)
+        finally:
+            inputs._native.close(self._report.handle)
 
 
 @contextmanager

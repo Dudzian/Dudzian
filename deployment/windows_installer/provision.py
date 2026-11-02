@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 import argparse
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 import hashlib
 import ipaddress
@@ -12,7 +13,9 @@ import secrets
 import shutil
 import subprocess
 import sys
-from typing import Any, Callable
+import tempfile
+from typing import Any, Callable, Iterator
+from psycopg.conninfo import make_conninfo
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
@@ -346,11 +349,58 @@ def _pki(
     _qualify_protected(security / "ca.key", {SYSTEM_SID: FILE_ALL_ACCESS}, inherit=False)
 
 
+@contextmanager
+def _bootstrap_password_files(security: Path) -> Iterator[tuple[Path, Path]]:
+    """Create the credential only inside a qualified SYSTEM-only directory."""
+    directory = Path(tempfile.mkdtemp(prefix=".postgres-bootstrap-", dir=security))
+    primary_failure: BaseException | None = None
+    try:
+        grants = {SYSTEM_SID: FILE_ALL_ACCESS}
+        _protect(directory, grants, inherit=True)
+        _qualify_protected(directory, grants, inherit=True)
+        password = secrets.token_urlsafe(48)
+        password_file = directory / "initdb.password"
+        passfile = directory / "pgpass"
+        password_file.write_text(password + "\n", encoding="ascii")
+        passfile.write_text(
+            f"127.0.0.1:{CONTRACT.postgresql_port}:*:postgres:{password}\n", encoding="ascii"
+        )
+        for path in (password_file, passfile):
+            _protect(path, grants, inherit=False)
+            _qualify_protected(path, grants, inherit=False)
+        yield password_file, passfile
+    except BaseException as exc:
+        primary_failure = exc
+        raise
+    finally:
+        try:
+            shutil.rmtree(directory)
+        except BaseException as exc:
+            if primary_failure is None:
+                raise
+            primary_failure.add_note(f"bootstrap credential cleanup failed: {type(exc).__name__}")
+
+
 def _configure_database(
     program_files: Path,
     data: Path,
     security: Path,
     set_stage: Callable[[str], None] = _ignore_stage,
+) -> None:
+    set_stage("POSTGRES_BOOTSTRAP_CREDENTIALS")
+    with _bootstrap_password_files(security) as (password_file, passfile):
+        _configure_database_with_password(
+            program_files, data, security, password_file, passfile, set_stage
+        )
+
+
+def _configure_database_with_password(
+    program_files: Path,
+    data: Path,
+    security: Path,
+    password_file: Path,
+    passfile: Path,
+    set_stage: Callable[[str], None],
 ) -> None:
     bindir = program_files / "PostgreSQL" / "bin"
     initdb = bindir / "initdb.exe"
@@ -363,8 +413,9 @@ def _configure_database(
             str(data),
             "--encoding=UTF8",
             "--auth-local=reject",
-            "--auth-host=reject",
+            "--auth-host=scram-sha-256",
             "--username=postgres",
+            "--pwfile=" + str(password_file),
         ],
         check=True,
         timeout=120,
@@ -377,25 +428,38 @@ def _configure_database(
         + f"\nlisten_addresses='127.0.0.1'\nport={CONTRACT.postgresql_port}\nssl=on\nssl_ca_file='{ca}'\nssl_cert_file='{cert}'\nssl_key_file='{key}'\n",
         encoding="utf-8",
     )
-    # Bootstrap exists only while the postmaster is installer-owned and is replaced before final start.
-    (data / "pg_hba.conf").write_text("host all postgres 127.0.0.1/32 trust\n", encoding="utf-8")
-    set_stage("POSTGRES_BOOTSTRAP_START")
-    subprocess.run(
-        [str(pg_ctl), "start", "-D", str(data), "-w", "-t", "60"],
-        check=True,
-        timeout=70,
+    # initdb establishes the random administrator credential before any listener
+    # exists. Even local bootstrap clients must authenticate over verified TLS.
+    (data / "pg_hba.conf").write_text(
+        "hostssl all postgres 127.0.0.1/32 scram-sha-256\n"
+        "host all all 0.0.0.0/0 reject\n"
+        "host all all ::0/0 reject\n",
+        encoding="utf-8",
     )
     primary_failure: BaseException | None = None
     try:
-        dsn = f"host=127.0.0.1 port={CONTRACT.postgresql_port} dbname=postgres user=postgres"
+        set_stage("POSTGRES_BOOTSTRAP_START")
+        subprocess.run(
+            [str(pg_ctl), "start", "-D", str(data), "-w", "-t", "60"],
+            check=True,
+            timeout=70,
+        )
+        dsn = make_conninfo(
+            host=CONTRACT.postgresql_host,
+            port=CONTRACT.postgresql_port,
+            dbname="postgres",
+            user="postgres",
+            passfile=str(passfile),
+            sslmode="verify-full",
+            sslrootcert=ca,
+            connect_timeout=5,
+        )
         import psycopg
 
         set_stage("POSTGRES_CREATE_DATABASE")
         with psycopg.connect(dsn, autocommit=True) as connection:
             connection.execute("CREATE DATABASE freshness_gate")
-        authority = PostgreSQLConnectionConfig(
-            f"host=127.0.0.1 port={CONTRACT.postgresql_port} dbname=freshness_gate user=postgres"
-        )
+        authority = PostgreSQLConnectionConfig(make_conninfo(dsn, dbname="freshness_gate"))
         set_stage("POSTGRES_PROVISION_FRESHNESS_AUTHORITY")
         provision_postgresql_freshness_authority(authority)
         set_stage("POSTGRES_QUALIFY_FRESHNESS_AUTHORITY")
@@ -425,17 +489,22 @@ def _configure_database(
         primary_failure = exc
         raise
     finally:
-        if primary_failure is None:
-            set_stage("POSTGRES_BOOTSTRAP_STOP")
         try:
-            subprocess.run(
-                [str(pg_ctl), "stop", "-D", str(data), "-m", "fast", "-w", "-t", "30"],
-                check=True,
-                timeout=40,
-            )
-        except BaseException:
             if primary_failure is None:
-                raise
+                set_stage("POSTGRES_BOOTSTRAP_STOP")
+        except BaseException as exc:
+            primary_failure = exc
+            raise
+        finally:
+            try:
+                subprocess.run(
+                    [str(pg_ctl), "stop", "-D", str(data), "-m", "fast", "-w", "-t", "30"],
+                    check=True,
+                    timeout=40,
+                )
+            except BaseException:
+                if primary_failure is None:
+                    raise
 
 
 def _prove_final_admin_rejection(psycopg: Any, dsn: str, connection: Any) -> None:
@@ -1141,9 +1210,7 @@ def main(argv: list[str] | None = None) -> int:
             clear_safe_failure()
             install(args.program_files, args.program_data, set_stage)
         elif args.command == "install-production-trust":
-            install_production_trust(
-                args.program_files, args.program_data, args.source, set_stage
-            )
+            install_production_trust(args.program_files, args.program_data, args.source, set_stage)
         elif args.command == "enroll":
             enroll(args.program_files, args.program_data)
         elif args.command == "rollback":

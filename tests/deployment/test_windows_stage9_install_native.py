@@ -10,6 +10,7 @@ import os
 import stat
 import types
 import zipfile
+from contextlib import ExitStack
 from pathlib import Path
 
 import pytest
@@ -306,6 +307,53 @@ def test_success_keeps_originals_and_msi_pinned_until_context_exit(protected, wi
         installed.verify_pins()
     with pytest.raises(native.InstallationIntegrityError, match="releasing"):
         installed.write_report({})
+
+
+def test_retained_report_writer_uses_original_handle_after_other_pins_close(protected, win32):
+    roots, arguments, material, observations = protected
+    with ExitStack() as report_stack:
+        with native.locked_installation_inputs(**arguments) as locked:
+            installed = locked.materialize_msi(**material)
+            installed.write_report({"status": "RUNNING"})
+            report_handle = installed._report.handle
+            writer = report_stack.enter_context(installed.retained_report_writer())
+            opened = [call for call in win32.calls if call[0] == "CreateFileW"]
+            with pytest.raises(native.InstallationIntegrityError, match="unavailable"):
+                with installed.retained_report_writer():
+                    pytest.fail("the original report handle must have exactly one owner")
+        assert set(win32.handles) == {report_handle}
+        report = {"status": "HANDLE_RELEASE_FAILED", "durable_report_matches_returned": True}
+        writer(report)
+        assert json.loads(installed.report_path.read_text()) == report
+        assert [call for call in win32.calls if call[0] == "CreateFileW"] == opened
+    assert win32.handles == {}
+    with pytest.raises(native.InstallationIntegrityError, match="unavailable"):
+        with installed.retained_report_writer():
+            pytest.fail("closed inputs must never reopen the report path")
+
+
+def test_retained_report_survives_input_cleanup_error(protected, win32, monkeypatch):
+    roots, arguments, material, observations = protected
+    with ExitStack() as report_stack:
+        with pytest.raises(OSError, match="cleanup test"):
+            with native.locked_installation_inputs(**arguments) as locked:
+                installed = locked.materialize_msi(**material)
+                installed.write_report({"status": "RUNNING"})
+                writer = report_stack.enter_context(installed.retained_report_writer())
+                original_close = locked._native.close
+                failing_handle = installed._msi.handle
+
+                def close(handle):
+                    original_close(handle)
+                    if handle == failing_handle:
+                        raise OSError("cleanup test")
+
+                monkeypatch.setattr(locked._native, "close", close)
+        assert set(win32.handles) == {installed._report.handle}
+        report = {"status": "HANDLE_RELEASE_FAILED"}
+        writer(report)
+        assert json.loads(installed.report_path.read_text()) == report
+    assert win32.handles == {}
 
 
 def test_inputs_reject_unsafe_acl_and_always_release_handles(protected, monkeypatch, win32):

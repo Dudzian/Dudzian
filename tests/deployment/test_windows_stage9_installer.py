@@ -502,6 +502,7 @@ def test_postgresql_is_created_suspended_and_assigned_before_resume(tmp_path: Pa
         tmp_path,
         win32api=object(),
         win32con=Con,
+        win32event=object(),
         win32job=JobApi,
         win32process=ProcessApi,
         stage=lambda value: events.append(value),
@@ -572,8 +573,11 @@ def test_postgresql_job_membership_query_back_fails_closed(
         create_suspended_in_job(
             ["postgres.exe"],
             tmp_path,
-            win32api=object(),
+            win32api=SimpleNamespace(TerminateProcess=lambda _process, _code: None),
             win32con=SimpleNamespace(CREATE_SUSPENDED=4),
+            win32event=SimpleNamespace(
+                WAIT_OBJECT_0=0, WaitForSingleObject=lambda _process, _timeout: 0
+            ),
             win32job=JobApi,
             win32process=ProcessApi,
             stage=events.append,
@@ -595,12 +599,15 @@ def test_postgresql_assign_failure_precedes_membership_verification(tmp_path: Pa
             self.closed = True
 
     process, thread, job = Handle(), Handle(), Handle()
+    alive = False
 
     class ProcessApi:
         STARTUPINFO = Handle
 
         @staticmethod
         def CreateProcess(*_args):
+            nonlocal alive
+            alive = True
             return process, thread, 41, 42
 
         @staticmethod
@@ -621,12 +628,26 @@ def test_postgresql_assign_failure_precedes_membership_verification(tmp_path: Pa
         def AssignProcessToJobObject(*_args):
             raise OSError("assign")
 
+    def terminate(handle, code):
+        nonlocal alive
+        assert handle is process and code != 0
+        assert alive and not process.closed and not thread.closed
+        alive = False
+        events.append("terminate")
+
+    def wait(handle, timeout):
+        assert handle is process and timeout > 0
+        assert not alive and not process.closed and not thread.closed
+        events.append("confirm-exit")
+        return 0
+
     with pytest.raises(OSError, match="assign"):
         create_suspended_in_job(
             ["postgres.exe"],
             tmp_path,
-            win32api=object(),
+            win32api=SimpleNamespace(TerminateProcess=terminate),
             win32con=SimpleNamespace(CREATE_SUSPENDED=4),
+            win32event=SimpleNamespace(WAIT_OBJECT_0=0, WaitForSingleObject=wait),
             win32job=JobApi,
             win32process=ProcessApi,
             stage=events.append,
@@ -635,6 +656,8 @@ def test_postgresql_assign_failure_precedes_membership_verification(tmp_path: Pa
     assert "VERIFY_JOB_MEMBERSHIP" not in events
     assert "RESUME_PROCESS" not in events
     assert "resume" not in events
+    assert events.index("terminate") < events.index("confirm-exit")
+    assert not alive
     assert job.closed and process.closed and thread.closed
 
 
@@ -679,6 +702,7 @@ def test_postgresql_job_is_closed_when_setup_fails(tmp_path: Path, failure_point
             tmp_path,
             win32api=object(),
             win32con=object(),
+            win32event=object(),
             win32job=JobApi,
             win32process=ProcessApi,
         )
@@ -1107,6 +1131,8 @@ def test_install_failure_diagnostic_survives_rollback_and_commit_clears_it(
 def test_database_effect_boundaries_set_exact_stage_before_effect(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, expected: str
 ) -> None:
+    monkeypatch.setattr(provision, "_protect", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(provision, "_qualify_protected", lambda *_args, **_kwargs: None)
     data = tmp_path / "data"
     security = tmp_path / "security"
     data.mkdir()
@@ -1179,6 +1205,8 @@ def test_database_effect_boundaries_set_exact_stage_before_effect(
 def test_final_hba_cutover_ignores_localized_rejection_text(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, rejection_message: str
 ) -> None:
+    monkeypatch.setattr(provision, "_protect", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(provision, "_qualify_protected", lambda *_args, **_kwargs: None)
     data = tmp_path / "data"
     security = tmp_path / "security"
     data.mkdir()
@@ -1248,7 +1276,7 @@ def test_final_hba_cutover_ignores_localized_rejection_text(
     def write_text(path: Path, value: str, *args, **kwargs):
         nonlocal cutover
         result = original_write_text(path, value, *args, **kwargs)
-        if path == data / "pg_hba.conf" and value != "host all postgres 127.0.0.1/32 trust\n":
+        if path == data / "pg_hba.conf" and value == "\n".join(provision.FINAL_HBA) + "\n":
             cutover = True
             events.append("final-hba-written")
         return result
@@ -1356,6 +1384,8 @@ def test_final_admin_rejection_closes_unexpected_accepted_connection() -> None:
 def test_final_hba_parser_failure_prevents_rejection_and_liveness_proofs(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setattr(provision, "_protect", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(provision, "_qualify_protected", lambda *_args, **_kwargs: None)
     data = tmp_path / "data"
     security = tmp_path / "security"
     data.mkdir()
@@ -1756,3 +1786,238 @@ def test_transaction_authority_never_uses_program_files() -> None:
     assert "program_data / OWNERSHIP_RECORD" in source
     assert "program_files / JOURNAL" not in source
     assert 'Execute="commit"' in WXS
+
+
+@pytest.mark.parametrize("cleanup_failure", ["terminate", "wait", "job", "thread", "process"])
+def test_postgresql_failed_assignment_preserves_cause_and_attempts_remaining_cleanup(
+    tmp_path: Path, cleanup_failure: str
+) -> None:
+    """Model failures without opening SCM or creating a Windows process."""
+    calls: list[str] = []
+    state = SimpleNamespace(alive=False)
+    original = OSError("assignment failed")
+
+    class Handle:
+        def __init__(self, name: str) -> None:
+            self.name = name
+            self.closed = False
+
+        def Close(self) -> None:
+            calls.append(self.name)
+            if self.name == cleanup_failure:
+                raise OSError("close failed")
+            self.closed = True
+
+    job, process, thread = Handle("job"), Handle("process"), Handle("thread")
+
+    def create(*_args):
+        state.alive = True
+        return process, thread, 41, 42
+
+    def assign(*_args):
+        raise original
+
+    def terminate(handle, _code):
+        assert handle is process and not process.closed
+        calls.append("terminate")
+        if cleanup_failure == "terminate":
+            raise OSError("termination failed")
+        state.alive = False
+
+    def wait(handle, _timeout):
+        assert handle is process and not process.closed
+        calls.append("wait")
+        if cleanup_failure == "wait":
+            raise OSError("wait failed")
+        return 258 if state.alive else 0
+
+    with pytest.raises(OSError) as raised:
+        create_suspended_in_job(
+            ["postgres.exe"],
+            tmp_path,
+            win32api=SimpleNamespace(TerminateProcess=terminate),
+            win32con=SimpleNamespace(CREATE_SUSPENDED=4),
+            win32event=SimpleNamespace(WAIT_OBJECT_0=0, WaitForSingleObject=wait),
+            win32process=SimpleNamespace(STARTUPINFO=lambda: None, CreateProcess=create),
+            win32job=SimpleNamespace(
+                CreateJobObject=lambda *_args: job,
+                JobObjectExtendedLimitInformation=1,
+                JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE=0x2000,
+                QueryInformationJobObject=lambda *_args: {
+                    "BasicLimitInformation": {"LimitFlags": 0}
+                },
+                SetInformationJobObject=lambda *_args: None,
+                AssignProcessToJobObject=assign,
+            ),
+        )
+
+    assert raised.value is original
+    assert calls[:4] == ["terminate", "job", "wait", "thread"]
+    assert any(
+        "cleanup failed" in note or "confirmation failed" in note for note in original.__notes__
+    )
+    if cleanup_failure in {"terminate", "wait"}:
+        assert "process" not in calls
+        assert not process.closed
+        assert original.postgresql_unconfirmed_process_handle is process
+        assert any("retained" in note for note in original.__notes__)
+    else:
+        assert calls[-1] == "process"
+        assert not state.alive
+
+
+@pytest.mark.parametrize("entrypoint", [False, True])
+@pytest.mark.parametrize(
+    ("exit_code", "cleanup_failure"),
+    [(0, None), (27, None), (None, None), (0, "thread"), (27, "process"), (None, "thread")],
+)
+def test_postgresql_worker_monitors_child_after_readiness_and_cleans_up(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    exit_code: int | None,
+    cleanup_failure: str | None,
+    entrypoint: bool,
+) -> None:
+    """Model native APIs, checking death detection needs no external stop."""
+    from deployment.windows_installer import postgresql_service as service
+
+    events: list[object] = []
+    diagnostics: list[tuple[object, ...]] = []
+    state = SimpleNamespace(alive=True, running=False, stopped=False)
+
+    class Handle:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        def Close(self):
+            events.append(("close", self.name))
+            if self.name == cleanup_failure:
+                raise OSError("handle cleanup failed")
+
+    job, process, thread = Handle("job"), Handle("process"), Handle("thread")
+
+    class Stop:
+        def is_set(self):
+            return state.stopped
+
+        def wait(self, *_args):
+            raise AssertionError("worker must detect child death without an external stop")
+
+    stop = Stop()
+    install_root, machine = tmp_path / "install", tmp_path / "machine"
+    bindir = install_root / "PostgreSQL" / "bin"
+    pgdata = machine / "PostgreSQL" / "Data"
+    bindir.mkdir(parents=True)
+    pgdata.mkdir(parents=True)
+    for path in (
+        bindir / "postgres.exe",
+        bindir / "pg_ctl.exe",
+        bindir / "pg_isready.exe",
+        pgdata / "PG_VERSION",
+    ):
+        path.touch()
+
+    def wait(handle, timeout):
+        assert handle is process
+        events.append(("wait", timeout))
+        if not state.running:
+            assert timeout == 0
+            return 258
+        if state.alive:
+            assert timeout == 100
+            if exit_code is None:
+                state.stopped = True
+                return 258
+            state.alive = False
+        return 0
+
+    event_api = SimpleNamespace(WAIT_OBJECT_0=0, WAIT_TIMEOUT=258, WaitForSingleObject=wait)
+    process_api = SimpleNamespace(
+        GetExitCodeProcess=lambda handle: 0 if exit_code is None else exit_code
+    )
+    for name, value in (
+        ("win32api", SimpleNamespace()),
+        ("win32con", SimpleNamespace()),
+        ("win32event", event_api),
+        ("win32job", SimpleNamespace()),
+        ("win32process", process_api),
+        ("win32service", SimpleNamespace(SERVICE_RUNNING=4)),
+    ):
+        monkeypatch.setitem(sys.modules, name, value)
+
+    def create(_command, _cwd, **kwargs):
+        assert kwargs["win32event"] is event_api
+        return job, process, thread, 41
+
+    def ready(_pg_isready, handle, observed_stop, **_kwargs):
+        assert handle is process and observed_stop is stop and not state.stopped
+        events.append("ready")
+
+    def report(status):
+        assert status == 4 and "ready" in events
+        state.running = True
+        events.append("running")
+
+    def run(command, **kwargs):
+        assert state.stopped and exit_code is None
+        assert command[1:] == ["stop", "-D", str(pgdata), "-m", "fast", "-w", "-t", "30"]
+        assert kwargs == {"check": True, "timeout": 35}
+        events.append("normal-stop")
+        state.alive = False
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(service, "_install_root", lambda: install_root)
+    monkeypatch.setattr(service, "machine_root", lambda: machine)
+    monkeypatch.setattr(service, "create_suspended_in_job", create)
+    monkeypatch.setattr(service, "wait_ready", ready)
+    monkeypatch.setattr(
+        service, "try_write_startup_diagnostic", lambda *args: diagnostics.append(args)
+    )
+    monkeypatch.setattr(service.subprocess, "run", run)
+
+    def dispatch(name, worker):
+        assert name == CONTRACT.postgresql_service
+        worker(stop, report)
+
+    monkeypatch.setattr(service, "run_service", dispatch)
+    invoke = service.main if entrypoint else lambda: service._run(stop, report)
+
+    if exit_code is None:
+        if cleanup_failure is None:
+            invoke()
+            assert diagnostics[-1] == ("STOP_PROCESS",)
+        else:
+            with pytest.raises(OSError, match="handle cleanup failed"):
+                invoke()
+            assert diagnostics[-1][0] == "STOP_PROCESS"
+            assert isinstance(diagnostics[-1][1], OSError)
+        assert "normal-stop" in events
+    else:
+        with pytest.raises(
+            RuntimeError, match=f"exited while running: exit_code={exit_code}"
+        ) as raised:
+            invoke()
+        if cleanup_failure is not None:
+            assert any(
+                f"{cleanup_failure} cleanup failed" in note for note in raised.value.__notes__
+            )
+        assert not state.stopped
+        assert "normal-stop" not in events
+        stage, failure, observed_code = diagnostics[-1]
+        assert stage == "MONITOR_PROCESS" and isinstance(failure, RuntimeError)
+        assert observed_code == exit_code
+    assert events[-3:] == [("close", "thread"), ("close", "process"), ("close", "job")]
+
+
+def test_postgresql_running_wait_failure_fails_closed() -> None:
+    from deployment.windows_installer.postgresql_service import monitor_process
+
+    with pytest.raises(RuntimeError, match="unexpected PostgreSQL wait result"):
+        monitor_process(
+            object(),
+            SimpleNamespace(is_set=lambda: False),
+            win32event=SimpleNamespace(
+                WAIT_OBJECT_0=0, WAIT_TIMEOUT=258, WaitForSingleObject=lambda *_args: -1
+            ),
+            win32process=object(),
+        )
