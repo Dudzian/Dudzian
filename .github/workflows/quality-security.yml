@@ -111,9 +111,14 @@ jobs:
           deployment/platform_readiness.py
           deployment/linux_physical_evidence.py
           deployment/linux_release_identity.py
+          deployment/production_local_installer.py
+          deployment/production_local_installer_host.py
+          deployment/freshness_verifier_entrypoint.py
           deployment/linux_physical_ipc.py
           deployment/linux_physical_postgresql.py
           bot_core/linux_service_ipc.py
+          bot_core/freshness_service_identity.py
+          bot_core/freshness_deployment_qualification.py
           bot_core/linux_service_postgresql.py
           bot_core/freshness_semantic_verifier.py
           bot_core/freshness_verifier_service.py
@@ -131,10 +136,12 @@ jobs:
           tests/security/test_linux_service_postgresql.py
           tests/security/test_freshness_semantic_verifier.py
           tests/security/test_freshness_production_local_deployment.py
+          tests/security/test_freshness_service_identity.py
           tests/deployment/test_linux_functional_pipeline.py
           tests/deployment/test_linux_verifier_observation.py
           tests/security/test_linux_service_postgresql_integration.py
           tests/deployment/test_linux_release_identity.py
+          tests/deployment/test_production_local_installer.py
           tests/deployment/test_linux_physical_collector.py
           tests/deployment/test_linux_physical_native.py
           tests/scripts/test_linux_physical_evidence_workflow.py
@@ -364,9 +371,14 @@ jobs:
           python -m ruff check deployment/platform_readiness.py
           deployment/linux_physical_evidence.py deployment/linux_physical_observations.py
           deployment/linux_release_identity.py
+          deployment/production_local_installer.py
+          deployment/production_local_installer_host.py
+          deployment/freshness_verifier_entrypoint.py
           deployment/linux_physical_ipc.py
           deployment/linux_physical_postgresql.py
           bot_core/linux_service_ipc.py
+          bot_core/freshness_service_identity.py
+          bot_core/freshness_deployment_qualification.py
           bot_core/linux_service_postgresql.py
           bot_core/freshness_semantic_verifier.py
           bot_core/freshness_verifier_service.py
@@ -392,9 +404,11 @@ jobs:
           tests/security/test_linux_service_postgresql.py
           tests/security/test_freshness_semantic_verifier.py
           tests/security/test_freshness_production_local_deployment.py
+          tests/security/test_freshness_service_identity.py
           tests/deployment/test_linux_functional_pipeline.py
           tests/deployment/test_linux_verifier_observation.py
           tests/deployment/test_linux_release_identity.py
+          tests/deployment/test_production_local_installer.py
           tests/deployment/test_linux_physical_collector.py
           tests/deployment/test_linux_physical_native.py
           tests/scripts/test_linux_physical_evidence_workflow.py
@@ -515,9 +529,14 @@ jobs:
           --cov=deployment.platform_readiness
           --cov=deployment.linux_physical_evidence
           --cov=deployment.linux_release_identity
+          --cov=deployment.production_local_installer
+          --cov=deployment.production_local_installer_host
+          --cov=deployment.freshness_verifier_entrypoint
           --cov=deployment.linux_physical_ipc
           --cov=deployment.linux_physical_postgresql
           --cov=bot_core.linux_service_ipc
+          --cov=bot_core.freshness_service_identity
+          --cov=bot_core.freshness_deployment_qualification
           --cov=bot_core.linux_service_postgresql
           --cov=bot_core.freshness_semantic_verifier
           --cov=bot_core.freshness_verifier_service

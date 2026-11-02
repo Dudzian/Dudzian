@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import os
-from pathlib import Path
 import stat
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -48,6 +48,9 @@ def installed_source(tmp_path, monkeypatch):
     # Nie zmieniaj globalnego os.name: test modelu musi zachować natywne Path
     # także podczas uruchamiania na Windows.
     monkeypatch.setattr(qualification, "os", SimpleNamespace(name="posix"))
+    native_platform = sys.platform
+    monkeypatch.setattr(qualification, "sys", SimpleNamespace(platform="linux"))
+    assert sys.platform == native_platform
 
     def installed_path(value):
         if str(value) == "/usr/lib/cryptohunter/bot_core":
@@ -64,7 +67,9 @@ def installed_source(tmp_path, monkeypatch):
     monkeypatch.setattr(qualification, "_immutable_file", Mock())
     systemctl = Mock(side_effect=AssertionError("Odmowa musi poprzedzać systemctl"))
     connect = Mock(side_effect=AssertionError("Odmowa musi poprzedzać połączenie bazy"))
+    identity = Mock(side_effect=AssertionError("Odmowa musi poprzedzać obserwację procesu"))
     monkeypatch.setattr(qualification, "_systemctl", systemctl)
+    monkeypatch.setattr(qualification, "qualify_freshness_service_identity", identity)
     monkeypatch.setattr(qualification.psycopg, "connect", connect)
     return SimpleNamespace(
         source=source,
@@ -72,6 +77,8 @@ def installed_source(tmp_path, monkeypatch):
         metadata=metadata,
         systemctl=systemctl,
         connect=connect,
+        identity=identity,
+        native_platform=native_platform,
     )
 
 
@@ -80,6 +87,8 @@ def assert_installed_code_refused(installed, message):
         qualification.qualify_production_local_deployment()
     installed.systemctl.assert_not_called()
     installed.connect.assert_not_called()
+    installed.identity.assert_not_called()
+    assert sys.platform == installed.native_platform
 
 
 @pytest.mark.parametrize("mutation", ["single-byte", "crlf"])
@@ -87,7 +96,7 @@ def test_actual_installed_bytes_refuse_drift_before_systemd_or_database(installe
     installed = installed_source
     if mutation == "single-byte":
         changed = bytes([installed.raw[0] ^ 1]) + installed.raw[1:]
-        assert sum(left != right for left, right in zip(changed, installed.raw)) == 1
+        assert sum(left != right for left, right in zip(changed, installed.raw, strict=True)) == 1
     else:
         assert b"\r\n" not in installed.raw and b"\n" in installed.raw
         changed = installed.raw.replace(b"\n", b"\r\n")
@@ -121,3 +130,22 @@ def test_actual_installed_symlink_refuses_even_with_reviewed_target_bytes(instal
     installed.source.symlink_to(target.name)
     assert installed.source.read_bytes() == installed.raw
     assert_installed_code_refused(installed, "unsafe source owner")
+
+
+def test_windows_platform_gate_refuses_with_only_module_local_platform_model(monkeypatch):
+    native_platform = sys.platform
+    monkeypatch.setattr(qualification, "sys", SimpleNamespace(platform="win32"))
+    boundary = Mock(side_effect=AssertionError("Bramka Windows musi poprzedzać kontrole hosta"))
+    monkeypatch.setattr(qualification, "_immutable_file", boundary)
+    with pytest.raises(qualification.DeploymentQualificationError, match="requires native Linux"):
+        qualification.qualify_production_local_deployment()
+    boundary.assert_not_called()
+    assert sys.platform == native_platform
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Rzeczywiste wywołanie kwalifikacji na Windows")
+def test_native_windows_qualification_refuses_without_platform_or_account_stubs():
+    assert qualification.sys is sys
+    assert qualification.os is os
+    with pytest.raises(qualification.DeploymentQualificationError, match="requires native Linux"):
+        qualification.qualify_production_local_deployment()

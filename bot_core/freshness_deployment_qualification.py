@@ -7,8 +7,14 @@ import os
 from pathlib import Path
 import stat
 import subprocess
+import sys
 
 import psycopg
+
+from bot_core.freshness_service_identity import (
+    ServiceIdentityError,
+    qualify_freshness_service_identity,
+)
 
 # Frozen deployment coordinates are repeated here deliberately: qualification must be
 # importable on hosts that cannot import the POSIX-only verifier executable.
@@ -94,6 +100,10 @@ def _systemctl(*arguments: str) -> str:
 
 def qualify_production_local_deployment() -> None:
     """Raise on any drift; return only after the complete live-host proof."""
+    if sys.platform == "win32":
+        raise DeploymentQualificationError(
+            "PRODUCTION_LOCAL deployment qualification requires native Linux"
+        )
     if os.name != "posix":
         raise DeploymentQualificationError(
             "PRODUCTION_LOCAL deployment qualification requires POSIX"
@@ -147,17 +157,10 @@ def qualify_production_local_deployment() -> None:
             hashlib.sha256(source.read_bytes()).hexdigest() == digest,
             f"reviewed source digest mismatch: {source}",
         )
-    shown = dict(
-        line.split("=", 1)
-        for line in _systemctl(
-            "show", UNIT_NAME, "--property=User,Group,ExecStart,Environment,ActiveState"
-        ).splitlines()
-    )
-    _fail(shown.get("User") == VERIFIER_USER, "wrong effective service User")
-    _fail(shown.get("Group") == IPC_GROUP, "wrong effective service Group")
-    _fail(shown.get("ActiveState") == "active", "verifier service is not active")
-    _fail("freshness_verifier_service" in shown.get("ExecStart", ""), "wrong executable")
-    _fail(shown.get("Environment") == "PYTHONNOUSERSITE=1", "unexpected environment")
+    try:
+        qualify_freshness_service_identity(uid=verifier.pw_uid, gid=ipc.gr_gid)
+    except ServiceIdentityError as exc:
+        raise DeploymentQualificationError("live verifier identity not qualified") from exc
 
     directory = Path(VERIFIER_SOCKET_PATH).parent
     directory_status = _mode(directory)
