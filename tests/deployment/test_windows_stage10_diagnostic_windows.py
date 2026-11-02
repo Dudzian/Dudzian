@@ -274,18 +274,45 @@ def test_native_publication_uses_same_handle_and_relative_nonreplacing_rename():
     native = publisher._Native.__new__(publisher._Native)
     observed = {}
 
-    def rename(handle, information_class, record, size):
-        prefix = ctypes.string_at(record, size)
-        observed.update(handle=handle, information_class=information_class, raw=prefix)
-        return 1
+    def rename(handle, io_status, record, size, information_class):
+        assert io_status._obj.information == 0
+        raw = ctypes.string_at(record, size)
+        observed.update(handle=handle, information_class=information_class, raw=raw)
+        return 0  # STATUS_SUCCESS
 
-    native.kernel = SimpleNamespace(SetFileInformationByHandle=rename)
+    native.nt = SimpleNamespace(NtSetInformationFile=rename)
     native.publish({"handle": 7}, 42, "report.json")
     assert observed["handle"] == 42
-    assert observed["information_class"] == publisher._FILE_RENAME_INFO
+    assert observed["information_class"] == publisher._FILE_RENAME_INFORMATION == 10
     assert observed["raw"][:4] == bytes(4)
     assert int.from_bytes(observed["raw"][8:16], "little") == 7
     assert observed["raw"][20:42] == "report.json".encode("utf-16-le")
+
+
+@pytest.mark.parametrize(
+    "status,winerror",
+    [(0xC0000035, 183), (0xC0000022, 5), (0x00000103, None)],
+)
+def test_native_rename_refuses_collisions_errors_and_pending_status(status, winerror):
+    native = publisher._Native.__new__(publisher._Native)
+    seen = []
+
+    def rename(handle, io_status, record, size, information_class):
+        seen.append((handle, information_class))
+        return ctypes.c_int32(status).value
+
+    native.nt = SimpleNamespace(
+        NtSetInformationFile=rename,
+        RtlNtStatusToDosError=lambda _status: winerror,
+    )
+    if winerror is None:
+        with pytest.raises(DiagnosticOutputError, match="Nieukończona"):
+            native.publish({"handle": 7}, 42, "report.json")
+    else:
+        with pytest.raises(OSError) as caught:
+            native.publish({"handle": 7}, 42, "report.json")
+        assert caught.value.errno == winerror
+    assert seen == [(42, publisher._FILE_RENAME_INFORMATION)]
 
 
 def test_native_writer_uses_complete_write_loop_then_flushes_once():

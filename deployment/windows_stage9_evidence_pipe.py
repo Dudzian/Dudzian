@@ -49,12 +49,50 @@ def pipe_name(name: str) -> str:
     return rf"\\.\pipe\CryptoHunter.Stage9.PostgreSQLEvidence.v1.{name}"
 
 
+class _ProcessWithImagePath:
+    """Proxy pywin32 functions while querying executable paths via kernel32.
+
+    Pinned pywin32 312 has GetProcessTimes but no QueryFullProcessImageName.
+    The Win32 function operates on the existing PROCESS_QUERY_LIMITED_INFORMATION
+    handle; it never opens a process by PID or adopts a successor.
+    """
+
+    def __init__(self, process: Any) -> None:
+        self._process = process
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._process, name)
+
+    def QueryFullProcessImageName(self, handle: Any, flags: int) -> str:
+        if flags not in (0, 1):
+            raise EvidencePipeError("unapproved process image path format")
+        loader = getattr(ctypes, "WinDLL", None)
+        if loader is None:
+            raise EvidencePipeError("native process image query unavailable")
+        kernel = loader("kernel32.dll", use_last_error=True, winmode=0x00000800)
+        query = kernel.QueryFullProcessImageNameW
+        query.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_uint32,
+            ctypes.POINTER(ctypes.c_wchar),
+            ctypes.POINTER(ctypes.c_uint32),
+        ]
+        query.restype = ctypes.c_int
+        image = ctypes.create_unicode_buffer(32768)
+        length = ctypes.c_uint32(len(image))
+        if not query(ctypes.c_void_p(int(handle)), flags, image, ctypes.byref(length)):
+            raise OSError(ctypes.get_last_error(), "pinned process image query failed")
+        if not 0 < length.value < len(image) or not image.value:
+            raise EvidencePipeError("pinned process image path unavailable")
+        return image.value
+
+
 def _win32() -> Any:
     if os.name != "nt" or struct.calcsize("P") != 8:
         raise EvidencePipeError("native Windows x64 evidence pipes are required")
     from types import SimpleNamespace
 
-    return SimpleNamespace(
+    native = SimpleNamespace(
         **{
             short: importlib.import_module(module)
             for short, module in (
@@ -69,6 +107,8 @@ def _win32() -> Any:
             )
         }
     )
+    native.process = _ProcessWithImagePath(native.process)
+    return native
 
 
 def _canonical_image(name: str) -> str:

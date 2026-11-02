@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import ctypes
 import json
 import os
 from contextlib import contextmanager
@@ -609,3 +610,54 @@ def test_completion_waits_for_native_client_disconnect(monkeypatch: pytest.Monke
         SimpleNamespace(file=SimpleNamespace(ReadFile=read)), Handle(), 1.0, Event()
     )
     assert calls == [1, 1]
+
+
+@pytest.mark.parametrize("outcome", ["success", "denied", "invalid-length"])
+def test_process_image_path_uses_original_handle_and_keeps_pywin32_methods(
+    monkeypatch: pytest.MonkeyPatch, outcome: str
+) -> None:
+    expected = r"C:\Program Files\CryptoHunter\CryptoHunterBackend.exe"
+    calls: list[tuple[int, int]] = []
+
+    def image_query(handle: Any, flags: int, output: Any, length: Any) -> int:
+        calls.append((handle.value, flags))
+        assert handle.value == 42
+        if outcome == "denied":
+            return 0
+        if outcome == "invalid-length":
+            length._obj.value = 0
+            return 1
+        image = ctypes.create_unicode_buffer(expected)
+        ctypes.memmove(output, image, ctypes.sizeof(image))
+        length._obj.value = len(expected)
+        return 1
+
+    kernel = SimpleNamespace(QueryFullProcessImageNameW=image_query)
+
+    def load(name: str, **kwargs: Any) -> Any:
+        assert name == "kernel32.dll"
+        assert kwargs == {"use_last_error": True, "winmode": 0x00000800}
+        return kernel
+
+    monkeypatch.setattr(pipe.ctypes, "WinDLL", load, raising=False)
+    monkeypatch.setattr(pipe.ctypes, "get_last_error", lambda: 5, raising=False)
+    adapter = pipe._ProcessWithImagePath(
+        SimpleNamespace(GetProcessTimes=lambda _handle: "delegated")
+    )
+    assert adapter.GetProcessTimes(42) == "delegated"
+    if outcome == "success":
+        assert adapter.QueryFullProcessImageName(42, 0) == expected
+    elif outcome == "denied":
+        with pytest.raises(OSError) as caught:
+            adapter.QueryFullProcessImageName(42, 0)
+        assert caught.value.errno == 5
+    else:
+        with pytest.raises(pipe.EvidencePipeError, match="path unavailable"):
+            adapter.QueryFullProcessImageName(42, 0)
+    assert calls == [(42, 0)]
+
+
+def test_process_image_query_rejects_unsupported_flags_before_native_access() -> None:
+    adapter = pipe._ProcessWithImagePath(SimpleNamespace())
+    with pytest.raises(pipe.EvidencePipeError, match="unapproved"):
+        adapter.QueryFullProcessImageName(42, 2)
