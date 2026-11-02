@@ -37,6 +37,8 @@ files = [
   "deployment/linux_physical_ipc.py",
   "deployment/linux_physical_postgresql.py",
   "bot_core/linux_service_ipc.py",
+  "bot_core/freshness_service_identity.py",
+  "bot_core/freshness_deployment_qualification.py",
   "bot_core/linux_service_postgresql.py",
   "bot_core/freshness_semantic_verifier.py",
   "bot_core/freshness_verifier_service.py",

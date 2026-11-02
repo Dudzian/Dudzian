@@ -6,6 +6,16 @@ nie przyznaje kwalifikacji fizycznej i nie zmienia statusu Stage 9.
 W tym PR wykonujemy wyłącznie testy syntetyczne w katalogach tymczasowych.
 Nie wykonujemy instalacji, restartów, tworzenia kont ani klastrów na Dellu.
 
+**Weryfikacja Ubuntu 24.04 po review PR #3235:** domyślne pakiety Noble
+`python3-cryptography` 41.0.7 i `python3-psycopg` 3.1.17 nie spełniają
+wymagań projektu. Python 3.12 spełnia warunek wersji języka, lecz dodatnia
+instalacja tego profilu na standardowym Noble pozostaje BLOCKED. Nie
+instalować bibliotek przez systemowy pip i nie obniżać wymagań. Projekt
+odrębnego chronionego środowiska opisuje
+[raport remediacji](../architecture/stage9_linux_installer_remediation.md).
+Pełna instrukcja manualnej próby, z jawną bramką zatrzymania, znajduje się
+w [procedurze jednorazowej VM Ubuntu 24.04](STAGE9_LINUX_UBUNTU2404_VM_TRIAL.md).
+
 ## Zakres i granica zaufania
 
 Instalator publikuje kod verifiera, jego jednostkę systemd oraz trzy szablony
@@ -86,6 +96,10 @@ Błędy składni CLI mają standardowy kod argparse 2. Wcześniejsza odmowa
 bootstrapu oznacza niespełnienie granicy zaufania instalatora, zanim działa
 właściwy raport JSON. Kilka niespełnionych warunków nie daje obietnicy ich
 jednoczesnego raportowania: pierwsza odmowa kończy przebieg bez zmian.
+Na standardowym Noble poprawne materiały i zainstalowane oficjalne biblioteki
+prowadzą do odmowy 20 z powodu wersji zależności. Bez `cryptography` może
+wcześniej wystąpić 10 przy sprawdzaniu podpisu. Nie wolno przedstawiać takiego
+wyniku jako potwierdzenia, że wykonano już kontrolę klastra z kodem 21.
 
 Preflight sprawdza pakiety, PID 1/systemd, PostgreSQL 16/main, przygotowane
 konta i grupy, kolizje UID/GID, interpreter i zależności, chronione ścieżki,

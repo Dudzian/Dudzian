@@ -512,7 +512,7 @@ def test_launcher_refuses_a_preloaded_bot_core_namespace(monkeypatch):
 @pytest.fixture
 def host_probe(monkeypatch):
     import grp
-    import pwd
+    import pwd as account_database
     from types import SimpleNamespace
 
     from deployment import production_local_installer_host as probe
@@ -552,12 +552,14 @@ def host_probe(monkeypatch):
         ),
         SimpleNamespace(gr_name="postgres", gr_gid=os.getgid() or 1, gr_mem=[]),
     ]
-    monkeypatch.setattr(pwd, "getpwall", lambda: users)
+    monkeypatch.setattr(account_database, "getpwall", lambda: users)
     monkeypatch.setattr(
-        pwd, "getpwnam", lambda name: next(item for item in users if item.pw_name == name)
+        account_database,
+        "getpwnam",
+        lambda name: next(item for item in users if item.pw_name == name),
     )
     monkeypatch.setattr(
-        pwd, "getpwuid", lambda uid: next(item for item in users if item.pw_uid == uid)
+        account_database, "getpwuid", lambda uid: next(item for item in users if item.pw_uid == uid)
     )
     monkeypatch.setattr(grp, "getgrall", lambda: groups)
     monkeypatch.setattr(
@@ -964,7 +966,7 @@ def test_native_unit_observation_retains_vendor_fragment_and_dropins(host_probe)
 
 @pytest.mark.parametrize("attack", ["name-missing", "reverse-mismatch", "hidden-group"])
 def test_native_nss_direct_lookup_must_match_enumeration(host_probe, monkeypatch, attack):
-    import pwd
+    import pwd as account_database
     from types import SimpleNamespace
 
     probe, _responses, _queries = host_probe
@@ -973,9 +975,11 @@ def test_native_nss_direct_lookup_must_match_enumeration(host_probe, monkeypatch
         def missing(_name):
             raise KeyError("missing prepared user")
 
-        monkeypatch.setattr(pwd, "getpwnam", missing)
+        monkeypatch.setattr(account_database, "getpwnam", missing)
     elif attack == "reverse-mismatch":
-        monkeypatch.setattr(pwd, "getpwuid", lambda _uid: SimpleNamespace(pw_name="foreign"))
+        monkeypatch.setattr(
+            account_database, "getpwuid", lambda _uid: SimpleNamespace(pw_name="foreign")
+        )
     else:
         monkeypatch.setattr(probe.os, "getgrouplist", lambda _name, gid: [gid, 803, 999])
     assert not probe.inspect_host().nss_ready

@@ -1,5 +1,9 @@
 # Stage 9 — bezpieczeństwo instalatora Linux
 
+Ten dokument zachowuje wyniki pierwszego etapu na `a5c4e882`. Aktualne
+poprawki review, zgodność Ubuntu 24.04, GitGuardian i późniejsze wyniki CI
+opisuje [raport remediacji PR #3235](stage9_linux_installer_remediation.md).
+
 Baza analizy i gałęzi: `main` na
 `2ed7051c3dd92ec7b7408795b42eb1434fac6c19`. Przegląd źródeł, testy syntetyczne
 i odizolowany PostgreSQL nie stanowią kwalifikacji fizycznej.

@@ -1,5 +1,14 @@
 # Quality, security, and code-intelligence toolchain
 
+Remediacja review PR #3235 obejmuje dokładną tożsamość usługi Freshness:
+`freshness_service_identity.py`, delegującą kwalifikację deploymentu oraz
+`test_freshness_service_identity.py`. Moduły są w configured mypy Linux/Win32,
+jawnym formacie i istniejącym pomiarze branch coverage quality-ratchet.
+Testy modelują systemd, czytają wyłącznie własne procesy/pidfd i nie wykonują
+uprzywilejowanej instalacji ani kwalifikacji fizycznej. Progi i bramki sprzętowe
+pozostają bez zmian. Ograniczenia Noble i plan manualnej VM są w dokumentacji
+remediacji instalatora.
+
 This document defines the maintained quality gates for CryptoHunter. Repository
 source remains authoritative; Codebase Memory is an index used to narrow source
 inspection, not a substitute for reading or testing the implementation.
