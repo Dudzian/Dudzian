@@ -132,10 +132,12 @@ class _ServiceLease:
     def assert_current(self) -> None:
         try:
             self._pinned.assert_current()
-        except pipe.EvidencePipeError as exc:
+        except Exception as exc:
             if self.wait(0):
                 raise _ProcessExited("Zachowany proces zakończył się") from exc
-            raise IdentityChanged(str(exc)) from exc
+            if isinstance(exc, pipe.EvidencePipeError):
+                raise IdentityChanged(str(exc)) from exc
+            raise
 
     def close(self) -> None:
         self._pinned.close()
@@ -174,13 +176,17 @@ class _HelperProcessLease:
         return _wait(self.w, self.process, milliseconds)
 
     def assert_current(self) -> None:
-        if self.child.poll() is not None and self.wait(0):
+        if self.wait(0):
             raise _ProcessExited("Zachowany proces pomocniczy zakończył się")
-        if (
-            self.child.pid != self.pid
-            or self.child.poll() is not None
-            or self._identity() != self.identity
-        ):
+        try:
+            changed = self.child.pid != self.pid or self._identity() != self.identity
+        except Exception as exc:
+            if self.wait(0):
+                raise _ProcessExited("Proces pomocniczy zakończył się podczas odczytu") from exc
+            raise
+        if changed:
+            if self.wait(0):
+                raise _ProcessExited("Proces pomocniczy zakończył się podczas odczytu")
             raise IdentityChanged("Tożsamość procesu pomocniczego uległa zmianie")
 
     def close(self) -> None:

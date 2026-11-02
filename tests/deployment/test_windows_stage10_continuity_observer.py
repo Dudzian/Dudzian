@@ -571,6 +571,55 @@ def test_helper_zamyka_uchwyt_po_bledzie_odczytu_tozsamosci(
     assert native_service.process.closes == 1
 
 
+@pytest.mark.parametrize("read_error", [False, True])
+def test_helper_exit_w_trakcie_odczytu_tozsamosci(
+    native_service: SimpleNamespace, read_error: bool
+) -> None:
+    child = SimpleNamespace(pid=123, poll=lambda: None)
+    lease = observer._HelperProcessLease(child)
+
+    def image(*_: Any) -> str:
+        native_service.state["alive"] = 0
+        if read_error:
+            raise OSError(6, "Proces zakończył się podczas QueryFullProcessImageName")
+        return r"C:\Temp\nieaktualny.exe"
+
+    native_service.native.process.QueryFullProcessImageName = image
+    result = observe(lease)
+    assert result.state is observer.ObservationState.PROCESS_EXITED
+    assert native_service.process.closes == 1
+
+
+def test_po_otwarciu_helper_jest_potwierdzany_uchwytem_bez_poll(
+    native_service: SimpleNamespace,
+) -> None:
+    child = SimpleNamespace(pid=123, poll=lambda: None)
+    lease = observer._HelperProcessLease(child)
+
+    def unavailable() -> None:
+        raise AssertionError("Źródłem ciągłości po otwarciu jest zachowany uchwyt")
+
+    child.poll = unavailable
+    result = observe(lease)
+    assert result.state is observer.ObservationState.CONTINUOUS
+    assert native_service.process.closes == 1
+
+
+def test_scm_blad_odczytu_po_zakonczeniu_zachowuje_stan_zakonczenia(
+    native_service: SimpleNamespace,
+) -> None:
+    lease = observer._ServiceLease()
+
+    def ended(*_: Any) -> Any:
+        native_service.state["alive"] = 0
+        raise OSError(6, "Usługa zakończyła się podczas QueryServiceStatusEx")
+
+    native_service.native.service.QueryServiceStatusEx = ended
+    result = observe(lease)
+    assert result.state is observer.ObservationState.PROCESS_EXITED
+    assert_service_closed(native_service)
+
+
 def test_helper_nie_otwiera_procesu_zakonczonego_przed_startem(
     native_service: SimpleNamespace,
 ) -> None:

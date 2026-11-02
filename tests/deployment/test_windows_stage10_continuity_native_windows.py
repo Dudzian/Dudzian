@@ -12,7 +12,7 @@ import subprocess
 import sys
 from contextlib import contextmanager
 from threading import Event, Timer
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator
 from uuid import uuid4
 
 import pytest
@@ -75,6 +75,7 @@ def assert_handle_closed(raw: int) -> None:
 
 def capture_lease(
     monkeypatch: pytest.MonkeyPatch,
+    on_first_wait: Callable[[], None] | None = None,
 ) -> list[tuple[Any, int, list[int]]]:
     original = observer._HelperProcessLease
     captured: list[tuple[Any, int, list[int]]] = []
@@ -83,9 +84,15 @@ def capture_lease(
         lease = original(child)
         handles: list[int] = []
         original_wait = lease.wait
+        triggered = False
 
         def wait(milliseconds: int) -> bool:
+            nonlocal triggered
             handles.append(int(lease.process))
+            if milliseconds > 0 and not triggered:
+                triggered = True
+                if on_first_wait is not None:
+                    on_first_wait()
             return original_wait(milliseconds)
 
         monkeypatch.setattr(lease, "wait", wait)
@@ -180,16 +187,16 @@ def test_nowa_instancja_nie_zastepuje_zakonczonego_procesu() -> None:
 def test_obserwator_zwraca_zakonczenie_i_zamyka_uchwyt(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    captured = capture_lease(monkeypatch)
     with child_process() as child:
         assert child.stdin is not None
         timer = Timer(0.15, child.stdin.close)
-        timer.start()
+        captured = capture_lease(monkeypatch, timer.start)
         try:
             result = observer.observe_test_process(child, seconds=2)
         finally:
             timer.cancel()
-            timer.join(timeout=5)
+            if timer.ident is not None:
+                timer.join(timeout=5)
         assert result.state is observer.ObservationState.PROCESS_EXITED
         assert result.duration_24h == "BLOCKED"
         assert len(captured) == 1
@@ -199,16 +206,16 @@ def test_obserwator_zwraca_zakonczenie_i_zamyka_uchwyt(
 def test_anulowanie_natywnego_oczekiwania_zamyka_uchwyt(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    captured = capture_lease(monkeypatch)
     stop = Event()
     with child_process() as child:
         timer = Timer(0.1, stop.set)
-        timer.start()
+        captured = capture_lease(monkeypatch, timer.start)
         try:
             result = observer.observe_test_process(child, seconds=2, stop=stop)
         finally:
             timer.cancel()
-            timer.join(timeout=5)
+            if timer.ident is not None:
+                timer.join(timeout=5)
         assert result.state is observer.ObservationState.OBSERVATION_LOST
         assert len(captured) == 1
         assert_handle_closed(captured[0][1])
