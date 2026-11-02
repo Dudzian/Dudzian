@@ -216,6 +216,7 @@ def installed(tmp_path: Path) -> tuple[dict[str, Any], tuple[Path, Path, Path], 
                 "second_state": 4,
                 "process_path": str(binary),
                 "process_started": "2026-10-16T00:00:00+00:00",
+                "failure_actions_on_non_crash_failures": name == CONTRACT.backend_service,
                 "recovery": {
                     "Command": "",
                     "RebootMsg": "",
@@ -655,28 +656,104 @@ def test_readonly_msi_product_code_uses_database_mode_zero(
     assert calls == [0, "execute", "close"]
 
 
-def test_native_scm_boundary_requests_query_rights_only(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("non_crash_failures", [False, True])
+def test_native_scm_boundary_requests_query_rights_only(
+    monkeypatch: pytest.MonkeyPatch, non_crash_failures: bool
+) -> None:
     calls = []
 
     def open_service(manager: str, name: str, rights: int) -> str:
         calls.append(rights)
         return "service"
 
+    def query_config2(service: str, level: int) -> Any:
+        assert service == "service"
+        calls.append(("query", level))
+        if level == 2:
+            return {"Actions": []}
+        assert level == 4
+        return non_crash_failures
+
     scm = SimpleNamespace(
         SC_MANAGER_CONNECT=1,
         SERVICE_QUERY_CONFIG=1,
         SERVICE_QUERY_STATUS=4,
         SERVICE_CONFIG_FAILURE_ACTIONS=2,
+        SERVICE_CONFIG_FAILURE_ACTIONS_FLAG=4,
         OpenSCManager=lambda *args: "manager",
         OpenService=open_service,
         QueryServiceConfig=lambda _: (16, 3, 0, "path", 0, 0, ["dependency"], "account"),
         QueryServiceStatusEx=lambda _: {"ProcessId": 5, "CurrentState": 4},
-        QueryServiceConfig2=lambda *args: {"Actions": []},
+        QueryServiceConfig2=query_config2,
+        ChangeServiceConfig2=lambda *args: pytest.fail("inspection must not configure recovery"),
+        StartService=lambda *args: pytest.fail("inspection must not start a service"),
         CloseServiceHandle=lambda handle: calls.append(handle),
     )
     monkeypatch.setattr(host.importlib, "import_module", lambda _: scm)
-    assert host._service_configuration("service")["second_process_id"] == 5
-    assert calls == [5, "service", "manager"]
+    observed = host._service_configuration("service")
+    assert observed["second_process_id"] == 5
+    assert observed["failure_actions_on_non_crash_failures"] is non_crash_failures
+    assert calls == [5, ("query", 2), ("query", 4), "service", "manager"]
+
+
+@pytest.mark.parametrize("enrolled", [False, True])
+def test_backend_non_crash_recovery_accepts_exact_true(installed: Any, enrolled: bool) -> None:
+    facts, paths, arguments = installed
+    backend = facts["services"][1]
+    backend["start_type"] = 2 if enrolled else 3
+    before = copy.deepcopy(facts["services"])
+    host._services(facts, facts["paths"]["program_files"], enrolled=enrolled)
+    assert facts["services"] == before
+    if not enrolled:
+        report = host.verify_post_install(*paths, observation=facts, **arguments)
+        scm_check = next(item for item in report["checks"] if item["name"] == "scm_configuration")
+        assert scm_check["status"] == "UNVERIFIED"
+
+
+@pytest.mark.parametrize("enrolled", [False, True])
+@pytest.mark.parametrize("value", [False, None, 0, 1, "True", "", [], {"enabled": True}])
+def test_backend_non_crash_recovery_rejects_disabled_or_malformed_flag(
+    installed: Any, enrolled: bool, value: Any
+) -> None:
+    facts, _paths, _arguments = installed
+    backend = facts["services"][1]
+    backend["start_type"] = 2 if enrolled else 3
+    backend["failure_actions_on_non_crash_failures"] = value
+    with pytest.raises(host.HostInspectionError, match="backend recovery"):
+        host._services(facts, facts["paths"]["program_files"], enrolled=enrolled)
+
+
+def test_backend_non_crash_recovery_missing_flag_fails_passive_inspection(installed: Any) -> None:
+    facts, paths, arguments = installed
+    del facts["services"][1]["failure_actions_on_non_crash_failures"]
+    report = host.verify_post_install(*paths, observation=facts, **arguments)
+    scm_check = next(item for item in report["checks"] if item["name"] == "scm_configuration")
+    assert scm_check["status"] == "FAIL"
+    assert report["status"] == "FAIL"
+
+
+@pytest.mark.parametrize("missing", [False, True])
+def test_clean_base_and_other_services_do_not_require_non_crash_recovery(
+    installed: Any, missing: bool
+) -> None:
+    facts, _paths, _arguments = installed
+    for service in facts["services"]:
+        if missing:
+            service.pop("failure_actions_on_non_crash_failures")
+        else:
+            service["failure_actions_on_non_crash_failures"] = False
+    facts["services"][1]["recovery"]["Actions"] = []
+    before = copy.deepcopy(facts["services"])
+    host._services(facts, facts["paths"]["program_files"], clean_base=True)
+    assert facts["services"] == before
+    facts["services"][1]["failure_actions_on_non_crash_failures"] = True
+    facts["services"][1]["recovery"]["Actions"] = [
+        (1, 1000),
+        (1, 5000),
+        (1, 30000),
+        (0, 0),
+    ]
+    host._services(facts, facts["paths"]["program_files"])
 
 
 def test_collector_script_has_no_mutating_commands() -> None:
@@ -761,7 +838,14 @@ def test_qualified_input_rejects_redirected_parent(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    "failure", ["OpenService", "QueryServiceConfig", "QueryServiceStatusEx", "QueryServiceConfig2"]
+    "failure",
+    [
+        "OpenService",
+        "QueryServiceConfig",
+        "QueryServiceStatusEx",
+        "QueryServiceConfig2",
+        "QueryFailureActionsFlag",
+    ],
 )
 def test_native_scm_closes_read_handles_on_every_failure(
     monkeypatch: pytest.MonkeyPatch, failure: str
@@ -771,23 +855,38 @@ def test_native_scm_closes_read_handles_on_every_failure(
     def fail(*args: Any) -> Any:
         raise PermissionError("native read denied")
 
+    queried = []
+
+    def query_config2(service: str, level: int) -> Any:
+        queried.append(level)
+        if level == 4:
+            return fail()
+        assert level == 2
+        return {"Actions": []}
+
     scm = SimpleNamespace(
         SC_MANAGER_CONNECT=1,
         SERVICE_QUERY_CONFIG=1,
         SERVICE_QUERY_STATUS=4,
         SERVICE_CONFIG_FAILURE_ACTIONS=2,
+        SERVICE_CONFIG_FAILURE_ACTIONS_FLAG=4,
         OpenSCManager=lambda *args: "manager",
         OpenService=lambda *args: "service",
         QueryServiceConfig=lambda _: (16, 3, 0, "path", 0, 0, [], "account"),
         QueryServiceStatusEx=lambda _: {"ProcessId": 5, "CurrentState": 4},
-        QueryServiceConfig2=lambda *args: {"Actions": []},
+        QueryServiceConfig2=query_config2,
+        ChangeServiceConfig2=lambda *args: pytest.fail("inspection must not configure recovery"),
+        StartService=lambda *args: pytest.fail("inspection must not start a service"),
         CloseServiceHandle=closed.append,
     )
-    setattr(scm, failure, fail)
+    if failure != "QueryFailureActionsFlag":
+        setattr(scm, failure, fail)
     monkeypatch.setattr(host.importlib, "import_module", lambda _: scm)
     with pytest.raises(PermissionError):
         host._service_configuration("service")
     assert closed == (["manager"] if failure == "OpenService" else ["service", "manager"])
+    if failure == "QueryFailureActionsFlag":
+        assert queried == [2, 4]
 
 
 def test_empty_readonly_msi_query_closes_view(

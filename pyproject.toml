@@ -147,6 +147,7 @@ files = [
   "deployment/windows_runner_acl.py",
   "deployment/windows_stage9_handoff.py",
   "deployment/windows_stage9_host_inspection.py",
+  "deployment/windows_service_recovery.py",
   "deployment/windows_stage9_postgresql_passive.py",
   "deployment/windows_stage9_evidence_pipe.py",
   "deployment/windows_stage9_service_sql.py",

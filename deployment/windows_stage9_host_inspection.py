@@ -156,11 +156,15 @@ def _service_configuration(name: str) -> dict[str, Any]:
         config = scm.QueryServiceConfig(service)
         status = scm.QueryServiceStatusEx(service)
         recovery = scm.QueryServiceConfig2(service, scm.SERVICE_CONFIG_FAILURE_ACTIONS)
+        failure_actions_on_non_crash_failures = scm.QueryServiceConfig2(
+            service, scm.SERVICE_CONFIG_FAILURE_ACTIONS_FLAG
+        )
         return {
             "service_type": config[0],
             "start_type": config[1],
             "dependencies": list(config[6]),
             "recovery": recovery,
+            "failure_actions_on_non_crash_failures": failure_actions_on_non_crash_failures,
             "second_process_id": status["ProcessId"],
             "second_state": status["CurrentState"],
         }
@@ -640,7 +644,8 @@ def _services(
             raise HostInspectionError("SCM recovery contains a command or reboot policy")
         if name == CONTRACT.backend_service and not clean_base:
             if (
-                recovery.get("ResetPeriod") != 86400
+                value.get("failure_actions_on_non_crash_failures") is not True
+                or recovery.get("ResetPeriod") != 86400
                 or not isinstance(actions, (list, tuple))
                 or [tuple(action) for action in actions]
                 != [(1, 1000), (1, 5000), (1, 30000), (0, 0)]

@@ -27,6 +27,7 @@ from bot_core.postgresql_freshness_authority import (
 )
 from deployment.windows_installer.contract import CONTRACT
 from deployment.windows_installer.service_base import build_smoke_requested
+from deployment.windows_service_recovery import FAILURE_ACTIONS_ON_NON_CRASH_FAILURES
 from deployment.windows_installer.postgresql_service import (
     SERVICE_NAME as POSTGRESQL_SERVICE_NAME,
     STARTUP_DIAGNOSTIC,
@@ -531,12 +532,15 @@ def _recovery() -> None:
     import win32service  # type: ignore[import-not-found]
 
     manager = win32service.OpenSCManager(None, None, win32service.SC_MANAGER_CONNECT)
-    service = win32service.OpenService(
-        manager,
-        CONTRACT.backend_service,
-        win32service.SERVICE_CHANGE_CONFIG | win32service.SERVICE_QUERY_CONFIG,
-    )
+    service = None
     try:
+        service = win32service.OpenService(
+            manager,
+            CONTRACT.backend_service,
+            win32service.SERVICE_CHANGE_CONFIG
+            | win32service.SERVICE_QUERY_CONFIG
+            | win32service.SERVICE_START,
+        )
         policy = {
             "ResetPeriod": 86400,
             "RebootMsg": "",
@@ -547,13 +551,31 @@ def _recovery() -> None:
         win32service.ChangeServiceConfig2(
             service, win32service.SERVICE_CONFIG_FAILURE_ACTIONS, policy
         )
+        # pywin32 uses a bool for this level. Readback proves stored config;
+        # Windows applies a changed flag at the next system start.
+        win32service.ChangeServiceConfig2(
+            service,
+            win32service.SERVICE_CONFIG_FAILURE_ACTIONS_FLAG,
+            FAILURE_ACTIONS_ON_NON_CRASH_FAILURES,
+        )
         observed = win32service.QueryServiceConfig2(
             service, win32service.SERVICE_CONFIG_FAILURE_ACTIONS
         )
-        if observed["ResetPeriod"] != 86400 or observed["Actions"] != policy["Actions"]:
+        observed_flag = win32service.QueryServiceConfig2(
+            service, win32service.SERVICE_CONFIG_FAILURE_ACTIONS_FLAG
+        )
+        if (
+            observed["ResetPeriod"] != 86400
+            or observed["Actions"] != policy["Actions"]
+            or observed.get("Command", "") not in ("", None)
+            or observed.get("RebootMsg", "") not in ("", None)
+        ):
             raise ProvisionError("recovery read-back mismatch")
+        if observed_flag is not FAILURE_ACTIONS_ON_NON_CRASH_FAILURES:
+            raise ProvisionError("recovery non-crash failure flag read-back mismatch")
     finally:
-        win32service.CloseServiceHandle(service)
+        if service is not None:
+            win32service.CloseServiceHandle(service)
         win32service.CloseServiceHandle(manager)
 
 
