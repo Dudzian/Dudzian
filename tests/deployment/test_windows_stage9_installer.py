@@ -953,7 +953,7 @@ def test_postgresql_readiness_success_requires_live_process(tmp_path: Path) -> N
     class Result:
         returncode = 0
 
-    wait_ready(
+    ready = wait_ready(
         tmp_path / "pg_isready.exe",
         object(),
         __import__("threading").Event(),
@@ -961,6 +961,7 @@ def test_postgresql_readiness_success_requires_live_process(tmp_path: Path) -> N
         win32event=Event,
         win32process=ProcessApi,
     )
+    assert ready is True
 
 
 def test_postgresql_clean_stop_requires_signaled_zero_exit() -> None:
@@ -1952,6 +1953,7 @@ def test_postgresql_worker_monitors_child_after_readiness_and_cleans_up(
     def ready(_pg_isready, handle, observed_stop, **_kwargs):
         assert handle is process and observed_stop is stop and not state.stopped
         events.append("ready")
+        return True
 
     def report(status):
         assert status == 4 and "ready" in events

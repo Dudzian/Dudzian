@@ -128,10 +128,36 @@ Nie wykonano produkcyjnego provisioningu, restartów usług, rebootu ani natywne
 kwalifikacji recovery. Żywa próba po aktywacji wymaga oddzielnego, izolowanego
 Windows i istniejących ręcznych bramek kwalifikacji; zwykłe PR CI jej nie wykonuje.
 
-Osobne potwierdzone ustalenie poza poprawką handlerów: anulowanie
-`postgresql_service.wait_ready()` jest nadal klasyfikowane jako
-`PostgreSQLReadinessTimeout`, nawet przed upływem deadline. Nie zmienia to
-wyników powyższych testów anulowania już działającego monitora. Osobna poprawka
-powinna rozdzielić anulowanie START_PENDING od rzeczywistego timeoutu,
-zachowując kontrolowany cleanup oryginalnego procesu, awarie przy spontanicznym
-exit 0/niezerowym, błędy uchwytów i wyłącznie natywny końcowy STOPPED.
+## Anulowanie readiness PostgreSQL
+
+`postgresql_service.wait_ready()` zwraca jawny wynik: `True` dla gotowości,
+`False` dla zaobserwowanego anulowania. Rzeczywisty upływ deadline nadal rzuca
+`PostgreSQLReadinessTimeout`. Ustawione zdarzenie anulowania przed następną
+próbą kończy oczekiwanie bez kolejnego probe, także gdy upłynął deadline.
+
+Każde ukończone wywołanie `pg_isready` jest poprzedzone i zakończone odczytem
+oryginalnego uchwytu postmastera. Zaobserwowany exit 0/niezerowy lub błąd API
+pozostaje awarią również przy równoczesnym anulowaniu; nie przechwytujemy
+wyjątków procesu lub subprocess jako normalnego anulowania. Dopiero po
+końcowym odczycie uchwytu sprawdzane są anulowanie, deadline i wynik probe.
+Sukces probe po deadline nie potwierdza gotowości. Te obserwacje nie dowodzą
+fizycznej kolejności równoczesnych zdarzeń procesu i anulowania.
+
+Worker z anulowaniem ustawionym na wejściu nie tworzy potomka. Po utworzeniu
+procesu anulowanie pomija `RUNNING` i monitor, ale przechodzi przez istniejące
+`pg_ctl stop -m fast`, potwierdzenie zakończenia oryginalnego uchwytu oraz
+cleanup uchwytów thread/process/job. Stan anulowania jest ponownie sprawdzany
+bezpośrednio przed publikacją readiness. Błędy zatrzymania, potwierdzenia exit
+i cleanup nadal propagują awarię z zachowaniem pierwszej przyczyny. Dotyczy to
+także możliwego braku pidfile podczas wczesnego rozruchu; nie maskujemy błędu
+`pg_ctl` jako udanego anulowania.
+
+**Ograniczenie SCM:** standardowa usługa w `SERVICE_START_PENDING` nie akceptuje
+zwykłego STOP. Przypięty host pywin32 zgłasza wtedy `dwControlsAccepted=0`;
+tej polityki nie zmieniono. Nowe testy wstrzykują programowe zdarzenie workera,
+nie wywołują `SvcStop` w START_PENDING i nie dowodzą osiągalności tej ścieżki
+przez natywny SCM w produkcji. Nie dodano nowego mechanizmu dostarczania
+anulowania podczas rozruchu. Natywne potwierdzenie wymaga osobnego izolowanego
+Windows oraz konkretnego, zatwierdzonego źródła anulowania. Źródła kontraktu:
+[SERVICE_STATUS](https://learn.microsoft.com/en-us/windows/win32/api/winsvc/ns-winsvc-service_status)
+i [ControlService](https://learn.microsoft.com/en-us/windows/win32/api/winsvc/nf-winsvc-controlservice).

@@ -445,9 +445,10 @@ def test_actual_postgresql_worker_reaches_native_host_with_truthful_final_status
     ):
         path.touch()
 
-    def ready(_path: Path, observed: Any, stop: threading.Event, **kwargs: Any) -> None:
+    def ready(_path: Path, observed: Any, stop: threading.Event, **kwargs: Any) -> bool:
         assert observed is process and stop is service.stop_event
         state.ready = True
+        return True
 
     def stop_postgresql(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[Any]:
         assert stop_method is not None
@@ -528,6 +529,232 @@ def test_unclean_endpoint_does_not_report_stopped(monkeypatch: pytest.MonkeyPatc
     assert joined == [7.0]
     assert service.evidence_stop.is_set()
     assert service.statuses == [START_PENDING]
+
+
+@pytest.mark.parametrize(
+    "outcome,cleanup_failure",
+    [
+        (outcome, None)
+        for outcome in (
+            "pre_entry_cancel",
+            "before_probe_cancel",
+            "during_wait_cancel",
+            "during_probe_cancel",
+            "after_ready_cancel",
+            "ready_then_stop",
+            "timeout",
+            "exit_zero",
+            "exit_nonzero",
+            "wait_error",
+            "exit_code_error",
+            "cancel_stop_error",
+            "cancel_exit_error",
+            "cancel_wait_error",
+        )
+    ]
+    + [
+        ("during_probe_cancel", "thread"),
+        ("during_probe_cancel", "process"),
+        ("during_probe_cancel", "job"),
+        ("wait_error", "job"),
+        ("cancel_stop_error", "job"),
+    ],
+)
+def test_actual_postgresql_startup_cancellation_cleanup_and_native_terminal_status(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    outcome: str,
+    cleanup_failure: str | None,
+) -> None:
+    """Inject a programmatic Event, not SCM STOP: START_PENDING accepts no STOP."""
+    from deployment.windows_installer import postgresql_service as pg
+
+    events: list[Any] = []
+    diagnostics: list[tuple[Any, ...]] = []
+    state = SimpleNamespace(alive=True, probed=False, clock=0.0, exit_code=0)
+    handle_error = OSError("private startup handle detail")
+    close_error = OSError("private startup cleanup detail")
+    stop_error = subprocess.CalledProcessError(1, ["pg_ctl", "stop"])
+    failure_outcomes = {
+        "timeout",
+        "exit_zero",
+        "exit_nonzero",
+        "wait_error",
+        "exit_code_error",
+        "cancel_stop_error",
+        "cancel_exit_error",
+        "cancel_wait_error",
+    }
+
+    class Handle:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        def Close(self) -> None:
+            events.append(("close", self.name))
+            if self.name == cleanup_failure:
+                raise close_error
+            if self.name == "job":
+                state.alive = False  # Model JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE.
+
+    process, thread, job = Handle("process"), Handle("thread"), Handle("job")
+    service = emulated_service(monkeypatch, CONTRACT.postgresql_service, pg._run)
+    if outcome == "pre_entry_cancel":
+        service.stop_event.set()
+    event_api = sys.modules["win32event"]
+
+    def wait(observed: Any, timeout: int) -> int:
+        assert observed is process
+        events.append(("wait", timeout))
+        if timeout == 100:
+            assert outcome == "ready_then_stop"
+            service.stop_event.set()
+            return 258
+        if timeout == 10_000:
+            assert not state.alive
+            return 258 if outcome == "cancel_wait_error" else 0
+        assert timeout == 0
+        if state.probed and outcome == "wait_error":
+            raise handle_error
+        return 258 if state.alive else 0
+
+    def exit_code(observed: Any) -> int:
+        assert observed is process
+        if outcome == "exit_code_error":
+            raise handle_error
+        return state.exit_code
+
+    event_api.WAIT_OBJECT_0 = 0
+    event_api.WAIT_TIMEOUT = 258
+    event_api.WaitForSingleObject = wait
+    for name, module in (
+        ("win32api", SimpleNamespace()),
+        ("win32con", SimpleNamespace()),
+        ("win32job", SimpleNamespace()),
+        ("win32process", SimpleNamespace(GetExitCodeProcess=exit_code)),
+    ):
+        monkeypatch.setitem(sys.modules, name, module)
+
+    install_root, machine = tmp_path / "install", tmp_path / "machine"
+    bindir, pgdata = install_root / "PostgreSQL" / "bin", machine / "PostgreSQL" / "Data"
+    bindir.mkdir(parents=True)
+    pgdata.mkdir(parents=True)
+    for path in (
+        bindir / "postgres.exe",
+        bindir / "pg_ctl.exe",
+        bindir / "pg_isready.exe",
+        pgdata / "PG_VERSION",
+    ):
+        path.touch()
+
+    def create(*args: Any, **kwargs: Any) -> tuple[Any, Any, Any, int]:
+        events.append("create")
+        if outcome == "before_probe_cancel":
+            service.stop_event.set()
+        return job, process, thread, 41
+
+    def probe(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[Any]:
+        assert command[0] == str(bindir / "pg_isready.exe")
+        events.append("probe")
+        snapshot = service.status_records[-1]
+        assert snapshot[1:3] == (START_PENDING, 0)
+        service.SvcInterrogate()
+        assert service.status_records[-1] == snapshot
+        state.probed = True
+        if outcome == "during_probe_cancel" or outcome.startswith("cancel_"):
+            service.stop_event.set()
+        if outcome in {"exit_zero", "exit_nonzero", "exit_code_error"}:
+            state.alive = False
+            state.exit_code = 31 if outcome == "exit_nonzero" else 0
+        if outcome == "timeout":
+            state.clock = 61.0
+        return subprocess.CompletedProcess(
+            command, 1 if outcome in {"during_wait_cancel", "timeout"} else 0
+        )
+
+    def cancel_backoff(timeout: float) -> bool:
+        assert outcome == "during_wait_cancel" and timeout == 0.1
+        service.stop_event.set()
+        return True
+
+    actual_wait_ready = pg.wait_ready
+
+    def readiness(path: Path, observed: Any, stop: threading.Event, **kwargs: Any) -> bool:
+        result = actual_wait_ready(
+            path, observed, stop, clock=lambda: state.clock, run=probe, **kwargs
+        )
+        if outcome == "after_ready_cancel":
+            assert result is True
+            stop.set()
+        return result
+
+    def stop_postgresql(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[Any]:
+        assert service.stop_event.is_set()
+        assert command == [
+            str(bindir / "pg_ctl.exe"),
+            "stop",
+            "-D",
+            str(pgdata),
+            "-m",
+            "fast",
+            "-w",
+            "-t",
+            "30",
+        ]
+        assert kwargs == {"check": True, "timeout": 35}
+        events.append("controlled-stop")
+        if outcome == "cancel_stop_error":
+            raise stop_error
+        state.alive = False
+        if outcome == "cancel_exit_error":
+            state.exit_code = 31
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(pg, "_install_root", lambda: install_root)
+    monkeypatch.setattr(pg, "machine_root", lambda: machine)
+    monkeypatch.setattr(pg, "create_suspended_in_job", create)
+    monkeypatch.setattr(pg, "wait_ready", readiness)
+    monkeypatch.setattr(pg, "try_write_startup_diagnostic", lambda *args: diagnostics.append(args))
+    monkeypatch.setattr(pg.subprocess, "run", stop_postgresql)
+    monkeypatch.setattr(service.stop_event, "wait", cancel_backoff)
+
+    submit = service.submit_status
+
+    def terminal_after_cleanup(owner: str, status: tuple[int, int, int]) -> None:
+        if status[0] == STOPPED and outcome != "pre_entry_cancel":
+            assert events[-3:] == [("close", "thread"), ("close", "process"), ("close", "job")]
+        submit(owner, status)
+
+    service.submit_status = terminal_after_cleanup
+    failure = emulated_native_host(service)
+    failed = outcome in failure_outcomes or cleanup_failure is not None
+    assert_final_host_status(service, failed=failed)
+    assert (RUNNING in service.statuses) is (outcome == "ready_then_stop")
+    assert STOP_PENDING not in service.statuses  # No modeled SCM STOP during START_PENDING.
+    if outcome == "pre_entry_cancel":
+        assert events == []
+    else:
+        assert "create" in events
+        assert events.count("probe") == (0 if outcome == "before_probe_cancel" else 1)
+    if outcome not in failure_outcomes and outcome != "pre_entry_cancel":
+        assert "controlled-stop" in events and ("wait", 10_000) in events
+    if not failed:
+        assert failure is None
+        assert all(len(item) == 1 for item in diagnostics)
+    elif outcome in {"wait_error", "exit_code_error"}:
+        assert failure is handle_error
+    elif outcome == "cancel_stop_error":
+        assert failure is stop_error
+    elif outcome not in failure_outcomes:
+        assert failure is close_error
+    elif outcome == "timeout":
+        assert isinstance(failure, pg.PostgreSQLReadinessTimeout)
+    else:
+        assert isinstance(failure, RuntimeError)
+        assert not isinstance(failure, pg.PostgreSQLReadinessTimeout)
+    if cleanup_failure is not None and outcome in failure_outcomes:
+        assert any("job cleanup failed" in note for note in failure.__notes__)
+        assert "private startup cleanup detail" not in " ".join(failure.__notes__)
 
 
 class EmulatedAdmissionUnavailable(RuntimeError):

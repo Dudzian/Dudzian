@@ -201,15 +201,24 @@ def wait_ready(
     run: Any = subprocess.run,
     win32event: Any,
     win32process: Any,
-) -> None:
+) -> bool:
+    """Return True when ready, False when cancelled; observed failures raise."""
     deadline = clock() + timeout
-    while clock() < deadline and not stop.is_set():
+
+    def require_alive() -> None:
         observed = win32event.WaitForSingleObject(process, 0)
         if observed == win32event.WAIT_OBJECT_0:
             code = win32process.GetExitCodeProcess(process)
             raise RuntimeError(f"PostgreSQL exited before readiness: exit_code={code}")
         if observed != win32event.WAIT_TIMEOUT:
             raise RuntimeError(f"unexpected PostgreSQL wait result: {observed}")
+
+    while not stop.is_set():
+        if clock() >= deadline:
+            break
+        require_alive()
+        if stop.is_set():
+            return False
         result = run(
             [
                 str(pg_isready),
@@ -223,9 +232,18 @@ def wait_ready(
             capture_output=True,
             timeout=5,
         )
+        # The original postmaster may have exited while the probe ran. An
+        # observed process/API failure must not be hidden by a concurrent stop.
+        require_alive()
+        if stop.is_set():
+            return False
+        if clock() >= deadline:
+            break
         if result.returncode == 0:
-            return
+            return True
         stop.wait(0.1)
+    if stop.is_set():
+        return False
     raise PostgreSQLReadinessTimeout("PostgreSQL local readiness deadline expired")
 
 
@@ -258,6 +276,8 @@ def monitor_process(
 def _run(stop: threading.Event, report: object) -> None:
     import win32api, win32con, win32event, win32job, win32process, win32service  # type: ignore[import-not-found]
 
+    if stop.is_set():
+        return
     stage = "QUALIFY_PATHS"
     try_write_startup_diagnostic(stage)
     postgres = _install_root() / "PostgreSQL" / "bin" / "postgres.exe"
@@ -294,11 +314,14 @@ def _run(stop: threading.Event, report: object) -> None:
         if win32event.WaitForSingleObject(process, 0) != win32event.WAIT_TIMEOUT:
             raise RuntimeError("PostgreSQL exited immediately after resume")
         set_stage("WAIT_READY")
-        wait_ready(pg_isready, process, stop, win32event=win32event, win32process=win32process)
-        set_stage("REPORT_RUNNING")
-        report(win32service.SERVICE_RUNNING)  # type: ignore[operator]
-        set_stage("MONITOR_PROCESS")
-        monitor_process(process, stop, win32event=win32event, win32process=win32process)
+        ready = wait_ready(
+            pg_isready, process, stop, win32event=win32event, win32process=win32process
+        )
+        if ready and not stop.is_set():
+            set_stage("REPORT_RUNNING")
+            report(win32service.SERVICE_RUNNING)  # type: ignore[operator]
+            set_stage("MONITOR_PROCESS")
+            monitor_process(process, stop, win32event=win32event, win32process=win32process)
         set_stage("STOP_PROCESS")
         subprocess.run(
             [str(pg_ctl), "stop", "-D", str(pgdata), "-m", "fast", "-w", "-t", "30"],
