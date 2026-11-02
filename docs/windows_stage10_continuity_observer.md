@@ -94,6 +94,12 @@ parowaniu odczytów (ponad 20 ms), zmianie różnicy biased/unbiased ponad 20 ms
 lub luce w kontroli ponad 5 s. Dłuższy suspend/resume lub zatrzymanie obserwatora
 przerywa zakres. Opóźnienie planisty może spowodować bezpieczną odmowę.
 
+Przed `CONTINUOUS` dodatkowa próbka zegarów po końcowym `assert_current()`
+i `wait(0)` podlega tym samym kontrolom luki, chronologii i rozbieżności.
+`observed_100ns` kończy się na próbce sprzed tych kontroli uchwytu. Późniejsza
+próbka jest wyłącznie kontrolą czasu; okno po ostatnim `wait(0)` nie ma
+potwierdzonej żywotności procesu i nie jest doliczane do zakresu obserwacji.
+
 Tolerancja odczytu oznacza, że bardzo krótki suspend albo przejście na granicy
 sesji może nie zostać osobno rozstrzygnięte. Nie ma jeszcze niezależnej, kompletnej
 obsługi powiadomień o zasilaniu i związania ich z zakresem próby. Dlatego zegar ma

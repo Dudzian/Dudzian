@@ -289,6 +289,13 @@ def _observe(
             elapsed = current.unbiased - first.unbiased
             previous = current
             if elapsed >= required_ticks:
+                # SCM i wait(0) mogły opóźnić się lub objąć suspend/resume.
+                final = clock.sample()
+                _check_clock(first, current, final)
+                if stop is not None and stop.is_set():
+                    raise ObservationLost("Anulowano aktywną obserwację")
+                # Zakres kończy się na current, przed ostatnią kontrolą uchwytu.
+                # Próbka final nie potwierdza żywotności po wait(0).
                 result = Observation(
                     ObservationState.CONTINUOUS,
                     scope,

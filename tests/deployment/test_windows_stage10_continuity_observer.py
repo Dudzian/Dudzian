@@ -101,6 +101,162 @@ def test_przedzial_wymaga_jednego_uchwytu_i_sprawdzenia_tozsamosci() -> None:
     assert lease.closes == 1
 
 
+def test_koncowa_weryfikacja_nie_dolicza_nierozstrzygnietego_okna() -> None:
+    lease, clock = Lease(), Clock()
+    result = observe(lease, clock)
+    assert result.state is observer.ObservationState.CONTINUOUS
+    assert clock.calls == 4  # Początek, dwie iteracje i kontrola po końcowym SCM/wait.
+    assert result.observed_100ns == 2 * TICK
+    assert result.duration_24h == "BLOCKED"
+    assert lease.closes == 1
+
+
+@pytest.mark.parametrize("operation", ["assert_current", "wait"])
+@pytest.mark.parametrize(
+    ("biased_delay", "unbiased_delay"),
+    [
+        (10 * observer.TICKS_PER_SECOND + TICK, TICK),
+        (observer.MAX_GAP_100NS + 1, observer.MAX_GAP_100NS + 1),
+        (3 * observer.TICKS_PER_SECOND, TICK),
+    ],
+    ids=["suspend-10s", "opoznienie-ponad-5s", "rozbieznosc-ponizej-5s"],
+)
+def test_opoznienie_koncowej_weryfikacji_odmawia(
+    operation: str, biased_delay: int, unbiased_delay: int
+) -> None:
+    lease, clock = Lease(), Clock()
+
+    def delayed() -> None:
+        if lease.checks == 3:
+            endpoint = START + 2 * TICK
+            clock.samples = [
+                observer.ClockSample(
+                    endpoint + biased_delay,
+                    endpoint + unbiased_delay,
+                    endpoint + biased_delay,
+                )
+            ]
+
+    if operation == "assert_current":
+        lease.on_check = delayed
+    else:
+
+        def wait() -> bool:
+            if lease.waits[-1] == 0:
+                delayed()
+            return False
+
+        lease.on_wait = wait
+    result = observe(lease, clock)
+    assert result.state is observer.ObservationState.OBSERVATION_LOST
+    assert result.duration_24h == "BLOCKED"
+    assert lease.closes == 1
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        observer.ClockSample(START + 2 * TICK - 1, START + 2 * TICK + 1, START + 2 * TICK + 2),
+        observer.ClockSample(START + 3 * TICK, START + TICK, START + 3 * TICK),
+        observer.ClockSample(START + 3 * TICK + 1, START + 3 * TICK, START + 3 * TICK),
+        observer.ClockSample(START + 3 * TICK, START + 3 * TICK, START + 3 * TICK + 200_001),
+        observer.ClockSample(-1, -1, -1),
+        observer.ClockSample(True, True, True),
+        observer.ClockSample(START + 2 * TICK, START + 2 * TICK, START + 2 * TICK),
+        OSError(6, "końcowy odczyt zegara"),
+        None,
+    ],
+    ids=[
+        "cofniecie-biased",
+        "cofniecie-unbiased",
+        "odwrocony-przedzial",
+        "niepewne-probkowanie",
+        "ujemny-zegar",
+        "bool-zamiast-licznika",
+        "zatrzymany-zegar",
+        "blad-api",
+        "brak-probki",
+    ],
+)
+def test_nieprawidlowa_probka_koncowej_weryfikacji_odmawia(bad: Any) -> None:
+    lease, clock = Lease(), Clock()
+
+    def final_check() -> None:
+        if lease.checks == 3:
+            clock.samples = [bad]
+
+    lease.on_check = final_check
+    result = observe(lease, clock)
+    assert result.state is observer.ObservationState.OBSERVATION_LOST
+    assert result.duration_24h == "BLOCKED"
+    assert lease.closes == 1
+
+
+def test_zmniejszenie_roznicy_zegarow_koncowej_weryfikacji_odmawia() -> None:
+    lease = Lease()
+    offset = 10 * TICK
+    clock = Clock(
+        [
+            observer.ClockSample(START + offset + tick, START + tick, START + offset + tick)
+            for tick in (0, TICK, 2 * TICK)
+        ]
+    )
+
+    def final_check() -> None:
+        if lease.checks == 3:
+            clock.samples = [
+                observer.ClockSample(
+                    START + offset + 3 * TICK, START + 5 * TICK, START + offset + 3 * TICK
+                )
+            ]
+
+    lease.on_check = final_check
+    result = observe(lease, clock)
+    assert result.state is observer.ObservationState.OBSERVATION_LOST
+    assert result.duration_24h == "BLOCKED"
+    assert lease.closes == 1
+
+
+def test_zakonczenie_podczas_koncowej_weryfikacji_nie_otwiera_nastepcy() -> None:
+    lease = Lease()
+    factory = Mock(return_value=lease)
+    lease.on_wait = lambda: lease.checks == 3
+    result = observer._observe(factory, Clock, seconds=0.5, scope="SYNTHETIC_TEST_ONLY")
+    assert result.state is observer.ObservationState.PROCESS_EXITED
+    factory.assert_called_once_with()
+    assert result.process_identity == lease.identity
+    assert result.duration_24h == "BLOCKED"
+    assert lease.closes == 1
+
+
+@pytest.mark.parametrize("operation", ["assert_current", "final_sample", "close"])
+def test_odmowa_anulowania_i_cleanup_koncowej_weryfikacji(operation: str) -> None:
+    lease, clock, stop = Lease(), Clock(), Event()
+    if operation == "assert_current":
+
+        def cancel() -> None:
+            if lease.checks == 3:
+                stop.set()
+
+        lease.on_check = cancel
+    elif operation == "final_sample":
+        sample = clock.sample
+
+        def cancel_sample() -> observer.ClockSample:
+            value = sample()
+            if clock.calls == 4:
+                stop.set()
+            return value
+
+        clock.sample = cancel_sample
+    else:
+        lease.close_error = OSError(6, "CloseHandle po końcowej weryfikacji")
+    result = observe(lease, clock, stop=stop)
+    assert result.state is observer.ObservationState.OBSERVATION_LOST
+    assert result.duration_24h == "BLOCKED"
+    assert lease.closes == 1
+
+
 @pytest.mark.parametrize(
     "seconds",
     [0, -1, float("nan"), float("inf"), float("-inf"), 86_401, True, False, 10**400, -(10**400)],
