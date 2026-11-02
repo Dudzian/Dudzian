@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from threading import Event
 from types import SimpleNamespace
 from typing import Any, Callable
+from unittest.mock import Mock
 
 import pytest
 
@@ -100,13 +101,47 @@ def test_przedzial_wymaga_jednego_uchwytu_i_sprawdzenia_tozsamosci() -> None:
     assert lease.closes == 1
 
 
-@pytest.mark.parametrize("seconds", [0, -1, float("nan"), float("inf"), 86_401, True])
-def test_niepoprawny_czas_nie_rozpoczyna_obserwacji(seconds: float) -> None:
-    lease = Lease()
-    result = observe(lease, seconds=seconds)
+@pytest.mark.parametrize(
+    "seconds",
+    [0, -1, float("nan"), float("inf"), float("-inf"), 86_401, True, False, 10**400, -(10**400)],
+    ids=[
+        "zero",
+        "ujemny",
+        "nan",
+        "inf",
+        "minus-inf",
+        "ponad-limit",
+        "true",
+        "false",
+        "duzy-int",
+        "duzy-ujemny-int",
+    ],
+)
+@pytest.mark.parametrize("public_entry", [False, True], ids=["wewnetrzne", "publiczne"])
+def test_niepoprawny_czas_nie_rozpoczyna_obserwacji(
+    seconds: float, public_entry: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    lease_factory = Mock(side_effect=AssertionError("Nie wolno otwierać SCM ani procesu"))
+    clock_factory = Mock(side_effect=AssertionError("Nie wolno inicjalizować zegara Windows"))
+    if public_entry:
+        monkeypatch.setattr(observer, "_ServiceLease", lease_factory)
+        monkeypatch.setattr(observer, "_NativeClock", clock_factory)
+        result = observer.observe_backend(seconds=seconds)
+    else:
+        result = observer._observe(
+            lease_factory, clock_factory, seconds=seconds, scope="SYNTHETIC_TEST_ONLY"
+        )
     assert result.state is observer.ObservationState.NOT_OBSERVED
     assert result.observed_100ns == 0
-    assert lease.waits == []
+    lease_factory.assert_not_called()
+    clock_factory.assert_not_called()
+
+
+@pytest.mark.parametrize("seconds", [1, 1.0, 0.5], ids=["int", "float", "ulamek"])
+def test_poprawny_czas_int_i_float_nadal_rozpoczyna_obserwacje(seconds: float) -> None:
+    result = observe(Lease(), seconds=seconds)
+    assert result.state is observer.ObservationState.CONTINUOUS
+    assert result.observed_100ns >= seconds * observer.TICKS_PER_SECOND
 
 
 @pytest.mark.parametrize("error", [OSError(5, "SCM niedostępny"), RuntimeError("brak API")])

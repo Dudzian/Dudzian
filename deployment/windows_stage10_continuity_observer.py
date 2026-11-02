@@ -238,8 +238,8 @@ def _observe(
     """Jednorazowy właściciel zasobów; żadnego wznowienia ani otwierania następcy."""
     if (
         type(seconds) not in (int, float)
-        or not math.isfinite(seconds)
         or not 0 < seconds <= MINIMUM_LIFECYCLE_SECONDS
+        or not math.isfinite(seconds)
     ):
         return Observation(ObservationState.NOT_OBSERVED, scope, "Niepoprawny czas obserwacji")
     if stop is not None and stop.is_set():
