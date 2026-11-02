@@ -125,6 +125,39 @@ def test_real_signature_inventory_and_symlink_to_directory(candidate):
     assert verified.packages == manifest["packages"]
 
 
+@pytest.mark.parametrize("path_alias", ["runtime", "trusted-key", "root"])
+def test_authority_boundary_rejects_parent_traversal(candidate, path_alias):
+    config, manifest, sign, _ = candidate
+    original_runtime = config.runtime
+    if path_alias in {"runtime", "trusted-key"}:
+        inside = config.runtime / "authority.pub"
+        write(inside, config.trusted_key.read_bytes())
+        manifest["files"] = runtime._tree(config.runtime)
+        sign()
+        config = replace(config, trusted_key=inside)
+    if path_alias == "runtime":
+        config = replace(config, runtime=config.runtime / ".." / config.runtime.name)
+    elif path_alias == "trusted-key":
+        config = replace(
+            config,
+            trusted_key=config.root / "etc" / ".." / config.runtime.name / "authority.pub",
+        )
+    else:
+        original_root = config.root
+        alias = original_root / ".." / original_root.name
+        config = replace(
+            config,
+            root=alias,
+            runtime=alias / config.runtime.relative_to(original_root),
+            manifest=alias / config.manifest.relative_to(original_root),
+            signature=alias / config.signature.relative_to(original_root),
+            trusted_key=alias / config.trusted_key.relative_to(original_root),
+        )
+    assert config.runtime.resolve() == original_runtime.resolve()
+    with pytest.raises(runtime.RuntimeTrustError, match="ścieżka wejściowa runtime"):
+        runtime.verify_runtime(config)
+
+
 def test_external_symlink_requires_signed_target_inventory(candidate):
     config, manifest, sign, _ = candidate
     source = config.root / "usr/lib/python3.12/site.py"

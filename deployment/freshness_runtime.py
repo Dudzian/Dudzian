@@ -129,7 +129,13 @@ def _status(path: Path, owner: int, *, symlink: bool = False) -> os.stat_result:
 
 
 def _parents(path: Path, owner: int, boundary: Path) -> None:
-    _require(path.is_absolute() and boundary.is_absolute(), "Wymagana ścieżka absolutna")
+    _require(
+        path.is_absolute()
+        and boundary.is_absolute()
+        and ".." not in path.parts
+        and ".." not in boundary.parts,
+        "Wymagana ścieżka absolutna bez przejść rodzica",
+    )
     _require(path.is_relative_to(boundary), "Ścieżka poza granicą runtime")
     relative = path.relative_to(boundary)
     current = boundary
@@ -518,7 +524,17 @@ def verify_runtime(config: RuntimeConfig) -> VerifiedRuntime:
     """Pełna odczytowa weryfikacja przed jakimkolwiek wykonaniem runtime."""
     try:
         _require(
-            config.runtime.is_absolute() and config.root.is_absolute(), "Wymagane ścieżki absolutne"
+            all(
+                path.is_absolute() and ".." not in path.parts
+                for path in (
+                    config.runtime,
+                    config.manifest,
+                    config.signature,
+                    config.trusted_key,
+                    config.root,
+                )
+            ),
+            "Nieprawidłowa ścieżka wejściowa runtime",
         )
         _require(
             not config.trusted_key.is_relative_to(config.runtime),
