@@ -8,7 +8,7 @@ import os
 import stat
 import subprocess
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -81,14 +81,15 @@ def process_identity(**changes):
 
 
 def verified_runtime(**changes):
+    # Modelowane ścieżki Linux muszą zachować ukośniki POSIX także na Windows.
     result = {
         "environment_id": "fixture-env",
         "revision": "a" * 40,
         "manifest_sha256": "b" * 64,
-        "executable": Path(
+        "executable": PurePosixPath(
             "/opt/cryptohunter/freshness-runtime/releases/fixture-env/bin/python3.12"
         ),
-        "base_executable": Path("/usr/bin/python3.12"),
+        "base_executable": PurePosixPath("/usr/bin/python3.12"),
         "base_executable_sha256": "a" * 64,
     }
     result.update(changes)
@@ -734,12 +735,18 @@ def test_runtime_environment_drift_between_observations_refuses(flow):
     assert flow.closed == [93]
 
 
-def test_foreign_environment_path_is_not_a_substring_match():
-    runtime = verified_runtime(
-        executable=Path(
+@pytest.mark.parametrize(
+    "executable",
+    [
+        PurePosixPath(
             "/tmp/opt/cryptohunter/freshness-runtime/releases/fixture-env/bin/python3.12"
-        )
-    )
+        ),
+        PureWindowsPath("/opt/cryptohunter/freshness-runtime/releases/fixture-env/bin/python3.12"),
+    ],
+    ids=["foreign-prefix", "windows-separators"],
+)
+def test_runtime_executable_requires_exact_posix_path(executable):
+    runtime = verified_runtime(executable=executable)
     with pytest.raises(identity.ServiceIdentityError, match="RUNTIME_EXECUTABLE_BINDING_CHANGED"):
         identity.expected_runtime_argv(runtime)
 
