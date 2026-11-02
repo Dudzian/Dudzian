@@ -360,3 +360,68 @@ def test_independently_signed_generic_inventory_cannot_replace_required_product_
     _sign(context)
     with pytest.raises(ValueError):
         _verify(context)
+
+
+def runtime_release_context() -> dict[str, Any]:
+    context = release_context()
+    binding = {
+        "environment_id": "approved-env-1",
+        "manifest_sha256": "1" * 64,
+        "source_revision": SOURCE_REVISION,
+        "executable": "/opt/cryptohunter/freshness-runtime/releases/approved-env-1/bin/python3.12",
+        "base_executable": "/usr/bin/python3.12",
+        "base_executable_sha256": "2" * 64,
+    }
+    installation = context["installation"]
+    installation["freshness_runtime"] = binding
+    payload = installation["release_identity"]["payload"]
+    payload.update(
+        schema_version=2, contract=release.RELEASE_CONTRACT_V2, freshness_runtime=binding.copy()
+    )
+    payload["installation_profile_sha256"] = digest(
+        {k: v for k, v in installation.items() if k != "release_identity"}
+    )
+    _sign(context)
+    return context
+
+
+def test_release_v2_independently_signs_runtime_binding_without_product_pass():
+    context = runtime_release_context()
+    statement = _verify(context)
+    assert statement["freshness_runtime"] == context["installation"]["freshness_runtime"]
+    assert statement["schema_version"] == 2
+    assert "status" not in statement
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("environment_id", "../foreign"),
+        ("manifest_sha256", "0" * 63),
+        ("source_revision", "0" * 40),
+        ("executable", "/usr/bin/python3.12"),
+        ("base_executable", "/tmp/python3.12"),
+        ("base_executable_sha256", "0" * 63),
+    ],
+)
+def test_release_v2_refuses_unbound_runtime_even_after_independent_resigning(field, value):
+    context = runtime_release_context()
+    installation = context["installation"]
+    installation["freshness_runtime"][field] = value
+    installation["release_identity"]["payload"]["freshness_runtime"][field] = value
+    installation["release_identity"]["payload"]["installation_profile_sha256"] = digest(
+        {k: v for k, v in installation.items() if k != "release_identity"}
+    )
+    _sign(context)
+    with pytest.raises(release.ReleaseIdentityError, match="runtime"):
+        _verify(context)
+
+
+def test_release_v1_refuses_adding_runtime_as_arbitrary_optional_field():
+    context = runtime_release_context()
+    payload = context["installation"]["release_identity"]["payload"]
+    payload.update(schema_version=1, contract=release.RELEASE_CONTRACT)
+    del payload["freshness_runtime"]
+    _sign(context)
+    with pytest.raises(release.ReleaseIdentityError, match="v2"):
+        _verify(context)

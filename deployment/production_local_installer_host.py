@@ -5,11 +5,13 @@ Import modułu i testy kontraktu nie wymagają kont POSIX ani systemd.
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 REQUIRED_PACKAGES = frozenset(
     {
@@ -93,7 +95,34 @@ def _query(arguments: list[str]) -> str | None:
     return output if result.returncode == 0 or absent_unit else None
 
 
-def inspect_host() -> HostState:
+def inspect_runtime(runtime: Any) -> bool:
+    """Sonda importów dopiero po niezależnej weryfikacji podpisu i plików.
+
+    Wywołujący dostarcza VerifiedRuntime z zaufanego bootstrapu. Sonda nie
+    ustanawia zaufania do interpretera i nigdy nie zastępuje jego weryfikacji.
+    """
+    executable = str(runtime.executable)
+    packages = runtime.packages
+    expected = json.dumps(packages, sort_keys=True)
+    script = (
+        "import sys,site,json,pathlib,importlib.metadata as m; "
+        "import cryptography,psycopg,psycopg.pq,cffi,pycparser,typing_extensions,psycopg_binary; "
+        f"expected=json.loads({expected!r}); "
+        "actual={d.metadata['Name'].lower().replace('_','-'):d.version "
+        "for d in m.distributions()}; "
+        "root=pathlib.Path(sys.prefix).resolve(); "
+        "origins=[pathlib.Path(x.__file__).resolve() for x in "
+        "(cryptography,psycopg,cffi,pycparser,typing_extensions,psycopg_binary)]; "
+        f"ok=(sys.executable=={executable!r} and sys.version_info[:2]==(3,12) "
+        "and sys.flags.isolated==1 and sys.flags.no_user_site==1 and not site.ENABLE_USER_SITE "
+        "and actual==expected and all(p.is_relative_to(root) for p in origins) "
+        "and psycopg.pq.__impl__=='binary' and psycopg.pq.version()>=160000); "
+        "sys.exit(0 if ok else 1)"
+    )
+    return _query([executable, "-I", "-s", "-B", "-c", script]) is not None
+
+
+def inspect_host(runtime: Any | None = None) -> HostState:
     """Odmowa przy niedostępnej obserwacji; nigdy nie tworzy klastra ani kont."""
     empty = HostState(False, frozenset(), False, False, (), ())
     if sys.platform == "win32":
@@ -165,25 +194,9 @@ def inspect_host() -> HostState:
         and _query(["/usr/bin/pg_conftool", "16", "main", "show", "include_dir"])
         in {"include_dir = 'conf.d'", 'include_dir = "conf.d"', "include_dir = conf.d"}
     )
-    python_ready = (
-        _query(
-            [
-                "/usr/bin/python3",
-                "-I",
-                "-s",
-                "-B",
-                "-c",
-                "import sys,cryptography,psycopg,re; from importlib.metadata import version; "
-                "c=version('cryptography'); p=version('psycopg'); "
-                "v=lambda x: tuple(map(int,x.split('.'))); "
-                "sys.exit(0 if sys.version_info >= (3,11) and "
-                "re.fullmatch(r'[0-9]+\\.[0-9]+\\.[0-9]+',c) and "
-                "re.fullmatch(r'[0-9]+\\.[0-9]+\\.[0-9]+',p) and "
-                "(50,0,1)<=v(c)<(51,0,0) and (3,2,0)<=v(p)<(4,0,0) else 1)",
-            ]
-        )
-        is not None
-    )
+    # Brak argumentu oznacza wyłącznie obserwację systemu. Nie wykonujemy
+    # systemowego interpretera jako zastępczego dowodu dla verifiera.
+    python_ready = runtime is not None and inspect_runtime(runtime)
     manager = _query(["/usr/bin/systemctl", "show", "--property=Version", "--value"])
     active = _query(["/usr/bin/systemctl", "is-active", "cryptohunter-freshness-verifier.service"])
     unit = _query(UNIT_QUERY)

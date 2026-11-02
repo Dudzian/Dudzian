@@ -8,7 +8,7 @@ import os
 import stat
 import subprocess
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -47,6 +47,25 @@ def exec_reply(command=None):
     )
 
 
+def bootstrap_command():
+    return [
+        identity.BOOTSTRAP_ARGV[0],
+        list(identity.BOOTSTRAP_ARGV),
+        False,
+        100,
+        120,
+        150,
+        180,
+        PID - 1,
+        1,
+        0,
+    ]
+
+
+def bootstrap_reply(command=None):
+    return exec_reply(bootstrap_command() if command is None else command)
+
+
 def process_identity(**changes):
     result = {
         "pid": PID,
@@ -61,12 +80,33 @@ def process_identity(**changes):
     return result
 
 
+def verified_runtime(**changes):
+    # Modelowane ścieżki Linux muszą zachować ukośniki POSIX także na Windows.
+    result = {
+        "environment_id": "fixture-env",
+        "revision": "a" * 40,
+        "manifest_sha256": "b" * 64,
+        "executable": PurePosixPath(
+            "/opt/cryptohunter/freshness-runtime/releases/fixture-env/bin/python3.12"
+        ),
+        "base_executable": PurePosixPath("/usr/bin/python3.12"),
+        "base_executable_sha256": "a" * 64,
+    }
+    result.update(changes)
+    return SimpleNamespace(**result)
+
+
 @pytest.fixture
 def flow(monkeypatch):
     """Zastąp granice hosta; sam parser i logika kwalifikacji pozostają rzeczywiste."""
+    runtime = verified_runtime()
+    monkeypatch.setattr(identity, "EXECUTABLE", str(runtime.executable))
+    monkeypatch.setattr(identity, "EXPECTED_ARGV", identity.expected_runtime_argv(runtime))
     state = SimpleNamespace(
+        runtimes=[runtime, runtime],
         properties=[properties(), properties()],
         commands=[exec_reply(), exec_reply()],
+        bootstraps=[bootstrap_reply(), bootstrap_reply()],
         processes=[process_identity(), process_identity()],
         programs=[
             {"argv": identity.EXPECTED_ARGV, "exe_sha256": "a" * 64, "exe_metadata": (1, 2)},
@@ -82,6 +122,17 @@ def flow(monkeypatch):
         return properties_reply(state.properties.pop(0))
 
     def query(arguments):
+        if arguments[-1] == "ExecStartPre":
+            assert arguments[:-1] == [
+                "/usr/bin/busctl",
+                "--system",
+                "--json=short",
+                "get-property",
+                "org.freedesktop.systemd1",
+                identity._OBJECT_PATH,
+                "org.freedesktop.systemd1.Service",
+            ]
+            return state.bootstraps.pop(0)
         assert arguments == [
             "/usr/bin/busctl",
             "--system",
@@ -108,9 +159,11 @@ def flow(monkeypatch):
     monkeypatch.setattr(identity, "_check_pidfd", lambda fd, pid: state.checks.append((fd, pid)))
     monkeypatch.setattr(identity, "_query", query)
     monkeypatch.setattr(identity, "capture_process_identity", lambda pid: state.processes.pop(0))
-    monkeypatch.setattr(identity, "_program_observation", lambda pid: state.programs.pop(0))
+    monkeypatch.setattr(
+        identity, "_program_observation", lambda pid, runtime=None: state.programs.pop(0)
+    )
     state.run = lambda: identity.qualify_freshness_service_identity(
-        uid=UID, gid=GID, systemctl=systemctl
+        uid=UID, gid=GID, systemctl=systemctl, runtime_verifier=lambda: state.runtimes.pop(0)
     )
     return state
 
@@ -482,6 +535,7 @@ def test_live_qualifier_propagates_identity_refusal_before_database(monkeypatch)
     )
     # Tylko test granicy kompozycji; nie przypisuje PASS kwalifikacji z pominiętymi pinami.
     monkeypatch.setattr(qualification, "REVIEWED_CODE_DIGESTS", {})
+    monkeypatch.setattr(qualification, "_load_runtime", verified_runtime)
     refusal = identity.ServiceIdentityError("EXECSTART_PROGRAM_OR_ARGUMENTS_CHANGED")
     qualify_identity = Mock(side_effect=refusal)
     monkeypatch.setattr(qualification, "qualify_freshness_service_identity", qualify_identity)
@@ -670,3 +724,226 @@ def test_native_program_refuses_when_another_binary_is_approved(monkeypatch):
     finally:
         child.terminate()
         child.wait(timeout=5)
+
+
+def test_runtime_environment_drift_between_observations_refuses(flow):
+    flow.runtimes[1] = verified_runtime(manifest_sha256="c" * 64)
+    with pytest.raises(
+        identity.ServiceIdentityError, match="SIGNED_RUNTIME_CHANGED_DURING_OBSERVATION"
+    ):
+        flow.run()
+    assert flow.closed == [93]
+
+
+@pytest.mark.parametrize(
+    "executable",
+    [
+        PurePosixPath(
+            "/tmp/opt/cryptohunter/freshness-runtime/releases/fixture-env/bin/python3.12"
+        ),
+        PureWindowsPath("/opt/cryptohunter/freshness-runtime/releases/fixture-env/bin/python3.12"),
+    ],
+    ids=["foreign-prefix", "windows-separators"],
+)
+def test_runtime_executable_requires_exact_posix_path(executable):
+    runtime = verified_runtime(executable=executable)
+    with pytest.raises(identity.ServiceIdentityError, match="RUNTIME_EXECUTABLE_BINDING_CHANGED"):
+        identity.expected_runtime_argv(runtime)
+
+
+def test_rendered_unit_binds_one_exact_signed_environment():
+    template = qualification.REVIEWED_UNIT.read_bytes()
+    rendered = identity.render_runtime_unit(template, verified_runtime())
+    assert b"@FRESHNESS_RUNTIME_PYTHON@" not in rendered
+    assert (
+        b"ExecStart=/opt/cryptohunter/freshness-runtime/releases/fixture-env/"
+        b"bin/python3.12 -I -s -B " in rendered
+    )
+    assert b"NoNewPrivileges=yes" in rendered
+    assert b"ProtectSystem=strict" in rendered
+    with pytest.raises(identity.ServiceIdentityError, match="RUNTIME_UNIT_TEMPLATE_INVALID"):
+        identity.render_runtime_unit(rendered, verified_runtime())
+
+
+def test_completed_bootstrap_uses_exact_verified_command():
+    assert identity._bootstrap_start(bootstrap_reply())[1] == identity.BOOTSTRAP_ARGV
+
+
+@pytest.mark.parametrize(
+    "index,value",
+    [
+        (0, "/tmp/python"),
+        (1, ["/usr/bin/python3", "-c", "pass"]),
+        (2, True),
+        (5, 0),
+        (6, 0),
+        (7, 0),
+        (8, 2),
+        (9, 1),
+    ],
+)
+def test_untrusted_or_failed_bootstrap_refuses(flow, index, value):
+    command = bootstrap_command()
+    command[index] = value
+    flow.bootstraps[0] = bootstrap_reply(command)
+    with pytest.raises(identity.ServiceIdentityError, match="BOOTSTRAP_"):
+        flow.run()
+    assert flow.closed == [93]
+
+
+def test_completed_bootstrap_replacement_between_observations_refuses(flow):
+    command = bootstrap_command()
+    command[7] += 1
+    flow.bootstraps[1] = bootstrap_reply(command)
+    with pytest.raises(identity.ServiceIdentityError, match="EFFECTIVE_BOOTSTRAP_CHANGED"):
+        flow.run()
+
+
+@LINUX
+def test_real_proc_image_must_match_signed_runtime_base_hash(
+    native_python, native_binary_metadata, monkeypatch
+):
+    runtime = verified_runtime(
+        base_executable=Path(identity.EXECUTABLE).resolve(strict=True),
+        base_executable_sha256="0" * 64,
+    )
+    monkeypatch.setattr(identity, "expected_runtime_argv", lambda runtime: identity.EXPECTED_ARGV)
+    with pytest.raises(
+        identity.ServiceIdentityError, match="PROCESS_PROGRAM_NOT_APPROVED_BY_RUNTIME"
+    ):
+        identity._program_observation(native_python[0].pid, runtime)
+
+
+@LINUX
+def test_real_proc_image_must_match_signed_runtime_base_path(
+    native_python, native_binary_metadata, monkeypatch
+):
+    runtime = verified_runtime(base_executable=Path("/usr/bin/foreign-python3.12"))
+    monkeypatch.setattr(identity, "expected_runtime_argv", lambda runtime: identity.EXPECTED_ARGV)
+    with pytest.raises(identity.ServiceIdentityError, match="RUNTIME_BASE_EXECUTABLE_CHANGED"):
+        identity._program_observation(native_python[0].pid, runtime)
+
+
+def test_bootstrap_cannot_finish_after_main_process_start(flow):
+    command = bootstrap_command()
+    command[6] = 301
+    flow.bootstraps[0] = bootstrap_reply(command)
+    with pytest.raises(identity.ServiceIdentityError, match="BOOTSTRAP_MAIN_PROCESS_ORDER_CHANGED"):
+        flow.run()
+    assert len(flow.processes) == 2
+    assert flow.closed == [93]
+
+
+def test_effective_main_start_can_follow_execstart_record(flow):
+    # systemd stempluje oba odczyty osobno: przygotowanie procesu poprzedza
+    # obserwację jego uruchomienia, bez wymagania identycznego mikrosekundowego czasu.
+    for observation in flow.properties:
+        observation["ExecMainStartTimestampMonotonic"] = "301"
+    assert flow.run() is None
+    assert flow.closed == [93]
+
+
+def test_published_unit_inventory_must_bind_same_environment_and_bootstrap():
+    runtime = verified_runtime()
+    published = identity.render_runtime_unit(qualification.REVIEWED_UNIT.read_bytes(), runtime)
+    assert identity.validate_runtime_unit(published, runtime) == published
+    foreign = published.replace(b"releases/fixture-env/", b"releases/foreign-env/")
+    with pytest.raises(identity.ServiceIdentityError, match="RUNTIME_UNIT_BINDING_CHANGED"):
+        identity.validate_runtime_unit(foreign, runtime)
+    with pytest.raises(identity.ServiceIdentityError, match="RUNTIME_UNIT_BINDING_CHANGED"):
+        identity.validate_runtime_unit(published + b"ExecStartPre=/bin/true\n", runtime)
+
+
+def ordered_service_timestamps(flow, bootstrap_end, exec_start, main_start):
+    command = exec_command()
+    command[4] = exec_start
+    bootstrap = bootstrap_command()
+    bootstrap[6] = bootstrap_end
+    flow.commands[:] = [exec_reply(command), exec_reply(command)]
+    flow.bootstraps[:] = [bootstrap_reply(bootstrap), bootstrap_reply(bootstrap)]
+    for observation in flow.properties:
+        observation["ExecMainStartTimestampMonotonic"] = str(main_start)
+
+
+@pytest.mark.parametrize(
+    "bootstrap_end,exec_start,main_start",
+    [
+        (180, 300, 301),
+        (180, 300, 300),
+        (300, 300, 301),
+        (300, 300, 300),
+        (180, 301, 450),
+        (180, 300, 2**32),
+    ],
+)
+def test_ordered_separate_systemd_timestamps_accept(flow, bootstrap_end, exec_start, main_start):
+    ordered_service_timestamps(flow, bootstrap_end, exec_start, main_start)
+    assert flow.run() is None
+    assert flow.checks == [(93, PID)] * 3
+    assert flow.closed == [93]
+
+
+@pytest.mark.parametrize(
+    "bootstrap_end,exec_start,main_start",
+    [(301, 300, 301), (180, 301, 300), (302, 301, 300), (301, 301, 300)],
+)
+def test_reversed_systemd_timestamps_refuse(flow, bootstrap_end, exec_start, main_start):
+    ordered_service_timestamps(flow, bootstrap_end, exec_start, main_start)
+    with pytest.raises(identity.ServiceIdentityError, match="BOOTSTRAP_MAIN_PROCESS_ORDER_CHANGED"):
+        flow.run()
+    assert len(flow.processes) == 2
+    assert flow.closed == [93]
+
+
+def test_delayed_main_timestamp_does_not_allow_pid_replacement(flow):
+    ordered_service_timestamps(flow, 180, 300, 301)
+    flow.properties[1].update(MainPID=str(PID + 1), ExecMainPID=str(PID + 1))
+    with pytest.raises(identity.ServiceIdentityError, match="EFFECTIVE_SERVICE_CHANGED"):
+        flow.run()
+    assert flow.closed == [93]
+
+
+def test_delayed_main_timestamp_must_stay_identical_between_snapshots(flow):
+    ordered_service_timestamps(flow, 180, 300, 301)
+    flow.properties[1]["ExecMainStartTimestampMonotonic"] = "302"
+    with pytest.raises(identity.ServiceIdentityError, match="EFFECTIVE_SERVICE_CHANGED"):
+        flow.run()
+    assert flow.closed == [93]
+
+
+UNIT_MUTATIONS = {
+    "exec-continuation-reset": lambda raw: raw
+    + b"\n[Service]\nExecStart\\\n=\nExecStart\\\n=/bin/true\n",
+    "bootstrap-continuation-reset": lambda raw: raw + b"\n[Service]\nExecStartPre\\\n=\n",
+    "indented-continuation-and-equals-whitespace": lambda raw: raw
+    + b"\n[Service]\n  ExecStart\\\n  =\n  ExecStart\\\n  = /bin/true\n",
+    "wrong-section": lambda raw: raw.replace(b"[Service]\n", b"[Unit]\n")
+    + b"\n[Service]\nExecStart\\\n=/bin/true\n",
+    "sandbox-duplicate": lambda raw: raw + b"\n[Service]\nNoNewPrivileges=no\n",
+    "sandbox-reset": lambda raw: raw.replace(b"ProtectSystem=strict\n", b"ProtectSystem=\n"),
+    "indented-directive": lambda raw: raw.replace(
+        b"NoNewPrivileges=yes\n", b"  NoNewPrivileges=yes\n"
+    ),
+    "equals-whitespace": lambda raw: raw.replace(
+        b"ProtectSystem=strict\n", b"ProtectSystem = strict\n"
+    ),
+}
+
+
+@pytest.mark.parametrize("mutation", UNIT_MUTATIONS, ids=UNIT_MUTATIONS)
+def test_unit_validation_rejects_any_unapproved_systemd_bytes(mutation):
+    runtime = verified_runtime()
+    published = identity.render_runtime_unit(qualification.REVIEWED_UNIT.read_bytes(), runtime)
+    changed = UNIT_MUTATIONS[mutation](published)
+    assert changed != published
+    with pytest.raises(identity.ServiceIdentityError, match="RUNTIME_UNIT_BINDING_CHANGED"):
+        identity.validate_runtime_unit(changed, runtime)
+
+
+@pytest.mark.parametrize("mutation", UNIT_MUTATIONS, ids=UNIT_MUTATIONS)
+def test_unit_rendering_rejects_mutated_template_before_materialization(mutation):
+    template = qualification.REVIEWED_UNIT.read_bytes()
+    changed = UNIT_MUTATIONS[mutation](template)
+    assert changed != template
+    with pytest.raises(identity.ServiceIdentityError, match="RUNTIME_UNIT_TEMPLATE_INVALID"):
+        identity.render_runtime_unit(changed, verified_runtime())

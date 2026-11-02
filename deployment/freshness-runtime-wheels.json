@@ -1,0 +1,74 @@
+{
+  "schema": "cryptohunter.freshness.wheelhouse.v1",
+  "target": {
+    "architecture": "amd64",
+    "os": "ubuntu",
+    "python": "3.12",
+    "version": "24.04"
+  },
+  "wheels": [
+    {
+      "filename": "cffi-2.1.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+      "name": "cffi",
+      "role": "runtime",
+      "sha256": "c1453022f490d2459a11819d83ad1d586e9ff65a12ac3e705ffebd46d3685dcf",
+      "size": 221822,
+      "url": "https://files.pythonhosted.org/packages/b1/db/dceb9dd5b231e1da801793f8acc9f3c52a7e1afe40bb1aae37e02b0faad5/cffi-2.1.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+      "version": "2.1.1"
+    },
+    {
+      "filename": "cryptography-50.0.2-cp311-abi3-manylinux_2_28_x86_64.whl",
+      "name": "cryptography",
+      "role": "runtime",
+      "sha256": "4061c0079120205fb760c58acab6443e217307dcf05e3702cf970e0689972856",
+      "size": 4753050,
+      "url": "https://files.pythonhosted.org/packages/1a/f1/b474e930c4d910328780e3940da76f5aa5cbc48ce1fc14e44d239d9ea9db/cryptography-50.0.2-cp311-abi3-manylinux_2_28_x86_64.whl",
+      "version": "50.0.2"
+    },
+    {
+      "filename": "pip-26.2.1-py3-none-any.whl",
+      "name": "pip",
+      "role": "build-tool",
+      "sha256": "71138adf1f4ca900cdb7d289c21b7494329f2332b6d85f0e1c42108c0384ed3e",
+      "size": 1816632,
+      "url": "https://files.pythonhosted.org/packages/f3/6e/1736e5b4ae2b778ef2f81c47d797de9f891d4d8acb047a24ca37a60294dd/pip-26.2.1-py3-none-any.whl",
+      "version": "26.2.1"
+    },
+    {
+      "filename": "psycopg-3.3.6-py3-none-any.whl",
+      "name": "psycopg",
+      "role": "runtime",
+      "sha256": "a1db9f7148b06a28606767efaca51fa6f9398c5c0a3810519be69d7000bdb631",
+      "size": 215490,
+      "url": "https://files.pythonhosted.org/packages/4e/de/748bd7609c71cae5d737f0ba9192f19329f70180ecda8fff3cac02c5abe3/psycopg-3.3.6-py3-none-any.whl",
+      "version": "3.3.6"
+    },
+    {
+      "filename": "psycopg_binary-3.3.6-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+      "name": "psycopg-binary",
+      "role": "runtime",
+      "sha256": "1679a1cb93fbe5a6d1fd58d82cbddcc6fcb8c61446ba7cae6eb2a7b19bc585de",
+      "size": 5235723,
+      "url": "https://files.pythonhosted.org/packages/0a/42/948bb3d2617795093512613fd96ba380e922992c7908fbc073858147d196/psycopg_binary-3.3.6-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+      "version": "3.3.6"
+    },
+    {
+      "filename": "pycparser-3.12-py3-none-any.whl",
+      "name": "pycparser",
+      "role": "runtime",
+      "sha256": "a076f3f489b39b43ed13563a1dafe42447445bec2e294154ec5c57fcdda4c85e",
+      "size": 62600,
+      "url": "https://files.pythonhosted.org/packages/b6/ae/315bbeee126a769cbde43cf4908acb4b40408d8bf8bbf334dd7368d8dadf/pycparser-3.12-py3-none-any.whl",
+      "version": "3.12"
+    },
+    {
+      "filename": "typing_extensions-4.16.0-py3-none-any.whl",
+      "name": "typing-extensions",
+      "role": "runtime",
+      "sha256": "481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8",
+      "size": 45571,
+      "url": "https://files.pythonhosted.org/packages/49/d3/b8441a820a491ddfc024b0b0cf0393375b75ea13866d9c66727e54c2fc80/typing_extensions-4.16.0-py3-none-any.whl",
+      "version": "4.16.0"
+    }
+  ]
+}

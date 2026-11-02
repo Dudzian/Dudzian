@@ -9,7 +9,8 @@ StartLimitBurst=5
 Type=simple
 User=os_freshness_crypto_verifier
 Group=freshness_verifier_ipc
-ExecStart=/usr/bin/python3 -I -s -B /usr/lib/cryptohunter/deployment/freshness_verifier_entrypoint.py
+ExecStartPre=/usr/bin/python3 -I -s -B /usr/lib/cryptohunter/deployment/freshness_runtime_bootstrap.py verify-installed
+ExecStart=@FRESHNESS_RUNTIME_PYTHON@ -I -s -B /usr/lib/cryptohunter/deployment/freshness_verifier_entrypoint.py
 Environment=PYTHONNOUSERSITE=1
 WorkingDirectory=/usr/lib/cryptohunter
 RuntimeDirectory=cryptohunter/freshness
