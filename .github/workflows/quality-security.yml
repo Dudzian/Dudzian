@@ -106,6 +106,7 @@ jobs:
           tests/deployment/test_windows_backend_recovery_provision.py
           tests/deployment/test_windows_service_recovery.py
           tests/deployment/test_windows_postgresql_bootstrap.py
+          tests/deployment/test_windows_bootstrap_credentials.py
           tests/deployment/test_windows_postgresql_role_denial.py
           tests/deployment/test_windows_msi_dependency_closure.py
           deployment/windows_stage9_install_preparation.py
@@ -472,6 +473,7 @@ jobs:
           tests/deployment/test_windows_postgresql_readiness_cancellation.py
           tests/deployment/test_windows_stage9_installer.py
           tests/deployment/test_windows_postgresql_bootstrap.py
+          tests/deployment/test_windows_bootstrap_credentials.py
           tests/deployment/test_windows_postgresql_role_denial.py
           tests/deployment/test_windows_msi_dependency_closure.py
           tests/deployment/test_windows_stage9_install_preparation.py

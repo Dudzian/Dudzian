@@ -43,6 +43,30 @@ ROOT = Path(__file__).parents[2]
 WXS = (ROOT / "deployment/windows_installer/Product.wxs").read_text(encoding="utf-8")
 
 
+@pytest.fixture
+def modeled_bootstrap_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Model native credential creation while exercising the complete DB flow.
+
+    Native descriptor and token enforcement are tested independently in
+    test_windows_bootstrap_credentials; these tests own stages and HBA cutover.
+    """
+    monkeypatch.setattr(provision, "_require_bootstrap_system", lambda: None)
+
+    def directory(security: Path) -> Path:
+        path = security / (".postgres-bootstrap-" + provision.secrets.token_hex(16))
+        path.mkdir(mode=0o700)
+        return path
+
+    def write(path: Path, value: str) -> None:
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, "w", encoding="ascii") as stream:
+            stream.write(value)
+
+    monkeypatch.setattr(provision, "_create_bootstrap_directory", directory)
+    monkeypatch.setattr(provision, "_qualify_bootstrap_directory", lambda _path: None)
+    monkeypatch.setattr(provision, "_write_bootstrap_secret", write)
+
+
 def test_canonical_msi_identity_and_scope() -> None:
     assert 'Scope="perMachine"' in WXS
     assert 'Platform="x64"' not in WXS
@@ -1130,10 +1154,8 @@ def test_install_failure_diagnostic_survives_rollback_and_commit_clears_it(
     ),
 )
 def test_database_effect_boundaries_set_exact_stage_before_effect(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, expected: str
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, expected: str, modeled_bootstrap_credentials
 ) -> None:
-    monkeypatch.setattr(provision, "_protect", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(provision, "_qualify_protected", lambda *_args, **_kwargs: None)
     data = tmp_path / "data"
     security = tmp_path / "security"
     data.mkdir()
@@ -1204,10 +1226,11 @@ def test_database_effect_boundaries_set_exact_stage_before_effect(
     ),
 )
 def test_final_hba_cutover_ignores_localized_rejection_text(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, rejection_message: str
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    rejection_message: str,
+    modeled_bootstrap_credentials,
 ) -> None:
-    monkeypatch.setattr(provision, "_protect", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(provision, "_qualify_protected", lambda *_args, **_kwargs: None)
     data = tmp_path / "data"
     security = tmp_path / "security"
     data.mkdir()
@@ -1383,10 +1406,8 @@ def test_final_admin_rejection_closes_unexpected_accepted_connection() -> None:
 
 
 def test_final_hba_parser_failure_prevents_rejection_and_liveness_proofs(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, modeled_bootstrap_credentials
 ) -> None:
-    monkeypatch.setattr(provision, "_protect", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(provision, "_qualify_protected", lambda *_args, **_kwargs: None)
     data = tmp_path / "data"
     security = tmp_path / "security"
     data.mkdir()

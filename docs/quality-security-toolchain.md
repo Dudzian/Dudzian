@@ -74,6 +74,16 @@ Windows uprawnieniami POSIX. Nie kwalifikuje SCM, Job Objects ani ACL Windows.
 Progi pokrycia, timeouty i bramki instalacji, enrollment oraz Stage 9/10 pozostają
 bez zmian.
 
+Regresje `test_windows_bootstrap_credentials.py` rozszerzają istniejący
+`quality-ratchet` o natywne modele tworzenia z jawną DACL, odmowę niewłaściwej
+tożsamości, dziedziczenia i nadpisania, błędy częściowego zapisu oraz cleanup.
+Osobny opt-in `CRYPTOHUNTER_RUN_WINDOWS_BOOTSTRAP_ACL_INTEGRATION=1` wymaga
+izolowanego procesu LocalSystem na Windows i bada wyłącznie pliki tymczasowe,
+w tym pozostałość po wymuszonym zakończeniu potomka. Nie uruchamia PostgreSQL,
+MSI ani usług i nie zastępuje kwalifikacji instalacji. Modele Linux nie są
+dowodem egzekwowania ACL przez jądro Windows. Zakres i ograniczenia opisuje
+[analiza alertów 59–61](security/code-scanning-59-61.md).
+
 Ścieżka fizycznych dowodów Linux (`linux_physical_evidence`,
 `linux_physical_observations`, `linux_physical_native`,
 `linux_physical_collector` i `linux_evidence_handoff`) wchodzi do

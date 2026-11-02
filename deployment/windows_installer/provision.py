@@ -13,7 +13,6 @@ import secrets
 import shutil
 import subprocess
 import sys
-import tempfile
 from typing import Any, Callable, Iterator
 from psycopg.conninfo import make_conninfo
 from cryptography import x509
@@ -350,25 +349,161 @@ def _pki(
     _qualify_protected(security / "ca.key", {SYSTEM_SID: FILE_ALL_ACCESS}, inherit=False)
 
 
+def _require_bootstrap_system() -> None:
+    """Require the effective MSI identity before creating bootstrap resources."""
+    import pywintypes  # type: ignore[import-not-found]
+    import win32api  # type: ignore[import-not-found]
+    import win32con  # type: ignore[import-not-found]
+    import win32security  # type: ignore[import-not-found]
+
+    try:
+        token = win32security.OpenThreadToken(
+            win32api.GetCurrentThread(), win32con.TOKEN_QUERY, True
+        )
+    except pywintypes.error as exc:
+        if exc.winerror != 1008:  # ERROR_NO_TOKEN: the thread is not impersonating.
+            raise
+        token = win32security.OpenProcessToken(win32api.GetCurrentProcess(), win32con.TOKEN_QUERY)
+    try:
+        sid, _attributes = win32security.GetTokenInformation(token, win32security.TokenUser)
+        if win32security.ConvertSidToStringSid(sid) != SYSTEM_SID:
+            raise ProvisionError("PostgreSQL bootstrap requires LocalSystem")
+    finally:
+        token.Close()
+
+
+def _bootstrap_security_attributes(*, inherit: bool) -> Any:
+    """Supply a protected SYSTEM-owned DACL to the native creation operation."""
+    import pywintypes  # type: ignore[import-not-found]
+    import win32security  # type: ignore[import-not-found]
+
+    system = win32security.ConvertStringSidToSid(SYSTEM_SID)
+    acl = win32security.ACL()
+    acl.AddAccessAllowedAceEx(
+        win32security.ACL_REVISION_DS, 3 if inherit else 0, FILE_ALL_ACCESS, system
+    )
+    descriptor = win32security.SECURITY_DESCRIPTOR()
+    descriptor.SetSecurityDescriptorOwner(system, False)
+    descriptor.SetSecurityDescriptorDacl(True, acl, False)
+    descriptor.SetSecurityDescriptorControl(
+        win32security.SE_DACL_PROTECTED, win32security.SE_DACL_PROTECTED
+    )
+    attributes = pywintypes.SECURITY_ATTRIBUTES()
+    attributes.SECURITY_DESCRIPTOR = descriptor
+    attributes.bInheritHandle = False
+    return attributes
+
+
+def _create_bootstrap_directory(security: Path) -> Path:
+    """Create an unpredictable private directory without an inherited-ACL window."""
+    import pywintypes  # type: ignore[import-not-found]
+    import win32file  # type: ignore[import-not-found]
+
+    attributes = _bootstrap_security_attributes(inherit=True)
+    for _attempt in range(10):
+        directory = security / (".postgres-bootstrap-" + secrets.token_hex(16))
+        try:
+            win32file.CreateDirectory(str(directory), attributes)
+        except pywintypes.error as exc:
+            if exc.winerror not in (80, 183):  # FILE_EXISTS / ALREADY_EXISTS
+                raise
+        else:
+            return directory
+    raise ProvisionError("could not create a unique PostgreSQL bootstrap directory")
+
+
+def _qualify_bootstrap_handle(handle: Any, *, inherit: bool) -> None:
+    """Check the created object, including owner and exact protected DACL."""
+    import win32security  # type: ignore[import-not-found]
+
+    descriptor = win32security.GetSecurityInfo(
+        handle,
+        win32security.SE_FILE_OBJECT,
+        win32security.OWNER_SECURITY_INFORMATION | win32security.DACL_SECURITY_INFORMATION,
+    )
+    control, _revision = descriptor.GetSecurityDescriptorControl()
+    owner = descriptor.GetSecurityDescriptorOwner()
+    dacl = descriptor.GetSecurityDescriptorDacl()
+    if (
+        owner is None
+        or win32security.ConvertSidToStringSid(owner) != SYSTEM_SID
+        or not control & win32security.SE_DACL_PROTECTED
+        or dacl is None
+        or dacl.GetAceCount() != 1
+    ):
+        raise ProvisionError("PostgreSQL bootstrap security descriptor differs")
+    header, mask, sid = dacl.GetAce(0)
+    if (
+        header != (win32security.ACCESS_ALLOWED_ACE_TYPE, 3 if inherit else 0)
+        or mask != FILE_ALL_ACCESS
+        or win32security.ConvertSidToStringSid(sid) != SYSTEM_SID
+    ):
+        raise ProvisionError("PostgreSQL bootstrap DACL differs")
+
+
+def _qualify_bootstrap_directory(directory: Path) -> None:
+    import win32con  # type: ignore[import-not-found]
+    import win32file  # type: ignore[import-not-found]
+
+    handle = win32file.CreateFile(
+        str(directory),
+        win32con.READ_CONTROL,
+        0,
+        None,
+        win32con.OPEN_EXISTING,
+        win32con.FILE_FLAG_BACKUP_SEMANTICS | win32file.FILE_FLAG_OPEN_REPARSE_POINT,
+        None,
+    )
+    try:
+        if (
+            win32file.GetFileInformationByHandle(int(handle))[0]
+            & win32con.FILE_ATTRIBUTE_REPARSE_POINT
+        ):
+            raise ProvisionError("PostgreSQL bootstrap directory is a reparse point")
+        _qualify_bootstrap_handle(handle, inherit=True)
+    finally:
+        handle.Close()
+
+
+def _write_bootstrap_secret(path: Path, value: str) -> None:
+    """Create exclusively with its final DACL, qualify, write, and close privately."""
+    import win32con  # type: ignore[import-not-found]
+    import win32file  # type: ignore[import-not-found]
+
+    handle = win32file.CreateFile(
+        str(path),
+        win32con.GENERIC_WRITE | win32con.READ_CONTROL,
+        0,
+        _bootstrap_security_attributes(inherit=False),
+        win32con.CREATE_NEW,
+        win32con.FILE_ATTRIBUTE_TEMPORARY,
+        None,
+    )
+    try:
+        _qualify_bootstrap_handle(handle, inherit=False)
+        payload = value.encode("ascii")
+        error, written = win32file.WriteFile(int(handle), payload)
+        if error or written != len(payload):
+            raise ProvisionError("PostgreSQL bootstrap credential write incomplete")
+    finally:
+        handle.Close()
+
+
 @contextmanager
 def _bootstrap_password_files(security: Path) -> Iterator[tuple[Path, Path]]:
-    """Create the credential only inside a qualified SYSTEM-only directory."""
-    directory = Path(tempfile.mkdtemp(prefix=".postgres-bootstrap-", dir=security))
+    """Keep short-lived credentials private from native creation through cleanup."""
+    _require_bootstrap_system()
+    directory = _create_bootstrap_directory(security)
     primary_failure: BaseException | None = None
     try:
-        grants = {SYSTEM_SID: FILE_ALL_ACCESS}
-        _protect(directory, grants, inherit=True)
-        _qualify_protected(directory, grants, inherit=True)
+        _qualify_bootstrap_directory(directory)
         password = secrets.token_urlsafe(48)
         password_file = directory / "initdb.password"
         passfile = directory / "pgpass"
-        password_file.write_text(password + "\n", encoding="ascii")
-        passfile.write_text(
-            f"127.0.0.1:{CONTRACT.postgresql_port}:*:postgres:{password}\n", encoding="ascii"
+        _write_bootstrap_secret(password_file, password + "\n")
+        _write_bootstrap_secret(
+            passfile, f"127.0.0.1:{CONTRACT.postgresql_port}:*:postgres:{password}\n"
         )
-        for path in (password_file, passfile):
-            _protect(path, grants, inherit=False)
-            _qualify_protected(path, grants, inherit=False)
         yield password_file, passfile
     except BaseException as exc:
         primary_failure = exc
@@ -420,7 +555,11 @@ def _configure_database_with_password(
         ],
         check=True,
         timeout=120,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
     )
+    # initdb has consumed the password; libpq needs only its separate passfile.
+    password_file.unlink()
     ca = (security / "ca.crt").as_posix()
     cert = (security / "server/server.crt").as_posix()
     key = (security / "server/server.key").as_posix()
@@ -444,6 +583,8 @@ def _configure_database_with_password(
             [str(pg_ctl), "start", "-D", str(data), "-w", "-t", "60"],
             check=True,
             timeout=70,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
         )
         dsn = make_conninfo(
             host=CONTRACT.postgresql_host,
@@ -502,6 +643,8 @@ def _configure_database_with_password(
                     [str(pg_ctl), "stop", "-D", str(data), "-m", "fast", "-w", "-t", "30"],
                     check=True,
                     timeout=40,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
                 )
             except BaseException:
                 if primary_failure is None:
@@ -1254,7 +1397,16 @@ def main(argv: list[str] | None = None) -> int:
         # Preserve the first failure class without leaking provider exception
         # text, which may contain credentials or private ceremony material.
         if args.command == "install":
-            write_safe_failure(args.command, current_stage, exc)
+            try:
+                write_safe_failure(args.command, current_stage, exc)
+            except Exception as diagnostic_exc:
+                # A publication failure must not escape with the sensitive
+                # original exception chained into an unhandled traceback.
+                print(
+                    "safe failure diagnostic unavailable: "
+                    f"exception={type(diagnostic_exc).__name__}",
+                    file=sys.stderr,
+                )
         stage_diagnostic = (
             f" stage={current_stage}" if args.command == "install-production-trust" else ""
         )
