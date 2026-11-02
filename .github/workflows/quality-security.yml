@@ -100,6 +100,7 @@ jobs:
           tests/deployment/test_windows_stage9_service_evidence.py
           tests/deployment/test_windows_stage9_service_inspector.py
           tests/deployment/test_windows_stage9_service_lifecycle.py
+          tests/deployment/test_windows_scm_control_handlers.py
           tests/deployment/test_windows_stage9_installer.py
           tests/deployment/test_windows_backend_recovery_provision.py
           tests/deployment/test_windows_service_recovery.py
@@ -466,6 +467,7 @@ jobs:
           tests/deployment/test_windows_stage9_service_evidence.py
           tests/deployment/test_windows_stage9_service_inspector.py
           tests/deployment/test_windows_stage9_service_lifecycle.py
+          tests/deployment/test_windows_scm_control_handlers.py
           tests/deployment/test_windows_stage9_installer.py
           tests/deployment/test_windows_postgresql_bootstrap.py
           tests/deployment/test_windows_postgresql_role_denial.py

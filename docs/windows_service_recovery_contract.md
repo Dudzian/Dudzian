@@ -79,6 +79,39 @@ nie zastępuje dowodu przejścia systemu. Wyniku statycznej inspekcji nie wolno
 opisywać jako żywej kwalifikacji recovery. Wdrożenie na istniejącym hoście
 wymaga osobno zaplanowanej aktywacji; ta zmiana nie wykonuje rebootu.
 
+## Sterowanie statusem i anulowanie
+
+Wspólna granica `service_base.py` serializuje raportowanie statusu oraz start
+endpointu przez `RLock`. Zapamiętuje pełny status dopiero po udanym
+`ReportServiceStatus`. `SvcInterrogate` odtwarza ten status przez natywne
+`SetServiceStatus`, zachowując controls, checkpoint i wait hint bez uruchamiania
+endpointu ani wykonywania kwalifikacji readiness. Samo interrogation nie
+zwiększa checkpointu: pywin32 zwiększa go przy high-level raporcie pending,
+a pytanie SCM nie dowodzi postępu workera. Przed pierwszym udanym zgłoszeniem
+handler nie wymyśla statusu.
+
+Żądanie `STOP_PENDING` utrwala osobny znacznik zatrzymania przed próbą zgłoszenia
+do SCM, również gdy to zgłoszenie zawiedzie. Późne raporty readiness nie mogą
+cofnąć usługi do `START_PENDING` ani `RUNNING`; interrogation ponawia wtedy
+`STOP_PENDING` zamiast odtwarzać stary `RUNNING`. Po zakończeniu lub awarii
+`SvcRun` Python nie zgłasza kolejnych statusów. Wyłącznym właścicielem końcowego
+`SERVICE_STOPPED` pozostaje natywny host pywin32.
+
+`SvcStop` i delegujący do niego `SvcShutdown` niezależnie podejmują próbę
+zgłoszenia `STOP_PENDING`, ustawienia `stop_event`, ustawienia `evidence_stop`
+oraz natywnego `SetEvent`. Pierwszy wyjątek zachowuje tożsamość; dodatkowe
+błędy są dopisywane wyłącznie przez stałą nazwę operacji i nazwę klasy,
+bez kopiowania ich tekstu do notatek lub logów. Operacje anulowania i join
+endpointu nie trzymają blokady statusu.
+
+Deterministyczne modele wymuszają kolejność współbieżnych INTERROGATE/STOP
+przez zdarzenia, bez opierania poprawności na opóźnieniach. Integracja modeluje
+handler kontrolny oddzielnie od workera PostgreSQL: błąd handlera nie jest
+sztucznie propagowany przez `WaitForSingleObject`. Worker otrzymuje anulowanie,
+opuszcza monitorowanie oryginalnego uchwytu i wykonuje cleanup. Testy zachowują
+również błędne zakończenie postmastera z kodem 0 i niezerowym oraz pojedynczy
+natywny `STOPPED`. Polityka recovery i jej bramki pozostają bez zmian.
+
 ## Walidacja i granice dowodu
 
 Testy setterów obejmują zapis `True` dla początkowych `False` i `True`,
@@ -94,3 +127,11 @@ bramek ownership, legal enrollment, Stage 9/10 ani gotowości produkcyjnej.
 Nie wykonano produkcyjnego provisioningu, restartów usług, rebootu ani natywnej
 kwalifikacji recovery. Żywa próba po aktywacji wymaga oddzielnego, izolowanego
 Windows i istniejących ręcznych bramek kwalifikacji; zwykłe PR CI jej nie wykonuje.
+
+Osobne potwierdzone ustalenie poza poprawką handlerów: anulowanie
+`postgresql_service.wait_ready()` jest nadal klasyfikowane jako
+`PostgreSQLReadinessTimeout`, nawet przed upływem deadline. Nie zmienia to
+wyników powyższych testów anulowania już działającego monitora. Osobna poprawka
+powinna rozdzielić anulowanie START_PENDING od rzeczywistego timeoutu,
+zachowując kontrolowany cleanup oryginalnego procesu, awarie przy spontanicznym
+exit 0/niezerowym, błędy uchwytów i wyłącznie natywny końcowy STOPPED.
