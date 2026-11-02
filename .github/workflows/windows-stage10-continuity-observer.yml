@@ -1,0 +1,69 @@
+name: Windows Stage 10 — obserwator ciągłości
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  continuity-observer:
+    name: Obserwator procesu (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with: {persist-credentials: false}
+      - uses: actions/setup-python@v7
+        with: {python-version: "3.11"}
+      - name: Przygotuj narzędzia izolowanych testów
+        run: >-
+          python -m pip install pytest pytest-cov pyyaml jsonschema packaging
+          "cryptography>=50.0.1,<51" "ruff==0.14.11" "mypy==1.10.0"
+      - name: Przygotuj istniejące adaptery Win32 do regresji
+        if: runner.os == 'Windows'
+        run: python -m pip install pywin32==312
+      - name: Sprawdź lint nowego modułu i testów
+        run: >-
+          python -m ruff check deployment/windows_stage10_continuity_observer.py
+          tests/deployment/test_windows_stage10_continuity_observer.py
+          tests/deployment/test_windows_stage10_continuity_native_windows.py
+      - name: Sprawdź format poza zakresem hooka i format testów
+        run: >-
+          python -m ruff format --check deployment/windows_stage10_continuity_observer.py
+          tests/deployment/test_windows_stage10_continuity_observer.py
+          tests/deployment/test_windows_stage10_continuity_native_windows.py
+      - name: Sprawdź typy na bieżącej platformie
+        run: python -m mypy deployment/windows_stage10_continuity_observer.py
+      - name: Sprawdź typy dla Win32
+        run: python -m mypy --platform win32 deployment/windows_stage10_continuity_observer.py
+      - name: Sprawdź model ciągłości i natywne uchwyty własnych procesów
+        # Natywne przypadki wykonują się tylko na hostowanym Windows. Ich helper
+        # nie jest usługą CryptoHunter i nie może wystawić produkcyjnego evidence.
+        run: >-
+          python -m pytest -q tests/deployment/test_windows_stage10_continuity_observer.py
+          tests/deployment/test_windows_stage10_continuity_native_windows.py
+          --cov=deployment.windows_stage10_continuity_observer --cov-branch
+          --cov-report=term-missing --cov-report=xml:windows-stage10-continuity-coverage.xml
+      - name: Sprawdź nieprzechodnią bramkę i regresje Windows Stage 9/10
+        run: >-
+          python -m pytest -q tests/deployment/test_windows_stage10_proof_validation.py
+          tests/deployment/test_windows_stage10_runtime_provenance.py
+          tests/deployment/test_windows_stage10_evidence_identity.py
+          tests/deployment/test_windows_stage9_install_native.py
+          tests/deployment/test_windows_stage9_install_qualification.py
+          tests/deployment/test_windows_stage9_service_evidence.py
+          tests/deployment/test_platform_evidence.py tests/deployment/test_platform_readiness.py
+      - name: Zachowaj wyłącznie raport pokrycia kodu testów
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-stage10-continuity-coverage-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: windows-stage10-continuity-coverage.xml
+          if-no-files-found: error
+          retention-days: 7

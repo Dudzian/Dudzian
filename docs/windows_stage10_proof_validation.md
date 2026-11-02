@@ -235,3 +235,8 @@ testów i osobnego przeglądu granicy zaufania.
 `WINDOWS_LIVE_LIFECYCLE_QUALIFIED=NO`
 
 `STAGE10_PRODUCTION_READY=NO`
+
+Podstawę natywnej obserwacji procesu, jej diagnostyczny zakres, model czasu
+i pozostałe blokady opisuje
+[obserwator ciągłości Windows Stage 10](windows_stage10_continuity_observer.md).
+Nie otwiera on powyższej bramki ani nie kwalifikuje produkcyjnego lifecycle.
