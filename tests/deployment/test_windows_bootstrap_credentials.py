@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
+import codecs
 import ctypes
 import os
 import re
@@ -21,6 +22,10 @@ class _RelativeCredentialRead:
     def __init__(self):
         from deployment import windows_stage10_diagnostic_windows as layout
 
+        # Python imports this codec lazily. Resolve it while still SYSTEM;
+        # Anonymous must not need access to the Python installation to read a
+        # fixture child whose directory handle has already been pinned.
+        codecs.lookup("utf-16-le")
         self.layout = layout
         self.boundary = layout._Native()
 
@@ -517,6 +522,59 @@ def test_baseexception_also_removes_secret_files(tmp_path: Path, native) -> None
 def test_relative_fixture_read_refuses_paths_outside_one_bounded_leaf(name):
     with pytest.raises(ValueError):
         _RelativeCredentialRead._check_leaf(name)
+
+
+def test_relative_fixture_codec_is_ready_before_restricted_token_boundary():
+    # A fresh interpreter must not inherit this pytest process's codec cache.
+    # Model Anonymous being unable to import Python files after construction.
+    script = """
+import builtins
+import codecs
+import ctypes
+import encodings
+import importlib.util
+import sys
+from types import SimpleNamespace
+from deployment import windows_stage10_diagnostic_windows as layout
+
+spec = importlib.util.spec_from_file_location("credential_fixture", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+codecs.unregister(encodings.search_function)
+encodings._cache.clear()
+sys.modules.pop("encodings.utf_16_le", None)
+codecs.register(encodings.search_function)
+
+def create(output, _access, _attributes, status, *_args):
+    ctypes.cast(output, ctypes.POINTER(ctypes.c_void_p))[0] = 123
+    ctypes.cast(status, ctypes.POINTER(layout._IoStatus)).contents.status_or_pointer = 0
+    return 0
+
+layout._Native = lambda: SimpleNamespace(nt=SimpleNamespace(NtCreateFile=create))
+probe = module._RelativeCredentialRead()
+original_import = builtins.__import__
+
+def restricted_import(name, *args, **kwargs):
+    if name == "encodings.utf_16_le":
+        raise ModuleNotFoundError("controlled unavailable codec")
+    return original_import(name, *args, **kwargs)
+
+builtins.__import__ = restricted_import
+try:
+    handle = probe.open(456, "anonymous-readable-control")
+except LookupError:
+    sys.exit(52)
+if handle != 123:
+    sys.exit(53)
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script, str(Path(__file__).resolve())],
+        cwd=Path(__file__).resolve().parents[2],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        timeout=30,
+    )
+    assert result.returncode == 0, f"codec boundary proof rejected ({result.returncode})"
 
 
 @pytest.mark.parametrize(
