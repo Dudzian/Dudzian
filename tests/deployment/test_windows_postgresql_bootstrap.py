@@ -213,8 +213,9 @@ def test_real_libpq_password_selection_requires_explicit_empty_with_passfile(
     for name in tuple(os.environ):
         if name.startswith("PG"):
             monkeypatch.delenv(name)
-    ambient = "synthetic-unrelated-machine-credential"
-    file_password = "synthetic-qualified-file-credential"
+    # The colon guarantees the ambient value differs from the URL-safe file password.
+    ambient = secrets.token_urlsafe(48) + ":"
+    file_password = secrets.token_urlsafe(48)
     monkeypatch.setenv("PGPASSWORD", ambient)
     passfile = tmp_path / "pgpass"
     passfile.write_text(f"127.0.0.1:1:postgres:postgres:{file_password}\n", encoding="ascii")
