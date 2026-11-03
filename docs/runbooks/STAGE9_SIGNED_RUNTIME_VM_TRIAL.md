@@ -1,5 +1,11 @@
 # Stage 9 — ręczna próba podpisanego runtime na jednorazowej VM
 
+> Bieżące wykonanie prowadzić przez
+> [harness INSPECT/EXECUTE-VM-TRIAL](STAGE9_LINUX_VM_HARNESS.md), z niezależnym
+> zatwierdzeniem VM i manifestem aplikacji v2. Odsyłacze poniżej do starszego
+> runbooka służą wyłącznie przygotowaniu/izolacji; jego eksport manifestu v1
+> i historyczna blokada runtime nie są procedurą bieżącego wydania.
+
 Procedura dotyczy wyłącznie Ubuntu Server 24.04 amd64 z systemd jako PID 1.
 Wykonuje ją operator na odizolowanej VM, bez Della, danych lub kluczy
 produkcyjnych. Nie wykonuje jej automatycznie pytest ani agent przygotowujący PR.

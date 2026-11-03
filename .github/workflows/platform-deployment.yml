@@ -34,6 +34,10 @@ jobs:
           deployment/linux_release_identity.py
           deployment/production_local_installer.py
           deployment/production_local_installer_host.py
+          deployment/stage9_vm_trial.py
+          deployment/stage9_vm_environment.py
+          deployment/stage9_vm_native.py
+          scripts/prepare_stage9_vm_bundle.py
           deployment/freshness_verifier_entrypoint.py
           deployment/linux_physical_ipc.py
           deployment/linux_physical_postgresql.py
@@ -59,6 +63,10 @@ jobs:
           tests/security/test_linux_service_postgresql_integration.py
           tests/deployment/test_linux_release_identity.py
           tests/deployment/test_production_local_installer.py
+          tests/deployment/test_stage9_vm_trial.py
+          tests/deployment/test_stage9_vm_environment.py
+          tests/deployment/test_stage9_vm_native.py
+          tests/deployment/test_prepare_stage9_vm_bundle.py
           tests/deployment/test_linux_physical_collector.py
           tests/deployment/test_linux_physical_native.py
           tests/scripts/test_linux_physical_evidence_workflow.py
@@ -69,6 +77,10 @@ jobs:
           deployment/linux_release_identity.py
           deployment/production_local_installer.py
           deployment/production_local_installer_host.py
+          deployment/stage9_vm_trial.py
+          deployment/stage9_vm_environment.py
+          deployment/stage9_vm_native.py
+          scripts/prepare_stage9_vm_bundle.py
           deployment/freshness_verifier_entrypoint.py
           deployment/linux_physical_ipc.py
           deployment/linux_physical_postgresql.py
@@ -94,6 +106,10 @@ jobs:
           tests/security/test_linux_service_postgresql_integration.py
           tests/deployment/test_linux_release_identity.py
           tests/deployment/test_production_local_installer.py
+          tests/deployment/test_stage9_vm_trial.py
+          tests/deployment/test_stage9_vm_environment.py
+          tests/deployment/test_stage9_vm_native.py
+          tests/deployment/test_prepare_stage9_vm_bundle.py
           tests/deployment/test_linux_physical_collector.py
           tests/deployment/test_linux_physical_native.py
           tests/scripts/test_linux_physical_evidence_workflow.py
@@ -104,6 +120,10 @@ jobs:
           deployment/linux_release_identity.py
           deployment/production_local_installer.py
           deployment/production_local_installer_host.py
+          deployment/stage9_vm_trial.py
+          deployment/stage9_vm_environment.py
+          deployment/stage9_vm_native.py
+          scripts/prepare_stage9_vm_bundle.py
           deployment/freshness_verifier_entrypoint.py
           deployment/linux_physical_ipc.py
           deployment/linux_physical_postgresql.py
@@ -115,6 +135,27 @@ jobs:
           bot_core/freshness_verifier_service.py
           deployment/linux_physical_collector.py deployment/linux_evidence_handoff.py
           deployment/platform_readiness.py deployment/platform_evidence.py
+      - name: Zapisz rzeczywistą tożsamość i uprawnienia katalogów testowych
+        shell: python
+        run: |
+          import json
+          import os
+          import stat
+          import tempfile
+          from pathlib import Path
+
+          with tempfile.TemporaryDirectory(prefix="stage9-exporter-ci-") as directory:
+              paths = (Path("/"), Path("/tmp"), Path(directory))
+              print(json.dumps({
+                  "effective_uid": os.geteuid(),
+                  "effective_gid": os.getegid(),
+                  "directories": [
+                      {"path": str(path), "uid": path.lstat().st_uid,
+                       "gid": path.lstat().st_gid,
+                       "mode": oct(stat.S_IMODE(path.lstat().st_mode))}
+                      for path in paths
+                  ],
+              }, sort_keys=True))
       - name: Sprawdź hermetyczne kontrakty i odmowy bez kwalifikacji fizycznej
         run: >-
           python -m pytest -q tests/deployment/test_linux_physical_evidence.py
@@ -130,6 +171,10 @@ jobs:
           tests/deployment/test_linux_verifier_observation.py
           tests/deployment/test_linux_release_identity.py
           tests/deployment/test_production_local_installer.py
+          tests/deployment/test_stage9_vm_trial.py
+          tests/deployment/test_stage9_vm_environment.py
+          tests/deployment/test_stage9_vm_native.py
+          tests/deployment/test_prepare_stage9_vm_bundle.py
           tests/deployment/test_linux_physical_collector.py
           tests/deployment/test_linux_physical_native.py
           tests/scripts/test_linux_physical_evidence_workflow.py

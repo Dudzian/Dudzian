@@ -126,6 +126,10 @@ jobs:
           deployment/freshness_runtime.py
           deployment/freshness_runtime_bootstrap.py
           deployment/build_freshness_runtime.py
+          deployment/stage9_vm_trial.py
+          deployment/stage9_vm_environment.py
+          deployment/stage9_vm_native.py
+          scripts/prepare_stage9_vm_bundle.py
           deployment/production_local_installer.py
           deployment/production_local_installer_host.py
           deployment/freshness_verifier_entrypoint.py
@@ -158,6 +162,10 @@ jobs:
           tests/deployment/test_linux_release_identity.py
           tests/deployment/test_freshness_runtime.py
           tests/deployment/test_build_freshness_runtime.py
+          tests/deployment/test_stage9_vm_trial.py
+          tests/deployment/test_stage9_vm_environment.py
+          tests/deployment/test_stage9_vm_native.py
+          tests/deployment/test_prepare_stage9_vm_bundle.py
           tests/deployment/test_production_local_installer.py
           tests/deployment/test_linux_physical_collector.py
           tests/deployment/test_linux_physical_native.py
@@ -391,6 +399,10 @@ jobs:
           deployment/freshness_runtime.py
           deployment/freshness_runtime_bootstrap.py
           deployment/build_freshness_runtime.py
+          deployment/stage9_vm_trial.py
+          deployment/stage9_vm_environment.py
+          deployment/stage9_vm_native.py
+          scripts/prepare_stage9_vm_bundle.py
           deployment/production_local_installer.py
           deployment/production_local_installer_host.py
           deployment/freshness_verifier_entrypoint.py
@@ -430,6 +442,10 @@ jobs:
           tests/deployment/test_linux_release_identity.py
           tests/deployment/test_freshness_runtime.py
           tests/deployment/test_build_freshness_runtime.py
+          tests/deployment/test_stage9_vm_trial.py
+          tests/deployment/test_stage9_vm_environment.py
+          tests/deployment/test_stage9_vm_native.py
+          tests/deployment/test_prepare_stage9_vm_bundle.py
           tests/deployment/test_production_local_installer.py
           tests/deployment/test_linux_physical_collector.py
           tests/deployment/test_linux_physical_native.py
@@ -566,6 +582,10 @@ jobs:
           --cov=deployment.freshness_runtime
           --cov=deployment.freshness_runtime_bootstrap
           --cov=deployment.build_freshness_runtime
+          --cov=deployment.stage9_vm_trial
+          --cov=deployment.stage9_vm_environment
+          --cov=deployment.stage9_vm_native
+          --cov=scripts.prepare_stage9_vm_bundle
           --cov=deployment.production_local_installer
           --cov=deployment.production_local_installer_host
           --cov=deployment.freshness_verifier_entrypoint
