@@ -117,6 +117,10 @@ def failure_type(exc: BaseException) -> str:
         return "ATTRIBUTE_ERROR"
     if isinstance(exc, KeyError):
         return "KEY_ERROR"
+    if isinstance(exc, TypeError):
+        return "TYPE_ERROR"
+    if isinstance(exc, ValueError):
+        return "VALUE_ERROR"
     if isinstance(exc, ProofFailure):
         return "PROOF_FAILURE"
     if type(exc).__module__ == "pywintypes" and type(exc).__name__ == "error":
@@ -313,7 +317,7 @@ def main() -> int:
                     # Every disposable postmaster stays in this kill-on-close
                     # job, including after abrupt scheduled-task termination.
                     report["stage"] = "CREATE_JOB_OBJECT"
-                    job = win32job.CreateJobObject(None, None)
+                    job = win32job.CreateJobObject(None, "")
                     report["stage"] = "QUERY_JOB_OBJECT"
                     limits = win32job.QueryInformationJobObject(
                         job, win32job.JobObjectExtendedLimitInformation
