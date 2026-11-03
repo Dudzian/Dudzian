@@ -216,7 +216,7 @@ def _write(output: Path, relative: str, content: bytes, mode: int) -> None:
     if not target.parent.exists():
         target.parent.mkdir(mode=0o755)
         target.parent.chmod(0o755)
-    fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, mode)
+    fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
     with os.fdopen(fd, "wb") as stream:
         stream.write(content)
         os.fchmod(stream.fileno(), mode)
