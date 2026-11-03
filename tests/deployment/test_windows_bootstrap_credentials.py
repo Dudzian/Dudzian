@@ -284,7 +284,12 @@ def test_creation_qualification_and_partial_write_failures_remove_credentials(
             pytest.fail("failed credential must never be handed to a consumer")
     assert list(tmp_path.iterdir()) == []
     assert all(handle.closed for handle in native.handles)
-    if failure in {"directory-create", "directory-open", "directory-attributes", "qualify-directory"}:
+    if failure in {
+        "directory-create",
+        "directory-open",
+        "directory-attributes",
+        "qualify-directory",
+    }:
         assert generated == []
     if failure == "qualify-file":
         assert not any(event[0] == "write" for event in native.events)
