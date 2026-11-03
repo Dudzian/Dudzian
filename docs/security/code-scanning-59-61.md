@@ -13,9 +13,9 @@ Ponowny odczyt ze skonfigurowanym `GITHUB_ALERT_TOKEN` 2026-11-03:
 
 | Zakres | Czas UTC | Wynik |
 | --- | --- | --- |
-| `GET /repos/Dudzian/Dudzian/code-scanning/alerts/59`, `/60`, `/61` | 15:29:27–15:29:28 | Wszystkie HTTP 403: `Resource not accessible by integration` |
-| Trzy odpowiadające endpointy `/alerts/{number}/instances` | 15:27 | Wszystkie HTTP 403: `Resource not accessible by integration` |
-| `GET /repos/Dudzian/Dudzian/code-scanning/analyses` | 15:27 | HTTP 403: `Resource not accessible by integration` |
+| `GET /repos/Dudzian/Dudzian/code-scanning/alerts/59`, `/60`, `/61` | 20:07:50 | Wszystkie HTTP 403: `Resource not accessible by integration` |
+| Trzy odpowiadające endpointy `/alerts/{number}/instances` | 20:07:50 | Wszystkie HTTP 403: `Resource not accessible by integration` |
+| `GET /repos/Dudzian/Dudzian/code-scanning/analyses` | 20:07:50 | HTTP 403: `Resource not accessible by integration` |
 
 Wartości poświadczenia nie wypisano ani nie zapisano w raporcie. Historyczny
 odczyt 2026-11-02 również zwracał 403; nagłówek wskazywał wymaganie
@@ -45,14 +45,15 @@ Nie przypisujemy #59 reguły ani przyczyny na podstawie sąsiednich numerów.
 
 Main `996f2bab4b7ed586a37c0434d857b7ef3a8211b5` zawiera scalone
 [#3243](https://github.com/Dudzian/Dudzian/pull/3243) i
-[#3245](https://github.com/Dudzian/Dudzian/pull/3245). Przygotowana synchronizacja
+[#3245](https://github.com/Dudzian/Dudzian/pull/3245). Wykonana synchronizacja
 `4761c43b94d3d2a569e236e10b8ded797913c101` ma rodziców `6ed51759…` i `996f2bab…`.
 Siedem plików poprawek natywnych jest identycznych z `ff967ad4…`, a oba pliki
 poprawki Linux z `cd3b964a…`. Zachowano oryginalne uchwyty procesu/katalogu,
 odmowę nadpisania, precyzyjne zegary, dokładny typ `bytes` i bramki Stage 9/10.
 Historyczne błędy brakującego `QueryFullProcessImageName`, rename Errno 87,
 prefiksów symlinków i Linux `no-any-return` pochodziły ze starej bazy;
-nie są regresjami poprawki poświadczeń. Wyniki nowej rewizji wymagają własnej CI.
+nie są regresjami poprawki poświadczeń. Na nowej bazie oba kontrakty
+Windows/Linux przeszły; aktualne bramki produkcyjne opisano osobno poniżej.
 
 ## Ograniczenie ryzyka w źródle
 
@@ -117,22 +118,68 @@ Nie dodano suppressions, nie osłabiono skanerów i nie zmieniano alertów.
 bezpośrednim wejściem `--pwfile`/`passfile`; stdin, named pipe, delete-on-close
 lub zamiennik w pamięci wymagają osobnego dowodu zgodności i cyklu życia.
 
-## Walidacja i warunki dalszej oceny
+## Końcowa walidacja i warunki dalszej oceny
 
-Natywny bootstrap na `6ed51759…` przeszedł
-[run 41660182573](https://github.com/Dudzian/Dudzian/actions/runs/41660182573):
-rzeczywisty LocalSystem, przypięte binaria, passfile, SCRAM/`verify-full`,
-negatywne hasło/CA/TLS, końcowe HBA i cleanup; modele Windows: 76 passed,
-4 opt-in skipped. Nie jest to dowód osobnych prób obcego tokenu i crash.
-Lokalne **724 passed, 21 skipped** dotyczą stanu **przed rozszerzeniem** harnessu.
+Rewizja zweryfikowanego kodu i sondy natywnej:
+`3bb4ad27d063000e45886ab3e3bd2d17b87ad715`. Końcowy commit aktualizujący
+niniejszy raport nie zmienia kodu; aktualny HEAD gałęzi jest podany w opisie PR.
 
-Nowy harness ma uruchamiać istniejące dwa opt-in przypadki LocalSystem:
-anonimowy czytelnik i pozostałości po crash. Ich wykonanie na nowej rewizji
-pozostaje **oczekujące**, dopóki nie zostanie odczytany wynik Windows.
-Modele Win32 i Linux/POSIX nie zastępują tych dowodów Object Managera.
+| Sprawdzenie | Wynik i granica dowodu |
+| --- | --- |
+| [LocalSystem, run 41709367175](https://github.com/Dudzian/Dudzian/actions/runs/41709367175/job/126173081008) | **PASS**; obie rzeczywiste próby Anonymous/crash wykonane, `CASE_PASSED`, exit0, bez skipów; bootstrap i cały cleanup PASS |
+| Modele na tym Windows | **95 passed, 4 skipped**; dwa opt-in ACL/crash uruchomiono dodatkowo pod SYSTEM |
+| [Pełny MSI po aktualizacji main](https://github.com/Dudzian/Dudzian/actions/runs/41671594169/job/126082425853) | **PASS**, receipt: install_exit_code=0 i uninstall_exit_code=0; files/services/DACL/PostgreSQL/Production Trust/fail-closed enrollment/cleanup PASS |
+| Bieżący zestaw lokalny Windows/Linux po zmianach fixture | **743 passed, 21 platform/opt-in skipped** |
+| Ruff całego baseline i zmienionych modułów; osobny format Windows | **PASS** |
+| Skonfigurowany mypy Linux i win32 | **PASS**, po 387 plików; dodatkowy dokładny mypy linux-evidence-contract: 19 plików PASS |
+| Dokładny `python -m pre_commit run ruff-format --all-files` | **PASS**, bez zmian po końcowej edycji raportu |
+| Betterleaks 1.9.0, pełny czysty eksport śledzonych plików z końcowym raportem | **PASS**, exit0, istniejący baseline, bez nowych wyłączeń |
+| [CI](https://github.com/Dudzian/Dudzian/actions/runs/41671593966), [Quality](https://github.com/Dudzian/Dudzian/actions/runs/41671594146), [CodeQL](https://github.com/Dudzian/Dudzian/actions/runs/41671593899) i oba workflow testowe Stage 10 dla e1b749bd | **PASS**; sukces CodeQL nie rozstrzyga numerowanych alertów |
 
-Dokładne SHA, końcowe wyniki pytest/Ruff/mypy i obowiązkowego
-`python -m pre_commit run ruff-format --all-files` są utrzymywane w opisie PR.
+[CodeQL dla 3bb4ad27](https://github.com/Dudzian/Dudzian/actions/runs/41709367193),
+Style i oba testowe workflow Stage 10 również zakończyły się sukcesem.
+Odczyt o 20:18 UTC: Quality i zwykłe CI tej rewizji nadal trwają; Platform
+Deployment ma zielone core wszystkich systemów, oba kontrakty, akceptację Windows
+i zgodność macOS, lecz MSI job `126177123155` nadal jest w kolejce. Nie nazywamy
+całych tych workflow PASS ani nie przenosimy dowodu MSI na cały nowy HEAD.
+
+Sonda Anonymous nadal wymaga rzeczywistego odczytu znanego pliku kontrolnego,
+a następnie `Access denied` dla prywatnego katalogu i obu plików. Dostarcza też
+atakującemu wcześniej otwarty uchwyt prywatnego katalogu, sprawdzając DACL
+samych plików. Odczyty są względne do przypiętych uchwytów fixture, aby prywatne
+hostowe katalogi nadrzędne nie maskowały badanej granicy. Udostępnienia,
+status pending, brak uchwytu lub inny błąd nie zastępują odmowy dostępu.
+Pythonowy kodek UTF-16LE jest inicjalizowany przed impersonacją; osobna regresja
+zimnego cache odtwarza wcześniejszy błąd sondy. Nie rozszerzano ACL produkcji,
+nie pomijano kontroli ani odmowy reparse. Próba crash potwierdza prywatność
+pozostałych plików, **nie automatyczne sprzątanie produkcji po śmierci procesu**.
+
+MSI sprawdzono dla head `e1b749bd6ada920b987847871429d0e2397745ea`.
+Receipt zapisuje checkout testowego merge GitHub Actions
+`38177dcb4f3a6d67806eb6ca1915529eb4d72c2d`; oba mają identyczne drzewo
+`ac0bbb61388162b726cd621236464a18bce26b18`.
+Produkcyjny provisioner jest identyczny z końcowym kodem, SHA-256
+`f75f74973fbc8a2ec1090b49fe5fd29e615f0376e92503766efe9669e07fd40f`.
+Zweryfikowano także digest pobranego artefaktu. Po tym przebiegu zmieniono
+wyłącznie sondę testową/kodek i raport, bez zmian produkcyjnego instalatora.
+
+Workflow platformowy dla `e1b749bd…` nie był w całości zielony.
+Zachowane bramki odmawiają:
+
+- Linux: systemd, clean install i reboot/update mają `MISSING_CURRENT_EVIDENCE`
+  (`LIVE_LINUX_INTEGRATION`); `LINUX_PRODUCTION_READY=NOT_READY`.
+- Windows: `WINDOWS_REBOOT_RECOVERY`, `WINDOWS_LONG_RUNNING_LIFECYCLE`,
+  `WINDOWS_UPDATE_RESTART` i `WINDOWS_FAILED_UPDATE_SAFE_BEHAVIOR` pozostają
+  niespełnione. Dwa ostatnie dotyczą nierozstrzygniętego kontraktu bezpiecznego
+  updatera, nie tylko niewykonanych testów reboot. `WINDOWS_BETA_RELEASE_READY=NOT_READY`.
+- Ręczne próby fizyczne/reboot zostały pominięte zgodnie z bramkami; macOS
+  deployment compatibility w tym przebiegu anulowano. Nie raportujemy go jako PASS.
+
+Kod bramek i kontrakty są identyczne ze scalonym main. To odrębne wymagania
+kwalifikacji, nie powrót naprawionych błędów API lub Linux no-any-return.
+
 Bez pełnego odczytu alertów, instancji i powiązanego SARIF nie deklarujemy
 ich naprawienia, false positive ani zaakceptowania ryzyka. **Draft / BLOCKED**
-pozostaje jawny; żaden PR nie został scalony w ramach tej operacji.
+pozostaje jawny. Nie scalono PR #3244 i nie zmieniano stanów alertów. Do dalszej
+oceny potrzebny jest autoryzowany odczyt Code scanning alerts w tym repozytorium
+przez skonfigurowane poświadczenie; wartości tokenu nie należy publikować.
