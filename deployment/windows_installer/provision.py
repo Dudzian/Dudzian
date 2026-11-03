@@ -655,6 +655,8 @@ def _configure_database_with_password(
             port=CONTRACT.postgresql_port,
             dbname="postgres",
             user="postgres",
+            # Empty explicitly blocks PGPASSWORD fallback but still selects the passfile.
+            password="",
             passfile=str(passfile),
             sslmode="verify-full",
             sslrootcert=ca,

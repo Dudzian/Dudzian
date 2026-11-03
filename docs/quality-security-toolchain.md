@@ -74,6 +74,15 @@ Windows uprawnieniami POSIX. Nie kwalifikuje SCM, Job Objects ani ACL Windows.
 Progi pokrycia, timeouty i bramki instalacji, enrollment oraz Stage 9/10 pozostają
 bez zmian.
 
+Workflow `windows-postgresql-bootstrap.yml` uruchamia również rzeczywisty,
+jednorazowy PostgreSQL EDB na hostowanym Windows jako LocalSystem. Używa
+przypiętych binariów i prawdziwych ACL, zachowuje zastane `PGPASSWORD`
+(lub tworzy kontrolowaną wartość testową) oraz porównuje wybór hasła przez libpq.
+Jawne `password=""` wyłącza fallback do `PGPASSWORD`, nadal wymagając chronionego
+passfile, SCRAM i `verify-full`. Test sprawdza odmowy hasła/CA/TLS oraz cleanup;
+publikuje tylko stałe kategorie i booleany. Nie instaluje MSI ani nie kwalifikuje
+Stage 9/10. Kanoniczny job MSI zachowuje wszystkie własne zależności i bramki.
+
 Regresje `test_windows_bootstrap_credentials.py` rozszerzają istniejący
 `quality-ratchet` o natywne modele tworzenia z jawną DACL, odmowę niewłaściwej
 tożsamości, dziedziczenia i nadpisania, błędy częściowego zapisu oraz cleanup.

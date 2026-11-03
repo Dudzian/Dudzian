@@ -13,7 +13,7 @@ import sys
 import time
 
 import psycopg
-from psycopg.conninfo import conninfo_to_dict
+from psycopg.conninfo import conninfo_to_dict, make_conninfo
 import pytest
 
 from deployment.windows_installer import provision
@@ -58,6 +58,7 @@ def test_bootstrap_model_requires_preestablished_credential_and_always_removes_i
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure_stage: str | None, capsys, caplog
 ) -> None:
     _posix_bootstrap_adapter(monkeypatch)
+    monkeypatch.setenv("PGPASSWORD", "synthetic-unrelated-machine-credential")
     data, security = tmp_path / "data", tmp_path / "security"
     data.mkdir()
     security.mkdir()
@@ -147,6 +148,7 @@ def test_bootstrap_model_requires_preestablished_credential_and_always_removes_i
             == f"127.0.0.1:{provision.CONTRACT.postgresql_port}:*:postgres:{password}\n"
         )
         assert options["sslmode"] == "verify-full"
+        assert options["password"] == ""
         assert options["sslrootcert"] == (security / "ca.crt").as_posix()
         assert options["connect_timeout"] == "5"
         assert password not in dsn
@@ -201,6 +203,44 @@ def test_bootstrap_model_requires_preestablished_credential_and_always_removes_i
         assert all(password not in value for value in os.environ.values())
     if any(command[1] == "start" for command in commands):
         assert commands[-1][1] == "stop"
+
+
+@pytest.mark.parametrize("explicit_empty_password", (False, True))
+def test_real_libpq_password_selection_requires_explicit_empty_with_passfile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, explicit_empty_password: bool
+) -> None:
+    """Inspect real libpq selection before polling; no server or auth is needed."""
+    for name in tuple(os.environ):
+        if name.startswith("PG"):
+            monkeypatch.delenv(name)
+    ambient = "synthetic-unrelated-machine-credential"
+    file_password = "synthetic-qualified-file-credential"
+    monkeypatch.setenv("PGPASSWORD", ambient)
+    passfile = tmp_path / "pgpass"
+    passfile.write_text(f"127.0.0.1:1:postgres:postgres:{file_password}\n", encoding="ascii")
+    passfile.chmod(0o600)
+    options = {
+        "host": "127.0.0.1",
+        "hostaddr": "127.0.0.1",
+        "port": "1",
+        "dbname": "postgres",
+        "user": "postgres",
+        "passfile": str(passfile),
+        "sslmode": "verify-full",
+        # Even an unexpected local listener cannot authenticate without this CA.
+        "sslrootcert": str(tmp_path / "absent-ca.crt"),
+        "connect_timeout": "1",
+    }
+    if explicit_empty_password:
+        options["password"] = ""
+    connection = psycopg.pq.PGconn.connect_start(make_conninfo(**options).encode())
+    try:
+        selected_file = connection.password == file_password.encode()
+        selected_ambient = connection.password == ambient.encode()
+        assert selected_file is explicit_empty_password
+        assert selected_ambient is (not explicit_empty_password)
+    finally:
+        connection.finish()
 
 
 @pytest.mark.parametrize("fail_qualification", (False, True))
