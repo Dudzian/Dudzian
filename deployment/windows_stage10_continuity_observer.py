@@ -94,9 +94,24 @@ class _NativeClock:
         loader = getattr(ctypes, "WinDLL", None)
         if loader is None:
             raise ObservationLost("Natywny loader Win32 jest niedostępny")
-        kernel = loader("kernel32.dll", use_last_error=True, winmode=0x00000800)
-        self._biased = kernel.QueryInterruptTimePrecise
-        self._unbiased = kernel.QueryUnbiasedInterruptTimePrecise
+        # Some Windows hosts do not export these precise calls from kernel32,
+        # even when the same APIs are available through the fixed realtime API
+        # set. Never downgrade to an imprecise timer or a wall clock.
+        for dll in (
+            "api-ms-win-core-realtime-l1-1-2.dll",
+            "api-ms-win-core-realtime-l1-1-1.dll",
+            "kernel32.dll",
+        ):
+            try:
+                realtime = loader(dll, use_last_error=True, winmode=0x00000800)
+                biased = realtime.QueryInterruptTimePrecise
+                unbiased = realtime.QueryUnbiasedInterruptTimePrecise
+            except (OSError, AttributeError):
+                continue
+            self._biased, self._unbiased = biased, unbiased
+            break
+        else:
+            raise ObservationLost("Precise native interrupt-time APIs unavailable")
         for function in (self._biased, self._unbiased):
             function.argtypes = [ctypes.POINTER(ctypes.c_ulonglong)]
             function.restype = None

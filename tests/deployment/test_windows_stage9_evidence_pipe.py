@@ -661,3 +661,21 @@ def test_process_image_query_rejects_unsupported_flags_before_native_access() ->
     adapter = pipe._ProcessWithImagePath(SimpleNamespace())
     with pytest.raises(pipe.EvidencePipeError, match="unapproved"):
         adapter.QueryFullProcessImageName(42, 2)
+
+
+def test_process_image_query_denies_missing_native_error_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def denied(handle: Any, flags: int, output: Any, length: Any) -> int:
+        return 0
+
+    monkeypatch.setattr(
+        pipe.ctypes,
+        "WinDLL",
+        lambda *_args, **_kwargs: SimpleNamespace(QueryFullProcessImageNameW=denied),
+        raising=False,
+    )
+    monkeypatch.delattr(pipe.ctypes, "get_last_error", raising=False)
+    adapter = pipe._ProcessWithImagePath(SimpleNamespace())
+    with pytest.raises(pipe.EvidencePipeError, match="error status unavailable"):
+        adapter.QueryFullProcessImageName(42, 0)

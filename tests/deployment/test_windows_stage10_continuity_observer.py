@@ -861,3 +861,74 @@ def test_publiczny_backend_korzysta_wylacznie_z_kontraktu_scm(
     assert result.process_identity is not None
     assert result.process_identity["name"] == observer.CONTRACT.backend_service
     assert_service_closed(native_service)
+
+
+@pytest.mark.parametrize("available", ["l1-1-2", "l1-1-1", "kernel32", "none"])
+def test_native_clock_resolves_precise_realtime_api_set_or_fails_closed(
+    monkeypatch: pytest.MonkeyPatch, available: str
+) -> None:
+    """Never substitute wall time or imprecise clocks for suspend detection."""
+    import ctypes
+
+    names = {
+        "l1-1-2": "api-ms-win-core-realtime-l1-1-2.dll",
+        "l1-1-1": "api-ms-win-core-realtime-l1-1-1.dll",
+        "kernel32": "kernel32.dll",
+    }
+    selected = names.get(available)
+    attempted: list[str] = []
+    ticks = [20_000_000, 19_000_000, 20_000_001]
+
+    def precise(out: Any) -> None:
+        out._obj.value = ticks.pop(0)
+
+    def unbiased(out: Any) -> None:
+        out._obj.value = ticks.pop(0)
+
+    def load(name: str, **kwargs: Any) -> Any:
+        attempted.append(name)
+        assert kwargs == {"use_last_error": True, "winmode": 0x00000800}
+        if name != selected:
+            raise OSError("fixed API set not exported")
+        return SimpleNamespace(
+            QueryInterruptTimePrecise=precise,
+            QueryUnbiasedInterruptTimePrecise=unbiased,
+        )
+
+    monkeypatch.setattr(observer, "os", SimpleNamespace(name="nt"))
+    monkeypatch.setattr(ctypes, "WinDLL", load, raising=False)
+    if selected is None:
+        with pytest.raises(observer.ObservationLost, match="Precise native"):
+            observer._NativeClock()
+        assert attempted == list(names.values())
+    else:
+        clock = observer._NativeClock()
+        assert clock.sample() == observer.ClockSample(20_000_000, 19_000_000, 20_000_001)
+        assert attempted[-1] == selected
+
+
+def test_native_clock_refuses_api_set_with_only_one_precise_symbol(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import ctypes
+
+    attempted = []
+
+    def incomplete(_out: Any) -> None:
+        raise AssertionError("incomplete API must never be called")
+
+    def load(name: str, **_kwargs: Any) -> Any:
+        attempted.append(name)
+        if name == "api-ms-win-core-realtime-l1-1-2.dll":
+            return SimpleNamespace(QueryInterruptTimePrecise=incomplete)
+        raise OSError("no complete precise API pair")
+
+    monkeypatch.setattr(observer, "os", SimpleNamespace(name="nt"))
+    monkeypatch.setattr(ctypes, "WinDLL", load, raising=False)
+    with pytest.raises(observer.ObservationLost, match="Precise native"):
+        observer._NativeClock()
+    assert attempted == [
+        "api-ms-win-core-realtime-l1-1-2.dll",
+        "api-ms-win-core-realtime-l1-1-1.dll",
+        "kernel32.dll",
+    ]

@@ -81,7 +81,10 @@ class _ProcessWithImagePath:
         image = ctypes.create_unicode_buffer(32768)
         length = ctypes.c_uint32(len(image))
         if not query(ctypes.c_void_p(int(handle)), flags, image, ctypes.byref(length)):
-            raise OSError(ctypes.get_last_error(), "pinned process image query failed")
+            get_last_error = getattr(ctypes, "get_last_error", None)
+            if get_last_error is None:
+                raise EvidencePipeError("native process image error status unavailable")
+            raise OSError(get_last_error(), "pinned process image query failed")
         if not 0 < length.value < len(image) or not image.value:
             raise EvidencePipeError("pinned process image path unavailable")
         return image.value
