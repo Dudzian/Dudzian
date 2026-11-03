@@ -447,7 +447,7 @@ def _qualify_bootstrap_directory(directory: Path) -> None:
 
     handle = win32file.CreateFile(
         str(directory),
-        win32con.READ_CONTROL,
+        win32con.READ_CONTROL | win32con.FILE_READ_ATTRIBUTES,
         0,
         None,
         win32con.OPEN_EXISTING,

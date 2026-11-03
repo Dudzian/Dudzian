@@ -75,6 +75,7 @@ def native(monkeypatch: pytest.MonkeyPatch):
     constants = SimpleNamespace(
         TOKEN_QUERY=8,
         READ_CONTROL=0x20000,
+        FILE_READ_ATTRIBUTES=0x80,
         GENERIC_WRITE=0x40000000,
         CREATE_NEW=1,
         OPEN_EXISTING=3,
@@ -154,7 +155,10 @@ def native(monkeypatch: pytest.MonkeyPatch):
             state.descriptors[path] = attributes.SECURITY_DESCRIPTOR
             return Handle(path, attributes.SECURITY_DESCRIPTOR, fd)
         assert disposition == constants.OPEN_EXISTING
-        assert attributes is None and access == constants.READ_CONTROL
+        assert attributes is None
+        # GetSecurityInfo needs READ_CONTROL; GetFileInformationByHandle also
+        # needs FILE_READ_ATTRIBUTES. Opening with READ_CONTROL alone is invalid.
+        assert access == constants.READ_CONTROL | constants.FILE_READ_ATTRIBUTES
         assert flags == constants.FILE_FLAG_BACKUP_SEMANTICS | 0x00200000
         state.events.append(("open-directory", path))
         if state.fail == "directory-open":
@@ -169,6 +173,8 @@ def native(monkeypatch: pytest.MonkeyPatch):
 
     def information(handle_id):
         resolve_handle(handle_id)
+        if state.fail == "directory-attributes":
+            raise NativeFailure(5)
         return (0x400 if state.reparse else 0,)
 
     def write(handle_id, payload):
@@ -251,6 +257,7 @@ def test_native_creates_final_system_acl_before_each_write_and_cleans_up(
     (
         "directory-create",
         "directory-open",
+        "directory-attributes",
         "qualify-directory",
         "create-initdb.password",
         "create-pgpass",
@@ -277,7 +284,7 @@ def test_creation_qualification_and_partial_write_failures_remove_credentials(
             pytest.fail("failed credential must never be handed to a consumer")
     assert list(tmp_path.iterdir()) == []
     assert all(handle.closed for handle in native.handles)
-    if failure in {"directory-create", "directory-open", "qualify-directory"}:
+    if failure in {"directory-create", "directory-open", "directory-attributes", "qualify-directory"}:
         assert generated == []
     if failure == "qualify-file":
         assert not any(event[0] == "write" for event in native.events)
