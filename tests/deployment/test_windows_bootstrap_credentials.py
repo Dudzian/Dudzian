@@ -4,13 +4,112 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
+import ctypes
 import os
+import re
 import subprocess
 import sys
 
 import pytest
 
 from deployment.windows_installer import provision
+
+
+class _RelativeCredentialRead:
+    """Read fixture children by pinned handles without trusting host ancestry."""
+
+    def __init__(self):
+        from deployment import windows_stage10_diagnostic_windows as layout
+
+        self.layout = layout
+        self.boundary = layout._Native()
+
+    @staticmethod
+    def _check_leaf(name: str) -> None:
+        if (
+            not isinstance(name, str)
+            or re.fullmatch(r"[A-Za-z0-9._-]{1,128}", name) is None
+            or name in {".", ".."}
+        ):
+            raise ValueError("relative fixture access requires a bounded leaf")
+
+    def pin_directory(self, path: Path):
+        handle = self.boundary.files.CreateFile(
+            str(path),
+            0x80000000 | 0x00100000 | 0x20,  # read, synchronize, traverse
+            0x7,
+            None,
+            3,
+            0x02000000 | 0x00200000,
+            None,
+        )
+        try:
+            attributes = self.boundary.files.GetFileInformationByHandle(int(handle))[0]
+            if not attributes & 0x10 or attributes & 0x400:
+                raise RuntimeError("fixture parent is not an ordinary directory")
+            return handle
+        except BaseException:
+            handle.Close()
+            raise
+
+    def close(self, handle: int) -> None:
+        try:
+            self.boundary.close(handle)
+        except OSError:
+            # A failed close must never satisfy a private-read PermissionError
+            # assertion after an unexpectedly successful open/read.
+            raise RuntimeError("relative fixture handle close failed") from None
+
+    def open(self, parent: int, name: str, *, directory: bool = False) -> int:
+        self._check_leaf(name)
+        encoded = name.encode("utf-16-le")
+        buffer = ctypes.create_string_buffer(encoded)
+        string = self.layout._UnicodeString(len(encoded), len(encoded), ctypes.addressof(buffer))
+        attributes = self.layout._ObjectAttributes(
+            ctypes.sizeof(self.layout._ObjectAttributes),
+            parent,
+            ctypes.pointer(string),
+            self.layout._OBJ_CASE_INSENSITIVE | self.layout._OBJ_DONT_REPARSE,
+            None,
+            None,
+        )
+        handle, status = ctypes.c_void_p(), self.layout._IoStatus()
+        result = self.boundary.nt.NtCreateFile(
+            ctypes.byref(handle),
+            0x80000000 | 0x00100000,
+            ctypes.byref(attributes),
+            ctypes.byref(status),
+            None,
+            0,
+            0x7,
+            self.layout._FILE_OPEN,
+            self.layout._OPEN_REPARSE_POINT
+            | self.layout._SYNCHRONOUS_IO_NONALERT
+            | (0x1 if directory else self.layout._NON_DIRECTORY_FILE),
+            None,
+            0,
+        )
+        result = ctypes.c_int32(result).value
+        completed = ctypes.c_int32(int(status.status_or_pointer or 0) & 0xFFFFFFFF).value
+        valid_handle = handle.value not in {None, 0, ctypes.c_void_p(-1).value}
+        if result != 0 or completed != 0:
+            if valid_handle:
+                self.close(int(handle.value))
+            code = self.boundary.nt.RtlNtStatusToDosError(result if result else completed)
+            raise getattr(ctypes, "WinError")(int(code))
+        if not valid_handle:
+            raise RuntimeError("relative fixture open returned no handle")
+        return int(handle.value)
+
+    def read(self, parent: int, name: str) -> bytes:
+        handle = self.open(parent, name)
+        try:
+            error, payload = self.boundary.files.ReadFile(handle, 4096)
+            if error:
+                raise getattr(ctypes, "WinError")(int(error))
+            return payload
+        finally:
+            self.close(handle)
 
 
 class NativeFailure(OSError):
@@ -412,6 +511,49 @@ def test_baseexception_also_removes_secret_files(tmp_path: Path, native) -> None
     assert all(handle.closed for handle in native.handles)
 
 
+@pytest.mark.parametrize(
+    "name", ("", ".", "..", "../outside", "a/b", "a\\b", "C:child", "a\0b", "a" * 129)
+)
+def test_relative_fixture_read_refuses_paths_outside_one_bounded_leaf(name):
+    with pytest.raises(ValueError):
+        _RelativeCredentialRead._check_leaf(name)
+
+
+@pytest.mark.parametrize(
+    ("result", "completed", "returned", "accepted"),
+    ((0x103, 0, 123, False), (0, 0x103, 123, False), (0, 0, None, False), (0, 0, 123, True)),
+)
+def test_relative_fixture_read_never_accepts_pending_or_missing_handle(
+    monkeypatch, result, completed, returned, accepted
+):
+    from deployment import windows_stage10_diagnostic_windows as layout
+
+    closed = []
+
+    def create(output, _access, _attributes, status, *_args):
+        ctypes.cast(output, ctypes.POINTER(ctypes.c_void_p))[0] = returned
+        ctypes.cast(status, ctypes.POINTER(layout._IoStatus)).contents.status_or_pointer = completed
+        return result
+
+    probe = object.__new__(_RelativeCredentialRead)
+    probe.layout = layout
+    probe.boundary = SimpleNamespace(
+        nt=SimpleNamespace(NtCreateFile=create, RtlNtStatusToDosError=lambda _status: 997),
+        close=closed.append,
+    )
+    monkeypatch.setattr(
+        ctypes, "WinError", lambda code: OSError(code, "controlled native status"), raising=False
+    )
+    if accepted:
+        handle = probe.open(456, ".postgres-bootstrap-fixture")
+        assert handle == returned
+        probe.close(handle)
+    else:
+        with pytest.raises((OSError, RuntimeError)):
+            probe.open(456, ".postgres-bootstrap-fixture")
+    assert closed == ([returned] if returned is not None else [])
+
+
 @pytest.mark.skipif(
     sys.platform != "win32"
     or os.environ.get("CRYPTOHUNTER_RUN_WINDOWS_BOOTSTRAP_ACL_INTEGRATION") != "1",
@@ -471,17 +613,42 @@ def test_native_windows_private_credentials_deny_anonymous_and_survive_crash_pri
                 provision._qualify_bootstrap_handle(handle, inherit=False)
             finally:
                 handle.Close()
-        win32security.ImpersonateAnonymousToken(win32api.GetCurrentThread())
+        probe = _RelativeCredentialRead()
+        public_parent = probe.pin_directory(tmp_path)
         try:
-            # A successful read under the identical ancestry proves denial is
-            # caused by the private credential boundary, not an inaccessible
-            # temporary root or an anonymous-token policy on the parent.
-            assert control.read_bytes() == b"synthetic readable control"
-            for path in paths:
-                with pytest.raises(PermissionError):
-                    path.read_bytes()
+            private_parent = probe.pin_directory(directory)
+            try:
+                win32security.ImpersonateAnonymousToken(win32api.GetCurrentThread())
+                try:
+                    # Host ancestor traversal is irrelevant: both opens are
+                    # relative to already pinned, fixture-only directory handles.
+                    control_matches = (
+                        probe.read(int(public_parent), control.name)
+                        == b"synthetic readable control"
+                    )
+                    assert control_matches
+                    unexpected = None
+                    try:
+                        with pytest.raises(PermissionError) as denied_directory:
+                            unexpected = probe.open(
+                                int(public_parent), directory.name, directory=True
+                            )
+                        assert denied_directory.value.winerror == 5
+                    finally:
+                        if unexpected is not None:
+                            probe.close(unexpected)
+                    # Even an attacker given the private-directory capability
+                    # must still be denied each file by its own SYSTEM-only DACL.
+                    for path in paths:
+                        with pytest.raises(PermissionError) as denied_file:
+                            probe.read(int(private_parent), path.name)
+                        assert denied_file.value.winerror == 5
+                finally:
+                    win32security.RevertToSelf()
+            finally:
+                private_parent.Close()
         finally:
-            win32security.RevertToSelf()
+            public_parent.Close()
     finally:
         if crash:
             provision.shutil.rmtree(directory)
