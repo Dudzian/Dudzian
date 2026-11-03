@@ -144,8 +144,10 @@ def qualify_endpoint(connection, endpoint: tuple[str, int]) -> None:
     parameters = {option.keyword: option.val for option in connection.pgconn.info}
     require(parameters[b"sslmode"] == b"verify-full")
     require(parameters[b"gssencmode"] == b"disable")
+    # inet::text includes a /32 mask even for a single IPv4 address. host()
+    # returns only the address, allowing the same exact endpoint comparison.
     address, actual_port, ssl, version = connection.execute(
-        "SELECT inet_server_addr()::text,inet_server_port(),ssl,version "
+        "SELECT pg_catalog.host(inet_server_addr()),inet_server_port(),ssl,version "
         "FROM pg_stat_ssl WHERE pid=pg_backend_pid()"
     ).fetchone()
     require((address, actual_port) == endpoint)

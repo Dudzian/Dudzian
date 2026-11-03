@@ -15,8 +15,10 @@ import pytest
 from tests.deployment import windows_postgresql_bootstrap_native as native
 
 
-@pytest.mark.parametrize("failure", ("endpoint", "tls", "gss", "scram"))
-def test_native_transport_observer_rejects_untrusted_connection(failure):
+@pytest.mark.parametrize(
+    "failure", (None, "endpoint", "server_endpoint", "server_port", "tls", "gss", "scram")
+)
+def test_native_transport_observer_accepts_only_trusted_connection(failure):
     """Observer models are negative checks, not evidence of libpq transport."""
     private_detail = secrets.token_urlsafe(24)
 
@@ -35,15 +37,28 @@ def test_native_transport_observer_rejects_untrusted_connection(failure):
 
         def execute(self, statement):
             if "pg_stat_ssl" in statement:
-                row = ("127.0.0.1", 55432, failure != "tls", "TLSv1.3")
+                # Match PostgreSQL's distinct inet->text and host(inet)
+                # representations, so a /32 projection mistake cannot pass.
+                address = (
+                    "127.0.0.1"
+                    if "pg_catalog.host(inet_server_addr())" in statement
+                    else "127.0.0.1/32"
+                )
+                if failure == "server_endpoint":
+                    address = "127.0.0.2"
+                port = 55433 if failure == "server_port" else 55432
+                row = (address, port, failure != "tls", "TLSv1.3")
             else:
                 row = ("md5" + private_detail if failure == "scram" else "SCRAM-SHA-256$",)
             return SimpleNamespace(fetchone=lambda: row)
 
-    with pytest.raises(native.ProofFailure) as captured:
+    if failure is None:
         native.qualify_endpoint(Connection(), ("127.0.0.1", 55432))
-    assert native.failure_category(captured.value) == "PROOF_ASSERTION_FAILED"
-    assert private_detail not in str(captured.value)
+    else:
+        with pytest.raises(native.ProofFailure) as captured:
+            native.qualify_endpoint(Connection(), ("127.0.0.1", 55432))
+        assert native.failure_category(captured.value) == "PROOF_ASSERTION_FAILED"
+        assert private_detail not in str(captured.value)
 
 
 def marker(root: Path) -> None:

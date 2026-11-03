@@ -418,6 +418,8 @@ def test_isolated_native_postgresql_bootstrap_denies_independent_client(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure_stage: str | None
 ) -> None:
     """Linux PG transport/schema test; it does not qualify Windows ACLs or SCM."""
+    from tests.deployment import windows_postgresql_bootstrap_native as native
+
     assert os.getuid() != 0
     _posix_bootstrap_adapter(monkeypatch)
     generated_secrets: list[str] = []
@@ -483,11 +485,12 @@ def test_isolated_native_postgresql_bootstrap_denies_independent_client(
         if stage == "POSTGRES_CREATE_DATABASE":
             passfile = next(security.glob(".postgres-bootstrap-*/pgpass"))
             dsn = (
-                f"host=127.0.0.1 port={port} dbname=postgres user=postgres "
+                f"host=127.0.0.1 hostaddr=127.0.0.1 port={port} dbname=postgres user=postgres "
                 f"passfile={passfile} sslmode=verify-full "
-                f"sslrootcert={security / 'ca.crt'} connect_timeout=3"
+                f"sslrootcert={security / 'ca.crt'} gssencmode=disable password='' connect_timeout=3"
             )
             with psycopg.connect(dsn, autocommit=True) as connection:
+                native.qualify_endpoint(connection, ("127.0.0.1", port))
                 ssl, version = connection.execute(
                     "SELECT ssl,version FROM pg_stat_ssl WHERE pid=pg_backend_pid()"
                 ).fetchone()

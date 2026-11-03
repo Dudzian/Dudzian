@@ -65,15 +65,18 @@ lokalne modele nie zastępują tego dowodu.
 
 Lokalny zestaw ośmiu modułów Windows (bootstrap, diagnostyka, harness,
 credentials, installer, role denial, backend recovery i service recovery):
-**361 passed, 4 skipped**. Pominięcia dotyczą wyłącznie opt-in PostgreSQL
+**364 passed, 4 skipped**. Pominięcia dotyczą wyłącznie opt-in PostgreSQL
 na Linux i natywnych ACL Windows. Rzeczywiste testy wyboru parametrów libpq:
 **17 PASS**; nie są dowodem uwierzytelnienia LocalSystem. Pełny baseline Ruff,
 lint i format zmienionych modułów oraz dokładny
 `python -m pre_commit run ruff-format --all-files`: **PASS**.
 Skonfigurowany mypy Linux i win32: **PASS**, po 387 plików.
 Betterleaks: **PASS**, exit0, istniejący baseline, bez nowych suppressions.
-Zestaw **361 passed, 4 skipped** powtórzono po zastąpieniu stałych
-syntetycznych haseł losowymi wartościami fixture.
+Zestaw powtórzono po zastąpieniu stałych syntetycznych haseł losowymi
+wartościami fixture i poprawieniu projekcji adresu w obserwatorze:
+`pg_catalog.host(inet_server_addr())` zwraca samo IP, podczas gdy rzutowanie
+`inet` na tekst dodaje maskę `/32`. Ścisłe porównanie adresu i portu pozostaje;
+regresja odrzuca także błędny adres zwrócony przez serwer i błędny port.
 
 Nowy przebieg LocalSystem, MSI clean-install, CodeQL, Quality and Security
 oraz pełne CI pozostają **PENDING** do odczytu wyników dla nowej rewizji.
