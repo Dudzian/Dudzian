@@ -1,5 +1,17 @@
 # Quality, security, and code-intelligence toolchain
 
+Harness próby VM Stage 9 (`stage9_vm_trial.py`, `stage9_vm_environment.py`,
+`stage9_vm_native.py`) oraz eksporter `scripts/prepare_stage9_vm_bundle.py`
+wchodzą do skonfigurowanego mypy Linux/Windows, jawnego Ruff/format oraz
+istniejącego pomiaru branch coverage `quality-ratchet`. Testy harnessu
+sprawdzają odczytową inspekcję, odmowy wykonania poza zatwierdzoną VM
+i zachowanie statusów `BLOCKED`/`NOT_EXECUTED`; nie uruchamiają instalacji
+ani uprzywilejowanej próby VM w zwykłym PR. Powtarza je hermetyczny job
+`linux-evidence-contract`. Filtry workflow runtime obejmują harness
+i jego testy, aby zmiany uruchamiały dotychczasowy build na Noble.
+Próg 70%, wcześniejsze zakresy i oddzielne bramki fizyczne pozostają
+bez zmian; wynik jednostkowy nie stanowi dowodu natywnej próby VM.
+
 Podpisany runtime Freshness obejmuje `freshness_runtime.py`, minimalny
 `freshness_runtime_bootstrap.py` oraz `build_freshness_runtime.py` w configured
 mypy Linux/Windows, jawnym Ruff/format i istniejącym branch coverage ratchet.

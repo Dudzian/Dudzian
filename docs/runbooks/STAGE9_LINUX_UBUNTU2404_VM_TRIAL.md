@@ -1,5 +1,13 @@
 # Stage 9 — jednorazowa próba operatora w Ubuntu 24.04 VM
 
+> **Procedura historyczna v1 — nie wykonywać jej eksportu ani fazy dodatniej
+> dla aktualnego wydania.** Poniższa blokada bibliotek i manifest v1 opisują
+> profil sprzed podpisanego runtime. Bieżący instalator wymaga
+> `cryptohunter.freshness.substrate.v2`, schema_version=2 i chronionego bindingu.
+> Aktualna procedura, tryby INSPECT/EXECUTE-VM-TRIAL, eksport v2 i snapshoty są w
+> [STAGE9_LINUX_VM_HARNESS.md](STAGE9_LINUX_VM_HARNESS.md). Zachowana treść nie
+> stanowi dowodu ani instrukcji wykonania bieżącej instalacji.
+
 To instrukcja do ręcznego wykonania w jednorazowej VM. Jej poleceń
 uprzywilejowanych nie uruchamia zwykły pytest, CI ani agent przygotowujący PR.
 Nie dotyczy fizycznego Della. Nie używać produkcyjnych kluczy, danych, sieci
