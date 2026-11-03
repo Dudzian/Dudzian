@@ -652,6 +652,8 @@ def _configure_database_with_password(
         )
         dsn = make_conninfo(
             host=CONTRACT.postgresql_host,
+            # host alone does not suppress PGHOSTADDR (including service defaults).
+            hostaddr=CONTRACT.postgresql_host,
             port=CONTRACT.postgresql_port,
             dbname="postgres",
             user="postgres",
@@ -660,6 +662,8 @@ def _configure_database_with_password(
             passfile=str(passfile),
             sslmode="verify-full",
             sslrootcert=ca,
+            # GSS encryption otherwise takes precedence over sslmode in libpq.
+            gssencmode="disable",
             connect_timeout=5,
         )
         import psycopg

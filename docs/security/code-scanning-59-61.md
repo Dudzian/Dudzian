@@ -1,13 +1,87 @@
 # Alerty Code Scanning #59, #60 i #61: zakres dowodu
 
-Aktualizacja: 2026-11-03. Raport rozdziela historię kodu, ograniczenie ryzyka
-i dane rzeczywiście odczytane z GitHub. PR [#3244](https://github.com/Dudzian/Dudzian/pull/3244)
-pozostaje **Draft / BLOCKED** z powodu braku dostępu do Code Scanning API.
-PR #3244 nie został scalony, nie zmieniono stanu alertów ani nie zaakceptowano
-pozostałego ryzyka w imieniu właściciela. Dowody CI nie upoważniają do
-instalacji produkcyjnej, enrollmentu ani fizycznej kwalifikacji Stage 9/10.
+Aktualizacja: 2026-11-03. Raport rozdziela bieżącą poprawkę libpq, historię
+kodu, ograniczenie ryzyka i dane rzeczywiście odczytane z GitHub.
+Brak dostępu do Code Scanning API **nie jest blokerem merge poprawki w PR
+[#3244](https://github.com/Dudzian/Dudzian/pull/3244)**. Nie stanowi też dowodu
+naprawienia alertów ani false positive. W ramach tej poprawki nie ponawiamy
+odczytów alertów #59–61, zmian tokenów ani uprawnień. Nie dodano suppressions.
+PR nie został scalony ani nie zmieniono stanów alertów. Dowody CI nie
+upoważniają do instalacji produkcyjnej, enrollmentu ani fizycznej kwalifikacji
+Stage 9/10.
 
-## Aktualny dostęp do API
+## Bieżąca poprawka: przypięcie endpointu libpq
+
+Punktem wyjścia tej korekty jest HEAD
+`3adba03d8803b5b869240c28bc70d3e31be79133`.
+W [`_configure_database_with_password()`](../../deployment/windows_installer/provision.py)
+jawne `host=127.0.0.1` nie wyłączało odziedziczonego `PGHOSTADDR`.
+libpq mogło zachować nazwę hosta dla weryfikacji certyfikatu i dopasowania
+passfile, a faktyczne połączenie TCP kierować na inny adres.
+
+DSN przypina teraz `hostaddr=CONTRACT.postgresql_host`, czyli zatwierdzony
+endpoint `127.0.0.1` z
+[`contract.py`](../../deployment/windows_installer/contract.py), obok jawnych
+`host`, `port`, `dbname`, `user`, `password=""`, chronionego `passfile`,
+`sslmode=verify-full`, `sslrootcert` i `connect_timeout=5`.
+`gssencmode=disable` zapobiega wyborowi szyfrowania GSS przed TLS przez libpq.
+To zachowuje wymaganą weryfikację TLS i serwerową politykę SCRAM.
+Ten sam DSN jest podstawą połączeń tworzenia bazy, provisioningu, kwalifikacji
+i dowodu odmowy nowej sesji administratora po zapisaniu końcowego HBA.
+
+Produkcja nie usuwa ani nie podmienia globalnych `os.environ`.
+Takie operacje wpływałyby także na inne wątki i procesy potomne instalatora;
+tymczasowe usunięcie i późniejsze przywrócenie nie usuwa tego wyścigu.
+Jawne parametry są ograniczone do konkretnego połączenia i nie wymagają
+szerszego refaktoringu.
+
+### Zakres wpływu pozostałych zmiennych PG*
+
+| Zmienne lub źródło | Ocena dla tego bootstrapu |
+| --- | --- |
+| `PGHOST`, `PGHOSTADDR`, `PGPORT`, `PGDATABASE`, `PGUSER` | Odpowiadające parametry są jawne. Nie wybierają innego endpointu ani użytkownika bootstrapu. |
+| `PGPASSWORD`, `PGPASSFILE` | Jawne `password=""` blokuje fallback hasła ze środowiska; jawny `passfile` wskazuje plik SYSTEM-only. Pusty parametr nie pozwala obejść SCRAM. |
+| `PGSSLMODE`, `PGSSLROOTCERT`, `PGCONNECT_TIMEOUT`, `PGGSSENCMODE` | Jawne `verify-full`, lokalna CA, timeout i `gssencmode=disable` mają pierwszeństwo. |
+| `PGSERVICE`, `PGSERVICEFILE`, `PGSYSCONFDIR` | Mogą wybrać plik usługi i uzupełnić parametry niepodane w DSN. Nie nadpisują powyższych jawnych parametrów; błędna usługa może uniemożliwić połączenie. Plik usługi może także ustawić np. `sslkeylogfile` lub parametry kluczy SCRAM; przypięcie endpointu nie oznacza izolacji od wszystkich skutków wrogiej konfiguracji usługi. |
+| `PGOPTIONS`, `PGAPPNAME`, `PGCLIENTENCODING`, `PGDATESTYLE`, `PGTZ` | Mogą zmieniać opcje startowe lub ustawienia sesji, a niektóre wartości powodować błąd. Nie są sanitowane. Nie zastępują przypiętego adresu, weryfikacji CA ani serwerowego HBA/SCRAM. |
+| `PGTARGETSESSIONATTRS`, `PGLOADBALANCEHOSTS`, ustawienia dostępności obsługiwane przez daną wersję libpq | Mogą wpływać na akceptację sesji lub dostępność. Jawna pojedyncza para host/hostaddr nie daje im listy obcych endpointów do wyboru. |
+| `PGSSLCERT`, `PGSSLKEY`, `PGSSLCERTMODE`, `PGSSLCRL`, `PGSSLCRLDIR` | Mogą wpływać na dodatkowe pliki i poświadczenia TLS albo spowodować odmowę. Nie zastępują jawnej zaufanej CA i `verify-full`. Zestaw ten nie jest deklaracją izolacji od wszystkich plików konfiguracyjnych środowiska. Parametr `sslpassword` nie ma zmiennej środowiskowej w sprawdzonym libpq 18.0.6. |
+| `PGSSLSNI`, `PGSSLNEGOTIATION`, `PGSSLMINPROTOCOLVERSION`, `PGSSLMAXPROTOCOLVERSION`, `PGMINPROTOCOLVERSION`, `PGMAXPROTOCOLVERSION`, `PGCHANNELBINDING`, `PGREQUIREAUTH` | Zależnie od wersji libpq mogą zmieniać negocjację, ograniczenia protokołu lub dodatkowe wymagania uwierzytelnienia, także uniemożliwić połączenie. Nie wyłączają jawnego `verify-full` ani polityki SCRAM serwera. |
+| `PGKRBSRVNAME`, `PGGSSLIB`, `PGGSSDELEGATION`, `PGREQUIREPEER` | Nie wybierają innego endpointu. Szyfrowanie GSS jest wyłączone, bootstrap HBA wymaga SCRAM, a połączenie Windows używa TCP. |
+
+Poprawka izoluje wybór endpointu i wskazane parametry uwierzytelnienia;
+nie obiecuje usunięcia wpływu każdego `PG*` na wszystkie nieokreślone
+ustawienia sesji ani braku eksportu dowolnych sekretów przy dowolnej wrogiej
+konfiguracji usługi. Nie rozszerzano zakresu na globalną sanitację środowiska.
+
+### Walidacja nowej rewizji
+
+Istniejący harness LocalSystem rozszerzono o błędne `PGPASSWORD`, obce
+`PGHOSTADDR` oraz obie zmienne jednocześnie. Dowód obejmuje rzeczywisty
+wybór endpointu przez libpq i połączenia do PostgreSQL, poprawny chroniony
+passfile, odmowy błędnego hasła i certyfikatu, końcowe HBA oraz bezpieczne
+stałe diagnostyki. Wykonanie nowej wersji na Windows pozostaje **PENDING**;
+lokalne modele nie zastępują tego dowodu.
+
+Lokalny zestaw ośmiu modułów Windows (bootstrap, diagnostyka, harness,
+credentials, installer, role denial, backend recovery i service recovery):
+**361 passed, 4 skipped**. Pominięcia dotyczą wyłącznie opt-in PostgreSQL
+na Linux i natywnych ACL Windows. Rzeczywiste testy wyboru parametrów libpq:
+**17 PASS**; nie są dowodem uwierzytelnienia LocalSystem. Pełny baseline Ruff,
+lint i format zmienionych modułów oraz dokładny
+`python -m pre_commit run ruff-format --all-files`: **PASS**.
+Skonfigurowany mypy Linux i win32: **PASS**, po 387 plików.
+Betterleaks: **PASS**, exit0, istniejący baseline, bez nowych suppressions.
+Zestaw **361 passed, 4 skipped** powtórzono po zastąpieniu stałych
+syntetycznych haseł losowymi wartościami fixture.
+
+Nowy przebieg LocalSystem, MSI clean-install, CodeQL, Quality and Security
+oraz pełne CI pozostają **PENDING** do odczytu wyników dla nowej rewizji.
+Poniższe historyczne sukcesy nie stanowią PASS dla zmienionego kodu.
+Brak fizycznych dowodów Linux i Stage 10 pozostaje odrębną sprawą i nie
+blokuje tej poprawki libpq. `STAGE9_PRODUCTION_READY=NO` pozostaje zachowane.
+
+## Historyczny dostęp do API
 
 Ponowny odczyt ze skonfigurowanym `GITHUB_ALERT_TOKEN` 2026-11-03:
 
@@ -30,9 +104,8 @@ Nie uzyskano `analysis_id`, więc powiązany SARIF i jego `codeFlows` pozostają
 | [#61](https://github.com/Dudzian/Dudzian/security/code-scanning/61) | Historyczny [komentarz PR #3241](https://github.com/Dudzian/Dudzian/pull/3241#discussion_r4445839634): ta sama nazwa reguły, zapis `pgpass`, ówczesne `provision.py:367` | Stan, severity, rule ID, aktualna lokalizacja, instancja, commit i analiza: nieznane |
 
 Komentarze review nie zastępują alertów, wszystkich stron `instances` ani
-SARIF. Po przywróceniu odczytu trzeba powiązać `analysis_key`, `category`,
-`ref` i SHA z analizą oraz pobrać jej SARIF przez
-`GET /code-scanning/analyses/{analysis_id}` z `Accept: application/sarif+json`.
+SARIF. Ewentualna przyszła ocena tych alertów wymagałaby powiązania analizy
+z jej metadanymi i SHA; nie jest częścią bieżącej poprawki libpq.
 Sam sukces joba CodeQL nie potwierdza naprawienia ani zamknięcia tych alertów.
 
 ## Historia źródeł i aktualizacja bazy
@@ -118,7 +191,7 @@ Nie dodano suppressions, nie osłabiono skanerów i nie zmieniano alertów.
 bezpośrednim wejściem `--pwfile`/`passfile`; stdin, named pipe, delete-on-close
 lub zamiennik w pamięci wymagają osobnego dowodu zgodności i cyklu życia.
 
-## Końcowa walidacja i warunki dalszej oceny
+## Historyczna walidacja przed poprawką PGHOSTADDR
 
 Rewizja zweryfikowanego kodu i sondy natywnej:
 `3bb4ad27d063000e45886ab3e3bd2d17b87ad715`. Końcowy commit aktualizujący
@@ -158,10 +231,12 @@ MSI sprawdzono dla head `e1b749bd6ada920b987847871429d0e2397745ea`.
 Receipt zapisuje checkout testowego merge GitHub Actions
 `38177dcb4f3a6d67806eb6ca1915529eb4d72c2d`; oba mają identyczne drzewo
 `ac0bbb61388162b726cd621236464a18bce26b18`.
-Produkcyjny provisioner jest identyczny z końcowym kodem, SHA-256
+Produkcyjny provisioner w tamtej rewizji był identyczny z kodem przed obecną
+poprawką PGHOSTADDR, SHA-256
 `f75f74973fbc8a2ec1090b49fe5fd29e615f0376e92503766efe9669e07fd40f`.
 Zweryfikowano także digest pobranego artefaktu. Po tym przebiegu zmieniono
-wyłącznie sondę testową/kodek i raport, bez zmian produkcyjnego instalatora.
+wyłącznie sondę testową/kodek i raport. Obecna korekta hostaddr/GSS zmienia
+produkcyjny instalator i wymaga nowego testu MSI.
 
 Workflow platformowy dla `e1b749bd…` nie był w całości zielony.
 Zachowane bramki odmawiają:
@@ -179,7 +254,8 @@ Kod bramek i kontrakty są identyczne ze scalonym main. To odrębne wymagania
 kwalifikacji, nie powrót naprawionych błędów API lub Linux no-any-return.
 
 Bez pełnego odczytu alertów, instancji i powiązanego SARIF nie deklarujemy
-ich naprawienia, false positive ani zaakceptowania ryzyka. **Draft / BLOCKED**
-pozostaje jawny. Nie scalono PR #3244 i nie zmieniano stanów alertów. Do dalszej
-oceny potrzebny jest autoryzowany odczyt Code scanning alerts w tym repozytorium
-przez skonfigurowane poświadczenie; wartości tokenu nie należy publikować.
+ich naprawienia ani false positive. Historyczne uznanie HTTP 403 za samodzielny
+bloker merge zostało zastąpione bieżącą oceną na początku dokumentu.
+Rekomendacja merge tej poprawki zależy od przeglądu kodu i zakończonych testów
+nowej rewizji, a nie dostępu do numerowanych alertów. Nie scalono PR #3244
+i nie zmieniano stanów alertów ani konfiguracji tokenów/uprawnień.

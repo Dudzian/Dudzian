@@ -15,6 +15,37 @@ import pytest
 from tests.deployment import windows_postgresql_bootstrap_native as native
 
 
+@pytest.mark.parametrize("failure", ("endpoint", "tls", "gss", "scram"))
+def test_native_transport_observer_rejects_untrusted_connection(failure):
+    """Observer models are negative checks, not evidence of libpq transport."""
+    private_detail = secrets.token_urlsafe(24)
+
+    class Connection:
+        autocommit = True
+        pgconn = SimpleNamespace(
+            hostaddr=b"127.0.0.2" if failure == "endpoint" else b"127.0.0.1",
+            used_password=True,
+            info=[
+                SimpleNamespace(keyword=b"sslmode", val=b"verify-full"),
+                SimpleNamespace(
+                    keyword=b"gssencmode", val=b"require" if failure == "gss" else b"disable"
+                ),
+            ],
+        )
+
+        def execute(self, statement):
+            if "pg_stat_ssl" in statement:
+                row = ("127.0.0.1", 55432, failure != "tls", "TLSv1.3")
+            else:
+                row = ("md5" + private_detail if failure == "scram" else "SCRAM-SHA-256$",)
+            return SimpleNamespace(fetchone=lambda: row)
+
+    with pytest.raises(native.ProofFailure) as captured:
+        native.qualify_endpoint(Connection(), ("127.0.0.1", 55432))
+    assert native.failure_category(captured.value) == "PROOF_ASSERTION_FAILED"
+    assert private_detail not in str(captured.value)
+
+
 def marker(root: Path) -> None:
     (root / native.OWNERSHIP_MARKER).write_text(native.OWNERSHIP_CONTENT, encoding="ascii")
 

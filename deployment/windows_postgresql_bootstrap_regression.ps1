@@ -62,6 +62,7 @@ try {
     )
     foreach ($field in @('stage', 'failure', 'failure_type', 'bootstrap_failure', 'passfile_connection',
         'ambient_password_connection', 'memory_password_connection', 'missing_password',
+        'pgpassword_passfile_connection', 'pghostaddr_passfile_connection', 'combined_passfile_connection',
         'wrong_password', 'wrong_ca', 'tls_disabled', 'native_acl_normal_status', 'native_acl_crash_status',
         'native_acl_normal_failure_type', 'native_acl_crash_failure_type')) {
         $value = $result.$field
@@ -82,7 +83,9 @@ try {
         }
     }
     foreach ($field in @('effective_local_system', 'listener_available', 'bootstrap_directory_qualified',
-        'native_credential_acl_crash',
+        'native_credential_acl_crash', 'libpq_unpinned_foreign_endpoint_observed',
+        'libpq_pinned_endpoint_verified', 'production_libpq_endpoint_verified',
+        'scram_verifier_verified', 'report_secrets_absent',
         'ambient_password_present', 'ambient_password_synthetic', 'final_hba_matches',
         'credentials_removed', 'postmaster_stopped', 'temporary_root_removed')) {
         $value = $result.$field

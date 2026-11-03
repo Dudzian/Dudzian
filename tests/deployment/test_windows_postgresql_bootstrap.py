@@ -39,6 +39,15 @@ def _posix_bootstrap_adapter(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.parametrize(
+    "ambient_environment",
+    (
+        (),
+        ("PGPASSWORD",),
+        ("PGHOSTADDR",),
+        ("PGPASSWORD", "PGHOSTADDR", "PGGSSENCMODE"),
+    ),
+)
+@pytest.mark.parametrize(
     "failure_stage",
     (
         None,
@@ -55,10 +64,24 @@ def _posix_bootstrap_adapter(monkeypatch: pytest.MonkeyPatch) -> None:
     ),
 )
 def test_bootstrap_model_requires_preestablished_credential_and_always_removes_it(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure_stage: str | None, capsys, caplog
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure_stage: str | None,
+    ambient_environment: tuple[str, ...],
+    capsys,
+    caplog,
 ) -> None:
     _posix_bootstrap_adapter(monkeypatch)
-    monkeypatch.setenv("PGPASSWORD", "synthetic-unrelated-machine-credential")
+    for name in ("PGPASSWORD", "PGHOSTADDR", "PGGSSENCMODE"):
+        monkeypatch.delenv(name, raising=False)
+    poisoned_values = {
+        "PGPASSWORD": secrets.token_urlsafe(48) + ":",
+        "PGHOSTADDR": "192.0.2.123",
+        "PGGSSENCMODE": "require",
+    }
+    for name in ambient_environment:
+        monkeypatch.setenv(name, poisoned_values[name])
+    environment_before = dict(os.environ)
     data, security = tmp_path / "data", tmp_path / "security"
     data.mkdir()
     security.mkdir()
@@ -148,6 +171,10 @@ def test_bootstrap_model_requires_preestablished_credential_and_always_removes_i
             == f"127.0.0.1:{provision.CONTRACT.postgresql_port}:*:postgres:{password}\n"
         )
         assert options["sslmode"] == "verify-full"
+        assert options["host"] == options["hostaddr"] == provision.CONTRACT.postgresql_host
+        assert options["port"] == str(provision.CONTRACT.postgresql_port)
+        assert options["user"] == "postgres"
+        assert options["gssencmode"] == "disable"
         assert options["password"] == ""
         assert options["sslrootcert"] == (security / "ca.crt").as_posix()
         assert options["connect_timeout"] == "5"
@@ -197,6 +224,7 @@ def test_bootstrap_model_requires_preestablished_credential_and_always_removes_i
         with pytest.raises(RuntimeError, match="injected bootstrap failure"):
             provision._configure_database(tmp_path, data, security, stage)
     assert list(security.iterdir()) == []
+    assert dict(os.environ) == environment_before
     if password is not None:
         captured = capsys.readouterr()
         assert password not in captured.out + captured.err + caplog.text
@@ -205,24 +233,34 @@ def test_bootstrap_model_requires_preestablished_credential_and_always_removes_i
         assert commands[-1][1] == "stop"
 
 
+@pytest.mark.parametrize("ambient_password", (False, True))
+@pytest.mark.parametrize("ambient_hostaddr", (False, True))
 @pytest.mark.parametrize("explicit_empty_password", (False, True))
+@pytest.mark.parametrize("explicit_hostaddr", (False, True))
 def test_real_libpq_password_selection_requires_explicit_empty_with_passfile(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, explicit_empty_password: bool
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    explicit_empty_password: bool,
+    explicit_hostaddr: bool,
+    ambient_password: bool,
+    ambient_hostaddr: bool,
 ) -> None:
-    """Inspect real libpq selection before polling; no server or auth is needed."""
+    """Real libpq parameter selection; authentication is proved by the native harness."""
     for name in tuple(os.environ):
         if name.startswith("PG"):
             monkeypatch.delenv(name)
     # The colon guarantees the ambient value differs from the URL-safe file password.
     ambient = secrets.token_urlsafe(48) + ":"
     file_password = secrets.token_urlsafe(48)
-    monkeypatch.setenv("PGPASSWORD", ambient)
+    if ambient_password:
+        monkeypatch.setenv("PGPASSWORD", ambient)
+    if ambient_hostaddr:
+        monkeypatch.setenv("PGHOSTADDR", "127.0.0.2")
     passfile = tmp_path / "pgpass"
     passfile.write_text(f"127.0.0.1:1:postgres:postgres:{file_password}\n", encoding="ascii")
     passfile.chmod(0o600)
     options = {
         "host": "127.0.0.1",
-        "hostaddr": "127.0.0.1",
         "port": "1",
         "dbname": "postgres",
         "user": "postgres",
@@ -234,12 +272,79 @@ def test_real_libpq_password_selection_requires_explicit_empty_with_passfile(
     }
     if explicit_empty_password:
         options["password"] = ""
+    if explicit_hostaddr:
+        options["hostaddr"] = "127.0.0.1"
     connection = psycopg.pq.PGconn.connect_start(make_conninfo(**options).encode())
     try:
         selected_file = connection.password == file_password.encode()
         selected_ambient = connection.password == ambient.encode()
-        assert selected_file is explicit_empty_password
-        assert selected_ambient is (not explicit_empty_password)
+        assert selected_file is (explicit_empty_password or not ambient_password)
+        assert selected_ambient is (not explicit_empty_password and ambient_password)
+        expected_address = (
+            b"127.0.0.2" if ambient_hostaddr and not explicit_hostaddr else b"127.0.0.1"
+        )
+        assert connection.hostaddr == expected_address
+    finally:
+        connection.finish()
+
+
+def test_real_libpq_explicit_bootstrap_parameters_override_environment_and_service(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Service defaults may fill gaps, but cannot redirect the pinned bootstrap."""
+    for name in tuple(os.environ):
+        if name.startswith("PG"):
+            monkeypatch.delenv(name)
+    service = tmp_path / "pg_service.conf"
+    service.write_text(
+        "[foreign]\nhost=foreign.invalid\nhostaddr=127.0.0.2\nport=2\n"
+        "user=foreign\ndbname=foreign\nsslmode=disable\ngssencmode=require\n"
+        "passfile=absent\nsslrootcert=absent\nconnect_timeout=30\n"
+        f"password={secrets.token_urlsafe(48)}:\n",
+        encoding="ascii",
+    )
+    environment = {
+        "PGSERVICE": "foreign",
+        "PGSERVICEFILE": str(service),
+        "PGHOST": "foreign.invalid",
+        "PGHOSTADDR": "127.0.0.2",
+        "PGPORT": "2",
+        "PGUSER": "foreign",
+        "PGDATABASE": "foreign",
+        "PGPASSWORD": secrets.token_urlsafe(48) + ":",
+        "PGPASSFILE": str(tmp_path / "absent-passfile"),
+        "PGSSLMODE": "disable",
+        "PGSSLROOTCERT": str(tmp_path / "absent-root"),
+        "PGGSSENCMODE": "require",
+        "PGCONNECT_TIMEOUT": "30",
+    }
+    for name, value in environment.items():
+        monkeypatch.setenv(name, value)
+    password = secrets.token_urlsafe(48)
+    passfile = tmp_path / "pgpass"
+    passfile.write_text(f"127.0.0.1:1:postgres:postgres:{password}\n", encoding="ascii")
+    passfile.chmod(0o600)
+    options = {
+        "host": "127.0.0.1",
+        "hostaddr": "127.0.0.1",
+        "port": "1",
+        "dbname": "postgres",
+        "user": "postgres",
+        "password": "",
+        "passfile": str(passfile),
+        "sslmode": "verify-full",
+        "sslrootcert": str(tmp_path / "trusted-ca.crt"),
+        "gssencmode": "disable",
+        "connect_timeout": "1",
+    }
+    connection = psycopg.pq.PGconn.connect_start(make_conninfo(**options).encode())
+    try:
+        selected = {option.keyword.decode(): option.val for option in connection.info}
+        for name, value in options.items():
+            if name != "password":
+                assert selected[name] == value.encode()
+        assert connection.password == password.encode()
+        assert connection.hostaddr == b"127.0.0.1"
     finally:
         connection.finish()
 

@@ -136,13 +136,72 @@ def failure_type(exc: BaseException) -> str:
 KNOWN_WINERRORS = frozenset({5, 6, 87, 1008, 1300, 1314})
 
 
-def probe(psycopg, dsn: str, **overrides) -> str:
+def qualify_endpoint(connection, endpoint: tuple[str, int]) -> None:
+    """Read the real libpq destination and the authenticated server's transport."""
+    host, port = endpoint
+    require(connection.pgconn.hostaddr == host.encode("ascii"))
+    require(connection.pgconn.used_password)
+    parameters = {option.keyword: option.val for option in connection.pgconn.info}
+    require(parameters[b"sslmode"] == b"verify-full")
+    require(parameters[b"gssencmode"] == b"disable")
+    address, actual_port, ssl, version = connection.execute(
+        "SELECT inet_server_addr()::text,inet_server_port(),ssl,version "
+        "FROM pg_stat_ssl WHERE pid=pg_backend_pid()"
+    ).fetchone()
+    require((address, actual_port) == endpoint)
+    require(ssl is True and version in {"TLSv1.2", "TLSv1.3"})
+    verifier = connection.execute(
+        "SELECT rolpassword FROM pg_authid WHERE rolname='postgres'"
+    ).fetchone()[0]
+    require(verifier.startswith("SCRAM-SHA-256$"))
+    # Observing a fresh production connection must not leave a transaction open.
+    if not connection.autocommit:
+        connection.rollback()
+
+
+def probe(psycopg, dsn: str, *, endpoint: tuple[str, int] | None = None, **overrides) -> str:
     try:
         with psycopg.connect(dsn, autocommit=True, **overrides) as connection:
             require(connection.execute("SELECT session_user").fetchone() == ("postgres",))
+            if endpoint is not None:
+                qualify_endpoint(connection, endpoint)
     except Exception as exc:
         return failure_category(exc)
     return "CONNECTED"
+
+
+def prove_unpinned_libpq_route(psycopg, root: Path) -> None:
+    """Show actual ambient routing using a decoy that never receives a secret."""
+    from psycopg.conninfo import make_conninfo
+
+    foreign = "127.0.0.2"
+    require(os.environ.get("PGHOSTADDR") == foreign)
+    with socket.socket() as listener:
+        listener.bind((foreign, 0))
+        listener.listen(1)
+        listener.settimeout(5)
+        # No real passfile or password is supplied to the unpinned control.
+        # connect_start is never polled, so no authentication can take place.
+        dsn = make_conninfo(
+            host="127.0.0.1",
+            port=listener.getsockname()[1],
+            user="postgres",
+            dbname="postgres",
+            password="",
+            passfile=str(root / "absent-route-control-passfile"),
+            sslmode="verify-full",
+            sslrootcert=str(root / "absent-route-control-ca"),
+            gssencmode="disable",
+            connect_timeout=5,
+        )
+        connection = psycopg.pq.PGconn.connect_start(dsn.encode("utf-8"))
+        try:
+            require(connection.hostaddr == foreign.encode("ascii"))
+            require(not connection.password)
+            with listener.accept()[0] as accepted:
+                require(accepted.getsockname()[0] == foreign)
+        finally:
+            connection.finish()
 
 
 def prepare(root: Path, report: dict[str, object]) -> None:
@@ -288,13 +347,18 @@ def run(root: Path, report: dict[str, object]) -> None:
     ambient_password = os.environ.get("PGPASSWORD")
     report["ambient_password_present"] = ambient_password is not None
     report["ambient_password_synthetic"] = not bool(ambient_password)
+    # This dedicated single-threaded proof process owns its test environment;
+    # the production installer never mutates global PG* variables.
     for name in tuple(os.environ):
         if name.startswith("PG"):
             del os.environ[name]
     # Keep the real machine credential when present. Otherwise use a controlled
     # mismatching value to exercise the same libpq precedence without exporting
     # either password. The colon cannot occur in token_urlsafe bootstrap values.
-    os.environ["PGPASSWORD"] = ambient_password or (provision.secrets.token_urlsafe(48) + ":")
+    wrong_ambient_password = ambient_password or (provision.secrets.token_urlsafe(48) + ":")
+    os.environ["PGPASSWORD"] = wrong_ambient_password
+    # GSS must not replace verified TLS even when explicitly requested by env.
+    os.environ["PGGSSENCMODE"] = "require"
     report["stage"] = "SELECT_LOOPBACK_PORT"
     with socket.socket() as reserve:
         reserve.bind(("127.0.0.1", 0))
@@ -320,7 +384,12 @@ def run(root: Path, report: dict[str, object]) -> None:
     provision._protect(data, grants, inherit=True)
     provision._protect(security, grants, inherit=True)
 
+    observe_production = False
+    production_endpoint_checks = 0
+    secrets_to_check = [wrong_ambient_password]
+
     def stage(value: str) -> None:
+        nonlocal observe_production
         # Only production constants can reach this callback; export no paths.
         report["stage"] = value if value in STAGES else "UNEXPECTED_STAGE"
         if value != "POSTGRES_CREATE_DATABASE":
@@ -335,20 +404,46 @@ def run(root: Path, report: dict[str, object]) -> None:
         provision._qualify_bootstrap_directory(passfile.parent)
         report["bootstrap_directory_qualified"] = True
         password = passfile.read_text(encoding="utf-8").rstrip("\n").split(":")[-1]
+        secrets_to_check.append(password)
         dsn = make_conninfo(
             host="127.0.0.1",
+            hostaddr=provision.CONTRACT.postgresql_host,
             port=port,
             user="postgres",
             dbname="postgres",
             sslmode="verify-full",
             sslrootcert=str(security / "ca.crt"),
+            gssencmode="disable",
             passfile=str(passfile),
             connect_timeout=5,
         )
         report["ambient_password_connection"] = probe(psycopg, dsn)
         # An explicit empty password suppresses the environment fallback while
         # still asking libpq to obtain the credential from its explicit passfile.
-        report["passfile_connection"] = probe(psycopg, dsn, password="")
+        endpoint = (provision.CONTRACT.postgresql_host, port)
+        report["passfile_connection"] = probe(psycopg, dsn, password="", endpoint=endpoint)
+        for label, with_password, with_hostaddr in (
+            ("pgpassword", True, False),
+            ("pghostaddr", False, True),
+            ("combined", True, True),
+        ):
+            if with_password:
+                os.environ["PGPASSWORD"] = wrong_ambient_password
+            else:
+                os.environ.pop("PGPASSWORD", None)
+            if with_hostaddr:
+                os.environ["PGHOSTADDR"] = "127.0.0.2"
+            else:
+                os.environ.pop("PGHOSTADDR", None)
+            report[label + "_passfile_connection"] = probe(
+                psycopg, dsn, password="", endpoint=endpoint
+            )
+            require(report[label + "_passfile_connection"] == "CONNECTED")
+        # Both poisoned values stay set for every actual production SQL call.
+        prove_unpinned_libpq_route(psycopg, root)
+        report["libpq_unpinned_foreign_endpoint_observed"] = True
+        report["libpq_pinned_endpoint_verified"] = True
+        report["scram_verifier_verified"] = True
         report["memory_password_connection"] = probe(psycopg, dsn, password=password)
         report["missing_password"] = probe(
             psycopg, dsn, passfile=str(root / "absent-passfile"), password=""
@@ -362,10 +457,28 @@ def run(root: Path, report: dict[str, object]) -> None:
             sslrootcert=str(security / "server" / "server.crt"),
         )
         report["tls_disabled"] = probe(psycopg, dsn, password=password, sslmode="disable")
+        observe_production = True
+
+    real_connect = psycopg.connect
+
+    def production_connect(*args, **kwargs):
+        nonlocal production_endpoint_checks
+        connection = real_connect(*args, **kwargs)
+        if observe_production:
+            try:
+                qualify_endpoint(connection, (provision.CONTRACT.postgresql_host, port))
+            except BaseException:
+                connection.close()
+                raise
+            production_endpoint_checks += 1
+        return connection
 
     provision._pki(security, sids, stage)
     bootstrap_error = None
     try:
+        # Instrumentation delegates every operation to real psycopg/libpq; it
+        # checks the production DSN's destination, rather than simulating it.
+        psycopg.connect = production_connect
         provision._configure_database(root / "payload", data, security, stage)
         report["final_hba_matches"] = (data / "pg_hba.conf").read_text(
             encoding="utf-8"
@@ -374,6 +487,7 @@ def run(root: Path, report: dict[str, object]) -> None:
         bootstrap_error = exc
         report["bootstrap_failure"] = failure_category(exc)
     finally:
+        psycopg.connect = real_connect
         report["credentials_removed"] = not list(security.glob(".postgres-bootstrap-*"))
         report["postmaster_stopped"] = not (data / "postmaster.pid").exists()
     if bootstrap_error is not None:
@@ -385,9 +499,13 @@ def run(root: Path, report: dict[str, object]) -> None:
     require(report.get("wrong_password") == "SCRAM_PASSWORD_REJECTED")
     require(report.get("wrong_ca") == "TLS_CERTIFICATE_REJECTED")
     require(report.get("tls_disabled") == "HBA_REJECTED")
+    require(production_endpoint_checks >= 4)
+    report["production_libpq_endpoint_verified"] = True
     require(report.get("final_hba_matches") is True)
     require(report.get("credentials_removed") is True)
     require(report.get("postmaster_stopped") is True)
+    require(all(value not in json.dumps(report) for value in secrets_to_check))
+    report["report_secrets_absent"] = True
     report["result"] = "PASS"
 
 
