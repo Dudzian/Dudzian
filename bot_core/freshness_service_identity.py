@@ -125,9 +125,11 @@ def validate_runtime_unit(content: bytes, runtime: VerifiedRuntime) -> bytes:
     )
 
     try:
-        return validate_approved_unit(content, expected_runtime_argv(runtime)[0])
+        approved: object = validate_approved_unit(content, expected_runtime_argv(runtime)[0])
     except RuntimeUnitError as exc:
         raise ServiceIdentityError("RUNTIME_UNIT_BINDING_CHANGED") from exc
+    _require(type(approved) is bytes, "RUNTIME_UNIT_BINDING_CHANGED")
+    return cast(bytes, approved)
 
 
 def render_runtime_unit(template: bytes, runtime: VerifiedRuntime) -> bytes:
@@ -140,9 +142,11 @@ def render_runtime_unit(template: bytes, runtime: VerifiedRuntime) -> bytes:
 
     _require(type(template) is bytes and template == UNIT_TEMPLATE, "RUNTIME_UNIT_TEMPLATE_INVALID")
     try:
-        return render_approved_unit(expected_runtime_argv(runtime)[0])
+        rendered: object = render_approved_unit(expected_runtime_argv(runtime)[0])
     except RuntimeUnitError as exc:
         raise ServiceIdentityError("RUNTIME_UNIT_TEMPLATE_INVALID") from exc
+    _require(type(rendered) is bytes, "RUNTIME_UNIT_TEMPLATE_INVALID")
+    return cast(bytes, rendered)
 
 
 def _require(condition: bool, code: str) -> None:

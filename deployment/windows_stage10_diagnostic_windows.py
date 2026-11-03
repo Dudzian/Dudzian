@@ -40,7 +40,7 @@ _OBJ_CASE_INSENSITIVE = 0x40
 _OBJ_DONT_REPARSE = 0x1000
 _FILE_OPEN = 1
 _FILE_CREATE = 2
-_FILE_RENAME_INFO = 3
+_FILE_RENAME_INFORMATION = 10
 _NOT_FOUND = frozenset({0xC0000034, 0xC000003A, 0xC000000F})
 _SYSTEM_SID = "S-1-5-18"
 _ADMINISTRATORS_SID = "S-1-5-32-544"
@@ -134,15 +134,19 @@ class _Native:
                 ctypes.c_int,
             ),
             "FlushFileBuffers": ([ctypes.c_void_p], ctypes.c_int),
-            "SetFileInformationByHandle": (
-                [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p, ctypes.c_uint32],
-                ctypes.c_int,
-            ),
             "CloseHandle": ([ctypes.c_void_p], ctypes.c_int),
         }
         for name, (arguments, result) in signatures.items():
             function = getattr(self.kernel, name)
             function.argtypes, function.restype = arguments, result
+        self.nt.NtSetInformationFile.argtypes = [
+            ctypes.c_void_p,
+            ctypes.POINTER(_IoStatus),
+            ctypes.c_void_p,
+            ctypes.c_uint32,
+            ctypes.c_int,
+        ]
+        self.nt.NtSetInformationFile.restype = ctypes.c_int32
         self.nt.NtCreateFile.argtypes = [
             ctypes.POINTER(ctypes.c_void_p),
             ctypes.c_uint32,
@@ -300,11 +304,25 @@ class _Native:
             raise self._failure()
 
     def publish(self, context: dict[str, Any], handle: int, name: str) -> None:
+        # Win32 FileRenameInfo rejected a non-null RootDirectory (error 87)
+        # on the tested runner. Native FileRenameInformation retains the
+        # verified directory-handle anchor and refuses destination replacement.
         record = _rename_record(context["handle"], name)
-        if not self.kernel.SetFileInformationByHandle(
-            handle, _FILE_RENAME_INFO, ctypes.byref(record), ctypes.sizeof(record)
-        ):
-            raise self._failure()
+        io_status = _IoStatus()
+        status = self.nt.NtSetInformationFile(
+            handle,
+            ctypes.byref(io_status),
+            ctypes.byref(record),
+            ctypes.sizeof(record),
+            _FILE_RENAME_INFORMATION,
+        )
+        if status > 0:
+            raise DiagnosticOutputError("Nieukończona natywna publikacja diagnostyki.")
+        if status < 0:
+            raise OSError(
+                self.nt.RtlNtStatusToDosError(status),
+                "Odmowa natywnej publikacji pliku.",
+            )
 
     def close(self, handle: int) -> None:
         if not self.kernel.CloseHandle(handle):
