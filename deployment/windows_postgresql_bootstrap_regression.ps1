@@ -53,6 +53,7 @@ try {
         'VALIDATE_PLATFORM', 'IMPORT_WIN32_JOB', 'CREATE_JOB_OBJECT', 'QUERY_JOB_OBJECT',
         'CONFIGURE_JOB_OBJECT', 'ASSIGN_JOB_OBJECT', 'VALIDATE_ROOT', 'IMPORT_POSTGRESQL_DRIVER',
         'IMPORT_BOOTSTRAP', 'VALIDATE_WINDOWS_ARCH', 'REQUIRE_LOCAL_SYSTEM',
+        'NATIVE_CREDENTIAL_ACL_CRASH',
         'SELECT_LOOPBACK_PORT', 'PROTECT_TEMPORARY_ROOT', 'PREPARE_TEMPORARY_DIRECTORIES',
         'IMPORT_ERROR', 'ATTRIBUTE_ERROR', 'KEY_ERROR', 'TYPE_ERROR', 'VALUE_ERROR', 'PROOF_FAILURE', 'PYWIN32_ERROR',
         'PROVISION_ERROR', 'OTHER_ERROR'
@@ -69,6 +70,7 @@ try {
         Write-Output ('NATIVE_POSTGRESQL_FAILURE_WINERROR = {0}' -f $result.failure_winerror)
     }
     foreach ($field in @('effective_local_system', 'listener_available', 'bootstrap_directory_qualified',
+        'native_credential_acl_crash',
         'ambient_password_present', 'ambient_password_synthetic', 'final_hba_matches',
         'credentials_removed', 'postmaster_stopped', 'temporary_root_removed')) {
         $value = $result.$field

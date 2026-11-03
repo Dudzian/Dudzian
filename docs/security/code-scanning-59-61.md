@@ -1,191 +1,138 @@
 # Alerty Code Scanning #59, #60 i #61: zakres dowodu
 
-Punkt wyjścia analizy: `main` o SHA
-`06f75ba9c966df876713cc4ef27fee1197b64d99`, po scaleniu PR #3241.
-Analiza dotyczy bootstrapu instalatora Windows; nie upoważnia do instalacji
-produkcyjnej, uruchomienia MSI, enrollmentu, rebootu ani merge.
+Aktualizacja: 2026-11-03. Raport rozdziela historię kodu, ograniczenie ryzyka
+i dane rzeczywiście odczytane z GitHub. PR [#3244](https://github.com/Dudzian/Dudzian/pull/3244)
+pozostaje **Draft / BLOCKED** z powodu braku dostępu do Code Scanning API.
+PR #3244 nie został scalony, nie zmieniono stanu alertów ani nie zaakceptowano
+pozostałego ryzyka w imieniu właściciela. Dowody CI nie upoważniają do
+instalacji produkcyjnej, enrollmentu ani fizycznej kwalifikacji Stage 9/10.
 
-## Dostęp do metadanych GitHub
+## Aktualny dostęp do API
 
-Dnia 2026-11-02 wywołania `GET /repos/Dudzian/Dudzian/code-scanning/alerts/59`,
-`/60` oraz `/61` ze skonfigurowanym `GITHUB_ALERT_TOKEN` zwróciły HTTP 403:
-`Resource not accessible by integration`. Nagłówek odpowiedzi dla #59 podaje
-`x-accepted-github-permissions: security_events=read`. To brak autoryzacji
-Code Scanning, a nie przekroczony limit żądań. Wartości poświadczenia nie
-zapisano w logach ani raporcie. Potrzebne jest poświadczenie z odczytem
-Code scanning alerts dla tego repozytorium.
+Ponowny odczyt ze skonfigurowanym `GITHUB_ALERT_TOKEN` 2026-11-03:
 
-Komentarze przeglądu PR są dowodem pomocniczym. Nie zastępują pełnej odpowiedzi
-Code Scanning API, listy instancji i SARIF z `codeFlows`. W szczególności nie
-potwierdzają aktualnego stanu alertu, severity, rule ID ani kompletnej ścieżki
-przepływu raportowanej przez analizator.
-
-| Alert | Ustalenie potwierdzone dostępnym dowodem | Niepotwierdzone |
+| Zakres | Czas UTC | Wynik |
 | --- | --- | --- |
-| [#59](https://github.com/Dudzian/Dudzian/security/code-scanning/59) | API zwraca 403; brak przypisania do problemu bootstrapu | Stan, narzędzie, rule ID, severity, lokalizacja, przepływ i commit wprowadzający |
-| [#60](https://github.com/Dudzian/Dudzian/security/code-scanning/60) | [Komentarz bota w PR #3241](https://github.com/Dudzian/Dudzian/pull/3241#discussion_r4445839602): CodeQL, „Clear-text storage of sensitive information”, `deployment/windows_installer/provision.py:365` w bazowym HEAD | Aktualny stan, rule ID, severity i ścieżka SARIF |
-| [#61](https://github.com/Dudzian/Dudzian/security/code-scanning/61) | [Komentarz bota w PR #3241](https://github.com/Dudzian/Dudzian/pull/3241#discussion_r4445839634): CodeQL, „Clear-text storage of sensitive information”, `deployment/windows_installer/provision.py:367` w bazowym HEAD | Aktualny stan, rule ID, severity i ścieżka SARIF |
+| `GET /repos/Dudzian/Dudzian/code-scanning/alerts/59`, `/60`, `/61` | 15:29:27–15:29:28 | Wszystkie HTTP 403: `Resource not accessible by integration` |
+| Trzy odpowiadające endpointy `/alerts/{number}/instances` | 15:27 | Wszystkie HTTP 403: `Resource not accessible by integration` |
+| `GET /repos/Dudzian/Dudzian/code-scanning/analyses` | 15:27 | HTTP 403: `Resource not accessible by integration` |
 
-W dostępnych komentarzach PR #3241, najnowszej stronie komentarzy review
-repozytorium oraz wyszukiwaniu issues nie znaleziono odniesienia do #59.
-To ograniczone wyszukiwanie nie dowodzi braku problemu. Nie przypisujemy #59
-reguły, pliku ani rozstrzygnięcia na podstawie sąsiednich numerów.
+Wartości poświadczenia nie wypisano ani nie zapisano w raporcie. Historyczny
+odczyt 2026-11-02 również zwracał 403; nagłówek wskazywał wymaganie
+`security_events=read`. To ograniczenie autoryzacji, nie dowód stanu alertu.
+Nie uzyskano `analysis_id`, więc powiązany SARIF i jego `codeFlows` pozostają
+**nieodczytane**. Nie oznacza to braku analizy, przepływu ani zera wyników.
 
-Po uzyskaniu uprawnień należy zachować pełne odpowiedzi dla trzech alertów
-i wszystkich stron ich `instances`; powiązać `analysis_key`, `category`,
-`ref` i SHA z odpowiednią analizą; pobrać jej SARIF przez
-`GET /code-scanning/analyses/{analysis_id}` z
-`Accept: application/sarif+json`. Dopiero ten materiał pozwala opisać pełny
-przepływ analizatora i rzeczywisty stan GitHub. Sam udany job CodeQL nie
-potwierdza zamknięcia określonego alertu.
+| Alert | Potwierdzony materiał | Aktualne metadane API |
+| --- | --- | --- |
+| [#59](https://github.com/Dudzian/Dudzian/security/code-scanning/59) | Wyłącznie odmowa API; brak podstaw do przypisania bootstrapowi | Stan, severity, rule ID, lokalizacja, instancja, commit i analiza: nieznane |
+| [#60](https://github.com/Dudzian/Dudzian/security/code-scanning/60) | Historyczny [komentarz PR #3241](https://github.com/Dudzian/Dudzian/pull/3241#discussion_r4445839602): CodeQL „Clear-text storage of sensitive information”, zapis `initdb.password`, ówczesne `provision.py:365` | Stan, severity, rule ID, aktualna lokalizacja, instancja, commit i analiza: nieznane |
+| [#61](https://github.com/Dudzian/Dudzian/security/code-scanning/61) | Historyczny [komentarz PR #3241](https://github.com/Dudzian/Dudzian/pull/3241#discussion_r4445839634): ta sama nazwa reguły, zapis `pgpass`, ówczesne `provision.py:367` | Stan, severity, rule ID, aktualna lokalizacja, instancja, commit i analiza: nieznane |
 
-## Historia i przepływ wynikający ze źródeł
+Komentarze review nie zastępują alertów, wszystkich stron `instances` ani
+SARIF. Po przywróceniu odczytu trzeba powiązać `analysis_key`, `category`,
+`ref` i SHA z analizą oraz pobrać jej SARIF przez
+`GET /code-scanning/analyses/{analysis_id}` z `Accept: application/sarif+json`.
+Sam sukces joba CodeQL nie potwierdza naprawienia ani zamknięcia tych alertów.
 
-`git blame` obu zapisów, `git show` i porównanie z rodzicem wskazują
-`a906318f9007ce8f2f2c9c0166cee57bf860b328` z 2026-11-02 16:54:56 UTC
-jako commit wprowadzający oba zapisy hasła. Komentarze bota podają ten sam
-`original_commit_id`. Merge `06f75ba9…` wprowadził je do `main`.
-To ustalenie historii kodu; bez API nie utożsamiamy go z polem historii alertu.
+## Historia źródeł i aktualizacja bazy
 
-Przepływy odczytane w bazowym źródle:
+Początkową bazą był `06f75ba9c966df876713cc4ef27fee1197b64d99`, po #3241.
+`git blame`, porównanie z rodzicem i `original_commit_id` komentarzy wskazują
+`a906318f9007ce8f2f2c9c0166cee57bf860b328` jako historyczne wprowadzenie obu
+zapisów. To **commit historii kodu**, nie potwierdzony commit alertu.
+Nie przypisujemy #59 reguły ani przyczyny na podstawie sąsiednich numerów.
 
-1. `secrets.token_urlsafe(48)` → `password` → dodanie końca linii →
-   `initdb.password` → ścieżka w `initdb --pwfile=…` → początkowe
-   poświadczenie administratora SCRAM.
-2. Ten sam `password` → rekord libpq z hostem, portem i użytkownikiem →
-   `pgpass` → parametr `passfile` w DSN → kolejne połączenia psycopg/libpq.
+Main `996f2bab4b7ed586a37c0434d857b7ef3a8211b5` zawiera scalone
+[#3243](https://github.com/Dudzian/Dudzian/pull/3243) i
+[#3245](https://github.com/Dudzian/Dudzian/pull/3245). Przygotowana synchronizacja
+`4761c43b94d3d2a569e236e10b8ded797913c101` ma rodziców `6ed51759…` i `996f2bab…`.
+Siedem plików poprawek natywnych jest identycznych z `ff967ad4…`, a oba pliki
+poprawki Linux z `cd3b964a…`. Zachowano oryginalne uchwyty procesu/katalogu,
+odmowę nadpisania, precyzyjne zegary, dokładny typ `bytes` i bramki Stage 9/10.
+Historyczne błędy brakującego `QueryFullProcessImageName`, rename Errno 87,
+prefiksów symlinków i Linux `no-any-return` pochodziły ze starej bazy;
+nie są regresjami poprawki poświadczeń. Wyniki nowej rewizji wymagają własnej CI.
 
-Hasło nie jest argumentem `initdb`/`pg_ctl` ani wartością DSN. Argumenty i DSN
-zawierają ścieżki do plików. `pg_ctl start/stop` nie wymaga hasła do
-administracyjnego połączenia SQL. `initdb` czyta pierwszy plik, libpq drugi;
-procesy uruchamiane przez instalator dziedziczą jego tożsamość SYSTEM.
+## Ograniczenie ryzyka w źródle
 
-Kształt wyniku `GetTokenInformation(TokenUser)` sprawdzono w
-[źródle pywin32 b312](https://github.com/mhammond/pywin32/blob/b312/win32/src/win32security.i#L1718):
-jest to para `(PySID, int)`, zgodna z rozpakowaniem użytym przez provisioner.
-PostgreSQL 17.11 jest wersją przypiętą w `pins.json` i `contract.py`.
-Jego [`restricted_token.c`](https://github.com/postgres/postgres/blob/REL_17_11/src/common/restricted_token.c)
-tworzy dziecko z tokenu bieżącego procesu: wyłącza maksymalne przywileje
-i grupy Administratorzy/Power Users, przekazuje zero ograniczających SID,
-a następnie używa `CreateProcessAsUser`. Nie zmienia SID użytkownika SYSTEM.
-To źródłowe uzasadnienie, dlaczego usunięcie grupy Administratorzy nie
-odbiera dziecku dostępu przyznanego ACE bezpośrednio SYSTEM. Nie zastępuje
-testu odczytu z rzeczywistych przypiętych binariów Windows.
+[`provision.py`](../../deployment/windows_installer/provision.py) zachowuje
+dwa natywne wejścia jawnego tekstu:
 
-## Cykl życia w bazowym HEAD
+1. `secrets.token_urlsafe(48)` → `initdb.password` → `initdb --pwfile=…` →
+   początkowe poświadczenie administratora SCRAM.
+2. To samo hasło → rekord `pgpass` → jawnie wskazany `passfile` libpq →
+   połączenia provisioning i qualification przez psycopg.
 
-Katalog `Security` ma chronione dziedziczne ACL dla Administratorów i SYSTEM
-oraz odczyt/wykonanie dla trzech SID usług. `mkdtemp` tworzy pod nim losowy
-katalog; dopiero potem `_protect` zastępuje jego DACL dziedziczną polityką
-SYSTEM-only, a `_qualify_protected` ją odczytuje i porównuje. Sekret powstaje
-dopiero po tym odczycie.
+`_require_bootstrap_system` sprawdza efektywny token wątku, używając tokenu
+procesu wyłącznie po `ERROR_NO_TOKEN`. Inny SID jest odrzucany przed zasobami.
+`CreateDirectory` i `CreateFile` otrzymują końcowy deskryptor już przy tworzeniu:
+owner SYSTEM, `SE_DACL_PROTECTED`, dokładnie jeden ACE SYSTEM `FILE_ALL_ACCESS`,
+brak obcych dziedziczonych ACE oraz `bInheritHandle=False`. Pliki używają
+`CREATE_NEW` i share mode 0. Kwalifikacja tego samego uchwytu poprzedza zapis;
+odmowa ACL/reparse lub niepełny `WriteFile` przerywa operację. Kwalifikacja
+katalogu żąda `READ_CONTROL | ntsecuritycon.FILE_READ_ATTRIBUTES`, zgodnie
+z eksportami przypiętego pywin32 312.
 
-Oba pliki są tworzone przez `Path.write_text` w tym katalogu. Następnie kod
-ustanawia i sprawdza ich osobne chronione DACL SYSTEM-only. Dziedziczna
-polityka katalogu ogranicza początkowe uprawnienia plików, ale pliki są
-otwierane po nazwie, a katalog nie dostaje jawnego deskryptora w operacji
-utworzenia. Późniejsze sprawdzenie ACL nie jest samodzielnym dowodem całego
-okresu od utworzenia ani zachowania natywnych czytelników Windows.
+Po udanym `initdb` pierwszy plik jest usuwany **przed listenerem**. `pgpass`
+pozostaje dłużej, do zakończenia połączeń SQL i końcowego HBA. Hasło nie trafia
+do argumentów procesu ani DSN i nie jest dodawane do środowiska potomków.
+Wyjście bootstrapowych `initdb`/`pg_ctl` jest odrzucane; diagnostyka eksportuje
+tylko walidowane pola i stałe kategorie, bez tekstu wyjątków i łańcucha błędów.
 
-Pliki pozostają do końca konfiguracji schematu, kwalifikacji i przełączenia
-końcowego HBA. `finally` próbuje zatrzymać bootstrap PostgreSQL i usunąć
-katalog. Pierwotny wyjątek zachowuje tożsamość; dodatkowa notatka cleanup
-zawiera jedynie klasę wyjątku. Obsługa CLI zapisuje allowlistowane pola
-operacji/etapu/klasy, bez tekstu wyjątku. Nieobsługiwane zabicie procesu
-nie wykonuje Pythonowego `finally`: pliki mogą pozostać na dysku z ostatnią
-DACL, a zatrzymanie bootstrap postmastera nie jest wtedy dowiedzione.
-Usunięcie pliku nie jest gwarancją wymazania bloków, kopii zapasowych ani
-zrzutów pamięci.
+Osobno potwierdzono przyczynę awarii MSI `POSTGRES_CREATE_DATABASE`:
+odziedziczone `PGPASSWORD` wygrywało z jawnym `passfile`. `password=""` w DSN
+wyłącza to domyślne źródło i pozwala libpq odczytać chroniony plik. Natywny
+[test odtwarzający](https://github.com/Dudzian/Dudzian/actions/runs/41620138236)
+odrzucił zastane hasło, a identyczne połączenie z passfile i poprawnym hasłem
+w pamięci działało. Nie zmieniono SCRAM, TLS `verify-full`, certyfikatów,
+końcowego HBA ani bramek kwalifikacyjnych.
 
-## Ocena alternatyw
+Kształt `(PySID, int)` wyniku `TokenUser` potwierdza
+[pywin32 b312](https://github.com/mhammond/pywin32/blob/b312/win32/src/win32security.i#L1718).
+Przypięty PostgreSQL 17.11 w
+[`restricted_token.c`](https://github.com/postgres/postgres/blob/REL_17_11/src/common/restricted_token.c)
+ogranicza przywileje/grupy potomka, zachowując SID użytkownika SYSTEM.
+Te źródła uzasadniają granice; same nie zastępują testu Windows.
 
-| Wariant | Ocena bezpieczeństwa i zgodności |
+## Oddzielna ocena pozostałego ryzyka
+
+| Alert | Ocena dostępnego historycznego przepływu; bez rozstrzygnięcia statusu API |
 | --- | --- |
-| Przywrócenie `trust` lub brak początkowego poświadczenia | Odrzucone: tworzy okno wejścia dowolnego lokalnego klienta przed końcowym HBA. |
-| Hasło w argumentach procesu | Odrzucone: ujawnia sekret w widocznej linii poleceń i diagnostyce subprocess. |
-| `PGPASSWORD` w środowisku potomków | Odrzucone: rozszerza zasięg sekretu o środowiska procesów i diagnostykę; `pg_ctl` nie potrzebuje sekretu. |
-| DPAPI/szyfrowany plik przekazany jako `--pwfile`/`passfile` | Nie jest bezpośrednim zamiennikiem: `initdb` i libpq oczekują jawnego tekstu. Adapter odszyfrowujący musi sam mieć bezpieczny kanał i cykl życia. |
-| Bezpośrednie hasło tylko w pamięci psycopg | Może usunąć drugi plik; wymaga sprawdzenia wszystkich wywołań provisioning/qualification, reprezentacji DSN i błędów, aby sekret nie trafił do logów. Nie rozwiązuje wejścia `initdb`. |
-| stdin/prompt `initdb` | Wymaga dowodu obsługi nieinteraktywnego Windows przez przypięte binaria; nie należy zakładać, że plik `-` lub konsola jest bezpiecznym stdin. |
-| Nazwany potok Windows | Wymaga dowodu zgodności sposobu otwierania przez `initdb`, jawnej DACL potoku, ochrony instancji, synchronizacji i fail-closed przy błędzie lub śmierci procesu. |
-| Krótkotrwały plik z jawną DACL przy tworzeniu | Zachowuje natywne wejście PostgreSQL. Musi od początku odrzucać dziedziczenie, istniejący cel/reparse point i obcych czytelników; potrzebuje osobnego dowodu cleanup po awarii procesu i zgodności flag współdzielenia. |
+| #59 | Niezidentyfikowany. Brak podstaw do przypisania, poprawki lub uznania false positive. |
+| #60 | `initdb.password` nadal zawiera jawne hasło na dysku. Końcowa DACL obowiązuje od utworzenia, a usunięcie po `initdb` skraca czas życia; nie usuwa klasy plaintext storage. |
+| #61 | `pgpass` nadal zawiera jawne hasło do końca SQL. DACL od utworzenia ogranicza czytelników, lecz dłuższy czas życia i możliwe pozostałości po awarii pozostają. |
 
-`FILE_FLAG_DELETE_ON_CLOSE` nie może zostać przyjęty bez sprawdzenia
-zgodności z otwarciem pliku przez `initdb`: czytelnik musi użyć zgodnych flag
-współdzielenia usuwania. Modele ACL oraz test Linux/POSIX nie dowodzą tej
-własności natywnego Windows.
+`FILE_ATTRIBUTE_TEMPORARY` jest wskazówką cache, nie szyfrowaniem ani gwarancją
+RAM-only. Wymuszone zabicie procesu może pominąć `finally`, pozostawiając
+prywatne pliki i bootstrap postmaster. `unlink` nie gwarantuje wymazania;
+Python nie gwarantuje zerowania hasła w pamięci. SYSTEM, administrator
+przejmujący własność, dump, pagefile i backup pozostają poza izolacją od
+zwykłego czytelnika. Nie dodano automatycznego odzyskiwania po awarii.
 
-## Zastosowane ograniczenie ryzyka
+Natywny `WriteFile` może nie być modelowany przez CodeQL tak jak wcześniejszy
+sink `write_text`. Zniknięcie wyniku nie dowodzi usunięcia plaintext ani ryzyka.
+Nie dodano suppressions, nie osłabiono skanerów i nie zmieniano alertów.
+`trust`, hasło w argumentach i nowe `PGPASSWORD` odrzucono. DPAPI nie jest
+bezpośrednim wejściem `--pwfile`/`passfile`; stdin, named pipe, delete-on-close
+lub zamiennik w pamięci wymagają osobnego dowodu zgodności i cyklu życia.
 
-Zachowano dwa krótkotrwałe pliki wymagane przez wybrany natywny interfejs;
-nie dodano kanału potokowego ani hasła w DSN. Nowe helpery w
-[`provision.py`](../../deployment/windows_installer/provision.py)
-ustanawiają następujący kontrakt:
+## Walidacja i warunki dalszej oceny
 
-1. `_require_bootstrap_system` odczytuje efektywny token wątku. Token procesu
-   jest używany wyłącznie po `ERROR_NO_TOKEN`, nie po dowolnym błędzie.
-   SID inny niż LocalSystem jest odrzucany przed utworzeniem zasobów.
-2. `_bootstrap_security_attributes` buduje jawny deskryptor: owner SYSTEM,
-   ustawione `SE_DACL_PROTECTED`, dokładnie jeden dozwalający ACE SYSTEM
-   z `FILE_ALL_ACCESS`. Tylko ACE katalogu ma `OBJECT_INHERIT_ACE` oraz
-   `CONTAINER_INHERIT_ACE`; uchwyty mają `bInheritHandle=False`.
-3. `CreateDirectory` otrzymuje ten deskryptor przy tworzeniu losowego
-   katalogu. Nie ma etapu tworzenia z dziedzicznymi czytelnikami `Security`.
-   Odczyt deskryptora z uchwytu sprawdza owner, ochronę DACL, dokładny ACE
-   i brak reparse point przed wygenerowaniem hasła.
-4. Każdy `CreateFile` dostaje końcowy deskryptor SYSTEM-only, `CREATE_NEW`
-   i tryb współdzielenia 0. To natywna operacja utworzenia ustanawia DACL;
-   późniejsza kwalifikacja nie służy jej naprawianiu. Odczyt zabezpieczeń
-   tego samego uchwytu poprzedza `WriteFile`; błędne ACL i niepełny zapis
-   kończą operację błędem. Uchwyt zamyka się również po wyjątku.
-5. `initdb.password` jest usuwany natychmiast po udanym `initdb`, przed
-   startem listenera. `pgpass` trwa do końca połączeń SQL. Żadne z tych
-   narzędzi nie otrzymuje hasła w argumentach ani w nowej zmiennej środowiska.
-   `stdout` i `stderr` bootstrapowych `initdb` oraz `pg_ctl` trafiają do
-   `DEVNULL`, aby tekst narzędzi nie przeszedł do logów instalatora.
-6. Końcowe HBA, mapowania certyfikatów, SCRAM bootstrapu i `verify-full`
-   pozostają takie same. Ścieżka w DSN wskazuje wyłącznie prywatny passfile;
-   poświadczenie nie jest wpisywane do DSN ani konfiguracji PostgreSQL.
-7. CLI obsługuje także błąd publikacji bezpiecznej diagnostyki. Wyjątek
-   `write_safe_failure` jest przechwytywany wewnątrz obsługi pierwotnego błędu;
-   stderr otrzymuje tylko stałe komunikaty i nazwy klas. Błąd zapisu raportu
-   nie powoduje nieobsłużonego tracebacku z łańcuchem zawierającym prywatny
-   tekst pierwotnego wyjątku. Operacja nadal zwraca kod błędu.
+Natywny bootstrap na `6ed51759…` przeszedł
+[run 41660182573](https://github.com/Dudzian/Dudzian/actions/runs/41660182573):
+rzeczywisty LocalSystem, przypięte binaria, passfile, SCRAM/`verify-full`,
+negatywne hasło/CA/TLS, końcowe HBA i cleanup; modele Windows: 76 passed,
+4 opt-in skipped. Nie jest to dowód osobnych prób obcego tokenu i crash.
+Lokalne **724 passed, 21 skipped** dotyczą stanu **przed rozszerzeniem** harnessu.
 
-Jest to ochrona dostępu od momentu utworzenia, **nie szyfrowanie**. Hasło
-nadal jest jawnym tekstem w dwóch plikach, choć pierwszy żyje krócej.
-`FILE_ATTRIBUTE_TEMPORARY` jest wskazówką dla cache, nie gwarancją pracy
-wyłącznie w RAM. Zastąpienie `Path.write_text` natywnym `WriteFile` wynika
-z potrzeby atomowego utworzenia z SECURITY_ATTRIBUTES i kwalifikacji
-uchwytu. CodeQL może nie modelować tego natywnego sinka; ewentualne
-zniknięcie wyniku po tej zmianie nie dowodzi usunięcia zapisu jawnego tekstu
-ani naprawienia klasy ryzyka. Nie dodano wyciszenia lokalnego/globalnego
-ani maskowania wartości sekretu.
+Nowy harness ma uruchamiać istniejące dwa opt-in przypadki LocalSystem:
+anonimowy czytelnik i pozostałości po crash. Ich wykonanie na nowej rewizji
+pozostaje **oczekujące**, dopóki nie zostanie odczytany wynik Windows.
+Modele Win32 i Linux/POSIX nie zastępują tych dowodów Object Managera.
 
-Po zwykłym wyjątku nadal działa cleanup z zachowaniem pierwszej przyczyny.
-Po wymuszonym zakończeniu procesu, awarii hosta lub błędzie usuwania mogą
-pozostać pliki SYSTEM-only; może też pozostać bootstrap postmaster.
-Administrator z uprawnieniami przejęcia własności, SYSTEM, zrzut pamięci,
-pagefile lub backup pozostają poza gwarancją izolacji od zwykłego użytkownika.
-Nie deklarujemy zerowania obiektów Pythona, bezpiecznego wymazywania nośnika
-ani automatycznego usunięcia po śmierci procesu. Dalsze ograniczenie tych
-pozostałości wymaga zgodnego i natywnie zweryfikowanego kanału wejścia
-`initdb` lub osobnego kontraktu odzyskiwania po awarii.
-
-## Rozstrzygnięcia i granice walidacji
-
-| Alert | Decyzja w tej analizie | Rzeczywisty stan GitHub |
-| --- | --- | --- |
-| #59 | Nadal otwarty: niezidentyfikowany bez autoryzowanego API; brak podstaw do poprawki lub false positive | Niepotwierdzony — API 403 |
-| #60 | Nadal otwarty: wprowadzono ograniczenie dostępu i czasu życia pierwszego pliku, ale jawny zapis pozostaje; brak podstaw do deklaracji naprawienia lub false positive | Niepotwierdzony — API 403 |
-| #61 | Nadal otwarty: wprowadzono ACL przy tworzeniu passfile, ale jawny zapis i pozostałości po awarii pozostają; brak podstaw do deklaracji naprawienia lub false positive | Niepotwierdzony — API 403 |
-
-Nie zaakceptowano ryzyka w imieniu właściciela i nie zmieniono stanu żadnego
-alertu. Ocena pozostałego ryzyka wymaga decyzji właściciela oraz pełnej
-identyfikacji alertów. Testy modelu Win32 na Linux sprawdzają przekazywane
-deskryptory, kolejność i ścieżki odmowy; nie dowodzą działania Windows Object
-Manager, izolacji obcego tokenu ani dostępu rzeczywistego `initdb`/libpq.
-Natywne testy Windows mają osobny opt-in i nie są zastępowane testem
-PostgreSQL na Linux. Brak ich wykonania oraz brak metadanych API wymagają
-pozostawienia PR jako Draft. Końcowe wyniki poleceń i SHA walidacji należy
-czytać w opisie PR; dokument nie przypisuje wyniku niewykonanym testom.
+Dokładne SHA, końcowe wyniki pytest/Ruff/mypy i obowiązkowego
+`python -m pre_commit run ruff-format --all-files` są utrzymywane w opisie PR.
+Bez pełnego odczytu alertów, instancji i powiązanego SARIF nie deklarujemy
+ich naprawienia, false positive ani zaakceptowania ryzyka. **Draft / BLOCKED**
+pozostaje jawny; żaden PR nie został scalony w ramach tej operacji.

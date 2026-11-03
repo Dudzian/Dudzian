@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+import secrets
 import sys
 from types import SimpleNamespace
+from xml.etree import ElementTree
 
 import pytest
 
@@ -115,3 +118,54 @@ def test_job_setup_failure_never_cleans_marked_existing_root(tmp_path, monkeypat
     assert native.main() == 1
     assert (root / "keep").read_text() == "unchanged"
     assert "temporary_root_removed" not in json.loads(report.read_text())
+
+
+@pytest.mark.parametrize("unexecuted", (None, "skipped", "error", "failure"))
+def test_native_credential_proof_refuses_skips_even_when_pytest_exits_zero(
+    tmp_path, monkeypatch, unexecuted
+):
+    monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
+    monkeypatch.setenv("PGPASSWORD", secrets.token_urlsafe(12))
+    ambient = os.environ["PGPASSWORD"]
+    root = tmp_path / "owned"
+    root.mkdir()
+    marker(root)
+
+    def child(command, **kwargs):
+        assert command[1:3] == ["-m", "pytest"]
+        assert "--confcutdir=tests/deployment" in command
+        assert command[command.index("--basetemp") + 1] == str(root / "credential-acl")
+        assert kwargs["stdout"] is native.subprocess.DEVNULL
+        assert kwargs["stderr"] is native.subprocess.DEVNULL
+        assert kwargs["timeout"] == 90
+        assert kwargs["env"]["CRYPTOHUNTER_RUN_WINDOWS_BOOTSTRAP_ACL_INTEGRATION"] == "1"
+        assert kwargs["env"]["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] == "1"
+        ambient_preserved = kwargs["env"]["PGPASSWORD"] == ambient
+        assert ambient_preserved
+        # Contradictory success counters ensure a skipped testcase itself cannot
+        # be mistaken for an executed proof, even with process exit status zero.
+        document = ElementTree.Element(
+            "testsuite", tests="2", failures="0", errors="0", skipped="0"
+        )
+        for value in (False, True):
+            case = ElementTree.SubElement(
+                document,
+                "testcase",
+                name=native.NATIVE_CREDENTIAL_ACL_TEST + f"[{value}]",
+            )
+            if value and unexecuted is not None:
+                ElementTree.SubElement(case, unexecuted)
+        ElementTree.ElementTree(document).write(command[command.index("--junitxml") + 1])
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(native.subprocess, "run", child)
+    report = {}
+    if unexecuted is None:
+        native.qualify_native_credential_acl_crash(root, report)
+        assert report["native_credential_acl_crash"] is True
+    else:
+        with pytest.raises(native.ProofFailure):
+            native.qualify_native_credential_acl_crash(root, report)
+        assert "native_credential_acl_crash" not in report
+    parent_ambient_preserved = os.environ["PGPASSWORD"] == ambient
+    assert parent_ambient_preserved

@@ -17,7 +17,9 @@ import shutil
 import socket
 import stat
 import struct
+import subprocess
 import sys
+from xml.etree import ElementTree
 
 
 class ProofFailure(RuntimeError):
@@ -160,6 +162,61 @@ def prepare(root: Path, report: dict[str, object]) -> None:
     report["result"] = "PREPARED"
 
 
+NATIVE_CREDENTIAL_ACL_TEST = (
+    "test_native_windows_private_credentials_deny_anonymous_and_survive_crash_privately"
+)
+
+
+def qualify_native_credential_acl_crash(root: Path, report: dict[str, object]) -> None:
+    """Require both actual foreign-token/crash cases; skipped tests are not proof."""
+    root = owned_root(root)
+    report["stage"] = "NATIVE_CREDENTIAL_ACL_CRASH"
+    results = root / "credential-acl-results.xml"
+    environment = {
+        **os.environ,
+        "CRYPTOHUNTER_RUN_WINDOWS_BOOTSTRAP_ACL_INTEGRATION": "1",
+        "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+    }
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "--confcutdir=tests/deployment",
+            "-q",
+            "tests/deployment/test_windows_bootstrap_credentials.py::" + NATIVE_CREDENTIAL_ACL_TEST,
+            "--basetemp",
+            str(root / "credential-acl"),
+            "--junitxml",
+            str(results),
+        ],
+        cwd=Path(__file__).resolve().parents[2],
+        env=environment,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        timeout=90,
+        check=False,
+    )
+    require(completed.returncode == 0)
+    document = ElementTree.parse(results).getroot()
+    require(document.tag in {"testsuite", "testsuites"})
+    cases = list(document.iter("testcase"))
+    require(len(cases) == 2)
+    require(
+        {case.get("name") for case in cases}
+        == {NATIVE_CREDENTIAL_ACL_TEST + "[False]", NATIVE_CREDENTIAL_ACL_TEST + "[True]"}
+    )
+    for suite in document.iter():
+        if suite.tag in {"testsuite", "testsuites"}:
+            for attribute in ("errors", "failures", "skipped"):
+                require(int(suite.get(attribute, "0")) == 0)
+            if "tests" in suite.attrib:
+                require(int(suite.attrib["tests"]) == len(list(suite.iter("testcase"))))
+    for case in cases:
+        require(not any(case.find(tag) is not None for tag in ("skipped", "error", "failure")))
+    report["native_credential_acl_crash"] = True
+
+
 def run(root: Path, report: dict[str, object]) -> None:
     report["stage"] = "VALIDATE_ROOT"
     root = owned_root(root)
@@ -176,6 +233,7 @@ def run(root: Path, report: dict[str, object]) -> None:
     report["stage"] = "REQUIRE_LOCAL_SYSTEM"
     provision._require_bootstrap_system()
     report["effective_local_system"] = True
+    qualify_native_credential_acl_crash(root, report)
     ambient_password = os.environ.get("PGPASSWORD")
     report["ambient_password_present"] = ambient_password is not None
     report["ambient_password_synthetic"] = not bool(ambient_password)
