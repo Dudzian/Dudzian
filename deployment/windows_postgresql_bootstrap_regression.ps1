@@ -58,7 +58,8 @@ try {
         'PROVISION_ERROR', 'OTHER_ERROR'
     )
     foreach ($field in @('stage', 'failure', 'failure_type', 'bootstrap_failure', 'passfile_connection',
-        'memory_password_connection', 'missing_password', 'wrong_password', 'wrong_ca', 'tls_disabled')) {
+        'ambient_password_connection', 'memory_password_connection', 'missing_password',
+        'wrong_password', 'wrong_ca', 'tls_disabled')) {
         $value = $result.$field
         if ($value -is [string] -and $value -cin $categories) {
             Write-Output ('NATIVE_POSTGRESQL_{0} = {1}' -f $field.ToUpperInvariant(), $value)
@@ -68,7 +69,8 @@ try {
         Write-Output ('NATIVE_POSTGRESQL_FAILURE_WINERROR = {0}' -f $result.failure_winerror)
     }
     foreach ($field in @('effective_local_system', 'listener_available', 'bootstrap_directory_qualified',
-        'final_hba_matches', 'credentials_removed', 'postmaster_stopped', 'temporary_root_removed')) {
+        'ambient_password_present', 'ambient_password_synthetic', 'final_hba_matches',
+        'credentials_removed', 'postmaster_stopped', 'temporary_root_removed')) {
         $value = $result.$field
         if ($value -is [bool]) {
             Write-Output ('NATIVE_POSTGRESQL_{0} = {1}' -f $field.ToUpperInvariant(), $value.ToString().ToUpperInvariant())

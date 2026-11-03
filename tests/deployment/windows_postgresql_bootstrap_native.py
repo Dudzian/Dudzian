@@ -176,9 +176,16 @@ def run(root: Path, report: dict[str, object]) -> None:
     report["stage"] = "REQUIRE_LOCAL_SYSTEM"
     provision._require_bootstrap_system()
     report["effective_local_system"] = True
+    ambient_password = os.environ.get("PGPASSWORD")
+    report["ambient_password_present"] = ambient_password is not None
+    report["ambient_password_synthetic"] = not bool(ambient_password)
     for name in tuple(os.environ):
         if name.startswith("PG"):
             del os.environ[name]
+    # Keep the real machine credential when present. Otherwise use a controlled
+    # mismatching value to exercise the same libpq precedence without exporting
+    # either password. The colon cannot occur in token_urlsafe bootstrap values.
+    os.environ["PGPASSWORD"] = ambient_password or (provision.secrets.token_urlsafe(48) + ":")
     report["stage"] = "SELECT_LOOPBACK_PORT"
     with socket.socket() as reserve:
         reserve.bind(("127.0.0.1", 0))
@@ -229,7 +236,10 @@ def run(root: Path, report: dict[str, object]) -> None:
             passfile=str(passfile),
             connect_timeout=5,
         )
-        report["passfile_connection"] = probe(psycopg, dsn)
+        report["ambient_password_connection"] = probe(psycopg, dsn)
+        # An explicit empty password suppresses the environment fallback while
+        # still asking libpq to obtain the credential from its explicit passfile.
+        report["passfile_connection"] = probe(psycopg, dsn, password="")
         report["memory_password_connection"] = probe(psycopg, dsn, password=password)
         report["missing_password"] = probe(
             psycopg, dsn, passfile=str(root / "absent-passfile"), password=""
@@ -259,6 +269,7 @@ def run(root: Path, report: dict[str, object]) -> None:
         report["postmaster_stopped"] = not (data / "postmaster.pid").exists()
     if bootstrap_error is not None:
         raise bootstrap_error
+    require(report.get("ambient_password_connection") == "SCRAM_PASSWORD_REJECTED")
     require(report.get("passfile_connection") == "CONNECTED")
     require(report.get("memory_password_connection") == "CONNECTED")
     require(report.get("missing_password") == "LIBPQ_NO_PASSWORD")

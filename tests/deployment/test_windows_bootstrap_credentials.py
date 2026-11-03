@@ -75,7 +75,6 @@ def native(monkeypatch: pytest.MonkeyPatch):
     constants = SimpleNamespace(
         TOKEN_QUERY=8,
         READ_CONTROL=0x20000,
-        FILE_READ_ATTRIBUTES=0x80,
         GENERIC_WRITE=0x40000000,
         CREATE_NEW=1,
         OPEN_EXISTING=3,
@@ -83,6 +82,9 @@ def native(monkeypatch: pytest.MonkeyPatch):
         FILE_FLAG_BACKUP_SEMANTICS=0x02000000,
         FILE_ATTRIBUTE_REPARSE_POINT=0x400,
     )
+    # Pinned pywin32 312 exports file access rights from ntsecuritycon; its
+    # win32con module deliberately has no FILE_READ_ATTRIBUTES attribute.
+    file_access = SimpleNamespace(FILE_READ_ATTRIBUTES=0x80)
 
     class Handle:
         def __init__(self, path=None, descriptor=None, fd=None):
@@ -158,7 +160,7 @@ def native(monkeypatch: pytest.MonkeyPatch):
         assert attributes is None
         # GetSecurityInfo needs READ_CONTROL; GetFileInformationByHandle also
         # needs FILE_READ_ATTRIBUTES. Opening with READ_CONTROL alone is invalid.
-        assert access == constants.READ_CONTROL | constants.FILE_READ_ATTRIBUTES
+        assert access == constants.READ_CONTROL | 0x80
         assert flags == constants.FILE_FLAG_BACKUP_SEMANTICS | 0x00200000
         state.events.append(("open-directory", path))
         if state.fail == "directory-open":
@@ -209,6 +211,7 @@ def native(monkeypatch: pytest.MonkeyPatch):
     modules = {
         "pywintypes": SimpleNamespace(error=NativeFailure, SECURITY_ATTRIBUTES=SimpleNamespace),
         "win32con": constants,
+        "ntsecuritycon": file_access,
         "win32api": SimpleNamespace(GetCurrentThread=lambda: 2, GetCurrentProcess=lambda: 1),
         "win32security": security,
         "win32file": SimpleNamespace(
@@ -223,6 +226,14 @@ def native(monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setitem(sys.modules, name, module)
     state.security, state.constants = security, constants
     return state
+
+
+def test_directory_attribute_right_uses_pinned_pywin32_module(tmp_path: Path, native) -> None:
+    assert not hasattr(sys.modules["win32con"], "FILE_READ_ATTRIBUTES")
+    assert sys.modules["ntsecuritycon"].FILE_READ_ATTRIBUTES == 0x80
+    with provision._bootstrap_password_files(tmp_path):
+        assert any(event[0] == "open-directory" for event in native.events)
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_native_creates_final_system_acl_before_each_write_and_cleans_up(

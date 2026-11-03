@@ -505,12 +505,13 @@ def _qualify_bootstrap_handle(handle: Any, *, inherit: bool) -> None:
 
 
 def _qualify_bootstrap_directory(directory: Path) -> None:
+    import ntsecuritycon
     import win32con  # type: ignore[import-not-found]
     import win32file  # type: ignore[import-not-found]
 
     handle = win32file.CreateFile(
         str(directory),
-        win32con.READ_CONTROL | win32con.FILE_READ_ATTRIBUTES,
+        win32con.READ_CONTROL | ntsecuritycon.FILE_READ_ATTRIBUTES,
         0,
         None,
         win32con.OPEN_EXISTING,
