@@ -13,6 +13,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import re
 import shutil
 import socket
 import stat
@@ -167,6 +168,51 @@ NATIVE_CREDENTIAL_ACL_TEST = (
 )
 
 
+def record_native_credential_case_diagnostics(document, report: dict[str, object]) -> None:
+    """Publish only known case labels, fixed result classes and source line numbers."""
+    cases = list(document.iter("testcase"))
+    for value, field in ((False, "native_acl_normal"), (True, "native_acl_crash")):
+        selected = [
+            case for case in cases if case.get("name") == NATIVE_CREDENTIAL_ACL_TEST + f"[{value}]"
+        ]
+        if len(selected) != 1:
+            report[field + "_status"] = "CASE_MISSING" if not selected else "CASE_DUPLICATE"
+            continue
+        case = selected[0]
+        error = case.find("error")
+        failure = case.find("failure")
+        if case.find("skipped") is not None:
+            status = "CASE_SKIPPED"
+        elif error is not None:
+            status = "CASE_ERROR"
+        elif failure is not None:
+            status = "CASE_FAILED"
+        else:
+            status = "CASE_PASSED"
+        report[field + "_status"] = status
+        problem = error if error is not None else failure
+        if problem is None:
+            continue
+        detail = problem.text or ""
+        last_line = detail.rstrip().split("\n")[-1]
+        kind = "OTHER_ERROR"
+        for pattern, category in (
+            (r"(?:^|:\s*)PermissionError\s*$", "PERMISSION_ERROR"),
+            (r"(?:^|:\s*)AssertionError\s*$", "ASSERTION_ERROR"),
+            (r"(?:^|:\s*)(?:[\w.]+\.)?ProvisionError\s*$", "PROVISION_ERROR"),
+            (r"(?:^|:\s*)pywintypes\.error\s*$", "PYWIN32_ERROR"),
+        ):
+            if re.search(pattern, last_line):
+                kind = category
+                break
+        report[field + "_failure_type"] = kind
+        source_lines = re.findall(r"test_windows_bootstrap_credentials\.py:(\d+):", detail)
+        if source_lines:
+            line = int(source_lines[-1])
+            if 1 <= line <= 1000:
+                report[field + "_failure_line"] = line
+
+
 def qualify_native_credential_acl_crash(root: Path, report: dict[str, object]) -> None:
     """Require both actual foreign-token/crash cases; skipped tests are not proof."""
     root = owned_root(root)
@@ -184,6 +230,8 @@ def qualify_native_credential_acl_crash(root: Path, report: dict[str, object]) -
             "pytest",
             "--confcutdir=tests/deployment",
             "-q",
+            "-o",
+            "tmp_path_retention_policy=failed",
             "tests/deployment/test_windows_bootstrap_credentials.py::" + NATIVE_CREDENTIAL_ACL_TEST,
             "--basetemp",
             str(root / "credential-acl"),
@@ -197,8 +245,11 @@ def qualify_native_credential_acl_crash(root: Path, report: dict[str, object]) -
         timeout=90,
         check=False,
     )
-    require(completed.returncode == 0)
+    if type(completed.returncode) is int and completed.returncode in range(6):
+        report["native_acl_pytest_exit"] = completed.returncode
     document = ElementTree.parse(results).getroot()
+    record_native_credential_case_diagnostics(document, report)
+    require(completed.returncode == 0)
     require(document.tag in {"testsuite", "testsuites"})
     cases = list(document.iter("testcase"))
     require(len(cases) == 2)

@@ -56,11 +56,14 @@ try {
         'NATIVE_CREDENTIAL_ACL_CRASH',
         'SELECT_LOOPBACK_PORT', 'PROTECT_TEMPORARY_ROOT', 'PREPARE_TEMPORARY_DIRECTORIES',
         'IMPORT_ERROR', 'ATTRIBUTE_ERROR', 'KEY_ERROR', 'TYPE_ERROR', 'VALUE_ERROR', 'PROOF_FAILURE', 'PYWIN32_ERROR',
-        'PROVISION_ERROR', 'OTHER_ERROR'
+        'PROVISION_ERROR', 'OTHER_ERROR',
+        'CASE_PASSED', 'CASE_SKIPPED', 'CASE_ERROR', 'CASE_FAILED', 'CASE_MISSING', 'CASE_DUPLICATE',
+        'PERMISSION_ERROR', 'ASSERTION_ERROR'
     )
     foreach ($field in @('stage', 'failure', 'failure_type', 'bootstrap_failure', 'passfile_connection',
         'ambient_password_connection', 'memory_password_connection', 'missing_password',
-        'wrong_password', 'wrong_ca', 'tls_disabled')) {
+        'wrong_password', 'wrong_ca', 'tls_disabled', 'native_acl_normal_status', 'native_acl_crash_status',
+        'native_acl_normal_failure_type', 'native_acl_crash_failure_type')) {
         $value = $result.$field
         if ($value -is [string] -and $value -cin $categories) {
             Write-Output ('NATIVE_POSTGRESQL_{0} = {1}' -f $field.ToUpperInvariant(), $value)
@@ -68,6 +71,15 @@ try {
     }
     if ($result.failure_winerror -is [long] -and $result.failure_winerror -in @(5, 6, 87, 1008, 1300, 1314)) {
         Write-Output ('NATIVE_POSTGRESQL_FAILURE_WINERROR = {0}' -f $result.failure_winerror)
+    }
+    if ($result.native_acl_pytest_exit -is [long] -and $result.native_acl_pytest_exit -in @(0, 1, 2, 3, 4, 5)) {
+        Write-Output ('NATIVE_POSTGRESQL_NATIVE_ACL_PYTEST_EXIT = {0}' -f $result.native_acl_pytest_exit)
+    }
+    foreach ($field in @('native_acl_normal_failure_line', 'native_acl_crash_failure_line')) {
+        $value = $result.$field
+        if ($value -is [long] -and $value -ge 1 -and $value -le 1000) {
+            Write-Output ('NATIVE_POSTGRESQL_{0} = {1}' -f $field.ToUpperInvariant(), $value)
+        }
     }
     foreach ($field in @('effective_local_system', 'listener_available', 'bootstrap_directory_qualified',
         'native_credential_acl_crash',

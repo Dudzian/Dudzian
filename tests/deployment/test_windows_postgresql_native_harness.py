@@ -120,13 +120,17 @@ def test_job_setup_failure_never_cleans_marked_existing_root(tmp_path, monkeypat
     assert "temporary_root_removed" not in json.loads(report.read_text())
 
 
-@pytest.mark.parametrize("unexecuted", (None, "skipped", "error", "failure"))
+@pytest.mark.parametrize(
+    ("unexecuted", "child_exit"),
+    ((None, 0), ("skipped", 0), ("error", 0), ("failure", 0), (None, 1)),
+)
 def test_native_credential_proof_refuses_skips_even_when_pytest_exits_zero(
-    tmp_path, monkeypatch, unexecuted
+    tmp_path, monkeypatch, unexecuted, child_exit
 ):
     monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
     monkeypatch.setenv("PGPASSWORD", secrets.token_urlsafe(12))
     ambient = os.environ["PGPASSWORD"]
+    private_detail = secrets.token_urlsafe(24)
     root = tmp_path / "owned"
     root.mkdir()
     marker(root)
@@ -134,6 +138,7 @@ def test_native_credential_proof_refuses_skips_even_when_pytest_exits_zero(
     def child(command, **kwargs):
         assert command[1:3] == ["-m", "pytest"]
         assert "--confcutdir=tests/deployment" in command
+        assert command[command.index("-o") + 1] == "tmp_path_retention_policy=failed"
         assert command[command.index("--basetemp") + 1] == str(root / "credential-acl")
         assert kwargs["stdout"] is native.subprocess.DEVNULL
         assert kwargs["stderr"] is native.subprocess.DEVNULL
@@ -154,18 +159,28 @@ def test_native_credential_proof_refuses_skips_even_when_pytest_exits_zero(
                 name=native.NATIVE_CREDENTIAL_ACL_TEST + f"[{value}]",
             )
             if value and unexecuted is not None:
-                ElementTree.SubElement(case, unexecuted)
+                problem = ElementTree.SubElement(case, unexecuted)
+                problem.text = (
+                    private_detail
+                    + "\ntests/deployment/test_windows_bootstrap_credentials.py:400: AssertionError"
+                    + "\ntests/deployment/test_windows_bootstrap_credentials.py:484: PermissionError"
+                )
         ElementTree.ElementTree(document).write(command[command.index("--junitxml") + 1])
-        return SimpleNamespace(returncode=0)
+        return SimpleNamespace(returncode=child_exit)
 
     monkeypatch.setattr(native.subprocess, "run", child)
     report = {}
-    if unexecuted is None:
+    if unexecuted is None and child_exit == 0:
         native.qualify_native_credential_acl_crash(root, report)
         assert report["native_credential_acl_crash"] is True
     else:
         with pytest.raises(native.ProofFailure):
             native.qualify_native_credential_acl_crash(root, report)
         assert "native_credential_acl_crash" not in report
+    assert report["native_acl_pytest_exit"] == child_exit
+    assert private_detail not in json.dumps(report)
+    if unexecuted in {"error", "failure"}:
+        assert report["native_acl_crash_failure_type"] == "PERMISSION_ERROR"
+        assert report["native_acl_crash_failure_line"] == 484
     parent_ambient_preserved = os.environ["PGPASSWORD"] == ambient
     assert parent_ambient_preserved
