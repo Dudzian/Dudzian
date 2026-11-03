@@ -15,6 +15,7 @@ from pathlib import Path
 import platform
 import shutil
 import socket
+import stat
 import struct
 import sys
 
@@ -28,9 +29,58 @@ def require(value: bool) -> None:
         raise ProofFailure
 
 
+OWNERSHIP_MARKER = ".cryptohunter-isolated-postgresql-bootstrap-owner"
+OWNERSHIP_CONTENT = "cryptohunter-isolated-postgresql-bootstrap-v1\n"
+
+
+def _reject_reparse(path: Path) -> None:
+    metadata = path.lstat()
+    require(not stat.S_ISLNK(metadata.st_mode))
+    require(not getattr(metadata, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT)
+
+
+def temporary_root(root: Path) -> Path:
+    """Accept only an ordinary strict descendant of the runner's temp storage."""
+    temporary = Path(os.environ["RUNNER_TEMP"])
+    require(temporary.is_absolute() and root.is_absolute())
+    require(".." not in temporary.parts and ".." not in root.parts)
+    for path in (temporary, *temporary.parents):
+        _reject_reparse(path)
+    require(temporary.is_dir())
+    require(root != temporary and temporary in root.parents)
+    require(root.parent.is_dir())
+    for path in (root, *root.parents):
+        try:
+            _reject_reparse(path)
+        except FileNotFoundError:
+            require(path == root)
+        if path == temporary:
+            break
+    return root
+
+
+def owned_root(root: Path) -> Path:
+    root = temporary_root(root)
+    require(root.is_dir())
+    marker = root / OWNERSHIP_MARKER
+    _reject_reparse(marker)
+    require(marker.is_file())
+    require(marker.read_text(encoding="ascii") == OWNERSHIP_CONTENT)
+    return root
+
+
+def cleanup_owned_root(root: Path) -> None:
+    """Remove only this harness's marked directory, never an arbitrary CLI path."""
+    root = owned_root(root)
+    for directory, names, filenames in os.walk(root, followlinks=False):
+        for name in (*names, *filenames):
+            _reject_reparse(Path(directory) / name)
+    shutil.rmtree(root)
+
+
 def failure_category(exc: BaseException) -> str:
     """Inspect locally but never export provider messages or arbitrary attributes."""
-    if isinstance(exc, PermissionError):
+    if isinstance(exc, PermissionError) or getattr(exc, "winerror", None) == 5:
         return "WINDOWS_ACCESS_DENIED"
     if isinstance(exc, ImportError):
         return "DEPENDENCY_UNAVAILABLE"
@@ -59,6 +109,26 @@ def failure_category(exc: BaseException) -> str:
     return "UNCLASSIFIED_FAILURE"
 
 
+def failure_type(exc: BaseException) -> str:
+    """Publish only a fixed type category, never an arbitrary class name."""
+    if isinstance(exc, ImportError):
+        return "IMPORT_ERROR"
+    if isinstance(exc, AttributeError):
+        return "ATTRIBUTE_ERROR"
+    if isinstance(exc, KeyError):
+        return "KEY_ERROR"
+    if isinstance(exc, ProofFailure):
+        return "PROOF_FAILURE"
+    if type(exc).__module__ == "pywintypes" and type(exc).__name__ == "error":
+        return "PYWIN32_ERROR"
+    if type(exc).__name__ == "ProvisionError":
+        return "PROVISION_ERROR"
+    return "OTHER_ERROR"
+
+
+KNOWN_WINERRORS = frozenset({5, 6, 87, 1008, 1300, 1314})
+
+
 def probe(psycopg, dsn: str, **overrides) -> str:
     try:
         with psycopg.connect(dsn, autocommit=True, **overrides) as connection:
@@ -69,30 +139,43 @@ def probe(psycopg, dsn: str, **overrides) -> str:
 
 
 def prepare(root: Path, report: dict[str, object]) -> None:
+    report["stage"] = "VALIDATE_TEMPORARY_ROOT"
+    root = temporary_root(root)
+    require(not root.exists())
+    root.mkdir()
+    with (root / OWNERSHIP_MARKER).open("x", encoding="ascii", newline="\n") as marker:
+        marker.write(OWNERSHIP_CONTENT)
     from deployment.windows_installer import build
 
-    require(not root.exists())
-    root.mkdir(parents=True)
     pins = json.loads((Path(build.__file__).parent / "pins.json").read_text(encoding="utf-8"))
+    report["stage"] = "ACQUIRE_PINNED_POSTGRESQL"
     archive = build.acquire_postgresql(pins, None, root / "download")
+    report["stage"] = "EXTRACT_PINNED_POSTGRESQL"
     build.normalize_postgresql_archive(archive, root / "payload" / "PostgreSQL")
     report["archive_sha256_verified"] = True
     report["result"] = "PREPARED"
 
 
 def run(root: Path, report: dict[str, object]) -> None:
+    report["stage"] = "VALIDATE_ROOT"
+    root = owned_root(root)
+    report["stage"] = "IMPORT_POSTGRESQL_DRIVER"
     import psycopg
     from psycopg.conninfo import make_conninfo
 
+    report["stage"] = "IMPORT_BOOTSTRAP"
     from deployment.windows_installer import provision
 
+    report["stage"] = "VALIDATE_WINDOWS_ARCH"
     require(sys.platform == "win32" and struct.calcsize("P") == 8)
     require(platform.machine().upper() in {"AMD64", "X86_64"})
+    report["stage"] = "REQUIRE_LOCAL_SYSTEM"
     provision._require_bootstrap_system()
     report["effective_local_system"] = True
     for name in tuple(os.environ):
         if name.startswith("PG"):
             del os.environ[name]
+    report["stage"] = "SELECT_LOOPBACK_PORT"
     with socket.socket() as reserve:
         reserve.bind(("127.0.0.1", 0))
         port = reserve.getsockname()[1]
@@ -108,8 +191,10 @@ def run(root: Path, report: dict[str, object]) -> None:
         for index, name in enumerate(provision.SERVICES, 1)
     }
     data, security = root / "data", root / "security"
+    report["stage"] = "PROTECT_TEMPORARY_ROOT"
     provision._protect(root, grants, inherit=True)
     provision._qualify_protected(root, grants, inherit=True)
+    report["stage"] = "PREPARE_TEMPORARY_DIRECTORIES"
     data.mkdir()
     security.mkdir()
     provision._protect(data, grants, inherit=True)
@@ -205,6 +290,7 @@ def main() -> int:
     parser.add_argument("--root", required=True, type=Path)
     parser.add_argument("--report", required=True, type=Path)
     parser.add_argument("--prepare", action="store_true")
+    parser.add_argument("--runner-temp", type=Path)
     args = parser.parse_args()
     report: dict[str, object] = {"schema_version": 1, "result": "FAIL", "stage": "SETUP"}
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -213,34 +299,46 @@ def main() -> int:
     with open(os.devnull, "w", encoding="utf-8") as sink:
         with redirect_stdout(sink), redirect_stderr(sink):
             try:
+                report["stage"] = "VALIDATE_PLATFORM"
                 require(sys.platform == "win32")
+                if args.runner_temp is not None:
+                    os.environ["RUNNER_TEMP"] = str(args.runner_temp)
                 if args.prepare:
                     prepare(args.root, report)
                 else:
+                    report["stage"] = "IMPORT_WIN32_JOB"
                     import win32api
                     import win32job
 
                     # Every disposable postmaster stays in this kill-on-close
                     # job, including after abrupt scheduled-task termination.
+                    report["stage"] = "CREATE_JOB_OBJECT"
                     job = win32job.CreateJobObject(None, None)
+                    report["stage"] = "QUERY_JOB_OBJECT"
                     limits = win32job.QueryInformationJobObject(
                         job, win32job.JobObjectExtendedLimitInformation
                     )
                     limits["BasicLimitInformation"]["LimitFlags"] |= (
                         win32job.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
                     )
+                    report["stage"] = "CONFIGURE_JOB_OBJECT"
                     win32job.SetInformationJobObject(
                         job, win32job.JobObjectExtendedLimitInformation, limits
                     )
+                    report["stage"] = "ASSIGN_JOB_OBJECT"
                     win32job.AssignProcessToJobObject(job, win32api.GetCurrentProcess())
                     run(args.root, report)
                 code = 0
             except Exception as exc:
                 report["failure"] = failure_category(exc)
+                report["failure_type"] = failure_type(exc)
+                winerror = getattr(exc, "winerror", None)
+                if type(winerror) is int and winerror in KNOWN_WINERRORS:
+                    report["failure_winerror"] = winerror
             finally:
-                if not args.prepare and args.root.exists():
+                if not args.prepare and report.get("effective_local_system") is True:
                     try:
-                        shutil.rmtree(args.root)
+                        cleanup_owned_root(args.root)
                         report["temporary_root_removed"] = True
                     except Exception:
                         report["temporary_root_removed"] = False

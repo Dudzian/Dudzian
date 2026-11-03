@@ -42,6 +42,7 @@ jobs:
         run: >-
           python -m pytest --confcutdir=tests/deployment -q
           tests/deployment/test_windows_postgresql_diagnostics.py
+          tests/deployment/test_windows_postgresql_native_harness.py
           tests/deployment/test_windows_bootstrap_credentials.py
           tests/deployment/test_windows_postgresql_bootstrap.py
       - name: Verify and extract the production-pinned PostgreSQL archive

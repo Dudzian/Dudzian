@@ -21,7 +21,7 @@ try {
     if ($rootPath -match '["\r\n]' -or $reportPath -match '["\r\n]' -or $script -match '["\r\n]') {
         throw 'invalid task argument'
     }
-    $arguments = '"{0}" --root "{1}" --report "{2}"' -f $script, $rootPath, $reportPath
+    $arguments = '"{0}" --root "{1}" --report "{2}" --runner-temp "{3}"' -f $script, $rootPath, $reportPath, $tempRoot.TrimEnd('\')
     $action = New-ScheduledTaskAction -Execute $PythonExecutable -Argument $arguments -WorkingDirectory $repository
     $principal = New-ScheduledTaskPrincipal -UserId 'S-1-5-18' -LogonType ServiceAccount -RunLevel Highest
     $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 8)
@@ -49,14 +49,23 @@ try {
         'POSTGRES_INITDB', 'POSTGRES_BOOTSTRAP_START', 'POSTGRES_CREATE_DATABASE',
         'POSTGRES_PROVISION_FRESHNESS_AUTHORITY', 'POSTGRES_QUALIFY_FRESHNESS_AUTHORITY',
         'POSTGRES_FINAL_HBA_WRITE', 'POSTGRES_FINAL_HBA_QUALIFY',
-        'POSTGRES_FINAL_ADMIN_REJECTION', 'POSTGRES_BOOTSTRAP_STOP'
+        'POSTGRES_FINAL_ADMIN_REJECTION', 'POSTGRES_BOOTSTRAP_STOP',
+        'VALIDATE_PLATFORM', 'IMPORT_WIN32_JOB', 'CREATE_JOB_OBJECT', 'QUERY_JOB_OBJECT',
+        'CONFIGURE_JOB_OBJECT', 'ASSIGN_JOB_OBJECT', 'VALIDATE_ROOT', 'IMPORT_POSTGRESQL_DRIVER',
+        'IMPORT_BOOTSTRAP', 'VALIDATE_WINDOWS_ARCH', 'REQUIRE_LOCAL_SYSTEM',
+        'SELECT_LOOPBACK_PORT', 'PROTECT_TEMPORARY_ROOT', 'PREPARE_TEMPORARY_DIRECTORIES',
+        'IMPORT_ERROR', 'ATTRIBUTE_ERROR', 'KEY_ERROR', 'PROOF_FAILURE', 'PYWIN32_ERROR',
+        'PROVISION_ERROR', 'OTHER_ERROR'
     )
-    foreach ($field in @('stage', 'failure', 'bootstrap_failure', 'passfile_connection',
+    foreach ($field in @('stage', 'failure', 'failure_type', 'bootstrap_failure', 'passfile_connection',
         'memory_password_connection', 'missing_password', 'wrong_password', 'wrong_ca', 'tls_disabled')) {
         $value = $result.$field
         if ($value -is [string] -and $value -cin $categories) {
             Write-Output ('NATIVE_POSTGRESQL_{0} = {1}' -f $field.ToUpperInvariant(), $value)
         }
+    }
+    if ($result.failure_winerror -is [long] -and $result.failure_winerror -in @(5, 6, 87, 1008, 1300, 1314)) {
+        Write-Output ('NATIVE_POSTGRESQL_FAILURE_WINERROR = {0}' -f $result.failure_winerror)
     }
     foreach ($field in @('effective_local_system', 'listener_available', 'bootstrap_directory_qualified',
         'final_hba_matches', 'credentials_removed', 'postmaster_stopped', 'temporary_root_removed')) {
