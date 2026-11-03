@@ -765,6 +765,21 @@ def test_rendered_unit_binds_one_exact_signed_environment():
         identity.render_runtime_unit(rendered, verified_runtime())
 
 
+def test_runtime_unit_adapter_rejects_non_bytes_fail_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from deployment import freshness_runtime
+
+    runtime = verified_runtime()
+    template = qualification.REVIEWED_UNIT.read_bytes()
+    monkeypatch.setattr(freshness_runtime, "render_runtime_unit", lambda *_args: "not-bytes")
+    with pytest.raises(identity.ServiceIdentityError, match="RUNTIME_UNIT_TEMPLATE_INVALID"):
+        identity.render_runtime_unit(template, runtime)
+    monkeypatch.setattr(freshness_runtime, "validate_runtime_unit", lambda *_args: "not-bytes")
+    with pytest.raises(identity.ServiceIdentityError, match="RUNTIME_UNIT_BINDING_CHANGED"):
+        identity.validate_runtime_unit(template, runtime)
+
+
 def test_completed_bootstrap_uses_exact_verified_command():
     assert identity._bootstrap_start(bootstrap_reply())[1] == identity.BOOTSTRAP_ARGV
 
