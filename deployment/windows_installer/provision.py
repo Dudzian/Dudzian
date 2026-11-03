@@ -14,6 +14,7 @@ import shutil
 import subprocess
 import sys
 from typing import Any, Callable, Iterator
+from psycopg import OperationalError
 from psycopg.conninfo import make_conninfo
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
@@ -54,6 +55,22 @@ OWNERSHIP_RECORD = ".stage9-install-ownership.json"
 ENROLLMENT_FINALIZATION = "enrollment-finalization.json"
 SCHEMA = 1
 SAFE_FAILURE_FIELDS = frozenset({"schema_version", "operation", "stage", "first_exception"})
+POSTGRES_CONNECTION_FAILURES = frozenset(
+    {
+        "PASSWORD_UNAVAILABLE",
+        "PASSWORD_REJECTED",
+        "PASSFILE_UNREADABLE",
+        "TLS_ROOT_CERTIFICATE_UNREADABLE",
+        "TLS_CLIENT_CERTIFICATE_UNREADABLE",
+        "TLS_SERVER_NAME_MISMATCH",
+        "TLS_SERVER_CERTIFICATE_REJECTED",
+        "TLS_UNAVAILABLE",
+        "LISTENER_REFUSED",
+        "CONNECTION_TIMEOUT",
+        "PERMISSION_DENIED",
+        "UNCLASSIFIED",
+    }
+)
 SERVICES = (
     CONTRACT.postgresql_service,
     CONTRACT.backend_service,
@@ -104,9 +121,18 @@ def safe_failure_path() -> Path:
 def _valid_safe_failure(value: object) -> bool:
     return (
         isinstance(value, dict)
-        and set(value) == SAFE_FAILURE_FIELDS
+        and set(value)
+        in (SAFE_FAILURE_FIELDS, SAFE_FAILURE_FIELDS | {"postgresql_connection_failure"})
         and value.get("schema_version") == SCHEMA
         and value.get("operation") == "install"
+        and (
+            "postgresql_connection_failure" not in value
+            or (
+                value.get("stage") == "POSTGRES_CREATE_DATABASE"
+                and isinstance(value["postgresql_connection_failure"], str)
+                and value["postgresql_connection_failure"] in POSTGRES_CONNECTION_FAILURES
+            )
+        )
         and all(
             isinstance(value.get(field), str) and bool(value[field])
             for field in ("stage", "first_exception")
@@ -133,16 +159,53 @@ def clear_safe_failure() -> None:
         path.unlink(missing_ok=True)
 
 
+def _postgresql_connection_failure(exc: BaseException) -> str:
+    """Return a diagnostic hint only; provider text never controls acceptance."""
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, OperationalError):
+            try:
+                message = str(current).casefold()
+            except Exception:
+                return "UNCLASSIFIED"
+            for needle, category in (
+                ("no password supplied", "PASSWORD_UNAVAILABLE"),
+                ("password authentication failed", "PASSWORD_REJECTED"),
+                ("password file", "PASSFILE_UNREADABLE"),
+                ("root certificate file", "TLS_ROOT_CERTIFICATE_UNREADABLE"),
+                ("private key file", "TLS_CLIENT_CERTIFICATE_UNREADABLE"),
+                ("could not load ssl client certificate", "TLS_CLIENT_CERTIFICATE_UNREADABLE"),
+                ("does not match host name", "TLS_SERVER_NAME_MISMATCH"),
+                ("certificate verify failed", "TLS_SERVER_CERTIFICATE_REJECTED"),
+                ("server does not support ssl", "TLS_UNAVAILABLE"),
+                ("connection refused", "LISTENER_REFUSED"),
+                ("actively refused", "LISTENER_REFUSED"),
+                ("timeout expired", "CONNECTION_TIMEOUT"),
+                ("permission denied", "PERMISSION_DENIED"),
+                ("access is denied", "PERMISSION_DENIED"),
+            ):
+                if needle in message:
+                    return category
+            return "UNCLASSIFIED"
+        current = current.__cause__ or current.__context__
+    return "UNCLASSIFIED"
+
+
 def write_safe_failure(operation: str, stage: str, exc: BaseException) -> None:
     """Atomically persist allowlisted failure metadata, never exception text."""
+    value = {
+        "schema_version": SCHEMA,
+        "operation": operation,
+        "stage": stage,
+        "first_exception": _first_exception_type(exc),
+    }
+    if stage == "POSTGRES_CREATE_DATABASE":
+        value["postgresql_connection_failure"] = _postgresql_connection_failure(exc)
     _write(
         safe_failure_path(),
-        {
-            "schema_version": SCHEMA,
-            "operation": operation,
-            "stage": stage,
-            "first_exception": _first_exception_type(exc),
-        },
+        value,
     )
 
 
