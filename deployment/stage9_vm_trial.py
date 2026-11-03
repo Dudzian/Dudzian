@@ -54,6 +54,8 @@ SNAPSHOT_PATHS = (
     Path("/var/lib/cryptohunter-installer"),
     Path("/opt/cryptohunter/freshness-runtime"),
 )
+STAGING_PARENT = Path("/usr/lib")
+STAGING_PREFIX = ".cryptohunter-stage-"
 COMMAND_ENV = {"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C", "LC_ALL": "C"}
 
 
@@ -215,7 +217,8 @@ def _digest(path: Path) -> str:
 def snapshot(paths: tuple[Path, ...] = SNAPSHOT_PATHS) -> str:
     """Hash treści/UID/GID/trybów/linków kontrolowanych drzew, bez atime i PGDATA.
 
-    To inwentarz zakresu mutacji instalatora, nie pełny snapshot dysku VM.
+    Obejmuje też staging instalatora obok katalogu kodu. Nie jest pełnym
+    snapshotem hosta: pomija PGDATA, stan usług i zewnętrzne pliki runtime.
     Treści ani osobne hashe konfiguracji nie opuszczają tej funkcji.
     """
     digest = hashlib.sha256()
@@ -244,6 +247,11 @@ def snapshot(paths: tuple[Path, ...] = SNAPSHOT_PATHS) -> str:
 
     for path in paths:
         visit(path)
+    _require(stat.S_ISDIR(STAGING_PARENT.lstat().st_mode), "SNAPSHOT_STAGING_PARENT_INVALID")
+    digest.update(json.dumps([str(STAGING_PARENT), STAGING_PREFIX]).encode())
+    for child in sorted(STAGING_PARENT.iterdir()):
+        if child.name.startswith(STAGING_PREFIX):
+            visit(child)
     return digest.hexdigest()
 
 

@@ -51,6 +51,60 @@ def test_snapshot_refuses_special_file_without_blocking(tmp_path):
         trial.snapshot((tmp_path,))
 
 
+def test_preflight_detects_new_sibling_installer_staging(tmp_path, monkeypatch):
+    library = tmp_path / "usr-lib"
+    library.mkdir()
+    installed = library / "cryptohunter"
+    installed.mkdir()
+    original_snapshot = trial.snapshot
+    monkeypatch.setattr(trial, "STAGING_PARENT", library)
+    monkeypatch.setattr(trial, "snapshot", lambda: original_snapshot((installed,)))
+
+    def preflight(*args, **kwargs):
+        (library / (".cryptohunter-stage-" + "a" * 64)).mkdir()
+        return {"status": "PASS", "state": "fresh"}
+
+    monkeypatch.setattr(trial, "_installer", preflight)
+    with pytest.raises(trial.TrialError, match="PREFLIGHT_MUTATED_HOST"):
+        trial.checked_preflight({}, REVISION)
+
+
+def test_staging_inventory_detects_changes_without_hashing_unrelated_data(tmp_path, monkeypatch):
+    library = tmp_path / "usr-lib"
+    library.mkdir()
+    monkeypatch.setattr(trial, "STAGING_PARENT", library)
+    before = trial.snapshot(())
+    unrelated = library / "unrelated-pgdata"
+    unrelated.mkdir()
+    payload = unrelated / "active-data"
+    payload.write_text("first")
+    assert trial.snapshot(()) == before
+    staging = library / (trial.STAGING_PREFIX + "a" * 64)
+    staging.mkdir()
+    staged_file = staging / "payload.py"
+    staged_file.write_text("reviewed")
+    created = trial.snapshot(())
+    assert created != before
+    staged_file.write_text("changed")
+    assert trial.snapshot(()) != created
+    staged_file.unlink()
+    staging.rmdir()
+    assert trial.snapshot(()) == before
+    staging.symlink_to(unrelated, target_is_directory=True)
+    linked = trial.snapshot(())
+    assert linked != before
+    payload.write_text("changed database pages")
+    assert trial.snapshot(()) == linked
+
+
+def test_staging_inventory_refuses_symlink_instead_of_parent(tmp_path, monkeypatch):
+    linked = tmp_path / "usr-lib"
+    linked.symlink_to(tmp_path, target_is_directory=True)
+    monkeypatch.setattr(trial, "STAGING_PARENT", linked)
+    with pytest.raises(trial.TrialError, match="SNAPSHOT_STAGING_PARENT_INVALID"):
+        trial.snapshot(())
+
+
 @pytest.mark.parametrize("status", ["BLOCKED", "FAIL", "NOT_EXECUTED"])
 def test_summary_never_promotes_incomplete_or_blocked(status):
     assert trial.summarize({"first": {"status": "PASS"}, "last": {"status": status}}) == status

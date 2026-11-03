@@ -291,13 +291,29 @@ Po sprawdzeniu wyniku kolejno stosować `--phase runtime-publish`, następnie
 Każde uruchomienie ponownie wymaga guard VM; nie wyciągać zgody z wcześniejszego
 PASS. Zatrzymać ciąg przy odmowie, braku danych albo niezgodności.
 
-Preflight jest odczytowy. Harness porównuje stan chronionych ścieżek przed/po;
-operator zachowuje dodatkowo NSS, listę klastrów, stan usług, wiersze guard
-i hash backupu. Nie porównywać atime, zmienianego samym odczytem. Nowy journal,
-staging, plik lub zmiana danych oznacza `FAIL`, nawet jeżeli instalator zwrócił
-READY. Porównanie stanu działa również przy wyjątku lub odmowie sprawdzanej
-operacji, a wykryta mutacja ma status `FAIL`, nie `BLOCKED`. Instalacja nie
-tworzy kont, klastra, schematu ani nie restartuje usług.
+Preflight ma pozostać odczytowy. Harness porównuje przed/po treść, UID/GID,
+tryby, liczbę hardlinków i literalne cele symlinków w **wybranym zakresie**:
+`/etc/passwd`, `/etc/group`, `/etc/postgresql`, `/etc/cryptohunter`,
+`/etc/systemd/system`, `/usr/lib/cryptohunter`,
+`/var/lib/cryptohunter-installer`, `/opt/cryptohunter/freshness-runtime`
+oraz istniejące ścieżki rodzeństwa `/usr/lib/.cryptohunter-stage-*`.
+Symlinków nie dereferencjonuje. Nie hashuje całego `/usr/lib`.
+Porównanie działa także przy wyjątku lub odmowie operacji; wykryta mutacja
+w tym zakresie oznacza `FAIL`, nie `BLOCKED`, nawet po odpowiedzi READY.
+
+Pole `readonly=true` i równość `before_sha256`/`after_sha256` dotyczą tego
+porównania, nie niezmienności całego hosta. Pomiar nie obejmuje PGDATA,
+wierszy bazy, aktywnego stanu managera/usług/procesów, wejść w `/srv` ani
+wszystkich plików systemowych. Nie porównuje czasów plików między pomiarami,
+ACL/xattrs ani krótkotrwałych zapisów cofniętych przed drugim odczytem.
+Podpisany inwentarz aplikacji, własny podpisany inwentarz runtime wraz
+z `external_files` i natywne obserwacje usług są odrębnymi kontrolami.
+
+Operator osobno zachowuje NSS, listę klastrów, stan usług oraz wiersze
+syntetycznego guard i hash backupu. Porównanie wybranych wierszy guard nie
+dowodzi niezmienności wszystkich danych PostgreSQL. Nie haszować aktywnego
+PGDATA; pełny punkt odtworzenia zapewnia spójny snapshot hypervisora zgodnie
+z sekcją 1. Instalacja nie tworzy kont, klastra, schematu ani nie restartuje usług.
 Po instalacji porównać receipt, pliki, metadane, kompletność publikacji, journal
 i guard danych. Powtórzyć identyczną instalację na osobnym klonie S5 oraz
 odmowę obcego wydania na innym klonie; nie zaliczać przypadkowej odmowy podpisu
@@ -571,7 +587,7 @@ go zwykłe workflow. Żaden powyższy wynik nie zamyka macierzy właściwej usł
 
 Raport zachowuje identyfikator i SHA obrazu, snapshoty, wersje systemu/pakietów,
 zatwierdzony commit, environment-id, SHA-256 dokładnych manifestów, wyniki
-podpisów, preflight wraz z porównaniem stanu, instalację, systemd, PostgreSQL,
+podpisów, preflight wraz z zakresem porównania wybranych ścieżek, instalację, systemd, PostgreSQL,
 IPC i osobne przypadki macierzy. Nie zapisywać kluczy prywatnych, poświadczeń,
 surowego środowiska procesu ani danych poufnych. Dowody stdout/kody wyjścia
 przechowywać razem z decyzją operatora i faktami izolacji spoza VM.

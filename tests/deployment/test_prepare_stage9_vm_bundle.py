@@ -8,12 +8,19 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from scripts import prepare_stage9_vm_bundle as exporter
 
 pytestmark = pytest.mark.skipif(sys.platform != "linux", reason="Rootless eksporter VM Linux")
+UID_CASES = (
+    pytest.param(None, id="runner-owner"),
+    pytest.param(1000, id="uid-1000-model"),
+    pytest.param(1001, id="uid-1001-model"),
+    pytest.param(4242, id="uid-4242-model"),
+)
 
 
 def git(source: Path, *arguments: str) -> str:
@@ -41,23 +48,42 @@ def commit(source: Path) -> str:
 
 
 @pytest.fixture
-def candidate(tmp_path: Path, monkeypatch):
-    # Source and artifacts are disposable data; the installer is never imported.
-    monkeypatch.setattr(exporter.os, "geteuid", lambda: 1000)
+def exporter_identity(tmp_path: Path, monkeypatch, request):
+    actual_uid = os.geteuid()
+    requested_uid = getattr(request, "param", None)
+    modeled = requested_uid is not None or actual_uid == 0
+    effective_uid = (
+        requested_uid if requested_uid is not None else (actual_uid if actual_uid != 0 else 1000)
+    )
+    if modeled:
+        # Model metadata and Python's identity query together. This never changes
+        # process credentials, filesystem ownership or the real Git subprocess UID.
+        monkeypatch.setattr(exporter.os, "geteuid", lambda: effective_uid)
     original_lstat = Path.lstat
 
-    def ubuntu_system_ownership(path: Path, *args, **kwargs):
+    def exporter_ownership(path: Path, *args, **kwargs):
         info = original_lstat(path, *args, **kwargs)
+        owner = info.st_uid
         if path in {Path("/"), Path("/tmp")}:
             # The executor remaps base-image ownership to nobody. Model only
-            # these immutable system ancestors as on Ubuntu; Git and candidate
-            # files, permissions, symlinks and output writes remain real.
+            # these system boundaries as Ubuntu root-owned ancestors.
+            owner = 0
+        elif modeled and info.st_uid == actual_uid:
+            if path == tmp_path or tmp_path in path.parents or path in tmp_path.parents:
+                owner = effective_uid
+        if owner != info.st_uid:
             fields = list(info)
-            fields[4] = 0
+            fields[4] = owner
             return os.stat_result(fields)
         return info
 
-    monkeypatch.setattr(Path, "lstat", ubuntu_system_ownership)
+    monkeypatch.setattr(Path, "lstat", exporter_ownership)
+    return effective_uid
+
+
+@pytest.fixture
+def candidate(tmp_path: Path, exporter_identity):
+    # Source and artifacts are disposable data; the installer is never imported.
     source = tmp_path / "source"
     source.mkdir()
     git(source, "init")
@@ -109,6 +135,7 @@ def prepare(candidate):
     return exporter.prepare(*candidate[:4])
 
 
+@pytest.mark.parametrize("exporter_identity", UID_CASES, indirect=True)
 def test_exports_exact_git_sources_dynamic_inventory_and_v2_binding(candidate):
     source, revision, binding_path, output, binding, required, template = candidate
     result = prepare(candidate)
@@ -162,6 +189,7 @@ def test_invalid_binding_refuses_before_writing(candidate, key, value):
     assert not candidate[3].exists()
 
 
+@pytest.mark.parametrize("exporter_identity", UID_CASES, indirect=True)
 def test_duplicate_binding_field_refused(candidate):
     candidate[2].write_text('{"schema":1,"schema":1}')
     with pytest.raises(exporter.BundleError, match="DUPLICATE_BINDING_FIELD"):
@@ -192,7 +220,7 @@ def test_writable_output_ancestor_refuses_before_export(candidate, tmp_path, mod
         parent.chmod(0o700)
 
 
-def test_foreign_owned_output_ancestor_refused(candidate, tmp_path, monkeypatch):
+def test_foreign_owned_output_ancestor_refused(candidate, tmp_path, monkeypatch, exporter_identity):
     parent = tmp_path / "foreign-owner"
     parent.mkdir(mode=0o755)
     original_lstat = Path.lstat
@@ -201,7 +229,7 @@ def test_foreign_owned_output_ancestor_refused(candidate, tmp_path, monkeypatch)
         info = original_lstat(path, *args, **kwargs)
         if path == parent:
             fields = list(info)
-            fields[4] = 12345
+            fields[4] = exporter_identity + 1
             return os.stat_result(fields)
         return info
 
@@ -250,6 +278,7 @@ def test_symlinks_refused(candidate, tmp_path, location):
         exporter.prepare(source, revision, binding_path, output)
 
 
+@pytest.mark.parametrize("exporter_identity", UID_CASES, indirect=True)
 def test_changed_worktree_refuses(candidate):
     (candidate[0] / "bot_core/test_extra.py").write_bytes(b"# changed\n")
     with pytest.raises(exporter.BundleError, match="WORKTREE_SOURCE_CHANGED"):
@@ -257,6 +286,7 @@ def test_changed_worktree_refuses(candidate):
     assert not candidate[3].exists()
 
 
+@pytest.mark.parametrize("exporter_identity", UID_CASES, indirect=True)
 def test_git_replace_cannot_substitute_approved_commit(candidate):
     source, revision, binding_path, output, *_ = candidate
     relative = "bot_core/test_extra.py"
@@ -276,6 +306,7 @@ def test_git_replace_cannot_substitute_approved_commit(candidate):
     assert not output.exists()
 
 
+@pytest.mark.parametrize("exporter_identity", UID_CASES, indirect=True)
 def test_wrong_head_refuses(candidate):
     with pytest.raises(exporter.BundleError, match="HEAD_CHANGED"):
         exporter.prepare(candidate[0], "f" * 40, candidate[2], candidate[3])
@@ -312,11 +343,68 @@ def test_root_cannot_export(candidate, monkeypatch):
     assert not candidate[3].exists()
 
 
+@pytest.mark.parametrize("exporter_identity", [0], indirect=True)
+def test_root_identity_and_root_owned_fixture_still_refused(candidate, exporter_identity):
+    assert exporter_identity == 0
+    assert candidate[0].lstat().st_uid == 0
+    with pytest.raises(exporter.BundleError, match="ROOTLESS_BUILDER_REQUIRED"):
+        prepare(candidate)
+    assert not candidate[3].exists()
+
+
+def test_fixture_keeps_real_runner_identity_or_explicit_root_model(exporter_identity, tmp_path):
+    actual_uid = int(subprocess.check_output(["/usr/bin/id", "-u"], text=True))
+    if actual_uid != 0:
+        assert exporter_identity == actual_uid
+        assert os.geteuid() == actual_uid
+        assert tmp_path.lstat().st_uid == tmp_path.stat().st_uid == actual_uid
+    else:
+        # Root pytest may exercise a rootless metadata model; no chown/setuid
+        # occurs, and the production root refusal remains independently tested.
+        assert exporter_identity != 0
+        assert tmp_path.stat().st_uid == 0
+        assert tmp_path.lstat().st_uid == exporter_identity
+
+
+def test_root_runner_setup_selects_explicit_rootless_model(tmp_path, monkeypatch):
+    # Unit model of pytest launched as root: no real setuid/chown, VM or service.
+    actual_uid = int(subprocess.check_output(["/usr/bin/id", "-u"], text=True))
+    actual_lstat = Path.lstat
+
+    def root_runner_metadata(path: Path, *args, **kwargs):
+        info = actual_lstat(path, *args, **kwargs)
+        if path == tmp_path or tmp_path in path.parents or path in tmp_path.parents:
+            fields = list(info)
+            fields[4] = 0
+            return os.stat_result(fields)
+        return info
+
+    monkeypatch.setattr(Path, "lstat", root_runner_metadata)
+    monkeypatch.setattr(exporter.os, "geteuid", lambda: 0)
+    assert tmp_path.lstat().st_uid == 0
+    effective_uid = exporter_identity.__wrapped__(tmp_path, monkeypatch, SimpleNamespace())
+    assert effective_uid == os.geteuid() == 1000
+    assert tmp_path.lstat().st_uid == 1000
+    assert Path("/").lstat().st_uid == Path("/tmp").lstat().st_uid == 0
+    rootless_candidate = candidate.__wrapped__(tmp_path, effective_uid)
+    assert prepare(rootless_candidate)["result"] == "UNSIGNED_TEST_ONLY_CANDIDATE"
+
+    # The fixture's modeled rootless branch grants no production root bypass.
+    monkeypatch.setattr(exporter.os, "geteuid", lambda: 0)
+    refused_output = tmp_path / "root-refused-candidate"
+    with pytest.raises(exporter.BundleError, match="ROOTLESS_BUILDER_REQUIRED"):
+        exporter.prepare(*rootless_candidate[:3], refused_output)
+    assert not refused_output.exists()
+    assert actual_lstat(tmp_path).st_uid == actual_uid
+    assert int(subprocess.check_output(["/usr/bin/id", "-u"], text=True)) == actual_uid
+
+
 def test_relative_output_refused(candidate):
     with pytest.raises(exporter.BundleError, match="ABSOLUTE_PATH_REQUIRED"):
         exporter.prepare(candidate[0], candidate[1], candidate[2], Path("relative"))
 
 
+@pytest.mark.parametrize("exporter_identity", UID_CASES, indirect=True)
 def test_cli_sanitizes_bad_json(candidate, capsys):
     candidate[2].write_bytes(b"invalid sensitive private fixture")
     result = exporter.main(
@@ -338,6 +426,7 @@ def test_cli_sanitizes_bad_json(candidate, capsys):
     assert not candidate[3].exists()
 
 
+@pytest.mark.parametrize("exporter_identity", UID_CASES, indirect=True)
 def test_restrictive_umask_affects_only_new_output(candidate):
     previous = os.umask(0o077)
     try:
