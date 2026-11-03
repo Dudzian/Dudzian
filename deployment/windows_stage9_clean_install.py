@@ -86,6 +86,12 @@ def _capture_provision_failure(logs: Path) -> None:
     target.write_text(json.dumps(diagnostic, sort_keys=True) + "\n", encoding="utf-8")
     print(f"PROVISION_FAILURE_STAGE = {diagnostic['stage']}", flush=True)
     print(f"PROVISION_FAILURE_EXCEPTION = {diagnostic['first_exception']}", flush=True)
+    if "postgresql_connection_failure" in diagnostic:
+        print(
+            "PROVISION_POSTGRES_CONNECTION_FAILURE = "
+            + diagnostic["postgresql_connection_failure"],
+            flush=True,
+        )
 
 
 def _read_service_startup_diagnostic() -> dict[str, object] | None:
