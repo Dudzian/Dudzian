@@ -74,6 +74,25 @@ Windows uprawnieniami POSIX. Nie kwalifikuje SCM, Job Objects ani ACL Windows.
 Progi pokrycia, timeouty i bramki instalacji, enrollment oraz Stage 9/10 pozostają
 bez zmian.
 
+Workflow `windows-postgresql-bootstrap.yml` uruchamia również rzeczywisty,
+jednorazowy PostgreSQL EDB na hostowanym Windows jako LocalSystem. Używa
+przypiętych binariów i prawdziwych ACL, zachowuje zastane `PGPASSWORD`
+(lub tworzy kontrolowaną wartość testową) oraz porównuje wybór hasła przez libpq.
+Jawne `password=""` wyłącza fallback do `PGPASSWORD`, nadal wymagając chronionego
+passfile, SCRAM i `verify-full`. Test sprawdza odmowy hasła/CA/TLS oraz cleanup;
+publikuje tylko stałe kategorie i booleany. Nie instaluje MSI ani nie kwalifikuje
+Stage 9/10. Kanoniczny job MSI zachowuje wszystkie własne zależności i bramki.
+
+Regresje `test_windows_bootstrap_credentials.py` rozszerzają istniejący
+`quality-ratchet` o natywne modele tworzenia z jawną DACL, odmowę niewłaściwej
+tożsamości, dziedziczenia i nadpisania, błędy częściowego zapisu oraz cleanup.
+Osobny opt-in `CRYPTOHUNTER_RUN_WINDOWS_BOOTSTRAP_ACL_INTEGRATION=1` wymaga
+izolowanego procesu LocalSystem na Windows i bada wyłącznie pliki tymczasowe,
+w tym pozostałość po wymuszonym zakończeniu potomka. Nie uruchamia PostgreSQL,
+MSI ani usług i nie zastępuje kwalifikacji instalacji. Modele Linux nie są
+dowodem egzekwowania ACL przez jądro Windows. Zakres i ograniczenia opisuje
+[analiza alertów 59–61](security/code-scanning-59-61.md).
+
 Ścieżka fizycznych dowodów Linux (`linux_physical_evidence`,
 `linux_physical_observations`, `linux_physical_native`,
 `linux_physical_collector` i `linux_evidence_handoff`) wchodzi do

@@ -1,0 +1,68 @@
+name: Isolated native Windows PostgreSQL bootstrap
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [codex/security-alerts-59-61]
+    paths:
+      - deployment/windows_installer/provision.py
+      - deployment/windows_postgresql_bootstrap_regression.ps1
+      - tests/deployment/windows_postgresql_bootstrap_native.py
+      - .github/workflows/windows-postgresql-bootstrap.yml
+  pull_request:
+    paths:
+      - deployment/windows_installer/provision.py
+      - deployment/windows_postgresql_bootstrap_regression.ps1
+      - tests/deployment/windows_postgresql_bootstrap_native.py
+      - .github/workflows/windows-postgresql-bootstrap.yml
+
+permissions:
+  contents: read
+
+jobs:
+  bootstrap:
+    name: Native LocalSystem PostgreSQL SCRAM and verify-full
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11.9'
+          architecture: x64
+      - name: Install targeted native dependencies
+        run: >-
+          python -m pip install psycopg[binary]==3.3.6 cryptography==50.0.1
+          pywin32==312 PyYAML==6.0.3 jsonschema==4.26.0 pytest==9.0.2
+          pydantic==2.7.4 numpy==1.26.4 pandas==2.2.2 zstandard==0.25.0 packaging==25.0
+      - name: Verify safe diagnostics and bootstrap models
+        shell: pwsh
+        env:
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
+        run: >-
+          python -m pytest --confcutdir=tests/deployment -q
+          tests/deployment/test_windows_postgresql_diagnostics.py
+          tests/deployment/test_windows_postgresql_native_harness.py
+          tests/deployment/test_windows_bootstrap_credentials.py
+          tests/deployment/test_windows_postgresql_bootstrap.py
+      - name: Verify and extract the production-pinned PostgreSQL archive
+        shell: pwsh
+        run: |
+          python tests/deployment/windows_postgresql_bootstrap_native.py `
+            --prepare --root (Join-Path $env:RUNNER_TEMP 'isolated-postgresql-bootstrap') `
+            --report test-results/windows-postgresql-bootstrap/prepare.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Prove real bootstrap under an isolated LocalSystem task
+        shell: pwsh
+        run: >-
+          ./deployment/windows_postgresql_bootstrap_regression.ps1
+          -Root (Join-Path $env:RUNNER_TEMP 'isolated-postgresql-bootstrap')
+          -Report (Join-Path $env:GITHUB_WORKSPACE 'test-results/windows-postgresql-bootstrap/native.json')
+      - name: Preserve only sanitized diagnostic enums
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-postgresql-bootstrap-diagnostics
+          path: test-results/windows-postgresql-bootstrap/*.json
+          if-no-files-found: warn
+          retention-days: 7
