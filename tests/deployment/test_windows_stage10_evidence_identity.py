@@ -303,7 +303,11 @@ def test_output_symlink_is_never_deleted_or_followed_for_writing(
     with pytest.raises(EvidenceProductionError, match="output already exists"):
         produce_windows_stage10_evidence("test-revision", receipt, output)
     assert output.is_symlink()
-    assert output.readlink() == target
+    link_target = str(output.readlink())
+    # Windows may expose the same local target with an extended-length prefix.
+    if link_target.startswith("\\\\?\\"):
+        link_target = link_target[4:]
+    assert Path(link_target) == target
     if target_exists:
         assert target.read_bytes() == original
     else:
