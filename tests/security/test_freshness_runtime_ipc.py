@@ -26,9 +26,16 @@ from types import SimpleNamespace
 import pytest
 
 from bot_core import freshness_runtime_ipc as ipc
-from bot_core.freshness_semantic_verifier import serve_local_unix_socket
+from bot_core.freshness_semantic_verifier import (
+    RECEIPT_AUTHENTICATION_DOMAIN,
+    serve_local_unix_socket,
+)
 from bot_core.linux_service_ipc import capture_process_identity
-from bot_core.postgresql_freshness_authority import canonical_json_bytes, parse_canonical_json
+from bot_core.postgresql_freshness_authority import (
+    canonical_json_bytes,
+    complete_semantic_head_digest,
+    parse_canonical_json,
+)
 from bot_core.production_signer_ipc import _SO_PEERPIDFD
 from deployment import linux_physical_ipc as paths
 from tests.security.test_freshness_semantic_verifier import fixture_candidate
@@ -60,6 +67,50 @@ def _record_expected(record):
     )
 
 
+def _bind_private_test_socket(listener, address):
+    """Utwórz atomowo socket 0660 wyłącznie w kontrolowanym procesie potomnym.
+
+    Umask jest globalna dla procesu. Główny pytest może mieć wątki, więc
+    ta fixture nigdy nie zmienia jego umask. Prywatny katalog 0700 ogranicza
+    dostęp do testowego UID; 0660 odtwarza dokładny kontrakt produkcji.
+    """
+    if multiprocessing.current_process().name == "MainProcess":
+        raise RuntimeError("Bind fixture wymaga odrębnego procesu")
+    directory = Path(address).parent
+    descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        parent = os.fstat(descriptor)
+        if (
+            not stat.S_ISDIR(parent.st_mode)
+            or (parent.st_uid, parent.st_gid) != (os.geteuid(), os.getegid())
+            or stat.S_IMODE(parent.st_mode) != 0o700
+            or {"system.posix_acl_access", "system.posix_acl_default"}.intersection(
+                os.listxattr(descriptor)
+            )
+        ):
+            raise PermissionError("Fixture wymaga prywatnego katalogu 0700 bez ACL")
+        # Socket powstaje od razu z docelowym DAC; nie ma bind -> chmod
+        # ani zmiany uprawnień przez ponownie rozwiązywaną ścieżkę.
+        previous = os.umask(0o117)
+        try:
+            listener.bind(f"/proc/self/fd/{descriptor}/{Path(address).name}")
+        finally:
+            os.umask(previous)
+        info = os.stat(Path(address).name, dir_fd=descriptor, follow_symlinks=False)
+        if (
+            not stat.S_ISSOCK(info.st_mode)
+            or (info.st_uid, info.st_gid) != (os.geteuid(), os.getegid())
+            or stat.S_IMODE(info.st_mode) != 0o660
+            or info.st_nlink != 1
+            or {"system.posix_acl_access", "system.posix_acl_default"}.intersection(
+                os.listxattr(address, follow_symlinks=False)
+            )
+        ):
+            raise PermissionError("Fixture nie utworzyła dokładnego socketu AF_UNIX")
+    finally:
+        os.close(descriptor)
+
+
 @pytest.fixture
 def kernel_pidfd():
     if sys.platform != "linux":
@@ -77,8 +128,7 @@ def kernel_pidfd():
 
 def _scripted_server(address, channel, finish, response, mode):
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
-        listener.bind(address)
-        os.chmod(address, 0o660)
+        _bind_private_test_socket(listener, address)
         listener.listen(4)
         listener.settimeout(0.05)
         channel.send(capture_process_identity(os.getpid()))
@@ -122,8 +172,7 @@ def _scripted_server(address, channel, finish, response, mode):
             if mode == "replace" and raw:
                 os.unlink(address)
                 replacement = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-                replacement.bind(address)
-                os.chmod(address, 0o660)
+                _bind_private_test_socket(replacement, address)
             if mode != "timeout" and raw:
                 try:
                     peer.sendall(response)
@@ -401,14 +450,9 @@ def test_real_process_exec_identity_change_after_request_is_unknown(
 @LINUX
 def test_real_symlink_and_non_socket_refused_before_connect(tmp_path, monkeypatch, kind):
     directory = tmp_path / "dedicated"
-    directory.mkdir()
+    directory.mkdir(mode=0o700)
     actual = directory / "verifier.sock"
-    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
-        listener.bind(str(actual))
-        os.chmod(actual, 0o660)
-        listener.listen(1)
-        record = capture_process_identity(os.getpid())
-        server = SimpleNamespace(address=str(actual), record=record)
+    with _scripted(directory) as server:
         _model_installed_coordinates(monkeypatch, server)
         if kind == "socket_symlink":
             selected = directory / "alias.sock"
@@ -421,13 +465,11 @@ def test_real_symlink_and_non_socket_refused_before_connect(tmp_path, monkeypatc
             selected = directory / "regular.sock"
             selected.write_bytes(b"not a socket")
         monkeypatch.setattr(ipc, "VERIFIER_SOCKET_PATH", str(selected))
-        result = ipc.RuntimeFreshnessVerifierClient(
-            _record_expected(record)
-        ).verify_exact_candidate(b"{}", b"{}", b"{}")
+        result = ipc.RuntimeFreshnessVerifierClient(server.expected).verify_exact_candidate(
+            b"{}", b"{}", b"{}"
+        )
         assert result.outcome is ipc.FreshnessIPCOutcome.UNAVAILABLE
-        listener.settimeout(0.02)
-        with pytest.raises(TimeoutError):
-            listener.accept()
+        assert _finish_count(server, connections=0) == b""
 
 
 class _ObservedWriter:
@@ -591,6 +633,102 @@ def test_kernel_peer_credentials_reject_foreign_expected_identity(
         )
         assert result.outcome is ipc.FreshnessIPCOutcome.UNAVAILABLE
         assert _finish_count(server) == b""
+
+
+def _fixture_socket_contract_child(directory, channel, case):
+    root = Path(directory)
+    if case == "unsafe_parent":
+        root = root / "group-visible"
+        directory_umask = os.umask(0o027)
+        try:
+            root.mkdir(mode=0o750)
+        finally:
+            os.umask(directory_umask)
+    elif case == "parent_symlink":
+        target = root / "real"
+        target.mkdir(mode=0o700)
+        root = root / "alias"
+        root.symlink_to(target, target_is_directory=True)
+    address = str(root / "contract.sock")
+    if case == "bind_failure":
+        Path(address).write_bytes(b"istniejacy obiekt fixture")
+
+    class RegularFileInsteadOfSocket:
+        def bind(self, selected):
+            Path(selected).write_bytes(b"zly typ obiektu fixture")
+
+    previous = os.umask(0o777)
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
+            try:
+                _bind_private_test_socket(
+                    RegularFileInsteadOfSocket() if case == "wrong_type" else listener, address
+                )
+            except (OSError, ValueError) as exc:
+                outcome = type(exc).__name__
+            else:
+                outcome = "BOUND"
+            restored = os.umask(0o777)
+            info = Path(address).lstat() if Path(address).exists() else None
+            channel.send(
+                {
+                    "outcome": outcome,
+                    "restored_umask": restored,
+                    "socket": info is not None and stat.S_ISSOCK(info.st_mode),
+                    "mode": None if info is None else stat.S_IMODE(info.st_mode),
+                    "uid": None if info is None else info.st_uid,
+                    "gid": None if info is None else info.st_gid,
+                    "links": None if info is None else info.st_nlink,
+                }
+            )
+    finally:
+        os.umask(previous)
+        channel.close()
+
+
+@LINUX
+@pytest.mark.parametrize(
+    "case", ["success", "bind_failure", "unsafe_parent", "parent_symlink", "wrong_type"]
+)
+def test_real_fixture_socket_dac_and_umask_restore(tmp_path, case):
+    """Prawdziwe DAC i typ inode; umask zmienia tylko jednorazowy potomek."""
+    context = multiprocessing.get_context("fork")
+    channel, child = context.Pipe()
+    process = context.Process(
+        target=_fixture_socket_contract_child, args=(str(tmp_path), child, case)
+    )
+    process.start()
+    child.close()
+    try:
+        assert channel.poll(5)
+        result = channel.recv()
+        assert result["restored_umask"] == 0o777
+        if case == "success":
+            assert result == {
+                "outcome": "BOUND",
+                "restored_umask": 0o777,
+                "socket": True,
+                "mode": 0o660,
+                "uid": os.geteuid(),
+                "gid": os.getegid(),
+                "links": 1,
+            }
+        else:
+            assert result["outcome"] != "BOUND"
+        process.join(5)
+        assert process.exitcode == 0
+    finally:
+        if process.is_alive():
+            process.terminate()
+            process.join(5)
+        channel.close()
+
+
+@LINUX
+def test_fixture_socket_bind_refuses_to_change_main_process_umask(tmp_path):
+    with pytest.raises(RuntimeError, match="odrębnego procesu"):
+        _bind_private_test_socket(object(), str(tmp_path / "forbidden.sock"))
+    assert not (tmp_path / "forbidden.sock").exists()
 
 
 class _DerivedIdWriter:
@@ -762,3 +900,114 @@ def test_real_self_hashed_malformed_binding_remains_unknown(tmp_path, monkeypatc
         )
         assert result.outcome is ipc.FreshnessIPCOutcome.OUTCOME_UNKNOWN
         assert _finish_count(server)
+
+
+def _two_verified_candidates():
+    """Dwa poprawne kandydaty, jeden resolver, rzeczywiste podpisy; writer jest modelem."""
+    verifier, _writer, proposer, document, receipt, pkey, fkey = fixture_candidate()
+    verifier = replace(verifier, preparations=_DerivedIdWriter())
+    inputs_a = tuple(canonical_json_bytes(value) for value in (proposer, document, receipt))
+    binding_a = parse_canonical_json(verifier.verify_exact_candidate(*inputs_a).binding)
+
+    payload = document["payload"]
+    payload["complete_semantic_head_set"][0]["digest"] = "3" * 64
+    payload["finalization_request_id"] = "request-B"
+    document["document_digest"] = hashlib.sha256(
+        ipc.DOCUMENT_DIGEST_DOMAIN + canonical_json_bytes(payload)
+    ).hexdigest()
+    proposer["signed_or_authenticated_document_digest"] = document["document_digest"]
+    receipt.update(
+        accepted_document_digest=document["document_digest"],
+        complete_semantic_head_digest=complete_semantic_head_digest(
+            payload["complete_semantic_head_set"]
+        ),
+        finalization_request_id="request-B",
+        receipt_id="receipt-B",
+    )
+    for value, key, domain in (
+        (proposer, pkey, ipc.PROPOSER_DOMAIN),
+        (document, fkey, ipc.DOCUMENT_AUTHENTICATION_DOMAIN),
+        (receipt, fkey, RECEIPT_AUTHENTICATION_DOMAIN),
+    ):
+        unsigned = {
+            name: item for name, item in value.items() if name != "authentication_tag_or_signature"
+        }
+        value["authentication_tag_or_signature"] = (
+            base64.urlsafe_b64encode(key.sign(domain + canonical_json_bytes(unsigned)))
+            .rstrip(b"=")
+            .decode()
+        )
+    inputs_b = tuple(canonical_json_bytes(value) for value in (proposer, document, receipt))
+    binding_b = parse_canonical_json(verifier.verify_exact_candidate(*inputs_b).binding)
+    assert binding_a["proposed_document_digest"] != binding_b["proposed_document_digest"]
+    assert binding_a["preparation_id"] != binding_b["preparation_id"]
+    return (inputs_a, binding_a), (inputs_b, binding_b)
+
+
+@pytest.mark.parametrize("response_candidate", [0, 1], ids=["A-for-A", "B-for-A"])
+@LINUX
+def test_real_prepared_response_must_match_sent_candidate_without_retry(
+    tmp_path, monkeypatch, kernel_pidfd, response_candidate
+):
+    candidates = _two_verified_candidates()
+    inputs_a, _binding_a = candidates[0]
+    _inputs, response_binding = candidates[response_candidate]
+    raw = _prepared_response(response_binding, rehash=False)
+    # Obie odpowiedzi mają poprawny własny hash i istniejący schemat.
+    assert ipc._decode_response(raw).outcome is ipc.FreshnessIPCOutcome.PREPARED
+    with _scripted(tmp_path, _frame(raw)) as server:
+        _model_installed_coordinates(monkeypatch, server)
+        result = ipc.RuntimeFreshnessVerifierClient(server.expected).verify_exact_candidate(
+            *inputs_a
+        )
+        if response_candidate == 0:
+            assert result.outcome is ipc.FreshnessIPCOutcome.PREPARED
+            assert result.binding == canonical_json_bytes(response_binding)
+        else:
+            assert result.outcome is ipc.FreshnessIPCOutcome.OUTCOME_UNKNOWN
+            assert result.preparation_id is None and result.binding is None
+        request = parse_canonical_json(_finish_count(server))
+        assert (
+            tuple(
+                base64.urlsafe_b64decode(request[name] + "=" * (-len(request[name]) % 4))
+                for name in (
+                    "proposer_authentication",
+                    "authoritative_document",
+                    "finalization_receipt",
+                )
+            )
+            == inputs_a
+        )
+
+
+def test_model_both_verified_candidates_match_their_own_binding():
+    for inputs, binding in _two_verified_candidates():
+        ipc._check_candidate_binding(canonical_json_bytes(binding), inputs)
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("proposed_document_digest", "f" * 64),
+        ("proposer_authentication_digest", "f" * 64),
+        ("authoritative_document_authentication_digest", "f" * 64),
+        ("receipt_canonical_digest", "f" * 64),
+        ("original_decision_identity", "f" * 64),
+        ("receipt_id", "another-receipt"),
+        ("finalization_request_id", "another-request"),
+        ("expected_predecessor_generation", 7),
+        ("expected_predecessor_document_digest", "f" * 64),
+        ("proposer_identity", "another-proposer"),
+        ("proposer_key_version", 7),
+        ("finalization_key_version", 7),
+        ("trust_domain", "another-domain"),
+        ("authority_id", "another-authority"),
+    ],
+)
+def test_model_self_hashed_binding_cannot_change_request_derived_fields(field, value):
+    inputs, binding = _two_verified_candidates()[0]
+    binding[field] = value
+    result = ipc._decode_response(_prepared_response(binding))
+    assert result.outcome is ipc.FreshnessIPCOutcome.PREPARED
+    with pytest.raises(ValueError, match="PREPARATION_FOR_ANOTHER_CANDIDATE"):
+        ipc._check_candidate_binding(result.binding, inputs)

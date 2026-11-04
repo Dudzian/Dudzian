@@ -17,11 +17,17 @@ from dataclasses import dataclass
 from enum import Enum
 
 from bot_core.freshness_semantic_verifier import (
+    DOCUMENT_AUTHENTICATION_DOMAIN,
+    DOCUMENT_DIGEST_DOMAIN,
+    ORIGINAL_DECISION_DOMAIN,
     PREPARATION_DOMAIN,
+    PROPOSER_AUTHENTICATION_FIELDS,
+    PROPOSER_DOMAIN,
     _decode_ipc_bytes,
     _digest,
     _encode_ipc_bytes,
     _integer,
+    _object,
     _string,
 )
 from bot_core.freshness_service_identity import CGROUP
@@ -34,7 +40,10 @@ from bot_core.freshness_verifier_service import (
 )
 from bot_core.linux_service_ipc import PinnedReadOnlyPeer
 from bot_core.postgresql_freshness_authority import (
+    DOCUMENT_FIELDS,
+    DOCUMENT_PAYLOAD_FIELDS,
     PREPARATION_FIELDS,
+    RECEIPT_FIELDS,
     canonical_json_bytes,
     parse_canonical_json,
 )
@@ -187,6 +196,88 @@ def _decode_response(raw: bytes) -> FreshnessIPCResult:
     return FreshnessIPCResult(outcome, digest, binding)
 
 
+def _check_candidate_binding(binding: bytes, inputs: tuple[bytes, bytes, bytes]) -> None:
+    """Powiąż PREPARED z niezmiennymi bajtami tego jednego żądania.
+
+    Wewnętrzny hash przygotowania nie dowodzi, którego żądania dotyczy
+    odpowiedź. Odtwarzamy istniejące preimages, bez zastępowania weryfikacji
+    podpisów lub resolvera poświadczeń po stronie autorytetu.
+    """
+    prepared = _object(parse_canonical_json(binding), PREPARATION_FIELDS, "preparation")
+    proposer = _object(
+        parse_canonical_json(inputs[0]), PROPOSER_AUTHENTICATION_FIELDS, "proposer authentication"
+    )
+    document = _object(parse_canonical_json(inputs[1]), DOCUMENT_FIELDS, "document")
+    payload = _object(document["payload"], DOCUMENT_PAYLOAD_FIELDS, "document payload")
+    receipt = _object(parse_canonical_json(inputs[2]), RECEIPT_FIELDS, "receipt")
+    document_digest = hashlib.sha256(
+        DOCUMENT_DIGEST_DOMAIN + canonical_json_bytes(payload)
+    ).hexdigest()
+    if (
+        document["document_digest"] != document_digest
+        or proposer["signed_or_authenticated_document_digest"] != document_digest
+    ):
+        raise ValueError("REQUEST_DOCUMENT_IDENTITY_MISMATCH")
+    original_material = {
+        key: receipt[key]
+        for key in (
+            "environment",
+            "trust_domain",
+            "authority_id",
+            "exact_predecessor_generation",
+            "exact_predecessor_document_digest",
+            "accepted_generation",
+            "accepted_document_digest",
+            "complete_semantic_head_digest",
+            "finalization_request_id",
+        )
+    }
+    expected = {
+        "environment": payload["environment"],
+        "trust_domain": payload["trust_domain"],
+        "authority_id": payload["authority_id"],
+        "expected_predecessor_generation": payload["predecessor_generation"],
+        "expected_predecessor_document_digest": payload["predecessor_document_digest"],
+        "proposed_document_digest": document_digest,
+        "proposer_identity": proposer["proposer_identity"],
+        "proposer_key_version": proposer["proposer_key_version"],
+        "proposer_authentication_digest": hashlib.sha256(
+            PROPOSER_DOMAIN
+            + canonical_json_bytes(
+                {
+                    key: item
+                    for key, item in proposer.items()
+                    if key != "authentication_tag_or_signature"
+                }
+            )
+        ).hexdigest(),
+        "finalization_key_version": payload["freshness_authority_key_version"],
+        "authoritative_document_authentication_digest": hashlib.sha256(
+            DOCUMENT_AUTHENTICATION_DOMAIN
+            + canonical_json_bytes(
+                {
+                    key: item
+                    for key, item in document.items()
+                    if key != "authentication_tag_or_signature"
+                }
+            )
+        ).hexdigest(),
+        # Kontrakt verifiera przechowuje hash dokładnego kanonicznego receipt
+        # (łącznie z podpisem), bez dodawania nowej domeny protokołu.
+        "receipt_canonical_digest": hashlib.sha256(inputs[2]).hexdigest(),
+        "receipt_id": receipt["receipt_id"],
+        "finalization_request_id": payload["finalization_request_id"],
+        "original_decision_identity": hashlib.sha256(
+            ORIGINAL_DECISION_DOMAIN + canonical_json_bytes(original_material)
+        ).hexdigest(),
+    }
+    if any(
+        type(prepared[key]) is not type(item) or prepared[key] != item
+        for key, item in expected.items()
+    ):
+        raise ValueError("PREPARATION_FOR_ANOTHER_CANDIDATE")
+
+
 class RuntimeFreshnessVerifierClient:
     """Jedno połączenie i jedno żądanie; nigdy reconnect ani automatyczny retry.
 
@@ -264,6 +355,10 @@ class RuntimeFreshnessVerifierClient:
                     raw = _receive_exact(peer, length, deadline)
                     _expect_eof(peer, deadline)
                     result = _decode_response(raw)
+                    if result.outcome is FreshnessIPCOutcome.PREPARED:
+                        if result.binding is None:
+                            raise ValueError("PREPARATION_BINDING_REQUIRED")
+                        _check_candidate_binding(result.binding, inputs)
                     _check_server(server, self._expected)
                     if _server_command(self._expected.pid) != command:
                         raise PermissionError("VERIFIER_COMMAND_CHANGED")

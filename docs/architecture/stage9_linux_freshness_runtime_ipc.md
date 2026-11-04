@@ -84,6 +84,16 @@ i dodatkowe dane nie są akceptowane.
 Odpowiedzi aplikacji mają zamknięte kategorie `PREPARED`, `INVALID`,
 `UNAVAILABLE`, `OUTCOME_UNKNOWN`. `PREPARED` wymaga dokładnego zestawu pól,
 identyfikatora przygotowania i kanonicznego bindingu o istniejącym schemacie.
+Poprawny własny hash przygotowania nie wystarcza: klient niezależnie
+porównuje binding z trzema niezmiennymi obiektami wysłanymi w tym żądaniu.
+Odtwarza istniejące preimages `DOCUMENT_DIGEST_DOMAIN`, `PROPOSER_DOMAIN`
+i `DOCUMENT_AUTHENTICATION_DOMAIN`, dokładny hash kanonicznego receipt
+(łącznie z jego podpisem) oraz `ORIGINAL_DECISION_DOMAIN`. Porównuje także
+wynikające z żądania selektory i tożsamości. Preimages uwierzytelnienia
+proposera i dokumentu pomijają pole podpisu zgodnie z protokołem verifiera;
+transport nie zastępuje jego weryfikacji podpisów i retained credentials.
+Odpowiedź dla innego poprawnego kandydata, nawet z poprawnym własnym
+`preparation_id`, daje `OUTCOME_UNKNOWN` po wysłaniu żądania, bez retry.
 Adapter nie interpretuje błędu transportu jako negatywnego dowodu
 autentyczności kandydata.
 
@@ -154,6 +164,8 @@ Najmniejszy bezpieczny podział dalszych prac zaczyna się od osobnego
 zatwierdzenia modelu uwierzytelnienia serwera przez odrębny UID runtime,
 z jawnym rozwiązaniem ograniczenia procfs i testem rzeczywistej izolacji.
 Do tej decyzji nie rozszerza się uprawnień ani gwarancji adaptera.
+Osobny [projekt do niezależnej akceptacji architektury](stage9_cross_uid_verifier_identity_proposal.md)
+opisuje warunki takiej decyzji; nie zatwierdza nowej podstawy zaufania.
 
 Kolejna osobna propozycja do autoryzacji obejmuje przegląd dokładnego
 diffu AccountGenesis: zastąpienie jego starego transportu wywołaniem
