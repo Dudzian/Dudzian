@@ -315,7 +315,7 @@ def test_application_rejects_relative_root_and_wrong_platform(monkeypatch):
         application.verify_installed_application()
 
 
-@pytest.mark.parametrize("limit", ["MAX_FILE", "MAX_TOTAL"])
+@pytest.mark.parametrize("limit", ["MAX_FILE", "MAX_TOTAL", "MAX_NODES"])
 def test_application_payload_size_limits_refuse(installed, monkeypatch, limit):
     monkeypatch.setattr(application, limit, 1)
     with pytest.raises(application.ApplicationTrustError):
@@ -401,21 +401,35 @@ def test_launcher_refuses_unprotected_application_bootstrap(monkeypatch):
         launcher._verify_application()
 
 
-def test_launcher_refuses_wrong_running_interpreter(monkeypatch):
+@pytest.mark.parametrize("mismatch", ["path", "inode", "sha256"])
+def test_launcher_refuses_wrong_running_interpreter(monkeypatch, mismatch):
+    content = b"model running interpreter"
     monkeypatch.setattr(
         Path,
         "lstat",
         lambda _path: SimpleNamespace(st_mode=stat.S_IFREG | 0o644, st_uid=0, st_nlink=1),
     )
+    # Model the Linux procfs boundary on every test OS. This checks the refusal
+    # itself on Windows/macOS without requiring their host to expose /proc.
+    monkeypatch.setattr(
+        Path,
+        "stat",
+        lambda path: SimpleNamespace(
+            st_dev=1, st_ino=2 if mismatch == "inode" and path == Path("/proc/self/exe") else 1
+        ),
+    )
+    monkeypatch.setattr(Path, "read_bytes", lambda _path: content)
     monkeypatch.setattr(
         launcher.runpy,
         "run_path",
         lambda *_args, **_kwargs: {
             "verify_installed_application": lambda: {
                 "runtime": {
-                    "executable": "/unapproved/python",
-                    "base_executable": sys.executable,
-                    "base_executable_sha256": "0" * 64,
+                    "executable": "/unapproved/python" if mismatch == "path" else sys.executable,
+                    "base_executable": "/approved/python",
+                    "base_executable_sha256": (
+                        "0" * 64 if mismatch == "sha256" else hashlib.sha256(content).hexdigest()
+                    ),
                 }
             }
         },

@@ -119,6 +119,7 @@ CONFIG_FILES = (
 MAX_FILE = 8 * 1024 * 1024
 MAX_TOTAL = 128 * 1024 * 1024
 MAX_MANIFEST = 4 * 1024 * 1024
+MAX_NODES = 32768
 
 
 class InstallerError(RuntimeError):
@@ -370,7 +371,8 @@ def _inventory(path: Path, *, owner_uid: int | None = None) -> dict[str, tuple[b
     root_fd = _open_absolute(path)
     result: dict[str, tuple[bytes, int]] = {}
     total = 0
-    nodes = 0
+    # The launcher includes the installation root in the same node budget.
+    nodes = 1
     directories: set[str] = set()
 
     def walk(fd: int, prefix: str) -> None:
@@ -386,9 +388,9 @@ def _inventory(path: Path, *, owner_uid: int | None = None) -> dict[str, tuple[b
             )
         for name in sorted(os.listdir(fd)):
             nodes += 1
-            _fail(nodes <= 32768, 12, "Zbyt duży inwentarz ścieżek")
+            _fail(nodes <= MAX_NODES, 12, "Zbyt duży inwentarz ścieżek")
             relative = f"{prefix}/{name}" if prefix else name
-            _parts(relative)
+            _fail(len(_parts(relative)) <= 32, 12, "Zbyt głęboki inwentarz")
             _fail(
                 not any(part in {"__pycache__", ".git"} for part in PurePosixPath(relative).parts)
                 and not relative.endswith((".pyc", ".pyo")),

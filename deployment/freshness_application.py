@@ -54,6 +54,7 @@ _SHA = re.compile(r"[0-9a-f]{64}")
 _REVISION = re.compile(r"[0-9a-f]{40}")
 MAX_FILE = 8 * 1024 * 1024
 MAX_TOTAL = 128 * 1024 * 1024
+MAX_NODES = 32768
 
 
 class ApplicationTrustError(RuntimeError):
@@ -257,7 +258,7 @@ def verify_installed_application(*, root: Path = Path("/"), owner_uid: int = 0) 
         def visit(path: Path) -> None:
             nonlocal total, nodes
             nodes += 1
-            _require(nodes <= 32768, "Zbyt duży inwentarz ścieżek aplikacji")
+            _require(nodes <= MAX_NODES, "Zbyt duży inwentarz ścieżek aplikacji")
             relative = path.relative_to(installation).as_posix()
             info = _protected(path, owner_uid, root)
             if stat.S_ISDIR(info.st_mode):

@@ -303,6 +303,25 @@ def test_missing_required_file_cannot_be_authorized_by_shorter_signed_inventory(
     _refuses(context, 12)
 
 
+def test_signed_file_with_33_path_parts_is_refused_before_installation(context):
+    relative = "bot_core/" + "nested/" * 31 + "probe.py"
+    path = context.config.bundle / relative
+    path.parent.mkdir(parents=True)
+    content = b"# signed optional artifact\n"
+    path.write_bytes(content)
+    path.chmod(0o644)
+    context.document["files"].append(
+        {
+            "path": relative,
+            "sha256": hashlib.sha256(content).hexdigest(),
+            "size": len(content),
+            "mode": 0o644,
+        }
+    )
+    context.sign()
+    _refuses(context, 12)
+
+
 def test_wrong_release_key_cannot_authorize_bundle(context: Context):
     context.key = Ed25519PrivateKey.generate()
     context.sign()
@@ -421,9 +440,34 @@ def test_install_retains_exact_signed_application_approval_separate_from_private
     assert stat.S_IMODE((context.config.root / installer.STATE).stat().st_mode) == 0o700
 
 
-def test_retained_installer_approval_verifies_only_signed_application_scope(context, monkeypatch):
+@pytest.mark.parametrize("path_parts", [2, 32])
+def test_retained_installer_approval_verifies_only_signed_application_scope(
+    context, monkeypatch, path_parts
+):
     from deployment import freshness_application
 
+    relative = "bot_core/" + "nested/" * (path_parts - 2) + "probe.py"
+    path = context.config.bundle / relative
+    path.parent.mkdir(parents=True, exist_ok=True)
+    content = b"# signed optional artifact\n"
+    path.write_bytes(content)
+    path.chmod(0o644)
+    context.document["files"].append(
+        {
+            "path": relative,
+            "sha256": hashlib.sha256(content).hexdigest(),
+            "size": len(content),
+            "mode": 0o644,
+        }
+    )
+    context.sign()
+    # Scale only the budget to exercise the exact root-inclusive boundary
+    # without creating tens of thousands of files in this regression.
+    nodes = 1 + sum(1 for _path in context.config.bundle.rglob("*"))
+    monkeypatch.setattr(installer, "MAX_NODES", nodes - 1)
+    _refuses(context, 12)
+    monkeypatch.setattr(installer, "MAX_NODES", nodes)
+    monkeypatch.setattr(freshness_application, "MAX_NODES", nodes)
     context.install()
     # Wyłącznie model already-verified runtime z fixture. Podpis aplikacji,
     # zachowane metadane i cały inwentarz są weryfikowane rzeczywiście.
