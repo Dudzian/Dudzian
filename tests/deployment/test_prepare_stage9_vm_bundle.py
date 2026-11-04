@@ -94,6 +94,7 @@ def candidate(tmp_path: Path, exporter_identity):
         exporter.UNIT,
         "deployment/freshness_runtime.py",
         "deployment/freshness_runtime_bootstrap.py",
+        "deployment/freshness_application.py",
     }
     template = (
         b"[Service]\nExecStartPre=/usr/bin/python3 bootstrap.py verify-installed\n"
@@ -158,7 +159,9 @@ def test_exports_exact_git_sources_dynamic_inventory_and_v2_binding(candidate):
             assert target.read_bytes() == (source / item["path"]).read_bytes()
     for relative in exporter.BOOTSTRAP_FILES:
         assert (output / "bootstrap" / relative).read_bytes() == (source / relative).read_bytes()
-    assert len((output / "bootstrap.sha256").read_text().splitlines()) == 5
+    assert len((output / "bootstrap.sha256").read_text().splitlines()) == len(
+        exporter.BOOTSTRAP_FILES
+    )
     assert (
         output / "bootstrap/deployment/install-production-local.sh"
     ).stat().st_mode & 0o777 == 0o755
@@ -437,3 +440,145 @@ def test_restrictive_umask_affects_only_new_output(candidate):
     assert output.stat().st_mode & 0o777 == 0o755
     assert all(path.stat().st_mode & 0o777 == 0o755 for path in output.rglob("*") if path.is_dir())
     assert (output / "release.json").stat().st_mode & 0o777 == 0o644
+
+
+@pytest.mark.parametrize("mode", [0o644, 0o755])
+def test_write_exposes_final_mode_only_after_full_flush_and_fsync(tmp_path, monkeypatch, mode):
+    target = tmp_path / "candidate"
+    content = b"exact signed bytes\n"
+    events = []
+    original_fdopen = os.fdopen
+    original_fsync = os.fsync
+    original_fchmod = os.fchmod
+
+    class ObservedStream:
+        def __init__(self, fd, *args, **kwargs):
+            self.stream = original_fdopen(fd, *args, **kwargs)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return self.stream.__exit__(*args)
+
+        def fileno(self):
+            return self.stream.fileno()
+
+        def write(self, value):
+            assert os.fstat(self.fileno()).st_mode & 0o777 == 0o600
+            events.append("write")
+            return self.stream.write(value)
+
+        def flush(self):
+            assert os.fstat(self.fileno()).st_mode & 0o777 == 0o600
+            events.append("flush")
+            self.stream.flush()
+
+    def sync(fd):
+        assert target.read_bytes() == content
+        assert os.fstat(fd).st_mode & 0o777 == 0o600
+        events.append("fsync")
+        original_fsync(fd)
+
+    def publish(fd, final_mode):
+        assert events == ["write", "flush", "fsync"]
+        assert final_mode == mode
+        events.append("chmod")
+        original_fchmod(fd, final_mode)
+
+    monkeypatch.setattr(exporter.os, "fdopen", ObservedStream)
+    monkeypatch.setattr(exporter.os, "fsync", sync)
+    monkeypatch.setattr(exporter.os, "fchmod", publish)
+    exporter._write(tmp_path, "candidate", content, mode)
+    assert events == ["write", "flush", "fsync", "chmod"]
+    assert target.read_bytes() == content
+    assert target.stat().st_mode & 0o777 == mode
+
+
+@pytest.mark.parametrize("failure", ["short", "write", "flush", "fsync"])
+def test_incomplete_or_failed_write_refuses_before_final_permissions(
+    tmp_path, monkeypatch, failure
+):
+    target = tmp_path / "candidate"
+    content = b"exact signed bytes\n"
+    original_fdopen = os.fdopen
+
+    class FailedStream:
+        def __init__(self, fd, *args, **kwargs):
+            self.stream = original_fdopen(fd, *args, **kwargs)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return self.stream.__exit__(*args)
+
+        def fileno(self):
+            return self.stream.fileno()
+
+        def write(self, value):
+            if failure in {"short", "write"}:
+                written = self.stream.write(value[:3])
+                if failure == "write":
+                    raise OSError("interrupted write")
+                return written
+            return self.stream.write(value)
+
+        def flush(self):
+            if failure == "flush":
+                raise OSError("failed flush")
+            self.stream.flush()
+
+    def sync(fd):
+        raise OSError("failed fsync")
+
+    def refuse_publish(fd, mode):
+        pytest.fail("failed write must never publish approved permissions")
+
+    monkeypatch.setattr(exporter.os, "fdopen", FailedStream)
+    monkeypatch.setattr(exporter.os, "fchmod", refuse_publish)
+    if failure == "fsync":
+        monkeypatch.setattr(exporter.os, "fsync", sync)
+    error = exporter.BundleError if failure == "short" else OSError
+    with pytest.raises(error):
+        exporter._write(tmp_path, "candidate", content, 0o755)
+    assert target.stat().st_mode & 0o777 == 0o600
+    if failure in {"short", "write"}:
+        assert target.read_bytes() == content[:3]
+    # A refused candidate remains inspectable and cannot be silently overwritten.
+    with pytest.raises(FileExistsError):
+        exporter._write(tmp_path, "candidate", content, 0o755)
+
+
+@pytest.mark.parametrize("collision", ["file", "symlink", "hardlink"])
+def test_write_collision_preserves_existing_bytes_and_mode(tmp_path, collision):
+    target = tmp_path / "candidate"
+    preserved = tmp_path / "preserved"
+    preserved.write_bytes(b"foreign bytes")
+    preserved.chmod(0o640)
+    if collision == "symlink":
+        target.symlink_to(preserved)
+    elif collision == "hardlink":
+        target.hardlink_to(preserved)
+    else:
+        target.write_bytes(b"existing bytes")
+        target.chmod(0o640)
+    previous = target.read_bytes()
+    with pytest.raises(FileExistsError):
+        exporter._write(tmp_path, "candidate", b"replacement", 0o755)
+    assert target.read_bytes() == previous
+    assert target.stat().st_mode & 0o777 == 0o640
+    assert preserved.read_bytes() == b"foreign bytes"
+
+
+@pytest.mark.parametrize("umask", [0o077, 0o777])
+@pytest.mark.parametrize("mode", [0o644, 0o755])
+def test_write_preserves_approved_final_mode_under_restrictive_umask(tmp_path, umask, mode):
+    previous = os.umask(umask)
+    try:
+        exporter._write(tmp_path, "candidate", b"exact signed bytes", mode)
+    finally:
+        os.umask(previous)
+    target = tmp_path / "candidate"
+    assert target.read_bytes() == b"exact signed bytes"
+    assert target.stat().st_mode & 0o777 == mode

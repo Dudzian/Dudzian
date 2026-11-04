@@ -124,6 +124,7 @@ jobs:
           deployment/linux_physical_evidence.py
           deployment/linux_release_identity.py
           deployment/freshness_runtime.py
+          deployment/freshness_application.py
           deployment/freshness_runtime_bootstrap.py
           deployment/build_freshness_runtime.py
           deployment/stage9_vm_trial.py
@@ -152,6 +153,7 @@ jobs:
           tests/security/test_linux_service_ipc.py
           tests/security/test_reviewed_source_checkout.py
           tests/security/test_freshness_reviewed_source_pins.py
+          tests/security/test_freshness_qualification_profiles.py
           tests/security/test_linux_service_postgresql.py
           tests/security/test_freshness_semantic_verifier.py
           tests/security/test_freshness_production_local_deployment.py
@@ -161,6 +163,7 @@ jobs:
           tests/security/test_linux_service_postgresql_integration.py
           tests/deployment/test_linux_release_identity.py
           tests/deployment/test_freshness_runtime.py
+          tests/deployment/test_freshness_application.py
           tests/deployment/test_build_freshness_runtime.py
           tests/deployment/test_stage9_vm_trial.py
           tests/deployment/test_stage9_vm_environment.py
@@ -397,6 +400,7 @@ jobs:
           deployment/linux_physical_evidence.py deployment/linux_physical_observations.py
           deployment/linux_release_identity.py
           deployment/freshness_runtime.py
+          deployment/freshness_application.py
           deployment/freshness_runtime_bootstrap.py
           deployment/build_freshness_runtime.py
           deployment/stage9_vm_trial.py
@@ -433,6 +437,7 @@ jobs:
           tests/security/test_linux_service_ipc.py
           tests/security/test_reviewed_source_checkout.py
           tests/security/test_freshness_reviewed_source_pins.py
+          tests/security/test_freshness_qualification_profiles.py
           tests/security/test_linux_service_postgresql.py
           tests/security/test_freshness_semantic_verifier.py
           tests/security/test_freshness_production_local_deployment.py
@@ -441,6 +446,7 @@ jobs:
           tests/deployment/test_linux_verifier_observation.py
           tests/deployment/test_linux_release_identity.py
           tests/deployment/test_freshness_runtime.py
+          tests/deployment/test_freshness_application.py
           tests/deployment/test_build_freshness_runtime.py
           tests/deployment/test_stage9_vm_trial.py
           tests/deployment/test_stage9_vm_environment.py
@@ -580,6 +586,7 @@ jobs:
           --cov=deployment.linux_physical_evidence
           --cov=deployment.linux_release_identity
           --cov=deployment.freshness_runtime
+          --cov=deployment.freshness_application
           --cov=deployment.freshness_runtime_bootstrap
           --cov=deployment.build_freshness_runtime
           --cov=deployment.stage9_vm_trial

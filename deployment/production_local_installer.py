@@ -85,6 +85,7 @@ REQUIRED_FILES = frozenset(
         "deployment/freshness_verifier_entrypoint.py",
         "deployment/freshness_runtime.py",
         "deployment/freshness_runtime_bootstrap.py",
+        "deployment/freshness_application.py",
         "deployment/systemd/cryptohunter-freshness-verifier.service",
         "deployment/postgresql/pg_hba.conf",
         "deployment/postgresql/pg_ident.conf",
@@ -93,6 +94,7 @@ REQUIRED_FILES = frozenset(
 )
 CODE = "usr/lib/cryptohunter"
 STATE = "var/lib/cryptohunter-installer"
+APPLICATION = "etc/cryptohunter/freshness-application"
 CONFIG_FILES = (
     (
         "deployment/systemd/cryptohunter-freshness-verifier.service",
@@ -117,6 +119,12 @@ CONFIG_FILES = (
 MAX_FILE = 8 * 1024 * 1024
 MAX_TOTAL = 128 * 1024 * 1024
 MAX_MANIFEST = 4 * 1024 * 1024
+MAX_NODES = 32768
+TRUSTED_BOOTSTRAP_FILES = (
+    "deployment/freshness_runtime.py",
+    "deployment/freshness_runtime_bootstrap.py",
+    "deployment/freshness_application.py",
+)
 
 
 class InstallerError(RuntimeError):
@@ -156,6 +164,9 @@ class Plan:
     artifacts: tuple[Artifact, ...]
     postgres_gid: int
     runtime: dict[str, str]
+    manifest_content: bytes
+    signature_content: bytes
+    trusted_key_content: bytes
 
 
 def _fail(condition: bool, code: int, reason: str) -> None:
@@ -365,7 +376,8 @@ def _inventory(path: Path, *, owner_uid: int | None = None) -> dict[str, tuple[b
     root_fd = _open_absolute(path)
     result: dict[str, tuple[bytes, int]] = {}
     total = 0
-    nodes = 0
+    # The launcher includes the installation root in the same node budget.
+    nodes = 1
     directories: set[str] = set()
 
     def walk(fd: int, prefix: str) -> None:
@@ -381,9 +393,9 @@ def _inventory(path: Path, *, owner_uid: int | None = None) -> dict[str, tuple[b
             )
         for name in sorted(os.listdir(fd)):
             nodes += 1
-            _fail(nodes <= 32768, 12, "Zbyt duży inwentarz ścieżek")
+            _fail(nodes <= MAX_NODES, 12, "Zbyt duży inwentarz ścieżek")
             relative = f"{prefix}/{name}" if prefix else name
-            _parts(relative)
+            _fail(len(_parts(relative)) <= 32, 12, "Zbyt głęboki inwentarz")
             _fail(
                 not any(part in {"__pycache__", ".git"} for part in PurePosixPath(relative).parts)
                 and not relative.endswith((".pyc", ".pyo")),
@@ -432,7 +444,9 @@ def _inventory(path: Path, *, owner_uid: int | None = None) -> dict[str, tuple[b
         os.close(root_fd)
 
 
-def _manifest(config: Config, tree: _Tree) -> tuple[str, tuple[Artifact, ...], dict[str, str]]:
+def _manifest(
+    config: Config, tree: _Tree
+) -> tuple[str, tuple[Artifact, ...], dict[str, str], bytes, bytes, bytes]:
     _fail(
         re.fullmatch(r"[0-9a-f]{40}", config.expected_revision) is not None,
         10,
@@ -508,6 +522,8 @@ def _manifest(config: Config, tree: _Tree) -> tuple[str, tuple[Artifact, ...], d
     inventory = _inventory(config.bundle)
     artifacts: list[Artifact] = []
     seen: set[str] = set()
+    reviewed = _application_helpers()["REVIEWED_SUBSTRATE_DIGESTS"]
+    trusted_bootstrap = _trusted_bootstrap(config)
     for entry in files:
         _fail(
             type(entry) is dict and set(entry) == {"path", "sha256", "size", "mode"},
@@ -541,6 +557,16 @@ def _manifest(config: Config, tree: _Tree) -> tuple[str, tuple[Artifact, ...], d
             12,
             "Zmieniona treść lub uprawnienia artefaktu",
         )
+        _fail(
+            path not in reviewed or entry["sha256"] == reviewed[path],
+            12,
+            "Podpisane źródło nie odpowiada zatwierdzonym bajtom podłoża",
+        )
+        _fail(
+            path not in trusted_bootstrap or content == trusted_bootstrap[path],
+            12,
+            "Podpisany helper nie odpowiada niezależnie zatwierdzonemu bootstrapowi",
+        )
         seen.add(path)
         artifacts.append(Artifact(path, entry["sha256"], entry["size"], mode, content))
     _fail(
@@ -548,7 +574,51 @@ def _manifest(config: Config, tree: _Tree) -> tuple[str, tuple[Artifact, ...], d
         12,
         "Niepełny lub dodatkowy niezatwierdzony kod w bundle",
     )
-    return hashlib.sha256(raw).hexdigest(), tuple(artifacts), runtime
+    return hashlib.sha256(raw).hexdigest(), tuple(artifacts), runtime, raw, signature, key_bytes
+
+
+def _trusted_bootstrap(config: Config) -> dict[str, bytes]:
+    """Odczytaj kotwicę instalatora, nigdy baseline z ocenianego payloadu."""
+    directory = Path(__file__).absolute().parent
+    _fail(
+        not directory.is_relative_to(config.bundle),
+        11,
+        "Zaufany bootstrap musi pochodzić spoza bundle",
+    )
+    # CLI zawsze wymaga owner_uid=0 i chronionego pełnego łańcucha od '/'.
+    # Jawny model rootless używa katalogu źródeł jako granicy sandboxa.
+    boundary = Path("/") if config.owner_uid == 0 else directory
+    source = _Tree(boundary, config.owner_uid)
+    try:
+        return {
+            name: source.read(
+                (directory / PurePosixPath(name).name).relative_to(boundary).as_posix()
+            )
+            for name in TRUSTED_BOOTSTRAP_FILES
+        }
+    finally:
+        source.close()
+
+
+def _application_helpers() -> dict[str, Any]:
+    """Kontrakt pochodzi z zaufanego bootstrapu, nigdy z wejściowego bundle."""
+    if __package__:
+        from deployment.freshness_application import REVIEWED_SUBSTRATE_DIGESTS
+
+        return {"REVIEWED_SUBSTRATE_DIGESTS": REVIEWED_SUBSTRATE_DIGESTS}
+    helper = Path(__file__).absolute().with_name("freshness_application.py")
+    if sys.platform != "win32" and os.geteuid() == 0:
+        for path in (*reversed(helper.parents), helper):
+            value = path.lstat()
+            _fail(
+                not stat.S_ISLNK(value.st_mode)
+                and value.st_uid == 0
+                and not value.st_mode & 0o022
+                and (path != helper or (stat.S_ISREG(value.st_mode) and value.st_nlink == 1)),
+                11,
+                "Niezaufany kontrakt podpisanej aplikacji",
+            )
+    return runpy.run_path(str(helper))
 
 
 def _runtime_helpers() -> dict[str, Any]:
@@ -696,6 +766,45 @@ def _receipt(plan: Plan, status: str) -> bytes:
     ).encode("ascii")
 
 
+def _application_binding(plan: Plan) -> bytes:
+    return json.dumps(
+        {
+            "schema_version": 1,
+            "scope": SCOPE,
+            "manifest_sha256": plan.manifest_sha256,
+            "source_revision": plan.source_revision,
+            "runtime": plan.runtime,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("ascii")
+
+
+def _application_material(plan: Plan) -> dict[str, bytes]:
+    return {
+        "manifest.json": plan.manifest_content,
+        "manifest.sig": plan.signature_content,
+        "authority.pub": plan.trusted_key_content,
+        "binding.json": _application_binding(plan),
+    }
+
+
+def _verify_application_material(tree: _Tree, config: Config, plan: Plan) -> None:
+    expected = _application_material(plan)
+    actual = _inventory(config.root / APPLICATION, owner_uid=config.owner_uid)
+    _fail(
+        actual == {name: (content, 0o644) for name, content in expected.items()},
+        24,
+        "Drift zachowanego podpisanego zatwierdzenia aplikacji",
+    )
+    for name, content in expected.items():
+        _fail(
+            tree.read(f"{APPLICATION}/{name}", mode=0o644) == content,
+            24,
+            "Niezgodny chroniony materiał zatwierdzenia aplikacji",
+        )
+
+
 def _installed(tree: _Tree, config: Config, plan: Plan) -> None:
     _fail(
         tree.status(f"{STATE}/receipt.json") is not None
@@ -720,6 +829,7 @@ def _installed(tree: _Tree, config: Config, plan: Plan) -> None:
     finally:
         os.close(state_fd)
     _verify_files(tree, config, plan)
+    _verify_application_material(tree, config, plan)
 
 
 def _verify_files(tree: _Tree, config: Config, plan: Plan) -> None:
@@ -746,7 +856,7 @@ def _verify_files(tree: _Tree, config: Config, plan: Plan) -> None:
 def _preflight(config: Config, host: HostState | None) -> Plan:
     tree = _Tree(config.root, config.owner_uid)
     try:
-        digest, artifacts, binding = _manifest(config, tree)
+        digest, artifacts, binding, raw, signature, key_bytes = _manifest(config, tree)
         runtime = _verified_runtime(config, binding, artifacts)
         if host is None:
             host = inspect_host(runtime)
@@ -824,7 +934,17 @@ def _preflight(config: Config, host: HostState | None) -> Plan:
                 23,
                 "Niezgodny katalog konfiguracji PostgreSQL",
             )
-        plan = Plan("fresh", digest, config.expected_revision, artifacts, postgres_gid, binding)
+        plan = Plan(
+            "fresh",
+            digest,
+            config.expected_revision,
+            artifacts,
+            postgres_gid,
+            binding,
+            raw,
+            signature,
+            key_bytes,
+        )
         status = tree.status(STATE)
         if status is not None:
             _fail(
@@ -836,7 +956,15 @@ def _preflight(config: Config, host: HostState | None) -> Plan:
             )
             _installed(tree, config, plan)
             return Plan(
-                "installed", digest, config.expected_revision, artifacts, postgres_gid, binding
+                "installed",
+                digest,
+                config.expected_revision,
+                artifacts,
+                postgres_gid,
+                binding,
+                raw,
+                signature,
+                key_bytes,
             )
         _fail(
             not host.verifier_active and host.unit_state == "not-found" and not host.unit_fragment,
@@ -851,6 +979,7 @@ def _preflight(config: Config, host: HostState | None) -> Plan:
             )
         _fail(
             tree.status(CODE) is None
+            and tree.status(APPLICATION) is None
             and tree.status(f"usr/lib/.cryptohunter-stage-{digest}") is None
             and all(tree.status(target) is None for _, target, _, _ in CONFIG_FILES),
             24,
@@ -956,6 +1085,20 @@ def install(
         _journal(tree, plan, "staged")
         if checkpoint is not None:
             checkpoint("staged")
+        _fail(
+            _manifest(config, tree)
+            == (
+                plan.manifest_sha256,
+                plan.artifacts,
+                plan.runtime,
+                plan.manifest_content,
+                plan.signature_content,
+                plan.trusted_key_content,
+            ),
+            30,
+            "Zatwierdzenie aplikacji zmieniło się po preflight",
+        )
+        _verified_runtime(config, plan.runtime, plan.artifacts)
         _publish(tree, stage, CODE)
         _journal(tree, plan, "code-published")
         if checkpoint is not None:
@@ -982,10 +1125,30 @@ def install(
             if checkpoint is not None:
                 checkpoint(f"configuration-{index + 1}")
         _verify_files(tree, config, plan)
+        # Zachowujemy dokładny podpisany snapshot z preflight. Kod źródłowy
+        # i stan instalatora nie są później substytutem podpisu aplikacji.
+        parent_fd = tree.directory("etc/cryptohunter", create=True)
+        try:
+            os.mkdir("freshness-application", 0o700, dir_fd=parent_fd)
+            os.fsync(parent_fd)
+        finally:
+            os.close(parent_fd)
+        for name, content in _application_material(plan).items():
+            if name != "binding.json":
+                tree.write_new(f"{APPLICATION}/{name}", content, 0o644)
+        application_fd = tree.directory(APPLICATION)
+        try:
+            _chmod_fd(application_fd, 0o755)
+            os.fsync(application_fd)
+        finally:
+            os.close(application_fd)
         tree.write_new(f"{STATE}/receipt.json", _receipt(plan, "complete"), 0o600)
         # Dziennik kończymy przez rename własnego nowego pliku. Nigdy nie
         # nadpisujemy kodu, kluczy ani konfiguracji poprzedniego wdrożenia.
         _journal(tree, plan, "complete")
+        # Publiczny, odczytywany przez verifier znacznik powstaje ostatni.
+        # Niekompletne zachowane metadane nie mogą udawać ukończonej instalacji.
+        tree.write_new(f"{APPLICATION}/binding.json", _application_binding(plan), 0o644)
         _installed(tree, config, plan)
         return Plan(
             "installed",
@@ -994,6 +1157,9 @@ def install(
             plan.artifacts,
             plan.postgres_gid,
             plan.runtime,
+            plan.manifest_content,
+            plan.signature_content,
+            plan.trusted_key_content,
         )
     except (Exception, KeyboardInterrupt) as exc:
         if isinstance(exc, InstallerError):

@@ -32,6 +32,7 @@ files = [
   "deployment/linux_physical_evidence.py",
   "deployment/linux_release_identity.py",
   "deployment/freshness_runtime.py",
+  "deployment/freshness_application.py",
   "deployment/freshness_runtime_bootstrap.py",
   "deployment/build_freshness_runtime.py",
   "deployment/stage9_vm_trial.py",

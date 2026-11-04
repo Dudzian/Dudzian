@@ -24,6 +24,7 @@ BOOTSTRAP_FILES = (
     "deployment/production_local_installer_host.py",
     "deployment/freshness_runtime.py",
     "deployment/freshness_runtime_bootstrap.py",
+    "deployment/freshness_application.py",
 )
 UNIT = "deployment/systemd/cryptohunter-freshness-verifier.service"
 TOKEN = b"@FRESHNESS_RUNTIME_PYTHON@"
@@ -218,7 +219,11 @@ def _write(output: Path, relative: str, content: bytes, mode: int) -> None:
         target.parent.chmod(0o755)
     fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
     with os.fdopen(fd, "wb") as stream:
-        stream.write(content)
+        _require(stream.write(content) == len(content), "OUTPUT_WRITE_INCOMPLETE")
+        # Keep a new candidate private until its complete bytes reach storage.
+        # Refused/interrupted writes retain the restrictive creation mode.
+        stream.flush()
+        os.fsync(stream.fileno())
         os.fchmod(stream.fileno(), mode)
 
 

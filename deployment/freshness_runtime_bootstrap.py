@@ -90,8 +90,25 @@ def verify_ed25519(raw: bytes, signature: bytes, key_bytes: bytes) -> None:
             os.close(fd)
 
 
+def _protected_helper(filename: str) -> Path:
+    helper = Path(__file__).absolute().with_name(filename)
+    for component in (*reversed(helper.parents), helper):
+        info = component.lstat()
+        if (
+            info.st_uid != 0
+            or info.st_mode & 0o022
+            or (
+                not stat.S_ISDIR(info.st_mode)
+                if component != helper
+                else not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
+            )
+        ):
+            raise RuntimeTrustError("Niechroniony helper bootstrapu")
+    return helper
+
+
 def main() -> int:
-    """ExecStartPre: sprawdź chroniony core przed odczytem runtime."""
+    """ExecStartPre: sprawdź runtime i aplikację przed wykonaniem launchera."""
     import runpy
     import sys
 
@@ -99,14 +116,15 @@ def main() -> int:
         print("Odmowa: nieprawidłowa operacja bootstrap runtime")
         return 1
     try:
-        core = Path(__file__).absolute().with_name("freshness_runtime.py")
-        for component in (*reversed(core.parents), core):
-            info = component.lstat()
-            if info.st_uid != 0 or info.st_mode & 0o022 or stat.S_ISLNK(info.st_mode):
-                raise RuntimeTrustError("Niechroniony core runtime")
+        core = _protected_helper("freshness_runtime.py")
+        application = _protected_helper("freshness_application.py")
         sys.pycache_prefix = "/dev/null"
         namespace = runpy.run_path(str(core), run_name="_cryptohunter_runtime_core")
         namespace["verify_installed_runtime"]()
+        # Te trzy helpery instalator porównuje z własną, niezależnie zaufaną
+        # kopią przed publikacją. Podpis payloadu nie wybiera weryfikatora.
+        namespace = runpy.run_path(str(application), run_name="_cryptohunter_application_trust")
+        namespace["verify_installed_application"]()
     except (RuntimeError, OSError, ValueError):
         print("Odmowa: granica zaufania runtime nie została ustanowiona")
         return 1

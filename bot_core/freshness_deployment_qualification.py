@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import argparse
 import hashlib
+import json
 import os
 from pathlib import Path
 import stat
 import subprocess
 import sys
+from typing import Any
 
 import psycopg
 
@@ -67,6 +70,53 @@ REVIEWED_CODE_DIGESTS = {
 
 class DeploymentQualificationError(RuntimeError):
     """The live host is not the exact reviewed deployment."""
+
+
+SUBSTRATE_PROFILE = "SIGNED_FRESHNESS_SUBSTRATE"
+FULL_PROFILE = "PRODUCTION_LOCAL"
+
+
+def _load_application() -> dict[str, Any]:
+    # This verifier imports no AccountGenesis authority and grants no live-host
+    # or product qualification. Its independent signed inventory covers bytes.
+    from deployment.freshness_application import verify_installed_application
+
+    return verify_installed_application()
+
+
+def qualify_signed_freshness_substrate() -> dict[str, Any]:
+    """Verify signed installed bytes only; never return a production proof."""
+    _fail(sys.platform == "linux", "signed Freshness substrate requires native Linux")
+    try:
+        result = _load_application()
+    except (RuntimeError, OSError, ValueError) as exc:
+        raise DeploymentQualificationError("signed application closure not qualified") from exc
+    _fail(
+        result.get("qualification_profile") == SUBSTRATE_PROFILE
+        and result.get("scope") == "cryptohunter.freshness.substrate.v2"
+        and result.get("production_qualification") == "WITHHELD",
+        "ambiguous signed substrate qualification scope",
+    )
+    return result
+
+
+def _qualify_reviewed_sources(code_directory: Path) -> None:
+    """Full-product pins, including the independently frozen AccountGenesis."""
+    for filename, digest in REVIEWED_CODE_DIGESTS.items():
+        source = code_directory / filename
+        status = _mode(source)
+        _fail(
+            status.st_uid == 0 and stat.S_ISREG(status.st_mode) and not source.is_symlink(),
+            f"unsafe source owner: {source}",
+        )
+        _fail(
+            not status.st_mode & (stat.S_IWGRP | stat.S_IWOTH),
+            f"source is group/world writable: {source}",
+        )
+        _fail(
+            hashlib.sha256(source.read_bytes()).hexdigest() == digest,
+            f"reviewed source digest mismatch: {source}",
+        )
 
 
 def _fail(condition: bool, message: str) -> None:
@@ -143,19 +193,8 @@ def qualify_production_local_deployment() -> None:
         _immutable_file(
             installed, (REVIEWED_DEPLOYMENT / filename).read_bytes(), online_uids, online_gids
         )
-    code_directory = Path("/usr/lib/cryptohunter/bot_core")
-    for filename, digest in REVIEWED_CODE_DIGESTS.items():
-        source = code_directory / filename
-        status = _mode(source)
-        _fail(status.st_uid == 0 and not source.is_symlink(), f"unsafe source owner: {source}")
-        _fail(
-            not status.st_mode & (stat.S_IWGRP | stat.S_IWOTH),
-            f"source is group/world writable: {source}",
-        )
-        _fail(
-            hashlib.sha256(source.read_bytes()).hexdigest() == digest,
-            f"reviewed source digest mismatch: {source}",
-        )
+    _qualify_reviewed_sources(Path("/usr/lib/cryptohunter/bot_core"))
+    qualify_signed_freshness_substrate()
     try:
         approved_runtime = _load_runtime()
         reviewed_unit = REVIEWED_UNIT.read_bytes()
@@ -225,8 +264,16 @@ def qualify_production_local_deployment() -> None:
     qualify_postgresql_freshness_authority(PostgreSQLConnectionConfig(dsn))
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--profile", choices=(FULL_PROFILE, SUBSTRATE_PROFILE), default=FULL_PROFILE
+    )
+    arguments = parser.parse_args(argv)
     try:
+        if arguments.profile == SUBSTRATE_PROFILE:
+            print(json.dumps(qualify_signed_freshness_substrate(), sort_keys=True))
+            return 0
         qualify_production_local_deployment()
     except Exception:
         print("FAIL CLOSED")

@@ -7,6 +7,13 @@
 > Aktualna procedura, tryby INSPECT/EXECUTE-VM-TRIAL, eksport v2 i snapshoty są w
 > [STAGE9_LINUX_VM_HARNESS.md](STAGE9_LINUX_VM_HARNESS.md). Zachowana treść nie
 > stanowi dowodu ani instrukcji wykonania bieżącej instalacji.
+>
+> Bieżący profil v2 zawiera 16 plików payloadu oraz sześć plików bootstrapu,
+> w tym `deployment/freshness_application.py`, i zachowuje podpisany manifest,
+> podpis, klucz publiczny oraz binding aplikacji do kontroli przy starcie.
+> Historycznych list i eksportu v1 poniżej nie należy uzupełniać ręcznie.
+> Nowy pakiet wymaga zatwierdzenia aktualnego PR przed podpisaniem; jego zakres
+> minimalny nie stanowi pełnej kwalifikacji `PRODUCTION_LOCAL`.
 
 To instrukcja do ręcznego wykonania w jednorazowej VM. Jej poleceń
 uprzywilejowanych nie uruchamia zwykły pytest, CI ani agent przygotowujący PR.

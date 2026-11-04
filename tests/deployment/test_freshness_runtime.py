@@ -7,6 +7,7 @@ Rzeczywiste importy wheels testuje osobny test buildera na Ubuntu.
 import hashlib
 import json
 import os
+import runpy
 import stat
 import sys
 from dataclasses import replace
@@ -475,6 +476,85 @@ def test_bootstrap_cli_refuses_unprotected_core(monkeypatch, capsys):
     monkeypatch.setattr(Path, "lstat", substituted)
     assert bootstrap.main() == 1
     assert "Odmowa" in capsys.readouterr().out
+
+
+@pytest.fixture
+def protected_bootstrap_metadata(monkeypatch):
+    """Model tylko metadanych uprzednio zatwierdzonej kopii bootstrapu."""
+    original = Path.lstat
+
+    def protected(path):
+        fields = list(original(path))
+        fields[stat.ST_UID] = 0
+        fields[stat.ST_MODE] &= ~0o022
+        return os.stat_result(fields)
+
+    monkeypatch.setattr(Path, "lstat", protected)
+    monkeypatch.setattr(sys, "argv", ["bootstrap", "verify-installed"])
+    return protected
+
+
+@pytest.mark.parametrize("filename", ["freshness_runtime.py", "freshness_application.py"])
+@pytest.mark.parametrize(
+    "attack", ["owner", "writable", "symlink", "hardlink", "directory", "missing"]
+)
+def test_bootstrap_checks_both_helpers_before_executing_code(
+    protected_bootstrap_metadata, monkeypatch, capsys, filename, attack
+):
+    executed = []
+
+    def substituted(path):
+        if path.name != filename:
+            return protected_bootstrap_metadata(path)
+        if attack == "missing":
+            raise FileNotFoundError(str(path))
+        fields = list(protected_bootstrap_metadata(path))
+        if attack == "owner":
+            fields[stat.ST_UID] = 12345
+        elif attack == "writable":
+            fields[stat.ST_MODE] |= 0o022
+        elif attack == "symlink":
+            fields[stat.ST_MODE] = stat.S_IFLNK | 0o644
+        elif attack == "hardlink":
+            fields[stat.ST_NLINK] = 2
+        elif attack == "directory":
+            fields[stat.ST_MODE] = stat.S_IFDIR | 0o755
+        return os.stat_result(fields)
+
+    monkeypatch.setattr(Path, "lstat", substituted)
+    monkeypatch.setattr(runpy, "run_path", lambda *args, **kwargs: executed.append(args))
+    assert bootstrap.main() == 1
+    assert "Odmowa" in capsys.readouterr().out
+    assert executed == []
+
+
+@pytest.mark.parametrize("application_failure", [False, True])
+def test_bootstrap_requires_application_verification_before_success(
+    protected_bootstrap_metadata, monkeypatch, capsys, application_failure
+):
+    verified = []
+
+    def verify_runtime():
+        verified.append("runtime")
+
+    def verify_application():
+        verified.append("application")
+        if application_failure:
+            raise bootstrap.RuntimeTrustError("unapproved application bytes")
+
+    def load(path, **_kwargs):
+        if Path(path).name == "freshness_runtime.py":
+            return {"verify_installed_runtime": verify_runtime}
+        assert verified == ["runtime"]
+        assert Path(path).name == "freshness_application.py"
+        return {"verify_installed_application": verify_application}
+
+    monkeypatch.setattr(runpy, "run_path", load)
+    assert bootstrap.main() == int(application_failure)
+    output = capsys.readouterr().out
+    assert ("Odmowa" in output) == application_failure
+    assert ("Integralność podpisanego runtime" in output) != application_failure
+    assert verified == ["runtime", "application"]
 
 
 def test_bootstrap_refuses_non_linux(monkeypatch):
