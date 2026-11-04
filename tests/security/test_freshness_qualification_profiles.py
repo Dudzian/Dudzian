@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import hashlib
+import os
 from pathlib import Path
+import stat
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -39,26 +41,40 @@ def test_full_pin_is_preserved_and_checkout_drift_is_explicit_review_material():
 def full_sources(tmp_path, monkeypatch):
     for name in qualification.REVIEWED_CODE_DIGESTS:
         (tmp_path / name).write_bytes((ROOT / "bot_core" / name).read_bytes())
-    # Model metadata only, keeping all six real source bytes and frozen pins.
-    # This fixture can demonstrate refusal, never a production PASS.
-    monkeypatch.setattr(
-        qualification,
-        "_mode",
-        lambda path: SimpleNamespace(st_uid=0, st_mode=path.lstat().st_mode),
-    )
+
+    # Model protected Linux metadata, not Windows' synthetic 0666 permission
+    # bits. Preserve real file types and missing-path errors, all source bytes
+    # and frozen pins. This fixture never establishes a production PASS.
+    read_source_mode = qualification._mode
+
+    def protected_source_mode(path):
+        metadata = list(read_source_mode(path))
+        metadata[stat.ST_UID] = 0
+        metadata[stat.ST_MODE] = stat.S_IFMT(metadata[stat.ST_MODE]) | 0o644
+        return os.stat_result(metadata)
+
+    monkeypatch.setattr(qualification, "_mode", protected_source_mode)
     return tmp_path
 
 
+@pytest.mark.parametrize("host_permissions", [0o644, 0o666], ids=["posix-mode", "windows-mode"])
 @pytest.mark.parametrize("change", ["current-unreviewed", "modified", "missing"])
-def test_full_source_gate_refuses_account_genesis_without_opening_product(full_sources, change):
+def test_full_source_gate_refuses_account_genesis_without_opening_product(
+    full_sources, change, host_permissions
+):
+    for path in full_sources.iterdir():
+        path.chmod(host_permissions)
     source = full_sources / ACCOUNT_GENESIS
     if change == "modified":
         source.write_bytes(source.read_bytes() + b"\n# unauthorized source\n")
     elif change == "missing":
         source.unlink()
-    error = FileNotFoundError if change == "missing" else qualification.DeploymentQualificationError
-    with pytest.raises(error):
+    with pytest.raises(qualification.DeploymentQualificationError) as refusal:
         qualification._qualify_reviewed_sources(full_sources)
+    reason = (
+        "missing or inaccessible path" if change == "missing" else "reviewed source digest mismatch"
+    )
+    assert str(refusal.value) == f"{reason}: {source}"
 
 
 @pytest.mark.parametrize(
