@@ -1,5 +1,17 @@
 # Quality, security, and code-intelligence toolchain
 
+Wąski klient `bot_core/freshness_runtime_ipc.py` i regresje
+`tests/security/test_freshness_runtime_ipc.py` wymagają testów rzeczywistych
+nieuprzywilejowanych AF_UNIX/PIDFD, odmów tożsamości, ścisłego protokołu
+i braku automatycznego retry po niejednoznacznym wyniku. Fixture chronionej
+ścieżki i nazw kont oraz modele resolvera/writer są odrębne od dowodu
+jądrowego i nie kwalifikują właściwej usługi, PostgreSQL ani produkcji.
+Obowiązują istniejące Ruff, dokładny hook `ruff-format --all-files`, mypy
+Linux/Windows i kontrole bezpieczeństwa, bez zmiany progów lub bramek.
+[Kontrakt klienta](architecture/stage9_linux_freshness_runtime_ipc.md)
+opisuje wymagane niezależne zatwierdzenie procesu i pozostawioną integrację
+AccountGenesis; `STAGE9_PRODUCTION_READY=NO` pozostaje bez zmian.
+
 Kontrola domknięcia podpisanej aplikacji Freshness (`freshness_application.py`)
 wchodzi do skonfigurowanego mypy Linux/Windows, jawnego Ruff/format i istniejącego
 raportu branch coverage `quality-ratchet`. Testy dokładnych bajtów, podpisanego
