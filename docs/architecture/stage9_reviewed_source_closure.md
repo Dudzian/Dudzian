@@ -50,12 +50,73 @@ niezgodnych trybów, symlinków, hardlinków i cache importów. Porównuje równ
 z podpisanym runtime. Skopiowanie modułu przez administratora nie jest
 podpisanym zatwierdzeniem.
 
-Bootstrap instalatora, entrypoint, `freshness_application.py`, helper runtime,
-bootstrap Ed25519/OpenSSL i bazowy interpreter muszą pochodzić z osobno
-zatwierdzonego, chronionego źródła. Wykonują się przed sprawdzeniem własnych
-bajtów. Podpis payloadu sam nie uwierzytelnia kodu sprawdzającego podpis.
+Bootstrap instalatora, `freshness_application.py`, helper runtime, bootstrap
+Ed25519/OpenSSL i bazowy interpreter muszą pochodzić z osobno zatwierdzonego,
+chronionego źródła. Kod tej bazy zaufania wykonuje się przed sprawdzeniem
+własnych bajtów. Launcher ma zostać uwierzytelniony w `ExecStartPre`, zanim
+systemd go wykona. Podpis payloadu sam nie uwierzytelnia kodu sprawdzającego podpis.
 Root i superuser PostgreSQL pozostają poza gwarancją; nie deklarujemy
 odporności na równoczesną złośliwą mutację dokonywaną przez root po kontroli.
+
+### Ciągłość zaufanego bootstrapu po review PR #3247
+
+Przegląd HEAD `8207c8326301b5f21d18af43f830b8b4a32e01fd` potwierdził lukę:
+poprawnie podpisany manifest mógł zawierać inne bajty
+`freshness_runtime_bootstrap.py`, `freshness_runtime.py` lub
+`freshness_application.py` niż odrębnie zatwierdzone kopie instalatora.
+Pięć pinów usługi tego nie wykrywało. Ochrona właściciela i trybu pliku
+zapobiega zapisowi przez zwykłego użytkownika, ale nie dowodzi pochodzenia
+już skopiowanych bajtów. Nie jest też niezależnym podpisem.
+
+Remediacja wiąże te trzy istniejące pliki payloadu z dokładnymi bajtami
+zaufanych siblingów instalatora przed publikacją. Źródłem porównania nie jest
+payload ani hash wyprowadzony z niego. Zmiana bootstrapu wymaga nowego,
+odrębnego review i przygotowania zaufanej kopii operatora. Nie dodaje się
+nowego pinu, pliku zaufania ani elementu `REQUIRED_FILES`.
+
+`ExecStartPre` wykonuje zaufany systemowy Python, bootstrap i core runtime;
+następnie zaufany helper aplikacji odtwarza podpisany inwentarz aplikacji.
+Dopiero sukces tej kontroli pozwala systemd wykonać podpisany interpreter
+i launcher. Launcher powtarza kontrolę aplikacji i tożsamości uruchomionego
+interpretera przed importem usługi. Podpisana podmiana launchera jest zmianą
+autoryzowanego payloadu; nie może zostać wykonana przed weryfikacją tego
+podpisu. Nadal wymaga niezależnego review dokładnego manifestu wydania.
+
+Niezależna kotwica pozostaje poza tym łańcuchem: operator odrębnym kanałem
+uzyskuje fingerprint autorytetu, przeprowadza review dokładnej rewizji,
+weryfikuje podpis `bootstrap.sha256` zaufanym systemowym OpenSSL oraz wszystkie
+wymienione hashe przed uruchomieniem Pythona z bootstrapu. Po skopiowaniu do
+chronionej lokalizacji ponawia porównanie bajtów i zapisuje metadane oraz
+wynik kontroli. Eksporter tylko tworzy niepodpisanego kandydata. Plik sum
+z tego samego, nieznanego bundle, samo approval VM lub sam `root:root/0644`
+nie ustanawiają autentyczności. Kod instalacji i startu nie weryfikuje własnej
+autentyczności przez samohash; polega na tej zewnętrznej ceremonii i ochronie
+już zatwierdzonej kopii. Root, systemowy interpreter, OpenSSL i administrator
+autorytetu pozostają zaufaną granicą.
+
+Jawny test kontraktowy wymaga dokładnej równości
+`freshness_application.REQUIRED_FILES == production_local_installer.REQUIRED_FILES`.
+Testy podpisanych podmian helperów muszą odmówić przed zapisem. Test pomostowy
+instalacji i launchera sprawdza rzeczywisty podpis aplikacji, zachowany binding,
+import zainstalowanego kodu i konstruktory FreshnessVerifier, ale modeluje
+runtime i granice hosta/bazy/socketu. Nie stanowi dowodu natywnego startu
+systemd ani poprawnego żądania obsłużonego przez produkcyjny runtime.
+Dokładne kryteria przyszłej próby określa
+[kontrakt ACCEPT/REJECT izolowanej VM](../runbooks/STAGE9_FRESHNESS_SERVICE_VM_ACCEPTANCE.md).
+
+### Oddzielna decyzja dotycząca AccountGenesis
+
+Wszystkie sześć `REVIEWED_CODE_DIGESTS`, w tym obecny pin AccountGenesis,
+pozostaje zamrożone. Przed zaakceptowaniem nowych bajtów niezależny reviewer
+musi wskazać dokładną rewizję i digest, odczytać audyt bajtowy i semantyczny,
+ocenić pełną ścieżkę IPC/PostgreSQL oraz odmowy, a następnie zapisać odrębną
+decyzję autoryzacyjną. Hash aktualnego checkoutu i sukces CI nie zastępują
+tej decyzji. Dopiero odrębnie zatwierdzone zmiany mogą prowadzić do nowego
+eksportu i podpisu wydania. Ten PR nie aktualizuje tego pinu.
+
+Stan Stage 9 pozostaje **IN_PROGRESS / PRODUCTION_NO_GO**. Pełna kwalifikacja
+AccountGenesis, rzeczywiste wydanie, żywe dowody oraz uruchomienie produktu
+pozostają poza remediacją tego review.
 
 ## Eksporter i zgodność wydania
 

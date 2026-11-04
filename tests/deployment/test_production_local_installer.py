@@ -293,6 +293,33 @@ def test_new_signature_does_not_approve_changed_reviewed_source(context, relativ
     _refuses(context, 12)
 
 
+@pytest.mark.parametrize(
+    "relative",
+    [
+        "deployment/freshness_runtime.py",
+        "deployment/freshness_runtime_bootstrap.py",
+        "deployment/freshness_application.py",
+    ],
+)
+def test_new_signature_does_not_replace_independently_trusted_helpers(context, relative):
+    file = context.config.bundle / relative
+    content = file.read_bytes() + b"\nraise AssertionError('untrusted helper executed')\n"
+    file.write_bytes(content)
+    record = next(item for item in context.document["files"] if item["path"] == relative)
+    record.update(size=len(content), sha256=hashlib.sha256(content).hexdigest())
+    context.sign()
+    _refuses(context, 12)
+
+
+def test_trusted_bootstrap_baseline_cannot_come_from_incoming_bundle(context, monkeypatch):
+    monkeypatch.setattr(
+        installer,
+        "__file__",
+        str(context.config.bundle / "deployment/production_local_installer.py"),
+    )
+    _refuses(context, 11)
+
+
 def test_missing_required_file_cannot_be_authorized_by_shorter_signed_inventory(context):
     relative = "bot_core/freshness_semantic_verifier.py"
     (context.config.bundle / relative).unlink()
@@ -490,6 +517,139 @@ def test_retained_installer_approval_verifies_only_signed_application_scope(
         proof["manifest_sha256"] == hashlib.sha256(context.config.manifest.read_bytes()).hexdigest()
     )
     assert proof["source_revision"] == REVISION
+
+
+@pytest.mark.parametrize("attack", [None, "service-bytes", "retained-binding"])
+def test_retained_approval_precedes_launcher_import_of_real_verifier_graph(
+    context, monkeypatch, attack
+):
+    """Rzeczywisty import i graf; host, runtime, NSS, DB i socket są modelami."""
+    from contextlib import nullcontext
+
+    from deployment import freshness_application, freshness_verifier_entrypoint as launcher
+
+    context.install()
+    installation = context.config.root / installer.CODE
+    if attack == "service-bytes":
+        service = installation / "bot_core/freshness_verifier_service.py"
+        service.write_bytes(service.read_bytes() + b"\nraise AssertionError('tampered service')\n")
+    elif attack == "retained-binding":
+        binding_path = context.config.root / installer.APPLICATION / "binding.json"
+        binding = json.loads(binding_path.read_bytes())
+        binding["runtime"]["manifest_sha256"] = "0" * 64
+        binding_path.write_text(json.dumps(binding))
+    runtime_helpers = installer._runtime_helpers()
+    events = []
+    original_import = launcher.importlib.import_module
+    original_modules = {
+        name for name in sys.modules if name == "bot_core" or name.startswith("bot_core.")
+    }
+    with monkeypatch.context() as patch:
+        patch.setattr(sys, "pycache_prefix", sys.pycache_prefix)
+        patch.setattr(launcher, "INSTALLATION", installation)
+        # Rootless: nie dowodzimy kanonicznej ścieżki, uid root ani /proc interpretera.
+        # Rzeczywisty podpis, zachowany binding i bajty nadal poprzedzają import.
+        patch.setattr(launcher, "_check_installation", lambda: None)
+        patch.setattr(
+            freshness_application,
+            "_helpers",
+            lambda: {
+                "verify_ed25519": runtime_helpers["verify_ed25519"],
+                "verify_installed_runtime": runtime_helpers["verify_installed_runtime"],
+            },
+        )
+
+        def verify_retained_application():
+            proof = freshness_application.verify_installed_application(
+                root=context.config.root, owner_uid=context.config.owner_uid
+            )
+            assert proof["production_qualification"] == "WITHHELD"
+            events.append("application-verified")
+
+        patch.setattr(launcher, "_verify_application", verify_retained_application)
+        for name in original_modules:
+            patch.delitem(sys.modules, name)
+
+        def import_real_service(name):
+            assert events == ["application-verified"]
+            assert name == "bot_core.freshness_verifier_service"
+            service = original_import(name)
+            semantic = sys.modules["bot_core.freshness_semantic_verifier"]
+            for loaded in (service, semantic):
+                assert Path(loaded.__file__).is_relative_to(installation)
+            events.append("service-imported")
+            patch.setitem(
+                sys.modules,
+                "pwd",
+                SimpleNamespace(
+                    getpwnam=lambda user: SimpleNamespace(
+                        pw_uid=901 if user == service.VERIFIER_USER else 902
+                    )
+                ),
+            )
+            patch.setitem(
+                sys.modules,
+                "grp",
+                SimpleNamespace(getgrnam=lambda _group: SimpleNamespace(gr_gid=803)),
+            )
+            patch.setattr(service.os, "geteuid", lambda: 901)
+
+            def connect(_connection):
+                events.append("database-probe")
+                return nullcontext()
+
+            patch.setattr(service.PostgreSQLVerifierConnection, "connect", connect)
+            patch.setattr(service, "load_installed_qualification_policy", lambda: None)
+
+            def serve(verifier, socket_path, **options):
+                assert isinstance(verifier, semantic.FreshnessSemanticVerifier)
+                assert isinstance(
+                    verifier.credentials, semantic.PostgreSQLRetainedCredentialResolver
+                )
+                assert isinstance(verifier.preparations, semantic.PostgreSQLPreparationWriter)
+                connection = verifier.credentials.connection
+                assert verifier.preparations.connection is connection
+                assert (connection.socket_directory, connection.port, connection.database) == (
+                    "/run/postgresql",
+                    5432,
+                    "freshness_gate",
+                )
+                assert socket_path == "/run/cryptohunter/freshness/verifier.sock"
+                assert options == {
+                    "allowed_peer_uid": 902,
+                    "socket_gid": 803,
+                    "parent_mode": 0o750,
+                    "readonly_qualifier": None,
+                }
+                # Właściwy verifier odmawia wadliwemu żądaniu bez dalszego DB.
+                with pytest.raises(semantic.FreshnessSemanticVerificationError):
+                    verifier.verify_and_prepare(b"{}", b"{}", b"{}")
+                events.append("verifier-constructed")
+
+            patch.setattr(service, "serve_local_unix_socket", serve)
+            return service
+
+        patch.setattr(launcher.importlib, "import_module", import_real_service)
+        try:
+            if attack is None:
+                assert launcher.main() == 0
+                assert events == [
+                    "application-verified",
+                    "service-imported",
+                    "database-probe",
+                    "verifier-constructed",
+                ]
+            else:
+                with pytest.raises(freshness_application.ApplicationTrustError):
+                    launcher.main()
+                assert events == []
+                assert not any(
+                    name == "bot_core" or name.startswith("bot_core.") for name in sys.modules
+                )
+        finally:
+            for name in list(sys.modules):
+                if name == "bot_core" or name.startswith("bot_core."):
+                    sys.modules.pop(name)
 
 
 def test_existing_application_approval_is_not_silently_adopted_or_overwritten(context):

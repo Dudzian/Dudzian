@@ -120,6 +120,11 @@ MAX_FILE = 8 * 1024 * 1024
 MAX_TOTAL = 128 * 1024 * 1024
 MAX_MANIFEST = 4 * 1024 * 1024
 MAX_NODES = 32768
+TRUSTED_BOOTSTRAP_FILES = (
+    "deployment/freshness_runtime.py",
+    "deployment/freshness_runtime_bootstrap.py",
+    "deployment/freshness_application.py",
+)
 
 
 class InstallerError(RuntimeError):
@@ -518,6 +523,7 @@ def _manifest(
     artifacts: list[Artifact] = []
     seen: set[str] = set()
     reviewed = _application_helpers()["REVIEWED_SUBSTRATE_DIGESTS"]
+    trusted_bootstrap = _trusted_bootstrap(config)
     for entry in files:
         _fail(
             type(entry) is dict and set(entry) == {"path", "sha256", "size", "mode"},
@@ -556,6 +562,11 @@ def _manifest(
             12,
             "Podpisane źródło nie odpowiada zatwierdzonym bajtom podłoża",
         )
+        _fail(
+            path not in trusted_bootstrap or content == trusted_bootstrap[path],
+            12,
+            "Podpisany helper nie odpowiada niezależnie zatwierdzonemu bootstrapowi",
+        )
         seen.add(path)
         artifacts.append(Artifact(path, entry["sha256"], entry["size"], mode, content))
     _fail(
@@ -564,6 +575,29 @@ def _manifest(
         "Niepełny lub dodatkowy niezatwierdzony kod w bundle",
     )
     return hashlib.sha256(raw).hexdigest(), tuple(artifacts), runtime, raw, signature, key_bytes
+
+
+def _trusted_bootstrap(config: Config) -> dict[str, bytes]:
+    """Odczytaj kotwicę instalatora, nigdy baseline z ocenianego payloadu."""
+    directory = Path(__file__).absolute().parent
+    _fail(
+        not directory.is_relative_to(config.bundle),
+        11,
+        "Zaufany bootstrap musi pochodzić spoza bundle",
+    )
+    # CLI zawsze wymaga owner_uid=0 i chronionego pełnego łańcucha od '/'.
+    # Jawny model rootless używa katalogu źródeł jako granicy sandboxa.
+    boundary = Path("/") if config.owner_uid == 0 else directory
+    source = _Tree(boundary, config.owner_uid)
+    try:
+        return {
+            name: source.read(
+                (directory / PurePosixPath(name).name).relative_to(boundary).as_posix()
+            )
+            for name in TRUSTED_BOOTSTRAP_FILES
+        }
+    finally:
+        source.close()
 
 
 def _application_helpers() -> dict[str, Any]:

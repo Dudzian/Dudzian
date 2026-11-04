@@ -13,6 +13,11 @@ odmowy i przygotowania VM; nie uruchamiać jej eksportu ani fazy dodatniej jako
 próby aktualnego wydania. Obowiązuje poniższy eksport v2 oraz
 [kontrakt podpisanego runtime](../architecture/stage9_linux_signed_python_runtime.md).
 
+Przyszły rzeczywisty start usługi musi spełnić osobny
+[kontrakt ACCEPT/REJECT](STAGE9_FRESHNESS_SERVICE_VM_ACCEPTANCE.md), obejmujący
+kotwicę bootstrapu, kolejność `ExecStartPre` i granice testów modelowych.
+Stage 9 pozostaje **IN_PROGRESS / PRODUCTION_NO_GO**.
+
 ## 1. Podział odpowiedzialności i snapshoty
 
 Operator hypervisora niezależnie weryfikuje oficjalny obraz Ubuntu, podpisane

@@ -134,6 +134,12 @@ def test_real_application_signature_preserves_explicit_minimal_scope(installed):
     assert result["source_revision"] == REVISION
 
 
+def test_application_and_installer_require_the_same_signed_payload():
+    from deployment import production_local_installer
+
+    assert application.REQUIRED_FILES == production_local_installer.REQUIRED_FILES
+
+
 @pytest.mark.parametrize(
     "attack",
     [
