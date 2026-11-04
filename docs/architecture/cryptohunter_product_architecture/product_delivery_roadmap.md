@@ -520,6 +520,27 @@ The audit explicitly searches for:
 - error-handling paths that hide or corrupt state
 - performance/resource defects that can affect beta operation
 
+### PB.2A — Adversarial tests within each module audit
+
+**Mandatory within PB.2, not a separate audit phase.** During the same review of each beta-reachable module, identify its trust boundaries, failure assumptions and safety invariants, then design and execute relevant adversarial/negative tests. Do not assume that repeated source review or existing green CI proves hostile, malformed or interrupted execution is safe. A module with no applicable adversarial surface requires a reasoned `NOT_APPLICABLE` disposition, not an automatic PASS.
+
+Select scenarios by actual module responsibilities; the following is a minimum threat/failure checklist, not a mandate to run irrelevant tests:
+
+| Module / boundary | Adversarial scenarios to qualify |
+| --- | --- |
+| Market data, exchange adapters, strategies and AI/ML | Missing, stale, malformed, NaN/Inf, duplicated or out-of-order market/events data; delayed candles and exchange responses; look-ahead and dataset leakage; unrealistic fills, slippage, fees, funding and other costs; reject misleading gross-only profitability claims. |
+| Risk Engine, portfolio, execution and reconciliation | Concurrent, repeated or replayed intents; partial/duplicate fills, cancel/fill races, reconnect storms, stale authority, kill-switch activation, exposure-limit breaches and multi-account/multi-venue ordering; prove no unauthorized order or unaccounted exposure. |
+| Persistence, PostgreSQL, migrations and recovery | Crash/kill at commit boundaries, partial writes, lock contention, timeouts, dropped connections, corrupt/old state, replay and interrupted backup/restore or migration; verify durable idempotency and reconciliation rather than silent state repair. |
+| Identity, secrets, IPC, licensing, signing and updater | Tampered or replayed tokens, configuration, manifests and artifacts; expired/unknown identities, clock anomalies, privilege or environment confusion, invalid signatures and downgraded authority; verify fail-closed refusal without secret disclosure. |
+| Desktop UI, QML, gRPC and background Core boundaries | Malformed/reordered responses, stale read models, lost connectivity, repeated user actions, spoofed commands and UI/Core disagreement; prove that presentation state never grants execution authority or bypasses Risk Engine. |
+| Installation, services and platform lifecycle | Interrupted install/update/reboot, substituted files, wrong version or permissions, denied service start and incomplete recovery; require platform-specific evidence and preserve Stage 9/10 physical and manual authorization boundaries. |
+
+For **each in-scope module**, record an auditable test matrix linking: identified failure/threat → invariant and expected safe result → reproducible scenario (test ID, inputs/seeds, platform, command/fixture) → actual outcome and evidence → finding ID or `PASS`/`NOT_APPLICABLE`/`BLOCKED` disposition. Exercise real code paths where feasible; mocked or static results must be labelled as such and never promoted to native/runtime proof. Unexpected success of a prohibited action, state corruption, bypass of an authority gate or unbounded financial exposure is a finding even if ordinary tests pass.
+
+Execute destructive and hostile cases **only in isolated test/PAPER/qualified TESTNET environments** with synthetic accounts/credentials and bounded effects. No real-money LIVE orders, production secrets, destructive host operations, physical enrollment, reboot or Stage 10 execution are authorized by this roadmap text. Anything requiring separate native, legal or operator authorization remains `BLOCKED` until properly qualified.
+
+Route accepted defects into the PB.7 ledger; rerun the failing scenario and its neighboring invariants after remediation. A skipped, unavailable or merely proposed test is not PASS. PB.2 does not replace the separate PB.3 cross-module attack-sequence audit or the later M6 production-hardening matrix.
+
 ## PB.3 — Cross-module and architecture-drift audit
 
 After module-level review, perform a separate repository-wide integration pass focused on boundaries that can appear correct in isolation.
@@ -534,6 +555,7 @@ Verify, at minimum:
 - UI ↔ Core authority boundaries
 - packaging/runtime/version compatibility
 - consistency between canonical architecture, machine-readable contracts and implementation
+- adversarial cross-module sequences (e.g. stale feed → duplicated intent → partial fill → restart → reconciliation; expired authority during UI/IPC retries) with evidence that combined modules preserve the same safety invariants
 
 ## PB.4 — Security and trust-boundary audit
 
@@ -565,6 +587,7 @@ Audit for:
 - Windows-specific qualification gaps
 - coverage of beta-critical operator workflows and UI states
 - CI gates that can pass while required behavior remains unverified
+- PB.2A adversarial matrix completeness, deterministic replay of failures, honest `BLOCKED`/`NOT_APPLICABLE` dispositions and regression coverage for accepted findings
 
 ## PB.6 — CI, build, dependency and release-surface audit
 
@@ -631,6 +654,7 @@ Before cutting the first beta:
 The first beta may be cut only when:
 
 - the complete repository has been covered by the defined audit scope
+- PB.2A adversarial matrices have supported dispositions for each beta-reachable module, with no unremediated BLOCKER/HIGH findings or unsupported PASS claims
 - cross-module and architecture-drift audits are complete
 - **BLOCKER = 0**
 - **HIGH = 0**
