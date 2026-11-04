@@ -201,11 +201,21 @@ python -I -s -B scripts/prepare_stage9_vm_bundle.py \
 Eksporter czyta `SCOPE`, `REQUIRED_FILES` i kanoniczny `UNIT_TEMPLATE` przez AST,
 bez importowania kodu produktu. Sprawdza Git blobs i zgodność lokalnych bajtów
 z zatwierdzonym SHA; odmawia symlinków, obcego checkoutu i zastanego outputu.
-Aktualna baza ma 15 plików, lecz źródłowy zbiór jest kontraktem, nie historyczna
+Aktualna baza ma 16 plików, lecz źródłowy zbiór jest kontraktem, nie historyczna
 liczba. Unit materializuje dokładną ścieżką executable z bindingu **przed**
 hashowaniem. Wynik zawiera `payload/`, unsigned `release.json` v2 z obiektem
-runtime równym bindingowi bez `schema`, pięć plików bootstrapu instalatora
-w `bootstrap/deployment/`, `bootstrap.sha256` i `revision.txt`.
+runtime równym bindingowi bez `schema`, sześć plików bootstrapu instalatora
+w `bootstrap/deployment/`, `bootstrap.sha256` i `revision.txt`. Nowy
+`deployment/freshness_application.py` należy zarówno do podpisywanego payloadu,
+jak i odrębnie zatwierdzanego bootstrapu instalatora.
+
+Instalator zachowuje dokładne bajty manifestu v2, jego podpis i publiczny klucz
+autorytetu w `/etc/cryptohunter/freshness-application/` oraz publikuje tam
+`binding.json` dopiero po ukończeniu instalacji. Podczas startu helper ponownie
+weryfikuje podpis, binding runtime i kompletny inwentarz zainstalowanych bajtów
+przed importem usługi. Te metadane potwierdzają wyłącznie
+`SIGNED_FRESHNESS_SUBSTRATE`; pełna kwalifikacja `PRODUCTION_LOCAL` nadal wymaga
+AccountGenesis i wszystkich własnych warunków.
 
 Oddzielnie przygotować i podpisać wykaz kodu harnessu i jego zależności
 (`stage9_vm_trial.py`, `stage9_vm_environment.py`, `stage9_vm_native.py` oraz
@@ -217,6 +227,9 @@ nie używać niezweryfikowanych sibling modules z innego checkoutu.
 Odrębna rola porównuje binding, szablon unit i wszystkie eksportowane bajty
 z zatwierdzonym SHA przed podpisaniem. Nie dodawać pól v2 do manifestu v1,
 nie przepisywać JSON po podpisie i nie uznawać unsigned eksportu za zatwierdzenie.
+Zmiany helpera oraz inwentarza wymagają niezależnego review i zatwierdzenia tego
+PR przed podpisaniem nowego pakietu lub dodatnią próbą VM. Sam eksport ani testy
+PR nie zatwierdzają nowych reviewed digestów i nie otwierają pełnej kwalifikacji.
 
 Na odrębnym stanowisku nowy autorytet aplikacji TEST_ONLY podpisuje aplikację
 i wykaz bootstrapu. Prywatny klucz pozostaje na tym stanowisku:

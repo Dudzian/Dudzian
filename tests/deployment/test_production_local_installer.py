@@ -273,6 +273,36 @@ def test_tampered_artifact_refuses_despite_original_valid_signature(context: Con
     _refuses(context, 12)
 
 
+@pytest.mark.parametrize(
+    "relative",
+    [
+        "bot_core/linux_service_ipc.py",
+        "bot_core/linux_service_postgresql.py",
+        "bot_core/production_signer_ipc.py",
+        "bot_core/freshness_verifier_service.py",
+        "bot_core/freshness_semantic_verifier.py",
+    ],
+)
+def test_new_signature_does_not_approve_changed_reviewed_source(context, relative):
+    file = context.config.bundle / relative
+    content = file.read_bytes() + b"\n# independently unreviewed revision\n"
+    file.write_bytes(content)
+    record = next(item for item in context.document["files"] if item["path"] == relative)
+    record.update(size=len(content), sha256=hashlib.sha256(content).hexdigest())
+    context.sign()
+    _refuses(context, 12)
+
+
+def test_missing_required_file_cannot_be_authorized_by_shorter_signed_inventory(context):
+    relative = "bot_core/freshness_semantic_verifier.py"
+    (context.config.bundle / relative).unlink()
+    context.document["files"] = [
+        item for item in context.document["files"] if item["path"] != relative
+    ]
+    context.sign()
+    _refuses(context, 12)
+
+
 def test_wrong_release_key_cannot_authorize_bundle(context: Context):
     context.key = Ed25519PrivateKey.generate()
     context.sign()
@@ -369,6 +399,96 @@ def test_install_verifies_exact_payload_and_preserves_executable_modes(context: 
     assert not (context.config.root / "etc/systemd/system/multi-user.target.wants").exists()
 
 
+def test_install_retains_exact_signed_application_approval_separate_from_private_journal(context):
+    plan = context.install()
+    metadata = context.config.root / installer.APPLICATION
+    assert stat.S_IMODE(metadata.stat().st_mode) == 0o755
+    expected = {
+        "manifest.json": context.config.manifest.read_bytes(),
+        "manifest.sig": context.config.signature.read_bytes(),
+        "authority.pub": context.config.trusted_key.read_bytes(),
+        "binding.json": installer._application_binding(plan),
+    }
+    assert set(path.name for path in metadata.iterdir()) == set(expected)
+    for name, content in expected.items():
+        path = metadata / name
+        assert path.read_bytes() == content
+        assert stat.S_IMODE(path.stat().st_mode) == 0o644
+    binding = json.loads(expected["binding.json"])
+    assert binding["scope"] == installer.SCOPE
+    assert binding["manifest_sha256"] == plan.manifest_sha256
+    assert binding["runtime"] == plan.runtime
+    assert stat.S_IMODE((context.config.root / installer.STATE).stat().st_mode) == 0o700
+
+
+def test_retained_installer_approval_verifies_only_signed_application_scope(context, monkeypatch):
+    from deployment import freshness_application
+
+    context.install()
+    # Wyłącznie model already-verified runtime z fixture. Podpis aplikacji,
+    # zachowane metadane i cały inwentarz są weryfikowane rzeczywiście.
+    runtime_helpers = installer._runtime_helpers()
+    monkeypatch.setattr(
+        freshness_application,
+        "_helpers",
+        lambda: {
+            "verify_ed25519": runtime_helpers["verify_ed25519"],
+            "verify_installed_runtime": runtime_helpers["verify_installed_runtime"],
+        },
+    )
+    proof = freshness_application.verify_installed_application(
+        root=context.config.root, owner_uid=context.config.owner_uid
+    )
+    assert proof["scope"] == installer.SCOPE
+    assert proof["qualification_profile"] == "SIGNED_FRESHNESS_SUBSTRATE"
+    assert proof["production_qualification"] == "WITHHELD"
+    assert (
+        proof["manifest_sha256"] == hashlib.sha256(context.config.manifest.read_bytes()).hexdigest()
+    )
+    assert proof["source_revision"] == REVISION
+
+
+def test_existing_application_approval_is_not_silently_adopted_or_overwritten(context):
+    metadata = context.config.root / installer.APPLICATION
+    metadata.mkdir(parents=True)
+    metadata.parent.chmod(0o755)
+    metadata.chmod(0o755)
+    sentinel = metadata / "manifest.json"
+    sentinel.write_bytes(b"administrator-owned earlier approval")
+    _refuses(context, 24)
+    assert sentinel.read_bytes() == b"administrator-owned earlier approval"
+
+
+@pytest.mark.parametrize("name", ["manifest.json", "manifest.sig", "authority.pub", "binding.json"])
+def test_retained_application_approval_drift_prevents_idempotent_adoption(context, name):
+    context.install()
+    metadata = context.config.root / installer.APPLICATION / name
+    metadata.write_bytes(metadata.read_bytes() + b"unapproved")
+    before = _snapshot(context.config.root)
+    with pytest.raises(installer.InstallerError) as error:
+        context.install()
+    assert error.value.code == 24
+    assert _snapshot(context.config.root) == before
+
+
+def test_application_binding_is_not_published_after_failed_metadata_write(context, monkeypatch):
+    original = installer._Tree.write_new
+
+    def fail_signature(tree, path, data, mode, gid=None):
+        if path == f"{installer.APPLICATION}/manifest.sig":
+            raise OSError("synthetic interrupted approval persistence")
+        return original(tree, path, data, mode, gid)
+
+    monkeypatch.setattr(installer._Tree, "write_new", fail_signature)
+    with pytest.raises(installer.InstallerError) as error:
+        context.install()
+    assert error.value.code == 30
+    assert not (context.config.root / installer.APPLICATION / "binding.json").exists()
+    with pytest.raises(installer.InstallerError) as retry:
+        context.install()
+    assert retry.value.code == 24
+
+
 def test_reinstall_of_identical_complete_state_is_readonly(context: Context):
     context.install()
     before = _snapshot(context.config.root)
@@ -431,6 +551,19 @@ def test_install_rechecks_artifact_modified_after_successful_preflight(context: 
         context.install()
     assert error.value.code == 12
     assert _snapshot(context.config.root) == before
+
+
+def test_source_changed_during_staging_is_refused_before_code_publication(context):
+    def change_source(phase):
+        if phase == "staged":
+            source = context.config.bundle / "bot_core/freshness_verifier_service.py"
+            source.write_bytes(source.read_bytes() + b"\n# changed after internal preflight\n")
+
+    with pytest.raises(installer.InstallerError) as error:
+        context.install(change_source)
+    assert error.value.code == 12
+    assert not (context.config.root / installer.CODE).exists()
+    assert not (context.config.root / installer.APPLICATION / "binding.json").exists()
 
 
 def test_published_systemd_postgresql_and_ipc_contracts_keep_service_separation(context: Context):
@@ -507,6 +640,7 @@ def test_isolated_launcher_ignores_hostile_cwd_and_pythonpath_without_running_pa
         f"module.INSTALLATION = Path({str(installation)!r})\n"
         # Wyłącznie rootless test importów: ochronę metadanych sprawdza osobny test.
         "module._check_installation = lambda: None\n"
+        "module._verify_application = lambda: None\n"
         "raise SystemExit(module.main())\n"
     )
     result = subprocess.run(
@@ -789,6 +923,7 @@ def test_launcher_constructs_only_fixed_namespace_and_imports_exact_service(monk
     with monkeypatch.context() as patch:
         patch.setattr(sys, "pycache_prefix", sys.pycache_prefix)
         patch.setattr(launcher, "_check_installation", lambda: None)
+        patch.setattr(launcher, "_verify_application", lambda: None)
         for name in list(sys.modules):
             if name == "bot_core" or name.startswith("bot_core."):
                 patch.delitem(sys.modules, name)
@@ -1351,3 +1486,27 @@ def test_direct_script_helper_exposes_same_complete_unit_validator():
     )
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "COMPLETE_UNIT_CONTRACT=PASS"
+
+
+def test_isolated_installer_loads_reviewed_application_contract_without_package_imports():
+    import subprocess
+
+    program = (
+        "import runpy, sys; "
+        f"m=runpy.run_path({str(REPOSITORY / 'deployment/production_local_installer.py')!r}); "
+        "digests=m['_application_helpers']()['REVIEWED_SUBSTRATE_DIGESTS']; "
+        "assert len(digests)==5; "
+        "assert set(digests)<=m['REQUIRED_FILES']; "
+        "assert 'bot_core' not in sys.modules; "
+        "assert 'deployment' not in sys.modules; "
+        "print('ISOLATED_APPLICATION_CONTRACT=PASS')"
+    )
+    result = subprocess.run(
+        [sys.executable, "-I", "-s", "-B", "-c", program],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "ISOLATED_APPLICATION_CONTRACT=PASS"

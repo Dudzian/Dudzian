@@ -33,6 +33,7 @@ jobs:
           deployment/linux_physical_observations.py deployment/linux_physical_native.py
           deployment/linux_release_identity.py
           deployment/production_local_installer.py
+          deployment/freshness_application.py
           deployment/production_local_installer_host.py
           deployment/stage9_vm_trial.py
           deployment/stage9_vm_environment.py
@@ -58,11 +59,15 @@ jobs:
           tests/security/test_freshness_semantic_verifier.py
           tests/security/test_freshness_production_local_deployment.py
           tests/security/test_freshness_service_identity.py
+          tests/security/test_reviewed_source_checkout.py
+          tests/security/test_freshness_reviewed_source_pins.py
+          tests/security/test_freshness_qualification_profiles.py
           tests/deployment/test_linux_functional_pipeline.py
           tests/deployment/test_linux_verifier_observation.py
           tests/security/test_linux_service_postgresql_integration.py
           tests/deployment/test_linux_release_identity.py
           tests/deployment/test_production_local_installer.py
+          tests/deployment/test_freshness_application.py
           tests/deployment/test_stage9_vm_trial.py
           tests/deployment/test_stage9_vm_environment.py
           tests/deployment/test_stage9_vm_native.py
@@ -76,6 +81,7 @@ jobs:
           deployment/linux_physical_observations.py deployment/linux_physical_native.py
           deployment/linux_release_identity.py
           deployment/production_local_installer.py
+          deployment/freshness_application.py
           deployment/production_local_installer_host.py
           deployment/stage9_vm_trial.py
           deployment/stage9_vm_environment.py
@@ -101,11 +107,15 @@ jobs:
           tests/security/test_freshness_semantic_verifier.py
           tests/security/test_freshness_production_local_deployment.py
           tests/security/test_freshness_service_identity.py
+          tests/security/test_reviewed_source_checkout.py
+          tests/security/test_freshness_reviewed_source_pins.py
+          tests/security/test_freshness_qualification_profiles.py
           tests/deployment/test_linux_functional_pipeline.py
           tests/deployment/test_linux_verifier_observation.py
           tests/security/test_linux_service_postgresql_integration.py
           tests/deployment/test_linux_release_identity.py
           tests/deployment/test_production_local_installer.py
+          tests/deployment/test_freshness_application.py
           tests/deployment/test_stage9_vm_trial.py
           tests/deployment/test_stage9_vm_environment.py
           tests/deployment/test_stage9_vm_native.py
@@ -119,6 +129,7 @@ jobs:
           deployment/linux_physical_observations.py deployment/linux_physical_native.py
           deployment/linux_release_identity.py
           deployment/production_local_installer.py
+          deployment/freshness_application.py
           deployment/production_local_installer_host.py
           deployment/stage9_vm_trial.py
           deployment/stage9_vm_environment.py
@@ -167,10 +178,14 @@ jobs:
           tests/security/test_freshness_semantic_verifier.py
           tests/security/test_freshness_production_local_deployment.py
           tests/security/test_freshness_service_identity.py
+          tests/security/test_reviewed_source_checkout.py
+          tests/security/test_freshness_reviewed_source_pins.py
+          tests/security/test_freshness_qualification_profiles.py
           tests/deployment/test_linux_functional_pipeline.py
           tests/deployment/test_linux_verifier_observation.py
           tests/deployment/test_linux_release_identity.py
           tests/deployment/test_production_local_installer.py
+          tests/deployment/test_freshness_application.py
           tests/deployment/test_stage9_vm_trial.py
           tests/deployment/test_stage9_vm_environment.py
           tests/deployment/test_stage9_vm_native.py

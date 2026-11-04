@@ -535,6 +535,9 @@ def test_live_qualifier_propagates_identity_refusal_before_database(monkeypatch)
     )
     # Tylko test granicy kompozycji; nie przypisuje PASS kwalifikacji z pominiętymi pinami.
     monkeypatch.setattr(qualification, "REVIEWED_CODE_DIGESTS", {})
+    # This is only a negative composition test of the process boundary, never
+    # a successful product qualification with mocked source/signature checks.
+    monkeypatch.setattr(qualification, "qualify_signed_freshness_substrate", Mock())
     monkeypatch.setattr(qualification, "_load_runtime", verified_runtime)
     refusal = identity.ServiceIdentityError("EXECSTART_PROGRAM_OR_ARGUMENTS_CHANGED")
     qualify_identity = Mock(side_effect=refusal)

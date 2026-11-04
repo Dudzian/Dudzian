@@ -1,5 +1,15 @@
 # Quality, security, and code-intelligence toolchain
 
+Kontrola domknięcia podpisanej aplikacji Freshness (`freshness_application.py`)
+wchodzi do skonfigurowanego mypy Linux/Windows, jawnego Ruff/format i istniejącego
+raportu branch coverage `quality-ratchet`. Testy dokładnych bajtów, podpisanego
+inwentarza, podmiany źródeł po instalacji i odrębnych profili kwalifikacji
+uruchamiają istniejące `quality-ratchet` i `linux-evidence-contract`; workflow
+runtime obejmuje kontrolę aplikacji, a przenośne testy odmów są zbierane również
+przez dotychczasowe zestawy Windows/macOS. Próba jednostkowa potwierdza wyłącznie
+zakres minimalnego podpisanego podłoża. Pełny pin AccountGenesis i jego blokada,
+próg 70%, timeouty oraz ręczne bramki natywnej próby Linux pozostają bez zmian.
+
 Harness próby VM Stage 9 (`stage9_vm_trial.py`, `stage9_vm_environment.py`,
 `stage9_vm_native.py`) oraz eksporter `scripts/prepare_stage9_vm_bundle.py`
 wchodzą do skonfigurowanego mypy Linux/Windows, jawnego Ruff/format oraz

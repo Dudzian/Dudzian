@@ -16,6 +16,8 @@ on:
       - 'bot_core/freshness_service_identity.py'
       - 'bot_core/freshness_deployment_qualification.py'
       - 'tests/deployment/test_freshness_runtime*'
+      - 'tests/deployment/test_freshness_application.py'
+      - 'tests/security/test_freshness_qualification_profiles.py'
       - 'tests/deployment/test_build_freshness_runtime.py'
       - 'tests/deployment/test_stage9_vm_trial.py'
       - 'tests/deployment/test_stage9_vm_environment.py'
@@ -39,6 +41,8 @@ on:
       - 'bot_core/freshness_service_identity.py'
       - 'bot_core/freshness_deployment_qualification.py'
       - 'tests/deployment/test_freshness_runtime*'
+      - 'tests/deployment/test_freshness_application.py'
+      - 'tests/security/test_freshness_qualification_profiles.py'
       - 'tests/deployment/test_build_freshness_runtime.py'
       - 'tests/deployment/test_stage9_vm_trial.py'
       - 'tests/deployment/test_stage9_vm_environment.py'
@@ -82,6 +86,7 @@ jobs:
         run: >-
           python -m pytest --confcutdir=tests/deployment -q
           tests/deployment/test_freshness_runtime.py
+          tests/deployment/test_freshness_application.py
           tests/deployment/test_build_freshness_runtime.py
           --junitxml="$RUNNER_TEMP/freshness-runtime-tests.xml"
       - uses: actions/upload-artifact@v6
