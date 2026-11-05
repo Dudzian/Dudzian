@@ -19,6 +19,7 @@ from typing import Any
 from deployment.stage9_vm_environment import (
     DEFAULT_APPROVAL,
     REQUIRED_PACKAGES,
+    _directory_without_acl,
     _protected,
     _read_approval,
     _VM_TYPES,
@@ -124,17 +125,18 @@ def _absolute(value: object) -> Path:
 
 
 def _open_directory(path: Path) -> int:
+    """Walker O_RDONLY wymaga r katalogów i x do lookup dzieci; nie dopuszcza ACL."""
     _require(path.is_absolute() and ".." not in path.parts, "Nieprawidłowy katalog chroniony")
     descriptor = os.open("/", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
-        _require(_protected(os.fstat(descriptor), directory=True), "Niezabezpieczony katalog root")
+        _require(_directory_without_acl(descriptor), "Niezabezpieczony katalog root lub ACL")
         for component in path.parts[1:]:
             child = os.open(
                 component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor
             )
             os.close(descriptor)
             descriptor = child
-            _require(_protected(os.fstat(descriptor), directory=True), "Niezabezpieczony przodek")
+            _require(_directory_without_acl(descriptor), "Niezabezpieczony przodek lub ACL")
         return descriptor
     except BaseException:
         os.close(descriptor)

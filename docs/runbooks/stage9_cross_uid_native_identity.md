@@ -85,11 +85,20 @@ Konto runtime ma wyłącznie swoją podstawową grupę i grupę IPC. Verifier ma
 wyłącznie grupę IPC. Wszystkie przodki socketu są root-owned bez zapisu
 grupy/innych, ostatni katalog verifier:IPC/0750, bez dodatkowych ACL.
 Katalog bazowy dowodów ma root:os_freshness_runtime/0750: tylko runtime
-potrzebuje przejścia do snapshotu. Nie zmienia to publicznej konfiguracji
+potrzebuje jego odczytu i przeszukiwania (`r+x`) do odczytania snapshotu.
+Ten sam wymóg obejmuje wszystkie katalogi ścieżki `before.json`, w tym
+opublikowany katalog próby. Verifier nie otrzymuje dostępu do tej ścieżki.
+Nie zmienia to publicznej konfiguracji
 jednostki root:root/0644 ani przodka `/run/cryptohunter`/0755 bez wrażliwych danych.
-Przed publikacją manifestu operator sprawdza też, że oba konta mają przejście
-przez `/etc/cryptohunter`, bez prawa zapisu i dodatkowych ACL. Brak przejścia
-oznacza przerwanie próby; nie zmieniać uprawnień zastanego katalogu.
+Przed publikacją manifestu operator sprawdza też, że oba konta mają odczyt
+i przeszukiwanie (`r+x`) każdego katalogu jego łańcucha od `/`, w tym
+`/etc/cryptohunter`, bez prawa zapisu i dodatkowych ACL. Samo `x` pozwalające
+otworzyć znany plik nie wystarcza: czytnik otwiera katalogi przez
+`O_RDONLY | O_DIRECTORY | O_NOFOLLOW`, więc wymaga również `r`.
+Brak któregokolwiek prawa oznacza przerwanie próby; nie zmieniać uprawnień
+zastanego katalogu ani nie przełączać czytnika na inny tryb otwarcia.
+Udany odczyt administratora nie potwierdza praw kont nieuprzywilejowanych;
+ich rzeczywiste wywołania i osobna próba VM pozostają wymagane.
 
 Dopiero po utworzeniu i sprawdzeniu powyższych kont oraz grup operator
 zatwierdza jednorazowy `trial_id` (UUID lowerhex) i zakres
@@ -124,6 +133,12 @@ Listener i probe przed bind/connect czytają manifest przez chroniony łańcuch
 FD-relative, bez symlinków/hardlinków i zapisu grupy/innych. Sprawdzają bieżące
 publiczne fakty VM i izolację, machine/boot/pakiety, rewizję/środowisko z CLI,
 skrypty i interpreter. Nie obchodzą wymogu UID 0 istniejącego rootguard.
+Odczyt zatwierdzenia i otwieranie chronionych katalogów używają wspólnego
+predykatu: każdy katalog, także `/`, musi należeć do root, nie dopuszczać
+zapisu grupy/innych i nie mieć POSIX access/default ACL. Niedostępność
+obserwacji xattr daje odmowę. Kontrola katalogu poprzedza przejście do
+następnego komponentu oraz odczyt danych przez loader; nie wykonuje się
+automatycznej naprawy praw ani ACL.
 Snapshot/run-probe/compare dodatkowo ponownie sprawdzają oryginalną zgodę
 administratora i jej hash. Brak lub niezgodność dowodu oznacza BLOCKED.
 Wycofanie upoważnienia wymaga wycofania manifestu przez operatora; nowy boot
@@ -233,12 +248,20 @@ wszystkich czterech wejść, manifest oraz argv. PID runuser nie jest utożsamia
 z PIDem Pythona klienta.
 
 Przed publikacją manifestu, snapshotu lub katalogu harness odmawia przy
-`system.posix_acl_access` albo `system.posix_acl_default` na sprawdzanym
-łańcuchu katalogów lub nowym obiekcie. Kontrola poprzedza zwiększenie trybu:
+`system.posix_acl_access` albo `system.posix_acl_default` w całym sprawdzanym
+łańcuchu katalogów od `/` lub nowym częściowym obiekcie. Kontrola
+nowego obiektu w mechanizmie publikacji poprzedza zwiększenie trybu:
 odziedziczona ACL z początkowo zerową maską mogłaby uzyskać odczyt po `chmod`.
 Harness nie usuwa ACL, nie naprawia przodków i nie zmienia uprawnień zastanych
 obiektów. Właściciel zapisów pozostaje root; grupa ma wyłącznie wskazany odczyt
 lub przejście, a inni użytkownicy nie otrzymują dostępu do dowodów.
+
+Kontrakt odczytu istniejącego końcowego pliku nadal sprawdza zwykły typ,
+właściciela root, brak zapisu grupy/innych, pojedynczy hardlink, ograniczony
+rozmiar i stabilność metadanych podczas odczytu. Wspólny predykat ACL dotyczy
+katalogów; nie ustanawia ogólnej kontroli ACL wszystkich istniejących plików
+ani executable. Kontrola ACL nowego dowodu pozostaje odrębnym warunkiem
+mechanizmu publikacji przed jego udostępnieniem.
 
 Root snapshot odczytuje prawdziwy `/proc/MainPID/exe`; to wejście wyłącznie
 TEST_ONLY z niezależnego obserwatora, nie akceptacja kodu usługi. Snapshot nie
@@ -342,6 +365,12 @@ sprawdzają kolejność odmów i manifest, w tym brak receipt.
 `test_stage9_cross_uid_permissions.py` sprawdza modelowane regresje publikacji
 uprawnień i odmów ACL. Te testy nie uruchamiają klienta produktu ani usługi,
 nie zmieniają UID/PID/executable i nie stanowią wyniku natywnej próby.
+`test_stage9_cross_uid_directory_contract.py` dodatkowo porównuje odmowy obu
+przejść po katalogach przy braku `r`, ACL przodka i braku obserwacji xattr. Jego
+osobna sonda Linux potwierdza na własnym katalogu tymczasowym różnicę między
+bezpośrednim otwarciem pliku a odczytowym otwarciem katalogu; używa jednego rzeczywistego UID.
+Przy root lub poza Linux jest jawnie pomijana. Nie dowodzi izolacji dwóch
+kont, systemd ani kwalifikacji VM.
 Wykonywać osobno:
 
 ```sh
@@ -349,5 +378,6 @@ python -m pytest --noconftest -q \
   tests/scripts/test_stage9_cross_uid_identity_reports.py \
   tests/scripts/test_stage9_cross_uid_identity_gates.py \
   tests/scripts/test_stage9_cross_uid_trial.py \
-  tests/scripts/test_stage9_cross_uid_permissions.py
+  tests/scripts/test_stage9_cross_uid_permissions.py \
+  tests/scripts/test_stage9_cross_uid_directory_contract.py
 ```

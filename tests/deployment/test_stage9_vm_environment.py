@@ -202,6 +202,8 @@ def test_approval_path_is_absolute_and_cannot_traverse_parents(path):
 
 
 def _protected_reader(monkeypatch, *, changed_index=None, mode=None, uid=0, nlink=1, data=b"{}"):
+    # Model kontroli Linux działa też na POSIX hosta; nie jest próbą jego ACL.
+    monkeypatch.setattr(guard, "sys", SimpleNamespace(platform="linux"))
     opened = []
     closed = []
     statuses = []
@@ -231,6 +233,7 @@ def _protected_reader(monkeypatch, *, changed_index=None, mode=None, uid=0, nlin
     monkeypatch.setattr(guard.os, "fstat", lambda fd: statuses[fd - 100])
     monkeypatch.setattr(guard.os, "close", closed.append)
     monkeypatch.setattr(guard.os, "read", lambda _fd, _length: chunks.pop(0))
+    monkeypatch.setattr(guard.os, "listxattr", lambda _fd: [], raising=False)
     return opened, closed
 
 
@@ -243,6 +246,61 @@ def test_approval_is_read_through_pinned_nofollow_descriptors(monkeypatch):
     assert opened[-1][1] & os.O_NONBLOCK
     assert all(not flags & (os.O_CREAT | os.O_TRUNC | os.O_WRONLY) for _, flags, _ in opened)
     assert opened[-1][2]["dir_fd"] == 101
+
+
+@pytest.mark.skipif(os.name != "posix", reason="Model wymaga stałych deskryptorów POSIX")
+def test_reader_acl_contract_covers_directories_not_existing_final_file(monkeypatch):
+    _protected_reader(monkeypatch)
+    observed = []
+
+    def attributes(fd):
+        observed.append(fd)
+        return ["system.posix_acl_access"] if fd == 102 else []
+
+    monkeypatch.setattr(guard.os, "listxattr", attributes)
+    assert guard._read_approval(Path("/etc/approval.json")) == b"{}"
+    assert observed == [100, 101]
+
+
+@pytest.mark.skipif(os.name != "posix", reason="Model wymaga stałych deskryptorów POSIX")
+@pytest.mark.parametrize("index", [0, 1], ids=["root", "przodek"])
+@pytest.mark.parametrize("acl", ["system.posix_acl_access", "system.posix_acl_default"])
+def test_directory_acl_refuses_before_reading_approval(monkeypatch, index, acl):
+    opened, closed = _protected_reader(monkeypatch)
+
+    def attributes(fd):
+        return [acl] if fd == index + 100 else []
+
+    def forbidden_read(*_args):
+        pytest.fail("ACL katalogu musi zatrzymać odczyt danych zatwierdzenia")
+
+    monkeypatch.setattr(guard.os, "listxattr", attributes)
+    monkeypatch.setattr(guard.os, "read", forbidden_read)
+    with pytest.raises(guard.VMGuardError, match="APPROVAL_INVALID"):
+        guard._read_approval(Path("/etc/approval.json"))
+    assert len(opened) == index + 1
+    assert sorted(closed) == list(range(100, 101 + index))
+
+
+@pytest.mark.skipif(os.name != "posix", reason="Model wymaga stałych deskryptorów POSIX")
+@pytest.mark.parametrize("index", [0, 1], ids=["root", "przodek"])
+def test_directory_xattr_denial_refuses_before_reading_approval(monkeypatch, index):
+    opened, closed = _protected_reader(monkeypatch)
+
+    def attributes(fd):
+        if fd == index + 100:
+            raise PermissionError("Model niedostępnej obserwacji ACL")
+        return []
+
+    def forbidden_read(*_args):
+        pytest.fail("Brak obserwacji ACL musi zatrzymać odczyt danych zatwierdzenia")
+
+    monkeypatch.setattr(guard.os, "listxattr", attributes)
+    monkeypatch.setattr(guard.os, "read", forbidden_read)
+    with pytest.raises(guard.VMGuardError, match="APPROVAL_INVALID"):
+        guard._read_approval(Path("/etc/approval.json"))
+    assert len(opened) == index + 1
+    assert sorted(closed) == list(range(100, 101 + index))
 
 
 @pytest.mark.parametrize(
