@@ -1,0 +1,39 @@
+[Unit]
+Description=Stage 9 TEST_ONLY projekt sondy AppArmor i seccomp BEZ LISTENERA
+ConditionSecurity=apparmor
+# Celowo zawsze fałszywe: /dev/null jest urządzeniem, nie katalogiem.
+# Usunięcie blokady wymaga review konkretnej jednorazowej VM i pełnego preflight.
+# ConditionSecurity ani nazwa profilu nie sprawdzają enforce lub treści polityki.
+ConditionPathIsDirectory=/dev/null
+
+[Service]
+Type=oneshot
+User=stage9_hybrid_test_only
+Group=stage9_hybrid_test_only
+ExecStart=/opt/stage9-hybrid-test-only/seccomp-probe --probe
+AppArmorProfile=stage9-hybrid-test-only
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+StandardInput=null
+StandardOutput=null
+StandardError=null
+WorkingDirectory=/
+UMask=0077
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+LimitCORE=0
+Restart=no
+TimeoutStartSec=10s
+
+# Brak sekcji Install: to nie jest jednostka przeznaczona do włączenia.

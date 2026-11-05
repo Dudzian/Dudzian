@@ -1,0 +1,25 @@
+# TEST_ONLY: projekt dla statycznego ELF sondy, nie profil FreshnessVerifier.
+# Nie ładować na hoście. Kompilować tylko z --skip-kernel-load --skip-cache.
+# ABI jest kontraktem parsera, nie dowodem cech aktywnego jądra.
+abi <abi/4.0>,
+
+profile stage9-hybrid-test-only /opt/stage9-hybrid-test-only/seccomp-probe flags=(enforce) {
+  # Jedyny obraz wykonywalny; brak x, bibliotek, Pythona i katalogów zapisu.
+  /opt/stage9-hybrid-test-only/seccomp-probe mr,
+  /dev/null rw,
+
+  # Jawna odmowa obu kierunków ptrace. Brak reguł zmiany profilu.
+  deny ptrace,
+  deny capability,
+  deny network,
+  deny unix,
+  deny mount,
+  deny umount,
+  deny pivot_root,
+
+  # Umożliwia zakończenie przez managera. Unconfined nie identyfikuje systemd:
+  # także napastnik może spowodować odmowę dostępności tymi sygnałami.
+  signal (receive) set=(term, kill) peer=unconfined,
+  # Pozostałe sygnały, IPC, pliki i exec pozostają domyślnie zabronione.
+  # AppArmor nie zapewnia tutaj ogólnego zakazu fork ani wszystkich io_uring.
+}
