@@ -29,6 +29,9 @@ from deployment.stage9_vm_environment import (
 MANIFEST = Path("/etc/cryptohunter/stage9-cross-uid-trial.json")
 ROOT = Path("/var/lib/stage9-cross-uid")
 SCOPE = "TEST_ONLY_STAGE9_CROSS_UID_DENIAL"
+IPC_GROUP = "freshness_verifier_ipc"
+RUNTIME_GROUP = "os_freshness_runtime"
+_ACL_NAMES = {"system.posix_acl_access", "system.posix_acl_default"}
 _MAX_BYTES = 65536
 _HARNESS = Path("scripts/diagnostics/stage9_cross_uid_identity.py")
 _CONTRACT = Path("scripts/diagnostics/stage9_cross_uid_trial.py")
@@ -171,12 +174,62 @@ def _protected_interpreter(path: Path) -> None:
     raise TrialError("Nadmierny łańcuch symlinków interpretera")
 
 
-def write_new(path: Path, raw: bytes, mode: int) -> None:
-    """Root zapisuje nowy plik O_EXCL; częściowego pliku nie adoptuje ani nie usuwa."""
+def require_administrator() -> None:
     if sys.platform != "linux":
         raise TrialError("Wymagany natywny Linux")
     _require(os.geteuid() == 0, "Zapis kontraktu wymaga administratora VM")
-    _require(mode in {0o600, 0o644} and type(mode) is int, "Niedozwolony tryb pliku dowodu")
+
+
+def group_gid(group: str) -> int:
+    if sys.platform != "linux":
+        raise TrialError("Wymagany natywny Linux")
+    import grp
+
+    _require(group in {IPC_GROUP, RUNTIME_GROUP}, "Nieautoryzowana grupa odczytu próby")
+    gid = grp.getgrnam(group).gr_gid
+    _require(type(gid) is int and gid > 0, "Brak odrębnej grupy odczytu próby")
+    return gid
+
+
+def _no_acl(descriptor: int) -> None:
+    if sys.platform != "linux":
+        raise TrialError("Wymagany natywny Linux")
+    _require(
+        not _ACL_NAMES.intersection(os.listxattr(descriptor)), "Niedozwolone ACL nowego dowodu"
+    )
+
+
+def _file_state(
+    descriptor: int, parent: int, name: str, size: int, mode: int, gid: int | None
+) -> None:
+    after = os.fstat(descriptor)
+    linked = os.stat(name, dir_fd=parent, follow_symlinks=False)
+    _require(
+        (after.st_dev, after.st_ino) == (linked.st_dev, linked.st_ino)
+        and after.st_size == linked.st_size == size
+        and stat.S_IMODE(after.st_mode) == stat.S_IMODE(linked.st_mode) == mode
+        and (gid is None or after.st_gid == linked.st_gid == gid)
+        and _protected(after, directory=False)
+        and _protected(linked, directory=False),
+        "Nowy dowód zmienił się podczas zapisu",
+    )
+    _no_acl(descriptor)
+
+
+def write_new(path: Path, raw: bytes, mode: int, *, group: str | None = None) -> None:
+    """Zapisuj prywatnie; pełny, sprawdzony plik udostępniaj tylko wskazanej grupie."""
+    if sys.platform != "linux":
+        raise TrialError("Wymagany natywny Linux")
+    require_administrator()
+    _require(
+        type(mode) is int
+        and (
+            (mode == 0o600 and group is None)
+            or (mode == 0o640 and group in {IPC_GROUP, RUNTIME_GROUP})
+        ),
+        "Niedozwolony tryb pliku dowodu",
+    )
+    gid = group_gid(group) if group is not None else 0
     _require(type(raw) is bytes and 0 < len(raw) <= _MAX_BYTES, "Nieprawidłowy rozmiar dowodu")
     path = _absolute(str(path))
     parent = _open_directory(path.parent)
@@ -185,10 +238,11 @@ def write_new(path: Path, raw: bytes, mode: int) -> None:
         descriptor = os.open(
             path.name,
             os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
-            mode,
+            0o600,
             dir_fd=parent,
         )
-        os.fchmod(descriptor, mode)
+        _no_acl(descriptor)
+        os.fchmod(descriptor, 0o600)
         _require(_protected(os.fstat(descriptor), directory=False), "Niezabezpieczony nowy dowód")
         remaining = memoryview(raw)
         while remaining:
@@ -196,23 +250,88 @@ def write_new(path: Path, raw: bytes, mode: int) -> None:
             _require(written > 0, "Niepełny zapis dowodu")
             remaining = remaining[written:]
         os.fsync(descriptor)
-        after = os.fstat(descriptor)
-        linked = os.stat(path.name, dir_fd=parent, follow_symlinks=False)
-        _require(
-            (after.st_dev, after.st_ino) == (linked.st_dev, linked.st_ino)
-            and after.st_size == len(raw)
-            and stat.S_IMODE(after.st_mode) == mode
-            and _protected(after, directory=False)
-            and _protected(linked, directory=False),
-            "Nowy dowód zmienił się podczas zapisu",
-        )
+        _file_state(descriptor, parent, path.name, len(raw), 0o600, None)
+        # fchmod nie może uaktywnić odziedziczonego ACL ani zastanej grupy SGID.
+        os.fchown(descriptor, 0, gid)
+        _file_state(descriptor, parent, path.name, len(raw), 0o600, gid)
+        if group is None:
+            os.fchmod(descriptor, 0o600)
+        else:
+            os.fchmod(descriptor, 0o640)
+        _file_state(descriptor, parent, path.name, len(raw), mode, gid)
+        os.fsync(descriptor)
         os.fsync(parent)
+    except BaseException:
+        if descriptor >= 0:
+            # Nie zostawiaj grupie niepotwierdzonej publikacji po błędzie końcowych kontroli.
+            os.fchmod(descriptor, 0o600)
+        raise
     finally:
         try:
             if descriptor >= 0:
                 os.close(descriptor)
         finally:
             os.close(parent)
+
+
+def _directory_state(descriptor: int, parent: int, name: str, mode: int, gid: int) -> None:
+    info = os.fstat(descriptor)
+    linked = os.stat(name, dir_fd=parent, follow_symlinks=False)
+    _require(
+        _protected(info, directory=True)
+        and _protected(linked, directory=True)
+        and (info.st_dev, info.st_ino) == (linked.st_dev, linked.st_ino)
+        and stat.S_IMODE(info.st_mode) == stat.S_IMODE(linked.st_mode) == mode
+        and info.st_gid == linked.st_gid == gid,
+        "Podmieniony katalog udostępnienia snapshotu",
+    )
+    _no_acl(descriptor)
+
+
+def new_snapshot_directory(path: Path) -> int:
+    """Utwórz prywatny katalog root:runtime; wywołujący przejmuje jego otwarty FD."""
+    if sys.platform != "linux":
+        raise TrialError("Wymagany natywny Linux")
+    require_administrator()
+    path = _absolute(str(path))
+    gid = group_gid(RUNTIME_GROUP)
+    _require(gid != group_gid(IPC_GROUP), "Grupy runtime i verifiera muszą być odrębne")
+    parent = _open_directory(path.parent)
+    descriptor = -1
+    try:
+        os.mkdir(path.name, 0o700, dir_fd=parent)
+        descriptor = os.open(path.name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
+        _no_acl(descriptor)
+        os.fchown(descriptor, 0, gid)
+        os.fchmod(descriptor, 0o700)
+        _directory_state(descriptor, parent, path.name, 0o700, gid)
+        os.fsync(descriptor)
+        os.fsync(parent)
+        return descriptor
+    except BaseException:
+        if descriptor >= 0:
+            os.close(descriptor)
+        raise
+    finally:
+        os.close(parent)
+
+
+def publish_snapshot_directory(descriptor: int, path: Path) -> None:
+    """Udostępniaj katalog dopiero po zapisaniu pełnego before.json."""
+    if sys.platform != "linux":
+        raise TrialError("Wymagany natywny Linux")
+    require_administrator()
+    gid = group_gid(RUNTIME_GROUP)
+    _require(gid != group_gid(IPC_GROUP), "Grupy runtime i verifiera muszą być odrębne")
+    parent = _open_directory(path.parent)
+    try:
+        _directory_state(descriptor, parent, path.name, 0o700, gid)
+        os.fchmod(descriptor, 0o750)
+        _directory_state(descriptor, parent, path.name, 0o750, gid)
+        os.fsync(descriptor)
+        os.fsync(parent)
+    finally:
+        os.close(parent)
 
 
 def validate_manifest(value: dict[str, Any]) -> None:
@@ -322,7 +441,7 @@ def create_trial(args: argparse.Namespace) -> dict[str, Any]:
     raw = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode(
         "utf-8"
     )
-    write_new(_manifest_path(args), raw, 0o644)
+    write_new(_manifest_path(args), raw, 0o640, group=IPC_GROUP)
     return {**value, "_manifest_sha256": hashlib.sha256(raw).hexdigest()}
 
 

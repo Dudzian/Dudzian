@@ -56,36 +56,6 @@ Wymagany exit 0 i kompletne fakty istniejącego `require_approved_vm`.
 Nie tworzyć approval automatycznie na podstawie wyniku inspekcji. Po zmianie
 bootu, pakietów lub commitu ponownie uzyskać niezależne zatwierdzenie.
 
-Przed startem listenera operator zatwierdza jednorazowy `trial_id` (UUID
-lowerhex) i zakres `TEST_ONLY_STAGE9_CROSS_UID_DENIAL`. Po kontroli całej kopii
-commitu i runtime, tym samym `trial_python` co w unicie:
-
-```sh
-trial_python=/ABSOLUTNA/ZATWIERDZONA/SCIEZKA/python3.12
-trial_id=ZATWIERDZONY_UUID_LOWERHEX
-"$trial_python" -s -B -m scripts.diagnostics.stage9_cross_uid_identity prepare-trial \
-  --revision "$trial_revision" --environment-id "$trial_environment_id" \
-  --trial-id "$trial_id" --source-root /srv/cryptohunter-trusted \
-  --python-executable "$trial_python"
-```
-
-Komenda wymaga UID 0 i oryginalnego `require_approved_vm`. Publikuje przez
-`O_EXCL` nowy `/etc/cryptohunter/stage9-cross-uid-trial.json`, root:root/0644,
-bez adopcji zastanego pliku. Nie tworzy ani nie rozszerza oryginalnej zgody.
-Manifest wiąże scope, trial ID, revision/environment, machine/boot, obraz,
-snapshot i pakiety z approval, jego dokładny hash, źródła obu skryptów oraz
-interpreter. Operator weryfikuje wartości. Dwa hashe skryptów nie dowodzą
-pochodzenia całego drzewa importów; wymagana jest niezależna kontrola kopii.
-
-Listener i probe przed bind/connect czytają manifest przez chroniony łańcuch
-FD-relative, bez symlinków/hardlinków i zapisu grupy/innych. Sprawdzają bieżące
-publiczne fakty VM i izolację, machine/boot/pakiety, rewizję/środowisko z CLI,
-skrypty i interpreter. Nie obchodzą wymogu UID 0 istniejącego rootguard.
-Snapshot/run-probe/compare dodatkowo ponownie sprawdzają oryginalną zgodę
-administratora i jej hash. Brak lub niezgodność dowodu oznacza BLOCKED.
-Wycofanie upoważnienia wymaga wycofania manifestu przez operatora; nowy boot
-lub zmiana źródeł/pakietów unieważnia go automatycznie.
-
 ## Ręczne przygotowanie czystego snapshotu
 
 Operator najpierw sprawdza brak obu kont, grup, jednostki produkcyjnej,
@@ -106,7 +76,7 @@ useradd --system --no-create-home --shell /usr/sbin/nologin \
 install -d -m 0755 -o root -g root /run/cryptohunter
 install -d -m 0750 -o os_freshness_crypto_verifier -g freshness_verifier_ipc \
   /run/cryptohunter/freshness
-install -d -m 0755 -o root -g root /var/lib/stage9-cross-uid
+install -d -m 0750 -o root -g os_freshness_runtime /var/lib/stage9-cross-uid
 ```
 
 Zachować `getent passwd`, `getent group`, `id` obu kont i numery UID/GID;
@@ -114,6 +84,50 @@ wymagane dodatnie różne UID oraz różny podstawowy GID runtime i verifiera.
 Konto runtime ma wyłącznie swoją podstawową grupę i grupę IPC. Verifier ma
 wyłącznie grupę IPC. Wszystkie przodki socketu są root-owned bez zapisu
 grupy/innych, ostatni katalog verifier:IPC/0750, bez dodatkowych ACL.
+Katalog bazowy dowodów ma root:os_freshness_runtime/0750: tylko runtime
+potrzebuje przejścia do snapshotu. Nie zmienia to publicznej konfiguracji
+jednostki root:root/0644 ani przodka `/run/cryptohunter`/0755 bez wrażliwych danych.
+Przed publikacją manifestu operator sprawdza też, że oba konta mają przejście
+przez `/etc/cryptohunter`, bez prawa zapisu i dodatkowych ACL. Brak przejścia
+oznacza przerwanie próby; nie zmieniać uprawnień zastanego katalogu.
+
+Dopiero po utworzeniu i sprawdzeniu powyższych kont oraz grup operator
+zatwierdza jednorazowy `trial_id` (UUID lowerhex) i zakres
+`TEST_ONLY_STAGE9_CROSS_UID_DENIAL`. `prepare-trial` rozwiązuje grupę IPC
+przez NSS, więc nie może poprzedzać przygotowania kont. Po kontroli całej
+kopii commitu i runtime, tym samym `trial_python` co w unicie:
+
+```sh
+trial_python=/ABSOLUTNA/ZATWIERDZONA/SCIEZKA/python3.12
+trial_id=ZATWIERDZONY_UUID_LOWERHEX
+"$trial_python" -s -B -m scripts.diagnostics.stage9_cross_uid_identity prepare-trial \
+  --revision "$trial_revision" --environment-id "$trial_environment_id" \
+  --trial-id "$trial_id" --source-root /srv/cryptohunter-trusted \
+  --python-executable "$trial_python"
+```
+
+Komenda wymaga UID 0 i oryginalnego `require_approved_vm`. Publikuje przez
+`O_EXCL` nowy `/etc/cryptohunter/stage9-cross-uid-trial.json`,
+root:freshness_verifier_ipc/0640, czytelny dla obu kont próby, bez dostępu
+innych użytkowników. Nowy plik powstaje jako root-owned/0600; początkowy GID
+może być odziedziczony z rodzica SGID. Dopiero
+po pełnym zapisie, `fsync`, kontroli inode i braku ACL następują
+`fchown(0, IPC_GID)` oraz `fchmod(0640)`. Nie ma etapu odczytu dla innych
+użytkowników ani zapisu grupy. Zastany plik oznacza odmowę bez adopcji.
+Komenda nie tworzy ani nie rozszerza oryginalnej zgody.
+Manifest wiąże scope, trial ID, revision/environment, machine/boot, obraz,
+snapshot i pakiety z approval, jego dokładny hash, źródła obu skryptów oraz
+interpreter. Operator weryfikuje wartości. Dwa hashe skryptów nie dowodzą
+pochodzenia całego drzewa importów; wymagana jest niezależna kontrola kopii.
+
+Listener i probe przed bind/connect czytają manifest przez chroniony łańcuch
+FD-relative, bez symlinków/hardlinków i zapisu grupy/innych. Sprawdzają bieżące
+publiczne fakty VM i izolację, machine/boot/pakiety, rewizję/środowisko z CLI,
+skrypty i interpreter. Nie obchodzą wymogu UID 0 istniejącego rootguard.
+Snapshot/run-probe/compare dodatkowo ponownie sprawdzają oryginalną zgodę
+administratora i jej hash. Brak lub niezgodność dowodu oznacza BLOCKED.
+Wycofanie upoważnienia wymaga wycofania manifestu przez operatora; nowy boot
+lub zmiana źródeł/pakietów unieważnia go automatycznie.
 
 Nowy, wyłącznie testowy plik
 `/etc/systemd/system/cryptohunter-freshness-verifier.service` ma root:root/0644.
@@ -191,17 +205,40 @@ JSON licznika po zakończeniu klienta; nigdy nie ponawia wymiany. Jeśli listene
 kompletnego licznika, zachować brak dowodu jako `BLOCKED`; sprawdzić jego journal,
 a nową próbę wykonać na świeżym klonie snapshotu. Nie zastępować raportu ręcznie.
 
-Run-probe tworzy nowy `/var/lib/stage9-cross-uid/<trial_id>`; zastany katalog
-lub częściowe dowody oznaczają odmowę bez adopcji/recovery. Sam zbiera
-`before.json`, uruchamia ustalony probe przez `/usr/sbin/runuser` jako runtime
-ze stałym argv/env/cwd, przechwytuje stdout przez PIPE (64 KiB, 90 s,
-wymagany exit 0), przejmuje stały licznik listenera i zbiera `after.json`.
-Nie przyjmuje cudzych raportów do „opieczętowania”. Snapshot przed ma
-root:root/0644 w katalogu 0755 na czas odczytu przez probe; po zakończeniu
-klienta katalog ma 0700, pozostałe artefakty 0600. `execution.json` powstaje
-przez O_EXCL dopiero po walidacji wykonania i wiąże dokładne hashe wszystkich
-czterech wejść, manifest oraz argv. PID runuser nie jest utożsamiany z PIDem
-Pythona klienta.
+Run-probe tworzy nowy `/var/lib/stage9-cross-uid/<trial_id>` jako
+root:os_freshness_runtime/0700 i utrzymuje deskryptor tego katalogu. Zastany
+katalog lub częściowe dowody oznaczają odmowę bez adopcji/recovery. Najpierw
+zbiera `before.json`. Ten nowy plik powstaje przez `O_EXCL` jako root-owned/0600;
+po pełnym zapisie, `fsync`, sprawdzeniu inode i braku ACL uzyskuje
+root:os_freshness_runtime/0640. Verifier nie potrzebuje odczytu snapshotu.
+Dopiero po ukończeniu pliku harness publikuje katalog jako 0750 przez
+utrzymywany deskryptor, udostępniając snapshot wyłącznie runtime.
+
+W tym oknie sam uruchamia ustalony probe przez `/usr/sbin/runuser` jako runtime
+ze stałym argv/env/cwd i przechwytuje stdout przez PIPE (64 KiB, 90 s,
+wymagany exit 0). W `finally` blokuje nowe otwarcia przez ścieżkę przez powrót do
+0700, także przy wyjątku, timeout albo błędzie klienta. Zamknięcie następuje
+przed przejęciem pozostałych dowodów. Dopiero potem kolektor przejmuje stały
+licznik listenera i zbiera `after.json`. `client.json`, `listener.json`,
+`after.json` i `execution.json` mają root:root/0600. `before.json` pozostaje
+0640 wewnątrz zamkniętego katalogu 0700, więc żadne konto nieuprzywilejowane
+nie może go ponownie otworzyć. Zamknięcie katalogu nie odbiera deskryptora
+wcześniej otwartego przez klienta; klient próby musi być już zakończony lub
+zatrzymany po timeout. Zachowany FD katalogu może nadal ujawniać nazwy nowych
+wpisów, lecz treść pozostałych plików chroni tryb 0600.
+
+Harness nie przyjmuje cudzych raportów do „opieczętowania”. `execution.json`
+powstaje przez `O_EXCL` dopiero po walidacji wykonania i wiąże dokładne hashe
+wszystkich czterech wejść, manifest oraz argv. PID runuser nie jest utożsamiany
+z PIDem Pythona klienta.
+
+Przed publikacją manifestu, snapshotu lub katalogu harness odmawia przy
+`system.posix_acl_access` albo `system.posix_acl_default` na sprawdzanym
+łańcuchu katalogów lub nowym obiekcie. Kontrola poprzedza zwiększenie trybu:
+odziedziczona ACL z początkowo zerową maską mogłaby uzyskać odczyt po `chmod`.
+Harness nie usuwa ACL, nie naprawia przodków i nie zmienia uprawnień zastanych
+obiektów. Właściciel zapisów pozostaje root; grupa ma wyłącznie wskazany odczyt
+lub przejście, a inni użytkownicy nie otrzymują dostępu do dowodów.
 
 Root snapshot odczytuje prawdziwy `/proc/MainPID/exe`; to wejście wyłącznie
 TEST_ONLY z niezależnego obserwatora, nie akceptacja kodu usługi. Snapshot nie
@@ -249,12 +286,36 @@ procfs, metadane/ACL socketu i katalogów oraz zewnętrzny identyfikator VM/obra
 To dowody testu w zaufanej VM, nie podpisana atestacja ani autorytet produktu.
 Root jest zaufanym kolektorem. Kontrola dostępu i hashe chronią przejęte
 artefakty przed późniejszą podmianą przez runtime/verifiera; nie chronią
-przed złośliwym root ani przejętym w pamięci autorem raportu. Publiczny trial
-ID nie jest sekretem ani uwierzytelnieniem. Hash obrazu pochodzi z zewnętrznej
-zgody operatora, nie z lokalnej atestacji hypervisora.
+przed złośliwym root ani przejętym w pamięci autorem raportu. Trial ID nie jest
+sekretem ani uwierzytelnieniem. Hash obrazu pochodzi z zewnętrznej zgody
+operatora, nie z lokalnej atestacji hypervisora.
 Po ich zebraniu operator jawnie zatrzymuje wyłącznie własną jednostkę testową
 `systemctl stop cryptohunter-freshness-verifier.service`, eksportuje dowody
 odłączanym nośnikiem i usuwa całą jednorazową VM. Nie czyści ręcznie produktu.
+
+## Osobna kwalifikacja dostępu w VM — NOT_RUN
+
+Poniższe sprawdzenie wymaga osobno zatwierdzonego scenariusza operatora z
+rzeczywistymi UID/GID w jednorazowej VM. Nie wykonano go w tej sesji. Lokalne
+regresje modelowane sprawdzają kolejność operacji i odmowy; nie dowodzą
+natywnych uprawnień między kontami.
+
+| Obiekt i etap | Runtime | Verifier | Trzecie konto bez grup runtime/IPC |
+| --- | --- | --- | --- |
+| Manifest root:IPC/0640 | Odczyt dozwolony | Odczyt dozwolony | Odmowa odczytu |
+| Ukończony `before.json`, katalog udostępniony jako 0750 | Odczyt dozwolony | Odmowa odczytu | Odmowa odczytu |
+| `before.json` i pozostałe dowody po zamknięciu katalogu do 0700 | Odmowa nowego otwarcia | Odmowa odczytu | Odmowa odczytu |
+
+Operator niezależnie sprawdza NSS i rzeczywiste grupy trzeciego konta, np.
+`nobody`; sama nazwa konta nie dowodzi braku członkostwa w grupach. Zbiera
+kody powodzenia otwarcia lub konkretne EACCES/EPERM oraz właścicieli, tryby
+i brak ACL, bez drukowania treści dowodów. W osobnym scenariuszu publikacji
+używa niesekretnego znacznika TEST_ONLY i tych samych helperów uprawnień,
+aby obserwować także okno 0750 oraz zamknięcie po wyjątku lub timeout.
+Nie dodaje opcji pomijania bramki, sztucznego opóźnienia ani rozszerzenia
+dostępu w narzędziu odmowy IPC. Brak obserwacji któregoś etapu pozostaje
+`NOT_RUN/BLOCKED`; zgodność samych trybów lub testy pytest nie zaliczają
+kwalifikacji rzeczywistych kont.
 
 ## Próby pozostające poza tym harnessem
 
@@ -278,12 +339,15 @@ awansować do natywnego wyniku.
 i odmowy zmian bindingów, snapshotu, systemd, procesu oraz kontroli klienta.
 `test_stage9_cross_uid_identity_gates.py` i `test_stage9_cross_uid_trial.py`
 sprawdzają kolejność odmów i manifest, w tym brak receipt.
-Nie uruchamia klienta ani usługi, nie zmienia UID/PID/executable i nie jest
-wynikiem natywnej próby. Wykonywać osobno:
+`test_stage9_cross_uid_permissions.py` sprawdza modelowane regresje publikacji
+uprawnień i odmów ACL. Te testy nie uruchamiają klienta produktu ani usługi,
+nie zmieniają UID/PID/executable i nie stanowią wyniku natywnej próby.
+Wykonywać osobno:
 
 ```sh
 python -m pytest --noconftest -q \
   tests/scripts/test_stage9_cross_uid_identity_reports.py \
   tests/scripts/test_stage9_cross_uid_identity_gates.py \
-  tests/scripts/test_stage9_cross_uid_trial.py
+  tests/scripts/test_stage9_cross_uid_trial.py \
+  tests/scripts/test_stage9_cross_uid_permissions.py
 ```

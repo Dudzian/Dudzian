@@ -30,8 +30,11 @@ from typing import Any
 from scripts.diagnostics.stage9_cross_uid_trial import (
     MANIFEST,
     ROOT,
+    RUNTIME_GROUP,
     binding,
     create_trial,
+    new_snapshot_directory,
+    publish_snapshot_directory,
     read_protected,
     require_trial,
     strict_json,
@@ -644,21 +647,24 @@ def collect_listener(uid: int, gid: int) -> bytes:
 
 def run_probe(args: argparse.Namespace) -> None:
     trial = require_trial(args, administrator=True)
+    if sys.platform != "linux":
+        raise ValueError("Wymagany natywny Linux")
     # Nowy katalog nigdy nie adoptuje poprzednich dowodów ani nie nadpisuje receipt.
-    for parent in (ROOT, *ROOT.parents):
-        info = parent.lstat()
-        require(
-            stat.S_ISDIR(info.st_mode) and info.st_uid == 0 and not info.st_mode & 0o022,
-            "Niezabezpieczony katalog prób",
-        )
     directory = ROOT / trial["trial_id"]
-    directory.mkdir(mode=0o755)
-    os.chmod(directory, 0o755)
-    before = capture_snapshot(trial)
-    before_raw = encoded(before)
-    write_new(directory / "before.json", before_raw, 0o644)
-    command = probe_command(trial, args.manifest, directory / "before.json")
-    client_raw = collect_probe(command, trial)
+    directory_fd = new_snapshot_directory(directory)
+    try:
+        before = capture_snapshot(trial)
+        before_raw = encoded(before)
+        write_new(directory / "before.json", before_raw, 0o640, group=RUNTIME_GROUP)
+        command = probe_command(trial, args.manifest, directory / "before.json")
+        publish_snapshot_directory(directory_fd, directory)
+        client_raw = collect_probe(command, trial)
+    finally:
+        # Trzymany FD blokuje nowe otwarcia przez ścieżkę także po błędzie/timeout.
+        try:
+            os.fchmod(directory_fd, 0o700)
+        finally:
+            os.close(directory_fd)
     server_raw = collect_listener(before["process"]["uid"], before["process"]["gid"])
     require(
         require_trial(args, administrator=True) == trial, "Zmiana zatwierdzenia podczas wykonania"
@@ -671,8 +677,7 @@ def run_probe(args: argparse.Namespace) -> None:
         before,
         snapshot_sha256=hashlib.sha256(before_raw).hexdigest(),
     )
-    # Po zakończeniu klienta wszystkie przejęte dowody są dostępne tylko root.
-    os.chmod(directory, 0o700)
+    # Pozostałe dowody powstają dopiero po odebraniu odczytu grupie runtime.
     files = {
         "before.json": before_raw,
         "after.json": encoded(after),
