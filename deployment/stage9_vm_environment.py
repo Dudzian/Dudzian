@@ -343,19 +343,38 @@ def _fingerprint(value: os.stat_result) -> tuple[int, ...]:
     )
 
 
+def _directory_without_acl(descriptor: int) -> bool:
+    """Root-owned katalog bez zapisu innych kont i bez access/default POSIX ACL.
+
+    Odczyt xattrs jest wymaganym dowodem; jego błąd nie oznacza braku ACL.
+    O_RDONLY wymaga odczytu katalogu, a lookup dziecka dodatkowo przeszukiwania.
+    """
+    if sys.platform != "linux":
+        return False
+    return _protected(os.fstat(descriptor), directory=True) and not {
+        "system.posix_acl_access",
+        "system.posix_acl_default",
+    }.intersection(os.listxattr(descriptor))
+
+
 def _read_approval(path: Path) -> bytes:
+    """Czytaj przez katalogi r+x bez ACL, zachowując kontrole końcowego pliku.
+
+    Zakaz ACL dotyczy katalogów; plik sprawdzamy przez owner/mode/nlink
+    i stabilne metadane. Nowe obiekty próby osobno sprawdza ich publisher.
+    """
     if not path.is_absolute() or path == Path("/") or ".." in path.parts:
         raise VMGuardError("APPROVAL_INVALID")
     fd = -1
     try:
         fd = os.open("/", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-        if not _protected(os.fstat(fd), directory=True):
+        if not _directory_without_acl(fd):
             raise VMGuardError("APPROVAL_INVALID")
         for name in path.parts[1:-1]:
             child = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
             os.close(fd)
             fd = child
-            if not _protected(os.fstat(fd), directory=True):
+            if not _directory_without_acl(fd):
                 raise VMGuardError("APPROVAL_INVALID")
         child = os.open(path.name, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW, dir_fd=fd)
         os.close(fd)
