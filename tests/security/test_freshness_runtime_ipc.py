@@ -15,6 +15,7 @@ import hashlib
 import multiprocessing
 import os
 import queue
+import signal
 import socket
 import stat
 import struct
@@ -583,12 +584,56 @@ def _semantic(tmp_path, *, deny_uid=False):
             events=events,
         )
     finally:
+        try:
+            _stop_semantic_fixture_process(process)
+        finally:
+            channel.close()
+            events.close()
+            events.join_thread()
+
+
+def _stop_semantic_fixture_process(process):
+    """Cleanup only: SIGTERM may be ignored in a forked test child.
+
+    This is not a production service shutdown test. Preserve an explicit
+    failure if even SIGKILL cannot reap the dedicated child.
+    """
+    if process.is_alive():
         process.terminate()
+        process.join(1)
+    if process.is_alive():
+        process.kill()
         process.join(5)
-        assert not process.is_alive()
-        channel.close()
-        events.close()
-        events.join_thread()
+    assert not process.is_alive(), (
+        f"Semantic test child remains alive after SIGKILL (pid={process.pid})"
+    )
+
+
+def _semantic_child_ignoring_sigterm(ready):
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    ready.send("READY")
+    while True:
+        signal.pause()
+
+
+@LINUX
+def test_semantic_fixture_forces_cleanup_when_sigterm_is_ignored():
+    """Regression for the actual Ubuntu CI fixture-teardown failure."""
+    ctx = multiprocessing.get_context("fork")
+    ready, child = ctx.Pipe(duplex=False)
+    process = ctx.Process(target=_semantic_child_ignoring_sigterm, args=(child,))
+    process.start()
+    child.close()
+    try:
+        assert ready.poll(5), "Child did not confirm SIGTERM-ignore handler"
+        assert ready.recv() == "READY"
+        _stop_semantic_fixture_process(process)
+        assert process.exitcode == -signal.SIGKILL
+    finally:
+        if process.is_alive():
+            process.kill()
+            process.join(5)
+        ready.close()
 
 
 @LINUX
