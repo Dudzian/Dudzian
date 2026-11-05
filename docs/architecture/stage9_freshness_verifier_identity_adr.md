@@ -7,13 +7,16 @@ Baza sprawdzona: `main` = `e0215b39fd447b548c7b660bfda90d04492cae91`
 
 ## Decyzja przed następnym eksperymentem
 
-Rekomendujemy **B: minimalny natywny verifier z zamkniętymi zależnościami**,
-uwierzytelniany jako dokładna instancja zatwierdzonej usługi systemowej.
-Podstawą byłby zaufany start, niezależnie uwierzytelniony systemowy manager,
-jądrowe związanie połączenia z procesem oraz egzekwowana ciągłość tej instancji.
-Nie byłby nią sam hash ELF ani język Rust. **Fallback: C**, wąski natywny
-obserwator, jeżeli właściciel zachowa wymóg niezależnego bieżącego pomiaru obrazu.
-C musi dodatkowo rozwiązać ciągłość; raport PID/hash sam nie wystarcza.
+Oddzielamy **mechanizm tożsamości** od **technologii verifiera**. Proponowany
+mechanizm to zaufany start, systemowy manager, jądrowe związanie kanału z dokładną
+instancją i egzekwowana ciągłość; wymaga takiego samego dowodu dla A (Python)
+i B (natywny Rust). **Warunkowo rekomendujemy zbadanie B**, bez zgody na port
+produkcji: mniejsze domknięcie zależności i powierzchnia wykonania są hipotezami,
+a nie wykazaną przewagą nad A. Wybór określają wspólne kryteria poniżej.
+**Fallback mechanizmu: C**, wąski obserwator, jeżeli wymagany pozostanie
+niezależny bieżący pomiar obrazu. C może obsługiwać A albo B; nie rozstrzyga
+technologii i nadal wymaga ochrony ciągłości. Sam hash ELF, Rust lub raport
+PID/hash nie ustanawiają tożsamości.
 
 Żaden wariant nie spełnia obecnego kontraktu bez osobnej zmiany jego podstawy
 dowodowej. Ten ADR nie zatwierdza tej zmiany. Nie implementować nowego klienta,
@@ -111,7 +114,7 @@ wejścia, ale nie stanowią tego dowodu.
 | T2: inny zwykły UID | Lokalne konto, próba connect, podmiany ścieżki lub sygnalizacji. | Podszycie, wyciek, przerwanie dostępności. | DAC/ACL przodków, grupa IPC, kernel credentials, chroniony systemd/cgroup, odmowa przed payload. Brak polegania wyłącznie na nazwie socketu. |
 | T3: obcy proces UID verifiera | RCE innej usługi, błędne nadanie konta, obcy launcher; bez root. | Właściwy UID, ale zły proces; ptrace, sygnały, przejęcie FD; także własne połączenie PG jako rola verifiera. | Dokładny MainPID/cgroup/PIDFD, ochrona startu i ciągłości, brak cgroup delegation. Odrębna odmowa dostępu do PG; sama grupa/peer jej nie daje. DoS sygnałami pozostaje możliwy, jeśli nie obejmie go niezależna polityka. |
 | T4: pliki, socket lub unit | Zapis do artefaktu/przodka, ACL, drop-in, bind mount, modyfikacja środowiska. | Uruchomienie innego kodu, błędne expected, podstawiony endpoint. | Root-owned niezapisywalne closure i przodkowie, niezależna weryfikacja podpisów przed startem, dokładny effective unit/argv/env/drop-ins, atomowa publikacja i K5. Możliwość takiego zapisu oznacza REJECT instalacji. Root może to zmienić i jest poza modelem. |
-| T5: ingerencja przed startem | Same UID ptrace/TRACEME, process_vm, `/proc/PID/mem`, odziedziczone FD/mapowania przed seal. | Zmieniony proces może zainstalować poprawny filtr i zgłosić gotowość. | Ochrona od managera przez exec/loader: dla B kandydat to systemowa Yama `ptrace_scope=2` od bootu i brak CAP_SYS_PTRACE u napastników, zaufany rodzic i zamknięte dziedziczenie. Samo późne dumpable=0, TracerPid=0 lub AppArmor tracee nie wystarcza. READ_FSCREDS wymaga osobnej oceny. |
+| T5: ingerencja przed startem | Same UID ptrace/TRACEME, process_vm, `/proc/PID/mem`, odziedziczone FD/mapowania przed seal. | Zmieniony proces może zainstalować poprawny filtr i zgłosić gotowość. | Ochrona od managera przez exec/loader: dla A/B kandydat to systemowa Yama `ptrace_scope=2` od bootu i brak CAP_SYS_PTRACE u napastników, zaufany rodzic i zamknięte dziedziczenie. Samo późne dumpable=0, TracerPid=0 lub AppArmor tracee nie wystarcza. READ_FSCREDS wymaga osobnej oceny. |
 | T6: exec/fork i FD po starcie | Dozwolony syscall, odziedziczony listener/ring lub SCM_RIGHTS/pidfd_getfd. | PID/start/cgroup pozostają zgodne, ale wykonuje inny kod lub dane odbiera inny proces. | Seal przed bind/listen: rzeczywiste zakazy exec/execveat, fork/vfork/clone/clone3, zmian credentials/namespaces/dumpable, przekazywania FD i io_uring; brak wcześniejszych dzieci, ringów, dzielonej pamięci i obcych kopii FD. PIDFD nie dowodzi aktualnego wykonawcy ani filtra. |
 | T7: podatność samego verifiera | Złośliwy dokument, błąd parsera/crypto/biblioteki, także błąd unsafe w Rust. | Kod lub błędna decyzja w uwierzytelnionej instancji; zgodny hash może pozostać. | Minimalny parser, bounds, audyt, fuzzing/wektory, izolacja i najmniejsze prawa. To ryzyko rezydualne zaufanego komponentu; A/B/C nie dowodzą ogólnej odporności na dowolne RCE. Seccomp nie sprawdza semantyki dozwolonych operacji ani Python bytecode. |
 | T8: root lub jądro | Przejęcie administratora/kernel, równoważne capabilities lub managera. | Podmiana wszystkich dowodów, pamięci i polityk. | Jawnie poza granicą gwarancji. Raport/sygnatura lokalnego obserwatora nie atestuje uczciwości hosta. |
@@ -121,7 +124,7 @@ mapuje samą nazwę OS, `pg_hba.conf` dopuszcza peer, a
 `PostgreSQLVerifierConnection.connect` sprawdza role i lokalność, nie cgroup ani
 kod procesu. Obcy proces tego UID może zatem otrzymać rolę
 `freshness_crypto_verifier`, jeżeli dosięgnie publicznego socketu PG.
-Nie uznawać takiego dostępu za rozwiązany przez B lub C.
+Nie uznawać takiego dostępu za rozwiązany przez wybór A, B lub C.
 
 Kandydat wymagający osobnego projektu to prywatny socket PG za root-owned
 przodkiem, udostępniany wyłącznie uprawnionym przestrzeniom montowań, bez TCP
@@ -168,9 +171,11 @@ unsafe/FFI, biblioteki kryptograficzne, linker/loader i dostawcy pozostają w TC
 Wybrać jeden audytowalny build i zamknięty zestaw zależności, statyczny jeśli
 wykonalny; nie deklarować closure bez inwentarza bibliotek i zasobów.
 
-**Nowy, proponowany predykat klienta** jest koniunkcją, nie zestawem fallbacków:
+**Nowy, proponowany predykat klienta**, wspólny dla A/B, jest koniunkcją,
+nie zestawem fallbacków. W A program i closure obejmują Python i aplikację,
+w B natywny obraz i jego zależności; technologia nie zmienia wymagań tożsamości:
 
-1. Niezależnie zaakceptowany manifest wydania wiąże dokładny ELF/closure,
+1. Niezależnie zaakceptowany manifest wydania wiąże dokładny program/closure,
    skuteczny unit, argv/env, rewizję polityk i ich wymagania platformowe.
    Zaufany bootstrap weryfikuje je przed wykonaniem kodu nowej usługi.
 2. Klient odczytuje systemowy manager przez chroniony system bus, z walidacją
@@ -182,7 +187,7 @@ wykonalny; nie deklarować closure bez inwentarza bibliotek i zasobów.
    z managerem. Tożsamość obejmuje boot ID, InvocationID, MainPID, start ticks
    i zatwierdzoną instalację; nowy boot/restart unieważnia poprzednie expected.
    Brak dostępu do któregokolwiek wymaganego faktu kończy się odmową.
-4. Start jest chroniony przed T5. Dla prototypu B proponuje się Yama2 od bootu
+4. Start jest chroniony przed T5. Dla obu wariantów proponuje się Yama2 od bootu
    dokładnej VM, brak CAP_SYS_PTRACE u zwykłych procesów i zaufanego rodzica.
    Wpływ globalnej polityki, jądro i jej niezmienność wymagają decyzji właściciela.
    Nie wnioskuje się tego z profilu AppArmor ofiary ani z końcowego dumpable.
@@ -233,7 +238,7 @@ instancję, endpoint i wynik. Kanał klient–obserwator ma własną ścisłą t
 limity i odmowy, bez podpisu/self-report uznawanego za dowód uczciwości hosta.
 
 Jednorazowe poświadczenie przed send jest za słabe: exec i delegacja FD mogą
-nastąpić później. C musi korzystać z wykazanej ochrony startu/ciągłości jak B
+nastąpić później. C musi korzystać z wykazanej ochrony startu/ciągłości jak A/B
 albo mediować dokładną wymianę z udowodnioną ochroną wszystkich przejść.
 Wstrzymanie procesu na czas hashowania nie rozwiązuje automatycznie dalszego
 odbioru. Utrzymywanie ptrace przez całą wymianę zwiększa TCB i wymaga modelu
@@ -257,7 +262,7 @@ implementacji. W tej tabeli nie ma dodatniej kwalifikacji produkcyjnej.
 | Zgodność z obecnym K4 przy braku odczytu `/proc/exe`, bez zmiany kontraktu | REJECT | REJECT | REJECT: obecny guard nie przyjmuje delegowanego dowodu |
 | Nowa podstawa tożsamości po jawnej decyzji | NOT_PROVEN: start+closure+instancja | NOT_PROVEN: start+zamknięty ELF+instancja | NOT_PROVEN: uwierzytelniony obserwator+ten sam kanał+ciągłość |
 | Pełna hybryda #3253 wobec arbitrary Python w pamięci | REJECT | Nie dotyczy interpretera; brak ogólnego dowodu RCE | REJECT jako gwarancja uzyskana tylko przez pomiar hasha Python |
-| Ochrona przed obcym procesem tego samego UID, od startu i po seal | NOT_PROVEN | NOT_PROVEN; Yama2 i seal wymagają dowodów | NOT_PROVEN; helper sam nie usuwa T5/T6 |
+| Ochrona przed obcym procesem tego samego UID, od startu i po seal | NOT_PROVEN; Yama2 i seal wymagają dowodów | NOT_PROVEN; Yama2 i seal wymagają dowodów | NOT_PROVEN; helper sam nie usuwa T5/T6 |
 | Pełna kwalifikacja AF_UNIX/systemd/PG na dwóch UID | NOT_PROVEN | NOT_PROVEN | NOT_PROVEN |
 | Istniejąca odmowa klienta przy brakującym executable | ACCEPT: K4/test negatywny | Ten sam guard nadal obowiązuje | Ten sam guard nadal obowiązuje |
 
@@ -267,11 +272,47 @@ nie są zakresem tego dokumentacyjnego PR.
 
 | Wariant | Zmiany kontraktu produkcyjnego po zgodzie | Utrzymanie, regresje i niezależne testowanie | Złożoność |
 | --- | --- | --- | --- |
-| A | Nowa przesłanka K4/K6; dokładny start/seal i closure; polityka ochrony startu; ewentualna izolacja PG. | Największe closure i zmienność importów/FFI/ABI; test dwóch UID bez mocków, audyt importów, kernelowe negatywy, rekwalifikacja każdej zależności. Protokół aplikacji może pozostać. | 5 granic: wydanie→start, start→seal, manager→klient, proces→kanał, proces→PG; ok. 6 komponentów: closure/builder, bootstrap, unit/polityki, klient, harness, izolacja PG. |
-| B | Wersjonowana alternatywa K4/K7 dla natywnej instancji, wymagania T5/T6; później osobno zatwierdzony kontrakt wdrożenia/kwalifikacji i PG. Bez samoczynnej wymiany pinów. | Mniejsze closure; nowa implementacja parsera/crypto/PG i ryzyko różnic semantycznych. Wektory porównawcze, fuzzing parsera i niezależne kernelowe testy instancji; audyt unsafe i supply chain. | Te same 5 granic; ok. 7 komponentów: natywna usługa, builder/inwentarz, bootstrap, unit/polityki, klient, harness, izolacja PG. |
+| A | Ta sama nowa przesłanka K4/K6/K7; dokładny start/seal i closure; ochrona T3/PG oraz T5/T6. | Zachowuje istniejący parser/crypto/SQL, ale wymaga audytu importów/FFI/ABI i rekwalifikacji zależności. Rozmiar closure i koszt utrzymania wymagają pomiaru; testy tożsamości takie same jak B. | 5 granic: wydanie→start, start→seal, manager→klient, proces→kanał, proces→PG; ok. 6 komponentów: closure/builder, bootstrap, unit/polityki, klient, harness, izolacja PG. |
+| B | Ta sama nowa przesłanka K4/K6/K7 i ochrona T3/PG, T5/T6; osobne zatwierdzenie natywnego wdrożenia. Bez samoczynnej wymiany pinów. | Mniejsze closure jest hipotezą. Dochodzi migracja parsera/crypto/PREPARED/PG; konieczne wektory różnicowe, fuzzing, audyt unsafe/FFI i dostawców oraz te same kernelowe testy instancji. | Te same 5 granic; ok. 7 komponentów: natywna usługa, builder/inwentarz, bootstrap, unit/polityki, klient, harness, izolacja PG. |
 | C | Uwierzytelniony kanał obserwatora, delegacja bieżącego pomiaru zamiast odczytu klienta, binding sesji i ciągłość; polityki helpera i PG. | Największy przyrost uprzywilejowanego TCB; regresje FD/races/lifetime i aktualizacji jądra. Niezależny klient adversarialny, zły FD/nonce/epoch, awaria helpera i testy jego uprawnień. Python closure nadal pozostaje, jeśli pozostaje Python. | 7 granic: pięć bazowych oraz klient→helper i helper→proces; ok. 9 komponentów: elementy A plus helper, jego unit/polityka oraz osobny protokół/harness. |
 
-**Minimalna konieczna zmiana** dla B: właściciel jawnie zatwierdza
+### Wspólne kryteria wyboru A/B
+
+Porównujemy ten sam model T1–T8: identyczną zaakceptowaną alternatywę K4,
+T3 także wobec obcego procesu UID verifiera i PG, ochronę T5 od startu oraz
+zakazy T6. Ten sam host, uprawnienia, korpus i progi; bez wyłączenia RCE tylko
+dla B. Historyczny REJECT Python w pamięci nie rozstrzyga tego porównania:
+przy absolutnym wymogu odporności na dowolne RCE żaden wariant nie ma dowodu.
+
+| Hipoteza korzyści B | Wymagany porównywalny dowód A/B | Granica wniosku |
+| --- | --- | --- |
+| Mniej kodu i dróg ładowania w TCB | Niezależnie sprawdzony inwentarz zależności i mapowań obu usług; w B zero interpretera/pluginów, wykaz usuniętych dróg importu i nowych bibliotek/dostawców. | Sam mniejszy rozmiar, LOC lub liczba plików nie dowodzą mniejszego ryzyka; trzeba wskazać usuniętą drogę ataku. |
+| Łatwiejsza ścisła izolacja | Ta sama macierz P1–P6 i odmowy T3/PG, dokładne allowlisty i audyt startu; wykazana realizacja uprzednio wybranego ograniczenia w B, którego A nie spełnia, bez nowych uprawnień lub słabszych odmów. | Sonda Rust dowodzi własnej ochrony; nie dowodzi niewykonalności ochrony A ani zgodności całej usługi. |
+| Mniej ryzyka błędów pamięci i utrzymania | Przegląd osiągalnego kodu natywnego, unsafe/FFI i zależności obu wariantów oraz odtwarzalna próba aktualizacji/rekwalifikacji według wspólnego budżetu. | Python już ogranicza błędy pamięci kodu wysokiego poziomu. Rust nie usuwa błędów logiki, unsafe, bibliotek ani dostawców; liczba crate nie jest miarą bezpieczeństwa. |
+
+Materiały tego ADR nie zawierają tych porównań: przewaga B jest **NOT_PROVEN**. Dodatkowy
+koszt B obejmuje dobór/walidację implementacji Ed25519, JCS/base64url i typów,
+preimages oraz bindingu PREPARED, a także sterownika PG, granic transakcji,
+trwałości i niejednoznacznego COMMIT. Wymagane są niezależne wektory protokołu
+(Python nie jest jedynym oracle), testy różnicowe i awarie PG; zero rozbieżności
+przed zastąpieniem usługi. Przejście testów tożsamości nie dowodzi tej zgodności.
+
+**Wybieramy A**, gdy spełnia wspólne warunki i budżety, a B nie ma wykazanej
+korzyści uzasadniającej koszt migracji. **Wybieramy B** dopiero, gdy spełnia te
+same warunki i niezależny przegląd potwierdzi co najmniej jedną wcześniej
+zdefiniowaną korzyść z tabeli oraz akceptowalne ryzyko migracji. Sam język nie
+jest korzyścią dowodową. **Oba: NOT_PROVEN**, gdy brakuje dowodów; niespełnienie
+obowiązkowego warunku daje REJECT danego wariantu. Nierozwiązane K4/T3/T5/T6
+nie uzasadniają migracji do B.
+
+**Przed rozpoczęciem portu produkcyjnego** wymagane są: zatwierdzenie wspólnej
+granicy i progów, natywny IDENTITY_ACCEPT, porównawcze artefakty uzasadniające B
+z późniejszej, odrębnej próby TEST_ONLY, niezależny przegląd ryzyka migracji
+oraz zatwierdzony korpus i plan zgodności parsera/crypto/PREPARED/transakcji PG.
+Przed wdrożeniem dodatkowo obowiązują pełna równoważność i AUTHORITY_ACCEPT;
+żadna z tych zgód nie zmienia automatycznie pinów ani pozostałych bramek.
+
+**Minimalna konieczna zmiana** wspólna dla A/B: właściciel jawnie zatwierdza
 wersjonowaną alternatywę dowodową K4 „zatwierdzony start + dokładna instancja
 managera + związany kanał + egzekwowana ciągłość” zamiast obowiązkowego live
 hasha odczytanego przez klienta. K1/K3/K5/K8 pozostają. K6/K7 dostają dokładną
@@ -294,12 +335,15 @@ wektorów/testów, budżet wydajności oraz osobna decyzja o pojedynczej VM.
 Korpus musi mieć jawnie zdefiniowane oczekiwane wyniki, zero dopuszczonych
 rozbieżności semantycznych i brak pominięć obowiązkowych przypadków.
 
-Wymagane decyzje: B lub C; delegacja/zastąpienie K4; zaakceptowanie ryzyka
+Wymagane decyzje: mechanizm tożsamości (wspólna przesłanka A/B albo C), osobno
+kryteria wyboru technologii A/B; delegacja/zastąpienie K4; zaakceptowanie ryzyka
 podatności wewnątrz TCB bez roszczenia pełnej atestacji pamięci; polityka ochrony
-startu (dla B kandydat Yama2 i jej wpływ na host); dokładny zakres T3/PG i
+startu (dla A/B kandydat Yama2 i jej wpływ na host); dokładny zakres T3/PG i
 mechanizm, który ma być kwalifikowany; lifecycle/rewokacja po restarcie;
 limity wydajności. Jeżeli PG pozostaje publiczne i peer-only, zapisać
 **REJECT pełnej kwalifikacji autorytetu**, bez wyłączenia T3 z raportu.
+Wybór technologii może pozostać NOT_PROVEN do porównania; akceptacja mechanizmu
+tożsamości nie upoważnia do przepisywania produkcyjnej usługi.
 
 **ACCEPT:** istnieją wszystkie powyższe jawne decyzje i podpisane/zaakceptowane
 kryteria, z rozdzieleniem IDENTITY_ACCEPT od pełnej kwalifikacji autorytetu.
@@ -310,12 +354,14 @@ Bez ACCEPT tego etapu nie powstaje następna sonda.
 
 ### 2. Izolowany prototyp TEST_ONLY — pierwszy prawidłowy dowód
 
-Pierwszy krok implementacyjny po ACCEPT etapu 1: mały natywny endpoint i
-**osobny klient TEST_ONLY** realizujący wybrany, zatwierdzony predykat.
+Pierwszy krok po ACCEPT etapu 1: minimalny endpoint z syntetycznym challenge
+i **osobny klient TEST_ONLY**, sprawdzające wyłącznie nową podstawę tożsamości.
+Endpoint może być natywną sondą Rust; nie przesądza to wyboru B dla aplikacji.
 Zachować produkcyjne `_check_server` i negatywną regresję `exe=None`.
-Prototyp ma własne syntetyczne wydanie/stałe, bez produkcyjnych kluczy, SQL,
-AccountGenesis i modyfikacji zamrożonych materiałów. Przeniesienie parsera
-sprawdza się następnie na uzgodnionych wektorach; samo echo nie dowodzi crypto.
+Prototyp ma własne syntetyczne wydanie/stałe, bez parsera i kryptografii dokumentów,
+PREPARED, SQL, AccountGenesis i zmian zamrożonych materiałów. P7 jest późniejszą
+próbą zgodności aplikacji, poza pierwszym dowodem tożsamości. Port parsera,
+kryptografii i PostgreSQL nie jest warunkiem rozpoczęcia tego prototypu.
 
 Artefakty: źródła i reproducible build/inwentarz, dokładny predykat i maszyna
 stanów start→seal→ready→jedna wymiana→zamknięcie, raport każdego przypadku
@@ -332,8 +378,8 @@ nie jest NATIVE PASS.
 | P3 | Zły unit/drop-in/argv/env/inwentarz, podmiana socketu/przodka, zły MainPID/cgroup, stara epoka po restarcie. | Brak uwierzytelnienia i 0 payload przed send; restart nie akceptuje starego expected. |
 | P4 | Exec/execveat, fork/vfork/clone/clone3, SCM_RIGHTS w obie strony, pidfd_getfd, io_uring i obce ABI/x32. | Rzeczywista odmowa przypisana mechanizmowi; brak obcego odbiorcy/nowego wykonawcy. Stare zgodne credentials nie wystarczają. Brak syscalla = BLOCKED, nie PASS. |
 | P5 | Ptrace/process_vm/proc-mem przed pierwszą instrukcją i podczas loadera; wcześniejsze FD/mapowania/dzieci. | Kontrola dowodzi osiągalności próby, właściwy wariant odmawia lub odrzuca start przed ready. Końcowy TracerPid=0 nie jest oracle. |
-| P6 | Śmierć/restart procesu, awaria dowodu/helpera, timeout, partial send, zły binding. | Przed send UNAVAILABLE/0 payload; po rozpoczęciu send OUTCOME_UNKNOWN, bez kolejnej próby i bez twierdzenia o rollbacku. |
-| P7 | Parser/crypto i PREPARED na korpusie zgodnym i złośliwym. | Zero różnic względem uzgodnionego oracle, dokładne limity i podpisy, żadnego kodu/deserializacji programu z danych. |
+| P6 | Śmierć/restart procesu, awaria dowodu/helpera, timeout, partial send, złe powiązanie kanału/epoki; binding PREPARED później w P7. | Przed send UNAVAILABLE/0 payload; po rozpoczęciu send OUTCOME_UNKNOWN, bez kolejnej próby i bez twierdzenia o rollbacku. |
+| P7, późniejsza kwalifikacja aplikacji | Parser/crypto i PREPARED na korpusie zgodnym i złośliwym. | Zero różnic względem uzgodnionego oracle, dokładne limity i podpisy, żadnego kodu/deserializacji programu z danych. |
 | P8, obowiązkowe dla C | Fałszywy helper, inny przekazany socket FD, stary/powtórzony werdykt, zły nonce także w tej samej epoce, przerwanie sesji dowodowej przed send. | Poprawny klient odmawia przed payload: 0 wysłanych bajtów aplikacyjnych; żaden werdykt dla innego kanału/żądania nie autoryzuje wymiany. |
 
 Modele rootless pomagają sprawdzić parser i maszynę stanów. Nie wolno z ich
@@ -355,20 +401,24 @@ rewizja jądra/ABI, systemd 255 i AppArmor z zapisanym stanem enforce. Używać
 rzeczywistych odrębnych UID, właściwego systemowego managera, AF_UNIX/PIDFD oraz
 tymczasowego PostgreSQL z kontami i danymi wyłącznie TEST_ONLY. Bez kontaktu
 z produkcyjnymi poświadczeniami i bazą. Nie instalować polityk na bieżącym hoście.
+Dla pierwszego IDENTITY_ACCEPT nie podłączać PG ani komponentów aplikacji;
+P7 i część PostgreSQL pozostają NOT_RUN do późniejszej kwalifikacji autorytetu.
 
 Artefakty: zgoda i identyfikator VM, dokładny commit/build/manifest, inwentarz
 OS/kernel/systemd/LSM/sysctl, rzeczywiste UID/GID/grupy, effective unit oraz
-boot/InvocationID/MainPID, chronione endpointy i obserwacje kanału, raport
-P1–P7 oraz P8 dla C bez mocków, zredagowany log PG i raport cleanup. Dowody muszą zawierać
+boot/InvocationID/MainPID, chronione endpointy i obserwacje kanału, raport P1–P6
+oraz P8 dla C bez mocków i cleanup; dla AUTHORITY_ACCEPT także P7 i log PG. Dowody muszą zawierać
 pole oczekiwanego wyniku, rzeczywistą przyczynę odmowy i niezależną kontrolę
 osiągalności; zastane EPERM/EINVAL nie jest automatycznie zasługą filtra.
 
 **IDENTITY_ACCEPT:** P1 i wszystkie obowiązkowe negatywy tożsamości P2–P6
 oraz P8 dla C wykonane bez pominięć, właściwe liczniki P2/P8 równe 0, poprawna epoka,
-nieprzerwana ochrona startu/FD oraz zachowane K8. Jest to pierwszy prawidłowy
+nieprzerwana ochrona startu/FD i transportowa część K8: jedna wymiana, deadline,
+klasyfikacja niejednoznaczności i brak retry. Pełne K8/P7 nie jest warunkiem
+tego dowodu; produkcyjne K8 pozostaje bez zmian. Jest to pierwszy prawidłowy
 natywny dowód tożsamości wybranego kontraktu, bez obchodzenia starego guardu.
 
-**AUTHORITY_ACCEPT dla zakresu VM:** dodatkowo P7 bez rozbieżności, rzeczywisty
+**AUTHORITY_ACCEPT dla zakresu VM:** dodatkowo pełne K8/P7 bez rozbieżności, rzeczywisty
 PG peer/role, poprawne przygotowanie właściwego kandydata; runtime nie wywołuje
 prepare, verifier nie uzyskuje CAS, inni zwykli UID **i obcy proces UID verifiera**
 nie uzyskują uprzywilejowanego dostępu do PG. Zweryfikować niezmienność stanu
@@ -379,7 +429,8 @@ Jeżeli próba awarii nie rozstrzyga COMMIT, raportuje nieznany wynik i nie retr
 
 **REJECT/STOP:** jakiekolwiek fałszywe uwierzytelnienie, przyjęty stary okres,
 przekazany kanał do obcego odbiorcy, niechroniony start, pominięty obowiązkowy
-test albo dostęp T3 do roli PG. Brak mechanizmu hosta oznacza BLOCKED/NOT_PROVEN,
+test właściwego zakresu (P7 obowiązkowe dopiero dla autorytetu) albo dostęp T3
+do roli PG. Brak mechanizmu hosta oznacza BLOCKED/NOT_PROVEN,
 a nie zgodę na słabszy test. Zatrzymać próbę, zachować dowody i zakończyć według
 zatwierdzonego cleanup; nie rozszerzać polityk eksperymentalnie.
 
