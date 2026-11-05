@@ -8,9 +8,13 @@ oraz socket-bound SO_PEERPIDFD. Nie zastępuje
 [pełnej akceptacji VM](STAGE9_FRESHNESS_SERVICE_VM_ACCEPTANCE.md).
 
 [Harness](../../scripts/diagnostics/stage9_cross_uid_identity.py) nie tworzy
-kont, jednostek, instalacji, kluczy, capabilities, bazy ani zatwierdzenia.
+kont, jednostek, instalacji, kluczy, capabilities, bazy ani zatwierdzenia VM.
+Po istniejącej zgodzie administrator może utworzyć manifest próby i przejąć
+dowody do chronionego katalogu. To jednorazowe narzędzie operatora, bez nowej
+usługi uprzywilejowanej lub brokera.
 Listener tylko liczy odebrane bajty. Nie uruchamia verifiera, SQL ani operacji
-przygotowania. Wynik `PASS` dotyczy wyłącznie odmowy i zera bajtów;
+przygotowania. `TEST_ONLY_NATIVE_DENIAL=PASS` dotyczy wyłącznie rzeczywiście
+wykonanej odmowy i zera bajtów. Parser zwraca tylko `FORMAT_CONSISTENT/NOT_RUN`;
 `postgresql_no_preparation_proof=NOT_RUN` i `product_qualification=BLOCKED`
 pozostają jawne. Brak operacji przygotowania w listenerze wyklucza jej
 wywołanie w tej próbie, ale nie dowodzi stanu rzeczywistego PostgreSQL.
@@ -51,6 +55,36 @@ trial_environment_id=noble-cross-uid-001
 Wymagany exit 0 i kompletne fakty istniejącego `require_approved_vm`.
 Nie tworzyć approval automatycznie na podstawie wyniku inspekcji. Po zmianie
 bootu, pakietów lub commitu ponownie uzyskać niezależne zatwierdzenie.
+
+Przed startem listenera operator zatwierdza jednorazowy `trial_id` (UUID
+lowerhex) i zakres `TEST_ONLY_STAGE9_CROSS_UID_DENIAL`. Po kontroli całej kopii
+commitu i runtime, tym samym `trial_python` co w unicie:
+
+```sh
+trial_python=/ABSOLUTNA/ZATWIERDZONA/SCIEZKA/python3.12
+trial_id=ZATWIERDZONY_UUID_LOWERHEX
+"$trial_python" -s -B -m scripts.diagnostics.stage9_cross_uid_identity prepare-trial \
+  --revision "$trial_revision" --environment-id "$trial_environment_id" \
+  --trial-id "$trial_id" --source-root /srv/cryptohunter-trusted \
+  --python-executable "$trial_python"
+```
+
+Komenda wymaga UID 0 i oryginalnego `require_approved_vm`. Publikuje przez
+`O_EXCL` nowy `/etc/cryptohunter/stage9-cross-uid-trial.json`, root:root/0644,
+bez adopcji zastanego pliku. Nie tworzy ani nie rozszerza oryginalnej zgody.
+Manifest wiąże scope, trial ID, revision/environment, machine/boot, obraz,
+snapshot i pakiety z approval, jego dokładny hash, źródła obu skryptów oraz
+interpreter. Operator weryfikuje wartości. Dwa hashe skryptów nie dowodzą
+pochodzenia całego drzewa importów; wymagana jest niezależna kontrola kopii.
+
+Listener i probe przed bind/connect czytają manifest przez chroniony łańcuch
+FD-relative, bez symlinków/hardlinków i zapisu grupy/innych. Sprawdzają bieżące
+publiczne fakty VM i izolację, machine/boot/pakiety, rewizję/środowisko z CLI,
+skrypty i interpreter. Nie obchodzą wymogu UID 0 istniejącego rootguard.
+Snapshot/run-probe/compare dodatkowo ponownie sprawdzają oryginalną zgodę
+administratora i jej hash. Brak lub niezgodność dowodu oznacza BLOCKED.
+Wycofanie upoważnienia wymaga wycofania manifestu przez operatora; nowy boot
+lub zmiana źródeł/pakietów unieważnia go automatycznie.
 
 ## Ręczne przygotowanie czystego snapshotu
 
@@ -115,12 +149,17 @@ zatwierdzenia produkcji i nie podmienia podpisanej instalacji. Socket powstaje
 atomowo jako 0660 przez lokalny umask0117 jednowątkowego listenera, bez przejściowego chmod po bind. Nie dodawać
 `CAP_SYS_PTRACE`, `PR_SET_PTRACER`, wyłączeń Yama, setuid ani zmian procfs.
 
+Do `ExecStart` po `listener` operator dopisuje literalnie:
+`--manifest /etc/cryptohunter/stage9-cross-uid-trial.json --revision <zatwierdzone40hex> --environment-id <zatwierdzone-environment-id>`.
+Brak argumentu lub manifestu zatrzymuje listener przed bind. Zmienne powłoki
+i znaczniki `<...>` nie mogą pozostać w rzeczywistym unicie.
+
 ## Wykonanie i sprawdzenie dowodów
 
 Poniższe kroki operator wykonuje w tej samej zatwierdzonej VM i tym samym boocie.
 `trial_python` musi wskazywać ten sam runtime co testowy `ExecStart`.
-Listener czeka najwyżej 45 s na każde z dwóch połączeń; przygotować polecenia
-snapshot/probe przed startem. Po zapisaniu licznika proces pozostaje żywy do
+Listener czeka najwyżej 120 s na każde z dwóch połączeń; przygotować polecenie
+run-probe przed startem. Po zapisaniu licznika proces pozostaje żywy do
 jawnego zatrzymania, aby MainPID/pidfd były dostępne przy końcowej kontroli.
 
 ```sh
@@ -139,27 +178,31 @@ do
   sleep 1
 done
 test "$trial_socket_ready" -eq 1
-test ! -e /var/lib/stage9-cross-uid/expected.json
-"$trial_python" -s -B -m scripts.diagnostics.stage9_cross_uid_identity snapshot \
-  --revision "$trial_revision" --environment-id "$trial_environment_id" \
-  > /var/lib/stage9-cross-uid/expected.json
-chmod 0644 /var/lib/stage9-cross-uid/expected.json
-runuser -u os_freshness_runtime -- "$trial_python" -s -B \
-  -m scripts.diagnostics.stage9_cross_uid_identity probe \
-  /var/lib/stage9-cross-uid/expected.json \
-  > /var/lib/stage9-cross-uid/client.json
+"$trial_python" -s -B -m scripts.diagnostics.stage9_cross_uid_identity run-probe \
+  --revision "$trial_revision" --environment-id "$trial_environment_id"
 "$trial_python" -s -B -m scripts.diagnostics.stage9_cross_uid_identity compare \
-  /var/lib/stage9-cross-uid/client.json \
-  /run/cryptohunter/freshness/native-listener.json
+  --revision "$trial_revision" --environment-id "$trial_environment_id"
 ```
 
-Nie kontynuować po niezerowym kodzie dowolnego kroku; chmod wykonać wyłącznie
-po sukcesie snapshotu. Snapshot musi być nowy, root-owned i czytelny dla runtime.
+Nie kontynuować po niezerowym kodzie dowolnego kroku.
 Oczekiwanie na socket służy tylko synchronizacji Type=simple, nie dowodzi
-tożsamości ani gotowości protokołu. Porównanie czeka najwyżej 5 s na kompletny
-JSON licznika; nigdy nie ponawia wymiany. Jeśli listener nie opublikował
+tożsamości ani gotowości protokołu. Run-probe czeka najwyżej 5 s na kompletny
+JSON licznika po zakończeniu klienta; nigdy nie ponawia wymiany. Jeśli listener nie opublikował
 kompletnego licznika, zachować brak dowodu jako `BLOCKED`; sprawdzić jego journal,
 a nową próbę wykonać na świeżym klonie snapshotu. Nie zastępować raportu ręcznie.
+
+Run-probe tworzy nowy `/var/lib/stage9-cross-uid/<trial_id>`; zastany katalog
+lub częściowe dowody oznaczają odmowę bez adopcji/recovery. Sam zbiera
+`before.json`, uruchamia ustalony probe przez `/usr/sbin/runuser` jako runtime
+ze stałym argv/env/cwd, przechwytuje stdout przez PIPE (64 KiB, 90 s,
+wymagany exit 0), przejmuje stały licznik listenera i zbiera `after.json`.
+Nie przyjmuje cudzych raportów do „opieczętowania”. Snapshot przed ma
+root:root/0644 w katalogu 0755 na czas odczytu przez probe; po zakończeniu
+klienta katalog ma 0700, pozostałe artefakty 0600. `execution.json` powstaje
+przez O_EXCL dopiero po walidacji wykonania i wiąże dokładne hashe wszystkich
+czterech wejść, manifest oraz argv. PID runuser nie jest utożsamiany z PIDem
+Pythona klienta.
+
 Root snapshot odczytuje prawdziwy `/proc/MainPID/exe`; to wejście wyłącznie
 TEST_ONLY z niezależnego obserwatora, nie akceptacja kodu usługi. Snapshot nie
 jest odpowiedzią listenera. Odczyty systemd są rzeczywiste i wykonywane także
@@ -187,7 +230,12 @@ executable, socketu, metod transportu ani wyniku klienta.
 Syntetyczne wejście `b"{}"` nie opuszcza klienta. Listener nie zna żadnego
 sekretu, podpisu ani dostępu SQL.
 
-`compare` wymaga dwóch zakończonych EOF połączeń od rzeczywistego PID/UID/GID
+`compare` wymaga aktualnej zgody administratora, manifestu, chronionego
+`execution.json`, zgodnych bajtów przejętych artefaktów oraz świeżej obserwacji
+zgodnej ze snapshotami przed/po. Sprawdza machine/boot, revision/environment,
+obraz, MainPID/UID/GID, okres jednostki i cały rekord procesu; sam hash
+nieużytego załącznika nie wystarcza. Wymaga także dwóch zakończonych EOF
+połączeń od rzeczywistego PID/UID/GID
 probe, **0 odebranych bajtów na obu**, zgodnego bootu i listenera, odmowy procfs
 oraz wyniku klienta `UNAVAILABLE/TRANSPORT_OR_IDENTITY_UNAVAILABLE` i dokładnego
 zapisu wywołania oraz wyjątku kontroli serwera podczas tego wywołania klienta.
@@ -199,6 +247,11 @@ Zachować dokładne kody wyjścia, oba raporty i snapshot, stdout porównania,
 journal jednostki, systemd properties, wersje jądra/systemd/Pythona, mountinfo
 procfs, metadane/ACL socketu i katalogów oraz zewnętrzny identyfikator VM/obrazu.
 To dowody testu w zaufanej VM, nie podpisana atestacja ani autorytet produktu.
+Root jest zaufanym kolektorem. Kontrola dostępu i hashe chronią przejęte
+artefakty przed późniejszą podmianą przez runtime/verifiera; nie chronią
+przed złośliwym root ani przejętym w pamięci autorem raportu. Publiczny trial
+ID nie jest sekretem ani uwierzytelnieniem. Hash obrazu pochodzi z zewnętrznej
+zgody operatora, nie z lokalnej atestacji hypervisora.
 Po ich zebraniu operator jawnie zatrzymuje wyłącznie własną jednostkę testową
 `systemctl stop cryptohunter-freshness-verifier.service`, eksportuje dowody
 odłączanym nośnikiem i usuwa całą jednorazową VM. Nie czyści ręcznie produktu.
@@ -215,13 +268,22 @@ pozostają aktywne, `STAGE9_PRODUCTION_READY=NO`, **bez merge**.
 
 ## Lokalne testy integralności raportu
 
-`tests/scripts/test_stage9_cross_uid_identity_reports.py` sprawdza format bazowy i
-odrzucenie dziesięciu spreparowanych raportów: bajt żądania, brak EOF, brak
-pidfd, zadeklarowane dostępne exe, ten sam UID, rozszerzenie kwalifikacji,
-brak wejścia do kontroli serwera, inny wyjątek, inny rekord procesu i brak trace.
+Tryb `format-reports client.json listener.json before.json` jest wyłącznie
+parserem i może działać poza VM. Jego jedynym dodatnim wynikiem jest
+`FORMAT_CONSISTENT`, z `native_status=NOT_RUN`, nigdy PASS. Nie zastępuje
+natywnego compare i nie zapisuje receipt. Syntetyczne JSON nie mogą same
+awansować do natywnego wyniku.
+
+`tests/scripts/test_stage9_cross_uid_identity_reports.py` sprawdza format
+i odmowy zmian bindingów, snapshotu, systemd, procesu oraz kontroli klienta.
+`test_stage9_cross_uid_identity_gates.py` i `test_stage9_cross_uid_trial.py`
+sprawdzają kolejność odmów i manifest, w tym brak receipt.
 Nie uruchamia klienta ani usługi, nie zmienia UID/PID/executable i nie jest
 wynikiem natywnej próby. Wykonywać osobno:
 
 ```sh
-python -m pytest --noconftest -q tests/scripts/test_stage9_cross_uid_identity_reports.py
+python -m pytest --noconftest -q \
+  tests/scripts/test_stage9_cross_uid_identity_reports.py \
+  tests/scripts/test_stage9_cross_uid_identity_gates.py \
+  tests/scripts/test_stage9_cross_uid_trial.py
 ```
