@@ -1,8 +1,10 @@
 """Prawdziwy rootless AF_UNIX/PIDFD oraz jawne modele chronionej instalacji.
 
 To nie jest dowód działania zainstalowanej usługi ani izolacji obcych UID.
-NSS/runtime UID, root-owned ancestry i systemd cgroup są modelowane; socket,
-niezależny proces, peer credentials, PIDFD, procfs i ramki są rzeczywiste.
+NSS/runtime UID, root-owned ancestry, systemd cgroup i izolacja grup usługi
+są modelowane; socket, niezależny proces, peer credentials, PIDFD, surowa
+obserwacja procfs i ramki są rzeczywiste. Model grup nie nadpisuje tej
+obserwacji ani ponownych odczytów tożsamości procesu.
 Writer bazy jest modelem obserwującym wywołania, bez połączeń PostgreSQL.
 """
 
@@ -226,11 +228,29 @@ def _scripted(tmp_path, response=None, *, mode="normal"):
         assert not process.is_alive()
 
 
-def _model_installed_coordinates(monkeypatch, server):
-    """Tylko model instalacji; nie zastępujemy SO_PEERCRED/PIDFD ani procfs."""
+def _model_installed_coordinates(monkeypatch, server, *, model_service_groups=True):
+    """Model instalacji; SO_PEERCRED/PIDFD i odczyty procfs pozostają rzeczywiste."""
     monkeypatch.setattr(ipc, "VERIFIER_SOCKET_PATH", server.address)
     monkeypatch.setattr(ipc, "CGROUP", server.record["cgroup"])
     monkeypatch.setattr(ipc, "_require_runtime_identity", lambda expected: None)
+    if model_service_groups:
+        check_server = ipc._check_server
+
+        def installed_server_groups(peer, expected):
+            # Hosted runner może należeć np. do grup sudo/docker, których
+            # nie ma zamrożona jednostka verifiera. Modelujemy tę samą
+            # instalacyjną granicę co konta i cgroup, wyłącznie w widoku
+            # guardu. Nie zmieniamy peer.process ani prawdziwego recheck:
+            # zmiana grup/UID/executable lub śmierć procesu nadal odmawia.
+            check_server(
+                SimpleNamespace(
+                    process={**peer.process, "groups": [peer.process["gid"]]},
+                    recheck=peer.recheck,
+                ),
+                expected,
+            )
+
+        monkeypatch.setattr(ipc, "_check_server", installed_server_groups)
     original_os = paths.os
     parent = str(Path(server.address).parent)
 
@@ -287,6 +307,45 @@ def test_real_local_unix_independent_process_exact_request_and_invalid(
             "finalization_receipt": base64.urlsafe_b64encode(b'{"r":3}').rstrip(b"=").decode(),
         }
         assert result.preparation_id is None and result.binding is None
+
+
+@LINUX
+def test_real_extra_server_groups_are_denied_before_send_without_group_model(
+    tmp_path, monkeypatch, kernel_pidfd
+):
+    """Prawdziwe grupy hosta: brak modelu usługi musi zachować odmowę."""
+    if set(os.getgroups()) <= {os.getegid()}:
+        pytest.skip("BLOCKED: konto testowe nie ma rzeczywistych dodatkowych grup")
+    with _scripted(tmp_path) as server:
+        assert set(server.record["groups"]) - {server.expected.gid}
+        _model_installed_coordinates(monkeypatch, server, model_service_groups=False)
+        result = ipc.RuntimeFreshnessVerifierClient(server.expected).verify_exact_candidate(
+            b"{}", b"{}", b"{}"
+        )
+        assert result.outcome is ipc.FreshnessIPCOutcome.UNAVAILABLE
+        assert _finish_count(server) == b""
+
+
+@LINUX
+def test_real_group_model_preserves_original_peer_observation(tmp_path, monkeypatch, kernel_pidfd):
+    with _scripted(tmp_path) as server:
+        _model_installed_coordinates(monkeypatch, server)
+        check_server = ipc._check_server
+        observed_groups = []
+
+        def unchanged_peer(peer, expected):
+            original = {**peer.process, "groups": list(peer.process["groups"])}
+            observed_groups.append(tuple(original["groups"]))
+            check_server(peer, expected)
+            assert peer.process == original
+
+        monkeypatch.setattr(ipc, "_check_server", unchanged_peer)
+        result = ipc.RuntimeFreshnessVerifierClient(server.expected).verify_exact_candidate(
+            b"{}", b"{}", b"{}"
+        )
+        assert result.outcome is ipc.FreshnessIPCOutcome.INVALID
+        assert observed_groups == [tuple(server.record["groups"])] * 2
+        assert _finish_count(server)
 
 
 @pytest.mark.parametrize("outcome", ["INVALID", "UNAVAILABLE", "OUTCOME_UNKNOWN"])

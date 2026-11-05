@@ -116,6 +116,20 @@ rzeczywistej izolacji dwóch produkcyjnych UID ani uruchomienia właściwej
 jednostki systemd. Testy jawnie rozdzielają ten model od rzeczywistych
 operacji jądra.
 
+Model instalacji obejmuje także brak dodatkowych grup usługi. Proces
+testowy na hosted Ubuntu może dziedziczyć grupy konta runnera, które
+produkcyjny guard prawidłowo odrzuca przed wysłaniem żądania. Fixture
+podaje guardowi kopię obserwacji z modelowaną grupą usługi, pozostawiając
+oryginalne `peer.process`, SO_PEERCRED, SO_PEERPIDFD i `peer.recheck()`
+bez zmian. Ponowny odczyt nadal sprawdza rzeczywiste grupy procesu i ich
+stabilność. Nie jest to dowód natywnej izolacji grup produkcyjnej usługi.
+
+Odrębny test bez modelu grup potwierdza rzeczywistą odmowę przed send,
+gdy konto testowe ma grupy dodatkowe. Na koncie bez takich grup zgłasza
+jawne `BLOCKED`/SKIP. Reprodukcja Ubuntu 24.04 z nieuprzywilejowanym
+UID i jedną syntetyczną grupą dodatkową pozwala sprawdzić obie ścieżki
+bez tworzenia kont, zmiany uprawnień hosta ani osłabienia guardu.
+
 Modele resolvera i writer sprawdzają dojście do właściwej granicy oraz brak
 wywołania przygotowania po odmowie autoryzacji lub weryfikacji. Nie są
 rzeczywistym PostgreSQL i nie ustanawiają dowodu ACL, peer mapping ani
