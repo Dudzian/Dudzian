@@ -578,6 +578,23 @@ jobs:
         run: |
           python scripts/ci/preflight_test_env.py
 
+      - name: Sprawdź checkout LF, migrację AccountGenesis i niezmienione piny
+        shell: bash
+        env:
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+          DUDZIAN_TEST_MODE: "1"
+          DUDZIAN_ALLOW_LONG_POLL: "0"
+        run: |
+          mkdir -p test-results
+          python -m pytest -q -s -p asyncio \
+            tests/security/test_account_genesis_review_checkout.py \
+            tests/security/test_account_genesis_verified_transport_contract.py \
+            tests/security/test_account_genesis_verified_transport_scope.py \
+            tests/security/test_freshness_verifier_remediation_scope.py \
+            tests/security/test_freshness_reviewed_source_pins.py \
+            tests/security/test_freshness_verifier_pg_remediation.py \
+            --junitxml=test-results/account-genesis-checkout.xml
+
       - name: Verify explicitly loaded pytest-asyncio plugin
         shell: bash
         env:
@@ -617,7 +634,9 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: bot-core-pytest-results
-          path: test-results/pytest.xml
+          path: |
+            test-results/pytest.xml
+            test-results/account-genesis-checkout.xml
           retention-days: 3
 
       - name: Generate champion diff audit report
@@ -694,6 +713,23 @@ jobs:
         shell: bash
         run: |
           python scripts/ci/preflight_test_env.py
+
+      - name: Sprawdź checkout LF, migrację AccountGenesis i niezmienione piny
+        shell: bash
+        env:
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+          DUDZIAN_TEST_MODE: "1"
+          DUDZIAN_ALLOW_LONG_POLL: "0"
+        run: |
+          mkdir -p test-results
+          python -m pytest -q -s -p asyncio \
+            tests/security/test_account_genesis_review_checkout.py \
+            tests/security/test_account_genesis_verified_transport_contract.py \
+            tests/security/test_account_genesis_verified_transport_scope.py \
+            tests/security/test_freshness_verifier_remediation_scope.py \
+            tests/security/test_freshness_reviewed_source_pins.py \
+            tests/security/test_freshness_verifier_pg_remediation.py \
+            --junitxml=test-results/account-genesis-checkout.xml
 
       - name: Verify explicitly loaded pytest-asyncio plugin
         shell: bash
@@ -833,7 +869,9 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: py-tests-ubuntu-pytest-results
-          path: test-results/pytest.xml
+          path: |
+            test-results/pytest.xml
+            test-results/account-genesis-checkout.xml
           retention-days: 3
 
   # Isolated PostgreSQL shards: selected by the exact complement of the generic
