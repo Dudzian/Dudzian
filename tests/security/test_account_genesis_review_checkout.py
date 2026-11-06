@@ -7,11 +7,19 @@ import json
 import platform
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 
+from bot_core import freshness_runtime_ipc as ipc
 from tests.security import account_genesis_transport_review_support as account
 from tests.security import freshness_verifier_remediation_support as verifier
+from tests.security import test_account_genesis_verified_transport_contract as contract
+
+# Dodatkowa regresja poza zamkniętym wykazem S9-FV-01; fixture pozostają wspólne.
+module = contract.module
+authority = contract.authority
 
 ROOT = Path(__file__).resolve().parents[2]
 PATCHES = (
@@ -141,3 +149,20 @@ def test_review_loader_refuses_unapproved_raw_bytes_before_patch(tmp_path, monke
     with pytest.raises(ValueError, match="zmieniła się dokładna baza"):
         account.load_account_genesis(tmp_path / "rejected")
     assert not (tmp_path / "rejected").exists()
+
+
+def test_missing_af_unix_refuses_before_identity_transport_or_sql(authority, monkeypatch):
+    """Brak transportu nadal odmawia, także w modelu platformy Linux."""
+    monkeypatch.setattr(ipc, "sys", SimpleNamespace(platform="linux"))
+    constructor = Mock(side_effect=AssertionError("Brak AF_UNIX musi poprzedzać socket"))
+    monkeypatch.setattr(ipc, "socket", SimpleNamespace(socket=constructor))
+    identity = Mock(side_effect=AssertionError("Brak AF_UNIX musi poprzedzać tożsamość"))
+    transport = Mock(side_effect=AssertionError("Brak AF_UNIX musi poprzedzać transport"))
+    monkeypatch.setattr(ipc, "_require_runtime_identity", identity)
+    monkeypatch.setattr(ipc, "_pinned_verifier_socket", transport)
+    sql = contract._forbid_sql(monkeypatch)
+    assert authority.authenticate_and_advance(b"p", b"d", b"r").outcome.value == "UNAVAILABLE"
+    identity.assert_not_called()
+    transport.assert_not_called()
+    constructor.assert_not_called()
+    sql.assert_not_called()

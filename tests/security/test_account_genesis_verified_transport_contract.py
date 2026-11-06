@@ -147,23 +147,6 @@ def test_encoded_request_limit_refuses_before_transport_or_sql(
     sql.assert_not_called()
 
 
-def test_missing_af_unix_refuses_before_identity_transport_or_sql(authority, monkeypatch):
-    """Brak transportu nadal odmawia, także w modelu platformy Linux."""
-    monkeypatch.setattr(ipc, "sys", SimpleNamespace(platform="linux"))
-    constructor = Mock(side_effect=AssertionError("Brak AF_UNIX musi poprzedzać socket"))
-    monkeypatch.setattr(ipc, "socket", SimpleNamespace(socket=constructor))
-    identity = Mock(side_effect=AssertionError("Brak AF_UNIX musi poprzedzać tożsamość"))
-    transport = Mock(side_effect=AssertionError("Brak AF_UNIX musi poprzedzać transport"))
-    monkeypatch.setattr(ipc, "_require_runtime_identity", identity)
-    monkeypatch.setattr(ipc, "_pinned_verifier_socket", transport)
-    sql = _forbid_sql(monkeypatch)
-    assert authority.authenticate_and_advance(b"p", b"d", b"r").outcome.value == "UNAVAILABLE"
-    identity.assert_not_called()
-    transport.assert_not_called()
-    constructor.assert_not_called()
-    sql.assert_not_called()
-
-
 @pytest.mark.parametrize(
     "preparation_id,binding",
     [
