@@ -7,6 +7,11 @@ Etap 1 K4-v2: **PENDING_OWNER_ACCEPT**, K4-v2 nieaktywny;
 natywny dowód dwóch UID: **NOT_RUN**.
 Stage 9: **IN_PROGRESS / PRODUCTION_NO_GO**.
 
+Poprawka P2 do tego samego PR zamyka możliwość zielonego kroku CI po pominięciu
+obowiązkowych prób AF_UNIX. [Dokładny wykaz 83 przypadków](s9_fv_01_required_cases.md)
+oraz [raport bramki JUnit](s9_fv_01_p2_junit_gate.md) opisują egzekwowanie wykonania.
+Dotychczasowe propozycje adaptera/serwera i zakres produkcyjny pozostają bez zmian.
+
 ## Inwentaryzacja i granice ustaleń
 
 Przeczytano `AGENTS.md`, źródła AccountGenesis, klienta runtime i verifiera,

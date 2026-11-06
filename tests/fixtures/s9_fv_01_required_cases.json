@@ -1,0 +1,337 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_contract",
+      "name": "test_alternate_socket_is_refused_without_fallback"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_contract",
+      "name": "test_ambiguous_cas_commit_is_not_a_preparation_retry[InterfaceError]"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_contract",
+      "name": "test_ambiguous_cas_commit_is_not_a_preparation_retry[OperationalError]"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_contract",
+      "name": "test_client_results_map_once_without_sql_or_retry[INVALID-INVALID_LOCAL_INPUT-INVALID_DOCUMENT]"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_contract",
+      "name": "test_client_results_map_once_without_sql_or_retry[INVALID-REQUEST_TOO_LARGE-INVALID_DOCUMENT]"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_contract",
+      "name": "test_client_results_map_once_without_sql_or_retry[INVALID-VERIFIER_RESPONSE-INVALID_AUTHENTICATION]"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_contract",
+      "name": "test_client_results_map_once_without_sql_or_retry[OUTCOME_UNKNOWN-AMBIGUOUS_EXCHANGE-PREPARATION_OUTCOME_UNKNOWN]"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_contract",
+      "name": "test_client_results_map_once_without_sql_or_retry[OUTCOME_UNKNOWN-VERIFIER_RESPONSE-PREPARATION_OUTCOME_UNKNOWN]"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_contract",
+      "name": "test_client_results_map_once_without_sql_or_retry[UNAVAILABLE-TRANSPORT_OR_IDENTITY_UNAVAILABLE-UNAVAILABLE]"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_contract",
+      "name": "test_client_results_map_once_without_sql_or_retry[UNAVAILABLE-VERIFIER_RESPONSE-UNAVAILABLE]"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_contract",
+      "name": "test_encoded_request_limit_refuses_before_transport_or_sql"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_contract",
+      "name": "test_incomplete_prepared_cannot_start_sql[None-None]"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_contract",
+      "name": "test_incomplete_prepared_cannot_start_sql[aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-None]"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_contract",
+      "name": "test_incomplete_prepared_cannot_start_sql[aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-[]]"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_contract",
+      "name": "test_incomplete_prepared_cannot_start_sql[aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-not json]"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_contract",
+      "name": "test_incomplete_prepared_cannot_start_sql[aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-{\"preparation_id\":\"other\"}]"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_contract",
+      "name": "test_incomplete_prepared_cannot_start_sql[aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-{}]"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_contract",
+      "name": "test_incomplete_prepared_cannot_start_sql[wrong-{}]"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_contract",
+      "name": "test_independently_supplied_expected_is_mandatory_and_exact"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_contract",
+      "name": "test_local_length_refusal_uses_actual_client_without_transport_or_sql[empty-0]"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_contract",
+      "name": "test_local_length_refusal_uses_actual_client_without_transport_or_sql[empty-1]"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_contract",
+      "name": "test_local_length_refusal_uses_actual_client_without_transport_or_sql[empty-2]"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_contract",
+      "name": "test_local_length_refusal_uses_actual_client_without_transport_or_sql[oversized-0]"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_contract",
+      "name": "test_local_length_refusal_uses_actual_client_without_transport_or_sql[oversized-1]"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_contract",
+      "name": "test_local_length_refusal_uses_actual_client_without_transport_or_sql[oversized-2]"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_contract",
+      "name": "test_migration_preserves_public_operation_and_exact_cas_methods"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_contract",
+      "name": "test_native_cas_serialization_retry_never_repeats_preparation[1]"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_contract",
+      "name": "test_native_cas_serialization_retry_never_repeats_preparation[3]"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_contract",
+      "name": "test_non_bytes_input_never_reaches_client_or_sql[None-0]"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_contract",
+      "name": "test_non_bytes_input_never_reaches_client_or_sql[None-1]"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_contract",
+      "name": "test_non_bytes_input_never_reaches_client_or_sql[None-2]"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_contract",
+      "name": "test_non_bytes_input_never_reaches_client_or_sql[inf-0]"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_contract",
+      "name": "test_non_bytes_input_never_reaches_client_or_sql[inf-1]"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_contract",
+      "name": "test_non_bytes_input_never_reaches_client_or_sql[inf-2]"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_contract",
+      "name": "test_non_bytes_input_never_reaches_client_or_sql[invalid4-0]"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_contract",
+      "name": "test_non_bytes_input_never_reaches_client_or_sql[invalid4-1]"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_contract",
+      "name": "test_non_bytes_input_never_reaches_client_or_sql[invalid4-2]"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_contract",
+      "name": "test_non_bytes_input_never_reaches_client_or_sql[nan-0]"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_contract",
+      "name": "test_non_bytes_input_never_reaches_client_or_sql[nan-1]"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_contract",
+      "name": "test_non_bytes_input_never_reaches_client_or_sql[nan-2]"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_contract",
+      "name": "test_non_bytes_input_never_reaches_client_or_sql[{}-0]"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_contract",
+      "name": "test_non_bytes_input_never_reaches_client_or_sql[{}-1]"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_contract",
+      "name": "test_non_bytes_input_never_reaches_client_or_sql[{}-2]"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_contract",
+      "name": "test_prepared_starts_separate_existing_serializable_cas[ALREADY_ACCEPTED_EXACT]"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_contract",
+      "name": "test_prepared_starts_separate_existing_serializable_cas[CAS_ACCEPTED]"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_contract",
+      "name": "test_runtime_connection_keeps_exact_peer_principal"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_scope",
+      "name": "test_baseline_drift_does_not_refresh_frozen_product_pin"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_scope",
+      "name": "test_existing_release_gate_rejects_each_proposed_composition[account_genesis]"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_scope",
+      "name": "test_existing_release_gate_rejects_each_proposed_composition[both]"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_scope",
+      "name": "test_existing_release_gate_rejects_each_proposed_composition[verifier]"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_unix",
+      "name": "test_real_adapter_bad_response_is_unknown_without_cas_or_retry[json]"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_unix",
+      "name": "test_real_adapter_bad_response_is_unknown_without_cas_or_retry[length]"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_unix",
+      "name": "test_real_adapter_bad_response_is_unknown_without_cas_or_retry[proposed_document_digest]"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_unix",
+      "name": "test_real_adapter_bad_response_is_unknown_without_cas_or_retry[proposer_authentication_digest]"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_unix",
+      "name": "test_real_adapter_bad_response_is_unknown_without_cas_or_retry[receipt_canonical_digest]"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_unix",
+      "name": "test_real_adapter_bad_response_is_unknown_without_cas_or_retry[trailing]"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_unix",
+      "name": "test_real_adapter_half_close_and_three_objects_reach_separate_cas"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_unix",
+      "name": "test_real_adapter_invalid_signed_input_never_prepares_or_calls_cas[0]"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_unix",
+      "name": "test_real_adapter_invalid_signed_input_never_prepares_or_calls_cas[1]"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_unix",
+      "name": "test_real_adapter_invalid_signed_input_never_prepares_or_calls_cas[2]"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_unix",
+      "name": "test_real_adapter_k4_missing_proof_denies_before_payload[cgroup]"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_unix",
+      "name": "test_real_adapter_k4_missing_proof_denies_before_payload[exe-unreadable]"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_unix",
+      "name": "test_real_adapter_k4_missing_proof_denies_before_payload[socket]"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_unix",
+      "name": "test_real_adapter_local_bad_input_never_connects[empty]"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_unix",
+      "name": "test_real_adapter_local_bad_input_never_connects[mutable]"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_unix",
+      "name": "test_real_adapter_local_bad_input_never_connects[none]"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_unix",
+      "name": "test_real_adapter_local_bad_input_never_connects[too-large]"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_unix",
+      "name": "test_real_adapter_maps_patched_server_failure_without_retry[unavailable-UNAVAILABLE-0]"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_unix",
+      "name": "test_real_adapter_maps_patched_server_failure_without_retry[unknown-PREPARATION_OUTCOME_UNKNOWN-1]"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_unix",
+      "name": "test_real_adapter_mismatched_expected_denies_before_payload[changes0]"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_unix",
+      "name": "test_real_adapter_mismatched_expected_denies_before_payload[changes1]"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_unix",
+      "name": "test_real_adapter_mismatched_expected_denies_before_payload[changes2]"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_unix",
+      "name": "test_real_adapter_mismatched_expected_denies_before_payload[changes3]"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_unix",
+      "name": "test_real_adapter_mismatched_expected_denies_before_payload[changes4]"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_unix",
+      "name": "test_real_adapter_select_failure_closes_model_session_before_next_prepare[execute]"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_unix",
+      "name": "test_real_adapter_select_failure_closes_model_session_before_next_prepare[fetchone]"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_unix",
+      "name": "test_real_deadline_frees_listener_for_adapter[\\x00\\x00\\x00\\x14{]"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_unix",
+      "name": "test_real_deadline_frees_listener_for_adapter[\\x00]"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_unix",
+      "name": "test_real_legacy_client_without_eof_is_refused_before_prepare"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_unix",
+      "name": "test_real_partial_send_is_unknown_with_one_connection[broken-connection]"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_unix",
+      "name": "test_real_partial_send_is_unknown_with_one_connection[partial-send]"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_unix",
+      "name": "test_real_response_broken_pipe_after_prepare_keeps_adapter_listener_usable"
+    },
+    {
+      "classname": "tests.security.test_account_genesis_verified_transport_unix",
+      "name": "test_real_timeout_keeps_late_effect_and_next_adapter_client_works"
+    }
+  ]
+}

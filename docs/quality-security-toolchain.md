@@ -1,5 +1,12 @@
 # Quality, security, and code-intelligence toolchain
 
+S9-FV-01 wymaga JUnit XML i statycznego wykazu 83 obowiązkowych przypadków.
+`scripts/quality/check_s9_fv_01_junit.py` odmawia PASS przy brakującym,
+pominiętym lub nieudanym przypadku, pustym raporcie albo niezerowym exit pytest.
+Dopuszczalne starsze SKIP są odrębne od obowiązkowych prób migracji; ich
+sumaryczne PASS nie zastępują wymaganych identyfikatorów. [Wykaz i reguły P2](audits/s9_fv_01_required_cases.md)
+nie włączają administracyjnego PG, Stage 9 ani natywnej próby dwóch UID.
+
 S9-FV-01 ma odrębny zwykły krok testów w `quality-ratchet`: dokładny patch
 AccountGenesis i cztery poprawki verifiera są ładowane wyłącznie do prywatnych
 kopii. Testy rozdzielają kontrakt/mapowanie, rzeczywisty AF_UNIX/PIDFD oraz
