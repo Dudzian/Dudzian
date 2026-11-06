@@ -1,5 +1,15 @@
 # Quality, security, and code-intelligence toolchain
 
+S9-FV-01 ma odrębny zwykły krok testów w `quality-ratchet`: dokładny patch
+AccountGenesis i cztery poprawki verifiera są ładowane wyłącznie do prywatnych
+kopii. Testy rozdzielają kontrakt/mapowanie, rzeczywisty AF_UNIX/PIDFD oraz
+modele niezależnego expected, instalacji i PG/CAS. Istniejąca bramka odrzuca
+niezatwierdzone nowe bajty; piny i produkcyjne źródła pozostają bez zmian.
+Mypy Linux/Win32 sprawdza również materializowane propozycje podczas lokalnej
+walidacji opisanej w [raporcie migracji](audits/s9_fv_01_account_genesis_verified_transport.md).
+Natywne dwa UID pozostają NOT_RUN; K4-v2 PENDING_OWNER_ACCEPT i Stage 9
+PRODUCTION_NO_GO nie zmieniają się po zielonych testach.
+
 Wąski klient `bot_core/freshness_runtime_ipc.py` i regresje
 `tests/security/test_freshness_runtime_ipc.py` wymagają testów rzeczywistych
 nieuprzywilejowanych AF_UNIX/PIDFD, odmów tożsamości, ścisłego protokołu

@@ -420,6 +420,22 @@ jobs:
           bot_core/freshness_verifier_service.py
           deployment/linux_physical_native.py deployment/linux_physical_collector.py
           deployment/linux_evidence_handoff.py
+      - name: S9-FV-01 izolowany przegląd transportu AccountGenesis (TEST_ONLY)
+        env:
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+          DUDZIAN_TEST_MODE: "1"
+          DUDZIAN_ALLOW_LONG_POLL: "0"
+        run: >-
+          python -m pytest -ra -p asyncio
+          tests/security/test_account_genesis_verified_transport_contract.py
+          tests/security/test_account_genesis_verified_transport_unix.py
+          tests/security/test_account_genesis_verified_transport_scope.py
+          tests/security/test_freshness_runtime_ipc.py
+          tests/security/test_freshness_runtime_ipc_identity.py
+          tests/security/test_freshness_verifier_transport_remediation.py
+          tests/security/test_freshness_verifier_pg_remediation.py
+          tests/security/test_freshness_verifier_remediation_scope.py
+          -m "not hardware and not destructive and not network" -q
       # PRE executor tests replace native custody, console and process boundaries.
       - name: Property and critical pure-logic tests with branch coverage
         env:

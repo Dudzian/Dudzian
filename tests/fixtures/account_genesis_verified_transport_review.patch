@@ -1,0 +1,188 @@
+--- a/bot_core/account_genesis_freshness_authority.py
++++ b/bot_core/account_genesis_freshness_authority.py
+@@ -14,0 +15,3 @@
++import os
++import re
++import time
+@@ -17,6 +19,0 @@
+-import base64
+-import os
+-import re
+-import socket
+-import struct
+-import time
+@@ -26,0 +24,5 @@
++from bot_core.freshness_runtime_ipc import (
++    FreshnessIPCOutcome,
++    RuntimeFreshnessVerifierClient,
++)
++from bot_core.freshness_verifier_service import VERIFIER_SOCKET_PATH
+@@ -33,2 +35,2 @@
+-
+-_MAX_FRAME = 4 * 1024 * 1024
++from deployment.linux_physical_ipc import ExpectedPeerProcess
++
+@@ -50,7 +51,0 @@
+-class _PreparationTransportState(str, Enum):
+-    NOT_CONNECTED = "not_connected"
+-    CONNECTED = "connected"
+-    REQUEST_STARTED = "request_started"
+-    RESPONSE_RECEIVED = "response_received"
+-
+-
+@@ -104 +99,6 @@
+-    def __init__(self, config: ProductionLocalFreshnessAuthorityConfig) -> None:
++    def __init__(
++        self,
++        config: ProductionLocalFreshnessAuthorityConfig,
++        *,
++        expected_verifier: ExpectedPeerProcess,
++    ) -> None:
+@@ -106,0 +107,4 @@
++        if config.verifier_socket_path != VERIFIER_SOCKET_PATH:
++            raise ValueError("fixed protected verifier socket required")
++        # Oczekiwania przekazuje zatwierdzona kompozycja runtime, nigdy odpowiedź usługi.
++        self._verifier_client = RuntimeFreshnessVerifierClient(expected_verifier)
+@@ -136,21 +140,11 @@
+-        first = self._request_preparation_once(proposer, document, receipt)
+-        if (
+-            isinstance(first, FreshnessAuthorityResult)
+-            and first.outcome is FreshnessAuthorityOutcome.PREPARATION_OUTCOME_UNKNOWN
+-        ):
+-            # Only an exact retry is permitted: all three snapshots are reused.
+-            retry = self._request_preparation_once(proposer, document, receipt)
+-            if (
+-                isinstance(retry, FreshnessAuthorityResult)
+-                and retry.outcome is FreshnessAuthorityOutcome.UNAVAILABLE
+-            ):
+-                # Once authority execution may have happened, an outage cannot
+-                # prove that the durable preparation did not commit.
+-                return first
+-            return retry
+-        return first
+-
+-    def _request_preparation_once(
+-        self, proposer: bytes, document: bytes, receipt: bytes
+-    ) -> _Prepared | FreshnessAuthorityResult:
+-        if not hasattr(socket, "AF_UNIX"):
++        # Jedna próba; klient uwierzytelnia serwer przed send i sprawdza binding
++        # dokładnie tych trzech obiektów. UNKNOWN nie zezwala na reconnect/retry.
++        result = self._verifier_client.verify_exact_candidate(proposer, document, receipt)
++        if result.outcome is FreshnessIPCOutcome.INVALID:
++            outcome = (
++                FreshnessAuthorityOutcome.INVALID_DOCUMENT
++                if result.reason in {"INVALID_LOCAL_INPUT", "REQUEST_TOO_LARGE"}
++                else FreshnessAuthorityOutcome.INVALID_AUTHENTICATION
++            )
++            return FreshnessAuthorityResult(outcome)
++        if result.outcome is FreshnessIPCOutcome.UNAVAILABLE:
+@@ -158,8 +152,11 @@
+-        request = canonical_json_bytes(
+-            {
+-                "proposer_authentication": _b64(proposer),
+-                "authoritative_document": _b64(document),
+-                "finalization_receipt": _b64(receipt),
+-            }
+-        )
+-        state = _PreparationTransportState.NOT_CONNECTED
++        if result.outcome is FreshnessIPCOutcome.OUTCOME_UNKNOWN:
++            return FreshnessAuthorityResult(FreshnessAuthorityOutcome.PREPARATION_OUTCOME_UNKNOWN)
++        # PREPARED jest wynikiem zweryfikowanego klienta, nie odpowiedzi socketu.
++        # Niepełny wynik nie stanowi podstawy do SQL ani zapewnienia rollbacku.
++        if (
++            result.outcome is not FreshnessIPCOutcome.PREPARED
++            or type(result.preparation_id) is not str
++            or _HEX.fullmatch(result.preparation_id) is None
++            or type(result.binding) is not bytes
++        ):
++            return FreshnessAuthorityResult(FreshnessAuthorityOutcome.PREPARATION_OUTCOME_UNKNOWN)
+@@ -167,41 +164 @@
+-            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+-                client.connect(self._config.verifier_socket_path)
+-                state = _PreparationTransportState.CONNECTED
+-                # Set before sendall: even a partial frame may have reached the
+-                # peer, so absence of a response is conservatively ambiguous.
+-                state = _PreparationTransportState.REQUEST_STARTED
+-                client.sendall(struct.pack("!I", len(request)) + request)
+-                length = struct.unpack("!I", _receive_exact(client, 4))[0]
+-                if length < 2 or length > _MAX_FRAME:
+-                    raise ValueError("invalid verifier response frame")
+-                raw_response = _receive_exact(client, length)
+-                state = _PreparationTransportState.RESPONSE_RECEIVED
+-        except OSError:
+-            outcome = (
+-                FreshnessAuthorityOutcome.UNAVAILABLE
+-                if state
+-                in {_PreparationTransportState.NOT_CONNECTED, _PreparationTransportState.CONNECTED}
+-                else FreshnessAuthorityOutcome.PREPARATION_OUTCOME_UNKNOWN
+-            )
+-            return FreshnessAuthorityResult(outcome)
+-        except (ValueError, struct.error):
+-            return FreshnessAuthorityResult(FreshnessAuthorityOutcome.CORRUPT)
+-        try:
+-            response = parse_canonical_json(raw_response)
+-        except (ValueError, TypeError, UnicodeError):
+-            return FreshnessAuthorityResult(FreshnessAuthorityOutcome.CORRUPT)
+-        if type(response) is not dict or type(response.get("outcome")) is not str:
+-            return FreshnessAuthorityResult(FreshnessAuthorityOutcome.CORRUPT)
+-        outcome = response["outcome"]
+-        if outcome == "INVALID" and set(response) == {"outcome"}:
+-            return FreshnessAuthorityResult(FreshnessAuthorityOutcome.INVALID_AUTHENTICATION)
+-        if outcome == "UNAVAILABLE" and set(response) == {"outcome"}:
+-            return FreshnessAuthorityResult(FreshnessAuthorityOutcome.UNAVAILABLE)
+-        if outcome == "OUTCOME_UNKNOWN" and set(response) == {"outcome"}:
+-            return FreshnessAuthorityResult(FreshnessAuthorityOutcome.PREPARATION_OUTCOME_UNKNOWN)
+-        if outcome != "PREPARED" or set(response) != {"outcome", "preparation_id", "binding"}:
+-            return FreshnessAuthorityResult(FreshnessAuthorityOutcome.CORRUPT)
+-        preparation_id = response["preparation_id"]
+-        try:
+-            binding = _unb64(response["binding"])
+-            parsed = parse_canonical_json(binding)
++            parsed = parse_canonical_json(result.binding)
+@@ -209,5 +166,3 @@
+-            return FreshnessAuthorityResult(FreshnessAuthorityOutcome.CORRUPT)
+-        if (
+-            type(preparation_id) is not str
+-            or _HEX.fullmatch(preparation_id) is None
+-            or type(parsed) is not dict
++            return FreshnessAuthorityResult(FreshnessAuthorityOutcome.PREPARATION_OUTCOME_UNKNOWN)
++        if (
++            type(parsed) is not dict
+@@ -215,4 +170,4 @@
+-            or parsed.get("preparation_id") != preparation_id
+-        ):
+-            return FreshnessAuthorityResult(FreshnessAuthorityOutcome.CORRUPT)
+-        return _Prepared(preparation_id, binding, parsed)
++            or parsed.get("preparation_id") != result.preparation_id
++        ):
++            return FreshnessAuthorityResult(FreshnessAuthorityOutcome.PREPARATION_OUTCOME_UNKNOWN)
++        return _Prepared(result.preparation_id, result.binding, parsed)
+@@ -312,28 +266,0 @@
+-
+-
+-def _receive_exact(connection: socket.socket, count: int) -> bytes:
+-    value = bytearray()
+-    while len(value) < count:
+-        part = connection.recv(count - len(value))
+-        if not part:
+-            raise OSError("truncated local frame")
+-        value.extend(part)
+-    return bytes(value)
+-
+-
+-def _b64(value: bytes) -> str:
+-    return base64.urlsafe_b64encode(value).rstrip(b"=").decode("ascii")
+-
+-
+-def _unb64(value: object) -> bytes:
+-    if (
+-        type(value) is not str
+-        or not value
+-        or "=" in value
+-        or re.fullmatch(r"[A-Za-z0-9_-]+", value) is None
+-    ):
+-        raise ValueError("invalid base64url")
+-    result = base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+-    if _b64(result) != value:
+-        raise ValueError("noncanonical base64url")
+-    return result
