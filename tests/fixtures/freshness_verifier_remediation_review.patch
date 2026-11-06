@@ -1,0 +1,67 @@
+--- a/bot_core/freshness_semantic_verifier.py
++++ b/bot_core/freshness_semantic_verifier.py
+@@ -20,0 +21 @@
++import time
+@@ -27 +28 @@
+-from bot_core.linux_service_ipc import ReadOnlyVerifierQualifier
++from bot_core.linux_service_ipc import EXCHANGE_TIMEOUT_SECONDS, ReadOnlyVerifierQualifier
+@@ -153,0 +155,2 @@
++        connection: psycopg.Connection[object] | None = None
++        handed_off = False
+@@ -166,0 +170,10 @@
++            if facts != (
++                "freshness_crypto_verifier",
++                "freshness_crypto_verifier",
++                None,
++                None,
++                False,
++            ):
++                raise FreshnessVerifierUnavailable("non-peer or wrong database session")
++            handed_off = True
++            return connection
+@@ -169,4 +182,7 @@
+-        if facts != ("freshness_crypto_verifier", "freshness_crypto_verifier", None, None, False):
+-            connection.close()
+-            raise FreshnessVerifierUnavailable("non-peer or wrong database session")
+-        return connection
++        finally:
++            if connection is not None and not handed_off:
++                try:
++                    connection.close()
++                except psycopg.Error:
++                    # Zachowaj pierwotną odmowę również przy błędzie cleanup.
++                    pass
+@@ -708,0 +725 @@
++            deadline = time.monotonic() + EXCHANGE_TIMEOUT_SECONDS
+@@ -728 +745 @@
+-                    header = _receive_exact(connection, 4)
++                    header = _receive_exact(connection, 4, deadline)
+@@ -732 +749,5 @@
+-                    request = parse_canonical_json(_receive_exact(connection, length))
++                    raw = _receive_exact(connection, length, deadline)
++                    _transport_remaining(connection, deadline)
++                    if connection.recv(1):
++                        raise FreshnessSemanticVerificationError("trailing IPC request bytes")
++                    request = parse_canonical_json(raw)
+@@ -751,0 +773 @@
++                    _transport_remaining(connection, deadline)
+@@ -774 +796,6 @@
+-                connection.sendall(struct.pack("!I", len(response)) + response)
++                try:
++                    _transport_remaining(connection, deadline)
++                    connection.sendall(struct.pack("!I", len(response)) + response)
++                except OSError:
++                    # Utrata odpowiedzi nie dowodzi rollbacku i nie uruchamia retry.
++                    pass
+@@ -779 +806,8 @@
+-def _receive_exact(connection: socket.socket, count: int) -> bytes:
++def _transport_remaining(connection: socket.socket, deadline: float) -> None:
++    remaining = deadline - time.monotonic()
++    if remaining <= 0:
++        raise TimeoutError("verifier IPC transport deadline exceeded")
++    connection.settimeout(remaining)
++
++
++def _receive_exact(connection: socket.socket, count: int, deadline: float) -> bytes:
+@@ -781,0 +816 @@
++        _transport_remaining(connection, deadline)
