@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+from contextlib import contextmanager
 from copy import deepcopy
 import hashlib
 import json
@@ -11,11 +12,14 @@ import struct
 import subprocess
 import sys
 import time
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 import pytest
 
+import bot_core.freshness_semantic_verifier as semantic_verifier_module
 from bot_core.freshness_semantic_verifier import (
     DOCUMENT_AUTHENTICATION_DOMAIN,
     DOCUMENT_DIGEST_DOMAIN,
@@ -34,6 +38,7 @@ from bot_core.postgresql_freshness_authority import (
     complete_semantic_head_digest,
     parse_canonical_json,
 )
+from bot_core.production_signer_ipc import EXCHANGE_TIMEOUT_SECONDS
 
 requires_linux_unix_ipc = pytest.mark.skipif(
     not sys.platform.startswith("linux"),
@@ -355,35 +360,151 @@ def test_legal_proposer_rotation_changes_full_evidence_preparation_identity():
     assert first_preparation["preparation_id"] != second_preparation["preparation_id"]
 
 
+def _reap_ipc_process(process, *, deadline):
+    """Zbierz exitcode bez dodatniego join, który może blokować po sentinelu."""
+    while True:
+        process.join(0)
+        if process.exitcode is not None:
+            return
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return
+        # Backoff ogranicza CPU przy WNOHANG; gotowość listenera potwierdza Pipe.
+        time.sleep(min(0.01, remaining))
+
+
 def _ipc_exchange(path: Path, request: bytes, *, declared_length: int | None = None) -> dict:
+    deadline = time.monotonic() + EXCHANGE_TIMEOUT_SECONDS
+
+    def remaining():
+        budget = deadline - time.monotonic()
+        if budget <= 0:
+            raise TimeoutError("Przekroczono całkowity limit wymiany IPC")
+        return budget
+
+    def receive_exact(client, count):
+        result = bytearray()
+        while len(result) < count:
+            client.settimeout(remaining())
+            part = client.recv(count - len(result))
+            if not part:
+                raise EOFError("Serwer zamknął połączenie przed końcem odpowiedzi IPC")
+            result.extend(part)
+        return bytes(result)
+
+    frame = (
+        struct.pack("!I", len(request) if declared_length is None else declared_length) + request
+    )
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+        client.settimeout(remaining())
         client.connect(str(path))
-        client.sendall(
-            struct.pack("!I", len(request) if declared_length is None else declared_length)
-            + request
-        )
-        size = struct.unpack("!I", client.recv(4))[0]
-        return json.loads(client.recv(size))
+        client.settimeout(remaining())
+        client.sendall(frame)
+        size = struct.unpack("!I", receive_exact(client, 4))[0]
+        raw = receive_exact(client, size)
+        remaining()
+        response = json.loads(raw)
+    remaining()
+    return response
 
 
-def _ipc_server(tmp_path: Path, verifier, requests: int = 1):
+def _serve_ipc_fixture(verifier, path, requests, ready):
+    """Potwierdź gotowość dopiero po rzeczywistym listen w procesie dziecka."""
+
+    class ReadySocket(socket.socket):
+        def listen(self, backlog=socket.SOMAXCONN):
+            super().listen(backlog)
+            ready.send_bytes(b"LISTENING")
+            ready.close()
+
+    socket_proxy = SimpleNamespace(**{**vars(socket), "socket": ReadySocket})
+    try:
+        with patch.object(semantic_verifier_module, "socket", socket_proxy):
+            serve_local_unix_socket(
+                verifier, str(path), allowed_peer_uid=os.getuid(), stop_after=requests
+            )
+    finally:
+        ready.close()
+
+
+@contextmanager
+def _ipc_server(tmp_path: Path, verifier, requests: int = 1, *, readiness_timeout: float = 5.0):
+    """Uruchom własny serwer i ogranicz czas oczekiwania na jego listener."""
     import multiprocessing
+    from multiprocessing.connection import wait
 
     tmp_path.chmod(0o755)
     tmp_path.parent.chmod(0o755)
     tmp_path.parent.parent.chmod(0o755)
     path = tmp_path / "verifier.sock"
-    process = multiprocessing.get_context("fork").Process(
-        target=serve_local_unix_socket,
-        args=(verifier, str(path)),
-        kwargs={"allowed_peer_uid": os.getuid(), "stop_after": requests},
+    assert not path.exists(), "Ścieżka testowego socketu musi być wolna przed uruchomieniem"
+    context = multiprocessing.get_context("fork")
+    receiver, sender = context.Pipe(duplex=False)
+    process = context.Process(
+        target=_serve_ipc_fixture,
+        args=(verifier, path, requests, sender),
     )
-    process.start()
-    for _ in range(100):
-        if path.exists():
-            break
-        time.sleep(0.01)
-    return path, process
+
+    def fail(reason):
+        alive = process.is_alive()
+        pytest.fail(
+            f"{reason}; pid={process.pid}, exitcode={process.exitcode}, "
+            f"alive={alive}, socket_exists={path.exists()}",
+            pytrace=False,
+        )
+
+    started = False
+    try:
+        process.start()
+        started = True
+        sender.close()
+        deadline = time.monotonic() + readiness_timeout
+        while True:
+            if not process.is_alive():
+                process.join(0)
+                fail("Proces serwera zakończył się przed potwierdzeniem gotowości")
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                fail("Przekroczono limit oczekiwania na gotowość listenera")
+            available = wait((receiver, process.sentinel), timeout=remaining)
+            if process.sentinel in available or not process.is_alive():
+                # Gotowy sentinel może wyprzedzić dostępność kodu zakończenia
+                # (np. przy instrumentacji coverage). Nie zwiększamy deadline.
+                _reap_ipc_process(process, deadline=deadline)
+                fail("Proces serwera zakończył się przed potwierdzeniem gotowości")
+            if receiver in available:
+                try:
+                    message = receiver.recv_bytes()
+                except EOFError:
+                    # EOF może wyprzedzić aktualizację exitcode o moment.
+                    # Zbieramy kod zakończenia w pozostałym budżecie gotowości.
+                    _reap_ipc_process(process, deadline=deadline)
+                    fail("Kanał gotowości zamknięto bez potwierdzenia listenera")
+                if message != b"LISTENING":
+                    fail("Odebrano nieprawidłowe potwierdzenie gotowości listenera")
+                if not process.is_alive():
+                    process.join(0)
+                    fail("Proces serwera zakończył się przy potwierdzeniu gotowości")
+                break
+        yield path, process
+        _reap_ipc_process(process, deadline=time.monotonic() + 5.0)
+        if process.is_alive() or process.exitcode != 0:
+            fail("Serwer nie zakończył się prawidłowo po wymianie IPC")
+        assert not path.exists(), "Serwer nie usunął swojego socketu po zakończeniu"
+    finally:
+        sender.close()
+        receiver.close()
+        if started:
+            if process.is_alive():
+                process.terminate()
+                _reap_ipc_process(process, deadline=time.monotonic() + 5.0)
+            if process.is_alive():
+                process.kill()
+                _reap_ipc_process(process, deadline=time.monotonic() + 5.0)
+            assert not process.is_alive(), "Nie udało się zakończyć własnego procesu testowego"
+            process.join(0)
+            if path.is_socket() and not path.is_symlink():
+                path.unlink(missing_ok=True)
 
 
 def _ipc_request(values, **extra) -> bytes:
@@ -400,13 +521,13 @@ def _ipc_request(values, **extra) -> bytes:
 @requires_linux_unix_ipc
 def test_unix_ipc_process_accepts_only_closed_valid_request(tmp_path):
     values = list(fixture_candidate())
-    path, process = _ipc_server(tmp_path, values[0])
-    response = _ipc_exchange(path, _ipc_request(values))
-    assert response["outcome"] == "PREPARED"
-    assert response["preparation_id"] == "opaque-preparation"
-    assert set(response) == {"outcome", "preparation_id", "binding"}
-    process.join(5)
-    assert process.exitcode == 0 and not path.exists()
+    with _ipc_server(tmp_path, values[0]) as (path, process):
+        response = _ipc_exchange(path, _ipc_request(values))
+        assert response["outcome"] == "PREPARED"
+        assert response["preparation_id"] == "opaque-preparation"
+        assert set(response) == {"outcome", "preparation_id", "binding"}
+        _reap_ipc_process(process, deadline=time.monotonic() + 5.0)
+        assert process.exitcode == 0 and not path.exists()
 
 
 @pytest.mark.parametrize(
@@ -425,10 +546,10 @@ def test_unix_ipc_has_closed_non_crypto_failure_outcomes(tmp_path, failure, expe
             raise failure
 
     object.__setattr__(values[0], "preparations", FailingWriter())
-    path, process = _ipc_server(tmp_path, values[0])
-    assert _ipc_exchange(path, _ipc_request(values)) == expected
-    process.join(5)
-    assert process.exitcode == 0
+    with _ipc_server(tmp_path, values[0]) as (path, process):
+        assert _ipc_exchange(path, _ipc_request(values)) == expected
+        _reap_ipc_process(process, deadline=time.monotonic() + 5.0)
+        assert process.exitcode == 0
 
 
 @pytest.mark.parametrize(
@@ -450,43 +571,43 @@ def test_unix_ipc_has_closed_non_crypto_failure_outcomes(tmp_path, failure, expe
 @requires_linux_unix_ipc
 def test_unix_ipc_process_rejects_injection_and_malformed_without_oracle(tmp_path, request_factory):
     values = list(fixture_candidate())
-    path, process = _ipc_server(tmp_path, values[0])
-    assert _ipc_exchange(path, request_factory(values)) == {"outcome": "INVALID"}
-    process.join(5)
-    assert process.exitcode == 0
+    with _ipc_server(tmp_path, values[0]) as (path, process):
+        assert _ipc_exchange(path, request_factory(values)) == {"outcome": "INVALID"}
+        _reap_ipc_process(process, deadline=time.monotonic() + 5.0)
+        assert process.exitcode == 0
 
 
 @pytest.mark.parametrize("declared", [1, 4 * 1024 * 1024 + 1])
 @requires_linux_unix_ipc
 def test_unix_ipc_process_rejects_bad_frame_lengths(tmp_path, declared):
     values = list(fixture_candidate())
-    path, process = _ipc_server(tmp_path, values[0])
-    assert _ipc_exchange(path, b"x", declared_length=declared) == {"outcome": "INVALID"}
-    process.join(5)
-    assert process.exitcode == 0
+    with _ipc_server(tmp_path, values[0]) as (path, process):
+        assert _ipc_exchange(path, b"x", declared_length=declared) == {"outcome": "INVALID"}
+        _reap_ipc_process(process, deadline=time.monotonic() + 5.0)
+        assert process.exitcode == 0
 
 
 @requires_linux_unix_ipc
 def test_unix_ipc_wrong_peer_cannot_invoke_and_there_is_no_tcp_listener(tmp_path):
     values = list(fixture_candidate())
-    path, process = _ipc_server(tmp_path, values[0])
-    path.chmod(0o666)  # force the request through to the SO_PEERCRED gate
-    attempt = subprocess.run(
-        [
-            "runuser",
-            "-u",
-            "nobody",
-            "--",
-            "/usr/bin/python3",
-            "-c",
-            "import socket,sys;s=socket.socket(socket.AF_UNIX);s.connect(sys.argv[1]);s.sendall(b'\\0\\0\\0\\2{}');print(s.recv(1).hex())",
-            str(path),
-        ],
-        text=True,
-        capture_output=True,
-    )
-    assert attempt.returncode != 0
-    assert process.is_alive()  # rejected peer did not count as a verifier operation
-    assert _ipc_exchange(path, _ipc_request(values))["preparation_id"] == "opaque-preparation"
-    process.join(5)
-    assert process.exitcode == 0
+    with _ipc_server(tmp_path, values[0]) as (path, process):
+        path.chmod(0o666)  # force the request through to the SO_PEERCRED gate
+        attempt = subprocess.run(
+            [
+                "runuser",
+                "-u",
+                "nobody",
+                "--",
+                "/usr/bin/python3",
+                "-c",
+                "import socket,sys;s=socket.socket(socket.AF_UNIX);s.connect(sys.argv[1]);s.sendall(b'\\0\\0\\0\\2{}');print(s.recv(1).hex())",
+                str(path),
+            ],
+            text=True,
+            capture_output=True,
+        )
+        assert attempt.returncode != 0
+        assert process.is_alive()  # rejected peer did not count as a verifier operation
+        assert _ipc_exchange(path, _ipc_request(values))["preparation_id"] == "opaque-preparation"
+        _reap_ipc_process(process, deadline=time.monotonic() + 5.0)
+        assert process.exitcode == 0

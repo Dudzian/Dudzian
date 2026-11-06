@@ -130,6 +130,7 @@ jobs:
           deployment/stage9_vm_trial.py
           deployment/stage9_vm_environment.py
           deployment/stage9_vm_native.py
+          deployment/stage9_vm_performance.py
           scripts/prepare_stage9_vm_bundle.py
           deployment/production_local_installer.py
           deployment/production_local_installer_host.py
@@ -156,6 +157,7 @@ jobs:
           tests/security/test_freshness_qualification_profiles.py
           tests/security/test_linux_service_postgresql.py
           tests/security/test_freshness_semantic_verifier.py
+          tests/security/test_stage9_af_unix_readiness.py
           tests/security/test_freshness_production_local_deployment.py
           tests/security/test_freshness_service_identity.py
           tests/deployment/test_linux_functional_pipeline.py
@@ -406,6 +408,7 @@ jobs:
           deployment/stage9_vm_trial.py
           deployment/stage9_vm_environment.py
           deployment/stage9_vm_native.py
+          deployment/stage9_vm_performance.py
           scripts/prepare_stage9_vm_bundle.py
           deployment/production_local_installer.py
           deployment/production_local_installer_host.py
@@ -466,6 +469,7 @@ jobs:
           tests/security/test_freshness_qualification_profiles.py
           tests/security/test_linux_service_postgresql.py
           tests/security/test_freshness_semantic_verifier.py
+          tests/security/test_stage9_af_unix_readiness.py
           tests/security/test_freshness_production_local_deployment.py
           tests/security/test_freshness_service_identity.py
           tests/deployment/test_linux_functional_pipeline.py
@@ -477,6 +481,8 @@ jobs:
           tests/deployment/test_stage9_vm_trial.py
           tests/deployment/test_stage9_vm_environment.py
           tests/deployment/test_stage9_vm_native.py
+          tests/deployment/test_stage9_vm_performance.py
+          tests/security/test_stage9_d07_model_measurement.py
           tests/deployment/test_prepare_stage9_vm_bundle.py
           tests/deployment/test_production_local_installer.py
           tests/deployment/test_linux_physical_collector.py
@@ -618,6 +624,7 @@ jobs:
           --cov=deployment.stage9_vm_trial
           --cov=deployment.stage9_vm_environment
           --cov=deployment.stage9_vm_native
+          --cov=deployment.stage9_vm_performance
           --cov=scripts.prepare_stage9_vm_bundle
           --cov=deployment.production_local_installer
           --cov=deployment.production_local_installer_host

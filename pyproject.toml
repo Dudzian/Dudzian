@@ -38,6 +38,7 @@ files = [
   "deployment/stage9_vm_trial.py",
   "deployment/stage9_vm_environment.py",
   "deployment/stage9_vm_native.py",
+  "deployment/stage9_vm_performance.py",
   "scripts/prepare_stage9_vm_bundle.py",
   "deployment/production_local_installer.py",
   "deployment/production_local_installer_host.py",

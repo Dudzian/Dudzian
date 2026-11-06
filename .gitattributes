@@ -19,3 +19,8 @@ deployment/freshness_verifier_entrypoint.py text eol=lf
 deployment/install-production-local.sh text eol=lf
 deployment/systemd/cryptohunter-freshness-verifier.service text eol=lf
 bot_core/freshness_service_identity.py text eol=lf
+bot_core/account_genesis_freshness_authority.py text eol=lf
+
+# Dokładne patche TEST_ONLY muszą pasować do chronionych baz LF.
+tests/fixtures/account_genesis_verified_transport_review.patch text eol=lf
+tests/fixtures/freshness_verifier_remediation_review.patch text eol=lf
