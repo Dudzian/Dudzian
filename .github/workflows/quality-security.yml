@@ -157,6 +157,7 @@ jobs:
           tests/security/test_freshness_qualification_profiles.py
           tests/security/test_linux_service_postgresql.py
           tests/security/test_freshness_semantic_verifier.py
+          tests/security/test_stage9_af_unix_readiness.py
           tests/security/test_freshness_production_local_deployment.py
           tests/security/test_freshness_service_identity.py
           tests/deployment/test_linux_functional_pipeline.py
@@ -468,6 +469,7 @@ jobs:
           tests/security/test_freshness_qualification_profiles.py
           tests/security/test_linux_service_postgresql.py
           tests/security/test_freshness_semantic_verifier.py
+          tests/security/test_stage9_af_unix_readiness.py
           tests/security/test_freshness_production_local_deployment.py
           tests/security/test_freshness_service_identity.py
           tests/deployment/test_linux_functional_pipeline.py
