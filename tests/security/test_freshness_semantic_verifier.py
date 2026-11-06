@@ -374,25 +374,38 @@ def _reap_ipc_process(process, *, deadline):
 
 
 def _ipc_exchange(path: Path, request: bytes, *, declared_length: int | None = None) -> dict:
+    deadline = time.monotonic() + EXCHANGE_TIMEOUT_SECONDS
+
+    def remaining():
+        budget = deadline - time.monotonic()
+        if budget <= 0:
+            raise TimeoutError("Przekroczono całkowity limit wymiany IPC")
+        return budget
+
     def receive_exact(client, count):
         result = bytearray()
         while len(result) < count:
+            client.settimeout(remaining())
             part = client.recv(count - len(result))
             if not part:
                 raise EOFError("Serwer zamknął połączenie przed końcem odpowiedzi IPC")
             result.extend(part)
         return bytes(result)
 
+    frame = (
+        struct.pack("!I", len(request) if declared_length is None else declared_length) + request
+    )
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-        # Surowa fixture nie zwiększa istniejącego limitu klienta 3,0 s.
-        client.settimeout(EXCHANGE_TIMEOUT_SECONDS)
+        client.settimeout(remaining())
         client.connect(str(path))
-        client.sendall(
-            struct.pack("!I", len(request) if declared_length is None else declared_length)
-            + request
-        )
+        client.settimeout(remaining())
+        client.sendall(frame)
         size = struct.unpack("!I", receive_exact(client, 4))[0]
-        return json.loads(receive_exact(client, size))
+        raw = receive_exact(client, size)
+        remaining()
+        response = json.loads(raw)
+    remaining()
+    return response
 
 
 def _serve_ipc_fixture(verifier, path, requests, ready):

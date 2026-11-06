@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import errno
+import json
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 import multiprocessing
@@ -10,6 +11,7 @@ import os
 from pathlib import Path
 import socket
 import stat
+import struct
 import sys
 import time
 from types import SimpleNamespace
@@ -281,3 +283,161 @@ def test_response_loss_after_send_never_reconnects_or_prepares_twice(tmp_path, m
                 fixture._ipc_exchange(path, fixture._ipc_request(values))
         assert connects == [str(path)] and len(sends) == 1 and sends[0] > 0
     assert accepts.value == preparations.value == 1
+
+
+def _fragmented_response_target(
+    _verifier, path, _requests, ready, *, response, offsets, attempts, accepts
+):
+    """TEST_ONLY: rzeczywisty transport, modelowa odpowiedź bez prepare/PG."""
+    payload = json.dumps(response).encode()
+    frame = struct.pack("!I", len(payload)) + payload
+    fragments = (frame[:1], frame[1:3], frame[3:8], frame[8:])
+
+    def receive_exact(peer, count):
+        result = bytearray()
+        while len(result) < count:
+            part = peer.recv(count - len(result))
+            assert part, "Klient zakończył niepełną ramkę żądania"
+            result.extend(part)
+        return bytes(result)
+
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
+            listener.settimeout(5)
+            listener.bind(str(path))
+            listener.listen(1)
+            ready.send_bytes(b"LISTENING")
+            ready.close()
+            peer, _address = listener.accept()
+            with peer:
+                accepts.value += 1
+                peer.settimeout(5)
+                size = struct.unpack("!I", receive_exact(peer, 4))[0]
+                assert receive_exact(peer, size) == b"{}"
+                started = time.monotonic()
+                for index, (offset, fragment) in enumerate(zip(offsets, fragments, strict=True)):
+                    # Opóźnienia są wektorem transmisji; gotowość potwierdza Pipe po listen.
+                    time.sleep(max(0, started + offset - time.monotonic()))
+                    attempts[index] = time.monotonic()
+                    try:
+                        peer.sendall(fragment)
+                    except (BrokenPipeError, ConnectionResetError):
+                        break
+    finally:
+        ready.close()
+        path.unlink(missing_ok=True)
+
+
+def test_fragmented_response_cannot_renew_total_exchange_deadline(tmp_path, monkeypatch):
+    context = multiprocessing.get_context("fork")
+    accepts, attempts = context.Value("i", 0), context.Array("d", 4)
+    monkeypatch.setattr(
+        fixture,
+        "_serve_ipc_fixture",
+        partial(
+            _fragmented_response_target,
+            response={"outcome": "INVALID"},
+            offsets=(0, 0.9, 1.8, 3.6),
+            attempts=attempts,
+            accepts=accepts,
+        ),
+    )
+    connects, sends = [], []
+
+    class CountedClient(socket.socket):
+        def connect(self, address):
+            connects.append(address)
+            return super().connect(address)
+
+        def sendall(self, data, flags=0):
+            sends.append(data)
+            return super().sendall(data, flags)
+
+    with fixture._ipc_server(tmp_path, fixture.fixture_candidate()[0]) as (path, _process):
+        proxy = SimpleNamespace(**{**vars(socket), "socket": CountedClient})
+        with patch.object(fixture, "socket", proxy):
+            started = time.monotonic()
+            with pytest.raises(TimeoutError):
+                fixture._ipc_exchange(path, b"{}")
+            elapsed = time.monotonic() - started
+        assert 2.5 <= elapsed < 4.5
+        assert connects == [str(path)] and sends == [struct.pack("!I", 2) + b"{}"]
+    assert accepts.value == 1
+    timestamps = list(attempts)
+    assert all(timestamps)
+    assert timestamps[-1] - timestamps[0] > fixture.EXCHANGE_TIMEOUT_SECONDS
+    assert max(later - earlier for earlier, later in zip(timestamps, timestamps[1:])) < 3
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        {"outcome": "INVALID"},
+        {"outcome": "UNAVAILABLE"},
+        {"outcome": "OUTCOME_UNKNOWN"},
+        {"outcome": "PREPARED", "preparation_id": "opaque-preparation", "binding": "e30"},
+    ],
+    ids=["INVALID", "UNAVAILABLE", "OUTCOME_UNKNOWN", "PREPARED"],
+)
+def test_fragmented_response_within_total_deadline_keeps_exact_result(
+    tmp_path, monkeypatch, response
+):
+    context = multiprocessing.get_context("fork")
+    accepts, attempts = context.Value("i", 0), context.Array("d", 4)
+    target = partial(
+        _fragmented_response_target,
+        response=response,
+        offsets=(0, 0.02, 0.04, 0.06),
+        attempts=attempts,
+        accepts=accepts,
+    )
+    monkeypatch.setattr(fixture, "_serve_ipc_fixture", target)
+    with fixture._ipc_server(tmp_path, fixture.fixture_candidate()[0]) as (path, _process):
+        assert fixture._ipc_exchange(path, b"{}") == response
+    assert accepts.value == 1 and all(attempts)
+    assert attempts[-1] - attempts[0] < fixture.EXCHANGE_TIMEOUT_SECONDS
+
+
+@pytest.mark.parametrize("late_operation", ["connect", "sendall", "last_recv"])
+def test_exchange_rejects_operation_returning_after_shared_deadline(monkeypatch, late_operation):
+    """Model zegara sprawdza zużycie budżetu także przez zakończoną operację."""
+    now, operations, timeouts = [0.0], [], []
+    payload = b'{"outcome":"INVALID"}'
+    fragments = [struct.pack("!I", len(payload)), payload]
+
+    def operation(name):
+        operations.append(name)
+        now[0] += 3.1 if name == late_operation else 0.2
+
+    class ModelClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_arguments):
+            return None
+
+        def settimeout(self, timeout):
+            assert 0 < timeout <= fixture.EXCHANGE_TIMEOUT_SECONDS
+            timeouts.append(timeout)
+
+        def connect(self, _address):
+            operation("connect")
+
+        def sendall(self, _data):
+            operation("sendall")
+
+        def recv(self, count):
+            part = fragments.pop(0)
+            assert count == len(part)
+            operation("header_recv" if fragments else "last_recv")
+            return part
+
+    proxy = SimpleNamespace(**{**vars(socket), "socket": lambda *_args: ModelClient()})
+    monkeypatch.setattr(fixture, "socket", proxy)
+    monkeypatch.setattr(fixture, "time", SimpleNamespace(monotonic=lambda: now[0]))
+    with pytest.raises(TimeoutError):
+        fixture._ipc_exchange(Path("model.sock"), b"{}")
+    expected = ["connect", "sendall", "header_recv", "last_recv"]
+    assert operations == expected[: expected.index(late_operation) + 1]
+    assert len(timeouts) == len(operations)
+    assert timeouts == pytest.approx([3 - 0.2 * index for index in range(len(operations))])
