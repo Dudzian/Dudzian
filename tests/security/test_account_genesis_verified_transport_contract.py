@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import inspect
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import psycopg
@@ -58,6 +59,17 @@ def _forbid_sql(monkeypatch):
     connection = Mock(side_effect=AssertionError("Próba SQL bez poprawnego PREPARED"))
     monkeypatch.setattr(psycopg, "connect", connection)
     return connection
+
+
+@pytest.fixture
+def linux_client_before_transport(monkeypatch):
+    """Model platformy dla lokalnych limitów; żadnego socketu ani dowodu IPC."""
+    constructor = Mock(side_effect=AssertionError("Kontrola lokalna nie może tworzyć socketu"))
+    monkeypatch.setattr(ipc, "sys", SimpleNamespace(platform="linux"))
+    monkeypatch.setattr(ipc, "socket", SimpleNamespace(AF_UNIX=object(), socket=constructor))
+    monkeypatch.setattr(ipc, "_require_runtime_identity", lambda _expected: None)
+    yield
+    constructor.assert_not_called()
 
 
 @pytest.mark.parametrize(
@@ -109,11 +121,9 @@ def test_non_bytes_input_never_reaches_client_or_sql(authority, monkeypatch, pos
     "invalid", [b"", b"x" * (ipc.MAX_FRAME_BYTES + 1)], ids=["empty", "oversized"]
 )
 def test_local_length_refusal_uses_actual_client_without_transport_or_sql(
-    authority, monkeypatch, position, invalid
+    authority, monkeypatch, linux_client_before_transport, position, invalid
 ):
-    # NSS/UID wyłącznie model; kontrola rozmiaru i mapowanie to prawdziwy kod.
-    monkeypatch.setattr(ipc.sys, "platform", "linux")
-    monkeypatch.setattr(ipc, "_require_runtime_identity", lambda _expected: None)
+    # Platforma/NSS/UID są modelem; kontrola rozmiaru i mapowanie to prawdziwy kod.
     transport = Mock(side_effect=AssertionError("Nie wolno łączyć przy złym rozmiarze"))
     monkeypatch.setattr(ipc, "_pinned_verifier_socket", transport)
     sql = _forbid_sql(monkeypatch)
@@ -124,9 +134,9 @@ def test_local_length_refusal_uses_actual_client_without_transport_or_sql(
     sql.assert_not_called()
 
 
-def test_encoded_request_limit_refuses_before_transport_or_sql(authority, monkeypatch):
-    monkeypatch.setattr(ipc.sys, "platform", "linux")
-    monkeypatch.setattr(ipc, "_require_runtime_identity", lambda _expected: None)
+def test_encoded_request_limit_refuses_before_transport_or_sql(
+    authority, monkeypatch, linux_client_before_transport
+):
     transport = Mock(side_effect=AssertionError("Nie wolno wysyłać za dużej ramki"))
     monkeypatch.setattr(ipc, "_pinned_verifier_socket", transport)
     sql = _forbid_sql(monkeypatch)
@@ -134,6 +144,23 @@ def test_encoded_request_limit_refuses_before_transport_or_sql(authority, monkey
         "INVALID_DOCUMENT"
     )
     transport.assert_not_called()
+    sql.assert_not_called()
+
+
+def test_missing_af_unix_refuses_before_identity_transport_or_sql(authority, monkeypatch):
+    """Brak transportu nadal odmawia, także w modelu platformy Linux."""
+    monkeypatch.setattr(ipc, "sys", SimpleNamespace(platform="linux"))
+    constructor = Mock(side_effect=AssertionError("Brak AF_UNIX musi poprzedzać socket"))
+    monkeypatch.setattr(ipc, "socket", SimpleNamespace(socket=constructor))
+    identity = Mock(side_effect=AssertionError("Brak AF_UNIX musi poprzedzać tożsamość"))
+    transport = Mock(side_effect=AssertionError("Brak AF_UNIX musi poprzedzać transport"))
+    monkeypatch.setattr(ipc, "_require_runtime_identity", identity)
+    monkeypatch.setattr(ipc, "_pinned_verifier_socket", transport)
+    sql = _forbid_sql(monkeypatch)
+    assert authority.authenticate_and_advance(b"p", b"d", b"r").outcome.value == "UNAVAILABLE"
+    identity.assert_not_called()
+    transport.assert_not_called()
+    constructor.assert_not_called()
     sql.assert_not_called()
 
 
