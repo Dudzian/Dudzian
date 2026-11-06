@@ -420,6 +420,32 @@ jobs:
           bot_core/freshness_verifier_service.py
           deployment/linux_physical_native.py deployment/linux_physical_collector.py
           deployment/linux_evidence_handoff.py
+      - name: S9-FV-01 izolowany przegląd transportu AccountGenesis (TEST_ONLY)
+        env:
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+          DUDZIAN_TEST_MODE: "1"
+          DUDZIAN_ALLOW_LONG_POLL: "0"
+        shell: bash
+        run: |
+          s9_fv_01_report="$RUNNER_TEMP/s9-fv-01-junit.xml"
+          rm -f -- "$s9_fv_01_report"
+          s9_fv_01_pytest_status=0
+          python -m pytest -ra -p asyncio \
+            tests/scripts/test_s9_fv_01_junit.py \
+            tests/scripts/test_s9_fv_01_junit_workflow.py \
+            tests/security/test_account_genesis_verified_transport_contract.py \
+            tests/security/test_account_genesis_verified_transport_unix.py \
+            tests/security/test_account_genesis_verified_transport_scope.py \
+            tests/security/test_freshness_runtime_ipc.py \
+            tests/security/test_freshness_runtime_ipc_identity.py \
+            tests/security/test_freshness_verifier_transport_remediation.py \
+            tests/security/test_freshness_verifier_pg_remediation.py \
+            tests/security/test_freshness_verifier_remediation_scope.py \
+            -m "not hardware and not destructive and not network" -q \
+            -o junit_family=xunit2 --junitxml="$s9_fv_01_report" \
+            || s9_fv_01_pytest_status=$?
+          python scripts/quality/check_s9_fv_01_junit.py "$s9_fv_01_report" \
+            --pytest-exit-code "$s9_fv_01_pytest_status"
       # PRE executor tests replace native custody, console and process boundaries.
       - name: Property and critical pure-logic tests with branch coverage
         env:
