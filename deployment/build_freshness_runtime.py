@@ -352,11 +352,13 @@ def build_runtime(
     probe = json.loads(_run([str(target_python), "-I", "-s", "-B", "-c", _PROBE]))
     if probe["packages"] != VERSIONS or probe["abi"] != "cpython-312-x86_64-linux-gnu":
         raise BuildError("Niezgodny zbiór bibliotek lub ABI")
-    shutil.copytree(wheelhouse, destination / "wheelhouse")
+    copied_wheelhouse = destination / "wheelhouse"
+    shutil.copytree(wheelhouse, copied_wheelhouse)
+    # copytree zachowuje także tryb katalogu z nośnika tylko do odczytu.
+    # Przeniesienie pip wymaga zapisu w kopii katalogu, nie w plikach wheels.
+    copied_wheelhouse.chmod(copied_wheelhouse.stat().st_mode | stat.S_IWUSR)
     (destination / "build-tools").mkdir()
-    (destination / "wheelhouse" / pip["filename"]).rename(
-        destination / "build-tools" / pip["filename"]
-    )
+    (copied_wheelhouse / pip["filename"]).rename(destination / "build-tools" / pip["filename"])
     shutil.copyfile(LOCK, destination / "requirements.lock")
     shutil.copyfile(CATALOG, destination / "wheelhouse.json")
     (destination / "build-probe.json").write_text(json.dumps(probe, sort_keys=True) + "\n")
