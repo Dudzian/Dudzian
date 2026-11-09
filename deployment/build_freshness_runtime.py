@@ -247,13 +247,17 @@ def _external_path_closure(seeds: set[Path]) -> tuple[Path, ...]:
     targets: dict[Path, str] = {}
     endpoints: dict[Path, Path] = {}
 
-    def visit(path: Path, active: frozenset[Path] = frozenset()) -> Path:
-        if not path.is_absolute():
+    def visit(path: Path | str, active: frozenset[Path] = frozenset()) -> Path:
+        literal_path = os.fspath(path)
+        if not literal_path.startswith("/"):
             raise BuildError("Wymagana absolutna ścieżka inwentarza")
-        current = Path(path.anchor)
-        for part in path.parts[1:]:
+        current = Path("/")
+        # Zachowaj także końcowe '/' i '/.': wymagają katalogu, a Path je usuwa.
+        for part in literal_path.split("/")[1:]:
             if not stat.S_ISDIR(current.lstat().st_mode):
                 raise BuildError("Przodek inwentarza nie jest katalogiem")
+            if part in {"", "."}:
+                continue
             if part == "..":
                 current = current.parent
                 continue
@@ -265,9 +269,7 @@ def _external_path_closure(seeds: set[Path]) -> tuple[Path, ...]:
                     raise BuildError("Cykl lub zbyt długi łańcuch symlinków runtime")
                 target = os.readlink(current)
                 targets[current] = target
-                target_path = Path(target)
-                if not target_path.is_absolute():
-                    target_path = current.parent / target_path
+                target_path = target if target.startswith("/") else f"{current.parent}/{target}"
                 endpoint = visit(target_path, active | {current})
                 endpoints[current] = endpoint
                 current = endpoint

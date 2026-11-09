@@ -118,7 +118,7 @@ def test_external_inventory_closes_usrmerge_parents_and_directory_targets(extern
     library.symlink_to("libnative.so.1")
     (host / "usr/lib/libnative.so.1").write_bytes(b"native dependency")
     dependencies.add(host / "lib/libnative.so")
-    (host / "usr/lib/python3.12/config").symlink_to("../native-config")
+    (host / "usr/lib/python3.12/config").symlink_to(".././native-config/")
     (host / "usr/lib/native-config").mkdir()
     (host / "usr/lib/native-config/unrelated").write_bytes(b"outside stdlib traversal")
 
@@ -145,6 +145,7 @@ def test_external_inventory_closes_usrmerge_parents_and_directory_targets(extern
     assert host / "lib/libnative.so" not in inventory
     assert host / "usr/lib/native-config/unrelated" not in inventory
     assert runtime._record(host / "lib")["target"] == "usr/lib"
+    assert runtime._record(host / "usr/lib/python3.12/config")["target"] == ".././native-config/"
 
 
 @pytest.mark.parametrize(
@@ -155,6 +156,8 @@ def test_external_inventory_closes_usrmerge_parents_and_directory_targets(extern
         "long-chain",
         "special",
         "file-parent",
+        "file-as-directory",
+        "dot-after-file",
         "aliased-target",
         "dotdot-through-link",
     ],
@@ -175,6 +178,10 @@ def test_external_inventory_refuses_invalid_symlink_closure(external_host, failu
         os.mkfifo(link)
     elif failure == "file-parent":
         link.symlink_to("site.py/../site.py")
+    elif failure == "file-as-directory":
+        link.symlink_to("site.py/")
+    elif failure == "dot-after-file":
+        link.symlink_to("site.py/.")
     elif failure == "aliased-target":
         (host / "lib").symlink_to("usr/lib")
         link.symlink_to("../../../lib/python3.12/site.py")
