@@ -15,6 +15,186 @@ from pathlib import Path
 import pytest
 
 from deployment import build_freshness_runtime as builder
+from deployment import freshness_runtime as runtime
+
+
+@pytest.fixture
+def external_host(tmp_path, monkeypatch):
+    """Prawdziwy filesystem; podmieniamy tylko ścieżki hosta i wynik ldd."""
+    if sys.platform != "linux":
+        pytest.skip("Kontrakt filesystem Linux")
+    host = tmp_path / "host"
+    destination = tmp_path / "runtime"
+    destination.mkdir()
+    for name in ("usr/bin", "usr/sbin", "usr/lib/python3.12", "etc"):
+        (host / name).mkdir(parents=True, exist_ok=True)
+    (host / "usr/bin/python3.12").write_bytes(b"interpreter")
+    (host / "usr/lib/python3.12/site.py").write_bytes(b"stdlib")
+    (host / "etc/ld.so.cache").write_bytes(b"loader cache")
+
+    def isolated_path(value):
+        path = Path(value)
+        if path.parts[:2] in {
+            ("/", "etc"),
+            ("/", "lib"),
+            ("/", "lib64"),
+            ("/", "bin"),
+            ("/", "sbin"),
+        }:
+            return host / path.relative_to("/")
+        return path
+
+    monkeypatch.setattr(builder, "Path", isolated_path)
+    monkeypatch.setattr(builder, "BASE_PYTHON", host / "usr/bin/python3.12")
+    dependencies = set()
+    monkeypatch.setattr(builder, "_native_dependencies", lambda roots: dependencies)
+    return host, destination, {"base_prefix": str(host / "usr")}, dependencies
+
+
+@pytest.mark.parametrize("length", [2, 3, 5, 31])
+@pytest.mark.parametrize("absolute", [False, True])
+def test_external_inventory_closes_every_literal_symlink(external_host, length, absolute):
+    host, destination, probe, _ = external_host
+    first = host / "usr/lib/python3.12/config-3.12-x86_64-linux-gnu/libpython3.12.so"
+    first.parent.mkdir()
+    library = host / "usr/lib/x86_64-linux-gnu"
+    library.mkdir()
+    links = [first, library / "libpython3.12.so.1"]
+    links.extend(library / f"libpython3.12.so.link{i}" for i in range(length - 2))
+    final = library / "libpython3.12.so.1.0"
+    final.write_bytes(b"trusted libpython")
+    targets = {}
+    for link, target in zip(links, [*links[1:], final], strict=True):
+        literal = str(target) if absolute else os.path.relpath(target, link.parent)
+        link.symlink_to(literal)
+        targets[link] = literal
+
+    inventory = builder._external_inventory(destination, probe)
+    assert inventory == tuple(sorted(set(inventory)))
+    assert inventory == builder._external_inventory(destination, probe)
+    assert set(links) | {final} <= set(inventory)
+    assert all(
+        parent in inventory
+        for path in [*links, final]
+        for parent in path.parents
+        if parent != Path("/")
+    )
+    assert Path("/") not in inventory
+    assert not absolute or Path(targets[first]).is_absolute()
+    if not absolute:
+        assert targets[first] == "../../x86_64-linux-gnu/libpython3.12.so.1"
+    manifest = runtime.collect_runtime_manifest(
+        destination,
+        environment_id="test-closure",
+        release_revision="a" * 40,
+        interpreter={},
+        packages={},
+        external_paths=inventory,
+        lock_sha256="0" * 64,
+    )
+    for link, literal in targets.items():
+        assert manifest["external_files"][str(link)] == {
+            "kind": "symlink",
+            "mode": 0o777,
+            "target": literal,
+        }
+    assert (
+        manifest["external_files"][str(final)]["sha256"]
+        == hashlib.sha256(final.read_bytes()).hexdigest()
+    )
+
+
+def test_external_inventory_closes_usrmerge_parents_and_directory_targets(external_host):
+    host, destination, probe, dependencies = external_host
+    for name, target in (
+        ("lib", "usr/lib"),
+        ("bin", "usr/bin"),
+        ("sbin", "usr/sbin"),
+        ("lib64", "usr/lib64"),
+    ):
+        (host / name).symlink_to(target)
+    (host / "usr/lib64").symlink_to("lib")
+    library = host / "usr/lib/libnative.so"
+    library.symlink_to("libnative.so.1")
+    (host / "usr/lib/libnative.so.1").write_bytes(b"native dependency")
+    dependencies.add(host / "lib/libnative.so")
+    (host / "usr/lib/python3.12/config").symlink_to("../native-config")
+    (host / "usr/lib/native-config").mkdir()
+    (host / "usr/lib/native-config/unrelated").write_bytes(b"outside stdlib traversal")
+
+    inventory = builder._external_inventory(destination, probe)
+    assert {
+        *(
+            host / name
+            for name in (
+                "lib",
+                "lib64",
+                "bin",
+                "sbin",
+                "usr/lib",
+                "usr/lib64",
+                "usr/bin",
+                "usr/sbin",
+            )
+        ),
+        library,
+        host / "usr/lib/libnative.so.1",
+        host / "usr/lib/python3.12/config",
+        host / "usr/lib/native-config",
+    } <= set(inventory)
+    assert host / "lib/libnative.so" not in inventory
+    assert host / "usr/lib/native-config/unrelated" not in inventory
+    assert runtime._record(host / "lib")["target"] == "usr/lib"
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        "missing",
+        "cycle",
+        "long-chain",
+        "special",
+        "file-parent",
+        "aliased-target",
+        "dotdot-through-link",
+    ],
+)
+def test_external_inventory_refuses_invalid_symlink_closure(external_host, failure):
+    host, destination, probe, _ = external_host
+    link = host / "usr/lib/python3.12/link"
+    if failure == "missing":
+        link.symlink_to("missing")
+    elif failure == "cycle":
+        link.symlink_to("second")
+        link.with_name("second").symlink_to("link")
+    elif failure == "long-chain":
+        for index in range(32):
+            (link.parent / f"link{index}").symlink_to(f"link{index + 1}")
+        (link.parent / "link32").write_bytes(b"final")
+    elif failure == "special":
+        os.mkfifo(link)
+    elif failure == "file-parent":
+        link.symlink_to("site.py/../site.py")
+    elif failure == "aliased-target":
+        (host / "lib").symlink_to("usr/lib")
+        link.symlink_to("../../../lib/python3.12/site.py")
+    else:
+        physical = host / "usr/lib/physical"
+        (physical / "directory").mkdir(parents=True)
+        (physical / "site.py").write_bytes(b"physical endpoint")
+        (link.parent / "directory").symlink_to("../physical/directory")
+        link.symlink_to("directory/../site.py")
+    with pytest.raises((builder.BuildError, OSError)):
+        builder._external_inventory(destination, probe)
+
+
+@pytest.mark.parametrize("name", ["ld.so.preload", "ld.so.conf", "ld.so.conf.d", "python312.zip"])
+def test_external_inventory_refuses_dangling_loader_inputs(external_host, name):
+    host, destination, probe, _ = external_host
+    parent = host / ("usr/lib" if name == "python312.zip" else "etc")
+    (parent / name).symlink_to("missing")
+    with pytest.raises((builder.BuildError, OSError)):
+        builder._external_inventory(destination, probe)
 
 
 def test_catalog_freezes_complete_runtime_and_build_tool_closure():
@@ -293,6 +473,12 @@ def test_real_noble_runtime_build_offline_and_imports(tmp_path, native_wheelhous
     assert "/usr/lib/python3.12/site.py" in data["external_files"]
     assert "/usr/bin/python3.12" in data["external_files"]
     assert any("libssl" in name for name in data["external_files"])
+    for name, record in data["external_files"].items():
+        if record["kind"] == "symlink":
+            target = Path(record["target"])
+            if not target.is_absolute():
+                target = Path(name).parent / target
+            assert os.path.normpath(str(target)) in data["external_files"]
     assert not list(runtime.rglob("*.pth"))
     assert not list(runtime.rglob("*.pyc"))
     assert (runtime / "bin/python3.12").resolve() == Path(base_python).resolve()

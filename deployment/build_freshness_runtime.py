@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import platform
 import re
 import runpy
@@ -240,18 +241,75 @@ def _native_dependencies(roots: list[Path]) -> set[Path]:
     return dependencies
 
 
+def _external_path_closure(seeds: set[Path]) -> tuple[Path, ...]:
+    """Zbierz rzeczywiste obiekty, bez gubienia literalnych dowiązań i przodków."""
+    paths: set[Path] = set()
+    targets: dict[Path, str] = {}
+    endpoints: dict[Path, Path] = {}
+
+    def visit(path: Path, active: frozenset[Path] = frozenset()) -> Path:
+        if not path.is_absolute():
+            raise BuildError("Wymagana absolutna ścieżka inwentarza")
+        current = Path(path.anchor)
+        for part in path.parts[1:]:
+            if not stat.S_ISDIR(current.lstat().st_mode):
+                raise BuildError("Przodek inwentarza nie jest katalogiem")
+            if part == "..":
+                current = current.parent
+                continue
+            current /= part
+            info = current.lstat()
+            paths.add(current)
+            if stat.S_ISLNK(info.st_mode):
+                if current in active or len(active) >= 31:
+                    raise BuildError("Cykl lub zbyt długi łańcuch symlinków runtime")
+                target = os.readlink(current)
+                targets[current] = target
+                target_path = Path(target)
+                if not target_path.is_absolute():
+                    target_path = current.parent / target_path
+                endpoint = visit(target_path, active | {current})
+                endpoints[current] = endpoint
+                current = endpoint
+            elif not (stat.S_ISREG(info.st_mode) or stat.S_ISDIR(info.st_mode)):
+                raise BuildError("Niedozwolony typ obiektu inwentarza")
+        return current
+
+    for seed in sorted(seeds):
+        visit(seed)
+    # Weryfikator wymaga każdego literalnego celu oraz rzeczywistych katalogów
+    # nadrzędnych. Nie twórz pozornych wpisów /lib/plik przez alias usrmerge.
+    # Cel z takim przodkiem lub odmienną semantyką '..' musi dostać odmowę.
+    for link in sorted(targets):
+        current = link
+        for _ in range(32):
+            if current not in paths:
+                raise BuildError("Cel symlinka poza rzeczywistym inwentarzem runtime")
+            if current not in targets:
+                break
+            target_path = Path(targets[current])
+            if not target_path.is_absolute():
+                target_path = current.parent / target_path
+            current = Path(os.path.normpath(str(target_path)))
+        else:
+            raise BuildError("Cykl lub zbyt długi łańcuch symlinków runtime")
+        if current != endpoints[link]:
+            raise BuildError("Niejednoznaczny cel symlinka runtime")
+    return tuple(sorted(paths))
+
+
 def _external_inventory(destination: Path, probe: dict[str, Any]) -> tuple[Path, ...]:
     stdlib = Path(probe["base_prefix"]) / "lib/python3.12"
     paths = {BASE_PYTHON, stdlib, Path("/etc/ld.so.cache")}
-    if Path("/etc/ld.so.preload").exists():
+    if Path("/etc/ld.so.preload").exists() or Path("/etc/ld.so.preload").is_symlink():
         raise BuildError("Niedozwolony preload loadera")
     for config in (Path("/etc/ld.so.conf"), Path("/etc/ld.so.conf.d")):
-        if config.exists():
+        if config.exists() or config.is_symlink():
             paths.add(config)
             if config.is_dir():
                 paths.update(config.rglob("*"))
     archive = stdlib.parent / "python312.zip"
-    if archive.exists():
+    if archive.exists() or archive.is_symlink():
         paths.add(archive)
     native_roots = [BASE_PYTHON]
     for path in sorted(stdlib.rglob("*")):
@@ -265,19 +323,11 @@ def _external_inventory(destination: Path, probe: dict[str, Any]) -> tuple[Path,
             native_roots.append(path)
     for path in _native_dependencies(native_roots):
         if not path.resolve().is_relative_to(destination):
-            paths.add(path.parent.resolve() / path.name)
-            paths.add(path.resolve())
+            paths.add(path)
     paths.update(
         Path(name) for name in ("/lib", "/lib64", "/bin", "/sbin") if Path(name).is_symlink()
     )
-    # Bind both literal symlink object and resolved target, with every directory
-    # crossed by their resolution. Ubuntu usrmerge is an explicitly signed link.
-    for path in tuple(paths):
-        paths.add(path.resolve())
-        paths.update(path.parents)
-        paths.update(path.resolve().parents)
-    paths.discard(Path("/"))
-    return tuple(sorted(paths))
+    return _external_path_closure(paths)
 
 
 def build_runtime(

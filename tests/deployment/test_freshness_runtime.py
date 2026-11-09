@@ -177,6 +177,127 @@ def test_external_symlink_requires_signed_target_inventory(candidate):
         runtime.verify_runtime(config)
 
 
+def external_symlink_chain(candidate, length=2, *, absolute=False):
+    """Model libpython Noble, bez dereferencji absolutnych linków poza testowy root."""
+    config, manifest, sign, _ = candidate
+    names = [
+        "/usr/lib/python3.12/config-3.12-x86_64-linux-gnu/libpython3.12.so",
+        "/usr/lib/x86_64-linux-gnu/libpython3.12.so.1",
+        *(f"/usr/lib/x86_64-linux-gnu/libpython3.12.so.link{index}" for index in range(length - 2)),
+    ]
+    final = "/usr/lib/x86_64-linux-gnu/libpython3.12.so.1.0"
+    write(config.root / final[1:], b"signed libpython bytes")
+    targets = []
+    for name, destination in zip(names, [*names[1:], final], strict=True):
+        target = destination if absolute else os.path.relpath(destination, str(Path(name).parent))
+        targets.append(target)
+        path = config.root / name[1:]
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.symlink_to(target)
+    for name in [*names, final]:
+        path = config.root / name[1:]
+        for item in (path, *path.parents):
+            if item == config.root:
+                break
+            manifest["external_files"]["/" + item.relative_to(config.root).as_posix()] = (
+                runtime._record(item)
+            )
+    sign()
+    return names, targets, final
+
+
+@pytest.mark.parametrize("length", [2, 3, 5])
+@pytest.mark.parametrize("absolute", [False, True])
+def test_complete_signed_external_symlink_chains_pass(candidate, length, absolute):
+    names, targets, final = external_symlink_chain(candidate, length, absolute=absolute)
+    config, manifest, _, _ = candidate
+    verified = runtime.verify_runtime(config)
+    assert verified.manifest == manifest
+    assert runtime._resolved(names[0], verified.manifest, config) == Path(final)
+    for name, target in zip(names, targets, strict=True):
+        assert verified.manifest["external_files"][name]["kind"] == "symlink"
+        assert verified.manifest["external_files"][name]["target"] == target
+    if not absolute:
+        assert targets[0] == "../../x86_64-linux-gnu/libpython3.12.so.1"
+
+
+def test_signed_usrmerge_directory_symlink_chains_pass(candidate):
+    config, manifest, sign, _ = candidate
+    for name in ("/usr/sbin", "/usr/lib"):
+        path = config.root / name[1:]
+        path.mkdir(parents=True, exist_ok=True)
+        manifest["external_files"][name] = runtime._record(path)
+    for name, target in (
+        ("/bin", "usr/bin"),
+        ("/sbin", "usr/sbin"),
+        ("/lib", "usr/lib"),
+        ("/lib64", "usr/lib64"),
+        ("/usr/lib64", "lib"),
+    ):
+        path = config.root / name[1:]
+        path.symlink_to(target)
+        manifest["external_files"][name] = runtime._record(path)
+    manifest["external_files"]["/usr/bin"] = runtime._record(config.root / "usr/bin")
+    sign()
+    verified = runtime.verify_runtime(config)
+    assert runtime._resolved("/lib64", verified.manifest, config) == Path("/usr/lib")
+
+
+@pytest.mark.parametrize(
+    "attack,reason",
+    [
+        ("missing-intermediate", "poza zatwierdzone materiały"),
+        ("missing-target", "Nie można ustanowić integralności runtime"),
+        ("changed-content", "Niezgodna integralność pliku runtime"),
+        ("changed-type", "Niechroniony plik runtime"),
+        ("changed-mode", "Niezgodne uprawnienia runtime"),
+        ("changed-link", "Niezgodny symlink runtime"),
+        ("unapproved-target", "poza zatwierdzone materiały"),
+        ("cycle", "Cykl symlinków runtime"),
+    ],
+)
+def test_external_symlink_chain_refuses_incomplete_inventory_and_tampering(
+    candidate, attack, reason
+):
+    names, _, final = external_symlink_chain(candidate, 3)
+    config, manifest, sign, _ = candidate
+    # Każdy scenariusz wychodzi od kandydata przechodzącego pełną weryfikację.
+    runtime.verify_runtime(config)
+    target = config.root / final[1:]
+    intermediate = config.root / names[1][1:]
+    if attack == "missing-intermediate":
+        del manifest["external_files"][names[1]]
+        sign()
+    elif attack == "missing-target":
+        target.unlink()
+    elif attack == "changed-content":
+        original = target.read_bytes()
+        target.write_bytes(b"!" * len(original))
+    elif attack == "changed-type":
+        target.unlink()
+        target.mkdir(mode=0o644)
+        target.chmod(0o644)
+    elif attack == "changed-mode":
+        target.chmod(0o600)
+    elif attack == "changed-link":
+        intermediate.unlink()
+        intermediate.symlink_to(final)
+    elif attack == "unapproved-target":
+        unapproved = "/usr/lib/unapproved-libpython.so"
+        write(config.root / unapproved[1:], target.read_bytes())
+        intermediate.unlink()
+        intermediate.symlink_to(unapproved)
+        manifest["external_files"][names[1]] = runtime._record(intermediate)
+        sign()
+    elif attack == "cycle":
+        intermediate.unlink()
+        intermediate.symlink_to(names[0])
+        manifest["external_files"][names[1]] = runtime._record(intermediate)
+        sign()
+    with pytest.raises(runtime.RuntimeTrustError, match=reason):
+        runtime.verify_runtime(config)
+
+
 @pytest.mark.parametrize(
     "attack",
     [
