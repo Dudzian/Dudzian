@@ -6,6 +6,9 @@ import base64
 import csv
 import hashlib
 import os
+import subprocess
+import sys
+from importlib import metadata as installed_metadata
 from pathlib import Path
 
 import pytest
@@ -21,6 +24,23 @@ def write_record(path: Path, rows: list[list[str]]) -> None:
 def file_row(name: str, content: bytes) -> list[str]:
     digest = base64.urlsafe_b64encode(hashlib.sha256(content).digest()).decode().rstrip("=")
     return [name, "sha256=" + digest, str(len(content))]
+
+
+def add_distribution(site: Path, name: str, version: str, directory: str | None = None):
+    """Poprawne, rozłączne metadane, aby testować semantykę dystrybucji."""
+    metadata = site / (directory or f"{name.replace('-', '_')}-{version}.dist-info")
+    metadata.mkdir()
+    (metadata / "METADATA").write_text(f"Name: {name}\nVersion: {version}\n", encoding="utf-8")
+    record = metadata / "RECORD"
+    rows = [
+        file_row(
+            (metadata / "METADATA").relative_to(site).as_posix(),
+            (metadata / "METADATA").read_bytes(),
+        ),
+        [record.relative_to(site).as_posix(), "", ""],
+    ]
+    write_record(record, rows)
+    return record, rows
 
 
 def installation(destination: Path):
@@ -47,6 +67,9 @@ def installation(destination: Path):
         ["cffi-2.1.1.dist-info/RECORD", "", ""],
     ]
     write_record(record, rows)
+    for name, version in builder.VERSIONS.items():
+        if name != "cffi":
+            add_distribution(site, name, version)
     return destination, site, record, rows, script
 
 
@@ -58,12 +81,16 @@ def installed(tmp_path):
 def test_cleanup_removes_only_deleted_script_rows_and_preserves_integrity_metadata(installed):
     destination, site, record, rows, script = installed
     before = {path: path.read_bytes() for path in site.rglob("*") if path.is_file()}
-    assert builder._installed_records(destination) == {record: rows}
+    installed_records = builder._installed_records(destination)
+    assert len(installed_records) == 6
+    assert installed_records[record] == rows
     builder._remove_installation_scripts(destination)
     assert not script.exists()
     assert not list((destination / "bin").iterdir())
     expected = [row for row in rows if row[0] != "../../../bin/cffi-gen-src"]
-    assert builder._installed_records(destination) == {record: expected}
+    installed_records = builder._installed_records(destination)
+    assert len(installed_records) == 6
+    assert installed_records[record] == expected
     assert expected[-1] == ["cffi-2.1.1.dist-info/RECORD", "", ""]
     assert all(path.read_bytes() == content for path, content in before.items() if path != record)
     assert b'"cffi/dane,polskie.txt"' in record.read_bytes()
@@ -211,7 +238,7 @@ def test_record_and_bin_reject_aliased_files(installed, attack):
 def test_empty_installation_refuses(tmp_path):
     site = tmp_path / "lib/python3.12/site-packages"
     site.mkdir(parents=True)
-    with pytest.raises(builder.BuildError, match="Brak metadanych RECORD"):
+    with pytest.raises(builder.BuildError):
         builder._installed_records(tmp_path)
 
 
@@ -224,3 +251,248 @@ def test_unchanged_record_bytes_are_not_rewritten(installed):
     original = record.read_bytes()
     builder._remove_installation_scripts(destination)
     assert record.read_bytes() == original
+
+
+def snapshot_files(destination: Path):
+    return {
+        path.relative_to(destination).as_posix(): path.read_bytes()
+        for path in destination.rglob("*")
+        if path.is_file() and not path.is_symlink()
+    }
+
+
+def test_unknown_bin_file_refuses_before_removing_any_installed_script(installed):
+    destination, _, _, _, script = installed
+    unknown = destination / "bin/unknown-executable"
+    unknown.write_bytes(b"#!/bin/sh\nexit 0\n")
+    unknown.chmod(0o755)
+    before = snapshot_files(destination)
+    with pytest.raises(builder.BuildError):
+        builder._remove_installation_scripts(destination)
+    assert unknown.is_file() and script.is_file()
+    assert (destination / "bin/activate").is_file()
+    assert snapshot_files(destination) == before
+
+
+@pytest.mark.parametrize("directory", ["CFFI-2.1.1.DIST-INFO", "cffi-2.1.1.egg-info"])
+def test_other_metadata_layout_cannot_hide_in_an_approved_record(installed, directory):
+    destination, site, record, rows, _ = installed
+    extra_record, extra_rows = add_distribution(site, "cffi", "2.1.1", directory)
+    if directory.endswith(".egg-info"):
+        package_info = extra_record.parent / "PKG-INFO"
+        (extra_record.parent / "METADATA").rename(package_info)
+        extra_rows = [
+            file_row(package_info.relative_to(site).as_posix(), package_info.read_bytes()),
+            [extra_record.relative_to(site).as_posix(), "", ""],
+        ]
+        write_record(extra_record, extra_rows)
+    visible = list(installed_metadata.distributions(path=[str(site)]))
+    assert len(visible) == 7
+    assert sum(distribution.metadata["Name"] == "cffi" for distribution in visible) == 2
+    # Wszystkie pliki dodatkowej dystrybucji są ujęte w poprawnym CSV: samo
+    # pokrycie plików nie dowodzi, że istnieje tylko sześć dystrybucji.
+    write_record(record, [*rows, *extra_rows])
+    before = snapshot_files(destination)
+    with pytest.raises(builder.BuildError):
+        builder._remove_installation_scripts(destination)
+    assert snapshot_files(destination) == before
+
+
+@pytest.mark.parametrize(
+    "script_name", ["activate", "activate.csh", "activate.fish", "Activate.ps1"]
+)
+def test_known_venv_activation_scripts_are_removed(installed, script_name):
+    destination, _, _, _, script = installed
+    (destination / "bin" / script_name).write_bytes(b"# znany skrypt aktywacji systemowego venv\n")
+    builder._remove_installation_scripts(destination)
+    assert not script.exists()
+    assert not list((destination / "bin").iterdir())
+
+
+def test_unknown_bin_script_cannot_gain_trust_from_record(installed):
+    destination, _, record, rows, _ = installed
+    script = destination / "bin/unknown-executable"
+    script.write_bytes(b"# dodatkowy skrypt\n")
+    rows.insert(0, file_row("../../../bin/unknown-executable", script.read_bytes()))
+    write_record(record, rows)
+    before = snapshot_files(destination)
+    with pytest.raises(builder.BuildError):
+        builder._remove_installation_scripts(destination)
+    assert snapshot_files(destination) == before
+
+
+def test_expected_wheel_script_requires_its_owning_distribution_record(installed):
+    destination, site, record, rows, script = installed
+    script_row = next(row for row in rows if row[0] == "../../../bin/cffi-gen-src")
+    write_record(record, [row for row in rows if row is not script_row])
+    other = site / "pycparser-3.12.dist-info/RECORD"
+    with other.open(newline="", encoding="utf-8") as stream:
+        other_rows = list(csv.reader(stream))
+    write_record(other, [script_row, *other_rows])
+    before = snapshot_files(destination)
+    with pytest.raises(builder.BuildError):
+        builder._remove_installation_scripts(destination)
+    assert script.is_file()
+    assert snapshot_files(destination) == before
+
+
+@pytest.mark.parametrize(
+    "name,version,directory",
+    [
+        ("unapproved", "1.0", "unapproved-1.0.dist-info"),
+        ("cffi", "2.1.1", "cffi_clone-2.1.1.dist-info"),
+        ("typing.extensions", "4.16.0", "typing.extensions-4.16.0.dist-info"),
+    ],
+    ids=["dodatkowa-dystrybucja", "duplikat-nazwy-i-wersji", "duplikat-po-normalizacji"],
+)
+def test_extra_or_duplicate_distribution_refuses_before_cleanup(
+    installed, name, version, directory
+):
+    destination, site, _, _, script = installed
+    add_distribution(site, name, version, directory)
+    before = snapshot_files(destination)
+    with pytest.raises(builder.BuildError):
+        builder._remove_installation_scripts(destination)
+    assert script.is_file()
+    assert snapshot_files(destination) == before
+
+
+def test_missing_expected_distribution_refuses_before_cleanup(installed):
+    destination, site, _, _, script = installed
+    distribution = site / "pycparser-3.12.dist-info"
+    for path in distribution.iterdir():
+        path.unlink()
+    distribution.rmdir()
+    before = snapshot_files(destination)
+    with pytest.raises(builder.BuildError):
+        builder._remove_installation_scripts(destination)
+    assert script.is_file()
+    assert snapshot_files(destination) == before
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        "Name: unexpected\nVersion: 2.1.1\n",
+        "Name: cffi!\nVersion: 2.1.1\n",
+        "Name: cffi\nVersion: 0.0.0\n",
+        "Version: 2.1.1\n",
+        "Name: cffi\n",
+        "Name: cffi\nName: cffi\nVersion: 2.1.1\n",
+        "Name: cffi\nVersion: 2.1.1\nVersion: 2.1.1\n",
+    ],
+    ids=[
+        "inna-nazwa",
+        "niedozwolona-skladnia-nazwy",
+        "inna-wersja",
+        "brak-nazwy",
+        "brak-wersji",
+        "dwie-nazwy",
+        "dwie-wersje",
+    ],
+)
+def test_distribution_metadata_contract_is_checked_even_with_valid_record(installed, metadata):
+    destination, site, record, rows, script = installed
+    metadata_path = record.parent / "METADATA"
+    metadata_path.write_text(metadata, encoding="utf-8")
+    metadata_name = metadata_path.relative_to(site).as_posix()
+    rows = [
+        file_row(metadata_name, metadata_path.read_bytes()) if row[0] == metadata_name else row
+        for row in rows
+    ]
+    write_record(record, rows)
+    before = snapshot_files(destination)
+    with pytest.raises(builder.BuildError):
+        builder._remove_installation_scripts(destination)
+    assert script.is_file()
+    assert snapshot_files(destination) == before
+
+
+def test_distribution_names_are_normalized_before_exact_set_comparison(installed):
+    destination, site, _, _, _ = installed
+    record = site / "typing_extensions-4.16.0.dist-info/RECORD"
+    metadata = record.parent / "METADATA"
+    metadata.write_text("Name: Typing.Extensions\nVersion: 4.16.0\n", encoding="utf-8")
+    metadata_name = metadata.relative_to(site).as_posix()
+    with record.open(newline="", encoding="utf-8") as stream:
+        rows = list(csv.reader(stream))
+    write_record(
+        record,
+        [
+            file_row(metadata_name, metadata.read_bytes()) if row[0] == metadata_name else row
+            for row in rows
+        ],
+    )
+    assert len(builder._installed_records(destination)) == 6
+    builder._remove_installation_scripts(destination)
+    assert len(builder._installed_records(destination)) == 6
+
+
+def test_wheel_record_cannot_claim_venv_activation_script(installed):
+    destination, _, record, rows, _ = installed
+    script = destination / "bin/activate"
+    rows.insert(0, file_row("../../../bin/activate", script.read_bytes()))
+    write_record(record, rows)
+    before = snapshot_files(destination)
+    with pytest.raises(builder.BuildError):
+        builder._remove_installation_scripts(destination)
+    assert snapshot_files(destination) == before
+
+
+def test_runtime_probe_rejects_duplicate_distribution_instead_of_overwriting_it():
+    # Ten test bada enumerację metadanych. Przy globalnym runnerze modelujemy
+    # tylko granicę venv; rzeczywistą izolację sprawdzają pełne buildy Noble.
+    prelude = """
+import importlib.metadata as metadata, sys
+if sys.prefix == sys.base_prefix:
+    sys.base_prefix = sys.prefix + "-testowa-baza"
+distribution = metadata.distribution("cffi")
+metadata.distributions = lambda: [distribution, distribution]
+"""
+    result = subprocess.run(
+        [sys.executable, "-I", "-s", "-B", "-c", prelude + builder._PROBE],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+    assert result.returncode != 0
+    assert "AssertionError: Powtorzona dystrybucja runtime" in result.stderr
+    assert result.stdout == ""
+
+
+def test_distribution_must_record_its_own_metadata_before_cleanup(installed):
+    destination, site, record, rows, script = installed
+    metadata_name = (record.parent / "METADATA").relative_to(site).as_posix()
+    metadata_row = next(row for row in rows if row[0] == metadata_name)
+    write_record(record, [row for row in rows if row is not metadata_row])
+    other = site / "pycparser-3.12.dist-info/RECORD"
+    with other.open(newline="", encoding="utf-8") as stream:
+        other_rows = list(csv.reader(stream))
+    write_record(other, [metadata_row, *other_rows])
+    before = snapshot_files(destination)
+    with pytest.raises(builder.BuildError):
+        builder._remove_installation_scripts(destination)
+    assert script.is_file()
+    assert snapshot_files(destination) == before
+
+
+def test_distribution_directory_alias_is_refused_even_with_consistent_record(installed):
+    destination, site, record, rows, script = installed
+    original_name = record.parent.name
+    alias = site / "cffi_alias-2.1.1.dist-info"
+    record.parent.rename(alias)
+    record = alias / "RECORD"
+    updated_rows = []
+    for row in rows:
+        name = row[0].replace(original_name + "/", alias.name + "/", 1)
+        if name == record.relative_to(site).as_posix():
+            updated_rows.append([name, "", ""])
+        else:
+            updated_rows.append(file_row(name, (site / name).read_bytes()))
+    write_record(record, updated_rows)
+    before = snapshot_files(destination)
+    with pytest.raises(builder.BuildError):
+        builder._remove_installation_scripts(destination)
+    assert script.is_file()
+    assert snapshot_files(destination) == before

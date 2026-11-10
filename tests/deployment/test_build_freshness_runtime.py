@@ -547,6 +547,7 @@ def test_real_noble_build_reproducible_across_different_staging_paths(tmp_path, 
         )
         assert result.returncode == 0, result.stderr
         manifest = json.loads(manifest_path.read_text())
+        assert len(manifest["files"]) == 366
         _assert_record_inventory(candidate, manifest)
         # Pełny zbiór obiektów obejmuje RECORD, archiwa wheel oraz literalne linki.
         assert manifest["files"] == runtime._tree(candidate)

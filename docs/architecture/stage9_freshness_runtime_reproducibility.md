@@ -33,6 +33,57 @@ Walidator jest przeznaczony dla zamkniętego zbioru wheelów tego buildera:
 celowo dopuszcza kanoniczne ścieżki względne i SHA-256 dla podanych hashy.
 Nie jest uniwersalnym walidatorem dowolnej instalacji Pythona.
 
+## Domknięcie odmów po przeglądzie PR #3262
+
+Pierwsza poprawka `RECORD` nadal dodawała do planu usuwania każdy zwykły
+plik z `bin`. Sam typ pliku nie dowodził jego pochodzenia. Nieznany
+`bin/unknown-executable` bez wpisu `RECORD` mógł więc zniknąć przed
+zaobserwowaniem błędnej instalacji. Obecnie cały plan jest sprawdzany przed
+pierwszym `unlink`, a usuwanie dopuszcza wyłącznie dwa rozłączne źródła:
+
+- Systemowy `venv` Ubuntu 24.04, `with_pip=False`: `activate`, `activate.csh`,
+  `activate.fish`, `Activate.ps1`. Te skrypty nie należą do dystrybucji wheel
+  i nie mogą być przypisane do jej `RECORD`.
+- Zatwierdzone wheels runtime: jedyny skrypt konsolowy to
+  `cffi-gen-src = cffi._cffi_gen_src:run`, wskazany przez `entry_points.txt`
+  pakietu `cffi==2.1.1`. Wpis musi znajdować się we własnym
+  `cffi-2.1.1.dist-info/RECORD`. Żaden runtime wheel nie zawiera `.data/scripts`.
+  Skrypty `pip`/`pip3` należą do narzędzia buildowego i nie są instalowane.
+
+Nazwy aktywacji potwierdzono przez utworzenie świeżego środowiska systemowym
+Pythonem w jednorazowym kontenerze. Właścicieli skryptów sprawdzono odczytowo
+w archiwach wheelhouse, po weryfikacji SHA-256. Nieznany zwykły plik,
+dopisanie obcego skryptu do poprawnego CSV, przejęcie `cffi-gen-src` przez
+inny pakiet albo przypisanie aktywacji venv do `RECORD` powodują odmowę
+bez usunięcia istniejących skryptów i bez zmiany metadanych.
+
+Drugi problem wynikał z walidacji plików CSV bez walidacji dokładnego zbioru
+dystrybucji. Siódma poprawna dystrybucja lub duplikat pod inną nazwą katalogu
+mogły mieć rozłączne, poprawne wpisy i przejść tę kontrolę. Sonda dodatkowo
+tworzyła słownik przez comprehension, co mogło nadpisać wcześniejszą
+dystrybucję o tej samej nazwie i ukryć nadmiar.
+
+`_installed_records` wymaga obecnie dokładnie sześciu nazw i wersji z części
+runtime zatwierdzonego katalogu wheelhouse. Każdy `METADATA` musi mieć
+pojedyncze pola `Name` i `Version`, poprawną gramatykę nazwy i własny wpis
+w `RECORD`. Normalizacja PEP 503 łączy ciągi `-`, `_` i `.` oraz ignoruje
+wielkość liter. Duplikat jest sprawdzany przed dodaniem do zbioru; katalog
+musi mieć kanoniczną nazwę instalacji wheel. `_PROBE` również sprawdza
+powtórzenie przed przypisaniem wartości w słowniku.
+
+Przy okazji wykryto powiązany wariant: skan `*.dist-info` pomijał nazwy
+z wielkimi literami, a samo pokrycie plików mogło zostać zapewnione przez
+`RECORD` innego pakietu. Tak mogły ukryć się metadane `.DIST-INFO` lub
+`.egg-info`, rozpoznawane przez `importlib.metadata`. Dwa testy odtworzyły
+brak odmowy; skan uwzględnia teraz wielkość liter niezależnie od zapisu,
+a metadane `egg-info` są odrzucane jako niedozwolone w zamkniętej instalacji
+wheel. Usunięto ten wariant w zakresie tego samego PR.
+
+Dodano 25 przypadków do testów `RECORD` (łącznie 59), w tym porównanie
+pełnej zawartości instalacji przed i po odmowie oraz rzeczywisty proces
+sondy z powtórzoną dystrybucją. Natywny test odtwarzalności dodatkowo wymaga
+jawnie `len(files) == 366` dla każdego z obu kandydatów.
+
 ## Trzy niezależne twierdzenia
 
 | Twierdzenie | Wymagany dowód | Granica wniosku |
@@ -96,7 +147,7 @@ zewnętrznej biblioteki i jej literalnego dowiązania. Testy buildera sprawdzaj�
 odtwarzalność w różnych staging oraz odmowy uszkodzonych metadanych, braków
 plików i manipulacji wheelhouse. Rzeczywista próba wymaga systemowego
 CPython 3.12 na jednorazowym Ubuntu 24.04; pominięty test nie jest dowodem
-pozytywnego wyniku. Wyniki konkretnego wykonania należy odczytać z raportu PR.
+pozytywnego wyniku. Wyniki konkretnego wykonania przedstawiono poniżej i w raporcie PR.
 
 Pozostają kontrole fail-closed, dokładne SHA-256 wejść i manifestu,
 pełny inwentarz native, zakaz wykonywalnych skryptów instalacyjnych
@@ -106,8 +157,8 @@ nie publikuje runtime, nie uruchamia usługi produkcyjnej i nie dopuszcza
 
 ## Wyniki wykonania — 10 listopada 2026
 
-Końcowy zestaw pięciu modułów testowych wykonał **215 testów bez błędów
-ani pominięć** (24,34 s) w jednorazowym kontenerze Ubuntu 24.04.5,
+Końcowy zestaw pięciu modułów testowych wykonał **240 testów bez błędów
+ani pominięć** (23,77 s) w jednorazowym kontenerze Ubuntu 24.04.5,
 z systemowym `python3.12=3.12.3-1ubuntu0.17`, jako UID 1000 i przy
 `--network none`. Źródła i wejściowy wheelhouse zamontowano tylko do odczytu.
 Narzędzia testowe miały oddzielny venv; zależności runtime zainstalowano
@@ -116,7 +167,7 @@ Nie uruchamiano próby publikującej `freshness_runtime_noble_trial.py`.
 
 | Sprawdzenie | Wynik |
 | --- | --- |
-| Dwie pary buildów: zwykły wheelhouse oraz tryby 0500/0400 | Obie pary zgodne przy staging długości 60 i 229 znaków; ścieżki interpretera miały 75 i 244 znaki |
+| Dwie pary buildów: zwykły wheelhouse oraz tryby 0500/0400 | Obie pary zgodne przy staging długości 65 i 234 znaków; ścieżki interpretera miały 80 i 249 znaków |
 | Pełny inwentarz wewnętrzny każdej pary | 366 identycznych obiektów: 313 plików, 49 katalogów i 4 dowiązania; wszystkie SHA-256 plików identyczne |
 | Metadane instalacji | Wszystkie 6 plików `RECORD` obecne w manifeście; niezależna kontrola CSV, istnienia, hashy, rozmiarów i kompletności plików przechodzi |
 | Inwentarz zewnętrzny każdej pary | 1345 identycznych obiektów, w tym 573 pliki `.pyc`; bez filtrowania cache i zależności natywnych |
@@ -124,9 +175,35 @@ Nie uruchamiano próby publikującej `freshness_runtime_noble_trial.py`.
 | Negatywne próby `RECORD` | Odmowy błędnego CSV/UTF-8, SHA-256, rozmiarów, duplikatów, braku wpisu własnego, ścieżek poza kontraktem, brakujących plików/skryptów/RECORD, nieujętych plików i dowiązań |
 | Negatywne próby wheelhouse | Odmowy zmiany bajtu bez zmiany rozmiaru, brakującego i dodatkowego wheel; brak utworzonego staging i manifestu |
 | Istniejące zabezpieczenia | Testy podpisów, integralności, izolacji importów, Ed25519, libpq i zakazu nadpisania przechodzą |
-| Przenośny zestaw na Debianie | 205 zaliczonych; 10 wymagających Ubuntu pominięto, po czym wykonano je w powyższym kontenerze |
+| Przenośny zestaw na Debianie | 230 zaliczonych; 10 wymagających Ubuntu pominięto, po czym wykonano je w powyższym kontenerze |
 | Bramki jakości | Ruff Tier A, jawny format zmienionych modułów, obowiązkowy `python -m pre_commit run ruff-format --all-files`, skonfigurowany hook mypy i dodatkowa kontrola buildera dla Windows przechodzą |
 | Betterleaks 1.9.0 | Istniejący hook zmian i pełny skan czystej kopii śledzonych źródeł z niezmienionym baseline: brak wykryć |
+
+Podział końcowej regresji: runtime 80, metadane `RECORD` 59, bytecode 4,
+aplikacja 51, builder 46. Wszystkie próby natywne rzeczywiście wykonano,
+włącznie z wariantami wheelhouse zwykłego oraz 0500/0400.
+
+Przebiegi robocze tej aktualizacji również ujawniły i wyjaśniły błędy:
+cztery skupione regresje przed poprawką potwierdziły brak odmowy dla obcego
+pliku, dodatkowej dystrybucji i dwóch duplikatów. Pierwsza wersja nowej
+implementacji miała kolizję lokalnej nazwy zmiennej mapy wersji z oczekiwanym
+hashem: mypy zgłosił jeden błąd, a testy dały 20 niezaliczonych, 70 zaliczonych
+i 10 pominiętych. Po usunięciu kolizji uzyskano 90 zaliczonych i 10
+pominiętych, a po trzech dodatkowych regresjach 93 zaliczone i 10 pominiętych.
+Dwie dalsze próby `.DIST-INFO`/`.egg-info` początkowo nie zgłaszały odmowy;
+po poprawieniu skanu przechodzą. Końcowe wyniki powyżej obejmują wszystkie
+te przypadki. Dwie pełne próby natywne po aktualizacji dały po 240 poprawnych
+wyników (24,50 s oraz końcowe 23,77 s). Po pierwszej doprecyzowano test sondy:
+wymaga konkretnego komunikatu odmowy duplikatu i pustego stdout, aby inna,
+wcześniejsza odmowa nie dawała fałszywie pozytywnego wyniku. Przy globalnym
+runnerze ten jednostkowy test modeluje tylko warunek różnej bazy venv;
+rzeczywistą izolację nadal sprawdzają natywne buildy. Test ukrytej `.egg-info`
+używa `PKG-INFO` i potwierdza obecność siódmej dystrybucji przez rzeczywisty
+`importlib.metadata` przed odmową buildera. Niezależny zestaw `RECORD` oraz
+bytecode po tych zmianach dał 63 poprawne wyniki.
+
+Nie pozostał nierozwiązany błąd bezpieczeństwa wykryty w tej aktualizacji;
+wynik nie zastępuje niezależnego audytu ani kwalifikacji hosta.
 
 Identyfikacja bazy testowej:
 
@@ -141,7 +218,8 @@ Identyfikacja bazy testowej:
 Pierwszy przebieg wykrył trzy błędy przygotowania danych nowych testów
 bytecode: wcześniejsze testy bootstrapu pozostawiały
 `sys.pycache_prefix='/dev/null'`. Dodano lokalną izolację cache w nowych
-testach; ponowny pełny zestaw dał powyższe 215 poprawnych wyników.
+testach; ponowny pełny zestaw pierwotnej rewizji dał 215 poprawnych wyników.
+Po dodatkowych poprawkach przeglądu pełna regresja dała 240 poprawnych wyników.
 Rzeczywiste buildy i porównania odtwarzalności przeszły także w pierwszej
 próbie. Nie zmieniano mechanizmu bootstrapu ani wygenerowanych kandydatów.
 
@@ -150,6 +228,12 @@ Pełny skan zastanego workspace zgłosił również ignorowany, nieśledzony
 z 6 października, zawierający testowy PEM ze źródła ujętego w baseline.
 Ten cache nie jest częścią PR; skan zmian i czystych źródeł przeszedł.
 Nie zmieniano baseline ani reguł skanera.
+Przy ponownym skanie kopii źródeł argument absolutny spowodował 18
+powtórnych zgłoszeń znanych fixtures, ponieważ prefiks katalogu zmienił
+odciski ścieżek. Wszystkie 18 odcisków po usunięciu prefiksu odpowiadało
+istniejącemu baseline. Powtórzenie utrzymywanego polecenia z `dir .`
+w katalogu kopii źródeł dało kod 0 i brak nowych wykryć. Skan objął 4155
+śledzonych plików, około 67,29 MB; baseline pozostał bez zmian.
 
 Wynik kontenera nie stanowi kwalifikacji fizycznego hosta. Nowego buildera
 nie uruchamiano tu na pakiecie `.16`; wcześniejsze obserwacje operatora

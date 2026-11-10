@@ -22,6 +22,7 @@ import sys
 import urllib.request
 import venv
 import zipfile
+from email.parser import BytesParser
 from pathlib import Path, PurePosixPath
 from typing import Any, cast
 
@@ -37,6 +38,11 @@ VERSIONS = {
     "pycparser": "3.12",
     "typing-extensions": "4.16.0",
 }
+# Systemowy venv Ubuntu 24.04, with_pip=False; skrypty bez wpisów RECORD.
+_VENV_SCRIPTS = frozenset({"activate", "activate.csh", "activate.fish", "Activate.ps1"})
+# Przejrzane entry_points.txt zamrożonych wheelów runtime: wyłącznie cffi.
+# Pip pozostaje archiwalnym narzędziem buildu i nie instaluje swoich skryptów.
+_WHEEL_SCRIPTS = {"cffi-gen-src": "cffi"}
 _ENV = {
     "PATH": "/usr/bin:/bin",
     "HOME": "/nonexistent",
@@ -48,7 +54,7 @@ _ENV = {
     "PSYCOPG_IMPL": "binary",
 }
 _PROBE = r"""
-import importlib.metadata as metadata, json, pathlib, site, ssl, sys, sysconfig
+import importlib.metadata as metadata, json, pathlib, re, site, ssl, sys, sysconfig
 import cryptography, psycopg, psycopg.pq
 from cryptography.hazmat.backends.openssl.backend import backend
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -64,8 +70,15 @@ for module in (cryptography, psycopg, psycopg.pq):
     origin = pathlib.Path(module.__file__).resolve()
     assert origin.is_relative_to(root)
     origins[module.__name__] = str(origin.relative_to(root))
-packages = {d.metadata["Name"].lower().replace("_", "-"): d.version
-            for d in metadata.distributions()}
+packages = {}
+for distribution in metadata.distributions():
+    info = distribution.metadata
+    names, versions = info.get_all("Name", []), info.get_all("Version", [])
+    assert len(names) == len(versions) == 1
+    assert re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?", names[0])
+    name = re.sub(r"[-_.]+", "-", names[0]).lower()
+    assert name not in packages, "Powtorzona dystrybucja runtime"
+    packages[name] = versions[0]
 print(json.dumps({"packages": packages, "origins": origins,
  "abi": sysconfig.get_config_var("SOABI"), "python": sys.version.split()[0],
  "openssl": ssl.OPENSSL_VERSION, "cryptography_openssl": backend.openssl_version_text(),
@@ -247,17 +260,50 @@ def _installed_records(destination: Path) -> dict[Path, list[list[str]]]:
     site = destination / "lib/python3.12/site-packages"
     if site.is_symlink() or not site.is_dir():
         raise BuildError("Brak katalogu instalacji RECORD")
+    expected_versions = {
+        entry["name"]: entry["version"] for entry in _catalog() if entry["role"] == "runtime"
+    }
+    installed: set[str] = set()
     result = {}
     claimed: set[Path] = set()
-    for distribution in sorted(site.glob("*.dist-info")):
+    for distribution in sorted(site.iterdir()):
+        # importlib.metadata rozpoznaje również wielkie litery i egg-info.
+        # Nie pozwól ukryć takiej dystrybucji w RECORD innego pakietu.
+        if distribution.name.lower().endswith(".egg-info"):
+            raise BuildError("Niedozwolone metadane egg-info runtime")
+        if not distribution.name.lower().endswith(".dist-info"):
+            continue
         record = distribution / "RECORD"
         _record_path(destination, site, record.relative_to(site).as_posix())
+        metadata_path = distribution / "METADATA"
+        _record_path(destination, site, metadata_path.relative_to(site).as_posix())
+        metadata = BytesParser().parsebytes(metadata_path.read_bytes(), headersonly=True)
+        names, versions = metadata.get_all("Name", []), metadata.get_all("Version", [])
+        if (
+            metadata.defects
+            or len(names) != 1
+            or len(versions) != 1
+            or type(names[0]) is not str
+            or type(versions[0]) is not str
+            or not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?", names[0])
+        ):
+            raise BuildError("Nieprawidłowa tożsamość dystrybucji METADATA")
+        name = re.sub(r"[-_.]+", "-", names[0]).lower()
+        version = versions[0]
+        if name in installed:
+            raise BuildError("Powtórzona dystrybucja runtime")
+        if expected_versions.get(name) != version:
+            raise BuildError("Niezatwierdzona nazwa lub wersja dystrybucji runtime")
+        if distribution.name != f"{name.replace('-', '_')}-{version}.dist-info":
+            raise BuildError("Niekanoniczny katalog dystrybucji runtime")
+        installed.add(name)
         try:
             with record.open(encoding="utf-8", newline="") as stream:
                 rows = list(csv.reader(stream, strict=True))
         except (UnicodeError, csv.Error) as exc:
             raise BuildError("Nieprawidłowy CSV RECORD") from exc
         self_recorded = False
+        metadata_recorded = False
         for row in rows:
             if len(row) != 3:
                 raise BuildError("Nieprawidłowa liczba pól RECORD")
@@ -266,6 +312,8 @@ def _installed_records(destination: Path) -> dict[Path, list[list[str]]]:
             if target in claimed:
                 raise BuildError("Powtórzony plik w RECORD")
             claimed.add(target)
+            if target == metadata_path:
+                metadata_recorded = True
             if target == record:
                 if digest or size:
                     raise BuildError("Wpis własny RECORD musi mieć puste hash i size")
@@ -282,9 +330,13 @@ def _installed_records(destination: Path) -> dict[Path, list[list[str]]]:
                 raise BuildError("Niezgodny rozmiar pliku RECORD")
         if not self_recorded:
             raise BuildError("Brak wpisu własnego RECORD")
+        if not metadata_recorded:
+            raise BuildError("Brak własnego METADATA w RECORD dystrybucji")
         result[record] = rows
     if not result:
         raise BuildError("Brak metadanych RECORD instalacji")
+    if installed != set(expected_versions) or len(result) != len(expected_versions):
+        raise BuildError("Niezgodny zestaw sześciu dystrybucji runtime")
     # Nie wolno przemilczeć pliku usuniętego z RECORD ani pliku dodanego poza
     # metadanymi. Katalogów specyfikacja nie wymaga i nie dodajemy ich do CSV.
     for path in site.rglob("*"):
@@ -296,6 +348,17 @@ def _installed_records(destination: Path) -> dict[Path, list[list[str]]]:
 def _remove_installation_scripts(destination: Path) -> None:
     """Usuń skrypty i tylko ich wiersze RECORD w nowo budowanym kandydacie."""
     records = _installed_records(destination)
+    site = destination / "lib/python3.12/site-packages"
+    wheel_scripts: set[Path] = set()
+    for record, rows in records.items():
+        for row in rows:
+            target = _record_path(destination, site, row[0])
+            if target.parent != destination / "bin":
+                continue
+            owner = _WHEEL_SCRIPTS.get(target.name)
+            if owner is None or record != site / f"{owner}-{VERSIONS[owner]}.dist-info/RECORD":
+                raise BuildError("Niezatwierdzony skrypt lub właściciel wpisu bin w RECORD")
+            wheel_scripts.add(target)
     scripts = set()
     for path in (destination / "bin").iterdir():
         info = path.lstat()
@@ -306,10 +369,11 @@ def _remove_installation_scripts(destination: Path) -> None:
             ):
                 raise BuildError("Niedozwolony symlink w bin runtime")
         elif stat.S_ISREG(info.st_mode) and info.st_nlink == 1:
+            if path.name not in _VENV_SCRIPTS and path not in wheel_scripts:
+                raise BuildError("Nieznany plik w bin runtime")
             scripts.add(path)
         else:
             raise BuildError("Niedozwolony obiekt w bin runtime")
-    site = destination / "lib/python3.12/site-packages"
     retained = {
         record: [row for row in rows if _record_path(destination, site, row[0]) not in scripts]
         for record, rows in records.items()
