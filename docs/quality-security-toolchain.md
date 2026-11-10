@@ -60,6 +60,13 @@ z systemowym CPython 3.12; nie tworzy kont ani klastra i nie zastępuje VM.
 [Kontrakt runtime](architecture/stage9_linux_signed_python_runtime.md)
 opisuje oddzielne podpisy i granicę bootstrapu.
 
+Regresje metadanych `RECORD` i wykonywania istniejącego bytecode rozszerzają
+ten sam zakres lint/format oraz testów i branch coverage. Natywny workflow
+porównuje dwa buildy na identycznej bazie przy różnych długościach staging,
+również dla wheelhouse 0500/0400. Progi i kontrole SHA-256, native oraz podpisów
+pozostają bez zmian. [Analiza odtwarzalności](architecture/stage9_freshness_runtime_reproducibility.md)
+rozdziela odtwarzalność, zgodność między wydaniami pakietów i integralność kandydata.
+
 Remediacja review PR #3235 obejmuje dokładną tożsamość usługi Freshness:
 `freshness_service_identity.py`, delegującą kwalifikację deploymentu oraz
 `test_freshness_service_identity.py`. Moduły są w configured mypy Linux/Win32,

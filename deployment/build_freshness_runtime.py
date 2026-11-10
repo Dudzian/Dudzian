@@ -7,6 +7,8 @@ Pobieranie wheelhouse to oddzielny krok; właściwy build działa bez sieci.
 from __future__ import annotations
 
 import argparse
+import base64
+import csv
 import hashlib
 import json
 import os
@@ -197,6 +199,129 @@ def _run(arguments: list[str]) -> str:
     if result.returncode:
         raise BuildError(f"Nieudany krok buildera: {Path(arguments[0]).name}")
     return result.stdout.strip()
+
+
+def _record_path(destination: Path, site: Path, name: str) -> Path:
+    """Ścieżka RECORD jest względna do site-packages, nigdy do cwd buildera."""
+    relative = PurePosixPath(name)
+    if (
+        not name
+        or "\\" in name
+        or "\x00" in name
+        or relative.is_absolute()
+        or str(relative) != name
+        or name == "."
+    ):
+        raise BuildError("Nieprawidłowa ścieżka RECORD")
+    if ".." in relative.parts:
+        # W tym zamkniętym zbiorze wheelów poza site-packages trafiają tylko
+        # skrypty konsolowe pip. Nie interpretuj dowolnego przejścia do rodzica.
+        if len(relative.parts) != 5 or relative.parts[:4] != ("..", "..", "..", "bin"):
+            raise BuildError("Ścieżka RECORD poza instalacją runtime")
+        target = destination / "bin" / relative.name
+    else:
+        target = site.joinpath(*relative.parts)
+    current = destination
+    parts = target.relative_to(destination).parts
+    for index, part in enumerate(parts):
+        current /= part
+        try:
+            info = current.lstat()
+        except OSError as exc:
+            raise BuildError("Brak pliku lub przodka wskazanego w RECORD") from exc
+        if index < len(parts) - 1:
+            if not stat.S_ISDIR(info.st_mode):
+                raise BuildError("Niedozwolony przodek pliku RECORD")
+        elif not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+            raise BuildError("Niedozwolony typ pliku RECORD")
+    return target
+
+
+def _installed_records(destination: Path) -> dict[Path, list[list[str]]]:
+    """Sprawdź RECORD przed zmianą instalacji, bez naprawiania cudzych braków.
+
+    CSV i puste pola hash/size pozostają zgodne z Recording Installed Projects.
+    Gdy hash jest podany, zamknięty kontrakt tych wheelów wymaga SHA-256.
+    Niezależnie od pustych pól manifest obejmuje każdy plik własnym SHA-256.
+    """
+    site = destination / "lib/python3.12/site-packages"
+    if site.is_symlink() or not site.is_dir():
+        raise BuildError("Brak katalogu instalacji RECORD")
+    result = {}
+    claimed: set[Path] = set()
+    for distribution in sorted(site.glob("*.dist-info")):
+        record = distribution / "RECORD"
+        _record_path(destination, site, record.relative_to(site).as_posix())
+        try:
+            with record.open(encoding="utf-8", newline="") as stream:
+                rows = list(csv.reader(stream, strict=True))
+        except (UnicodeError, csv.Error) as exc:
+            raise BuildError("Nieprawidłowy CSV RECORD") from exc
+        self_recorded = False
+        for row in rows:
+            if len(row) != 3:
+                raise BuildError("Nieprawidłowa liczba pól RECORD")
+            name, digest, size = row
+            target = _record_path(destination, site, name)
+            if target in claimed:
+                raise BuildError("Powtórzony plik w RECORD")
+            claimed.add(target)
+            if target == record:
+                if digest or size:
+                    raise BuildError("Wpis własny RECORD musi mieć puste hash i size")
+                self_recorded = True
+            elif digest:
+                expected = "sha256=" + base64.urlsafe_b64encode(
+                    bytes.fromhex(_digest(target))
+                ).decode("ascii").rstrip("=")
+                if digest != expected:
+                    raise BuildError("Niezgodny SHA-256 pliku RECORD")
+            if size and (
+                not re.fullmatch(r"0|[1-9][0-9]*", size) or int(size) != target.stat().st_size
+            ):
+                raise BuildError("Niezgodny rozmiar pliku RECORD")
+        if not self_recorded:
+            raise BuildError("Brak wpisu własnego RECORD")
+        result[record] = rows
+    if not result:
+        raise BuildError("Brak metadanych RECORD instalacji")
+    # Nie wolno przemilczeć pliku usuniętego z RECORD ani pliku dodanego poza
+    # metadanymi. Katalogów specyfikacja nie wymaga i nie dodajemy ich do CSV.
+    for path in site.rglob("*"):
+        if path.is_symlink() or (not path.is_dir() and path not in claimed):
+            raise BuildError("Plik instalacji poza metadanymi RECORD")
+    return result
+
+
+def _remove_installation_scripts(destination: Path) -> None:
+    """Usuń skrypty i tylko ich wiersze RECORD w nowo budowanym kandydacie."""
+    records = _installed_records(destination)
+    scripts = set()
+    for path in (destination / "bin").iterdir():
+        info = path.lstat()
+        if stat.S_ISLNK(info.st_mode):
+            if (
+                path.name not in {"python", "python3", "python3.12"}
+                or path.resolve() != BASE_PYTHON
+            ):
+                raise BuildError("Niedozwolony symlink w bin runtime")
+        elif stat.S_ISREG(info.st_mode) and info.st_nlink == 1:
+            scripts.add(path)
+        else:
+            raise BuildError("Niedozwolony obiekt w bin runtime")
+    site = destination / "lib/python3.12/site-packages"
+    retained = {
+        record: [row for row in rows if _record_path(destination, site, row[0]) not in scripts]
+        for record, rows in records.items()
+    }
+    # Walidacja wszystkich metadanych i planu usuwania poprzedza pierwszy unlink.
+    for script in sorted(scripts):
+        script.unlink()
+    for record, rows in retained.items():
+        if rows != records[record]:
+            with record.open("w", encoding="utf-8", newline="") as stream:
+                csv.writer(stream, lineterminator="\n").writerows(rows)
+    _installed_records(destination)
 
 
 def _check_platform() -> str:
@@ -395,9 +520,7 @@ def build_runtime(
     )
     # Aktywacja i skrypty konsolowe nie są częścią ścieżki usługi. Nie zostawiaj
     # shebang wskazujących na staging ani narzędzi instalacyjnych runtime.
-    for script in (destination / "bin").iterdir():
-        if not script.is_symlink():
-            script.unlink()
+    _remove_installation_scripts(destination)
     for path in destination.rglob("*"):
         if path.suffix == ".pth" or path.name in {"sitecustomize.py", "usercustomize.py"}:
             raise BuildError("Niedozwolony hook importów runtime")
