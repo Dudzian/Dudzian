@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import csv
 import hashlib
 import json
 import os
@@ -336,6 +338,30 @@ def readonly_build_inputs(tmp_path, monkeypatch):
             )
         assert "--no-index" in arguments and "--require-hashes" in arguments
         assert arguments[arguments.index("--find-links") + 1] == str(wheelhouse)
+        destination = Path(arguments[arguments.index("--python") + 1]).parents[1]
+        site = destination / "lib/python3.12/site-packages"
+        site.mkdir(parents=True)
+        for name, version in builder.VERSIONS.items():
+            package = name.replace("-", "_")
+            module = site / package / "__init__.py"
+            module.parent.mkdir()
+            module.write_bytes(b"# syntetyczny model zainstalowanego pakietu\n")
+            metadata = site / f"{package}-{version}.dist-info"
+            metadata.mkdir()
+            (metadata / "METADATA").write_text(f"Name: {name}\nVersion: {version}\n")
+            record = metadata / "RECORD"
+            with record.open("w", newline="", encoding="utf-8") as output:
+                writer = csv.writer(output)
+                for path in (module, metadata / "METADATA"):
+                    digest = base64.urlsafe_b64encode(hashlib.sha256(path.read_bytes()).digest())
+                    writer.writerow(
+                        [
+                            path.relative_to(site).as_posix(),
+                            "sha256=" + digest.decode("ascii").rstrip("="),
+                            str(path.stat().st_size),
+                        ]
+                    )
+                writer.writerow([record.relative_to(site).as_posix(), "", ""])
         return ""
 
     monkeypatch.setattr(builder, "_run", run)
@@ -422,6 +448,158 @@ def native_wheelhouse(tmp_path, request):
     finally:
         # Dopiero po obserwacji niezmienionych wejść umożliwiamy cleanup tmp_path.
         wheelhouse.chmod(0o700)
+
+
+def _assert_record_inventory(candidate, manifest):
+    """Niezależny od buildera odczyt CSV i kontrola bajtów zainstalowanych plików."""
+    site = candidate / "lib/python3.12/site-packages"
+    records = sorted(site.glob("*.dist-info/RECORD"))
+    assert len(records) == len(builder.VERSIONS)
+    recorded = set()
+    for record in records:
+        relative_record = record.relative_to(candidate).as_posix()
+        assert manifest["files"][relative_record]["sha256"] == builder._digest(record)
+        self_rows = 0
+        with record.open(newline="", encoding="utf-8") as stream:
+            for row in csv.reader(stream, strict=True):
+                assert len(row) == 3
+                name, digest, size = row
+                path = site / name
+                assert path.resolve().is_relative_to(candidate)
+                assert path.is_file() and not path.is_symlink(), name
+                assert path.resolve() not in recorded, name
+                recorded.add(path.resolve())
+                if path.resolve() == record.resolve():
+                    self_rows += 1
+                    assert digest == size == ""
+                else:
+                    if digest:
+                        actual = base64.urlsafe_b64encode(
+                            hashlib.sha256(path.read_bytes()).digest()
+                        )
+                        assert digest == "sha256=" + actual.decode("ascii").rstrip("="), name
+                    if size:
+                        assert size == str(path.stat().st_size), name
+        assert self_rows == 1
+    assert recorded == {path.resolve() for path in site.rglob("*") if path.is_file()}
+    assert all(path.is_symlink() for path in (candidate / "bin").iterdir())
+    assert not list(candidate.rglob("*.pyc"))
+    assert not list(site.glob("pip*"))
+
+
+def _native_builder_command(wheelhouse, destination, manifest, environment_id):
+    return [
+        os.environ.get("FRESHNESS_RUNTIME_BASE_PYTHON", "/usr/bin/python3.12"),
+        "-I",
+        "-s",
+        "-B",
+        str(builder.HERE / "build_freshness_runtime.py"),
+        "--wheelhouse",
+        str(wheelhouse),
+        "--destination",
+        str(destination),
+        "--environment-id",
+        environment_id,
+        "--release-revision",
+        "a" * 40,
+        "--manifest",
+        str(manifest),
+    ]
+
+
+def _native_system_snapshot():
+    result = subprocess.run(
+        ["/usr/bin/dpkg-query", "-W", "-f=${binary:Package}\t${Version}\t${Architecture}\n"],
+        capture_output=True,
+        text=True,
+        env=builder._ENV,
+        check=True,
+        timeout=30,
+    )
+    return {
+        "dpkg": sorted(result.stdout.splitlines()),
+        "python_sha256": builder._digest(Path("/usr/bin/python3.12")),
+    }
+
+
+def test_real_noble_build_reproducible_across_different_staging_paths(tmp_path, native_wheelhouse):
+    """Dwa pełne buildy na tej samej bazie; tożsamość wydania nie jest hashem plików."""
+    wheelhouse, entries, _ = native_wheelhouse
+    expected_hashes = {entry["filename"]: entry["sha256"] for entry in entries}
+    lock_hash = builder._digest(builder.LOCK)
+    system = _native_system_snapshot()
+    candidates = [tmp_path / "a", tmp_path / ("clean-runtime-" + "long-staging-" * 12)]
+    assert len(str(candidates[1] / "bin/python3.12")) > 127
+    manifests = []
+    for index, candidate in enumerate(candidates):
+        assert _native_system_snapshot() == system
+        assert builder._digest(builder.LOCK) == lock_hash
+        builder.verify_wheelhouse(wheelhouse)
+        assert {
+            path.name: builder._digest(path) for path in wheelhouse.iterdir()
+        } == expected_hashes
+        manifest_path = tmp_path / f"repro-{index}.json"
+        result = subprocess.run(
+            _native_builder_command(wheelhouse, candidate, manifest_path, f"repro-noble-{index}"),
+            capture_output=True,
+            text=True,
+            timeout=240,
+        )
+        assert result.returncode == 0, result.stderr
+        manifest = json.loads(manifest_path.read_text())
+        assert len(manifest["files"]) == 366
+        _assert_record_inventory(candidate, manifest)
+        # Pełny zbiór obiektów obejmuje RECORD, archiwa wheel oraz literalne linki.
+        assert manifest["files"] == runtime._tree(candidate)
+        for name, record in manifest["external_files"].items():
+            assert runtime._record(Path(name)) == record
+        manifests.append(manifest)
+    assert _native_system_snapshot() == system
+    assert builder._digest(builder.LOCK) == lock_hash
+    assert {path.name: builder._digest(path) for path in wheelhouse.iterdir()} == expected_hashes
+    first, second = manifests
+    assert first["environment_id"] != second["environment_id"]
+    assert first["installation_path"] != second["installation_path"]
+    assert first["files"] == second["files"]
+    assert first["external_files"] == second["external_files"]
+    assert first["interpreter"] == second["interpreter"]
+    # Równość wszystkich pozostałych pól; nie porównujemy hashy całych manifestów.
+    identity_fields = {"environment_id", "installation_path"}
+    assert {key: value for key, value in first.items() if key not in identity_fields} == {
+        key: value for key, value in second.items() if key not in identity_fields
+    }
+
+
+@pytest.mark.parametrize("attack", ["same-size-tamper", "missing", "extra"])
+def test_real_wheelhouse_tampering_refused_before_staging(tmp_path, native_wheelhouse, attack):
+    wheelhouse, entries, _ = native_wheelhouse
+    damaged = tmp_path / "damaged-wheelhouse"
+    shutil.copytree(wheelhouse, damaged)
+    damaged.chmod(0o700)
+    wheel = damaged / entries[0]["filename"]
+    if attack == "same-size-tamper":
+        wheel.chmod(0o600)
+        original = wheel.read_bytes()
+        wheel.write_bytes(bytes([original[0] ^ 1]) + original[1:])
+        assert wheel.stat().st_size == len(original)
+        expected_error = "hash"
+    elif attack == "missing":
+        wheel.unlink()
+        expected_error = "Niekompletny"
+    else:
+        (damaged / "unreviewed-1-py3-none-any.whl").write_bytes(b"niezatwierdzone wejscie")
+        expected_error = "dodatkowy pakiet"
+    with pytest.raises(builder.BuildError, match=expected_error):
+        builder.verify_wheelhouse(damaged)
+    destination, manifest = tmp_path / "refused-runtime", tmp_path / "refused.json"
+    result = subprocess.run(
+        _native_builder_command(damaged, destination, manifest, "refused-input"),
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode != 0
+    assert not destination.exists() and not manifest.exists()
 
 
 def test_real_noble_runtime_build_offline_and_imports(tmp_path, native_wheelhouse):

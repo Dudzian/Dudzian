@@ -80,7 +80,7 @@ jobs:
             --no-index --require-hashes --only-binary=:all: \
             --find-links "$RUNNER_TEMP/freshness-wheelhouse" \
             -r deployment/requirements-freshness-runtime.lock
-      - name: Zbuduj offline bez roota dla wheelhouse zwykłego i 0500/0400
+      - name: Sprawdź odtwarzalność dwóch buildów offline i odmowy bez roota
         env:
           FRESHNESS_RUNTIME_WHEELHOUSE: ${{ runner.temp }}/freshness-wheelhouse
           FRESHNESS_RUNTIME_BASE_PYTHON: /usr/bin/python3.12
@@ -89,10 +89,14 @@ jobs:
         # Oba warianty używają rzeczywistego buildera: venv, pip z --no-index,
         # --require-hashes, --only-binary=:all: oraz sondy importów/Ed25519/libpq.
         # Każda próba ma własne tmp_path; brak wejść CI jest błędem, nie skipem.
+        # Odtwarzalność porównuje wszystkie obiekty obu buildów na tej samej bazie
+        # systemowej przy różnych długościach staging, z zachowaniem RECORD.
         run: >-
           "$RUNNER_TEMP/freshness-test-tools/bin/python" -m pytest
           --confcutdir=tests/deployment -v -ra
           tests/deployment/test_freshness_runtime.py
+          tests/deployment/test_freshness_runtime_record.py
+          tests/deployment/test_freshness_runtime_bytecode.py
           tests/deployment/test_freshness_application.py
           tests/deployment/test_build_freshness_runtime.py
           --junitxml="$RUNNER_TEMP/freshness-runtime-tests.xml"

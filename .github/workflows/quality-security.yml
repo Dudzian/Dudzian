@@ -165,6 +165,8 @@ jobs:
           tests/security/test_linux_service_postgresql_integration.py
           tests/deployment/test_linux_release_identity.py
           tests/deployment/test_freshness_runtime.py
+          tests/deployment/test_freshness_runtime_record.py
+          tests/deployment/test_freshness_runtime_bytecode.py
           tests/deployment/test_freshness_application.py
           tests/deployment/test_build_freshness_runtime.py
           tests/deployment/test_stage9_vm_trial.py
@@ -476,6 +478,8 @@ jobs:
           tests/deployment/test_linux_verifier_observation.py
           tests/deployment/test_linux_release_identity.py
           tests/deployment/test_freshness_runtime.py
+          tests/deployment/test_freshness_runtime_record.py
+          tests/deployment/test_freshness_runtime_bytecode.py
           tests/deployment/test_freshness_application.py
           tests/deployment/test_build_freshness_runtime.py
           tests/deployment/test_stage9_vm_trial.py
