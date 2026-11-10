@@ -274,9 +274,17 @@ def test_unknown_bin_file_refuses_before_removing_any_installed_script(installed
     assert snapshot_files(destination) == before
 
 
-@pytest.mark.parametrize("directory", ["CFFI-2.1.1.DIST-INFO", "cffi-2.1.1.egg-info"])
+@pytest.mark.parametrize(
+    "directory",
+    ["CFFI-2.1.1.DIST-INFO", "cffi_duplicate-2.1.1.DiSt-InFo", "cffi-2.1.1.egg-info"],
+)
 def test_other_metadata_layout_cannot_hide_in_an_approved_record(installed, directory):
     destination, site, record, rows, _ = installed
+    # Sprawdź alias na rzeczywistym systemie plików, niezależnie od platformy.
+    # Gdy różnica liter nie tworzy osobnego katalogu, zachowaj dodatkową
+    # dystrybucję cffi i wielki sufiks, używając rozłącznej nazwy katalogu.
+    if directory == "CFFI-2.1.1.DIST-INFO" and (site / directory).exists():
+        directory = "cffi_duplicate-2.1.1.DIST-INFO"
     extra_record, extra_rows = add_distribution(site, "cffi", "2.1.1", directory)
     if directory.endswith(".egg-info"):
         package_info = extra_record.parent / "PKG-INFO"
@@ -293,9 +301,44 @@ def test_other_metadata_layout_cannot_hide_in_an_approved_record(installed, dire
     # pokrycie plików nie dowodzi, że istnieje tylko sześć dystrybucji.
     write_record(record, [*rows, *extra_rows])
     before = snapshot_files(destination)
-    with pytest.raises(builder.BuildError):
+    if directory.endswith(".egg-info"):
+        expected_error = "Niedozwolone metadane egg-info runtime"
+    elif directory.startswith("cffi_duplicate-"):
+        expected_error = "Powtórzona dystrybucja runtime"
+    else:
+        # Kolejność dwóch nazw różniących się literami zależy także od Path.
+        expected_error = "Niekanoniczny katalog dystrybucji runtime|Powtórzona dystrybucja runtime"
+    with pytest.raises(builder.BuildError, match=expected_error):
         builder._remove_installation_scripts(destination)
     assert snapshot_files(destination) == before
+
+
+def test_other_metadata_layout_on_case_insensitive_filesystem(installed, monkeypatch):
+    _, site, _, _, _ = installed
+    directory = "CFFI-2.1.1.DIST-INFO"
+    original_exists = Path.exists
+    original_mkdir = Path.mkdir
+
+    def case_insensitive_exists(path):
+        if path.parent == site and path.name.casefold() == directory.casefold():
+            return True
+        return original_exists(path)
+
+    def case_insensitive_mkdir(path, *args, **kwargs):
+        if path.parent == site and any(
+            child.name.casefold() == path.name.casefold() for child in site.iterdir()
+        ):
+            raise FileExistsError(path)
+        return original_mkdir(path, *args, **kwargs)
+
+    # Modeluj kolizję także na Linux, ale wykonaj cały scenariusz odmowy
+    # na rzeczywistych plikach, bez zastępowania walidacji buildera.
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "exists", case_insensitive_exists)
+        patch.setattr(Path, "mkdir", case_insensitive_mkdir)
+        test_other_metadata_layout_cannot_hide_in_an_approved_record(installed, directory)
+    assert (site / "cffi_duplicate-2.1.1.DIST-INFO").is_dir()
+    assert len(list(installed_metadata.distributions(path=[str(site)]))) == 7
 
 
 @pytest.mark.parametrize(
