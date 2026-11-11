@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import stat
 import sys
 from dataclasses import dataclass, replace
@@ -886,7 +887,7 @@ def test_launcher_refuses_a_preloaded_bot_core_namespace(monkeypatch):
 
 
 @pytest.fixture
-def host_probe(monkeypatch):
+def host_probe(monkeypatch, tmp_path):
     import grp
     import pwd as account_database
     from types import SimpleNamespace
@@ -898,8 +899,9 @@ def host_probe(monkeypatch):
         "cluster": (
             "16 main 5432 online postgres /var/lib/postgresql/16/main /var/log/postgresql.log"
         ),
-        "unit": "loaded",
-        "include": "include_dir = 'conf.d'",
+        "unit": "LoadState=loaded\nActiveState=active",
+        "config_sql_root": None,
+        "config_sql": "t",
         "python": "",
         "manager": "257",
         "active": None,
@@ -918,14 +920,13 @@ def host_probe(monkeypatch):
         for name, uid, gid in [
             ("os_freshness_crypto_verifier", 901, 801),
             ("os_freshness_runtime", 902, 802),
+            ("postgres", 999, os.getgid() or 1),
         ]
     ]
     groups = [
         SimpleNamespace(gr_name="os_freshness_crypto_verifier", gr_gid=801, gr_mem=[]),
         SimpleNamespace(gr_name="os_freshness_runtime", gr_gid=802, gr_mem=[]),
-        SimpleNamespace(
-            gr_name="freshness_verifier_ipc", gr_gid=803, gr_mem=[user.pw_name for user in users]
-        ),
+        SimpleNamespace(gr_name="freshness_verifier_ipc", gr_gid=803, gr_mem=list(probe.USERS)),
         SimpleNamespace(gr_name="postgres", gr_gid=os.getgid() or 1, gr_mem=[]),
     ]
     monkeypatch.setattr(account_database, "getpwall", lambda: users)
@@ -952,14 +953,35 @@ def host_probe(monkeypatch):
 
     monkeypatch.setattr(Path, "read_text", read)
 
+    # Rzeczywisty odczyt plików i metadanych we własnym drzewie; tylko UID
+    # właściciela modelujemy jak w rootless testach instalatora.
+    root = tmp_path / "postgresql-host"
+    configuration = root / "etc/postgresql/16/main/postgresql.conf"
+    configuration.parent.joinpath("conf.d").mkdir(parents=True)
+    configuration.write_text("# Ubuntu default configuration\n" * 817 + "include_dir = 'conf.d'\n")
+    dropin = configuration.parent / "conf.d/defaults.conf"
+    dropin.write_text("max_connections = 100\n")
+    for directory in (root, *(path for path in root.rglob("*") if path.is_dir())):
+        directory.chmod(0o755)
+    configuration.chmod(0o644)
+    dropin.chmod(0o644)
+    responses["config_root"] = root
+    responses["configuration"] = configuration
+    snapshot = probe._pg_snapshot
+    monkeypatch.setattr(
+        probe, "_pg_snapshot", lambda uid: snapshot(uid, root=root, owner_uid=os.getuid())
+    )
+
     def query(arguments):
         queries.append(arguments)
         if arguments[0].endswith("dpkg-query"):
             return responses[arguments[-1]]
         if arguments[0].endswith("pg_lsclusters"):
             return responses["cluster"]
-        if arguments[0].endswith("pg_conftool"):
-            return responses["include"]
+        if arguments == probe.POSTGRESQL_CONFIG_QUERY:
+            return responses["config_sql"]
+        if arguments == probe.POSTGRESQL_ROOT_CONFIG_QUERY:
+            return responses["config_sql_root"]
         if arguments[0].endswith(("python3", "python3.12")):
             return responses["python"]
         if "is-active" in arguments:
@@ -985,13 +1007,22 @@ def test_native_host_probe_queries_only_readonly_commands(host_probe):
     )
     assert state.systemd and state.cluster_online and state.python_ready
     assert state.packages == PACKAGES
-    assert tuple(user.name for user in state.users) == probe.USERS
+    assert tuple(user.name for user in state.users) == (*probe.USERS, "postgres")
     assert len(state.groups) == 4
     assert state.nss_ready
     assert state.unit_state == "not-found"
     assert state.unit_fragment == "" and state.unit_dropins == ()
     assert not state.verifier_active
     assert queries
+    assert probe.POSTGRESQL_CONFIG_QUERY in queries
+    assert not any(arguments[0].endswith("pg_conftool") for arguments in queries)
+    assert all(
+        arguments[0] in {"/usr/bin/dpkg-query", "/usr/bin/pg_lsclusters", "/usr/bin/systemctl"}
+        or arguments == probe.POSTGRESQL_CONFIG_QUERY
+        or arguments == probe.POSTGRESQL_ROOT_CONFIG_QUERY
+        or arguments[0] == "/approved/bin/python3.12"
+        for arguments in queries
+    )
     assert not any(
         operation in {"start", "restart", "reload", "enable", "create", "drop"}
         for arguments in queries
@@ -1020,17 +1051,304 @@ def test_native_host_probe_never_infers_cluster_from_package_presence(host_probe
     assert not state.cluster_online
 
 
-@pytest.mark.parametrize("field", ["unit", "include", "python", "manager"])
+@pytest.mark.parametrize("field", ["unit", "config_sql", "python", "manager"])
 def test_native_host_probe_inaccessible_dependencies_remain_unready(host_probe, field):
     probe, responses, _queries = host_probe
     responses[field] = None
     state = probe.inspect_host()
-    if field in {"unit", "include"}:
+    if field in {"unit", "config_sql"}:
         assert not state.cluster_online
     elif field == "python":
         assert not state.python_ready
     else:
         assert not state.systemd
+
+
+def test_native_host_probe_accepts_ubuntu_include_at_line_818_without_changing_files(host_probe):
+    probe, responses, _queries = host_probe
+    root = responses["config_root"]
+    before = _snapshot(root)
+    metadata = {
+        path.relative_to(root): (path.stat().st_mtime_ns, path.stat().st_ctime_ns)
+        for path in root.rglob("*")
+    }
+    assert responses["configuration"].read_text().splitlines()[817] == "include_dir = 'conf.d'"
+    assert probe.inspect_host().cluster_online
+    assert _snapshot(root) == before
+    assert {
+        path.relative_to(root): (path.stat().st_mtime_ns, path.stat().st_ctime_ns)
+        for path in root.rglob("*")
+    } == metadata
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        b"# include_dir = 'conf.d'\nport = 5432\n",
+        b"include_dir = 'elsewhere'\n",
+        b"include_dir = '/etc/postgresql/16/main/conf.d'\n",
+        b"include_dir = 'conf.d'\ninclude_dir = 'conf.d'\n",
+        b"include_dir = 'conf.d'\ninclude_if_exists = 'extra.conf'\n",
+        b"include_dir = 'conf.d' trailing\n",
+        b"include_dir = 'conf.d\n",
+        b"include_dir = 'conf.d'\nmalformed line with extra tokens\n",
+        b"application_name = 'include_dir = ''conf.d'''\n",
+        b"application_name = '\ninclude_dir = conf.d\n'\n",
+        b"include_dir = 'conf.d'\n\x00",
+        b"include_dir = 'conf.d'\n# \xff\n",
+    ],
+)
+def test_native_host_probe_refuses_missing_wrong_or_ambiguous_include(host_probe, content):
+    probe, responses, queries = host_probe
+    responses["configuration"].write_bytes(content)
+    assert not probe.inspect_host().cluster_online
+    assert probe.POSTGRESQL_CONFIG_QUERY not in queries
+
+
+@pytest.mark.parametrize("target", ["postgresql.conf", "conf.d", "conf.d/defaults.conf", "."])
+@pytest.mark.parametrize("write_bits", [0o020, 0o002])
+def test_native_host_probe_refuses_writable_protected_configuration(host_probe, target, write_bits):
+    probe, responses, queries = host_probe
+    path = responses["configuration"].parent / target
+    path.chmod(path.stat().st_mode | write_bits)
+    before = _snapshot(responses["config_root"])
+    assert not probe.inspect_host().cluster_online
+    assert _snapshot(responses["config_root"]) == before
+    assert probe.POSTGRESQL_CONFIG_QUERY not in queries
+
+
+@pytest.mark.parametrize("target", ["postgresql.conf", "conf.d", "conf.d/defaults.conf", "."])
+def test_native_host_probe_refuses_configuration_symlinks(host_probe, target):
+    probe, responses, _queries = host_probe
+    parent = responses["configuration"].parent
+    path = parent / target if target != "." else parent
+    saved = path.with_name(path.name + ".saved")
+    path.rename(saved)
+    path.symlink_to(saved, target_is_directory=saved.is_dir())
+    before = _snapshot(responses["config_root"])
+    assert not probe.inspect_host().cluster_online
+    assert _snapshot(responses["config_root"]) == before
+
+
+def test_native_host_probe_refuses_hardlinked_main_configuration(host_probe):
+    probe, responses, _queries = host_probe
+    configuration = responses["configuration"]
+    os.link(configuration, configuration.with_name("hardlink"))
+    assert not probe.inspect_host().cluster_online
+
+
+@pytest.mark.parametrize("target", ["postgresql.conf", "conf.d", "conf.d/defaults.conf"])
+def test_native_host_probe_refuses_foreign_configuration_owner(host_probe, monkeypatch, target):
+    probe, responses, _queries = host_probe
+    path = responses["configuration"].parent / target
+    inode = path.stat().st_ino
+    original = probe.os.fstat
+
+    def fstat(fd):
+        metadata = original(fd)
+        if metadata.st_ino != inode:
+            return metadata
+        fields = {name: getattr(metadata, name) for name in dir(metadata) if name.startswith("st_")}
+        return SimpleNamespace(**{**fields, "st_uid": 424242})
+
+    monkeypatch.setattr(probe.os, "fstat", fstat)
+    assert not probe.inspect_host().cluster_online
+
+
+def test_native_host_probe_accepts_postgres_owned_main_file_with_protected_root_parents(
+    host_probe, monkeypatch
+):
+    probe, responses, _queries = host_probe
+    inode = responses["configuration"].stat().st_ino
+    original = probe.os.fstat
+
+    def fstat(fd):
+        metadata = original(fd)
+        if metadata.st_ino != inode:
+            return metadata
+        fields = {name: getattr(metadata, name) for name in dir(metadata) if name.startswith("st_")}
+        return SimpleNamespace(**{**fields, "st_uid": 999})
+
+    monkeypatch.setattr(probe.os, "fstat", fstat)
+    assert probe.inspect_host().cluster_online
+
+
+def test_native_host_probe_refuses_configuration_changed_while_reading_file(
+    host_probe, monkeypatch
+):
+    probe, responses, queries = host_probe
+    inode = responses["configuration"].stat().st_ino
+    original = probe.os.fstat
+    observations = 0
+
+    def fstat(fd):
+        nonlocal observations
+        metadata = original(fd)
+        if metadata.st_ino != inode:
+            return metadata
+        observations += 1
+        fields = {name: getattr(metadata, name) for name in dir(metadata) if name.startswith("st_")}
+        return SimpleNamespace(**{**fields, "st_mtime_ns": metadata.st_mtime_ns + observations})
+
+    monkeypatch.setattr(probe.os, "fstat", fstat)
+    assert not probe.inspect_host().cluster_online
+    assert probe.POSTGRESQL_CONFIG_QUERY not in queries
+
+
+def test_native_host_probe_refuses_nonregular_configuration_without_blocking(host_probe):
+    probe, responses, queries = host_probe
+    configuration = responses["configuration"]
+    configuration.unlink()
+    os.mkfifo(configuration, 0o600)
+    assert not probe.inspect_host().cluster_online
+    assert probe.POSTGRESQL_CONFIG_QUERY not in queries
+
+
+@pytest.mark.parametrize("failure", ["unreadable", "missing", "oversized", "nested_include"])
+def test_native_host_probe_refuses_unavailable_or_unbounded_configuration(
+    host_probe, monkeypatch, failure
+):
+    probe, responses, queries = host_probe
+    configuration = responses["configuration"]
+    if failure == "missing":
+        configuration.unlink()
+    elif failure == "oversized":
+        configuration.write_bytes(b"#" * (probe._PG_MAX_FILE + 1))
+    elif failure == "nested_include":
+        (configuration.parent / "conf.d/defaults.conf").write_text("include = 'outside.conf'\n")
+    else:
+        original = probe.os.open
+
+        def refuse(path, *args, **kwargs):
+            if path == "postgresql.conf":
+                raise PermissionError("unreadable fixture configuration")
+            return original(path, *args, **kwargs)
+
+        monkeypatch.setattr(probe.os, "open", refuse)
+    assert not probe.inspect_host().cluster_online
+    assert probe.POSTGRESQL_CONFIG_QUERY not in queries
+
+
+@pytest.mark.parametrize(
+    "response", [None, "", "f", "true", "t\nf", "ERROR: invalid configuration"]
+)
+def test_native_host_probe_refuses_unverified_server_configuration(host_probe, response):
+    probe, responses, _queries = host_probe
+    responses["config_sql"] = response
+    assert not probe.inspect_host().cluster_online
+
+
+def test_native_host_probe_accepts_deployed_root_peer_mapping_without_postgres_fallback(host_probe):
+    probe, responses, queries = host_probe
+    responses["config_sql_root"] = "t"
+    responses["config_sql"] = None
+    assert probe.inspect_host().cluster_online
+    assert probe.POSTGRESQL_ROOT_CONFIG_QUERY in queries
+    assert probe.POSTGRESQL_CONFIG_QUERY not in queries
+
+
+def test_native_host_probe_checks_postgres_peer_after_default_ubuntu_root_peer_refusal(host_probe):
+    probe, _responses, queries = host_probe
+    assert probe.inspect_host().cluster_online
+    assert queries.index(probe.POSTGRESQL_ROOT_CONFIG_QUERY) < queries.index(
+        probe.POSTGRESQL_CONFIG_QUERY
+    )
+
+
+def test_native_host_probe_refuses_configuration_drift_during_server_query(host_probe, monkeypatch):
+    probe, responses, _queries = host_probe
+    original = probe._query
+
+    def query(arguments):
+        if arguments == probe.POSTGRESQL_CONFIG_QUERY:
+            responses["configuration"].write_text("include_dir = 'conf.d'\nport = 5432\n")
+        return original(arguments)
+
+    monkeypatch.setattr(probe, "_query", query)
+    assert not probe.inspect_host().cluster_online
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        "LoadState=loaded",
+        "LoadState=loaded\nActiveState=inactive",
+        "LoadState=loaded\nActiveState=failed",
+        "LoadState=loaded\nActiveState=active\nActiveState=active",
+    ],
+)
+def test_native_host_probe_refuses_stopped_or_unobservable_postgresql_service(host_probe, response):
+    probe, responses, queries = host_probe
+    responses["unit"] = response
+    assert not probe.inspect_host().cluster_online
+    assert probe.POSTGRESQL_CONFIG_QUERY not in queries
+
+
+@pytest.mark.parametrize("uid", [None, 0])
+def test_native_host_probe_requires_resolved_nonroot_postgres_account(host_probe, monkeypatch, uid):
+    import pwd
+
+    probe, _responses, queries = host_probe
+    original = pwd.getpwnam
+
+    def lookup(name):
+        if name == "postgres":
+            if uid is None:
+                raise KeyError(name)
+            return SimpleNamespace(pw_uid=uid)
+        return original(name)
+
+    monkeypatch.setattr(pwd, "getpwnam", lookup)
+    assert not probe.inspect_host().cluster_online
+    assert probe.POSTGRESQL_CONFIG_QUERY not in queries
+
+
+def test_postgresql_configuration_query_uses_bounded_local_readonly_peer_connection():
+    from deployment import production_local_installer_host as probe
+
+    command = probe.POSTGRESQL_CONFIG_QUERY
+    assert probe.POSTGRESQL_ROOT_CONFIG_QUERY == command[4:]
+    assert command[:5] == [
+        "/usr/sbin/runuser",
+        "-u",
+        "postgres",
+        "--",
+        "/usr/lib/postgresql/16/bin/psql",
+    ]
+    assert "-X" in command and "-w" in command and "ON_ERROR_STOP=1" in command
+    assert command[command.index("-h") + 1] == "/var/run/postgresql"
+    assert command[command.index("-p") + 1] == "5432"
+    conninfo = command[command.index("-d") + 1]
+    assert "connect_timeout=5" in conninfo
+    assert "statement_timeout=5000" in conninfo
+    assert "default_transaction_read_only=on" in conninfo
+    sql = command[command.index("-c") + 1]
+    assert sql.startswith("SELECT ") and ";" not in sql
+    assert "pg_catalog.pg_file_settings WHERE error IS NOT NULL" in sql
+    assert "pg_catalog.pg_hba_file_rules WHERE error IS NOT NULL" in sql
+    assert "server_version_num" in sql and "160000 AND 169999" in sql
+    assert "config_file" in sql and "data_directory" in sql and "port" in sql
+
+
+def test_real_pg_conftool_exit_one_does_not_reject_verified_include(host_probe):
+    import subprocess
+
+    command = os.environ.get("STAGE9_TEST_PG_CONFTOOL") or shutil.which("pg_conftool")
+    if command is None:
+        pytest.skip("optional real postgresql-common tool is unavailable")
+    probe, responses, queries = host_probe
+    configuration = responses["configuration"]
+    result = subprocess.run(
+        [command, str(configuration), "show", "include_dir"],
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+    assert result.returncode == 1 and result.stdout == "" and result.stderr == ""
+    assert probe.inspect_host().cluster_online
+    assert not any(arguments[0].endswith("pg_conftool") for arguments in queries)
 
 
 def test_native_host_probe_reports_running_verifier_and_missing_package(host_probe):

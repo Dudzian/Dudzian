@@ -60,6 +60,11 @@ Zachować `/etc/os-release`, `uname`, PID 1, wersję CPython/systemd, APT source
 
 Przygotowanie 16/main i kont opisują sekcje 2–3 historycznego runbooka, ale jego
 listy bibliotek Pythona i manifestu v1 nie obowiązują nowego profilu.
+Kontrola PostgreSQL używa chronionego odczytu `postgresql.conf` i płaskiego
+`conf.d` oraz lokalnego peer SELECT; `pg_conftool … show include_dir` nie jest
+kryterium akceptacji. Wymagania własności, odmowy nieobsługiwanych include oraz
+osobne przypadki rzeczywistej VM opisuje
+[remediacja host-probe](../architecture/stage9_linux_installer_remediation.md#remediacja-host-probe-postgresql--2026-11-11).
 Osobny syntetyczny `stage9_vm_guard` i jego sprawdzony backup służą porównaniu
 wierszy przed/po instalacji; nie są schematem Freshness ani poświadczeniem.
 Schemat Freshness przygotować tylko przez istniejące, niezależnie przejrzane

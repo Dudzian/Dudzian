@@ -104,12 +104,18 @@ Dopiero po osobnym zatwierdzeniu operator jawnie tworzy pusty klaster fixture:
 sudo pg_createcluster 16 main --port=5432
 sudo systemctl start postgresql@16-main.service
 pg_lsclusters --no-header > "$trial_evidence/clusters-created.txt"
-sudo pg_conftool 16 main show include_dir > "$trial_evidence/include-dir.txt"
 systemctl show postgresql@16-main.service --property=LoadState,ActiveState \
   > "$trial_evidence/postgresql-unit.txt"
 ```
 
-Oczekiwany jest wyłącznie `16 main 5432 online postgres` i `include_dir='conf.d'`.
+Oczekiwany jest wyłącznie `16 main 5432 online postgres` oraz załadowana,
+aktywna jednostka. Wymaganą dyrektywę `include_dir = 'conf.d'` sprawdza
+odczytowy preflight aktualnego instalatora, z przejrzanego i chronionego
+bootstrapu, zgodnie z [procedurą v2](STAGE9_LINUX_VM_HARNESS.md#6-wejścia-i-kolejne-fazy-wykonania).
+Nie używać `pg_conftool 16 main show include_dir` jako kryterium akceptacji:
+poprawna konfiguracja Noble daje tu kod 1 i pusty wynik, ponieważ narzędzie
+rozwija include zamiast zwracać tę dyrektywę jako parametr. Szczegóły i granice
+kontroli opisuje [remediacja host-probe](../architecture/stage9_linux_installer_remediation.md#remediacja-host-probe-postgresql--2026-11-11).
 Nie wykonywać tych poleceń na Dellu. Nie używać `pg_dropcluster` w recovery.
 
 ## 3. Dane zastane, backup i konta

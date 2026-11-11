@@ -1,5 +1,9 @@
 # PR #3235 — remediacja review instalatora Linux
 
+Raport PR #3235 poniżej zachowuje historyczny kontekst. Aktualną poprawkę
+odczytowej kontroli PostgreSQL opisuje
+[dodatek host-probe z 2026-11-11](#remediacja-host-probe-postgresql--2026-11-11).
+
 Data: 2026-11-02 (UTC / Atlantic/Reykjavik). Kontynuacja istniejącej gałęzi
 `codex/stage9-linux-installer-safety`, baza review
 `a5c4e882091a2ce3daaed0943ec1177fd88c17ff`. Bez nowego PR i bez merge.
@@ -256,3 +260,85 @@ Nie wystarczy zmienić jednego ExecStart:
 ## Zakres pozostały i decyzja
 
 W tym zadaniu wykazano rzeczywistą niezgodność, potwierdzono izolowany import na CPython 3.12 i przedstawiono projekt jej rozwiązania. Nie implementowano runtime lub zmiany jednostki bez kompletnego podpisanego kontraktu. Właściwa dodatnia próba systemd/instalacji na Ubuntu pozostaje do odrębnego przygotowania i wykonania operatora, bez fizycznego Della. Nie deklarować PASS dla instalacji Ubuntu, nie ustawiać LINUX_PRODUCTION_READY=PASS ani Stage 9 COMPLETE.
+
+## Remediacja host-probe PostgreSQL — 2026-11-11
+
+`include_dir` jest dyrektywą parsera PostgreSQL, nie parametrem GUC.
+W pakiecie Ubuntu Noble `postgresql-common 257build1.1` funkcja
+`PgCommon::read_conf_file()` rozwija zawartość katalogu i scala parametry
+plików, ale nie zapisuje klucza `include_dir`. `pg_conftool … show include_dir`
+odczytuje ten wynik; przy nieobecnym kluczu zwraca 1 bez stdout/stderr.
+Taki wynik nie dowodzi braku aktywnej dyrektywy ani awarii klastra.
+Odtworzono go rzeczywistym narzędziem z rozpakowanych pakietów Ubuntu,
+na plikach tymczasowych, bez instalacji pakietów i zmian konfiguracji hosta.
+Odczyty `port` i parametru z pliku `conf.d` równocześnie kończyły się kodem 0.
+
+Źródła sprawdzone bezpośrednio:
+
+- [Pakiet postgresql-common 257build1.1](https://archive.ubuntu.com/ubuntu/pool/main/p/postgresql-common/postgresql-common_257build1.1_all.deb):
+  `PgCommon.pm`, linie 197–212; `pg_conftool`, linie 125–134.
+- [Pakiet postgresql-client-common 257build1.1](https://archive.ubuntu.com/ubuntu/pool/main/p/postgresql-common/postgresql-client-common_257build1.1_all.deb).
+- [Parser PostgreSQL 16](https://github.com/postgres/postgres/blob/REL_16_STABLE/src/backend/utils/misc/guc-file.l#L430):
+  dyrektywa include jest przetwarzana od razu, bez tworzenia zmiennej.
+
+`inspect_host()` zachowuje wymaganie klastra `16/main`, właściciela `postgres`,
+portu 5432 i stanu `online`, a jednostka `postgresql@16-main.service` musi mieć
+odpowiedź z dokładnie dwóch pól: `LoadState=loaded` i `ActiveState=active`. Zamiast wyniku
+`pg_conftool` wymagane są dwa niezależne odczyty:
+
+1. Chroniony snapshot `/etc/postgresql/16/main/postgresql.conf` oraz aktywnych
+   nieukrytych plików `*.conf` w `conf.d`. W głównym pliku wymagana jest dokładnie
+   jedna dyrektywa include wskazująca `conf.d`; brak, inna wartość, duplikat,
+   inne lub zagnieżdżone include powodują odmowę. Profil obsługuje jednowierszowe
+   przypisania; wielowierszowa lub niejednoznaczna składnia również oznacza
+   odmowę. To ograniczony profil instalatora, a nie zamiennik parsera serwera.
+2. Stały lokalny SELECT przez `/usr/lib/postgresql/16/bin/psql`, z rolą SQL
+   `postgres`, socketem `/var/run/postgresql`, portem 5432 i bazą `postgres`.
+   Najpierw używany jest peer konta root, zgodny z istniejącym wdrożonym
+   mapowaniem HBA root→postgres; następnie, jeśli trzeba, `runuser -u postgres`
+   dla standardowego peer postgres→postgres na Ubuntu. Obie sondy mają ten
+   sam stały SELECT i opcje.
+   Opcje `-X -w`, `passfile=/dev/null`, `ON_ERROR_STOP=1`, timeout połączenia 5 s, timeout zapytania
+   5000 ms i `default_transaction_read_only=on` ograniczają tę sondę. Wymagana
+   jest dokładna odpowiedź `t`: działający serwer ma wskazywać powyższy plik
+   konfiguracji, `/var/lib/postgresql/16/main`, port 5432 i wersję 16.x oraz
+   potwierdzać peer root/postgres, rolę sesji i bieżącą `postgres` oraz
+   transakcję read-only, a także nie zgłaszać błędów w `pg_catalog.pg_file_settings` i
+   `pg_catalog.pg_hba_file_rules`. Wiersze `pg_file_settings` muszą pochodzić
+   wyłącznie z głównego pliku albo płaskiego `conf.d`; wpisy ustawień
+   z `postgresql.auto.conf` (ALTER SYSTEM) lub innych źródeł powodują odmowę.
+   Standardowy pusty `postgresql.auto.conf` jest dopuszczony. Kontrola nie
+   deklaruje ochrony metadanych wszystkich plików PostgreSQL. Lokalna baza lub
+   oba peer niedostępne oznaczają odmowę. Sonda nie uruchamia reload/restart
+   ani naprawy.
+
+Odczyt używa przypiętych deskryptorów i `O_NOFOLLOW`. Pliki muszą być zwykłe,
+mieć pojedynczy hardlink, właściciela root albo rzeczywistego `postgres` i nie
+mogą być zapisywalne przez grupę/innych. Katalogi i ich przodkowie pozostają
+root-owned bez zapisu grupy/innych; istniejący wymóg `0755` w preflight nie
+zmienia się. Symlink w chronionej ścieżce, błąd odczytu, niepoprawne UTF-8/NUL,
+przekroczenie limitów (1 MiB na plik, 8 MiB łącznie, 1024 pliki w `conf.d`)
+lub zmiana bajtów/metadanych między snapshotami przed i po SQL powodują odmowę.
+Nie wykonywać `chown`, `chmod` ani edycji PostgreSQL w celu automatycznego
+usunięcia odmowy; zastany stan wymaga niezależnej oceny administratora.
+
+Testy jednostkowe czytają rzeczywiste pliki tymczasowe i modelują granice
+systemd/SQL; nie kwalifikują rzeczywistego klastra. Osobna Ubuntu Server
+24.04 amd64 VM pozostaje wymagana dla następujących obserwacji:
+
+- akceptacja przygotowanego 16/main na 5432, z peer, działającym systemd i
+  `include_dir = 'conf.d'`, również po niezależnym restarcie VM;
+- rzeczywisty wynik `pg_conftool` 1/pusty przy jednoczesnym przejściu nowej sondy;
+- odmowy na osobno przygotowanych klonach: brak/zła wartość include,
+  błędna/nieczytelna konfiguracja, symlink i niebezpieczne uprawnienia;
+- odmowy przy braku klastra, innym porcie, zatrzymanej usłudze lub
+  niedostępnym peer/SQL;
+- porównanie plików, usług i syntetycznego guard danych przed i po samym
+  preflight oraz kontrola identycznego wcześniej ukończonego wdrożenia.
+
+Wykonanie odbywa się w ramach istniejącej
+[procedury v2](../runbooks/STAGE9_LINUX_VM_HARNESS.md), z jej niezależnym
+zatwierdzeniem i podpisanym runtime. Zwykłe testy PR nie tworzą approval,
+nie modyfikują VM i nie uruchamiają destrukcyjnej kwalifikacji. Progi, UID/GID,
+IPC oraz wymagania podpisanego runtime pozostają bez zmian.
+Stage 9 pozostaje **IN_PROGRESS / PRODUCTION_NO_GO**.

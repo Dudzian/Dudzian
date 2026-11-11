@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import stat
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -31,6 +33,176 @@ UNIT_QUERY = [
     "cryptohunter-freshness-verifier.service",
     "--property=LoadState,FragmentPath,DropInPaths",
 ]
+POSTGRESQL_UNIT_QUERY = [
+    "/usr/bin/systemctl",
+    "show",
+    "postgresql@16-main.service",
+    "--property=LoadState,ActiveState",
+]
+POSTGRESQL_CONFIG_QUERY = [
+    "/usr/sbin/runuser",
+    "-u",
+    "postgres",
+    "--",
+    "/usr/lib/postgresql/16/bin/psql",
+    "-X",
+    "-w",
+    "-qAt",
+    "-h",
+    "/var/run/postgresql",
+    "-p",
+    "5432",
+    "-U",
+    "postgres",
+    "-d",
+    "dbname=postgres connect_timeout=5 passfile=/dev/null "
+    "options='-c statement_timeout=5000 -c default_transaction_read_only=on'",
+    "-v",
+    "ON_ERROR_STOP=1",
+    "-c",
+    "SELECT pg_catalog.current_setting('config_file') = '/etc/postgresql/16/main/postgresql.conf' "
+    "AND pg_catalog.current_setting('data_directory') = '/var/lib/postgresql/16/main' "
+    "AND pg_catalog.current_setting('port') = '5432' "
+    "AND pg_catalog.current_setting('server_version_num')::int BETWEEN 160000 AND 169999 "
+    "AND system_user::text IN ('peer:root', 'peer:postgres') "
+    "AND session_user = 'postgres' AND current_user = 'postgres' "
+    "AND pg_catalog.current_setting('transaction_read_only') = 'on' "
+    "AND NOT EXISTS (SELECT FROM pg_catalog.pg_file_settings WHERE error IS NOT NULL) "
+    "AND NOT EXISTS (SELECT FROM pg_catalog.pg_file_settings "
+    "WHERE sourcefile IS NULL OR (sourcefile <> '/etc/postgresql/16/main/postgresql.conf' "
+    "AND sourcefile !~ '^/etc/postgresql/16/main/conf[.]d/[^/.][^/]*[.]conf$')) "
+    "AND NOT EXISTS (SELECT FROM pg_catalog.pg_hba_file_rules WHERE error IS NOT NULL)",
+]
+# Zastany Ubuntu używa peer postgres -> postgres; wdrożony HBA mapuje
+# root -> postgres. Obie stałe sondy pozostają lokalne i wyłącznie odczytowe.
+POSTGRESQL_ROOT_CONFIG_QUERY = POSTGRESQL_CONFIG_QUERY[4:]
+_PG_DIRECTORY = "etc/postgresql/16/main"
+_PG_MAX_FILE = 1024 * 1024
+_PG_MAX_TOTAL = 8 * _PG_MAX_FILE
+_PG_LINE = re.compile(
+    r"[ \t]*([A-Za-z_][A-Za-z_0-9.]*)"
+    r"(?:[ \t]*=[ \t]*|[ \t]+)"
+    r"('(?:[^'\\\r\n]|\\.|'')*'|[^ \t\r\n#'=]+)[ \t]*(?:#.*)?"
+)
+
+
+def _pg_directives(content: bytes) -> list[tuple[str, str]]:
+    """Ograniczony profil jednowierszowy; pełną semantykę sprawdza serwer.
+
+    Nie interpretujemy wielowierszowych wartości ani zagnieżdżonych include.
+    Nieznana składnia oznacza odmowę, również gdy serwer nadal działa ze starą
+    konfiguracją. include_dir nie jest GUC zwracanym przez pg_conftool.
+    """
+    text = content.decode("utf-8", errors="strict")
+    if "\x00" in text:
+        raise ValueError("NUL w konfiguracji PostgreSQL")
+    result = []
+    for line in text.split("\n"):
+        line = line.removesuffix("\r")
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        match = _PG_LINE.fullmatch(line)
+        if match is None:
+            raise ValueError("Niejednoznaczna konfiguracja PostgreSQL")
+        result.append((match[1].lower(), match[2]))
+    return result
+
+
+def _pg_snapshot(
+    postgres_uid: int, *, root: Path = Path("/"), owner_uid: int = 0
+) -> dict[str, tuple[tuple[int, ...], bytes]]:
+    """Odczyt chronionego main/conf.d bez symlinków w żadnym komponencie.
+
+    root/owner_uid są granicą hermetycznego modelu filesystemu w testach;
+    inspekcja natywna zawsze używa / i UID 0. Nie otwieramy plików do zapisu.
+    """
+    result = {}
+
+    def identity(metadata: os.stat_result) -> tuple[int, ...]:
+        return tuple(
+            getattr(metadata, name)
+            for name in (
+                "st_dev",
+                "st_ino",
+                "st_mode",
+                "st_uid",
+                "st_gid",
+                "st_nlink",
+                "st_size",
+                "st_mtime_ns",
+                "st_ctime_ns",
+            )
+        )
+
+    def check(fd: int, *, directory: bool) -> os.stat_result:
+        metadata = os.fstat(fd)
+        valid = (
+            stat.S_ISDIR(metadata.st_mode) and metadata.st_uid == owner_uid
+            if directory
+            else stat.S_ISREG(metadata.st_mode)
+            and metadata.st_nlink == 1
+            and metadata.st_uid in {owner_uid, postgres_uid}
+            and metadata.st_size <= _PG_MAX_FILE
+        )
+        if not valid or metadata.st_mode & 0o022:
+            raise PermissionError("Niechroniona konfiguracja PostgreSQL")
+        return metadata
+
+    def read(parent: int, name: str, key: str) -> bytes:
+        fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+        try:
+            before = check(fd, directory=False)
+            with os.fdopen(os.dup(fd), "rb") as stream:
+                content = stream.read(_PG_MAX_FILE + 1)
+            if len(content) > _PG_MAX_FILE or identity(before) != identity(os.fstat(fd)):
+                raise ValueError("Zmiana konfiguracji PostgreSQL podczas odczytu")
+            result[key] = (identity(before), content)
+            return content
+        finally:
+            os.close(fd)
+
+    fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        check(fd, directory=True)
+        for part in _PG_DIRECTORY.split("/"):
+            next_fd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            os.close(fd)
+            fd = next_fd
+            check(fd, directory=True)
+        main = _pg_directives(read(fd, "postgresql.conf", "postgresql.conf"))
+        includes = [(key, value) for key, value in main if key.startswith("include")]
+        if includes not in [[("include_dir", "'conf.d'")], [("include_dir", "conf.d")]]:
+            raise ValueError("Wymagana pojedyncza dyrektywa include_dir conf.d")
+        next_fd = os.open("conf.d", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+        os.close(fd)
+        fd = next_fd
+        metadata = check(fd, directory=True)
+        result["conf.d"] = (identity(metadata), b"")
+        names = sorted(
+            name for name in os.listdir(fd) if not name.startswith(".") and name.endswith(".conf")
+        )
+        if len(names) > 1024:
+            raise ValueError("Zbyt wiele plików konfiguracji PostgreSQL")
+        for name in names:
+            directives = _pg_directives(read(fd, name, "conf.d/" + name))
+            if any(key.startswith("include") for key, _value in directives):
+                raise ValueError("Nieobsługiwane zagnieżdżone include PostgreSQL")
+            if sum(len(content) for _metadata, content in result.values()) > _PG_MAX_TOTAL:
+                raise ValueError("Zbyt duża konfiguracja PostgreSQL")
+        return result
+    finally:
+        os.close(fd)
+
+
+def _postgresql_config_ready(postgres_uid: int) -> bool:
+    try:
+        before = _pg_snapshot(postgres_uid)
+        ready = (
+            _query(POSTGRESQL_ROOT_CONFIG_QUERY) == "t" or _query(POSTGRESQL_CONFIG_QUERY) == "t"
+        )
+        return ready and before == _pg_snapshot(postgres_uid)
+    except (OSError, UnicodeError, ValueError):
+        return False
 
 
 @dataclass(frozen=True)
@@ -178,21 +350,18 @@ def inspect_host(runtime: Any | None = None) -> HostState:
     )
     cluster = _query(["/usr/bin/pg_lsclusters", "--no-header", "16", "main"])
     columns = cluster.split() if cluster is not None else []
+    unit_lines = (_query(POSTGRESQL_UNIT_QUERY) or "").splitlines()
+    try:
+        postgres_uid = pwd.getpwnam("postgres").pw_uid
+    except (KeyError, OSError):
+        postgres_uid = -1
     cluster_online = (
         len(columns) >= 7
         and columns[:5] == ["16", "main", "5432", "online", "postgres"]
-        and _query(
-            [
-                "/usr/bin/systemctl",
-                "show",
-                "postgresql@16-main.service",
-                "--property=LoadState",
-                "--value",
-            ]
-        )
-        == "loaded"
-        and _query(["/usr/bin/pg_conftool", "16", "main", "show", "include_dir"])
-        in {"include_dir = 'conf.d'", 'include_dir = "conf.d"', "include_dir = conf.d"}
+        and len(unit_lines) == 2
+        and set(unit_lines) == {"LoadState=loaded", "ActiveState=active"}
+        and postgres_uid > 0
+        and _postgresql_config_ready(postgres_uid)
     )
     # Brak argumentu oznacza wyłącznie obserwację systemu. Nie wykonujemy
     # systemowego interpretera jako zastępczego dowodu dla verifiera.
