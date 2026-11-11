@@ -11,6 +11,7 @@ import re
 import stat
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -39,6 +40,111 @@ POSTGRESQL_UNIT_QUERY = [
     "postgresql@16-main.service",
     "--property=LoadState,ActiveState",
 ]
+# Dwa zamknięte profile: przygotowany Ubuntu i dostarczony profil aplikacji.
+# Kolejność reguł jest częścią polityki; żaden dodatkowy wiersz nie jest pomijany.
+_PG_UBUNTU_HBA = [
+    ["local", ["all"], ["postgres"], None, None, "peer", None],
+    ["local", ["all"], ["all"], None, None, "peer", None],
+    ["host", ["all"], ["all"], "127.0.0.1", "255.255.255.255", "scram-sha-256", None],
+    [
+        "host",
+        ["all"],
+        ["all"],
+        "::1",
+        "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
+        "scram-sha-256",
+        None,
+    ],
+    ["local", ["replication"], ["all"], None, None, "peer", None],
+    ["host", ["replication"], ["all"], "127.0.0.1", "255.255.255.255", "scram-sha-256", None],
+    [
+        "host",
+        ["replication"],
+        ["all"],
+        "::1",
+        "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
+        "scram-sha-256",
+        None,
+    ],
+]
+_PG_DEPLOYED_HBA = [
+    ["local", ["all"], ["postgres"], None, None, "peer", ["map=freshness_admin_map"]],
+    [
+        "local",
+        ["freshness_gate"],
+        ["freshness_crypto_verifier"],
+        None,
+        None,
+        "peer",
+        ["map=freshness_authority_map"],
+    ],
+    [
+        "local",
+        ["freshness_gate"],
+        ["freshness_runtime"],
+        None,
+        None,
+        "peer",
+        ["map=freshness_authority_map"],
+    ],
+    ["local", ["freshness_gate"], ["all"], None, None, "reject", None],
+    ["local", ["all"], ["all"], None, None, "reject", None],
+]
+_PG_DEPLOYED_IDENT = [
+    ["freshness_authority_map", "os_freshness_crypto_verifier", "freshness_crypto_verifier"],
+    ["freshness_authority_map", "os_freshness_runtime", "freshness_runtime"],
+    ["freshness_admin_map", "root", "postgres"],
+]
+_PG_HBA_ROWS = (
+    "COALESCE((SELECT pg_catalog.jsonb_agg(pg_catalog.jsonb_build_array(type,database,user_name,address,netmask,"
+    "auth_method,options) ORDER BY rule_number) FROM hba), '[]'::jsonb)"
+)
+_PG_IDENT_ROWS = (
+    "COALESCE((SELECT pg_catalog.jsonb_agg(pg_catalog.jsonb_build_array(map_name,sys_name,pg_username) "
+    "ORDER BY map_number) FROM ident), '[]'::jsonb)"
+)
+_POSTGRESQL_SQL = (
+    "WITH hba AS MATERIALIZED (SELECT * FROM pg_catalog.pg_hba_file_rules), "
+    "ident AS MATERIALIZED (SELECT * FROM pg_catalog.pg_ident_file_mappings), "
+    "files AS MATERIALIZED (SELECT * FROM pg_catalog.pg_file_settings) "
+    "SELECT pg_catalog.json_build_object('ready', ("
+    "pg_catalog.current_setting('config_file') = '/etc/postgresql/16/main/postgresql.conf' "
+    "AND pg_catalog.current_setting('data_directory') = '/var/lib/postgresql/16/main' "
+    "AND pg_catalog.current_setting('port') = '5432' "
+    "AND pg_catalog.current_setting('server_version_num')::int BETWEEN 160000 AND 169999 "
+    "AND system_user::text IN ('peer:root', 'peer:postgres') "
+    "AND session_user = 'postgres' AND current_user = 'postgres' "
+    "AND pg_catalog.current_setting('transaction_read_only') = 'on' "
+    "AND pg_catalog.current_setting('fsync') = 'on' "
+    "AND pg_catalog.current_setting('synchronous_commit') = 'on' "
+    "AND NOT EXISTS (SELECT FROM files WHERE error IS NOT NULL) "
+    "AND NOT EXISTS (SELECT FROM files "
+    "WHERE sourcefile IS NULL OR (sourcefile <> '/etc/postgresql/16/main/postgresql.conf' "
+    "AND sourcefile !~ '^/etc/postgresql/16/main/conf[.]d/[^/.][^/]*[.]conf$')) "
+    "AND NOT EXISTS (SELECT FROM hba WHERE error IS NOT NULL "
+    "OR file_name IS DISTINCT FROM pg_catalog.current_setting('hba_file')) "
+    "AND NOT EXISTS (SELECT FROM ident WHERE error IS NOT NULL "
+    "OR file_name IS DISTINCT FROM pg_catalog.current_setting('ident_file')) "
+    "AND NOT EXISTS (SELECT FROM pg_catalog.pg_settings WHERE pending_restart) "
+    "AND NOT EXISTS (SELECT FROM files AS f JOIN pg_catalog.pg_settings AS s ON s.name=f.name "
+    "WHERE f.applied AND f.name IN ('listen_addresses','unix_socket_directories','port',"
+    "'data_directory','hba_file','ident_file','fsync','synchronous_commit') "
+    "AND f.setting IS DISTINCT FROM s.setting) "
+    "AND ((pg_catalog.current_setting('hba_file') = '/etc/postgresql/16/main/pg_hba.conf' "
+    "AND pg_catalog.current_setting('ident_file') = '/etc/postgresql/16/main/pg_ident.conf' "
+    "AND pg_catalog.current_setting('listen_addresses') = 'localhost' "
+    "AND pg_catalog.current_setting('unix_socket_directories') = '/var/run/postgresql' "
+    f"AND {_PG_HBA_ROWS} = '{json.dumps(_PG_UBUNTU_HBA)}'::jsonb "
+    f"AND {_PG_IDENT_ROWS} = '[]'::jsonb) "
+    "OR (pg_catalog.current_setting('hba_file') = '/etc/cryptohunter/postgresql/pg_hba.conf' "
+    "AND pg_catalog.current_setting('ident_file') = '/etc/cryptohunter/postgresql/pg_ident.conf' "
+    "AND pg_catalog.current_setting('listen_addresses') = '' "
+    "AND pg_catalog.current_setting('unix_socket_directories') = '/run/postgresql' "
+    f"AND {_PG_HBA_ROWS} = '{json.dumps(_PG_DEPLOYED_HBA)}'::jsonb "
+    f"AND {_PG_IDENT_ROWS} = '{json.dumps(_PG_DEPLOYED_IDENT)}'::jsonb))), "
+    "'postmaster_start_ns', "
+    "(EXTRACT(EPOCH FROM pg_catalog.pg_postmaster_start_time()) * 1000000000)::bigint)"
+)
 POSTGRESQL_CONFIG_QUERY = [
     "/usr/sbin/runuser",
     "-u",
@@ -56,22 +162,11 @@ POSTGRESQL_CONFIG_QUERY = [
     "postgres",
     "-d",
     "dbname=postgres connect_timeout=5 passfile=/dev/null "
-    "options='-c statement_timeout=5000 -c default_transaction_read_only=on'",
+    "options='-c statement_timeout=5000 -c default_transaction_read_only=on -c search_path=pg_catalog'",
     "-v",
     "ON_ERROR_STOP=1",
     "-c",
-    "SELECT pg_catalog.current_setting('config_file') = '/etc/postgresql/16/main/postgresql.conf' "
-    "AND pg_catalog.current_setting('data_directory') = '/var/lib/postgresql/16/main' "
-    "AND pg_catalog.current_setting('port') = '5432' "
-    "AND pg_catalog.current_setting('server_version_num')::int BETWEEN 160000 AND 169999 "
-    "AND system_user::text IN ('peer:root', 'peer:postgres') "
-    "AND session_user = 'postgres' AND current_user = 'postgres' "
-    "AND pg_catalog.current_setting('transaction_read_only') = 'on' "
-    "AND NOT EXISTS (SELECT FROM pg_catalog.pg_file_settings WHERE error IS NOT NULL) "
-    "AND NOT EXISTS (SELECT FROM pg_catalog.pg_file_settings "
-    "WHERE sourcefile IS NULL OR (sourcefile <> '/etc/postgresql/16/main/postgresql.conf' "
-    "AND sourcefile !~ '^/etc/postgresql/16/main/conf[.]d/[^/.][^/]*[.]conf$')) "
-    "AND NOT EXISTS (SELECT FROM pg_catalog.pg_hba_file_rules WHERE error IS NOT NULL)",
+    _POSTGRESQL_SQL,
 ]
 # Zastany Ubuntu używa peer postgres -> postgres; wdrożony HBA mapuje
 # root -> postgres. Obie stałe sondy pozostają lokalne i wyłącznie odczytowe.
@@ -108,13 +203,37 @@ def _pg_directives(content: bytes) -> list[tuple[str, str]]:
     return result
 
 
-def _pg_snapshot(
-    postgres_uid: int, *, root: Path = Path("/"), owner_uid: int = 0
-) -> dict[str, tuple[tuple[int, ...], bytes]]:
-    """Odczyt chronionego main/conf.d bez symlinków w żadnym komponencie.
+def _pg_auth_lines(content: bytes, *, ident: bool) -> None:
+    """Zamknięcie zależności HBA/ident obejmuje również puste include i @file.
 
-    root/owner_uid są granicą hermetycznego modelu filesystemu w testach;
-    inspekcja natywna zawsze używa / i UID 0. Nie otwieramy plików do zapisu.
+    Widoki PostgreSQL nie zwracają wierszy dla pustych plików dołączonych.
+    Profil nie obsługuje include, list z plików ani kontynuacji wierszy.
+    Pełną semantykę dopuszczonych wierszy sprawdza niezależnie serwer.
+    """
+    text = content.decode("utf-8", errors="strict")
+    if "\x00" in text:
+        raise ValueError("NUL w konfiguracji uwierzytelniania PostgreSQL")
+    heads = {"freshness_admin_map", "freshness_authority_map"} if ident else {"local", "host"}
+    for line in text.split("\n"):
+        active = line.partition("#")[0].strip()
+        if active and (active.split()[0] not in heads or "@" in active or "\\" in active):
+            raise ValueError("Nieobsługiwane zależności konfiguracji uwierzytelniania PostgreSQL")
+
+
+def _pg_snapshot(
+    postgres_uid: int,
+    *,
+    root: Path = Path("/"),
+    owner_uid: int = 0,
+    postgres_gid: int | None = None,
+) -> dict[str, tuple[tuple[int, ...], bytes]]:
+    """Odczyt main/conf.d/HBA/ident/auto.conf bez zapisów.
+
+    Katalogi pozostają root:0755 zgodnie z wcześniejszym kontraktem instalatora.
+    postgres:0700 nie chroni przestrzeni nazw podpisanego drop-inu przed serwerem.
+    Odczyt auto.conf ma odrębną politykę trzech stałych przodków danych;
+    nie zmienia ona wymagań własności konfiguracji w /etc.
+    root/owner_uid służą wyłącznie hermetycznemu modelowi filesystemu w testach.
     """
     result = {}
 
@@ -134,17 +253,42 @@ def _pg_snapshot(
             )
         )
 
-    def check(fd: int, *, directory: bool) -> os.stat_result:
+    def check(
+        fd: int, *, directory: bool, installed_auth: bool = False, data_ancestor: bool = False
+    ) -> os.stat_result:
         metadata = os.fstat(fd)
-        valid = (
-            stat.S_ISDIR(metadata.st_mode) and metadata.st_uid == owner_uid
-            if directory
-            else stat.S_ISREG(metadata.st_mode)
-            and metadata.st_nlink == 1
-            and metadata.st_uid in {owner_uid, postgres_uid}
-            and metadata.st_size <= _PG_MAX_FILE
-        )
-        if not valid or metadata.st_mode & 0o022:
+        if directory:
+            valid = (
+                stat.S_ISDIR(metadata.st_mode)
+                and metadata.st_uid == owner_uid
+                and stat.S_IMODE(metadata.st_mode) == (0o750 if installed_auth else 0o755)
+            )
+            if installed_auth:
+                if sys.platform == "win32":
+                    raise OSError("Inspekcja PostgreSQL wymaga POSIX")
+                import grp
+
+                expected_gid = (
+                    grp.getgrnam("postgres").gr_gid if postgres_gid is None else postgres_gid
+                )
+                valid = valid and metadata.st_gid == expected_gid
+            if data_ancestor:
+                # Wyłącznie trzy stałe katalogi PGDATA podczas odczytu auto.conf.
+                # Nie jest to wyjątek dla katalogów /etc ani miejsca publikacji.
+                valid = (
+                    stat.S_ISDIR(metadata.st_mode)
+                    and metadata.st_uid in {owner_uid, postgres_uid}
+                    and stat.S_IMODE(metadata.st_mode) in {0o700, 0o750, 0o755}
+                )
+        else:
+            valid = (
+                stat.S_ISREG(metadata.st_mode)
+                and metadata.st_nlink == 1
+                and metadata.st_uid in {owner_uid, postgres_uid}
+                and metadata.st_size <= _PG_MAX_FILE
+                and not metadata.st_mode & 0o022
+            )
+        if not valid:
             raise PermissionError("Niechroniona konfiguracja PostgreSQL")
         return metadata
 
@@ -157,51 +301,125 @@ def _pg_snapshot(
             if len(content) > _PG_MAX_FILE or identity(before) != identity(os.fstat(fd)):
                 raise ValueError("Zmiana konfiguracji PostgreSQL podczas odczytu")
             result[key] = (identity(before), content)
+            if sum(len(data) for _metadata, data in result.values()) > _PG_MAX_TOTAL:
+                raise ValueError("Zbyt duża konfiguracja PostgreSQL")
             return content
         finally:
             os.close(fd)
 
-    fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-    try:
-        check(fd, directory=True)
-        for part in _PG_DIRECTORY.split("/"):
-            next_fd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
-            os.close(fd)
-            fd = next_fd
+    root_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+
+    def directory(relative: str) -> int:
+        fd = os.dup(root_fd)
+        try:
             check(fd, directory=True)
-        main = _pg_directives(read(fd, "postgresql.conf", "postgresql.conf"))
-        includes = [(key, value) for key, value in main if key.startswith("include")]
-        if includes not in [[("include_dir", "'conf.d'")], [("include_dir", "conf.d")]]:
-            raise ValueError("Wymagana pojedyncza dyrektywa include_dir conf.d")
-        next_fd = os.open("conf.d", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
-        os.close(fd)
-        fd = next_fd
-        metadata = check(fd, directory=True)
-        result["conf.d"] = (identity(metadata), b"")
-        names = sorted(
-            name for name in os.listdir(fd) if not name.startswith(".") and name.endswith(".conf")
-        )
-        if len(names) > 1024:
-            raise ValueError("Zbyt wiele plików konfiguracji PostgreSQL")
-        for name in names:
-            directives = _pg_directives(read(fd, name, "conf.d/" + name))
-            if any(key.startswith("include") for key, _value in directives):
-                raise ValueError("Nieobsługiwane zagnieżdżone include PostgreSQL")
-            if sum(len(content) for _metadata, content in result.values()) > _PG_MAX_TOTAL:
-                raise ValueError("Zbyt duża konfiguracja PostgreSQL")
+            parts = relative.split("/")
+            for index, part in enumerate(parts):
+                next_fd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+                os.close(fd)
+                fd = next_fd
+                check(
+                    fd,
+                    directory=True,
+                    installed_auth=relative == "etc/cryptohunter/postgresql"
+                    and index == len(parts) - 1,
+                    data_ancestor=relative == "var/lib/postgresql/16/main" and index >= 2,
+                )
+            return fd
+        except BaseException:
+            os.close(fd)
+            raise
+
+    try:
+        fd = directory(_PG_DIRECTORY)
+        try:
+            main = _pg_directives(read(fd, "postgresql.conf", "postgresql.conf"))
+            includes = [(key, value) for key, value in main if key.startswith("include")]
+            if includes not in [[("include_dir", "'conf.d'")], [("include_dir", "conf.d")]]:
+                raise ValueError("Wymagana pojedyncza dyrektywa include_dir conf.d")
+            _pg_auth_lines(read(fd, "pg_hba.conf", "pg_hba.conf"), ident=False)
+            _pg_auth_lines(read(fd, "pg_ident.conf", "pg_ident.conf"), ident=True)
+        finally:
+            os.close(fd)
+        fd = directory(_PG_DIRECTORY + "/conf.d")
+        try:
+            result["conf.d"] = (identity(check(fd, directory=True)), b"")
+            names = sorted(
+                name
+                for name in os.listdir(fd)
+                if not name.startswith(".") and name.endswith(".conf")
+            )
+            if len(names) > 1024:
+                raise ValueError("Zbyt wiele plików konfiguracji PostgreSQL")
+            for name in names:
+                directives = _pg_directives(read(fd, name, "conf.d/" + name))
+                if any(key.startswith("include") for key, _value in directives):
+                    raise ValueError("Nieobsługiwane zagnieżdżone include PostgreSQL")
+        finally:
+            os.close(fd)
+        try:
+            fd = directory("etc/cryptohunter/postgresql")
+        except FileNotFoundError:
+            pass
+        else:
+            try:
+                _pg_auth_lines(read(fd, "pg_hba.conf", "installed/pg_hba.conf"), ident=False)
+                _pg_auth_lines(read(fd, "pg_ident.conf", "installed/pg_ident.conf"), ident=True)
+            finally:
+                os.close(fd)
+        fd = directory("var/lib/postgresql/16/main")
+        try:
+            auto = read(fd, "postgresql.auto.conf", "postgresql.auto.conf").decode(
+                "utf-8", errors="strict"
+            )
+            if "\x00" in auto or any(
+                line.strip() and not line.lstrip().startswith("#") for line in auto.split("\n")
+            ):
+                raise ValueError("Wymagany pusty postgresql.auto.conf bez dyrektyw")
+        finally:
+            os.close(fd)
         return result
     finally:
-        os.close(fd)
+        os.close(root_fd)
+
+
+def _pg_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("Niejednoznaczna odpowiedź PostgreSQL")
+        result[key] = value
+    return result
 
 
 def _postgresql_config_ready(postgres_uid: int) -> bool:
     try:
         before = _pg_snapshot(postgres_uid)
-        ready = (
-            _query(POSTGRESQL_ROOT_CONFIG_QUERY) == "t" or _query(POSTGRESQL_CONFIG_QUERY) == "t"
-        )
-        return ready and before == _pg_snapshot(postgres_uid)
-    except (OSError, UnicodeError, ValueError):
+        for command in (POSTGRESQL_ROOT_CONFIG_QUERY, POSTGRESQL_CONFIG_QUERY):
+            output = _query(command)
+            if output is None:
+                continue  # Niedostępny peer root może być zastąpiony peer postgres.
+            observation = json.loads(output, object_pairs_hook=_pg_json_object)
+            if (
+                type(observation) is not dict
+                or set(observation) != {"ready", "postmaster_start_ns"}
+                or observation["ready"] is not True
+                or type(observation["postmaster_start_ns"]) is not int
+                or not 0 < observation["postmaster_start_ns"] <= time.time_ns()
+            ):
+                return False
+            # Widoki HBA/ident opisują dysk, nie wszystkie załadowane reguły.
+            # Wymagamy plików i namespace'u sprzed pełnego startu postmastera:
+            # startup z błędnym HBA jest fatalny. Sam reload_time nie dowodzi
+            # udanego reload HBA. Zmiany po starcie oznaczają odmowę, bez reload.
+            if any(
+                max(metadata[-2:]) > observation["postmaster_start_ns"]
+                for metadata, _content in before.values()
+            ):
+                return False
+            return before == _pg_snapshot(postgres_uid)
+        return False
+    except (KeyError, OSError, UnicodeError, ValueError):
         return False
 
 

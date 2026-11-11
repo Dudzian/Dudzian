@@ -253,6 +253,67 @@ def test_identical_reinstall_detects_writes(monkeypatch):
         trial.execute_phase("install", {}, REVISION, ENVIRONMENT)
 
 
+@pytest.mark.parametrize("post_status", ["FAIL", "BLOCKED"])
+def test_install_stops_without_reinstall_when_postflight_cannot_verify_activation(
+    monkeypatch, post_status
+):
+    observations = iter(
+        [
+            {"status": "PASS", "state": "fresh"},
+            {"status": post_status, "exit_code": 21},
+        ]
+    )
+    events = []
+    monkeypatch.setattr(trial, "checked_preflight", lambda *args: next(observations))
+
+    def publish(*args, **kwargs):
+        events.append("publish")
+        assert events == ["publish"]
+        return {"status": "PASS", "state": "installed"}
+
+    monkeypatch.setattr(trial, "_installer", publish)
+    monkeypatch.setattr(
+        trial, "_command", lambda *args, **kwargs: pytest.fail("activation command forbidden")
+    )
+    result = trial.execute_phase("install", {}, REVISION, ENVIRONMENT)
+    assert result["status"] == "BLOCKED"
+    assert result["state"] == "installed"
+    assert result["reason"] == "POST_INSTALL_PREFLIGHT_REFUSED"
+    assert result["postflight"] == {"status": post_status, "exit_code": 21}
+    assert result["identical_reinstall"] == "NOT_EXECUTED"
+    assert events == ["publish"]
+
+
+def test_install_rechecks_idempotency_after_independently_activated_profile(monkeypatch):
+    events = []
+    monkeypatch.setattr(
+        trial, "checked_preflight", lambda *args: {"status": "PASS", "state": "installed"}
+    )
+
+    def identical(*args, **kwargs):
+        events.append("identical-install")
+        return {"status": "PASS", "state": "installed"}
+
+    monkeypatch.setattr(trial, "_installer", identical)
+    monkeypatch.setattr(trial, "snapshot", lambda: "unchanged")
+    result = trial.execute_phase("install", {}, REVISION, ENVIRONMENT)
+    assert result["status"] == "PASS" and result["identical_reinstall"] == "PASS"
+    assert events == ["identical-install", "identical-install"]
+
+
+@pytest.mark.parametrize("exit_code", [None, 12, 20, 22, 23, 24, True])
+def test_unrelated_postflight_refusal_remains_failure(monkeypatch, exit_code):
+    observations = iter(
+        [{"status": "PASS", "state": "fresh"}, {"status": "FAIL", "exit_code": exit_code}]
+    )
+    monkeypatch.setattr(trial, "checked_preflight", lambda *args: next(observations))
+    monkeypatch.setattr(
+        trial, "_installer", lambda *args, **kwargs: {"status": "PASS", "state": "installed"}
+    )
+    with pytest.raises(trial.TrialError, match="POST_INSTALL_NOT_VERIFIED"):
+        trial.execute_phase("install", {}, REVISION, ENVIRONMENT)
+
+
 @pytest.mark.parametrize("phase", ["systemd", "postgresql-ipc"])
 def test_native_phases_require_verified_installed_release(monkeypatch, phase):
     monkeypatch.setattr(

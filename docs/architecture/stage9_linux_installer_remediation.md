@@ -283,58 +283,123 @@ Odczyty `port` i parametru z pliku `conf.d` równocześnie kończyły się kodem
 
 `inspect_host()` zachowuje wymaganie klastra `16/main`, właściciela `postgres`,
 portu 5432 i stanu `online`, a jednostka `postgresql@16-main.service` musi mieć
-odpowiedź z dokładnie dwóch pól: `LoadState=loaded` i `ActiveState=active`. Zamiast wyniku
-`pg_conftool` wymagane są dwa niezależne odczyty:
+odpowiedź z dokładnie dwóch pól: `LoadState=loaded` i `ActiveState=active`.
+Review PR #3264 ujawnił dwie dalsze granice wymagające jawnej polityki.
 
-1. Chroniony snapshot `/etc/postgresql/16/main/postgresql.conf` oraz aktywnych
-   nieukrytych plików `*.conf` w `conf.d`. W głównym pliku wymagana jest dokładnie
-   jedna dyrektywa include wskazująca `conf.d`; brak, inna wartość, duplikat,
-   inne lub zagnieżdżone include powodują odmowę. Profil obsługuje jednowierszowe
-   przypisania; wielowierszowa lub niejednoznaczna składnia również oznacza
-   odmowę. To ograniczony profil instalatora, a nie zamiennik parsera serwera.
-2. Stały lokalny SELECT przez `/usr/lib/postgresql/16/bin/psql`, z rolą SQL
-   `postgres`, socketem `/var/run/postgresql`, portem 5432 i bazą `postgres`.
-   Najpierw używany jest peer konta root, zgodny z istniejącym wdrożonym
-   mapowaniem HBA root→postgres; następnie, jeśli trzeba, `runuser -u postgres`
-   dla standardowego peer postgres→postgres na Ubuntu. Obie sondy mają ten
-   sam stały SELECT i opcje.
-   Opcje `-X -w`, `passfile=/dev/null`, `ON_ERROR_STOP=1`, timeout połączenia 5 s, timeout zapytania
-   5000 ms i `default_transaction_read_only=on` ograniczają tę sondę. Wymagana
-   jest dokładna odpowiedź `t`: działający serwer ma wskazywać powyższy plik
-   konfiguracji, `/var/lib/postgresql/16/main`, port 5432 i wersję 16.x oraz
-   potwierdzać peer root/postgres, rolę sesji i bieżącą `postgres` oraz
-   transakcję read-only, a także nie zgłaszać błędów w `pg_catalog.pg_file_settings` i
-   `pg_catalog.pg_hba_file_rules`. Wiersze `pg_file_settings` muszą pochodzić
-   wyłącznie z głównego pliku albo płaskiego `conf.d`; wpisy ustawień
-   z `postgresql.auto.conf` (ALTER SYSTEM) lub innych źródeł powodują odmowę.
-   Standardowy pusty `postgresql.auto.conf` jest dopuszczony. Kontrola nie
-   deklaruje ochrony metadanych wszystkich plików PostgreSQL. Lokalna baza lub
-   oba peer niedostępne oznaczają odmowę. Sonda nie uruchamia reload/restart
-   ani naprawy.
+### P1: Ubuntu i root-owned przestrzeń nazw instalatora
 
-Odczyt używa przypiętych deskryptorów i `O_NOFOLLOW`. Pliki muszą być zwykłe,
-mieć pojedynczy hardlink, właściciela root albo rzeczywistego `postgres` i nie
-mogą być zapisywalne przez grupę/innych. Katalogi i ich przodkowie pozostają
-root-owned bez zapisu grupy/innych; istniejący wymóg `0755` w preflight nie
-zmienia się. Symlink w chronionej ścieżce, błąd odczytu, niepoprawne UTF-8/NUL,
-przekroczenie limitów (1 MiB na plik, 8 MiB łącznie, 1024 pliki w `conf.d`)
-lub zmiana bajtów/metadanych między snapshotami przed i po SQL powodują odmowę.
-Nie wykonywać `chown`, `chmod` ani edycji PostgreSQL w celu automatycznego
-usunięcia odmowy; zastany stan wymaga niezależnej oceny administratora.
+`pg_createcluster` z pakietu 257build1.1 przypisuje katalog konfiguracji do
+właściciela klastra (linie 384–385), a `conf.d` tworzy przez `mkdir(..., 0755)`
+i przypisuje do tego samego właściciela (linie 583–584). Umask może ograniczyć
+tryb tworzonego katalogu. Zgłoszony na `CryptoHunter-Stage9-ServiceTrial`
+`postgres:postgres 0700` nie jest dowodem awarii PostgreSQL.
 
-Testy jednostkowe czytają rzeczywiste pliki tymczasowe i modelują granice
-systemd/SQL; nie kwalifikują rzeczywistego klastra. Osobna Ubuntu Server
-24.04 amd64 VM pozostaje wymagana dla następujących obserwacji:
+Jednak wcześniejszy, niezależny od sondy kontrakt
+`production_local_installer.py::_Tree._directory()` i `_preflight()` wymaga
+root-owned `0755` dla `conf.d` i jego przodków. Pozostaje on bez zmian;
+sonda stosuje tę samą politykę. Nie dodano wyjątku dla `postgres` jako
+właściciela katalogu. `0700` wyklucza obce konta, lecz właściciel `postgres`
+nadal może dodawać i zastępować nazwy plików, w tym root-owned drop-in
+instalatora. Taki katalog nie zapewnia jego wymaganej ochrony publikacji.
+Akceptacja postgres-owned pliku głównego nie uzasadnia rozszerzenia prawa
+do zmiany całej przestrzeni nazw.
 
-- akceptacja przygotowanego 16/main na 5432, z peer, działającym systemd i
-  `include_dir = 'conf.d'`, również po niezależnym restarcie VM;
-- rzeczywisty wynik `pg_conftool` 1/pusty przy jednoczesnym przejściu nowej sondy;
-- odmowy na osobno przygotowanych klonach: brak/zła wartość include,
-  błędna/nieczytelna konfiguracja, symlink i niebezpieczne uprawnienia;
-- odmowy przy braku klastra, innym porcie, zatrzymanej usłudze lub
-  niedostępnym peer/SQL;
-- porównanie plików, usług i syntetycznego guard danych przed i po samym
-  preflight oraz kontrola identycznego wcześniej ukończonego wdrożenia.
+Zgłoszona VM pozostaje zatem **BLOCKED przed S3**. Osobny
+[plan weryfikacji i propozycja kontrolowanej remediacji](../runbooks/STAGE9_HOST_PROBE_REMEDIATION_VM_PLAN.md)
+wymagają inwentaryzacji wszystkich rodziców i zatwierdzenia konkretnych
+ścieżek przez operatora. Nie wykonano ani nie dodano automatycznego
+`chown`, `chmod`, reload czy restartu VM.
+
+### P2: dwa zamknięte profile konfiguracji i uwierzytelniania
+
+Stały lokalny SELECT przez `/usr/lib/postgresql/16/bin/psql` używa roli SQL
+`postgres`, socketu `/var/run/postgresql`, portu 5432 i bazy `postgres`.
+Najpierw próbuje peer root→postgres; tylko niedostępne polecenie może
+spowodować próbę przez `runuser -u postgres` dla peer postgres→postgres.
+Odpowiedź dostępna, ale niezgodna z kontraktem, powoduje odmowę bez fallbacku.
+Opcje `-X -w`, `passfile=/dev/null`, `ON_ERROR_STOP=1`, timeout połączenia 5 s,
+timeout zapytania 5000 ms, `default_transaction_read_only=on` i
+`search_path=pg_catalog` są stałe.
+Podproces ma ograniczony czas, stałe środowisko i nie używa shella.
+
+Wymagane są zgodne `config_file`, `data_directory`, port i wersja 16.x,
+`system_user` równe `peer:root` albo `peer:postgres`, obie role SQL równe
+`postgres` i rzeczywista transakcja read-only. Wiersze `pg_file_settings`
+mogą pochodzić tylko z głównego pliku lub płaskiego `conf.d`.
+`/var/lib/postgresql/16/main/postgresql.auto.conf` jest dodatkowo czytany
+bezpośrednio: dopuszczalne są wyłącznie puste wiersze i komentarze UTF-8
+bez NUL. Każda dyrektywa, także include pustego pliku niewidocznego w widoku
+SQL, powoduje odmowę. Nie wystarcza brak wierszy GUC z tego źródła.
+Brak widoków HBA/ident/GUC, błędy parsowania lub `pending_restart` oznaczają
+odmowę. Dla zastosowanych wpisów krytycznych GUC porównuje się wartość
+z dysku i z `pg_settings`: listen, socket, port, katalog danych, ścieżki
+HBA/ident, `fsync` oraz `synchronous_commit`. Obie ostatnie wartości muszą
+być efektywnie dokładnie `on`.
+
+| Profil | Efektywny listen | Efektywny katalog socketu | HBA i ident |
+| --- | --- | --- | --- |
+| Przygotowany Ubuntu | dokładnie `localhost` | dokładnie `/var/run/postgresql` | domyślne pliki w `/etc/postgresql/16/main`, siedem reguł HBA i pusty ident |
+| Wdrożony profil projektu | dokładnie pusty | dokładnie `/run/postgresql` | pliki w `/etc/cryptohunter/postgresql`, pięć reguł HBA i trzy mapowania ident z payloadu |
+
+Dopuszczenie `/run/postgresql` wynika wyłącznie z dostarczanego
+`production-local.conf`; nie jest ogólnym wyjątkiem dla alternatywnych socketów.
+`*`, inne adresy, listy adresów/socketów i mieszanie obu profili powodują odmowę.
+Reguły HBA są porównywane w całości, w kolejności, z tablicami baz/użytkowników,
+adresem, maską, metodą i opcjami. Ubuntu wymaga kolejno: lokalnego peer dla
+`all/postgres`, lokalnego peer dla `all/all`, loopback SCRAM dla `all/all`
+(IPv4 i IPv6), lokalnego peer dla `replication/all` i loopback SCRAM dla
+`replication/all` (IPv4 i IPv6). Wdrożony profil wymaga dokładnych pięciu
+wierszy `deployment/postgresql/pg_hba.conf` i trzech mapowań
+`deployment/postgresql/pg_ident.conf`. Dodatkowy `trust`, nawet za poprawnym
+peer lub reject, zmieniona kolejność/opcja/mapowanie i reguła z innego pliku
+powodują odmowę. Statyczny odczyt HBA/ident dodatkowo odrzuca include,
+również pusty, listy `@plik` i kontynuacje wierszy. Uwierzytelnienie jednej
+sesji nie zastępuje tej kontroli.
+
+### Ochrona odczytu i zgodność z pełnym startem serwera
+
+Snapshot obejmuje główny plik, aktywne nieukryte `conf.d/*.conf`, domyślną
+parę HBA/ident, `postgresql.auto.conf` i, jeżeli istnieje, parę HBA/ident
+wdrożonego profilu.
+W głównym pliku wymagana jest jedna dyrektywa include wskazująca `conf.d`.
+Brak, zła wartość, duplikat, inne/zagnieżdżone include lub wielowierszowa
+i niejednoznaczna składnia powodują odmowę. To ograniczony profil instalatora.
+
+Odczyt przez przypięte deskryptory używa `O_NOFOLLOW`. Pliki są zwykłe,
+z jednym hardlinkiem, należą do root albo rzeczywistego UID `postgres`,
+bez zapisu grupy/innych. Katalogi głównej konfiguracji i przodkowie są
+root-owned `0755`; wyłącznie `/etc/cryptohunter/postgresql` zachowuje odrębny
+kontrakt root:postgres `0750` z oczekiwanym GID, a jego rodzice nadal root `0755`.
+Dojście do stałego `postgresql.auto.conf` jest odrębnym odczytem: wyłącznie
+`/var/lib/postgresql`, `/var/lib/postgresql/16` i `/var/lib/postgresql/16/main`
+mogą należeć do root lub rzeczywistego `postgres`, z trybem `0700`, `0750`
+albo `0755`. `/var` i `/var/lib` pozostają root `0755`. Ten wąski wyjątek
+obserwacji katalogów danych nie dotyczy `/etc`, nie daje prawa zapisu
+i nie zmienia polityki P1. Sam `postgresql.auto.conf` podlega tym samym
+kontrolom nofollow, hardlinków, właściciela, no022, rozmiaru i stabilności
+oraz porównaniu mtime/ctime ze startem serwera co pozostałe chronione pliki.
+Bajty i pełne kontrolowane metadane muszą być stabilne podczas
+odczytu i zgodne w snapshotach przed/po SQL. Limity wynoszą 1 MiB na plik,
+8 MiB łącznie i 1024 aktywne pliki w `conf.d`; niepoprawne UTF-8/NUL
+w konfiguracji GUC i błędy odczytu powodują odmowę.
+
+`pg_hba_file_rules` i `pg_ident_file_mappings` opisują pliki na dysku.
+`pg_conf_load_time()` nie dowodzi udanego przeładowania wszystkich reguł HBA.
+Dlatego odpowiedź SQL to dokładny obiekt JSON z `ready=true` i dodatnim,
+nieprzyszłym `postmaster_start_ns`. Powtórzone klucze, niewłaściwe typy i
+dodatkowe pola są odrzucane. Każdy chroniony plik oraz katalog `conf.d`
+muszą mieć mtime i ctime nie późniejsze niż **pełny start postmastera**.
+Zmiana po starcie powoduje odmowę, także po poprawnym reload. Ewentualny
+pełny restart wymaga osobnego zatwierdzenia operatora; sonda go nie wykonuje.
+Nie można zatem uznać nowo zapisanej konfiguracji instalacji za aktywną
+przez sam ponowny preflight. Granicę bieżącego harnessu opisuje plan VM.
+
+Ochrona przestrzeni nazw i stabilny odczyt nie są atestacją przeciw
+złośliwemu procesowi PostgreSQL ani administratorowi root. Dopuszczone
+postgres-owned pliki i odpowiedzi serwera zachowują tę granicę zaufania;
+nie deklaruje się ochrony metadanych całego PGDATA ani wszystkich plików
+PostgreSQL. Testy jednostkowe i jednorazowe klastry potwierdzają tylko
+obserwowane granice implementacji, a nie zaliczenie ServiceTrial.
 
 Wykonanie odbywa się w ramach istniejącej
 [procedury v2](../runbooks/STAGE9_LINUX_VM_HARNESS.md), z jej niezależnym

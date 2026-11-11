@@ -116,6 +116,10 @@ Nie używać `pg_conftool 16 main show include_dir` jako kryterium akceptacji:
 poprawna konfiguracja Noble daje tu kod 1 i pusty wynik, ponieważ narzędzie
 rozwija include zamiast zwracać tę dyrektywę jako parametr. Szczegóły i granice
 kontroli opisuje [remediacja host-probe](../architecture/stage9_linux_installer_remediation.md#remediacja-host-probe-postgresql--2026-11-11).
+Własność `postgres` katalogu `conf.d` może być poprawna dla Ubuntu, lecz
+bieżący instalator wymaga root-owned `0755`. Nie zmieniać tych metadanych
+na podstawie historycznej procedury; zgłoszony ServiceTrial pozostaje
+`BLOCKED` do [osobnej oceny operatora](STAGE9_HOST_PROBE_REMEDIATION_VM_PLAN.md).
 Nie wykonywać tych poleceń na Dellu. Nie używać `pg_dropcluster` w recovery.
 
 ## 3. Dane zastane, backup i konta
