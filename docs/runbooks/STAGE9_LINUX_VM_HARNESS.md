@@ -60,6 +60,17 @@ Zachować `/etc/os-release`, `uname`, PID 1, wersję CPython/systemd, APT source
 
 Przygotowanie 16/main i kont opisują sekcje 2–3 historycznego runbooka, ale jego
 listy bibliotek Pythona i manifestu v1 nie obowiązują nowego profilu.
+Kontrola PostgreSQL używa chronionego odczytu `postgresql.conf`, płaskiego
+`conf.d`, HBA/ident i stałego `postgresql.auto.conf` oraz lokalnego peer SELECT;
+`pg_conftool … show include_dir`
+nie jest kryterium akceptacji. Obowiązują dwa dokładne profile listen/socket/HBA,
+root-owned `0755` dla głównego katalogu konfiguracji i jego przodków oraz
+zgodność chronionych plików ze startem postmastera. Wymagania i granice opisuje
+[remediacja host-probe](../architecture/stage9_linux_installer_remediation.md#remediacja-host-probe-postgresql--2026-11-11).
+Zgłoszone `conf.d` postgres:postgres `0700` na ServiceTrial oznacza **BLOCKED
+przed S3**. [Osobny plan VM](STAGE9_HOST_PROBE_REMEDIATION_VM_PLAN.md)
+zawiera propozycję remediacji wymagającą zatwierdzenia operatora, bez
+automatycznych zmian ani wykonywania negatywnych testów na ServiceTrial.
 Osobny syntetyczny `stage9_vm_guard` i jego sprawdzony backup służą porównaniu
 wierszy przed/po instalacji; nie są schematem Freshness ani poświadczeniem.
 Schemat Freshness przygotować tylko przez istniejące, niezależnie przejrzane
@@ -308,6 +319,17 @@ Po sprawdzeniu wyniku kolejno stosować `--phase runtime-publish`, następnie
 `--phase preflight` i dopiero po jego pozytywnym wyniku `--phase install`.
 Każde uruchomienie ponownie wymaga guard VM; nie wyciągać zgody z wcześniejszego
 PASS. Zatrzymać ciąg przy odmowie, braku danych albo niezgodności.
+
+Po zapisaniu nowej konfiguracji PostgreSQL sonda odmawia, dopóki pliki nie
+odpowiadają pełnemu startowi postmastera i aktywnemu profilowi. Instalator
+nie restartuje PostgreSQL. Jeżeli kontrola po publikacji zwróci dokładnie
+kod instalatora 21, faza `install` pozostaje `BLOCKED` z przyczyną
+`POST_INSTALL_PREFLIGHT_REFUSED`, pełnym postflight i
+`identical_reinstall=NOT_EXECUTED`. Inne błędy zachowują wcześniejszą odmowę.
+To nie jest dowód ukończonej natywnej próby. Nie pomijać
+postflight, nie usuwać receipt/journala i nie dodawać automatycznego restartu.
+Osobną ocenę operatora oraz aktywację wyłącznie zatwierdzonego klona opisuje
+[plan host-probe](STAGE9_HOST_PROBE_REMEDIATION_VM_PLAN.md).
 
 Preflight ma pozostać odczytowy. Harness porównuje przed/po treść, UID/GID,
 tryby, liczbę hardlinków i literalne cele symlinków w **wybranym zakresie**:

@@ -479,6 +479,21 @@ def execute_phase(
         if result["status"] != "PASS":
             return result
         post = checked_preflight(inputs, revision)
+        if (
+            post["status"] != "PASS"
+            and type(post.get("exit_code")) is int
+            and post["exit_code"] == 21
+        ):
+            # Publikacja plików nie dowodzi aktywacji konfiguracji PostgreSQL.
+            # Operator może ponowić tę samą fazę po niezależnie zatwierdzonej
+            # aktywacji. Nie restartujemy usług ani nie zaliczamy idempotencji.
+            return {
+                **result,
+                "status": "BLOCKED",
+                "reason": "POST_INSTALL_PREFLIGHT_REFUSED",
+                "postflight": post,
+                "identical_reinstall": "NOT_EXECUTED",
+            }
         _require(
             post["status"] == "PASS" and post["state"] == "installed", "POST_INSTALL_NOT_VERIFIED"
         )
