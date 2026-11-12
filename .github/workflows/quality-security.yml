@@ -72,6 +72,10 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
+      - name: Install strace for bootstrap file-access regression
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends --yes strace
       - name: Install test and quality tools
         run: |
           python -m pip install --upgrade pip
@@ -132,6 +136,8 @@ jobs:
           deployment/stage9_vm_native.py
           deployment/stage9_vm_performance.py
           scripts/prepare_stage9_vm_bundle.py
+          scripts/prepare_stage9_protected_tree.py
+          scripts/stage9_runtime_provenance.py
           deployment/production_local_installer.py
           deployment/production_local_installer_host.py
           deployment/freshness_verifier_entrypoint.py
@@ -170,6 +176,11 @@ jobs:
           tests/deployment/test_freshness_application.py
           tests/deployment/test_build_freshness_runtime.py
           tests/deployment/test_stage9_vm_trial.py
+          tests/deployment/test_freshness_runtime_bootstrap_security.py
+          tests/deployment/test_stage9_harness_import_security.py
+          tests/deployment/test_stage9_harness_runtime_guard.py
+          tests/deployment/test_stage9_protected_tree.py
+          tests/deployment/test_stage9_runtime_provenance.py
           tests/deployment/test_stage9_vm_environment.py
           tests/deployment/test_stage9_vm_native.py
           tests/deployment/test_prepare_stage9_vm_bundle.py
@@ -412,6 +423,8 @@ jobs:
           deployment/stage9_vm_native.py
           deployment/stage9_vm_performance.py
           scripts/prepare_stage9_vm_bundle.py
+          scripts/prepare_stage9_protected_tree.py
+          scripts/stage9_runtime_provenance.py
           deployment/production_local_installer.py
           deployment/production_local_installer_host.py
           deployment/freshness_verifier_entrypoint.py
@@ -483,6 +496,11 @@ jobs:
           tests/deployment/test_freshness_application.py
           tests/deployment/test_build_freshness_runtime.py
           tests/deployment/test_stage9_vm_trial.py
+          tests/deployment/test_freshness_runtime_bootstrap_security.py
+          tests/deployment/test_stage9_harness_import_security.py
+          tests/deployment/test_stage9_harness_runtime_guard.py
+          tests/deployment/test_stage9_protected_tree.py
+          tests/deployment/test_stage9_runtime_provenance.py
           tests/deployment/test_stage9_vm_environment.py
           tests/deployment/test_stage9_vm_native.py
           tests/deployment/test_stage9_vm_performance.py
@@ -630,6 +648,8 @@ jobs:
           --cov=deployment.stage9_vm_native
           --cov=deployment.stage9_vm_performance
           --cov=scripts.prepare_stage9_vm_bundle
+          --cov=scripts.prepare_stage9_protected_tree
+          --cov=scripts.stage9_runtime_provenance
           --cov=deployment.production_local_installer
           --cov=deployment.production_local_installer_host
           --cov=deployment.freshness_verifier_entrypoint

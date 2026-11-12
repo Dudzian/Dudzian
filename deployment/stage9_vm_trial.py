@@ -7,19 +7,93 @@ bindingu ani konfiguracji diagnostycznej; nie naprawia zastanych artefaktów.
 from __future__ import annotations
 
 import argparse
+import ast
 import hashlib
 import importlib
+import importlib.abc
+import importlib.util
 import json
 import os
 import re
-import runpy
 import stat
 import subprocess
 import sys
-from importlib.machinery import ModuleSpec
+from importlib.machinery import BuiltinImporter, FileFinder, FrozenImporter, ModuleSpec, PathFinder
 from pathlib import Path
-from types import ModuleType
+from types import FunctionType, ModuleType
 from typing import Any, cast
+from zipimport import zipimporter
+
+HARNESS_INVENTORY = Path("/etc/cryptohunter/stage9-harness-inventory.json")
+# Reviewed transitive graph, including delayed and TYPE_CHECKING imports.
+HARNESS_MODULES = frozenset(
+    {
+        "deployment.stage9_vm_native",
+        "deployment.freshness_runtime",
+        "deployment.freshness_runtime_bootstrap",
+        "deployment.production_local_installer_host",
+        "deployment.linux_physical_ipc",
+        "deployment.linux_physical_native",
+        "deployment.linux_physical_observations",
+        "deployment.linux_physical_postgresql",
+        "deployment.linux_release_identity",
+        "deployment.linux_physical_evidence",
+        "bot_core.freshness_service_identity",
+        "bot_core.linux_service_ipc",
+        "bot_core.linux_service_postgresql",
+        "bot_core.production_signer_ipc",
+    }
+)
+HARNESS_HELPERS = frozenset(
+    {
+        "deployment/stage9_vm_trial.py",
+        "deployment/stage9_vm_environment.py",
+        "deployment/production_local_installer.py",
+        "deployment/freshness_application.py",
+    }
+)
+EXTERNAL_IMPORTS = frozenset(
+    {
+        "__future__",
+        "argparse",
+        "ast",
+        "base64",
+        "binascii",
+        "collections",
+        "contextlib",
+        "cryptography",
+        "ctypes",
+        "dataclasses",
+        "datetime",
+        "email",
+        "fcntl",
+        "grp",
+        "hashlib",
+        "importlib",
+        "json",
+        "math",
+        "os",
+        "pathlib",
+        "platform",
+        "psycopg",
+        "pwd",
+        "re",
+        "runpy",
+        "secrets",
+        "select",
+        "signal",
+        "socket",
+        "sqlite3",
+        "stat",
+        "struct",
+        "subprocess",
+        "sys",
+        "time",
+        "types",
+        "typing",
+        "zipimport",
+    }
+)
 
 DEFAULT_APPROVAL = Path("/etc/cryptohunter/stage9-vm-trial-approval.json")
 PHASES = ("runtime-verify", "runtime-publish", "preflight", "install", "systemd", "postgresql-ipc")
@@ -90,15 +164,20 @@ def _protected(path: Path, *, directory: bool = False) -> None:
 
 
 def _read(path: Path, limit: int) -> bytes:
+    before = path.lstat()
     _protected(path)
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     try:
         info = os.fstat(fd)
         _require(stat.S_ISREG(info.st_mode) and info.st_nlink == 1, "INPUT_NOT_REGULAR")
+        _require(_stable(before) == _stable(info), "INPUT_CHANGED_DURING_READ")
         with os.fdopen(fd, "rb", closefd=False) as stream:
             raw = stream.read(limit + 1)
         _require(len(raw) <= limit, "INPUT_TOO_LARGE")
-        _require(_stable(path.lstat()) == _stable(info), "INPUT_CHANGED_DURING_READ")
+        _require(
+            _stable(os.fstat(fd)) == _stable(info) and _stable(path.lstat()) == _stable(info),
+            "INPUT_CHANGED_DURING_READ",
+        )
         return raw
     finally:
         os.close(fd)
@@ -163,18 +242,17 @@ def load_inputs(path: Path) -> dict[str, dict[str, str]]:
 
 def _helper(name: str) -> Path:
     path = Path(__file__).absolute().with_name(name)
-    _protected(path)
+    sources = _harness_sources()
+    _require(path.relative_to(path.parent.parent).as_posix() in sources, "HELPER_NOT_APPROVED")
     return path
 
 
 def _environment_helpers(execute: bool) -> dict[str, Any]:
     path = Path(__file__).absolute().with_name("stage9_vm_environment.py")
-    if execute:
-        _protected(Path(__file__).absolute())
-        _protected(path)
-    # Nie odczytujemy sąsiedniego bytecode ani modułów z cwd/PYTHONPATH.
-    sys.pycache_prefix = "/dev/null"
-    return runpy.run_path(str(path))
+    sources = _harness_sources()
+    namespace: dict[str, Any] = {"__name__": "_stage9_vm_environment", "__file__": str(path)}
+    exec(compile(sources["deployment/stage9_vm_environment.py"], str(path), "exec"), namespace)
+    return namespace
 
 
 def _command(arguments: list[str], *, timeout: int = 180) -> tuple[int, bytes]:
@@ -331,22 +409,357 @@ def _runtime(
     return {"status": "PASS", "reason": "SIGNED_RUNTIME_VERIFIED", **result}
 
 
-def _native_module() -> Any:
-    # Zaufany checkout jest odrębny od bundle aplikacji. Nie wykonujemy __init__.
+def _project(name: str) -> bool:
+    return name.split(".", 1)[0] in {"deployment", "bot_core"}
+
+
+def _check_graph(sources: dict[str, bytes]) -> None:
+    helpers = {name.removesuffix(".py").replace("/", ".") for name in HARNESS_HELPERS}
+    allowed = HARNESS_MODULES | helpers
+    reached: set[str] = set()
+    pending = ["deployment.stage9_vm_native", *sorted(helpers)]
+    while pending:
+        name = pending.pop()
+        if name in reached:
+            continue
+        _require(name in allowed, "HARNESS_IMPORT_NOT_APPROVED")
+        reached.add(name)
+        tree = ast.parse(sources[name.replace(".", "/") + ".py"])
+        for node in ast.walk(tree):
+            imports: list[str] = []
+            if isinstance(node, ast.Import):
+                imports = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                _require(node.level == 0 and node.module is not None, "HARNESS_RELATIVE_IMPORT")
+                imports = [node.module or ""]
+                if node.module in {"deployment", "bot_core"}:
+                    imports = [node.module + "." + alias.name for alias in node.names]
+            elif isinstance(node, ast.Call):
+                function = node.func
+                reviewed_loader_call = name == "deployment.stage9_vm_trial" and (
+                    (isinstance(function, ast.Name) and function.id == "exec")
+                    or (
+                        isinstance(function, ast.Attribute)
+                        and function.attr == "import_module"
+                        and isinstance(function.value, ast.Name)
+                        and function.value.id == "importlib"
+                    )
+                )
+                _require(
+                    reviewed_loader_call
+                    or (
+                        not (
+                            isinstance(function, ast.Name)
+                            and function.id in {"__import__", "eval", "exec"}
+                        )
+                        and not (
+                            isinstance(function, ast.Attribute)
+                            and function.attr in {"import_module", "exec_module", "load_module"}
+                        )
+                    ),
+                    "HARNESS_DYNAMIC_IMPORT_REFUSED",
+                )
+            for dependency in imports:
+                if _project(dependency):
+                    _require(
+                        dependency in (allowed if name in helpers else HARNESS_MODULES),
+                        "HARNESS_IMPORT_NOT_APPROVED",
+                    )
+                    pending.append(dependency)
+                else:
+                    _require(
+                        dependency.split(".", 1)[0] in EXTERNAL_IMPORTS,
+                        "HARNESS_DEPENDENCY_NOT_APPROVED",
+                    )
+    _require(reached == allowed, "HARNESS_GRAPH_CHANGED")
+
+
+def _harness_sources(revision: str | None = None) -> dict[str, bytes]:
+    """Authenticate exact inventory before executing any helper; never discover code."""
     root = Path(__file__).absolute().parent.parent
-    for package_name in ("deployment", "bot_core"):
-        package_root = root / package_name
-        _protected(package_root, directory=True)
-        for path in package_root.glob("*.py"):
-            _protected(path)
-        _require(package_name not in sys.modules, "PACKAGE_PRELOADED")
-        package = ModuleType(package_name)
-        package.__package__ = package_name
-        package.__path__ = [str(package_root)]
-        package.__spec__ = ModuleSpec(package_name, loader=None, is_package=True)
-        package.__spec__.submodule_search_locations = package.__path__
-        sys.modules[package_name] = package
-    return importlib.import_module("deployment.stage9_vm_native")
+    _protected(root, directory=True)
+    document = _json(_read(HARNESS_INVENTORY, 1024 * 1024))
+    _require(
+        set(document) == {"schema", "source_revision", "tree_root", "objects"}
+        and type(document["schema"]) is int
+        and document["schema"] == 1
+        and type(document["source_revision"]) is str
+        and re.fullmatch(r"[0-9a-f]{40}", document["source_revision"]) is not None
+        and document["tree_root"] == str(root)
+        and (revision is None or document["source_revision"] == revision)
+        and type(document["objects"]) is list,
+        "HARNESS_INVENTORY_INVALID",
+    )
+    required = {name.replace(".", "/") + ".py" for name in HARNESS_MODULES} | set(HARNESS_HELPERS)
+    directories = {"."} | {str(parent) for name in required for parent in Path(name).parents}
+    expected: dict[str, dict[str, Any]] = {}
+    for record in document["objects"]:
+        _require(type(record) is dict and type(record.get("path")) is str, "HARNESS_RECORD_INVALID")
+        name = record["path"]
+        _require(name not in expected, "HARNESS_RECORD_DUPLICATE")
+        kind = "file" if name in required else "directory" if name in directories else None
+        _require(
+            kind is not None
+            and record.get("kind") == kind
+            and set(record)
+            == ({"path", "kind", "mode", "sha256"} if kind == "file" else {"path", "kind", "mode"})
+            and type(record["mode"]) is int
+            and record["mode"] == (0o444 if kind == "file" else 0o555),
+            "HARNESS_OBJECT_NOT_APPROVED",
+        )
+        if kind == "file":
+            _require(
+                type(record["sha256"]) is str
+                and re.fullmatch(r"[0-9a-f]{64}", record["sha256"]) is not None,
+                "HARNESS_DIGEST_INVALID",
+            )
+        expected[name] = record
+    _require(set(expected) == required | directories, "HARNESS_INVENTORY_INCOMPLETE")
+    observed: set[str] = set()
+    sources: dict[str, bytes] = {}
+
+    def visit(path: Path, name: str) -> None:
+        _require(name in expected, "HARNESS_EXTRA_OBJECT")
+        record = expected[name]
+        _protected(path, directory=record["kind"] == "directory")
+        info = path.lstat()
+        _require(stat.S_IMODE(info.st_mode) == record["mode"], "HARNESS_MODE_CHANGED")
+        observed.add(name)
+        if record["kind"] == "directory":
+            for child in sorted(path.iterdir()):
+                visit(child, child.relative_to(root).as_posix())
+        else:
+            raw = _read(path, 8 * 1024 * 1024)
+            _require(
+                hashlib.sha256(raw).hexdigest() == record["sha256"], "HARNESS_INTEGRITY_CHANGED"
+            )
+            sources[name] = raw
+        _require(_stable(path.lstat()) == _stable(info), "HARNESS_CHANGED_DURING_READ")
+
+    visit(root, ".")
+    _require(observed == set(expected), "HARNESS_INVENTORY_INCOMPLETE")
+    _check_graph(sources)
+    return sources
+
+
+def _import_state() -> None:
+    _require(
+        bool(sys.flags.isolated and sys.flags.no_user_site and sys.dont_write_bytecode),
+        "HARNESS_ISOLATED_PROCESS_REQUIRED",
+    )
+    _require(
+        type(sys.modules) is dict and all(type(name) is str for name in sys.modules),
+        "IMPORT_CACHE_NOT_APPROVED",
+    )
+    _require(
+        type(sys.meta_path) is list
+        and type(sys.path_hooks) is list
+        and type(sys.path_importer_cache) is dict
+        and type(sys.path) is list
+        and all(type(item) is str for item in sys.path)
+        and all(type(item) is str for item in sys.path_importer_cache),
+        "IMPORT_CACHE_NOT_APPROVED",
+    )
+    _require(not any(_project(name) for name in sys.modules), "PACKAGE_PRELOADED")
+    _require(
+        all(
+            name == "__main__" or name.split(".", 1)[0] in sys.stdlib_module_names
+            for name in sys.modules
+        ),
+        "EXTERNAL_MODULE_PRELOADED",
+    )
+    for name, module in sys.modules.items():
+        if name in {"typing.io", "typing.re"}:
+            typing_module = sys.modules.get("typing")
+            _require(
+                type(typing_module) is ModuleType
+                and module is typing_module.__dict__.get(name.split(".")[1]),
+                "IMPORT_CACHE_NOT_APPROVED",
+            )
+        else:
+            # Do not inspect arbitrary cached objects through __getattr__ or
+            # subclass callbacks before their type has been accepted.
+            _require(type(module) is ModuleType, "IMPORT_CACHE_NOT_APPROVED")
+    _require(
+        len(sys.meta_path) == 3
+        and all(
+            actual is expected
+            for actual, expected in zip(
+                sys.meta_path, (BuiltinImporter, FrozenImporter, PathFinder), strict=True
+            )
+        ),
+        "IMPORT_HOOK_NOT_APPROVED",
+    )
+    for finder in sys.path_importer_cache.values():
+        _require(
+            finder is None or type(finder) is FileFinder or type(finder) is zipimporter,
+            "IMPORT_CACHE_NOT_APPROVED",
+        )
+    safe_hook = FileFinder.path_hook(
+        (importlib.machinery.ExtensionFileLoader, importlib.machinery.EXTENSION_SUFFIXES),
+        (importlib.machinery.SourceFileLoader, importlib.machinery.SOURCE_SUFFIXES),
+    )
+    for hook in sys.path_hooks:
+        _require(
+            hook is zipimporter
+            or (type(hook) is FunctionType and hook.__code__ is safe_hook.__code__),
+            "IMPORT_HOOK_NOT_APPROVED",
+        )
+    # Do not call arbitrary cache invalidators or hooks. Project imports never use these.
+    sys.path_importer_cache.clear()
+    sys.path_hooks[:] = [safe_hook]
+
+
+class _HarnessLoader(importlib.abc.Loader):
+    """Project sources use authenticated bytes; external modules use signed runtime objects."""
+
+    def __init__(self, sources: dict[str, bytes], root: Path) -> None:
+        self.sources = sources
+        self.root = root
+        self.runtime: dict[str, dict[str, Any]] | None = None
+        # Linux CPython's host stdlib path comes from the trusted interpreter.
+        # Do not let sysconfig lazily import an environment-selected data module.
+        self.bootstrap_stdlib = (
+            Path(sys.base_prefix)
+            / sys.platlibdir
+            / f"python{sys.version_info.major}.{sys.version_info.minor}"
+        )
+
+    def bind_runtime(self, manifest: dict[str, Any]) -> None:
+        self.runtime = {
+            str(Path(manifest["installation_path"]) / name): record
+            for name, record in manifest["files"].items()
+        } | manifest["external_files"]
+        # Initial Python/stdlib execution belongs to the independently trusted
+        # bootstrap. Backing-file checks cannot attest a compromised interpreter.
+        for name, module in tuple(sys.modules.items()):
+            if name == "__main__":
+                continue
+            if name in {"typing.io", "typing.re"}:
+                # CPython 3.11 caches these deprecated aliases as classes,
+                # rather than modules with specs. Bind them to trusted typing.
+                typing_module = sys.modules["typing"]
+                _require(
+                    type(typing_module) is ModuleType
+                    and module is typing_module.__dict__[name.split(".")[1]],
+                    "RUNTIME_MODULE_NOT_APPROVED",
+                )
+                continue
+            if _project(name):
+                _require(getattr(module, "__loader__", None) is self, "PACKAGE_CACHE_CHANGED")
+                continue
+            spec = getattr(module, "__spec__", None)
+            _require(spec is not None, "RUNTIME_MODULE_NOT_APPROVED")
+            assert spec is not None
+            if spec.origin in {"built-in", "frozen"}:
+                continue
+            _require(type(spec.origin) is str, "RUNTIME_MODULE_NOT_APPROVED")
+            self._runtime_bytes(Path(spec.origin))
+
+    def _runtime_bytes(self, origin: Path) -> bytes:
+        assert self.runtime is not None
+        record = self.runtime.get(str(origin))
+        _require(record is not None and record.get("kind") == "file", "RUNTIME_IMPORT_NOT_APPROVED")
+        assert record is not None
+        raw = _read(origin, 512 * 1024 * 1024)
+        _require(
+            hashlib.sha256(raw).hexdigest() == record["sha256"]
+            and len(raw) == record["size"]
+            and stat.S_IMODE(origin.lstat().st_mode) == record["mode"],
+            "RUNTIME_IMPORT_INTEGRITY_CHANGED",
+        )
+        return raw
+
+    def find_spec(self, fullname: str, path: Any = None, target: Any = None) -> ModuleSpec | None:
+        if _project(fullname):
+            _require(
+                fullname in HARNESS_MODULES or fullname in {"deployment", "bot_core"},
+                "HARNESS_IMPORT_NOT_APPROVED",
+            )
+            return ModuleSpec(fullname, self, is_package=fullname in {"deployment", "bot_core"})
+        if (
+            BuiltinImporter.find_spec(fullname) is not None
+            or FrozenImporter.find_spec(fullname) is not None
+        ):
+            return None
+        spec = PathFinder.find_spec(fullname, path)
+        # Optional imports in trusted stdlib (e.g. copy's org.python.core)
+        # require Python's absence semantics. Never let another finder execute
+        # a fallback; an existing unapproved object remains a hard refusal.
+        if spec is None:
+            raise ModuleNotFoundError(f"No module named {fullname!r}", name=fullname)
+        _require(type(spec.origin) is str, "RUNTIME_IMPORT_NOT_APPROVED")
+        origin = Path(cast(str, spec.origin))
+        if self.runtime is None:
+            # Before runtime signature verification only the independently
+            # protected host stdlib may execute. Read source bytes directly.
+            stdlib = self.bootstrap_stdlib
+            _require(
+                fullname.split(".", 1)[0] in sys.stdlib_module_names
+                and origin.is_relative_to(stdlib)
+                and not {"site-packages", "dist-packages", "__pycache__"}
+                & set(origin.relative_to(stdlib).parts),
+                "RUNTIME_NOT_VERIFIED",
+            )
+            raw = _read(origin, 512 * 1024 * 1024)
+        else:
+            raw = self._runtime_bytes(origin)
+        if type(spec.loader) is importlib.machinery.SourceFileLoader:
+            # Bypass even authenticated bytecode; execute the checked source bytes.
+            self.sources[fullname] = raw
+            replacement = ModuleSpec(
+                fullname,
+                self,
+                origin=str(origin),
+                is_package=spec.submodule_search_locations is not None,
+            )
+            replacement.submodule_search_locations = spec.submodule_search_locations
+            replacement.has_location = True
+            return replacement
+        _require(
+            type(spec.loader) is importlib.machinery.ExtensionFileLoader,
+            "RUNTIME_LOADER_NOT_APPROVED",
+        )
+        return spec
+
+    def create_module(self, spec: ModuleSpec) -> None:
+        return None
+
+    def exec_module(self, module: ModuleType) -> None:
+        name = module.__name__
+        if name in {"deployment", "bot_core"}:
+            module.__path__ = []
+            return
+        relative = name.replace(".", "/") + ".py"
+        project = _project(name)
+        raw = self.sources[relative if project else name]
+        assert module.__spec__ is not None or project
+        module.__file__ = (
+            str(self.root / relative)
+            if project
+            else cast(str, cast(ModuleSpec, module.__spec__).origin)
+        )
+        exec(compile(raw, module.__file__, "exec", dont_inherit=True), module.__dict__)
+
+
+def _native_module() -> Any:
+    sources = _harness_sources()
+    _import_state()
+    loader = _HarnessLoader(sources, Path(__file__).absolute().parent.parent)
+    sys.meta_path.insert(0, loader)
+    before = set(sys.modules)
+    try:
+        runtime = importlib.import_module("deployment.freshness_runtime")
+        verified = runtime.verify_installed_runtime()
+        manifest = verified.manifest
+        loader.bind_runtime(manifest)
+        return importlib.import_module("deployment.stage9_vm_native")
+    except BaseException:
+        sys.meta_path.remove(loader)
+        for name in set(sys.modules) - before:
+            if _project(name):
+                del sys.modules[name]
+        raise
 
 
 def _installed_executable(revision: str, environment_id: str) -> str:
@@ -528,7 +941,12 @@ def execute_phase(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--mode", required=True, choices=("INSPECT", "EXECUTE-VM-TRIAL"))
+    parser.add_argument(
+        "--mode",
+        required=True,
+        choices=("INSPECT", "EXECUTE-VM-TRIAL"),
+        help="INSPECT: diagnostyka odczytowa z chronionego drzewa harnessu, bez instalacji runtime/aplikacji ani approval VM; EXECUTE-VM-TRIAL: osobno zatwierdzona próba VM.",
+    )
     parser.add_argument("--approval", type=Path, default=DEFAULT_APPROVAL)
     parser.add_argument("--revision")
     parser.add_argument("--environment-id")
@@ -540,12 +958,15 @@ def main(argv: list[str] | None = None) -> int:
     code = 0
     try:
         execute = args.mode == "EXECUTE-VM-TRIAL"
-        helpers = _environment_helpers(execute)
         if not execute:
             _require(
                 args.phase is None and args.inputs is None and not args.native_worker,
                 "INSPECT_EXECUTION_ARGUMENTS_REFUSED",
             )
+        _harness_sources(args.revision if execute else None)
+        _import_state()
+        helpers = _environment_helpers(execute)
+        if not execute:
             report["environment"] = helpers["inspect_environment"]()
             report["result"] = "NOT_EXECUTED"
         else:

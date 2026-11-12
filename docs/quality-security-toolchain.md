@@ -1,5 +1,22 @@
 # Quality, security, and code-intelligence toolchain
 
+Poprawki po review PR #3265 dodają osobny, ręcznie wybierany zakres
+`stage9-safe` w `platform-deployment.yml`, dla Python 3.11 i 3.12 i dokładnego
+HEAD. Zachowuje on próg diff coverage 70%, format, Ruff, mypy i skan sekretów;
+wykluczone generatory kluczy/podpisów, syntetyczne dopuszczenia i próby VM
+mają status NOT_EXECUTED. Pełne wymagane bramki nadal obowiązują poza tym
+odrębnym zakresem. [Raport poprawek](audits/stage9_pr3265_review_remediation_2026-11-12.md).
+
+
+Remediacja audytu Stage 9 `fc15b982` dodaje pięć zestawów negatywnych testów
+importu, konfiguracji OpenSSL, pełnego drzewa i odczytowej proweniencji. Nowe
+narzędzia są w mypy Linux/Win32 oraz istniejącym pomiarze coverage; `strace`
+sprawdza rzeczywiste odczyty bootstrapu. Procedury i ograniczenia wykonania
+są w [raporcie remediacji](audits/stage9_security_remediation_2026-11-12.md).
+S3 BLOCKED i PRODUCTION NO_GO pozostają bez zmian; ten PR nie wykonuje
+przebudowy runtime, generacji materiałów zaufania ani kwalifikacji VM.
+
+
 S9-FV-01 wymaga JUnit XML i statycznego wykazu 83 obowiązkowych przypadków.
 `scripts/quality/check_s9_fv_01_junit.py` odmawia PASS przy brakującym,
 pominiętym lub nieudanym przypadku, pustym raporcie albo niezerowym exit pytest.

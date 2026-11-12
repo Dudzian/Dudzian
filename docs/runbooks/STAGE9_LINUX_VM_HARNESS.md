@@ -1,7 +1,8 @@
 # Stage 9 Linux — harness jednorazowej VM i kontrakt v2
 
-Ta procedura dotyczy wyłącznie niezależnie przygotowanej i jawnie zatwierdzonej
-Ubuntu Server 24.04 amd64 VM, z rzeczywistym systemd jako PID 1 i PostgreSQL 16.
+Tryb `EXECUTE-VM-TRIAL` dotyczy wyłącznie niezależnie przygotowanej i jawnie
+zatwierdzonej Ubuntu Server 24.04 amd64 VM, z rzeczywistym systemd jako PID 1
+i PostgreSQL 16. Wstępny, odczytowy `INSPECT` ma osobny kontrakt z sekcji 2.
 Nie kwalifikuje fizycznego hosta ani produkcji i nie awansuje Stage 9.
 Kontener, systemd-analyze bez działającego systemd oraz syntetyczna sonda SQL
 nie zastępują próby VM. Przy braku takiej VM wynik natywny pozostaje `PENDING`.
@@ -77,18 +78,45 @@ Schemat Freshness przygotować tylko przez istniejące, niezależnie przejrzane
 narzędzia. Nie tworzyć syntetycznych poświadczeń PRODUCTION, aby odblokować
 dodatni scenariusz. Brak właściwych autorytetów ma pozostać `BLOCKED`.
 
-## 2. INSPECT — wyłącznie odczyt
+## 2. INSPECT — odczyt przed instalacją produktu
 
-Na dowolnej maszynie można uruchomić bez sudo:
+`INSPECT` służy do wstępnej diagnostyki hosta Linux **przed instalacją runtime
+i aplikacji**. Nie wymaga działającej usługi Freshness, bindingu runtime,
+materiałów aplikacji, przygotowanego klastra ani zatwierdzenia VM. Może działać
+bez sudo, również gdy host nie spełnia warunków wykonania próby VM. Nie stanowi
+zgody na `EXECUTE-VM-TRIAL` ani kwalifikacji hosta.
+
+Wymaga natomiast wcześniej niezależnie uwierzytelnionego **narzędzia**:
+osobnego chronionego drzewa harnessu z dokładnymi 18 źródłami oraz zewnętrznym
+inwentarzem `/etc/cryptohunter/stage9-harness-inventory.json`. Przygotowanie
+tego drzewa jest odrębną czynnością administratora według
+[procedury chronionego drzewa](stage9_protected_execution_tree.md).
+Nie jest instalacją runtime ani aplikacji. Nie uruchamiać `INSPECT` z
+edytowalnego checkoutu, katalogu transportowego, TAR ani pełnej kopii
+`bot_core/` i `deployment/`; dodatkowe obiekty muszą powodować odmowę.
+
+Po tej niezależnej kontroli operator wskazuje absolutne położenie drzewa jako
+`S9_PROTECTED_TREE` i uruchamia zaufany systemowy interpreter:
 
 ```sh
-python -I -s -B deployment/stage9_vm_trial.py --mode INSPECT
+/usr/bin/python3 -I -s -B \
+  "$S9_PROTECTED_TREE/deployment/stage9_vm_trial.py" --mode INSPECT
 ```
 
-Tryb wypisuje JSON na stdout. Nie tworzy raportu, katalogów, kont ani klastra,
-nie instaluje i nie uruchamia usług. Odczytuje obserwacje środowiska; ich brak
-nie daje uprawnienia do wykonania. Redirekcja stdout do pliku jest odrębną
-decyzją operatora i sama jest zapisem, poza odczytowym kontraktem INSPECT.
+Przed wykonaniem helpera środowiska tryb sprawdza chronione źródła, kompletny
+inwentarz, właścicieli, prawa, hashe i stan importów. Helper jest kompilowany
+wyłącznie ze sprawdzonych bajtów; nie ma fallbacku do sąsiadującego pakietu,
+rozszerzenia ani bytecode. Brak poprawnego narzędzia lub izolacji procesu
+powoduje odmowę z niezerowym kodem **przed diagnostyką**. Nie obniżać praw
+kontroli ani nie generować zastępczego inwentarza w odpowiedzi na odmowę.
+
+Prawidłowy `INSPECT` wypisuje JSON na stdout i kończy się kodem `0` z
+`result=NOT_EXECUTED`; wszystkie fazy wykonania pozostają `NOT_EXECUTED`.
+Brak obserwacji środowiska nie daje uprawnienia do wykonania. Nie przekazywać
+`--phase`, `--inputs` ani wewnętrznego `--native-worker`: ich obecność oznacza
+odmowę. Tryb nie tworzy raportu na dysku, katalogów, kont ani klastra, nie
+instaluje i nie uruchamia usług. Redirekcja stdout do pliku jest odrębną
+decyzją operatora i sama jest zapisem poza odczytowym kontraktem `INSPECT`.
 
 ## 3. Zatwierdzenie VM przed EXECUTE-VM-TRIAL
 
@@ -137,12 +165,23 @@ Po reboot/restore zmieniającym boot-id approval wymaga ponownej niezależnej
 oceny. Zmiana systemowego interpretera lub bibliotek wymaga ponownego przeglądu
 i podpisu runtime, nie automatycznej aktualizacji hashy.
 
-Uruchamiany jako root kod harnessu, jego moduły i bootstrap muszą pochodzić
-z przejrzanego commitu w chronionej kopii `/srv/cryptohunter-trusted`.
-Nie uruchamiać jako root edytowalnego checkoutu. Operator osobno weryfikuje
-podpisany wykaz hashy tej kopii; approval nie podpisuje kodu.
+Kod harnessu, jego moduły i bootstrap muszą pochodzić z przejrzanego commitu
+w osobnym chronionym drzewie, na przykład `/srv/cryptohunter-trusted`.
+Dotyczy to także nieuprzywilejowanego `INSPECT`. Operator niezależnie
+uwierzytelnia dokładny inwentarz i sprawdza go według
+[procedury chronionego drzewa](stage9_protected_execution_tree.md).
+Nie uruchamiać jako root edytowalnego checkoutu. Zatwierdzenie VM nie podpisuje
+kodu i nie zastępuje uwierzytelnienia narzędzi.
 
 ## 4. Runtime, niezależny podpis i binding
+
+**Migracja po PR #3265: BLOCKED.** Obowiązuje pojedyncza rewizja wydania:
+[kontrakt i procedura migracji](stage9_revision_migration.md). Runtime z `fc15…`
+nie odpowiada nowej aplikacji ani harnessowi. Poniższe historyczne polecenia
+budowy i generowania materiałów wolno rozważyć dopiero po odrębnej zgodzie
+na konkretne operacje. Builder także generuje klucz/podpis w swojej sondzie.
+W zadaniu poprawy PR nie uruchamia się sekcji budowania, podpisania, tworzenia
+nowego dopuszczenia ani prób VM; istniejące materiały pozostają bez zmian.
 
 Stosować istniejący builder i pełny lock/katalog wheelhouse, bez zastępowania
 hashy plikami znalezionymi lokalnie. Pobieranie odbywa się przed izolacją:
@@ -233,12 +272,13 @@ przed importem usługi. Te metadane potwierdzają wyłącznie
 `SIGNED_FRESHNESS_SUBSTRATE`; pełna kwalifikacja `PRODUCTION_LOCAL` nadal wymaga
 AccountGenesis i wszystkich własnych warunków.
 
-Oddzielnie przygotować i podpisać wykaz kodu harnessu i jego zależności
-(`stage9_vm_trial.py`, `stage9_vm_environment.py`, `stage9_vm_native.py` oraz
-moduły importowane przez natywne obserwacje) z tego samego SHA. Nie należą one
-do minimalnego payloadu usługi. Najprościej zachować pełny przejrzany eksport
-`bot_core/` i `deployment/` w chronionej kopii `/srv/cryptohunter-trusted`;
-nie używać niezweryfikowanych sibling modules z innego checkoutu.
+Oddzielnie przygotować i niezależnie uwierzytelnić wykaz kodu harnessu i jego
+zależności z tego samego SHA. Nie należą one do minimalnego payloadu usługi.
+Obowiązuje dokładna lista 18 źródeł i trzech katalogów z
+[procedury chronionego drzewa](stage9_protected_execution_tree.md), także
+dla `INSPECT`. Pełny eksport `bot_core/` lub `deployment/` nie spełnia tego
+kontraktu: dodatkowe pliki, pakiety, puste katalogi i cache są odrzucane.
+Nie używać niezweryfikowanych sibling modules z innego checkoutu.
 
 Odrębna rola porównuje binding, szablon unit i wszystkie eksportowane bajty
 z zatwierdzonym SHA przed podpisaniem. Nie dodawać pól v2 do manifestu v1,

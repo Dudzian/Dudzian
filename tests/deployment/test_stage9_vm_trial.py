@@ -21,6 +21,14 @@ REVISION = "a" * 40
 ENVIRONMENT = "test-only-noble-001"
 
 
+@pytest.fixture(autouse=True)
+def modeled_harness_authentication(monkeypatch):
+    # These orchestration models mock every executed helper. Filesystem and
+    # executable-source authentication have separate adversarial tests.
+    monkeypatch.setattr(trial, "_harness_sources", lambda revision=None: {})
+    monkeypatch.setattr(trial, "_import_state", lambda: None)
+
+
 def test_snapshot_is_readonly_and_detects_content_mode_link_and_absence(tmp_path):
     root = tmp_path / "host"
     root.mkdir()
