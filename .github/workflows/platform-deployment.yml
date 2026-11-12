@@ -24,6 +24,10 @@ jobs:
         with: {persist-credentials: false}
       - uses: actions/setup-python@v7
         with: {python-version: "3.11"}
+      - name: Install strace for bootstrap file-access regression
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends --yes strace
       - run: >-
           python -m pip install pytest pyyaml "cryptography>=50.0.1,<51" jsonschema
           "psycopg[binary]>=3.2,<4" "ruff==0.14.11" "mypy==1.10.0" types-PyYAML types-requests
@@ -39,6 +43,8 @@ jobs:
           deployment/stage9_vm_environment.py
           deployment/stage9_vm_native.py
           scripts/prepare_stage9_vm_bundle.py
+          scripts/prepare_stage9_protected_tree.py
+          scripts/stage9_runtime_provenance.py
           deployment/freshness_verifier_entrypoint.py
           deployment/linux_physical_ipc.py
           deployment/linux_physical_postgresql.py
@@ -69,6 +75,11 @@ jobs:
           tests/deployment/test_production_local_installer.py
           tests/deployment/test_freshness_application.py
           tests/deployment/test_stage9_vm_trial.py
+          tests/deployment/test_freshness_runtime_bootstrap_security.py
+          tests/deployment/test_stage9_harness_import_security.py
+          tests/deployment/test_stage9_harness_runtime_guard.py
+          tests/deployment/test_stage9_protected_tree.py
+          tests/deployment/test_stage9_runtime_provenance.py
           tests/deployment/test_stage9_vm_environment.py
           tests/deployment/test_stage9_vm_native.py
           tests/deployment/test_prepare_stage9_vm_bundle.py
@@ -87,6 +98,8 @@ jobs:
           deployment/stage9_vm_environment.py
           deployment/stage9_vm_native.py
           scripts/prepare_stage9_vm_bundle.py
+          scripts/prepare_stage9_protected_tree.py
+          scripts/stage9_runtime_provenance.py
           deployment/freshness_verifier_entrypoint.py
           deployment/linux_physical_ipc.py
           deployment/linux_physical_postgresql.py
@@ -117,6 +130,11 @@ jobs:
           tests/deployment/test_production_local_installer.py
           tests/deployment/test_freshness_application.py
           tests/deployment/test_stage9_vm_trial.py
+          tests/deployment/test_freshness_runtime_bootstrap_security.py
+          tests/deployment/test_stage9_harness_import_security.py
+          tests/deployment/test_stage9_harness_runtime_guard.py
+          tests/deployment/test_stage9_protected_tree.py
+          tests/deployment/test_stage9_runtime_provenance.py
           tests/deployment/test_stage9_vm_environment.py
           tests/deployment/test_stage9_vm_native.py
           tests/deployment/test_prepare_stage9_vm_bundle.py
@@ -135,6 +153,8 @@ jobs:
           deployment/stage9_vm_environment.py
           deployment/stage9_vm_native.py
           scripts/prepare_stage9_vm_bundle.py
+          scripts/prepare_stage9_protected_tree.py
+          scripts/stage9_runtime_provenance.py
           deployment/freshness_verifier_entrypoint.py
           deployment/linux_physical_ipc.py
           deployment/linux_physical_postgresql.py
@@ -187,6 +207,11 @@ jobs:
           tests/deployment/test_production_local_installer.py
           tests/deployment/test_freshness_application.py
           tests/deployment/test_stage9_vm_trial.py
+          tests/deployment/test_freshness_runtime_bootstrap_security.py
+          tests/deployment/test_stage9_harness_import_security.py
+          tests/deployment/test_stage9_harness_runtime_guard.py
+          tests/deployment/test_stage9_protected_tree.py
+          tests/deployment/test_stage9_runtime_provenance.py
           tests/deployment/test_stage9_vm_environment.py
           tests/deployment/test_stage9_vm_native.py
           tests/deployment/test_prepare_stage9_vm_bundle.py

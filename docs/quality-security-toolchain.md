@@ -1,5 +1,14 @@
 # Quality, security, and code-intelligence toolchain
 
+Remediacja audytu Stage 9 `fc15b982` dodaje pięć zestawów negatywnych testów
+importu, konfiguracji OpenSSL, pełnego drzewa i odczytowej proweniencji. Nowe
+narzędzia są w mypy Linux/Win32 oraz istniejącym pomiarze coverage; `strace`
+sprawdza rzeczywiste odczyty bootstrapu. Procedury i ograniczenia wykonania
+są w [raporcie remediacji](audits/stage9_security_remediation_2026-11-12.md).
+S3 BLOCKED i PRODUCTION NO_GO pozostają bez zmian; ten PR nie wykonuje
+przebudowy runtime, generacji materiałów zaufania ani kwalifikacji VM.
+
+
 S9-FV-01 wymaga JUnit XML i statycznego wykazu 83 obowiązkowych przypadków.
 `scripts/quality/check_s9_fv_01_junit.py` odmawia PASS przy brakującym,
 pominiętym lub nieudanym przypadku, pustym raporcie albo niezerowym exit pytest.

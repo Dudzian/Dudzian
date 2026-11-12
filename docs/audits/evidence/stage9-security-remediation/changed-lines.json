@@ -1,0 +1,402 @@
+{
+  "base": "fc15b98298c5430286dd2206ec7eeb8f20e2497b",
+  "scope": "Implementation, tests, CI and procedures; excludes this report and execution evidence",
+  "files": [
+    {
+      "path": ".github/workflows/freshness-runtime.yml",
+      "sha256": "008eadd4fa447b8a9a1d66d589e6b40589163c18e34258ae1205e59cab543507",
+      "hunks": [
+        {
+          "old_start": 13,
+          "old_count": 0,
+          "new_start": 14,
+          "new_count": 2
+        },
+        {
+          "old_start": 22,
+          "old_count": 0,
+          "new_start": 25,
+          "new_count": 4
+        },
+        {
+          "old_start": 38,
+          "old_count": 0,
+          "new_start": 45,
+          "new_count": 2
+        },
+        {
+          "old_start": 47,
+          "old_count": 0,
+          "new_start": 56,
+          "new_count": 4
+        }
+      ]
+    },
+    {
+      "path": ".github/workflows/platform-deployment.yml",
+      "sha256": "5c9a1999643869ea69ae52eec043d5c3d06426a51eb8c08735b0324ca6f6a695",
+      "hunks": [
+        {
+          "old_start": 26,
+          "old_count": 0,
+          "new_start": 27,
+          "new_count": 4
+        },
+        {
+          "old_start": 41,
+          "old_count": 0,
+          "new_start": 46,
+          "new_count": 2
+        },
+        {
+          "old_start": 71,
+          "old_count": 0,
+          "new_start": 78,
+          "new_count": 5
+        },
+        {
+          "old_start": 89,
+          "old_count": 0,
+          "new_start": 101,
+          "new_count": 2
+        },
+        {
+          "old_start": 119,
+          "old_count": 0,
+          "new_start": 133,
+          "new_count": 5
+        },
+        {
+          "old_start": 137,
+          "old_count": 0,
+          "new_start": 156,
+          "new_count": 2
+        },
+        {
+          "old_start": 189,
+          "old_count": 0,
+          "new_start": 210,
+          "new_count": 5
+        }
+      ]
+    },
+    {
+      "path": ".github/workflows/quality-security.yml",
+      "sha256": "90aa094a5209360ef8ced280d15560be6296c97092a22bfecac6ecacb5f4fb71",
+      "hunks": [
+        {
+          "old_start": 74,
+          "old_count": 0,
+          "new_start": 75,
+          "new_count": 4
+        },
+        {
+          "old_start": 134,
+          "old_count": 0,
+          "new_start": 139,
+          "new_count": 2
+        },
+        {
+          "old_start": 172,
+          "old_count": 0,
+          "new_start": 179,
+          "new_count": 5
+        },
+        {
+          "old_start": 414,
+          "old_count": 0,
+          "new_start": 426,
+          "new_count": 2
+        },
+        {
+          "old_start": 485,
+          "old_count": 0,
+          "new_start": 499,
+          "new_count": 5
+        },
+        {
+          "old_start": 632,
+          "old_count": 0,
+          "new_start": 651,
+          "new_count": 2
+        }
+      ]
+    },
+    {
+      "path": "deployment/freshness_runtime_bootstrap.py",
+      "sha256": "0fad5585b0f49a88267c896d53b396c66201d41e59e895068be8a2fd71dec9da",
+      "hunks": [
+        {
+          "old_start": 8,
+          "old_count": 0,
+          "new_start": 9,
+          "new_count": 1
+        },
+        {
+          "old_start": 14,
+          "old_count": 0,
+          "new_start": 16,
+          "new_count": 15
+        },
+        {
+          "old_start": 19,
+          "old_count": 0,
+          "new_start": 36,
+          "new_count": 38
+        },
+        {
+          "old_start": 34,
+          "old_count": 2,
+          "new_start": 88,
+          "new_count": 5
+        },
+        {
+          "old_start": 50,
+          "old_count": 0,
+          "new_start": 108,
+          "new_count": 1
+        },
+        {
+          "old_start": 52,
+          "old_count": 7,
+          "new_start": 110,
+          "new_count": 3
+        },
+        {
+          "old_start": 62,
+          "old_count": 0,
+          "new_start": 117,
+          "new_count": 6
+        },
+        {
+          "old_start": 79,
+          "old_count": 1,
+          "new_start": 139,
+          "new_count": 8
+        }
+      ]
+    },
+    {
+      "path": "deployment/stage9_vm_trial.py",
+      "sha256": "6c07b0b2f0073d02cdd22b862737cd03218ea8a34d6279240e388d0e6b138450",
+      "hunks": [
+        {
+          "old_start": 9,
+          "old_count": 0,
+          "new_start": 10,
+          "new_count": 1
+        },
+        {
+          "old_start": 11,
+          "old_count": 0,
+          "new_start": 13,
+          "new_count": 2
+        },
+        {
+          "old_start": 15,
+          "old_count": 1,
+          "new_start": 17,
+          "new_count": 0
+        },
+        {
+          "old_start": 19,
+          "old_count": 1,
+          "new_start": 21,
+          "new_count": 1
+        },
+        {
+          "old_start": 21,
+          "old_count": 1,
+          "new_start": 23,
+          "new_count": 1
+        },
+        {
+          "old_start": 22,
+          "old_count": 0,
+          "new_start": 25,
+          "new_count": 72
+        },
+        {
+          "old_start": 101,
+          "old_count": 1,
+          "new_start": 175,
+          "new_count": 4
+        },
+        {
+          "old_start": 166,
+          "old_count": 1,
+          "new_start": 243,
+          "new_count": 2
+        },
+        {
+          "old_start": 172,
+          "old_count": 6,
+          "new_start": 250,
+          "new_count": 4
+        },
+        {
+          "old_start": 334,
+          "old_count": 2,
+          "new_start": 410,
+          "new_count": 67
+        },
+        {
+          "old_start": 337,
+          "old_count": 13,
+          "new_start": 478,
+          "new_count": 241
+        },
+        {
+          "old_start": 542,
+          "old_count": 0,
+          "new_start": 912,
+          "new_count": 2
+        }
+      ]
+    },
+    {
+      "path": "docs/quality-security-toolchain.md",
+      "sha256": "b31a3aec5e74ce918e05ec026e38557b5c928f60b45819aa984f83df8912824f",
+      "hunks": [
+        {
+          "old_start": 2,
+          "old_count": 0,
+          "new_start": 3,
+          "new_count": 9
+        }
+      ]
+    },
+    {
+      "path": "docs/runbooks/stage9_protected_execution_tree.md",
+      "sha256": "6dee22a0e8c26907a797c1a959a59be068f8869131be540d613e18d9981a3f7d",
+      "hunks": [
+        {
+          "old_start": 0,
+          "old_count": 0,
+          "new_start": 1,
+          "new_count": 167
+        }
+      ]
+    },
+    {
+      "path": "docs/runbooks/stage9_runtime_provenance.md",
+      "sha256": "40f02f1da1040ad8c58b86ebb7acb77f8b2c5309c47e50dfaccb1bb40aca6252",
+      "hunks": [
+        {
+          "old_start": 0,
+          "old_count": 0,
+          "new_start": 1,
+          "new_count": 200
+        }
+      ]
+    },
+    {
+      "path": "pyproject.toml",
+      "sha256": "73820791edc3282a7ff9c18e528e86a0cbb8943333e968813c7165aa795408e5",
+      "hunks": [
+        {
+          "old_start": 42,
+          "old_count": 0,
+          "new_start": 43,
+          "new_count": 2
+        }
+      ]
+    },
+    {
+      "path": "scripts/prepare_stage9_protected_tree.py",
+      "sha256": "a799c2d76e1f8ec47505474573fe23cedf35d5a741a9836be72e1781f940a8e2",
+      "hunks": [
+        {
+          "old_start": 0,
+          "old_count": 0,
+          "new_start": 1,
+          "new_count": 464
+        }
+      ]
+    },
+    {
+      "path": "scripts/stage9_runtime_provenance.py",
+      "sha256": "3a392bdbe551b54976a5d7c3827c914136daae70fd50c5edf8234fa1e5329bef",
+      "hunks": [
+        {
+          "old_start": 0,
+          "old_count": 0,
+          "new_start": 1,
+          "new_count": 238
+        }
+      ]
+    },
+    {
+      "path": "tests/deployment/test_freshness_runtime_bootstrap_security.py",
+      "sha256": "ea4c61add3d62da4ec39ad8682553f0a38c6783262af340b714815f0e6b1c396",
+      "hunks": [
+        {
+          "old_start": 0,
+          "old_count": 0,
+          "new_start": 1,
+          "new_count": 217
+        }
+      ]
+    },
+    {
+      "path": "tests/deployment/test_stage9_harness_import_security.py",
+      "sha256": "d15b517683871c85f4fb0979fc3c35d108fad720f2f07fc628c9e284174e0387",
+      "hunks": [
+        {
+          "old_start": 0,
+          "old_count": 0,
+          "new_start": 1,
+          "new_count": 366
+        }
+      ]
+    },
+    {
+      "path": "tests/deployment/test_stage9_harness_runtime_guard.py",
+      "sha256": "5c869a85e743d3e0d93495bc3ac157722bf9c8910cdef725852d3956f176641d",
+      "hunks": [
+        {
+          "old_start": 0,
+          "old_count": 0,
+          "new_start": 1,
+          "new_count": 156
+        }
+      ]
+    },
+    {
+      "path": "tests/deployment/test_stage9_protected_tree.py",
+      "sha256": "ef18fab67e555defdb0fab59b73c178ca02df6f2b9073ca0b56c060c457f15e3",
+      "hunks": [
+        {
+          "old_start": 0,
+          "old_count": 0,
+          "new_start": 1,
+          "new_count": 283
+        }
+      ]
+    },
+    {
+      "path": "tests/deployment/test_stage9_runtime_provenance.py",
+      "sha256": "25028d95ea9f8a080dd48721f53ec747ae7b54541dfe8bef10c08c8c8fdbae8b",
+      "hunks": [
+        {
+          "old_start": 0,
+          "old_count": 0,
+          "new_start": 1,
+          "new_count": 176
+        }
+      ]
+    },
+    {
+      "path": "tests/deployment/test_stage9_vm_trial.py",
+      "sha256": "651061090c1d881e40961375ba3528992c1ba7b61cc4529c80b74c3617b0c1ff",
+      "hunks": [
+        {
+          "old_start": 23,
+          "old_count": 0,
+          "new_start": 24,
+          "new_count": 8
+        }
+      ]
+    }
+  ]
+}

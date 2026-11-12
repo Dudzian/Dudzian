@@ -1,0 +1,93 @@
+{
+  "cwd": "/workspace/Dudzian",
+  "euid": 1000,
+  "environment": {
+    "PRE_COMMIT_HOME": "/workspace/.cache/pre-commit",
+    "PATH_prepend_for_format": "/workspace/Dudzian/.venv/bin",
+    "BETTERLEAKS_BIN": "/workspace/work/stage9-security/tools/betterleaks"
+  },
+  "betterleaks_archive_sha256": "f8b185a39ffcece2a1ca82bf3a4e7435cd81963ffd16b7a9128daf75f35f6de7",
+  "checks": [
+    {
+      "name": "ruff",
+      "argv": [
+        ".venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "--no-cache",
+        "bot_core",
+        "core",
+        "scripts",
+        "tests",
+        "deploy",
+        "stage6_samples",
+        "ui",
+        "deployment/stage9_vm_trial.py",
+        "deployment/freshness_runtime_bootstrap.py"
+      ],
+      "exit_code": 0,
+      "log_finished_at_mtime": "2026-11-12T16:08:22.074147+00:00"
+    },
+    {
+      "name": "mypy-linux",
+      "argv": [
+        ".venv/bin/python",
+        "-m",
+        "mypy",
+        "--config-file=pyproject.toml"
+      ],
+      "exit_code": 0,
+      "log_finished_at_mtime": "2026-11-12T16:07:06.542184+00:00"
+    },
+    {
+      "name": "format-preflight",
+      "argv": [
+        "python",
+        "-m",
+        "pre_commit",
+        "run",
+        "ruff-format",
+        "--all-files"
+      ],
+      "exit_code": 0,
+      "log_finished_at_mtime": "2026-11-12T16:07:57.283188+00:00"
+    },
+    {
+      "name": "deployment-format",
+      "argv": [
+        ".venv/bin/python",
+        "-m",
+        "ruff",
+        "format",
+        "--check",
+        "deployment/stage9_vm_trial.py",
+        "deployment/freshness_runtime_bootstrap.py"
+      ],
+      "exit_code": 0,
+      "log_finished_at_mtime": "2026-11-12T16:08:21.459282+00:00"
+    },
+    {
+      "name": "secret-scan",
+      "argv": [
+        ".venv/bin/python",
+        "scripts/quality/betterleaks_hook.py"
+      ],
+      "exit_code": 0,
+      "log_finished_at_mtime": "2026-11-12T16:08:23.261572+00:00"
+    },
+    {
+      "name": "checkout-refusal",
+      "argv": [
+        ".venv/bin/python",
+        "-I",
+        "-B",
+        "deployment/stage9_vm_trial.py",
+        "--mode",
+        "INSPECT"
+      ],
+      "exit_code": 2,
+      "log_finished_at_mtime": "2026-11-12T11:55:49.818030+00:00"
+    }
+  ]
+}
