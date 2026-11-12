@@ -217,6 +217,18 @@ sources = {name.replace('.', '/') + '.py': (root / (name.replace('.', '/') + '.p
 sources.update({name: (root / name).read_bytes() for name in namespace['HARNESS_HELPERS']})
 namespace['_check_graph'](sources)
 loader = namespace['_HarnessLoader'](sources, root)
+# Model only host stdlib ownership in this development interpreter. Source
+# bytes, file types, modes, links and descriptor-stability checks remain real.
+g = namespace['_HarnessLoader'].find_spec.__globals__
+original_protected = g['_protected']
+def protected_development_stdlib(path, *, directory=False):
+    if path.is_relative_to(loader.bootstrap_stdlib):
+        info = path.lstat()
+        assert not path.is_symlink() and not info.st_mode & 0o022
+        assert path.is_dir() if directory else path.is_file() and info.st_nlink == 1
+        return
+    original_protected(path, directory=directory)
+g['_protected'] = protected_development_stdlib
 sys.meta_path.insert(0, loader)
 import deployment.stage9_vm_native as native
 assert native.__loader__ is loader
@@ -364,3 +376,68 @@ def test_helper_import_graph_is_also_checked_before_execution(authenticated_tree
     sources[helper] += b"\nimport unapproved_helper_dependency\n"
     with pytest.raises(trial.TrialError, match="HARNESS_DEPENDENCY_NOT_APPROVED"):
         trial._check_graph(sources)
+
+
+def test_descriptor_swap_is_refused_before_reading_source(tmp_path, monkeypatch):
+    import stat
+
+    source = tmp_path / "source.py"
+    source.write_bytes(b"non-executable data")
+    monkeypatch.setattr(trial, "_protected", lambda *args, **kwargs: None)
+    original_fstat = os.fstat
+
+    def replaced_descriptor(fd):
+        values = list(original_fstat(fd))
+        values[stat.ST_INO] += 1
+        return os.stat_result(values)
+
+    monkeypatch.setattr(os, "fstat", replaced_descriptor)
+    monkeypatch.setattr(
+        os, "fdopen", lambda *args, **kwargs: pytest.fail("read before identity check")
+    )
+    with pytest.raises(trial.TrialError, match="INPUT_CHANGED_DURING_READ"):
+        trial._read(source, 1024)
+
+
+@pytest.mark.parametrize("container", ["meta_path", "path_hooks", "path_importer_cache", "path"])
+def test_import_state_refuses_foreign_containers_without_callbacks(tmp_path, container):
+    script = r"""
+import runpy, sys
+namespace = runpy.run_path(sys.argv[1])
+class ForbiddenList(list):
+    def __iter__(self):
+        raise AssertionError('foreign container iterated')
+    def __len__(self):
+        raise AssertionError('foreign container length evaluated')
+class ForbiddenDict(dict):
+    def values(self):
+        raise AssertionError('foreign cache values called')
+key = sys.argv[2]
+value = ForbiddenDict() if key == 'path_importer_cache' else ForbiddenList()
+setattr(sys, key, value)
+try:
+    namespace['_import_state']()
+except namespace['TrialError'] as error:
+    print(str(error))
+else:
+    raise AssertionError('foreign container accepted')
+"""
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-S",
+            "-B",
+            "-c",
+            script,
+            str(REPOSITORY / "deployment/stage9_vm_trial.py"),
+            container,
+        ],
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+        env={"PATH": "/usr/bin:/bin"},
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "IMPORT_CACHE_NOT_APPROVED"

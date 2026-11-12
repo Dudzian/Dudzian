@@ -25,8 +25,8 @@ UID_CASES = (
 
 def git(source: Path, *arguments: str) -> str:
     return subprocess.check_output(
-        ["/usr/bin/git", "-C", str(source), *arguments],
-        env={"PATH": "/usr/bin:/bin", "GIT_CONFIG_NOSYSTEM": "1"},
+        ["/usr/bin/git", "-c", "commit.gpgsign=false", "-C", str(source), *arguments],
+        env={"PATH": "/usr/bin:/bin", "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null"},
         stderr=subprocess.DEVNULL,
         text=True,
     ).strip()

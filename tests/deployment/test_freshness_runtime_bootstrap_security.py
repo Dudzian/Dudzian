@@ -129,6 +129,8 @@ def test_hostile_environment_config_and_provider_are_never_opened(
     assert "/proc/self/fd/" in actual
     assert all(str(path) not in actual for path in (config, included, provider))
     assert "ossl-modules" not in actual
+    if evidence := os.environ.get("STAGE9_SAFE_OUTPUT"):
+        (Path(evidence) / "bootstrap-opens.trace").write_text(actual)
 
 
 @pytest.mark.parametrize("attack", ["message", "signature", "public-key"])
@@ -215,3 +217,150 @@ def test_descriptor_cleanup_when_openssl_fails(system_openssl, monkeypatch):
     for fd in created:
         with pytest.raises(OSError):
             os.fstat(fd)
+
+
+@pytest.mark.parametrize(
+    "attack",
+    [
+        "owner",
+        "writable",
+        "symlink",
+        "hardlink",
+        "directory",
+        "fifo",
+        "not-executable",
+        "ancestor-owner",
+        "ancestor-writable",
+        "ancestor-symlink",
+        "ancestor-file",
+    ],
+)
+def test_openssl_metadata_refused_before_execution_and_closes_inputs(monkeypatch, attack):
+    import stat
+
+    executable = Path("/usr/bin/openssl")
+    original_lstat = Path.lstat
+    sealed = bootstrap._sealed_input
+    descriptors = []
+
+    def metadata(path):
+        fields = list(original_lstat(path))
+        fields[stat.ST_UID] = 0
+        fields[stat.ST_MODE] &= ~0o022
+        if path == executable:
+            fields[stat.ST_MODE] = stat.S_IFREG | 0o755
+            fields[stat.ST_NLINK] = 1
+            if attack == "owner":
+                fields[stat.ST_UID] = 1001
+            elif attack == "writable":
+                fields[stat.ST_MODE] |= 0o020
+            elif attack == "symlink":
+                fields[stat.ST_MODE] = stat.S_IFLNK | 0o755
+            elif attack == "hardlink":
+                fields[stat.ST_NLINK] = 2
+            elif attack == "directory":
+                fields[stat.ST_MODE] = stat.S_IFDIR | 0o755
+            elif attack == "fifo":
+                fields[stat.ST_MODE] = stat.S_IFIFO | 0o755
+            elif attack == "not-executable":
+                fields[stat.ST_MODE] &= ~stat.S_IXUSR
+        elif path == executable.parent:
+            if attack == "ancestor-owner":
+                fields[stat.ST_UID] = 1001
+            elif attack == "ancestor-writable":
+                fields[stat.ST_MODE] |= 0o002
+            elif attack == "ancestor-symlink":
+                fields[stat.ST_MODE] = stat.S_IFLNK | 0o755
+            elif attack == "ancestor-file":
+                fields[stat.ST_MODE] = stat.S_IFREG | 0o755
+        return os.stat_result(fields)
+
+    def remember(value):
+        fd = sealed(value)
+        descriptors.append(fd)
+        return fd
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Unapproved OpenSSL object must never execute")
+
+    monkeypatch.setattr(Path, "lstat", metadata)
+    monkeypatch.setattr(bootstrap, "_sealed_input", remember)
+    monkeypatch.setattr(bootstrap.subprocess, "run", forbidden)
+    with pytest.raises(bootstrap.RuntimeTrustError, match="Niechroniony"):
+        bootstrap.verify_ed25519(MESSAGE, SIGNATURE, PUBLIC_KEY)
+    assert len(descriptors) == 4
+    for fd in descriptors:
+        with pytest.raises(OSError):
+            os.fstat(fd)
+
+
+@pytest.mark.parametrize("operation", ["write-error", "zero-write", "seek", "seal"])
+def test_memfd_failure_closes_current_and_prior_inputs_without_execution(monkeypatch, operation):
+    create = os.memfd_create
+    write = os.write
+    seek = os.lseek
+    seal = fcntl.fcntl
+    descriptors = []
+
+    def remember(*args, **kwargs):
+        fd = create(*args, **kwargs)
+        descriptors.append(fd)
+        return fd
+
+    def fail_write(fd, value):
+        if len(descriptors) == 2:
+            if operation == "zero-write":
+                return 0
+            raise OSError("controlled write refusal")
+        return write(fd, value)
+
+    def fail_seek(*args):
+        if len(descriptors) == 2:
+            raise OSError("controlled seek refusal")
+        return seek(*args)
+
+    def fail_seal(*args):
+        if len(descriptors) == 2:
+            raise OSError("controlled sealing refusal")
+        return seal(*args)
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Unsealed input must never reach OpenSSL")
+
+    monkeypatch.setattr(os, "memfd_create", remember)
+    if operation in {"write-error", "zero-write"}:
+        monkeypatch.setattr(os, "write", fail_write)
+    elif operation == "seek":
+        monkeypatch.setattr(os, "lseek", fail_seek)
+    else:
+        monkeypatch.setattr(fcntl, "fcntl", fail_seal)
+    monkeypatch.setattr(bootstrap.subprocess, "run", forbidden)
+    with pytest.raises(bootstrap.RuntimeTrustError):
+        bootstrap.verify_ed25519(MESSAGE, SIGNATURE, PUBLIC_KEY)
+    assert len(descriptors) == 2
+    for fd in descriptors:
+        with pytest.raises(OSError):
+            os.fstat(fd)
+
+
+def test_memfd_allocation_failure_closes_prior_inputs_without_execution(monkeypatch):
+    create = os.memfd_create
+    descriptors = []
+
+    def fail_second(*args, **kwargs):
+        if descriptors:
+            raise OSError("controlled allocation refusal")
+        fd = create(*args, **kwargs)
+        descriptors.append(fd)
+        return fd
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Incomplete inputs must never reach OpenSSL")
+
+    monkeypatch.setattr(os, "memfd_create", fail_second)
+    monkeypatch.setattr(bootstrap.subprocess, "run", forbidden)
+    with pytest.raises(bootstrap.RuntimeTrustError):
+        bootstrap.verify_ed25519(MESSAGE, SIGNATURE, PUBLIC_KEY)
+    assert len(descriptors) == 1
+    with pytest.raises(OSError):
+        os.fstat(descriptors[0])

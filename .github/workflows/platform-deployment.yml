@@ -4,6 +4,17 @@ on:
   pull_request:
   workflow_dispatch:
     inputs:
+      validation_scope:
+        description: "Separate non-signing Stage 9 checks; full keeps all existing gates"
+        required: true
+        type: choice
+        options: [full, stage9-safe]
+        default: full
+      expected_commit:
+        description: "Exact 40-hex reviewed HEAD required for stage9-safe"
+        required: false
+        type: string
+        default: ""
       run_stage10:
         description: "Run destructive/reboot Stage-10 lifecycle qualification"
         required: true
@@ -16,7 +27,87 @@ on:
         default: false
 
 jobs:
+  stage9-safe-validation:
+    name: Stage 9 safe checks (Python ${{ matrix.python }})
+    if: github.event_name == 'workflow_dispatch' && inputs.validation_scope == 'stage9-safe'
+    runs-on: ubuntu-24.04
+    permissions: {contents: read}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12"]
+    env:
+      STAGE9_EXPECTED_COMMIT: ${{ inputs.expected_commit }}
+      STAGE9_RUN_STAGE10: ${{ toJSON(inputs.run_stage10) }}
+      STAGE9_RUN_PHYSICAL: ${{ toJSON(inputs.run_linux_physical) }}
+      STAGE9_SAFE_OUTPUT: ${{ runner.temp }}/stage9-safe-${{ matrix.python }}
+    steps:
+      - name: Require exact commit and forbid privileged dispatch inputs
+        shell: python
+        run: |
+          import os
+          import re
+          expected = os.environ["STAGE9_EXPECTED_COMMIT"]
+          if (re.fullmatch(r"[0-9a-f]{40}", expected) is None
+              or expected != os.environ["GITHUB_SHA"]
+              or os.environ["STAGE9_RUN_STAGE10"] != "false"
+              or os.environ["STAGE9_RUN_PHYSICAL"] != "false"):
+              raise SystemExit("STAGE9_SAFE_DISPATCH_REFUSED")
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install isolated validation tools without building runtime
+        run: >-
+          python -m pip install pytest PyYAML jsonschema "cryptography>=50.0.1,<51"
+          "psycopg[binary]>=3.2,<4" "ruff==0.14.11" "mypy==1.10.0"
+          "pre-commit>=4,<5" "coverage>=7.10,<8" "diff-cover>=9,<12"
+          types-PyYAML types-requests "grpcio>=1.62,<2" "protobuf>=4.24,<6" packaging
+      - name: Install syscall observation tool on disposable hosted runner
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends --yes strace
+      - name: Install pinned offline secret scanner
+        shell: bash
+        run: |
+          set -euo pipefail
+          s9_tools="$RUNNER_TEMP/stage9-safe-tools-${{ matrix.python }}"
+          mkdir "$s9_tools"
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            https://github.com/betterleaks/betterleaks/releases/download/v1.9.0/betterleaks_1.9.0_linux_x64.tar.gz \
+            -o "$s9_tools/betterleaks.tar.gz"
+          printf '%s  %s\n' f8b185a39ffcece2a1ca82bf3a4e7435cd81963ffd16b7a9128daf75f35f6de7 \
+            "$s9_tools/betterleaks.tar.gz" | sha256sum --check --strict
+          tar -xzf "$s9_tools/betterleaks.tar.gz" -C "$s9_tools" betterleaks
+          printf 'BETTERLEAKS_BIN=%s/betterleaks\n' "$s9_tools" >> "$GITHUB_ENV"
+      - name: Run explicit static, regression and adversarial checks
+        run: >-
+          python -B scripts/quality/run_stage9_safe_validation.py
+          --expected-commit "$STAGE9_EXPECTED_COMMIT"
+          --base-commit fc15b98298c5430286dd2206ec7eeb8f20e2497b
+          --output "$STAGE9_SAFE_OUTPUT"
+      - name: Preserve actual exits, logs, JUnit and coverage
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: stage9-safe-${{ matrix.python }}-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.STAGE9_SAFE_OUTPUT }}/*.json
+            ${{ env.STAGE9_SAFE_OUTPUT }}/*.log
+            ${{ env.STAGE9_SAFE_OUTPUT }}/*.error
+            ${{ env.STAGE9_SAFE_OUTPUT }}/*.xml
+            ${{ env.STAGE9_SAFE_OUTPUT }}/*.trace
+            ${{ env.STAGE9_SAFE_OUTPUT }}/.coverage
+          if-no-files-found: error
+          retention-days: 14
+
   linux-evidence-contract:
+    if: (github.event_name != 'workflow_dispatch' || inputs.validation_scope != 'stage9-safe')
     runs-on: ubuntu-24.04
     permissions: {contents: read}
     steps:
@@ -224,8 +315,7 @@ jobs:
 
   linux-physical-challenge:
     if: >-
-      github.event_name == 'workflow_dispatch' && inputs.run_linux_physical == true
-      && github.ref == 'refs/heads/main' && github.repository == 'Dudzian/Dudzian'
+      (github.event_name != 'workflow_dispatch' || inputs.validation_scope != 'stage9-safe') && (github.event_name == 'workflow_dispatch' && inputs.run_linux_physical == true && github.ref == 'refs/heads/main' && github.repository == 'Dudzian/Dudzian')
     runs-on: ubuntu-24.04
     environment: stage9-linux-challenge
     permissions: {contents: read, actions: read}
@@ -269,8 +359,7 @@ jobs:
 
   linux-physical-validation:
     if: >-
-      github.event_name == 'workflow_dispatch' && inputs.run_linux_physical == true
-      && github.ref == 'refs/heads/main' && github.repository == 'Dudzian/Dudzian'
+      (github.event_name != 'workflow_dispatch' || inputs.validation_scope != 'stage9-safe') && (github.event_name == 'workflow_dispatch' && inputs.run_linux_physical == true && github.ref == 'refs/heads/main' && github.repository == 'Dudzian/Dudzian')
     needs: [linux-physical-challenge]
     runs-on: ubuntu-24.04
     # Operator zatwierdza ten job dopiero po zakończeniu transportu z Della.
@@ -328,8 +417,7 @@ jobs:
 
   linux-production-gate:
     if: >-
-      github.event_name == 'workflow_dispatch' && inputs.run_linux_physical == true
-      && github.ref == 'refs/heads/main' && github.repository == 'Dudzian/Dudzian'
+      (github.event_name != 'workflow_dispatch' || inputs.validation_scope != 'stage9-safe') && (github.event_name == 'workflow_dispatch' && inputs.run_linux_physical == true && github.ref == 'refs/heads/main' && github.repository == 'Dudzian/Dudzian')
     needs: [linux-physical-validation, core-linux, core-windows, core-macos]
     runs-on: ubuntu-24.04
     environment: stage9-linux-evidence
@@ -396,6 +484,7 @@ jobs:
           --linux-replay-ledger "$RUNNER_TEMP/linux-evidence-consumed.sqlite"
 
   core-linux:
+    if: (github.event_name != 'workflow_dispatch' || inputs.validation_scope != 'stage9-safe')
     runs-on: ubuntu-latest
     steps: &core_steps
       - uses: actions/checkout@v7
@@ -410,14 +499,17 @@ jobs:
           path: core-${{ runner.os }}.json
 
   core-windows:
+    if: (github.event_name != 'workflow_dispatch' || inputs.validation_scope != 'stage9-safe')
     runs-on: windows-latest
     steps: *core_steps
 
   core-macos:
+    if: (github.event_name != 'workflow_dispatch' || inputs.validation_scope != 'stage9-safe')
     runs-on: macos-latest
     steps: *core_steps
 
   windows-deployment-contract:
+    if: (github.event_name != 'workflow_dispatch' || inputs.validation_scope != 'stage9-safe')
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
@@ -442,6 +534,7 @@ jobs:
         run: ./deployment/windows_ownership_json_regression.ps1
 
   windows-deployment-integration:
+    if: (github.event_name != 'workflow_dispatch' || inputs.validation_scope != 'stage9-safe')
     runs-on: windows-latest
     needs: windows-deployment-contract
     steps:
@@ -499,6 +592,7 @@ jobs:
           path: windows-scm-evidence.json
 
   windows-clean-install-integration:
+    if: (github.event_name != 'workflow_dispatch' || inputs.validation_scope != 'stage9-safe')
     runs-on: windows-latest
     needs: [windows-deployment-contract, windows-deployment-integration]
     steps:
@@ -582,7 +676,8 @@ jobs:
             dist/windows/windows-clean-install-evidence.json
 
   windows-stage10-prepare-and-schedule-reboot:
-    if: github.event_name == 'workflow_dispatch' && inputs.run_stage10 == true
+    if: >-
+      (github.event_name != 'workflow_dispatch' || inputs.validation_scope != 'stage9-safe') && (github.event_name == 'workflow_dispatch' && inputs.run_stage10 == true)
     runs-on: [self-hosted, Windows, X64, cryptohunter-stage10]
     needs: [windows-deployment-integration, windows-clean-install-integration]
     steps:
@@ -609,7 +704,8 @@ jobs:
         run: shutdown.exe /r /t 75 /d p:4:1 /c "CryptoHunter Stage-10 qualification"
 
   windows-stage10-reboot-barrier:
-    if: github.event_name == 'workflow_dispatch' && inputs.run_stage10 == true
+    if: >-
+      (github.event_name != 'workflow_dispatch' || inputs.validation_scope != 'stage9-safe') && (github.event_name == 'workflow_dispatch' && inputs.run_stage10 == true)
     needs: windows-stage10-prepare-and-schedule-reboot
     runs-on: ubuntu-latest
     steps:
@@ -617,7 +713,8 @@ jobs:
         run: sleep 240
 
   windows-stage10-qualify-after-reboot:
-    if: github.event_name == 'workflow_dispatch' && inputs.run_stage10 == true
+    if: >-
+      (github.event_name != 'workflow_dispatch' || inputs.validation_scope != 'stage9-safe') && (github.event_name == 'workflow_dispatch' && inputs.run_stage10 == true)
     needs: windows-stage10-reboot-barrier
     runs-on: [self-hosted, Windows, X64, cryptohunter-stage10]
     timeout-minutes: 1800
@@ -656,7 +753,8 @@ jobs:
             stage10/windows-stage10-transcript.log
 
   linux-deployment-integration:
-    if: always() && (github.event_name == 'pull_request' || inputs.run_stage10 == true)
+    if: >-
+      (github.event_name != 'workflow_dispatch' || inputs.validation_scope != 'stage9-safe') && (always() && (github.event_name == 'pull_request' || inputs.run_stage10 == true))
     runs-on: ubuntu-latest
     needs: [core-linux, core-windows, core-macos]
     steps:
@@ -706,7 +804,8 @@ jobs:
 
   macos-deployment-integration:
     name: macOS deployment compatibility (production deferred)
-    if: github.event_name == 'pull_request' || inputs.run_stage10 == true
+    if: >-
+      (github.event_name != 'workflow_dispatch' || inputs.validation_scope != 'stage9-safe') && (github.event_name == 'pull_request' || inputs.run_stage10 == true)
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
@@ -722,7 +821,8 @@ jobs:
           tests/deployment/test_platform_evidence.py tests/deployment/test_core_test_plan.py
 
   windows-release-gate:
-    if: always() && (github.event_name == 'pull_request' || inputs.run_stage10 == true)
+    if: >-
+      (github.event_name != 'workflow_dispatch' || inputs.validation_scope != 'stage9-safe') && (always() && (github.event_name == 'pull_request' || inputs.run_stage10 == true))
     runs-on: windows-latest
     needs:
       - core-linux

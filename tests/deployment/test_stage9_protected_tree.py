@@ -281,3 +281,23 @@ def test_duplicate_json_fields_are_rejected_before_schema():
     raw = b'{"schema":1,"schema":1}'
     with pytest.raises(tree.TreeError, match="DUPLICATE_JSON_FIELD"):
         tree._document(raw, hashlib.sha256(raw).hexdigest())
+
+
+def test_git_object_reads_disable_lazy_fetch_and_all_transports(tmp_path, monkeypatch):
+    import subprocess
+
+    calls = []
+
+    def observe(arguments, **options):
+        calls.append(arguments)
+        assert options["env"]["GIT_NO_LAZY_FETCH"] == "1"
+        assert options["env"]["GIT_ALLOW_PROTOCOL"] == ""
+        assert options["env"]["GIT_CONFIG_NOSYSTEM"] == "1"
+        assert options["env"]["GIT_CONFIG_GLOBAL"] == "/dev/null"
+        assert "core.fsmonitor=false" in arguments
+        assert "core.hooksPath=/dev/null" in arguments
+        return subprocess.CompletedProcess(arguments, 0, b"object data", b"")
+
+    monkeypatch.setattr(tree.subprocess, "run", observe)
+    assert tree._git(tmp_path, "cat-file", "blob", "a" * 40) == b"object data"
+    assert len(calls) == 1

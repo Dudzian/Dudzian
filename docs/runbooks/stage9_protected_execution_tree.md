@@ -25,6 +25,11 @@ The provenance collector is a separate read-only administrator tool. It must
 run from its own independently trusted location; it is not added to this
 harness tree, whose executable source set is fixed.
 
+The export requires complete local Git objects. Its Git subprocess disables lazy
+fetch and all Git transport protocols, so repository-selected remote helpers
+cannot acquire missing promisor objects. Missing objects cause refusal; fetch or
+repair belongs to a separately trusted acquisition step, outside this exporter.
+
 The candidate is transport data: its directories retain owner write permission,
 so it cannot pass protected execution verification. The installed tree uses
 root ownership, directories `0555`, regular files `0444`, and only files marked
@@ -43,6 +48,32 @@ and directories are sorted by path. The installed external inventory lives at
 `/etc/cryptohunter/stage9-harness-inventory.json`, outside the execution tree.
 It binds both the exact commit and final absolute root. A hash printed by the
 exporter is an identifier, not independent authorization.
+
+## Preinstallation INSPECT
+
+The protected harness is a trusted diagnostic tool, separate from the product's
+runtime and application installation. `INSPECT` can run as a non-root user
+before either product installation exists, without VM approval, runtime binding,
+application inputs or a PostgreSQL cluster. It still requires the complete
+authenticated harness tree and its fixed external inventory. A mutable checkout,
+transport candidate or TAR is never an executable substitute.
+
+After an administrator has independently prepared and verified this tool tree,
+use a trusted system interpreter:
+
+```sh
+/usr/bin/python3 -I -s -B \
+    "$S9_PROTECTED_TREE/deployment/stage9_vm_trial.py" --mode INSPECT
+```
+
+The operator supplies `S9_PROTECTED_TREE` as the reviewed absolute tree path.
+The source/inventory/import-state checks precede environment helper execution.
+Missing or inconsistent trust material causes a nonzero refusal before any
+diagnostics; no relaxed fallback or new inventory is generated. A successful
+read-only observation has exit `0` and `result=NOT_EXECUTED`, with all execution
+phases still `NOT_EXECUTED`. It authorizes no subsequent phase. See the
+[main harness runbook](STAGE9_LINUX_VM_HARNESS.md#2-inspect--odczyt-przed-instalacją-produktu)
+for the separate diagnostic and execution contracts.
 
 ## Administrator procedure (not executed here)
 

@@ -103,6 +103,10 @@ def _git(source: Path, *arguments: str) -> bytes:
                 "GIT_CONFIG_NOSYSTEM": "1",
                 "GIT_CONFIG_GLOBAL": "/dev/null",
                 "GIT_NO_REPLACE_OBJECTS": "1",
+                # Export uses complete local objects. Partial-clone lazy
+                # fetches must never dispatch repository-selected helpers.
+                "GIT_NO_LAZY_FETCH": "1",
+                "GIT_ALLOW_PROTOCOL": "",
             },
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,

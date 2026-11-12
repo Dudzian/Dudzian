@@ -164,11 +164,13 @@ def _protected(path: Path, *, directory: bool = False) -> None:
 
 
 def _read(path: Path, limit: int) -> bytes:
+    before = path.lstat()
     _protected(path)
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     try:
         info = os.fstat(fd)
         _require(stat.S_ISREG(info.st_mode) and info.st_nlink == 1, "INPUT_NOT_REGULAR")
+        _require(_stable(before) == _stable(info), "INPUT_CHANGED_DURING_READ")
         with os.fdopen(fd, "rb", closefd=False) as stream:
             raw = stream.read(limit + 1)
         _require(len(raw) <= limit, "INPUT_TOO_LARGE")
@@ -549,6 +551,15 @@ def _import_state() -> None:
         type(sys.modules) is dict and all(type(name) is str for name in sys.modules),
         "IMPORT_CACHE_NOT_APPROVED",
     )
+    _require(
+        type(sys.meta_path) is list
+        and type(sys.path_hooks) is list
+        and type(sys.path_importer_cache) is dict
+        and type(sys.path) is list
+        and all(type(item) is str for item in sys.path)
+        and all(type(item) is str for item in sys.path_importer_cache),
+        "IMPORT_CACHE_NOT_APPROVED",
+    )
     _require(not any(_project(name) for name in sys.modules), "PACKAGE_PRELOADED")
     _require(
         all(
@@ -557,6 +568,18 @@ def _import_state() -> None:
         ),
         "EXTERNAL_MODULE_PRELOADED",
     )
+    for name, module in sys.modules.items():
+        if name in {"typing.io", "typing.re"}:
+            typing_module = sys.modules.get("typing")
+            _require(
+                type(typing_module) is ModuleType
+                and module is typing_module.__dict__.get(name.split(".")[1]),
+                "IMPORT_CACHE_NOT_APPROVED",
+            )
+        else:
+            # Do not inspect arbitrary cached objects through __getattr__ or
+            # subclass callbacks before their type has been accepted.
+            _require(type(module) is ModuleType, "IMPORT_CACHE_NOT_APPROVED")
     _require(
         len(sys.meta_path) == 3
         and all(
@@ -594,6 +617,13 @@ class _HarnessLoader(importlib.abc.Loader):
         self.sources = sources
         self.root = root
         self.runtime: dict[str, dict[str, Any]] | None = None
+        # Linux CPython's host stdlib path comes from the trusted interpreter.
+        # Do not let sysconfig lazily import an environment-selected data module.
+        self.bootstrap_stdlib = (
+            Path(sys.base_prefix)
+            / sys.platlibdir
+            / f"python{sys.version_info.major}.{sys.version_info.minor}"
+        )
 
     def bind_runtime(self, manifest: dict[str, Any]) -> None:
         self.runtime = {
@@ -647,20 +677,33 @@ class _HarnessLoader(importlib.abc.Loader):
                 "HARNESS_IMPORT_NOT_APPROVED",
             )
             return ModuleSpec(fullname, self, is_package=fullname in {"deployment", "bot_core"})
-        if self.runtime is None:
-            # Bootstrap stdlib is part of the independently protected host Python.
-            _require(fullname.split(".", 1)[0] in sys.stdlib_module_names, "RUNTIME_NOT_VERIFIED")
-            return None
         if (
             BuiltinImporter.find_spec(fullname) is not None
             or FrozenImporter.find_spec(fullname) is not None
         ):
             return None
         spec = PathFinder.find_spec(fullname, path)
-        _require(spec is not None and type(spec.origin) is str, "RUNTIME_IMPORT_NOT_APPROVED")
-        assert spec is not None
+        # Optional imports in trusted stdlib (e.g. copy's org.python.core)
+        # require Python's absence semantics. Never let another finder execute
+        # a fallback; an existing unapproved object remains a hard refusal.
+        if spec is None:
+            raise ModuleNotFoundError(f"No module named {fullname!r}", name=fullname)
+        _require(type(spec.origin) is str, "RUNTIME_IMPORT_NOT_APPROVED")
         origin = Path(cast(str, spec.origin))
-        raw = self._runtime_bytes(origin)
+        if self.runtime is None:
+            # Before runtime signature verification only the independently
+            # protected host stdlib may execute. Read source bytes directly.
+            stdlib = self.bootstrap_stdlib
+            _require(
+                fullname.split(".", 1)[0] in sys.stdlib_module_names
+                and origin.is_relative_to(stdlib)
+                and not {"site-packages", "dist-packages", "__pycache__"}
+                & set(origin.relative_to(stdlib).parts),
+                "RUNTIME_NOT_VERIFIED",
+            )
+            raw = _read(origin, 512 * 1024 * 1024)
+        else:
+            raw = self._runtime_bytes(origin)
         if type(spec.loader) is importlib.machinery.SourceFileLoader:
             # Bypass even authenticated bytecode; execute the checked source bytes.
             self.sources[fullname] = raw
@@ -671,6 +714,7 @@ class _HarnessLoader(importlib.abc.Loader):
                 is_package=spec.submodule_search_locations is not None,
             )
             replacement.submodule_search_locations = spec.submodule_search_locations
+            replacement.has_location = True
             return replacement
         _require(
             type(spec.loader) is importlib.machinery.ExtensionFileLoader,
@@ -897,7 +941,12 @@ def execute_phase(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--mode", required=True, choices=("INSPECT", "EXECUTE-VM-TRIAL"))
+    parser.add_argument(
+        "--mode",
+        required=True,
+        choices=("INSPECT", "EXECUTE-VM-TRIAL"),
+        help="INSPECT: diagnostyka odczytowa z chronionego drzewa harnessu, bez instalacji runtime/aplikacji ani approval VM; EXECUTE-VM-TRIAL: osobno zatwierdzona próba VM.",
+    )
     parser.add_argument("--approval", type=Path, default=DEFAULT_APPROVAL)
     parser.add_argument("--revision")
     parser.add_argument("--environment-id")
@@ -909,14 +958,15 @@ def main(argv: list[str] | None = None) -> int:
     code = 0
     try:
         execute = args.mode == "EXECUTE-VM-TRIAL"
-        _harness_sources(args.revision if execute else None)
-        _import_state()
-        helpers = _environment_helpers(execute)
         if not execute:
             _require(
                 args.phase is None and args.inputs is None and not args.native_worker,
                 "INSPECT_EXECUTION_ARGUMENTS_REFUSED",
             )
+        _harness_sources(args.revision if execute else None)
+        _import_state()
+        helpers = _environment_helpers(execute)
+        if not execute:
             report["environment"] = helpers["inspect_environment"]()
             report["result"] = "NOT_EXECUTED"
         else:

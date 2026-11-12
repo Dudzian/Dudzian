@@ -75,10 +75,19 @@ def _openssl() -> str:
     executable = Path("/usr/bin/openssl")
     for item in (*reversed(executable.parents), executable):
         status = item.lstat()
-        if stat.S_ISLNK(status.st_mode) or status.st_uid != 0 or status.st_mode & 0o022:
+        last = item == executable
+        if (
+            status.st_uid != 0
+            or status.st_mode & 0o022
+            or (
+                not stat.S_ISREG(status.st_mode)
+                or status.st_nlink != 1
+                or not status.st_mode & stat.S_IXUSR
+                if last
+                else not stat.S_ISDIR(status.st_mode)
+            )
+        ):
             raise RuntimeTrustError("Niechroniony bootstrap OpenSSL")
-    if not executable.is_file():
-        raise RuntimeTrustError("Brak systemowego bootstrap OpenSSL")
     return str(executable)
 
 

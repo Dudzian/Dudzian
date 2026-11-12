@@ -160,6 +160,27 @@ def _helpers() -> dict[str, Any]:
     return result
 
 
+def _runtime_binding(runtime: Any, manifest: dict[str, Any]) -> dict[str, str]:
+    """Bind an already verified runtime to the already authenticated application.
+
+    This is only the equality gate. It neither verifies signatures nor turns
+    arbitrary manifest data into an authenticated application.
+    """
+    actual = {
+        "environment_id": runtime.environment_id,
+        "manifest_sha256": runtime.manifest_sha256,
+        "source_revision": runtime.revision,
+        "executable": str(runtime.executable),
+        "base_executable": str(runtime.base_executable),
+        "base_executable_sha256": runtime.base_executable_sha256,
+    }
+    _require(
+        actual == manifest["runtime"] and actual["source_revision"] == manifest["source_revision"],
+        "Runtime nie odpowiada podpisanej aplikacji",
+    )
+    return actual
+
+
 def verify_installed_application(*, root: Path = Path("/"), owner_uid: int = 0) -> dict[str, Any]:
     """Sprawdź tylko minimalny podpisany payload; nigdy pełny PRODUCTION_LOCAL."""
     try:
@@ -287,19 +308,7 @@ def verify_installed_application(*, root: Path = Path("/"), owner_uid: int = 0) 
         visit(installation)
         _require(observed == set(inventory), "Brak podpisanego pliku aplikacji")
         runtime = helpers["verify_installed_runtime"](root=root, owner_uid=owner_uid)
-        actual_runtime = {
-            "environment_id": runtime.environment_id,
-            "manifest_sha256": runtime.manifest_sha256,
-            "source_revision": runtime.revision,
-            "executable": str(runtime.executable),
-            "base_executable": str(runtime.base_executable),
-            "base_executable_sha256": runtime.base_executable_sha256,
-        }
-        _require(
-            actual_runtime == manifest["runtime"]
-            and actual_runtime["source_revision"] == manifest["source_revision"],
-            "Runtime nie odpowiada podpisanej aplikacji",
-        )
+        actual_runtime = _runtime_binding(runtime, manifest)
         return {
             "scope": SCOPE,
             "qualification_profile": PROFILE,

@@ -670,7 +670,11 @@ def _verified_runtime(
         "base_executable": str(runtime.base_executable),
         "base_executable_sha256": runtime.base_executable_sha256,
     }
-    _fail(actual == binding, 25, "Runtime nie odpowiada zatwierdzeniu tego wydania")
+    _fail(
+        actual == binding and runtime.revision == config.expected_revision,
+        25,
+        "Runtime nie odpowiada zatwierdzeniu tego wydania",
+    )
     unit = next(
         item.content
         for item in artifacts
