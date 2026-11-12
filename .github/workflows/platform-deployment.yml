@@ -105,6 +105,7 @@ jobs:
             ${{ runner.temp }}/${{ env.STAGE9_SAFE_OUTPUT }}/.coverage
           if-no-files-found: error
           retention-days: 14
+          include-hidden-files: true
 
   linux-evidence-contract:
     if: (github.event_name != 'workflow_dispatch' || inputs.validation_scope != 'stage9-safe')

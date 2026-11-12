@@ -78,6 +78,7 @@ def test_safe_matrix_is_unprivileged_and_preserves_exact_commit_and_evidence():
     )
     assert upload["if"] == "always()"
     assert upload["with"]["if-no-files-found"] == "error"
+    assert upload["with"]["include-hidden-files"] is True
     assert ".coverage" in upload["with"]["path"]
     assert "*.xml" in upload["with"]["path"]
     assert "*.json" in upload["with"]["path"]

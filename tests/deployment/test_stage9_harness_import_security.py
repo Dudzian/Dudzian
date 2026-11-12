@@ -207,7 +207,7 @@ def test_authentication_precedes_any_environment_helper(monkeypatch, capsys):
 
 def test_real_isolated_import_uses_authenticated_source_and_no_bytecode(tmp_path):
     script = """
-import runpy, sys
+import runpy, sys, secrets
 from pathlib import Path
 namespace = runpy.run_path(sys.argv[1])
 namespace['_import_state']()
@@ -217,18 +217,9 @@ sources = {name.replace('.', '/') + '.py': (root / (name.replace('.', '/') + '.p
 sources.update({name: (root / name).read_bytes() for name in namespace['HARNESS_HELPERS']})
 namespace['_check_graph'](sources)
 loader = namespace['_HarnessLoader'](sources, root)
-# Model only host stdlib ownership in this development interpreter. Source
-# bytes, file types, modes, links and descriptor-stability checks remain real.
-g = namespace['_HarnessLoader'].find_spec.__globals__
-original_protected = g['_protected']
-def protected_development_stdlib(path, *, directory=False):
-    if path.is_relative_to(loader.bootstrap_stdlib):
-        info = path.lstat()
-        assert not path.is_symlink() and not info.st_mode & 0o022
-        assert path.is_dir() if directory else path.is_file() and info.st_nlink == 1
-        return
-    original_protected(path, directory=directory)
-g['_protected'] = protected_development_stdlib
+# This test isolates exact project-source selection. Trusted host stdlib is
+# loaded during the initial bootstrap; full guarded stdlib/dependency execution
+# and explicit root metadata models have separate loader_execution tests.
 sys.meta_path.insert(0, loader)
 import deployment.stage9_vm_native as native
 assert native.__loader__ is loader

@@ -81,7 +81,16 @@ HEAD uruchamiany jest wyłącznie powyższy dispatch; jego aktualny wynik i adre
 runu są podane w opisie istniejącego PR. Pierwsza próba dispatch dla wcześniejszej rewizji została odrzucona przez
 walidator GitHub (HTTP 422: niedozwolone `runner.temp` w job.env); nie utworzyła
 runu. Ścieżka jest teraz składana w kroku na przypisanym runnerze i ma własną
-regresję. Autorytatywny HEAD wykonania znajduje
+regresję. Pierwszy rzeczywisty run
+[43319211410](https://github.com/Dudzian/Dudzian/actions/runs/43319211410)
+zachował na obu Pythonach FAIL jednego fixture importu projektowego (483/484
+przypadki PASS), przy pozostałych bramkach exit 0. Fixture zakładał uprawnienia
+chronionego stdlib w development toolcache `setup-python`. Teraz izoluje
+wyłącznie wybór źródła projektu, z zaufanym stdlib załadowanym w bootstrapie.
+Oddzielny test pełnego chronionego grafu i odmowy metadanych pozostają bez
+osłabienia; produkcyjny loader nadal odrzuca niechronione pliki. Włączono też
+retencję jawnie wskazanego ukrytego pliku `.coverage` w artefakcie CI.
+Autorytatywny HEAD wykonania znajduje
 się w `validation.json.context.commit` obu artefaktów macierzy. Raport nie
 przedstawia wyników lokalnych jako wyników GitHub Actions.
 
