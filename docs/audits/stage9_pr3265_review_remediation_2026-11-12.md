@@ -78,7 +78,10 @@ status **NOT_EXECUTED**. Ich pominięcie nie jest pozytywną kwalifikacją.
 
 **W chwili zapisu raportu GitHub CI: NOT_EXECUTED.** Po publikacji zamrożonego
 HEAD uruchamiany jest wyłącznie powyższy dispatch; jego aktualny wynik i adres
-runu są podane w opisie istniejącego PR. Autorytatywny HEAD wykonania znajduje
+runu są podane w opisie istniejącego PR. Pierwsza próba dispatch dla wcześniejszej rewizji została odrzucona przez
+walidator GitHub (HTTP 422: niedozwolone `runner.temp` w job.env); nie utworzyła
+runu. Ścieżka jest teraz składana w kroku na przypisanym runnerze i ma własną
+regresję. Autorytatywny HEAD wykonania znajduje
 się w `validation.json.context.commit` obu artefaktów macierzy. Raport nie
 przedstawia wyników lokalnych jako wyników GitHub Actions.
 
@@ -142,8 +145,8 @@ Obejmuje kod, testy, CLI, workflow i procedury względem commita poddanego revie
 - CI: `platform-deployment.yml`, `run_stage9_safe_validation.py`,
   `test_stage9_safe_ci.py`, `pyproject.toml`, `quality-security-toolchain.md`.
 
-Przed zamrożeniem commita wykonano **483 dozwolone testy na Python 3.11.17**
-i **483 na Python 3.12.14**, każdy zestaw exit **0**, bez SKIP. Są to wyniki
+Przed zamrożeniem commita wykonano **484 dozwolone testy na Python 3.11.17**
+i **484 na Python 3.12.14**, każdy zestaw exit **0**, bez SKIP. Są to wyniki
 lokalnego drzewa development. Logi, JUnit i metadane argv zachowano
 lokalnie w katalogu roboczym; nie są eksportowane z tego środowiska do repozytorium. Nie zastępują wykonania dokładnego finalnego HEAD
 w CI. Po zamrożeniu uruchamiany jest ten sam runner z pełnymi statycznymi

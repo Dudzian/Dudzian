@@ -4,7 +4,7 @@
   "files": [
     {
       "path": ".github/workflows/platform-deployment.yml",
-      "sha256": "5d59bd4d2166d4c0024e82a773865c0bdb629bc99a9c13cf363e7a90c73c9e61",
+      "sha256": "3ea0b6e1fe0a3087242413e3c7775d3102eb1cc5f6b61c3592dafca919a331e0",
       "hunks": [
         {
           "old_start": 6,
@@ -472,13 +472,13 @@
     },
     {
       "path": "tests/scripts/test_stage9_safe_ci.py",
-      "sha256": "2b1071c028f6c391acb30c7ac055e476e519a5071b1108d2056e97f39e71cf06",
+      "sha256": "44a991e0d93c38d2e75d8692e964a81bcbc63ef9f101aac924b8eda22b5bd85a",
       "hunks": [
         {
           "old_start": 0,
           "old_count": 0,
           "new_start": 1,
-          "new_count": 305
+          "new_count": 320
         }
       ]
     }

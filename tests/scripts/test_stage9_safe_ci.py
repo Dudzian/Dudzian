@@ -303,3 +303,18 @@ def test_blocked_context_keeps_receipt_and_no_steps_execute(tmp_path, monkeypatc
     assert receipt["reason"] == "EXPECTED_HEAD_MISMATCH"
     assert all(record["status"] == "NOT_EXECUTED" for record in receipt["not_executed"])
     assert receipt["s3"] == "BLOCKED" and receipt["production"] == "NO_GO"
+
+
+def test_job_environment_uses_only_contexts_available_before_runner_assignment():
+    # GitHub rejected the old dispatch before creating any run because runner
+    # is unavailable in jobs.<id>.env. Step inputs may resolve runner.temp.
+    job = workflow()["jobs"]["stage9-safe-validation"]
+    assert "runner." not in json.dumps(job["env"])
+    invocation = next(
+        step for step in job["steps"] if "run_stage9_safe_validation.py" in step.get("run", "")
+    )
+    assert '--output "$RUNNER_TEMP/$STAGE9_SAFE_OUTPUT"' in invocation["run"]
+    upload = next(
+        step for step in job["steps"] if step.get("uses", "").startswith("actions/upload-artifact@")
+    )
+    assert "${{ runner.temp }}/${{ env.STAGE9_SAFE_OUTPUT }}/" in upload["with"]["path"]

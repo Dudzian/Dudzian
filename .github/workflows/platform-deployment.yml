@@ -41,7 +41,7 @@ jobs:
       STAGE9_EXPECTED_COMMIT: ${{ inputs.expected_commit }}
       STAGE9_RUN_STAGE10: ${{ toJSON(inputs.run_stage10) }}
       STAGE9_RUN_PHYSICAL: ${{ toJSON(inputs.run_linux_physical) }}
-      STAGE9_SAFE_OUTPUT: ${{ runner.temp }}/stage9-safe-${{ matrix.python }}
+      STAGE9_SAFE_OUTPUT: stage9-safe-${{ matrix.python }}
     steps:
       - name: Require exact commit and forbid privileged dispatch inputs
         shell: python
@@ -90,19 +90,19 @@ jobs:
           python -B scripts/quality/run_stage9_safe_validation.py
           --expected-commit "$STAGE9_EXPECTED_COMMIT"
           --base-commit fc15b98298c5430286dd2206ec7eeb8f20e2497b
-          --output "$STAGE9_SAFE_OUTPUT"
+          --output "$RUNNER_TEMP/$STAGE9_SAFE_OUTPUT"
       - name: Preserve actual exits, logs, JUnit and coverage
         if: always()
         uses: actions/upload-artifact@v6
         with:
           name: stage9-safe-${{ matrix.python }}-${{ github.sha }}-${{ github.run_attempt }}
           path: |
-            ${{ env.STAGE9_SAFE_OUTPUT }}/*.json
-            ${{ env.STAGE9_SAFE_OUTPUT }}/*.log
-            ${{ env.STAGE9_SAFE_OUTPUT }}/*.error
-            ${{ env.STAGE9_SAFE_OUTPUT }}/*.xml
-            ${{ env.STAGE9_SAFE_OUTPUT }}/*.trace
-            ${{ env.STAGE9_SAFE_OUTPUT }}/.coverage
+            ${{ runner.temp }}/${{ env.STAGE9_SAFE_OUTPUT }}/*.json
+            ${{ runner.temp }}/${{ env.STAGE9_SAFE_OUTPUT }}/*.log
+            ${{ runner.temp }}/${{ env.STAGE9_SAFE_OUTPUT }}/*.error
+            ${{ runner.temp }}/${{ env.STAGE9_SAFE_OUTPUT }}/*.xml
+            ${{ runner.temp }}/${{ env.STAGE9_SAFE_OUTPUT }}/*.trace
+            ${{ runner.temp }}/${{ env.STAGE9_SAFE_OUTPUT }}/.coverage
           if-no-files-found: error
           retention-days: 14
 
