@@ -11,7 +11,8 @@ import hashlib
 import itertools
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+from typing import cast
 
 import pytest
 
@@ -30,12 +31,14 @@ OLD_BOOTSTRAP_SOURCE_SHA256 = "f19cb38167e078048fef181e56412957a53b7aef14b878cb9
 
 
 def runtime_model(revision: str) -> runtime.VerifiedRuntime:
+    # Model a Linux runtime regardless of the OS executing the test.
+    release_root = PurePosixPath("/opt/cryptohunter/freshness-runtime/releases")
     return runtime.VerifiedRuntime(
         ENVIRONMENT,
         revision,
         "b" * 64,
-        Path(f"/opt/cryptohunter/freshness-runtime/releases/{ENVIRONMENT}/bin/python3.12"),
-        Path("/usr/bin/python3.12"),
+        cast(Path, release_root / ENVIRONMENT / "bin/python3.12"),
+        cast(Path, PurePosixPath("/usr/bin/python3.12")),
         "c" * 64,
         "c" * 64,
         {"cryptography": "50.0.2", "psycopg": "3.3.6"},
@@ -53,6 +56,15 @@ def binding_model(revision: str) -> dict[str, str]:
         "base_executable": str(model.base_executable),
         "base_executable_sha256": model.base_executable_sha256,
     }
+
+
+@pytest.mark.parametrize("revision", (OLD, REVIEWED))
+def test_runtime_model_uses_canonical_linux_paths_on_every_host(revision: str) -> None:
+    model = runtime_model(revision)
+    assert str(model.executable) == (
+        f"/opt/cryptohunter/freshness-runtime/releases/{ENVIRONMENT}/bin/python3.12"
+    )
+    assert str(model.base_executable) == "/usr/bin/python3.12"
 
 
 def schema_model(revision: str) -> dict:
@@ -115,6 +127,23 @@ def test_bundle_export_refuses_relabelled_runtime_binding(monkeypatch, binding_r
     else:
         with pytest.raises(exporter.BundleError, match="BINDING_VALUES_REFUSED"):
             exporter._binding(Path("/model/not-a-real-binding"), expected)
+
+
+@pytest.mark.parametrize("field", ("executable", "base_executable"))
+def test_bundle_export_refuses_windows_separators(monkeypatch, field: str) -> None:
+    binding = binding_model(REVIEWED)
+    binding[field] = binding[field].replace("/", "\\")
+    monkeypatch.setattr(
+        exporter, "_read", lambda path: json.dumps({"schema": 1, **binding}).encode()
+    )
+    with pytest.raises(exporter.BundleError, match="BINDING_VALUES_REFUSED"):
+        exporter._binding(Path("/model/not-a-real-binding"), REVIEWED)
+
+
+def test_runtime_unit_refuses_windows_separator_path() -> None:
+    executable = binding_model(REVIEWED)["executable"].replace("/", "\\")
+    with pytest.raises(RuntimeError, match="Niekanoniczna ścieżka interpretera"):
+        runtime.render_runtime_unit(executable)
 
 
 @pytest.mark.parametrize(
