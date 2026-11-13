@@ -18,6 +18,7 @@ def ui_generated_artifacts_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
     )
     monkeypatch.setenv("BOT_CORE_UI_LAYOUTS_PATH", str(tmp_path / "var" / "ui_layouts.json"))
 
+
 @pytest.fixture(scope="session")
 def qt_gui_application():
     """Keep the native Qt application alive through the complete QML test session."""
