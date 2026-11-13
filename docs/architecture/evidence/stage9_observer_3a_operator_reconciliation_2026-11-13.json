@@ -13,13 +13,37 @@
       "subject": "DEB package audit",
       "operator_result": "8/8 PASS",
       "codex_verification": "NOT_PERFORMED",
-      "missing_materials": "Exact eight package identities, versions, architectures, archive bytes, expected declarations, commands and full output."
+      "operator_details": {
+        "classification": "OPERATOR_REPORTED_AND_CHAT_REVIEWED",
+        "host_repository_revision": "d011240f3f5a81b41d1f81ef179efd763c641b30",
+        "report_filename": "payload-host-observations.json",
+        "reported_report_sha256": "9cb47a76f4fb0cda8db0a181ee9183596ebf51438cb144c97f4c816cefbdd7e3",
+        "report_digest_verification_by_codex": "NOT_RECOMPUTED_OR_INDEPENDENTLY_AUTHENTICATED",
+        "packages_passed": 8,
+        "packages_total": 8,
+        "packages_refused": 0,
+        "control_fields": "PASS_FOR_ALL_EIGHT_PACKAGES",
+        "objects_matched": 419,
+        "objects_total": 419,
+        "packages": [
+          {"name": "python3.12", "objects_matched": 34},
+          {"name": "python3.12-venv", "objects_matched": 13},
+          {"name": "libc6", "objects_matched": 298},
+          {"name": "libssl3t64", "objects_matched": 20},
+          {"name": "libpq5", "objects_matched": 10},
+          {"name": "libffi8", "objects_matched": 10},
+          {"name": "libnss3", "objects_matched": 24},
+          {"name": "zlib1g", "objects_matched": 10}
+        ]
+      },
+      "missing_materials": "Exact package versions, architectures, individual DEB hashes and archive bytes, expected declarations, commands and full output; the named report itself has not been supplied."
     },
     {
       "id": "OR-02",
       "subject": "Package objects compared with physical host",
       "operator_result": "419/419 MATCH",
       "codex_verification": "NOT_PERFORMED",
+      "operator_details_record": "OR-01",
       "missing_materials": "419-row inventory, object types, package-to-host path mapping, comparison semantics, commands, output and collection context."
     },
     {
@@ -34,6 +58,7 @@
       "subject": "Historical archive manifest",
       "operator_result": "SHA-256 MATCH; 14/14 files verified",
       "codex_verification": "NOT_PERFORMED",
+      "operator_reported_counts": {"archive_regular_files": 15, "manifest_entries": 14, "verified_files": 14},
       "missing_materials": "Original manifest bytes, members and complete verification output."
     },
     {
@@ -64,8 +89,8 @@
     "source": "docs/architecture/stage9_observer_3a_cpython_runtime_closure_v1.md"
   },
   "scope_cautions": [
-    "The identities of the newly reported eight DEBs have not been supplied; do not equate them to either the historical eight-package static acquisition or the four-package V3 inventory.",
-    "The 419 objects have no supplied type breakdown or row-level mapping; do not equate their count to the V3 1002 control/data records.",
+    "Package names and per-package counts are known from the operator account; exact versions, architectures, individual DEB hashes and original report bytes remain unavailable. Do not equate this set to either the historical eight-package static acquisition or the four-package V3 inventory.",
+    "The per-package counts sum to 419, but no object-type breakdown or row-level mapping was supplied; do not equate their count to the V3 1002 control/data records.",
     "Equal sampled metadata does not prove absence of intervening changes or lifetime integrity.",
     "No report field grants authority, independent acceptance or production qualification."
   ],
