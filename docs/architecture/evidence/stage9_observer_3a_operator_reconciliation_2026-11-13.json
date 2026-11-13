@@ -1,0 +1,80 @@
+{
+  "record_type": "ADVISORY_OPERATOR_REPORT_NOT_AN_OBSERVER_CONTRACT",
+  "received_on": "2026-11-13",
+  "review_baseline": "d011240f3f5a81b41d1f81ef179efd763c641b30",
+  "origin": "USER_RELAY_OF_LOCAL_OPERATOR_EXECUTION",
+  "classification": "OPERATOR_REPORTED_AND_CHAT_REVIEWED",
+  "codex_independent_host_replay": "NOT_PERFORMED",
+  "original_materials_received_in_this_review": false,
+  "reported_host": "physical Ubuntu 24.04",
+  "reported_checks": [
+    {
+      "id": "OR-01",
+      "subject": "DEB package audit",
+      "operator_result": "8/8 PASS",
+      "codex_verification": "NOT_PERFORMED",
+      "missing_materials": "Exact eight package identities, versions, architectures, archive bytes, expected declarations, commands and full output."
+    },
+    {
+      "id": "OR-02",
+      "subject": "Package objects compared with physical host",
+      "operator_result": "419/419 MATCH",
+      "codex_verification": "NOT_PERFORMED",
+      "missing_materials": "419-row inventory, object types, package-to-host path mapping, comparison semantics, commands, output and collection context."
+    },
+    {
+      "id": "OR-03",
+      "subject": "stage9-elf-triage-rNlpy9.tar.gz",
+      "operator_result": "SHA-256 MATCH",
+      "codex_verification": "NOT_PERFORMED",
+      "missing_materials": "Original archive and external digest record."
+    },
+    {
+      "id": "OR-04",
+      "subject": "Historical archive manifest",
+      "operator_result": "SHA-256 MATCH; 14/14 files verified",
+      "codex_verification": "NOT_PERFORMED",
+      "missing_materials": "Original manifest bytes, members and complete verification output."
+    },
+    {
+      "id": "OR-05",
+      "subject": "Historical python3.12, _hashlib and _json SHA-256",
+      "operator_result": "Match inventory",
+      "codex_verification": "NOT_PERFORMED",
+      "missing_materials": "Historical digest output and exact inventory binding."
+    },
+    {
+      "id": "OR-06",
+      "subject": "Metadata of the three historical files before and after measurement",
+      "operator_result": "Identical",
+      "codex_verification": "NOT_PERFORMED",
+      "missing_materials": "Before/after records, fields, paths, tools, commands and collection context."
+    },
+    {
+      "id": "OR-07",
+      "subject": "Historical archive time and repository revision",
+      "operator_result": "2026-10-29T11:04:23Z; cad53867231a1a6e49ea770c07043b417af84449",
+      "codex_verification": "NOT_PERFORMED",
+      "missing_materials": "Original collection transcript binding archive, time and revision."
+    }
+  ],
+  "historical_reference_values_not_remeasured": {
+    "archive_sha256": "0a26027f9bf94149fe2b36d3fbba1fdb6e5393e2016c9bd9956463b154005b0f",
+    "manifest_sha256": "f52859c04f703bfe6ba36190229e7b18ac1543df5c443d589a549835177c3fdb",
+    "source": "docs/architecture/stage9_observer_3a_cpython_runtime_closure_v1.md"
+  },
+  "scope_cautions": [
+    "The identities of the newly reported eight DEBs have not been supplied; do not equate them to either the historical eight-package static acquisition or the four-package V3 inventory.",
+    "The 419 objects have no supplied type breakdown or row-level mapping; do not equate their count to the V3 1002 control/data records.",
+    "Equal sampled metadata does not prove absence of intervening changes or lifetime integrity.",
+    "No report field grants authority, independent acceptance or production qualification."
+  ],
+  "retained_disposition": {
+    "stage_9": "IN_PROGRESS",
+    "observer_3a_qualification": "BLOCKED",
+    "stage_3b": "NOT AUTHORIZED",
+    "production": "NO-GO",
+    "runtime_attestation": "MISSING",
+    "host_pid_namespace": "UNVERIFIED"
+  }
+}
