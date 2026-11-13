@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import os
-import sys
 from pathlib import Path
 
 import pytest
@@ -34,20 +32,6 @@ class _FakeRuntimeService(QObject):
 @pytest.fixture(autouse=True)
 def _force_offscreen(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
-
-
-def _ensure_app() -> QGuiApplication:
-    try:
-        app = QGuiApplication.instance()
-        if app is None:
-            app = QGuiApplication([])
-        return app
-    except Exception as exc:  # pragma: no cover - środowisko bez backendu GL/Qt
-        qt_qpa_platform = os.getenv("QT_QPA_PLATFORM", "<unset>")
-        pytest.skip(
-            f"Qt runtime unavailable on {sys.platform} (QT_QPA_PLATFORM={qt_qpa_platform}): {exc}",
-            allow_module_level=True,
-        )
 
 
 def _ui_config() -> UiAppConfig:
@@ -95,9 +79,9 @@ def test_mode_wizard_controller_recommendations(tmp_path: Path) -> None:
 
 
 def test_mode_wizard_qml_loads_without_reference_and_connections_warnings(
-    request: pytest.FixtureRequest,
+    request: pytest.FixtureRequest, qt_gui_application: QGuiApplication
 ) -> None:
-    app = _ensure_app()
+    app = qt_gui_application
     engine = QQmlApplicationEngine()
     request.addfinalizer(lambda: teardown_qml_engine(engine, process_events=app.processEvents))
     warnings = collect_engine_warnings(engine)
