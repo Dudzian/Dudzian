@@ -227,10 +227,11 @@ def test_server_durability_serializable_and_metadata(registry) -> None:
     setup = registry["setup"]
     with psycopg.connect(BASE_DSN, autocommit=True) as conn:
         row = conn.execute(
-            "SELECT version(), current_setting('fsync'), current_setting('synchronous_commit')"
+            "SELECT current_setting('server_version_num')::integer, current_setting('fsync'), "
+            "current_setting('synchronous_commit'), current_setting('full_page_writes')"
         ).fetchone()
-        assert row is not None and "PostgreSQL 16.15" in row[0]
-        assert row[1:] == ("on", "on")
+        assert row is not None and row[0] // 10000 == 16
+        assert row[1:] == ("on", "on", "on")
         with conn.transaction():
             conn.execute("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE")
             isolation = conn.execute("SELECT current_setting('transaction_isolation')").fetchone()

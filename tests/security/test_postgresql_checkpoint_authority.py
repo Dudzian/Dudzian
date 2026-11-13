@@ -1206,6 +1206,94 @@ def test_coordinated_constraint_and_manifest_tamper_cannot_qualify_schema(bounda
         boundary.restart()
 
 
+@pytest.mark.parametrize(
+    "options,server_version",
+    [
+        (None, 160015),
+        (None, 160016),
+        (None, 170000),
+        (["pg_attver=1"], 160016),
+        (["pg_attver=18446744073709551615"], 160016),
+        (["pg_attver=22218432"], 160017),
+    ],
+)
+def test_only_reviewed_pg16_attribute_versions_qualify(options, server_version):
+    assert checkpoint_schema._reviewed_attribute_options(options, server_version)
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        [],
+        {},
+        "pg_attver=1",
+        ("pg_attver=1",),
+        [None],
+        [1],
+        [b"pg_attver=1"],
+        ["pg_attver=0"],
+        ["pg_attver=-1"],
+        ["pg_attver=+1"],
+        ["pg_attver=01"],
+        ["pg_attver=1.0"],
+        ["pg_attver=18446744073709551616"],
+        ["pg_attver=" + "9" * 5000],
+        ["pg_attver=1\n"],
+        ["pg_attver= 1"],
+        ["pg_attver=1 "],
+        ["pg_attver=١"],
+        ["PG_ATTVER=1"],
+        ["unknown=1"],
+        ["n_distinct=0.5"],
+        ["pg_attver=1", "pg_attver=1"],
+        ["pg_attver=1", "pg_attver=2"],
+        ["pg_attver=1", "n_distinct=0.5"],
+        ["unknown=1", "pg_attver=1"],
+    ],
+)
+def test_unreviewed_or_malformed_attribute_options_fail_closed(options):
+    assert not checkpoint_schema._reviewed_attribute_options(options, 160016)
+
+
+@pytest.mark.parametrize("server_version", [150016, 160000, 160015, 170000, 170012])
+def test_attribute_version_metadata_requires_reviewed_engine_series(server_version):
+    assert not checkpoint_schema._reviewed_attribute_options(["pg_attver=1"], server_version)
+
+
+@pytest.mark.parametrize(
+    "alteration",
+    [
+        "ALTER COLUMN signature SET STORAGE EXTERNAL",
+        "ALTER COLUMN signature SET COMPRESSION pglz",
+        "ALTER COLUMN signature SET STATISTICS 100",
+        "ALTER COLUMN signature SET (n_distinct=0.5)",
+        "ALTER COLUMN signature DROP NOT NULL",
+        "ALTER COLUMN checkpoint SET DEFAULT ''::bytea",
+        "ADD COLUMN unreviewed text",
+    ],
+)
+def test_column_drift_with_matching_manifest_cannot_qualify_schema(boundary, alteration):
+    setup = boundary.checkpoint_setup
+    schema = sql.Identifier(setup.schema)
+    with psycopg.connect(BASE_DSN, autocommit=True) as conn:
+        conn.execute(sql.SQL("ALTER TABLE {}.entries {}").format(schema, sql.SQL(alteration)))
+        conn.execute(
+            sql.SQL("UPDATE {}.metadata SET physical_definition_sha256=%s").format(schema),
+            (checkpoint_schema._physical_fingerprint(conn, setup.schema),),
+        )
+        owner_oid = conn.execute(
+            "SELECT oid FROM pg_catalog.pg_roles WHERE rolname=%s", (setup.schema_owner_role,)
+        ).fetchone()[0]
+        with pytest.raises(
+            checkpoint_schema.CheckpointSchemaQualificationError, match="columns differ"
+        ):
+            checkpoint_schema._qualify_physical_definition(conn, setup.schema, owner_oid)
+    with pytest.raises(HistoryContractError):
+        boundary.checkpoint.current_checkpoint()
+    with pytest.raises(HistoryContractError):
+        boundary.restart()
+
+
 def test_unchanged_sql_body_with_substituted_output_type_does_not_qualify(boundary):
     setup = boundary.checkpoint_setup
     schema = sql.Identifier(setup.schema)

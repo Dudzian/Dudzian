@@ -1,6 +1,7 @@
 """Authenticate data before execution; attack fixtures are never imported."""
 
 import hashlib
+import importlib.util
 import json
 import os
 import subprocess
@@ -84,11 +85,33 @@ def test_exact_graph_and_sources_are_verified_before_compile(authenticated_tree)
         sources["deployment/stage9_vm_native.py"]
         == (REPOSITORY / "deployment/stage9_vm_native.py").read_bytes()
     )
-    module = ModuleType("deployment.stage9_vm_native")
     loader = trial._HarnessLoader(sources, authenticated_tree[0])
+    spec = loader.find_spec("deployment.stage9_vm_native")
+    assert spec is not None
+    module = importlib.util.module_from_spec(spec)
     # Only authenticated repository source executes; no attack fixture does.
     loader.exec_module(module)
     assert module.UNIT == "cryptohunter-freshness-verifier.service"
+
+
+def test_project_loader_freezes_authenticated_sources_before_execution(authenticated_tree):
+    sources = trial._harness_sources(REVISION)
+    loader = trial._HarnessLoader(sources, authenticated_tree[0])
+    sources["deployment/stage9_vm_native.py"] = b"unapproved replacement; never execute"
+    loader.sources["deployment/stage9_vm_native.py"] = sources["deployment/stage9_vm_native.py"]
+    spec = loader.find_spec("deployment.stage9_vm_native")
+    assert spec is not None
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    assert module.UNIT == "cryptohunter-freshness-verifier.service"
+
+
+@pytest.mark.parametrize("statement", [b"\nexec('unapproved')\n", b"\neval('unapproved')\n"])
+def test_harness_itself_has_no_generic_execution_exemption(authenticated_tree, statement):
+    sources = trial._harness_sources(REVISION)
+    sources["deployment/stage9_vm_trial.py"] += statement
+    with pytest.raises(trial.TrialError, match="HARNESS_DYNAMIC_IMPORT_REFUSED"):
+        trial._check_graph(sources)
 
 
 @pytest.mark.parametrize(

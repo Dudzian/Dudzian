@@ -17,6 +17,7 @@ import pytest
 import yaml
 
 from tests.scripts.test_general_ci_platform_contract import (
+    _assert_pinned_pg16_image,
     _contract_bash,
     _pytest_command as _general_pytest_command,
 )
@@ -562,7 +563,7 @@ def test_linux_cca_log_routes_to_integration_and_atomic_without_non_linux_fast_e
 
 
 def _assert_local_pg16_service(service: dict, host_port: int) -> None:
-    assert service["image"] == "postgres:16"
+    _assert_pinned_pg16_image(service["image"])
     assert service["ports"] == [f"127.0.0.1:{host_port}:5432"]
 
 
@@ -598,7 +599,7 @@ def test_all_ci_postgresql_services_publish_only_their_expected_loopback_port(
         job_name: {
             name: service
             for name, service in job.get("services", {}).items()
-            if service.get("image") == "postgres:16"
+            if service.get("image", "").startswith("postgres:")
         }
         for job_name, job in jobs.items()
         if job.get("services")
@@ -622,7 +623,9 @@ def test_all_ci_postgresql_services_publish_only_their_expected_loopback_port(
 )
 def test_postgresql_service_contract_rejects_wildcard_extra_or_wrong_ports(ports):
     with pytest.raises(AssertionError):
-        _assert_local_pg16_service({"image": "postgres:16", "ports": ports}, 55432)
+        _assert_local_pg16_service(
+            {"image": "postgres:16.0@sha256:" + "a" * 64, "ports": ports}, 55432
+        )
 
 
 def test_history_qualification_has_independent_durable_pg16_and_real_restart_controls():

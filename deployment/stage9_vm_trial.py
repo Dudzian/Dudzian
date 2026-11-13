@@ -20,7 +20,7 @@ import subprocess
 import sys
 from importlib.machinery import BuiltinImporter, FileFinder, FrozenImporter, ModuleSpec, PathFinder
 from pathlib import Path
-from types import FunctionType, ModuleType
+from types import CodeType, FunctionType, ModuleType
 from typing import Any, cast
 from zipimport import zipimporter
 
@@ -250,9 +250,16 @@ def _helper(name: str) -> Path:
 def _environment_helpers(execute: bool) -> dict[str, Any]:
     path = Path(__file__).absolute().with_name("stage9_vm_environment.py")
     sources = _harness_sources()
-    namespace: dict[str, Any] = {"__name__": "_stage9_vm_environment", "__file__": str(path)}
-    exec(compile(sources["deployment/stage9_vm_environment.py"], str(path), "exec"), namespace)
-    return namespace
+    name = "_stage9_vm_environment"
+    loader = _SourceSnapshotLoader(
+        {name: (str(path), sources["deployment/stage9_vm_environment.py"])}
+    )
+    spec = importlib.util.spec_from_loader(name, loader)
+    _require(spec is not None, "HELPER_NOT_APPROVED")
+    assert spec is not None
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    return module.__dict__
 
 
 def _command(arguments: list[str], *, timeout: int = 180) -> tuple[int, bytes]:
@@ -437,12 +444,17 @@ def _check_graph(sources: dict[str, bytes]) -> None:
             elif isinstance(node, ast.Call):
                 function = node.func
                 reviewed_loader_call = name == "deployment.stage9_vm_trial" and (
-                    (isinstance(function, ast.Name) and function.id == "exec")
-                    or (
+                    (
                         isinstance(function, ast.Attribute)
                         and function.attr == "import_module"
                         and isinstance(function.value, ast.Name)
                         and function.value.id == "importlib"
+                    )
+                    or (
+                        isinstance(function, ast.Attribute)
+                        and function.attr == "exec_module"
+                        and isinstance(function.value, ast.Name)
+                        and function.value.id == "loader"
                     )
                 )
                 _require(
@@ -610,11 +622,48 @@ def _import_state() -> None:
     sys.path_hooks[:] = [safe_hook]
 
 
-class _HarnessLoader(importlib.abc.Loader):
+class _SourceSnapshotLoader(importlib.abc.SourceLoader):
+    """Import only authenticated in-memory source, without filesystem or bytecode fallback.
+
+    Callers authenticate the inventory or signed runtime before constructing a
+    snapshot. The standard importlib execution lifecycle owns compilation and
+    module execution; these hooks bind a module name to its exact source bytes.
+    Overriding get_code is deliberate: SourceLoader's default may consult .pyc.
+    """
+
+    def __init__(self, snapshots: dict[str, tuple[str, bytes]]) -> None:
+        self._snapshots = dict(snapshots)
+
+    def get_filename(self, fullname: str) -> str:
+        _require(fullname in self._snapshots, "SOURCE_MODULE_NOT_APPROVED")
+        return self._snapshots[fullname][0]
+
+    def get_data(self, path: str) -> bytes:
+        for filename, source in self._snapshots.values():
+            if path == filename:
+                return source
+        raise TrialError("SOURCE_PATH_NOT_APPROVED")
+
+    def get_code(self, fullname: str) -> CodeType:
+        filename = self.get_filename(fullname)
+        return self.source_to_code(self.get_data(filename), filename)
+
+
+class _HarnessLoader(_SourceSnapshotLoader):
     """Project sources use authenticated bytes; external modules use signed runtime objects."""
 
     def __init__(self, sources: dict[str, bytes], root: Path) -> None:
-        self.sources = sources
+        snapshots = {
+            name: (str(root / (name.replace(".", "/") + ".py")), sources[relative])
+            for name in HARNESS_MODULES
+            if (relative := name.replace(".", "/") + ".py") in sources
+        }
+        # Namespace packages have no on-disk __init__, and no package search path.
+        snapshots.update(
+            {name: (str(root / name / "__init__.py"), b"") for name in ("deployment", "bot_core")}
+        )
+        super().__init__(snapshots)
+        self.sources = dict(sources)
         self.root = root
         self.runtime: dict[str, dict[str, Any]] | None = None
         # Linux CPython's host stdlib path comes from the trusted interpreter.
@@ -676,7 +725,14 @@ class _HarnessLoader(importlib.abc.Loader):
                 fullname in HARNESS_MODULES or fullname in {"deployment", "bot_core"},
                 "HARNESS_IMPORT_NOT_APPROVED",
             )
-            return ModuleSpec(fullname, self, is_package=fullname in {"deployment", "bot_core"})
+            project_spec = ModuleSpec(
+                fullname,
+                self,
+                origin=self.get_filename(fullname),
+                is_package=fullname in {"deployment", "bot_core"},
+            )
+            project_spec.has_location = True
+            return project_spec
         if (
             BuiltinImporter.find_spec(fullname) is not None
             or FrozenImporter.find_spec(fullname) is not None
@@ -707,6 +763,7 @@ class _HarnessLoader(importlib.abc.Loader):
         if type(spec.loader) is importlib.machinery.SourceFileLoader:
             # Bypass even authenticated bytecode; execute the checked source bytes.
             self.sources[fullname] = raw
+            self._snapshots[fullname] = (str(origin), raw)
             replacement = ModuleSpec(
                 fullname,
                 self,
@@ -721,25 +778,6 @@ class _HarnessLoader(importlib.abc.Loader):
             "RUNTIME_LOADER_NOT_APPROVED",
         )
         return spec
-
-    def create_module(self, spec: ModuleSpec) -> None:
-        return None
-
-    def exec_module(self, module: ModuleType) -> None:
-        name = module.__name__
-        if name in {"deployment", "bot_core"}:
-            module.__path__ = []
-            return
-        relative = name.replace(".", "/") + ".py"
-        project = _project(name)
-        raw = self.sources[relative if project else name]
-        assert module.__spec__ is not None or project
-        module.__file__ = (
-            str(self.root / relative)
-            if project
-            else cast(str, cast(ModuleSpec, module.__spec__).origin)
-        )
-        exec(compile(raw, module.__file__, "exec", dont_inherit=True), module.__dict__)
 
 
 def _native_module() -> Any:
