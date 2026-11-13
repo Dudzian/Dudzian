@@ -220,8 +220,12 @@ def context(tmp_path, monkeypatch):
 def test_context_refuses_unsupported_or_ambiguous_execution(context, monkeypatch, change):
     checkout, output = context
     expected, base = HEAD, safe.AUDITED_BASE
+    # Exercise each Linux-only refusal on all CI hosts, including native Windows.
+    # Only model the OS boundary; do not execute any Linux-only operation.
+    monkeypatch.setattr(safe.sys, "platform", "linux")
+    monkeypatch.setattr(safe.os, "geteuid", lambda: 1000, raising=False)
     if change == "root":
-        monkeypatch.setattr(safe.os, "geteuid", lambda: 0)
+        monkeypatch.setattr(safe.os, "geteuid", lambda: 0, raising=False)
     elif change == "platform":
         monkeypatch.setattr(safe.sys, "platform", "win32")
     elif change == "version":
@@ -244,21 +248,24 @@ def test_context_refuses_unsupported_or_ambiguous_execution(context, monkeypatch
 
 
 @pytest.mark.parametrize(
-    "executable,code,status",
+    "case,code,status",
     [
-        ("/usr/bin/true", 0, "PASS"),
-        ("/usr/bin/false", 1, "FAIL"),
-        ("/nonexistent-stage9-tool", None, "NOT_EXECUTED"),
+        ("success", 0, "PASS"),
+        ("failure", 1, "FAIL"),
+        ("missing", None, "NOT_EXECUTED"),
     ],
 )
-def test_actual_tool_result_retains_original_exit_or_not_executed(
-    tmp_path, executable, code, status
-):
-    result = safe.run_step("actual", [executable], ROOT, tmp_path, dict(os.environ))
+def test_actual_tool_result_retains_original_exit_or_not_executed(tmp_path, case, code, status):
+    if case == "missing":
+        argv = [str(tmp_path / "nonexistent-stage9-tool")]
+    else:
+        # A real isolated subprocess, but with an executable available on every CI OS.
+        argv = [sys.executable, "-I", "-B", "-c", f"raise SystemExit({code})"]
+    result = safe.run_step("actual", argv, ROOT, tmp_path, dict(os.environ))
     assert result["exit_code"] == code
     assert result["status"] == status
     assert json.loads((tmp_path / "actual.result.json").read_text()) == result
-    assert result["argv"] == [executable]
+    assert result["argv"] == argv
     assert result["started_at"] <= result["finished_at"]
 
 

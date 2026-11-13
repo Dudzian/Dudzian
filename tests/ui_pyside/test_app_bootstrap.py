@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import os
-import sys
 from functools import partial
 from pathlib import Path
 
@@ -38,22 +36,10 @@ def _isolate_mode_wizard_storage(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     )
 
 
-def _ensure_qt_application() -> QGuiApplication:
-    try:
-        app = QGuiApplication.instance()
-        if app is None:  # pragma: no cover - w praktyce tworzy się przy pierwszym bootstrapie
-            app = QGuiApplication([])
-        return app
-    except Exception as exc:  # pragma: no cover - środowiska bez backendu GL/Qt
-        qt_qpa_platform = os.getenv("QT_QPA_PLATFORM", "<unset>")
-        pytest.skip(
-            f"Qt runtime unavailable on {sys.platform} (QT_QPA_PLATFORM={qt_qpa_platform}): {exc}",
-            allow_module_level=True,
-        )
-
-
-def test_pyside_app_bootstrap_loads_qml(tmp_path: Path, request: pytest.FixtureRequest) -> None:
-    qt_app = _ensure_qt_application()
+def test_pyside_app_bootstrap_loads_qml(
+    tmp_path: Path, request: pytest.FixtureRequest, qt_gui_application: QGuiApplication
+) -> None:
+    qt_app = qt_gui_application
     options = AppOptions(config_path=Path("ui/config/example.yaml"))
     app = BotPysideApplication(options)
     load_warnings: list[str] = []
@@ -133,14 +119,16 @@ def test_pyside_app_bootstrap_loads_qml(tmp_path: Path, request: pytest.FixtureR
     assert cloud_flag is False
 
 
-def test_cloud_flag_context_property(request: pytest.FixtureRequest) -> None:
+def test_cloud_flag_context_property(
+    request: pytest.FixtureRequest, qt_gui_application: QGuiApplication
+) -> None:
     options = AppOptions(
         config_path=Path("ui/config/example.yaml"),
         enable_cloud_runtime=True,
     )
     app = BotPysideApplication(options)
     engine = app.load()
-    qt_app = _ensure_qt_application()
+    qt_app = qt_gui_application
     request.addfinalizer(lambda: teardown_qml_engine(engine, process_events=qt_app.processEvents))
     ctx = engine.rootContext()
     assert ctx.contextProperty("cloudRuntimeEnabled") is True
