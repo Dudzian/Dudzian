@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import os
 from pathlib import Path
+import re
 import shlex
 import shutil
 import subprocess
@@ -46,6 +47,40 @@ POSTGRESQL_MARKERS = (
     "external_postgresql and not integration and not e2e_demo_paper "
     "and not retraining and not soak and not performance and not qml"
 )
+
+
+def _assert_pinned_pg16_image(image: str) -> None:
+    assert re.fullmatch(r"postgres:16\.\d+@sha256:[0-9a-f]{64}", image), (
+        "CI PostgreSQL must use a reviewed patch and immutable image digest"
+    )
+
+
+@pytest.mark.parametrize(
+    "image",
+    [
+        "postgres:16",
+        "postgres:16.16",
+        "postgres:latest",
+        "postgres:17.0@sha256:" + "a" * 64,
+        "postgres:16.16@sha256:" + "g" * 64,
+        "postgres:16.16@sha256:" + "a" * 63,
+    ],
+)
+def test_postgresql_ci_image_contract_rejects_floating_unsupported_or_invalid_pins(image):
+    with pytest.raises(AssertionError):
+        _assert_pinned_pg16_image(image)
+
+
+def test_postgresql_ci_services_and_negative_controls_share_one_immutable_image():
+    images = set()
+    for filename in ("ci.yml", "quality-security.yml"):
+        source = (ROOT / ".github/workflows" / filename).read_text(encoding="utf-8")
+        references = re.findall(r"\bpostgres:[\w.@:-]+", source)
+        assert references, f"PostgreSQL CI fixtures missing in {filename}"
+        for image in references:
+            _assert_pinned_pg16_image(image)
+        images.update(references)
+    assert len(images) == 1, "all primary and negative-control clusters must use the same image"
 
 
 def _general_ci_jobs() -> dict:
@@ -347,7 +382,7 @@ def test_ubuntu_runs_external_postgresql_against_postgresql_16_service(tmp_path)
     }
 
     postgres = postgres_job["services"]["postgres"]
-    assert postgres["image"] == "postgres:16"
+    _assert_pinned_pg16_image(postgres["image"])
     assert postgres["env"]["POSTGRES_HOST_AUTH_METHOD"] == "trust"
     assert [str(mapping) for mapping in postgres["ports"]] == ["127.0.0.1:55432:5432"]
     assert postgres_job["timeout-minutes"] == 150
@@ -383,7 +418,7 @@ def test_ubuntu_runs_external_postgresql_against_postgresql_16_service(tmp_path)
     assert "len({row[0] for row in observed}) == 3" in cluster_preflight
     assert '[row[1] for row in observed] == ["on", "off", "on"]' in cluster_preflight
     assert 'all(row[2:] == ("on", "on") for row in observed)' in cluster_preflight
-    assert "postgres:16 -c fsync=off" in cluster_preflight
+    assert f"{postgres['image']} -c fsync=off" in cluster_preflight
     assert "Stop isolated PostgreSQL negative-control clusters" in {
         step["name"] for step in postgres_job["steps"]
     }

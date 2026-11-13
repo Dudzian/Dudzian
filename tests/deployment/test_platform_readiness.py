@@ -483,21 +483,27 @@ def test_stage10_workflow_keeps_opt_in_and_fail_closed_preflight() -> None:
         "type": "boolean",
         "default": False,
     }
+    isolated_full_scope = (
+        "(github.event_name != 'workflow_dispatch' || inputs.validation_scope != 'stage9-safe')"
+    )
     opt_in = "github.event_name == 'workflow_dispatch' && inputs.run_stage10 == true"
     for job_name in (
         "windows-stage10-prepare-and-schedule-reboot",
         "windows-stage10-reboot-barrier",
         "windows-stage10-qualify-after-reboot",
     ):
-        assert jobs[job_name]["if"] == opt_in
+        assert jobs[job_name]["if"] == f"{isolated_full_scope} && ({opt_in})"
     assert jobs["windows-release-gate"]["if"] == (
-        "always() && (github.event_name == 'pull_request' || inputs.run_stage10 == true)"
+        f"{isolated_full_scope} && "
+        "(always() && (github.event_name == 'pull_request' || inputs.run_stage10 == true))"
     )
     assert jobs["linux-deployment-integration"]["if"] == (
-        "always() && (github.event_name == 'pull_request' || inputs.run_stage10 == true)"
+        f"{isolated_full_scope} && "
+        "(always() && (github.event_name == 'pull_request' || inputs.run_stage10 == true))"
     )
     assert jobs["macos-deployment-integration"]["if"] == (
-        "github.event_name == 'pull_request' || inputs.run_stage10 == true"
+        f"{isolated_full_scope} && "
+        "(github.event_name == 'pull_request' || inputs.run_stage10 == true)"
     )
     assert jobs["windows-stage10-prepare-and-schedule-reboot"]["runs-on"] == [
         "self-hosted",
@@ -582,6 +588,80 @@ def test_stage10_workflow_keeps_opt_in_and_fail_closed_preflight() -> None:
         "--evidence evidence/windows-stage10-evidence.json" in command
         for command in release_commands
     )
+
+
+def _workflow_condition(condition: str, context: dict[str, object]) -> bool:
+    """Interpret the small boolean grammar of these gates without executing code.
+
+    Dispatch boolean inputs are typed by GitHub. The matrix includes absent and
+    malformed text values to check that neither is mistaken for boolean opt-in.
+    Dependency success is outside this model; the existing preflight contract
+    separately requires successful current Core jobs and reviewed evidence.
+    """
+    for name, value in context.items():
+        condition = condition.replace(name, repr(value))
+    tree = ast.parse(condition.replace("&&", " and ").replace("||", " or "), mode="eval")
+
+    def interpret(node: ast.AST) -> object:
+        if isinstance(node, ast.Constant):
+            return node.value
+        if isinstance(node, ast.Name) and node.id in {"true", "false"}:
+            return node.id == "true"
+        if isinstance(node, ast.BoolOp):
+            values = (bool(interpret(value)) for value in node.values)
+            return all(values) if isinstance(node.op, ast.And) else any(values)
+        if isinstance(node, ast.Compare) and len(node.ops) == 1:
+            left, right = interpret(node.left), interpret(node.comparators[0])
+            if isinstance(node.ops[0], ast.Eq):
+                return left == right
+            if isinstance(node.ops[0], ast.NotEq):
+                return left != right
+        raise AssertionError(f"Unsupported workflow condition: {ast.dump(node)}")
+
+    return bool(interpret(tree.body))
+
+
+@pytest.mark.parametrize("event", ["pull_request", "push", "workflow_dispatch"])
+@pytest.mark.parametrize("scope", ["full", "stage9-safe"])
+@pytest.mark.parametrize("run_stage10", [True, False, None, "", "true", "false"])
+def test_stage10_lifecycle_requires_manual_boolean_opt_in_outside_safe_scope(
+    event: str, scope: str, run_stage10: object
+) -> None:
+    root = Path(__file__).resolve().parents[2]
+    jobs = yaml.safe_load(
+        (root / ".github/workflows/platform-deployment.yml").read_text(encoding="utf-8")
+    )["jobs"]
+    expected = event == "workflow_dispatch" and scope == "full" and run_stage10 is True
+    context = {
+        "github.event_name": event,
+        "inputs.validation_scope": scope,
+        "inputs.run_stage10": run_stage10,
+    }
+    for name in (
+        "windows-stage10-prepare-and-schedule-reboot",
+        "windows-stage10-reboot-barrier",
+        "windows-stage10-qualify-after-reboot",
+    ):
+        assert _workflow_condition(jobs[name]["if"], context) is expected, name
+
+
+@pytest.mark.parametrize("run_stage10", [False, True])
+@pytest.mark.parametrize("run_linux_physical", [False, True])
+def test_safe_scope_excludes_every_full_job_even_with_privileged_flags(
+    run_stage10: bool, run_linux_physical: bool
+) -> None:
+    root = Path(__file__).resolve().parents[2]
+    jobs = yaml.safe_load(
+        (root / ".github/workflows/platform-deployment.yml").read_text(encoding="utf-8")
+    )["jobs"]
+    context = {
+        "github.event_name": "workflow_dispatch",
+        "inputs.validation_scope": "stage9-safe",
+        "inputs.run_stage10": run_stage10,
+        "inputs.run_linux_physical": run_linux_physical,
+    }
+    for name, job in jobs.items():
+        assert _workflow_condition(job["if"], context) is (name == "stage9-safe-validation"), name
 
 
 def test_stage10_proof_validation_ci_uses_only_hosted_hermetic_checks() -> None:

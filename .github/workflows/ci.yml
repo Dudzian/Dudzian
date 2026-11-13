@@ -666,7 +666,7 @@ jobs:
     timeout-minutes: 150
     services:
       postgres:
-        image: postgres:16
+        image: postgres:16.16@sha256:30551eca978d79ccf49d037bc297b5670baea61a04ceca42ff7fd3100163d3ce
         env:
           # Disposable SQL-ACL fixtures use passwordless LOGIN roles; never production auth.
           # Runner-local ports limit exposure; see docs/security/ci-postgresql-isolation.md.
@@ -792,10 +792,10 @@ jobs:
           # fsync=off is the required negative control, NEVER the primary DB.
           docker run --detach --rm --name dz-ci-pg16-unsafe \
             -p 127.0.0.1:55433:5432 \
-            -e POSTGRES_HOST_AUTH_METHOD=trust postgres:16 -c fsync=off
+            -e POSTGRES_HOST_AUTH_METHOD=trust postgres:16.16@sha256:30551eca978d79ccf49d037bc297b5670baea61a04ceca42ff7fd3100163d3ce -c fsync=off
           docker run --detach --rm --name dz-ci-pg16-other \
             -p 127.0.0.1:55434:5432 \
-            -e POSTGRES_HOST_AUTH_METHOD=trust postgres:16
+            -e POSTGRES_HOST_AUTH_METHOD=trust postgres:16.16@sha256:30551eca978d79ccf49d037bc297b5670baea61a04ceca42ff7fd3100163d3ce
           python - <<'PY'
           import time
           import psycopg
@@ -891,7 +891,7 @@ jobs:
     timeout-minutes: 150
     services:
       postgres:
-        image: postgres:16
+        image: postgres:16.16@sha256:30551eca978d79ccf49d037bc297b5670baea61a04ceca42ff7fd3100163d3ce
         env:
           POSTGRES_HOST_AUTH_METHOD: trust
         ports:
@@ -962,10 +962,10 @@ jobs:
           # fsync=off is the required negative control, NEVER the primary DB.
           docker run --detach --rm --name dz-ci-pg16-unsafe \
             -p 127.0.0.1:55433:5432 \
-            -e POSTGRES_HOST_AUTH_METHOD=trust postgres:16 -c fsync=off
+            -e POSTGRES_HOST_AUTH_METHOD=trust postgres:16.16@sha256:30551eca978d79ccf49d037bc297b5670baea61a04ceca42ff7fd3100163d3ce -c fsync=off
           docker run --detach --rm --name dz-ci-pg16-other \
             -p 127.0.0.1:55434:5432 \
-            -e POSTGRES_HOST_AUTH_METHOD=trust postgres:16
+            -e POSTGRES_HOST_AUTH_METHOD=trust postgres:16.16@sha256:30551eca978d79ccf49d037bc297b5670baea61a04ceca42ff7fd3100163d3ce
           python - <<'PY'
           import time
           import psycopg

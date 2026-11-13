@@ -35,6 +35,7 @@ SCHEMA_VERSION = 1
 STORAGE_FAMILY = "POSTGRESQL_ISSUER_HISTORY_CHECKPOINT_V2"
 PROFILE = "PRODUCTION_LOCAL"
 _SAFE_IDENTIFIER = re.compile(r"[a-z_][a-z0-9_]{0,62}\Z")
+_ATTRIBUTE_VERSION_OPTION = re.compile(r"pg_attver=([1-9][0-9]{0,19})\Z")
 _TABLES = ("metadata", "checkpoints", "entries")
 _FUNCTION_CALLERS = {
     **dict.fromkeys(CANONICAL_FUNCTION_RETURNS),
@@ -436,6 +437,25 @@ _REVIEWED_COLUMNS = {
 }
 
 
+def _reviewed_attribute_options(options: object, server_version: int) -> bool:
+    """Allow only PG16's reviewed, server-managed attribute version metadata.
+
+    PostgreSQL 16.16 backpatches attribute versioning into attoptions under the
+    reserved pg_attver key (upstream src/backend/catalog/README.attver.md).
+    The server writes a canonical uint64 WAL position; zero is represented by
+    absence, including columns retained from an older minor release. User
+    options, duplicates and unknown representations remain unqualified.
+    """
+    if options is None:
+        return True
+    if not 160016 <= server_version < 170000:
+        return False
+    if type(options) is not list or len(options) != 1 or type(options[0]) is not str:
+        return False
+    version = _ATTRIBUTE_VERSION_OPTION.fullmatch(options[0])
+    return version is not None and int(version[1]) <= (1 << 64) - 1
+
+
 def _qualify_physical_definition(
     conn: psycopg.Connection[Any], schema: str, owner_oid: int
 ) -> None:
@@ -473,12 +493,17 @@ def _qualify_physical_definition(
             True,
             0,
             -1,
-            None,
         )
         for table in sorted(_REVIEWED_COLUMNS)
         for index, (name, data_type) in enumerate(_REVIEWED_COLUMNS[table], 1)
     ]
-    if columns != expected_columns:
+    if (
+        any(
+            not _reviewed_attribute_options(column[-1], conn.info.server_version)
+            for column in columns
+        )
+        or [column[:-1] for column in columns] != expected_columns
+    ):
         raise CheckpointSchemaQualificationError(
             "checkpoint columns differ from reviewed local definition"
         )

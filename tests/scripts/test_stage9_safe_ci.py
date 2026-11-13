@@ -84,7 +84,10 @@ def test_safe_matrix_is_unprivileged_and_preserves_exact_commit_and_evidence():
     assert "*.json" in upload["with"]["path"]
 
 
-@pytest.mark.parametrize("change", ["head", "malformed", "stage10", "physical"])
+@pytest.mark.parametrize(
+    "change",
+    ["head", "malformed", "stage10", "physical", "both", "missing-stage10", "text-stage10"],
+)
 def test_actual_dispatch_guard_refuses_wrong_commit_or_privileged_inputs(change):
     step = workflow()["jobs"]["stage9-safe-validation"]["steps"][0]
     environment = dict(
@@ -98,10 +101,14 @@ def test_actual_dispatch_guard_refuses_wrong_commit_or_privileged_inputs(change)
         environment["GITHUB_SHA"] = "b" * 40
     elif change == "malformed":
         environment["STAGE9_EXPECTED_COMMIT"] = "main"
-    elif change == "stage10":
+    elif change in {"stage10", "both"}:
         environment["STAGE9_RUN_STAGE10"] = "true"
-    else:
+    if change in {"physical", "both"}:
         environment["STAGE9_RUN_PHYSICAL"] = "true"
+    elif change == "missing-stage10":
+        environment["STAGE9_RUN_STAGE10"] = "null"
+    elif change == "text-stage10":
+        environment["STAGE9_RUN_STAGE10"] = '"false"'
     result = subprocess.run(
         [sys.executable, "-I", "-B", "-c", step["run"]],
         env=environment,
@@ -110,6 +117,23 @@ def test_actual_dispatch_guard_refuses_wrong_commit_or_privileged_inputs(change)
     )
     assert result.returncode != 0
     assert b"STAGE9_SAFE_DISPATCH_REFUSED" in result.stderr
+
+
+def test_actual_dispatch_guard_accepts_only_reviewed_commit_with_both_flags_false():
+    step = workflow()["jobs"]["stage9-safe-validation"]["steps"][0]
+    result = subprocess.run(
+        [sys.executable, "-I", "-B", "-c", step["run"]],
+        env=dict(
+            os.environ,
+            STAGE9_EXPECTED_COMMIT=HEAD,
+            GITHUB_SHA=HEAD,
+            STAGE9_RUN_STAGE10="false",
+            STAGE9_RUN_PHYSICAL="false",
+        ),
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def test_safe_selection_never_expands_signed_or_approval_fixtures():

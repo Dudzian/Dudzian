@@ -10,6 +10,7 @@ from __future__ import annotations
 import email
 import hashlib
 import importlib
+import importlib.abc
 import importlib.util
 import json
 import os
@@ -281,3 +282,66 @@ print('NO_CONFIG_SELECTED_IMPORT')
     )
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "NO_CONFIG_SELECTED_IMPORT"
+
+
+def test_snapshot_loader_refuses_unknown_module_before_compilation(tmp_path, monkeypatch):
+    loader = trial._SourceSnapshotLoader({})
+    monkeypatch.setattr(
+        loader, "source_to_code", lambda *args: pytest.fail("unapproved source compiled")
+    )
+    with pytest.raises(trial.TrialError, match="SOURCE_MODULE_NOT_APPROVED"):
+        loader.get_code("unapproved")
+
+
+@pytest.mark.parametrize(
+    "other", ["other.py", "trusted_email.pyc", "__pycache__/trusted_email.pyc"]
+)
+def test_snapshot_loader_refuses_unlisted_paths_and_all_bytecode(tmp_path, other):
+    source = tmp_path / "trusted_email.py"
+    loader = trial._SourceSnapshotLoader({"trusted_email": (str(source), b"")})
+    with pytest.raises(trial.TrialError, match="SOURCE_PATH_NOT_APPROVED"):
+        loader.get_data(str(tmp_path / other))
+
+
+def test_standard_source_loader_executes_frozen_snapshot_without_reopening(tmp_path, monkeypatch):
+    source = tmp_path / "trusted_email.py"
+    raw = Path(email.__file__).read_bytes()
+    snapshots = {"trusted_email": (str(source), raw)}
+    loader = trial._SourceSnapshotLoader(snapshots)
+    snapshots["trusted_email"] = (str(source), b"unapproved replacement; never execute")
+    assert isinstance(loader, importlib.abc.SourceLoader)
+    assert loader.get_data(str(source)) == raw
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("snapshot loader used a filesystem or bytecode fallback")
+
+    monkeypatch.setattr(loader, "set_data", forbidden)
+    monkeypatch.setattr(trial, "_read", forbidden)
+    spec = importlib.util.spec_from_loader("trusted_email", loader)
+    assert spec is not None
+    module = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, "trusted_email", module)
+    with monkeypatch.context() as reads:
+        for operation in ("builtins.open", "io.open", "os.open", "_io.open_code"):
+            reads.setattr(operation, forbidden)
+        loader.exec_module(module)
+    assert module.__file__ == str(source)
+    assert "message_from_bytes" in module.__all__
+    assert not list(tmp_path.iterdir())
+
+
+def test_environment_helper_uses_authenticated_snapshot_without_path_reopen(tmp_path, monkeypatch):
+    source = (ROOT / "deployment/stage9_vm_environment.py").read_bytes()
+    helper = tmp_path / "stage9_vm_environment.py"
+    monkeypatch.setattr(trial, "__file__", str(tmp_path / "stage9_vm_trial.py"))
+    monkeypatch.setattr(
+        trial, "_harness_sources", lambda: {"deployment/stage9_vm_environment.py": source}
+    )
+    monkeypatch.setattr(
+        trial, "_read", lambda *args: pytest.fail("helper reopened after authentication")
+    )
+    namespace = trial._environment_helpers(False)
+    assert namespace["__file__"] == str(helper)
+    assert namespace["__name__"] == "_stage9_vm_environment"
+    assert callable(namespace["require_approved_vm"])
+    assert not list(tmp_path.iterdir())
