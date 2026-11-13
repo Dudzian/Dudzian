@@ -625,7 +625,6 @@ jobs:
             --ignore-glob=tests/licensing/test_pdsa_*.py \
             --ignore-glob=tests/licensing/test_production_*.py \
             --ignore-glob=tests/licensing/test_cha_*.py \
-            # Collect multiple Windows-only regressions in one bounded run.
             --maxfail=20 \
             --durations=10 \
             --junitxml=test-results/pytest.xml
