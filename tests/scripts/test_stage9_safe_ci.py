@@ -255,9 +255,7 @@ def test_context_refuses_unsupported_or_ambiguous_execution(context, monkeypatch
         ("missing", None, "NOT_EXECUTED"),
     ],
 )
-def test_actual_tool_result_retains_original_exit_or_not_executed(
-    tmp_path, case, code, status
-):
+def test_actual_tool_result_retains_original_exit_or_not_executed(tmp_path, case, code, status):
     if case == "missing":
         argv = [str(tmp_path / "nonexistent-stage9-tool")]
     else:
