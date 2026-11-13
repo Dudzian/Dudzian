@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import os
-import sys
 from pathlib import Path
 
 import pytest
@@ -13,26 +11,13 @@ try:
 except ImportError as exc:  # pragma: no cover - środowisko bez GL/Qt
     pytest.skip(f"PySide6 unavailable: {exc}", allow_module_level=True)
 
+from tests._qt_utils import teardown_qml_engine
 from tests.ui_pyside.qml_test_helpers import assert_engine_loaded, collect_engine_warnings
 
 
 @pytest.fixture(autouse=True)
 def _force_offscreen(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
-
-
-def _ensure_app() -> QGuiApplication:
-    try:
-        app = QGuiApplication.instance()
-        if app is None:
-            app = QGuiApplication([])
-        return app
-    except Exception as exc:  # pragma: no cover - środowisko bez backendu GL/Qt
-        qt_qpa_platform = os.getenv("QT_QPA_PLATFORM", "<unset>")
-        pytest.skip(
-            f"Qt runtime unavailable on {sys.platform} (QT_QPA_PLATFORM={qt_qpa_platform}): {exc}",
-            allow_module_level=True,
-        )
 
 
 class _RuntimeStub(QObject):
@@ -73,8 +58,10 @@ class _DesignSystemStub(QObject):
         return "Font Awesome 6 Free"
 
 
-def test_ai_decisions_view_renders_without_live_runtime() -> None:
-    _ensure_app()
+def test_ai_decisions_view_renders_without_live_runtime(
+    request: pytest.FixtureRequest, qt_gui_application: QGuiApplication
+) -> None:
+    app = qt_gui_application
     snapshot = {
         "lastDecision": {
             "mode": "scalping",
@@ -107,6 +94,17 @@ def test_ai_decisions_view_renders_without_live_runtime() -> None:
     design = _DesignSystemStub()
 
     engine = QQmlApplicationEngine()
+
+    def cleanup_engine() -> None:
+        teardown_qml_engine(
+            engine,
+            process_events=app.processEvents,
+            context_properties_to_clear=("runtimeService", "designSystem"),
+        )
+        # Keep QML's Python-owned context properties alive until native teardown.
+        _ = (runtime, design)
+
+    request.addfinalizer(cleanup_engine)
     warnings = collect_engine_warnings(engine)
     engine.rootContext().setContextProperty("runtimeService", runtime)
     engine.rootContext().setContextProperty("designSystem", design)
@@ -117,7 +115,6 @@ def test_ai_decisions_view_renders_without_live_runtime() -> None:
     assert_engine_loaded(engine, warnings, "QML view failed to load")
 
     view = engine.rootObjects()[0]
-    app = _ensure_app()
     app.processEvents()
 
     # Defensive: if backend/order of initialization differs, ensure the view
