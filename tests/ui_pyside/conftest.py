@@ -19,19 +19,23 @@ def ui_generated_artifacts_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setenv("BOT_CORE_UI_LAYOUTS_PATH", str(tmp_path / "var" / "ui_layouts.json"))
 
 
+# Keep the Python wrapper alive after pytest releases its session fixture.
+# Qt's normal process shutdown owns app teardown; a session-wide DeferredDelete
+# flush here can destroy still-referenced QML objects and segfault PySide6.
+_SESSION_QT_APPLICATION: object | None = None
+
+
 @pytest.fixture(scope="session")
 def qt_gui_application():
-    """Keep the native Qt application alive through the complete QML test session."""
-    from PySide6.QtGui import QGuiApplication
+    """Reuse a single Qt application without global native-object destruction."""
+    global _SESSION_QT_APPLICATION
 
-    from tests._qt_utils import settle_qt_application
+    from PySide6.QtGui import QGuiApplication
 
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     app = QGuiApplication.instance()
     if app is None:
         app = QGuiApplication([])
 
-    yield app
-    # QML engines have per-test finalizers; drain residual native Qt work before
-    # Python starts unloading shiboken/PySide6 modules at interpreter exit.
-    settle_qt_application(process_events=app.processEvents)
+    _SESSION_QT_APPLICATION = app
+    return app
