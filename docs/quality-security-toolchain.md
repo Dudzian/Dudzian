@@ -597,3 +597,14 @@ Cryptographic validity and conformance to a caller-supplied signer policy do
 not approve that policy's origin. External authority, freshness/checkpoints,
 rollback protection, tool acceptance and production isolation remain separate
 unverified requirements; qualification remains BLOCKED and production NO-GO.
+
+The separate [APT acceptance/checkpoint foundation V4c](architecture/stage9_observer_apt_v4c.md)
+adds three bounded, canonical signed contracts, immutable checkpoint transitions
+and composition over unchanged V4b evidence. The three V4c modules enter the
+existing configured mypy Linux/Win32, explicit Ruff/format and branch-coverage
+scopes; their synthetic positive/negative tests extend the Observer regressions.
+No threshold, timeout, production policy or Linux/Windows readiness gate changes.
+Explicit TEST anchors exercise signatures and bindings only; external authority
+and authenticated time remain UNVERIFIED, durable antirollback and runtime
+qualification remain BLOCKED. No production state writer, package execution,
+installation, root test or automatic rotation is introduced.
