@@ -75,6 +75,7 @@ class AptEvidenceV5a:
     result: v4a.AptResultV4a
     signature_result: v4b.AptResultV4b | None = None
     acceptance_result: v4c.AptResultV4c | None = None
+    trust_context: v4b.TrustContextV4b | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -273,6 +274,10 @@ def _claim(value: Any, budget: _MappingBudget, depth: int = 0) -> Any:
             v4a.AptDeclarationV4a,
             v4a.AptResultV4a,
             v4b.AptResultV4b,
+            v4b.TrustContextV4b,
+            v4b.SignerRuleV4b,
+            v4b.TimeRulesV4b,
+            v4b.ExternalAuthorityReferenceV4b,
             v4c.AptResultV4c,
             checkpoint.SnapshotStateV4c,
             GpgvEvidenceV4b,
@@ -323,7 +328,10 @@ def _sources(
 
 
 def _image(value: dict[str, Any], budget: _MappingBudget) -> dict[str, dict[str, Any]]:
-    _object(value, {"format", "image_id", "snapshot_sha256", "sources", "files"})
+    keys = {"format", "image_id", "snapshot_sha256", "sources", "files"}
+    if "apt_context" in value:
+        keys.add("apt_context")
+    _object(value, keys)
     _require(value["format"] == EXPECTED_FORMAT, "UNSUPPORTED_SOURCE")
     _id(value["image_id"])
     _digest(value["snapshot_sha256"])
@@ -432,12 +440,82 @@ def _measurements(
         _control_identity(item.control.control, expected, budget)
 
 
+def _apt_selection(
+    image: dict[str, Any], mapping: dict[str, Any], budget: _MappingBudget
+) -> dict[str, Any] | None:
+    """Require identical context expectations in both separately pinned inputs."""
+    if "apt_context" not in image and "apt_context" not in mapping:
+        return None
+    _require("apt_context" in image and "apt_context" in mapping, "PROVENANCE_INCOMPLETE")
+    for document in (image, mapping):
+        budget.compare()
+        selection = _object(
+            document["apt_context"], {"repository_id", "snapshot_id", "context_sha256"}
+        )
+        try:
+            v4b._label(selection["repository_id"])
+            v4b._label(selection["snapshot_id"])
+        except v4b._Refusal:
+            raise ImageMappingRefusalV5a("FORMAT_REJECTED") from None
+        _digest(selection["context_sha256"])
+    expected = cast(dict[str, Any], image["apt_context"])
+    selected = mapping["apt_context"]
+    for key, code in (
+        ("repository_id", "REPOSITORY_MISMATCH"),
+        ("snapshot_id", "SNAPSHOT_MISMATCH"),
+        ("context_sha256", "CONTEXT_BINDING_REJECTED"),
+    ):
+        budget.compare()
+        _require(expected[key] == selected[key], code)
+    return expected
+
+
+def _apt_context(
+    evidence: AptEvidenceV5a,
+    selection: dict[str, Any] | None,
+    snapshot: str,
+    budget: _MappingBudget,
+) -> str | None:
+    """Bound the full context before using V4c's authoritative hash contract."""
+    context = evidence.trust_context
+    if (
+        context is None
+        and selection is None
+        and evidence.signature_result is None
+        and evidence.acceptance_result is None
+    ):
+        return None
+    _require(
+        type(context) is v4b.TrustContextV4b
+        and selection is not None
+        and evidence.signature_result is not None,
+        "PROVENANCE_INCOMPLETE",
+    )
+    assert context is not None and selection is not None
+    raw = canonical_json_bytes(_claim(context, budget))
+    _require(len(raw) <= 65536, "LIMIT_EXCEEDED")
+    budget.reserve(len(raw) * 20)  # Covers V4c's asdict/list/canonical copies before allocation.
+    try:
+        digest = v4c.context_sha256_v4c(context)
+    except v4c.V4cRefusal:
+        raise ImageMappingRefusalV5a("CONTEXT_REJECTED") from None
+    budget.check()
+    _require(context.repository_id == selection["repository_id"], "REPOSITORY_MISMATCH")
+    _require(
+        context.snapshot_id == selection["snapshot_id"] and context.release_sha256 == snapshot,
+        "SNAPSHOT_MISMATCH",
+    )
+    _require(digest == selection["context_sha256"], "CONTEXT_BINDING_REJECTED")
+    return digest
+
+
 def _apt(
     evidence: AptEvidenceV5a,
     inventory_digest: str,
     snapshot: str,
     packages: tuple[UbuntuPackageInventoryV3, ...],
     budget: _MappingBudget,
+    selection: dict[str, Any] | None,
 ) -> str:
     _require(type(evidence) is AptEvidenceV5a, "PROVENANCE_INCOMPLETE")
     _require(
@@ -455,6 +533,7 @@ def _apt(
         "PROVENANCE_INCOMPLETE",
     )
     _measurements(result.packages, packages, budget)
+    context_digest = _apt_context(evidence, selection, snapshot, budget)
     signature = evidence.signature_result
     if signature is not None:
         _require(type(signature) is v4b.AptResultV4b, "PROVENANCE_INCOMPLETE")
@@ -497,6 +576,11 @@ def _apt(
             "PROVENANCE_INCOMPLETE",
         )
         _measurements(signature.v4a.packages, packages, budget)
+        assert evidence.trust_context is not None
+        try:
+            v4b._signer(evidence.trust_context, signed)
+        except v4b._Refusal:
+            raise ImageMappingRefusalV5a("CONTEXT_BINDING_REJECTED") from None
     acceptance = evidence.acceptance_result
     if acceptance is not None:
         _require(
@@ -515,6 +599,14 @@ def _apt(
             raise ImageMappingRefusalV5a("PROVENANCE_INCOMPLETE") from None
         _require(not acceptance.proposed_state.revoked, "PROVENANCE_INCOMPLETE")
         _require(acceptance.proposed_state.snapshot_sha256 == snapshot, "SNAPSHOT_MISMATCH")
+        assert selection is not None
+        _require(
+            acceptance.proposed_state.repository_id == selection["repository_id"],
+            "REPOSITORY_MISMATCH",
+        )
+        _require(
+            acceptance.proposed_state.context_sha256 == context_digest, "CONTEXT_BINDING_REJECTED"
+        )
     return _claim_digest(evidence, budget)
 
 
@@ -701,7 +793,8 @@ def verify_image_mapping_v5a(
                 "directory_policy",
                 "entries",
                 "transforms",
-            },
+            }
+            | ({"apt_context"} if "apt_context" in mapping else set()),
         )
         _require(mapping["format"] == MAPPING_FORMAT, "UNSUPPORTED_SOURCE")
         _require(mapping["directory_policy"] == "identical-explicit-v1", "UNSUPPORTED_SOURCE")
@@ -717,6 +810,8 @@ def verify_image_mapping_v5a(
         )
         snapshot = _digest(mapping["snapshot_sha256"])
         _require(snapshot == image["snapshot_sha256"], "SNAPSHOT_MISMATCH")
+        selection = _apt_selection(image, mapping, budget)
+        _require(selection is None or apt_evidence is not None, "PROVENANCE_INCOMPLETE")
         sources = _sources(mapping["sources"], packages, budget)
         expected_sources = _sources(image["sources"], packages, budget)
         _require(sources == expected_sources, "PROVENANCE_INCOMPLETE")
@@ -742,6 +837,7 @@ def verify_image_mapping_v5a(
                 snapshot,
                 packages,
                 budget,
+                selection,
             )
         )
         budget.check()
@@ -763,7 +859,14 @@ def verify_image_mapping_v5a(
             unsupported = tuple(sorted(set(unsupported) | set(exc.unsupported)))
         consistency: Literal["MISMATCH", "INCOMPLETE"] = (
             "MISMATCH"
-            if exc.code in {"ARTIFACT_MISMATCH", "SNAPSHOT_MISMATCH", "PATH_COLLISION"}
+            if exc.code
+            in {
+                "ARTIFACT_MISMATCH",
+                "SNAPSHOT_MISMATCH",
+                "PATH_COLLISION",
+                "REPOSITORY_MISMATCH",
+                "CONTEXT_BINDING_REJECTED",
+            }
             else "INCOMPLETE"
         )
         reason = exc.code

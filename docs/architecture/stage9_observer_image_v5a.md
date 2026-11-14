@@ -40,6 +40,11 @@ without inventing such closure. The static tree is not a complete V1 manifest,
 an accepted projection of one, or an adapter that activates standard parsers.
 Standard Observer parsers and their existing refusals remain unchanged.
 
+The V5a-only `apt_context` extension below binds stronger supplied V4b/V4c
+claims to a separately selected repository and full trust context. Existing
+V4a-only inputs without that extension remain supported. No V1–V4 contract or
+result schema changes.
+
 V3's package allowlist, exact CPython package version, `amd64` architecture,
 canonical DEB filename and complete control/data TAR profiles remain in force.
 Unsupported package families need separate reviewed contract work. Historical
@@ -77,7 +82,7 @@ that a verifier was run or that its environment was trusted.
 
 ## Expected-image declaration
 
-The top-level record has exactly these fields:
+The top-level record has these mandatory fields and the optional extension below:
 
 ```text
 {
@@ -88,6 +93,19 @@ The top-level record has exactly these fields:
   files: [ImageFile, ...]
 }
 ```
+
+The optional additional field `apt_context` has exactly this shape:
+
+```text
+{repository_id, snapshot_id, context_sha256}
+```
+
+Repository and snapshot labels follow V4b's existing label syntax, and the
+context digest is a nonzero lowercase SHA-256. This field must appear in both
+the independent expected image and mapping, with identical values, or in neither.
+It is required when V4b, V4c or a full trust context is supplied. The stronger
+profile also requires the associated V4b signature evidence and full context;
+an expectation pin alone cannot replace missing evidence.
 
 Every source is identified explicitly by the exact record:
 
@@ -127,7 +145,7 @@ metadata and content independently from literal fixture requirements.
 
 ## Mapping declaration and record identity
 
-The mapping top-level record has exactly these fields:
+The mapping top-level record has these mandatory fields and the same optional extension:
 
 ```text
 {
@@ -141,6 +159,9 @@ The mapping top-level record has exactly these fields:
   transforms: [Transform, ...]
 }
 ```
+
+The mapping permits the same optional `apt_context` field defined above.
+Its values must equal the independently pinned expected-image selection.
 
 `inventory_sha256` covers the exact supplied V3 JSON bytes;
 `expected_image_sha256` covers the exact supplied expected-image bytes. A
@@ -257,16 +278,31 @@ Optional `AptEvidenceV5a` supplies these named fields:
 
 ```text
 inventory_sha256, snapshot_sha256, declaration, result,
-signature_result=None, acceptance_result=None
+signature_result=None, acceptance_result=None, trust_context=None
 ```
 
 `declaration` is an existing `AptDeclarationV4a`; `result` is an existing
 `AptResultV4a`. Its inventory pin, Release hash and full V3 measurements must
 agree with this invocation. Optional V4b and V4c results must bind to the same
-chain and snapshot; they cannot introduce measurements from another package set
-or snapshot
-or upgrade a refusal. If supplied materials disagree, V5a refuses rather than
+chain, repository, snapshot and selected full context; they cannot introduce
+measurements from another package set or snapshot or upgrade a refusal.
+If supplied materials disagree, V5a refuses rather than
 combining their individually positive fields.
+
+The appended `trust_context` is an existing `TrustContextV4b`. In the stronger
+profile, V5a computes its digest with the existing
+`context_sha256_v4c(context)` contract after bounded inspection and compares
+that digest with `apt_context.context_sha256` from both documents. The complete
+context includes repository and snapshot IDs, Release and keyring hashes,
+signer/algorithm rules, time rules, version, validity/revocation fields and
+external-authority references. The context's repository ID, snapshot ID and
+Release hash must also equal the selected labels and `snapshot_sha256`.
+Matching Release bytes alone do not bind a different repository or context.
+
+The existing V4b `_signer` policy checks are reapplied to the supplied GPG
+evidence under this bound context, including signer pairs, algorithms,
+revocation and time rules. This is a comparison against caller-supplied rules
+and time, not a new signature verification or authenticated-time operation.
 
 V4b's successful local signature/policy claims still carry their fixed external
 authority, freshness, checkpoint, rollback, tool and isolation blockers. V4c's
@@ -278,8 +314,15 @@ It does not rerun `gpgv` or V4c signature verification.
 The V4b claim must have the exact existing six-code blocker tuple and exact
 `GpgvEvidenceV4b` and `AptResultV4a` types. V4c must have its exact four-code
 blocker tuple and an exact `SnapshotStateV4c` that passes the existing state
-validator, is not revoked and selects the same snapshot. A label claiming
-success cannot bypass these structural or binding checks.
+validator, is not revoked and selects the same snapshot, repository and computed
+context digest. `SnapshotStateV4c` has no snapshot-ID field: that ID is carried
+by the full context, whose digest must match the state and independently pinned
+selection. A label claiming success cannot bypass these checks.
+
+V5a does not independently pin checkpoint IDs or checkpoint hashes here. Two
+otherwise valid states for the same selected context and snapshot can have
+different checkpoint identities. This binding establishes neither an exact
+accepted checkpoint nor durable anti-rollback state.
 
 With V4a evidence, `snapshot_sha256` denotes the selected Release bytes.
 Without that evidence, it is only a caller-selected, pinned snapshot identity;
@@ -300,11 +343,14 @@ the profile, evidence, structure, closure or available resources cannot support
 a complete result. Failure reasons are controlled codes rather than raw input
 or exception text.
 
-`ARTIFACT_MISMATCH`, `SNAPSHOT_MISMATCH` and `PATH_COLLISION` produce
+`ARTIFACT_MISMATCH`, `SNAPSHOT_MISMATCH`, `PATH_COLLISION`,
+`REPOSITORY_MISMATCH` and `CONTEXT_BINDING_REJECTED` produce
 `MISMATCH`. Other controlled refusals produce `INCOMPLETE`, including
 `FORMAT_REJECTED`, `LIMIT_EXCEEDED`, `UNSUPPORTED_SOURCE`,
 `PROVENANCE_INCOMPLETE`, `CLOSURE_INCOMPLETE`, `FILE_POLICY_REJECTED` and
-`UNSUPPORTED_TRANSFORMATION`. A cooperative keyboard or I/O interruption
+`UNSUPPORTED_TRANSFORMATION`. A full context rejected by the existing V4c
+context-hash validator produces `CONTEXT_REJECTED` and `INCOMPLETE`.
+A cooperative keyboard or I/O interruption
 produces `OPERATION_INTERRUPTED`; allocation failure produces `LIMIT_EXCEEDED`.
 These additional V5a diagnostics use a separate exception and leave V1's
 closed reason-code enum unchanged.
@@ -315,6 +361,9 @@ when present, the supplied APT evidence. Measurement/evidence claim hashes
 include the bounded complete dataclass fields; tuples become arrays and bytes
 become hex text for hashing. They identify supplied claims, not authenticated
 verifier transcripts. `v4_binding` is `NOT_PROVIDED` or `CALLER_CLAIM_BOUND`.
+No result fields are added for the context extension: raw document hashes cover
+the complete `apt_context` selections and `apt_evidence_sha256` covers the
+complete supplied trust context. Every refusal still clears these bindings.
 Each returned `MappedFileV5a` carries its file ID, path, type, content hash or
 `None`, size, UID, GID, mode and every `MappedOriginV5a` source/package/version/
 record/member reference.
@@ -365,11 +414,17 @@ reservations. Evidence strings/bytes are capped at 65,536 characters/bytes;
 arrays are bounded by `max_archive_members`, dataclasses by 64 fields and
 nesting by 16. Serialized dataclasses must have exact allowlisted types:
 `AptEvidenceV5a`, `AptDeclarationV4a`, `AptResultV4a`, `AptResultV4b`,
-`AptResultV4c`, `SnapshotStateV4c`, `GpgvEvidenceV4b`,
+`TrustContextV4b`, `SignerRuleV4b`, `TimeRulesV4b`,
+`ExternalAuthorityReferenceV4b`, `AptResultV4c`, `SnapshotStateV4c`, `GpgvEvidenceV4b`,
 `PackageInventoryResultV3`, `PackageMeasurementV3` and `TarResultV3`.
 Arbitrary dataclasses and subclasses are rejected; their field descriptors
 cannot introduce unbounded names or user-defined serialization behavior.
 The known field names are also included in memory reservations.
+Before calling the existing V4c context-hash helper, V5a serializes the full
+context through this bounded known-type traversal, requires at most 65,536
+canonical bytes and reserves a further 20 times that byte length for the
+helper's dataclass, tuple/list and canonicalization copies. A larger or
+resource-exhausting context refuses before the helper is called.
 Comparison calls cannot exceed
 `(max_archive_members + max_files + 128) * (max_path_depth + 32)`.
 

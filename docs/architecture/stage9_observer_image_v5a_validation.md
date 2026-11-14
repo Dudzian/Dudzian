@@ -4,6 +4,8 @@ Date: 2026-11-14. Base main: `5d56a05192436b8772ab0fb73bbeac0d3ec91a00`.
 Branch: `feat/stage9-observer-image-v5a`. The Draft PR description records the
 exact delivered HEAD. Main and active PRs were checked before implementation;
 the search returned no open PRs. Main was checked again before delivery.
+The initial results below describe the original V5a implementation. The P2
+follow-up at the end records the context-binding correction and current tests.
 
 The [technical contract](stage9_observer_image_v5a.md) defines the static
 mapping, unsupported transformations, unresolved mappings and V5b boundary.
@@ -124,3 +126,72 @@ Authenticated time = UNVERIFIED
 Durable anti-rollback = BLOCKED
 Runtime qualification = BLOCKED
 ```
+
+## P2 follow-up: complete V4b/V4c context binding
+
+The reviewed PR HEAD was exactly
+`8ec11912e0b1640b94cf5bd6b6045b2a79ebecff`; its seven-file PR diff and
+`_apt()` implementation were checked before making changes. Two negative
+assertions were run against that code before the fix. Both failed because the
+mapper returned `MATCH`, nonempty `mapped_files` and `CALLER_CLAIM_BOUND`.
+
+| Substitution, retaining the same Release SHA-256 | Before | After |
+| --- | --- | --- |
+| V4c state selects another `repository_id` | Incorrect `MATCH` | `MISMATCH`, `REPOSITORY_MISMATCH` |
+| V4c state selects another `context_sha256` | Incorrect `MATCH` | `MISMATCH`, `CONTEXT_BINDING_REJECTED` |
+
+The V5a-only correction adds an optional closed `apt_context` record to both
+the independent expected image and mapping, with exact `repository_id`,
+`snapshot_id` and `context_sha256`. Both declarations must agree. Stronger
+V4b/V4c evidence additionally requires the complete `AptEvidenceV5a.trust_context`.
+Its digest is computed by the unchanged `context_sha256_v4c()` contract after
+bounded V5a resource accounting. Repository, snapshot ID, Release hash and
+context digest are checked against the pinned selection; V4c's repository,
+context digest and snapshot hash must match. The Gpgv evidence is checked
+against the selected context's existing signer policy. Missing data refuses
+instead of preserving a stronger partial binding.
+
+The context hash covers all context fields, including ordered signer and
+algorithm arrays, keyring identity, time rules and external-authority references.
+The expected-image byte pin also covers the new selection. Substituting the
+context and V4c state together cannot replace that independent expectation.
+No context hash is synthesized from only a selected subset of fields.
+
+The former no-context V4a-only input remains supported when both documents omit
+`apt_context`. Previously accepted V4b/V4c inputs without a complete pinned
+context now refuse. The technical contract documents this deliberate V5a
+tightening; no V1–V4 source, contract, operator evidence or CI scope changed.
+
+Current validation on the same unprivileged Linux/Python 3.12 environment:
+
+| Check | P2 outcome |
+| --- | --- |
+| V5a suite | **153 passed**, no skips/xfails; **99%** coverage, 508 statements, 100 branches, no partial branches |
+| Combined V1/V2/V3/V4/V5a selection | **2298 passed, 30 skipped** |
+| CI workflow contracts and secret hygiene | **289 passed** (276 + 13), no skips |
+| Full workflow Ruff/335-file format; exact all-files format hook; full pre-commit | PASS |
+| Configured mypy Linux/Win32 | PASS, 403 source files per target |
+| Betterleaks staged and complete working-tree scans | PASS, zero leaks |
+| Semgrep blocking rules and rule fixtures | PASS, zero findings; **5/5 fixtures** |
+| Maintained community rules on V5a | PASS, 200 rules, zero findings/errors |
+| Diff scope/whitespace review | PASS, four V5a implementation/test/documentation files |
+
+The combined pytest command is the regression selection above plus
+`tests/deployment/test_stage9_observer_image_v5a.py`; quality commands and
+configured scopes are unchanged. Pre-fix red assertions, post-fix JUnit,
+coverage and scanner reports are retained separately in the workspace under
+`work/v5a-p2`, not committed as operator evidence. The 30 skips still require
+the unavailable local `gpgv`; no new skip or xfail was added. Native Windows
+execution remains unavailable; configured Win32 mypy and portable byte fixtures
+were checked. The earlier full community scan's existing findings/limitations
+remain recorded above; the new P2 source has a separate clean community scan.
+
+Residual limits: these checks establish consistency of supplied claims, not
+authenticated execution of V4b/V4c, independent authority acceptance or runtime
+qualification. V5a has no independently selected checkpoint identity; another
+structurally valid checkpoint for the same pinned repository/context/snapshot
+is not distinguished merely by these new checks. Its supplied result is still
+included in the evidence hash. No checkpoint authenticity, authenticated time
+or durable anti-rollback claim is added. All eight blocked/unverified Stage 9,
+Observer 3A, Stage 3B, production, authority, time, rollback and runtime statuses
+above remain unchanged. The existing PR stays a draft and is not merged.

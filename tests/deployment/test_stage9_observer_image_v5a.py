@@ -601,6 +601,29 @@ def test_corresponding_v4a_measurement_is_bound_without_authenticating_it(case: 
 
 def _signature_evidence(case: ImageCase) -> Any:
     evidence = _evidence(case)
+    context = v4b.TrustContextV4b(
+        "TEST-context",
+        1,
+        (v4b.SignerRuleV4b("1" * 40, "2" * 40, 0, 1000),),
+        ((22, 8),),
+        "EXACT_SIGNING_PRIMARY_PAIRS",
+        "TEST-repository",
+        "TEST-snapshot",
+        _SNAPSHOT,
+        _sha(b"TEST-keyring"),
+        0,
+        1000,
+        False,
+        v4b.TimeRulesV4b(100, 300, 0),
+        v4b.ExternalAuthorityReferenceV4b("TEST-authority", "TEST-reference", "TEST-delivery"),
+    )
+    selection = {
+        "repository_id": "TEST-repository",
+        "snapshot_id": "TEST-snapshot",
+        "context_sha256": v4c.context_sha256_v4c(context),
+    }
+    case.expected["apt_context"] = copy.deepcopy(selection)
+    case.mapping["apt_context"] = copy.deepcopy(selection)
     signature = v4b.AptResultV4b(
         "VALID",
         "MATCH",
@@ -616,7 +639,21 @@ def _signature_evidence(case: ImageCase) -> Any:
         evidence.result,
         _SNAPSHOT,
     )
-    return replace(evidence, signature_result=signature)
+    return replace(evidence, signature_result=signature, trust_context=context)
+
+
+def _acceptance_evidence(case: ImageCase) -> Any:
+    evidence = _signature_evidence(case)
+    state = SnapshotStateV4c(
+        "TEST-repository",
+        "TEST-checkpoint-source",
+        "TEST-checkpoint",
+        1,
+        _SNAPSHOT,
+        v4c.context_sha256_v4c(evidence.trust_context),
+        _sha(b"checkpoint"),
+    )
+    return replace(evidence, acceptance_result=v4c.AptResultV4c("VALID", v4c._BLOCKERS, state))
 
 
 def test_v4b_and_v4c_claims_remain_unverified_and_unchanged_after_match(case: ImageCase) -> None:
@@ -627,7 +664,7 @@ def test_v4b_and_v4c_claims_remain_unverified_and_unchanged_after_match(case: Im
         "TEST-checkpoint",
         1,
         _SNAPSHOT,
-        _sha(b"context"),
+        v4c.context_sha256_v4c(evidence.trust_context),
         _sha(b"checkpoint"),
     )
     # Real V4c technical success retains these four blockers in reason_codes;
@@ -685,7 +722,7 @@ def test_invalid_or_unrelated_v4c_claim_never_bypasses_existing_boundary(
         "TEST-checkpoint",
         1,
         _SNAPSHOT,
-        _sha(b"context"),
+        v4c.context_sha256_v4c(evidence.trust_context),
         _sha(b"checkpoint"),
     )
     acceptance = v4c.AptResultV4c("VALID", v4c._BLOCKERS, state)
@@ -700,6 +737,233 @@ def test_invalid_or_unrelated_v4c_claim_never_bypasses_existing_boundary(
     else:
         evidence = replace(evidence, signature_result=None)
     _refused(case.verify(apt_evidence=replace(evidence, acceptance_result=acceptance)))
+
+
+def test_v4b_context_matches_independent_selection_without_granting_acceptance(
+    case: ImageCase,
+) -> None:
+    evidence = _signature_evidence(case)
+    before = copy.deepcopy(evidence)
+    result = case.verify(apt_evidence=evidence)
+    assert result.consistency == "MATCH", result.reason_codes
+    assert result.v4_binding == "CALLER_CLAIM_BOUND"
+    assert evidence == before
+    _blocked(result)
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("repository_id", "TEST-other-repository"),
+        ("context_sha256", _sha(b"other context with same snapshot")),
+    ],
+)
+def test_same_release_cannot_rebind_v4c_to_other_repository_or_context(
+    case: ImageCase, field: str, value: str
+) -> None:
+    evidence = _acceptance_evidence(case)
+    baseline = case.verify(apt_evidence=evidence)
+    assert baseline.consistency == "MATCH", baseline.reason_codes
+    original_state = evidence.acceptance_result.proposed_state
+    swapped = replace(original_state, **{field: value})
+    acceptance = replace(evidence.acceptance_result, proposed_state=swapped)
+    before = copy.deepcopy(evidence)
+    result = case.verify(apt_evidence=replace(evidence, acceptance_result=acceptance))
+    assert result.consistency == "MISMATCH"
+    _refused(
+        result,
+        "REPOSITORY_MISMATCH" if field == "repository_id" else "CONTEXT_BINDING_REJECTED",
+    )
+    assert evidence == before
+
+
+@pytest.mark.parametrize(
+    "part",
+    [
+        "repository_id",
+        "snapshot_id",
+        "context_id",
+        "keyring_sha256",
+        "time_rules",
+        "external_authority",
+    ],
+)
+def test_substituted_v4b_context_cannot_reuse_same_release_hash(case: ImageCase, part: str) -> None:
+    evidence = _signature_evidence(case)
+    context = evidence.trust_context
+    substitutions = {
+        "repository_id": "TEST-other-repository",
+        "snapshot_id": "TEST-other-snapshot",
+        "context_id": "TEST-other-context",
+        "keyring_sha256": _sha(b"other keyring"),
+        "time_rules": replace(context.time_rules, maximum_signature_age_seconds=301),
+        "external_authority": v4b.ExternalAuthorityReferenceV4b(
+            "TEST-other-authority", "TEST-reference", "TEST-delivery"
+        ),
+    }
+    changed = replace(context, **{part: substitutions[part]})
+    _refused(case.verify(apt_evidence=replace(evidence, trust_context=changed)))
+
+
+@pytest.mark.parametrize("part", ["repository_id", "keyring_sha256"])
+def test_simultaneous_context_and_v4c_state_swap_cannot_replace_independent_selection(
+    case: ImageCase, part: str
+) -> None:
+    evidence = _acceptance_evidence(case)
+    context = replace(
+        evidence.trust_context,
+        **{part: "TEST-other-repository" if part == "repository_id" else _sha(b"other keyring")},
+    )
+    state = replace(
+        evidence.acceptance_result.proposed_state,
+        repository_id=context.repository_id,
+        context_sha256=v4c.context_sha256_v4c(context),
+    )
+    changed = replace(
+        evidence,
+        trust_context=context,
+        acceptance_result=replace(evidence.acceptance_result, proposed_state=state),
+    )
+    _refused(case.verify(apt_evidence=changed))
+
+
+@pytest.mark.parametrize(
+    "part",
+    [
+        "missing-context",
+        "missing-expected-pin",
+        "missing-mapping-pin",
+        "missing-both-pins",
+        "missing-evidence",
+    ],
+)
+def test_stronger_v4_claims_require_full_context_and_both_document_pins(
+    case: ImageCase, part: str
+) -> None:
+    evidence = _acceptance_evidence(case)
+    if part == "missing-context":
+        evidence = replace(evidence, trust_context=None)
+    elif part == "missing-expected-pin":
+        case.expected.pop("apt_context")
+    elif part == "missing-mapping-pin":
+        case.mapping.pop("apt_context")
+    elif part == "missing-both-pins":
+        case.expected.pop("apt_context")
+        case.mapping.pop("apt_context")
+    else:
+        evidence = None
+    _refused(case.verify(apt_evidence=evidence))
+
+
+@pytest.mark.parametrize("document", ["expected", "mapping"])
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("repository_id", "TEST-other-repository"),
+        ("snapshot_id", "TEST-other-snapshot"),
+        ("context_sha256", "1" * 64),
+    ],
+)
+def test_mixed_independent_and_mapping_context_selections_are_refused(
+    case: ImageCase, document: str, field: str, value: str
+) -> None:
+    evidence = _signature_evidence(case)
+    declaration = case.expected if document == "expected" else case.mapping
+    declaration["apt_context"][field] = value
+    _refused(case.verify(apt_evidence=evidence))
+
+
+@pytest.mark.parametrize(
+    "selection",
+    [
+        None,
+        {},
+        {"repository_id": "TEST-repository"},
+        {"repository_id": True, "snapshot_id": "TEST-snapshot", "context_sha256": "1" * 64},
+        {
+            "repository_id": "TEST-repository",
+            "snapshot_id": "TEST-snapshot",
+            "context_sha256": "1" * 64,
+            "unknown": "field",
+        },
+    ],
+)
+def test_context_selection_has_closed_fields_and_strict_types(
+    case: ImageCase, selection: Any
+) -> None:
+    evidence = _signature_evidence(case)
+    case.expected["apt_context"] = copy.deepcopy(selection)
+    case.mapping["apt_context"] = copy.deepcopy(selection)
+    _refused(case.verify(apt_evidence=evidence))
+
+
+def test_context_pin_substitution_cannot_replace_expected_image_byte_pin(case: ImageCase) -> None:
+    evidence = _acceptance_evidence(case)
+    original_pin = _sha(case.expected_raw)
+    context = replace(evidence.trust_context, context_id="TEST-substituted-context")
+    digest = v4c.context_sha256_v4c(context)
+    case.expected["apt_context"]["context_sha256"] = digest
+    case.mapping["apt_context"]["context_sha256"] = digest
+    state = replace(evidence.acceptance_result.proposed_state, context_sha256=digest)
+    changed = replace(
+        evidence,
+        trust_context=context,
+        acceptance_result=replace(evidence.acceptance_result, proposed_state=state),
+    )
+    _refused(
+        case.verify(apt_evidence=changed, expected_image_sha256=original_pin), "ARTIFACT_MISMATCH"
+    )
+
+
+@pytest.mark.parametrize("part", ["signer", "algorithm", "revoked-signer", "signature-time"])
+def test_bound_context_rechecks_signer_policy_instead_of_accepting_status_claim(
+    case: ImageCase, part: str
+) -> None:
+    evidence = _signature_evidence(case)
+    context = evidence.trust_context
+    signature = evidence.signature_result
+    if part == "signer":
+        signature = replace(
+            signature, evidence=replace(signature.evidence, signing_fingerprint="3" * 40)
+        )
+    elif part == "algorithm":
+        signature = replace(signature, evidence=replace(signature.evidence, public_key_algorithm=1))
+    elif part == "revoked-signer":
+        context = replace(
+            context, allowed_signers=(replace(context.allowed_signers[0], revoked=True),)
+        )
+        digest = v4c.context_sha256_v4c(context)
+        case.expected["apt_context"]["context_sha256"] = digest
+        case.mapping["apt_context"]["context_sha256"] = digest
+    else:
+        signature = replace(
+            signature, evidence=replace(signature.evidence, signature_timestamp=999)
+        )
+    _refused(
+        case.verify(
+            apt_evidence=replace(evidence, trust_context=context, signature_result=signature)
+        )
+    )
+
+
+def test_oversized_context_signer_tuple_is_refused_with_no_partial_binding(case: ImageCase) -> None:
+    evidence = _signature_evidence(case)
+    context = replace(
+        evidence.trust_context, allowed_signers=evidence.trust_context.allowed_signers * 8193
+    )
+    _refused(case.verify(apt_evidence=replace(evidence, trust_context=context)))
+
+
+def test_context_processing_uses_same_deadline_and_discards_completed_mapping(
+    case: ImageCase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    evidence = _acceptance_evidence(case)
+
+    def exhausted(context: Any) -> str:
+        raise offline.contract.ContractRefusal("LIMIT_EXCEEDED")
+
+    monkeypatch.setattr(v4c, "context_sha256_v4c", exhausted)
+    _refused(case.verify(apt_evidence=evidence), "LIMIT_EXCEEDED")
 
 
 def test_arbitrary_nested_dataclass_is_not_serialized_as_evidence(case: ImageCase) -> None:
