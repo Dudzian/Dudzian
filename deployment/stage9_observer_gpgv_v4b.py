@@ -364,10 +364,12 @@ def verify_detached_v4b(
     Caller-selected tool/keyring pins are measurements, not independent trust
     approval. No configuration, user environment, key import or key retrieval
     participates. All three output channels share a strict cumulative ceiling.
+    Root is refused before opening the selected tool or starting a subprocess.
     """
     try:
         if sys.platform != "linux":
             raise GpgvRefusalV4b("GPGV_INPUT_REJECTED")
+        _require(os.geteuid() != 0)
         _require(hasattr(os, "memfd_create"))
         _require(type(limits) is GpgvLimitsV4b)
         _require(

@@ -113,6 +113,32 @@ def test_complete_machine_status_produces_only_crypto_evidence(harness: ChildHar
     assert not hasattr(evidence, "acceptance")
 
 
+def test_root_refuses_before_tool_open_or_process_start(
+    harness: ChildHarness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    harness.emit(_status())
+    monkeypatch.setattr(gpgv.os, "geteuid", lambda: 0)
+
+    def forbid_open(*args: Any, **kwargs: Any) -> Any:
+        pytest.fail("Root refusal must precede opening the selected tool")
+
+    monkeypatch.setattr(gpgv.os, "open", forbid_open)
+    _refused(harness, "GPGV_INPUT_REJECTED")
+    assert not harness.commands
+
+
+@pytest.mark.parametrize("euid", [1, 1000, 65534])
+def test_unprivileged_uid_preserves_verification(
+    harness: ChildHarness, monkeypatch: pytest.MonkeyPatch, euid: int
+) -> None:
+    monkeypatch.setattr(gpgv.os, "geteuid", lambda: euid)
+    harness.emit(_status())
+    evidence = harness.verify()
+    assert evidence.signing_fingerprint == TEST_FINGERPRINT
+    assert evidence.primary_fingerprint == TEST_FINGERPRINT
+    assert len(harness.commands) == 1
+
+
 def test_exact_subkey_and_primary_are_distinct_evidence(harness: ChildHarness) -> None:
     harness.emit(_status(signing=TEST_OTHER_SIGNING_FINGERPRINT))
     evidence = harness.verify()

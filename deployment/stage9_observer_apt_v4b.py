@@ -293,7 +293,12 @@ def _selection(
 
 
 def _frozen_archive(reader: _InputReader, path: str, size: int, digest: str) -> int:
-    """Hash and seal one bounded DEB copy; parse that same immutable descriptor."""
+    """Hash and seal one bounded DEB copy; parse that same immutable descriptor.
+
+    Reserve the complete kernel-backed copy plus a chunk before allocation.
+    Earlier reservations, closed DEB copies and deleted metadata are not refunded;
+    the final tree scan still needs its own reservation after archive parsing.
+    """
     if sys.platform != "linux":
         raise _Refusal("BYTE_BINDING_UNPROVEN")
     import fcntl
@@ -344,6 +349,8 @@ def verify_apt_signature_v4b(
     Original paths are monitored; immutable Release bytes and sealed DEB copies
     prevent a signature/check-chain byte swap within this invocation. This is
     not independent acceptance of the tool, kernel, loader or runtime isolation.
+    The effective DEB ceiling is smaller than max_file_bytes: cumulative memory
+    reservations cover each complete sealed copy and the final inventory scan.
     """
     reader: _InputReader | None = None
     budget: _Budget | None = None

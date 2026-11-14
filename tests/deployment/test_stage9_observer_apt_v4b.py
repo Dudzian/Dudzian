@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import errno
+import gzip
 import hashlib
 import os
 import sys
@@ -26,7 +27,11 @@ from tests.deployment.test_stage9_observer_apt_v4b_crypto import (
     local_gpgv_tool,
     runtime_test_signer,
 )
-from tests.deployment.test_stage9_observer_package_v3 import build_package_case
+from tests.deployment.test_stage9_observer_package_v3 import (
+    PackageCase,
+    _ar_fixture,
+    build_package_case,
+)
 
 fcntl = pytest.importorskip("fcntl", reason="V4b sealed descriptors require Linux fcntl")
 pytestmark = [
@@ -454,6 +459,200 @@ def test_late_failure_discards_all_evidence(
 )
 def test_resource_limits_never_publish_partial_success(case: BoundaryCase, limits: Limits) -> None:
     _refused(case.verify(limits=limits), "LIMIT_EXCEEDED")
+
+
+def _resize_inert_archive(package: PackageCase, size: int) -> None:
+    """Build a valid, exact even-sized ar using inert TAR tail and gzip name bytes."""
+    assert size % 2 == 0
+    control = package.entries[1][1]
+    if package.entries[1][0].endswith(".gz"):
+        control = gzip.decompress(control)
+    compressed = gzip.compress(control, mtime=0)
+    # Three ar headers, debian-binary's four bytes, and the global header.
+    overhead = 192
+    name_bytes = (size - overhead - len(compressed) - 1) % 512
+    control_body = (
+        compressed[:3] + b"\x08" + compressed[4:10] + b"X" * name_bytes + b"\0" + compressed[10:]
+    )
+    data_size = size - overhead - len(control_body)
+    assert data_size >= 5120 and data_size % 512 == 0
+    data = package.entries[2][1][:data_size].ljust(data_size, b"\0")
+    package.entries = [package.entries[0], ("control.tar.gz", control_body), ("data.tar", data)]
+    package.package["data"].update(unpacked_bytes=len(data), unpacked_sha256=_sha(data))
+    package.rebind_archive(_ar_fixture(package.entries))
+    assert package.path.stat().st_size == size
+
+
+def _refresh_boundary(case: BoundaryCase) -> None:
+    case.chain.refresh()
+    case.declaration = case.chain.declaration
+    case.context = replace(case.context, release_sha256=case.declaration.release_sha256)
+
+
+def _archive_reservations(case: BoundaryCase) -> tuple[int, int]:
+    """Independent arithmetic for these plain-index fixtures, before any DEB copy."""
+    packages = case.chain.package_case.declaration["packages"]
+    inventory = 16 * len(case.chain.inventory_raw)
+    for package in packages:
+        for name in ("control", "data"):
+            inventory += 4096 + sum(
+                4096 + 8 * (len(record["name"].encode()) + len(record["linkname"].encode()))
+                for record in package[name]["records"]
+            )
+    paths: set[str] = set()
+    for path in (
+        case.declaration.release_path,
+        case.declaration.packages_path,
+        case.signature.signature_path,
+        case.signature.keyring_path,
+        *(package["filename"] for package in packages),
+    ):
+        parts = path.split("/")
+        paths.update("/".join(parts[:depth]) for depth in range(1, len(parts) + 1))
+    scan = sum(512 + 8 * len(path) for path in paths)
+    metadata = 16 * (
+        case.declaration.release_size
+        + case.declaration.packages_size
+        + case.signature.signature_size
+        + case.signature.keyring_size
+    )
+    before = inventory + Limits().chunk_bytes * 8 + 1048576 + 2 * scan + metadata
+    return before, scan
+
+
+def test_default_complete_archive_ceiling_includes_final_scan_and_earlier_reservations(
+    case: BoundaryCase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    limits = Limits()
+    package = case.chain.package_case
+    _resize_inert_archive(package, 30 * 1024 * 1024)
+    _refresh_boundary(case)
+    before, scan = _archive_reservations(case)
+    ceiling = limits.working_memory_bytes - before - limits.chunk_bytes - scan
+    assert 30 * 1024 * 1024 < ceiling < 31 * 1024 * 1024
+    _resize_inert_archive(package, ceiling)
+    _refresh_boundary(case)
+    assert _archive_reservations(case) == (before, scan)
+    finished: list[int] = []
+    original_finish = apt._InputReader.finish
+
+    def finish(reader: Any, expected: Any) -> None:
+        try:
+            original_finish(reader, expected)
+        finally:
+            finished.append(reader.budget.retained)
+
+    monkeypatch.setattr(apt._InputReader, "finish", finish)
+    result = case.verify()
+    assert result.cryptographic_signature == "VALID", result.reason_codes
+    assert result.v4a is not None and result.v4a.packages[0].archive_bytes == ceiling
+    assert finished == [limits.working_memory_bytes]
+    _blocked(result)
+    # The identical valid archive fails with exactly one less budget byte.
+    _refused(
+        case.verify(limits=replace(limits, working_memory_bytes=limits.working_memory_bytes - 1)),
+        "LIMIT_EXCEEDED",
+    )
+    # A single legal JSON whitespace byte consumes sixteen earlier reserved bytes.
+    _refused(case.verify(inventory_raw=case.chain.inventory_raw + b" "), "LIMIT_EXCEEDED")
+    # Valid ar lengths are even: +2 is the next representable complete DEB size.
+    _resize_inert_archive(package, ceiling + 2)
+    _refresh_boundary(case)
+    assert _archive_reservations(case) == (before, scan)
+    _refused(case.verify(), "LIMIT_EXCEEDED")
+    assert finished == [
+        limits.working_memory_bytes,
+        limits.working_memory_bytes,
+        limits.working_memory_bytes + 16,
+        limits.working_memory_bytes + 2,
+    ]
+
+
+def test_default_copy_admission_ceiling_refuses_one_more_byte_before_memfd_creation(
+    case: BoundaryCase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    limits = Limits()
+    package = case.chain.package_case
+    _resize_inert_archive(package, 30 * 1024 * 1024)
+    _refresh_boundary(case)
+    before, scan = _archive_reservations(case)
+    ceiling = limits.working_memory_bytes - before - limits.chunk_bytes
+    _resize_inert_archive(package, ceiling)
+    _refresh_boundary(case)
+    assert _archive_reservations(case) == (before, scan)
+    created: list[str] = []
+    copied: list[int] = []
+    original_create, original_copy = apt.os.memfd_create, apt._frozen_archive
+
+    def create(name: str, flags: int) -> int:
+        created.append(name)
+        return original_create(name, flags)
+
+    def copy(reader: Any, path: str, size: int, digest: str) -> int:
+        descriptor = original_copy(reader, path, size, digest)
+        copied.append(size)
+        return descriptor
+
+    monkeypatch.setattr(apt.os, "memfd_create", create)
+    monkeypatch.setattr(apt, "_frozen_archive", copy)
+    # Copy admission succeeds at equality; the mandatory final scan still refuses.
+    _refused(case.verify(), "LIMIT_EXCEEDED")
+    assert copied == [ceiling] and len(created) == 1
+    package.rebind_archive(package.path.read_bytes() + b"\0")
+    _refresh_boundary(case)
+    assert _archive_reservations(case) == (before, scan)
+    _refused(case.verify(), "LIMIT_EXCEEDED")
+    assert copied == [ceiling] and len(created) == 1
+
+
+def test_default_two_package_budget_retains_closed_copies_until_final_scan(
+    case: BoundaryCase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    limits = Limits()
+    first = case.chain.package_case
+    second = build_package_case(case.chain.directory, package="libpython3.12-minimal")
+    first.declaration["packages"].append(second.package)
+    for package in (first, second):
+        _resize_inert_archive(package, 15 * 1024 * 1024)
+    _refresh_boundary(case)
+    before, scan = _archive_reservations(case)
+    second_size = (
+        limits.working_memory_bytes - before - 2 * limits.chunk_bytes - scan - first.package["size"]
+    )
+    _resize_inert_archive(second, second_size)
+    _refresh_boundary(case)
+    assert _archive_reservations(case) == (before, scan)
+    retained: list[int] = []
+    original_copy = apt._frozen_archive
+
+    def copy(reader: Any, path: str, size: int, digest: str) -> int:
+        retained.append(reader.budget.retained)
+        return original_copy(reader, path, size, digest)
+
+    monkeypatch.setattr(apt, "_frozen_archive", copy)
+    result = case.verify()
+    assert result.cryptographic_signature == "VALID", result.reason_codes
+    assert result.v4a is not None and len(result.v4a.packages) == 2
+    assert retained == [before, before + first.package["size"] + limits.chunk_bytes]
+    _blocked(result)
+    _refused(
+        case.verify(limits=replace(limits, working_memory_bytes=limits.working_memory_bytes - 1)),
+        "LIMIT_EXCEEDED",
+    )
+
+
+@pytest.mark.parametrize("size", [32 * 1024 * 1024, 64 * 1024 * 1024, 64 * 1024 * 1024 + 1])
+def test_default_file_ceiling_does_not_imply_copy_admission(
+    case: BoundaryCase, monkeypatch: pytest.MonkeyPatch, size: int
+) -> None:
+    case.chain.package_case.package["size"] = size
+    _refresh_boundary(case)
+
+    def unexpected(*args: Any, **kwargs: Any) -> Any:
+        pytest.fail("The memory or declaration ceiling must refuse before creating a DEB memfd")
+
+    monkeypatch.setattr(apt.os, "memfd_create", unexpected)
+    _refused(case.verify(), "LIMIT_EXCEEDED")
 
 
 @pytest.mark.parametrize(

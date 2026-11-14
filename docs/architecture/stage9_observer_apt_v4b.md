@@ -145,6 +145,99 @@ V4a itself is unchanged. Its existing API, fixtures, refusal semantics and
 `NOT_PERFORMED` signature field remain regression requirements. V1–V3 remain
 separate historical contracts.
 
+## Effective DEB size under the shared budget
+
+`Limits()` sets `max_file_bytes=67,108,864` (64 MiB),
+`working_memory_bytes=33,554,432` (32 MiB), and `chunk_bytes=65,536`.
+The 64 MiB declaration ceiling is not an achievable default DEB copy size.
+`_frozen_archive()` reserves the entire `size + chunk_bytes` before creating
+its `memfd`. The copy already reads and hashes bounded chunks; it does not
+construct a whole-DEB Python byte value. The full-size reservation accounts
+conservatively for the kernel-backed immutable copy.
+
+Let `M` be the working-memory ceiling, `C` the chunk size, and `R` the retained
+budget immediately before the first DEB. For an accepted input tree, define
+`S = sum(512 + 8 * len(relative_path))` over every selected file and ancestor
+directory. Paths in this API are ASCII. The exact earlier reservation is:
+
+```text
+I = 16 * len(inventory_raw)
+    + sum_over_each_control_and_data_inventory(
+        4096 + sum_over_records(4096 + 8 * (UTF8_name_bytes + UTF8_linkname_bytes)))
+A = 16 * (Release_size + signature_size + keyring_size + selected_index_size)
+G = 0                                                   for Packages
+G = 262144 + 4*C + 16*decoded_index_size                 for Packages.gz
+R = I + (8*C + 1048576) + 2*S + A + G
+```
+
+The `2*S` comprises the expected-tree model and the initial directory scan.
+For gzip indexes, `G` describes the retained value after successful decoding;
+each temporary decompression allowance must also fit when reserved. Parsing,
+metadata and decoder limits may refuse before a DEB is reached.
+
+For DEB `i`, of size `D_i`, the copy-admission condition is exactly:
+
+```text
+8 <= D_i <= min(max_file_bytes, M - R - sum_previous(D_j + C) - C)
+```
+
+This is a necessary size condition, not evidence of valid archive structure.
+The `_Budget` reservations are cumulative: deleting metadata values or closing
+a sealed DEB does not refund them. Multiple DEBs therefore share the remaining
+allowance; the limit is not independently available to every package.
+Furthermore, the mandatory `reader.finish()` performs another directory scan
+and reserves another `S`. With raw/gzip DEB members, the complete operation's
+retained-budget condition is:
+
+```text
+sum(D_i) + number_of_DEBs*C + R + S <= M
+single DEB: D <= min(max_file_bytes, M - R - C - S)
+```
+
+Every other check still applies, including total input reads, unpacked bytes,
+record counts, TAR-inventory memory, complete hashes, format, deadline and
+cleanup. For Zstandard members, each decoder additionally requires
+`window_size + estimate_decompression_context_size() + 524288` bytes from
+`M - budget.retained` at decoder creation. Its content/window/ratio and native
+memory checks can narrow the admitted range further. There is consequently
+no universal exact default maximum independent of the selected metadata,
+inventory, paths, compression and number of DEBs.
+
+Even ignoring all positive metadata/tree/inventory allowances, one default
+DEB must be smaller than `31,916,032` bytes (30.4375 MiB), because the fixed
+reservation alone consumes 1.5 MiB and the copy needs another 64 KiB. The
+actual complete-operation limit is lower. The public regression fixture with
+one gzip control member and one raw data member has `R=1,723,520` and
+`S=3,272`: copying admits at most **31,765,376 bytes**, while full local success
+admits at most **31,762,104 bytes** (about 30.291 MiB). Its complete valid DEB
+at equality succeeds; the next valid ar size, two bytes larger, refuses during
+the final scan. The same valid archive fails if the memory ceiling is tightened
+by one byte. One additional legal JSON whitespace byte reserves sixteen more
+bytes and likewise refuses at that boundary. At the separate copy-admission
+boundary, one additional declared byte refuses before `memfd` allocation.
+All refusals discard the cryptographic and package evidence. The two-package
+boundary test also checks that closing the first copy does not restore budget.
+
+### Possible future copy-accounting model
+
+A separate model could retain chunked copying and track live sealed-archive
+storage independently from Python buffers and decoder workspace. An explicit
+hard cap on aggregate live `memfd` bytes, reservations before allocation, and
+release only after confirmed descriptor closure could avoid charging closed
+copies cumulatively. This could process larger declared inputs with bounded
+Python buffers and describe peak resource use more accurately.
+
+Charging only a chunk would instead omit kernel `memfd` storage. Those pages
+consume memory or swap and can cause host/cgroup pressure or allocation
+failure; streaming alone is not a hard RSS or system-isolation boundary.
+Any replacement would need an independently enforced memory/storage quota,
+decoder and concurrent-buffer accounting, bounded reads and writes (including
+short-write handling), unchanged exact-size/hash and original-descriptor
+mutation checks, mandatory seal/readback before parsing, deadlines and
+fail-closed cleanup on every failure. Neither reopening a mutable pathname
+nor parsing before sealing is a substitute. This remediation does not adopt
+that model, increase any limit, refund reservations, or change V4a.
+
 ## Bounded local `gpgv` execution
 
 `verify_detached_v4b(*, release, signature, keyring, tool,
@@ -153,6 +246,11 @@ limits=GpgvLimitsV4b())` returns `GpgvEvidenceV4b` or a controlled
 absolute executable selection plus SHA-256 pin and exact keyring bytes selected
 by the caller. Hash agreement establishes only local byte identity, not
 independent approval of the tool or keyring.
+
+The public adapter itself refuses effective UID zero with
+`GPGV_INPUT_REJECTED` before opening the selected tool or starting a subprocess.
+This check supplements the outer APT verifier's root refusal; it does not
+establish independent tool acceptance or operating-system isolation.
 
 The invocation uses an argument vector, never a shell, and a fresh private
 working/home directory with a closed environment. It does not consult system
