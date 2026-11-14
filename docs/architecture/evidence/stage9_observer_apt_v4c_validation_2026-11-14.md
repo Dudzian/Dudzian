@@ -158,3 +158,91 @@ Even the complete correctly signed TEST bundle refuses production authorization.
 There is no production root enrollment, clock adapter, current checkpoint
 service, atomic durable state writer, automatic key rotation, network key/policy
 retrieval or V5 implementation in this change.
+
+## P2: full V4b → V4c integration evidence
+
+The P2 follow-up starts from the verified PR #3271 HEAD
+`9008efeb3acfa1aebe5d1563b5ee72a8c69387b3`. Before editing, the remote head,
+local head and clean checkout matched; the existing diff contained eleven
+files, 3,118 additions and one deletion. All eight exact-head PR workflows were
+still queued. Their pending state is separate from completed local checks.
+
+The follow-up changes only the existing V4c test module and this evidence
+record. It adds a genuine local `gpgv` path from an inert Release → Packages →
+DEB fixture through `verify_apt_signature_v4b()` into
+`verify_apt_acceptance_v4c()`. The returned V4b object is passed unchanged;
+the real integration path neither constructs `AptResultV4b` nor mocks the
+signature verifier. The original constructed-result unit cases remain useful
+separate tests. A shared TEST-material factory signs acceptance, evaluation-time
+evidence and both candidate/predecessor checkpoints around either input path.
+
+Disposable GnuPG TEST keys sign the exact dated Release bytes. Separate
+in-memory Ed25519 TEST keys sign the V4c contracts. The successful path checks
+complete V4b chain evidence, a technically valid immutable proposal, unchanged
+predecessor/V4b inputs, and all fixed blocked authorization/qualification fields.
+No investigated package or installer is executed.
+
+Negative cases cover Release replacement after signing, an invalid APT
+signature, an APT signer outside the context policy, substituted V4b context,
+invalid V4c acceptance/checkpoint signatures, rollback, mismatched predecessor
+hash and missing/mismatched evaluation-time evidence. Stage-specific reason
+assertions distinguish the intended failures; every V4c refusal contains no
+proposed state. Release/signature declaration hashes are refreshed after
+tampering so the APT negative cases exercise real crypto/policy validation.
+
+The available local verifier was GnuPG `gpgv` 2.4.7, SHA-256
+`3f29dddc10e4089aeac5b2675313f4e5fe822abe5ab3bf7898d238c32d758304`;
+GnuPG `gpg` 2.4.7 generated only disposable TEST signing material. This tool
+selection is test provenance, not independent tool approval. Tests require a
+nonroot Linux environment and provisioned local tools; unavailable requirements
+are reported as SKIPPED, with no mock fallback and no runtime download.
+
+Neither the supplied Python result object nor this successful test is an
+independently authenticated proof of execution. Root acceptance, authenticated
+current time, checkpoint currentness, durable state and runtime qualification
+remain open exactly as recorded in the contract. This follow-up closes a P2
+integration-evidence gap; it does not change the implementation, V1–V4b
+contracts, policies, Linux/Windows gates or V5 scope.
+
+Completed P2 local validation (Linux, UID 1000):
+
+| Check | Result |
+| --- | --- |
+| Genuine V4b → V4c integration | 12 passed: one positive and eleven negative cases; zero skips/failures |
+| Complete V4c suite | 385 passed: 225 composition, 89 transitions, 71 trust; zero skips/failures |
+| V1–V4b/Observer contracts and existing CI contracts | 1,968 passed; zero skips/failures |
+| Total relevant regression cases | 2,353 passed; zero skips/failures |
+| V4c branch-inclusive coverage | 99% aggregate; implementation unchanged |
+| Full workflow Ruff baseline and strict test E/F/B/I/format | Passed |
+| Configured mypy Linux/Win32 | Passed, 402 files each |
+| Exact `python -m pre_commit run ruff-format --all-files` | Passed |
+| Full all-files pre-commit, including staged offline Betterleaks | Passed |
+| Configured Semgrep / rule fixtures | Five rules, 1,134 Python targets, zero findings; 5/5 fixtures passed |
+| Community Semgrep on three V4c modules | 200 rules; zero findings/errors |
+| Betterleaks working tree / final staged set | Passed; configuration and baseline unchanged |
+| pip-audit desktop / Zstandard lock | 105 / one dependencies; zero vulnerabilities/skips |
+| Test environment `pip check` | Passed |
+
+A separate controlled missing-tool probe selected only the positive E2E test
+with a deliberately nonexistent `STAGE9_TEST_GPGV`: one explicit SKIPPED,
+224 deselected, with the missing local TEST gpgv prerequisite in the reason.
+This prerequisite probe is not part of the successful native regression counts.
+All twelve genuine integration cases executed with the available verifier.
+Fixture-local platform/tool checks preserve the portable V4c unit tests.
+
+For a provisioned nonroot Linux test environment, the targeted reproduction is:
+
+```sh
+STAGE9_TEST_GPGV=/absolute/path/to/local/gpgv python -m pytest \
+  tests/deployment/test_stage9_observer_apt_v4c.py \
+  -k real_v4b_to_v4c -q -rs -o addopts=''
+```
+
+P2 validation logs, JUnit, scanner JSON and coverage XML are intermediate local
+artifacts under `/workspace/work/p2-validation/`, outside the repository. The
+final independently reviewed diff has no unresolved scoped P0/P1/P2 finding;
+the requested integration-evidence P2 is closed. The external acceptance,
+authenticated time, durable rollback protection and runtime requirements remain
+open by design, with every authorization status above unchanged. The existing
+PR remains Draft, without merge; its published-head Actions snapshot is recorded
+separately in the PR description and is not inferred from local PASS results.

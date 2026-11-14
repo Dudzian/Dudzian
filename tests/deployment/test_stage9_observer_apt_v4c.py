@@ -2,17 +2,23 @@
 
 from __future__ import annotations
 
+import base64
 import copy
 import hashlib
 import json
-from dataclasses import dataclass, replace
-from typing import Any
+from dataclasses import FrozenInstanceError, dataclass, replace
+from pathlib import Path
+from typing import Any, Iterator
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
-from deployment import stage9_observer_apt_v4c as apt, stage9_observer_trust_v4c as trust
+from deployment import (
+    stage9_observer_apt_v4b as v4b,
+    stage9_observer_apt_v4c as apt,
+    stage9_observer_trust_v4c as trust,
+)
 from deployment.canonical_json import canonical_json_bytes
 from deployment.stage9_observer_apt_v4a import AptResultV4a
 from deployment.stage9_observer_apt_v4b import (
@@ -23,6 +29,11 @@ from deployment.stage9_observer_apt_v4b import (
 )
 from deployment.stage9_observer_checkpoint_v4c import SnapshotStateV4c
 from deployment.stage9_observer_gpgv_v4b import GpgvEvidenceV4b
+from tests.deployment.test_stage9_observer_apt_v4b_crypto import (
+    TestSignerV4b,
+    local_gpgv_tool,
+    runtime_test_signer,
+)
 
 pytestmark = [pytest.mark.security, pytest.mark.unit]
 _TIME = 1794657600
@@ -129,19 +140,21 @@ class SyntheticCase:
         self.rebind_prior_checkpoint()
 
 
-def _authority(role: str) -> tuple[Any, tuple[Ed25519PrivateKey, ...]]:
+def _authority(role: str, timestamp: int = _TIME) -> tuple[Any, tuple[Ed25519PrivateKey, ...]]:
     private = (Ed25519PrivateKey.generate(), Ed25519PrivateKey.generate())
     keys = tuple(
         trust.TestAuthorityKeyV4c(
             f"TEST-{role}-{index}",
             key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw).hex(),
-            _TIME - 3600,
-            _TIME + 3600,
+            timestamp - 3600,
+            timestamp + 3600,
         )
         for index, key in enumerate(private)
     )
     return (
-        trust.TestAuthorityV4c(f"TEST-{role}-authority", 1, keys, 2, _TIME - 3600, _TIME + 3600),
+        trust.TestAuthorityV4c(
+            f"TEST-{role}-authority", 1, keys, 2, timestamp - 3600, timestamp + 3600
+        ),
         private,
     )
 
@@ -173,9 +186,16 @@ def case() -> SyntheticCase:
         AptResultV4a("MATCH", ()),
         digest,
     )
+    return _v4c_case(context, result, _RELEASE)
+
+
+def _v4c_case(context: TrustContextV4b, result: AptResultV4b, release: bytes) -> SyntheticCase:
+    """Sign TEST V4c materials around an unchanged supplied V4b result."""
+    digest = _sha(release)
+    timestamp = context.time_rules.evaluation_time
     context_digest = apt.context_sha256_v4c(context)
     state = SnapshotStateV4c(
-        "TEST-repository",
+        context.repository_id,
         "TEST-checkpoint-source",
         "TEST-checkpoint-previous",
         4,
@@ -191,15 +211,15 @@ def case() -> SyntheticCase:
         ("checkpoint", "stage9-apt-checkpoint-v1"),
         ("time", "stage9-apt-time-evidence-v1"),
     ):
-        authorities[role], keys[role] = _authority(role)
+        authorities[role], keys[role] = _authority(role, timestamp)
         payloads[role] = {
             "schema": schema,
             "authority_id": authorities[role].authority_id,
             "policy_version": 1,
             "algorithm": "ed25519-sha256",
             "domain": schema,
-            "valid_from": _TIME - 300,
-            "valid_until": _TIME + 300,
+            "valid_from": timestamp - 300,
+            "valid_until": timestamp + 300,
             "repository_id": context.repository_id,
             "snapshot_id": context.snapshot_id,
             "context_sha256": context_digest,
@@ -219,9 +239,18 @@ def case() -> SyntheticCase:
     )
     payloads["acceptance"].update(
         keyring_sha256=context.keyring_sha256,
-        allowed_signers=[{"signing_fingerprint": _SIGNING, "primary_fingerprint": _PRIMARY}],
+        allowed_signers=sorted(
+            [
+                {
+                    "signing_fingerprint": signer.signing_fingerprint,
+                    "primary_fingerprint": signer.primary_fingerprint,
+                }
+                for signer in context.allowed_signers
+            ],
+            key=lambda signer: (signer["signing_fingerprint"], signer["primary_fingerprint"]),
+        ),
         sequence=5,
-        issued_at=_TIME - 60,
+        issued_at=timestamp - 60,
         checkpoint_sha256="0" * 64,
         rotation_policy="EXPLICIT_CONTEXT_LINK",
         revocation_policy="DENY_REVOKED",
@@ -230,9 +259,9 @@ def case() -> SyntheticCase:
     payloads["time"].update(
         proof_id="TEST-time-proof",
         time_source_id="TEST-time-source",
-        evaluation_time=_TIME,
+        evaluation_time=timestamp,
     )
-    value = SyntheticCase(context, result, _RELEASE, state, payloads, authorities, keys)
+    value = SyntheticCase(context, result, release, state, payloads, authorities, keys)
     value.rebind_checkpoint()
     value.rebind_prior_checkpoint()
     return value
@@ -909,3 +938,219 @@ def test_recomputed_prior_checkpoint_hash_cannot_hide_projection_substitution(
             observed_checkpoint_after=digest,
         )
     )
+
+
+@pytest.fixture(scope="module")
+def real_v4c_signer(tmp_path_factory: pytest.TempPathFactory) -> Iterator[TestSignerV4b]:
+    # Tool selection skips unsupported platforms/missing gpgv; it never downloads.
+    try:
+        local_gpgv_tool()
+    except FileNotFoundError:
+        pytest.skip("Full V4b -> V4c integration requires an existing local TEST gpgv")
+    with runtime_test_signer(tmp_path_factory.mktemp("TEST-v4c-signer")) as signer:
+        yield signer
+
+
+@pytest.fixture
+def real_v4b_v4c_case(tmp_path: Path, real_v4c_signer: TestSignerV4b) -> tuple[SyntheticCase, Any]:
+    # Import only after local_gpgv_tool's Linux check: this helper's module uses
+    # importorskip(fcntl), which must not skip the portable V4c contract tests.
+    from tests.deployment.test_stage9_observer_apt_v4b import _boundary
+
+    boundary = _boundary(tmp_path / "apt")
+    release = (
+        b"Date: Thu, 01 Jan 2026 00:00:00 UTC\n"
+        b"Valid-Until: Thu, 01 Jan 2026 01:00:00 UTC\n" + boundary.chain.release_path.read_bytes()
+    )
+    boundary.chain.set_release(release)
+    boundary.declaration = boundary.chain.declaration
+    signature = real_v4c_signer.sign(release)
+    (boundary.chain.directory / boundary.signature.signature_path).write_bytes(signature)
+    (boundary.chain.directory / boundary.signature.keyring_path).write_bytes(
+        real_v4c_signer.keyring
+    )
+    boundary.signature = replace(
+        boundary.signature,
+        signature_sha256=_sha(signature),
+        signature_size=len(signature),
+        keyring_sha256=_sha(real_v4c_signer.keyring),
+        keyring_size=len(real_v4c_signer.keyring),
+    )
+    timestamp = real_v4c_signer.signature_timestamp
+    boundary.context = replace(
+        boundary.context,
+        release_sha256=_sha(release),
+        keyring_sha256=boundary.signature.keyring_sha256,
+        allowed_signers=(
+            SignerRuleV4b(
+                real_v4c_signer.signing_fingerprint,
+                real_v4c_signer.primary_fingerprint,
+                timestamp - 3600,
+                timestamp + 3600,
+            ),
+        ),
+        valid_from=timestamp - 3600,
+        valid_until=timestamp + 3600,
+        # gpg's faked-system-time can advance while signing; keep evaluation
+        # separately fixed and bounded rather than assuming the same second.
+        time_rules=TimeRulesV4b(timestamp + 30, 60, 0),
+    )
+    result = v4b.verify_apt_signature_v4b(
+        boundary.chain.directory,
+        declaration=boundary.declaration,
+        signature=boundary.signature,
+        context=boundary.context,
+        inventory_raw=boundary.chain.inventory_raw,
+        tool=local_gpgv_tool(),
+    )
+    assert result.cryptographic_signature == "VALID", result.reason_codes
+    assert result.signer_policy == "MATCH"
+    assert result.evidence is not None
+    assert timestamp <= result.evidence.signature_timestamp <= timestamp + 30
+    assert result.evidence.signing_fingerprint == real_v4c_signer.signing_fingerprint
+    assert result.release_sha256 == _sha(release)
+    assert result.v4a is not None and result.v4a.consistency == "MATCH"
+    assert len(result.v4a.packages) == 1
+    assert result.v4a.packages[0].archive_sha256 == boundary.chain.package_case.package["sha256"]
+    case = _v4c_case(boundary.context, result, release)
+    assert case.result is result
+    return case, boundary
+
+
+def test_real_v4b_to_v4c_proposes_only_immutable_technical_state(
+    real_v4b_v4c_case: tuple[SyntheticCase, Any],
+) -> None:
+    """Actual gpgv and both public verifiers run in-process, without crypto mocks.
+
+    The returned V4b object demonstrates composition; it is not independently
+    authenticated execution evidence or a production authority token.
+    """
+    case, _ = real_v4b_v4c_case
+    before_result, before_state = copy.deepcopy(case.result), case.state
+    result = case.verify()
+    assert result.technical_validation == "VALID", result.reason_codes
+    proposal = result.proposed_state
+    assert proposal is not None
+    assert proposal.sequence == before_state.sequence + 1
+    assert proposal.snapshot_sha256 == _sha(case.release)
+    assert proposal.context_sha256 == apt.context_sha256_v4c(case.context)
+    assert proposal.checkpoint_sha256 == _sha(case.raw("checkpoint"))
+    with pytest.raises(FrozenInstanceError):
+        proposal.sequence = 99
+    assert case.state == before_state
+    assert case.result == before_result
+    assert case.result.external_authority_acceptance == "UNVERIFIED"
+    assert case.result.source_authenticity == "UNVERIFIED"
+    assert case.result.tool_acceptance == case.result.system_isolation == "UNVERIFIED"
+    assert case.result.freshness == case.result.checkpoint == case.result.rollback == "BLOCKED"
+    assert case.result.acceptance == case.result.qualification == "BLOCKED"
+    assert case.result.stage_9 == "IN_PROGRESS"
+    assert case.result.stage_3b == "NOT AUTHORIZED"
+    assert case.result.STAGE_3A_COMPLETE == case.result.PRODUCTION_QUALIFIED == "NO"
+    assert case.result.production_status == "PRODUCTION_NO_GO"
+    assert case.result.refused is True
+    _blocked(result)
+    assert result.STAGE_3A_COMPLETE == result.PRODUCTION_QUALIFIED == "NO"
+
+
+@pytest.mark.parametrize(
+    "mutation, expected_reason",
+    [
+        ("changed-release-after-signing", "SNAPSHOT_BINDING_REJECTED"),
+        ("invalid-apt-signature", "SNAPSHOT_BINDING_REJECTED"),
+        ("disallowed-apt-signer", "SNAPSHOT_BINDING_REJECTED"),
+        ("substituted-v4b-context", "CONTEXT_BINDING_REJECTED"),
+        ("invalid-acceptance-signature", "V4C_SIGNATURE_INVALID"),
+        ("invalid-checkpoint-signature", "V4C_SIGNATURE_INVALID"),
+        ("invalid-previous-checkpoint-signature", "V4C_SIGNATURE_INVALID"),
+        ("rollback-sequence", "SNAPSHOT_ROLLBACK"),
+        ("mismatched-predecessor-hash", "SNAPSHOT_SUCCESSOR_PROOF_REJECTED"),
+        ("missing-time-evidence", "TIME_EVIDENCE_MISSING"),
+        ("mismatched-time-evidence", "SNAPSHOT_MISMATCH"),
+    ],
+)
+def test_real_v4b_to_v4c_refuses_without_partial_proposal(
+    real_v4b_v4c_case: tuple[SyntheticCase, Any], mutation: str, expected_reason: str
+) -> None:
+    case, boundary = real_v4b_v4c_case
+    before_state = case.state
+    overrides = {}
+    if mutation in {
+        "changed-release-after-signing",
+        "invalid-apt-signature",
+        "disallowed-apt-signer",
+    }:
+        if mutation == "changed-release-after-signing":
+            original_signature = (boundary.chain.directory / "Release.gpg").read_bytes()
+            changed = b"Origin: SYNTHETIC TEST CHANGE\n" + case.release
+            boundary.chain.set_release(changed)
+            boundary.declaration = boundary.chain.declaration
+            boundary.context = replace(boundary.context, release_sha256=_sha(changed))
+            assert (boundary.chain.directory / "Release.gpg").read_bytes() == original_signature
+        elif mutation == "invalid-apt-signature":
+            signature_path = boundary.chain.directory / "Release.gpg"
+            armored = signature_path.read_bytes()
+            encoded = b"".join(
+                line
+                for line in armored.split(b"\n\n", 1)[1].splitlines()
+                if line and not line.startswith((b"=", b"-"))
+            )
+            packet = base64.b64decode(encoded, validate=True)
+            signature = packet[:-1] + bytes([packet[-1] ^ 1])
+            signature_path.write_bytes(signature)
+            boundary.signature = replace(
+                boundary.signature, signature_sha256=_sha(signature), signature_size=len(signature)
+            )
+        else:
+            boundary.context = replace(
+                boundary.context,
+                allowed_signers=(
+                    replace(boundary.context.allowed_signers[0], signing_fingerprint="C" * 40),
+                ),
+            )
+        # Propagate the actual failed public V4b result, never a fabricated or
+        # manually "repaired" AptResultV4b, across the V4c boundary.
+        case.result = v4b.verify_apt_signature_v4b(
+            boundary.chain.directory,
+            declaration=boundary.declaration,
+            signature=boundary.signature,
+            context=boundary.context,
+            inventory_raw=boundary.chain.inventory_raw,
+            tool=local_gpgv_tool(),
+        )
+        overrides["context"] = boundary.context
+        overrides["release_raw"] = boundary.chain.release_path.read_bytes()
+        assert case.result.cryptographic_signature == "UNVERIFIED"
+        assert case.result.signer_policy == "UNVERIFIED"
+        assert case.result.evidence is None and case.result.v4a is None
+        if mutation == "disallowed-apt-signer":
+            assert "SIGNER_REJECTED" in case.result.reason_codes
+        else:
+            assert case.result.reason_codes == ("GPGV_PROCESS_FAILED",)
+    elif mutation == "substituted-v4b-context":
+        overrides["context"] = replace(
+            case.context, context_version=case.context.context_version + 1
+        )
+    elif mutation.startswith("invalid-"):
+        role = "acceptance" if mutation == "invalid-acceptance-signature" else "checkpoint"
+        raw = case.previous_checkpoint_raw if "previous" in mutation else case.raw(role)
+        envelope = json.loads(raw)
+        envelope["signatures"][0]["signature_hex"] = "0" * 128
+        target = "previous_checkpoint_raw" if "previous" in mutation else f"{role}_raw"
+        overrides[target] = canonical_json_bytes(envelope)
+    elif mutation == "rollback-sequence":
+        case.payloads["acceptance"]["sequence"] = case.payloads["checkpoint"]["sequence"] = 3
+        case.rebind_checkpoint()
+    elif mutation == "mismatched-predecessor-hash":
+        case.payloads["checkpoint"]["previous_snapshot_sha256"] = "9" * 64
+        case.rebind_checkpoint()
+    elif mutation == "missing-time-evidence":
+        overrides["time_evidence_raw"] = None
+    else:
+        case.payloads["time"]["snapshot_id"] = "TEST-different-snapshot"
+    before_result = copy.deepcopy(case.result)
+    result = case.verify(**overrides)
+    _refused(result)
+    assert expected_reason in result.reason_codes
+    assert case.result == before_result
+    assert case.state == before_state
