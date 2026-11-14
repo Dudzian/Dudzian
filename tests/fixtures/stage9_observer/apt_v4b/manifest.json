@@ -1,0 +1,51 @@
+{
+  "scope": "SYNTHETIC_TEST_ONLY_NO_PRODUCTION_TRUST",
+  "fingerprints": {
+    "allowed_primary": "F0CE695C6FDE222193F947EA6072FCC9635A8E82",
+    "allowed_signing": "0FA3D4C37E2635B51588BD9F56B7F307CFFB5CC7",
+    "unknown_primary": "D84E30004C4E202AF2D4F0FD2753F0297D90E38B",
+    "unknown_signing": "A27F46AB1E43C95F69E1C431BE30E5A13B92C290",
+    "disallowed_signing_fingerprint": "C56ABA33BFBAC216B183D17747DA753F3A1A47CE"
+  },
+  "signature_timestamp": 1767225600,
+  "public_key_algorithm": 22,
+  "hash_algorithm": 8,
+  "files": [
+    {
+      "name": "Release",
+      "sha256": "9e194cf81d473f8b505881939c5486737af53d47f931d077d99e291b1f06b2f5"
+    },
+    {
+      "name": "allowed-keyring.gpg",
+      "sha256": "c77a9857699c3ea2ac09b11d643a3a1f7b9e429b78b20361b0fc79f328ee9117"
+    },
+    {
+      "name": "allowed.asc",
+      "sha256": "13f11458690fcd3d5d3bd11f03a4a6660fdbb51a64a4b58008b3297f75e9b5a6"
+    },
+    {
+      "name": "wrong-subkey.asc",
+      "sha256": "eee9a68bde7b32c74a3b37e47db84b86b04eceb775398aff2a19e8391baedc36"
+    },
+    {
+      "name": "weak-hash.asc",
+      "sha256": "89225b8be7f596745f7b0f6a9b535af48f98afb844771bc49e55c427c2bd7591"
+    },
+    {
+      "name": "expired.asc",
+      "sha256": "d9a16b80c833ed9f1fd1ca65302c3a611aa79abca7073dc33807aa90db7cbe72"
+    },
+    {
+      "name": "revoked-keyring.gpg",
+      "sha256": "3d5fed10dc4944ab2dfe069b94db813bd3ee24c64b59a4b02a53397dac52d565"
+    },
+    {
+      "name": "unknown-keyring.gpg",
+      "sha256": "0e9f60633cb77fdbfb19099c304657412e6db28771d39270b456c9f1eb7c4974"
+    },
+    {
+      "name": "unknown.asc",
+      "sha256": "235cf5eb57a1f6b91831a4da61c9aacbe38155dc601c0ec74b695a0ef3c6d7bf"
+    }
+  ]
+}
