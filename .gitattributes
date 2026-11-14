@@ -6,6 +6,11 @@
 *.md text eol=lf
 *.sig text eol=lf
 
+# Podpisy i piny V4b wymagają identycznych bajtów w każdym checkoucie.
+tests/fixtures/stage9_observer/apt_v4b/Release -text
+tests/fixtures/stage9_observer/apt_v4b/*.asc -text
+tests/fixtures/stage9_observer/apt_v4b/*.gpg -text
+
 # Przejrzane piny chronią dokładne bajty kodu, również w checkoutach Windows.
 # Nie normalizujemy treści podczas kwalifikacji zainstalowanych plików.
 bot_core/linux_service_ipc.py text eol=lf

@@ -246,3 +246,84 @@ authenticated time, durable rollback protection and runtime requirements remain
 open by design, with every authorization status above unchanged. The existing
 PR remains Draft, without merge; its published-head Actions snapshot is recorded
 separately in the PR description and is not inferred from local PASS results.
+
+## P1: preserve signed V4b fixture bytes during Windows checkout
+
+The follow-up starts from verified PR #3271 HEAD
+`46a5c0372e322c102783f78bb38ed8a676137c7b`. The native Windows failure is
+[Python tests (Windows), job 132483974288](https://github.com/Dudzian/Dudzian/actions/runs/43605556629/job/132483974288):
+Windows Server 2025, Git 2.56.0.windows.4, Python 3.11.9; one failure, 25,689
+passes, 4,142 skips and 1,559 deselections. The failed assertion is the unchanged
+`test_frozen_test_material_hashes`. Its expected Release hash is
+`9e194cf81d473f8b505881939c5486737af53d47f931d077d99e291b1f06b2f5`;
+the checkout produced CRLF hash
+`19c9a860584a46a3d9ce53a043cfb39b27da570185ddefb45b9342868cab6a28`.
+The same run's Ubuntu Python test job succeeded.
+
+All nine manifest materials were independently hashed as raw bytes in the
+original HEAD blobs, Git index and working tree. All three representations match
+the original manifest; no blob, key, signature or manifest change is warranted.
+
+| Material | SHA-256 in HEAD, index and working tree |
+| --- | --- |
+| `Release` | `9e194cf81d473f8b505881939c5486737af53d47f931d077d99e291b1f06b2f5` |
+| `allowed-keyring.gpg` | `c77a9857699c3ea2ac09b11d643a3a1f7b9e429b78b20361b0fc79f328ee9117` |
+| `allowed.asc` | `13f11458690fcd3d5d3bd11f03a4a6660fdbb51a64a4b58008b3297f75e9b5a6` |
+| `wrong-subkey.asc` | `eee9a68bde7b32c74a3b37e47db84b86b04eceb775398aff2a19e8391baedc36` |
+| `weak-hash.asc` | `89225b8be7f596745f7b0f6a9b535af48f98afb844771bc49e55c427c2bd7591` |
+| `expired.asc` | `d9a16b80c833ed9f1fd1ca65302c3a611aa79abca7073dc33807aa90db7cbe72` |
+| `revoked-keyring.gpg` | `3d5fed10dc4944ab2dfe069b94db813bd3ee24c64b59a4b02a53397dac52d565` |
+| `unknown-keyring.gpg` | `0e9f60633cb77fdbfb19099c304657412e6db28771d39270b456c9f1eb7c4974` |
+| `unknown.asc` | `235cf5eb57a1f6b91831a4da61c9aacbe38155dc601c0ec74b695a0ef3c6d7bf` |
+
+The only checkout configuration changes are three scoped `.gitattributes`
+rules: exact `apt_v4b/Release`, `apt_v4b/*.asc` and `apt_v4b/*.gpg` have
+`-text`. `git check-attr` confirms `text: unset` for every manifest material;
+README/manifest retain their existing explicit LF treatment. There is no
+normalization in the hash test or verifier and no skip added to the failed test.
+
+Three regression cases in the existing V4b crypto test module protect the Git
+configuration. One checks all nine effective attributes. Two create disposable
+Git repositories, copy exact fixture bytes and the real attributes, compare raw
+index blobs, and perform actual checkouts with Linux settings
+`core.autocrlf=false/core.eol=lf` or Windows-style settings
+`core.autocrlf=true/core.eol=crlf`. An ordinary text control must become CRLF in
+the latter case, proving conversion remains active outside protected fixtures.
+Before the fix the attribute check and Windows-style checkout failed, with the
+exact reported CRLF hash; Linux checkout passed. After the fix all three pass.
+These local Git conversion checks are distinct from native Windows CI.
+
+The analogous-fixture audit inspected all 30 tracked `tests/fixtures` files and
+their relevant consumers. Original attributes allow conversion of Release and
+all five armored `.asc` fixtures; the three `.gpg` files are auto-detected as
+binary but now also receive explicit protection. The other 15 JSON/patch
+fixtures retain their bytes under the Windows-style checkout through existing
+LF rules. Five inspected pinned Stage 9 substrate sources, AccountGenesis
+source and its two review patches are hash-correct and explicitly LF. No other
+analogous frozen cryptographic fixture needing a rule change was found in this
+inspected scope; there is no exhaustive repository-wide claim.
+
+Completed local validation as UID 1000:
+
+- All nine manifest hashes match in HEAD/index/working tree and in both temporary
+  checkout configurations. The entire V4b crypto module passes: 14 tests,
+  including the unchanged failing hash test and genuine gpgv cases.
+- All relevant V1–V4c/Observer/CI regressions: 2,356 passed, zero skips/failures,
+  including all twelve real V4b → V4c integration cases.
+- Full workflow Ruff, strict changed-test E/F/B/I/format, configured mypy
+  Linux/Win32 (402 files each), exact all-files format hook and full all-files
+  pre-commit passed. Betterleaks working-tree/staged scans passed without
+  scanner or baseline changes.
+- Semgrep: five configured blocking rules/1,134 targets, zero findings; fixtures
+  5/5; community scan of three V4c modules: 200 rules, zero findings/errors.
+  Desktop/Zstandard pip-audit: 105/one dependencies, zero vulnerabilities/skips;
+  environment `pip check` passed.
+
+Logs, hash audit JSON and JUnit are intermediate artifacts under
+`/workspace/work/p1-checkout/`. The repeated native Windows and Linux CI results
+are recorded separately in the PR description against the published commit;
+local checkout simulation is not reported as native Windows execution.
+The earlier platform Linux deployment job failed for missing current systemd,
+clean-install and reboot qualification evidence. That separate readiness
+boundary remains unchanged and must not be hidden by claiming overall CI PASS.
+Every production/trust/qualification status above remains unchanged.

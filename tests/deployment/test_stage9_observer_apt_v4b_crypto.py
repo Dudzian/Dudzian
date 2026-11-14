@@ -146,6 +146,90 @@ def test_frozen_test_material_hashes() -> None:
     assert not any(_FIXTURES.glob("**/private-keys-v1.d"))
 
 
+def _fixture_git(directory: Path, *arguments: str, raw: bytes | None = None) -> bytes:
+    executable = shutil.which("git")
+    if executable is None:
+        pytest.skip("Local Git is required to verify fixture checkout byte preservation")
+    environment = os.environ.copy()
+    environment.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull, GIT_ATTR_NOSYSTEM="1")
+    for name in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"):
+        environment.pop(name, None)
+    return subprocess.run(
+        [executable, "-C", str(directory), "-c", "core.attributesFile=", *arguments],
+        input=raw,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=True,
+        timeout=20,
+        env=environment,
+    ).stdout
+
+
+def test_frozen_test_materials_disable_git_text_conversion() -> None:
+    repository = Path(__file__).resolve().parents[2]
+    records = json.loads((_FIXTURES / "manifest.json").read_text())["files"]
+    paths = [(_FIXTURES / record["name"]).relative_to(repository).as_posix() for record in records]
+    observed = _fixture_git(
+        repository,
+        "check-attr",
+        "-z",
+        "--stdin",
+        "text",
+        raw=b"\0".join(path.encode() for path in paths),
+    )
+    assert observed == b"".join(path.encode() + b"\0text\0unset\0" for path in paths)
+
+
+@pytest.mark.parametrize(
+    "autocrlf, eol, control_bytes",
+    [("false", "lf", b"ordinary text\n"), ("true", "crlf", b"ordinary text\r\n")],
+    ids=["linux-checkout", "windows-checkout"],
+)
+def test_frozen_test_material_checkout_preserves_exact_bytes(
+    tmp_path: Path, autocrlf: str, eol: str, control_bytes: bytes
+) -> None:
+    repository = Path(__file__).resolve().parents[2]
+    records = json.loads((_FIXTURES / "manifest.json").read_text())["files"]
+    relative = _FIXTURES.relative_to(repository)
+    selected = tmp_path / relative
+    selected.mkdir(parents=True)
+    (tmp_path / ".gitattributes").write_bytes((repository / ".gitattributes").read_bytes())
+    control = tmp_path / "checkout-control.txt"
+    control.write_bytes(b"ordinary text\n")
+    paths = []
+    for record in records:
+        raw = (_FIXTURES / record["name"]).read_bytes()
+        assert hashlib.sha256(raw).hexdigest() == record["sha256"]
+        (selected / record["name"]).write_bytes(raw)
+        paths.append((relative / record["name"]).as_posix())
+    _fixture_git(tmp_path, "init", "--quiet")
+    _fixture_git(
+        tmp_path, "-c", "core.autocrlf=false", "add", "--", ".gitattributes", control.name, *paths
+    )
+    for record, path in zip(records, paths, strict=True):
+        indexed = _fixture_git(tmp_path, "show", ":" + path)
+        assert hashlib.sha256(indexed).hexdigest() == record["sha256"]
+        assert indexed == (_FIXTURES / record["name"]).read_bytes()
+        (tmp_path / path).unlink()
+    control.unlink()
+    _fixture_git(
+        tmp_path,
+        "-c",
+        f"core.autocrlf={autocrlf}",
+        "-c",
+        f"core.eol={eol}",
+        "checkout-index",
+        "--all",
+        "--force",
+    )
+    for record in records:
+        assert (
+            hashlib.sha256((selected / record["name"]).read_bytes()).hexdigest() == record["sha256"]
+        )
+    # The ordinary text control proves the Windows case actually converts LF.
+    assert control.read_bytes() == control_bytes
+
+
 def test_real_frozen_test_signature(tool: GpgvToolV4b) -> None:
     manifest = json.loads((_FIXTURES / "manifest.json").read_text())
     evidence = verify_detached_v4b(
