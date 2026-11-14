@@ -608,3 +608,13 @@ Explicit TEST anchors exercise signatures and bindings only; external authority
 and authenticated time remain UNVERIFIED, durable antirollback and runtime
 qualification remain BLOCKED. No production state writer, package execution,
 installation, root test or automatic rotation is introduced.
+
+The separate [archive-to-image mapping V5a](architecture/stage9_observer_image_v5a.md)
+compares complete frozen V3 records with a separately supplied and pinned static
+expected image. Its module and positive/negative tests extend the existing
+configured mypy Linux/Win32, explicit Ruff/format, Observer regression and
+branch-coverage scopes. Thresholds, prior scopes, timeouts and qualification
+gates are unchanged. Synthetic DEBs use binary writes with explicit LF bytes
+for portable fixtures. V5a executes no transformations, investigated code,
+installer or network operation. A static `MATCH` never upgrades V4 trust,
+independent image acceptance, host/runtime qualification or production status.
