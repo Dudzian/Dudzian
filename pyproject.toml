@@ -118,6 +118,8 @@ files = [
   "deployment/stage9_observer_tar_v3.py",
   "deployment/stage9_observer_package_v3.py",
   "deployment/stage9_observer_apt_v4a.py",
+  "deployment/stage9_observer_apt_v4b.py",
+  "deployment/stage9_observer_gpgv_v4b.py",
   "scripts/verify_stage9_real_deb_v2.py",
   "scripts/verify_stage9_real_deb_v3.py",
   "deployment/stage9_trusted_installation_files.py",

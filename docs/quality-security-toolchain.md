@@ -585,3 +585,15 @@ Job `linux-evidence-contract` powtarza te testy bez wywoływania fizycznej insta
 Dotychczasowe inventory atomic/history, progi diff coverage 70%, timeouty
 i manualne bramki sprzętowe pozostają bez zmian. Testy instalatora nie
 kwalifikują pełnego runtime ani fizycznej instalacji CryptoHunter.
+
+
+The separate [offline APT signature boundary V4b](architecture/stage9_observer_apt_v4b.md)
+adds both the trust/context integration and bounded `gpgv` adapter to the same
+configured mypy Linux/Win32, explicit Ruff/format and branch-coverage scopes.
+Their synthetic negative tests join the existing Observer V1–V4a regressions;
+no coverage threshold, timeout or physical-hardware gate changes. Tests use
+local TEST key material and never promote it to a production trust root.
+Cryptographic validity and conformance to a caller-supplied signer policy do
+not approve that policy's origin. External authority, freshness/checkpoints,
+rollback protection, tool acceptance and production isolation remain separate
+unverified requirements; qualification remains BLOCKED and production NO-GO.
