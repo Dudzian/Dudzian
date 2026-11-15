@@ -1,5 +1,15 @@
 # Quality, security, and code-intelligence toolchain
 
+V5c3 dodaje osobny kontrakt lokalnej obserwacji wykonania, kontrolę tożsamości
+runtime i narzędzie kompilacji dla przygotowanej izolowanej VM. Trzy moduły
+oraz ich testy rozszerzają istniejące mypy Linux/Win32, jawny Ruff/format
+i branch coverage `quality-ratchet`, bez zmiany progów, limitów i bramek.
+Zwykłe CI sprawdza mechanizm i syntetyczne źródła; nie uruchamia badanego
+interpretera ani nie przyznaje niezależnej akceptacji dowodów. Brak kwalifikowanej
+izolacji oznacza `EXECUTION_BLOCKED`, a próbę dokładnego CPython oznacza się
+`NOT_TESTED`. [Kontrakt i procedura V5c3](architecture/stage9_observer_pyc_execution_v5c3.md)
+oddzielają te wyniki od kwalifikacji Stage 9 i produkcji.
+
 V5c2 dodaje niezależne obliczanie hasha źródła PEP 552, porównanie rzeczywistych
 bajtów V5b z nagłówkiem PYC i osobny kontrakt przyszłej rekonstrukcji. Trzy
 moduły oraz ich testy wchodzą do istniejącego mypy Linux/Win32, jawnego
