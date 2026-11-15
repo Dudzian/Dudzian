@@ -30,6 +30,9 @@ def exported(tmp_path: Path):
     source = tmp_path / "source"
     source.mkdir()
     git(source, "init")
+    # Keep fixture commits from racing the complete read-only export snapshot.
+    git(source, "config", "maintenance.auto", "false")
+    git(source, "config", "gc.auto", "0")
     (source / "deployment").mkdir()
     (source / "deployment/stage9_vm_native.py").write_text(
         "raise RuntimeError('This data fixture must never execute')\n"
