@@ -36,6 +36,29 @@ def _isolate_mode_wizard_storage(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     )
 
 
+def _teardown_application(app: BotPysideApplication, qt_app: QGuiApplication) -> None:
+    """Stop owned workers while their Python/Qt owners and engine are alive."""
+    engine = app.engine
+    if engine is None:
+        return
+    bridge = engine.rootContext().contextProperty("grpcBridge")
+    service = bridge.runtimeService
+    workers = tuple(
+        worker for worker in (service._grpc_thread, service._ai_feed_thread) if worker is not None
+    )
+    try:
+        service._stop_grpc_stream()
+        for worker in workers:
+            # A connection-ready wait has its own bounded deadline, which can exceed
+            # the short best-effort join used by the product stop method.
+            worker.join(timeout=service._grpc_ready_timeout + 1.0)
+    finally:
+        teardown_qml_engine(engine, process_events=qt_app.processEvents)
+    assert all(not worker.is_alive() for worker in workers), "UI test leaked a runtime worker"
+    # The app argument retains its bridge and all Python-owned context objects
+    # until the native QML roots/engine have actually been destroyed.
+
+
 def test_pyside_app_bootstrap_loads_qml(
     tmp_path: Path, request: pytest.FixtureRequest, qt_gui_application: QGuiApplication
 ) -> None:
@@ -44,7 +67,7 @@ def test_pyside_app_bootstrap_loads_qml(
     app = BotPysideApplication(options)
     load_warnings: list[str] = []
     engine = app.load(warning_sink=load_warnings.append)
-    request.addfinalizer(lambda: teardown_qml_engine(engine, process_events=qt_app.processEvents))
+    request.addfinalizer(lambda: _teardown_application(app, qt_app))
     warnings = load_warnings + collect_engine_warnings(engine)
     warnings = list(dict.fromkeys(warnings))
     assert_engine_loaded(engine, warnings, "QML nie został załadowany")
@@ -129,7 +152,7 @@ def test_cloud_flag_context_property(
     app = BotPysideApplication(options)
     engine = app.load()
     qt_app = qt_gui_application
-    request.addfinalizer(lambda: teardown_qml_engine(engine, process_events=qt_app.processEvents))
+    request.addfinalizer(lambda: _teardown_application(app, qt_app))
     ctx = engine.rootContext()
     assert ctx.contextProperty("cloudRuntimeEnabled") is True
     licensing_controller = ctx.contextProperty("licensingController")
@@ -137,3 +160,27 @@ def test_cloud_flag_context_property(
     licensing_controller.resetStatus()
 
     qt_app.processEvents()
+
+
+def test_bootstrap_teardown_joins_owned_runtime_workers(
+    qt_gui_application: QGuiApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("BOT_CORE_UI_GRPC_READY_TIMEOUT", "1")
+    app = BotPysideApplication(AppOptions(config_path=Path("ui/config/example.yaml")))
+    engine = app.load()
+    service = engine.rootContext().contextProperty("grpcBridge").runtimeService
+    try:
+        service._start_grpc_stream("127.0.0.1:1", 5)
+        workers = tuple(
+            worker
+            for worker in (service._grpc_thread, service._ai_feed_thread)
+            if worker is not None
+        )
+        assert workers, "The lifecycle regression must exercise actual runtime workers"
+    finally:
+        _teardown_application(app, qt_gui_application)
+    assert all(not worker.is_alive() for worker in workers)
+    assert service._grpc_client is None
+    assert service._grpc_thread is None
+    assert service._ai_feed_thread is None
