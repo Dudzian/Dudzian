@@ -16,7 +16,7 @@ import re
 import stat
 import sys
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Literal, cast
 
 from cryptography.exceptions import InvalidSignature
@@ -24,7 +24,8 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from deployment.canonical_json import canonical_json_bytes
 
-POLICY_DIRECTORY = Path("/etc/cryptohunter/observer-v5d1")
+_POLICY_DIRECTORY_POSIX = PurePosixPath("/etc/cryptohunter/observer-v5d1")
+POLICY_DIRECTORY = Path(_POLICY_DIRECTORY_POSIX)
 ANCHOR_PATH = POLICY_DIRECTORY / "operator-anchors.json"
 APPROVED_POLICY_PATH = POLICY_DIRECTORY / "approved-policy.json"
 REQUIREMENTS_PATH = POLICY_DIRECTORY / "domain-requirements.json"
@@ -106,7 +107,8 @@ def _require(condition: bool, code: str) -> None:
         raise IdentityRefusalV5d1(code)
 
 
-def _absolute_path(value: Any) -> Path:
+def _absolute_path(value: Any) -> PurePosixPath:
+    """Validate signed Linux path data without consulting the host path flavour."""
     _require(
         type(value) is str
         and 1 < len(value) <= 4096
@@ -115,7 +117,7 @@ def _absolute_path(value: Any) -> Path:
         and all(part not in {"", ".", ".."} for part in value[1:].split("/")),
         "IDENTITY_PATH_REJECTED",
     )
-    return Path(value)
+    return PurePosixPath(value)
 
 
 def _protected_metadata(metadata: os.stat_result, *, directory: bool) -> None:
@@ -145,8 +147,8 @@ def _metadata_identity(metadata: os.stat_result) -> tuple[int, ...]:
 
 def _open_protected(path: Path) -> int:
     """Walk held directory FDs; reject every symlink and writable ancestor."""
-    _absolute_path(str(path))
     _require(sys.platform == "linux", "IDENTITY_HOST_UNSUPPORTED")
+    _absolute_path(str(path))
     directory_fd = os.open("/", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
     try:
         _protected_metadata(os.fstat(directory_fd), directory=True)
@@ -324,7 +326,7 @@ def validate_signed_policy_v5d1(
     _require({pin.role for pin in artifacts} == _ROLES, "IDENTITY_POLICY_CLOSURE_INCOMPLETE")
     _require(
         [pin.path for pin in artifacts if pin.role == "domain-requirements"]
-        == [str(REQUIREMENTS_PATH)],
+        == [str(_POLICY_DIRECTORY_POSIX / "domain-requirements.json")],
         "IDENTITY_REQUIREMENTS_PIN_REJECTED",
     )
     return ApprovedControllerPolicyV5d1(

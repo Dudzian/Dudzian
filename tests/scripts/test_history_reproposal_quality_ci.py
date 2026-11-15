@@ -832,7 +832,7 @@ def test_observer_v5b_preserves_explicit_quality_and_coverage_scopes():
     platform_jobs = yaml.safe_load(
         (ROOT / ".github/workflows/platform-deployment.yml").read_text(encoding="utf-8")
     )["jobs"]
-    contract = platform_jobs["linux-evidence-contract"]
+    contract = platform_jobs["stage9-v5d1-static-contract"]
     commands = [step.get("run", "") for step in contract["steps"]]
     for module in (
         "stage9_observer_collector_identity_v5d1",

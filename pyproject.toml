@@ -364,6 +364,9 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+  # Required by the configured V5d1 parser checks in wheelhouse-only mypy jobs.
+  "defusedxml==0.7.1",
+  "types-defusedxml==0.7.0.20240218",
   "pytest>=7.4",
   "pytest-asyncio>=0.23",
   "pytest-cov>=4.1",

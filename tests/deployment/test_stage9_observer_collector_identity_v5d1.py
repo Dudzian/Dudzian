@@ -5,7 +5,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from pathlib import Path
+import sys
+from pathlib import Path, PurePosixPath
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -25,7 +26,7 @@ def _synthetic_policy() -> tuple[dict, dict, Ed25519PrivateKey]:
         "revision": 1,
         "artifacts": [
             {
-                "path": str(identity.REQUIREMENTS_PATH)
+                "path": "/etc/cryptohunter/observer-v5d1/domain-requirements.json"
                 if role == "domain-requirements"
                 else f"/synthetic/{role}",
                 "role": role,
@@ -69,6 +70,39 @@ def test_synthetic_signature_validates_only_policy_bytes() -> None:
     assert approved.policy_sha256 == anchor["approved_policy_sha256"]
     assert len(approved.artifacts) == 6
     assert not hasattr(approved, "identity_verified")
+
+
+def test_synthetic_policy_paths_have_posix_semantics() -> None:
+    anchor, policy, key = _synthetic_policy()
+    approved = identity.validate_signed_policy_v5d1(*_signed(anchor, policy, key))
+    assert tuple(pin.path for pin in approved.artifacts) == tuple(
+        artifact["path"] for artifact in policy["artifacts"]
+    )
+    path = identity._absolute_path("/synthetic/controller-code")
+    assert type(path) is PurePosixPath
+    assert path.is_absolute()
+    assert path.parts == ("/", "synthetic", "controller-code")
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "synthetic/controller-code",
+        "C:/synthetic/controller-code",
+        "/synthetic\\controller-code",
+        "//synthetic/controller-code",
+        "/synthetic/./controller-code",
+        "/synthetic/../controller-code",
+        "/synthetic//controller-code",
+        "/synthetic/controller-code/",
+    ],
+)
+def test_synthetic_policy_rejects_noncanonical_posix_paths(path: str) -> None:
+    anchor, policy, key = _synthetic_policy()
+    policy["artifacts"][0]["path"] = path
+    _repin(anchor, policy)
+    with pytest.raises(identity.IdentityRefusalV5d1, match="^IDENTITY_PATH_REJECTED$"):
+        identity.validate_signed_policy_v5d1(*_signed(anchor, policy, key))
 
 
 @pytest.mark.parametrize(
@@ -145,7 +179,6 @@ def test_synthetic_malformed_json_fails_closed(raw: bytes) -> None:
 def test_public_entrypoint_has_no_caller_authority_argument(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(identity.sys, "platform", "linux")
     monkeypatch.setattr(
         identity,
         "read_protected_file_v5d1",
@@ -155,17 +188,43 @@ def test_public_entrypoint_has_no_caller_authority_argument(
     assert report.identity == "COLLECTOR_IDENTITY_UNVERIFIED"
     assert report.execution == "EXECUTION_NOT_AUTHORIZED"
     assert not report.policy_signature_verified
-    assert "IDENTITY_POLICY_UNAVAILABLE" in report.reason_codes
+    assert (
+        "IDENTITY_POLICY_UNAVAILABLE" if sys.platform == "linux" else "IDENTITY_HOST_UNSUPPORTED"
+    ) in report.reason_codes
     with pytest.raises(TypeError):
         identity.verify_controller_identity_v5d1("caller-authority")
 
 
+@pytest.mark.skipif(sys.platform == "linux", reason="Native unsupported-host refusal")
+def test_native_non_linux_host_refuses_before_policy_or_posix_access(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def unexpected_access(*args, **kwargs):
+        pytest.fail("Unsupported host must refuse before reading policy or opening descriptors")
+
+    monkeypatch.setattr(identity, "read_protected_file_v5d1", unexpected_access)
+    monkeypatch.setattr(identity.os, "open", unexpected_access)
+    report = identity.verify_controller_identity_v5d1()
+    assert "IDENTITY_HOST_UNSUPPORTED" in report.reason_codes
+    assert report.identity == "COLLECTOR_IDENTITY_UNVERIFIED"
+    assert report.execution == "EXECUTION_NOT_AUTHORIZED"
+    assert not report.policy_signature_verified
+    assert report.measurements == ()
+    assert report.environment_sha256 is None
+    with pytest.raises(identity.IdentityRefusalV5d1, match="^IDENTITY_HOST_UNSUPPORTED$"):
+        identity._environment_fingerprint()
+    with pytest.raises(identity.IdentityRefusalV5d1, match="^IDENTITY_HOST_UNSUPPORTED$"):
+        identity._open_protected(identity.ANCHOR_PATH)
+    with pytest.raises(identity.IdentityRefusalV5d1, match="^IDENTITY_HOST_UNSUPPORTED$"):
+        identity._read_protected(identity.ANCHOR_PATH, identity.MAX_POLICY_BYTES)
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux host identity metadata")
 def test_synthetic_full_match_retains_independent_launch_refusal(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     anchor, policy, key = _synthetic_policy()
     anchor_raw, envelope = _signed(anchor, policy, key)
-    monkeypatch.setattr(identity.sys, "platform", "linux")
     monkeypatch.setattr(
         identity,
         "read_protected_file_v5d1",
@@ -185,13 +244,13 @@ def test_synthetic_full_match_retains_independent_launch_refusal(
     assert report.identity == "COLLECTOR_IDENTITY_UNVERIFIED"
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux host identity metadata")
 def test_synthetic_policy_change_during_measurement_is_rejected(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     anchor, policy, key = _synthetic_policy()
     anchor_raw, envelope = _signed(anchor, policy, key)
     reads = iter((anchor_raw, envelope, b"changed"))
-    monkeypatch.setattr(identity.sys, "platform", "linux")
     monkeypatch.setattr(identity, "read_protected_file_v5d1", lambda path: next(reads))
     monkeypatch.setattr(identity, "_required_artifact_paths", lambda: ({}, ()))
     monkeypatch.setattr(identity, "_environment_fingerprint", lambda: "0" * 64)
@@ -214,7 +273,7 @@ def test_synthetic_metadata_and_path_protection(tmp_path: Path) -> None:
         identity.read_protected_file_v5d1(identity.ANCHOR_PATH, max_bytes=True)
 
 
-@pytest.mark.skipif(os.name != "posix", reason="SYNTHETIC descriptor fixture requires POSIX")
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux-only protected descriptor traversal")
 def test_synthetic_nofollow_rejects_symlink_and_bounded_read(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -248,11 +307,11 @@ def test_synthetic_hardlink_and_writable_metadata_rejected() -> None:
         identity._protected_metadata(os.stat_result(values), directory=False)
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux host identity metadata")
 def test_synthetic_environment_drift_blocks_identity(monkeypatch: pytest.MonkeyPatch) -> None:
     anchor, policy, key = _synthetic_policy()
     anchor_raw, envelope = _signed(anchor, policy, key)
     fingerprints = iter(("0" * 64, "1" * 64))
-    monkeypatch.setattr(identity.sys, "platform", "linux")
     monkeypatch.setattr(identity, "_environment_fingerprint", lambda: next(fingerprints))
     monkeypatch.setattr(
         identity,
@@ -269,6 +328,7 @@ def test_synthetic_environment_drift_blocks_identity(monkeypatch: pytest.MonkeyP
     assert report.identity == "COLLECTOR_IDENTITY_UNVERIFIED"
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux host identity metadata")
 def test_synthetic_path_replacement_between_measurement_passes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -276,7 +336,6 @@ def test_synthetic_path_replacement_between_measurement_passes(
     anchor_raw, envelope = _signed(anchor, policy, key)
     changed = tmp_path / "changed"
     changed.write_bytes(b"different-inode")
-    monkeypatch.setattr(identity.sys, "platform", "linux")
     monkeypatch.setattr(identity, "_environment_fingerprint", lambda: "0" * 64)
     monkeypatch.setattr(
         identity,
@@ -293,7 +352,7 @@ def test_synthetic_path_replacement_between_measurement_passes(
     assert all(item.sha256 == item.expected_sha256 for item in report.measurements)
 
 
-@pytest.mark.skipif(os.name != "posix", reason="SYNTHETIC special-file fixture requires POSIX")
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux-only protected descriptor traversal")
 def test_synthetic_special_file_rejected_before_content_open(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
