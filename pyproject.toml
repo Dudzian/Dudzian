@@ -126,6 +126,7 @@ files = [
   "deployment/stage9_observer_image_v5a.py",
   "deployment/stage9_observer_member_source_v5b.py",
   "deployment/stage9_observer_materialization_v5b.py",
+  "deployment/stage9_observer_pyc_v5c1.py",
   "scripts/verify_stage9_real_deb_v2.py",
   "scripts/verify_stage9_real_deb_v3.py",
   "deployment/stage9_trusted_installation_files.py",

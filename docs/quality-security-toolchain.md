@@ -628,3 +628,14 @@ qualify a native runtime. V5a success semantics, the 70% changed-code threshold,
 all existing limits and privileged execution gates remain unchanged. The
 [technical contract](architecture/stage9_observer_materialization_v5b.md) records
 the supported profile and refused transformations.
+
+The separate [bounded bytecode verifier V5c1](architecture/stage9_observer_pyc_v5c1.md)
+joins those same configured mypy Linux/Win32, explicit Ruff/format, Observer
+regression and branch-coverage scopes. Its tests verify immutable synthetic DEBs
+through the existing V5b reader and independently expected opaque `.pyc` bytes;
+they do not compile or execute the investigated source, body or interpreter.
+Byte identity, header structure and declared source binding remain separate
+from `RECONSTRUCTION_UNVERIFIED` and `SOURCE_HASH_UNVERIFIED`. No existing
+threshold, timeout, test inventory, import allowlist or qualification gate is
+relaxed. The [validation report](architecture/stage9_observer_pyc_v5c1_validation.md)
+records exact local checks and pending hosted CI separately.

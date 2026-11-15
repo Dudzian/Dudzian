@@ -805,6 +805,7 @@ def test_observer_v5b_preserves_explicit_quality_and_coverage_scopes():
         "stage9_observer_image_v5a",
         "stage9_observer_member_source_v5b",
         "stage9_observer_materialization_v5b",
+        "stage9_observer_pyc_v5c1",
     ):
         source = f"deployment/{module}.py"
         test = f"tests/deployment/test_{module}.py"
