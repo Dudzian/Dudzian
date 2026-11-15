@@ -29,3 +29,6 @@ bot_core/account_genesis_freshness_authority.py text eol=lf
 # Dokładne patche TEST_ONLY muszą pasować do chronionych baz LF.
 tests/fixtures/account_genesis_verified_transport_review.patch text eol=lf
 tests/fixtures/freshness_verifier_remediation_review.patch text eol=lf
+
+# V5c2: preserve exact bytes of the pinned SipHash reference.
+tests/fixtures/stage9_observer/pyc_source_hash_v5c2/cpython_siphash13_reference.c text eol=lf
